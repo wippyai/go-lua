@@ -41,7 +41,7 @@ func TestProgramRootRetainsOnlyFrozenSurface(t *testing.T) {
 	methodInfo := reflect.TypeOf((*Program)(nil))
 	wantMethods := map[string]bool{
 		"Source": true, "Flow": true, "Static": true, "Module": true, "ContentID": true,
-		"SemanticSourceReceipt": true, "SemanticSourceViews": true,
+		"SemanticSourceReceipt": true, "SemanticSourceViews": true, "TransformerInput": true,
 	}
 	if methodInfo.NumMethod() != len(wantMethods) {
 		t.Fatalf("Program method count = %d, want %d", methodInfo.NumMethod(), len(wantMethods))

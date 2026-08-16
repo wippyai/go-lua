@@ -18,14 +18,32 @@ type Demand struct {
 // Points, then expands every reached WTO region to its complete Point
 // membership before exposing its schedule events.
 func (graph *Graph) Demand() (*Demand, bool) {
-	if !graph.valid() || len(graph.queries) == 0 {
+	return graph.DemandWithPoints(nil)
+}
+
+// DemandWithPoints derives the ordinary registered-Query closure plus a
+// solve-local set of exact additional roots. The roots add no Query or graph
+// identity row; callers use them only to request already-declared inference
+// at otherwise undemanded Points. A nil root set is exactly Demand.
+func (graph *Graph) DemandWithPoints(roots []Point) (*Demand, bool) {
+	if !graph.valid() || len(graph.queries) == 0 && len(roots) == 0 {
 		return nil, false
 	}
 	selected := make([]bool, len(graph.points))
-	frontier := make([]schedule.Node, 0, len(graph.queries))
+	frontier := make([]schedule.Node, 0, len(graph.queries)+len(roots))
 	for _, query := range graph.queries {
 		node, ok := graph.pointAt[query.point.key]
 		if !ok {
+			return nil, false
+		}
+		if !selected[node] {
+			selected[node] = true
+			frontier = append(frontier, node)
+		}
+	}
+	for _, root := range roots {
+		node, ok := graph.pointAt[root.key]
+		if !ok || !graph.OwnsPoint(root) {
 			return nil, false
 		}
 		if !selected[node] {

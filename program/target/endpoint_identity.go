@@ -17,7 +17,9 @@ import (
 	"github.com/wippyai/go-lua/program/keyspace"
 )
 
-const endpointIdentityCodecVersion uint64 = 6
+// Version 7 adds explicit publication-effect descriptor bytes to semantic
+// effect identities. Earlier endpoint identities are deliberately distinct.
+const endpointIdentityCodecVersion uint64 = 7
 
 const (
 	semanticOperationAnchor uint64 = iota + 80
@@ -671,6 +673,17 @@ func (c *Contract) encodeEffectArguments(w *canonical.Writer, row effectRow) err
 	}
 	for position := row.rows.start; position < row.rows.end; position++ {
 		if err := w.Uint(uint64(c.effectRows[position])); err != nil {
+			return err
+		}
+	}
+	if err := w.Bool(row.hasPublication); err != nil {
+		return err
+	}
+	if row.hasPublication {
+		if !c.validPublicationEffectRow(row) {
+			return errors.New("target: malformed publication effect selector")
+		}
+		if err := encodePublicationEffectDescriptor(w, row.publication); err != nil {
 			return err
 		}
 	}
@@ -1723,6 +1736,38 @@ func (c *Contract) EffectDescriptorID(op Operation, index int) (keyspace.Content
 	return id, id.Available()
 }
 
+// PublicationEffectDescriptor returns the immutable Target-owned publication
+// semantics for one exact ordinary effect occurrence. Generic effects remain
+// absent unless their author explicitly supplied PublicationEffectSpec.
+func (c *Contract) PublicationEffectDescriptor(op Operation, index int) (PublicationEffectDescriptor, bool) {
+	row, ok := c.effect(op, index)
+	if !ok || !c.sealed || !c.validPublicationEffectRow(row) {
+		return PublicationEffectDescriptor{}, false
+	}
+	return row.publication, true
+}
+
+// PublicationEffectDescriptorID returns the existing canonical effect
+// descriptor identity only when that exact occurrence carries an explicit
+// publication descriptor. Reusing the effect descriptor ID prevents a second
+// parallel semantic identity for the same sealed occurrence.
+func (c *Contract) PublicationEffectDescriptorID(op Operation, index int) (keyspace.ContentID, bool) {
+	if _, ok := c.PublicationEffectDescriptor(op, index); !ok {
+		return keyspace.ContentID{}, false
+	}
+	return c.EffectDescriptorID(op, index)
+}
+
+// PublicationEffectOccurrenceID returns the existing canonical exact effect
+// occurrence identity only when that occurrence carries explicit publication
+// semantics.
+func (c *Contract) PublicationEffectOccurrenceID(op Operation, index int) (keyspace.ContentID, bool) {
+	if _, ok := c.PublicationEffectDescriptor(op, index); !ok {
+		return keyspace.ContentID{}, false
+	}
+	return c.EffectOccurrenceID(op, index)
+}
+
 // CallbackEffectDescriptorID returns the semantic quotient for one callback
 // effect occurrence.  It has no inverse because duplicate descriptors are a
 // deliberate quotient of distinct retained occurrences.
@@ -1737,6 +1782,39 @@ func (c *Contract) CallbackEffectDescriptorID(callback CallbackID, index int) (k
 	}
 	id := c.effectDescriptorIDs[position]
 	return id, id.Available()
+}
+
+// CallbackPublicationEffectDescriptor returns the immutable Target-owned
+// publication semantics for one exact callback effect occurrence.
+func (c *Contract) CallbackPublicationEffectDescriptor(callback CallbackID, index int) (PublicationEffectDescriptor, bool) {
+	row, ok := c.callback(callback)
+	if !ok || !c.sealed || index < 0 || index >= row.effects.len() {
+		return PublicationEffectDescriptor{}, false
+	}
+	effect := c.effects[row.effects.start+uint32(index)]
+	if !c.validPublicationEffectRow(effect) {
+		return PublicationEffectDescriptor{}, false
+	}
+	return effect.publication, true
+}
+
+// CallbackPublicationEffectDescriptorID returns the canonical generic effect
+// descriptor identity for one callback occurrence with explicit publication
+// semantics.
+func (c *Contract) CallbackPublicationEffectDescriptorID(callback CallbackID, index int) (keyspace.ContentID, bool) {
+	if _, ok := c.CallbackPublicationEffectDescriptor(callback, index); !ok {
+		return keyspace.ContentID{}, false
+	}
+	return c.CallbackEffectDescriptorID(callback, index)
+}
+
+// CallbackPublicationEffectOccurrenceID returns the canonical exact callback
+// effect occurrence identity for an explicitly declared publication effect.
+func (c *Contract) CallbackPublicationEffectOccurrenceID(callback CallbackID, index int) (keyspace.ContentID, bool) {
+	if _, ok := c.CallbackPublicationEffectDescriptor(callback, index); !ok {
+		return keyspace.ContentID{}, false
+	}
+	return c.CallbackEffectOccurrenceID(callback, index)
 }
 
 // EffectOccurrenceID returns the exact ordinary effect occurrence identity,

@@ -131,8 +131,8 @@ func checkFrozenFixtureLinkProject(contract *target.Contract, project testfixtur
 	if err != nil {
 		return err
 	}
-	if publications.Count() != 114 || publications.Count() != semanticsource.CatalogSchema().Count() {
-		return fmt.Errorf("semantic-source publications = %d, want exact 114/generated denominator %d", publications.Count(), semanticsource.CatalogSchema().Count())
+	if publications.Count() != 111 || publications.Count() != semanticsource.CatalogSchema().Count() {
+		return fmt.Errorf("semantic-source publications = %d, want exact 111/generated denominator %d", publications.Count(), semanticsource.CatalogSchema().Count())
 	}
 	return nil
 }
@@ -170,8 +170,8 @@ func roundTripFixtureProject(linked *link.Link, contract *target.Contract) error
 	if err != nil {
 		return fmt.Errorf("replayed semantic-source publication: %w", err)
 	}
-	if publications.Count() != 114 || publications.Count() != semanticsource.CatalogSchema().Count() {
-		return fmt.Errorf("replayed semantic-source publications = %d, want exact 114/generated denominator %d", publications.Count(), semanticsource.CatalogSchema().Count())
+	if publications.Count() != 111 || publications.Count() != semanticsource.CatalogSchema().Count() {
+		return fmt.Errorf("replayed semantic-source publications = %d, want exact 111/generated denominator %d", publications.Count(), semanticsource.CatalogSchema().Count())
 	}
 	return nil
 }

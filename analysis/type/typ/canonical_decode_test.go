@@ -89,10 +89,10 @@ func TestDecodeCanonicalRoundTripsRawIEEEFloatLiterals(t *testing.T) {
 			t.Fatalf("decode %#x: %v", bits, err)
 		}
 		literal, ok := decoded.(*Literal)
-		if !ok || literal.Base != kind.Number {
+		if !ok || literal.Base() != kind.Number {
 			t.Fatalf("decoded %#x = %T/%#v", bits, decoded, decoded)
 		}
-		if got := math.Float64bits(literal.Value.(float64)); got != bits {
+		if got := math.Float64bits(literal.Value().(float64)); got != bits {
 			t.Fatalf("decoded bits=%#x, want %#x", got, bits)
 		}
 		if !TypeEquals(original, decoded) {

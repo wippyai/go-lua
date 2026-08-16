@@ -13,10 +13,10 @@ import (
 )
 
 const (
-	// v32 makes Project, Boundary, and Static contribute only their immutable child
-	// digests; no semantic child is mutated after root identity.
-	linkContentVersion = 34
-	linkPolicyVersion  = 34
+	// v35 deletes the legacy LinkStatic Program-reconstruction constituent.
+	// ProgramArtifact is the only owner of Program-internal static facts.
+	linkContentVersion = 35
+	linkPolicyVersion  = 35
 )
 
 // contentID names the complete authored Link input under one fixed sealing
@@ -51,14 +51,15 @@ func contentID(link *Link, project linkproject.Cold, boundary *linkboundary.Comp
 	if !moduleID.Available() || w.Bytes(moduleID[:]) != nil {
 		return keyspace.ContentID{}
 	}
-	if !contentStaticAuthority(&w, static) {
+	staticID := static.ContentID()
+	if !staticID.Available() || w.Bytes(staticID[:]) != nil {
 		return keyspace.ContentID{}
 	}
 	hostID := host.ContentID()
 	if !hostID.Available() || w.Bytes(hostID[:]) != nil {
 		return keyspace.ContentID{}
 	}
-	if link.project == nil || !contentDependencyDigest(&w, boundary, link.project.Mounts(), static, module) {
+	if link.project == nil || !contentDependencyDigest(&w, boundary, static, module) {
 		return keyspace.ContentID{}
 	}
 	if w.Finish() != nil {
@@ -75,7 +76,7 @@ func contentID(link *Link, project linkproject.Cold, boundary *linkboundary.Comp
 // target BindingSpec used during admission is intentionally absent: it is a
 // replay witness, while the resolved Operation is the semantic dependency.
 // The rows are derived from child authorities for this call and never stored.
-func contentDependencyDigest(w *canonical.Writer, boundary *linkboundary.Component, mounts linkproject.Mounts, static linkstatic.Cold, module linkmodule.Cold) bool {
+func contentDependencyDigest(w *canonical.Writer, boundary *linkboundary.Component, static linkstatic.Cold, module linkmodule.Cold) bool {
 	if w == nil || boundary == nil {
 		return false
 	}
@@ -83,7 +84,7 @@ func contentDependencyDigest(w *canonical.Writer, boundary *linkboundary.Compone
 	if !ok || contract == nil {
 		return false
 	}
-	rows, err := deriveDependencyRows(boundary, mounts, static, module)
+	rows, err := deriveDependencyRows(boundary, static, module)
 	if err != nil {
 		return false
 	}
@@ -98,15 +99,4 @@ func contentDependencyDigest(w *canonical.Writer, boundary *linkboundary.Compone
 		}
 	}
 	return true
-}
-
-// contentStaticAuthority includes the sealed static-only structural authority
-// in Link identity. Artifact replay derives the rows again from the same
-// Programs; it never serializes a duplicate static resolver.
-func contentStaticAuthority(w *canonical.Writer, static linkstatic.Cold) bool {
-	if w == nil {
-		return false
-	}
-	id := static.ContentID()
-	return id.Available() && w.Bytes(id[:]) == nil
 }

@@ -468,6 +468,22 @@ func TestSelf(t *testing.T) {
 		}
 	})
 
+	t.Run("rewrites self in function binder constraints", func(t *testing.T) {
+		param := typ.NewTypeParam("T", typ.Self)
+		fn := typ.Func().TypeParamRef(param).Param("value", param).Build()
+
+		result, ok := Self(fn, typ.String).(*typ.Function)
+		if !ok {
+			t.Fatalf("result = %T, want function", fn)
+		}
+		if len(result.TypeParams) != 1 || result.TypeParams[0].Constraint != typ.String {
+			t.Fatalf("function binder = %#v, want constraint string", result.TypeParams)
+		}
+		if result.Params[0].Type != result.TypeParams[0] {
+			t.Fatalf("function parameter = %v, want rewritten binder", result.Params[0].Type)
+		}
+	})
+
 	t.Run("rewrites function-valued record fields", func(t *testing.T) {
 		method := typ.Func().Param("self", typ.Self).Returns(typ.Self).Build()
 		rec := typetable.NewRecord().Field("method", method).Build()

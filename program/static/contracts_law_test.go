@@ -77,6 +77,13 @@ func TestContractsPreserveDenseTypedSidecars(t *testing.T) {
 	if got, ok := contracts.Calls().TypeArgumentAt(call, 1); !ok || got != keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 3) {
 		t.Fatalf("call argument = (%v, %v)", got, ok)
 	}
+	receipt, receiptOK := contracts.Calls().TypeArgumentReceipt(call)
+	if !receiptOK || !receipt.Available() {
+		t.Fatal("call type-argument receipt unavailable")
+	}
+	if replay, replayOK := contracts.Calls().TypeArgumentReceipt(call); !replayOK || replay != receipt {
+		t.Fatal("call type-argument receipt was not replay-stable")
+	}
 }
 
 func TestContractsPreserveOmittedAndKnownEmptyReturns(t *testing.T) {

@@ -42,8 +42,8 @@ func TestLiteralDiscriminantDomainsFindsSharedNestedTag(t *testing.T) {
 		}
 	}
 	if len(domains[0].Cases) != 2 ||
-		domains[0].Cases[0].Literal.Value != "created" ||
-		domains[0].Cases[1].Literal.Value != "deleted" {
+		domains[0].Cases[0].Literal.Value() != "created" ||
+		domains[0].Cases[1].Literal.Value() != "deleted" {
 		t.Fatalf("cases = %#v, want created/deleted literals", domains[0].Cases)
 	}
 }

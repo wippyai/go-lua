@@ -14,7 +14,8 @@ import (
 	"github.com/wippyai/go-lua/program/flow/internal/executable"
 	"github.com/wippyai/go-lua/program/flow/internal/outcome"
 	"github.com/wippyai/go-lua/program/flow/internal/position"
-	"github.com/wippyai/go-lua/program/flow/internal/recurrence"
+	"github.com/wippyai/go-lua/program/flow/internal/runtimeentry"
+	"github.com/wippyai/go-lua/program/flow/internal/semanticpath"
 	"github.com/wippyai/go-lua/program/flow/internal/sourcecontrol"
 	flowkind "github.com/wippyai/go-lua/program/flow/kind"
 	"github.com/wippyai/go-lua/program/keyspace"
@@ -197,7 +198,7 @@ func openBinaryPrimitiveFixture(t *testing.T, comparisonOp flowkind.BinaryOp) *b
 		closeBinaryPrimitiveFinalizers(sourceFinal, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("position.Seal: %v", err)
 	}
-	sourceComponent, err := sourceFinal.Commit(indexInput)
+	sourceComponent, issuance, err := sourceFinal.CommitWithSemanticPathIssuance(indexInput)
 	if err != nil {
 		closeBinaryPrimitiveFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("source.Commit: %v", err)
@@ -208,20 +209,54 @@ func openBinaryPrimitiveFixture(t *testing.T, comparisonOp flowkind.BinaryOp) *b
 		closeBinaryPrimitiveFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("sourcecontrol.Seal: %v", err)
 	}
-	recur, err := recurrence.Seal(sourceView, flowView, bodies, forest, graph, staticID, moduleID)
-	if err != nil {
+	cellRoleIssuance, cellRoleOK := issuance.IssueCellRoles(sourceView)
+	cellRoles, cellRolesOK := cellRoleIssuance.Consume(sourceView)
+	if !cellRoleOK || !cellRolesOK {
 		closeBinaryPrimitiveFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
-		t.Fatalf("recurrence.Seal: %v", err)
+		t.Fatal("source.CellRoleCatalog: unavailable")
+	}
+	certificate, certificateErr := semanticpath.Seal(issuance, cellRoles, sourceView, flowView, bodies, bindingResult, forest, outcomes, flowView.Cold().ContentID(), staticID, moduleID)
+	if certificateErr != nil {
+		closeBinaryPrimitiveFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
+		t.Fatalf("semanticpath.Seal: %v", certificateErr)
+	}
+	vertexReceipt, receiptOK := certificate.IssueVertexCatalogReceipt()
+	vertexLease, vertexErr := graph.InstallVertexCatalogLease(bodies, vertexReceipt)
+	if !receiptOK || vertexErr != nil || vertexLease == nil {
+		closeBinaryPrimitiveFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
+		t.Fatal("sourcecontrol.InstallVertexCatalog: no exact receipt")
+	}
+	defer graph.ReleaseVertexCatalog(vertexLease)
+	outcomePhasePaths, outcomePhasePathsOK := certificate.IssueOutcomePhaseReceipt()
+	outcomePhases, outcomeErr := graph.IssueOutcomePhases(sourceView, flowView, bodies, outcomes, outcomePhasePaths)
+	if !outcomePhasePathsOK || outcomeErr != nil || outcomePhases == nil {
+		closeBinaryPrimitiveFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
+		t.Fatal("sourcecontrol.IssueOutcomePhases: unavailable")
 	}
 	executableResult, err := executable.Seal(sourceView, flowView, forest, graph, staticID, moduleID)
 	if err != nil {
 		closeBinaryPrimitiveFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("executable.Seal: %v", err)
 	}
-	causalResult, err := causal.Seal(sourceView, flowView, bodies, forest, outcomes, graph, recur, ports, executableResult, staticID, moduleID)
+	entries, err := runtimeentry.Seal(sourceView, flowView, graph, ports, executableResult, staticID, moduleID)
 	if err != nil {
 		closeBinaryPrimitiveFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
-		t.Fatalf("causal.Seal: %v", err)
+		t.Fatalf("runtimeentry.Seal: %v", err)
+	}
+	causalReceipt, receiptOK := certificate.IssueCausalReceipt()
+	if !receiptOK {
+		closeBinaryPrimitiveFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
+		t.Fatal("semanticpath.IssueCausalReceipt: receipt unavailable")
+	}
+	preparation, err := causal.PrepareRoutePlanWithStructuralPaths(sourceView, flowView, bodies, forest, outcomes, graph, ports, executableResult, entries, causalReceipt, outcomePhases, staticID, moduleID)
+	if err != nil {
+		closeBinaryPrimitiveFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
+		t.Fatalf("causal.PrepareRoutePlan: %v", err)
+	}
+	causalResult, err := preparation.Seal()
+	if err != nil {
+		closeBinaryPrimitiveFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
+		t.Fatalf("causal.Preparation.Seal: %v", err)
 	}
 	fixture := &binaryPrimitiveFixture{sourceView: sourceView, flow: flowView, executable: executableResult, causal: causalResult, staticID: staticID, moduleID: moduleID, staticFinal: staticFinal, flowFinal: flowFinal, moduleFinal: moduleFinal}
 	t.Cleanup(func() {

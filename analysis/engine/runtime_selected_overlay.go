@@ -47,10 +47,15 @@ type preparedSelectedFactorOverlay struct {
 	// to the existing carrier; no typed root is migrated.
 	execution       *schedule.Schedule
 	executionDemand *equation.Demand
-	regions         []runtimeRegion
-	regionChildren  [][]int
-	pointRegion     []int
-	activeRegions   []bool
+	// directCatalog is the complete installed selected-direct descriptor set
+	// after this frontier (indexed by runtime factor edge). It is retained only
+	// until the prepared overlay is committed, then published in overlay.directAt.
+	directCatalog  map[int]equation.SelectedStructuralFactorEdge
+	directEdges    []equation.SelectedStructuralFactorEdge
+	regions        []runtimeRegion
+	regionChildren [][]int
+	pointRegion    []int
+	activeRegions  []bool
 }
 
 // preparedFactorCSRRow is one replacement for an existing runtime CSR row.
@@ -111,6 +116,7 @@ func (runtime *solverRuntime) prepareSelectedFactorOverlay(delta, accepted []equ
 		execution:         execution,
 		latePlans:         make(map[composition.Key]carrier.ReindexPlan),
 		newOrigins:        make(map[runtimeFactorOrigin]int),
+		directCatalog:     cloneDirectCatalog(runtime.overlay.directAt),
 	}
 	for _, descriptor := range descriptors {
 		bound, valid := runtime.bindSelectedFactorEdge(descriptor, prepared.latePlans)
@@ -131,6 +137,7 @@ func (runtime *solverRuntime) prepareSelectedFactorOverlay(delta, accepted []equ
 			if !appendPreparedReplacement(prepared, installed, bound.edge) {
 				return nil, false
 			}
+			prepared.directCatalog[installed] = descriptor.edge
 			continue
 		}
 		if _, static := runtime.overlay.staticOrigins[bound.origin]; static {
@@ -142,6 +149,7 @@ func (runtime *solverRuntime) prepareSelectedFactorOverlay(delta, accepted []equ
 		bound.edge.index = prepared.previousEdgeCount + len(prepared.additions)
 		prepared.newOrigins[bound.origin] = bound.edge.index
 		prepared.additions = append(prepared.additions, preparedFactorAddition{edge: bound.edge, origin: bound.origin})
+		prepared.directCatalog[bound.edge.index] = descriptor.edge
 	}
 	if len(prepared.additions) == 0 && len(prepared.replacements) == 0 {
 		return nil, false
@@ -149,10 +157,35 @@ func (runtime *solverRuntime) prepareSelectedFactorOverlay(delta, accepted []equ
 	if !prepared.finalize(runtime) {
 		return nil, false
 	}
-	if prepared.execution != nil && prepared.execution.RegionCount() != 0 && !prepared.bindFeedbackRuntime(runtime, accepted) {
+	prepared.directEdges = directCatalogEdges(prepared.directCatalog)
+	if prepared.execution != nil && prepared.execution.RegionCount() != 0 && !prepared.bindFeedbackRuntime(runtime) {
 		return nil, false
 	}
 	return prepared, true
+}
+
+func cloneDirectCatalog(source map[int]equation.SelectedStructuralFactorEdge) map[int]equation.SelectedStructuralFactorEdge {
+	result := make(map[int]equation.SelectedStructuralFactorEdge, len(source))
+	for index, edge := range source {
+		result[index] = edge
+	}
+	return result
+}
+
+func directCatalogEdges(catalog map[int]equation.SelectedStructuralFactorEdge) []equation.SelectedStructuralFactorEdge {
+	if len(catalog) == 0 {
+		return nil
+	}
+	indexes := make([]int, 0, len(catalog))
+	for index := range catalog {
+		indexes = append(indexes, index)
+	}
+	sort.Ints(indexes)
+	result := make([]equation.SelectedStructuralFactorEdge, 0, len(indexes))
+	for _, index := range indexes {
+		result = append(result, catalog[index])
+	}
+	return result
 }
 
 func (runtime *solverRuntime) validSelectedOrigin(index int, origin runtimeFactorOrigin) bool {
@@ -326,16 +359,15 @@ func (prepared *preparedSelectedFactorOverlay) finalize(runtime *solverRuntime) 
 	return true
 }
 
-// bindFeedbackRuntime uses the canonical accepted Graph only as a topology
-// oracle. Dense Point/Group identities and every typed carrier root remain
-// owned by the live runtime. The resulting recurrence scopes are sealed on
-// that existing carrier, which is the essential no-replay property of the
-// feedback overlay.
-func (prepared *preparedSelectedFactorOverlay) bindFeedbackRuntime(runtime *solverRuntime, accepted []equation.AcceptedMember) bool {
-	if prepared == nil || runtime == nil || runtime.topology == nil || runtime.graph == nil || runtime.carrier == nil || prepared.runtime != runtime || prepared.execution == nil || prepared.execution.RegionCount() == 0 {
+// bindFeedbackRuntime uses the prepared schedule plus the exact direct-edge
+// delta as a recurrence certificate. Dense Point/Group identities and every
+// typed carrier root remain owned by the live runtime; no accepted Graph is
+// reconstructed or used as a fake oracle.
+func (prepared *preparedSelectedFactorOverlay) bindFeedbackRuntime(runtime *solverRuntime) bool {
+	if prepared == nil || runtime == nil || runtime.graph == nil || runtime.carrier == nil || prepared.runtime != runtime || prepared.execution == nil || prepared.execution.RegionCount() == 0 || len(prepared.directEdges) != len(prepared.directCatalog) {
 		return false
 	}
-	oracle, ok := runtime.topology.Graph(accepted)
+	oracle, ok := runtime.graph.ActivationGraphOverlay(prepared.execution, prepared.directEdges)
 	if !ok || oracle == nil || oracle.Schedule() == nil || oracle.RegionCount() == 0 || oracle.PointCount() != runtime.graph.PointCount() || oracle.GroupCount() != runtime.graph.GroupCount() || oracle.EnvironmentEdgeTotal() != runtime.graph.EnvironmentEdgeTotal() || oracle.FactorEdgeTotal() != prepared.previousEdgeCount+len(prepared.additions) {
 		return false
 	}
@@ -604,7 +636,7 @@ func runtimeSelectedOverlayIndexCachesValid(runtime *solverRuntime) bool {
 		return false
 	}
 	overlay := runtime.overlay
-	return overlay.factorByKey != nil && overlay.staticOrigins != nil && overlay.originAt != nil &&
+	return overlay.factorByKey != nil && overlay.staticOrigins != nil && overlay.originAt != nil && overlay.directAt != nil &&
 		overlay.dependencyAt != nil && overlay.reindexes.scopes != nil &&
 		overlay.reindexes.plans != nil && overlay.reindexes.decisions != nil &&
 		overlay.latePlans != nil && overlay.generation != 0

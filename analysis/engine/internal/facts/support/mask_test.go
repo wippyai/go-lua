@@ -158,6 +158,239 @@ func TestCoordinateIdentityReindexRetainsExactMaskHandleAcrossIssuedScopes(t *te
 	}
 }
 
+func TestReindexRejectsOutOfScopeNonIdentityAndDiscardsCandidate(t *testing.T) {
+	manager, err := guard.New([]guard.Atom{3, 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, ok := manager.SealScope([]guard.Atom{3})
+	if !ok {
+		t.Fatal("source scope")
+	}
+	target, ok := manager.SealScope(nil)
+	if !ok {
+		t.Fatal("target scope")
+	}
+	builder, ok := manager.NewReindex(source, target)
+	if !ok || !builder.Forget(3) {
+		t.Fatal("forget relation")
+	}
+	plan, ok := builder.Seal()
+	if !ok || plan.CoordinateIdentity() {
+		t.Fatal("nonidentity relation")
+	}
+	inputWork := New(manager)
+	input, ok := inputWork.Literal(7, true)
+	if !ok || !inputWork.Seal() {
+		t.Fatal("out-of-scope input")
+	}
+	transportWork := New(manager)
+	if _, ok := ReindexWithWork(transportWork, input, plan); ok {
+		t.Fatal("out-of-scope nonidentity transport succeeded")
+	}
+	if transportWork.Open() || transportWork.Seal() {
+		t.Fatal("failed transport published or retained its candidate")
+	}
+}
+
+func TestReusableSupportBatchReindexPublishesCorrelatedMasksOnce(t *testing.T) {
+	manager, err := guard.New([]guard.Atom{3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, ok := manager.SealScope([]guard.Atom{3})
+	if !ok {
+		t.Fatal("source scope")
+	}
+	target, ok := manager.SealScope(nil)
+	if !ok {
+		t.Fatal("target scope")
+	}
+	builder, ok := manager.NewReindex(source, target)
+	if !ok || !builder.Forget(3) {
+		t.Fatal("forget relation")
+	}
+	plan, ok := builder.Seal()
+	if !ok {
+		t.Fatal("reindex plan")
+	}
+	inputBuilder := New(manager)
+	input, ok := inputBuilder.Literal(3, true)
+	if !ok || !inputBuilder.Seal() {
+		t.Fatal("input support")
+	}
+	batch := New(manager)
+	if batch == nil || !batch.BeginTransaction(nil) {
+		t.Fatal("batch transaction")
+	}
+	first, ok := batch.And(input, input)
+	if !ok {
+		batch.Discard()
+		t.Fatal("first candidate")
+	}
+	second, ok := batch.Reindex(first, plan)
+	if !ok {
+		batch.Discard()
+		t.Fatal("reindex candidate")
+	}
+	if !batch.Seal() || batch.Open() || !second.Valid() {
+		t.Fatal("batch publication")
+	}
+	whole, ok := True(manager)
+	if !ok || !second.Equal(whole) {
+		t.Fatal("forget candidate changed exact support")
+	}
+}
+
+// TestCandidateReindexUsesOwningWorkRatherThanSealedMaskAccessors proves a
+// genuinely new batch.And candidate can cross a non-coordinate relation
+// before the one enclosing transaction seals. Foreign candidate ownership
+// remains rejected rather than being mistaken for an equivalent manager root.
+func TestCandidateReindexUsesOwningWorkRatherThanSealedMaskAccessors(t *testing.T) {
+	manager, err := guard.New([]guard.Atom{3, 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := manager.AllScope()
+	target, ok := manager.SealScope([]guard.Atom{3})
+	if !ok {
+		t.Fatal("target scope")
+	}
+	builder, ok := manager.NewReindex(source, target)
+	if !ok || !builder.Identity(3) || !builder.Forget(7) {
+		t.Fatal("non-coordinate relation")
+	}
+	plan, ok := builder.Seal()
+	if !ok {
+		t.Fatal("relation seal")
+	}
+	batch := New(manager)
+	if batch == nil || !batch.BeginTransaction(nil) {
+		t.Fatal("candidate transaction")
+	}
+	defer batch.Discard()
+	left, ok := batch.Literal(3, true)
+	if !ok {
+		t.Fatal("candidate left")
+	}
+	right, ok := batch.Literal(7, true)
+	if !ok {
+		t.Fatal("candidate right")
+	}
+	candidate, ok := batch.And(left, right)
+	if !ok || candidate.Valid() {
+		t.Fatal("genuinely new candidate")
+	}
+	reindexed, ok := batch.Reindex(candidate, plan)
+	if !ok || reindexed.Valid() {
+		t.Fatal("candidate non-coordinate reindex")
+	}
+	foreign := New(manager)
+	if foreign == nil || !foreign.BeginTransaction(nil) {
+		t.Fatal("foreign transaction")
+	}
+	defer foreign.Discard()
+	if _, ok := foreign.Reindex(candidate, plan); ok {
+		t.Fatal("foreign candidate work accepted")
+	}
+	if !batch.Seal() || !reindexed.Valid() {
+		t.Fatal("candidate publication")
+	}
+}
+
+func TestReindexIdentityAndCoordinateIdentityRetainSourceScopeProof(t *testing.T) {
+	manager, err := guard.New([]guard.Atom{3, 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, ok := manager.SealScope([]guard.Atom{3})
+	if !ok {
+		t.Fatal("source scope")
+	}
+	identityBuilder, ok := manager.NewReindex(source, source)
+	if !ok || !identityBuilder.Identity(3) {
+		t.Fatal("identity relation")
+	}
+	identity, ok := identityBuilder.Seal()
+	if !ok || !identity.Identity() {
+		t.Fatal("identity proof")
+	}
+	target, ok := manager.SealScope([]guard.Atom{3})
+	if !ok || target.Same(source) {
+		t.Fatal("coordinate target")
+	}
+	coordinateBuilder, ok := manager.NewReindex(source, target)
+	if !ok || !coordinateBuilder.Identity(3) {
+		t.Fatal("coordinate relation")
+	}
+	coordinate, ok := coordinateBuilder.Seal()
+	if !ok || coordinate.Identity() || !coordinate.CoordinateIdentity() {
+		t.Fatal("coordinate identity proof")
+	}
+	inputWork := New(manager)
+	input, ok := inputWork.Literal(7, true)
+	if !ok || !inputWork.Seal() {
+		t.Fatal("out-of-scope input")
+	}
+	for name, plan := range map[string]guard.Reindex{"identity": identity, "coordinate": coordinate} {
+		t.Run(name, func(t *testing.T) {
+			if _, ok := ReindexWithWork(nil, input, plan); ok {
+				t.Fatal("zero-copy transport admitted an out-of-scope root")
+			}
+		})
+	}
+}
+
+func TestReindexNonIdentityPreservesExactSupportSemantics(t *testing.T) {
+	manager, err := guard.New([]guard.Atom{3, 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := manager.AllScope()
+	target, ok := manager.SealScope([]guard.Atom{3})
+	if !ok {
+		t.Fatal("target scope")
+	}
+	builder, ok := manager.NewReindex(source, target)
+	if !ok || !builder.Identity(3) || !builder.Forget(7) {
+		t.Fatal("forget relation")
+	}
+	plan, ok := builder.Seal()
+	if !ok {
+		t.Fatal("relation seal")
+	}
+	inputWork := New(manager)
+	input, ok := inputWork.Literal(3, true)
+	if !ok {
+		t.Fatal("first input literal")
+	}
+	input, ok = inputWork.And(input, mustSupportLiteral(t, inputWork, 7, true))
+	if !ok || !inputWork.Seal() {
+		t.Fatal("input support")
+	}
+	result, ok := Reindex(input, plan)
+	if !ok {
+		t.Fatal("nonidentity transport")
+	}
+	expectedWork := New(manager)
+	expected, ok := expectedWork.Literal(3, true)
+	if !ok || !expectedWork.Seal() {
+		t.Fatal("expected support")
+	}
+	if !result.Equal(expected) {
+		t.Fatal("nonidentity transport changed support semantics")
+	}
+}
+
+func mustSupportLiteral(t testing.TB, work *Work, atom guard.Atom, value bool) Mask {
+	t.Helper()
+	mask, ok := work.Literal(atom, value)
+	if !ok {
+		t.Fatalf("literal %d", atom)
+	}
+	return mask
+}
+
 func mustTrue(t testing.TB, manager *guard.Manager) Mask {
 	t.Helper()
 	value, ok := True(manager)
@@ -315,5 +548,66 @@ func TestReusableSupportShellKeepsMeaningAndRecoversAfterDiscard(t *testing.T) {
 	}
 	if !third.Overlap().Equal(first.Overlap()) {
 		t.Fatal("failed transaction poisoned later Boolean result")
+	}
+}
+
+func TestReusableSupportEntailsUsesReadScratchAfterConstructionSeal(t *testing.T) {
+	manager, err := guard.New([]guard.Atom{3, 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	builder := New(manager)
+	premise, ok := builder.Conjoin(builder.True(), 3, true)
+	if !ok {
+		t.Fatal("premise")
+	}
+	premise, ok = builder.Conjoin(premise, 7, true)
+	if !ok || !builder.Seal() {
+		t.Fatal("premise seal")
+	}
+	conclusionBuilder := New(manager)
+	conclusion, ok := conclusionBuilder.Literal(3, true)
+	if !ok || !conclusionBuilder.Seal() {
+		t.Fatal("conclusion seal")
+	}
+
+	// The exact same shell crosses from a completed construction transaction to
+	// a read transaction; this is the Binding lifecycle exercised in production.
+	construction := New(manager)
+	if _, ok := ThreeWithWork(construction, nil, premise, conclusion); !ok || construction.Open() {
+		t.Fatal("construction shell did not reach its terminal seal")
+	}
+	reader := construction
+	if !reader.EntailsWithCheckpoint(nil, premise, conclusion) || reader.EntailsWithCheckpoint(nil, conclusion, premise) {
+		t.Fatal("support entailment law failed after prior construction seal")
+	}
+	if !reader.EntailsWithCheckpoint(nil, premise, conclusion) {
+		t.Fatal("warmed support entailment changed")
+	}
+	if allocations := testing.AllocsPerRun(1_000, func() {
+		if !reader.EntailsWithCheckpoint(nil, premise, conclusion) {
+			t.Fatal("reused support entailment changed")
+		}
+	}); allocations != 0 {
+		t.Fatalf("reused support entailment allocated %f times", allocations)
+	}
+
+	polls := 0
+	if reader.EntailsWithCheckpoint(func() bool {
+		polls++
+		return false
+	}, premise, conclusion) || polls == 0 {
+		t.Fatalf("cancelled support entailment = %t after %d polls", reader.EntailsWithCheckpoint(nil, premise, conclusion), polls)
+	}
+	foreignManager, err := guard.New([]guard.Atom{3, 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign, ok := FromGuard(foreignManager, foreignManager.True())
+	if !ok {
+		t.Fatal("foreign support")
+	}
+	if reader.EntailsWithCheckpoint(nil, premise, foreign) {
+		t.Fatal("foreign support crossed reusable read authority")
 	}
 }

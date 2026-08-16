@@ -257,12 +257,65 @@ func (v Boundaries) For(call keyspace.Term) (CallBoundary, bool) {
 	return row.CallBoundary, true
 }
 
+// Arm reissues one exact closed CallBoundary arm through the sealed boundary
+// row and successor reference. It is O(1): callSlots selects the boundary
+// row and the fixed arm slot selects its endpoint/proof; no successor range
+// is scanned.
+func (v Boundaries) Arm(call keyspace.Term, arm BoundaryArmKind) (Successor, bool) {
+	if v.result == nil || !v.result.available() || !isBoundaryArm(arm) || keyspace.TermFamily(call) != keyspace.FamilyCall {
+		return Successor{}, false
+	}
+	ordinal := keyspace.TermOrdinal(call)
+	if ordinal == 0 || uint64(ordinal) >= uint64(len(v.result.boundaries.callSlots)) {
+		return Successor{}, false
+	}
+	slot := v.result.boundaries.callSlots[ordinal]
+	if slot == 0 || uint64(slot-1) >= uint64(len(v.result.boundaries.rows)) {
+		return Successor{}, false
+	}
+	row := v.result.boundaries.rows[slot-1]
+	if !v.result.validBoundaryRow(row) || row.Call != call {
+		return Successor{}, false
+	}
+	to, decision, truth, ok := boundarySuccessor(row.CallBoundary, arm)
+	if !ok {
+		return Successor{}, false
+	}
+	ref := row.refs[arm]
+	if !ref.routeDigest.Available() || ref.index != slot-1 || ref.local || ref.arm != arm {
+		return Successor{}, false
+	}
+	successor, ok := v.result.successorForRef(ref)
+	if !ok || successor.To != to || successor.Decision != decision || successor.Truth != truth {
+		return Successor{}, false
+	}
+	return successor, true
+}
+
 // Successors is the one allocation-free combined local-plus-boundary
 // traversal view.
 type Successors struct{ result *Result }
 
 // Successors returns the exact union traversal view.
 func (r *Result) Successors() Successors { return Successors{result: r} }
+
+// TotalCount/TotalAt expose the already-sealed union index in its canonical
+// publication order. They do not create a third route table: refs points to
+// the existing Edge/CallBoundary rows and successorForRef reissues one exact
+// route on demand.
+func (v Successors) TotalCount() int {
+	if v.result == nil || !v.result.available() {
+		return 0
+	}
+	return len(v.result.index.refs)
+}
+
+func (v Successors) TotalAt(index int) (Successor, bool) {
+	if v.result == nil || !v.result.available() || index < 0 || index >= len(v.result.index.refs) {
+		return Successor{}, false
+	}
+	return v.result.successorForRef(v.result.index.refs[index])
+}
 
 func (v Successors) Count(from keyspace.Term) int {
 	start, end, ok := v.result.successorRange(from)
@@ -332,7 +385,7 @@ func (r *Result) successorForRef(ref successorRef) (Successor, bool) {
 		}
 		return Successor{From: edge.From, To: edge.To, Decision: edge.Decision, Truth: edge.Truth,
 			Mu: edge.Mu, Arm: BoundaryLocal, routeDigest: ref.routeDigest, route: id,
-			result: r, edgeIndex: ref.index, edgeIndexValid: idOK}, true
+			component: row.component, ref: ref, refValid: true, result: r, edgeIndex: ref.index, edgeIndexValid: idOK}, true
 	}
 	if uint64(ref.index) >= uint64(len(r.boundaries.rows)) {
 		return Successor{}, false
@@ -346,13 +399,24 @@ func (r *Result) successorForRef(ref successorRef) (Successor, bool) {
 	if !armOK {
 		return Successor{}, false
 	}
+	proof := row.proofs[ref.arm]
 	id, idOK := r.routeIdentityFastForRef(ref)
 	if r.routesReady && !idOK {
 		return Successor{}, false
 	}
-	return Successor{From: boundary.Call, To: to, Decision: decision, Truth: truth,
+	return Successor{From: boundary.Call, To: to, Decision: decision, Truth: truth, Mu: proof.mu,
 		Arm: ref.arm, routeDigest: ref.routeDigest, route: id, result: r,
-		edgeIndex: ref.index, edgeIndexValid: idOK}, true
+		component: row.components[ref.arm], ref: ref, refValid: true, edgeIndex: ref.index, edgeIndexValid: idOK}, true
+}
+
+// Component reports the recurrence-issued cyclic-component head carried by
+// this exact final route. A false result is a genuine acyclic/cross-component
+// route, not a missing certificate.
+func (s Successor) Component() (keyspace.Term, bool) {
+	if !isKnownArm(s.Arm) || s.result == nil || s.component == 0 || !s.result.componentIssued(s.component) {
+		return 0, false
+	}
+	return s.component, true
 }
 
 // IsBoundary reports whether the route belongs to the typed call-boundary
@@ -372,24 +436,91 @@ func (s Successor) Identity() (RouteIdentity, bool) {
 	return s.route, true
 }
 
+func (s Successor) SemanticID() (keyspace.ContentID, bool) {
+	if s.result == nil || !s.refValid {
+		return keyspace.ContentID{}, false
+	}
+	return s.result.semanticRouteID(s.ref)
+}
+
+// FromPoint/ToPoint resolve the exact parent-issued VertexCatalog points
+// copied into this final route during the causal transaction. They never
+// derive a point from an endpoint Term or Site.
+func (s Successor) FromPoint() (WTOPoint, bool) {
+	if s.result == nil || !s.refValid || !s.ref.fromPoint.Available() {
+		return WTOPoint{}, false
+	}
+	index, ok := s.result.wto.pointByPath[s.ref.fromPoint]
+	if !ok {
+		return WTOPoint{}, false
+	}
+	return s.result.wtoPointAt(int(index))
+}
+func (s Successor) ToPoint() (WTOPoint, bool) {
+	if s.result == nil || !s.refValid || !s.ref.toPoint.Available() {
+		return WTOPoint{}, false
+	}
+	index, ok := s.result.wto.pointByPath[s.ref.toPoint]
+	if !ok {
+		return WTOPoint{}, false
+	}
+	return s.result.wtoPointAt(int(index))
+}
+
 // ResetCount, ResetAt, and ResetContains are route-local reset capabilities.
 // They intentionally do not accept or expose an Edge ordinal.
 func (s Successor) ResetCount() (int, bool) {
-	if !s.IsLocal() || s.result == nil || !s.edgeIndexValid {
+	if s.result == nil || !s.edgeIndexValid {
 		return 0, false
 	}
-	return s.result.Edges().ResetCount(int(s.edgeIndex))
+	if s.IsLocal() {
+		return s.result.Edges().ResetCount(int(s.edgeIndex))
+	}
+	return s.result.boundaryResetCount(s.edgeIndex, s.Arm)
+}
+
+// HasResetWitness distinguishes a cyclic Mu edge with an empty reset interval
+// from an acyclic/non-Mu route. Callers must never infer this from Count==0.
+func (s Successor) HasResetWitness() bool {
+	if s.result == nil || !s.refValid || s.Mu == 0 {
+		return false
+	}
+	if s.IsLocal() {
+		_, ok := s.result.Edges().ResetCount(int(s.edgeIndex))
+		return ok
+	}
+	_, ok := s.result.boundaryResetCount(s.edgeIndex, s.Arm)
+	return ok
 }
 
 func (s Successor) ResetAt(offset int) (keyspace.Term, bool) {
-	if !s.IsLocal() || s.result == nil || !s.edgeIndexValid {
+	if s.result == nil || !s.edgeIndexValid {
 		return 0, false
 	}
-	return s.result.Edges().ResetAt(int(s.edgeIndex), offset)
+	if s.IsLocal() {
+		return s.result.Edges().ResetAt(int(s.edgeIndex), offset)
+	}
+	return s.result.boundaryResetAt(s.edgeIndex, s.Arm, offset)
+}
+
+// ResetPathAt returns the parent-issued semantic reset-member receipt. It is
+// O(1), immutable, and remains valid for an empty Mu witness (count zero).
+func (s Successor) ResetPathAt(offset int) (keyspace.ContentID, bool) {
+	if s.result == nil || !s.refValid || s.ref.resetMembers == nil || offset < 0 || uint64(offset) >= uint64(len(*s.ref.resetMembers)) {
+		return keyspace.ContentID{}, false
+	}
+	path := (*s.ref.resetMembers)[offset]
+	return path, path.Available()
 }
 
 func (s Successor) ResetContains(decision keyspace.Term) bool {
-	return s.IsLocal() && s.result != nil && s.edgeIndexValid && s.result.Edges().ResetContains(int(s.edgeIndex), decision)
+	if s.result == nil || !s.edgeIndexValid {
+		return false
+	}
+	if s.IsLocal() {
+		return s.result.Edges().ResetContains(int(s.edgeIndex), decision)
+	}
+	return s.result.boundaryResetContains(s.edgeIndex, s.Arm, decision)
 }
 
 // Resolve performs owner-fenced semantic lookup. The inverse is sorted by
@@ -446,12 +577,15 @@ func (r *Result) validEdgeRow(row edgeRow) bool {
 	} else if !isDecision(row.Decision) || !r.validResultTerm(row.Decision) {
 		return false
 	}
+	if row.component != 0 && !r.componentIssued(row.component) {
+		return false
+	}
 	if row.Mu == 0 {
 		return row.resetStart == 0 && row.resetPast == 0 && row.resetCount == 0 && !row.resetDigest.Available()
 	}
 	if row.Mu != 0 {
 		family := keyspace.TermFamily(row.Mu)
-		if (family != keyspace.FamilyLabel && family != keyspace.FamilyLoop) || !r.validResultTerm(row.Mu) || row.resetPast < row.resetStart {
+		if row.component != row.Mu || (family != keyspace.FamilyLabel && family != keyspace.FamilyLoop) || !r.validResultTerm(row.Mu) || row.resetPast < row.resetStart {
 			return false
 		}
 		// Before route sealing the witness fields must still be empty; they
@@ -482,17 +616,131 @@ func (r *Result) validBoundaryRow(row boundaryRow) bool {
 		keyspace.TermFamily(b.Cancel) != keyspace.FamilyOutcome || !r.validResultTerm(b.Cancel) {
 		return false
 	}
+	var shapeOK bool
 	switch b.mode {
 	case boundaryDirect:
-		return r.validResultTerm(b.Normal) && b.Normal != 0 && b.Other == 0 && b.TailReturn == 0
+		shapeOK = r.validResultTerm(b.Normal) && b.Normal != 0 && b.Other == 0 && b.TailReturn == 0
 	case boundarySelectAnd, boundarySelectOr:
-		return keyspace.TermFamily(b.Normal) == keyspace.FamilySelect && r.validResultTerm(b.Normal) &&
+		shapeOK = keyspace.TermFamily(b.Normal) == keyspace.FamilySelect && r.validResultTerm(b.Normal) &&
 			r.validResultTerm(b.Other) && b.Other != 0 && b.TailReturn == 0
 	case boundaryTail:
-		return b.Normal == 0 && b.Other == 0 && r.validResultTerm(b.TailReturn) && keyspace.TermFamily(b.TailReturn) == keyspace.FamilyOutcome
+		shapeOK = b.Normal == 0 && b.Other == 0 && r.validResultTerm(b.TailReturn) && keyspace.TermFamily(b.TailReturn) == keyspace.FamilyOutcome
 	default:
 		return false
 	}
+	if !shapeOK {
+		return false
+	}
+	for _, arm := range [...]BoundaryArmKind{BoundaryResume, BoundarySelectTrue, BoundarySelectFalse, BoundaryTail, BoundaryThrow, BoundaryYield, BoundaryCancel} {
+		if boundaryArmPresent(row, arm) {
+			if !r.validBoundaryProof(row, arm) {
+				return false
+			}
+			continue
+		}
+		if row.components[arm] != 0 || row.proofs[arm] != (boundaryRecurrenceProof{}) {
+			return false
+		}
+	}
+	return true
+}
+
+func (r *Result) validBoundaryProof(row boundaryRow, arm BoundaryArmKind) bool {
+	if !isBoundaryArm(arm) || !boundaryArmPresent(row, arm) || (row.components[arm] != 0 && !r.componentIssued(row.components[arm])) {
+		return false
+	}
+	proof := row.proofs[arm]
+	if proof.mu == 0 {
+		return proof.resetStart == 0 && proof.resetPast == 0 && proof.resetCount == 0 && !proof.resetDigest.Available()
+	}
+	if row.components[arm] != proof.mu || proof.resetPast < proof.resetStart || !r.validResultTerm(proof.mu) {
+		return false
+	}
+	family := keyspace.TermFamily(proof.mu)
+	if family != keyspace.FamilyLabel && family != keyspace.FamilyLoop {
+		return false
+	}
+	start, end, ok := r.muRange(proof.mu)
+	if !ok || uint64(proof.resetPast) > uint64(end-start) || uint64(start)+uint64(proof.resetPast) > uint64(len(r.reset.streams)) {
+		return false
+	}
+	if r.routesReady {
+		_, _, ok := boundaryResetWitness(proof)
+		return ok
+	}
+	// Route-index construction visits several arms of the same boundary.
+	// Earlier visits may already have installed a digest, so accept either the
+	// still-empty preimage witness or a fully self-consistent installed one.
+	if proof.resetCount == 0 && !proof.resetDigest.Available() {
+		return true
+	}
+	_, _, ok = boundaryResetWitness(proof)
+	return ok
+}
+
+func (r *Result) componentIssued(component keyspace.Term) bool {
+	if r == nil || !canonicalComponent(component, true) {
+		return false
+	}
+	_, ok := r.componentIndex[component]
+	return ok
+}
+
+func (r *Result) boundaryResetCount(index uint32, arm BoundaryArmKind) (int, bool) {
+	if r == nil || uint64(index) >= uint64(len(r.boundaries.rows)) {
+		return 0, false
+	}
+	row := r.boundaries.rows[index]
+	if !r.validBoundaryProof(row, arm) || row.proofs[arm].mu == 0 {
+		return 0, false
+	}
+	proof := row.proofs[arm]
+	return int(proof.resetPast - proof.resetStart), true
+}
+
+func (r *Result) boundaryResetAt(index uint32, arm BoundaryArmKind, offset int) (keyspace.Term, bool) {
+	if offset < 0 || r == nil || uint64(index) >= uint64(len(r.boundaries.rows)) {
+		return 0, false
+	}
+	row := r.boundaries.rows[index]
+	if !r.validBoundaryProof(row, arm) || row.proofs[arm].mu == 0 {
+		return 0, false
+	}
+	proof := row.proofs[arm]
+	if uint64(offset) >= uint64(proof.resetPast-proof.resetStart) {
+		return 0, false
+	}
+	start, _, ok := r.muRange(proof.mu)
+	if !ok {
+		return 0, false
+	}
+	term := r.reset.streams[uint64(start)+uint64(proof.resetStart)+uint64(offset)]
+	return term, isDecision(term)
+}
+
+func (r *Result) boundaryResetContains(index uint32, arm BoundaryArmKind, decision keyspace.Term) bool {
+	if r == nil || uint64(index) >= uint64(len(r.boundaries.rows)) || !isDecision(decision) {
+		return false
+	}
+	row := r.boundaries.rows[index]
+	if !r.validBoundaryProof(row, arm) || row.proofs[arm].mu == 0 {
+		return false
+	}
+	proof := row.proofs[arm]
+	family, ordinal := keyspace.TermFamily(decision), keyspace.TermOrdinal(decision)
+	if uint64(ordinal) >= uint64(len(r.reset.decisionHead[family])) || r.reset.decisionHead[family][ordinal] != proof.mu {
+		return false
+	}
+	ranks := r.reset.decisionRank[family]
+	if uint64(ordinal) >= uint64(len(ranks)) {
+		return false
+	}
+	start, end, ok := r.muRange(proof.mu)
+	if !ok || proof.resetPast > end-start {
+		return false
+	}
+	rank := ranks[ordinal]
+	return uint64(rank) < uint64(end-start) && proof.resetStart <= rank && rank < proof.resetPast
 }
 
 func (r *Result) successorRange(from keyspace.Term) (uint32, uint32, bool) {

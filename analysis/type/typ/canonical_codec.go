@@ -903,36 +903,36 @@ func canonicalLiteralScalar(literal *Literal) ([]byte, error) {
 	if literal == nil {
 		return nil, fmt.Errorf("typ: nil Literal")
 	}
-	out := []byte{canonicalLiteral, byte(literal.Base)}
-	switch literal.Base {
+	out := []byte{canonicalLiteral, byte(literal.base)}
+	switch literal.base {
 	case Boolean.Kind():
-		value, ok := literal.Value.(bool)
+		value, ok := literal.value.(bool)
 		if !ok {
-			return nil, fmt.Errorf("typ: malformed boolean literal payload %T", literal.Value)
+			return nil, fmt.Errorf("typ: malformed boolean literal payload %T", literal.value)
 		}
 		return appendBool(out, value), nil
 	case Integer.Kind():
-		value, ok := literal.Value.(int64)
+		value, ok := literal.value.(int64)
 		if !ok {
-			return nil, fmt.Errorf("typ: malformed integer literal payload %T", literal.Value)
+			return nil, fmt.Errorf("typ: malformed integer literal payload %T", literal.value)
 		}
 		return binary.AppendVarint(out, value), nil
 	case Number.Kind():
-		value, ok := literal.Value.(float64)
+		value, ok := literal.value.(float64)
 		if !ok {
-			return nil, fmt.Errorf("typ: malformed number literal payload %T", literal.Value)
+			return nil, fmt.Errorf("typ: malformed number literal payload %T", literal.value)
 		}
 		var encoded [8]byte
 		binary.BigEndian.PutUint64(encoded[:], math.Float64bits(value))
 		return append(out, encoded[:]...), nil
 	case String.Kind():
-		value, ok := literal.Value.(string)
+		value, ok := literal.value.(string)
 		if !ok {
-			return nil, fmt.Errorf("typ: malformed string literal payload %T", literal.Value)
+			return nil, fmt.Errorf("typ: malformed string literal payload %T", literal.value)
 		}
 		return appendFrameString(out, value), nil
 	default:
-		return nil, fmt.Errorf("typ: unsupported literal base %d", literal.Base)
+		return nil, fmt.Errorf("typ: unsupported literal base %d", literal.base)
 	}
 }
 
@@ -940,30 +940,30 @@ func canonicalLiteralScalarSize(literal *Literal) (int, error) {
 	if literal == nil {
 		return 0, fmt.Errorf("typ: nil Literal")
 	}
-	switch literal.Base {
+	switch literal.base {
 	case Boolean.Kind():
-		if _, ok := literal.Value.(bool); !ok {
-			return 0, fmt.Errorf("typ: malformed boolean literal payload %T", literal.Value)
+		if _, ok := literal.value.(bool); !ok {
+			return 0, fmt.Errorf("typ: malformed boolean literal payload %T", literal.value)
 		}
 		return 3, nil
 	case Integer.Kind():
-		if _, ok := literal.Value.(int64); !ok {
-			return 0, fmt.Errorf("typ: malformed integer literal payload %T", literal.Value)
+		if _, ok := literal.value.(int64); !ok {
+			return 0, fmt.Errorf("typ: malformed integer literal payload %T", literal.value)
 		}
 		return 2 + binary.MaxVarintLen64, nil
 	case Number.Kind():
-		if _, ok := literal.Value.(float64); !ok {
-			return 0, fmt.Errorf("typ: malformed number literal payload %T", literal.Value)
+		if _, ok := literal.value.(float64); !ok {
+			return 0, fmt.Errorf("typ: malformed number literal payload %T", literal.value)
 		}
 		return 10, nil
 	case String.Kind():
-		value, ok := literal.Value.(string)
+		value, ok := literal.value.(string)
 		if !ok {
-			return 0, fmt.Errorf("typ: malformed string literal payload %T", literal.Value)
+			return 0, fmt.Errorf("typ: malformed string literal payload %T", literal.value)
 		}
 		return 2 + canonicalFormalsUvarintSize(uint64(len(value))) + len(value), nil
 	default:
-		return 0, fmt.Errorf("typ: unsupported literal base %d", literal.Base)
+		return 0, fmt.Errorf("typ: unsupported literal base %d", literal.base)
 	}
 }
 

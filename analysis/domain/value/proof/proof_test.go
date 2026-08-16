@@ -386,6 +386,7 @@ func TestRuntimeKindReducedTypeNarrowsByRuntimeKindExclusion(t *testing.T) {
 
 func TestVariantOriginTypeAndFullFamilyProjection(t *testing.T) {
 	reg := canonicalRegistry()
+	cache := typevalue.NewCache()
 	dog := typetable.NewRecord().
 		Field("kind", typ.LiteralString("dog")).
 		Field("bark", typ.String).
@@ -399,9 +400,9 @@ func TestVariantOriginTypeAndFullFamilyProjection(t *testing.T) {
 	if !ok {
 		t.Fatal("missing union variant origin")
 	}
-	value := typevalue.NewCache().FromTypeWithWitness(reg, union)
+	value := cache.FromTypeWithWitness(reg, union)
 	value = product.Set(reg, value, variantorigin.Key, variantorigin.Of(family, cases))
-	proofs := New(reg, typevalue.NewCache())
+	proofs := New(reg, cache)
 
 	projected, ok := proofs.VariantOriginType(value)
 	if !ok {
@@ -435,7 +436,7 @@ func TestOptionalProjectionPredicates(t *testing.T) {
 		{name: "never", in: typ.Never, wantValue: false, wantTruthSplit: false},
 		{name: "plain string", in: typ.String, wantValue: false, wantTruthSplit: false},
 		{name: "optional string", in: typ.MaterializeOptional(typ.String), wantValue: true, wantTruthSplit: true},
-		{name: "optional false", in: typ.MaterializeOptional(typ.False), wantValue: true, wantTruthSplit: false},
+		{name: "optional false", in: typ.MaterializeOptional(typ.LiteralBool(false)), wantValue: true, wantTruthSplit: false},
 		{name: "optional boolean", in: typ.MaterializeOptional(typ.Boolean), wantValue: true, wantTruthSplit: false},
 		{name: "optional never", in: typ.MaterializeOptional(typ.Never), wantValue: false, wantTruthSplit: false},
 	}

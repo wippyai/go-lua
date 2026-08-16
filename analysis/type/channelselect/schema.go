@@ -42,7 +42,7 @@ func resultDefaultType(selectID string) typ.Type {
 		Field(ResultChannelField, caseMarkerType(selectID, DefaultCaseIndex)).
 		Field(ResultValueField, typ.Nil).
 		Field(ResultOKField, typ.Boolean).
-		Field(ResultDefaultField, typ.True).
+		Field(ResultDefaultField, typ.LiteralBool(true)).
 		Build()
 }
 
@@ -194,18 +194,18 @@ func caseMarker(t typ.Type) (string, int, bool) {
 		return "", 0, false
 	}
 	idLiteral, ok := unwrap.Annotations(idField.Type).(*typ.Literal)
-	if !ok || idLiteral.Base != kind.String {
+	if !ok || idLiteral.Base() != kind.String {
 		return "", 0, false
 	}
 	indexLiteral, ok := unwrap.Annotations(indexField.Type).(*typ.Literal)
-	if !ok || indexLiteral.Base != kind.Integer {
+	if !ok || indexLiteral.Base() != kind.Integer {
 		return "", 0, false
 	}
-	id, ok := idLiteral.Value.(string)
+	id, ok := idLiteral.Value().(string)
 	if !ok {
 		return "", 0, false
 	}
-	index, ok := indexLiteral.Value.(int64)
+	index, ok := indexLiteral.Value().(int64)
 	if !ok {
 		return "", 0, false
 	}

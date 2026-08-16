@@ -5,58 +5,47 @@ import (
 	"encoding/binary"
 
 	"github.com/wippyai/go-lua/program/keyspace"
-	linkboundary "github.com/wippyai/go-lua/program/link/boundary"
-	linkhost "github.com/wippyai/go-lua/program/link/host"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
 )
 
 // SourceSeed is one unconditional, result-bearing Link Value admitted by this
 // exact Schema. It is a cold Rule operand over the existing Link Value; Value
 // introduces neither a source row nor a second source identity.
 type SourceSeed struct {
-	schema *Schema
-	value  linkboundary.Value
+	schema  *Schema
+	valueID keyspace.ContentID
+	result  *SourceResult
 }
 
 // SourceSeed admits exactly Program literals and binder-authorized runtime
 // TypeValue roots. Contextual boot, endpoint, fresh-result, capability, and
 // host-member relations remain available only through their owning relations.
-func (schema *Schema) SourceSeed(value linkboundary.Value) (SourceSeed, bool) {
-	if schema == nil || schema.source == nil || !schema.unconditionalValue(value) {
+func (schema *Schema) SourceSeedForValueID(id keyspace.ContentID) (SourceSeed, bool) {
+	if schema == nil || !id.Available() {
 		return SourceSeed{}, false
 	}
-	return SourceSeed{schema: schema, value: value}, true
+	row, ok := schema.coordinates[id]
+	if !ok || row.sourceResult == nil || !row.sourceResult.validFor(schema, id) {
+		return SourceSeed{}, false
+	}
+	return SourceSeed{schema: schema, valueID: id, result: row.sourceResult}, true
 }
 
-// SourceSeedAt projects Link's canonical Value position directly. An excluded
-// position returns false; there is no compacted parallel ordinal.
-func (schema *Schema) SourceSeedAt(index int) (SourceSeed, bool) {
-	if schema == nil || schema.source == nil {
-		return SourceSeed{}, false
-	}
-	value, ok := schema.source.Boundary().Values().At(index)
-	if !ok {
-		return SourceSeed{}, false
-	}
-	return schema.SourceSeed(value)
-}
-
-func (schema *Schema) unconditionalValue(value linkboundary.Value) bool {
-	if schema == nil || schema.source == nil {
+func (schema *Schema) unconditionalValueID(value keyspace.ContentID) bool {
+	if schema == nil || !value.Available() {
 		return false
 	}
-	if _, ok := schema.SourceValue(value); !ok {
+	if _, ok := schema.SourceValueID(value); !ok {
 		return false
 	}
 	if schema.typeRefs[value] != 0 {
 		return true
 	}
-	_, _, ok := schema.sourceLiteral(value)
+	_, _, ok := schema.sourceLiteralID(value)
 	return ok
 }
 
 func (seed SourceSeed) valid() bool {
-	return seed.schema != nil && seed.schema.source != nil && seed.schema.unconditionalValue(seed.value)
+	return seed.schema != nil && seed.result != nil && seed.result.validFor(seed.schema, seed.valueID)
 }
 
 // ID returns the existing canonical Link Value identity of this source.
@@ -64,17 +53,17 @@ func (seed SourceSeed) ID() (keyspace.ContentID, bool) {
 	if !seed.valid() {
 		return keyspace.ContentID{}, false
 	}
-	return seed.schema.source.Boundary().Values().ID(seed.value)
+	return seed.result.id, true
 }
 
-// Origin returns the existing authored Program occurrence that issued this
-// unconditional source.  Link remains the sole owner of the Value-to-source
-// relation; Value retains neither a second occurrence row nor an ordinal.
-func (seed SourceSeed) Origin() (linkproject.Shard, keyspace.Term, bool) {
-	if !seed.valid() {
-		return linkproject.Shard{}, 0, false
+// Occurrence returns the exact mount-qualified ProgramArtifact row that
+// issued this source. Raw shard/term coordinates never cross this receipt
+// boundary.
+func (seed SourceSeed) Occurrence() (keyspace.ContentID, keyspace.ContentID, bool) {
+	if !seed.valid() || !seed.result.module.Available() || !seed.result.occurrence.Available() {
+		return keyspace.ContentID{}, keyspace.ContentID{}, false
 	}
-	return seed.schema.source.Boundary().Values().Origin(seed.value)
+	return seed.result.module, seed.result.occurrence, true
 }
 
 // Result rederives both the existing Value Factor coordinate and its immutable
@@ -83,12 +72,7 @@ func (seed SourceSeed) Result() (Coordinate, Value, bool) {
 	if !seed.valid() {
 		return Coordinate{}, Value{}, false
 	}
-	coordinate, coordinateOK := seed.schema.CoordinateFor(seed.value)
-	fact, factOK := seed.schema.SourceValue(seed.value)
-	if !coordinateOK || !factOK {
-		return Coordinate{}, Value{}, false
-	}
-	return coordinate, fact, true
+	return seed.result.coordinate, seed.result.fact, true
 }
 
 // ReturnBoundary is Value's direct coordinate for one executable Program
@@ -96,45 +80,24 @@ func (seed SourceSeed) Result() (Coordinate, Value, bool) {
 // identity, or projection mediates this domain operand.
 type ReturnBoundary struct {
 	schema  *Schema
-	shard   linkproject.Shard
-	term    keyspace.Term
+	key     computationKey
 	content keyspace.ContentID
 	values  Coordinate
 }
 
-func (schema *Schema) ReturnBoundary(shard linkproject.Shard, term keyspace.Term) (ReturnBoundary, bool) {
-	if schema == nil || schema.source == nil || shard == (linkproject.Shard{}) || term == 0 {
+func (schema *Schema) ReturnBoundary(module, occurrence keyspace.ContentID) (ReturnBoundary, bool) {
+	if schema == nil || schema.returnBoundaries == nil || !module.Available() || !occurrence.Available() {
 		return ReturnBoundary{}, false
 	}
-	p, ok := schema.source.Project().Mounts().Program(shard)
-	if !ok || p == nil || !p.Flow().Executable().Contains(term) {
-		return ReturnBoundary{}, false
-	}
-	_, values, ok := p.Flow().Authored().Control().Returns().Get(term)
-	if !ok {
-		return ReturnBoundary{}, false
-	}
-	value, ok := schema.source.Boundary().Values().Of(shard, values)
-	if !ok {
-		return ReturnBoundary{}, false
-	}
-	coordinate, ok := schema.CoordinateFor(value)
-	if !ok {
-		return ReturnBoundary{}, false
-	}
-	shardIndex, shardOK := schema.source.Project().Mounts().Index(shard)
-	content := returnBoundaryContent(schema.source.ContentID(), uint64(shardIndex+1), term)
-	if !shardOK || !content.Available() {
-		return ReturnBoundary{}, false
-	}
-	return ReturnBoundary{schema: schema, shard: shard, term: term, content: content, values: coordinate}, true
+	boundary, ok := schema.returnBoundaries[computationKey{module: module, occurrence: occurrence}]
+	return boundary, ok && boundary.valid()
 }
 
 func (boundary ReturnBoundary) valid() bool {
 	if boundary.schema == nil || !boundary.content.Available() {
 		return false
 	}
-	expected, ok := boundary.schema.ReturnBoundary(boundary.shard, boundary.term)
+	expected, ok := boundary.schema.returnBoundaries[boundary.key]
 	return ok && expected == boundary
 }
 
@@ -158,21 +121,11 @@ func (boundary ReturnBoundary) Values() (Coordinate, bool) {
 	return boundary.values, true
 }
 
-func returnBoundaryContent(linkID keyspace.ContentID, shard uint64, term keyspace.Term) keyspace.ContentID {
-	var payload [56]byte
-	copy(payload[:32], linkID[:])
-	copy(payload[32:40], []byte("val-ret!"))
-	binary.BigEndian.PutUint64(payload[40:48], uint64(shard))
-	binary.BigEndian.PutUint64(payload[48:56], uint64(term))
-	return sha256.Sum256(payload[:])
-}
-
 // CapabilitySeed is one existing Link capability source.  The associated
 // provider capability remains a Link handle; Value only admits it beneath an
 // exact atom through WithCapability.
 type CapabilitySeed struct {
 	schema *Schema
-	seed   linkhost.ProviderCapabilitySeed
 	index  uint32
 }
 
@@ -185,9 +138,9 @@ func (schema *Schema) CapabilityCount() int {
 	return len(schema.capabilities)
 }
 
-func (schema *Schema) CapabilityAt(index int) (linkhost.ProviderCapability, bool) {
+func (schema *Schema) CapabilityAt(index int) (keyspace.ContentID, bool) {
 	if schema == nil || index < 0 || index >= len(schema.capabilities) {
-		return linkhost.ProviderCapability{}, false
+		return keyspace.ContentID{}, false
 	}
 	return schema.capabilities[index], true
 }
@@ -203,60 +156,52 @@ func (schema *Schema) CapabilitySeedAt(index int) (CapabilitySeed, bool) {
 	if schema == nil || index < 0 || index >= len(schema.capabilitySeeds) {
 		return CapabilitySeed{}, false
 	}
-	return CapabilitySeed{schema: schema, seed: schema.capabilitySeeds[index], index: uint32(index)}, true
+	return CapabilitySeed{schema: schema, index: uint32(index)}, true
 }
 
-func (schema *Schema) CapabilitySeed(seed linkhost.ProviderCapabilitySeed) (CapabilitySeed, bool) {
-	if schema == nil {
-		return CapabilitySeed{}, false
-	}
-	capability, ok := schema.source.Host().CapabilitySeeds().Capability(seed)
-	if !ok || schema.capabilityID[capability] == 0 {
+func (schema *Schema) CapabilitySeedForID(id keyspace.ContentID) (CapabilitySeed, bool) {
+	if schema == nil || !id.Available() {
 		return CapabilitySeed{}, false
 	}
 	for index, candidate := range schema.capabilitySeeds {
-		if candidate == seed {
-			return CapabilitySeed{schema: schema, seed: seed, index: uint32(index)}, true
+		if candidate.id == id {
+			return CapabilitySeed{schema: schema, index: uint32(index)}, true
 		}
 	}
 	return CapabilitySeed{}, false
 }
 
 func (seed CapabilitySeed) valid() bool {
-	if seed.schema == nil || seed.schema.source == nil || int(seed.index) >= len(seed.schema.capabilitySeeds) || seed.schema.capabilitySeeds[seed.index] != seed.seed {
-		return false
-	}
-	capability, ok := seed.schema.source.Host().CapabilitySeeds().Capability(seed.seed)
-	return ok && seed.schema.capabilityID[capability] != 0
+	return seed.schema != nil && int(seed.index) < len(seed.schema.capabilitySeeds) && seed.schema.capabilitySeeds[seed.index].id.Available() && seed.schema.capabilityID[seed.schema.capabilitySeeds[seed.index].capability] != 0
 }
 
 // ID identifies this exact Link capability-source row. Link retains the
 // canonical range and all source geometry; the Schema-fenced ordinal merely
 // gives a typed Rule operand its stable semantic content without a name key.
 func (seed CapabilitySeed) ID() (keyspace.ContentID, bool) {
-	if !seed.valid() || !seed.schema.source.ContentID().Available() {
+	if !seed.valid() || !seed.schema.linkID.Available() {
 		return keyspace.ContentID{}, false
 	}
 	var payload [32 + 8 + 8]byte
-	linkID := seed.schema.source.ContentID()
+	linkID := seed.schema.linkID
 	copy(payload[:32], linkID[:])
 	binary.BigEndian.PutUint64(payload[32:40], uint64(seed.index))
 	binary.BigEndian.PutUint64(payload[40:48], 3)
 	return sha256.Sum256(payload[:]), true
 }
 
-func (seed CapabilitySeed) Capability() (linkhost.ProviderCapability, bool) {
+func (seed CapabilitySeed) CapabilityID() (keyspace.ContentID, bool) {
 	if !seed.valid() {
-		return linkhost.ProviderCapability{}, false
+		return keyspace.ContentID{}, false
 	}
-	return seed.schema.source.Host().CapabilitySeeds().Capability(seed.seed)
+	return seed.schema.capabilitySeeds[seed.index].capability, true
 }
 
-func (seed CapabilitySeed) Source() (linkhost.ProviderCapabilitySource, bool) {
+func (seed CapabilitySeed) Source() (CapabilitySource, bool) {
 	if !seed.valid() {
-		return linkhost.ProviderCapabilitySourceInvalid, false
+		return CapabilitySourceInvalid, false
 	}
-	return seed.schema.source.Host().CapabilitySeeds().Source(seed.seed)
+	return seed.schema.capabilitySeeds[seed.index].source, true
 }
 
 // Exposure returns the existing Value coordinate only for Link's exposure
@@ -267,14 +212,14 @@ func (seed CapabilitySeed) Exposure() (Coordinate, bool) {
 		return Coordinate{}, false
 	}
 	source, ok := seed.Source()
-	if !ok || source != linkhost.ProviderCapabilitySourceExposure {
+	if !ok || source != CapabilitySourceExposure {
 		return Coordinate{}, false
 	}
-	value, ok := seed.schema.source.Host().CapabilitySeeds().Exposure(seed.seed)
-	if !ok {
+	value := seed.schema.capabilitySeeds[seed.index].exposure
+	if !value.Available() {
 		return Coordinate{}, false
 	}
-	return seed.schema.CoordinateFor(value)
+	return seed.schema.CoordinateForID(value)
 }
 
 // ApplyExposure decorates every exact alternative in an existing exposure
@@ -289,7 +234,7 @@ func (seed CapabilitySeed) ApplyExposure(coordinate Coordinate, input Value) (Va
 	if input.top || seed.schema.Equal(input, seed.schema.Bottom()) {
 		return input, true
 	}
-	capability, ok := seed.Capability()
+	capability, ok := seed.CapabilityID()
 	if !ok {
 		return Value{}, false
 	}
@@ -333,23 +278,23 @@ func (member HostMember) valid() bool {
 	return member.schema != nil && int(member.index) < len(member.schema.hostMembers)
 }
 
-func (member HostMember) Capability() (linkhost.ProviderCapability, bool) {
+func (member HostMember) CapabilityID() (keyspace.ContentID, bool) {
 	if !member.valid() {
-		return linkhost.ProviderCapability{}, false
+		return keyspace.ContentID{}, false
 	}
 	return member.schema.hostMembers[member.index].capability, true
 }
 
-func (member HostMember) Output() (linkboundary.Value, bool) {
+func (member HostMember) OutputID() (keyspace.ContentID, bool) {
 	if !member.valid() {
-		return linkboundary.Value{}, false
+		return keyspace.ContentID{}, false
 	}
 	return member.schema.hostMembers[member.index].output, true
 }
 
-func (member HostMember) Endpoint() (linkboundary.Endpoint, bool) {
+func (member HostMember) EndpointID() (keyspace.ContentID, bool) {
 	if !member.valid() {
-		return linkboundary.Endpoint{}, false
+		return keyspace.ContentID{}, false
 	}
 	return member.schema.hostMembers[member.index].endpoint, true
 }

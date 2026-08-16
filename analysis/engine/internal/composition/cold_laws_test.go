@@ -70,6 +70,30 @@ func TestColdCompositionIDIgnoresEquationTopology(t *testing.T) {
 	}
 }
 
+func TestRoutedWriteReadCoordinateEntersCompositionIdentity(t *testing.T) {
+	factor, other := coldKey(6), coldKey(7)
+	base := func(route uint64) Candidate {
+		return Candidate{
+			Factors: []Factor{{Key: factor}, {Key: other}},
+			Rules: []Rule{{
+				Key: coldKey(8), OperandFamily: coldKey(249), Admission: coldAdmission(), OutputKind: FactorOutput, Output: factor, Inputs: 2,
+				Reads: []Read{
+					{Kind: ReadExact, Input: 0, Factor: factor},
+					{Kind: ReadSelect, Input: 0, Factor: factor, Semantic: factor, Dependencies: []uint64{0}},
+					{Kind: ReadSelect, Input: 1, Factor: factor, Semantic: factor, Dependencies: []uint64{0}},
+				},
+				Writes: []Write{{Kind: WriteRoute, Factor: factor, Route: route}},
+			}},
+			Queries: []QueryFamily{{Key: coldKey(9), Freezer: coldKey(10), Projections: []QueryProjection{{Kind: QueryFactorExact, Factor: other}}}},
+		}
+	}
+	first, firstOK := Seal(base(2))
+	second, secondOK := Seal(base(3))
+	if !firstOK || !secondOK || first == nil || second == nil || first.ID() == second.ID() {
+		t.Fatalf("routed Write read coordinate identity: first=%t/%t second=%t/%t equal=%t", first != nil, firstOK, second != nil, secondOK, first != nil && second != nil && first.ID() == second.ID())
+	}
+}
+
 func TestRuleAdmissionIsMandatoryAndCanonical(t *testing.T) {
 	factor, rule, query, freezer := coldKey(201), coldKey(202), coldKey(203), coldKey(204)
 	base := func() Candidate {
@@ -179,6 +203,39 @@ func TestColdQueryReadOrderChangesIdentityButNotFactorGraph(t *testing.T) {
 	}
 	if len(first.Incidence()) != len(second.Incidence()) || len(first.Components()) != len(second.Components()) {
 		t.Fatal("query projection order changed the Factor SCC graph")
+	}
+}
+
+func TestColdQueryScalarShapesPreserveOrderedProjectionProof(t *testing.T) {
+	left, right := coldKey(41), coldKey(42)
+	family, freezer, normalizer := coldKey(43), coldKey(44), coldKey(45)
+	sealed, ok := Seal(Candidate{
+		Factors: []Factor{{Key: left}, {Key: right, Forms: []FactorForm{{Kind: FactorSummaryRead, Semantic: normalizer}}}},
+		Queries: []QueryFamily{{Key: family, Freezer: freezer, Projections: []QueryProjection{
+			{Kind: QueryFactorExact, Factor: left},
+			{Kind: QueryFactorSummary, Factor: right, Normalizer: normalizer},
+		}}},
+	})
+	if !ok || sealed == nil {
+		t.Fatal("query shape fixture")
+	}
+	index, found := sealed.QueryIndex(family)
+	shape, shaped := sealed.QueryShapeAt(index)
+	first, firstOK := sealed.QueryProjectionShapeAt(index, 0)
+	second, secondOK := sealed.QueryProjectionShapeAt(index, 1)
+	if !found || !shaped || shape != (QueryShape{Freezer: freezer, ProjectionCount: 2}) ||
+		!firstOK || first != (QueryProjectionShape{Kind: QueryFactorExact, Factor: left}) ||
+		!secondOK || second != (QueryProjectionShape{Kind: QueryFactorSummary, Factor: right, Normalizer: normalizer}) {
+		t.Fatal("scalar query shape projection disagrees with sealed order")
+	}
+	detached := sealed.Queries()
+	detached[0].Projections[0].Factor = right
+	again, againOK := sealed.QueryProjectionShapeAt(index, 0)
+	if !againOK || again != first {
+		t.Fatal("detached query copy mutated the sealed scalar proof")
+	}
+	if _, present := sealed.QueryProjectionShapeAt(index, 2); present {
+		t.Fatal("out-of-range query projection was admitted")
 	}
 }
 

@@ -331,6 +331,87 @@ func TestWorkReadsSealedPriorAndCurrentLocalWithoutObserverAllocation(t *testing
 	}
 }
 
+func TestWorkEntailsReusesTraversalScratchAndHonorsCheckpoint(t *testing.T) {
+	manager := newTestManager(t)
+	builder := manager.NewWork()
+	a, b := literal(t, builder, testA), literal(t, builder, testB)
+	premise := builder.And(a, b)
+	conclusion := a
+	builder.Seal()
+
+	reader := manager.NewWork()
+	if !reader.Entails(premise, conclusion) || reader.Entails(conclusion, premise) {
+		t.Fatal("reusable Work entailment law failed")
+	}
+	// Warm the non-identity traversal so its Work-owned seen map and stack have
+	// reached their stable capacity before measuring the hot read.
+	if !reader.Entails(premise, conclusion) {
+		t.Fatal("warmed entailment changed")
+	}
+	if allocations := testing.AllocsPerRun(1_000, func() {
+		if !reader.Entails(premise, conclusion) {
+			t.Fatal("reused entailment changed")
+		}
+	}); allocations != 0 {
+		t.Fatalf("reused Work entailment allocated %f times", allocations)
+	}
+
+	if !reader.SetCheckpoint(func() bool { return false }) {
+		t.Fatal("checkpoint install failed")
+	}
+	if reader.Entails(premise, conclusion) {
+		t.Fatal("cancelled entailment succeeded")
+	}
+	if !reader.SetCheckpoint(nil) || !reader.Entails(premise, conclusion) {
+		t.Fatal("reader did not recover after cancellation")
+	}
+
+	foreignManager := newTestManager(t)
+	foreignWork := foreignManager.NewWork()
+	foreign := literal(t, foreignWork, testA)
+	foreignWork.Seal()
+	if reader.Entails(premise, foreign) {
+		t.Fatal("foreign manager entailment crossed the Work authority fence")
+	}
+}
+
+func TestWorkEntailsImmediateCasesAcrossSealedAndCandidateRoots(t *testing.T) {
+	manager := newTestManager(t)
+	priorWork := manager.NewWork()
+	prior := literal(t, priorWork, testA)
+	priorWork.Seal()
+
+	current := manager.NewWork()
+	local := literal(t, current, testA)
+	if !current.Valid(prior) || !current.Valid(local) {
+		t.Fatal("Work did not admit sealed predecessor and current candidate")
+	}
+
+	// Same-handle identity is valid for both an immutable predecessor and the
+	// current candidate.  The terminal cases cover the exact Boolean boundary
+	// without entering the product traversal.
+	if !current.Entails(prior, prior) || !current.Entails(local, local) ||
+		!current.Entails(manager.False(), local) || !current.Entails(local, manager.True()) {
+		t.Fatal("immediate Work entailment cases failed")
+	}
+	if current.Entails(manager.True(), local) || current.Entails(local, manager.False()) {
+		t.Fatal("immediate Work non-entailment cases failed")
+	}
+
+	// Distinct sealed/candidate handles still use the exact product traversal;
+	// warming it must preserve the allocation-free reusable-scratch contract.
+	if !current.Entails(prior, local) || !current.Entails(local, prior) {
+		t.Fatal("mixed-generation Work entailment failed")
+	}
+	if allocations := testing.AllocsPerRun(1_000, func() {
+		if !current.Entails(prior, local) || !current.Entails(prior, prior) || !current.Entails(local, local) {
+			t.Fatal("warmed Work entailment changed")
+		}
+	}); allocations != 0 {
+		t.Fatalf("warmed Work entailment allocated %f times", allocations)
+	}
+}
+
 func TestForeignAndUnsealedGuardsReject(t *testing.T) {
 	manager := newTestManager(t)
 	work := manager.NewWork()

@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/wippyai/go-lua/program"
 	"github.com/wippyai/go-lua/program/keyspace"
@@ -36,6 +37,12 @@ type CorpusProject struct {
 	files     []string
 }
 
+var (
+	frozenCorpusOnce     sync.Once
+	frozenCorpusProjects []CorpusProject
+	frozenCorpusErr      error
+)
+
 func (project CorpusProject) Name() string { return project.relative }
 
 func (project CorpusProject) FileCount() int { return len(project.files) }
@@ -48,9 +55,26 @@ func (project CorpusProject) FileAt(index int) (string, bool) {
 }
 
 // FrozenCorpusProjects returns every checked-in fixture directory in canonical
-// path order. A manifest, when present, must name exactly the local Lua files;
-// diagnostics, skip fields, package metadata, and outputs are never consulted.
+// path order. The filesystem census is process-cached and every returned slice
+// is a defensive view. A manifest, when present, must name exactly the local Lua
+// files; diagnostics, skip fields, package metadata, and outputs are never
+// consulted.
 func FrozenCorpusProjects() ([]CorpusProject, error) {
+	projects, err := frozenCorpusCatalog()
+	if err != nil {
+		return nil, err
+	}
+	return cloneCorpusProjects(projects), nil
+}
+
+func frozenCorpusCatalog() ([]CorpusProject, error) {
+	frozenCorpusOnce.Do(func() {
+		frozenCorpusProjects, frozenCorpusErr = loadFrozenCorpusProjects()
+	})
+	return frozenCorpusProjects, frozenCorpusErr
+}
+
+func loadFrozenCorpusProjects() ([]CorpusProject, error) {
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
 		return nil, fmt.Errorf("testfixture: cannot resolve corpus owner location")
@@ -98,7 +122,7 @@ func FrozenCorpusProjects() ([]CorpusProject, error) {
 }
 
 func FrozenCorpusProject(name string) (CorpusProject, error) {
-	projects, err := FrozenCorpusProjects()
+	projects, err := frozenCorpusCatalog()
 	if err != nil {
 		return CorpusProject{}, err
 	}
@@ -106,7 +130,20 @@ func FrozenCorpusProject(name string) (CorpusProject, error) {
 	if index >= len(projects) || projects[index].relative != name {
 		return CorpusProject{}, fmt.Errorf("testfixture: missing fixture project %q", name)
 	}
-	return projects[index], nil
+	return cloneCorpusProject(projects[index]), nil
+}
+
+func cloneCorpusProjects(projects []CorpusProject) []CorpusProject {
+	result := make([]CorpusProject, len(projects))
+	for index, project := range projects {
+		result[index] = cloneCorpusProject(project)
+	}
+	return result
+}
+
+func cloneCorpusProject(project CorpusProject) CorpusProject {
+	project.files = append([]string(nil), project.files...)
+	return project
 }
 
 // SealCorpusProject is the sole fixture Project-to-Link constructor. It uses
@@ -131,7 +168,10 @@ func SealCorpusProject(contract *target.Contract, project CorpusProject) (*link.
 		if err != nil {
 			return nil, fmt.Errorf("testfixture: read %s: %w", path, err)
 		}
-		sealed, err := lower.Lower(lower.Source{Name: path, Text: source})
+		// The fixture project is the source-root boundary. Diagnostics and
+		// manifests use project-relative file names; the corpus storage path is
+		// test infrastructure and must not enter Program identity or findings.
+		sealed, err := lower.Lower(lower.Source{Name: filepath.ToSlash(file), Text: source})
 		if err != nil {
 			return nil, fmt.Errorf("testfixture: lower %s: %w", path, err)
 		}

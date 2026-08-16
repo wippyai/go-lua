@@ -6,16 +6,7 @@ import (
 	linkhost "github.com/wippyai/go-lua/program/link/host"
 	linkmodule "github.com/wippyai/go-lua/program/link/module"
 	linkproject "github.com/wippyai/go-lua/program/link/project"
-	linkstatic "github.com/wippyai/go-lua/program/link/static"
 )
-
-// Static returns Link's sole immutable static-resolution owner.
-func (l *Link) Static() *linkstatic.Component {
-	if l == nil {
-		return nil
-	}
-	return l.static
-}
 
 // Project returns Link's sole immutable mount, exact-key, and Application
 // authority. Construction-only Draft state is never observable here.

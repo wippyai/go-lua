@@ -51,7 +51,6 @@ var sourceInventory = [...]sourceConclusion{
 	{semanticsource.OriginTargetProtocol, 0, conclusionTargetType},
 	{semanticsource.OriginLinkProjectShardMount, 0, conclusionStaticResolution},
 	{semanticsource.OriginLinkStatic, 0, conclusionStaticResolution},
-	{semanticsource.OriginLinkStatic, semanticsource.FacetLinkStaticResolution, conclusionStaticResolution},
 }
 
 // Contracts returns Static's canonically ordered Factor-owned obligations.

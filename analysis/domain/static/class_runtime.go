@@ -1,18 +1,18 @@
 package static
 
 import (
+	"crypto/sha256"
 	"errors"
-	"fmt"
 
 	"github.com/wippyai/go-lua/analysis/semantic/typeauthority"
-	linkboundary "github.com/wippyai/go-lua/program/link/boundary"
+	"github.com/wippyai/go-lua/program/keyspace"
 )
 
 // sealRuntime transfers the complete evaluated structural denominator into
 // typeauthority exactly once. ClassSet keeps only its Pack carrier after this
 // call; no runtime reflection graph or mutable bridge points back into Static.
 func (s *ClassSet) sealRuntime() (*typeauthority.Runtime, error) {
-	if s == nil || s.authority == nil || s.authority.source == nil || s.authority.types == nil {
+	if s == nil || s.authority == nil || s.authority.types == nil {
 		return nil, errors.New("static: Runtime seal source unavailable")
 	}
 	inputs := make([]typeauthority.RuntimeInput, 0, len(s.rows))
@@ -23,10 +23,7 @@ func (s *ClassSet) sealRuntime() (*typeauthority.Runtime, error) {
 		if row.kind != ClassConcrete {
 			continue
 		}
-		input, ok := s.authority.types.RuntimeInput(row.encoded)
-		if !ok {
-			return nil, fmt.Errorf("static: concrete class %d lacks canonical Runtime input", index)
-		}
+		input := row.input
 		inputs = append(inputs, input)
 		inputByClass[uint32(index)] = input
 		classByInput = append(classByInput, uint32(index))
@@ -61,93 +58,98 @@ func (s *ClassSet) sealRuntime() (*typeauthority.Runtime, error) {
 // joins an existing executable Boundary Value to the already-contextual
 // Static result and, only for a concrete result, to Runtime's structural row.
 func (s *ClassSet) sealTypeValueOccurrences(runtime *typeauthority.Runtime) error {
-	if s == nil || s.authority == nil || s.authority.source == nil || runtime == nil {
+	if s == nil || s.authority == nil || runtime == nil {
 		return errors.New("static: TypeValue occurrence source unavailable")
 	}
-	a := s.authority
-	boundary := a.source.Boundary()
-	if boundary == nil {
-		return errors.New("static: TypeValue Boundary unavailable")
+	// A Static authority is admitted through ProgramArtifact rows. Keeping a
+	// Link/Program traversal here would make the old composition a second
+	// production path and would retain authored terms past the seal boundary.
+	if len(s.authority.mounts) == 0 {
+		return errors.New("static: TypeValue artifacts required")
 	}
-	mounts := a.source.Project().Mounts()
+	return s.sealMountedTypeValueOccurrences(runtime)
+}
+
+// sealMountedTypeValueOccurrences grounds TypeValue rows solely through the
+// immutable artifact occurrence ID and Link Boundary mounted-value receipt.
+// No source graph or authored coordinate is reopened here.
+func (s *ClassSet) sealMountedTypeValueOccurrences(runtime *typeauthority.Runtime) error {
+	a := s.authority
+	if a == nil || a.types == nil || runtime == nil {
+		return errors.New("static: mounted TypeValue source unavailable")
+	}
 	rows := make([]typeValueRow, 0)
-	seen := make(map[linkboundary.Value]struct{})
-	for mountIndex := 0; mountIndex < mounts.Count(); mountIndex++ {
-		shard, ok := mounts.At(mountIndex)
-		if !ok {
-			return errors.New("static: malformed TypeValue mount")
+	seen := make(map[keyspace.ContentID]struct{})
+	for _, mount := range a.mounts {
+		if mount.Artifact == nil || !mount.Artifact.Available() {
+			return errors.New("static: unavailable mounted TypeValue artifact")
 		}
-		p, ok := mounts.Program(shard)
-		if !ok || p == nil {
-			return errors.New("static: unavailable TypeValue Program")
-		}
-		resolver, ok := a.source.Static().Namespaces().ResolverForShard(shard)
-		if !ok {
-			return errors.New("static: unavailable TypeValue resolver")
-		}
-		namespace, ok := a.source.Static().Namespaces().ResolverContentID(resolver)
-		if !ok {
-			return errors.New("static: unavailable TypeValue namespace")
-		}
-		typeValues := p.Flow().Authored().TypeValues()
-		for index := 0; index < typeValues.Count(); index++ {
-			term, ok := typeValues.At(index)
-			if !ok {
-				return errors.New("static: malformed TypeValue source")
+		for index := 0; index < mount.Artifact.StaticTypeValueCount(); index++ {
+			artifactRow, rowOK := mount.Artifact.StaticTypeValueAt(index)
+			if !rowOK || !artifactRow.Available() {
+				return errors.New("static: malformed mounted TypeValue row")
 			}
-			if _, ok := typeValues.Get(term); !ok {
-				return errors.New("static: unavailable TypeValue source")
+			valueID, valueOK := a.valueIDs[mountedValueKey{module: mount.ModuleID, semantic: artifactRow.ID()}]
+			if !valueOK || !valueID.Available() {
+				return errors.New("static: unavailable mounted TypeValue value receipt")
 			}
-			if !p.Flow().Executable().Contains(term) {
-				continue
-			}
-			value, ok := boundary.Values().Of(shard, term)
-			if !ok {
-				return errors.New("static: unavailable TypeValue Boundary Value")
-			}
-			if _, duplicate := seen[value]; duplicate {
+			if _, duplicate := seen[valueID]; duplicate {
 				return errors.New("static: duplicate TypeValue Boundary Value")
 			}
-			target, ok := p.Static().Operands().TypeValues().Target(term)
-			if !ok {
-				return errors.New("static: unavailable TypeValue target")
+			reference, referenceOK := a.types.FindByReferenceID(artifactRow.ReferenceID())
+			if !referenceOK {
+				return errors.New("static: unavailable mounted TypeValue reference")
 			}
-			selector, ok := a.types.Find(p.ContentID(), target)
-			if !ok {
-				return errors.New("static: unavailable TypeValue selector")
+			coordinate, coordinateOK := a.coordinateFor(coordinateKey{reference: reference, namespace: mount.NamespaceID})
+			if !coordinateOK {
+				return errors.New("static: unavailable mounted TypeValue coordinate")
 			}
-			reference, ok := a.types.Ref(selector)
-			if !ok {
-				return errors.New("static: unavailable TypeValue reference")
+			result, resultOK := a.Result(coordinate)
+			if !resultOK {
+				return errors.New("static: unavailable mounted TypeValue result")
 			}
-			coordinate, ok := a.coordinateFor(coordinateKey{reference: reference, namespace: namespace})
-			if !ok {
-				return errors.New("static: unavailable TypeValue coordinate")
+			row := typeValueRow{valueID: valueID, name: artifactRow.Name(), root: artifactRow.RootID()}
+			if !staticPrimitiveTypeValueName(row.name) {
+				row.root = mountedTypeValueRootID(mount.ModuleID, row.root)
 			}
-			result, ok := a.Result(coordinate)
-			if !ok {
-				return errors.New("static: unavailable TypeValue result")
-			}
-			name, root, ok := staticTypeValueIdentity(a.source, shard, p, term, target)
-			if !ok {
-				return errors.New("static: unavailable TypeValue identity")
-			}
-			row := typeValueRow{value: value, name: name, root: root}
 			inner, exact, dispositionErr := s.typeValueExactInner(result, runtime)
 			if dispositionErr != nil {
 				return dispositionErr
 			}
 			row.inner, row.exact = inner, exact
-			row.id, ok = staticTypeValueRowID(a.source, boundary.Values(), runtime, result, row)
-			if !ok {
-				return errors.New("static: unavailable TypeValue row identity")
+			row.id, rowOK = staticTypeValueRowID(a.linkID, runtime, result, row)
+			if !rowOK {
+				return errors.New("static: unavailable mounted TypeValue row identity")
 			}
-			seen[value] = struct{}{}
+			seen[valueID] = struct{}{}
 			rows = append(rows, row)
 		}
 	}
 	a.typeValues = rows
 	return nil
+}
+
+func staticPrimitiveTypeValueName(name string) bool {
+	switch name {
+	case "nil", "boolean", "number", "integer", "string", "any", "unknown", "never":
+		return true
+	default:
+		return false
+	}
+}
+
+func mountedTypeValueRootID(module, local keyspace.ContentID) keyspace.ContentID {
+	if !module.Available() || !local.Available() {
+		return keyspace.ContentID{}
+	}
+	hash := sha256.New()
+	_, _ = hash.Write([]byte("wippy.analysis.static/typevalue-mounted-root/v1"))
+	_, _ = hash.Write([]byte{0})
+	_, _ = hash.Write(module[:])
+	_, _ = hash.Write(local[:])
+	var id keyspace.ContentID
+	copy(id[:], hash.Sum(nil))
+	return id
 }
 
 // typeValueExactInner classifies an already-grounded Static result. Bottom

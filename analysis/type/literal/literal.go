@@ -39,7 +39,7 @@ func PrimitiveBase(lit *typ.Literal) typ.Type {
 	if lit == nil {
 		return nil
 	}
-	switch lit.Base {
+	switch lit.Base() {
 	case kind.Boolean:
 		return typ.Boolean
 	case kind.Integer:
@@ -56,10 +56,10 @@ func PrimitiveBase(lit *typ.Literal) typ.Type {
 // IntegerValue extracts the exact integer carried by an integer literal type.
 func IntegerValue(t typ.Type) (int64, bool) {
 	lit, ok := t.(*typ.Literal)
-	if !ok || lit.Base != kind.Integer {
+	if !ok || lit.Base() != kind.Integer {
 		return 0, false
 	}
-	value, ok := lit.Value.(int64)
+	value, ok := lit.Value().(int64)
 	return value, ok
 }
 

@@ -21,8 +21,8 @@ exact-read path. Completed predecessor observations select only owner-issued
 exact Refs; Product preserves their Guard-row correlation; an epoch publishes
 only the accepted sparse reverse relation and atomically removes stale routes.
 Selected pairs never become Program, Link, Rule-instance, Point, Group,
-manifest, or persistent identity. `ActivationPlan` remains exclusively the
-dynamic Program/Link relation mechanism. A Rule may now bind one atomic
+manifest, or persistent identity. The dynamic Program/Link relation remains
+the sole activation mechanism. A Rule may now bind one atomic
 `RouteWrite` to its preceding staged selection: every selected owner-issued Ref
 is paired with its route-local value, equal targets reduce only through the
 Factor's admitted Join, unselected coordinates survive only through declared
@@ -75,7 +75,7 @@ representations.
 Current executable truth supersedes the historical Wave-D census retained
 later in this document: the root `analysis` package owns one production
 Composition with five Factors and fifteen Rules. It classifies every mounted
-Body through one closed sum and executes one SourceAssembly/Solver. The
+Body through one closed sum and executes one receipt-owned solver. The
 admitted arms are exact direct-field read, exact global-operation call/effect,
 and direct literal return; an unknown body rejects the entire Link. Engine
 imports no domain, Link, Target, or Lua package, and no domain owns another

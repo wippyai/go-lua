@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/type/annotation"
-	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
@@ -51,7 +50,6 @@ func TestPrimitiveBase(t *testing.T) {
 		{name: "number", lit: typ.LiteralNumber(1.5), want: typ.Number},
 		{name: "string", lit: typ.LiteralString("x"), want: typ.String},
 		{name: "nil", lit: nil, want: nil},
-		{name: "unknown base", lit: &typ.Literal{Base: kind.Nil, Value: nil}, want: nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

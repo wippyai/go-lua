@@ -21,7 +21,6 @@ type registryRuntime struct {
 	retentionSafe          bool
 	interner               *interner
 	axes                   []axisRuntimeAxis
-	canonicalAxes          []uint16
 	byID                   map[string]uint16
 	reducers               []reducerEntry
 	reducerDeps            [][]int
@@ -153,17 +152,22 @@ func buildRegistryRuntime(reg *axis.Registry) *registryRuntime {
 	sort.Slice(order, func(i, j int) bool {
 		return rt.axes[order[i]].id < rt.axes[order[j]].id
 	})
-	rt.canonicalAxes = make([]uint16, len(order))
+	// Freeze the runtime axis table in canonical ordinal order. Product nodes
+	// already store dense ordinals, so retaining registration order here would
+	// force every hot ordinal access through a second indirection.
+	orderedAxes := make([]axisRuntimeAxis, len(order))
 	for ordinal, index := range order {
 		if ordinal > int(^uint16(0)) {
 			rt.err = fmt.Errorf("product: registry has too many axes")
 			return rt
 		}
-		rt.axes[index].ordinal = uint16(ordinal)
-		rt.byID[rt.axes[index].id] = uint16(index)
-		rt.canonicalAxes[ordinal] = uint16(index)
-		rt.bottomSlots = append(rt.bottomSlots, slot{ordinal: uint16(ordinal), value: rt.axes[index].bottomAny})
+		info := rt.axes[index]
+		info.ordinal = uint16(ordinal)
+		orderedAxes[ordinal] = info
+		rt.byID[info.id] = uint16(ordinal)
+		rt.bottomSlots = append(rt.bottomSlots, slot{ordinal: uint16(ordinal), value: info.bottomAny})
 	}
+	rt.axes = orderedAxes
 
 	if err := rt.buildReducers(reg.ReducersView()); err != nil {
 		rt.err = err
@@ -178,7 +182,7 @@ func (rt *registryRuntime) buildMeasures() {
 	// canonical product ordinal, never registration order.
 	widen := make([]rankComponent, 0, len(rt.axes)+2)
 	widen = append(widen, rankComponent{kind: shapeRank}, rankComponent{kind: presenceRank})
-	for ordinal := range rt.canonicalAxes {
+	for ordinal := range rt.axes {
 		info := rt.axisOrdinal(uint16(ordinal))
 		width := info.spec.WidenRankWidth()
 		if width <= 0 {
@@ -229,8 +233,8 @@ func (rt *registryRuntime) axis(id string) (axisRuntimeAxis, bool) {
 }
 
 func (rt *registryRuntime) axisOrdinal(ordinal uint16) axisRuntimeAxis {
-	if int(ordinal) >= len(rt.canonicalAxes) {
+	if int(ordinal) >= len(rt.axes) {
 		panic("product: slot ordinal outside registry")
 	}
-	return rt.axes[rt.canonicalAxes[ordinal]]
+	return rt.axes[ordinal]
 }

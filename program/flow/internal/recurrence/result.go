@@ -1,6 +1,10 @@
 package recurrence
 
-import "github.com/wippyai/go-lua/program/keyspace"
+import (
+	"sync"
+
+	"github.com/wippyai/go-lua/program/keyspace"
+)
 
 // Annotation is the recurrence projection for one sourcecontrol Arc. The
 // slice is aligned with sourcecontrol.Result.ArcAt: an ordinary Arc has a
@@ -17,7 +21,9 @@ type Annotation struct {
 // private so no caller can retain a second SCC, stream, or reset-set
 // authority. All query methods fail closed and perform no allocation.
 type Result struct {
-	annotations []Annotation
+	bindingMu     sync.Mutex
+	bindingIssued bool
+	annotations   []Annotation
 
 	// The owner identities are the narrow splice fence for this projection.
 	// No Source, Flow, or sourcecontrol authority is retained here.

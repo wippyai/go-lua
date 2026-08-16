@@ -27,7 +27,10 @@ type ContractsInput struct {
 type contractsStore struct {
 	functions []functionContractRow
 	calls     []poolRange
-	terms     []keyspace.Term
+	// callReceipts are sealed per-call template identities. They are a
+	// derived O(1) authentication surface; authored terms remain in terms.
+	callReceipts []keyspace.ContentID
+	terms        []keyspace.Term
 }
 
 type functionContractRow struct {

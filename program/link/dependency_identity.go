@@ -10,7 +10,6 @@ import (
 	"github.com/wippyai/go-lua/program/keyspace"
 	linkboundary "github.com/wippyai/go-lua/program/link/boundary"
 	linkmodule "github.com/wippyai/go-lua/program/link/module"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
 	linkstatic "github.com/wippyai/go-lua/program/link/static"
 	"github.com/wippyai/go-lua/program/target"
 )
@@ -34,10 +33,10 @@ type dependencyRow struct {
 }
 
 // deriveDependencyRows builds the exact sorted dependency witness used by the
-// Link identity. Boundary, Static, and Module remain the sole authorities for
-// their respective rows; this slice exists only for the duration of sealing.
-func deriveDependencyRows(boundary *linkboundary.Component, mounts linkproject.Mounts, static linkstatic.Cold, module linkmodule.Cold) ([]dependencyRow, error) {
-	if boundary == nil || static.SchemaContentCount() != mounts.Count() {
+// Link identity. Boundary and Module own the remaining Link-local rows;
+// Program static content is already committed by Project and ProgramArtifact.
+func deriveDependencyRows(boundary *linkboundary.Component, static linkstatic.Cold, module linkmodule.Cold) ([]dependencyRow, error) {
+	if boundary == nil || static.SchemaContentCount() == 0 {
 		return nil, errors.New("link: dependency authorities unavailable")
 	}
 	contract, ok := boundary.Target()
@@ -64,18 +63,12 @@ func deriveDependencyRows(boundary *linkboundary.Component, mounts linkproject.M
 		}
 		rows = append(rows, dependencyRow{kind: dependencyProvider, id: id, operation: operation})
 	}
-
-	seenSchema := make(map[keyspace.ContentID]struct{}, static.SchemaContentCount())
 	for index := 0; index < static.SchemaContentCount(); index++ {
-		content, contentOK := static.SchemaContentAt(index)
-		if !contentOK || !content.Available() {
-			return nil, errors.New("link: malformed schema dependency authority")
+		id, ok := static.SchemaContentAt(index)
+		if !ok || !id.Available() {
+			return nil, errors.New("link: malformed namespace dependency")
 		}
-		if _, duplicate := seenSchema[content]; duplicate {
-			continue
-		}
-		seenSchema[content] = struct{}{}
-		rows = append(rows, dependencyRow{kind: dependencySchema, id: content})
+		rows = append(rows, dependencyRow{kind: dependencySchema, id: id})
 	}
 
 	world := module.ContentID()

@@ -5,6 +5,30 @@
   ],
   "check": {
     "errors": 0,
+    "diagnostic_rules": [
+      {
+        "code": "advice.always_false_guard",
+        "enabled": true,
+        "severity": "hint"
+      }
+    ],
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 5,
+        "column": 8,
+        "severity": "hint",
+        "code": "advice.always_false_guard",
+        "message_contains": ["condition is proven always false"],
+        "min_evidence": 1,
+        "evidence_contains": ["condition is proven to be false on every reachable path"],
+        "render_contains": ["hint[advice.always_false_guard]", "condition is proven always false"],
+        "render_not_contains": ["condition is proven always true"],
+        "help_contains": ["unreachable branch"],
+        "label_contains": ["constant guard"],
+        "min_labels": 1
+      }
+    ],
     "native": {
       "facts": [
         {

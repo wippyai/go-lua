@@ -7,9 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier/product"
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier/shape"
-	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/demand"
-	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/engine/internal/factbinding"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 )
@@ -181,7 +179,7 @@ func Product[V, O any](access Access[V, O], visit func(Row) bool) bool {
 func ReadValue[V, O, S any](access Access[V, O], row Row, read Read[S]) (S, bool) {
 	var zero S
 	execution := access.execution
-	if execution == nil || execution.owner == nil || access.owner != execution.owner || execution.active.Load() != access.epoch || execution.product == nil || !execution.product.requireCheckpoint() || read.rule == nil || read.rule != execution.owner.ruleSchema() || read.index < 0 || read.resolve == nil || row.session == nil || row.session != execution.product || row.epoch != access.epoch || row.index != execution.product.current || row.index < 0 || row.index >= len(row.session.values) || read.index >= len(row.session.reads) || row.session.reads[read.index] == nil {
+	if execution == nil || execution.owner == nil || access.owner != execution.owner || execution.active.Load() != access.epoch || execution.product == nil || !execution.product.requireCheckpoint() || !read.matchesRuntimeOwner(execution.owner) || row.session == nil || row.session != execution.product || row.epoch != access.epoch || row.index != execution.product.current || row.index < 0 || row.index >= len(row.session.values) || read.index >= len(row.session.reads) || row.session.reads[read.index] == nil {
 		if execution != nil {
 			execution.failed.Store(true)
 		}
@@ -226,13 +224,30 @@ type stagedFactor[V any] interface {
 	stagedSlot() (shape.Slot, bool)
 }
 
+// stagedTargetProvider is the typed, owner-local projection needed by a
+// heterogeneous selected-read binder. It carries no coordinate or mutable
+// runtime state; the bound Factor remains the sole staged target authority.
+type stagedTargetProvider[V any] interface {
+	stagedFactorTarget() stagedFactor[V]
+	stagedFactorReceiptMatches(*schemaRuleReadOrigin) bool
+}
+
+func (factor *boundFactor[K, V]) stagedFactorTarget() stagedFactor[V] { return factor }
+
+func (factor *boundFactor[K, V]) stagedFactorReceiptMatches(origin *schemaRuleReadOrigin) bool {
+	if factor == nil || origin == nil || !factor.receipt.valid() || factor.receipt.state != origin.state || factor.receipt.schema != origin.state.schema || factor.receipt.ordinal != origin.factor || factor.receipt.semantic != origin.state.schema.factorSemanticAt(origin.factor) {
+		return false
+	}
+	return factor.receipt.authority == origin.state.authority
+}
+
 // stagedReadRuntime is one dynamic exact-read node. It has no candidate
 // vector: the locator sees only declared predecessor observations and emits
 // owner-issued Refs through SelectRoute. Physical Unit work is deduplicated
 // per row while canonical numeric tags retain every semantic route.
 type stagedReadRuntime[V, S any, Tag selectionTag] struct {
 	input     int
-	selector  *coldReadSelector
+	selector  stagedReadSelector
 	target    stagedFactor[V]
 	locate    func(SelectorContext) bool
 	normalize func(OrderedCells[V]) S
@@ -328,13 +343,13 @@ func (*stagedReadRuntime[V, S, Tag]) summaryProof() ruleSummaryReadProof {
 
 func (runtime *stagedReadRuntime[V, S, Tag]) refine(session *productSession, index int) bool {
 	if runtime == nil || session == nil || session.execution == nil || session.work == nil || index < 0 || index >= len(session.reads) ||
-		runtime.input < 0 || runtime.input >= len(session.inputs) || runtime.selector == nil || runtime.selector.read != index ||
-		runtime.target == nil || runtime.locate == nil || runtime.normalize == nil || len(runtime.selector.depends) == 0 ||
+		runtime.input < 0 || runtime.input >= len(session.inputs) || runtime.selector == nil || runtime.selector.selectorReadIndex() != index ||
+		runtime.target == nil || runtime.locate == nil || runtime.normalize == nil || runtime.selector.selectorDependencyCount() == 0 ||
 		len(session.values) != session.rows.Count() || index >= len(session.sessions) || session.sessions[index] != nil {
 		return false
 	}
-	for _, dependency := range runtime.selector.depends {
-		if !session.requireCheckpoint() || dependency.kind != readDependency || dependency.index < 0 || dependency.index >= index || dependency.index >= len(session.reads) || session.reads[dependency.index] == nil {
+	for dependency := 0; dependency < index; dependency++ {
+		if runtime.selector.selectorDeclaresRead(dependency) && (!session.requireCheckpoint() || dependency >= len(session.reads) || session.reads[dependency] == nil) {
 			return false
 		}
 	}
@@ -991,7 +1006,7 @@ func (runtime *outputRuntime) targets(execution *ruleExecution, row int) ([]reso
 				return nil, false
 			}
 			selected[writeIndex] = []bool{true}
-			if write.directID.sealAuthority == 0 {
+			if !write.directID.validOrigin() {
 				return nil, false
 			}
 			result = append(result, resolvedRuleTarget{target: write.direct, proof: write.directID})
@@ -1034,7 +1049,7 @@ func (runtime *outputRuntime) targets(execution *ruleExecution, row int) ([]reso
 			}
 			if choose {
 				bits[ordinal] = true
-				if write.targetIDs[ordinal].sealAuthority == 0 {
+				if !write.targetIDs[ordinal].validOrigin() {
 					return nil, false
 				}
 				result = append(result, resolvedRuleTarget{target: write.targets[ordinal], proof: write.targetIDs[ordinal]})
@@ -1099,7 +1114,7 @@ const (
 // access object, so a named K never needs reflection, an offset conversion,
 // or a type-switch arm in the hot runtime.
 func newTypedOutputAccess[K ~uint32 | ~uint64, V any](output *boundFactor[K, V], owner anyRule, projection *outputRuntime) (outputAccess[V], bool) {
-	if output == nil || output.binding == nil || owner == nil || projection == nil {
+	if output == nil || output.binding == nil || output.implementation == nil || output.implementation.algebra == nil || owner == nil || projection == nil {
 		return outputAccess[V]{}, false
 	}
 	routeRead, routeOutput := projection.routeRead()
@@ -1110,9 +1125,9 @@ func newTypedOutputAccess[K ~uint32 | ~uint64, V any](output *boundFactor[K, V],
 	if transformed, present := owner.(transformedCarryOwner[V]); present {
 		semantic, targets, apply, active := transformed.transformedCarry()
 		if active {
-			defaultValue, defaultOK := output.factor.algebra.Default()
+			defaultValue, defaultOK := output.implementation.algebra.Default()
 			mappedDefault, mappedOK := apply(defaultValue)
-			if !defaultOK || !mappedOK || !output.factor.algebra.Equal(defaultValue, mappedDefault) {
+			if !defaultOK || !mappedOK || !output.implementation.algebra.Equal(defaultValue, mappedDefault) {
 				return outputAccess[V]{}, false
 			}
 			closure, closed := output.binding.TransformClosure(targets)
@@ -1355,7 +1370,7 @@ func (output *typedOutput[K, V]) stageSelection(execution *ruleExecution, epoch 
 	for ordinal := 0; ordinal < batch.count; ordinal++ {
 		ref, value, available := batch.at(ordinal)
 		current, proof, resolved := output.routeTarget(ref)
-		if !available || !resolved || current == (carrier.Target{}) || proof.sealAuthority == 0 {
+		if !available || !resolved || current == (carrier.Target{}) || !proof.validOrigin() {
 			return false
 		}
 		if pairs != nil {
@@ -1478,7 +1493,7 @@ func (output *typedOutput[K, V]) discard() {
 }
 
 type boundRule[V, O any] struct {
-	rule           *ruleSchema
+	proof          *ruleRuntimeProof
 	admission      RuleAdmission[V, O]
 	anchor         SemanticKey
 	operandContent [32]byte
@@ -1497,6 +1512,18 @@ type boundRule[V, O any] struct {
 	carryApply     func(V) (V, bool)
 	carryOnly      bool
 	nextEpoch      atomic.Uint64
+}
+
+// ruleOperand is the private typed bridge used only while attaching a
+// SchemaBinding selected read. It exposes the canonical bound operand to the
+// locator without putting an operand into SelectorContext or retaining a
+// mutable snapshot.
+func (bound *boundRule[V, O]) ruleOperand() O {
+	if bound == nil {
+		var zero O
+		return zero
+	}
+	return bound.operand
 }
 
 func (bound *boundRule[V, O]) transformedCarry() (SemanticKey, []carrier.Target, func(V) (V, bool), bool) {
@@ -1567,253 +1594,20 @@ type ruleExecution struct {
 // anyRule contains no typed Fact payload. It exists only to ensure an Access
 // cannot be replayed against another canonical Rule-instance row.
 type anyRule interface {
-	ruleSchema() *ruleSchema
 	requiresDerivation() bool
+	runtimeRuleProof() *ruleRuntimeProof
 }
 
-func (bound *boundRule[V, O]) ruleSchema() *ruleSchema {
+func (bound *boundRule[V, O]) runtimeRuleProof() *ruleRuntimeProof {
 	if bound == nil {
 		return nil
 	}
-	return bound.rule
+	return bound.proof
 }
 
 // bindMemberRule turns graph-owned member metadata into the one private
 // per-row target projection. The caller supplies no write surface, selector
 // candidate, dependency, or relation: the member is the sole occurrence owner.
-func bindMemberRule[V, O any](member equation.RuleMember, rule *Rule[V, O], operand O, output runtimeFactor) (*boundRule[V, O], []carrier.Target, bool) {
-	if !member.Key().Available() || !member.Rule().Available() || rule == nil || !rule.available() || rule.schema == nil || !rule.admission.same(rule.schema.admission) || output == nil || rule.schema.output == nil ||
-		output.semantic() != rule.schema.output.semantic || member.ReadCount() != len(rule.schema.reads) || member.WriteCount() != len(rule.schema.writes) || len(rule.schema.writes) == 0 && len(rule.schema.carries) == 0 {
-		return nil, nil, false
-	}
-	coordinates := ActivationCoordinates{}
-	if activation, dynamic := member.ActivationMember(); dynamic {
-		locator, located := activation.Locator()
-		if !located {
-			return nil, nil, false
-		}
-		coordinates = ActivationCoordinates{
-			binding:     semanticKeyFromComposition(activation.Binding()),
-			application: semanticKeyFromComposition(locator.Application),
-			target:      semanticKeyFromComposition(locator.Target),
-			endpoint:    semanticKeyFromComposition(locator.Endpoint),
-		}
-		if !coordinates.Available() {
-			return nil, nil, false
-		}
-	}
-	projection := &outputRuntime{writes: make([]outputWriteRuntime, len(rule.schema.writes))}
-	all := make([]carrier.Target, 0, len(rule.schema.writes))
-	for writeIndex, cold := range rule.schema.writes {
-		if cold.form == nil || cold.form.factor != rule.schema.output {
-			return nil, nil, false
-		}
-		surface, ok := member.WriteAt(writeIndex)
-		if !ok {
-			return nil, nil, false
-		}
-		switch cold.form.writeKind {
-		case exactWriteForm:
-			candidateCount, candidatesOK := member.WriteCandidateCount(writeIndex)
-			dependencyCount, dependenciesOK := member.WriteDependencyCount(writeIndex)
-			relationCount, relationsOK := member.WriteRelationCount(writeIndex)
-			if !candidatesOK || !dependenciesOK || !relationsOK || candidateCount != 0 || dependencyCount != 0 || relationCount != 0 {
-				return nil, nil, false
-			}
-			if cold.route != 0 {
-				route, routeOK := member.WriteRouteRead(writeIndex)
-				if !routeOK || route != cold.route || cold.route-1 >= uint64(len(rule.schema.reads)) || !output.hasRouteUniverse() {
-					return nil, nil, false
-				}
-				projection.writes[writeIndex] = outputWriteRuntime{routeRead: cold.route}
-				continue
-			}
-			route, routeOK := member.WriteRouteRead(writeIndex)
-			if !routeOK || route != 0 {
-				return nil, nil, false
-			}
-			target, ok := output.writeTarget(surface)
-			if !ok {
-				return nil, nil, false
-			}
-			proof, proofOK := newRuleTargetProof(rule.schema.output, surface)
-			if !proofOK {
-				return nil, nil, false
-			}
-			projection.writes[writeIndex] = outputWriteRuntime{direct: target, directID: proof}
-			all = appendUniqueTarget(all, target)
-		case selectorWriteForm:
-			if cold.route != 0 {
-				return nil, nil, false
-			}
-			selector := coldSelectorForWrite(rule.schema, writeIndex)
-			issued, ok := output.writeSelector(surface)
-			candidateCount, candidatesOK := member.WriteCandidateCount(writeIndex)
-			dependencyCount, dependenciesOK := member.WriteDependencyCount(writeIndex)
-			if !ok || !candidatesOK || !dependenciesOK || issued.Kind() != carrier.TargetSelector || selector == nil || len(selector.candidates) == 0 || candidateCount != len(selector.candidates) || dependencyCount != len(selector.depends) {
-				return nil, nil, false
-			}
-			targets, ok := output.writeSelectorCandidates(surface)
-			if !ok || len(targets) != len(selector.candidates) {
-				return nil, nil, false
-			}
-			targetIDs := make([]ruleTargetProof, len(selector.candidates))
-			for candidate, read := range selector.candidates {
-				bound, ok := member.WriteCandidateAt(writeIndex, candidate)
-				targetID, targetOK := member.WriteTargetCandidateAt(writeIndex, candidate)
-				if !ok || !targetOK || bound != uint64(read) {
-					return nil, nil, false
-				}
-				proof, proofOK := newRuleTargetProof(rule.schema.output, targetID)
-				if !proofOK {
-					return nil, nil, false
-				}
-				targetIDs[candidate] = proof
-			}
-			relations := make(map[int][][]int)
-			targetDependencies := 0
-			for dependencyIndex, dependency := range selector.depends {
-				bound, ok := member.WriteDependencyAt(writeIndex, dependencyIndex)
-				if !ok || bound.Index != uint64(dependency.index) || bound.Target != (dependency.kind == writeDependency) {
-					return nil, nil, false
-				}
-				if dependency.kind != writeDependency {
-					continue
-				}
-				relation, ok := member.WriteRelationAt(writeIndex, targetDependencies)
-				if !ok || relation.Prior != uint64(dependency.index) || len(relation.Matches) != len(selector.candidates) {
-					return nil, nil, false
-				}
-				matches := make([][]int, len(relation.Matches))
-				for current, row := range relation.Matches {
-					matches[current] = make([]int, len(row))
-					for ordinal, prior := range row {
-						if prior > uint64(^uint(0)>>1) {
-							return nil, nil, false
-						}
-						matches[current][ordinal] = int(prior)
-					}
-				}
-				relations[dependency.index] = matches
-				targetDependencies++
-			}
-			relationCount, relationsOK := member.WriteRelationCount(writeIndex)
-			if !relationsOK || relationCount != targetDependencies {
-				return nil, nil, false
-			}
-			projection.writes[writeIndex] = outputWriteRuntime{selector: selector, candidates: append([]int(nil), selector.candidates...), targets: targets, targetIDs: targetIDs, relations: relations}
-			for _, target := range targets {
-				all = appendUniqueTarget(all, target)
-			}
-		default:
-			return nil, nil, false
-		}
-	}
-	anchor := semanticKeyFromComposition(member.Key())
-	if !anchor.Available() {
-		return nil, nil, false
-	}
-	entity := OperandEntity{key: member.Operand().Entity()}
-	if !entity.key.Available() || entity.key.Version != instanceOperandEntityVersion {
-		return nil, nil, false
-	}
-	operandContent := [32]byte(entity.key.ID)
-	if operandContent == [32]byte{} {
-		return nil, nil, false
-	}
-	hasRouteWrite := false
-	for _, write := range projection.writes {
-		if write.routeRead != 0 {
-			hasRouteWrite = true
-			break
-		}
-	}
-	carryRouteScope := output.carryRouteScopeFor(member)
-	routeScope := hasRouteWrite || carryRouteScope
-	if routeScope && !output.hasRouteUniverse() {
-		return nil, nil, false
-	}
-	if len(all) == 0 && len(rule.schema.carries) == 0 && !routeScope {
-		return nil, nil, false
-	}
-	bound := &boundRule[V, O]{rule: rule.schema, admission: rule.admission, anchor: anchor, operandContent: operandContent, coordinates: coordinates, transfer: rule.transfer, operand: operand}
-	if len(rule.schema.carries) == 1 && rule.schema.carries[0].transform.Available() {
-		carry := rule.schema.carries[0]
-		if rule.carryTransform != carry.transform || rule.carryApply == nil {
-			return nil, nil, false
-		}
-		carryTargets, targetsOK := output.carryTargetsFor(member)
-		if !targetsOK {
-			return nil, nil, false
-		}
-		bound.carrySemantic = carry.transform
-		bound.carryTargets = carryTargets
-		bound.routeTransform = carryRouteScope
-		// The immutable, content-addressed instance operand closes the
-		// Factor-owned transform exactly once. Allocation recency can therefore
-		// select its own root without a dynamic registry or a global transform
-		// callback, while the hot terminal map remains monomorphic V -> V.
-		bound.carryApply = func(value V) (V, bool) {
-			return rule.carryApply(operand, value)
-		}
-	}
-	bound.carryOnly = len(rule.schema.writes) == 0 && !bound.carrySemantic.Available()
-	if routeScope {
-		bound.routeScope = output
-	}
-	if !bound.carryOnly {
-		access, boundOutput := rule.output.bindOutput(output, bound, projection)
-		if !boundOutput {
-			return nil, nil, false
-		}
-		bound.output = access
-	}
-	return bound, all, true
-}
-
-func newRuleTargetProof(factor *factorSchema, surface equation.Surface) (ruleTargetProof, bool) {
-	if factor == nil || factor.composition == nil || !factor.composition.Sealed() || factor.open || !factor.bound ||
-		factor.composition.sealAuthority == 0 || surface.Factor != factor.semantic.compositionKey() ||
-		surface.Form != equation.SurfaceWriteExact || surface.Local == 0 || surface.Local-1 >= factor.keyEnd ||
-		(surface.Mode != equation.TargetModeStrong && surface.Mode != equation.TargetModeWeak) {
-		return ruleTargetProof{}, false
-	}
-	return ruleTargetProof{
-		sealAuthority: factor.composition.sealAuthority,
-		factorIndex:   factor.bindIndex,
-		raw:           surface.Local - 1,
-		strong:        surface.Mode == equation.TargetModeStrong,
-	}, true
-}
-
-func newRuleReadProof(factor *factorSchema, surface equation.Surface) (ruleReadProof, bool) {
-	if factor == nil || factor.composition == nil || !factor.composition.Sealed() || factor.open || !factor.bound ||
-		factor.composition.sealAuthority == 0 || surface.Factor != factor.semantic.compositionKey() ||
-		surface.Form != equation.SurfaceReadExact || surface.Local == 0 || surface.Local-1 >= factor.keyEnd ||
-		surface.Mode != equation.TargetModeNone {
-		return ruleReadProof{}, false
-	}
-	return ruleReadProof{
-		sealAuthority: factor.composition.sealAuthority,
-		factorIndex:   factor.bindIndex,
-		raw:           surface.Local - 1,
-		exact:         true,
-	}, true
-}
-
-func coldSelectorForWrite(rule *ruleSchema, write int) *coldWriteSelector {
-	if rule == nil || write < 0 {
-		return nil
-	}
-	for index := range rule.writeSelectors {
-		selector := &rule.writeSelectors[index]
-		if selector.write == write {
-			return selector
-		}
-	}
-	return nil
-}
-
 func appendUniqueTarget(targets []carrier.Target, candidate carrier.Target) []carrier.Target {
 	for _, target := range targets {
 		if target.Same(candidate) {
@@ -1827,160 +1621,23 @@ func appendUniqueTarget(targets []carrier.Target, candidate carrier.Target) []ca
 // read projection. Factor and structural support Rules use this exact path;
 // only Factor Rules additionally install an output Patch session.
 type readBinding interface {
-	ruleSchema() *ruleSchema
 	appendReadRuntime(readRuntime) bool
+	runtimeRuleProof() *ruleRuntimeProof
 }
 
 // bindRuntimeRuleReads consumes a Rule's sealed positional read binders in
 // Graph member order. The compiler supplies only the factor catalog; every
 // typed normalization, equality, and selector callback remains schema-owned.
-func bindRuntimeRuleReads(schema *ruleSchema, target readBinding, member equation.RuleMember, factors map[composition.Key]runtimeFactor) bool {
-	if schema == nil || target == nil || len(schema.reads) != member.ReadCount() || factors == nil {
-		return false
-	}
-	for index, declared := range schema.reads {
-		if declared.bind == nil || declared.form == nil {
-			return false
-		}
-		factor, ok := factors[declared.form.factor.semantic.compositionKey()]
-		if !ok || factor == nil || !declared.bind.bindRuntimeRead(schema, target, member, factor) {
-			return false
-		}
-		if index != len(schema.reads)-1 && target.ruleSchema() != schema {
-			return false
-		}
-	}
-	return true
-}
-
 func (bound *boundRule[V, O]) appendReadRuntime(read readRuntime) bool {
-	if bound == nil || bound.rule == nil || read == nil || len(bound.reads) >= len(bound.rule.reads) {
+	if bound == nil || read == nil || bound.proof == nil || !bound.proof.valid() || len(bound.reads) >= int(bound.proof.reads) {
 		return false
 	}
 	bound.reads = append(bound.reads, read)
 	return true
 }
 
-// bindExactRead attaches one equation-issued exact surface to the type-only
-// Read resolver retained by the cold Rule. It neither mutates Read nor leaks
-// the bound Unit into Rule/Factor declaration state.
-func bindExactRead[K ~uint32 | ~uint64, V, S any](bound readBinding, read Read[S], factor *boundFactor[K, V], surface equation.Surface, normalize func(OrderedCells[V]) S, equal func(S, S) bool, fingerprint func(S) uint64) bool {
-	if bound == nil {
-		return false
-	}
-	schema := bound.ruleSchema()
-	if schema == nil || read.rule != schema || read.index < 0 || read.index >= len(schema.reads) || read.resolve == nil || factor == nil || normalize == nil || equal == nil || fingerprint == nil || surface.Form != equation.SurfaceReadExact {
-		return false
-	}
-	declared := schema.reads[read.index]
-	if declared.input != read.input.index || declared.form == nil || declared.form.factor != factor.factor.schema || declared.form.readKind != exactReadForm {
-		return false
-	}
-	unit, ok := factor.readUnit(surface)
-	if !ok {
-		return false
-	}
-	proof, proved := newRuleReadProof(factor.factor.schema, surface)
-	if !proved {
-		return false
-	}
-	return bound.appendReadRuntime(&typedReadRuntime[K, V, S]{input: declared.input, binding: factor.binding, unit: unit, proof: proof, normalize: normalize, equal: equal, fingerprint: fingerprint})
-}
-
-// bindSummaryRead installs a Factor-owned normalizer over one finite summary
-// Unit. The concrete key set came from the compiled Graph catalog before
-// attachment; the normalizer/equality witnesses remain with the typed cold
-// ReadForm and never cross into carrier or demand.
-func bindSummaryRead[K ~uint32 | ~uint64, V, S any](bound readBinding, read Read[S], factor *boundFactor[K, V], surface equation.Surface, form ReadForm[V, S]) bool {
-	if bound == nil {
-		return false
-	}
-	schema := bound.ruleSchema()
-	if schema == nil || read.rule != schema || read.index < 0 || read.index >= len(schema.reads) || read.resolve == nil || factor == nil || !form.valid() || form.schema.readKind != summaryReadForm || surface.Form != equation.SurfaceReadSummary || !matchesFactorReadForm(factor.factor.schema, surface, summaryReadForm) {
-		return false
-	}
-	declared := schema.reads[read.index]
-	if declared.input != read.input.index || declared.form != form.schema || declared.form.factor != factor.factor.schema {
-		return false
-	}
-	unit, ok := factor.readUnit(surface)
-	if !ok {
-		return false
-	}
-	proof, proved := factor.summaryReadProof(surface, form.schema)
-	if !proved {
-		return false
-	}
-	return bound.appendReadRuntime(&typedReadRuntime[K, V, S]{input: declared.input, binding: factor.binding, unit: unit, summary: proof, normalize: form.normalize, equal: form.equal, fingerprint: form.fingerprint})
-}
-
-// bindMemberExactRead binds an exact token through its graph-owned resolved
-// surface. Callers cannot substitute a separate occurrence coordinate.
-func bindMemberExactRead[K ~uint32 | ~uint64, V, S any](bound readBinding, member equation.RuleMember, read Read[S], factor *boundFactor[K, V], normalize func(OrderedCells[V]) S, equal func(S, S) bool, fingerprint func(S) uint64) bool {
-	if bound == nil || read.index < 0 {
-		return false
-	}
-	surface, ok := member.ReadAt(read.index)
-	return ok && bindExactRead(bound, read, factor, surface, normalize, equal, fingerprint)
-}
-
-// bindMemberSummaryRead binds one Factor-owned summary token through the
-// member surface at the token's declared ordinal.
-func bindMemberSummaryRead[K ~uint32 | ~uint64, V, S any](bound readBinding, member equation.RuleMember, read Read[S], factor *boundFactor[K, V], form ReadForm[V, S]) bool {
-	if bound == nil || read.index < 0 {
-		return false
-	}
-	surface, ok := member.ReadAt(read.index)
-	return ok && bindSummaryRead(bound, read, factor, surface, form)
-}
-
-// bindMemberStagedRead installs one sparse row-local exact selector. The
-// topology contributes only the sealed target Factor occurrence surface; it
-// cannot pre-enumerate candidates. The typed Factor target and typed
-// normalizer stay behind stagedFactor and ReadForm respectively.
-func bindMemberStagedRead[V, S any, Tag selectionTag](bound readBinding, member equation.RuleMember, read Read[Selection[Tag, S]], target stagedFactor[V], source ReadForm[V, S], selector *coldReadSelector, locate func(SelectorContext) bool) bool {
-	if bound == nil || target == nil || selector == nil || locate == nil {
-		return false
-	}
-	schema := bound.ruleSchema()
-	if schema == nil || read.rule != schema || read.index < 0 || read.index >= len(schema.reads) || read.resolve == nil || !source.valid() || source.schema.readKind != exactReadForm || selector.read != read.index || len(selector.depends) == 0 || !sameDependencies(selector.depends, schema.reads[read.index].depends) {
-		return false
-	}
-	declared := schema.reads[read.index]
-	if declared.input != read.input.index || declared.form != source.schema || declared.form.factor == nil || source.schema.factor == nil || declared.form.factor != source.schema.factor {
-		return false
-	}
-	for _, dependency := range selector.depends {
-		if dependency.kind != readDependency || dependency.index < 0 || dependency.index >= read.index {
-			return false
-		}
-	}
-	surface, ok := member.ReadAt(read.index)
-	if !ok || surface.Form != equation.SurfaceReadSelect || surface.Factor != source.schema.factor.semantic.compositionKey() ||
-		surface.Semantic != surface.Factor || surface.Normalizer.Available() || surface.Mode != equation.TargetModeNone || surface.Local == 0 {
-		return false
-	}
-	if _, slotOK := target.stagedSlot(); !slotOK {
-		return false
-	}
-	return bound.appendReadRuntime(&stagedReadRuntime[V, S, Tag]{input: declared.input, selector: selector, target: target, locate: locate, normalize: source.normalize})
-}
-
-func coldReadSelectorForRead(rule *ruleSchema, read int) *coldReadSelector {
-	if rule == nil || read < 0 {
-		return nil
-	}
-	for index := range rule.readSelectors {
-		selector := &rule.readSelectors[index]
-		if selector.read == read {
-			return selector
-		}
-	}
-	return nil
-}
-
 func (bound *boundRule[V, O]) execute(work *carrier.Work, base carrier.RuleContributionBase, inputs []carrier.State, within support.Mask) (carrier.Patch, []demand.Observation, bool, bool, SolveFailurePhase) {
-	if bound == nil || bound.rule == nil || bound.transfer == nil || work == nil || !work.OwnsRuleContributionStates(base, inputs) {
+	if bound == nil || bound.transfer == nil || work == nil || !work.OwnsRuleContributionStates(base, inputs) {
 		return carrier.Patch{}, nil, false, false, SolveFailurePhasePreflight
 	}
 	epoch := bound.nextEpoch.Add(1)
@@ -2041,7 +1698,7 @@ func (bound *boundRule[V, O]) execute(work *carrier.Work, base carrier.RuleContr
 		return carrier.Patch{}, nil, false, false, SolveFailurePhaseDerivation
 	}
 	defer ticket.invalidate()
-	evidence, admitted := bound.admission.admit(derivation, bound.rule.composition, bound.rule)
+	evidence, admitted := bound.admission.admit(derivation, bound.proof)
 	if !execution.product.requireCheckpoint() {
 		return carrier.Patch{}, nil, false, false, SolveFailurePhaseCheckpoint
 	}
@@ -2074,10 +1731,14 @@ func (bound *boundRule[V, O]) execute(work *carrier.Work, base carrier.RuleContr
 }
 
 func (bound *boundRule[V, O]) derivation(execution *ruleExecution, reads []demand.Observation) (RuleDerivation[V, O], *ruleAdmissionTicket, bool) {
-	if bound == nil || bound.rule == nil || !bound.admission.same(bound.rule.admission) || execution == nil || execution.owner != bound || !bound.carryOnly && execution.output == nil || execution.product == nil || !execution.product.requireCheckpoint() || execution.epoch == 0 || execution.active.Load() != execution.epoch || bound.anchor.Available() == false || bound.rule.composition == nil || !bound.rule.composition.Sealed() {
+	if bound == nil || bound.proof == nil || !bound.proof.valid() || !bound.admission.same(bound.proof.admission) || execution == nil || execution.owner != bound || !bound.carryOnly && execution.output == nil || execution.product == nil || !execution.product.requireCheckpoint() || execution.epoch == 0 || execution.active.Load() != execution.epoch || !bound.anchor.Available() {
 		return RuleDerivation[V, O]{}, nil, false
 	}
-	ticket := &ruleAdmissionTicket{rule: bound.rule, composition: bound.rule.composition.ID(), identity: bound.admission.identity, epoch: execution.epoch, anchor: bound.anchor, execution: execution, product: execution.product, live: true}
+	compositionID := bound.proof.compositionID()
+	if !compositionID.Available() {
+		return RuleDerivation[V, O]{}, nil, false
+	}
+	ticket := &ruleAdmissionTicket{proof: bound.proof, composition: compositionID, identity: bound.admission.identity, epoch: execution.epoch, anchor: bound.anchor, execution: execution, product: execution.product, live: true}
 	// Trusted theorem admission has no checker-visible operands. Preserve all
 	// runtime authority in its one live ticket without copying input, read, or
 	// staged-result proof payloads.
@@ -2139,7 +1800,7 @@ func (bound *boundRule[V, O]) derivation(execution *ruleExecution, reads []deman
 	if !execution.product.requireCheckpoint() {
 		return RuleDerivation[V, O]{}, nil, false
 	}
-	return RuleDerivation[V, O]{rule: bound.rule, composition: bound.rule.composition.ID(), identity: bound.admission.identity, epoch: execution.epoch, anchor: bound.anchor, operandContent: bound.operandContent, coordinates: bound.coordinates, inputs: inputs, reads: proofReads, dispositions: dispositions, product: execution.product, ticket: ticket, operand: bound.operand}, ticket, true
+	return RuleDerivation[V, O]{proof: bound.proof, composition: compositionID, identity: bound.admission.identity, epoch: execution.epoch, anchor: bound.anchor, operandContent: bound.operandContent, coordinates: bound.coordinates, inputs: inputs, reads: proofReads, dispositions: dispositions, product: execution.product, ticket: ticket, operand: bound.operand}, ticket, true
 }
 
 // validRuleDispositionCoverage makes a checker-visible derivation total over

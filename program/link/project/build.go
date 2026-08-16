@@ -121,6 +121,7 @@ func buildApplications(mounts []mountRow) ([]applicationRow, []uint32, []uint32,
 		executable := flowView.Executable()
 		directFunctions := flowView.DirectFunctions()
 		functions := authored.Functions()
+		transformer := p.TransformerInput()
 		for at := 0; at < callsView.Count(); at++ {
 			call, ok := callsView.At(at)
 			if !ok {
@@ -128,6 +129,11 @@ func buildApplications(mounts []mountRow) ([]applicationRow, []uint32, []uint32,
 			}
 			if !executable.Contains(call) {
 				continue
+			}
+			occurrence, occurrenceOK := transformer.CallAt(at)
+			context := occurrence.ContextID()
+			if !occurrenceOK || !transformer.OwnsCallOccurrence(occurrence) || !context.Available() {
+				return nil, nil, nil, nil, nil, errors.New("link/project: malformed executable Program Call occurrence proof")
 			}
 			_, callee, _, _, callOK := callsView.Get(call)
 			if !callOK {
@@ -139,7 +145,7 @@ func buildApplications(mounts []mountRow) ([]applicationRow, []uint32, []uint32,
 					return nil, nil, nil, nil, nil, errors.New("link/project: direct Call names malformed Function")
 				}
 			}
-			appendItem(applicationKey{kind: applicationCall, shard: uint32(shard), term: call})
+			appendItem(applicationKey{kind: applicationCall, shard: uint32(shard), term: call, callContext: context, callProof: occurrence})
 		}
 		if err := appendFunctionStyleApplications(p, shard, appendItem); err != nil {
 			return nil, nil, nil, nil, nil, err
@@ -176,13 +182,18 @@ func buildApplications(mounts []mountRow) ([]applicationRow, []uint32, []uint32,
 			return nil, nil, nil, nil, nil, errors.New("link/project: duplicate Application")
 		}
 		ordinal := uint32(index + 1)
-		lookup[item] = ordinal
-		applications[index] = applicationRow{kind: item.kind, shard: item.shard, term: item.term, slot: item.slot}
+		lookup[applicationLookupKey(item)] = ordinal
+		applications[index] = applicationRow{kind: item.kind, shard: item.shard, term: item.term, slot: item.slot, callContext: item.callContext, callProof: item.callProof}
 		switch item.kind {
 		case applicationCall:
+			formal := callApplicationID(item.callContext)
+			if !item.callContext.Available() || !item.callProof.Available() || item.callProof.ContextID() != item.callContext || !formal.Available() {
+				return nil, nil, nil, nil, nil, errors.New("link/project: Call Application lacks occurrence identity")
+			}
+			applications[index].callFormal = formal
 			bases = append(bases, ordinal)
 			calls = append(calls, ordinal)
-			source := callSource{shard: item.shard, term: item.term}
+			source := callSource{shard: item.shard, context: item.callContext}
 			if prior := callsBySource[source]; prior != 0 {
 				return nil, nil, nil, nil, nil, errors.New("link/project: ambiguous Call Application")
 			}
@@ -297,6 +308,16 @@ func compareApplicationKey(left, right applicationKey) int {
 	return 0
 }
 
+// applicationLookupKey deliberately strips the Program proof identity from
+// the construction-only physical-row lookup. Import roots name the existing
+// portable Application row, while the retained CallOccurrence identity is
+// used only by the exact mounted inverse and is not part of artifact wire.
+func applicationLookupKey(key applicationKey) applicationKey {
+	key.callContext = keyspace.ContentID{}
+	key.callProof = program.CallOccurrence{}
+	return key
+}
+
 func canonicalMounts(input []Module) ([]mountRow, error) {
 	mounts := make([]mountRow, len(input))
 	names := make(map[string]struct{}, len(input))
@@ -315,7 +336,11 @@ func canonicalMounts(input []Module) ([]mountRow, error) {
 		if !id.Available() {
 			return nil, fmt.Errorf("link/project: module %q has unavailable Program ContentID", item.Name)
 		}
-		mounts[index] = mountRow{name: item.Name, program: item.Program, id: id}
+		key := moduleKeyID(item.Name, id)
+		if !key.Available() {
+			return nil, fmt.Errorf("link/project: module %q has unavailable ModuleKey", item.Name)
+		}
+		mounts[index] = mountRow{name: item.Name, program: item.Program, id: id, key: key}
 	}
 	sort.Slice(mounts, func(left, right int) bool {
 		if order := bytes.Compare(mounts[left].id[:], mounts[right].id[:]); order != 0 {

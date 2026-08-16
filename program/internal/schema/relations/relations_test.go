@@ -53,8 +53,8 @@ func TestCanonicalSchemaDeclaresTheRetainedDenominator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if schema.Count() != 114 {
-		t.Fatalf("relation count = %d, want 114", schema.Count())
+	if schema.Count() != 111 {
+		t.Fatalf("relation count = %d, want 111", schema.Count())
 	}
 	t.Logf("catalog relations=%d digest=%x", schema.Count(), schema.Digest())
 	counts := map[Owner]int{}
@@ -66,11 +66,11 @@ func TestCanonicalSchemaDeclaresTheRetainedDenominator(t *testing.T) {
 		OwnerProgramFlow:   33,
 		OwnerProgramStatic: 10,
 		OwnerProgramModule: 6,
-		OwnerTarget:        36,
+		OwnerTarget:        37,
 		OwnerLinkProject:   2,
 		OwnerLinkBoundary:  1,
 		OwnerLinkModule:    8,
-		OwnerLinkStatic:    5,
+		OwnerLinkStatic:    1,
 		OwnerLinkHost:      5,
 	} {
 		if got := counts[owner]; got != want {
@@ -113,6 +113,7 @@ func TestCanonicalSchemaDeclaresTheRetainedDenominator(t *testing.T) {
 	assertForm(t, schema.Rows(), semanticsource.OriginTargetOperation, semanticsource.FacetTargetOpaque, FormSealDerived)
 	assertForm(t, schema.Rows(), semanticsource.OriginTargetOperation, semanticsource.FacetTargetOperationEffect, FormAuthored)
 	assertForm(t, schema.Rows(), semanticsource.OriginTargetOperation, semanticsource.FacetTargetCallbackEffect, FormAuthored)
+	assertForm(t, schema.Rows(), semanticsource.OriginTargetOperation, semanticsource.FacetTargetPublicationEffect, FormAuthored)
 	assertForm(t, schema.Rows(), semanticsource.OriginTargetOperation, semanticsource.FacetTargetCallbackRelease, FormAuthored)
 	assertForm(t, schema.Rows(), semanticsource.OriginTargetOperation, semanticsource.FacetTargetSuspension, FormSealDerived)
 	assertForm(t, schema.Rows(), semanticsource.OriginTargetProtocol, semanticsource.FacetTargetProtocolEscape, FormSealDerived)
@@ -223,6 +224,13 @@ func TestCanonicalSchemaDeclaresTheRetainedDenominator(t *testing.T) {
 	assertParents(t, rowFor(t, schema.Rows(), semanticsource.OriginTargetOperation, semanticsource.FacetTargetOpaque), targetOperation)
 	assertParents(t, rowFor(t, schema.Rows(), semanticsource.OriginTargetOperation, semanticsource.FacetTargetOperationEffect), targetOperation, targetABI)
 	assertParents(t, rowFor(t, schema.Rows(), semanticsource.OriginTargetOperation, semanticsource.FacetTargetCallbackEffect), targetCallback, targetABI)
+	assertParents(t, rowFor(t, schema.Rows(), semanticsource.OriginTargetOperation, semanticsource.FacetTargetPublicationEffect),
+		targetOperation,
+		targetABI,
+		targetCallback,
+		definitionFor(t, semanticsource.OriginTargetOperation, semanticsource.FacetTargetOperationEffect),
+		definitionFor(t, semanticsource.OriginTargetOperation, semanticsource.FacetTargetCallbackEffect),
+	)
 	assertParents(t, rowFor(t, schema.Rows(), semanticsource.OriginTargetOperation, semanticsource.FacetTargetCallbackRelease), targetCallback, targetOperation, targetABI, targetOutcome)
 	assertParents(t, rowFor(t, schema.Rows(), semanticsource.OriginTargetOperation, semanticsource.FacetTargetProduced), targetOperation, targetOutcome)
 	assertParents(t, rowFor(t, schema.Rows(), semanticsource.OriginTargetGsub, 0),
@@ -295,6 +303,7 @@ func TestCanonicalSchemaDeclaresTheRetainedDenominator(t *testing.T) {
 		semanticsource.FacetTargetProduced,
 		semanticsource.FacetTargetProducedCapture,
 		semanticsource.FacetTargetFreshResult,
+		semanticsource.FacetTargetPublicationEffect,
 	} {
 		boundaryParents = append(boundaryParents, definitionFor(t, semanticsource.OriginTargetOperation, facet))
 	}

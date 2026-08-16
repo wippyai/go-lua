@@ -97,7 +97,8 @@ func (identity RouteIdentity) Equal(other RouteIdentity) bool {
 	return identity == other
 }
 
-func (identity RouteIdentity) Digest() keyspace.ContentID { return identity.digest }
+func (identity RouteIdentity) Digest() keyspace.ContentID      { return identity.digest }
+func (identity RouteIdentity) ResetDigest() keyspace.ContentID { return identity.resetDigest }
 func (identity RouteIdentity) Provenance() Provenance {
 	return Provenance{Source: identity.sourceID, Flow: identity.flowID, Static: identity.staticID, Module: identity.moduleID}
 }
@@ -127,12 +128,461 @@ func (successor Successor) Identity() (RouteIdentity, bool) {
 	identity, ok := successor.route.Identity()
 	return publicRouteIdentity(identity), ok
 }
-func (successor Successor) ResetCount() (int, bool) { return successor.route.ResetCount() }
+func (successor Successor) SemanticID() (keyspace.ContentID, bool) {
+	return successor.route.SemanticID()
+}
+func (successor Successor) FromPoint() (WTOPoint, bool) {
+	point, ok := successor.route.FromPoint()
+	return publicWTOPoint(point), ok
+}
+func (successor Successor) ToPoint() (WTOPoint, bool) {
+	point, ok := successor.route.ToPoint()
+	return publicWTOPoint(point), ok
+}
+
+// WTORegionID returns the sole parent-issued local schedule membership for
+// this final route. A zero ID denotes a cross-region/acyclic route.
+func (successor Successor) WTORegionID() keyspace.ContentID { return successor.route.WTORegionID() }
+func (successor Successor) ResetCount() (int, bool)         { return successor.route.ResetCount() }
 func (successor Successor) ResetAt(offset int) (keyspace.Term, bool) {
 	return successor.route.ResetAt(offset)
 }
+func (successor Successor) ResetPathAt(offset int) (keyspace.ContentID, bool) {
+	return successor.route.ResetPathAt(offset)
+}
 func (successor Successor) ResetContains(decision keyspace.Term) bool {
 	return successor.route.ResetContains(decision)
+}
+func (successor Successor) HasResetWitness() bool { return successor.route.HasResetWitness() }
+
+// FinalRoute is the single opaque Flow projection consumed by Program route
+// facades. Endpoint and optional decision/Mu Site handles are issued here;
+// callers never reconstruct them from raw successor Terms.
+type FinalRoute struct {
+	owner      *causal.Result
+	successor  Successor
+	from       Site // optional legacy attachment
+	to         Site // optional legacy attachment
+	fromPoint  WTOPoint
+	toPoint    WTOPoint
+	decision   Site
+	mu         Site
+	identity   RouteIdentity
+	semanticID keyspace.ContentID
+	fromPath   keyspace.ContentID
+	toPath     keyspace.ContentID
+	guard      RouteGuardProof
+	recurrence RouteRecurrence
+	guarded    bool
+	component  bool
+}
+
+func publicFinalRoute(result *causal.Result, successor causal.Successor) (FinalRoute, bool) {
+	public := publicSuccessor(successor)
+	identity, identityOK := public.Identity()
+	semanticID, semanticIDOK := public.SemanticID()
+	fromPoint, fromPointOK := public.FromPoint()
+	toPoint, toPointOK := public.ToPoint()
+	if !identityOK || !semanticIDOK || !fromPointOK || !toPointOK {
+		return FinalRoute{}, false
+	}
+	route := FinalRoute{owner: result, successor: public, fromPoint: fromPoint, toPoint: toPoint, identity: identity, semanticID: semanticID, fromPath: fromPoint.PathID(), toPath: toPoint.PathID(), guarded: successor.Decision != 0}
+	if from, ok := result.SiteForTerm(successor.From); ok {
+		route.from = publicSite(from)
+	}
+	if to, ok := result.SiteForTerm(successor.To); ok {
+		route.to = publicSite(to)
+	}
+	if successor.Decision != 0 {
+		if decision, ok := result.SiteForTerm(successor.Decision); ok {
+			route.decision = publicSite(decision)
+		}
+	}
+	if successor.Mu != 0 {
+		if mu, ok := result.SiteForTerm(successor.Mu); ok {
+			route.mu = publicSite(mu)
+		}
+	}
+	route.guard, _ = public.GuardProof()
+	if route.guarded && !route.guard.Available() {
+		return FinalRoute{}, false
+	}
+	if _, componentOK := public.Component(); componentOK {
+		route.component = true
+		route.recurrence, _ = public.Recurrence()
+		if !route.recurrence.Available() {
+			return FinalRoute{}, false
+		}
+	} else if route.recurrence.Available() {
+		return FinalRoute{}, false
+	}
+	return route, route.Available()
+}
+
+func (route FinalRoute) Available() bool {
+	if route.owner == nil || !route.identity.Available() || !route.fromPoint.Available() || !route.toPoint.Available() {
+		return false
+	}
+	issued, ok := route.owner.Successors().Resolve(route.identity.causal())
+	if !ok {
+		return false
+	}
+	issuedIdentity, issuedOK := issued.Identity()
+	issuedPublic := publicSuccessor(issued)
+	issuedSemanticID, semanticOK := issuedPublic.SemanticID()
+	if !issuedOK || issuedIdentity != route.identity.causal() || !semanticOK || issuedSemanticID != route.semanticID ||
+		issuedPublic.route != route.successor.route || issuedPublic.Arm != route.successor.Arm {
+		return false
+	}
+	issuedFromPoint, issuedFromPointOK := issuedPublic.FromPoint()
+	issuedToPoint, issuedToPointOK := issuedPublic.ToPoint()
+	if !issuedFromPointOK || !issuedToPointOK || issuedFromPoint.PathID() != route.fromPath || issuedToPoint.PathID() != route.toPath {
+		return false
+	}
+	_, issuedComponent := issued.Component()
+	if issuedComponent != route.component || (issued.Decision != 0) != route.guarded {
+		return false
+	}
+	if issued.Decision == 0 {
+		if route.decision.Available() {
+			return false
+		}
+	} else if decisionSite, decisionSiteOK := route.owner.SiteForTerm(issued.Decision); decisionSiteOK {
+		if !route.decision.Available() || route.decision.site != decisionSite {
+			return false
+		}
+	} else if route.decision.Available() {
+		return false
+	}
+	if issued.Mu == 0 {
+		if route.mu.Available() {
+			return false
+		}
+	} else if muSite, muSiteOK := route.owner.SiteForTerm(issued.Mu); muSiteOK {
+		if !route.mu.Available() || route.mu.site != muSite {
+			return false
+		}
+	} else if route.mu.Available() {
+		return false
+	}
+	if route.guarded {
+		guardIdentity, guardOK := route.guard.RouteIdentity()
+		guardRouteID, guardRouteIDOK := route.guard.RouteID()
+		if !guardOK || !guardIdentity.Equal(route.identity) || !guardRouteIDOK || guardRouteID != route.semanticID || !route.guard.Available() {
+			return false
+		}
+	} else if route.guard.Available() {
+		return false
+	}
+	if route.component {
+		recurrenceIdentity, recurrenceOK := route.recurrence.RouteIdentity()
+		recurrenceRouteID, recurrenceRouteIDOK := route.recurrence.RouteID()
+		if !recurrenceOK || !recurrenceIdentity.Equal(route.identity) || !recurrenceRouteIDOK || recurrenceRouteID != route.semanticID || !route.recurrence.Available() {
+			return false
+		}
+	} else if route.recurrence.Available() {
+		return false
+	}
+	return true
+}
+
+func (route FinalRoute) Identity() (RouteIdentity, bool) {
+	if !route.Available() {
+		return RouteIdentity{}, false
+	}
+	return route.identity, true
+}
+
+// ID returns the parent-issued opaque route identity used for semantic joins.
+// Its raw endpoint preimage remains private to Causal validation.
+func (route FinalRoute) ID() (keyspace.ContentID, bool) {
+	if !route.Available() {
+		return keyspace.ContentID{}, false
+	}
+	return route.semanticID, route.semanticID.Available()
+}
+
+func (route FinalRoute) From() (Site, bool) {
+	if !route.Available() || !route.from.Available() {
+		return Site{}, false
+	}
+	return route.from, true
+}
+
+func (route FinalRoute) To() (Site, bool) {
+	if !route.Available() || !route.to.Available() {
+		return Site{}, false
+	}
+	return route.to, true
+}
+func (route FinalRoute) FromPoint() (WTOPoint, bool) {
+	if !route.Available() {
+		return WTOPoint{}, false
+	}
+	return route.fromPoint, true
+}
+func (route FinalRoute) ToPoint() (WTOPoint, bool) {
+	if !route.Available() {
+		return WTOPoint{}, false
+	}
+	return route.toPoint, true
+}
+
+func (route FinalRoute) FromPath() (keyspace.ContentID, bool) {
+	if !route.Available() {
+		return keyspace.ContentID{}, false
+	}
+	return route.fromPath, true
+}
+
+func (route FinalRoute) ToPath() (keyspace.ContentID, bool) {
+	if !route.Available() {
+		return keyspace.ContentID{}, false
+	}
+	return route.toPath, true
+}
+
+func (route FinalRoute) OwnsSite(site Site) bool {
+	return route.Available() && route.owner.OwnsSite(site.site) &&
+		(site == route.from || site == route.to || site == route.decision || site == route.mu)
+}
+
+func (route FinalRoute) Decision() (Site, bool) {
+	if !route.Available() || !route.decision.Available() || !route.owner.OwnsSite(route.decision.site) {
+		return Site{}, false
+	}
+	return route.decision, true
+}
+
+func (route FinalRoute) Mu() (Site, bool) {
+	if !route.Available() || !route.mu.Available() || !route.owner.OwnsSite(route.mu.site) {
+		return Site{}, false
+	}
+	return route.mu, true
+}
+
+func (route FinalRoute) Arm() (BoundaryArmKind, bool) {
+	if !route.Available() {
+		return 0, false
+	}
+	return route.successor.Arm, true
+}
+
+func (route FinalRoute) GuardProof() (RouteGuardProof, bool) {
+	if !route.Available() || !route.guarded || !route.guard.Available() || !route.owner.OwnsRouteGuardProof(route.guard.proof) {
+		return RouteGuardProof{}, false
+	}
+	return route.guard, true
+}
+
+func (route FinalRoute) Guarded() bool {
+	return route.Available() && route.guarded
+}
+
+func (route FinalRoute) Recurrence() (RouteRecurrence, bool) {
+	if !route.Available() || !route.component || !route.recurrence.Available() || !route.owner.OwnsRouteRecurrence(route.recurrence.proof) {
+		return RouteRecurrence{}, false
+	}
+	return route.recurrence, true
+}
+
+func (route FinalRoute) Component() (Site, bool) {
+	proof, ok := route.Recurrence()
+	if !ok {
+		return Site{}, false
+	}
+	term, ok := proof.Component()
+	if !ok {
+		return Site{}, false
+	}
+	site, ok := route.owner.SiteForTerm(term)
+	return publicSite(site), ok && route.owner.OwnsSite(site)
+}
+
+func (route FinalRoute) HasMu() bool {
+	proof, ok := route.Recurrence()
+	return ok && proof.HasMu()
+}
+
+func (route FinalRoute) MuPathID() (keyspace.ContentID, bool) {
+	proof, ok := route.Recurrence()
+	if !ok {
+		return keyspace.ContentID{}, false
+	}
+	return proof.MuPathID()
+}
+
+func (route FinalRoute) ResetCount() (int, bool) {
+	if !route.Available() {
+		return 0, false
+	}
+	return route.successor.ResetCount()
+}
+
+// ResetPathAt returns the immutable semantic receipt for one reset member.
+// It does not expose the authored decision term or a Site context identity.
+func (route FinalRoute) ResetPathAt(index int) (keyspace.ContentID, bool) {
+	if !route.Available() || index < 0 {
+		return keyspace.ContentID{}, false
+	}
+	return route.successor.ResetPathAt(index)
+}
+func (route FinalRoute) HasResetWitness() bool {
+	return route.Available() && route.successor.HasResetWitness()
+}
+
+func (route FinalRoute) ResetAt(index int) (Site, bool) {
+	if !route.Available() || index < 0 {
+		return Site{}, false
+	}
+	term, ok := route.successor.ResetAt(index)
+	if !ok {
+		return Site{}, false
+	}
+	site, ok := route.owner.SiteForTerm(term)
+	return publicSite(site), ok && route.owner.OwnsSite(site)
+}
+
+func (route FinalRoute) ResetContains(decision Site) bool {
+	if !route.Available() || !decision.Available() || !route.owner.OwnsSite(decision.site) {
+		return false
+	}
+	term, ok := decision.Term()
+	return ok && route.successor.ResetContains(term)
+}
+
+func (view Successors) FinalAt(index int) (FinalRoute, bool) {
+	if view.result == nil {
+		return FinalRoute{}, false
+	}
+	successor, ok := view.TotalAt(index)
+	if !ok {
+		return FinalRoute{}, false
+	}
+	return publicFinalRoute(view.result, successor.route)
+}
+
+func (view Successors) ResolveFinal(identity RouteIdentity) (FinalRoute, bool) {
+	if view.result == nil {
+		return FinalRoute{}, false
+	}
+	successor, ok := view.Resolve(identity)
+	if !ok {
+		return FinalRoute{}, false
+	}
+	return publicFinalRoute(view.result, successor.route)
+}
+
+func (view Causal) OwnsFinalRoute(route FinalRoute) bool {
+	return view.result != nil && route.owner == view.result && route.Available()
+}
+
+func (view Causal) OwnsRouteSite(route FinalRoute, site Site) bool {
+	return view.result != nil && route.owner == view.result && route.OwnsSite(site)
+}
+
+// Component reports the recurrence-issued Program-local cyclic head for this
+// exact final route. A false result denotes an acyclic or cross-component
+// route; callers never infer membership from Mu.
+func (successor Successor) Component() (keyspace.Term, bool) {
+	return successor.route.Component()
+}
+
+// RouteRecurrence is the exact recurrence/component proof issued by the
+// sealed Causal owner for a cyclic final route. It is opaque to Program: the
+// component identity is authored here, not reconstructed from route fields.
+type RouteRecurrence struct {
+	proof causal.RouteRecurrence
+	route RouteIdentity
+}
+
+func publicRouteRecurrence(proof causal.RouteRecurrence) RouteRecurrence {
+	route, _ := proof.RouteIdentity()
+	return RouteRecurrence{proof: proof, route: publicRouteIdentity(route)}
+}
+
+func (successor Successor) Recurrence() (RouteRecurrence, bool) {
+	proof, ok := successor.route.Recurrence()
+	return publicRouteRecurrence(proof), ok
+}
+
+// RouteGuardProof is the exact parent-issued guarded disposition of one
+// route. Its decision Site projection is optional; Truth and ownership are
+// authenticated by the proof itself.
+type RouteGuardProof struct{ proof causal.RouteGuardProof }
+
+func (successor Successor) GuardProof() (RouteGuardProof, bool) {
+	proof, ok := successor.route.GuardProof()
+	return RouteGuardProof{proof: proof}, ok
+}
+
+func (proof RouteGuardProof) Available() bool               { return proof.proof.Available() }
+func (proof RouteGuardProof) ContextID() keyspace.ContentID { return proof.proof.ContextID() }
+func (proof RouteGuardProof) Truth() (bool, bool)           { return proof.proof.Truth() }
+func (proof RouteGuardProof) RouteID() (keyspace.ContentID, bool) {
+	return proof.proof.RouteID()
+}
+func (proof RouteGuardProof) DecisionPathID() (keyspace.ContentID, bool) {
+	return proof.proof.DecisionPathID()
+}
+func (proof RouteGuardProof) RouteIdentity() (RouteIdentity, bool) {
+	identity, ok := proof.proof.RouteIdentity()
+	return publicRouteIdentity(identity), ok
+}
+
+func (proof RouteRecurrence) Available() bool { return proof.proof.Available() }
+
+func (proof RouteRecurrence) Equal(other RouteRecurrence) bool {
+	if !proof.Available() || !other.Available() || proof.ComponentID() != other.ComponentID() {
+		return false
+	}
+	leftRouteID, leftRouteOK := proof.RouteID()
+	rightRouteID, rightRouteOK := other.RouteID()
+	leftCount, leftCountOK := proof.ResetCount()
+	rightCount, rightCountOK := other.ResetCount()
+	leftDigest, leftDigestOK := proof.ResetDigest()
+	rightDigest, rightDigestOK := other.ResetDigest()
+	leftMuPath, leftMuPathOK := proof.MuPathID()
+	rightMuPath, rightMuPathOK := other.MuPathID()
+	return leftRouteOK && rightRouteOK && leftRouteID == rightRouteID && proof.HasMu() == other.HasMu() &&
+		leftMuPath == rightMuPath && leftMuPathOK == rightMuPathOK && leftCount == rightCount && leftCountOK == rightCountOK &&
+		leftDigest == rightDigest && leftDigestOK == rightDigestOK
+}
+
+// SameComponent compares only the parent-issued SCC identity. It is distinct
+// from Equal, which also authenticates the exact final route and recurrence
+// witness.
+func (proof RouteRecurrence) SameComponent(other RouteRecurrence) bool {
+	return proof.Available() && other.Available() && proof.ComponentID() == other.ComponentID()
+}
+
+func (proof RouteRecurrence) RouteIdentity() (RouteIdentity, bool) {
+	if !proof.Available() {
+		return RouteIdentity{}, false
+	}
+	return proof.route, true
+}
+
+func (proof RouteRecurrence) ComponentID() keyspace.ContentID {
+	return proof.proof.ComponentID()
+}
+
+func (proof RouteRecurrence) RouteID() (keyspace.ContentID, bool) {
+	return proof.proof.RouteID()
+}
+func (proof RouteRecurrence) HasMu() bool                          { return proof.proof.HasMu() }
+func (proof RouteRecurrence) MuPathID() (keyspace.ContentID, bool) { return proof.proof.MuPathID() }
+
+func (proof RouteRecurrence) Component() (keyspace.Term, bool) {
+	return proof.proof.Component()
+}
+
+func (proof RouteRecurrence) Mu() (keyspace.Term, bool) { return proof.proof.Mu() }
+
+func (proof RouteRecurrence) ResetCount() (int, bool) { return proof.proof.ResetCount() }
+
+func (proof RouteRecurrence) ResetDigest() (keyspace.ContentID, bool) {
+	return proof.proof.ResetDigest()
 }
 
 type Causal struct{ result *causal.Result }
@@ -141,6 +591,14 @@ func (view Causal) Edges() Edges           { return Edges{result: view.result} }
 func (view Causal) Boundaries() Boundaries { return Boundaries{result: view.result} }
 func (view Causal) Successors() Successors { return Successors{result: view.result} }
 func (view Causal) Sites() Sites           { return Sites{result: view.result} }
+
+func (view Causal) OwnsRouteRecurrence(proof RouteRecurrence) bool {
+	return view.result != nil && view.result.OwnsRouteRecurrence(proof.proof)
+}
+
+func (view Causal) OwnsRouteGuardProof(proof RouteGuardProof) bool {
+	return view.result != nil && view.result.OwnsRouteGuardProof(proof.proof)
+}
 
 // Site is an opaque exact-quartet-fenced Flow causal site handle for an
 // existing route endpoint or sealed body-terminal Outcome coordinate.
@@ -159,12 +617,21 @@ func (site Site) Equal(other Site) bool { return site.site.Equal(other.site) }
 // ContextID returns the contextual endpoint identity; it is not mutation portable.
 func (site Site) ContextID() keyspace.ContentID { return site.site.ContextID() }
 
+// PathID returns the portable structural semantic identity issued by Flow.
+func (site Site) PathID() keyspace.ContentID { return site.site.PathID() }
+
 // Term returns the existing causal endpoint Term represented by the site.
 func (site Site) Term() (keyspace.Term, bool) { return site.site.Term() }
 
 // Sites is the allocation-free canonical causal endpoint projection.
 // Its indexes borrow the one sealed Causal owner and retain no syntax/IR copy.
 type Sites struct{ result *causal.Result }
+
+// Owns accepts only a Site issued by this exact hot Causal owner. Unlike
+// Equal, it deliberately rejects equivalent artifact replay handles.
+func (view Sites) Owns(site Site) bool {
+	return view.result != nil && view.result.OwnsSite(site.site)
+}
 
 // Count reports the deduped route-endpoint denominator.
 func (view Sites) Count() int {
@@ -294,6 +761,17 @@ func (view Boundaries) For(call keyspace.Term) (CallBoundary, bool) {
 	return publicBoundary(boundary), ok
 }
 
+// Arm returns one exact sealed CallBoundary arm without traversing the union
+// successor ranges. The arm vocabulary is closed and the returned route is
+// still owned by the same Causal authority.
+func (view Boundaries) Arm(call keyspace.Term, arm BoundaryArmKind) (Successor, bool) {
+	if view.result == nil {
+		return Successor{}, false
+	}
+	successor, ok := view.result.Boundaries().Arm(call, causal.BoundaryArmKind(arm))
+	return publicSuccessor(successor), ok
+}
+
 type Successors struct{ result *causal.Result }
 
 func (view Successors) Count(from keyspace.Term) int {
@@ -301,6 +779,26 @@ func (view Successors) Count(from keyspace.Term) int {
 		return 0
 	}
 	return view.result.Successors().Count(from)
+}
+
+// TotalCount returns the one sealed local-plus-call route denominator in
+// canonical publication order. It borrows the causal index and retains no
+// second catalog.
+func (view Successors) TotalCount() int {
+	if view.result == nil {
+		return 0
+	}
+	return view.result.Successors().TotalCount()
+}
+
+// TotalAt reissues one route from the sealed union index without rescanning
+// endpoint ranges or reconstructing a downstream route table.
+func (view Successors) TotalAt(index int) (Successor, bool) {
+	if view.result == nil {
+		return Successor{}, false
+	}
+	successor, ok := view.result.Successors().TotalAt(index)
+	return publicSuccessor(successor), ok
 }
 func (view Successors) At(from keyspace.Term, index int) (Successor, bool) {
 	if view.result == nil {

@@ -3,9 +3,6 @@ package typevalue
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/heap"
-	staticdomain "github.com/wippyai/go-lua/analysis/domain/static"
-	"github.com/wippyai/go-lua/analysis/semantic/typeauthority"
 	"github.com/wippyai/go-lua/program/link"
 	linkproject "github.com/wippyai/go-lua/program/link/project"
 	programlower "github.com/wippyai/go-lua/program/lower"
@@ -15,18 +12,16 @@ import (
 func TestStaticTypeValueSeedsPreserveDuplicateContentMounts(t *testing.T) {
 	p, err := programlower.Lower(programlower.Source{Name: "duplicate_typevalue.lua", Text: []byte(`
 local subject = 1
-type Dynamic = typeof(subject)
 string(subject)
-Dynamic(subject)
+string(subject)
 `)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	q, err := programlower.Lower(programlower.Source{Name: "duplicate_typevalue.lua", Text: []byte(`
 local subject = 1
-type Dynamic = typeof(subject)
 string(subject)
-Dynamic(subject)
+string(subject)
 `)})
 	if err != nil {
 		t.Fatal(err)
@@ -35,49 +30,44 @@ Dynamic(subject)
 	if err != nil {
 		t.Fatal(err)
 	}
-	left := sealStaticTypeValueFixture(t, contract, []linkproject.Module{{Name: "left", Program: p}, {Name: "right", Program: q}})
-	right := sealStaticTypeValueFixture(t, contract, []linkproject.Module{{Name: "right", Program: q}, {Name: "left", Program: p}})
-	if left.TypeValueSeeds().Count() != 4 || right.TypeValueSeeds().Count() != 4 {
+	leftSource := sealTypeValueLink(t, contract, []linkproject.Module{{Name: "left", Program: p}, {Name: "right", Program: q}})
+	rightSource := sealTypeValueLink(t, contract, []linkproject.Module{{Name: "right", Program: q}, {Name: "left", Program: p}})
+	leftStatics, leftHeaps := sealTypeValueAuthorities(t, leftSource, contract)
+	rightStatics, rightHeaps := sealTypeValueAuthorities(t, rightSource, contract)
+	left, leftOK := New(leftStatics, leftHeaps)
+	right, rightOK := New(rightStatics, rightHeaps)
+	if !leftOK || !rightOK || left == nil || right == nil {
+		t.Fatal("typevalue seal")
+	}
+	if left.SeedCount() != 4 || right.SeedCount() != 4 {
 		t.Fatal("Static did not retain four mounted occurrences")
 	}
 	for index := 0; index < 4; index++ {
-		l, _ := left.TypeValueSeeds().At(index)
-		r, _ := right.TypeValueSeeds().At(index)
-		if _, ok := left.TypeValueSeeds().Source(l); !ok {
-			t.Fatal("left seed source")
+		l, lOK := left.SeedAt(index)
+		r, rOK := right.SeedAt(index)
+		if !lOK || !rOK {
+			t.Fatal("mounted seed")
 		}
-		if _, ok := right.TypeValueSeeds().Source(r); !ok {
-			t.Fatal("right seed source")
+		if _, ok := left.SeedID(l); !ok {
+			t.Fatal("left seed identity")
 		}
-		if _, ok := left.TypeValueSeeds().RootIdentity(l); !ok {
+		if _, ok := right.SeedID(r); !ok {
+			t.Fatal("right seed identity")
+		}
+		if _, ok := left.SeedRoot(l); !ok {
 			t.Fatal("left seed root")
 		}
-		if _, ok := right.TypeValueSeeds().RootIdentity(r); !ok {
+		if _, ok := right.SeedRoot(r); !ok {
 			t.Fatal("right seed root")
 		}
 	}
 }
 
-func sealStaticTypeValueFixture(t testing.TB, contract *target.Contract, modules []linkproject.Module) *staticdomain.Authority {
+func sealTypeValueLink(t testing.TB, contract *target.Contract, modules []linkproject.Module) *link.Link {
 	t.Helper()
 	source, err := link.Seal(&link.Spec{Target: contract, Modules: modules})
 	if err != nil {
 		t.Fatal(err)
 	}
-	types, ok := typeauthority.Seal(source)
-	if !ok {
-		t.Fatal("typeauthority seal")
-	}
-	statics, _, err := staticdomain.Seal(source, types)
-	if err != nil {
-		t.Fatal(err)
-	}
-	heaps, ok := heap.Seal(source)
-	if !ok {
-		t.Fatal("heap seal")
-	}
-	if _, ok := New(statics, heaps); !ok {
-		t.Fatal("typevalue seal")
-	}
-	return statics
+	return source
 }

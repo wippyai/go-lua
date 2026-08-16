@@ -33,13 +33,8 @@ func (a *Authority) SeedValue(seed Seed) (Root, Value, bool) {
 // a TypeValue Rule uses this ID as its operand-content identity instead of
 // inventing a source name, descriptor key, or runtime object identity.
 func (a *Authority) SeedID(seed Seed) (keyspace.ContentID, bool) {
-	if a == nil || a.source == nil {
+	if a == nil {
 		return keyspace.ContentID{}, false
 	}
-	source, ok := a.SeedSource(seed)
-	if !ok {
-		return keyspace.ContentID{}, false
-	}
-	id, ok := a.values.ID(source)
-	return id, ok && id.Available()
+	return a.SeedValueIdentity(seed)
 }

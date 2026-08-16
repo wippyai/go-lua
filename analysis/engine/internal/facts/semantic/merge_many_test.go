@@ -110,6 +110,97 @@ func TestJoinContributionsManyMatchesFixedBinaryOrderAndAdmitsOnlyFinalValue(t *
 	}
 }
 
+func TestJoinContributionsManyReusesPriorNovelAggregateWithoutReadmission(t *testing.T) {
+	manager, err := guard.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	regions := support.New(manager)
+	if regions == nil {
+		t.Fatal("regions")
+	}
+	all := regions.True()
+	if !regions.Seal() {
+		t.Fatal("region seal")
+	}
+	admissions := 0
+	values, ok := terminal.New(terminal.Config[uint8]{
+		Equal: func(left, right uint8) bool { return left == right },
+		Fingerprint: func(value uint8) uint64 {
+			admissions++
+			return uint64(value)
+		},
+	})
+	if !ok {
+		t.Fatal("terminal arena")
+	}
+	ids := make(map[uint8]terminal.ID[uint8])
+	for _, value := range []uint8{0, 1, 2} {
+		id, admitted := values.Admit(value)
+		if !admitted {
+			t.Fatalf("admit %d", value)
+		}
+		ids[value] = id
+	}
+	if !values.Seal() {
+		t.Fatal("terminal seal")
+	}
+	facts, ok := diagram.New(diagram.Config[semanticFactor, semanticKey, uint8]{Factors: []semanticFactor{semanticColumn}, Terminals: values, Guards: manager})
+	if !ok {
+		t.Fatal("diagram")
+	}
+	join := func(left, right uint8) (uint8, bool) { return left | right, true }
+	domain, ok := New(facts, values, Operations[uint8]{
+		Default: 0, Equal: func(left, right uint8) bool { return left == right }, Fingerprint: func(value uint8) uint64 { return uint64(value) },
+		Join: join, Widen: join, Narrow: func(_, right uint8) (uint8, bool) { return right, true }, LessOrEq: func(left, right uint8) bool { return left&right == left },
+	})
+	if !ok {
+		t.Fatal("domain")
+	}
+	plane := func(value uint8) Plane[semanticFactor, semanticKey, uint8] {
+		t.Helper()
+		builder := facts.Begin()
+		if builder == nil {
+			t.Fatal("plane builder")
+		}
+		root, written := builder.Set(facts.Empty(), semanticColumn, 7, all, ids[value])
+		if !written {
+			t.Fatal("plane write")
+		}
+		root, written = builder.Seal(root)
+		if !written {
+			t.Fatal("plane seal")
+		}
+		result, valid := domain.Plane(root)
+		if !valid {
+			t.Fatal("plane")
+		}
+		return result
+	}
+	left, right := plane(1), plane(2)
+	empty, ok := domain.Empty()
+	if !ok {
+		t.Fatal("empty")
+	}
+	covers := func(key semanticKey, output []support.Mask) bool {
+		if key != 7 || len(output) != 2 {
+			return false
+		}
+		output[0], output[1] = all, all
+		return true
+	}
+	admissions = 0
+	first, valid := domain.JoinContributionsMany(empty, []Plane[semanticFactor, semanticKey, uint8]{left, right}, diagram.NewSoleScratch[semanticKey, uint8](), support.New(manager), covers)
+	if !valid || admissions != 1 {
+		t.Fatalf("first novel fold valid=%t admissions=%d", valid, admissions)
+	}
+	admissions = 0
+	second, valid := domain.JoinContributionsMany(first, []Plane[semanticFactor, semanticKey, uint8]{left, right}, diagram.NewSoleScratch[semanticKey, uint8](), support.New(manager), covers)
+	if !valid || admissions != 0 || second.Root() != first.Root() {
+		t.Fatalf("prior representative valid=%t admissions=%d roots=%t", valid, admissions, second.Root() == first.Root())
+	}
+}
+
 func TestJoinContributionsManyDistinguishesAbsentFromPresentDefault(t *testing.T) {
 	fixture := newSemanticFixture(t)
 	domain, ok := New(fixture.diagram, fixture.values, Operations[uint8]{
@@ -279,7 +370,7 @@ func TestJoinContributionsManyReusesSemanticReferenceAcrossSiblingTerminals(t *t
 		t.Fatal("empty plane")
 	}
 
-	t.Run("exclusive_carries_collapse_to_reference", func(t *testing.T) {
+	t.Run("exclusive_carries_preserve_semantic_value", func(t *testing.T) {
 		regions := support.New(manager)
 		if regions == nil {
 			t.Fatal("regions")
@@ -294,9 +385,6 @@ func TestJoinContributionsManyReusesSemanticReferenceAcrossSiblingTerminals(t *t
 		})
 		if !valid {
 			t.Fatal("many fold")
-		}
-		if folded.Root() != reference.Root() {
-			t.Fatal("semantic reference was rebuilt instead of reused")
 		}
 		if terminalAdmissions != 0 {
 			t.Fatalf("exclusive carries admitted %d candidate terminals", terminalAdmissions)
@@ -317,7 +405,7 @@ func TestJoinContributionsManyReusesSemanticReferenceAcrossSiblingTerminals(t *t
 		}
 	})
 
-	t.Run("overlap_reuses_reference_before_admission", func(t *testing.T) {
+	t.Run("overlap_reuses_operand_before_admission", func(t *testing.T) {
 		regions := support.New(manager)
 		if regions == nil {
 			t.Fatal("regions")
@@ -334,8 +422,8 @@ func TestJoinContributionsManyReusesSemanticReferenceAcrossSiblingTerminals(t *t
 		if !valid {
 			t.Fatal("many fold")
 		}
-		if folded.Root() != reference.Root() {
-			t.Fatal("equal overlap did not reuse reference root")
+		if !domain.EqualAt(folded, func(guard.Atom) bool { return true }, left, func(guard.Atom) bool { return true }) {
+			t.Fatal("equal overlap changed the operand semantic value")
 		}
 		if terminalAdmissions != 0 {
 			t.Fatalf("reference-equivalent aggregate admitted %d candidate terminals", terminalAdmissions)

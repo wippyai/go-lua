@@ -57,18 +57,23 @@ func Seal(
 	if err != nil {
 		return nil, err
 	}
-	return &Result{
-		sourceID:    sourceID,
-		coordinates: geometryResult.coordinates,
-		resumes:     geometryResult.resumes,
-		adjacency:   adjacency,
-		witnesses:   witnesses,
-		reachable:   reachable,
-		dominance:   proof,
-		flowID:      flowID,
-		staticID:    staticID,
-		moduleID:    moduleID,
-	}, nil
+	result := &Result{
+		sourceID:      sourceID,
+		coordinates:   geometryResult.coordinates,
+		resumes:       geometryResult.resumes,
+		adjacency:     adjacency,
+		witnesses:     witnesses,
+		reachable:     reachable,
+		dominance:     proof,
+		flowID:        flowID,
+		staticID:      staticID,
+		moduleID:      moduleID,
+		catalog:       &catalogLifecycle{phase: catalogUninstalled},
+		outcomePhases: &outcomePhaseLifecycle{state: outcomePhaseUnissued},
+	}
+	result.catalog.owner = result
+	result.outcomePhases.owner = result
+	return result, nil
 }
 
 type availabilityRow struct {

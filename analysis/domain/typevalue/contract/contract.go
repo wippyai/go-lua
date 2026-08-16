@@ -33,8 +33,6 @@ var sourceInventory = [...]sourceConclusion{
 	{semanticsource.OriginProgramStatic, semanticsource.FacetProgramStaticTypeRef, conclusionTypeValueTarget},
 	{semanticsource.OriginLinkProjectShardMount, 0, conclusionTypeValueResolution},
 	{semanticsource.OriginLinkStatic, 0, conclusionTypeValueResolution},
-	{semanticsource.OriginLinkStatic, semanticsource.FacetLinkStaticResolution, conclusionTypeValueResolution},
-	{semanticsource.OriginLinkStatic, semanticsource.FacetLinkStaticExpression, conclusionTypeValueResolution},
 }
 
 // Contracts returns TypeValue's canonically ordered Factor-owned obligations.

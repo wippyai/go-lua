@@ -19,7 +19,7 @@ func (s *arcState) markLivenessArc(source, target, decision keyspace.Term, truth
 // causalTarget converts an authored structural destination to its sealed
 // runtime Entry port. Outcome coordinates are already terminal. Body is an
 // evaluation leaf/activation anchor and therefore deliberately resolves to
-// Ports.Entry(Body); emitBodyEntry owns the separate Body-to-first-root route.
+// runtimeentry.Entry(Body); emitBodyEntry owns the separate Body-to-first-root route.
 func (s *routeState) causalTarget(raw keyspace.Term) (keyspace.Term, bool) {
 	if raw == 0 {
 		return 0, false
@@ -34,6 +34,16 @@ func (s *routeState) causalTarget(raw keyspace.Term) (keyspace.Term, bool) {
 		}
 		if !validPreTerm(candidate, s.counts) {
 			return 0, false
+		}
+		if keyspace.TermFamily(candidate) == keyspace.FamilyLoop {
+			_, _, loopKind, _, loopOK := s.flow.Control().Loops().Get(candidate)
+			if loopOK && loopKind == kind.LoopRepeat && s.live(candidate) && !s.static(candidate) {
+				// Repeat has no pre-body control expression. Its authored Loop
+				// anchor owns a separate exact Loop -> Body initial route, so a
+				// predecessor must stop at that anchor instead of normalizing
+				// through it to the child Body and bypassing the structural Arc.
+				return candidate, true
+			}
 		}
 		if !s.live(candidate) {
 			// Resume proofs may point at a dead/static direct root. Skip that
@@ -65,11 +75,10 @@ func (s *routeState) causalTarget(raw keyspace.Term) (keyspace.Term, bool) {
 			candidate = next
 			continue
 		}
-		// entryEndpoint starts with the exact Ports.Entry(raw) projection and
-		// follows only the typed child sequence when that first authored operand is
-		// static/dead. This preserves the Body leaf rule while keeping static
-		// operands out of the published causal planes.
-		target, ok := s.entryEndpoint(candidate)
+		// runtimeentry owns the exact Ports/Executable normalization and follows
+		// typed children past static/dead authored operands. Causal consumes only
+		// the sealed O(1) projection here.
+		target, ok := s.entries.Entry(candidate)
 		if !ok || target == 0 {
 			return 0, false
 		}
@@ -193,13 +202,15 @@ func (s *structureState) emitBodyEntry(bodyTerm keyspace.Term) error {
 		if !toOK {
 			return errors.New("program/flow/causal: Body entry root has no causal Entry")
 		}
-		return s.appendEdge(bodyTerm, to, bodyTerm, 0, false, entryArc)
+		// The parent structural Body -> Body Arc is a separate final route;
+		// it cannot be the child's synthetic BodyEntry route origin.
+		return s.appendBodyEntryEdge(bodyTerm, to, entryArc)
 	}
 	normal, normalOK := s.bodyNormal(bodyTerm)
 	if !normalOK {
 		return errors.New("program/flow/causal: empty Body has no Normal Outcome")
 	}
-	return s.appendEdge(bodyTerm, normal, bodyTerm, 0, false, entryArc)
+	return s.appendBodyEntryEdge(bodyTerm, normal, entryArc)
 }
 
 func (s *structureState) breakTarget(term keyspace.Term) keyspace.Term {
@@ -246,6 +257,10 @@ func (s *structureState) emitBodyNormalRoute(bodyTerm keyspace.Term) error {
 	if !normalOK {
 		return errors.New("program/flow/causal: Body Normal Outcome is unavailable")
 	}
+	tail, tailOK := s.graph.Tail(bodyTerm)
+	if !tailOK {
+		return errors.New("program/flow/causal: Body tail phase is unavailable")
+	}
 	ordinal := keyspace.TermOrdinal(bodyTerm)
 	if ordinal == 0 || uint64(ordinal) >= uint64(len(s.bodyParentRoot)) {
 		return nil
@@ -262,6 +277,27 @@ func (s *structureState) emitBodyNormalRoute(bodyTerm keyspace.Term) error {
 	}
 	parentCursor := s.bodyParentCursor[ordinal]
 	if parentCursor < 0 {
+		return nil
+	}
+	if !s.graph.Reachable(tail) {
+		// A Return-terminated Body has no structural fallthrough. Consume its
+		// exact tail witness as liveness-only so arc coverage stays complete,
+		// but do not fabricate an OutcomeNormal -> continuation route or a
+		// BodyTail WTO endpoint.
+		switch keyspace.TermFamily(parentRoot) {
+		case keyspace.FamilyBranch, keyspace.FamilyBody:
+			raw, rawOK := s.nextRoot(parent, parentCursor)
+			if !rawOK {
+				return errors.New("program/flow/causal: unreachable Body tail target is unavailable")
+			}
+			if _, livenessOK := s.markLivenessArc(bodyTerm, raw, 0, false); !livenessOK {
+				return errors.New("program/flow/causal: unreachable Body tail Arc is unavailable")
+			}
+		case keyspace.FamilyLoop:
+			if _, livenessOK := s.markLivenessArc(bodyTerm, parentRoot, 0, false); !livenessOK {
+				return errors.New("program/flow/causal: unreachable Loop Body tail Arc is unavailable")
+			}
+		}
 		return nil
 	}
 	switch keyspace.TermFamily(parentRoot) {
@@ -471,9 +507,15 @@ func (s *structureState) emitLoop(owner keyspace.Term, cursor int, loop, _ keysp
 			// Boundary emission supplies Call -> Loop. The source-control
 			// header witness is owned by Loop (not by the nested Call), so
 			// claim that exact Arc for the boundary normal disposition here.
-			if _, arcOK := s.claimArc(loop, loop, 0, false, arcBoundaryNormal); !arcOK {
+			arcIndex, arcOK := s.claimArc(loop, loop, 0, false, arcBoundaryNormal)
+			if !arcOK {
 				return errors.New("program/flow/causal: Loop Call header Arc is unavailable")
 			}
+			callOrdinal := keyspace.TermOrdinal(controlEndpoint)
+			if callOrdinal == 0 || uint64(callOrdinal) >= uint64(len(s.normalArc)) || s.normalArc[callOrdinal] >= 0 {
+				return errors.New("program/flow/causal: Loop Call header normal Arc is malformed")
+			}
+			s.normalArc[callOrdinal] = arcIndex
 		} else {
 			seedArc, seedOK := s.markArc(loop, loop, 0, false)
 			if !seedOK {

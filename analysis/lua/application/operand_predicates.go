@@ -40,9 +40,9 @@ func isIntegerConvertible(t typ.Type) bool {
 		return true
 	}
 	if lit, ok := t.(*typ.Literal); ok {
-		switch lit.Base {
+		switch lit.Base() {
 		case kind.Number:
-			v, ok := lit.Value.(float64)
+			v, ok := lit.Value().(float64)
 			return ok && isIntegralFloat(v)
 		case kind.String:
 			v, ok := numericStringLiteral(lit)

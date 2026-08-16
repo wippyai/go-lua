@@ -5,8 +5,6 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/semantic/typeauthority"
 	"github.com/wippyai/go-lua/program/keyspace"
-	linkboundary "github.com/wippyai/go-lua/program/link/boundary"
-	linkstatic "github.com/wippyai/go-lua/program/link/static"
 )
 
 type innerDisposition uint8
@@ -40,7 +38,6 @@ type descriptorRow struct {
 	nameKind     NameDisposition
 	name         uint32 // one-based into names when exact
 	resolverKind resolverDisposition
-	resolver     linkstatic.Resolver
 }
 
 type descriptorKey struct {
@@ -49,7 +46,6 @@ type descriptorKey struct {
 	nameKind     NameDisposition
 	name         uint32
 	resolverKind resolverDisposition
-	resolver     linkstatic.Resolver
 }
 
 // Descriptor is one correlated (inner,name,resolver) row. Coordinates cannot
@@ -60,7 +56,7 @@ type Descriptor struct {
 }
 
 type seedRow struct {
-	source     linkboundary.Value
+	valueID    keyspace.ContentID
 	descriptor Descriptor
 	root       uint32
 }
@@ -73,8 +69,8 @@ type Seed struct {
 
 // forEachStaticSeed consumes Static's total occurrence relation. TypeValue
 // performs no Program or Static-expression rescans of its own.
-func (a *Authority) forEachStaticSeed(visit func(linkboundary.Value, string, keyspace.ContentID, typeauthority.RuntimeInner, bool) bool) bool {
-	if a == nil || a.source == nil || a.static == nil || a.runtime == nil || visit == nil {
+func (a *Authority) forEachStaticSeed(visit func(keyspace.ContentID, string, keyspace.ContentID, typeauthority.RuntimeInner, bool) bool) bool {
+	if a == nil || a.static == nil || a.runtime == nil || visit == nil {
 		return false
 	}
 	seeds := a.static.TypeValueSeeds()
@@ -83,11 +79,8 @@ func (a *Authority) forEachStaticSeed(visit func(linkboundary.Value, string, key
 		if !ok {
 			return false
 		}
-		value, ok := seeds.Source(seed)
+		valueID, ok := seeds.ValueIdentity(seed)
 		if !ok {
-			return false
-		}
-		if _, _, ok := a.values.Origin(value); !ok {
 			return false
 		}
 		name, ok := seeds.Name(seed)
@@ -102,7 +95,7 @@ func (a *Authority) forEachStaticSeed(visit func(linkboundary.Value, string, key
 		if exact && !a.runtime.Equal(inner, inner) {
 			return false
 		}
-		if !visit(value, name, root, inner, exact) {
+		if !visit(valueID, name, root, inner, exact) {
 			return false
 		}
 	}
@@ -110,7 +103,7 @@ func (a *Authority) forEachStaticSeed(visit func(linkboundary.Value, string, key
 }
 
 func (a *Authority) sealDescriptors() bool {
-	if a == nil || a.source == nil || a.runtime == nil || uint64(a.values.Count()) > uint64(math.MaxUint32) {
+	if a == nil || a.runtime == nil {
 		return false
 	}
 	a.nameIndex = make(map[string]uint32)
@@ -136,8 +129,8 @@ func (a *Authority) sealDescriptors() bool {
 	if _, ok := appendDescriptor(descriptorRow{innerKind: innerOther, nameKind: NameNone, resolverKind: resolverNone}); !ok {
 		return false
 	}
-	if !a.forEachStaticSeed(func(value linkboundary.Value, name string, _ keyspace.ContentID, inner typeauthority.RuntimeInner, exactInner bool) bool {
-		rootIndex, admitted := a.runtimeRoots[value]
+	if !a.forEachStaticSeed(func(valueID keyspace.ContentID, name string, _ keyspace.ContentID, inner typeauthority.RuntimeInner, exactInner bool) bool {
+		rootIndex, admitted := a.runtimeRoots[valueID]
 		if !admitted {
 			return false
 		}
@@ -158,7 +151,7 @@ func (a *Authority) sealDescriptors() bool {
 		if !ok {
 			return false
 		}
-		a.seeds = append(a.seeds, seedRow{source: value, descriptor: descriptor, root: rootIndex})
+		a.seeds = append(a.seeds, seedRow{valueID: valueID, descriptor: descriptor, root: rootIndex})
 		return true
 	}) {
 		return false
@@ -361,14 +354,6 @@ func (a *Authority) DescriptorName(descriptor Descriptor) (string, NameDispositi
 	return a.names[row.name-1], NameExact, true
 }
 
-func (a *Authority) DescriptorResolver(descriptor Descriptor) (linkstatic.Resolver, bool, bool) {
-	row, ok := a.descriptor(descriptor)
-	if !ok {
-		return linkstatic.Resolver{}, false, false
-	}
-	return row.resolver, row.resolverKind == resolverExact, row.resolverKind == resolverOther
-}
-
 func (a *Authority) descriptor(descriptor Descriptor) (descriptorRow, bool) {
 	if a == nil || descriptor.owner != a || uint64(descriptor.index) >= uint64(len(a.descriptors)) {
 		return descriptorRow{}, false
@@ -403,9 +388,9 @@ func (a *Authority) SeedDescriptor(seed Seed) (Descriptor, bool) {
 	return row.descriptor, ok
 }
 
-func (a *Authority) SeedSource(seed Seed) (linkboundary.Value, bool) {
+func (a *Authority) SeedValueIdentity(seed Seed) (keyspace.ContentID, bool) {
 	row, ok := a.seed(seed)
-	return row.source, ok
+	return row.valueID, ok && row.valueID.Available()
 }
 
 func (a *Authority) seed(seed Seed) (seedRow, bool) {

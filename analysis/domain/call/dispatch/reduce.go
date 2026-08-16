@@ -5,7 +5,6 @@ import (
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
-	linkboundary "github.com/wippyai/go-lua/program/link/boundary"
 )
 
 // reduce maps one exact Value callee to Call's direct selected-target
@@ -57,18 +56,14 @@ func dispatchAtom(bound site, atom valuedomain.Atom) (capability calldomain.Targ
 		return calldomain.Target{}, false, atom.RuntimeKinds().Contains(runtimekind.Function)
 	}
 	if require, scopedLoader := reference.ScopedLoader(); scopedLoader {
-		boundaryRequire, hasRequire := bound.boundary.RequireOperation()
+		boundaryRequire, hasRequire := algebra.RequireOperation()
 		key, keyOK := bound.callKey()
-		application, applicationOK := key.Application()
-		shard, _, callOK := bound.link.Project().Applications().Call(application)
-		if !hasRequire || boundaryRequire != require || !keyOK || !applicationOK || !callOK {
+		if !hasRequire || boundaryRequire != require || !keyOK || !key.IsApplication() {
 			return calldomain.Target{}, false, true
 		}
-		seed, seedOK := bound.boundary.Seeds().ScopedLoader(shard)
-		if !seedOK {
-			return calldomain.Target{}, false, true
-		}
-		capability, admitted := algebra.TargetForSeed(seed)
+		seedID := bound.requireSeedID
+		capability, admitted := algebra.TargetForSeedID(seedID)
+		admitted = admitted && seedID.Available()
 		if !admitted {
 			return calldomain.Target{}, false, true
 		}
@@ -79,9 +74,9 @@ func dispatchAtom(bound site, atom valuedomain.Atom) (capability calldomain.Targ
 		if !values.OwnsHeapSchema(bound.heaps) {
 			return calldomain.Target{}, false, true
 		}
-		shard, function, kind, programAllocation := key.ProgramAllocation()
-		if programAllocation && kind == heapdomain.AllocationClosure {
-			capability, admitted := algebra.TargetForFunction(shard, function)
+		receipt, programAllocation := key.AllocationReceipt()
+		if programAllocation && receipt.Available() && receipt.Kind() == heapdomain.AllocationClosure {
+			capability, admitted := algebra.TargetForAllocation(receipt.Module(), receipt.AllocationID())
 			if !admitted {
 				return calldomain.Target{}, false, true
 			}
@@ -90,31 +85,19 @@ func dispatchAtom(bound site, atom valuedomain.Atom) (capability calldomain.Targ
 		return calldomain.Target{}, false, atom.RuntimeKinds().Contains(runtimekind.Function)
 	}
 
-	if seed, callableSeed := reference.Callable(); callableSeed {
-		disposition, _, _, classified := bound.boundary.Seeds().CallableDisposition(seed)
-		if !classified {
-			return calldomain.Target{}, false, true
-		}
-		switch disposition {
-		case linkboundary.CallableDeniedTarget:
-			return calldomain.Target{}, false, false
-		case linkboundary.CallableAdmittedOperation:
-			capability, admitted := algebra.TargetForSeed(seed)
-			if !admitted {
-				return calldomain.Target{}, false, true
-			}
+	if seedID, callableSeed := reference.CallableID(); callableSeed {
+		capability, admitted := algebra.TargetForSeedID(seedID)
+		if admitted {
 			return capability, true, false
-		default:
-			return calldomain.Target{}, false, true
 		}
+		// Value issues CallableID only for an exact callable seed admitted or
+		// explicitly denied during the cold Link seal. Absence from Call's
+		// admitted target rows is therefore the exact denied disposition.
+		return calldomain.Target{}, false, false
 	}
 
-	if endpoint, endpointReference := reference.Endpoint(); endpointReference {
-		seed, seedOK := bound.boundary.Endpoints().Seed(endpoint)
-		if !seedOK {
-			return calldomain.Target{}, false, true
-		}
-		capability, admitted := algebra.TargetForSeed(seed)
+	if seedID, endpointReference := reference.EndpointID(); endpointReference {
+		capability, admitted := algebra.TargetForSeedID(seedID)
 		if !admitted {
 			return calldomain.Target{}, false, true
 		}

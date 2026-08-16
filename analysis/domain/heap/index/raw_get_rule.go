@@ -4,14 +4,9 @@ import (
 	"sync"
 
 	calldomain "github.com/wippyai/go-lua/analysis/domain/call"
-	callowner "github.com/wippyai/go-lua/analysis/domain/call/owner"
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
-	"github.com/wippyai/go-lua/analysis/domain/heap/keymatch"
-	heapowner "github.com/wippyai/go-lua/analysis/domain/heap/owner"
 	"github.com/wippyai/go-lua/analysis/domain/pack"
-	packowner "github.com/wippyai/go-lua/analysis/domain/pack/owner"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
-	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
 )
 
@@ -19,27 +14,86 @@ import (
 // candidate. It owns selection only; Heap and Pack remain the semantic owners
 // of storage and Lua adjustment respectively.
 type RawGetRule struct {
-	topology *Topology
-	values   *valueowner.Owner
-	calls    *callowner.Owner
-	heap     *heapowner.Owner
-	packs    *packowner.Owner
-	// selectors is keymatch's sealed Value-relation projection.  RawGet uses
-	// it but never rebuilds selector equality or deduplication locally.
-	selectors *keymatch.SelectorProjection
-	payloads  []rawPayload
-	sources   []rawSource
-
-	rule       *engine.Rule[valuedomain.Value, Access]
 	receiver   engine.Read[engine.OrderedCells[valuedomain.Value]]
 	key        engine.Read[engine.Selection[uint64, engine.OrderedCells[valuedomain.Value]]]
 	call       engine.Read[engine.Selection[uint64, engine.OrderedCells[calldomain.Value]]]
 	heapRead   engine.Read[engine.Selection[heapdomain.RawRouteTag, engine.OrderedCells[heapdomain.Value]]]
 	packRead   engine.Read[engine.Selection[heapdomain.RawPayloadTag, engine.OrderedCells[pack.Value]]]
 	sourceRead engine.Read[engine.Selection[rawSourceTag, engine.OrderedCells[valuedomain.Value]]]
-	write      engine.Write[valuedomain.Value]
 
 	scratch sync.Pool
+	runtime *rawGetRuntime
+}
+
+// rawGetRuntime is the sealed owner projection used by the receipt-native
+// lane.  It contains no Rule/Composition or Link catalog; all structural
+// tables are frozen before binding and all live reads route through typed
+// owner callbacks.
+type rawGetRuntime struct {
+	topology           *Topology
+	values             *valuedomain.Schema
+	calls              *calldomain.Algebra
+	heap               heapdomain.Schema
+	visitCallDemand    func(valuedomain.Value, func(calldomain.Key, uint64) bool) bool
+	callRoute          func(engine.SelectorContext, calldomain.Key, uint64) bool
+	valueRoute         func(engine.SelectorContext, valuedomain.Coordinate, uint64) bool
+	heapRoute          func(engine.SelectorContext, heapdomain.Key, heapdomain.RawRouteTag) bool
+	packRoute          func(engine.SelectorContext, pack.Root, heapdomain.RawPayloadTag) bool
+	visitReceiver      func(valuedomain.Value, CallState, func(Route) bool) bool
+	visitRawRoute      func(heapdomain.RawRouteTag, heapdomain.Value, heapdomain.KeySelector, func(heapdomain.RawAccess) bool) bool
+	selectorForSlot    func(heapdomain.Slot) (heapdomain.KeySelector, bool)
+	callKeyForTag      func(uint64) (calldomain.Key, bool)
+	valueReadRef       func(engine.RuleDerivation[valuedomain.Value, Access], engine.Read[engine.OrderedCells[valuedomain.Value]], valuedomain.Coordinate) bool
+	valueTarget        func(engine.RuleTarget, valuedomain.Coordinate) bool
+	valueSelectionRef  func(engine.RuleDerivation[valuedomain.Value, Access], engine.RuleDisposition[valuedomain.Value], engine.Read[engine.Selection[uint64, engine.OrderedCells[valuedomain.Value]]], int, valuedomain.Coordinate) bool
+	callSelectionRef   func(engine.RuleDerivation[valuedomain.Value, Access], engine.RuleDisposition[valuedomain.Value], engine.Read[engine.Selection[uint64, engine.OrderedCells[calldomain.Value]]], int, uint64) bool
+	heapSelectionRef   func(engine.RuleDerivation[valuedomain.Value, Access], engine.RuleDisposition[valuedomain.Value], engine.Read[engine.Selection[heapdomain.RawRouteTag, engine.OrderedCells[heapdomain.Value]]], int, heapdomain.Key) bool
+	packSelectionRef   func(engine.RuleDerivation[valuedomain.Value, Access], engine.RuleDisposition[valuedomain.Value], engine.Read[engine.Selection[heapdomain.RawPayloadTag, engine.OrderedCells[pack.Value]]], int, pack.Root) bool
+	sourceSelectionRef func(engine.RuleDerivation[valuedomain.Value, Access], engine.RuleDisposition[valuedomain.Value], engine.Read[engine.Selection[rawSourceTag, engine.OrderedCells[valuedomain.Value]]], int, valuedomain.Coordinate) bool
+}
+
+func (rule *RawGetRule) valueSchema() *valuedomain.Schema {
+	if rule == nil || rule.runtime == nil {
+		return nil
+	}
+	return rule.runtime.values
+}
+func (rule *RawGetRule) callAlgebra() *calldomain.Algebra {
+	if rule == nil || rule.runtime == nil {
+		return nil
+	}
+	return rule.runtime.calls
+}
+func (rule *RawGetRule) heapSchema() heapdomain.Schema {
+	if rule == nil || rule.runtime == nil {
+		return heapdomain.Schema{}
+	}
+	return rule.runtime.heap
+}
+func (rule *RawGetRule) packSchema() *pack.Schema {
+	if rule == nil || rule.runtime == nil || rule.runtime.topology == nil {
+		return nil
+	}
+	return rule.runtime.topology.packs
+}
+func (rule *RawGetRule) payloadAt(tag heapdomain.RawPayloadTag) (rawPayload, bool) {
+	if rule == nil || rule.runtime == nil || rule.runtime.topology == nil || rule.runtime.topology.catalog == nil {
+		return rawPayload{}, false
+	}
+	return payloadAt(rule.runtime.topology.catalog.payloads, tag)
+}
+func (rule *RawGetRule) sourceAt(tag rawSourceTag) (rawSource, bool) {
+	if rule == nil || rule.runtime == nil || rule.runtime.topology == nil || rule.runtime.topology.catalog == nil {
+		return rawSource{}, false
+	}
+	return sourceAt(rule.runtime.topology.catalog.sources, tag)
+}
+
+func (rule *RawGetRule) sourceTag(payload heapdomain.RawPayloadTag, source pack.SemanticSource) (rawSourceTag, bool) {
+	if rule == nil || rule.runtime == nil || rule.runtime.topology == nil || rule.runtime.topology.catalog == nil {
+		return 0, false
+	}
+	return rule.runtime.topology.catalog.sourceTag(payload, source)
 }
 
 type rawGetScratch struct {
@@ -58,50 +112,11 @@ func bitWords(count int) int {
 	return (count + 63) / 64
 }
 
-func DeclareRawGet(composition *engine.Composition, semantic, family, evidence engine.SemanticKey, topology *Topology, values *valueowner.Owner, calls *callowner.Owner, heap *heapowner.Owner, packs *packowner.Owner) (*RawGetRule, bool) {
-	if composition == nil || topology == nil || values == nil || calls == nil || heap == nil || packs == nil ||
-		!semantic.Available() || !family.Available() || !evidence.Available() || semantic == family || semantic == evidence || family == evidence ||
-		!topology.valid() || values.Schema() != topology.values || calls.Algebra() != topology.calls || heap.Schema() != topology.heap ||
-		packs.Schema() == nil || packs.Schema().Link() != values.Schema().Link() {
-		return nil, false
-	}
-	payloads, sources, ok := buildRawPayloads(topology, packs.Schema())
-	if !ok {
-		return nil, false
-	}
-	selectors, ok := keymatch.NewSelectorProjection(heap.Schema(), values.Schema())
-	if !ok {
-		return nil, false
-	}
-	result := &RawGetRule{topology: topology, values: values, calls: calls, heap: heap, packs: packs, selectors: selectors, payloads: payloads, sources: sources}
-	result.scratch.New = func() any {
-		return &rawGetScratch{
-			payload: make([]uint64, bitWords(len(payloads)-1)),
-			source:  make([]uint64, bitWords(len(sources))),
-		}
-	}
-	result.scratch.Put(result.scratch.New())
-	declared, ok := engine.DeclareRule(composition, engine.RuleSpec[valuedomain.Value, Access]{
-		Semantic: semantic, OperandFamily: family, OperandContent: rawGetContent,
-		Output: values.Output(), Inputs: 4,
-		Admission: engine.AdmitRuleByDerivation(evidence, result.check(semantic)), Transfer: result.transfer,
-	}, result.declare)
-	if !ok || declared == nil || result.rule != declared {
-		return nil, false
-	}
-	return result, true
-}
-
-func rawGetContent(access Access) (Access, [32]byte, bool) {
-	id, ok := access.ID()
-	return access, [32]byte(id), ok && access.Read()
-}
-
 func (rule *RawGetRule) owns(access Access) bool {
-	if !rule.valid() || !rule.topology.OwnsAccess(access) || !access.Read() {
+	if !rule.valid() || !access.valid() || access.topology != rule.runtime.topology || !access.Read() {
 		return false
 	}
-	return true
+	return rule.runtime.values == rule.runtime.topology.values && rule.runtime.heap == rule.runtime.topology.heap && rule.runtime.calls == rule.runtime.topology.calls
 }
 
 // valid is the runtime declaration fence for RawGet.  The Heap owner and
@@ -109,74 +124,7 @@ func (rule *RawGetRule) owns(access Access) bool {
 // ContentID values are insufficient because independently sealed same-Link
 // schemas issue distinct owner-bound coordinates.
 func (rule *RawGetRule) valid() bool {
-	return rule != nil && rule.topology != nil && rule.topology.valid() && rule.values != nil && rule.calls != nil && rule.heap != nil && rule.packs != nil &&
-		rule.values.Schema() == rule.topology.values && rule.calls.Algebra() == rule.topology.calls && rule.heap.Schema() == rule.topology.heap &&
-		rule.packs.Schema() != nil && rule.packs.Schema().Link() == rule.values.Schema().Link()
-}
-
-func (rule *RawGetRule) declare(raw *engine.Rule[valuedomain.Value, Access]) bool {
-	valueIn, a := raw.InputAt(0)
-	callIn, b := raw.InputAt(1)
-	heapIn, c := raw.InputAt(2)
-	packIn, d := raw.InputAt(3)
-	if !a || !b || !c || !d {
-		return false
-	}
-	var ok bool
-	rule.receiver, ok = engine.ReadFrom(raw, valueIn, rule.values.ExactRead())
-	if !ok {
-		return false
-	}
-	rule.key, ok = engine.SelectRead[valuedomain.Value, Access, valuedomain.Value, engine.OrderedCells[valuedomain.Value], uint64](raw, valueIn, rule.values.ExactRead(), []engine.Dependency{engine.ReadDependency(rule.receiver)}, rule.locateKey)
-	if !ok {
-		return false
-	}
-	rule.call, ok = engine.SelectRead[valuedomain.Value, Access, calldomain.Value, engine.OrderedCells[calldomain.Value], uint64](raw, callIn, rule.calls.ExactRead(), []engine.Dependency{engine.ReadDependency(rule.receiver), engine.ReadDependency(rule.key)}, rule.locateCall)
-	if !ok {
-		return false
-	}
-	rule.heapRead, ok = engine.SelectRead[valuedomain.Value, Access, heapdomain.Value, engine.OrderedCells[heapdomain.Value], heapdomain.RawRouteTag](raw, heapIn, rule.heap.ExactRead(), []engine.Dependency{engine.ReadDependency(rule.receiver), engine.ReadDependency(rule.key), engine.ReadDependency(rule.call)}, rule.locateHeap)
-	if !ok {
-		return false
-	}
-	rule.packRead, ok = engine.SelectRead[valuedomain.Value, Access, pack.Value, engine.OrderedCells[pack.Value], heapdomain.RawPayloadTag](raw, packIn, rule.packs.ExactRead(), []engine.Dependency{engine.ReadDependency(rule.key), engine.ReadDependency(rule.heapRead)}, rule.locatePack)
-	if !ok {
-		return false
-	}
-	rule.sourceRead, ok = engine.SelectRead[valuedomain.Value, Access, valuedomain.Value, engine.OrderedCells[valuedomain.Value], rawSourceTag](raw, valueIn, rule.values.ExactRead(), []engine.Dependency{engine.ReadDependency(rule.key), engine.ReadDependency(rule.heapRead), engine.ReadDependency(rule.packRead)}, rule.locateSource)
-	if !ok {
-		return false
-	}
-	if !engine.CarryFrom(raw, valueIn, rule.values.Carry()) {
-		return false
-	}
-	rule.write, ok = engine.WriteTo(raw, rule.values.ExactWrite())
-	if ok {
-		rule.rule = raw
-	}
-	return ok
-}
-
-func (rule *RawGetRule) Instance(access Access) (*engine.RuleInstance[valuedomain.Value, Access], bool) {
-	if rule == nil || rule.rule == nil || !rule.owns(access) {
-		return nil, false
-	}
-	receiver, a := access.Receiver()
-	result, b := access.Result()
-	receiverRef, c := rule.values.Locate(receiver)
-	resultRef, d := rule.values.Locate(result)
-	if !a || !b || !c || !d {
-		return nil, false
-	}
-	return engine.NewRuleInstance(rule.rule, access, func(binding *engine.RuleBinding[valuedomain.Value, Access]) bool {
-		return engine.InstanceRead(binding, rule.receiver, receiverRef) &&
-			engine.InstanceSelectorRead(binding, rule.key, rule.values.ExactRead()) &&
-			engine.InstanceSelectorRead(binding, rule.call, rule.calls.ExactRead()) &&
-			engine.InstanceSelectorRead(binding, rule.heapRead, rule.heap.ExactRead()) &&
-			engine.InstanceSelectorRead(binding, rule.packRead, rule.packs.ExactRead()) &&
-			engine.InstanceSelectorRead(binding, rule.sourceRead, rule.values.ExactRead()) &&
-			engine.InstanceWrite(binding, rule.write, resultRef)
-	})
+	return rule != nil && rule.runtime != nil && rule.runtime.topology != nil && rule.runtime.topology.valid() && rule.runtime.values != nil && rule.runtime.calls != nil && rule.runtime.heap.Valid()
 }
 
 func (rule *RawGetRule) locateKey(context engine.SelectorContext, access Access) bool {
@@ -191,8 +139,7 @@ func (rule *RawGetRule) locateKey(context engine.SelectorContext, access Access)
 	if !dynamic {
 		return true
 	}
-	ref, ok := rule.values.Locate(coordinate)
-	return ok && engine.SelectRoute(context, ref, uint64(1))
+	return rule.runtime.valueRoute != nil && rule.runtime.valueRoute(context, coordinate, uint64(1))
 }
 
 func (rule *RawGetRule) locateCall(context engine.SelectorContext, access Access) bool {
@@ -213,9 +160,8 @@ func (rule *RawGetRule) locateCall(context engine.SelectorContext, access Access
 	if !keyValid {
 		return true
 	}
-	return rule.topology.VisitReceiverCallDemand(receiver, func(key calldomain.Key, tag uint64) bool {
-		ref, found := rule.calls.Locate(key)
-		return found && engine.SelectRoute(context, ref, tag)
+	return rule.runtime.visitCallDemand(receiver, func(key calldomain.Key, tag uint64) bool {
+		return rule.callsRoute(context, key, tag)
 	})
 }
 
@@ -266,14 +212,13 @@ func (rule *RawGetRule) locateHeap(context engine.SelectorContext, access Access
 		}
 		return selected.value, selected.present
 	}
-	visited := rule.topology.VisitReceiver(receiver, state, func(route Route) bool {
+	visited := rule.runtime.visitReceiver(receiver, state, func(route Route) bool {
 		key, role, rooted := route.Root()
 		if !rooted {
 			return true
 		}
-		ref, found := rule.heap.Locate(key)
-		tag, tagged := rule.heap.Schema().RouteTag(key, role)
-		return found && tagged && engine.SelectRoute(context, ref, tag)
+		tag, tagged := rule.heapSchema().RouteTag(key, role)
+		return tagged && rule.runtime.heapRoute != nil && rule.runtime.heapRoute(context, key, tag)
 	})
 	return visited && stateValid
 }
@@ -315,5 +260,12 @@ func (rule *RawGetRule) keySelector(access Access) (heapdomain.KeySelector, bool
 	if !ok {
 		return heapdomain.KeySelector{}, false
 	}
-	return rule.heap.Schema().SelectorForSlot(slot)
+	if rule.runtime.selectorForSlot != nil {
+		return rule.runtime.selectorForSlot(slot)
+	}
+	return heapdomain.KeySelector{}, false
+}
+
+func (rule *RawGetRule) callsRoute(context engine.SelectorContext, key calldomain.Key, tag uint64) bool {
+	return rule != nil && rule.runtime != nil && rule.runtime.callRoute != nil && rule.runtime.callRoute(context, key, tag)
 }

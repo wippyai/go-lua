@@ -5,17 +5,17 @@
 package index
 
 import (
+	"fmt"
 	"sync"
 
 	calldomain "github.com/wippyai/go-lua/analysis/domain/call"
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
+	"github.com/wippyai/go-lua/analysis/domain/heap/keymatch"
 	"github.com/wippyai/go-lua/analysis/domain/materialization"
+	"github.com/wippyai/go-lua/analysis/domain/pack"
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
-	"github.com/wippyai/go-lua/program"
 	"github.com/wippyai/go-lua/program/keyspace"
-	linkboundary "github.com/wippyai/go-lua/program/link/boundary"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
 )
 
 // Topology is the one cold, Link-scoped receiver-to-root support authority
@@ -27,37 +27,92 @@ import (
 // conservatively recovered from their existing source Application and current
 // Call fact.
 type Topology struct {
-	heap     heapdomain.Schema
-	values   *valuedomain.Schema
-	calls    *calldomain.Algebra
-	boundary linkboundary.Values
-	linkID   keyspace.ContentID
-
-	static      []rootRole
+	heap        heapdomain.Schema
+	values      *valuedomain.Schema
+	calls       *calldomain.Algebra
+	packs       *pack.Schema
+	catalog     *rawCatalog
+	selectors   *keymatch.SelectorProjection
+	static      []rawSetRouteFact
 	fresh       []freshRoot
 	freshByRoot map[heapdomain.Key]uint32
 	freshApps   []freshApplication
-	freshByApp  map[linkproject.Application]uint32
+	freshByApp  map[keyspace.ContentID]uint32
+	indexRows   map[heapdomain.IndexAccess]*indexRow
+	staticByTag map[heapdomain.RawRouteTag]uint32
 	scratch     sync.Pool
 }
 
-type rootRole struct {
-	key  heapdomain.Key
-	role materialization.Role
+// SealFailure is the closed phase at which Heap index topology admission
+// failed. It is diagnostic-only: no failure exposes a partial Topology or
+// changes the ordinary Seal contract.
+type SealFailure uint8
+
+const (
+	SealFailureNone SealFailure = iota
+	SealFailureInputs
+	SealFailureBoundary
+	SealFailureRoots
+	SealFailureValidity
+)
+
+func (failure SealFailure) String() string {
+	switch failure {
+	case SealFailureNone:
+		return "none"
+	case SealFailureInputs:
+		return "inputs"
+	case SealFailureBoundary:
+		return "boundary"
+	case SealFailureRoots:
+		return "roots"
+	case SealFailureValidity:
+		return "validity"
+	default:
+		return "unknown"
+	}
+}
+
+// SealDiagnostic names one closed failure and, where applicable, its mount
+// and row. Negative coordinates mean the failure is not row-specific.
+type SealDiagnostic struct {
+	failure SealFailure
+	mount   int
+	row     int
+}
+
+func (diagnostic SealDiagnostic) Failure() SealFailure { return diagnostic.failure }
+func (diagnostic SealDiagnostic) Mount() int           { return diagnostic.mount }
+func (diagnostic SealDiagnostic) Row() int             { return diagnostic.row }
+func (diagnostic SealDiagnostic) String() string {
+	if diagnostic.failure == SealFailureNone {
+		return SealFailureNone.String()
+	}
+	if diagnostic.mount < 0 {
+		return diagnostic.failure.String()
+	}
+	if diagnostic.row < 0 {
+		return fmt.Sprintf("%s:mount=%d", diagnostic.failure, diagnostic.mount)
+	}
+	return fmt.Sprintf("%s:mount=%d:row=%d", diagnostic.failure, diagnostic.mount, diagnostic.row)
+}
+
+func sealDiagnostic(failure SealFailure, mount, row int) SealDiagnostic {
+	return SealDiagnostic{failure: failure, mount: mount, row: row}
 }
 
 type freshRoot struct {
-	key         heapdomain.Key
-	application linkproject.Application
-	tag         uint32
+	key           heapdomain.Key
+	applicationID keyspace.ContentID
+	tag           uint32
 }
 
 // freshApplication groups only Link's intrinsic root-to-source-application
 // relation. It deliberately stores no operation-selection relation. tag is
 // the canonical, topology-local grouping coordinate for this one group.
 type freshApplication struct {
-	application linkproject.Application
-	tag         uint32
+	applicationID keyspace.ContentID
+	tag           uint32
 }
 
 // routeScratch is reusable implementation storage, never semantic State.
@@ -66,7 +121,7 @@ type freshApplication struct {
 // neither scans nor clears the complete fresh-application universe. Neither
 // collection names a Factor coordinate or survives one observation.
 type routeScratch struct {
-	emitted     map[rootRole]struct{}
+	emitted     map[rawSetRouteFact]struct{}
 	demanded    []uint64
 	demandEpoch uint64
 }
@@ -80,11 +135,10 @@ func (scratch *routeScratch) nextDemandEpoch() uint64 {
 	return scratch.demandEpoch
 }
 
-// Index is one exact existing Heap candidate projection. It retains only its
-// canonical receiver/result/dynamic-key Value coordinates and Heap key
-// partition. Root selection is always performed by Topology; no
-// candidate×root relation is retained here or elsewhere.
-type Index struct {
+// indexRow is the one immutable projection retained by Topology for a Heap
+// candidate. Index carries only a pointer to this row; callers cannot forge a
+// copied coordinate bundle.
+type indexRow struct {
 	topology    *Topology
 	indexAccess heapdomain.IndexAccess
 	receiver    valuedomain.Coordinate
@@ -92,6 +146,14 @@ type Index struct {
 	dynamicKey  valuedomain.Coordinate
 	slot        heapdomain.Slot
 	id          keyspace.ContentID
+}
+
+// Index is one exact existing Heap candidate projection. Its embedded row is
+// private but keeps the historical field access internal to this package;
+// pointer identity is the owner fence and preserves comparability for engine
+// operand content.
+type Index struct {
+	*indexRow
 }
 
 // Access is retained as the index package's rule operand name. It is an alias
@@ -163,41 +225,80 @@ func (topology *Topology) HeapState(key heapdomain.Key, value heapdomain.Value) 
 // schemas. It is deliberately a cold O(R) construction where R is the Heap
 // root support. Hot exact observation scans receiver atoms and selected fresh
 // rows only; it never scans every Heap root or materializes candidate×root.
-func Seal(heap heapdomain.Schema, values *valuedomain.Schema, calls *calldomain.Algebra) (*Topology, bool) {
-	if values == nil || calls == nil || !values.OwnsHeapSchema(heap) || values.Link() == nil || calls.Link() != values.Link() || !heap.ContentID().Available() ||
-		heap.LinkContentID() != values.Link().ContentID() || calls.LinkID() != values.Link().ContentID() {
-		return nil, false
+func Seal(heap heapdomain.Schema, values *valuedomain.Schema, calls *calldomain.Algebra, packs *pack.Schema) (*Topology, bool) {
+	topology, diagnostic := SealWithFailure(heap, values, calls, packs)
+	return topology, diagnostic.failure == SealFailureNone
+}
+
+// SealWithFailure is Seal with a permanent closed diagnostic. It never
+// returns a partially admitted Topology.
+func SealWithFailure(heap heapdomain.Schema, values *valuedomain.Schema, calls *calldomain.Algebra, packs *pack.Schema) (*Topology, SealDiagnostic) {
+	if values == nil || calls == nil || packs == nil || !values.OwnsHeapSchema(heap) || !values.LinkOwner().Matches(calls.LinkOwner()) || !values.LinkOwner().Matches(heap.LinkOwner()) || !values.LinkOwner().Matches(packs.LinkOwner()) || !heap.ContentID().Available() {
+		return nil, sealDiagnostic(SealFailureInputs, -1, -1)
 	}
-	linked := values.Link()
-	if linked.Boundary() == nil {
-		return nil, false
+	if calls.MountModuleCount() != values.MountCount() {
+		return nil, sealDiagnostic(SealFailureBoundary, -1, -1)
 	}
-	topology := &Topology{heap: heap, values: values, calls: calls, boundary: linked.Boundary().Values(), linkID: linked.ContentID(), freshByRoot: make(map[heapdomain.Key]uint32), freshByApp: make(map[linkproject.Application]uint32)}
-	if !topology.build() || !topology.valid() {
-		return nil, false
+	seenModules := make(map[keyspace.ContentID]struct{}, calls.MountModuleCount())
+	for mountIndex := 0; mountIndex < calls.MountModuleCount(); mountIndex++ {
+		module, moduleOK := calls.MountModuleAt(mountIndex)
+		if !moduleOK || !module.Available() {
+			return nil, sealDiagnostic(SealFailureBoundary, mountIndex, -1)
+		}
+		if _, duplicate := seenModules[module]; duplicate {
+			return nil, sealDiagnostic(SealFailureBoundary, mountIndex, -1)
+		}
+		if _, mountOK := heap.ArtifactMountForModule(module); !mountOK {
+			return nil, sealDiagnostic(SealFailureBoundary, mountIndex, -1)
+		}
+		seenModules[module] = struct{}{}
+	}
+	selectors, selectorsOK := keymatch.NewSelectorProjection(heap, values)
+	if !selectorsOK {
+		return nil, sealDiagnostic(SealFailureValidity, -1, -1)
+	}
+	topology := &Topology{heap: heap, values: values, calls: calls, packs: packs, selectors: selectors, freshByRoot: make(map[heapdomain.Key]uint32), freshByApp: make(map[keyspace.ContentID]uint32)}
+	if !topology.build() {
+		return nil, sealDiagnostic(SealFailureRoots, -1, -1)
+	}
+	if !topology.buildIndexRows() {
+		return nil, sealDiagnostic(SealFailureValidity, -1, -1)
+	}
+	if !topology.buildRouteFacts() {
+		return nil, sealDiagnostic(SealFailureValidity, -1, -1)
+	}
+	payloads, sources, sourceRefs, byPayloadSource, payloadsOK := buildRawPayloads(topology, packs)
+	if !payloadsOK {
+		return nil, sealDiagnostic(SealFailureValidity, -1, -1)
+	}
+	topology.catalog = &rawCatalog{payloads: payloads, sources: sources, sourceRefs: sourceRefs, byPayloadSource: byPayloadSource}
+	if !topology.valid() {
+		return nil, sealDiagnostic(SealFailureValidity, -1, -1)
 	}
 	// The support is fixed after Seal. Seed reusable route and exact-demand
 	// dedup storage now; sync.Pool may be reclaimed, so this is a steady-state
 	// allocation envelope, not a semantic or unconditional allocation guarantee.
 	topology.scratch.New = func() any {
 		return &routeScratch{
-			emitted:  make(map[rootRole]struct{}, len(topology.static)+len(topology.fresh)*2),
+			emitted:  make(map[rawSetRouteFact]struct{}, len(topology.static)+len(topology.fresh)*2),
 			demanded: make([]uint64, len(topology.freshApps)),
 		}
 	}
 	topology.scratch.Put(&routeScratch{
-		emitted:  make(map[rootRole]struct{}, len(topology.static)+len(topology.fresh)*2),
+		emitted:  make(map[rawSetRouteFact]struct{}, len(topology.static)+len(topology.fresh)*2),
 		demanded: make([]uint64, len(topology.freshApps)),
 	})
-	return topology, true
+	return topology, SealDiagnostic{}
 }
 
 func (topology *Topology) valid() bool {
-	return topology != nil && topology.values != nil && topology.values.Link() != nil && topology.calls != nil &&
-		topology.boundary.Count() == topology.values.CoordinateCount() &&
-		topology.values.OwnsHeapSchema(topology.heap) && topology.calls.Link() == topology.values.Link() && topology.linkID.Available() && topology.heap.ContentID().Available() &&
-		topology.heap.LinkContentID() == topology.linkID && topology.values.Link().ContentID() == topology.linkID &&
-		topology.calls.LinkID() == topology.linkID
+	return topology.baseValid() && topology.catalog != nil
+}
+
+func (topology *Topology) baseValid() bool {
+	return topology != nil && topology.values != nil && topology.values.Valid() && topology.calls != nil && topology.packs != nil && topology.selectors != nil && topology.values.LinkOwner().Available() && topology.values.LinkOwner().Matches(topology.heap.LinkOwner()) && topology.values.LinkOwner().Matches(topology.calls.LinkOwner()) && topology.values.LinkOwner().Matches(topology.packs.LinkOwner()) &&
+		topology.values.CoordinateCount() != 0 &&
+		topology.values.OwnsHeapSchema(topology.heap) && topology.heap.ContentID().Available()
 }
 
 func (topology *Topology) build() bool {
@@ -212,39 +313,39 @@ func (topology *Topology) build() bool {
 				return false
 			}
 		case heapdomain.RootAllocation:
-			if _, _, kind, source := key.ProgramAllocation(); source {
-				if kind == heapdomain.AllocationTable && !topology.appendStatic(key) {
+			if receipt, source := key.AllocationReceipt(); source {
+				if receipt.Kind() == heapdomain.AllocationTable && !topology.appendStatic(key) {
 					return false
 				}
 				continue
 			}
-			application, _, _, _, _, _, fresh := key.FreshResult()
+			applicationID, _, _, _, fresh := key.FreshResultID()
 			if !fresh {
 				return false
 			}
 			// Fresh rows are valid only when their source application is an
 			// existing Call key. Their nominal kind is operation-dependent and
 			// intentionally not read through a Link selection bridge.
-			if _, ok := topology.calls.KeyForApplication(application); !ok {
+			if _, ok := topology.calls.KeyForApplicationID(applicationID); !ok {
 				return false
 			}
 			if topology.freshByRoot[key] != 0 {
 				return false
 			}
-			appIndex := topology.freshByApp[application]
+			appIndex := topology.freshByApp[applicationID]
 			if appIndex == 0 {
 				if uint64(len(topology.freshApps)) == uint64(^uint32(0)) {
 					return false
 				}
-				topology.freshApps = append(topology.freshApps, freshApplication{application: application, tag: uint32(len(topology.freshApps) + 1)})
+				topology.freshApps = append(topology.freshApps, freshApplication{applicationID: applicationID, tag: uint32(len(topology.freshApps) + 1)})
 				appIndex = uint32(len(topology.freshApps))
-				topology.freshByApp[application] = appIndex
+				topology.freshByApp[applicationID] = appIndex
 			}
 			group := &topology.freshApps[appIndex-1]
 			if group.tag == 0 {
 				return false
 			}
-			topology.fresh = append(topology.fresh, freshRoot{key: key, application: application, tag: group.tag})
+			topology.fresh = append(topology.fresh, freshRoot{key: key, applicationID: applicationID, tag: group.tag})
 			topology.freshByRoot[key] = uint32(len(topology.fresh))
 		default:
 			return false
@@ -257,62 +358,87 @@ func (topology *Topology) appendStatic(key heapdomain.Key) bool {
 	added := false
 	for _, role := range []materialization.Role{materialization.Exact, materialization.Recent, materialization.Summary} {
 		if _, ok := topology.heap.Reference(key, role); ok {
-			topology.static = append(topology.static, rootRole{key: key, role: role})
+			topology.static = append(topology.static, rawSetRouteFact{key: key, role: role})
 			added = true
 		}
 	}
 	return added
 }
 
+func (topology *Topology) buildIndexRows() bool {
+	if topology == nil {
+		return false
+	}
+	rows := make(map[heapdomain.IndexAccess]*indexRow, topology.heap.IndexAccessCount())
+	for index := 0; index < topology.heap.IndexAccessCount(); index++ {
+		indexAccess, accessOK := topology.heap.IndexAccessAt(index)
+		if !accessOK {
+			return false
+		}
+		id, idOK := topology.heap.IndexAccessID(indexAccess)
+		geometry, geometryOK := topology.heap.IndexAccessGeometry(indexAccess)
+		// Heap stores the already-issued Boundary Value identities for access
+		// geometry. Artifact semantic IDs use CoordinateForMountedSemantic; the
+		// two ContentID namespaces must not be conflated.
+		receiver, receiverOK := topology.values.CoordinateForID(geometry.BaseValueID)
+		slot, slotOK := topology.heap.SlotForIndexAccess(indexAccess)
+		if !idOK || !id.Available() || !geometryOK || !receiverOK || !slotOK {
+			return false
+		}
+		row := &indexRow{topology: topology, indexAccess: indexAccess, receiver: receiver, slot: slot, id: id}
+		if geometry.Read {
+			resultID, resultValueOK := topology.heap.IndexAccessResultID(indexAccess)
+			result, resultOK := topology.values.CoordinateForID(resultID)
+			if !resultValueOK || !resultOK {
+				return false
+			}
+			row.result = result
+		}
+		if geometry.DynamicKey {
+			coordinate, coordinateOK := topology.values.CoordinateForID(geometry.KeyValueID)
+			if !coordinateOK {
+				return false
+			}
+			row.dynamicKey = coordinate
+		}
+		rows[indexAccess] = row
+	}
+	topology.indexRows = rows
+	return len(rows) == topology.heap.IndexAccessCount()
+}
+
+func (topology *Topology) buildRouteFacts() bool {
+	if topology == nil {
+		return false
+	}
+	routes := make([]rawSetRouteFact, len(topology.static))
+	routesByTag := make(map[heapdomain.RawRouteTag]uint32, len(topology.static))
+	for index, static := range topology.static {
+		tag, ok := topology.heap.RouteTag(static.key, static.role)
+		if !ok || tag == 0 {
+			return false
+		}
+		route := rawSetRouteFact{key: static.key, role: static.role, tag: tag}
+		if _, duplicate := routesByTag[tag]; duplicate {
+			return false
+		}
+		routes[index] = route
+		routesByTag[tag] = uint32(index + 1)
+	}
+	topology.static = routes
+	topology.staticByTag = routesByTag
+	return true
+}
+
 // Access returns the exact existing Heap candidate row. All geometry comes
 // from the sealed Heap row; this path never reopens Flow or reconstructs a
 // Lens.
 func (topology *Topology) Access(indexAccess heapdomain.IndexAccess) (Access, bool) {
-	if topology == nil || !topology.valid() {
+	if topology == nil || !topology.valid() || topology.indexRows == nil {
 		return Access{}, false
 	}
-	id, idOK := topology.heap.IndexAccessID(indexAccess)
-	geometry, geometryOK := topology.heap.IndexAccessGeometry(indexAccess)
-	base, baseOK := topology.boundary.Of(geometry.Shard, geometry.Base)
-	receiver, receiverOK := topology.values.CoordinateFor(base)
-	slot, slotOK := topology.heap.SlotForIndexAccess(indexAccess)
-	if !idOK || !id.Available() || !geometryOK || !baseOK || !receiverOK || !slotOK || (geometry.ReadTerm == 0) == (geometry.WriteTerm == 0) {
-		return Access{}, false
-	}
-	resultAccess := Access{topology: topology, indexAccess: indexAccess, receiver: receiver, slot: slot, id: id}
-	if geometry.ReadTerm != 0 {
-		resultValue, resultValueOK := topology.heap.IndexAccessResult(indexAccess)
-		result, resultOK := topology.values.CoordinateFor(resultValue)
-		if !resultValueOK || !resultOK {
-			return Access{}, false
-		}
-		resultAccess.result = result
-	}
-	if keyspace.TermFamily(geometry.Lens) == keyspace.FamilyLensKey {
-		dynamic, dynamicOK := topology.boundary.Of(geometry.Shard, geometry.KeyTerm)
-		coordinate, coordinateOK := topology.values.CoordinateFor(dynamic)
-		if !dynamicOK || !coordinateOK {
-			return Access{}, false
-		}
-		resultAccess.dynamicKey = coordinate
-	}
-	return resultAccess, true
-}
-
-// AccessFor resolves one exact mounted Program index-access occurrence through
-// Heap's occurrence inverse and then issues this Topology's canonical Access.
-// It never enumerates Heap candidates and never reconstitutes geometry in the
-// index package; the supplied Program/Shard/term must first pass Heap's owner
-// and executable-geometry fence.
-func (topology *Topology) AccessFor(shard linkproject.Shard, owner *program.Program, occurrence keyspace.Term) (Access, bool) {
-	if topology == nil || !topology.valid() {
-		return Access{}, false
-	}
-	indexAccess, ok := topology.heap.IndexAccessFor(shard, owner, occurrence)
-	if !ok {
-		return Access{}, false
-	}
-	return topology.Access(indexAccess)
+	row, ok := topology.indexRows[indexAccess]
+	return Access{indexRow: row}, ok && topology.ownsRow(row)
 }
 
 // OwnsAccess is the topology ownership fence for one retained index operand.
@@ -321,19 +447,22 @@ func (topology *Topology) AccessFor(shard linkproject.Shard, owner *program.Prog
 // canonical reissue also verifies every derived coordinate and policy field,
 // so a matching portable ID cannot substitute for ownership.
 func (topology *Topology) OwnsAccess(access Access) bool {
-	if topology == nil || access.topology != topology || !topology.valid() {
+	return topology != nil && topology.ownsRow(access.indexRow)
+}
+
+func (topology *Topology) ownsRow(row *indexRow) bool {
+	if topology == nil || row == nil || row.topology != topology || topology.indexRows == nil || topology.indexRows[row.indexAccess] != row || !row.id.Available() {
 		return false
 	}
-	canonical, ok := topology.Access(access.indexAccess)
-	return ok && canonical == access
+	_, geometryOK := topology.heap.IndexAccessGeometry(row.indexAccess)
+	return geometryOK
 }
 
 func (access Access) valid() bool {
-	if access.topology == nil || !access.topology.valid() || !access.id.Available() {
+	if access.indexRow == nil || access.topology == nil || !access.id.Available() {
 		return false
 	}
-	canonical, ok := access.topology.Access(access.indexAccess)
-	return ok && canonical.receiver == access.receiver && canonical.result == access.result && canonical.dynamicKey == access.dynamicKey && canonical.slot == access.slot && canonical.id == access.id
+	return access.topology.ownsRow(access.indexRow)
 }
 
 func (access Access) IndexAccess() (heapdomain.IndexAccess, bool) {
@@ -377,7 +506,7 @@ func (access Access) Read() bool {
 		return false
 	}
 	geometry, ok := access.topology.heap.IndexAccessGeometry(access.indexAccess)
-	return ok && geometry.ReadTerm != 0 && geometry.WriteTerm == 0
+	return ok && geometry.Read
 }
 
 // Write reports whether this existing Heap candidate row is a typed indexed
@@ -388,7 +517,7 @@ func (access Access) Write() bool {
 		return false
 	}
 	geometry, ok := access.topology.heap.IndexAccessGeometry(access.indexAccess)
-	return ok && geometry.ReadTerm == 0 && geometry.WriteTerm != 0
+	return ok && !geometry.Read
 }
 
 func (access Access) Slot() (heapdomain.Slot, bool) {
@@ -440,7 +569,7 @@ func (topology *Topology) VisitReceiverCallDemand(receiver valuedomain.Value, vi
 			if group.tag == 0 {
 				return false
 			}
-			key, ok := topology.calls.KeyForApplication(group.application)
+			key, ok := topology.calls.KeyForApplicationID(group.applicationID)
 			if !ok {
 				return false
 			}
@@ -480,7 +609,7 @@ func (topology *Topology) VisitReceiverCallDemand(receiver valuedomain.Value, vi
 		if scratch.demanded[index] == epoch {
 			return true
 		}
-		key, ok := topology.calls.KeyForApplication(fresh.application)
+		key, ok := topology.calls.KeyForApplicationID(fresh.applicationID)
 		if !ok {
 			return false
 		}
@@ -585,7 +714,7 @@ func (topology *Topology) visitTopReceiver(callState CallState, visit func(Route
 			if !ok {
 				return false
 			}
-			identity := rootRole{key: root, role: role}
+			identity := rawSetRouteFact{key: root, role: role}
 			if _, found := scratch.emitted[identity]; found {
 				return true
 			}
@@ -635,8 +764,8 @@ func (topology *Topology) keyForReference(reference valuedomain.Reference) (heap
 		}
 		return heapdomain.Key{}, false
 	}
-	if root, ok := reference.BootRoot(); ok {
-		return topology.heap.KeyForBootRoot(root)
+	if rootID, ok := reference.BootRootID(); ok {
+		return topology.heap.KeyForBootID(rootID)
 	}
 	return heapdomain.Key{}, false
 }
@@ -649,6 +778,16 @@ func (topology *Topology) freshFor(root heapdomain.Key) (freshRoot, bool) {
 	return topology.fresh[index-1], true
 }
 
+// CallKeyForTag resolves the topology-local demand tag issued by
+// VisitReceiverCallDemand. It is the sole hot mapping for receipt-selected
+// fresh Call rows; callers never retain a copied fresh-application slice.
+func (topology *Topology) CallKeyForTag(tag uint64) (calldomain.Key, bool) {
+	if topology == nil || !topology.valid() || tag == 0 || tag > uint64(len(topology.freshApps)) {
+		return calldomain.Key{}, false
+	}
+	return topology.calls.KeyForApplicationID(topology.freshApps[tag-1].applicationID)
+}
+
 // visitFresh preserves only the Call fact's empty/non-empty distinction. Heap
 // does not replay a selected target through Link, so any nonempty fresh source
 // is conservatively an unknown table route.
@@ -659,7 +798,7 @@ func (topology *Topology) visitFresh(fresh freshRoot, role materialization.Role,
 	if fresh.tag == 0 {
 		return false
 	}
-	key, ok := topology.calls.KeyForApplication(fresh.application)
+	key, ok := topology.calls.KeyForApplicationID(fresh.applicationID)
 	if !ok || callState == nil {
 		return emit(topology.unknownRoute())
 	}
@@ -676,7 +815,7 @@ func (topology *Topology) visitFresh(fresh freshRoot, role materialization.Role,
 // visitFreshApplication is the Value.Top path. It retains only Link's direct
 // root-to-Application edge; selected-operation reconstruction is forbidden.
 func (topology *Topology) visitFreshApplication(group freshApplication, callState CallState, emit func(Route) bool) bool {
-	key, ok := topology.calls.KeyForApplication(group.application)
+	key, ok := topology.calls.KeyForApplicationID(group.applicationID)
 	if !ok || callState == nil {
 		return emit(topology.unknownRoute())
 	}

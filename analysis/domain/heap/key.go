@@ -10,9 +10,9 @@ package heap
 import (
 	"github.com/wippyai/go-lua/analysis/domain/materialization"
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
+	programartifact "github.com/wippyai/go-lua/analysis/internal/programartifact"
+	"github.com/wippyai/go-lua/program"
 	"github.com/wippyai/go-lua/program/keyspace"
-	linkhost "github.com/wippyai/go-lua/program/link/host"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
 	"github.com/wippyai/go-lua/program/target"
 )
 
@@ -66,52 +66,98 @@ func (key Key) Kind() RootKind {
 	return row.kind
 }
 
-// ProgramAllocation returns the exact Program aggregate selected by this Key.
-// Target fresh roots return false because they have no Program occurrence.
-func (key Key) ProgramAllocation() (linkproject.Shard, keyspace.Term, AllocationKind, bool) {
-	if !key.valid() || key.Kind() != RootAllocation {
-		return linkproject.Shard{}, 0, AllocationInvalid, false
-	}
-	root, ok := key.owner.rootAt(key.slot)
-	if !ok {
-		return linkproject.Shard{}, 0, AllocationInvalid, false
-	}
-	row := root.allocation
-	return row.shard, row.term, row.kind, row.term != 0
+// AllocationReceipt is Heap's pointer-free mounted allocation identity. The
+// module key is the concrete mount receipt, so duplicate mounts of one
+// Program remain distinct while allocation identity stays reusable.
+type AllocationReceipt struct {
+	module       keyspace.ContentID
+	programID    keyspace.ContentID
+	allocationID keyspace.ContentID
+	kind         AllocationKind
+	form         program.AllocationForm
+	artifact     *programartifact.Artifact
 }
 
-// FreshResult returns the exact creation occurrence and Target nominal root
-// selected by this Key. Program aggregates return false.  This projects one
-// Key, not an Application×fresh enumeration or a selection authority.
-func (key Key) FreshResult() (linkproject.Application, linkproject.Shard, keyspace.Term, int, uint32, uint32, bool) {
+func (kind AllocationKind) Valid() bool { return kind == AllocationTable || kind == AllocationClosure }
+func (receipt AllocationReceipt) Available() bool {
+	return receipt.module.Available() && receipt.programID.Available() && receipt.allocationID.Available() && receipt.kind.Valid() && receipt.form.Valid() && receipt.artifact != nil && receipt.artifact.Available() && receipt.artifact.CompileKey().ProgramID() == receipt.programID
+}
+func (receipt AllocationReceipt) Module() keyspace.ContentID       { return receipt.module }
+func (receipt AllocationReceipt) ProgramID() keyspace.ContentID    { return receipt.programID }
+func (receipt AllocationReceipt) AllocationID() keyspace.ContentID { return receipt.allocationID }
+func (receipt AllocationReceipt) Kind() AllocationKind {
+	if !receipt.Available() {
+		return AllocationInvalid
+	}
+	return receipt.kind
+}
+func (receipt AllocationReceipt) Form() program.AllocationForm {
+	if !receipt.Available() {
+		return program.AllocationFormInvalid
+	}
+	return receipt.form
+}
+
+// AllocationReceipt issues an opaque owner receipt for an artifact allocation
+// occurrence. The artifact occurrence catalog is the sole Program fact plane.
+func (mount ArtifactMount) AllocationReceipt(id keyspace.ContentID, kind AllocationKind, form program.AllocationForm) (AllocationReceipt, bool) {
+	if !mount.Available() || !id.Available() || !kind.Valid() || !form.Valid() {
+		return AllocationReceipt{}, false
+	}
+	row, ok := mount.artifact.OccurrenceForID(programartifact.OccurrenceAllocation, id)
+	if !ok || row.ID() != id || row.Code() != uint64(form) {
+		return AllocationReceipt{}, false
+	}
+	receipt := AllocationReceipt{module: mount.module, programID: mount.programID, allocationID: id, kind: kind, form: form, artifact: mount.artifact}
+	return receipt, receipt.Available()
+}
+
+// AllocationReceipt returns the compact identity for one Heap allocation key.
+func (key Key) AllocationReceipt() (AllocationReceipt, bool) {
 	if !key.valid() || key.Kind() != RootAllocation {
-		return linkproject.Application{}, linkproject.Shard{}, 0, 0, 0, 0, false
+		return AllocationReceipt{}, false
+	}
+	row, ok := key.owner.rootAt(key.slot)
+	if !ok || row.kind != RootAllocation || !row.allocation.module.Available() {
+		return AllocationReceipt{}, false
+	}
+	mount, mounted := key.owner.artifacts[row.allocation.module]
+	if !mounted {
+		return AllocationReceipt{}, false
+	}
+	receipt := AllocationReceipt{module: row.allocation.module, programID: row.allocation.programID, allocationID: row.allocation.allocationID, kind: row.allocation.kind, form: row.allocation.form, artifact: mount.artifact}
+	return receipt, receipt.Available()
+}
+
+// FreshResult returns the exact creation occurrence selected by this Key.
+// Program aggregates return false. Its target Call coordinate remains opaque:
+// Heap never reissues or exposes the raw Program Term.
+func (key Key) FreshResultID() (keyspace.ContentID, int, uint32, uint32, bool) {
+	if !key.valid() || key.Kind() != RootAllocation {
+		return keyspace.ContentID{}, 0, 0, 0, false
 	}
 	root, ok := key.owner.rootAt(key.slot)
 	if !ok {
-		return linkproject.Application{}, linkproject.Shard{}, 0, 0, 0, 0, false
+		return keyspace.ContentID{}, 0, 0, 0, false
 	}
 	row := root.fresh
-	if row.application == (linkproject.Application{}) || !row.kinds.Valid() {
-		return linkproject.Application{}, linkproject.Shard{}, 0, 0, 0, 0, false
+	if !row.applicationID.Available() || !row.kinds.Valid() {
+		return keyspace.ContentID{}, 0, 0, 0, false
 	}
-	shard, call, callOK := key.owner.source.Project().Applications().Call(row.application)
-	if !callOK {
-		return linkproject.Application{}, linkproject.Shard{}, 0, 0, 0, 0, false
-	}
-	return row.application, shard, call, int(row.outcome), row.result, row.ordinal, true
+	return row.applicationID, int(row.outcome), row.result, row.ordinal, true
 }
 
-// BootRoot returns the exact actor-local bootstrap root selected by this key.
-func (key Key) BootRoot() (linkhost.BootRoot, bool) {
+// BootID returns the detached actor-local bootstrap root identity selected by
+// this key.  Heap never reissues Host's authority-bearing BootRoot.
+func (key Key) BootID() (keyspace.ContentID, bool) {
 	if !key.valid() || key.Kind() != RootBoot {
-		return linkhost.BootRoot{}, false
+		return keyspace.ContentID{}, false
 	}
 	row, ok := key.owner.rootAt(key.slot)
 	if !ok {
-		return linkhost.BootRoot{}, false
+		return keyspace.ContentID{}, false
 	}
-	return row.boot, true
+	return row.bootID, row.bootID.Available()
 }
 
 // Slot is an owner-issued cold structural storage provenance. Exact Lua keys
@@ -122,6 +168,27 @@ func (key Key) BootRoot() (linkhost.BootRoot, bool) {
 type Slot struct {
 	owner *schema
 	id    uint32
+}
+
+// ExactKey is Heap's owner-fenced exact literal coordinate.  It is issued
+// only from the sealed Heap exact-key universe; it cannot retain or replay a
+// Project Key authority.
+type ExactKey struct {
+	owner   *schema
+	ordinal uint32
+}
+
+func (key ExactKey) valid() bool {
+	return key.owner != nil && key.ordinal != 0 && int(key.ordinal) <= len(key.owner.exactKeys)
+}
+
+// Literal returns the already-normalized scalar exact key.
+func (key ExactKey) Literal() (keyspace.LiteralValue, bool) {
+	if !key.valid() {
+		return keyspace.LiteralValue{}, false
+	}
+	literal := key.owner.exactKeys[key.ordinal-1].literal
+	return literal, literal.Kind != 0
 }
 
 func (slot Slot) valid() bool {
@@ -169,7 +236,6 @@ const (
 // caller-minted equality token.
 type keyAtom struct {
 	kind         keyAtomKind
-	exact        linkproject.Key
 	exactOrdinal uint32
 	root         uint32
 	role         materialization.Role
@@ -232,20 +298,20 @@ func (selector KeySelector) ExactCount() int {
 	return count
 }
 
-func (selector KeySelector) ExactAt(index int) (linkproject.Key, bool) {
+func (selector KeySelector) ExactAt(index int) (ExactKey, bool) {
 	if !selector.valid() || selector.kinds != 0 || index < 0 {
-		return linkproject.Key{}, false
+		return ExactKey{}, false
 	}
 	for _, atom := range selector.atoms {
 		if atom.kind != keyAtomExact {
 			continue
 		}
 		if index == 0 {
-			return atom.exact, true
+			return ExactKey{owner: selector.owner, ordinal: atom.exactOrdinal}, true
 		}
 		index--
 	}
-	return linkproject.Key{}, false
+	return ExactKey{}, false
 }
 
 // ReferenceCount/ReferenceAt enumerate exact object-identity key subjects.
@@ -298,14 +364,18 @@ func (selector KeySelector) RuntimeKinds() runtimekind.Set {
 }
 
 // Origin exposes the one existing source coordinate of a partition. Dynamic
-// slots retain direct Program provenance, never a Link Value or constructor
-// wrapper. Exact slots retain the Link canonical key arena identity.
-func (slot Slot) Origin() (kind SlotKind, exact linkproject.Key, shard linkproject.Shard, term keyspace.Term, ok bool) {
+// slots retain the globally unique opaque Boundary Value identity; exact
+// slots retain the Link canonical key arena identity. Heap never exposes a
+// raw authored Term or a redundant mount qualifier.
+func (slot Slot) Origin() (kind SlotKind, exact ExactKey, value keyspace.ContentID, ok bool) {
 	if !slot.valid() {
-		return SlotInvalid, linkproject.Key{}, linkproject.Shard{}, 0, false
+		return SlotInvalid, ExactKey{}, keyspace.ContentID{}, false
 	}
 	row := slot.owner.slots[slot.id-1]
-	return row.kind, row.exact, row.dynamic.shard, row.dynamic.term, true
+	if row.kind == SlotExact {
+		return row.kind, ExactKey{owner: slot.owner, ordinal: row.exact}, keyspace.ContentID{}, row.exact != 0
+	}
+	return row.kind, ExactKey{}, row.dynamic, row.dynamic.Available()
 }
 
 // Payload is one exact Values-pack scalar-selection source. It names neither
@@ -320,17 +390,17 @@ func (payload Payload) valid() bool {
 	return payload.owner != nil && payload.id != 0 && int(payload.id) <= len(payload.owner.payloads)
 }
 
-// Source returns the exact Program Values relation and its scalar adjustment
-// offset. The offset is a Program semantic coordinate, not an owner ID.
-func (payload Payload) Source() (linkproject.Shard, keyspace.Term, int, bool) {
+// Source returns the mounted artifact Values identity and its scalar
+// adjustment. The ID is a Program-issued semantic receipt, not a raw Term.
+func (payload Payload) Source() (keyspace.ContentID, keyspace.ContentID, int, bool) {
 	if !payload.valid() {
-		return linkproject.Shard{}, 0, 0, false
+		return keyspace.ContentID{}, keyspace.ContentID{}, 0, false
 	}
 	row := payload.owner.payloads[payload.id-1]
 	if row.kind != payloadValues {
-		return linkproject.Shard{}, 0, 0, false
+		return keyspace.ContentID{}, keyspace.ContentID{}, 0, false
 	}
-	return row.shard, row.values, int(row.index), true
+	return row.module, row.valuesID, int(row.index), row.module.Available() && row.valuesID.Available()
 }
 
 // InitialValue returns the sealed Target bootstrap source for a boot payload.
@@ -378,16 +448,16 @@ func (reference Reference) Key() (Key, materialization.Role, bool) {
 	return Key{owner: reference.owner, slot: reference.root}, reference.role, true
 }
 
-// BootRoot projects a bootstrap-family reference.
-func (reference Reference) BootRoot() (linkhost.BootRoot, materialization.Role, bool) {
+// BootID projects a detached bootstrap-family reference.
+func (reference Reference) BootID() (keyspace.ContentID, materialization.Role, bool) {
 	if !reference.valid() || reference.Kind() != RootBoot {
-		return linkhost.BootRoot{}, materialization.Invalid, false
+		return keyspace.ContentID{}, materialization.Invalid, false
 	}
 	row, ok := reference.owner.rootAt(reference.root)
 	if !ok {
-		return linkhost.BootRoot{}, materialization.Invalid, false
+		return keyspace.ContentID{}, materialization.Invalid, false
 	}
-	return row.boot, reference.role, true
+	return row.bootID, reference.role, row.bootID.Available()
 }
 
 // ContainmentKind distinguishes a proved absence from exact and opaque

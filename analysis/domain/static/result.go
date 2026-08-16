@@ -3,7 +3,6 @@ package static
 import (
 	"github.com/wippyai/go-lua/analysis/semantic/typeauthority"
 	"github.com/wippyai/go-lua/program/keyspace"
-	linkboundary "github.com/wippyai/go-lua/program/link/boundary"
 	"github.com/wippyai/go-lua/program/target"
 )
 
@@ -41,21 +40,20 @@ const (
 	FaultContainment
 )
 
-// RuntimeSubject is the exact Boundary-local Cell value occurrence observed at the
+// RuntimeSubject is the exact detached Cell occurrence observed at the
 // authored Program SourceFrontier. Static never gives a non-executable Read a
 // runtime coordinate of its own.
 type RuntimeSubject struct {
 	linkID keyspace.ContentID
-	value  linkboundary.Value
 	id     keyspace.ContentID
-	body   keyspace.Term
+	body   keyspace.ContentID
 	cursor uint32
 }
 
-func (s RuntimeSubject) Valid() bool                       { return s.linkID.Available() && s.id.Available() && s.body != 0 }
-func (s RuntimeSubject) LinkID() keyspace.ContentID        { return s.linkID }
-func (s RuntimeSubject) Value() (linkboundary.Value, bool) { return s.value, s.Valid() }
-func (s RuntimeSubject) SourceFrontier() (keyspace.Term, int, bool) {
+func (s RuntimeSubject) Valid() bool {
+	return s.linkID.Available() && s.id.Available() && s.body.Available()
+}
+func (s RuntimeSubject) SourceFrontier() (keyspace.ContentID, int, bool) {
 	return s.body, int(s.cursor), s.Valid()
 }
 
@@ -66,7 +64,7 @@ func (s RuntimeSubject) SourceFrontier() (keyspace.Term, int, bool) {
 type Symbolic struct {
 	reference   typeauthority.StaticTypeRef
 	sourceOwner keyspace.ContentID
-	source      keyspace.Term
+	source      keyspace.ContentID
 	namespace   keyspace.ContentID
 	environment keyspace.ContentID
 	operation   target.Operation
@@ -83,23 +81,23 @@ func (s Symbolic) Operation() target.Operation            { return s.operation }
 func (s Symbolic) Law() keyspace.ContentID                { return s.law }
 func (s Symbolic) Dependency() keyspace.ContentID         { return s.dependency }
 func (s Symbolic) Reason() Reason                         { return s.reason }
-func (s Symbolic) Source() (keyspace.ContentID, keyspace.Term, bool) {
-	return s.sourceOwner, s.source, s.sourceOwner.Available() && s.source != 0
+func (s Symbolic) Source() (keyspace.ContentID, keyspace.ContentID, bool) {
+	return s.sourceOwner, s.source, s.sourceOwner.Available() && s.source.Available()
 }
 func (s Symbolic) Subject() (RuntimeSubject, bool) {
 	return s.subject, s.reason == ReasonRuntimeSubject && s.subject.Valid()
 }
 
 func (s Symbolic) exactSource() bool {
-	if s.sourceOwner.Available() != (s.source != 0) {
+	if s.sourceOwner.Available() != s.source.Available() {
 		return false
 	}
 	return s.exactOperand()
 }
 
 func (s Symbolic) exactOperand() bool {
-	programSource := s.sourceOwner.Available() && s.source != 0
-	if s.sourceOwner.Available() != (s.source != 0) {
+	programSource := s.sourceOwner.Available() && s.source.Available()
+	if s.sourceOwner.Available() != s.source.Available() {
 		return false
 	}
 	return programSource || s.reference.Valid()
@@ -108,6 +106,7 @@ func (s Symbolic) exactOperand() bool {
 type resultRow struct {
 	kind     Kind
 	closed   []byte
+	runtime  typeauthority.RuntimeInput
 	symbolic Symbolic
 	fault    Fault
 }
@@ -161,9 +160,9 @@ func (v Value) Fault() (Fault, bool) {
 // structured site retained for an invalid judgment. They deliberately reuse
 // the same authored coordinate vocabulary as Symbolic; Fault remains the
 // diagnostic identity.
-func (v Value) InvalidSource() (keyspace.ContentID, keyspace.Term, bool) {
+func (v Value) InvalidSource() (keyspace.ContentID, keyspace.ContentID, bool) {
 	if !v.IsInvalid() {
-		return keyspace.ContentID{}, 0, false
+		return keyspace.ContentID{}, keyspace.ContentID{}, false
 	}
 	return v.owner.results[v.index].symbolic.Source()
 }

@@ -8,7 +8,7 @@ import (
 )
 
 // SemanticSourceReceipt is Link's detached aggregate denominator. It retains
-// only the exact Link owner identity and the already-sealed 114-definition
+// only the exact Link owner identity and the already-sealed 111-definition
 // cardinality result; no child authority, Program, schema builder, or row
 // relation crosses this boundary.
 type SemanticSourceReceipt struct {

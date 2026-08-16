@@ -229,15 +229,15 @@ func TestSelectResultLogicalTruthiness(t *testing.T) {
 		want  typ.Type
 	}{
 		{name: "nil and returns nil", left: typ.Nil, op: kind.SelectAnd, right: typ.String, want: typ.Nil},
-		{name: "false or returns right", left: typ.False, op: kind.SelectOr, right: typ.String, want: typ.String},
-		{name: "true and returns right", left: typ.True, op: kind.SelectAnd, right: typ.Number, want: typ.Number},
+		{name: "false or returns right", left: typ.LiteralBool(false), op: kind.SelectOr, right: typ.String, want: typ.String},
+		{name: "true and returns right", left: typ.LiteralBool(true), op: kind.SelectAnd, right: typ.Number, want: typ.Number},
 		{name: "truthy string or returns left", left: typ.String, op: kind.SelectOr, right: typ.Number, want: typ.String},
-		{name: "boolean and splits false or right", left: typ.Boolean, op: kind.SelectAnd, right: typ.String, want: typeexpr.Union(typ.False, typ.String)},
-		{name: "boolean or splits true or right", left: typ.Boolean, op: kind.SelectOr, right: typ.String, want: typeexpr.Union(typ.True, typ.String)},
-		{name: "any and returns falsy condition or right", left: typ.Any, op: kind.SelectAnd, right: typ.String, want: typeexpr.Union(typ.Nil, typ.False, typ.String)},
-		{name: "unknown and returns falsy condition or right literal", left: typ.Unknown, op: kind.SelectAnd, right: typ.LiteralInt(1), want: typeexpr.Union(typ.Nil, typ.False, typ.LiteralInt(1))},
+		{name: "boolean and splits false or right", left: typ.Boolean, op: kind.SelectAnd, right: typ.String, want: typeexpr.Union(typ.LiteralBool(false), typ.String)},
+		{name: "boolean or splits true or right", left: typ.Boolean, op: kind.SelectOr, right: typ.String, want: typeexpr.Union(typ.LiteralBool(true), typ.String)},
+		{name: "any and returns falsy condition or right", left: typ.Any, op: kind.SelectAnd, right: typ.String, want: typeexpr.Union(typ.Nil, typ.LiteralBool(false), typ.String)},
+		{name: "unknown and returns falsy condition or right literal", left: typ.Unknown, op: kind.SelectAnd, right: typ.LiteralInt(1), want: typeexpr.Union(typ.Nil, typ.LiteralBool(false), typ.LiteralInt(1))},
 		{name: "unknown or is unknown", left: typ.Unknown, op: kind.SelectOr, right: typ.String, want: typ.Unknown},
-		{name: "truthy left or unknown stays left", left: typ.True, op: kind.SelectOr, right: typ.Unknown, want: typ.True},
+		{name: "truthy left or unknown stays left", left: typ.LiteralBool(true), op: kind.SelectOr, right: typ.Unknown, want: typ.LiteralBool(true)},
 		{name: "falsey left and unknown stays left", left: typ.Nil, op: kind.SelectAnd, right: typ.Unknown, want: typ.Nil},
 	}
 
@@ -259,11 +259,11 @@ func TestSelectResultLogicalUnionDistribution(t *testing.T) {
 	}
 	assertType(t, got, typeexpr.Union(typ.String, typ.Number))
 
-	got, ok = SelectResult(typeexpr.Union(typ.False, typ.String), kind.SelectAnd, typ.Number)
+	got, ok = SelectResult(typeexpr.Union(typ.LiteralBool(false), typ.String), kind.SelectAnd, typ.Number)
 	if !ok {
 		t.Fatal("BinaryOp(false | string, and, number) failed")
 	}
-	assertType(t, got, typeexpr.Union(typ.False, typ.Number))
+	assertType(t, got, typeexpr.Union(typ.LiteralBool(false), typ.Number))
 
 	got, ok = SelectResult(typeexpr.Union(typ.Unknown, typ.Nil), kind.SelectOr, typ.Number)
 	if !ok {

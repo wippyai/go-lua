@@ -8,37 +8,40 @@ import (
 )
 
 // Topology is the one sealed structural authority for a Solver. It owns the
-// base ordinary topology plus finite activation bindings. A binding stores
-// one closed constituent Axes declaration and one finite Template once; Graph materializes only the
-// fragments selected by accepted Members. No candidate universe, bitmap,
-// alternate graph, or callback survives sealing.
+// ordinary graph and the immutable receipt-origin activation selections.
 type Topology struct {
 	source *composition.Composition
-	base   TopologySpec
-	key    composition.Key
+	// deferredQueries is issued only by the receipt-only observation seal. It
+	// records that every declared Query family was intentionally deferred to
+	// solve-local owned observation roots rather than silently omitted.
+	deferredQueries bool
+	// initial is the one compiled immutable structural graph. Activation
+	// revisions are tiny identity views over this payload; the builder spec
+	// and assembly are deliberately not retained after sealing.
+	initial *Graph
+	key     composition.Key
+	rows    compiledRowDirectory
 
-	bindings         []activationBinding
-	bindingAt        map[composition.Key]int
-	bindingByTrigger map[composition.Key]int
+	receipts         []activationReceipt
+	receiptAt        map[composition.Key]int
+	receiptByTrigger map[composition.Key][]int
 	reverses         []derivedActivationReverse
 }
 
-// activationBinding is sealed, topology-owned metadata. Its key is derived
-// from the cold Schema, exact trigger occurrence, Axes, Template/ports, and
-// its cold family, exact trigger occurrence, Axes, and Template/ports; it is
-// never supplied by a builder or selected by a Rule.
-type activationBinding struct {
-	key              composition.Key
-	family           composition.Key
-	trigger          composition.Key
-	triggerRule      composition.Key
-	triggerAdmission composition.Key
-	application      composition.Key
-	plan             VariantPlan
-	ports            map[composition.Key]sealedPort
-	ambient          Scope
+// activationReceipt is the sealed index of one pre-materialized target row.
+// It contains no template, port table, or lowering capability.
+type activationReceipt struct {
+	key         composition.Key
+	family      composition.Key
+	trigger     composition.Key
+	application composition.Key
+	target      composition.Key
+	endpoint    composition.Key
+	direct      DirectActivationCandidate
 }
 
+// Deprecated compatibility storage for the in-flight selector migration.
+// It is not used by graph lowering; receipt-origin rows are authoritative.
 // derivedActivationReverse is produced exclusively by a sealed binding's
 // actual export ports. It is not a second user-authored declaration.
 type derivedActivationReverse struct {
@@ -47,39 +50,14 @@ type derivedActivationReverse struct {
 	trigger composition.Key
 }
 
-func (binding *activationBinding) issue(owner *Topology, locator PairLocator) (Member, bool) {
-	if binding == nil || owner == nil || !binding.key.Available() || !binding.family.Available() || !binding.trigger.Available() {
+func (receipt *activationReceipt) issue(owner *Topology, locator PairLocator) (Member, bool) {
+	if receipt == nil || owner == nil || !receipt.key.Available() || !receipt.family.Available() || !receipt.trigger.Available() {
 		return Member{}, false
 	}
-	if !binding.plan.available(owner.source, binding.family) || binding.application != locator.Application {
+	if receipt.application != locator.Application || receipt.target != locator.Target || receipt.endpoint != locator.Endpoint {
 		return Member{}, false
 	}
-	if _, found := binding.plan.variant(locator.Target, locator.Endpoint); !found {
-		return Member{}, false
-	}
-	return Member{owner: owner, binding: binding.key, locator: locator}, true
-}
-
-func (binding *activationBinding) appendMember(spec *TopologySpec, member Member, premise Expr) bool {
-	if binding == nil || spec == nil || !member.Available() || member.Binding() != binding.key || !premise.Available() || !validScopedExpr(premise, binding.ambient) {
-		return false
-	}
-	locator, located := member.Locator()
-	if !located || locator.Application != binding.application {
-		return false
-	}
-	variant, found := binding.plan.variant(locator.Target, locator.Endpoint)
-	if !found {
-		return false
-	}
-	template, bound := variant.template.bindPrototype(binding.ports, binding.ambient)
-	if !bound {
-		return false
-	}
-	if !template.appendMember(spec, binding.key, member, premise) {
-		return false
-	}
-	return true
+	return Member{owner: owner, binding: receipt.key, locator: locator}, true
 }
 
 // SealTopology freezes a single base graph and its binding descriptors. It
@@ -88,209 +66,354 @@ func (binding *activationBinding) appendMember(spec *TopologySpec, member Member
 // a raw locator only through Topology.SelectMember, which validates that
 // trigger's sole binding and mints one Member. It deliberately does not
 // compile one graph per inactive relation.
+type SealTopologyFailure uint8
+
+const (
+	SealTopologyFailureNone SealTopologyFailure = iota
+	SealTopologyFailureInput
+	SealTopologyFailureAssembly
+	SealTopologyFailureReissue
+	SealTopologyFailureTargets
+	SealTopologyFailurePoints
+	SealTopologyFailureCatalog
+	SealTopologyFailureInstances
+	SealTopologyFailureReceipts
+	SealTopologyFailureRealms
+	SealTopologyFailureCompile
+	SealTopologyFailureGraphKey
+	SealTopologyFailureTopologyKey
+	SealTopologyFailureGraphKeyStructure
+	SealTopologyFailureGraphKeySchedule
+	SealTopologyFailureGraphKeyIdentity
+	SealTopologyFailureCompileInput
+	SealTopologyFailureCompileCatalog
+	SealTopologyFailureCompileUsage
+	SealTopologyFailureCompileInstances
+	SealTopologyFailureCompilePoints
+	SealTopologyFailureCompileGroups
+	SealTopologyFailureCompileEnvironment
+	SealTopologyFailureCompileFactor
+	SealTopologyFailureCompileQueries
+	SealTopologyFailureCompileActivation
+	SealTopologyFailureCompileDecisions
+	SealTopologyFailureCompileRanks
+	SealTopologyFailureCompileAssembly
+	SealTopologyFailureCompileDirectory
+	SealTopologyFailureDeferredQueries
+)
+
 func SealTopology(source *composition.Composition, spec TopologySpec) (*Topology, bool) {
+	topology, _, ok := SealTopologyWithFailure(source, spec)
+	return topology, ok
+}
+
+// SealTopologyWithFailure is the production diagnostic companion to
+// SealTopology. It exposes only the first closed phase, never caller rows,
+// coordinates, or mutable compiler state.
+func SealTopologyWithFailure(source *composition.Composition, spec TopologySpec) (*Topology, SealTopologyFailure, bool) {
+	return sealTopologyWithFailure(source, spec, false)
+}
+
+// SealObservationTopologyWithFailure is the narrow receipt-only topology
+// seal for a schema whose Query families are all deferred to solve-local
+// observation roots. It admits exactly zero ordinary Query rows; partial and
+// ordinary-query topologies remain the responsibility of SealTopology.
+func SealObservationTopologyWithFailure(source *composition.Composition, spec TopologySpec) (*Topology, SealTopologyFailure, bool) {
+	return sealTopologyWithFailure(source, spec, true)
+}
+
+func sealTopologyWithFailure(source *composition.Composition, spec TopologySpec, deferredQueries bool) (*Topology, SealTopologyFailure, bool) {
 	if source == nil || !validTopologyBatch(spec.Batch, spec) {
-		return nil, false
+		return nil, SealTopologyFailureInput, false
 	}
+	if deferredQueries && len(source.Queries()) == 0 {
+		return nil, SealTopologyFailureDeferredQueries, false
+	}
+	assembly, assembled := SealTopologyAssembly(spec.Batch, spec.Materializations)
+	if !assembled || !assembly.Available() {
+		return nil, SealTopologyFailureAssembly, false
+	}
+	materializations := append([]TemplateMaterialization(nil), spec.Materializations...)
+	directCandidates := append([]DirectActivationCandidate(nil), spec.DirectCandidates...)
 	sealed := copyTopologySpec(spec)
-	basePoints, _, _, baseOK := buildPoints(sealed.Points)
+	if !reissueTopologySpec(&sealed, assembly) {
+		return nil, SealTopologyFailureReissue, false
+	}
+	if !appendAssemblyTargets(&sealed, assembly.Targets()) {
+		return nil, SealTopologyFailureTargets, false
+	}
+	if deferredQueries && len(sealed.Queries) != 0 {
+		return nil, SealTopologyFailureDeferredQueries, false
+	}
+	_, _, _, baseOK := buildPoints(sealed.Points)
 	if !baseOK {
-		return nil, false
+		return nil, SealTopologyFailurePoints, false
 	}
 	catalog, catalogOK := buildTopologyCatalog(TopologySpec{Rules: sealed.Rules, Summaries: sealed.Summaries, WeakTargets: sealed.WeakTargets})
 	if !catalogOK {
-		return nil, false
+		return nil, SealTopologyFailureCatalog, false
 	}
 	instances, instancesOK := buildInstances(source, sealed.Batch, sealed.Rules, catalog)
 	if !instancesOK {
-		return nil, false
+		return nil, SealTopologyFailureInstances, false
 	}
 	topology := &Topology{
 		source:           source,
-		bindingAt:        make(map[composition.Key]int, len(sealed.ActivationBindings)),
-		bindingByTrigger: make(map[composition.Key]int, len(sealed.ActivationBindings)),
+		deferredQueries:  deferredQueries,
+		receiptAt:        make(map[composition.Key]int),
+		receiptByTrigger: make(map[composition.Key][]int),
 	}
-	if !topology.sealBindings(sealed.Batch, sealed.ActivationBindings, basePoints, instances) {
-		return nil, false
+	if !topology.sealReceipts(sealed.Batch, len(sealed.Points), materializations, directCandidates, instances) {
+		return nil, SealTopologyFailureReceipts, false
 	}
-	if !sealed.Batch.closesOperandRealms(sealed.Rules, sealed.ActivationBindings) {
-		return nil, false
+	if !sealed.Batch.closesOperandRealms(sealed.Rules) {
+		return nil, SealTopologyFailureRealms, false
 	}
-	sealed.ActivationBindings = nil
-	graph, compiled := compileTopology(source, sealed, topology.reverses)
+	graph, rows, compileFailure, compiled := compileTopologyWithFailure(source, sealed, topology.reverses, deferredQueries)
 	if !compiled || graph == nil {
-		return nil, false
+		return nil, compileFailure, false
 	}
-	baseKey, keyed := graphSemanticKey(graph)
+	baseKey, graphKeyFailure, keyed := graphSemanticKeyWithFailure(graph)
 	if !keyed {
-		return nil, false
+		return nil, graphKeyFailure, false
 	}
 	key, keyed := topology.deriveKey(baseKey)
 	if !keyed {
-		return nil, false
+		return nil, SealTopologyFailureTopologyKey, false
 	}
-	topology.base, topology.key = sealed, key
-	return topology, true
+	topology.initial, topology.key, topology.rows = graph, key, rows
+	graph.owner = topology
+	initialRevision, revisionOK := topology.Revision(nil)
+	if !revisionOK {
+		return nil, SealTopologyFailureTopologyKey, false
+	}
+	graph.revision = initialRevision
+	return topology, SealTopologyFailureNone, true
 }
 
-func (topology *Topology) sealBindings(batch *Batch, values []ActivationBinding, base map[PointRef]Point, instances []canonicalInstance) bool {
-	if topology == nil || topology.source == nil || batch == nil || !batch.Sealed() {
+// appendAssemblyTargets joins the already-directory-owned target rows to the
+// caller's ordinary topology rows. Point and rule references are local to
+// each materialized target receipt, so they are shifted exactly once at this
+// boundary; no target Batch capability can reach the compiler.
+func appendAssemblyTargets(spec *TopologySpec, targets []TopologySpec) bool {
+	if spec == nil {
 		return false
 	}
-	if !distinctActivationBindingTriggers(values, instances) {
-		return false
-	}
-	bindings := make([]activationBinding, len(values))
-	boundTriggers := make(map[composition.Key]struct{}, len(values))
-	checkedPlans := make(map[*variantPlanData]struct{}, len(values))
-	for index, value := range values {
-		if !value.Family.Available() {
+	for _, target := range targets {
+		if target.Batch != spec.Batch {
 			return false
 		}
-		_, known := topology.source.ActivationFamily(value.Family)
-		if !known {
+		pointOffset, ruleOffset := len(spec.Points), len(spec.Rules)
+		if len(spec.PointRanks) == 0 && pointOffset != 0 {
+			spec.PointRanks = make([]int, pointOffset)
+			for index := range spec.PointRanks {
+				spec.PointRanks[index] = index
+			}
+		}
+		targetRanks := target.PointRanks
+		if len(targetRanks) == 0 && len(target.Points) != 0 {
+			targetRanks = make([]int, len(target.Points))
+			for index := range targetRanks {
+				targetRanks[index] = index
+			}
+		}
+		if len(targetRanks) != 0 && len(targetRanks) != len(target.Points) {
 			return false
 		}
-		triggerIndex, triggerOK := ruleRefIndex(value.Trigger, len(instances))
-		if !triggerOK {
-			return false
+		spec.Points = append(spec.Points, target.Points...)
+		if len(targetRanks) != 0 {
+			for _, rank := range targetRanks {
+				spec.PointRanks = append(spec.PointRanks, rank+pointOffset)
+			}
 		}
-		trigger := instances[triggerIndex]
-		triggerSchema, schemaOK := ruleSchema(topology.source, trigger.row.Schema)
-		if !schemaOK || len(triggerSchema.Activations) != 1 || triggerSchema.Activations[0].Family != value.Family {
-			return false
+		for _, rule := range target.Rules {
+			spec.Rules = append(spec.Rules, copyInstance(rule))
 		}
-		if _, alreadyBound := boundTriggers[trigger.key]; alreadyBound {
-			return false
-		}
-		if !trigger.row.Schema.Available() || !triggerSchema.Admission.Identity.Available() {
-			return false
-		}
-		if !value.Plan.available(topology.source, value.Family) || !value.Application.Available() {
-			return false
-		}
-		if _, checked := checkedPlans[value.Plan.data]; !checked {
-			for _, variant := range value.Plan.data.variants {
-				if variant.template.batch != batch {
+		for _, group := range target.Groups {
+			members := make([]RuleRef, len(group.Members))
+			for index, member := range group.Members {
+				if member == 0 {
 					return false
 				}
+				members[index] = RuleRef(uint64(member) + uint64(ruleOffset))
 			}
-			checkedPlans[value.Plan.data] = struct{}{}
-		}
-		ports, ambient, portsOK := sealPlanPortBindings(value.Plan, value.PortBindings, base)
-		if !portsOK || len(value.Plan.data.exports) == 0 && !value.Plan.data.structuralOnly() {
-			return false
-		}
-		key, keyOK := deriveVariantBindingKey(value.Family, trigger.key, value.Application, value.Plan.data.key, ports, ambient)
-		if !keyOK {
-			return false
-		}
-		bindings[index] = activationBinding{key: key, family: value.Family, trigger: trigger.key, triggerRule: trigger.row.Schema, triggerAdmission: triggerSchema.Admission.Identity, application: value.Application, plan: value.Plan, ports: ports, ambient: ambient}
-		boundTriggers[trigger.key] = struct{}{}
-	}
-	for _, instance := range instances {
-		schema, schemaOK := ruleSchema(topology.source, instance.row.Schema)
-		if !schemaOK {
-			return false
-		}
-		if len(schema.Activations) != 0 {
-			if len(schema.Activations) != 1 {
+			output := PointRef(uint64(group.Output) + uint64(pointOffset))
+			if group.Output == 0 {
 				return false
 			}
-			if _, bound := boundTriggers[instance.key]; !bound {
+			bound := Group{Members: members, Output: output, Inputs: append([]Input(nil), group.Inputs...), EnvironmentInput: group.EnvironmentInput, premise: group.premise}
+			spec.Groups = append(spec.Groups, bound)
+		}
+		for _, edge := range target.FactorEdges {
+			if edge.Target == 0 {
 				return false
 			}
+			spec.FactorEdges = append(spec.FactorEdges, FactorEdge{Target: PointRef(uint64(edge.Target) + uint64(pointOffset)), Input: edge.Input, Factor: edge.Factor})
 		}
-	}
-	sort.Slice(bindings, func(left, right int) bool { return lessKey(bindings[left].key, bindings[right].key) })
-	topology.bindingAt = make(map[composition.Key]int, len(bindings))
-	reverseSeen := make(map[[2]composition.Key]struct{}, len(bindings))
-	for index := range bindings {
-		if index > 0 && bindings[index].key == bindings[index-1].key {
-			return false
-		}
-		topology.bindingAt[bindings[index].key] = index
-		if _, duplicate := topology.bindingByTrigger[bindings[index].trigger]; duplicate {
-			return false
-		}
-		topology.bindingByTrigger[bindings[index].trigger] = index
-		exports := make([]sealedPort, 0, len(bindings[index].plan.data.exports))
-		for _, role := range bindings[index].plan.data.exports {
-			port, found := bindings[index].ports[role]
-			if !found {
+		for _, edge := range target.EnvironmentEdges {
+			if edge.Target == 0 {
 				return false
 			}
-			exports = append(exports, port)
+			spec.EnvironmentEdges = append(spec.EnvironmentEdges, EnvironmentEdge{Target: PointRef(uint64(edge.Target) + uint64(pointOffset)), Input: edge.Input, TransportOnly: edge.TransportOnly})
 		}
-		for _, port := range exports {
-			if !port.point.Available() {
-				return false
-			}
-			incidence := [2]composition.Key{port.point.key, bindings[index].trigger}
-			if _, duplicate := reverseSeen[incidence]; duplicate {
-				continue
-			}
-			reverseSeen[incidence] = struct{}{}
-			topology.reverses = append(topology.reverses, derivedActivationReverse{binding: bindings[index].key, target: port.point.key, trigger: bindings[index].trigger})
-		}
-	}
-	topology.bindings = bindings
-	return true
-}
-
-// distinctActivationBindingTriggers closes the raw TopologySpec boundary
-// before template sealing. One structural trigger owns one family binding;
-// accepting a second binding would reintroduce a tuple compatibility table.
-func distinctActivationBindingTriggers(values []ActivationBinding, instances []canonicalInstance) bool {
-	seen := make(map[composition.Key]struct{}, len(values))
-	for _, value := range values {
-		index, ok := ruleRefIndex(value.Trigger, len(instances))
-		if !ok || !instances[index].key.Available() {
-			return false
-		}
-		if _, duplicate := seen[instances[index].key]; duplicate {
-			return false
-		}
-		seen[instances[index].key] = struct{}{}
+		spec.Summaries = append(spec.Summaries, target.Summaries...)
+		spec.WeakTargets = append(spec.WeakTargets, target.WeakTargets...)
 	}
 	return true
 }
 
-func deriveVariantBindingKey(schema, trigger, application, plan composition.Key, ports map[composition.Key]sealedPort, ambient Scope) (composition.Key, bool) {
-	if !schema.Available() || !trigger.Available() || !application.Available() || !plan.Available() || !ambient.Available() {
-		return composition.Key{}, false
+// reissueTopologySpec replaces builder-local capabilities with the exact
+// directory issued by TopologyAssembly. Existing base-only topologies retain
+// their Batch identity; a materialized assembly can never leak a foreign
+// Batch into ordinary compilation.
+func reissueTopologySpec(spec *TopologySpec, assembly TopologyAssembly) bool {
+	if spec == nil || !assembly.Available() || spec.Batch == nil {
+		return false
 	}
-	roles := make([]composition.Key, 0, len(ports))
-	for role := range ports {
-		roles = append(roles, role)
-	}
-	sort.Slice(roles, func(left, right int) bool { return lessKey(roles[left], roles[right]) })
-	return identityKey("analysis/engine/equation/activation-variant-binding", func(writer *canonical.DigestWriter) bool {
-		if !writeKey(writer, schema) || !writeKey(writer, trigger) || !writeKey(writer, application) || !writeKey(writer, plan) || !writeScope(writer, ambient) || writer.Count(uint64(len(roles))) != nil {
-			return false
-		}
-		for _, role := range roles {
-			port := ports[role]
-			if !writeKey(writer, role) || !writePoint(writer, port.point) || writer.Uint(uint64(port.mode)) != nil {
-				return false
-			}
-			if !writePortReads(writer, port.prototypeReads) || !writePortReads(writer, port.reads) {
-				return false
-			}
-		}
+	if assembly.Batch() == spec.Batch {
+		spec.Materializations = nil
 		return true
-	})
+	}
+	reissueInput := func(input Input) (Input, bool) {
+		if !input.Available() {
+			return Input{}, false
+		}
+		source, sourceOK := assembly.Site(input.Source())
+		target, targetOK := assembly.Site(input.Target())
+		if !sourceOK || !targetOK {
+			return Input{}, false
+		}
+		result := BoundaryInput(source, target, input.Provenance(), input.Pre(), input.Reindex(), input.Post())
+		return result, result.Available()
+	}
+	for index := range spec.Rules {
+		occurrence, occurrenceOK := assembly.Occurrence(spec.Rules[index].Occurrence)
+		operand, operandOK := assembly.Operand(spec.Rules[index].Operand)
+		if !occurrenceOK || !operandOK || !operand.Occurrence().Same(occurrence) {
+			return false
+		}
+		spec.Rules[index].Occurrence, spec.Rules[index].Operand = occurrence, operand
+	}
+	for index := range spec.Points {
+		site, ok := assembly.Site(spec.Points[index].Site)
+		if !ok {
+			return false
+		}
+		spec.Points[index].Site = site
+	}
+	for index := range spec.Groups {
+		for input := range spec.Groups[index].Inputs {
+			bound, ok := reissueInput(spec.Groups[index].Inputs[input])
+			if !ok {
+				return false
+			}
+			spec.Groups[index].Inputs[input] = bound
+		}
+		if spec.Groups[index].EnvironmentInput.Available() {
+			bound, ok := reissueInput(spec.Groups[index].EnvironmentInput)
+			if !ok {
+				return false
+			}
+			spec.Groups[index].EnvironmentInput = bound
+		}
+	}
+	for index := range spec.EnvironmentEdges {
+		bound, ok := reissueInput(spec.EnvironmentEdges[index].Input)
+		if !ok {
+			return false
+		}
+		spec.EnvironmentEdges[index].Input = bound
+	}
+	for index := range spec.FactorEdges {
+		bound, ok := reissueInput(spec.FactorEdges[index].Input)
+		if !ok {
+			return false
+		}
+		spec.FactorEdges[index].Input = bound
+	}
+	spec.Batch = assembly.Batch()
+	spec.Materializations = nil
+	return true
 }
 
-func (topology *Topology) binding(key composition.Key) (*activationBinding, bool) {
-	if topology == nil || !key.Available() {
-		return nil, false
+func (topology *Topology) sealReceipts(base *Batch, pointCount int, values []TemplateMaterialization, direct []DirectActivationCandidate, instances []canonicalInstance) bool {
+	if topology == nil || topology.source == nil || base == nil || pointCount == 0 {
+		return false
 	}
-	index, found := topology.bindingAt[key]
-	if !found || index < 0 || index >= len(topology.bindings) || topology.bindings[index].key != key {
-		return nil, false
+	receipts := make([]activationReceipt, 0, len(values)+len(direct))
+	seen := make(map[composition.Key]struct{}, len(values)+len(direct))
+	for _, value := range values {
+		origin, ok := value.Origin()
+		// Structural/template assembly laws may materialize a target without
+		// an activation trigger. Such rows still belong in the sealed graph,
+		// but cannot mint a runtime selection receipt. Production activation
+		// callers attach origin before admission.
+		if !ok {
+			continue
+		}
+		if origin.TriggerOrdinal < 0 || origin.TriggerOrdinal >= len(instances) {
+			return false
+		}
+		if _, known := topology.source.ActivationFamily(origin.Family); !known {
+			return false
+		}
+		instance := instances[origin.TriggerOrdinal]
+		schema, schemaOK := ruleSchema(topology.source, instance.row.Schema)
+		if !schemaOK || len(schema.Activations) != 1 || schema.Activations[0].Family != origin.Family {
+			return false
+		}
+		key, keyed := identityKey("analysis/engine/equation/activation-receipt", func(writer *canonical.DigestWriter) bool {
+			return writeKey(writer, value.Key()) && writeKey(writer, instance.key) && writeKey(writer, origin.Family) && writeKey(writer, origin.Application) && writeKey(writer, origin.Target) && writeKey(writer, origin.Endpoint)
+		})
+		if !keyed {
+			return false
+		}
+		if _, duplicate := seen[key]; duplicate {
+			return false
+		}
+		seen[key] = struct{}{}
+		receipts = append(receipts, activationReceipt{key: key, family: origin.Family, trigger: instance.key, application: origin.Application, target: origin.Target, endpoint: origin.Endpoint})
 	}
-	return &topology.bindings[index], true
+	for _, value := range direct {
+		origin, ok := value.Origin()
+		if !ok || !value.OwnedBy(topology.source, base) || origin.TriggerOrdinal < 0 || origin.TriggerOrdinal >= len(instances) {
+			return false
+		}
+		if _, known := topology.source.ActivationFamily(origin.Family); !known {
+			return false
+		}
+		instance := instances[origin.TriggerOrdinal]
+		schema, schemaOK := ruleSchema(topology.source, instance.row.Schema)
+		if !schemaOK || len(schema.Activations) != 1 || schema.Activations[0].Family != origin.Family {
+			return false
+		}
+		for index := 0; index < value.TransportCount(); index++ {
+			transport, transportOK := value.TransportAt(index)
+			if !transportOK || int(uint64(transport.Source)) > pointCount || int(uint64(transport.Target)) > pointCount {
+				return false
+			}
+		}
+		key, keyed := identityKey("analysis/engine/equation/activation-receipt", func(writer *canonical.DigestWriter) bool {
+			return writeKey(writer, value.Key()) && writeKey(writer, instance.key) && writeKey(writer, origin.Family) && writeKey(writer, origin.Application) && writeKey(writer, origin.Target) && writeKey(writer, origin.Endpoint)
+		})
+		if !keyed {
+			return false
+		}
+		if _, duplicate := seen[key]; duplicate {
+			return false
+		}
+		seen[key] = struct{}{}
+		receipts = append(receipts, activationReceipt{key: key, family: origin.Family, trigger: instance.key, application: origin.Application, target: origin.Target, endpoint: origin.Endpoint, direct: value})
+	}
+	sort.Slice(receipts, func(left, right int) bool { return lessKey(receipts[left].key, receipts[right].key) })
+	topology.receipts = receipts
+	topology.receiptAt = make(map[composition.Key]int, len(receipts))
+	topology.receiptByTrigger = make(map[composition.Key][]int)
+	for index := range receipts {
+		topology.receiptAt[receipts[index].key] = index
+		topology.receiptByTrigger[receipts[index].trigger] = append(topology.receiptByTrigger[receipts[index].trigger], index)
+	}
+	return true
 }
 
 // ownsMember rechecks the opaque Member against this topology's sealed Axes.
@@ -300,32 +423,31 @@ func (topology *Topology) ownsMember(member Member) bool {
 	if topology == nil || member.owner != topology || !member.binding.Available() || !member.locator.Available() {
 		return false
 	}
-	binding, found := topology.binding(member.binding)
-	if !found || !binding.plan.available(topology.source, binding.family) || binding.application != member.locator.Application {
+	index, found := topology.receiptAt[member.binding]
+	if !found || index < 0 || index >= len(topology.receipts) {
 		return false
 	}
-	if _, variant := binding.plan.variant(member.locator.Target, member.locator.Endpoint); !variant {
-		return false
-	}
-	return true
+	receipt := topology.receipts[index]
+	return receipt.application == member.locator.Application && receipt.target == member.locator.Target && receipt.endpoint == member.locator.Endpoint
 }
 
-// ActivationBinding returns the one sealed binding owned by one exact trigger
+// ActivationReceipt returns the one sealed receipt owned by one exact trigger
 // occurrence and cold family. One trigger has exactly one binding: allowing a
 // slice here would let singleton axes reconstruct a compatibility table.
-func (topology *Topology) ActivationBinding(trigger, family composition.Key) (composition.Key, bool) {
+func (topology *Topology) ActivationReceipt(trigger, family composition.Key) (composition.Key, bool) {
 	if topology == nil || !trigger.Available() || !family.Available() {
 		return composition.Key{}, false
 	}
-	index, found := topology.bindingByTrigger[trigger]
-	if !found || index < 0 || index >= len(topology.bindings) {
+	indexes := topology.receiptByTrigger[trigger]
+	if len(indexes) == 0 {
 		return composition.Key{}, false
 	}
-	binding := topology.bindings[index]
-	if binding.trigger != trigger || binding.family != family {
-		return composition.Key{}, false
+	for _, index := range indexes {
+		if index >= 0 && index < len(topology.receipts) && topology.receipts[index].family == family {
+			return topology.receipts[index].key, true
+		}
 	}
-	return binding.key, true
+	return composition.Key{}, false
 }
 
 // ActivationApplication returns the exact application constituent sealed on
@@ -335,29 +457,41 @@ func (topology *Topology) ActivationApplication(trigger, family composition.Key)
 	if topology == nil || !trigger.Available() || !family.Available() {
 		return composition.Key{}, false
 	}
-	index, found := topology.bindingByTrigger[trigger]
-	if !found || index < 0 || index >= len(topology.bindings) {
+	indexes := topology.receiptByTrigger[trigger]
+	if len(indexes) == 0 {
 		return composition.Key{}, false
 	}
-	binding := topology.bindings[index]
-	if binding.trigger != trigger || binding.family != family || !binding.application.Available() {
-		return composition.Key{}, false
+	for _, index := range indexes {
+		if index >= 0 && index < len(topology.receipts) {
+			receipt := topology.receipts[index]
+			if receipt.family == family && receipt.application.Available() {
+				return receipt.application, true
+			}
+		}
 	}
-	return binding.application, true
+	return composition.Key{}, false
 }
 
-// SelectMember is the only structural conversion from one trigger's semantic
-// locator to its one Member. Each trigger owns one binding, so it cannot union
-// singleton bindings into a compatibility table and does not allocate.
-func (topology *Topology) SelectMember(trigger composition.Key, locator PairLocator) (Member, bool) {
+// SelectReceiptMember converts one trigger locator only when an exact
+// pre-materialized receipt owns that tuple.
+func (topology *Topology) SelectReceiptMember(trigger composition.Key, locator PairLocator) (Member, bool) {
 	if topology == nil || !trigger.Available() || !locator.Available() {
 		return Member{}, false
 	}
-	index, found := topology.bindingByTrigger[trigger]
-	if !found || index < 0 || index >= len(topology.bindings) {
+	indexes := topology.receiptByTrigger[trigger]
+	if len(indexes) == 0 {
 		return Member{}, false
 	}
-	return topology.bindings[index].issue(topology, locator)
+	for _, index := range indexes {
+		if index < 0 || index >= len(topology.receipts) {
+			continue
+		}
+		receipt := &topology.receipts[index]
+		if member, ok := receipt.issue(topology, locator); ok {
+			return member, true
+		}
+	}
+	return Member{}, false
 }
 
 func (topology *Topology) deriveKey(base composition.Key) (composition.Key, bool) {
@@ -365,11 +499,11 @@ func (topology *Topology) deriveKey(base composition.Key) (composition.Key, bool
 		return composition.Key{}, false
 	}
 	return identityKey("analysis/engine/equation/topology", func(writer *canonical.DigestWriter) bool {
-		if !writeKey(writer, base) || writer.Count(uint64(len(topology.bindings))) != nil {
+		if !writeKey(writer, base) || writer.Uint(boolUint(topology.deferredQueries)) != nil || writer.Count(uint64(len(topology.receipts))) != nil {
 			return false
 		}
-		for _, binding := range topology.bindings {
-			if !writeKey(writer, binding.key) || !writeKey(writer, binding.family) || !writeKey(writer, binding.trigger) || !writeKey(writer, binding.triggerRule) || !writeKey(writer, binding.triggerAdmission) || !writeKey(writer, binding.application) || !writeKey(writer, binding.plan.data.key) {
+		for _, receipt := range topology.receipts {
+			if !writeKey(writer, receipt.key) || !writeKey(writer, receipt.family) || !writeKey(writer, receipt.trigger) || !writeKey(writer, receipt.application) || !writeKey(writer, receipt.target) || !writeKey(writer, receipt.endpoint) {
 				return false
 			}
 		}
@@ -423,10 +557,6 @@ func (topology *Topology) Accept(member Member, premise Expr) (AcceptedMember, b
 	if topology == nil || !member.ownedBy(topology) || !premise.Available() {
 		return AcceptedMember{}, false
 	}
-	binding, bound := topology.binding(member.Binding())
-	if !bound || !validScopedExpr(premise, binding.ambient) {
-		return AcceptedMember{}, false
-	}
 	evidence, ok := topology.acceptedEvidenceKey(member, premise)
 	if !ok {
 		return AcceptedMember{}, false
@@ -442,34 +572,148 @@ func (topology *Topology) acceptedEvidenceKey(member Member, premise Expr) (comp
 	if topology == nil || !member.ownedBy(topology) || !premise.Available() {
 		return composition.Key{}, false
 	}
-	binding, bound := topology.binding(member.Binding())
-	if !bound || !binding.triggerRule.Available() || !binding.triggerAdmission.Available() || !binding.trigger.Available() {
+	index, bound := topology.receiptAt[member.Binding()]
+	if !bound || index < 0 || index >= len(topology.receipts) {
 		return composition.Key{}, false
 	}
+	receipt := topology.receipts[index]
 	return identityKey("analysis/engine/equation/activation-evidence", func(writer *canonical.DigestWriter) bool {
-		return writeMemberTuple(writer, member) && writeKey(writer, binding.triggerRule) && writeKey(writer, binding.triggerAdmission) && writeKey(writer, binding.trigger) && writeExpr(writer, premise)
+		return writeMemberTuple(writer, member) && writeKey(writer, receipt.family) && writeKey(writer, receipt.trigger) && writeKey(writer, receipt.application) && writeExpr(writer, premise)
 	})
 }
 
-// Graph is the sole derived graph view T(A) = base U selected Template
-// fragments. It visits only accepted Members, never an eager candidate set.
+// Graph returns the sealed structural graph or a compact revision view over
+// it. It visits only accepted Members, never an eager candidate set or a
+// retained builder specification.
 func (topology *Topology) Graph(accepted []AcceptedMember) (*Graph, bool) {
-	if topology == nil || topology.source == nil || !topology.validAccepted(accepted) {
+	if topology == nil || topology.source == nil || topology.initial == nil || !topology.validAccepted(accepted) {
 		return nil, false
 	}
-	spec := copyTopologySpec(topology.base)
 	for _, row := range accepted {
 		member := row.Member()
-		binding, found := topology.binding(member.Binding())
-		if !found || !binding.appendMember(&spec, member, row.Premise()) {
+		if !topology.ownsMember(member) {
 			return nil, false
 		}
 	}
-	if _, ok := topology.Revision(accepted); !ok {
+	revision, ok := topology.Revision(accepted)
+	if !ok {
 		return nil, false
 	}
-	graph, ok := compileTopology(topology.source, spec, topology.reverses)
-	return graph, ok && graph != nil
+	if len(accepted) == 0 {
+		return topology.initial, true
+	}
+	view := *topology.initial
+	view.self = &view
+	view.payload = topology.initial
+	view.owner = topology
+	view.revision = revision
+	return &view, true
+}
+
+// OwnsGraph proves that a Graph was issued by this exact sealed Topology.
+// The pointer and immutable revision fence prevent equal-content topologies
+// from exchanging graph members or runtime bindings.
+func (topology *Topology) OwnsGraph(graph *Graph) bool {
+	return topology != nil && graph != nil && graph.owner == topology && graph.revision.Available() && graph.valid() && topology.source != nil && graph.composition == topology.source
+}
+
+// PointRowLocator, RuleMemberRowLocator, QueryRowLocator, and
+// ActivationMemberRowLocator are opaque sealed correspondences. They retain
+// canonical row identity without exporting equation keys or disposable
+// builder ordinals to the engine's post-Commit lookup path.
+type PointRowLocator struct {
+	owner *Topology
+	key   composition.Key
+}
+
+type RuleMemberRowLocator struct {
+	owner *Topology
+	key   composition.Key
+}
+
+type QueryRowLocator struct {
+	owner *Topology
+	key   composition.Key
+}
+
+type ActivationMemberRowLocator struct {
+	owner  *Topology
+	member composition.Key
+}
+
+func (topology *Topology) PointRow(ref PointRef) (PointRowLocator, bool) {
+	index := int(uint64(ref)) - 1
+	if topology == nil || index < 0 || index >= len(topology.rows.points) || !topology.rows.points[index].Available() {
+		return PointRowLocator{}, false
+	}
+	return PointRowLocator{owner: topology, key: topology.rows.points[index]}, true
+}
+
+func (topology *Topology) RuleMemberRow(ref RuleRef) (RuleMemberRowLocator, bool) {
+	index := int(uint64(ref)) - 1
+	if topology == nil || index < 0 || index >= len(topology.rows.members) || !topology.rows.members[index].Available() {
+		return RuleMemberRowLocator{}, false
+	}
+	return RuleMemberRowLocator{owner: topology, key: topology.rows.members[index]}, true
+}
+
+func (topology *Topology) QueryRow(index uint64) (QueryRowLocator, bool) {
+	if topology == nil || index >= uint64(len(topology.rows.queries)) || !topology.rows.queries[index].Available() {
+		return QueryRowLocator{}, false
+	}
+	return QueryRowLocator{owner: topology, key: topology.rows.queries[index]}, true
+}
+
+// ActivationMemberRow projects one exact trigger Rule reference only when the
+// sealed topology owns at least one materialized candidate for that trigger.
+// Candidate target tuples remain receipt-owned and do not multiply the stable
+// structural-member directory.
+func (topology *Topology) ActivationMemberRow(ref RuleRef) (ActivationMemberRowLocator, bool) {
+	index := int(uint64(ref)) - 1
+	if topology == nil || index < 0 || index >= len(topology.rows.members) {
+		return ActivationMemberRowLocator{}, false
+	}
+	member := topology.rows.members[index]
+	if !member.Available() || len(topology.receiptByTrigger[member]) == 0 {
+		return ActivationMemberRowLocator{}, false
+	}
+	return ActivationMemberRowLocator{owner: topology, member: member}, true
+}
+
+func (locator PointRowLocator) Resolve(graph *Graph) (Point, bool) {
+	if locator.owner == nil || !locator.key.Available() || !locator.owner.OwnsGraph(graph) {
+		return Point{}, false
+	}
+	node, found := graph.pointAt[locator.key]
+	if !found || int(node) < 0 || int(node) >= len(graph.points) {
+		return Point{}, false
+	}
+	point := graph.points[node]
+	return point, graph.OwnsPoint(point) && point.key == locator.key
+}
+
+func (locator RuleMemberRowLocator) Resolve(graph *Graph) (RuleMember, bool) {
+	if locator.owner == nil || !locator.key.Available() || !locator.owner.OwnsGraph(graph) {
+		return RuleMember{}, false
+	}
+	member, found := graph.memberAt[locator.key]
+	return member, found && graph.OwnsMember(member) && member.key == locator.key
+}
+
+func (locator QueryRowLocator) Resolve(graph *Graph) (Query, bool) {
+	if locator.owner == nil || !locator.key.Available() || !locator.owner.OwnsGraph(graph) {
+		return Query{}, false
+	}
+	query, found := graph.queryAt[locator.key]
+	return query, found && graph.OwnsQuery(query) && query.key == locator.key
+}
+
+func (locator ActivationMemberRowLocator) Resolve(graph *Graph) (RuleMember, bool) {
+	if locator.owner == nil || !locator.member.Available() || !locator.owner.OwnsGraph(graph) || len(locator.owner.receiptByTrigger[locator.member]) == 0 {
+		return RuleMember{}, false
+	}
+	member, found := graph.memberAt[locator.member]
+	return member, found && graph.OwnsMember(member) && member.key == locator.member
 }
 
 func (topology *Topology) validAccepted(values []AcceptedMember) bool {
@@ -478,10 +722,6 @@ func (topology *Topology) validAccepted(values []AcceptedMember) bool {
 	}
 	for index, value := range values {
 		if !value.Available() || !value.member.ownedBy(topology) || index > 0 && !lessAcceptedMember(values[index-1], value) {
-			return false
-		}
-		binding, bound := topology.binding(value.member.Binding())
-		if !bound || !validScopedExpr(value.premise, binding.ambient) {
 			return false
 		}
 		if index > 0 && sameMember(values[index-1].Member(), value.Member()) {
@@ -498,8 +738,7 @@ func (topology *Topology) MergeAccepted(left, right AcceptedMember) (AcceptedMem
 	if topology == nil || !left.Available() || !right.Available() || !left.member.ownedBy(topology) || !right.member.ownedBy(topology) || !sameMember(left.member, right.member) {
 		return AcceptedMember{}, false
 	}
-	binding, bound := topology.binding(left.member.Binding())
-	if !bound || !validScopedExpr(left.premise, binding.ambient) || !validScopedExpr(right.premise, binding.ambient) {
+	if !topology.ownsMember(left.member) || !topology.ownsMember(right.member) {
 		return AcceptedMember{}, false
 	}
 	premise, ok := OrExpr(left.premise, right.premise)
@@ -514,18 +753,25 @@ func (topology *Topology) MergeAccepted(left, right AcceptedMember) (AcceptedMem
 }
 
 func graphSemanticKey(graph *Graph) (composition.Key, bool) {
+	key, _, ok := graphSemanticKeyWithFailure(graph)
+	return key, ok
+}
+
+// graphSemanticKeyWithFailure retains the graph-key failure boundary for the
+// receipt compiler without exposing mutable Graph state to callers.
+func graphSemanticKeyWithFailure(graph *Graph) (composition.Key, SealTopologyFailure, bool) {
 	if graph == nil || graph.self != graph || graph.composition == nil {
-		return composition.Key{}, false
+		return composition.Key{}, SealTopologyFailureGraphKeyStructure, false
 	}
 	type reverse struct{ target, trigger composition.Key }
 	reverses := make([]reverse, 0)
 	for target, triggers := range graph.activationReverses {
 		if target < 0 || target >= len(graph.points) {
-			return composition.Key{}, false
+			return composition.Key{}, SealTopologyFailureGraphKeyStructure, false
 		}
 		for _, trigger := range triggers {
 			if trigger < 0 || int(trigger) >= len(graph.points) {
-				return composition.Key{}, false
+				return composition.Key{}, SealTopologyFailureGraphKeyStructure, false
 			}
 			reverses = append(reverses, reverse{target: graph.points[target].key, trigger: graph.points[trigger].key})
 		}
@@ -536,7 +782,8 @@ func graphSemanticKey(graph *Graph) (composition.Key, bool) {
 		}
 		return lessKey(reverses[left].trigger, reverses[right].trigger)
 	})
-	return identityKey("analysis/engine/equation/graph", func(writer *canonical.DigestWriter) bool {
+	scheduleInvalid := false
+	key, ok := identityKey("analysis/engine/equation/graph", func(writer *canonical.DigestWriter) bool {
 		if writer.Count(uint64(len(graph.points))) != nil {
 			return false
 		}
@@ -558,7 +805,7 @@ func graphSemanticKey(graph *Graph) (composition.Key, bool) {
 				return false
 			}
 			for _, edge := range graph.environments {
-				if !writeKey(writer, edge.key) || !writeKey(writer, edge.target.key) || !writeKey(writer, edge.input.key) {
+				if !writeKey(writer, edge.key) || !writeKey(writer, edge.target.key) || !writeKey(writer, edge.input.key) || writer.Uint(boolUint(edge.transportOnly)) != nil {
 					return false
 				}
 			}
@@ -589,22 +836,55 @@ func graphSemanticKey(graph *Graph) (composition.Key, bool) {
 				return false
 			}
 		}
+		if graph.scheduleRanked {
+			if writer.Uint(3) != nil || graph.schedule == nil || writer.Count(uint64(graph.schedule.EventCount())) != nil {
+				scheduleInvalid = true
+				return false
+			}
+			for index := 0; index < graph.schedule.EventCount(); index++ {
+				event, ok := graph.schedule.EventAt(index)
+				if !ok || writer.Uint(uint64(event.Kind)) != nil || writer.Uint(uint64(event.Node)) != nil || writer.Uint(uint64(event.Region+1)) != nil {
+					scheduleInvalid = true
+					return false
+				}
+			}
+			if writer.Count(uint64(graph.schedule.RegionCount())) != nil {
+				scheduleInvalid = true
+				return false
+			}
+			for index := 0; index < graph.schedule.RegionCount(); index++ {
+				region, ok := graph.schedule.RegionAt(index)
+				if !ok || writer.Uint(uint64(region.Head)) != nil || writer.Uint(uint64(region.Parent+1)) != nil || writer.Uint(uint64(region.Enter)) != nil || writer.Uint(uint64(region.Exit+1)) != nil {
+					scheduleInvalid = true
+					return false
+				}
+			}
+		}
 		return true
 	})
+	if !ok {
+		if scheduleInvalid {
+			return composition.Key{}, SealTopologyFailureGraphKeySchedule, false
+		}
+		return composition.Key{}, SealTopologyFailureGraphKeyIdentity, false
+	}
+	return key, SealTopologyFailureNone, true
 }
 
 func copyTopologySpec(spec TopologySpec) TopologySpec {
 	result := TopologySpec{
-		Batch:              spec.Batch,
-		Rules:              make([]RuleInstance, len(spec.Rules)),
-		Points:             append([]PointSpec(nil), spec.Points...),
-		Groups:             make([]Group, len(spec.Groups)),
-		Queries:            cloneQueryInstances(spec.Queries),
-		EnvironmentEdges:   make([]EnvironmentEdge, len(spec.EnvironmentEdges)),
-		FactorEdges:        make([]FactorEdge, len(spec.FactorEdges)),
-		ActivationBindings: make([]ActivationBinding, len(spec.ActivationBindings)),
-		Summaries:          make([]SummaryMapping, len(spec.Summaries)),
-		WeakTargets:        make([]WeakTargetMapping, len(spec.WeakTargets)),
+		Batch:            spec.Batch,
+		Materializations: append([]TemplateMaterialization(nil), spec.Materializations...),
+		DirectCandidates: append([]DirectActivationCandidate(nil), spec.DirectCandidates...),
+		Rules:            make([]RuleInstance, len(spec.Rules)),
+		Points:           append([]PointSpec(nil), spec.Points...),
+		PointRanks:       append([]int(nil), spec.PointRanks...),
+		Groups:           make([]Group, len(spec.Groups)),
+		Queries:          cloneQueryInstances(spec.Queries),
+		EnvironmentEdges: make([]EnvironmentEdge, len(spec.EnvironmentEdges)),
+		FactorEdges:      make([]FactorEdge, len(spec.FactorEdges)),
+		Summaries:        make([]SummaryMapping, len(spec.Summaries)),
+		WeakTargets:      make([]WeakTargetMapping, len(spec.WeakTargets)),
 	}
 	for index, rule := range spec.Rules {
 		result.Rules[index] = copyInstance(rule)
@@ -613,19 +893,10 @@ func copyTopologySpec(spec TopologySpec) TopologySpec {
 		result.Groups[index] = Group{Members: append([]RuleRef(nil), group.Members...), Output: group.Output, Inputs: append([]Input(nil), group.Inputs...), EnvironmentInput: group.EnvironmentInput, premise: group.premise}
 	}
 	for index, edge := range spec.EnvironmentEdges {
-		result.EnvironmentEdges[index] = EnvironmentEdge{Target: edge.Target, Input: edge.Input}
+		result.EnvironmentEdges[index] = EnvironmentEdge{Target: edge.Target, Input: edge.Input, TransportOnly: edge.TransportOnly}
 	}
 	for index, edge := range spec.FactorEdges {
 		result.FactorEdges[index] = FactorEdge{Target: edge.Target, Input: edge.Input, Factor: edge.Factor}
-	}
-	for index, binding := range spec.ActivationBindings {
-		result.ActivationBindings[index] = ActivationBinding{
-			Family:       binding.Family,
-			Trigger:      binding.Trigger,
-			Application:  binding.Application,
-			Plan:         binding.Plan,
-			PortBindings: copyPortBindings(binding.PortBindings),
-		}
 	}
 	for index, summary := range spec.Summaries {
 		result.Summaries[index] = SummaryMapping{Surface: summary.Surface, Keys: append([]uint64(nil), summary.Keys...)}

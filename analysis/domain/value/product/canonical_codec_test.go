@@ -279,8 +279,8 @@ func TestCanonicalProductRejectsMalformedNoncanonicalValues(t *testing.T) {
 		"explicit-axis-top": {n: &node{reg: reg, shape: ShapeTop, presence: presence.Top(), slots: []slot{{ordinal: 0, value: 3}}}},
 		"duplicate-slot":    {n: &node{reg: reg, shape: ShapeTop, presence: presence.Top(), slots: []slot{{ordinal: 0, value: 1}, {ordinal: 0, value: 2}}}},
 	}
-	if len(rt.canonicalAxes) != 1 {
-		t.Fatalf("test registry axes = %d, want 1", len(rt.canonicalAxes))
+	if len(rt.axes) != 1 {
+		t.Fatalf("test registry axes = %d, want 1", len(rt.axes))
 	}
 	for name, value := range fixtures {
 		t.Run(name, func(t *testing.T) {

@@ -116,6 +116,23 @@ func TestCanonicalCodecFormalsNestedBindersAreAlphaInvariant(t *testing.T) {
 	}
 }
 
+func TestCanonicalCodecFormalsAdmitsNestedInstantiationAfterCanonicalRoundTrip(t *testing.T) {
+	formal := NewTypeParam("T", nil)
+	wrapper := NewGeneric("Wrapper", []*TypeParam{formal}, RebuildRecord(RecordParts{Fields: []Field{{Name: "inner", Type: formal}}}))
+	value := Instantiate(wrapper, Instantiate(wrapper, String))
+	encoded, err := EncodeCanonical(context.Background(), value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeCanonicalStructural(context.Background(), encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EncodeCanonicalFormals(context.Background(), decoded, nil); err != nil {
+		t.Fatalf("closed nested instantiation became open after canonical round trip: %v", err)
+	}
+}
+
 func TestCanonicalCodecFormalsRecursiveNamesAreNotSemantic(t *testing.T) {
 	left := NewRecursive("LeftName", func(self Type) Type {
 		return NewArray(self)

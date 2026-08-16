@@ -183,7 +183,7 @@ func validateCanonicalProductValue(rt *registryRuntime, value Value) error {
 	}
 	var previous uint16
 	for i, current := range value.n.slots {
-		if int(current.ordinal) >= len(rt.canonicalAxes) {
+		if int(current.ordinal) >= len(rt.axes) {
 			return fmt.Errorf("product: sparse slot ordinal %d is outside the registry", current.ordinal)
 		}
 		if i > 0 && previous >= current.ordinal {

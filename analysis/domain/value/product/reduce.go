@@ -110,7 +110,7 @@ func (rt *registryRuntime) buildReducers(view axis.ReducersView) error {
 				return fmt.Errorf("product: reducer %q writes axis %q without a ReductionRank", entry.owner, id)
 			}
 			entry.writeAllowed[info.ordinal] = true
-			rt.axes[rt.canonicalAxes[info.ordinal]].reducerWritten = true
+			rt.axes[info.ordinal].reducerWritten = true
 		}
 		sort.Slice(entry.reads, func(i, j int) bool { return entry.reads[i] < entry.reads[j] })
 		reducerIndex := len(rt.reducers)
@@ -126,7 +126,7 @@ func (rt *registryRuntime) buildReducers(view axis.ReducersView) error {
 	// the cyclic hot path and must not filter every registered axis to find the
 	// few coordinates a reducer is permitted to change.
 	rt.reducerWrittenOrdinals = rt.reducerWrittenOrdinals[:0]
-	for ordinal := range rt.canonicalAxes {
+	for ordinal := range rt.axes {
 		if rt.axisOrdinal(uint16(ordinal)).reducerWritten {
 			rt.reducerWrittenOrdinals = append(rt.reducerWrittenOrdinals, uint16(ordinal))
 		}

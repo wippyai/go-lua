@@ -8,7 +8,7 @@ import (
 )
 
 func TestPrimitiveFunctionRetainsEstablishedMeaning(t *testing.T) {
-	got, ok := primitive(static.PrimitiveFunction)
+	got, ok := primitiveKind(uint8(static.PrimitiveFunction))
 	if !ok {
 		t.Fatal("function primitive was unsupported")
 	}

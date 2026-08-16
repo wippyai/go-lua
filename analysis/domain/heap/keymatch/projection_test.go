@@ -1,13 +1,16 @@
-package keymatch
+package keymatch_test
 
 import (
 	"reflect"
 	"testing"
 
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
+	keymatch "github.com/wippyai/go-lua/analysis/domain/heap/keymatch"
 	"github.com/wippyai/go-lua/analysis/domain/materialization"
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
+	"github.com/wippyai/go-lua/analysis/internal/programartifact/schemaadapter"
+	"github.com/wippyai/go-lua/analysis/internal/programschema"
 	"github.com/wippyai/go-lua/program/keyspace"
 	"github.com/wippyai/go-lua/program/link"
 	linkproject "github.com/wippyai/go-lua/program/link/project"
@@ -26,7 +29,7 @@ return nil, 1, 1.0, object
 	if validity := nilAtom.TableKeyValidity(); validity.MayBeValid() || !validity.MayBeInvalid() {
 		t.Fatal("nil did not retain its invalid-key branch")
 	}
-	if _, ok := Project(heap, values, nilAtom); ok {
+	if _, ok := keymatch.Project(heap, values, nilAtom); ok {
 		t.Fatal("nil manufactured a valid Heap selector")
 	}
 
@@ -37,13 +40,17 @@ return nil, 1, 1.0, object
 		if !valueOK {
 			t.Fatal("Value")
 		}
-		atom, atomOK := values.Source(value)
-		if !atomOK {
+		valueID, valueIDOK := boundaryValues.ID(value)
+		fact, factOK := values.SourceValueID(valueID)
+		var atom valuedomain.Atom
+		if factOK {
+			values.VisitSupport(fact, func(candidate valuedomain.Atom) { atom = candidate })
+		}
+		if !valueIDOK || !factOK || !values.OwnsAtom(atom) {
 			continue
 		}
-		if key, keyOK := atom.ExactKey(); keyOK {
-			literal, literalOK := linked.Project().Keys().Exact(key)
-			if literalOK && literal.Kind == keyspace.LiteralInteger {
+		if literal, keyOK := atom.ExactKey(); keyOK {
+			if literal.Kind == keyspace.LiteralInteger {
 				numeric = append(numeric, atom)
 			}
 		}
@@ -54,8 +61,8 @@ return nil, 1, 1.0, object
 	if numeric[0] != numeric[1] {
 		t.Fatal("Value did not retain Link's 1 == 1.0 exact key quotient")
 	}
-	firstNumeric, firstNumericOK := Project(heap, values, numeric[0])
-	secondNumeric, secondNumericOK := Project(heap, values, numeric[1])
+	firstNumeric, firstNumericOK := keymatch.Project(heap, values, numeric[0])
+	secondNumeric, secondNumericOK := keymatch.Project(heap, values, numeric[1])
 	if !firstNumericOK || !secondNumericOK || firstNumeric.Selector().Kind() != heapdomain.KeySelectorAtom || !sameAlternative(firstNumeric, secondNumeric) {
 		t.Fatal("normalized numeric source did not project one exact Link key")
 	}
@@ -68,7 +75,7 @@ return nil, 1, 1.0, object
 	if !keyOK || !atomOK || recentAtom.TableKeyValidity() != valuedomain.TableKeyValid {
 		t.Fatal("recent rooted table key")
 	}
-	rooted, projected := Project(heap, values, recentAtom)
+	rooted, projected := keymatch.Project(heap, values, recentAtom)
 	if !projected || rooted.Selector().Kind() != heapdomain.KeySelectorAtom {
 		t.Fatal("recent rooted atom did not project exactly")
 	}
@@ -80,7 +87,7 @@ return nil, 1, 1.0, object
 	}
 
 	summaryAtom, summaryOK := values.Allocation(key, materialization.Summary)
-	summary, summaryProjected := Project(heap, values, summaryAtom)
+	summary, summaryProjected := keymatch.Project(heap, values, summaryAtom)
 	if !summaryOK || !summaryProjected {
 		t.Fatal("summary atom")
 	}
@@ -94,7 +101,7 @@ return nil, 1, 1.0, object
 	if !inexactOK || inexact.TableKeyValidity() != valuedomain.TableKeyValid|valuedomain.TableKeyInvalid {
 		t.Fatal("opaque number did not retain both key-validity branches")
 	}
-	opaque, opaqueProjected := Project(heap, values, inexact)
+	opaque, opaqueProjected := keymatch.Project(heap, values, inexact)
 	if !opaqueProjected || opaque.Selector().Kind() != heapdomain.KeySelectorKinds || opaque.Selector().RuntimeKinds() != runtimekind.Bit(runtimekind.Number) {
 		t.Fatal("opaque numeric key did not become one typed Number selector")
 	}
@@ -106,7 +113,7 @@ return nil, 1, 1.0, object
 	if !opaqueReferenceOK {
 		t.Fatal("opaque reference value")
 	}
-	opaqueReferenceAlternative, opaqueReferenceProjected := Project(heap, values, opaqueReference)
+	opaqueReferenceAlternative, opaqueReferenceProjected := keymatch.Project(heap, values, opaqueReference)
 	if !opaqueReferenceProjected || opaqueReferenceAlternative.Selector().Kind() != heapdomain.KeySelectorKinds || opaqueReferenceAlternative.Containment().Kind() != heapdomain.ContainmentUnknown {
 		t.Fatal("opaque reference key was mistaken for known-none containment")
 	}
@@ -117,7 +124,7 @@ func TestContainmentMapsScalarRootedOpaqueAndForeignAtoms(t *testing.T) {
 	scalar := sourceAtom(t, values, linked, func(atom valuedomain.Atom) bool {
 		return atom.RuntimeKinds() == runtimekind.Bit(runtimekind.Number)
 	})
-	scalarContainment, scalarOK := Containment(heap, values, scalar)
+	scalarContainment, scalarOK := keymatch.Containment(heap, values, scalar)
 	if !scalarOK || scalarContainment.Kind() != heapdomain.ContainmentNone {
 		t.Fatal("scalar atom did not prove known-none containment")
 	}
@@ -125,41 +132,41 @@ func TestContainmentMapsScalarRootedOpaqueAndForeignAtoms(t *testing.T) {
 	key, keyOK := firstAllocationKey(heap)
 	rooted, rootedOK := values.Allocation(key, materialization.Recent)
 	want, wantOK := heap.Reference(key, materialization.Recent)
-	rootedContainment, containmentOK := Containment(heap, values, rooted)
+	rootedContainment, containmentOK := keymatch.Containment(heap, values, rooted)
 	got, gotOK := rootedContainment.Reference()
 	if !rootedOK || !keyOK || !wantOK || !containmentOK || rootedContainment.Kind() != heapdomain.ContainmentExact || !gotOK || got != want {
 		t.Fatal("tracked rooted atom lost exact containment")
 	}
 
 	opaque, opaqueOK := values.OpaqueReference(valuedomain.ReferenceTable)
-	opaqueContainment, opaqueContainmentOK := Containment(heap, values, opaque)
+	opaqueContainment, opaqueContainmentOK := keymatch.Containment(heap, values, opaque)
 	if !opaqueOK || !opaqueContainmentOK || opaqueContainment.Kind() != heapdomain.ContainmentUnknown {
 		t.Fatal("opaque reference atom was not preserved as unknown containment")
 	}
 
-	foreignHeap, foreignValues, foreignLinked := fixture(t, "keymatch_containment_foreign", `local object = {}; return 1, object`)
+	foreignHeap, foreignValues, _ := fixture(t, "keymatch_containment_foreign", `local object = {}; return 1, object`)
 	foreignKey, foreignKeyOK := firstAllocationKey(foreignHeap)
 	foreign, foreignOK := foreignValues.Allocation(foreignKey, materialization.Recent)
-	if !foreignKeyOK || !foreignOK || foreignHeap.Link() != foreignLinked {
+	if !foreignKeyOK || !foreignOK || !foreignValues.OwnsHeapSchema(foreignHeap) {
 		t.Fatal("foreign containment fixture")
 	}
-	if _, ok := Containment(heap, foreignValues, foreign); ok {
+	if _, ok := keymatch.Containment(heap, foreignValues, foreign); ok {
 		t.Fatal("foreign atom crossed containment owner fence")
 	}
 }
 
 func TestProjectTopSupportIsCompleteDeterministicAndSchemaFenced(t *testing.T) {
-	heap, values, linked := fixture(t, "keymatch_top", `local left = {}; local right = {}; return left, right`)
-	collect := func() (bool, []Alternative, bool) {
+	heap, values, _ := fixture(t, "keymatch_top", `local left = {}; local right = {}; return left, right`)
+	collect := func() (bool, []keymatch.Alternative, bool) {
 		complete, invalid := true, false
-		var alternatives []Alternative
+		var alternatives []keymatch.Alternative
 		if !values.VisitSupport(values.Top(), func(atom valuedomain.Atom) {
 			validity := atom.TableKeyValidity()
 			invalid = invalid || validity.MayBeInvalid()
 			if !validity.MayBeValid() {
 				return
 			}
-			alternative, ok := Project(heap, values, atom)
+			alternative, ok := keymatch.Project(heap, values, atom)
 			if !ok {
 				complete = false
 				return
@@ -199,23 +206,20 @@ func TestProjectTopSupportIsCompleteDeterministicAndSchemaFenced(t *testing.T) {
 		}
 	}
 
-	otherHeap, otherValues, otherLinked := fixture(t, "keymatch_foreign", `local left = {}; local right = {}; return left, right`)
-	if otherLinked == linked {
-		t.Fatal("fixture reused Link authority")
-	}
+	otherHeap, otherValues, _ := fixture(t, "keymatch_foreign", `local left = {}; local right = {}; return left, right`)
 	key, keyOK := firstAllocationKey(otherHeap)
 	atom, atomOK := otherValues.Allocation(key, materialization.Recent)
 	reference, role, referenceOK := atom.Reference()
 	if !keyOK || !atomOK || !referenceOK || role != materialization.Recent {
 		t.Fatal("foreign rooted Value atom")
 	}
-	if _, ok := Project(heap, otherValues, atom); ok {
+	if _, ok := keymatch.Project(heap, otherValues, atom); ok {
 		t.Fatal("foreign Value schema entered atom projection")
 	}
-	if _, ok := Reference(heap, otherValues, reference, role); ok {
+	if _, ok := keymatch.Reference(heap, otherValues, reference, role); ok {
 		t.Fatal("foreign Value reference entered Heap mapping")
 	}
-	if otherHeap.Link() != otherLinked {
+	if !otherValues.OwnsHeapSchema(otherHeap) {
 		t.Fatal("foreign fixture did not retain its Link owner")
 	}
 }
@@ -223,12 +227,13 @@ func TestProjectTopSupportIsCompleteDeterministicAndSchemaFenced(t *testing.T) {
 func TestProjectBootExactReference(t *testing.T) {
 	heap, values, linked := bootFixture(t, "keymatch_boot")
 	root, rootOK := linked.Host().BootRoots().At(0)
-	atom, atomOK := values.Boot(root)
-	if !rootOK || !atomOK || atom.TableKeyValidity() != valuedomain.TableKeyValid {
+	rootID, rootIDOK := linked.Host().BootRoots().ID(root)
+	atom, atomOK := values.BootID(rootID)
+	if !rootOK || !rootIDOK || !atomOK || atom.TableKeyValidity() != valuedomain.TableKeyValid {
 		t.Fatal("boot exact Value")
 	}
-	alternative, projected := Project(heap, values, atom)
-	key, keyOK := heap.KeyForBootRoot(root)
+	alternative, projected := keymatch.Project(heap, values, atom)
+	key, keyOK := heap.KeyForBootID(rootID)
 	want, wantOK := heap.Reference(key, materialization.Exact)
 	if !projected || alternative.Selector().Kind() != heapdomain.KeySelectorAtom || !keyOK || !wantOK || alternative.Containment().Kind() != heapdomain.ContainmentExact {
 		t.Fatal("boot exact root did not retain one exact key alternative")
@@ -240,7 +245,7 @@ func TestProjectBootExactReference(t *testing.T) {
 	}
 }
 
-func sameAlternative(left, right Alternative) bool {
+func sameAlternative(left, right keymatch.Alternative) bool {
 	leftSelector, rightSelector := left.Selector(), right.Selector()
 	if leftSelector.Kind() != rightSelector.Kind() || leftSelector.RuntimeKinds() != rightSelector.RuntimeKinds() || leftSelector.ExactCount() != rightSelector.ExactCount() || leftSelector.ReferenceCount() != rightSelector.ReferenceCount() {
 		return false
@@ -262,7 +267,7 @@ func sameAlternative(left, right Alternative) bool {
 	return left.Containment() == right.Containment()
 }
 
-func containsChild(alternatives []Alternative, want heapdomain.Reference) bool {
+func containsChild(alternatives []keymatch.Alternative, want heapdomain.Reference) bool {
 	for _, alternative := range alternatives {
 		child, ok := alternative.Containment().Reference()
 		if ok && child == want {
@@ -298,9 +303,9 @@ func fixture(t testing.TB, module, text string) (heapdomain.Schema, *valuedomain
 	if err != nil {
 		t.Fatal(err)
 	}
-	heap, heapOK := heapdomain.Seal(linked)
-	values, valuesOK := valuedomain.Seal(linked, heap)
-	if !heapOK || !valuesOK {
+	heap, heapFailure := heapdomain.SealWithArtifacts(linked, keymatchHeapMounts(t, linked))
+	values, valueFailure := valuedomain.SealWithFailure(linked, heap, keymatchValueMounts(t, linked))
+	if heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone {
 		t.Fatal("domain schema")
 	}
 	return heap, values, linked
@@ -326,9 +331,9 @@ func bootFixture(t testing.TB, module string) (heapdomain.Schema, *valuedomain.S
 	if err != nil {
 		t.Fatal(err)
 	}
-	heap, heapOK := heapdomain.Seal(linked)
-	values, valuesOK := valuedomain.Seal(linked, heap)
-	if !heapOK || !valuesOK {
+	heap, heapFailure := heapdomain.SealWithArtifacts(linked, keymatchHeapMounts(t, linked))
+	values, valueFailure := valuedomain.SealWithFailure(linked, heap, keymatchValueMounts(t, linked))
+	if heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone {
 		t.Fatal("boot domain schema")
 	}
 	return heap, values, linked
@@ -339,11 +344,59 @@ func sourceAtom(t testing.TB, values *valuedomain.Schema, linked *link.Link, mat
 	boundaryValues := linked.Boundary().Values()
 	for index := 0; index < boundaryValues.Count(); index++ {
 		value, valueOK := boundaryValues.At(index)
-		atom, atomOK := values.Source(value)
-		if valueOK && atomOK && match(atom) {
+		valueID, valueIDOK := boundaryValues.ID(value)
+		fact, factOK := values.SourceValueID(valueID)
+		var atom valuedomain.Atom
+		if factOK {
+			values.VisitSupport(fact, func(candidate valuedomain.Atom) { atom = candidate })
+		}
+		if valueOK && valueIDOK && factOK && values.OwnsAtom(atom) && match(atom) {
 			return atom
 		}
 	}
 	t.Fatal("matching source atom")
 	return valuedomain.Atom{}
+}
+
+func keymatchHeapMounts(t testing.TB, linked *link.Link) []heapdomain.ArtifactMount {
+	t.Helper()
+	heapMounts, _ := keymatchArtifactMounts(t, linked)
+	return heapMounts
+}
+
+func keymatchValueMounts(t testing.TB, linked *link.Link) []valuedomain.ArtifactMount {
+	t.Helper()
+	_, valueMounts := keymatchArtifactMounts(t, linked)
+	return valueMounts
+}
+
+func keymatchArtifactMounts(t testing.TB, linked *link.Link) ([]heapdomain.ArtifactMount, []valuedomain.ArtifactMount) {
+	t.Helper()
+	receipt, receiptOK := programschema.Global()
+	if !receiptOK || linked == nil || linked.Project() == nil {
+		t.Fatal("keymatch artifact receipt")
+	}
+	projectMounts := linked.Project().Mounts()
+	heapMounts := make([]heapdomain.ArtifactMount, projectMounts.Count())
+	valueMounts := make([]valuedomain.ArtifactMount, projectMounts.Count())
+	for index := 0; index < projectMounts.Count(); index++ {
+		shard, shardOK := projectMounts.At(index)
+		program, programOK := projectMounts.Program(shard)
+		module, moduleOK := linked.Project().ModuleKey(shard)
+		programID, programIDOK := projectMounts.ProgramID(shard)
+		if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
+			t.Fatal("keymatch artifact mount")
+		}
+		artifact, failure := schemaadapter.CompileDetailed(program.TransformerInput(), receipt)
+		if failure.Available() || artifact == nil {
+			t.Fatalf("keymatch artifact: %v", failure)
+		}
+		var heapOK, valueOK bool
+		heapMounts[index], heapOK = heapdomain.NewArtifactMount(artifact, module, programID)
+		valueMounts[index], valueOK = valuedomain.NewArtifactMount(artifact, module, programID)
+		if !heapOK || !valueOK {
+			t.Fatal("keymatch artifact mount receipt")
+		}
+	}
+	return heapMounts, valueMounts
 }

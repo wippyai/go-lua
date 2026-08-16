@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/program/flow/internal/authored"
 	"github.com/wippyai/go-lua/program/flow/internal/body"
 	"github.com/wippyai/go-lua/program/flow/internal/containment"
+	"github.com/wippyai/go-lua/program/flow/internal/routeplan"
 	"github.com/wippyai/go-lua/program/flow/internal/sourcecontrol"
 	"github.com/wippyai/go-lua/program/flow/kind"
 	"github.com/wippyai/go-lua/program/keyspace"
@@ -30,47 +31,128 @@ func Seal(
 	staticID keyspace.ContentID,
 	moduleID keyspace.ContentID,
 ) (*Result, error) {
+	result, _, err := sealWithPlan(sourceView, flow, bodies, forest, graph, nil, nil, staticID, moduleID)
+	return result, err
+}
+
+// SealWithPlan derives recurrence and atomically binds one already-sealed
+// causal route plan while the private SCC partition remains live. The Plan is
+// assembly-local; neither it nor the Binding is retained by Result.
+func SealWithPlan(
+	sourceView source.View,
+	flow authored.View,
+	bodies *body.Result,
+	forest *containment.Result,
+	graph *sourcecontrol.Result,
+	plan *routeplan.Plan,
+	outcomePhases *sourcecontrol.OutcomePhaseReceipt,
+	staticID keyspace.ContentID,
+	moduleID keyspace.ContentID,
+) (*Result, *Binding, error) {
+	if plan == nil {
+		return nil, nil, errors.New("program/flow/recurrence: route plan is unavailable")
+	}
+	return sealWithPlan(sourceView, flow, bodies, forest, graph, plan, outcomePhases, staticID, moduleID)
+}
+
+func sealWithPlan(
+	sourceView source.View,
+	flow authored.View,
+	bodies *body.Result,
+	forest *containment.Result,
+	graph *sourcecontrol.Result,
+	plan *routeplan.Plan,
+	outcomePhases *sourcecontrol.OutcomePhaseReceipt,
+	staticID keyspace.ContentID,
+	moduleID keyspace.ContentID,
+) (*Result, *Binding, error) {
 	sourceID := sourceView.Identity().ContentID()
 	flowID := flow.Cold().ContentID()
 	if !sourceID.Available() || !flowID.Available() || !staticID.Available() || !moduleID.Available() {
-		return nil, errors.New("program/flow/recurrence: owner identity is unavailable")
+		return nil, nil, errors.New("program/flow/recurrence: owner identity is unavailable")
 	}
 	if !body.Matches(bodies, sourceID, flowID) {
-		return nil, errors.New("program/flow/recurrence: Body provenance disagrees with Source or Flow")
+		return nil, nil, errors.New("program/flow/recurrence: Body provenance disagrees with Source or Flow")
 	}
 	if !containment.Matches(forest, sourceID, flowID, staticID, moduleID) {
-		return nil, errors.New("program/flow/recurrence: containment provenance disagrees with Source, Flow, Static, or Module")
+		return nil, nil, errors.New("program/flow/recurrence: containment provenance disagrees with Source, Flow, Static, or Module")
 	}
 	if !sourcecontrol.Matches(graph, sourceID, flowID, staticID, moduleID) {
-		return nil, errors.New("program/flow/recurrence: sourcecontrol provenance disagrees with Source, Flow, Static, or Module")
+		return nil, nil, errors.New("program/flow/recurrence: sourcecontrol provenance disagrees with Source, Flow, Static, or Module")
 	}
 	counts, err := validateOwners(sourceView, flow, bodies, forest, graph)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	if !graph.VertexCatalogAvailable() {
+		return nil, nil, errors.New("program/flow/recurrence: semantic vertex catalog is unavailable")
 	}
 	parts, err := deriveComponents(graph)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	heads, err := deriveHeads(sourceView, flow, forest, graph, parts, counts)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	// The local WTO denominator is SourceControl's complete reachable graph.
+	// A causal Plan selects transfer rows only; it must never erase a vertex
+	// from the parent-issued schedule.
+	live := reachableNodes(graph)
+	draft, err := deriveHierarchy(graph, live)
+	if err != nil {
+		return nil, nil, err
+	}
+	if outcomePhases != nil {
+		paths, receiptOK := outcomePhases.Consume(graph)
+		if !receiptOK {
+			return nil, nil, errors.New("program/flow/recurrence: Outcome-phase receipt is foreign or consumed")
+		}
+		if err := draft.placeOutcomePhasePoints(paths, plan, graph, parts, heads); err != nil {
+			return nil, nil, err
+		}
+	}
+	hierarchy, err := draft.transfer()
+	if err != nil {
+		return nil, nil, err
 	}
 	trace, err := buildEventTrace(sourceView, flow, bodies, forest, graph, parts)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := validateDecisionCoverage(sourceView, flow, forest, graph, parts, trace, counts); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	work, err := classifyArcs(sourceView, flow, graph, parts, heads, trace, counts)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := requireCyclicWitness(parts, heads, work); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return materialize(counts, parts, heads, trace, work, sourceID, flowID, staticID, moduleID)
+	result, err := materialize(counts, parts, heads, trace, work, sourceID, flowID, staticID, moduleID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if plan == nil {
+		return result, nil, nil
+	}
+	binding, err := bindPlan(result, plan, graph, parts, heads, hierarchy, sourceView, flow)
+	if err != nil {
+		return nil, nil, err
+	}
+	return result, binding, nil
+}
+
+func reachableNodes(graph *sourcecontrol.Result) []bool {
+	if graph == nil || graph.NodeCount() == 0 {
+		return nil
+	}
+	live := make([]bool, graph.NodeCount())
+	for node := range live {
+		live[node] = graph.Reachable(uint32(node))
+	}
+	return live
 }
 
 func validateOwners(
@@ -173,7 +255,20 @@ func installHead(
 	if component == unassignedComponent || !parts.cyclic[component] {
 		return
 	}
-	if heads[component] == 0 || term < heads[component] {
+	// Head identity is selected by the semantic vertex receipt, with the
+	// authored term only as a deterministic collision tie-breaker. This keeps
+	// component directories stable when physical/source ordinals are rebased.
+	path, pathOK := graph.VertexPathAt(node)
+	if !pathOK {
+		return
+	}
+	if heads[component] == 0 {
+		heads[component] = term
+		return
+	}
+	currentNode, currentOK := decisionCoordinate(sourceView, flow, graph, heads[component])
+	currentPath, currentPathOK := graph.VertexPathAt(currentNode)
+	if !currentOK || !currentPathOK || string(path[:]) < string(currentPath[:]) || (path == currentPath && term < heads[component]) {
 		heads[component] = term
 	}
 }

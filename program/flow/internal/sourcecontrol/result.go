@@ -59,6 +59,17 @@ type Result struct {
 	flowID      keyspace.ContentID
 	staticID    keyspace.ContentID
 	moduleID    keyspace.ContentID
+	// catalog is shared by copied Result values. Its lifecycle cannot be
+	// forked by struct copying and release requires the assembler-held lease.
+	catalog *catalogLifecycle
+	// outcomePhases is the one-shot parent-issued extension for non-Normal
+	// Outcome phases. It is deliberately separate from Reachable/CSR: an
+	// Outcome phase is a schedule point, never a structural fallthrough.
+	outcomePhases *outcomePhaseLifecycle
+}
+
+func (r *Result) ownerAvailable() bool {
+	return r != nil && r.sourceID.Available() && r.flowID.Available() && r.staticID.Available() && r.moduleID.Available()
 }
 
 // Matches reports whether r was sealed for the exact Source, authored Flow,
@@ -72,7 +83,7 @@ func Matches(r *Result, sourceID, flowID, staticID, moduleID keyspace.ContentID)
 // with plausible coordinates or graph rows but any unavailable owner identity
 // is not a usable source-control authority.
 func (r *Result) available() bool {
-	return r != nil && r.sourceID.Available() && r.flowID.Available() && r.staticID.Available() && r.moduleID.Available()
+	return r.ownerAvailable() && r.VertexCatalogAvailable()
 }
 
 // NodeCount reports the dense source-control coordinate denominator.

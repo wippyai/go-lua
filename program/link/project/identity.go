@@ -13,7 +13,7 @@ const (
 	applicationIdentityVersion uint64 = 2
 	applicationIdentityWords          = 22
 	moduleIdentityFormat              = "program/link/project/module"
-	moduleIdentityVersion             = 1
+	moduleIdentityVersion             = 2
 )
 
 // ApplicationID derives the stable identity of one exact Project
@@ -31,29 +31,38 @@ func (c *Component) ApplicationID(application Application) (keyspace.ContentID, 
 	return applicationID(c.authority.applicationContentID, row)
 }
 
-// ModuleKey derives the stable identity of one exact Project mount.  The
-// digest is mount-local and excludes Target, Link, and all dependent Link
-// component relations.
+// ModuleKey derives the stable identity of one exact authored mount row. The
+// digest is dependency-local: an unrelated sibling mount, canonical ordinal,
+// Target, enclosing Project, or Link cannot rename it. The exact Shard owner
+// fence remains mandatory for hot access; equal scalar keys never authorize a
+// handle from an equivalent reseal.
 func (c *Component) ModuleKey(shard Shard) (keyspace.ContentID, bool) {
 	if c == nil || c.authority == nil || !c.authority.mountContentID.Available() || shard.authority != c.authority || shard.ordinal == 0 || uint64(shard.ordinal) > uint64(len(c.authority.mounts)) {
 		return keyspace.ContentID{}, false
 	}
 	mount := c.authority.mounts[shard.ordinal-1]
-	if mount.program == nil || !mount.id.Available() || mount.program.ContentID() != mount.id {
+	if mount.program == nil || !mount.id.Available() || mount.program.ContentID() != mount.id || !mount.key.Available() {
 		return keyspace.ContentID{}, false
+	}
+	return mount.key, true
+}
+
+func moduleKeyID(name string, programID keyspace.ContentID) keyspace.ContentID {
+	if name == "" || !programID.Available() {
+		return keyspace.ContentID{}
 	}
 	var id keyspace.ContentID
 	h := sha256.New()
 	var w canonical.Writer
 	if w.Reset(h, moduleIdentityFormat, moduleIdentityVersion) != nil ||
-		w.Record(1) != nil || w.Bytes(c.authority.mountContentID[:]) != nil ||
-		w.Uint(uint64(shard.ordinal)) != nil || w.Bytes(mount.id[:]) != nil || w.Finish() != nil {
-		return keyspace.ContentID{}, false
+		w.Record(1) != nil || w.String(name) != nil ||
+		w.Bytes(programID[:]) != nil || w.Finish() != nil {
+		return keyspace.ContentID{}
 	}
 	if sum := h.Sum(id[:0]); len(sum) != len(id) {
-		return keyspace.ContentID{}, false
+		return keyspace.ContentID{}
 	}
-	return id, id.Available()
+	return id
 }
 
 func applicationID(relationID keyspace.ContentID, row applicationRow) (id keyspace.ContentID, ok bool) {

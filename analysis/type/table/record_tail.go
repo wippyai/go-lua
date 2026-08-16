@@ -26,7 +26,7 @@ func MapComponentKeyMayContainString(key typ.Type, name string) bool {
 			return true
 		}
 		if k, ok := k.(*typ.Literal); ok {
-			return k.Base == kind.String && k.Value == name
+			return k.Base() == kind.String && k.Value() == name
 		}
 		return k.Kind() == kind.String
 	})
@@ -40,11 +40,11 @@ func MapComponentKeyMayContainInt(key typ.Type, index int64) bool {
 			return true
 		}
 		if k, ok := k.(*typ.Literal); ok {
-			switch k.Base {
+			switch k.Base() {
 			case kind.Integer:
-				return k.Value == index
+				return k.Value() == index
 			case kind.Number:
-				number, ok := k.Value.(float64)
+				number, ok := k.Value().(float64)
 				return ok && number == float64(index)
 			default:
 				return false

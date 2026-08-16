@@ -245,7 +245,7 @@ func TestIntersectionForMeet(t *testing.T) {
 }
 
 func TestIntersectionForMeetCollapsesContradictoryBooleanScalars(t *testing.T) {
-	if got := IntersectionForMeet(typ.False, typ.True); got != typ.Never {
+	if got := IntersectionForMeet(typ.LiteralBool(false), typ.LiteralBool(true)); got != typ.Never {
 		t.Fatalf("IntersectionForMeet(false, true) = %v, want never", got)
 	}
 }

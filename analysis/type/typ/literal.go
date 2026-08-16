@@ -16,31 +16,30 @@ import (
 //   - LiteralString("foo") is a subtype of string
 //   - LiteralInt(42) is a subtype of integer (and number)
 //
-// Base indicates the underlying primitive kind (Boolean, Number, Integer, String).
-// Value holds the actual value with the appropriate Go type.
+// Base reports the underlying primitive kind (Boolean, Number, Integer,
+// or String). Value reports the represented Go value.
 type Literal struct {
-	Base  kind.Kind // Boolean, Number, Integer, or String
-	Value any       // bool, float64, int64, or string
+	base  kind.Kind // Boolean, Number, Integer, or String
+	value any       // bool, float64, int64, or string
 	hash  uint64
 	str   string
 }
 
-// True and False are singleton boolean literals.
 var (
 	trueHash  = hash.MixHash(hash.MixHash(uint64(kind.Literal), uint64(kind.Boolean)), 1)
 	falseHash = hash.MixHash(uint64(kind.Literal), uint64(kind.Boolean))
 
-	True  = &Literal{Base: kind.Boolean, Value: true, hash: trueHash, str: "true"}
-	False = &Literal{Base: kind.Boolean, Value: false, hash: falseHash, str: "false"}
+	trueLiteral  = &Literal{base: kind.Boolean, value: true, hash: trueHash, str: "true"}
+	falseLiteral = &Literal{base: kind.Boolean, value: false, hash: falseHash, str: "false"}
 )
 
 // LiteralBool returns the canonical boolean literal type.
 func LiteralBool(v bool) *Literal {
 	if v {
-		return True
+		return trueLiteral
 	}
 
-	return False
+	return falseLiteral
 }
 
 // LiteralInt creates an integer literal type.
@@ -48,7 +47,7 @@ func LiteralInt(v int64) *Literal {
 	h := hash.MixHash(uint64(kind.Literal), uint64(kind.Integer))
 	h = hash.MixHash(h, uint64(v))
 
-	return &Literal{Base: kind.Integer, Value: v, hash: h, str: strconv.FormatInt(v, 10)}
+	return &Literal{base: kind.Integer, value: v, hash: h, str: strconv.FormatInt(v, 10)}
 }
 
 // LiteralNumber creates a number literal type.
@@ -60,7 +59,7 @@ func LiteralNumber(v float64) *Literal {
 	// zero without borrowing Go's non-reflexive floating equality.
 	h = hash.MixHash(h, math.Float64bits(v))
 
-	return &Literal{Base: kind.Number, Value: v, hash: h, str: strconv.FormatFloat(v, 'g', -1, 64)}
+	return &Literal{base: kind.Number, value: v, hash: h, str: strconv.FormatFloat(v, 'g', -1, 64)}
 }
 
 // LiteralString creates a string literal type for v.
@@ -68,31 +67,35 @@ func LiteralString(v string) *Literal {
 	h := hash.MixHash(uint64(kind.Literal), uint64(kind.String))
 	h = hash.MixHash(h, hash.FnvString(v))
 
-	return &Literal{Base: kind.String, Value: v, hash: h, str: strconv.Quote(v)}
+	return &Literal{base: kind.String, value: v, hash: h, str: strconv.Quote(v)}
 }
 
 func (l *Literal) Kind() kind.Kind { return kind.Literal }
+
+func (l *Literal) Base() kind.Kind { return l.base }
+
+func (l *Literal) Value() any { return l.value }
 
 func (l *Literal) String() string {
 	if l.str != "" {
 		return l.str
 	}
-	switch l.Base {
+	switch l.base {
 	case kind.Boolean:
-		if l.Value.(bool) {
+		if l.value.(bool) {
 			return "true"
 		}
 
 		return "false"
 	case kind.Integer:
-		return strconv.FormatInt(l.Value.(int64), 10)
+		return strconv.FormatInt(l.value.(int64), 10)
 	case kind.Number:
-		return strconv.FormatFloat(l.Value.(float64), 'g', -1, 64)
+		return strconv.FormatFloat(l.value.(float64), 'g', -1, 64)
 	case kind.String:
-		return fmt.Sprintf("%q", l.Value.(string))
+		return fmt.Sprintf("%q", l.value.(string))
 	}
 
-	return fmt.Sprintf("%v", l.Value)
+	return fmt.Sprintf("%v", l.value)
 }
 
 func (l *Literal) Hash() uint64 { return l.hash }
@@ -103,13 +106,13 @@ func (l *Literal) Equals(other Type) bool {
 	}
 
 	ol := other.(*Literal)
-	if l.Base != ol.Base {
+	if l.base != ol.base {
 		return false
 	}
-	if l.Base == kind.Number {
-		left, leftOK := l.Value.(float64)
-		right, rightOK := ol.Value.(float64)
+	if l.base == kind.Number {
+		left, leftOK := l.value.(float64)
+		right, rightOK := ol.value.(float64)
 		return leftOK && rightOK && math.Float64bits(left) == math.Float64bits(right)
 	}
-	return l.Value == ol.Value
+	return l.value == ol.value
 }

@@ -22,7 +22,7 @@ func (r *Runtime) runtimeEqualAt(left, right runtimeProofRef, path *runtimeProof
 	if !left.selfActive && !right.selfActive {
 		return false, true
 	}
-	leftRow, rightRow := r.rows[left.index-1], r.rows[right.index-1]
+	leftRow, rightRow := &r.rows[left.index-1], &r.rows[right.index-1]
 	if leftRow.form != rightRow.form {
 		return false, true
 	}
@@ -115,7 +115,7 @@ func (r *Runtime) runtimeEqualChild(leftParent runtimeProofRef, left runtimeChil
 }
 
 func (r *Runtime) runtimeFunctionEqual(left, right runtimeProofRef, path *runtimeProofPath) (bool, bool) {
-	leftRow, rightRow := r.rows[left.index-1], r.rows[right.index-1]
+	leftRow, rightRow := &r.rows[left.index-1], &r.rows[right.index-1]
 	leftTypeParameters, leftOK := r.runtimeTypeParameterSlice(leftRow)
 	rightTypeParameters, rightOK := r.runtimeTypeParameterSlice(rightRow)
 	if !leftOK || !rightOK {
@@ -170,7 +170,7 @@ func (r *Runtime) runtimeFunctionEqual(left, right runtimeProofRef, path *runtim
 }
 
 func (r *Runtime) runtimeRecordEqual(left, right runtimeProofRef, path *runtimeProofPath) (bool, bool) {
-	leftRow, rightRow := r.rows[left.index-1], r.rows[right.index-1]
+	leftRow, rightRow := &r.rows[left.index-1], &r.rows[right.index-1]
 	if leftRow.open != rightRow.open {
 		return false, true
 	}
@@ -219,7 +219,7 @@ func (r *Runtime) runtimeRecordEqual(left, right runtimeProofRef, path *runtimeP
 }
 
 func (r *Runtime) runtimeInterfaceEqual(left, right runtimeProofRef, path *runtimeProofPath) (bool, bool) {
-	leftRow, rightRow := r.rows[left.index-1], r.rows[right.index-1]
+	leftRow, rightRow := &r.rows[left.index-1], &r.rows[right.index-1]
 	if leftRow.name != rightRow.name || leftRow.methods.start > leftRow.methods.end || rightRow.methods.start > rightRow.methods.end ||
 		uint64(leftRow.methods.end) > uint64(len(r.methods)) || uint64(rightRow.methods.end) > uint64(len(r.methods)) {
 		return false, leftRow.name != rightRow.name
@@ -241,7 +241,7 @@ func (r *Runtime) runtimeInterfaceEqual(left, right runtimeProofRef, path *runti
 }
 
 func (r *Runtime) runtimeGenericEqual(left, right runtimeProofRef, path *runtimeProofPath) (bool, bool) {
-	leftRow, rightRow := r.rows[left.index-1], r.rows[right.index-1]
+	leftRow, rightRow := &r.rows[left.index-1], &r.rows[right.index-1]
 	if leftRow.name != rightRow.name {
 		return false, true
 	}
@@ -266,7 +266,7 @@ func (r *Runtime) runtimeGenericEqual(left, right runtimeProofRef, path *runtime
 }
 
 func (r *Runtime) runtimeInstantiatedEqual(left, right runtimeProofRef, path *runtimeProofPath) (bool, bool) {
-	leftRow, rightRow := r.rows[left.index-1], r.rows[right.index-1]
+	leftRow, rightRow := &r.rows[left.index-1], &r.rows[right.index-1]
 	if answer, decided := r.runtimeEqualChild(left, leftRow.base, right, rightRow.base, path); !decided || !answer {
 		return answer, decided
 	}
@@ -289,8 +289,8 @@ func (r *Runtime) runtimeInstantiatedEqual(left, right runtimeProofRef, path *ru
 	return true, true
 }
 
-func (r *Runtime) runtimeTypeParameterSlice(row runtimeRow) ([]runtimeNamedChild, bool) {
-	if row.typeParameters.start > row.typeParameters.end || uint64(row.typeParameters.end) > uint64(len(r.typeParameters)) {
+func (r *Runtime) runtimeTypeParameterSlice(row *runtimeRow) ([]runtimeNamedChild, bool) {
+	if row == nil || row.typeParameters.start > row.typeParameters.end || uint64(row.typeParameters.end) > uint64(len(r.typeParameters)) {
 		return nil, false
 	}
 	return r.typeParameters[row.typeParameters.start:row.typeParameters.end], true

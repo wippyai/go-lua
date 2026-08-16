@@ -7,20 +7,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/internal/canonical"
 )
 
-// PortMode is the static direction of one fragment/base-point connection.
-// It is structural metadata, not an activation predicate or runtime capability.
-type PortMode uint8
-
-const (
-	PortInvalid PortMode = iota
-	PortImport
-	PortExport
-	PortImportExport
-)
-
-func (mode PortMode) imports() bool { return mode == PortImport || mode == PortImportExport }
-func (mode PortMode) exports() bool { return mode == PortExport || mode == PortImportExport }
-
 func validScopedExpr(expr Expr, scope Scope) bool {
 	if !expr.Available() || !scope.Available() {
 		return false
@@ -33,11 +19,11 @@ func validScopedExpr(expr Expr, scope Scope) bool {
 	return true
 }
 
-// Port maps one canonical fragment role to one presealed base Point. Axes
-// membership belongs exclusively to ActivationBinding; a binding with a
+// TemplateRole maps one canonical fragment role to one presealed base Point. Axes
+// membership belongs exclusively to the sealed receipt; a binding with a
 // different base mapping is a different fixed-shape binding, never a branch
 // inside this port table.
-type Port struct {
+type TemplateRole struct {
 	Role composition.Key
 	Mode PortMode
 	// Reads are the finite named prototype exact-read slots supplied by this
@@ -46,67 +32,49 @@ type Port struct {
 	Reads []PortRead
 }
 
-// PortRead is one named import-surface slot. Role is an ABI semantic key, not
-// a Factor coordinate or an ordinal. Surface is prototype-side in Port and
-// caller-side in PortBinding.
-type PortRead struct {
-	Role    composition.Key
-	Surface Surface
-}
-
-// PortBinding attaches one shared-plan role to a trigger-owned base Point.
-// Mode belongs to the immutable Template role, never to the binding.
-type PortBinding struct {
-	Role composition.Key
-	Base PointRef
-	// Reads binds the exact caller Factor surfaces for the matching Port slots.
-	// It cannot introduce a new Factor, form, or slot.
-	Reads []PortRead
-}
-
-// FragmentPoint is one symbolic point reference in a Template. Exactly one
-// coordinate is present: Local names a pair-owned PointSpec, while Port names
-// a static Port role. The raw PointRef/Role are builder input only; seal
+// TargetPoint is one symbolic point reference in a Template. Exactly one
+// coordinate is present: Local names a pair-owned PointSpec, while TemplateRole names
+// a static TemplateRole role. The raw PointRef/Role are builder input only; seal
 // resolves them to issued point identities before any graph is compiled.
-type FragmentPoint struct {
+type TargetPoint struct {
 	Local PointRef
-	Port  composition.Key
+	Role  composition.Key
 }
 
-// FragmentInput is an ordinary complete boundary input before its symbolic
+// TemplateInput is an ordinary complete boundary input before its symbolic
 // endpoints are resolved.  Pre/post conditions and provenance remain part of
 // the template so member expansion cannot silently drop them.
-type FragmentInput struct {
-	Point      FragmentPoint
+type TemplateInput struct {
+	Point      TargetPoint
 	Provenance composition.Key
 	Pre        Expr
 	Reindex    Reindex
 	Post       Expr
 }
 
-// FragmentGroup is a finite ordinary Group shape. Expansion resolves its
-// Local/Port point references and emits the normal compiled input form used
+// TargetGroup is a finite ordinary Group shape. Expansion resolves its
+// Local/TemplateRole point references and emits the normal compiled input form used
 // by the sole equation compiler.
-type FragmentGroup struct {
+type TargetGroup struct {
 	Members []RuleRef
-	Output  FragmentPoint
-	Inputs  []FragmentInput
+	Output  TargetPoint
+	Inputs  []TemplateInput
 }
 
-// FragmentFactorEdge is one structural Factor-local transport in an
+// TargetFactorEdge is one structural Factor-local transport in an
 // activation fragment.  It is deliberately the same boundary shape as an
 // ordinary Input, with symbolic endpoints resolved only while an accepted
 // Member is expanded.  The edge has no Rule/Group/Member authority of its
 // own; after expansion it is appended to TopologySpec.FactorEdges and follows
 // the ordinary graph, demand, WTO, and runtime paths.
-type FragmentFactorEdge struct {
+type TargetFactorEdge struct {
 	// Source is the member-local or named-port endpoint. ExternalSource is
-	// an already-issued source Point supplied by the owning SourceAssembly;
+	// an already-issued source Point supplied by the owning target Batch;
 	// exactly one of them is present. ExternalSource is not alpha-renamed or
 	// copied during Member expansion.
-	Source         FragmentPoint
+	Source         TargetPoint
 	ExternalSource Site
-	Target         FragmentPoint
+	Target         TargetPoint
 	// ExternalTarget is the symmetric already-issued target Point form. The
 	// ordinary FactorEdge topology remains the only runtime edge plane; this
 	// field merely lets a structural fragment terminate at an existing base
@@ -126,9 +94,9 @@ type FragmentFactorEdge struct {
 type Template struct {
 	Rules       []RuleInstance
 	Points      []PointSpec
-	Ports       []Port
-	Groups      []FragmentGroup
-	FactorEdges []FragmentFactorEdge
+	Roles       []TemplateRole
+	Groups      []TargetGroup
+	FactorEdges []TargetFactorEdge
 	Summaries   []SummaryMapping
 	WeakTargets []WeakTargetMapping
 }
@@ -217,7 +185,7 @@ func (row PrototypeRow) MatchesExact(value RuleInstance) bool {
 // this prototype. A source compiler may choose whether the same role also
 // exports control, but it cannot rename a role/slot, replace its Factor
 // surface, or bind one placeholder through a second slot.
-func (row PrototypeRow) MatchesPortReads(expected []Port) bool {
+func (row PrototypeRow) MatchesPortReads(expected []TemplateRole) bool {
 	if !row.Available() {
 		return false
 	}
@@ -272,7 +240,7 @@ func (row PrototypeRow) MatchesPortReads(expected []Port) bool {
 }
 
 func activationPrototypeInstance(row RuleInstance) bool {
-	if !row.Schema.Available() || !row.OperandFamily.Available() || !row.Occurrence.Available() || !row.Operand.Available() || len(row.Supports) != 0 || len(row.Prunes) != 0 {
+	if !row.Schema.Available() || !row.OperandFamily.Available() || !row.Occurrence.Available() || !row.Operand.Available() {
 		return false
 	}
 	selectorLocal := uint64(0)
@@ -295,8 +263,18 @@ func activationPrototypeInstance(row RuleInstance) bool {
 		}
 	}
 	for index, write := range row.Writes {
-		if write.Index != uint64(index) || write.Surface.Form != SurfaceWriteExact || write.Surface.Mode != TargetModeStrong || write.Surface.Semantic.Available() || write.Surface.Normalizer.Available() ||
+		if write.Index != uint64(index) || write.Surface.Form != SurfaceWriteExact || (write.Surface.Mode != TargetModeStrong && write.Surface.Mode != TargetModeWeak) || write.Surface.Semantic.Available() || write.Surface.Normalizer.Available() ||
 			write.Route != 0 || len(write.Candidates) != 0 || len(write.TargetCandidates) != 0 || len(write.Relations) != 0 {
+			return false
+		}
+	}
+	for _, support := range row.Supports {
+		if !support.Surface.Available() {
+			return false
+		}
+	}
+	for _, prune := range row.Prunes {
+		if !prune.Surface.Available() {
 			return false
 		}
 	}
@@ -311,8 +289,8 @@ func (plan VariantPlan) PrototypeRows(target, endpoint composition.Key) []Protot
 	if !found {
 		return nil
 	}
-	rows := make([]PrototypeRow, len(variant.template.instances))
-	for index, instance := range variant.template.instances {
+	rows := make([]PrototypeRow, len(variant.template.formal.prototypes))
+	for index, instance := range variant.template.formal.prototypes {
 		key, ok := identityKey("analysis/engine/equation/activation-prototype-row", func(writer *canonical.DigestWriter) bool {
 			return writeKey(writer, plan.data.key) && writeKey(writer, variant.target) && writeKey(writer, variant.endpoint) && writeKey(writer, instance.key)
 		})
@@ -351,7 +329,7 @@ func (data *variantPlanData) structuralOnly() bool {
 		return false
 	}
 	for _, variant := range data.variants {
-		if len(variant.template.instances) != 0 || len(variant.template.value.FactorEdges) == 0 {
+		if len(variant.template.formal.prototypes) != 0 || variant.template.formal.factorEdges == 0 {
 			return false
 		}
 	}
@@ -361,7 +339,7 @@ func (data *variantPlanData) structuralOnly() bool {
 type sealedVariant struct {
 	target   composition.Key
 	endpoint composition.Key
-	template templatePrototype
+	template formalVariantDescriptor
 }
 
 // NewVariantPlan seals target/endpoint membership and immutable prototype
@@ -384,16 +362,16 @@ func NewVariantPlan(source *composition.Composition, family composition.Key, val
 		if !value.Target.Available() || !value.Endpoint.Available() {
 			return VariantPlan{}, false
 		}
-		template, ok := sealTemplatePrototype(source, value.Template)
+		template, ok := sealFormalVariantDescriptor(source, value.Template)
 		if !ok {
 			return VariantPlan{}, false
 		}
 		if index == 0 {
-			roles = clonePortModes(template.ports)
-			portReads = clonePortReads(template.portReads)
-			selectors = append([]prototypeSelectorSurface(nil), template.selectors...)
-			exportRoles = append([]composition.Key(nil), template.exports...)
-		} else if !samePortModes(roles, template.ports) || !samePortReads(portReads, template.portReads) || !samePrototypeSelectorSurfaces(selectors, template.selectors) || !sameKeySlice(exportRoles, template.exports) {
+			roles = clonePortModes(template.formal.portModes)
+			portReads = clonePortReads(template.formal.portReads)
+			selectors = append([]prototypeSelectorSurface(nil), template.formal.selectors...)
+			exportRoles = append([]composition.Key(nil), template.formal.exports...)
+		} else if !samePortModes(roles, template.formal.portModes) || !samePortReads(portReads, template.formal.portReads) || !samePrototypeSelectorSurfaces(selectors, template.formal.selectors) || !sameKeySlice(exportRoles, template.formal.exports) {
 			// One plan is one fixed ABI shape. Accepting endpoint-specific
 			// port vocabularies would force every Application attachment to
 			// retain the union, recreating the forbidden A×E storage plane.
@@ -485,44 +463,6 @@ func samePortReads(left, right map[composition.Key][]PortRead) bool {
 	return true
 }
 
-func canonicalPortReads(values []PortRead) ([]PortRead, bool) {
-	if len(values) == 0 {
-		return nil, true
-	}
-	result := append([]PortRead(nil), values...)
-	sort.Slice(result, func(left, right int) bool { return lessKey(result[left].Role, result[right].Role) })
-	for index, read := range result {
-		if !read.Role.Available() || !read.Surface.Available() || index > 0 && result[index-1].Role == read.Role {
-			return nil, false
-		}
-	}
-	return result, true
-}
-
-func samePortReadSlots(left, right []PortRead) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
-			return false
-		}
-	}
-	return true
-}
-
-func writePortReads(writer *canonical.DigestWriter, reads []PortRead) bool {
-	if writer.Count(uint64(len(reads))) != nil {
-		return false
-	}
-	for _, read := range reads {
-		if !writeKey(writer, read.Role) || !writeSurface(writer, read.Surface) {
-			return false
-		}
-	}
-	return true
-}
-
 func samePortModes(left, right map[composition.Key]PortMode) bool {
 	if len(left) != len(right) {
 		return false
@@ -569,66 +509,298 @@ func (plan VariantPlan) variant(target, endpoint composition.Key) (sealedVariant
 	return variant, variant.target == target && variant.endpoint == endpoint
 }
 
-// templatePrototype is a fully authenticated finite fragment except for
-// trigger-owned port bases. Its immutable syntax, source Batch, Rule rows,
-// local points, group scopes, and port roles are sealed once. Binding checks
-// only the concrete port bases against that sealed ABI.
-type templatePrototype struct {
-	source    *composition.Composition
-	key       composition.Key
-	value     Template
-	batch     *Batch
-	instances []canonicalInstance
-	points    map[PointRef]Point
-	ports     map[composition.Key]PortMode
-	portReads map[composition.Key][]PortRead
-	selectors []prototypeSelectorSurface
-	exports   []composition.Key
+// formalVariantDescriptor is the equation-issued endpoint receipt. Its
+// FormalTemplate owns the one sealed formal Batch (including target rows and
+// formal ports); this descriptor adds only canonical prototype projections and
+// the fixed selector/port ABI used by typed payload attachment.
+type formalVariantDescriptor struct {
+	source *composition.Composition
+	key    composition.Key
+	formal FormalTemplate
 }
 
-func sealTemplatePrototype(source *composition.Composition, value Template) (templatePrototype, bool) {
-	if source == nil || len(value.Rules) != len(value.Groups) || len(value.Rules) == 0 && len(value.FactorEdges) == 0 {
-		return templatePrototype{}, false
+// normalizeTemplateFormal reissues one authored template into a dedicated
+// formal Batch. Roles become FormalPorts; ordinary local sites, occurrences,
+// and operands are reissued in the same transaction. This is the cold
+// boundary used later by TemplateBinding; no caller Batch capability is
+// retained in the shared plan.
+func normalizeTemplateFormal(value Template) (result Template, resultBatch *Batch, resultPorts map[composition.Key]FormalPort, ok bool) {
+	stage := "start"
+	_ = stage
+	base := templateBatch(value)
+	if base != nil && !base.Sealed() {
+		return Template{}, nil, nil, false
 	}
-	result := templatePrototype{source: source, value: copyTemplate(value)}
-	batch := templateBatch(result.value)
-	if batch == nil {
-		return templatePrototype{}, false
-	}
-	for _, row := range result.value.Rules {
-		schema, schemaOK := ruleSchema(source, row.Schema)
-		if !schemaOK || len(schema.Activations) != 0 {
-			return templatePrototype{}, false
+	if base == nil {
+		if len(value.Points) != 0 || len(value.Rules) != 0 {
+			return Template{}, nil, nil, false
+		}
+		for _, edge := range value.FactorEdges {
+			if edge.ExternalSource.Available() || edge.ExternalTarget.Available() {
+				return Template{}, nil, nil, false
+			}
 		}
 	}
-	catalog, ok := buildTopologyCatalog(TopologySpec{Rules: result.value.Rules, Summaries: result.value.Summaries, WeakTargets: result.value.WeakTargets})
-	if !ok || !validateTopologyCatalogUsage(TopologySpec{Rules: result.value.Rules, Summaries: result.value.Summaries, WeakTargets: result.value.WeakTargets}, catalog) {
-		return templatePrototype{}, false
+	formal := NewBatch()
+	stage = "roles"
+	ports := make(map[composition.Key]FormalPort, len(value.Roles))
+	for _, role := range value.Roles {
+		port, ok := formal.AdmitFormalPort(role.Role, role.Mode, role.Reads)
+		if !ok {
+			return Template{}, nil, nil, false
+		}
+		ports[role.Role] = port
+	}
+	baseSiteCount := 0
+	if base != nil {
+		baseSiteCount = len(base.sites)
+	}
+	sites := make([]Site, baseSiteCount)
+	stage = "sites"
+	if base != nil {
+		for index, row := range base.sites {
+			if row.formal {
+				port, ok := ports[row.formalRole]
+				if !ok {
+					return Template{}, nil, nil, false
+				}
+				sites[index] = port.Site()
+				continue
+			}
+			site, ok := formal.AdmitSite(row.source, row.scope, row.init, row.disposition)
+			if !ok {
+				return Template{}, nil, nil, false
+			}
+			sites[index] = site
+		}
+	}
+	occurrenceCount := 0
+	if base != nil {
+		occurrenceCount = len(base.occurrences)
+	}
+	occurrences := make([]Occurrence, occurrenceCount)
+	stage = "occurrences"
+	if base != nil {
+		for index, row := range base.occurrences {
+			if row.site == 0 || uint64(row.site) > uint64(len(sites)) {
+				return Template{}, nil, nil, false
+			}
+			var ok bool
+			switch row.kind {
+			case OccurrenceAt:
+				occurrences[index], ok = formal.At(sites[row.site-1])
+			case OccurrenceFrom:
+				occurrences[index], ok = formal.From(sites[row.site-1], row.entity)
+			case OccurrenceRelation:
+				occurrences[index], ok = formal.Relation(sites[row.site-1], row.entity)
+			}
+			if !ok {
+				return Template{}, nil, nil, false
+			}
+		}
+	}
+	operandCount := 0
+	if base != nil {
+		operandCount = len(base.operands)
+	}
+	operands := make([]Operand, operandCount)
+	stage = "operands"
+	if base != nil {
+		for index, row := range base.operands {
+			if row.occurrence == 0 || uint64(row.occurrence) > uint64(len(occurrences)) {
+				return Template{}, nil, nil, false
+			}
+			operand, ok := formal.AdmitOperand(occurrences[row.occurrence-1], row.entity)
+			if !ok {
+				return Template{}, nil, nil, false
+			}
+			operands[index] = operand
+		}
+	}
+	result = copyTemplate(value)
+	for index, point := range result.Points {
+		if point.Site.row == 0 || uint64(point.Site.row) > uint64(len(sites)) {
+			return Template{}, nil, nil, false
+		}
+		result.Points[index].Site = sites[point.Site.row-1]
+	}
+	for index, rule := range result.Rules {
+		if rule.Occurrence.row == 0 || uint64(rule.Occurrence.row) > uint64(len(occurrences)) || rule.Operand.row == 0 || uint64(rule.Operand.row) > uint64(len(operands)) {
+			return Template{}, nil, nil, false
+		}
+		result.Rules[index].Occurrence = occurrences[rule.Occurrence.row-1]
+		result.Rules[index].Operand = operands[rule.Operand.row-1]
+	}
+	for index, edge := range result.FactorEdges {
+		if edge.ExternalSource.Available() {
+			if edge.ExternalSource.row == 0 || uint64(edge.ExternalSource.row) > uint64(len(sites)) {
+				return Template{}, nil, nil, false
+			}
+			result.FactorEdges[index].ExternalSource = sites[edge.ExternalSource.row-1]
+		}
+		if edge.ExternalTarget.Available() {
+			if edge.ExternalTarget.row == 0 || uint64(edge.ExternalTarget.row) > uint64(len(sites)) {
+				return Template{}, nil, nil, false
+			}
+			result.FactorEdges[index].ExternalTarget = sites[edge.ExternalTarget.row-1]
+		}
+	}
+	// The formal owner admits the complete ordinary target grammar into this
+	// same open Batch. No engine-side copy may construct a second row graph.
+	pointRefs := make(map[Site]PointRef, len(result.Points)+len(ports))
+	pointSites := make(map[PointRef]Site, len(result.Points)+len(ports))
+	for _, point := range result.Points {
+		ref, admitted := formal.AdmitPoint(point.Site)
+		if !admitted {
+			return Template{}, nil, nil, false
+		}
+		pointRefs[point.Site] = ref
+		pointSites[ref] = point.Site
+	}
+	for _, port := range ports {
+		if _, present := pointRefs[port.Site()]; present {
+			continue
+		}
+		ref, admitted := formal.AdmitPoint(port.Site())
+		if !admitted {
+			return Template{}, nil, nil, false
+		}
+		pointRefs[port.Site()] = ref
+		pointSites[ref] = port.Site()
+	}
+	for _, row := range result.Rules {
+		if !formal.AdmitRule(row) {
+			return Template{}, nil, nil, false
+		}
+	}
+	resolvePoint := func(point TargetPoint) (PointRef, bool) {
+		if point.Role.Available() {
+			port, present := ports[point.Role]
+			if !present {
+				return 0, false
+			}
+			ref, present := pointRefs[port.Site()]
+			return ref, present && ref != 0
+		}
+		if point.Local == 0 || uint64(point.Local) > uint64(len(result.Points)) {
+			return 0, false
+		}
+		ref, present := pointRefs[result.Points[point.Local-1].Site]
+		return ref, present && ref != 0
+	}
+	for _, group := range result.Groups {
+		output, outputOK := resolvePoint(group.Output)
+		if !outputOK {
+			return Template{}, nil, nil, false
+		}
+		bound := BatchGroup{Output: output, Members: append([]RuleRef(nil), group.Members...)}
+		for _, input := range group.Inputs {
+			source, sourceOK := resolvePoint(input.Point)
+			if !sourceOK {
+				return Template{}, nil, nil, false
+			}
+			sourceSite, sourcePresent := pointSites[source]
+			targetSite, targetPresent := pointSites[output]
+			if !sourcePresent || !targetPresent {
+				return Template{}, nil, nil, false
+			}
+			bound.Inputs = append(bound.Inputs, TargetBoundaryInput(sourceSite, targetSite, input.Provenance, input.Pre, input.Reindex, input.Post))
+		}
+		if !formal.AdmitGroup(bound) {
+			return Template{}, nil, nil, false
+		}
+	}
+	for _, edge := range result.FactorEdges {
+		target, targetOK := resolvePoint(edge.Target)
+		var source Site
+		var sourceOK bool
+		if edge.ExternalSource.Available() {
+			source, sourceOK = edge.ExternalSource, true
+		} else {
+			ref, ok := resolvePoint(edge.Source)
+			if ok {
+				source, sourceOK = pointSites[ref]
+				if !sourceOK {
+					return Template{}, nil, nil, false
+				}
+			}
+		}
+		if !targetOK || !sourceOK {
+			return Template{}, nil, nil, false
+		}
+		targetSite, targetPresent := pointSites[target]
+		if !targetPresent {
+			return Template{}, nil, nil, false
+		}
+		input := TargetBoundaryInput(source, targetSite, edge.Provenance, edge.Pre, edge.Reindex, edge.Post)
+		if !formal.AdmitFactorEdge(BatchFactorEdge{Target: target, Input: input, Factor: edge.Factor}) {
+			return Template{}, nil, nil, false
+		}
+	}
+	for _, summary := range result.Summaries {
+		if !formal.AdmitSummary(summary) {
+			return Template{}, nil, nil, false
+		}
+	}
+	for _, weak := range result.WeakTargets {
+		if !formal.AdmitWeakTarget(weak) {
+			return Template{}, nil, nil, false
+		}
+	}
+	if !formal.Seal() {
+		return Template{}, nil, nil, false
+	}
+	return result, formal, ports, true
+}
+
+func sealFormalVariantDescriptor(source *composition.Composition, value Template) (formalVariantDescriptor, bool) {
+	if source == nil || len(value.Rules) != len(value.Groups) || len(value.Rules) == 0 && len(value.FactorEdges) == 0 {
+		return formalVariantDescriptor{}, false
+	}
+	normalized, batch, formals, formalOK := normalizeTemplateFormal(value)
+	if !formalOK || batch == nil || !batch.Sealed() {
+		return formalVariantDescriptor{}, false
+	}
+	formal := formalTemplateFromParts(batch, formals, len(normalized.Roles))
+	if !formal.Available() {
+		return formalVariantDescriptor{}, false
+	}
+	result := formalVariantDescriptor{source: source, formal: formal}
+	for _, row := range normalized.Rules {
+		schema, schemaOK := ruleSchema(source, row.Schema)
+		if !schemaOK || len(schema.Activations) != 0 {
+			return formalVariantDescriptor{}, false
+		}
+	}
+	catalog, ok := buildTopologyCatalog(TopologySpec{Rules: normalized.Rules, Summaries: normalized.Summaries, WeakTargets: normalized.WeakTargets})
+	if !ok || !validateTopologyCatalogUsage(TopologySpec{Rules: normalized.Rules, Summaries: normalized.Summaries, WeakTargets: normalized.WeakTargets}, catalog) {
+		return formalVariantDescriptor{}, false
 	}
 	var instances []canonicalInstance
-	if len(result.value.Rules) != 0 {
-		instances, ok = buildInstances(source, batch, result.value.Rules, catalog)
+	if len(normalized.Rules) != 0 {
+		instances, ok = buildInstances(source, batch, normalized.Rules, catalog)
 		if !ok {
-			return templatePrototype{}, false
+			return formalVariantDescriptor{}, false
 		}
 	}
 	selectors, ok := prototypeSelectorSurfaces(instances)
 	if !ok {
-		return templatePrototype{}, false
+		return formalVariantDescriptor{}, false
 	}
-	points, _, _, ok := buildPoints(result.value.Points)
+	points, _, _, ok := buildPoints(normalized.Points)
 	if !ok {
-		return templatePrototype{}, false
+		return formalVariantDescriptor{}, false
 	}
-	ports, portReads, exports, ok := prototypePortRoles(result.value.Ports, result.value.Groups, result.value.FactorEdges, points, instances, source, batch)
+	ports, portReads, exports, ok := prototypePortRoles(normalized.Roles, normalized.Groups, normalized.FactorEdges, points, instances, source, batch)
 	if !ok {
-		return templatePrototype{}, false
+		return formalVariantDescriptor{}, false
 	}
-	key, ok := prototypeTemplateKey(result.value, instances, points, ports, portReads)
+	key, ok := prototypeTemplateKey(normalized, instances, points, ports, portReads)
 	if !ok {
-		return templatePrototype{}, false
+		return formalVariantDescriptor{}, false
 	}
-	result.key, result.batch, result.instances, result.points, result.ports, result.portReads, result.selectors, result.exports = key, batch, instances, points, ports, portReads, selectors, exports
+	result.key = key
+	result.formal = result.formal.withProjections(instances, points, ports, portReads, selectors, exports, len(normalized.FactorEdges))
 	return result, true
 }
 
@@ -658,48 +830,6 @@ func prototypeSelectorSurfaces(instances []canonicalInstance) ([]prototypeSelect
 		return lessSurface(result[left].surface, result[right].surface)
 	})
 	return result, true
-}
-
-// ActivationBinding is the sole declarative attachment of one cold activation
-// family to one exact trigger occurrence, closed activation Axes, and finite
-// Template. Its canonical identity is derived at seal; callers never author
-// a binding key or a tuple list.
-type ActivationBinding struct {
-	Family  composition.Key
-	Trigger RuleRef
-	// Application and Plan are the shared family-plan attachment. They replace
-	// the old per-trigger axes/template payload. PortBindings maps the Plan's
-	// named roles to this trigger's already-issued base points.
-	Application  composition.Key
-	Plan         VariantPlan
-	PortBindings []PortBinding
-}
-
-type sealedPort struct {
-	role           composition.Key
-	base           PointRef
-	point          Point
-	mode           PortMode
-	prototypeReads []PortRead
-	reads          []PortRead
-}
-
-type sealedTemplate struct {
-	source    *composition.Composition
-	key       composition.Key
-	value     Template
-	batch     *Batch
-	instances []canonicalInstance // declaration-order row keys
-	points    map[PointRef]Point  // declaration-order local point keys
-	ports     map[composition.Key]sealedPort
-	// substitutions is immutable attachment-local data.  It maps only the
-	// prototype exact-read surfaces explicitly declared by import slots.
-	substitutions map[Surface]Surface
-	// ambient is the one exact caller decision universe for this attachment.
-	// Every local template scope is instantiated beneath it; every bound Port
-	// already owns this exact scope.  It is deliberately private: Port remains
-	// a role-only ABI and no per-port context grammar exists.
-	ambient Scope
 }
 
 func templateBatch(value Template) *Batch {
@@ -734,7 +864,7 @@ func templateBatch(value Template) *Batch {
 	return batch
 }
 
-func prototypePortRoles(values []Port, groups []FragmentGroup, edges []FragmentFactorEdge, points map[PointRef]Point, instances []canonicalInstance, source *composition.Composition, batch *Batch) (map[composition.Key]PortMode, map[composition.Key][]PortRead, []composition.Key, bool) {
+func prototypePortRoles(values []TemplateRole, groups []TargetGroup, edges []TargetFactorEdge, points map[PointRef]Point, instances []canonicalInstance, source *composition.Composition, batch *Batch) (map[composition.Key]PortMode, map[composition.Key][]PortRead, []composition.Key, bool) {
 	structuralOnly := len(groups) == 0 && len(instances) == 0
 	if source == nil || len(groups) != len(instances) || structuralOnly && len(points) != 0 {
 		return nil, nil, nil, false
@@ -794,12 +924,12 @@ func prototypePortRoles(values []Port, groups []FragmentGroup, edges []FragmentF
 		if len(group.Members) == 0 {
 			return nil, nil, nil, false
 		}
-		outputScope, outputScopeOK := prototypeFragmentScope(group.Output, points)
+		outputScope, outputScopeOK := templatePointScope(group.Output, points)
 		if !outputScopeOK {
 			return nil, nil, nil, false
 		}
 		if group.Output.Local != 0 {
-			if group.Output.Port.Available() {
+			if group.Output.Role.Available() {
 				return nil, nil, nil, false
 			}
 			if _, found := points[group.Output.Local]; !found {
@@ -807,11 +937,11 @@ func prototypePortRoles(values []Port, groups []FragmentGroup, edges []FragmentF
 			}
 			localOutputs[group.Output.Local] = append(localOutputs[group.Output.Local], groupIndex)
 		} else {
-			mode, found := ports[group.Output.Port]
+			mode, found := ports[group.Output.Role]
 			if !found || !mode.exports() {
 				return nil, nil, nil, false
 			}
-			uses[group.Output.Port] |= portUseExport
+			uses[group.Output.Role] |= portUseExport
 		}
 		for _, ref := range group.Members {
 			index, ok := ruleRefIndex(ref, len(instances))
@@ -828,12 +958,12 @@ func prototypePortRoles(values []Port, groups []FragmentGroup, edges []FragmentF
 			if !input.Provenance.Available() || !input.Pre.Available() || !input.Reindex.Available() || !input.Post.Available() {
 				return nil, nil, nil, false
 			}
-			inputScope, inputScopeOK := prototypeFragmentScope(input.Point, points)
-			if !inputScopeOK || !validPrototypeFragmentInput(input, inputScope, outputScope) {
+			inputScope, inputScopeOK := templatePointScope(input.Point, points)
+			if !inputScopeOK || !validPrototypeTemplateInput(input, inputScope, outputScope) {
 				return nil, nil, nil, false
 			}
 			if input.Point.Local != 0 {
-				if input.Point.Port.Available() {
+				if input.Point.Role.Available() {
 					return nil, nil, nil, false
 				}
 				if _, found := points[input.Point.Local]; !found {
@@ -841,11 +971,11 @@ func prototypePortRoles(values []Port, groups []FragmentGroup, edges []FragmentF
 				}
 				localInputs[groupIndex] = append(localInputs[groupIndex], input.Point.Local)
 			} else {
-				mode, found := ports[input.Point.Port]
+				mode, found := ports[input.Point.Role]
 				if !found || !mode.imports() {
 					return nil, nil, nil, false
 				}
-				uses[input.Point.Port] |= portUseImport
+				uses[input.Point.Role] |= portUseImport
 			}
 		}
 	}
@@ -855,26 +985,26 @@ func prototypePortRoles(values []Port, groups []FragmentGroup, edges []FragmentF
 	// the one port liveness table prevents an edge from smuggling an otherwise
 	// unbound port into the sealed variant.
 	for _, edge := range edges {
-		if !validFragmentFactorEdge(edge, points, source, batch) {
+		if !validTargetFactorEdge(edge, points, source, batch) {
 			return nil, nil, nil, false
 		}
 		if edge.ExternalSource.Available() {
 			// The external source is already bound to the owning Assembly;
 			// it does not consume a shared-plan port role.
 		} else if edge.Source.Local == 0 {
-			if _, found := ports[edge.Source.Port]; !found {
+			if _, found := ports[edge.Source.Role]; !found {
 				return nil, nil, nil, false
 			}
-			uses[edge.Source.Port] |= portUseImport
+			uses[edge.Source.Role] |= portUseImport
 		}
 		if edge.ExternalTarget.Available() {
 			// The external target is already bound to the owning Assembly;
 			// it does not consume a shared-plan port role.
 		} else if edge.Target.Local == 0 {
-			if _, found := ports[edge.Target.Port]; !found {
+			if _, found := ports[edge.Target.Role]; !found {
 				return nil, nil, nil, false
 			}
-			uses[edge.Target.Port] |= portUseExport
+			uses[edge.Target.Role] |= portUseExport
 		}
 	}
 	if !structuralOnly {
@@ -887,7 +1017,7 @@ func prototypePortRoles(values []Port, groups []FragmentGroup, edges []FragmentF
 	if !validatePortReadRoutes(portReads, groups, instances, source) {
 		return nil, nil, nil, false
 	}
-	if !structuralOnly && !validateFragmentLiveness(groups, points, localOutputs, localInputs) {
+	if !structuralOnly && !validateTemplateLiveness(groups, points, localOutputs, localInputs) {
 		return nil, nil, nil, false
 	}
 	exports := make([]composition.Key, 0, len(ports))
@@ -919,9 +1049,9 @@ func prototypePortRoles(values []Port, groups []FragmentGroup, edges []FragmentF
 
 // validatePortReadRoutes proves a named prototype read is not merely present
 // somewhere in a template.  Its Rule schema input must be the exact
-// FragmentInput connected to that import role; every declared slot must be
+// TemplateInput connected to that import role; every declared slot must be
 // used at least once.  This closes the otherwise subtle input-crossing leak.
-func validatePortReadRoutes(portReads map[composition.Key][]PortRead, groups []FragmentGroup, instances []canonicalInstance, source *composition.Composition) bool {
+func validatePortReadRoutes(portReads map[composition.Key][]PortRead, groups []TargetGroup, instances []canonicalInstance, source *composition.Composition) bool {
 	if len(portReads) == 0 {
 		return true
 	}
@@ -956,7 +1086,7 @@ func validatePortReadRoutes(portReads map[composition.Key][]PortRead, groups []F
 					return false
 				}
 				point := group.Inputs[input].Point
-				if point.Local != 0 || point.Port != role {
+				if point.Local != 0 || point.Role != role {
 					return false
 				}
 				seen[read.Surface] = true
@@ -971,27 +1101,27 @@ func validatePortReadRoutes(portReads map[composition.Key][]PortRead, groups []F
 	return true
 }
 
-// prototypeFragmentScope is the one formal endpoint typing rule. A Local
-// point exposes its declared template scope; a Port is polymorphic over the
+// templatePointScope is the one formal endpoint typing rule. A Local
+// point exposes its declared template scope; a TemplateRole is polymorphic over the
 // eventual attachment scope and is therefore typed at EmptyScope here.  The
 // attachment later lifts this empty formal boundary by ambient identity.
-func prototypeFragmentScope(value FragmentPoint, points map[PointRef]Point) (Scope, bool) {
-	if (value.Local != 0 && value.Port.Available()) || (value.Local == 0 && !value.Port.Available()) {
+func templatePointScope(value TargetPoint, points map[PointRef]Point) (Scope, bool) {
+	if (value.Local != 0 && value.Role.Available()) || (value.Local == 0 && !value.Role.Available()) {
 		return Scope{}, false
 	}
 	if value.Local != 0 {
 		point, found := points[value.Local]
 		return point.Scope(), found && point.Available()
 	}
-	return EmptyScope(), value.Port.Available()
+	return EmptyScope(), value.Role.Available()
 }
 
-func validPrototypeFragmentInput(input FragmentInput, source, target Scope) bool {
+func validPrototypeTemplateInput(input TemplateInput, source, target Scope) bool {
 	return input.Provenance.Available() && input.Pre.Available() && input.Reindex.Available() && input.Post.Available() &&
 		validScopedExpr(input.Pre, source) && sameScope(input.Reindex.source, source) && sameScope(input.Reindex.target, target) && validScopedExpr(input.Post, target)
 }
 
-func validFragmentFactorEdge(edge FragmentFactorEdge, points map[PointRef]Point, source *composition.Composition, batch *Batch) bool {
+func validTargetFactorEdge(edge TargetFactorEdge, points map[PointRef]Point, source *composition.Composition, batch *Batch) bool {
 	if source == nil || !edge.Factor.Available() || !edge.Provenance.Available() || !edge.Pre.Available() || !edge.Reindex.Available() || !edge.Post.Available() {
 		return false
 	}
@@ -1001,29 +1131,29 @@ func validFragmentFactorEdge(edge FragmentFactorEdge, points map[PointRef]Point,
 	if batch == nil || !batch.Sealed() || edge.ExternalSource.Available() && edge.ExternalSource.batch != batch || edge.ExternalTarget.Available() && edge.ExternalTarget.batch != batch {
 		return false
 	}
-	if edge.ExternalSource.Available() && (edge.Source.Local != 0 || edge.Source.Port.Available()) {
+	if edge.ExternalSource.Available() && (edge.Source.Local != 0 || edge.Source.Role.Available()) {
 		return false
 	}
-	if !edge.ExternalSource.Available() && edge.Source.Local == 0 && !edge.Source.Port.Available() {
+	if !edge.ExternalSource.Available() && edge.Source.Local == 0 && !edge.Source.Role.Available() {
 		return false
 	}
-	if edge.ExternalTarget.Available() && (edge.Target.Local != 0 || edge.Target.Port.Available()) {
+	if edge.ExternalTarget.Available() && (edge.Target.Local != 0 || edge.Target.Role.Available()) {
 		return false
 	}
-	if !edge.ExternalTarget.Available() && edge.Target.Local == 0 && !edge.Target.Port.Available() {
+	if !edge.ExternalTarget.Available() && edge.Target.Local == 0 && !edge.Target.Role.Available() {
 		return false
 	}
 	sourceScope, sourceOK := EmptyScope(), true
 	if edge.ExternalSource.Available() {
 		sourceScope = edge.ExternalSource.Scope()
 	} else {
-		sourceScope, sourceOK = prototypeFragmentScope(edge.Source, points)
+		sourceScope, sourceOK = templatePointScope(edge.Source, points)
 	}
 	targetScope, targetOK := EmptyScope(), true
 	if edge.ExternalTarget.Available() {
 		targetScope = edge.ExternalTarget.Scope()
 	} else {
-		targetScope, targetOK = prototypeFragmentScope(edge.Target, points)
+		targetScope, targetOK = templatePointScope(edge.Target, points)
 	}
 	return sourceOK && targetOK && validScopedExpr(edge.Pre, sourceScope) &&
 		sameScope(edge.Reindex.source, sourceScope) && sameScope(edge.Reindex.target, targetScope) && validScopedExpr(edge.Post, targetScope)
@@ -1101,7 +1231,7 @@ func prototypeTemplateKey(value Template, instances []canonicalInstance, points 
 	})
 }
 
-func prototypeFactorEdgeKeys(values []FragmentFactorEdge, points map[PointRef]Point) ([]composition.Key, bool) {
+func prototypeFactorEdgeKeys(values []TargetFactorEdge, points map[PointRef]Point) ([]composition.Key, bool) {
 	result := make([]composition.Key, len(values))
 	for index, edge := range values {
 		source, sourceOK := composition.Key{}, false
@@ -1139,7 +1269,7 @@ func prototypeFactorEdgeKeys(values []FragmentFactorEdge, points map[PointRef]Po
 	return result, true
 }
 
-func prototypeGroupKeys(groups []FragmentGroup, instances []canonicalInstance, points map[PointRef]Point) ([]composition.Key, bool) {
+func prototypeGroupKeys(groups []TargetGroup, instances []canonicalInstance, points map[PointRef]Point) ([]composition.Key, bool) {
 	result := make([]composition.Key, len(groups))
 	for groupIndex, group := range groups {
 		output, outputOK := prototypePointKey(group.Output, points)
@@ -1189,57 +1319,12 @@ func prototypeGroupKeys(groups []FragmentGroup, instances []canonicalInstance, p
 	return result, true
 }
 
-func prototypePointKey(point FragmentPoint, points map[PointRef]Point) (composition.Key, bool) {
+func prototypePointKey(point TargetPoint, points map[PointRef]Point) (composition.Key, bool) {
 	if point.Local != 0 {
 		local, found := points[point.Local]
-		return local.key, found && !point.Port.Available() && local.Available()
+		return local.key, found && !point.Role.Available() && local.Available()
 	}
-	return point.Port, point.Port.Available()
-}
-
-func sealPlanPortBindings(plan VariantPlan, values []PortBinding, base map[PointRef]Point) (map[composition.Key]sealedPort, Scope, bool) {
-	if plan.data == nil || len(values) != len(plan.data.ports) {
-		return nil, Scope{}, false
-	}
-	if len(plan.data.ports) == 0 {
-		if len(values) != 0 {
-			return nil, Scope{}, false
-		}
-		return map[composition.Key]sealedPort{}, EmptyScope(), true
-	}
-	ports := make(map[composition.Key]sealedPort, len(values))
-	var ambient Scope
-	for _, value := range values {
-		mode, declared := plan.data.ports[value.Role]
-		point, present := base[value.Base]
-		if !declared || !value.Role.Available() || !present || !point.Available() {
-			return nil, Scope{}, false
-		}
-		if _, duplicate := ports[value.Role]; duplicate {
-			return nil, Scope{}, false
-		}
-		if !point.Scope().Available() {
-			return nil, Scope{}, false
-		}
-		if !ambient.Available() {
-			ambient = point.Scope()
-		} else if !sameScope(ambient, point.Scope()) {
-			// A shared plan has one caller world. Silently unioning port
-			// scopes would create an unowned cross-world transport.
-			return nil, Scope{}, false
-		}
-		prototypeReads := plan.data.portReads[value.Role]
-		reads, readsOK := canonicalPortReads(value.Reads)
-		if len(prototypeReads) != 0 {
-			if !readsOK || !compatiblePortReads(plan.data.source, prototypeReads, reads) {
-				return nil, Scope{}, false
-			}
-		} else if !readsOK || len(reads) != 0 {
-			return nil, Scope{}, false
-		}
-		ports[value.Role] = sealedPort{role: value.Role, base: value.Base, point: point, mode: mode, prototypeReads: append([]PortRead(nil), prototypeReads...), reads: reads}
-	}
-	return ports, ambient, len(ports) == len(plan.data.ports) && ambient.Available()
+	return point.Role, point.Role.Available()
 }
 
 // compatiblePortRead validates the only dynamic data capability crossing an
@@ -1279,77 +1364,12 @@ func compatiblePortRead(source *composition.Composition, prototype, caller Surfa
 	return found
 }
 
-// bindPrototype resolves only the selected endpoint's named roles against one
-// trigger attachment. Prototype rows are not copied: the returned view carries
-// immutable plan-owned rows plus small trigger-local port resolution.
-func (value templatePrototype) bindPrototype(ports map[composition.Key]sealedPort, ambient Scope) (sealedTemplate, bool) {
-	if value.source == nil || !value.key.Available() || value.batch == nil || !value.batch.Sealed() || !ambient.Available() || len(value.instances) == 0 && len(value.value.FactorEdges) == 0 {
-		return sealedTemplate{}, false
-	}
-	selected := make(map[composition.Key]sealedPort, len(value.ports))
-	for role, mode := range value.ports {
-		port, found := ports[role]
-		if !found || port.mode != mode || !port.point.Available() || !sameScope(port.point.Scope(), ambient) ||
-			!samePortReadSlots(port.prototypeReads, value.portReads[role]) {
-			return sealedTemplate{}, false
-		}
-		selected[role] = port
-	}
-	if len(selected) != len(ports) {
-		return sealedTemplate{}, false
-	}
-	substitutions, substitutionsOK := portReadSubstitutions(value.source, selected)
-	if !substitutionsOK {
-		return sealedTemplate{}, false
-	}
-	key, ok := identityKey("analysis/engine/equation/activation-template-binding", func(writer *canonical.DigestWriter) bool {
-		if !writeKey(writer, value.key) || !writeScope(writer, ambient) || writer.Count(uint64(len(selected))) != nil {
-			return false
-		}
-		roles := make([]composition.Key, 0, len(selected))
-		for role := range selected {
-			roles = append(roles, role)
-		}
-		sort.Slice(roles, func(left, right int) bool { return lessKey(roles[left], roles[right]) })
-		for _, role := range roles {
-			port := selected[role]
-			if !writeKey(writer, role) || !writePoint(writer, port.point) || writer.Uint(uint64(port.mode)) != nil {
-				return false
-			}
-			if !writePortReads(writer, port.prototypeReads) || !writePortReads(writer, port.reads) {
-				return false
-			}
-		}
-		return true
-	})
-	if !ok {
-		return sealedTemplate{}, false
-	}
-	return sealedTemplate{source: value.source, key: key, value: value.value, batch: value.batch, instances: value.instances, points: value.points, ports: selected, substitutions: substitutions, ambient: ambient}, true
-}
-
-func portReadSubstitutions(source *composition.Composition, ports map[composition.Key]sealedPort) (map[Surface]Surface, bool) {
-	result := make(map[Surface]Surface)
-	for _, port := range ports {
-		if !compatiblePortReads(source, port.prototypeReads, port.reads) {
-			return nil, false
-		}
-		for index, prototype := range port.prototypeReads {
-			if _, duplicate := result[prototype.Surface]; duplicate {
-				return nil, false
-			}
-			result[prototype.Surface] = port.reads[index].Surface
-		}
-	}
-	return result, true
-}
-
-// validateFragmentLiveness reverse-walks the template's ordinary local
+// validateTemplateLiveness reverse-walks the template's ordinary local
 // Point/Group graph from export-port outputs. A local Point is live only when
 // it lies on a path to an exported base point; a local Init input is a valid
 // leaf of that walk and does not need a synthetic producer. Every template
 // Rule is already owned by exactly one Group, so live Groups imply live Rules.
-func validateFragmentLiveness(groups []FragmentGroup, points map[PointRef]Point, producers map[PointRef][]int, inputs [][]PointRef) bool {
+func validateTemplateLiveness(groups []TargetGroup, points map[PointRef]Point, producers map[PointRef][]int, inputs [][]PointRef) bool {
 	if len(groups) == 0 || len(inputs) != len(groups) {
 		return false
 	}
@@ -1399,24 +1419,24 @@ func copyTemplate(value Template) Template {
 	result := Template{
 		Rules:       make([]RuleInstance, len(value.Rules)),
 		Points:      append([]PointSpec(nil), value.Points...),
-		Ports:       make([]Port, len(value.Ports)),
-		Groups:      make([]FragmentGroup, len(value.Groups)),
-		FactorEdges: make([]FragmentFactorEdge, len(value.FactorEdges)),
+		Roles:       make([]TemplateRole, len(value.Roles)),
+		Groups:      make([]TargetGroup, len(value.Groups)),
+		FactorEdges: make([]TargetFactorEdge, len(value.FactorEdges)),
 		Summaries:   make([]SummaryMapping, len(value.Summaries)),
 		WeakTargets: make([]WeakTargetMapping, len(value.WeakTargets)),
 	}
 	for index, row := range value.Rules {
 		result.Rules[index] = copyInstance(row)
 	}
-	for index, port := range value.Ports {
-		result.Ports[index] = Port{Role: port.Role, Mode: port.Mode, Reads: append([]PortRead(nil), port.Reads...)}
+	for index, port := range value.Roles {
+		result.Roles[index] = TemplateRole{Role: port.Role, Mode: port.Mode, Reads: append([]PortRead(nil), port.Reads...)}
 	}
 	for index, group := range value.Groups {
-		copied := FragmentGroup{Members: append([]RuleRef(nil), group.Members...), Output: group.Output, Inputs: append([]FragmentInput(nil), group.Inputs...)}
+		copied := TargetGroup{Members: append([]RuleRef(nil), group.Members...), Output: group.Output, Inputs: append([]TemplateInput(nil), group.Inputs...)}
 		result.Groups[index] = copied
 	}
 	for index, edge := range value.FactorEdges {
-		result.FactorEdges[index] = FragmentFactorEdge{Source: edge.Source, ExternalSource: edge.ExternalSource, Target: edge.Target, ExternalTarget: edge.ExternalTarget, Factor: edge.Factor, Provenance: edge.Provenance, Pre: edge.Pre, Reindex: edge.Reindex, Post: edge.Post}
+		result.FactorEdges[index] = TargetFactorEdge{Source: edge.Source, ExternalSource: edge.ExternalSource, Target: edge.Target, ExternalTarget: edge.ExternalTarget, Factor: edge.Factor, Provenance: edge.Provenance, Pre: edge.Pre, Reindex: edge.Reindex, Post: edge.Post}
 	}
 	for index, summary := range value.Summaries {
 		result.Summaries[index] = SummaryMapping{Surface: summary.Surface, Keys: append([]uint64(nil), summary.Keys...)}
@@ -1427,81 +1447,11 @@ func copyTemplate(value Template) Template {
 	return result
 }
 
-func copyPortBindings(values []PortBinding) []PortBinding {
-	result := make([]PortBinding, len(values))
-	for index, value := range values {
-		result[index] = PortBinding{Role: value.Role, Base: value.Base, Reads: append([]PortRead(nil), value.Reads...)}
-	}
-	return result
-}
-
-func boundProvenance(base, binding, member, row composition.Key) (composition.Key, bool) {
-	if !base.Available() || !binding.Available() || !member.Available() || !row.Available() {
-		return composition.Key{}, false
-	}
-	return identityKey("analysis/engine/equation/dynamic-boundary-provenance", func(writer *canonical.DigestWriter) bool {
-		return writeKey(writer, base) && writeKey(writer, binding) && writeKey(writer, member) && writeKey(writer, row)
-	})
-}
-
-// memberNamespace is an ephemeral graph-materialization namespace. It is
-// derived only while expanding an already accepted solver tuple; it is not a
-// Member identity, candidate handle, or topology/manifest row.
-func memberNamespace(member Member) (composition.Key, bool) {
-	if !member.Available() {
-		return composition.Key{}, false
-	}
-	return identityKey("analysis/engine/equation/accepted-activation-namespace", func(writer *canonical.DigestWriter) bool {
-		return writeMemberTuple(writer, member)
-	})
-}
-
 // decisionAlpha is the invocation-local renaming of raw template decisions.
 // Its one key per (raw decision, binding, Member) is deliberately independent
 // of a local Point row: branches in different local points of one invocation
 // remain correlated, while branches from distinct Members cannot alias.
 type decisionAlpha map[composition.Key]Decision
-
-func (template sealedTemplate) decisionAlpha(binding, member composition.Key) (decisionAlpha, bool) {
-	if !template.key.Available() || !binding.Available() || !member.Available() {
-		return nil, false
-	}
-	result := make(decisionAlpha)
-	addSite := func(site Site) bool {
-		scope := site.Scope()
-		if !site.Available() || !scope.Available() {
-			return false
-		}
-		for _, decision := range scope.row.decisions {
-			if _, found := result[decision.key]; found {
-				continue
-			}
-			key, ok := identityKey("analysis/engine/equation/template-decision", func(writer *canonical.DigestWriter) bool {
-				return writeKey(writer, decision.key) && writeKey(writer, binding) && writeKey(writer, member)
-			})
-			if !ok {
-				return false
-			}
-			bound, ok := NewDecision(key)
-			if !ok {
-				return false
-			}
-			result[decision.key] = bound
-		}
-		return true
-	}
-	for _, point := range template.value.Points {
-		if !addSite(point.Site) {
-			return nil, false
-		}
-	}
-	for _, rule := range template.value.Rules {
-		if !addSite(rule.Occurrence.Site()) {
-			return nil, false
-		}
-	}
-	return result, true
-}
 
 func (alpha decisionAlpha) bind(decision Decision, local bool) (Decision, bool) {
 	if !decision.Available() {
@@ -1583,7 +1533,7 @@ func boundExpr(value Expr, alpha decisionAlpha) (Expr, bool) {
 }
 
 // boundReindex rewrites one simultaneous relation at its two endpoints. A
-// local endpoint receives the Member alpha; a static Port endpoint retains
+// local endpoint receives the Member alpha; a static TemplateRole endpoint retains
 // its base decisions. Substitution expressions belong to the target scope.
 func boundReindex(value Reindex, source, target templateResolvedPoint, ambient Scope, alpha decisionAlpha) (Reindex, bool) {
 	if !value.Available() || !source.available() || !target.available() || !ambient.Available() || !sameScope(value.source, source.rawScope) || !sameScope(value.target, target.rawScope) {
@@ -1596,7 +1546,7 @@ func boundReindex(value Reindex, source, target templateResolvedPoint, ambient S
 		// caller target carries the attachment ambient scope. Such ambient
 		// decisions are newly introduced at the target and therefore require
 		// no source map. Retain the identity fast path when both endpoints
-		// contain the decision. A source-only decision introduced by a Port's
+		// contain the decision. A source-only decision introduced by a TemplateRole's
 		// ambient lift is forgotten exactly once; a source-only decision already
 		// present in the raw source retains its authored formal mapping below.
 		sourceHas, targetHas := source.scope.contains(decision), target.scope.contains(decision)
@@ -1663,417 +1613,17 @@ func boundReindex(value Reindex, source, target templateResolvedPoint, ambient S
 	return NewReindex(source.scope, target.scope, maps)
 }
 
-// memberSiteTable is the one alpha-binding authority for every local Site in
-// one selected Member.  A base Site can occur as a Point, a Rule occurrence,
-// or both; those projections must share one dynamically bound Site and one
-// dynamically bound Scope.  The table is intentionally Member-local and
-// rejects a Site from another sealed Batch before it can acquire an overlay.
-type memberSiteTable struct {
-	batch   *Batch
-	ambient Scope
-	alpha   decisionAlpha
-	binding composition.Key
-	member  composition.Key
-	rows    map[composition.Key]memberBoundSite
-}
-
-type memberBoundSite struct {
-	base  Site
-	site  Site
-	scope Scope
-}
-
-// memberBoundOccurrence is a table-issued lineage token.  It is deliberately
-// not a caller-supplied Site/Occurrence pair: bindOperand accepts only this
-// value, which proves the Operand stayed on its admitted base occurrence and
-// that occurrence stayed on the canonical Site selected for this Member.
-type memberBoundOccurrence struct {
-	base       Occurrence
-	occurrence Occurrence
-	site       memberBoundSite
-	row        composition.Key
-}
-
-func newMemberSiteTable(batch *Batch, ambient Scope, alpha decisionAlpha, binding, member composition.Key, capacity int) (*memberSiteTable, bool) {
-	if batch == nil || !batch.Sealed() || !ambient.Available() || alpha == nil || !binding.Available() || !member.Available() || capacity < 0 {
-		return nil, false
-	}
-	return &memberSiteTable{batch: batch, ambient: ambient, alpha: alpha, binding: binding, member: member, rows: make(map[composition.Key]memberBoundSite, capacity)}, true
-}
-
-func (table *memberSiteTable) bind(base Site) (memberBoundSite, bool) {
-	if table == nil || table.batch == nil || !table.batch.Sealed() || !base.Available() || base.batch != table.batch {
-		return memberBoundSite{}, false
-	}
-	if bound, found := table.rows[base.Key()]; found {
-		return bound, bound.base.Same(base) && bound.site.Available() && sameScope(bound.scope, bound.site.Scope())
-	}
-	init, disposition, initialized := base.Init()
-	if !initialized {
-		return memberBoundSite{}, false
-	}
-	scope, ok := boundScope(base.Scope(), table.ambient, table.alpha)
-	if !ok {
-		return memberBoundSite{}, false
-	}
-	boundInit, ok := boundExpr(init, table.alpha)
-	if !ok {
-		return memberBoundSite{}, false
-	}
-	return table.admit(base, scope, boundInit, disposition)
-}
-
-// admit is deliberately strict even though bind is its only production
-// caller.  It makes a duplicate projection prove the same alpha scope, init
-// formula, and disposition, so a foreign or divergent rebind has no route to
-// a second capability for the same source row.
-func (table *memberSiteTable) admit(base Site, scope Scope, init Expr, disposition InitDisposition) (memberBoundSite, bool) {
-	if table == nil || table.batch == nil || !table.batch.Sealed() || !base.Available() || base.batch != table.batch || !scope.Available() || !init.Available() {
-		return memberBoundSite{}, false
-	}
-	baseInit, baseDisposition, initialized := base.Init()
-	expectedScope, scopeOK := boundScope(base.Scope(), table.ambient, table.alpha)
-	expectedInit, initOK := boundExpr(baseInit, table.alpha)
-	if !initialized || !scopeOK || !initOK || disposition != baseDisposition || !sameScope(scope, expectedScope) || !sameExpr(init, expectedInit) {
-		return memberBoundSite{}, false
-	}
-	if bound, found := table.rows[base.Key()]; found {
-		return bound, bound.base.Same(base) && sameScope(bound.scope, scope) && bound.site.Available() && sameExpr(boundInit(bound.site), init)
-	}
-	site, ok := boundSite(base, scope, init, disposition, table.binding, table.member)
-	if !ok {
-		return memberBoundSite{}, false
-	}
-	bound := memberBoundSite{base: base, site: site, scope: scope}
-	table.rows[base.Key()] = bound
-	return bound, true
-}
-
-func boundInit(site Site) Expr {
-	value, _, ok := site.Init()
-	if !ok {
-		return Expr{}
-	}
-	return value
-}
-
-func (table *memberSiteTable) bindOccurrence(base Occurrence, row composition.Key) (memberBoundOccurrence, bool) {
-	if table == nil || table.batch == nil || !table.batch.Sealed() || !base.Available() || base.batch != table.batch || base.dynamic != nil || !row.Available() {
-		return memberBoundOccurrence{}, false
-	}
-	site, ok := table.bind(base.Site())
-	if !ok || !site.base.Same(base.Site()) || !site.site.Available() {
-		return memberBoundOccurrence{}, false
-	}
-	key, ok := identityKey("analysis/engine/equation/dynamic-occurrence", func(writer *canonical.DigestWriter) bool {
-		return writeOccurrence(writer, base) && writeSite(writer, site.site) && writeKey(writer, table.binding) && writeKey(writer, table.member) && writeKey(writer, row)
-	})
-	if !ok {
-		return memberBoundOccurrence{}, false
-	}
-	occurrence := Occurrence{batch: base.batch, row: base.row, dynamic: &dynamicOccurrence{site: site.site, key: key, binding: table.binding, member: table.member, row: row}}
-	if !occurrence.Available() || !occurrence.Site().Same(site.site) {
-		return memberBoundOccurrence{}, false
-	}
-	return memberBoundOccurrence{base: base, occurrence: occurrence, site: site, row: row}, true
-}
-
-func (table *memberSiteTable) bindOperand(base Operand, occurrence memberBoundOccurrence) (Operand, bool) {
-	if table == nil || table.batch == nil || !table.batch.Sealed() || !base.Available() || base.batch != table.batch || base.dynamic != nil || !occurrence.base.Available() || !occurrence.occurrence.Available() || occurrence.base.batch != table.batch || occurrence.occurrence.batch != table.batch || !occurrence.row.Available() {
-		return Operand{}, false
-	}
-	baseOccurrence := base.Occurrence()
-	if !baseOccurrence.Same(occurrence.base) || !occurrence.site.base.Same(occurrence.base.Site()) || !occurrence.site.site.Available() || !occurrence.occurrence.Site().Same(occurrence.site.site) || occurrence.occurrence.dynamic == nil {
-		return Operand{}, false
-	}
-	dynamic := occurrence.occurrence.dynamic
-	if dynamic.binding != table.binding || dynamic.member != table.member || dynamic.row != occurrence.row || !dynamic.site.Same(occurrence.site.site) {
-		return Operand{}, false
-	}
-	key, ok := identityKey("analysis/engine/equation/dynamic-operand", func(writer *canonical.DigestWriter) bool {
-		return writeOperand(writer, base) && writeOccurrence(writer, occurrence.occurrence) && writeKey(writer, table.binding) && writeKey(writer, table.member) && writeKey(writer, occurrence.row)
-	})
-	if !ok {
-		return Operand{}, false
-	}
-	operand := Operand{batch: base.batch, row: base.row, dynamic: &dynamicOperand{occurrence: occurrence.occurrence, key: key, binding: table.binding, member: table.member, row: occurrence.row}}
-	return operand, operand.Available() && operand.Occurrence().Same(occurrence.occurrence)
-}
-
-func (template sealedTemplate) appendMember(spec *TopologySpec, binding composition.Key, member Member, premise Expr) bool {
-	if spec == nil || spec.Batch != template.batch || !template.key.Available() || template.batch == nil || !template.batch.Sealed() || !template.ambient.Available() || !member.Available() || member.Binding() != binding || !premise.Available() || !validScopedExpr(premise, template.ambient) || len(template.instances) != len(template.value.Rules) || len(template.points) != len(template.value.Points) {
-		return false
-	}
-	namespace, namespaceOK := memberNamespace(member)
-	if !namespaceOK {
-		return false
-	}
-	alpha, ok := template.decisionAlpha(binding, namespace)
-	if !ok {
-		return false
-	}
-	provenanceRow := template.key
-	if len(template.instances) != 0 {
-		provenanceRow = template.instances[0].key
-	}
-	sites, ok := newMemberSiteTable(template.batch, template.ambient, alpha, binding, namespace, len(template.value.Points)+len(template.value.Rules))
-	if !ok {
-		return false
-	}
-	ruleOffset := len(spec.Rules)
-	locals := make(map[PointRef]templateResolvedPoint, len(template.value.Points))
-	for pointIndex, row := range template.value.Points {
-		local := PointAt(pointIndex)
-		original, found := template.points[local]
-		if !found || !original.Available() {
-			return false
-		}
-		if !row.Site.Same(original.Site()) {
-			return false
-		}
-		boundSite, ok := sites.bind(row.Site)
-		if !ok {
-			return false
-		}
-		bound := PointAt(len(spec.Points))
-		locals[local] = templateResolvedPoint{ref: bound, site: boundSite.site, scope: boundSite.scope, rawScope: row.Site.Scope(), local: true}
-		spec.Points = append(spec.Points, PointSpec{Site: boundSite.site})
-	}
-	for ruleIndex, row := range template.value.Rules {
-		instance := template.instances[ruleIndex]
-		occurrence, ok := sites.bindOccurrence(row.Occurrence, instance.key)
-		if !ok {
-			return false
-		}
-		operand, ok := sites.bindOperand(row.Operand, occurrence)
-		if !ok {
-			return false
-		}
-		bound := copyInstance(row)
-		bound.Occurrence, bound.Operand = occurrence.occurrence, operand
-		if !template.substitutePortReads(&bound) {
-			return false
-		}
-		bound.activation = member
-		spec.Rules = append(spec.Rules, bound)
-	}
-	premiseDecisions := premise.Decisions()
-	for _, group := range template.value.Groups {
-		output, outputOK := template.resolvePoint(spec, locals, group.Output, PortExport)
-		if !outputOK || len(group.Members) == 0 {
-			return false
-		}
-		for _, decision := range premiseDecisions {
-			if !output.scope.contains(decision) {
-				return false
-			}
-		}
-		bound := Group{Members: make([]RuleRef, len(group.Members)), Output: output.ref, Inputs: make([]Input, len(group.Inputs)), premise: premise}
-		for memberIndex, ref := range group.Members {
-			index, ok := ruleRefIndex(ref, len(template.value.Rules))
-			if !ok {
-				return false
-			}
-			bound.Members[memberIndex] = RuleAt(ruleOffset + index)
-		}
-		for inputIndex, input := range group.Inputs {
-			source, sourceOK := template.resolvePoint(spec, locals, input.Point, PortImport)
-			if !sourceOK {
-				return false
-			}
-			reindex, ok := boundReindex(input.Reindex, source, output, template.ambient, alpha)
-			if !ok {
-				return false
-			}
-			pre, post := input.Pre, input.Post
-			if source.local {
-				pre, ok = boundExpr(pre, alpha)
-				if !ok {
-					return false
-				}
-			}
-			if output.local {
-				post, ok = boundExpr(post, alpha)
-				if !ok {
-					return false
-				}
-			}
-			provenance, ok := boundProvenance(input.Provenance, binding, namespace, provenanceRow)
-			if !ok {
-				return false
-			}
-			bound.Inputs[inputIndex] = BoundaryInput(source.site, output.site, provenance, pre, reindex, post)
-			if !bound.Inputs[inputIndex].Available() {
-				return false
-			}
-		}
-		spec.Groups = append(spec.Groups, bound)
-	}
-	for _, edge := range template.value.FactorEdges {
-		var source templateResolvedPoint
-		var sourceOK bool
-		if edge.ExternalSource.Available() {
-			source, sourceOK = resolveExternalPoint(spec, edge.ExternalSource)
-		} else {
-			source, sourceOK = template.resolvePoint(spec, locals, edge.Source, PortImport)
-		}
-		var target templateResolvedPoint
-		var targetOK bool
-		if edge.ExternalTarget.Available() {
-			target, targetOK = resolveExternalPoint(spec, edge.ExternalTarget)
-		} else {
-			target, targetOK = template.resolvePoint(spec, locals, edge.Target, PortExport)
-		}
-		if !sourceOK || !targetOK {
-			return false
-		}
-		reindex, ok := boundReindex(edge.Reindex, source, target, template.ambient, alpha)
-		if !ok {
-			return false
-		}
-		pre, post := edge.Pre, edge.Post
-		if source.local {
-			pre, ok = boundExpr(pre, alpha)
-			if !ok {
-				return false
-			}
-		}
-		if target.local {
-			post, ok = boundExpr(post, alpha)
-			if !ok {
-				return false
-			}
-		}
-		// Accepted-member evidence is part of the selected route. Attach it to
-		// whichever endpoint owns the attachment scope; this is what permits
-		// both external->port and port->external structural rows without a
-		// compensating identity producer or an escaped formula.
-		if validScopedExpr(premise, source.scope) {
-			pre, ok = AndExpr(premise, pre)
-		} else if validScopedExpr(premise, target.scope) {
-			post, ok = AndExpr(premise, post)
-		} else {
-			return false
-		}
-		if !ok {
-			return false
-		}
-		provenance, ok := boundProvenance(edge.Provenance, binding, namespace, provenanceRow)
-		if !ok {
-			return false
-		}
-		input := BoundaryInput(source.site, target.site, provenance, pre, reindex, post)
-		if !input.Available() {
-			return false
-		}
-		spec.FactorEdges = append(spec.FactorEdges, FactorEdge{Target: target.ref, Input: input, Factor: edge.Factor})
-	}
-	for _, summary := range template.value.Summaries {
-		if !appendSummaryMapping(&spec.Summaries, summary) {
-			return false
-		}
-	}
-	for _, weak := range template.value.WeakTargets {
-		boundWeak, ok := template.substituteWeakTargetCandidates(weak)
-		if !ok || !appendWeakTargetMapping(&spec.WeakTargets, boundWeak) {
-			return false
-		}
-	}
-	return true
-}
-
-// substitutePortReads replaces only prototype surfaces explicitly named by a
-// read-bearing import port.  It runs after member-local occurrence binding
-// and before the ordinary topology validator, so the normal Rule schema
-// remains the final authority for Factor/form compatibility.
-func (template sealedTemplate) substitutePortReads(row *RuleInstance) bool {
-	if row == nil {
-		return false
-	}
-	for index := range row.Reads {
-		if caller, mapped := template.substitutions[row.Reads[index].Surface]; mapped {
-			row.Reads[index].Surface = caller
-		}
-	}
-	return true
-}
-
-func (template sealedTemplate) substituteWeakTargetCandidates(value WeakTargetMapping) (WeakTargetMapping, bool) {
-	if !value.Surface.Available() {
-		return WeakTargetMapping{}, false
-	}
-	result := WeakTargetMapping{Surface: value.Surface, Candidates: make([]Surface, len(value.Candidates))}
-	for index, candidate := range value.Candidates {
-		if caller, mapped := template.substitutions[candidate]; mapped {
-			candidate = caller
-		}
-		result.Candidates[index] = candidate
-	}
-	sort.Slice(result.Candidates, func(left, right int) bool { return lessSurface(result.Candidates[left], result.Candidates[right]) })
-	for index := 1; index < len(result.Candidates); index++ {
-		// Coverage is a set, but distinct prototype candidates collapsing to
-		// one caller Ref would hide an invalid attachment.  Reject rather than
-		// silently changing the declared weak relation.
-		if result.Candidates[index-1] == result.Candidates[index] {
-			return WeakTargetMapping{}, false
-		}
-	}
-	return result, validWeakTargetMapping(result)
-}
-
 type templateResolvedPoint struct {
 	ref      PointRef
 	site     Site
 	scope    Scope
 	rawScope Scope
 	local    bool
+	open     bool
 }
 
 func (point templateResolvedPoint) available() bool {
-	return point.ref != 0 && point.site.Available() && point.scope.Available() && point.rawScope.Available()
-}
-
-func (template sealedTemplate) resolvePoint(spec *TopologySpec, locals map[PointRef]templateResolvedPoint, value FragmentPoint, required PortMode) (templateResolvedPoint, bool) {
-	if spec == nil || value.Local != 0 && value.Port.Available() || value.Local == 0 && !value.Port.Available() {
-		return templateResolvedPoint{}, false
-	}
-	if value.Local != 0 {
-		point, found := locals[value.Local]
-		return point, found && point.available() && point.local
-	}
-	port, found := template.ports[value.Port]
-	if !found || required == PortImport && !port.mode.imports() || required == PortExport && !port.mode.exports() {
-		return templateResolvedPoint{}, false
-	}
-	index, valid := pointRefIndex(port.base, len(spec.Points))
-	if !valid {
-		return templateResolvedPoint{}, false
-	}
-	row := spec.Points[index]
-	point, issued := derivePoint(row.Site)
-	if !issued || point.key != port.point.key || !sameScope(point.Scope(), port.point.Scope()) {
-		return templateResolvedPoint{}, false
-	}
-	if !template.ambient.Available() || !sameScope(port.point.Scope(), template.ambient) {
-		return templateResolvedPoint{}, false
-	}
-	// Prototype ports are typed at EmptyScope. The attachment's actual
-	// ambient decisions are supplied only by boundReindex's identity lift.
-	return templateResolvedPoint{ref: port.base, site: port.point.Site(), scope: template.ambient, rawScope: EmptyScope()}, true
-}
-
-func resolveExternalPoint(spec *TopologySpec, site Site) (templateResolvedPoint, bool) {
-	if spec == nil || !site.Available() || spec.Batch == nil || !spec.Batch.Sealed() {
-		return templateResolvedPoint{}, false
-	}
-	for index, row := range spec.Points {
-		if !row.Site.Available() || !row.Site.Same(site) {
-			continue
-		}
-		point := PointAt(index)
-		return templateResolvedPoint{ref: point, site: site, scope: site.Scope(), rawScope: site.Scope()}, true
-	}
-	return templateResolvedPoint{}, false
+	return point.ref != 0 && (point.site.Available() || point.open && point.site.batch != nil && point.site.dynamic == nil) && point.scope.Available() && point.rawScope.Available()
 }
 
 func ruleRefIndex(ref RuleRef, count int) (int, bool) {
@@ -2082,47 +1632,4 @@ func ruleRefIndex(ref RuleRef, count int) (int, bool) {
 		return 0, false
 	}
 	return int(value - 1), true
-}
-
-func pointRefIndex(ref PointRef, count int) (int, bool) {
-	value := uint64(ref)
-	if value == 0 || value > uint64(count) {
-		return 0, false
-	}
-	return int(value - 1), true
-}
-
-func appendSummaryMapping(rows *[]SummaryMapping, value SummaryMapping) bool {
-	if rows == nil || !validSummaryMapping(value) {
-		return false
-	}
-	for _, current := range *rows {
-		if current.Surface == value.Surface {
-			return compareRawKeySets(current.Keys, value.Keys) == 0
-		}
-	}
-	*rows = append(*rows, SummaryMapping{Surface: value.Surface, Keys: append([]uint64(nil), value.Keys...)})
-	return true
-}
-
-func appendWeakTargetMapping(rows *[]WeakTargetMapping, value WeakTargetMapping) bool {
-	if rows == nil || !validWeakTargetMapping(value) {
-		return false
-	}
-	for _, current := range *rows {
-		if current.Surface != value.Surface {
-			continue
-		}
-		if len(current.Candidates) != len(value.Candidates) {
-			return false
-		}
-		for index := range current.Candidates {
-			if current.Candidates[index] != value.Candidates[index] {
-				return false
-			}
-		}
-		return true
-	}
-	*rows = append(*rows, WeakTargetMapping{Surface: value.Surface, Candidates: append([]Surface(nil), value.Candidates...)})
-	return true
 }

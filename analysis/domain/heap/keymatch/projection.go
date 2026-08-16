@@ -32,7 +32,7 @@ func (alternative Alternative) Containment() heapdomain.Containment { return alt
 // references have no Heap root and therefore fail rather than becoming an
 // invented identity.
 func Reference(heap heapdomain.Schema, values *valuedomain.Schema, reference valuedomain.Reference, role materialization.Role) (heapdomain.Reference, bool) {
-	if values == nil || !values.OwnsHeapSchema(heap) || heap.Link() == nil || values.Link() != heap.Link() || !values.OwnsReference(reference) || !role.Valid() {
+	if values == nil || !values.OwnsHeapSchema(heap) || !heap.LinkOwner().Matches(values.LinkOwner()) || !values.LinkOwner().Available() || !values.OwnsReference(reference) || !role.Valid() {
 		return heapdomain.Reference{}, false
 	}
 	if key, ok := reference.AllocationKey(); ok {
@@ -41,8 +41,8 @@ func Reference(heap heapdomain.Schema, values *valuedomain.Schema, reference val
 		}
 		return heap.Reference(key, role)
 	}
-	if root, ok := reference.BootRoot(); ok {
-		key, keyOK := heap.KeyForBootRoot(root)
+	if rootID, ok := reference.BootRootID(); ok {
+		key, keyOK := heap.KeyForBootID(rootID)
 		if !keyOK {
 			return heapdomain.Reference{}, false
 		}
@@ -58,7 +58,7 @@ func Reference(heap heapdomain.Schema, values *valuedomain.Schema, reference val
 // have no valid alternative; callers inspect TableKeyValidity separately to
 // retain their invalid-key branch.
 func Project(heap heapdomain.Schema, values *valuedomain.Schema, atom valuedomain.Atom) (Alternative, bool) {
-	if values == nil || !values.OwnsHeapSchema(heap) || heap.Link() == nil || values.Link() != heap.Link() || !values.OwnsAtom(atom) || !atom.TableKeyValidity().MayBeValid() {
+	if values == nil || !values.OwnsHeapSchema(heap) || !heap.LinkOwner().Matches(values.LinkOwner()) || !values.LinkOwner().Available() || !values.OwnsAtom(atom) || !atom.TableKeyValidity().MayBeValid() {
 		return Alternative{}, false
 	}
 	containment, containmentOK := Containment(heap, values, atom)
@@ -97,7 +97,7 @@ func Project(heap heapdomain.Schema, values *valuedomain.Schema, atom valuedomai
 // table keys. Scalar alternatives prove None; tracked rooted alternatives
 // produce Exact; untracked or opaque reference families produce Unknown.
 func Containment(heap heapdomain.Schema, values *valuedomain.Schema, atom valuedomain.Atom) (heapdomain.Containment, bool) {
-	if values == nil || !values.OwnsHeapSchema(heap) || heap.Link() == nil || values.Link() != heap.Link() || !values.OwnsAtom(atom) {
+	if values == nil || !values.OwnsHeapSchema(heap) || !heap.LinkOwner().Matches(values.LinkOwner()) || !values.LinkOwner().Available() || !values.OwnsAtom(atom) {
 		return heapdomain.Containment{}, false
 	}
 	if reference, role, rooted := atom.Reference(); rooted {

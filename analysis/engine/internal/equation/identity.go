@@ -486,6 +486,122 @@ type RuleInstance struct {
 	activation Member
 }
 
+// RuleSurfaceSourceReceipt is the immutable equation-owned surface source
+// issued during exact Batch admission. It carries the complete resolved row
+// geometry while keeping the underlying Rule/Batch authorities private.
+type RuleSurfaceSourceReceipt struct {
+	authority  *ruleSurfaceSourceAuthority
+	source     *composition.Composition
+	batch      *Batch
+	rule       composition.Key
+	occurrence Occurrence
+	operand    Operand
+	reads      []ResolvedRead
+	carries    []ResolvedCarry
+	writes     []ResolvedWrite
+	supports   []ResolvedSupport
+	prunes     []ResolvedPrune
+}
+
+type ruleSurfaceSourceAuthority struct{ marker byte }
+
+// RuleSurfaceSourceSpec is the typed row-admission payload used to issue one
+// immutable surface source.  It deliberately is not RuleInstance: callers
+// cannot pass a preassembled equation row (or its private activation witness)
+// across the Batch authority boundary.
+type RuleSurfaceSourceSpec struct {
+	Schema        composition.Key
+	OperandFamily composition.Key
+	Occurrence    Occurrence
+	Operand       Operand
+	Reads         []ResolvedRead
+	Carries       []ResolvedCarry
+	Writes        []ResolvedWrite
+	Supports      []ResolvedSupport
+	Prunes        []ResolvedPrune
+}
+
+func (batch *Batch) IssueRuleSurfaceSource(source *composition.Composition, spec RuleSurfaceSourceSpec) (RuleSurfaceSourceReceipt, bool) {
+	row := RuleInstance{Schema: spec.Schema, OperandFamily: spec.OperandFamily, Occurrence: spec.Occurrence, Operand: spec.Operand, Reads: spec.Reads, Carries: spec.Carries, Writes: spec.Writes, Supports: spec.Supports, Prunes: spec.Prunes}
+	if source == nil || batch == nil || !row.ValidFor(source) || !batch.Sealed() || !batch.OwnsOccurrence(row.Occurrence) || !batch.OwnsOperand(row.Operand) || !row.Operand.Occurrence().Same(row.Occurrence) {
+		return RuleSurfaceSourceReceipt{}, false
+	}
+	return RuleSurfaceSourceReceipt{authority: &ruleSurfaceSourceAuthority{}, source: source, batch: batch, rule: row.Schema, occurrence: row.Occurrence, operand: row.Operand, reads: append([]ResolvedRead(nil), row.Reads...), carries: append([]ResolvedCarry(nil), row.Carries...), writes: cloneResolvedWrites(row.Writes), supports: append([]ResolvedSupport(nil), row.Supports...), prunes: append([]ResolvedPrune(nil), row.Prunes...)}, true
+}
+
+func (receipt RuleSurfaceSourceReceipt) ValidFor(source *composition.Composition, batch *Batch, rule composition.Key) bool {
+	if receipt.authority == nil || receipt.source != source || receipt.batch != batch || receipt.batch == nil || !receipt.batch.Sealed() || receipt.rule != rule || receipt.source == nil {
+		return false
+	}
+	_, ok := receipt.source.RuleIndex(rule)
+	return ok
+}
+
+func (receipt RuleSurfaceSourceReceipt) Occurrence() Occurrence { return receipt.occurrence }
+func (receipt RuleSurfaceSourceReceipt) Operand() Operand       { return receipt.operand }
+func (receipt RuleSurfaceSourceReceipt) Rule() composition.Key  { return receipt.rule }
+func (receipt RuleSurfaceSourceReceipt) Same(other RuleSurfaceSourceReceipt) bool {
+	return receipt.authority != nil && receipt.authority == other.authority && receipt.source == other.source && receipt.batch == other.batch && receipt.rule == other.rule && receipt.occurrence == other.occurrence && receipt.operand == other.operand
+}
+func (receipt RuleSurfaceSourceReceipt) ReadAt(index uint64) (ResolvedRead, bool) {
+	if index >= uint64(len(receipt.reads)) {
+		return ResolvedRead{}, false
+	}
+	return receipt.reads[index], true
+}
+func (receipt RuleSurfaceSourceReceipt) CarryAt(index uint64) (ResolvedCarry, bool) {
+	if index >= uint64(len(receipt.carries)) {
+		return ResolvedCarry{}, false
+	}
+	return receipt.carries[index], true
+}
+func (receipt RuleSurfaceSourceReceipt) WriteAt(index uint64) (ResolvedWrite, bool) {
+	if index >= uint64(len(receipt.writes)) {
+		return ResolvedWrite{}, false
+	}
+	return cloneResolvedWrites(receipt.writes[index : index+1])[0], true
+}
+func (receipt RuleSurfaceSourceReceipt) SupportAt(index uint64) (ResolvedSupport, bool) {
+	if index >= uint64(len(receipt.supports)) {
+		return ResolvedSupport{}, false
+	}
+	return receipt.supports[index], true
+}
+func (receipt RuleSurfaceSourceReceipt) PruneAt(index uint64) (ResolvedPrune, bool) {
+	if index >= uint64(len(receipt.prunes)) {
+		return ResolvedPrune{}, false
+	}
+	return receipt.prunes[index], true
+}
+
+func cloneResolvedWrites(rows []ResolvedWrite) []ResolvedWrite {
+	result := make([]ResolvedWrite, len(rows))
+	for i, row := range rows {
+		result[i] = ResolvedWrite{Index: row.Index, Surface: row.Surface, Route: row.Route, Candidates: append([]uint64(nil), row.Candidates...), TargetCandidates: append([]Surface(nil), row.TargetCandidates...), Relations: make([]CandidateRelation, len(row.Relations))}
+		for j, relation := range row.Relations {
+			result[i].Relations[j] = CandidateRelation{Prior: relation.Prior, Matches: make([][]uint64, len(relation.Matches))}
+			for k, matches := range relation.Matches {
+				result[i].Relations[j].Matches[k] = append([]uint64(nil), matches...)
+			}
+		}
+	}
+	return result
+}
+
+// ValidFor authenticates the complete resolved row against the exact sealed
+// cold rule schema, including every form, dependency, candidate, relation,
+// support, and prune surface.
+func (row RuleInstance) ValidFor(source *composition.Composition) bool {
+	if source == nil || !row.Schema.Available() {
+		return false
+	}
+	ordinal, ok := source.RuleIndex(row.Schema)
+	if !ok || ordinal >= uint64(len(source.Rules())) {
+		return false
+	}
+	return validateResolvedInstance(row, source.Rules()[ordinal])
+}
+
 // PointSpec declares one stable state coordinate from one exact sealed Site.
 // Scope and initialization are consumed from that Site; a caller cannot split
 // them across a Point declaration or manufacture recursive point identities.
@@ -519,6 +635,17 @@ type Group struct {
 type EnvironmentEdge struct {
 	Target PointRef
 	Input  Input
+	// TransportOnly is a parent-issued intra-point transport annotation. The
+	// edge remains part of environment folding, but is not a static point
+	// influence and therefore cannot create a scheduler SCC by itself.
+	TransportOnly bool
+}
+
+func boolUint(value bool) uint64 {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 // FactorEdge is one structural Point-to-Point transport that projects the
@@ -568,16 +695,22 @@ type WeakTargetMapping struct {
 // consistently renumbering these local references leaves all compiled
 // identities unchanged. It has no authority after SealTopology succeeds.
 type TopologySpec struct {
-	Batch              *Batch
-	Rules              []RuleInstance
-	Points             []PointSpec
-	Groups             []Group
-	Queries            []QueryInstance
-	EnvironmentEdges   []EnvironmentEdge
-	FactorEdges        []FactorEdge
-	ActivationBindings []ActivationBinding
-	Summaries          []SummaryMapping
-	WeakTargets        []WeakTargetMapping
+	Batch            *Batch
+	Materializations []TemplateMaterialization
+	DirectCandidates []DirectActivationCandidate
+	Rules            []RuleInstance
+	Points           []PointSpec
+	// PointRanks optionally supplies the canonical semantic order for the
+	// dense graph nodes represented by Points.  When present it must be a
+	// complete permutation of [0,len(Points)); when absent the historical
+	// semantic-key/point order remains in force.
+	PointRanks       []int
+	Groups           []Group
+	Queries          []QueryInstance
+	EnvironmentEdges []EnvironmentEdge
+	FactorEdges      []FactorEdge
+	Summaries        []SummaryMapping
+	WeakTargets      []WeakTargetMapping
 }
 
 // Query is an equation-issued retained observation identity.

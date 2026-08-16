@@ -3,7 +3,6 @@ package call
 
 import (
 	"github.com/wippyai/go-lua/program/keyspace"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
 	"github.com/wippyai/go-lua/program/target"
 )
 
@@ -16,13 +15,6 @@ type Key struct {
 }
 
 func (key Key) Valid() bool { return key.owner != nil && key.owner.validKey(key) }
-
-func (key Key) Application() (linkproject.Application, bool) {
-	if !key.Valid() || key.owner.keys[key.slot-1].kind != keyApplication {
-		return linkproject.Application{}, false
-	}
-	return key.owner.keys[key.slot-1].application, true
-}
 
 // Callback returns the exact Target operation/callback pair for a callback
 // arm. It never projects a callback Subedge or manufactures an Application.
@@ -74,7 +66,7 @@ func (key Key) ApplicationID() (keyspace.ContentID, bool) {
 	if !key.IsApplication() {
 		return keyspace.ContentID{}, false
 	}
-	return key.ContentID()
+	return key.owner.keys[key.slot-1].applicationID, true
 }
 
 // selector is the private dense identity for one global callable target.

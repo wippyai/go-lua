@@ -2,9 +2,12 @@ package causal
 
 import (
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/program/flow/internal/authored"
+	"github.com/wippyai/go-lua/program/flow/internal/recurrence"
+	"github.com/wippyai/go-lua/program/flow/internal/routeplan"
 	"github.com/wippyai/go-lua/program/flow/kind"
 	"github.com/wippyai/go-lua/program/keyspace"
 	"github.com/wippyai/go-lua/program/source"
@@ -311,8 +314,11 @@ func TestSemanticMatrixNestedReturnPublishesTypedOutcomeChain(t *testing.T) {
 			causalFamilyCount{keyspace.FamilyValues, 1},
 			causalFamilyCount{keyspace.FamilyNil, 1},
 		),
-		rows:      [][]keyspace.Term{{branch}, {returned}, nil},
-		nilOwners: []keyspace.Term{parent},
+		rows:                 [][]keyspace.Term{{branch}, {returned}, nil},
+		nilOwners:            []keyspace.Term{parent},
+		captureBodyEntryPath: returnedBody,
+		captureBodyTailPath:  returnedBody,
+		captureVertexPath:    returned,
 		flow: authored.Input{
 			Values: authored.ValuesInput{Rows: []authored.Value{{Owner: returnedBody}}},
 			Control: authored.ControlInput{
@@ -324,6 +330,22 @@ func TestSemanticMatrixNestedReturnPublishesTypedOutcomeChain(t *testing.T) {
 
 	if !f.executable.Executable(branch) || !f.executable.Executable(returned) {
 		t.Fatalf("nested Branch/Return liveness = %v/%v", f.executable.Executable(branch), f.executable.Executable(returned))
+	}
+	if got := f.result.Successors().Count(returnedBody); got != 1 {
+		t.Fatalf("nested Body entry successor denominator = %d, want 1", got)
+	}
+	bodyEntry, bodyEntryOK := f.result.Successors().At(returnedBody, 0)
+	returnedEntry, returnedEntryOK := f.ports.Entry(returned)
+	if !bodyEntryOK || bodyEntry.IsBoundary() || bodyEntry.From != returnedBody || !returnedEntryOK || bodyEntry.To != returnedEntry {
+		t.Fatalf("nested Body entry successor = %#v/%v, want local %v -> Entry(%v)=%v/%v", bodyEntry, bodyEntryOK, returnedBody, returned, returnedEntry, returnedEntryOK)
+	}
+	fromPoint, fromPointOK := bodyEntry.FromPoint()
+	if !fromPointOK || fromPoint.PathID() != f.capturedBodyEntryPath {
+		t.Fatalf("nested Body entry FromPoint = %v/%v, want captured BodyEntry path %v", fromPoint.PathID(), fromPointOK, f.capturedBodyEntryPath)
+	}
+	toPoint, toPointOK := bodyEntry.ToPoint()
+	if !toPointOK || toPoint.PathID() != f.capturedVertexPath {
+		t.Fatalf("nested Body entry ToPoint = %v/%v, want captured Return-root path %v", toPoint.PathID(), toPointOK, f.capturedVertexPath)
 	}
 	returnExit, ok := f.outcomes.ReturnExit(returned)
 	if !ok {
@@ -356,6 +378,22 @@ func TestSemanticMatrixNestedReturnPublishesTypedOutcomeChain(t *testing.T) {
 	}
 	if got := f.result.Successors().Count(parentReturn); got != 0 {
 		t.Fatalf("terminal parent Return Outcome successor denominator = %d, want 0", got)
+	}
+	returnedNormal, returnedNormalOK := f.outcomes.BodyExit(returnedBody, kind.OutcomeNormal)
+	if !returnedNormalOK || f.result.Successors().Count(returnedNormal) != 0 {
+		t.Fatalf("Return-only nested Body retained a Normal continuation: %v/%d", returnedNormalOK, f.result.Successors().Count(returnedNormal))
+	}
+	returnedTail := f.capturedBodyTailPath
+	for index := 0; index < f.result.LocalWTO().EventCount(); index++ {
+		event, eventOK := f.result.LocalWTO().EventAt(index)
+		point, pointOK := event.Point()
+		if eventOK && pointOK && point.PathID() == returnedTail {
+			t.Fatal("Return-only nested Body tail leaked into LocalWTO")
+		}
+	}
+	fallthroughNormal, fallthroughNormalOK := f.outcomes.BodyExit(fallthroughBody, kind.OutcomeNormal)
+	if !fallthroughNormalOK || f.result.Successors().Count(fallthroughNormal) == 0 {
+		t.Fatal("mixed fallthrough Body lost its Normal continuation")
 	}
 }
 
@@ -669,6 +707,7 @@ func TestSemanticMatrixNumericHeaderCallUsesIngressThenLoopAnchor(t *testing.T) 
 	if boundary.Normal != last {
 		t.Fatalf("numeric header Call normal = %v, want next header endpoint %v", boundary.Normal, last)
 	}
+	assertBoundaryResumeIngress(t, f, call, last)
 
 	// The last header endpoint is the only local seed into the iteration
 	// anchor.  No Body Normal route may point back to the first header Entry.
@@ -686,7 +725,7 @@ func TestSemanticMatrixNumericHeaderCallUsesIngressThenLoopAnchor(t *testing.T) 
 	if hasLocalEdge(f.result, normal, first) {
 		t.Fatalf("numeric Body Normal re-enters one-shot header Entry %v", first)
 	}
-	assertLoopResetRows(t, f, loop)
+	assertLoopFeedbackSuccessor(t, f, normal, loop)
 }
 
 func TestSemanticMatrixGenericHeaderCallUsesIngressThenLoopAnchor(t *testing.T) {
@@ -706,6 +745,7 @@ func TestSemanticMatrixGenericHeaderCallUsesIngressThenLoopAnchor(t *testing.T) 
 	if boundary.Normal != header {
 		t.Fatalf("generic header Call normal = %v, want header Values %v", boundary.Normal, header)
 	}
+	assertBoundaryResumeIngress(t, f, call, header)
 	lastEndpoint, lastOK := f.ports.Finish(header)
 	if !lastOK || !hasLocalEdge(f.result, lastEndpoint, loop) {
 		t.Fatalf("generic last header endpoint %v/%v does not route to Loop anchor %v", lastEndpoint, lastOK, loop)
@@ -723,7 +763,7 @@ func TestSemanticMatrixGenericHeaderCallUsesIngressThenLoopAnchor(t *testing.T) 
 	if hasLocalEdge(f.result, normal, first) {
 		t.Fatalf("generic Body Normal re-enters one-shot header Entry %v", first)
 	}
-	assertLoopResetRows(t, f, loop)
+	assertLoopFeedbackSuccessor(t, f, normal, loop)
 }
 
 func numericGenericHeaderCallSpec(loopKind kind.LoopKind) causalSpec {
@@ -794,28 +834,76 @@ func hasBoundaryTo(result *Result, call, to keyspace.Term) bool {
 	return false
 }
 
-func assertLoopResetRows(t *testing.T, fixture *causalFixture, loop keyspace.Term) {
+// assertLoopFeedbackSuccessor authenticates the exact child-normal feedback
+// route for numeric/generic loops. The separate header ingress BoundaryResume
+// is intentionally acyclic; this local route owns the Loop Mu/reset proof.
+func assertLoopFeedbackSuccessor(t *testing.T, fixture *causalFixture, normal, loop keyspace.Term) {
 	t.Helper()
-	seen := false
-	for index := 0; index < fixture.result.Edges().Count(); index++ {
-		mu, ok := fixture.result.Edges().Mu(index)
-		if !ok || mu != loop {
-			continue
-		}
-		seen = true
-		count, countOK := fixture.result.Edges().ResetCount(index)
-		if !countOK || count < 0 {
-			t.Fatalf("Loop reset row %d = %d/%v", index, count, countOK)
-		}
-		for offset := 0; offset < count; offset++ {
-			decision, decisionOK := fixture.result.Edges().ResetAt(index, offset)
-			if !decisionOK || !fixture.result.Edges().ResetContains(index, decision) {
-				t.Fatalf("Loop reset row %d member %d = %v/%v lacks membership", index, offset, decision, decisionOK)
-			}
+	var feedback Successor
+	found := false
+	for index := 0; index < fixture.result.Successors().Count(normal); index++ {
+		successor, ok := fixture.result.Successors().At(normal, index)
+		if ok && successor.IsLocal() && successor.To == loop {
+			feedback, found = successor, true
+			break
 		}
 	}
-	if !seen {
-		t.Fatalf("Loop %v has no recurrence Mu row", loop)
+	if !found {
+		t.Fatalf("Loop %v has no local child-normal feedback from %v", loop, normal)
+	}
+	if feedback.Mu != loop {
+		t.Fatalf("Loop feedback = %#v, want Mu %v", feedback, loop)
+	}
+	if component, ok := feedback.Component(); !ok || component != loop {
+		t.Fatalf("Loop feedback component = %v/%v, want %v/true", component, ok, loop)
+	}
+	count, ok := feedback.ResetCount()
+	if !ok || count < 0 {
+		t.Fatalf("Loop feedback reset count = %d/%v", count, ok)
+	}
+	for offset := 0; offset < count; offset++ {
+		decision, decisionOK := feedback.ResetAt(offset)
+		if !decisionOK || !feedback.ResetContains(decision) {
+			t.Fatalf("Loop feedback reset member %d = %v/%v", offset, decision, decisionOK)
+		}
+	}
+	identity, ok := feedback.Identity()
+	if !ok || identity.Mu != loop || identity.ResetCount != uint32(count) || !identity.ResetDigest.Available() {
+		t.Fatalf("Loop feedback identity lost recurrence witness: %#v/%v", identity, ok)
+	}
+}
+
+// Numeric/generic header Calls take the exact Loop-root -> hidden-decision
+// ingress witness as their BoundaryResume origin. Although its semantic terms
+// are Loop -> Loop, its physical source is outside the cycle; the child-tail
+// feedback local Edge owns the loop Mu/reset witness checked separately by
+// assertLoopFeedbackSuccessor.
+func assertBoundaryResumeIngress(t *testing.T, fixture *causalFixture, call, normal keyspace.Term) {
+	t.Helper()
+	var resume Successor
+	found := false
+	for index := 0; index < fixture.result.Successors().Count(call); index++ {
+		successor, ok := fixture.result.Successors().At(call, index)
+		if ok && successor.Arm == BoundaryResume {
+			resume, found = successor, true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("loop header Call has no BoundaryResume: %#v", resume)
+	}
+	if resume.To != normal || resume.Mu != 0 {
+		t.Fatalf("loop header Call BoundaryResume = %#v, want acyclic ingress to semantic normal %v", resume, normal)
+	}
+	if component, ok := resume.Component(); ok || component != 0 {
+		t.Fatalf("loop header Call ingress component = %v/%v, want 0/false", component, ok)
+	}
+	if count, ok := resume.ResetCount(); ok || count != 0 {
+		t.Fatalf("loop header Call ingress reset count = %d/%v, want 0/false", count, ok)
+	}
+	identity, ok := resume.Identity()
+	if !ok || identity.Mu != 0 || identity.ResetCount != 0 || identity.ResetDigest.Available() {
+		t.Fatalf("loop header Call ingress identity carries recurrence witness: %#v/%v", identity, ok)
 	}
 }
 
@@ -927,116 +1015,122 @@ func TestSemanticMatrixBreakOutcomePropagatesThroughLoopResume(t *testing.T) {
 func TestSemanticMatrixBackwardGotoCarriesLoopReset(t *testing.T) {
 	parent := causalTerm(keyspace.FamilyBody, 1)
 	loopBody := causalTerm(keyspace.FamilyBody, 2)
+	gotoArm := causalTerm(keyspace.FamilyBody, 3)
+	fallthroughArm := causalTerm(keyspace.FamilyBody, 4)
 	loop := causalTerm(keyspace.FamilyLoop, 1)
+	branch := causalTerm(keyspace.FamilyBranch, 1)
 	gotoTerm := causalTerm(keyspace.FamilyGoto, 1)
 	label := causalTerm(keyspace.FamilyLabel, 1)
-	condition := causalTerm(keyspace.FamilyNil, 1)
+	loopCondition := causalTerm(keyspace.FamilyNil, 1)
+	branchCondition := causalTerm(keyspace.FamilyNil, 2)
 	f := openCausalFixture(t, causalSpec{
 		counts: causalCounts(
-			causalFamilyCount{keyspace.FamilyBody, 2},
+			causalFamilyCount{keyspace.FamilyBody, 4},
 			causalFamilyCount{keyspace.FamilyLoop, 1},
+			causalFamilyCount{keyspace.FamilyBranch, 1},
 			causalFamilyCount{keyspace.FamilyGoto, 1},
 			causalFamilyCount{keyspace.FamilyLabel, 1},
-			causalFamilyCount{keyspace.FamilyNil, 1},
+			causalFamilyCount{keyspace.FamilyNil, 2},
 		),
-		rows:      [][]keyspace.Term{{loop}, {gotoTerm, label}},
-		nilOwners: []keyspace.Term{parent},
+		rows:      [][]keyspace.Term{{loop}, {label, branch}, {gotoTerm}, nil},
+		nilOwners: []keyspace.Term{parent, loopBody},
+		captureArcs: []causalArcSelector{
+			{Source: gotoTerm, Target: label},
+			{Source: loopBody, Target: loop},
+		},
 		flow: authored.Input{Control: authored.ControlInput{
 			Labels: []authored.Label{{Owner: loopBody}},
-			Gotos:  []authored.Goto{{Owner: loopBody, Target: label}},
-			Loops:  []authored.Loop{{Owner: parent, Body: loopBody, Kind: kind.LoopWhile, Control: condition}},
+			Gotos:  []authored.Goto{{Owner: gotoArm, Target: label}},
+			Branches: []authored.Branch{{
+				Owner: loopBody, Condition: branchCondition, WhenTrue: gotoArm, WhenFalse: fallthroughArm,
+			}},
+			Loops: []authored.Loop{{Owner: parent, Body: loopBody, Kind: kind.LoopWhile, Control: loopCondition}},
 		}},
 	})
 
 	if got := f.result.Successors().Count(gotoTerm); got == 0 {
 		t.Fatal("backward Goto has no causal successors")
 	}
-	seenMu := false
-	for index := 0; index < f.result.Edges().Count(); index++ {
-		mu, ok := f.result.Edges().Mu(index)
-		if !ok || mu != label {
-			continue
-		}
-		seenMu = true
-		if reset, resetOK := f.result.Edges().ResetCount(index); !resetOK || reset < 0 {
-			t.Fatalf("backward Goto Mu reset = %d/%v", reset, resetOK)
-		}
-	}
-	if !seenMu {
-		t.Fatal("backward Goto did not retain exact Label Mu")
-	}
-	resume, ok := f.control.Resume(label)
-	if !ok {
-		t.Fatal("backward Goto Label resume is absent")
-	}
-	if f.result.Successors().Count(resume) == 0 {
-		t.Fatalf("backward Goto Label resume %v has no causal route", resume)
-	}
 	normal, normalOK := f.outcomes.BodyExit(loopBody, kind.OutcomeNormal)
 	if !normalOK {
 		t.Fatal("nested Body Normal Outcome is absent")
 	}
-	foundNormal := false
-	for index := 0; index < f.result.Successors().Count(gotoTerm); index++ {
-		successor, successorOK := f.result.Successors().At(gotoTerm, index)
-		if successorOK && !successor.IsBoundary() && successor.To == normal {
-			foundNormal = true
-		}
-		if successorOK && !successor.IsBoundary() && successor.To == loopBody {
-			t.Fatalf("backward Goto Outcome re-entered raw nested Body anchor: %#v", successor)
-		}
+	gotoExit, gotoExitOK := f.outcomes.GotoExit(gotoTerm)
+	if !gotoExitOK || keyspace.TermFamily(gotoExit) != keyspace.FamilyOutcome {
+		t.Fatalf("outward backward Goto Exit = %v/%v, want typed Outcome", gotoExit, gotoExitOK)
 	}
-	if !foundNormal {
-		t.Fatalf("backward Goto did not target nested Body Normal Outcome %v", normal)
+	gotoOwner, gotoKind, gotoTarget, gotoRowOK := f.outcomes.Get(gotoExit)
+	if !gotoRowOK || gotoOwner != gotoArm || gotoKind != kind.OutcomeGoto || gotoTarget != label {
+		t.Fatalf("outward backward Goto Outcome = %v/%v/%v/%v, want %v/%v/%v/true", gotoOwner, gotoKind, gotoTarget, gotoRowOK, gotoArm, kind.OutcomeGoto, label)
 	}
-	gotoArcOrdinal := -1
-	for index := 0; index < f.control.ArcCount(); index++ {
-		arc, arcOK := f.control.ArcAt(index)
-		if arcOK && arc.Source == gotoTerm && arc.Target == label && arc.Decision == 0 && !arc.Truth {
-			gotoArcOrdinal = index
-			break
-		}
+	parentGoto, propagated := f.outcomes.Propagation(gotoExit)
+	if !propagated {
+		t.Fatal("outward backward Goto Outcome did not propagate to loop Body")
 	}
-	if gotoArcOrdinal < 0 {
-		t.Fatal("backward Goto sourcecontrol Arc is absent")
+	parentOwner, parentKind, parentTarget, parentRowOK := f.outcomes.Get(parentGoto)
+	if !parentRowOK || parentOwner != loopBody || parentKind != kind.OutcomeGoto || parentTarget != label {
+		t.Fatalf("outward backward Goto parent Outcome = %v/%v/%v/%v, want %v/%v/%v/true", parentOwner, parentKind, parentTarget, parentRowOK, loopBody, kind.OutcomeGoto, label)
 	}
-	gotoAnnotation, annotationOK := f.recurrence.ArcAt(gotoArcOrdinal)
-	if !annotationOK || gotoAnnotation.Head != 0 {
-		t.Fatalf("backward Goto recurrence annotation = %#v/%v, want terminal non-Mu Arc", gotoAnnotation, annotationOK)
+	if len(f.capturedArcs) != 2 {
+		t.Fatalf("backward Goto Arc capture count = %d, want 2", len(f.capturedArcs))
+	}
+	gotoArc := f.capturedArcs[0]
+	if gotoArc.ordinal < 0 || gotoArc.arc.Source != gotoTerm || gotoArc.arc.Target != label || gotoArc.arc.Decision != 0 || gotoArc.arc.Truth {
+		t.Fatalf("backward Goto sourcecontrol Arc snapshot = %#v", gotoArc)
+	}
+	gotoAnnotation, annotationOK := f.recurrence.ArcAt(gotoArc.ordinal)
+	if !annotationOK || gotoAnnotation.Head != label {
+		t.Fatalf("backward Goto recurrence annotation = %#v/%v, want Label Mu", gotoAnnotation, annotationOK)
 	}
 	gotoEdge := -1
 	for index := 0; index < f.result.Edges().Count(); index++ {
 		edge, edgeOK := f.result.Edges().At(index)
-		if edgeOK && edge.From == gotoTerm && edge.Mu == 0 {
+		if edgeOK && edge.From == gotoTerm && edge.To == gotoExit && edge.Mu == label {
 			gotoEdge = index
 			break
 		}
 	}
 	if gotoEdge < 0 {
-		t.Fatalf("backward Goto causal edge is absent: %v", gotoTerm)
+		t.Fatalf("backward Goto causal Mu edge is absent: %v -> %v", gotoTerm, gotoExit)
 	}
-	if _, ok := f.result.Edges().ResetCount(gotoEdge); ok {
-		t.Fatal("non-recurrent Goto edge exposed reset membership")
+	wantGotoReset, wantGotoResetOK := f.recurrence.ResetCount(gotoArc.ordinal)
+	gotGotoReset, gotGotoResetOK := f.result.Edges().ResetCount(gotoEdge)
+	if !wantGotoResetOK || !gotGotoResetOK || gotGotoReset != wantGotoReset {
+		t.Fatalf("backward Goto reset count = %d/%v, want recurrence %d/%v", gotGotoReset, gotGotoResetOK, wantGotoReset, wantGotoResetOK)
 	}
-	loopArcOrdinal := -1
-	for index := 0; index < f.control.ArcCount(); index++ {
-		arc, arcOK := f.control.ArcAt(index)
-		if arcOK && arc.Source == loopBody && arc.Target == loop && arc.Decision == 0 && !arc.Truth {
-			annotation, annotationOK := f.recurrence.ArcAt(index)
-			if annotationOK && annotation.Head == label {
-				loopArcOrdinal = index
-				break
-			}
+	for offset := 0; offset < wantGotoReset; offset++ {
+		wantDecision, wantDecisionOK := f.recurrence.ResetAt(gotoArc.ordinal, offset)
+		gotDecision, gotDecisionOK := f.result.Edges().ResetAt(gotoEdge, offset)
+		if !wantDecisionOK || !gotDecisionOK || gotDecision != wantDecision || !f.result.Edges().ResetContains(gotoEdge, gotDecision) {
+			t.Fatalf("backward Goto reset[%d] = %v/%v, want %v/%v and membership", offset, gotDecision, gotDecisionOK, wantDecision, wantDecisionOK)
 		}
 	}
-	if loopArcOrdinal < 0 {
-		t.Fatal("backward loop recurrence Arc is absent")
+	propagationEdge := -1
+	for index := 0; index < f.result.Edges().Count(); index++ {
+		edge, edgeOK := f.result.Edges().At(index)
+		if edgeOK && edge.From == gotoExit && edge.To == parentGoto {
+			propagationEdge = index
+			if edge.Mu != 0 {
+				t.Fatalf("carrierless outward Goto propagation retained Mu: %#v", edge)
+			}
+			if _, resetOK := f.result.Edges().ResetCount(index); resetOK {
+				t.Fatalf("carrierless outward Goto propagation retained reset: %#v", edge)
+			}
+			break
+		}
 	}
-	loopAnnotation, annotationOK := f.recurrence.ArcAt(loopArcOrdinal)
+	if propagationEdge < 0 {
+		t.Fatalf("outward Goto propagation causal edge is absent: %v -> %v", gotoExit, parentGoto)
+	}
+	loopArc := f.capturedArcs[1]
+	if loopArc.ordinal < 0 || loopArc.arc.Source != loopBody || loopArc.arc.Target != loop || loopArc.arc.Decision != 0 || loopArc.arc.Truth {
+		t.Fatalf("backward loop sourcecontrol Arc snapshot = %#v", loopArc)
+	}
+	loopAnnotation, annotationOK := f.recurrence.ArcAt(loopArc.ordinal)
 	if !annotationOK || loopAnnotation.Head != label {
 		t.Fatalf("backward loop recurrence annotation = %#v/%v", loopAnnotation, annotationOK)
 	}
-	conditionEntry, conditionEntryOK := f.ports.Entry(condition)
+	conditionEntry, conditionEntryOK := f.ports.Entry(loopCondition)
 	if !conditionEntryOK {
 		t.Fatal("backward loop condition Entry is absent")
 	}
@@ -1051,13 +1145,13 @@ func TestSemanticMatrixBackwardGotoCarriesLoopReset(t *testing.T) {
 	if loopEdge < 0 {
 		t.Fatalf("backward loop causal Mu edge is absent: %v -> %v", normal, conditionEntry)
 	}
-	wantReset, wantResetOK := f.recurrence.ResetCount(loopArcOrdinal)
+	wantReset, wantResetOK := f.recurrence.ResetCount(loopArc.ordinal)
 	gotReset, gotResetOK := f.result.Edges().ResetCount(loopEdge)
 	if !wantResetOK || !gotResetOK || gotReset != wantReset {
 		t.Fatalf("backward loop reset count = %d/%v, want recurrence %d/%v", gotReset, gotResetOK, wantReset, wantResetOK)
 	}
 	for offset := 0; offset < wantReset; offset++ {
-		wantDecision, wantDecisionOK := f.recurrence.ResetAt(loopArcOrdinal, offset)
+		wantDecision, wantDecisionOK := f.recurrence.ResetAt(loopArc.ordinal, offset)
 		gotDecision, gotDecisionOK := f.result.Edges().ResetAt(loopEdge, offset)
 		if !wantDecisionOK || !gotDecisionOK || gotDecision != wantDecision || !f.result.Edges().ResetContains(loopEdge, gotDecision) {
 			t.Fatalf("backward loop reset[%d] = %v/%v, want %v/%v and membership", offset, gotDecision, gotDecisionOK, wantDecision, wantDecisionOK)
@@ -1212,22 +1306,10 @@ func TestSemanticMatrixForeignProvenanceFailsClosed(t *testing.T) {
 	if Matches(left.result, right.sourceView.Identity().ContentID(), left.flow.Cold().ContentID(), left.staticFinalize.View().ContentID(), left.moduleFinalize.View().ContentID()) {
 		t.Fatal("equal-shape foreign Source identity matched causal Result")
 	}
-	if _, err := Seal(right.sourceView, left.flow, left.bodies, left.forest, left.outcomes, left.control, left.recurrence, left.ports, left.executable, left.staticFinalize.View().ContentID(), left.moduleFinalize.View().ContentID()); err == nil {
-		t.Fatal("Seal accepted a foreign Source against typed prerequisites")
-	}
-	if _, err := Seal(left.sourceView, right.flow, left.bodies, left.forest, left.outcomes, left.control, left.recurrence, left.ports, left.executable, left.staticFinalize.View().ContentID(), left.moduleFinalize.View().ContentID()); err == nil {
-		t.Fatal("Seal accepted a foreign authored Flow against typed prerequisites")
-	}
-	foreignStatic := left.staticFinalize.View().ContentID()
-	foreignStatic[0]++
-	if _, err := Seal(left.sourceView, left.flow, left.bodies, left.forest, left.outcomes, left.control, left.recurrence, left.ports, left.executable, foreignStatic, left.moduleFinalize.View().ContentID()); err == nil {
-		t.Fatal("Seal accepted a foreign Static identity")
-	}
-	foreignModule := left.moduleFinalize.View().ContentID()
-	foreignModule[0]++
-	if _, err := Seal(left.sourceView, left.flow, left.bodies, left.forest, left.outcomes, left.control, left.recurrence, left.ports, left.executable, left.staticFinalize.View().ContentID(), foreignModule); err == nil {
-		t.Fatal("Seal accepted a foreign Module identity")
-	}
+	// Route planning is now receipt-only: a Source commit issuance is consumed
+	// before Causal receives any plan capability, so no View-only foreign-plan
+	// entry remains to probe here. The Result provenance fence remains the
+	// published foreign-owner law.
 }
 
 func provenanceCallSpec(name string, swapped bool) causalSpec {
@@ -1273,13 +1355,76 @@ func TestSemanticMatrixEverySourceControlArcHasOneDisposition(t *testing.T) {
 	assertEveryArcDisposition(t, f)
 }
 
-func assertEveryArcDisposition(t *testing.T, f *causalFixture) {
-	t.Helper()
-	state, err := newSealState(f.sourceView, f.flow, f.bodies, f.forest, f.outcomes, f.control, f.recurrence, f.ports, f.executable, f.staticFinalize.View().ContentID(), f.moduleFinalize.View().ContentID())
+func TestRoutePlanDeclarationCannotBeSwappedBeforeBinding(t *testing.T) {
+	f := openCausalFixture(t, directCallSpec("causal-plan-route-swap.lua"))
+	state, err := newSealState(f.sourceView, f.flow, f.bodies, f.forest, f.outcomes, f.control, f.recurrence, f.ports, f.executable, f.entries, f.staticFinalize.View().ContentID(), f.moduleFinalize.View().ContentID())
 	if err != nil {
 		t.Fatalf("newSealState: %v", err)
 	}
-	phases := []func() error{state.eval.emitEvaluation, state.structure.emitStructure, state.outcomes.emitOutcomes, state.boundary.emitBoundaries, state.index.finish}
+	builder, err := routeplan.New(f.control.Owner())
+	if err != nil {
+		t.Fatalf("routeplan.New: %v", err)
+	}
+	state.plan = &planState{builder: builder, arcOrdinal: make([]int, f.control.ArcCount())}
+	for index := range state.plan.arcOrdinal {
+		state.plan.arcOrdinal[index] = -1
+	}
+	state.reset.planState, state.boundary.planState = state.plan, state.plan
+	for _, phase := range []func() error{state.eval.emitEvaluation, state.structure.emitStructure, state.outcomes.emitOutcomes, state.boundary.emitBoundaries} {
+		if err := phase(); err != nil {
+			t.Fatalf("causal phase: %v", err)
+		}
+	}
+	plan, err := builder.Seal()
+	if err != nil {
+		t.Fatalf("route plan seal: %v", err)
+	}
+	state.plan.plan = plan
+	first, second := -1, -1
+	for left := range state.edges.edgeRows {
+		for right := left + 1; right < len(state.edges.edgeRows); right++ {
+			if state.edges.edgeRows[left].From != state.edges.edgeRows[right].From || state.edges.edgeRows[left].To != state.edges.edgeRows[right].To ||
+				state.edges.edgeRows[left].Decision != state.edges.edgeRows[right].Decision || state.edges.edgeRows[left].Truth != state.edges.edgeRows[right].Truth {
+				first, second = left, right
+				break
+			}
+		}
+		if first >= 0 {
+			break
+		}
+	}
+	if first < 0 {
+		t.Skip("fixture has no distinct local final route declarations")
+	}
+	recur, binding, err := recurrence.SealWithPlan(f.sourceView, f.flow, f.bodies, f.forest, f.control, plan, nil, f.staticFinalize.View().ContentID(), f.moduleFinalize.View().ContentID())
+	if err != nil {
+		t.Fatalf("recurrence.SealWithPlan: %v", err)
+	}
+	defer binding.Abort(plan)
+	state.proof.recur = recur
+	state.edges.edgeRows[first].Edge = state.edges.edgeRows[second].Edge
+	err = state.finalizeBinding(plan, binding)
+	if err == nil || !strings.Contains(err.Error(), "declaration disagrees with final row") {
+		t.Fatalf("swapped final route declaration error = %v, want plan-row mismatch", err)
+	}
+}
+
+func assertEveryArcDisposition(t *testing.T, f *causalFixture) {
+	t.Helper()
+	state, err := newSealState(f.sourceView, f.flow, f.bodies, f.forest, f.outcomes, f.control, f.recurrence, f.ports, f.executable, f.entries, f.staticFinalize.View().ContentID(), f.moduleFinalize.View().ContentID())
+	if err != nil {
+		t.Fatalf("newSealState: %v", err)
+	}
+	builder, err := routeplan.New(f.control.Owner())
+	if err != nil {
+		t.Fatalf("routeplan.New: %v", err)
+	}
+	state.plan = &planState{builder: builder, arcOrdinal: make([]int, f.control.ArcCount())}
+	for index := range state.plan.arcOrdinal {
+		state.plan.arcOrdinal[index] = -1
+	}
+	state.reset.planState, state.boundary.planState = state.plan, state.plan
+	phases := []func() error{state.eval.emitEvaluation, state.structure.emitStructure, state.outcomes.emitOutcomes, state.boundary.emitBoundaries, state.index.validateArcCoverage}
 	for index, phase := range phases {
 		if err := phase(); err != nil {
 			t.Fatalf("causal phase %d: %v", index, err)

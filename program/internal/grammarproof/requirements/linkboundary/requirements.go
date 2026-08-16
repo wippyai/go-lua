@@ -197,6 +197,7 @@ func boundaryParentSpecs() []boundaryParentSpec {
 		{semanticsource.OriginTargetOperation, semanticsource.FacetTargetProduced},
 		{semanticsource.OriginTargetOperation, semanticsource.FacetTargetProducedCapture},
 		{semanticsource.OriginTargetOperation, semanticsource.FacetTargetFreshResult},
+		{semanticsource.OriginTargetOperation, semanticsource.FacetTargetPublicationEffect},
 		{semanticsource.OriginTargetProtocol, 0},
 		{semanticsource.OriginTargetProtocol, semanticsource.FacetTargetProtocolState},
 		{semanticsource.OriginTargetProtocol, semanticsource.FacetTargetProtocolAcquisition},
@@ -230,7 +231,7 @@ func (e Evidence) Validate() error {
 	}
 	row := e.Rows[0]
 	if row.Boundary.Origin != semanticsource.OriginLinkBoundary || row.Boundary.Facet != 0 || row.Boundary.Revision == 0 ||
-		row.Owner != relations.OwnerLinkBoundary || row.Form != relations.FormVirtualPredicate || len(row.Parents) != 32 {
+		row.Owner != relations.OwnerLinkBoundary || row.Form != relations.FormVirtualPredicate || len(row.Parents) != 33 {
 		return ErrInvalidBoundary
 	}
 	want := boundaryParentSpecs()

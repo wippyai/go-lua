@@ -64,17 +64,17 @@ func mapComponentKeyAdmitsLiteral(keyDomain typ.Type, lit *typ.Literal) bool {
 	if lit == nil {
 		return false
 	}
-	switch lit.Base {
+	switch lit.Base() {
 	case kind.String:
-		name, ok := lit.Value.(string)
+		name, ok := lit.Value().(string)
 		return ok && mapComponentKeyAdmitsStringLiteral(keyDomain, name)
 	case kind.Integer:
-		index, ok := lit.Value.(int64)
+		index, ok := lit.Value().(int64)
 		return ok && mapComponentKeyAdmitsIntLiteral(keyDomain, index)
 	case kind.Number:
 		return mapComponentKeyAdmitsNumberLiteral(keyDomain, lit)
 	case kind.Boolean:
-		value, ok := lit.Value.(bool)
+		value, ok := lit.Value().(bool)
 		return ok && mapComponentKeyAdmitsBooleanLiteral(keyDomain, value)
 	default:
 		return false
@@ -108,8 +108,8 @@ func mapComponentKeyAdmitsTypedLiteral[T comparable](keyDomain typ.Type, base ki
 	return mapComponentKeyDomainAdmitsAny(keyDomain, func(k typ.Type) bool {
 		switch lit := k.(type) {
 		case *typ.Literal:
-			other, ok := lit.Value.(T)
-			return lit.Base == base && ok && other == want
+			other, ok := lit.Value().(T)
+			return lit.Base() == base && ok && other == want
 		default:
 			return admitsDomain != nil && admitsDomain(k)
 		}
@@ -121,7 +121,7 @@ func mapComponentKeyAdmitsIntLiteral(keyDomain typ.Type, index int64) bool {
 }
 
 func mapComponentKeyAdmitsNumberLiteral(keyDomain typ.Type, lit *typ.Literal) bool {
-	value, ok := lit.Value.(float64)
+	value, ok := lit.Value().(float64)
 	if !ok {
 		return false
 	}

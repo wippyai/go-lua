@@ -588,7 +588,7 @@ func TestProtectedSubedgeMatrix(t *testing.T) {
 		t.Fatalf("pcall admission route = %d/%d/%v", route, sibling, ok)
 	}
 	kind, values, ok := contract.OutcomeAt(pcall, int(outcome))
-	if !ok || kind != flowkind.OutcomeNormal || !hasFixedOutcomeForValues(contract, values, []typ.Type{typ.False, typ.Any}) {
+	if !ok || kind != flowkind.OutcomeNormal || !hasFixedOutcomeForValues(contract, values, []typ.Type{typ.LiteralBool(false), typ.Any}) {
 		t.Fatal("pcall admission failure does not produce false/error")
 	}
 

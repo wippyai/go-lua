@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/wippyai/go-lua/analysis"
+	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/program/link"
 	linkproject "github.com/wippyai/go-lua/program/link/project"
 	"github.com/wippyai/go-lua/program/lower"
@@ -55,10 +56,16 @@ func analyzeEdgeMatrixPrefix(t *testing.T, cases int) {
 	if compileStatus != analysis.CompileComplete || plan == nil {
 		t.Fatalf("Compile prefix%d: status=%d plan=%v", cases, compileStatus, plan != nil)
 	}
-	result, status := plan.Solve(context.Background())
+	result, status, diagnostics := plan.SolveWithDiagnostics(context.Background(), engine.SolveDiagnosticOptions{Flags: engine.SolveDiagnosticAll, MaxRows: 256})
 	solved := time.Now()
 	t.Logf("Analyze prefix%d: compile=%s solve=%s total=%s", cases, compiled.Sub(started), solved.Sub(compiled), solved.Sub(started))
 	if status != analysis.AnalyzeComplete || result == nil || result.BodyCount() == 0 {
+		failure := diagnostics.Engine.Failure
+		t.Logf("Analyze prefix%d diagnostics: phase=%s reason=%s rule=%s engine={flags:%d work:%d/%d cutoff:%t epochs:%d passes:%d refresh:%d eval:%d fail:%d fold:%d rhs:%d restart:%d activation:%d failure:{available:%t reason:%d phase:%s point:%v group:%v member:%v rule:%v}}",
+			cases, diagnostics.Phase, diagnostics.Reason, diagnostics.Rule,
+			diagnostics.Engine.Flags, diagnostics.Engine.Work, diagnostics.Engine.MaxWork, diagnostics.Engine.WorkCutoff,
+			diagnostics.Engine.Epochs, diagnostics.Engine.EpochPasses, diagnostics.Engine.Refreshes, diagnostics.Engine.Evaluates, diagnostics.Engine.EvaluateFailures, diagnostics.Engine.Folds, diagnostics.Engine.RegionRHS, diagnostics.Engine.Restarts, diagnostics.Engine.Activations,
+			failure.Available(), failure.Reason(), failure.Phase(), failure.Point(), failure.Group(), failure.Member(), failure.Rule())
 		t.Fatalf("Analyze prefix%d: status=%d result=%v", cases, status, result != nil)
 	}
 }

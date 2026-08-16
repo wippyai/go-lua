@@ -68,7 +68,7 @@ func token(t testing.TB, origin semanticsource.Origin, facet semanticsource.Face
 	return definition.Token()
 }
 func typeValueSources(t testing.TB) []semanticsource.Token {
-	return []semanticsource.Token{token(t, semanticsource.OriginProgramFlowTypeValue, 0), token(t, semanticsource.OriginProgramStatic, semanticsource.FacetProgramStaticTypeValueTarget), token(t, semanticsource.OriginProgramStatic, semanticsource.FacetProgramStaticTypeRef), token(t, semanticsource.OriginLinkProjectShardMount, 0), token(t, semanticsource.OriginLinkStatic, 0), token(t, semanticsource.OriginLinkStatic, semanticsource.FacetLinkStaticResolution), token(t, semanticsource.OriginLinkStatic, semanticsource.FacetLinkStaticExpression)}
+	return []semanticsource.Token{token(t, semanticsource.OriginProgramFlowTypeValue, 0), token(t, semanticsource.OriginProgramStatic, semanticsource.FacetProgramStaticTypeValueTarget), token(t, semanticsource.OriginProgramStatic, semanticsource.FacetProgramStaticTypeRef), token(t, semanticsource.OriginLinkProjectShardMount, 0), token(t, semanticsource.OriginLinkStatic, 0)}
 }
 func sourcesOf(contracts []coverage.CoverageContract) []semanticsource.Token {
 	result := make([]semanticsource.Token, len(contracts))

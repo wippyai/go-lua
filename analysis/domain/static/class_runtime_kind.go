@@ -127,7 +127,7 @@ func staticTypeMayRuntimeKinds(value typ.Type, active map[typ.Type]bool) runtime
 		delete(active, value)
 		return result
 	case *typ.Literal:
-		return runtimeKindForBase(typed.Base)
+		return runtimeKindForBase(typed.Base())
 	}
 
 	switch value.Kind() {

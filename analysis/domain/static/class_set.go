@@ -37,6 +37,7 @@ type Class struct {
 type classRow struct {
 	kind    ClassKind
 	encoded []byte
+	input   typeauthority.RuntimeInput
 	inner   typeauthority.RuntimeInner // construction-only; zero for opaque/AnyValue.
 }
 
@@ -47,7 +48,6 @@ type classRow struct {
 // values and derives declaration classes directly from Target.
 type ClassSet struct {
 	authority        *Authority
-	target           *target.Contract
 	id               keyspace.ContentID
 	rows             []classRow // zero is AnyValue
 	byBytes          map[string]Class
@@ -84,7 +84,7 @@ func sealClassSet(authority *Authority) (*ClassSet, *typeauthority.Runtime, erro
 			if decodeErr != nil {
 				return nil, nil, decodeErr
 			}
-			class, addErr := set.addConcrete(decoded)
+			class, addErr := set.addConcreteInput(decoded, row.runtime)
 			if addErr != nil {
 				return nil, nil, addErr
 			}
@@ -92,8 +92,9 @@ func sealClassSet(authority *Authority) (*ClassSet, *typeauthority.Runtime, erro
 		case KindSymbolic:
 			if row.symbolic.reason == ReasonOpenFormal && row.symbolic.reference.Valid() {
 				materialized, found := authority.types.Resolve(row.symbolic.reference)
-				if found {
-					class, addErr := set.addConcrete(materialized)
+				input, closed := authority.types.RuntimeInputForType(materialized)
+				if found && closed {
+					class, addErr := set.addConcreteInput(materialized, input)
 					if addErr != nil {
 						return nil, nil, fmt.Errorf("static: materialize open class: %w", addErr)
 					}
@@ -112,11 +113,10 @@ func sealClassSet(authority *Authority) (*ClassSet, *typeauthority.Runtime, erro
 			set.byStatic[uint32(index)] = class
 		}
 	}
-	contract, ok := authority.source.Boundary().Target()
-	if !ok {
+	contract := authority.target
+	if contract == nil || !contract.ContentID().Available() {
 		return nil, nil, errors.New("static: Link target unavailable")
 	}
-	set.target = contract
 	seenOperations := make(map[target.Operation]struct{}, contract.OperationCount())
 	for index := 0; index < contract.OperationCount(); index++ {
 		operation, valid := contract.OperationAt(index)
@@ -165,6 +165,7 @@ func sealClassSet(authority *Authority) (*ClassSet, *typeauthority.Runtime, erro
 	set.byBytes = nil
 	for index := range set.rows {
 		set.rows[index].encoded = nil
+		set.rows[index].input = typeauthority.RuntimeInput{}
 		set.rows[index].inner = typeauthority.RuntimeInner{}
 	}
 	return set, runtime, nil
@@ -219,7 +220,7 @@ func (s *ClassSet) ClassForStatic(value Value) (Class, bool) {
 // part of the capability: the raw ordinal alone is not an owner identity and
 // must not admit an equal-numbered type from another sealed Target.
 func (s *ClassSet) ClassForTarget(contract *target.Contract, value target.Type) (Class, bool) {
-	if s == nil || contract == nil || contract != s.target {
+	if s == nil || s.authority == nil || contract == nil || contract != s.authority.target {
 		return Class{}, false
 	}
 	class, ok := s.byTarget[value]
@@ -419,6 +420,18 @@ func (s *ClassSet) addConcrete(value typ.Type) (Class, error) {
 	if value == nil {
 		return Class{}, errors.New("static: nil concrete class")
 	}
+	input, ok := s.authority.types.RuntimeInputForType(value)
+	if !ok {
+		return Class{}, errors.New("static: concrete class lacks scoped Runtime input")
+	}
+	return s.addConcreteInput(value, input)
+}
+
+func (s *ClassSet) addConcreteInput(value typ.Type, input typeauthority.RuntimeInput) (Class, error) {
+	value = typ.UnwrapStructuralWrappers(value)
+	if value == nil {
+		return Class{}, errors.New("static: nil concrete class")
+	}
 	encoded, err := typ.EncodeCanonical(context.Background(), value)
 	if err != nil {
 		return Class{}, err
@@ -431,7 +444,7 @@ func (s *ClassSet) addConcrete(value typ.Type) (Class, error) {
 		return Class{}, fmt.Errorf("static: concrete class handle: %w", err)
 	}
 	class := Class{owner: s, index: index}
-	s.rows = append(s.rows, classRow{kind: ClassConcrete, encoded: append([]byte(nil), encoded...)})
+	s.rows = append(s.rows, classRow{kind: ClassConcrete, encoded: append([]byte(nil), encoded...), input: input})
 	s.byBytes[string(encoded)] = class
 	return class, nil
 }
@@ -598,7 +611,7 @@ func (s *ClassSet) contentID(runtime *typeauthority.Runtime, operations map[targ
 	}
 	h := sha256.New()
 	h.Write([]byte("wippy.analysis.static/class-set/v9"))
-	linkID := s.authority.source.ContentID()
+	linkID := s.authority.LinkID()
 	h.Write(linkID[:])
 	runtimeID := runtime.ContentID()
 	h.Write(runtimeID[:])
@@ -619,7 +632,10 @@ func (s *ClassSet) contentID(runtime *typeauthority.Runtime, operations map[targ
 		h.Write(word[:])
 		h.Write(row.encoded)
 	}
-	contract, _ := s.authority.source.Boundary().Target()
+	contract := s.authority.target
+	if contract == nil {
+		return keyspace.ContentID{}
+	}
 	targetID := contract.ContentID()
 	h.Write(targetID[:])
 	// Target handle order, not map iteration, fixes selected-operation identity.

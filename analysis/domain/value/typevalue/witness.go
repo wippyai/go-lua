@@ -34,9 +34,9 @@ func StringLiteralOf(reg *axis.Registry, value product.Value) (string, bool) {
 		return "", false
 	}
 	lit, ok := t.(*typ.Literal)
-	if !ok || lit.Base != kind.String {
+	if !ok || lit.Base() != kind.String {
 		return "", false
 	}
-	s, ok := lit.Value.(string)
+	s, ok := lit.Value().(string)
 	return s, ok
 }

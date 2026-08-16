@@ -64,18 +64,18 @@ func mapComponentKeyMayOverlapLiteral(keyDomain typ.Type, lit *typ.Literal) bool
 	if lit == nil {
 		return false
 	}
-	switch lit.Base {
+	switch lit.Base() {
 	case kind.String:
-		name, ok := lit.Value.(string)
+		name, ok := lit.Value().(string)
 		return ok && MapComponentKeyMayContainString(keyDomain, name)
 	case kind.Integer:
-		index, ok := lit.Value.(int64)
+		index, ok := lit.Value().(int64)
 		return ok && MapComponentKeyMayContainInt(keyDomain, index)
 	case kind.Number:
-		value, ok := lit.Value.(float64)
+		value, ok := lit.Value().(float64)
 		return ok && mapComponentKeyMayOverlapNumberLiteral(keyDomain, value)
 	case kind.Boolean:
-		value, ok := lit.Value.(bool)
+		value, ok := lit.Value().(bool)
 		return ok && mapComponentKeyMayOverlapBooleanLiteral(keyDomain, value)
 	default:
 		return false
@@ -85,7 +85,7 @@ func mapComponentKeyMayOverlapLiteral(keyDomain typ.Type, lit *typ.Literal) bool
 func mapComponentKeyMayOverlapStringType(keyDomain typ.Type) bool {
 	return mapComponentKeyMayOverlapBaseType(
 		keyDomain,
-		func(lit *typ.Literal) bool { return lit.Base == kind.String },
+		func(lit *typ.Literal) bool { return lit.Base() == kind.String },
 		func(k kind.Kind) bool { return k == kind.String },
 	)
 }
@@ -94,11 +94,11 @@ func mapComponentKeyMayOverlapIntegerType(keyDomain typ.Type) bool {
 	return mapComponentKeyMayOverlapBaseType(
 		keyDomain,
 		func(lit *typ.Literal) bool {
-			switch lit.Base {
+			switch lit.Base() {
 			case kind.Integer:
 				return true
 			case kind.Number:
-				value, ok := lit.Value.(float64)
+				value, ok := lit.Value().(float64)
 				return ok && value == float64(int64(value))
 			default:
 				return false
@@ -111,7 +111,7 @@ func mapComponentKeyMayOverlapIntegerType(keyDomain typ.Type) bool {
 func mapComponentKeyMayOverlapNumberType(keyDomain typ.Type) bool {
 	return mapComponentKeyMayOverlapBaseType(
 		keyDomain,
-		func(lit *typ.Literal) bool { return lit.Base == kind.Integer || lit.Base == kind.Number },
+		func(lit *typ.Literal) bool { return lit.Base() == kind.Integer || lit.Base() == kind.Number },
 		func(k kind.Kind) bool { return k == kind.Integer || k == kind.Number },
 	)
 }
@@ -119,7 +119,7 @@ func mapComponentKeyMayOverlapNumberType(keyDomain typ.Type) bool {
 func mapComponentKeyMayOverlapBooleanType(keyDomain typ.Type) bool {
 	return mapComponentKeyMayOverlapBaseType(
 		keyDomain,
-		func(lit *typ.Literal) bool { return lit.Base == kind.Boolean },
+		func(lit *typ.Literal) bool { return lit.Base() == kind.Boolean },
 		func(k kind.Kind) bool { return k == kind.Boolean },
 	)
 }
@@ -143,12 +143,12 @@ func mapComponentKeyMayOverlapNumberLiteral(keyDomain typ.Type, value float64) b
 			return true
 		}
 		if lit, ok := k.(*typ.Literal); ok {
-			switch lit.Base {
+			switch lit.Base() {
 			case kind.Integer:
-				other, ok := lit.Value.(int64)
+				other, ok := lit.Value().(int64)
 				return ok && isInteger && other == int64(value)
 			case kind.Number:
-				other, ok := lit.Value.(float64)
+				other, ok := lit.Value().(float64)
 				return ok && other == value
 			default:
 				return false
@@ -164,8 +164,8 @@ func mapComponentKeyMayOverlapBooleanLiteral(keyDomain typ.Type, value bool) boo
 			return true
 		}
 		if lit, ok := k.(*typ.Literal); ok {
-			other, ok := lit.Value.(bool)
-			return lit.Base == kind.Boolean && ok && other == value
+			other, ok := lit.Value().(bool)
+			return lit.Base() == kind.Boolean && ok && other == value
 		}
 		return k.Kind() == kind.Boolean
 	})

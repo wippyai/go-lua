@@ -14,7 +14,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/link"
 )
 
 // Form is the exact runtime LType reflection form. FormOther deliberately
@@ -121,6 +120,37 @@ type RuntimeInner struct {
 type RuntimeInput struct {
 	authority *Authority
 	encoded   []byte
+	// value is a construction-only, ownership-isolated graph used to retain
+	// authored binder presentation (for example `T` rather than codec-local
+	// `scoped-local-1`). SealRuntime drops it with the builder.
+	value typ.Type
+}
+
+type RuntimeInputFailure uint8
+
+const (
+	RuntimeInputFailureNone RuntimeInputFailure = iota
+	RuntimeInputFailureAuthority
+	RuntimeInputFailureDecode
+	RuntimeInputFailureCanonical
+	RuntimeInputFailureOpenFormal
+)
+
+func (failure RuntimeInputFailure) String() string {
+	switch failure {
+	case RuntimeInputFailureNone:
+		return "none"
+	case RuntimeInputFailureAuthority:
+		return "authority"
+	case RuntimeInputFailureDecode:
+		return "decode"
+	case RuntimeInputFailureCanonical:
+		return "canonical"
+	case RuntimeInputFailureOpenFormal:
+		return "open-formal"
+	default:
+		return "invalid"
+	}
 }
 
 type runtimeChild struct {
@@ -235,8 +265,8 @@ type InstantiationMatch struct {
 // Static supplies already-evaluated canonical closed inputs; Runtime seals
 // their finite structural closure and has no evaluator or source AST path.
 type Runtime struct {
-	source *link.Link
-	id     keyspace.ContentID
+	sourceID keyspace.ContentID
+	id       keyspace.ContentID
 
 	rows           []runtimeRow
 	fields         []runtimeNamedChild
@@ -286,21 +316,61 @@ type runtimeCanonicalInput struct {
 // canonical encoding can represent by a presentation name alone; nested
 // Generic and Function binders remain valid closed roots.
 func (a *Authority) RuntimeInput(encoded []byte) (RuntimeInput, bool) {
+	input, failure := a.RuntimeInputWithFailure(encoded)
+	return input, failure == RuntimeInputFailureNone
+}
+
+func (a *Authority) RuntimeInputWithFailure(encoded []byte) (RuntimeInput, RuntimeInputFailure) {
 	if a == nil || !a.LinkID().Available() || len(encoded) == 0 {
-		return RuntimeInput{}, false
+		return RuntimeInput{}, RuntimeInputFailureAuthority
 	}
 	value, err := typ.DecodeCanonicalStructural(context.Background(), encoded)
 	if err != nil || value == nil {
-		return RuntimeInput{}, false
+		return RuntimeInput{}, RuntimeInputFailureDecode
 	}
 	canonical, err := typ.EncodeCanonical(context.Background(), value)
 	if err != nil || !sameBytes(canonical, encoded) {
+		return RuntimeInput{}, RuntimeInputFailureCanonical
+	}
+	input, ok := a.RuntimeInputForType(value)
+	if !ok {
+		return RuntimeInput{}, RuntimeInputFailureOpenFormal
+	}
+	return input, RuntimeInputFailureNone
+}
+
+// RuntimeInputForType seals the scoped canonical identity while the exact
+// evaluated closed graph is still live. Ordinary canonical bytes deliberately
+// omit binder ownership and therefore cannot faithfully reconstruct a graph
+// containing repeated applications of the same nested Generic declaration.
+// RuntimeInput remains opaque and construction-only; Runtime retains no typ
+// graph after SealRuntime.
+func (a *Authority) RuntimeInputForType(value typ.Type) (RuntimeInput, bool) {
+	// A binder-owned formal inside a Generic/Function is structurally closed.
+	// ContainsTypeParam cannot distinguish it from a free formal and used to
+	// reject valid generic declarations before Runtime could seal them.
+	if a == nil || !a.LinkID().Available() || value == nil || !typ.IsGraphClosed(value) || typ.ValidateStaticGenericRecurrence(value) != nil {
 		return RuntimeInput{}, false
 	}
-	if _, err := typ.EncodeCanonicalFormals(context.Background(), value, nil); err != nil {
+	encoded, err := typ.EncodeCanonicalFormals(context.Background(), value, nil)
+	if err != nil || len(encoded) == 0 {
 		return RuntimeInput{}, false
 	}
-	return RuntimeInput{authority: a, encoded: append([]byte(nil), encoded...)}, true
+	// Zero external formals is the ownership boundary: the codec accepts
+	// binder-local Generic/Function formals, but rejects any parameter that
+	// was not introduced by the encoded root.
+	if typ.ValidateCanonicalFormals(encoded, 0) != nil {
+		return RuntimeInput{}, false
+	}
+	decoded, err := typ.DecodeCanonicalFormals(context.Background(), encoded, nil)
+	if err != nil || decoded == nil {
+		return RuntimeInput{}, false
+	}
+	reencoded, err := typ.EncodeCanonicalFormals(context.Background(), decoded, nil)
+	if err != nil || !sameBytes(reencoded, encoded) {
+		return RuntimeInput{}, false
+	}
+	return RuntimeInput{authority: a, encoded: append([]byte(nil), encoded...), value: value}, true
 }
 
 // SealRuntime closes the direct structural children of Static's finite
@@ -308,11 +378,11 @@ func (a *Authority) RuntimeInput(encoded []byte) (RuntimeInput, bool) {
 // TypeValue interpretation belongs to Static, which owns both the evaluated
 // result and its Boundary occurrence.
 func SealRuntime(types *Authority, inputs []RuntimeInput) (*Runtime, []RuntimeInner, error) {
-	if types == nil || types.source == nil || !types.source.ContentID().Available() || types.LinkID() != types.source.ContentID() {
-		return nil, nil, errors.New("typeauthority: Runtime Link/selector authority mismatch")
+	if types == nil || !types.ArtifactBacked() || !types.LinkID().Available() {
+		return nil, nil, errors.New("typeauthority: Runtime requires detached artifact authority")
 	}
 	runtime := &Runtime{
-		source: types.source,
+		sourceID: types.LinkID(),
 		// Relation rows and semantic descriptors are populated by the one
 		// seal pass below.  No dense pair cache survives publication.
 	}
@@ -326,8 +396,16 @@ func SealRuntime(types *Authority, inputs []RuntimeInput) (*Runtime, []RuntimeIn
 		return nil, nil, err
 	}
 	for _, input := range canonicalInputs {
-		value, err := typ.DecodeCanonicalStructural(context.Background(), input.input.encoded)
-		if err != nil || value == nil {
+		value := input.input.value
+		if value == nil {
+			var err error
+			value, err = typ.DecodeCanonicalFormals(context.Background(), input.input.encoded, nil)
+			if err != nil || value == nil {
+				return nil, nil, errors.New("typeauthority: invalid Runtime input")
+			}
+		}
+		verified, verifyErr := typ.EncodeCanonicalFormals(context.Background(), value, nil)
+		if verifyErr != nil || !sameBytes(verified, input.input.encoded) {
 			return nil, nil, errors.New("typeauthority: invalid Runtime input")
 		}
 		inner, err := builder.add(runtimePending{value: value})
@@ -642,7 +720,7 @@ func (b *runtimeBuilder) lookupInput(input RuntimeInput) (RuntimeInner, error) {
 	if b == nil || input.authority == nil || len(input.encoded) == 0 {
 		return RuntimeInner{}, errors.New("typeauthority: invalid Runtime input lookup")
 	}
-	value, err := typ.DecodeCanonicalStructural(context.Background(), input.encoded)
+	value, err := typ.DecodeCanonicalFormals(context.Background(), input.encoded, nil)
 	if err != nil || value == nil {
 		return RuntimeInner{}, errors.New("typeauthority: invalid Runtime input lookup")
 	}
@@ -1156,10 +1234,10 @@ func (b *runtimeBuilder) describeOne(index int) error {
 		row.inner, err = child(value.Constraint, current.formals, current.scope)
 		return err
 	case *typ.Literal:
-		row.literal.base = value.Base
-		switch value.Base {
+		row.literal.base = value.Base()
+		switch value.Base() {
 		case kind.Boolean:
-			literal, ok := value.Value.(bool)
+			literal, ok := value.Value().(bool)
 			if !ok {
 				return errors.New("typeauthority: malformed Runtime boolean literal")
 			}
@@ -1167,19 +1245,19 @@ func (b *runtimeBuilder) describeOne(index int) error {
 				row.literal.bits = 1
 			}
 		case kind.Integer:
-			literal, ok := value.Value.(int64)
+			literal, ok := value.Value().(int64)
 			if !ok {
 				return errors.New("typeauthority: malformed Runtime integer literal")
 			}
 			row.literal.bits = uint64(literal)
 		case kind.Number:
-			literal, ok := value.Value.(float64)
+			literal, ok := value.Value().(float64)
 			if !ok {
 				return errors.New("typeauthority: malformed Runtime number literal")
 			}
 			row.literal.bits = math.Float64bits(literal)
 		case kind.String:
-			literal, ok := value.Value.(string)
+			literal, ok := value.Value().(string)
 			if !ok {
 				return errors.New("typeauthority: malformed Runtime string literal")
 			}
@@ -1515,13 +1593,12 @@ func (r *Runtime) sealRanks() error {
 }
 
 func (r *Runtime) sealIdentity() error {
-	if r == nil || r.source == nil || !r.source.ContentID().Available() {
+	if r == nil || !r.sourceID.Available() {
 		return errors.New("typeauthority: unavailable Runtime identity source")
 	}
 	hash := sha256.New()
 	_, _ = hash.Write([]byte("wippy.analysis.typeauthority.runtime\x00\x03"))
-	sourceID := r.source.ContentID()
-	_, _ = hash.Write(sourceID[:])
+	_, _ = hash.Write(r.sourceID[:])
 	writeRuntimeWord(hash, uint64(len(r.rows)))
 	for _, row := range r.rows {
 		_, _ = hash.Write([]byte{byte(row.form)})
@@ -1700,19 +1777,10 @@ func writeRuntimeParameters(hash interface{ Write([]byte) (int, error) }, values
 // composition check, not a portable inner identity; Inner identity is always
 // derived from Runtime.ContentID plus the immutable dense row.
 func (r *Runtime) LinkID() keyspace.ContentID {
-	if r == nil || r.source == nil {
+	if r == nil {
 		return keyspace.ContentID{}
 	}
-	return r.source.ContentID()
-}
-
-// Link returns Runtime's exact Link owner. Boundary Values are pointer-fenced
-// hot capabilities; equal content identities do not permit cross-Link reuse.
-func (r *Runtime) Link() *link.Link {
-	if r == nil {
-		return nil
-	}
-	return r.source
+	return r.sourceID
 }
 
 func (r *Runtime) ContentID() keyspace.ContentID {

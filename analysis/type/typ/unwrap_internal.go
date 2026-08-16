@@ -10,7 +10,7 @@ func UnwrapTransparentWrappers(t Type) Type {
 		if !ok {
 			return t
 		}
-		if ann.Inner == nil || ann.Inner == t || !path.enter(ann) {
+		if ann == nil || ann.Inner == nil || ann.Inner == t || !path.enter(ann) {
 			return t
 		}
 		t = ann.Inner

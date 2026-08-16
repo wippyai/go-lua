@@ -427,7 +427,7 @@ func (c *checker) subtypeRule(sub, super typ.Type) proofExpr {
 		if other, ok := super.(*typ.Literal); ok {
 			return booleanExpr(lit.Equals(other))
 		}
-		switch lit.Base {
+		switch lit.Base() {
 		case kind.Boolean:
 			return booleanExpr(super.Kind() == kind.Boolean)
 		case kind.Integer:
@@ -845,7 +845,7 @@ func (c *checker) widenRule(narrow, wide typ.Type) proofExpr {
 		if optional, ok := wide.(*typ.Optional); ok {
 			wideInner = unwrap.Alias(optional.Inner)
 		}
-		switch literal.Base {
+		switch literal.Base() {
 		case kind.Boolean:
 			return booleanExpr(wideInner != nil && wideInner.Kind() == kind.Boolean)
 		case kind.String:

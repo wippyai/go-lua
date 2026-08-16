@@ -692,6 +692,81 @@ func TestPointRHSFoldMatchesCanonicalOrderAndClosesOnlyOnSupportGrowth(t *testin
 		t.Fatalf("direct fixed-order off value = %d/%t/%t, want 4/true/true", got, present, valid)
 	}
 
+	t.Run("whole_equal_sibling_adopts_current_predecessor", func(t *testing.T) {
+		// Each contribution is published through a distinct terminal/FDD
+		// candidate, so equal values do not imply equal root identity. The
+		// first small seed makes the empty base non-pristine; the second whole
+		// rule then reaches FoldPointRHSUnder instead of the initial adoption
+		// shortcut. Its result is semantically equal to the current predecessor
+		// over the sealed universe and must retain that predecessor handle.
+		predecessorRule := toRule(finishContributionAt(t, work, plan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), whole, 4))
+		equalRule := toRule(finishContributionAt(t, work, plan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), whole, 4))
+		seedRule := toRule(finishContributionAt(t, work, plan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), on, 4))
+		predecessorPoint, ok := work.PointStateFromRuleContribution(predecessorRule)
+		if !ok {
+			t.Fatal("predecessor point")
+		}
+		predecessorRoot, ok := predecessorPoint.HandleAt(slot)
+		if !ok {
+			t.Fatal("predecessor root")
+		}
+		equalRoot, ok := equalRule.HandleAt(slot)
+		if !ok || equalRoot == predecessorRoot {
+			t.Fatal("independent equal rules did not retain sibling root identities")
+		}
+		if !work.BeginPointRHSFold(predecessorPoint, base) || !work.AddPointFoldRule(seedRule) || !work.AddPointFoldRule(equalRule) {
+			t.Fatal("equal sibling fold inputs")
+		}
+		finished, ok := work.FinishPointRHSFold()
+		if !ok {
+			t.Fatal("equal sibling fold")
+		}
+		finishedRoot, ok := finished.HandleAt(slot)
+		if !ok || finishedRoot != predecessorRoot {
+			t.Fatal("whole-universe equal fold did not adopt current predecessor root")
+		}
+		for _, valuation := range []func(guard.Atom) bool{
+			func(atom guard.Atom) bool { return atom == 1 },
+			func(guard.Atom) bool { return false },
+		} {
+			if got, present, valid := observedExactValue(binding, work, finishedRoot, fixture.unit(t, 0), whole, valuation); !valid || !present || got != 4 {
+				t.Fatalf("equal sibling result = %d/%t/%t, want 4/true/true", got, present, valid)
+			}
+		}
+	})
+
+	t.Run("whole_universe_unequal_sibling_is_not_adopted", func(t *testing.T) {
+		predecessorRule := toRule(finishContributionAt(t, work, plan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), whole, 5))
+		unequalPoint, ok := work.PointStateFromRuleContribution(predecessorRule)
+		if !ok {
+			t.Fatal("unequal predecessor point")
+		}
+		predecessorRoot, ok := unequalPoint.HandleAt(slot)
+		if !ok {
+			t.Fatal("unequal predecessor root")
+		}
+		equalRule := toRule(finishContributionAt(t, work, plan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), whole, 4))
+		equalRoot, ok := equalRule.HandleAt(slot)
+		if !ok || equalRoot == predecessorRoot {
+			t.Fatal("unequal sibling rules unexpectedly share root identity")
+		}
+		seedRule := toRule(finishContributionAt(t, work, plan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), on, 4))
+		if !work.BeginPointRHSFold(unequalPoint, base) || !work.AddPointFoldRule(seedRule) || !work.AddPointFoldRule(equalRule) {
+			t.Fatal("unequal sibling fold inputs")
+		}
+		finished, ok := work.FinishPointRHSFold()
+		if !ok {
+			t.Fatal("unequal sibling fold")
+		}
+		finishedRoot, ok := finished.HandleAt(slot)
+		if !ok || finishedRoot == predecessorRoot {
+			t.Fatal("whole-universe unequal fold adopted predecessor root")
+		}
+		if got, present, valid := observedExactValue(binding, work, finishedRoot, fixture.unit(t, 0), whole, func(guard.Atom) bool { return false }); !valid || !present || got != 4 {
+			t.Fatalf("unequal sibling result = %d/%t/%t, want 4/true/true", got, present, valid)
+		}
+	})
+
 	onValue := finishContributionAt(t, work, plan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), on, 4)
 	offValue := finishContributionAt(t, work, plan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), off, 9)
 	source, _, ok := work.MergeContribution(onValue, offValue)

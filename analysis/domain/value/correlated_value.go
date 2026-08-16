@@ -7,8 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/materialization"
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
 	"github.com/wippyai/go-lua/analysis/lattice"
-	linkboundary "github.com/wippyai/go-lua/program/link/boundary"
-	linkhost "github.com/wippyai/go-lua/program/link/host"
+	"github.com/wippyai/go-lua/program/keyspace"
 )
 
 // Value is one immutable normalized correlated relation over a Schema's
@@ -131,8 +130,8 @@ func (schema *Schema) Alternatives(atoms ...Atom) (Value, bool) {
 // existing Link Value coordinate. Allocation deliberately has no source fact:
 // its sole executable authority is the allocation Rule's atomic Age+Fresh
 // patch. Dynamic source families likewise come only from their exact Rule.
-func (schema *Schema) SourceValue(subject linkboundary.Value) (Value, bool) {
-	if schema == nil || schema.source == nil {
+func (schema *Schema) SourceValueID(subject keyspace.ContentID) (Value, bool) {
+	if schema == nil || !subject.Available() {
 		return Value{}, false
 	}
 	row, ok := schema.coordinates[subject]
@@ -375,7 +374,7 @@ func mix(hash, value uint64) uint64 {
 // WithCapability attaches one exact sealed provider capability to one atom
 // already present in the relation.  It cannot add a capability to another
 // atom, so an alias/capability Rule must carry the same receiver alternative.
-func (schema *Schema) WithCapability(value Value, atom Atom, capability linkhost.ProviderCapability) (Value, bool) {
+func (schema *Schema) WithCapability(value Value, atom Atom, capability keyspace.ContentID) (Value, bool) {
 	if !schema.owns(value) || !atom.valid() || atom.schema != schema {
 		return Value{}, false
 	}
@@ -462,7 +461,7 @@ func (schema *Schema) Age(value Value, key heap.Key) (Value, bool) {
 // HasCapability reads Capability(atom, capability) from one exact Value
 // relation.  It is a projection of the correlated carrier, never a separate
 // capability map or Factor.
-func (schema *Schema) HasCapability(value Value, atom Atom, capability linkhost.ProviderCapability) bool {
+func (schema *Schema) HasCapability(value Value, atom Atom, capability keyspace.ContentID) bool {
 	if !schema.owns(value) || !atom.valid() || atom.schema != schema {
 		return false
 	}

@@ -114,7 +114,7 @@ type treatment struct {
 }
 
 // Ledger is a frozen coverage result bound to one exact source catalog and
-// sealed composition.  Its contents are private so later caller mutation
+// sealed receipt Binding. Its contents are private so later caller mutation
 // cannot turn a failed denominator into an accepted one.
 type Ledger struct {
 	catalog       SourceCatalog
@@ -172,16 +172,16 @@ type Result struct{ Issues []Issue }
 func (result Result) Valid() bool { return len(result.Issues) == 0 }
 
 // Freeze validates the entire three-part coverage kernel in one cut:
-// generated source catalog, Factor-owned contracts, and treatment plan.  It
-// reads only semantic identities from Composition.SemanticReport; Rule and
-// Query schemas are deliberately not reinterpreted or duplicated here.
+// generated source catalog, Factor-owned contracts, and treatment plan. It
+// reads only semantic identities from the receipt-native Binding report; Rule
+// and Query schemas are deliberately not reinterpreted or duplicated here.
 func Freeze(
 	catalog SourceCatalog,
 	contracts []CoverageContract,
 	rules []RulePlan,
 	queries []QueryPlan,
 	structural []StructuralPlan,
-	composition *engine.Composition,
+	binding *engine.SchemaBinding,
 ) (Ledger, Result) {
 	ledger := Ledger{catalog: cloneCatalog(catalog)}
 	result := Result{}
@@ -211,10 +211,10 @@ func Freeze(
 	ledger.requirements = sortedRequirements(requirements)
 	ledger.treatments = cloneTreatments(plans)
 	validateTreatments(&result, requirements, plans)
-	validateComposition(&result, requirements, plans, composition)
+	validateBinding(&result, requirements, plans, binding)
 	ledger.valid = result.Valid()
 	if ledger.valid {
-		ledger.compositionID = composition.ID()
+		ledger.compositionID = binding.Schema().ID()
 	}
 	return ledger, result
 }
@@ -304,13 +304,14 @@ func planOwnsRequirement(plan treatment, requirement Requirement) bool {
 	}
 }
 
-func validateComposition(result *Result, requirements map[Requirement]struct{}, plans []treatment, composition *engine.Composition) {
-	if composition == nil || !composition.Sealed() {
+func validateBinding(result *Result, requirements map[Requirement]struct{}, plans []treatment, binding *engine.SchemaBinding) {
+	if binding == nil || !binding.Sealed() {
 		result.Issues = append(result.Issues, Issue{Kind: IssueIncompleteCompositionReport})
 		return
 	}
-	report, reported := composition.SemanticReport()
-	if !reported || !report.ID.Available() || report.ID != composition.ID() {
+	report, reported := binding.SemanticReport()
+	schema := binding.Schema()
+	if !reported || schema == nil || !report.ID.Available() || report.ID != schema.ID() {
 		result.Issues = append(result.Issues, Issue{Kind: IssueIncompleteCompositionReport})
 		return
 	}

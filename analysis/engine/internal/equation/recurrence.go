@@ -175,6 +175,9 @@ func (graph *Graph) deriveRegions() bool {
 	// contribute interfaces and head ingress/back classification to the same
 	// WTO regions.
 	for edgeIndex, edge := range graph.environments {
+		if edge.transportOnly {
+			continue
+		}
 		target, targetOK := graph.pointAt[edge.target.key]
 		source, sourceOK := graph.pointAt[edge.input.point.key]
 		if !targetOK || !sourceOK {
@@ -576,7 +579,7 @@ func (view RegionView) FactorAt(index int) (composition.Key, bool) {
 // derived at graph construction from the one event stream, so runtime binding
 // never replays the schedule merely to recover region membership.
 func (graph *Graph) PointRegion(point Point) (int, bool) {
-	if !graph.valid() || point.graph != graph {
+	if !graph.valid() || !graph.ownsNode(point.graph) {
 		return schedule.NoRegion, false
 	}
 	node, ok := graph.pointAt[point.key]

@@ -15,11 +15,11 @@ func TestLiteralBool(t *testing.T) {
 		t.Errorf("Kind: got %v, want Literal", tr.Kind())
 	}
 
-	if tr.Base != kind.Boolean {
-		t.Errorf("Base: got %v, want Boolean", tr.Base)
+	if tr.Base() != kind.Boolean {
+		t.Errorf("Base: got %v, want Boolean", tr.Base())
 	}
 
-	if tr.Value != true {
+	if tr.Value() != true {
 		t.Error("Value should be true")
 	}
 
@@ -47,12 +47,12 @@ func TestLiteralInt(t *testing.T) {
 		t.Errorf("Kind: got %v, want Literal", lit.Kind())
 	}
 
-	if lit.Base != kind.Integer {
-		t.Errorf("Base: got %v, want Integer", lit.Base)
+	if lit.Base() != kind.Integer {
+		t.Errorf("Base: got %v, want Integer", lit.Base())
 	}
 
-	if lit.Value != int64(42) {
-		t.Errorf("Value: got %v, want 42", lit.Value)
+	if lit.Value() != int64(42) {
+		t.Errorf("Value: got %v, want 42", lit.Value())
 	}
 
 	if lit.String() != "42" {
@@ -80,12 +80,12 @@ func TestLiteralNumber(t *testing.T) {
 		t.Errorf("Kind: got %v, want Literal", lit.Kind())
 	}
 
-	if lit.Base != kind.Number {
-		t.Errorf("Base: got %v, want Number", lit.Base)
+	if lit.Base() != kind.Number {
+		t.Errorf("Base: got %v, want Number", lit.Base())
 	}
 
-	if lit.Value != 3.14 {
-		t.Errorf("Value: got %v, want 3.14", lit.Value)
+	if lit.Value() != 3.14 {
+		t.Errorf("Value: got %v, want 3.14", lit.Value())
 	}
 
 	zero := LiteralNumber(0.0)
@@ -116,7 +116,7 @@ func TestLiteralNumberUsesRawIEEEBitsAsReflexiveIdentity(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			value := math.Float64frombits(test.bits)
 			left, right := LiteralNumber(value), LiteralNumber(value)
-			if got := math.Float64bits(left.Value.(float64)); got != test.bits {
+			if got := math.Float64bits(left.Value().(float64)); got != test.bits {
 				t.Fatalf("public float payload bits=%#x, want %#x", got, test.bits)
 			}
 			if !left.Equals(right) || !TypeEquals(left, right) || left.Hash() != right.Hash() {
@@ -144,12 +144,12 @@ func TestLiteralString(t *testing.T) {
 		t.Errorf("Kind: got %v, want Literal", lit.Kind())
 	}
 
-	if lit.Base != kind.String {
-		t.Errorf("Base: got %v, want String", lit.Base)
+	if lit.Base() != kind.String {
+		t.Errorf("Base: got %v, want String", lit.Base())
 	}
 
-	if lit.Value != "hello" {
-		t.Errorf("Value: got %v, want hello", lit.Value)
+	if lit.Value() != "hello" {
+		t.Errorf("Value: got %v, want hello", lit.Value())
 	}
 
 	if lit.String() != `"hello"` {
@@ -184,30 +184,26 @@ func TestLiteralStringReturnsFreshStructurallyEqualNodes(t *testing.T) {
 		t.Fatalf("fresh string literals changed value/hash/render semantics: first=%q/%d second=%q/%d", first.String(), first.Hash(), second.String(), second.Hash())
 	}
 
-	// Literal fields are intentionally exposed for the existing type model. A
-	// caller mutating one malformed node must not poison the next construction.
-	first.Value = "mutated"
-	first.str = `"mutated"`
-	if second.Value != "same" || second.String() != `"same"` {
-		t.Fatalf("fresh string literal storage was aliased: %#v/%q", second.Value, second.String())
+	if first.Value() != "same" || second.Value() != "same" || second.String() != `"same"` {
+		t.Fatalf("fresh string literal state changed: %#v/%q", second.Value(), second.String())
 	}
 }
 
 func TestLiteralSingletons(t *testing.T) {
-	if True.Value != true {
-		t.Error("True should have value true")
+	if LiteralBool(true).Value() != true {
+		t.Error("true singleton should have value true")
 	}
 
-	if False.Value != false {
-		t.Error("False should have value false")
+	if LiteralBool(false).Value() != false {
+		t.Error("false singleton should have value false")
 	}
 
-	if !True.Equals(LiteralBool(true)) {
-		t.Error("True should equal LiteralBool(true)")
+	if !LiteralBool(true).Equals(LiteralBool(true)) {
+		t.Error("true singleton should equal LiteralBool(true)")
 	}
 
-	if !False.Equals(LiteralBool(false)) {
-		t.Error("False should equal LiteralBool(false)")
+	if !LiteralBool(false).Equals(LiteralBool(false)) {
+		t.Error("false singleton should equal LiteralBool(false)")
 	}
 }
 
@@ -262,20 +258,20 @@ func TestLiteralBoolInterning(t *testing.T) {
 	f1 := LiteralBool(false)
 	f2 := LiteralBool(false)
 
-	if t1 != True {
-		t.Error("LiteralBool(true) should return typ.True singleton")
+	if t1 != trueLiteral {
+		t.Error("LiteralBool(true) should return the true singleton")
 	}
 
-	if t2 != True {
-		t.Error("LiteralBool(true) should return typ.True singleton")
+	if t2 != trueLiteral {
+		t.Error("LiteralBool(true) should return the true singleton")
 	}
 
-	if f1 != False {
-		t.Error("LiteralBool(false) should return typ.False singleton")
+	if f1 != falseLiteral {
+		t.Error("LiteralBool(false) should return the false singleton")
 	}
 
-	if f2 != False {
-		t.Error("LiteralBool(false) should return typ.False singleton")
+	if f2 != falseLiteral {
+		t.Error("LiteralBool(false) should return the false singleton")
 	}
 
 	if t1 != t2 {
@@ -286,11 +282,11 @@ func TestLiteralBoolInterning(t *testing.T) {
 		t.Error("multiple LiteralBool(false) calls should return same pointer")
 	}
 
-	if t1.Hash() != True.Hash() {
-		t.Errorf("hash mismatch: LiteralBool(true)=%d, True=%d", t1.Hash(), True.Hash())
+	if t1.Hash() != trueLiteral.Hash() {
+		t.Errorf("hash mismatch: LiteralBool(true)=%d, true=%d", t1.Hash(), trueLiteral.Hash())
 	}
 
-	if f1.Hash() != False.Hash() {
-		t.Errorf("hash mismatch: LiteralBool(false)=%d, False=%d", f1.Hash(), False.Hash())
+	if f1.Hash() != falseLiteral.Hash() {
+		t.Errorf("hash mismatch: LiteralBool(false)=%d, false=%d", f1.Hash(), falseLiteral.Hash())
 	}
 }

@@ -5,7 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/materialization"
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
-	linkhost "github.com/wippyai/go-lua/program/link/host"
+	"github.com/wippyai/go-lua/program/keyspace"
 	"github.com/wippyai/go-lua/program/target"
 )
 
@@ -36,7 +36,6 @@ type RawAccess struct {
 	fragment      rawAccessFragment
 	initialFrozen bool
 	top           bool
-	route         RawRouteTag
 }
 
 type rawAccessFragment struct {
@@ -65,11 +64,7 @@ func (fragment rawAccessFragment) valid(owner *schema) bool {
 }
 
 func (access RawAccess) valid() bool {
-	if access.owner == nil || !access.key.valid() || access.key.owner != access.owner || !access.role.Valid() || access.route == 0 {
-		return false
-	}
-	wantRoute, routeOK := rawRouteTag(access.key, access.role)
-	if !routeOK || access.route != wantRoute {
+	if access.owner == nil || !access.key.valid() || access.key.owner != access.owner || !access.role.Valid() {
 		return false
 	}
 	if access.top {
@@ -113,13 +108,6 @@ func (access RawAccess) InitialFrozen() bool {
 	return access.valid() && !access.top && access.initialFrozen
 }
 
-func (access RawAccess) RouteTag() RawRouteTag {
-	if !access.valid() {
-		return 0
-	}
-	return access.route
-}
-
 // RouteTag issues the compact staged route projection for key and role. The
 // returned tag has no meaning until this exact Schema admits it again.
 func (schema Schema) RouteTag(key Key, role materialization.Role) (RawRouteTag, bool) {
@@ -147,19 +135,19 @@ func (access RawAccess) PayloadTag(present Present) (RawPayloadTag, bool) {
 // one selected Present tuple and returns the exact Target initial source
 // together with its owning boot root. Program Values payloads deliberately
 // fail here and continue through PayloadTag/PayloadForRawTag.
-func (access RawAccess) InitialPayload(present Present) (linkhost.BootRoot, target.InitialValue, bool) {
+func (access RawAccess) InitialPayload(present Present) (keyspace.ContentID, target.InitialValue, bool) {
 	if !access.valid() || access.top || !present.valid() || present.owner != access.owner || access.cell.PresentCount() != 1 {
-		return linkhost.BootRoot{}, 0, false
+		return keyspace.ContentID{}, 0, false
 	}
 	selected, selectedOK := access.cell.PresentAt(0)
 	if !selectedOK || comparePresent(selected, present) != 0 || access.key.Kind() != RootBoot {
-		return linkhost.BootRoot{}, 0, false
+		return keyspace.ContentID{}, 0, false
 	}
 	payload, payloadOK := present.Payload()
 	initial, initialOK := payload.InitialValue()
-	root, rootOK := access.key.BootRoot()
+	root, rootOK := access.key.BootID()
 	if !payloadOK || !initialOK || !rootOK {
-		return linkhost.BootRoot{}, 0, false
+		return keyspace.ContentID{}, 0, false
 	}
 	return root, initial, true
 }
@@ -234,17 +222,13 @@ func (schema Schema) VisitRawAccess(key Key, fact Value, role materialization.Ro
 		!role.Valid() || !schema.admitsReferenceRole(key.slot, role) || !selector.valid() || selector.owner != schema.owner || visit == nil {
 		return false
 	}
-	route, routeOK := rawRouteTag(key, role)
-	if !routeOK {
-		return false
-	}
 	emitCell := func(world World, object Object, fragment rawAccessFragment, initialFrozen bool, cell CellState) bool {
 		raw, ok := cell.Raw()
 		if !ok {
 			return false
 		}
 		emit := func(selected CellState) bool {
-			return visit(RawAccess{owner: schema.owner, key: key, role: role, world: world, object: object, cell: selected, fragment: fragment, initialFrozen: initialFrozen, route: route})
+			return visit(RawAccess{owner: schema.owner, key: key, role: role, world: world, object: object, cell: selected, fragment: fragment, initialFrozen: initialFrozen})
 		}
 		if raw.has(RawAbsent) {
 			absent, absentOK := schema.CellAbsent()
@@ -274,7 +258,7 @@ func (schema Schema) VisitRawAccess(key Key, fact Value, role materialization.Ro
 		return true
 	}
 	if fact.top {
-		return visit(RawAccess{owner: schema.owner, key: key, role: role, top: true, route: route})
+		return visit(RawAccess{owner: schema.owner, key: key, role: role, top: true})
 	}
 	for _, world := range fact.worlds {
 		object, selected := rawWorldObject(world, role)
@@ -480,7 +464,7 @@ func (schema Schema) initialFrozenBootSlot(key Key, atom keyAtom) bool {
 	if !schema.valid() || key.Kind() != RootBoot || atom.kind != keyAtomExact {
 		return false
 	}
-	slot := schema.owner.exactSlots[atom.exact]
+	slot := schema.owner.exactSlots[atom.exactOrdinal]
 	if slot == 0 {
 		return false
 	}
@@ -508,11 +492,7 @@ func (schema Schema) selectedPolicyAtoms(key Key, partition Partition, kinds run
 			if slot.kind != SlotExact {
 				continue
 			}
-			keyIndex, keyOK := schema.owner.source.Project().Keys().Index(slot.exact)
-			if !keyOK {
-				continue
-			}
-			atom := keyAtom{kind: keyAtomExact, exact: slot.exact, exactOrdinal: uint32(keyIndex + 1)}
+			atom := keyAtom{kind: keyAtomExact, exactOrdinal: slot.exact}
 			if keyAtomRuntimeKinds(schema.owner, atom)&kinds != 0 {
 				atoms = append(atoms, atom)
 			}

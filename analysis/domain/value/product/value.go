@@ -2,7 +2,6 @@ package product
 
 import (
 	"fmt"
-	"reflect"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -68,7 +67,7 @@ func RetentionSafe(reg *axis.Registry, v Value) bool {
 		return true
 	}
 	for _, slot := range v.n.slots {
-		if int(slot.ordinal) >= len(rt.canonicalAxes) {
+		if int(slot.ordinal) >= len(rt.axes) {
 			return false
 		}
 		spec := rt.axisOrdinal(slot.ordinal).spec
@@ -171,22 +170,16 @@ func Get[T any](reg *axis.Registry, v Value, key axis.Key[T]) T {
 	if !ok {
 		panic(fmt.Sprintf("product: unregistered axis %q", key.ID()))
 	}
-	wantType := reflect.TypeFor[T]()
+	wantType := key.Type()
+	if wantType != info.topType {
+		panic(fmt.Sprintf("product: axis %q has incompatible typed key type %v, want %v", key.ID(), wantType, info.topType))
+	}
 	if raw, ok := lookupSlot(v, info.ordinal); ok {
-		if gotType := reflect.TypeOf(raw); gotType != info.topType {
-			panic(fmt.Sprintf("product: axis %q has value type %v, want registered axis type %v", key.ID(), gotType, info.topType))
-		}
-		if wantType != info.topType {
-			panic(fmt.Sprintf("product: axis %q has incompatible typed key type %v, want %v", key.ID(), wantType, info.topType))
-		}
 		tv, ok := raw.(T)
 		if !ok {
 			panic(fmt.Sprintf("product: axis %q has value type %T, want typed key value", key.ID(), raw))
 		}
 		return tv
-	}
-	if wantType != info.topType {
-		panic(fmt.Sprintf("product: axis %q has incompatible typed key type %v, want %v", key.ID(), wantType, info.topType))
 	}
 	tv, ok := info.topAny.(T)
 	if !ok {
@@ -207,7 +200,7 @@ func Set[T any](reg *axis.Registry, v Value, key axis.Key[T], value T) Value {
 	if !ok {
 		panic(fmt.Sprintf("product: unregistered axis %q", key.ID()))
 	}
-	wantType := reflect.TypeFor[T]()
+	wantType := key.Type()
 	if wantType != info.topType {
 		panic(fmt.Sprintf("product: axis %q has incompatible typed key type %v, want %v", key.ID(), wantType, info.topType))
 	}

@@ -576,7 +576,7 @@ func TestPresenceCannotBeSparseProductAxis(t *testing.T) {
 	})
 	mustPanic(t, func() {
 		valid := mustRegistry(t)
-		_ = intern(valid, ShapeTop, presence.Top(), []slot{{ordinal: uint16(len(mustRuntime(valid).canonicalAxes)), value: presence.Present()}})
+		_ = intern(valid, ShapeTop, presence.Top(), []slot{{ordinal: uint16(len(mustRuntime(valid).axes)), value: presence.Present()}})
 	})
 }
 

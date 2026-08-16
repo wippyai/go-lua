@@ -4,14 +4,12 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
+	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
 	"github.com/wippyai/go-lua/analysis/internal/canonical"
 )
 
-// SelectedStructuralFactorEdge is one accepted structural-only activation
-// transport materialized against the immutable base points of a Topology.
-// It deliberately is not a Graph edge: callers receive the exact issued
-// endpoint identities and boundary relation, but no mutable graph ownership
-// or candidate catalog.
+// SelectedStructuralFactorEdge is one candidate-local transport admitted
+// only for an accepted activation Member. It never mutates the base Graph.
 type SelectedStructuralFactorEdge struct {
 	key    composition.Key
 	source Point
@@ -30,44 +28,36 @@ func (edge SelectedStructuralFactorEdge) Target() Point           { return edge.
 func (edge SelectedStructuralFactorEdge) Input() Input            { return edge.input }
 func (edge SelectedStructuralFactorEdge) Factor() composition.Key { return edge.factor }
 
-// SelectedStructuralFactorEdges expands a canonical accepted subset into
-// FactorEdge-only structural transports without copying or compiling the base
-// TopologySpec.  It accepts a full accepted set or a canonical delta; every
-// selected Member must resolve to a zero-payload template whose endpoints are
-// already-issued Points owned by base.  Typed fragments, local points, Groups,
-// summaries, and weak-target declarations fail closed and remain on the
-// ordinary Graph materialization path.
+// SelectedStructuralFactorEdges lowers only the direct transport receipts
+// owned by accepted Members. It does not enumerate inactive candidates, and
+// it attaches each member's exact premise at an endpoint scope before the
+// runtime overlay observes the edge.
 func (topology *Topology) SelectedStructuralFactorEdges(base *Graph, accepted []AcceptedMember) ([]SelectedStructuralFactorEdge, bool) {
-	if topology == nil || topology.source == nil || !topology.validAccepted(accepted) || !topology.ownsBaseGraph(base) {
+	if topology == nil || base == nil || !topology.OwnsGraph(base) || !topology.validAccepted(accepted) {
 		return nil, false
 	}
 	result := make([]SelectedStructuralFactorEdge, 0)
 	for _, acceptedMember := range accepted {
 		member := acceptedMember.Member()
-		binding, found := topology.binding(member.Binding())
-		if !found || !binding.plan.data.structuralOnly() {
+		if !topology.ownsMember(member) {
 			return nil, false
 		}
-		locator, located := member.Locator()
-		if !located || locator.Application != binding.application {
+		index, found := topology.receiptAt[member.Binding()]
+		if !found || index < 0 || index >= len(topology.receipts) {
 			return nil, false
 		}
-		variant, selected := binding.plan.variant(locator.Target, locator.Endpoint)
-		if !selected {
-			return nil, false
+		receipt := topology.receipts[index]
+		if !receipt.direct.Available() {
+			// Materialized candidates already belong to the base graph.
+			continue
 		}
-		template, bound := variant.template.bindPrototype(binding.ports, binding.ambient)
-		if !bound || !structuralFactorOnlyTemplate(template) {
-			return nil, false
-		}
-		namespace, namespaced := memberNamespace(member)
-		alpha, alphaBound := template.decisionAlpha(binding.key, namespace)
-		if !namespaced || !alphaBound || len(template.instances) != 0 {
-			return nil, false
-		}
-		for _, row := range template.value.FactorEdges {
-			edge, ok := materializeSelectedStructuralFactorEdge(topology.source, base, template, binding.key, namespace, alpha, acceptedMember.Premise(), template.key, row)
-			if !ok {
+		for transportIndex := 0; transportIndex < receipt.direct.TransportCount(); transportIndex++ {
+			transport, transportOK := receipt.direct.TransportAt(transportIndex)
+			if !transportOK {
+				return nil, false
+			}
+			edge, edgeOK := topology.selectedDirectActivationEdge(base, receipt, acceptedMember.Premise(), transport)
+			if !edgeOK {
 				return nil, false
 			}
 			result = append(result, edge)
@@ -82,150 +72,181 @@ func (topology *Topology) SelectedStructuralFactorEdges(base *Graph, accepted []
 	return result, true
 }
 
-// ownsBaseGraph rejects a selected Graph before edge materialization. The
-// graph's private storage cannot be assembled outside this package; exact
-// endpoint ownership is then proven by selectedStructuralBasePoint's direct
-// base.pointAt lookup for each requested external Site or sealed Port. This
-// avoids rebuilding a Point map or scanning every base Point per frontier.
-func (topology *Topology) ownsBaseGraph(graph *Graph) bool {
-	if topology == nil || graph == nil || topology.source == nil || topology.base.Batch == nil || !topology.base.Batch.Sealed() ||
-		!graph.OwnsComposition(topology.source) || graph.PointCount() != len(topology.base.Points) ||
-		graph.GroupCount() != len(topology.base.Groups) || graph.QueryCount() != len(topology.base.Queries) ||
-		graph.EnvironmentEdgeTotal() != len(topology.base.EnvironmentEdges) || graph.FactorEdgeTotal() != len(topology.base.FactorEdges) ||
-		len(graph.points) != len(graph.pointAt) {
-		return false
+// ActivationGraphOverlay derives the exact recurrence certificate for a
+// prepared direct-activation delta. It shares the sealed points/groups and
+// cold metadata, while appending only the newly admitted Factor edges and
+// rebuilding the compact WTO/region rows from the already prepared schedule.
+// It is deliberately not an accepted Graph oracle: callers must supply the
+// exact selected edge delta and schedule proven by the runtime overlay.
+func (graph *Graph) ActivationGraphOverlay(execution *schedule.Schedule, additions []SelectedStructuralFactorEdge) (*Graph, bool) {
+	if graph == nil || !graph.valid() || execution == nil || execution.NodeCount() != len(graph.points) {
+		return nil, false
 	}
-	return true
+	view := *graph
+	view.self = &view
+	view.payload = graph
+	view.schedule = execution
+	view.factorEdges = append([]FactorEdgeNode(nil), graph.factorEdges...)
+	view.factorIncoming = cloneIntRows(graph.factorIncoming)
+	view.factorOutgoing = cloneIntRows(graph.factorOutgoing)
+	existing := make(map[composition.Key]struct{}, len(view.factorEdges)+len(additions))
+	for _, edge := range view.factorEdges {
+		if !edge.key.Available() {
+			return nil, false
+		}
+		existing[edge.key] = struct{}{}
+	}
+	for _, selected := range additions {
+		if !selected.Available() || !graph.OwnsPoint(selected.source) || !graph.OwnsPoint(selected.target) || selected.input.Point().Key() != selected.source.Key() {
+			return nil, false
+		}
+		if _, duplicate := existing[selected.key]; duplicate {
+			return nil, false
+		}
+		source, sourceOK := graph.PointIndex(selected.source)
+		target, targetOK := graph.PointIndex(selected.target)
+		if !sourceOK || !targetOK || source < 0 || source >= len(view.factorOutgoing) || target < 0 || target >= len(view.factorIncoming) {
+			return nil, false
+		}
+		index := len(view.factorEdges)
+		view.factorEdges = append(view.factorEdges, FactorEdgeNode{graph: &view, key: selected.key, target: selected.target, input: selected.input, factor: selected.factor})
+		view.factorOutgoing[source] = append(view.factorOutgoing[source], index)
+		view.factorIncoming[target] = append(view.factorIncoming[target], index)
+		existing[selected.key] = struct{}{}
+	}
+	view.eventNodes = make([]int, execution.EventCount()+1)
+	view.eventPoints = make([]schedule.Node, 0, len(view.points))
+	view.pointOrder = make([]int, len(view.points))
+	view.pointRegion = make([]int, len(view.points))
+	for index := range view.pointOrder {
+		view.pointOrder[index] = -1
+		view.pointRegion[index] = schedule.NoRegion
+	}
+	for index := 0; index < execution.EventCount(); index++ {
+		event, eventOK := execution.EventAt(index)
+		if !eventOK || event.Node < 0 || int(event.Node) >= len(view.points) {
+			return nil, false
+		}
+		view.eventNodes[index+1] = view.eventNodes[index]
+		if event.Kind == schedule.EventNode {
+			if view.pointOrder[event.Node] != -1 || event.Region < schedule.NoRegion || event.Region >= execution.RegionCount() {
+				return nil, false
+			}
+			view.pointOrder[event.Node] = len(view.eventPoints)
+			view.pointRegion[event.Node] = event.Region
+			view.eventPoints = append(view.eventPoints, event.Node)
+			view.eventNodes[index+1]++
+		}
+	}
+	if len(view.eventPoints) != len(view.points) {
+		return nil, false
+	}
+	for _, order := range view.pointOrder {
+		if order < 0 || order >= len(view.eventPoints) {
+			return nil, false
+		}
+	}
+	view.regionNodes = make([]int, execution.RegionCount())
+	for index := range view.regionNodes {
+		region, regionOK := execution.RegionAt(index)
+		if !regionOK || region.Enter < 0 || region.Exit < region.Enter || region.Exit >= execution.EventCount() {
+			return nil, false
+		}
+		view.regionNodes[index] = view.eventNodes[region.Exit+1] - view.eventNodes[region.Enter]
+		if view.regionNodes[index] == 0 {
+			return nil, false
+		}
+	}
+	view.regions = nil
+	view.regionInterfaces = nil
+	view.regionFaces = nil
+	view.regionExternal = nil
+	view.regionBack = nil
+	view.regionInternal = nil
+	view.regionEnvironmentExternal = nil
+	view.regionEnvironmentBack = nil
+	view.regionFactorExternal = nil
+	view.regionFactorBack = nil
+	view.regionFactorInternal = nil
+	view.regionFactors = nil
+	if !view.deriveRegions() {
+		return nil, false
+	}
+	return &view, true
 }
 
-func structuralFactorOnlyTemplate(template sealedTemplate) bool {
-	return template.source != nil && template.batch != nil && template.batch.Sealed() && template.key.Available() &&
-		len(template.instances) == 0 && len(template.points) == 0 && len(template.value.Rules) == 0 &&
-		len(template.value.Points) == 0 && len(template.value.Groups) == 0 && len(template.value.FactorEdges) != 0 &&
-		len(template.value.Summaries) == 0 && len(template.value.WeakTargets) == 0
+func cloneIntRows(rows [][]int) [][]int {
+	result := make([][]int, len(rows))
+	for index, row := range rows {
+		result[index] = append([]int(nil), row...)
+	}
+	return result
 }
 
-// materializeSelectedStructuralFactorEdge is the structural-only lowering of
-// sealedTemplate.appendMember. It deliberately binds the immutable template
-// rows directly: no disposable TopologySpec, no appendMember path, and no
-// linear resolveExternalPoint scan appear on the selected hot path.
-func materializeSelectedStructuralFactorEdge(source *composition.Composition, base *Graph, template sealedTemplate, binding, namespace composition.Key, alpha decisionAlpha, premise Expr, provenanceRow composition.Key, row FragmentFactorEdge) (SelectedStructuralFactorEdge, bool) {
-	if source == nil || base == nil || !template.ambient.Available() || !binding.Available() || !namespace.Available() || alpha == nil || !premise.Available() || !provenanceRow.Available() || !row.Factor.Available() {
+func (topology *Topology) selectedDirectActivationEdge(base *Graph, receipt activationReceipt, premise Expr, transport DirectActivationTransport) (SelectedStructuralFactorEdge, bool) {
+	if topology == nil || base == nil || !premise.Available() || !receipt.key.Available() || !transport.Factor.Available() || transport.Source == 0 || transport.Target == 0 {
 		return SelectedStructuralFactorEdge{}, false
 	}
-	if _, known := source.FactorIndex(row.Factor); !known {
+	if _, known := topology.source.FactorIndex(transport.Factor); !known {
 		return SelectedStructuralFactorEdge{}, false
 	}
-	resolvedSource, sourceOK := selectedStructuralSourcePoint(base, template, row)
-	resolvedTarget, targetOK := selectedStructuralTargetPoint(base, template, row)
+	source, sourceOK := topology.directCandidatePoint(base, transport.Source)
+	target, targetOK := topology.directCandidatePoint(base, transport.Target)
 	if !sourceOK || !targetOK {
 		return SelectedStructuralFactorEdge{}, false
 	}
-	reindex, reindexed := boundReindex(row.Reindex, resolvedSource.resolved, resolvedTarget.resolved, template.ambient, alpha)
+	maps := make([]DecisionMap, len(source.Scope().row.decisions))
+	for index, decision := range source.Scope().row.decisions {
+		if target.Scope().contains(decision) {
+			maps[index] = Identity(decision)
+		} else {
+			maps[index] = Forget(decision)
+		}
+	}
+	reindex, reindexed := NewReindex(source.Scope(), target.Scope(), maps)
 	if !reindexed {
 		return SelectedStructuralFactorEdge{}, false
 	}
-	pre, post := row.Pre, row.Post
-	if resolvedSource.resolved.local {
-		var bound bool
-		pre, bound = boundExpr(pre, alpha)
-		if !bound {
-			return SelectedStructuralFactorEdge{}, false
-		}
-	}
-	if resolvedTarget.resolved.local {
-		var bound bool
-		post, bound = boundExpr(post, alpha)
-		if !bound {
-			return SelectedStructuralFactorEdge{}, false
-		}
-	}
-	// This is the same attachment law as sealedTemplate.appendMember: premise
-	// evidence belongs at the endpoint whose exact scope owns it.
-	var attached bool
-	if validScopedExpr(premise, resolvedSource.resolved.scope) {
+	pre, post := TrueExpr(), TrueExpr()
+	if validScopedExpr(premise, source.Scope()) {
+		var attached bool
 		pre, attached = AndExpr(premise, pre)
-	} else if validScopedExpr(premise, resolvedTarget.resolved.scope) {
+		if !attached {
+			return SelectedStructuralFactorEdge{}, false
+		}
+	} else if validScopedExpr(premise, target.Scope()) {
+		var attached bool
 		post, attached = AndExpr(premise, post)
-	}
-	if !attached {
+		if !attached {
+			return SelectedStructuralFactorEdge{}, false
+		}
+	} else {
 		return SelectedStructuralFactorEdge{}, false
 	}
-	provenance, provenanced := boundProvenance(row.Provenance, binding, namespace, provenanceRow)
-	if !provenanced {
-		return SelectedStructuralFactorEdge{}, false
-	}
-	input := BoundaryInput(resolvedSource.resolved.site, resolvedTarget.resolved.site, provenance, pre, reindex, post)
+	input := BoundaryInput(source.Site(), target.Site(), receipt.key, pre, reindex, post)
 	if !input.Available() {
 		return SelectedStructuralFactorEdge{}, false
 	}
+	input.point = source
 	key, keyed := identityKey("analysis/engine/equation/factor-edge", func(writer *canonical.DigestWriter) bool {
-		return writeKey(writer, input.Key()) && writePoint(writer, resolvedTarget.point) && writeKey(writer, row.Factor)
+		return writeKey(writer, input.Key()) && writePoint(writer, target) && writeKey(writer, transport.Factor)
 	})
-	if !keyed || !key.Available() {
+	if !keyed {
 		return SelectedStructuralFactorEdge{}, false
 	}
-	input.point = resolvedSource.point
-	return SelectedStructuralFactorEdge{key: key, source: resolvedSource.point, target: resolvedTarget.point, input: input, factor: row.Factor}, true
+	return SelectedStructuralFactorEdge{key: key, source: source, target: target, input: input, factor: transport.Factor}, true
 }
 
-type selectedStructuralResolvedPoint struct {
-	point    Point
-	resolved templateResolvedPoint
-}
-
-func selectedStructuralSourcePoint(base *Graph, template sealedTemplate, edge FragmentFactorEdge) (selectedStructuralResolvedPoint, bool) {
-	if edge.ExternalSource.Available() {
-		return selectedStructuralExternalPoint(base, edge.ExternalSource)
+func (topology *Topology) directCandidatePoint(base *Graph, ref PointRef) (Point, bool) {
+	index := int(uint64(ref)) - 1
+	if topology == nil || base == nil || index < 0 || index >= len(topology.rows.points) {
+		return Point{}, false
 	}
-	return selectedStructuralPortPoint(base, template, edge.Source, PortImport)
-}
-
-func selectedStructuralTargetPoint(base *Graph, template sealedTemplate, edge FragmentFactorEdge) (selectedStructuralResolvedPoint, bool) {
-	if edge.ExternalTarget.Available() {
-		return selectedStructuralExternalPoint(base, edge.ExternalTarget)
-	}
-	return selectedStructuralPortPoint(base, template, edge.Target, PortExport)
-}
-
-func selectedStructuralExternalPoint(base *Graph, site Site) (selectedStructuralResolvedPoint, bool) {
-	expected, issued := derivePoint(site)
-	point, ref, found := selectedStructuralBasePoint(base, expected)
-	if !issued || !found || !point.Site().Same(site) || !sameScope(point.Scope(), site.Scope()) {
-		return selectedStructuralResolvedPoint{}, false
-	}
-	return selectedStructuralResolvedPoint{point: point, resolved: templateResolvedPoint{ref: ref, site: point.Site(), scope: point.Scope(), rawScope: point.Scope()}}, true
-}
-
-func selectedStructuralPortPoint(base *Graph, template sealedTemplate, value FragmentPoint, required PortMode) (selectedStructuralResolvedPoint, bool) {
-	if value.Local != 0 || !value.Port.Available() {
-		return selectedStructuralResolvedPoint{}, false
-	}
-	port, found := template.ports[value.Port]
-	if !found || required == PortImport && !port.mode.imports() || required == PortExport && !port.mode.exports() || port.base == 0 || !port.point.Available() || !template.ambient.Available() || !sameScope(port.point.Scope(), template.ambient) {
-		return selectedStructuralResolvedPoint{}, false
-	}
-	point, ref, owned := selectedStructuralBasePoint(base, port.point)
-	if !owned || !point.Site().Same(port.point.Site()) || !sameScope(point.Scope(), port.point.Scope()) {
-		return selectedStructuralResolvedPoint{}, false
-	}
-	return selectedStructuralResolvedPoint{point: point, resolved: templateResolvedPoint{ref: ref, site: point.Site(), scope: template.ambient, rawScope: EmptyScope()}}, true
-}
-
-// selectedStructuralBasePoint converts a sealed Site/Port Point into the
-// graph-owned capability needed by the runtime. It consults Graph.pointAt
-// directly, so selected materialization never rebuilds an O(P) lookup map.
-func selectedStructuralBasePoint(base *Graph, expected Point) (Point, PointRef, bool) {
-	if base == nil || !base.valid() || !expected.Available() {
-		return Point{}, 0, false
-	}
-	node, found := base.pointAt[expected.key]
+	key := topology.rows.points[index]
+	node, found := base.pointAt[key]
 	if !found || node < 0 || int(node) >= len(base.points) {
-		return Point{}, 0, false
+		return Point{}, false
 	}
 	point := base.points[node]
-	if !base.OwnsPoint(point) || point.key != expected.key || !point.Site().Same(expected.Site()) || !sameScope(point.Scope(), expected.Scope()) {
-		return Point{}, 0, false
-	}
-	return point, PointAt(int(node)), true
+	return point, base.OwnsPoint(point) && point.key == key
 }

@@ -910,13 +910,124 @@ type OutcomeSpec struct {
 
 // EffectSpec is one authored Koka effect occurrence. Each argument vector is
 // checked against Target's ABI after SpecRef resolution. RowArgs carries the
-// target operation's row formal substitution.
+// target operation's row formal substitution. Publication is absent unless an
+// author explicitly declares one; ordinary Koka effects never imply memory
+// publication by name or by their argument shape.
 type EffectSpec struct {
-	Target     SpecRef
-	ValueArgs  []ValueFormal
-	TypeArgs   []TypeFormal
-	ValuesArgs []ValuesVar
-	RowArgs    []RowVar
+	Target      SpecRef
+	ValueArgs   []ValueFormal
+	TypeArgs    []TypeFormal
+	ValuesArgs  []ValuesVar
+	RowArgs     []RowVar
+	Publication *PublicationEffectSpec
+}
+
+// PublicationEffectKind is the closed semantic operation performed by one
+// explicitly authored effect occurrence. It is Target semantic authority, not
+// a Program spelling convention and not a runtime placement conclusion.
+type PublicationEffectKind uint8
+
+const (
+	PublicationEffectInvalid PublicationEffectKind = iota
+	PublicationEffectSendTransfer
+	PublicationEffectReturnEscape
+	PublicationEffectCallbackEscape
+	PublicationEffectFreezeSeal
+	PublicationEffectWriteMutation
+	PublicationEffectCloseRelease
+)
+
+// PublicationDestinationRole selects the optional destination-context formal
+// in the effect target operation. No role means that the event has no
+// statically-authenticated destination context.
+type PublicationDestinationRole uint8
+
+const (
+	PublicationDestinationInvalid PublicationDestinationRole = iota
+	PublicationDestinationNone
+	PublicationDestinationValueFormal
+)
+
+// PublicationEscapeDisposition is the exact escape effect, if any, declared
+// by a publication operation.
+type PublicationEscapeDisposition uint8
+
+const (
+	PublicationEscapeInvalid PublicationEscapeDisposition = iota
+	PublicationEscapeNone
+	PublicationEscapeSendTransfer
+	PublicationEscapeReturn
+	PublicationEscapeCallback
+)
+
+// PublicationMutabilityDisposition is the static mutability transition
+// declared by the target semantic operation. Runtime ownership/COW decisions
+// remain later authenticated conclusions.
+type PublicationMutabilityDisposition uint8
+
+const (
+	PublicationMutabilityInvalid PublicationMutabilityDisposition = iota
+	PublicationMutabilityPreserve
+	PublicationMutabilitySeal
+	PublicationMutabilityWrite
+	PublicationMutabilityCopyOnWrite
+)
+
+// PublicationLifetimeDisposition is the static lifetime transition declared
+// by the target semantic operation.
+type PublicationLifetimeDisposition uint8
+
+const (
+	PublicationLifetimeInvalid PublicationLifetimeDisposition = iota
+	PublicationLifetimePreserve
+	PublicationLifetimeRelease
+)
+
+// PublicationEffectSpec explicitly attaches memory-relevant semantics to one
+// effect occurrence. Subject and Destination are zero-based ValueFormal
+// selectors in the resolved effect target ABI; Destination is meaningful only
+// for PublicationDestinationValueFormal.
+//
+// The exact valid combinations are checked while sealing. A nil Publication
+// remains absent rather than being inferred from generic effect metadata.
+type PublicationEffectSpec struct {
+	Kind        PublicationEffectKind
+	Subject     ValueFormal
+	Destination PublicationDestinationRole
+	Context     ValueFormal
+	Escape      PublicationEscapeDisposition
+	Mutability  PublicationMutabilityDisposition
+	Lifetime    PublicationLifetimeDisposition
+}
+
+// PublicationEffectDescriptor is the immutable Target-owned projection of an
+// explicitly authored PublicationEffectSpec. It can only be obtained from a
+// sealed Contract query; its fields intentionally remain private so callers
+// cannot forge a descriptor to splice into another owner.
+type PublicationEffectDescriptor struct {
+	kind        PublicationEffectKind
+	subject     ValueFormal
+	destination PublicationDestinationRole
+	context     ValueFormal
+	escape      PublicationEscapeDisposition
+	mutability  PublicationMutabilityDisposition
+	lifetime    PublicationLifetimeDisposition
+}
+
+func (d PublicationEffectDescriptor) Kind() PublicationEffectKind { return d.kind }
+func (d PublicationEffectDescriptor) Subject() ValueFormal        { return d.subject }
+func (d PublicationEffectDescriptor) DestinationRole() PublicationDestinationRole {
+	return d.destination
+}
+func (d PublicationEffectDescriptor) Context() ValueFormal { return d.context }
+func (d PublicationEffectDescriptor) Escape() PublicationEscapeDisposition {
+	return d.escape
+}
+func (d PublicationEffectDescriptor) Mutability() PublicationMutabilityDisposition {
+	return d.mutability
+}
+func (d PublicationEffectDescriptor) Lifetime() PublicationLifetimeDisposition {
+	return d.lifetime
 }
 
 // RowSpec is an authored Koka effect row. Multiplicity in Occurrences is
@@ -1223,11 +1334,13 @@ type captureRow struct {
 }
 
 type effectRow struct {
-	target    Operation
-	values    indexRange
-	types     indexRange
-	valuesVar indexRange
-	rows      indexRange
+	target         Operation
+	values         indexRange
+	types          indexRange
+	valuesVar      indexRange
+	rows           indexRange
+	publication    PublicationEffectDescriptor
+	hasPublication bool
 }
 
 type indexRange struct{ start, end uint32 }

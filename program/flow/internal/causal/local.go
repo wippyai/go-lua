@@ -10,7 +10,7 @@ import (
 
 func (s *evalState) addSequence(from, to, owner keyspace.Term) error {
 	fromEndpoint, fromOK := s.finishEndpoint(from)
-	toEndpoint, toOK := s.entryEndpoint(to)
+	toEndpoint, toOK := s.entries.Entry(to)
 	if !fromOK || !toOK {
 		if !fromOK && s.live(from) && !s.static(from) || !toOK && s.live(to) && !s.static(to) {
 			return fmt.Errorf("program/flow/causal: live evaluation endpoint %v -> %v has no typed port", from, to)
@@ -67,8 +67,8 @@ func (s *evalState) addWriteCommit(from, write, owner keyspace.Term) error {
 // Table construction needs this explicitly because Finish(Table) is the last
 // field commit, not the table's first-field evaluation anchor.
 func (s *evalState) addEntry(from, to, owner keyspace.Term) error {
-	fromEndpoint, fromOK := s.entryEndpoint(from)
-	toEndpoint, toOK := s.entryEndpoint(to)
+	fromEndpoint, fromOK := s.entries.Entry(from)
+	toEndpoint, toOK := s.entries.Entry(to)
 	if !fromOK || !toOK {
 		if !fromOK && s.live(from) && !s.static(from) || !toOK && s.live(to) && !s.static(to) {
 			return fmt.Errorf("program/flow/causal: live evaluation entry %v -> %v has no typed port", from, to)
@@ -87,21 +87,21 @@ func (s *evalState) addEntry(from, to, owner keyspace.Term) error {
 // reach that failure.  Valid exact keys (including a runtime UnaryNeg) retain
 // the ordinary key -> Values sequencing.
 func (s *evalState) tableFieldEntry(field keyspace.Term) (keyspace.Term, bool) {
-	_, key, _, fieldKind, ok := s.flow.Fields().Get(field)
+	_, _, _, _, ok := s.flow.Fields().Get(field)
 	if !ok {
 		return 0, false
 	}
-	if fieldKind == kind.FieldExact && !s.exactFieldAvailable(key) {
+	if s.invalidExactField(field) {
 		return field, true
 	}
-	return s.entryEndpoint(field)
+	return s.entries.Entry(field)
 }
 
 func (s *evalState) addTableRoute(from, field, owner keyspace.Term, entry bool) error {
 	var fromEndpoint keyspace.Term
 	var fromOK bool
 	if entry {
-		fromEndpoint, fromOK = s.entryEndpoint(from)
+		fromEndpoint, fromOK = s.entries.Entry(from)
 	} else {
 		fromEndpoint, fromOK = s.finishEndpoint(from)
 	}
@@ -140,7 +140,7 @@ func (s *evalState) addFinish(from, to, owner keyspace.Term) error {
 
 func (s *evalState) addGuard(from, to, owner, decision keyspace.Term, truth bool, arcIndex int) error {
 	fromEndpoint, fromOK := s.finishEndpoint(from)
-	toEndpoint, toOK := s.entryEndpoint(to)
+	toEndpoint, toOK := s.entries.Entry(to)
 	if !fromOK || !toOK {
 		if !fromOK && s.live(from) && !s.static(from) || !toOK && s.live(to) && !s.static(to) {
 			return fmt.Errorf("program/flow/causal: live guarded endpoint %v -> %v has no typed port", from, to)
@@ -175,7 +175,7 @@ func (s *evalState) planCallEntry(call, target keyspace.Term) error {
 	if keyspace.TermFamily(call) != keyspace.FamilyCall || !s.live(call) || s.tailPlans[keyspace.TermOrdinal(call)] != 0 {
 		return nil
 	}
-	to, ok := s.entryEndpoint(target)
+	to, ok := s.entries.Entry(target)
 	if !ok {
 		return fmt.Errorf("program/flow/causal: live Call %v continuation target %v has no Entry port", call, target)
 	}
@@ -197,7 +197,7 @@ func (s *evalState) planCallSelect(call, selectTerm, right keyspace.Term, operat
 	if keyspace.TermFamily(call) != keyspace.FamilyCall || !s.live(call) || s.tailPlans[keyspace.TermOrdinal(call)] != 0 {
 		return nil
 	}
-	other, ok := s.entryEndpoint(right)
+	other, ok := s.entries.Entry(right)
 	if !ok {
 		if s.static(right) || !s.live(right) {
 			// A static/dead right operand contributes no runtime endpoint. Both
@@ -666,7 +666,7 @@ func (s *evalState) emitTables() error {
 		if !s.live(field) {
 			continue
 		}
-		table, key, values, fieldKind, ok := fields.Get(field)
+		table, key, values, _, ok := fields.Get(field)
 		if !ok {
 			return errors.New("program/flow/causal: malformed TableField")
 		}
@@ -674,7 +674,7 @@ func (s *evalState) emitTables() error {
 		if !ownerOK || keyspace.TermFamily(owner) != keyspace.FamilyBody {
 			return errors.New("program/flow/causal: TableField owner is unavailable")
 		}
-		keyUsable := fieldKind == kind.FieldKey || (fieldKind == kind.FieldExact && s.exactFieldAvailable(key))
+		keyUsable := !s.invalidExactField(field)
 		if keyUsable && s.live(key) {
 			if err := s.planCallEntry(key, values); err != nil {
 				return err

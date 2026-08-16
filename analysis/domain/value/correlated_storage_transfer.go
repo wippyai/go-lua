@@ -4,9 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 
-	"github.com/wippyai/go-lua/program"
+	programartifact "github.com/wippyai/go-lua/analysis/internal/programartifact"
 	"github.com/wippyai/go-lua/program/keyspace"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
 )
 
 // storageTransferKind is the closed Program occurrence family whose fixed
@@ -25,29 +24,28 @@ func (kind storageTransferKind) valid() bool {
 	return kind >= storageTransferRead && kind <= storageTransferWrite
 }
 
-func storageTransferKindFor(term keyspace.Term) (storageTransferKind, bool) {
-	switch keyspace.TermFamily(term) {
-	case keyspace.FamilyRead:
+func storageTransferKindForArtifact(kind programartifact.OccurrenceKind) (storageTransferKind, bool) {
+	switch kind {
+	case programartifact.OccurrenceStorageRead:
 		return storageTransferRead, true
-	case keyspace.FamilyBind:
+	case programartifact.OccurrenceStorageBindTransfer:
 		return storageTransferBind, true
-	case keyspace.FamilyWrite:
+	case programartifact.OccurrenceStorageWrite:
 		return storageTransferWrite, true
 	default:
 		return storageTransferInvalid, false
 	}
 }
 
-// StorageTransferRef is the replay identity of one Value-owned fixed storage
-// relation. The tuple names an existing Program occurrence; it never names a
-// Link scalar row or allocation ordinal.
+// StorageTransferRef is the exact mounted inverse identity of one Value-owned
+// fixed storage relation. The tuple names an existing Program occurrence; it
+// never names a Link scalar row or allocation ordinal.
 type StorageTransferRef struct {
-	linkID       keyspace.ContentID
-	shard        linkproject.Shard
-	shardOrdinal uint32
-	kind         storageTransferKind
-	term         keyspace.Term
-	position     uint32
+	linkID     keyspace.ContentID
+	mount      keyspace.ContentID
+	occurrence keyspace.ContentID
+	kind       storageTransferKind
+	position   uint32
 }
 
 // StorageTransfer is one sealed directed relation from an existing Value
@@ -58,10 +56,19 @@ type StorageTransfer struct {
 }
 
 type storageTransferRow struct {
-	ref  StorageTransferRef
-	id   keyspace.ContentID
-	from Coordinate
-	to   Coordinate
+	ref     StorageTransferRef
+	id      keyspace.ContentID
+	from    Coordinate
+	to      Coordinate
+	ordinal uint32
+}
+
+// storageTransferOccurrenceKey joins a reusable Program occurrence identity
+// to the exact Link mount that issued its Value operand. The mount qualifier
+// is mandatory: one reusable Program may appear in several Link modules.
+type storageTransferOccurrenceKey struct {
+	mount      keyspace.ContentID
+	occurrence keyspace.ContentID
 }
 
 // StorageTransferCount reports Value's complete fixed Read/Bind/Write
@@ -82,89 +89,32 @@ func (schema *Schema) StorageTransferAt(index int) (StorageTransfer, bool) {
 	return transfer, transfer.valid()
 }
 
-// StorageTransferFor returns Value's sole fixed storage relation for one
-// exact Program occurrence. The occurrence tuple is only an inverse into the
-// already-sealed Read/Bind/Write denominator; it creates no compiler-owned
-// row or alternate storage identity.
-func (schema *Schema) StorageTransferFor(shard linkproject.Shard, occurrence keyspace.Term, position int) (StorageTransfer, bool) {
-	if schema == nil || schema.source == nil || shard == (linkproject.Shard{}) || occurrence == 0 || position < 0 || uint64(position) > uint64(^uint32(0)) {
+// StorageTransferForArtifactOccurrence resolves the exact Link-owned
+// transfer operand for one mounted reusable Program occurrence. The mapping
+// is sealed with the Value schema; hot callers never reopen Program or Link
+// topology to reconstruct it.
+func (schema *Schema) StorageTransferForArtifactOccurrence(mount, occurrence keyspace.ContentID) (StorageTransfer, bool) {
+	if schema == nil || !mount.Available() || !occurrence.Available() || schema.storageTransferOccurrences == nil {
 		return StorageTransfer{}, false
 	}
-	kind, kindOK := storageTransferKindFor(occurrence)
-	if !kindOK {
-		return StorageTransfer{}, false
-	}
-	if kind != storageTransferBind && position != 0 {
-		return StorageTransfer{}, false
-	}
-	project := schema.source.Project()
-	if project == nil {
-		return StorageTransfer{}, false
-	}
-	mounts := project.Mounts()
-	shardIndex, shardOK := mounts.Index(shard)
-	if !shardOK || uint64(shardIndex) >= uint64(^uint32(0)) {
-		return StorageTransfer{}, false
-	}
-	canonicalShard, canonicalOK := mounts.At(shardIndex)
-	linkID := schema.source.ContentID()
-	if !canonicalOK || canonicalShard != shard || !linkID.Available() {
-		return StorageTransfer{}, false
-	}
-	if !schema.storageTransferOccurrenceExecutable(shard, kind, occurrence, uint32(position)) {
-		return StorageTransfer{}, false
-	}
-	ref := StorageTransferRef{
-		linkID:       linkID,
-		shard:        shard,
-		shardOrdinal: uint32(shardIndex + 1),
-		kind:         kind,
-		term:         occurrence,
-		position:     uint32(position),
-	}
-	ordinal := schema.storageTransferOrdinals[ref]
+	ordinal := schema.storageTransferOccurrences[storageTransferOccurrenceKey{mount: mount, occurrence: occurrence}]
 	if ordinal == 0 {
 		return StorageTransfer{}, false
 	}
-	// Keep the canonical map ordinal in its native unsigned domain: converting
-	// through int would make this exact inverse architecture-dependent near the
-	// dense uint32 ceiling.
 	transfer := StorageTransfer{schema: schema, index: ordinal - 1}
 	return transfer, transfer.valid()
 }
 
-// FindStorageTransfer rebinds only the canonical occurrence tuple to this
-// schema. Equal-content Links replay through their own Value coordinates;
-// foreign content fails before an ordinal is observed.
+// FindStorageTransfer returns only a receipt issued by this exact Schema.
+// StorageTransferRef retains the exact ModuleKey mount and Program occurrence
+// from sealing, so equal content from another Link cannot replay through this
+// inverse. The sealed ordinal map is the complete warm lookup authority; it
+// never reopens Flow.
 func (schema *Schema) FindStorageTransfer(ref StorageTransferRef) (StorageTransfer, bool) {
-	if schema == nil || schema.source == nil || !ref.valid() || ref.linkID != schema.source.ContentID() {
+	if schema == nil || !ref.valid() || ref.linkID != schema.linkID {
 		return StorageTransfer{}, false
 	}
-	project := schema.source.Project()
-	if project == nil {
-		return StorageTransfer{}, false
-	}
-	mounts := project.Mounts()
-	// Project.Shard is intentionally owner-fenced and therefore cannot be a
-	// replay-map key across independently sealed equal-content Projects.  The
-	// persisted relation uses the canonical mount ordinal; reissue this
-	// schema's exact Shard and match only the semantic tuple.
-	if uint64(ref.shardOrdinal) > uint64(mounts.Count()) {
-		return StorageTransfer{}, false
-	}
-	if localIndex, localOK := mounts.Index(ref.shard); localOK && uint64(localIndex)+1 != uint64(ref.shardOrdinal) {
-		return StorageTransfer{}, false
-	}
-	shard, shardOK := mounts.At(int(ref.shardOrdinal - 1))
-	if !shardOK {
-		return StorageTransfer{}, false
-	}
-	if !schema.storageTransferOccurrenceExecutable(shard, ref.kind, ref.term, ref.position) {
-		return StorageTransfer{}, false
-	}
-	localRef := ref
-	localRef.shard = shard
-	ordinal := schema.storageTransferOrdinals[localRef]
+	ordinal := schema.storageTransferOrdinals[ref]
 	if ordinal == 0 {
 		return StorageTransfer{}, false
 	}
@@ -173,40 +123,25 @@ func (schema *Schema) FindStorageTransfer(ref StorageTransferRef) (StorageTransf
 }
 
 func (ref StorageTransferRef) valid() bool {
-	if !ref.linkID.Available() || ref.shard == (linkproject.Shard{}) || ref.shardOrdinal == 0 || ref.term == 0 || !ref.kind.valid() {
+	if !ref.linkID.Available() || !ref.mount.Available() || !ref.occurrence.Available() || !ref.kind.valid() {
 		return false
 	}
-	switch ref.kind {
-	case storageTransferRead:
-		return keyspace.TermFamily(ref.term) == keyspace.FamilyRead && ref.position == 0
-	case storageTransferBind:
-		return keyspace.TermFamily(ref.term) == keyspace.FamilyBind
-	case storageTransferWrite:
-		return keyspace.TermFamily(ref.term) == keyspace.FamilyWrite && ref.position == 0
-	default:
-		return false
-	}
+	return ref.kind == storageTransferBind || ref.position == 0
 }
 
 func (transfer StorageTransfer) valid() bool {
-	if transfer.schema == nil || transfer.schema.source == nil || transfer.schema.storageTransferOrdinals == nil || uint64(transfer.index) >= uint64(len(transfer.schema.storageTransfers)) {
+	if transfer.schema == nil || uint64(transfer.index) >= uint64(len(transfer.schema.storageTransfers)) {
 		return false
 	}
 	row := transfer.schema.storageTransfers[transfer.index]
 	if !row.ref.valid() || !row.id.Available() || !row.from.Valid() || !row.to.Valid() {
 		return false
 	}
-	project := transfer.schema.source.Project()
-	if project == nil {
-		return false
-	}
-	shardIndex, shardOK := project.Mounts().Index(row.ref.shard)
-	if !shardOK || uint64(shardIndex)+1 != uint64(row.ref.shardOrdinal) ||
-		!transfer.schema.storageTransferOccurrenceExecutable(row.ref.shard, row.ref.kind, row.ref.term, row.ref.position) {
-		return false
-	}
-	ordinal := transfer.schema.storageTransferOrdinals[row.ref]
-	return uint64(ordinal) == uint64(transfer.index)+1 && row.ref.linkID == transfer.schema.source.ContentID()
+	// Program/Flow occurrence geometry is authenticated once by
+	// addStorageTransfer while the Schema is sealing. A published handle is
+	// thereafter the exact (Schema pointer, dense row) receipt; hot rule paths
+	// must not reopen the mounted Program or inverse map to re-prove it.
+	return uint64(row.ordinal) == uint64(transfer.index)+1 && row.ref.linkID == transfer.schema.linkID
 }
 
 // OwnsStorageTransfer is the complete Value owner fence for this operand.
@@ -214,7 +149,7 @@ func (schema *Schema) OwnsStorageTransfer(transfer StorageTransfer) bool {
 	return schema != nil && transfer.schema == schema && transfer.valid()
 }
 
-// Ref returns the sole replay identity for the exact relation.
+// Ref returns the sole exact mounted inverse identity for the relation.
 func (transfer StorageTransfer) Ref() (StorageTransferRef, bool) {
 	if !transfer.valid() {
 		return StorageTransferRef{}, false
@@ -235,12 +170,12 @@ func (transfer StorageTransfer) ID() (keyspace.ContentID, bool) {
 // transfer.  The transfer's Value-coordinate endpoints stay owned by Value,
 // while control routing remains entirely in Flow; no from/to route is copied
 // out of the sealed relation.
-func (transfer StorageTransfer) Occurrence() (linkproject.Shard, keyspace.Term, bool) {
+func (transfer StorageTransfer) Occurrence() (keyspace.ContentID, keyspace.ContentID, bool) {
 	if !transfer.valid() {
-		return linkproject.Shard{}, 0, false
+		return keyspace.ContentID{}, keyspace.ContentID{}, false
 	}
 	ref := transfer.schema.storageTransfers[transfer.index].ref
-	return ref.shard, ref.term, true
+	return ref.mount, ref.occurrence, true
 }
 
 // Endpoints returns Value's exact pre-existing source and destination
@@ -253,221 +188,102 @@ func (transfer StorageTransfer) Endpoints() (from, to Coordinate, ok bool) {
 	return row.from, row.to, true
 }
 
-// storageTransferOccurrenceExecutable authenticates the tuple against the
-// immutable Program source before the ordinal map is observed. The sealed map
-// remains the only relation index; these constant-time checks merely reject a
-// malformed, dead, or width-inconsistent occurrence supplied by a caller (or
-// left behind by a forged in-package row).
-func (schema *Schema) storageTransferOccurrenceExecutable(shard linkproject.Shard, kind storageTransferKind, occurrence keyspace.Term, position uint32) bool {
-	if schema == nil || schema.source == nil || !kind.valid() || occurrence == 0 {
-		return false
+func (schema *valueBuilder) sealStorageTransfersWithFailure() SealFailure {
+	if schema == nil || schema.sealProject() == nil || schema.storageTransfers != nil || schema.storageTransferOrdinals == nil || schema.storageTransferOccurrences == nil || schema.artifacts == nil {
+		return SealFailureStorageTransferInput
 	}
-	project := schema.source.Project()
-	if project == nil {
-		return false
-	}
-	p, ok := project.Mounts().Program(shard)
-	if !ok || p == nil || !p.Flow().Executable().Contains(occurrence) {
-		return false
-	}
-	storage := p.Flow().Authored().Storage()
-	cells := storage.Cells()
-	switch kind {
-	case storageTransferRead:
-		if keyspace.TermFamily(occurrence) != keyspace.FamilyRead || position != 0 {
-			return false
+	for index := 0; index < schema.sealProject().Mounts().Count(); index++ {
+		shard, shardOK := schema.sealProject().Mounts().At(index)
+		module, moduleOK := schema.sealProject().ModuleKey(shard)
+		mount, mountOK := schema.artifacts[module]
+		if !shardOK || !moduleOK || !mountOK || !mount.Available() {
+			return SealFailureStorageTransferMount
 		}
-		_, cell, _, related := storage.Reads().Get(occurrence)
-		if !related {
-			return false
-		}
-		_, _, _, storageCell := cells.Get(cell)
-		return storageCell
-	case storageTransferBind:
-		if keyspace.TermFamily(occurrence) != keyspace.FamilyBind {
-			return false
-		}
-		owner, valuePack, related := storage.Binds().Get(occurrence)
-		if !related || keyspace.TermFamily(owner) != keyspace.FamilyBody || keyspace.TermOrdinal(owner) == 0 ||
-			keyspace.TermFamily(valuePack) != keyspace.FamilyValues || keyspace.TermOrdinal(valuePack) == 0 {
-			return false
-		}
-		width, sized := p.Source().Binds().Len(occurrence)
-		if !sized || uint64(position) >= uint64(width) {
-			return false
-		}
-		cell, bound := p.Source().Binds().At(occurrence, int(position))
-		_, fixed := p.Flow().Authored().Values().Member(valuePack, int(position))
-		if !bound || !fixed {
-			return false
-		}
-		_, _, _, storageCell := cells.Get(cell)
-		return storageCell
-	case storageTransferWrite:
-		if keyspace.TermFamily(occurrence) != keyspace.FamilyWrite || position != 0 {
-			return false
-		}
-		assign, target, related := storage.Writes().Get(occurrence)
-		if !related || !p.Flow().Executable().Contains(assign) {
-			return false
-		}
-		_, _, _, storageCell := cells.Get(target)
-		return storageCell
-	default:
-		return false
-	}
-}
-
-func (schema *Schema) sealStorageTransfers() bool {
-	if schema == nil || schema.source == nil || schema.storageTransfers != nil || schema.storageTransferOrdinals == nil {
-		return false
-	}
-	for index := 0; index < schema.source.Project().Mounts().Count(); index++ {
-		shard, shardOK := schema.source.Project().Mounts().At(index)
-		p, programOK := schema.source.Project().Mounts().Program(shard)
-		if !shardOK || !programOK || p == nil || !schema.sealReadTransfers(shard, p) || !schema.sealBindTransfers(shard, p) || !schema.sealWriteTransfers(shard, p) {
-			return false
-		}
-	}
-	return true
-}
-
-func (schema *Schema) sealReadTransfers(shard linkproject.Shard, p *program.Program) bool {
-	reads := p.Flow().Authored().Storage().Reads()
-	cells := p.Flow().Authored().Storage().Cells()
-	for index := 0; index < reads.Count(); index++ {
-		read, present := reads.At(index)
-		_, cell, _, related := reads.Get(read)
-		if !present || !related {
-			return false
-		}
-		if !p.Flow().Executable().Contains(read) {
-			continue
-		}
-		if _, _, _, storage := cells.Get(cell); !storage {
-			continue
-		}
-		if !schema.addStorageTransfer(shard, storageTransferRead, read, 0, cell, read) {
-			return false
-		}
-	}
-	return true
-}
-
-func (schema *Schema) sealBindTransfers(shard linkproject.Shard, p *program.Program) bool {
-	storage := p.Flow().Authored().Storage()
-	binds := storage.Binds()
-	values := p.Flow().Authored().Values()
-	cells := storage.Cells()
-	bindCells := p.Source().Binds()
-	for index := 0; index < binds.Count(); index++ {
-		bind, present := binds.At(index)
-		owner, valuePack, related := binds.Get(bind)
-		width, sized := bindCells.Len(bind)
-		if !present || !related || !sized || keyspace.TermFamily(owner) != keyspace.FamilyBody || keyspace.TermOrdinal(owner) == 0 {
-			return false
-		}
-		if !p.Flow().Executable().Contains(bind) {
-			continue
-		}
-		for position := 0; position < width; position++ {
-			cell, bound := bindCells.At(bind, position)
-			value, fixed := values.Member(valuePack, position)
-			if !bound {
-				return false
-			}
-			if _, _, _, storage := cells.Get(cell); !storage {
+		artifact := mount.Artifact()
+		for rowIndex := 0; rowIndex < artifact.OccurrenceCount(); rowIndex++ {
+			row, rowOK := artifact.OccurrenceAt(rowIndex)
+			kind, kindOK := storageTransferKindForArtifact(row.Kind())
+			if !rowOK || !kindOK {
 				continue
 			}
-			if !fixed {
-				continue
+			position := uint32(row.Code())
+			if kind != storageTransferBind && position != 0 {
+				return SealFailureStorageTransferAddInput
 			}
-			if !schema.addStorageTransfer(shard, storageTransferBind, bind, uint32(position), value, cell) {
-				return false
+			var fromID, toID keyspace.ContentID
+			switch kind {
+			case storageTransferRead:
+				fromID, _ = row.InputAt(0)
+				toID = row.ID()
+			case storageTransferBind, storageTransferWrite:
+				_, _ = row.InputAt(0)
+				fromID, _ = row.InputAt(1)
+				toID, _ = row.InputAt(2)
+			}
+			if failure := schema.addArtifactStorageTransfer(module, kind, row.ID(), position, fromID, toID); failure != SealFailureNone {
+				return failure
 			}
 		}
 	}
-	return true
+	return SealFailureNone
 }
 
-func (schema *Schema) sealWriteTransfers(shard linkproject.Shard, p *program.Program) bool {
-	storage := p.Flow().Authored().Storage()
-	writes := storage.Writes()
-	assigns := storage.Assigns()
-	valuePacks := p.Flow().Authored().Values()
-	cells := storage.Cells()
-	seenWrites := 0
-	for index := 0; index < assigns.Count(); index++ {
-		assign, present := assigns.At(index)
-		owner, valuePack, assignOK := assigns.Get(assign)
-		count, countOK := assigns.WriteCount(assign)
-		expectedAssign := keyspace.MakeTerm(keyspace.FamilyAssign, uint32(index+1))
-		if !present || assign != expectedAssign || !assignOK || !countOK || count <= 0 ||
-			keyspace.TermFamily(owner) != keyspace.FamilyBody || keyspace.TermOrdinal(owner) == 0 ||
-			keyspace.TermFamily(valuePack) != keyspace.FamilyValues || keyspace.TermOrdinal(valuePack) == 0 {
-			return false
-		}
-		executable := p.Flow().Executable().Contains(assign)
-		for position := 0; position < count; position++ {
-			write, writeOK := assigns.WriteAt(assign, position)
-			expectedWrite, expectedWriteOK := writes.At(seenWrites)
-			writeAssign, cell, related := writes.Get(write)
-			if !writeOK || !expectedWriteOK || write != expectedWrite || !related || writeAssign != assign {
-				return false
-			}
-			seenWrites++
-			if !executable {
-				continue
-			}
-			if _, _, _, storage := cells.Get(cell); !storage {
-				continue
-			}
-			value, fixed := valuePacks.Member(valuePack, position)
-			if !fixed {
-				continue
-			}
-			if !schema.addStorageTransfer(shard, storageTransferWrite, write, 0, value, cell) {
-				return false
-			}
-		}
+func (schema *valueBuilder) addArtifactStorageTransfer(module keyspace.ContentID, kind storageTransferKind, occurrence keyspace.ContentID, position uint32, fromID, toID keyspace.ContentID) SealFailure {
+	if schema == nil || schema.sealProject() == nil || schema.storageTransferOrdinals == nil || schema.storageTransferOccurrences == nil || !module.Available() || !kind.valid() || !occurrence.Available() || !fromID.Available() || !toID.Available() {
+		return SealFailureStorageTransferAddInput
 	}
-	if seenWrites != writes.Count() {
-		return false
+	fromValue, fromValueOK := schema.sealBoundary().Values().ForMountedSemantic(module, fromID)
+	toValue, toValueOK := schema.sealBoundary().Values().ForMountedSemantic(module, toID)
+	if !fromValueOK {
+		return SealFailureStorageTransferAddFromValue
 	}
-	return true
-}
-
-func (schema *Schema) addStorageTransfer(shard linkproject.Shard, kind storageTransferKind, term keyspace.Term, position uint32, fromTerm, toTerm keyspace.Term) bool {
-	if schema == nil || schema.source == nil || schema.storageTransferOrdinals == nil || shard == (linkproject.Shard{}) || !kind.valid() || term == 0 || fromTerm == 0 || toTerm == 0 {
-		return false
+	if !toValueOK {
+		return SealFailureStorageTransferAddToValue
 	}
-	fromValue, fromValueOK := schema.source.Boundary().Values().Of(shard, fromTerm)
-	toValue, toValueOK := schema.source.Boundary().Values().Of(shard, toTerm)
-	from, fromOK := schema.CoordinateFor(fromValue)
-	to, toOK := schema.CoordinateFor(toValue)
-	shardIndex, shardOK := schema.source.Project().Mounts().Index(shard)
-	ref := StorageTransferRef{linkID: schema.source.ContentID(), shard: shard, shardOrdinal: uint32(shardIndex + 1), kind: kind, term: term, position: position}
+	from, fromOK := schema.coordinateForCold(fromValue)
+	to, toOK := schema.coordinateForCold(toValue)
+	if !fromOK {
+		return SealFailureStorageTransferAddFromCoordinate
+	}
+	if !toOK {
+		return SealFailureStorageTransferAddToCoordinate
+	}
+	ref := StorageTransferRef{linkID: schema.linkID, mount: module, occurrence: occurrence, kind: kind, position: position}
+	if !ref.valid() {
+		return SealFailureStorageTransferAddRef
+	}
 	id := storageTransferIdentity(ref)
-	if !shardOK || !fromValueOK || !toValueOK || !fromOK || !toOK || !ref.valid() || !id.Available() || !schema.storageTransferOccurrenceExecutable(shard, kind, term, position) || schema.storageTransferOrdinals[ref] != 0 || uint64(len(schema.storageTransfers)) >= uint64(^uint32(0)) {
-		return false
+	if !id.Available() {
+		return SealFailureStorageTransferAddIdentity
 	}
-	schema.storageTransfers = append(schema.storageTransfers, storageTransferRow{ref: ref, id: id, from: from, to: to})
+	key := storageTransferOccurrenceKey{mount: module, occurrence: occurrence}
+	if schema.storageTransferOrdinals[ref] != 0 {
+		return SealFailureStorageTransferAddDuplicateRef
+	}
+	if schema.storageTransferOccurrences[key] != 0 {
+		return SealFailureStorageTransferAddDuplicateOccurrence
+	}
+	if uint64(len(schema.storageTransfers)) >= uint64(^uint32(0)) {
+		return SealFailureStorageTransferAddCapacity
+	}
+	schema.storageTransfers = append(schema.storageTransfers, storageTransferRow{ref: ref, id: id, from: from, to: to, ordinal: uint32(len(schema.storageTransfers) + 1)})
 	schema.storageTransferOrdinals[ref] = uint32(len(schema.storageTransfers))
-	return true
+	schema.storageTransferOccurrences[key] = uint32(len(schema.storageTransfers))
+	return SealFailureNone
 }
 
 func storageTransferIdentity(ref StorageTransferRef) keyspace.ContentID {
 	if !ref.valid() {
 		return keyspace.ContentID{}
 	}
-	var payload [32 + 6*8]byte
+	var payload [32 + 12*8]byte
 	copy(payload[:32], ref.linkID[:])
 	words := payload[32:]
 	binary.BigEndian.PutUint64(words[0:8], 0x76616c2d73746f72) // "val-stor"
 	binary.BigEndian.PutUint64(words[8:16], 1)
-	binary.BigEndian.PutUint64(words[16:24], uint64(ref.shardOrdinal))
-	binary.BigEndian.PutUint64(words[24:32], uint64(ref.kind))
-	binary.BigEndian.PutUint64(words[32:40], uint64(ref.term))
-	binary.BigEndian.PutUint64(words[40:48], uint64(ref.position))
+	binary.BigEndian.PutUint64(words[16:24], uint64(ref.kind))
+	binary.BigEndian.PutUint64(words[24:32], uint64(ref.position))
+	copy(words[32:64], ref.mount[:])
+	copy(words[64:96], ref.occurrence[:])
 	return sha256.Sum256(payload[:])
 }

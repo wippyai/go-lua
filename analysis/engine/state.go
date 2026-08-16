@@ -7,9 +7,10 @@ import "github.com/wippyai/go-lua/analysis/engine/internal/composition"
 // must not become a continuation route. A State is valid only for the exact
 // Solver revision that published it.
 type State struct {
-	owner      *Solver
-	completion *completionAuthority
-	results    []*queryResult
+	owner        *Solver
+	completion   *completionAuthority
+	results      []*queryResult
+	observations []*observationResult
 }
 
 // completionAuthority is an unforgeable, immutable terminal token. The
@@ -21,31 +22,50 @@ type completionAuthority struct {
 	revision uint64
 }
 
-// QueryResult returns an independent clone for one exact opaque QueryReceipt.
-// The receipt fences the issuing Assembly, Solver, revision, family
-// authority, canonical equation instance key, and dense runtime result slot.
-// No family-only lookup exists: callers must retain the one receipt issued for
-// each concrete QueryInstance.
-func QueryResult[R any](receipt QueryReceipt[R], state *State) (R, bool) {
+// ReceiptQueryResult reads a receipt-native query attached to the common
+// solver runtime. The graph identity, owner proof, result slot, and solver
+// revision are all revalidated; no family or semantic lookup is performed.
+func ReceiptQueryResult[R any](query ReceiptQuery, solver *Solver, state *State) (R, bool) {
 	var zero R
-	value := receipt.value
-	query := receipt.query
-	if query == nil || !receipt.Available() || !validQueryReceipt(value) || state == nil || state.owner == nil || state.owner != value.solver || !state.owner.ownsCompletedState(state) || state.completion == nil || state.completion.revision != state.owner.revision {
+	if query.graph == nil || !query.graph.valid() || solver == nil || solver.runtime == nil || state == nil || state.owner != solver || !solver.ownsCompletedState(state) || solver.runtime.graph == nil || !solver.runtime.graph.OwnsQuery(query.identity) {
 		return zero, false
 	}
-	authority := sealedQueryAuthority(query)
-	if authority == nil || value.authority != authority {
+	for index, runtimeQuery := range solver.runtime.queries {
+		if runtimeQuery == nil || runtimeQuery.query().Key() != query.identity.Key() {
+			continue
+		}
+		owner := runtimeQuery.queryOwner()
+		result, ok := state.result(index, owner, query.identity.Key())
+		if !ok || result.value == nil {
+			return zero, false
+		}
+		typed, ok := result.value.(*typedFrozenValue[R])
+		if !ok || typed == nil {
+			return zero, false
+		}
+		return typed.freeze.Clone(typed.value), true
+	}
+	return zero, false
+}
+
+// ReceiptObservationResult reads one optional solve-local observation. The
+// handle, runtime row, completed State, and Solver revision must all share the
+// same unforgeable owner; the returned value is an independent frozen clone.
+func ReceiptObservationResult[R any](observation ReceiptObservation[R], solver *Solver, state *State) (R, bool) {
+	var zero R
+	if !observation.Available() || solver == nil || solver.runtime == nil || state == nil || state.owner != solver || !solver.ownsCompletedState(state) || !observation.owner.valid(solver.runtime) || observation.ordinal >= uint64(len(solver.runtime.observations)) || observation.ordinal >= uint64(len(state.observations)) {
 		return zero, false
 	}
-	result, ok := state.result(value.slot, authority, value.key)
-	if !ok || result.value == nil {
+	runtime := solver.runtime.observations[observation.ordinal]
+	result := state.observations[observation.ordinal]
+	if runtime == nil || runtime.observationOwner() != observation.owner || runtime.observationID() != observation.id || result == nil || result.owner != observation.owner || result.id != observation.id || result.value == nil {
 		return zero, false
 	}
 	typed, ok := result.value.(*typedFrozenValue[R])
 	if !ok || typed == nil {
 		return zero, false
 	}
-	return query.result.Clone(typed.value), true
+	return typed.freeze.Clone(typed.value), true
 }
 
 func (solver *Solver) ownsCompletedState(state *State) bool {
@@ -57,7 +77,7 @@ func (solver *Solver) ownsCompletedState(state *State) bool {
 	return state.completion != nil && state.completion.solver == solver && state.completion.serial != 0 && state.completion.serial <= solver.completion && state.completion.revision == solver.revision
 }
 
-func (state *State) result(index int, owner *queryAuthority, key composition.Key) (*queryResult, bool) {
+func (state *State) result(index int, owner queryOwner, key composition.Key) (*queryResult, bool) {
 	if state == nil || owner == nil || index < 0 || index >= len(state.results) {
 		return nil, false
 	}

@@ -95,7 +95,7 @@ func TestDecodeCanonicalFormalsRoundTripsRawIEEEFloatLiterals(t *testing.T) {
 			t.Fatalf("decode %#x: %v", bits, err)
 		}
 		literal, ok := decoded.(*Literal)
-		if !ok || literal.Base != kind.Number || math.Float64bits(literal.Value.(float64)) != bits || !TypeEquals(original, decoded) {
+		if !ok || literal.Base() != kind.Number || math.Float64bits(literal.Value().(float64)) != bits || !TypeEquals(original, decoded) {
 			t.Fatalf("scoped decode lost %#x: %#v", bits, decoded)
 		}
 		roundTrip, err := EncodeCanonicalFormals(context.Background(), decoded, nil)

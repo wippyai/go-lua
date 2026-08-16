@@ -10,17 +10,19 @@ import (
 	"math"
 
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
+	"github.com/wippyai/go-lua/analysis/internal/programartifact"
 	"github.com/wippyai/go-lua/analysis/lattice"
 	"github.com/wippyai/go-lua/analysis/semantic/typeauthority"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/link"
-	linkstatic "github.com/wippyai/go-lua/program/link/static"
 	"github.com/wippyai/go-lua/program/target"
 )
 
-const evaluatorLaw = "wippy.analysis.static/evaluator/v7"
+// evaluatorLaw is part of Static's sealed identity.  Mounted-artifact
+// admission is a production contract change, so advance the live evaluator
+// law monotonically and use the same constant for every identity projection.
+const evaluatorLaw = "wippy.analysis.static/evaluator/v10"
 
 func staticLawContentID(targetID keyspace.ContentID) (id keyspace.ContentID) {
 	if !targetID.Available() {
@@ -65,10 +67,11 @@ type coordinateRow struct {
 // handles projected onto ClassSet's canonical semantic-union descriptors;
 // decoded typ graphs are construction-only.
 type Authority struct {
-	source   *link.Link
+	// linkID is the exact mounted owner fence. No Link is retained.
+	linkID   keyspace.ContentID
 	types    *typeauthority.Authority
 	id       keyspace.ContentID
-	targetID keyspace.ContentID
+	target   *target.Contract
 	lawID    keyspace.ContentID
 
 	results          []resultRow // 0=bottom, 1=top, semantic values follow.
@@ -80,42 +83,69 @@ type Authority struct {
 	memo             map[evaluationKey]Value
 	coordinates      []coordinateRow
 	coordinateIndex  map[coordinateKey]uint32
-	typeOfOutputs    map[linkstatic.InputRef]Coordinate
-	operands         map[linkstatic.InputRef]ContainedOperand
+	typeOfOutputs    map[keyspace.ContentID]Coordinate
+	operands         map[keyspace.ContentID]ContainedOperand
 	namespaceIDs     map[keyspace.ContentID]struct{}
 	runtimeKinds     runtimeKindTable
 	runtimeKindMask  []runtimekind.Set // exact RuntimeTypeOf masks by Static result.
 	runtimeKindValue []bool            // exact RuntimeTypeOf result membership.
+	typeArguments    typeArgumentFormalTable
 
 	classes    *ClassSet
 	runtime    *typeauthority.Runtime
 	typeValues []typeValueRow
+	mounts     []MountedArtifact
+	valueIDs   map[mountedValueKey]keyspace.ContentID // construction-only scalar substitution
 }
 
-// Seal derives the complete finite Static authority from existing Link,
-// Program, typeauthority, and Target facts. There is no caller-authored Spec.
-func Seal(source *link.Link, types *typeauthority.Authority) (*Authority, *typeauthority.Runtime, error) {
-	if source == nil || !source.ContentID().Available() || types == nil || types.Link() != source {
+// MountedValueID is the complete scalar Link substitution receipt for one
+// artifact semantic occurrence.  It intentionally carries no Boundary Value:
+// Static consumes this relation while sealing and retains only its own issued
+// result identities thereafter.
+type MountedValueID struct {
+	ModuleID   keyspace.ContentID
+	SemanticID keyspace.ContentID
+	ValueID    keyspace.ContentID
+}
+
+type mountedValueKey struct {
+	module   keyspace.ContentID
+	semantic keyspace.ContentID
+}
+
+// MountContext is the complete Link-local substitution receipt Static needs
+// during construction. It contains scalar identity, target semantics, and
+// detached mounted-value identities only; it never exposes or retains a Link
+// or Boundary authority.
+type MountContext struct {
+	LinkID   keyspace.ContentID
+	Target   *target.Contract
+	ValueIDs []MountedValueID
+}
+
+func sealMounted(context MountContext, types *typeauthority.Authority, mounts []MountedArtifact) (*Authority, *typeauthority.Runtime, error) {
+	if !context.LinkID.Available() || context.Target == nil || !context.Target.ContentID().Available() || types == nil || types.LinkID() != context.LinkID {
 		return nil, nil, errors.New("static: Link/type authority mismatch")
 	}
+	valueIDs, valuesOK := sealMountedValueIDs(context.ValueIDs)
+	if !valuesOK {
+		return nil, nil, errors.New("static: malformed mounted-value substitution receipt")
+	}
 	a := &Authority{
-		source: source, types: types,
+		linkID: context.LinkID, types: types, valueIDs: valueIDs,
 		results:       []resultRow{{kind: KindBottom}, {kind: KindTop}},
 		closedByBytes: make(map[string]Value), symbolicByKey: make(map[Symbolic]Value),
 		memo:            make(map[evaluationKey]Value),
-		coordinateIndex: make(map[coordinateKey]uint32), operands: make(map[linkstatic.InputRef]ContainedOperand),
-		namespaceIDs: make(map[keyspace.ContentID]struct{}),
+		coordinateIndex: make(map[coordinateKey]uint32), operands: make(map[keyspace.ContentID]ContainedOperand),
+		namespaceIDs: make(map[keyspace.ContentID]struct{}), mounts: append([]MountedArtifact(nil), mounts...),
 	}
-	contract, ok := source.Boundary().Target()
-	if !ok || contract == nil || !contract.ContentID().Available() {
-		return nil, nil, errors.New("static: Link target unavailable")
-	}
-	a.targetID = contract.ContentID()
-	a.lawID = staticLawContentID(a.targetID)
+	targetID := context.Target.ContentID()
+	a.target = context.Target
+	a.lawID = staticLawContentID(targetID)
 	if !a.lawID.Available() {
 		return nil, nil, errors.New("static: unavailable evaluator law identity")
 	}
-	if err := a.sealHotProjections(contract); err != nil {
+	if err := a.sealHotProjections(context.Target); err != nil {
 		return nil, nil, err
 	}
 	if err := a.sealContainedOperands(); err != nil {
@@ -126,6 +156,9 @@ func Seal(source *link.Link, types *typeauthority.Authority) (*Authority, *typea
 	}
 	if err := a.sealTypeOfOutputs(); err != nil {
 		return nil, nil, err
+	}
+	if len(mounts) == 0 || !a.sealMountedTypeArgumentFormals() {
+		return nil, nil, errors.New("static: malformed call type-argument formal relation")
 	}
 	runtimeKinds, err := sealRuntimeKinds(a)
 	if err != nil {
@@ -138,16 +171,95 @@ func Seal(source *link.Link, types *typeauthority.Authority) (*Authority, *typea
 	}
 	a.classes = classes
 	a.runtime = runtime
+	for index := range a.results {
+		a.results[index].runtime = typeauthority.RuntimeInput{}
+	}
 	if err := a.sealClassProjection(); err != nil {
 		return nil, nil, err
 	}
-	// Drop every construction-only index. Hot Static retains the exact Link,
-	// semantic result bytes, sealed query maps, and finite relations only.
+	// Drop every construction-only index. Hot Static retains only semantic
+	// result bytes, sealed query coordinates, and finite relations.
 	a.types = nil
+	if len(mounts) != 0 && !types.DetachConstructionAuthority() {
+		return nil, nil, errors.New("static: failed to detach type construction authority")
+	}
 	a.closedByBytes = nil
 	a.symbolicByKey = nil
 	a.memo = nil
+	a.operands = nil
+	a.typeOfOutputs = nil
+	a.mounts = nil
+	// Mounted-value substitution is construction-only and must not retain any
+	// Link coordinate, even indirectly through a capability-bearing wrapper.
+	a.valueIDs = nil
 	return a, runtime, nil
+}
+
+func sealMountedValueIDs(rows []MountedValueID) (map[mountedValueKey]keyspace.ContentID, bool) {
+	sealed := make(map[mountedValueKey]keyspace.ContentID, len(rows))
+	for _, row := range rows {
+		if !row.ModuleID.Available() || !row.SemanticID.Available() || !row.ValueID.Available() {
+			return nil, false
+		}
+		key := mountedValueKey{module: row.ModuleID, semantic: row.SemanticID}
+		if _, duplicate := sealed[key]; duplicate {
+			return nil, false
+		}
+		sealed[key] = row.ValueID
+	}
+	return sealed, true
+}
+
+// MountedArtifact is the closed Link substitution receipt Static admits at
+// its production boundary.  The artifact is immutable and reusable by
+// ProgramID; ModuleID is the Link-local mount identity.  Static's inference
+// remains the owner of all judgments, while this seam authenticates that the
+// mounted rows belong to the exact Program occurrence being linked.
+type MountedArtifact struct {
+	Artifact    *programartifact.Artifact
+	ModuleID    keyspace.ContentID
+	ProgramID   keyspace.ContentID
+	NamespaceID keyspace.ContentID
+}
+
+// SealMountedArtifacts is the production Static ingress.  It admits only
+// closed, owner-issued artifacts and rejects duplicate mounts before any
+// inference begins.  The old Link-only Seal remains available to construction
+// and law fixtures while callers migrate; production analysis must use this
+// mounted seam so Static never receives source graph authority.
+func SealMountedArtifacts(context MountContext, types *typeauthority.Authority, mounts []MountedArtifact) (*Authority, *typeauthority.Runtime, error) {
+	if len(mounts) == 0 {
+		return nil, nil, errors.New("static: no mounted artifacts")
+	}
+	seenModules := make(map[keyspace.ContentID]struct{}, len(mounts))
+	for _, mount := range mounts {
+		if mount.Artifact == nil || !mount.Artifact.Available() || !mount.ModuleID.Available() || !mount.ProgramID.Available() {
+			return nil, nil, errors.New("static: unavailable mounted artifact")
+		}
+		if mount.Artifact.CompileKey().ProgramID() != mount.ProgramID {
+			return nil, nil, errors.New("static: mounted artifact/program mismatch")
+		}
+		if !mount.NamespaceID.Available() {
+			return nil, nil, errors.New("static: unavailable mounted namespace")
+		}
+		for rowIndex := 0; rowIndex < mount.Artifact.StaticTypeArgumentCount(); rowIndex++ {
+			row, rowOK := mount.Artifact.StaticTypeArgumentAt(rowIndex)
+			if !rowOK || !row.Available() {
+				return nil, nil, errors.New("static: malformed mounted type-argument row")
+			}
+		}
+		for rowIndex := 0; rowIndex < mount.Artifact.StaticTypeValueCount(); rowIndex++ {
+			row, rowOK := mount.Artifact.StaticTypeValueAt(rowIndex)
+			if !rowOK || !row.Available() {
+				return nil, nil, errors.New("static: malformed mounted TypeValue row")
+			}
+		}
+		if _, duplicate := seenModules[mount.ModuleID]; duplicate {
+			return nil, nil, errors.New("static: duplicate mounted module")
+		}
+		seenModules[mount.ModuleID] = struct{}{}
+	}
+	return sealMounted(context, types, mounts)
 }
 
 func (a *Authority) ContentID() keyspace.ContentID {
@@ -158,20 +270,10 @@ func (a *Authority) ContentID() keyspace.ContentID {
 }
 
 func (a *Authority) LinkID() keyspace.ContentID {
-	if a == nil || a.source == nil {
+	if a == nil {
 		return keyspace.ContentID{}
 	}
-	return a.source.ContentID()
-}
-
-// Link returns the exact sealed Link owner. Content identity alone is not an
-// owner fence: separately sealed same-content Links retain distinct opaque
-// handles and cannot share Static/Value declaration capabilities.
-func (a *Authority) Link() *link.Link {
-	if a == nil {
-		return nil
-	}
-	return a.source
+	return a.linkID
 }
 
 // Result returns the exact result admitted for one Authority-local contextual
@@ -521,6 +623,10 @@ func (a *Authority) addClosed(value typ.Type) (Value, error) {
 	if value == nil || typ.ContainsTypeParam(value) || !typ.IsGraphClosed(value) || typ.ValidateStaticGenericRecurrence(value) != nil {
 		return Value{}, errors.New("static: non-closed type reached result admission")
 	}
+	runtimeInput, runtimeOK := a.types.RuntimeInputForType(value)
+	if !runtimeOK {
+		return Value{}, errors.New("static: closed type lacks scoped Runtime input")
+	}
 	encoded, err := typ.EncodeCanonical(context.Background(), value)
 	if err != nil {
 		return Value{}, fmt.Errorf("static: encode closed result: %w", err)
@@ -536,7 +642,7 @@ func (a *Authority) addClosed(value typ.Type) (Value, error) {
 		return Value{}, fmt.Errorf("static: closed result handle: %w", err)
 	}
 	result := Value{owner: a, index: index}
-	a.results = append(a.results, resultRow{kind: KindClosed, closed: append([]byte(nil), encoded...)})
+	a.results = append(a.results, resultRow{kind: KindClosed, closed: append([]byte(nil), encoded...), runtime: runtimeInput})
 	a.closedByBytes[string(encoded)] = result
 	return result, nil
 }
@@ -586,9 +692,9 @@ func denseOrdinal(length int) (uint32, error) {
 
 func (a *Authority) contentID() (id keyspace.ContentID) {
 	h := sha256.New()
-	h.Write([]byte("wippy.analysis.static/evaluator/v8"))
+	h.Write([]byte(evaluatorLaw))
 	h.Write([]byte{0})
-	linkID := a.source.ContentID()
+	linkID := a.linkID
 	h.Write(linkID[:])
 	var word [8]byte
 	binary.BigEndian.PutUint64(word[:], uint64(len(a.results)))
@@ -620,8 +726,8 @@ func (a *Authority) contentID() (id keyspace.ContentID) {
 	for _, coordinate := range a.coordinates {
 		owner := coordinate.key.reference.Owner()
 		h.Write(owner[:])
-		binary.BigEndian.PutUint64(word[:], uint64(coordinate.key.reference.Root()))
-		h.Write(word[:])
+		node := coordinate.key.reference.NodeID()
+		h.Write(node[:])
 		h.Write(coordinate.key.namespace[:])
 		resultID, ok := staticResultIdentity(coordinate.result)
 		if !ok {
@@ -669,12 +775,10 @@ func staticResultIdentity(value Value) (keyspace.ContentID, bool) {
 func writeSymbolic(h interface{ Write([]byte) (int, error) }, value Symbolic) {
 	owner := value.reference.Owner()
 	h.Write(owner[:])
-	var word [8]byte
-	binary.BigEndian.PutUint64(word[:], uint64(value.reference.Root()))
-	h.Write(word[:])
+	node := value.reference.NodeID()
+	h.Write(node[:])
 	h.Write(value.sourceOwner[:])
-	binary.BigEndian.PutUint64(word[:], uint64(value.source))
-	h.Write(word[:])
+	h.Write(value.source[:])
 	h.Write(value.namespace[:])
 	h.Write(value.law[:])
 	h.Write(value.dependency[:])

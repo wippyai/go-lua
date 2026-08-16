@@ -697,6 +697,22 @@ func (c *Contract) EffectTarget(op Operation, index int) (Operation, bool) {
 	return effect.target, true
 }
 
+// validPublicationEffectRow recomputes the exact target-ABI selector fence at
+// every owner query and canonical encoding boundary. The descriptor itself is
+// not a capability: only a sealed effect row under this Contract can authorize
+// it.
+func (c *Contract) validPublicationEffectRow(effect effectRow) bool {
+	if c == nil || !effect.hasPublication || !effect.publication.validConsequences() {
+		return false
+	}
+	target, ok := c.operation(effect.target)
+	if !ok || uint64(effect.publication.subject) >= uint64(c.ValuesCount(target.input)) {
+		return false
+	}
+	return effect.publication.destination != PublicationDestinationValueFormal ||
+		uint64(effect.publication.context) < uint64(c.ValuesCount(target.input))
+}
+
 func (c *Contract) EffectValueArgumentCount(op Operation, index int) int {
 	effect, ok := c.effect(op, index)
 	if !ok {

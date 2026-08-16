@@ -2,6 +2,25 @@ package engine
 
 import "sync/atomic"
 
+type coldWriteSelector struct {
+	write      int
+	candidates []int
+	depends    []selectorDependency
+	decide     func(SelectorContext) bool
+}
+
+type selectorDependency struct {
+	kind  dependencyKind
+	index int
+}
+
+type dependencyKind uint8
+
+const (
+	readDependency dependencyKind = iota + 1
+	writeDependency
+)
+
 // SelectorContext is the synchronous, row-local capability passed only while
 // a sealed staged locator or write selector is running. It cannot construct a
 // carrier capability, recover a key/unit, or retain a route after the call.
@@ -17,7 +36,7 @@ type SelectorContext struct {
 type selectorFrame struct {
 	execution *ruleExecution
 	epoch     uint64
-	read      *coldReadSelector
+	read      stagedReadSelector
 	write     *coldWriteSelector
 	product   *productSession
 	row       int
@@ -32,6 +51,16 @@ type selectorFrame struct {
 	call           atomic.Uint64
 
 	selected func(int, int) (bool, bool)
+}
+
+// stagedReadSelector is the minimal immutable read geometry consumed by the
+// selector frame. Receipt Rule
+// cells supply a Schema-fenced implementation. Keeping the frame on this
+// scalar seam prevents the Schema path from reconstructing a cold rule row.
+type stagedReadSelector interface {
+	selectorReadIndex() int
+	selectorDeclaresRead(int) bool
+	selectorDependencyCount() int
 }
 
 func (frame *selectorFrame) valid() bool {
@@ -92,15 +121,13 @@ func (frame *selectorFrame) declaresRead(index int) bool {
 	if frame == nil {
 		return false
 	}
-	var dependencies []Dependency
 	if frame.read != nil {
-		dependencies = frame.read.depends
-	} else if frame.write != nil {
-		dependencies = frame.write.depends
-	} else {
+		return frame.read.selectorDeclaresRead(index)
+	}
+	if frame.write == nil {
 		return false
 	}
-	for _, dependency := range dependencies {
+	for _, dependency := range frame.write.depends {
 		if dependency.kind == readDependency && dependency.index == index {
 			return true
 		}
@@ -142,7 +169,7 @@ func (frame *selectorFrame) declaresWrite(index int) bool {
 func SelectorRead[S any](context SelectorContext, read Read[S]) (S, bool) {
 	var zero S
 	frame := context.frame
-	if !context.valid() || !frame.rowLive() || read.rule == nil || read.rule != frame.execution.owner.ruleSchema() || read.index < 0 || !frame.declaresRead(read.index) || read.resolve == nil || frame.product == nil || frame.product.execution != frame.execution || frame.row < 0 || frame.row >= len(frame.product.values) || read.index >= len(frame.product.reads) || frame.product.reads[read.index] == nil || !frame.product.requireCheckpoint() {
+	if !context.valid() || !frame.rowLive() || !read.matchesRuntimeOwner(frame.execution.owner) || read.index < 0 || !frame.declaresRead(read.index) || read.resolve == nil || frame.product == nil || frame.product.execution != frame.execution || frame.row < 0 || frame.row >= len(frame.product.values) || read.index >= len(frame.product.reads) || frame.product.reads[read.index] == nil || !frame.product.requireCheckpoint() {
 		frame.poison()
 		return zero, false
 	}
@@ -174,7 +201,7 @@ func SelectorRead[S any](context SelectorContext, read Read[S]) (S, bool) {
 // selector candidate. It is invalid for staged read locators.
 func CurrentCandidate[S any](context SelectorContext, read Read[S]) bool {
 	frame := context.frame
-	if !context.valid() || !frame.rowLive() || frame.write == nil || read.rule == nil || read.rule != frame.execution.owner.ruleSchema() || read.index < 0 || !frame.declaresCandidate(read.index) {
+	if !context.valid() || !frame.rowLive() || frame.write == nil || !read.matchesRuntimeOwner(frame.execution.owner) || read.index < 0 || !frame.declaresCandidate(read.index) {
 		frame.poison()
 		return false
 	}
@@ -183,9 +210,14 @@ func CurrentCandidate[S any](context SelectorContext, read Read[S]) bool {
 
 // SelectorSelected resolves a presealed write-target relation for the current
 // positional write selector candidate. It is unavailable to staged reads.
-func SelectorSelected[V, S any](context SelectorContext, prior Write[V], current Read[S]) bool {
+type receiptWrite[V any] struct {
+	proof *ruleRuntimeProof
+	index int
+}
+
+func SelectorSelected[V, S any](context SelectorContext, prior receiptWrite[V], current Read[S]) bool {
 	frame := context.frame
-	if !context.valid() || !frame.rowLive() || frame.write == nil || prior.rule == nil || prior.rule != frame.execution.owner.ruleSchema() || prior.index < 0 || current.rule == nil || current.rule != frame.execution.owner.ruleSchema() || current.index < 0 || !frame.declaresWrite(prior.index) || !frame.isCurrent(current.index) || frame.selected == nil {
+	if !context.valid() || !frame.rowLive() || frame.write == nil || prior.proof == nil || !prior.proof.valid() || prior.index < 0 || !current.matchesRuntimeOwner(frame.execution.owner) || current.index < 0 || !frame.declaresWrite(prior.index) || !frame.isCurrent(current.index) || frame.selected == nil {
 		frame.poison()
 		return false
 	}

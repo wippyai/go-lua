@@ -14,7 +14,8 @@ import (
 	"github.com/wippyai/go-lua/program/flow/internal/executable"
 	"github.com/wippyai/go-lua/program/flow/internal/outcome"
 	"github.com/wippyai/go-lua/program/flow/internal/position"
-	"github.com/wippyai/go-lua/program/flow/internal/recurrence"
+	"github.com/wippyai/go-lua/program/flow/internal/runtimeentry"
+	"github.com/wippyai/go-lua/program/flow/internal/semanticpath"
 	"github.com/wippyai/go-lua/program/flow/internal/sourcecontrol"
 	"github.com/wippyai/go-lua/program/keyspace"
 	"github.com/wippyai/go-lua/program/module"
@@ -178,7 +179,7 @@ func openContinuationFixture(t *testing.T, spec continuationSpec) *continuationF
 		closeContinuationFinalizers(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("position.Seal: %v", err)
 	}
-	sourceComponent, err := sourceFinalize.Commit(indexInput)
+	sourceComponent, issuance, err := sourceFinalize.CommitWithSemanticPathIssuance(indexInput)
 	if err != nil {
 		closeContinuationFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("source.Commit: %v", err)
@@ -190,25 +191,59 @@ func openContinuationFixture(t *testing.T, spec continuationSpec) *continuationF
 		closeContinuationFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("sourcecontrol.Seal: %v", err)
 	}
-	recurrenceResult, err := recurrence.Seal(sourceView, flowView, bodies, forest, controlResult, staticID, moduleID)
-	if err != nil {
+	cellRoleIssuance, cellRoleOK := issuance.IssueCellRoles(sourceView)
+	cellRoles, cellRolesOK := cellRoleIssuance.Consume(sourceView)
+	if !cellRoleOK || !cellRolesOK {
 		closeContinuationFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
-		t.Fatalf("recurrence.Seal: %v", err)
+		t.Fatal("source.CellRoleCatalog: unavailable")
+	}
+	certificate, certificateErr := semanticpath.Seal(issuance, cellRoles, sourceView, flowView, bodies, bindingResult, forest, outcomes, flowView.Cold().ContentID(), staticID, moduleID)
+	if certificateErr != nil {
+		closeContinuationFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+		t.Fatalf("semanticpath.Seal: %v", certificateErr)
+	}
+	vertexReceipt, receiptOK := certificate.IssueVertexCatalogReceipt()
+	vertexLease, vertexErr := controlResult.InstallVertexCatalogLease(bodies, vertexReceipt)
+	if !receiptOK || vertexErr != nil || vertexLease == nil {
+		closeContinuationFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+		t.Fatal("sourcecontrol.InstallVertexCatalog: no exact receipt")
+	}
+	defer controlResult.ReleaseVertexCatalog(vertexLease)
+	outcomePhasePaths, outcomePhasePathsOK := certificate.IssueOutcomePhaseReceipt()
+	outcomePhases, outcomeErr := controlResult.IssueOutcomePhases(sourceView, flowView, bodies, outcomes, outcomePhasePaths)
+	if !outcomePhasePathsOK || outcomeErr != nil || outcomePhases == nil {
+		closeContinuationFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+		t.Fatal("sourcecontrol.IssueOutcomePhases: unavailable")
 	}
 	executableResult, err := executable.Seal(sourceView, flowView, forest, controlResult, staticID, moduleID)
 	if err != nil {
 		closeContinuationFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, module.Finalizer{})
 		t.Fatalf("executable.Seal: %v", err)
 	}
+	entries, err := runtimeentry.Seal(sourceView, flowView, controlResult, ports, executableResult, staticID, moduleID)
+	if err != nil {
+		closeContinuationFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+		t.Fatalf("runtimeentry.Seal: %v", err)
+	}
+	causalReceipt, receiptOK := certificate.IssueCausalReceipt()
+	if !receiptOK {
+		closeContinuationFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+		t.Fatal("semanticpath.IssueCausalReceipt: receipt unavailable")
+	}
+	preparation, err := causal.PrepareRoutePlanWithStructuralPaths(sourceView, flowView, bodies, forest, outcomes, controlResult, ports, executableResult, entries, causalReceipt, outcomePhases, staticID, moduleID)
+	if err != nil {
+		closeContinuationFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+		t.Fatalf("causal.PrepareRoutePlan: %v", err)
+	}
+	causalResult, err := preparation.Seal()
+	if err != nil {
+		closeContinuationFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+		t.Fatalf("causal.Preparation.Seal: %v", err)
+	}
 	candidateResult, err := candidates.Seal(sourceView.Identity(), flowView, executableResult, staticID, moduleID)
 	if err != nil {
 		closeContinuationFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("candidates.Seal: %v", err)
-	}
-	causalResult, err := causal.Seal(sourceView, flowView, bodies, forest, outcomes, controlResult, recurrenceResult, ports, executableResult, staticID, moduleID)
-	if err != nil {
-		closeContinuationFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
-		t.Fatalf("causal.Seal: %v", err)
 	}
 	result, err := Seal(sourceView, flowView, bodies, bindingResult, executableResult, candidateResult, causalResult, staticID, moduleID)
 	if err != nil {

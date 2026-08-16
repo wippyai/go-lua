@@ -3,7 +3,6 @@ package pack
 import (
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/static"
-	linkboundary "github.com/wippyai/go-lua/program/link/boundary"
 )
 
 type scalarSelectionKind uint8
@@ -413,7 +412,7 @@ func (schema *Schema) ObserveInput(root Root, value Value, selector InputSelecto
 // observation.  complete=false means an unresolved Head/Any/open remainder
 // may carry an allocation; callers must conservatively produce Escape Top,
 // never silently treat the selection as empty.
-func (schema *Schema) VisitInputSources(observation InputObservation, visit func(linkboundary.Value) bool) (complete, ok bool) {
+func (schema *Schema) VisitInputSources(observation InputObservation, visit func(SemanticSource) bool) (complete, ok bool) {
 	if schema == nil || schema.state == nil || !observation.valid() || observation.owner != schema.state.owner || visit == nil {
 		return false, false
 	}

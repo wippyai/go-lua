@@ -20,10 +20,9 @@ func (rule *RawSetRule) check(semantic engine.SemanticKey) engine.RuleDerivation
 		operand, operandOK := derivation.Operand()
 		id, idOK := operand.ID()
 		receiverCoordinate, receiverOK := operand.Receiver()
-		receiverRef, receiverRefOK := rule.values.Locate(receiverCoordinate)
 		descriptor, descriptorOK := rule.payloadForWrite(operand)
-		if !operandOK || !idOK || !rule.owns(operand) || !receiverOK || !receiverRefOK || !descriptorOK ||
-			!derivation.OperandContentMatches([32]byte(id)) || !engine.DerivationReadMatchesRef(derivation, rule.receiver, receiverRef) {
+		if !operandOK || !idOK || !rule.owns(operand) || !receiverOK || !descriptorOK ||
+			!derivation.OperandContentMatches([32]byte(id)) || rule.runtime == nil || rule.runtime.valueReadRef == nil || !rule.runtime.valueReadRef(derivation, rule.receiver, receiverCoordinate) {
 			return engine.RuleEvidence{}, false
 		}
 		for index := 0; index < derivation.InputCount(); index++ {
@@ -76,7 +75,7 @@ func (rule *RawSetRule) check(semantic engine.SemanticKey) engine.RuleDerivation
 			for ordinal := 0; ordinal < heapCount; ordinal++ {
 				output, outputOK := disposition.OutputAt(ordinal)
 				tag, cells, routed := engine.DerivationDispositionRouteValue(derivation, disposition, rule.heapRead, output)
-				if !outputOK || !routed || cells.Count() != 1 || !routeTargetMatches(rule, receiverValue(receiverCells), tag, output.Target()) {
+				if !outputOK || !routed || cells.Count() != 1 || !routeTargetMatches(rule, operand, receiverValue(receiverCells), tag, output.Target()) {
 					rule.putSetScratch(scratch)
 					return engine.RuleEvidence{}, false
 				}
@@ -85,7 +84,7 @@ func (rule *RawSetRule) check(semantic engine.SemanticKey) engine.RuleDerivation
 					rule.putSetScratch(scratch)
 					return engine.RuleEvidence{}, false
 				}
-				expected := rule.heap.Schema().Bottom()
+				expected := rule.heapSchema().Bottom()
 				if present {
 					var expectedOK bool
 					expected, expectedOK = rule.mutateRoute(operand, tag, fact, view)
@@ -135,17 +134,16 @@ func derivationDynamicKeyMatches(
 	operand Access,
 ) bool {
 	coordinate, coordinateOK := operand.DynamicKey()
-	ref, refOK := rule.values.Locate(coordinate)
-	if !coordinateOK || !refOK {
+	if !coordinateOK {
 		return false
 	}
 	selected := derivationSelectionValue(derivation, disposition, rule.key, nil, uint64(1), func(ordinal int) bool {
-		return engine.DerivationDispositionSelectionMatchesRef(derivation, disposition, rule.key, ordinal, ref)
+		return rule.runtime != nil && rule.runtime.valueSelectionRef != nil && rule.runtime.valueSelectionRef(derivation, disposition, rule.key, ordinal, coordinate)
 	})
-	// The no-route disposition is still authenticated by the dynamic-key
-	// selection.  A selected-but-absent cell is not an invalid Lua key; it is
-	// missing evidence and must not settle as an explicit NoSelection.
-	return selected.valid && selected.found && selected.present
+	// The no-route disposition is still authenticated by the exact dynamic-key
+	// selection. A selected-but-absent cell is lawful only because this caller
+	// already proved Heap, Pack, and source selections are all empty.
+	return selected.valid && selected.found
 }
 
 func derivationRawSetView(
@@ -182,67 +180,54 @@ func derivationRawSetView(
 	}
 	if _, dynamic := operand.DynamicKey(); dynamic && view.keyCount == 1 {
 		coordinate, coordinateOK := operand.DynamicKey()
-		ref, refOK := rule.values.Locate(coordinate)
-		if !coordinateOK || !refOK {
+		if !coordinateOK || rule.runtime == nil || rule.runtime.valueSelectionRef == nil {
 			return rawSetView{}, false
 		}
 		view.key = derivationSelectionValue(derivation, disposition, rule.key, nil, uint64(1), func(ordinal int) bool {
-			return engine.DerivationDispositionSelectionMatchesRef(derivation, disposition, rule.key, ordinal, ref)
+			return rule.runtime.valueSelectionRef(derivation, disposition, rule.key, ordinal, coordinate)
 		})
 		if !view.key.valid || !view.key.found {
 			return rawSetView{}, false
 		}
 	}
+	descriptor, descriptorOK := rule.payloadForWrite(operand)
+	if !descriptorOK {
+		return rawSetView{}, false
+	}
 	view.pack = func(tag heapdomain.RawPayloadTag) rawSelected[pack.Value] {
-		payload, payloadOK := payloadAt(rule.payloads, tag)
-		root, rootOK := payload.payload.Root()
-		ref, refOK := rule.packs.Locate(root)
-		if !payloadOK || payload.kind != rawPayloadTail || !rootOK || !refOK {
+		payload := descriptor
+		payloadOK := payload.tag == tag
+		root, rootOK := payload.descriptor.payload.Root()
+		if !payloadOK || payload.descriptor.kind != rawPayloadTail || !rootOK || rule.runtime == nil || rule.runtime.packSelectionRef == nil {
 			return rawSelected[pack.Value]{}
 		}
 		return derivationSelectionValue(derivation, disposition, rule.packRead, &scratch.pack, tag, func(ordinal int) bool {
-			return engine.DerivationDispositionSelectionMatchesRef(derivation, disposition, rule.packRead, ordinal, ref)
+			return rule.runtime.packSelectionRef(derivation, disposition, rule.packRead, ordinal, root)
 		})
 	}
 	view.source = func(tag rawSourceTag) rawSelected[valuedomain.Value] {
-		source, sourceOK := sourceAt(rule.sources, tag)
-		ref, refOK := rule.values.Locate(source.coordinate)
-		if !sourceOK || !refOK {
+		source, sourceOK := sourceAt(rule.sourcesFor(operand), tag)
+		if !sourceOK || rule.runtime == nil || rule.runtime.sourceSelectionRef == nil {
 			return rawSelected[valuedomain.Value]{}
 		}
 		return derivationSelectionValue(derivation, disposition, rule.source, &scratch.source, tag, func(ordinal int) bool {
-			return engine.DerivationDispositionSelectionMatchesRef(derivation, disposition, rule.source, ordinal, ref)
+			return rule.runtime.sourceSelectionRef(derivation, disposition, rule.source, ordinal, source.coordinate)
 		})
 	}
 	return view, true
 }
 
-func routeTargetMatches(rule *RawSetRule, receiver valuedomain.Value, tag heapdomain.RawRouteTag, target engine.RuleTarget) bool {
-	if rule == nil || !rule.topology.values.Equal(receiver, receiver) || tag == 0 {
+func routeTargetMatches(rule *RawSetRule, operand Access, receiver valuedomain.Value, tag heapdomain.RawRouteTag, target engine.RuleTarget) bool {
+	if rule == nil || tag == 0 || !rule.owns(operand) {
 		return false
 	}
-	found := false
-	matched := false
-	if !rule.topology.VisitReceiver(receiver, nil, func(route Route) bool {
-		if route.Kind() != RouteRoot {
-			return true
-		}
-		key, role, ok := route.Root()
-		if !ok {
-			return false
-		}
-		want, wantOK := rule.heap.Schema().RouteTag(key, role)
-		ref, refOK := rule.heap.Locate(key)
-		if !wantOK || !refOK {
-			return false
-		}
-		if want == tag {
-			found = true
-			matched = engine.TargetMatchesRef(target, ref)
-		}
-		return true
-	}) {
+	if rule.topology == nil || !operand.valid() || operand.topology != rule.topology {
 		return false
 	}
-	return found && matched
+	routeIndex, found := rule.topology.staticByTag[tag]
+	if !found || routeIndex == 0 || uint64(routeIndex) > uint64(len(rule.topology.static)) {
+		return false
+	}
+	route := rule.topology.static[routeIndex-1]
+	return route.tag == tag && rule.heapTarget(target, route.key)
 }

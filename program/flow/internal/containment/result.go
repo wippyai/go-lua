@@ -12,6 +12,7 @@ import "github.com/wippyai/go-lua/program/keyspace"
 type Result struct {
 	total   uint32
 	parents [keyspace.FamilyCount][]keyspace.Term
+	roles   [keyspace.FamilyCount][]uint64
 	pre     [keyspace.FamilyCount][]uint32
 	post    [keyspace.FamilyCount][]uint32
 	static  [keyspace.FamilyCount][]uint64
@@ -22,6 +23,21 @@ type Result struct {
 	flowID   keyspace.ContentID
 	staticID keyspace.ContentID
 	moduleID keyspace.ContentID
+}
+
+// StructuralRole returns the exact owner-issued semantic edge role and
+// one-based role-local rank for child. It is deliberately narrower than a
+// generic edge view: Parent remains the sole containment relation, while this
+// projection exists only so Flow's semantic-path certificate can name the
+// already-proved edge without raw Term ordinals.
+func (r *Result) StructuralRole(child keyspace.Term) (role, rank uint32, ok bool) {
+	family, ordinal, valid := r.ordinal(child)
+	if !valid || uint64(ordinal) > uint64(len(r.roles[family])) {
+		return 0, 0, false
+	}
+	packed := r.roles[family][ordinal-1]
+	role, rank = uint32(packed>>32), uint32(packed)
+	return role, rank, role != 0 && rank != 0
 }
 
 // Matches reports whether r was sealed from exactly the supplied Source,

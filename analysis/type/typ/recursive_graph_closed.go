@@ -78,6 +78,7 @@ func recursiveGraphClosedWalk(root Type, seen map[*Recursive]bool, memo map[recu
 		}
 		if recursive, ok := current.(*Recursive); ok {
 			if recursive.Body == nil {
+				seen[recursive] = true
 				if keyed {
 					memo[key] = false
 				}

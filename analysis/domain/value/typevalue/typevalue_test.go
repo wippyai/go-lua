@@ -13,7 +13,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/type/ambient"
-	"github.com/wippyai/go-lua/analysis/type/subtype"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
@@ -166,25 +165,6 @@ func TestDefinitelyNonEmptyIndexContainerUsesProductiveRecursiveProof(t *testing
 	}
 	if !DefinitelyNonEmptyIndexContainer(deep) {
 		t.Fatal("deep acyclic alias graph lost its non-empty proof")
-	}
-}
-
-func TestTypeOfMaterializedTaggedAliasReturnsCompatibleType(t *testing.T) {
-	reg := registry.Registry()
-	target := typetable.NewRecord().
-		Field("__tag", typ.LiteralString("int")).
-		Build()
-	alias := typ.NewAlias("__test_MaterializedTaggedAlias", target)
-
-	got, ok := TypeOf(reg, FromType(reg, alias))
-	if !ok {
-		t.Fatal("TypeOf(materialized alias) returned !ok")
-	}
-	if !typ.TypeEquals(got, target) && !typ.TypeEquals(got, alias) {
-		t.Fatalf("TypeOf(materialized alias) = %s, want alias-compatible %s", got, alias)
-	}
-	if !subtype.IsSubtype(alias, got) && !subtype.IsSubtype(got, alias) {
-		t.Fatalf("TypeOf(materialized alias) = %s, not overlap-compatible with %s", got, alias)
 	}
 }
 

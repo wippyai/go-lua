@@ -83,12 +83,12 @@ func logicalVariantResult(left typ.Type, op kind.SelectOp, right typ.Type) (typ.
 		return typ.Never, true
 	case typ.IsAny(left):
 		if op == kind.SelectAnd {
-			return normalizeOperatorResults(typ.Nil, typ.False, right), true
+			return normalizeOperatorResults(typ.Nil, typ.LiteralBool(false), right), true
 		}
 		return typ.Any, true
 	case typ.IsUnknown(left):
 		if op == kind.SelectAnd {
-			return normalizeOperatorResults(typ.Nil, typ.False, right), true
+			return normalizeOperatorResults(typ.Nil, typ.LiteralBool(false), right), true
 		}
 		return typ.Unknown, true
 	}
@@ -106,9 +106,9 @@ func logicalVariantResult(left typ.Type, op kind.SelectOp, right typ.Type) (typ.
 		return left, true
 	case truthBoolean:
 		if op == kind.SelectAnd {
-			return normalizeOperatorResults(typ.False, right), true
+			return normalizeOperatorResults(typ.LiteralBool(false), right), true
 		}
-		return normalizeOperatorResults(typ.True, right), true
+		return normalizeOperatorResults(typ.LiteralBool(true), right), true
 	default:
 		return typ.Unknown, true
 	}
@@ -128,8 +128,8 @@ func truthinessOf(t typ.Type) truthiness {
 	if t == nil {
 		return truthUnknown
 	}
-	if lit, ok := t.(*typ.Literal); ok && lit.Base == typekind.Boolean {
-		v, ok := lit.Value.(bool)
+	if lit, ok := t.(*typ.Literal); ok && lit.Base() == typekind.Boolean {
+		v, ok := lit.Value().(bool)
 		if !ok {
 			return truthUnknown
 		}

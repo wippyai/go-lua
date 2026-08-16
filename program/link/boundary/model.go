@@ -7,6 +7,8 @@
 package boundary
 
 import (
+	"github.com/wippyai/go-lua/program"
+	"github.com/wippyai/go-lua/program/flow"
 	"github.com/wippyai/go-lua/program/keyspace"
 	"github.com/wippyai/go-lua/program/link/internal/radix"
 	linkproject "github.com/wippyai/go-lua/program/link/project"
@@ -96,18 +98,71 @@ type authority struct {
 	target          *target.Contract
 	require         target.Operation
 	valueTable      *valueTable
+	mountedCalls    *mountedCallTable
 	seedTable       *seedTable
 	moduleRelation  keyspace.ContentID
 	content         keyspace.ContentID
 	semanticReceipt SemanticSourceReceipt
 }
 
+// mountedCallTable is the one typed call/value projection. Keeping it behind
+// its own owner prevents Boundary's top-level authority from becoming a
+// generic retained product or row store.
+type mountedCallTable struct {
+	rows     []mountedCallRow
+	semantic map[mountedCallSemanticKey]uint32
+}
+
+type mountedCallSemanticKey struct {
+	module keyspace.ContentID
+	call   keyspace.ContentID
+}
+
+// mountedCallRow is Boundary's sealed exact join from a Project/Program call
+// proof to existing Boundary Value ordinals. Rows align with Project's full
+// Application relation; non-call positions remain unavailable.
+type mountedCallRow struct {
+	ready       bool
+	module      keyspace.ContentID
+	mounted     linkproject.CallApplication
+	occurrence  program.CallOccurrence
+	values      program.CallValues
+	form        flow.CallForm
+	callee      uint32
+	receiver    uint32
+	hasReceiver bool
+	actuals     uint32
+	arguments   []uint32
+	result      uint32
+	actualTail  uint32
+	tailSpan    program.Span
+	tailContext keyspace.ContentID
+	hasTail     bool
+}
+
 type valueTable struct {
 	rows      []valueRow
 	ids       []valueIDRow
 	index     radix.Store
+	spans     map[valueSpanKey]uint32
+	semantic  map[valueSemanticKey]uint32
+	mounts    map[keyspace.ContentID]uint32
 	relations []keyspace.ContentID
 	content   keyspace.ContentID
+}
+
+type valueSpanKey struct {
+	mount   uint32
+	context keyspace.ContentID
+}
+
+// valueSemanticKey is the construction-only inverse from a reusable Program
+// semantic occurrence identity to one existing mounted Boundary Value.  It
+// is not an authored-term index: the Link builder alone joins the live proof
+// once, and consumers later supply only ModuleKey plus the opaque identity.
+type valueSemanticKey struct {
+	mount uint32
+	id    keyspace.ContentID
 }
 
 type valueRow struct {

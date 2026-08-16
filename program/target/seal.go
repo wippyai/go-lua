@@ -319,12 +319,14 @@ type producedAnchorStep struct {
 }
 
 type effectDraft struct {
-	targetSource SpecRef
-	target       Operation
-	values       []ValueFormal
-	types        []TypeFormal
-	valuesVar    []ValuesVar
-	rows         []RowVar
+	targetSource   SpecRef
+	target         Operation
+	values         []ValueFormal
+	types          []TypeFormal
+	valuesVar      []ValuesVar
+	rows           []RowVar
+	publication    PublicationEffectDescriptor
+	hasPublication bool
 }
 
 type rowDraft struct {
@@ -1276,6 +1278,13 @@ func (d operationDraft) freezeRow(input RowSpec, owner string) (rowDraft, error)
 			return rowDraft{}, fmt.Errorf("target: effect %d has invalid target", index)
 		}
 		draft := effectDraft{targetSource: item.Target}
+		if item.Publication != nil {
+			publication, publicationErr := freezePublicationEffect(*item.Publication)
+			if publicationErr != nil {
+				return rowDraft{}, fmt.Errorf("target: %s effect %d publication: %w", owner, index, publicationErr)
+			}
+			draft.publication, draft.hasPublication = publication, true
+		}
 		if _, err := checkedStoredLength("effect value argument pool", len(item.ValueArgs)); err != nil {
 			return rowDraft{}, err
 		}
@@ -1315,6 +1324,51 @@ func (d operationDraft) freezeRow(input RowSpec, owner string) (rowDraft, error)
 		out.effects[index] = draft
 	}
 	return out, nil
+}
+
+func freezePublicationEffect(input PublicationEffectSpec) (PublicationEffectDescriptor, error) {
+	descriptor := PublicationEffectDescriptor{
+		kind: input.Kind, subject: input.Subject, destination: input.Destination,
+		context: input.Context, escape: input.Escape, mutability: input.Mutability, lifetime: input.Lifetime,
+	}
+	if descriptor.destination != PublicationDestinationNone && descriptor.destination != PublicationDestinationValueFormal {
+		return PublicationEffectDescriptor{}, errors.New("invalid destination role")
+	}
+	if descriptor.destination == PublicationDestinationNone && descriptor.context != 0 {
+		return PublicationEffectDescriptor{}, errors.New("destination-free publication carries context formal")
+	}
+	if !descriptor.validConsequences() {
+		return PublicationEffectDescriptor{}, errors.New("kind and typed consequences disagree")
+	}
+	return descriptor, nil
+}
+
+func (d PublicationEffectDescriptor) validConsequences() bool {
+	switch d.kind {
+	case PublicationEffectSendTransfer:
+		return d.destination == PublicationDestinationValueFormal &&
+			d.escape == PublicationEscapeSendTransfer &&
+			(d.mutability == PublicationMutabilityPreserve || d.mutability == PublicationMutabilityCopyOnWrite) &&
+			d.lifetime == PublicationLifetimePreserve
+	case PublicationEffectReturnEscape:
+		return d.destination == PublicationDestinationNone && d.escape == PublicationEscapeReturn &&
+			d.mutability == PublicationMutabilityPreserve && d.lifetime == PublicationLifetimePreserve
+	case PublicationEffectCallbackEscape:
+		return d.destination == PublicationDestinationNone && d.escape == PublicationEscapeCallback &&
+			d.mutability == PublicationMutabilityPreserve && d.lifetime == PublicationLifetimePreserve
+	case PublicationEffectFreezeSeal:
+		return d.destination == PublicationDestinationNone && d.escape == PublicationEscapeNone &&
+			d.mutability == PublicationMutabilitySeal && d.lifetime == PublicationLifetimePreserve
+	case PublicationEffectWriteMutation:
+		return d.destination == PublicationDestinationNone && d.escape == PublicationEscapeNone &&
+			(d.mutability == PublicationMutabilityWrite || d.mutability == PublicationMutabilityCopyOnWrite) &&
+			d.lifetime == PublicationLifetimePreserve
+	case PublicationEffectCloseRelease:
+		return d.destination == PublicationDestinationNone && d.escape == PublicationEscapeNone &&
+			d.mutability == PublicationMutabilityPreserve && d.lifetime == PublicationLifetimeRelease
+	default:
+		return false
+	}
 }
 
 func canonicalizeBindings(drafts []operationDraft) error {
@@ -1493,6 +1547,18 @@ func (d *operationDraft) resolveEffectList(effects []effectDraft, all []operatio
 			return fmt.Errorf("target: %s %d does not match target ABI", label, index)
 		}
 		effects[index].target = targetOp
+		if effects[index].hasPublication {
+			descriptor := effects[index].publication
+			if !descriptor.validConsequences() {
+				return fmt.Errorf("target: %s %d has invalid publication consequences", label, index)
+			}
+			if uint64(descriptor.subject) >= uint64(target.valueFormalCount()) {
+				return fmt.Errorf("target: %s %d publication subject outside effect target ABI", label, index)
+			}
+			if descriptor.destination == PublicationDestinationValueFormal && uint64(descriptor.context) >= uint64(target.valueFormalCount()) {
+				return fmt.Errorf("target: %s %d publication destination outside effect target ABI", label, index)
+			}
+		}
 	}
 	sort.Slice(effects, func(left, right int) bool { return compareEffect(effects[left], effects[right]) < 0 })
 	return nil
@@ -2423,7 +2489,7 @@ func (c *Contract) appendEffects(input []effectDraft) (indexRange, error) {
 		return indexRange{}, err
 	}
 	for _, effect := range input {
-		row := effectRow{target: effect.target}
+		row := effectRow{target: effect.target, publication: effect.publication, hasPublication: effect.hasPublication}
 		if row.values, err = appendStoredRange(&c.effectVals, effect.values, "effect value argument pool"); err != nil {
 			return indexRange{}, err
 		}
@@ -2965,7 +3031,65 @@ func compareEffect(left, right effectDraft) int {
 	if order := compareUint32Slice(left.valuesVar, right.valuesVar); order != 0 {
 		return order
 	}
-	return compareUint32Slice(left.rows, right.rows)
+	if order := compareUint32Slice(left.rows, right.rows); order != 0 {
+		return order
+	}
+	if left.hasPublication != right.hasPublication {
+		if !left.hasPublication {
+			return -1
+		}
+		return 1
+	}
+	if !left.hasPublication {
+		return 0
+	}
+	return comparePublicationEffectDescriptor(left.publication, right.publication)
+}
+
+func comparePublicationEffectDescriptor(left, right PublicationEffectDescriptor) int {
+	if left.kind != right.kind {
+		if left.kind < right.kind {
+			return -1
+		}
+		return 1
+	}
+	if left.subject != right.subject {
+		if left.subject < right.subject {
+			return -1
+		}
+		return 1
+	}
+	if left.destination != right.destination {
+		if left.destination < right.destination {
+			return -1
+		}
+		return 1
+	}
+	if left.context != right.context {
+		if left.context < right.context {
+			return -1
+		}
+		return 1
+	}
+	if left.escape != right.escape {
+		if left.escape < right.escape {
+			return -1
+		}
+		return 1
+	}
+	if left.mutability != right.mutability {
+		if left.mutability < right.mutability {
+			return -1
+		}
+		return 1
+	}
+	if left.lifetime < right.lifetime {
+		return -1
+	}
+	if left.lifetime > right.lifetime {
+		return 1
+	}
+	return 0
 }
 
 func compareUint32Slice[T ~uint32](left, right []T) int {

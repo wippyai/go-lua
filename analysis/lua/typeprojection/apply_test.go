@@ -361,11 +361,11 @@ func TestExpectedConstructorEntryTypeSkipsUnionMembersWithoutExplicitEntry(t *te
 		Field("headers", typetable.NewMap(typ.String, typ.String)).
 		Build()
 	success := typetable.NewRecord().
-		Field("ok", typ.True).
+		Field("ok", typ.LiteralBool(true)).
 		Field("value", response).
 		Build()
 	failure := typetable.NewRecord().
-		Field("ok", typ.False).
+		Field("ok", typ.LiteralBool(false)).
 		Field("error", typ.String).
 		Build()
 	source := typeexpr.Union(success, failure)

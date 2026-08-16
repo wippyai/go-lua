@@ -178,8 +178,10 @@ type orderStore struct {
 	bodyRanges   []termRange
 	bindTerms    []keyspace.Term
 	bindRanges   []termRange
+	bindOwners   []keyspace.Term
 	formalTerms  []keyspace.Term
 	formalRanges []termRange
+	formalOwners []keyspace.Term
 }
 
 type positionSlot struct {
@@ -531,6 +533,22 @@ type Preimage struct{ state *draftState }
 
 // Component is the immutable Source owner published by Program root.
 type Component struct{ authority *authority }
+
+// SemanticPathIssuance is the one-shot parent capability created only by the
+// Finalizer commit transaction. A published View cannot recreate it: the
+// opaque authority pointer is checked on consumption and the capability is
+// cleared even when downstream proof validation fails.
+type SemanticPathIssuance struct {
+	state *semanticPathIssuanceState
+}
+
+type semanticPathIssuanceState struct {
+	mu              sync.Mutex
+	authority       *authority
+	used            bool
+	cellRoles       *cellRoleAuthority
+	cellRolesIssued bool
+}
 
 // Cold is the allocation-free Source identity snapshot. It intentionally
 // retains only the authored ContentID; final derived positions and Outcome

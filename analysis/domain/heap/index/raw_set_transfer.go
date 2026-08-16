@@ -51,18 +51,19 @@ func (rule *RawSetRule) transfer(access engine.Access[heapdomain.Value, Access])
 			return false
 		}
 		// An empty Heap route is the explicit no-candidate disposition. This
-		// covers absent receivers and definitely invalid dynamic nil/NaN keys;
-		// Pack/Value selectors must be empty downstream of that route.
+		// covers absent receivers, selected-but-absent dynamic keys, and
+		// definitely invalid dynamic nil/NaN keys; Pack/Value selectors must
+		// be empty downstream of that route.
 		if view.heapCount == 0 {
 			if _, dynamic := operand.DynamicKey(); dynamic {
 				if receiverPresent && view.keyCount != 1 || !receiverPresent && view.keyCount != 0 {
 					return false
 				}
-				// A live receiver's dynamic-key route is always downstream
-				// of one authenticated, present key observation.  An absent
-				// key cell is not the explicit invalid-key case; accepting it
-				// would let a missing premise masquerade as NoSelection.
-				if receiverPresent && (!view.key.valid || !view.key.found || !view.key.present) {
+				// A live receiver's no-route branch is still authenticated by
+				// one exact dynamic-key selection. Its cell may be absent only
+				// because every downstream selection is empty; routed Heap
+				// mutation remains stricter below.
+				if receiverPresent && (!view.key.valid || !view.key.found) {
 					return false
 				}
 			}
@@ -80,7 +81,7 @@ func (rule *RawSetRule) transfer(access engine.Access[heapdomain.Value, Access])
 				return heapdomain.Value{}, false
 			}
 			if !present {
-				return rule.heap.Schema().Bottom(), true
+				return rule.heapSchema().Bottom(), true
 			}
 			return rule.mutateRoute(operand, tag, fact, view)
 		})
@@ -156,12 +157,9 @@ func rawSetSelectionShape(access Access, descriptor rawPayload, view rawSetView)
 		if view.keyCount == 1 && (!view.key.valid || !view.key.found) {
 			return false
 		}
-		if view.heapCount == 0 && view.keyCount == 1 && !view.key.present {
-			return false
-		}
 		// A routed write must be downstream of the one present dynamic-key
-		// observation. A selected-but-absent key can lawfully settle the
-		// explicit no-route branch, but it cannot carry a Heap route.
+		// observation. A selected-but-absent key lawfully settles only the
+		// explicit all-empty no-route branch; it cannot carry a Heap route.
 		if view.heapCount > 0 && (!view.key.valid || !view.key.found || !view.key.present) {
 			return false
 		}
@@ -180,7 +178,7 @@ func rawSetSelectionShape(access Access, descriptor rawPayload, view rawSetView)
 	default:
 		return false
 	}
-	return view.packCount == wantPack && view.sourceCount == len(descriptor.sources)
+	return view.packCount == wantPack && view.sourceCount == int(descriptor.sourceCount)
 }
 
 // mutateRoute is the common Heap-owned reducer used by transfer and
@@ -201,16 +199,16 @@ func (rule *RawSetRule) mutateRoute(access Access, route heapdomain.RawRouteTag,
 		return heapdomain.Value{}, false
 	}
 	indexAccess, indexOK := access.IndexAccess()
-	slot, slotOK := rule.heap.Schema().SlotForIndexAccess(indexAccess)
-	payload, payloadOK := rule.heap.Schema().PayloadForIndexAccess(indexAccess)
+	slot, slotOK := rule.heapSchema().SlotForIndexAccess(indexAccess)
+	payload, payloadOK := rule.heapSchema().PayloadForIndexAccess(indexAccess)
 	if !indexOK || !slotOK || !payloadOK {
 		return heapdomain.Value{}, false
 	}
-	values := rule.values.Schema()
+	values := rule.valueSchema()
 	if _, dynamic := access.DynamicKey(); dynamic && view.key.found && !values.Equal(view.key.value, view.key.value) {
 		return heapdomain.Value{}, false
 	}
-	schema := rule.heap.Schema()
+	schema := rule.heapSchema()
 	result := schema.Bottom()
 	var frozen, changed, preserved bool
 	apply := func(selector heapdomain.KeySelector, keyChild heapdomain.Containment) bool {
@@ -230,7 +228,7 @@ func (rule *RawSetRule) mutateRoute(access Access, route heapdomain.RawRouteTag,
 		}
 		if view.key.value.IsTop() {
 			unknown, unknownOK := schema.ContainmentUnknown()
-			if !unknownOK || !rule.selectors.Visit(view.key.value, func(selector heapdomain.KeySelector) bool { return apply(selector, unknown) }) {
+			if !unknownOK || !rule.topology.selectors.Visit(view.key.value, func(selector heapdomain.KeySelector) bool { return apply(selector, unknown) }) {
 				return heapdomain.Value{}, false
 			}
 		} else {
@@ -279,15 +277,19 @@ func (rule *RawSetRule) applyPayload(
 	if result == nil || frozen == nil || changed == nil || preserved == nil {
 		return false
 	}
-	schema := rule.heap.Schema()
+	schema := rule.heapSchema()
 	switch descriptor.kind {
 	case rawPayloadNil:
 		return rule.applyDelete(schema, raw, result, frozen, changed)
 	case rawPayloadFixed:
-		tag, found := descriptor.byValue[descriptor.fixed]
-		if !found {
+		if descriptor.sourceCount != 1 {
 			return false
 		}
+		tags, tagsOK := rule.topology.catalog.sourceTags(payloadTag)
+		if !tagsOK || len(tags) != 1 {
+			return false
+		}
+		tag := tags[0]
 		return rule.applySourceTag(schema, raw, tag, view, access, slot, payload, keyChild, result, frozen, changed, preserved)
 	case rawPayloadTail:
 		selected := view.pack(payloadTag)
@@ -299,11 +301,12 @@ func (rule *RawSetRule) applyPayload(
 			return true
 		}
 		root, rootOK := descriptor.payload.Root()
-		values, valuesOK := descriptor.payload.Selection()
-		if !rootOK || !valuesOK {
+		selection, selectionOK := descriptor.payload.Selection()
+		values, valuesOK := descriptor.payload.Values()
+		if !rootOK || !selectionOK || !valuesOK {
 			return false
 		}
-		observation, observed := rule.packs.Schema().ObserveScalar(root, selected.value, descriptor.values, values)
+		observation, observed := rule.packSchema().ObserveScalar(root, selected.value, values, selection)
 		if !observed {
 			return false
 		}
@@ -316,7 +319,7 @@ func (rule *RawSetRule) applyPayload(
 		}
 		for index := 0; index < observation.Count(); index++ {
 			scalar, scalarOK := observation.At(index)
-			if !scalarOK || !rule.applyScalar(raw, descriptor, scalar, view, access, slot, payload, keyChild, result, frozen, changed, preserved) {
+			if !scalarOK || !rule.applyScalar(raw, descriptor, payloadTag, scalar, view, access, slot, payload, keyChild, result, frozen, changed, preserved) {
 				return false
 			}
 		}
@@ -329,18 +332,18 @@ func (rule *RawSetRule) applyPayload(
 }
 
 func (rule *RawSetRule) applyScalar(
-	raw heapdomain.RawAccess, descriptor rawPayload, scalar pack.Scalar, view rawSetView,
+	raw heapdomain.RawAccess, descriptor rawPayload, payloadTag heapdomain.RawPayloadTag, scalar pack.Scalar, view rawSetView,
 	access Access, slot heapdomain.Slot, payload heapdomain.Payload, keyChild heapdomain.Containment,
 	result *heapdomain.Value, frozen, changed, preserved *bool,
 ) bool {
 	if scalar.Kind() == pack.ScalarEndpoint {
-		value, valueOK := rule.packs.Schema().ScalarSource(scalar)
-		tag, tagOK := descriptor.byValue[value]
-		return valueOK && tagOK && rule.applySourceTag(rule.heap.Schema(), raw, tag, view, access, slot, payload, keyChild, result, frozen, changed, preserved)
+		source, sourceOK := rule.packSchema().ScalarSource(scalar)
+		tag, tagOK := rule.sourceTag(payloadTag, source)
+		return sourceOK && tagOK && rule.applySourceTag(rule.heapSchema(), raw, tag, view, access, slot, payload, keyChild, result, frozen, changed, preserved)
 	}
 	kinds, kindsOK := descriptor.payload.ScalarMayRuntimeKinds(scalar)
-	value, valueOK := rule.values.Schema().ForRuntimeKinds(kinds)
-	return kindsOK && valueOK && rule.applySourceValue(rule.heap.Schema(), raw, value, access, slot, payload, keyChild, result, frozen, changed, preserved)
+	value, valueOK := rule.valueSchema().ForRuntimeKinds(kinds)
+	return kindsOK && valueOK && rule.applySourceValue(rule.heapSchema(), raw, value, access, slot, payload, keyChild, result, frozen, changed, preserved)
 }
 
 func (rule *RawSetRule) applySourceTag(
@@ -364,7 +367,7 @@ func (rule *RawSetRule) applySourceValue(
 	access Access, slot heapdomain.Slot, payload heapdomain.Payload, keyChild heapdomain.Containment,
 	result *heapdomain.Value, frozen, changed, preserved *bool,
 ) bool {
-	values := rule.values.Schema()
+	values := rule.valueSchema()
 	if !values.Equal(source, source) {
 		return false
 	}

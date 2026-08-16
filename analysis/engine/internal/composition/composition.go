@@ -6,6 +6,7 @@ package composition
 import (
 	"context"
 	"crypto/sha256"
+	"reflect"
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/internal/canonical"
@@ -14,7 +15,7 @@ import (
 // codecVersion changes whenever a cold semantic term changes meaning. The
 // trusted-theorem provenance rename is semantic: previous `Theorem` rows must
 // never be mistaken for checked artifacts by a persisted CompositionID.
-const codecVersion = 15
+const codecVersion = 16
 
 // ID is a fixed semantic digest.  It is not a Program artifact identity.
 type ID [sha256.Size]byte
@@ -177,6 +178,65 @@ type FactorForm struct {
 	Semantic Key
 }
 
+// Scalar shape projections are the only child-schema inspection surface used
+// by hot binding. They intentionally contain no slices or mutable row storage.
+type FactorFormShape struct {
+	Kind     FactorFormKind
+	Semantic Key
+}
+
+type RuleShape struct {
+	OperandFamily    Key
+	Admission        Admission
+	OutputKind       OutputKind
+	Output           Key
+	Inputs           uint64
+	ReadCount        uint64
+	CarryCount       uint64
+	WriteCount       uint64
+	ActivationCount  uint64
+	ActivationFamily Key
+}
+
+type RuleReadShape struct {
+	Kind            ReadKind
+	Input           uint64
+	Factor          Key
+	Semantic        Key
+	Normalizer      Key
+	DependencyCount uint64
+}
+
+type RuleCarryShape struct {
+	Input     uint64
+	Factor    Key
+	Transform Key
+}
+
+type RuleWriteShape struct {
+	Kind            WriteKind
+	Factor          Key
+	Semantic        Key
+	Route           uint64
+	CandidateCount  uint64
+	DependencyCount uint64
+}
+
+// QueryShape is the scalar, immutable header of one sealed Query family.
+// Hot binding uses this projection instead of detaching the cold Query row.
+type QueryShape struct {
+	Freezer         Key
+	ProjectionCount uint64
+}
+
+// QueryProjectionShape is one scalar projection in the sealed Query's
+// canonical order. It contains no callback or mutable row storage.
+type QueryProjectionShape struct {
+	Kind       QueryProjectionKind
+	Factor     Key
+	Normalizer Key
+}
+
 type Factor struct {
 	Key   Key
 	Forms []FactorForm
@@ -257,6 +317,19 @@ type Composition struct {
 	components   []Component
 }
 
+// Same reports exact canonical cold-schema equality. ID equality is required
+// but never sufficient on its own: a hot binding must reject a digest
+// collision rather than treating it as schema authority. Only the canonical
+// semantic rows participate; lookup and incidence indexes are derived.
+func Same(left, right *Composition) bool {
+	return left != nil && right != nil && left.id.Available() && left.id == right.id &&
+		reflect.DeepEqual(left.factors, right.factors) &&
+		reflect.DeepEqual(left.completion, right.completion) &&
+		reflect.DeepEqual(left.activations, right.activations) &&
+		reflect.DeepEqual(left.rules, right.rules) &&
+		reflect.DeepEqual(left.queries, right.queries)
+}
+
 func (c *Composition) ID() ID {
 	if c == nil {
 		return ID{}
@@ -270,6 +343,12 @@ func (c *Composition) FactorIndex(key Key) (uint64, bool) {
 	value, ok := c.factorAt[key]
 	return value, ok
 }
+func (c *Composition) FactorKeyAt(index uint64) Key {
+	if c == nil || index >= uint64(len(c.factors)) {
+		return Key{}
+	}
+	return c.factors[index].Key
+}
 func (c *Composition) RuleIndex(key Key) (uint64, bool) {
 	if c == nil {
 		return 0, false
@@ -277,12 +356,35 @@ func (c *Composition) RuleIndex(key Key) (uint64, bool) {
 	value, ok := c.ruleAt[key]
 	return value, ok
 }
+func (c *Composition) RuleKeyAt(index uint64) Key {
+	if c == nil || index >= uint64(len(c.rules)) {
+		return Key{}
+	}
+	return c.rules[index].Key
+}
 func (c *Composition) QueryIndex(key Key) (uint64, bool) {
 	if c == nil {
 		return 0, false
 	}
 	value, ok := c.queryAt[key]
 	return value, ok
+}
+func (c *Composition) QueryKeyAt(index uint64) Key {
+	if c == nil || index >= uint64(len(c.queries)) {
+		return Key{}
+	}
+	return c.queries[index].Key
+}
+func (c *Composition) ActivationIndex(key Key) (uint64, bool) {
+	if c == nil {
+		return 0, false
+	}
+	for index, family := range c.activations {
+		if family.Semantic == key {
+			return uint64(index), true
+		}
+	}
+	return 0, false
 }
 func (c *Composition) Factors() []Factor {
 	if c == nil {
@@ -292,6 +394,106 @@ func (c *Composition) Factors() []Factor {
 }
 func (c *Composition) Rules() []Rule          { return copyRules(c.rules) }
 func (c *Composition) Queries() []QueryFamily { return copyQueries(c.queries) }
+
+// ShapeCount returns the immutable cold denominators without detaching any
+// semantic row. It is the narrow proof used by the hot Binding planner.
+func (c *Composition) ShapeCount() (factors, rules, queries, activations int, ok bool) {
+	if c == nil || !c.id.Available() {
+		return 0, 0, 0, 0, false
+	}
+	return len(c.factors), len(c.rules), len(c.queries), len(c.activations), true
+}
+
+// FactorFormCount returns only one canonical Factor's extension-form
+// denominator. It exposes no row, semantic identity, or mutable storage.
+func (c *Composition) FactorFormCount(index uint64) (int, bool) {
+	if c == nil || index >= uint64(len(c.factors)) {
+		return 0, false
+	}
+	return len(c.factors[index].Forms), true
+}
+
+func (c *Composition) FactorFormShapeAt(factor, form uint64) (FactorFormShape, bool) {
+	if c == nil || factor >= uint64(len(c.factors)) || form >= uint64(len(c.factors[factor].Forms)) {
+		return FactorFormShape{}, false
+	}
+	row := c.factors[factor].Forms[form]
+	return FactorFormShape{Kind: row.Kind, Semantic: row.Semantic}, true
+}
+
+func (c *Composition) RuleShapeAt(index uint64) (RuleShape, bool) {
+	if c == nil || index >= uint64(len(c.rules)) {
+		return RuleShape{}, false
+	}
+	row := c.rules[index]
+	activationFamily := Key{}
+	if len(row.Activations) == 1 {
+		activationFamily = row.Activations[0].Family
+	}
+	return RuleShape{OperandFamily: row.OperandFamily, Admission: row.Admission, OutputKind: row.OutputKind, Output: row.Output, Inputs: row.Inputs, ReadCount: uint64(len(row.Reads)), CarryCount: uint64(len(row.Carries)), WriteCount: uint64(len(row.Writes)), ActivationCount: uint64(len(row.Activations)), ActivationFamily: activationFamily}, true
+}
+
+func (c *Composition) RuleReadShapeAt(rule, read uint64) (RuleReadShape, bool) {
+	if c == nil || rule >= uint64(len(c.rules)) || read >= uint64(len(c.rules[rule].Reads)) {
+		return RuleReadShape{}, false
+	}
+	row := c.rules[rule].Reads[read]
+	return RuleReadShape{Kind: row.Kind, Input: row.Input, Factor: row.Factor, Semantic: row.Semantic, Normalizer: row.Normalizer, DependencyCount: uint64(len(row.Dependencies))}, true
+}
+
+func (c *Composition) RuleReadDependencyAt(rule, read, dependency uint64) (uint64, bool) {
+	if c == nil || rule >= uint64(len(c.rules)) || read >= uint64(len(c.rules[rule].Reads)) || dependency >= uint64(len(c.rules[rule].Reads[read].Dependencies)) {
+		return 0, false
+	}
+	return c.rules[rule].Reads[read].Dependencies[dependency], true
+}
+
+func (c *Composition) RuleCarryShapeAt(rule, carry uint64) (RuleCarryShape, bool) {
+	if c == nil || rule >= uint64(len(c.rules)) || carry >= uint64(len(c.rules[rule].Carries)) {
+		return RuleCarryShape{}, false
+	}
+	row := c.rules[rule].Carries[carry]
+	return RuleCarryShape{Input: row.Input, Factor: row.Factor, Transform: row.Transform}, true
+}
+
+func (c *Composition) RuleWriteShapeAt(rule, write uint64) (RuleWriteShape, bool) {
+	if c == nil || rule >= uint64(len(c.rules)) || write >= uint64(len(c.rules[rule].Writes)) {
+		return RuleWriteShape{}, false
+	}
+	row := c.rules[rule].Writes[write]
+	return RuleWriteShape{Kind: row.Kind, Factor: row.Factor, Semantic: row.Semantic, Route: row.Route, CandidateCount: uint64(len(row.Candidates)), DependencyCount: uint64(len(row.Dependencies))}, true
+}
+
+func (c *Composition) RuleWriteCandidateAt(rule, write, candidate uint64) (uint64, bool) {
+	if c == nil || rule >= uint64(len(c.rules)) || write >= uint64(len(c.rules[rule].Writes)) || candidate >= uint64(len(c.rules[rule].Writes[write].Candidates)) {
+		return 0, false
+	}
+	return c.rules[rule].Writes[write].Candidates[candidate], true
+}
+
+func (c *Composition) RuleWriteDependencyAt(rule, write, dependency uint64) (index uint64, target bool, ok bool) {
+	if c == nil || rule >= uint64(len(c.rules)) || write >= uint64(len(c.rules[rule].Writes)) || dependency >= uint64(len(c.rules[rule].Writes[write].Dependencies)) {
+		return 0, false, false
+	}
+	value := c.rules[rule].Writes[write].Dependencies[dependency]
+	return value.Index, value.Target, true
+}
+
+func (c *Composition) QueryShapeAt(index uint64) (QueryShape, bool) {
+	if c == nil || index >= uint64(len(c.queries)) {
+		return QueryShape{}, false
+	}
+	row := c.queries[index]
+	return QueryShape{Freezer: row.Freezer, ProjectionCount: uint64(len(row.Projections))}, true
+}
+
+func (c *Composition) QueryProjectionShapeAt(query, projection uint64) (QueryProjectionShape, bool) {
+	if c == nil || query >= uint64(len(c.queries)) || projection >= uint64(len(c.queries[query].Projections)) {
+		return QueryProjectionShape{}, false
+	}
+	row := c.queries[query].Projections[projection]
+	return QueryProjectionShape{Kind: row.Kind, Factor: row.Factor, Normalizer: row.Normalizer}, true
+}
 
 // RuleAt returns one detached sealed rule without cloning the entire catalog.
 // Dense ordinal admission remains owned by RuleIndex; callers cannot retain or
@@ -872,7 +1074,7 @@ func compositionID(factors []Factor, completion Completion, activations []Activa
 			return ID{}, false
 		}
 		for _, write := range rule.Writes {
-			if writer.Uint(uint64(write.Kind)) != nil || !key(write.Factor) || !key(write.Semantic) || !deps(write.Candidates) || !writeDeps(write.Dependencies) {
+			if writer.Uint(uint64(write.Kind)) != nil || !key(write.Factor) || !key(write.Semantic) || writer.Uint(write.Route) != nil || !deps(write.Candidates) || !writeDeps(write.Dependencies) {
 				return ID{}, false
 			}
 		}

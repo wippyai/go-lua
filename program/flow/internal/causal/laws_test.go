@@ -1,10 +1,24 @@
 package causal
 
 import (
+	"fmt"
+	"sort"
 	"testing"
 
+	"github.com/wippyai/go-lua/program/flow/kind"
 	"github.com/wippyai/go-lua/program/keyspace"
 )
+
+func TestOutcomePhaseClassifierExcludesOnlyNormal(t *testing.T) {
+	if outcomePhaseOutcome(kind.OutcomeNormal) {
+		t.Fatal("Normal selected an Outcome phase")
+	}
+	for _, outcomeKind := range []kind.OutcomeKind{kind.OutcomeReturn, kind.OutcomeThrow, kind.OutcomeYield, kind.OutcomeCancel, kind.OutcomeBreak, kind.OutcomeGoto} {
+		if !outcomePhaseOutcome(outcomeKind) {
+			t.Fatalf("%v did not select an Outcome phase", outcomeKind)
+		}
+	}
+}
 
 // syntheticResult is deliberately assembled from the published typed rows.
 // It keeps these laws independent of the upstream fixture builders while
@@ -35,6 +49,36 @@ func syntheticResult() *Result {
 func rebuildSyntheticSuccessors(r *Result, edges []edgeRow, boundaries []boundaryRow) error {
 	r.edges.rows = edges
 	r.boundaries.rows = boundaries
+	// Synthetic rows are a closed test fixture, not a production certificate
+	// path. Give their fixture authority the exact heads it deliberately uses.
+	componentSet := make(map[keyspace.Term]struct{})
+	for _, row := range edges {
+		if row.component != 0 {
+			componentSet[row.component] = struct{}{}
+		}
+	}
+	for _, row := range boundaries {
+		for _, arm := range [...]BoundaryArmKind{BoundaryResume, BoundarySelectTrue, BoundarySelectFalse, BoundaryTail, BoundaryThrow, BoundaryYield, BoundaryCancel} {
+			if boundaryArmPresent(row, arm) && row.components[arm] != 0 {
+				componentSet[row.components[arm]] = struct{}{}
+			}
+		}
+	}
+	r.components = make([]keyspace.Term, 0, len(componentSet))
+	for component := range componentSet {
+		r.components = append(r.components, component)
+	}
+	sort.Slice(r.components, func(left, right int) bool { return r.components[left] < r.components[right] })
+	r.componentIndex = make(map[keyspace.Term]uint32, len(r.components))
+	for index, component := range r.components {
+		if !canonicalComponent(component, true) || uint64(index) > uint64(^uint32(0)) {
+			return fmt.Errorf("synthetic component %v is unavailable", component)
+		}
+		if _, duplicate := r.componentIndex[component]; duplicate {
+			return fmt.Errorf("synthetic component %v is duplicated", component)
+		}
+		r.componentIndex[component] = uint32(index)
+	}
 	r.boundaries.callSlots = make([]uint32, r.index.familyCounts[keyspace.FamilyCall]+1)
 	edgeOwners := make([]keyspace.Term, len(edges))
 	for index := range edges {
@@ -57,6 +101,53 @@ func rebuildSyntheticSuccessors(r *Result, edges []edgeRow, boundaries []boundar
 	return index.buildSuccessorIndex()
 }
 
+func TestSemanticWTOSitesArePathOrderedPerVertexWithoutCrossVertexCollapse(t *testing.T) {
+	r := syntheticResult()
+	body := keyspace.MakeTerm(keyspace.FamilyBody, 1)
+	call := keyspace.MakeTerm(keyspace.FamilyCall, 1)
+	pathBody := keyspace.ContentID{1}
+	pathCall := keyspace.ContentID{2}
+	r.sites.rows = []siteRow{{term: body, path: pathBody}, {term: call, path: pathCall}}
+	// The same issued Site is a legitimate projection of two graph vertices;
+	// only the duplicate inside vertex zero is removed.
+	r.pendingNodeSites = [][]uint32{{1, 0, 1}, {1}}
+
+	first, firstID, ok := r.semanticWTOSites(0)
+	if !ok || len(first) != 2 || first[0] != 0 || first[1] != 1 || !firstID.Available() {
+		t.Fatalf("first semantic WTO site set = (%v, %v, %t)", first, firstID, ok)
+	}
+	second, secondID, ok := r.semanticWTOSites(1)
+	if !ok || len(second) != 1 || second[0] != 1 || !secondID.Available() {
+		t.Fatalf("second semantic WTO site set = (%v, %v, %t)", second, secondID, ok)
+	}
+}
+
+func TestClassifyWTORoutesUsesLowestCommonRegionAndExplicitCrossDisposition(t *testing.T) {
+	r := syntheticResult()
+	rootID, childID, otherID := keyspace.ContentID{11}, keyspace.ContentID{12}, keyspace.ContentID{13}
+	firstDigest, secondDigest := keyspace.ContentID{21}, keyspace.ContentID{22}
+	firstPath, secondPath := keyspace.ContentID{31}, keyspace.ContentID{32}
+	first := successorRef{local: true, arm: BoundaryLocal, routeDigest: firstDigest, semanticPath: firstPath}
+	second := successorRef{local: true, arm: BoundaryLocal, routeDigest: secondDigest, semanticPath: secondPath}
+	r.index.refs = []successorRef{first, second}
+	r.routeIndex = []routeLookup{{digest: firstDigest, ref: first}, {digest: secondDigest, ref: second}}
+	r.pendingNodeSites = make([][]uint32, 3)
+	r.pendingWTORoutes = []pendingWTORoute{{from: 0, to: 1}, {from: 1, to: 2}}
+	store := wtoStore{
+		regions: []wtoRegion{{id: rootID}, {id: childID, parent: rootID}, {id: otherID}},
+		byID:    map[keyspace.ContentID]uint32{rootID: 0, childID: 1, otherID: 2},
+	}
+	if err := r.classifyWTORoutes(&store, []uint32{1, 0, 2}); err != nil {
+		t.Fatalf("classifyWTORoutes rejected valid nested/cross membership: %v", err)
+	}
+	if r.index.refs[0].wtoRegion != rootID || r.routeIndex[0].ref.wtoRegion != rootID || len(store.regions[0].routes) != 1 {
+		t.Fatal("nested route was not assigned to its lowest common parent region")
+	}
+	if r.index.refs[1].wtoRegion.Available() || r.routeIndex[1].ref.wtoRegion.Available() || len(store.regions[2].routes) != 0 {
+		t.Fatal("cross-root route was not retained as an explicit zero membership")
+	}
+}
+
 func TestClosedBoundaryArmsAndTwoPlanePartition(t *testing.T) {
 	r := syntheticResult()
 	r.reset.headRanges[keyspace.FamilyLoop] = make([]range32, 2)
@@ -73,7 +164,7 @@ func TestClosedBoundaryArmsAndTwoPlanePartition(t *testing.T) {
 	outcome3 := keyspace.MakeTerm(keyspace.FamilyOutcome, 3)
 	outcome4 := keyspace.MakeTerm(keyspace.FamilyOutcome, 4)
 	edges := []edgeRow{
-		{Edge: Edge{From: body, To: selectTerm, Decision: branch, Truth: true, Mu: loop}},
+		{Edge: Edge{From: body, To: selectTerm, Decision: branch, Truth: true, Mu: loop}, component: loop},
 	}
 	boundaries := []boundaryRow{
 		{CallBoundary: CallBoundary{Call: call1, Normal: body, Throw: outcome1, Yield: outcome2, Cancel: outcome3, mode: boundaryDirect}},
@@ -183,9 +274,9 @@ func TestStructuralGuardsAndOutcomeRoutesStayTyped(t *testing.T) {
 	edges := []edgeRow{
 		{Edge: Edge{From: branch, To: body, Decision: branch, Truth: true}},
 		{Edge: Edge{From: branch, To: outcome1, Decision: branch, Truth: false}},
-		{Edge: Edge{From: loop, To: body, Decision: loop, Truth: true, Mu: loop}},
+		{Edge: Edge{From: loop, To: body, Decision: loop, Truth: true, Mu: loop}, component: loop},
 		{Edge: Edge{From: loop, To: outcome2, Decision: loop, Truth: false}},
-		{Edge: Edge{From: breakTerm, To: outcome3, Mu: loop}},
+		{Edge: Edge{From: breakTerm, To: outcome3, Mu: loop}, component: loop},
 		{Edge: Edge{From: gotoTerm, To: label}},
 		{Edge: Edge{From: returnTerm, To: outcome4}},
 		{Edge: Edge{From: fieldKey, To: outcome1}},
@@ -267,9 +358,10 @@ func TestCompressedMuQueriesAndEmptyReset(t *testing.T) {
 	r.reset.decisionHead[keyspace.FamilyBranch][1] = loop
 	r.reset.decisionRank[keyspace.FamilyBranch][1] = 1
 	r.edges.rows = []edgeRow{
-		{Edge: Edge{From: body, To: selectTerm, Mu: loop}, resetStart: 0, resetPast: 2},
-		{Edge: Edge{From: body, To: branch, Mu: loop}, resetStart: 2, resetPast: 2},
+		{Edge: Edge{From: body, To: selectTerm, Mu: loop}, component: loop, resetStart: 0, resetPast: 2},
+		{Edge: Edge{From: body, To: branch, Mu: loop}, component: loop, resetStart: 2, resetPast: 2},
 	}
+	r.components = []keyspace.Term{loop}
 
 	view := r.Edges()
 	if count, ok := view.ResetCount(0); !ok || count != 2 {
@@ -290,6 +382,239 @@ func TestCompressedMuQueriesAndEmptyReset(t *testing.T) {
 	}
 	if view.ResetContains(1, selectTerm) {
 		t.Fatal("empty reset falsely contains a decision")
+	}
+}
+
+func TestComponentShapedButUnissuedRowFailsClosed(t *testing.T) {
+	r := syntheticResult()
+	body := keyspace.MakeTerm(keyspace.FamilyBody, 1)
+	loop := keyspace.MakeTerm(keyspace.FamilyLoop, 1)
+	selectTerm := keyspace.MakeTerm(keyspace.FamilySelect, 1)
+	if err := rebuildSyntheticSuccessors(r, []edgeRow{{Edge: Edge{From: body, To: selectTerm}, component: loop}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := r.Edges().At(0); !ok {
+		t.Fatal("fixture-issued component row disappeared")
+	}
+	r.components = nil
+	if _, ok := r.Edges().At(0); ok {
+		t.Fatal("component-shaped but unissued local row remained observable")
+	}
+}
+
+func TestLocalProjectionUsesOnlyIssuedCausalRows(t *testing.T) {
+	build := func(t *testing.T) (*Result, Successor, Site, Region) {
+		t.Helper()
+		r := syntheticResult()
+		body := keyspace.MakeTerm(keyspace.FamilyBody, 1)
+		loop := keyspace.MakeTerm(keyspace.FamilyLoop, 1)
+		selectTerm := keyspace.MakeTerm(keyspace.FamilySelect, 1)
+		if err := rebuildSyntheticSuccessors(r, []edgeRow{{Edge: Edge{From: body, To: selectTerm}, component: loop}}, nil); err != nil {
+			t.Fatal(err)
+		}
+		r.sites.rows = []siteRow{
+			{term: body, context: hashSiteContext(r.sourceID, r.flowID, r.staticID, r.moduleID, body)},
+			{term: selectTerm, context: hashSiteContext(r.sourceID, r.flowID, r.staticID, r.moduleID, selectTerm)},
+		}
+		if !r.buildLocal() {
+			t.Fatal("failed to project issued local component")
+		}
+		successor, ok := r.Successors().At(body, 0)
+		if !ok {
+			t.Fatal("issued local successor disappeared")
+		}
+		site, ok := r.SiteForTerm(body)
+		if !ok {
+			t.Fatal("issued local site disappeared")
+		}
+		region, ok := r.Local().ForSuccessor(successor)
+		if !ok || !region.Available() || !region.ContainsSuccessor(successor) || !region.ContainsSite(site) {
+			t.Fatal("region lost its existing causal route/site references")
+		}
+		if head, ok := region.Head(); !ok || head != loop {
+			t.Fatalf("region head = %v/%v, want %v/true", head, ok, loop)
+		}
+		if region.SuccessorCount() != 1 || region.SiteCount() != 2 {
+			t.Fatalf("region traversal counts = routes %d sites %d, want 1/2", region.SuccessorCount(), region.SiteCount())
+		}
+		if route, ok := region.SuccessorAt(0); !ok || !route.IsLocal() || route.From != body || route.To != selectTerm {
+			t.Fatalf("region route traversal lost existing successor: %#v/%v", route, ok)
+		}
+		if endpoint, ok := region.SiteAt(0); !ok || !endpoint.Available() {
+			t.Fatal("region site traversal lost existing site")
+		}
+		return r, successor, site, region
+	}
+	_, successor, site, first := build(t)
+	_, foreignSuccessor, foreignSite, second := build(t)
+	if first.ID() != second.ID() {
+		t.Fatal("equivalent issued component changed stable local identity")
+	}
+	if _, ok := first.result.Local().ForSuccessor(foreignSuccessor); ok {
+		t.Fatal("foreign successor entered local inverse")
+	}
+	if regions := first.result.Local().RegionCountForSite(foreignSite); regions != 0 {
+		t.Fatal("foreign site entered local inverse")
+	}
+	if !first.ContainsSuccessor(successor) || !first.ContainsSite(site) {
+		t.Fatal("local membership was not stable")
+	}
+}
+
+func TestLocalEnumeratesEmptyIssuedHeadInCanonicalOrder(t *testing.T) {
+	r := syntheticResult()
+	loop := keyspace.MakeTerm(keyspace.FamilyLoop, 1)
+	r.components = []keyspace.Term{loop}
+	if !r.buildLocal() {
+		t.Fatal("failed to build empty issued region")
+	}
+	local := r.Local()
+	if local.Count() != 1 {
+		t.Fatalf("empty issued region count = %d, want 1", local.Count())
+	}
+	region, ok := local.At(0)
+	if !ok || region.SuccessorCount() != 0 || region.SiteCount() != 0 {
+		t.Fatal("empty issued region was not enumerable")
+	}
+	if replay, ok := local.Resolve(region.ID()); !ok || replay.ID() != region.ID() {
+		t.Fatal("canonical empty region identity failed to resolve")
+	}
+	if _, ok := local.At(1); ok {
+		t.Fatal("region enumeration exposed a physical overflow row")
+	}
+	if allocs := testing.AllocsPerRun(1000, func() { _, _ = local.At(0); _, _ = local.Resolve(region.ID()) }); allocs != 0 {
+		t.Fatalf("local enumeration allocates %v times", allocs)
+	}
+}
+
+func TestLocalSiteMembershipIsMultiValued(t *testing.T) {
+	r := syntheticResult()
+	body := keyspace.MakeTerm(keyspace.FamilyBody, 1)
+	loop := keyspace.MakeTerm(keyspace.FamilyLoop, 1)
+	label := keyspace.MakeTerm(keyspace.FamilyLabel, 1)
+	selectTerm := keyspace.MakeTerm(keyspace.FamilySelect, 1)
+	branch := keyspace.MakeTerm(keyspace.FamilyBranch, 1)
+	if err := rebuildSyntheticSuccessors(r, []edgeRow{
+		{Edge: Edge{From: body, To: selectTerm}, component: loop},
+		{Edge: Edge{From: body, To: branch}, component: label},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	r.sites.rows = []siteRow{
+		{term: body, context: hashSiteContext(r.sourceID, r.flowID, r.staticID, r.moduleID, body)},
+		{term: selectTerm, context: hashSiteContext(r.sourceID, r.flowID, r.staticID, r.moduleID, selectTerm)},
+		{term: branch, context: hashSiteContext(r.sourceID, r.flowID, r.staticID, r.moduleID, branch)},
+	}
+	if !r.buildLocal() {
+		t.Fatal("failed to build multi-region site inverse")
+	}
+	first, firstOK := r.Local().At(0)
+	second, secondOK := r.Local().At(1)
+	firstHead, firstHeadOK := first.Head()
+	secondHead, secondHeadOK := second.Head()
+	if !firstOK || !secondOK || !firstHeadOK || !secondHeadOK || firstHead != label || secondHead != loop {
+		t.Fatalf("canonical Region order = %v/%v, want Label/Loop", firstHead, secondHead)
+	}
+	site, ok := r.SiteForTerm(body)
+	if !ok {
+		t.Fatal("shared site disappeared")
+	}
+	if regions := r.Local().RegionCountForSite(site); regions != 2 {
+		t.Fatalf("shared Site region count = %d, want 2", regions)
+	}
+	for index := 0; index < r.Local().RegionCountForSite(site); index++ {
+		if region, ok := r.Local().RegionAtSite(site, index); !ok || !region.ContainsSite(site) {
+			t.Fatalf("site inverse %d lost exact region", index)
+		}
+	}
+	if allocs := testing.AllocsPerRun(1000, func() { _, _ = r.Local().RegionAtSite(site, 0) }); allocs != 0 {
+		t.Fatalf("site region inverse allocates %v times", allocs)
+	}
+}
+
+func TestLocalSiteInverseDeduplicatesInterleavedRegionRoutes(t *testing.T) {
+	r := syntheticResult()
+	body := keyspace.MakeTerm(keyspace.FamilyBody, 1)
+	loop := keyspace.MakeTerm(keyspace.FamilyLoop, 1)
+	label := keyspace.MakeTerm(keyspace.FamilyLabel, 1)
+	selectTerm := keyspace.MakeTerm(keyspace.FamilySelect, 1)
+	branch := keyspace.MakeTerm(keyspace.FamilyBranch, 1)
+	if err := rebuildSyntheticSuccessors(r, []edgeRow{
+		{Edge: Edge{From: body, To: selectTerm}, component: loop},
+		{Edge: Edge{From: body, To: branch}, component: label},
+		{Edge: Edge{From: body, To: selectTerm}, component: loop},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	r.sites.rows = []siteRow{
+		{term: body, context: hashSiteContext(r.sourceID, r.flowID, r.staticID, r.moduleID, body)},
+		{term: selectTerm, context: hashSiteContext(r.sourceID, r.flowID, r.staticID, r.moduleID, selectTerm)},
+		{term: branch, context: hashSiteContext(r.sourceID, r.flowID, r.staticID, r.moduleID, branch)},
+	}
+	if !r.buildLocal() {
+		t.Fatal("failed to build interleaved region inverse")
+	}
+	site, ok := r.SiteForTerm(body)
+	if !ok || r.Local().RegionCountForSite(site) != 2 {
+		t.Fatal("interleaved A/B/A routes duplicated shared site membership")
+	}
+}
+
+func TestLocalRejectsDuplicateSiteTerms(t *testing.T) {
+	r := syntheticResult()
+	body := keyspace.MakeTerm(keyspace.FamilyBody, 1)
+	loop := keyspace.MakeTerm(keyspace.FamilyLoop, 1)
+	selectTerm := keyspace.MakeTerm(keyspace.FamilySelect, 1)
+	if err := rebuildSyntheticSuccessors(r, []edgeRow{{Edge: Edge{From: body, To: selectTerm}, component: loop}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	context := hashSiteContext(r.sourceID, r.flowID, r.staticID, r.moduleID, body)
+	r.sites.rows = []siteRow{
+		{term: body, context: context},
+		{term: body, context: context},
+		{term: selectTerm, context: hashSiteContext(r.sourceID, r.flowID, r.staticID, r.moduleID, selectTerm)},
+	}
+	if r.buildLocal() {
+		t.Fatal("Local accepted duplicate canonical Site terms")
+	}
+}
+
+func TestBoundaryArmRetainsExactMuResetWitness(t *testing.T) {
+	r := syntheticResult()
+	body := keyspace.MakeTerm(keyspace.FamilyBody, 1)
+	call := keyspace.MakeTerm(keyspace.FamilyCall, 1)
+	loop := keyspace.MakeTerm(keyspace.FamilyLoop, 1)
+	selectTerm := keyspace.MakeTerm(keyspace.FamilySelect, 1)
+	throw := keyspace.MakeTerm(keyspace.FamilyOutcome, 1)
+	yield := keyspace.MakeTerm(keyspace.FamilyOutcome, 2)
+	cancel := keyspace.MakeTerm(keyspace.FamilyOutcome, 3)
+	r.reset.streams = []keyspace.Term{selectTerm}
+	r.reset.headRanges[keyspace.FamilyLoop] = make([]range32, 2)
+	r.reset.headRanges[keyspace.FamilyLoop][1] = range32{start: 0, end: 1}
+	r.reset.decisionHead[keyspace.FamilySelect] = make([]keyspace.Term, 2)
+	r.reset.decisionRank[keyspace.FamilySelect] = make([]uint32, 2)
+	r.reset.decisionHead[keyspace.FamilySelect][1] = loop
+	boundary := boundaryRow{CallBoundary: CallBoundary{
+		Call: call, Normal: body, Throw: throw, Yield: yield, Cancel: cancel, mode: boundaryDirect,
+	}}
+	boundary.components[BoundaryResume] = loop
+	boundary.proofs[BoundaryResume] = boundaryRecurrenceProof{mu: loop, resetStart: 0, resetPast: 1}
+	if err := rebuildSyntheticSuccessors(r, nil, []boundaryRow{boundary}); err != nil {
+		t.Fatal(err)
+	}
+	row := r.boundaries.rows[0]
+	if !r.validBoundaryProof(row, BoundaryResume) || row.components[BoundaryResume] != loop || row.proofs[BoundaryResume].mu != loop {
+		t.Fatalf("pre-seal boundary recurrence proof = %#v", row)
+	}
+	if count, ok := r.boundaryResetCount(0, BoundaryResume); !ok || count != 1 {
+		t.Fatalf("boundary reset count = %d/%v, want 1/true", count, ok)
+	}
+	if decision, ok := r.boundaryResetAt(0, BoundaryResume, 0); !ok || decision != selectTerm || !r.boundaryResetContains(0, BoundaryResume, selectTerm) {
+		t.Fatalf("boundary reset witness = %v/%v", decision, ok)
+	}
+	r.reset.decisionRank[keyspace.FamilySelect] = nil
+	if r.boundaryResetContains(0, BoundaryResume, selectTerm) {
+		t.Fatal("truncated boundary decision-rank plane exposed reset membership")
 	}
 }
 
@@ -530,7 +855,7 @@ func TestEquivalentResealAndResetPermutationPreserveIdentity(t *testing.T) {
 		r.reset.streams = append([]keyspace.Term(nil), order...)
 		r.reset.headRanges[keyspace.FamilyLoop] = make([]range32, 2)
 		r.reset.headRanges[keyspace.FamilyLoop][1] = range32{start: 0, end: uint32(len(order))}
-		r.edges.rows = []edgeRow{{Edge: Edge{From: body, To: outcome1, Mu: loop}, resetStart: 0, resetPast: uint32(len(order))}}
+		r.edges.rows = []edgeRow{{Edge: Edge{From: body, To: outcome1, Mu: loop}, component: loop, resetStart: 0, resetPast: uint32(len(order))}}
 		if err := rebuildSyntheticSuccessors(r, r.edges.rows, nil); err != nil {
 			t.Fatal(err)
 		}

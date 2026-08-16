@@ -366,7 +366,7 @@ func knownConcreteRuntimeKind(value typ.Type) bool {
 		return true
 	}
 	if literal, ok := value.(*typ.Literal); ok {
-		switch literal.Base {
+		switch literal.Base() {
 		case kind.Boolean, kind.Integer, kind.Number, kind.String:
 			return true
 		}

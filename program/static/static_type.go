@@ -57,6 +57,12 @@ func (types StaticTypes) Ref(term keyspace.Term) (StaticTypeRef, bool) {
 	return StaticTypeRef{component: component, term: term}, true
 }
 
+// Owns authenticates a StaticTypeRef against this exact published Static
+// component. It does not rebind the ref's local Term into another owner.
+func (types StaticTypes) Owns(ref StaticTypeRef) bool {
+	return types.component != nil && ref.component == types.component && types.component.StaticTypeTerm(ref.term)
+}
+
 // Term recovers the checked local Term and discards the owner binding. A zero
 // ref or a ref whose Component is no longer available returns the zero Term;
 // callers that pass the result to another StaticTypes view are requesting a

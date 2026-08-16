@@ -12,7 +12,7 @@ import (
 func isNumericStringLiteral(t typ.Type) bool {
 	t = operatorSurface(t)
 	lit, ok := t.(*typ.Literal)
-	if !ok || lit.Base != kind.String {
+	if !ok || lit.Base() != kind.String {
 		return false
 	}
 	_, ok = numericStringLiteral(lit)
@@ -20,10 +20,10 @@ func isNumericStringLiteral(t typ.Type) bool {
 }
 
 func numericStringLiteral(lit *typ.Literal) (float64, bool) {
-	if lit == nil || lit.Base != kind.String {
+	if lit == nil || lit.Base() != kind.String {
 		return 0, false
 	}
-	value, ok := lit.Value.(string)
+	value, ok := lit.Value().(string)
 	if !ok {
 		return 0, false
 	}

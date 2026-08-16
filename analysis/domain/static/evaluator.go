@@ -3,27 +3,24 @@ package static
 import (
 	"errors"
 
+	"github.com/wippyai/go-lua/analysis/internal/programartifact"
 	"github.com/wippyai/go-lua/analysis/semantic/typeauthority"
 	"github.com/wippyai/go-lua/program/keyspace"
-	linkstatic "github.com/wippyai/go-lua/program/link/static"
 	"github.com/wippyai/go-lua/program/target"
 )
 
 type OperandKind uint8
 
 const (
-	// OperandInvalid is the zero disposition so an unavailable lookup can never
-	// be mistaken for a legitimate exact static Unknown.
 	OperandInvalid OperandKind = iota
 	OperandUnknown
 	OperandKnown
 	OperandRuntimeSubject
 )
 
-// ContainedOperand is the context-free typeof boundary. Its four cases are
-// intentionally disjoint: only RuntimeSubject may acquire a later State
-// dependency; Unknown retains an exact static reason; Invalid retains the
-// exact static diagnostic and never falls back to runtime evaluation.
+// ContainedOperand is a detached artifact disposition. It carries only
+// scalar Program-issued IDs; no Link static handle, authored term, or Program
+// pointer survives the seal.
 type ContainedOperand struct {
 	kind           OperandKind
 	known          Value
@@ -31,14 +28,14 @@ type ContainedOperand struct {
 	reason         Reason
 	fault          Fault
 	owner          keyspace.ContentID
-	source         keyspace.Term
+	source         keyspace.ContentID
 	namespace      keyspace.ContentID
 	environment    keyspace.ContentID
 	operation      target.Operation
 	law            keyspace.ContentID
 	dependency     keyspace.ContentID
-	site           keyspace.Term
-	frontierBody   keyspace.Term
+	site           keyspace.ContentID
+	frontierBody   keyspace.ContentID
 	frontierCursor uint32
 }
 
@@ -55,133 +52,86 @@ func (o ContainedOperand) UnknownReason() (Reason, bool) {
 func (o ContainedOperand) Fault() (Fault, bool) {
 	return o.fault, o.kind == OperandInvalid && o.fault != 0
 }
-
-func (o ContainedOperand) Source() (keyspace.ContentID, keyspace.Term, bool) {
-	return o.owner, o.source, o.owner.Available() && o.source != 0
+func (o ContainedOperand) Source() (keyspace.ContentID, keyspace.ContentID, bool) {
+	return o.owner, o.source, o.owner.Available() && o.source.Available()
 }
-func (o ContainedOperand) Namespace() keyspace.ContentID     { return o.namespace }
-func (o ContainedOperand) Environment() keyspace.ContentID   { return o.environment }
-func (o ContainedOperand) Operation() target.Operation       { return o.operation }
-func (o ContainedOperand) Law() keyspace.ContentID           { return o.law }
-func (o ContainedOperand) Dependency() keyspace.ContentID    { return o.dependency }
-func (o ContainedOperand) StaticSite() (keyspace.Term, bool) { return o.site, o.site != 0 }
-func (o ContainedOperand) SourceFrontier() (keyspace.Term, int, bool) {
-	return o.frontierBody, int(o.frontierCursor), o.frontierBody != 0
+func (o ContainedOperand) Namespace() keyspace.ContentID          { return o.namespace }
+func (o ContainedOperand) Environment() keyspace.ContentID        { return o.environment }
+func (o ContainedOperand) Operation() target.Operation            { return o.operation }
+func (o ContainedOperand) Law() keyspace.ContentID                { return o.law }
+func (o ContainedOperand) Dependency() keyspace.ContentID         { return o.dependency }
+func (o ContainedOperand) StaticSite() (keyspace.ContentID, bool) { return o.site, o.site.Available() }
+func (o ContainedOperand) SourceFrontier() (keyspace.ContentID, int, bool) {
+	return o.frontierBody, int(o.frontierCursor), o.frontierBody.Available()
 }
 
-// Input returns Static's already-sealed disposition for one exact Link static
-// input. It is an O(1) query over the complete TypeOf/Annotation denominator;
-// it never re-enters evaluation or walks Program/Link data.
-func (a *Authority) Input(input linkstatic.InputRef) (ContainedOperand, bool) {
-	if a == nil {
+func (a *Authority) Input(input keyspace.ContentID) (ContainedOperand, bool) {
+	if a == nil || !input.Available() {
 		return ContainedOperand{}, false
 	}
 	operand, ok := a.operands[input]
 	return operand, ok
 }
 
-// TypeOf projects one exact Link-owned static operand to the existing Static
-// output coordinate and its already-sealed context-free judgment. The Link
-// operand is the sole source handle: RuntimeSubject exposes its one existing
-// Value through ContainedOperand, while Known, Unknown, and Invalid remain
-// pure results with no State dependency. No second typeof identity is minted.
-func (a *Authority) TypeOf(source linkstatic.InputRef) (Coordinate, ContainedOperand, bool) {
-	if a == nil || a.source == nil {
+func (a *Authority) TypeOf(input keyspace.ContentID) (Coordinate, ContainedOperand, bool) {
+	if a == nil || !input.Available() {
 		return Coordinate{}, ContainedOperand{}, false
 	}
-	kind, site, expression, operand, _, _, ok := a.source.Static().Inputs().Source(source)
-	hotReference, referenceOK := a.source.Static().Expressions().Reference(expression)
-	resolver, resolverOK := a.source.Static().Expressions().Resolver(expression)
-	shard, shardOK := a.source.Static().Expressions().Shard(expression)
-	p, programOK := a.source.Project().Mounts().Program(shard)
-	if !ok || !referenceOK || !resolverOK || !shardOK || !programOK || p == nil || operand == 0 {
-		return Coordinate{}, ContainedOperand{}, false
-	}
-	owner, typeOf := p.ContentID(), site
-	if kind != linkstatic.InputTypeOf || hotReference.Term() != typeOf {
-		return Coordinate{}, ContainedOperand{}, false
-	}
-	namespace, ok := a.source.Static().Namespaces().ResolverContentID(resolver)
-	if !ok || !namespace.Available() {
-		return Coordinate{}, ContainedOperand{}, false
-	}
-	output, ok := a.typeOfOutputs[source]
+	output, ok := a.typeOfOutputs[input]
 	if !ok {
 		return Coordinate{}, ContainedOperand{}, false
 	}
-	coordinateIndex, coordinateOK := a.CoordinateIndex(output)
-	if !coordinateOK {
-		return Coordinate{}, ContainedOperand{}, false
-	}
-	reference := a.coordinates[coordinateIndex].key.reference
-	if !reference.Valid() || reference.Owner() != owner || reference.Root() != typeOf {
-		return Coordinate{}, ContainedOperand{}, false
-	}
-	contained, ok := a.Input(source)
+	operand, ok := a.Input(input)
 	if !ok {
-		return Coordinate{}, ContainedOperand{}, false
-	}
-	containedOwner, containedSource, exact := contained.Source()
-	site, siteOK := contained.StaticSite()
-	if !exact || !siteOK || site != typeOf || containedOwner != owner || containedSource != operand || contained.Namespace() != namespace {
 		return Coordinate{}, ContainedOperand{}, false
 	}
 	if result, admitted := a.Result(output); !admitted || !a.Owns(result) {
 		return Coordinate{}, ContainedOperand{}, false
 	}
-	return output, contained, true
+	return output, operand, true
 }
 
-// sealCoordinates materializes only observable Static cells: one base cell
-// for every authored selector. Recursive evaluation is carried by a result,
-// not made into an unobservable ref×context coordinate product.
 func (a *Authority) sealCoordinates() error {
-	if a == nil || a.types == nil || a.source == nil {
+	if a == nil || a.types == nil || !a.linkID.Available() {
 		return errors.New("static: unavailable coordinate source")
 	}
-	for index := 0; index < a.source.Static().Expressions().Count(); index++ {
-		expression, ok := a.source.Static().Expressions().At(index)
-		if !ok {
-			return errors.New("static: malformed Link static expression family")
+	if len(a.mounts) == 0 {
+		return errors.New("static: mounted artifacts required")
+	}
+	return a.sealMountedCoordinates()
+}
+
+func (a *Authority) sealMountedCoordinates() error {
+	for _, mount := range a.mounts {
+		if !mount.NamespaceID.Available() {
+			return errors.New("static: mounted namespace unavailable")
 		}
-		hotReference, ok := a.source.Static().Expressions().Reference(expression)
-		if !ok {
-			return errors.New("static: expression lacks portable reference")
-		}
-		resolver, ok := a.source.Static().Expressions().Resolver(expression)
-		if !ok {
-			return errors.New("static: Program lacks resolver namespace")
-		}
-		shard, shardOK := a.source.Static().Expressions().Shard(expression)
-		p, programOK := a.source.Project().Mounts().Program(shard)
-		if !shardOK || !programOK || p == nil {
-			return errors.New("static: expression lacks Program owner")
-		}
-		selector, refOK := a.types.Find(p.ContentID(), hotReference.Term())
-		if !refOK {
-			return errors.New("static: expression lacks portable reference")
-		}
-		ref, refOK := a.types.Ref(selector)
-		if !refOK {
-			return errors.New("static: expression lacks portable reference")
-		}
-		if err := a.addCoordinate(ref, resolver, Environment{}, 0); err != nil {
-			return err
+		for index := 0; index < mount.Artifact.StaticExpressionCount(); index++ {
+			row, ok := mount.Artifact.StaticExpressionAt(index)
+			if !ok || !row.Available() || row.Owner() != mount.ProgramID {
+				return errors.New("static: malformed mounted expression row")
+			}
+			ref, ok := a.types.FindByReferenceID(row.ReferenceID())
+			if !ok {
+				return errors.New("static: mounted expression reference unavailable")
+			}
+			if err := a.addCoordinate(ref, mount.NamespaceID, Environment{}, 0); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
 
-func (a *Authority) addCoordinate(ref typeauthority.StaticTypeRef, resolver linkstatic.Resolver, environment Environment, operation target.Operation) error {
-	namespace, ok := a.source.Static().Namespaces().ResolverContentID(resolver)
-	if !ok {
-		return errors.New("static: invalid resolver")
+func (a *Authority) addCoordinate(ref typeauthority.StaticTypeRef, namespace keyspace.ContentID, environment Environment, operation target.Operation) error {
+	if !namespace.Available() {
+		return errors.New("static: invalid namespace")
 	}
 	key := coordinateKey{reference: ref, namespace: namespace, environment: environment.ContentID(), operation: operation}
 	if _, duplicate := a.coordinateIndex[key]; duplicate {
 		return nil
 	}
-	value, err := a.evaluate(ref, resolver, environment, operation)
+	value, err := a.evaluate(ref, namespace, environment, operation)
 	if err != nil {
 		return err
 	}
@@ -193,3 +143,7 @@ func (a *Authority) addCoordinate(ref typeauthority.StaticTypeRef, resolver link
 	a.coordinateIndex[key] = index
 	return nil
 }
+
+// Keep the artifact enum referenced in this file's API documentation and
+// guard accidental reintroduction of a second operand vocabulary.
+var _ = programartifact.StaticInputOperandKnown

@@ -79,6 +79,19 @@ func (view Calls) TypeArgumentAt(term keyspace.Term, index int) (keyspace.Term, 
 	return component.contracts.terms[row.Start+uint32(index)], true
 }
 
+// TypeArgumentReceipt is the sealed O(1) identity of one authored call
+// type-argument template. It authenticates the whole ordered template;
+// TypeArgumentAt remains the sole member replay query.
+func (view Calls) TypeArgumentReceipt(term keyspace.Term) (keyspace.ContentID, bool) {
+	component := view.componentOf()
+	if component == nil || !keyspace.ValidTerm(term, keyspace.FamilyCall, len(component.contracts.calls)) ||
+		len(component.contracts.callReceipts) != len(component.contracts.calls) {
+		return keyspace.ContentID{}, false
+	}
+	receipt := component.contracts.callReceipts[keyspace.TermOrdinal(term)-1]
+	return receipt, receipt.Available()
+}
+
 func functionContractAt(component *Component, term keyspace.Term) (functionContractRow, bool) {
 	if component == nil || !keyspace.ValidTerm(term, keyspace.FamilyFunction, len(component.contracts.functions)) {
 		return functionContractRow{}, false

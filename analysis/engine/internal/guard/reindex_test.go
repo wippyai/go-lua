@@ -77,6 +77,91 @@ func TestReindexForgetAndSimultaneousSwap(t *testing.T) {
 	}
 }
 
+func TestPureProjectionReindexRejectsLateOutOfScopeNodeWithoutPublication(t *testing.T) {
+	manager, err := New([]Atom{testA, testB})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, ok := manager.SealScope([]Atom{testA})
+	if !ok {
+		t.Fatal("source scope")
+	}
+	target, ok := manager.SealScope(nil)
+	if !ok {
+		t.Fatal("target scope")
+	}
+	builder, ok := manager.NewReindex(source, target)
+	if !ok || !builder.Forget(testA) {
+		t.Fatal("projection relation")
+	}
+	plan, ok := builder.Seal()
+	if !ok || !plan.PureProjection() {
+		t.Fatal("projection proof")
+	}
+	input := sealedGuard(t, manager, func(work *Work) Guard {
+		return work.And(literal(t, work, testA), literal(t, work, testB))
+	})
+	work := manager.NewWork()
+	if _, ok := work.Reindex(input, plan); ok {
+		t.Fatal("out-of-scope projection succeeded")
+	}
+	if work.Published() {
+		t.Fatal("failed projection published a candidate")
+	}
+	work.Discard()
+}
+
+// TestCoordinateIdentityReindexRetainsSealedAndCandidateHandles proves that
+// separately issued equal-coordinate scopes retain a root without rebuilding
+// it, while guard.Work still performs the source-scope proof for both sealed
+// and current-candidate roots.
+func TestCoordinateIdentityReindexRetainsSealedAndCandidateHandles(t *testing.T) {
+	manager, err := New([]Atom{testA, testB})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, ok := manager.SealScope([]Atom{testA})
+	if !ok {
+		t.Fatal("source scope")
+	}
+	target, ok := manager.SealScope([]Atom{testA})
+	if !ok || target.Same(source) {
+		t.Fatal("separately issued target scope")
+	}
+	builder, ok := manager.NewReindex(source, target)
+	if !ok || !builder.Identity(testA) {
+		t.Fatal("coordinate identity builder")
+	}
+	plan, ok := builder.Seal()
+	if !ok || plan.Identity() || !plan.CoordinateIdentity() {
+		t.Fatal("coordinate identity plan")
+	}
+	sealed := sealedGuard(t, manager, func(work *Work) Guard { return literal(t, work, testA) })
+	sealedOutOfScope := sealedGuard(t, manager, func(work *Work) Guard { return literal(t, work, testB) })
+	work := manager.NewWork()
+	if work == nil {
+		t.Fatal("candidate work")
+	}
+	if reindexed, ok := work.Reindex(sealed, plan); !ok || reindexed != sealed {
+		t.Fatal("sealed coordinate identity rebuilt or rejected source root")
+	}
+	candidate := literal(t, work, testA)
+	if candidate == sealed || manager.Valid(candidate) {
+		t.Fatal("fresh candidate source root")
+	}
+	if reindexed, ok := work.Reindex(candidate, plan); !ok || reindexed != candidate {
+		t.Fatal("candidate coordinate identity rebuilt or rejected source root")
+	}
+	candidateOutOfScope := literal(t, work, testB)
+	if _, ok := work.Reindex(sealedOutOfScope, plan); ok {
+		t.Fatal("sealed out-of-source root accepted")
+	}
+	if _, ok := work.Reindex(candidateOutOfScope, plan); ok {
+		t.Fatal("candidate out-of-source root accepted")
+	}
+	work.Discard()
+}
+
 func TestReindexCompositionMatchesSequentialTransport(t *testing.T) {
 	manager, err := New([]Atom{testA, testB})
 	if err != nil {

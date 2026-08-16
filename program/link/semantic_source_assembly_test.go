@@ -16,8 +16,8 @@ func TestSourcePublicationsSealCompleteProject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("source catalog: %v", err)
 	}
-	if got.Count() != 114 || got.Count() != semanticsource.CatalogSchema().Count() {
-		t.Fatalf("publication count = %d, want exact 114/generated denominator %d", got.Count(), semanticsource.CatalogSchema().Count())
+	if got.Count() != 111 || got.Count() != semanticsource.CatalogSchema().Count() {
+		t.Fatalf("publication count = %d, want exact 111/generated denominator %d", got.Count(), semanticsource.CatalogSchema().Count())
 	}
 
 	want := make(map[semanticsource.Token]int, got.Count())
@@ -62,8 +62,8 @@ func TestSourcePublicationsSealCompleteProject(t *testing.T) {
 			t.Fatalf("sealed token %v = %d/%t, want %d", token, measure.Count(), present, count)
 		}
 	}
-	if len(seen) != len(want) || len(seen) != 114 || len(seen) != semanticsource.CatalogSchema().Count() {
-		t.Fatalf("sealed vocabulary = %d, want exact 114/generated denominator %d", len(seen), semanticsource.CatalogSchema().Count())
+	if len(seen) != len(want) || len(seen) != 111 || len(seen) != semanticsource.CatalogSchema().Count() {
+		t.Fatalf("sealed vocabulary = %d, want exact 111/generated denominator %d", len(seen), semanticsource.CatalogSchema().Count())
 	}
 }
 
@@ -94,8 +94,8 @@ func TestSourcePublicationsRetainZeroRowsAndReplay(t *testing.T) {
 		t.Fatalf("Link aggregate receipt = %x/%t, want owner %x/true", receipt.OwnerID(), ok, sealed.ContentID())
 	}
 	detached, ok := receipt.Publications()
-	if !ok || detached.Count() != 114 || detached.Count() != semanticsource.CatalogSchema().Count() {
-		t.Fatalf("detached Link receipt = %d/%t, want exact 114/generated denominator %d", detached.Count(), ok, semanticsource.CatalogSchema().Count())
+	if !ok || detached.Count() != 111 || detached.Count() != semanticsource.CatalogSchema().Count() {
+		t.Fatalf("detached Link receipt = %d/%t, want exact 111/generated denominator %d", detached.Count(), ok, semanticsource.CatalogSchema().Count())
 	}
 	first, err := sealed.SourcePublications()
 	if err != nil {

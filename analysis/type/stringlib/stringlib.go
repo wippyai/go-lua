@@ -21,7 +21,7 @@ var gsubReplacement = typeexpr.Union(
 	typetable.NewMap(typ.Any, typ.Any),
 	typ.Func().
 		Param("capture", captureValueType).
-		Returns(typeexpr.Union(typ.String, typ.Number, typ.False, typ.Nil)).
+		Returns(typeexpr.Union(typ.String, typ.Number, typ.LiteralBool(false), typ.Nil)).
 		Build(),
 )
 

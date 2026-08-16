@@ -15,8 +15,8 @@ var (
 )
 
 const (
-	linkSemanticSourcePublicationCount   = 114
-	semanticSourceTargetPublicationCount = 36
+	linkSemanticSourcePublicationCount   = 111
+	semanticSourceTargetPublicationCount = 37
 )
 
 // buildSemanticSourcePublications performs the one seal-time aggregate. Every
@@ -128,7 +128,7 @@ func newSemanticSourceAssembly(schema *relations.Schema) (*semanticSourceAssembl
 		assembly.schemaExpected[index] = semanticSourceExpectation{definition: definition, contributor: contributor}
 		assembly.expectedCount[contributor]++
 	}
-	if len(rows) != linkSemanticSourcePublicationCount || assembly.expectedCount[semanticSourceProgram] != 57 || assembly.expectedCount[semanticSourceTarget] != semanticSourceTargetPublicationCount || assembly.expectedCount[semanticSourceProject] != 2 || assembly.expectedCount[semanticSourceBoundary] != 1 || assembly.expectedCount[semanticSourceModule] != 8 || assembly.expectedCount[semanticSourceStatic] != 5 || assembly.expectedCount[semanticSourceHost] != 5 {
+	if len(rows) != linkSemanticSourcePublicationCount || assembly.expectedCount[semanticSourceProgram] != 57 || assembly.expectedCount[semanticSourceTarget] != semanticSourceTargetPublicationCount || assembly.expectedCount[semanticSourceProject] != 2 || assembly.expectedCount[semanticSourceBoundary] != 1 || assembly.expectedCount[semanticSourceModule] != 8 || assembly.expectedCount[semanticSourceStatic] != 1 || assembly.expectedCount[semanticSourceHost] != 5 {
 		return nil, errSemanticSourceAssemblySchema
 	}
 	return assembly, nil
@@ -219,7 +219,7 @@ func (assembly *semanticSourceAssembly) acceptSum(contributor semanticSourceCont
 	return nil
 }
 func (assembly *semanticSourceAssembly) acceptLink(publications []semanticsource.Publication) error {
-	if assembly == nil || len(publications) != 21 || assembly.accepted[semanticSourceProject] || assembly.accepted[semanticSourceBoundary] || assembly.accepted[semanticSourceModule] || assembly.accepted[semanticSourceStatic] || assembly.accepted[semanticSourceHost] {
+	if assembly == nil || len(publications) != 17 || assembly.accepted[semanticSourceProject] || assembly.accepted[semanticSourceBoundary] || assembly.accepted[semanticSourceModule] || assembly.accepted[semanticSourceStatic] || assembly.accepted[semanticSourceHost] {
 		return errSemanticSourceAssemblyFragment
 	}
 	seen := make([]bool, len(assembly.schemaExpected))

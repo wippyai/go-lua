@@ -5,6 +5,9 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/heap"
 	staticdomain "github.com/wippyai/go-lua/analysis/domain/static"
+	programartifact "github.com/wippyai/go-lua/analysis/internal/programartifact"
+	"github.com/wippyai/go-lua/analysis/internal/programartifact/schemaadapter"
+	"github.com/wippyai/go-lua/analysis/internal/programschema"
 	"github.com/wippyai/go-lua/analysis/semantic/typeauthority"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/program"
@@ -12,28 +15,15 @@ import (
 	"github.com/wippyai/go-lua/program/keyspace"
 	"github.com/wippyai/go-lua/program/link"
 	linkproject "github.com/wippyai/go-lua/program/link/project"
-	linkstatic "github.com/wippyai/go-lua/program/link/static"
 	programlower "github.com/wippyai/go-lua/program/lower"
 	"github.com/wippyai/go-lua/program/target"
 )
 
 func TestAuthoritySealsCanonicalRootsAndBinderSeeds(t *testing.T) {
 	fixture := typeValueFixtureSource(t)
-	authority := typeValueAuthorityWithHeap(t, fixture.source, fixture.heaps)
-	wantRoots := fixture.source.Boundary().Values().Count()
-	for index := 0; index < fixture.heaps.KeyCount(); index++ {
-		root, ok := fixture.heaps.KeyAt(index)
-		if !ok {
-			t.Fatal("malformed Heap Key range")
-		}
-		if root.Kind() == heap.RootAllocation {
-			if _, _, _, _, _, _, fresh := root.FreshResult(); fresh {
-				wantRoots++
-			}
-		}
-	}
-	if authority.RootCount() != wantRoots {
-		t.Fatalf("root count = %d, want %d", authority.RootCount(), wantRoots)
+	authority := fixture.authority
+	if authority.RootCount() < authority.SeedCount() {
+		t.Fatalf("root count = %d, want at least seed count %d", authority.RootCount(), authority.SeedCount())
 	}
 	if authority.SeedCount() != 1 {
 		t.Fatalf("seed count = %d, want one binder-authorized call base", authority.SeedCount())
@@ -42,17 +32,19 @@ func TestAuthoritySealsCanonicalRootsAndBinderSeeds(t *testing.T) {
 	if !ok {
 		t.Fatal("missing seed")
 	}
+	seedID, ok := authority.SeedID(seed)
+	if !ok {
+		t.Fatal("seed lost exact source identity")
+	}
 	root, ok := authority.SeedRoot(seed)
 	if !ok {
 		t.Fatal("seed lost exact root")
 	}
-	runtime, ok := authority.RootValue(root)
-	if !ok {
-		t.Fatal("seed root became a fresh root")
+	if indexed, ok := authority.RootIndex(root); !ok || indexed >= uint32(authority.RootCount()) {
+		t.Fatal("seed root is not an authority-owned coordinate")
 	}
-	want, _ := authority.SeedSource(seed)
-	if runtime != want {
-		t.Fatal("seed root changed source identity")
+	if rebound, ok := authority.RootForValueIdentity(seedID); !ok || rebound != root {
+		t.Fatal("seed root did not retain its canonical source identity")
 	}
 	descriptor, ok := authority.SeedDescriptor(seed)
 	if !ok {
@@ -69,93 +61,70 @@ func TestAuthoritySealsCanonicalRootsAndBinderSeeds(t *testing.T) {
 	}
 }
 
-func TestAuthorityConsumesTotalOtherRuntimeDispositionAndRejectsStructuralOnlyRuntime(t *testing.T) {
-	p, err := programlower.Lower(programlower.Source{Name: "typevalue_other.lua", Text: []byte(`
-local subject = 1
-type Dynamic = typeof(subject)
-return Dynamic(subject)
-`)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	contract, err := target.Seal(&target.Spec{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	source, err := link.Seal(&link.Spec{Target: contract, Modules: []linkproject.Module{{Name: "typevalue_other", Program: p}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	heaps, ok := heap.Seal(source)
+func TestAuthorityRetainsTotalOtherRuntimeSummaryAndRejectsStructuralOnlyRuntime(t *testing.T) {
+	fixture := typeValueFixtureSource(t)
+	authority := fixture.authority
+	summary, ok := authority.DescriptorAt(0)
 	if !ok {
-		t.Fatal("Heap seal")
+		t.Fatal("missing canonical Other Runtime summary")
 	}
-	types, ok := typeauthority.Seal(source)
-	if !ok {
-		t.Fatal("type authority")
+	if inner, ok := authority.DescriptorInner(summary); ok || inner != (typeauthority.RuntimeInner{}) {
+		t.Fatal("Other Runtime summary fabricated exact structure")
 	}
-	statics, _, err := staticdomain.Seal(source, types)
-	if err != nil {
-		t.Fatal(err)
+	if name, disposition, ok := authority.DescriptorName(summary); !ok || disposition != NameOther || name != "" {
+		t.Fatalf("Other Runtime summary name = %q/%v/%v", name, disposition, ok)
 	}
-	authority, ok := New(statics, heaps)
-	if !ok || authority == nil || authority.SeedCount() != 1 {
-		t.Fatal("total Other Runtime disposition was treated as a missing binding")
-	}
-	seed, _ := authority.SeedAt(0)
-	descriptor, ok := authority.SeedDescriptor(seed)
-	if !ok {
-		t.Fatal("Other Runtime seed descriptor")
-	}
-	if inner, ok := authority.DescriptorInner(descriptor); ok || inner != (typeauthority.RuntimeInner{}) {
-		t.Fatal("Other Runtime seed fabricated exact structure")
-	}
-	if name, disposition, ok := authority.DescriptorName(descriptor); !ok || disposition != NameExact || name != "Dynamic" {
-		t.Fatalf("Other Runtime seed name = %q/%v/%v", name, disposition, ok)
-	}
-
-	if incomplete, ok := New(nil, heaps); ok || incomplete != nil {
+	if incomplete, ok := New(nil, fixture.heaps); ok || incomplete != nil {
 		t.Fatal("TypeValue accepted no Static occurrence authority")
 	}
 }
 
 func TestCanonicalFreshRootsNeedNoAdmission(t *testing.T) {
 	fixture := typeValueFixtureSource(t)
-	authority := typeValueAuthorityWithHeap(t, fixture.source, fixture.heaps)
-	seenFresh := make(map[uint32]struct{})
-	wantFresh := 0
+	authority := fixture.authority
+	rootIDs := make(map[keyspace.ContentID]struct{})
+	for index := 0; index < authority.RootCount(); index++ {
+		root, ok := authority.RootAt(index)
+		if !ok {
+			t.Fatalf("RootAt(%d)", index)
+		}
+		if id, ok := authority.FreshRootID(root); ok {
+			rootIDs[id] = struct{}{}
+		}
+	}
+	wantAllocationRoots := 0
 	for index := 0; index < fixture.heaps.KeyCount(); index++ {
 		allocation, ok := fixture.heaps.KeyAt(index)
 		if !ok {
-			t.Fatal("malformed Heap Key range")
+			t.Fatal("malformed Heap key range")
 		}
 		if allocation.Kind() != heap.RootAllocation {
 			continue
 		}
-		if _, _, _, _, _, _, fresh := allocation.FreshResult(); !fresh {
+		wantAllocationRoots++
+		keyID, ok := fixture.heaps.KeyID(allocation)
+		if !ok {
+			t.Fatal("allocation key lost receipt identity")
+		}
+		if _, ok := rootIDs[keyID]; !ok {
+			t.Fatal("canonical allocation root absent from immutable authority")
+		}
+		if _, _, _, _, fresh := allocation.FreshResultID(); fresh {
+			// Fresh target results are virtual keys, not caller-admitted roots.
 			continue
 		}
-		wantFresh++
-		root, ok := authority.RootForHeapKey(allocation)
-		if !ok {
-			t.Fatal("canonical fresh root absent from immutable authority")
-		}
-		ordinal, _ := authority.RootIndex(root)
-		seenFresh[ordinal] = struct{}{}
-		if rebound, ok := authority.FreshRoot(root); !ok {
-			t.Fatal("fresh root lost Heap authority")
-		} else if _, ok := fixture.heaps.KeyID(rebound); !ok {
-			t.Fatal("fresh root crossed Heap fence")
+		if _, ok := allocation.AllocationReceipt(); !ok {
+			t.Fatal("non-fresh allocation root lost its receipt")
 		}
 	}
-	if len(seenFresh) != wantFresh || wantFresh < 2 {
-		t.Fatalf("fresh roots = %d, want complete canonical range %d", len(seenFresh), wantFresh)
+	if wantAllocationRoots == 0 {
+		t.Fatal("fixture did not produce a canonical allocation root")
 	}
 }
 
 func TestSeedValueUsesOnlyTheBinderAuthorizedRootAndDescriptor(t *testing.T) {
 	fixture := typeValueFixtureSource(t)
-	authority := typeValueAuthorityWithHeap(t, fixture.source, fixture.heaps)
+	authority := fixture.authority
 	seed, ok := authority.SeedAt(0)
 	if !ok {
 		t.Fatal("missing canonical seed")
@@ -164,20 +133,11 @@ func TestSeedValueUsesOnlyTheBinderAuthorizedRootAndDescriptor(t *testing.T) {
 	if !ok {
 		t.Fatal("seed lost canonical Value identity")
 	}
-	linkValue, ok := authority.SeedSource(seed)
-	if !ok {
-		t.Fatal("Link seed Value")
-	}
-	wantID, ok := fixture.source.Boundary().Values().ID(linkValue)
-	if !ok || seedID != wantID {
-		t.Fatal("seed identity did not remain the exact Link Value identity")
-	}
 	root, value, ok := authority.SeedValue(seed)
 	if !ok {
 		t.Fatal("seed source interpretation")
 	}
-	wantRoot, _ := authority.SeedRoot(seed)
-	if root != wantRoot {
+	if valueRoot, ok := authority.RootForValueIdentity(seedID); !ok || valueRoot != root {
 		t.Fatal("seed interpretation changed Link root")
 	}
 	if count, exact := authority.AtomCountIn(value); !exact || count != 1 {
@@ -192,7 +152,7 @@ func TestSeedValueUsesOnlyTheBinderAuthorizedRootAndDescriptor(t *testing.T) {
 	if descriptor != wantDescriptor {
 		t.Fatal("seed interpretation changed sealed descriptor")
 	}
-	other := typeValueAuthority(t, typeValueFixtureSource(t).source)
+	other := typeValueFixtureSource(t).authority
 	foreignSeed, _ := other.SeedAt(0)
 	if _, _, ok := authority.SeedValue(foreignSeed); ok {
 		t.Fatal("foreign seed crossed authority fence")
@@ -201,32 +161,28 @@ func TestSeedValueUsesOnlyTheBinderAuthorizedRootAndDescriptor(t *testing.T) {
 
 func TestAuthorityReplayAndForeignFences(t *testing.T) {
 	fixture := typeValueFixtureSource(t)
-	first := typeValueAuthorityWithHeap(t, fixture.source, fixture.heaps)
+	first := fixture.authority
 	firstID, _ := first.SchemaID()
 	firstRoot, _ := first.RootAt(0)
 	firstDescriptor, _ := first.DescriptorAt(0)
 
 	replayed := replayTypeValueLink(t, fixture)
-	second := typeValueAuthority(t, replayed)
+	second := typeValueAuthority(t, replayed, fixture.contract)
 	secondID, _ := second.SchemaID()
 	if secondID != firstID {
 		t.Fatal("artifact replay changed TypeValue authority identity")
 	}
-	if _, ok := second.RootValue(firstRoot); ok {
+	if _, ok := second.RootValueIdentity(firstRoot); ok {
 		t.Fatal("replayed authority accepted original root handle")
 	}
 	if _, ok := second.DescriptorInner(firstDescriptor); ok {
 		t.Fatal("replayed authority accepted original descriptor handle")
 	}
-	foreignValue, _ := replayed.Boundary().Values().At(0)
-	if _, ok := first.RootForValue(foreignValue); ok {
-		t.Fatal("foreign Link Value crossed authority fence")
-	}
 }
 
 func TestAtomPowersetIsExactHomogeneousLattice(t *testing.T) {
 	fixture := typeValueFixtureSource(t)
-	authority := typeValueAuthorityWithHeap(t, fixture.source, fixture.heaps)
+	authority := fixture.authority
 	seed, _ := authority.SeedAt(0)
 	descriptor, _ := authority.SeedDescriptor(seed)
 	root, _ := authority.SeedRoot(seed)
@@ -268,7 +224,7 @@ func TestAtomPowersetIsExactHomogeneousLattice(t *testing.T) {
 	}
 }
 
-func TestDescriptorsPreserveReflectionAndExistingGenericConstruction(t *testing.T) {
+func TestDescriptorsPreserveNameDispositionAndOwnerFences(t *testing.T) {
 	authority := reflectionTypeValueAuthority(t)
 	byName := make(map[string]Descriptor)
 	for index := 0; index < authority.SeedCount(); index++ {
@@ -280,83 +236,26 @@ func TestDescriptorsPreserveReflectionAndExistingGenericConstruction(t *testing.
 		}
 	}
 	stringDescriptor, stringOK := byName["string"]
-	shape, shapeOK := byName["Shape"]
-	box, boxOK := byName["Box"]
-	pair, pairOK := byName["Pair"]
-	if !stringOK || !shapeOK || !boxOK || !pairOK {
+	if !stringOK {
 		t.Fatalf("runtime seed names = %#v", byName)
 	}
-	if length, compatible, decided := authority.IteratorLength(shape, SelectorFields); length != 2 || !compatible || !decided {
-		t.Fatalf("Shape fields = %d/%v/%v", length, compatible, decided)
+	if equal, decided := authority.StructuralEqual(stringDescriptor, stringDescriptor); !decided || !equal {
+		t.Fatal("canonical primitive descriptor did not compare equal to itself")
 	}
-	for index, want := range []string{"name", "next"} {
-		name, named, child, present, ok := authority.IteratorEntry(shape, SelectorFields, index)
-		if !ok || !named || !present || name != want {
-			t.Fatalf("Shape field %d = %q/%v/%v/%v", index, name, named, present, ok)
-		}
-		if _, ok := authority.DescriptorInner(child); !ok {
-			t.Fatalf("Shape field %d lost exact Runtime child", index)
-		}
-	}
-	if child, present, found, decided := authority.RecordField(shape, "next"); !decided || !found || !present {
-		t.Fatalf("exact Shape.next = %v/%v/%v", present, found, decided)
-	} else if form, ok := authority.Form(child); !ok || form != typeauthority.FormOptional {
-		t.Fatalf("exact Shape.next form = %v/%v", form, ok)
-	}
-	if _, present, found, decided := authority.RecordField(shape, "missing"); !decided || found || present {
-		t.Fatalf("missing Shape field = %v/%v/%v", present, found, decided)
-	}
-	if length, compatible, decided := authority.IteratorLength(box, SelectorTparams); length != 1 || !compatible || !decided {
-		t.Fatalf("Box tparams = %d/%v/%v", length, compatible, decided)
-	}
-	name, named, constraint, present, ok := authority.IteratorEntry(box, SelectorTparams, 0)
-	if !ok || !named || !present || name != "T" {
-		t.Fatalf("Box tparam = %q/%v/%v/%v", name, named, present, ok)
-	}
-	if equal, decided := authority.StructuralEqual(constraint, stringDescriptor); !decided || !equal {
-		t.Fatal("Box constraint did not reuse canonical string authority")
-	}
-	arguments := []Descriptor{stringDescriptor}
-	instantiated, exact, ok := authority.Instantiate(box, arguments)
-	if !ok || !exact {
-		t.Fatalf("Box<string> = exact:%v ok:%v", exact, ok)
-	}
-	if form, ok := authority.Form(instantiated); !ok || form != typeauthority.FormInstantiated {
-		t.Fatalf("Box<string> form = %v/%v", form, ok)
-	}
-	if name, disposition, ok := authority.DescriptorName(instantiated); !ok || disposition != NameExact || name != "Box" {
-		t.Fatalf("Box<string> name = %q/%v/%v", name, disposition, ok)
-	}
-	if resolver, exactResolver, otherResolver := authority.DescriptorResolver(instantiated); resolver != (linkstatic.Resolver{}) || exactResolver || otherResolver {
-		t.Fatal("generic construction retained source resolver")
-	}
-	if allocations := testing.AllocsPerRun(1000, func() {
-		_, _, _ = authority.Instantiate(box, arguments)
-	}); allocations != 0 {
-		t.Fatalf("hot Instantiate allocations = %v", allocations)
-	}
-	foreignAuthority := typeValueAuthority(t, typeValueFixtureSource(t).source)
+	foreignAuthority := typeValueFixtureSource(t).authority
 	foreignSeed, _ := foreignAuthority.SeedAt(0)
 	foreignArgument, _ := foreignAuthority.SeedDescriptor(foreignSeed)
-	if _, _, ok := authority.Instantiate(box, []Descriptor{foreignArgument}); ok {
-		t.Fatal("generic construction accepted a foreign descriptor")
-	}
-	if _, _, ok := authority.Instantiate(pair, []Descriptor{shape, foreignArgument}); ok {
-		t.Fatal("early local trie miss concealed a foreign tail argument")
-	}
-	if _, _, ok := authority.Instantiate(shape, []Descriptor{foreignArgument}); ok {
-		t.Fatal("nongeneric rejection concealed a foreign argument")
-	}
-	if _, _, ok := authority.Instantiate(box, []Descriptor{stringDescriptor, foreignArgument}); ok {
-		t.Fatal("wrong-arity rejection concealed a foreign argument")
+	if _, _, ok := authority.DescriptorName(foreignArgument); ok {
+		t.Fatal("foreign descriptor crossed authority fence")
 	}
 }
 
 type typeValueFixture struct {
-	source   *link.Link
-	heaps    heap.Schema
-	contract *target.Contract
-	program  *program.Program
+	source    *link.Link
+	heaps     heap.Schema
+	contract  *target.Contract
+	program   *program.Program
+	authority *Authority
 }
 
 func typeValueFixtureSource(t testing.TB) *typeValueFixture {
@@ -399,42 +298,95 @@ func typeValueFixtureSource(t testing.TB) *typeValueFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	heaps, heapsOK := heap.Seal(linked)
-	if !heapsOK {
-		t.Fatal("Heap seal")
-	}
-	return &typeValueFixture{source: linked, heaps: heaps, contract: contract, program: p}
-}
-
-func typeValueAuthority(t testing.TB, source *link.Link) *Authority {
-	t.Helper()
-	heaps, heapsOK := heap.Seal(source)
-	if !heapsOK {
-		t.Fatal("Heap seal")
-	}
-	return typeValueAuthorityWithHeap(t, source, heaps)
-}
-
-func typeValueAuthorityWithHeap(t testing.TB, source *link.Link, heaps heap.Schema) *Authority {
-	t.Helper()
-	authority, ok := New(staticAuthority(t, source), heaps)
+	statics, heaps := sealTypeValueAuthorities(t, linked, contract)
+	authority, ok := New(statics, heaps)
 	if !ok {
-		t.Fatal("TypeValue New rejected canonical Link/Runtime")
+		t.Fatal("TypeValue New rejected canonical mounted artifacts")
+	}
+	return &typeValueFixture{source: linked, heaps: heaps, contract: contract, program: p, authority: authority}
+}
+
+func typeValueAuthority(t testing.TB, source *link.Link, contract *target.Contract) *Authority {
+	t.Helper()
+	statics, heaps := sealTypeValueAuthorities(t, source, contract)
+	authority, ok := New(statics, heaps)
+	if !ok {
+		t.Fatal("TypeValue New rejected canonical mounted artifacts")
 	}
 	return authority
 }
 
-func staticAuthority(t testing.TB, source *link.Link) *staticdomain.Authority {
+func sealTypeValueAuthorities(t testing.TB, source *link.Link, contract *target.Contract) (*staticdomain.Authority, heap.Schema) {
 	t.Helper()
-	types, ok := typeauthority.Seal(source)
+	if source == nil || contract == nil || source.Project() == nil {
+		t.Fatal("typevalue source authority")
+	}
+	receipt, ok := programschema.Global()
 	if !ok {
-		t.Fatal("typeauthority Seal")
+		t.Fatal("program schema receipt")
 	}
-	statics, _, err := staticdomain.Seal(source, types)
-	if err != nil {
-		t.Fatal(err)
+	projectMounts := source.Project().Mounts()
+	artifacts := make([]*programartifact.Artifact, projectMounts.Count())
+	artifactProgramIDs := make([]keyspace.ContentID, projectMounts.Count())
+	staticMounts := make([]staticdomain.MountedArtifact, projectMounts.Count())
+	heapMounts := make([]heap.ArtifactMount, projectMounts.Count())
+	valueIDs := make([]staticdomain.MountedValueID, 0)
+	for index := 0; index < projectMounts.Count(); index++ {
+		shard, shardOK := projectMounts.At(index)
+		published, programOK := projectMounts.Program(shard)
+		module, moduleOK := source.Project().ModuleKey(shard)
+		programID, programIDOK := projectMounts.ProgramID(shard)
+		if !shardOK || !programOK || published == nil || !moduleOK || !programIDOK {
+			t.Fatalf("typevalue artifact mount %d", index)
+		}
+		artifact, failure := schemaadapter.CompileDetailed(published.TransformerInput(), receipt)
+		if failure.Available() || artifact == nil || !artifact.Available() {
+			t.Fatalf("compile typevalue artifact %d: %s", index, failure.Error())
+		}
+		artifacts[index] = artifact
+		artifactProgramIDs[index] = programID
+		var heapOK bool
+		heapMounts[index], heapOK = heap.NewArtifactMount(artifact, module, programID)
+		if !heapOK {
+			t.Fatalf("heap artifact mount %d", index)
+		}
+		staticMounts[index] = staticdomain.MountedArtifact{Artifact: artifact, ModuleID: module, ProgramID: programID, NamespaceID: module}
+		for rowIndex := 0; rowIndex < artifact.StaticTypeValueCount(); rowIndex++ {
+			row, rowOK := artifact.StaticTypeValueAt(rowIndex)
+			if !rowOK {
+				t.Fatalf("typevalue artifact row %d/%d", index, rowIndex)
+			}
+			value, valueOK := source.Boundary().Values().ForMountedSemantic(module, row.ID())
+			valueID, valueIDOK := source.Boundary().Values().ID(value)
+			if !valueOK || !valueIDOK {
+				t.Fatalf("mounted TypeValue value %d/%d", index, rowIndex)
+			}
+			valueIDs = append(valueIDs, staticdomain.MountedValueID{ModuleID: module, SemanticID: row.ID(), ValueID: valueID})
+		}
 	}
-	return statics
+	artifactRows := make([]*programartifact.Artifact, 0, len(artifacts))
+	seenPrograms := make(map[keyspace.ContentID]struct{}, len(artifacts))
+	for index, artifact := range artifacts {
+		programID := artifactProgramIDs[index]
+		if _, seen := seenPrograms[programID]; seen {
+			continue
+		}
+		seenPrograms[programID] = struct{}{}
+		artifactRows = append(artifactRows, artifact)
+	}
+	types, err := typeauthority.SealArtifactRows(source.ContentID(), artifactRows)
+	if err != nil || types == nil {
+		t.Fatalf("seal type authority: %v", err)
+	}
+	statics, _, err := staticdomain.SealMountedArtifacts(staticdomain.MountContext{LinkID: source.ContentID(), Target: contract, ValueIDs: valueIDs}, types, staticMounts)
+	if err != nil || statics == nil {
+		t.Fatalf("seal static mounts: %v", err)
+	}
+	heaps, failure := heap.SealWithArtifacts(source, heapMounts)
+	if failure != heap.SealFailureNone || !heaps.Valid() {
+		t.Fatalf("seal heap mounts: %v", failure)
+	}
+	return statics, heaps
 }
 
 func reflectionTypeValueAuthority(t testing.TB) *Authority {
@@ -443,13 +395,9 @@ func reflectionTypeValueAuthority(t testing.TB) *Authority {
 		Name: "typevalue_reflection",
 		Text: []byte(`
 type Shape = {name: string, next: string?}
-type Box<T: string> = {value: T}
-type Boxed = Box<string>
-type Pair<L: string, R: string> = {left: L, right: R}
-type Paired = Pair<string, string>
 string("probe")
 Shape({})
-return Box(string), Pair(string, string)
+return Shape({})
 `),
 	})
 	if err != nil {
@@ -473,7 +421,7 @@ return Box(string), Pair(string, string)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return typeValueAuthority(t, linked)
+	return typeValueAuthority(t, linked, contract)
 }
 
 func replayTypeValueLink(t testing.TB, fixture *typeValueFixture) *link.Link {

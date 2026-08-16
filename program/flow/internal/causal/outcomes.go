@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/wippyai/go-lua/program/flow/internal/routeplan"
 	"github.com/wippyai/go-lua/program/flow/kind"
 	"github.com/wippyai/go-lua/program/keyspace"
 )
@@ -18,7 +19,7 @@ func (s *outcomeState) emitOutcomes() error {
 		if !ok {
 			return errors.New("program/flow/causal: Outcome row is unavailable")
 		}
-		owner, outcomeKind, target, rowOK := s.outs.Get(term)
+		owner, outcomeKind, _, rowOK := s.outs.Get(term)
 		if !rowOK || !validPreTerm(owner, s.counts) || keyspace.TermFamily(owner) != keyspace.FamilyBody {
 			return errors.New("program/flow/causal: malformed Outcome row")
 		}
@@ -35,34 +36,12 @@ func (s *outcomeState) emitOutcomes() error {
 			continue
 		}
 		switch outcomeKind {
-		case kind.OutcomeBreak:
-			if keyspace.TermFamily(target) != keyspace.FamilyLoop {
-				return errors.New("program/flow/causal: Break Outcome target is not Loop")
-			}
-			resume, resumeOK := s.graph.Resume(target)
-			if !resumeOK {
-				return errors.New("program/flow/causal: Break Loop resume is unavailable")
-			}
-			to, toOK := s.resumeTarget(resume)
-			if !toOK {
-				return errors.New("program/flow/causal: Break resume is not executable")
-			}
-			if err := s.appendEdge(term, to, owner, 0, false, -1); err != nil {
+		case kind.OutcomeBreak, kind.OutcomeGoto:
+			to, origin, err := s.outcomeResumeOrigin(term)
+			if err != nil {
 				return err
 			}
-		case kind.OutcomeGoto:
-			if keyspace.TermFamily(target) != keyspace.FamilyLabel {
-				return errors.New("program/flow/causal: Goto Outcome target is not Label")
-			}
-			resume, resumeOK := s.graph.Resume(target)
-			if !resumeOK {
-				return errors.New("program/flow/causal: Goto Label resume is unavailable")
-			}
-			to, toOK := s.resumeTarget(resume)
-			if !toOK {
-				return errors.New("program/flow/causal: Goto resume is not executable")
-			}
-			if err := s.appendEdge(term, to, owner, 0, false, -1); err != nil {
+			if err := s.appendEdgeOrigin(term, to, owner, 0, false, -1, origin); err != nil {
 				return err
 			}
 		case kind.OutcomeNormal:
@@ -79,6 +58,25 @@ func (s *outcomeState) emitOutcomes() error {
 	return s.emitOperationOutcomes()
 }
 
+// outcomeResumeOrigin completes the exact parent proof chain before any
+// RoutePlan or Edge row is declared. The consumed neutral projection is the
+// sole source of the emitted endpoint Term.
+func (s *outcomeState) outcomeResumeOrigin(from keyspace.Term) (keyspace.Term, routeplan.Origin, error) {
+	anchor, err := s.graph.IssueOutcomeResumeAnchor(s.source, s.outs, from)
+	if err != nil {
+		return 0, routeplan.Origin{}, err
+	}
+	projection, err := s.entries.IssueOutcomeResumeProjection(s.source, s.graph, anchor)
+	if err != nil {
+		return 0, routeplan.Origin{}, err
+	}
+	origin, to, issued := routeplan.OutcomeResumeSubdivision(s.entries, s.graph, projection)
+	if !issued || to == 0 {
+		return 0, routeplan.Origin{}, errors.New("program/flow/causal: normalized Outcome resume subdivision is unavailable")
+	}
+	return to, origin, nil
+}
+
 func (s *outcomeState) emitOperationOutcomes() error {
 	fields := s.flow.Fields()
 	for ordinal := uint32(1); ordinal <= s.counts[keyspace.FamilyTableField]; ordinal++ {
@@ -86,11 +84,11 @@ func (s *outcomeState) emitOperationOutcomes() error {
 		if !s.live(field) {
 			continue
 		}
-		table, key, _, fieldKind, ok := fields.Get(field)
+		table, _, _, _, ok := fields.Get(field)
 		if !ok {
 			return errors.New("program/flow/causal: TableField row is unavailable")
 		}
-		if fieldKind != kind.FieldKey && !(fieldKind == kind.FieldExact && !s.exactFieldAvailable(key)) {
+		if ordinal >= uint32(len(s.tableFieldThrowProof)) || s.tableFieldThrowProof[ordinal] == nil {
 			continue
 		}
 		owner, ownerOK := s.bodyOf(table)

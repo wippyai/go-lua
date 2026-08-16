@@ -9,6 +9,9 @@ import (
 	"github.com/wippyai/go-lua/program/keyspace"
 )
 
+// Version 21 adds explicit publication-effect presence and typed descriptor
+// bytes to each effect row. A target identity from any preceding layout must
+// never be reused for a contract with publication semantics.
 // Version 20 adds the exact initial whole-object immutable header to every
 // boot shape. A target identity from any preceding layout must never be reused
 // for a different bootstrap Heap header.
@@ -16,7 +19,7 @@ import (
 // Version 18 adds retained callback-holder protocol rows and the mandatory
 // zero-holder branch of a callback release. A target identity from any
 // preceding layout must never be reused as this schema.
-const contentIDCodecVersion = 20
+const contentIDCodecVersion = 21
 
 // ContentID derives the SHA-256 identity of the complete observable sealed
 // contract. It encodes no authoring references, Go object identities, lookup
@@ -1306,7 +1309,43 @@ func encodeEffectRow(w *canonical.Writer, c *Contract, effect effectRow) error {
 			return err
 		}
 	}
+	if err := w.Bool(effect.hasPublication); err != nil {
+		return err
+	}
+	if effect.hasPublication {
+		if !c.validPublicationEffectRow(effect) {
+			return errors.New("target: malformed publication effect selector")
+		}
+		if err := encodePublicationEffectDescriptor(w, effect.publication); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func encodePublicationEffectDescriptor(w *canonical.Writer, descriptor PublicationEffectDescriptor) error {
+	if !descriptor.validConsequences() {
+		return errors.New("target: malformed publication effect descriptor")
+	}
+	if err := w.Uint(uint64(descriptor.kind)); err != nil {
+		return err
+	}
+	if err := w.Uint(uint64(descriptor.subject)); err != nil {
+		return err
+	}
+	if err := w.Uint(uint64(descriptor.destination)); err != nil {
+		return err
+	}
+	if err := w.Uint(uint64(descriptor.context)); err != nil {
+		return err
+	}
+	if err := w.Uint(uint64(descriptor.escape)); err != nil {
+		return err
+	}
+	if err := w.Uint(uint64(descriptor.mutability)); err != nil {
+		return err
+	}
+	return w.Uint(uint64(descriptor.lifetime))
 }
 
 func encodeProtocol(w *canonical.Writer, c *Contract, protocol Protocol) error {

@@ -12,6 +12,20 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/guard"
 )
 
+type readFormKind uint8
+
+const (
+	exactReadForm readFormKind = iota + 1
+	summaryReadForm
+)
+
+type writeFormKind uint8
+
+const (
+	exactWriteForm writeFormKind = iota + 1
+	selectorWriteForm
+)
+
 type boundUnit struct {
 	unit        carrier.Unit
 	kind        carrier.UnitKind
@@ -29,12 +43,13 @@ type boundTarget struct {
 // assembly, not declaration: Factor remains a cold owner capability and never
 // receives a carrier slot, binding, Unit, Target, or Selector.
 type boundFactor[K ~uint32 | ~uint64, V any] struct {
-	factor  *Factor[K, V]
-	binding *factbinding.Binding[K, V]
-	slot    shape.Slot
-	hasSlot bool
-	reads   map[equation.Surface]boundUnit
-	writes  map[equation.Surface]boundTarget
+	implementation *FactorImplementation[K, V]
+	receipt        factorRuntimeReceipt
+	binding        *factbinding.Binding[K, V]
+	slot           shape.Slot
+	hasSlot        bool
+	reads          map[equation.Surface]boundUnit
+	writes         map[equation.Surface]boundTarget
 	// dynamicUnits is the one Factor-owned exact Unit universe needed by
 	// staged reads. It is allocated once only when a sealed ReadSelect targets
 	// this Factor; no Rule/input/root candidate product is retained.
@@ -81,16 +96,63 @@ type graphFactorUses struct {
 }
 
 type graphReadUse struct {
-	rule    *ruleSchema
+	rule    *schemaRuleRef
 	index   int
 	surface equation.Surface
 }
 
 type graphWriteUse struct {
-	rule    *ruleSchema
+	rule    *schemaRuleRef
 	index   int
 	surface equation.Surface
 	targets []equation.Surface // positional selector target candidates only
+}
+
+// schemaRuleRef is a no-copy cold Rule proof. It names one canonical Schema
+// row and exposes only scalar shape accessors; no Link callback or declaration schema
+// pointer crosses into Factor carrier binding.
+type schemaRuleRef struct {
+	schema  *Schema
+	ordinal uint64
+}
+
+func (ref *schemaRuleRef) valid() bool {
+	return ref != nil && ref.schema != nil && ref.schema.Available() && ref.schema.ruleSemanticAt(ref.ordinal).Available()
+}
+
+func (ref *schemaRuleRef) key() composition.Key {
+	if !ref.valid() {
+		return composition.Key{}
+	}
+	return ref.schema.ruleSemanticAt(ref.ordinal)
+}
+
+func (ref *schemaRuleRef) shape() (composition.RuleShape, bool) {
+	if !ref.valid() {
+		return composition.RuleShape{}, false
+	}
+	return ref.schema.ruleShapeAt(ref.ordinal)
+}
+
+func (ref *schemaRuleRef) read(index uint64) (composition.RuleReadShape, bool) {
+	if !ref.valid() {
+		return composition.RuleReadShape{}, false
+	}
+	return ref.schema.ruleReadShapeAt(ref.ordinal, index)
+}
+
+func (ref *schemaRuleRef) carry(index uint64) (composition.RuleCarryShape, bool) {
+	if !ref.valid() {
+		return composition.RuleCarryShape{}, false
+	}
+	return ref.schema.ruleCarryShapeAt(ref.ordinal, index)
+}
+
+func (ref *schemaRuleRef) write(index uint64) (composition.RuleWriteShape, bool) {
+	if !ref.valid() {
+		return composition.RuleWriteShape{}, false
+	}
+	return ref.schema.ruleWriteShapeAt(ref.ordinal, index)
 }
 
 type graphBindingCatalog struct {
@@ -201,8 +263,8 @@ func appendGraphCarryTargets(catalog *graphBindingCatalog, factor, member compos
 // DAG is evaluated from predecessor-free components. This is the exact least
 // closure of declared direct writes and Carry predecessors: no depth limit,
 // cardinality cap, or runtime topology traversal is involved.
-func buildGraphCarryClosures(cold *Composition, graph *equation.Graph, rules map[composition.Key]*ruleSchema) (map[graphCarryClosureKey]graphCarryClosure, bool) {
-	if cold == nil || graph == nil || len(rules) == 0 {
+func buildGraphCarryClosures(schema *Schema, graph *equation.Graph, rules map[composition.Key]*schemaRuleRef) (map[graphCarryClosureKey]graphCarryClosure, bool) {
+	if schema == nil || !schema.Available() || graph == nil || len(rules) == 0 {
 		return nil, false
 	}
 	carriedFactors := make(map[composition.Key]struct{})
@@ -217,15 +279,16 @@ func buildGraphCarryClosures(cold *Composition, graph *equation.Graph, rules map
 				return nil, false
 			}
 			rule := rules[member.Rule()]
-			if rule == nil || len(rule.carries) == 0 {
+			shape, shapeOK := rule.shape()
+			if !shapeOK || shape.CarryCount == 0 {
 				continue
 			}
-			if rule.output == nil || len(rule.carries) != 1 {
+			if shape.OutputKind != composition.FactorOutput || shape.CarryCount != 1 {
 				return nil, false
 			}
-			factor := rule.output.semantic.compositionKey()
-			carry := rule.carries[0]
-			if !factor.Available() || carry.factor == nil || carry.factor.semantic.compositionKey() != factor {
+			factor := shape.Output
+			carry, carryOK := rule.carry(0)
+			if !factor.Available() || !carryOK || carry.Factor != factor {
 				return nil, false
 			}
 			carriedFactors[factor] = struct{}{}
@@ -268,49 +331,54 @@ func buildGraphCarryClosures(cold *Composition, graph *equation.Graph, rules map
 				return nil, false
 			}
 			rule := rules[member.Rule()]
-			if rule == nil {
+			shape, shapeOK := rule.shape()
+			if !shapeOK {
 				return nil, false
 			}
 			// Carry closure is defined only over direct writes and carry
 			// predecessors of carried Factor-output Rules. A structural member
 			// has neither; it remains a valid graph member when an unrelated
 			// Factor carries through the same graph.
-			if rule.output == nil {
-				if len(rule.carries) != 0 {
+			if shape.OutputKind != composition.FactorOutput {
+				if shape.CarryCount != 0 {
 					return nil, false
 				}
 				continue
 			}
-			factor := rule.output.semantic.compositionKey()
+			factor := shape.Output
 			if _, carried := carriedFactors[factor]; !carried {
 				continue
 			}
 			node, nodeOK := ensureNode(factor, group.Output())
-			if !nodeOK || member.WriteCount() != len(rule.writes) {
+			if !nodeOK || uint64(member.WriteCount()) != shape.WriteCount {
 				return nil, false
 			}
-			for writeIndex, write := range rule.writes {
-				surface, surfaceOK := member.WriteAt(writeIndex)
-				if !surfaceOK || write.form == nil {
+			for writeIndex := uint64(0); writeIndex < shape.WriteCount; writeIndex++ {
+				write, writeOK := rule.write(writeIndex)
+				if !writeOK {
 					return nil, false
 				}
-				switch write.form.writeKind {
-				case exactWriteForm:
-					if write.route != 0 {
-						if surface.Form != equation.SurfaceWriteRoute || surface.Mode != equation.TargetModeNone {
-							return nil, false
-						}
-						node.route = true
-					} else {
-						node.direct = append(node.direct, surface)
-					}
-				case selectorWriteForm:
-					selector := coldSelectorForWrite(rule, writeIndex)
-					if selector == nil || len(selector.candidates) == 0 {
+				surface, surfaceOK := member.WriteAt(int(writeIndex))
+				if !surfaceOK {
+					return nil, false
+				}
+				switch write.Kind {
+				case composition.WriteExact:
+					if write.Route != 0 {
 						return nil, false
 					}
-					for candidateIndex := range selector.candidates {
-						target, targetOK := member.WriteTargetCandidateAt(writeIndex, candidateIndex)
+					node.direct = append(node.direct, surface)
+				case composition.WriteRoute:
+					if write.Route == 0 || surface.Form != equation.SurfaceWriteRoute || surface.Mode != equation.TargetModeNone {
+						return nil, false
+					}
+					node.route = true
+				case composition.WriteSelect:
+					if write.CandidateCount == 0 {
+						return nil, false
+					}
+					for candidateIndex := uint64(0); candidateIndex < write.CandidateCount; candidateIndex++ {
+						target, targetOK := member.WriteTargetCandidateAt(int(writeIndex), int(candidateIndex))
 						if !targetOK {
 							return nil, false
 						}
@@ -320,17 +388,17 @@ func buildGraphCarryClosures(cold *Composition, graph *equation.Graph, rules map
 					return nil, false
 				}
 			}
-			if len(rule.carries) == 0 {
+			if shape.CarryCount == 0 {
 				continue
 			}
-			if len(rule.carries) != 1 {
+			if shape.CarryCount != 1 {
 				return nil, false
 			}
-			carry := rule.carries[0]
-			if carry.factor == nil || carry.factor.semantic.compositionKey() != factor {
+			carry, carryOK := rule.carry(0)
+			if !carryOK || carry.Factor != factor {
 				return nil, false
 			}
-			input, inputOK := group.InputAt(carry.input)
+			input, inputOK := group.InputAt(int(carry.Input))
 			if !inputOK {
 				return nil, false
 			}
@@ -521,45 +589,49 @@ func mergeCarrySurfaces(left, right []equation.Surface) []equation.Surface {
 	return merged
 }
 
-func buildGraphBindingCatalog(cold *Composition, graph *equation.Graph) (*graphBindingCatalog, bool) {
-	if cold == nil || !cold.Sealed() || cold.coldComposition() == nil || graph == nil || graph.CompositionID() != cold.coldComposition().ID() {
+func buildGraphBindingCatalog(schema *Schema, graph *equation.Graph) (*graphBindingCatalog, bool) {
+	if schema == nil || !schema.Available() || graph == nil || graph.CompositionID() != schema.cold.ID() {
 		return nil, false
 	}
-	sealedRules := cold.coldComposition().Rules()
-	sealedQueries := cold.coldComposition().Queries()
-	sealedFactors := cold.coldComposition().Factors()
-	rules := make(map[composition.Key]*ruleSchema, len(cold.rules))
-	for _, rule := range cold.rules {
-		if rule == nil || !rule.bound || !validRuleBind(rule) || rule.bindIndex >= uint64(len(sealedRules)) {
-			return nil, false
-		}
-		if _, duplicate := rules[rule.semantic.compositionKey()]; duplicate {
-			return nil, false
-		}
-		rules[rule.semantic.compositionKey()] = rule
+	factorCount, ruleCount, queryCount, _, shapeOK := schema.shapeCount()
+	if !shapeOK {
+		return nil, false
 	}
-	queries := make(map[composition.Key]*querySchema, len(cold.queries))
-	for _, query := range cold.queries {
-		if query.schema == nil || !query.schema.bound || !validQueryBind(query.schema) || query.schema.bindIndex >= uint64(len(sealedQueries)) {
+	rules := make(map[composition.Key]*schemaRuleRef, ruleCount)
+	for ordinal := 0; ordinal < ruleCount; ordinal++ {
+		key := schema.ruleSemanticAt(uint64(ordinal))
+		if !key.Available() {
 			return nil, false
 		}
-		if _, duplicate := queries[query.schema.semantic.compositionKey()]; duplicate {
+		ref := &schemaRuleRef{schema: schema, ordinal: uint64(ordinal)}
+		if _, duplicate := rules[key]; duplicate {
 			return nil, false
 		}
-		queries[query.schema.semantic.compositionKey()] = query.schema
+		rules[key] = ref
 	}
-	catalog := &graphBindingCatalog{factors: make(map[composition.Key]*graphFactorUses, len(cold.factors))}
-	for _, factor := range cold.factors {
-		if factor == nil || !factor.bound || !validFactorBind(factor) || factor.bindIndex >= uint64(len(sealedFactors)) {
+	queries := make(map[composition.Key]struct{}, queryCount)
+	for ordinal := 0; ordinal < queryCount; ordinal++ {
+		key := schema.querySemanticAt(uint64(ordinal))
+		if !key.Available() {
 			return nil, false
 		}
-		key := factor.semantic.compositionKey()
+		if _, duplicate := queries[key]; duplicate {
+			return nil, false
+		}
+		queries[key] = struct{}{}
+	}
+	catalog := &graphBindingCatalog{factors: make(map[composition.Key]*graphFactorUses, factorCount)}
+	for ordinal := 0; ordinal < factorCount; ordinal++ {
+		key := schema.factorSemanticAt(uint64(ordinal))
+		if !key.Available() {
+			return nil, false
+		}
 		if _, duplicate := catalog.factors[key]; duplicate {
 			return nil, false
 		}
 		catalog.factors[key] = &graphFactorUses{}
 	}
-	closures, closuresOK := buildGraphCarryClosures(cold, graph, rules)
+	closures, closuresOK := buildGraphCarryClosures(schema, graph, rules)
 	if !closuresOK {
 		return nil, false
 	}
@@ -575,21 +647,22 @@ func buildGraphBindingCatalog(cold *Composition, graph *equation.Graph) (*graphB
 				return nil, false
 			}
 			rule, present := rules[member.Rule()]
-			if !present || rule == nil || member.ReadCount() != len(rule.reads) || member.WriteCount() != len(rule.writes) {
+			shape, shapeOK := rule.shape()
+			if !present || !shapeOK || uint64(member.ReadCount()) != shape.ReadCount || uint64(member.WriteCount()) != shape.WriteCount {
 				return nil, false
 			}
-			if len(rule.carries) != 0 {
-				if rule.output == nil || len(rule.carries) != 1 {
+			if shape.CarryCount != 0 {
+				if shape.OutputKind != composition.FactorOutput || shape.CarryCount != 1 {
 					return nil, false
 				}
-				carry := rule.carries[0]
-				input, inputOK := group.InputAt(carry.input)
-				if !inputOK {
+				carry, carryOK := rule.carry(0)
+				input, inputOK := group.InputAt(int(carry.Input))
+				if !carryOK || !inputOK {
 					return nil, false
 				}
-				closureKey := graphCarryClosureKey{factor: rule.output.semantic.compositionKey(), point: input.Point().Key()}
+				closureKey := graphCarryClosureKey{factor: shape.Output, point: input.Point().Key()}
 				closure, closureOK := catalog.carryClosures[closureKey]
-				if !closureOK || !appendGraphCarryTargets(catalog, rule.output.semantic.compositionKey(), member.Key(), closure) {
+				if !closureOK || !appendGraphCarryTargets(catalog, shape.Output, member.Key(), closure) {
 					return nil, false
 				}
 				for _, target := range closure.targets {
@@ -604,7 +677,8 @@ func buildGraphBindingCatalog(cold *Composition, graph *equation.Graph) (*graphB
 					return nil, false
 				}
 				use := graphReadUse{rule: rule, index: readIndex, surface: surface}
-				if rule.reads[readIndex].form == nil {
+				readShape, readOK := rule.read(uint64(readIndex))
+				if !readOK || !readShape.Factor.Available() {
 					return nil, false
 				}
 				if !appendGraphRead(catalog, surface, use) {
@@ -613,17 +687,20 @@ func buildGraphBindingCatalog(cold *Composition, graph *equation.Graph) (*graphB
 			}
 			for writeIndex := 0; writeIndex < member.WriteCount(); writeIndex++ {
 				surface, ok := member.WriteAt(writeIndex)
-				if !ok || !surface.Available() || rule.writes[writeIndex].form == nil {
+				if !ok || !surface.Available() {
 					return nil, false
 				}
 				use := graphWriteUse{rule: rule, index: writeIndex, surface: surface}
+				writeShape, writeOK := rule.write(uint64(writeIndex))
+				if !writeOK {
+					return nil, false
+				}
 				count := 0
-				if rule.writes[writeIndex].form.writeKind == selectorWriteForm {
-					selector := coldSelectorForWrite(rule, writeIndex)
-					if selector == nil || len(selector.candidates) == 0 {
+				if writeShape.Kind == composition.WriteSelect {
+					if writeShape.CandidateCount == 0 {
 						return nil, false
 					}
-					count = len(selector.candidates)
+					count = int(writeShape.CandidateCount)
 					use.targets = make([]equation.Surface, count)
 				}
 				for targetIndex := 0; targetIndex < count; targetIndex++ {
@@ -643,7 +720,10 @@ func buildGraphBindingCatalog(cold *Composition, graph *equation.Graph) (*graphB
 	}
 	for queryIndex := 0; queryIndex < graph.QueryCount(); queryIndex++ {
 		query, ok := graph.QueryAt(queryIndex)
-		if !ok || !query.Key().Available() || !query.Family().Available() || queries[query.Family()] == nil {
+		if !ok || !query.Key().Available() || !query.Family().Available() {
+			return nil, false
+		}
+		if _, present := queries[query.Family()]; !present {
 			return nil, false
 		}
 		for _, surface := range query.Surfaces() {
@@ -660,20 +740,30 @@ func buildGraphBindingCatalog(cold *Composition, graph *equation.Graph) (*graphB
 // graph-owned: a caller cannot choose atoms, their order, or a second Manager
 // for a set of Factors.
 type runtimeBinding struct {
+	schema    *Schema
+	state     *schemaBindingState
+	authority *schemaBindingAuthority
+	mode      runtimeBindingMode
 	graph     *equation.Graph
 	guards    *guard.Manager
 	catalog   *graphBindingCatalog // cold only; sole compiler releases it after binding
 	validated bool                 // newRuntimeBinding checked the dense atom catalog once
 }
 
+type runtimeBindingMode uint8
+
+const (
+	runtimeBindingReceipt runtimeBindingMode = iota + 1
+)
+
 // newRuntimeBinding derives dense atoms in the Graph catalog order.
 // Atom numbers are implementation-local dense ranks; equation Decisions stay
 // the only semantic identity.
-func newRuntimeBinding(cold *Composition, graph *equation.Graph) (*runtimeBinding, bool) {
-	if cold == nil || !cold.Sealed() || graph == nil || !graph.OwnsComposition(cold.coldComposition()) || graph.CompositionID() != cold.coldComposition().ID() {
+func newRuntimeBinding(schema *Schema, graph *equation.Graph) (*runtimeBinding, bool) {
+	if schema == nil || !schema.Available() || graph == nil || !graph.OwnsComposition(schema.cold) || graph.CompositionID() != schema.cold.ID() {
 		return nil, false
 	}
-	catalog, catalogOK := buildGraphBindingCatalog(cold, graph)
+	catalog, catalogOK := buildGraphBindingCatalog(schema, graph)
 	if !catalogOK || catalog == nil {
 		return nil, false
 	}
@@ -692,14 +782,45 @@ func newRuntimeBinding(cold *Composition, graph *equation.Graph) (*runtimeBindin
 	if err != nil || manager == nil {
 		return nil, false
 	}
-	return &runtimeBinding{graph: graph, guards: manager, catalog: catalog, validated: true}, true
+	return &runtimeBinding{schema: schema, mode: runtimeBindingReceipt, graph: graph, guards: manager, catalog: catalog, validated: true}, true
+}
+
+// newReceiptRuntimeBinding is the pre-fenced constructor for the callback-free
+// Factor vertical.  It shares the same graph/catalog/runtime path as the
+// constructor publishes the exact sealed SchemaBinding state and
+// authority before any Factor implementation can be consumed.  A receipt can
+// therefore never claim ownership of an unpinned runtime or mix bindings.
+func newReceiptRuntimeBinding(binding *SchemaBinding, graph *equation.Graph) (*runtimeBinding, bool) {
+	state := bindingState(binding)
+	if state == nil {
+		return nil, false
+	}
+	state.mu.Lock()
+	schema, authority, sealed := state.schema, state.authority, state.phase == schemaBindingSealed && state.authority != nil
+	state.mu.Unlock()
+	if !sealed {
+		return nil, false
+	}
+	runtime, ok := newRuntimeBinding(schema, graph)
+	if !ok || runtime == nil {
+		return nil, false
+	}
+	runtime.mode, runtime.state, runtime.authority = runtimeBindingReceipt, state, authority
+	return runtime, true
 }
 
 func (binding *runtimeBinding) valid() bool {
 	// The Graph and Manager are immutable after successful construction. The
 	// complete decision/atom correspondence is proved above once; rewalking it
 	// for every Factor would turn cold binding into F×Decision work.
-	return binding != nil && binding.validated && binding.graph != nil && binding.graph.CompositionID().Available() && binding.guards != nil
+	return binding != nil && binding.validated && binding.mode == runtimeBindingReceipt && binding.schema != nil && binding.schema.Available() && binding.graph != nil && binding.graph.CompositionID() == binding.schema.coldID() && binding.guards != nil && binding.state != nil && binding.authority != nil && binding.state.authority == binding.authority && binding.state.schema == binding.schema && binding.state.phase == schemaBindingSealed
+}
+
+func (binding *runtimeBinding) pinReceipt(receipt factorRuntimeReceipt) bool {
+	if binding == nil || binding.mode != runtimeBindingReceipt || !receipt.valid() || receipt.schema != binding.schema {
+		return false
+	}
+	return binding.state == receipt.state && binding.authority == receipt.authority
 }
 
 // takeFactorUses consumes one typed binder's cold graph partition. It is a
@@ -759,24 +880,41 @@ type carryTargetRow struct {
 	route   bool
 }
 
-func bindFactorFromGraph[K ~uint32 | ~uint64, V any](factor *Factor[K, V], runtime *runtimeBinding) (*boundFactor[K, V], bool) {
-	if factor == nil || factor.schema == nil || !factor.valid() || !factor.schema.bound || !runtime.valid() || runtime.graph.CompositionID() != factor.composition.coldComposition().ID() {
+func bindFactorFromGraph[K ~uint32 | ~uint64, V any](implementation *FactorImplementation[K, V], runtime *runtimeBinding) (*boundFactor[K, V], bool) {
+	if implementation == nil || implementation.algebra == nil || !implementation.descriptor.valid() || runtime == nil || !runtime.valid() {
 		return nil, false
 	}
-	index, indexed := factor.composition.coldComposition().FactorIndex(factor.schema.semantic.compositionKey())
-	if !indexed || index != factor.schema.bindIndex {
+	descriptor := implementation.descriptor
+	receipt := implementation.receipt
+	if runtime.mode == runtimeBindingReceipt {
+		if !receipt.valid() {
+			return nil, false
+		}
+		if !runtime.pinReceipt(receipt) {
+			return nil, false
+		}
+		descriptor = factorRuntimeDescriptor{schema: receipt.schema, state: receipt.state, ordinal: receipt.ordinal, semantic: receipt.semantic, keyEnd: receipt.keyEnd, algebra: receipt.algebra}
+	} else {
 		return nil, false
 	}
-	uses, taken := runtime.takeFactorUses(factor.schema.semantic.compositionKey())
+	if runtime.graph.CompositionID() != descriptor.schema.coldID() {
+		return nil, false
+	}
+	index, indexed := descriptor.schema.cold.FactorIndex(descriptor.semantic)
+	if !indexed || index != descriptor.ordinal {
+		return nil, false
+	}
+	uses, taken := runtime.takeFactorUses(descriptor.semantic)
 	if !taken {
 		return nil, false
 	}
-	catalog, catalogOK := collectFactorGraphCatalog(factor, runtime.graph, uses)
+	catalog, catalogOK := collectFactorGraphCatalog[K, V](descriptor, runtime.graph, uses)
 	if !catalogOK {
 		return nil, false
 	}
 	bound := &boundFactor[K, V]{
-		factor:          factor,
+		implementation:  implementation,
+		receipt:         receipt,
 		reads:           make(map[equation.Surface]boundUnit, len(catalog.exactReads)+len(catalog.summaryAliases)),
 		writes:          make(map[equation.Surface]boundTarget, len(catalog.strongWrites)+len(catalog.weakWrites)),
 		writeSelectors:  make(map[equation.Surface]carrier.Selector, len(catalog.writeSelectors)),
@@ -784,18 +922,18 @@ func bindFactorFromGraph[K ~uint32 | ~uint64, V any](factor *Factor[K, V], runti
 		carryTargets:    make(map[composition.Key][]carrier.Target, len(catalog.carryTargets)),
 		carryRouteScope: make(map[composition.Key]bool, len(catalog.carryTargets)),
 	}
-	binding, ok := factbinding.Bind(factor.algebra, runtime.guards, func(binding *factbinding.Binding[K, V]) bool {
+	binding, ok := factbinding.Bind(implementation.algebra, runtime.guards, func(binding *factbinding.Binding[K, V]) bool {
 		if catalog.dynamicRead {
 			// A staged target Factor declares each exact Unit once, in owner key
 			// order. This is O(R) per actually targeted Factor, rather than the
 			// former candidate×root cold surface. Static exact reads still share
 			// these same Units through bound.reads.
-			if factor.schema.keyEnd > uint64(^uint(0)>>1) {
+			if implementation.algebra.KeyEnd() > uint64(^uint(0)>>1) {
 				return false
 			}
-			bound.dynamicUnits = make([]carrier.Unit, int(factor.schema.keyEnd))
+			bound.dynamicUnits = make([]carrier.Unit, int(implementation.algebra.KeyEnd()))
 			exactIndex := 0
-			for raw := uint64(0); raw < factor.schema.keyEnd; raw++ {
+			for raw := uint64(0); raw < implementation.algebra.KeyEnd(); raw++ {
 				key := K(raw)
 				if uint64(key) != raw {
 					return false
@@ -850,7 +988,7 @@ func bindFactorFromGraph[K ~uint32 | ~uint64, V any](factor *Factor[K, V], runti
 			bound.reads[alias] = unit
 		}
 		if catalog.routeWrite {
-			if !catalog.dynamicRead || len(bound.dynamicUnits) != int(factor.schema.keyEnd) {
+			if !catalog.dynamicRead || len(bound.dynamicUnits) != int(implementation.algebra.KeyEnd()) {
 				return false
 			}
 			bound.routeTargets = make([]carrier.Target, len(bound.dynamicUnits))
@@ -866,7 +1004,7 @@ func bindFactorFromGraph[K ~uint32 | ~uint64, V any](factor *Factor[K, V], runti
 			}
 		}
 		for _, surface := range catalog.strongWrites {
-			unit, present := bound.reads[exactReadSurface(factor, surface.Local)]
+			unit, present := bound.reads[equation.Surface{Factor: descriptor.semantic, Form: equation.SurfaceReadExact, Local: surface.Local}]
 			if !present {
 				return false
 			}
@@ -889,7 +1027,7 @@ func bindFactorFromGraph[K ~uint32 | ~uint64, V any](factor *Factor[K, V], runti
 		return declareWeakTargets(binding, bound, catalog.weakWrites) &&
 			declareWriteSelectors(binding, bound, catalog.writeSelectors)
 	})
-	if !ok || binding == nil || len(bound.reads) != len(catalog.exactReads)+len(catalog.summaryAliases) || len(bound.writes) != len(catalog.strongWrites)+len(catalog.weakWrites) || len(bound.writeSelectors) != len(catalog.writeSelectors) || len(bound.writeCandidates) != len(catalog.writeSelectors) || catalog.dynamicRead && len(bound.dynamicUnits) != int(factor.schema.keyEnd) || catalog.routeWrite && len(bound.routeTargets) != int(factor.schema.keyEnd) {
+	if !ok || binding == nil || len(bound.reads) != len(catalog.exactReads)+len(catalog.summaryAliases) || len(bound.writes) != len(catalog.strongWrites)+len(catalog.weakWrites) || len(bound.writeSelectors) != len(catalog.writeSelectors) || len(bound.writeCandidates) != len(catalog.writeSelectors) || catalog.dynamicRead && len(bound.dynamicUnits) != int(implementation.algebra.KeyEnd()) || catalog.routeWrite && len(bound.routeTargets) != int(implementation.algebra.KeyEnd()) {
 		return nil, false
 	}
 	for _, row := range catalog.carryTargets {
@@ -908,23 +1046,50 @@ func bindFactorFromGraph[K ~uint32 | ~uint64, V any](factor *Factor[K, V], runti
 	return bound, true
 }
 
-func exactReadSurface[K ~uint32 | ~uint64, V any](factor *Factor[K, V], local uint64) equation.Surface {
-	return equation.Surface{Factor: factor.schema.semantic.compositionKey(), Form: equation.SurfaceReadExact, Local: local}
+func exactReadDescriptorSurface(descriptor factorRuntimeDescriptor, local uint64) equation.Surface {
+	return equation.Surface{Factor: descriptor.semantic, Form: equation.SurfaceReadExact, Local: local}
 }
 
-func exactWriteSurface[K ~uint32 | ~uint64, V any](factor *Factor[K, V], local uint64) equation.Surface {
-	return equation.Surface{Factor: factor.schema.semantic.compositionKey(), Form: equation.SurfaceWriteExact, Local: local, Mode: equation.TargetModeStrong}
+func exactReadReceiptSurface(receipt factorRuntimeReceipt, local uint64) equation.Surface {
+	return equation.Surface{Factor: receipt.semantic, Form: equation.SurfaceReadExact, Local: local}
+}
+
+func exactWriteReceiptSurface(receipt factorRuntimeReceipt, local uint64) equation.Surface {
+	return equation.Surface{Factor: receipt.semantic, Form: equation.SurfaceWriteExact, Local: local, Mode: equation.TargetModeStrong}
+}
+
+func matchesFactorReadShape(schema *Schema, ordinal uint64, surface equation.Surface, kind readFormKind) bool {
+	if schema == nil || !schema.Available() || ordinal >= schema.factorCount() || !surface.Available() || surface.Factor != schema.factorSemanticAt(ordinal) {
+		return false
+	}
+	if kind == exactReadForm {
+		return surface.Form == equation.SurfaceReadExact && surface.Mode == equation.TargetModeNone && !surface.Semantic.Available() && !surface.Normalizer.Available()
+	}
+	if kind != summaryReadForm || surface.Form != equation.SurfaceReadSummary || surface.Mode != equation.TargetModeNone || !surface.Semantic.Available() || surface.Normalizer != surface.Semantic {
+		return false
+	}
+	count, ok := schema.factorFormCount(ordinal)
+	if !ok {
+		return false
+	}
+	for index := 0; index < count; index++ {
+		form, formOK := schema.factorFormShapeAt(ordinal, uint64(index))
+		if formOK && form.Kind == composition.FactorSummaryRead && form.Semantic == surface.Semantic {
+			return true
+		}
+	}
+	return false
 }
 
 // collectFactorGraphCatalog performs only cold work. Graph owns every
 // occurrence surface, summary key row, weak cover, and selector target; the
 // Factor owns only the typed conversion from raw key to K and the carrier
 // declarations. There is no caller-supplied materialization language.
-func collectFactorGraphCatalog[K ~uint32 | ~uint64, V any](factor *Factor[K, V], graph *equation.Graph, uses graphFactorUses) (factorGraphCatalog[K], bool) {
-	if factor == nil || factor.schema == nil || graph == nil {
+func collectFactorGraphCatalog[K ~uint32 | ~uint64, V any](descriptor factorRuntimeDescriptor, graph *equation.Graph, uses graphFactorUses) (factorGraphCatalog[K], bool) {
+	if descriptor.schema == nil || !descriptor.schema.Available() || descriptor.algebra == nil || graph == nil {
 		return factorGraphCatalog[K]{}, false
 	}
-	key := factor.schema.semantic.compositionKey()
+	key := descriptor.semantic
 	exact := make(map[equation.Surface]struct{})
 	summaries := make(map[equation.Surface][]K)
 	aliases := make(map[equation.Surface]equation.Surface)
@@ -936,11 +1101,11 @@ func collectFactorGraphCatalog[K ~uint32 | ~uint64, V any](factor *Factor[K, V],
 
 	var collectRead func(equation.Surface) bool
 	collectSummary := func(surface equation.Surface) bool {
-		if !matchesFactorReadForm(factor.schema, surface, summaryReadForm) || surface.Mode != equation.TargetModeNone {
+		if !matchesFactorReadShape(descriptor.schema, descriptor.ordinal, surface, summaryReadForm) || surface.Mode != equation.TargetModeNone {
 			return false
 		}
 		representative, represented := graph.SummaryRepresentative(surface)
-		if !represented || !matchesFactorReadForm(factor.schema, representative, summaryReadForm) {
+		if !represented || !matchesFactorReadShape(descriptor.schema, descriptor.ordinal, representative, summaryReadForm) {
 			return false
 		}
 		count, counted := graph.SummaryKeyCount(representative)
@@ -950,7 +1115,7 @@ func collectFactorGraphCatalog[K ~uint32 | ~uint64, V any](factor *Factor[K, V],
 		keys := make([]K, count)
 		for index := range keys {
 			raw, present := graph.SummaryKeyAt(representative, index)
-			if !present || raw >= factor.schema.keyEnd {
+			if !present || raw >= descriptor.keyEnd {
 				return false
 			}
 			keys[index] = K(raw)
@@ -971,7 +1136,7 @@ func collectFactorGraphCatalog[K ~uint32 | ~uint64, V any](factor *Factor[K, V],
 		}
 		switch surface.Form {
 		case equation.SurfaceReadExact:
-			if surface.Semantic.Available() || surface.Normalizer.Available() || surface.Local == 0 || surface.Local > factor.schema.keyEnd {
+			if surface.Semantic.Available() || surface.Normalizer.Available() || surface.Local == 0 || surface.Local > descriptor.keyEnd {
 				return false
 			}
 			exact[surface] = struct{}{}
@@ -1010,11 +1175,11 @@ func collectFactorGraphCatalog[K ~uint32 | ~uint64, V any](factor *Factor[K, V],
 		}
 		switch surface.Mode {
 		case equation.TargetModeStrong:
-			if surface.Local == 0 || surface.Local > factor.schema.keyEnd {
+			if surface.Local == 0 || surface.Local > descriptor.keyEnd {
 				return false
 			}
 			strong[surface] = struct{}{}
-			exact[exactReadSurface(factor, surface.Local)] = struct{}{}
+			exact[exactReadDescriptorSurface(descriptor, surface.Local)] = struct{}{}
 			return true
 		case equation.TargetModeWeak:
 			return collectWeak(surface)
@@ -1023,41 +1188,42 @@ func collectFactorGraphCatalog[K ~uint32 | ~uint64, V any](factor *Factor[K, V],
 		}
 	}
 	for _, use := range uses.reads {
-		if use.rule == nil || use.index < 0 || use.index >= len(use.rule.reads) || use.rule.reads[use.index].form == nil || use.rule.reads[use.index].form.factor != factor.schema {
+		readShape, readOK := use.rule.read(uint64(use.index))
+		if use.rule == nil || use.index < 0 || !readOK || readShape.Factor != key {
 			return factorGraphCatalog[K]{}, false
 		}
-		declared := use.rule.reads[use.index]
 		if use.surface.Form == equation.SurfaceReadSelect {
 			// A ReadSelect names its target Factor only. Exact Ref routes are
 			// chosen row-locally by the staged locator; no target Unit or
 			// candidate vector is present in the graph catalog.
-			if declared.form.readKind != exactReadForm || len(declared.depends) == 0 ||
+			if readShape.Kind != composition.ReadSelect || readShape.DependencyCount == 0 ||
 				use.surface.Mode != equation.TargetModeNone || use.surface.Semantic != key || use.surface.Normalizer.Available() || use.surface.Local == 0 {
 				return factorGraphCatalog[K]{}, false
 			}
 			dynamicRead = true
 			continue
 		}
-		if len(declared.depends) != 0 || !collectRead(use.surface) {
+		if readShape.DependencyCount != 0 || !collectRead(use.surface) {
 			return factorGraphCatalog[K]{}, false
 		}
 	}
 	for _, use := range uses.writes {
-		if use.rule == nil || use.index < 0 || use.index >= len(use.rule.writes) || use.rule.writes[use.index].form == nil || use.rule.writes[use.index].form.factor != factor.schema {
+		writeShape, writeOK := use.rule.write(uint64(use.index))
+		if use.rule == nil || use.index < 0 || !writeOK || writeShape.Factor != key {
 			return factorGraphCatalog[K]{}, false
 		}
-		switch use.rule.writes[use.index].form.writeKind {
-		case exactWriteForm:
-			if use.rule.writes[use.index].route != 0 {
-				if use.surface.Form != equation.SurfaceWriteRoute || use.surface.Mode != equation.TargetModeNone || use.surface.Semantic.Available() || use.surface.Normalizer.Available() || len(use.targets) != 0 {
-					return factorGraphCatalog[K]{}, false
-				}
-				routeWrite = true
-			} else if len(use.targets) != 0 || !collectTarget(use.surface) {
+		switch writeShape.Kind {
+		case composition.WriteExact:
+			if writeShape.Route != 0 || len(use.targets) != 0 || !collectTarget(use.surface) {
 				return factorGraphCatalog[K]{}, false
 			}
-		case selectorWriteForm:
-			if !matchesFactorWriteForm(factor.schema, use.surface, selectorWriteForm) || use.surface.Mode != equation.TargetModeNone || len(use.targets) == 0 {
+		case composition.WriteRoute:
+			if writeShape.Route == 0 || use.surface.Form != equation.SurfaceWriteRoute || use.surface.Mode != equation.TargetModeNone || use.surface.Semantic.Available() || use.surface.Normalizer.Available() || len(use.targets) != 0 {
+				return factorGraphCatalog[K]{}, false
+			}
+			routeWrite = true
+		case composition.WriteSelect:
+			if !matchesFactorWriteShape(descriptor.schema, descriptor.ordinal, use.surface, selectorWriteForm) || use.surface.Mode != equation.TargetModeNone || len(use.targets) == 0 {
 				return factorGraphCatalog[K]{}, false
 			}
 			for _, target := range use.targets {
@@ -1217,30 +1383,23 @@ func compareRuntimeKey(left, right composition.Key) int {
 	return 0
 }
 
-func matchesFactorReadForm(factor *factorSchema, surface equation.Surface, kind readFormKind) bool {
-	if factor == nil || !surface.Available() || surface.Factor != factor.semantic.compositionKey() {
+func matchesFactorWriteShape(schema *Schema, ordinal uint64, surface equation.Surface, kind writeFormKind) bool {
+	if schema == nil || !schema.Available() || ordinal >= schema.factorCount() || !surface.Available() || surface.Factor != schema.factorSemanticAt(ordinal) {
 		return false
 	}
-	for _, form := range factor.forms {
-		if form == nil || form.readKind != kind {
-			continue
-		}
-		switch kind {
-		case summaryReadForm:
-			if surface.Form == equation.SurfaceReadSummary && surface.Semantic == form.semantic.compositionKey() && surface.Normalizer == form.semantic.compositionKey() {
-				return true
-			}
-		}
+	if kind == exactWriteForm {
+		return surface.Form == equation.SurfaceWriteExact && !surface.Semantic.Available() && !surface.Normalizer.Available()
 	}
-	return false
-}
-
-func matchesFactorWriteForm(factor *factorSchema, surface equation.Surface, kind writeFormKind) bool {
-	if factor == nil || !surface.Available() || surface.Factor != factor.semantic.compositionKey() {
+	if kind != selectorWriteForm || surface.Form != equation.SurfaceWriteSelect || !surface.Semantic.Available() || surface.Normalizer.Available() {
 		return false
 	}
-	for _, form := range factor.forms {
-		if form != nil && form.writeKind == kind && kind == selectorWriteForm && surface.Form == equation.SurfaceWriteSelect && surface.Semantic == form.semantic.compositionKey() && !surface.Normalizer.Available() {
+	count, ok := schema.factorFormCount(ordinal)
+	if !ok {
+		return false
+	}
+	for index := 0; index < count; index++ {
+		form, formOK := schema.factorFormShapeAt(ordinal, uint64(index))
+		if formOK && form.Kind == composition.FactorSelectorWrite && form.Semantic == surface.Semantic {
 			return true
 		}
 	}
@@ -1407,10 +1566,10 @@ func sameTargetVector(left, right []boundTarget) bool {
 }
 
 func (bound *boundFactor[K, V]) semantic() SemanticKey {
-	if bound == nil || bound.factor == nil {
+	if bound == nil || bound.implementation == nil || !bound.implementation.descriptor.valid() {
 		return SemanticKey{}
 	}
-	return bound.factor.schema.semantic
+	return semanticKeyFromComposition(bound.implementation.descriptor.semantic)
 }
 
 func (bound *boundFactor[K, V]) operation() carrier.FactorOperation {
@@ -1462,27 +1621,29 @@ func (bound *boundFactor[K, V]) readUnit(surface equation.Surface) (carrier.Unit
 	return unit.unit, ok
 }
 
-// summaryReadProof returns the sealed canonical vector bound to one concrete
-// summary surface. It stays private to the generic engine and is consumed
-// only by derivation evidence comparison.
-func (bound *boundFactor[K, V]) summaryReadProof(surface equation.Surface, form *formSchema) (ruleSummaryReadProof, bool) {
-	if bound == nil || bound.factor == nil || bound.factor.schema == nil || form == nil ||
-		form.factor != bound.factor.schema || form.readKind != summaryReadForm {
+// receiptMatches is the factor-owned authority bridge for receipt queries.
+// It deliberately exposes no coordinate type: the sealed Factor cell checks
+// the exact SchemaBinding, factor ordinal, and semantic key internally.
+func (bound *boundFactor[K, V]) receiptMatches(state *schemaBindingState, authority *schemaBindingAuthority, ordinal uint64, semantic composition.Key) bool {
+	return bound != nil && bound.receipt.valid() && bound.receipt.state == state && bound.receipt.authority == authority && bound.receipt.ordinal == ordinal && bound.receipt.semantic == semantic
+}
+
+// summaryReadReceiptProof is the slot-native counterpart of summaryReadProof.
+// It authenticates the exact sealed form ordinal and semantic key without
+// reconstructing a declaration form or consulting a semantic lookup table.
+func (bound *boundFactor[K, V]) summaryReadReceiptProof(surface equation.Surface, formOrdinal uint64, semantic composition.Key) (ruleSummaryReadProof, bool) {
+	if bound == nil || !bound.receipt.valid() || !semantic.Available() {
 		return ruleSummaryReadProof{}, false
 	}
 	unit, found := bound.reads[surface]
-	if !found || unit.kind != carrier.SummaryUnit || len(unit.summaryKeys) == 0 {
+	if !found || unit.kind != carrier.SummaryUnit || len(unit.summaryKeys) == 0 || !matchesFactorReadShape(bound.receipt.schema, bound.receipt.ordinal, surface, summaryReadForm) || surface.Semantic != semantic || surface.Normalizer != semantic {
 		return ruleSummaryReadProof{}, false
 	}
-	return ruleSummaryReadProof{
-		sealAuthority: bound.factor.composition.sealAuthority,
-		factor:        bound.factor.schema,
-		form:          form,
-		// summaryKeys is immutable cold binding data. Aliased summary
-		// surfaces intentionally share this canonical vector, and the
-		// runtime proof retains it after the surface map is released.
-		keys: unit.summaryKeys,
-	}, true
+	formReceipt, formOK := bound.receipt.formAt(formOrdinal, SchemaFormReadSummary, semantic)
+	if !formOK {
+		return ruleSummaryReadProof{}, false
+	}
+	return ruleSummaryReadProof{receipt: bound.receipt, formReceipt: formReceipt, keys: unit.summaryKeys, digest: SummaryVectorDigest(unit.summaryKeys)}, true
 }
 
 // stagedUnit resolves only a Factor-issued exact Ref through the predeclared
@@ -1490,10 +1651,18 @@ func (bound *boundFactor[K, V]) summaryReadProof(surface equation.Surface, form 
 // raw coordinate is used; no key, Unit, or graph lookup is exposed to the
 // locator.
 func (bound *boundFactor[K, V]) stagedUnit(ref exactRef) (carrier.Unit, bool) {
-	if bound == nil || bound.factor == nil || len(bound.dynamicUnits) == 0 || ref == nil {
+	if bound == nil || len(bound.dynamicUnits) == 0 || ref == nil {
 		return carrier.Unit{}, false
 	}
-	raw, ok := ref.stagedRaw(bound.factor.schema)
+	var raw uint64
+	var ok bool
+	if bound.receipt.valid() {
+		if typed, valid := ref.(interface {
+			receiptRaw(factorRuntimeReceipt) (uint64, bool)
+		}); valid {
+			raw, ok = typed.receiptRaw(bound.receipt)
+		}
+	}
 	if !ok || raw >= uint64(len(bound.dynamicUnits)) {
 		return carrier.Unit{}, false
 	}
@@ -1509,10 +1678,18 @@ func (bound *boundFactor[K, V]) stagedUnit(ref exactRef) (carrier.Unit, bool) {
 // established during Factor binding, so runtime never declares a target or
 // reconstructs a key after sealing.
 func (bound *boundFactor[K, V]) stagedTarget(ref exactRef) (carrier.Target, ruleTargetProof, bool) {
-	if bound == nil || bound.factor == nil || len(bound.routeTargets) != len(bound.dynamicUnits) || len(bound.routeTargets) == 0 || ref == nil {
+	if bound == nil || len(bound.routeTargets) != len(bound.dynamicUnits) || len(bound.routeTargets) == 0 || ref == nil {
 		return carrier.Target{}, ruleTargetProof{}, false
 	}
-	raw, ok := ref.stagedRaw(bound.factor.schema)
+	var raw uint64
+	var ok bool
+	if bound.receipt.valid() {
+		if typed, valid := ref.(interface {
+			receiptRaw(factorRuntimeReceipt) (uint64, bool)
+		}); valid {
+			raw, ok = typed.receiptRaw(bound.receipt)
+		}
+	}
 	if !ok || raw >= uint64(len(bound.routeTargets)) {
 		return carrier.Target{}, ruleTargetProof{}, false
 	}
@@ -1520,7 +1697,11 @@ func (bound *boundFactor[K, V]) stagedTarget(ref exactRef) (carrier.Target, rule
 	if target == (carrier.Target{}) || target.Mode() != carrier.StrongTarget {
 		return carrier.Target{}, ruleTargetProof{}, false
 	}
-	proof, proven := newRuleTargetProof(bound.factor.schema, exactWriteSurface(bound.factor, raw+1))
+	var proof ruleTargetProof
+	var proven bool
+	if bound.receipt.valid() {
+		proof, proven = newRuleTargetReceiptProof(bound.receipt, exactWriteReceiptSurface(bound.receipt, raw+1))
+	}
 	if !proven {
 		return carrier.Target{}, ruleTargetProof{}, false
 	}
@@ -1567,7 +1748,7 @@ func (bound *boundFactor[K, V]) prepareRouteTransformClosure() bool {
 }
 
 func (bound *boundFactor[K, V]) hasRouteUniverse() bool {
-	return bound != nil && (len(bound.routeTargets) != 0 || bound.factor != nil && bound.factor.schema != nil && bound.factor.schema.keyEnd == 0)
+	return bound != nil && bound.implementation != nil && (len(bound.routeTargets) != 0 || bound.implementation.algebra != nil && bound.implementation.algebra.KeyEnd() == 0)
 }
 
 func (bound *boundFactor[K, V]) carryRouteScopeFor(member equation.RuleMember) bool {
@@ -1584,29 +1765,80 @@ func (bound *boundFactor[K, V]) stagedSlot() (shape.Slot, bool) {
 // typed observation decoding, and the V payload entirely inside the Factor
 // owner. One Begin/End generation surrounds exactly one selected Unit.
 func (bound *boundFactor[K, V]) stagedObserve(work *carrier.Work, input carrier.State, unit carrier.Unit, within support.Mask, visit func(factbinding.Observation[V], support.Mask) bool) bool {
-	if bound == nil || bound.binding == nil || work == nil || !work.Checkpoint() || unit == (carrier.Unit{}) || !within.Valid() || visit == nil {
-		return false
+	_, ok := bound.stagedObserveWithFailure(work, input, unit, within, visit)
+	return ok
+}
+
+type stagedObservationFailure uint8
+
+const (
+	stagedObservationFailureNone stagedObservationFailure = iota
+	stagedObservationFailureArguments
+	stagedObservationFailureCheckpoint
+	stagedObservationFailureUnit
+	stagedObservationFailureSupport
+	stagedObservationFailureSlot
+	stagedObservationFailureWork
+	stagedObservationFailureRoot
+	stagedObservationFailureCarrier
+	stagedObservationFailureDecode
+	stagedObservationFailureVisitor
+)
+
+// stagedObserveWithFailure keeps the same typed owner boundary as
+// stagedObserve while classifying the first closed read predicate. Optional
+// solve-local observations use this classification for failure telemetry;
+// ordinary rule and query behavior is unchanged.
+func (bound *boundFactor[K, V]) stagedObserveWithFailure(work *carrier.Work, input carrier.State, unit carrier.Unit, within support.Mask, visit func(factbinding.Observation[V], support.Mask) bool) (stagedObservationFailure, bool) {
+	if bound == nil || bound.binding == nil || work == nil || visit == nil {
+		return stagedObservationFailureArguments, false
+	}
+	if !work.Checkpoint() {
+		return stagedObservationFailureCheckpoint, false
+	}
+	if unit == (carrier.Unit{}) {
+		return stagedObservationFailureUnit, false
+	}
+	if !within.Valid() {
+		return stagedObservationFailureSupport, false
 	}
 	slot, slotOK := bound.runtimeSlot()
 	if !slotOK {
-		return false
+		return stagedObservationFailureSlot, false
 	}
 	slotWork, workOK := work.SlotWork(slot)
 	if !workOK || !slotWork.BeginObservation() {
-		return false
+		return stagedObservationFailureWork, false
 	}
 	defer slotWork.EndObservation()
 	root, rootOK := input.HandleAt(slot)
 	if !rootOK {
-		return false
+		return stagedObservationFailureRoot, false
 	}
-	return slotWork.ObserveUnder(root, unit, within, func(row carrier.ObservationRow) bool {
+	failure := stagedObservationFailureNone
+	completed := slotWork.ObserveUnder(root, unit, within, func(row carrier.ObservationRow) bool {
 		if !work.Checkpoint() {
+			failure = stagedObservationFailureVisitor
 			return false
 		}
 		observation, resolved := bound.binding.ResolveObservation(slotWork, row)
-		return resolved && observation.Valid() && visit(observation, row.Region())
+		if !resolved || !observation.Valid() {
+			failure = stagedObservationFailureDecode
+			return false
+		}
+		if !visit(observation, row.Region()) {
+			failure = stagedObservationFailureVisitor
+			return false
+		}
+		return true
 	})
+	if !completed {
+		if failure == stagedObservationFailureNone {
+			failure = stagedObservationFailureCarrier
+		}
+		return failure, false
+	}
+	return stagedObservationFailureNone, true
 }
 
 func (bound *boundFactor[K, V]) writeTarget(surface equation.Surface) (carrier.Target, bool) {

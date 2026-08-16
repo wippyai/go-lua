@@ -29,8 +29,11 @@ type Spec struct {
 // immutable rows; Link never retains a mixed dependency union or copies
 // Program or Target correspondence.
 type Link struct {
-	// static is the sole immutable owner of Link's static-resolution relation.
-	// It is derived before runtime Link geometry and has no runtime dependency.
+	// owner is the detached exact-owner state issued to sealed domain schemas.
+	// It intentionally contains no Link or child authority pointers.
+	owner *ownerState
+	// static is the detached per-mount namespace plane. It contains scalar
+	// Project mount identities only; it never owns Program static facts.
 	static   *linkstatic.Component
 	project  *linkproject.Component
 	boundary *linkboundary.Component

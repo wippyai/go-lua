@@ -1,0 +1,182 @@
+package analysis
+
+import (
+	"github.com/wippyai/go-lua/analysis/domain/effect/factor"
+	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
+	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/program/keyspace"
+)
+
+// artifactQueryRole is deliberately closed: each mounted artifact point gets
+// exactly the two query lanes defined by the sealed Program schema.
+type artifactQueryRole uint8
+
+const (
+	artifactQueryValueSummary artifactQueryRole = iota + 1
+	artifactQueryEffectExact
+)
+
+type artifactQueryAttachment struct {
+	id    keyspace.ContentID
+	mount keyspace.ContentID
+	point keyspace.ContentID
+	role  artifactQueryRole
+}
+
+type artifactQueryPlan struct {
+	rows []artifactQueryAttachment
+}
+
+// newArtifactQueryPlan derives mount-qualified query identities from semantic
+// occurrences in non-callable Program roots. Callable bodies are not global
+// result roots: their interiors enter demand only through a selected call,
+// callback, or explicit observation interface. This is the runtime cut that
+// prevents an uncalled library function from being solved merely because it
+// exists in a mounted Program. Synthetic WTO-only points remain in the
+// schedule but are not result observation sites. No Program/Flow owner is
+// reopened.
+func newArtifactQueryPlan(mounts []mountedProgramArtifact) (*artifactQueryPlan, bool) {
+	if len(mounts) == 0 {
+		return nil, false
+	}
+	plan := &artifactQueryPlan{}
+	expected := 0
+	for _, mount := range mounts {
+		if mount.artifact == nil || !mount.artifact.Available() || !mount.moduleKey.Available() {
+			return nil, false
+		}
+		rootBodies := make(map[keyspace.ContentID][]keyspace.ContentID)
+		for bodyIndex := 0; bodyIndex < mount.artifact.BodyCount(); bodyIndex++ {
+			body, bodyOK := mount.artifact.BodyAt(bodyIndex)
+			if !bodyOK || !body.Available() || !body.ID().Available() {
+				return nil, false
+			}
+			if body.Callable() {
+				continue
+			}
+			entries := make([]keyspace.ContentID, body.EntryPointCount())
+			for entryIndex := range entries {
+				entry, entryOK := body.EntryPointAt(entryIndex)
+				if !entryOK || !entry.Available() {
+					return nil, false
+				}
+				entries[entryIndex] = entry
+			}
+			if len(entries) == 0 {
+				return nil, false
+			}
+			rootBodies[body.ID()] = entries
+		}
+		if len(rootBodies) == 0 {
+			return nil, false
+		}
+		observed := make(map[keyspace.ContentID]struct{})
+		observedBodies := make(map[keyspace.ContentID]struct{}, len(rootBodies))
+		for occurrenceIndex := 0; occurrenceIndex < mount.artifact.OccurrenceCount(); occurrenceIndex++ {
+			occurrence, occurrenceOK := mount.artifact.OccurrenceAt(occurrenceIndex)
+			body, bodyOK := occurrence.BodyID()
+			if !occurrenceOK || !occurrence.Available() {
+				return nil, false
+			}
+			if !bodyOK {
+				continue
+			}
+			if _, root := rootBodies[body]; !root {
+				continue
+			}
+			observedBodies[body] = struct{}{}
+			for pointIndex := 0; pointIndex < occurrence.PointCount(); pointIndex++ {
+				point, pointOK := occurrence.PointAt(pointIndex)
+				if !pointOK || !point.Available() {
+					return nil, false
+				}
+				observed[point] = struct{}{}
+			}
+		}
+		// A non-callable root with no semantic occurrence still needs one exact
+		// empty observation anchor. Use its Program-issued entry attachment,
+		// never an arbitrary point from a callable body.
+		for body, entries := range rootBodies {
+			if _, present := observedBodies[body]; present {
+				continue
+			}
+			for _, entry := range entries {
+				observed[entry] = struct{}{}
+			}
+		}
+		for index := 0; index < mount.artifact.PointCount(); index++ {
+			point, ok := mount.artifact.PointAt(index)
+			if !ok || !point.Available() || !point.ID().Available() {
+				return nil, false
+			}
+			pointID := point.ID()
+			if _, selected := observed[pointID]; !selected {
+				continue
+			}
+			expected++
+			for _, row := range []struct {
+				role artifactQueryRole
+				name string
+			}{
+				{artifactQueryValueSummary, "value-summary"},
+				{artifactQueryEffectExact, "effect-exact"},
+			} {
+				id, idOK := analysisContentID("analysis/artifact-query/v1", mount.moduleKey[:], pointID[:], []byte(row.name))
+				if !idOK {
+					return nil, false
+				}
+				plan.rows = append(plan.rows, artifactQueryAttachment{id: id, mount: mount.moduleKey, point: pointID, role: row.role})
+			}
+		}
+	}
+	return plan, expected > 0 && len(plan.rows) == 2*expected
+}
+
+// AddRows emits query rows after source sealing and before graph commit.
+func (plan *artifactQueryPlan) AddRows(assembly *engine.ReceiptAssembly, binding *programBinding) bool {
+	if plan == nil || assembly == nil || binding == nil || binding.valueQuery == nil || binding.effectQuery == nil || len(plan.rows) == 0 {
+		return false
+	}
+	for _, row := range plan.rows {
+		var ok bool
+		if row.role == artifactQueryValueSummary {
+			ok = engine.AddMountedSummaryQuery(assembly, binding.valueQuery, row.id, row.mount, row.point)
+		} else if row.role == artifactQueryEffectExact {
+			ok = engine.AddMountedExactQuery(assembly, binding.effectQuery, row.id, row.mount, row.point)
+		}
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// Attach binds every query row to the existing Link-local implementation
+// receipts. Rule dispatch remains a separate attachment lane.
+func (plan *artifactQueryPlan) Attach(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, binding *programBinding) bool {
+	if plan == nil || compilation == nil || graph == nil || binding == nil || binding.valueQuery == nil || binding.effectQuery == nil || len(plan.rows) == 0 {
+		return false
+	}
+	for _, row := range plan.rows {
+		query, ok := graph.Query(row.id)
+		if !ok {
+			return false
+		}
+		if row.role == artifactQueryValueSummary {
+			ok = engine.AttachReceiptSummaryQuery(compilation, binding.valueQuery, query)
+		} else if row.role == artifactQueryEffectExact {
+			ok = engine.AttachReceiptExactQuery(compilation, binding.effectQuery, query)
+		} else {
+			ok = false
+		}
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// Keep the concrete query result types in this file's dependency surface so
+// the lane remains tied to the existing programBinding implementations.
+var _ *engine.SummaryQueryImplementation[valuedomain.Value, valueSummaryObservation]
+var _ *engine.ExactQueryImplementation[factor.Value, effectObservation]

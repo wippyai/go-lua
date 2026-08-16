@@ -169,6 +169,27 @@ func (work *Work) transportContributionCoverage(input contributionCoverage, pre 
 	if !work.live() || input.composition != work.composition || !omega.validFor(work.composition) || !pre.Valid() || !post.Valid() || !targetSupport.Valid() || pre.Manager() != work.composition.guards || post.Manager() != work.composition.guards || targetSupport.Manager() != work.composition.guards {
 		return contributionCoverage{}, false
 	}
+	// Input coverage is already an immutable authored surface. Validate its
+	// target ownership and strict order before opening the candidate so the
+	// batch below can retain the same sorted, unique Target sequence without
+	// invoking the sealed-only canonicalizer on candidate masks.
+	if !work.validTransportSourceCoverage(input) {
+		return contributionCoverage{}, false
+	}
+	// All rows belong to one authored coverage relation. Keep their support
+	// intersections and reindexing in one candidate transaction so the
+	// correlated masks cross one publication cut. A failed row discards the
+	// entire batch; no partially transported Target region can escape.
+	batch := work.newSupportWork()
+	if batch == nil {
+		return contributionCoverage{}, false
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			batch.Discard()
+		}
+	}()
 	coverage := contributionCoverage{composition: work.composition, slots: make([]slotCoverage, work.composition.Count())}
 	nonempty := false
 	for position := 0; position < work.composition.Count(); position++ {
@@ -178,37 +199,104 @@ func (work *Work) transportContributionCoverage(input contributionCoverage, pre 
 		}
 		rows := make([]TargetRegion, 0, len(source.targets))
 		for _, row := range source.targets {
-			region, valid := work.intersectSupport(row.region, pre)
+			region, valid := batch.And(row.region, pre)
 			if !valid {
 				return contributionCoverage{}, false
 			}
-			if support.Empty(region) {
+			empty, valid := transportCandidateEmpty(batch, region)
+			if !valid {
+				return contributionCoverage{}, false
+			}
+			if empty {
 				continue
 			}
-			region, valid = work.reindexSupport(region, omega.relation)
+			region, valid = batch.Reindex(region, omega.relation)
 			if !valid {
 				return contributionCoverage{}, false
 			}
-			region, valid = work.intersectSupport(region, post)
-			if !valid || support.Empty(region) {
-				if !valid {
-					return contributionCoverage{}, false
-				}
+			empty, valid = transportCandidateEmpty(batch, region)
+			if !valid {
+				return contributionCoverage{}, false
+			}
+			if empty {
+				continue
+			}
+			region, valid = batch.And(region, post)
+			if !valid {
+				return contributionCoverage{}, false
+			}
+			empty, valid = transportCandidateEmpty(batch, region)
+			if !valid {
+				return contributionCoverage{}, false
+			}
+			if empty {
 				continue
 			}
 			rows = append(rows, TargetRegion{target: row.target, region: region})
 		}
-		canonical, valid := work.canonicalCoverage(rows, targetSupport)
-		if !valid {
-			return contributionCoverage{}, false
-		}
-		coverage.slots[position] = canonical
-		nonempty = nonempty || len(canonical.targets) != 0
+		// Each retained row is constructed by exact And operations from an
+		// admitted source row and the target boundary. The algebra therefore
+		// proves row ⊆ targetSupport; no second entailment or canonicalization
+		// transaction is needed while these masks remain candidates.
+		coverage.slots[position] = slotCoverage{targets: rows}
+		nonempty = nonempty || len(rows) != 0
+	}
+	if !batch.Seal() {
+		return contributionCoverage{}, false
+	}
+	committed = true
+	if !validTransportCoverageShape(coverage, work.composition) {
+		return contributionCoverage{}, false
 	}
 	if !nonempty {
 		coverage.slots = nil
 	}
 	return coverage, true
+}
+
+func (work *Work) validTransportSourceCoverage(input contributionCoverage) bool {
+	if work == nil || input.composition != work.composition {
+		return false
+	}
+	for position := 0; position < work.composition.Count(); position++ {
+		rows := input.slot(shape.Slot(position)).targets
+		for index, row := range rows {
+			slot, ok := row.target.Slot()
+			if !ok || int(slot) != position || !work.composition.OwnsTarget(slot, row.target) || !row.region.Valid() || row.region.Manager() != work.composition.guards || support.Empty(row.region) {
+				return false
+			}
+			if index != 0 && !rows[index-1].target.Less(row.target) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func transportCandidateEmpty(batch *support.Work, region support.Mask) (bool, bool) {
+	if batch == nil {
+		return false, false
+	}
+	view, ok := batch.Decompose(region)
+	if !ok {
+		return false, false
+	}
+	return view.Terminal && !view.Value, true
+}
+
+func validTransportCoverageShape(coverage contributionCoverage, composition *Composition) bool {
+	if composition == nil || coverage.composition != composition || len(coverage.slots) != 0 && len(coverage.slots) != composition.Count() {
+		return false
+	}
+	for position := range coverage.slots {
+		rows := coverage.slots[position].targets
+		for index, row := range rows {
+			if !row.region.Valid() || row.region.Manager() != composition.guards || support.Empty(row.region) || index != 0 && !rows[index-1].target.Less(row.target) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func validBoundaryMask(mask support.Mask, scope Scope) bool {

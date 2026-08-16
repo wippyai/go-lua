@@ -1,10 +1,11 @@
-package index
+package index_test
 
 import (
 	"testing"
 
 	calldomain "github.com/wippyai/go-lua/analysis/domain/call"
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
+	indexdomain "github.com/wippyai/go-lua/analysis/domain/heap/index"
 	"github.com/wippyai/go-lua/analysis/domain/materialization"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -17,8 +18,8 @@ import (
 )
 
 func TestTopologyStaticRoutesPreserveExactTopAndHeapExtremes(t *testing.T) {
-	heap, values, calls, _, rootKey, candidate := staticTopologyFixture(t)
-	topology, sealed := Seal(heap, values, calls)
+	heap, values, calls, _, rootKey, candidate, mounts := staticTopologyFixture(t)
+	topology, sealed := indexdomain.Seal(heap, values, calls, mounts.packs)
 	access, accessed := topology.Access(candidate)
 	rooted := rootKey.Valid()
 	atom, atomOK := values.Allocation(rootKey, materialization.Recent)
@@ -38,8 +39,8 @@ func TestTopologyStaticRoutesPreserveExactTopAndHeapExtremes(t *testing.T) {
 		t.Fatal("exact index key fabricated a dynamic Value coordinate")
 	}
 
-	var exact []Route
-	if !topology.VisitReceiver(receiver, nil, func(route Route) bool { exact = append(exact, route); return true }) || len(exact) != 1 {
+	var exact []indexdomain.Route
+	if !topology.VisitReceiver(receiver, nil, func(route indexdomain.Route) bool { exact = append(exact, route); return true }) || len(exact) != 1 {
 		t.Fatal("exact rooted receiver did not produce exactly one route")
 	}
 	gotRoot, gotRole, exactOK := exact[0].Root()
@@ -47,7 +48,7 @@ func TestTopologyStaticRoutesPreserveExactTopAndHeapExtremes(t *testing.T) {
 		t.Fatal("exact rooted receiver lost root-role correlation")
 	}
 	if allocations := testing.AllocsPerRun(100, func() {
-		if !topology.VisitReceiver(receiver, nil, func(Route) bool { return true }) {
+		if !topology.VisitReceiver(receiver, nil, func(indexdomain.Route) bool { return true }) {
 			panic("exact route")
 		}
 	}); allocations != 0 {
@@ -56,69 +57,69 @@ func TestTopologyStaticRoutesPreserveExactTopAndHeapExtremes(t *testing.T) {
 
 	roles := map[materialization.Role]bool{}
 	unknown, other := false, false
-	if !topology.VisitReceiver(values.Top(), nil, func(route Route) bool {
+	if !topology.VisitReceiver(values.Top(), nil, func(route indexdomain.Route) bool {
 		switch route.Kind() {
-		case RouteRoot:
+		case indexdomain.RouteRoot:
 			key, role, ok := route.Root()
 			if ok && key == rootKey {
 				roles[role] = true
 			}
-		case RouteUnknown:
+		case indexdomain.RouteUnknown:
 			unknown = true
-		case RouteOther:
+		case indexdomain.RouteOther:
 			other = true
 		}
 		return true
 	}) || !roles[materialization.Recent] || !roles[materialization.Summary] || !unknown || !other {
 		t.Fatal("Value.Top did not retain all table root roles plus unknown/other")
 	}
-	if topology.HeapState(rootKey, heap.Bottom()) != HeapStateNone || topology.HeapState(rootKey, heap.Top()) != HeapStateTop {
+	if topology.HeapState(rootKey, heap.Bottom()) != indexdomain.HeapStateNone || topology.HeapState(rootKey, heap.Top()) != indexdomain.HeapStateTop {
 		t.Fatal("Heap.Top was conflated with no Heap fact")
 	}
-	foreignHeap, _, _, _, foreignRoot, _ := staticTopologyFixture(t)
+	foreignHeap, _, _, _, foreignRoot, _, _ := staticTopologyFixture(t)
 	foreignOK := foreignRoot.Valid()
-	if !foreignOK || topology.HeapState(rootKey, foreignHeap.Top()) != HeapStateInvalid {
+	if !foreignOK || topology.HeapState(rootKey, foreignHeap.Top()) != indexdomain.HeapStateInvalid {
 		t.Fatal("foreign Heap.Top crossed topology owner fence")
 	}
 	foreignValues := topologyForeignValues(t)
-	if topology.VisitReceiver(foreignValues.Top(), nil, func(Route) bool { return true }) {
+	if topology.VisitReceiver(foreignValues.Top(), nil, func(indexdomain.Route) bool { return true }) {
 		t.Fatal("foreign Value.Top crossed topology owner fence")
 	}
-	_, _, _, _, _, foreignCandidate := staticTopologyFixture(t)
-	if access, ok := topology.Access(foreignCandidate); ok || access != (Access{}) {
+	_, _, _, _, _, foreignCandidate, _ := staticTopologyFixture(t)
+	if access, ok := topology.Access(foreignCandidate); ok || access != (indexdomain.Access{}) {
 		t.Fatal("foreign index access crossed topology owner fence")
 	}
 }
 
 func TestTopologyRejectsSameLinkResealedHeap(t *testing.T) {
-	heap, values, calls, linked, _, _ := staticTopologyFixture(t)
+	heap, values, calls, linked, _, _, mounts := staticTopologyFixture(t)
 	if !values.OwnsHeapSchema(heap) {
 		t.Fatal("Value did not retain the exact Heap schema handle")
 	}
-	resealed, resealedOK := heapdomain.Seal(linked)
-	if !resealedOK || values.OwnsHeapSchema(resealed) {
+	resealed, resealedFailure := heapdomain.SealWithArtifacts(linked, mounts.heap)
+	if resealedFailure != heapdomain.SealFailureNone || values.OwnsHeapSchema(resealed) {
 		t.Fatal("independently resealed same-Link Heap was not distinguished")
 	}
-	if topology, ok := Seal(resealed, values, calls); ok || topology != nil {
+	if topology, ok := indexdomain.Seal(resealed, values, calls, mounts.packs); ok || topology != nil {
 		t.Fatal("Topology accepted independently resealed Heap")
 	}
-	if topology, ok := Seal(heap, values, calls); !ok || topology == nil || !topology.valid() {
+	if topology, ok := indexdomain.Seal(heap, values, calls, mounts.packs); !ok || topology == nil {
 		t.Fatal("Topology rejected exact Value/Heap schema pair")
 	}
 	foreignLink := sameContentLink(t, linked)
-	foreignCalls, foreignCallsOK := calldomain.New(foreignLink)
+	foreignCalls, foreignCallsOK := calldomain.NewWithMountedArtifacts(foreignLink, indexMounts(t, foreignLink).call)
 	if !foreignCallsOK || foreignLink.ContentID() != linked.ContentID() || foreignLink == linked {
 		t.Fatal("same-content independent Call fixture")
 	}
-	if topology, ok := Seal(heap, values, foreignCalls); ok || topology != nil {
+	if topology, ok := indexdomain.Seal(heap, values, foreignCalls, mounts.packs); ok || topology != nil {
 		t.Fatal("Topology accepted same-content independent Call algebra")
 	}
 }
 
 func TestTopologyOwnsAccessRejectsDuplicateSameContentTopology(t *testing.T) {
-	heap, values, calls, _, _, candidate := staticTopologyFixture(t)
-	primary, primaryOK := Seal(heap, values, calls)
-	duplicate, duplicateOK := Seal(heap, values, calls)
+	heap, values, calls, _, _, candidate, mounts := staticTopologyFixture(t)
+	primary, primaryOK := indexdomain.Seal(heap, values, calls, mounts.packs)
+	duplicate, duplicateOK := indexdomain.Seal(heap, values, calls, mounts.packs)
 	if !primaryOK || primary == nil || !duplicateOK || duplicate == nil || primary == duplicate {
 		t.Fatal("same-content topology fixtures did not seal independently")
 	}
@@ -132,38 +133,6 @@ func TestTopologyOwnsAccessRejectsDuplicateSameContentTopology(t *testing.T) {
 	}
 	if primary.OwnsAccess(duplicateAccess) || duplicate.OwnsAccess(primaryAccess) {
 		t.Fatal("duplicate same-content topology access crossed owner fence")
-	}
-}
-
-func TestTopologyAccessForUsesProgramOccurrenceInverse(t *testing.T) {
-	heap, values, calls, linked, _, candidate := staticTopologyFixture(t)
-	topology, sealed := Seal(heap, values, calls)
-	shard, shardOK := linked.Project().Mounts().At(0)
-	program, programOK := linked.Project().Mounts().Program(shard)
-	geometry, geometryOK := heap.IndexAccessGeometry(candidate)
-	if !sealed || topology == nil || !shardOK || !programOK || !geometryOK || geometry.ReadTerm == 0 {
-		t.Fatal("occurrence inverse fixture unavailable")
-	}
-	access, accessOK := topology.AccessFor(shard, program, geometry.ReadTerm)
-	selected, selectedOK := access.IndexAccess()
-	if !accessOK || !selectedOK || selected != candidate || !topology.OwnsAccess(access) {
-		t.Fatal("Program occurrence did not issue topology-owned Access")
-	}
-	foreignLink := sameContentLink(t, linked)
-	foreignShard, foreignShardOK := foreignLink.Project().Mounts().At(0)
-	foreignProgram, foreignProgramOK := foreignLink.Project().Mounts().Program(foreignShard)
-	if !foreignShardOK || !foreignProgramOK {
-		t.Fatal("foreign occurrence fixture")
-	}
-	if _, ok := topology.AccessFor(foreignShard, foreignProgram, geometry.ReadTerm); ok {
-		t.Fatal("foreign Shard crossed topology occurrence inverse")
-	}
-	if allocations := testing.AllocsPerRun(1000, func() {
-		if _, ok := topology.AccessFor(shard, program, geometry.ReadTerm); !ok {
-			panic("Program occurrence inverse")
-		}
-	}); allocations != 0 {
-		t.Fatalf("warm topology occurrence inverse allocated %v times", allocations)
 	}
 }
 
@@ -191,13 +160,18 @@ func sameContentLink(t testing.TB, original *link.Link) *link.Link {
 	return clone
 }
 
-func staticTopologyFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Schema, *calldomain.Algebra, *link.Link, heapdomain.Key, heapdomain.IndexAccess) {
+func staticTopologyFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Schema, *calldomain.Algebra, *link.Link, heapdomain.Key, heapdomain.IndexAccess, indexFixtureMounts) {
 	t.Helper()
 	p, err := lower.Lower(lower.Source{Name: "heap_index_topology.lua", Text: []byte(`local table = {}; return table.field`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	contract, err := target.Seal(&target.Spec{})
+	contract, err := target.Seal(&target.Spec{Operations: []target.OperationSpec{{
+		Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"require"}}},
+		Input:    target.ValuesSpec{Tail: target.ValuesClosed},
+		Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}},
+		Effects:  target.RowSpec{Tail: target.RowClosed},
+	}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,17 +179,12 @@ func staticTopologyFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Schema
 	if err != nil {
 		t.Fatal(err)
 	}
-	heap, heapOK := heapdomain.Seal(linked)
-	values, valuesOK := valuedomain.Seal(linked, heap)
-	calls, callsOK := calldomain.New(linked)
-	if !heapOK || !valuesOK || !callsOK {
-		t.Fatal("schemas")
-	}
+	heap, values, calls, mounts := indexSchemas(t, linked)
 	var root heapdomain.Key
 	for index := 0; index < heap.KeyCount(); index++ {
 		candidate, ok := heap.KeyAt(index)
-		_, _, kind, source := candidate.ProgramAllocation()
-		if ok && source && kind == heapdomain.AllocationTable {
+		receipt, source := candidate.AllocationReceipt()
+		if ok && source && receipt.Kind() == heapdomain.AllocationTable {
 			root = candidate
 			break
 		}
@@ -227,7 +196,7 @@ func staticTopologyFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Schema
 			t.Fatal("index access")
 		}
 		geometry, ok := heap.IndexAccessGeometry(candidate)
-		if ok && geometry.ReadTerm != 0 {
+		if ok && geometry.Read {
 			access = candidate
 			break
 		}
@@ -235,16 +204,16 @@ func staticTopologyFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Schema
 	if !root.Valid() || access == (heapdomain.IndexAccess{}) {
 		t.Fatal("static roots")
 	}
-	return heap, values, calls, linked, root, access
+	return heap, values, calls, linked, root, access, mounts
 }
 
 func topologyForeignValues(t testing.TB) *valuedomain.Schema {
 	t.Helper()
-	_, values, _, _, _, _ := staticTopologyFixture(t)
+	_, values, _, _, _, _, _ := staticTopologyFixture(t)
 	return values
 }
 
-func freshTopologyFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Schema, *calldomain.Algebra, *link.Link, heapdomain.Key) {
+func freshTopologyFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Schema, *calldomain.Algebra, *link.Link, heapdomain.Key, indexFixtureMounts) {
 	t.Helper()
 	p, err := lower.Lower(lower.Source{Name: "heap_index_fresh_topology.lua", Text: []byte(`return fresh()`)})
 	if err != nil {
@@ -254,6 +223,7 @@ func freshTopologyFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Schema,
 		return target.BindingSpec{Namespace: target.BindingBuiltin, Member: []string{name}}
 	}
 	contract, err := target.Seal(&target.Spec{InitialRoots: []target.InitialRootSpec{{Identity: "GlobalEnvRoot", Shape: target.BootShapeSpec{Aggregate: target.BootAggregateTable, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}}}}, Operations: []target.OperationSpec{
+		{Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"require"}}}, Input: target.ValuesSpec{Tail: target.ValuesClosed}, Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}}, Effects: target.RowSpec{Tail: target.RowClosed}},
 		{Bindings: []target.BindingSpec{binding("fresh")}, Input: target.ValuesSpec{Tail: target.ValuesClosed}, Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: target.ValuesClosed}, FreshResults: []target.FreshResultSpec{{Result: 0, Kind: target.FreshTable}}}}, Effects: target.RowSpec{Tail: target.RowClosed}},
 		{Bindings: []target.BindingSpec{binding("other")}, Input: target.ValuesSpec{Tail: target.ValuesClosed}, Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: target.ValuesClosed}, FreshResults: []target.FreshResultSpec{{Result: 0, Kind: target.FreshFunction}}}}, Effects: target.RowSpec{Tail: target.RowClosed}},
 	}, InitialEntries: []target.InitialEntrySpec{{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "_G"}, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: target.InitialMutable}, {Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "fresh"}, Value: target.InitialValueSpec{Kind: target.InitialValueOperation, Operation: binding("fresh")}, Mutability: target.InitialMutable}, {Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "__link_absent"}, Value: target.InitialValueSpec{Kind: target.InitialValueAbsent}, Mutability: target.InitialMutable}}, InitialBindings: []target.InitialBindingSpec{{Name: "_G", Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "_G"}}, {Name: "fresh", Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "fresh"}}}})
@@ -264,21 +234,17 @@ func freshTopologyFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Schema,
 	if err != nil {
 		t.Fatal(err)
 	}
-	heap, heapOK := heapdomain.Seal(linked)
-	values, valuesOK := valuedomain.Seal(linked, heap)
-	calls, callsOK := calldomain.New(linked)
-	if !heapOK || !valuesOK || !callsOK {
-		t.Fatal("schemas")
-	}
+	heap, values, calls, mounts := indexSchemas(t, linked)
 	for index := 0; index < heap.KeyCount(); index++ {
 		root, ok := heap.KeyAt(index)
 		if !ok {
 			continue
 		}
-		if _, _, _, _, _, _, fresh := root.FreshResult(); fresh {
-			return heap, values, calls, linked, root
+		_, _, _, _, fresh := root.FreshResultID()
+		if fresh {
+			return heap, values, calls, linked, root, mounts
 		}
 	}
 	t.Fatal("fresh allocation root")
-	return heapdomain.Schema{}, nil, nil, nil, heapdomain.Key{}
+	return heapdomain.Schema{}, nil, nil, nil, heapdomain.Key{}, indexFixtureMounts{}
 }

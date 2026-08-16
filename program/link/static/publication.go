@@ -2,34 +2,13 @@ package static
 
 import "github.com/wippyai/go-lua/program/semanticsource"
 
-// Publications publishes the already sealed identity/schema/publication
-// snapshot. The hot Component is intentionally not reachable from Cold;
-// Build performs the structural validation before taking this snapshot.
+// Publications exposes the sole remaining LinkStatic source fact: the exact
+// number of detached mount namespaces. No Program-derived relation survives.
 func (v Cold) Publications() ([]semanticsource.Publication, bool) {
-	views, viewsOK := v.SemanticSourceViews()
-	if !viewsOK {
-		return nil, false
-	}
-	schema := semanticsource.CatalogSchema()
-	result := make([]semanticsource.Publication, 0, schema.Count())
-	expected := 0
-	for index := 0; index < schema.Count(); index++ {
-		definition, ok := schema.DefinitionAt(index)
-		if !ok || definition.Token().Origin() != semanticsource.OriginLinkStatic {
-			continue
-		}
-		expected++
-		view, viewOK := views.viewFor(definition.Token())
-		if !viewOK || !view.valid() {
-			return nil, false
-		}
-		publication, err := semanticsource.SealPublication(definition, view.Count())
-		if err != nil {
-			return nil, false
-		}
-		result = append(result, publication)
-	}
-	return result, len(result) == expected
+	if !v.live() { return nil, false }
+	definition, ok := semanticsource.Definition(semanticsource.OriginLinkStatic, 0)
+	if !ok { return nil, false }
+	publication, err := semanticsource.SealPublication(definition, len(v.schema))
+	if err != nil { return nil, false }
+	return []semanticsource.Publication{publication}, true
 }
-
-const maxPublishedCount = int(^uint(0) >> 1)

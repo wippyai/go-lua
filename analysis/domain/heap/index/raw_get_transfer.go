@@ -7,7 +7,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/pack"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/analysis/engine"
-	linkboundary "github.com/wippyai/go-lua/program/link/boundary"
 )
 
 // rawGetView is the read-only input to the one raw-get reduction. Transfer
@@ -197,7 +196,7 @@ func (rule *RawGetRule) reduce(operand Access, receiver valuedomain.Value, view 
 	if rule == nil || !rule.owns(operand) || view.scratch == nil || view.call == nil || view.heap == nil || view.pack == nil || view.source == nil {
 		return valuedomain.Value{}, false, false
 	}
-	result, any := rule.values.Schema().Bottom(), false
+	result, any := rule.valueSchema().Bottom(), false
 	selectorCount := 0
 	if !rule.visitKeySelectors(operand, view, func(heapdomain.KeySelector) bool {
 		selectorCount++
@@ -210,7 +209,7 @@ func (rule *RawGetRule) reduce(operand Access, receiver valuedomain.Value, view 
 	}
 
 	callCount := 0
-	if !rule.topology.VisitReceiverCallDemand(receiver, func(_ calldomain.Key, tag uint64) bool {
+	if rule.runtime.visitCallDemand == nil || !rule.runtime.visitCallDemand(receiver, func(_ calldomain.Key, tag uint64) bool {
 		selected := view.call(tag)
 		if !selected.valid || !selected.found {
 			return false
@@ -231,14 +230,14 @@ func (rule *RawGetRule) reduce(operand Access, receiver valuedomain.Value, view 
 		}
 		return selected.value, selected.present
 	}
-	valid := rule.topology.VisitReceiver(receiver, callState, func(route Route) bool {
+	valid := rule.runtime.visitReceiver(receiver, callState, func(route Route) bool {
 		switch route.Kind() {
 		case RouteRoot:
 			key, role, rooted := route.Root()
 			if !rooted {
 				return false
 			}
-			tag, tagged := rule.heap.Schema().RouteTag(key, role)
+			tag, tagged := rule.heapSchema().RouteTag(key, role)
 			if !tagged {
 				return false
 			}
@@ -284,7 +283,8 @@ func (rule *RawGetRule) visitKeySelectors(operand Access, view rawGetView, visit
 	if !view.key.present {
 		return true
 	}
-	return rule.selectors != nil && rule.selectors.Visit(view.key.value, visit)
+	selectors := rule.runtime.topology.selectors
+	return selectors != nil && selectors.Visit(view.key.value, visit)
 }
 
 type rawGetCensus struct {
@@ -294,7 +294,10 @@ type rawGetCensus struct {
 }
 
 func (rule *RawGetRule) applyHeap(tag heapdomain.RawRouteTag, fact heapdomain.Value, selector heapdomain.KeySelector, view rawGetView, census *rawGetCensus, result *valuedomain.Value, any *bool) bool {
-	return rule.heap.Schema().VisitRawAccessRoute(tag, fact, selector, func(raw heapdomain.RawAccess) bool {
+	if rule.runtime.visitRawRoute == nil {
+		return false
+	}
+	return rule.runtime.visitRawRoute(tag, fact, selector, func(raw heapdomain.RawAccess) bool {
 		if raw.IsTop() {
 			return rule.joinPresentTop(result, any)
 		}
@@ -318,14 +321,14 @@ func (rule *RawGetRule) applyPresent(raw heapdomain.RawAccess, present heapdomai
 		return false
 	}
 	if root, initial, boot := raw.InitialPayload(present); boot {
-		value, ok := rule.values.Schema().TargetInitial(root, initial)
+		value, ok := rule.valueSchema().TargetInitialID(root, initial)
 		return ok && rule.reduceAndJoin(valueContainment, value, result, any)
 	}
 	tag, ok := raw.PayloadTag(present)
 	if !ok {
 		return false
 	}
-	payload, ok := payloadAt(rule.payloads, tag)
+	payload, ok := rule.payloadAt(tag)
 	if !ok || !rule.requirePayload(tag, payload, view, census) {
 		return false
 	}
@@ -335,7 +338,11 @@ func (rule *RawGetRule) applyPresent(raw heapdomain.RawAccess, present heapdomai
 	case rawPayloadInitial:
 		return false
 	case rawPayloadFixed:
-		selected := rule.sourceValue(view, payload, payload.fixed)
+		tags, tagsOK := rule.runtime.topology.catalog.sourceTags(tag)
+		if !tagsOK || len(tags) != 1 {
+			return false
+		}
+		selected := view.source(tags[0])
 		return selected.valid && selected.found && (!selected.present || rule.reduceAndJoin(valueContainment, selected.value, result, any))
 	case rawPayloadTail:
 		selected := view.pack(tag)
@@ -347,19 +354,20 @@ func (rule *RawGetRule) applyPresent(raw heapdomain.RawAccess, present heapdomai
 		}
 		root, rootOK := payload.payload.Root()
 		selection, selectionOK := payload.payload.Selection()
-		observation, observed := rule.packs.Schema().ObserveScalar(root, selected.value, payload.values, selection)
-		if !rootOK || !selectionOK || !observed {
+		values, valuesOK := payload.payload.Values()
+		observation, observed := rule.packSchema().ObserveScalar(root, selected.value, values, selection)
+		if !rootOK || !selectionOK || !valuesOK || !observed {
 			return false
 		}
 		if observation.IsBottom() {
 			return true
 		}
 		if observation.IsTop() {
-			return rule.reduceAndJoin(valueContainment, rule.values.Schema().Top(), result, any)
+			return rule.reduceAndJoin(valueContainment, rule.valueSchema().Top(), result, any)
 		}
 		for index := 0; index < observation.Count(); index++ {
 			scalar, ok := observation.At(index)
-			if !ok || !rule.applyScalar(view, payload, scalar, valueContainment, result, any) {
+			if !ok || !rule.applyScalar(view, tag, payload, scalar, valueContainment, result, any) {
 				return false
 			}
 		}
@@ -369,16 +377,16 @@ func (rule *RawGetRule) applyPresent(raw heapdomain.RawAccess, present heapdomai
 	}
 }
 
-func (rule *RawGetRule) applyScalar(view rawGetView, payload rawPayload, scalar pack.Scalar, containment heapdomain.Containment, result *valuedomain.Value, any *bool) bool {
+func (rule *RawGetRule) applyScalar(view rawGetView, payloadTag heapdomain.RawPayloadTag, payload rawPayload, scalar pack.Scalar, containment heapdomain.Containment, result *valuedomain.Value, any *bool) bool {
 	if scalar.Kind() == pack.ScalarEndpoint {
 		// An exact Pack endpoint is a symbolic reference to one existing Link
 		// value, not a value fact embedded in Pack.  Resolve it through Pack's
 		// sealed source projection, then use RawGet's already-declared Value
 		// selector.  This keeps Value as the sole authority for the fact and
 		// preserves the endpoint identity without a body-wide Pack aggregate.
-		value, valueOK := rule.packs.Schema().ScalarSource(scalar)
-		selected := rule.sourceValue(view, payload, value)
-		if !valueOK || !selected.valid || !selected.found {
+		source, sourceOK := rule.packSchema().ScalarSource(scalar)
+		selected := rule.sourceValue(view, payloadTag, source)
+		if !sourceOK || !selected.valid || !selected.found {
 			return false
 		}
 		if !selected.present {
@@ -387,17 +395,16 @@ func (rule *RawGetRule) applyScalar(view rawGetView, payload rawPayload, scalar 
 		return rule.reduceAndJoin(containment, selected.value, result, any)
 	}
 	kinds, kindsOK := payload.payload.ScalarMayRuntimeKinds(scalar)
-	value, valueOK := rule.values.Schema().ForRuntimeKinds(kinds)
+	value, valueOK := rule.valueSchema().ForRuntimeKinds(kinds)
 	return kindsOK && valueOK && rule.reduceAndJoin(containment, value, result, any)
 }
 
-func (rule *RawGetRule) sourceValue(view rawGetView, payload rawPayload, want linkboundary.Value) rawSelected[valuedomain.Value] {
-	tag, found := payload.byValue[want]
+func (rule *RawGetRule) sourceValue(view rawGetView, payloadTag heapdomain.RawPayloadTag, want pack.SemanticSource) rawSelected[valuedomain.Value] {
+	tag, found := rule.sourceTag(payloadTag, want)
 	if !found {
 		return rawSelected[valuedomain.Value]{}
 	}
-	source, ok := sourceAt(rule.sources, tag)
-	if !ok || source.value != want {
+	if _, ok := rule.sourceAt(tag); !ok {
 		return rawSelected[valuedomain.Value]{}
 	}
 	return view.source(tag)
@@ -415,7 +422,11 @@ func (rule *RawGetRule) requirePayload(tag heapdomain.RawPayloadTag, payload raw
 		mark(census.scratch.payload, uint64(tag))
 		census.pack++
 	}
-	for _, sourceTag := range payload.sources {
+	tags, tagsOK := rule.runtime.topology.catalog.sourceTags(tag)
+	if !tagsOK {
+		return false
+	}
+	for _, sourceTag := range tags {
 		if marked(census.scratch.source, uint64(sourceTag)) {
 			continue
 		}
@@ -430,7 +441,7 @@ func (rule *RawGetRule) requirePayload(tag heapdomain.RawPayloadTag, payload raw
 }
 
 func (rule *RawGetRule) reduceAndJoin(containment heapdomain.Containment, value valuedomain.Value, result *valuedomain.Value, any *bool) bool {
-	values := rule.values.Schema()
+	values := rule.valueSchema()
 	var stored valuedomain.Value
 	var ok bool
 	switch containment.Kind() {
@@ -446,8 +457,8 @@ func (rule *RawGetRule) reduceAndJoin(containment heapdomain.Containment, value 
 		var selector valuedomain.Atom
 		if root, role, allocation := reference.Key(); allocation && root.Kind() == heapdomain.RootAllocation {
 			selector, ok = values.Allocation(root, role)
-		} else if root, role, boot := reference.BootRoot(); boot && role == materialization.Exact {
-			selector, ok = values.Boot(root)
+		} else if rootID, role, boot := reference.BootID(); boot && role == materialization.Exact {
+			selector, ok = values.BootID(rootID)
 		}
 		if ok {
 			stored, ok = values.FilterStoredExact(value, selector)
@@ -469,7 +480,7 @@ func (rule *RawGetRule) reduceAndJoin(containment heapdomain.Containment, value 
 }
 
 func (rule *RawGetRule) join(result *valuedomain.Value, any *bool, value valuedomain.Value) bool {
-	next, ok := rule.values.Schema().Join(*result, value)
+	next, ok := rule.valueSchema().Join(*result, value)
 	if !ok {
 		return false
 	}
@@ -478,6 +489,6 @@ func (rule *RawGetRule) join(result *valuedomain.Value, any *bool, value valuedo
 }
 
 func (rule *RawGetRule) joinPresentTop(result *valuedomain.Value, any *bool) bool {
-	present, ok := rule.values.Schema().FilterPresent(rule.values.Schema().Top())
+	present, ok := rule.valueSchema().FilterPresent(rule.valueSchema().Top())
 	return ok && rule.join(result, any, present)
 }

@@ -4,189 +4,109 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 
+	programartifact "github.com/wippyai/go-lua/analysis/internal/programartifact"
 	"github.com/wippyai/go-lua/program/keyspace"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
+	"github.com/wippyai/go-lua/program/link"
 )
 
-// programBoundary is Residence's exact executable Program relation. Link
-// supplies project topology (Shard -> Program); Program remains the sole
-// authority for the relation itself.  It is deliberately private: callers
-// obtain Residence Keys, never a second cross-domain source handle.
-type programBoundary struct {
-	shard linkproject.Shard
-	term  keyspace.Term
-	index uint32 // capture index; zero for Write and Return.
+// ArtifactMount is the complete post-seal mount receipt consumed by
+// Residence.  It deliberately contains no Project Shard: mount, module and
+// Program are exact scalar identities, while the reusable Artifact remains
+// Program-owned.
+type ArtifactMount struct {
+	artifact *programartifact.Artifact
+	mount    keyspace.ContentID
+	module   keyspace.ContentID
+	program  keyspace.ContentID
 }
 
-func (owner *schema) captureBoundaries() bool {
-	for shardIndex := 0; shardIndex < owner.source.Project().Mounts().Count(); shardIndex++ {
-		shard, shardOK := owner.source.Project().Mounts().At(shardIndex)
-		p, programOK := owner.source.Project().Mounts().Program(shard)
-		if !shardOK || !programOK || p == nil {
-			return false
-		}
-		class, classOK := owner.classForShard(shard)
-		if !classOK {
-			return false
-		}
-		flow := p.Flow()
-		authored := flow.Authored()
-		functions := authored.Functions()
-		executable := flow.Executable()
-		for functionIndex := 0; functionIndex < functions.Count(); functionIndex++ {
-			function, functionOK := functions.At(functionIndex)
-			if !functionOK || function == 0 {
-				return false
-			}
-			if !executable.Contains(function) {
-				continue
-			}
-			count, countOK := functions.CaptureCount(function)
-			if !countOK || count < 0 {
-				return false
-			}
-			for index := 0; index < count; index++ {
-				if uint64(index) > uint64(^uint32(0)) {
-					return false
-				}
-				coordinate := programBoundary{shard: shard, term: function, index: uint32(index)}
-				if _, _, captureOK := functions.CaptureAt(function, index); !captureOK ||
-					!owner.addBoundaryClass(boundaryRow{kind: BoundaryCapture, id: owner.programBoundaryID(BoundaryCapture, coordinate), program: coordinate}, class) {
-					return false
-				}
-			}
-		}
+func NewArtifactMount(artifact *programartifact.Artifact, mount, module, program keyspace.ContentID) (ArtifactMount, bool) {
+	if artifact == nil || !artifact.Available() || !mount.Available() || !module.Available() || !program.Available() || artifact.CompileKey().ProgramID() != program {
+		return ArtifactMount{}, false
 	}
-	return true
+	return ArtifactMount{artifact: artifact, mount: mount, module: module, program: program}, true
 }
 
-func (owner *schema) storeBoundaries() bool {
-	for shardIndex := 0; shardIndex < owner.source.Project().Mounts().Count(); shardIndex++ {
-		shard, shardOK := owner.source.Project().Mounts().At(shardIndex)
-		p, programOK := owner.source.Project().Mounts().Program(shard)
-		if !shardOK || !programOK || p == nil {
-			return false
-		}
-		class, classOK := owner.classForShard(shard)
-		if !classOK {
-			return false
-		}
-		flow := p.Flow()
-		authored := flow.Authored()
-		writes := authored.Storage().Writes()
-		executable := flow.Executable()
-		exactLenses := authored.Access().Exact()
-		dynamicLenses := authored.Access().Dynamic()
-		for writeIndex := 0; writeIndex < writes.Count(); writeIndex++ {
-			write, writeOK := writes.At(writeIndex)
-			if !writeOK || write == 0 {
-				return false
-			}
-			if !executable.Contains(write) {
-				continue
-			}
-			_, target, writeRelationOK := writes.Get(write)
-			if !writeRelationOK || target == 0 {
-				return false
-			}
-			_, _, _, _, exactLens := exactLenses.Get(target)
-			_, _, _, dynamicLens := dynamicLenses.Get(target)
-			if !exactLens && !dynamicLens {
-				continue
-			}
-			coordinate := programBoundary{shard: shard, term: write}
-			if !owner.addBoundaryClass(boundaryRow{kind: BoundaryStore, id: owner.programBoundaryID(BoundaryStore, coordinate), program: coordinate}, class) {
-				return false
-			}
-		}
+func (mount ArtifactMount) Available() bool {
+	return mount.artifact != nil && mount.artifact.Available() && mount.mount.Available() && mount.module.Available() && mount.program.Available() && mount.artifact.CompileKey().ProgramID() == mount.program
+}
+func (mount ArtifactMount) Artifact() *programartifact.Artifact {
+	if !mount.Available() {
+		return nil
 	}
-	return true
+	return mount.artifact
 }
-
-func (owner *schema) returnBoundaries() bool {
-	for shardIndex := 0; shardIndex < owner.source.Project().Mounts().Count(); shardIndex++ {
-		shard, shardOK := owner.source.Project().Mounts().At(shardIndex)
-		p, programOK := owner.source.Project().Mounts().Program(shard)
-		if !shardOK || !programOK || p == nil {
-			return false
-		}
-		class, classOK := owner.classForShard(shard)
-		if !classOK {
-			return false
-		}
-		flow := p.Flow()
-		authored := flow.Authored()
-		returns := authored.Control().Returns()
-		executable := flow.Executable()
-		for returnIndex := 0; returnIndex < returns.Count(); returnIndex++ {
-			term, returnOK := returns.At(returnIndex)
-			if !returnOK || term == 0 {
-				return false
-			}
-			if !executable.Contains(term) {
-				continue
-			}
-			if _, _, relationOK := returns.Get(term); !relationOK {
-				return false
-			}
-			coordinate := programBoundary{shard: shard, term: term}
-			if !owner.addBoundaryClass(boundaryRow{kind: BoundaryReturn, id: owner.programBoundaryID(BoundaryReturn, coordinate), program: coordinate}, class) {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-func (owner *schema) programBoundaryID(kind BoundaryKind, coordinate programBoundary) keyspace.ContentID {
-	if owner == nil || owner.source == nil {
+func (mount ArtifactMount) MountID() keyspace.ContentID {
+	if !mount.Available() {
 		return keyspace.ContentID{}
 	}
-	shard, ok := owner.source.Project().Mounts().Index(coordinate.shard)
-	if !ok {
+	return mount.mount
+}
+func (mount ArtifactMount) Module() keyspace.ContentID {
+	if !mount.Available() {
 		return keyspace.ContentID{}
 	}
-	var image [32 + 5*8]byte
-	copy(image[:32], owner.linkID[:])
-	binary.BigEndian.PutUint64(image[32:], 0x7265732d70726f67) // "res-prog"
-	binary.BigEndian.PutUint64(image[40:], uint64(kind))
-	binary.BigEndian.PutUint64(image[48:], uint64(shard+1))
-	binary.BigEndian.PutUint64(image[56:], uint64(coordinate.term))
-	binary.BigEndian.PutUint64(image[64:], uint64(coordinate.index))
+	return mount.module
+}
+func (mount ArtifactMount) ProgramID() keyspace.ContentID {
+	if !mount.Available() {
+		return keyspace.ContentID{}
+	}
+	return mount.program
+}
+
+func (owner *schema) addProgramBoundaries(mounts []ArtifactMount) bool {
+	for _, mount := range mounts {
+		if !mount.Available() {
+			return false
+		}
+		class, classOK := owner.mountClasses[mount.mount]
+		if !classOK {
+			return false
+		}
+		for index := 0; index < mount.artifact.BoundaryCount(); index++ {
+			row, ok := mount.artifact.BoundaryAt(index)
+			if !ok || !row.Available() || row.Kind() == programartifact.BoundaryStore && !row.Eligible() {
+				continue
+			}
+			if !owner.addBoundaryClass(boundaryRow{kind: boundaryKind(row.Kind()), id: residenceProgramBoundaryID(owner.linkOwner, mount.mount, row)}, class) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func boundaryKind(kind programartifact.BoundaryKind) BoundaryKind {
+	switch kind {
+	case programartifact.BoundaryCapture:
+		return BoundaryCapture
+	case programartifact.BoundaryStore:
+		return BoundaryStore
+	case programartifact.BoundaryReturn:
+		return BoundaryReturn
+	default:
+		return BoundaryInvalid
+	}
+}
+
+func residenceProgramBoundaryID(owner link.OwnerCapability, mountID keyspace.ContentID, row programartifact.BoundaryRow) keyspace.ContentID {
+	if !owner.Available() || !mountID.Available() || !row.Available() {
+		return keyspace.ContentID{}
+	}
+	linkID := owner.ContentID()
+	var image [120]byte
+	copy(image[:32], linkID[:])
+	copy(image[32:64], mountID[:])
+	binary.BigEndian.PutUint64(image[64:], 0x7265732d617274) // res-art
+	binary.BigEndian.PutUint64(image[72:], uint64(row.Kind()))
+	rowID := row.ID()
+	copy(image[80:112], rowID[:])
+	position, _ := row.Position()
+	binary.BigEndian.PutUint64(image[112:], uint64(position))
 	return keyspace.ContentID(sha256.Sum256(image[:]))
 }
 
-func (owner *schema) validProgramBoundary(kind BoundaryKind, coordinate programBoundary) bool {
-	if owner == nil || owner.source == nil || coordinate.term == 0 {
-		return false
-	}
-	p, ok := owner.source.Project().Mounts().Program(coordinate.shard)
-	if !ok || p == nil || !p.Flow().Executable().Contains(coordinate.term) {
-		return false
-	}
-	switch kind {
-	case BoundaryCapture:
-		functions := p.Flow().Authored().Functions()
-		count, ok := functions.CaptureCount(coordinate.term)
-		if !ok || count < 0 || uint64(count) > uint64(^uint32(0))+1 || uint64(coordinate.index) >= uint64(count) {
-			return false
-		}
-		_, _, ok = functions.CaptureAt(coordinate.term, int(coordinate.index))
-		return ok
-	case BoundaryStore:
-		flow := p.Flow()
-		writes := flow.Authored().Storage().Writes()
-		_, target, ok := writes.Get(coordinate.term)
-		if !ok || target == 0 {
-			return false
-		}
-		_, _, _, _, exactLens := flow.Authored().Access().Exact().Get(target)
-		_, _, _, dynamicLens := flow.Authored().Access().Dynamic().Get(target)
-		return exactLens || dynamicLens
-	case BoundaryReturn:
-		_, _, ok := p.Flow().Authored().Control().Returns().Get(coordinate.term)
-		return ok
-	default:
-		return false
-	}
+func (owner *schema) validArtifactBoundary(kind BoundaryKind, mount ArtifactMount, row programartifact.BoundaryRow) bool {
+	return owner != nil && mount.Available() && row.Available() && boundaryKind(row.Kind()) == kind && mount.artifact.CompileKey().ProgramID() == mount.program && (kind != BoundaryStore || row.Eligible())
 }

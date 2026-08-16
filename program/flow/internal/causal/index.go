@@ -23,6 +23,7 @@ func (s *indexState) activationRoot(bodyTerm keyspace.Term) (keyspace.Term, bool
 }
 
 func (s *indexState) validateArcCoverage() error {
+	s.arcCoverageValidated = false
 	if s.graph == nil || s.graph.ArcCount() < 0 || len(s.arcDisposition) != s.graph.ArcCount() {
 		return errors.New("program/flow/causal: Arc disposition denominator is unavailable")
 	}
@@ -44,12 +45,13 @@ func (s *indexState) validateArcCoverage() error {
 		}
 		return fmt.Errorf("program/flow/causal: live sourcecontrol Arc %d (%v -> %v) has no disposition", index, row.Source, row.Target)
 	}
+	s.arcCoverageValidated = true
 	return nil
 }
 
 func (s *indexState) finish() error {
-	if err := s.validateArcCoverage(); err != nil {
-		return err
+	if !s.arcCoverageValidated {
+		return errors.New("program/flow/causal: Arc coverage was not validated before finalization")
 	}
 	if len(s.edgeRows) != len(s.edgeOwners) || len(s.boundaryRows) != len(s.boundaryOwners) {
 		return errors.New("program/flow/causal: typed row owner planes are misaligned")
@@ -303,22 +305,47 @@ func (s *indexState) buildSuccessorIndex() error {
 		return errors.New("program/flow/causal: successor reference pool exceeds host index range")
 	}
 	refs := make([]successorRef, int(total))
-	fillEdge := func(edge Edge, index uint32) error {
+	fillEdge := func(edge Edge, index uint32, ordinal int) error {
+		if ordinal >= int(^uint32(0)) {
+			return errors.New("program/flow/causal: successor Plan ordinal is invalid")
+		}
 		plane := &s.result.index.planes[keyspace.TermFamily(edge.From)]
 		rangeValue := &plane.ranges[keyspace.TermOrdinal(edge.From)]
 		if rangeValue.start >= rangeValue.end || uint64(rangeValue.start) >= uint64(len(refs)) {
 			return errors.New("program/flow/causal: successor fill range is invalid")
 		}
-		refs[rangeValue.start] = successorRef{index: index, local: true, arm: BoundaryLocal}
+		ref := successorRef{index: index, local: true, arm: BoundaryLocal}
+		if ordinal >= 0 {
+			ref.planOrdinal, ref.planOrdinalSet = uint32(ordinal), true
+		}
+		refs[rangeValue.start] = ref
 		rangeValue.start++
 		return nil
 	}
+	if len(s.edgeRowsScratch.planOrdinals) != 0 && len(s.edgeRowsScratch.planOrdinals) != len(s.edgeRows) {
+		return errors.New("program/flow/causal: Edge Plan ordinal scratch is malformed")
+	}
 	for index, edge := range s.edgeRows {
-		if err := fillEdge(edge.Edge, uint32(index)); err != nil {
+		ordinal := -1
+		if len(s.edgeRowsScratch.planOrdinals) != 0 {
+			if index >= len(s.edgeRowsScratch.planOrdinals) {
+				return errors.New("program/flow/causal: Edge Plan ordinal disappeared")
+			}
+			ordinal = s.edgeRowsScratch.planOrdinals[index]
+		}
+		if err := fillEdge(edge.Edge, uint32(index), ordinal); err != nil {
 			return err
 		}
 	}
+	if len(s.boundaryRowsScratch.planOrdinals) != 0 && len(s.boundaryRowsScratch.planOrdinals) != len(s.boundaryRows) {
+		return errors.New("program/flow/causal: CallBoundary Plan ordinal scratch is malformed")
+	}
 	for index, boundary := range s.boundaryRows {
+		var planned boundaryPlanOrdinals
+		planBound := len(s.boundaryRowsScratch.planOrdinals) != 0
+		if planBound {
+			planned = s.boundaryRowsScratch.planOrdinals[index]
+		}
 		plane := &s.result.index.planes[keyspace.FamilyCall]
 		rangeValue := &plane.ranges[keyspace.TermOrdinal(boundary.Call)]
 		for _, arm := range [...]BoundaryArmKind{BoundaryResume, BoundarySelectTrue, BoundarySelectFalse, BoundaryTail, BoundaryThrow, BoundaryYield, BoundaryCancel} {
@@ -328,7 +355,14 @@ func (s *indexState) buildSuccessorIndex() error {
 			if rangeValue.start >= rangeValue.end || uint64(rangeValue.start) >= uint64(len(refs)) {
 				return errors.New("program/flow/causal: successor boundary fill range is invalid")
 			}
-			refs[rangeValue.start] = successorRef{index: uint32(index), local: false, arm: arm}
+			if planBound && (!planned.present[arm] || planned.ordinals[arm] < 0 || planned.ordinals[arm] >= int(^uint32(0))) {
+				return errors.New("program/flow/causal: CallBoundary arm Plan ordinal is invalid")
+			}
+			ref := successorRef{index: uint32(index), local: false, arm: arm}
+			if planBound {
+				ref.planOrdinal, ref.planOrdinalSet = uint32(planned.ordinals[arm]), true
+			}
+			refs[rangeValue.start] = ref
 			rangeValue.start++
 		}
 	}

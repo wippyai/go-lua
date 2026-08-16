@@ -947,6 +947,17 @@ func (state State) Valid() bool {
 // issued.
 func (state State) Same(other State) bool { return sameState(state, other) }
 
+// SamePublishedInput reports the identity visible at a Rule input and Point
+// publication boundary. It deliberately differs from Same: predecessor
+// provenance keeps the exact support handle, while an input/publication
+// identity keeps the carrier authority and scope, compares support by its
+// semantic formula, and retains exact immutable root-vector identity. Compact
+// authored coverage is a PointState concern and is compared by the owning
+// Work's ExactSamePointRepresentation predicate.
+func (state State) SamePublishedInput(other State) bool {
+	return samePublishedInputState(state, other)
+}
+
 func (state State) live() bool {
 	return state.authority.live() && state.scope.validFor(state.authority.composition) && state.support.Valid() && state.support.Manager() == state.authority.composition.guards && len(state.roots) == len(state.authority.composition.operations) && (!state.previewMarked() || state.previewOwner() != nil && state.previewOwner().live) && (!state.contributionMarked() || state.contributionOwner() != nil && state.contributionOwner().live)
 }
@@ -1395,61 +1406,81 @@ func (work *Work) MergeSelectedUnder(kind MergeKind, current, selectedRight, exa
 	return work.commit(current, patches, exactRight.support, exactSplit.RightOnly(), exactSplit.LeftOnly(), delta)
 }
 
+// StateReindexBoundary is the first closed substage reached by one State
+// reindex. It is detached diagnostic provenance only; no State or slot index
+// is exposed through this marker.
+type StateReindexBoundary uint8
+
+const (
+	StateReindexBoundaryNone StateReindexBoundary = iota
+	StateReindexBoundarySupport
+	StateReindexBoundaryTypedSlots
+	StateReindexBoundaryCommit
+)
+
 // Reindex atomically transports one State across a sealed guard-coordinate
 // boundary. It is input transport, not a Point publication or demand event,
 // so it returns no ChangeSet. The target support is transformed and sealed
 // before any Factor is asked to transform; every prepared root is dropped if
 // any later slot rejects, leaving the source State untouched.
 func (work *Work) Reindex(state State, plan ReindexPlan) (State, bool) {
+	result, _, ok := work.ReindexWithBoundary(state, plan)
+	return result, ok
+}
+
+// ReindexWithBoundary performs the exact Reindex transaction while returning
+// only the failed aggregate boundary. Typed-slot failure intentionally omits
+// the physical slot index, which is not public diagnostic authority.
+func (work *Work) ReindexWithBoundary(state State, plan ReindexPlan) (State, StateReindexBoundary, bool) {
 	if !work.live() || work.reindexing || state.previewMarked() || state.contributionMarked() || !work.OwnsState(state) || !plan.validFor(work.composition) || !state.scope.same(plan.source()) {
-		return State{}, false
+		return State{}, StateReindexBoundarySupport, false
 	}
 	work.reindexing = true
 	defer func() { work.reindexing = false }()
 	if plan.identity() {
-		return state, true
+		return state, StateReindexBoundaryNone, true
 	}
 	targetSupport, ok := work.reindexSupport(state.support, plan.relation)
 	if !ok {
-		return State{}, false
+		return State{}, StateReindexBoundarySupport, false
 	}
 	if root, valid := targetSupport.Guard(); !valid || !plan.target().guard.Contains(root) {
-		return State{}, false
+		return State{}, StateReindexBoundarySupport, false
 	}
 	empty := emptyMask(work.composition.guards)
 	if !empty.Valid() {
-		return State{}, false
+		return State{}, StateReindexBoundarySupport, false
 	}
 	delta := work.newSupportWork()
 	if delta == nil {
-		return State{}, false
+		return State{}, StateReindexBoundarySupport, false
 	}
 	patches := make([]Patch, 0, len(work.slots))
 	for index, slot := range work.slots {
 		if !work.live() || slot == nil {
 			delta.Discard()
 			dropPatches(patches)
-			return State{}, false
+			return State{}, StateReindexBoundaryTypedSlots, false
 		}
 		change, valid := slot.ReindexUnder(state.roots[index], state.support, targetSupport, plan.relation, delta)
 		if !valid {
 			delta.Discard()
 			dropPatches(patches)
-			return State{}, false
+			return State{}, StateReindexBoundaryTypedSlots, false
 		}
 		if !work.acceptInto(&patches, state, change, delta) {
 			delta.Discard()
-			return State{}, false
+			return State{}, StateReindexBoundaryTypedSlots, false
 		}
 	}
 	next, _, committed := work.commit(state, patches, targetSupport, empty, empty, delta)
 	if !committed {
-		return State{}, false
+		return State{}, StateReindexBoundaryCommit, false
 	}
 	// commit owns the one root publication cut. Only after that all-slot cut
 	// succeeds may the returned immutable State receive its target interface.
 	next.scope = plan.target()
-	return next, next.live()
+	return next, StateReindexBoundaryCommit, next.live()
 }
 
 func emptyMask(manager *guard.Manager) support.Mask {
@@ -1864,9 +1895,9 @@ func (work *Work) commit(state State, patches []Patch, nextSupport, added, remov
 			if !state.authority.composition.operations[int(patch.slot)].ValidRoot(root) {
 				panic("prepared root publication violated carrier invariant")
 			}
-			next[int(patch.slot)] = root
-		} else if prepared.rootsChanged {
-			next[int(patch.slot)] = record.after
+				next[int(patch.slot)] = root
+			} else if prepared.rootsChanged {
+				next[int(patch.slot)] = record.after
 		}
 	}
 	dropPatches(patches)

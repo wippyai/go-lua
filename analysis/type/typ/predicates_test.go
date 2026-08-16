@@ -102,19 +102,19 @@ func TestAdmitsFalse(t *testing.T) {
 		want bool
 	}{
 		{name: "nil", in: nil, want: false},
-		{name: "false literal", in: False, want: true},
-		{name: "true literal", in: True, want: false},
+		{name: "false literal", in: LiteralBool(false), want: true},
+		{name: "true literal", in: LiteralBool(true), want: false},
 		{name: "boolean", in: Boolean, want: true},
 		{name: "nil type", in: Nil, want: false},
 		{name: "string", in: String, want: false},
 		{name: "any", in: Any, want: false},
 		{name: "unknown", in: Unknown, want: false},
-		{name: "alias to false", in: NewAlias("F", False), want: true},
-		{name: "annotated false", in: NewAnnotated(False, ann), want: true},
-		{name: "optional false", in: MaterializeOptional(False), want: true},
-		{name: "union with false", in: MaterializeUnion([]Type{String, False}), want: true},
+		{name: "alias to false", in: NewAlias("F", LiteralBool(false)), want: true},
+		{name: "annotated false", in: NewAnnotated(LiteralBool(false), ann), want: true},
+		{name: "optional false", in: MaterializeOptional(LiteralBool(false)), want: true},
+		{name: "union with false", in: MaterializeUnion([]Type{String, LiteralBool(false)}), want: true},
 		{name: "union without false", in: MaterializeUnion([]Type{String, Number}), want: false},
-		{name: "intersection retains false", in: MaterializeIntersection([]Type{Boolean, False}), want: true},
+		{name: "intersection retains false", in: MaterializeIntersection([]Type{Boolean, LiteralBool(false)}), want: true},
 		{name: "intersection excludes false", in: MaterializeIntersection([]Type{Boolean, String}), want: false},
 	}
 	for _, tt := range tests {
@@ -219,8 +219,8 @@ func TestPredicatesDeepAcyclicLaws(t *testing.T) {
 		{
 			name:      "admits false",
 			predicate: AdmitsFalse,
-			positive:  False,
-			negative:  True,
+			positive:  LiteralBool(false),
+			negative:  LiteralBool(true),
 		},
 		{
 			name:      "boolean",
@@ -251,7 +251,7 @@ func TestPredicatesDeepAcyclicLaws(t *testing.T) {
 func TestPredicatesDeepCyclicLaws(t *testing.T) {
 	admitsPositive := &Union{Members: make([]Type, 2)}
 	admitsPositive.Members[0] = admitsPositive
-	admitsPositive.Members[1] = False
+	admitsPositive.Members[1] = LiteralBool(false)
 	admitsNegative := &Intersection{Members: make([]Type, 2)}
 	admitsNegative.Members[0] = admitsNegative
 	admitsNegative.Members[1] = Boolean

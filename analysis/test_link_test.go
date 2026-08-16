@@ -25,3 +25,16 @@ func directFieldHostileLink(t testing.TB, text string) *link.Link {
 	}
 	return linked
 }
+
+func mustLink(t testing.TB, text string, contract *target.Contract) *link.Link {
+	t.Helper()
+	program, err := lower.Lower(lower.Source{Name: "analysis.lua", Text: []byte(text)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	linked, err := link.Seal(&link.Spec{Target: contract, Modules: []linkproject.Module{{Name: "main", Program: program}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return linked
+}

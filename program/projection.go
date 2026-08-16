@@ -21,12 +21,16 @@ import (
 // behind their typed Views; the receipt is cardinality-only and is not a
 // second mutable relation representation or forwarding query surface.
 type Program struct {
-	source          *source.Component
-	flow            *flow.Component
-	static          *static.Component
-	module          *module.Component
-	id              keyspace.ContentID
-	semanticReceipt SemanticSourceReceipt
+	source            *source.Component
+	flow              *flow.Component
+	static            *static.Component
+	module            *module.Component
+	id                keyspace.ContentID
+	semanticReceipt   SemanticSourceReceipt
+	allocationReceipt *allocationReceipt
+	pointAttachments  *pointAttachmentReceipt
+	valuesCatalog     *valuesCatalog
+	returnCatalog     *returnCatalog
 }
 
 var (
@@ -34,6 +38,7 @@ var (
 	errUnavailable     = errors.New("program: unavailable owner identity")
 	errProvenance      = errors.New("program: Flow provenance does not match owner quartet")
 	errSemanticSource  = errors.New("program: semantic-source receipt unavailable")
+	errAllocation      = errors.New("program: allocation receipt unavailable")
 )
 
 // Publish consumes assembly and publishes the one immutable Program root.
@@ -80,6 +85,19 @@ func Publish(assembly *flow.Assembly) (*Program, error) {
 		module: moduleComponent,
 		id:     id,
 	}
+	pointAttachments, pointsOK := buildPointAttachmentReceipt(program)
+	if !pointsOK {
+		return nil, errors.New("program: WTO point attachment receipt unavailable")
+	}
+	program.pointAttachments = pointAttachments
+	// Allocation templates consume exact point-backed Program proofs. Install
+	// the point attachment sidecar first so their construction-time
+	// TransformerInput is complete; neither sidecar is rebuilt after publish.
+	allocationReceipt, allocationErr := buildAllocationReceipt(program)
+	if allocationErr != nil {
+		return nil, fmt.Errorf("%w: %v", errAllocation, allocationErr)
+	}
+	program.allocationReceipt = allocationReceipt
 	// Semantic-source publication is a cold seal product.  Build and validate
 	// the detached receipt while the exact owner quartet is still in hand so
 	// later mounts can replay the fixed 57-row denominator without reopening
@@ -89,6 +107,16 @@ func Publish(assembly *flow.Assembly) (*Program, error) {
 		return nil, errSemanticSource
 	}
 	program.semanticReceipt = receipt
+	valuesCatalog, valuesOK := buildValuesCatalog(program)
+	if !valuesOK {
+		return nil, errors.New("program: Values catalog unavailable")
+	}
+	program.valuesCatalog = valuesCatalog
+	returnCatalog, returnsOK := buildReturnCatalog(program)
+	if !returnsOK {
+		return nil, errors.New("program: Return catalog unavailable")
+	}
+	program.returnCatalog = returnCatalog
 	return program, nil
 }
 

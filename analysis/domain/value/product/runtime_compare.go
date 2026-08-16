@@ -24,7 +24,7 @@ func (rt *registryRuntime) isProductBottom(p presence.Value, slots []slot) bool 
 		return true
 	}
 	for _, slot := range slots {
-		info := rt.axes[rt.canonicalAxes[slot.ordinal]]
+		info := rt.axisOrdinal(slot.ordinal)
 		if info.spec.EqualAny(slot.value, info.bottomAny) {
 			return true
 		}

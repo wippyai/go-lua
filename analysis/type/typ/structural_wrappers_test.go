@@ -16,6 +16,14 @@ func TestUnwrapStructuralWrappers(t *testing.T) {
 	if got := UnwrapStructuralWrappers(nil); got != nil {
 		t.Fatalf("nil structural wrapper result = %T, want nil", got)
 	}
+	var typedNil *Annotated
+	if got := UnwrapStructuralWrappers(typedNil); got != typedNil {
+		t.Fatalf("typed-nil structural wrapper result = %T, want typed nil", got)
+	}
+	typedNilAlias := &Alias{Name: "typed-nil", Target: typedNil}
+	if got := UnwrapStructuralWrappers(typedNilAlias); got != typedNil {
+		t.Fatalf("typed-nil Alias target result = %T, want typed nil", got)
+	}
 }
 
 func TestUnwrapStructuralWrappersMalformedAndCycles(t *testing.T) {

@@ -25,6 +25,7 @@ type Site struct {
 type siteRow struct {
 	term    keyspace.Term
 	context keyspace.ContentID
+	path    keyspace.ContentID // copied while the structural lease is live
 }
 
 type siteLookup struct {
@@ -35,6 +36,7 @@ type siteLookup struct {
 type siteStore struct {
 	rows    []siteRow
 	lookups []siteLookup
+	byTerm  map[keyspace.Term]uint32
 }
 
 const (
@@ -92,6 +94,16 @@ func (s Site) ContextID() keyspace.ContentID {
 	return s.result.sites.rows[s.index].context
 }
 
+// PathID returns the parent-issued structural semantic identity of this Site.
+// Unlike ContextID it contains no owner quartet or raw coordinate and is the
+// portable identity consumed by reusable Program artifacts.
+func (s Site) PathID() keyspace.ContentID {
+	if !s.available() {
+		return keyspace.ContentID{}
+	}
+	return s.result.sites.rows[s.index].path
+}
+
 // Term returns the existing causal endpoint represented by this site.
 func (s Site) Term() (keyspace.Term, bool) {
 	if !s.available() {
@@ -120,17 +132,19 @@ func (r *Result) SiteCount() int {
 // SiteAt returns one site in canonical Term order.
 func (r *Result) SiteAt(index int) (Site, bool) { return r.siteAt(index) }
 
+// OwnsSite accepts only a handle issued by this exact hot Causal Result.
+// Equivalent replay sites are intentionally not owner-identical.
+func (r *Result) OwnsSite(site Site) bool { return r != nil && site.result == r && site.available() }
+
 func (r *Result) siteForTerm(term keyspace.Term) (Site, bool) {
 	if !r.available() || keyspace.TermFamily(term) == keyspace.FamilyInvalid {
 		return Site{}, false
 	}
-	index := sort.Search(len(r.sites.rows), func(index int) bool {
-		return r.sites.rows[index].term >= term
-	})
-	if index >= len(r.sites.rows) || r.sites.rows[index].term != term {
+	index, found := r.sites.byTerm[term]
+	if !found || uint64(index) >= uint64(len(r.sites.rows)) || r.sites.rows[index].term != term {
 		return Site{}, false
 	}
-	return r.siteAt(index)
+	return r.siteAt(int(index))
 }
 
 // SiteForTerm resolves only an actual endpoint of an existing sealed route or
@@ -165,6 +179,45 @@ func (r *Result) ResolveContextID(id keyspace.ContentID) (Site, bool) {
 	return r.resolveSite(id)
 }
 
+// captureOutcomePhasePaths seals Outcome-to-phase receipts before
+// recurrence Claim. The later Site/WTO phases consume this map and never
+// reopen SourceControl or Outcome to reconstruct an attachment.
+func (r *Result) captureOutcomePhasePaths(control *sourcecontrol.Result, outcomes *outcome.Result) error {
+	if r == nil || control == nil || outcomes == nil || !sourcecontrol.Matches(control, r.sourceID, r.flowID, r.staticID, r.moduleID) || !outcome.Matches(outcomes, r.sourceID, r.flowID, r.staticID, r.moduleID) {
+		return errors.New("program/flow/causal: terminal outcome receipt owners disagree")
+	}
+	paths := make(map[keyspace.Term]keyspace.ContentID)
+	for index := 0; index < outcomes.Count(); index++ {
+		term, ok := outcomes.At(index)
+		if !ok {
+			return errors.New("program/flow/causal: outcome row disappeared while issuing tail receipts")
+		}
+		owner, outcomeKind, _, ok := outcomes.Get(term)
+		if !ok {
+			continue
+		}
+		switch outcomeKind {
+		case kind.OutcomeNormal:
+			path, pathOK := control.BodyTailPath(owner)
+			if !pathOK {
+				return errors.New("program/flow/causal: terminal Outcome Body tail path is unavailable")
+			}
+			paths[term] = path
+		default:
+			phase, phaseOK := control.OutcomePhase(term)
+			path, pathOK := control.ResolvePhaseRef(phase)
+			if !phaseOK || !pathOK {
+				// Static/unreachable non-Normal Outcomes remain valid Sites but do
+				// not have a parent-issued schedule point.
+				continue
+			}
+			paths[term] = path
+		}
+	}
+	r.outcomePhasePaths = paths
+	return nil
+}
+
 func (r *Result) buildSites(sourceView source.View, control *sourcecontrol.Result, outcomes *outcome.Result) error {
 	if r == nil || !r.available() || control == nil || outcomes == nil || !sourceView.Identity().ContentID().Available() {
 		return errors.New("program/flow/causal: site owner is unavailable")
@@ -182,6 +235,9 @@ func (r *Result) buildSites(sourceView source.View, control *sourcecontrol.Resul
 		return errors.New("program/flow/causal: endpoint denominator overflows host index")
 	}
 	terms := make([]keyspace.Term, 0, len(r.index.refs)*2)
+	if r.outcomePhasePaths == nil {
+		return errors.New("program/flow/causal: terminal Outcome receipts were not captured")
+	}
 	for _, routeRef := range r.index.refs {
 		route, ok := r.successorForRef(routeRef)
 		if !ok || keyspace.TermFamily(route.From) == keyspace.FamilyInvalid || keyspace.TermFamily(route.To) == keyspace.FamilyInvalid {
@@ -189,41 +245,41 @@ func (r *Result) buildSites(sourceView source.View, control *sourcecontrol.Resul
 		}
 		terms = append(terms, route.From, route.To)
 	}
-	for index := 0; index < outcomes.Count(); index++ {
-		outcomeTerm, ok := outcomes.At(index)
-		if !ok {
-			return errors.New("program/flow/causal: outcome row disappeared while building sites")
-		}
-		_, outcomeKind, target, ok := outcomes.Get(outcomeTerm)
-		if !ok || target != 0 {
-			continue
-		}
-		switch outcomeKind {
-		case kind.OutcomeNormal, kind.OutcomeReturn, kind.OutcomeThrow, kind.OutcomeYield, kind.OutcomeCancel:
-			terms = append(terms, outcomeTerm)
-		}
+	for outcomeTerm := range r.outcomePhasePaths {
+		terms = append(terms, outcomeTerm)
 	}
-	sort.Slice(terms, func(left, right int) bool { return terms[left] < terms[right] })
-	unique := terms[:0]
+	seenTerms := make(map[keyspace.Term]struct{}, len(terms))
+	unique := make([]keyspace.Term, 0, len(terms))
 	for _, term := range terms {
-		if len(unique) == 0 || unique[len(unique)-1] != term {
+		if _, exists := seenTerms[term]; !exists {
+			seenTerms[term] = struct{}{}
 			unique = append(unique, term)
 		}
 	}
-	store := siteStore{rows: make([]siteRow, len(unique))}
+	store := siteStore{rows: make([]siteRow, len(unique)), byTerm: make(map[keyspace.Term]uint32, len(unique))}
 	for index, term := range unique {
+		path, pathOK := r.semanticTermPath(term)
+		if !pathOK {
+			return errors.New("program/flow/causal: Site structural path is unavailable")
+		}
 		store.rows[index] = siteRow{
 			term:    term,
 			context: hashSiteContext(r.sourceID, r.flowID, r.staticID, r.moduleID, term),
+			path:    path,
 		}
+	}
+	radixSiteRows(store.rows)
+	for index, row := range store.rows {
+		if _, duplicate := store.byTerm[row.term]; duplicate {
+			return errors.New("program/flow/causal: duplicate Site term")
+		}
+		store.byTerm[row.term] = uint32(index)
 	}
 	store.lookups = make([]siteLookup, len(store.rows))
 	for index, row := range store.rows {
 		store.lookups[index] = siteLookup{context: row.context, index: uint32(index)}
 	}
-	sort.Slice(store.lookups, func(left, right int) bool {
-		return bytes.Compare(store.lookups[left].context[:], store.lookups[right].context[:]) < 0
-	})
+	radixSiteLookups(store.lookups)
 	for index := 1; index < len(store.lookups); index++ {
 		if store.lookups[index-1].context == store.lookups[index].context {
 			return errors.New("program/flow/causal: contextual site digest collision")
@@ -231,4 +287,50 @@ func (r *Result) buildSites(sourceView source.View, control *sourcecontrol.Resul
 	}
 	r.sites = store
 	return nil
+}
+
+func radixSiteLookups(rows []siteLookup) {
+	if len(rows) < 2 {
+		return
+	}
+	work := make([]siteLookup, len(rows))
+	for byteIndex := len(keyspace.ContentID{}) - 1; byteIndex >= 0; byteIndex-- {
+		var counts [256]int
+		for _, row := range rows {
+			counts[row.context[byteIndex]]++
+		}
+		at := 0
+		for index := range counts {
+			at, counts[index] = at+counts[index], at
+		}
+		for _, row := range rows {
+			bucket := row.context[byteIndex]
+			work[counts[bucket]] = row
+			counts[bucket]++
+		}
+		copy(rows, work)
+	}
+}
+
+func radixSiteRows(rows []siteRow) {
+	if len(rows) < 2 {
+		return
+	}
+	work := make([]siteRow, len(rows))
+	for byteIndex := len(keyspace.ContentID{}) - 1; byteIndex >= 0; byteIndex-- {
+		var counts [256]int
+		for _, row := range rows {
+			counts[row.path[byteIndex]]++
+		}
+		at := 0
+		for index := range counts {
+			at, counts[index] = at+counts[index], at
+		}
+		for _, row := range rows {
+			bucket := row.path[byteIndex]
+			work[counts[bucket]] = row
+			counts[bucket]++
+		}
+		copy(rows, work)
+	}
 }

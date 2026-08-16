@@ -45,10 +45,6 @@ func TestSourcePublicationsRetainRequiredZeroRows(t *testing.T) {
 		{semanticsource.OriginLinkModule, semanticsource.FacetLinkModuleInitGeneration},
 		{semanticsource.OriginLinkModule, semanticsource.FacetLinkModuleInitOutcome},
 		{semanticsource.OriginLinkModule, semanticsource.FacetLinkModuleInitTerminal},
-		{semanticsource.OriginLinkStatic, semanticsource.FacetLinkStaticResolution},
-		{semanticsource.OriginLinkStatic, semanticsource.FacetLinkStaticExpression},
-		{semanticsource.OriginLinkStatic, semanticsource.FacetLinkStaticExport},
-		{semanticsource.OriginLinkStatic, semanticsource.FacetLinkStaticInput},
 		{semanticsource.OriginLinkHost, 0},
 		{semanticsource.OriginLinkHost, semanticsource.FacetLinkHostExposure},
 		{semanticsource.OriginLinkHost, semanticsource.FacetLinkHostMember},
@@ -98,8 +94,8 @@ func semanticSourceFixture(t *testing.T, permuted bool) (*Link, *target.Contract
 func semanticSourcePublicationCounts(t testing.TB, l *Link) map[semanticsource.Token]int {
 	t.Helper()
 	publications, ok := l.sourcePublications()
-	if !ok || len(publications) != 21 {
-		t.Fatalf("Link semantic-source publications = %d/%t, want 21/true", len(publications), ok)
+	if !ok || len(publications) != 17 {
+		t.Fatalf("Link semantic-source publications = %d/%t, want 17/true", len(publications), ok)
 	}
 	counts := make(map[semanticsource.Token]int, len(publications))
 	for _, publication := range publications {
@@ -109,8 +105,8 @@ func semanticSourcePublicationCounts(t testing.TB, l *Link) map[semanticsource.T
 		}
 		counts[token] = publication.Count()
 	}
-	if len(counts) != 21 {
-		t.Fatalf("Link semantic-source distinct definitions = %d, want 21", len(counts))
+	if len(counts) != 17 {
+		t.Fatalf("Link semantic-source distinct definitions = %d, want 17", len(counts))
 	}
 	return counts
 }
@@ -196,35 +192,6 @@ func assertSemanticSourceTypedCounts(t *testing.T, l *Link, contract *target.Con
 			}
 		}
 	}
-	statics := l.Static()
-	for index := 0; index < statics.Namespaces().Count(); index++ {
-		if _, ok := statics.Namespaces().At(index); !ok {
-			t.Fatalf("StaticNamespaceAt(%d)", index)
-		}
-	}
-	for index := 0; index < statics.Resolutions().Count(); index++ {
-		if _, ok := statics.Resolutions().At(index); !ok {
-			t.Fatalf("StaticResolutionAt(%d)", index)
-		}
-	}
-	staticExports := 0
-	for index := 0; index < statics.Namespaces().Count(); index++ {
-		namespace, ok := statics.Namespaces().At(index)
-		if !ok {
-			t.Fatalf("StaticNamespaceAt(%d)", index)
-		}
-		staticExports += statics.Namespaces().ExportCount(namespace)
-	}
-	for index := 0; index < statics.Expressions().Count(); index++ {
-		if _, ok := statics.Expressions().At(index); !ok {
-			t.Fatalf("StaticExpressionAt(%d)", index)
-		}
-	}
-	for index := 0; index < statics.Inputs().Count(); index++ {
-		if _, ok := statics.Inputs().At(index); !ok {
-			t.Fatalf("StaticInputAt(%d)", index)
-		}
-	}
 	endpoints := l.Boundary().Endpoints()
 	for index := 0; index < endpoints.Count(); index++ {
 		endpoint, ok := endpoints.At(index)
@@ -267,11 +234,7 @@ func assertSemanticSourceTypedCounts(t *testing.T, l *Link, contract *target.Con
 		semanticSourceDefinition(t, semanticsource.OriginLinkModule, semanticsource.FacetLinkModuleInitGeneration).Token(): l.Module().Generations().Count(),
 		semanticSourceDefinition(t, semanticsource.OriginLinkModule, semanticsource.FacetLinkModuleInitOutcome).Token():    initOutcomes,
 		semanticSourceDefinition(t, semanticsource.OriginLinkModule, semanticsource.FacetLinkModuleInitTerminal).Token():   initTerminals,
-		semanticSourceDefinition(t, semanticsource.OriginLinkStatic, 0).Token():                                            statics.Namespaces().Count(),
-		semanticSourceDefinition(t, semanticsource.OriginLinkStatic, semanticsource.FacetLinkStaticResolution).Token():     statics.Resolutions().Count(),
-		semanticSourceDefinition(t, semanticsource.OriginLinkStatic, semanticsource.FacetLinkStaticExpression).Token():     statics.Expressions().Count(),
-		semanticSourceDefinition(t, semanticsource.OriginLinkStatic, semanticsource.FacetLinkStaticExport).Token():         staticExports,
-		semanticSourceDefinition(t, semanticsource.OriginLinkStatic, semanticsource.FacetLinkStaticInput).Token():          statics.Inputs().Count(),
+		semanticSourceDefinition(t, semanticsource.OriginLinkStatic, 0).Token():                                            l.static.Cold().SchemaContentCount(),
 		semanticSourceDefinition(t, semanticsource.OriginLinkHost, 0).Token():                                              endpoints.Count(),
 		semanticSourceDefinition(t, semanticsource.OriginLinkHost, semanticsource.FacetLinkHostExposure).Token():           l.Host().Exposures().Count(),
 		semanticSourceDefinition(t, semanticsource.OriginLinkHost, semanticsource.FacetLinkHostBoot).Token():               l.Host().Globals().Count(),

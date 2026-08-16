@@ -42,7 +42,7 @@ func TestFlowArtifactSectionTopLevelPayloadAndDerivedExclusion(t *testing.T) {
 	changed.directFunction = nil
 	changed.candidates = nil
 	changed.directBinding = nil
-	changed.causal = nil
+	changed.programStructure.causal = nil
 	changed.continuation = nil
 	if got := encodeTopLevelArtifactSection(t, &changed); !bytes.Equal(got, base) {
 		t.Fatal("derived or provenance mutation changed authored artifact bytes")

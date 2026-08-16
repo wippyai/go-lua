@@ -8,7 +8,6 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/program"
-	"github.com/wippyai/go-lua/program/flow"
 	flowkind "github.com/wippyai/go-lua/program/flow/kind"
 	"github.com/wippyai/go-lua/program/internal/canonical"
 	"github.com/wippyai/go-lua/program/keyspace"
@@ -27,7 +26,12 @@ func sealValues(a *authority) error {
 		return errors.New("link/boundary: invalid value authority")
 	}
 	mounts := a.project.Mounts()
-	table := &valueTable{relations: make([]keyspace.ContentID, mounts.Count())}
+	table := &valueTable{
+		relations: make([]keyspace.ContentID, mounts.Count()),
+		spans:     make(map[valueSpanKey]uint32),
+		semantic:  make(map[valueSemanticKey]uint32),
+		mounts:    make(map[keyspace.ContentID]uint32, mounts.Count()),
+	}
 	var builder radix.Builder
 	for mountIndex := 0; mountIndex < mounts.Count(); mountIndex++ {
 		shard, ok := mounts.At(mountIndex)
@@ -39,8 +43,19 @@ func sealValues(a *authority) error {
 		if !ok || program == nil || !nameOK || name == "" || !program.ContentID().Available() {
 			return errors.New("link/boundary: unavailable mounted Program")
 		}
+		moduleKey, moduleOK := a.project.ModuleKey(shard)
+		if !moduleOK || !moduleKey.Available() {
+			return errors.New("link/boundary: unavailable mounted Program identity")
+		}
+		if _, duplicate := table.mounts[moduleKey]; duplicate {
+			return errors.New("link/boundary: duplicate mounted Program identity")
+		}
+		table.mounts[moduleKey] = uint32(mountIndex + 1)
 		pairs, err := valuePairs(program, uint32(mountIndex+1), &table.rows)
 		if err != nil {
+			return err
+		}
+		if err := sealValueSpans(table, program, uint32(mountIndex+1), pairs); err != nil {
 			return err
 		}
 		relation := mountValueRelationID(name, program.ContentID(), pairs)
@@ -57,6 +72,19 @@ func sealValues(a *authority) error {
 		return errors.New("link/boundary: seal value indexes")
 	}
 	table.index = index
+	// Semantic projections depend on the finalized Term->ordinal quotient.
+	// Build them only after every mounted relation has been indexed; they are
+	// still construction-only and retain no Program proof after this function.
+	for mountIndex := 0; mountIndex < mounts.Count(); mountIndex++ {
+		shard, shardOK := mounts.At(mountIndex)
+		program, programOK := mounts.Program(shard)
+		if !shardOK || !programOK || program == nil {
+			return errors.New("link/boundary: unavailable mounted semantic Program")
+		}
+		if err := sealValueSemanticIDs(table, program, uint32(mountIndex+1)); err != nil {
+			return err
+		}
+	}
 	table.content = valueAggregateID(table.relations)
 	if !table.content.Available() {
 		return errors.New("link/boundary: unavailable value relation identity")
@@ -65,6 +93,254 @@ func sealValues(a *authority) error {
 		return err
 	}
 	a.valueTable = table
+	return nil
+}
+
+func sealValueSpans(table *valueTable, p *program.Program, mount uint32, pairs []radix.Pair) error {
+	if table == nil || p == nil || mount == 0 || table.spans == nil {
+		return errors.New("link/boundary: invalid Program span projection")
+	}
+	input := p.TransformerInput()
+	for _, pair := range pairs {
+		span, spanOK := input.Span(keyspace.Term(pair.Key))
+		if !spanOK {
+			// Some Boundary values (notably storage Cells) are subjects rather
+			// than evaluable occurrences and therefore own no Entry/Finish Span.
+			continue
+		}
+		context := span.ContextID()
+		if !input.OwnsSpan(span) || !context.Available() || uint64(pair.Value) >= uint64(len(table.rows)) {
+			return errors.New("link/boundary: unavailable Program value span")
+		}
+		key := valueSpanKey{mount: mount, context: context}
+		if _, duplicate := table.spans[key]; duplicate {
+			return errors.New("link/boundary: duplicate Program value span")
+		}
+		table.spans[key] = pair.Value
+	}
+	return nil
+}
+
+// sealValueSemanticIDs builds the one mounted substitution directory used by
+// artifact consumers.  Every key is a Program-issued opaque semantic ID;
+// raw Terms are consulted only inside this Link construction transaction to
+// recover an already-issued Boundary ordinal.  Once sealed, Pack and other
+// consumers cannot reconstruct or submit a Term.
+func sealValueSemanticIDs(table *valueTable, p *program.Program, mount uint32) error {
+	if table == nil || p == nil || mount == 0 || table.semantic == nil {
+		return errors.New("link/boundary: invalid semantic value projection")
+	}
+	input := p.TransformerInput()
+	add := func(id keyspace.ContentID, ordinal uint32, ok bool) error {
+		if !id.Available() {
+			return errors.New("link/boundary: unavailable semantic value identity")
+		}
+		if !ok || uint64(ordinal) >= uint64(len(table.rows)) {
+			return errors.New("link/boundary: semantic value has no Boundary ordinal")
+		}
+		if table.rows[ordinal].shard != mount {
+			return errors.New("link/boundary: semantic value crossed mount boundary")
+		}
+		key := valueSemanticKey{mount: mount, id: id}
+		if existing, duplicate := table.semantic[key]; duplicate {
+			if existing == ordinal {
+				return nil
+			}
+			return errors.New("link/boundary: semantic value maps to distinct Boundary ordinals")
+		}
+		table.semantic[key] = ordinal
+		return nil
+	}
+	addSpan := func(label string, id keyspace.ContentID, span program.Span, spanOK bool) error {
+		ordinal, ordinalOK := boundaryValueForProgramSpan(table, mount, span)
+		if !spanOK || !ordinalOK {
+			return errors.New("link/boundary: semantic " + label + " has no Boundary ordinal")
+		}
+		return add(id, ordinal, true)
+	}
+	values := input.Values()
+	for index := 0; index < values.Count(); index++ {
+		value, valueOK := values.At(index)
+		span, spanOK := value.Span()
+		if !valueOK || !input.OwnsValuesOccurrence(value) {
+			return errors.New("link/boundary: malformed semantic Values receipt")
+		}
+		if spanOK {
+			if err := addSpan("Values", value.ID(), span, true); err != nil {
+				return err
+			}
+		}
+		for memberIndex := 0; memberIndex < value.Count(); memberIndex++ {
+			member, memberOK := value.At(memberIndex)
+			memberSpan, memberSpanOK := member.Span()
+			if !memberOK || !input.OwnsValuesMember(member) || !memberSpanOK {
+				return errors.New("link/boundary: malformed semantic Values member")
+			}
+			if err := addSpan("Values member", member.ID(), memberSpan, true); err != nil {
+				return err
+			}
+		}
+		if tail, tailOK := value.Tail(); tailOK {
+			tailSpan, tailSpanOK := tail.Span()
+			if !input.OwnsTailProducer(tail) || !tailSpanOK {
+				return errors.New("link/boundary: malformed semantic Values tail")
+			}
+			if err := addSpan("Values tail", tail.ContextID(), tailSpan, true); err != nil {
+				return err
+			}
+		}
+	}
+	storage := p.Flow().Authored().Storage().Cells()
+	if storage.Count() != input.StorageCellCount() {
+		return errors.New("link/boundary: semantic Cell denominator mismatch")
+	}
+	for index := 0; index < input.StorageCellCount(); index++ {
+		cell, cellOK := input.StorageCellAt(index)
+		term, termOK := storage.At(index)
+		ordinal, ordinalOK := table.index.Lookup(radix.Index(mount), uint32(term))
+		if !cellOK || !termOK {
+			return errors.New("link/boundary: malformed semantic Cell receipt")
+		}
+		if !ordinalOK || uint64(ordinal) >= uint64(len(table.rows)) {
+			return errors.New("link/boundary: semantic Cell has no Boundary ordinal")
+		}
+		row := table.rows[ordinal]
+		if row.shard != mount || row.term != term {
+			return errors.New("link/boundary: semantic Cell Boundary ordinal is not exact")
+		}
+		if err := add(cell.ContextID(), ordinal, true); err != nil {
+			return err
+		}
+	}
+	for index := 0; index < input.CallCount(); index++ {
+		call, callOK := input.CallAt(index)
+		if !callOK {
+			continue
+		}
+		span, spanOK := call.Span()
+		callee, calleeOK := call.Callee()
+		calleeSpan, calleeSpanOK := callee.Span()
+		actuals, actualsOK := call.Actuals()
+		actualsSpan, actualsSpanOK := actuals.Span()
+		values, valuesOK := call.Values()
+		valuesSpan, valuesSpanOK := values.Span()
+		if !input.OwnsCallOccurrence(call) || !spanOK || !calleeOK || !calleeSpanOK || !actualsOK || !actualsSpanOK || !valuesOK || !valuesSpanOK {
+			return errors.New("link/boundary: malformed semantic Call receipt")
+		}
+		for _, row := range []struct {
+			id   keyspace.ContentID
+			span program.Span
+		}{{call.ContextID(), span}, {callee.ContextID(), calleeSpan}, {actuals.ContextID(), actualsSpan}, {values.ContextID(), valuesSpan}} {
+			if err := addSpan("Call operand", row.id, row.span, true); err != nil {
+				return err
+			}
+		}
+		if receiver, receiverOK := call.Receiver(); receiverOK {
+			receiverSpan, receiverSpanOK := receiver.Span()
+			if !receiverSpanOK {
+				return errors.New("link/boundary: malformed semantic Call receiver")
+			}
+			if err := addSpan("Call receiver", receiver.ContextID(), receiverSpan, true); err != nil {
+				return err
+			}
+		}
+		for argumentIndex := 0; argumentIndex < values.Count(); argumentIndex++ {
+			argument, argumentOK := values.At(argumentIndex)
+			argumentSpan, argumentSpanOK := argument.Span()
+			if !argumentOK || !argumentSpanOK {
+				return errors.New("link/boundary: malformed semantic Call argument")
+			}
+			if err := addSpan("Call argument", argument.ContextID(), argumentSpan, true); err != nil {
+				return err
+			}
+		}
+		if tail, tailOK := values.Tail(); tailOK {
+			tailSpan, tailSpanOK := tail.Span()
+			if !tailSpanOK {
+				return errors.New("link/boundary: malformed semantic Call tail")
+			}
+			if err := addSpan("Call tail", tail.ContextID(), tailSpan, true); err != nil {
+				return err
+			}
+		}
+	}
+	// Computation and return rows are artifact-issued from the exact authored
+	// Span identities.  Publish the same semantic inverse here so mounted
+	// consumers join by ModuleKey+occurrence ID rather than reopening Terms.
+	for index := 0; index < input.UnaryOccurrenceCount(); index++ {
+		row, ok := input.UnaryOccurrenceAt(index)
+		span, spanOK := row.Span()
+		operandSpan, operandSpanOK := row.OperandSpan()
+		if !ok || !spanOK || !operandSpanOK || addSpan("Unary", row.ContextID(), span, true) != nil || addSpan("Unary operand", row.OperandID(), operandSpan, true) != nil {
+			return errors.New("link/boundary: malformed semantic Unary receipt")
+		}
+	}
+	for index := 0; index < input.SelectOccurrenceCount(); index++ {
+		row, ok := input.SelectOccurrenceAt(index)
+		span, spanOK := row.Span()
+		leftSpan, leftSpanOK := row.LeftSpan()
+		rightSpan, rightSpanOK := row.RightSpan()
+		if !ok || !spanOK || !leftSpanOK || !rightSpanOK || addSpan("Select", row.ContextID(), span, true) != nil || addSpan("Select left", row.LeftID(), leftSpan, true) != nil || addSpan("Select right", row.RightID(), rightSpan, true) != nil {
+			return errors.New("link/boundary: malformed semantic Select receipt")
+		}
+	}
+	for index := 0; index < input.ClaimOccurrenceCount(); index++ {
+		row, ok := input.ClaimOccurrenceAt(index)
+		span, spanOK := row.Span()
+		operandSpan, operandSpanOK := row.OperandSpan()
+		if !ok || !spanOK || !operandSpanOK || addSpan("Claim", row.ContextID(), span, true) != nil || addSpan("Claim operand", row.OperandID(), operandSpan, true) != nil {
+			return errors.New("link/boundary: malformed semantic Claim receipt")
+		}
+	}
+	for index := 0; index < input.ReturnOccurrenceCount(); index++ {
+		row, ok := input.ReturnOccurrenceAt(index)
+		_, spanOK := row.Span()
+		valuesSpan, valuesSpanOK := row.ValuesSpan()
+		if !ok || !spanOK || !valuesSpanOK || !row.ContextID().Available() || !row.ValuesID().Available() {
+			return errors.New("link/boundary: unavailable semantic Return receipt")
+		}
+		// A Return is an Outcome/control occurrence, rather than a member of
+		// Boundary's value universe. Its ID is consumed by the artifact and
+		// Residence boundary rows, which preserve that structural identity
+		// directly. Only the returned Values occurrence needs a Boundary Value
+		// ordinal for Value's return transfer rule. Attempting to map the
+		// Return span itself through valuePairs is a category error: the value
+		// universe intentionally contains the derived Outcome terminal, not the
+		// authored Return control term.
+		if err := addSpan("Return values", row.ValuesID(), valuesSpan, true); err != nil {
+			return err
+		}
+	}
+	type sourceFamily struct {
+		count int
+		at    func(int) (program.ValueSourceOccurrence, bool)
+	}
+	for _, family := range []sourceFamily{
+		{input.NilSourceCount(), input.NilSourceAt}, {input.BoolSourceCount(), input.BoolSourceAt},
+		{input.IntegerSourceCount(), input.IntegerSourceAt}, {input.FloatSourceCount(), input.FloatSourceAt},
+		{input.StringSourceCount(), input.StringSourceAt}, {input.TypeValueSourceCount(), input.TypeValueSourceAt},
+	} {
+		for index := 0; index < family.count; index++ {
+			source, ok := family.at(index)
+			if !ok {
+				continue
+			}
+			span, spanOK := source.Span()
+			if !input.OwnsValueSourceOccurrence(source) || !spanOK || addSpan("ValueSource", source.ContextID(), span, true) != nil {
+				return errors.New("link/boundary: malformed semantic ValueSource receipt")
+			}
+		}
+	}
+	for index := 0; index < input.StorageReadCount(); index++ {
+		read, ok := input.StorageReadAt(index)
+		if !ok {
+			continue
+		}
+		span, spanOK := read.Span()
+		if !input.OwnsStorageReadOccurrence(read) || !spanOK || addSpan("StorageRead", read.ContextID(), span, true) != nil {
+			return errors.New("link/boundary: malformed semantic StorageRead receipt")
+		}
+	}
 	return nil
 }
 
@@ -386,60 +662,94 @@ func (v Values) Of(shard linkproject.Shard, term keyspace.Term) (Value, bool) {
 	return value, row.shard == uint32(mountIndex+1) && row.term == term
 }
 
-// Callee returns the exact existing Program callee Value of one ordinary
-// Project Call application. It is a direct projection only: Boundary retains
-// neither a call table nor a derived callee identity.
-func (v Calls) Callee(application linkproject.Application) (Value, bool) {
-	if v.component == nil || v.component.authority == nil {
+// ForProgramSpan resolves one exact opaque Program occurrence proof through
+// Boundary's sole sealed span-to-Value inverse. The authored term remains in
+// Program/Boundary construction; consumers cannot reconstruct or supply it.
+func (v Values) ForProgramSpan(shard linkproject.Shard, span program.Span) (Value, bool) {
+	if !v.live() || !span.Available() {
 		return Value{}, false
 	}
-	applications := v.component.authority.project.Applications()
-	shard, term, ok := applications.Call(application)
-	if !ok || term == 0 {
+	mounts := v.component.authority.project.Mounts()
+	mountIndex, mountOK := mounts.Index(shard)
+	p, programOK := mounts.Program(shard)
+	context := span.ContextID()
+	if !mountOK || mountIndex < 0 || !programOK || p == nil || !p.TransformerInput().OwnsSpan(span) || !context.Available() {
 		return Value{}, false
 	}
-	p, ok := v.component.authority.project.Mounts().Program(shard)
-	if !ok || p == nil {
+	ordinal, ok := v.component.authority.valueTable.spans[valueSpanKey{mount: uint32(mountIndex + 1), context: context}]
+	if !ok || uint64(ordinal) >= uint64(len(v.component.authority.valueTable.rows)) {
 		return Value{}, false
 	}
-	_, callee, _, _, ok := p.Flow().Authored().Calls().Get(term)
-	if !ok || callee == 0 {
-		return Value{}, false
-	}
-	return (Values{component: v.component}).Of(shard, callee)
+	row := v.component.authority.valueTable.rows[ordinal]
+	value := Value{component: v.component, ordinal: ordinal}
+	return value, row.shard == uint32(mountIndex+1) && v.valid(value)
 }
 
-// CallOperands returns the exact existing Program operands of one ordinary
-// Project Call Application. Receiver presence is encoded by CallForm; a zero
-// Value is not interpreted as a semantic form.
-func (v Calls) CallOperands(application linkproject.Application) (form flow.CallForm, receiver, actuals Value, ok bool) {
-	if v.component == nil || v.component.authority == nil {
-		return 0, Value{}, Value{}, false
+// ForMountedSpan rebinds one reusable Program span identity through an exact
+// Link mount. It is the artifact substitution lane: neither a Program handle
+// nor an authored Term is accepted or reconstructed.
+func (v Values) ForMountedSpan(moduleKey, spanContext keyspace.ContentID) (Value, bool) {
+	if !v.live() || !moduleKey.Available() || !spanContext.Available() {
+		return Value{}, false
 	}
-	applications := v.component.authority.project.Applications()
-	shard, term, ok := applications.Call(application)
-	if !ok || term == 0 {
-		return 0, Value{}, Value{}, false
+	mount := v.component.authority.valueTable.mounts[moduleKey]
+	if mount == 0 || uint64(mount) > uint64(len(v.component.authority.valueTable.relations)) {
+		return Value{}, false
 	}
-	p, ok := v.component.authority.project.Mounts().Program(shard)
-	if !ok || p == nil {
-		return 0, Value{}, Value{}, false
+	ordinal, ok := v.component.authority.valueTable.spans[valueSpanKey{mount: mount, context: spanContext}]
+	if !ok || uint64(ordinal) >= uint64(len(v.component.authority.valueTable.rows)) {
+		return Value{}, false
 	}
-	_, _, receiverTerm, actualsTerm, ok := p.Flow().Authored().Calls().Get(term)
-	if !ok || actualsTerm == 0 {
-		return 0, Value{}, Value{}, false
+	row := v.component.authority.valueTable.rows[ordinal]
+	value := Value{component: v.component, ordinal: ordinal}
+	return value, row.shard == mount && v.valid(value)
+}
+
+// ForMountedSemantic rebinds one exact reusable Program semantic occurrence
+// through a concrete ModuleKey. The inverse was sealed while Link owned the
+// live Program proof; callers cannot provide a raw Term or fabricate a
+// Value-to-occurrence join.
+func (v Values) ForMountedSemantic(moduleKey, occurrenceID keyspace.ContentID) (Value, bool) {
+	if !v.live() || !moduleKey.Available() || !occurrenceID.Available() {
+		return Value{}, false
 	}
-	values := Values{component: v.component}
-	actuals, ok = values.Of(shard, actualsTerm)
-	if !ok {
-		return 0, Value{}, Value{}, false
+	mount := v.component.authority.valueTable.mounts[moduleKey]
+	if mount == 0 || uint64(mount) > uint64(len(v.component.authority.valueTable.relations)) {
+		return Value{}, false
 	}
-	if receiverTerm == 0 {
-		return flow.CallFormPlain, Value{}, actuals, true
+	ordinal, ok := v.component.authority.valueTable.semantic[valueSemanticKey{mount: mount, id: occurrenceID}]
+	if !ok || uint64(ordinal) >= uint64(len(v.component.authority.valueTable.rows)) {
+		return Value{}, false
 	}
-	receiver, ok = values.Of(shard, receiverTerm)
-	if !ok {
-		return 0, Value{}, Value{}, false
+	row := v.component.authority.valueTable.rows[ordinal]
+	value := Value{component: v.component, ordinal: ordinal}
+	return value, row.shard == mount && v.valid(value)
+}
+
+// VisitMountedSemantics visits the complete mounted semantic Value directory
+// exactly once. Order is deliberately unspecified: semantic IDs are opaque
+// lookup keys, not an authored sequence. The callback receives only the
+// existing ModuleKey and Boundary Value association sealed by this owner.
+func (v Values) VisitMountedSemantics(visit func(moduleKey, occurrenceID keyspace.ContentID, value Value) bool) bool {
+	if !v.live() || visit == nil {
+		return false
 	}
-	return flow.CallFormMethod, receiver, actuals, true
+	table := v.component.authority.valueTable
+	mounts := v.component.authority.project.Mounts()
+	if mounts.Count() != len(table.relations) {
+		return false
+	}
+	for key, ordinal := range table.semantic {
+		if key.mount == 0 || uint64(key.mount) > uint64(mounts.Count()) || !key.id.Available() || uint64(ordinal) >= uint64(len(table.rows)) {
+			return false
+		}
+		shard, shardOK := mounts.At(int(key.mount - 1))
+		module, moduleOK := v.component.authority.project.ModuleKey(shard)
+		row := table.rows[ordinal]
+		value := Value{component: v.component, ordinal: ordinal}
+		if !shardOK || !moduleOK || !module.Available() || table.mounts[module] != key.mount || row.shard != key.mount || !v.valid(value) || !visit(module, key.id, value) {
+			return false
+		}
+	}
+	return true
 }

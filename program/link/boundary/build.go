@@ -36,6 +36,9 @@ func Build(input Input) (*Draft, error) {
 	if err := sealValues(authority); err != nil {
 		return nil, err
 	}
+	if err := sealMountedCalls(authority); err != nil {
+		return nil, err
+	}
 	authority.moduleRelation = moduleRelationID(authority.valueTable.content, input.Target, require)
 	if !authority.moduleRelation.Available() {
 		return nil, errors.New("link/boundary: unavailable module relation identity")

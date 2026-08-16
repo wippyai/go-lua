@@ -140,11 +140,11 @@ func TestNarrowByPathTruthyDoesNotTreatStringLiteralAsBooleanTrue(t *testing.T) 
 
 func TestNarrowByPathTruthyKeepsOnlyTruthyBooleanMember(t *testing.T) {
 	on := typetable.NewRecord().
-		Field("enabled", typ.True).
+		Field("enabled", typ.LiteralBool(true)).
 		Field("run", typ.Func().Returns().Build()).
 		Build()
 	off := typetable.NewRecord().
-		Field("enabled", typ.False).
+		Field("enabled", typ.LiteralBool(false)).
 		Field("skip", typ.Func().Returns().Build()).
 		Build()
 
@@ -1411,21 +1411,21 @@ func recursiveTreeNodeFixture() (typ.Type, typ.Type, typ.Type) {
 }
 
 func TestNarrowByLiteralKeepsOnlyInhabitedArm(t *testing.T) {
-	got, ok := NarrowByLiteral(typeexpr.Union(typ.String, typ.False), typ.False)
+	got, ok := NarrowByLiteral(typeexpr.Union(typ.String, typ.LiteralBool(false)), typ.LiteralBool(false))
 	if !ok {
 		t.Fatal("expected a strict narrowing of string | false by false")
 	}
-	if !typ.TypeEquals(got, typ.False) {
+	if !typ.TypeEquals(got, typ.LiteralBool(false)) {
 		t.Fatalf("got %v, want false", got)
 	}
 }
 
 func TestNarrowByLiteralDecomposesBoolean(t *testing.T) {
-	got, ok := NarrowByLiteral(typ.Boolean, typ.True)
+	got, ok := NarrowByLiteral(typ.Boolean, typ.LiteralBool(true))
 	if !ok {
 		t.Fatal("expected a strict narrowing of boolean by true")
 	}
-	if !typ.TypeEquals(got, typ.True) {
+	if !typ.TypeEquals(got, typ.LiteralBool(true)) {
 		t.Fatalf("got %v, want true", got)
 	}
 }
@@ -1441,13 +1441,13 @@ func TestNarrowByLiteralLeavesOpenScalarWhole(t *testing.T) {
 }
 
 func TestNarrowByLiteralAndNotPartitionTheSameUnion(t *testing.T) {
-	union := typeexpr.Union(typ.String, typ.False)
-	positive, positiveOK := NarrowByLiteral(union, typ.False)
-	negative, negativeOK := NarrowByLiteralNot(union, typ.False)
+	union := typeexpr.Union(typ.String, typ.LiteralBool(false))
+	positive, positiveOK := NarrowByLiteral(union, typ.LiteralBool(false))
+	negative, negativeOK := NarrowByLiteralNot(union, typ.LiteralBool(false))
 	if !positiveOK || !negativeOK {
 		t.Fatal("both edges of x == false must narrow string | false")
 	}
-	if !typ.TypeEquals(positive, typ.False) || !typ.TypeEquals(negative, typ.String) {
+	if !typ.TypeEquals(positive, typ.LiteralBool(false)) || !typ.TypeEquals(negative, typ.String) {
 		t.Fatalf("got %v / %v, want false / string", positive, negative)
 	}
 }

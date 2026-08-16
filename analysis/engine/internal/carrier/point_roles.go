@@ -128,7 +128,7 @@ func (work *Work) EqualRuleContribution(left, right RuleContribution) bool {
 // predicate for the one canonical fold/publication flow.
 func (work *Work) ExactSameRuleContributionRepresentation(left, right RuleContribution) bool {
 	return work.admittedRuleContribution(left) && work.admittedRuleContribution(right) && work.liveFor(left.value.state, right.value.state) &&
-		exactSameStateRepresentation(left.value.state, right.value.state) && sameContributionCoverage(left.value.coverage, right.value.coverage)
+		samePublishedInputState(left.value.state, right.value.state) && sameContributionCoverage(left.value.coverage, right.value.coverage)
 }
 
 func (work *Work) LessOrEqRuleContribution(left, right RuleContribution) bool {
@@ -175,17 +175,17 @@ func (work *Work) EqualPointState(left, right PointState) bool {
 // consumers must refold before a later ascent ticket can be accepted.
 func (work *Work) ExactSamePointRepresentation(left, right PointState) bool {
 	return work.admittedPointState(left) && work.admittedPointState(right) && work.liveFor(left.state, right.state) &&
-		exactSameStateRepresentation(left.state, right.state) && sameContributionCoverage(left.coverage, right.coverage)
+		samePublishedInputState(left.state, right.state) && sameContributionCoverage(left.coverage, right.coverage)
 }
 
-// exactSameStateRepresentation is deliberately not sameState. sameState is
+// samePublishedInputState is deliberately not sameState. sameState is
 // predecessor provenance and treats a different support BDD handle as a
 // different State even when it denotes the same formula. Publication barriers
 // are semantic at the outer support boundary, so harmless handle churn must
 // not version/wake an otherwise identical State+C header. Roots remain a
 // strict immutable-vector identity: independently rebuilt roots need the
 // conservative publication path even when their payloads compare equal.
-func exactSameStateRepresentation(left, right State) bool {
+func samePublishedInputState(left, right State) bool {
 	return left.authority == right.authority && left.scope.same(right.scope) && left.support.Equal(right.support) && sameRootVector(left.roots, right.roots)
 }
 
@@ -577,12 +577,44 @@ func (work *Work) MergeSelectedPointState(kind MergeKind, current PointState, se
 // latent and cannot re-enter RuleContribution algebra except through the
 // closing lift below.  Non-coordinate transport uses the existing total raw
 // State transport, which masks source support before reindexing.
+// PointTransportBoundary is the first closed substage reached by one total
+// PointState transport. It is detached diagnostic provenance only: callers
+// cannot inspect PointState storage or alter the one transport authority.
+type PointTransportBoundary uint8
+
+const (
+	PointTransportBoundaryNone PointTransportBoundary = iota
+	PointTransportBoundaryPreflight
+	PointTransportBoundaryCoordinatePreSupport
+	PointTransportBoundaryCoordinateReindexSupport
+	PointTransportBoundaryCoordinatePostSupport
+	PointTransportBoundaryCoordinateCoverage
+	PointTransportBoundaryCoordinateAdmission
+	PointTransportBoundaryGeneralPreFilter
+	PointTransportBoundaryGeneralReindexSupport
+	PointTransportBoundaryGeneralReindexTypedSlots
+	PointTransportBoundaryGeneralReindexCommit
+	PointTransportBoundaryGeneralPostFilter
+	PointTransportBoundaryGeneralCoverage
+	PointTransportBoundaryGeneralAdmission
+)
+
+// TransportPointState preserves the ordinary total PointState transport API.
 func (work *Work) TransportPointState(input PointState, pre support.Mask, omega ReindexPlan, post support.Mask) (PointState, bool) {
+	point, _, ok := work.TransportPointStateWithBoundary(input, pre, omega, post)
+	return point, ok
+}
+
+// TransportPointStateWithBoundary performs the exact same total transport as
+// TransportPointState and returns only the failed carrier substage. The
+// marker is consumed by engine diagnostics immediately; it carries no state,
+// roots, coverage, or mutable work authority.
+func (work *Work) TransportPointStateWithBoundary(input PointState, pre support.Mask, omega ReindexPlan, post support.Mask) (PointState, PointTransportBoundary, bool) {
 	if !work.live() || !work.admittedPointState(input) || !omega.validFor(work.composition) || !input.state.scope.same(omega.source()) || !validBoundaryMask(pre, input.state.scope) || !validBoundaryMask(post, omega.target()) {
-		return PointState{}, false
+		return PointState{}, PointTransportBoundaryPreflight, false
 	}
 	if omega.identity() && pre.IsTrue() && post.IsTrue() {
-		return input, true
+		return input, PointTransportBoundaryNone, true
 	}
 	if omega.coordinateIdentity() && pre.IsTrue() && post.IsTrue() {
 		state := input.state
@@ -590,40 +622,56 @@ func (work *Work) TransportPointState(input PointState, pre support.Mask, omega 
 		point := input
 		point.state = state
 		point.authority = state.authority
-		return point, work.admittedPointState(point)
+		return point, PointTransportBoundaryCoordinateAdmission, work.admittedPointState(point)
 	}
 	if omega.coordinateIdentity() {
 		source, ok := work.intersectSupport(input.state.support, pre)
 		if !ok {
-			return PointState{}, false
+			return PointState{}, PointTransportBoundaryCoordinatePreSupport, false
 		}
 		reindexed, ok := work.reindexSupport(source, omega.relation)
 		if !ok {
-			return PointState{}, false
+			return PointState{}, PointTransportBoundaryCoordinateReindexSupport, false
 		}
 		target, ok := work.intersectSupport(reindexed, post)
 		if !ok {
-			return PointState{}, false
+			return PointState{}, PointTransportBoundaryCoordinatePostSupport, false
 		}
 		coverage, ok := work.transportContributionCoverage(input.coverage, pre, omega, post, target)
 		if !ok {
-			return PointState{}, false
+			return PointState{}, PointTransportBoundaryCoordinateCoverage, false
 		}
 		state := input.state
 		state.scope, state.support = omega.target(), target
 		point := PointState{state: state, coverage: coverage, roleSeal: work.contributionSeal, authority: state.authority}
-		return point, work.admittedPointState(point)
+		return point, PointTransportBoundaryCoordinateAdmission, work.admittedPointState(point)
 	}
-	state, ok := work.Transport(input.state, pre, omega, post)
+	state, ok := work.filter(input.state, pre)
 	if !ok {
-		return PointState{}, false
+		return PointState{}, PointTransportBoundaryGeneralPreFilter, false
+	}
+	var reindexBoundary StateReindexBoundary
+	state, reindexBoundary, ok = work.ReindexWithBoundary(state, omega)
+	if !ok {
+		switch reindexBoundary {
+		case StateReindexBoundarySupport:
+			return PointState{}, PointTransportBoundaryGeneralReindexSupport, false
+		case StateReindexBoundaryTypedSlots:
+			return PointState{}, PointTransportBoundaryGeneralReindexTypedSlots, false
+		default:
+			return PointState{}, PointTransportBoundaryGeneralReindexCommit, false
+		}
+	}
+	state, ok = work.filter(state, post)
+	if !ok {
+		return PointState{}, PointTransportBoundaryGeneralPostFilter, false
 	}
 	coverage, ok := work.transportContributionCoverage(input.coverage, pre, omega, post, state.support)
 	if !ok {
-		return PointState{}, false
+		return PointState{}, PointTransportBoundaryGeneralCoverage, false
 	}
 	point := PointState{state: state, coverage: coverage, roleSeal: work.contributionSeal, authority: state.authority}
-	return point, work.admittedPointState(point)
+	return point, PointTransportBoundaryGeneralAdmission, work.admittedPointState(point)
 }
 
 // LiftRuleContribution is the only PointState -> RuleContribution boundary.

@@ -1,15 +1,16 @@
 package residence
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/domain/heap"
 	"github.com/wippyai/go-lua/analysis/domain/materialization"
+	programartifact "github.com/wippyai/go-lua/analysis/internal/programartifact"
 	"github.com/wippyai/go-lua/program/keyspace"
 	"github.com/wippyai/go-lua/program/link"
-	linkhost "github.com/wippyai/go-lua/program/link/host"
 	linkmodule "github.com/wippyai/go-lua/program/link/module"
 	linkproject "github.com/wippyai/go-lua/program/link/project"
 	"github.com/wippyai/go-lua/program/target"
@@ -17,71 +18,110 @@ import (
 
 const schemaFormat uint64 = 0x7265736964656e63 // "residenc"
 
-// Schema is the sealed Residence family for one exact Link. K is exactly the
-// structural boundary range. AnalysisRoot is solver State and is admitted by
-// a factored boundary-to-root relation rather than a root×boundary key table.
+// Schema is the sealed Residence family for one exact Link.  Its published
+// storage is a scalar receipt: no Project, Boundary, Host, Module, Program or
+// owner-fenced Link coordinate survives the seal.
 type Schema struct{ owner *schema }
 
 type schema struct {
-	source *link.Link
-	heap   heap.Schema
-	linkID keyspace.ContentID
-	id     keyspace.ContentID
+	linkOwner link.OwnerCapability
+	heap      heap.Schema
+	id        keyspace.ContentID
 
 	allocations     []heap.Key
 	allocationIndex map[heap.Key]uint32
 
 	boundaries    []boundaryRow
 	boundaryIndex map[boundaryIdentity]uint32
-	rootClasses   [][]linkmodule.AnalysisRoot
+	rootClasses   [][]keyspace.ContentID
 	classBuckets  map[uint64][]uint32
-	shardClasses  map[linkproject.Shard]uint32
+	mountClasses  map[keyspace.ContentID]uint32
 
-	potential uint64
-	bottom    Value
-	top       Value
+	potential   uint64
+	bottom, top Value
 }
 
 type boundaryIdentity struct {
 	kind BoundaryKind
 	id   keyspace.ContentID
 }
-
 type boundaryRow struct {
-	kind        BoundaryKind
-	id          keyspace.ContentID
-	class       uint32
-	program     programBoundary
-	application linkproject.Application
-	operation   target.Operation
-	port        uint32
-	entry       linkmodule.ModuleCacheEntry
-	coordinate  linkmodule.ModuleCoordinate
-	global      linkhost.GlobalBinding
+	kind  BoundaryKind
+	id    keyspace.ContentID
+	class uint32
 }
 
-func Seal(source *link.Link, heapSchema heap.Schema) (Schema, bool) {
-	// ContentID is the cold/replay identity; it is not a live ownership
-	// capability.  Residence may only ingest allocation keys from a Heap
-	// schema sealed against this exact Link authority.
-	if source == nil || !source.ContentID().Available() || !heapSchema.Valid() || heapSchema.Link() != source || heapSchema.LinkContentID() != source.ContentID() {
+// SealWithArtifacts is cold ingress. It consumes the source Link only long
+// enough to authenticate scalar mount/application/global/root identities;
+// none of its handles enter the sealed Schema.
+func SealWithArtifacts(source *link.Link, heapSchema heap.Schema, mounts []ArtifactMount) (Schema, bool) {
+	if source == nil {
+		return Schema{}, false
+	}
+	linkOwner := source.OwnerCapability()
+	if !linkOwner.Available() || source.Project() == nil || source.Module() == nil || source.Host() == nil || !heapSchema.Valid() || !heapSchema.LinkOwner().Matches(linkOwner) || len(mounts) == 0 || len(mounts) != source.Project().Mounts().Count() {
 		return Schema{}, false
 	}
 	owner := &schema{
-		source:          source,
-		heap:            heapSchema,
-		linkID:          source.ContentID(),
-		allocationIndex: make(map[heap.Key]uint32),
-		boundaryIndex:   make(map[boundaryIdentity]uint32),
-		classBuckets:    make(map[uint64][]uint32),
-		shardClasses:    make(map[linkproject.Shard]uint32),
+		linkOwner: linkOwner, heap: heapSchema,
+		allocationIndex: make(map[heap.Key]uint32), boundaryIndex: make(map[boundaryIdentity]uint32),
+		classBuckets: make(map[uint64][]uint32), mountClasses: make(map[keyspace.ContentID]uint32, len(mounts)),
 	}
-	if !owner.addAllocations() || !owner.captureBoundaries() || !owner.storeBoundaries() || !owner.returnBoundaries() ||
-		!owner.addApplicationBoundaries() ||
-		!owner.addModuleEntryBoundaries() || !owner.addModuleCoordinateBoundaries() || !owner.addGlobalBoundaries() || !owner.finish() {
+	if !owner.addMountClasses(source, mounts) || !owner.addAllocations() || !owner.addProgramBoundaries(mounts) ||
+		!owner.addApplicationBoundaries(source) || !owner.addModuleBoundaries(source) || !owner.addGlobalBoundaries(source) || !owner.finish() {
 		return Schema{}, false
 	}
 	return Schema{owner: owner}, true
+}
+
+// residenceMountID turns the otherwise owner-fenced Project Shard position
+// into a Link-specific immutable receipt. Ordinal is consumed only here at
+// cold ingress, so duplicate mounts remain distinct without retaining Shard.
+func residenceMountID(owner link.OwnerCapability, module, program keyspace.ContentID, ordinal int) keyspace.ContentID {
+	if !owner.Available() || !module.Available() || !program.Available() || ordinal < 0 {
+		return keyspace.ContentID{}
+	}
+	linkID := owner.ContentID()
+	var image [112]byte
+	copy(image[:32], linkID[:])
+	copy(image[32:64], module[:])
+	copy(image[64:96], program[:])
+	binary.BigEndian.PutUint64(image[96:104], 0x7265732d6d6e74) // res-mnt
+	binary.BigEndian.PutUint64(image[104:112], uint64(ordinal))
+	return keyspace.ContentID(sha256.Sum256(image[:]))
+}
+
+func (owner *schema) addMountClasses(source *link.Link, mounts []ArtifactMount) bool {
+	for index, mount := range mounts {
+		shard, shardOK := source.Project().Mounts().At(index)
+		module, moduleOK := source.Project().ModuleKey(shard)
+		program, programOK := source.Project().Mounts().ProgramID(shard)
+		expected := residenceMountID(owner.linkOwner, module, program, index)
+		if !shardOK || !moduleOK || !programOK || !mount.Available() || mount.mount != expected || mount.module != module || mount.program != program || mount.artifact.CompileKey().ProgramID() != program {
+			return false
+		}
+		rootCount := source.Module().Roots().ForShardCount(shard)
+		roots := make([]keyspace.ContentID, 0, rootCount)
+		rootsOK := true
+		for rootIndex := 0; rootIndex < rootCount; rootIndex++ {
+			root, rootOK := source.Module().Roots().ForShardAt(shard, rootIndex)
+			rootID, rootIDOK := source.Module().Roots().ID(root)
+			if !rootOK || !rootIDOK || !rootID.Available() {
+				rootsOK = false
+				break
+			}
+			roots = append(roots, rootID)
+		}
+		class, classOK := owner.internRootClass(roots)
+		if !rootsOK || !classOK {
+			return false
+		}
+		if _, duplicate := owner.mountClasses[mount.mount]; duplicate {
+			return false
+		}
+		owner.mountClasses[mount.mount] = class
+	}
+	return true
 }
 
 func (owner *schema) addAllocations() bool {
@@ -105,99 +145,58 @@ func (owner *schema) addAllocations() bool {
 	return true
 }
 
-func (owner *schema) rootsForShard(shard linkproject.Shard) ([]linkmodule.AnalysisRoot, bool) {
-	count := owner.source.Module().Roots().ForShardCount(shard)
-	roots := make([]linkmodule.AnalysisRoot, 0, count)
-	for index := 0; index < count; index++ {
-		root, ok := owner.source.Module().Roots().ForShardAt(shard, index)
-		if !ok {
-			return nil, false
-		}
-		roots = append(roots, root)
-	}
-	return roots, true
-}
-
-func (owner *schema) classForShard(shard linkproject.Shard) (uint32, bool) {
-	if stored := owner.shardClasses[shard]; stored != 0 {
-		return stored - 1, true
-	}
-	roots, ok := owner.rootsForShard(shard)
-	if !ok {
-		return 0, false
-	}
-	class, ok := owner.internRootClass(roots)
-	if !ok || class == ^uint32(0) {
-		return 0, false
-	}
-	owner.shardClasses[shard] = class + 1
-	return class, true
-}
-
-func (owner *schema) classForApplication(application linkproject.Application) (uint32, bool) {
-	shard, term, ok := owner.source.Project().Applications().Call(application)
-	if !ok {
-		return 0, false
-	}
-	p, ok := owner.source.Project().Mounts().Program(shard)
-	if !ok || p == nil || !p.Flow().Executable().Contains(term) {
-		return 0, false
-	}
-	return owner.classForShard(shard)
-}
-
-func (owner *schema) addApplicationBoundaries() bool {
-	contract, ok := owner.source.Boundary().Target()
-	if !ok || contract == nil {
+func (owner *schema) addApplicationBoundaries(source *link.Link) bool {
+	boundary := source.Boundary()
+	contract, contractOK := boundary.Target()
+	if boundary == nil || !contractOK || contract == nil {
 		return false
 	}
-	for appIndex := 0; appIndex < owner.source.Project().Applications().Count(); appIndex++ {
-		application, ok := owner.source.Project().Applications().At(appIndex)
-		if !ok {
-			return false
-		}
-		class, ok := owner.classForApplication(application)
-		if !ok {
+	for index := 0; index < source.Project().Applications().Count(); index++ {
+		application, appOK := source.Project().Applications().At(index)
+		appID, appIDOK := source.Project().ApplicationID(application)
+		shard, _, callOK := source.Project().Applications().Call(application)
+		mountIndex, mountIndexOK := source.Project().Mounts().Index(shard)
+		if !appOK || !appIDOK || !callOK || !mountIndexOK {
 			continue
 		}
-		project := owner.source.Project()
-		if project == nil {
-			return false
-		}
-		appID, ok := project.ApplicationID(application)
-		if !ok {
+		mountShard, mountOK := source.Project().Mounts().At(mountIndex)
+		module, moduleOK := source.Project().ModuleKey(mountShard)
+		program, programOK := source.Project().Mounts().ProgramID(mountShard)
+		mountID := residenceMountID(owner.linkOwner, module, program, mountIndex)
+		class, classOK := owner.mountClasses[mountID]
+		if !mountOK || !moduleOK || !programOK || !classOK || !appID.Available() {
 			return false
 		}
 		for opIndex := 0; opIndex < contract.OperationCount(); opIndex++ {
-			operation, ok := contract.OperationAt(opIndex)
-			if !ok {
+			operation, opOK := contract.OperationAt(opIndex)
+			if !opOK {
 				return false
 			}
-			if !owner.source.Boundary().ApplicationOperationAvailable(contract, application, operation) {
+			if !boundary.ApplicationOperationAvailable(contract, application, operation) {
 				continue
 			}
 			appendPort := func(kind BoundaryKind, port uint32) bool {
-				return owner.addBoundaryClass(boundaryRow{kind: kind, id: applicationBoundaryID(owner.linkID, appID, operation, kind, port), application: application, operation: operation, port: port}, class)
+				return owner.addBoundaryClass(boundaryRow{kind: kind, id: applicationBoundaryID(owner.linkOwner, appID, operation, kind, port)}, class)
 			}
-			for index := 0; index < contract.CallbackCount(operation); index++ {
-				callback, ok := contract.CallbackAt(operation, index)
+			for portIndex := 0; portIndex < contract.CallbackCount(operation); portIndex++ {
+				callback, ok := contract.CallbackAt(operation, portIndex)
 				if !ok || !appendPort(BoundaryCallback, uint32(callback)) {
 					return false
 				}
 			}
-			for index := 0; index < contract.SuspensionCount(operation); index++ {
-				if !appendPort(BoundarySuspension, uint32(index)) {
+			for portIndex := 0; portIndex < contract.SuspensionCount(operation); portIndex++ {
+				if !appendPort(BoundarySuspension, uint32(portIndex)) {
 					return false
 				}
 			}
-			for index := 0; index < contract.TransferCount(operation); index++ {
-				transfer, ok := contract.TransferIDAt(operation, index)
+			for portIndex := 0; portIndex < contract.TransferCount(operation); portIndex++ {
+				transfer, ok := contract.TransferIDAt(operation, portIndex)
 				if !ok || !appendPort(BoundaryTransfer, uint32(transfer)) {
 					return false
 				}
 			}
-			for index := 0; index < contract.ResumeCount(operation); index++ {
-				resume, ok := contract.ResumeIDAt(operation, index)
+			for portIndex := 0; portIndex < contract.ResumeCount(operation); portIndex++ {
+				resume, ok := contract.ResumeIDAt(operation, portIndex)
 				if !ok || !appendPort(BoundaryResume, uint32(resume)) {
 					return false
 				}
@@ -207,8 +206,12 @@ func (owner *schema) addApplicationBoundaries() bool {
 	return true
 }
 
-func applicationBoundaryID(linkID, applicationID keyspace.ContentID, operation target.Operation, kind BoundaryKind, port uint32) keyspace.ContentID {
-	var image [32 + 32 + 4*8]byte
+func applicationBoundaryID(owner link.OwnerCapability, applicationID keyspace.ContentID, operation target.Operation, kind BoundaryKind, port uint32) keyspace.ContentID {
+	if !owner.Available() || !applicationID.Available() {
+		return keyspace.ContentID{}
+	}
+	linkID := owner.ContentID()
+	var image [96]byte
 	copy(image[:32], linkID[:])
 	copy(image[32:64], applicationID[:])
 	binary.BigEndian.PutUint64(image[64:], 0x7265732d6170706f)
@@ -218,77 +221,78 @@ func applicationBoundaryID(linkID, applicationID keyspace.ContentID, operation t
 	return keyspace.ContentID(sha256.Sum256(image[:]))
 }
 
-func (owner *schema) addModuleEntryBoundaries() bool {
-	for index := 0; index < owner.source.Module().Cache().EntryCount(); index++ {
-		entry, ok := owner.source.Module().Cache().EntryAt(index)
-		id, idOK := owner.source.Module().Cache().EntryID(entry)
-		_, from, to, mappingOK := owner.source.Module().Cache().EntryMapping(entry)
-		if !ok || !idOK || !mappingOK || !owner.addBoundary(boundaryRow{kind: BoundaryModuleEntry, id: id, entry: entry}, []linkmodule.AnalysisRoot{from, to}) {
+func (owner *schema) addModuleBoundaries(source *link.Link) bool {
+	module := source.Module()
+	for index := 0; index < module.Cache().EntryCount(); index++ {
+		entry, entryOK := module.Cache().EntryAt(index)
+		entryID, idOK := module.Cache().EntryID(entry)
+		_, from, to, mappingOK := module.Cache().EntryMapping(entry)
+		fromID, fromOK := module.Roots().ID(from)
+		toID, toOK := module.Roots().ID(to)
+		if !entryOK || !idOK || !mappingOK || !fromOK || !toOK || !owner.addBoundary(boundaryRow{kind: BoundaryModuleEntry, id: entryID}, []keyspace.ContentID{fromID, toID}) {
 			return false
 		}
 	}
-	return true
-}
-
-type coordinateScope struct {
-	actor          linkmodule.Actor
-	shard          linkproject.Shard
-	representative linkmodule.ModuleCacheInstance
-}
-
-func (owner *schema) addModuleCoordinateBoundaries() bool {
-	scopes := make(map[coordinateScope][]linkmodule.AnalysisRoot)
-	for index := 0; index < owner.source.Module().Roots().Count(); index++ {
-		root, ok := owner.source.Module().Roots().At(index)
-		coordinate, coordinateOK := owner.source.Module().Coordinates().ForRoot(root)
-		actor, shard, representative, mappingOK := owner.source.Module().Coordinates().Mapping(coordinate)
-		if !ok || !coordinateOK || !mappingOK {
+	// This construction-local tuple preserves Module's exact cache transport
+	// law. It is consumed into scalar coordinate/root IDs before Schema is
+	// returned, so no Project Shard, Actor or Module instance survives.
+	type coordinateScope struct {
+		actor          linkmodule.Actor
+		shard          linkproject.Shard
+		representative linkmodule.ModuleCacheInstance
+	}
+	scopes := make(map[coordinateScope][]keyspace.ContentID)
+	for index := 0; index < module.Roots().Count(); index++ {
+		root, rootOK := module.Roots().At(index)
+		coordinate, coordinateOK := module.Coordinates().ForRoot(root)
+		actor, shard, representative, mappingOK := module.Coordinates().Mapping(coordinate)
+		rootID, rootIDOK := module.Roots().ID(root)
+		if !rootOK || !coordinateOK || !mappingOK || !rootIDOK {
 			return false
 		}
-		tuple := coordinateScope{actor: actor, shard: shard, representative: representative}
-		scopes[tuple] = append(scopes[tuple], root)
+		scopes[coordinateScope{actor: actor, shard: shard, representative: representative}] = append(scopes[coordinateScope{actor: actor, shard: shard, representative: representative}], rootID)
 	}
-	for index := 0; index < owner.source.Module().Cache().EntryCount(); index++ {
-		entry, ok := owner.source.Module().Cache().EntryAt(index)
-		_, from, to, mappingOK := owner.source.Module().Cache().EntryMapping(entry)
-		_, fromActor, fromInstance, fromOK := owner.source.Module().Roots().Mapping(from)
-		toShard, toActor, _, toOK := owner.source.Module().Roots().Mapping(to)
-		representative, representativeOK := owner.source.Module().Cache().Representative(fromInstance)
-		if !ok || !mappingOK || !fromOK || !toOK || !representativeOK || fromActor != toActor {
+	for index := 0; index < module.Cache().EntryCount(); index++ {
+		entry, entryOK := module.Cache().EntryAt(index)
+		_, from, to, mappingOK := module.Cache().EntryMapping(entry)
+		_, fromActor, fromInstance, fromOK := module.Roots().Mapping(from)
+		toShard, toActor, _, toOK := module.Roots().Mapping(to)
+		representative, representativeOK := module.Cache().Representative(fromInstance)
+		toID, toOK := module.Roots().ID(to)
+		if !entryOK || !mappingOK || !fromOK || !toOK || !representativeOK || fromActor != toActor {
 			return false
 		}
 		tuple := coordinateScope{actor: fromActor, shard: toShard, representative: representative}
-		scopes[tuple] = append(scopes[tuple], to)
+		scopes[tuple] = append(scopes[tuple], toID)
 	}
-	for index := 0; index < owner.source.Module().Coordinates().Count(); index++ {
-		coordinate, ok := owner.source.Module().Coordinates().At(index)
-		id, idOK := owner.source.Module().Coordinates().ID(coordinate)
-		actor, shard, representative, mappingOK := owner.source.Module().Coordinates().Mapping(coordinate)
+	for index := 0; index < module.Coordinates().Count(); index++ {
+		coordinate, coordinateOK := module.Coordinates().At(index)
+		coordinateID, idOK := module.Coordinates().ID(coordinate)
+		actor, shard, representative, mappingOK := module.Coordinates().Mapping(coordinate)
 		roots := scopes[coordinateScope{actor: actor, shard: shard, representative: representative}]
-		if !ok || !idOK || !mappingOK || len(roots) == 0 || !owner.addBoundary(boundaryRow{kind: BoundaryModuleCoordinate, id: id, coordinate: coordinate}, roots) {
+		if !coordinateOK || !idOK || !mappingOK || len(roots) == 0 || !owner.addBoundary(boundaryRow{kind: BoundaryModuleCoordinate, id: coordinateID}, roots) {
 			return false
 		}
 	}
 	return true
 }
 
-func (owner *schema) addGlobalBoundaries() bool {
-	for index := 0; index < owner.source.Host().Globals().Count(); index++ {
-		global, ok := owner.source.Host().Globals().At(index)
-		id, idOK := residenceGlobalBindingID(owner.source, global)
-		root, _, _, _, _, _, mappingOK := owner.source.Host().Globals().Mapping(global)
-		if !ok || !idOK || !mappingOK || !owner.addBoundary(boundaryRow{kind: BoundaryGlobal, id: id, global: global}, []linkmodule.AnalysisRoot{root}) {
+func (owner *schema) addGlobalBoundaries(source *link.Link) bool {
+	globals := source.Host().Globals()
+	for index := 0; index < globals.Count(); index++ {
+		global, globalOK := globals.At(index)
+		globalID, idOK := globals.ID(global)
+		root, _, _, _, _, _, mappingOK := globals.Mapping(global)
+		rootID, rootIDOK := source.Module().Roots().ID(root)
+		if !globalOK || !idOK || !mappingOK || !rootIDOK || !owner.addBoundary(boundaryRow{kind: BoundaryGlobal, id: globalID}, []keyspace.ContentID{rootID}) {
 			return false
 		}
 	}
 	return true
 }
 
-func (owner *schema) addBoundary(row boundaryRow, roots []linkmodule.AnalysisRoot) bool {
-	if row.kind == BoundaryInvalid || !row.id.Available() {
-		return false
-	}
-	normalized, ok := owner.normalizeRoots(roots)
+func (owner *schema) addBoundary(row boundaryRow, roots []keyspace.ContentID) bool {
+	normalized, ok := normalizeRoots(roots)
 	if !ok {
 		return false
 	}
@@ -297,17 +301,17 @@ func (owner *schema) addBoundary(row boundaryRow, roots []linkmodule.AnalysisRoo
 }
 
 func (owner *schema) addBoundaryClass(row boundaryRow, class uint32) bool {
-	if row.kind == BoundaryInvalid || !row.id.Available() || uint64(class) >= uint64(len(owner.rootClasses)) {
+	if row.kind == BoundaryInvalid || !row.id.Available() || int(class) >= len(owner.rootClasses) {
 		return false
 	}
 	identity := boundaryIdentity{kind: row.kind, id: row.id}
 	if existing := owner.boundaryIndex[identity]; existing != 0 {
-		oldClass := owner.boundaries[existing-1].class
-		if oldClass == class {
+		old := owner.boundaries[existing-1]
+		if old.class == class {
 			return true
 		}
-		merged, mergedOK := owner.mergeRoots(owner.rootClasses[oldClass], owner.rootClasses[class])
-		if !mergedOK {
+		merged, ok := mergeRootIDs(owner.rootClasses[old.class], owner.rootClasses[class])
+		if !ok {
 			return false
 		}
 		mergedClass, ok := owner.internRootClass(merged)
@@ -326,121 +330,76 @@ func (owner *schema) addBoundaryClass(row boundaryRow, class uint32) bool {
 	return true
 }
 
-func (owner *schema) normalizeRoots(roots []linkmodule.AnalysisRoot) ([]linkmodule.AnalysisRoot, bool) {
-	result := append([]linkmodule.AnalysisRoot(nil), roots...)
-	for _, root := range result {
-		if _, ok := owner.source.Module().Roots().ID(root); !ok {
+func normalizeRoots(roots []keyspace.ContentID) ([]keyspace.ContentID, bool) {
+	if len(roots) == 0 {
+		return nil, false
+	}
+	result := append([]keyspace.ContentID(nil), roots...)
+	for _, id := range result {
+		if !id.Available() {
 			return nil, false
 		}
 	}
-	rootView := owner.source.Module().Roots()
-	sort.Slice(result, func(left, right int) bool {
-		order, ok := rootView.Compare(result[left], result[right])
-		return ok && order < 0
-	})
-	end := 0
-	for _, root := range result {
-		if end == 0 || result[end-1] != root {
-			result[end] = root
+	sort.Slice(result, func(left, right int) bool { return bytes.Compare(result[left][:], result[right][:]) < 0 })
+	end := 1
+	for index := 1; index < len(result); index++ {
+		if result[index] != result[end-1] {
+			result[end] = result[index]
 			end++
 		}
 	}
 	return result[:end], true
 }
 
-func (owner *schema) rootClassHash(roots []linkmodule.AnalysisRoot) (uint64, bool) {
-	if owner == nil || owner.source == nil {
-		return 0, false
-	}
-	hash := uint64(1469598103934665603)
-	for _, root := range roots {
-		id, ok := owner.source.Module().Roots().ID(root)
-		if !ok {
-			return 0, false
-		}
-		for _, byte := range id {
-			hash ^= uint64(byte)
-			hash *= 1099511628211
-		}
-	}
-	return hash, true
-}
-
-func (owner *schema) internRootClass(roots []linkmodule.AnalysisRoot) (uint32, bool) {
-	hash, ok := owner.rootClassHash(roots)
+func (owner *schema) internRootClass(roots []keyspace.ContentID) (uint32, bool) {
+	normalized, ok := normalizeRoots(roots)
 	if !ok {
 		return 0, false
 	}
-	for _, id := range owner.classBuckets[hash] {
-		candidate := owner.rootClasses[id]
-		if len(candidate) != len(roots) {
-			continue
+	hash := uint64(1469598103934665603)
+	for _, id := range normalized {
+		for _, value := range id {
+			hash ^= uint64(value)
+			hash *= 1099511628211
 		}
-		equal := true
-		for index := range roots {
-			if candidate[index] != roots[index] {
-				equal = false
-				break
-			}
-		}
-		if equal {
-			return id, true
+	}
+	for _, candidateID := range owner.classBuckets[hash] {
+		candidate := owner.rootClasses[candidateID]
+		if len(candidate) == len(normalized) && equalRootIDs(candidate, normalized) {
+			return candidateID, true
 		}
 	}
 	if uint64(len(owner.rootClasses)) >= uint64(^uint32(0)) {
 		return 0, false
 	}
 	id := uint32(len(owner.rootClasses))
-	owner.rootClasses = append(owner.rootClasses, append([]linkmodule.AnalysisRoot(nil), roots...))
+	owner.rootClasses = append(owner.rootClasses, normalized)
 	owner.classBuckets[hash] = append(owner.classBuckets[hash], id)
 	return id, true
 }
 
-func (owner *schema) mergeRoots(left, right []linkmodule.AnalysisRoot) ([]linkmodule.AnalysisRoot, bool) {
-	if owner == nil || owner.source == nil {
-		return nil, false
+func equalRootIDs(left, right []keyspace.ContentID) bool {
+	if len(left) != len(right) {
+		return false
 	}
-	roots := owner.source.Module().Roots()
-	result := make([]linkmodule.AnalysisRoot, 0, len(left)+len(right))
-	for li, ri := 0, 0; li < len(left) || ri < len(right); {
-		if li == len(left) {
-			result = append(result, right[ri:]...)
-			break
-		}
-		if ri == len(right) {
-			result = append(result, left[li:]...)
-			break
-		}
-		order, ok := roots.Compare(left[li], right[ri])
-		if !ok {
-			return nil, false
-		}
-		switch {
-		case order < 0:
-			result = append(result, left[li])
-			li++
-		case order > 0:
-			result = append(result, right[ri])
-			ri++
-		default:
-			result = append(result, left[li])
-			li++
-			ri++
+	for index := range left {
+		if left[index] != right[index] {
+			return false
 		}
 	}
-	return result, true
+	return true
+}
+func mergeRootIDs(left, right []keyspace.ContentID) ([]keyspace.ContentID, bool) {
+	return normalizeRoots(append(append([]keyspace.ContentID(nil), left...), right...))
 }
 
 func (owner *schema) finish() bool {
-	if owner == nil || owner.source == nil {
-		return false
-	}
 	potential, ok := owner.exactPotential()
 	if !ok {
 		return false
 	}
 	owner.potential = potential
-	owner.id = residenceContentID(owner.linkID)
+	owner.id = residenceContentID(owner.linkOwner)
 	if !owner.id.Available() {
 		return false
 	}
@@ -449,14 +408,7 @@ func (owner *schema) finish() bool {
 	return true
 }
 
-// exactPotential derives the finite relation cardinality from the sealed
-// vocabulary itself.  Keeping this as enumeration rather than a product
-// constant makes the rank proof stay correct when a lawful alternative is
-// added or removed: Fact.valid is the sole semantic admission authority.
 func (owner *schema) exactPotential() (uint64, bool) {
-	if owner == nil {
-		return 0, false
-	}
 	roles := [...]materialization.Role{materialization.Exact, materialization.Recent, materialization.Summary}
 	locations := [...]Location{ActorLocal, Shared, Module, Global}
 	retentions := [...]Retention{NotRetained, Retained}
@@ -470,13 +422,12 @@ func (owner *schema) exactPotential() (uint64, bool) {
 					for _, survival := range survivals {
 						for _, lastUse := range lastUses {
 							fact := Fact{owner: owner, reference: Reference{owner: owner, root: root, role: role}, location: location, retention: retention, survival: survival, lastUse: lastUse}
-							if !fact.valid() {
-								continue
+							if fact.valid() {
+								if count == ^uint64(0) {
+									return 0, false
+								}
+								count++
 							}
-							if count == ^uint64(0) {
-								return 0, false
-							}
-							count++
 						}
 					}
 				}
@@ -486,19 +437,20 @@ func (owner *schema) exactPotential() (uint64, bool) {
 	return count, true
 }
 
-func residenceContentID(linkID keyspace.ContentID) (id keyspace.ContentID) {
-	var payload [32 + 2*8]byte
+func residenceContentID(owner link.OwnerCapability) (id keyspace.ContentID) {
+	if !owner.Available() {
+		return keyspace.ContentID{}
+	}
+	linkID := owner.ContentID()
+	var payload [48]byte
 	copy(payload[:32], linkID[:])
 	binary.BigEndian.PutUint64(payload[32:40], schemaFormat)
-	binary.BigEndian.PutUint64(payload[40:48], 2)
-	digest := sha256.Sum256(payload[:])
-	copy(id[:], digest[:])
-	return id
+	binary.BigEndian.PutUint64(payload[40:48], 3)
+	return keyspace.ContentID(sha256.Sum256(payload[:]))
 }
 
 func (schema Schema) valid() bool {
-	return schema.owner != nil && schema.owner.source != nil && schema.owner.heap.Valid() && schema.owner.linkID.Available() && schema.owner.id.Available() &&
-		schema.owner.heap.Link() == schema.owner.source && schema.owner.source.ContentID() == schema.owner.linkID && schema.owner.heap.LinkContentID() == schema.owner.linkID
+	return schema.owner != nil && schema.owner.linkOwner.Available() && schema.owner.heap.Valid() && schema.owner.heap.LinkOwner().Matches(schema.owner.linkOwner) && schema.owner.id.Available()
 }
 func (schema Schema) ContentID() keyspace.ContentID {
 	if !schema.valid() {
@@ -506,44 +458,25 @@ func (schema Schema) ContentID() keyspace.ContentID {
 	}
 	return schema.owner.id
 }
-func (schema Schema) LinkContentID() keyspace.ContentID {
+func (schema Schema) LinkOwner() link.OwnerCapability {
 	if !schema.valid() {
-		return keyspace.ContentID{}
+		return link.OwnerCapability{}
 	}
-	return schema.owner.linkID
+	return schema.owner.linkOwner
 }
-
-func (schema Schema) Rebind(source *link.Link) (Schema, bool) {
-	if !schema.valid() || source == nil || source.ContentID() != schema.owner.linkID {
-		return Schema{}, false
-	}
-	heapSchema, heapOK := schema.owner.heap.Rebind(source)
-	if !heapOK {
-		return Schema{}, false
-	}
-	rebound, ok := Seal(source, heapSchema)
-	if !ok || rebound.ContentID() != schema.ContentID() {
-		return Schema{}, false
-	}
-	return rebound, true
-}
-
+func (schema Schema) Owner() link.OwnerCapability { return schema.LinkOwner() }
 func (schema Schema) KeyCount() int {
 	if !schema.valid() {
 		return 0
 	}
 	return len(schema.owner.boundaries)
 }
-
 func (schema Schema) KeyAt(index int) (Key, bool) {
 	if !schema.valid() || index < 0 || index >= len(schema.owner.boundaries) {
 		return Key{}, false
 	}
 	return Key{owner: schema.owner, id: uint32(index + 1)}, true
 }
-
-// keyFor returns the owner-issued Key for one already validated exact boundary.
-// boundaryIndex is the canonical reverse index for every Residence family.
 func (schema Schema) keyFor(kind BoundaryKind, id keyspace.ContentID) (Key, bool) {
 	if !schema.valid() || kind == BoundaryInvalid || !id.Available() {
 		return Key{}, false
@@ -551,112 +484,32 @@ func (schema Schema) keyFor(kind BoundaryKind, id keyspace.ContentID) (Key, bool
 	key := Key{owner: schema.owner, id: schema.owner.boundaryIndex[boundaryIdentity{kind: kind, id: id}]}
 	return key, key.valid()
 }
-
-// KeyForCapture returns the exact Residence key for an executable Program
-// closure capture in this schema's project topology.
-func (schema Schema) KeyForCapture(shard linkproject.Shard, function keyspace.Term, index int) (Key, bool) {
-	if !schema.valid() || index < 0 || uint64(index) > uint64(^uint32(0)) {
+func (schema Schema) KeyForCapture(mount ArtifactMount, row programartifact.BoundaryRow) (Key, bool) {
+	if !schema.valid() || !schema.owner.validArtifactBoundary(BoundaryCapture, mount, row) {
 		return Key{}, false
 	}
-	coordinate := programBoundary{shard: shard, term: function, index: uint32(index)}
-	if !schema.owner.validProgramBoundary(BoundaryCapture, coordinate) {
+	return schema.keyFor(BoundaryCapture, residenceProgramBoundaryID(schema.owner.linkOwner, mount.mount, row))
+}
+func (schema Schema) KeyForStore(mount ArtifactMount, row programartifact.BoundaryRow) (Key, bool) {
+	if !schema.valid() || !schema.owner.validArtifactBoundary(BoundaryStore, mount, row) {
 		return Key{}, false
 	}
-	return schema.keyFor(BoundaryCapture, schema.owner.programBoundaryID(BoundaryCapture, coordinate))
+	return schema.keyFor(BoundaryStore, residenceProgramBoundaryID(schema.owner.linkOwner, mount.mount, row))
+}
+func (schema Schema) KeyForReturn(mount ArtifactMount, row programartifact.BoundaryRow) (Key, bool) {
+	if !schema.valid() || !schema.owner.validArtifactBoundary(BoundaryReturn, mount, row) {
+		return Key{}, false
+	}
+	return schema.keyFor(BoundaryReturn, residenceProgramBoundaryID(schema.owner.linkOwner, mount.mount, row))
 }
 
-// KeyForStore returns the exact Residence key for an executable Program
-// Write whose target is a Lens.
-func (schema Schema) KeyForStore(shard linkproject.Shard, write keyspace.Term) (Key, bool) {
-	if !schema.valid() {
-		return Key{}, false
-	}
-	coordinate := programBoundary{shard: shard, term: write}
-	if !schema.owner.validProgramBoundary(BoundaryStore, coordinate) {
-		return Key{}, false
-	}
-	return schema.keyFor(BoundaryStore, schema.owner.programBoundaryID(BoundaryStore, coordinate))
-}
-
-// KeyForReturn returns the exact Residence key for an executable Program
-// Return relation.
-func (schema Schema) KeyForReturn(shard linkproject.Shard, term keyspace.Term) (Key, bool) {
-	if !schema.valid() {
-		return Key{}, false
-	}
-	coordinate := programBoundary{shard: shard, term: term}
-	if !schema.owner.validProgramBoundary(BoundaryReturn, coordinate) {
-		return Key{}, false
-	}
-	return schema.keyFor(BoundaryReturn, schema.owner.programBoundaryID(BoundaryReturn, coordinate))
-}
-
-// KeyForModuleCacheEntry returns the exact Residence key for one sealed
-// module-cache ingress boundary from this Schema's Link.
-func (schema Schema) KeyForModuleCacheEntry(entry linkmodule.ModuleCacheEntry) (Key, bool) {
-	if !schema.valid() {
-		return Key{}, false
-	}
-	id, ok := schema.owner.source.Module().Cache().EntryID(entry)
-	if !ok {
-		return Key{}, false
-	}
-	return schema.keyFor(BoundaryModuleEntry, id)
-}
-
-// KeyForModuleCoordinate returns the exact Residence key for one sealed
-// module-cache coordinate boundary from this Schema's Link.
-func (schema Schema) KeyForModuleCoordinate(coordinate linkmodule.ModuleCoordinate) (Key, bool) {
-	if !schema.valid() {
-		return Key{}, false
-	}
-	id, ok := schema.owner.source.Module().Coordinates().ID(coordinate)
-	if !ok {
-		return Key{}, false
-	}
-	return schema.keyFor(BoundaryModuleCoordinate, id)
-}
-
-// KeyForGlobalBinding returns the exact Residence key for one sealed global
-// binding boundary. GlobalBinding is a pre-existing Link-local scalar rather
-// than a source-stamped opaque handle, so its issuing Link is required to
-// make foreign use explicit and reject matching ordinals from another Link.
-func (schema Schema) KeyForGlobalBinding(source *link.Link, binding linkhost.GlobalBinding) (Key, bool) {
-	if !schema.valid() || source != schema.owner.source {
-		return Key{}, false
-	}
-	id, ok := residenceGlobalBindingID(source, binding)
-	if !ok {
-		return Key{}, false
-	}
-	return schema.keyFor(BoundaryGlobal, id)
-}
-
-// residenceGlobalBindingID projects Host's detached identity for one exact
-// global binding. Residence consumes that owner-issued identity directly; it
-// neither exposes a host ordinal nor recreates Host's semantic key.
-func residenceGlobalBindingID(source *link.Link, binding linkhost.GlobalBinding) (keyspace.ContentID, bool) {
-	if source == nil || !source.ContentID().Available() || source.Host() == nil {
-		return keyspace.ContentID{}, false
-	}
-	return source.Host().Globals().ID(binding)
-}
-
-// AdmitsAt is the exact factored State×K admission relation. It performs no
-// root×boundary materialization and is logarithmic in the admitted root class.
-func (schema Schema) AdmitsAt(root linkmodule.AnalysisRoot, key Key) bool {
-	if !schema.valid() || !key.valid() || key.owner != schema.owner {
+// AdmitsAt receives a detached Module-root identity. A caller cannot keep or
+// smuggle an owner-fenced module coordinate through a sealed Residence value.
+func (schema Schema) AdmitsAt(root keyspace.ContentID, key Key) bool {
+	if !schema.valid() || !key.valid() || key.owner != schema.owner || !root.Available() {
 		return false
 	}
 	roots := schema.owner.rootClasses[schema.owner.boundaries[key.id-1].class]
-	ownerRoots := schema.owner.source.Module().Roots()
-	index := sort.Search(len(roots), func(index int) bool {
-		order, ok := ownerRoots.Compare(roots[index], root)
-		return ok && order >= 0
-	})
-	if index >= len(roots) {
-		return false
-	}
-	order, ok := ownerRoots.Compare(roots[index], root)
-	return ok && order == 0
+	index := sort.Search(len(roots), func(index int) bool { return bytes.Compare(roots[index][:], root[:]) >= 0 })
+	return index < len(roots) && roots[index] == root
 }

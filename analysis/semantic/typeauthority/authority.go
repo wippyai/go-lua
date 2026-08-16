@@ -1,153 +1,102 @@
-// Package typeauthority owns the sealed projection from Program static type
-// terms to existing typ semantics. It is deliberately neither an AST reader
-// nor a second type language: every selector resolves back to one exact
-// Program ContentID and one already-sealed Program Term.
+// Package typeauthority owns the detached static-type directory assembled
+// from sealed ProgramArtifact rows.  Programs and Links are construction
+// inputs to the compiler, never data retained by this package's authority.
 package typeauthority
 
 import (
 	"bytes"
+	"errors"
 	"sort"
-	"sync"
 
+	"github.com/wippyai/go-lua/analysis/internal/programartifact"
 	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/program"
 	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/link"
 )
 
-// StaticTypeRef is the portable identity issued by this Link-local authority
-// for one authored Static type term. Static.StaticTypeRef is intentionally an
-// owner-bound hot capability and carries only its local Term; the authority
-// therefore owns the cross-owner pair used by Lookup, persistence, and
-// runtime bindings.
+// StaticTypeRef is the exact detached ProgramArtifact node coordinate.  It
+// carries no dense Term compatibility token: the node is the Program-issued
+// static reference content identity used by every mounted substitution.
 type StaticTypeRef struct {
 	owner keyspace.ContentID
-	root  keyspace.Term
+	node  keyspace.ContentID
 }
 
-func (ref StaticTypeRef) Valid() bool               { return ref.owner.Available() && ref.root != 0 }
-func (ref StaticTypeRef) Owner() keyspace.ContentID { return ref.owner }
-func (ref StaticTypeRef) Root() keyspace.Term       { return ref.root }
+func (ref StaticTypeRef) Valid() bool                { return ref.owner.Available() && ref.node.Available() }
+func (ref StaticTypeRef) Owner() keyspace.ContentID  { return ref.owner }
+func (ref StaticTypeRef) NodeID() keyspace.ContentID { return ref.node }
 
-// Selector is a Link-authority-local dense static type coordinate. Zero is
-// invalid. It is deliberately small enough for recurrent fact hot paths; its
-// portable identity is recovered only at the artifact boundary through Ref.
+// Selector is a dense authority-local static-type coordinate. Zero is
+// invalid. It is only a hot lookup token; it is not a source term.
 type Selector uint32
 
-// FamilyRef identifies a direct sealed static-union family. Its members are
-// existing Program type roots; no process-global discovery catalog or copied
-// typ union determines family identity.
-type FamilyRef struct{ root Selector }
-
-func (f FamilyRef) Root() Selector { return f.root }
-func (f FamilyRef) Valid() bool    { return f.root != 0 }
-
 type entry struct {
-	ref     StaticTypeRef
-	program *program.Program
+	ref StaticTypeRef
 }
 
-type materializationState uint8
-
-const (
-	materializationCold materializationState = iota
-	materializationWorking
-	materializationReady
-)
-
-// Authority is immutable after Seal. Its only mutable data is the cold,
-// memoized existing typ.Type projection; selectors, their portable references,
-// and family arities are entirely sealed Program facts.
+// Authority is immutable after SealArtifactRows. All semantic materialization
+// is delegated to the detached ArtifactAuthority; no Program, Flow, Link, or
+// authored Term is reachable from this object.
 type Authority struct {
-	source   *link.Link
-	linkID   keyspace.ContentID
-	entries  []entry // Selector is one-based into entries.
-	byRef    map[StaticTypeRef]Selector
-	programs map[keyspace.ContentID]*program.Program
-
-	mu        sync.Mutex
-	states    []materializationState
-	types     []typ.Type
-	params    []*typ.TypeParam
-	recursive []*typ.Recursive
-
-	familyMu sync.Mutex
-	families map[Selector]familyResult
+	linkID        keyspace.ContentID
+	entries       []entry
+	byRef         map[StaticTypeRef]Selector
+	byReferenceID map[keyspace.ContentID]Selector
+	artifact      *ArtifactAuthority
 }
 
-// Seal constructs one canonical selector universe for Link's complete finite
-// Program set. Link already owns the source-module authority; this pass merely
-// gives every existing static type root a dense hot-path coordinate. No AST is
-// read and no new structural type form is invented.
-func Seal(source *link.Link) (*Authority, bool) {
-	if source == nil || !source.ContentID().Available() {
-		return nil, false
+// SealArtifactRows constructs the selector directory directly from reusable
+// ProgramArtifact rows. Rows are sorted by owner and row identity so the
+// selector assignment is deterministic and independent of mount order.
+func SealArtifactRows(linkID keyspace.ContentID, artifacts []*programartifact.Artifact) (*Authority, error) {
+	if !linkID.Available() {
+		return nil, errors.New("typeauthority: unavailable artifact link identity")
 	}
-	mounts := source.Project().Mounts()
-	byProgram := make(map[keyspace.ContentID]*program.Program, mounts.Count())
-	for index := 0; index < mounts.Count(); index++ {
-		shard, ok := mounts.At(index)
-		if !ok {
-			return nil, false
-		}
-		p, ok := mounts.Program(shard)
-		if !ok || p == nil || !p.ContentID().Available() {
-			return nil, false
-		}
-		id := p.ContentID()
-		if prior, duplicate := byProgram[id]; duplicate && prior != p {
-			// Equal Program content may be decoded into distinct pointers. One
-			// canonical pointer is enough because all queries are immutable.
-			continue
-		}
-		byProgram[id] = p
+	artifact, err := SealArtifacts(artifacts)
+	if err != nil {
+		return nil, err
 	}
-	ids := make([]keyspace.ContentID, 0, len(byProgram))
-	for id := range byProgram {
-		ids = append(ids, id)
-	}
-	sort.Slice(ids, func(i, j int) bool { return bytes.Compare(ids[i][:], ids[j][:]) < 0 })
-
-	entries := make([]entry, 0)
-	for _, id := range ids {
-		p := byProgram[id]
-		staticTypes := p.Static().StaticTypes()
-		for index := 0; index < staticTypes.Count(); index++ {
-			hot, ok := staticTypes.At(index)
-			root := hot.Term()
-			if !ok || root == 0 {
-				return nil, false
+	type rowEntry struct{ owner, node keyspace.ContentID }
+	rows := make([]rowEntry, 0)
+	for _, item := range artifacts {
+		if item == nil || !item.Available() {
+			return nil, errors.New("typeauthority: unavailable artifact")
+		}
+		owner := item.CompileKey().ProgramID()
+		for i := 0; i < item.StaticTypeNodeCount(); i++ {
+			row, ok := item.StaticTypeNodeAt(i)
+			if !ok || !row.Available() || row.Owner() != owner {
+				return nil, errors.New("typeauthority: malformed artifact row")
 			}
-			entries = append(entries, entry{ref: StaticTypeRef{owner: id, root: root}, program: p})
+			rows = append(rows, rowEntry{owner: owner, node: row.ID()})
 		}
 	}
-	if uint64(len(entries)) >= uint64(^uint32(0)) {
-		return nil, false
-	}
-	authority := &Authority{
-		source:    source,
-		linkID:    source.ContentID(),
-		entries:   entries,
-		byRef:     make(map[StaticTypeRef]Selector, len(entries)),
-		programs:  byProgram,
-		states:    make([]materializationState, len(entries)),
-		types:     make([]typ.Type, len(entries)),
-		params:    make([]*typ.TypeParam, len(entries)),
-		recursive: make([]*typ.Recursive, len(entries)),
-	}
-	for index, current := range authority.entries {
-		selector := Selector(index + 1)
-		if _, duplicate := authority.byRef[current.ref]; duplicate {
-			return nil, false
+	sort.Slice(rows, func(i, j int) bool {
+		if cmp := bytes.Compare(rows[i].owner[:], rows[j].owner[:]); cmp != 0 {
+			return cmp < 0
 		}
-		authority.byRef[current.ref] = selector
+		return bytes.Compare(rows[i].node[:], rows[j].node[:]) < 0
+	})
+	// An unannotated Program lawfully contributes no static type nodes. The
+	// artifact set itself is still non-empty and owner-validated by
+	// SealArtifacts; an empty selector directory is therefore a complete
+	// authority, not an unavailable one.
+	if uint64(len(rows)) >= uint64(^uint32(0)) {
+		return nil, errors.New("typeauthority: invalid artifact selector range")
 	}
-	return authority, true
+	a := &Authority{
+		linkID: linkID, artifact: artifact, entries: make([]entry, len(rows)),
+		byRef:         make(map[StaticTypeRef]Selector, len(rows)),
+		byReferenceID: make(map[keyspace.ContentID]Selector, len(rows)),
+	}
+	for i, item := range rows {
+		ref := StaticTypeRef{owner: item.owner, node: item.node}
+		a.entries[i] = entry{ref: ref}
+		a.byRef[ref] = Selector(i + 1)
+		a.byReferenceID[item.node] = Selector(i + 1)
+	}
+	return a, nil
 }
 
-// LinkID identifies the exact Link whose dense selector coordinates this
-// Authority owns. It is for cache fencing only; portable selector identity is
-// always Ref's Program ContentID plus Program Term.
 func (a *Authority) LinkID() keyspace.ContentID {
 	if a == nil {
 		return keyspace.ContentID{}
@@ -155,14 +104,14 @@ func (a *Authority) LinkID() keyspace.ContentID {
 	return a.linkID
 }
 
-// Link returns the exact sealed Link owner. LinkID is only a replay/cache
-// identity: independently sealed same-content Links retain distinct authority
-// capabilities and must not cross a live semantic boundary.
-func (a *Authority) Link() *link.Link {
-	if a == nil {
-		return nil
-	}
-	return a.source
+// ArtifactBacked is retained as a compatibility predicate for callers while
+// the migration is completed. It is always true for a valid Authority.
+func (a *Authority) ArtifactBacked() bool { return a != nil && a.artifact != nil }
+
+// DetachConstructionAuthority is an explicit lifecycle fence. Construction
+// state is never retained, so detachment is a validity check only.
+func (a *Authority) DetachConstructionAuthority() bool {
+	return a != nil && a.artifact != nil && a.linkID.Available()
 }
 
 func (a *Authority) Count() int {
@@ -179,7 +128,6 @@ func (a *Authority) At(index int) (Selector, bool) {
 	return Selector(index + 1), true
 }
 
-// Ref returns Selector's portable Program-owned identity.
 func (a *Authority) Ref(selector Selector) (StaticTypeRef, bool) {
 	entry, ok := a.entry(selector)
 	if !ok {
@@ -188,7 +136,6 @@ func (a *Authority) Ref(selector Selector) (StaticTypeRef, bool) {
 	return entry.ref, true
 }
 
-// Lookup admits only a portable reference present in this exact sealed Link.
 func (a *Authority) Lookup(ref StaticTypeRef) (Selector, bool) {
 	if a == nil || !ref.Valid() {
 		return 0, false
@@ -198,34 +145,24 @@ func (a *Authority) Lookup(ref StaticTypeRef) (Selector, bool) {
 		return 0, false
 	}
 	entry, ok := a.entry(selector)
-	if !ok || entry.program == nil || entry.program.ContentID() != ref.Owner() {
-		return 0, false
-	}
-	hot, ok := entry.program.Static().StaticTypes().Ref(ref.Root())
-	return selector, ok && hot.Term() == ref.Root()
+	return selector, ok && entry.ref == ref && entry.ref.NodeID().Available()
 }
 
-// Find resolves an artifact-origin Program coordinate by re-minting the
-// canonical typed reference through this Authority's sealed Program owner.
-// It is the sole raw artifact boundary; all semantic consumers retain the
-// resulting StaticTypeRef or Selector.
-func (a *Authority) Find(owner keyspace.ContentID, root keyspace.Term) (Selector, bool) {
-	if a == nil || !owner.Available() || root == 0 {
-		return 0, false
+// FindByReferenceID admits the term-free artifact reference issued by the
+// ProgramArtifact compiler. No Program lookup or authored-term reconstruction
+// is permitted here.
+func (a *Authority) FindByReferenceID(id keyspace.ContentID) (StaticTypeRef, bool) {
+	if a == nil || !id.Available() {
+		return StaticTypeRef{}, false
 	}
-	p := a.programs[owner]
-	if p == nil || p.ContentID() != owner {
-		return 0, false
+	selector, ok := a.byReferenceID[id]
+	if !ok {
+		return StaticTypeRef{}, false
 	}
-	if _, ok := p.Static().StaticTypes().Ref(root); !ok {
-		return 0, false
-	}
-	return a.Lookup(StaticTypeRef{owner: owner, root: root})
+	entry, ok := a.entry(selector)
+	return entry.ref, ok && entry.ref.Valid()
 }
 
-// Resolve projects one portable authored reference through this exact sealed
-// authority.  It is a cold boundary: the returned graph is ownership-isolated
-// and is never the authority's memoized construction graph.
 func (a *Authority) Resolve(ref StaticTypeRef) (typ.Type, bool) {
 	selector, ok := a.Lookup(ref)
 	if !ok {
@@ -234,31 +171,19 @@ func (a *Authority) Resolve(ref StaticTypeRef) (typ.Type, bool) {
 	return a.Materialize(selector)
 }
 
-// Family exposes a direct Program union as a finite family. The returned
-// family has no separate ID: its root selector is the exact static union root.
-func (a *Authority) Family(root Selector) (FamilyRef, bool) {
-	if _, ok := a.familyArms(root); !ok {
-		return FamilyRef{}, false
+func (a *Authority) Materialize(selector Selector) (typ.Type, bool) {
+	if a == nil || a.artifact == nil {
+		return nil, false
 	}
-	return FamilyRef{root: root}, true
-}
-
-func (a *Authority) FamilyArity(family FamilyRef) int {
-	arms, ok := a.familyArms(family.root)
-	if !ok {
-		return 0
+	entry, ok := a.entry(selector)
+	if !ok || !entry.ref.NodeID().Available() {
+		return nil, false
 	}
-	return len(arms)
-}
-
-// FamilyArm returns the exact existing static member selector. It never
-// materializes a typ union or consults a global variant catalog.
-func (a *Authority) FamilyArm(family FamilyRef, index int) (Selector, bool) {
-	arms, ok := a.familyArms(family.root)
-	if !ok || index < 0 || index >= len(arms) {
-		return 0, false
+	value, ok := a.artifact.Resolve(entry.ref.NodeID())
+	if !ok || value == nil || typ.ValidateStaticGenericRecurrence(value) != nil {
+		return nil, false
 	}
-	return arms[index], true
+	return value, true
 }
 
 func (a *Authority) entry(selector Selector) (entry, bool) {

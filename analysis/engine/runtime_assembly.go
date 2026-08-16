@@ -19,6 +19,8 @@ type runtimeMember interface {
 	member() equation.RuleMember
 	outputSlot() (shape.Slot, bool)
 	factorKey() (composition.Key, bool)
+	// Slice results are binding-owned and immutable after attachment; assembly
+	// only reads them while sealing the private runtime plan.
 	carries() []int
 	initialReads() []demand.Observation
 	dynamicReads() []demand.DynamicRead
@@ -64,12 +66,17 @@ func (bound *boundRuleMember[V, O]) outputSlot() (shape.Slot, bool) {
 	return bound.slot, bound != nil && bound.rule != nil && bound.hasSlot
 }
 func (bound *boundRuleMember[V, O]) factorKey() (composition.Key, bool) {
-	if bound == nil || bound.rule == nil || bound.rule.rule == nil || bound.rule.rule.output == nil {
+	if bound == nil || bound.rule == nil || bound.rule.proof == nil || !bound.rule.proof.valid() || !bound.rule.proof.output.Available() {
 		return composition.Key{}, false
 	}
-	return bound.rule.rule.output.semantic.compositionKey(), true
+	return bound.rule.proof.output, true
 }
-func (bound *boundRuleMember[V, O]) carries() []int { return append([]int(nil), bound.carry...) }
+func (bound *boundRuleMember[V, O]) carries() []int {
+	if bound == nil {
+		return nil
+	}
+	return bound.carry
+}
 func (bound *boundRuleMember[V, O]) initialReads() []demand.Observation {
 	if bound == nil || bound.rule == nil {
 		return nil
@@ -86,22 +93,22 @@ func (bound *boundRuleMember[V, O]) targets() []carrier.Target {
 	if bound == nil {
 		return nil
 	}
-	return append([]carrier.Target(nil), bound.outputTargets...)
+	return bound.outputTargets
 }
 func (bound *boundRuleMember[V, O]) carryTargets() []carrier.Target {
 	if bound == nil {
 		return nil
 	}
-	return append([]carrier.Target(nil), bound.allTargets...)
+	return bound.allTargets
 }
 func (bound *boundRuleMember[V, O]) narrowTargets() []carrier.Target {
 	if bound == nil || !bound.narrowEligible {
 		return nil
 	}
 	if len(bound.carry) != 0 {
-		return append([]carrier.Target(nil), bound.allTargets...)
+		return bound.allTargets
 	}
-	return append([]carrier.Target(nil), bound.outputTargets...)
+	return bound.outputTargets
 }
 func (bound *boundRuleMember[V, O]) routeScope() runtimeFactor {
 	if bound == nil {
@@ -121,100 +128,169 @@ func (bound *boundRuleMember[V, O]) execute(work *carrier.Work, base carrier.Rul
 	return memberResult{patch: patch, wrote: wrote, reads: reads, phase: phase, valid: ok}
 }
 
-// bindRuleMember attaches one typed Factor Rule to its private Group member.
-// Group input arity is checked by assembly, where the Group is available.
-func bindRuleMember[V, O any](member equation.RuleMember, rule *Rule[V, O], operand O, output runtimeFactor) (*boundRuleMember[V, O], bool) {
-	if !member.Key().Available() || rule == nil || rule.schema == nil || member.Rule() != rule.schema.semantic.compositionKey() {
-		return nil, false
-	}
-	bound, targets, ok := bindMemberRule(member, rule, operand, output)
-	if !ok {
-		return nil, false
-	}
-	carries := make([]int, len(rule.schema.carries))
-	for index, carry := range rule.schema.carries {
-		if carry.factor != rule.schema.output || carry.input < 0 || carry.input >= rule.schema.inputs {
-			return nil, false
-		}
-		carries[index] = carry.input
-	}
-	slot, slotOK := output.runtimeSlot()
-	if !slotOK {
-		return nil, false
-	}
-	for _, target := range targets {
-		owner, valid := target.Slot()
-		if !valid || owner != slot {
-			return nil, false
-		}
-	}
-	if len(targets) == 0 && len(carries) == 0 && bound.routeScope == nil {
-		return nil, false
-	}
-	var carryTargets []carrier.Target
-	if len(carries) != 0 {
-		var targetsOK bool
-		carryTargets, targetsOK = output.carryTargetsFor(member)
-		if !targetsOK {
-			return nil, false
-		}
-		for _, target := range targets {
-			carryTargets = appendUniqueTarget(carryTargets, target)
-		}
-		carryTargets = compactRuntimeTargets(carryTargets)
-	}
-	return &boundRuleMember[V, O]{value: member, rule: bound, slot: slot, hasSlot: true, carry: carries, outputTargets: append([]carrier.Target(nil), targets...), allTargets: carryTargets, narrowEligible: output.supports(carrier.Narrow), routeOwner: bound.routeScope, outputWrite: len(rule.schema.writes) != 0 || bound.carrySemantic.Available()}, true
+// bindSchemaRuleMember attaches the receipt-native zero-read Rule lane to the
+// existing boundRule/Access executor. It intentionally has no declaration Rule or
+// declaration argument: the private ruleRuntimeProof is the sole identity.
+type schemaRuleMemberGeometry interface {
+	Rule() composition.Key
+	OperandFamily() composition.Key
+	ReadCount() int
+	WriteCount() int
+	ActivationMember() (equation.Member, bool)
+	WriteAt(int) (equation.Surface, bool)
+	WriteRouteRead(int) (uint64, bool)
+	WriteCandidateCount(int) (int, bool)
+	WriteDependencyCount(int) (int, bool)
+	WriteRelationCount(int) (int, bool)
 }
 
-type boundSupportMember struct {
-	value equation.RuleMember
-	rule  *compiledSupportRule
+func exactSchemaRuleMemberGeometry(proof *ruleRuntimeProof, member schemaRuleMemberGeometry) (equation.Surface, bool) {
+	if proof == nil || !proof.valid() || member == nil || member.Rule() != proof.semantic || member.OperandFamily() != proof.operandFamily || uint64(member.ReadCount()) != proof.reads || member.WriteCount() != 1 {
+		return equation.Surface{}, false
+	}
+	if _, dynamic := member.ActivationMember(); dynamic {
+		return equation.Surface{}, false
+	}
+	surface, surfaceOK := member.WriteAt(0)
+	route, routeOK := member.WriteRouteRead(0)
+	candidates, candidatesOK := member.WriteCandidateCount(0)
+	dependencies, dependenciesOK := member.WriteDependencyCount(0)
+	relations, relationsOK := member.WriteRelationCount(0)
+	if !surfaceOK || surface.Factor != proof.output || surface.Form != equation.SurfaceWriteExact || surface.Mode != equation.TargetModeStrong || surface.Local == 0 || !routeOK || route != 0 || !candidatesOK || candidates != 0 || !dependenciesOK || dependencies != 0 || !relationsOK || relations != 0 {
+		return equation.Surface{}, false
+	}
+	return surface, true
 }
 
-func (bound *boundSupportMember) member() equation.RuleMember        { return bound.value }
-func (bound *boundSupportMember) outputSlot() (shape.Slot, bool)     { return 0, false }
-func (bound *boundSupportMember) factorKey() (composition.Key, bool) { return composition.Key{}, false }
-func (bound *boundSupportMember) carries() []int                     { return nil }
-func (bound *boundSupportMember) initialReads() []demand.Observation {
-	if bound == nil || bound.rule == nil {
-		return nil
+func routeSchemaRuleMemberGeometry(proof *ruleRuntimeProof, member schemaRuleMemberGeometry) (equation.Surface, uint64, bool) {
+	if proof == nil || !proof.valid() || proof.routeWrite == nil || !proof.routeWrite.Valid() || member == nil || member.Rule() != proof.semantic || member.OperandFamily() != proof.operandFamily || uint64(member.ReadCount()) != proof.reads || member.WriteCount() != 1 {
+		return equation.Surface{}, 0, false
 	}
-	return bound.rule.initialReads()
-}
-func (bound *boundSupportMember) dynamicReads() []demand.DynamicRead {
-	if bound == nil || bound.rule == nil {
-		return nil
+	if _, dynamic := member.ActivationMember(); dynamic {
+		return equation.Surface{}, 0, false
 	}
-	return bound.rule.dynamicReads()
-}
-func (bound *boundSupportMember) targets() []carrier.Target       { return nil }
-func (bound *boundSupportMember) carryTargets() []carrier.Target  { return nil }
-func (bound *boundSupportMember) narrowTargets() []carrier.Target { return nil }
-func (bound *boundSupportMember) routeScope() runtimeFactor       { return nil }
-func (bound *boundSupportMember) routeNarrow() bool               { return false }
-func (bound *boundSupportMember) writesOutput() bool              { return false }
-func (bound *boundSupportMember) execute(work *carrier.Work, base carrier.RuleContributionBase, inputs []carrier.State, within support.Mask) memberResult {
-	if bound == nil || bound.rule == nil {
-		return memberResult{}
+	surface, surfaceOK := member.WriteAt(0)
+	route, routeOK := member.WriteRouteRead(0)
+	candidates, candidatesOK := member.WriteCandidateCount(0)
+	dependencies, dependenciesOK := member.WriteDependencyCount(0)
+	relations, relationsOK := member.WriteRelationCount(0)
+	if !surfaceOK || surface.Factor != proof.output || surface.Form != equation.SurfaceWriteRoute || surface.Mode != equation.TargetModeNone || surface.Local == 0 || !routeOK || route != proof.routeWrite.read+1 || !candidatesOK || candidates != 0 || !dependenciesOK || dependencies != 0 || !relationsOK || relations != 0 {
+		return equation.Surface{}, 0, false
 	}
-	retained, reads, ok := bound.rule.execute(work, base, inputs, within)
-	return memberResult{retained: retained, hasSupport: true, reads: reads, valid: ok}
+	return surface, route, true
 }
 
-func bindSupportMember(member equation.RuleMember, rule *SupportRule) (*boundSupportMember, bool) {
-	if !member.Key().Available() || rule == nil || rule.schema == nil || member.Rule() != rule.schema.semantic.compositionKey() {
+func bindSchemaRuleMember[K ~uint32 | ~uint64, V, O any](implementation *RuleImplementation[K, V, O], member equation.RuleMember, operand O, output runtimeFactor, factors map[composition.Key]runtimeFactor) (*boundRuleMember[V, O], bool) {
+	if implementation == nil || !implementation.receipt.valid() || member.Key() == (composition.Key{}) || !member.Occurrence().Available() || output == nil || factors == nil {
 		return nil, false
 	}
-	compiled, ok := compileSupportRule(rule)
-	if !ok {
+	receipt := implementation.receipt
+	proof := receipt.proof
+	hot := receipt.cell.impl
+	if proof == nil || hot == nil {
+		return nil, false
+	}
+	shape, shapeOK := proof.schema.ruleShapeAt(proof.ordinal)
+	if !shapeOK || shape.OutputKind != composition.FactorOutput || shape.CarryCount > 1 || shape.WriteCount != 1 || uint64(len(hot.reads)) != shape.ReadCount || shape.CarryCount == 0 && hot.carry != nil || shape.CarryCount == 1 && hot.carry == nil {
+		return nil, false
+	}
+	boundOutput, outputOK := output.(*boundFactor[K, V])
+	if !outputOK || boundOutput == nil || !boundOutput.receipt.valid() || boundOutput.receipt.state != receipt.state || boundOutput.receipt.authority != receipt.authority || boundOutput.receipt.schema != receipt.output.schema || boundOutput.receipt.ordinal != receipt.output.ordinal || boundOutput.receipt.semantic != receipt.output.semantic || boundOutput.receipt.algebra != receipt.output.algebra || boundOutput.receipt.semantic != shape.Output {
+		return nil, false
+	}
+	surface, memberOK := exactSchemaRuleMemberGeometry(proof, member)
+	_, routeRead, routeOK := routeSchemaRuleMemberGeometry(proof, member)
+	if !memberOK && !routeOK {
+		return nil, false
+	}
+	var target carrier.Target
+	var targetProof ruleTargetProof
+	if memberOK {
+		var targetOK, targetProofOK bool
+		target, targetOK = output.writeTarget(surface)
+		targetProof, targetProofOK = newRuleTargetReceiptProof(boundOutput.receipt, surface)
+		if !targetOK || !targetProofOK {
+			return nil, false
+		}
+	} else if !output.hasRouteUniverse() {
+		return nil, false
+	}
+	canonical, content, contentOK := hot.operandContent(operand)
+	if !contentOK || content == [32]byte{} || !member.Operand().Available() {
+		return nil, false
+	}
+	entity := OperandEntity{key: member.Operand().Entity()}
+	if !entity.key.Available() || entity.key.Version != instanceOperandEntityVersion || [32]byte(entity.key.ID) != content {
 		return nil, false
 	}
 	anchor := semanticKeyFromComposition(member.Key())
 	if !anchor.Available() {
 		return nil, false
 	}
-	compiled.anchor = anchor
-	return &boundSupportMember{value: member, rule: compiled}, true
+	bound := &boundRule[V, O]{proof: proof, admission: hot.admission, anchor: anchor, operandContent: content, transfer: hot.transfer, operand: canonical}
+	projection := &outputRuntime{writes: make([]outputWriteRuntime, 1)}
+	if memberOK {
+		projection.writes[0] = outputWriteRuntime{direct: target, directID: targetProof}
+	} else {
+		projection.writes[0] = outputWriteRuntime{routeRead: routeRead}
+	}
+	carryIndexes := []int(nil)
+	allTargets := []carrier.Target(nil)
+	if memberOK {
+		allTargets = append(allTargets, target)
+	}
+	if hot.carry != nil {
+		carryShape, carryOK := hot.carry.shape()
+		if !carryOK || carryShape.Factor != shape.Output || carryShape.Input >= shape.Inputs || output.carryRouteScopeFor(member) {
+			return nil, false
+		}
+		if carryShape.Input > uint64(^uint(0)>>1) {
+			return nil, false
+		}
+		carryTargets, targetsOK := output.carryTargetsFor(member)
+		if !targetsOK {
+			return nil, false
+		}
+		for _, carryTarget := range carryTargets {
+			allTargets = appendUniqueTarget(allTargets, carryTarget)
+		}
+		carryIndexes = []int{int(carryShape.Input)}
+		if carryShape.Transform.Available() {
+			if hot.carry.apply == nil {
+				return nil, false
+			}
+			bound.carrySemantic = semanticKeyFromComposition(carryShape.Transform)
+			if !bound.carrySemantic.Available() {
+				return nil, false
+			}
+			bound.carryTargets = carryTargets
+			bound.carryApply = func(value V) (V, bool) {
+				return hot.carry.apply(operand, value)
+			}
+		}
+	}
+	access, accessOK := newTypedOutputAccess(boundOutput, bound, projection)
+	if !accessOK {
+		return nil, false
+	}
+	bound.output = access
+	for _, read := range hot.reads {
+		if read == nil || !read.bind(bound, member, factors) {
+			return nil, false
+		}
+	}
+	if routeOK {
+		bound.routeScope = output
+	}
+	slot, slotOK := output.runtimeSlot()
+	if !slotOK {
+		return nil, false
+	}
+	outputTargets := []carrier.Target(nil)
+	if memberOK {
+		outputTargets = []carrier.Target{target}
+	}
+	return &boundRuleMember[V, O]{rule: bound, slot: slot, hasSlot: true, carry: carryIndexes, outputTargets: outputTargets, allTargets: allTargets, narrowEligible: output.supports(carrier.Narrow), routeOwner: bound.routeScope, outputWrite: true, value: member}, true
 }
 
 // boundActivationMember is an output-free member in the same Group
@@ -253,16 +329,36 @@ func (bound *boundActivationMember) execute(work *carrier.Work, base carrier.Rul
 	if bound == nil || bound.rule == nil {
 		return memberResult{}
 	}
-	selected, reads, ok := bound.rule.execute(work, base, inputs, within)
-	return memberResult{activations: selected, reads: reads, valid: ok}
+	selected, reads, ok, phase := bound.rule.execute(work, base, inputs, within)
+	return memberResult{activations: selected, reads: reads, phase: phase, valid: ok}
 }
 
-func bindActivationMember(member equation.RuleMember, rule *ActivationRule, topology *equation.Topology, trigger composition.Key, graph *equation.Graph) (*boundActivationMember, bool) {
-	if !member.Key().Available() || rule == nil || rule.schema == nil || member.Rule() != rule.schema.semantic.compositionKey() || topology == nil || graph == nil || !trigger.Available() || trigger != member.Key() {
+// bindActivationMemberReceipt attaches one graph-owned activation Member to a
+// receipt-native activation implementation. The receipt compiler performs
+// the exact Schema/family/trigger checks; this adapter adds only the Member
+// anchor and returns the same runtime member consumed by the existing epoch
+// executor.
+func bindActivationMemberReceipt(member equation.RuleMember, implementation *ActivationRuleImplementation, topology *equation.Topology, trigger composition.Key, graph *equation.Graph, factors map[composition.Key]runtimeFactor) (*boundActivationMember, bool) {
+	if implementation == nil || !implementation.receipt.valid() || !member.Key().Available() || topology == nil || graph == nil ||
+		!topology.OwnsComposition(implementation.receipt.proof.schema.cold) || !topology.OwnsGraph(graph) || !graph.OwnsMember(member) ||
+		!trigger.Available() || trigger != member.Key() || member.Rule() != implementation.receipt.proof.semantic ||
+		member.OperandFamily() != implementation.receipt.proof.operandFamily || uint64(member.ReadCount()) != implementation.receipt.proof.reads || member.WriteCount() != 0 || factors == nil {
 		return nil, false
 	}
-	compiled, ok := compileActivationRule(rule, topology, trigger, graph)
+	compiled, ok := compileActivationRuleReceipt(implementation, topology, trigger, graph)
 	if !ok {
+		return nil, false
+	}
+	hot := implementation.receipt.cell.impl
+	if hot == nil || uint64(len(hot.reads)) != implementation.receipt.proof.reads {
+		return nil, false
+	}
+	for _, read := range hot.reads {
+		if read == nil || !read.bind(compiled, member, factors) {
+			return nil, false
+		}
+	}
+	if uint64(len(compiled.reads)) != implementation.receipt.proof.reads {
 		return nil, false
 	}
 	anchor := semanticKeyFromComposition(member.Key())
@@ -338,10 +434,13 @@ type runtimeRegion struct {
 }
 
 type solverRuntime struct {
-	composition *Composition
-	topology    *equation.Topology
-	carrier     *carrier.Composition
-	graph       *equation.Graph
+	// receiptState/receiptAuthority are the SchemaBinding-native runtime
+	// authority. Receipt compilation never fabricates a cold declaration owner.
+	receiptState     *schemaBindingState
+	receiptAuthority *schemaBindingAuthority
+	topology         *equation.Topology
+	carrier          *carrier.Composition
+	graph            *equation.Graph
 	// execution overrides the graph-owned demanded event stream only after a
 	// selected overlay introduces feedback over the same already-demanded Point
 	// set. It contains no semantic facts; the live carrier remains unchanged.
@@ -360,13 +459,17 @@ type solverRuntime struct {
 	overlay             runtimeStructuralOverlay
 	demand              *demand.Plan
 	queries             []runtimeQuery
-	pointScopes         []carrier.Scope
-	pointInitials       []support.Mask
-	regions             []runtimeRegion
-	regionChildren      [][]int // operational traversal cache derived from immutable Region.Parent
-	pointRegion         []int
-	activePoints        []bool
-	activeRegions       []bool
+	// observations are optional solve-local read-only projections. They are
+	// attached after the reusable topology is committed, never participate in
+	// demand or rule execution, and are empty on the ordinary solve path.
+	observations   []runtimeObservation
+	pointScopes    []carrier.Scope
+	pointInitials  []support.Mask
+	regions        []runtimeRegion
+	regionChildren [][]int // operational traversal cache derived from immutable Region.Parent
+	pointRegion    []int
+	activePoints   []bool
+	activeRegions  []bool
 
 	retained  *carrier.RetainedWork
 	completed *State
@@ -406,9 +509,14 @@ type runtimeFactorOrigin struct {
 // derived carrier binding cache over already-issued scopes and atoms, never a
 // second equation or carrier authoring surface.
 type runtimeStructuralOverlay struct {
-	factorByKey     map[composition.Key]runtimeFactor
-	staticOrigins   map[runtimeFactorOrigin]struct{}
-	originAt        map[runtimeFactorOrigin]int
+	factorByKey   map[composition.Key]runtimeFactor
+	staticOrigins map[runtimeFactorOrigin]struct{}
+	originAt      map[runtimeFactorOrigin]int
+	// directAt retains only the exact equation descriptors for installed
+	// selected direct edges. It is the compact bridge needed when a later
+	// frontier first creates feedback; runtime.factorEdges alone has already
+	// lowered those descriptors to carrier rows.
+	directAt        map[int]equation.SelectedStructuralFactorEdge
 	factorOutgoing  [][]int // all static and selected factor transports
 	dependencyEdges []schedule.Edge
 	dependencyAt    map[[2]int]struct{}
@@ -427,19 +535,53 @@ func (origin runtimeFactorOrigin) available() bool {
 	return origin.source >= 0 && origin.target >= 0 && origin.factor.Available() && origin.provenance.Available() && origin.reindex.Available() && origin.post.Available()
 }
 
-// assembleSolver attaches graph-issued members to one sealed carrier, then
-// seals the demand Point closure. Points are the only runtime state roots.
-func assembleRuntime(cold *Composition, graph *equation.Graph, runtime *carrier.Composition, factors map[composition.Key]runtimeFactor, rows []runtimeMember, queries []runtimeQuery) (*solverRuntime, bool) {
-	if cold == nil || !cold.Sealed() || graph == nil || runtime == nil || runtime.Guards() == nil || factors == nil {
+// assembleReceiptRuntime enters the common executable assembly with the
+// exact sealed SchemaBinding authority already pinned by receipt compilation.
+// It is deliberately disjoint from cold declaration capabilities.
+func assembleReceiptRuntime(state *schemaBindingState, authority *schemaBindingAuthority, graph *equation.Graph, runtime *carrier.Composition, factors map[composition.Key]runtimeFactor, rows []runtimeMember, queries []runtimeQuery, observations []runtimeObservation) (*solverRuntime, bool) {
+	return assembleRuntimeOwned(state, authority, graph, runtime, factors, rows, queries, observations)
+}
+
+func assembleRuntimeOwned(receiptState *schemaBindingState, receiptAuthority *schemaBindingAuthority, graph *equation.Graph, runtime *carrier.Composition, factors map[composition.Key]runtimeFactor, rows []runtimeMember, queries []runtimeQuery, observations []runtimeObservation) (*solverRuntime, bool) {
+	if receiptState == nil || receiptAuthority == nil || receiptState.phase != schemaBindingSealed || receiptState.authority != receiptAuthority || receiptState.schema == nil || !receiptState.schema.Available() || graph == nil || runtime == nil || runtime.Guards() == nil || factors == nil {
 		return nil, false
 	}
-	points, ok := graph.Demand()
+	schema := receiptState.schema
+	if schema == nil || graph.CompositionID() != schema.coldID() {
+		return nil, false
+	}
+	observationPoints := make([]equation.Point, len(observations))
+	for index, observation := range observations {
+		if observation == nil {
+			return nil, false
+		}
+		point := observation.observationPoint()
+		if !graph.OwnsPoint(point) {
+			return nil, false
+		}
+		observationPoints[index] = point
+	}
+	points, ok := graph.DemandWithPoints(observationPoints)
 	if !ok || points == nil || points.PointCount() == 0 || points.EventCount() == 0 {
 		return nil, false
 	}
 	activePoints, activeRegions, activeOK := runtimeDemandMembership(graph, points)
 	if !activeOK {
 		return nil, false
+	}
+	// A graph Group becomes a hot runtime producer only when its exact output
+	// Point is in this solve's demand closure. The immutable graph keeps every
+	// reusable Program row for future observation/activation revisions, while
+	// disconnected interiors retain identity only and allocate no contribution
+	// plan, read set, or recurrence footprint in this runtime generation.
+	selectedGroups := make([]bool, graph.GroupCount())
+	for index := range selectedGroups {
+		group, groupOK := graph.HyperedgeAt(index)
+		outputIndex, outputOK := graph.PointIndex(group.Output())
+		if !groupOK || !outputOK || outputIndex < 0 || outputIndex >= len(activePoints) {
+			return nil, false
+		}
+		selectedGroups[index] = activePoints[outputIndex]
 	}
 	byMember := make(map[composition.Key]runtimeMember, len(rows))
 	for _, row := range rows {
@@ -556,6 +698,22 @@ func assembleRuntime(cold *Composition, graph *equation.Graph, runtime *carrier.
 		if !groupOK || !indexed || groupIndex != index || !graph.OwnsGroup(group) || !group.Key().Available() {
 			return nil, false
 		}
+		if !selectedGroups[index] {
+			// Consume and authenticate every supplied member identity so callers
+			// cannot hide an extra or foreign row in an undemanded fragment. The
+			// typed hot member itself is deliberately not copied into the runtime
+			// producer.
+			for memberIndex := 0; memberIndex < group.MemberCount(); memberIndex++ {
+				member, memberOK := group.MemberAt(memberIndex)
+				row := byMember[member.Key()]
+				if !memberOK || !member.Key().Available() || row == nil || row.member().Key() != member.Key() || !row.member().Rule().Available() {
+					return nil, false
+				}
+				delete(byMember, member.Key())
+			}
+			producers[index] = runtimeProducer{index: index, group: group}
+			continue
+		}
 		outputScope, scoped := plans.scope(group.Output().Scope())
 		premise, premised := runtimeFormula(runtime, outputScope, group.Premise(), plans.decisions)
 		if !scoped || !premised {
@@ -656,8 +814,9 @@ func assembleRuntime(cold *Composition, graph *equation.Graph, runtime *carrier.
 			if !factorOK {
 				return nil, false
 			}
+			memberCarries := row.carries()
 			occurrenceTargets := row.targets()
-			if len(row.carries()) != 0 {
+			if len(memberCarries) != 0 {
 				occurrenceTargets = row.carryTargets()
 			}
 			narrowTargets := row.narrowTargets()
@@ -701,7 +860,7 @@ func assembleRuntime(cold *Composition, graph *equation.Graph, runtime *carrier.
 			if row.writesOutput() {
 				writes = append(writes, slot)
 			}
-			for _, input := range row.carries() {
+			for _, input := range memberCarries {
 				if input < 0 || input >= len(inputTransports) {
 					return nil, false
 				}
@@ -717,7 +876,7 @@ func assembleRuntime(cold *Composition, graph *equation.Graph, runtime *carrier.
 			return lessRuntimeKey(members[left].member().Key(), members[right].member().Key())
 		})
 		sort.Slice(footprint, func(left, right int) bool { return lessRuntimeKey(footprint[left].key, footprint[right].key) })
-		producers[index] = runtimeProducer{index: index, group: group, plan: plan, members: members, inputs: append([]runtimeInput(nil), inputTransports...), environment: environment, outputScope: outputScope, premise: premise, reads: initialReads, dynamicReads: dynamicReads, carries: demandCarries, footprint: footprint}
+		producers[index] = runtimeProducer{index: index, group: group, plan: plan, members: members, inputs: inputTransports, environment: environment, outputScope: outputScope, premise: premise, reads: initialReads, dynamicReads: dynamicReads, carries: demandCarries, footprint: footprint}
 	}
 	if len(byMember) != 0 {
 		return nil, false
@@ -748,7 +907,6 @@ func assembleRuntime(cold *Composition, graph *equation.Graph, runtime *carrier.
 		return nil, false
 	}
 	selected := make([]int, points.PointCount())
-	selectedGroups := make([]bool, graph.GroupCount())
 	for index := range selected {
 		point, pointOK := points.PointAt(index)
 		pointIndex, indexed := graph.PointIndex(point)
@@ -762,7 +920,9 @@ func assembleRuntime(cold *Composition, graph *equation.Graph, runtime *carrier.
 			if !producerOK || !indexed || groupIndex < 0 || groupIndex >= len(selectedGroups) {
 				return nil, false
 			}
-			selectedGroups[groupIndex] = true
+			if !selectedGroups[groupIndex] {
+				return nil, false
+			}
 		}
 	}
 	for groupIndex, selectedGroup := range selectedGroups {
@@ -786,7 +946,7 @@ func assembleRuntime(cold *Composition, graph *equation.Graph, runtime *carrier.
 		}
 	}
 	sealedDemand := demandPlan.Seal(selected)
-	validQueries := validateRuntimeQueries(cold, graph, queries)
+	validQueries := validateRuntimeQueries(receiptState, receiptAuthority, graph, queries)
 	if !sealedDemand || !validQueries {
 		return nil, false
 	}
@@ -794,25 +954,26 @@ func assembleRuntime(cold *Composition, graph *equation.Graph, runtime *carrier.
 	if !dependencyOK {
 		return nil, false
 	}
-	assembled := &solverRuntime{composition: cold, carrier: runtime, graph: graph, factors: nil, points: points, producers: producers, environments: environments, factorEdges: factorEdges, environmentIncoming: environmentIncoming, factorIncoming: factorIncoming, overlay: runtimeStructuralOverlay{factorByKey: factorByKey, staticOrigins: staticOrigins, originAt: make(map[runtimeFactorOrigin]int), factorOutgoing: factorOutgoing, dependencyEdges: dependencyEdges, dependencyAt: dependencyAt, reindexes: plans, latePlans: make(map[composition.Key]carrier.ReindexPlan), generation: 1}, demand: demandPlan, queries: append([]runtimeQuery(nil), queries...), pointScopes: pointScopes, pointInitials: pointInitials, regions: regions, regionChildren: regionChildren, pointRegion: pointRegion, activePoints: activePoints, activeRegions: activeRegions}
+	assembled := &solverRuntime{receiptState: receiptState, receiptAuthority: receiptAuthority, carrier: runtime, graph: graph, factors: nil, points: points, producers: producers, environments: environments, factorEdges: factorEdges, environmentIncoming: environmentIncoming, factorIncoming: factorIncoming, overlay: runtimeStructuralOverlay{factorByKey: factorByKey, staticOrigins: staticOrigins, originAt: make(map[runtimeFactorOrigin]int), directAt: make(map[int]equation.SelectedStructuralFactorEdge), factorOutgoing: factorOutgoing, dependencyEdges: dependencyEdges, dependencyAt: dependencyAt, reindexes: plans, latePlans: make(map[composition.Key]carrier.ReindexPlan), generation: 1}, demand: demandPlan, queries: append([]runtimeQuery(nil), queries...), observations: append([]runtimeObservation(nil), observations...), pointScopes: pointScopes, pointInitials: pointInitials, regions: regions, regionChildren: regionChildren, pointRegion: pointRegion, activePoints: activePoints, activeRegions: activeRegions}
 	return assembled, true
 }
 
-func validateRuntimeQueries(cold *Composition, graph *equation.Graph, rows []runtimeQuery) bool {
-	if cold == nil || !cold.Sealed() || cold.coldComposition() == nil || graph == nil || graph.CompositionID() != cold.coldComposition().ID() || len(rows) != graph.QueryCount() {
+func validateRuntimeQueries(receiptState *schemaBindingState, receiptAuthority *schemaBindingAuthority, graph *equation.Graph, rows []runtimeQuery) bool {
+	if receiptState == nil || receiptAuthority == nil || receiptState.phase != schemaBindingSealed || receiptState.authority != receiptAuthority || receiptState.schema == nil || !receiptState.schema.Available() || graph == nil || len(rows) != graph.QueryCount() {
 		return false
 	}
+	schema := receiptState.schema
+	if schema == nil || graph.CompositionID() != schema.coldID() {
+		return false
+	}
+	ownerRuntime := &solverRuntime{receiptState: receiptState, receiptAuthority: receiptAuthority, graph: graph}
 	for index, row := range rows {
 		identity, identityOK := graph.QueryAt(index)
 		if !identityOK || row == nil || !graph.OwnsQuery(row.query()) || !row.query().Key().Available() || row.query().Key() != identity.Key() || row.query().Family() != identity.Family() {
 			return false
 		}
-		authority := row.queryAuthority()
-		if !validQueryAuthority(authority) || authority.schema.composition != cold || authority.schema.semantic.compositionKey() != row.query().Family() || authority.schema.bindIndex != authority.index {
-			return false
-		}
-		familyIndex, known := cold.coldComposition().QueryIndex(row.query().Family())
-		if !known || familyIndex != authority.index {
+		owner := row.queryOwner()
+		if owner == nil || !owner.validQueryOwner(ownerRuntime, identity) {
 			return false
 		}
 	}
@@ -865,6 +1026,9 @@ func runtimeStaticDependencyEdges(graph *equation.Graph) ([]schedule.Edge, map[[
 		}
 		for index := 0; index < graph.EnvironmentOutgoingCount(source); index++ {
 			edge, edgeOK := graph.EnvironmentOutgoingAt(source, index)
+			if edgeOK && edge.TransportOnly() {
+				continue
+			}
 			targetIndex, indexed := graph.PointIndex(edge.Target())
 			if !edgeOK || !indexed || !appendEdge(sourceIndex, targetIndex) {
 				return nil, nil, false
@@ -999,6 +1163,22 @@ func bindRuntimeRegionsWithEdges(graph *equation.Graph, active []bool, runtime *
 			// lawful recurrence contribution here.
 			bound.environmentBack = append(bound.environmentBack, edgeIndex)
 		}
+		// TransportOnly edges are intentionally absent from the immutable WTO
+		// recurrence graph, but a self-transport targeting a region head still
+		// contributes to that head's runtime RHS. Keep it in the same back
+		// ingress/version surface as ordinary environment back edges.
+		for edgeIndex := 0; edgeIndex < graph.EnvironmentEdgeTotal(); edgeIndex++ {
+			edge, edgeOK := graph.EnvironmentEdgeAtIndex(edgeIndex)
+			if !edgeOK || !edge.TransportOnly() || edge.Target() != head {
+				continue
+			}
+			boundIndex, indexed := edges.environment(edge)
+			if !indexed || boundIndex < 0 {
+				return nil, nil, false
+			}
+			bound.environmentBack = append(bound.environmentBack, boundIndex)
+		}
+		sort.Ints(bound.environmentBack)
 		for index := 0; index < region.ExternalFactorEdgeCount(); index++ {
 			edge, edgeOK := region.ExternalFactorEdgeAt(index)
 			if !edgeOK {

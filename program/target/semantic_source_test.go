@@ -32,8 +32,8 @@ func TestSourcePublicationsMatchTypedTargetProjections(t *testing.T) {
 		t.Fatal("sealed Contract has no semantic-source publication")
 	}
 	publications := receipt.Publications()
-	if len(publications) != 36 {
-		t.Fatalf("Target publications = %d, want 36", len(publications))
+	if len(publications) != 37 {
+		t.Fatalf("Target publications = %d, want 37", len(publications))
 	}
 	got := targetPublishedCounts(t, publications)
 	want := targetProjectionCounts(t, contract)
@@ -198,7 +198,7 @@ func targetPublishedCounts(t *testing.T, publications []semanticsource.Publicati
 // publication reads the sealed tables and does not pay this cost.
 func targetProjectionCounts(t *testing.T, contract *Contract) map[targetSourceKey]int {
 	t.Helper()
-	counts := make(map[targetSourceKey]int, 36)
+	counts := make(map[targetSourceKey]int, 37)
 	for _, key := range targetPublicationKeys() {
 		counts[key] = 0
 	}
@@ -216,6 +216,11 @@ func targetProjectionCounts(t *testing.T, contract *Contract) map[targetSourceKe
 		counts[targetSourceKey{origin: semanticsource.OriginTargetOperation}]++
 		counts[targetSourceKey{origin: semanticsource.OriginTargetOperation, facet: semanticsource.FacetTargetABI}]++
 		counts[targetSourceKey{origin: semanticsource.OriginTargetOperation, facet: semanticsource.FacetTargetOperationEffect}] += contract.EffectCount(op)
+		for effect := 0; effect < contract.EffectCount(op); effect++ {
+			if _, found := contract.PublicationEffectDescriptor(op, effect); found {
+				counts[targetSourceKey{origin: semanticsource.OriginTargetOperation, facet: semanticsource.FacetTargetPublicationEffect}]++
+			}
+		}
 		counts[targetSourceKey{origin: semanticsource.OriginTargetOperation, facet: semanticsource.FacetTargetSubedge}] += contract.SubedgeCount(op)
 		counts[targetSourceKey{origin: semanticsource.OriginTargetOperation, facet: semanticsource.FacetTargetBinding}] += contract.BindingCount(op)
 		counts[targetSourceKey{origin: semanticsource.OriginTargetOperation, facet: semanticsource.FacetTargetResume}] += contract.ResumeCount(op)
@@ -239,6 +244,11 @@ func targetProjectionCounts(t *testing.T, contract *Contract) map[targetSourceKe
 			}
 			counts[targetSourceKey{origin: semanticsource.OriginTargetOperation, facet: semanticsource.FacetTargetCallback}]++
 			counts[targetSourceKey{origin: semanticsource.OriginTargetOperation, facet: semanticsource.FacetTargetCallbackEffect}] += contract.CallbackEffectCount(callback)
+			for effect := 0; effect < contract.CallbackEffectCount(callback); effect++ {
+				if _, found := contract.CallbackPublicationEffectDescriptor(callback, effect); found {
+					counts[targetSourceKey{origin: semanticsource.OriginTargetOperation, facet: semanticsource.FacetTargetPublicationEffect}]++
+				}
+			}
 			if _, _, _, _, found := contract.CallbackRelease(callback); found {
 				counts[targetSourceKey{origin: semanticsource.OriginTargetOperation, facet: semanticsource.FacetTargetCallbackRelease}]++
 			}
@@ -292,8 +302,8 @@ func targetProjectionCounts(t *testing.T, contract *Contract) map[targetSourceKe
 	return counts
 }
 
-func targetPublicationKeys() [36]targetSourceKey {
-	return [36]targetSourceKey{
+func targetPublicationKeys() [37]targetSourceKey {
+	return [37]targetSourceKey{
 		{origin: semanticsource.OriginTargetContract},
 		{origin: semanticsource.OriginTargetOperation},
 		{origin: semanticsource.OriginTargetOperation, facet: semanticsource.FacetTargetABI},
@@ -318,6 +328,7 @@ func targetPublicationKeys() [36]targetSourceKey {
 		{origin: semanticsource.OriginTargetOperation, facet: semanticsource.FacetTargetProduced},
 		{origin: semanticsource.OriginTargetOperation, facet: semanticsource.FacetTargetProducedCapture},
 		{origin: semanticsource.OriginTargetOperation, facet: semanticsource.FacetTargetFreshResult},
+		{origin: semanticsource.OriginTargetOperation, facet: semanticsource.FacetTargetPublicationEffect},
 		{origin: semanticsource.OriginTargetProtocol},
 		{origin: semanticsource.OriginTargetProtocol, facet: semanticsource.FacetTargetProtocolState},
 		{origin: semanticsource.OriginTargetProtocol, facet: semanticsource.FacetTargetProtocolAcquisition},

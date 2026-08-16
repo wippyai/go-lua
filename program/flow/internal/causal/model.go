@@ -6,7 +6,11 @@
 // exact union of those two planes; no third graph is retained.
 package causal
 
-import "github.com/wippyai/go-lua/program/keyspace"
+import (
+	"github.com/wippyai/go-lua/program/flow/internal/recurrence"
+	"github.com/wippyai/go-lua/program/flow/internal/semanticpath"
+	"github.com/wippyai/go-lua/program/keyspace"
+)
 
 // Edge is one immutable local causal transfer. From and To are existing
 // canonical Terms. Decision is zero for an unguarded transfer and is an
@@ -90,12 +94,15 @@ func isBoundaryArm(arm BoundaryArmKind) bool {
 // seal-private capabilities and never become part of this value's public
 // identity.
 type Successor struct {
-	From     keyspace.Term
-	To       keyspace.Term
-	Decision keyspace.Term
-	Truth    bool
-	Mu       keyspace.Term
-	Arm      BoundaryArmKind
+	From      keyspace.Term
+	To        keyspace.Term
+	Decision  keyspace.Term
+	Truth     bool
+	Mu        keyspace.Term
+	Arm       BoundaryArmKind
+	component keyspace.Term
+	ref       successorRef
+	refValid  bool
 
 	// routeDigest is the stable semantic route identity.  The physical row
 	// ref remains seal-private and is intentionally absent from this value.
@@ -123,6 +130,10 @@ func isDecision(t keyspace.Term) bool {
 
 type edgeRow struct {
 	Edge
+	// component is the recurrence-issued canonical cyclic-component head for
+	// this final route, or zero for acyclic/cross-component routes. It is not
+	// derived from Mu: ordinary intra-SCC routes legitimately have Mu zero.
+	component keyspace.Term
 	// resetStart/resetPast are ranks in the owning Mu head's immutable stream.
 	// interval is meaningful whenever Mu is nonzero, including start == past.
 	resetStart uint32
@@ -136,6 +147,25 @@ type edgeRow struct {
 
 type boundaryRow struct {
 	CallBoundary
+	// components are row-owned membership scalars for the closed boundary arm
+	// sum. No successor index duplicates or reconstructs this projection.
+	components [BoundaryCancel + 1]keyspace.Term
+	proofs     [BoundaryCancel + 1]boundaryRecurrenceProof
+	// refs are sealed O(1) arm receipts populated from the canonical union
+	// index. They point back to this row; no successor scan is needed to
+	// reissue an arm or its route identity.
+	refs [BoundaryCancel + 1]successorRef
+}
+
+// boundaryRecurrenceProof is the optional exact-Arc Mu/reset witness for one
+// existing CallBoundary arm. The row remains the sole owner: it stores no
+// copied reset set, only a range into Result.reset's canonical stream.
+type boundaryRecurrenceProof struct {
+	mu          keyspace.Term
+	resetStart  uint32
+	resetPast   uint32
+	resetDigest keyspace.ContentID
+	resetCount  uint32
 }
 
 type successorRef struct {
@@ -145,7 +175,37 @@ type successorRef struct {
 	arm   BoundaryArmKind
 	// routeDigest is the canonical semantic identity of this route. It is an
 	// index payload, not a second route row or a public physical identity.
-	routeDigest keyspace.ContentID
+	routeDigest       keyspace.ContentID
+	semanticPath      keyspace.ContentID
+	semanticResetPath keyspace.ContentID
+	resetMembers      *[]keyspace.ContentID
+	semanticMuPath    keyspace.ContentID
+	guardContext      keyspace.ContentID
+	// guardDecisionPath is the exact semanticpath-issued identity of the
+	// guarded decision. It is copied while the private structural path lease is
+	// live so RouteGuardProof never reopens that released authority.
+	guardDecisionPath keyspace.ContentID
+	// fromPoint/toPoint are the exact SourceControl VertexCatalog receipts
+	// for this final route.  They are copied while the catalog lease is live;
+	// no later Site/term reconstruction may substitute for them.
+	fromPoint keyspace.ContentID
+	toPoint   keyspace.ContentID
+	// planOrdinal is seal-local exact Plan provenance. It is copied from the
+	// emitters' ordinal receipts into the combined ref only long enough to bind
+	// the recurrence hierarchy to final routes, then cleared before Result is
+	// published.
+	planOrdinal    uint32
+	planOrdinalSet bool
+	// routeIndexOrdinal is the exact slot stamped when the sorted route
+	// directory is sealed. It lets later semantic-path publication update the
+	// existing lookup row in O(1), without reconstructing a second ref map.
+	routeIndexOrdinal uint32
+	// wtoRegion is the sole parent-issued local schedule membership for this
+	// final route. It is a semantic ID, never a region row/index capability.
+	wtoRegion keyspace.ContentID
+	// diagnostic is seal-private route provenance used only if hierarchy
+	// receipt attachment fails. It is cleared before Result publication.
+	diagnostic routeReceiptDiagnostic
 }
 
 type routeLookup struct {
@@ -197,6 +257,23 @@ type successorIndex struct {
 	writeCommitRefs []successorRef
 }
 
+// pendingWTORoute is seal-local provenance for one existing final successor.
+// It is aligned to successorIndex.refs only until Flow exchanges private graph
+// coordinates for semantic WTO memberships; it is never a published route
+// relation or a retained graph projection.
+type pendingWTORoute struct {
+	from     uint32
+	to       uint32
+	fromPath keyspace.ContentID
+	toPath   keyspace.ContentID
+}
+
+type boundRouteReceipt struct {
+	fromPath   keyspace.ContentID
+	toPath     keyspace.ContentID
+	diagnostic routeReceiptDiagnostic
+}
+
 type successorPlane struct {
 	denominator uint32
 	ranges      []range32
@@ -220,6 +297,27 @@ type Result struct {
 	// needed for logarithmic semantic resolution.
 	routeIndex  []routeLookup
 	routesReady bool
+	// components is the exact ordered recurrence-issued component directory.
+	// It retains only heads, never node/arc/SCC topology, and seeds Flow.Local.
+	components     []keyspace.Term
+	componentIndex map[keyspace.Term]uint32
+	// componentPaths are Source/Flow-issued semantic region paths, parallel to
+	// the recurrence component directory. Exact owner provenance remains on
+	// Result; these paths are the portable component preimage.
+	componentPaths []keyspace.ContentID
+	// structuralPaths is the sole semanticpath-owned projection for authored
+	structuralPaths *semanticpath.CausalPaths
+	local           localStore
+	wto             wtoStore
+	// pendingWTO is the recurrence-issued, owner-private node bracket stream.
+	// It exists only between causal sealing and Flow's semantic-path
+	// publication; no public query observes it.
+	pendingWTO         recurrence.HierarchyProof
+	pendingNodeSites   [][]uint32
+	pendingWTORoutes   []pendingWTORoute
+	pendingVertexPaths []keyspace.ContentID
+	boundRouteReceipts []boundRouteReceipt
+	outcomePhasePaths  map[keyspace.Term]keyspace.ContentID
 
 	sourceID keyspace.ContentID
 	flowID   keyspace.ContentID

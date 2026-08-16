@@ -80,7 +80,7 @@ func fieldMergeKind(t typ.Type) kind.Kind {
 		t = a.Target
 	}
 	if lit, ok := literal.ExtractAliasOnly(t); ok {
-		return lit.Base
+		return lit.Base()
 	}
 	if t == nil {
 		return kind.Nil

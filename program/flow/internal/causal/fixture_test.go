@@ -14,6 +14,8 @@ import (
 	"github.com/wippyai/go-lua/program/flow/internal/outcome"
 	"github.com/wippyai/go-lua/program/flow/internal/position"
 	"github.com/wippyai/go-lua/program/flow/internal/recurrence"
+	"github.com/wippyai/go-lua/program/flow/internal/runtimeentry"
+	"github.com/wippyai/go-lua/program/flow/internal/semanticpath"
 	"github.com/wippyai/go-lua/program/flow/internal/sourcecontrol"
 	"github.com/wippyai/go-lua/program/keyspace"
 	"github.com/wippyai/go-lua/program/module"
@@ -34,7 +36,15 @@ type causalFixture struct {
 	recurrence *recurrence.Result
 	ports      *evaluation.Ports
 	executable *executable.Result
+	entries    *runtimeentry.Result
 	result     *Result
+
+	// These path receipts are captured while the SourceControl VertexCatalog
+	// lease is live.  Semantic-matrix laws must not reopen it after release.
+	capturedBodyEntryPath keyspace.ContentID
+	capturedBodyTailPath  keyspace.ContentID
+	capturedVertexPath    keyspace.ContentID
+	capturedArcs          []causalArcCapture
 
 	staticFinalize static.Finalizer
 	flowFinalize   authored.Finalizer
@@ -56,6 +66,42 @@ type causalSpec struct {
 	floatBits   []uint64
 	keys        []source.KeyInput
 	exactAtoms  []keyspace.LiteralValue
+
+	// Test-only exact point receipts to capture before the catalog lease is
+	// released. Zero leaves the corresponding receipt unspecified.
+	captureBodyEntryPath keyspace.Term
+	captureBodyTailPath  keyspace.Term
+	captureVertexPath    keyspace.Term
+	captureArcs          []causalArcSelector
+	runtimeEntryProbe    func(*runtimeEntryFixture)
+}
+
+type runtimeEntryFixture struct {
+	sourceView source.View
+	flow       authored.View
+	outcomes   *outcome.Result
+	control    *sourcecontrol.Result
+	ports      *evaluation.Ports
+	executable *executable.Result
+	entries    *runtimeentry.Result
+	staticID   keyspace.ContentID
+	moduleID   keyspace.ContentID
+}
+
+// causalArcSelector identifies one immutable structural witness to retain for
+// a law after the transient VertexCatalog has been released.
+type causalArcSelector struct {
+	Source   keyspace.Term
+	Target   keyspace.Term
+	Decision keyspace.Term
+	Truth    bool
+}
+
+// causalArcCapture is a test-only scalar snapshot. It deliberately retains
+// neither an ArcRef nor any SourceControl lease/result authority.
+type causalArcCapture struct {
+	arc     sourcecontrol.Arc
+	ordinal int
 }
 
 func openCausalFixture(t *testing.T, spec causalSpec) *causalFixture {
@@ -183,7 +229,7 @@ func openCausalFixture(t *testing.T, spec causalSpec) *causalFixture {
 		closeCausalFinalizers(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("position.Seal: %v", err)
 	}
-	sourceComponent, err := sourceFinalize.Commit(indexInput)
+	sourceComponent, issuance, err := sourceFinalize.CommitWithSemanticPathIssuance(indexInput)
 	if err != nil {
 		closeCausalFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("source.Commit: %v", err)
@@ -195,26 +241,145 @@ func openCausalFixture(t *testing.T, spec causalSpec) *causalFixture {
 		closeCausalFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("sourcecontrol.Seal: %v", err)
 	}
-	recur, err := recurrence.Seal(sourceView, flowView, bodies, forest, graph, staticID, moduleID)
-	if err != nil {
+	cellRoleIssuance, cellRoleOK := issuance.IssueCellRoles(sourceView)
+	cellRoles, cellRolesOK := cellRoleIssuance.Consume(sourceView)
+	if !cellRoleOK || !cellRolesOK {
 		closeCausalFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
-		t.Fatalf("recurrence.Seal: %v", err)
+		t.Fatal("source.CellRoleCatalog: unavailable")
+	}
+	certificate, certificateErr := semanticpath.Seal(issuance, cellRoles, sourceView, flowView, bodies, bindingResult, forest, outcomes, flowView.Cold().ContentID(), staticID, moduleID)
+	if certificateErr != nil {
+		closeCausalFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+		t.Fatalf("semanticpath.Seal: %v", certificateErr)
+	}
+	vertexReceipt, receiptOK := certificate.IssueVertexCatalogReceipt()
+	vertexLease, vertexErr := graph.InstallVertexCatalogLease(bodies, vertexReceipt)
+	if !receiptOK || vertexErr != nil || vertexLease == nil {
+		closeCausalFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+		t.Fatal("sourcecontrol.InstallVertexCatalog: no exact receipt")
+	}
+	defer graph.ReleaseVertexCatalog(vertexLease)
+	capturedBodyEntryPath, capturedBodyTailPath, capturedVertexPath := keyspace.ContentID{}, keyspace.ContentID{}, keyspace.ContentID{}
+	if spec.captureBodyEntryPath != 0 {
+		var pathOK bool
+		capturedBodyEntryPath, pathOK = graph.BodyEntryPath(spec.captureBodyEntryPath)
+		if !pathOK {
+			closeCausalFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+			t.Fatal("sourcecontrol.BodyEntryPath: unavailable while catalog lease is live")
+		}
+	}
+	if spec.captureBodyTailPath != 0 {
+		var pathOK bool
+		capturedBodyTailPath, pathOK = graph.BodyTailPath(spec.captureBodyTailPath)
+		if !pathOK {
+			closeCausalFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+			t.Fatal("sourcecontrol.BodyTailPath: unavailable while catalog lease is live")
+		}
+	}
+	if spec.captureVertexPath != 0 {
+		ref, refOK := graph.CoordinateRef(sourceView, spec.captureVertexPath)
+		var pathOK bool
+		if refOK {
+			capturedVertexPath, pathOK = graph.VertexPath(ref)
+		}
+		if !pathOK {
+			closeCausalFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+			t.Fatal("sourcecontrol.VertexPath: unavailable while catalog lease is live")
+		}
+	}
+	capturedArcs := make([]causalArcCapture, len(spec.captureArcs))
+	if len(spec.captureArcs) != 0 {
+		captureIndex := make(map[causalArcSelector]int, len(spec.captureArcs))
+		for index, selector := range spec.captureArcs {
+			if selector.Source == 0 || selector.Target == 0 {
+				closeCausalFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+				t.Fatal("causal fixture Arc capture selector is malformed")
+			}
+			if _, duplicate := captureIndex[selector]; duplicate {
+				closeCausalFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+				t.Fatal("causal fixture Arc capture selector is duplicated")
+			}
+			captureIndex[selector] = index
+			capturedArcs[index].ordinal = -1
+		}
+		for ordinal := 0; ordinal < graph.ArcCount(); ordinal++ {
+			arc, arcOK := graph.ArcAt(ordinal)
+			if !arcOK {
+				closeCausalFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+				t.Fatal("causal fixture Arc denominator is unavailable while catalog lease is live")
+			}
+			selector := causalArcSelector{Source: arc.Source, Target: arc.Target, Decision: arc.Decision, Truth: arc.Truth}
+			index, requested := captureIndex[selector]
+			if !requested {
+				continue
+			}
+			if capturedArcs[index].ordinal >= 0 {
+				closeCausalFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+				t.Fatal("causal fixture Arc capture selector is ambiguous")
+			}
+			capturedArcs[index] = causalArcCapture{arc: arc, ordinal: ordinal}
+		}
+		for index, capture := range capturedArcs {
+			if capture.ordinal < 0 {
+				closeCausalFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+				t.Fatalf("causal fixture Arc capture %d is absent", index)
+			}
+		}
+	}
+	outcomePhasePaths, outcomePhasePathsOK := certificate.IssueOutcomePhaseReceipt()
+	outcomePhases, outcomeErr := graph.IssueOutcomePhases(sourceView, flowView, bodies, outcomes, outcomePhasePaths)
+	if !outcomePhasePathsOK || outcomeErr != nil || outcomePhases == nil {
+		closeCausalFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+		t.Fatal("sourcecontrol.IssueOutcomePhases: unavailable")
 	}
 	execResult, err := executable.Seal(sourceView, flowView, forest, graph, staticID, moduleID)
 	if err != nil {
 		closeCausalFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("executable.Seal: %v", err)
 	}
-	result, err := Seal(sourceView, flowView, bodies, forest, outcomes, graph, recur, ports, execResult, staticID, moduleID)
+	entries, err := runtimeentry.Seal(sourceView, flowView, graph, ports, execResult, staticID, moduleID)
 	if err != nil {
 		closeCausalFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
-		t.Fatalf("causal.Seal: %v", err)
+		t.Fatalf("runtimeentry.Seal: %v", err)
+	}
+	if spec.runtimeEntryProbe != nil {
+		spec.runtimeEntryProbe(&runtimeEntryFixture{sourceView: sourceView, flow: flowView, outcomes: outcomes,
+			control: graph, ports: ports, executable: execResult, entries: entries, staticID: staticID, moduleID: moduleID})
+	}
+	causalReceipt, receiptOK := certificate.IssueCausalReceipt()
+	if !receiptOK {
+		closeCausalFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+		t.Fatal("semanticpath.IssueCausalReceipt: receipt unavailable")
+	}
+	preparation, err := PrepareRoutePlanWithStructuralPaths(sourceView, flowView, bodies, forest, outcomes, graph, ports, execResult, entries, causalReceipt, outcomePhases, staticID, moduleID)
+	if err != nil {
+		closeCausalFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+		t.Fatalf("causal.PrepareRoutePlan: %v", err)
+	}
+	preparationCopy := *preparation
+	result, err := preparation.Seal()
+	if err != nil {
+		closeCausalFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+		t.Fatalf("causal.Preparation.Seal: %v", err)
+	}
+	if _, err := preparationCopy.Seal(); err == nil {
+		closeCausalFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+		t.Fatal("copied causal Preparation sealed a second transaction")
+	}
+	// The finished Causal authority retains no recurrence result. This fixture
+	// separately seals recurrence only for diagnostic laws that inspect it.
+	recur, err := recurrence.Seal(sourceView, flowView, bodies, forest, graph, staticID, moduleID)
+	if err != nil {
+		closeCausalFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+		t.Fatalf("recurrence.Seal: %v", err)
 	}
 
 	fixture := &causalFixture{
 		sourceView: sourceView, flow: flowView, bodies: bodies, forest: forest,
 		outcomes: outcomes, control: graph, recurrence: recur, ports: ports,
-		executable: execResult, result: result,
+		executable: execResult, entries: entries, result: result,
+		capturedBodyEntryPath: capturedBodyEntryPath, capturedBodyTailPath: capturedBodyTailPath,
+		capturedVertexPath: capturedVertexPath, capturedArcs: capturedArcs,
 		staticFinalize: staticFinalize, flowFinalize: flowFinalize, moduleFinalize: moduleFinalize,
 	}
 	t.Cleanup(func() {

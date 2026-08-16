@@ -206,8 +206,10 @@ func TestArtifactReplayPreservesProjectCallInverse(t *testing.T) {
 	linked := linked(t, sealed, linkproject.Module{Name: "main", Program: p})
 	shard := onlyProjectShardFor(t, linked, p)
 	term := call(t, p, 0)
-	original, originalOK := linked.Project().Applications().Calls().ForCall(shard, p, term)
-	if !originalOK {
+	occurrence := artifactCallOccurrence(t, p, term)
+	originalProof, originalOK := linked.Project().Applications().Calls().ForOccurrence(shard, occurrence)
+	original, originalApplicationOK := originalProof.Application()
+	if !originalOK || !originalApplicationOK {
 		t.Fatal("original Project Call inverse unavailable")
 	}
 	originalID, originalIDOK := linked.Project().ApplicationID(original)
@@ -223,8 +225,9 @@ func TestArtifactReplayPreservesProjectCallInverse(t *testing.T) {
 		t.Fatal(err)
 	}
 	replayedShard := onlyProjectShardFor(t, replayed, p)
-	rebound, reboundOK := replayed.Project().Applications().Calls().ForCall(replayedShard, p, term)
-	if !reboundOK {
+	reboundProof, reboundOK := replayed.Project().Applications().Calls().ForOccurrence(replayedShard, occurrence)
+	rebound, reboundApplicationOK := reboundProof.Application()
+	if !reboundOK || !reboundApplicationOK {
 		t.Fatal("replayed Project Call inverse unavailable")
 	}
 	reboundID, reboundIDOK := replayed.Project().ApplicationID(rebound)
@@ -232,7 +235,26 @@ func TestArtifactReplayPreservesProjectCallInverse(t *testing.T) {
 		t.Fatalf("replayed Project Application identity = %x/%v, want %x", reboundID, reboundIDOK, originalID)
 	}
 	foreign := source(t, `require("dependency")`)
-	if _, ok := replayed.Project().Applications().Calls().ForCall(replayedShard, foreign, term); ok {
+	foreignOccurrence := artifactCallOccurrence(t, foreign, call(t, foreign, 0))
+	if _, ok := replayed.Project().Applications().Calls().ForOccurrence(replayedShard, foreignOccurrence); ok {
 		t.Fatal("replayed Project accepted equal-term foreign Program")
 	}
+}
+
+func artifactCallOccurrence(t testing.TB, owner *program.Program, term keyspace.Term) program.CallOccurrence {
+	t.Helper()
+	calls := owner.Flow().Authored().Calls()
+	input := owner.TransformerInput()
+	for index := 0; index < calls.Count(); index++ {
+		candidate, ok := calls.At(index)
+		if ok && candidate == term {
+			occurrence, occurrenceOK := input.CallAt(index)
+			if !occurrenceOK {
+				t.Fatal("Program CallOccurrence unavailable")
+			}
+			return occurrence
+		}
+	}
+	t.Fatal("Program CallOccurrence absent")
+	return program.CallOccurrence{}
 }

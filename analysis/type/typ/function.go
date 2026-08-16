@@ -183,7 +183,7 @@ func CloneFunction(fn *Function) *Function {
 		Variadic:          fn.Variadic,
 		Returns:           append([]Type(nil), fn.Returns...),
 		hash:              fn.hash,
-		equalityHashCache: fn.equalityHashCache,
+		equalityHashCache: &equalityHashCache{},
 		typeProperties:    fn.typeProperties.copyStatic(),
 	}
 	if functionSemanticNamesCanonical(clone.Params) {

@@ -7,18 +7,18 @@ import (
 
 func literalStringKey(t typ.Type) (string, bool) {
 	lit, ok := t.(*typ.Literal)
-	if !ok || lit.Base != kind.String {
+	if !ok || lit.Base() != kind.String {
 		return "", false
 	}
-	name, ok := lit.Value.(string)
+	name, ok := lit.Value().(string)
 	return name, ok
 }
 
 func literalIntKey(t typ.Type) (int64, bool) {
 	lit, ok := t.(*typ.Literal)
-	if !ok || lit.Base != kind.Integer {
+	if !ok || lit.Base() != kind.Integer {
 		return 0, false
 	}
-	index, ok := lit.Value.(int64)
+	index, ok := lit.Value().(int64)
 	return index, ok
 }

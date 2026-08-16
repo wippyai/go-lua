@@ -52,10 +52,6 @@ const (
 	FacetLinkModuleInitTerminal          Facet = 7
 	FacetLinkModuleRepresentative        Facet = 2
 	FacetLinkModuleTransport             Facet = 3
-	FacetLinkStaticExport                Facet = 3
-	FacetLinkStaticExpression            Facet = 2
-	FacetLinkStaticInput                 Facet = 4
-	FacetLinkStaticResolution            Facet = 1
 	FacetProgramFlowArithmetic           Facet = 4
 	FacetProgramFlowBitwise              Facet = 5
 	FacetProgramFlowBodyRoots            Facet = 1
@@ -112,6 +108,7 @@ const (
 	FacetTargetProtocolState             Facet = 1
 	FacetTargetProtocolTransition        Facet = 3
 	FacetTargetProtocolTransitionOutcome Facet = 4
+	FacetTargetPublicationEffect         Facet = 25
 	FacetTargetResultAlias               Facet = 21
 	FacetTargetResume                    Facet = 7
 	FacetTargetResumeOutcome             Facet = 17
@@ -183,62 +180,59 @@ var catalogDefinitions = [...]RelationDef{
 	{token: Token{origin: OriginProgramModuleEntry, facet: FacetProgramModuleEntryMember, revision: Revision(4), digest: 0x15E8BE9C9EB4157E}, seal: relationDefinitionSeal},
 	{token: Token{origin: OriginProgramModuleEntry, facet: FacetProgramModuleEntryRootFunction, revision: Revision(4), digest: 0x2E89F865BF61EBAE}, seal: relationDefinitionSeal},
 	{token: Token{origin: OriginTargetContract, facet: 0, revision: Revision(1), digest: 0x73BD5CEB13146543}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginTargetOperation, facet: 0, revision: Revision(5), digest: 0x3901010A576F3574}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginTargetOperation, facet: FacetTargetABI, revision: Revision(5), digest: 0x0CC918685D452D90}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginTargetOperation, facet: FacetTargetSubedge, revision: Revision(5), digest: 0x0AA0EA9CC0CFD58D}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginTargetOperation, facet: FacetTargetCallback, revision: Revision(5), digest: 0xA118AF645631AA80}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginTargetOperation, facet: FacetTargetBinding, revision: Revision(5), digest: 0xEEBF12A18774C3F7}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginTargetOperation, facet: FacetTargetResume, revision: Revision(5), digest: 0x3C6AB4690FDE73B6}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginTargetOperation, facet: FacetTargetSpawn, revision: Revision(5), digest: 0x1B9BCDCF59614DE0}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginTargetOperation, facet: FacetTargetOpaque, revision: Revision(5), digest: 0x83F90CDBA2779341}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginTargetOperation, facet: FacetTargetOperationEffect, revision: Revision(5), digest: 0x7AB06F32CB25F3B2}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginTargetOperation, facet: FacetTargetCallbackEffect, revision: Revision(5), digest: 0x7B4399180FB28DE2}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginTargetOperation, facet: FacetTargetCallbackRelease, revision: Revision(5), digest: 0x8D268E95F1922D1A}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginTargetOperation, facet: FacetTargetOutcome, revision: Revision(5), digest: 0x491D7493E43C4D03}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginTargetOperation, facet: FacetTargetTransfer, revision: Revision(5), digest: 0xE13B0F5BF7A7BEE4}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginTargetOperation, facet: FacetTargetTransferOutcome, revision: Revision(5), digest: 0x0F165D54A3DE8676}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginTargetOperation, facet: FacetTargetSuspension, revision: Revision(5), digest: 0xBAFF8323CE877C74}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginTargetOperation, facet: FacetTargetResumeOutcome, revision: Revision(5), digest: 0x78E6C055BC24CC8C}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginTargetOperation, facet: FacetTargetSpawnSibling, revision: Revision(5), digest: 0xE326A5CDC29DCD92}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginTargetOperation, facet: FacetTargetSubedgeArgumentOrigin, revision: Revision(5), digest: 0x272DFB4FEADCFD2E}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginTargetOperation, facet: FacetTargetCallbackResult, revision: Revision(5), digest: 0x67D8F549B10F9C72}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginTargetOperation, facet: FacetTargetResultAlias, revision: Revision(5), digest: 0x1C75D37F491981CB}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginTargetOperation, facet: FacetTargetProduced, revision: Revision(5), digest: 0x8290AD4C179F2E4C}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginTargetOperation, facet: FacetTargetProducedCapture, revision: Revision(5), digest: 0xDDFB1DD2F5993F66}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginTargetOperation, facet: FacetTargetFreshResult, revision: Revision(5), digest: 0x0D46C5D05A9D32E9}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginTargetProtocol, facet: 0, revision: Revision(6), digest: 0x8EEE01FC1FB82FFC}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginTargetProtocol, facet: FacetTargetProtocolState, revision: Revision(6), digest: 0xC0024F439F7CF0BB}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginTargetProtocol, facet: FacetTargetProtocolAcquisition, revision: Revision(6), digest: 0xE417CBEC2657C795}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginTargetProtocol, facet: FacetTargetProtocolTransition, revision: Revision(6), digest: 0x64795569E641F2B1}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginTargetProtocol, facet: FacetTargetProtocolTransitionOutcome, revision: Revision(6), digest: 0x9EB71888DDAB0652}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginTargetProtocol, facet: FacetTargetProtocolEscape, revision: Revision(6), digest: 0x7ABA6DD88998AB5A}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginTargetProtocol, facet: FacetTargetProtocolCallbackHolder, revision: Revision(6), digest: 0xBA2AEBA60367E697}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginTargetOperation, facet: 0, revision: Revision(6), digest: 0xE25E5E31273B6793}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginTargetOperation, facet: FacetTargetABI, revision: Revision(6), digest: 0x61AE49708E7CE109}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginTargetOperation, facet: FacetTargetSubedge, revision: Revision(6), digest: 0x9F6638178AFE7E44}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginTargetOperation, facet: FacetTargetCallback, revision: Revision(6), digest: 0xF181F5F1760BCD56}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginTargetOperation, facet: FacetTargetBinding, revision: Revision(6), digest: 0x0BBC7A81638BBFC6}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginTargetOperation, facet: FacetTargetResume, revision: Revision(6), digest: 0xFC7C734E11231D25}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginTargetOperation, facet: FacetTargetSpawn, revision: Revision(6), digest: 0x478119C62C460E8D}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginTargetOperation, facet: FacetTargetOpaque, revision: Revision(6), digest: 0x926390A9F09850DD}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginTargetOperation, facet: FacetTargetOperationEffect, revision: Revision(6), digest: 0xA6145AFEEE66F008}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginTargetOperation, facet: FacetTargetCallbackEffect, revision: Revision(6), digest: 0x81AB9B27385283A8}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginTargetOperation, facet: FacetTargetCallbackRelease, revision: Revision(6), digest: 0xFD615700E06ADE12}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginTargetOperation, facet: FacetTargetOutcome, revision: Revision(6), digest: 0xCFDFB63642BA5BBF}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginTargetOperation, facet: FacetTargetTransfer, revision: Revision(6), digest: 0xD566D26DE2B5A190}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginTargetOperation, facet: FacetTargetTransferOutcome, revision: Revision(6), digest: 0xD7A1B8E9BAFAC6F5}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginTargetOperation, facet: FacetTargetSuspension, revision: Revision(6), digest: 0xE43E7181C5D58A73}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginTargetOperation, facet: FacetTargetResumeOutcome, revision: Revision(6), digest: 0x702DC4AC58499280}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginTargetOperation, facet: FacetTargetSpawnSibling, revision: Revision(6), digest: 0x8A41C1D06B9BF5BE}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginTargetOperation, facet: FacetTargetSubedgeArgumentOrigin, revision: Revision(6), digest: 0x9691454ECB6B254C}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginTargetOperation, facet: FacetTargetCallbackResult, revision: Revision(6), digest: 0xB76FA2E8C4F5AB27}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginTargetOperation, facet: FacetTargetResultAlias, revision: Revision(6), digest: 0xBC2F5E3968A0446D}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginTargetOperation, facet: FacetTargetProduced, revision: Revision(6), digest: 0xD3616B19C4C0F0E6}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginTargetOperation, facet: FacetTargetProducedCapture, revision: Revision(6), digest: 0x75C9D98C3E782725}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginTargetOperation, facet: FacetTargetFreshResult, revision: Revision(6), digest: 0x4DA1F63E346D098B}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginTargetOperation, facet: FacetTargetPublicationEffect, revision: Revision(6), digest: 0x4908A94326F2349D}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginTargetProtocol, facet: 0, revision: Revision(7), digest: 0xE74076F2BD05710F}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginTargetProtocol, facet: FacetTargetProtocolState, revision: Revision(7), digest: 0xDBCBEFAA498DA0AD}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginTargetProtocol, facet: FacetTargetProtocolAcquisition, revision: Revision(7), digest: 0x3C088D97C0F53261}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginTargetProtocol, facet: FacetTargetProtocolTransition, revision: Revision(7), digest: 0x2F9279E6EF4B773A}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginTargetProtocol, facet: FacetTargetProtocolTransitionOutcome, revision: Revision(7), digest: 0x5E02B3132D240DFF}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginTargetProtocol, facet: FacetTargetProtocolEscape, revision: Revision(7), digest: 0xDC431F0D102D97C4}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginTargetProtocol, facet: FacetTargetProtocolCallbackHolder, revision: Revision(7), digest: 0x12BA788F83224E11}, seal: relationDefinitionSeal},
 	{token: Token{origin: OriginTargetBoot, facet: 0, revision: Revision(2), digest: 0x6E54004135AA121F}, seal: relationDefinitionSeal},
 	{token: Token{origin: OriginTargetBoot, facet: FacetTargetBootEntry, revision: Revision(2), digest: 0xB43F900A4512E618}, seal: relationDefinitionSeal},
 	{token: Token{origin: OriginTargetBoot, facet: FacetTargetBootMetatableAttachment, revision: Revision(2), digest: 0x4259425CB5E7E14C}, seal: relationDefinitionSeal},
 	{token: Token{origin: OriginTargetBoot, facet: FacetTargetBootBinding, revision: Revision(2), digest: 0x8A5E76DE0D229CF4}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginTargetGsub, facet: 0, revision: Revision(5), digest: 0x728479795BE9237C}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginTargetGsub, facet: 0, revision: Revision(6), digest: 0x13F83842BC542F1F}, seal: relationDefinitionSeal},
 	{token: Token{origin: OriginLinkProjectShardMount, facet: 0, revision: Revision(3), digest: 0x44B78A5A8B2481D8}, seal: relationDefinitionSeal},
 	{token: Token{origin: OriginLinkProjectBaseApplication, facet: 0, revision: Revision(6), digest: 0x480B7289D297D8BE}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginLinkBoundary, facet: 0, revision: Revision(9), digest: 0xF966D471171C91AD}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginLinkModule, facet: 0, revision: Revision(9), digest: 0xE8EC6E943EE30CDE}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginLinkModule, facet: FacetLinkModuleCache, revision: Revision(9), digest: 0xAC1093EE0BE721ED}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginLinkModule, facet: FacetLinkModuleRepresentative, revision: Revision(9), digest: 0x9E18FAA256DDD9A0}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginLinkModule, facet: FacetLinkModuleTransport, revision: Revision(9), digest: 0xFEF90E1172DA4E2A}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginLinkModule, facet: FacetLinkModuleAnalysisRoot, revision: Revision(9), digest: 0x14FB4FC5C49C3C0C}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginLinkModule, facet: FacetLinkModuleInitGeneration, revision: Revision(9), digest: 0x09DAB3E1C8B4DAAA}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginLinkModule, facet: FacetLinkModuleInitOutcome, revision: Revision(9), digest: 0x8BCEF0331E3825AB}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginLinkModule, facet: FacetLinkModuleInitTerminal, revision: Revision(9), digest: 0x4474620B7717827D}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginLinkBoundary, facet: 0, revision: Revision(11), digest: 0xBCE702CCCEC3D61C}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginLinkModule, facet: 0, revision: Revision(11), digest: 0xC7524E74F2A5C74B}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginLinkModule, facet: FacetLinkModuleCache, revision: Revision(11), digest: 0x4F851D9174C5D9F8}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginLinkModule, facet: FacetLinkModuleRepresentative, revision: Revision(11), digest: 0x04140F960BD3F949}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginLinkModule, facet: FacetLinkModuleTransport, revision: Revision(11), digest: 0x5B58C85DAE4BC27D}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginLinkModule, facet: FacetLinkModuleAnalysisRoot, revision: Revision(11), digest: 0xD521D713D3BD249E}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginLinkModule, facet: FacetLinkModuleInitGeneration, revision: Revision(11), digest: 0x68A186580DF1BE9B}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginLinkModule, facet: FacetLinkModuleInitOutcome, revision: Revision(11), digest: 0x67D241150E75A6B7}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginLinkModule, facet: FacetLinkModuleInitTerminal, revision: Revision(11), digest: 0x82724A26BD882E2A}, seal: relationDefinitionSeal},
 	{token: Token{origin: OriginLinkStatic, facet: 0, revision: Revision(11), digest: 0x860B148E564262F6}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginLinkStatic, facet: FacetLinkStaticResolution, revision: Revision(11), digest: 0x1D4536460407B225}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginLinkStatic, facet: FacetLinkStaticExpression, revision: Revision(11), digest: 0xE6F723912453882F}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginLinkStatic, facet: FacetLinkStaticExport, revision: Revision(11), digest: 0xD94722C94DB8F0AE}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginLinkStatic, facet: FacetLinkStaticInput, revision: Revision(11), digest: 0xF26F7BB35E0CA49B}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginLinkHost, facet: 0, revision: Revision(9), digest: 0x94F0438E9B12160B}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginLinkHost, facet: FacetLinkHostExposure, revision: Revision(9), digest: 0x47CD5648B3C0E9E8}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginLinkHost, facet: FacetLinkHostBoot, revision: Revision(9), digest: 0x86655735ADEEC75F}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginLinkHost, facet: FacetLinkHostMember, revision: Revision(9), digest: 0x3219F17F25C93088}, seal: relationDefinitionSeal},
-	{token: Token{origin: OriginLinkHost, facet: FacetLinkHostEndpointTarget, revision: Revision(9), digest: 0x5CBD0073A0B4D7D5}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginLinkHost, facet: 0, revision: Revision(11), digest: 0x2B4E599B59FCA66B}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginLinkHost, facet: FacetLinkHostExposure, revision: Revision(11), digest: 0x2363649B555D0204}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginLinkHost, facet: FacetLinkHostBoot, revision: Revision(11), digest: 0x2066258FE1A9BE76}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginLinkHost, facet: FacetLinkHostMember, revision: Revision(11), digest: 0x91AE5D552CC3957F}, seal: relationDefinitionSeal},
+	{token: Token{origin: OriginLinkHost, facet: FacetLinkHostEndpointTarget, revision: Revision(11), digest: 0x4C777F430F55EF0F}, seal: relationDefinitionSeal},
 }
 
 var (
@@ -491,99 +485,93 @@ func catalogDefinition(origin Origin, facet Facet) (RelationDef, bool) {
 			return catalogDefinitions[79], true
 		case FacetTargetFreshResult:
 			return catalogDefinitions[80], true
+		case FacetTargetPublicationEffect:
+			return catalogDefinitions[81], true
 		}
 	case OriginTargetProtocol:
 		switch facet {
 		case 0:
-			return catalogDefinitions[81], true
-		case FacetTargetProtocolState:
 			return catalogDefinitions[82], true
-		case FacetTargetProtocolAcquisition:
+		case FacetTargetProtocolState:
 			return catalogDefinitions[83], true
-		case FacetTargetProtocolTransition:
+		case FacetTargetProtocolAcquisition:
 			return catalogDefinitions[84], true
-		case FacetTargetProtocolTransitionOutcome:
+		case FacetTargetProtocolTransition:
 			return catalogDefinitions[85], true
-		case FacetTargetProtocolEscape:
+		case FacetTargetProtocolTransitionOutcome:
 			return catalogDefinitions[86], true
-		case FacetTargetProtocolCallbackHolder:
+		case FacetTargetProtocolEscape:
 			return catalogDefinitions[87], true
+		case FacetTargetProtocolCallbackHolder:
+			return catalogDefinitions[88], true
 		}
 	case OriginTargetBoot:
 		switch facet {
 		case 0:
-			return catalogDefinitions[88], true
-		case FacetTargetBootEntry:
 			return catalogDefinitions[89], true
-		case FacetTargetBootMetatableAttachment:
+		case FacetTargetBootEntry:
 			return catalogDefinitions[90], true
-		case FacetTargetBootBinding:
+		case FacetTargetBootMetatableAttachment:
 			return catalogDefinitions[91], true
+		case FacetTargetBootBinding:
+			return catalogDefinitions[92], true
 		}
 	case OriginTargetGsub:
 		switch facet {
 		case 0:
-			return catalogDefinitions[92], true
+			return catalogDefinitions[93], true
 		}
 	case OriginLinkProjectShardMount:
 		switch facet {
 		case 0:
-			return catalogDefinitions[93], true
+			return catalogDefinitions[94], true
 		}
 	case OriginLinkProjectBaseApplication:
 		switch facet {
 		case 0:
-			return catalogDefinitions[94], true
+			return catalogDefinitions[95], true
 		}
 	case OriginLinkBoundary:
 		switch facet {
 		case 0:
-			return catalogDefinitions[95], true
+			return catalogDefinitions[96], true
 		}
 	case OriginLinkModule:
 		switch facet {
 		case 0:
-			return catalogDefinitions[96], true
-		case FacetLinkModuleCache:
 			return catalogDefinitions[97], true
-		case FacetLinkModuleRepresentative:
+		case FacetLinkModuleCache:
 			return catalogDefinitions[98], true
-		case FacetLinkModuleTransport:
+		case FacetLinkModuleRepresentative:
 			return catalogDefinitions[99], true
-		case FacetLinkModuleAnalysisRoot:
+		case FacetLinkModuleTransport:
 			return catalogDefinitions[100], true
-		case FacetLinkModuleInitGeneration:
+		case FacetLinkModuleAnalysisRoot:
 			return catalogDefinitions[101], true
-		case FacetLinkModuleInitOutcome:
+		case FacetLinkModuleInitGeneration:
 			return catalogDefinitions[102], true
-		case FacetLinkModuleInitTerminal:
+		case FacetLinkModuleInitOutcome:
 			return catalogDefinitions[103], true
+		case FacetLinkModuleInitTerminal:
+			return catalogDefinitions[104], true
 		}
 	case OriginLinkStatic:
 		switch facet {
 		case 0:
-			return catalogDefinitions[104], true
-		case FacetLinkStaticResolution:
 			return catalogDefinitions[105], true
-		case FacetLinkStaticExpression:
-			return catalogDefinitions[106], true
-		case FacetLinkStaticExport:
-			return catalogDefinitions[107], true
-		case FacetLinkStaticInput:
-			return catalogDefinitions[108], true
 		}
 	case OriginLinkHost:
 		switch facet {
 		case 0:
-			return catalogDefinitions[109], true
+			return catalogDefinitions[106], true
 		case FacetLinkHostExposure:
-			return catalogDefinitions[110], true
+			return catalogDefinitions[107], true
 		case FacetLinkHostBoot:
-			return catalogDefinitions[111], true
+			return catalogDefinitions[108], true
 		case FacetLinkHostMember:
-			return catalogDefinitions[112], true
+			return catalogDefinitions[109], true
 		case FacetLinkHostEndpointTarget:
-			return catalogDefinitions[113], true
+			return catalogDefinitions[110], true
 		}
 	}
 	return RelationDef{}, false

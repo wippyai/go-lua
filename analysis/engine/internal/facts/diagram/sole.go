@@ -64,16 +64,26 @@ type SoleScratch[K scalar.Key, V any] struct {
 	manyMemo         map[uint64]int
 	manyNodeIDs      map[*node[V]]uint32
 	manyMaskIDs      map[support.Mask]uint32
+	// many seed is a separate iterative predecessor import. It is never read
+	// by manyState, so reconstruction cannot widen the fused operand product.
+	manySeedStack []soleManySeedFrame[V]
+	manySeedState map[*node[V]]uint8
+	manyPriorIDs  []terminal.ID[V]
+	manyPriorSeen map[terminal.ID[V]]struct{}
 }
 
 type soleManyState[V any] struct {
-	reference *node[V]
 	offset    int
 	next      int
 	low, high int
 	atom      guard.Atom
 	result    *node[V]
 	phase     uint8
+}
+
+type soleManySeedFrame[V any] struct {
+	node  *node[V]
+	phase uint8
 }
 
 // SetCheckpoint installs an opaque evaluator liveness probe. It is called
@@ -150,6 +160,7 @@ func (scratch *SoleScratch[K, V]) Clear() {
 	clear(scratch.manyHighSupports)
 	scratch.manyHighSupports = scratch.manyHighSupports[:0]
 	scratch.clearManyStates()
+	scratch.clearManySeed()
 }
 
 func (scratch *SoleScratch[K, V]) clearManyStates() {
@@ -167,6 +178,18 @@ func (scratch *SoleScratch[K, V]) clearManyStates() {
 	clear(scratch.manyMemo)
 	clear(scratch.manyNodeIDs)
 	clear(scratch.manyMaskIDs)
+}
+
+func (scratch *SoleScratch[K, V]) clearManySeed() {
+	if scratch == nil {
+		return
+	}
+	clear(scratch.manySeedStack)
+	scratch.manySeedStack = scratch.manySeedStack[:0]
+	clear(scratch.manySeedState)
+	clear(scratch.manyPriorIDs)
+	scratch.manyPriorIDs = scratch.manyPriorIDs[:0]
+	clear(scratch.manyPriorSeen)
 }
 
 func resizeClear[T any](values []T, count int) []T {
@@ -312,13 +335,11 @@ func (scratch *SoleScratch[K, V]) manyMaskID(value support.Mask) uint32 {
 	return id
 }
 
-func (scratch *SoleScratch[K, V]) manyState(reference *node[V], nodes []*node[V], supports []support.Mask) (int, bool) {
+func (scratch *SoleScratch[K, V]) manyState(nodes []*node[V], supports []support.Mask) (int, bool) {
 	if scratch == nil || len(nodes) == 0 || len(nodes) != len(supports) {
 		return 0, false
 	}
 	hash := uint64(1469598103934665603)
-	hash ^= uint64(scratch.manyNodeID(reference))
-	hash *= 1099511628211
 	for index := range nodes {
 		hash ^= uint64(scratch.manyNodeID(nodes[index]))
 		hash *= 1099511628211
@@ -327,7 +348,7 @@ func (scratch *SoleScratch[K, V]) manyState(reference *node[V], nodes []*node[V]
 	}
 	for link := scratch.manyMemo[hash]; link != 0; link = scratch.manyStates[link-1].next {
 		state := scratch.manyStates[link-1]
-		equal := state.reference == reference
+		equal := true
 		for index := range nodes {
 			if scratch.manyTupleNodes[state.offset+index] != nodes[index] || scratch.manyTupleSupport[state.offset+index] != supports[index] {
 				equal = false
@@ -345,7 +366,7 @@ func (scratch *SoleScratch[K, V]) manyState(reference *node[V], nodes []*node[V]
 	scratch.manyTupleNodes = append(scratch.manyTupleNodes, nodes...)
 	scratch.manyTupleSupport = append(scratch.manyTupleSupport, supports...)
 	index := len(scratch.manyStates)
-	scratch.manyStates = append(scratch.manyStates, soleManyState[V]{reference: reference, offset: offset, next: scratch.manyMemo[hash]})
+	scratch.manyStates = append(scratch.manyStates, soleManyState[V]{offset: offset, next: scratch.manyMemo[hash]})
 	scratch.manyMemo[hash] = index + 1
 	return index, true
 }

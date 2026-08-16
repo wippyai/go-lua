@@ -17,10 +17,8 @@ func (rule *RawGetRule) check(semantic engine.SemanticKey) engine.RuleDerivation
 		id, idOK := operand.ID()
 		receiverCoordinate, receiverOK := operand.Receiver()
 		resultCoordinate, resultOK := operand.Result()
-		receiverRef, receiverRefOK := rule.values.Locate(receiverCoordinate)
-		resultRef, resultRefOK := rule.values.Locate(resultCoordinate)
-		if !operandOK || !idOK || !rule.owns(operand) || !receiverOK || !resultOK || !receiverRefOK || !resultRefOK ||
-			!derivation.OperandContentMatches([32]byte(id)) || !engine.DerivationReadMatchesRef(derivation, rule.receiver, receiverRef) {
+		if !operandOK || !idOK || !rule.owns(operand) || !receiverOK || !resultOK || rule.runtime.valueReadRef == nil ||
+			!derivation.OperandContentMatches([32]byte(id)) || !rule.runtime.valueReadRef(derivation, rule.receiver, receiverCoordinate) {
 			return engine.RuleEvidence{}, false
 		}
 		for index := 0; index < derivation.InputCount(); index++ {
@@ -72,7 +70,7 @@ func (rule *RawGetRule) check(semantic engine.SemanticKey) engine.RuleDerivation
 			actual, actualOK := disposition.Value()
 			target, targetOK := disposition.TargetAt(0)
 			if disposition.Kind() != engine.RuleDispositionStaged || disposition.TargetCount() != 1 || !actualOK || !targetOK ||
-				!engine.TargetMatchesRef(target, resultRef) || !rule.values.Schema().Equal(actual, expected) {
+				rule.runtime.valueTarget == nil || !rule.runtime.valueTarget(target, resultCoordinate) || !rule.valueSchema().Equal(actual, expected) {
 				return engine.RuleEvidence{}, false
 			}
 		}
@@ -129,58 +127,53 @@ func derivationRawGetView(
 	}
 	if _, dynamic := operand.DynamicKey(); dynamic {
 		coordinate, coordinateOK := operand.DynamicKey()
-		ref, refOK := rule.values.Locate(coordinate)
-		if !coordinateOK || !refOK {
+		if !coordinateOK {
+			return rawGetView{}, false
+		}
+		if rule.runtime.valueSelectionRef == nil {
 			return rawGetView{}, false
 		}
 		view.key = derivationSelectionValue(derivation, disposition, rule.key, nil, uint64(1), func(ordinal int) bool {
-			return engine.DerivationDispositionSelectionMatchesRef(derivation, disposition, rule.key, ordinal, ref)
+			return rule.runtime.valueSelectionRef(derivation, disposition, rule.key, ordinal, coordinate)
 		})
 		if !view.key.valid || !view.key.found {
 			return rawGetView{}, false
 		}
 	}
 	view.call = func(tag uint64) rawSelected[calldomain.Value] {
-		if tag == 0 || tag > uint64(len(rule.topology.freshApps)) {
-			return rawSelected[calldomain.Value]{}
-		}
-		key, keyOK := rule.calls.Algebra().KeyForApplication(rule.topology.freshApps[tag-1].application)
-		ref, refOK := rule.calls.Locate(key)
-		if !keyOK || !refOK {
+		_, keyOK := rule.runtime.callKeyForTag(tag)
+		if !keyOK || rule.runtime.callSelectionRef == nil {
 			return rawSelected[calldomain.Value]{}
 		}
 		return derivationSelectionValue(derivation, disposition, rule.call, &scratch.call, tag, func(ordinal int) bool {
-			return engine.DerivationDispositionSelectionMatchesRef(derivation, disposition, rule.call, ordinal, ref)
+			return rule.runtime.callSelectionRef(derivation, disposition, rule.call, ordinal, tag)
 		})
 	}
 	view.heap = func(tag heapdomain.RawRouteTag, key heapdomain.Key) rawSelected[heapdomain.Value] {
-		ref, ok := rule.heap.Locate(key)
-		if !ok {
+		if rule.runtime.heapSelectionRef == nil {
 			return rawSelected[heapdomain.Value]{}
 		}
 		return derivationSelectionValue(derivation, disposition, rule.heapRead, &scratch.heap, tag, func(ordinal int) bool {
-			return engine.DerivationDispositionSelectionMatchesRef(derivation, disposition, rule.heapRead, ordinal, ref)
+			return rule.runtime.heapSelectionRef(derivation, disposition, rule.heapRead, ordinal, key)
 		})
 	}
 	view.pack = func(tag heapdomain.RawPayloadTag) rawSelected[pack.Value] {
-		payload, payloadOK := payloadAt(rule.payloads, tag)
+		payload, payloadOK := rule.payloadAt(tag)
 		root, rootOK := payload.payload.Root()
-		ref, refOK := rule.packs.Locate(root)
-		if !payloadOK || !rootOK || !refOK {
+		if !payloadOK || !rootOK || rule.runtime.packSelectionRef == nil {
 			return rawSelected[pack.Value]{}
 		}
 		return derivationSelectionValue(derivation, disposition, rule.packRead, &scratch.pack, tag, func(ordinal int) bool {
-			return engine.DerivationDispositionSelectionMatchesRef(derivation, disposition, rule.packRead, ordinal, ref)
+			return rule.runtime.packSelectionRef(derivation, disposition, rule.packRead, ordinal, root)
 		})
 	}
 	view.source = func(tag rawSourceTag) rawSelected[valuedomain.Value] {
-		source, sourceOK := sourceAt(rule.sources, tag)
-		ref, refOK := rule.values.Locate(source.coordinate)
-		if !sourceOK || !refOK {
+		source, sourceOK := rule.sourceAt(tag)
+		if !sourceOK || rule.runtime.sourceSelectionRef == nil {
 			return rawSelected[valuedomain.Value]{}
 		}
 		return derivationSelectionValue(derivation, disposition, rule.sourceRead, &scratch.value, tag, func(ordinal int) bool {
-			return engine.DerivationDispositionSelectionMatchesRef(derivation, disposition, rule.sourceRead, ordinal, ref)
+			return rule.runtime.sourceSelectionRef(derivation, disposition, rule.sourceRead, ordinal, source.coordinate)
 		})
 	}
 	return view, true

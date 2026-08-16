@@ -54,8 +54,8 @@ func IntersectionForMeet(members ...typ.Type) typ.Type {
 	// checks can mistake for a live declared target instead of Bottom.
 	hasTrue, hasFalse := false, false
 	for _, member := range flat {
-		hasTrue = hasTrue || typ.TypeEquals(member, typ.True)
-		hasFalse = hasFalse || typ.TypeEquals(member, typ.False)
+		hasTrue = hasTrue || typ.TypeEquals(member, typ.LiteralBool(true))
+		hasFalse = hasFalse || typ.TypeEquals(member, typ.LiteralBool(false))
 	}
 	if hasTrue && hasFalse {
 		return typ.Never

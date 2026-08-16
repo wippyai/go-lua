@@ -25,8 +25,8 @@ func (l *Link) sourcePublications() ([]semanticsource.Publication, bool) {
 		return nil, false
 	}
 	staticCold := l.static.Cold()
-	staticReceipt, ok := staticCold.SemanticSourceReceipt()
-	if !ok || staticReceipt.OwnerID() != staticCold.ContentID() {
+	staticRows, ok := staticCold.Publications()
+	if !ok || len(staticRows) != 1 {
 		return nil, false
 	}
 	hostCold := l.host.Cold()
@@ -35,17 +35,17 @@ func (l *Link) sourcePublications() ([]semanticsource.Publication, bool) {
 		return nil, false
 	}
 	projectRows, boundaryRows, moduleRows := projectReceipt.Publications(), boundaryReceipt.Publications(), moduleReceipt.Publications()
-	staticRows, hostRows := staticReceipt.Publications(), hostReceipt.Publications()
-	if len(projectRows) != 2 || len(boundaryRows) != 1 || len(moduleRows) != 8 || len(staticRows) != 5 || len(hostRows) != 5 {
+	hostRows := hostReceipt.Publications()
+	if len(projectRows) != 2 || len(boundaryRows) != 1 || len(moduleRows) != 8 || len(staticRows) != 1 || len(hostRows) != 5 {
 		return nil, false
 	}
-	rows := make([]semanticsource.Publication, 0, 21)
+	rows := make([]semanticsource.Publication, 0, 17)
 	rows = append(rows, projectRows...)
 	rows = append(rows, boundaryRows...)
 	rows = append(rows, moduleRows...)
 	rows = append(rows, staticRows...)
 	rows = append(rows, hostRows...)
-	return rows, len(rows) == 21
+	return rows, len(rows) == 17
 }
 
 // sealedSemanticSource is a narrow lifecycle/owner proof. The individual

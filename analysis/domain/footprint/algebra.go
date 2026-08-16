@@ -13,10 +13,7 @@ import (
 type Schema struct{ universe *universe }
 type universe struct {
 	heap      heap.Schema
-	heapID    keyspace.ContentID
 	id        keyspace.ContentID
-	keys      []Key
-	keyIndex  map[Key]uint32
 	roots     []heap.Key
 	rootIndex map[heap.Key]uint32
 	potential uint64
@@ -43,8 +40,7 @@ func NewSchema(source heap.Schema) (Schema, bool) {
 		return Schema{}, false
 	}
 	universe := &universe{
-		heap: source, heapID: source.ContentID(),
-		keys: make([]Key, 0, rootCount), keyIndex: make(map[Key]uint32, rootCount),
+		heap:  source,
 		roots: make([]heap.Key, 0, rootCount), rootIndex: make(map[heap.Key]uint32, rootCount),
 	}
 	for index := 0; index < source.KeyCount(); index++ {
@@ -63,10 +59,6 @@ func NewSchema(source heap.Schema) (Schema, bool) {
 		}
 		universe.roots = append(universe.roots, root)
 		universe.rootIndex[root] = uint32(len(universe.roots))
-		key, ok := AllocationKey(source, root)
-		if !ok || !universe.addKey(key) {
-			return Schema{}, false
-		}
 	}
 	roots := uint64(rootCount)
 	if roots != 0 && roots > ^uint64(0)/roots {
@@ -85,21 +77,11 @@ func NewSchema(source heap.Schema) (Schema, bool) {
 	return Schema{universe: universe}, true
 }
 
-func (universe *universe) addKey(key Key) bool {
-	if universe == nil || !key.validFor(universe.heap) || universe.keyIndex[key] != 0 {
-		return false
-	}
-	universe.keys = append(universe.keys, key)
-	universe.keyIndex[key] = uint32(len(universe.keys))
-	return true
-}
-
 func (universe *universe) ownsKey(key Key) bool {
-	if universe == nil {
+	if universe == nil || key.universe != universe {
 		return false
 	}
-	index := universe.keyIndex[key]
-	return index != 0 && uint64(index) <= uint64(len(universe.keys)) && universe.keys[index-1] == key
+	return key.slot != 0 && uint64(key.slot) <= uint64(len(universe.roots))
 }
 
 func (universe *universe) rootAt(coordinate uint32) (heap.Key, bool) {
@@ -110,7 +92,7 @@ func (universe *universe) rootAt(coordinate uint32) (heap.Key, bool) {
 }
 
 func (s Schema) Valid() bool {
-	return s.universe != nil && s.universe.id.Available() && s.universe.heap.Valid() && s.universe.heapID.Available() && s.universe.heap.ContentID() == s.universe.heapID
+	return s.universe != nil && s.universe.id.Available() && s.universe.heap.Valid()
 }
 func (s Schema) ContentID() keyspace.ContentID {
 	if !s.Valid() {
@@ -132,21 +114,21 @@ func (s Schema) KeyCount() int {
 	if !s.Valid() {
 		return 0
 	}
-	return len(s.universe.keys)
+	return len(s.universe.roots)
 }
 
-// KeyAt returns one Heap-derived exact structural observation key.
+// KeyAt returns one universe-owned dense handle for an exact structural root.
 func (s Schema) KeyAt(index int) (Key, bool) {
-	if !s.Valid() || index < 0 || index >= len(s.universe.keys) {
+	if !s.Valid() || index < 0 || index >= len(s.universe.roots) || uint64(index) >= uint64(^uint32(0)) {
 		return Key{}, false
 	}
-	return s.universe.keys[index], true
+	return Key{universe: s.universe, slot: uint32(index + 1)}, true
 }
 
 // Rebind reconstructs only the cold family declaration. Existing Values stay
 // fenced to their original owner.
 func (s Schema) Rebind(source heap.Schema) (Schema, bool) {
-	if !s.Valid() || !source.Valid() || source.ContentID() != s.universe.heapID {
+	if !s.Valid() || !source.Valid() || source.ContentID() != s.universe.heap.ContentID() {
 		return Schema{}, false
 	}
 	rebound, ok := NewSchema(source)

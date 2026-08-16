@@ -107,16 +107,35 @@ func BuildPlan(factor engine.SemanticKey, bindings PlanBindings) (CoveragePlan, 
 	if !ok {
 		return CoveragePlan{}, false
 	}
+	// Contracts are sealed in canonical order, so re-deriving every row for
+	// every contract is unnecessary. Build the exact requirement relation once
+	// and use the sealed contract requirement as its lookup key.
+	byRequirement := make(map[coverage.Requirement]conclusion, len(rows))
+	for _, declared := range rows {
+		definition, found := semanticsource.Definition(declared.origin, declared.facet)
+		judgment, derived := coverage.DeriveConclusion(factor, uint16(declared.conclusion), revision)
+		if !found || !derived {
+			return CoveragePlan{}, false
+		}
+		contract := coverage.CoverageContract{
+			Source:     definition.Token(),
+			Class:      coverage.OwnerFactor,
+			Owner:      factor,
+			Conclusion: judgment,
+		}
+		requirement := contract.Requirement()
+		if _, duplicate := byRequirement[requirement]; duplicate {
+			return CoveragePlan{}, false
+		}
+		byRequirement[requirement] = declared.conclusion
+	}
 	by := make(map[conclusion][]coverage.Requirement, len(contracts))
 	for _, contract := range contracts {
-		for _, declared := range rows {
-			definition, defined := semanticsource.Definition(declared.origin, declared.facet)
-			judgment, derived := coverage.DeriveConclusion(factor, uint16(declared.conclusion), revision)
-			if defined && derived && definition.Token() == contract.Source && judgment == contract.Conclusion {
-				by[declared.conclusion] = append(by[declared.conclusion], contract.Requirement())
-				break
-			}
+		declared, found := byRequirement[contract.Requirement()]
+		if !found {
+			return CoveragePlan{}, false
 		}
+		by[declared] = append(by[declared], contract.Requirement())
 	}
 	plans := []coverage.RulePlan{
 		{Semantic: bindings.Ingress, Covers: append(append([]coverage.Requirement(nil), by[objectRoot]...), by[freshRoot]...)},

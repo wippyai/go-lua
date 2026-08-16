@@ -12,15 +12,22 @@ import (
 // only schedule nodes, publishers, and query roots. Groups are private atomic
 // RHS hyperedges; they never become schedule nodes or executable objects.
 type Graph struct {
-	self        *Graph
-	composition *composition.Composition
-	points      []Point
-	pointAt     map[composition.Key]schedule.Node
-	groups      []GroupNode
-	groupAt     map[composition.Key]int
-	memberAt    map[composition.Key]struct{}
-	producers   [][]int
-	consumers   [][]int
+	self *Graph
+	// payload is non-nil only for an activation revision view. Views share
+	// every immutable structural row with the sealed initial graph and carry
+	// only a new identity/revision header.
+	payload        *Graph
+	owner          *Topology
+	revision       composition.Key
+	composition    *composition.Composition
+	scheduleRanked bool
+	points         []Point
+	pointAt        map[composition.Key]schedule.Node
+	groups         []GroupNode
+	groupAt        map[composition.Key]int
+	memberAt       map[composition.Key]RuleMember
+	producers      [][]int
+	consumers      [][]int
 	// Environment edges are structural Point-to-Point transports. They are
 	// kept beside, never inside, Group hyperedges so no fake Rule authority is
 	// needed for a control-only predecessor.
@@ -36,7 +43,7 @@ type Graph struct {
 	// absent from schedule edges and producer lists.
 	activationReverses [][]schedule.Node
 	queries            []Query
-	queryAt            map[composition.Key]struct{}
+	queryAt            map[composition.Key]Query
 	decisions          []Decision
 	schedule           *schedule.Schedule
 	eventNodes         []int
@@ -91,10 +98,11 @@ type GroupNode struct {
 
 // EnvironmentEdgeNode is one graph-owned structural transport row.
 type EnvironmentEdgeNode struct {
-	graph  *Graph
-	key    composition.Key
-	target Point
-	input  Input
+	graph         *Graph
+	key           composition.Key
+	target        Point
+	input         Input
+	transportOnly bool
 }
 
 // FactorEdgeNode is one graph-owned structural transport that projects the
@@ -144,9 +152,10 @@ type builtGroup struct {
 }
 
 type builtEnvironmentEdge struct {
-	key    composition.Key
-	target Point
-	input  Input
+	key           composition.Key
+	target        Point
+	input         Input
+	transportOnly bool
 }
 
 type builtActivationReverse struct {
@@ -154,81 +163,168 @@ type builtActivationReverse struct {
 	trigger Point
 }
 
+// compiledRowDirectory is the immutable correspondence between disposable
+// builder references and canonical graph-row identities. It is produced in
+// the same compilation pass as the Graph; no later caller scans or rebuilds
+// topology to recover that correspondence.
+type compiledRowDirectory struct {
+	points  []composition.Key
+	members []composition.Key
+	queries []composition.Key
+}
+
 // compileTopology is the one raw topology compiler. Its input is reachable
 // only through a sealed Topology selection; direct compilation of a mutable
 // builder spelling is deliberately not exposed outside this package.
-func compileTopology(source *composition.Composition, topology TopologySpec, activationReverses []derivedActivationReverse) (*Graph, bool) {
-	if source == nil || !validTopologyBatch(topology.Batch, topology) || len(topology.Rules) == 0 || len(topology.Points) == 0 || len(topology.Groups) == 0 {
-		return nil, false
+func compileTopology(source *composition.Composition, topology TopologySpec, activationReverses []derivedActivationReverse) (*Graph, compiledRowDirectory, bool) {
+	graph, directory, _, ok := compileTopologyWithFailure(source, topology, activationReverses, false)
+	return graph, directory, ok
+}
+
+// compileTopologyWithFailure is the sealed topology compiler's closed
+// diagnostic form. The returned phase names only a compiler boundary; no
+// mutable row or raw builder reference escapes this package.
+func compileTopologyWithFailure(source *composition.Composition, topology TopologySpec, activationReverses []derivedActivationReverse, deferredQueries bool) (*Graph, compiledRowDirectory, SealTopologyFailure, bool) {
+	if source == nil || !validTopologyBatch(topology.Batch, topology) || len(topology.Points) == 0 {
+		return nil, compiledRowDirectory{}, SealTopologyFailureCompileInput, false
 	}
 	catalog, ok := buildTopologyCatalog(topology)
-	if !ok || !validateTopologyCatalogUsage(topology, catalog) {
-		return nil, false
+	if !ok {
+		return nil, compiledRowDirectory{}, SealTopologyFailureCompileCatalog, false
+	}
+	if !validateTopologyCatalogUsage(topology, catalog) {
+		return nil, compiledRowDirectory{}, SealTopologyFailureCompileUsage, false
 	}
 	instances, ok := buildInstances(source, topology.Batch, topology.Rules, catalog)
 	if !ok {
-		return nil, false
+		return nil, compiledRowDirectory{}, SealTopologyFailureCompileInstances, false
 	}
 	declared, sites, points, ok := buildPoints(topology.Points)
 	if !ok {
-		return nil, false
+		return nil, compiledRowDirectory{}, SealTopologyFailureCompilePoints, false
 	}
 	groups, ok := buildGroups(source, instances, declared, sites, topology.Groups)
 	if !ok {
-		return nil, false
+		return nil, compiledRowDirectory{}, SealTopologyFailureCompileGroups, false
 	}
 	environments, ok := buildEnvironmentEdges(topology.EnvironmentEdges, declared, sites)
 	if !ok {
-		return nil, false
+		return nil, compiledRowDirectory{}, SealTopologyFailureCompileEnvironment, false
 	}
 	factorEdges, ok := buildFactorEdges(source, topology.FactorEdges, declared, sites)
 	if !ok {
-		return nil, false
+		return nil, compiledRowDirectory{}, SealTopologyFailureCompileFactor, false
 	}
-	queries, ok := buildQueries(source, declared, topology.Queries, catalog)
+	queries, ok := buildQueries(source, declared, topology.Queries, catalog, deferredQueries)
 	if !ok {
-		return nil, false
+		return nil, compiledRowDirectory{}, SealTopologyFailureCompileQueries, false
 	}
 	reverses, ok := buildActivationReverseIndex(activationReverses, instances, declared, groups)
 	if !ok {
-		return nil, false
+		return nil, compiledRowDirectory{}, SealTopologyFailureCompileActivation, false
 	}
 	decisions, ok := collectDecisions(points, groups, environments, factorEdges)
 	if !ok {
-		return nil, false
+		return nil, compiledRowDirectory{}, SealTopologyFailureCompileDecisions, false
 	}
-	graph, assembled := assembleGraph(source, points, groups, environments, factorEdges, queries, reverses, decisions, catalog)
-	return graph, assembled
+	denseRanks := make([]int, 0)
+	if len(topology.PointRanks) != 0 {
+		denseRanks = make([]int, len(points))
+		denseAt := make(map[composition.Key]int, len(points))
+		for index, point := range points {
+			if _, duplicate := denseAt[point.key]; duplicate {
+				return nil, compiledRowDirectory{}, SealTopologyFailureCompileRanks, false
+			}
+			denseAt[point.key] = index
+		}
+		for index := range topology.Points {
+			point, found := declared[PointAt(index)]
+			denseIndex, indexed := denseAt[point.key]
+			if !found || !indexed {
+				return nil, compiledRowDirectory{}, SealTopologyFailureCompileRanks, false
+			}
+			denseRanks[denseIndex] = topology.PointRanks[index]
+		}
+	}
+	graph, assembled := assembleGraph(source, points, groups, environments, factorEdges, queries, reverses, decisions, catalog, denseRanks)
+	if !assembled || graph == nil {
+		return nil, compiledRowDirectory{}, SealTopologyFailureCompileAssembly, false
+	}
+	directory := compiledRowDirectory{
+		points:  make([]composition.Key, len(topology.Points)),
+		members: make([]composition.Key, len(instances)),
+		queries: make([]composition.Key, len(topology.Queries)),
+	}
+	for index := range topology.Points {
+		point, found := declared[PointAt(index)]
+		node, indexed := graph.pointAt[point.key]
+		if !found || !indexed || int(node) < 0 || int(node) >= len(graph.points) || !graph.OwnsPoint(graph.points[node]) {
+			return nil, compiledRowDirectory{}, SealTopologyFailureCompileDirectory, false
+		}
+		directory.points[index] = point.key
+	}
+	for index, instance := range instances {
+		member, found := graph.memberAt[instance.key]
+		if !found || !graph.OwnsMember(member) {
+			return nil, compiledRowDirectory{}, SealTopologyFailureCompileDirectory, false
+		}
+		directory.members[index] = instance.key
+	}
+	for index, row := range topology.Queries {
+		point, found := declared[row.Point]
+		if !found {
+			return nil, compiledRowDirectory{}, SealTopologyFailureCompileDirectory, false
+		}
+		key, keyed := deriveQueryKey(row, point, catalog)
+		query, found := graph.queryAt[key]
+		if !keyed || !found || !graph.OwnsQuery(query) {
+			return nil, compiledRowDirectory{}, SealTopologyFailureCompileDirectory, false
+		}
+		directory.queries[index] = key
+	}
+	return graph, directory, SealTopologyFailureNone, true
 }
 
 func validTopologyBatch(batch *Batch, topology TopologySpec) bool {
 	if !batch.Sealed() {
 		return false
 	}
+	if len(topology.PointRanks) != 0 {
+		if len(topology.PointRanks) != len(topology.Points) {
+			return false
+		}
+		seenRanks := make([]bool, len(topology.PointRanks))
+		for _, rank := range topology.PointRanks {
+			if rank < 0 || rank >= len(seenRanks) || seenRanks[rank] {
+				return false
+			}
+			seenRanks[rank] = true
+		}
+	}
 	for _, point := range topology.Points {
-		if !batch.ownsSite(point.Site) {
+		if !batch.ownsConcreteSite(point.Site) {
 			return false
 		}
 	}
 	for _, rule := range topology.Rules {
-		if !batch.ownsOccurrence(rule.Occurrence) || !batch.ownsOperand(rule.Operand) || !rule.Operand.Occurrence().Same(rule.Occurrence) {
+		if !batch.ownsOccurrence(rule.Occurrence) || !batch.ownsConcreteSite(rule.Occurrence.Site()) || !batch.ownsOperand(rule.Operand) || !rule.Operand.Occurrence().Same(rule.Occurrence) {
 			return false
 		}
 	}
 	for _, group := range topology.Groups {
 		for _, input := range group.Inputs {
-			if !batch.ownsSite(input.Source()) || !batch.ownsSite(input.Target()) {
+			if !batch.ownsConcreteSite(input.Source()) || !batch.ownsConcreteSite(input.Target()) {
 				return false
 			}
 		}
 	}
 	for _, edge := range topology.EnvironmentEdges {
-		if !batch.ownsSite(edge.Input.Source()) || !batch.ownsSite(edge.Input.Target()) {
+		if !batch.ownsConcreteSite(edge.Input.Source()) || !batch.ownsConcreteSite(edge.Input.Target()) {
 			return false
 		}
 	}
 	for _, edge := range topology.FactorEdges {
-		if !batch.ownsSite(edge.Input.Source()) || !batch.ownsSite(edge.Input.Target()) || !edge.Factor.Available() {
+		if !batch.ownsConcreteSite(edge.Input.Source()) || !batch.ownsConcreteSite(edge.Input.Target()) || !edge.Factor.Available() {
 			return false
 		}
 	}
@@ -359,7 +455,9 @@ func buildInstances(source *composition.Composition, batch *Batch, rows []RuleIn
 		seen[key] = struct{}{}
 		result[index] = canonicalInstance{key: key, row: copyInstance(row)}
 	}
-	return result, len(result) != 0
+	// A directory may legitimately contain only materialized boundary points
+	// and transport inputs. Empty rule catalogs are closed, not malformed.
+	return result, true
 }
 
 func buildGroups(source *composition.Composition, instances []canonicalInstance, declared map[PointRef]Point, sites map[composition.Key]Point, rows []Group) ([]builtGroup, bool) {
@@ -455,7 +553,7 @@ func buildEnvironmentEdges(rows []EnvironmentEdge, declared map[PointRef]Point, 
 		input := row.Input
 		input.point = source
 		key, keyOK := identityKey("analysis/engine/equation/environment-edge", func(writer *canonical.DigestWriter) bool {
-			return writeKey(writer, input.Key()) && writePoint(writer, target)
+			return writeKey(writer, input.Key()) && writePoint(writer, target) && writer.Uint(boolUint(row.TransportOnly)) == nil
 		})
 		if !keyOK || !key.Available() {
 			return nil, false
@@ -464,7 +562,7 @@ func buildEnvironmentEdges(rows []EnvironmentEdge, declared map[PointRef]Point, 
 			return nil, false
 		}
 		seen[key] = struct{}{}
-		result[index] = builtEnvironmentEdge{key: key, target: target, input: input}
+		result[index] = builtEnvironmentEdge{key: key, target: target, input: input, transportOnly: row.TransportOnly}
 	}
 	sort.Slice(result, func(left, right int) bool { return lessKey(result[left].key, result[right].key) })
 	return result, true
@@ -558,8 +656,19 @@ func resolveInputs(rows []Input, sites map[composition.Key]Point, target Point) 
 	return result, true
 }
 
-func buildQueries(source *composition.Composition, declared map[PointRef]Point, rows []QueryInstance, catalog topologyCatalog) ([]Query, bool) {
+func buildQueries(source *composition.Composition, declared map[PointRef]Point, rows []QueryInstance, catalog topologyCatalog, deferredQueries bool) ([]Query, bool) {
 	families := source.Queries()
+	if deferredQueries && len(rows) == 0 {
+		return nil, true
+	}
+	// A callback-free Factor/Rule schema may legitimately have no Query
+	// families while its graph is being compiled into a reusable transformer.
+	// Preserve exact inventory coverage: the empty cold denominator accepts
+	// only an empty instance set; any nonempty denominator still requires every
+	// family and at least one concrete observation.
+	if len(families) == 0 {
+		return nil, len(rows) == 0
+	}
 	if len(rows) < len(families) || len(rows) == 0 {
 		return nil, false
 	}
@@ -590,8 +699,8 @@ func buildQueries(source *composition.Composition, declared map[PointRef]Point, 
 	return queries, true
 }
 
-func assembleGraph(source *composition.Composition, points []Point, built []builtGroup, environments []builtEnvironmentEdge, factorEdges []builtFactorEdge, queries []Query, reverses []builtActivationReverse, decisions []Decision, catalog topologyCatalog) (*Graph, bool) {
-	graph := &Graph{composition: source, points: append([]Point(nil), points...), pointAt: make(map[composition.Key]schedule.Node, len(points)), groups: make([]GroupNode, len(built)), groupAt: make(map[composition.Key]int, len(built)), memberAt: make(map[composition.Key]struct{}), producers: make([][]int, len(points)), consumers: make([][]int, len(points)), environments: make([]EnvironmentEdgeNode, len(environments)), environmentIncoming: make([][]int, len(points)), environmentOutgoing: make([][]int, len(points)), environmentGroups: make([][]int, len(points)), factorEdges: make([]FactorEdgeNode, len(factorEdges)), factorIncoming: make([][]int, len(points)), factorOutgoing: make([][]int, len(points)), activationReverses: make([][]schedule.Node, len(points)), queries: append([]Query(nil), queries...), queryAt: make(map[composition.Key]struct{}, len(queries)), decisions: append([]Decision(nil), decisions...)}
+func assembleGraph(source *composition.Composition, points []Point, built []builtGroup, environments []builtEnvironmentEdge, factorEdges []builtFactorEdge, queries []Query, reverses []builtActivationReverse, decisions []Decision, catalog topologyCatalog, semanticRanks ...[]int) (*Graph, bool) {
+	graph := &Graph{composition: source, scheduleRanked: len(semanticRanks) != 0 && len(semanticRanks[0]) != 0, points: append([]Point(nil), points...), pointAt: make(map[composition.Key]schedule.Node, len(points)), groups: make([]GroupNode, len(built)), groupAt: make(map[composition.Key]int, len(built)), memberAt: make(map[composition.Key]RuleMember), producers: make([][]int, len(points)), consumers: make([][]int, len(points)), environments: make([]EnvironmentEdgeNode, len(environments)), environmentIncoming: make([][]int, len(points)), environmentOutgoing: make([][]int, len(points)), environmentGroups: make([][]int, len(points)), factorEdges: make([]FactorEdgeNode, len(factorEdges)), factorIncoming: make([][]int, len(points)), factorOutgoing: make([][]int, len(points)), activationReverses: make([][]schedule.Node, len(points)), queries: append([]Query(nil), queries...), queryAt: make(map[composition.Key]Query, len(queries)), decisions: append([]Decision(nil), decisions...)}
 	graph.self = graph
 	if !graph.installCatalog(catalog) {
 		return nil, false
@@ -613,7 +722,7 @@ func assembleGraph(source *composition.Composition, points []Point, built []buil
 		if _, duplicate := graph.queryAt[query.key]; duplicate {
 			return nil, false
 		}
-		graph.queryAt[query.key] = struct{}{}
+		graph.queryAt[query.key] = graph.queries[index]
 	}
 	edges := make(map[schedule.Edge]struct{})
 	for groupIndex, row := range built {
@@ -635,7 +744,7 @@ func assembleGraph(source *composition.Composition, points []Point, built []buil
 			if _, duplicate := graph.memberAt[members[memberIndex].key]; duplicate {
 				return nil, false
 			}
-			graph.memberAt[members[memberIndex].key] = struct{}{}
+			graph.memberAt[members[memberIndex].key] = members[memberIndex]
 		}
 		environmentInput := row.environmentInput
 		if environmentInput.Available() {
@@ -676,10 +785,12 @@ func assembleGraph(source *composition.Composition, points []Point, built []buil
 		}
 		input := row.input
 		input.point = graph.points[sourcePoint]
-		graph.environments[edgeIndex] = EnvironmentEdgeNode{graph: graph, key: row.key, target: graph.points[target], input: input}
+		graph.environments[edgeIndex] = EnvironmentEdgeNode{graph: graph, key: row.key, target: graph.points[target], input: input, transportOnly: row.transportOnly}
 		graph.environmentIncoming[target] = append(graph.environmentIncoming[target], edgeIndex)
 		graph.environmentOutgoing[sourcePoint] = append(graph.environmentOutgoing[sourcePoint], edgeIndex)
-		edges[schedule.Edge{From: sourcePoint, To: target}] = struct{}{}
+		if !row.transportOnly {
+			edges[schedule.Edge{From: sourcePoint, To: target}] = struct{}{}
+		}
 	}
 	for edgeIndex, row := range factorEdges {
 		target, targetOK := graph.pointAt[row.target.key]
@@ -730,7 +841,13 @@ func assembleGraph(source *composition.Composition, points []Point, built []buil
 		}
 		return ordered[i].To < ordered[j].To
 	})
-	prepared, err := schedule.Prepare(len(graph.points), ordered)
+	var prepared *schedule.Schedule
+	var err error
+	if len(semanticRanks) != 0 && len(semanticRanks[0]) != 0 {
+		prepared, err = schedule.PrepareOrdered(len(graph.points), ordered, semanticRanks[0])
+	} else {
+		prepared, err = schedule.Prepare(len(graph.points), ordered)
+	}
 	if err != nil || prepared == nil {
 		return nil, false
 	}
@@ -1175,6 +1292,10 @@ func (graph *Graph) valid() bool {
 	return graph != nil && graph.self == graph && graph.composition != nil && graph.schedule != nil
 }
 
+func (graph *Graph) ownsNode(owner *Graph) bool {
+	return graph != nil && (owner == graph || graph.payload != nil && owner == graph.payload)
+}
+
 // CompositionID identifies the sealed cold schema from which this immutable
 // topology was compiled. It lets the typed runtime binder reject an equally
 // named Factor from another Composition without exposing the Composition or
@@ -1302,7 +1423,7 @@ func (graph *Graph) EnvironmentEdgeTotal() int {
 }
 
 func (graph *Graph) EnvironmentEdgeIndex(edge EnvironmentEdgeNode) (int, bool) {
-	if !graph.valid() || edge.graph != graph || !edge.key.Available() {
+	if !graph.valid() || !graph.ownsNode(edge.graph) || !edge.key.Available() {
 		return 0, false
 	}
 	for index := range graph.environments {
@@ -1398,7 +1519,7 @@ func (graph *Graph) FactorEdgeTotal() int {
 }
 
 func (graph *Graph) FactorEdgeIndex(edge FactorEdgeNode) (int, bool) {
-	if !graph.valid() || edge.graph != graph || !edge.key.Available() {
+	if !graph.valid() || !graph.ownsNode(edge.graph) || !edge.key.Available() {
 		return 0, false
 	}
 	for index := range graph.factorEdges {
@@ -1445,11 +1566,11 @@ func (graph *Graph) QueryAt(index int) (Query, bool) {
 }
 
 func (graph *Graph) OwnsQuery(query Query) bool {
-	if !graph.valid() || query.graph != graph || !query.key.Available() {
+	if !graph.valid() || !graph.ownsNode(query.graph) || !query.key.Available() {
 		return false
 	}
-	_, ok := graph.queryAt[query.key]
-	return ok
+	owned, ok := graph.queryAt[query.key]
+	return ok && graph.ownsNode(owned.graph) && owned.key == query.key
 }
 func (graph *Graph) DecisionCount() int {
 	if !graph.valid() {
@@ -1464,7 +1585,7 @@ func (graph *Graph) DecisionAt(index int) (Decision, bool) {
 	return graph.decisions[index], true
 }
 func (graph *Graph) OwnsPoint(point Point) bool {
-	if !graph.valid() || point.graph != graph || !point.Available() {
+	if !graph.valid() || !graph.ownsNode(point.graph) || !point.Available() {
 		return false
 	}
 	node, ok := graph.pointAt[point.key]
@@ -1479,7 +1600,7 @@ func (graph *Graph) PointIndex(point Point) (int, bool) {
 }
 
 func (graph *Graph) OwnsGroup(group GroupNode) bool {
-	if !graph.valid() || group.graph != graph || !group.key.Available() {
+	if !graph.valid() || !graph.ownsNode(group.graph) || !group.key.Available() {
 		return false
 	}
 	index, ok := graph.groupAt[group.key]
@@ -1493,11 +1614,11 @@ func (graph *Graph) GroupIndex(group GroupNode) (int, bool) {
 	return graph.groupAt[group.key], true
 }
 func (graph *Graph) OwnsMember(member RuleMember) bool {
-	if !graph.valid() || member.graph != graph || !member.key.Available() {
+	if !graph.valid() || !graph.ownsNode(member.graph) || !member.key.Available() {
 		return false
 	}
-	_, ok := graph.memberAt[member.key]
-	return ok
+	owned, ok := graph.memberAt[member.key]
+	return ok && graph.ownsNode(owned.graph) && owned.key == member.key
 }
 func (group GroupNode) Key() composition.Key { return group.key }
 func (group GroupNode) Output() Point        { return group.output }
@@ -1519,6 +1640,7 @@ func (group GroupNode) EnvironmentInput() (Input, bool) {
 func (edge EnvironmentEdgeNode) Key() composition.Key { return edge.key }
 func (edge EnvironmentEdgeNode) Target() Point        { return edge.target }
 func (edge EnvironmentEdgeNode) Input() Input         { return edge.input }
+func (edge EnvironmentEdgeNode) TransportOnly() bool  { return edge.transportOnly }
 func (edge FactorEdgeNode) Key() composition.Key      { return edge.key }
 func (edge FactorEdgeNode) Target() Point             { return edge.target }
 func (edge FactorEdgeNode) Input() Input              { return edge.input }

@@ -35,34 +35,34 @@ func encodePrimitive(t typ.Type) (*typeWire, error) {
 }
 
 func encodeLiteral(l *typ.Literal) (*typeWire, error) {
-	out := &typeWire{Kind: "literal", Base: l.Base.String()}
-	switch l.Base {
+	out := &typeWire{Kind: "literal", Base: l.Base().String()}
+	switch l.Base() {
 	case kind.Boolean:
-		v, ok := l.Value.(bool)
+		v, ok := l.Value().(bool)
 		if !ok {
-			return nil, fmt.Errorf("literal boolean has %T", l.Value)
+			return nil, fmt.Errorf("literal boolean has %T", l.Value())
 		}
 		out.Bool = &v
 	case kind.Integer:
-		v, ok := l.Value.(int64)
+		v, ok := l.Value().(int64)
 		if !ok {
-			return nil, fmt.Errorf("literal integer has %T", l.Value)
+			return nil, fmt.Errorf("literal integer has %T", l.Value())
 		}
 		out.Int = &v
 	case kind.Number:
-		v, ok := l.Value.(float64)
+		v, ok := l.Value().(float64)
 		if !ok {
-			return nil, fmt.Errorf("literal number has %T", l.Value)
+			return nil, fmt.Errorf("literal number has %T", l.Value())
 		}
 		out.Number = &v
 	case kind.String:
-		v, ok := l.Value.(string)
+		v, ok := l.Value().(string)
 		if !ok {
-			return nil, fmt.Errorf("literal string has %T", l.Value)
+			return nil, fmt.Errorf("literal string has %T", l.Value())
 		}
 		out.String = &v
 	default:
-		return nil, fmt.Errorf("unsupported literal base %s", l.Base)
+		return nil, fmt.Errorf("unsupported literal base %s", l.Base())
 	}
 	return out, nil
 }

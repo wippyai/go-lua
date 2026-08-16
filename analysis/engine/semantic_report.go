@@ -136,7 +136,7 @@ type QuerySchemaReport struct {
 }
 
 // CompositionReport is the immutable-by-value semantic inventory derived
-// from one sealed Composition. It permits a composition root to check its
+// from one sealed receipt SchemaBinding. It permits a binding to check its
 // reviewed declaration and derived-incidence contract without exposing cold
 // schemas, typed callbacks, binding indexes, or runtime topology.
 //
@@ -154,18 +154,28 @@ type CompositionReport struct {
 	Components         []FactorComponent
 }
 
-// SemanticReport returns the complete canonical semantic inventory of a
-// successfully sealed Composition. It is unavailable before Seal and every
-// returned slice is detached from the cold authority.
-func (composition *Composition) SemanticReport() (CompositionReport, bool) {
-	if composition == nil || !composition.Sealed() || composition.sealed == nil {
+// SemanticReport returns the same detached schema inventory through the
+// declaration root for coverage and audit consumers.
+func (binding *SchemaBinding) SemanticReport() (CompositionReport, bool) {
+	if binding == nil || !binding.Sealed() {
 		return CompositionReport{}, false
 	}
-	report := CompositionReport{ID: composition.id}
+	schema := binding.Schema()
+	if schema == nil || !schema.Available() {
+		return CompositionReport{}, false
+	}
+	return semanticReportFromCold(schema.id, schema.cold)
+}
+
+func semanticReportFromCold(id CompositionID, cold *composition.Composition) (CompositionReport, bool) {
+	report := CompositionReport{ID: id}
 	if !report.ID.Available() {
 		return CompositionReport{}, false
 	}
-	if completion, present := composition.sealed.Completion(); present {
+	if cold == nil {
+		return CompositionReport{}, false
+	}
+	if completion, present := cold.Completion(); present {
 		report.Completion = semanticKeyFromComposition(completion.Semantic)
 		report.CompletionPrune = semanticKeyFromComposition(completion.Prune)
 		if !report.Completion.Available() || !report.CompletionPrune.Available() {
@@ -173,7 +183,7 @@ func (composition *Composition) SemanticReport() (CompositionReport, bool) {
 		}
 	}
 
-	activations := composition.sealed.ActivationFamilies()
+	activations := cold.ActivationFamilies()
 	report.ActivationFamilies = make([]SemanticKey, len(activations))
 	for index, activation := range activations {
 		key := semanticKeyFromComposition(activation.Semantic)
@@ -183,7 +193,7 @@ func (composition *Composition) SemanticReport() (CompositionReport, bool) {
 		report.ActivationFamilies[index] = key
 	}
 
-	rules := composition.sealed.Rules()
+	rules := cold.Rules()
 	report.Rules = make([]RuleSchemaReport, len(rules))
 	for index, rule := range rules {
 		derived, valid := ruleSchemaReportFromCold(rule)
@@ -193,7 +203,7 @@ func (composition *Composition) SemanticReport() (CompositionReport, bool) {
 		report.Rules[index] = derived
 	}
 
-	queries := composition.sealed.Queries()
+	queries := cold.Queries()
 	report.Queries = make([]QuerySchemaReport, len(queries))
 	for index, query := range queries {
 		derived, valid := querySchemaReportFromCold(query)
@@ -203,7 +213,7 @@ func (composition *Composition) SemanticReport() (CompositionReport, bool) {
 		report.Queries[index] = derived
 	}
 
-	incidences := composition.sealed.Incidence()
+	incidences := cold.Incidence()
 	report.Incidences = make([]FactorIncidence, len(incidences))
 	for index, incidence := range incidences {
 		read := semanticKeyFromComposition(incidence.Read)
@@ -214,7 +224,7 @@ func (composition *Composition) SemanticReport() (CompositionReport, bool) {
 		report.Incidences[index] = FactorIncidence{Read: read, Write: write}
 	}
 
-	components := composition.sealed.Components()
+	components := cold.Components()
 	report.Components = make([]FactorComponent, len(components))
 	for index, component := range components {
 		factors := make([]SemanticKey, len(component.Factors))
@@ -236,6 +246,15 @@ func (composition *Composition) SemanticReport() (CompositionReport, bool) {
 		report.Components[index] = FactorComponent{Factors: factors, Successors: successors}
 	}
 	return report, true
+}
+
+// SemanticReport returns the immutable structural inventory owned by Schema.
+// It is deliberately independent of any Link-local Binding implementation.
+func (schema *Schema) SemanticReport() (CompositionReport, bool) {
+	if !schema.Available() {
+		return CompositionReport{}, false
+	}
+	return semanticReportFromCold(schema.id, schema.cold)
 }
 
 func querySchemaReportFromCold(query composition.QueryFamily) (QuerySchemaReport, bool) {

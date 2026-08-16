@@ -97,9 +97,12 @@ func seal(spec *Spec, replay *linkhost.ReplaySpec) (*Link, error) {
 	if !link.id.Available() {
 		return nil, errors.New("link: unavailable content identity")
 	}
+	// Issue the exact owner witness only after the complete Link identity is
+	// sealed. The witness state is detached and contains no Link graph pointer.
+	link.owner = &ownerState{id: link.id}
 	link.static, err = staticDraft.Finalize()
 	if err != nil || link.static == nil {
-		return nil, errors.New("link: unavailable static identity binding")
+		return nil, errors.New("link: unavailable static namespace binding")
 	}
 	link.semanticReceipt, err = buildSemanticSourceReceipt(link)
 	if err != nil {

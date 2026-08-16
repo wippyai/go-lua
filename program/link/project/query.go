@@ -131,6 +131,22 @@ func (v Mounts) Program(shard Shard) (*program.Program, bool) {
 	return p, p != nil
 }
 
+// ProgramID returns the immutable reusable Program identity for one exact
+// owner-fenced Project mount.  Artifact consumers use this scalar projection
+// to authenticate a mounted artifact without reopening or retaining the
+// Program object itself.
+func (v Mounts) ProgramID(shard Shard) (keyspace.ContentID, bool) {
+	index, ok := v.Index(shard)
+	if !ok {
+		return keyspace.ContentID{}, false
+	}
+	p := v.authority.mounts[index].program
+	if p == nil || !p.ContentID().Available() {
+		return keyspace.ContentID{}, false
+	}
+	return p.ContentID(), true
+}
+
 func (v Mounts) Name(shard Shard) (string, bool) {
 	index, ok := v.Index(shard)
 	if !ok {
@@ -198,6 +214,26 @@ func (v Keys) ForProgram(shard Shard, owner *program.Program, key keyspace.Key) 
 		return Key{}, false
 	}
 	return Key{authority: v.authority, ordinal: keys[key-1] + 1}, true
+}
+
+// ForMounted resolves an already-authenticated reusable Program key through
+// its concrete ModuleKey. It is the artifact binding lane: no Program handle
+// is reopened or accepted after the Project has sealed its key quotient.
+func (v Keys) ForMounted(module keyspace.ContentID, key keyspace.Key) (Key, bool) {
+	if !v.live() || !module.Available() || key == 0 {
+		return Key{}, false
+	}
+	for index, mount := range v.authority.mounts {
+		if mount.key != module {
+			continue
+		}
+		keys := v.authority.programKeys[index]
+		if uint64(key) > uint64(len(keys)) {
+			return Key{}, false
+		}
+		return Key{authority: v.authority, ordinal: keys[key-1] + 1}, true
+	}
+	return Key{}, false
 }
 func (v Keys) ForTarget(contract *target.Contract, key target.ExactKey) (Key, bool) {
 	if !v.live() || contract == nil || contract != v.authority.target || key == 0 || uint64(key) > uint64(len(v.authority.targetKeys)) {
@@ -292,6 +328,23 @@ func (v Applications) IsBase(application Application) bool {
 	}
 }
 
+// ContentID returns the detached identity of this exact application row.
+func (application Application) ContentID() (keyspace.ContentID, bool) {
+	if application.authority == nil {
+		return keyspace.ContentID{}, false
+	}
+	return (&Component{authority: application.authority}).ApplicationID(application)
+}
+
+// IsBase reports the canonical base subsequence membership for this exact
+// application handle.
+func (application Application) IsBase() bool {
+	if application.authority == nil {
+		return false
+	}
+	return (Applications{authority: application.authority}).IsBase(application)
+}
+
 func (v Applications) Call(application Application) (Shard, keyspace.Term, bool) {
 	row, ok := v.application(application)
 	if !ok || row.kind != applicationCall {
@@ -352,28 +405,6 @@ func (v Calls) At(index int) (Application, bool) {
 		return Application{}, false
 	}
 	return Application{authority: v.authority, ordinal: v.authority.callApplications[index]}, true
-}
-
-// ForCall reissues the one canonical Project Application for an exact
-// executable Program Call occurrence. The Shard and mounted Program must
-// both come from this exact Project authority; equivalent reseals and
-// same-ordinal foreign Programs/Shards fail before the owner-local inverse is
-// consulted. The inverse contains only existing executable Call rows, so
-// wrong-family, dead, and otherwise absent Program terms are rejected without
-// scanning the Project Application table.
-func (v Calls) ForCall(shard Shard, owner *program.Program, call keyspace.Term) (Application, bool) {
-	if !v.live() || owner == nil || call == 0 || shard.authority != v.authority || shard.ordinal == 0 || uint64(shard.ordinal) > uint64(len(v.authority.mounts)) || v.authority.mounts[shard.ordinal-1].program != owner {
-		return Application{}, false
-	}
-	ordinal := v.authority.callApplicationsBySource[callSource{shard: shard.ordinal, term: call}]
-	if ordinal == 0 || uint64(ordinal) > uint64(len(v.authority.applications)) {
-		return Application{}, false
-	}
-	row := v.authority.applications[ordinal-1]
-	if row.kind != applicationCall || row.shard != shard.ordinal || row.term != call {
-		return Application{}, false
-	}
-	return Application{authority: v.authority, ordinal: ordinal}, true
 }
 
 func (v Bases) Count() int {

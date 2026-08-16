@@ -751,8 +751,8 @@ func pcallProfile(op target.OperationSpec) target.OperationSpec {
 		Lifecycle: target.CallbackSyncRequiredOnce, Effects: target.RowSpec{Tail: target.RowClosed},
 	}}
 	op.Outcomes = []target.OutcomeSpec{
-		{Kind: flowkind.OutcomeNormal, Values: values([]typ.Type{typ.True}, true, 1)},
-		{Kind: flowkind.OutcomeNormal, Values: closed(typ.False, typ.Any)},
+		{Kind: flowkind.OutcomeNormal, Values: values([]typ.Type{typ.LiteralBool(true)}, true, 1)},
+		{Kind: flowkind.OutcomeNormal, Values: closed(typ.LiteralBool(false), typ.Any)},
 		{Kind: flowkind.OutcomeYield, Values: callbackTail(2)},
 		{Kind: flowkind.OutcomeCancel, Values: callbackTail(3)},
 	}
@@ -780,8 +780,8 @@ func xpcallProfile(op target.OperationSpec) target.OperationSpec {
 		{Function: target.InputSource{Kind: target.InputSourceValueFormal, Ordinal: 1}, Admission: target.DirectFunction, Arguments: anyValue(), Outcomes: terminals(callbackTail(4), callbackTail(4), anyValue(), anyValue(), callbackTail(3)), Lifecycle: target.CallbackSyncOptionalMany, Effects: target.RowSpec{Tail: target.RowClosed}},
 	}
 	op.Outcomes = []target.OutcomeSpec{
-		{Kind: flowkind.OutcomeNormal, Values: values([]typ.Type{typ.True}, true, 1)},
-		{Kind: flowkind.OutcomeNormal, Values: closed(typ.False, typ.Any)},
+		{Kind: flowkind.OutcomeNormal, Values: values([]typ.Type{typ.LiteralBool(true)}, true, 1)},
+		{Kind: flowkind.OutcomeNormal, Values: closed(typ.LiteralBool(false), typ.Any)},
 		{Kind: flowkind.OutcomeYield, Values: callbackTail(2)},
 		{Kind: flowkind.OutcomeCancel, Values: callbackTail(3)},
 		{Kind: flowkind.OutcomeThrow, Values: anyValue()},
@@ -1026,8 +1026,8 @@ func resumeEnvelope() target.OperationSpec {
 	op.ValuesVars = 3
 	op.Input = values([]typ.Type{typ.Any}, true, 0)
 	op.Outcomes = []target.OutcomeSpec{
-		{Kind: flowkind.OutcomeNormal, Values: values([]typ.Type{typ.True}, true, 1)},
-		{Kind: flowkind.OutcomeNormal, Values: values([]typ.Type{typ.False}, true, 2)},
+		{Kind: flowkind.OutcomeNormal, Values: values([]typ.Type{typ.LiteralBool(true)}, true, 1)},
+		{Kind: flowkind.OutcomeNormal, Values: values([]typ.Type{typ.LiteralBool(false)}, true, 2)},
 	}
 	op.Resumes = []target.ResumeSpec{resumeRelation(target.ResumeSourceValueFormal, 0, 0, 0, 1)}
 	op.Effects = target.RowSpec{Tail: target.RowClosed}

@@ -23,15 +23,15 @@ func ExactScalarKeySegment(reg *axis.Registry, cache *Cache, value product.Value
 	if !ok {
 		return segment.Segment{}, false
 	}
-	switch lit.Base {
+	switch lit.Base() {
 	case kind.String:
-		name, ok := lit.Value.(string)
+		name, ok := lit.Value().(string)
 		if !ok {
 			return segment.Segment{}, false
 		}
 		return segment.Segment{Kind: segment.SegmentIndexString, Name: name}, true
 	case kind.Integer:
-		index, ok := lit.Value.(int64)
+		index, ok := lit.Value().(int64)
 		if !ok || int64(int(index)) != index {
 			return segment.Segment{}, false
 		}

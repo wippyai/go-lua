@@ -179,7 +179,6 @@ func TestRecursiveContainsMemoPreservesIntrinsicMarkersWithRecursiveBodies(t *te
 
 	for name, predicate := range map[string]func(Type) bool{
 		"any":          ContainsAny,
-		"type-param":   ContainsTypeParam,
 		"instantiated": ContainsInstantiated,
 		"generic":      ContainsGeneric,
 	} {
@@ -188,6 +187,29 @@ func TestRecursiveContainsMemoPreservesIntrinsicMarkersWithRecursiveBodies(t *te
 				t.Fatalf("recursive generic graph lost intrinsic %s marker", name)
 			}
 		})
+	}
+}
+
+func TestRecursiveContainsMemoTreatsInstantiatedFormalsAsBound(t *testing.T) {
+	node := NewRecursivePlaceholder("Node")
+	param := NewTypeParam("T", nil)
+	generic := NewGeneric("Box", []*TypeParam{param}, nil)
+	generic.SetBody(RebuildRecord(RecordParts{Fields: []Field{
+		{Name: "next", Type: MaterializeOptional(node)},
+		{Name: "value", Type: param},
+	}}))
+	node.SetBody(RebuildRecord(RecordParts{Fields: []Field{{
+		Name: "box", Type: Instantiate(generic, String),
+	}}}))
+
+	if ContainsTypeParam(node) {
+		t.Fatal("recursive generic application exposed a declaration formal as free")
+	}
+	node.SetBody(RebuildRecord(RecordParts{Fields: []Field{{
+		Name: "box", Type: Instantiate(generic, param),
+	}}}))
+	if !ContainsTypeParam(node) {
+		t.Fatal("recursive generic application lost a free type parameter in its argument")
 	}
 }
 

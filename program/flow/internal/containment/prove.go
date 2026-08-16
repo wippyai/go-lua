@@ -101,6 +101,9 @@ func Prove(
 	result.flowID = flowID
 	result.staticID = staticID
 	result.moduleID = moduleID
+	if err := sealStaticStructuralRoles(result, staticView, moduleView); err != nil {
+		return nil, nil, err
+	}
 	scopeProof, err := sealStaticScopeProof(preimage, staticView, view, staticID, moduleID, resolver, counts)
 	if err != nil {
 		return nil, nil, err

@@ -7,18 +7,24 @@ package factor
 
 import (
 	"crypto/sha256"
-	"encoding/binary"
 	"math"
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/domain/call"
 	"github.com/wippyai/go-lua/analysis/domain/pack"
 	internalhash "github.com/wippyai/go-lua/analysis/internal/hash"
+	"github.com/wippyai/go-lua/analysis/internal/programartifact"
 	"github.com/wippyai/go-lua/analysis/lattice"
 	"github.com/wippyai/go-lua/program/keyspace"
 	"github.com/wippyai/go-lua/program/link"
+	linkboundary "github.com/wippyai/go-lua/program/link/boundary"
 	linkproject "github.com/wippyai/go-lua/program/link/project"
 	"github.com/wippyai/go-lua/program/target"
+)
+
+const (
+	effectFactorIDDomain = "wippy.analysis.effect.factor.v5\x00"
+	effectRootIDDomain   = "wippy.analysis.effect.root.v3\x00"
 )
 
 // Root is one Factor-owned executable Program body coordinate.
@@ -46,43 +52,136 @@ type Value struct {
 }
 
 type rootRow struct {
-	shard uint32
-	body  keyspace.Term
+	moduleKey keyspace.ContentID
+	programID keyspace.ContentID
+	bodyID    keyspace.ContentID
+	context   keyspace.ContentID
+	id        keyspace.ContentID
 }
 
 // Algebra owns the one finite Effect factor vocabulary.  The capacity is a
 // mathematical upper bound, not a materialized product or convergence cap.
 type Algebra struct {
-	source   *link.Link
-	packs    *pack.Schema
-	contract *target.Contract
-	linkID   keyspace.ContentID
+	linkOwner link.OwnerCapability
+	packs     *pack.Schema
+	contract  *target.Contract
 
-	roots     []rootRow
-	rootIndex map[rootRef]uint32
-	capacity  uint64
-	unknownID keyspace.ContentID
-	content   keyspace.ContentID
+	roots                []rootRow
+	rootContextIndex     map[rootContextRef]uint32
+	rootBodyIndex        map[rootBodyRef]uint32
+	rootMountedBodyIndex map[rootMountedBodyRef]uint32
+	capacity             uint64
+	unknownID            keyspace.ContentID
+	content              keyspace.ContentID
+	applicationOps       map[keyspace.ContentID]map[target.Operation]int
+	applicationCount     uint64
+	callRows             map[keyspace.ContentID]callRow
+	mountedCalls         []mountedCallRow
+	mountedCallIndex     map[mountedCallRef]uint32
 }
 
-type rootRef struct {
-	shard uint32
-	body  keyspace.Term
+type callRow struct {
+	moduleID keyspace.ContentID
+	context  keyspace.ContentID
+	root     uint32
+}
+
+type artifactCallRow struct {
+	programID keyspace.ContentID
+	bodyID    keyspace.ContentID
+	root      uint32
+}
+
+type rootContextRef struct {
+	module  keyspace.ContentID
+	context keyspace.ContentID
+}
+
+type rootBodyRef struct {
+	module keyspace.ContentID
+	bodyID keyspace.ContentID
+}
+
+type rootMountedBodyRef struct {
+	moduleKey keyspace.ContentID
+	bodyID    keyspace.ContentID
+}
+
+// MountedArtifact is the exact mounted reusable artifact handle consumed by
+// Effect.  Body rows are enumerated and validated inside Effect; callers
+// cannot self-attest Body/Context scalar correspondence.
+type MountedArtifact struct {
+	ModuleKey keyspace.ContentID
+	Artifact  *programartifact.Artifact
+}
+
+type bodyRootReceipt struct {
+	moduleKey keyspace.ContentID
+	programID keyspace.ContentID
+	bodyID    keyspace.ContentID
+	contextID keyspace.ContentID
+}
+
+// MountedCall is Effect's detached, exact ordinary-call placement receipt.
+// It is issued only from the cold Link census and contains neither Project
+// nor Program proof.  The opaque slot is authenticated by its issuing
+// Algebra, making content-equal foreign Links fail closed.
+type MountedCall struct {
+	owner *Algebra
+	slot  uint32
+}
+
+type mountedCallRow struct {
+	applicationID keyspace.ContentID
+	moduleID      keyspace.ContentID
+	contextID     keyspace.ContentID
+}
+
+type mountedCallRef struct {
+	moduleID  keyspace.ContentID
+	contextID keyspace.ContentID
 }
 
 // New seals the Factor's small owner-local vocabulary.  It stores no Target
 // effect table and no Application×Operation matrix; such coordinates remain
 // validated projections at atom issue time.
 func New(source *link.Link, packs *pack.Schema, contract *target.Contract) (*Algebra, bool) {
-	if source == nil || !source.ContentID().Available() || packs == nil || packs.Link() != source || contract == nil || source.Boundary() == nil || source.Project() == nil {
+	if source == nil || packs == nil || contract == nil || source.Boundary() == nil || source.Project() == nil {
+		return nil, false
+	}
+	owner := source.OwnerCapability()
+	if !owner.Available() || !packs.LinkOwner().Matches(owner) {
 		return nil, false
 	}
 	linked, ok := source.Boundary().Target()
 	if !ok || linked != contract {
 		return nil, false
 	}
-	a := &Algebra{source: source, packs: packs, contract: contract, linkID: source.ContentID(), rootIndex: make(map[rootRef]uint32)}
-	if !a.sealRoots() || !a.sealCapacity() {
+	return NewWithMountedArtifacts(source, packs, contract, nil)
+}
+
+// NewWithMountedArtifacts constructs Effect from exact mounted artifacts.
+// It is artifact-native: no Program census or caller-supplied Body proof
+// bundle is accepted.
+func NewWithMountedArtifacts(source *link.Link, packs *pack.Schema, contract *target.Contract, mounts []MountedArtifact) (*Algebra, bool) {
+	if source == nil || packs == nil || contract == nil || source.Boundary() == nil || source.Project() == nil {
+		return nil, false
+	}
+	owner := source.OwnerCapability()
+	if !owner.Available() || !packs.LinkOwner().Matches(owner) {
+		return nil, false
+	}
+	linked, ok := source.Boundary().Target()
+	if !ok || linked != contract {
+		return nil, false
+	}
+	a := &Algebra{linkOwner: owner, packs: packs, contract: contract, rootContextIndex: make(map[rootContextRef]uint32), rootBodyIndex: make(map[rootBodyRef]uint32), rootMountedBodyIndex: make(map[rootMountedBodyRef]uint32), applicationOps: make(map[keyspace.ContentID]map[target.Operation]int), callRows: make(map[keyspace.ContentID]callRow), mountedCallIndex: make(map[mountedCallRef]uint32)}
+	project := source.Project()
+	if project == nil {
+		return nil, false
+	}
+	artifactCalls, artifactsOK := a.sealMountedArtifacts(mounts)
+	if !artifactsOK || !a.captureApplicationOps(project, source.Boundary(), artifactCalls) || !a.sealCapacity() {
 		return nil, false
 	}
 	a.unknownID = externalID()
@@ -94,16 +193,94 @@ func New(source *link.Link, packs *pack.Schema, contract *target.Contract) (*Alg
 }
 
 func (a *Algebra) Valid() bool {
-	return a != nil && a.source != nil && a.packs != nil && a.packs.Link() == a.source && a.contract != nil &&
-		a.linkID.Available() && a.source.ContentID() == a.linkID && a.content.Available()
+	return a != nil && a.linkOwner.Available() && a.packs != nil && a.packs.LinkOwner().Matches(a.linkOwner) && a.contract != nil &&
+		a.linkOwner.ContentID().Available() && a.content.Available()
 }
 
-func (a *Algebra) Link() *link.Link {
+// LinkOwner returns Effect's exact detached Link owner witness.
+func (a *Algebra) LinkOwner() link.OwnerCapability {
 	if !a.Valid() {
-		return nil
+		return link.OwnerCapability{}
 	}
-	return a.source
+	return a.linkOwner
 }
+
+func (a *Algebra) captureApplicationOps(project *linkproject.Component, boundary *linkboundary.Component, artifactCalls map[mountedCallRef]artifactCallRow) bool {
+	if a == nil || project == nil || boundary == nil || a.contract == nil {
+		return false
+	}
+	apps := project.Applications()
+	a.applicationCount = uint64(apps.Count())
+	for i := 0; i < apps.Count(); i++ {
+		app, ok := apps.At(i)
+		id, idOK := project.ApplicationID(app)
+		if !ok || !idOK || !id.Available() {
+			return false
+		}
+		rows := make(map[target.Operation]int)
+		for j := 0; j < a.contract.OperationCount(); j++ {
+			op, opOK := a.contract.OperationAt(j)
+			if !opOK {
+				return false
+			}
+			if !boundary.ApplicationOperationAvailable(a.contract, app, op) {
+				continue
+			}
+			args, argsOK := boundary.Calls().TypeFormalArguments(a.contract, app, op)
+			if !argsOK {
+				rows[op] = -1
+				continue
+			}
+			rows[op] = args.Count()
+		}
+		a.applicationOps[id] = rows
+		if apps.IsBase(app) {
+			applicationID, moduleID, contextID, identityOK := apps.Calls().MountedIdentity(app)
+			if !identityOK {
+				// Non-call base applications are not mounted Program calls.
+				continue
+			}
+			artifact, artifactOK := artifactCalls[mountedCallRef{moduleID: moduleID, contextID: contextID}]
+			if applicationID != id || !artifactOK || artifact.root == 0 || uint64(artifact.root) > uint64(len(a.roots)) || !moduleID.Available() || !contextID.Available() {
+				return false
+			}
+			if _, duplicate := a.callRows[id]; duplicate {
+				return false
+			}
+			ref := mountedCallRef{moduleID: moduleID, contextID: contextID}
+			if _, duplicate := a.mountedCallIndex[ref]; duplicate {
+				return false
+			}
+			a.callRows[id] = callRow{moduleID: moduleID, context: contextID, root: artifact.root}
+			a.mountedCalls = append(a.mountedCalls, mountedCallRow{applicationID: id, moduleID: moduleID, contextID: contextID})
+			a.mountedCallIndex[ref] = uint32(len(a.mountedCalls))
+		}
+	}
+	return true
+}
+
+func (a *Algebra) applicationOperation(applicationID keyspace.ContentID, operation target.Operation) (int, bool) {
+	if a == nil || !applicationID.Available() || operation == 0 {
+		return 0, false
+	}
+	count, found := a.applicationOps[applicationID]
+	if !found {
+		return 0, false
+	}
+	args, found := count[operation]
+	return args, found && args >= 0
+}
+
+// LinkID returns the detached content identity paired with LinkOwner.
+func (a *Algebra) LinkID() keyspace.ContentID {
+	if !a.Valid() {
+		return keyspace.ContentID{}
+	}
+	return a.linkOwner.ContentID()
+}
+
+// Owner is the concise alias used by cross-domain binders.
+func (a *Algebra) Owner() link.OwnerCapability { return a.LinkOwner() }
 
 func (a *Algebra) Pack() *pack.Schema {
 	if !a.Valid() {
@@ -133,16 +310,19 @@ func (a *Algebra) RootAt(index int) (Root, bool) {
 	return Root{owner: a, slot: uint32(index + 1)}, true
 }
 
-func (a *Algebra) RootForBody(shard linkproject.Shard, body keyspace.Term) (Root, bool) {
-	if !a.Valid() || a.source.Project() == nil || body == 0 {
+// RootForMountedBodyID is the production artifact bridge. It accepts only
+// mounted and Program-issued scalar IDs and therefore cannot reopen a
+// Program Body proof after compilation.
+func (a *Algebra) RootForMountedBodyID(moduleKey, programID, bodyID keyspace.ContentID) (Root, bool) {
+	if !a.Valid() || !moduleKey.Available() || !programID.Available() || !bodyID.Available() {
 		return Root{}, false
 	}
-	index, ok := a.source.Project().Mounts().Index(shard)
-	if !ok || uint64(index+1) > uint64(math.MaxUint32) {
+	slot := a.rootMountedBodyIndex[rootMountedBodyRef{moduleKey: moduleKey, bodyID: bodyID}]
+	if slot == 0 || uint64(slot) > uint64(len(a.roots)) {
 		return Root{}, false
 	}
-	slot := a.rootIndex[rootRef{shard: uint32(index + 1), body: body}]
-	if slot == 0 {
+	row := a.roots[slot-1]
+	if row.moduleKey != moduleKey || row.programID != programID || row.bodyID != bodyID {
 		return Root{}, false
 	}
 	return Root{owner: a, slot: slot}, true
@@ -150,23 +330,15 @@ func (a *Algebra) RootForBody(shard linkproject.Shard, body keyspace.Term) (Root
 
 // RootForCall derives the exact containing Effect body for one existing
 // ordinary Project Call. It retains no application index or site relation.
-func (a *Algebra) RootForCall(application linkproject.Application) (Root, bool) {
-	if !a.Valid() || !a.callInRootCandidate(application) {
+func (a *Algebra) RootForCallID(applicationID keyspace.ContentID) (Root, bool) {
+	if !a.Valid() || !applicationID.Available() {
 		return Root{}, false
 	}
-	shard, term, ok := a.source.Project().Applications().Call(application)
-	if !ok {
+	row, ok := a.callRows[applicationID]
+	if !ok || !row.moduleID.Available() || !row.context.Available() || row.root == 0 || uint64(row.root) > uint64(len(a.roots)) {
 		return Root{}, false
 	}
-	p, ok := a.source.Project().Mounts().Program(shard)
-	if !ok || p == nil {
-		return Root{}, false
-	}
-	body, _, _, ok := p.Source().Index().Position(term)
-	if !ok {
-		return Root{}, false
-	}
-	return a.RootForBody(shard, body)
+	return Root{owner: a, slot: row.root}, true
 }
 
 func (a *Algebra) RootIndex(root Root) (int, bool) {
@@ -176,21 +348,6 @@ func (a *Algebra) RootIndex(root Root) (int, bool) {
 	return int(root.slot - 1), true
 }
 
-func (a *Algebra) RootShard(root Root) (linkproject.Shard, bool) {
-	if !a.ownsRoot(root) {
-		return linkproject.Shard{}, false
-	}
-	shard, ok := a.source.Project().Mounts().At(int(a.roots[root.slot-1].shard) - 1)
-	return shard, ok
-}
-
-func (a *Algebra) RootBody(root Root) (keyspace.Term, bool) {
-	if !a.ownsRoot(root) {
-		return 0, false
-	}
-	return a.roots[root.slot-1].body, true
-}
-
 // RootID is Effect's portable body-root proof. Dense root slots remain hot
 // owner state and never enter rule operands or replay identities.
 func (a *Algebra) RootID(root Root) (keyspace.ContentID, bool) {
@@ -198,42 +355,23 @@ func (a *Algebra) RootID(root Root) (keyspace.ContentID, bool) {
 		return keyspace.ContentID{}, false
 	}
 	row := a.roots[root.slot-1]
-	if row.shard == 0 {
-		return keyspace.ContentID{}, false
-	}
-	shard, ok := a.source.Project().Mounts().At(int(row.shard) - 1)
-	if !ok {
-		return keyspace.ContentID{}, false
-	}
-	p, ok := a.source.Project().Mounts().Program(shard)
-	if !ok || p == nil || !p.ContentID().Available() {
-		return keyspace.ContentID{}, false
-	}
-	const prefix = "wippy.analysis.effect.root.v1\x00"
-	var payload [len(prefix) + sha256.Size + 4]byte
-	copy(payload[:], prefix)
-	id := p.ContentID()
-	copy(payload[len(prefix):], id[:])
-	binary.BigEndian.PutUint32(payload[len(prefix)+sha256.Size:], uint32(row.body))
-	out := keyspace.ContentID(sha256.Sum256(payload[:]))
-	return out, out.Available()
+	return row.id, row.id.Available()
 }
 
-// ContainsCall validates that an existing ordinary Project Call belongs to
-// this exact body root. It retains no application relation.
-func (a *Algebra) ContainsCall(root Root, application linkproject.Application) bool {
-	return a.callInRoot(root, application)
+// ContainsCallID validates an existing detached ordinary-call identity.
+func (a *Algebra) ContainsCallID(root Root, applicationID keyspace.ContentID) bool {
+	return a.callInRootID(root, applicationID)
 }
 
 // OpaqueCallUnknown converts an exact admitted opaque Call alternative into
 // the Factor's one unknown vocabulary atom. Call is evidence only: it is not
 // retained, enumerated, or made into a Factor root.
-func (a *Algebra) OpaqueCallUnknown(root Root, calls *call.Algebra, application linkproject.Application, value call.Value) (Atom, bool) {
-	if !a.ownsRoot(root) || calls == nil || !calls.Valid() || calls.Link() != a.source || !value.HasOpaqueAlternative() {
+func (a *Algebra) OpaqueCallUnknown(root Root, calls *call.Algebra, applicationID keyspace.ContentID, value call.Value) (Atom, bool) {
+	if !a.ownsRoot(root) || calls == nil || !calls.Valid() || !calls.LinkOwner().Matches(a.linkOwner) || !value.HasOpaqueAlternative() {
 		return Atom{}, false
 	}
-	key, ok := calls.KeyForApplication(application)
-	if !ok || !calls.Admits(key, value) || !a.callInRoot(root, application) {
+	key, ok := calls.KeyForApplicationID(applicationID)
+	if !ok || !calls.Admits(key, value) || !a.callInRootID(root, applicationID) {
 		return Atom{}, false
 	}
 	return Atom{owner: a, root: root.slot, id: a.unknownID}, true
@@ -241,8 +379,8 @@ func (a *Algebra) OpaqueCallUnknown(root Root, calls *call.Algebra, application 
 
 // OpenOperationUnknown requires an exact selected operation with its explicit
 // unknown-open effect row. Row variables remain unsupported and fail closed.
-func (a *Algebra) OpenOperationUnknown(root Root, application linkproject.Application, owner target.Operation) (Atom, bool) {
-	if !a.ownsRoot(root) || !a.selectedCall(root, application, owner) {
+func (a *Algebra) OpenOperationUnknown(root Root, applicationID keyspace.ContentID, owner target.Operation) (Atom, bool) {
+	if !a.ownsRoot(root) || !a.selectedCall(root, applicationID, owner) {
 		return Atom{}, false
 	}
 	tail, _, ok := a.contract.EffectTail(owner)
@@ -252,8 +390,8 @@ func (a *Algebra) OpenOperationUnknown(root Root, application linkproject.Applic
 	return Atom{owner: a, root: root.slot, id: a.unknownID}, true
 }
 
-func (a *Algebra) OpenCallbackUnknown(root Root, application linkproject.Application, owner target.Operation, callback target.CallbackID) (Atom, bool) {
-	if !a.ownsRoot(root) || !a.selectedCall(root, application, owner) {
+func (a *Algebra) OpenCallbackUnknown(root Root, applicationID keyspace.ContentID, owner target.Operation, callback target.CallbackID) (Atom, bool) {
+	if !a.ownsRoot(root) || !a.selectedCall(root, applicationID, owner) {
 		return Atom{}, false
 	}
 	callbackOwner, ownerOK := a.contract.CallbackOwner(callback)
@@ -266,61 +404,40 @@ func (a *Algebra) OpenCallbackUnknown(root Root, application linkproject.Applica
 
 // CallEffectAtom validates one selected ordinary-call effect. Row variables and
 // row arguments fail closed; explicit closed/open rows retain known atoms.
-func (a *Algebra) CallEffectAtom(root Root, application linkproject.Application, owner target.Operation, effect int) (Atom, bool) {
-	if !a.ownsRoot(root) || !a.selectedCall(root, application, owner) {
+func (a *Algebra) CallEffectAtom(root Root, applicationID keyspace.ContentID, owner target.Operation, effect int) (Atom, bool) {
+	mounted, mountedOK := a.mountedCallForApplication(applicationID)
+	if !mountedOK || !a.selectedMountedCall(root, mounted, owner) {
 		return Atom{}, false
 	}
-	tail, _, tailOK := a.contract.EffectTail(owner)
-	if !tailOK || (tail != target.RowClosed && tail != target.RowUnknownOpen) || effect < 0 || effect >= a.contract.EffectCount(owner) || a.contract.EffectRowArgumentCount(owner, effect) != 0 {
+	formal, formalOK := a.FormalCallEffectAtom(mounted, owner, effect)
+	binding, bindingOK := a.bindFormalAtom(root, mounted, formal, formal)
+	if !formalOK || !bindingOK {
 		return Atom{}, false
 	}
-	targetOp, ok := a.contract.EffectTarget(owner, effect)
-	if !ok || !a.validateOrdinaryInputs(owner, effect) {
-		return Atom{}, false
-	}
-	descriptor, ok := a.contract.EffectDescriptorID(owner, effect)
-	if !ok {
-		return Atom{}, false
-	}
-	correspondence, terms, ok := a.ordinaryTypeArguments(application, owner, effect)
-	if !ok {
-		return Atom{}, false
-	}
-	return a.issue(root, application, targetOp, descriptor, correspondence, terms)
+	return binding.Atom()
 }
 
 // CallbackEffectAtom validates and issues one callback-owned selected-call
 // atom. Callback occurrence provenance does not enter atom identity.
-func (a *Algebra) CallbackEffectAtom(root Root, application linkproject.Application, owner target.Operation, callback target.CallbackID, effect int) (Atom, bool) {
-	if !a.ownsRoot(root) || !a.selectedCall(root, application, owner) || effect < 0 || a.contract.CallbackEffectCount(callback) <= effect {
+func (a *Algebra) CallbackEffectAtom(root Root, applicationID keyspace.ContentID, owner target.Operation, callback target.CallbackID, effect int) (Atom, bool) {
+	mounted, mountedOK := a.mountedCallForApplication(applicationID)
+	if !mountedOK || !a.selectedMountedCall(root, mounted, owner) {
 		return Atom{}, false
 	}
-	callbackOwner, ownerOK := a.contract.CallbackOwner(callback)
-	tail, _, tailOK := a.contract.CallbackEffectTail(callback)
-	if !ownerOK || callbackOwner != owner || !tailOK || (tail != target.RowClosed && tail != target.RowUnknownOpen) || a.contract.CallbackEffectRowArgumentCount(callback, effect) != 0 {
+	formal, formalOK := a.FormalCallbackEffectAtom(mounted, owner, callback, effect)
+	binding, bindingOK := a.bindFormalAtom(root, mounted, formal, formal)
+	if !formalOK || !bindingOK {
 		return Atom{}, false
 	}
-	targetOp, ok := a.contract.CallbackEffectTarget(callback, effect)
-	if !ok || !a.validateCallbackInputs(owner, callback, effect) {
-		return Atom{}, false
-	}
-	descriptor, ok := a.contract.CallbackEffectDescriptorID(callback, effect)
-	if !ok {
-		return Atom{}, false
-	}
-	correspondence, terms, ok := a.callbackTypeArguments(application, owner, callback, effect)
-	if !ok {
-		return Atom{}, false
-	}
-	return a.issue(root, application, targetOp, descriptor, correspondence, terms)
+	return binding.Atom()
 }
 
 // SelectedCallEffects reduces the explicit ordinary and callback effects of
 // one operation already selected by a Rule-owned Call target. It keeps no
 // selection state: every invocation revalidates the canonical witnesses.
 // Unsupported authored rows fail closed so a caller cannot silently omit them.
-func (a *Algebra) SelectedCallEffects(root Root, application linkproject.Application, operation target.Operation) (Value, bool) {
-	if !a.ownsRoot(root) || !a.selectedCall(root, application, operation) {
+func (a *Algebra) SelectedCallEffects(root Root, applicationID keyspace.ContentID, operation target.Operation) (Value, bool) {
+	if !a.ownsRoot(root) || !a.selectedCall(root, applicationID, operation) {
 		return Value{}, false
 	}
 	tail, _, ok := a.contract.EffectTail(operation)
@@ -346,7 +463,7 @@ func (a *Algebra) SelectedCallEffects(root Root, application linkproject.Applica
 	}
 	atoms := make([]Atom, 0, atomCount)
 	for effect := 0; effect < a.contract.EffectCount(operation); effect++ {
-		atom, ok := a.CallEffectAtom(root, application, operation, effect)
+		atom, ok := a.CallEffectAtom(root, applicationID, operation, effect)
 		if !ok {
 			return Value{}, false
 		}
@@ -358,7 +475,7 @@ func (a *Algebra) SelectedCallEffects(root Root, application linkproject.Applica
 			return Value{}, false
 		}
 		for effect := 0; effect < a.contract.CallbackEffectCount(callback); effect++ {
-			atom, ok := a.CallbackEffectAtom(root, application, operation, callback, effect)
+			atom, ok := a.CallbackEffectAtom(root, applicationID, operation, callback, effect)
 			if !ok {
 				return Value{}, false
 			}
@@ -371,8 +488,8 @@ func (a *Algebra) SelectedCallEffects(root Root, application linkproject.Applica
 // SelectedCallOpaque reduces only explicit unknown-open Target rows for one
 // Rule-selected operation. Fully closed rows contribute Bottom; RowVariable
 // is unsupported and therefore rejects the whole selected operation.
-func (a *Algebra) SelectedCallOpaque(root Root, application linkproject.Application, operation target.Operation) (Value, bool) {
-	if !a.ownsRoot(root) || !a.selectedCall(root, application, operation) {
+func (a *Algebra) SelectedCallOpaque(root Root, applicationID keyspace.ContentID, operation target.Operation) (Value, bool) {
+	if !a.ownsRoot(root) || !a.selectedCall(root, applicationID, operation) {
 		return Value{}, false
 	}
 	tail, _, ok := a.contract.EffectTail(operation)
@@ -382,7 +499,7 @@ func (a *Algebra) SelectedCallOpaque(root Root, application linkproject.Applicat
 	var unknown Atom
 	known := false
 	if tail == target.RowUnknownOpen {
-		atom, ok := a.OpenOperationUnknown(root, application, operation)
+		atom, ok := a.OpenOperationUnknown(root, applicationID, operation)
 		if !ok {
 			return Value{}, false
 		}
@@ -399,7 +516,7 @@ func (a *Algebra) SelectedCallOpaque(root Root, application linkproject.Applicat
 		}
 		if callbackTail == target.RowUnknownOpen {
 			if !known {
-				atom, ok := a.OpenCallbackUnknown(root, application, operation, callback)
+				atom, ok := a.OpenCallbackUnknown(root, applicationID, operation, callback)
 				if !ok {
 					return Value{}, false
 				}
@@ -657,39 +774,92 @@ func (a *Algebra) Fingerprint(value Value) uint64 {
 	return value.seal
 }
 
-func (a *Algebra) sealRoots() bool {
-	mounts := a.source.Project().Mounts()
-	for i := 0; i < mounts.Count(); i++ {
-		shard, ok := mounts.At(i)
-		if !ok || uint64(i+1) > uint64(math.MaxUint32) {
-			return false
+func (a *Algebra) sealMountedArtifacts(mounts []MountedArtifact) (map[mountedCallRef]artifactCallRow, bool) {
+	receipts := make([]bodyRootReceipt, 0)
+	artifactCalls := make(map[mountedCallRef]artifactCallRow)
+	seenMounts := make(map[keyspace.ContentID]struct{}, len(mounts))
+	for _, mount := range mounts {
+		if mount.Artifact == nil || !mount.Artifact.Available() || !mount.ModuleKey.Available() {
+			return nil, false
 		}
-		program, ok := mounts.Program(shard)
-		if !ok || program == nil {
-			return false
+		if mount.Artifact.CompileKey().ProgramID() == (keyspace.ContentID{}) {
+			return nil, false
 		}
-		bodyCount := program.Source().Identity().FamilyCount(keyspace.FamilyBody)
-		for ordinal := 1; ordinal <= bodyCount; ordinal++ {
-			body := keyspace.MakeTerm(keyspace.FamilyBody, uint32(ordinal))
-			if !program.Flow().Executable().Contains(body) {
-				continue
+		if _, duplicate := seenMounts[mount.ModuleKey]; duplicate {
+			return nil, false
+		}
+		seenMounts[mount.ModuleKey] = struct{}{}
+		programID := mount.Artifact.CompileKey().ProgramID()
+		for index := 0; index < mount.Artifact.BodyCount(); index++ {
+			body, ok := mount.Artifact.BodyAt(index)
+			if !ok || !body.Available() || !body.ID().Available() || !body.ContextID().Available() {
+				return nil, false
 			}
-			if uint64(len(a.roots)) >= uint64(math.MaxUint32) {
-				return false
+			receipts = append(receipts, bodyRootReceipt{moduleKey: mount.ModuleKey, programID: programID, bodyID: body.ID(), contextID: body.ContextID()})
+		}
+		packReceipt, ok := mount.Artifact.PackReceipt()
+		if !ok {
+			return nil, false
+		}
+		for index := 0; index < packReceipt.CallCount(); index++ {
+			call, callOK := packReceipt.CallAt(index)
+			if !callOK || !call.Available() || !call.ID().Available() || !call.BodyID().Available() {
+				return nil, false
 			}
-			ref := rootRef{shard: uint32(i + 1), body: body}
-			if a.rootIndex[ref] != 0 {
-				return false
+			ref := mountedCallRef{moduleID: mount.ModuleKey, contextID: call.ID()}
+			if _, duplicate := artifactCalls[ref]; duplicate {
+				return nil, false
 			}
-			a.roots = append(a.roots, rootRow{shard: uint32(i + 1), body: body})
-			a.rootIndex[ref] = uint32(len(a.roots))
+			artifactCalls[ref] = artifactCallRow{programID: programID, bodyID: call.BodyID()}
 		}
 	}
-	return true
+	ordered := append([]bodyRootReceipt(nil), receipts...)
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].moduleKey != ordered[j].moduleKey {
+			return lessID(ordered[i].moduleKey, ordered[j].moduleKey)
+		}
+		if ordered[i].bodyID != ordered[j].bodyID {
+			return lessID(ordered[i].bodyID, ordered[j].bodyID)
+		}
+		return lessID(ordered[i].contextID, ordered[j].contextID)
+	})
+	for _, receipt := range ordered {
+		if !receipt.programID.Available() || !receipt.bodyID.Available() || !receipt.contextID.Available() || !receipt.moduleKey.Available() {
+			return nil, false
+		}
+		contextRef := rootContextRef{module: receipt.moduleKey, context: receipt.contextID}
+		bodyRef := rootBodyRef{module: receipt.moduleKey, bodyID: receipt.bodyID}
+		mountedRef := rootMountedBodyRef{moduleKey: receipt.moduleKey, bodyID: receipt.bodyID}
+		if a.rootContextIndex[contextRef] != 0 || a.rootBodyIndex[bodyRef] != 0 || a.rootMountedBodyIndex[mountedRef] != 0 || uint64(len(a.roots)) >= uint64(math.MaxUint32) {
+			return nil, false
+		}
+		id := effectRootID(receipt.programID, receipt.moduleKey, receipt.contextID)
+		if !id.Available() {
+			return nil, false
+		}
+		a.roots = append(a.roots, rootRow{moduleKey: receipt.moduleKey, programID: receipt.programID, bodyID: receipt.bodyID, context: receipt.contextID, id: id})
+		slot := uint32(len(a.roots))
+		a.rootContextIndex[contextRef] = slot
+		a.rootBodyIndex[bodyRef] = slot
+		a.rootMountedBodyIndex[mountedRef] = slot
+	}
+	for ref, call := range artifactCalls {
+		slot := a.rootMountedBodyIndex[rootMountedBodyRef{moduleKey: ref.moduleID, bodyID: call.bodyID}]
+		if slot == 0 || uint64(slot) > uint64(len(a.roots)) {
+			return nil, false
+		}
+		root := a.roots[slot-1]
+		if root.moduleKey != ref.moduleID || root.programID != call.programID || root.bodyID != call.bodyID {
+			return nil, false
+		}
+		call.root = slot
+		artifactCalls[ref] = call
+	}
+	return artifactCalls, true
 }
 
 func (a *Algebra) sealCapacity() bool {
-	contexts := uint64(a.source.Project().Applications().Calls().Count())
+	contexts := uint64(a.applicationCount)
 	occurrences := uint64(0)
 	for i := 0; i < a.contract.OperationCount(); i++ {
 		op, ok := a.contract.OperationAt(i)
@@ -727,55 +897,31 @@ func (a *Algebra) sealCapacity() bool {
 	return true
 }
 
-func (a *Algebra) selectedCall(root Root, application linkproject.Application, owner target.Operation) bool {
-	if !a.source.Boundary().ApplicationOperationAvailable(a.contract, application, owner) {
+func (a *Algebra) selectedCall(root Root, applicationID keyspace.ContentID, owner target.Operation) bool {
+	if _, available := a.applicationOperation(applicationID, owner); !available {
 		return false
 	}
-	if !a.callInRoot(root, application) {
+	if !a.callInRootID(root, applicationID) {
 		return false
 	}
-	packRoot, ok := a.packs.CallRoot(application)
-	if !ok {
+	row, rowOK := a.callRows[applicationID]
+	packRoot, ok := a.packs.CallRootForMountedSemantic(row.moduleID, row.context)
+	if !rowOK || !ok {
 		return false
 	}
 	_, ok = a.packs.RootID(packRoot)
 	return ok
 }
 
-func (a *Algebra) callInRoot(root Root, application linkproject.Application) bool {
+func (a *Algebra) callInRootID(root Root, applicationID keyspace.ContentID) bool {
 	if !a.ownsRoot(root) {
 		return false
 	}
-	shard, call, ok := a.source.Project().Applications().Call(application)
-	if !ok {
+	row, rowOK := a.callRows[applicationID]
+	if !rowOK || !row.moduleID.Available() || !row.context.Available() || row.root == 0 || uint64(row.root) > uint64(len(a.roots)) {
 		return false
 	}
-	program, ok := a.source.Project().Mounts().Program(shard)
-	if !ok || program == nil {
-		return false
-	}
-	body, _, _, ok := program.Source().Index().Position(call)
-	shardIndex, shardOK := a.source.Project().Mounts().Index(shard)
-	if !ok || !shardOK || body != a.roots[root.slot-1].body || uint32(shardIndex+1) != a.roots[root.slot-1].shard {
-		return false
-	}
-	return true
-}
-
-func (a *Algebra) callInRootCandidate(application linkproject.Application) bool {
-	if !a.Valid() {
-		return false
-	}
-	shard, term, ok := a.source.Project().Applications().Call(application)
-	if !ok {
-		return false
-	}
-	p, ok := a.source.Project().Mounts().Program(shard)
-	if !ok || p == nil {
-		return false
-	}
-	body, _, _, ok := p.Source().Index().Position(term)
-	return ok && p.Flow().Executable().Contains(body)
+	return Root{owner: a, slot: row.root} == root
 }
 
 func (a *Algebra) validateOrdinaryInputs(owner target.Operation, effect int) bool {
@@ -820,65 +966,6 @@ func (a *Algebra) validateCallbackInputs(owner target.Operation, callback target
 		}
 	}
 	return true
-}
-
-func (a *Algebra) ordinaryTypeArguments(application linkproject.Application, owner target.Operation, effect int) (keyspace.ContentID, []keyspace.Term, bool) {
-	count := a.contract.EffectTypeArgumentCount(owner, effect)
-	return a.selectedTypeArguments(application, owner, count, func(i int) (target.TypeFormal, bool) { return a.contract.EffectTypeArgumentAt(owner, effect, i) })
-}
-
-func (a *Algebra) callbackTypeArguments(application linkproject.Application, owner target.Operation, callback target.CallbackID, effect int) (keyspace.ContentID, []keyspace.Term, bool) {
-	count := a.contract.CallbackEffectTypeArgumentCount(callback, effect)
-	return a.selectedTypeArguments(application, owner, count, func(i int) (target.TypeFormal, bool) {
-		return a.contract.CallbackEffectTypeArgumentAt(callback, effect, i)
-	})
-}
-
-func (a *Algebra) selectedTypeArguments(application linkproject.Application, owner target.Operation, count int, at func(int) (target.TypeFormal, bool)) (keyspace.ContentID, []keyspace.Term, bool) {
-	if count == 0 {
-		return keyspace.ContentID{}, nil, true
-	}
-	arguments, ok := a.source.Boundary().Calls().TypeFormalArguments(a.contract, application, owner)
-	if !ok {
-		return keyspace.ContentID{}, nil, false
-	}
-	correspondence, ok := arguments.CorrespondenceID()
-	if !ok {
-		return keyspace.ContentID{}, nil, false
-	}
-	terms := make([]keyspace.Term, count)
-	for i := 0; i < count; i++ {
-		formal, ok := at(i)
-		if !ok || uint64(formal) >= uint64(arguments.Count()) {
-			return keyspace.ContentID{}, nil, false
-		}
-		term, ok := arguments.At(int(formal))
-		if !ok {
-			return keyspace.ContentID{}, nil, false
-		}
-		terms[i] = term
-	}
-	return correspondence, terms, true
-}
-
-func (a *Algebra) issue(root Root, application linkproject.Application, targetOp target.Operation, descriptor, correspondence keyspace.ContentID, terms []keyspace.Term) (Atom, bool) {
-	operationID, ok := a.contract.EffectOperationID(targetOp)
-	if !ok || !descriptor.Available() {
-		return Atom{}, false
-	}
-	packRoot, ok := a.packs.CallRoot(application)
-	if !ok {
-		return Atom{}, false
-	}
-	rootID, ok := a.packs.RootID(packRoot)
-	if !ok {
-		return Atom{}, false
-	}
-	id := atomID(operationID, descriptor, rootID, correspondence, terms)
-	if !id.Available() {
-		return Atom{}, false
-	}
-	return Atom{owner: a, root: root.slot, id: id}, true
 }
 
 func (a *Algebra) ownsRoot(root Root) bool {
@@ -926,46 +1013,42 @@ func (a *Algebra) valueSeal(root uint32, top bool, atoms []Atom) uint64 {
 }
 
 func (a *Algebra) contentID() keyspace.ContentID {
+	ownerID := a.linkOwner.ContentID()
+	if !ownerID.Available() {
+		return keyspace.ContentID{}
+	}
 	h := sha256.New()
-	_, _ = h.Write([]byte("wippy.analysis.effect.factor.v3\x00"))
-	_, _ = h.Write(a.linkID[:])
+	_, _ = h.Write([]byte(effectFactorIDDomain))
+	_, _ = h.Write(ownerID[:])
 	for _, root := range a.roots {
-		var word [8]byte
-		binary.BigEndian.PutUint32(word[:4], root.shard)
-		binary.BigEndian.PutUint32(word[4:], uint32(root.body))
-		_, _ = h.Write(word[:])
+		_, _ = h.Write(root.moduleKey[:])
+		_, _ = h.Write(root.id[:])
 	}
 	var out keyspace.ContentID
 	copy(out[:], h.Sum(nil))
 	return out
 }
 
+// effectRootID is the v3 concrete mounted root identity. The exact Program
+// Body context remains opaque, while ModuleKey keeps duplicate mounts
+// disjoint without using Link identity or a dense shard ordinal.
+func effectRootID(programID, moduleKey, context keyspace.ContentID) keyspace.ContentID {
+	if !programID.Available() || !moduleKey.Available() || !context.Available() {
+		return keyspace.ContentID{}
+	}
+	hash := sha256.New()
+	_, _ = hash.Write([]byte(effectRootIDDomain))
+	_, _ = hash.Write(programID[:])
+	_, _ = hash.Write(moduleKey[:])
+	_, _ = hash.Write(context[:])
+	var result keyspace.ContentID
+	copy(result[:], hash.Sum(nil))
+	return result
+}
+
 func externalID() keyspace.ContentID {
 	h := sha256.New()
 	_, _ = h.Write([]byte("wippy.analysis.effect.atom.v2.unknown\x00"))
-	var out keyspace.ContentID
-	copy(out[:], h.Sum(nil))
-	return out
-}
-func atomID(operation, descriptor, root, static keyspace.ContentID, args []keyspace.Term) keyspace.ContentID {
-	if !operation.Available() || !descriptor.Available() || !root.Available() || (len(args) != 0 && !static.Available()) {
-		return keyspace.ContentID{}
-	}
-	h := sha256.New()
-	_, _ = h.Write([]byte("wippy.analysis.effect.atom.v1\x00"))
-	_, _ = h.Write(operation[:])
-	_, _ = h.Write(descriptor[:])
-	_, _ = h.Write(root[:])
-	var word [4]byte
-	binary.BigEndian.PutUint32(word[:], uint32(len(args)))
-	_, _ = h.Write(word[:])
-	if len(args) != 0 {
-		_, _ = h.Write(static[:])
-	}
-	for _, argument := range args {
-		binary.BigEndian.PutUint32(word[:], uint32(argument))
-		_, _ = h.Write(word[:])
-	}
 	var out keyspace.ContentID
 	copy(out[:], h.Sum(nil))
 	return out

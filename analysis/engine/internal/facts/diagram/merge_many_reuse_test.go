@@ -5,12 +5,13 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/terminal"
+	"github.com/wippyai/go-lua/analysis/engine/internal/guard"
 )
 
-func TestMergeSoleFactorManyReusesSemanticReferenceAndSparsifiesUndefined(t *testing.T) {
+func TestMergeSoleFactorManyPreservesSemanticValueAndSparsifiesUndefined(t *testing.T) {
 	fixture := newRelationFixture(t)
-	// The reference column is a nondefault value over all guards. The two
-	// real operands carry it on complementary authored surfaces.
+	// The previous column is a nondefault value over all guards. The two real
+	// operands carry it on complementary authored surfaces.
 	on := fixture.atom
 	regions := support.New(fixture.diagram.guards)
 	if regions == nil {
@@ -27,16 +28,16 @@ func TestMergeSoleFactorManyReusesSemanticReferenceAndSparsifiesUndefined(t *tes
 	left := fixture.sealed(t, relationWrite{key: 1, when: on, value: 20})
 	right := fixture.sealed(t, relationWrite{key: 1, when: notOn, value: 20})
 
-	combine := func(_ relationKey, reference terminal.ID[uint8], values []terminal.ID[uint8], present []bool) (terminal.ID[uint8], bool) {
+	combine := func(_ relationKey, values []terminal.ID[uint8], present []bool, _ []terminal.ID[uint8]) (terminal.ID[uint8], bool) {
 		for index := range values {
 			if present[index] {
 				return values[index], true
 			}
 		}
-		return reference, true
+		return terminal.ID[uint8]{}, true
 	}
 
-	t.Run("reference_reuse", func(t *testing.T) {
+	t.Run("semantic_value_is_preserved", func(t *testing.T) {
 		builder := fixture.diagram.Begin()
 		if builder == nil {
 			t.Fatal("builder")
@@ -56,12 +57,19 @@ func TestMergeSoleFactorManyReusesSemanticReferenceAndSparsifiesUndefined(t *tes
 			builder.Discard()
 			t.Fatal("many merge")
 		}
-		if merged.root != reference.root || merged.count != reference.count {
+		if merged.count != reference.count {
 			builder.Discard()
-			t.Fatal("equal reconstruction did not retain reference root")
+			t.Fatal("equal reconstruction changed sparse column count")
 		}
-		if _, valid := builder.Seal(merged); !valid {
+		sealed, valid := builder.Seal(merged)
+		if !valid {
 			t.Fatal("seal")
+		}
+		for _, valuation := range []bool{false, true} {
+			got, present, readable := fixture.diagram.At(sealed, relationFactorID, 1, func(guard.Atom) bool { return valuation })
+			if !readable || !present || got != fixture.values[20] {
+				t.Fatalf("folded value at %t = %v/%t/%t, want value 20", valuation, got, present, readable)
+			}
 		}
 	})
 
@@ -74,7 +82,7 @@ func TestMergeSoleFactorManyReusesSemanticReferenceAndSparsifiesUndefined(t *tes
 		if work == nil {
 			t.Fatal("work")
 		}
-		merged, valid := builder.MergeSoleFactorMany(reference, []Root[relationFactor, relationKey, uint8]{fixture.diagram.Empty(), fixture.diagram.Empty()}, NewSoleScratch[relationKey, uint8](), work, func(_ relationKey, _ terminal.ID[uint8], _ []terminal.ID[uint8], present []bool) (terminal.ID[uint8], bool) {
+		merged, valid := builder.MergeSoleFactorMany(reference, []Root[relationFactor, relationKey, uint8]{fixture.diagram.Empty(), fixture.diagram.Empty()}, NewSoleScratch[relationKey, uint8](), work, func(_ relationKey, _ []terminal.ID[uint8], present []bool, _ []terminal.ID[uint8]) (terminal.ID[uint8], bool) {
 			if len(present) != 2 || present[0] == present[1] {
 				return terminal.ID[uint8]{}, false
 			}

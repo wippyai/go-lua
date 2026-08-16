@@ -42,13 +42,20 @@ func (s Substitution) Root(root heap.Key) heap.Key {
 
 func (s Substitution) Key(key Key) (Key, bool) {
 	if key.Kind() != KeyAllocation {
-		return key, key.validFor(s.source)
+		return key, s.source.Valid() && key.universe != nil && key.universe.heap == s.source && key.valid()
+	}
+	if !s.source.Valid() || key.universe == nil || key.universe.heap != s.source {
+		return Key{}, false
 	}
 	root, ok := key.HeapKey()
 	if !ok {
 		return Key{}, false
 	}
-	return AllocationKey(s.source, s.Root(root))
+	slot, ok := key.universe.rootIndex[s.Root(root)]
+	if !ok {
+		return Key{}, false
+	}
+	return Key{universe: key.universe, slot: slot}, true
 }
 
 type Fact struct {

@@ -7,8 +7,8 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/materialization"
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
+	programartifact "github.com/wippyai/go-lua/analysis/internal/programartifact"
 	"github.com/wippyai/go-lua/program"
-	programflow "github.com/wippyai/go-lua/program/flow"
 	flowkind "github.com/wippyai/go-lua/program/flow/kind"
 	"github.com/wippyai/go-lua/program/keyspace"
 	"github.com/wippyai/go-lua/program/link"
@@ -18,26 +18,270 @@ import (
 	"github.com/wippyai/go-lua/program/target"
 )
 
-const schemaFormat uint64 = 0x686561702d7638 // "heap-v8"
+const schemaFormat uint64 = 0x686561702d7639 // "heap-v9"
 
 // Schema is the one immutable Heap family authority derived from one sealed
 // Link. It is deliberately not a per-root schema: all Values share this fence
 // and the Factor's sparse default is therefore constant and lawful.
 type Schema struct{ owner *schema }
 
+// ArtifactMount is the seal-time substitution from one reusable Program
+// artifact to one concrete Link mount. The artifact is pointer-free after
+// publication; Module is the compact mount identity that keeps duplicate
+// mounts distinct.
+type ArtifactMount struct {
+	artifact  *programartifact.Artifact
+	module    keyspace.ContentID
+	programID keyspace.ContentID
+}
+
+// OccurrenceMount is Heap's opaque, mount-scoped occurrence issuer.  The
+// issuer is obtained only from the sealed Heap owner, so callers cannot turn
+// an arbitrary (module, occurrence) pair into a coordinate.  Its lookups use
+// Heap's sealed occurrence inverses and retain the exact artifact pointer
+// fence carried by ArtifactMount.
+type OccurrenceMount struct {
+	owner *schema
+	mount ArtifactMount
+}
+
+func (issuer OccurrenceMount) valid() bool {
+	if issuer.owner == nil || !issuer.mount.Available() || issuer.owner.artifacts == nil {
+		return false
+	}
+	canonical, ok := issuer.owner.artifacts[issuer.mount.module]
+	return ok && canonical.artifact == issuer.mount.artifact && canonical.programID == issuer.mount.programID
+}
+
+// OccurrenceMountForModule returns Heap's canonical occurrence issuer for one
+// concrete mounted module.  The returned issuer is the only hot lookup input;
+// module and occurrence identities are never accepted as a free-standing
+// directory key by consumers.
+func (schema Schema) OccurrenceMountForModule(module keyspace.ContentID) (OccurrenceMount, bool) {
+	if !schema.valid() || !module.Available() || schema.owner.artifacts == nil {
+		return OccurrenceMount{}, false
+	}
+	mount, ok := schema.owner.artifacts[module]
+	issuer := OccurrenceMount{owner: schema.owner, mount: mount}
+	return issuer, ok && issuer.valid()
+}
+
+func (issuer OccurrenceMount) Module() keyspace.ContentID {
+	if !issuer.valid() {
+		return keyspace.ContentID{}
+	}
+	return issuer.mount.module
+}
+
+func (issuer OccurrenceMount) ProgramID() keyspace.ContentID {
+	if !issuer.valid() {
+		return keyspace.ContentID{}
+	}
+	return issuer.mount.programID
+}
+
+// IndexAccessForOccurrence resolves one exact mounted Read/Write occurrence
+// through Heap's sealed inverse map.  Artifact and Program identity remain
+// part of the opaque issuer fence; duplicate mounts cannot alias.
+func (issuer OccurrenceMount) IndexAccessForOccurrence(id keyspace.ContentID, read bool) (IndexAccess, bool) {
+	if !issuer.valid() || !id.Available() {
+		return IndexAccess{}, false
+	}
+	// The inverse map is sealed from the canonical artifact rows, so no
+	// artifact occurrence directory needs to be reopened for this lookup.
+	receipt := IndexAccessReceipt{module: issuer.mount.module, programID: issuer.mount.programID, occurrence: id, read: read, artifact: issuer.mount.artifact}
+	return Schema{owner: issuer.owner}.IndexAccessForReceipt(receipt)
+}
+
+// AllocationRootForOccurrence resolves one exact mounted Program allocation
+// through Heap's sealed inverse map.  Allocation kind/form are read from the
+// sealed Heap row, so callers do not restate or reconstruct them.
+func (issuer OccurrenceMount) AllocationRootForOccurrence(id keyspace.ContentID) (Key, bool) {
+	if !issuer.valid() || !id.Available() {
+		return Key{}, false
+	}
+	schema := Schema{owner: issuer.owner}
+	index := schema.owner.programAllocationOrdinals[programAllocationOccurrence{module: issuer.mount.module, allocationID: id}]
+	if index == 0 {
+		return Key{}, false
+	}
+	row, ok := schema.owner.rootAt(index)
+	if !ok || row.kind != RootAllocation || row.allocation.module != issuer.mount.module || row.allocation.programID != issuer.mount.programID || row.allocation.allocationID != id {
+		return Key{}, false
+	}
+	key := Key{owner: issuer.owner, slot: index}
+	return key, schema.OwnsKey(key)
+}
+
+// AllocationCount returns the mounted artifact's stable allocation order.
+// It is a cold enumeration bridge for binding-specific source receipts; it
+// does not expose or duplicate Heap's occurrence inverse.
+func (issuer OccurrenceMount) AllocationCount() int {
+	if !issuer.valid() {
+		return 0
+	}
+	return issuer.mount.artifact.HeapAllocationCount()
+}
+
+// AllocationAt returns one mounted allocation ID and its exact Heap root in
+// artifact order. The occurrence-to-root resolution itself remains the
+// sealed Heap O(1) inverse.
+func (issuer OccurrenceMount) AllocationAt(index int) (keyspace.ContentID, Key, bool) {
+	if !issuer.valid() || index < 0 || index >= issuer.mount.artifact.HeapAllocationCount() {
+		return keyspace.ContentID{}, Key{}, false
+	}
+	allocation, allocationOK := issuer.mount.artifact.HeapAllocationAt(index)
+	if !allocationOK || !allocation.ID().Available() {
+		return keyspace.ContentID{}, Key{}, false
+	}
+	key, keyOK := issuer.AllocationRootForOccurrence(allocation.ID())
+	return allocation.ID(), key, keyOK
+}
+
+// AllocationOrdinal returns the stable mounted artifact ordinal for one
+// allocation occurrence. The ordinal is a private index into a binding's
+// source-receipt vector, never a public identity or a second occurrence map.
+func (issuer OccurrenceMount) AllocationOrdinal(id keyspace.ContentID) (int, bool) {
+	if !issuer.valid() || !id.Available() {
+		return 0, false
+	}
+	schema := Schema{owner: issuer.owner}
+	index := schema.owner.programAllocationOrdinals[programAllocationOccurrence{module: issuer.mount.module, allocationID: id}]
+	if index == 0 {
+		return 0, false
+	}
+	row, ok := schema.owner.rootAt(index)
+	if !ok || row.kind != RootAllocation || row.allocation.artifactRow == 0 || row.allocation.module != issuer.mount.module || row.allocation.allocationID != id {
+		return 0, false
+	}
+	ordinal := int(row.allocation.artifactRow - 1)
+	return ordinal, ordinal < issuer.mount.artifact.HeapAllocationCount()
+}
+
+func NewArtifactMount(artifact *programartifact.Artifact, module, programID keyspace.ContentID) (ArtifactMount, bool) {
+	if artifact == nil || !artifact.Available() || !module.Available() || !programID.Available() || artifact.CompileKey().ProgramID() != programID {
+		return ArtifactMount{}, false
+	}
+	return ArtifactMount{artifact: artifact, module: module, programID: programID}, true
+}
+func (mount ArtifactMount) Available() bool {
+	return mount.artifact != nil && mount.artifact.Available() && mount.module.Available() && mount.programID.Available() && mount.artifact.CompileKey().ProgramID() == mount.programID
+}
+func (mount ArtifactMount) Module() keyspace.ContentID {
+	if !mount.Available() {
+		return keyspace.ContentID{}
+	}
+	return mount.module
+}
+func (mount ArtifactMount) ProgramID() keyspace.ContentID {
+	if !mount.Available() {
+		return keyspace.ContentID{}
+	}
+	return mount.programID
+}
+func (mount ArtifactMount) Artifact() *programartifact.Artifact {
+	if !mount.Available() {
+		return nil
+	}
+	return mount.artifact
+}
+
+// ArtifactMountForModule returns Heap's canonical seal-time artifact receipt
+// for one concrete Link module. Consumers that admit a second mounted owner
+// must compare this exact artifact pointer and ProgramID; module identity
+// alone is not sufficient to fence a no-index module.
+func (schema Schema) ArtifactMountForModule(module keyspace.ContentID) (ArtifactMount, bool) {
+	if !schema.valid() || !module.Available() || schema.owner.artifacts == nil {
+		return ArtifactMount{}, false
+	}
+	mount, ok := schema.owner.artifacts[module]
+	return mount, ok && mount.Available()
+}
+
+// SealFailure is the closed admission phase for Heap's cold source
+// projection. It is diagnostic-only: a failure never produces a partial
+// Schema or changes the ordinary Seal contract.
+type SealFailure uint8
+
+const (
+	SealFailureNone SealFailure = iota
+	SealFailureSource
+	SealFailureProgramAllocations
+	SealFailureFreshResults
+	SealFailureProgramRootsOverflow
+	SealFailureBootRoot
+	SealFailureRootsOverflow
+	SealFailureBootProjection
+	SealFailureIndexAccess
+	SealFailureUnknownSlot
+	SealFailureFinishRootKinds
+	SealFailureFinishAtomicKeys
+	SealFailureFinishOccurrenceInverses
+	SealFailureFinishReferencePotential
+	SealFailureFinishContainments
+	SealFailureFinishPresentSlots
+	SealFailureFinishPresentContainments
+	SealFailureFinishWidenRanks
+	SealFailureFinishContentID
+)
+
+func (failure SealFailure) String() string {
+	switch failure {
+	case SealFailureNone:
+		return "none"
+	case SealFailureSource:
+		return "source"
+	case SealFailureProgramAllocations:
+		return "program-allocations"
+	case SealFailureFreshResults:
+		return "fresh-results"
+	case SealFailureProgramRootsOverflow:
+		return "program-roots-overflow"
+	case SealFailureBootRoot:
+		return "boot-root"
+	case SealFailureRootsOverflow:
+		return "roots-overflow"
+	case SealFailureBootProjection:
+		return "boot-projection"
+	case SealFailureIndexAccess:
+		return "index-access"
+	case SealFailureUnknownSlot:
+		return "unknown-slot"
+	case SealFailureFinishRootKinds:
+		return "finish-root-kinds"
+	case SealFailureFinishAtomicKeys:
+		return "finish-atomic-keys"
+	case SealFailureFinishOccurrenceInverses:
+		return "finish-occurrence-inverses"
+	case SealFailureFinishReferencePotential:
+		return "finish-reference-potential"
+	case SealFailureFinishContainments:
+		return "finish-containments"
+	case SealFailureFinishPresentSlots:
+		return "finish-present-slots"
+	case SealFailureFinishPresentContainments:
+		return "finish-present-containments"
+	case SealFailureFinishWidenRanks:
+		return "finish-widen-ranks"
+	case SealFailureFinishContentID:
+		return "finish-content-id"
+	default:
+		return "unknown"
+	}
+}
+
 type schema struct {
-	source *link.Link
-	linkID keyspace.ContentID
-	id     keyspace.ContentID
+	linkOwner link.OwnerCapability
+	id        keyspace.ContentID
 
 	roots            []rootRow // physical Program roots followed by Boot roots
 	programRootCount uint32
-	bootIndex        map[linkhost.BootRoot]uint32
+	bootIndex        map[keyspace.ContentID]uint32
 	freshTemplates   []freshTemplate
 	freshByKey       map[freshTemplateKey]uint32
 	freshSets        []freshTemplateSet
 	freshSetValues   []freshSetValue
-	freshApps        []linkproject.Application
+	freshApps        []keyspace.ContentID
 	freshAppSets     []uint32
 	freshOffsets     []uint64
 	freshCount       uint64
@@ -49,8 +293,10 @@ type schema struct {
 
 	slots        []slotRow
 	slotSupport  []slotSupport
-	exactSlots   map[linkproject.Key]uint32
-	dynamicSlots map[sourceCoordinate]uint32
+	exactSlots   map[uint32]uint32
+	exactKeys    []exactKeyRow
+	exactIndex   map[keyspace.LiteralValue]uint32
+	dynamicSlots map[keyspace.ContentID]uint32
 	unknownSlot  uint32
 
 	payloads       []payloadRow
@@ -61,8 +307,7 @@ type schema struct {
 	bootEntryOrder []rootSlot
 	bootInitials   map[rootPayload]bootEntryRow
 
-	metatableRoutes     []metatableRouteRow
-	bootMetatableRoutes map[linkhost.BootMetatableAttachment]uint32
+	metatableRoutes []metatableRouteRow
 	// fields and indexAccesses are Heap's direct sealed projections of Flow's
 	// AccessGeometry. No authored Flow owner or generic Lens/access graph is
 	// retained after sealing.
@@ -76,6 +321,7 @@ type schema struct {
 	// selector for the exact owner-fenced Program tuple.
 	programAllocationOrdinals map[programAllocationOccurrence]uint32
 	indexAccessOrdinals       map[indexAccessOccurrence]uint32
+	artifacts                 map[keyspace.ContentID]ArtifactMount
 
 	// These are sealed finite denominators for Heap's canonical Mu carrier;
 	// they are rank witnesses, never work budgets or cardinality caps.
@@ -87,11 +333,44 @@ type schema struct {
 	top                  Value
 }
 
+type heapSealContext struct {
+	project  *linkproject.Component
+	boundary *linkboundary.Component
+	host     *linkhost.Component
+}
+
+// heapBuilder is a stack-confined cold authority.  It embeds the eventually
+// published scalar schema only while deriving its rows; no builder value or
+// Link component can cross SealWithArtifacts' return boundary.
+type heapBuilder struct {
+	*schema
+	seal heapSealContext
+}
+
+func (owner *heapBuilder) sealProject() *linkproject.Component {
+	if owner == nil {
+		return nil
+	}
+	return owner.seal.project
+}
+func (owner *heapBuilder) sealBoundary() *linkboundary.Component {
+	if owner == nil {
+		return nil
+	}
+	return owner.seal.boundary
+}
+func (owner *heapBuilder) sealHost() *linkhost.Component {
+	if owner == nil {
+		return nil
+	}
+	return owner.seal.host
+}
+
 type rootRow struct {
 	kind          RootKind
 	allocation    allocationSource
 	fresh         freshSource
-	boot          linkhost.BootRoot
+	bootID        keyspace.ContentID
 	bootImmutable bool
 	fieldStart    uint32
 	fieldCount    uint32
@@ -108,18 +387,25 @@ const (
 )
 
 type allocationSource struct {
-	shard linkproject.Shard
-	term  keyspace.Term
-	kind  AllocationKind
+	// module is the compact mounted-artifact identity.  A module key is
+	// deliberately mount-local: duplicate mounts of one Program therefore
+	// remain distinct without retaining the Link Project Shard authority.
+	module       keyspace.ContentID
+	kind         AllocationKind
+	form         program.AllocationForm
+	programID    keyspace.ContentID
+	allocationID keyspace.ContentID
+	artifactRow  uint32
+	rootValueID  keyspace.ContentID
 }
 
 // freshSource is a virtual exact fresh creation coordinate.
 type freshSource struct {
-	application linkproject.Application
-	outcome     uint32
-	result      uint32
-	ordinal     uint32
-	kinds       runtimekind.Set
+	applicationID keyspace.ContentID
+	outcome       uint32
+	result        uint32
+	ordinal       uint32
+	kinds         runtimekind.Set
 }
 
 type freshTemplateKey struct{ outcome, result, ordinal uint32 }
@@ -132,23 +418,29 @@ type freshSetValue struct {
 	kinds    runtimekind.Set
 }
 
-type sourceCoordinate struct {
-	shard linkproject.Shard
-	term  keyspace.Term
-}
+// exactKeyRow is Heap's detached exact-key universe.  Link's canonical
+// quotient is consumed while sealing; the published schema keeps only the
+// normalized scalar literal and a Heap-local dense ordinal.
+type exactKeyRow struct{ literal keyspace.LiteralValue }
 
 type fieldSource struct {
-	root uint32
-	term keyspace.Term
+	root         uint32
+	allocationID keyspace.ContentID
+	fieldID      keyspace.ContentID
 }
 
 type fieldRow struct {
 	fieldSource
-	kind     flowkind.FieldKind
-	keyTerm  keyspace.Term
-	slot     uint32
-	payload  uint32
-	openTail uint32
+	kind         flowkind.FieldKind
+	width        int
+	finalOpen    bool
+	normalized   keyspace.Key
+	normalizedOK bool
+	slot         uint32
+	payload      uint32
+	openTail     uint32
+	artifactRow  uint32
+	valuesRow    uint32
 }
 
 type payloadKind uint8
@@ -161,23 +453,24 @@ const (
 
 type slotRow struct {
 	kind    SlotKind
-	exact   linkproject.Key
-	dynamic sourceCoordinate
+	exact   uint32
+	dynamic keyspace.ContentID
 	field   uint32
 }
 
 type payloadRow struct {
-	kind    payloadKind
-	shard   linkproject.Shard
-	values  keyspace.Term
-	index   uint32
-	initial target.InitialValue
+	kind     payloadKind
+	module   keyspace.ContentID
+	valuesID keyspace.ContentID
+	index    uint32
+	initial  target.InitialValue
 }
 
 type bootEntryRow struct {
 	raw        RawPresence
 	payload    uint32
 	initial    target.InitialValue
+	kind       target.InitialValueKind
 	valueChild uint32
 	mutability target.InitialMutability
 }
@@ -211,34 +504,34 @@ type rootPayload struct {
 }
 
 type indexAccessRow struct {
-	shard    linkproject.Shard
-	read     keyspace.Term
-	write    keyspace.Term
-	base     keyspace.Term
-	keyTerm  keyspace.Term
-	values   keyspace.Term
-	position int
-	lens     keyspace.Term
-	slot     uint32
-	payload  uint32
+	module      keyspace.ContentID
+	programID   keyspace.ContentID
+	occurrence  keyspace.ContentID
+	isRead      bool
+	baseValueID keyspace.ContentID
+	keyValueID  keyspace.ContentID
+	valuesID    keyspace.ContentID
+	position    int
+	dynamic     bool
+	resultID    keyspace.ContentID
+	slot        uint32
+	payload     uint32
 }
 
 // programAllocationOccurrence is the one exact inverse key for a Program
-// aggregate. Shard carries Project's owner fence; term carries the authored
-// occurrence. The Program pointer is checked at query time against that Shard
-// rather than copied into this map, so the map cannot become a second Program
-// identity table.
+// aggregate. Shard distinguishes duplicate mounts; allocationID is the
+// opaque Program proof identity. No raw Term is part of the inverse key.
 type programAllocationOccurrence struct {
-	shard linkproject.Shard
-	term  keyspace.Term
+	module       keyspace.ContentID
+	allocationID keyspace.ContentID
 }
 
-// indexAccessOccurrence is the one exact inverse key for an authored index
-// access. Read and Write terms are disjoint families, so the occurrence term
-// alone selects the typed sealed row after the mounted Program validates it.
+// indexAccessOccurrence is the portable mounted occurrence key already
+// issued by Program's semantic-path authority. It contains no raw Term or
+// mount ordinal; duplicate mounts remain distinct through ModuleKey.
 type indexAccessOccurrence struct {
-	shard linkproject.Shard
-	term  keyspace.Term
+	module keyspace.ContentID
+	id     keyspace.ContentID
 }
 
 // Field is one schema-issued Program TableField route.  It has no Link
@@ -254,18 +547,73 @@ type IndexAccess struct {
 	index uint32
 }
 
+// IndexAccessReceipt is the opaque artifact occurrence substitution for one
+// mounted index candidate. It contains no Program/Flow proof or raw mount
+// ordinal.
+type IndexAccessReceipt struct {
+	module     keyspace.ContentID
+	programID  keyspace.ContentID
+	occurrence keyspace.ContentID
+	read       bool
+	artifact   *programartifact.Artifact
+}
+
+func (receipt IndexAccessReceipt) Available() bool {
+	return receipt.module.Available() && receipt.programID.Available() && receipt.occurrence.Available() && receipt.artifact != nil && receipt.artifact.Available() && receipt.artifact.CompileKey().ProgramID() == receipt.programID
+}
+func (receipt IndexAccessReceipt) Module() keyspace.ContentID {
+	if !receipt.Available() {
+		return keyspace.ContentID{}
+	}
+	return receipt.module
+}
+func (receipt IndexAccessReceipt) ProgramID() keyspace.ContentID {
+	if !receipt.Available() {
+		return keyspace.ContentID{}
+	}
+	return receipt.programID
+}
+func (receipt IndexAccessReceipt) OccurrenceID() keyspace.ContentID {
+	if !receipt.Available() {
+		return keyspace.ContentID{}
+	}
+	return receipt.occurrence
+}
+func (receipt IndexAccessReceipt) Read() bool { return receipt.Available() && receipt.read }
+
+func (mount ArtifactMount) IndexAccessReceipt(id keyspace.ContentID, read bool) (IndexAccessReceipt, bool) {
+	if !mount.Available() || !id.Available() {
+		return IndexAccessReceipt{}, false
+	}
+	kind := programartifact.OccurrenceIndexWrite
+	if read {
+		kind = programartifact.OccurrenceIndexRead
+	}
+	row, ok := mount.artifact.OccurrenceForID(kind, id)
+	if !ok || row.ID() != id {
+		return IndexAccessReceipt{}, false
+	}
+	receipt := IndexAccessReceipt{module: mount.module, programID: mount.programID, occurrence: id, read: read, artifact: mount.artifact}
+	return receipt, receipt.Available()
+}
+
 // IndexGeometry is Heap's direct immutable copy of one sealed candidate row.
-// Exactly one of ReadTerm and WriteTerm is nonzero. Read rows have Position
-// -1 and no Values; write rows retain their authored Values and position.
+// Read rows have Position -1 and no Values receipt; write rows retain their
+// authored Values occurrence identity and position.
 type IndexGeometry struct {
-	Shard     linkproject.Shard
-	ReadTerm  keyspace.Term
-	WriteTerm keyspace.Term
-	Base      keyspace.Term
-	KeyTerm   keyspace.Term
-	Values    keyspace.Term
-	Position  int
-	Lens      keyspace.Term
+	// Module is the compact mounted-artifact receipt. It replaces the
+	// Link-owned Shard proof after sealing.
+	Module    keyspace.ContentID
+	ProgramID keyspace.ContentID
+	// BaseValueID and KeyValueID are Link-owned Boundary Value identities,
+	// not reusable artifact semantic IDs. ValuesID remains the artifact-owned
+	// Values occurrence used to resolve the write payload through Pack.
+	BaseValueID keyspace.ContentID
+	KeyValueID  keyspace.ContentID
+	ValuesID    keyspace.ContentID
+	Position    int
+	DynamicKey  bool
+	Read        bool
 }
 
 // payloadSupport prevents a source payload from being paired with an
@@ -281,148 +629,311 @@ type payloadSupport struct {
 	roots map[uint32]struct{}
 }
 
-// Seal derives the complete finite structural Heap support from Link. It
-// creates no source identities: roots, fields, lenses, candidate rows, and
-// Values-pack selections are all existing Link coordinates.
-func Seal(source *link.Link) (Schema, bool) {
-	if source == nil || !source.ContentID().Available() {
-		return Schema{}, false
+// SealWithArtifacts is the artifact-native Heap admission seam. It consumes
+// only immutable artifact rows and Link's sealed substitution inverses; it
+// never reopens a mounted Program, TransformerInput, or Flow geometry.
+func SealWithArtifacts(source *link.Link, mounts []ArtifactMount) (Schema, SealFailure) {
+	builder, byModule, failure := newArtifactSchemaOwner(source, mounts)
+	if failure != SealFailureNone {
+		return Schema{}, failure
 	}
-	owner := &schema{
-		source:              source,
-		linkID:              source.ContentID(),
-		bootIndex:           make(map[linkhost.BootRoot]uint32),
-		exactSlots:          make(map[linkproject.Key]uint32),
-		dynamicSlots:        make(map[sourceCoordinate]uint32),
-		freshByKey:          make(map[freshTemplateKey]uint32),
-		payloadIndex:        make(map[payloadRow]uint32),
-		localSlots:          make(map[rootSlot]struct{}),
-		bootEntries:         make(map[rootSlot]bootEntryRow),
-		bootInitials:        make(map[rootPayload]bootEntryRow),
-		bootMetatableRoutes: make(map[linkhost.BootMetatableAttachment]uint32),
-	}
-	if !owner.addProgramAllocations() {
-		return Schema{}, false
+	owner := builder.schema
+	owner.artifacts = byModule
+	if !builder.addArtifactAllocations(byModule) {
+		return Schema{}, SealFailureProgramAllocations
 	}
 	owner.programRootCount = uint32(len(owner.roots))
-	if !owner.addTargetFreshResults() {
-		return Schema{}, false
+	if !builder.addTargetFreshResults() {
+		return Schema{}, SealFailureFreshResults
 	}
 	if owner.rootCount() > uint64(^uint32(0)) {
-		return Schema{}, false
+		return Schema{}, SealFailureProgramRootsOverflow
 	}
 	for index := 0; index < source.Host().BootRoots().Count(); index++ {
 		root, ok := source.Host().BootRoots().At(index)
-		if !ok || !owner.addBootRoot(root) {
-			return Schema{}, false
+		rootID, idOK := source.Host().BootRoots().ID(root)
+		if !ok || !idOK || !builder.addBootRoot(root, rootID) {
+			return Schema{}, SealFailureBootRoot
 		}
 	}
 	if owner.rootCount() > uint64(^uint32(0)) {
-		return Schema{}, false
+		return Schema{}, SealFailureRootsOverflow
 	}
-	if !owner.addBootEntries() || !owner.addBootMetatableRoutes() {
-		return Schema{}, false
+	if !builder.addBootEntries() || !builder.addBootMetatableRoutes() {
+		return Schema{}, SealFailureBootProjection
 	}
-	mounts := source.Project().Mounts()
-	for index := 0; index < mounts.Count(); index++ {
-		shard, ok := mounts.At(index)
-		p, programOK := mounts.Program(shard)
-		if !ok || !programOK || p == nil || !owner.addIndexAccesses(shard, p) {
-			return Schema{}, false
-		}
+	if !builder.addArtifactIndexes(byModule) {
+		return Schema{}, SealFailureIndexAccess
 	}
 	owner.unknownSlot = owner.ensureUnknownSlot()
-	if owner.unknownSlot == 0 || !owner.finish() {
-		return Schema{}, false
+	if owner.unknownSlot == 0 {
+		return Schema{}, SealFailureUnknownSlot
 	}
-	return Schema{owner: owner}, true
+	if failure := builder.finishWithFailure(); failure != SealFailureNone {
+		return Schema{}, failure
+	}
+	return Schema{owner: owner}, SealFailureNone
 }
 
-// addProgramAllocations seals Program-owned aggregate roots directly.  Link
-// contributes only the shard-to-Program topology; it does not manufacture an
-// allocation handle or cache a second root range.
-func (owner *schema) addProgramAllocations() bool {
-	if owner == nil || owner.source == nil {
+func newArtifactSchemaOwner(source *link.Link, mounts []ArtifactMount) (*heapBuilder, map[keyspace.ContentID]ArtifactMount, SealFailure) {
+	if source == nil {
+		return nil, nil, SealFailureSource
+	}
+	linkOwner := source.OwnerCapability()
+	if !linkOwner.Available() || source.Project() == nil || len(mounts) != source.Project().Mounts().Count() {
+		return nil, nil, SealFailureSource
+	}
+	byModule := make(map[keyspace.ContentID]ArtifactMount, len(mounts))
+	for _, mount := range mounts {
+		if !mount.Available() {
+			return nil, nil, SealFailureProgramAllocations
+		}
+		if _, duplicate := byModule[mount.module]; duplicate {
+			return nil, nil, SealFailureProgramAllocations
+		}
+		byModule[mount.module] = mount
+	}
+	for index := 0; index < source.Project().Mounts().Count(); index++ {
+		shard, shardOK := source.Project().Mounts().At(index)
+		module, moduleOK := source.Project().ModuleKey(shard)
+		programID, programOK := source.Project().Mounts().ProgramID(shard)
+		mount, mountOK := byModule[module]
+		if !shardOK || !moduleOK || !programOK || !mountOK || !mount.Available() || mount.module != module || mount.programID != programID || mount.artifact.CompileKey().ProgramID() != programID {
+			return nil, nil, SealFailureProgramAllocations
+		}
+	}
+	owner := &schema{linkOwner: linkOwner, bootIndex: make(map[keyspace.ContentID]uint32), exactSlots: make(map[uint32]uint32), exactIndex: make(map[keyspace.LiteralValue]uint32), dynamicSlots: make(map[keyspace.ContentID]uint32), freshByKey: make(map[freshTemplateKey]uint32), payloadIndex: make(map[payloadRow]uint32), localSlots: make(map[rootSlot]struct{}), bootEntries: make(map[rootSlot]bootEntryRow), bootInitials: make(map[rootPayload]bootEntryRow)}
+	builder := &heapBuilder{schema: owner, seal: heapSealContext{project: source.Project(), boundary: source.Boundary(), host: source.Host()}}
+	return builder, byModule, SealFailureNone
+}
+
+// mountedValue is Heap's sole artifact-to-Boundary substitution. The artifact
+// supplies a Program-issued span identity and Boundary reissues its opaque
+// mounted Value; neither an authored Term nor a Program handle survives.
+func (owner *heapBuilder) mountedValue(module, span keyspace.ContentID) (linkboundary.Value, bool) {
+	if owner == nil || owner.sealProject() == nil || !module.Available() || !span.Available() {
+		return linkboundary.Value{}, false
+	}
+	value, valueOK := owner.sealBoundary().Values().ForMountedSpan(module, span)
+	return value, valueOK && value != (linkboundary.Value{})
+}
+
+func (owner *heapBuilder) addArtifactAllocations(mounts map[keyspace.ContentID]ArtifactMount) bool {
+	if owner == nil || owner.sealProject() == nil {
 		return false
 	}
-	mounts := owner.source.Project().Mounts()
-	for index := 0; index < mounts.Count(); index++ {
-		shard, shardOK := mounts.At(index)
-		p, programOK := mounts.Program(shard)
-		if !shardOK || !programOK || p == nil {
+	for mountIndex := 0; mountIndex < owner.sealProject().Mounts().Count(); mountIndex++ {
+		shard, shardOK := owner.sealProject().Mounts().At(mountIndex)
+		module, moduleOK := owner.sealProject().ModuleKey(shard)
+		mount, mountOK := mounts[module]
+		if !shardOK || !moduleOK || !mountOK {
 			return false
 		}
-		flow := p.Flow()
-		geometry := flow.AccessGeometry()
-		if !geometry.Available() {
+		artifact := mount.Artifact()
+		if artifact == nil {
 			return false
 		}
-		authored := flow.Authored()
-		tables := authored.Tables()
-		functions := authored.Functions()
-		executable := flow.Executable()
-		for tableIndex := 0; tableIndex < tables.Count(); tableIndex++ {
-			term, ok := tables.At(tableIndex)
-			if !ok {
+		valuesRows := make(map[keyspace.ContentID]uint32, artifact.ValuesCount())
+		for valuesIndex := 0; valuesIndex < artifact.ValuesCount(); valuesIndex++ {
+			values, valuesOK := artifact.ValuesAt(valuesIndex)
+			if !valuesOK || !values.ID().Available() || uint64(valuesIndex) >= uint64(^uint32(0)) {
 				return false
 			}
-			if !executable.Contains(term) {
-				continue
-			}
-			if !owner.addProgramAllocation(shard, term, AllocationTable, geometry) {
+			if _, duplicate := valuesRows[values.ID()]; duplicate {
 				return false
 			}
+			valuesRows[values.ID()] = uint32(valuesIndex + 1)
 		}
-		for functionIndex := 0; functionIndex < functions.Count(); functionIndex++ {
-			term, ok := functions.At(functionIndex)
-			if !ok {
+		for index := 0; index < artifact.HeapAllocationCount(); index++ {
+			allocation, allocationOK := artifact.HeapAllocationAt(index)
+			root, rootOK := owner.mountedValue(mount.module, allocation.RootSpan())
+			rootID, rootIDOK := owner.sealBoundary().Values().ID(root)
+			if !allocationOK || !rootOK || !rootIDOK || allocation.ID() == (keyspace.ContentID{}) || uint64(index) >= uint64(^uint32(0)) {
 				return false
 			}
-			if !executable.Contains(term) {
+			kind := AllocationInvalid
+			switch allocation.Role() {
+			case program.AllocationTable:
+				kind = AllocationTable
+			case program.AllocationClosure:
+				kind = AllocationClosure
+			default:
+				return false
+			}
+			owner.roots = append(owner.roots, rootRow{kind: RootAllocation, allocation: allocationSource{module: mount.module, kind: kind, form: allocation.Form(), programID: mount.programID, allocationID: allocation.ID(), artifactRow: uint32(index + 1), rootValueID: rootID}})
+			rootIndex := uint32(len(owner.roots))
+			if kind != AllocationTable {
 				continue
 			}
-			if !owner.addProgramAllocation(shard, term, AllocationClosure, geometry) {
-				return false
+			for fieldIndex := 0; fieldIndex < allocation.FieldCount(); fieldIndex++ {
+				field, fieldOK := allocation.FieldAt(fieldIndex)
+				if !fieldOK || !owner.addArtifactField(rootIndex, mount, allocation, uint32(index+1), field, uint32(fieldIndex+1), valuesRows[field.ValuesID()]) {
+					return false
+				}
 			}
 		}
 	}
 	return true
 }
 
-func (owner *schema) addProgramAllocation(shard linkproject.Shard, term keyspace.Term, kind AllocationKind, geometry programflow.AccessGeometry) bool {
-	if owner == nil || owner.source == nil || term == 0 || uint64(len(owner.roots)) >= uint64(^uint32(0)) {
+func (owner *heapBuilder) addArtifactField(root uint32, mount ArtifactMount, allocation programartifact.HeapAllocationRow, allocationRow uint32, field programartifact.HeapFieldRow, fieldRowIndex, valuesRow uint32) bool {
+	if owner == nil || root == 0 || int(root) > len(owner.roots) || !mount.Available() || !allocation.Available() || allocationRow == 0 || !field.Available() || fieldRowIndex == 0 || valuesRow == 0 {
 		return false
 	}
-	p, ok := owner.source.Project().Mounts().Program(shard)
-	if !ok || p == nil || !p.Flow().Executable().Contains(term) {
+	row := owner.roots[root-1]
+	if row.kind != RootAllocation || row.allocation.module != mount.module || row.allocation.kind != AllocationTable || row.allocation.allocationID != allocation.ID() {
 		return false
 	}
-	switch kind {
-	case AllocationTable:
-		if _, ok := p.Flow().Authored().Tables().Get(term); !ok {
+	_, width, finalOpen, valuesOK := field.Values()
+	if !valuesOK {
+		return false
+	}
+	var slotID uint32
+	var normalized keyspace.Key
+	var normalizedOK bool
+	switch field.Kind() {
+	case flowkind.FieldKey:
+		keyValue, keyOK := owner.mountedValue(mount.module, field.SelectorSpan())
+		if !keyOK {
 			return false
 		}
-	case AllocationClosure:
-		if _, _, _, ok := p.Flow().Authored().Functions().Get(term); !ok {
+		keyValueID, keyValueIDOK := owner.sealBoundary().Values().ID(keyValue)
+		if !keyValueIDOK {
 			return false
 		}
+		slotID = owner.addDynamicSlot(keyValueID)
+	case flowkind.FieldList, flowkind.FieldName, flowkind.FieldExact:
+		normalized, normalizedOK = field.NormalizedKey()
+		if !normalizedOK || normalized == 0 {
+			return false
+		}
+		key, keyOK := owner.sealProject().Keys().ForMounted(mount.module, normalized)
+		literal, literalOK := owner.sealProject().Keys().Exact(key)
+		if !keyOK || !literalOK {
+			return false
+		}
+		slotID = owner.addExactSlot(literal)
 	default:
 		return false
 	}
-	owner.roots = append(owner.roots, rootRow{kind: RootAllocation, allocation: allocationSource{shard: shard, term: term, kind: kind}})
-	root := uint32(len(owner.roots))
-	if kind != AllocationTable {
-		return true
-	}
-	tables := p.Flow().Authored().Tables()
-	fieldCount, fieldsOK := tables.FieldCount(term)
-	if !fieldsOK {
+	if slotID == 0 || !owner.addLocalSlot(slotID, root) {
 		return false
 	}
-	for fieldIndex := 0; fieldIndex < fieldCount; fieldIndex++ {
-		field, fieldOK := tables.FieldAt(term, fieldIndex)
-		if !fieldOK || !owner.addField(root, shard, field, geometry) {
+	payloadID := owner.addArtifactPayload(payloadRow{kind: payloadValues, module: mount.module, valuesID: field.ValuesID()})
+	if payloadID == 0 || !owner.addLocalPayload(payloadID, root, slotID) {
+		return false
+	}
+	dense := uint32(len(owner.fields) + 1)
+	owner.fields = append(owner.fields, fieldRow{fieldSource: fieldSource{root: root, allocationID: allocation.ID(), fieldID: field.ID()}, kind: field.Kind(), width: width, finalOpen: finalOpen, normalized: normalized, normalizedOK: normalizedOK, slot: slotID, payload: payloadID, artifactRow: fieldRowIndex, valuesRow: valuesRow})
+	if owner.roots[root-1].fieldStart == 0 {
+		owner.roots[root-1].fieldStart = dense
+	}
+	owner.roots[root-1].fieldCount++
+	if finalOpen {
+		id := owner.addSlot(slotRow{kind: SlotOpenTail, field: dense})
+		if id == 0 || !owner.addLocalSlot(id, root) || !owner.addLocalPayload(payloadID, root, id) {
 			return false
+		}
+		owner.fields[dense-1].openTail = id
+	}
+	return true
+}
+
+func (owner *schema) addArtifactPayload(row payloadRow) uint32 {
+	if owner == nil || row.kind != payloadValues || !row.module.Available() || !row.valuesID.Available() {
+		return 0
+	}
+	if id := owner.payloadIndex[row]; id != 0 {
+		return id
+	}
+	if uint64(len(owner.payloads)) >= uint64(^uint32(0)) {
+		return 0
+	}
+	owner.payloads = append(owner.payloads, row)
+	owner.payloadSupport = append(owner.payloadSupport, payloadSupport{})
+	id := uint32(len(owner.payloads))
+	owner.payloadIndex[row] = id
+	return id
+}
+
+func (owner *heapBuilder) addArtifactIndexes(mounts map[keyspace.ContentID]ArtifactMount) bool {
+	if owner == nil || owner.sealProject() == nil {
+		return false
+	}
+	for mountIndex := 0; mountIndex < owner.sealProject().Mounts().Count(); mountIndex++ {
+		shard, shardOK := owner.sealProject().Mounts().At(mountIndex)
+		module, moduleOK := owner.sealProject().ModuleKey(shard)
+		mount, mountOK := mounts[module]
+		if !shardOK || !moduleOK || !mountOK {
+			return false
+		}
+		artifact := mount.Artifact()
+		if artifact == nil {
+			return false
+		}
+		for index := 0; index < artifact.HeapIndexCount(); index++ {
+			access, accessOK := artifact.HeapIndexAt(index)
+			if !accessOK || !access.Available() {
+				return false
+			}
+			baseValue, baseValueOK := owner.mountedValue(mount.module, access.BaseSpan())
+			if !baseValueOK {
+				return false
+			}
+			baseValueID, baseValueIDOK := owner.sealBoundary().Values().ID(baseValue)
+			if !baseValueIDOK {
+				return false
+			}
+			dynamic := access.DynamicKeySpan().Available()
+			var keyValueID keyspace.ContentID
+			var keyValueIDOK bool
+			var slot uint32
+			if dynamic {
+				keyValue, keyOK := owner.mountedValue(mount.module, access.DynamicKeySpan())
+				if !keyOK {
+					return false
+				}
+				keyValueID, keyValueIDOK = owner.sealBoundary().Values().ID(keyValue)
+				if !keyValueIDOK {
+					return false
+				}
+				slot = owner.addDynamicSlot(keyValueID)
+				if slot == 0 || !owner.markGlobalSlot(slot) {
+					return false
+				}
+			} else {
+				exact, exactOK := access.ExactKey()
+				if !exactOK {
+					return false
+				}
+				key, keyOK := owner.sealProject().Keys().ForMounted(mount.module, exact)
+				literal, literalOK := owner.sealProject().Keys().Exact(key)
+				if !keyOK || !literalOK {
+					return false
+				}
+				slot = owner.addExactSlot(literal)
+			}
+			if access.Read() {
+				result, resultOK := owner.mountedValue(mount.module, access.ResultSpan())
+				if !resultOK {
+					return false
+				}
+				resultID, resultIDOK := owner.sealBoundary().Values().ID(result)
+				if !resultIDOK {
+					return false
+				}
+				owner.indexAccesses = append(owner.indexAccesses, indexAccessRow{module: mount.module, programID: mount.programID, occurrence: access.ID(), isRead: true, baseValueID: baseValueID, keyValueID: keyValueID, position: -1, dynamic: dynamic, resultID: resultID, slot: slot})
+				continue
+			}
+			_, position, valuesOK := access.Values()
+			if !valuesOK {
+				return false
+			}
+			payload := owner.addArtifactPayload(payloadRow{kind: payloadValues, module: mount.module, valuesID: access.ValuesID(), index: uint32(position)})
+			if payload == 0 || !owner.addGlobalPayload(payload, slot) {
+				return false
+			}
+			owner.indexAccesses = append(owner.indexAccesses, indexAccessRow{module: mount.module, programID: mount.programID, occurrence: access.ID(), baseValueID: baseValueID, keyValueID: keyValueID, valuesID: access.ValuesID(), position: position, dynamic: dynamic, slot: slot, payload: payload})
 		}
 	}
 	return true
@@ -432,11 +943,11 @@ func (owner *schema) addProgramAllocation(shard linkproject.Shard, term keyspace
 // templates and one interned eligible-template set per Call Application; a
 // Key decodes its `(Application,outcome,result,ordinal)` source on demand.
 // No Application×template rows are retained.
-func (owner *schema) addTargetFreshResults() bool {
-	if owner == nil || owner.source == nil {
+func (owner *heapBuilder) addTargetFreshResults() bool {
+	if owner == nil || owner.sealProject() == nil {
 		return false
 	}
-	contract, ok := owner.source.Boundary().Target()
+	contract, ok := owner.sealBoundary().Target()
 	if !ok || contract == nil {
 		return false
 	}
@@ -467,8 +978,8 @@ func (owner *schema) addTargetFreshResults() bool {
 	if len(owner.freshTemplates) == 0 {
 		return true
 	}
-	for applicationIndex := 0; applicationIndex < owner.source.Project().Applications().Calls().Count(); applicationIndex++ {
-		application, applicationOK := owner.source.Project().Applications().Calls().At(applicationIndex)
+	for applicationIndex := 0; applicationIndex < owner.sealProject().Applications().Calls().Count(); applicationIndex++ {
+		application, applicationOK := owner.sealProject().Applications().Calls().At(applicationIndex)
 		if !applicationOK {
 			return false
 		}
@@ -478,7 +989,7 @@ func (owner *schema) addTargetFreshResults() bool {
 			if !operationOK {
 				return false
 			}
-			if !owner.source.Boundary().ApplicationOperationAvailable(contract, application, operation) {
+			if !owner.sealBoundary().ApplicationOperationAvailable(contract, application, operation) {
 				continue
 			}
 			for outcome := 0; outcome < contract.OutcomeCount(operation); outcome++ {
@@ -532,7 +1043,11 @@ func (owner *schema) addTargetFreshResults() bool {
 			owner.freshSets = append(owner.freshSets, freshTemplateSet{start: start, end: uint32(len(owner.freshSetValues))})
 			set = uint32(len(owner.freshSets))
 		}
-		owner.freshApps = append(owner.freshApps, application)
+		applicationID, applicationOK := owner.sealProject().ApplicationID(application)
+		if !applicationOK || !applicationID.Available() {
+			return false
+		}
+		owner.freshApps = append(owner.freshApps, applicationID)
 		owner.freshAppSets = append(owner.freshAppSets, set)
 		if owner.freshCount > ^uint64(0)-uint64(len(values)) {
 			return false
@@ -581,7 +1096,7 @@ func (owner *schema) rootAt(slot uint32) (rootRow, bool) {
 			return rootRow{}, false
 		}
 		template := owner.freshTemplates[templateID-1]
-		return rootRow{kind: RootAllocation, fresh: freshSource{application: owner.freshApps[appIndex], outcome: template.outcome, result: template.result, ordinal: template.ordinal, kinds: setValue.kinds}}, true
+		return rootRow{kind: RootAllocation, fresh: freshSource{applicationID: owner.freshApps[appIndex], outcome: template.outcome, result: template.result, ordinal: template.ordinal, kinds: setValue.kinds}}, true
 	}
 	bootIndex := uint64(slot) - owner.freshCount
 	if bootIndex == 0 || bootIndex > uint64(len(owner.roots)) {
@@ -590,15 +1105,15 @@ func (owner *schema) rootAt(slot uint32) (rootRow, bool) {
 	return owner.roots[bootIndex-1], true
 }
 
-func (owner *schema) addBootRoot(root linkhost.BootRoot) bool {
-	if owner == nil || owner.source == nil || owner.bootIndex[root] != 0 || uint64(len(owner.roots)) >= uint64(^uint32(0)) {
+func (owner *heapBuilder) addBootRoot(root linkhost.BootRoot, rootID keyspace.ContentID) bool {
+	if owner == nil || owner.sealProject() == nil || !rootID.Available() || owner.bootIndex[rootID] != 0 || uint64(len(owner.roots)) >= uint64(^uint32(0)) {
 		return false
 	}
-	_, initial, ok := owner.source.Host().BootRoots().Mapping(root)
+	_, initial, ok := owner.sealHost().BootRoots().Mapping(root)
 	if !ok || initial == 0 {
 		return false
 	}
-	contract, contractOK := owner.source.Boundary().Target()
+	contract, contractOK := owner.sealBoundary().Target()
 	if !contractOK || contract == nil {
 		return false
 	}
@@ -607,12 +1122,12 @@ func (owner *schema) addBootRoot(root linkhost.BootRoot) bool {
 	if !shapeOK || !immutableOK {
 		return false
 	}
-	owner.roots = append(owner.roots, rootRow{kind: RootBoot, boot: root, bootImmutable: immutable})
+	owner.roots = append(owner.roots, rootRow{kind: RootBoot, bootID: rootID, bootImmutable: immutable})
 	virtual := uint64(len(owner.roots)) + owner.freshCount
 	if virtual > uint64(^uint32(0)) {
 		return false
 	}
-	owner.bootIndex[root] = uint32(virtual)
+	owner.bootIndex[rootID] = uint32(virtual)
 	return true
 }
 
@@ -620,16 +1135,16 @@ func (owner *schema) addBootRoot(root linkhost.BootRoot) bool {
 // Link's actor-local BootRoot image and its one shared exact-key universe.
 // This is a cold schema projection only: it neither creates a runtime value
 // nor seeds recurrent Heap state.
-func (owner *schema) addBootEntries() bool {
-	if owner == nil || owner.source == nil {
+func (owner *heapBuilder) addBootEntries() bool {
+	if owner == nil || owner.sealProject() == nil {
 		return false
 	}
-	contract, ok := owner.source.Boundary().Target()
+	contract, ok := owner.sealBoundary().Target()
 	if !ok || contract == nil {
 		return false
 	}
 	type entryRow struct {
-		key        linkproject.Key
+		literal    keyspace.LiteralValue
 		value      target.InitialValue
 		kind       target.InitialValueKind
 		mutability target.InitialMutability
@@ -641,26 +1156,28 @@ func (owner *schema) addBootEntries() bool {
 			return false
 		}
 		kind, valid := contract.InitialValueKind(initialValue)
-		key, keyOK := owner.source.Project().Keys().ForTarget(contract, exact)
-		if !valid || kind == target.InitialValueInvalid || !keyOK {
+		key, keyOK := owner.sealProject().Keys().ForTarget(contract, exact)
+		literal, literalOK := owner.sealProject().Keys().Exact(key)
+		if !valid || kind == target.InitialValueInvalid || !keyOK || !literalOK {
 			return false
 		}
-		entries[entryRoot] = append(entries[entryRoot], entryRow{key: key, value: initialValue, kind: kind, mutability: mutability})
+		entries[entryRoot] = append(entries[entryRoot], entryRow{literal: literal, value: initialValue, kind: kind, mutability: mutability})
 	}
 	for _, root := range owner.roots {
 		if root.kind != RootBoot {
 			continue
 		}
-		virtualRoot := owner.bootIndex[root.boot]
+		virtualRoot := owner.bootIndex[root.bootID]
 		if virtualRoot == 0 {
 			return false
 		}
-		actor, initial, mapped := owner.source.Host().BootRoots().Mapping(root.boot)
-		if !mapped {
+		boot, bootOK := owner.bootRootForID(root.bootID)
+		actor, initial, mapped := owner.sealHost().BootRoots().Mapping(boot)
+		if !bootOK || !mapped {
 			return false
 		}
 		for _, entry := range entries[initial] {
-			slot := owner.addExactSlot(entry.key)
+			slot := owner.addExactSlot(entry.literal)
 			if slot == 0 || !owner.addLocalSlot(slot, virtualRoot) {
 				return false
 			}
@@ -668,7 +1185,7 @@ func (owner *schema) addBootEntries() bool {
 			if !rawOK {
 				return false
 			}
-			row := bootEntryRow{raw: raw, mutability: entry.mutability}
+			row := bootEntryRow{raw: raw, kind: entry.kind, mutability: entry.mutability}
 			// Target preserves Nil and Absent as distinct contract values.  Both
 			// project to raw absence in Heap: Lua assignment of nil deletes the
 			// slot, so Heap must never materialize a present nil payload.
@@ -680,9 +1197,10 @@ func (owner *schema) addBootEntries() bool {
 				row.raw, row.payload, row.initial = RawPresent, payload, entry.value
 				if entry.kind == target.InitialValueRoot {
 					initialRoot, rootValue := contract.InitialValueRoot(entry.value)
-					child, found := owner.source.Host().BootRoots().For(actor, initialRoot)
-					childID := owner.bootIndex[child]
-					if !rootValue || !found || childID == 0 {
+					child, found := owner.sealHost().BootRoots().For(actor, initialRoot)
+					childIDRaw, childIDOK := owner.sealHost().BootRoots().ID(child)
+					childID := owner.bootIndex[childIDRaw]
+					if !rootValue || !found || !childIDOK || childID == 0 {
 						return false
 					}
 					row.valueChild = childID
@@ -726,18 +1244,24 @@ func initialValueRawPresence(kind target.InitialValueKind) (RawPresence, bool) {
 	}
 }
 
-func (owner *schema) addBootMetatableRoutes() bool {
-	if owner == nil || owner.source == nil {
+func (owner *heapBuilder) addBootMetatableRoutes() bool {
+	if owner == nil || owner.sealProject() == nil {
 		return false
 	}
-	for index := 0; index < owner.source.Host().Attachments().Count(); index++ {
-		attachment, ok := owner.source.Host().Attachments().At(index)
-		if !ok || owner.bootMetatableRoutes[attachment] != 0 {
+	seen := make(map[linkhost.BootMetatableAttachment]struct{})
+	for index := 0; index < owner.sealHost().Attachments().Count(); index++ {
+		attachment, ok := owner.sealHost().Attachments().At(index)
+		if !ok {
 			return false
 		}
-		base, metatable, mapped := owner.source.Host().Attachments().Mapping(attachment)
-		metatableID := owner.bootIndex[metatable]
-		if !mapped || base == target.InitialValueInvalid || metatableID == 0 || uint64(len(owner.metatableRoutes)) >= uint64(^uint32(0)) {
+		if _, duplicate := seen[attachment]; duplicate {
+			return false
+		}
+		seen[attachment] = struct{}{}
+		base, metatable, mapped := owner.sealHost().Attachments().Mapping(attachment)
+		metatableIDRaw, metatableIDOK := owner.sealHost().BootRoots().ID(metatable)
+		metatableID := owner.bootIndex[metatableIDRaw]
+		if !mapped || !metatableIDOK || base == target.InitialValueInvalid || metatableID == 0 || uint64(len(owner.metatableRoutes)) >= uint64(^uint32(0)) {
 			return false
 		}
 		owner.metatableRoutes = append(owner.metatableRoutes, metatableRouteRow{
@@ -745,209 +1269,39 @@ func (owner *schema) addBootMetatableRoutes() bool {
 			metatable: metatableID,
 			role:      materialization.Exact,
 		})
-		owner.bootMetatableRoutes[attachment] = uint32(len(owner.metatableRoutes))
 	}
 	return true
 }
 
-func (owner *schema) addField(root uint32, shard linkproject.Shard, field keyspace.Term, geometry programflow.AccessGeometry) bool {
-	if owner == nil || owner.source == nil || root == 0 || root > uint32(len(owner.roots)) || field == 0 || !geometry.Available() {
-		return false
+// bootRootForID consumes Host's authority during sealing only.  The returned
+// coordinate never enters a published Heap row.
+func (owner *heapBuilder) bootRootForID(id keyspace.ContentID) (linkhost.BootRoot, bool) {
+	if owner == nil || !id.Available() || owner.sealHost() == nil {
+		return linkhost.BootRoot{}, false
 	}
-	row := owner.roots[root-1]
-	if row.kind != RootAllocation || row.allocation.shard != shard || row.allocation.kind != AllocationTable {
-		return false
-	}
-	mounts := owner.source.Project().Mounts()
-	_, shardIndexOK := mounts.Index(shard)
-	if !shardIndexOK {
-		return false
-	}
-	p, ok := mounts.Program(shard)
-	if !ok || p == nil {
-		return false
-	}
-	authored := p.Flow().Authored()
-	table, keyTerm, values, fieldKind, fieldOK := authored.Fields().Get(field)
-	if !fieldOK || table != row.allocation.term || keyTerm == 0 || values == 0 {
-		return false
-	}
-	normalized, normalizedOK := geometry.TableFields().Get(field)
-	if !normalizedOK {
-		return false
-	}
-	var slotID uint32
-	switch fieldKind {
-	case flowkind.FieldKey:
-		// FieldKey is the one dynamic field form. Its raw source term is the
-		// dynamic selector identity; a zero normalized key is not enough to
-		// classify a field as dynamic.
-		slotID = owner.addDynamicSlot(sourceCoordinate{shard: shard, term: keyTerm})
-	case flowkind.FieldList, flowkind.FieldName, flowkind.FieldExact:
-		if normalized == 0 {
-			// Nil, NaN, and other non-storable exact fields are not dynamic.
-			// An executable constructor with one is malformed for Heap and
-			// fails closed.
-			return false
+	roots := owner.sealHost().BootRoots()
+	for index := 0; index < roots.Count(); index++ {
+		root, rootOK := roots.At(index)
+		rootID, idOK := roots.ID(root)
+		if rootOK && idOK && rootID == id {
+			return root, true
 		}
-		linkKey, keyOK := owner.source.Project().Keys().ForProgram(shard, p, normalized)
-		if !keyOK {
-			return false
-		}
-		slotID = owner.addExactSlot(linkKey)
-	default:
-		return false
 	}
-	if slotID == 0 || !owner.addLocalSlot(slotID, root) {
-		return false
-	}
-	var finalOpen, valuesOK bool
-	values, finalOpen, valuesOK = authored.Fields().Values(field)
-	if !valuesOK || values == 0 {
-		return false
-	}
-	payloadID := owner.addPayload(payloadRow{kind: payloadValues, shard: shard, values: values})
-	if payloadID == 0 || !owner.addLocalPayload(payloadID, root, slotID) {
-		return false
-	}
-	fieldID := uint32(len(owner.fields) + 1)
-	owner.fields = append(owner.fields, fieldRow{fieldSource: fieldSource{root: root, term: field}, kind: fieldKind, keyTerm: keyTerm, slot: slotID, payload: payloadID})
-	if owner.roots[root-1].fieldStart == 0 {
-		owner.roots[root-1].fieldStart = fieldID
-	}
-	owner.roots[root-1].fieldCount++
-	if finalOpen {
-		id := owner.addSlot(slotRow{kind: SlotOpenTail, field: fieldID})
-		if id == 0 || !owner.addLocalSlot(id, root) || !owner.addLocalPayload(payloadID, root, id) {
-			return false
-		}
-		owner.fields[fieldID-1].openTail = id
-	}
-	return true
+	return linkhost.BootRoot{}, false
 }
 
-func (owner *schema) addIndexAccesses(shard linkproject.Shard, p *program.Program) bool {
-	if owner == nil || owner.source == nil || p == nil {
-		return false
-	}
-	flow := p.Flow()
-	geometry := flow.AccessGeometry()
-	if !geometry.Available() {
-		return false
-	}
-	executable := flow.Executable()
-	indexGeometry := geometry.IndexAccesses()
-	reads, writes := indexGeometry.Reads(), indexGeometry.Writes()
-	for index := 0; index < reads.Count(); index++ {
-		read, ok := reads.At(index)
-		if !ok || keyspace.TermFamily(read) != keyspace.FamilyRead || keyspace.TermOrdinal(read) == 0 || !executable.Contains(read) {
-			return false
-		}
-		base, keyTerm, lens, rowOK := reads.Get(read)
-		if !rowOK || base == 0 || keyTerm == 0 || lens == 0 || !owner.appendIndexRead(shard, geometry, read, base, keyTerm, lens) {
-			return false
-		}
-	}
-	for index := 0; index < writes.Count(); index++ {
-		write, ok := writes.At(index)
-		if !ok || keyspace.TermFamily(write) != keyspace.FamilyWrite || keyspace.TermOrdinal(write) == 0 || !executable.Contains(write) {
-			return false
-		}
-		base, keyTerm, values, position, lens, rowOK := writes.Get(write)
-		if !rowOK || base == 0 || keyTerm == 0 || values == 0 || position < 0 || lens == 0 || !owner.appendIndexWrite(shard, geometry, write, base, keyTerm, values, position, lens) {
-			return false
-		}
-	}
-	return true
-}
-
-func (owner *schema) indexSlot(shard linkproject.Shard, geometry programflow.AccessGeometry, lens, keyTerm keyspace.Term) (uint32, bool) {
-	if lens == 0 || keyTerm == 0 {
-		return 0, false
-	}
-	switch keyspace.TermFamily(lens) {
-	case keyspace.FamilyLensExact:
-		normalized, ok := geometry.ExactLenses().Get(lens)
-		// A valid exact row with no storable key is never dynamic. Executable
-		// candidates fail closed rather than admitting an invented selector.
-		if !ok || normalized == 0 {
-			return 0, false
-		}
-		mounts := owner.source.Project().Mounts()
-		_, shardIndexOK := mounts.Index(shard)
-		if !shardIndexOK {
-			return 0, false
-		}
-		p, programOK := mounts.Program(shard)
-		if !programOK || p == nil {
-			return 0, false
-		}
-		key, keyOK := owner.source.Project().Keys().ForProgram(shard, p, normalized)
-		if !keyOK {
-			return 0, false
-		}
-		slot := owner.addExactSlot(key)
-		return slot, slot != 0
-	case keyspace.FamilyLensKey:
-		if _, ok := geometry.DynamicLenses().Get(lens); !ok {
-			return 0, false
-		}
-		// Dynamic selectors carry a runtime key term. It must be a Link value
-		// so topology can evaluate it after sealing; exact selectors instead
-		// use their normalized key and never require the authored key term.
-		if _, ok := owner.source.Boundary().Values().Of(shard, keyTerm); !ok {
-			return 0, false
-		}
-		slot := owner.addDynamicSlot(sourceCoordinate{shard: shard, term: keyTerm})
-		if slot == 0 || !owner.markGlobalSlot(slot) {
-			return 0, false
-		}
-		return slot, true
-	default:
-		return 0, false
-	}
-}
-
-func (owner *schema) appendIndexRead(shard linkproject.Shard, geometry programflow.AccessGeometry, read, base, keyTerm, lens keyspace.Term) bool {
-	if uint64(len(owner.indexAccesses)) >= uint64(^uint32(0)) {
-		return false
-	}
-	if _, ok := owner.source.Boundary().Values().Of(shard, read); !ok {
-		return false
-	}
-	if _, ok := owner.source.Boundary().Values().Of(shard, base); !ok {
-		return false
-	}
-	slot, ok := owner.indexSlot(shard, geometry, lens, keyTerm)
-	if !ok {
-		return false
-	}
-	owner.indexAccesses = append(owner.indexAccesses, indexAccessRow{shard: shard, read: read, base: base, keyTerm: keyTerm, position: -1, lens: lens, slot: slot})
-	return true
-}
-
-func (owner *schema) appendIndexWrite(shard linkproject.Shard, geometry programflow.AccessGeometry, write, base, keyTerm, values keyspace.Term, position int, lens keyspace.Term) bool {
-	if uint64(len(owner.indexAccesses)) >= uint64(^uint32(0)) || position < 0 || uint64(position) > uint64(^uint32(0)) {
-		return false
-	}
-	if _, ok := owner.source.Boundary().Values().Of(shard, base); !ok {
-		return false
-	}
-	slot, ok := owner.indexSlot(shard, geometry, lens, keyTerm)
-	if !ok {
-		return false
-	}
-	payload := owner.addPayload(payloadRow{kind: payloadValues, shard: shard, values: values, index: uint32(position)})
-	if payload == 0 || !owner.addGlobalPayload(payload, slot) {
-		return false
-	}
-	owner.indexAccesses = append(owner.indexAccesses, indexAccessRow{shard: shard, write: write, base: base, keyTerm: keyTerm, values: values, position: position, lens: lens, slot: slot, payload: payload})
-	return true
-}
-
-func (owner *schema) addExactSlot(exact linkproject.Key) uint32 {
-	if owner == nil {
+func (owner *schema) addExactSlot(literal keyspace.LiteralValue) uint32 {
+	if owner == nil || literal.Kind == 0 {
 		return 0
+	}
+	exact := owner.exactIndex[literal]
+	if exact == 0 {
+		if uint64(len(owner.exactKeys)) >= uint64(^uint32(0)) {
+			return 0
+		}
+		owner.exactKeys = append(owner.exactKeys, exactKeyRow{literal: literal})
+		exact = uint32(len(owner.exactKeys))
+		owner.exactIndex[literal] = exact
 	}
 	if id := owner.exactSlots[exact]; id != 0 {
 		return id
@@ -960,11 +1314,8 @@ func (owner *schema) addExactSlot(exact linkproject.Key) uint32 {
 	return id
 }
 
-func (owner *schema) addDynamicSlot(dynamic sourceCoordinate) uint32 {
-	if owner == nil || dynamic.term == 0 {
-		return 0
-	}
-	if _, ok := owner.source.Project().Mounts().Index(dynamic.shard); !ok {
+func (owner *schema) addDynamicSlot(dynamic keyspace.ContentID) uint32 {
+	if owner == nil || !dynamic.Available() {
 		return 0
 	}
 	if id := owner.dynamicSlots[dynamic]; id != 0 {
@@ -997,24 +1348,16 @@ func (owner *schema) ensureUnknownSlot() uint32 {
 	return owner.unknownSlot
 }
 
-func (owner *schema) addPayload(row payloadRow) uint32 {
-	if owner == nil || owner.source == nil {
+func (owner *heapBuilder) addPayload(row payloadRow) uint32 {
+	if owner == nil || owner.sealProject() == nil {
 		return 0
 	}
 	if id := owner.payloadIndex[row]; id != 0 {
 		return id
 	}
 	switch row.kind {
-	case payloadValues:
-		p, ok := owner.source.Project().Mounts().Program(row.shard)
-		if !ok || p == nil {
-			return 0
-		}
-		if _, ok := p.Flow().Authored().Values().Position(row.values, int(row.index)); !ok {
-			return 0
-		}
 	case payloadInitial:
-		contract, ok := owner.source.Boundary().Target()
+		contract, ok := owner.sealBoundary().Target()
 		if !ok || contract == nil {
 			return 0
 		}
@@ -1076,18 +1419,25 @@ func (owner *schema) addLocalPayload(payload, root, slot uint32) bool {
 	return true
 }
 
-func (owner *schema) finish() bool {
-	if owner == nil || owner.source == nil || len(owner.slots) == 0 {
-		return false
+func (owner *heapBuilder) finish() bool {
+	return owner.finishWithFailure() == SealFailureNone
+}
+
+func (owner *heapBuilder) finishWithFailure() SealFailure {
+	if owner == nil || owner.sealProject() == nil || len(owner.slots) == 0 {
+		return SealFailureUnknownSlot
 	}
-	if !owner.buildRootKinds() || !owner.buildAtomicKeys() {
-		return false
+	if !owner.buildRootKinds() {
+		return SealFailureFinishRootKinds
+	}
+	if !owner.buildAtomicKeys() {
+		return SealFailureFinishAtomicKeys
 	}
 	// Build the exact inverse only after all Program roots and index geometry
 	// rows are complete. A duplicate tuple is an ambiguity in the canonical
 	// relation and therefore rejects the whole Heap seal.
 	if !owner.sealOccurrenceInverses() {
-		return false
+		return SealFailureFinishOccurrenceInverses
 	}
 	owner.bootEntryOrder = owner.bootEntryOrder[:0]
 	for entry := range owner.bootEntries {
@@ -1106,39 +1456,39 @@ func (owner *schema) finish() bool {
 	// descent; no threshold decides whether a tuple is retained.
 	references, ok := owner.referencePotential()
 	if !ok {
-		return false
+		return SealFailureFinishReferencePotential
 	}
 	owner.referenceCount = references
 	containments, ok := safeAdd(references, 2)
 	if !ok {
-		return false
+		return SealFailureFinishContainments
 	}
 	present, ok := safeMul(uint64(len(owner.slots)), uint64(len(owner.payloads)))
 	if !ok {
-		return false
+		return SealFailureFinishPresentSlots
 	}
 	present, ok = safeMul(present, containments)
 	if !ok {
-		return false
+		return SealFailureFinishPresentContainments
 	}
 	present, ok = safeMul(present, containments)
 	if !ok {
-		return false
+		return SealFailureFinishPresentContainments
 	}
 	if present == ^uint64(0) {
-		return false
+		return SealFailureFinishPresentContainments
 	}
 	owner.presentPotential = present
 	if !owner.sealWidenRankBounds() {
-		return false
+		return SealFailureFinishWidenRanks
 	}
-	owner.id = heapContentID(owner.linkID)
+	owner.id = heapContentID(owner.linkOwner)
 	if !owner.id.Available() {
-		return false
+		return SealFailureFinishContentID
 	}
-	owner.bottom = Value{owner: owner}
-	owner.top = Value{owner: owner, top: true}
-	return true
+	owner.bottom = Value{owner: owner.schema}
+	owner.top = Value{owner: owner.schema, top: true}
+	return SealFailureNone
 }
 
 // sealOccurrenceInverses derives the two exact occurrence indexes from the
@@ -1146,11 +1496,11 @@ func (owner *schema) finish() bool {
 // Heap sealing: callers can look up one supplied Program occurrence without
 // walking the root or access denominators, while no new source row or identity
 // is introduced.
-func (owner *schema) sealOccurrenceInverses() bool {
-	if owner == nil || owner.source == nil || owner.programAllocationOrdinals != nil || owner.indexAccessOrdinals != nil {
+func (owner *heapBuilder) sealOccurrenceInverses() bool {
+	if owner == nil || owner.sealProject() == nil || owner.programAllocationOrdinals != nil || owner.indexAccessOrdinals != nil {
 		return false
 	}
-	project := owner.source.Project()
+	project := owner.sealProject()
 	if project == nil {
 		return false
 	}
@@ -1161,27 +1511,48 @@ func (owner *schema) sealOccurrenceInverses() bool {
 	}
 	for index := uint32(0); index < owner.programRootCount; index++ {
 		row := owner.roots[index]
-		if row.kind != RootAllocation || row.allocation.shard == (linkproject.Shard{}) ||
-			!validProgramAllocation(row.allocation.shard, mounts, row.allocation.term, row.allocation.kind) {
+		if row.kind != RootAllocation || !row.allocation.module.Available() ||
+			!row.allocation.programID.Available() || !row.allocation.allocationID.Available() ||
+			row.allocation.artifactRow == 0 || (row.allocation.kind != AllocationTable && row.allocation.kind != AllocationClosure) {
 			return false
 		}
-		occurrence := programAllocationOccurrence{shard: row.allocation.shard, term: row.allocation.term}
+		mount, mountOK := owner.artifacts[row.allocation.module]
+		if !mountOK || !mount.Available() || mount.programID != row.allocation.programID {
+			return false
+		}
+		allocation, allocationOK := mount.Artifact().HeapAllocationAt(int(row.allocation.artifactRow - 1))
+		if !allocationOK || allocation.ID() != row.allocation.allocationID || allocation.Form() != row.allocation.form {
+			return false
+		}
+		occurrence := programAllocationOccurrence{module: row.allocation.module, allocationID: row.allocation.allocationID}
 		if allocations[occurrence] != 0 {
 			return false
 		}
 		allocations[occurrence] = index + 1
 	}
+	for _, row := range owner.fields {
+		if row.artifactRow == 0 || row.valuesRow == 0 || row.root == 0 || uint64(row.root) > uint64(len(owner.roots)) {
+			return false
+		}
+		root := owner.roots[row.root-1]
+		mount, mountOK := owner.artifacts[root.allocation.module]
+		if !mountOK || !mount.Available() || root.kind != RootAllocation || root.allocation.kind != AllocationTable {
+			return false
+		}
+		allocation, allocationOK := mount.Artifact().HeapAllocationAt(int(root.allocation.artifactRow - 1))
+		field, fieldOK := allocation.FieldAt(int(row.artifactRow - 1))
+		values, valuesOK := mount.Artifact().ValuesAt(int(row.valuesRow - 1))
+		if !allocationOK || !fieldOK || !valuesOK || allocation.ID() != row.allocationID || field.ID() != row.fieldID || values.ID() != field.ValuesID() {
+			return false
+		}
+	}
 
 	accesses := make(map[indexAccessOccurrence]uint32, len(owner.indexAccesses))
 	for index, row := range owner.indexAccesses {
-		if row.shard == (linkproject.Shard{}) || !validIndexAccessRow(row, mounts) {
+		if !row.module.Available() || !validIndexAccessRow(row, mounts) {
 			return false
 		}
-		term := row.read
-		if term == 0 {
-			term = row.write
-		}
-		occurrence := indexAccessOccurrence{shard: row.shard, term: term}
+		occurrence := indexAccessOccurrence{module: row.module, id: row.occurrence}
 		if accesses[occurrence] != 0 {
 			return false
 		}
@@ -1192,87 +1563,32 @@ func (owner *schema) sealOccurrenceInverses() bool {
 	return true
 }
 
-func validProgramAllocation(shard linkproject.Shard, mounts linkproject.Mounts, term keyspace.Term, kind AllocationKind) bool {
-	if shard == (linkproject.Shard{}) || !validProgramAllocationTermShape(term) {
-		return false
-	}
-	p, ok := mounts.Program(shard)
-	if !ok || p == nil || !p.Flow().Executable().Contains(term) {
-		return false
-	}
-	switch kind {
-	case AllocationTable:
-		_, ok = p.Flow().Authored().Tables().Get(term)
-	case AllocationClosure:
-		_, _, _, ok = p.Flow().Authored().Functions().Get(term)
-	default:
-		return false
-	}
-	return ok
-}
-
-func validProgramAllocationTermShape(term keyspace.Term) bool {
-	if term == 0 || keyspace.TermOrdinal(term) == 0 {
-		return false
-	}
-	family := keyspace.TermFamily(term)
-	return family == keyspace.FamilyTable || family == keyspace.FamilyFunction
-}
-
-func validProgramAllocationTerm(owner *program.Program, term keyspace.Term) bool {
-	if owner == nil || !validProgramAllocationTermShape(term) || !owner.Flow().Executable().Contains(term) {
-		return false
-	}
-	switch keyspace.TermFamily(term) {
-	case keyspace.FamilyTable:
-		_, ok := owner.Flow().Authored().Tables().Get(term)
-		return ok
-	case keyspace.FamilyFunction:
-		_, _, _, ok := owner.Flow().Authored().Functions().Get(term)
-		return ok
-	default:
-		return false
-	}
-}
-
-func validProgramIndexAccessOccurrence(owner *program.Program, occurrence keyspace.Term) bool {
-	if owner == nil || occurrence == 0 || keyspace.TermOrdinal(occurrence) == 0 || !owner.Flow().AccessGeometry().Available() || !owner.Flow().Executable().Contains(occurrence) {
-		return false
-	}
-	geometry := owner.Flow().AccessGeometry().IndexAccesses()
-	switch keyspace.TermFamily(occurrence) {
-	case keyspace.FamilyRead:
-		_, _, _, ok := geometry.Reads().Get(occurrence)
-		return ok
-	case keyspace.FamilyWrite:
-		_, _, _, _, _, ok := geometry.Writes().Get(occurrence)
-		return ok
-	default:
-		return false
-	}
-}
-
 func validIndexAccessRow(row indexAccessRow, mounts linkproject.Mounts) bool {
-	if row.read != 0 && row.write != 0 || row.read == 0 && row.write == 0 || row.base == 0 || row.keyTerm == 0 || row.lens == 0 {
+	if !row.baseValueID.Available() || !row.module.Available() || !row.programID.Available() || !row.occurrence.Available() || row.dynamic && !row.keyValueID.Available() {
 		return false
 	}
-	p, ok := mounts.Program(row.shard)
-	if !ok || p == nil || !p.Flow().AccessGeometry().Available() {
-		return false
-	}
-	geometry := p.Flow().AccessGeometry().IndexAccesses()
-	if row.read != 0 {
-		if keyspace.TermFamily(row.read) != keyspace.FamilyRead || row.values != 0 || row.position != -1 || row.payload != 0 || !p.Flow().Executable().Contains(row.read) {
+	// Seal-time validation has already joined the row to ProgramArtifact. The
+	// retained Heap row is intentionally independent of the mounted Program;
+	// only its scalar geometry and mounted artifact identity survive.
+	_ = mounts
+	return row.isRead && validIndexReadRow(row) || !row.isRead && validIndexWriteRow(row)
+}
+
+func validIndexReadRow(row indexAccessRow) bool {
+	if row.isRead {
+		if !row.resultID.Available() || row.valuesID.Available() || row.position != -1 || row.payload != 0 {
 			return false
 		}
-		base, keyTerm, lens, rowOK := geometry.Reads().Get(row.read)
-		return rowOK && base == row.base && keyTerm == row.keyTerm && lens == row.lens
+		return true
 	}
-	if keyspace.TermFamily(row.write) != keyspace.FamilyWrite || row.values == 0 || row.position < 0 || row.payload == 0 || !p.Flow().Executable().Contains(row.write) {
+	return false
+}
+
+func validIndexWriteRow(row indexAccessRow) bool {
+	if row.isRead || !row.valuesID.Available() || row.position < 0 || row.payload == 0 {
 		return false
 	}
-	base, keyTerm, values, position, lens, rowOK := geometry.Writes().Get(row.write)
-	return rowOK && base == row.base && keyTerm == row.keyTerm && values == row.values && position == row.position && lens == row.lens
+	return true
 }
 
 // sealWidenRankBounds proves that every fixed-coordinate Object score, and
@@ -1323,8 +1639,8 @@ func (owner *schema) sealWidenRankBounds() bool {
 // mask for each structural root. RootKind is deliberately insufficient: a
 // Program closure is Function, and one fresh root can be Table or Function
 // across sealed Candidate rows while retaining one canonical root identity.
-func (owner *schema) buildRootKinds() bool {
-	if owner == nil || owner.source == nil {
+func (owner *heapBuilder) buildRootKinds() bool {
+	if owner == nil || owner.sealProject() == nil {
 		return false
 	}
 	for index := uint64(0); index < owner.rootCount(); index++ {
@@ -1345,16 +1661,20 @@ func (owner *schema) rootRuntimeKinds(root uint32) (runtimekind.Set, bool) {
 	case RootBoot:
 		return runtimekind.Bit(runtimekind.Table), true
 	case RootAllocation:
-		if row.allocation.term != 0 {
-			switch row.allocation.kind {
-			case AllocationTable:
-				return runtimekind.Bit(runtimekind.Table), true
-			case AllocationClosure:
-				return runtimekind.Bit(runtimekind.Function), true
-			}
+		// Virtual fresh results deliberately share the allocation root carrier:
+		// they admit Recent/Summary materialization but have no Program
+		// allocation proof. Their Target-derived kind set is sealed in rootAt.
+		if row.fresh.applicationID.Available() {
+			return row.fresh.kinds, row.fresh.kinds.Valid()
+		}
+		switch row.allocation.kind {
+		case AllocationTable:
+			return runtimekind.Bit(runtimekind.Table), true
+		case AllocationClosure:
+			return runtimekind.Bit(runtimekind.Function), true
+		default:
 			return 0, false
 		}
-		return row.fresh.kinds, row.fresh.kinds.Valid() && row.fresh.kinds&^legalTableKeyKinds == 0
 	default:
 		return 0, false
 	}
@@ -1380,18 +1700,28 @@ func freshRootKinds(kind target.FreshKind) (runtimekind.Set, bool) {
 	}
 }
 
-func (owner *schema) buildAtomicKeys() bool {
-	if owner == nil || owner.source == nil || owner.atomicKeys != nil {
+func (owner *heapBuilder) buildAtomicKeys() bool {
+	if owner == nil || owner.sealProject() == nil || owner.atomicKeys != nil {
 		return false
 	}
-	keys := owner.source.Project().Keys()
+	keys := owner.sealProject().Keys()
 	atoms := make([]keyAtom, 0, keys.Count()+int(owner.rootCount()))
 	for index := 0; index < keys.Count(); index++ {
 		key, ok := keys.At(index)
-		if !ok {
+		literal, literalOK := keys.Exact(key)
+		if !ok || !literalOK || literal.Kind == 0 {
 			return false
 		}
-		atoms = append(atoms, keyAtom{kind: keyAtomExact, exact: key, exactOrdinal: uint32(index + 1)})
+		ordinal := owner.exactIndex[literal]
+		if ordinal == 0 {
+			if uint64(len(owner.exactKeys)) >= uint64(^uint32(0)) {
+				return false
+			}
+			owner.exactKeys = append(owner.exactKeys, exactKeyRow{literal: literal})
+			ordinal = uint32(len(owner.exactKeys))
+			owner.exactIndex[literal] = ordinal
+		}
+		atoms = append(atoms, keyAtom{kind: keyAtomExact, exactOrdinal: ordinal})
 	}
 	for index := uint64(0); index < owner.rootCount(); index++ {
 		root, rootOK := owner.rootAt(uint32(index + 1))
@@ -1410,11 +1740,11 @@ func (owner *schema) buildAtomicKeys() bool {
 		atoms = append(atoms, keyAtom{kind: keyAtomReference, root: uint32(index + 1), role: role})
 	}
 	atoms = normalizeKeyAtoms(atoms)
-	if len(atoms) != 0 && !validExactKeyAtoms(owner, atoms) {
+	if len(atoms) != 0 && !validExactKeyAtoms(owner.schema, atoms) {
 		return false
 	}
 	for _, atom := range atoms {
-		mask := keyAtomRuntimeKinds(owner, atom)
+		mask := keyAtomRuntimeKinds(owner.schema, atom)
 		index := int(mask)
 		if index == 0 || index >= len(owner.atomMaskCounts) || owner.atomMaskCounts[index] == ^uint64(0) {
 			return false
@@ -1512,11 +1842,12 @@ func (owner *schema) admitsReferenceRole(root uint32, role materialization.Role)
 	}
 }
 
-func heapContentID(linkID keyspace.ContentID) (id keyspace.ContentID) {
+func heapContentID(owner link.OwnerCapability) (id keyspace.ContentID) {
 	// schemaFormat is the sole Heap schema/content identity discriminator.
 	// Keeping one version word means a row-layout or projection-authority
 	// change cannot accidentally leave a second, contradictory revision in
 	// the identity hash.
+	linkID := owner.ContentID()
 	var payload [32 + 8]byte
 	copy(payload[:32], linkID[:])
 	binary.BigEndian.PutUint64(payload[32:], schemaFormat)
@@ -1526,7 +1857,7 @@ func heapContentID(linkID keyspace.ContentID) (id keyspace.ContentID) {
 }
 
 func (schema Schema) valid() bool {
-	return schema.owner != nil && schema.owner.source != nil && schema.owner.linkID.Available() && schema.owner.id.Available() &&
+	return schema.owner != nil && schema.owner.linkOwner.Available() && schema.owner.id.Available() &&
 		(schema.owner.referenceCount != ^uint64(0) && schema.owner.presentPotential != ^uint64(0) &&
 			schema.owner.fixedObjectRankBound != 0 && schema.owner.maxObjectRankSum != 0)
 }
@@ -1547,27 +1878,47 @@ func (schema Schema) LinkContentID() keyspace.ContentID {
 	if !schema.valid() {
 		return keyspace.ContentID{}
 	}
-	return schema.owner.linkID
+	return schema.owner.linkOwner.ContentID()
 }
 
-// Link returns the exact immutable structural authority behind this Heap
-// schema. It is for typed Heap child declarations only, never recurrent fact
-// state or an engine capability.
-func (schema Schema) Link() *link.Link {
+// LinkOwner returns Heap's exact detached Link owner witness.
+func (schema Schema) LinkOwner() link.OwnerCapability {
 	if !schema.valid() {
-		return nil
+		return link.OwnerCapability{}
 	}
-	return schema.owner.source
+	return schema.owner.linkOwner
 }
+
+// Owner is the concise alias used by cross-domain binders.
+func (schema Schema) Owner() link.OwnerCapability { return schema.LinkOwner() }
 
 // Rebind reconstructs the complete cold authority from an equivalent Link.
 // State Values intentionally do not rebind or serialize.
 func (schema Schema) Rebind(source *link.Link) (Schema, bool) {
-	if !schema.valid() || source == nil || source.ContentID() != schema.owner.linkID {
+	if !schema.valid() || source == nil || schema.owner.artifacts == nil {
 		return Schema{}, false
 	}
-	rebound, ok := Seal(source)
-	if !ok || rebound.ContentID() != schema.ContentID() {
+	sourceOwner := source.OwnerCapability()
+	if !sourceOwner.Available() || sourceOwner.ContentID() != schema.owner.linkOwner.ContentID() {
+		return Schema{}, false
+	}
+	mounts := make([]ArtifactMount, 0, source.Project().Mounts().Count())
+	for index := 0; index < source.Project().Mounts().Count(); index++ {
+		shard, shardOK := source.Project().Mounts().At(index)
+		module, moduleOK := source.Project().ModuleKey(shard)
+		prior, priorOK := schema.owner.artifacts[module]
+		programID, programOK := source.Project().Mounts().ProgramID(shard)
+		if !shardOK || !moduleOK || !priorOK || !prior.Available() || !programOK || prior.programID != programID {
+			return Schema{}, false
+		}
+		mount, mountOK := NewArtifactMount(prior.artifact, module, programID)
+		if !mountOK {
+			return Schema{}, false
+		}
+		mounts = append(mounts, mount)
+	}
+	rebound, failure := SealWithArtifacts(source, mounts)
+	if failure != SealFailureNone || rebound.ContentID() != schema.ContentID() {
 		return Schema{}, false
 	}
 	return rebound, true
@@ -1592,31 +1943,76 @@ func (schema Schema) KeyAt(index int) (Key, bool) {
 	return Key{owner: schema.owner, slot: uint32(index + 1)}, true
 }
 
-// KeyForProgramAllocation resolves one exact mounted Program allocation
-// occurrence to Heap's already-issued aggregate Key. The Shard and Program
-// must belong to this Schema's Link and the term must be an executable Table
-// or Function occurrence. No root enumeration or source row is performed.
-func (schema Schema) KeyForProgramAllocation(shard linkproject.Shard, owner *program.Program, term keyspace.Term) (Key, bool) {
-	if !schema.valid() || schema.owner.programAllocationOrdinals == nil || owner == nil || term == 0 {
+// KeyForAllocationReceipt resolves a compact artifact-owned allocation
+// receipt without reopening Link, Program, or TransformerInput. Mount
+// identity is part of the receipt, preserving duplicate mounts.
+func (schema Schema) KeyForAllocationReceipt(receipt AllocationReceipt) (Key, bool) {
+	if !schema.valid() || !receipt.Available() || schema.owner.artifacts == nil {
 		return Key{}, false
 	}
-	mounts := schema.owner.source.Project().Mounts()
-	mounted, mountedOK := mounts.Program(shard)
-	if !mountedOK || mounted != owner || !validProgramAllocationTerm(owner, term) {
+	mount, ok := schema.owner.artifacts[receipt.module]
+	if !ok || mount.artifact != receipt.artifact || mount.programID != receipt.programID {
 		return Key{}, false
 	}
-	slot := schema.owner.programAllocationOrdinals[programAllocationOccurrence{shard: shard, term: term}]
+	slot := schema.owner.programAllocationOrdinals[programAllocationOccurrence{module: receipt.module, allocationID: receipt.allocationID}]
 	if slot == 0 {
 		return Key{}, false
 	}
-	key := Key{owner: schema.owner, slot: slot}
-	return key, key.Valid() && key.Kind() == RootAllocation
+	row, rowOK := schema.owner.rootAt(slot)
+	if !rowOK || row.kind != RootAllocation || row.allocation.module != receipt.module || row.allocation.programID != receipt.programID || row.allocation.allocationID != receipt.allocationID || row.allocation.kind != receipt.kind || row.allocation.form != receipt.form {
+		return Key{}, false
+	}
+	return Key{owner: schema.owner, slot: slot}, true
+}
+
+// AllocationRootValueID returns the sealed mounted semantic identity for one
+// allocation root.  Resolution belongs to Value's detached directory; Heap
+// never retains or reissues a Boundary Value carrier after sealing.
+func (schema Schema) AllocationRootValueID(key Key) (keyspace.ContentID, bool) {
+	if !schema.valid() || !schema.OwnsKey(key) || key.Kind() != RootAllocation {
+		return keyspace.ContentID{}, false
+	}
+	row, ok := schema.owner.rootAt(key.slot)
+	if !ok || row.kind != RootAllocation || !row.allocation.allocationID.Available() || !row.allocation.rootValueID.Available() {
+		return keyspace.ContentID{}, false
+	}
+	return row.allocation.rootValueID, true
+}
+
+// AllocationFormForKey returns the constructor form already sealed on one
+// existing Program allocation root.  Consumers that only need the source
+// disposition must use this row projection rather than rescanning artifact
+// fields to classify the root again.
+func (schema Schema) AllocationFormForKey(key Key) (program.AllocationForm, bool) {
+	if !schema.valid() || !schema.OwnsKey(key) || key.Kind() != RootAllocation {
+		return program.AllocationFormInvalid, false
+	}
+	row, ok := schema.owner.rootAt(key.slot)
+	if !ok || row.kind != RootAllocation || !row.allocation.form.Valid() {
+		return program.AllocationFormInvalid, false
+	}
+	return row.allocation.form, true
+}
+
+// FreshenAllocationReceipt is the post-seal artifact-native allocation lane.
+func (schema Schema) FreshenAllocationReceipt(receipt AllocationReceipt) (Key, bool) {
+	return schema.KeyForAllocationReceipt(receipt)
 }
 
 // OwnsKey rejects a forged or foreign Heap coordinate without reconstructing
 // its Program/Target source.
 func (schema Schema) OwnsKey(key Key) bool {
 	return schema.valid() && key.valid() && key.owner == schema.owner
+}
+
+// KeyIndex projects Heap's already-issued dense carrier coordinate for one
+// exact Key. It is an owner-fenced view of Key's sealed selector, not a new
+// lookup table or a source reconstruction path.
+func (schema Schema) KeyIndex(key Key) (int, bool) {
+	if !schema.OwnsKey(key) || key.slot == 0 || uint64(key.slot) > schema.owner.rootCount() {
+		return 0, false
+	}
+	return int(key.slot - 1), true
 }
 
 // KeyID is Heap's stable identity for an already owner-issued coordinate.
@@ -1634,17 +2030,49 @@ func (schema Schema) KeyID(key Key) (keyspace.ContentID, bool) {
 	return sha256.Sum256(payload[:]), true
 }
 
-// KeyForBootRoot admits only an existing actor-local BootRoot from this Link
-// into the same Heap Key family as allocation roots.
-func (schema Schema) KeyForBootRoot(root linkhost.BootRoot) (Key, bool) {
+// KeyForBootID admits one existing detached bootstrap semantic ID into the
+// same Heap Key family as allocation roots.  Host coordinates are consumed at
+// seal time and cannot be passed through this post-seal API.
+func (schema Schema) KeyForBootID(rootID keyspace.ContentID) (Key, bool) {
 	if !schema.valid() {
 		return Key{}, false
 	}
-	id := schema.owner.bootIndex[root]
+	id := schema.owner.bootIndex[rootID]
 	if id == 0 {
 		return Key{}, false
 	}
 	return Key{owner: schema.owner, slot: id}, true
+}
+
+// BootCount and BootIDAt enumerate the detached bootstrap-root directory
+// sealed into Heap.  They are the only post-seal bootstrap discovery surface.
+func (schema Schema) BootCount() int {
+	if !schema.valid() {
+		return 0
+	}
+	count := 0
+	for _, row := range schema.owner.roots {
+		if row.kind == RootBoot && row.bootID.Available() {
+			count++
+		}
+	}
+	return count
+}
+
+func (schema Schema) BootIDAt(index int) (keyspace.ContentID, bool) {
+	if !schema.valid() || index < 0 {
+		return keyspace.ContentID{}, false
+	}
+	for _, row := range schema.owner.roots {
+		if row.kind != RootBoot || !row.bootID.Available() {
+			continue
+		}
+		if index == 0 {
+			return row.bootID, true
+		}
+		index--
+	}
+	return keyspace.ContentID{}, false
 }
 
 // BootFrozen projects Target's canonical whole-object boot header through the
@@ -1712,19 +2140,83 @@ func (schema Schema) FieldAt(key Key, index int) (Field, bool) {
 	return Field{owner: schema.owner, index: root.fieldStart + uint32(index)}, true
 }
 
-// FieldOrigin returns the exact table Key and direct Program TableField term.
-func (schema Schema) FieldOrigin(field Field) (Key, linkproject.Shard, keyspace.Term, bool) {
+// ArtifactAllocationForKey returns the exact reusable allocation descriptor
+// that was mounted to issue key. It performs only semantic-ID lookup against
+// Heap's already authenticated artifact mount; it never reopens Program.
+func (schema Schema) ArtifactAllocationForKey(key Key) (programartifact.HeapAllocationRow, bool) {
+	if !schema.OwnsKey(key) || key.Kind() != RootAllocation || schema.owner.artifacts == nil {
+		return programartifact.HeapAllocationRow{}, false
+	}
+	receipt, receiptOK := key.AllocationReceipt()
+	root, rootOK := schema.owner.rootAt(key.slot)
+	if !receiptOK || !rootOK || root.kind != RootAllocation || root.allocation.module != receipt.module || root.allocation.programID != receipt.programID || root.allocation.allocationID != receipt.allocationID || root.allocation.kind != receipt.kind {
+		return programartifact.HeapAllocationRow{}, false
+	}
+	mount, mountOK := schema.owner.artifacts[receipt.module]
+	if !mountOK || !mount.Available() {
+		return programartifact.HeapAllocationRow{}, false
+	}
+	if mount.programID != receipt.programID || mount.artifact.CompileKey().ProgramID() != receipt.programID {
+		return programartifact.HeapAllocationRow{}, false
+	}
+	artifact := mount.Artifact()
+	if artifact == nil || root.allocation.artifactRow == 0 {
+		return programartifact.HeapAllocationRow{}, false
+	}
+	allocation, allocationOK := artifact.HeapAllocationAt(int(root.allocation.artifactRow - 1))
+	if !allocationOK || allocation.ID() != receipt.allocationID || allocation.Form() != root.allocation.form || allocation.Role() == program.AllocationInvalid {
+		return programartifact.HeapAllocationRow{}, false
+	}
+	return allocation, true
+}
+
+// ArtifactFieldFor returns one exact reusable field descriptor by its stable
+// allocation-field identity. No dense field ordinal or authored Term crosses
+// this boundary.
+func (schema Schema) ArtifactFieldFor(field Field) (programartifact.HeapFieldRow, bool) {
 	if !schema.ownsField(field) {
-		return Key{}, linkproject.Shard{}, 0, false
+		return programartifact.HeapFieldRow{}, false
 	}
 	row := schema.owner.fields[field.index-1]
-	root := Key{owner: schema.owner, slot: row.root}
-	physical, physicalOK := schema.owner.rootAt(row.root)
-	if !physicalOK {
-		return Key{}, linkproject.Shard{}, 0, false
+	root, rootOK := schema.owner.rootAt(row.root)
+	if !rootOK || root.kind != RootAllocation || root.allocation.allocationID != row.allocationID {
+		return programartifact.HeapFieldRow{}, false
 	}
-	allocation := physical.allocation
-	return root, allocation.shard, row.term, allocation.term != 0
+	allocation, allocationOK := schema.ArtifactAllocationForKey(Key{owner: schema.owner, slot: row.root})
+	if !allocationOK || allocation.ID() != row.allocationID {
+		return programartifact.HeapFieldRow{}, false
+	}
+	if row.artifactRow == 0 {
+		return programartifact.HeapFieldRow{}, false
+	}
+	candidate, candidateOK := allocation.FieldAt(int(row.artifactRow - 1))
+	return candidate, candidateOK && candidate.ID() == row.fieldID
+}
+
+// ArtifactValuesForField returns the exact ProgramArtifact Values denominator
+// named by a sealed field descriptor. The join is the Values semantic ID, not
+// an authored Term or a dense artifact position.
+func (schema Schema) ArtifactValuesForField(field Field) (programartifact.ValuesRow, bool) {
+	if !schema.ownsField(field) {
+		return programartifact.ValuesRow{}, false
+	}
+	fieldRow, fieldOK := schema.ArtifactFieldFor(field)
+	physical := schema.owner.fields[field.index-1]
+	root, rootOK := schema.owner.rootAt(physical.root)
+	if !fieldOK || !rootOK || root.kind != RootAllocation {
+		return programartifact.ValuesRow{}, false
+	}
+	mount, mountOK := schema.owner.artifacts[root.allocation.module]
+	if !mountOK || !mount.Available() || mount.programID != root.allocation.programID {
+		return programartifact.ValuesRow{}, false
+	}
+	artifact := mount.Artifact()
+	valuesID := fieldRow.ValuesID()
+	if artifact == nil || !valuesID.Available() || physical.valuesRow == 0 {
+		return programartifact.ValuesRow{}, false
+	}
+	values, valuesOK := artifact.ValuesAt(int(physical.valuesRow - 1))
+	return values, valuesOK && values.ID() == valuesID
 }
 
 func (schema Schema) SlotForField(field Field) (Slot, bool) {
@@ -1759,25 +2251,37 @@ func (schema Schema) IndexAccessAt(index int) (IndexAccess, bool) {
 	return access, schema.ownsIndexAccess(access)
 }
 
-// IndexAccessFor resolves one exact mounted Program index-access occurrence
-// to Heap's canonical IndexAccess row. Both Read and Write terms are
-// accepted; the supplied Program, owner-fenced Shard, executable occurrence,
-// and sealed geometry must all agree before the inverse is observed.
-func (schema Schema) IndexAccessFor(shard linkproject.Shard, owner *program.Program, occurrence keyspace.Term) (IndexAccess, bool) {
-	if !schema.valid() || schema.owner.indexAccessOrdinals == nil || owner == nil || occurrence == 0 {
+// IndexAccessForReceipt resolves a mounted artifact occurrence in O(1) after
+// Heap seal. It never reopens the mounted Program or TransformerInput.
+func (schema Schema) IndexAccessForReceipt(receipt IndexAccessReceipt) (IndexAccess, bool) {
+	if !schema.valid() || !receipt.Available() || schema.owner.artifacts == nil {
 		return IndexAccess{}, false
 	}
-	mounts := schema.owner.source.Project().Mounts()
-	mounted, mountedOK := mounts.Program(shard)
-	if !mountedOK || mounted != owner || !validProgramIndexAccessOccurrence(owner, occurrence) {
+	mount, ok := schema.owner.artifacts[receipt.module]
+	if !ok || mount.artifact != receipt.artifact || mount.programID != receipt.programID {
 		return IndexAccess{}, false
 	}
-	index := schema.owner.indexAccessOrdinals[indexAccessOccurrence{shard: shard, term: occurrence}]
-	if index == 0 || uint64(index) > uint64(len(schema.owner.indexAccesses)) {
+	index := schema.owner.indexAccessOrdinals[indexAccessOccurrence{module: receipt.module, id: receipt.occurrence}]
+	if index == 0 || int(index) > len(schema.owner.indexAccesses) {
+		return IndexAccess{}, false
+	}
+	row := schema.owner.indexAccesses[index-1]
+	if row.module != receipt.module || row.programID != receipt.programID || row.isRead != receipt.read {
 		return IndexAccess{}, false
 	}
 	access := IndexAccess{owner: schema.owner, index: index}
 	return access, schema.ownsIndexAccess(access)
+}
+
+// IndexAccessOccurrence returns Heap's exact mounted reusable occurrence key.
+// It is copied while Heap already owns the Program geometry census; callers
+// receive no raw Term, Program, Flow, or mount ordinal to reconstruct it.
+func (schema Schema) IndexAccessOccurrence(access IndexAccess) (module, occurrence keyspace.ContentID, read bool, ok bool) {
+	if !schema.ownsIndexAccess(access) {
+		return keyspace.ContentID{}, keyspace.ContentID{}, false, false
+	}
+	row := schema.owner.indexAccesses[access.index-1]
+	return row.module, row.occurrence, row.isRead, row.module.Available() && row.occurrence.Available()
 }
 
 func (schema Schema) PayloadForField(field Field) (Payload, bool) {
@@ -1788,14 +2292,14 @@ func (schema Schema) PayloadForField(field Field) (Payload, bool) {
 }
 
 // IndexAccessGeometry returns the direct typed geometry retained by Heap.
-// Exactly one of read and write is nonzero; read rows have position -1,
-// values zero, and write rows carry their authored Values and position.
+// Read rows have position -1 and no Values receipt; write rows carry their
+// artifact-issued Values identity and position.
 func (schema Schema) IndexAccessGeometry(access IndexAccess) (IndexGeometry, bool) {
 	if !schema.ownsIndexAccess(access) {
 		return IndexGeometry{}, false
 	}
 	row := schema.owner.indexAccesses[access.index-1]
-	return IndexGeometry{Shard: row.shard, ReadTerm: row.read, WriteTerm: row.write, Base: row.base, KeyTerm: row.keyTerm, Values: row.values, Position: row.position, Lens: row.lens}, true
+	return IndexGeometry{Module: row.module, ProgramID: row.programID, BaseValueID: row.baseValueID, KeyValueID: row.keyValueID, ValuesID: row.valuesID, Position: row.position, DynamicKey: row.dynamic, Read: row.isRead}, true
 }
 
 // SlotForIndexAccess returns the exact slot sealed on the Heap row.
@@ -1813,21 +2317,37 @@ func (schema Schema) PayloadForIndexAccess(access IndexAccess) (Payload, bool) {
 		return Payload{}, false
 	}
 	row := schema.owner.indexAccesses[access.index-1]
-	if row.read != 0 || row.payload == 0 {
+	if row.isRead || row.payload == 0 {
 		return Payload{}, false
 	}
 	return schema.payload(row.payload)
 }
 
-func (schema Schema) IndexAccessResult(access IndexAccess) (linkboundary.Value, bool) {
+// RawPayloadTagForIndexAccess returns Heap's sealed payload identity for one
+// indexed write. The row already owns this relation; callers must not rebuild
+// it by rescanning payload sources or coordinates.
+func (schema Schema) RawPayloadTagForIndexAccess(access IndexAccess) (RawPayloadTag, bool) {
 	if !schema.ownsIndexAccess(access) {
-		return linkboundary.Value{}, false
+		return 0, false
 	}
 	row := schema.owner.indexAccesses[access.index-1]
-	if row.read == 0 {
-		return linkboundary.Value{}, false
+	if row.isRead || row.payload == 0 {
+		return 0, false
 	}
-	return schema.owner.source.Boundary().Values().Of(row.shard, row.read)
+	return RawPayloadTag(row.payload), true
+}
+
+// IndexAccessResultID returns the detached Link-owned Boundary Value identity
+// for a read result; callers resolve it directly through Value's ID directory.
+func (schema Schema) IndexAccessResultID(access IndexAccess) (keyspace.ContentID, bool) {
+	if !schema.ownsIndexAccess(access) {
+		return keyspace.ContentID{}, false
+	}
+	row := schema.owner.indexAccesses[access.index-1]
+	if !row.isRead {
+		return keyspace.ContentID{}, false
+	}
+	return row.resultID, row.resultID.Available()
 }
 
 func (schema Schema) IndexAccessID(access IndexAccess) (keyspace.ContentID, bool) {
@@ -1835,19 +2355,14 @@ func (schema Schema) IndexAccessID(access IndexAccess) (keyspace.ContentID, bool
 		return keyspace.ContentID{}, false
 	}
 	row := schema.owner.indexAccesses[access.index-1]
-	sourceTerm := row.read
-	if sourceTerm == 0 {
-		sourceTerm = row.write
-	}
-	var payload [32 + 2*8]byte
+	var payload [32 + 32 + 32 + 1]byte
 	id := schema.ContentID()
 	copy(payload[:32], id[:])
-	shardIndex, ok := schema.owner.source.Project().Mounts().Index(row.shard)
-	if !ok {
-		return keyspace.ContentID{}, false
+	copy(payload[32:64], row.module[:])
+	copy(payload[64:96], row.occurrence[:])
+	if row.isRead {
+		payload[96] = 1
 	}
-	binary.BigEndian.PutUint64(payload[32:40], uint64(shardIndex+1))
-	binary.BigEndian.PutUint64(payload[40:48], uint64(sourceTerm))
 	return sha256.Sum256(payload[:]), true
 }
 
@@ -1998,20 +2513,15 @@ func (entry BootEntry) ValueContainment() (Containment, bool) {
 		return Containment{}, false
 	}
 	row := entry.owner.bootEntries[rootSlot{root: entry.root, slot: entry.slot}]
-	if row.raw != RawPresent || row.payload == 0 || int(row.payload) > len(entry.owner.payloads) || entry.owner.source == nil {
+	if row.raw != RawPresent || row.payload == 0 || int(row.payload) > len(entry.owner.payloads) {
 		return Containment{}, false
 	}
 	payload := entry.owner.payloads[row.payload-1]
-	contract, contractOK := entry.owner.source.Boundary().Target()
-	if payload.kind != payloadInitial || payload.initial != row.initial || !contractOK || contract == nil {
-		return Containment{}, false
-	}
-	kind, kindOK := contract.InitialValueKind(payload.initial)
-	if !kindOK {
+	if payload.kind != payloadInitial || payload.initial != row.initial {
 		return Containment{}, false
 	}
 	schema := Schema{owner: entry.owner}
-	switch kind {
+	switch row.kind {
 	case target.InitialValueRoot:
 		child, childOK := entry.ValueChild()
 		if !childOK {
@@ -2031,19 +2541,6 @@ func (entry BootEntry) ValueContainment() (Containment, bool) {
 	default:
 		return Containment{}, false
 	}
-}
-
-// BootMetatableRoute returns the existing immutable Link bootstrap route for
-// one primitive base class. It does not imply ordinary dispatch selection.
-func (schema Schema) BootMetatableRoute(attachment linkhost.BootMetatableAttachment) (MetatableRoute, bool) {
-	if !schema.valid() {
-		return MetatableRoute{}, false
-	}
-	id := schema.owner.bootMetatableRoutes[attachment]
-	if id == 0 {
-		return MetatableRoute{}, false
-	}
-	return MetatableRoute{owner: schema.owner, id: id}, true
 }
 
 // Admits is Heap's sole coordinate-specific carrier fence. The outer Value
@@ -2133,11 +2630,7 @@ func (schema Schema) partitionAdmitsSlot(partition Partition, kind runtimekind.K
 	if row.kind != SlotExact {
 		return true
 	}
-	keyIndex, keyOK := schema.owner.source.Project().Keys().Index(row.exact)
-	if !keyOK {
-		return false
-	}
-	exact := keyAtom{kind: keyAtomExact, exact: row.exact, exactOrdinal: uint32(keyIndex + 1)}
+	exact := keyAtom{kind: keyAtomExact, exactOrdinal: row.exact}
 	if !validExactKeyAtom(schema.owner, exact) {
 		return false
 	}
@@ -2239,14 +2732,14 @@ func (schema Schema) ownsField(field Field) bool {
 		return false
 	}
 	row := schema.owner.fields[field.index-1]
-	if row.root == 0 || uint64(row.root) > schema.owner.rootCount() || row.slot == 0 || row.payload == 0 || row.term == 0 || row.keyTerm == 0 {
+	if row.root == 0 || uint64(row.root) > schema.owner.rootCount() || row.slot == 0 || row.payload == 0 || !row.allocationID.Available() || !row.fieldID.Available() || row.artifactRow == 0 || row.valuesRow == 0 {
 		return false
 	}
 	root, ok := schema.owner.rootAt(row.root)
 	if !ok || root.kind != RootAllocation || root.allocation.kind != AllocationTable || root.fieldStart == 0 || field.index < root.fieldStart || uint64(field.index-root.fieldStart) >= uint64(root.fieldCount) {
 		return false
 	}
-	return uint64(row.slot) <= uint64(len(schema.owner.slots)) && uint64(row.payload) <= uint64(len(schema.owner.payloads))
+	return uint64(row.slot) <= uint64(len(schema.owner.slots)) && uint64(row.payload) <= uint64(len(schema.owner.payloads)) && row.allocationID == root.allocation.allocationID
 }
 
 func (schema Schema) ownsIndexAccess(access IndexAccess) bool {
@@ -2254,17 +2747,11 @@ func (schema Schema) ownsIndexAccess(access IndexAccess) bool {
 		return false
 	}
 	row := schema.owner.indexAccesses[access.index-1]
-	if _, shardOK := schema.owner.source.Project().Mounts().Index(row.shard); !shardOK || row.base == 0 || row.keyTerm == 0 || row.lens == 0 || row.slot == 0 || uint64(row.slot) > uint64(len(schema.owner.slots)) {
+	if !row.module.Available() || !row.programID.Available() || !row.baseValueID.Available() || row.dynamic && !row.keyValueID.Available() || row.slot == 0 || uint64(row.slot) > uint64(len(schema.owner.slots)) {
 		return false
 	}
-	if (row.read == 0) == (row.write == 0) {
-		return false
+	if row.isRead {
+		return row.resultID.Available() && !row.valuesID.Available() && row.position == -1 && row.payload == 0
 	}
-	if keyspace.TermFamily(row.lens) != keyspace.FamilyLensExact && keyspace.TermFamily(row.lens) != keyspace.FamilyLensKey {
-		return false
-	}
-	if row.read != 0 {
-		return keyspace.TermFamily(row.read) == keyspace.FamilyRead && row.values == 0 && row.position == -1 && row.payload == 0
-	}
-	return keyspace.TermFamily(row.write) == keyspace.FamilyWrite && row.values != 0 && row.position >= 0 && row.payload != 0 && uint64(row.payload) <= uint64(len(schema.owner.payloads))
+	return row.valuesID.Available() && row.position >= 0 && row.payload != 0 && uint64(row.payload) <= uint64(len(schema.owner.payloads))
 }

@@ -53,8 +53,8 @@ func (r *Runtime) runtimeSubtypeAt(left, right runtimeProofRef, path *runtimePro
 	if left.present {
 		return r.runtimePresentSubtype(left, right, path)
 	}
-	leftRow := r.rows[left.index-1]
-	rightRow := r.rows[right.index-1]
+	leftRow := &r.rows[left.index-1]
+	rightRow := &r.rows[right.index-1]
 
 	// Recursive and instantiated equations precede top/bottom and outer-form
 	// dispatch, matching the canonical relation.
@@ -286,13 +286,13 @@ func (r *Runtime) runtimeNormalizeRef(ref runtimeProofRef) (runtimeProofRef, boo
 	if r == nil || ref.index == 0 || uint64(ref.index) > uint64(len(r.rows)) || ref.selfActive != (ref.self != 0) {
 		return runtimeProofRef{}, false
 	}
-	row := r.rows[ref.index-1]
+	row := &r.rows[ref.index-1]
 	if row.form == FormSelf && ref.selfActive {
 		ref.index, ref.self, ref.selfActive = ref.self, 0, false
 		if ref.index == 0 || uint64(ref.index) > uint64(len(r.rows)) {
 			return runtimeProofRef{}, false
 		}
-		row = r.rows[ref.index-1]
+		row = &r.rows[ref.index-1]
 	}
 	// Self substitution does not cross declaration/binding boundaries.
 	if row.form == FormInterface {
@@ -330,7 +330,7 @@ func runtimeProofPathContains(path *runtimeProofPath, relation runtimeProofRelat
 }
 
 func (r *Runtime) runtimeOptionalTop(ref runtimeProofRef) bool {
-	row := r.rows[ref.index-1]
+	row := &r.rows[ref.index-1]
 	if row.form != FormOptional || !row.inner.present {
 		return false
 	}
@@ -343,7 +343,7 @@ func (r *Runtime) runtimeOptionalTop(ref runtimeProofRef) bool {
 }
 
 func (r *Runtime) runtimeTableLike(ref runtimeProofRef) bool {
-	row := r.rows[ref.index-1]
+	row := &r.rows[ref.index-1]
 	switch row.form {
 	case FormRecord, FormArray, FormMap, FormReadonlyMap, FormTuple, FormInterface:
 		return true
@@ -352,12 +352,15 @@ func (r *Runtime) runtimeTableLike(ref runtimeProofRef) bool {
 	}
 }
 
-func (r *Runtime) runtimeEmptyRecord(row runtimeRow) bool {
+func (r *Runtime) runtimeEmptyRecord(row *runtimeRow) bool {
+	if row == nil {
+		return false
+	}
 	return row.form == FormRecord && row.fields.start == row.fields.end && row.staticMembers.start == row.staticMembers.end
 }
 
 func (r *Runtime) runtimeVariantSlice(ref runtimeProofRef) ([]runtimeChild, bool) {
-	row := r.rows[ref.index-1]
+	row := &r.rows[ref.index-1]
 	if row.variants.start > row.variants.end || uint64(row.variants.end) > uint64(len(r.variants)) {
 		return nil, false
 	}
@@ -444,7 +447,7 @@ func (r *Runtime) runtimeAnyToVariants(left, right runtimeProofRef, all bool, pa
 }
 
 func (r *Runtime) runtimePresentSubtype(left, right runtimeProofRef, path *runtimeProofPath) (bool, bool) {
-	row := r.rows[left.index-1]
+	row := &r.rows[left.index-1]
 	switch row.form {
 	case FormNil, FormNever:
 		return true, true
@@ -478,7 +481,7 @@ func (r *Runtime) runtimePresentSubtype(left, right runtimeProofRef, path *runti
 }
 
 func (r *Runtime) runtimeInstantiationInvariant(left, right runtimeProofRef, path *runtimeProofPath) (bool, bool) {
-	leftRow, rightRow := r.rows[left.index-1], r.rows[right.index-1]
+	leftRow, rightRow := &r.rows[left.index-1], &r.rows[right.index-1]
 	if leftRow.form != FormInstantiated || rightRow.form != FormInstantiated ||
 		!leftRow.base.present || !rightRow.base.present ||
 		!r.runtimeSameRow(leftRow.base.inner.index, rightRow.base.inner.index) ||
@@ -524,7 +527,7 @@ func (r *Runtime) runtimeLiteralSubtype(left runtimeLiteral, right runtimeProofR
 }
 
 func (r *Runtime) runtimeMutableMapping(left, right runtimeProofRef, path *runtimeProofPath) (bool, bool) {
-	leftRow, rightRow := r.rows[left.index-1], r.rows[right.index-1]
+	leftRow, rightRow := &r.rows[left.index-1], &r.rows[right.index-1]
 	if !leftRow.key.present || !leftRow.value.present || !rightRow.key.present || !rightRow.value.present {
 		return false, false
 	}
@@ -539,7 +542,7 @@ func (r *Runtime) runtimeMutableMapping(left, right runtimeProofRef, path *runti
 }
 
 func (r *Runtime) runtimeReadonlyParts(leftKey, leftValue, right runtimeProofRef, path *runtimeProofPath) (bool, bool) {
-	rightRow := r.rows[right.index-1]
+	rightRow := &r.rows[right.index-1]
 	if !rightRow.key.present || !rightRow.value.present {
 		return false, false
 	}
@@ -551,7 +554,7 @@ func (r *Runtime) runtimeReadonlyParts(leftKey, leftValue, right runtimeProofRef
 }
 
 func (r *Runtime) runtimeReadonlyMapping(left, right runtimeProofRef, path *runtimeProofPath) (bool, bool) {
-	leftRow := r.rows[left.index-1]
+	leftRow := &r.rows[left.index-1]
 	if !leftRow.key.present || !leftRow.value.present {
 		return false, false
 	}
@@ -559,7 +562,7 @@ func (r *Runtime) runtimeReadonlyMapping(left, right runtimeProofRef, path *runt
 }
 
 func (r *Runtime) runtimeTupleSlice(ref runtimeProofRef) ([]runtimeTupleElement, bool) {
-	row := r.rows[ref.index-1]
+	row := &r.rows[ref.index-1]
 	if row.elements.start > row.elements.end || uint64(row.elements.end) > uint64(len(r.elements)) {
 		return nil, false
 	}
@@ -587,7 +590,7 @@ func (r *Runtime) runtimeTupleToReadonly(left, right runtimeProofRef, path *runt
 	if !ok {
 		return false, false
 	}
-	rightRow := r.rows[right.index-1]
+	rightRow := &r.rows[right.index-1]
 	if !rightRow.key.present || !rightRow.value.present {
 		return false, false
 	}
@@ -628,7 +631,7 @@ func (r *Runtime) runtimeTupleSubtype(left, right runtimeProofRef, path *runtime
 }
 
 func (r *Runtime) runtimeParameterSlice(ref runtimeProofRef) ([]runtimeParameter, bool) {
-	row := r.rows[ref.index-1]
+	row := &r.rows[ref.index-1]
 	if row.parameters.start > row.parameters.end || uint64(row.parameters.end) > uint64(len(r.parameters)) {
 		return nil, false
 	}
@@ -636,7 +639,7 @@ func (r *Runtime) runtimeParameterSlice(ref runtimeProofRef) ([]runtimeParameter
 }
 
 func (r *Runtime) runtimeResultSlice(ref runtimeProofRef) ([]runtimeChild, bool) {
-	row := r.rows[ref.index-1]
+	row := &r.rows[ref.index-1]
 	if row.results.start > row.results.end || uint64(row.results.end) > uint64(len(r.results)) {
 		return nil, false
 	}
@@ -661,7 +664,7 @@ func (r *Runtime) runtimeFunctionSubtype(left, right runtimeProofRef, path *runt
 	if !leftOK || !rightOK || !leftResultsOK || !rightResultsOK {
 		return false, false
 	}
-	leftRow, rightRow := r.rows[left.index-1], r.rows[right.index-1]
+	leftRow, rightRow := &r.rows[left.index-1], &r.rows[right.index-1]
 	leftRequired, rightRequired := runtimeRequiredParameters(leftParameters), runtimeRequiredParameters(rightParameters)
 	if leftRequired > rightRequired || (!rightRow.variadic.present && leftRequired > len(rightParameters)) ||
 		(!leftRow.variadic.present && len(rightParameters) > len(leftParameters)) {
@@ -731,7 +734,7 @@ type runtimeRecordMember struct {
 }
 
 func (r *Runtime) runtimeFieldSlice(ref runtimeProofRef) ([]runtimeNamedChild, bool) {
-	row := r.rows[ref.index-1]
+	row := &r.rows[ref.index-1]
 	if row.fields.start > row.fields.end || uint64(row.fields.end) > uint64(len(r.fields)) {
 		return nil, false
 	}
@@ -739,7 +742,7 @@ func (r *Runtime) runtimeFieldSlice(ref runtimeProofRef) ([]runtimeNamedChild, b
 }
 
 func (r *Runtime) runtimeStaticSlice(ref runtimeProofRef) ([]runtimeStaticChild, bool) {
-	row := r.rows[ref.index-1]
+	row := &r.rows[ref.index-1]
 	if row.staticMembers.start > row.staticMembers.end || uint64(row.staticMembers.end) > uint64(len(r.staticMembers)) {
 		return nil, false
 	}
@@ -835,7 +838,7 @@ func (r *Runtime) runtimeRecordSubtype(left, right runtimeProofRef, path *runtim
 			return answer, decided
 		}
 	}
-	leftRow, rightRow := r.rows[left.index-1], r.rows[right.index-1]
+	leftRow, rightRow := &r.rows[left.index-1], &r.rows[right.index-1]
 	if rightRow.key.present || rightRow.value.present {
 		if !rightRow.key.present || !rightRow.value.present || !leftRow.key.present || !leftRow.value.present {
 			return false, rightRow.key.present && rightRow.value.present
@@ -900,7 +903,7 @@ func (r *Runtime) runtimeOptionalLike(ref runtimeProofRef, path *runtimeIndexPat
 		}
 	}
 	frame := runtimeIndexPath{index: ref.index, parent: path}
-	row := r.rows[ref.index-1]
+	row := &r.rows[ref.index-1]
 	switch row.form {
 	case FormNil, FormAny, FormUnknown, FormOptional:
 		return true
@@ -919,7 +922,7 @@ func (r *Runtime) runtimeOptionalLike(ref runtimeProofRef, path *runtimeIndexPat
 }
 
 func (r *Runtime) runtimeMetatableSubtype(left, right runtimeProofRef, path *runtimeProofPath) (bool, bool) {
-	leftRow, rightRow := r.rows[left.index-1], r.rows[right.index-1]
+	leftRow, rightRow := &r.rows[left.index-1], &r.rows[right.index-1]
 	if !leftRow.metatable.present && !rightRow.metatable.present {
 		return true, true
 	}
@@ -942,7 +945,7 @@ func (r *Runtime) runtimeMetatableSubtype(left, right runtimeProofRef, path *run
 }
 
 func (r *Runtime) runtimeRecordToInterface(left, right runtimeProofRef, path *runtimeProofPath) (bool, bool) {
-	rightRow := r.rows[right.index-1]
+	rightRow := &r.rows[right.index-1]
 	if rightRow.methods.start > rightRow.methods.end || uint64(rightRow.methods.end) > uint64(len(r.methods)) {
 		return false, false
 	}
@@ -965,7 +968,7 @@ func (r *Runtime) runtimeRecordToInterface(left, right runtimeProofRef, path *ru
 func (r *Runtime) runtimeRecordToMap(left, right runtimeProofRef, readonly bool, path *runtimeProofPath) (bool, bool) {
 	fields, fieldsOK := r.runtimeFieldSlice(left)
 	static, staticOK := r.runtimeStaticSlice(left)
-	rightRow := r.rows[right.index-1]
+	rightRow := &r.rows[right.index-1]
 	if !fieldsOK || !staticOK || !rightRow.key.present || !rightRow.value.present {
 		return false, false
 	}
@@ -999,7 +1002,7 @@ func (r *Runtime) runtimeRecordToMap(left, right runtimeProofRef, readonly bool,
 				return answer, decided
 			}
 		}
-		leftRow := r.rows[left.index-1]
+		leftRow := &r.rows[left.index-1]
 		if leftRow.open || leftRow.metatable.present {
 			if answer, decided := r.runtimeSubtypeAt(runtimeProofRef{index: r.stringRow}, rightKey, path); !decided || !answer {
 				return answer, decided
@@ -1009,7 +1012,7 @@ func (r *Runtime) runtimeRecordToMap(left, right runtimeProofRef, readonly bool,
 			}
 		}
 	}
-	leftRow := r.rows[left.index-1]
+	leftRow := &r.rows[left.index-1]
 	if leftRow.key.present || leftRow.value.present {
 		if !leftRow.key.present || !leftRow.value.present {
 			return false, false
@@ -1029,7 +1032,7 @@ func (r *Runtime) runtimeRecordToMap(left, right runtimeProofRef, readonly bool,
 }
 
 func (r *Runtime) runtimeMapToRecord(left, right runtimeProofRef, path *runtimeProofPath) (bool, bool) {
-	leftRow, rightRow := r.rows[left.index-1], r.rows[right.index-1]
+	leftRow, rightRow := &r.rows[left.index-1], &r.rows[right.index-1]
 	if !leftRow.key.present || !leftRow.value.present || !rightRow.key.present || !rightRow.value.present {
 		return false, true
 	}
@@ -1074,7 +1077,7 @@ func (r *Runtime) runtimeMapToRecord(left, right runtimeProofRef, path *runtimeP
 }
 
 func (r *Runtime) runtimeInterfaceSubtype(left, right runtimeProofRef, path *runtimeProofPath) (bool, bool) {
-	leftRow, rightRow := r.rows[left.index-1], r.rows[right.index-1]
+	leftRow, rightRow := &r.rows[left.index-1], &r.rows[right.index-1]
 	if leftRow.methods.start > leftRow.methods.end || rightRow.methods.start > rightRow.methods.end ||
 		uint64(leftRow.methods.end) > uint64(len(r.methods)) || uint64(rightRow.methods.end) > uint64(len(r.methods)) {
 		return false, false
@@ -1129,7 +1132,7 @@ func (r *Runtime) runtimeWidenAt(left, right runtimeProofRef, path *runtimeProof
 	if left.present {
 		return r.runtimePresentWiden(left, right, path)
 	}
-	leftRow, rightRow := r.rows[left.index-1], r.rows[right.index-1]
+	leftRow, rightRow := &r.rows[left.index-1], &r.rows[right.index-1]
 	if leftRow.form == FormInstantiated {
 		if !leftRow.expansion.present {
 			return false, false
@@ -1275,7 +1278,7 @@ func (r *Runtime) runtimeWidenAt(left, right runtimeProofRef, path *runtimeProof
 }
 
 func (r *Runtime) runtimePresentWiden(left, right runtimeProofRef, path *runtimeProofPath) (bool, bool) {
-	row := r.rows[left.index-1]
+	row := &r.rows[left.index-1]
 	switch row.form {
 	case FormNil, FormNever:
 		return true, true
@@ -1306,7 +1309,7 @@ func (r *Runtime) runtimePresentWiden(left, right runtimeProofRef, path *runtime
 }
 
 func (r *Runtime) runtimeWidenMap(left, right runtimeProofRef, path *runtimeProofPath) (bool, bool) {
-	leftRow, rightRow := r.rows[left.index-1], r.rows[right.index-1]
+	leftRow, rightRow := &r.rows[left.index-1], &r.rows[right.index-1]
 	leftKey, rightKey := r.runtimeChildRef(left, leftRow.key), r.runtimeChildRef(right, rightRow.key)
 	leftValue, rightValue := r.runtimeChildRef(left, leftRow.value), r.runtimeChildRef(right, rightRow.value)
 	if answer, decided := r.runtimeSubtypeAt(leftKey, rightKey, path); !decided || !answer {
@@ -1329,7 +1332,7 @@ func (r *Runtime) runtimeWidenRecordToMap(left, right runtimeProofRef, path *run
 	if !ok {
 		return false, false
 	}
-	rightRow := r.rows[right.index-1]
+	rightRow := &r.rows[right.index-1]
 	rightKey, rightValue := r.runtimeChildRef(right, rightRow.key), r.runtimeChildRef(right, rightRow.value)
 	for _, field := range fields {
 		if answer, decided := r.runtimeSubtypeAt(r.runtimeChildRef(left, field.key), rightKey, path); !decided || !answer {
@@ -1339,7 +1342,7 @@ func (r *Runtime) runtimeWidenRecordToMap(left, right runtimeProofRef, path *run
 			return answer, decided
 		}
 	}
-	leftRow := r.rows[left.index-1]
+	leftRow := &r.rows[left.index-1]
 	if leftRow.key.present || leftRow.value.present {
 		if !leftRow.key.present || !leftRow.value.present {
 			return false, false
@@ -1370,7 +1373,7 @@ func (r *Runtime) runtimeWidenRecordToArray(left, right runtimeProofRef, path *r
 			return answer, decided
 		}
 	}
-	leftRow := r.rows[left.index-1]
+	leftRow := &r.rows[left.index-1]
 	if leftRow.key.present || leftRow.value.present {
 		if !leftRow.key.present || !leftRow.value.present {
 			return false, false
@@ -1452,7 +1455,7 @@ func (r *Runtime) runtimeWidenFunction(left, right runtimeProofRef, path *runtim
 			return answer, decided
 		}
 	}
-	leftRow, rightRow := r.rows[left.index-1], r.rows[right.index-1]
+	leftRow, rightRow := &r.rows[left.index-1], &r.rows[right.index-1]
 	if leftRow.variadic.present != rightRow.variadic.present {
 		return false, true
 	}

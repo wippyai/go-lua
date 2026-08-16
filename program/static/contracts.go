@@ -1,6 +1,7 @@
 package static
 
 import (
+	"crypto/sha256"
 	"errors"
 
 	"github.com/wippyai/go-lua/program/internal/canonical"
@@ -44,8 +45,25 @@ func compactContracts(component *Component, counts [keyspace.FamilyCount]uint32,
 			return errors.New("program/static: oversized call type arguments")
 		}
 		store.calls = append(store.calls, typeArguments)
+		receipt, receiptOK := callTypeArgumentReceipt(row.TypeArguments)
+		if !receiptOK {
+			return errors.New("program/static: unavailable call type-argument receipt")
+		}
+		store.callReceipts = append(store.callReceipts, receipt)
 	}
 	return nil
+}
+
+func callTypeArgumentReceipt(terms []keyspace.Term) (id keyspace.ContentID, ok bool) {
+	hash := sha256.New()
+	var writer canonical.Writer
+	if writer.Reset(hash, "program/static/call-type-arguments", 1) != nil || writeTypeTermsContent(&writer, terms) != nil || writer.Finish() != nil {
+		return keyspace.ContentID{}, false
+	}
+	if sum := hash.Sum(id[:0]); len(sum) != len(id) {
+		return keyspace.ContentID{}, false
+	}
+	return id, id.Available()
 }
 
 // completeTypeParamOwnership is the single exact owner/order law for every

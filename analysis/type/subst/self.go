@@ -1,11 +1,9 @@
 package subst
 
 import (
-	"github.com/wippyai/go-lua/analysis/type/inspect"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/transform"
 	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 // Self replaces Self type references with a concrete type.
@@ -28,43 +26,15 @@ const (
 	selfRewriteRuntimeValue
 )
 
-type selfScanMode uint8
-
-const (
-	selfScanSubstitutable selfScanMode = iota
-	selfScanSurface
-)
-
 func containsSubstitutableSelf(t typ.Type) bool {
-	if typ.ContainsRecursive(t) && !containsSurfaceSelf(t) {
+	if t == nil {
 		return false
 	}
-	scan := newSelfContainsScan()
-	return scan.contains(t, selfScanSubstitutable)
-}
-
-func containsSurfaceSelf(t typ.Type) bool {
-	scan := newSelfContainsScan()
-	return scan.contains(t, selfScanSurface)
-}
-
-type selfContainsScan struct {
-	scanner *inspect.Scanner
-}
-
-func newSelfContainsScan() selfContainsScan {
-	return selfContainsScan{
-		scanner: inspect.NewScanner(inspect.ScanOptions{
-			Seen: inspect.NewIdentitySeen(nil),
-		}),
-	}
-}
-
-func (s *selfContainsScan) contains(t typ.Type, mode selfScanMode) bool {
+	memo := make(map[typ.Type]bool)
 	stack := []typ.Type{t}
 	for len(stack) != 0 {
 		i := len(stack) - 1
-		current := unwrap.Annotated(stack[i])
+		current := typ.UnwrapTransparentWrappers(stack[i])
 		stack = stack[:i]
 		if current == nil {
 			continue
@@ -72,66 +42,29 @@ func (s *selfContainsScan) contains(t typ.Type, mode selfScanMode) bool {
 		if current.Kind() == kind.Self {
 			return true
 		}
+		// Recursive and Interface nodes each own the Self references in their
+		// bodies.  Do not cross either binding boundary while looking for a
+		// free Self in the enclosing type.
 		if _, ok := current.(*typ.Interface); ok {
 			continue
 		}
 		if _, ok := current.(*typ.Recursive); ok {
 			continue
 		}
-		if mode == selfScanSubstitutable && typ.ContainsRecursive(current) && !containsSurfaceSelf(current) {
+		if _, seen := memo[current]; seen {
 			continue
 		}
-		if s.scanner != nil && !s.scanner.Enter(current) {
+		memo[current] = true
+		// An instantiation owns only its arguments in the current scope; the
+		// Generic declaration is a separate binder and is not a child here.
+		if instantiated, ok := current.(*typ.Instantiated); ok {
+			stack = append(stack, instantiated.TypeArgs...)
 			continue
 		}
-		switch v := current.(type) {
-		case *typ.Optional:
-			stack = append(stack, v.Inner)
-		case *typ.Union:
-			stack = append(stack, v.Members...)
-		case *typ.Intersection:
-			stack = append(stack, v.Members...)
-		case *typ.Array:
-			stack = append(stack, v.Element)
-		case *typ.Map:
-			stack = append(stack, v.Key, v.Value)
-		case *typ.ReadonlyMap:
-			stack = append(stack, v.Key, v.Value)
-		case *typ.Tuple:
-			stack = append(stack, v.Elements...)
-		case *typ.Function:
-			for _, param := range v.Params {
-				stack = append(stack, param.Type)
-			}
-			stack = append(stack, v.Variadic)
-			stack = append(stack, v.Returns...)
-		case *typ.Record:
-			for _, field := range v.Fields {
-				stack = append(stack, field.Type)
-			}
-			for _, member := range v.StaticMembers {
-				stack = append(stack, member.Type)
-			}
-			stack = append(stack, v.Metatable)
-			if v.HasMapComponent() {
-				stack = append(stack, v.MapKey, v.MapValue)
-			}
-		case *typ.Meta:
-			stack = append(stack, v.Of)
-		case *typ.TypeParam:
-			stack = append(stack, v.Constraint)
-		case *typ.Generic:
-			for _, parameter := range v.TypeParams {
-				if parameter != nil {
-					stack = append(stack, parameter.Constraint)
-				}
-			}
-			stack = append(stack, v.Body)
-		case *typ.Alias:
-			stack = append(stack, v.Target)
-		case *typ.Instantiated:
-			stack = append(stack, v.TypeArgs...)
-		}
+		typ.WalkChildren(current, func(child typ.Type) bool {
+			stack = append(stack, child)
+			return false
+		})
 	}
 	return false
 }

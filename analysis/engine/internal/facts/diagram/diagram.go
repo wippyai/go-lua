@@ -741,11 +741,65 @@ func (builder *Builder[F, K, V]) Reindex(value Value[V], relation guard.Reindex,
 	if relation.Identity() {
 		return value, true
 	}
+	if relation.PureProjection() {
+		result, ok := builder.reindexProjection(value.node, relation, operation, make(map[*node[V]]*node[V]), make(map[zipKey[V]]*node[V]))
+		if !ok {
+			return Value[V]{}, false
+		}
+		return Value[V]{owner: builder.diagram.owner, node: result}, true
+	}
 	result, ok := builder.reindex(value.node, relation, operation, make(map[*node[V]]*node[V]), make(map[zipKey[V]]*node[V]), make(map[reindexITEKey[V]]*node[V]))
 	if !ok {
 		return Value[V]{}, false
 	}
 	return Value[V]{owner: builder.diagram.owner, node: result}, true
+}
+
+// reindexProjection transports a pure coordinate projection without building
+// target-region ITEs. Retained coordinates are rebuilt directly at the same
+// atom; forgotten coordinates alone invoke the caller's existential combine.
+// The input-node memo is enough to share recursive source structure, while
+// the existing zip memo keeps the forgotten-fiber joins canonical.
+func (builder *Builder[F, K, V]) reindexProjection(input *node[V], relation guard.Reindex, operation Combine[V], cache map[*node[V]]*node[V], zipCache map[zipKey[V]]*node[V]) (*node[V], bool) {
+	if input.terminal {
+		return input, true
+	}
+	if cached, ok := cache[input]; ok {
+		return cached, true
+	}
+	action, ok := relation.ProjectionAction(input.atom)
+	if !ok {
+		return nil, false
+	}
+	low, ok := builder.reindexProjection(input.low, relation, operation, cache, zipCache)
+	if !ok {
+		return nil, false
+	}
+	high, ok := builder.reindexProjection(input.high, relation, operation, cache, zipCache)
+	if !ok {
+		return nil, false
+	}
+	var result *node[V]
+	switch {
+	case action.RetainsCoordinate():
+		if low == input.low && high == input.high {
+			// A separately-issued coordinate identity changes only the Scope
+			// wrapper, not the Boolean payload. Preserve the exact FDD node when
+			// the recursive children are unchanged.
+			result = input
+		} else {
+			result = builder.decision(input.atom, low, high)
+		}
+	case action.ForgetsCoordinate():
+		result, ok = builder.zip(low, high, operation, zipCache)
+		if !ok {
+			return nil, false
+		}
+	default:
+		return nil, false
+	}
+	cache[input] = result
+	return result, true
 }
 
 type reindexITEKey[V any] struct {

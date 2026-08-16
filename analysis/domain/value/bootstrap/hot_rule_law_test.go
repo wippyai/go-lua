@@ -1,0 +1,160 @@
+package bootstrap_test
+
+import (
+	"encoding/binary"
+	"testing"
+
+	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
+	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
+	bootstrap "github.com/wippyai/go-lua/analysis/domain/value/bootstrap"
+	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
+	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/internal/programartifact/schemaadapter"
+	"github.com/wippyai/go-lua/analysis/internal/programschema"
+	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/program/link"
+	linkproject "github.com/wippyai/go-lua/program/link/project"
+	"github.com/wippyai/go-lua/program/lower"
+	"github.com/wippyai/go-lua/program/target"
+)
+
+func TestHotBootstrapRuleBindsReceiptAndRejectsForeignOperand(t *testing.T) {
+	local := bootstrapFixture(t, "local bootstrap")
+	foreign := bootstrapFixture(t, "foreign bootstrap")
+
+	bind := func(fixture *bootstrapFixtureState) (*valueowner.HotOwner, *bootstrap.HotRule, *engine.SchemaBinding) {
+		cold, ownerFragment, fragment := bootstrapColdSchema(t)
+		binding := engine.NewSchemaBinding(cold)
+		owner, ownerOK := valueowner.BindHot(binding, ownerFragment, fixture.schema)
+		rule, ruleOK := bootstrap.BindHot(fragment, owner)
+		if !ownerOK || !ruleOK || !binding.Seal() {
+			return nil, nil, binding
+		}
+		return owner, rule, binding
+	}
+
+	owner, rule, binding := bind(local)
+	if owner == nil || rule == nil || binding == nil {
+		t.Fatal("bootstrap receipt bind")
+	}
+	issuer, issued := rule.Implementation()
+	if !issued || issuer == nil {
+		t.Fatal("bootstrap typed Rule issuer")
+	}
+	if resolved, ok := valueowner.ResolveRuleImplementation(issuer); !ok || resolved == nil {
+		t.Fatal("bootstrap sealed receipt")
+	}
+	if catalog := rule.Catalog(); catalog == nil || catalog.Count() != local.schema.GlobalBootstrapResultCount() {
+		t.Fatal("bootstrap catalog")
+	}
+	localID, localOK := local.schema.GlobalBootstrapResultIDAt(0)
+	foreignID, foreignOK := foreign.schema.GlobalBootstrapResultIDAt(0)
+	if !localOK || !foreignOK || localID == foreignID {
+		t.Fatal("bootstrap global identities")
+	}
+	if receipt, ok := rule.ReceiptForID(localID); !ok || receipt != localID {
+		t.Fatal("local bootstrap receipt rejected")
+	}
+	if receipt, ok := rule.ReceiptForID(foreignID); ok || receipt != (keyspace.ContentID{}) {
+		t.Fatal("foreign bootstrap receipt crossed Value owner")
+	}
+	if receipt, ok := rule.ReceiptForID(keyspace.ContentID{}); ok || receipt != (keyspace.ContentID{}) {
+		t.Fatal("zero bootstrap receipt accepted")
+	}
+
+	foreignOwner, foreignRule, foreignBinding := bind(foreign)
+	if foreignOwner == nil || foreignRule == nil || foreignBinding == nil {
+		t.Fatal("foreign bootstrap receipt bind")
+	}
+	foreignIssuer, issued := foreignRule.Implementation()
+	if !issued || foreignIssuer == nil {
+		t.Fatal("foreign bootstrap typed Rule issuer")
+	}
+	if resolved, ok := valueowner.ResolveRuleImplementationFor(foreignOwner, issuer); ok || resolved != nil {
+		t.Fatal("foreign equal-binding accepted the first bootstrap receipt")
+	}
+	if resolved, ok := valueowner.ResolveRuleImplementationFor(foreignOwner, foreignIssuer); !ok || resolved == nil {
+		t.Fatal("foreign equal-binding rejected its own receipt")
+	}
+}
+
+type bootstrapFixtureState struct {
+	schema *valuedomain.Schema
+}
+
+func bootstrapFixture(t testing.TB, name string) *bootstrapFixtureState {
+	t.Helper()
+	programValue, err := lower.Lower(lower.Source{Name: name + ".lua", Text: []byte("local root = _G\nlocal absent = __link_absent\nreturn root, absent\n")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract, err := target.Seal(&target.Spec{
+		InitialRoots: []target.InitialRootSpec{{Identity: "GlobalEnvRoot", Shape: target.BootShapeSpec{Aggregate: target.BootAggregateTable, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}}}},
+		InitialEntries: []target.InitialEntrySpec{
+			{Root: "GlobalEnvRoot", Key: bootstrapLiteral("_G"), Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: target.InitialMutable},
+			{Root: "GlobalEnvRoot", Key: bootstrapLiteral("__link_absent"), Value: target.InitialValueSpec{Kind: target.InitialValueAbsent}, Mutability: target.InitialMutable},
+		},
+		InitialBindings: []target.InitialBindingSpec{
+			{Name: "_G", Root: "GlobalEnvRoot", Key: bootstrapLiteral("_G")},
+			{Name: "__link_absent", Root: "GlobalEnvRoot", Key: bootstrapLiteral("__link_absent")},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	linked, err := link.Seal(&link.Spec{Target: contract, Modules: []linkproject.Module{{Name: name, Program: programValue}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, ok := programschema.Global()
+	if !ok {
+		t.Fatal("program schema receipt")
+	}
+	artifact, failure := schemaadapter.CompileDetailed(programValue.TransformerInput(), receipt)
+	if failure.Available() || artifact == nil {
+		t.Fatalf("compile artifact: %s", failure.Error())
+	}
+	shard, shardOK := linked.Project().Mounts().At(0)
+	module, moduleOK := linked.Project().ModuleKey(shard)
+	programID, programIDOK := linked.Project().Mounts().ProgramID(shard)
+	heapMount, heapMountOK := heapdomain.NewArtifactMount(artifact, module, programID)
+	valueMount, valueMountOK := valuedomain.NewArtifactMount(artifact, module, programID)
+	if !shardOK || !moduleOK || !programIDOK || !heapMountOK || !valueMountOK {
+		t.Fatal("artifact mount")
+	}
+	heaps, heapFailure := heapdomain.SealWithArtifacts(linked, []heapdomain.ArtifactMount{heapMount})
+	schema, valueFailure := valuedomain.SealWithFailure(linked, heaps, []valuedomain.ArtifactMount{valueMount})
+	if heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone || schema.GlobalBootstrapResultCount() == 0 {
+		t.Fatalf("schema seal heap=%s value=%s globals=%d", heapFailure, valueFailure, schema.GlobalBootstrapResultCount())
+	}
+	return &bootstrapFixtureState{schema: schema}
+}
+
+func bootstrapColdSchema(t testing.TB) (*engine.Schema, *valueowner.SchemaFragment, *bootstrap.SchemaFragment) {
+	t.Helper()
+	builder := engine.NewSchema()
+	ownerFragment, ownerOK := valueowner.DeclareSchema(builder, bootstrapKey(32_001), bootstrapKey(32_002))
+	fragment, fragmentOK := bootstrap.DeclareSchema(builder, bootstrapKey(32_003), bootstrapKey(32_004), bootstrapKey(32_005), ownerFragment)
+	if !ownerOK || !fragmentOK {
+		t.Fatal("bootstrap cold schema")
+	}
+	cold, sealOK := builder.Seal()
+	if !sealOK || cold == nil {
+		t.Fatal("bootstrap cold schema seal")
+	}
+	return cold, ownerFragment, fragment
+}
+
+func bootstrapKey(number uint64) engine.SemanticKey {
+	var digest [32]byte
+	binary.BigEndian.PutUint64(digest[24:], number)
+	key, ok := engine.NewSemanticKey(digest, 1)
+	if !ok {
+		panic("bootstrap semantic key")
+	}
+	return key
+}
+
+func bootstrapLiteral(text string) keyspace.LiteralValue {
+	return keyspace.LiteralValue{Kind: keyspace.LiteralString, String: text}
+}

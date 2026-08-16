@@ -9,8 +9,6 @@ import (
 	staticdomain "github.com/wippyai/go-lua/analysis/domain/static"
 	"github.com/wippyai/go-lua/analysis/semantic/typeauthority"
 	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/link"
-	linkboundary "github.com/wippyai/go-lua/program/link/boundary"
 )
 
 // SchemaID is the cold identity of one immutable TypeValue relation. Runtime
@@ -23,9 +21,7 @@ func (id SchemaID) Available() bool { return id != SchemaID{} }
 // universe is derived in New; callers cannot admit roots, descriptors, atoms,
 // names, captures, or summary images.
 type Authority struct {
-	source  *link.Link
 	static  *staticdomain.Authority
-	values  linkboundary.Values
 	heap    heap.Schema
 	runtime *typeauthority.Runtime
 	linkID  keyspace.ContentID
@@ -33,7 +29,7 @@ type Authority struct {
 	roots   []rootRow
 	seeds   []seedRow
 
-	runtimeRoots    map[linkboundary.Value]uint32
+	runtimeRoots    map[keyspace.ContentID]uint32
 	allocationRoots map[heap.Key]uint32
 
 	descriptors     []descriptorRow
@@ -50,16 +46,15 @@ type Authority struct {
 // New seals the relation from Static's already-grounded occurrence rows and
 // Heap's exact allocation schema. Link and Runtime are derived, never passed.
 func New(statics *staticdomain.Authority, heaps heap.Schema) (*Authority, bool) {
-	if statics == nil || statics.Link() == nil || !statics.LinkID().Available() || !statics.ContentID().Available() {
+	if statics == nil || !statics.LinkID().Available() || !statics.ContentID().Available() {
 		return nil, false
 	}
-	source := statics.Link()
 	runtime, runtimeOK := statics.Runtime()
-	if source.Boundary() == nil || heaps.LinkContentID() != source.ContentID() || heaps.Link() != source ||
-		!runtimeOK || runtime == nil || runtime.Link() != source || runtime.LinkID() != source.ContentID() || !runtime.ContentID().Available() {
+	if heaps.LinkContentID() != statics.LinkID() ||
+		!runtimeOK || runtime == nil || runtime.LinkID() != statics.LinkID() || !runtime.ContentID().Available() {
 		return nil, false
 	}
-	a := &Authority{source: source, static: statics, values: source.Boundary().Values(), heap: heaps, runtime: runtime, linkID: source.ContentID()}
+	a := &Authority{static: statics, heap: heaps, runtime: runtime, linkID: statics.LinkID()}
 	if !a.sealRoots() || !a.sealDescriptors() || !a.sealAtomRange() {
 		return nil, false
 	}
@@ -68,6 +63,10 @@ func New(statics *staticdomain.Authority, heaps heap.Schema) (*Authority, bool) 
 		return nil, false
 	}
 	a.nameIndex = nil
+	// Heap is a seal-time source of fresh-root identities. No published
+	// TypeValue authority reopens its Link-backed schema or allocation keys.
+	a.heap = heap.Schema{}
+	a.allocationRoots = nil
 	return a, true
 }
 
@@ -99,14 +98,13 @@ func (a *Authority) schemaID() SchemaID {
 		var id keyspace.ContentID
 		switch row.kind {
 		case rootRuntime:
-			valueID, ok := a.values.ID(row.value)
-			if !ok {
+			if !row.valueID.Available() {
 				return SchemaID{}
 			}
-			id = valueID
+			id = row.valueID
 			_, _ = h.Write(id[:])
 		case rootFresh:
-			id, _ = a.heap.KeyID(row.fresh)
+			id = row.freshID
 			_, _ = h.Write(id[:])
 		}
 	}
@@ -123,10 +121,6 @@ func (a *Authority) schemaID() SchemaID {
 			_, _ = h.Write(innerID[:])
 		}
 		writeUint64(h, uint64(row.name))
-		if row.resolverKind == resolverExact {
-			resolverID, _ := a.source.Static().Namespaces().ResolverContentID(row.resolver)
-			_, _ = h.Write(resolverID[:])
-		}
 	}
 	writeUint64(h, uint64(a.cursorEnd))
 	var id SchemaID

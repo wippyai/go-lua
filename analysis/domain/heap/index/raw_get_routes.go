@@ -16,35 +16,34 @@ func (rule *RawGetRule) locatePack(context engine.SelectorContext, access Access
 		if !ok {
 			return false
 		}
-		ref, ok := rule.packs.Locate(root)
-		if !ok {
+		if rule.runtime.packRoute == nil {
 			return false
 		}
 		mark(seen.payload, uint64(tag))
-		return engine.SelectRoute(context, ref, tag)
+		return rule.runtime.packRoute(context, root, tag)
 	})
 }
 
 func (rule *RawGetRule) locateSource(context engine.SelectorContext, access Access) bool {
 	seen := rule.takeScratch()
 	defer rule.putScratch(seen)
-	return rule.visitSelectedPayloads(context, access, func(_ heapdomain.RawPayloadTag, payload rawPayload) bool {
-		for _, tag := range payload.sources {
+	return rule.visitSelectedPayloads(context, access, func(payloadTag heapdomain.RawPayloadTag, payload rawPayload) bool {
+		tags, tagsOK := rule.runtime.topology.catalog.sourceTags(payloadTag)
+		if !tagsOK {
+			return false
+		}
+		for _, tag := range tags {
 			if marked(seen.source, uint64(tag)) {
 				continue
 			}
-			source, ok := sourceAt(rule.sources, tag)
+			source, ok := rule.sourceAt(tag)
 			if !ok {
 				return false
 			}
-			ref, ok := rule.values.Locate(source.coordinate)
-			if !ok {
+			if rule.runtime.valueRoute == nil || !rule.runtime.valueRoute(context, source.coordinate, uint64(tag)) {
 				return false
 			}
 			mark(seen.source, uint64(tag))
-			if !engine.SelectRoute(context, ref, tag) {
-				return false
-			}
 		}
 		return true
 	})
@@ -62,6 +61,13 @@ func (rule *RawGetRule) visitSelectedPayloads(context engine.SelectorContext, ac
 	if !ok {
 		return false
 	}
+	// The staged Heap read is an authenticated route selection.  An empty
+	// selection therefore proves that no Heap payload was selected; Pack and
+	// Value have no downstream route to project, and must not reopen the key
+	// selector merely to discover the same empty frontier.
+	if count == 0 {
+		return true
+	}
 	return rule.visitContextKeySelectors(context, access, func(selector heapdomain.KeySelector) bool {
 		for index := 0; index < count; index++ {
 			route, cells, selectedOK := engine.SelectorSelectionAt(context, selected, index)
@@ -75,7 +81,7 @@ func (rule *RawGetRule) visitSelectedPayloads(context engine.SelectorContext, ac
 			if !present {
 				continue
 			}
-			if !rule.heap.Schema().VisitRawAccessRoute(route, fact, selector, func(raw heapdomain.RawAccess) bool {
+			if rule.runtime.visitRawRoute == nil || !rule.runtime.visitRawRoute(route, fact, selector, func(raw heapdomain.RawAccess) bool {
 				if raw.IsTop() {
 					return true
 				}
@@ -95,7 +101,7 @@ func (rule *RawGetRule) visitSelectedPayloads(context engine.SelectorContext, ac
 						}
 						return false
 					}
-					payload, ok := payloadAt(rule.payloads, tag)
+					payload, ok := rule.payloadAt(tag)
 					if !ok || !visit(tag, payload) {
 						return false
 					}
@@ -164,5 +170,6 @@ func (rule *RawGetRule) visitContextKeySelectors(context engine.SelectorContext,
 	if !present {
 		return true
 	}
-	return rule.selectors != nil && rule.selectors.Visit(fact, visit)
+	selectors := rule.runtime.topology.selectors
+	return selectors != nil && selectors.Visit(fact, visit)
 }

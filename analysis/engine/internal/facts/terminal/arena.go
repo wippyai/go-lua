@@ -216,9 +216,9 @@ func (work *Work[V]) Admit(value V) (ID[V], bool) {
 	return admitHashed(work.page, hash, value)
 }
 
-// Valid accepts IDs inherited from Work's sealed base and IDs created in this
-// still-open candidate page.  A Work cannot validate an ID from a sibling
-// candidate page.
+// Valid accepts published IDs from Work's sealed base owner (including sealed
+// sibling pages) and IDs created in this still-open candidate page. It rejects
+// IDs from a sibling candidate page until that page is sealed.
 func (work *Work[V]) Valid(id ID[V]) bool {
 	return work != nil && work.open && validPageID(id) && (work.base.Valid(id) || id.page == work.page)
 }

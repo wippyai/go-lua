@@ -14,7 +14,10 @@ import (
 	"github.com/wippyai/go-lua/program/flow/internal/directfunction"
 	"github.com/wippyai/go-lua/program/flow/internal/evaluation"
 	"github.com/wippyai/go-lua/program/flow/internal/executable"
+	"github.com/wippyai/go-lua/program/flow/internal/functionboundary"
 	"github.com/wippyai/go-lua/program/flow/internal/outcome"
+	"github.com/wippyai/go-lua/program/flow/internal/returnprojection"
+	"github.com/wippyai/go-lua/program/flow/internal/semanticpath"
 	"github.com/wippyai/go-lua/program/keyspace"
 	"github.com/wippyai/go-lua/program/module"
 	"github.com/wippyai/go-lua/program/semanticsource"
@@ -72,15 +75,20 @@ type Component struct {
 	containment      containmentProjection
 	outcomes         *outcome.Result
 	ports            *evaluation.Ports
+	programStructure programStructureProjection
 	pending          *evaluation.Pending
 	executable       *executable.Result
 	directFunction   *directfunction.Result
 	candidates       *candidates.Result
 	accessGeometry   *accessgeometry.Result
 	directBinding    *directbinding.Result
-	causal           *causal.Result
 	binaryPrimitives *binaryprimitive.Result
 	continuation     *continuation.Result
+	allocationPaths  [keyspace.FamilyCount][]allocationPath
+	semanticPaths    *semanticpath.Certificate
+	valueSourcePaths [keyspace.FamilyCount][]keyspace.ContentID
+	storagePaths     [keyspace.FamilyCount][]keyspace.ContentID
+	callPaths        []keyspace.ContentID
 	semantic         semanticsource.PublicationRange
 }
 
@@ -102,6 +110,15 @@ type containmentProjection struct {
 	parents []keyspace.Term
 	static  []bool
 	index   [keyspace.FamilyCount][]uint32
+}
+
+// programStructureProjection is Flow's sole retained Program-local structural
+// aggregate. Its boundary and causal relations are sibling owner-issued
+// projections: neither is derived from, or reconstructed through, the other.
+type programStructureProjection struct {
+	boundaries *functionboundary.Result
+	causal     *causal.Result
+	returns    *returnprojection.Result
 }
 
 // View is the typed public query surface over one committed Flow component.
@@ -158,13 +175,15 @@ func (view View) semanticSourceAvailable() bool {
 	}
 	if !outcome.Matches(component.outcomes, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) ||
 		!evaluation.Matches(component.ports, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) ||
+		!functionboundary.Matches(component.programStructure.boundaries, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) ||
+		!returnprojection.Matches(component.programStructure.returns, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) ||
 		!evaluation.MatchesPending(component.pending, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) ||
 		!executable.Matches(component.executable, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) ||
 		!directfunction.Matches(component.directFunction, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) ||
 		!candidates.Matches(component.candidates, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) ||
 		!accessgeometry.Matches(component.accessGeometry, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) ||
 		!directbinding.Matches(component.directBinding, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) ||
-		!causal.Matches(component.causal, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) ||
+		!causal.Matches(component.programStructure.causal, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) ||
 		!binaryprimitive.Matches(component.binaryPrimitives, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) ||
 		!continuation.Matches(component.continuation, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) {
 		return false
@@ -215,6 +234,36 @@ func (view View) Ports() Ports {
 		return Ports{}
 	}
 	return Ports{result: view.component.ports}
+}
+
+// FunctionBoundaries is the sole published Function/Body-boundary join. It
+// carries only existing Source/Flow/Outcome terms, including the explicit
+// assembly root, and is fenced to the complete Flow quartet.
+func (view View) FunctionBoundaries() FunctionBoundaries {
+	if !view.available() {
+		return FunctionBoundaries{}
+	}
+	provenance := view.component.provenance
+	if !view.projectionFence() || !functionboundary.Matches(view.component.programStructure.boundaries, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) {
+		return FunctionBoundaries{}
+	}
+	return FunctionBoundaries{result: view.component.programStructure.boundaries}
+}
+
+// BodyReturns is the sole sealed projection from a Body boundary to its
+// targetless OutcomeReturn and ordered executable Values alternatives.
+func (view View) BodyReturns() BodyReturns {
+	if !view.available() {
+		return BodyReturns{}
+	}
+	provenance := view.component.provenance
+	structure := view.component.programStructure
+	if !view.projectionFence() || !returnprojection.Matches(structure.returns, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) ||
+		!functionboundary.Matches(structure.boundaries, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) ||
+		!causal.Matches(structure.causal, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) {
+		return BodyReturns{}
+	}
+	return BodyReturns{result: structure.returns, causal: structure.causal, boundaries: structure.boundaries}
 }
 
 func (view View) Pending() Pending {
@@ -268,7 +317,7 @@ func (view View) Causal() Causal {
 	if !view.available() {
 		return Causal{}
 	}
-	return Causal{result: view.component.causal}
+	return Causal{result: view.component.programStructure.causal}
 }
 
 func (view View) BinaryPrimitives() BinaryPrimitives {

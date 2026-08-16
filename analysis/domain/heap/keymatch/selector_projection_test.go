@@ -1,4 +1,4 @@
-package keymatch
+package keymatch_test
 
 import (
 	"strconv"
@@ -6,13 +6,14 @@ import (
 	"testing"
 
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
+	keymatch "github.com/wippyai/go-lua/analysis/domain/heap/keymatch"
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 )
 
 func TestSelectorProjectionIsCompleteUniqueCanonicalAndOwnerFenced(t *testing.T) {
 	heap, values, _ := fixture(t, "keymatch_selector_projection", selectorProjectionSource(12))
-	projection, sealed := NewSelectorProjection(heap, values)
+	projection, sealed := keymatch.NewSelectorProjection(heap, values)
 	if !sealed {
 		t.Fatal("selector projection")
 	}
@@ -47,11 +48,8 @@ func TestSelectorProjectionIsCompleteUniqueCanonicalAndOwnerFenced(t *testing.T)
 		t.Fatal("selector projection order depends on input construction order")
 	}
 
-	foreignHeap, foreignValues, _ := fixture(t, "keymatch_selector_projection_foreign", selectorProjectionSource(2))
-	if foreignHeap.Link() == heap.Link() {
-		t.Fatal("foreign fixture reused Link authority")
-	}
-	if _, ok := NewSelectorProjection(heap, foreignValues); ok {
+	_, foreignValues, _ := fixture(t, "keymatch_selector_projection_foreign", selectorProjectionSource(2))
+	if _, ok := keymatch.NewSelectorProjection(heap, foreignValues); ok {
 		t.Fatal("selector projection accepted foreign Value owner")
 	}
 	if projection.Visit(foreignValues.Top(), func(heapdomain.KeySelector) bool { return true }) {
@@ -67,23 +65,23 @@ func TestSelectorProjectionRejectsSameLinkResealedHeap(t *testing.T) {
 	if !values.OwnsHeapSchema(heap) {
 		t.Fatal("Value did not retain the exact Heap schema handle")
 	}
-	projection, ok := NewSelectorProjection(heap, values)
+	projection, ok := keymatch.NewSelectorProjection(heap, values)
 	if !ok || projection == nil {
 		t.Fatal("exact Value/Heap schema pair was rejected")
 	}
 
-	resealed, resealedOK := heapdomain.Seal(linked)
-	if !resealedOK || values.OwnsHeapSchema(resealed) {
+	resealed, resealedFailure := heapdomain.SealWithArtifacts(linked, keymatchHeapMounts(t, linked))
+	if resealedFailure != heapdomain.SealFailureNone || values.OwnsHeapSchema(resealed) {
 		t.Fatal("independently resealed same-Link Heap was not distinguished")
 	}
-	if _, ok := NewSelectorProjection(resealed, values); ok {
+	if _, ok := keymatch.NewSelectorProjection(resealed, values); ok {
 		t.Fatal("selector projection accepted independently resealed Heap")
 	}
 	atom, atomOK := values.OpaqueKind(runtimekind.Number)
 	if !atomOK || !atom.TableKeyValidity().MayBeValid() {
 		t.Fatal("Value key atom")
 	}
-	if _, ok := Project(resealed, values, atom); ok {
+	if _, ok := keymatch.Project(resealed, values, atom); ok {
 		t.Fatal("Project accepted independently resealed Heap")
 	}
 }
@@ -97,13 +95,13 @@ func TestSelectorProjectionCollapsesRepeatedKindsAtScale(t *testing.T) {
 	for _, count := range []int{64, 1024} {
 		t.Run(selectorProjectionScaleName(count), func(t *testing.T) {
 			heap, values, _ := fixture(t, "keymatch_selector_projection_scale", selectorProjectionSource(count))
-			projection, sealed := NewSelectorProjection(heap, values)
+			projection, sealed := keymatch.NewSelectorProjection(heap, values)
 			if !sealed {
 				t.Fatal("selector projection")
 			}
 			rawTableKinds := 0
 			if !values.VisitSupport(values.Top(), func(atom valuedomain.Atom) {
-				alternative, ok := Project(heap, values, atom)
+				alternative, ok := keymatch.Project(heap, values, atom)
 				if ok && alternative.Selector().Kind() == heapdomain.KeySelectorKinds && alternative.Selector().RuntimeKinds() == runtimekind.Bit(runtimekind.Table) {
 					rawTableKinds++
 				}
@@ -126,7 +124,7 @@ func TestSelectorProjectionCollapsesRepeatedKindsAtScale(t *testing.T) {
 
 func TestSelectorProjectionWarmVisitAllocatesNothing(t *testing.T) {
 	heap, values, _ := fixture(t, "keymatch_selector_projection_warm", selectorProjectionSource(256))
-	projection, sealed := NewSelectorProjection(heap, values)
+	projection, sealed := keymatch.NewSelectorProjection(heap, values)
 	if !sealed {
 		t.Fatal("selector projection")
 	}
@@ -147,7 +145,7 @@ func TestSelectorProjectionWarmVisitAllocatesNothing(t *testing.T) {
 	}
 }
 
-func projectedSelectors(t testing.TB, projection *SelectorProjection, value valuedomain.Value) []heapdomain.KeySelector {
+func projectedSelectors(t testing.TB, projection *keymatch.SelectorProjection, value valuedomain.Value) []heapdomain.KeySelector {
 	t.Helper()
 	var selectors []heapdomain.KeySelector
 	if projection == nil || !projection.Visit(value, func(selector heapdomain.KeySelector) bool {
@@ -163,7 +161,7 @@ func directDistinctSelectors(t testing.TB, heap heapdomain.Schema, values *value
 	t.Helper()
 	var selectors []heapdomain.KeySelector
 	if values == nil || !values.VisitSupport(value, func(atom valuedomain.Atom) {
-		alternative, ok := Project(heap, values, atom)
+		alternative, ok := keymatch.Project(heap, values, atom)
 		if !ok || containsSelector(selectors, alternative.Selector()) {
 			return
 		}

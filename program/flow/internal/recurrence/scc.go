@@ -20,7 +20,7 @@ type components struct {
 
 func deriveComponents(graph *sourcecontrol.Result) (components, error) {
 	var empty components
-	if graph == nil || graph.NodeCount() == 0 {
+	if graph == nil || graph.NodeCount() == 0 || !graph.VertexCatalogAvailable() {
 		return empty, errors.New("program/flow/recurrence: sourcecontrol graph is unavailable")
 	}
 	nodeCount := graph.NodeCount()
@@ -32,7 +32,11 @@ func deriveComponents(graph *sourcecontrol.Result) (components, error) {
 	// depth out of the seal path even for a generated deep body.
 	visited := make([]bool, int(nodeCount))
 	finish := make([]uint32, 0)
-	for start := uint32(0); start < nodeCount; start++ {
+	for ordinal := 0; ordinal < int(nodeCount); ordinal++ {
+		start, canonical := graph.CanonicalNodeAt(ordinal)
+		if !canonical {
+			return empty, errors.New("program/flow/recurrence: canonical vertex permutation is unavailable")
+		}
 		if !graph.Reachable(start) || visited[start] {
 			continue
 		}

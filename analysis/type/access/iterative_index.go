@@ -386,11 +386,11 @@ func iterativeKeyMayBeInteger(key typ.Type) bool {
 			continue
 		}
 		if literal, ok := base.(*typ.Literal); ok {
-			if literal.Base == kind.Integer {
+			if literal.Base() == kind.Integer {
 				return true
 			}
-			if literal.Base == kind.Number {
-				if number, ok := literal.Value.(float64); ok && number == float64(int64(number)) {
+			if literal.Base() == kind.Number {
+				if number, ok := literal.Value().(float64); ok && number == float64(int64(number)) {
 					return true
 				}
 			}

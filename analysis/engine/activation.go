@@ -69,7 +69,7 @@ func Activate(value Activation, application, target, endpoint SemanticKey) bool 
 		}
 		return false
 	}
-	member, selected := value.execution.owner.topology.SelectMember(value.execution.owner.trigger, equation.PairLocator{
+	member, selected := value.execution.owner.topology.SelectReceiptMember(value.execution.owner.trigger, equation.PairLocator{
 		Application: application.compositionKey(),
 		Target:      target.compositionKey(),
 		Endpoint:    endpoint.compositionKey(),
@@ -109,7 +109,7 @@ func ActivationApplication(value Activation) (SemanticKey, bool) {
 // checks as SupportReadValue, without granting a factor write surface.
 func ActivationReadValue[S any](value Activation, read Read[S]) (S, bool) {
 	var zero S
-	if !value.live() || read.rule == nil || value.execution.owner == nil || read.rule != value.execution.owner.rule || read.index < 0 || read.index >= len(value.execution.frame.product.reads) || read.resolve == nil {
+	if !value.live() || value.execution.owner == nil || !read.matchesRuntimeOwner(value.execution.owner) || read.index < 0 || read.index >= len(value.execution.frame.product.reads) || read.resolve == nil {
 		if value.execution != nil && value.execution.frame != nil {
 			value.execution.frame.failed.Store(true)
 		}
@@ -151,7 +151,9 @@ type activationSelection struct {
 }
 
 type compiledActivationRule struct {
-	rule        *ruleSchema
+	proof       *ruleRuntimeProof
+	schema      *Schema
+	receipt     *ActivationRuleImplementation
 	admission   RuleAdmission[ActivationResult, ruleUnit]
 	run         func(*activationExecution) bool
 	topology    *equation.Topology
@@ -164,16 +166,31 @@ type compiledActivationRule struct {
 }
 
 func (compiled *compiledActivationRule) executableInstance() bool {
-	return compiled != nil && compiled.rule != nil && compiled.rule.activation != nil && compiled.rule.output == nil && compiled.rule.inputs >= 0 &&
-		compiled.rule.activation.family != nil && compiled.admission.same(compiled.rule.admission) && compiled.run != nil && compiled.topology != nil && compiled.trigger.Available() &&
-		compiled.application.Available() && compiled.anchor.Available() && compiled.graph != nil && compiled.rule.semantic.Available()
+	if compiled == nil || compiled.proof == nil || !compiled.proof.valid() || !compiled.admission.valid() || compiled.run == nil || compiled.topology == nil || !compiled.trigger.Available() || !compiled.application.Available() || !compiled.anchor.Available() || compiled.graph == nil {
+		return false
+	}
+	if compiled.receipt != nil {
+		shape, ok := compiled.proof.schema.ruleShapeAt(compiled.proof.ordinal)
+		return compiled.schema == compiled.proof.schema && compiled.receipt.receipt.valid() && compiled.proof.state != nil && compiled.proof.outputKind == composition.StructuralOutput && compiled.proof.output == (composition.Key{}) && ok && shape.ActivationFamily.Available()
+	}
+	return false
 }
 
-func (compiled *compiledActivationRule) ruleSchema() *ruleSchema {
+func (compiled *compiledActivationRule) runtimeRuleProof() *ruleRuntimeProof {
 	if compiled == nil {
 		return nil
 	}
-	return compiled.rule
+	return compiled.proof
+}
+
+func (compiled *compiledActivationRule) declaredReadCount() uint64 {
+	if compiled == nil {
+		return 0
+	}
+	if compiled.receipt != nil {
+		return compiled.proof.reads
+	}
+	return 0
 }
 
 func (compiled *compiledActivationRule) requiresDerivation() bool {
@@ -181,7 +198,7 @@ func (compiled *compiledActivationRule) requiresDerivation() bool {
 }
 
 func (compiled *compiledActivationRule) appendReadRuntime(read readRuntime) bool {
-	if compiled == nil || compiled.rule == nil || read == nil || len(compiled.reads) >= len(compiled.rule.reads) {
+	if compiled == nil || read == nil || uint64(len(compiled.reads)) >= compiled.declaredReadCount() {
 		return false
 	}
 	compiled.reads = append(compiled.reads, read)
@@ -217,13 +234,19 @@ func (compiled *compiledActivationRule) dynamicReads() []demand.DynamicRead {
 	return result
 }
 
-func (compiled *compiledActivationRule) execute(work *carrier.Work, base carrier.RuleContributionBase, inputs []carrier.State, within support.Mask) (selected []equation.AcceptedMember, reads []demand.Observation, accepted bool) {
-	if !compiled.executableInstance() || work == nil || !work.OwnsRuleContributionStates(base, inputs) || len(compiled.reads) != len(compiled.rule.reads) {
-		return nil, nil, false
+func (compiled *compiledActivationRule) execute(work *carrier.Work, base carrier.RuleContributionBase, inputs []carrier.State, within support.Mask) (selected []equation.AcceptedMember, reads []demand.Observation, accepted bool, phase SolveFailurePhase) {
+	if !compiled.executableInstance() {
+		return nil, nil, false, SolveFailurePhaseActivationInstance
+	}
+	if work == nil || !work.OwnsRuleContributionStates(base, inputs) {
+		return nil, nil, false, SolveFailurePhaseActivationContribution
+	}
+	if uint64(len(compiled.reads)) != compiled.declaredReadCount() {
+		return nil, nil, false, SolveFailurePhaseActivationReads
 	}
 	epoch := compiled.nextEpoch.Add(1)
 	if epoch == 0 {
-		return nil, nil, false
+		return nil, nil, false, SolveFailurePhaseActivationEpoch
 	}
 	frame := &ruleExecution{owner: compiled, work: work, base: base, inputs: append([]carrier.State(nil), inputs...), epoch: epoch}
 	frame.active.Store(epoch)
@@ -236,12 +259,12 @@ func (compiled *compiledActivationRule) execute(work *carrier.Work, base carrier
 		frame.active.CompareAndSwap(epoch, 0)
 		execution.active.CompareAndSwap(epoch, 0)
 		if recover() != nil {
-			selected, reads, accepted = nil, nil, false
+			selected, reads, accepted, phase = nil, nil, false, SolveFailurePhasePreflight
 		}
 	}()
 	product, okay := newProductSession(frame, compiled.reads, work, inputs, within)
 	if !okay || product == nil || !product.started.CompareAndSwap(false, true) {
-		return nil, nil, false
+		return nil, nil, false, SolveFailurePhaseActivationProduct
 	}
 	frame.product = product
 	var dispositions []RuleDisposition[ActivationResult]
@@ -251,17 +274,17 @@ func (compiled *compiledActivationRule) execute(work *carrier.Work, base carrier
 	selections := make([]activationSelection, 0)
 	for index := 0; index < product.rows.Count(); index++ {
 		if !product.requireCheckpoint() {
-			return nil, nil, false
+			return nil, nil, false, SolveFailurePhaseCheckpoint
 		}
 		region, rowOK := product.rows.At(index)
 		if !rowOK {
-			return nil, nil, false
+			return nil, nil, false, SolveFailurePhasePreflight
 		}
 		execution.row, execution.region = index, region
 		execution.selected = execution.selected[:0]
 		execution.locators = execution.locators[:0]
 		if !compiled.run(execution) || !product.requireCheckpoint() || frame.failed.Load() {
-			return nil, nil, false
+			return nil, nil, false, SolveFailurePhaseTransfer
 		}
 		// Keep every row selection until the complete Product is known. A
 		// Member selected on P and Q must be unioned as one support premise
@@ -270,34 +293,40 @@ func (compiled *compiledActivationRule) execute(work *carrier.Work, base carrier
 		if compiled.requiresDerivation() {
 			locators, canonicalLocators := canonicalActivationLocators(execution.locators)
 			if !canonicalLocators {
-				return nil, nil, false
+				return nil, nil, false, SolveFailurePhaseDerivation
 			}
 			dispositions = append(dispositions, RuleDisposition[ActivationResult]{kind: RuleDispositionStaged, value: ActivationResult{selections: locators}, guard: RuleGuard{mask: region}, row: ruleResultRow{index: index}, ordinal: index})
 		}
 	}
 	reads = product.observations()
 	if !product.requireCheckpoint() {
-		return nil, nil, false
+		return nil, nil, false, SolveFailurePhaseCheckpoint
 	}
 	var canonical bool
 	selections, canonical = canonicalActivationSelections(selections, product.requireCheckpoint)
 	if !canonical {
-		return nil, nil, false
+		return nil, nil, false, SolveFailurePhaseDerivation
 	}
 	derivation, ticket, valid := compiled.derivation(frame, reads, dispositions)
 	if !valid {
-		return nil, nil, false
+		return nil, nil, false, SolveFailurePhaseDerivation
 	}
 	defer ticket.invalidate()
-	evidence, admitted := compiled.admission.admit(derivation, compiled.rule.composition, compiled.rule)
-	if !product.requireCheckpoint() || !admitted {
-		return nil, nil, false
+	evidence, admitted := compiled.admission.admit(derivation, ticket.proof)
+	if !product.requireCheckpoint() {
+		return nil, nil, false, SolveFailurePhaseCheckpoint
+	}
+	if !admitted {
+		return nil, nil, false, SolveFailurePhaseAdmission
 	}
 	selected, valid = compiled.admitSelections(selections, product)
-	if !valid || !evidence.consume() {
-		return nil, nil, false
+	if !valid {
+		return nil, nil, false, SolveFailurePhaseAdmission
 	}
-	return selected, reads, true
+	if !evidence.consume() {
+		return nil, nil, false, SolveFailurePhasePublication
+	}
+	return selected, reads, true, SolveFailurePhaseNone
 }
 
 func canonicalActivationSelections(values []activationSelection, checkpoint func() bool) ([]activationSelection, bool) {
@@ -469,9 +498,9 @@ func activationPremise(graph *equation.Graph, region support.Mask, checkpoint fu
 	return equation.NewExprDAGWithCheckpoint(rows, ordinal, checkpoint)
 }
 
-func retainActivationRun(rule *ruleSchema, run func(Activation) bool) func(*activationExecution) bool {
+func retainActivationRunReceipt(compiled *compiledActivationRule, run func(Activation) bool) func(*activationExecution) bool {
 	return func(execution *activationExecution) bool {
-		if rule == nil || rule.activation == nil || run == nil || execution == nil || execution.owner == nil || execution.owner.rule != rule || execution.epoch == 0 || execution.active.Load() != execution.epoch || execution.frame == nil || execution.frame.product == nil || !execution.frame.product.requireCheckpoint() || !execution.region.Valid() || execution.row < 0 {
+		if compiled == nil || compiled.receipt == nil || run == nil || execution == nil || execution.owner != compiled || execution.epoch == 0 || execution.active.Load() != execution.epoch || execution.frame == nil || execution.frame.product == nil || !execution.frame.product.requireCheckpoint() || execution.row < 0 {
 			return false
 		}
 		call := execution.nextCall.Add(1)
@@ -485,10 +514,15 @@ func retainActivationRun(rule *ruleSchema, run func(Activation) bool) func(*acti
 }
 
 func (compiled *compiledActivationRule) derivation(execution *ruleExecution, reads []demand.Observation, dispositions []RuleDisposition[ActivationResult]) (RuleDerivation[ActivationResult, ruleUnit], *ruleAdmissionTicket, bool) {
-	if compiled == nil || compiled.rule == nil || !compiled.admission.same(compiled.rule.admission) || execution == nil || execution.owner != compiled || execution.product == nil || !execution.product.requireCheckpoint() || execution.epoch == 0 || execution.active.Load() != execution.epoch || !compiled.anchor.Available() || compiled.rule.composition == nil || !compiled.rule.composition.Sealed() {
+	if compiled == nil || execution == nil || execution.owner != compiled || execution.product == nil || !execution.product.requireCheckpoint() || execution.epoch == 0 || execution.active.Load() != execution.epoch || !compiled.anchor.Available() || !compiled.admission.valid() || compiled.receipt == nil {
 		return RuleDerivation[ActivationResult, ruleUnit]{}, nil, false
 	}
-	ticket := &ruleAdmissionTicket{rule: compiled.rule, composition: compiled.rule.composition.ID(), identity: compiled.admission.identity, epoch: execution.epoch, anchor: compiled.anchor, execution: execution, product: execution.product, live: true}
+	proof := compiled.proof
+	if proof == nil || !proof.valid() || !compiled.admission.same(proof.admission) {
+		return RuleDerivation[ActivationResult, ruleUnit]{}, nil, false
+	}
+	compositionID := proof.compositionID()
+	ticket := &ruleAdmissionTicket{proof: proof, composition: compositionID, identity: compiled.admission.identity, epoch: execution.epoch, anchor: compiled.anchor, execution: execution, product: execution.product, live: true}
 	if !compiled.requiresDerivation() {
 		return RuleDerivation[ActivationResult, ruleUnit]{ticket: ticket}, ticket, true
 	}
@@ -516,21 +550,30 @@ func (compiled *compiledActivationRule) derivation(execution *ruleExecution, rea
 		dispositions[index].row.ticket = ticket
 		dispositions[index].ordinal = index
 	}
-	return RuleDerivation[ActivationResult, ruleUnit]{rule: compiled.rule, composition: compiled.rule.composition.ID(), identity: compiled.admission.identity, epoch: execution.epoch, anchor: compiled.anchor, inputs: inputs, reads: proofReads, dispositions: dispositions, product: execution.product, ticket: ticket}, ticket, execution.product.requireCheckpoint()
+	return RuleDerivation[ActivationResult, ruleUnit]{proof: proof, composition: compositionID, identity: compiled.admission.identity, epoch: execution.epoch, anchor: compiled.anchor, inputs: inputs, reads: proofReads, dispositions: dispositions, product: execution.product, ticket: ticket}, ticket, execution.product.requireCheckpoint()
 }
 
-func compileActivationRule(rule *ActivationRule, topology *equation.Topology, trigger composition.Key, graph *equation.Graph) (*compiledActivationRule, bool) {
-	if rule == nil || !rule.available() || !rule.composition.Sealed() || rule.schema == nil || !rule.admission.same(rule.schema.admission) || !validColdActivationRule(rule.composition, rule.schema) || rule.run == nil || topology == nil || graph == nil || !trigger.Available() {
+// compileActivationRuleReceipt is the receipt-native activation compiler for a
+// compiler. It consumes the exact SchemaBinding proof and graph-owned trigger
+// member; it never reconstructs a declaration-shaped rule.
+func compileActivationRuleReceipt(implementation *ActivationRuleImplementation, topology *equation.Topology, trigger composition.Key, graph *equation.Graph) (*compiledActivationRule, bool) {
+	if implementation == nil || !implementation.receipt.valid() || topology == nil || graph == nil ||
+		!topology.OwnsComposition(implementation.receipt.proof.schema.cold) || !topology.OwnsGraph(graph) || !trigger.Available() {
 		return nil, false
 	}
-	if _, bound := topology.ActivationBinding(trigger, rule.schema.activation.family.semantic.compositionKey()); !bound {
+	proof := implementation.receipt.proof
+	shape, shapeOK := proof.schema.ruleShapeAt(proof.ordinal)
+	if !shapeOK || shape.OutputKind != composition.StructuralOutput || shape.ActivationCount != 1 || !shape.ActivationFamily.Available() {
 		return nil, false
 	}
-	application, projected := topology.ActivationApplication(trigger, rule.schema.activation.family.semantic.compositionKey())
+	if _, bound := topology.ActivationReceipt(trigger, shape.ActivationFamily); !bound {
+		return nil, false
+	}
+	application, projected := topology.ActivationApplication(trigger, shape.ActivationFamily)
 	if !projected {
 		return nil, false
 	}
-	compiled := &compiledActivationRule{rule: rule.schema, admission: rule.admission, topology: topology, trigger: trigger, application: semanticKeyFromComposition(application), graph: graph}
-	compiled.run = retainActivationRun(rule.schema, rule.run)
+	compiled := &compiledActivationRule{proof: proof, schema: proof.schema, receipt: implementation, admission: implementation.receipt.cell.impl.admission, topology: topology, trigger: trigger, application: semanticKeyFromComposition(application), graph: graph}
+	compiled.run = retainActivationRunReceipt(compiled, implementation.receipt.cell.impl.run)
 	return compiled, true
 }

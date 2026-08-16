@@ -25,7 +25,7 @@ func TestStaticClosedAdmissionRejectsDanglingRecursiveGraphs(t *testing.T) {
 	}
 }
 
-func TestStaticClosedAdmissionAcceptsProductiveRecursiveGraph(t *testing.T) {
+func TestStaticClosedAdmissionRejectsUnissuedProductiveRecursiveGraph(t *testing.T) {
 	authority := &Authority{
 		results:       []resultRow{{kind: KindBottom}, {kind: KindTop}},
 		closedByBytes: make(map[string]Value),
@@ -33,7 +33,7 @@ func TestStaticClosedAdmissionAcceptsProductiveRecursiveGraph(t *testing.T) {
 	closed := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
 		return typ.NewArray(self)
 	})
-	if _, err := authority.addClosed(closed); err != nil {
-		t.Fatalf("productive recursive graph rejected: %v", err)
+	if _, err := authority.addClosed(closed); err == nil {
+		t.Fatal("unissued productive recursive graph was admitted")
 	}
 }

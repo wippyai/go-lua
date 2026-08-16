@@ -91,6 +91,22 @@ type targetRowEmitter struct {
 	failed bool
 }
 
+func writePublicationEffectDescriptor(writer *targetReceiptWriter, descriptor PublicationEffectDescriptor) {
+	if writer == nil || !descriptor.validConsequences() {
+		if writer != nil {
+			writer.valid = false
+		}
+		return
+	}
+	writer.u64(uint64(descriptor.Kind()))
+	writer.u64(uint64(descriptor.Subject()))
+	writer.u64(uint64(descriptor.DestinationRole()))
+	writer.u64(uint64(descriptor.Context()))
+	writer.u64(uint64(descriptor.Escape()))
+	writer.u64(uint64(descriptor.Mutability()))
+	writer.u64(uint64(descriptor.Lifetime()))
+}
+
 func (emitter *targetRowEmitter) row(write func(*targetReceiptWriter)) {
 	if emitter == nil || emitter.failed || write == nil {
 		return
@@ -340,6 +356,70 @@ func (c *Contract) buildTargetViews() (SemanticSourceViews, bool) {
 					writer.valid = false
 				}
 			})
+		}
+	})
+	if !ok {
+		return SemanticSourceViews{}, false
+	}
+	views.publicationEffect, ok = targetTypedRows(c, tokenTarget(semanticsource.OriginTargetOperation, semanticsource.FacetTargetPublicationEffect), func(emitter *targetRowEmitter) {
+		for operationIndex := 0; operationIndex < c.OperationCount(); operationIndex++ {
+			op, found := c.OperationAt(operationIndex)
+			if !found {
+				emitter.failed = true
+				return
+			}
+			ownerID, ownerOK := c.EffectOperationID(op)
+			if !ownerOK {
+				emitter.failed = true
+				return
+			}
+			for effectIndex := 0; effectIndex < c.EffectCount(op); effectIndex++ {
+				descriptor, present := c.PublicationEffectDescriptor(op, effectIndex)
+				if !present {
+					continue
+				}
+				descriptorID, descriptorOK := c.PublicationEffectDescriptorID(op, effectIndex)
+				occurrenceID, occurrenceOK := c.PublicationEffectOccurrenceID(op, effectIndex)
+				emitter.row(func(writer *targetReceiptWriter) {
+					writer.id(ownerID)
+					writer.id(descriptorID)
+					writer.id(occurrenceID)
+					writePublicationEffectDescriptor(writer, descriptor)
+					if !descriptorOK || !occurrenceOK {
+						writer.valid = false
+					}
+				})
+			}
+			for callbackIndex := 0; callbackIndex < c.CallbackCount(op); callbackIndex++ {
+				callback, callbackOK := c.CallbackAt(op, callbackIndex)
+				if !callbackOK {
+					emitter.failed = true
+					return
+				}
+				callbackID, callbackIDOK := c.CallbackContentID(op, callback)
+				if !callbackIDOK {
+					emitter.failed = true
+					return
+				}
+				for effectIndex := 0; effectIndex < c.CallbackEffectCount(callback); effectIndex++ {
+					descriptor, present := c.CallbackPublicationEffectDescriptor(callback, effectIndex)
+					if !present {
+						continue
+					}
+					descriptorID, descriptorOK := c.CallbackPublicationEffectDescriptorID(callback, effectIndex)
+					occurrenceID, occurrenceOK := c.CallbackPublicationEffectOccurrenceID(callback, effectIndex)
+					emitter.row(func(writer *targetReceiptWriter) {
+						writer.id(ownerID)
+						writer.id(callbackID)
+						writer.id(descriptorID)
+						writer.id(occurrenceID)
+						writePublicationEffectDescriptor(writer, descriptor)
+						if !descriptorOK || !occurrenceOK {
+							writer.valid = false
+						}
+					})
+				}
+			}
 		}
 	})
 	if !ok {

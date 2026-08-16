@@ -329,7 +329,7 @@ func TestResumePayloadTransportUsesOnlyExistingValuesRelations(t *testing.T) {
 			Input:      ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesVariable, Var: 0},
 			Outcomes: []OutcomeSpec{
 				{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesVariable, Var: 1}},
-				{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{typ.False}, Tail: ValuesClosed}},
+				{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{typ.LiteralBool(false)}, Tail: ValuesClosed}},
 			},
 			Resumes: []ResumeSpec{{
 				Source: ResumeSourceValueFormal, Carrier: 0, Arguments: callbackTail(0),

@@ -361,13 +361,13 @@ func TestTypeEqualsLiteralInt(t *testing.T) {
 }
 
 func TestTypeEqualsLiteralBool(t *testing.T) {
-	if !typeEquals(True, True) {
+	if !typeEquals(LiteralBool(true), LiteralBool(true)) {
 		t.Error("true should equal true")
 	}
-	if !typeEquals(False, False) {
+	if !typeEquals(LiteralBool(false), LiteralBool(false)) {
 		t.Error("false should equal false")
 	}
-	if typeEquals(True, False) {
+	if typeEquals(LiteralBool(true), LiteralBool(false)) {
 		t.Error("true should not equal false")
 	}
 }

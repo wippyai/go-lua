@@ -2,7 +2,6 @@ package product
 
 import (
 	"fmt"
-	"reflect"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -57,7 +56,7 @@ func EditSet[T any](ed *Editor, key axis.Key[T], value T) {
 	if !ok {
 		panic(fmt.Sprintf("product: unregistered axis %q", key.ID()))
 	}
-	wantType := reflect.TypeFor[T]()
+	wantType := key.Type()
 	if wantType != info.topType {
 		panic(fmt.Sprintf("product: axis %q has incompatible typed key type %v, want %v", key.ID(), wantType, info.topType))
 	}

@@ -106,7 +106,7 @@ func literalAtPath(t typ.Type, suffix []segment.Segment) (*typ.Literal, bool) {
 }
 
 func literalCanDiscriminate(lit *typ.Literal) bool {
-	return lit != nil && (lit.Base == kind.String || lit.Base == kind.Boolean)
+	return lit != nil && (lit.Base() == kind.String || lit.Base() == kind.Boolean)
 }
 
 func cloneSegments(in []segment.Segment) []segment.Segment {

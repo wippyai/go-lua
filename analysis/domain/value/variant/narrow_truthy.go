@@ -15,7 +15,7 @@ import (
 // rather than a structural literal-tag comparison.
 func isTruthySentinel(lit typ.Type) bool {
 	l, ok := unwrap.Annotated(lit).(*typ.Literal)
-	return ok && l.Base == kind.Boolean && l.Value == true
+	return ok && l.Base() == kind.Boolean && l.Value() == true
 }
 
 // NarrowByPathTruthy keeps variants whose member path can be truthy under Lua
@@ -155,7 +155,7 @@ func typeCanBeTruthySeen(t typ.Type, active *typegraph.Path) bool {
 		}
 		return false
 	case *typ.Literal:
-		return !(v.Base == kind.Boolean && v.Value == false)
+		return !(v.Base() == kind.Boolean && v.Value() == false)
 	default:
 		if v == nil {
 			return false
@@ -205,7 +205,7 @@ func typeCanBeFalsySeen(t typ.Type, active *typegraph.Path) bool {
 		}
 		return false
 	case *typ.Literal:
-		return v.Base == kind.Boolean && v.Value == false
+		return v.Base() == kind.Boolean && v.Value() == false
 	default:
 		normalized := unwrap.NormalizeNil(unwrap.Annotated(t))
 		if normalized == nil {

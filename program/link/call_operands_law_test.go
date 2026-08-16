@@ -25,16 +25,18 @@ local arithmetic = 1 + 2
 	plainCall := globalCall(t, p, "plain")
 	method := callApplicationForCall(t, linked, methodCall)
 	plain := callApplicationForCall(t, linked, plainCall)
+	methodMounted, methodOccurrence := mountedCallForApplication(t, linked, method)
+	plainMounted, plainOccurrence := mountedCallForApplication(t, linked, plain)
 
 	_, methodCallee, methodReceiver, methodActuals, methodOK := p.Flow().Authored().Calls().Get(methodCall)
 	if !methodOK || methodCallee == 0 || methodReceiver == 0 || methodActuals == 0 {
 		t.Fatal("method Program Call")
 	}
-	methodCalleeValue, methodCalleeOK := linked.Boundary().Calls().Callee(method)
+	methodCalleeValue, methodCalleeOK := linked.Boundary().Calls().MountedCallCallee(methodMounted, methodOccurrence)
 	if !methodCalleeOK || !valueOriginIs(linked, methodCalleeValue, methodCallee) {
 		t.Fatalf("method call callee = %v/%t", methodCalleeValue, methodCalleeOK)
 	}
-	form, receiver, actuals, operandsOK := linked.Boundary().Calls().CallOperands(method)
+	form, receiver, actuals, operandsOK := linked.Boundary().Calls().MountedCallOperands(methodMounted, methodOccurrence)
 	if !operandsOK || form != flow.CallFormMethod || !valueOriginIs(linked, receiver, methodReceiver) || !valueOriginIs(linked, actuals, methodActuals) {
 		t.Fatalf("method call operands = form:%v receiver:%v actuals:%v ok:%v", form, receiver, actuals, operandsOK)
 	}
@@ -43,19 +45,19 @@ local arithmetic = 1 + 2
 	if !plainOK || plainCallee == 0 || plainReceiver != 0 || plainActuals == 0 {
 		t.Fatal("plain Program Call")
 	}
-	plainCalleeValue, plainCalleeOK := linked.Boundary().Calls().Callee(plain)
+	plainCalleeValue, plainCalleeOK := linked.Boundary().Calls().MountedCallCallee(plainMounted, plainOccurrence)
 	if !plainCalleeOK || !valueOriginIs(linked, plainCalleeValue, plainCallee) {
 		t.Fatalf("plain call callee = %v/%t", plainCalleeValue, plainCalleeOK)
 	}
-	form, receiver, actuals, operandsOK = linked.Boundary().Calls().CallOperands(plain)
+	form, receiver, actuals, operandsOK = linked.Boundary().Calls().MountedCallOperands(plainMounted, plainOccurrence)
 	if !operandsOK || form != flow.CallFormPlain || receiver != (linkboundary.Value{}) || !valueOriginIs(linked, actuals, plainActuals) {
 		t.Fatalf("plain call operands = form:%v receiver:%v actuals:%v ok:%v", form, receiver, actuals, operandsOK)
 	}
-	if _, _, _, ok := linked.Boundary().Calls().CallOperands(linkproject.Application{}); ok {
-		t.Fatal("zero Application yielded call operands")
+	if _, _, _, ok := linked.Boundary().Calls().MountedCallOperands(linkproject.CallApplication{}, program.CallOccurrence{}); ok {
+		t.Fatal("zero mounted proof yielded call operands")
 	}
-	if _, ok := linked.Boundary().Calls().Callee(linkproject.Application{}); ok {
-		t.Fatal("zero Application yielded callee")
+	if _, ok := linked.Boundary().Calls().MountedCallCallee(linkproject.CallApplication{}, program.CallOccurrence{}); ok {
+		t.Fatal("zero mounted proof yielded callee")
 	}
 	applications := linked.Project().Applications()
 	var arithmetic linkproject.Application
@@ -72,16 +74,29 @@ local arithmetic = 1 + 2
 	if arithmetic == (linkproject.Application{}) {
 		t.Fatal("arithmetic application unavailable")
 	}
-	if _, ok := linked.Boundary().Calls().Callee(arithmetic); ok {
+	if _, ok := linked.Project().Applications().Calls().ForApplication(arithmetic); ok {
 		t.Fatal("non-Call application yielded callee")
 	}
 	foreign := linkedForOperands(t, p)
-	if _, _, _, ok := foreign.Boundary().Calls().CallOperands(method); ok {
-		t.Fatal("foreign Link accepted call Application")
+	if _, _, _, ok := foreign.Boundary().Calls().MountedCallOperands(methodMounted, methodOccurrence); ok {
+		t.Fatal("foreign Link accepted mounted Call proof")
 	}
-	if _, ok := foreign.Boundary().Calls().Callee(method); ok {
-		t.Fatal("foreign Link accepted call Application callee")
+	if _, ok := foreign.Boundary().Calls().MountedCallCallee(methodMounted, methodOccurrence); ok {
+		t.Fatal("foreign Link accepted mounted Call callee")
 	}
+}
+
+func mountedCallForApplication(t testing.TB, linked *Link, application linkproject.Application) (linkproject.CallApplication, program.CallOccurrence) {
+	t.Helper()
+	mounted, ok := linked.Project().Applications().Calls().ForApplication(application)
+	if !ok {
+		t.Fatal("mounted Call application")
+	}
+	occurrence, ok := mounted.Occurrence()
+	if !ok {
+		t.Fatal("mounted Call occurrence")
+	}
+	return mounted, occurrence
 }
 
 func linkedForOperands(t testing.TB, p *program.Program) *Link {

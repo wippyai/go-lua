@@ -3,6 +3,7 @@ package engine
 import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
+	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 )
 
@@ -62,7 +63,7 @@ type RuleDerivationChecker[V, O any] func(RuleDerivation[V, O]) (RuleEvidence, b
 // Keeping the type opaque prevents a checker from fabricating a successful
 // admission or using an unrelated evaluator result.
 type RuleDerivation[V, O any] struct {
-	rule           *ruleSchema
+	proof          *ruleRuntimeProof
 	composition    CompositionID
 	identity       SemanticKey
 	epoch          uint64
@@ -79,10 +80,10 @@ type RuleDerivation[V, O any] struct {
 
 // Rule returns the exact Rule schema identity that produced this derivation.
 func (derivation RuleDerivation[V, O]) Rule() SemanticKey {
-	if derivation.rule == nil {
+	if derivation.proof == nil || !derivation.proof.valid() {
 		return SemanticKey{}
 	}
-	return derivation.rule.semantic
+	return semanticKeyFromComposition(derivation.proof.semantic)
 }
 
 // Composition returns the sealed composition identity under which the
@@ -193,7 +194,7 @@ type ruleResultRow struct {
 func DerivationDispositionReadValue[V, O, S any](derivation RuleDerivation[V, O], disposition RuleDisposition[V], read Read[S]) (S, bool) {
 	var zero S
 	ordinal := disposition.ordinal
-	if !derivation.liveProduct() || ordinal < 0 || ordinal >= len(derivation.dispositions) || derivation.dispositions[ordinal].ordinal != ordinal || derivation.dispositions[ordinal].row != disposition.row || disposition.row.ticket != derivation.ticket || disposition.row.index != ordinal || disposition.row.index < 0 || disposition.row.index >= len(derivation.product.values) || read.rule != derivation.rule || read.index < 0 || read.index >= len(derivation.product.reads) || read.resolve == nil {
+	if !derivation.liveProduct() || ordinal < 0 || ordinal >= len(derivation.dispositions) || derivation.dispositions[ordinal].ordinal != ordinal || derivation.dispositions[ordinal].row != disposition.row || disposition.row.ticket != derivation.ticket || disposition.row.index != ordinal || disposition.row.index < 0 || disposition.row.index >= len(derivation.product.values) || !read.matchesRuleProof(derivation.proof) || read.index >= len(derivation.product.reads) || read.resolve == nil {
 		return zero, false
 	}
 	id, found := derivation.product.readID(disposition.row.index, read.index)
@@ -257,11 +258,11 @@ func DerivationDispositionSelectionMatchesRef[V any, O any, Tag selectionTag, S 
 // stagedRouteSink, so this comparison authenticates the same owner-issued
 // exact coordinate without constructing a second route authority.
 type selectionRefIdentity struct {
-	compositionID CompositionID
-	sealAuthority uint64
-	factorKey     composition.Key
-	factorIndex   uint64
-	raw           uint64
+	compositionID    CompositionID
+	bindingAuthority *schemaBindingAuthority
+	factorKey        composition.Key
+	factorIndex      uint64
+	raw              uint64
 }
 
 type selectionRefIdentityProvider interface {
@@ -270,11 +271,11 @@ type selectionRefIdentityProvider interface {
 
 func (ref Ref[K]) selectionRefIdentity() selectionRefIdentity {
 	return selectionRefIdentity{
-		compositionID: ref.compositionID,
-		sealAuthority: ref.sealAuthority,
-		factorKey:     ref.factorKey,
-		factorIndex:   ref.factorIndex,
-		raw:           uint64(ref.raw),
+		compositionID:    ref.compositionID,
+		bindingAuthority: ref.bindingAuthority,
+		factorKey:        ref.factorKey,
+		factorIndex:      ref.factorIndex,
+		raw:              uint64(ref.raw),
 	}
 }
 
@@ -286,11 +287,20 @@ func selectionRouteMatchesRef[K ~uint32 | ~uint64](route exactRef, expected Ref[
 	return ok && actual.selectionRefIdentity() == expected.selectionRefIdentity()
 }
 
+// derivationSelectedRead authenticates one selected-read capability through
+// the sealed selected-read proof.
+func derivationSelectedRead[V any, O any, Tag selectionTag, S any](derivation RuleDerivation[V, O], read Read[Selection[Tag, S]]) bool {
+	if derivation.proof == nil || !derivation.proof.valid() || read.index < 0 || read.resolve == nil || !read.matchesRuleProof(derivation.proof) {
+		return false
+	}
+	selected := derivation.proof.selectedReadAt(uint64(read.index))
+	return selected != nil && selected.Valid() && selected.read == uint64(read.index)
+}
+
 func derivationDispositionSelection[V any, O any, Tag selectionTag, S any](derivation RuleDerivation[V, O], disposition RuleDisposition[V], read Read[Selection[Tag, S]]) (Selection[Tag, S], int, bool) {
 	ordinal := disposition.ordinal
 	if !derivation.liveProduct() || ordinal < 0 || ordinal >= len(derivation.dispositions) || derivation.dispositions[ordinal].ordinal != ordinal ||
-		derivation.dispositions[ordinal].row != disposition.row || disposition.row.ticket != derivation.ticket || disposition.row.index != ordinal ||
-		read.rule != derivation.rule || read.index < 0 || read.index >= len(derivation.rule.reads) || read.resolve == nil || coldSelectorForRead(derivation.rule, read.index) == nil {
+		derivation.dispositions[ordinal].row != disposition.row || disposition.row.ticket != derivation.ticket || disposition.row.index != ordinal || !derivationSelectedRead(derivation, read) {
 		return Selection[Tag, S]{}, 0, false
 	}
 	id, found := derivation.product.readID(disposition.row.index, read.index)
@@ -315,19 +325,12 @@ func DerivationDispositionRouteValue[V any, O any, Tag selectionTag, S any](deri
 	var value S
 	ordinal := disposition.ordinal
 	if !derivation.liveProduct() || ordinal < 0 || ordinal >= len(derivation.dispositions) || derivation.dispositions[ordinal].ordinal != ordinal ||
-		derivation.dispositions[ordinal].row != disposition.row || disposition.row.ticket != derivation.ticket || disposition.row.index != ordinal ||
-		read.rule != derivation.rule || read.index < 0 || read.index >= len(derivation.rule.reads) || read.resolve == nil || output.ordinal < 0 {
+		derivation.dispositions[ordinal].row != disposition.row || disposition.row.ticket != derivation.ticket || disposition.row.index != ordinal || !derivationSelectedRead(derivation, read) || output.ordinal < 0 {
 		return tag, value, false
 	}
 	var routeRead uint64
-	for _, write := range derivation.rule.writes {
-		if write.route == 0 {
-			continue
-		}
-		if routeRead != 0 || write.route-1 >= uint64(len(derivation.rule.reads)) {
-			return tag, value, false
-		}
-		routeRead = write.route
+	if derivation.proof != nil && derivation.proof.routeWrite != nil && derivation.proof.routeWrite.Valid() {
+		routeRead = derivation.proof.routeWrite.read + 1
 	}
 	if routeRead == 0 || int(routeRead-1) != read.index {
 		return tag, value, false
@@ -359,7 +362,7 @@ func DerivationDispositionRouteValue[V any, O any, Tag selectionTag, S any](deri
 // Factor root or attach a new one.
 type RuleInput struct{ state carrier.State }
 
-func (input RuleInput) Same(other RuleInput) bool { return input.state.Same(other.state) }
+func (input RuleInput) Same(other RuleInput) bool { return input.state.SamePublishedInput(other.state) }
 func (input RuleInput) Guard() RuleGuard          { return RuleGuard{mask: input.state.Support()} }
 
 // RuleRead is one exact input-qualified resolved read observation. Unit stays
@@ -378,37 +381,32 @@ func (read RuleRead) Same(other RuleRead) bool {
 // Summary and selector runtimes carry the zero value and therefore cannot
 // satisfy an exact Ref proof.
 type ruleReadProof struct {
-	sealAuthority uint64
-	factorIndex   uint64
-	raw           uint64
-	exact         bool
+	schema           *Schema
+	bindingAuthority *schemaBindingAuthority
+	factorIndex      uint64
+	raw              uint64
+	exact            bool
+}
+
+func newRuleReadReceiptProof(receipt factorRuntimeReceipt, surface equation.Surface) (ruleReadProof, bool) {
+	if !receipt.valid() || surface.Factor != receipt.semantic || surface.Form != equation.SurfaceReadExact || surface.Mode != equation.TargetModeNone || surface.Semantic.Available() || surface.Normalizer.Available() || surface.Local == 0 || surface.Local > receipt.keyEnd {
+		return ruleReadProof{}, false
+	}
+	return ruleReadProof{schema: receipt.schema, bindingAuthority: receipt.authority, factorIndex: receipt.ordinal, raw: surface.Local - 1, exact: true}, true
 }
 
 // ruleSummaryReadProof is the private sealed identity of one summary Unit.
-// It retains the canonical key vector only for equality against a
-// ClosedRefs capability; checker code never receives the vector or a raw
-// coordinate.
+// The canonical key vector is retained for cold shape bookkeeping; hot
+// evidence authenticates the sealed scalar digest and never replays it.
 type ruleSummaryReadProof struct {
-	sealAuthority uint64
-	factor        *factorSchema
-	form          *formSchema
-	keys          []uint64
+	receipt     factorRuntimeReceipt
+	formReceipt factorFormReceipt
+	keys        []uint64
+	digest      [32]byte
 }
 
 func summaryProofMatchesRefs[K ~uint32 | ~uint64](proof ruleSummaryReadProof, refs *ClosedRefs[K]) bool {
-	if proof.factor == nil || proof.form == nil || proof.form.factor != proof.factor ||
-		proof.form.readKind != summaryReadForm || proof.factor.composition == nil ||
-		proof.factor.open || !proof.factor.bound || !proof.factor.composition.Sealed() ||
-		proof.sealAuthority == 0 || proof.sealAuthority != proof.factor.composition.sealAuthority ||
-		refs == nil || !refs.closed || refs.factor != proof.factor || len(refs.refs) == 0 || len(refs.refs) != len(proof.keys) {
-		return false
-	}
-	for index, ref := range refs.refs {
-		if !validateRefForSchema(proof.factor, ref) || index > 0 && refs.refs[index-1].raw >= ref.raw || uint64(ref.raw) != proof.keys[index] {
-			return false
-		}
-	}
-	return true
+	return proof.receipt.valid() && refs != nil && refs.closed && refs.validIssuer() && refs.receipt.state == proof.receipt.state && refs.receipt.authority == proof.receipt.authority && refs.receipt.schema == proof.receipt.schema && refs.receipt.ordinal == proof.receipt.ordinal && refs.receipt.semantic == proof.receipt.semantic && proof.formReceipt.kind == SchemaFormReadSummary && proof.formReceipt.semantic != (composition.Key{}) && len(refs.refs) == len(proof.keys) && refs.digest == proof.digest
 }
 
 // DerivationReadMatchesRef proves that one checker-visible typed read was
@@ -416,7 +414,7 @@ func summaryProofMatchesRefs[K ~uint32 | ~uint64](proof ruleSummaryReadProof, re
 // the live product's sealed read runtime; no coordinate, equation Surface, or
 // carrier Unit is exposed or reconstructed.
 func DerivationReadMatchesRef[V, O, S any, K ~uint32 | ~uint64](derivation RuleDerivation[V, O], read Read[S], ref Ref[K]) bool {
-	if !derivation.liveProduct() || read.rule != derivation.rule || read.index < 0 ||
+	if !derivation.liveProduct() || !read.matchesRuleProof(derivation.proof) ||
 		read.index >= len(derivation.product.reads) || read.resolve == nil {
 		return false
 	}
@@ -425,8 +423,7 @@ func DerivationReadMatchesRef[V, O, S any, K ~uint32 | ~uint64](derivation RuleD
 		return false
 	}
 	proof := runtime.exactProof()
-	return proof.exact && proof.sealAuthority == ref.sealAuthority && proof.factorIndex == ref.factorIndex &&
-		proof.raw == uint64(ref.raw)
+	return proof.schema != nil && proof.exact && ref.bindingAuthority == proof.bindingAuthority && ref.compositionID == proof.schema.ID() && ref.factorKey == proof.schema.factorSemanticAt(proof.factorIndex) && ref.factorIndex == proof.factorIndex && proof.raw == uint64(ref.raw)
 }
 
 // DerivationReadMatchesSummaryRefs proves that one checker-visible typed
@@ -435,7 +432,7 @@ func DerivationReadMatchesRef[V, O, S any, K ~uint32 | ~uint64](derivation RuleD
 // it exposes neither coordinates nor the summary Unit, and accepts no
 // alternate evidence path.
 func DerivationReadMatchesSummaryRefs[V, O, S any, K ~uint32 | ~uint64](derivation RuleDerivation[V, O], read Read[S], refs *ClosedRefs[K]) bool {
-	if !derivation.liveProduct() || read.rule != derivation.rule || read.index < 0 ||
+	if !derivation.liveProduct() || !read.matchesRuleProof(derivation.proof) ||
 		read.index >= len(derivation.product.reads) || read.resolve == nil {
 		return false
 	}
@@ -461,10 +458,23 @@ type RuleTarget struct {
 }
 
 type ruleTargetProof struct {
-	sealAuthority uint64
-	factorIndex   uint64
-	raw           uint64
-	strong        bool
+	schema           *Schema
+	state            *schemaBindingState
+	bindingAuthority *schemaBindingAuthority
+	factorIndex      uint64
+	raw              uint64
+	strong           bool
+}
+
+func newRuleTargetReceiptProof(receipt factorRuntimeReceipt, surface equation.Surface) (ruleTargetProof, bool) {
+	if !receipt.valid() || surface.Factor != receipt.semantic || surface.Form != equation.SurfaceWriteExact || surface.Mode != equation.TargetModeStrong || surface.Semantic.Available() || surface.Normalizer.Available() || surface.Local == 0 || surface.Local > receipt.keyEnd {
+		return ruleTargetProof{}, false
+	}
+	return ruleTargetProof{schema: receipt.schema, state: receipt.state, bindingAuthority: receipt.authority, factorIndex: receipt.ordinal, raw: surface.Local - 1, strong: true}, true
+}
+
+func (proof ruleTargetProof) validOrigin() bool {
+	return proof.schema != nil && proof.schema.Available() && proof.state != nil && proof.bindingAuthority != nil && proof.state.phase == schemaBindingSealed && proof.state.schema == proof.schema && proof.state.authority == proof.bindingAuthority && proof.factorIndex < proof.schema.factorCount() && proof.strong
 }
 
 func (target RuleTarget) Same(other RuleTarget) bool {
@@ -476,9 +486,10 @@ func (target RuleTarget) Same(other RuleTarget) bool {
 // sealed surface identity; neither the raw coordinate nor the equation
 // representation is exposed.
 func TargetMatchesRef[K ~uint32 | ~uint64](target RuleTarget, ref Ref[K]) bool {
-	return target.target != (carrier.Target{}) && target.proof.strong &&
-		target.proof.sealAuthority == ref.sealAuthority && target.proof.factorIndex == ref.factorIndex &&
-		target.proof.raw == uint64(ref.raw)
+	if target.target == (carrier.Target{}) || !target.proof.validOrigin() {
+		return false
+	}
+	return ref.bindingAuthority == target.proof.bindingAuthority && ref.compositionID == target.proof.schema.ID() && ref.factorKey == target.proof.schema.factorSemanticAt(target.proof.factorIndex) && ref.factorIndex == target.proof.factorIndex && target.proof.raw == uint64(ref.raw)
 }
 
 // RuleDispositionKind is the exact transfer outcome for one Product row.
@@ -591,7 +602,7 @@ func (disposition RuleDisposition[V]) OutputAt(index int) (RuleOutput[V], bool) 
 // derivation can turn into evidence, so a checker cannot mint admission for a
 // different Rule, evaluator epoch, or Composition.
 type RuleEvidence struct {
-	rule        *ruleSchema
+	proof       *ruleRuntimeProof
 	composition CompositionID
 	identity    SemanticKey
 	epoch       uint64
@@ -604,7 +615,7 @@ func (derivation RuleDerivation[V, O]) Accept() (RuleEvidence, bool) {
 	if !derivation.liveProduct() {
 		return RuleEvidence{}, false
 	}
-	return RuleEvidence{rule: derivation.rule, composition: derivation.composition, identity: derivation.identity, epoch: derivation.epoch, ticket: derivation.ticket}, true
+	return RuleEvidence{proof: derivation.proof, composition: derivation.composition, identity: derivation.identity, epoch: derivation.epoch, ticket: derivation.ticket}, true
 }
 
 // AdmitRuleByTrustedTheorem selects one explicitly named, versioned reviewed
@@ -650,15 +661,15 @@ func (admission RuleAdmission[V, O]) same(schema ruleAdmissionSchema) bool {
 // only the live runtime ticket; derivation admission additionally receives the
 // complete checker-visible payload. Keeping both cases here preserves one
 // admission path and prevents a checker from publishing independently.
-func (admission RuleAdmission[V, O]) admit(derivation RuleDerivation[V, O], composition *Composition, rule *ruleSchema) (RuleEvidence, bool) {
-	if !admission.valid() || composition == nil || rule == nil || !composition.Sealed() {
+func (admission RuleAdmission[V, O]) admit(derivation RuleDerivation[V, O], proof *ruleRuntimeProof) (RuleEvidence, bool) {
+	if !admission.valid() || proof == nil || !proof.valid() || !admission.same(proof.admission) {
 		return RuleEvidence{}, false
 	}
 	switch admission.kind {
 	case ruleAdmissionTrustedTheorem:
-		return derivation.ticket.evidence(rule, composition.ID(), admission.identity)
+		return derivation.ticket.evidence(proof, proof.compositionID(), admission.identity)
 	case ruleAdmissionDerivation:
-		if derivation.rule != rule || derivation.composition != composition.ID() || derivation.identity != admission.identity || !derivation.liveProduct() {
+		if derivation.proof != proof || derivation.composition != proof.compositionID() || derivation.identity != admission.identity || !derivation.liveProduct() {
 			return RuleEvidence{}, false
 		}
 		var evidence RuleEvidence
@@ -671,7 +682,7 @@ func (admission RuleAdmission[V, O]) admit(derivation RuleDerivation[V, O], comp
 			}()
 			evidence, accepted = admission.check(derivation)
 		}()
-		if !accepted || evidence.rule != rule || evidence.composition != composition.ID() || evidence.identity != admission.identity || evidence.epoch != derivation.epoch || evidence.ticket != derivation.ticket {
+		if !accepted || evidence.proof != proof || evidence.composition != proof.compositionID() || evidence.identity != admission.identity || evidence.epoch != derivation.epoch || evidence.ticket != derivation.ticket {
 			return RuleEvidence{}, false
 		}
 		return evidence, true
@@ -681,7 +692,7 @@ func (admission RuleAdmission[V, O]) admit(derivation RuleDerivation[V, O], comp
 }
 
 type ruleAdmissionTicket struct {
-	rule        *ruleSchema
+	proof       *ruleRuntimeProof
 	composition CompositionID
 	identity    SemanticKey
 	epoch       uint64
@@ -695,15 +706,15 @@ type ruleAdmissionTicket struct {
 // evidence is the trusted-theorem admission cut. It exposes no derivation
 // operands, but still binds evidence to the exact live rule instance, product,
 // anchor, epoch, composition, and one-shot ticket.
-func (ticket *ruleAdmissionTicket) evidence(rule *ruleSchema, composition CompositionID, identity SemanticKey) (RuleEvidence, bool) {
-	if !ticket.liveFor(rule, composition, identity) {
+func (ticket *ruleAdmissionTicket) evidence(proof *ruleRuntimeProof, composition CompositionID, identity SemanticKey) (RuleEvidence, bool) {
+	if !ticket.liveFor(proof, composition, identity) {
 		return RuleEvidence{}, false
 	}
-	return RuleEvidence{rule: rule, composition: composition, identity: identity, epoch: ticket.epoch, ticket: ticket}, true
+	return RuleEvidence{proof: proof, composition: composition, identity: identity, epoch: ticket.epoch, ticket: ticket}, true
 }
 
-func (ticket *ruleAdmissionTicket) liveFor(rule *ruleSchema, composition CompositionID, identity SemanticKey) bool {
-	return ticket != nil && ticket.live && !ticket.used && rule != nil && composition.Available() && identity.Available() && ticket.rule == rule &&
+func (ticket *ruleAdmissionTicket) liveFor(proof *ruleRuntimeProof, composition CompositionID, identity SemanticKey) bool {
+	return ticket != nil && ticket.live && !ticket.used && proof != nil && proof.valid() && composition.Available() && identity.Available() && ticket.proof == proof &&
 		ticket.composition == composition && ticket.identity == identity && ticket.epoch != 0 && ticket.anchor.Available() &&
 		ticket.execution != nil && ticket.product != nil && ticket.product.execution == ticket.execution &&
 		ticket.execution.epoch == ticket.epoch && ticket.execution.active.Load() == ticket.epoch && ticket.product.valid(ticket.execution, ticket.epoch)
@@ -711,8 +722,11 @@ func (ticket *ruleAdmissionTicket) liveFor(rule *ruleSchema, composition Composi
 
 func (derivation RuleDerivation[V, O]) valid() bool {
 	ticket := derivation.ticket
-	return derivation.rule != nil && derivation.composition.Available() && derivation.identity.Available() && derivation.epoch != 0 && derivation.anchor.Available() &&
-		derivation.product != nil && ticket != nil && ticket.live && !ticket.used && ticket.rule == derivation.rule && ticket.composition == derivation.composition && ticket.identity == derivation.identity && ticket.epoch == derivation.epoch && ticket.anchor == derivation.anchor && ticket.execution == derivation.product.execution && ticket.product == derivation.product
+	if derivation.proof == nil || !derivation.proof.valid() {
+		return false
+	}
+	return derivation.composition.Available() && derivation.identity.Available() && derivation.epoch != 0 && derivation.anchor.Available() &&
+		derivation.product != nil && ticket != nil && ticket.live && !ticket.used && ticket.proof == derivation.proof && ticket.composition == derivation.composition && ticket.identity == derivation.identity && ticket.epoch == derivation.epoch && ticket.anchor == derivation.anchor && ticket.execution == derivation.product.execution && ticket.product == derivation.product
 }
 
 func (derivation RuleDerivation[V, O]) liveProduct() bool {
@@ -720,11 +734,11 @@ func (derivation RuleDerivation[V, O]) liveProduct() bool {
 }
 
 func (evidence *RuleEvidence) consume() bool {
-	if evidence == nil || evidence.rule == nil || !evidence.composition.Available() || !evidence.identity.Available() || evidence.epoch == 0 || evidence.ticket == nil {
+	if evidence == nil || evidence.proof == nil || !evidence.proof.valid() || !evidence.composition.Available() || !evidence.identity.Available() || evidence.epoch == 0 || evidence.ticket == nil {
 		return false
 	}
 	ticket := evidence.ticket
-	if !ticket.live || ticket.used || ticket.rule != evidence.rule || ticket.composition != evidence.composition || ticket.identity != evidence.identity || ticket.epoch != evidence.epoch {
+	if !ticket.live || ticket.used || ticket.proof != evidence.proof || ticket.composition != evidence.composition || ticket.identity != evidence.identity || ticket.epoch != evidence.epoch {
 		return false
 	}
 	ticket.used = true
@@ -742,6 +756,191 @@ func (ticket *ruleAdmissionTicket) invalidate() {
 type ruleAdmissionSchema struct {
 	kind     ruleAdmissionKind
 	identity SemanticKey
+}
+
+// ruleRuntimeProof is the sole private runtime identity of one sealed receipt
+// Rule implementation. It names the SchemaBinding state, canonical ordinal,
+// semantic shape, and sealed read/write receipts used by admission.
+type ruleRuntimeProof struct {
+	schema           *Schema
+	state            *schemaBindingState
+	bindingAuthority *schemaBindingAuthority
+	ordinal          uint64
+	semantic         composition.Key
+	operandFamily    composition.Key
+	admission        ruleAdmissionSchema
+	outputKind       composition.OutputKind
+	output           composition.Key
+	inputs           uint64
+	reads            uint64
+	carries          uint64
+	writes           uint64
+	selectedReads    []*SchemaSelectedReadReceipt
+	selectWrite      *SchemaSelectWriteReceipt
+	routeWrite       *SchemaRouteWriteReceipt
+}
+
+func (proof *ruleRuntimeProof) selectedReadAt(read uint64) *SchemaSelectedReadReceipt {
+	if proof == nil || read >= uint64(len(proof.selectedReads)) {
+		return nil
+	}
+	return proof.selectedReads[read]
+}
+
+func coldRuleAdmission(value composition.Admission) (ruleAdmissionSchema, bool) {
+	identity := semanticKeyFromComposition(value.Identity)
+	result := ruleAdmissionSchema{identity: identity}
+	switch value.Kind {
+	case composition.AdmissionTrustedTheorem:
+		result.kind = ruleAdmissionTrustedTheorem
+	case composition.AdmissionDerivation:
+		result.kind = ruleAdmissionDerivation
+	default:
+		return ruleAdmissionSchema{}, false
+	}
+	return result, result.valid()
+}
+
+// newSchemaRuleRuntimeProof issues the private proof from the exact shared
+// SchemaBinding state and canonical Rule ordinal.
+func newSchemaRuleRuntimeProof(state *schemaBindingState, authority *schemaBindingAuthority, ordinal uint64) (*ruleRuntimeProof, bool) {
+	if state == nil || authority == nil || state.phase != schemaBindingSealed || state.authority != authority || state.schema == nil || ordinal >= uint64(len(state.rules)) {
+		return nil, false
+	}
+	cell, ok := state.rules[ordinal].(schemaRuleBindingCell)
+	if !ok || cell == nil || cell.schemaBindingSchema() != state.schema || cell.schemaRuleOrdinal() != ordinal || !cell.schemaRuleComplete() {
+		return nil, false
+	}
+	shape, shapeOK := state.schema.ruleShapeAt(ordinal)
+	if !shapeOK {
+		return nil, false
+	}
+	admission, admitted := coldRuleAdmission(shape.Admission)
+	if !admitted {
+		return nil, false
+	}
+	proof := &ruleRuntimeProof{
+		schema: state.schema, state: state, bindingAuthority: authority,
+		ordinal: ordinal, semantic: state.schema.ruleSemanticAt(ordinal),
+		operandFamily: shape.OperandFamily, admission: admission, outputKind: shape.OutputKind,
+		output: shape.Output, inputs: shape.Inputs, reads: shape.ReadCount,
+		carries: shape.CarryCount, writes: shape.WriteCount,
+	}
+	if shape.ReadCount > uint64(^uint(0)>>1) {
+		return nil, false
+	}
+	proof.selectedReads = make([]*SchemaSelectedReadReceipt, int(shape.ReadCount))
+	fence := schemaRuleReceiptFence{state: state, authority: authority, schema: state.schema, rule: ordinal}
+	if ordinal < uint64(len(state.rules)) {
+		fence.cell, _ = state.rules[ordinal].(schemaRuleBindingCell)
+	}
+	for read := uint64(0); read < shape.ReadCount; read++ {
+		readShape, readOK := state.schema.ruleReadShapeAt(ordinal, read)
+		if !readOK {
+			return nil, false
+		}
+		if readShape.Kind == composition.ReadSelect {
+			receipt, receiptOK := issueSchemaSelectedReadReceiptFence(fence, fence.valid(), read)
+			if !receiptOK {
+				return nil, false
+			}
+			proof.selectedReads[read] = &receipt
+		}
+	}
+	for write := uint64(0); write < shape.WriteCount; write++ {
+		writeShape, writeOK := state.schema.ruleWriteShapeAt(ordinal, write)
+		if !writeOK {
+			return nil, false
+		}
+		switch writeShape.Kind {
+		case composition.WriteSelect:
+			receipt, receiptOK := issueSchemaSelectWriteReceiptFence(fence, fence.valid(), write)
+			if !receiptOK {
+				return nil, false
+			}
+			proof.selectWrite = &receipt
+		case composition.WriteRoute:
+			receipt, receiptOK := issueSchemaRouteWriteReceiptFence(fence, fence.valid(), write)
+			if !receiptOK {
+				return nil, false
+			}
+			proof.routeWrite = &receipt
+		}
+	}
+	if !proof.valid() {
+		return nil, false
+	}
+	return proof, true
+}
+
+func (proof *ruleRuntimeProof) valid() bool {
+	if proof == nil || proof.schema == nil || !proof.schema.Available() || !proof.semantic.Available() || !proof.operandFamily.Available() || !proof.admission.valid() || proof.ordinal >= uint64(schemaRuleCount(proof.schema)) || proof.schema.ruleSemanticAt(proof.ordinal) != proof.semantic {
+		return false
+	}
+	shape, ok := proof.schema.ruleShapeAt(proof.ordinal)
+	admission, admitted := coldRuleAdmission(shape.Admission)
+	if !ok || !admitted || shape.OperandFamily != proof.operandFamily || admission != proof.admission || shape.OutputKind != proof.outputKind || shape.Output != proof.output || shape.Inputs != proof.inputs || shape.ReadCount != proof.reads || shape.CarryCount != proof.carries || shape.WriteCount != proof.writes {
+		return false
+	}
+	if proof.state == nil || proof.bindingAuthority == nil || proof.state.phase != schemaBindingSealed || proof.state.authority != proof.bindingAuthority || proof.state.schema != proof.schema || proof.ordinal >= uint64(len(proof.state.rules)) {
+		return false
+	}
+	cell, ok := proof.state.rules[proof.ordinal].(schemaRuleBindingCell)
+	if !ok || cell == nil || cell.schemaBindingSchema() != proof.schema || cell.schemaRuleOrdinal() != proof.ordinal || !cell.schemaRuleComplete() || !cell.schemaRuleProofMatches(proof) {
+		return false
+	}
+	if uint64(len(proof.selectedReads)) != proof.reads {
+		return false
+	}
+	for read := uint64(0); read < proof.reads; read++ {
+		shape, shapeOK := proof.schema.ruleReadShapeAt(proof.ordinal, read)
+		if !shapeOK {
+			return false
+		}
+		if shape.Kind == composition.ReadSelect {
+			selectedRead := proof.selectedReadAt(read)
+			if selectedRead == nil || !selectedRead.Valid() || selectedRead.fence.state != proof.state || selectedRead.fence.authority != proof.bindingAuthority || selectedRead.fence.rule != proof.ordinal || selectedRead.read != read {
+				return false
+			}
+		} else if proof.selectedReads[read] != nil {
+			return false
+		}
+	}
+	for write := uint64(0); write < proof.writes; write++ {
+		shape, shapeOK := proof.schema.ruleWriteShapeAt(proof.ordinal, write)
+		if !shapeOK {
+			return false
+		}
+		switch shape.Kind {
+		case composition.WriteSelect:
+			if proof.selectWrite == nil || !proof.selectWrite.Valid() || proof.selectWrite.fence.state != proof.state || proof.selectWrite.fence.authority != proof.bindingAuthority || proof.selectWrite.fence.rule != proof.ordinal || proof.selectWrite.write != write {
+				return false
+			}
+		case composition.WriteRoute:
+			if proof.routeWrite == nil || !proof.routeWrite.Valid() || proof.routeWrite.fence.state != proof.state || proof.routeWrite.fence.authority != proof.bindingAuthority || proof.routeWrite.fence.rule != proof.ordinal || proof.routeWrite.write != write {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func (proof *ruleRuntimeProof) compositionID() CompositionID {
+	if proof == nil || !proof.valid() {
+		return CompositionID{}
+	}
+	return proof.schema.ID()
+}
+
+func schemaRuleCount(schema *Schema) int {
+	if schema == nil {
+		return 0
+	}
+	_, rules, _, _, ok := schema.shapeCount()
+	if !ok {
+		return 0
+	}
+	return rules
 }
 
 func (schema ruleAdmissionSchema) valid() bool {

@@ -54,9 +54,11 @@ func (domain *Domain[F, K, V]) JoinContributions(left, right Plane[F, K, V], scr
 // transaction. Diagram synchronizes all operand FDDs and authored regions;
 // this layer evaluates each completed terminal cell as a local V left-comb
 // and admits only its final value. No intermediate Join prefix receives a
-// terminal identity or survives in the sealed terminal page.
-func (domain *Domain[F, K, V]) JoinContributionsMany(reference Plane[F, K, V], inputs []Plane[F, K, V], scratch *diagram.SoleScratch[K, V], regions *support.Work, covers diagram.SoleManyRegions[K]) (Plane[F, K, V], bool) {
-	if domain == nil || !domain.validPlane(reference) || len(inputs) == 0 || scratch == nil || regions == nil || !regions.Open() || covers == nil {
+// terminal identity or survives in the sealed terminal page. previous is
+// passed only for sparse-root reconstruction plus a post-fold representative
+// preference; it never contributes a value or presence lane to the join.
+func (domain *Domain[F, K, V]) JoinContributionsMany(previous Plane[F, K, V], inputs []Plane[F, K, V], scratch *diagram.SoleScratch[K, V], regions *support.Work, covers diagram.SoleManyRegions[K]) (Plane[F, K, V], bool) {
+	if domain == nil || !domain.validPlane(previous) || len(inputs) == 0 || scratch == nil || regions == nil || !regions.Open() || covers == nil {
 		return Plane[F, K, V]{}, false
 	}
 	roots := make([]diagram.Root[F, K, V], len(inputs))
@@ -71,7 +73,8 @@ func (domain *Domain[F, K, V]) JoinContributionsMany(reference Plane[F, K, V], i
 	if values == nil || builder == nil {
 		return Plane[F, K, V]{}, false
 	}
-	root, ok := builder.MergeSoleFactorMany(reference.root, roots, scratch, regions, domain.terminalsManyJoin(values), covers)
+	combine := domain.terminalsMany(values)
+	root, ok := builder.MergeSoleFactorMany(previous.root, roots, scratch, regions, combine, covers)
 	if !ok {
 		builder.Discard()
 		return Plane[F, K, V]{}, false
@@ -83,106 +86,125 @@ func (domain *Domain[F, K, V]) JoinContributionsMany(reference Plane[F, K, V], i
 	return Plane[F, K, V]{root: root}, true
 }
 
-func (domain *Domain[F, K, V]) terminalsManyJoin(values *terminal.Work[V]) diagram.SoleManyCombine[K, V] {
-	// A candidate terminal page interns only against its base ancestry. Point
-	// folds can also contain sealed sibling pages, so retain one operation-local
-	// canonical spelling per semantic final value. The hash only selects a
-	// small collision bucket; Equal remains the proof. This is deliberately
-	// not a global interner and cannot influence fold presence, support, or
-	// fixed operand order.
-	var canonical map[uint64][]terminal.ID[V]
-	choose := func(value V, reference terminal.ID[V], ids []terminal.ID[V], present []bool) (terminal.ID[V], bool) {
-		fingerprint := uint64(0)
-		if domain.ops.Fingerprint != nil {
-			fingerprint = domain.ops.Fingerprint(value)
-		}
-		for _, candidate := range canonical[fingerprint] {
-			candidateValue, valid := values.Value(candidate)
-			if !valid {
-				return terminal.ID[V]{}, false
-			}
-			if domain.ops.Equal(value, candidateValue) {
-				return candidate, true
-			}
-		}
+// manyCanonical is one operation-local semantic representative table for the
+// final fixed-order fold. It may retain an existing operand identity,
+// including one from a sibling sealed terminal page, but only the final fold
+// is allowed to admit a genuinely new value.
+type manyCanonical[V any] struct {
+	values      *terminal.Work[V]
+	equal       func(V, V) bool
+	fingerprint func(V) uint64
+	canonical   map[uint64][]terminal.ID[V]
+}
 
-		chosen := terminal.ID[V]{}
-		if reference != (terminal.ID[V]{}) {
-			referenceValue, valid := values.Value(reference)
-			if !valid {
-				return terminal.ID[V]{}, false
-			}
-			if domain.ops.Equal(value, referenceValue) {
-				chosen = reference
-			}
-		}
-		if chosen == (terminal.ID[V]{}) {
-			for index, included := range present {
-				if !included || ids[index] == (terminal.ID[V]{}) {
-					continue
-				}
-				candidateValue, valid := values.Value(ids[index])
-				if !valid {
-					return terminal.ID[V]{}, false
-				}
-				if domain.ops.Equal(value, candidateValue) {
-					chosen = ids[index]
-					break
-				}
-			}
-		}
-		if chosen == (terminal.ID[V]{}) {
-			var admitted bool
-			chosen, admitted = values.Admit(value)
-			if !admitted {
-				return terminal.ID[V]{}, false
-			}
-		}
-		if canonical == nil {
-			canonical = make(map[uint64][]terminal.ID[V])
-		}
-		canonical[fingerprint] = append(canonical[fingerprint], chosen)
-		return chosen, true
+func (canonical *manyCanonical[V]) choose(value V, prior, preferred []terminal.ID[V]) (terminal.ID[V], bool) {
+	if canonical == nil || canonical.values == nil || canonical.equal == nil {
+		return terminal.ID[V]{}, false
 	}
-	return func(key K, reference terminal.ID[V], ids []terminal.ID[V], present []bool) (terminal.ID[V], bool) {
-		if values == nil || len(ids) == 0 || len(ids) != len(present) {
+	fingerprint := uint64(0)
+	if canonical.fingerprint != nil {
+		fingerprint = canonical.fingerprint(value)
+	}
+	for _, candidate := range prior {
+		if candidate == (terminal.ID[V]{}) {
+			continue
+		}
+		candidateValue, valid := canonical.values.Value(candidate)
+		if !valid {
 			return terminal.ID[V]{}, false
+		}
+		if canonical.equal(value, candidateValue) {
+			if canonical.canonical == nil {
+				canonical.canonical = make(map[uint64][]terminal.ID[V])
+			}
+			canonical.canonical[fingerprint] = append(canonical.canonical[fingerprint], candidate)
+			return candidate, true
+		}
+	}
+	for _, candidate := range canonical.canonical[fingerprint] {
+		candidateValue, valid := canonical.values.Value(candidate)
+		if !valid {
+			return terminal.ID[V]{}, false
+		}
+		if canonical.equal(value, candidateValue) {
+			return candidate, true
+		}
+	}
+	for _, candidate := range preferred {
+		if candidate == (terminal.ID[V]{}) {
+			continue
+		}
+		candidateValue, valid := canonical.values.Value(candidate)
+		if !valid {
+			return terminal.ID[V]{}, false
+		}
+		if canonical.equal(value, candidateValue) {
+			if canonical.canonical == nil {
+				canonical.canonical = make(map[uint64][]terminal.ID[V])
+			}
+			canonical.canonical[fingerprint] = append(canonical.canonical[fingerprint], candidate)
+			return candidate, true
+		}
+	}
+	chosen, admitted := canonical.values.Admit(value)
+	if !admitted {
+		return terminal.ID[V]{}, false
+	}
+	if canonical.canonical == nil {
+		canonical.canonical = make(map[uint64][]terminal.ID[V])
+	}
+	canonical.canonical[fingerprint] = append(canonical.canonical[fingerprint], chosen)
+	return chosen, true
+}
+
+// terminalsMany supplies the one typed callback for every arity. Presence is
+// carried separately from terminal identity, so a present sparse zero remains
+// Default while an uncovered lane is Absent.
+func (domain *Domain[F, K, V]) terminalsMany(values *terminal.Work[V]) diagram.SoleManyCombine[K, V] {
+	canonical := &manyCanonical[V]{values: values, equal: domain.ops.Equal, fingerprint: domain.ops.Fingerprint}
+	zero := terminal.ID[V]{}
+	combine := func(_ K, ids []terminal.ID[V], present []bool, prior []terminal.ID[V]) (terminal.ID[V], bool) {
+		if values == nil || len(ids) == 0 || len(ids) != len(present) {
+			return zero, false
 		}
 		var accumulator V
 		have := false
-		for index, included := range present {
-			if !included {
+		preferred := ids[:0]
+		for index := range ids {
+			if !present[index] {
 				continue
 			}
 			value := domain.ops.Default
-			if ids[index] != (terminal.ID[V]{}) {
+			if ids[index] != zero {
 				var valid bool
 				value, valid = values.Value(ids[index])
 				if !valid {
-					return terminal.ID[V]{}, false
+					return zero, false
 				}
+				preferred = append(preferred, ids[index])
 			}
 			if !have {
 				accumulator, have = value, true
 				continue
 			}
-			output, valid := domain.joinPair(accumulator, value)
-			if !valid {
-				return terminal.ID[V]{}, false
+			var joined bool
+			accumulator, joined = domain.joinPair(accumulator, value)
+			if !joined {
+				return zero, false
 			}
-			accumulator = output
 		}
 		if !have {
-			return terminal.ID[V]{}, false
+			return zero, true
 		}
 		if domain.ops.Equal(accumulator, domain.ops.Default) {
-			return terminal.ID[V]{}, true
+			return zero, true
 		}
 		if !domain.joinStable(accumulator) {
-			return terminal.ID[V]{}, false
+			return zero, false
 		}
-		return choose(accumulator, reference, ids, present)
+		return canonical.choose(accumulator, prior, preferred)
 	}
+	return combine
 }
 
 // JoinContributionChanges applies a right operand at exact authored/changed

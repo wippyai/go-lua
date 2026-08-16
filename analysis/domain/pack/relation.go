@@ -9,6 +9,7 @@ type relation struct {
 	owner   *algebra
 	index   uint32
 	targets []equationTarget
+	sealed  bool
 }
 
 type equationTarget struct {
@@ -17,18 +18,30 @@ type equationTarget struct {
 }
 
 func (relation *relation) valid() bool {
-	if relation == nil || relation.owner == nil || !relation.owner.valid() || relation.index == 0 {
-		return false
+	return relation != nil && relation.sealed && relation.owner != nil && relation.owner.valid() && relation.index != 0 && len(relation.targets) != 0
+}
+
+// sealRelation validates the complete target vector once and freezes a
+// private copy. Hot Value/SourceResult authentication thereafter checks only
+// immutable scalar fences; it never rescans the target denominator.
+func sealRelation(owner *algebra, index uint32, targets []equationTarget) (*relation, bool) {
+	if owner == nil || !owner.valid() || index == 0 || len(targets) == 0 {
+		return nil, false
 	}
-	for index, target := range relation.targets {
+	frozen := append([]equationTarget(nil), targets...)
+	for position, target := range frozen {
 		if target.kind != EquationScalar && target.kind != EquationPack || target.index == 0 {
-			return false
+			return nil, false
 		}
-		if index != 0 && compareTarget(target, relation.targets[index-1]) <= 0 {
-			return false
+		if position != 0 && compareTarget(target, frozen[position-1]) <= 0 {
+			return nil, false
 		}
 	}
-	return true
+	relation := &relation{owner: owner, index: index, targets: frozen, sealed: true}
+	if !relation.valid() {
+		return nil, false
+	}
+	return relation, true
 }
 
 func compareTarget(left, right equationTarget) int {

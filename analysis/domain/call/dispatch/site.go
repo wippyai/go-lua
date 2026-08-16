@@ -10,8 +10,6 @@ import (
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/program/keyspace"
 	"github.com/wippyai/go-lua/program/link"
-	linkboundary "github.com/wippyai/go-lua/program/link/boundary"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
 )
 
 // site is the private ordinary-call binding consumed by this package's Rule.
@@ -19,68 +17,66 @@ import (
 // coordinate, and Pack call root. No cross-domain site can escape this
 // package or be supplied independently of Rule.Instance(application).
 type site struct {
-	algebra    *calldomain.Algebra
-	values     *valuedomain.Schema
-	heaps      heapdomain.Schema
-	boundary   *linkboundary.Component
-	packs      *packdomain.Schema
-	link       *link.Link
-	key        calldomain.Key
-	callee     linkboundary.Value
-	coordinate valuedomain.Coordinate
-	root       packdomain.Root
-	keyID      keyspace.ContentID
-	valueID    keyspace.ContentID
-	rootID     keyspace.ContentID
-	id         keyspace.ContentID
+	algebra       *calldomain.Algebra
+	values        *valuedomain.Schema
+	heaps         heapdomain.Schema
+	requireSeedID keyspace.ContentID
+	packs         *packdomain.Schema
+	key           calldomain.Key
+	mounted       calldomain.MountedCall
+	coordinate    valuedomain.Coordinate
+	root          packdomain.Root
+	keyID         keyspace.ContentID
+	valueID       keyspace.ContentID
+	rootID        keyspace.ContentID
+	id            keyspace.ContentID
 }
 
 const siteVersion uint64 = 1
 
-// newSite consumes Boundary.Calls().Callee exactly once. It never reopens
-// Program Flow and never materializes Application×Target availability.
+// newSite consumes Call's detached mounted-dispatch row. It never reopens
+// Project, Boundary, Program Flow, or materializes Application×Target
+// availability.
 func newSite(
 	algebra *calldomain.Algebra,
 	values *valuedomain.Schema,
 	heaps heapdomain.Schema,
 	packs *packdomain.Schema,
-	application linkproject.Application,
+	applicationID keyspace.ContentID,
 ) (site, bool) {
 	if algebra == nil || !algebra.Valid() || values == nil || packs == nil || !heaps.Valid() {
 		return site{}, false
 	}
-	source := algebra.Link()
-	if source == nil || values.Link() != source || heaps.Link() != source || packs.Link() != source {
+	owner := algebra.LinkOwner()
+	if !owner.Available() || !values.LinkOwner().Matches(owner) || !heaps.LinkOwner().Matches(owner) || !packs.LinkOwner().Matches(owner) {
 		return site{}, false
 	}
-	boundary := source.Boundary()
-	if boundary == nil || !boundary.MatchesProject(source.Project()) {
+	key, keyOK := algebra.KeyForApplicationID(applicationID)
+	if !keyOK {
 		return site{}, false
 	}
-	key, keyOK := algebra.KeyForApplication(application)
-	callee, calleeOK := boundary.Calls().Callee(application)
-	coordinate, coordinateOK := values.CoordinateFor(callee)
-	root, rootOK := packs.CallRoot(application)
+	mounted, mountedOK := algebra.MountedCallForApplication(applicationID)
+	issuedApplication, occurrence, module, valueID, seedID, identityOK := algebra.MountedCallIdentity(mounted)
+	coordinate, coordinateOK := values.CoordinateForID(valueID)
+	root, rootOK := packs.CallRootForMountedSemantic(module, occurrence)
 	keyID, keyIDOK := key.ContentID()
-	valueID, valueIDOK := boundary.Values().ID(callee)
 	rootID, rootIDOK := packs.RootID(root)
-	if !keyOK || !calleeOK || !coordinateOK || !rootOK || !keyIDOK || !valueIDOK || !rootIDOK {
+	if !mountedOK || !identityOK || issuedApplication != applicationID || !coordinateOK || !rootOK || !keyIDOK || !rootIDOK {
 		return site{}, false
 	}
-	id := siteID(source.ContentID(), keyID, valueID, rootID)
-	if !id.Available() {
+	siteIdentity := siteID(owner, keyID, valueID, rootID)
+	if !siteIdentity.Available() {
 		return site{}, false
 	}
-	bound := site{
-		algebra: algebra, values: values, heaps: heaps, boundary: boundary,
-		packs: packs, link: source, key: key, callee: callee,
-		coordinate: coordinate, root: root, keyID: keyID, valueID: valueID,
-		rootID: rootID, id: id,
-	}
+	bound := site{algebra: algebra, values: values, heaps: heaps, requireSeedID: seedID, packs: packs, key: key, mounted: mounted, coordinate: coordinate, root: root, keyID: keyID, valueID: valueID, rootID: rootID, id: siteIdentity}
 	return bound, bound.valid()
 }
 
-func siteID(linkID, keyID, valueID, rootID keyspace.ContentID) keyspace.ContentID {
+func siteID(owner link.OwnerCapability, keyID, valueID, rootID keyspace.ContentID) keyspace.ContentID {
+	if !owner.Available() {
+		return keyspace.ContentID{}
+	}
+	linkID := owner.ContentID()
 	if !linkID.Available() || !keyID.Available() || !valueID.Available() || !rootID.Available() {
 		return keyspace.ContentID{}
 	}
@@ -98,31 +94,44 @@ func siteID(linkID, keyID, valueID, rootID keyspace.ContentID) keyspace.ContentI
 // admission. Replay IDs are checked after exact owner pointers.
 func (bound site) valid() bool {
 	if bound.algebra == nil || !bound.algebra.Valid() || bound.values == nil ||
-		!bound.heaps.Valid() || bound.packs == nil || bound.link == nil ||
-		bound.algebra.Link() != bound.link || bound.values.Link() != bound.link ||
-		bound.heaps.Link() != bound.link || bound.packs.Link() != bound.link ||
-		bound.boundary == nil || bound.boundary != bound.link.Boundary() ||
-		!bound.boundary.MatchesProject(bound.link.Project()) || !bound.key.Valid() ||
+		!bound.heaps.Valid() || bound.packs == nil ||
+		!bound.values.LinkOwner().Matches(bound.algebra.LinkOwner()) || !bound.heaps.LinkOwner().Matches(bound.algebra.LinkOwner()) || !bound.packs.LinkOwner().Matches(bound.algebra.LinkOwner()) ||
+		!bound.key.Valid() ||
+		!bound.mounted.Valid() ||
 		!bound.values.OwnsHeapSchema(bound.heaps) ||
 		!bound.key.IsApplication() || !bound.coordinate.Valid() ||
+		!bound.requireSeedID.Available() ||
 		!bound.keyID.Available() || !bound.valueID.Available() ||
 		!bound.rootID.Available() || !bound.id.Available() || !bound.rootMatches() {
 		return false
 	}
 	keyID, keyOK := bound.key.ContentID()
 	owned, ownedOK := bound.algebra.FindKey(keyID)
-	rootID, rootOK := bound.packs.RootID(bound.root)
-	coordinate, coordinateOK := bound.values.CoordinateFor(bound.callee)
-	valueID, valueOK := bound.boundary.Values().ID(bound.callee)
-	expectedID := siteID(bound.link.ContentID(), keyID, valueID, rootID)
-	return keyOK && ownedOK && owned == bound.key && keyID == bound.keyID &&
-		rootOK && rootID == bound.rootID && coordinateOK && coordinate == bound.coordinate &&
-		valueOK && valueID == bound.valueID && expectedID.Available() && expectedID == bound.id
+	if !keyOK || !ownedOK || owned != bound.key || keyID != bound.keyID {
+		return false
+	}
+	// The application key is the sole portable inverse. Re-fetch every
+	// mount-sensitive scalar from Call's sealed row so a package-local copy
+	// cannot splice another mount's loader seed, Value coordinate, or Pack
+	// root while retaining this site's replay identity.
+	applicationID, applicationOK := bound.key.ApplicationID()
+	mounted, mountedOK := bound.algebra.MountedCallForApplication(applicationID)
+	issuedApplication, contextID, moduleID, valueID, seedID, identityOK := bound.algebra.MountedCallIdentity(mounted)
+	expectedCoordinate, coordinateOK := bound.values.CoordinateForID(valueID)
+	expectedRoot, rootOK := bound.packs.CallRootForMountedSemantic(moduleID, contextID)
+	rootID, rootIDOK := bound.packs.RootID(bound.root)
+	expectedRootID, expectedRootIDOK := bound.packs.RootID(expectedRoot)
+	expectedID := siteID(bound.algebra.LinkOwner(), keyID, valueID, expectedRootID)
+	return applicationOK && mountedOK && identityOK && issuedApplication == applicationID && mounted == bound.mounted && coordinateOK && rootOK && rootIDOK && expectedRootIDOK &&
+		valueID == bound.valueID && seedID == bound.requireSeedID &&
+		expectedCoordinate == bound.coordinate && expectedRoot == bound.root && rootID == bound.rootID &&
+		expectedID.Available() && expectedID == bound.id
 }
 
-// matchesSchemas is the Rule-level reseal fence. Link equality alone is not
-// sufficient: a separately sealed Heap or Pack schema over the same Link is
-// a distinct owner and cannot supply this site's recurrent binding.
+// matchesSchemas is the Rule-level reseal fence. Shared Link ownership alone
+// is not sufficient: a separately sealed Heap or Pack schema over the same
+// Link is a distinct schema owner and cannot supply this site's recurrent
+// binding.
 func (bound site) matchesSchemas(heaps heapdomain.Schema, packs *packdomain.Schema) bool {
 	return bound.valid() && bound.heaps == heaps && bound.packs == packs
 }
@@ -156,13 +165,6 @@ func (bound site) algebraOwner() *calldomain.Algebra {
 	return bound.algebra
 }
 
-func (bound site) linkOwner() *link.Link {
-	if !bound.valid() {
-		return nil
-	}
-	return bound.link
-}
-
 func (bound site) valueSchema() *valuedomain.Schema {
 	if !bound.valid() {
 		return nil
@@ -182,11 +184,4 @@ func (bound site) packRoot() (packdomain.Root, bool) {
 		return packdomain.Root{}, false
 	}
 	return bound.root, true
-}
-
-func (bound site) boundaryCallee() (linkboundary.Value, bool) {
-	if !bound.valid() {
-		return linkboundary.Value{}, false
-	}
-	return bound.callee, true
 }

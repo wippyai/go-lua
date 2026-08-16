@@ -219,7 +219,7 @@ func pathForcesLiteral(t typ.Type, suffix []segment.Segment, lit typ.Type) bool 
 // Boolean is a closed, two-valued primitive rather than a *typ.Union node, but
 // excluding one literal from it is exactly as representable as excluding a
 // member from an explicit true|false union, so rootUnion treats it as one.
-var booleanRootUnion = &typ.Union{Members: []typ.Type{typ.True, typ.False}}
+var booleanRootUnion = &typ.Union{Members: []typ.Type{typ.LiteralBool(true), typ.LiteralBool(false)}}
 
 // NarrowByLiteral keeps the members of a union t that lit inhabits: the
 // `x == lit` guard's true edge for a root value, and the exact complement of
@@ -373,7 +373,7 @@ func runtimeTypeNameOfSeen(t typ.Type, active *typegraph.Path) (string, bool) {
 		}
 		return runtimeTypeNameOfSeen(expanded, active)
 	case *typ.Literal:
-		return runtimeTypeNameOfKind(v.Base)
+		return runtimeTypeNameOfKind(v.Base())
 	default:
 		return runtimeTypeNameOfKind(t.Kind())
 	}

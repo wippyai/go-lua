@@ -31,6 +31,26 @@ func (schema *Schema) FilterPresent(input Value) (Value, bool) {
 	return Value{schema: schema, image: input.image[schema.stride():]}, true
 }
 
+// FilterPresence retains exactly the nilability partition selected by one
+// owner-issued control-flow refinement. The finite path preserves the exact
+// correlated atom/capability row; Top uses the schema's immutable runtime-kind
+// census. False remains in the present partition, matching Lua nilability.
+func (schema *Schema) FilterPresence(input Value, present bool) (Value, bool) {
+	if present {
+		return schema.FilterPresent(input)
+	}
+	if schema == nil || !schema.owns(input) {
+		return Value{}, false
+	}
+	if input.top {
+		return schema.ForRuntimeKinds(runtimekind.Bit(runtimekind.Nil))
+	}
+	if len(input.image) == 0 || input.image[0] != 1 { // atomNil is sealed first.
+		return schema.Bottom(), true
+	}
+	return Value{schema: schema, image: input.image[:schema.stride()]}, true
+}
+
 // FilterStoredNone retains precisely scalar/non-reference alternatives. It
 // does not infer anything about a structural child: any rooted or opaque
 // reference remains outside this projection. Its result is an immutable

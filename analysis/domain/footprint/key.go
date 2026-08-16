@@ -16,48 +16,40 @@ const (
 	KeyAllocation
 )
 
-// Key is an opaque Heap-scoped Factor key. Heap owns aggregate identity, so
-// Footprint cannot pair a root with an unrelated schema or reconstruct one
-// from Link topology.
+// Key is an opaque Footprint-scoped Factor key. It is a dense capability into
+// the immutable universe; the selected Heap root remains owned by that
+// universe rather than being copied into every key.
 type Key struct {
-	heap heap.Schema
-	kind KeyKind
-	root heap.Key
-	id   keyspace.ContentID
+	universe *universe
+	slot     uint32
 }
 
-func AllocationKey(source heap.Schema, root heap.Key) (Key, bool) {
-	if !source.Valid() || !source.OwnsKey(root) || root.Kind() != heap.RootAllocation {
-		return Key{}, false
+func (k Key) Kind() KeyKind {
+	if !k.valid() {
+		return KeyInvalid
 	}
-	id, ok := root.ContentID()
-	if !ok || !id.Available() {
-		return Key{}, false
-	}
-	return Key{heap: source, kind: KeyAllocation, root: root, id: id}, true
+	return KeyAllocation
 }
-
-func (k Key) Kind() KeyKind { return k.kind }
 
 func (k Key) ContentID() keyspace.ContentID {
-	if !k.valid() {
+	root, ok := k.HeapKey()
+	if !ok {
 		return keyspace.ContentID{}
 	}
-	return k.id
+	id, ok := root.ContentID()
+	if !ok {
+		return keyspace.ContentID{}
+	}
+	return id
 }
 
 func (k Key) HeapKey() (heap.Key, bool) {
-	return k.root, k.valid() && k.kind == KeyAllocation
+	if !k.valid() {
+		return heap.Key{}, false
+	}
+	return k.universe.rootAt(k.slot)
 }
 
 func (k Key) valid() bool {
-	return k.heap.Valid() && k.kind == KeyAllocation && k.id.Available() && k.heap.OwnsKey(k.root) && k.root.Kind() == heap.RootAllocation
-}
-
-func (k Key) validFor(source heap.Schema) bool {
-	if !k.valid() || !source.Valid() || k.heap != source {
-		return false
-	}
-	id, ok := k.root.ContentID()
-	return ok && id == k.id
+	return k.universe != nil && k.slot != 0 && uint64(k.slot) <= uint64(len(k.universe.roots))
 }

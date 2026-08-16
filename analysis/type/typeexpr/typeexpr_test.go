@@ -114,8 +114,8 @@ func TestUnionPreservesLiteralMembersWithBaseTypes(t *testing.T) {
 		},
 		{
 			name:  "boolean literal with boolean",
-			input: []typ.Type{typ.Boolean, typ.True},
-			want:  []typ.Type{typ.Boolean, typ.True},
+			input: []typ.Type{typ.Boolean, typ.LiteralBool(true)},
+			want:  []typ.Type{typ.Boolean, typ.LiteralBool(true)},
 		},
 		{
 			name:  "integer literal with integer",

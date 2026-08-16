@@ -30,7 +30,7 @@ func RuntimeKindFromType(t typ.Type) (runtimekind.Value, bool) {
 	}
 	switch tt := t.(type) {
 	case *typ.Literal:
-		switch tt.Base {
+		switch tt.Base() {
 		case kind.Boolean:
 			return runtimekind.Singleton(runtimekind.Boolean), true
 		case kind.Integer, kind.Number:

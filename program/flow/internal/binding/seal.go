@@ -58,6 +58,8 @@ func Seal(preimage source.Preimage, view authored.View, bodies *body.Result, ent
 	cellCount := cells.Count()
 	roles := make([]kind.CellRole, cellCount+1)
 	hosts := make([]keyspace.Term, cellCount+1)
+	captures := make([]captureCellRole, cellCount+1)
+	loopCells := make([]loopCellRole, cellCount+1)
 
 	keys := preimage.Keys()
 	if err := validateCells(cells, keys, roles, hosts, bodyCount); err != nil {
@@ -77,10 +79,10 @@ func Seal(preimage source.Preimage, view authored.View, bodies *body.Result, ent
 	if err := sealBinds(preimage, binds, cells, roles, hosts, bodyCount); err != nil {
 		return Result{}, err
 	}
-	if err := sealLoops(loops, cells, bodies, roles, hosts, bodyCount); err != nil {
+	if err := sealLoops(loops, cells, bodies, roles, hosts, loopCells, bodyCount); err != nil {
 		return Result{}, err
 	}
-	if err := sealFunctions(preimage, functions, cells, bodies, roles, hosts, bodyCount); err != nil {
+	if err := sealFunctions(preimage, functions, cells, bodies, roles, hosts, captures, bodyCount); err != nil {
 		return Result{}, err
 	}
 	functionCells, err := sealFunctionCells(preimage, view, binds, functions, cells, roles, hosts, bodyCount)
@@ -107,6 +109,8 @@ func Seal(preimage source.Preimage, view authored.View, bodies *body.Result, ent
 		hosts:         hosts,
 		chunk:         chunk,
 		functionCells: functionCells,
+		captures:      captures,
+		loops:         loopCells,
 	}, nil
 }
 
@@ -143,11 +147,10 @@ func validateEntry(result *body.Result, entry keyspace.Term, bodyCount int) erro
 
 func validateCells(cells authored.Cells, keys source.Keys, roles []kind.CellRole, hosts []keyspace.Term, bodyCount int) error {
 	cellCount := len(roles) - 1
-	exactCount := keys.ExactCount()
-	if exactCount < 0 {
-		return errors.New("program/flow/binding: invalid exact-key cardinality")
-	}
-	seenKeys := make([]bool, exactCount+1)
+	// Exact atoms can be much larger than the Cell family. Allocate duplicate
+	// scratch only when a global Cell actually claims an atom; local-only and
+	// zero-Cell programs must not scale validation memory with ExactCount.
+	var seenKeys map[keyspace.Key]struct{}
 	for index := 0; index < cellCount; index++ {
 		cell, ok := cells.At(index)
 		if !ok {
@@ -159,14 +162,20 @@ func validateCells(cells authored.Cells, keys source.Keys, roles []kind.CellRole
 		}
 		switch cellKind {
 		case authored.CellGlobal:
-			if cellBody != 0 || key == 0 || uint64(key) > uint64(exactCount) || seenKeys[key] {
+			if cellBody != 0 || key == 0 {
 				return errors.New("program/flow/binding: invalid or duplicate global key")
 			}
 			value, exact := keys.Exact(key)
 			if !exact || value.Kind != keyspace.LiteralString || value.String == "" {
 				return errors.New("program/flow/binding: global key is not a canonical nonempty String atom")
 			}
-			seenKeys[key] = true
+			if seenKeys == nil {
+				seenKeys = make(map[keyspace.Key]struct{})
+			}
+			if _, duplicate := seenKeys[key]; duplicate {
+				return errors.New("program/flow/binding: invalid or duplicate global key")
+			}
+			seenKeys[key] = struct{}{}
 			if err := assignRole(cells, roles, hosts, cell, kind.CellGlobal, 0, 0, bodyCount); err != nil {
 				return err
 			}
@@ -271,7 +280,7 @@ func sealBinds(preimage source.Preimage, binds authored.Binds, cells authored.Ce
 	return nil
 }
 
-func sealLoops(loops authored.Loops, cells authored.Cells, bodies *body.Result, roles []kind.CellRole, hosts []keyspace.Term, bodyCount int) error {
+func sealLoops(loops authored.Loops, cells authored.Cells, bodies *body.Result, roles []kind.CellRole, hosts []keyspace.Term, inverse []loopCellRole, bodyCount int) error {
 	for index := 0; index < loops.Count(); index++ {
 		loop, ok := loops.At(index)
 		if !ok {
@@ -298,12 +307,17 @@ func sealLoops(loops authored.Loops, cells authored.Cells, bodies *body.Result, 
 			if err := assignRole(cells, roles, hosts, cell, kind.CellLoop, loopBody, loop, bodyCount); err != nil {
 				return err
 			}
+			ordinal := keyspace.TermOrdinal(cell)
+			if uint64(ordinal) >= uint64(len(inverse)) || inverse[ordinal].loop != 0 {
+				return errors.New("program/flow/binding: duplicate Loop Cell inverse")
+			}
+			inverse[ordinal] = loopCellRole{loop: loop, position: uint32(at), kind: loopKind}
 		}
 	}
 	return nil
 }
 
-func sealFunctions(preimage source.Preimage, functions authored.Functions, cells authored.Cells, bodies *body.Result, roles []kind.CellRole, hosts []keyspace.Term, bodyCount int) error {
+func sealFunctions(preimage source.Preimage, functions authored.Functions, cells authored.Cells, bodies *body.Result, roles []kind.CellRole, hosts []keyspace.Term, inverse []captureCellRole, bodyCount int) error {
 	formalOrder := preimage.Formals()
 	seenOuter := make([]uint32, cells.Count()+1)
 	for index := 0; index < functions.Count(); index++ {
@@ -367,6 +381,11 @@ func sealFunctions(preimage source.Preimage, functions authored.Functions, cells
 			if err := assignRole(cells, roles, hosts, inner, kind.CellCapture, functionBody, function, bodyCount); err != nil {
 				return err
 			}
+			innerOrdinal := keyspace.TermOrdinal(inner)
+			if uint64(innerOrdinal) >= uint64(len(inverse)) || inverse[innerOrdinal].function != 0 {
+				return errors.New("program/flow/binding: duplicate Capture Cell inverse")
+			}
+			inverse[innerOrdinal] = captureCellRole{function: function, outer: outer, position: uint32(at)}
 		}
 	}
 	return nil

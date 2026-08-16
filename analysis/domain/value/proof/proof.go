@@ -408,7 +408,7 @@ func (r Reader) exactLiteralWitnessAdmissible(value product.Value, want typ.Type
 	if !ok {
 		return false
 	}
-	switch lit.Base {
+	switch lit.Base() {
 	case kind.Boolean, kind.Number, kind.Integer, kind.String:
 		return r.IsSubtype(lit, want)
 	default:
@@ -772,9 +772,9 @@ func truthinessSplitSeen(t typ.Type, active *typegraph.Path) (typ.Type, typ.Type
 		}
 		return unionOrNever(truthyMembers), unionOrNever(falsyMembers), true
 	case *typ.Literal:
-		if v.Base == kind.Boolean {
-			if truth, isBool := v.Value.(bool); isBool && !truth {
-				return typ.Never, typ.False, true
+		if v.Base() == kind.Boolean {
+			if truth, isBool := v.Value().(bool); isBool && !truth {
+				return typ.Never, typ.LiteralBool(false), true
 			}
 		}
 		return t, typ.Never, true
@@ -783,7 +783,7 @@ func truthinessSplitSeen(t typ.Type, active *typegraph.Path) (typ.Type, typ.Type
 	case kind.Nil:
 		return typ.Never, typ.Nil, true
 	case kind.Boolean:
-		return typ.True, typ.False, true
+		return typ.LiteralBool(true), typ.LiteralBool(false), true
 	case kind.String, kind.Number, kind.Integer, kind.Function, kind.Record, kind.Array, kind.Map, kind.ReadonlyMap, kind.Tuple, kind.Interface, kind.Generic:
 		// Every value of these kinds is truthy in Lua: only nil and false are not.
 		return t, typ.Never, true

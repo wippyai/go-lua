@@ -26,6 +26,7 @@ type mountRow struct {
 	name    string
 	program *program.Program
 	id      keyspace.ContentID
+	key     keyspace.ContentID
 }
 
 type keyRow struct{ value keyspace.LiteralValue }
@@ -188,26 +189,30 @@ const (
 )
 
 type applicationKey struct {
-	kind  applicationKind
-	shard uint32
-	term  keyspace.Term
-	slot  applicationSlot
+	kind        applicationKind
+	shard       uint32
+	term        keyspace.Term
+	slot        applicationSlot
+	callContext keyspace.ContentID
+	callProof   program.CallOccurrence
 }
 
-// callSource is the owner-local inverse key for one executable Program Call.
-// Its dense shard ordinal is meaningful only with the exact authority that
-// owns the map; the public query validates that authority before consulting
-// it. Keeping the inverse keyed by the source occurrence avoids a Project-
-// wide scan while retaining Application as the sole issued identity.
+// callSource is the owner-local inverse key for one exact mounted Program
+// CallOccurrence. Its dense shard ordinal is meaningful only with the exact
+// authority that owns the map; the public query validates both that authority
+// and the mounted Program proof before consulting it.
 type callSource struct {
-	shard uint32
-	term  keyspace.Term
+	shard   uint32
+	context keyspace.ContentID
 }
 
 type applicationRow struct {
-	kind  applicationKind
-	shard uint32
-	term  keyspace.Term
-	slot  applicationSlot
-	root  uint32
+	kind        applicationKind
+	shard       uint32
+	term        keyspace.Term
+	slot        applicationSlot
+	root        uint32
+	callContext keyspace.ContentID
+	callFormal  keyspace.ContentID
+	callProof   program.CallOccurrence
 }

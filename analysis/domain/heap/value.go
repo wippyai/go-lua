@@ -6,7 +6,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/materialization"
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
 	"github.com/wippyai/go-lua/program/keyspace"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
 )
 
 // RawPresence is a finite may-mask for one partition cell. A present tuple is
@@ -560,20 +559,18 @@ func (value Value) WorldAt(index int) (World, bool) {
 
 var legalTableKeyKinds = runtimekind.All &^ runtimekind.Bit(runtimekind.Nil)
 
-// ExactSelector creates the singleton Link-normalized exact-key selection.
-// Link already quotients 1 and 1.0 and rejects nil/NaN.
-func (schema Schema) ExactSelector(key linkproject.Key) (KeySelector, bool) {
-	if !schema.valid() || schema.owner.source == nil {
+// ExactSelector creates the singleton already-normalized exact-key selection.
+// The literal is matched against Heap's sealed quotient, so caller input
+// cannot mint an unseen key or carry a Project coordinate.
+func (schema Schema) ExactSelector(literal keyspace.LiteralValue) (KeySelector, bool) {
+	if !schema.valid() || literal.Kind == 0 {
 		return KeySelector{}, false
 	}
-	if _, ok := schema.owner.source.Project().Keys().Exact(key); !ok {
+	ordinal := schema.owner.exactIndex[literal]
+	if ordinal == 0 || int(ordinal) > len(schema.owner.exactKeys) {
 		return KeySelector{}, false
 	}
-	index, ok := schema.owner.source.Project().Keys().Index(key)
-	if !ok {
-		return KeySelector{}, false
-	}
-	return KeySelector{owner: schema.owner, atoms: []keyAtom{{kind: keyAtomExact, exact: key, exactOrdinal: uint32(index + 1)}}}, true
+	return KeySelector{owner: schema.owner, atoms: []keyAtom{{kind: keyAtomExact, exactOrdinal: ordinal}}}, true
 }
 
 // ReferenceSelector creates a singleton exact rooted-key selection. Summary
@@ -628,12 +625,16 @@ func (schema Schema) SelectorForSlot(slot Slot) (KeySelector, bool) {
 	if !schema.valid() || !slot.valid() || slot.owner != schema.owner {
 		return KeySelector{}, false
 	}
-	kind, exact, _, _, ok := slot.Origin()
+	kind, exact, _, ok := slot.Origin()
 	if !ok {
 		return KeySelector{}, false
 	}
 	if kind == SlotExact {
-		return schema.ExactSelector(exact)
+		literal, literalOK := exact.Literal()
+		if !literalOK {
+			return KeySelector{}, false
+		}
+		return schema.ExactSelector(literal)
 	}
 	return schema.KindSelector()
 }
@@ -755,7 +756,7 @@ func (schema Schema) Create(predecessor Value, allocationKey Key, fresh Object) 
 }
 
 func validExactKeyAtoms(owner *schema, atoms []keyAtom) bool {
-	if owner == nil || owner.source == nil || len(atoms) == 0 {
+	if owner == nil || len(atoms) == 0 {
 		return false
 	}
 	for index, atom := range atoms {
@@ -767,13 +768,12 @@ func validExactKeyAtoms(owner *schema, atoms []keyAtom) bool {
 }
 
 func validExactKeyAtom(owner *schema, atom keyAtom) bool {
-	if owner == nil || owner.source == nil {
+	if owner == nil {
 		return false
 	}
 	switch atom.kind {
 	case keyAtomExact:
-		_, ok := owner.source.Project().Keys().Exact(atom.exact)
-		return ok && keyAtomRuntimeKinds(owner, atom) != 0
+		return atom.exactOrdinal != 0 && int(atom.exactOrdinal) <= len(owner.exactKeys) && keyAtomRuntimeKinds(owner, atom) != 0
 	case keyAtomReference:
 		return atom.role != materialization.Summary && owner.admitsReferenceRole(atom.root, atom.role) && keyAtomRuntimeKinds(owner, atom) != 0
 	default:
@@ -798,15 +798,15 @@ func normalizeKeyAtoms(atoms []keyAtom) []keyAtom {
 }
 
 func keyAtomRuntimeKinds(owner *schema, atom keyAtom) runtimekind.Set {
-	if owner == nil || owner.source == nil {
+	if owner == nil {
 		return 0
 	}
 	switch atom.kind {
 	case keyAtomExact:
-		literal, ok := owner.source.Project().Keys().Exact(atom.exact)
-		if !ok {
+		if atom.exactOrdinal == 0 || int(atom.exactOrdinal) > len(owner.exactKeys) {
 			return 0
 		}
+		literal := owner.exactKeys[atom.exactOrdinal-1].literal
 		switch literal.Kind {
 		case keyspace.LiteralBool:
 			return runtimekind.Bit(runtimekind.Boolean)

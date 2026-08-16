@@ -124,11 +124,11 @@ func predicateLeaf(t Type, which predicateKind) (bool, bool) {
 		}
 		switch which {
 		case predicateAdmitsFalse:
-			return tt.Base == kind.Boolean && tt.Value == false, true
+			return tt.base == kind.Boolean && tt.value == false, true
 		case predicateBoolean:
-			return tt.Base == kind.Boolean, true
+			return tt.base == kind.Boolean, true
 		case predicateIntegerIndex:
-			return tt.Base == kind.Integer, true
+			return tt.base == kind.Integer, true
 		}
 	case *Annotated:
 		if tt == nil || tt.Inner == nil || tt.Inner == t {

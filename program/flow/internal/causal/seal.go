@@ -3,6 +3,7 @@ package causal
 import (
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/wippyai/go-lua/program/flow/internal/authored"
 	"github.com/wippyai/go-lua/program/flow/internal/body"
@@ -11,32 +12,70 @@ import (
 	"github.com/wippyai/go-lua/program/flow/internal/executable"
 	"github.com/wippyai/go-lua/program/flow/internal/outcome"
 	"github.com/wippyai/go-lua/program/flow/internal/recurrence"
+	"github.com/wippyai/go-lua/program/flow/internal/routeplan"
+	"github.com/wippyai/go-lua/program/flow/internal/runtimeentry"
+	"github.com/wippyai/go-lua/program/flow/internal/semanticpath"
 	"github.com/wippyai/go-lua/program/flow/internal/sourcecontrol"
 	"github.com/wippyai/go-lua/program/keyspace"
 	"github.com/wippyai/go-lua/program/source"
 )
 
-// Seal materializes the final causal-successor authority from the complete
-// typed Flow proofs. The unique root Body in the Body/containment proofs is
-// the activation entry; no caller-supplied compatibility entry or source-order
-// rescan participates in causal assembly.
-func Seal(
-	sourceView source.View,
-	flow authored.View,
-	bodies *body.Result,
-	forest *containment.Result,
-	outcomes *outcome.Result,
-	control *sourcecontrol.Result,
-	recurrenceResult *recurrence.Result,
-	ports *evaluation.Ports,
-	executableResult *executable.Result,
-	staticID keyspace.ContentID,
-	moduleID keyspace.ContentID,
-) (*Result, error) {
-	state, err := newSealState(sourceView, flow, bodies, forest, outcomes, control, recurrenceResult, ports, executableResult, staticID, moduleID)
+// Preparation is the one-shot causal route transaction. It contains final
+// row scratch plus the sealed neutral plan needed by recurrence while its SCC
+// partition is live. It is not a published causal authority.
+type Preparation struct {
+	shared *preparationState
+}
+
+type preparationState struct {
+	mu            sync.Mutex
+	state         *sealState
+	plan          *routeplan.Plan
+	outcomePhases *sourcecontrol.OutcomePhaseReceipt
+	used          bool
+}
+
+// PrepareRoutePlanWithStructuralPaths is Flow's production route transaction.
+// The structural term path plane was issued immediately after Source commit;
+// Causal consumes it before it emits or binds any final route.
+func PrepareRoutePlanWithStructuralPaths(
+	sourceView source.View, flow authored.View, bodies *body.Result, forest *containment.Result,
+	outcomes *outcome.Result, control *sourcecontrol.Result, ports *evaluation.Ports,
+	executableResult *executable.Result, entries *runtimeentry.Result, receipt *semanticpath.CausalReceipt, outcomePhases *sourcecontrol.OutcomePhaseReceipt,
+	staticID keyspace.ContentID, moduleID keyspace.ContentID,
+) (*Preparation, error) {
+	if receipt == nil || outcomePhases == nil {
+		return nil, errors.New("program/flow/causal: parent path receipt is required")
+	}
+	return prepareRoutePlan(sourceView, flow, bodies, forest, outcomes, control, ports, executableResult, entries, receipt, outcomePhases, staticID, moduleID)
+}
+
+func prepareRoutePlan(
+	sourceView source.View, flow authored.View, bodies *body.Result, forest *containment.Result,
+	outcomes *outcome.Result, control *sourcecontrol.Result, ports *evaluation.Ports,
+	executableResult *executable.Result, entries *runtimeentry.Result, receipt *semanticpath.CausalReceipt, outcomePhases *sourcecontrol.OutcomePhaseReceipt,
+	staticID keyspace.ContentID, moduleID keyspace.ContentID,
+) (*Preparation, error) {
+	state, err := newSealState(sourceView, flow, bodies, forest, outcomes, control, nil, ports, executableResult, entries, staticID, moduleID)
 	if err != nil {
 		return nil, err
 	}
+	if receipt == nil || !state.pub.result.consumeStructuralPathReceipt(receipt) {
+		return nil, errors.New("program/flow/causal: parent structural path lease is malformed")
+	}
+	if err := state.pub.result.captureOutcomePhasePaths(control, outcomes); err != nil {
+		return nil, err
+	}
+	builder, err := routeplan.New(control.Owner())
+	if err != nil {
+		return nil, err
+	}
+	state.plan = &planState{builder: builder, arcOrdinal: make([]int, control.ArcCount())}
+	for index := range state.plan.arcOrdinal {
+		state.plan.arcOrdinal[index] = -1
+	}
+	state.reset.planState = state.plan
+	state.boundary.planState = state.plan
 	if err := state.eval.emitEvaluation(); err != nil {
 		return nil, err
 	}
@@ -49,13 +88,137 @@ func Seal(
 	if err := state.boundary.emitBoundaries(); err != nil {
 		return nil, err
 	}
+	plan, err := builder.Seal()
+	if err != nil {
+		return nil, err
+	}
+	state.plan.plan = plan
+	return &Preparation{shared: &preparationState{state: state, plan: plan, outcomePhases: outcomePhases}}, nil
+}
+
+// Seal runs the only legal consumer sequence for a prepared route plan:
+// recurrence binds it once while SCC parts are live, then Causal consumes that
+// exact binding. Plan and Binding never leave this one-shot transaction.
+func (preparation *Preparation) Seal() (*Result, error) {
+	if preparation == nil || preparation.shared == nil {
+		return nil, errors.New("program/flow/causal: route preparation is unavailable")
+	}
+	shared := preparation.shared
+	shared.mu.Lock()
+	if shared.state == nil || shared.plan == nil || shared.outcomePhases == nil || shared.used {
+		shared.mu.Unlock()
+		return nil, errors.New("program/flow/causal: route preparation is already terminal")
+	}
+	// Sealing is terminal even on a malformed plan. This prevents a second
+	// recurrence issuance for the same Causal transaction.
+	state, plan, outcomePhases := shared.state, shared.plan, shared.outcomePhases
+	shared.used = true
+	shared.plan = nil
+	shared.state = nil
+	shared.outcomePhases = nil
+	shared.mu.Unlock()
+	// Every terminal path drops the seal-local scratch. No partially decorated
+	// Result is published unless finalizePrepared returns successfully.
+	defer state.releaseTransaction()
+	recur, binding, err := recurrence.SealWithPlan(state.proof.source, state.proof.flow, state.proof.bodies, state.proof.forest, state.proof.graph, plan, outcomePhases, state.proof.staticID, state.proof.moduleID)
+	if err != nil {
+		return nil, err
+	}
+	defer binding.Abort(plan)
+	result, err := finalizePrepared(state, plan, recur, binding)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// finalizePrepared is deliberately private: only Preparation.Seal obtains the
+// matching Plan and Binding. Keeping this sequence inside Causal prevents an
+// honest caller from replaying one Plan through recurrence a second time.
+func finalizePrepared(state *sealState, plan *routeplan.Plan, recur *recurrence.Result, binding *recurrence.Binding) (*Result, error) {
+	if state == nil || plan == nil || recur == nil || binding == nil {
+		return nil, errors.New("program/flow/causal: route preparation or recurrence binding is unavailable")
+	}
+	if !recurrence.Matches(recur, state.proof.result.sourceID, state.proof.result.flowID, state.proof.result.staticID, state.proof.result.moduleID) ||
+		recur.ArcCount() != state.proof.graph.ArcCount() {
+		return nil, errors.New("program/flow/causal: recurrence binding provenance disagrees with route preparation")
+	}
+	if !binding.Matches(plan, recur) {
+		return nil, errors.New("program/flow/causal: recurrence binding belongs to another seal result or route plan")
+	}
+	if err := state.index.validateArcCoverage(); err != nil {
+		return nil, err
+	}
+	state.proof.recur = recur
+	if err := state.finalizeBinding(plan, binding); err != nil {
+		return nil, err
+	}
+	// The nested hierarchy is a second one-shot recurrence certificate. It is
+	// deliberately consumed before the component directory closes; publication
+	// of semantic Site/Region rows is deferred until Flow has issued every
+	// structural path, never reconstructed from the final Causal rows.
+	hierarchy, ok := binding.CompleteAndTakeHierarchy(plan)
+	if !ok || hierarchy.Count() == 0 {
+		return nil, errors.New("program/flow/causal: nested hierarchy binding was not consumed exactly once")
+	}
+	state.pub.result.pendingWTO = hierarchy
+	components, ok := binding.CompleteAndTakeDirectory(plan)
+	if !ok {
+		return nil, errors.New("program/flow/causal: recurrence binding was not consumed exactly once")
+	}
+	if err := state.installComponentDirectory(components); err != nil {
+		return nil, err
+	}
 	if err := state.index.finish(); err != nil {
 		return nil, err
 	}
-	if err := state.pub.result.buildSites(sourceView, control, outcomes); err != nil {
+	if err := state.pub.result.installBoundRoutePaths(); err != nil {
+		return nil, fmt.Errorf("program/flow/causal: %w", err)
+	}
+	if err := state.pub.result.buildSites(state.proof.source, state.proof.graph, state.proof.outs); err != nil {
 		return nil, err
 	}
+	if err := state.pub.result.prepareWTOReceipts(); err != nil {
+		return nil, err
+	}
+	if !state.pub.result.installRouteSemanticPaths() {
+		return nil, errors.New("program/flow/causal: final route publication phase=semantic-paths row=-1 reason=receipt-or-directory-mismatch")
+	}
+	if err := state.pub.result.finalizeLocalWTO(); err != nil {
+		return nil, err
+	}
+	if !state.pub.result.buildLocal() {
+		return nil, errors.New("program/flow/causal: local recurrence projection is malformed")
+	}
 	return state.pub.result, nil
+}
+
+func (s *sealState) releaseTransaction() {
+	if s == nil {
+		return
+	}
+	if s.plan != nil {
+		s.plan.builder = nil
+		s.plan.plan = nil
+		s.plan.arcOrdinal = nil
+	}
+	s.plan = nil
+	if s.edges != nil {
+		s.edges.edgeRows, s.edges.edgeOwners, s.edges.planOrdinals = nil, nil, nil
+	}
+	if s.rows != nil {
+		s.rows.boundaryRows, s.rows.boundaryOwners, s.rows.planOrdinals = nil, nil, nil
+	}
+	if s.arc != nil {
+		s.arc.arcDisposition = nil
+	}
+	// Proof inputs are no longer needed after indexes and Sites have been
+	// built. Result contains only its final typed rows/projections.
+	if s.proof != nil {
+		s.proof.graph, s.proof.recur, s.proof.ports, s.proof.exec = nil, nil, nil, nil
+		s.proof.bodies, s.proof.forest, s.proof.outs = nil, nil, nil
+		s.proof.typedScratch = nil
+	}
 }
 
 // resultScratch is the one mutable publication target shared by the private
@@ -65,11 +228,12 @@ type resultScratch struct{ result *Result }
 // typedScratch contains only the seal-local parent projections used by
 // structural and tail-route validation.
 type typedScratch struct {
-	valueParent        []keyspace.Term
-	bodyParentRoot     []keyspace.Term
-	bodyParentCursor   []int
-	invalidExactKeys   []bool
-	invalidExactFields []bool
+	valueParent          []keyspace.Term
+	bodyParentRoot       []keyspace.Term
+	bodyParentCursor     []int
+	invalidExactKeys     []bool
+	invalidExactFields   []bool
+	tableFieldThrowProof []*sourcecontrol.TableFieldThrowEligibility
 }
 
 // proofState owns immutable typed prerequisites and their denominator fence.
@@ -84,6 +248,7 @@ type proofState struct {
 	recur    *recurrence.Result
 	ports    *evaluation.Ports
 	exec     *executable.Result
+	entries  *runtimeentry.Result
 	staticID keyspace.ContentID
 	moduleID keyspace.ContentID
 
@@ -101,9 +266,19 @@ type arcState struct {
 	arcDisposition []arcDisposition
 }
 
+// planState is seal-local glue between final Causal rows and the recurrence
+// binding ordinal. It contains neither adjacency nor SCC data.
+type planState struct {
+	builder     *routeplan.Builder
+	plan        *routeplan.Plan
+	arcOrdinal  []int
+	nextOrdinal int
+}
+
 type edgeRowsScratch struct {
 	edgeRows         []edgeRow
 	edgeOwners       []keyspace.Term
+	planOrdinals     []int
 	writeCommitEdges []uint32
 	writeCommitSet   []bool
 }
@@ -111,6 +286,12 @@ type edgeRowsScratch struct {
 type boundaryRowsScratch struct {
 	boundaryRows   []boundaryRow
 	boundaryOwners []keyspace.Term
+	planOrdinals   []boundaryPlanOrdinals
+}
+
+type boundaryPlanOrdinals struct {
+	ordinals [BoundaryCancel + 1]int
+	present  [BoundaryCancel + 1]bool
 }
 
 type callState struct {
@@ -122,6 +303,7 @@ type callState struct {
 	callPlans   []callNormalRoute
 	callPlanSet []bool
 	tailPlans   []keyspace.Term
+	tailProofs  []*sourcecontrol.CallTailReturnReceipt
 
 	// Direct Call structural coordinates are filled while the Body root pass
 	// visits each root. Boundary sealing performs O(1) lookup rather than
@@ -130,12 +312,15 @@ type callState struct {
 	directCallCursor []int
 	directCallRaw    []keyspace.Term
 	directCallSet    []bool
+	normalArc        []int
 }
 
 type resetState struct {
 	*proofState
 	arc *arcState
 	*edgeRowsScratch
+	*planState
+	tailProofs []*sourcecontrol.CallTailReturnReceipt
 }
 
 type evalState struct {
@@ -157,6 +342,7 @@ type boundaryState struct {
 	*structureState
 	*callState
 	*boundaryRowsScratch
+	*planState
 }
 
 type indexState struct {
@@ -165,6 +351,7 @@ type indexState struct {
 	*edgeRowsScratch
 	*boundaryRowsScratch
 	*resultScratch
+	arcCoverageValidated bool
 }
 
 // sealState is only the phase coordinator. Relation-owned scratch and all
@@ -182,6 +369,7 @@ type sealState struct {
 	edges     *edgeRowsScratch
 	rows      *boundaryRowsScratch
 	pub       *resultScratch
+	plan      *planState
 }
 
 func newSealState(
@@ -194,10 +382,11 @@ func newSealState(
 	recur *recurrence.Result,
 	ports *evaluation.Ports,
 	exec *executable.Result,
+	entries *runtimeentry.Result,
 	staticID keyspace.ContentID,
 	moduleID keyspace.ContentID,
 ) (*sealState, error) {
-	if bodies == nil || forest == nil || outs == nil || control == nil || recur == nil || ports == nil || exec == nil {
+	if bodies == nil || forest == nil || outs == nil || control == nil || ports == nil || exec == nil || entries == nil {
 		return nil, errors.New("program/flow/causal: one or more typed prerequisites are unavailable")
 	}
 	sourceID := sourceView.Identity().ContentID()
@@ -207,22 +396,23 @@ func newSealState(
 	}
 	if !body.Matches(bodies, sourceID, flowID) || !containment.Matches(forest, sourceID, flowID, staticID, moduleID) ||
 		!outcome.Matches(outs, sourceID, flowID, staticID, moduleID) || !sourcecontrol.Matches(control, sourceID, flowID, staticID, moduleID) ||
-		!recurrence.Matches(recur, sourceID, flowID, staticID, moduleID) || !evaluation.Matches(ports, sourceID, flowID, staticID, moduleID) ||
-		!executable.Matches(exec, sourceID, flowID, staticID, moduleID) {
+		(recur != nil && !recurrence.Matches(recur, sourceID, flowID, staticID, moduleID)) || !evaluation.Matches(ports, sourceID, flowID, staticID, moduleID) ||
+		!executable.Matches(exec, sourceID, flowID, staticID, moduleID) || !runtimeentry.Matches(entries, sourceID, flowID, staticID, moduleID) ||
+		!runtimeentry.OwnsParents(entries, control, ports, exec) {
 		return nil, errors.New("program/flow/causal: typed prerequisite provenance disagrees with Source, Flow, Static, or Module")
 	}
 
 	pub := &resultScratch{result: &Result{sourceID: sourceID, flowID: flowID, staticID: staticID, moduleID: moduleID}}
 	proof := &proofState{
 		source: sourceView, flow: flow, bodies: bodies, forest: forest, outs: outs,
-		graph: control, recur: recur, ports: ports, exec: exec,
+		graph: control, recur: recur, ports: ports, exec: exec, entries: entries,
 		staticID: staticID, moduleID: moduleID,
 		typedScratch: &typedScratch{}, resultScratch: pub,
 	}
 	arc := &arcState{proofState: proof}
 	edges := &edgeRowsScratch{}
 	calls := &callState{proofState: proof}
-	reset := &resetState{proofState: proof, arc: arc, edgeRowsScratch: edges}
+	reset := &resetState{proofState: proof, arc: arc, edgeRowsScratch: edges, tailProofs: calls.tailProofs}
 	eval := &evalState{proofState: proof, arcState: arc, resetState: reset, edgeRowsScratch: edges, callState: calls}
 	routes := &routeState{evalState: eval}
 	structure := &structureState{routeState: routes}
@@ -255,10 +445,11 @@ func newSealState(
 	if _, activationOK := bodies.Activation(proof.entry); !activationOK {
 		return nil, errors.New("program/flow/causal: Entry Body activation is unavailable")
 	}
-	if control.ArcCount() != recur.ArcCount() {
+	if recur != nil && control.ArcCount() != recur.ArcCount() {
 		return nil, errors.New("program/flow/causal: recurrence Arc denominator disagrees with sourcecontrol")
 	}
 	arc.arcDisposition = make([]arcDisposition, control.ArcCount())
+	proof.tableFieldThrowProof = make([]*sourcecontrol.TableFieldThrowEligibility, proof.counts[keyspace.FamilyTableField]+1)
 	if err := proof.buildTypedIndexes(); err != nil {
 		return nil, err
 	}
@@ -266,10 +457,16 @@ func newSealState(
 	calls.callPlans = make([]callNormalRoute, proof.counts[keyspace.FamilyCall]+1)
 	calls.callPlanSet = make([]bool, proof.counts[keyspace.FamilyCall]+1)
 	calls.tailPlans = make([]keyspace.Term, proof.counts[keyspace.FamilyCall]+1)
+	calls.tailProofs = make([]*sourcecontrol.CallTailReturnReceipt, proof.counts[keyspace.FamilyCall]+1)
+	reset.tailProofs = calls.tailProofs
 	calls.directCallOwner = make([]keyspace.Term, proof.counts[keyspace.FamilyCall]+1)
 	calls.directCallCursor = make([]int, proof.counts[keyspace.FamilyCall]+1)
 	calls.directCallRaw = make([]keyspace.Term, proof.counts[keyspace.FamilyCall]+1)
 	calls.directCallSet = make([]bool, proof.counts[keyspace.FamilyCall]+1)
+	calls.normalArc = make([]int, proof.counts[keyspace.FamilyCall]+1)
+	for index := range calls.normalArc {
+		calls.normalArc[index] = -1
+	}
 	for index := range calls.directCallCursor {
 		calls.directCallCursor[index] = -1
 	}

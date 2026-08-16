@@ -88,6 +88,19 @@ func (w *Work) Entails(premise, conclusion Guard) bool {
 	if !w.Live() || !w.Valid(premise) || !w.Valid(conclusion) {
 		return false
 	}
+	// These are the exact same Boolean identities used by Manager.Entails.
+	// Work may read both sealed predecessors and its own open candidate, so
+	// the ownership check above remains mandatory; once it succeeds, these
+	// cases need no product traversal or reusable seen-map lookup.
+	if premise == conclusion {
+		return w.Live()
+	}
+	if isTerminal(premise) {
+		return !terminalValue(premise) && w.Live()
+	}
+	if isTerminal(conclusion) {
+		return terminalValue(conclusion) && w.Live()
+	}
 	return !w.satisfiable(premise, conclusion, true)
 }
 

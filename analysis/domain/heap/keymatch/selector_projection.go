@@ -6,7 +6,6 @@ import (
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
 )
 
 // SelectorProjection is the sealed, owner-fenced projection from one Value
@@ -35,7 +34,7 @@ type SelectorProjection struct {
 // schemas deliberately do not mix.  It introduces no Factor, State
 // coordinate, or equality plane.
 func NewSelectorProjection(heap heapdomain.Schema, values *valuedomain.Schema) (*SelectorProjection, bool) {
-	if values == nil || !values.OwnsHeapSchema(heap) || heap.Link() == nil || values.Link() != heap.Link() || !heap.ContentID().Available() || values.AtomCount() == 0 {
+	if values == nil || !values.OwnsHeapSchema(heap) || !heap.LinkOwner().Matches(values.LinkOwner()) || !values.LinkOwner().Available() || !heap.ContentID().Available() || values.AtomCount() == 0 {
 		return nil, false
 	}
 	projection := &SelectorProjection{
@@ -67,7 +66,7 @@ func NewSelectorProjection(heap heapdomain.Schema, values *valuedomain.Schema) (
 // A false result is an owner, value, or visitor failure.  A value with no
 // valid key alternative succeeds without invoking visit.
 func (projection *SelectorProjection) Visit(value valuedomain.Value, visit func(heapdomain.KeySelector) bool) bool {
-	if projection == nil || projection.values == nil || !projection.values.OwnsHeapSchema(projection.heap) || projection.heap.Link() == nil || projection.values.Link() != projection.heap.Link() || visit == nil {
+	if projection == nil || projection.values == nil || !projection.values.OwnsHeapSchema(projection.heap) || !projection.heap.LinkOwner().Matches(projection.values.LinkOwner()) || !projection.values.LinkOwner().Available() || visit == nil {
 		return false
 	}
 	scratch, ok := projection.scratch.Get().(*selectorProjectionScratch)
@@ -156,7 +155,7 @@ func completeSelectorProjectionAtom(projection *SelectorProjection, bySelector m
 // explicit keymatch design change.
 type selectorIdentity struct {
 	kind      heapdomain.KeySelectorKind
-	exact     linkproject.Key
+	exact     heapdomain.ExactKey
 	reference heapdomain.Reference
 	kinds     runtimekind.Set
 }

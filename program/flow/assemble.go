@@ -18,9 +18,12 @@ import (
 	"github.com/wippyai/go-lua/program/flow/internal/directfunction"
 	"github.com/wippyai/go-lua/program/flow/internal/evaluation"
 	"github.com/wippyai/go-lua/program/flow/internal/executable"
+	"github.com/wippyai/go-lua/program/flow/internal/functionboundary"
 	"github.com/wippyai/go-lua/program/flow/internal/outcome"
 	"github.com/wippyai/go-lua/program/flow/internal/position"
-	"github.com/wippyai/go-lua/program/flow/internal/recurrence"
+	"github.com/wippyai/go-lua/program/flow/internal/returnprojection"
+	"github.com/wippyai/go-lua/program/flow/internal/runtimeentry"
+	"github.com/wippyai/go-lua/program/flow/internal/semanticpath"
 	"github.com/wippyai/go-lua/program/flow/internal/sourcecontrol"
 	"github.com/wippyai/go-lua/program/flow/internal/staticcheck"
 	"github.com/wippyai/go-lua/program/keyspace"
@@ -112,6 +115,10 @@ func Assemble(
 	if err != nil {
 		return fail("Evaluation ports", err)
 	}
+	functionBoundaryResult, err := functionboundary.Seal(preimage, authoredLive, bodies, ports, outcomes, staticID, moduleID, entry)
+	if err != nil {
+		return fail("Function boundaries", err)
+	}
 	direct, err := directbinding.Seal(preimage, authoredLive, bodies, bindings, staticView, moduleView)
 	if err != nil {
 		return fail("DirectBinding", err)
@@ -125,7 +132,7 @@ func Assemble(
 	// terminal even on malformed input, so mark the capability closed before
 	// invoking it and never attempt a second terminal action in cleanup.
 	sourceTerminal = true
-	sourceComponent, err := sourceFinalizer.Commit(indexInput)
+	sourceComponent, semanticPathIssuance, err := sourceFinalizer.CommitWithSemanticPathIssuance(indexInput)
 	if err != nil {
 		return fail("Source commit", err)
 	}
@@ -137,21 +144,65 @@ func Assemble(
 	// and retain only their own scalar quartet.  All topology, recurrence, and
 	// control proofs remain local to this call.
 	sourceView := sourceComponent.View()
+	cellRoleIssuance, cellRoleOK := semanticPathIssuance.IssueCellRoles(sourceView)
+	if !cellRoleOK {
+		return fail("Semantic path Cell roles", errors.New("Source Cell role issuance failed"))
+	}
+	cellRoles, cellRolesOK := cellRoleIssuance.Consume(sourceView)
+	if !cellRolesOK {
+		return fail("Semantic path Cell roles", errors.New("Source Cell role receipt failed"))
+	}
+	pathCertificate, err := semanticpath.Seal(semanticPathIssuance, cellRoles, sourceView, authoredLive, bodies, bindings, forest, outcomes, flowID, staticID, moduleID)
+	if err != nil {
+		return fail("Semantic path certificate", err)
+	}
 	controlGraph, err := sourcecontrol.Seal(sourceView, authoredLive, bodies, forest, shape, entry, staticID, moduleID)
 	if err != nil {
 		return fail("Source control", err)
 	}
-	recurrenceResult, err := recurrence.Seal(sourceView, authoredLive, bodies, forest, controlGraph, staticID, moduleID)
-	if err != nil {
-		return fail("Recurrence", err)
+	vertexReceipt, receiptOK := pathCertificate.IssueVertexCatalogReceipt()
+	vertexLease, vertexErr := controlGraph.InstallVertexCatalogLease(bodies, vertexReceipt)
+	if !receiptOK || vertexErr != nil || vertexLease == nil {
+		return fail("Source control vertex catalog", errors.New("semantic vertex catalog issuance failed"))
+	}
+	outcomePhasePaths, outcomePhasePathsOK := pathCertificate.IssueOutcomePhaseReceipt()
+	outcomePhases, err := controlGraph.IssueOutcomePhases(sourceView, authoredLive, bodies, outcomes, outcomePhasePaths)
+	if !outcomePhasePathsOK || err != nil || outcomePhases == nil {
+		return fail("Source control Outcome phases", errors.New("Outcome phase issuance failed"))
 	}
 	executableResult, err := executable.Seal(sourceView, authoredLive, forest, controlGraph, staticID, moduleID)
 	if err != nil {
 		return fail("Executable", err)
 	}
+	runtimeEntries, err := runtimeentry.Seal(sourceView, authoredLive, controlGraph, ports, executableResult, staticID, moduleID)
+	if err != nil {
+		return fail("Runtime entry", err)
+	}
+	returnProjection, err := returnprojection.Seal(sourceView, authoredLive, bodies, outcomes, executableResult, staticID, moduleID)
+	if err != nil {
+		return fail("Body returns", err)
+	}
+	causalReceipt, receiptOK := pathCertificate.IssueCausalReceipt()
+	if !receiptOK {
+		return fail("Causal structural path receipt", errors.New("structural path receipt issuance failed"))
+	}
+	causalPreparation, err := causal.PrepareRoutePlanWithStructuralPaths(sourceView, authoredLive, bodies, forest, outcomes, controlGraph, ports, executableResult, runtimeEntries, causalReceipt, outcomePhases, staticID, moduleID)
+	if err != nil {
+		return fail("Causal route plan", err)
+	}
+	causalResult, err := causalPreparation.Seal()
+	if err != nil {
+		return fail("Causal recurrence", err)
+	}
 	directFunctionResult, err := directfunction.Seal(sourceView, authoredLive, bodies, bindings, forest, controlGraph, executableResult, staticID, moduleID)
 	if err != nil {
 		return fail("DirectFunction", err)
+	}
+	// No published Flow projection may retain SourceControl's catalog/CSR or
+	// opaque NodeRefs. Every Causal point/route receipt was copied while the
+	// lease was live; DirectFunction is the last structural consumer.
+	if !controlGraph.ReleaseVertexCatalog(vertexLease) {
+		return fail("Source control vertex catalog release", errors.New("vertex catalog release authority was unavailable"))
 	}
 	candidateResult, err := candidates.Seal(sourceView.Identity(), authoredLive, executableResult, staticID, moduleID)
 	if err != nil {
@@ -165,10 +216,6 @@ func Assemble(
 	if err != nil {
 		return fail("Pending", err)
 	}
-	causalResult, err := causal.Seal(sourceView, authoredLive, bodies, forest, outcomes, controlGraph, recurrenceResult, ports, executableResult, staticID, moduleID)
-	if err != nil {
-		return fail("Causal", err)
-	}
 	binaryPrimitivesResult, err := binaryprimitive.Seal(sourceView, authoredLive, candidateResult, causalResult, staticID, moduleID)
 	if err != nil {
 		return fail("BinaryPrimitives", err)
@@ -176,6 +223,22 @@ func Assemble(
 	continuationResult, err := continuation.Seal(sourceView, authoredLive, bodies, bindings, executableResult, candidateResult, causalResult, staticID, moduleID)
 	if err != nil {
 		return fail("Continuation", err)
+	}
+	valueSourcePaths, err := sealCertificateValueSourcePaths(sourceView, authoredLive, pathCertificate, staticID, moduleID)
+	if err != nil {
+		return fail("Value source paths", err)
+	}
+	storagePaths, err := sealCertificateStoragePaths(sourceView, authoredLive, pathCertificate, staticID, moduleID)
+	if err != nil {
+		return fail("Storage paths", err)
+	}
+	allocationPaths, err := sealCertificateAllocationPaths(sourceView, executableResult, authoredLive, pathCertificate, staticID, moduleID)
+	if err != nil {
+		return fail("Allocation paths", err)
+	}
+	callPaths, err := sealCertificateCallPaths(sourceView, authoredLive, pathCertificate, staticID, moduleID)
+	if err != nil {
+		return fail("Call paths", err)
 	}
 
 	// Reduce the only two structural projections retained by Flow before any
@@ -240,21 +303,30 @@ func Assemble(
 		return fail("Flow commit", errors.New("Flow returned no authored View"))
 	}
 	component := &Component{
-		provenance:       Provenance{Source: sourceID, Flow: flowID, Static: staticID, Module: moduleID},
-		authored:         authoredView,
-		activation:       activation,
-		containment:      reducedContainment,
-		outcomes:         outcomes,
-		ports:            ports,
+		provenance:  Provenance{Source: sourceID, Flow: flowID, Static: staticID, Module: moduleID},
+		authored:    authoredView,
+		activation:  activation,
+		containment: reducedContainment,
+		outcomes:    outcomes,
+		ports:       ports,
+		programStructure: programStructureProjection{
+			boundaries: functionBoundaryResult,
+			causal:     causalResult,
+			returns:    returnProjection,
+		},
 		pending:          pendingResult,
 		executable:       executableResult,
 		directFunction:   directFunctionResult,
 		candidates:       candidateResult,
 		accessGeometry:   accessGeometryResult,
 		directBinding:    direct,
-		causal:           causalResult,
 		binaryPrimitives: binaryPrimitivesResult,
 		continuation:     continuationResult,
+		allocationPaths:  allocationPaths,
+		semanticPaths:    pathCertificate,
+		valueSourcePaths: valueSourcePaths,
+		storagePaths:     storagePaths,
+		callPaths:        callPaths,
 	}
 	fragment, err := sealSemanticSourceFragment(component.View())
 	if err != nil {

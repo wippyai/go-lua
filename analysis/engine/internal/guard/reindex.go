@@ -25,6 +25,19 @@ func (e Expr) validFor(scope Scope) bool {
 // only this sealed relation, never caller atom slices or replacement maps.
 type Reindex struct{ value *reindex }
 
+// projectionKind records the only two coordinate actions that can be
+// transported without evaluating a target expression: retain the coordinate
+// itself, or existentially forget it.  The zero value deliberately means a
+// general action; Set must never be inferred to be a projection merely from
+// the shape of its expression.
+type projectionKind uint8
+
+const (
+	projectionGeneral projectionKind = iota
+	projectionRetain
+	projectionForget
+)
+
 type reindex struct {
 	manager  *Manager
 	source   Scope
@@ -36,6 +49,7 @@ type reindex struct {
 	// may be separately issued Scope identities. Boolean payloads are reusable;
 	// a State wrapper is not.
 	coordinateIdentity bool
+	pureProjection     bool
 	sealed             bool
 }
 
@@ -44,9 +58,10 @@ type reindexEntry struct {
 	// source decision value. Set(expr) produces !expr/expr; Forget produces
 	// true/true. Keeping both sides makes composition through a forgotten
 	// intermediate coordinate exact rather than collapsing it to `expr=true`.
-	low      Guard
-	high     Guard
-	identity bool
+	low        Guard
+	high       Guard
+	identity   bool
+	projection projectionKind
 }
 
 // reindexEntryRow keeps one complete source-coordinate action beside its
@@ -104,7 +119,12 @@ type ReindexBuilder struct {
 	target  Scope
 	entries []reindexEntry
 	set     []bool
-	sealed  bool
+	// work is one lazy candidate transaction for all Set/Identity entries.
+	// Forget entries need no BDD construction. Keeping this shell open until
+	// the complete relation seals lets one builder publish one page set rather
+	// than one Work generation per source row.
+	work   *Work
+	sealed bool
 }
 
 // NewReindex starts a cold relation builder. Source and target must be exact
@@ -124,7 +144,7 @@ func (builder *ReindexBuilder) Forget(atom Atom) bool {
 	if !ok {
 		return false
 	}
-	builder.entries[rank] = reindexEntry{low: builder.manager.True(), high: builder.manager.True()}
+	builder.entries[rank] = reindexEntry{low: builder.manager.True(), high: builder.manager.True(), projection: projectionForget}
 	builder.set[rank] = true
 	return true
 }
@@ -135,10 +155,14 @@ func (builder *ReindexBuilder) Set(atom Atom, expression Expr) bool {
 	if !ok || !expression.validFor(builder.target) {
 		return false
 	}
-	work := builder.manager.NewWork()
-	low := work.Not(expression.root)
-	work.Seal()
-	builder.entries[rank] = reindexEntry{low: low, high: expression.root}
+	if builder.work == nil {
+		builder.work = builder.manager.NewWork()
+	}
+	low := builder.work.Not(expression.root)
+	if !builder.work.Open() || !builder.work.owns(low) {
+		return false
+	}
+	builder.entries[rank] = reindexEntry{low: low, high: expression.root, projection: projectionGeneral}
 	builder.set[rank] = true
 	return true
 }
@@ -150,15 +174,18 @@ func (builder *ReindexBuilder) Identity(atom Atom) bool {
 	if !ok || !builder.target.contains(atom) {
 		return false
 	}
-	work := builder.manager.NewWork()
-	literal, valid := work.Literal(atom)
+	if builder.work == nil {
+		builder.work = builder.manager.NewWork()
+	}
+	literal, valid := builder.work.Literal(atom)
 	if !valid {
-		work.Discard()
 		return false
 	}
-	negated := work.Not(literal)
-	work.Seal()
-	builder.entries[rank] = reindexEntry{low: negated, high: literal, identity: true}
+	negated := builder.work.Not(literal)
+	if !builder.work.Open() || !builder.work.owns(negated) {
+		return false
+	}
+	builder.entries[rank] = reindexEntry{low: negated, high: literal, identity: true, projection: projectionRetain}
 	builder.set[rank] = true
 	return true
 }
@@ -186,6 +213,14 @@ func (builder *ReindexBuilder) Seal() (Reindex, bool) {
 			return Reindex{}, false
 		}
 	}
+	if builder.work != nil {
+		builder.work.Seal()
+		if !builder.work.Published() {
+			builder.sealed = true
+			builder.work.Close()
+			return Reindex{}, false
+		}
+	}
 	builder.sealed = true
 	entries := make([]reindexEntryRow, len(builder.entries))
 	for index, entry := range builder.entries {
@@ -201,7 +236,14 @@ func (builder *ReindexBuilder) Seal() (Reindex, bool) {
 		}
 	}
 	identity := coordinateIdentity && builder.source.Same(builder.target)
-	plan := Reindex{value: &reindex{manager: builder.manager, source: builder.source, target: builder.target, entries: entries, identity: identity, coordinateIdentity: coordinateIdentity, sealed: true}}
+	pureProjection := true
+	for _, entry := range entries {
+		if entry.projection == projectionGeneral {
+			pureProjection = false
+			break
+		}
+	}
+	plan := Reindex{value: &reindex{manager: builder.manager, source: builder.source, target: builder.target, entries: entries, identity: identity, coordinateIdentity: coordinateIdentity, pureProjection: pureProjection, sealed: true}}
 	if !plan.Valid() {
 		return Reindex{}, false
 	}
@@ -231,6 +273,19 @@ type ReindexAction struct {
 	low  Guard
 	high Guard
 }
+
+// ProjectionAction is the O(1)-validity, scalar lookup surface for a pure
+// projection.  It intentionally exposes only the coordinate classification;
+// general relational regions remain behind ReindexAction.
+type ProjectionAction struct{ kind projectionKind }
+
+// RetainsCoordinate reports that the source decision is the same target
+// coordinate and can be rebuilt directly without an ITE.
+func (action ProjectionAction) RetainsCoordinate() bool { return action.kind == projectionRetain }
+
+// ForgetsCoordinate reports that both source fibers reach the same target
+// region and therefore must be combined by the caller's existential law.
+func (action ProjectionAction) ForgetsCoordinate() bool { return action.kind == projectionForget }
 
 // Low and High return the sealed target regions admitting source false and
 // source true respectively. They preserve the plan's relational meaning
@@ -280,19 +335,69 @@ func (plan Reindex) validAction() bool {
 // inspect plan entries collectively or provide a replacement map at runtime.
 func (plan Reindex) Action(atom Atom) (ReindexAction, bool) { return plan.action(atom) }
 
+// PureProjection proves that every source coordinate is either retained as
+// itself or existentially forgotten.  The proof is computed at Seal and the
+// hot read is structural and allocation-free; it never rescans the relation.
+func (plan Reindex) PureProjection() bool {
+	return plan.Valid() && plan.value.pureProjection
+}
+
+// ProjectionAction returns the scalar projection classification for one
+// source atom. Unlike Action, it does not call validAction: the sealed proof
+// makes validity O(1), followed by a source-row binary search.
+func (plan Reindex) ProjectionAction(atom Atom) (ProjectionAction, bool) {
+	if !plan.PureProjection() {
+		return ProjectionAction{}, false
+	}
+	rank, exists := plan.value.manager.atoms[atom]
+	if !exists {
+		return ProjectionAction{}, false
+	}
+	index := rankSearch(plan.value.source.value.ranks, rank)
+	if index >= len(plan.value.entries) || plan.value.entries[index].rank != rank {
+		return ProjectionAction{}, false
+	}
+	action := ProjectionAction{kind: plan.value.entries[index].projection}
+	if !action.RetainsCoordinate() && !action.ForgetsCoordinate() {
+		return ProjectionAction{}, false
+	}
+	return action, true
+}
+
 // Reindex applies plan simultaneously to root. Each source branch is gated by
 // its sealed relational target region then unioned, which is ITE for ordinary
 // substitution and existential OR for Forget. The complete source-scope proof
 // rejects an unscoped decision rather than silently retaining it.
 func (w *Work) Reindex(root Guard, plan Reindex) (Guard, bool) {
-	if !w.Valid(root) || !plan.Valid() || plan.value.manager != w.manager || !w.scopeContains(plan.Source(), root) {
+	if !w.Valid(root) || !plan.Valid() || plan.value.manager != w.manager {
 		return Guard{}, false
-	}
-	if plan.Identity() {
-		return root, true
 	}
 	if isTerminal(root) {
 		return root, true
+	}
+	if plan.CoordinateIdentity() {
+		// A coordinate-identical relation is the one zero-copy path. It still
+		// needs the candidate-aware source-scope proof: separately issued
+		// source/target Scopes may have the same coordinate payload, while an
+		// out-of-source Guard must never be retained through either identity.
+		if !w.scopeContains(plan.Source(), root) {
+			return Guard{}, false
+		}
+		return root, true
+	}
+	// Pure projections are the common carrier relation: every source
+	// coordinate is either retained or existentially forgotten.  The
+	// projection traversal below is also the complete source-scope proof, so
+	// do not first fold the root and then traverse it again.  Retained
+	// coordinates can be rebuilt directly; forgotten coordinates only need the
+	// exact OR of their already-transported branches.  General Set relations
+	// retain the relational traversal below, including its explicit source
+	// proof, because their target expressions need the full ITE operation.
+	if plan.PureProjection() {
+		return w.reindexProjection(root, plan)
+	}
+	if !w.scopeContains(plan.Source(), root) {
+		return Guard{}, false
 	}
 	resolved := make(map[Guard]Guard)
 	stack := []unaryFrame{{guard: root}}
@@ -336,6 +441,64 @@ func (w *Work) Reindex(root Guard, plan Reindex) (Guard, bool) {
 	return resolved[root], true
 }
 
+// reindexProjection transports a pure retain/forget relation in one complete
+// postorder traversal.  Looking up the action for every visited source node
+// simultaneously proves that the input root is contained by plan.Source;
+// there is no separate scope fold.  A retained action preserves the source
+// decision rank and therefore uses the canonical node constructor directly.
+// A forgotten action is existential closure, exactly low OR high.
+func (w *Work) reindexProjection(root Guard, plan Reindex) (Guard, bool) {
+	resolved := make(map[Guard]Guard)
+	stack := []unaryFrame{{guard: root}}
+	for len(stack) != 0 {
+		if !w.Live() {
+			return Guard{}, false
+		}
+		frame := &stack[len(stack)-1]
+		if _, done := resolvedGuard(frame.guard, resolved); done {
+			stack = stack[:len(stack)-1]
+			continue
+		}
+		n := w.node(frame.guard)
+		action, valid := plan.ProjectionAction(w.manager.atom(n.rank))
+		if !valid {
+			// The input mentions a source coordinate not admitted by this
+			// complete relation. No candidate is published by this method;
+			// the support owner discards its enclosing transaction.
+			return Guard{}, false
+		}
+		switch frame.phase {
+		case 0:
+			frame.phase = 1
+			if _, done := resolvedGuard(n.low, resolved); !done {
+				stack = append(stack, unaryFrame{guard: n.low})
+			}
+		case 1:
+			frame.phase = 2
+			if _, done := resolvedGuard(n.high, resolved); !done {
+				stack = append(stack, unaryFrame{guard: n.high})
+			}
+		default:
+			low, _ := resolvedGuard(n.low, resolved)
+			high, _ := resolvedGuard(n.high, resolved)
+			var result Guard
+			if action.RetainsCoordinate() {
+				result = w.makeNode(n.rank, low, high)
+			} else if action.ForgetsCoordinate() {
+				result = w.applyNode(orOperation, low, high)
+			} else {
+				return Guard{}, false
+			}
+			if !w.Live() {
+				return Guard{}, false
+			}
+			resolved[frame.guard] = result
+			stack = stack[:len(stack)-1]
+		}
+	}
+	return resolved[root], true
+}
+
 func (w *Work) scopeContains(scope Scope, root Guard) bool {
 	if !scope.Valid() || scope.Manager() != w.manager || !w.Valid(root) {
 		return false
@@ -368,7 +531,7 @@ func (m *Manager) ComposeReindex(first, second Reindex) (Reindex, bool) {
 			work.Discard()
 			return Reindex{}, false
 		}
-		entries[index] = reindexEntryRow{rank: firstEntry.rank, reindexEntry: reindexEntry{low: low, high: high}}
+		entries[index] = reindexEntryRow{rank: firstEntry.rank, reindexEntry: reindexEntry{low: low, high: high, projection: projectionGeneral}}
 	}
 	work.Seal()
 	identity := first.Identity() && second.Identity() && first.Source().Same(second.Target())

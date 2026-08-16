@@ -43,3 +43,17 @@ func TestCloneFunctionNil(t *testing.T) {
 		t.Fatal("CloneFunction(nil) must return nil")
 	}
 }
+
+func TestCloneFunctionDoesNotShareEqualityHashCache(t *testing.T) {
+	recursive := NewRecursive("R", func(self Type) Type { return NewArray(self) })
+	source := Func().Returns(recursive).Build()
+	sourceHash := EqualityHash(source)
+	clone := CloneFunction(source)
+	clone.Returns[0] = Boolean
+	if got := EqualityHash(clone); got == sourceHash {
+		t.Fatalf("cloned function reused source equality cache: got=%d source=%d", got, sourceHash)
+	}
+	if got := EqualityHash(source); got != sourceHash {
+		t.Fatalf("mutating cloned function changed source equality hash: got=%d want=%d", got, sourceHash)
+	}
+}

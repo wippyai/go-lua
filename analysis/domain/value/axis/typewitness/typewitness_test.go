@@ -94,7 +94,7 @@ func (f *forgedStringType) String() string             { return f.mutable }
 func (*forgedStringType) Hash() uint64                 { return 1 }
 func (f *forgedStringType) Equals(other typ.Type) bool { return f == other }
 
-func TestArtifactRetentionRejectsKindForgedPrimitiveAndMutableLiteral(t *testing.T) {
+func TestArtifactRetentionRejectsKindForgedPrimitiveAndUnsealedLiteral(t *testing.T) {
 	reg := testRegistry(t)
 	forged := &forgedStringType{mutable: "before"}
 	if product.RetentionSafe(reg, product.Set(reg, product.Top(), Key, Value{t: forged})) {
@@ -102,14 +102,10 @@ func TestArtifactRetentionRejectsKindForgedPrimitiveAndMutableLiteral(t *testing
 	}
 	forged.mutable = "after"
 
-	literal := &typ.Literal{Base: kind.String, Value: "retention-mutation-fixture"}
+	literal := typ.LiteralString("retention-mutation-fixture")
 	stored := product.Set(reg, product.Top(), Key, Value{t: literal})
 	if product.RetentionSafe(reg, stored) {
-		t.Fatal("pointer-backed literal crossed artifact boundary before mutation")
-	}
-	literal.Value = "mutated"
-	if product.RetentionSafe(reg, stored) {
-		t.Fatal("post-mutation pointer-backed literal crossed artifact boundary")
+		t.Fatal("unsealed literal crossed artifact boundary")
 	}
 }
 

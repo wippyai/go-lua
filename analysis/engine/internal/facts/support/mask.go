@@ -296,10 +296,17 @@ func Reindex(mask Mask, plan guard.Reindex) (Mask, bool) {
 // released by Seal or Discard, so a concurrent delta candidate cannot be
 // accidentally reset by a nested transport.
 func ReindexWithWork(work *Work, mask Mask, plan guard.Reindex) (Mask, bool) {
-	if !mask.Valid() || !plan.Valid() || mask.Manager() != plan.Source().Manager() || !plan.Source().Contains(mask.root) {
+	if !mask.Valid() || !plan.Valid() || mask.Manager() != plan.Source().Manager() {
 		return Mask{}, false
 	}
 	if plan.CoordinateIdentity() {
+		// The zero-copy path does not enter guard.Work.Reindex, so retain the
+		// explicit source-scope proof here.  A coordinate-identical relation
+		// preserves the Boolean root only after proving that the root is
+		// actually authored in the relation's source scope.
+		if !plan.Source().Contains(mask.root) {
+			return Mask{}, false
+		}
 		return mask, true
 	}
 	if work == nil {
@@ -344,6 +351,63 @@ func (work *Work) Valid(mask Mask) bool {
 // Mask.Entails and never publishes a second support representation.
 func (work *Work) Entails(premise, conclusion Mask) bool {
 	return work.live() && work.Valid(premise) && work.Valid(conclusion) && work.work.Entails(premise.root, conclusion.root) && work.live()
+}
+
+// Reindex transports one support region inside the caller's already
+// active candidate transaction.  Unlike ReindexWithWork it neither opens nor
+// seals the shell, allowing a carrier-owned batch to publish all correlated
+// rows at one Boolean cut. Candidate Masks are authenticated by this Work,
+// rather than Mask.Valid/Manager which intentionally accept sealed roots
+// only. guard.Work owns the exact source-scope proof for both coordinate and
+// non-coordinate relations while retaining candidate roots where lawful.
+func (work *Work) Reindex(mask Mask, plan guard.Reindex) (Mask, bool) {
+	if !work.live() || !work.active || !work.Valid(mask) || !plan.Valid() || !work.OwnsManager(plan.Source().Manager()) || plan.Target().Manager() != plan.Source().Manager() {
+		return Mask{}, false
+	}
+	root, ok := work.work.Reindex(mask.root, plan)
+	if !ok || !work.live() {
+		return Mask{}, false
+	}
+	return Mask{manager: mask.manager, root: root}, true
+}
+
+// EntailsWithCheckpoint proves exact Boolean support inclusion through this
+// Work's reusable read scratch while polling one evaluator-owned liveness
+// probe during the traversal.  The probe is scoped to this call: an active
+// construction transaction keeps its prior checkpoint and reservation after
+// the read returns.  No candidate BDD is built and no Manager traversal
+// scratch is allocated.
+func (work *Work) EntailsWithCheckpoint(checkpoint func() bool, premise, conclusion Mask) bool {
+	// Binding owns one reusable Boolean shell for both completed construction
+	// helpers and read-only proofs. A preceding helper leaves the shell sealed;
+	// reopen that terminal transaction before consulting its scratch. Never
+	// reset an already-open candidate: guard.Work permits read traversal of its
+	// own candidate and sealed predecessors without changing the candidate.
+	if work == nil || work.work == nil || !work.Open() && !work.Begin() {
+		return false
+	}
+	if !work.live() || !work.Valid(premise) || !work.Valid(conclusion) {
+		return false
+	}
+	if checkpoint == nil {
+		return work.work.Entails(premise.root, conclusion.root) && work.live()
+	}
+	if !checkpoint() {
+		return false
+	}
+	priorCheckpoint, priorActive := work.checkpoint, work.active
+	if !work.work.SetCheckpoint(checkpoint) {
+		return false
+	}
+	work.checkpoint = checkpoint
+	defer func() {
+		work.checkpoint = priorCheckpoint
+		work.active = priorActive
+		// The underlying guard Work owns the traversal checkpoint. Restore it
+		// even when the callback cancels halfway through the read.
+		_ = work.work.SetCheckpoint(priorCheckpoint)
+	}()
+	return work.work.Entails(premise.root, conclusion.root) && work.live()
 }
 
 // Decompose reads either a sealed region or a candidate region owned by this

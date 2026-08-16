@@ -2,11 +2,9 @@ package index
 
 import (
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
+	"github.com/wippyai/go-lua/analysis/domain/materialization"
 	"github.com/wippyai/go-lua/analysis/domain/pack"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
-	"github.com/wippyai/go-lua/program/keyspace"
-	linkboundary "github.com/wippyai/go-lua/program/link/boundary"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
 )
 
 type rawPayloadKind uint8
@@ -19,49 +17,59 @@ const (
 	rawPayloadInitial
 )
 
-// rawPayload is a cold descriptor for one existing Heap RawPayloadTag. Values
-// is Pack's Program-source selector and payload is its owner-fenced marginal.
-// Neither is recurrent fact state.
+// rawPayload is a cold descriptor for one existing Heap RawPayloadTag. Its
+// source is Pack's mounted semantic selector; neither is recurrent fact state.
 type rawPayload struct {
-	kind    rawPayloadKind
-	values  pack.Values
-	payload pack.Payload
-	fixed   linkboundary.Value
-	// source is the exact Program Values source retained by Heap's Payload.
-	// It is declaration-time provenance only; IndexAccessGeometry remains the
-	// authority for admitting an indexed write.
-	source  rawPayloadSource
-	sources []rawSourceTag
-	byValue map[linkboundary.Value]rawSourceTag
-}
-
-type rawPayloadSource struct {
-	shard  linkproject.Shard
-	values keyspace.Term
-	offset int
+	kind        rawPayloadKind
+	payload     pack.Payload
+	sourceStart uint32
+	sourceCount uint32
 }
 
 type rawSourceTag uint64
 
+type rawPayloadSource struct {
+	payload heapdomain.RawPayloadTag
+	source  pack.SemanticSource
+}
+
 type rawSource struct {
-	value      linkboundary.Value
 	coordinate valuedomain.Coordinate
 }
 
-func buildRawPayloads(topology *Topology, packs *pack.Schema) ([]rawPayload, []rawSource, bool) {
-	if topology == nil || !topology.valid() || packs == nil {
-		return nil, nil, false
+// rawCatalog is the one immutable Topology/Link-scoped Pack/Value projection
+// shared by both raw operation directions. Heap remains the authority for
+// candidate geometry and payload tags; this catalog contains only the Pack
+// payload/source rows needed by typed selection callbacks.
+type rawCatalog struct {
+	payloads        []rawPayload
+	sources         []rawSource
+	sourceRefs      []rawSourceTag
+	byPayloadSource map[rawPayloadSource]rawSourceTag
+}
+
+// rawSetRouteFact is the immutable topology projection carried by one
+// admitted RawSet operand.  Hot callbacks consume these canonical routes and
+// never retain or reopen Topology.
+type rawSetRouteFact struct {
+	key  heapdomain.Key
+	role materialization.Role
+	tag  heapdomain.RawRouteTag
+}
+
+func buildRawPayloads(topology *Topology, packs *pack.Schema) ([]rawPayload, []rawSource, []rawSourceTag, map[rawPayloadSource]rawSourceTag, bool) {
+	if topology == nil || !topology.baseValid() || packs == nil || packs != topology.packs {
+		return nil, nil, nil, nil, false
 	}
 	values := topology.values
-	linked := values.Link()
-	if linked == nil || linked.Boundary() == nil {
-		return nil, nil, false
+	if values == nil || !values.LinkOwner().Matches(packs.LinkOwner()) {
+		return nil, nil, nil, nil, false
 	}
-	boundaryValues := linked.Boundary().Values()
 	result := []rawPayload{{}}
-	requests := make([]pack.PayloadRequest, 0)
-	tailRows := make([]int, 0)
 	var sources []rawSource
+	var sourceRefs []rawSourceTag
+	byPayloadSource := make(map[rawPayloadSource]rawSourceTag)
+	sourceTags := make(map[pack.SemanticSource]rawSourceTag)
 	visited := 0
 	complete := topology.heap.VisitRawPayloadTags(func(tag heapdomain.RawPayloadTag, payload heapdomain.Payload) bool {
 		visited = int(tag)
@@ -70,7 +78,7 @@ func buildRawPayloads(topology *Topology, packs *pack.Schema) ([]rawPayload, []r
 		}
 		// Target initial payloads are projected directly by RawAccess. They
 		// still occupy their canonical tag position but need no Pack/Value read.
-		shard, valuesTerm, offset, programPayload := payload.Source()
+		module, valuesID, offset, programPayload := payload.Source()
 		if !programPayload {
 			if _, initial := payload.InitialValue(); !initial {
 				return false
@@ -78,35 +86,36 @@ func buildRawPayloads(topology *Topology, packs *pack.Schema) ([]rawPayload, []r
 			result = append(result, rawPayload{kind: rawPayloadInitial})
 			return true
 		}
-		p, programOK := linked.Project().Mounts().Program(shard)
-		if !programOK || p == nil {
+		row := rawPayload{}
+		mounted, mountedOK := packs.PayloadForMounted(module, valuesID, offset)
+		if !mountedOK {
 			return false
 		}
-		row := rawPayload{source: rawPayloadSource{shard: shard, values: valuesTerm, offset: offset}}
-		position, ok := p.Flow().Authored().Values().Position(valuesTerm, offset)
-		if !ok {
-			return false
-		}
-		switch {
-		case position.Fixed != 0:
-			fixed, fixedOK := boundaryValues.Of(shard, position.Fixed)
+		switch mounted.Kind() {
+		case pack.MountedPayloadFixed:
+			fixed, fixedOK := mounted.Fixed()
 			if !fixedOK {
 				return false
 			}
-			row.kind, row.fixed = rawPayloadFixed, fixed
-		case position.Tail != 0:
-			// The Pack relation belongs to the complete executable Values
-			// occurrence named by Heap's payload.  position.Tail is only the
-			// symbolic Call/Vararg producer for its open suffix and deliberately
-			// has no competing Values root.
-			packValues, _, valuesOK := packs.Values(shard, valuesTerm)
-			if !valuesOK {
+			row.kind = rawPayloadFixed
+			coordinate, coordinateOK := values.CoordinateForMountedSemantic(fixed.Module(), fixed.ID())
+			if !coordinateOK || !appendRawSource(&sources, &sourceRefs, sourceTags, byPayloadSource, &row, tag, fixed, coordinate) || row.sourceCount != 1 {
 				return false
 			}
-			row.kind, row.values = rawPayloadTail, packValues
-			requests = append(requests, pack.PayloadRequest{Values: packValues, Index: offset})
-			tailRows = append(tailRows, len(result))
-		case position.NilFill:
+		case pack.MountedPayloadTail:
+			payload, payloadOK := mounted.Tail()
+			if !payloadOK {
+				return false
+			}
+			row.kind, row.payload = rawPayloadTail, payload
+			for sourceIndex := 0; sourceIndex < payload.SourceCount(); sourceIndex++ {
+				source, sourceOK := payload.SourceAt(sourceIndex)
+				coordinate, coordinateOK := values.CoordinateForMountedSemantic(source.Module(), source.ID())
+				if !sourceOK || !coordinateOK || !appendRawSource(&sources, &sourceRefs, sourceTags, byPayloadSource, &row, tag, source, coordinate) {
+					return false
+				}
+			}
+		case pack.MountedPayloadNil:
 			row.kind = rawPayloadNil
 		default:
 			return false
@@ -118,64 +127,76 @@ func buildRawPayloads(topology *Topology, packs *pack.Schema) ([]rawPayload, []r
 	// has no partial meaning, so every canonical tag must have produced one
 	// descriptor; otherwise fail closed instead of returning an empty prefix.
 	if !complete || len(result) != visited+1 {
-		return nil, nil, false
+		return nil, nil, nil, nil, false
 	}
-	selections, selectionsOK := packs.Payloads(requests)
-	if !selectionsOK || len(selections) != len(tailRows) {
-		return nil, nil, false
-	}
-	for selectionIndex, rowIndex := range tailRows {
-		if rowIndex <= 0 || rowIndex >= len(result) {
-			return nil, nil, false
-		}
-		result[rowIndex].payload = selections[selectionIndex]
-	}
-	sourceTags := make(map[linkboundary.Value]rawSourceTag)
-	for rowIndex := 1; rowIndex < len(result); rowIndex++ {
-		row := &result[rowIndex]
-		switch row.kind {
-		case rawPayloadFixed:
-			coordinate, found := values.CoordinateFor(row.fixed)
-			if !found || !appendRawSource(&sources, sourceTags, row, row.fixed, coordinate) {
-				return nil, nil, false
-			}
-		case rawPayloadTail:
-			for sourceIndex := 0; sourceIndex < row.payload.SourceCount(); sourceIndex++ {
-				source, sourceOK := row.payload.SourceAt(sourceIndex)
-				coordinate, coordinateOK := values.CoordinateFor(source)
-				if !sourceOK || !coordinateOK || !appendRawSource(&sources, sourceTags, row, source, coordinate) {
-					return nil, nil, false
-				}
-			}
-		}
-	}
-	return result, sources, true
+	return result, sources, sourceRefs, byPayloadSource, true
 }
 
-func appendRawSource(all *[]rawSource, tags map[linkboundary.Value]rawSourceTag, payload *rawPayload, value linkboundary.Value, coordinate valuedomain.Coordinate) bool {
-	if all == nil || tags == nil || payload == nil || value == (linkboundary.Value{}) || !coordinate.Valid() || uint64(len(*all)) == ^uint64(0) {
+func appendRawSource(all *[]rawSource, refs *[]rawSourceTag, tags map[pack.SemanticSource]rawSourceTag, byPayloadSource map[rawPayloadSource]rawSourceTag, payload *rawPayload, payloadTag heapdomain.RawPayloadTag, source pack.SemanticSource, coordinate valuedomain.Coordinate) bool {
+	if all == nil || refs == nil || tags == nil || byPayloadSource == nil || payload == nil || !source.Available() || !coordinate.Valid() || payloadTag == 0 || uint64(len(*all)) == ^uint64(0) || uint64(len(*refs)) >= uint64(^uint32(0)) || payload.sourceCount == ^uint32(0) {
 		return false
 	}
-	if payload.byValue == nil {
-		payload.byValue = make(map[linkboundary.Value]rawSourceTag)
+	key := rawPayloadSource{payload: payloadTag, source: source}
+	reverse := payload.kind == rawPayloadTail
+	if reverse {
+		if _, exists := byPayloadSource[key]; exists {
+			return true
+		}
 	}
-	if _, exists := payload.byValue[value]; exists {
+	if !reverse && payload.sourceCount != 0 {
 		return true
 	}
-	tag, exists := tags[value]
+	tag, exists := tags[source]
 	if exists {
-		source, ok := sourceAt(*all, tag)
-		if !ok || source.value != value || source.coordinate != coordinate {
+		row, ok := sourceAt(*all, tag)
+		if !ok || row.coordinate != coordinate {
 			return false
 		}
 	} else {
-		*all = append(*all, rawSource{value: value, coordinate: coordinate})
+		*all = append(*all, rawSource{coordinate: coordinate})
 		tag = rawSourceTag(len(*all))
-		tags[value] = tag
+		tags[source] = tag
 	}
-	payload.sources = append(payload.sources, tag)
-	payload.byValue[value] = tag
+	if payload.sourceCount == 0 {
+		payload.sourceStart = uint32(len(*refs))
+	}
+	// The catalog keeps one ordered source-ref vector; each payload retains
+	// only a bounded span, avoiding a per-payload slice header/backing array.
+	*refs = append(*refs, tag)
+	payload.sourceCount++
+	if reverse {
+		byPayloadSource[key] = tag
+	}
 	return true
+}
+
+func payloadSources(payloads []rawPayload, refs []rawSourceTag, tag heapdomain.RawPayloadTag) ([]rawSourceTag, bool) {
+	payload, ok := payloadAt(payloads, tag)
+	if !ok {
+		return nil, false
+	}
+	start := uint64(payload.sourceStart)
+	count := uint64(payload.sourceCount)
+	end := start + count
+	if end < start || end > uint64(len(refs)) {
+		return nil, false
+	}
+	return refs[start:end], true
+}
+
+func (catalog *rawCatalog) sourceTag(payload heapdomain.RawPayloadTag, source pack.SemanticSource) (rawSourceTag, bool) {
+	if catalog == nil || catalog.byPayloadSource == nil || payload == 0 || !source.Available() {
+		return 0, false
+	}
+	tag, ok := catalog.byPayloadSource[rawPayloadSource{payload: payload, source: source}]
+	return tag, ok
+}
+
+func (catalog *rawCatalog) sourceTags(payload heapdomain.RawPayloadTag) ([]rawSourceTag, bool) {
+	if catalog == nil {
+		return nil, false
+	}
+	return payloadSources(catalog.payloads, catalog.sourceRefs, payload)
 }
 
 func payloadAt(values []rawPayload, tag heapdomain.RawPayloadTag) (rawPayload, bool) {

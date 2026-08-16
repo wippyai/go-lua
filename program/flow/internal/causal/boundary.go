@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/wippyai/go-lua/program/flow/internal/routeplan"
 	"github.com/wippyai/go-lua/program/flow/kind"
 	"github.com/wippyai/go-lua/program/keyspace"
 )
@@ -49,9 +50,75 @@ func (s *boundaryState) appendBoundary(boundary CallBoundary, owner keyspace.Ter
 	if uint64(len(s.boundaryRows)) >= uint64(^uint32(0)) {
 		return errors.New("program/flow/causal: CallBoundary denominator overflows")
 	}
+	if s.planState == nil || s.planState.builder == nil {
+		return errors.New("program/flow/causal: route plan builder is unavailable")
+	}
+	planned := boundaryPlanOrdinals{}
+	for _, arm := range [...]BoundaryArmKind{BoundaryResume, BoundarySelectTrue, BoundarySelectFalse, BoundaryTail, BoundaryThrow, BoundaryYield, BoundaryCancel} {
+		to, decision, truth, present := boundarySuccessor(boundary, arm)
+		if !present {
+			continue
+		}
+		origin, err := s.boundaryOrigin(boundary, arm, to)
+		if err != nil {
+			return err
+		}
+		ordinal := s.planState.nextOrdinal
+		if err := s.planState.builder.Emit(routeplan.Route{From: boundary.Call, To: to, Decision: decision, Truth: truth, Arm: routePlanArm(arm)}, origin); err != nil {
+			return err
+		}
+		s.planState.nextOrdinal++
+		if boundary.mode == boundaryDirect && arm == BoundaryResume {
+			callOrdinal := keyspace.TermOrdinal(boundary.Call)
+			if callOrdinal != 0 && uint64(callOrdinal) < uint64(len(s.normalArc)) && s.normalArc[callOrdinal] >= 0 {
+				arcIndex := s.normalArc[callOrdinal]
+				if arcIndex >= len(s.planState.arcOrdinal) || s.planState.arcOrdinal[arcIndex] >= 0 {
+					return errors.New("program/flow/causal: Call normal Arc has multiple planned routes")
+				}
+				s.planState.arcOrdinal[arcIndex] = ordinal
+			}
+		}
+		planned.ordinals[arm], planned.present[arm] = ordinal, true
+	}
 	s.boundaryRows = append(s.boundaryRows, boundaryRow{CallBoundary: boundary})
 	s.boundaryOwners = append(s.boundaryOwners, owner)
+	s.planOrdinals = append(s.planOrdinals, planned)
 	return nil
+}
+
+func routePlanArm(arm BoundaryArmKind) routeplan.Arm {
+	switch arm {
+	case BoundaryResume:
+		return routeplan.ArmResume
+	case BoundarySelectTrue:
+		return routeplan.ArmSelectTrue
+	case BoundarySelectFalse:
+		return routeplan.ArmSelectFalse
+	case BoundaryTail:
+		return routeplan.ArmTail
+	case BoundaryThrow:
+		return routeplan.ArmThrow
+	case BoundaryYield:
+		return routeplan.ArmYield
+	case BoundaryCancel:
+		return routeplan.ArmCancel
+	default:
+		return 0
+	}
+}
+
+func (s *boundaryState) boundaryOrigin(boundary CallBoundary, arm BoundaryArmKind, to keyspace.Term) (routeplan.Origin, error) {
+	owner, ownerOK := s.bodyOf(boundary.Call)
+	if !ownerOK {
+		return routeplan.Origin{}, errors.New("program/flow/causal: Call boundary owner is unavailable")
+	}
+	if boundary.mode == boundaryDirect && arm == BoundaryResume {
+		ordinal := keyspace.TermOrdinal(boundary.Call)
+		if ordinal != 0 && uint64(ordinal) < uint64(len(s.normalArc)) && s.normalArc[ordinal] >= 0 {
+			return s.localOrigin(boundary.Call, to, owner, s.normalArc[ordinal])
+		}
+	}
+	return s.localOrigin(boundary.Call, to, owner, -1)
 }
 
 func (s *boundaryState) validOutcome(term keyspace.Term) bool {
@@ -180,7 +247,12 @@ func (s *boundaryState) buildTailPlans() error {
 		if err := validateChain(exit); err != nil {
 			return err
 		}
+		proof, proofErr := s.graph.IssueCallTailReturnReceipt(s.source, s.flow, s.outs, tail, ret, exit, owner)
+		if proofErr != nil {
+			return proofErr
+		}
 		s.tailPlans[callOrdinal] = exit
+		s.tailProofs[callOrdinal] = proof
 	}
 	return nil
 }
@@ -247,24 +319,28 @@ func (s *structureState) prepareDirectCall(owner, root keyspace.Term, cursor int
 	return s.setCallPlan(root, callNormalRoute{normal: to, mode: boundaryDirect})
 }
 
-func (s *boundaryState) claimDirectCallArc(call keyspace.Term, disposition arcDisposition) error {
+func (s *boundaryState) claimDirectCallArc(call keyspace.Term, disposition arcDisposition) (int, error) {
 	owner, cursor, ok := s.directRootCall(call)
 	if !ok {
-		return nil
+		return -1, nil
 	}
 	_ = cursor
 	raw := s.directCallRaw[keyspace.TermOrdinal(call)]
 	if raw == 0 {
-		return errors.New("program/flow/causal: direct Call structural target is unavailable")
+		return -1, errors.New("program/flow/causal: direct Call structural target is unavailable")
 	}
 	rawLive := raw == owner || (rootKind(keyspace.TermFamily(raw)) && !s.static(raw) && s.live(raw))
 	if !rawLive {
 		disposition = arcLivenessOnly
 	}
-	if _, claimed := s.claimArc(call, raw, 0, false, disposition); !claimed {
-		return errors.New("program/flow/causal: direct Call structural Arc is unavailable")
+	index, claimed := s.claimArc(call, raw, 0, false, disposition)
+	if !claimed {
+		return -1, errors.New("program/flow/causal: direct Call structural Arc is unavailable")
 	}
-	return nil
+	if disposition != arcBoundaryNormal {
+		return -1, nil
+	}
+	return index, nil
 }
 
 type callNormalRoute struct {
@@ -295,7 +371,7 @@ func (s *boundaryState) emitBoundaries() error {
 		boundary := CallBoundary{Call: call}
 		tail := s.tailPlans[ordinal]
 		if tail != 0 {
-			if err := s.claimDirectCallArc(call, arcLivenessOnly); err != nil {
+			if _, err := s.claimDirectCallArc(call, arcLivenessOnly); err != nil {
 				return err
 			}
 			boundary.TailReturn = tail
@@ -305,8 +381,12 @@ func (s *boundaryState) emitBoundaries() error {
 			if !normalOK || route.normal == 0 {
 				return errors.New("program/flow/causal: live Call has no typed normal continuation")
 			}
-			if err := s.claimDirectCallArc(call, arcBoundaryNormal); err != nil {
+			arcIndex, err := s.claimDirectCallArc(call, arcBoundaryNormal)
+			if err != nil {
 				return err
+			}
+			if arcIndex >= 0 {
+				s.normalArc[ordinal] = arcIndex
 			}
 			boundary.Normal = route.normal
 			boundary.Other = route.other

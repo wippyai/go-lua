@@ -4,281 +4,503 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 
+	programartifact "github.com/wippyai/go-lua/analysis/internal/programartifact"
 	flowkind "github.com/wippyai/go-lua/program/flow/kind"
 	"github.com/wippyai/go-lua/program/keyspace"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
-	programstatic "github.com/wippyai/go-lua/program/static"
 )
 
-// UnaryNot is Value's owner-fenced interpretation of one Program Unary term.
-// Program owns the causal terms; Link supplies only shard-to-Program and
-// Program-term-to-Value topology.
-type UnaryNot struct {
-	schema  *Schema
-	shard   linkproject.Shard
-	term    keyspace.Term
-	content keyspace.ContentID
-	result  Coordinate
-	operand Coordinate
+type computationKey struct {
+	module     keyspace.ContentID
+	occurrence keyspace.ContentID
 }
 
-func (schema *Schema) UnaryNot(shard linkproject.Shard, term keyspace.Term) (UnaryNot, bool) {
-	if schema == nil || schema.source == nil {
-		return UnaryNot{}, false
-	}
-	p, programOK := schema.source.Project().Mounts().Program(shard)
-	if !programOK || p == nil {
-		return UnaryNot{}, false
-	}
-	_, op, operandTerm, unaryOK := p.Flow().Authored().Operators().Unaries().Get(term)
-	if !p.Flow().Executable().Contains(term) || !unaryOK || op != flowkind.UnaryNot {
-		return UnaryNot{}, false
-	}
-	resultValue, resultOK := schema.source.Boundary().Values().Of(shard, term)
-	operandValue, operandOK := schema.source.Boundary().Values().Of(shard, operandTerm)
-	result, resultCoordinateOK := schema.CoordinateFor(resultValue)
-	operand, operandCoordinateOK := schema.CoordinateFor(operandValue)
-	shardIndex, shardIndexOK := schema.source.Project().Mounts().Index(shard)
-	content := unaryNotContent(schema.source.ContentID(), uint64(shardIndex+1), term)
-	if !shardIndexOK || !resultOK || !operandOK || !resultCoordinateOK || !operandCoordinateOK || !content.Available() {
-		return UnaryNot{}, false
-	}
-	return UnaryNot{schema: schema, shard: shard, term: term, content: content, result: result, operand: operand}, true
+type selectBranchKey struct {
+	computationKey
+	branch uint8
 }
 
-func (operand UnaryNot) valid() bool {
-	if operand.schema == nil || !operand.content.Available() {
-		return false
+// BinaryEquality is Value's owner-fenced interpretation of one reusable
+// Program equality computation. It retains only the exact mounted
+// coordinates and the equality polarity; authored terms and Flow geometry
+// remain behind ProgramArtifact.
+type BinaryEquality struct {
+	schema              *Schema
+	key                 computationKey
+	content             keyspace.ContentID
+	result, left, right Coordinate
+	notEqual            bool
+}
+
+// BinaryArithmetic is Value's owner-fenced interpretation of one reusable
+// Program primitive arithmetic transfer.  Program owns the operator and
+// occurrence geometry; Value owns only the mounted coordinates and abstract
+// result relation.
+type BinaryArithmetic struct {
+	schema              *Schema
+	key                 computationKey
+	content             keyspace.ContentID
+	result, left, right Coordinate
+	op                  flowkind.BinaryOp
+}
+
+func (schema *Schema) BinaryArithmetic(module, occurrence keyspace.ContentID) (BinaryArithmetic, bool) {
+	if schema == nil || schema.binaryArithmetics == nil {
+		return BinaryArithmetic{}, false
 	}
-	expected, ok := operand.schema.UnaryNot(operand.shard, operand.term)
-	return ok && expected == operand
+	row, ok := schema.binaryArithmetics[computationKey{module: module, occurrence: occurrence}]
+	return row, ok && row.valid()
 }
 
-func (schema *Schema) OwnsUnaryNot(operand UnaryNot) bool {
-	return schema != nil && operand.schema == schema && operand.valid()
+func (row BinaryArithmetic) valid() bool {
+	return row.schema != nil && row.key.module.Available() && row.key.occurrence.Available() &&
+		row.content.Available() && binaryArithmeticOperator(row.op)
 }
 
-func (operand UnaryNot) ID() (keyspace.ContentID, bool) {
-	if !operand.valid() {
+func (schema *Schema) OwnsBinaryArithmetic(row BinaryArithmetic) bool {
+	return schema != nil && row.schema == schema && row.valid()
+}
+
+func (row BinaryArithmetic) ID() (keyspace.ContentID, bool) {
+	if !row.valid() {
 		return keyspace.ContentID{}, false
 	}
-	return operand.content, true
+	return row.content, true
 }
 
-func (operand UnaryNot) Endpoints() (result, input Coordinate, ok bool) {
-	if !operand.valid() {
+func (row BinaryArithmetic) Endpoints() (result, left, right Coordinate, op flowkind.BinaryOp, ok bool) {
+	if !row.valid() {
+		return Coordinate{}, Coordinate{}, Coordinate{}, 0, false
+	}
+	return row.result, row.left, row.right, row.op, true
+}
+
+func binaryArithmeticOperator(op flowkind.BinaryOp) bool {
+	return op >= flowkind.BinaryAdd && op <= flowkind.BinaryPow
+}
+
+// BinaryOrder is Value's owner-fenced interpretation of one reusable Program
+// relational-order computation. It retains only exact mounted coordinates and
+// the closed Lua operator; authored terms and Flow geometry remain behind the
+// ProgramArtifact receipt.
+type BinaryOrder struct {
+	schema              *Schema
+	key                 computationKey
+	content             keyspace.ContentID
+	result, left, right Coordinate
+	op                  flowkind.BinaryOp
+}
+
+func (schema *Schema) BinaryOrder(module, occurrence keyspace.ContentID) (BinaryOrder, bool) {
+	if schema == nil || schema.binaryOrders == nil {
+		return BinaryOrder{}, false
+	}
+	row, ok := schema.binaryOrders[computationKey{module: module, occurrence: occurrence}]
+	return row, ok && row.valid()
+}
+
+func (row BinaryOrder) valid() bool {
+	return row.schema != nil && row.key.module.Available() && row.key.occurrence.Available() &&
+		row.content.Available() && binaryOrderOperator(row.op)
+}
+
+func (schema *Schema) OwnsBinaryOrder(row BinaryOrder) bool {
+	return schema != nil && row.schema == schema && row.valid()
+}
+
+func (row BinaryOrder) ID() (keyspace.ContentID, bool) {
+	if !row.valid() {
+		return keyspace.ContentID{}, false
+	}
+	return row.content, true
+}
+
+func (row BinaryOrder) Endpoints() (result, left, right Coordinate, op flowkind.BinaryOp, ok bool) {
+	if !row.valid() {
+		return Coordinate{}, Coordinate{}, Coordinate{}, 0, false
+	}
+	return row.result, row.left, row.right, row.op, true
+}
+
+func binaryOrderOperator(op flowkind.BinaryOp) bool {
+	return op >= flowkind.BinaryLess && op <= flowkind.BinaryGreaterEqual
+}
+
+// PresenceRefinement is Value's owner-fenced interpretation of one exact
+// reusable nil-comparison arm. It names only the mounted storage coordinate
+// and the closed presence conclusion; Program branch/route geometry remains
+// behind the artifact receipt that issued this operand.
+type PresenceRefinement struct {
+	schema  *Schema
+	key     computationKey
+	content keyspace.ContentID
+	target  Coordinate
+	present bool
+}
+
+func (schema *Schema) PresenceRefinement(module, occurrence keyspace.ContentID) (PresenceRefinement, bool) {
+	if schema == nil || schema.presenceRefinements == nil {
+		return PresenceRefinement{}, false
+	}
+	row, ok := schema.presenceRefinements[computationKey{module: module, occurrence: occurrence}]
+	return row, ok && row.valid()
+}
+
+func (row PresenceRefinement) valid() bool {
+	return row.schema != nil && row.key.module.Available() && row.key.occurrence.Available() && row.content.Available()
+}
+
+func (schema *Schema) OwnsPresenceRefinement(row PresenceRefinement) bool {
+	return schema != nil && row.schema == schema && row.valid()
+}
+
+func (row PresenceRefinement) ID() (keyspace.ContentID, bool) {
+	if !row.valid() {
+		return keyspace.ContentID{}, false
+	}
+	return row.content, true
+}
+
+func (row PresenceRefinement) Target() (Coordinate, bool, bool) {
+	if !row.valid() {
+		return Coordinate{}, false, false
+	}
+	return row.target, row.present, true
+}
+
+func (schema *Schema) BinaryEquality(module, occurrence keyspace.ContentID) (BinaryEquality, bool) {
+	if schema == nil || schema.binaryEqualities == nil {
+		return BinaryEquality{}, false
+	}
+	row, ok := schema.binaryEqualities[computationKey{module: module, occurrence: occurrence}]
+	return row, ok && row.valid()
+}
+
+func (row BinaryEquality) valid() bool {
+	return row.schema != nil && row.key.module.Available() && row.key.occurrence.Available() && row.content.Available()
+}
+
+func (schema *Schema) OwnsBinaryEquality(row BinaryEquality) bool {
+	return schema != nil && row.schema == schema && row.valid()
+}
+
+func (row BinaryEquality) ID() (keyspace.ContentID, bool) {
+	if !row.valid() {
+		return keyspace.ContentID{}, false
+	}
+	return row.content, true
+}
+
+func (row BinaryEquality) Endpoints() (result, left, right Coordinate, notEqual bool, ok bool) {
+	if !row.valid() {
+		return Coordinate{}, Coordinate{}, Coordinate{}, false, false
+	}
+	return row.result, row.left, row.right, row.notEqual, true
+}
+
+type UnaryNot struct {
+	schema                              *Schema
+	key                                 computationKey
+	content                             keyspace.ContentID
+	resultCoordinate, operandCoordinate Coordinate
+}
+
+func (schema *Schema) UnaryNot(module, occurrence keyspace.ContentID) (UnaryNot, bool) {
+	if schema == nil || schema.unaryNots == nil {
+		return UnaryNot{}, false
+	}
+	row, ok := schema.unaryNots[computationKey{module, occurrence}]
+	return row, ok && row.valid()
+}
+
+func (row UnaryNot) valid() bool {
+	return row.schema != nil && row.key.module.Available() && row.key.occurrence.Available() && row.content.Available()
+}
+func (schema *Schema) OwnsUnaryNot(row UnaryNot) bool {
+	return schema != nil && row.schema == schema && row.valid()
+}
+func (row UnaryNot) ID() (keyspace.ContentID, bool) {
+	if !row.valid() {
+		return keyspace.ContentID{}, false
+	}
+	return row.content, true
+}
+func (row UnaryNot) Endpoints() (Coordinate, Coordinate, bool) {
+	if !row.valid() {
 		return Coordinate{}, Coordinate{}, false
 	}
-	return operand.result, operand.operand, true
+	return row.resultCoordinate, row.operandCoordinate, true
 }
 
-// SelectBranch is Value's one truth-conditioned interpretation of an existing
-// Program Select. The branch ordinal is Value-local; Program Select supplies
-// the actual causal operand geometry.
 type SelectBranch struct {
-	schema       *Schema
-	shard        linkproject.Shard
-	term         keyspace.Term
-	content      keyspace.ContentID
-	branch       uint8
-	truthy       bool
-	chosenIsLeft bool
-	result       Coordinate
-	left         Coordinate
-	chosen       Coordinate
+	schema               *Schema
+	key                  computationKey
+	content              keyspace.ContentID
+	branch               uint8
+	truthy, chosenIsLeft bool
+	result, left, chosen Coordinate
 }
 
-func (schema *Schema) SelectBranch(shard linkproject.Shard, term keyspace.Term, branch int) (SelectBranch, bool) {
-	if schema == nil || schema.source == nil || branch < 0 || branch > 1 {
+func (schema *Schema) SelectBranch(module, occurrence keyspace.ContentID, branch int) (SelectBranch, bool) {
+	if schema == nil || schema.selectBranches == nil || branch < 0 || branch > 1 {
 		return SelectBranch{}, false
 	}
-	p, programOK := schema.source.Project().Mounts().Program(shard)
-	if !programOK || p == nil {
-		return SelectBranch{}, false
-	}
-	_, op, leftTerm, rightTerm, selectOK := p.Flow().Authored().Operators().Selects().Get(term)
-	if !p.Flow().Executable().Contains(term) || !selectOK {
-		return SelectBranch{}, false
-	}
-	var chosenTerm keyspace.Term
-	var truthy, chosenIsLeft bool
-	switch op {
-	case flowkind.SelectAnd:
-		if branch == 0 {
-			chosenTerm, truthy = rightTerm, true
-		} else {
-			chosenTerm, chosenIsLeft = leftTerm, true
-		}
-	case flowkind.SelectOr:
-		if branch == 0 {
-			chosenTerm, truthy, chosenIsLeft = leftTerm, true, true
-		} else {
-			chosenTerm = rightTerm
-		}
-	default:
-		return SelectBranch{}, false
-	}
-	resultValue, resultOK := schema.source.Boundary().Values().Of(shard, term)
-	leftValue, leftOK := schema.source.Boundary().Values().Of(shard, leftTerm)
-	chosenValue, chosenOK := schema.source.Boundary().Values().Of(shard, chosenTerm)
-	result, resultCoordinateOK := schema.CoordinateFor(resultValue)
-	left, leftCoordinateOK := schema.CoordinateFor(leftValue)
-	chosen, chosenCoordinateOK := schema.CoordinateFor(chosenValue)
-	shardIndex, shardIndexOK := schema.source.Project().Mounts().Index(shard)
-	content := selectBranchContent(schema.source.ContentID(), uint64(shardIndex+1), term, uint8(branch))
-	if !shardIndexOK || !resultOK || !leftOK || !chosenOK || !resultCoordinateOK || !leftCoordinateOK || !chosenCoordinateOK || !content.Available() {
-		return SelectBranch{}, false
-	}
-	return SelectBranch{schema: schema, shard: shard, term: term, content: content, branch: uint8(branch), truthy: truthy, chosenIsLeft: chosenIsLeft, result: result, left: left, chosen: chosen}, true
+	row, ok := schema.selectBranches[selectBranchKey{computationKey{module, occurrence}, uint8(branch)}]
+	return row, ok && row.valid()
 }
-
-func (operand SelectBranch) valid() bool {
-	if operand.schema == nil || operand.branch > 1 || !operand.content.Available() {
-		return false
-	}
-	expected, ok := operand.schema.SelectBranch(operand.shard, operand.term, int(operand.branch))
-	return ok && expected == operand
+func (row SelectBranch) valid() bool {
+	return row.schema != nil && row.key.module.Available() && row.key.occurrence.Available() && row.content.Available() && row.branch <= 1
 }
-
-func (schema *Schema) OwnsSelectBranch(operand SelectBranch) bool {
-	return schema != nil && operand.schema == schema && operand.valid()
+func (schema *Schema) OwnsSelectBranch(row SelectBranch) bool {
+	return schema != nil && row.schema == schema && row.valid()
 }
-
-func (operand SelectBranch) ID() (keyspace.ContentID, bool) {
-	if !operand.valid() {
+func (row SelectBranch) ID() (keyspace.ContentID, bool) {
+	if !row.valid() {
 		return keyspace.ContentID{}, false
 	}
-	return operand.content, true
+	return row.content, true
 }
-
-func (operand SelectBranch) Endpoints() (result, left, chosen Coordinate, truthy, chosenIsLeft bool, ok bool) {
-	if !operand.valid() {
+func (row SelectBranch) Endpoints() (result, left, chosen Coordinate, truthy, chosenIsLeft bool, ok bool) {
+	if !row.valid() {
 		return Coordinate{}, Coordinate{}, Coordinate{}, false, false, false
 	}
-	return operand.result, operand.left, operand.chosen, operand.truthy, operand.chosenIsLeft, true
+	return row.result, row.left, row.chosen, row.truthy, row.chosenIsLeft, true
 }
 
-// ValueClaim is Value's identity-preserving interpretation of a Program
-// ValueClaim. Program owns the closed claim grammar and static target.
 type ValueClaim struct {
-	schema  *Schema
-	shard   linkproject.Shard
-	term    keyspace.Term
-	content keyspace.ContentID
-	result  Coordinate
-	operand Coordinate
-	kind    flowkind.ValueClaimKind
-	target  programstatic.StaticTypeRef
+	schema          *Schema
+	key             computationKey
+	content         keyspace.ContentID
+	result, operand Coordinate
+	kind            flowkind.ValueClaimKind
 }
 
-func (schema *Schema) ValueClaim(shard linkproject.Shard, term keyspace.Term) (ValueClaim, bool) {
-	if schema == nil || schema.source == nil {
+func (schema *Schema) ValueClaim(module, occurrence keyspace.ContentID) (ValueClaim, bool) {
+	if schema == nil || schema.valueClaims == nil {
 		return ValueClaim{}, false
 	}
-	p, programOK := schema.source.Project().Mounts().Program(shard)
-	if !programOK || p == nil {
-		return ValueClaim{}, false
-	}
-	_, operandTerm, kind, claimOK := p.Flow().Authored().Claims().Get(term)
-	if !p.Flow().Executable().Contains(term) || !claimOK {
-		return ValueClaim{}, false
-	}
-	var reference programstatic.StaticTypeRef
-	switch kind {
-	case flowkind.ValueClaimTypeAs, flowkind.ValueClaimTypeColonColon:
-		target, targetOK := p.Static().Operands().Claims().Target(term)
-		if !targetOK {
-			return ValueClaim{}, false
-		}
-		var staticOK bool
-		reference, staticOK = p.Static().StaticTypes().Ref(target)
-		if !staticOK {
-			return ValueClaim{}, false
-		}
-	case flowkind.ValueClaimNonNil:
-		if target, targetOK := p.Static().Operands().Claims().Target(term); targetOK && target != 0 {
-			return ValueClaim{}, false
-		}
-	default:
-		return ValueClaim{}, false
-	}
-	resultValue, resultOK := schema.source.Boundary().Values().Of(shard, term)
-	operandValue, operandOK := schema.source.Boundary().Values().Of(shard, operandTerm)
-	result, resultCoordinateOK := schema.CoordinateFor(resultValue)
-	operand, operandCoordinateOK := schema.CoordinateFor(operandValue)
-	shardIndex, shardIndexOK := schema.source.Project().Mounts().Index(shard)
-	content := valueClaimContent(schema.source.ContentID(), uint64(shardIndex+1), term)
-	if !shardIndexOK || !resultOK || !operandOK || !resultCoordinateOK || !operandCoordinateOK || !content.Available() {
-		return ValueClaim{}, false
-	}
-	return ValueClaim{schema: schema, shard: shard, term: term, content: content, result: result, operand: operand, kind: kind, target: reference}, true
+	row, ok := schema.valueClaims[computationKey{module, occurrence}]
+	return row, ok && row.valid()
 }
-
-func (claim ValueClaim) valid() bool {
-	if claim.schema == nil || !claim.content.Available() {
-		return false
-	}
-	expected, ok := claim.schema.ValueClaim(claim.shard, claim.term)
-	return ok && expected == claim
+func (row ValueClaim) valid() bool {
+	return row.schema != nil && row.key.module.Available() && row.key.occurrence.Available() && row.content.Available()
 }
-
-func (schema *Schema) OwnsValueClaim(claim ValueClaim) bool {
-	return schema != nil && claim.schema == schema && claim.valid()
+func (schema *Schema) OwnsValueClaim(row ValueClaim) bool {
+	return schema != nil && row.schema == schema && row.valid()
 }
-
-func (claim ValueClaim) ID() (keyspace.ContentID, bool) {
-	if !claim.valid() {
+func (row ValueClaim) ID() (keyspace.ContentID, bool) {
+	if !row.valid() {
 		return keyspace.ContentID{}, false
 	}
-	return claim.content, true
+	return row.content, true
 }
-
-func (claim ValueClaim) Endpoints() (result, operand Coordinate, ok bool) {
-	if !claim.valid() {
+func (row ValueClaim) Endpoints() (Coordinate, Coordinate, bool) {
+	if !row.valid() {
 		return Coordinate{}, Coordinate{}, false
 	}
-	return claim.result, claim.operand, true
+	return row.result, row.operand, true
 }
-
-func (claim ValueClaim) Kind() (flowkind.ValueClaimKind, bool) {
-	if !claim.valid() {
+func (row ValueClaim) Kind() (flowkind.ValueClaimKind, bool) {
+	if !row.valid() {
 		return 0, false
 	}
-	return claim.kind, true
+	return row.kind, true
 }
 
-// StaticTarget exposes the Static-owned reference for typed claims.
-func (claim ValueClaim) StaticTarget() (programstatic.StaticTypeRef, bool) {
-	if !claim.valid() || claim.target.Term() == 0 {
-		return programstatic.StaticTypeRef{}, false
+func (schema *valueBuilder) sealComputationRows() bool {
+	if schema == nil || schema.sealProject() == nil || schema.artifacts == nil {
+		return false
 	}
-	return claim.target, true
+	for module, mount := range schema.artifacts {
+		artifact := mount.Artifact()
+		if artifact == nil {
+			return false
+		}
+		for index := 0; index < artifact.OccurrenceCount(); index++ {
+			row, ok := artifact.OccurrenceAt(index)
+			if !ok {
+				return false
+			}
+			key := computationKey{module, row.ID()}
+			switch row.Kind() {
+			case programartifact.OccurrenceBinaryArithmetic:
+				leftID, rightID, op, rowOK := row.BinaryArithmetic()
+				result, resultOK := schema.sealBoundary().Values().ForMountedSpan(module, row.ID())
+				left, leftOK := schema.sealBoundary().Values().ForMountedSpan(module, leftID)
+				right, rightOK := schema.sealBoundary().Values().ForMountedSpan(module, rightID)
+				rc, rcOK := schema.coordinateForCold(result)
+				lc, lcOK := schema.coordinateForCold(left)
+				rr, rrOK := schema.coordinateForCold(right)
+				if !rowOK || !resultOK || !leftOK || !rightOK || !rcOK || !lcOK || !rrOK || !binaryArithmeticOperator(op) {
+					return false
+				}
+				content := computationContent(schema.linkID, "val-arithmetic!", module, row.ID(), row.Code())
+				arithmetic := BinaryArithmetic{schema: schema.Schema, key: key, content: content, result: rc, left: lc, right: rr, op: op}
+				if !arithmetic.valid() {
+					return false
+				}
+				if _, duplicate := schema.binaryArithmetics[key]; duplicate {
+					return false
+				}
+				schema.binaryArithmetics[key] = arithmetic
+			case programartifact.OccurrenceBinaryEquality:
+				leftID, rightID, op, rowOK := row.BinaryEquality()
+				if !rowOK {
+					return false
+				}
+				result, resultOK := schema.sealBoundary().Values().ForMountedSpan(module, row.ID())
+				left, leftOK := schema.sealBoundary().Values().ForMountedSpan(module, leftID)
+				right, rightOK := schema.sealBoundary().Values().ForMountedSpan(module, rightID)
+				rc, rcOK := schema.coordinateForCold(result)
+				lc, lcOK := schema.coordinateForCold(left)
+				rr, rrOK := schema.coordinateForCold(right)
+				if !resultOK || !leftOK || !rightOK || !rcOK || !lcOK || !rrOK {
+					return false
+				}
+				notEqual := op == flowkind.BinaryNotEqual
+				content := computationContent(schema.linkID, "val-eq!", module, row.ID(), row.Code())
+				binary := BinaryEquality{schema: schema.Schema, key: key, content: content, result: rc, left: lc, right: rr, notEqual: notEqual}
+				if binary.valid() {
+					if _, duplicate := schema.binaryEqualities[key]; duplicate {
+						return false
+					}
+					schema.binaryEqualities[key] = binary
+				} else {
+					return false
+				}
+			case programartifact.OccurrenceBinaryOrder:
+				leftID, rightID, op, rowOK := row.BinaryOrder()
+				result, resultOK := schema.sealBoundary().Values().ForMountedSpan(module, row.ID())
+				left, leftOK := schema.sealBoundary().Values().ForMountedSpan(module, leftID)
+				right, rightOK := schema.sealBoundary().Values().ForMountedSpan(module, rightID)
+				rc, rcOK := schema.coordinateForCold(result)
+				lc, lcOK := schema.coordinateForCold(left)
+				rr, rrOK := schema.coordinateForCold(right)
+				if !rowOK || !resultOK || !leftOK || !rightOK || !rcOK || !lcOK || !rrOK || !binaryOrderOperator(op) {
+					return false
+				}
+				content := computationContent(schema.linkID, "val-order!", module, row.ID(), row.Code())
+				order := BinaryOrder{schema: schema.Schema, key: key, content: content, result: rc, left: lc, right: rr, op: op}
+				if order.valid() {
+					if _, duplicate := schema.binaryOrders[key]; duplicate {
+						return false
+					}
+					schema.binaryOrders[key] = order
+				} else {
+					return false
+				}
+			case programartifact.OccurrenceBinaryPresenceRefinement:
+				_, targetID, _, _, present, rowOK := row.BinaryPresenceRefinement()
+				target, targetOK := schema.sealBoundary().Values().ForMountedSemantic(module, targetID)
+				coordinate, coordinateOK := schema.coordinateForCold(target)
+				if !rowOK || !targetOK || !coordinateOK {
+					return false
+				}
+				content := computationContent(schema.linkID, "val-presence-refine!", module, row.ID(), row.Code())
+				refinement := PresenceRefinement{schema: schema.Schema, key: key, content: content, target: coordinate, present: present}
+				if !refinement.valid() {
+					return false
+				}
+				if _, duplicate := schema.presenceRefinements[key]; duplicate {
+					return false
+				}
+				schema.presenceRefinements[key] = refinement
+			case programartifact.OccurrenceUnary:
+				if row.Code() != uint64(flowkind.UnaryNot) || row.InputCount() != 1 {
+					continue
+				}
+				operandID, ok := row.InputAt(0)
+				if !ok {
+					return false
+				}
+				result, resultOK := schema.sealBoundary().Values().ForMountedSemantic(module, row.ID())
+				operand, operandOK := schema.sealBoundary().Values().ForMountedSemantic(module, operandID)
+				rc, rcOK := schema.coordinateForCold(result)
+				oc, ocOK := schema.coordinateForCold(operand)
+				if !resultOK || !operandOK || !rcOK || !ocOK {
+					return false
+				}
+				content := computationContent(schema.linkID, "val-not!", module, row.ID())
+				schema.unaryNots[key] = UnaryNot{schema: schema.Schema, key: key, content: content, resultCoordinate: rc, operandCoordinate: oc}
+			case programartifact.OccurrenceSelect:
+				if row.InputCount() != 2 || (row.Code() != uint64(flowkind.SelectAnd) && row.Code() != uint64(flowkind.SelectOr)) {
+					continue
+				}
+				leftID, leftOK := row.InputAt(0)
+				rightID, rightOK := row.InputAt(1)
+				if !leftOK || !rightOK {
+					return false
+				}
+				result, resultOK := schema.sealBoundary().Values().ForMountedSemantic(module, row.ID())
+				left, leftOK := schema.sealBoundary().Values().ForMountedSemantic(module, leftID)
+				right, rightOK := schema.sealBoundary().Values().ForMountedSemantic(module, rightID)
+				rc, rcOK := schema.coordinateForCold(result)
+				lc, lcOK := schema.coordinateForCold(left)
+				rr, rrOK := schema.coordinateForCold(right)
+				if !resultOK || !leftOK || !rightOK || !rcOK || !lcOK || !rrOK {
+					return false
+				}
+				for branch := 0; branch < 2; branch++ {
+					truthy, chosenLeft := false, false
+					chosen := rr
+					if row.Code() == uint64(flowkind.SelectAnd) {
+						if branch == 0 {
+							truthy, chosen = true, rr
+						} else {
+							chosenLeft, chosen = true, lc
+						}
+					} else if branch == 0 {
+						truthy, chosenLeft, chosen = true, true, lc
+					}
+					schema.selectBranches[selectBranchKey{key, uint8(branch)}] = SelectBranch{schema: schema.Schema, key: key, content: computationContent(schema.linkID, "val-sel!", module, row.ID(), uint64(branch)), branch: uint8(branch), truthy: truthy, chosenIsLeft: chosenLeft, result: rc, left: lc, chosen: chosen}
+				}
+			case programartifact.OccurrenceValueClaim:
+				if row.InputCount() != 1 {
+					continue
+				}
+				operandID, ok := row.InputAt(0)
+				if !ok {
+					return false
+				}
+				result, resultOK := schema.sealBoundary().Values().ForMountedSemantic(module, row.ID())
+				operand, operandOK := schema.sealBoundary().Values().ForMountedSemantic(module, operandID)
+				rc, rcOK := schema.coordinateForCold(result)
+				oc, ocOK := schema.coordinateForCold(operand)
+				if !resultOK || !operandOK || !rcOK || !ocOK {
+					return false
+				}
+				schema.valueClaims[key] = ValueClaim{schema: schema.Schema, key: key, content: computationContent(schema.linkID, "val-clm!", module, row.ID()), result: rc, operand: oc, kind: flowkind.ValueClaimKind(row.Code())}
+			case programartifact.OccurrenceReturnBoundary:
+				if row.InputCount() != 1 {
+					continue
+				}
+				valuesID, ok := row.InputAt(0)
+				if !ok {
+					return false
+				}
+				value, valueOK := schema.sealBoundary().Values().ForMountedSemantic(module, valuesID)
+				coordinate, coordinateOK := schema.coordinateForCold(value)
+				if !valueOK || !coordinateOK {
+					return false
+				}
+				schema.returnBoundaries[key] = ReturnBoundary{schema: schema.Schema, key: key, content: computationContent(schema.linkID, "val-ret!", module, row.ID()), values: coordinate}
+			}
+		}
+	}
+	return true
 }
 
-func unaryNotContent(linkID keyspace.ContentID, shard uint64, term keyspace.Term) keyspace.ContentID {
-	var payload [56]byte
-	copy(payload[:32], linkID[:])
-	copy(payload[32:40], []byte("val-not!"))
-	binary.BigEndian.PutUint64(payload[40:48], uint64(shard))
-	binary.BigEndian.PutUint64(payload[48:56], uint64(term))
-	return sha256.Sum256(payload[:])
-}
-
-func selectBranchContent(linkID keyspace.ContentID, shard uint64, term keyspace.Term, branch uint8) keyspace.ContentID {
-	var payload [64]byte
-	copy(payload[:32], linkID[:])
-	copy(payload[32:40], []byte("val-sel!"))
-	binary.BigEndian.PutUint64(payload[40:48], uint64(shard))
-	binary.BigEndian.PutUint64(payload[48:56], uint64(term))
-	payload[56] = branch
-	return sha256.Sum256(payload[:])
-}
-
-func valueClaimContent(linkID keyspace.ContentID, shard uint64, term keyspace.Term) keyspace.ContentID {
-	var payload [56]byte
-	copy(payload[:32], linkID[:])
-	copy(payload[32:40], []byte("val-clm!"))
-	binary.BigEndian.PutUint64(payload[40:48], uint64(shard))
-	binary.BigEndian.PutUint64(payload[48:56], uint64(term))
-	return sha256.Sum256(payload[:])
+func computationContent(linkID keyspace.ContentID, label string, module, occurrence keyspace.ContentID, extra ...uint64) keyspace.ContentID {
+	h := sha256.New()
+	h.Write(linkID[:])
+	h.Write([]byte(label))
+	h.Write(module[:])
+	h.Write(occurrence[:])
+	for _, value := range extra {
+		var b [8]byte
+		binary.BigEndian.PutUint64(b[:], value)
+		h.Write(b[:])
+	}
+	var result keyspace.ContentID
+	copy(result[:], h.Sum(nil))
+	return result
 }

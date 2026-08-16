@@ -29,8 +29,7 @@ func (rule *RawSetRule) locatePack(context engine.SelectorContext, access Access
 		return true
 	}
 	root, rootOK := descriptor.descriptor.payload.Root()
-	ref, refOK := rule.packs.Locate(root)
-	return rootOK && refOK && engine.SelectRoute(context, ref, descriptor.tag)
+	return rootOK && rule.packRoute(context, root, descriptor.tag)
 }
 
 func (rule *RawSetRule) locateSource(context engine.SelectorContext, access Access) bool {
@@ -49,10 +48,13 @@ func (rule *RawSetRule) locateSource(context engine.SelectorContext, access Acce
 	if count == 0 {
 		return true
 	}
-	for _, tag := range descriptor.descriptor.sources {
-		source, sourceOK := sourceAt(rule.sources, tag)
-		ref, refOK := rule.values.Locate(source.coordinate)
-		if !sourceOK || !refOK || !engine.SelectRoute(context, ref, tag) {
+	tags, tagsOK := rule.topology.catalog.sourceTags(descriptor.tag)
+	if !tagsOK {
+		return false
+	}
+	for _, tag := range tags {
+		source, sourceOK := sourceAt(rule.sourcesFor(access), tag)
+		if !sourceOK || !rule.sourceRoute(context, source.coordinate, tag) {
 			return false
 		}
 	}

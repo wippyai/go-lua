@@ -145,6 +145,84 @@ func TestMountRelationIDIsStableDetachedAndOwnerFenced(t *testing.T) {
 	}
 }
 
+func TestModuleKeyIsOneDependencyLocalMountRow(t *testing.T) {
+	left := projectProgram(t, `local value = {left = 1}`)
+	right := projectProgram(t, `local value = {right = 2}`)
+	contract := projectTarget(t, "GlobalEnvRoot")
+	seal := func(targetContract *target.Contract, modules []Module) *Component {
+		t.Helper()
+		draft, err := Build(Input{Modules: modules, Target: targetContract})
+		if err != nil {
+			t.Fatal(err)
+		}
+		component, err := draft.Finalize()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return component
+	}
+	keyForName := func(component *Component, name string) (keyspace.ContentID, int) {
+		t.Helper()
+		for index := 0; index < component.Mounts().Count(); index++ {
+			shard, shardOK := component.Mounts().At(index)
+			gotName, nameOK := component.Mounts().Name(shard)
+			if shardOK && nameOK && gotName == name {
+				key, keyOK := component.ModuleKey(shard)
+				if !keyOK || !key.Available() {
+					t.Fatalf("ModuleKey(%q) unavailable", name)
+				}
+				return key, index
+			}
+		}
+		t.Fatalf("mount %q unavailable", name)
+		return keyspace.ContentID{}, -1
+	}
+
+	baseModules := []Module{{Name: "left", Program: left}, {Name: "right", Program: right}}
+	base := seal(contract, baseModules)
+	permuted := seal(contract, []Module{{Name: "right", Program: right}, {Name: "left", Program: left}})
+	targetChanged := seal(projectTarget(t, "AlternateGlobalEnvRoot"), baseModules)
+	// A second mount of left sorts before the existing left row and therefore
+	// changes its dense Shard ordinal. That physical movement must not rename
+	// either pre-existing authored mount.
+	expanded := seal(contract, []Module{{Name: "aaa", Program: left}, {Name: "left", Program: left}, {Name: "right", Program: right}})
+
+	leftKey, leftIndex := keyForName(base, "left")
+	rightKey, _ := keyForName(base, "right")
+	for label, component := range map[string]*Component{"permuted": permuted, "target": targetChanged, "expanded": expanded} {
+		gotLeft, gotLeftIndex := keyForName(component, "left")
+		gotRight, _ := keyForName(component, "right")
+		if gotLeft != leftKey || gotRight != rightKey {
+			t.Fatalf("%s change renamed an unaffected mount row", label)
+		}
+		if label == "expanded" && gotLeftIndex == leftIndex {
+			t.Fatal("expanded fixture did not move the left dense ordinal")
+		}
+	}
+
+	duplicateKey, _ := keyForName(expanded, "aaa")
+	if duplicateKey == leftKey {
+		t.Fatal("two authored names mounting the same Program collapsed")
+	}
+	renamed := seal(contract, []Module{{Name: "renamed", Program: left}, {Name: "right", Program: right}})
+	renamedKey, _ := keyForName(renamed, "renamed")
+	if renamedKey == leftKey {
+		t.Fatal("mount rename did not change its local identity")
+	}
+	replacement := projectProgram(t, `local value = {replacement = 3}`)
+	replaced := seal(contract, []Module{{Name: "left", Program: replacement}, {Name: "right", Program: right}})
+	replacedKey, _ := keyForName(replaced, "left")
+	if replacedKey == leftKey {
+		t.Fatal("mounted Program change did not change its local identity")
+	}
+
+	baseShard, _ := base.Mounts().At(leftIndex)
+	permutedShard, _ := permuted.Mounts().At(leftIndex)
+	if _, ok := base.ModuleKey(permutedShard); ok || baseShard == permutedShard {
+		t.Fatal("stable scalar ModuleKey collapsed exact hot Shard ownership")
+	}
+}
+
 func TestProjectContentFailsClosedForUnavailableOrNoncanonicalConstituents(t *testing.T) {
 	p := projectProgram(t, `return 1`)
 	id := p.ContentID()

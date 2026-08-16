@@ -202,6 +202,7 @@ func buildBindOrder(a *authority, rows []BindCells, cells []bool) error {
 			}
 			cells[keyspace.TermOrdinal(cell)-1] = true
 			a.order.bindTerms = append(a.order.bindTerms, cell)
+			a.order.bindOwners = append(a.order.bindOwners, row.Bind)
 		}
 		r, ok := makeRange(start, len(row.Cells))
 		if !ok {
@@ -229,6 +230,7 @@ func buildFormalOrder(a *authority, rows []FunctionFormals, cells []bool) error 
 			}
 			cells[keyspace.TermOrdinal(formal)-1] = true
 			a.order.formalTerms = append(a.order.formalTerms, formal)
+			a.order.formalOwners = append(a.order.formalOwners, row.Function)
 		}
 		r, ok := makeRange(start, len(row.Formals))
 		if !ok {
@@ -295,14 +297,27 @@ func (p Preimage) Literals() Literals { return Literals{state: p.state} }
 // The caller-owned batch is validated and compacted into Source's private
 // index; no batch or containment rows survive publication.
 func (f Finalizer) Commit(input IndexInput) (*Component, error) {
+	component, _, err := f.commit(input, false)
+	return component, err
+}
+
+// CommitWithSemanticPathIssuance is the sole parent issuance point for
+// Flow's structural semantic-path certificate. The token is returned only to
+// the exact Commit caller, cannot be reconstructed from Component.View, and
+// may be consumed once by semanticpath after all sibling proofs are present.
+func (f Finalizer) CommitWithSemanticPathIssuance(input IndexInput) (*Component, *SemanticPathIssuance, error) {
+	return f.commit(input, true)
+}
+
+func (f Finalizer) commit(input IndexInput, issueSemanticPath bool) (*Component, *SemanticPathIssuance, error) {
 	if f.state == nil {
-		return nil, errors.New("program/source: invalid finalizer")
+		return nil, nil, errors.New("program/source: invalid finalizer")
 	}
 	state := f.state
 	state.mu.Lock()
 	if state.phase != draftFinalizerClaimed || state.authority == nil {
 		state.mu.Unlock()
-		return nil, errors.New("program/source: finalizer is terminal")
+		return nil, nil, errors.New("program/source: finalizer is terminal")
 	}
 	// Keep the original authored authority immutable for any query that
 	// already captured it before Commit acquired the fence. Seal projection
@@ -318,17 +333,46 @@ func (f Finalizer) Commit(input IndexInput) (*Component, error) {
 		state.phase = draftTerminal
 		state.authority = nil
 		state.mu.Unlock()
-		return nil, err
+		return nil, nil, err
 	}
 	state.phase = draftTerminal
 	state.authority = nil
 	state.mu.Unlock()
 	fragment, err := sealSemanticSourceFragment(View{authority: &authority})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	authority.semantic = fragment
-	return &Component{authority: &authority}, nil
+	component := &Component{authority: &authority}
+	if !issueSemanticPath {
+		return component, nil, nil
+	}
+	cellRoles, err := buildCellRoleAuthority(&authority)
+	if err != nil {
+		return nil, nil, err
+	}
+	return component, &SemanticPathIssuance{state: &semanticPathIssuanceState{authority: &authority, cellRoles: cellRoles}}, nil
+}
+
+// ConsumeSemanticPathIssuance transfers the exact commit-only capability to
+// Flow's semantic-path leaf. A same-content or foreign View is rejected by
+// pointer authority, and every attempted consume is terminal.
+func (issuance *SemanticPathIssuance) ConsumeSemanticPathIssuance(view View) bool {
+	if issuance == nil || issuance.state == nil {
+		return false
+	}
+	state := issuance.state
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.used {
+		return false
+	}
+	// Consumption is terminal before any caller-controlled View comparison.
+	// A foreign probe must not leave a live capability for an exact retry.
+	authority := state.authority
+	state.used = true
+	state.authority = nil
+	return authority != nil && view.authority == authority
 }
 
 // Abort consumes this Finalizer without publishing a Component. Abort is

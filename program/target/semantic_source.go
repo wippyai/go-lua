@@ -82,13 +82,13 @@ func (cursor *SemanticSourceCursor) Next() (keyspace.ContentID, bool) {
 type SemanticSourceViews struct {
 	owner keyspace.ContentID
 
-	contract, operation, abi, subedge, callback, binding, resume, spawn, opaque                 SemanticSourceView
-	operationEffect, callbackEffect, callbackRelease, outcome, transfer, transferOutcome        SemanticSourceView
-	suspension, resumeOutcome, spawnSibling, subedgeArgumentOrigin, callbackResult              SemanticSourceView
-	resultAlias, produced, producedCapture, freshResult                                         SemanticSourceView
-	protocol, protocolState, protocolAcquisition, protocolTransition, protocolTransitionOutcome SemanticSourceView
-	protocolEscape, protocolCallbackHolder                                                      SemanticSourceView
-	boot, bootEntry, bootMetatableAttachment, bootBinding, gsub                                 SemanticSourceView
+	contract, operation, abi, subedge, callback, binding, resume, spawn, opaque                             SemanticSourceView
+	operationEffect, callbackEffect, publicationEffect, callbackRelease, outcome, transfer, transferOutcome SemanticSourceView
+	suspension, resumeOutcome, spawnSibling, subedgeArgumentOrigin, callbackResult                          SemanticSourceView
+	resultAlias, produced, producedCapture, freshResult                                                     SemanticSourceView
+	protocol, protocolState, protocolAcquisition, protocolTransition, protocolTransitionOutcome             SemanticSourceView
+	protocolEscape, protocolCallbackHolder                                                                  SemanticSourceView
+	boot, bootEntry, bootMetatableAttachment, bootBinding, gsub                                             SemanticSourceView
 }
 
 func (views SemanticSourceViews) valid() bool {
@@ -106,7 +106,7 @@ func (views SemanticSourceViews) valid() bool {
 func (views SemanticSourceViews) all() []SemanticSourceView {
 	return []SemanticSourceView{
 		views.contract, views.operation, views.abi, views.subedge, views.callback, views.binding, views.resume, views.spawn, views.opaque,
-		views.operationEffect, views.callbackEffect, views.callbackRelease, views.outcome, views.transfer, views.transferOutcome,
+		views.operationEffect, views.callbackEffect, views.publicationEffect, views.callbackRelease, views.outcome, views.transfer, views.transferOutcome,
 		views.suspension, views.resumeOutcome, views.spawnSibling, views.subedgeArgumentOrigin, views.callbackResult,
 		views.resultAlias, views.produced, views.producedCapture, views.freshResult,
 		views.protocol, views.protocolState, views.protocolAcquisition, views.protocolTransition, views.protocolTransitionOutcome,
@@ -127,6 +127,9 @@ func (views SemanticSourceViews) Spawn() SemanticSourceView           { return v
 func (views SemanticSourceViews) Opaque() SemanticSourceView          { return views.opaque }
 func (views SemanticSourceViews) OperationEffect() SemanticSourceView { return views.operationEffect }
 func (views SemanticSourceViews) CallbackEffect() SemanticSourceView  { return views.callbackEffect }
+func (views SemanticSourceViews) PublicationEffect() SemanticSourceView {
+	return views.publicationEffect
+}
 func (views SemanticSourceViews) CallbackRelease() SemanticSourceView { return views.callbackRelease }
 func (views SemanticSourceViews) Outcome() SemanticSourceView         { return views.outcome }
 func (views SemanticSourceViews) Transfer() SemanticSourceView        { return views.transfer }
@@ -194,6 +197,8 @@ func (views SemanticSourceViews) viewFor(token semanticsource.Token) (SemanticSo
 			return views.operationEffect, true
 		case semanticsource.FacetTargetCallbackEffect:
 			return views.callbackEffect, true
+		case semanticsource.FacetTargetPublicationEffect:
+			return views.publicationEffect, true
 		case semanticsource.FacetTargetCallbackRelease:
 			return views.callbackRelease, true
 		case semanticsource.FacetTargetOutcome:
@@ -275,7 +280,7 @@ func (receipt SemanticSourceReceipt) Publications() []semanticsource.Publication
 		return nil
 	}
 	schema := semanticsource.CatalogSchema()
-	rows := make([]semanticsource.Publication, 0, 36)
+	rows := make([]semanticsource.Publication, 0, 37)
 	for index := 0; index < schema.Count(); index++ {
 		definition, defined := schema.DefinitionAt(index)
 		if !defined {

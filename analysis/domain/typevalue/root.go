@@ -7,7 +7,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/heap"
 	"github.com/wippyai/go-lua/analysis/semantic/typeauthority"
 	"github.com/wippyai/go-lua/program/keyspace"
-	linkboundary "github.com/wippyai/go-lua/program/link/boundary"
 )
 
 type rootKind uint8
@@ -18,9 +17,9 @@ const (
 )
 
 type rootRow struct {
-	kind  rootKind
-	value linkboundary.Value
-	fresh heap.Key
+	kind    rootKind
+	valueID keyspace.ContentID
+	freshID keyspace.ContentID
 }
 
 // Root is one existing Boundary Value or one canonical fresh Heap Key.
@@ -31,39 +30,30 @@ type Root struct {
 }
 
 func (a *Authority) sealRoots() bool {
-	if a == nil || a.source == nil || uint64(a.values.Count()) > uint64(^uint32(0)) {
+	if a == nil || a.static == nil {
 		return false
 	}
-	seedKeys := make(map[linkboundary.Value]keyspace.ContentID)
-	if !a.forEachStaticSeed(func(value linkboundary.Value, _ string, root keyspace.ContentID, _ typeauthority.RuntimeInner, _ bool) bool {
+	seedKeys := make(map[keyspace.ContentID]keyspace.ContentID)
+	if !a.forEachStaticSeed(func(valueID keyspace.ContentID, _ string, root keyspace.ContentID, _ typeauthority.RuntimeInner, _ bool) bool {
 		if !root.Available() {
 			return false
 		}
-		seedKeys[value] = root
+		seedKeys[valueID] = root
 		return true
 	}) {
 		return false
 	}
-	a.runtimeRoots = make(map[linkboundary.Value]uint32, a.values.Count())
+	a.runtimeRoots = make(map[keyspace.ContentID]uint32, len(seedKeys))
 	a.allocationRoots = make(map[heap.Key]uint32, a.heap.KeyCount())
 	representatives := make(map[keyspace.ContentID]uint32, len(seedKeys))
-	for index := 0; index < a.values.Count(); index++ {
-		value, ok := a.values.At(index)
-		if !ok {
-			return false
+	for valueID, key := range seedKeys {
+		if representative, found := representatives[key]; found {
+			a.runtimeRoots[valueID] = representative
+			continue
 		}
-		if _, duplicate := a.runtimeRoots[value]; duplicate {
-			return false
-		}
-		if key, seeded := seedKeys[value]; seeded {
-			if representative, found := representatives[key]; found {
-				a.runtimeRoots[value] = representative
-				continue
-			}
-			representatives[key] = uint32(len(a.roots))
-		}
-		a.runtimeRoots[value] = uint32(len(a.roots))
-		a.roots = append(a.roots, rootRow{kind: rootRuntime, value: value})
+		representatives[key] = uint32(len(a.roots))
+		a.runtimeRoots[valueID] = uint32(len(a.roots))
+		a.roots = append(a.roots, rootRow{kind: rootRuntime, valueID: valueID})
 	}
 	for index := 0; index < a.heap.KeyCount(); index++ {
 		allocation, ok := a.heap.KeyAt(index)
@@ -79,12 +69,15 @@ func (a *Authority) sealRoots() bool {
 		if _, duplicate := a.allocationRoots[allocation]; duplicate {
 			return false
 		}
-		if shard, term, _, programRoot := allocation.ProgramAllocation(); programRoot {
-			value, valueOK := a.values.Of(shard, term)
-			rootIndex, admitted := a.runtimeRoots[value]
-			if !valueOK || !admitted {
+		if _, programRoot := allocation.AllocationReceipt(); programRoot {
+			// Program-backed roots are retained as detached allocation identities;
+			// resolving their Boundary Value is deliberately outside this domain.
+			allocationID, allocationOK := a.heap.KeyID(allocation)
+			if !allocationOK || !allocationID.Available() {
 				return false
 			}
+			rootIndex := uint32(len(a.roots))
+			a.roots = append(a.roots, rootRow{kind: rootFresh, freshID: allocationID})
 			a.allocationRoots[allocation] = rootIndex
 			continue
 		}
@@ -96,7 +89,11 @@ func (a *Authority) sealRoots() bool {
 			return false
 		}
 		rootIndex := uint32(len(a.roots))
-		a.roots = append(a.roots, rootRow{kind: rootFresh, fresh: allocation})
+		freshID, freshOK := a.heap.KeyID(allocation)
+		if !freshOK || !freshID.Available() {
+			return false
+		}
+		a.roots = append(a.roots, rootRow{kind: rootFresh, freshID: freshID})
 		a.allocationRoots[allocation] = rootIndex
 	}
 	return true
@@ -123,39 +120,28 @@ func (a *Authority) RootIndex(root Root) (uint32, bool) {
 	return root.index, true
 }
 
-func (a *Authority) RootForValue(value linkboundary.Value) (Root, bool) {
-	if a == nil || a.source == nil {
+func (a *Authority) RootForValueIdentity(valueID keyspace.ContentID) (Root, bool) {
+	if a == nil || !valueID.Available() {
 		return Root{}, false
 	}
-	if _, _, ok := a.values.Origin(value); !ok {
-		return Root{}, false
-	}
-	index, ok := a.runtimeRoots[value]
+	index, ok := a.runtimeRoots[valueID]
 	return Root{owner: a, index: index}, ok
 }
 
-func (a *Authority) RootForHeapKey(key heap.Key) (Root, bool) {
-	if a == nil || !a.heap.OwnsKey(key) || key.Kind() != heap.RootAllocation {
-		return Root{}, false
-	}
-	index, ok := a.allocationRoots[key]
-	return Root{owner: a, index: index}, ok
-}
-
-func (a *Authority) RootValue(root Root) (linkboundary.Value, bool) {
+func (a *Authority) RootValueIdentity(root Root) (keyspace.ContentID, bool) {
 	row, ok := a.root(root)
 	if !ok || row.kind != rootRuntime {
-		return linkboundary.Value{}, false
+		return keyspace.ContentID{}, false
 	}
-	return row.value, true
+	return row.valueID, true
 }
 
-func (a *Authority) FreshRoot(root Root) (heap.Key, bool) {
+func (a *Authority) FreshRootID(root Root) (keyspace.ContentID, bool) {
 	row, ok := a.root(root)
 	if !ok || row.kind != rootFresh {
-		return heap.Key{}, false
+		return keyspace.ContentID{}, false
 	}
-	return row.fresh, true
+	return row.freshID, true
 }
 
 func (a *Authority) root(root Root) (rootRow, bool) {

@@ -10,10 +10,10 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/heap"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
-	"github.com/wippyai/go-lua/program/flow"
+	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
+	"github.com/wippyai/go-lua/program"
 	flowkind "github.com/wippyai/go-lua/program/flow/kind"
 	"github.com/wippyai/go-lua/program/keyspace"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
 )
 
 // Form is the complete source constructor disposition. Closed means that all
@@ -52,15 +52,12 @@ type Root struct {
 // Program origin and are rejected: their guarded creation has a separate
 // semantic owner.
 func New(schema heap.Schema, key heap.Key) (Root, bool) {
-	linked := schema.Link()
-	if linked == nil {
-		return Root{}, false
-	}
-	_, _, kind, originOK := key.ProgramAllocation()
+	receipt, originOK := key.AllocationReceipt()
 	id, idOK := key.ContentID()
 	if !originOK || !schema.OwnsKey(key) || !idOK || !id.Available() {
 		return Root{}, false
 	}
+	kind := receipt.Kind()
 	form, formOK := classify(schema, key, kind)
 	if !formOK {
 		return Root{}, false
@@ -69,50 +66,28 @@ func New(schema heap.Schema, key heap.Key) (Root, bool) {
 }
 
 func classify(schema heap.Schema, root heap.Key, kind heap.AllocationKind) (Form, bool) {
+	sealed, sealedOK := schema.AllocationFormForKey(root)
+	if !sealedOK {
+		return FormInvalid, false
+	}
 	switch kind {
 	case heap.AllocationClosure:
-		return FormEmpty, true
+		return formFromProgram(sealed)
 	case heap.AllocationTable:
-		rootShard, rootTerm, _, rootOK := root.ProgramAllocation()
-		rootProgram, rootProgramOK := schema.Link().Project().Mounts().Program(rootShard)
-		if !rootOK || !rootProgramOK || rootProgram == nil || !rootProgram.Flow().AccessGeometry().Available() {
-			return FormInvalid, false
-		}
-		count := schema.FieldCount(root)
-		if count == 0 {
-			return FormEmpty, true
-		}
-		finalOpen := false
-		for index := 0; index < count; index++ {
-			field, fieldOK := schema.FieldAt(root, index)
-			fieldRoot, shard, fieldTerm, fieldOrigin := schema.FieldOrigin(field)
-			p, programOK := schema.Link().Project().Mounts().Program(shard)
-			if !fieldOK || !fieldOrigin || fieldRoot != root || !programOK || p == nil {
-				return FormInvalid, false
-			}
-			flowView := p.Flow()
-			if !flowView.AccessGeometry().Available() {
-				return FormInvalid, false
-			}
-			table, _, values, _, fieldOK := flowView.Authored().Fields().Get(fieldTerm)
-			resolvedValues, open, valuesOK := flowView.Authored().Fields().Values(fieldTerm)
-			_, tableOwnerOK := flowView.Authored().Tables().Get(table)
-			if !fieldOK || table != rootTerm || !tableOwnerOK || resolvedValues != values || !valuesOK {
-				return FormInvalid, false
-			}
-			if open {
-				finalOpen = true
-				continue
-			}
-			width, widthOK := p.Flow().Authored().Values().Len(values)
-			if !widthOK || width != 1 {
-				return FormInvalid, false
-			}
-		}
-		if finalOpen {
-			return FormFinalOpen, true
-		}
+		return formFromProgram(sealed)
+	default:
+		return FormInvalid, false
+	}
+}
+
+func formFromProgram(form program.AllocationForm) (Form, bool) {
+	switch form {
+	case program.AllocationFormEmpty:
+		return FormEmpty, true
+	case program.AllocationFormClosed:
 		return FormClosed, true
+	case program.AllocationFormFinalOpen:
+		return FormFinalOpen, true
 	default:
 		return FormInvalid, false
 	}
@@ -127,7 +102,11 @@ func (root Root) Form() Form                     { return root.form }
 // admits an operand into its semantic or evidence path.
 func (root Root) Revalidate(schema heap.Schema) bool {
 	canonical, ok := New(schema, root.key)
-	return root.FencedTo(schema) && ok && canonical == root
+	return root.FencedTo(schema) && ok && root.same(canonical)
+}
+
+func (root Root) same(other Root) bool {
+	return root.schema == other.schema && root.key == other.key && root.id == other.id && root.kind == other.kind && root.form == other.form
 }
 
 // FencedTo is Root's hot owner/capability fence. A Root that has already
@@ -135,26 +114,28 @@ func (root Root) Revalidate(schema heap.Schema) bool {
 // its exact Heap schema issuer; recurrent transfer must not reconstruct Link
 // allocation topology for every Product row.
 func (root Root) FencedTo(schema heap.Schema) bool {
-	_, rootIDOK := root.ID()
-	return root.schema == schema && schema.Link() != nil && rootIDOK && root.Key().Kind() == heap.RootAllocation && root.Form() != FormInvalid
+	receipt, receiptOK := root.key.AllocationReceipt()
+	return schema.Valid() && root.schema == schema && root.id.Available() && root.kind != heap.AllocationInvalid && root.form != FormInvalid &&
+		schema.OwnsKey(root.key) && root.key.Kind() == heap.RootAllocation && receiptOK && receipt.Kind() == root.kind
 }
 
 // Closed is the complete schema-fenced structural view of one scalar table
 // constructor. It is the only field source accepted by the closed Rule.
 type Closed struct {
-	root   Root
-	heap   heap.Schema
-	values *valuedomain.Schema
-	coords []valuedomain.Coordinate
-	fields []Field
+	root    Root
+	heap    heap.Schema
+	values  *valuedomain.Schema
+	coords  []valuedomain.Coordinate
+	fields  []Field
+	summary valueowner.SummaryReceipt
 }
 
 // NewClosed admits only a scalar closed source table. No caller can use this
 // descriptor for an empty/closure root or a final-open table.
 func NewClosed(schema heap.Schema, valueSchema *valuedomain.Schema, allocation heap.Key) (Closed, bool) {
 	root, rootOK := New(schema, allocation)
-	if !rootOK || root.form != FormClosed || valueSchema == nil || valueSchema.Link() == nil || schema.Link() == nil ||
-		valueSchema.Link() != schema.Link() || !valueSchema.OwnsHeapSchema(schema) {
+	if !rootOK || root.form != FormClosed || valueSchema == nil || !valueSchema.LinkOwner().Matches(schema.LinkOwner()) ||
+		!valueSchema.OwnsHeapSchema(schema) {
 		return Closed{}, false
 	}
 	fields, coords, fieldsOK := closedFields(schema, valueSchema, root)
@@ -180,7 +161,7 @@ func (closed Closed) Count() int {
 // Heap and Value schemas before any Rule uses it.
 func (closed Closed) Revalidate() bool {
 	canonical, ok := NewClosed(closed.heap, closed.values, closed.root.key)
-	return ok && closed.root == canonical.root && closed.heap == canonical.heap && closed.values == canonical.values && equalCoordinates(closed.coords, canonical.coords) && equalFields(closed.fields, canonical.fields)
+	return ok && closed.root.same(canonical.root) && closed.heap == canonical.heap && closed.values == canonical.values && equalCoordinates(closed.coords, canonical.coords) && equalFields(closed.fields, canonical.fields)
 }
 
 // RevalidateFor additionally fences this descriptor to the exact Heap and
@@ -217,6 +198,20 @@ func (closed Closed) CoordinateAt(index int) (valuedomain.Coordinate, bool) {
 	return closed.coords[index], true
 }
 
+// WithSummaryReceipt retains the Value-owned immutable summary witness issued
+// during hot operand admission. The source descriptor stores no coordinates
+// from the witness and does not expose its private Ref vector.
+func (closed Closed) WithSummaryReceipt(receipt valueowner.SummaryReceipt) (Closed, bool) {
+	if !closed.valid() || !receipt.MatchesCoordinates(closed.values, closed.coords) {
+		return Closed{}, false
+	}
+	closed.summary = receipt
+	return closed, true
+}
+
+// SummaryReceipt returns the opaque Value witness retained by this operand.
+func (closed Closed) SummaryReceipt() valueowner.SummaryReceipt { return closed.summary }
+
 // Field is one source-ordered scalar constructor input. It carries only cold
 // topology projections; applying values to Heap remains the closed Rule's
 // semantic work.
@@ -230,7 +225,7 @@ type Field struct {
 	key      valuedomain.Coordinate
 	keyOrd   uint32
 	keyKind  KeyKind
-	exact    linkproject.Key
+	exact    heap.ExactKey
 	id       keyspace.ContentID
 }
 
@@ -248,20 +243,16 @@ func (closed Closed) At(index int) (Field, bool) {
 
 func (closed Closed) valid() bool {
 	_, rootIDOK := closed.root.ID()
-	return closed.heap.Link() != nil && closed.heap.ContentID().Available() && closed.values != nil && closed.values.Link() != nil && closed.values.Link() == closed.heap.Link() && closed.values.OwnsHeapSchema(closed.heap) && rootIDOK && closed.root.Key().Kind() == heap.RootAllocation && closed.root.Form() == FormClosed && len(closed.coords) != 0 && len(closed.fields) != 0
+	return closed.heap.Valid() && closed.heap.ContentID().Available() && closed.values != nil && closed.values.LinkOwner().Matches(closed.heap.LinkOwner()) && closed.values.OwnsHeapSchema(closed.heap) && rootIDOK && closed.root.Key().Kind() == heap.RootAllocation && closed.root.Form() == FormClosed && len(closed.coords) != 0 && len(closed.fields) != 0
 }
 
 func closedFields(schema heap.Schema, valueSchema *valuedomain.Schema, root Root) ([]Field, []valuedomain.Coordinate, bool) {
-	linked := schema.Link()
-	if linked == nil {
+	if valueSchema == nil {
 		return nil, nil, false
 	}
-	if linked.Boundary() == nil {
-		return nil, nil, false
-	}
-	boundaryValues := linked.Boundary().Values()
-	_, rootTerm, _, rootOK := root.key.ProgramAllocation()
-	if !rootOK {
+	rootReceipt, rootOK := root.key.AllocationReceipt()
+	module := rootReceipt.Module()
+	if !rootOK || !module.Available() {
 		return nil, nil, false
 	}
 	fieldCount := schema.FieldCount(root.key)
@@ -275,59 +266,46 @@ func closedFields(schema heap.Schema, valueSchema *valuedomain.Schema, root Root
 	}
 	for index := 0; index < fieldCount; index++ {
 		field, fieldOK := schema.FieldAt(root.key, index)
-		fieldRoot, shard, fieldTerm, originOK := schema.FieldOrigin(field)
-		mounts := linked.Project().Mounts()
-		if _, shardOK := mounts.Index(shard); !shardOK {
+		descriptor, descriptorOK := schema.ArtifactFieldFor(field)
+		values, valuesOK := schema.ArtifactValuesForField(field)
+		member, memberOK := values.MemberAt(0)
+		value, valueRefOK := valueSchema.CoordinateForMountedSemantic(module, member.ID())
+		_, width, finalOpen, geometryOK := descriptor.Values()
+		if !fieldOK || !descriptorOK || !valuesOK || !geometryOK || finalOpen || width != 1 || values.MemberCount() != 1 || !memberOK || !valueRefOK {
 			return nil, nil, false
 		}
-		projectShard := shard
-		programValue, programOK := mounts.Program(projectShard)
-		if !fieldOK || !originOK || fieldRoot != root.key || !programOK || programValue == nil {
-			return nil, nil, false
-		}
-		flowView := programValue.Flow()
-		if !flowView.AccessGeometry().Available() {
-			return nil, nil, false
-		}
-		table, sourceTerm, values, fieldKind, ok := flowView.Authored().Fields().Get(fieldTerm)
-		authoredValues, finalOpen, valuesOK := flowView.Authored().Fields().Values(fieldTerm)
-		tableOwner, tableOwnerOK := flowView.Authored().Tables().Get(table)
-		width, widthOK := flowView.Authored().Values().Len(values)
-		member, memberOK := flowView.Authored().Values().Member(values, 0)
-		valueRef, valueRefOK := boundaryValues.Of(projectShard, member)
-		normalized, geometryOK := flowView.AccessGeometry().TableFields().Get(fieldTerm)
-		if !ok || table != rootTerm || !tableOwnerOK || authoredValues != values || !valuesOK || finalOpen || !widthOK || width != 1 || !memberOK || !valueRefOK || !geometryOK {
-			return nil, nil, false
-		}
-		switch fieldKind {
+		switch descriptor.Kind() {
 		case flowkind.FieldKey:
-			if normalized != 0 {
+			if normalized, normalizedOK := descriptor.NormalizedKey(); !normalizedOK || normalized != 0 {
 				return nil, nil, false
 			}
-			if sameDirectCellRead(flowView.Authored(), tableOwner, sourceTerm, member) {
-				coordinate, coordinateOK := valueSchema.CoordinateFor(valueRef)
+			if descriptor.SharesFirstValueCell() {
+				coordinate, coordinateOK := value, valueRefOK
 				if !coordinateOK || !appendCoordinate(coordinate) {
 					return nil, nil, false
 				}
 				continue
 			}
-			value, valueOK := valueSchema.CoordinateFor(valueRef)
-			if !valueOK || !appendCoordinate(value) {
+			if !valueRefOK || !appendCoordinate(value) {
 				return nil, nil, false
 			}
-			dynamicRef, dynamicOK := boundaryValues.Of(projectShard, sourceTerm)
-			coordinate, coordinateOK := valueSchema.CoordinateFor(dynamicRef)
+			sourceSlot, sourceSlotOK := schema.SlotForField(field)
+			if !sourceSlotOK {
+				return nil, nil, false
+			}
+			_, _, dynamicID, dynamicOK := sourceSlot.Origin()
+			coordinate, coordinateOK := valueSchema.CoordinateForID(dynamicID)
 			if !dynamicOK || !coordinateOK || !appendCoordinate(coordinate) {
 				return nil, nil, false
 			}
 		case flowkind.FieldList, flowkind.FieldName, flowkind.FieldExact:
 			// FieldExact nil/NaN is represented by a zero normalized key. It is
 			// non-storable and must not fall through to the dynamic branch.
-			if normalized == 0 {
+			normalized, normalizedOK := descriptor.NormalizedKey()
+			if !normalizedOK || normalized == 0 {
 				return nil, nil, false
 			}
-			value, valueOK := valueSchema.CoordinateFor(valueRef)
-			if !valueOK || !appendCoordinate(value) {
+			if !valueRefOK || !appendCoordinate(value) {
 				return nil, nil, false
 			}
 		default:
@@ -353,68 +331,55 @@ func closedFields(schema heap.Schema, valueSchema *valuedomain.Schema, root Root
 		field, fieldOK := schema.FieldAt(root.key, index)
 		slot, slotOK := schema.SlotForField(field)
 		payload, payloadOK := schema.PayloadForField(field)
-		fieldRoot, shard, fieldTerm, originOK := schema.FieldOrigin(field)
-		mounts := linked.Project().Mounts()
-		_, shardOK := mounts.Index(shard)
-		projectShard := shard
-		programValue, programOK := mounts.Program(shard)
-		if !fieldOK || !slotOK || !payloadOK || !originOK || fieldRoot != root.key || !shardOK || !programOK || programValue == nil {
-			return nil, nil, false
-		}
-		flowView := programValue.Flow()
-		if !flowView.AccessGeometry().Available() {
-			return nil, nil, false
-		}
-		table, sourceTerm, values, fieldKind, ok := flowView.Authored().Fields().Get(fieldTerm)
-		authoredValues, finalOpen, valuesOK := flowView.Authored().Fields().Values(fieldTerm)
-		tableOwner, tableOwnerOK := flowView.Authored().Tables().Get(table)
-		width, widthOK := flowView.Authored().Values().Len(values)
-		member, memberOK := flowView.Authored().Values().Member(values, 0)
-		valueRef, valueRefOK := boundaryValues.Of(projectShard, member)
-		normalized, geometryOK := flowView.AccessGeometry().TableFields().Get(fieldTerm)
-		if !ok || table != rootTerm || !tableOwnerOK || authoredValues != values || !valuesOK || finalOpen || !widthOK || width != 1 || !memberOK || !valueRefOK || !geometryOK {
+		descriptor, descriptorOK := schema.ArtifactFieldFor(field)
+		values, valuesOK := schema.ArtifactValuesForField(field)
+		member, memberOK := values.MemberAt(0)
+		value, valueRefOK := valueSchema.CoordinateForMountedSemantic(module, member.ID())
+		payloadModule, payloadValues, payloadOffset, payloadSourceOK := payload.Source()
+		_, width, finalOpen, geometryOK := descriptor.Values()
+		if !fieldOK || !slotOK || !payloadOK || !descriptorOK || !valuesOK || !geometryOK || finalOpen || width != 1 || values.MemberCount() != 1 || !memberOK || !valueRefOK || !payloadSourceOK || payloadModule != module || payloadValues != descriptor.ValuesID() || payloadOffset != 0 {
 			return nil, nil, false
 		}
 		kind := KeyExact
-		var exact linkproject.Key
-		switch fieldKind {
+		var exact heap.ExactKey
+		switch descriptor.Kind() {
 		case flowkind.FieldKey:
-			if normalized != 0 {
+			if normalized, normalizedOK := descriptor.NormalizedKey(); !normalizedOK || normalized != 0 {
 				return nil, nil, false
 			}
 			kind = KeyDynamic
 		case flowkind.FieldList, flowkind.FieldName, flowkind.FieldExact:
 			// A zero exact key is the non-storable nil/NaN outcome, never a
 			// dynamic selector.
-			if normalized == 0 {
+			normalized, normalizedOK := descriptor.NormalizedKey()
+			if !normalizedOK || normalized == 0 {
 				return nil, nil, false
 			}
-			var exactOK bool
-			exact, exactOK = linked.Project().Keys().ForProgram(projectShard, programValue, normalized)
-			if !exactOK {
+			originKind, sourceExact, _, exactOK := slot.Origin()
+			if !exactOK || originKind != heap.SlotExact {
 				return nil, nil, false
 			}
+			exact = sourceExact
 		default:
 			return nil, nil, false
 		}
-		value, valueOK := valueSchema.CoordinateFor(valueRef)
 		valueOrd, valueOrdOK := coordinateOrdinal(unique, value)
-		if !valueOK || !valueOrdOK {
+		if !valueRefOK || !valueOrdOK {
 			return nil, nil, false
 		}
 		var key valuedomain.Coordinate
 		var keyOrd uint32
 		var selector heap.KeySelector
 		if kind == KeyDynamic {
-			if sameDirectCellRead(flowView.Authored(), tableOwner, sourceTerm, member) {
+			if descriptor.SharesFirstValueCell() {
 				key, keyOrd = value, valueOrd
 			} else {
-				dynamicRef, dynamicOK := boundaryValues.Of(projectShard, sourceTerm)
+				_, _, dynamicID, dynamicOK := slot.Origin()
 				if !dynamicOK {
 					return nil, nil, false
 				}
 				var keyOK bool
-				key, keyOK = valueSchema.CoordinateFor(dynamicRef)
+				key, keyOK = valueSchema.CoordinateForID(dynamicID)
 				var keyOrdOK bool
 				keyOrd, keyOrdOK = coordinateOrdinal(unique, key)
 				if !keyOK || !keyOrdOK {
@@ -435,26 +400,6 @@ func closedFields(schema heap.Schema, valueSchema *valuedomain.Schema, root Root
 		fields = append(fields, Field{ordinal: uint32(index + 1), slot: slot, payload: payload, selector: selector, value: value, valueOrd: valueOrd, key: key, keyOrd: keyOrd, keyKind: kind, exact: exact, id: id})
 	}
 	return fields, unique, true
-}
-
-// sameDirectCellRead recognizes only two authored Read rows that both read
-// the same lexical Cell under the table's owner. Terms are occurrence
-// identities, so equal source expressions must not be compared directly.
-func sameDirectCellRead(authored flow.Authored, owner, left, right keyspace.Term) bool {
-	if keyspace.TermFamily(owner) != keyspace.FamilyBody || keyspace.TermOrdinal(owner) == 0 ||
-		keyspace.TermFamily(left) != keyspace.FamilyRead || keyspace.TermOrdinal(left) == 0 ||
-		keyspace.TermFamily(right) != keyspace.FamilyRead || keyspace.TermOrdinal(right) == 0 {
-		return false
-	}
-	reads := authored.Storage().Reads()
-	leftOwner, leftSource, _, leftOK := reads.Get(left)
-	rightOwner, rightSource, _, rightOK := reads.Get(right)
-	if !leftOK || !rightOK || leftOwner != owner || rightOwner != owner ||
-		keyspace.TermFamily(leftSource) != keyspace.FamilyCell || keyspace.TermOrdinal(leftSource) == 0 ||
-		keyspace.TermFamily(rightSource) != keyspace.FamilyCell || keyspace.TermOrdinal(rightSource) == 0 {
-		return false
-	}
-	return leftSource == rightSource
 }
 
 func equalCoordinates(left, right []valuedomain.Coordinate) bool {
@@ -520,7 +465,7 @@ func (field Field) Payload() heap.Payload          { return field.payload }
 func (field Field) Value() valuedomain.Coordinate  { return field.value }
 func (field Field) ValueOrdinal() uint32           { return field.valueOrd }
 func (field Field) KeyKind() KeyKind               { return field.keyKind }
-func (field Field) ExactKey() (linkproject.Key, bool) {
+func (field Field) ExactKey() (heap.ExactKey, bool) {
 	return field.exact, field.keyKind == KeyExact
 }
 func (field Field) ExactSelector() (heap.KeySelector, bool) {

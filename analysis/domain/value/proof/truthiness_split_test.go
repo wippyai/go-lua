@@ -16,7 +16,7 @@ func TestTruthinessSplitKeepsBothEdgesOfABoolean(t *testing.T) {
 	if typ.IsNever(truthy) || typ.IsNever(falsy) {
 		t.Fatalf("TruthinessSplit(boolean) = %v / %v, want both edges inhabited", truthy, falsy)
 	}
-	if !typ.TypeEquals(truthy, typ.True) || !typ.TypeEquals(falsy, typ.False) {
+	if !typ.TypeEquals(truthy, typ.LiteralBool(true)) || !typ.TypeEquals(falsy, typ.LiteralBool(false)) {
 		t.Fatalf("TruthinessSplit(boolean) = %v / %v, want true / false", truthy, falsy)
 	}
 }
@@ -33,8 +33,8 @@ func TestTruthinessSplitProvesEachEdgeOfAClosedType(t *testing.T) {
 		{name: "integer", value: typ.Integer, falsyNever: true, wantSplitted: true},
 		{name: "record", value: typetable.NewRecord().Field("id", typ.String).Build(), falsyNever: true, wantSplitted: true},
 		{name: "nil", value: typ.Nil, truthyNever: true, wantSplitted: true},
-		{name: "false", value: typ.False, truthyNever: true, wantSplitted: true},
-		{name: "true", value: typ.True, falsyNever: true, wantSplitted: true},
+		{name: "false", value: typ.LiteralBool(false), truthyNever: true, wantSplitted: true},
+		{name: "true", value: typ.LiteralBool(true), falsyNever: true, wantSplitted: true},
 		{name: "any", value: typ.Any},
 		{name: "unknown", value: typ.Unknown},
 	} {
@@ -76,7 +76,7 @@ func TestTruthinessSplitRetainsFalseBesideNilForAnOptionalBoolean(t *testing.T) 
 	if !ok {
 		t.Fatal("TruthinessSplit(boolean?) reported no split")
 	}
-	if !typ.TypeEquals(truthy, typ.True) {
+	if !typ.TypeEquals(truthy, typ.LiteralBool(true)) {
 		t.Fatalf("TruthinessSplit(boolean?) truthy = %v, want true", truthy)
 	}
 	if typ.IsNever(falsy) || !typ.AdmitsFalse(falsy) {
@@ -102,12 +102,12 @@ func subtypeOfFalsy(t typ.Type) bool {
 		}
 		return len(value.Members) != 0
 	default:
-		return typ.TypeEquals(t, typ.Nil) || typ.TypeEquals(t, typ.False)
+		return typ.TypeEquals(t, typ.Nil) || typ.TypeEquals(t, typ.LiteralBool(false))
 	}
 }
 
 func TestTruthinessSplitLiftsOverAUnionPointwise(t *testing.T) {
-	value := normalize.UnionForEvidence(typ.String, typ.False, typ.Nil)
+	value := normalize.UnionForEvidence(typ.String, typ.LiteralBool(false), typ.Nil)
 	truthy, falsy, ok := TruthinessSplit(value)
 	if !ok {
 		t.Fatalf("TruthinessSplit(%v) reported no split", value)

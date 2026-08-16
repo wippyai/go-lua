@@ -114,7 +114,7 @@ func TestResultValueTypeWithDefaultIncludesRuntimeDefaultFields(t *testing.T) {
 		t.Fatalf("default ok field = %v, want boolean", okField)
 	}
 	defaultField := record.GetField("default")
-	if defaultField == nil || !typ.TypeEquals(defaultField.Type, typ.True) {
+	if defaultField == nil || !typ.TypeEquals(defaultField.Type, typ.LiteralBool(true)) {
 		t.Fatalf("default field = %v, want true", defaultField)
 	}
 }
