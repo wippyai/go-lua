@@ -217,6 +217,7 @@ type Binding[K scalar.Key, V any] struct {
 	lastExact           K
 	hasExact            bool
 	lastSummary         []K
+	lastDistributive    bool
 	lastStrong          unitOrder
 	lastWeak            []unitOrder
 	summaries           uint64
@@ -253,6 +254,10 @@ type declaredUnit[K scalar.Key] struct {
 	order    unitOrder
 	position int
 	keys     []K
+	// distributive marks a summary whose reader folds each declared
+	// coordinate independently.  It is sealed at declaration from the cold
+	// read form and is never chosen per observation.
+	distributive bool
 }
 
 type declaredTarget[K scalar.Key] struct {
@@ -344,6 +349,18 @@ func (binding *Binding[K, V]) DeclareExact(key K) (carrier.Unit, bool) {
 // key set is both the summary's coverage witness and its later invalidation
 // closure; summaries never gain candidates after this cut.
 func (binding *Binding[K, V]) DeclareSummary(keys []K) (carrier.Unit, bool) {
+	return binding.declareSummary(keys, false)
+}
+
+// DeclareDistributiveSummary seals a summary whose declared coordinates are
+// folded independently by its reader. The two folds are distinct Units even
+// over the same key vector: a correlated reader of those keys still receives
+// the exact joint partition.
+func (binding *Binding[K, V]) DeclareDistributiveSummary(keys []K) (carrier.Unit, bool) {
+	return binding.declareSummary(keys, true)
+}
+
+func (binding *Binding[K, V]) declareSummary(keys []K, distributive bool) (carrier.Unit, bool) {
 	if binding == nil || !binding.declaring || binding.phase > declareSummary || len(keys) == 0 {
 		return carrier.Unit{}, false
 	}
@@ -353,7 +370,7 @@ func (binding *Binding[K, V]) DeclareSummary(keys []K) (carrier.Unit, bool) {
 			return carrier.Unit{}, false
 		}
 	}
-	if len(binding.lastSummary) != 0 && !keysLess(binding.lastSummary, frozen) {
+	if len(binding.lastSummary) != 0 && !summaryOrderLess(binding.lastSummary, binding.lastDistributive, frozen, distributive) {
 		return carrier.Unit{}, false
 	}
 	binding.phase = declareSummary
@@ -366,9 +383,9 @@ func (binding *Binding[K, V]) DeclareSummary(keys []K) (carrier.Unit, bool) {
 	if !ok {
 		return carrier.Unit{}, false
 	}
-	binding.units[unit] = declaredUnit[K]{order: unitOrder{kind: carrier.SummaryUnit, id: id}, position: len(binding.unitList), keys: frozen}
+	binding.units[unit] = declaredUnit[K]{order: unitOrder{kind: carrier.SummaryUnit, id: id}, position: len(binding.unitList), keys: frozen, distributive: distributive}
 	binding.unitList = append(binding.unitList, unit)
-	binding.lastSummary = frozen
+	binding.lastSummary, binding.lastDistributive = frozen, distributive
 	return unit, true
 }
 
@@ -565,6 +582,19 @@ func keysLess[K scalar.Key](left, right []K) bool {
 		}
 	}
 	return len(left) < len(right)
+}
+
+// summaryOrderLess is the declaration order over summary Units. The key
+// vector orders first; the fold breaks the tie so one key vector may carry
+// both a correlated and a distributive Unit, in that order.
+func summaryOrderLess[K scalar.Key](left []K, leftDistributive bool, right []K, rightDistributive bool) bool {
+	if keysLess(left, right) {
+		return true
+	}
+	if keysLess(right, left) {
+		return false
+	}
+	return !leftDistributive && rightDistributive
 }
 
 func unitOrderLess(left, right unitOrder) bool {

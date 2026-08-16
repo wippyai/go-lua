@@ -1,6 +1,6 @@
 package readmodel
 
-import "github.com/wippyai/go-lua/analysis/type/typ"
+import "github.com/wippyai/go-lua/analysis/domain/type/typ"
 
 type RedundantConditionProofState uint8
 

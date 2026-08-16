@@ -3,8 +3,8 @@ package activation
 import (
 	calldomain "github.com/wippyai/go-lua/analysis/domain/call"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/internal/programartifact"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 )
 
 // TargetBatchRow is one mounted Program body selector row. BodyPath is the
@@ -12,7 +12,7 @@ import (
 // equation semantic locators admitted for this mounted row.
 type TargetBatchRow struct {
 	Body     calldomain.Body
-	BodyPath keyspace.ContentID
+	BodyPath identity.ContentID
 	Role     calldomain.TargetRoleID
 }
 
@@ -22,7 +22,7 @@ type TargetBatchRow struct {
 // through Link or Project state.
 type MountedTargetBatch struct {
 	Artifact  *programartifact.Artifact
-	ModuleKey keyspace.ContentID
+	ModuleKey identity.ContentID
 	Rows      []TargetBatchRow
 }
 
@@ -36,14 +36,14 @@ type Route struct {
 
 type targetBatchRow struct {
 	body       calldomain.Body
-	bodyID     keyspace.ContentID
-	bodyPath   keyspace.ContentID
+	bodyID     identity.ContentID
+	bodyPath   identity.ContentID
 	role       calldomain.TargetRoleID
 	target     engine.SemanticKey
 	endpoint   engine.SemanticKey
-	artifactID keyspace.ContentID
-	programID  keyspace.ContentID
-	moduleKey  keyspace.ContentID
+	artifactID identity.ContentID
+	programID  identity.ContentID
+	moduleKey  identity.ContentID
 }
 
 // TargetBatchCatalog is the immutable Link-wide activation selector receipt
@@ -54,13 +54,13 @@ type targetBatchRow struct {
 type TargetBatchCatalog struct {
 	rows       []targetBatchRow
 	bodyRoutes map[bodyRouteKey]uint32
-	sealed     keyspace.ContentID
+	sealed     identity.ContentID
 	self       *TargetBatchCatalog
 }
 
 type bodyRouteKey struct {
-	moduleKey keyspace.ContentID
-	id        keyspace.ContentID
+	moduleKey identity.ContentID
+	id        identity.ContentID
 }
 
 // NewTargetBatchCatalog seals the one Link-wide selector catalog from ordered
@@ -85,7 +85,7 @@ func NewTargetBatchCatalog(mounts []MountedTargetBatch) (*TargetBatchCatalog, bo
 		if !artifactID.Available() || !programID.Available() {
 			return nil, false
 		}
-		seen := make(map[keyspace.ContentID]struct{}, len(mount.Rows))
+		seen := make(map[identity.ContentID]struct{}, len(mount.Rows))
 		for _, candidate := range mount.Rows {
 			bodyID, bodyIDOK := candidate.Body.ContentID()
 			bodyArtifactID, bodyArtifactOK := candidate.Body.ArtifactID()
@@ -161,7 +161,7 @@ func (catalog *TargetBatchCatalog) routeAt(index int) (route, bool) {
 	return route{body: row.body, target: row.target, endpoint: row.endpoint}, true
 }
 
-func (catalog *TargetBatchCatalog) routeForBody(moduleKey keyspace.ContentID, id keyspace.ContentID) (route, bool) {
+func (catalog *TargetBatchCatalog) routeForBody(moduleKey identity.ContentID, id identity.ContentID) (route, bool) {
 	if catalog == nil || !catalog.valid() || !moduleKey.Available() || !id.Available() || catalog.bodyRoutes == nil {
 		return route{}, false
 	}
@@ -191,7 +191,7 @@ func (catalog *TargetBatchCatalog) RouteAt(index int) (Route, bool) {
 // RouteForBody returns the exact activation selector for one mounted Call
 // body semantic ID. Shard remains part of the inverse because equal Program
 // artifacts may be mounted more than once with different substitutions.
-func (catalog *TargetBatchCatalog) RouteForBody(moduleKey keyspace.ContentID, id keyspace.ContentID) (Route, bool) {
+func (catalog *TargetBatchCatalog) RouteForBody(moduleKey identity.ContentID, id identity.ContentID) (Route, bool) {
 	item, ok := catalog.routeForBody(moduleKey, id)
 	if !ok {
 		return Route{}, false

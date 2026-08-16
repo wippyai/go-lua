@@ -4,14 +4,14 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value"
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // HotRule is Value/bootstrap's receipt-native GlobalBinding Rule issuer. It
 // retains no host mapping or Value coordinate; those remain owner/schema
 // authorities consulted by the typed callbacks.
 type HotRule struct {
-	implementation *valueowner.RuleImplementation[keyspace.ContentID]
+	implementation *valueowner.RuleImplementation[identity.ContentID]
 	catalog        *Catalog
 	owner          *valueowner.HotOwner
 }
@@ -21,14 +21,14 @@ type HotRule struct {
 // the typed callbacks; no legacy declaration path is consulted.
 func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bool) {
 	if fragment == nil || fragment.slot == nil || owner == nil || owner.Schema() == nil ||
-		!fragment.semantic.Available() || !fragment.evidence.Available() || !distinct(fragment.semantic, fragment.evidence) {
+		!fragment.semantic.Available() || !fragment.evidence.Available() || !engine.DistinctKeys(fragment.semantic, fragment.evidence) {
 		return nil, false
 	}
 	schema := owner.Schema()
-	implementation, ok := valueowner.BindExactWriteRule(owner, fragment.slot, fragment.write, engine.HotRuleSpec[value.Value, keyspace.ContentID]{
+	implementation, ok := valueowner.BindExactWriteRule(owner, fragment.slot, fragment.write, engine.HotRuleSpec[value.Value, identity.ContentID]{
 		OperandContent: globalContentForSchema(schema),
 		Admission:      engine.AdmitRuleByDerivation(fragment.evidence, hotBootstrapChecker(owner, fragment.semantic)),
-		Transfer: func(access engine.Access[value.Value, keyspace.ContentID]) bool {
+		Transfer: func(access engine.Access[value.Value, identity.ContentID]) bool {
 			binding, operandOK := engine.Operand(access)
 			if !operandOK {
 				return false
@@ -72,23 +72,23 @@ func (rule *HotRule) Catalog() *Catalog {
 
 // ReceiptForID returns the exact preissued GlobalBinding for one Host-global
 // identity in O(1).
-func (rule *HotRule) ReceiptForID(id keyspace.ContentID) (keyspace.ContentID, bool) {
+func (rule *HotRule) ReceiptForID(id identity.ContentID) (identity.ContentID, bool) {
 	if rule == nil || rule.catalog == nil {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return rule.catalog.ReceiptForID(id)
 }
 
 // ReceiptForOccurrence is the narrow attachment spelling used by artifact
 // receipt assembly. Value bootstrap IDs are stable Host-global identities.
-func (rule *HotRule) ReceiptForOccurrence(id keyspace.ContentID) (keyspace.ContentID, bool) {
+func (rule *HotRule) ReceiptForOccurrence(id identity.ContentID) (identity.ContentID, bool) {
 	return rule.ReceiptForID(id)
 }
 
 // AttachLinkOccurrence lowers one Link-global ValueBootstrap row. The exact
 // bootstrap witness supplied to ReceiptAssembly owns the occurrence; this
 // package contributes only its matching preissued GlobalBinding and write Ref.
-func (rule *HotRule) AttachLinkOccurrence(assembly *engine.ReceiptAssembly, occurrenceID keyspace.ContentID) (engine.BindingRuleRowRef, bool) {
+func (rule *HotRule) AttachLinkOccurrence(assembly *engine.ReceiptAssembly, occurrenceID identity.ContentID) (engine.BindingRuleRowRef, bool) {
 	if rule == nil || rule.owner == nil || assembly == nil {
 		return engine.BindingRuleRowRef{}, false
 	}
@@ -124,7 +124,7 @@ func (rule *HotRule) AttachLinkOccurrence(assembly *engine.ReceiptAssembly, occu
 // AttachLinkReceiptMember resolves the committed Link-global member and its
 // private GlobalBinding internally. ValueBootstrap is emitted once for the
 // whole Link and therefore has no mount or reusable-point argument.
-func (rule *HotRule) AttachLinkReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, occurrenceID keyspace.ContentID) (*engine.ReceiptMember, bool) {
+func (rule *HotRule) AttachLinkReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, occurrenceID identity.ContentID) (*engine.ReceiptMember, bool) {
 	if rule == nil || rule.owner == nil || graph == nil {
 		return nil, false
 	}
@@ -152,7 +152,7 @@ func (rule *HotRule) BeginReceiptCompilation(graph *engine.ReceiptGraph) (*engin
 
 // AttachReceiptMember attaches one graph-owned global bootstrap member with
 // the exact owner-fenced GlobalBinding operand.
-func (rule *HotRule) AttachReceiptMember(compilation *engine.ReceiptCompilation, member engine.ReceiptRuleMember, binding keyspace.ContentID) (*engine.ReceiptMember, bool) {
+func (rule *HotRule) AttachReceiptMember(compilation *engine.ReceiptCompilation, member engine.ReceiptRuleMember, binding identity.ContentID) (*engine.ReceiptMember, bool) {
 	if rule == nil || rule.owner == nil {
 		return nil, false
 	}
@@ -164,15 +164,15 @@ func (rule *HotRule) AttachReceiptMember(compilation *engine.ReceiptCompilation,
 }
 
 // Implementation returns the typed pending issuer until SchemaBinding seals.
-func (rule *HotRule) Implementation() (*valueowner.RuleImplementation[keyspace.ContentID], bool) {
+func (rule *HotRule) Implementation() (*valueowner.RuleImplementation[identity.ContentID], bool) {
 	if rule == nil || rule.implementation == nil {
 		return nil, false
 	}
 	return rule.implementation, true
 }
 
-func hotBootstrapChecker(owner *valueowner.HotOwner, ruleSemantic engine.SemanticKey) engine.RuleDerivationChecker[value.Value, keyspace.ContentID] {
-	return func(derivation engine.RuleDerivation[value.Value, keyspace.ContentID]) (engine.RuleEvidence, bool) {
+func hotBootstrapChecker(owner *valueowner.HotOwner, ruleSemantic engine.SemanticKey) engine.RuleDerivationChecker[value.Value, identity.ContentID] {
+	return func(derivation engine.RuleDerivation[value.Value, identity.ContentID]) (engine.RuleEvidence, bool) {
 		if owner == nil || owner.Schema() == nil || derivation.Rule() != ruleSemantic || derivation.InputCount() != 0 || derivation.ReadCount() != 0 || derivation.DispositionCount() != 1 {
 			return engine.RuleEvidence{}, false
 		}

@@ -30,7 +30,7 @@ func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[heapdomain.Value, so
 // DeclareSchema records Heap closed allocation's exact incidence: one input,
 // exact Heap read, Value summary read, transformed Heap carry, and write.
 func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, transform, evidence engine.SemanticKey, heap *heapowner.SchemaFragment, values *valueowner.SchemaFragment) (*SchemaFragment, bool) {
-	if builder == nil || heap == nil || values == nil || !distinct(semantic, operandFamily, transform, evidence) {
+	if builder == nil || heap == nil || values == nil || !engine.DistinctKeys(semantic, operandFamily, transform, evidence) {
 		return nil, false
 	}
 	slot, ok := engine.NewRuleSlot[heapdomain.Value, source.Closed](builder, engine.SchemaRuleSpec[heapdomain.Value]{

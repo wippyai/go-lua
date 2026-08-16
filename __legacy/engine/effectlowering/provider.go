@@ -4,6 +4,9 @@ package effectlowering
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/type/subst"
+	"github.com/wippyai/go-lua/analysis/domain/type/subtype"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -15,9 +18,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/module/signature"
-	"github.com/wippyai/go-lua/analysis/type/subst"
-	"github.com/wippyai/go-lua/analysis/type/subtype"
-	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // SignatureNameFunc maps one call producer in context to a stable signature name.

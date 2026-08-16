@@ -5,7 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/materialization"
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
 // RawPresence is a finite may-mask for one partition cell. A present tuple is

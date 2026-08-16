@@ -48,7 +48,7 @@ func staticCarrierType(t *testing.T, typ reflect.Type, seen map[reflect.Type]str
 	}
 	seen[typ] = struct{}{}
 	path := typ.PkgPath()
-	if strings.Contains(path, "/program/link/boundary") || strings.Contains(path, "/program/link/project") || path == "github.com/wippyai/go-lua/program" {
+	if strings.Contains(path, "/program/link/boundary") || strings.Contains(path, "/program/link/project") || path == "github.com/wippyai/go-lua/analysis/program" {
 		t.Fatalf("Static retained forbidden carrier %s from %s", typ, path)
 	}
 	// Recurse only through Static-owned types. Crossing into another sealed

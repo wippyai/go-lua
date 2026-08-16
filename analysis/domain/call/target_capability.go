@@ -1,8 +1,8 @@
 package call
 
 import (
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
 // Target is an opaque, validated capability for one selector in one Call
@@ -30,9 +30,9 @@ type Target struct {
 // semantic vocabulary.
 type Body struct {
 	owner   *Algebra
-	module  keyspace.ContentID
+	module  identity.ContentID
 	receipt bodyReceipt
-	context keyspace.ContentID
+	context identity.ContentID
 }
 
 // Bodies is Call's one global executable-function-body view.  It carries
@@ -178,9 +178,9 @@ func (body Body) Same(other Body) bool {
 // It is derived from the sealed Program content and body term, never from
 // Call's selector or any raw target ordinal.  This is the identity used by
 // body-call Rule operands and cold derivation evidence.
-func (body Body) ContentID() (keyspace.ContentID, bool) {
+func (body Body) ContentID() (identity.ContentID, bool) {
 	if !body.Valid() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return body.receipt.formalID, body.receipt.formalID.Available()
 }
@@ -188,25 +188,25 @@ func (body Body) ContentID() (keyspace.ContentID, bool) {
 // ModuleKey returns Project's already-issued mount identity for this exact
 // body capability. It is used only as a mount provenance fence; callers
 // cannot recover the underlying Shard or manufacture a Body from the scalar.
-func (body Body) ModuleKey() (keyspace.ContentID, bool) {
+func (body Body) ModuleKey() (identity.ContentID, bool) {
 	if !body.Valid() || body.owner == nil {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return body.module, true
 }
 
 // ArtifactID returns the mounted reusable artifact identity copied at seal.
-func (body Body) ArtifactID() (keyspace.ContentID, bool) {
+func (body Body) ArtifactID() (identity.ContentID, bool) {
 	return body.receipt.artifactID, body.Valid() && body.receipt.artifactID.Available()
 }
 
 // ProgramID returns the source identity used to issue this body receipt.
-func (body Body) ProgramID() (keyspace.ContentID, bool) {
+func (body Body) ProgramID() (identity.ContentID, bool) {
 	return body.receipt.programID, body.Valid() && body.receipt.programID.Available()
 }
 
 // BodyPath returns the artifact body identity; it is not a dense ordinal.
-func (body Body) BodyPath() (keyspace.ContentID, bool) {
+func (body Body) BodyPath() (identity.ContentID, bool) {
 	return body.receipt.bodyPath, body.Valid() && body.receipt.bodyPath.Available()
 }
 

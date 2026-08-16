@@ -14,7 +14,9 @@ import (
 // TestProgramBindingUsesCanonicalCapabilityDirectory keeps the hot binding
 // from regressing into a second per-role capability registry. Capabilities
 // are short-lived during pre-seal registration and resolved from the sealed
-// SchemaBinding directory by semantic key afterward.
+// SchemaBinding directory by semantic key afterward. The Link-local record
+// keeps no owner or capability of its own, and the rule table's projection
+// reaches that one directory rather than caching its answers.
 func TestProgramBindingUsesCanonicalCapabilityDirectory(t *testing.T) {
 	_, current, _, ok := runtime.Caller(0)
 	if !ok {
@@ -26,6 +28,15 @@ func TestProgramBindingUsesCanonicalCapabilityDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	file, err := parser.ParseFile(token.NewFileSet(), path, source, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registryPath := filepath.Join(filepath.Dir(current), "schema", "grammar", "rule_registry.go")
+	registrySource, err := os.ReadFile(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registryFile, err := parser.ParseFile(token.NewFileSet(), registryPath, registrySource, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,36 +70,73 @@ func TestProgramBindingUsesCanonicalCapabilityDirectory(t *testing.T) {
 		}
 	}
 
+	if capabilityStores(file) != 0 {
+		t.Error("programBinding stores RuleSlotCapability; use SchemaBinding's canonical directory")
+	}
+
 	hasVocabulary := false
 	bindingRuleSlotCalls := 0
-	capabilityMaps := 0
-	ast.Inspect(file, func(node ast.Node) bool {
-		field, ok := node.(*ast.Field)
-		if ok && len(field.Names) == 1 && field.Names[0].Name == "vocabulary" {
+	ast.Inspect(registryFile, func(node ast.Node) bool {
+		if field, ok := node.(*ast.Field); ok && len(field.Names) == 1 && field.Names[0].Name == "bundle" {
 			hasVocabulary = true
-		}
-		if mapType, ok := node.(*ast.MapType); ok {
-			if selector, ok := mapType.Value.(*ast.SelectorExpr); ok && selector.Sel.Name == "RuleSlotCapability" {
-				capabilityMaps++
-			}
 		}
 		call, ok := node.(*ast.CallExpr)
 		if !ok {
 			return true
 		}
-		selector, ok := call.Fun.(*ast.SelectorExpr)
-		if ok && selector.Sel.Name == "BindingRuleSlot" {
+		if selector, ok := call.Fun.(*ast.SelectorExpr); ok && selector.Sel.Name == "BindingRuleSlot" {
 			bindingRuleSlotCalls++
 		}
 		return true
 	})
 	if !hasVocabulary {
-		t.Error("programBinding does not retain the canonical semanticvocabulary.Bundle")
+		t.Error("the rule registry does not retain the canonical vocabulary.Bundle")
 	}
 	if bindingRuleSlotCalls == 0 {
-		t.Error("programBinding never resolves capabilities through engine.BindingRuleSlot")
+		t.Error("the rule registry never resolves capabilities through engine.BindingRuleSlot")
 	}
-	if capabilityMaps != 0 {
-		t.Errorf("programBinding introduces %d RuleSlotCapability map(s); use SchemaBinding's canonical directory", capabilityMaps)
+	// The registry may hold a capability only for the pre-seal pairing pass,
+	// which is a local of one function, never a retained field of a record.
+	if stored := capabilityStores(registryFile); stored != 0 {
+		t.Errorf("the rule registry retains %d RuleSlotCapability field(s); the sealed directory is the sole authority", stored)
+	}
+}
+
+// capabilityStores counts retained per-role capability storage: a struct field
+// or a map whose value is a RuleSlotCapability.
+func capabilityStores(file *ast.File) int {
+	stored := 0
+	ast.Inspect(file, func(node ast.Node) bool {
+		if mapType, ok := node.(*ast.MapType); ok {
+			if selector, ok := mapType.Value.(*ast.SelectorExpr); ok && selector.Sel.Name == "RuleSlotCapability" {
+				stored++
+			}
+		}
+		structType, ok := node.(*ast.StructType)
+		if !ok {
+			return true
+		}
+		for _, field := range structType.Fields.List {
+			if capabilityTyped(field.Type) {
+				stored++
+			}
+		}
+		return true
+	})
+	return stored
+}
+
+func capabilityTyped(expr ast.Expr) bool {
+	switch typed := expr.(type) {
+	case *ast.SelectorExpr:
+		return typed.Sel.Name == "RuleSlotCapability"
+	case *ast.ArrayType:
+		return capabilityTyped(typed.Elt)
+	case *ast.StarExpr:
+		return capabilityTyped(typed.X)
+	case *ast.MapType:
+		return capabilityTyped(typed.Value)
+	default:
+		return false
 	}
 }

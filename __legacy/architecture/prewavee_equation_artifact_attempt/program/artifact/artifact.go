@@ -8,9 +8,9 @@ import (
 	"errors"
 	"sort"
 
-	"github.com/wippyai/go-lua/program"
-	"github.com/wippyai/go-lua/program/internal/core"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/program"
+	"github.com/wippyai/go-lua/analysis/program/internal/core"
+	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
 // Dependency names one exact externally supplied artifact prerequisite. It is

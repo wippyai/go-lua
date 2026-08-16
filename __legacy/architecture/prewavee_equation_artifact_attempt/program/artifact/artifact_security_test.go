@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/wippyai/go-lua/program/artifact"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
 // A stored Program is accepted whole or rejected whole: decoder failures never

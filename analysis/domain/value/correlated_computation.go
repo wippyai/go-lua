@@ -4,14 +4,14 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 
-	programartifact "github.com/wippyai/go-lua/analysis/internal/programartifact"
-	flowkind "github.com/wippyai/go-lua/program/flow/kind"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
 
 type computationKey struct {
-	module     keyspace.ContentID
-	occurrence keyspace.ContentID
+	module     identity.ContentID
+	occurrence identity.ContentID
 }
 
 type selectBranchKey struct {
@@ -26,7 +26,7 @@ type selectBranchKey struct {
 type BinaryEquality struct {
 	schema              *Schema
 	key                 computationKey
-	content             keyspace.ContentID
+	content             identity.ContentID
 	result, left, right Coordinate
 	notEqual            bool
 }
@@ -38,12 +38,12 @@ type BinaryEquality struct {
 type BinaryArithmetic struct {
 	schema              *Schema
 	key                 computationKey
-	content             keyspace.ContentID
+	content             identity.ContentID
 	result, left, right Coordinate
 	op                  flowkind.BinaryOp
 }
 
-func (schema *Schema) BinaryArithmetic(module, occurrence keyspace.ContentID) (BinaryArithmetic, bool) {
+func (schema *Schema) BinaryArithmetic(module, occurrence identity.ContentID) (BinaryArithmetic, bool) {
 	if schema == nil || schema.binaryArithmetics == nil {
 		return BinaryArithmetic{}, false
 	}
@@ -60,9 +60,9 @@ func (schema *Schema) OwnsBinaryArithmetic(row BinaryArithmetic) bool {
 	return schema != nil && row.schema == schema && row.valid()
 }
 
-func (row BinaryArithmetic) ID() (keyspace.ContentID, bool) {
+func (row BinaryArithmetic) ID() (identity.ContentID, bool) {
 	if !row.valid() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return row.content, true
 }
@@ -85,12 +85,12 @@ func binaryArithmeticOperator(op flowkind.BinaryOp) bool {
 type BinaryOrder struct {
 	schema              *Schema
 	key                 computationKey
-	content             keyspace.ContentID
+	content             identity.ContentID
 	result, left, right Coordinate
 	op                  flowkind.BinaryOp
 }
 
-func (schema *Schema) BinaryOrder(module, occurrence keyspace.ContentID) (BinaryOrder, bool) {
+func (schema *Schema) BinaryOrder(module, occurrence identity.ContentID) (BinaryOrder, bool) {
 	if schema == nil || schema.binaryOrders == nil {
 		return BinaryOrder{}, false
 	}
@@ -107,9 +107,9 @@ func (schema *Schema) OwnsBinaryOrder(row BinaryOrder) bool {
 	return schema != nil && row.schema == schema && row.valid()
 }
 
-func (row BinaryOrder) ID() (keyspace.ContentID, bool) {
+func (row BinaryOrder) ID() (identity.ContentID, bool) {
 	if !row.valid() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return row.content, true
 }
@@ -132,12 +132,12 @@ func binaryOrderOperator(op flowkind.BinaryOp) bool {
 type PresenceRefinement struct {
 	schema  *Schema
 	key     computationKey
-	content keyspace.ContentID
+	content identity.ContentID
 	target  Coordinate
 	present bool
 }
 
-func (schema *Schema) PresenceRefinement(module, occurrence keyspace.ContentID) (PresenceRefinement, bool) {
+func (schema *Schema) PresenceRefinement(module, occurrence identity.ContentID) (PresenceRefinement, bool) {
 	if schema == nil || schema.presenceRefinements == nil {
 		return PresenceRefinement{}, false
 	}
@@ -153,9 +153,9 @@ func (schema *Schema) OwnsPresenceRefinement(row PresenceRefinement) bool {
 	return schema != nil && row.schema == schema && row.valid()
 }
 
-func (row PresenceRefinement) ID() (keyspace.ContentID, bool) {
+func (row PresenceRefinement) ID() (identity.ContentID, bool) {
 	if !row.valid() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return row.content, true
 }
@@ -167,7 +167,7 @@ func (row PresenceRefinement) Target() (Coordinate, bool, bool) {
 	return row.target, row.present, true
 }
 
-func (schema *Schema) BinaryEquality(module, occurrence keyspace.ContentID) (BinaryEquality, bool) {
+func (schema *Schema) BinaryEquality(module, occurrence identity.ContentID) (BinaryEquality, bool) {
 	if schema == nil || schema.binaryEqualities == nil {
 		return BinaryEquality{}, false
 	}
@@ -183,9 +183,9 @@ func (schema *Schema) OwnsBinaryEquality(row BinaryEquality) bool {
 	return schema != nil && row.schema == schema && row.valid()
 }
 
-func (row BinaryEquality) ID() (keyspace.ContentID, bool) {
+func (row BinaryEquality) ID() (identity.ContentID, bool) {
 	if !row.valid() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return row.content, true
 }
@@ -200,11 +200,11 @@ func (row BinaryEquality) Endpoints() (result, left, right Coordinate, notEqual 
 type UnaryNot struct {
 	schema                              *Schema
 	key                                 computationKey
-	content                             keyspace.ContentID
+	content                             identity.ContentID
 	resultCoordinate, operandCoordinate Coordinate
 }
 
-func (schema *Schema) UnaryNot(module, occurrence keyspace.ContentID) (UnaryNot, bool) {
+func (schema *Schema) UnaryNot(module, occurrence identity.ContentID) (UnaryNot, bool) {
 	if schema == nil || schema.unaryNots == nil {
 		return UnaryNot{}, false
 	}
@@ -218,9 +218,9 @@ func (row UnaryNot) valid() bool {
 func (schema *Schema) OwnsUnaryNot(row UnaryNot) bool {
 	return schema != nil && row.schema == schema && row.valid()
 }
-func (row UnaryNot) ID() (keyspace.ContentID, bool) {
+func (row UnaryNot) ID() (identity.ContentID, bool) {
 	if !row.valid() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return row.content, true
 }
@@ -234,13 +234,13 @@ func (row UnaryNot) Endpoints() (Coordinate, Coordinate, bool) {
 type SelectBranch struct {
 	schema               *Schema
 	key                  computationKey
-	content              keyspace.ContentID
+	content              identity.ContentID
 	branch               uint8
 	truthy, chosenIsLeft bool
 	result, left, chosen Coordinate
 }
 
-func (schema *Schema) SelectBranch(module, occurrence keyspace.ContentID, branch int) (SelectBranch, bool) {
+func (schema *Schema) SelectBranch(module, occurrence identity.ContentID, branch int) (SelectBranch, bool) {
 	if schema == nil || schema.selectBranches == nil || branch < 0 || branch > 1 {
 		return SelectBranch{}, false
 	}
@@ -253,9 +253,9 @@ func (row SelectBranch) valid() bool {
 func (schema *Schema) OwnsSelectBranch(row SelectBranch) bool {
 	return schema != nil && row.schema == schema && row.valid()
 }
-func (row SelectBranch) ID() (keyspace.ContentID, bool) {
+func (row SelectBranch) ID() (identity.ContentID, bool) {
 	if !row.valid() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return row.content, true
 }
@@ -269,12 +269,12 @@ func (row SelectBranch) Endpoints() (result, left, chosen Coordinate, truthy, ch
 type ValueClaim struct {
 	schema          *Schema
 	key             computationKey
-	content         keyspace.ContentID
+	content         identity.ContentID
 	result, operand Coordinate
 	kind            flowkind.ValueClaimKind
 }
 
-func (schema *Schema) ValueClaim(module, occurrence keyspace.ContentID) (ValueClaim, bool) {
+func (schema *Schema) ValueClaim(module, occurrence identity.ContentID) (ValueClaim, bool) {
 	if schema == nil || schema.valueClaims == nil {
 		return ValueClaim{}, false
 	}
@@ -287,9 +287,9 @@ func (row ValueClaim) valid() bool {
 func (schema *Schema) OwnsValueClaim(row ValueClaim) bool {
 	return schema != nil && row.schema == schema && row.valid()
 }
-func (row ValueClaim) ID() (keyspace.ContentID, bool) {
+func (row ValueClaim) ID() (identity.ContentID, bool) {
 	if !row.valid() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return row.content, true
 }
@@ -489,7 +489,7 @@ func (schema *valueBuilder) sealComputationRows() bool {
 	return true
 }
 
-func computationContent(linkID keyspace.ContentID, label string, module, occurrence keyspace.ContentID, extra ...uint64) keyspace.ContentID {
+func computationContent(linkID identity.ContentID, label string, module, occurrence identity.ContentID, extra ...uint64) identity.ContentID {
 	h := sha256.New()
 	h.Write(linkID[:])
 	h.Write([]byte(label))
@@ -500,7 +500,7 @@ func computationContent(linkID keyspace.ContentID, label string, module, occurre
 		binary.BigEndian.PutUint64(b[:], value)
 		h.Write(b[:])
 	}
-	var result keyspace.ContentID
+	var result identity.ContentID
 	copy(result[:], h.Sum(nil))
 	return result
 }

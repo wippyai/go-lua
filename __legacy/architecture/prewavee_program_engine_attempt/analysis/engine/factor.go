@@ -8,7 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts"
 	"github.com/wippyai/go-lua/analysis/engine/internal/guard"
 	"github.com/wippyai/go-lua/analysis/lattice"
-	"github.com/wippyai/go-lua/program/artifact"
+	"github.com/wippyai/go-lua/analysis/program/artifact"
 )
 
 // KeySpace is one Factor's sealed, finite direct dependency-key universe.

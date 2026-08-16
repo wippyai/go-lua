@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	testutil "github.com/wippyai/go-lua/analysis/check/checktest"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 )
 
 // inferenceCase is an unannotated (or minimally-annotated) program whose returned

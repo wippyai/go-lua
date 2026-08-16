@@ -7,7 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/heap/allocation/internal/source"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // Catalog is the immutable allocation-occurrence denominator for one exact
@@ -17,14 +17,14 @@ type Catalog struct {
 	heap         heapdomain.Schema
 	values       *valuedomain.Schema
 	summaryOwner *valueowner.HotOwner
-	mounts       map[keyspace.ContentID]*mountRows
-	mountOrder   []keyspace.ContentID
+	mounts       map[identity.ContentID]*mountRows
+	mountOrder   []identity.ContentID
 	summaryState summaryState
 }
 
 type mountRows struct {
 	owner      *Catalog
-	module     keyspace.ContentID
+	module     identity.ContentID
 	occurrence heapdomain.OccurrenceMount
 	closed     []source.Closed
 	closedSet  []bool
@@ -140,7 +140,7 @@ func BeginWithFailure(heap heapdomain.Schema, values *valuedomain.Schema, summar
 	if !heap.Valid() || values == nil || !values.Valid() || summaryOwner == nil || summaryOwner.Schema() != values || !values.OwnsHeapSchema(heap) || !values.LinkOwner().Matches(heap.LinkOwner()) || len(mounts) != values.MountCount() {
 		return nil, SealFailureInput
 	}
-	result := &Catalog{heap: heap, values: values, summaryOwner: summaryOwner, mounts: make(map[keyspace.ContentID]*mountRows), summaryState: summaryPending}
+	result := &Catalog{heap: heap, values: values, summaryOwner: summaryOwner, mounts: make(map[identity.ContentID]*mountRows), summaryState: summaryPending}
 	for _, mounted := range mounts {
 		if !mounted.Available() {
 			return nil, SealFailureMount
@@ -236,7 +236,7 @@ func (catalog *Catalog) SealSummaryReceiptsWithFailure() SealFailure {
 	return SealFailureNone
 }
 
-func (catalog *Catalog) ForMount(module keyspace.ContentID) (Mount, bool) {
+func (catalog *Catalog) ForMount(module identity.ContentID) (Mount, bool) {
 	if catalog == nil || catalog.summaryState != summarySealed || !module.Available() {
 		return Mount{}, false
 	}
@@ -249,21 +249,21 @@ func (mount Mount) ownedBy(catalog *Catalog) bool {
 }
 
 // ModuleID returns the exact mount substitution identity.
-func (mount Mount) ModuleID() keyspace.ContentID {
+func (mount Mount) ModuleID() identity.ContentID {
 	if mount.rows == nil {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return mount.rows.module
 }
 
-func (mount Mount) KeyForOccurrence(id keyspace.ContentID) (heapdomain.Key, bool) {
+func (mount Mount) KeyForOccurrence(id identity.ContentID) (heapdomain.Key, bool) {
 	if mount.rows == nil || !id.Available() || !mount.ownedBy(mount.rows.owner) {
 		return heapdomain.Key{}, false
 	}
 	return mount.rows.occurrence.AllocationRootForOccurrence(id)
 }
 
-func (mount Mount) RootForOccurrence(id keyspace.ContentID) (source.Root, bool) {
+func (mount Mount) RootForOccurrence(id identity.ContentID) (source.Root, bool) {
 	if mount.rows == nil || !id.Available() || !mount.ownedBy(mount.rows.owner) {
 		return source.Root{}, false
 	}
@@ -275,7 +275,7 @@ func (mount Mount) RootForOccurrence(id keyspace.ContentID) (source.Root, bool) 
 	return root, rootOK && root.FencedTo(mount.rows.owner.heap)
 }
 
-func (mount Mount) ClosedForOccurrence(id keyspace.ContentID) (source.Closed, bool) {
+func (mount Mount) ClosedForOccurrence(id identity.ContentID) (source.Closed, bool) {
 	if mount.rows == nil || !id.Available() || !mount.ownedBy(mount.rows.owner) {
 		return source.Closed{}, false
 	}

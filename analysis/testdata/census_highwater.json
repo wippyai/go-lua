@@ -1,0 +1,22 @@
+{
+  "measured": "2026-08-16",
+  "note": "Provenance: the first full-census completion of 2026-08-16 (journaled receipt seq 2071: 911 fixtures, 504 complete, 111 incomplete, 296 unsupported, 0 invalid) established this ratchet. A later full run the same day, in this lane, measured 584 complete / 143 incomplete / 184 unsupported / 0 invalid over 45m34s of analysis wall across 32 workers, so the mark is recorded at that higher measured floor: complete rose by 80 and unsupported fell by 112. Incomplete rose from 111 to 143 in that run, because the distribution moved out of unsupported into complete and incomplete together; the incomplete ceiling is therefore recorded where it was measured rather than where it was hoped. The sample lane is the stride-6 projection of the same walk. The full lane is authoritative only on a full-corpus run; the next full bounded run revalidates both numbers.",
+  "corpus_projects": 911,
+  "full": {
+    "measured": true,
+    "projects": 911,
+    "complete_min": 584,
+    "incomplete_max": 143,
+    "unsupported_max": 184,
+    "invalid_max": 0
+  },
+  "sample": {
+    "measured": true,
+    "stride": 6,
+    "projects": 152,
+    "complete_min": 99,
+    "incomplete_max": 26,
+    "unsupported_max": 27,
+    "invalid_max": 0
+  }
+}

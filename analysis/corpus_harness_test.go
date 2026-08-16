@@ -1,0 +1,717 @@
+package analysis
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+	"sort"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	callsite "github.com/wippyai/go-lua/analysis/domain/effect/callsite"
+	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/lua/lower"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/program/link"
+	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/profile"
+	"github.com/wippyai/go-lua/analysis/internal/testfixture"
+	"github.com/wippyai/go-lua/analysis/schema/grammar"
+)
+
+// The corpus harness is this package's single fixture spine. One enumeration
+// names every frozen fixture and binds it to its source-authored expectation;
+// one path seals, compiles, solves, judges the detached Result, and closes the
+// plan. A test supplies only the analyzer entry it exercises and the judgment
+// it applies, never its own corpus walk: independent walks are how a census
+// stays green while acceptance never runs.
+//
+// There is deliberately no timeout, work budget, result cap, or skip here. The
+// repository's bounded runner owns process-tree resource enforcement, so a
+// killed shard is a failed shard, never a passed one.
+
+const (
+	corpusHarnessProjectCount = 911
+	corpusHarnessLuaFileCount = testfixture.FrozenLuaFileCount
+	// Keep corpus concurrency independent of both fixture count and unusually
+	// large host CPU counts. Thirty-two is the measured 911-corpus lane; the
+	// repository's bounded runner remains the hard RSS/time authority.
+	corpusHarnessMaxWorkers = 32
+)
+
+// corpusHarnessExecution selects which public analyzer entry the spine drives.
+// Every fixture is loaded, sealed, judged, and closed identically; only the
+// entry under test differs.
+type corpusHarnessExecution uint8
+
+const (
+	// corpusHarnessAnalyzeOnce drives the public one-shot Analyze.
+	corpusHarnessAnalyzeOnce corpusHarnessExecution = iota
+	// corpusHarnessDiagnosticSolve drives Compile plus SolveWithDiagnostics.
+	corpusHarnessDiagnosticSolve
+	// corpusHarnessReportSolve drives Compile plus a policy SolveWithReport.
+	corpusHarnessReportSolve
+	// corpusHarnessCompileOnly stops at the compiled plan, for laws that judge
+	// the compile receipt boundary itself.
+	corpusHarnessCompileOnly
+)
+
+// corpusHarnessMode is one judgment plugged into the spine. policy, preflight,
+// and judge are the only mode-owned decisions; loading, sealing, compiling,
+// solving, the detached-Result contract, and plan closure are shared.
+type corpusHarnessMode struct {
+	name      string
+	execution corpusHarnessExecution
+	options   engine.SolveDiagnosticOptions
+	// preflight fences fixture contracts a mode cannot judge, before compile.
+	preflight func(*corpusHarnessProject) []string
+	// policy derives the per-fixture diagnostic policy of a report execution.
+	// Contracts it cannot express are carried into the run and judged after the
+	// fixture has passed through the current analyzer, never before.
+	policy func(*corpusHarnessProject) (DiagnosticPolicy, []string)
+	// judge is the mode's verdict on one completed run.
+	judge func(*corpusHarnessRun) []string
+}
+
+// corpusHarnessProject is one fixture as both an executable Link source and a
+// source-authored expectation. Binding them in one enumeration is what keeps
+// the census and the acceptance oracle on the same corpus.
+type corpusHarnessProject struct {
+	name        string
+	source      testfixture.CorpusProject
+	expectation *corpusDiagnosticProjectExpectations
+}
+
+// corpusHarnessCost is per-fixture accounting. Elapsed time is exact per
+// fixture; allocation is exact only in a serial walk, where no other fixture
+// is running, and is reported as unavailable otherwise. The one-shot Analyze
+// entry reports its whole run as solve, because it owns its own compile.
+type corpusHarnessCost struct {
+	seal, compile, solve time.Duration
+	allocated            uint64
+	allocationExact      bool
+}
+
+func (cost corpusHarnessCost) total() time.Duration {
+	return cost.seal + cost.compile + cost.solve
+}
+
+type corpusHarnessRun struct {
+	project            corpusHarnessProject
+	linked             *link.Link
+	plan               *Plan
+	result             *Result
+	report             *DiagnosticReport
+	status             AnalyzeStatus
+	compileDiagnostics AnalyzeDiagnostics
+	solveDiagnostics   AnalyzeDiagnostics
+	policy             DiagnosticPolicy
+	policyUnsupported  []string
+	cost               corpusHarnessCost
+}
+
+// corpusHarnessOutcome is one fixture's classified walk verdict.
+type corpusHarnessOutcome struct {
+	project string
+	status  AnalyzeStatus
+	class   string
+	err     error
+	cost    corpusHarnessCost
+}
+
+var (
+	corpusHarnessOnce          sync.Once
+	corpusHarnessProjectsValue []corpusHarnessProject
+	corpusHarnessProjectsErr   error
+)
+
+// corpusHarnessProjects is the single fixture enumeration. It cross-checks the
+// executable corpus census against the manifest expectation catalog so no mode
+// can silently judge a different corpus than another.
+func corpusHarnessProjects(t *testing.T) []corpusHarnessProject {
+	t.Helper()
+	catalog, err := frozenCorpusDiagnosticExpectationCatalog(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	corpusHarnessOnce.Do(func() {
+		corpusHarnessProjectsValue, corpusHarnessProjectsErr = buildCorpusHarnessProjects(catalog)
+	})
+	if corpusHarnessProjectsErr != nil {
+		t.Fatal(corpusHarnessProjectsErr)
+	}
+	return corpusHarnessProjectsValue
+}
+
+func buildCorpusHarnessProjects(catalog *corpusDiagnosticExpectationCatalog) ([]corpusHarnessProject, error) {
+	if catalog == nil {
+		return nil, fmt.Errorf("frozen corpus expectation catalog is unavailable")
+	}
+	sources, err := testfixture.FrozenCorpusProjects()
+	if err != nil {
+		return nil, fmt.Errorf("load frozen corpus: %w", err)
+	}
+	if len(sources) != corpusHarnessProjectCount || len(catalog.projects) != corpusHarnessProjectCount || catalog.inventory.projects != corpusHarnessProjectCount {
+		return nil, fmt.Errorf("frozen corpus projects = %d executable, %d expectation, %d inventory, want exactly %d", len(sources), len(catalog.projects), catalog.inventory.projects, corpusHarnessProjectCount)
+	}
+	projects := make([]corpusHarnessProject, 0, len(sources))
+	files := 0
+	for index, source := range sources {
+		expectation := catalog.projects[index]
+		if expectation == nil || expectation.name != source.Name() {
+			name := ""
+			if expectation != nil {
+				name = expectation.name
+			}
+			return nil, fmt.Errorf("frozen corpus enumerations diverge at %d: executable %q, expectation %q", index, source.Name(), name)
+		}
+		if len(expectation.files) != source.FileCount() {
+			return nil, fmt.Errorf("frozen corpus fixture %q has %d executable Lua files and %d expectation files", source.Name(), source.FileCount(), len(expectation.files))
+		}
+		files += source.FileCount()
+		projects = append(projects, corpusHarnessProject{name: source.Name(), source: source, expectation: expectation})
+	}
+	if files != corpusHarnessLuaFileCount || catalog.inventory.luaFiles != corpusHarnessLuaFileCount {
+		return nil, fmt.Errorf("frozen corpus Lua files = %d executable, %d expectation, want exactly %d", files, catalog.inventory.luaFiles, corpusHarnessLuaFileCount)
+	}
+	return projects, nil
+}
+
+// corpusHarnessShard selects one canonical fixture-path prefix.
+func corpusHarnessShard(t *testing.T, prefix string) []corpusHarnessProject {
+	t.Helper()
+	projects := corpusHarnessProjects(t)
+	selected := make([]corpusHarnessProject, 0, len(projects))
+	for _, project := range projects {
+		if strings.HasPrefix(project.name, prefix) {
+			selected = append(selected, project)
+		}
+	}
+	if len(selected) == 0 {
+		t.Fatalf("%s frozen-corpus shard is empty", prefix)
+	}
+	return selected
+}
+
+func corpusHarnessFixture(t *testing.T, name string) corpusHarnessProject {
+	t.Helper()
+	projects := corpusHarnessProjects(t)
+	index := sort.Search(len(projects), func(index int) bool { return projects[index].name >= name })
+	if index >= len(projects) || projects[index].name != name {
+		t.Fatalf("missing fixture project %q", name)
+	}
+	return projects[index]
+}
+
+func corpusHarnessContract(t testing.TB) *target.Contract {
+	t.Helper()
+	contract, err := profile.Contract()
+	if err != nil {
+		t.Fatalf("seal canonical target profile: %v", err)
+	}
+	return contract
+}
+
+// corpusHarnessSolveOptions is the shared fixture solve selection: complete
+// engine evidence with a bounded row projection, and no work budget, so a
+// non-terminating fixture is caught by the bounded runner rather than passing
+// as a cut-off sample.
+func corpusHarnessSolveOptions() engine.SolveDiagnosticOptions {
+	return engine.SolveDiagnosticOptions{Flags: engine.SolveDiagnosticAll, MaxRows: 256}
+}
+
+// corpusHarnessSourceLink seals one raw Lua source as a single-module Link.
+// Fixture-directory projects go through corpusHarnessExecute instead; this is
+// for tests whose input is a synthesized or truncated source text.
+func corpusHarnessSourceLink(t testing.TB, contract *target.Contract, name string, text []byte) *link.Link {
+	t.Helper()
+	program, err := lower.Lower(lower.Source{Name: name, Text: text})
+	if err != nil {
+		t.Fatal(err)
+	}
+	linked, err := link.Seal(&link.Spec{Target: contract, Modules: []linkproject.Module{{Name: "main", Program: program}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return linked
+}
+
+// corpusHarnessSourceText reads one file of a fixture project. The fixture
+// directory stays owned by the enumeration; no test reconstructs a corpus path.
+func corpusHarnessSourceText(t testing.TB, project corpusHarnessProject, file string) []byte {
+	t.Helper()
+	if project.expectation == nil || project.expectation.directory == "" {
+		t.Fatalf("fixture %q has no expectation directory", project.name)
+	}
+	contents, err := os.ReadFile(filepath.Join(project.expectation.directory, filepath.FromSlash(file)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return contents
+}
+
+// corpusHarnessFixtureRun runs one named fixture through the spine and fails
+// the calling test on any classified failure.
+func corpusHarnessFixtureRun(t *testing.T, name string, mode corpusHarnessMode) *corpusHarnessRun {
+	t.Helper()
+	run, _, err := corpusHarnessExecute(t, corpusHarnessFixture(t, name), mode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return run
+}
+
+// corpusHarnessExecute is the spine: seal, compile, solve, judge the detached
+// Result, then apply the mode's judgment. The compiled plan is closed when t
+// completes, so a walk holds at most one live plan per worker. Failures are
+// returned classified instead of raised, so a single-fixture law can fail in
+// place and a walk can group the same verdict.
+func corpusHarnessExecute(t testing.TB, project corpusHarnessProject, mode corpusHarnessMode) (*corpusHarnessRun, string, error) {
+	t.Helper()
+	run := &corpusHarnessRun{project: project}
+	if project.name == "" || project.expectation == nil {
+		return run, "fixture", fmt.Errorf("unavailable fixture project or expectation")
+	}
+	if mode.preflight != nil {
+		if unsupported := mode.preflight(&run.project); len(unsupported) != 0 {
+			return run, "fixture-contract", fmt.Errorf("unsupported fixture contract before compile:\n%s", strings.Join(unsupported, "\n"))
+		}
+	}
+	contract := corpusHarnessContract(t)
+	started := time.Now()
+	linked, err := testfixture.SealCorpusProject(contract, project.source)
+	run.cost.seal = time.Since(started)
+	if err != nil {
+		return run, "link", fmt.Errorf("link: %w", err)
+	}
+	run.linked = linked
+	return corpusHarnessExecuteLink(t, run, mode)
+}
+
+// corpusHarnessExecuteLink runs an already sealed Link through the spine. Its
+// caller owns how that Link was constructed; everything after it is shared.
+func corpusHarnessExecuteLink(t testing.TB, run *corpusHarnessRun, mode corpusHarnessMode) (*corpusHarnessRun, string, error) {
+	t.Helper()
+	if run == nil || run.linked == nil {
+		return run, "link", fmt.Errorf("unavailable sealed Link")
+	}
+	linked := run.linked
+	if mode.execution == corpusHarnessAnalyzeOnce {
+		started := time.Now()
+		run.result, run.status = Analyze(context.Background(), linked)
+		run.cost.solve = time.Since(started)
+		if run.status != AnalyzeComplete {
+			class := corpusHarnessStatusName(run.status)
+			return run, class, fmt.Errorf("Analyze status = %s", class)
+		}
+	} else {
+		started := time.Now()
+		plan, compileStatus, compileDiagnostics := CompileWithDiagnostics(linked)
+		run.cost.compile = time.Since(started)
+		run.compileDiagnostics = compileDiagnostics
+		if compileStatus != CompileComplete || plan == nil {
+			return run, "compile", fmt.Errorf("compile=%v plan=%t artifact=%s heap=%s schedule=%s diagnostics=%+v",
+				compileStatus, plan != nil, planLawArtifactFailure(linked), planLawHeapSealFailure(linked), planLawArtifactScheduleRow(linked, compileDiagnostics.ReceiptScheduleOrdinal), compileDiagnostics)
+		}
+		run.plan = plan
+		// A fixture is a sequential acceptance unit. Close the assembled Link
+		// topology on every post-compile path, including policy, solve, report,
+		// and matcher failures; immutable Program artifacts remain cache-owned.
+		t.Cleanup(func() {
+			if !plan.Close() {
+				t.Error("close compiled fixture plan")
+			}
+		})
+		if mode.execution == corpusHarnessCompileOnly {
+			return run, "", nil
+		}
+		if class, err := corpusHarnessSolve(run, mode); err != nil {
+			return run, class, err
+		}
+	}
+	if err := corpusHarnessResultDefect(run.result, linked.ContentID()); err != nil {
+		return run, "detached-result", err
+	}
+	if mode.judge != nil {
+		if mismatches := mode.judge(run); len(mismatches) != 0 {
+			class := mode.name
+			if class == "" {
+				class = "judgment"
+			}
+			return run, class, fmt.Errorf("%s:\n%s", class, strings.Join(mismatches, "\n"))
+		}
+	}
+	return run, "", nil
+}
+
+func corpusHarnessSolve(run *corpusHarnessRun, mode corpusHarnessMode) (string, error) {
+	started := time.Now()
+	switch mode.execution {
+	case corpusHarnessDiagnosticSolve:
+		run.result, run.status, run.solveDiagnostics = run.plan.SolveWithDiagnostics(context.Background(), mode.options)
+	case corpusHarnessReportSolve:
+		if mode.policy != nil {
+			run.policy, run.policyUnsupported = mode.policy(&run.project)
+		}
+		run.result, run.report, run.status, run.solveDiagnostics = run.plan.SolveWithReport(context.Background(), mode.options, run.policy)
+	default:
+		return "execution", fmt.Errorf("unknown corpus harness execution %d", mode.execution)
+	}
+	run.cost.solve = time.Since(started)
+	if run.status != AnalyzeComplete || run.result == nil {
+		return corpusHarnessStatusName(run.status), fmt.Errorf("AnalyzeComplete required: status=%v result=%t binding=%s engine=%s diagnostics=%+v",
+			run.status, run.result != nil, corpusHarnessBindingFailure(run.plan, run.linked), corpusHarnessEngineFailure(run.solveDiagnostics), run.solveDiagnostics)
+	}
+	return "", nil
+}
+
+// corpusHarnessResultDefect is the detached public Result contract every mode
+// applies. A Result that cannot name its own source, bodies, roots, values, or
+// effects is not a clean analysis regardless of the mode's own verdict.
+func corpusHarnessResultDefect(result *Result, sourceID identity.ContentID) error {
+	if result == nil {
+		return fmt.Errorf("nil result")
+	}
+	if !result.ContentID().Available() || !result.SourceID().Available() || result.SourceID() != sourceID {
+		return fmt.Errorf("invalid source/content identity")
+	}
+	if result.BodyCount() == 0 {
+		return fmt.Errorf("empty body projection")
+	}
+	for bodyIndex := 0; bodyIndex < result.BodyCount(); bodyIndex++ {
+		body, ok := result.BodyAt(bodyIndex)
+		if !ok {
+			return fmt.Errorf("body %d is not addressable", bodyIndex)
+		}
+		if id, ok := body.ID(); !ok || !id.Available() {
+			return fmt.Errorf("body %d has no detached identity", bodyIndex)
+		}
+		for rootIndex := 0; rootIndex < body.RootCount(); rootIndex++ {
+			root, ok := body.RootAt(rootIndex)
+			if !ok {
+				return fmt.Errorf("body %d root %d is not addressable", bodyIndex, rootIndex)
+			}
+			if id, ok := root.ID(); !ok || !id.Available() {
+				return fmt.Errorf("body %d root %d has no detached identity", bodyIndex, rootIndex)
+			}
+		}
+		for valueIndex := 0; valueIndex < body.ValueCount(); valueIndex++ {
+			if id, _, ok := body.ValueAt(valueIndex); !ok || !id.Available() {
+				return fmt.Errorf("body %d value %d has no detached identity", bodyIndex, valueIndex)
+			}
+		}
+		if _, _, ok := body.EffectDisposition(); !ok {
+			return fmt.Errorf("body %d effect projection unavailable", bodyIndex)
+		}
+		for effectIndex := 0; effectIndex < body.EffectCount(); effectIndex++ {
+			if id, ok := body.EffectAt(effectIndex); !ok || !id.Available() {
+				return fmt.Errorf("body %d effect %d has no detached identity", bodyIndex, effectIndex)
+			}
+		}
+	}
+	return nil
+}
+
+// corpusHarnessWalk runs one mode over the selected fixtures. Every fixture is
+// its own named subtest, so a failure names its fixture and the walk holds at
+// most one live plan per worker. The returned outcomes carry the same verdict
+// the subtests reported, for the caller's shard receipt.
+func corpusHarnessWalk(t *testing.T, projects []corpusHarnessProject, mode corpusHarnessMode) []corpusHarnessOutcome {
+	outcomes := make([]corpusHarnessOutcome, len(projects))
+	workers := corpusHarnessWorkerCount(len(projects))
+	if workers == 0 {
+		return outcomes
+	}
+	serial := workers == 1
+	var next atomic.Int64
+	var walkers sync.WaitGroup
+	for worker := 0; worker < workers; worker++ {
+		walkers.Add(1)
+		go func() {
+			defer walkers.Done()
+			for {
+				index := int(next.Add(1) - 1)
+				if index >= len(projects) {
+					return
+				}
+				project := projects[index]
+				t.Run(project.name, func(t *testing.T) {
+					allocated := corpusHarnessAllocated(serial)
+					run, class, err := corpusHarnessExecute(t, project, mode)
+					run.cost.allocated, run.cost.allocationExact = corpusHarnessAllocated(serial)-allocated, serial
+					outcomes[index] = corpusHarnessOutcome{project: project.name, status: run.status, class: class, err: err, cost: run.cost}
+					if err != nil {
+						t.Fatal(err)
+					}
+				})
+			}
+		}()
+	}
+	walkers.Wait()
+	return outcomes
+}
+
+// corpusHarnessAllocated reads the cumulative allocation counter. It is only
+// attributable to one fixture in a serial walk, so a concurrent walk does not
+// pay for the stop-the-world read.
+func corpusHarnessAllocated(serial bool) uint64 {
+	if !serial {
+		return 0
+	}
+	var stats runtime.MemStats
+	runtime.ReadMemStats(&stats)
+	return stats.TotalAlloc
+}
+
+func corpusHarnessWorkerCount(projects int) int {
+	if projects <= 0 {
+		return 0
+	}
+	workers := runtime.GOMAXPROCS(0)
+	if workers < 1 {
+		workers = 1
+	}
+	if workers > corpusHarnessMaxWorkers {
+		workers = corpusHarnessMaxWorkers
+	}
+	if workers > projects {
+		workers = projects
+	}
+	return workers
+}
+
+// corpusHarnessShardReceipt is the walk's status line: what ran, what the
+// public status census was, and what it cost. Failures are reported by their
+// own subtests; this receipt exists so a shard's cost stays visible instead of
+// becoming an unexplained bounded-runner kill.
+func corpusHarnessShardReceipt(shard string, outcomes []corpusHarnessOutcome) string {
+	var counts [4]int
+	var wall time.Duration
+	failures := 0
+	for _, outcome := range outcomes {
+		if outcome.status >= AnalyzeInvalid && int(outcome.status) < len(counts) {
+			counts[outcome.status]++
+		}
+		if outcome.err != nil {
+			failures++
+		}
+		wall += outcome.cost.total()
+	}
+	var receipt strings.Builder
+	fmt.Fprintf(&receipt, "corpus %s: fixtures=%d complete=%d incomplete=%d unsupported=%d invalid=%d failed=%d analysis-wall=%s",
+		shard, len(outcomes), counts[AnalyzeComplete], counts[AnalyzeIncomplete], counts[AnalyzeUnsupported], counts[AnalyzeInvalid], failures, wall.Round(time.Millisecond))
+	receipt.WriteString(corpusHarnessCostReport(outcomes, 5))
+	return receipt.String()
+}
+
+// corpusHarnessCostReport names the most expensive fixtures of a walk. Time is
+// always exact; allocation is reported only from a serial walk, where it is
+// attributable to a single fixture.
+func corpusHarnessCostReport(outcomes []corpusHarnessOutcome, rows int) string {
+	if rows < 1 || len(outcomes) == 0 {
+		return ""
+	}
+	ranked := make([]corpusHarnessOutcome, 0, len(outcomes))
+	for _, outcome := range outcomes {
+		if outcome.project != "" {
+			ranked = append(ranked, outcome)
+		}
+	}
+	if len(ranked) == 0 {
+		return ""
+	}
+	sort.Slice(ranked, func(left, right int) bool {
+		return ranked[left].cost.total() > ranked[right].cost.total()
+	})
+	if len(ranked) > rows {
+		ranked = ranked[:rows]
+	}
+	var report strings.Builder
+	report.WriteString("\nslowest fixtures:")
+	for _, outcome := range ranked {
+		fmt.Fprintf(&report, "\n  %s seal=%s compile=%s solve=%s", outcome.project, outcome.cost.seal.Round(time.Millisecond), outcome.cost.compile.Round(time.Millisecond), outcome.cost.solve.Round(time.Millisecond))
+		if outcome.cost.allocationExact {
+			fmt.Fprintf(&report, " allocated=%dMiB", outcome.cost.allocated/(1<<20))
+		}
+	}
+	return report.String()
+}
+
+// corpusHarnessFailureReport groups walk failures by class with a bounded
+// per-class detail budget, so one systemic regression cannot flood a shard's
+// receipt with one row per fixture.
+func corpusHarnessFailureReport(outcomes []corpusHarnessOutcome, perClass int) string {
+	if perClass < 1 {
+		perClass = 1
+	}
+	grouped := make(map[string][]string)
+	for _, outcome := range outcomes {
+		if outcome.err == nil {
+			continue
+		}
+		class := outcome.class
+		if class == "" {
+			class = "unknown"
+		}
+		grouped[class] = append(grouped[class], fmt.Sprintf("%s (%v)", outcome.project, outcome.err))
+	}
+	if len(grouped) == 0 {
+		return ""
+	}
+	classes := make([]string, 0, len(grouped))
+	for class := range grouped {
+		classes = append(classes, class)
+	}
+	sort.Strings(classes)
+	var report strings.Builder
+	report.WriteString("canonical corpus failures")
+	for _, class := range classes {
+		rows := grouped[class]
+		fmt.Fprintf(&report, "\n%s: %d", class, len(rows))
+		limit := len(rows)
+		if limit > perClass {
+			limit = perClass
+		}
+		for _, row := range rows[:limit] {
+			report.WriteString("\n  ")
+			report.WriteString(row)
+		}
+		if len(rows) > limit {
+			fmt.Fprintf(&report, "\n  ... %d more", len(rows)-limit)
+		}
+	}
+	return report.String()
+}
+
+func corpusHarnessStatusName(status AnalyzeStatus) string {
+	switch status {
+	case AnalyzeInvalid:
+		return "invalid"
+	case AnalyzeUnsupported:
+		return "unsupported"
+	case AnalyzeIncomplete:
+		return "incomplete"
+	case AnalyzeComplete:
+		return "complete"
+	default:
+		return fmt.Sprintf("unknown(%d)", status)
+	}
+}
+
+// corpusHarnessEngineFailure is the compact engine evidence every failing
+// solve reports. It replaces the per-test diagnostic dumps that used to make
+// one fixture lane readable and the rest opaque.
+func corpusHarnessEngineFailure(diagnostics AnalyzeDiagnostics) string {
+	failure := diagnostics.Engine.Failure
+	return fmt.Sprintf("phase=%s reason=%s rule=%s work=%d/%d cutoff=%t epochs=%d passes=%d evaluates=%d fails=%d folds=%d restarts=%d activations=%d failure={available:%t reason:%d phase:%s point:%v group:%v member:%v rule:%v}",
+		diagnostics.Phase, diagnostics.Reason, diagnostics.Rule,
+		diagnostics.Engine.Work, diagnostics.Engine.MaxWork, diagnostics.Engine.WorkCutoff,
+		diagnostics.Engine.Epochs, diagnostics.Engine.EpochPasses, diagnostics.Engine.Evaluates, diagnostics.Engine.EvaluateFailures,
+		diagnostics.Engine.Folds, diagnostics.Engine.Restarts, diagnostics.Engine.Activations,
+		failure.Available(), failure.Reason(), failure.Phase(), failure.Point(), failure.Group(), failure.Member(), failure.Rule())
+}
+
+// corpusHarnessBindingFailure names the first closed construction boundary a
+// completed compile still fails at, so an incomplete solve reports where the
+// Link-mounted receipt assembly stopped instead of only its public status.
+func corpusHarnessBindingFailure(plan *Plan, source *link.Link) string {
+	if plan == nil || plan.state == nil || source == nil || source.ContentID() != plan.state.sourceID || plan.state.artifacts == nil {
+		return "state"
+	}
+	binding, bindingFailure, valueFailure, allocationFailure := plan.state.newProgramBinding(source)
+	if bindingFailure != ProgramBindingFailureNone {
+		return "binding:" + bindingFailure.String() + ":" + valueFailure.String() + ":" + allocationFailure.String()
+	}
+	if failure := corpusHarnessEffectBodyReceiptFailure(plan, binding); failure != "" {
+		return "effect-body:" + failure
+	}
+	return "complete"
+}
+
+func corpusHarnessEffectBodyReceiptFailure(plan *Plan, binding *programBinding) string {
+	if plan == nil || plan.state == nil || plan.state.artifacts == nil || binding == nil {
+		return "state"
+	}
+	effectBody, effectBodyOK := grammar.RuleHandle[*callsite.BodyHotRule](binding.rules, programartifact.RuleRoleEffectBody)
+	if !effectBodyOK {
+		return "state"
+	}
+	valueIDs, heapIDs, witness, witnessOK := linkBootstrapWitness(plan.state, binding)
+	if !witnessOK {
+		return "bootstrap"
+	}
+	mounts := make([]engine.MountedArtifactReceipt, 0, len(plan.state.artifacts.mounts))
+	for _, mount := range plan.state.artifacts.mounts {
+		receipt, receiptOK := newEngineArtifactScalarReceipt(mount.template, mount.roles, binding)
+		if !receiptOK {
+			return "receipt"
+		}
+		mounted, mountedOK := engine.NewMountedArtifactReceipt(receipt, mount.moduleKey)
+		if !mountedOK {
+			return "mount"
+		}
+		mounts = append(mounts, mounted)
+	}
+	assembly, _, assemblyOK := engine.BeginMountedArtifactReceiptAssemblyWithFailure(binding.binding, mounts, witness)
+	if !assemblyOK {
+		return "assembly"
+	}
+	defer assembly.Abort()
+	if !binding.attachLinkBootstrapRules(assembly, valueIDs, heapIDs) {
+		return "bootstrap-rules"
+	}
+	for _, mount := range plan.state.artifacts.mounts {
+		issuer, issuerOK := effectBody.ForMount(mount.moduleKey)
+		if !issuerOK {
+			return "issuer"
+		}
+		for index := 0; index < mount.artifact.RuleOccurrenceCount(programartifact.RuleRoleEffectBody); index++ {
+			row, rowOK := mount.artifact.RuleOccurrenceAt(programartifact.RuleRoleEffectBody, index)
+			if !rowOK {
+				return "artifact-row"
+			}
+			if _, receiptOK := issuer.ReceiptForOccurrence(row.ID()); !receiptOK {
+				return "occurrence"
+			}
+			for pointIndex := 0; pointIndex < row.PointCount(); pointIndex++ {
+				point, pointOK := row.PointAt(pointIndex)
+				if !pointOK {
+					return "point"
+				}
+				if _, failure := effectBody.AttachMountedOccurrenceWithFailure(assembly, mount.moduleKey, point, row.ID()); failure != 0 {
+					return "attach-" + failure.String()
+				}
+			}
+		}
+	}
+	if !assembly.SealSources() {
+		return "seal-" + effectBody.FinalizationFailure().String()
+	}
+	return ""
+}
+
+// corpusHarnessCensusMode is the honest status census: the public one-shot
+// entry plus the detached Result contract. Diagnostics and fixture
+// expectations belong to the acceptance mode.
+func corpusHarnessCensusMode() corpusHarnessMode {
+	return corpusHarnessMode{name: "census", execution: corpusHarnessAnalyzeOnce}
+}
+
+// corpusHarnessReceiptMode is the closed-phase receipt lane: one compile and
+// one diagnostic solve, reporting the exact construction boundary on failure.
+func corpusHarnessReceiptMode() corpusHarnessMode {
+	return corpusHarnessMode{name: "receipt", execution: corpusHarnessDiagnosticSolve, options: corpusHarnessSolveOptions()}
+}
+
+// corpusHarnessCompileMode stops at the compiled plan, for laws that judge the
+// compile receipt boundary without depending on a later solve.
+func corpusHarnessCompileMode() corpusHarnessMode {
+	return corpusHarnessMode{name: "compile", execution: corpusHarnessCompileOnly}
+}

@@ -19,7 +19,7 @@ type SchemaFragment struct {
 
 // DeclareSchema records the one-input trusted structural activation Rule.
 func DeclareSchema(builder *engine.SchemaBuilder, semantic, familySemantic, admission engine.SemanticKey, owner *callowner.SchemaFragment) (*SchemaFragment, bool) {
-	if builder == nil || owner == nil || !distinct(semantic, familySemantic, admission) {
+	if builder == nil || owner == nil || !engine.DistinctKeys(semantic, familySemantic, admission) {
 		return nil, false
 	}
 	family, ok := engine.DeclareSchemaActivationFamily(builder, familySemantic)
@@ -47,18 +47,4 @@ func DeclareSchema(builder *engine.SchemaBuilder, semantic, familySemantic, admi
 
 func (fragment *SchemaFragment) ActivationSlot() *engine.SchemaActivationRuleSlot {
 	return fragment.slot
-}
-
-func distinct(keys ...engine.SemanticKey) bool {
-	for index, key := range keys {
-		if !key.Available() {
-			return false
-		}
-		for _, prior := range keys[:index] {
-			if prior == key {
-				return false
-			}
-		}
-	}
-	return true
 }

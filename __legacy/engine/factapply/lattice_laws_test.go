@@ -35,7 +35,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	latticelaws "github.com/wippyai/go-lua/analysis/test/laws/lattice"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 )
 
 // TestCoreAbstractInterpretationLaws is the bounded, deterministic law suite

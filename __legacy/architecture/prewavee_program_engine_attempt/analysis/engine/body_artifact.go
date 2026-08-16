@@ -3,9 +3,9 @@ package engine
 import (
 	"sort"
 
-	"github.com/wippyai/go-lua/program"
-	"github.com/wippyai/go-lua/program/artifact"
-	"github.com/wippyai/go-lua/program/link"
+	"github.com/wippyai/go-lua/analysis/program"
+	"github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/program/link"
 )
 
 // EquationCache emits one canonical, module-local derived section after the

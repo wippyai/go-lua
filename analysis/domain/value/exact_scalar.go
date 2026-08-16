@@ -1,6 +1,6 @@
 package value
 
-import "github.com/wippyai/go-lua/program/keyspace"
+import "github.com/wippyai/go-lua/analysis/program/keyspace"
 
 // ExactScalarKind is Value's closed classification of one singleton scalar.
 // It is intentionally narrower than RuntimeKinds: an opaque scalar or a

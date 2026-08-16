@@ -3,8 +3,8 @@ package owner
 import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/factor"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/link"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/link"
 )
 
 // HotOwner is Effect's Link-local Factor binder. The cold Factor identity and
@@ -30,9 +30,9 @@ func (owner *HotOwner) LinkOwner() link.OwnerCapability {
 }
 
 // LinkID returns the scalar identity paired with LinkOwner.
-func (owner *HotOwner) LinkID() keyspace.ContentID {
+func (owner *HotOwner) LinkID() identity.ContentID {
 	if owner == nil {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return owner.linkOwner.ContentID()
 }
@@ -75,25 +75,37 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, algebra *f
 	if !effectBindingOpen(binding) || fragment == nil || algebra == nil || !algebra.Valid() || !validCoordinateCount(algebra.RootCount()) {
 		return nil, false
 	}
-	lattice, ok := algebra.Lattice()
-	if !ok {
+	owner := &HotOwner{binding: binding, fragment: fragment, algebra: algebra, linkOwner: algebra.LinkOwner()}
+	spec, specOK := owner.FactorSpec()
+	if !specOK || !engine.BindFactor[coordinate](binding, fragment.slot, spec) {
 		return nil, false
 	}
-	owner := &HotOwner{binding: binding, fragment: fragment, algebra: algebra, linkOwner: algebra.LinkOwner()}
-	if !engine.BindFactor[coordinate](binding, fragment.slot, engine.HotFactorSpec[coordinate, factor.Value]{
-		KeyEnd:      uint64(algebra.RootCount()),
+	return owner, true
+}
+
+// FactorSpec is Effect's exact Factor algebra for this binding: the same value
+// BindHot hands to the engine. A declaration surface projects this record
+// instead of restating the lattice, admission, or widening law, so the two
+// cannot drift.
+func (owner *HotOwner) FactorSpec() (engine.HotFactorSpec[coordinate, factor.Value], bool) {
+	if owner == nil || owner.algebra == nil || !owner.algebra.Valid() || !validCoordinateCount(owner.algebra.RootCount()) {
+		return engine.HotFactorSpec[coordinate, factor.Value]{}, false
+	}
+	lattice, ok := owner.algebra.Lattice()
+	if !ok {
+		return engine.HotFactorSpec[coordinate, factor.Value]{}, false
+	}
+	return engine.HotFactorSpec[coordinate, factor.Value]{
+		KeyEnd:      uint64(owner.algebra.RootCount()),
 		Lattice:     lattice,
-		Default:     algebra.Default(),
+		Default:     owner.algebra.Default(),
 		AdmitAt:     owner.admits,
-		Fingerprint: algebra.Fingerprint,
+		Fingerprint: owner.algebra.Fingerprint,
 		WidenRank: engine.Measure[coordinate, factor.Value]{
 			Width: 1,
 			At:    owner.widenRank,
 		},
-	}) {
-		return nil, false
-	}
-	return owner, true
+	}, true
 }
 
 // Algebra returns Effect's exact Link-local semantic authority.

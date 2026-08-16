@@ -10,14 +10,14 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant/caseset"
 	"github.com/wippyai/go-lua/analysis/internal/typegraph"
-	"github.com/wippyai/go-lua/analysis/type/kind"
-	typenormalize "github.com/wippyai/go-lua/analysis/type/normalize"
-	typerefine "github.com/wippyai/go-lua/analysis/type/refinement"
-	"github.com/wippyai/go-lua/analysis/type/subst"
-	"github.com/wippyai/go-lua/analysis/type/subtype"
-	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/analysis/type/typeexpr"
-	"github.com/wippyai/go-lua/analysis/type/unwrap"
+	"github.com/wippyai/go-lua/analysis/domain/type/kind"
+	typenormalize "github.com/wippyai/go-lua/analysis/domain/type/normalize"
+	typerefine "github.com/wippyai/go-lua/analysis/domain/type/refinement"
+	"github.com/wippyai/go-lua/analysis/domain/type/subst"
+	"github.com/wippyai/go-lua/analysis/domain/type/subtype"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/typeexpr"
+	"github.com/wippyai/go-lua/analysis/domain/type/unwrap"
 )
 
 // PartitionTruthiness intersects value with one side of Lua's truthiness

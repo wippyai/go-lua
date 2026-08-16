@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/wippyai/go-lua/analysis/type/kind"
-	typetable "github.com/wippyai/go-lua/analysis/type/table"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/kind"
+	typetable "github.com/wippyai/go-lua/analysis/domain/type/table"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 )
 
 func encodePrimitive(t typ.Type) (*typeWire, error) {

@@ -8,9 +8,10 @@ import (
 	"sync"
 
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/internal/programschema"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/link"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/program/link"
+	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 const resultFormat uint64 = 9
@@ -48,11 +49,11 @@ type Plan struct {
 type compiledState struct {
 	artifacts            *compiledArtifactSet
 	resultReceipt        *artifactResultReceipt
-	receipt              programschema.CompilationReceipt
+	receipt              grammar.CompilationReceipt
 	binding              *programBinding
 	graph                *engine.ReceiptGraph
 	queryPlan            *artifactQueryPlan
-	sourceID             keyspace.ContentID
+	sourceID             identity.ContentID
 	admitted             bool
 	runtimeOnce          sync.Once
 	runtimeOK            bool
@@ -72,9 +73,9 @@ type compiledState struct {
 // Result is a detached projection of canonical body-root and query rows. It
 // retains neither Link/domain/engine handles nor template classifications.
 type Result struct {
-	source  keyspace.ContentID
-	content keyspace.ContentID
-	values  []keyspace.ContentID
+	source  identity.ContentID
+	content identity.ContentID
+	values  []identity.ContentID
 	bodies  []resultBody
 	// native is the one sealed post-convergence publication receipt. An
 	// available empty receipt is distinct from a missing producer.
@@ -87,16 +88,16 @@ type Result struct {
 }
 
 type resultBody struct {
-	id            keyspace.ContentID
+	id            identity.ContentID
 	roots         []resultRoot
 	valuePresence []uint64
 	effectPresent bool
 	effectTop     bool
-	effects       []keyspace.ContentID
+	effects       []identity.ContentID
 }
 
 type resultRoot struct {
-	id     keyspace.ContentID
+	id     identity.ContentID
 	family keyspace.Family
 }
 
@@ -128,7 +129,7 @@ func CompileWithDiagnostics(source *link.Link) (*Plan, CompileStatus, AnalyzeDia
 		return nil, CompileInvalid, diagnostics
 	}
 	diagnostics.enter(AnalyzeDiagnosticPhaseItemIssuance)
-	receipt, receiptOK := programschema.Global()
+	receipt, receiptOK := grammar.Global()
 	if !receiptOK || !receipt.Available() {
 		diagnostics.ItemIssuance = AnalyzeDiagnosticItemIssuanceFailureProgramSchema
 		diagnostics.failCurrentPhase()
@@ -353,10 +354,10 @@ func (state *compiledState) buildRuntimeSolver(policy *DiagnosticPolicy) (*engin
 }
 
 // SourceID is the content fence of the Link compiled into this plan.
-func (plan *Plan) SourceID() keyspace.ContentID {
+func (plan *Plan) SourceID() identity.ContentID {
 	state, leased := plan.acquire()
 	if !leased {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	defer state.releaseLease()
 	return state.sourceID
@@ -480,15 +481,15 @@ func Analyze(ctx context.Context, source *link.Link) (*Result, AnalyzeStatus) {
 	}
 }
 
-func (result *Result) ContentID() keyspace.ContentID {
+func (result *Result) ContentID() identity.ContentID {
 	if !result.valid() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return result.content
 }
-func (result *Result) SourceID() keyspace.ContentID {
+func (result *Result) SourceID() identity.ContentID {
 	if !result.valid() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return result.source
 }
@@ -512,7 +513,7 @@ func (body Body) row() (resultBody, bool) {
 	}
 	return body.owner.bodies[body.ordinal-1], true
 }
-func (body Body) ID() (keyspace.ContentID, bool) { row, ok := body.row(); return row.id, ok }
+func (body Body) ID() (identity.ContentID, bool) { row, ok := body.row(); return row.id, ok }
 func (body Body) RootCount() int {
 	// Root rows are the exact mount-qualified ProgramArtifact receipt plane; no
 	// Solve-time Program, Source, or Flow reconstruction participates here.
@@ -539,7 +540,7 @@ func (root Root) row() (resultRoot, bool) {
 	}
 	return rows[root.index-1], true
 }
-func (root Root) ID() (keyspace.ContentID, bool) { row, ok := root.row(); return row.id, ok }
+func (root Root) ID() (identity.ContentID, bool) { row, ok := root.row(); return row.id, ok }
 func (root Root) Family() keyspace.Family {
 	row, ok := root.row()
 	if !ok {
@@ -559,10 +560,10 @@ func (body Body) EffectCount() int {
 	}
 	return len(row.effects)
 }
-func (body Body) EffectAt(index int) (keyspace.ContentID, bool) {
+func (body Body) EffectAt(index int) (identity.ContentID, bool) {
 	row, ok := body.row()
 	if !ok || index < 0 || index >= len(row.effects) {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return row.effects[index], true
 }
@@ -575,10 +576,10 @@ func (body Body) ValueCount() int {
 	}
 	return len(body.owner.values)
 }
-func (body Body) ValueAt(index int) (id keyspace.ContentID, present, ok bool) {
+func (body Body) ValueAt(index int) (id identity.ContentID, present, ok bool) {
 	row, rowOK := body.row()
 	if !rowOK || body.owner == nil || index < 0 || index >= len(body.owner.values) {
-		return keyspace.ContentID{}, false, false
+		return identity.ContentID{}, false, false
 	}
 	return body.owner.values[index], resultValuePresent(row.valuePresence, index), true
 }
@@ -627,71 +628,79 @@ func (result *Result) validPayload() bool {
 	return true
 }
 
-func analysisResultID(source keyspace.ContentID, values []keyspace.ContentID, bodies []resultBody) (keyspace.ContentID, bool) {
+func analysisResultID(source identity.ContentID, values []identity.ContentID, bodies []resultBody) (identity.ContentID, bool) {
 	return analysisResultIDWithProjections(source, values, bodies, nil)
 }
 
-func analysisResultIDWithProjections(source keyspace.ContentID, values []keyspace.ContentID, bodies []resultBody, placement *placementResultReceipt) (keyspace.ContentID, bool) {
+func analysisResultIDWithProjections(source identity.ContentID, values []identity.ContentID, bodies []resultBody, placement *placementResultReceipt) (identity.ContentID, bool) {
 	return analysisResultIDWithPublication(source, values, bodies, nil, placement)
 }
 
-func analysisResultIDWithPublication(source keyspace.ContentID, values []keyspace.ContentID, bodies []resultBody, native *nativePublicationReceipt, placement *placementResultReceipt) (keyspace.ContentID, bool) {
+func writeResultFrame(hash interface{ Write([]byte) (int, error) }, value []byte) bool {
+	var size [8]byte
+	binary.BigEndian.PutUint64(size[:], uint64(len(value)))
+	first, firstErr := hash.Write(size[:])
+	second, secondErr := hash.Write(value)
+	return firstErr == nil && secondErr == nil && first == len(size) && second == len(value)
+}
+
+func analysisResultIDWithPublication(source identity.ContentID, values []identity.ContentID, bodies []resultBody, native *nativePublicationReceipt, placement *placementResultReceipt) (identity.ContentID, bool) {
 	if !source.Available() || len(bodies) == 0 {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	hash := sha256.New()
-	write := func(value []byte) bool { return writeFramedHash(hash, value) }
+	write := func(value []byte) bool { return writeResultFrame(hash, value) }
 	var version, count [8]byte
 	binary.BigEndian.PutUint64(version[:], resultFormat)
 	binary.BigEndian.PutUint64(count[:], uint64(len(values)))
 	if !write([]byte("analysis/result")) || !write(version[:]) || !write(source[:]) || !write(count[:]) {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	for _, value := range values {
 		if !value.Available() || !write(value[:]) {
-			return keyspace.ContentID{}, false
+			return identity.ContentID{}, false
 		}
 	}
 	binary.BigEndian.PutUint64(count[:], uint64(len(bodies)))
 	if !write(count[:]) {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	for _, body := range bodies {
 		binary.BigEndian.PutUint64(count[:], uint64(len(body.roots)))
 		if !write(body.id[:]) || !write(count[:]) {
-			return keyspace.ContentID{}, false
+			return identity.ContentID{}, false
 		}
 		for _, root := range body.roots {
 			if !write(root.id[:]) || !write([]byte{byte(root.family)}) {
-				return keyspace.ContentID{}, false
+				return identity.ContentID{}, false
 			}
 		}
 		binary.BigEndian.PutUint64(count[:], uint64(len(body.valuePresence)))
 		if !write(count[:]) {
-			return keyspace.ContentID{}, false
+			return identity.ContentID{}, false
 		}
 		for _, word := range body.valuePresence {
 			binary.BigEndian.PutUint64(count[:], word)
 			if !write(count[:]) {
-				return keyspace.ContentID{}, false
+				return identity.ContentID{}, false
 			}
 		}
 		binary.BigEndian.PutUint64(count[:], uint64(len(body.effects)))
 		if !write([]byte{boolByte(body.effectPresent), boolByte(body.effectTop)}) || !write(count[:]) {
-			return keyspace.ContentID{}, false
+			return identity.ContentID{}, false
 		}
 		for _, effect := range body.effects {
 			if !write(effect[:]) {
-				return keyspace.ContentID{}, false
+				return identity.ContentID{}, false
 			}
 		}
 	}
 	nativeAvailable := native != nil && native.valid()
 	if native != nil && !nativeAvailable {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	if !write([]byte{boolByte(nativeAvailable)}) {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	nativeCount := 0
 	if nativeAvailable {
@@ -699,23 +708,23 @@ func analysisResultIDWithPublication(source keyspace.ContentID, values []keyspac
 	}
 	binary.BigEndian.PutUint64(count[:], uint64(nativeCount))
 	if !write(count[:]) || nativeAvailable && !write(native.content[:]) {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	placementAvailable := placement != nil && placement.valid()
 	if placement != nil && !placementAvailable {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	if !write([]byte{boolByte(placementAvailable)}) {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	// The marker is unavailable-only today. Retain the count field in the
 	// Result format so a future solved typed placement receipt extends this
 	// identity without a parallel Result family.
 	binary.BigEndian.PutUint64(count[:], 0)
 	if !write(count[:]) {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
-	var id keyspace.ContentID
+	var id identity.ContentID
 	copy(id[:], hash.Sum(nil))
 	return id, id.Available()
 }

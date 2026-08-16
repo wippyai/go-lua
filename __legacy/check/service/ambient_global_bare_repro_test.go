@@ -4,10 +4,10 @@ import (
 	"context"
 	"testing"
 
+	typetable "github.com/wippyai/go-lua/analysis/domain/type/table"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	"github.com/wippyai/go-lua/analysis/embedding"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
-	typetable "github.com/wippyai/go-lua/analysis/type/table"
-	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // Mirrors command_bus: an ambient host module (channel) used as a BARE global

@@ -4,7 +4,7 @@ import (
 	packdomain "github.com/wippyai/go-lua/analysis/domain/pack"
 	packowner "github.com/wippyai/go-lua/analysis/domain/pack/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // HotRule is Pack/source's receipt-native Rule issuer. It retains only the
@@ -15,7 +15,7 @@ type HotRule struct {
 	owner          *packowner.HotOwner
 	schema         *packdomain.Schema
 	receiptsSealed bool
-	occurrences    map[keyspace.ContentID]*mountedSourceRows
+	occurrences    map[identity.ContentID]*mountedSourceRows
 }
 
 // BindHot binds one exact callback-free source fragment to one exact Pack

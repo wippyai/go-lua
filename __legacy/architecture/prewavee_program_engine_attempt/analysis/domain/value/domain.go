@@ -7,8 +7,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	valueregistry "github.com/wippyai/go-lua/analysis/domain/value/registry"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/program"
-	"github.com/wippyai/go-lua/program/link"
+	"github.com/wippyai/go-lua/analysis/program"
+	"github.com/wippyai/go-lua/analysis/program/link"
 )
 
 const occurrenceKey uint64 = 0

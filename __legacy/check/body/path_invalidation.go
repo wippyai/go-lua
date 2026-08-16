@@ -7,7 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
-	"github.com/wippyai/go-lua/analysis/type/subtype"
+	"github.com/wippyai/go-lua/analysis/domain/type/subtype"
 )
 
 // PathInvalidatedBetween reports whether target loses path-stability after from

@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 type exactObservationWriteFixture struct {
@@ -65,7 +65,7 @@ func TestExactObservationDerivesCommittedExactWriteCoordinate(t *testing.T) {
 
 func TestRuleExactObservationReadsCommittedMemberAndRejectsForeignState(t *testing.T) {
 	fixture := newExactRuleObservationFixture(t, hotExactQuerySpec())
-	if _, attached := AttachRuleExactObservation(fixture.compilation, fixture.implementation, keyspace.ContentID{}, fixture.member); attached {
+	if _, attached := AttachRuleExactObservation(fixture.compilation, fixture.implementation, identity.ContentID{}, fixture.member); attached {
 		t.Fatal("exact observation accepted unavailable ID")
 	}
 	observation, attached := AttachRuleExactObservation(fixture.compilation, fixture.implementation, receiptAssemblySemanticID(92), fixture.member)
@@ -140,11 +140,14 @@ func TestReceiptAssemblyCommitDoesNotImplicitlyDeferQueryFamilies(t *testing.T) 
 	}
 }
 
-func TestRuleExactObservationFreezesAndClonesMutableResult(t *testing.T) {
-	scratch := []uint64{7, 11}
+// hotMutableExactQuerySpec is the exact-query spec of a result type whose
+// value is a mutable backing store. Its freezer copies, so materialization
+// detaches the projector's scratch, and its Clone copies, so an explicit
+// detachment hands the caller an owned value.
+func hotMutableExactQuerySpec(project func(OrderedCells[uint64]) []uint64) HotExactQuerySpec[uint64, []uint64] {
 	clone := func(value []uint64) []uint64 { return append([]uint64(nil), value...) }
-	fixture := newExactRuleObservationFixture(t, HotExactQuerySpec[uint64, []uint64]{
-		Project: func(_ OrderedCells[uint64]) []uint64 { return scratch },
+	return HotExactQuerySpec[uint64, []uint64]{
+		Project: project,
 		Result: FrozenResult[[]uint64]{
 			Semantic: coldKey(949_902), Freeze: clone, Clone: clone,
 			Equal: func(left, right []uint64) bool {
@@ -166,7 +169,18 @@ func TestRuleExactObservationFreezesAndClonesMutableResult(t *testing.T) {
 				return fingerprint
 			},
 		},
-	})
+	}
+}
+
+// TestRuleExactObservationFreezesOnceAndDetachesOnDemand fixes the borrow
+// contract for a mutable result type. Materialization freezes the projector's
+// backing store, so a later mutation of that scratch is invisible; every
+// borrowed read then returns that one published value without copying it; and a
+// caller that needs an owned copy asks for one explicitly and mutates it
+// without reaching the published result.
+func TestRuleExactObservationFreezesOnceAndDetachesOnDemand(t *testing.T) {
+	scratch := []uint64{7, 11}
+	fixture := newExactRuleObservationFixture(t, hotMutableExactQuerySpec(func(_ OrderedCells[uint64]) []uint64 { return scratch }))
 	observation, attached := AttachRuleExactObservation(fixture.compilation, fixture.implementation, receiptAssemblySemanticID(94), fixture.member)
 	if !attached || !observation.Available() {
 		t.Fatal("mutable exact observation attachment")
@@ -186,15 +200,18 @@ func TestRuleExactObservationFreezesAndClonesMutableResult(t *testing.T) {
 	if !firstReadable || len(first) != 2 || first[0] != 7 || first[1] != 11 {
 		t.Fatalf("first frozen observation read = %#v/%t", first, firstReadable)
 	}
-	first[0] = 101
 	second, secondReadable := ReceiptObservationResult[[]uint64](observation, solver, state)
-	if !secondReadable || len(second) != 2 || second[0] != 7 || second[1] != 11 {
-		t.Fatalf("frozen observation retained caller mutation = %#v/%t", second, secondReadable)
+	if !secondReadable || len(second) != 2 || &second[0] != &first[0] {
+		t.Fatalf("a borrowed read copied the published result = %#v/%t", second, secondReadable)
 	}
-	second[1] = 103
+	detached, detachedReadable := DetachReceiptObservationResult[[]uint64](observation, solver, state)
+	if !detachedReadable || len(detached) != 2 || detached[0] != 7 || detached[1] != 11 || &detached[0] == &first[0] {
+		t.Fatalf("detached observation read = %#v/%t", detached, detachedReadable)
+	}
+	detached[0], detached[1] = 101, 103
 	third, thirdReadable := ReceiptObservationResult[[]uint64](observation, solver, state)
 	if !thirdReadable || len(third) != 2 || third[0] != 7 || third[1] != 11 {
-		t.Fatalf("separate frozen observation reads alias = %#v/%t", third, thirdReadable)
+		t.Fatalf("a detached copy reached the published result = %#v/%t", third, thirdReadable)
 	}
 }
 

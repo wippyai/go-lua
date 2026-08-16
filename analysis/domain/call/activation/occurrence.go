@@ -4,7 +4,7 @@ import (
 	calldomain "github.com/wippyai/go-lua/analysis/domain/call"
 	callowner "github.com/wippyai/go-lua/analysis/domain/call/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // MountedIssuer is a rule-fenced view over Call's canonical mounted-call
@@ -12,7 +12,7 @@ import (
 // lookup borrows Call's owner-issued dense receipt in O(1).
 type MountedIssuer struct {
 	rule   *HotRule
-	module keyspace.ContentID
+	module identity.ContentID
 }
 
 func (rule *HotRule) SealOccurrenceReceipts() bool {
@@ -36,7 +36,7 @@ func (rule *HotRule) SealOccurrenceReceipts() bool {
 	return true
 }
 
-func (rule *HotRule) ForMount(module keyspace.ContentID) (MountedIssuer, bool) {
+func (rule *HotRule) ForMount(module identity.ContentID) (MountedIssuer, bool) {
 	if rule == nil || !rule.receiptsSealed || rule.owner == nil || rule.owner.Algebra() == nil || !module.Available() || !rule.owner.Algebra().OwnsMountedModule(module) {
 		return MountedIssuer{}, false
 	}
@@ -48,27 +48,27 @@ func (issuer MountedIssuer) valid() bool {
 	return issuer.rule != nil && issuer.rule.receiptsSealed && issuer.rule.owner != nil && issuer.rule.owner.Algebra() != nil && issuer.module.Available() && issuer.rule.owner.Algebra().OwnsMountedModule(issuer.module)
 }
 
-func (issuer MountedIssuer) mounted(id keyspace.ContentID) (calldomain.MountedCall, bool) {
+func (issuer MountedIssuer) mounted(id identity.ContentID) (calldomain.MountedCall, bool) {
 	if !issuer.valid() || !id.Available() {
 		return calldomain.MountedCall{}, false
 	}
 	return issuer.rule.owner.Algebra().MountedCallForOccurrence(issuer.module, id)
 }
 
-func (issuer MountedIssuer) occurrenceKey(id keyspace.ContentID) (calldomain.Key, keyspace.ContentID, bool) {
+func (issuer MountedIssuer) occurrenceKey(id identity.ContentID) (calldomain.Key, identity.ContentID, bool) {
 	mounted, mountedOK := issuer.mounted(id)
 	if !mountedOK {
-		return calldomain.Key{}, keyspace.ContentID{}, false
+		return calldomain.Key{}, identity.ContentID{}, false
 	}
 	applicationID, _, moduleID, _, _, identityOK := issuer.rule.owner.Algebra().MountedCallIdentity(mounted)
 	if !identityOK || moduleID != issuer.module || !applicationID.Available() {
-		return calldomain.Key{}, keyspace.ContentID{}, false
+		return calldomain.Key{}, identity.ContentID{}, false
 	}
 	key, keyOK := issuer.rule.owner.Algebra().KeyForApplicationID(applicationID)
 	return key, applicationID, keyOK && issuer.rule.owner.Algebra().OwnsKey(key)
 }
 
-func (issuer MountedIssuer) occurrenceOperands(id keyspace.ContentID) (calldomain.Key, engine.SemanticKey, bool) {
+func (issuer MountedIssuer) occurrenceOperands(id identity.ContentID) (calldomain.Key, engine.SemanticKey, bool) {
 	key, applicationID, keyOK := issuer.occurrenceKey(id)
 	if !keyOK {
 		return calldomain.Key{}, engine.SemanticKey{}, false
@@ -77,12 +77,12 @@ func (issuer MountedIssuer) occurrenceOperands(id keyspace.ContentID) (calldomai
 	return key, application, applicationOK && application.Available()
 }
 
-func (issuer MountedIssuer) KeyForOccurrence(id keyspace.ContentID) (calldomain.Key, bool) {
+func (issuer MountedIssuer) KeyForOccurrence(id identity.ContentID) (calldomain.Key, bool) {
 	key, _, ok := issuer.occurrenceKey(id)
 	return key, ok
 }
 
-func (issuer MountedIssuer) ApplicationForOccurrence(id keyspace.ContentID) (engine.SemanticKey, bool) {
+func (issuer MountedIssuer) ApplicationForOccurrence(id identity.ContentID) (engine.SemanticKey, bool) {
 	_, applicationID, ok := issuer.occurrenceKey(id)
 	if !ok {
 		return engine.SemanticKey{}, false
@@ -91,7 +91,7 @@ func (issuer MountedIssuer) ApplicationForOccurrence(id keyspace.ContentID) (eng
 	return application, applicationOK && application.Available()
 }
 
-func (rule *HotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, mountID, reusablePointID, occurrenceID keyspace.ContentID) bool {
+func (rule *HotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, mountID, reusablePointID, occurrenceID identity.ContentID) bool {
 	if rule == nil || rule.owner == nil || rule.implementation == nil || assembly == nil {
 		return false
 	}
@@ -154,7 +154,7 @@ func (rule *HotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, m
 
 // AttachMountedReceiptMember resolves and attaches one exact activation
 // member from the committed activation graph.
-func (rule *HotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, reusablePointID, occurrenceID keyspace.ContentID) (*engine.AttachedActivationReceiptMember, bool) {
+func (rule *HotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, reusablePointID, occurrenceID identity.ContentID) (*engine.AttachedActivationReceiptMember, bool) {
 	if rule == nil || compilation == nil || graph == nil || rule.implementation == nil || rule.catalog == nil || !rule.catalog.valid() {
 		return nil, false
 	}

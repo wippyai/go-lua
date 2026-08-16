@@ -6,11 +6,10 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/internal/programartifact"
-	"github.com/wippyai/go-lua/program/link"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
-	"github.com/wippyai/go-lua/program/target/profile"
-	"github.com/wippyai/go-lua/program/testfixture"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/program/link"
+	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/analysis/program/target/profile"
 )
 
 // Keep the first corpus fixture that exercises an unconditional branch in a
@@ -63,7 +62,7 @@ func TestCorpusAlwaysFalseGuardReceiptLaw(t *testing.T) {
 	} {
 		t.Run(test.project, func(t *testing.T) {
 			plan, baseline, baselineDiagnostics, _ := testCorpusReceiptLaw(t, test.project)
-			offResult, offReport, offStatus, offDiagnostics := plan.SolveWithReport(context.Background(), engine.SolveDiagnosticOptions{Flags: engine.SolveDiagnosticAll, MaxRows: 256}, DiagnosticPolicy{})
+			offResult, offReport, offStatus, offDiagnostics := plan.SolveWithReport(context.Background(), corpusHarnessSolveOptions(), DiagnosticPolicy{})
 			if offStatus != AnalyzeComplete || offResult == nil || offReport != nil || offResult.ContentID() != baseline.ContentID() || offDiagnostics.ObservationAttach != engine.ReceiptObservationAttachFailureNone || !reflect.DeepEqual(offDiagnostics.Engine, baselineDiagnostics.Engine) {
 				t.Fatalf("policy-off false guard changed inference = status=%v result=%t report=%t identity=%v/%v diagnostics=%+v", offStatus, offResult != nil, offReport != nil, offResult.ContentID(), baseline.ContentID(), offDiagnostics)
 			}
@@ -109,7 +108,7 @@ func TestCorpusGuardPolarityMissingEvidenceSuppressesBothRulesLaw(t *testing.T) 
 
 func TestCorpusAlwaysTrueGuardPolicyDisabledIdentityLaw(t *testing.T) {
 	plan, baseline, baselineDiagnostics, _ := testCorpusReceiptLaw(t, "advice/always-true-guard")
-	result, report, status, diagnostics := plan.SolveWithReport(context.Background(), engine.SolveDiagnosticOptions{Flags: engine.SolveDiagnosticAll, MaxRows: 256}, DiagnosticPolicy{})
+	result, report, status, diagnostics := plan.SolveWithReport(context.Background(), corpusHarnessSolveOptions(), DiagnosticPolicy{})
 	if status != AnalyzeComplete || result == nil || report != nil || result.ContentID() != baseline.ContentID() || !reflect.DeepEqual(diagnostics.Engine, baselineDiagnostics.Engine) {
 		t.Fatalf("disabled-policy solve = %v result=%t report=%t identity=%v/%v diagnostics=%+v", status, result != nil, report != nil, result.ContentID(), baseline.ContentID(), diagnostics)
 	}
@@ -121,7 +120,7 @@ func TestCorpusAlwaysTrueGuardPolicyDisabledIdentityLaw(t *testing.T) {
 // collector.
 func TestCorpusUnresolvedTypeReferenceStaticReceiptLaw(t *testing.T) {
 	plan, baseline, _, _ := testCorpusReceiptLaw(t, "semantic/unresolved-reference-diagnostics-evidence-chain")
-	offResult, offReport, offStatus, offDiagnostics := plan.SolveWithReport(context.Background(), engine.SolveDiagnosticOptions{Flags: engine.SolveDiagnosticAll, MaxRows: 256}, DiagnosticPolicy{})
+	offResult, offReport, offStatus, offDiagnostics := plan.SolveWithReport(context.Background(), corpusHarnessSolveOptions(), DiagnosticPolicy{})
 	if offStatus != AnalyzeComplete || offResult == nil || offReport != nil || offResult.ContentID() != baseline.ContentID() {
 		t.Fatalf("disabled unresolved-type policy changed result = status=%v result=%t report=%t identity=%v/%v diagnostics=%+v", offStatus, offResult != nil, offReport != nil, offResult.ContentID(), baseline.ContentID(), offDiagnostics)
 	}
@@ -260,7 +259,7 @@ return 0`)
 		artifacts.mounts[0].moduleKey == artifacts.mounts[1].moduleKey {
 		t.Fatal("duplicate diagnostic mounts did not reuse one artifact with distinct substitutions")
 	}
-	baseline, baselineStatus, baselineDiagnostics := plan.SolveWithDiagnostics(context.Background(), engine.SolveDiagnosticOptions{Flags: engine.SolveDiagnosticAll, MaxRows: 256})
+	baseline, baselineStatus, baselineDiagnostics := plan.SolveWithDiagnostics(context.Background(), corpusHarnessSolveOptions())
 	result, report, solveStatus, solveDiagnostics := solveAlwaysTrueGuardReport(plan)
 	bodyCount, findingCount, collectionFailure := 0, 0, DiagnosticCollectionSubjectQueryAbsent
 	if result != nil {
@@ -292,19 +291,19 @@ return 0`)
 }
 
 func solveAlwaysTrueGuardReport(plan *Plan) (*Result, *DiagnosticReport, AnalyzeStatus, AnalyzeDiagnostics) {
-	return plan.SolveWithReport(context.Background(), engine.SolveDiagnosticOptions{Flags: engine.SolveDiagnosticAll, MaxRows: 256}, DiagnosticPolicy{Enabled: []DiagnosticRule{DiagnosticRuleAlwaysTrueGuard}})
+	return plan.SolveWithReport(context.Background(), corpusHarnessSolveOptions(), DiagnosticPolicy{Enabled: []DiagnosticCode{DiagnosticCodeAlwaysTrueGuard}})
 }
 
 func solveGuardPolarityReport(plan *Plan) (*Result, *DiagnosticReport, AnalyzeStatus, AnalyzeDiagnostics) {
-	return plan.SolveWithReport(context.Background(), engine.SolveDiagnosticOptions{Flags: engine.SolveDiagnosticAll, MaxRows: 256}, DiagnosticPolicy{Enabled: []DiagnosticRule{DiagnosticRuleAlwaysTrueGuard, DiagnosticRuleAlwaysFalseGuard}})
+	return plan.SolveWithReport(context.Background(), corpusHarnessSolveOptions(), DiagnosticPolicy{Enabled: []DiagnosticCode{DiagnosticCodeAlwaysTrueGuard, DiagnosticCodeAlwaysFalseGuard}})
 }
 
 func solveUnresolvedTypeReferenceReport(plan *Plan) (*Result, *DiagnosticReport, AnalyzeStatus, AnalyzeDiagnostics) {
-	return plan.SolveWithReport(context.Background(), engine.SolveDiagnosticOptions{Flags: engine.SolveDiagnosticAll, MaxRows: 256}, DiagnosticPolicy{Enabled: []DiagnosticRule{DiagnosticRuleUnresolvedTypeReference}})
+	return plan.SolveWithReport(context.Background(), corpusHarnessSolveOptions(), DiagnosticPolicy{Enabled: []DiagnosticCode{DiagnosticCodeUnresolvedTypeReference}})
 }
 
 func solveUnresolvedValueReferenceReport(plan *Plan) (*Result, *DiagnosticReport, AnalyzeStatus, AnalyzeDiagnostics) {
-	return plan.SolveWithReport(context.Background(), engine.SolveDiagnosticOptions{Flags: engine.SolveDiagnosticAll, MaxRows: 256}, DiagnosticPolicy{Enabled: []DiagnosticRule{DiagnosticRuleUnresolvedValueReference}})
+	return plan.SolveWithReport(context.Background(), corpusHarnessSolveOptions(), DiagnosticPolicy{Enabled: []DiagnosticCode{DiagnosticCodeUnresolvedValueReference}})
 }
 
 func assertAlwaysTrueGuardLocations(t *testing.T, report *DiagnosticReport, expected, forbidden map[uint32]uint32) {
@@ -397,99 +396,11 @@ func TestCorpusSoundnessRecurrenceExitArmReceiptLaw(t *testing.T) {
 	testCorpusReceiptLaw(t, "soundness/recurrence-exit-arm")
 }
 
+// testCorpusReceiptLaw is the receipt lane's thin harness invocation: one
+// fixture, one compile, one diagnostic solve, and the shared detached-Result
+// contract. Its callers own the receipt they then prove.
 func testCorpusReceiptLaw(t *testing.T, name string) (*Plan, *Result, AnalyzeDiagnostics, *link.Link) {
 	t.Helper()
-	project, err := testfixture.FrozenCorpusProject(name)
-	if err != nil {
-		t.Fatal(err)
-	}
-	contract, err := profile.Contract()
-	if err != nil {
-		t.Fatal(err)
-	}
-	linked, err := testfixture.SealCorpusProject(contract, project)
-	if err != nil {
-		t.Fatal(err)
-	}
-	plan, compiled, compileDiagnostics := CompileWithDiagnostics(linked)
-	if compiled != CompileComplete || plan == nil {
-		t.Fatalf("compile=%v artifact=%s heap=%s schedule=%s diagnostics=%+v", compiled, planLawArtifactFailure(linked), planLawHeapSealFailure(linked), planLawArtifactScheduleRow(linked, compileDiagnostics.ReceiptScheduleOrdinal), compileDiagnostics)
-	}
-	result, status, diagnostics := plan.SolveWithDiagnostics(context.Background(), engine.SolveDiagnosticOptions{Flags: engine.SolveDiagnosticAll, MaxRows: 256})
-	if status != AnalyzeComplete || result == nil {
-		t.Fatalf("solve=%v result=%v binding=%s diagnostics=%+v", status, result != nil, corpusAlwaysTrueGuardBindingFailure(plan, linked), diagnostics)
-	}
-	return plan, result, diagnostics, linked
-}
-
-func corpusAlwaysTrueGuardBindingFailure(plan *Plan, source *link.Link) string {
-	if plan == nil || plan.state == nil || source == nil || source.ContentID() != plan.state.sourceID || plan.state.artifacts == nil {
-		return "state"
-	}
-	binding, bindingFailure, valueFailure, allocationFailure := plan.state.newProgramBinding(source)
-	if bindingFailure != ProgramBindingFailureNone {
-		return "binding:" + bindingFailure.String() + ":" + valueFailure.String() + ":" + allocationFailure.String()
-	}
-	if failure := corpusAlwaysTrueGuardEffectBodyReceiptFailure(plan, binding); failure != "" {
-		return "effect-body:" + failure
-	}
-	return "complete"
-}
-
-func corpusAlwaysTrueGuardEffectBodyReceiptFailure(plan *Plan, binding *programBinding) string {
-	if plan == nil || plan.state == nil || plan.state.artifacts == nil || binding == nil || binding.effectBody == nil {
-		return "state"
-	}
-	valueIDs, heapIDs, witness, witnessOK := linkBootstrapWitness(plan.state, binding)
-	if !witnessOK {
-		return "bootstrap"
-	}
-	mounts := make([]engine.MountedArtifactReceipt, 0, len(plan.state.artifacts.mounts))
-	for _, mount := range plan.state.artifacts.mounts {
-		receipt, receiptOK := newEngineArtifactScalarReceipt(mount.template, mount.roles, binding)
-		if !receiptOK {
-			return "receipt"
-		}
-		mounted, mountedOK := engine.NewMountedArtifactReceipt(receipt, mount.moduleKey)
-		if !mountedOK {
-			return "mount"
-		}
-		mounts = append(mounts, mounted)
-	}
-	assembly, _, assemblyOK := engine.BeginMountedArtifactReceiptAssemblyWithFailure(binding.binding, mounts, witness)
-	if !assemblyOK {
-		return "assembly"
-	}
-	defer assembly.Abort()
-	if !binding.attachLinkBootstrapRules(assembly, valueIDs, heapIDs) {
-		return "bootstrap-rules"
-	}
-	for _, mount := range plan.state.artifacts.mounts {
-		issuer, issuerOK := binding.effectBody.ForMount(mount.moduleKey)
-		if !issuerOK {
-			return "issuer"
-		}
-		for index := 0; index < mount.artifact.RuleOccurrenceCount(programartifact.RuleRoleEffectBody); index++ {
-			row, rowOK := mount.artifact.RuleOccurrenceAt(programartifact.RuleRoleEffectBody, index)
-			if !rowOK {
-				return "artifact-row"
-			}
-			if _, receiptOK := issuer.ReceiptForOccurrence(row.ID()); !receiptOK {
-				return "occurrence"
-			}
-			for pointIndex := 0; pointIndex < row.PointCount(); pointIndex++ {
-				point, pointOK := row.PointAt(pointIndex)
-				if !pointOK {
-					return "point"
-				}
-				if _, failure := binding.effectBody.AttachMountedOccurrenceWithFailure(assembly, mount.moduleKey, point, row.ID()); failure != 0 {
-					return "attach-" + failure.String()
-				}
-			}
-		}
-	}
-	if !assembly.SealSources() {
-		return "seal-" + binding.effectBody.FinalizationFailure().String()
-	}
-	return ""
+	run := corpusHarnessFixtureRun(t, name, corpusHarnessReceiptMode())
+	return run.plan, run.result, run.solveDiagnostics, run.linked
 }

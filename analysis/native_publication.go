@@ -5,7 +5,7 @@ import (
 	"encoding/binary"
 	"sort"
 
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // NativePublicationLane is the closed public partition of native analysis
@@ -98,20 +98,20 @@ func (trust NativePublicationTrust) String() string {
 // one row. All IDs are immutable scalar identities; it retains no Program,
 // Link, Engine, State, or domain handle.
 type NativePublicationProvenance struct {
-	mount    keyspace.ContentID
-	artifact keyspace.ContentID
-	local    keyspace.ContentID
-	body     keyspace.ContentID
-	point    keyspace.ContentID
-	span     keyspace.ContentID
+	mount    identity.ContentID
+	artifact identity.ContentID
+	local    identity.ContentID
+	body     identity.ContentID
+	point    identity.ContentID
+	span     identity.ContentID
 }
 
-func (value NativePublicationProvenance) MountID() keyspace.ContentID    { return value.mount }
-func (value NativePublicationProvenance) ArtifactID() keyspace.ContentID { return value.artifact }
-func (value NativePublicationProvenance) LocalID() keyspace.ContentID    { return value.local }
-func (value NativePublicationProvenance) BodyID() keyspace.ContentID     { return value.body }
-func (value NativePublicationProvenance) PointID() keyspace.ContentID    { return value.point }
-func (value NativePublicationProvenance) SourceSpanID() keyspace.ContentID {
+func (value NativePublicationProvenance) MountID() identity.ContentID    { return value.mount }
+func (value NativePublicationProvenance) ArtifactID() identity.ContentID { return value.artifact }
+func (value NativePublicationProvenance) LocalID() identity.ContentID    { return value.local }
+func (value NativePublicationProvenance) BodyID() identity.ContentID     { return value.body }
+func (value NativePublicationProvenance) PointID() identity.ContentID    { return value.point }
+func (value NativePublicationProvenance) SourceSpanID() identity.ContentID {
 	return value.span
 }
 
@@ -119,17 +119,17 @@ func (value NativePublicationProvenance) SourceSpanID() keyspace.ContentID {
 // fields mean the producer intentionally issued no temporal qualification;
 // consumers must not invent one from absent events.
 type NativePublicationValidity struct {
-	event              keyspace.ContentID
-	established        keyspace.ContentID
+	event              identity.ContentID
+	established        identity.ContentID
 	establishedOrdinal uint64
-	revoked            keyspace.ContentID
+	revoked            identity.ContentID
 	revokedOrdinal     uint64
 }
 
-func (value NativePublicationValidity) EventID() keyspace.ContentID       { return value.event }
-func (value NativePublicationValidity) EstablishedID() keyspace.ContentID { return value.established }
+func (value NativePublicationValidity) EventID() identity.ContentID       { return value.event }
+func (value NativePublicationValidity) EstablishedID() identity.ContentID { return value.established }
 func (value NativePublicationValidity) EstablishedOrdinal() uint64        { return value.establishedOrdinal }
-func (value NativePublicationValidity) RevokedID() keyspace.ContentID     { return value.revoked }
+func (value NativePublicationValidity) RevokedID() identity.ContentID     { return value.revoked }
 func (value NativePublicationValidity) RevokedOrdinal() uint64            { return value.revokedOrdinal }
 
 func (value NativePublicationValidity) valid() bool {
@@ -158,7 +158,7 @@ type NativePublicationToken struct {
 type NativePublication struct{ token NativePublicationToken }
 
 func (row NativePublication) Token() NativePublicationToken { return row.token }
-func (row NativePublication) ID() (keyspace.ContentID, bool) {
+func (row NativePublication) ID() (identity.ContentID, bool) {
 	value, ok := row.resolve()
 	return value.id, ok
 }
@@ -185,10 +185,10 @@ func (row NativePublication) Kind() NativePublicationKind {
 }
 
 // SemanticID is the closed schema key that authorized the row's kind.
-func (row NativePublication) SemanticID() keyspace.ContentID {
+func (row NativePublication) SemanticID() identity.ContentID {
 	value, ok := row.resolve()
 	if !ok {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return value.semantic
 }
@@ -286,7 +286,7 @@ func (result *Result) NativePublicationAt(index int) (NativePublication, bool) {
 	}
 	return NativePublication{token: NativePublicationToken{owner: result, ordinal: ordinal}}, true
 }
-func (result *Result) NativePublicationByID(id keyspace.ContentID) (NativePublication, bool) {
+func (result *Result) NativePublicationByID(id identity.ContentID) (NativePublication, bool) {
 	if !result.NativePublicationAvailable() || !id.Available() {
 		return NativePublication{}, false
 	}
@@ -352,17 +352,17 @@ func (family nativePublicationFamily) String() string {
 	}
 }
 
-func (family nativePublicationFamily) semanticID() (keyspace.ContentID, bool) {
+func (family nativePublicationFamily) semanticID() (identity.ContentID, bool) {
 	name := family.String()
 	if name == "" {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
-	return analysisContentID("analysis/native-publication/family/v1", []byte(name))
+	return identity.DeriveContentID("analysis/native-publication/family/v1", []byte(name))
 }
 
 type nativePublicationRow struct {
-	id           keyspace.ContentID
-	semantic     keyspace.ContentID
+	id           identity.ContentID
+	semantic     identity.ContentID
 	lane         NativePublicationLane
 	kind         NativePublicationKind
 	family       nativePublicationFamily
@@ -396,9 +396,9 @@ func (value NativePublicationProvenance) valid() bool {
 }
 
 type nativePublicationReceipt struct {
-	content keyspace.ContentID
+	content identity.ContentID
 	rows    []nativePublicationRow
-	byID    map[keyspace.ContentID]uint32
+	byID    map[identity.ContentID]uint32
 	sealed  bool
 }
 
@@ -422,7 +422,7 @@ func newNativePublicationReceipt(rows []nativePublicationRow) (*nativePublicatio
 	copyRows := make([]nativePublicationRow, len(rows))
 	copy(copyRows, rows)
 	sort.Slice(copyRows, func(i, j int) bool { return bytes.Compare(copyRows[i].id[:], copyRows[j].id[:]) < 0 })
-	byID := make(map[keyspace.ContentID]uint32, len(copyRows))
+	byID := make(map[identity.ContentID]uint32, len(copyRows))
 	parts := make([][]byte, len(copyRows))
 	for index, row := range copyRows {
 		if !row.valid() {
@@ -434,16 +434,16 @@ func newNativePublicationReceipt(rows []nativePublicationRow) (*nativePublicatio
 		byID[row.id] = uint32(index + 1)
 		parts[index] = row.id[:]
 	}
-	content, ok := analysisContentID("analysis/native-publication/receipt/v1", parts...)
+	content, ok := identity.DeriveContentID("analysis/native-publication/receipt/v1", parts...)
 	if !ok {
 		return nil, false
 	}
 	return &nativePublicationReceipt{content: content, rows: copyRows, byID: byID, sealed: true}, true
 }
 
-func nativePublicationRowID(row nativePublicationRow) (keyspace.ContentID, bool) {
+func nativePublicationRowID(row nativePublicationRow) (identity.ContentID, bool) {
 	if row.family.String() == "" || !row.semantic.Available() || !row.lane.Valid() || !row.kind.Valid() || !row.trust.Valid() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	var enums [8]byte
 	binary.BigEndian.PutUint64(enums[:], uint64(row.lane)|uint64(row.kind)<<8|uint64(row.family)<<16|uint64(row.trust)<<24)
@@ -460,7 +460,7 @@ func nativePublicationRowID(row nativePublicationRow) (keyspace.ContentID, bool)
 	var ordinals [24]byte
 	binary.BigEndian.PutUint64(ordinals[0:8], row.validity.establishedOrdinal)
 	binary.BigEndian.PutUint64(ordinals[8:16], row.validity.revokedOrdinal)
-	return analysisContentID(
+	return identity.DeriveContentID(
 		"analysis/native-publication/row/v1",
 		row.semantic[:], enums[:], flags[:], []byte(row.key), []byte(row.module), []byte(row.term), []byte(row.subject), []byte(row.occurrence), []byte(row.value),
 		row.provenance.mount[:], row.provenance.artifact[:], row.provenance.local[:], row.provenance.body[:], row.provenance.point[:], row.provenance.span[:],

@@ -11,9 +11,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/module/signature"
-	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // Manifest is the stable module-boundary type metadata exchanged between

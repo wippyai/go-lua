@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	coldcomposition "github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
+	"github.com/wippyai/go-lua/analysis/identity"
 	"sync"
 )
 
@@ -175,10 +176,20 @@ func (schema *Schema) ruleWriteDependencyAt(rule, write, dependency uint64) (uin
 // Solver is the receipt-native runtime owner. Its compiler is initialized by
 // receipt compilation and never retains a cold declaration Composition.
 type Solver struct {
-	mu         sync.Mutex
-	runtime    *solverRuntime
-	compiler   solverCompiler
-	accepted   []equation.AcceptedMember
-	revision   uint64
-	completion uint64
+	mu       sync.Mutex
+	runtime  *solverRuntime
+	compiler solverCompiler
+	// store is this Solver's live store identity. It is issued once at
+	// compilation and never reused, so every address a completed State hands out
+	// names exactly this Solver and is meaningless in any other.
+	store identity.StoreID
+	// relation is this Solver's one published activation relation: the accepted
+	// Members, the structural digest derived at that publication, and the
+	// Generation stamp every completed State is fenced against. Accepting a
+	// frontier replaces it atomically; nothing advances the stamp separately.
+	relation equation.Relation
+	// completion is the publication stamp of installed results. It fences a
+	// different lifetime than relation: several completions may be published
+	// within one activation relation.
+	completion identity.Generation
 }

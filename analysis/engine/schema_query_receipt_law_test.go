@@ -128,7 +128,7 @@ func exactQueryReceiptGraph(t testing.TB, schema *Schema, factor *FactorSlot[uin
 	if !topologyOK || topology == nil {
 		t.Fatal("exact query graph topology")
 	}
-	graph, graphOK := topology.Graph(nil)
+	graph, graphOK := initialEquationGraph(topology)
 	identity, identityOK := graph.QueryAt(0)
 	if !graphOK || graph == nil || !identityOK || !graph.OwnsQuery(identity) || identity.Family() != queryKey || identity.Key() == (equation.Query{}).Key() {
 		t.Fatal("exact query graph identity")
@@ -137,6 +137,14 @@ func exactQueryReceiptGraph(t testing.TB, schema *Schema, factor *FactorSlot[uin
 }
 
 func receiptExactQuerySchemaFixture(t testing.TB) (*Schema, *FactorSlot[uint64], *RuleSlot[uint64, ruleUnit], SchemaWriteSlot[uint64], *QuerySlot[uint64]) {
+	t.Helper()
+	return receiptExactQuerySchemaFixtureOf[uint64](t, coldKey(948_003))
+}
+
+// receiptExactQuerySchemaFixtureOf is the same fixture over an arbitrary
+// declared result type, so a law can bind a query whose result carries a
+// mutable backing store rather than a scalar.
+func receiptExactQuerySchemaFixtureOf[R any](t testing.TB, freezer SemanticKey) (*Schema, *FactorSlot[uint64], *RuleSlot[uint64, ruleUnit], SchemaWriteSlot[uint64], *QuerySlot[R]) {
 	t.Helper()
 	builder := NewSchema()
 	factor, factorOK := DeclareFactorSlot[uint64](builder, coldKey(948_001))
@@ -147,7 +155,7 @@ func receiptExactQuerySchemaFixture(t testing.TB) (*Schema, *FactorSlot[uint64],
 		Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(948_032)}, Output: factor.Ref(),
 	})
 	write, writeOK := SchemaWrite(rule, writeForm)
-	query, queryOK := DeclareQuerySlot[uint64](builder, SchemaQuerySpec{Semantic: coldKey(948_002), Freezer: coldKey(948_003)})
+	query, queryOK := DeclareQuerySlot[R](builder, SchemaQuerySpec{Semantic: coldKey(948_002), Freezer: freezer})
 	queryReadOK := SchemaQueryRead(query, readForm)
 	schema, schemaOK := builder.Seal()
 	if !factorOK || !writeFormOK || !ruleOK || !writeOK || !readOK || !queryOK || !queryReadOK || !schemaOK || schema == nil {
@@ -260,7 +268,7 @@ func dualExactQueryReceiptFixture(t testing.TB) (*Schema, *FactorSlot[uint64], *
 	if !topologyOK || topology == nil {
 		t.Fatal("dual exact query topology")
 	}
-	graph, graphOK := topology.Graph(nil)
+	graph, graphOK := initialEquationGraph(topology)
 	if !graphOK || graph == nil || graph.QueryCount() != 2 {
 		t.Fatal("dual exact query graph")
 	}

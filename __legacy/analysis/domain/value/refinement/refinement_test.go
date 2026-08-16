@@ -13,9 +13,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
-	typetable "github.com/wippyai/go-lua/analysis/type/table"
-	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/analysis/type/typeexpr"
+	typetable "github.com/wippyai/go-lua/analysis/domain/type/table"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/typeexpr"
 )
 
 func TestCanBeFalseUsesTypeWitness(t *testing.T) {

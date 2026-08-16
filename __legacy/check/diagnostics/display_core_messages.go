@@ -4,8 +4,8 @@ import (
 	"fmt"
 
 	"github.com/wippyai/go-lua/analysis/check/readmodel"
-	typeformat "github.com/wippyai/go-lua/analysis/type/format"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	typeformat "github.com/wippyai/go-lua/analysis/domain/type/format"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 )
 
 func (diagnosticDisplay) Type(t typ.Type) string {

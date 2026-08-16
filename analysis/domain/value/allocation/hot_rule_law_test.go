@@ -10,14 +10,14 @@ import (
 	allocation "github.com/wippyai/go-lua/analysis/domain/value/allocation"
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/internal/programartifact"
-	"github.com/wippyai/go-lua/analysis/internal/programartifact/schemaadapter"
-	"github.com/wippyai/go-lua/analysis/internal/programschema"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/link"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
-	"github.com/wippyai/go-lua/program/lower"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/lua/lower"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
+	"github.com/wippyai/go-lua/analysis/program/link"
+	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 func TestHotAllocationRuleBindsCarryReceiptAndRejectsForeignBinding(t *testing.T) {
@@ -118,8 +118,8 @@ type allocationFixtureState struct {
 	schema     *valuedomain.Schema
 	heaps      heapdomain.Schema
 	mounts     []heapdomain.ArtifactMount
-	module     keyspace.ContentID
-	occurrence keyspace.ContentID
+	module     identity.ContentID
+	occurrence identity.ContentID
 }
 
 func allocationFixture(t testing.TB, name string) *allocationFixtureState {
@@ -136,7 +136,7 @@ func allocationFixture(t testing.TB, name string) *allocationFixtureState {
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, ok := programschema.Global()
+	receipt, ok := grammar.Global()
 	if !ok {
 		t.Fatal("program schema receipt")
 	}
@@ -157,7 +157,7 @@ func allocationFixture(t testing.TB, name string) *allocationFixtureState {
 	if heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone {
 		t.Fatalf("schema seal heap=%s value=%s", heapFailure, valueFailure)
 	}
-	var occurrence keyspace.ContentID
+	var occurrence identity.ContentID
 	for index := 0; index < artifact.OccurrenceCount(); index++ {
 		row, rowOK := artifact.OccurrenceAt(index)
 		if rowOK && row.Kind() == programartifact.OccurrenceAllocation {
@@ -174,7 +174,7 @@ func allocationFixture(t testing.TB, name string) *allocationFixtureState {
 func allocationColdSchema(t testing.TB) (*engine.Schema, *valueowner.SchemaFragment, *allocation.SchemaFragment, *engine.QuerySlot[bool]) {
 	t.Helper()
 	builder := engine.NewSchema()
-	ownerFragment, ownerOK := valueowner.DeclareSchema(builder, allocationKey(31_001), allocationKey(31_002))
+	ownerFragment, ownerOK := valueowner.DeclareSchema(builder, allocationKey(31_001), allocationKey(31_002), allocationKey(31_101))
 	fragment, fragmentOK := allocation.DeclareSchema(builder, allocationKey(31_003), allocationKey(31_004), allocationKey(31_005), allocationKey(31_006), ownerFragment)
 	query, queryOK := engine.NewQuerySlot[bool](builder, engine.SchemaQuerySpec{Semantic: allocationKey(31_007), Freezer: allocationKey(31_008)})
 	if !ownerOK || !fragmentOK || !queryOK || !engine.SchemaQueryRead(query, ownerFragment.ExactRead()) {

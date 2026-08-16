@@ -5,9 +5,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/symbol"
-	"github.com/wippyai/go-lua/analysis/type/subtype"
-	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/analysis/type/unwrap"
+	"github.com/wippyai/go-lua/analysis/domain/type/subtype"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/unwrap"
 )
 
 func lowerReturnLocalTypesFromWIR(graph cfg.Graph, body *wir.Body) map[symbol.ID]typ.Type {

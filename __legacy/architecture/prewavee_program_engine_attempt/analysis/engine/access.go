@@ -5,7 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/factbinding"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts"
-	"github.com/wippyai/go-lua/program/link"
+	"github.com/wippyai/go-lua/analysis/program/link"
 )
 
 // Access is the sole typed Rule execution capability. It is valid for one

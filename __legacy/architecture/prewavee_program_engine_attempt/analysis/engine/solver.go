@@ -9,9 +9,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts"
 	"github.com/wippyai/go-lua/analysis/engine/internal/guard"
 	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
-	"github.com/wippyai/go-lua/program"
-	"github.com/wippyai/go-lua/program/artifact"
-	"github.com/wippyai/go-lua/program/link"
+	"github.com/wippyai/go-lua/analysis/program"
+	"github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/program/link"
 )
 
 // Solver owns one sealed Link analysis composition.  Program and Link remain

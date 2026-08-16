@@ -1,7 +1,6 @@
 package bind
 
 import (
-	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -60,7 +59,7 @@ type globalOrderFrame struct {
 }
 
 type globalOccurrence struct {
-	id     symbol.ID
+	id     Symbol
 	origin ast.Position
 	next   uint32
 }
@@ -100,21 +99,21 @@ func (c GlobalCensus) Contains(identity GlobalIdentity) bool {
 }
 
 type globalRecord struct {
-	id          symbol.ID
+	id          Symbol
 	firstOrigin ast.Position
 	needsCell   bool
 	observed    bool
 	slot        uint32
 }
 
-func (r *Result) observeGlobal(id symbol.ID, ident *ast.IdentExpr, needsCell bool) {
+func (r *Result) observeGlobal(id Symbol, ident *ast.IdentExpr, needsCell bool) {
 	if r == nil || id == 0 || ident == nil {
 		return
 	}
 	r.observeGlobalAt(id, authoredPosition(ident), needsCell)
 }
 
-func (r *Result) observeGlobalAt(id symbol.ID, origin ast.Position, needsCell bool) {
+func (r *Result) observeGlobalAt(id Symbol, origin ast.Position, needsCell bool) {
 	if r == nil || id == 0 {
 		return
 	}
@@ -145,7 +144,7 @@ func (r *Result) beginGlobalOrderTargets() {
 	r.globals.frames[len(r.globals.frames)-1].targets = true
 }
 
-func (r *Result) appendGlobalObservation(id symbol.ID, origin ast.Position) {
+func (r *Result) appendGlobalObservation(id Symbol, origin ast.Position) {
 	if r == nil || id == 0 {
 		return
 	}
@@ -227,7 +226,7 @@ func authoredPosition(node ast.PositionHolder) ast.Position {
 	}
 }
 
-func (r *Result) addGlobalRecord(id symbol.ID) {
+func (r *Result) addGlobalRecord(id Symbol) {
 	if r == nil || id == 0 {
 		return
 	}
@@ -238,7 +237,7 @@ func (r *Result) addGlobalRecord(id symbol.ID) {
 	r.globals.byID[id] = uint32(len(r.globals.records))
 }
 
-func (r *Result) globalRecord(id symbol.ID) *globalRecord {
+func (r *Result) globalRecord(id Symbol) *globalRecord {
 	if r == nil || id == 0 || int(id) >= len(r.globals.byID) {
 		return nil
 	}
@@ -249,7 +248,7 @@ func (r *Result) globalRecord(id symbol.ID) *globalRecord {
 	return &r.globals.records[index-1]
 }
 
-func (r *Result) globalSlot(id symbol.ID) (uint32, bool) {
+func (r *Result) globalSlot(id Symbol) (uint32, bool) {
 	record := r.globalRecord(id)
 	if record == nil || !record.needsCell || int(record.slot) >= len(r.globals.cells) {
 		return 0, false

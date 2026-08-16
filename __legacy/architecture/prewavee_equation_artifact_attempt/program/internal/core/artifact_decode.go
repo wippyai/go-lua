@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/wippyai/go-lua/program/internal/canonical"
+	"github.com/wippyai/go-lua/analysis/program/internal/canonical"
 )
 
 func decodeArtifact(data []byte, target ContentID) (*Program, ArtifactEnvelope, error) {

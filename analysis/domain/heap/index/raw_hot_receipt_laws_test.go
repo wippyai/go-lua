@@ -15,19 +15,19 @@ import (
 	packowner "github.com/wippyai/go-lua/analysis/domain/pack/owner"
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
 	staticdomain "github.com/wippyai/go-lua/analysis/domain/static"
+	"github.com/wippyai/go-lua/analysis/domain/type/authority"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/internal/programartifact"
-	"github.com/wippyai/go-lua/analysis/internal/programartifact/schemaadapter"
-	"github.com/wippyai/go-lua/analysis/internal/programschema"
-	"github.com/wippyai/go-lua/analysis/semantic/typeauthority"
-	flowkind "github.com/wippyai/go-lua/program/flow/kind"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/link"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
-	"github.com/wippyai/go-lua/program/lower"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/lua/lower"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
+	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/link"
+	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 type rawHotQueryObservation struct {
@@ -55,20 +55,20 @@ type rawHotHeapObservation struct {
 
 type rawHotSeed struct {
 	Capability engine.RuleSlotCapability
-	Point      keyspace.ContentID
-	Occurrence keyspace.ContentID
+	Point      identity.ContentID
+	Occurrence identity.ContentID
 }
 
 type rawHotValueSeed struct {
 	rawHotSeed
-	Implementation *valueowner.RuleImplementation[keyspace.ContentID]
+	Implementation *valueowner.RuleImplementation[identity.ContentID]
 	Coordinate     valuedomain.Coordinate
 	Value          valuedomain.Value
 }
 
 type rawHotHeapSeed struct {
 	rawHotSeed
-	Implementation *heapowner.RuleImplementation[keyspace.ContentID]
+	Implementation *heapowner.RuleImplementation[identity.ContentID]
 	Key            heapdomain.Key
 	Value          heapdomain.Value
 }
@@ -172,7 +172,7 @@ func rawHotHeapQuerySpec(heap heapdomain.Schema, seed heapdomain.Value) (engine.
 
 func TestRawHotMountedPathSolve(t *testing.T) {
 	fixture := rawHotMountedFixture(t)
-	if fixture.getOccurrence == (keyspace.ContentID{}) || fixture.setOccurrence == (keyspace.ContentID{}) {
+	if fixture.getOccurrence == (identity.ContentID{}) || fixture.setOccurrence == (identity.ContentID{}) {
 		t.Fatal("missing raw occurrences")
 	}
 	if fixture.getRule == nil || fixture.setRule == nil {
@@ -262,7 +262,7 @@ func TestRawHotMountedPathSolve(t *testing.T) {
 	}
 }
 
-func attachRawHotValueSeed(assembly *engine.ReceiptAssembly, owner *valueowner.HotOwner, mount keyspace.ContentID, seed rawHotValueSeed) bool {
+func attachRawHotValueSeed(assembly *engine.ReceiptAssembly, owner *valueowner.HotOwner, mount identity.ContentID, seed rawHotValueSeed) bool {
 	implementation, implementationOK := valueowner.ResolveRuleImplementation(seed.Implementation)
 	occurrence, occurrenceOK := assembly.AdmitMountedRuleOccurrence(seed.Capability, mount, seed.Point, seed.Occurrence)
 	transaction, transactionOK := engine.BeginMountedRuleAdmission(assembly, implementation, occurrence, seed.Occurrence)
@@ -282,7 +282,7 @@ func attachRawHotValueSeed(assembly *engine.ReceiptAssembly, owner *valueowner.H
 	})
 }
 
-func attachRawHotHeapSeed(assembly *engine.ReceiptAssembly, owner *heapowner.HotOwner, mount keyspace.ContentID, seed rawHotHeapSeed) bool {
+func attachRawHotHeapSeed(assembly *engine.ReceiptAssembly, owner *heapowner.HotOwner, mount identity.ContentID, seed rawHotHeapSeed) bool {
 	implementation, implementationOK := heapowner.ResolveRuleImplementation(seed.Implementation)
 	occurrence, occurrenceOK := assembly.AdmitMountedRuleOccurrence(seed.Capability, mount, seed.Point, seed.Occurrence)
 	transaction, transactionOK := engine.BeginMountedRuleAdmission(assembly, implementation, occurrence, seed.Occurrence)
@@ -302,7 +302,7 @@ func attachRawHotHeapSeed(assembly *engine.ReceiptAssembly, owner *heapowner.Hot
 	})
 }
 
-func attachRawHotValueSeedMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, implementation *valueowner.RuleImplementation[keyspace.ContentID], mount keyspace.ContentID, seed rawHotValueSeed) (*engine.ReceiptMember, bool) {
+func attachRawHotValueSeedMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, implementation *valueowner.RuleImplementation[identity.ContentID], mount identity.ContentID, seed rawHotValueSeed) (*engine.ReceiptMember, bool) {
 	member, memberOK := graph.MountedRuleMember(seed.Capability, mount, seed.Point, seed.Occurrence)
 	resolved, resolvedOK := valueowner.ResolveRuleImplementation(implementation)
 	if !memberOK || !resolvedOK {
@@ -311,7 +311,7 @@ func attachRawHotValueSeedMember(compilation *engine.ReceiptCompilation, graph *
 	return engine.AttachReceiptRuleMember(compilation, resolved, member, seed.Occurrence)
 }
 
-func attachRawHotHeapSeedMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, implementation *heapowner.RuleImplementation[keyspace.ContentID], mount keyspace.ContentID, seed rawHotHeapSeed) (*engine.ReceiptMember, bool) {
+func attachRawHotHeapSeedMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, implementation *heapowner.RuleImplementation[identity.ContentID], mount identity.ContentID, seed rawHotHeapSeed) (*engine.ReceiptMember, bool) {
 	member, memberOK := graph.MountedRuleMember(seed.Capability, mount, seed.Point, seed.Occurrence)
 	resolved, resolvedOK := heapowner.ResolveRuleImplementation(implementation)
 	if !memberOK || !resolvedOK {
@@ -321,17 +321,17 @@ func attachRawHotHeapSeedMember(compilation *engine.ReceiptCompilation, graph *e
 }
 
 type rawHotMountedPlan struct {
-	getID, getPoint  keyspace.ContentID
-	setID, setPoint  keyspace.ContentID
+	getID, getPoint  identity.ContentID
+	setID, setPoint  identity.ContentID
 	valueCoordinates []valuedomain.Coordinate
 	valueFacts       []valuedomain.Value
 	heapKeys         []heapdomain.Key
 	heapFacts        []heapdomain.Value
 }
 
-func buildRawHotMountedPlan(t testing.TB, linked *link.Link, module keyspace.ContentID, artifact *programartifact.Artifact, heapMount heapdomain.ArtifactMount, heapSchema heapdomain.Schema, valueSchema *valuedomain.Schema, packs *packdomain.Schema) rawHotMountedPlan {
+func buildRawHotMountedPlan(t testing.TB, linked *link.Link, module identity.ContentID, artifact *programartifact.Artifact, heapMount heapdomain.ArtifactMount, heapSchema heapdomain.Schema, valueSchema *valuedomain.Schema, packs *packdomain.Schema) rawHotMountedPlan {
 	t.Helper()
-	var getID, setID keyspace.ContentID
+	var getID, setID identity.ContentID
 	var getGeometry, setGeometry heapdomain.IndexGeometry
 	var getAccess heapdomain.IndexAccess
 	var nilSourceAccess, tableSourceAccess heapdomain.IndexAccess
@@ -409,7 +409,7 @@ func buildRawHotMountedPlan(t testing.TB, linked *link.Link, module keyspace.Con
 	if !setID.Available() || nilSourceAccess == (heapdomain.IndexAccess{}) || !nilSource.Available() || tableSourceAccess == (heapdomain.IndexAccess{}) || !tableSource.Available() || nilSourceCount != 1 || tableSourceCount != 1 {
 		t.Fatalf("raw mounted nil/fixed write plan writes=%d mounted=%d fixed=%d tail=%d nil=%d facts=%d nilSources=%d tableSources=%d", artifact.RuleOccurrenceCount(programartifact.RuleRoleRawSet), mountedCount, fixedCount, tailCount, nilCount, sourceFactCount, nilSourceCount, tableSourceCount)
 	}
-	if getID == (keyspace.ContentID{}) {
+	if getID == (identity.ContentID{}) {
 		t.Fatal("raw mounted read occurrence")
 	}
 	if getGeometry.BaseValueID == setGeometry.BaseValueID {
@@ -431,7 +431,7 @@ func buildRawHotMountedPlan(t testing.TB, linked *link.Link, module keyspace.Con
 	if getGeometry.BaseValueID == setGeometry.BaseValueID {
 		t.Fatal("raw mounted read did not target foreign root")
 	}
-	var getPoint, setPoint keyspace.ContentID
+	var getPoint, setPoint identity.ContentID
 	var getPointOK, setPointOK bool
 	for index := 0; index < artifact.RuleOccurrenceCount(programartifact.RuleRoleRawGet); index++ {
 		candidate, candidateOK := artifact.RuleOccurrenceAt(programartifact.RuleRoleRawGet, index)
@@ -519,7 +519,7 @@ func buildRawHotMountedPlan(t testing.TB, linked *link.Link, module keyspace.Con
 	}
 }
 
-func rawHotScalarValue(id keyspace.ContentID, schema *valuedomain.Schema) (valuedomain.Coordinate, valuedomain.Value, bool) {
+func rawHotScalarValue(id identity.ContentID, schema *valuedomain.Schema) (valuedomain.Coordinate, valuedomain.Value, bool) {
 	if schema == nil {
 		return valuedomain.Coordinate{}, valuedomain.Value{}, false
 	}
@@ -528,7 +528,7 @@ func rawHotScalarValue(id keyspace.ContentID, schema *valuedomain.Schema) (value
 	return coordinate, fact, coordinateOK && factOK
 }
 
-func heapKeyForRootValue(schema heapdomain.Schema, rootValueID keyspace.ContentID) (heapdomain.Key, bool) {
+func heapKeyForRootValue(schema heapdomain.Schema, rootValueID identity.ContentID) (heapdomain.Key, bool) {
 	for index := 0; index < schema.KeyCount(); index++ {
 		key, keyOK := schema.KeyAt(index)
 		candidate, candidateOK := schema.AllocationRootValueID(key)
@@ -561,7 +561,7 @@ func rawHotOuterTableKeys(schema heapdomain.Schema, source heapdomain.Key) ([2]h
 	return result, count == len(result)
 }
 
-func mustIndexOccurrenceID(t testing.TB, schema heapdomain.Schema, access heapdomain.IndexAccess) keyspace.ContentID {
+func mustIndexOccurrenceID(t testing.TB, schema heapdomain.Schema, access heapdomain.IndexAccess) identity.ContentID {
 	t.Helper()
 	module, occurrence, _, ok := schema.IndexAccessOccurrence(access)
 	if !ok || !module.Available() || !occurrence.Available() {
@@ -571,11 +571,11 @@ func mustIndexOccurrenceID(t testing.TB, schema heapdomain.Schema, access heapdo
 }
 
 type rawHotFixture struct {
-	mountID                  keyspace.ContentID
-	getPoint                 keyspace.ContentID
-	getOccurrence            keyspace.ContentID
-	setPoint                 keyspace.ContentID
-	setOccurrence            keyspace.ContentID
+	mountID                  identity.ContentID
+	getPoint                 identity.ContentID
+	getOccurrence            identity.ContentID
+	setPoint                 identity.ContentID
+	setOccurrence            identity.ContentID
 	getRule                  *indexdomain.RawGetHotRule
 	setRule                  *indexdomain.RawSetHotRule
 	assembly                 *engine.ReceiptAssembly
@@ -584,9 +584,9 @@ type rawHotFixture struct {
 	heap                     *heapowner.HotOwner
 	valueSeeds               []rawHotValueSeed
 	heapSeeds                []rawHotHeapSeed
-	queryID                  keyspace.ContentID
+	queryID                  identity.ContentID
 	queryImplementation      *engine.ExactQueryImplementation[valuedomain.Value, rawHotQueryObservation]
-	heapQueryIDA             keyspace.ContentID
+	heapQueryIDA             identity.ContentID
 	heapQueryImplementationA *engine.ExactQueryImplementation[heapdomain.Value, rawHotHeapObservation]
 }
 
@@ -613,7 +613,7 @@ return b.source`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, receiptOK := programschema.Global()
+	receipt, receiptOK := grammar.Global()
 	if !receiptOK {
 		t.Fatal("program schema")
 	}
@@ -664,25 +664,25 @@ return b.source`)})
 	}
 
 	builder := engine.NewSchema()
-	valueFragment, valueFragmentOK := valueowner.DeclareSchema(builder, rawHotKey(1), rawHotKey(2))
+	valueFragment, valueFragmentOK := valueowner.DeclareSchema(builder, rawHotKey(1), rawHotKey(2), rawHotKey(101))
 	callFragment, callFragmentOK := callowner.DeclareSchema(builder, rawHotKey(3))
 	heapFragment, heapFragmentOK := heapowner.DeclareSchema(builder, rawHotKey(4))
 	packFragment, packFragmentOK := packowner.DeclareSchema(builder, rawHotKey(5))
 	getFragment, getFragmentOK := indexdomain.DeclareRawGetSchema(builder, rawHotKey(6), rawHotKey(7), rawHotKey(8), valueFragment, callFragment, heapFragment, packFragment)
 	setFragment, setFragmentOK := indexdomain.DeclareRawSetSchema(builder, rawHotKey(9), rawHotKey(10), rawHotKey(11), valueFragment, heapFragment, packFragment)
-	valueSeedRules := make([]*engine.RuleSlot[valuedomain.Value, keyspace.ContentID], len(plan.valueCoordinates))
+	valueSeedRules := make([]*engine.RuleSlot[valuedomain.Value, identity.ContentID], len(plan.valueCoordinates))
 	valueSeedWrites := make([]engine.SchemaWriteSlot[valuedomain.Value], len(plan.valueCoordinates))
 	valueSeedOK := true
 	for index := range valueSeedRules {
-		seedRule, seedRuleOK := engine.DeclareRuleSlot[valuedomain.Value, keyspace.ContentID](builder, engine.SchemaRuleSpec[valuedomain.Value]{Semantic: rawHotKey(byte(20 + index*3)), OperandFamily: rawHotKey(byte(21 + index*3)), Inputs: 0, Admission: engine.SchemaAdmission{Basis: engine.RuleAdmissionBasisTrustedTheorem, Identity: rawHotKey(byte(22 + index*3))}, Output: valueFragment.Ref()})
+		seedRule, seedRuleOK := engine.DeclareRuleSlot[valuedomain.Value, identity.ContentID](builder, engine.SchemaRuleSpec[valuedomain.Value]{Semantic: rawHotKey(byte(20 + index*3)), OperandFamily: rawHotKey(byte(21 + index*3)), Inputs: 0, Admission: engine.SchemaAdmission{Basis: engine.RuleAdmissionBasisTrustedTheorem, Identity: rawHotKey(byte(22 + index*3))}, Output: valueFragment.Ref()})
 		seedWrite, seedWriteOK := engine.SchemaWrite(seedRule, valueFragment.ExactWrite())
 		valueSeedRules[index], valueSeedWrites[index], valueSeedOK = seedRule, seedWrite, valueSeedOK && seedRuleOK && seedWriteOK
 	}
-	heapSeedRules := make([]*engine.RuleSlot[heapdomain.Value, keyspace.ContentID], len(plan.heapKeys))
+	heapSeedRules := make([]*engine.RuleSlot[heapdomain.Value, identity.ContentID], len(plan.heapKeys))
 	heapSeedWrites := make([]engine.SchemaWriteSlot[heapdomain.Value], len(plan.heapKeys))
 	heapSeedOK := true
 	for index := range heapSeedRules {
-		seedRule, seedRuleOK := engine.DeclareRuleSlot[heapdomain.Value, keyspace.ContentID](builder, engine.SchemaRuleSpec[heapdomain.Value]{Semantic: rawHotKey(byte(40 + index*3)), OperandFamily: rawHotKey(byte(41 + index*3)), Inputs: 0, Admission: engine.SchemaAdmission{Basis: engine.RuleAdmissionBasisTrustedTheorem, Identity: rawHotKey(byte(42 + index*3))}, Output: heapFragment.Ref()})
+		seedRule, seedRuleOK := engine.DeclareRuleSlot[heapdomain.Value, identity.ContentID](builder, engine.SchemaRuleSpec[heapdomain.Value]{Semantic: rawHotKey(byte(40 + index*3)), OperandFamily: rawHotKey(byte(41 + index*3)), Inputs: 0, Admission: engine.SchemaAdmission{Basis: engine.RuleAdmissionBasisTrustedTheorem, Identity: rawHotKey(byte(42 + index*3))}, Output: heapFragment.Ref()})
 		seedWrite, seedWriteOK := engine.SchemaWrite(seedRule, heapFragment.ExactWrite())
 		heapSeedRules[index], heapSeedWrites[index], heapSeedOK = seedRule, seedWrite, heapSeedOK && seedRuleOK && seedWriteOK
 	}
@@ -701,31 +701,31 @@ return b.source`)})
 	packsHot, packsHotOK := packowner.BindHot(binding, packFragment, packs)
 	getRule, getRuleOK := indexdomain.BindRawGetHot(binding, getFragment, topology, values, callsHot, heap, packsHot)
 	setRule, setRuleOK := indexdomain.BindRawSetHot(binding, setFragment, topology, values, heap, packsHot)
-	valueSeedImplementations := make([]*valueowner.RuleImplementation[keyspace.ContentID], len(valueSeedRules))
+	valueSeedImplementations := make([]*valueowner.RuleImplementation[identity.ContentID], len(valueSeedRules))
 	valueSeedBindOK := true
 	for index, seedRule := range valueSeedRules {
 		fact := plan.valueFacts[index]
-		implementation, implementationOK := valueowner.BindExactWriteRule(values, seedRule, valueSeedWrites[index], engine.HotRuleSpec[valuedomain.Value, keyspace.ContentID]{
-			OperandContent: func(value keyspace.ContentID) (keyspace.ContentID, [32]byte, bool) {
+		implementation, implementationOK := valueowner.BindExactWriteRule(values, seedRule, valueSeedWrites[index], engine.HotRuleSpec[valuedomain.Value, identity.ContentID]{
+			OperandContent: func(value identity.ContentID) (identity.ContentID, [32]byte, bool) {
 				return value, sha256.Sum256(value[:]), value.Available()
 			},
-			Admission: engine.AdmitRuleByTrustedTheorem[valuedomain.Value, keyspace.ContentID](rawHotKey(byte(22 + index*3))),
-			Transfer: func(access engine.Access[valuedomain.Value, keyspace.ContentID]) bool {
+			Admission: engine.AdmitRuleByTrustedTheorem[valuedomain.Value, identity.ContentID](rawHotKey(byte(22 + index*3))),
+			Transfer: func(access engine.Access[valuedomain.Value, identity.ContentID]) bool {
 				return engine.Product(access, func(row engine.Row) bool { return engine.StageValue(access, row, fact) })
 			},
 		})
 		valueSeedImplementations[index], valueSeedBindOK = implementation, valueSeedBindOK && implementationOK
 	}
-	heapSeedImplementations := make([]*heapowner.RuleImplementation[keyspace.ContentID], len(heapSeedRules))
+	heapSeedImplementations := make([]*heapowner.RuleImplementation[identity.ContentID], len(heapSeedRules))
 	heapSeedBindOK := true
 	for index, seedRule := range heapSeedRules {
 		fact := plan.heapFacts[index]
-		implementation, implementationOK := heapowner.BindExactWriteRule(heap, seedRule, heapSeedWrites[index], engine.HotRuleSpec[heapdomain.Value, keyspace.ContentID]{
-			OperandContent: func(value keyspace.ContentID) (keyspace.ContentID, [32]byte, bool) {
+		implementation, implementationOK := heapowner.BindExactWriteRule(heap, seedRule, heapSeedWrites[index], engine.HotRuleSpec[heapdomain.Value, identity.ContentID]{
+			OperandContent: func(value identity.ContentID) (identity.ContentID, [32]byte, bool) {
 				return value, sha256.Sum256(value[:]), value.Available()
 			},
-			Admission: engine.AdmitRuleByTrustedTheorem[heapdomain.Value, keyspace.ContentID](rawHotKey(byte(42 + index*3))),
-			Transfer: func(access engine.Access[heapdomain.Value, keyspace.ContentID]) bool {
+			Admission: engine.AdmitRuleByTrustedTheorem[heapdomain.Value, identity.ContentID](rawHotKey(byte(42 + index*3))),
+			Transfer: func(access engine.Access[heapdomain.Value, identity.ContentID]) bool {
 				return engine.Product(access, func(row engine.Row) bool { return engine.StageValue(access, row, fact) })
 			},
 		})
@@ -792,12 +792,12 @@ func rawHotSeedIDs[T interface{ rawHotSeedValue() rawHotSeed }](seeds []T) []raw
 func (seed rawHotValueSeed) rawHotSeedValue() rawHotSeed { return seed.rawHotSeed }
 func (seed rawHotHeapSeed) rawHotSeedValue() rawHotSeed  { return seed.rawHotSeed }
 
-func rawHotScalarReceipt(artifact *programartifact.Artifact, schemaID [32]byte, getCapability, setCapability engine.RuleSlotCapability, getPoint, setPoint, getID, setID, seedPoint keyspace.ContentID, valueSeeds, heapSeeds []rawHotSeed) (*engine.ArtifactScalarReceipt, bool) {
+func rawHotScalarReceipt(artifact *programartifact.Artifact, schemaID [32]byte, getCapability, setCapability engine.RuleSlotCapability, getPoint, setPoint, getID, setID, seedPoint identity.ContentID, valueSeeds, heapSeeds []rawHotSeed) (*engine.ArtifactScalarReceipt, bool) {
 	// Observe the read only after the write. A pre-write read would let the
 	// cross-root non-interference law pass even if RawSet later fanned out.
 	points := []engine.ArtifactScalarPoint{{ID: seedPoint, Initial: true}, {ID: setPoint}, {ID: getPoint}}
 	regionID, bodyID := rawHotID(60), rawHotID(61)
-	members := make([]keyspace.ContentID, len(points))
+	members := make([]identity.ContentID, len(points))
 	for index, point := range points {
 		members[index] = point.ID
 	}
@@ -813,7 +813,7 @@ func rawHotScalarReceipt(artifact *programartifact.Artifact, schemaID [32]byte, 
 		scalarRuleBinding{capability: getCapability, rule: engine.ArtifactScalarRule{Stage: engine.ArtifactRuleStageLocal, Point: getPoint, Input: setPoint, ID: getID}},
 		scalarRuleBinding{capability: setCapability, rule: engine.ArtifactScalarRule{Stage: engine.ArtifactRuleStageLocal, Point: setPoint, Input: seedPoint, ID: setID}},
 	)
-	spec, specOK := engine.NewArtifactScalarSpec(artifact.ID(), artifact.CompileKey().ProgramID(), keyspace.ContentID(schemaID), engine.ArtifactScalarCapacity{Roles: len(rules), Points: len(points), Transfers: 2, Regions: 1, Events: 5, Rules: len(rules), Bodies: 1})
+	spec, specOK := engine.NewArtifactScalarSpec(artifact.ID(), artifact.CompileKey().ProgramID(), identity.ContentID(schemaID), engine.ArtifactScalarCapacity{Roles: len(rules), Points: len(points), Transfers: 2, Regions: 1, Events: 5, Rules: len(rules), Bodies: 1})
 	if !specOK {
 		return nil, false
 	}
@@ -882,9 +882,9 @@ func rawHotKey(value byte) engine.SemanticKey {
 	return rawHotSemantic(value)
 }
 
-func rawHotID(value byte) keyspace.ContentID {
+func rawHotID(value byte) identity.ContentID {
 	digest := sha256.Sum256([]byte{0xE1, value})
-	return keyspace.ContentID(digest)
+	return identity.ContentID(digest)
 }
 
 func rawHotSemantic(value byte) engine.SemanticKey {

@@ -3,7 +3,7 @@ package judgment
 import (
 	"fmt"
 
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 )
 
 // NewTypeRef builds the canonical stable reference for a resolved type.

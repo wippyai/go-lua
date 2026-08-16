@@ -12,8 +12,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
-	typerefinement "github.com/wippyai/go-lua/analysis/type/refinement"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	typerefinement "github.com/wippyai/go-lua/analysis/domain/type/refinement"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 )
 
 // ComposeSupplemental returns one canonical provider that evaluates every

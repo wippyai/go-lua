@@ -7,8 +7,8 @@ import (
 	"sort"
 	"sync/atomic"
 
-	"github.com/wippyai/go-lua/program"
-	"github.com/wippyai/go-lua/program/link"
+	"github.com/wippyai/go-lua/analysis/program"
+	"github.com/wippyai/go-lua/analysis/program/link"
 )
 
 // Coordinate is the sole Solver-private representation of one demanded

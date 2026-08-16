@@ -3,7 +3,7 @@ package engine
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/program/link"
+	"github.com/wippyai/go-lua/analysis/program/link"
 )
 
 // Relation and RelationRef share one frame-generation stamp.  Once its

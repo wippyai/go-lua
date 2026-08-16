@@ -9,16 +9,17 @@ import (
 
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/internal/programartifact"
-	"github.com/wippyai/go-lua/analysis/internal/programartifact/schemaadapter"
-	"github.com/wippyai/go-lua/analysis/internal/programschema"
-	"github.com/wippyai/go-lua/program"
-	flowkind "github.com/wippyai/go-lua/program/flow/kind"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/link"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
-	"github.com/wippyai/go-lua/program/lower"
-	"github.com/wippyai/go-lua/program/target/profile"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/lua/lower"
+	"github.com/wippyai/go-lua/analysis/program"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
+	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/program/link"
+	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/analysis/program/target/profile"
+	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 func planLawLink(t testing.TB) *link.Link {
@@ -56,7 +57,7 @@ func planLawArtifactFailure(linked *link.Link) string {
 	if linked == nil || linked.Project() == nil {
 		return "link-unavailable"
 	}
-	receipt, ok := programschema.Global()
+	receipt, ok := grammar.Global()
 	if !ok {
 		return "schema-unavailable"
 	}
@@ -90,7 +91,7 @@ func planLawArtifactScheduleRow(linked *link.Link, ordinal uint32) string {
 	if linked == nil || linked.Project() == nil {
 		return "unavailable"
 	}
-	receipt, ok := programschema.Global()
+	receipt, ok := grammar.Global()
 	if !ok {
 		return "schema-unavailable"
 	}
@@ -117,7 +118,7 @@ func planLawArtifactScheduleRow(linked *link.Link, ordinal uint32) string {
 		}
 		localIndex := int(remaining) - artifact.EnvironmentEdgeCount()
 		edge, edgeOK := artifact.LocalTransferAt(localIndex)
-		ranks := make(map[keyspace.ContentID]int, artifact.PointCount())
+		ranks := make(map[identity.ContentID]int, artifact.PointCount())
 		for eventIndex := 0; eventIndex < artifact.WTOEventCount(); eventIndex++ {
 			event, eventOK := artifact.WTOEventAt(eventIndex)
 			if eventOK && event.Kind() == programartifact.WTOEventPoint {
@@ -151,7 +152,7 @@ func planLawHeapSealFailure(linked *link.Link) string {
 	if linked == nil || linked.Project() == nil {
 		return "link-unavailable"
 	}
-	receipt, ok := programschema.Global()
+	receipt, ok := grammar.Global()
 	if !ok {
 		return "schema-unavailable"
 	}
@@ -205,12 +206,11 @@ func planLawValueSourceFailure(p *program.Program, family, row int) string {
 	_, directOK := input.Span(term)
 	_, rootOK := input.RootSpan(term)
 	anchor, anchorOK := input.ValueSourceAnchor(term)
-	finish, finishOK := anchor.Finish()
-	attachments := input.PointAttachments(finish)
+	_, finishOK := anchor.Finish()
 	path, pathOK := p.Flow().ValueSourcePath(term)
-	return fmt.Sprintf("value-source-family=%d row=%d row-ok=%v executable=%v body=%v containing=%v body-equal=%v direct-span=%v root-span=%v path=%v anchor=%v finish=%v attachments=%d",
+	return fmt.Sprintf("value-source-family=%d row=%d row-ok=%v executable=%v body=%v containing=%v body-equal=%v direct-span=%v root-span=%v path=%v anchor=%v finish=%v",
 		family, row, rowOK, p.Flow().Executable().Contains(term), bodyOK, containingOK,
-		bodyOK && containingOK && body.Equal(containing), directOK, rootOK, pathOK && path.Available(), anchorOK, finishOK, attachments.Count())
+		bodyOK && containingOK && body.Equal(containing), directOK, rootOK, pathOK && path.Available(), anchorOK, finishOK)
 }
 
 func planLawRuleGeometryFailure(plan *Plan) string {

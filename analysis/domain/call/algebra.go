@@ -4,10 +4,10 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/link"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/link"
+	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
 // keyKind is the closed source-sum discriminator.  It is deliberately kept
@@ -23,11 +23,11 @@ const (
 
 type keyRow struct {
 	kind          keyKind
-	applicationID keyspace.ContentID
+	applicationID identity.ContentID
 	operation     target.Operation
 	callback      target.CallbackID
 	resume        target.ResumeID
-	id            keyspace.ContentID
+	id            identity.ContentID
 }
 
 // Algebra is the single Link-scoped owner of the complete Call Factor family.
@@ -37,16 +37,16 @@ type keyRow struct {
 // closed source sum (there is no B×Operation/Port product).
 type Algebra struct {
 	contract                   *target.Contract
-	mountModules               []keyspace.ContentID
-	mountModuleIndex           map[keyspace.ContentID]uint32
+	mountModules               []identity.ContentID
+	mountModuleIndex           map[identity.ContentID]uint32
 	mountedCalls               []mountedCallRow
-	mountedCallIndex           map[keyspace.ContentID]uint32
+	mountedCallIndex           map[identity.ContentID]uint32
 	mountedCallOccurrenceIndex map[mountedCallOccurrenceRef]uint32
 	requireOperation           target.Operation
 	linkOwner                  link.OwnerCapability
-	content                    keyspace.ContentID
+	content                    identity.ContentID
 	keys                       []keyRow
-	keyIndex                   map[keyspace.ContentID]uint32
+	keyIndex                   map[identity.ContentID]uint32
 	targets                    []targetRow
 	targetIndex                map[targetKey]selector
 	roleIndex                  map[TargetRoleID]selector
@@ -60,16 +60,16 @@ type Algebra struct {
 // mountedCallRow is the seal-time projection of Project's ordinary-call
 // relation. No Project/Shard/CallApplication authority is retained.
 type mountedCallRow struct {
-	applicationID keyspace.ContentID
-	contextID     keyspace.ContentID
-	moduleID      keyspace.ContentID
-	calleeValueID keyspace.ContentID
-	loaderSeedID  keyspace.ContentID
+	applicationID identity.ContentID
+	contextID     identity.ContentID
+	moduleID      identity.ContentID
+	calleeValueID identity.ContentID
+	loaderSeedID  identity.ContentID
 }
 
 type mountedCallOccurrenceRef struct {
-	moduleID  keyspace.ContentID
-	contextID keyspace.ContentID
+	moduleID  identity.ContentID
+	contextID identity.ContentID
 }
 
 // New builds the boundary-only Call family. Production callers that need
@@ -99,8 +99,8 @@ func NewWithMountedArtifacts(source *link.Link, mounts []MountedArtifact) (*Alge
 		return nil, false
 	}
 	algebra := &Algebra{
-		contract: contract, mountModuleIndex: make(map[keyspace.ContentID]uint32), mountedCallIndex: make(map[keyspace.ContentID]uint32), mountedCallOccurrenceIndex: make(map[mountedCallOccurrenceRef]uint32), linkOwner: linkOwner,
-		keyIndex: make(map[keyspace.ContentID]uint32), targetIndex: make(map[targetKey]selector), roleIndex: make(map[TargetRoleID]selector),
+		contract: contract, mountModuleIndex: make(map[identity.ContentID]uint32), mountedCallIndex: make(map[identity.ContentID]uint32), mountedCallOccurrenceIndex: make(map[mountedCallOccurrenceRef]uint32), linkOwner: linkOwner,
+		keyIndex: make(map[identity.ContentID]uint32), targetIndex: make(map[targetKey]selector), roleIndex: make(map[TargetRoleID]selector),
 		functionIndex: make(map[functionTargetKey]selector), allocationIndex: make(map[allocationTargetKey]selector),
 	}
 	algebra.requireOperation, _ = boundary.RequireOperation()
@@ -123,7 +123,7 @@ func NewWithMountedArtifacts(source *link.Link, mounts []MountedArtifact) (*Alge
 		moduleID, moduleOK := project.ModuleKey(shard)
 		programID, programOK := mountsView.ProgramID(shard)
 		artifact := mounts[index].Artifact
-		artifactProgramID := keyspace.ContentID{}
+		artifactProgramID := identity.ContentID{}
 		if artifact != nil && artifact.Available() {
 			artifactProgramID = artifact.CompileKey().ProgramID()
 		}
@@ -182,9 +182,9 @@ func (algebra *Algebra) MountModuleCount() int {
 	}
 	return len(algebra.mountModules)
 }
-func (algebra *Algebra) MountModuleAt(index int) (keyspace.ContentID, bool) {
+func (algebra *Algebra) MountModuleAt(index int) (identity.ContentID, bool) {
 	if !algebra.Valid() || index < 0 || index >= len(algebra.mountModules) {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return algebra.mountModules[index], true
 }
@@ -296,7 +296,7 @@ func (algebra *Algebra) appendKey(row keyRow) bool {
 	default:
 		return false
 	}
-	if row.kind == keyApplication && row.id == (keyspace.ContentID{}) {
+	if row.kind == keyApplication && row.id == (identity.ContentID{}) {
 		row.id = row.applicationID
 	}
 	if !row.id.Available() || algebra.keyIndex[row.id] != 0 {
@@ -311,15 +311,15 @@ func (algebra *Algebra) Valid() bool {
 	return algebra != nil && algebra.contract != nil && algebra.linkOwner.Available() && algebra.content.Available() &&
 		algebra.bodyTargetCount >= 0 && algebra.bodyTargetCount <= len(algebra.targets)
 }
-func (algebra *Algebra) ContentID() keyspace.ContentID {
+func (algebra *Algebra) ContentID() identity.ContentID {
 	if !algebra.Valid() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return algebra.content
 }
-func (algebra *Algebra) LinkID() keyspace.ContentID {
+func (algebra *Algebra) LinkID() identity.ContentID {
 	if !algebra.Valid() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return algebra.linkOwner.ContentID()
 }
@@ -366,7 +366,7 @@ func (algebra *Algebra) OwnsKey(key Key) bool {
 
 // KeyForApplicationID projects the compact application receipt produced at
 // seal time.  It deliberately has no Project reach-back.
-func (algebra *Algebra) KeyForApplicationID(id keyspace.ContentID) (Key, bool) {
+func (algebra *Algebra) KeyForApplicationID(id identity.ContentID) (Key, bool) {
 	if !algebra.Valid() || !id.Available() {
 		return Key{}, false
 	}
@@ -411,7 +411,7 @@ func (algebra *Algebra) KeyForResume(issuing *target.Contract, operation target.
 	return algebra.keyForID(id, keyResume)
 }
 
-func (algebra *Algebra) keyForID(id keyspace.ContentID, kind keyKind) (Key, bool) {
+func (algebra *Algebra) keyForID(id identity.ContentID, kind keyKind) (Key, bool) {
 	if !algebra.Valid() || !id.Available() {
 		return Key{}, false
 	}
@@ -424,7 +424,7 @@ func (algebra *Algebra) keyForID(id keyspace.ContentID, kind keyKind) (Key, bool
 }
 
 // FindKey restores one existing Call source-sum key by its portable identity.
-func (algebra *Algebra) FindKey(id keyspace.ContentID) (Key, bool) {
+func (algebra *Algebra) FindKey(id identity.ContentID) (Key, bool) {
 	if !algebra.Valid() || !id.Available() {
 		return Key{}, false
 	}
@@ -459,7 +459,7 @@ func (algebra *Algebra) OpaqueAdmitted(key Key) bool { return algebra.dynamic(ke
 
 // TargetForFunction projects one sealed function receipt into an owner-bound
 // Call capability. The dense target identity never crosses this API.
-func (algebra *Algebra) TargetForFunction(moduleKey, functionContext keyspace.ContentID) (Target, bool) {
+func (algebra *Algebra) TargetForFunction(moduleKey, functionContext identity.ContentID) (Target, bool) {
 	if algebra == nil || !algebra.Valid() || !moduleKey.Available() || !functionContext.Available() {
 		return Target{}, false
 	}
@@ -470,7 +470,7 @@ func (algebra *Algebra) TargetForFunction(moduleKey, functionContext keyspace.Co
 // TargetForAllocation projects one exact compact closure-allocation receipt
 // into this Algebra. The mount and allocation identities are already
 // owner-fenced before the precomputed target lookup is used.
-func (algebra *Algebra) TargetForAllocation(moduleKey, allocationID keyspace.ContentID) (Target, bool) {
+func (algebra *Algebra) TargetForAllocation(moduleKey, allocationID identity.ContentID) (Target, bool) {
 	if algebra == nil || !algebra.Valid() || !moduleKey.Available() || !allocationID.Available() {
 		return Target{}, false
 	}
@@ -486,7 +486,7 @@ func (algebra *Algebra) OwnsTarget(target Target) bool {
 // capability. Foreign equivalent Boundary seeds fail closed.
 // TargetForSeedID is the detached hot lookup. The ID must have been issued
 // by the exact Boundary during cold construction.
-func (algebra *Algebra) TargetForSeedID(seedID keyspace.ContentID) (Target, bool) {
+func (algebra *Algebra) TargetForSeedID(seedID identity.ContentID) (Target, bool) {
 	if !algebra.Valid() || !seedID.Available() {
 		return Target{}, false
 	}
@@ -570,9 +570,9 @@ func (algebra *Algebra) Rebind(value Value) (Value, bool) {
 	return Value{owner: algebra, known: true, open: value.open, selectors: value.selectors}, true
 }
 
-func algebraContentID(owner link.OwnerCapability) (id keyspace.ContentID) {
+func algebraContentID(owner link.OwnerCapability) (id identity.ContentID) {
 	if !owner.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	linkID := owner.ContentID()
 	var payload [32 + 24]byte

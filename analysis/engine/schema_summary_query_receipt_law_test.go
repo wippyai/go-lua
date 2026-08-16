@@ -134,7 +134,7 @@ func TestReceiptCompilerBindsSummaryQueryGraphSurface(t *testing.T) {
 	if !topologyOK || topology == nil {
 		t.Fatal("summary graph topology")
 	}
-	graph, graphOK := topology.Graph(nil)
+	graph, graphOK := initialEquationGraph(topology)
 	if !graphOK || graph == nil {
 		t.Fatal("summary graph identity")
 	}

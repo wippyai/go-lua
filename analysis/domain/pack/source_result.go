@@ -1,6 +1,6 @@
 package pack
 
-import "github.com/wippyai/go-lua/program/keyspace"
+import "github.com/wippyai/go-lua/analysis/identity"
 
 // sourceResultRow is the immutable, seal-time result for one source-producing
 // root. Rows align with Schema roots; non-source roots remain unavailable.
@@ -20,8 +20,8 @@ type SourceResult struct {
 }
 
 type sourceOccurrenceRow struct {
-	module     keyspace.ContentID
-	occurrence keyspace.ContentID
+	module     identity.ContentID
+	occurrence identity.ContentID
 	result     uint32
 }
 
@@ -100,7 +100,7 @@ func (schema *Schema) sealSourceResults() bool {
 		}
 		results[index] = sourceResultRow{ready: true, source: source, root: root, value: value}
 		rootRow := schema.state.roots[index]
-		var module, occurrence keyspace.ContentID
+		var module, occurrence identity.ContentID
 		switch rootRow.kind {
 		case rootValues:
 			if uint64(rootRow.sourceIndex) >= uint64(len(schema.state.values)) {
@@ -147,9 +147,9 @@ func (schema *Schema) SourceOccurrenceCount() int {
 // SourceOccurrenceAt projects one mounted Program occurrence ID to Pack's
 // opaque already-sealed result. No Program, Flow, Link mount, or raw term is
 // exposed or reconstructed.
-func (schema *Schema) SourceOccurrenceAt(index int) (keyspace.ContentID, keyspace.ContentID, SourceResult, bool) {
+func (schema *Schema) SourceOccurrenceAt(index int) (identity.ContentID, identity.ContentID, SourceResult, bool) {
 	if schema == nil || schema.state == nil || index < 0 || index >= len(schema.state.sourceOccurrences) {
-		return keyspace.ContentID{}, keyspace.ContentID{}, SourceResult{}, false
+		return identity.ContentID{}, identity.ContentID{}, SourceResult{}, false
 	}
 	row := schema.state.sourceOccurrences[index]
 	result := SourceResult{schema: schema.state, index: row.result}

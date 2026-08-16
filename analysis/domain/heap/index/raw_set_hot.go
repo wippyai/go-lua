@@ -8,7 +8,7 @@ import (
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // RawSetHotRule is the receipt-native RawSet issuer. The reducer remains the
@@ -69,7 +69,7 @@ func (rule *RawSetHotRule) AttachReceiptMember(compilation *engine.ReceiptCompil
 // AttachMountedOccurrence lowers one RawSet artifact row from its exact
 // mounted Access. All selector reads and the routed Heap write are anchored to
 // this occurrence/operand pair, so no arbitrary route candidate is retained.
-func (rule *RawSetHotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, mountID, reusablePointID, occurrenceID keyspace.ContentID) (engine.BindingRuleRowRef, bool) {
+func (rule *RawSetHotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, mountID, reusablePointID, occurrenceID identity.ContentID) (engine.BindingRuleRowRef, bool) {
 	if rule == nil || rule.values == nil || rule.heap == nil || assembly == nil {
 		return engine.BindingRuleRowRef{}, false
 	}
@@ -135,7 +135,7 @@ func (rule *RawSetHotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssem
 
 // AttachMountedReceiptMember resolves the graph member and private RawSet
 // Access internally before attaching the exact Heap-owned implementation.
-func (rule *RawSetHotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, reusablePointID, occurrenceID keyspace.ContentID) (*engine.ReceiptMember, bool) {
+func (rule *RawSetHotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, reusablePointID, occurrenceID identity.ContentID) (*engine.ReceiptMember, bool) {
 	if rule == nil || graph == nil {
 		return nil, false
 	}
@@ -150,7 +150,7 @@ func (rule *RawSetHotRule) AttachMountedReceiptMember(compilation *engine.Receip
 // ReceiptForOccurrence resolves one exact mounted RawSet candidate directly
 // through Heap's mount-scoped inverse. The Access receipt remains owned by
 // this rule's operand issuer; no Topology occurrence directory is needed.
-func (rule *RawSetHotRule) ReceiptForOccurrence(module, occurrenceID keyspace.ContentID) (Access, bool) {
+func (rule *RawSetHotRule) ReceiptForOccurrence(module, occurrenceID identity.ContentID) (Access, bool) {
 	if rule == nil || rule.core == nil || rule.core.topology == nil {
 		return Access{}, false
 	}

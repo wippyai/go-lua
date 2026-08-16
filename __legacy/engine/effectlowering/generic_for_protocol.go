@@ -1,8 +1,8 @@
 package effectlowering
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	"github.com/wippyai/go-lua/analysis/module/signature"
-	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // CallableIteratorSignature reports whether the first result of a sealed call

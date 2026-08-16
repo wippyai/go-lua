@@ -6,10 +6,10 @@ import (
 	typedomain "github.com/wippyai/go-lua/analysis/domain/type"
 	"github.com/wippyai/go-lua/analysis/domain/type/factor/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/domain/type/factor/internal/origin"
-	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/program/link"
-	programlower "github.com/wippyai/go-lua/program/lower"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
+	"github.com/wippyai/go-lua/analysis/program/link"
+	programlower "github.com/wippyai/go-lua/analysis/program/lower"
+	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
 // Current Program ownership makes Values operands unique, but a future

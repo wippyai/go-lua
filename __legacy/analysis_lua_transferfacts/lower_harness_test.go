@@ -19,10 +19,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
-	"github.com/wippyai/go-lua/analysis/type/ambient"
-	typetable "github.com/wippyai/go-lua/analysis/type/table"
-	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/analysis/type/typeexpr"
+	"github.com/wippyai/go-lua/analysis/domain/type/ambient"
+	typetable "github.com/wippyai/go-lua/analysis/domain/type/table"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/typeexpr"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 

@@ -5,12 +5,12 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/pack"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
-func publicationCorrelationLawID(label string) keyspace.ContentID {
-	return keyspace.ContentID(sha256.Sum256([]byte(label)))
+func publicationCorrelationLawID(label string) identity.ContentID {
+	return identity.ContentID(sha256.Sum256([]byte(label)))
 }
 
 // This law deliberately exercises only the detached scalar seal. The positive

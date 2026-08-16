@@ -5,9 +5,9 @@ import (
 	"encoding/binary"
 	"testing"
 
-	"github.com/wippyai/go-lua/program"
-	"github.com/wippyai/go-lua/program/artifact"
-	"github.com/wippyai/go-lua/program/internal/canonical"
+	"github.com/wippyai/go-lua/analysis/program"
+	"github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/program/internal/canonical"
 )
 
 func TestArtifactRoundTripRetainsTypedMetamethodCandidates(t *testing.T) {

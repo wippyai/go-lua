@@ -4,8 +4,8 @@ import (
 	"math"
 
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
-	flowkind "github.com/wippyai/go-lua/program/flow/kind"
-	"github.com/wippyai/go-lua/program/keyspace"
+	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
 // Not applies Lua logical-not to the complete correlated Value relation.

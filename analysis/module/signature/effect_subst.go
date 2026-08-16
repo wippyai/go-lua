@@ -3,9 +3,9 @@ package signature
 import (
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
-	"github.com/wippyai/go-lua/analysis/type/projection"
-	"github.com/wippyai/go-lua/analysis/type/subst"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/projection"
+	"github.com/wippyai/go-lua/analysis/domain/type/subst"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 )
 
 // SubstituteEffectTypes returns a copy of row whose embedded type payloads have

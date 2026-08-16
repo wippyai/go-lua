@@ -15,7 +15,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/symbol"
-	typeformat "github.com/wippyai/go-lua/analysis/type/format"
+	typeformat "github.com/wippyai/go-lua/analysis/domain/type/format"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/source"
 )

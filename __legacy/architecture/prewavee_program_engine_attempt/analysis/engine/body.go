@@ -3,8 +3,8 @@ package engine
 import (
 	"sort"
 
-	"github.com/wippyai/go-lua/program"
-	"github.com/wippyai/go-lua/program/link"
+	"github.com/wippyai/go-lua/analysis/program"
+	"github.com/wippyai/go-lua/analysis/program/link"
 )
 
 // bodyOrigin is exactly one Program-owned lexical Body in one Link shard.

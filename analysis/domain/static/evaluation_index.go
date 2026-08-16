@@ -4,10 +4,11 @@ import (
 	"errors"
 	"math"
 
-	"github.com/wippyai/go-lua/analysis/internal/programartifact"
-	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
+	"github.com/wippyai/go-lua/analysis/identity"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
 func (a *Authority) sealHotProjections(contract *target.Contract) error {
@@ -97,7 +98,7 @@ func (a *Authority) sealTypeOfOutputs() error {
 	if a == nil || !a.linkID.Available() || a.typeOfOutputs != nil {
 		return errors.New("static: unavailable typeof output projection")
 	}
-	a.typeOfOutputs = make(map[keyspace.ContentID]Coordinate)
+	a.typeOfOutputs = make(map[identity.ContentID]Coordinate)
 	if len(a.mounts) == 0 {
 		return errors.New("static: mounted artifacts required")
 	}

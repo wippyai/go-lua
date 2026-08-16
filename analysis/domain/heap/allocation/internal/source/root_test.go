@@ -6,13 +6,13 @@ import (
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
 	source "github.com/wippyai/go-lua/analysis/domain/heap/allocation/internal/source"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
-	"github.com/wippyai/go-lua/analysis/internal/programartifact/schemaadapter"
-	"github.com/wippyai/go-lua/analysis/internal/programschema"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/link"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
-	programlower "github.com/wippyai/go-lua/program/lower"
-	"github.com/wippyai/go-lua/program/target"
+	lualower "github.com/wippyai/go-lua/analysis/lua/lower"
+	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/program/link"
+	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 func TestRootClassifiesCompleteSourceConstructorForms(t *testing.T) {
@@ -390,7 +390,7 @@ func sourceCoordinateOrdinal(coordinates []valuedomain.Coordinate, want valuedom
 
 func sourceFixture(t testing.TB, text string) (heapdomain.Schema, *valuedomain.Schema, *link.Link) {
 	t.Helper()
-	p, err := programlower.Lower(programlower.Source{Name: "allocation_source.lua", Text: []byte(text)})
+	p, err := lualower.Lower(lualower.Source{Name: "allocation_source.lua", Text: []byte(text)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -427,7 +427,7 @@ func sourceValueMounts(t testing.TB, linked *link.Link) []valuedomain.ArtifactMo
 
 func sourceArtifactMounts(t testing.TB, linked *link.Link) ([]heapdomain.ArtifactMount, []valuedomain.ArtifactMount) {
 	t.Helper()
-	receipt, receiptOK := programschema.Global()
+	receipt, receiptOK := grammar.Global()
 	if !receiptOK || linked == nil || linked.Project() == nil {
 		t.Fatal("source artifact receipt")
 	}

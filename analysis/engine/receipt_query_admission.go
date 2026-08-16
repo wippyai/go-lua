@@ -3,24 +3,24 @@ package engine
 import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // AddMountedSummaryQuery issues one summary query row anchored at a mounted
 // artifact point.  The point is addressed by the mount and reusable artifact
 // point ID; callers never receive equation references.  It must be called
 // after ReceiptAssembly.SealSources and before Commit.
-func AddMountedSummaryQuery[V, R any](assembly *ReceiptAssembly, implementation *SummaryQueryImplementation[V, R], id, mount, reusable keyspace.ContentID) bool {
+func AddMountedSummaryQuery[V, R any](assembly *ReceiptAssembly, implementation *SummaryQueryImplementation[V, R], id, mount, reusable identity.ContentID) bool {
 	return addMountedQuery[V, R](assembly, implementation, id, mount, reusable, composition.QueryFactorSummary)
 }
 
 // AddMountedExactQuery is the exact-query counterpart of
 // AddMountedSummaryQuery.
-func AddMountedExactQuery[V, R any](assembly *ReceiptAssembly, implementation *ExactQueryImplementation[V, R], id, mount, reusable keyspace.ContentID) bool {
+func AddMountedExactQuery[V, R any](assembly *ReceiptAssembly, implementation *ExactQueryImplementation[V, R], id, mount, reusable identity.ContentID) bool {
 	return addMountedQuery[V, R](assembly, implementation, id, mount, reusable, composition.QueryFactorExact)
 }
 
-func addMountedQuery[V, R any](assembly *ReceiptAssembly, implementation bindingQueryReceipt, id, mount, reusable keyspace.ContentID, kind composition.QueryProjectionKind) bool {
+func addMountedQuery[V, R any](assembly *ReceiptAssembly, implementation bindingQueryReceipt, id, mount, reusable identity.ContentID, kind composition.QueryProjectionKind) bool {
 	if assembly == nil || assembly.builder == nil || implementation == nil || !id.Available() || !mount.Available() || !reusable.Available() {
 		return false
 	}
@@ -68,6 +68,6 @@ func addMountedQuery[V, R any](assembly *ReceiptAssembly, implementation binding
 }
 
 // Query returns the graph-owned query receipt issued under id.
-func (receipt *ReceiptGraph) Query(id keyspace.ContentID) (ReceiptQuery, bool) {
+func (receipt *ReceiptGraph) Query(id identity.ContentID) (ReceiptQuery, bool) {
 	return receipt.lookupQuery(id)
 }

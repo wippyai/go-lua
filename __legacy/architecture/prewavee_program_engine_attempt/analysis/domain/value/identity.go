@@ -6,7 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/program"
+	"github.com/wippyai/go-lua/analysis/program"
 )
 
 const sourceLiteralSemanticVersion = 1

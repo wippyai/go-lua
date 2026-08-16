@@ -22,7 +22,7 @@ type SchemaFragment struct {
 
 // DeclareSchema records the exact Value-read/Call-write dispatch incidence.
 func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evidence engine.SemanticKey, values *valueowner.SchemaFragment, calls *callowner.SchemaFragment) (*SchemaFragment, bool) {
-	if builder == nil || values == nil || calls == nil || !distinct(semantic, operandFamily, evidence) {
+	if builder == nil || values == nil || calls == nil || !engine.DistinctKeys(semantic, operandFamily, evidence) {
 		return nil, false
 	}
 	slot, ok := engine.NewRuleSlot[calldomain.Value, dispatchReceipt](builder, engine.SchemaRuleSpec[calldomain.Value]{
@@ -50,18 +50,4 @@ func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evide
 
 func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[calldomain.Value, dispatchReceipt] {
 	return fragment.slot
-}
-
-func distinct(keys ...engine.SemanticKey) bool {
-	for index, key := range keys {
-		if !key.Available() {
-			return false
-		}
-		for _, prior := range keys[:index] {
-			if prior == key {
-				return false
-			}
-		}
-	}
-	return true
 }

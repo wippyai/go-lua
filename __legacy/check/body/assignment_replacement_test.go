@@ -3,8 +3,8 @@ package body
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/type/table"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/table"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 )
 
 func TestInferredReplacementAcceptedAllowsNumberForInferredInteger(t *testing.T) {

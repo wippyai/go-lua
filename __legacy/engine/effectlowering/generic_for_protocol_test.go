@@ -3,8 +3,8 @@ package effectlowering
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	"github.com/wippyai/go-lua/analysis/module/signature"
-	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestCallableIteratorSignatureClassifiesFunctionResultNotContainer(t *testing.T) {

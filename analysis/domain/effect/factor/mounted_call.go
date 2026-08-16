@@ -2,8 +2,8 @@ package factor
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/call"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
 // Valid reports whether this detached mounted-call receipt was issued by its
@@ -37,7 +37,7 @@ func (a *Algebra) mountedCallRow(mounted MountedCall) (mountedCallRow, bool) {
 	return row, row.applicationID.Available() && row.moduleID.Available() && row.contextID.Available()
 }
 
-func (a *Algebra) mountedCallForApplication(applicationID keyspace.ContentID) (MountedCall, bool) {
+func (a *Algebra) mountedCallForApplication(applicationID identity.ContentID) (MountedCall, bool) {
 	if !a.Valid() || !applicationID.Available() {
 		return MountedCall{}, false
 	}
@@ -119,7 +119,7 @@ func (a *Algebra) MountedCallOpaqueUnknown(root Root, calls *call.Algebra, mount
 
 // MountedCallIdentity exposes cold scalar evidence for domain-owned formal
 // substitution.  It remains fenced by the opaque mounted receipt.
-func (a *Algebra) MountedCallIdentity(mounted MountedCall) (applicationID, moduleID, occurrenceID keyspace.ContentID, ok bool) {
+func (a *Algebra) MountedCallIdentity(mounted MountedCall) (applicationID, moduleID, occurrenceID identity.ContentID, ok bool) {
 	row, ok := a.mountedCallRow(mounted)
 	return row.applicationID, row.moduleID, row.contextID, ok
 }

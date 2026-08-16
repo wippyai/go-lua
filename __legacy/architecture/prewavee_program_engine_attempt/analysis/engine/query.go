@@ -3,8 +3,8 @@ package engine
 import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/coordinate"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts"
-	"github.com/wippyai/go-lua/program"
-	"github.com/wippyai/go-lua/program/link"
+	"github.com/wippyai/go-lua/analysis/program"
+	"github.com/wippyai/go-lua/analysis/program/link"
 )
 
 // Query is one sealed observation of a typed Factor at one exact Program

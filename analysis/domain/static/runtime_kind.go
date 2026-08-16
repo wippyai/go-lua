@@ -4,8 +4,8 @@ import (
 	"errors"
 
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
-	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/analysis/type/typeexpr"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/typeexpr"
 )
 
 // runtimeKindTable is the sealed dense RuntimeKind interpretation. It stays

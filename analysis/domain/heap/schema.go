@@ -7,15 +7,16 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/materialization"
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
-	programartifact "github.com/wippyai/go-lua/analysis/internal/programartifact"
-	"github.com/wippyai/go-lua/program"
-	flowkind "github.com/wippyai/go-lua/program/flow/kind"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/link"
-	linkboundary "github.com/wippyai/go-lua/program/link/boundary"
-	linkhost "github.com/wippyai/go-lua/program/link/host"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/program/link"
+	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
+	linkhost "github.com/wippyai/go-lua/analysis/program/link/host"
+	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
 const schemaFormat uint64 = 0x686561702d7639 // "heap-v9"
@@ -31,8 +32,8 @@ type Schema struct{ owner *schema }
 // mounts distinct.
 type ArtifactMount struct {
 	artifact  *programartifact.Artifact
-	module    keyspace.ContentID
-	programID keyspace.ContentID
+	module    identity.ContentID
+	programID identity.ContentID
 }
 
 // OccurrenceMount is Heap's opaque, mount-scoped occurrence issuer.  The
@@ -57,7 +58,7 @@ func (issuer OccurrenceMount) valid() bool {
 // concrete mounted module.  The returned issuer is the only hot lookup input;
 // module and occurrence identities are never accepted as a free-standing
 // directory key by consumers.
-func (schema Schema) OccurrenceMountForModule(module keyspace.ContentID) (OccurrenceMount, bool) {
+func (schema Schema) OccurrenceMountForModule(module identity.ContentID) (OccurrenceMount, bool) {
 	if !schema.valid() || !module.Available() || schema.owner.artifacts == nil {
 		return OccurrenceMount{}, false
 	}
@@ -66,16 +67,16 @@ func (schema Schema) OccurrenceMountForModule(module keyspace.ContentID) (Occurr
 	return issuer, ok && issuer.valid()
 }
 
-func (issuer OccurrenceMount) Module() keyspace.ContentID {
+func (issuer OccurrenceMount) Module() identity.ContentID {
 	if !issuer.valid() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return issuer.mount.module
 }
 
-func (issuer OccurrenceMount) ProgramID() keyspace.ContentID {
+func (issuer OccurrenceMount) ProgramID() identity.ContentID {
 	if !issuer.valid() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return issuer.mount.programID
 }
@@ -83,7 +84,7 @@ func (issuer OccurrenceMount) ProgramID() keyspace.ContentID {
 // IndexAccessForOccurrence resolves one exact mounted Read/Write occurrence
 // through Heap's sealed inverse map.  Artifact and Program identity remain
 // part of the opaque issuer fence; duplicate mounts cannot alias.
-func (issuer OccurrenceMount) IndexAccessForOccurrence(id keyspace.ContentID, read bool) (IndexAccess, bool) {
+func (issuer OccurrenceMount) IndexAccessForOccurrence(id identity.ContentID, read bool) (IndexAccess, bool) {
 	if !issuer.valid() || !id.Available() {
 		return IndexAccess{}, false
 	}
@@ -96,7 +97,7 @@ func (issuer OccurrenceMount) IndexAccessForOccurrence(id keyspace.ContentID, re
 // AllocationRootForOccurrence resolves one exact mounted Program allocation
 // through Heap's sealed inverse map.  Allocation kind/form are read from the
 // sealed Heap row, so callers do not restate or reconstruct them.
-func (issuer OccurrenceMount) AllocationRootForOccurrence(id keyspace.ContentID) (Key, bool) {
+func (issuer OccurrenceMount) AllocationRootForOccurrence(id identity.ContentID) (Key, bool) {
 	if !issuer.valid() || !id.Available() {
 		return Key{}, false
 	}
@@ -126,13 +127,13 @@ func (issuer OccurrenceMount) AllocationCount() int {
 // AllocationAt returns one mounted allocation ID and its exact Heap root in
 // artifact order. The occurrence-to-root resolution itself remains the
 // sealed Heap O(1) inverse.
-func (issuer OccurrenceMount) AllocationAt(index int) (keyspace.ContentID, Key, bool) {
+func (issuer OccurrenceMount) AllocationAt(index int) (identity.ContentID, Key, bool) {
 	if !issuer.valid() || index < 0 || index >= issuer.mount.artifact.HeapAllocationCount() {
-		return keyspace.ContentID{}, Key{}, false
+		return identity.ContentID{}, Key{}, false
 	}
 	allocation, allocationOK := issuer.mount.artifact.HeapAllocationAt(index)
 	if !allocationOK || !allocation.ID().Available() {
-		return keyspace.ContentID{}, Key{}, false
+		return identity.ContentID{}, Key{}, false
 	}
 	key, keyOK := issuer.AllocationRootForOccurrence(allocation.ID())
 	return allocation.ID(), key, keyOK
@@ -141,7 +142,7 @@ func (issuer OccurrenceMount) AllocationAt(index int) (keyspace.ContentID, Key, 
 // AllocationOrdinal returns the stable mounted artifact ordinal for one
 // allocation occurrence. The ordinal is a private index into a binding's
 // source-receipt vector, never a public identity or a second occurrence map.
-func (issuer OccurrenceMount) AllocationOrdinal(id keyspace.ContentID) (int, bool) {
+func (issuer OccurrenceMount) AllocationOrdinal(id identity.ContentID) (int, bool) {
 	if !issuer.valid() || !id.Available() {
 		return 0, false
 	}
@@ -158,7 +159,7 @@ func (issuer OccurrenceMount) AllocationOrdinal(id keyspace.ContentID) (int, boo
 	return ordinal, ordinal < issuer.mount.artifact.HeapAllocationCount()
 }
 
-func NewArtifactMount(artifact *programartifact.Artifact, module, programID keyspace.ContentID) (ArtifactMount, bool) {
+func NewArtifactMount(artifact *programartifact.Artifact, module, programID identity.ContentID) (ArtifactMount, bool) {
 	if artifact == nil || !artifact.Available() || !module.Available() || !programID.Available() || artifact.CompileKey().ProgramID() != programID {
 		return ArtifactMount{}, false
 	}
@@ -167,15 +168,15 @@ func NewArtifactMount(artifact *programartifact.Artifact, module, programID keys
 func (mount ArtifactMount) Available() bool {
 	return mount.artifact != nil && mount.artifact.Available() && mount.module.Available() && mount.programID.Available() && mount.artifact.CompileKey().ProgramID() == mount.programID
 }
-func (mount ArtifactMount) Module() keyspace.ContentID {
+func (mount ArtifactMount) Module() identity.ContentID {
 	if !mount.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return mount.module
 }
-func (mount ArtifactMount) ProgramID() keyspace.ContentID {
+func (mount ArtifactMount) ProgramID() identity.ContentID {
 	if !mount.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return mount.programID
 }
@@ -190,7 +191,7 @@ func (mount ArtifactMount) Artifact() *programartifact.Artifact {
 // for one concrete Link module. Consumers that admit a second mounted owner
 // must compare this exact artifact pointer and ProgramID; module identity
 // alone is not sufficient to fence a no-index module.
-func (schema Schema) ArtifactMountForModule(module keyspace.ContentID) (ArtifactMount, bool) {
+func (schema Schema) ArtifactMountForModule(module identity.ContentID) (ArtifactMount, bool) {
 	if !schema.valid() || !module.Available() || schema.owner.artifacts == nil {
 		return ArtifactMount{}, false
 	}
@@ -272,16 +273,16 @@ func (failure SealFailure) String() string {
 
 type schema struct {
 	linkOwner link.OwnerCapability
-	id        keyspace.ContentID
+	id        identity.ContentID
 
 	roots            []rootRow // physical Program roots followed by Boot roots
 	programRootCount uint32
-	bootIndex        map[keyspace.ContentID]uint32
+	bootIndex        map[identity.ContentID]uint32
 	freshTemplates   []freshTemplate
 	freshByKey       map[freshTemplateKey]uint32
 	freshSets        []freshTemplateSet
 	freshSetValues   []freshSetValue
-	freshApps        []keyspace.ContentID
+	freshApps        []identity.ContentID
 	freshAppSets     []uint32
 	freshOffsets     []uint64
 	freshCount       uint64
@@ -296,7 +297,7 @@ type schema struct {
 	exactSlots   map[uint32]uint32
 	exactKeys    []exactKeyRow
 	exactIndex   map[keyspace.LiteralValue]uint32
-	dynamicSlots map[keyspace.ContentID]uint32
+	dynamicSlots map[identity.ContentID]uint32
 	unknownSlot  uint32
 
 	payloads       []payloadRow
@@ -321,7 +322,7 @@ type schema struct {
 	// selector for the exact owner-fenced Program tuple.
 	programAllocationOrdinals map[programAllocationOccurrence]uint32
 	indexAccessOrdinals       map[indexAccessOccurrence]uint32
-	artifacts                 map[keyspace.ContentID]ArtifactMount
+	artifacts                 map[identity.ContentID]ArtifactMount
 
 	// These are sealed finite denominators for Heap's canonical Mu carrier;
 	// they are rank witnesses, never work budgets or cardinality caps.
@@ -370,7 +371,7 @@ type rootRow struct {
 	kind          RootKind
 	allocation    allocationSource
 	fresh         freshSource
-	bootID        keyspace.ContentID
+	bootID        identity.ContentID
 	bootImmutable bool
 	fieldStart    uint32
 	fieldCount    uint32
@@ -390,18 +391,18 @@ type allocationSource struct {
 	// module is the compact mounted-artifact identity.  A module key is
 	// deliberately mount-local: duplicate mounts of one Program therefore
 	// remain distinct without retaining the Link Project Shard authority.
-	module       keyspace.ContentID
+	module       identity.ContentID
 	kind         AllocationKind
 	form         program.AllocationForm
-	programID    keyspace.ContentID
-	allocationID keyspace.ContentID
+	programID    identity.ContentID
+	allocationID identity.ContentID
 	artifactRow  uint32
-	rootValueID  keyspace.ContentID
+	rootValueID  identity.ContentID
 }
 
 // freshSource is a virtual exact fresh creation coordinate.
 type freshSource struct {
-	applicationID keyspace.ContentID
+	applicationID identity.ContentID
 	outcome       uint32
 	result        uint32
 	ordinal       uint32
@@ -425,8 +426,8 @@ type exactKeyRow struct{ literal keyspace.LiteralValue }
 
 type fieldSource struct {
 	root         uint32
-	allocationID keyspace.ContentID
-	fieldID      keyspace.ContentID
+	allocationID identity.ContentID
+	fieldID      identity.ContentID
 }
 
 type fieldRow struct {
@@ -454,14 +455,14 @@ const (
 type slotRow struct {
 	kind    SlotKind
 	exact   uint32
-	dynamic keyspace.ContentID
+	dynamic identity.ContentID
 	field   uint32
 }
 
 type payloadRow struct {
 	kind     payloadKind
-	module   keyspace.ContentID
-	valuesID keyspace.ContentID
+	module   identity.ContentID
+	valuesID identity.ContentID
 	index    uint32
 	initial  target.InitialValue
 }
@@ -504,16 +505,16 @@ type rootPayload struct {
 }
 
 type indexAccessRow struct {
-	module      keyspace.ContentID
-	programID   keyspace.ContentID
-	occurrence  keyspace.ContentID
+	module      identity.ContentID
+	programID   identity.ContentID
+	occurrence  identity.ContentID
 	isRead      bool
-	baseValueID keyspace.ContentID
-	keyValueID  keyspace.ContentID
-	valuesID    keyspace.ContentID
+	baseValueID identity.ContentID
+	keyValueID  identity.ContentID
+	valuesID    identity.ContentID
 	position    int
 	dynamic     bool
-	resultID    keyspace.ContentID
+	resultID    identity.ContentID
 	slot        uint32
 	payload     uint32
 }
@@ -522,16 +523,16 @@ type indexAccessRow struct {
 // aggregate. Shard distinguishes duplicate mounts; allocationID is the
 // opaque Program proof identity. No raw Term is part of the inverse key.
 type programAllocationOccurrence struct {
-	module       keyspace.ContentID
-	allocationID keyspace.ContentID
+	module       identity.ContentID
+	allocationID identity.ContentID
 }
 
 // indexAccessOccurrence is the portable mounted occurrence key already
 // issued by Program's semantic-path authority. It contains no raw Term or
 // mount ordinal; duplicate mounts remain distinct through ModuleKey.
 type indexAccessOccurrence struct {
-	module keyspace.ContentID
-	id     keyspace.ContentID
+	module identity.ContentID
+	id     identity.ContentID
 }
 
 // Field is one schema-issued Program TableField route.  It has no Link
@@ -551,9 +552,9 @@ type IndexAccess struct {
 // mounted index candidate. It contains no Program/Flow proof or raw mount
 // ordinal.
 type IndexAccessReceipt struct {
-	module     keyspace.ContentID
-	programID  keyspace.ContentID
-	occurrence keyspace.ContentID
+	module     identity.ContentID
+	programID  identity.ContentID
+	occurrence identity.ContentID
 	read       bool
 	artifact   *programartifact.Artifact
 }
@@ -561,27 +562,27 @@ type IndexAccessReceipt struct {
 func (receipt IndexAccessReceipt) Available() bool {
 	return receipt.module.Available() && receipt.programID.Available() && receipt.occurrence.Available() && receipt.artifact != nil && receipt.artifact.Available() && receipt.artifact.CompileKey().ProgramID() == receipt.programID
 }
-func (receipt IndexAccessReceipt) Module() keyspace.ContentID {
+func (receipt IndexAccessReceipt) Module() identity.ContentID {
 	if !receipt.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return receipt.module
 }
-func (receipt IndexAccessReceipt) ProgramID() keyspace.ContentID {
+func (receipt IndexAccessReceipt) ProgramID() identity.ContentID {
 	if !receipt.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return receipt.programID
 }
-func (receipt IndexAccessReceipt) OccurrenceID() keyspace.ContentID {
+func (receipt IndexAccessReceipt) OccurrenceID() identity.ContentID {
 	if !receipt.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return receipt.occurrence
 }
 func (receipt IndexAccessReceipt) Read() bool { return receipt.Available() && receipt.read }
 
-func (mount ArtifactMount) IndexAccessReceipt(id keyspace.ContentID, read bool) (IndexAccessReceipt, bool) {
+func (mount ArtifactMount) IndexAccessReceipt(id identity.ContentID, read bool) (IndexAccessReceipt, bool) {
 	if !mount.Available() || !id.Available() {
 		return IndexAccessReceipt{}, false
 	}
@@ -603,14 +604,14 @@ func (mount ArtifactMount) IndexAccessReceipt(id keyspace.ContentID, read bool) 
 type IndexGeometry struct {
 	// Module is the compact mounted-artifact receipt. It replaces the
 	// Link-owned Shard proof after sealing.
-	Module    keyspace.ContentID
-	ProgramID keyspace.ContentID
+	Module    identity.ContentID
+	ProgramID identity.ContentID
 	// BaseValueID and KeyValueID are Link-owned Boundary Value identities,
 	// not reusable artifact semantic IDs. ValuesID remains the artifact-owned
 	// Values occurrence used to resolve the write payload through Pack.
-	BaseValueID keyspace.ContentID
-	KeyValueID  keyspace.ContentID
-	ValuesID    keyspace.ContentID
+	BaseValueID identity.ContentID
+	KeyValueID  identity.ContentID
+	ValuesID    identity.ContentID
 	Position    int
 	DynamicKey  bool
 	Read        bool
@@ -675,7 +676,7 @@ func SealWithArtifacts(source *link.Link, mounts []ArtifactMount) (Schema, SealF
 	return Schema{owner: owner}, SealFailureNone
 }
 
-func newArtifactSchemaOwner(source *link.Link, mounts []ArtifactMount) (*heapBuilder, map[keyspace.ContentID]ArtifactMount, SealFailure) {
+func newArtifactSchemaOwner(source *link.Link, mounts []ArtifactMount) (*heapBuilder, map[identity.ContentID]ArtifactMount, SealFailure) {
 	if source == nil {
 		return nil, nil, SealFailureSource
 	}
@@ -683,7 +684,7 @@ func newArtifactSchemaOwner(source *link.Link, mounts []ArtifactMount) (*heapBui
 	if !linkOwner.Available() || source.Project() == nil || len(mounts) != source.Project().Mounts().Count() {
 		return nil, nil, SealFailureSource
 	}
-	byModule := make(map[keyspace.ContentID]ArtifactMount, len(mounts))
+	byModule := make(map[identity.ContentID]ArtifactMount, len(mounts))
 	for _, mount := range mounts {
 		if !mount.Available() {
 			return nil, nil, SealFailureProgramAllocations
@@ -702,7 +703,7 @@ func newArtifactSchemaOwner(source *link.Link, mounts []ArtifactMount) (*heapBui
 			return nil, nil, SealFailureProgramAllocations
 		}
 	}
-	owner := &schema{linkOwner: linkOwner, bootIndex: make(map[keyspace.ContentID]uint32), exactSlots: make(map[uint32]uint32), exactIndex: make(map[keyspace.LiteralValue]uint32), dynamicSlots: make(map[keyspace.ContentID]uint32), freshByKey: make(map[freshTemplateKey]uint32), payloadIndex: make(map[payloadRow]uint32), localSlots: make(map[rootSlot]struct{}), bootEntries: make(map[rootSlot]bootEntryRow), bootInitials: make(map[rootPayload]bootEntryRow)}
+	owner := &schema{linkOwner: linkOwner, bootIndex: make(map[identity.ContentID]uint32), exactSlots: make(map[uint32]uint32), exactIndex: make(map[keyspace.LiteralValue]uint32), dynamicSlots: make(map[identity.ContentID]uint32), freshByKey: make(map[freshTemplateKey]uint32), payloadIndex: make(map[payloadRow]uint32), localSlots: make(map[rootSlot]struct{}), bootEntries: make(map[rootSlot]bootEntryRow), bootInitials: make(map[rootPayload]bootEntryRow)}
 	builder := &heapBuilder{schema: owner, seal: heapSealContext{project: source.Project(), boundary: source.Boundary(), host: source.Host()}}
 	return builder, byModule, SealFailureNone
 }
@@ -710,7 +711,7 @@ func newArtifactSchemaOwner(source *link.Link, mounts []ArtifactMount) (*heapBui
 // mountedValue is Heap's sole artifact-to-Boundary substitution. The artifact
 // supplies a Program-issued span identity and Boundary reissues its opaque
 // mounted Value; neither an authored Term nor a Program handle survives.
-func (owner *heapBuilder) mountedValue(module, span keyspace.ContentID) (linkboundary.Value, bool) {
+func (owner *heapBuilder) mountedValue(module, span identity.ContentID) (linkboundary.Value, bool) {
 	if owner == nil || owner.sealProject() == nil || !module.Available() || !span.Available() {
 		return linkboundary.Value{}, false
 	}
@@ -718,7 +719,7 @@ func (owner *heapBuilder) mountedValue(module, span keyspace.ContentID) (linkbou
 	return value, valueOK && value != (linkboundary.Value{})
 }
 
-func (owner *heapBuilder) addArtifactAllocations(mounts map[keyspace.ContentID]ArtifactMount) bool {
+func (owner *heapBuilder) addArtifactAllocations(mounts map[identity.ContentID]ArtifactMount) bool {
 	if owner == nil || owner.sealProject() == nil {
 		return false
 	}
@@ -733,7 +734,7 @@ func (owner *heapBuilder) addArtifactAllocations(mounts map[keyspace.ContentID]A
 		if artifact == nil {
 			return false
 		}
-		valuesRows := make(map[keyspace.ContentID]uint32, artifact.ValuesCount())
+		valuesRows := make(map[identity.ContentID]uint32, artifact.ValuesCount())
 		for valuesIndex := 0; valuesIndex < artifact.ValuesCount(); valuesIndex++ {
 			values, valuesOK := artifact.ValuesAt(valuesIndex)
 			if !valuesOK || !values.ID().Available() || uint64(valuesIndex) >= uint64(^uint32(0)) {
@@ -748,7 +749,7 @@ func (owner *heapBuilder) addArtifactAllocations(mounts map[keyspace.ContentID]A
 			allocation, allocationOK := artifact.HeapAllocationAt(index)
 			root, rootOK := owner.mountedValue(mount.module, allocation.RootSpan())
 			rootID, rootIDOK := owner.sealBoundary().Values().ID(root)
-			if !allocationOK || !rootOK || !rootIDOK || allocation.ID() == (keyspace.ContentID{}) || uint64(index) >= uint64(^uint32(0)) {
+			if !allocationOK || !rootOK || !rootIDOK || allocation.ID() == (identity.ContentID{}) || uint64(index) >= uint64(^uint32(0)) {
 				return false
 			}
 			kind := AllocationInvalid
@@ -856,7 +857,7 @@ func (owner *schema) addArtifactPayload(row payloadRow) uint32 {
 	return id
 }
 
-func (owner *heapBuilder) addArtifactIndexes(mounts map[keyspace.ContentID]ArtifactMount) bool {
+func (owner *heapBuilder) addArtifactIndexes(mounts map[identity.ContentID]ArtifactMount) bool {
 	if owner == nil || owner.sealProject() == nil {
 		return false
 	}
@@ -885,7 +886,7 @@ func (owner *heapBuilder) addArtifactIndexes(mounts map[keyspace.ContentID]Artif
 				return false
 			}
 			dynamic := access.DynamicKeySpan().Available()
-			var keyValueID keyspace.ContentID
+			var keyValueID identity.ContentID
 			var keyValueIDOK bool
 			var slot uint32
 			if dynamic {
@@ -1105,7 +1106,7 @@ func (owner *schema) rootAt(slot uint32) (rootRow, bool) {
 	return owner.roots[bootIndex-1], true
 }
 
-func (owner *heapBuilder) addBootRoot(root linkhost.BootRoot, rootID keyspace.ContentID) bool {
+func (owner *heapBuilder) addBootRoot(root linkhost.BootRoot, rootID identity.ContentID) bool {
 	if owner == nil || owner.sealProject() == nil || !rootID.Available() || owner.bootIndex[rootID] != 0 || uint64(len(owner.roots)) >= uint64(^uint32(0)) {
 		return false
 	}
@@ -1275,7 +1276,7 @@ func (owner *heapBuilder) addBootMetatableRoutes() bool {
 
 // bootRootForID consumes Host's authority during sealing only.  The returned
 // coordinate never enters a published Heap row.
-func (owner *heapBuilder) bootRootForID(id keyspace.ContentID) (linkhost.BootRoot, bool) {
+func (owner *heapBuilder) bootRootForID(id identity.ContentID) (linkhost.BootRoot, bool) {
 	if owner == nil || !id.Available() || owner.sealHost() == nil {
 		return linkhost.BootRoot{}, false
 	}
@@ -1314,7 +1315,7 @@ func (owner *schema) addExactSlot(literal keyspace.LiteralValue) uint32 {
 	return id
 }
 
-func (owner *schema) addDynamicSlot(dynamic keyspace.ContentID) uint32 {
+func (owner *schema) addDynamicSlot(dynamic identity.ContentID) uint32 {
 	if owner == nil || !dynamic.Available() {
 		return 0
 	}
@@ -1842,7 +1843,7 @@ func (owner *schema) admitsReferenceRole(root uint32, role materialization.Role)
 	}
 }
 
-func heapContentID(owner link.OwnerCapability) (id keyspace.ContentID) {
+func heapContentID(owner link.OwnerCapability) (id identity.ContentID) {
 	// schemaFormat is the sole Heap schema/content identity discriminator.
 	// Keeping one version word means a row-layout or projection-authority
 	// change cannot accidentally leave a second, contradictory revision in
@@ -1866,17 +1867,17 @@ func (schema Schema) valid() bool {
 func (schema Schema) Valid() bool { return schema.valid() }
 
 // ContentID identifies the cold Heap declaration, never a recurrent Value.
-func (schema Schema) ContentID() keyspace.ContentID {
+func (schema Schema) ContentID() identity.ContentID {
 	if !schema.valid() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return schema.owner.id
 }
 
 // LinkContentID identifies the exact Link scope that admitted this family.
-func (schema Schema) LinkContentID() keyspace.ContentID {
+func (schema Schema) LinkContentID() identity.ContentID {
 	if !schema.valid() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return schema.owner.linkOwner.ContentID()
 }
@@ -1968,13 +1969,13 @@ func (schema Schema) KeyForAllocationReceipt(receipt AllocationReceipt) (Key, bo
 // AllocationRootValueID returns the sealed mounted semantic identity for one
 // allocation root.  Resolution belongs to Value's detached directory; Heap
 // never retains or reissues a Boundary Value carrier after sealing.
-func (schema Schema) AllocationRootValueID(key Key) (keyspace.ContentID, bool) {
+func (schema Schema) AllocationRootValueID(key Key) (identity.ContentID, bool) {
 	if !schema.valid() || !schema.OwnsKey(key) || key.Kind() != RootAllocation {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	row, ok := schema.owner.rootAt(key.slot)
 	if !ok || row.kind != RootAllocation || !row.allocation.allocationID.Available() || !row.allocation.rootValueID.Available() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return row.allocation.rootValueID, true
 }
@@ -2018,9 +2019,9 @@ func (schema Schema) KeyIndex(key Key) (int, bool) {
 // KeyID is Heap's stable identity for an already owner-issued coordinate.
 // It is not a second root representation and it never serializes a Link
 // allocation handle.
-func (schema Schema) KeyID(key Key) (keyspace.ContentID, bool) {
+func (schema Schema) KeyID(key Key) (identity.ContentID, bool) {
 	if !schema.valid() || !key.valid() || key.owner != schema.owner {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	var payload [32 + 2*8]byte
 	id := schema.ContentID()
@@ -2033,7 +2034,7 @@ func (schema Schema) KeyID(key Key) (keyspace.ContentID, bool) {
 // KeyForBootID admits one existing detached bootstrap semantic ID into the
 // same Heap Key family as allocation roots.  Host coordinates are consumed at
 // seal time and cannot be passed through this post-seal API.
-func (schema Schema) KeyForBootID(rootID keyspace.ContentID) (Key, bool) {
+func (schema Schema) KeyForBootID(rootID identity.ContentID) (Key, bool) {
 	if !schema.valid() {
 		return Key{}, false
 	}
@@ -2059,9 +2060,9 @@ func (schema Schema) BootCount() int {
 	return count
 }
 
-func (schema Schema) BootIDAt(index int) (keyspace.ContentID, bool) {
+func (schema Schema) BootIDAt(index int) (identity.ContentID, bool) {
 	if !schema.valid() || index < 0 {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	for _, row := range schema.owner.roots {
 		if row.kind != RootBoot || !row.bootID.Available() {
@@ -2072,7 +2073,7 @@ func (schema Schema) BootIDAt(index int) (keyspace.ContentID, bool) {
 		}
 		index--
 	}
-	return keyspace.ContentID{}, false
+	return identity.ContentID{}, false
 }
 
 // BootFrozen projects Target's canonical whole-object boot header through the
@@ -2276,9 +2277,9 @@ func (schema Schema) IndexAccessForReceipt(receipt IndexAccessReceipt) (IndexAcc
 // IndexAccessOccurrence returns Heap's exact mounted reusable occurrence key.
 // It is copied while Heap already owns the Program geometry census; callers
 // receive no raw Term, Program, Flow, or mount ordinal to reconstruct it.
-func (schema Schema) IndexAccessOccurrence(access IndexAccess) (module, occurrence keyspace.ContentID, read bool, ok bool) {
+func (schema Schema) IndexAccessOccurrence(access IndexAccess) (module, occurrence identity.ContentID, read bool, ok bool) {
 	if !schema.ownsIndexAccess(access) {
-		return keyspace.ContentID{}, keyspace.ContentID{}, false, false
+		return identity.ContentID{}, identity.ContentID{}, false, false
 	}
 	row := schema.owner.indexAccesses[access.index-1]
 	return row.module, row.occurrence, row.isRead, row.module.Available() && row.occurrence.Available()
@@ -2339,20 +2340,20 @@ func (schema Schema) RawPayloadTagForIndexAccess(access IndexAccess) (RawPayload
 
 // IndexAccessResultID returns the detached Link-owned Boundary Value identity
 // for a read result; callers resolve it directly through Value's ID directory.
-func (schema Schema) IndexAccessResultID(access IndexAccess) (keyspace.ContentID, bool) {
+func (schema Schema) IndexAccessResultID(access IndexAccess) (identity.ContentID, bool) {
 	if !schema.ownsIndexAccess(access) {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	row := schema.owner.indexAccesses[access.index-1]
 	if !row.isRead {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return row.resultID, row.resultID.Available()
 }
 
-func (schema Schema) IndexAccessID(access IndexAccess) (keyspace.ContentID, bool) {
+func (schema Schema) IndexAccessID(access IndexAccess) (identity.ContentID, bool) {
 	if !schema.ownsIndexAccess(access) {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	row := schema.owner.indexAccesses[access.index-1]
 	var payload [32 + 32 + 32 + 1]byte
@@ -2434,9 +2435,9 @@ func (entry BootEntry) Slot() (Slot, bool) {
 // projection. root and slot stay private carrier selectors; their canonical
 // pair is hashed under the sealed Heap schema instead of being exposed as a
 // second key plane.
-func (entry BootEntry) ID() (keyspace.ContentID, bool) {
+func (entry BootEntry) ID() (identity.ContentID, bool) {
 	if !entry.valid() || !entry.owner.id.Available() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	var payload [32 + 4*8]byte
 	copy(payload[:32], entry.owner.id[:])

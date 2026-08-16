@@ -8,8 +8,8 @@ import (
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
 	packdomain "github.com/wippyai/go-lua/analysis/domain/pack"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/link"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/link"
 )
 
 // site is the private ordinary-call binding consumed by this package's Rule.
@@ -20,16 +20,16 @@ type site struct {
 	algebra       *calldomain.Algebra
 	values        *valuedomain.Schema
 	heaps         heapdomain.Schema
-	requireSeedID keyspace.ContentID
+	requireSeedID identity.ContentID
 	packs         *packdomain.Schema
 	key           calldomain.Key
 	mounted       calldomain.MountedCall
 	coordinate    valuedomain.Coordinate
 	root          packdomain.Root
-	keyID         keyspace.ContentID
-	valueID       keyspace.ContentID
-	rootID        keyspace.ContentID
-	id            keyspace.ContentID
+	keyID         identity.ContentID
+	valueID       identity.ContentID
+	rootID        identity.ContentID
+	id            identity.ContentID
 }
 
 const siteVersion uint64 = 1
@@ -42,7 +42,7 @@ func newSite(
 	values *valuedomain.Schema,
 	heaps heapdomain.Schema,
 	packs *packdomain.Schema,
-	applicationID keyspace.ContentID,
+	applicationID identity.ContentID,
 ) (site, bool) {
 	if algebra == nil || !algebra.Valid() || values == nil || packs == nil || !heaps.Valid() {
 		return site{}, false
@@ -72,13 +72,13 @@ func newSite(
 	return bound, bound.valid()
 }
 
-func siteID(owner link.OwnerCapability, keyID, valueID, rootID keyspace.ContentID) keyspace.ContentID {
+func siteID(owner link.OwnerCapability, keyID, valueID, rootID identity.ContentID) identity.ContentID {
 	if !owner.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	linkID := owner.ContentID()
 	if !linkID.Available() || !keyID.Available() || !valueID.Available() || !rootID.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	var image [32*4 + 16]byte
 	copy(image[:32], linkID[:])
@@ -144,9 +144,9 @@ func (bound site) rootMatches() bool {
 	return ok && id == bound.rootID
 }
 
-func (bound site) contentID() (keyspace.ContentID, bool) {
+func (bound site) contentID() (identity.ContentID, bool) {
 	if !bound.valid() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return bound.id, true
 }

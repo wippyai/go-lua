@@ -4,8 +4,8 @@ import (
 	"crypto/sha256"
 
 	"github.com/wippyai/go-lua/analysis/domain/pack"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
 const publicationPlacementCorrelationDomain = "wippy.analysis.effect.publication-placement-correlation.v1\x00"
@@ -21,14 +21,14 @@ const publicationPlacementCorrelationDomain = "wippy.analysis.effect.publication
 // runtime capability. That makes it safe to carry as a static correlation
 // input without extending either result lifetime or placement authority.
 type PublicationPlacementCorrelationCandidate struct {
-	id          keyspace.ContentID
-	proof       keyspace.ContentID
-	descriptor  keyspace.ContentID
-	occurrence  keyspace.ContentID
-	mount       keyspace.ContentID
-	call        keyspace.ContentID
-	subject     keyspace.ContentID
-	destination keyspace.ContentID
+	id          identity.ContentID
+	proof       identity.ContentID
+	descriptor  identity.ContentID
+	occurrence  identity.ContentID
+	mount       identity.ContentID
+	call        identity.ContentID
+	subject     identity.ContentID
+	destination identity.ContentID
 	hasContext  bool
 	kind        target.PublicationEffectKind
 	escape      target.PublicationEscapeDisposition
@@ -36,14 +36,14 @@ type PublicationPlacementCorrelationCandidate struct {
 	lifetime    target.PublicationLifetimeDisposition
 }
 
-func publicationPlacementCorrelationID(proof, descriptor, occurrence, mount, call, subject, destination keyspace.ContentID, hasContext bool, kind target.PublicationEffectKind, escape target.PublicationEscapeDisposition, mutability target.PublicationMutabilityDisposition, lifetime target.PublicationLifetimeDisposition) keyspace.ContentID {
+func publicationPlacementCorrelationID(proof, descriptor, occurrence, mount, call, subject, destination identity.ContentID, hasContext bool, kind target.PublicationEffectKind, escape target.PublicationEscapeDisposition, mutability target.PublicationMutabilityDisposition, lifetime target.PublicationLifetimeDisposition) identity.ContentID {
 	if !proof.Available() || !descriptor.Available() || !occurrence.Available() || !mount.Available() || !call.Available() || !subject.Available() ||
 		hasContext && !destination.Available() || !hasContext && destination.Available() || !publicationPlacementConsequencesValid(kind, escape, mutability, lifetime) {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	hash := sha256.New()
 	_, _ = hash.Write([]byte(publicationPlacementCorrelationDomain))
-	for _, value := range [...]keyspace.ContentID{proof, descriptor, occurrence, mount, call, subject, destination} {
+	for _, value := range [...]identity.ContentID{proof, descriptor, occurrence, mount, call, subject, destination} {
 		_, _ = hash.Write(value[:])
 	}
 	if hasContext {
@@ -52,7 +52,7 @@ func publicationPlacementCorrelationID(proof, descriptor, occurrence, mount, cal
 		_, _ = hash.Write([]byte{0})
 	}
 	_, _ = hash.Write([]byte{byte(kind), byte(escape), byte(mutability), byte(lifetime)})
-	var id keyspace.ContentID
+	var id identity.ContentID
 	copy(id[:], hash.Sum(nil))
 	return id
 }
@@ -112,7 +112,7 @@ func NewPublicationPlacementCorrelationCandidate(proof PublicationTransitionProo
 	}
 
 	hasContext := false
-	destinationID := keyspace.ContentID{}
+	destinationID := identity.ContentID{}
 	if contextSelector, contextRequired := proof.ContextSelector(); contextRequired {
 		destinationModule, destinationCall, destinationProvenanceOK := destination.CallProvenance()
 		if !destinationPresent || !pack.SameRuntimeAllocationContextBindingIssuer(subject, destination) || !destination.MatchesSelector(contextSelector) || !destinationProvenanceOK || destinationModule != mount || destinationCall != call {
@@ -138,34 +138,34 @@ func NewPublicationPlacementCorrelationCandidate(proof PublicationTransitionProo
 	return candidate, candidate.valid()
 }
 
-func (candidate PublicationPlacementCorrelationCandidate) ContentID() (keyspace.ContentID, bool) {
+func (candidate PublicationPlacementCorrelationCandidate) ContentID() (identity.ContentID, bool) {
 	return candidate.id, candidate.valid()
 }
 
-func (candidate PublicationPlacementCorrelationCandidate) ProofID() (keyspace.ContentID, bool) {
+func (candidate PublicationPlacementCorrelationCandidate) ProofID() (identity.ContentID, bool) {
 	return candidate.proof, candidate.valid()
 }
 
-func (candidate PublicationPlacementCorrelationCandidate) DescriptorID() (keyspace.ContentID, bool) {
+func (candidate PublicationPlacementCorrelationCandidate) DescriptorID() (identity.ContentID, bool) {
 	return candidate.descriptor, candidate.valid()
 }
 
-func (candidate PublicationPlacementCorrelationCandidate) OccurrenceID() (keyspace.ContentID, bool) {
+func (candidate PublicationPlacementCorrelationCandidate) OccurrenceID() (identity.ContentID, bool) {
 	return candidate.occurrence, candidate.valid()
 }
 
-func (candidate PublicationPlacementCorrelationCandidate) CallProvenance() (mount, call keyspace.ContentID, ok bool) {
+func (candidate PublicationPlacementCorrelationCandidate) CallProvenance() (mount, call identity.ContentID, ok bool) {
 	if !candidate.valid() {
-		return keyspace.ContentID{}, keyspace.ContentID{}, false
+		return identity.ContentID{}, identity.ContentID{}, false
 	}
 	return candidate.mount, candidate.call, true
 }
 
-func (candidate PublicationPlacementCorrelationCandidate) SubjectBindingID() (keyspace.ContentID, bool) {
+func (candidate PublicationPlacementCorrelationCandidate) SubjectBindingID() (identity.ContentID, bool) {
 	return candidate.subject, candidate.valid()
 }
 
-func (candidate PublicationPlacementCorrelationCandidate) DestinationBindingID() (keyspace.ContentID, bool) {
+func (candidate PublicationPlacementCorrelationCandidate) DestinationBindingID() (identity.ContentID, bool) {
 	return candidate.destination, candidate.valid() && candidate.hasContext
 }
 

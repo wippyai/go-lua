@@ -4,9 +4,9 @@ package covariant
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	"github.com/wippyai/go-lua/analysis/type/subtype"
-	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/analysis/type/unwrap"
+	"github.com/wippyai/go-lua/analysis/domain/type/subtype"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/unwrap"
 )
 
 // WidenRecord rebuilds a covariantly exposed ancestor record and returns the

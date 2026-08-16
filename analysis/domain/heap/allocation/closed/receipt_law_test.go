@@ -12,12 +12,12 @@ import (
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/internal/programartifact/schemaadapter"
-	"github.com/wippyai/go-lua/analysis/internal/programschema"
-	"github.com/wippyai/go-lua/program/link"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
-	"github.com/wippyai/go-lua/program/lower"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/lua/lower"
+	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
+	"github.com/wippyai/go-lua/analysis/program/link"
+	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 // TestClosedMountedReceiptAdmission keeps the valid ownership law at the
@@ -35,7 +35,7 @@ func TestClosedMountedReceiptAdmission(t *testing.T) {
 
 	builder := engine.NewSchema()
 	heapFragment, heapOK := heapowner.DeclareSchema(builder, closedKey(1))
-	valueFragment, valueOK := valueowner.DeclareSchema(builder, closedKey(2), closedKey(3))
+	valueFragment, valueOK := valueowner.DeclareSchema(builder, closedKey(2), closedKey(3), closedKey(101))
 	fragment, fragmentOK := closed.DeclareSchema(builder, closedKey(4), closedKey(5), closedKey(6), closedKey(7), heapFragment, valueFragment)
 	cold, coldOK := builder.Seal()
 	if !heapOK || !valueOK || !fragmentOK || !coldOK || cold == nil {
@@ -108,7 +108,7 @@ func closedReceiptFixture(t testing.TB, text string) (heapdomain.Schema, *valued
 
 func closedArtifactMounts(t testing.TB, linked *link.Link) closedFixtureMounts {
 	t.Helper()
-	receipt, receiptOK := programschema.Global()
+	receipt, receiptOK := grammar.Global()
 	if !receiptOK || linked == nil || linked.Project() == nil {
 		t.Fatal("closed artifact receipt")
 	}

@@ -7,13 +7,13 @@ package callsite
 import (
 	effectowner "github.com/wippyai/go-lua/analysis/domain/effect/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 type mountedReceiptRows struct {
 	rule   *HotRule
-	module keyspace.ContentID
-	rows   map[keyspace.ContentID]hotOperand
+	module identity.ContentID
+	rows   map[identity.ContentID]hotOperand
 }
 
 func (rule *HotRule) sealOccurrenceReceipts() bool {
@@ -25,7 +25,7 @@ func (rule *HotRule) sealOccurrenceReceipts() bool {
 	}
 	rule.receiptsSealed = true
 	effects := rule.effects.Algebra()
-	occurrences := make(map[keyspace.ContentID]*mountedReceiptRows)
+	occurrences := make(map[identity.ContentID]*mountedReceiptRows)
 	for index := 0; index < effects.MountedCallCount(); index++ {
 		mounted, mountedOK := effects.MountedCallAt(index)
 		_, module, id, identityOK := effects.MountedCallIdentity(mounted)
@@ -34,7 +34,7 @@ func (rule *HotRule) sealOccurrenceReceipts() bool {
 		}
 		rows := occurrences[module]
 		if rows == nil {
-			rows = &mountedReceiptRows{rule: rule, module: module, rows: make(map[keyspace.ContentID]hotOperand)}
+			rows = &mountedReceiptRows{rule: rule, module: module, rows: make(map[identity.ContentID]hotOperand)}
 			occurrences[module] = rows
 		}
 		operand, operandOK := rule.Receipt(mounted)
@@ -57,7 +57,7 @@ func (rule *HotRule) SealOccurrenceReceipts() bool {
 }
 
 // ForMount returns this rule's exact receipt issuer for one mounted module.
-func (rule *HotRule) ForMount(module keyspace.ContentID) (ReceiptIssuer, bool) {
+func (rule *HotRule) ForMount(module identity.ContentID) (ReceiptIssuer, bool) {
 	if rule == nil || !rule.receiptsSealed || !module.Available() {
 		return ReceiptIssuer{}, false
 	}
@@ -68,7 +68,7 @@ func (rule *HotRule) ForMount(module keyspace.ContentID) (ReceiptIssuer, bool) {
 
 type ReceiptIssuer struct{ rows *mountedReceiptRows }
 
-func (issuer ReceiptIssuer) ReceiptForOccurrence(id keyspace.ContentID) (hotOperand, bool) {
+func (issuer ReceiptIssuer) ReceiptForOccurrence(id identity.ContentID) (hotOperand, bool) {
 	if issuer.rows == nil || !id.Available() || issuer.rows.rule == nil || issuer.rows.rule.occurrences[issuer.rows.module] != issuer.rows {
 		return hotOperand{}, false
 	}
@@ -81,7 +81,7 @@ func (issuer ReceiptIssuer) ReceiptForOccurrence(id keyspace.ContentID) (hotOper
 // rule's owner capability plus mount/occurrence; callers cannot supply or
 // splice a stage point. Opaque Call handling is intentionally a distinct role
 // and cannot issue this selected receipt.
-func (rule *HotRule) MountedSelectedCallEffectStage(graph *engine.ReceiptGraph, mountID, occurrenceID keyspace.ContentID) (engine.MountedNativeCallStageReceipt, bool) {
+func (rule *HotRule) MountedSelectedCallEffectStage(graph *engine.ReceiptGraph, mountID, occurrenceID identity.ContentID) (engine.MountedNativeCallStageReceipt, bool) {
 	if rule == nil || rule.opaque || graph == nil || !mountID.Available() || !occurrenceID.Available() || rule.implementation == nil {
 		return engine.MountedNativeCallStageReceipt{}, false
 	}
@@ -97,7 +97,7 @@ func (rule *HotRule) MountedSelectedCallEffectStage(graph *engine.ReceiptGraph, 
 
 // AttachMountedOccurrence admits one Selected/Opaque artifact Call row with
 // exact Call predecessor and Effect output surfaces.
-func (rule *HotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, mountID, reusablePointID, occurrenceID keyspace.ContentID) (engine.BindingRuleRowRef, bool) {
+func (rule *HotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, mountID, reusablePointID, occurrenceID identity.ContentID) (engine.BindingRuleRowRef, bool) {
 	if rule == nil || rule.implementation == nil || rule.calls == nil || rule.effects == nil || assembly == nil {
 		return engine.BindingRuleRowRef{}, false
 	}
@@ -146,7 +146,7 @@ func (rule *HotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, m
 
 // AttachMountedReceiptMember resolves and attaches one exact Selected/Opaque
 // graph member using the preissued typed callsite operand.
-func (rule *HotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, reusablePointID, occurrenceID keyspace.ContentID) (*engine.ReceiptMember, bool) {
+func (rule *HotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, reusablePointID, occurrenceID identity.ContentID) (*engine.ReceiptMember, bool) {
 	if rule == nil || compilation == nil || graph == nil || rule.implementation == nil {
 		return nil, false
 	}
@@ -182,7 +182,7 @@ func (rule *BodyHotRule) sealOccurrenceReceipts() bool {
 	}
 	rule.receiptsSealed = true
 	effects := rule.effects.Algebra()
-	occurrences := make(map[keyspace.ContentID]*mountedBodyReceiptRows)
+	occurrences := make(map[identity.ContentID]*mountedBodyReceiptRows)
 	for index := 0; index < effects.MountedCallCount(); index++ {
 		mounted, mountedOK := effects.MountedCallAt(index)
 		_, module, id, identityOK := effects.MountedCallIdentity(mounted)
@@ -191,7 +191,7 @@ func (rule *BodyHotRule) sealOccurrenceReceipts() bool {
 		}
 		rows := occurrences[module]
 		if rows == nil {
-			rows = &mountedBodyReceiptRows{rule: rule, module: module, rows: make(map[keyspace.ContentID]hotBodyOperand)}
+			rows = &mountedBodyReceiptRows{rule: rule, module: module, rows: make(map[identity.ContentID]hotBodyOperand)}
 			occurrences[module] = rows
 		}
 		operand, operandOK := rule.Receipt(mounted)
@@ -209,8 +209,8 @@ func (rule *BodyHotRule) sealOccurrenceReceipts() bool {
 
 type mountedBodyReceiptRows struct {
 	rule   *BodyHotRule
-	module keyspace.ContentID
-	rows   map[keyspace.ContentID]hotBodyOperand
+	module identity.ContentID
+	rows   map[identity.ContentID]hotBodyOperand
 }
 
 // SealOccurrenceReceipts issues every Body mounted Call receipt and closes
@@ -220,7 +220,7 @@ func (rule *BodyHotRule) SealOccurrenceReceipts() bool {
 }
 
 // ForMount returns Body's exact mounted receipt issuer.
-func (rule *BodyHotRule) ForMount(module keyspace.ContentID) (BodyReceiptIssuer, bool) {
+func (rule *BodyHotRule) ForMount(module identity.ContentID) (BodyReceiptIssuer, bool) {
 	if rule == nil || !rule.receiptsSealed || !module.Available() {
 		return BodyReceiptIssuer{}, false
 	}
@@ -405,7 +405,7 @@ func (rule *BodyHotRule) recordFinalizationFailure(failure BodyReceiptFinalizati
 	}
 }
 
-func (issuer BodyReceiptIssuer) ReceiptForOccurrence(id keyspace.ContentID) (hotBodyOperand, bool) {
+func (issuer BodyReceiptIssuer) ReceiptForOccurrence(id identity.ContentID) (hotBodyOperand, bool) {
 	if issuer.rows == nil || !id.Available() || issuer.rows.rule == nil || issuer.rows.rule.occurrences[issuer.rows.module] != issuer.rows {
 		return hotBodyOperand{}, false
 	}
@@ -413,7 +413,7 @@ func (issuer BodyReceiptIssuer) ReceiptForOccurrence(id keyspace.ContentID) (hot
 	return operand, ok && issuer.rows.rule.accepts(operand)
 }
 
-func (rule *BodyHotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, mountID, reusablePointID, occurrenceID keyspace.ContentID) (engine.BindingRuleRowRef, bool) {
+func (rule *BodyHotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, mountID, reusablePointID, occurrenceID identity.ContentID) (engine.BindingRuleRowRef, bool) {
 	row, failure := rule.AttachMountedOccurrenceWithFailure(assembly, mountID, reusablePointID, occurrenceID)
 	return row, failure == BodyReceiptAttachFailureNone
 }
@@ -421,7 +421,7 @@ func (rule *BodyHotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembl
 // AttachMountedOccurrenceWithFailure admits one mount-qualified Body row and
 // returns its closed failed capability phase when the exact receipt cannot be
 // attached.
-func (rule *BodyHotRule) AttachMountedOccurrenceWithFailure(assembly *engine.ReceiptAssembly, mountID, reusablePointID, occurrenceID keyspace.ContentID) (engine.BindingRuleRowRef, BodyReceiptAttachFailure) {
+func (rule *BodyHotRule) AttachMountedOccurrenceWithFailure(assembly *engine.ReceiptAssembly, mountID, reusablePointID, occurrenceID identity.ContentID) (engine.BindingRuleRowRef, BodyReceiptAttachFailure) {
 	if rule == nil || rule.implementation == nil || rule.calls == nil || rule.effects == nil || assembly == nil {
 		return engine.BindingRuleRowRef{}, BodyReceiptAttachFailureArguments
 	}
@@ -572,7 +572,7 @@ func (rule *BodyHotRule) AttachMountedOccurrenceWithFailure(assembly *engine.Rec
 
 // AttachMountedReceiptMember resolves and attaches one exact Body graph
 // member using its preissued body-call operand.
-func (rule *BodyHotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, reusablePointID, occurrenceID keyspace.ContentID) (*engine.ReceiptMember, bool) {
+func (rule *BodyHotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, reusablePointID, occurrenceID identity.ContentID) (*engine.ReceiptMember, bool) {
 	if rule == nil || compilation == nil || graph == nil || rule.implementation == nil {
 		return nil, false
 	}

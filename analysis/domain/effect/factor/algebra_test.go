@@ -6,17 +6,17 @@ import (
 	effectfactor "github.com/wippyai/go-lua/analysis/domain/effect/factor"
 	"github.com/wippyai/go-lua/analysis/domain/pack"
 	staticdomain "github.com/wippyai/go-lua/analysis/domain/static"
-	programartifact "github.com/wippyai/go-lua/analysis/internal/programartifact"
-	"github.com/wippyai/go-lua/analysis/internal/programartifact/schemaadapter"
-	"github.com/wippyai/go-lua/analysis/internal/programschema"
-	"github.com/wippyai/go-lua/analysis/semantic/typeauthority"
-	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/program/flow/kind"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/link"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
-	"github.com/wippyai/go-lua/program/lower"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/domain/type/authority"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/lua/lower"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
+	"github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/link"
+	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 type effectFactorFixture struct {
@@ -28,7 +28,7 @@ type effectFactorFixture struct {
 	factor      *effectfactor.Algebra
 	mounts      []effectfactor.MountedArtifact
 	owner       target.Operation
-	application keyspace.ContentID
+	application identity.ContentID
 	mountedCall effectfactor.MountedCall
 	root        effectfactor.Root
 }
@@ -47,7 +47,7 @@ func newEffectFactorFixture(t testing.TB, spec target.Spec, source string) effec
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, ok := programschema.Global()
+	receipt, ok := grammar.Global()
 	if !ok {
 		t.Fatal("program schema receipt")
 	}
@@ -153,7 +153,7 @@ func effectKnownAtom(t testing.TB, fixture effectFactorFixture) effectfactor.Ato
 	return atom
 }
 
-func effectAtomID(t testing.TB, algebra *effectfactor.Algebra, atom effectfactor.Atom) keyspace.ContentID {
+func effectAtomID(t testing.TB, algebra *effectfactor.Algebra, atom effectfactor.Atom) identity.ContentID {
 	t.Helper()
 	id, ok := algebra.AtomID(atom)
 	if !ok || !id.Available() {

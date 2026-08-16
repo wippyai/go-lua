@@ -4,9 +4,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/wippyai/go-lua/analysis/type/annotation"
-	"github.com/wippyai/go-lua/analysis/type/kind"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/annotation"
+	"github.com/wippyai/go-lua/analysis/domain/type/kind"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	"github.com/wippyai/go-lua/validate"
 )
 
@@ -265,7 +265,7 @@ func validateBasic(val LValue, t typ.Type) bool {
 }
 
 func validateLiteralTyp(val LValue, lt *typ.Literal) bool {
-	switch lit := lt.Value.(type) {
+	switch lit := lt.Value().(type) {
 	case string:
 		s, ok := val.(LString)
 		return ok && string(s) == lit

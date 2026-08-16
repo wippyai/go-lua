@@ -3,38 +3,22 @@ package analysis
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/program/link"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
-	"github.com/wippyai/go-lua/program/lower"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/program/link"
+	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
+// The synthetic-source links below share the harness' single-module seal so
+// one construction path serves both fixture text and inline law text.
 func directFieldHostileLink(t testing.TB, text string) *link.Link {
 	t.Helper()
-	program, err := lower.Lower(lower.Source{Name: "analysis_test.lua", Text: []byte(text)})
-	if err != nil {
-		t.Fatal(err)
-	}
 	contract, err := target.Seal(&target.Spec{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	linked, err := link.Seal(&link.Spec{Target: contract, Modules: []linkproject.Module{{Name: "main", Program: program}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return linked
+	return corpusHarnessSourceLink(t, contract, "analysis_test.lua", []byte(text))
 }
 
 func mustLink(t testing.TB, text string, contract *target.Contract) *link.Link {
 	t.Helper()
-	program, err := lower.Lower(lower.Source{Name: "analysis.lua", Text: []byte(text)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	linked, err := link.Seal(&link.Spec{Target: contract, Modules: []linkproject.Module{{Name: "main", Program: program}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return linked
+	return corpusHarnessSourceLink(t, contract, "analysis.lua", []byte(text))
 }

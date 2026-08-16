@@ -17,8 +17,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 	"github.com/wippyai/go-lua/analysis/symbol"
-	typerefine "github.com/wippyai/go-lua/analysis/type/refinement"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	typerefine "github.com/wippyai/go-lua/analysis/domain/type/refinement"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 )
 
 func TestFormalTupleLeafEvaluatorDirectBorrowedCorrelatedAndOwned(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // RuleOccurrenceReceipt and RuleOperandReceipt are sealed source-batch
@@ -16,12 +16,12 @@ type RuleOccurrenceReceipt struct {
 	role        RuleSlotCapability
 	linkRole    RuleSlotCapability
 	value       equation.Occurrence
-	member      keyspace.ContentID
-	activation  keyspace.ContentID
-	mount       keyspace.ContentID
-	reusable    keyspace.ContentID
+	member      identity.ContentID
+	activation  identity.ContentID
+	mount       identity.ContentID
+	reusable    identity.ContentID
 	input       equation.Site
-	inputID     keyspace.ContentID
+	inputID     identity.ContentID
 	stage       ArtifactRuleStage
 	predecessor *artifactEnvironmentRow
 	routed      bool
@@ -281,7 +281,7 @@ func completeCapabilityDirectory(state *schemaBindingState) bool {
 // AdmitMountedRuleOccurrence resolves one exact mounted point and occurrence
 // identity. The member identity is mount+point+occurrence qualified, so equal
 // reusable artifacts and same IDs on different mounts cannot alias.
-func (assembly *ReceiptAssembly) AdmitMountedRuleOccurrence(role RuleSlotCapability, mountID, reusablePointID, occurrenceID keyspace.ContentID) (RuleOccurrenceReceipt, bool) {
+func (assembly *ReceiptAssembly) AdmitMountedRuleOccurrence(role RuleSlotCapability, mountID, reusablePointID, occurrenceID identity.ContentID) (RuleOccurrenceReceipt, bool) {
 	if assembly == nil || assembly.builder == nil || !role.mounted() || !mountID.Available() || !reusablePointID.Available() || !occurrenceID.Available() {
 		return RuleOccurrenceReceipt{}, false
 	}
@@ -292,7 +292,7 @@ func (assembly *ReceiptAssembly) AdmitMountedRuleOccurrence(role RuleSlotCapabil
 	rows := inner.artifact
 	var site equation.Site
 	var inputSite equation.Site
-	var inputID keyspace.ContentID
+	var inputID identity.ContentID
 	var stage ArtifactRuleStage
 	var predecessor *artifactEnvironmentRow
 	var routed bool
@@ -327,7 +327,7 @@ func (assembly *ReceiptAssembly) AdmitMountedRuleOccurrence(role RuleSlotCapabil
 // AdmitLinkRuleOccurrence resolves only the two Link-global bootstrap roles
 // from the sealed witness catalog. It has no mount argument and cannot admit
 // an arbitrary site or occurrence ID.
-func (assembly *ReceiptAssembly) AdmitLinkRuleOccurrence(role RuleSlotCapability, occurrenceID keyspace.ContentID) (RuleOccurrenceReceipt, bool) {
+func (assembly *ReceiptAssembly) AdmitLinkRuleOccurrence(role RuleSlotCapability, occurrenceID identity.ContentID) (RuleOccurrenceReceipt, bool) {
 	if assembly == nil || assembly.builder == nil || !role.link() || !occurrenceID.Available() || assembly.builder.inner == nil {
 		return RuleOccurrenceReceipt{}, false
 	}
@@ -1276,31 +1276,31 @@ func (assembly *ReceiptAssembly) IssueRuleSourceWithSurfacesWithFailure(semantic
 	return RuleSurfaceSourceReceipt{value: source, assembly: assembly}, RuleSourceIssueFailureNone
 }
 
-func mountedRuleMemberID(role RuleSlotCapability, mount, point, occurrence keyspace.ContentID) keyspace.ContentID {
+func mountedRuleMemberID(role RuleSlotCapability, mount, point, occurrence identity.ContentID) identity.ContentID {
 	if !role.mounted() || !mount.Available() || !point.Available() || !occurrence.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	encoded := []byte("analysis/engine/rule-member/v2")
 	encoded = appendRuleSlotCapability(encoded, role)
 	encoded = append(encoded, mount[:]...)
 	encoded = append(encoded, point[:]...)
 	encoded = append(encoded, occurrence[:]...)
-	return keyspace.ContentID(sha256.Sum256(encoded))
+	return identity.ContentID(sha256.Sum256(encoded))
 }
 
-func mountedRuleActivationID(role RuleSlotCapability, mount, point, occurrence keyspace.ContentID) keyspace.ContentID {
+func mountedRuleActivationID(role RuleSlotCapability, mount, point, occurrence identity.ContentID) identity.ContentID {
 	if !role.mounted() || !mount.Available() || !point.Available() || !occurrence.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	encoded := []byte("analysis/engine/activation-member/v2")
 	encoded = appendRuleSlotCapability(encoded, role)
 	encoded = append(encoded, mount[:]...)
 	encoded = append(encoded, point[:]...)
 	encoded = append(encoded, occurrence[:]...)
-	return keyspace.ContentID(sha256.Sum256(encoded))
+	return identity.ContentID(sha256.Sum256(encoded))
 }
 
-func mountedRuleInputKey(member, input keyspace.ContentID, slot uint64) (composition.Key, bool) {
+func mountedRuleInputKey(member, input identity.ContentID, slot uint64) (composition.Key, bool) {
 	if !member.Available() || !input.Available() {
 		return composition.Key{}, false
 	}
@@ -1313,42 +1313,42 @@ func mountedRuleInputKey(member, input keyspace.ContentID, slot uint64) (composi
 			break
 		}
 	}
-	return artifactReceiptKey(keyspace.ContentID(sha256.Sum256(encoded)), artifactOccurrenceSourceVersion)
+	return artifactReceiptKey(identity.ContentID(sha256.Sum256(encoded)), artifactOccurrenceSourceVersion)
 }
 
-func linkRuleOccurrenceKey(role RuleSlotCapability, occurrence keyspace.ContentID) (composition.Key, bool) {
+func linkRuleOccurrenceKey(role RuleSlotCapability, occurrence identity.ContentID) (composition.Key, bool) {
 	if !role.link() || !occurrence.Available() {
 		return composition.Key{}, false
 	}
 	encoded := []byte("analysis/engine/link-rule-occurrence/v1")
 	encoded = appendRuleSlotCapability(encoded, role)
 	encoded = append(encoded, occurrence[:]...)
-	return artifactReceiptKey(keyspace.ContentID(sha256.Sum256(encoded)), artifactOccurrenceSourceVersion)
+	return artifactReceiptKey(identity.ContentID(sha256.Sum256(encoded)), artifactOccurrenceSourceVersion)
 }
 
-func linkRuleMemberID(role RuleSlotCapability, owner, point, occurrence keyspace.ContentID) keyspace.ContentID {
+func linkRuleMemberID(role RuleSlotCapability, owner, point, occurrence identity.ContentID) identity.ContentID {
 	if !role.link() || !owner.Available() || !point.Available() || !occurrence.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	encoded := []byte("analysis/engine/link-rule-member/v1")
 	encoded = appendRuleSlotCapability(encoded, role)
 	encoded = append(encoded, owner[:]...)
 	encoded = append(encoded, point[:]...)
 	encoded = append(encoded, occurrence[:]...)
-	return keyspace.ContentID(sha256.Sum256(encoded))
+	return identity.ContentID(sha256.Sum256(encoded))
 }
 
 // mountedRuleOccurrenceKey keeps the Batch occurrence entity family-local.
 // One authored occurrence can feed several closed Rule roles; sharing the
 // raw artifact ID would alias those independent semantic rows.
-func mountedRuleOccurrenceKey(role RuleSlotCapability, occurrence keyspace.ContentID) (composition.Key, bool) {
+func mountedRuleOccurrenceKey(role RuleSlotCapability, occurrence identity.ContentID) (composition.Key, bool) {
 	if !role.mounted() || !occurrence.Available() {
 		return composition.Key{}, false
 	}
 	encoded := []byte("analysis/engine/rule-occurrence/v1")
 	encoded = appendRuleSlotCapability(encoded, role)
 	encoded = append(encoded, occurrence[:]...)
-	return artifactReceiptKey(keyspace.ContentID(sha256.Sum256(encoded)), artifactOccurrenceSourceVersion)
+	return artifactReceiptKey(identity.ContentID(sha256.Sum256(encoded)), artifactOccurrenceSourceVersion)
 }
 
 func appendRuleSlotCapability(encoded []byte, capability RuleSlotCapability) []byte {

@@ -4,6 +4,7 @@ import (
 	allocationcatalog "github.com/wippyai/go-lua/analysis/domain/heap/allocation/catalog"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 // AnalyzeDiagnosticPhase is the coarse permanent production phase reached by
@@ -151,80 +152,14 @@ func (failure AnalyzeDiagnosticItemIssuanceFailure) String() string {
 }
 
 // AnalyzeDiagnosticRule is the closed analyzer-owned classification of the
-// Engine first-failure Rule key. Unknown includes empty, foreign, and generic
-// engine lifecycle failures without a bound analyzer rule.
-type AnalyzeDiagnosticRule uint8
+// Engine first-failure Rule key. It is the sealed rule table's own
+// classification: the inventory, the ordinals, and the names all come from
+// that one table, so a rule added there is classified without a second list.
+// Unknown includes empty, foreign, and generic engine lifecycle failures
+// without a bound analyzer rule.
+type AnalyzeDiagnosticRule = grammar.DiagnosticRule
 
-const (
-	AnalyzeDiagnosticRuleUnknown AnalyzeDiagnosticRule = iota
-	AnalyzeDiagnosticRuleValueSource
-	AnalyzeDiagnosticRulePackSource
-	AnalyzeDiagnosticRuleHeapIngress
-	AnalyzeDiagnosticRuleValueAllocation
-	AnalyzeDiagnosticRuleHeapEmpty
-	AnalyzeDiagnosticRuleHeapClosed
-	AnalyzeDiagnosticRuleRawGet
-	AnalyzeDiagnosticRuleRawSet
-	AnalyzeDiagnosticRuleCallDispatch
-	AnalyzeDiagnosticRuleEffectSelected
-	AnalyzeDiagnosticRuleEffectOpaque
-	AnalyzeDiagnosticRuleEffectBody
-	AnalyzeDiagnosticRuleCallActivation
-	AnalyzeDiagnosticRuleValueBootstrap
-	AnalyzeDiagnosticRuleHeapBootstrap
-	AnalyzeDiagnosticRuleValueTransfer
-	AnalyzeDiagnosticRuleValueBinaryArithmetic
-	AnalyzeDiagnosticRuleValueBinaryEquality
-	AnalyzeDiagnosticRuleValueBinaryOrder
-	AnalyzeDiagnosticRuleValuePresenceRefinement
-)
-
-func (rule AnalyzeDiagnosticRule) String() string {
-	switch rule {
-	case AnalyzeDiagnosticRuleValueSource:
-		return "value-source"
-	case AnalyzeDiagnosticRulePackSource:
-		return "pack-source"
-	case AnalyzeDiagnosticRuleHeapIngress:
-		return "heap-ingress"
-	case AnalyzeDiagnosticRuleValueAllocation:
-		return "value-allocation"
-	case AnalyzeDiagnosticRuleHeapEmpty:
-		return "heap-empty"
-	case AnalyzeDiagnosticRuleHeapClosed:
-		return "heap-closed"
-	case AnalyzeDiagnosticRuleRawGet:
-		return "raw-get"
-	case AnalyzeDiagnosticRuleRawSet:
-		return "raw-set"
-	case AnalyzeDiagnosticRuleCallDispatch:
-		return "call-dispatch"
-	case AnalyzeDiagnosticRuleEffectSelected:
-		return "effect-selected"
-	case AnalyzeDiagnosticRuleEffectOpaque:
-		return "effect-opaque"
-	case AnalyzeDiagnosticRuleEffectBody:
-		return "effect-body"
-	case AnalyzeDiagnosticRuleCallActivation:
-		return "call-activation"
-	case AnalyzeDiagnosticRuleValueBootstrap:
-		return "value-bootstrap"
-	case AnalyzeDiagnosticRuleHeapBootstrap:
-		return "heap-bootstrap"
-	case AnalyzeDiagnosticRuleValueTransfer:
-		return "value-transfer"
-	case AnalyzeDiagnosticRuleValueBinaryArithmetic:
-		return "value-binary-arithmetic"
-	case AnalyzeDiagnosticRuleValueBinaryEquality:
-		return "value-binary-equality"
-	case AnalyzeDiagnosticRuleValueBinaryOrder:
-		return "value-binary-order"
-	case AnalyzeDiagnosticRuleValuePresenceRefinement:
-		return "value-presence-refinement"
-	default:
-		return "unknown"
-	}
-}
+const AnalyzeDiagnosticRuleUnknown = grammar.DiagnosticRuleUnknown
 
 // AnalyzeDiagnostics is the detached analysis-level envelope for one Plan
 // solve. Engine contains optional bounded runtime evidence; Phase and Reason

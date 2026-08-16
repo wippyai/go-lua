@@ -9,13 +9,14 @@ import (
 	bootstrap "github.com/wippyai/go-lua/analysis/domain/value/bootstrap"
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/internal/programartifact/schemaadapter"
-	"github.com/wippyai/go-lua/analysis/internal/programschema"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/link"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
-	"github.com/wippyai/go-lua/program/lower"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/lua/lower"
+	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/program/link"
+	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 func TestHotBootstrapRuleBindsReceiptAndRejectsForeignOperand(t *testing.T) {
@@ -55,10 +56,10 @@ func TestHotBootstrapRuleBindsReceiptAndRejectsForeignOperand(t *testing.T) {
 	if receipt, ok := rule.ReceiptForID(localID); !ok || receipt != localID {
 		t.Fatal("local bootstrap receipt rejected")
 	}
-	if receipt, ok := rule.ReceiptForID(foreignID); ok || receipt != (keyspace.ContentID{}) {
+	if receipt, ok := rule.ReceiptForID(foreignID); ok || receipt != (identity.ContentID{}) {
 		t.Fatal("foreign bootstrap receipt crossed Value owner")
 	}
-	if receipt, ok := rule.ReceiptForID(keyspace.ContentID{}); ok || receipt != (keyspace.ContentID{}) {
+	if receipt, ok := rule.ReceiptForID(identity.ContentID{}); ok || receipt != (identity.ContentID{}) {
 		t.Fatal("zero bootstrap receipt accepted")
 	}
 
@@ -106,7 +107,7 @@ func bootstrapFixture(t testing.TB, name string) *bootstrapFixtureState {
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, ok := programschema.Global()
+	receipt, ok := grammar.Global()
 	if !ok {
 		t.Fatal("program schema receipt")
 	}
@@ -133,7 +134,7 @@ func bootstrapFixture(t testing.TB, name string) *bootstrapFixtureState {
 func bootstrapColdSchema(t testing.TB) (*engine.Schema, *valueowner.SchemaFragment, *bootstrap.SchemaFragment) {
 	t.Helper()
 	builder := engine.NewSchema()
-	ownerFragment, ownerOK := valueowner.DeclareSchema(builder, bootstrapKey(32_001), bootstrapKey(32_002))
+	ownerFragment, ownerOK := valueowner.DeclareSchema(builder, bootstrapKey(32_001), bootstrapKey(32_002), bootstrapKey(32_101))
 	fragment, fragmentOK := bootstrap.DeclareSchema(builder, bootstrapKey(32_003), bootstrapKey(32_004), bootstrapKey(32_005), ownerFragment)
 	if !ownerOK || !fragmentOK {
 		t.Fatal("bootstrap cold schema")

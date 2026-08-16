@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 type SolveStatus uint8
@@ -170,7 +171,7 @@ type executorEpoch struct {
 	// Solve path, so the hot path does not allocate or retain diagnostics.
 	report             *SolveReport
 	diagnostics        *solveDiagnosticState
-	diagnosticRevision uint64
+	diagnosticRevision identity.Generation
 	work               *carrier.Work
 	demand             *demand.Epoch
 	points             []carrier.PointState
@@ -295,7 +296,7 @@ func (epoch *executorEpoch) recordMemberFailure(reason SolveFailureReason, phase
 	epoch.recordFailure(reason, phase, pointKey, groupKey, memberKey, ruleKey)
 }
 
-func newRuntimeEpoch(runtime *solverRuntime, accepted []equation.AcceptedMember, ctx context.Context) (*executorEpoch, bool) {
+func newRuntimeEpoch(runtime *solverRuntime, relation equation.Relation, ctx context.Context) (*executorEpoch, bool) {
 	// Owner/liveness fence: do not allocate an epoch for a missing or canceled
 	// call, or for a runtime with a missing owner-owned root.
 	if runtime == nil {
@@ -313,7 +314,7 @@ func newRuntimeEpoch(runtime *solverRuntime, accepted []equation.AcceptedMember,
 
 	// Accepted members must belong to this runtime generation's sealed
 	// topology before any carrier or demand state is opened.
-	if !validAcceptedActivations(runtime.topology, accepted) {
+	if !relation.OwnedBy(runtime.topology) {
 		return nil, false
 	}
 
@@ -927,7 +928,8 @@ func (epoch *executorEpoch) installSelectedFactorOverlay(overlay *preparedSelect
 	epoch.postfixPending = prepared.postfixPending
 	epoch.postfixHead = 0
 	epoch.queue.count = len(prepared.wakePoints)
-	runtime.overlay.generation++
+	// matches proved the next stamp is representable before installation began.
+	runtime.overlay.generation = runtime.overlay.generation.Next()
 	return true
 }
 
@@ -945,7 +947,7 @@ func epochSelectedOverlayInstallEligible(epoch *executorEpoch, overlay *prepared
 // every successful installation, so an old prepared delta cannot overwrite a
 // newer factor/CSR view without rescanning all prior edges.
 func (overlay *preparedSelectedFactorOverlay) matches(runtime *solverRuntime) bool {
-	if overlay == nil || runtime == nil || runtime.graph == nil || overlay.runtime != runtime || overlay.generation == 0 || overlay.generation != runtime.overlay.generation || runtime.overlay.generation == ^uint64(0) {
+	if overlay == nil || runtime == nil || runtime.graph == nil || overlay.runtime != runtime || !overlay.generation.Available() || overlay.generation != runtime.overlay.generation || !runtime.overlay.generation.Next().Available() {
 		return false
 	}
 	nextEdgeCount := overlay.previousEdgeCount + len(overlay.additions)
@@ -3255,7 +3257,7 @@ func (solver *Solver) completedState(runtime *solverRuntime) *State {
 	if state == nil || runtime.retained == nil || !runtime.retained.Live() {
 		return nil
 	}
-	if state.owner != solver || state.completion == nil || state.completion.solver != solver || state.completion.serial == 0 || state.completion.serial != solver.completion || state.completion.revision != solver.revision {
+	if state.completion == nil || state.completion.store != solver.store || !state.completion.serial.Available() || state.completion.serial != solver.completion || state.completion.relation != solver.relation.Generation() {
 		return nil
 	}
 	return state
@@ -3266,8 +3268,8 @@ func (solver *Solver) completedState(runtime *solverRuntime) *State {
 // materialization, retention of the new root arena, and eviction of any prior
 // lease.  Once complete wins, these assignments are deliberately infallible;
 // cancellation after that cut is non-operative.
-func (solver *Solver) publishCompleted(epoch *executorEpoch, runtime *solverRuntime, state *State, completion uint64, retained *carrier.RetainedWork) bool {
-	if solver == nil || epoch == nil || runtime == nil || state == nil || retained == nil || solver.runtime != runtime || state.owner != solver || state.completion == nil || state.completion.solver != solver || state.completion.serial != completion || state.completion.revision != solver.revision || !epoch.complete() {
+func (solver *Solver) publishCompleted(epoch *executorEpoch, runtime *solverRuntime, state *State, completion identity.Generation, retained *carrier.RetainedWork) bool {
+	if solver == nil || epoch == nil || runtime == nil || state == nil || retained == nil || solver.runtime != runtime || state.completion == nil || state.completion.store != solver.store || state.completion.serial != completion || state.completion.relation != solver.relation.Generation() || !epoch.complete() {
 		return false
 	}
 	runtime.retained = retained
@@ -3367,7 +3369,7 @@ runtimeRevisions:
 		if state = solver.completedState(runtime); state != nil {
 			return state, SolveComplete
 		}
-		epoch, ok := newRuntimeEpoch(runtime, solver.accepted, ctx)
+		epoch, ok := newRuntimeEpoch(runtime, solver.relation, ctx)
 		if !ok {
 			if ctx.Err() != nil {
 				return nil, SolveCanceled
@@ -3379,7 +3381,7 @@ runtimeRevisions:
 		}
 		epoch.report = report
 		epoch.diagnostics = diagnostics
-		epoch.diagnosticRevision = solver.revision
+		epoch.diagnosticRevision = solver.relation.Generation()
 		if diagnostics != nil && !epoch.work.SetCheckpoint(epoch.diagnosticCheckpoint) {
 			epoch.incomplete()
 			epoch.discard()
@@ -3389,7 +3391,7 @@ runtimeRevisions:
 			return nil, SolveIncomplete
 		}
 		if diagnostics != nil {
-			diagnostics.epochStarted(epoch, solver.revision)
+			diagnostics.epochStarted(epoch, solver.relation.Generation())
 		}
 		current = epoch
 		for {
@@ -3419,7 +3421,7 @@ runtimeRevisions:
 				}
 				return nil, SolveIncomplete
 			}
-			delta, subtracted := subtractAcceptedActivations(runtime.topology, frontier, solver.accepted)
+			delta, subtracted := subtractAcceptedActivations(runtime.topology, frontier, solver.relation.Rows())
 			if !subtracted {
 				epoch.incomplete()
 				epoch.discard()
@@ -3435,8 +3437,8 @@ runtimeRevisions:
 				// committed relation. Keep this completed epoch for publication.
 				break
 			}
-			accepted, merged := mergeAcceptedActivations(runtime.topology, solver.accepted, delta)
-			if !merged || sameAcceptedActivations(solver.accepted, accepted) {
+			accepted, merged := mergeAcceptedActivations(runtime.topology, solver.relation.Rows(), delta)
+			if !merged || sameAcceptedActivations(solver.relation.Rows(), accepted) || !runtime.topology.ValidAccepted(accepted) {
 				epoch.incomplete()
 				epoch.discard()
 				if report != nil {
@@ -3444,19 +3446,24 @@ runtimeRevisions:
 				}
 				return nil, SolveIncomplete
 			}
+			// The next relation is derived exactly once, here: Publish stamps the
+			// following Generation and stores the structural digest derived for
+			// it. Both installation paths below consume that one publication and
+			// neither re-derives its identity. A saturated stamp fails closed.
+			published, publishedOK := runtime.topology.Publish(solver.relation, accepted)
 			// The live path is deliberately narrower than activation validity: it
 			// must prove total demand, no recurrence, structural-only FactorEdges,
 			// and an acyclic combined dependency relation. A false result is not a
 			// weakened solve; it selects the unchanged cold compiler below.
-			if solver.revision != ^uint64(0) {
-				overlay, preparedOverlay := runtime.prepareSelectedFactorOverlay(delta, accepted)
+			if publishedOK {
+				overlay, preparedOverlay := runtime.prepareSelectedFactorOverlay(delta, published)
 				installedOverlay := preparedOverlay && overlay != nil && epoch.installSelectedFactorOverlay(overlay)
 				if installedOverlay {
-					solver.accepted = accepted
-					solver.revision++
-					epoch.diagnosticRevision = solver.revision
+					solver.relation = published
+					epoch.diagnosticRevision = published.Generation()
+
 					if diagnostics != nil {
-						diagnostics.observeRevision(solver.revision)
+						diagnostics.observeRevision(published.Generation())
 						diagnostics.resetRevisionEvidence()
 					}
 					if ctx.Err() != nil {
@@ -3475,7 +3482,13 @@ runtimeRevisions:
 			if ctx.Err() != nil {
 				return nil, SolveCanceled
 			}
-			rebuilt, phase, built := solver.compiler.compile(accepted)
+			if !publishedOK {
+				if report != nil {
+					report.record(SolveFailureReasonActivationRevisionOverflow, SolveFailurePhaseNone, SemanticKey{}, SemanticKey{}, SemanticKey{}, SemanticKey{})
+				}
+				return nil, SolveIncomplete
+			}
+			rebuilt, phase, built := solver.compiler.compile(published)
 			if !built || rebuilt == nil {
 				if report != nil {
 					report.record(SolveFailureReasonActivationCompile, phase, SemanticKey{}, SemanticKey{}, SemanticKey{}, SemanticKey{})
@@ -3485,12 +3498,6 @@ runtimeRevisions:
 			if ctx.Err() != nil {
 				return nil, SolveCanceled
 			}
-			if solver.revision == ^uint64(0) {
-				if report != nil {
-					report.record(SolveFailureReasonActivationRevisionOverflow, SolveFailurePhaseNone, SemanticKey{}, SemanticKey{}, SemanticKey{}, SemanticKey{})
-				}
-				return nil, SolveIncomplete
-			}
 			runtime.completed = nil
 			if runtime.retained != nil && !runtime.retained.Close() {
 				if report != nil {
@@ -3499,11 +3506,11 @@ runtimeRevisions:
 				return nil, SolveIncomplete
 			}
 			runtime.retained = nil
-			solver.accepted = accepted
+			solver.relation = published
 			solver.runtime = rebuilt
-			solver.revision++
+
 			if diagnostics != nil {
-				diagnostics.observeRevision(solver.revision)
+				diagnostics.observeRevision(published.Generation())
 				diagnostics.resetRevisionEvidence()
 			}
 			if ctx.Err() != nil {
@@ -3622,14 +3629,14 @@ runtimeRevisions:
 			epoch.discard()
 			return nil, SolveCanceled
 		}
-		if solver.completion == ^uint64(0) {
+		nextCompletion := solver.completion.Next()
+		if !nextCompletion.Available() {
 			epoch.incomplete()
 			epoch.discard()
 			reportFailureQuery(report, SolveFailureReasonPublication, SemanticKey{})
 			return nil, SolveIncomplete
 		}
-		nextCompletion := solver.completion + 1
-		state = &State{owner: solver, completion: &completionAuthority{solver: solver, serial: nextCompletion, revision: solver.revision}, results: results, observations: observationResults}
+		state = &State{completion: &completionAuthority{store: solver.store, serial: nextCompletion, relation: solver.relation.Generation()}, results: results, observations: observationResults}
 		// Retain and eviction are preparation, not publication.  They must
 		// finish while cancellation can still win the epoch terminal race.
 		retained, retainedOK := epoch.work.Retain()

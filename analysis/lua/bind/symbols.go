@@ -1,12 +1,28 @@
 package bind
 
 import (
-	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
+// SymbolKind classifies how a binder-owned lexical symbol was declared.
+type SymbolKind uint8
+
+const (
+	SymbolUnknown SymbolKind = iota
+	SymbolParam
+	SymbolLocal
+	SymbolGlobal
+	SymbolUpvalue
+	SymbolFunction
+)
+
+// Symbol is a lexical declaration coordinate issued by one binding Result.
+// It has no meaning outside that result and must be translated before Lua
+// lowering publishes canonical Program identities.
+type Symbol uint64
+
 // SymbolOf returns the declaration symbol bound to an identifier occurrence.
-func (r *Result) SymbolOf(ident *ast.IdentExpr) (symbol.ID, bool) {
+func (r *Result) SymbolOf(ident *ast.IdentExpr) (Symbol, bool) {
 	if r == nil || ident == nil {
 		return 0, false
 	}
@@ -28,7 +44,7 @@ func (r *Result) IsImplicitGlobalUse(ident *ast.IdentExpr) bool {
 // obtained by resolving an identifier occurrence through Result.
 type GlobalIdentity struct {
 	owner *Result
-	id    symbol.ID
+	id    Symbol
 }
 
 // GlobalIdentity resolves ident to its bound global declaration.
@@ -46,11 +62,11 @@ func (r *Result) GlobalIdentity(ident *ast.IdentExpr) (GlobalIdentity, bool) {
 // GlobalIdentityOf returns the Result-scoped identity for an already-bound
 // global symbol, including roots whose authored occurrence is a qualified
 // TypeRef and therefore has no value-level IdentExpr node.
-func (r *Result) GlobalIdentityOf(id symbol.ID) (GlobalIdentity, bool) {
+func (r *Result) GlobalIdentityOf(id Symbol) (GlobalIdentity, bool) {
 	if r == nil || id == 0 || r.globalRecord(id) == nil {
 		return GlobalIdentity{}, false
 	}
-	if kind, ok := r.Kind(id); !ok || kind != symbol.Global {
+	if kind, ok := r.Kind(id); !ok || kind != SymbolGlobal {
 		return GlobalIdentity{}, false
 	}
 	return GlobalIdentity{owner: r, id: id}, true
@@ -65,7 +81,7 @@ func (identity GlobalIdentity) Valid() bool {
 
 // ID returns the Result-scoped lexical symbol number. It is useful only as a
 // diagnostic; lower consumers should pass the opaque identity itself.
-func (identity GlobalIdentity) ID() symbol.ID {
+func (identity GlobalIdentity) ID() Symbol {
 	if !identity.Valid() {
 		return 0
 	}
@@ -125,16 +141,16 @@ func (r *Result) DirectGlobalCalls() []DirectGlobalCall {
 	return append([]DirectGlobalCall(nil), r.directGlobalCalls...)
 }
 
-func (r *Result) symbolResolvesToGlobal(id symbol.ID, name string) bool {
+func (r *Result) symbolResolvesToGlobal(id Symbol, name string) bool {
 	if r == nil || id == 0 || name == "" || r.Name(id) != name {
 		return false
 	}
 	kind, ok := r.Kind(id)
-	return ok && kind == symbol.Global
+	return ok && kind == SymbolGlobal
 }
 
 // Name returns the declaration name for a symbol.
-func (r *Result) Name(id symbol.ID) string {
+func (r *Result) Name(id Symbol) string {
 	if r == nil {
 		return ""
 	}
@@ -142,16 +158,16 @@ func (r *Result) Name(id symbol.ID) string {
 }
 
 // Kind returns the declaration kind for a symbol.
-func (r *Result) Kind(id symbol.ID) (symbol.Kind, bool) {
+func (r *Result) Kind(id Symbol) (SymbolKind, bool) {
 	if r == nil {
-		return symbol.Unknown, false
+		return SymbolUnknown, false
 	}
 	kind, ok := r.kinds[id]
 	return kind, ok
 }
 
 // LocalSymbolAt returns the local symbol at index for stmt.
-func (r *Result) LocalSymbolAt(stmt *ast.LocalAssignStmt, index int) (symbol.ID, bool) {
+func (r *Result) LocalSymbolAt(stmt *ast.LocalAssignStmt, index int) (Symbol, bool) {
 	if r == nil || stmt == nil || index < 0 {
 		return 0, false
 	}
@@ -164,7 +180,7 @@ func (r *Result) LocalSymbolAt(stmt *ast.LocalAssignStmt, index int) (symbol.ID,
 
 // SymbolTypeAnnotation returns the declared type expression for a parameter or
 // local declaration symbol.
-func (r *Result) SymbolTypeAnnotation(id symbol.ID) (ast.TypeExpr, bool) {
+func (r *Result) SymbolTypeAnnotation(id Symbol) (ast.TypeExpr, bool) {
 	if r == nil || id == 0 {
 		return nil, false
 	}
@@ -173,7 +189,7 @@ func (r *Result) SymbolTypeAnnotation(id symbol.ID) (ast.TypeExpr, bool) {
 }
 
 // NumForSymbol returns the loop variable symbol for a numeric for statement.
-func (r *Result) NumForSymbol(stmt *ast.NumberForStmt) (symbol.ID, bool) {
+func (r *Result) NumForSymbol(stmt *ast.NumberForStmt) (Symbol, bool) {
 	if r == nil || stmt == nil {
 		return 0, false
 	}
@@ -182,11 +198,18 @@ func (r *Result) NumForSymbol(stmt *ast.NumberForStmt) (symbol.ID, bool) {
 }
 
 // GenericForSymbols returns ordered loop variable symbols for a generic for.
-func (r *Result) GenericForSymbols(stmt *ast.GenericForStmt) []symbol.ID {
+func (r *Result) GenericForSymbols(stmt *ast.GenericForStmt) []Symbol {
 	if r == nil || stmt == nil {
 		return nil
 	}
 	return cloneSymbols(r.genericForSymbols[stmt])
+}
+
+func cloneSymbols(ids []Symbol) []Symbol {
+	if len(ids) == 0 {
+		return nil
+	}
+	return append([]Symbol(nil), ids...)
 }
 
 // newSymbol allocates a declaration identity from this Result's own counter.
@@ -194,7 +217,7 @@ func (r *Result) GenericForSymbols(stmt *ast.GenericForStmt) []symbol.ID {
 // across independent solves, which keeps every downstream identity token and
 // content digest deterministic. IDs are unique within a Result; they are never
 // compared against symbols from another Result.
-func (r *Result) newSymbol(name string, kind symbol.Kind) symbol.ID {
+func (r *Result) newSymbol(name string, kind SymbolKind) Symbol {
 	r.nextSymbolID++
 	id := r.nextSymbolID
 	r.names[id] = name
@@ -202,7 +225,7 @@ func (r *Result) newSymbol(name string, kind symbol.Kind) symbol.ID {
 	return id
 }
 
-func (r *Result) setSymbolTypeAnnotation(id symbol.ID, expr ast.TypeExpr) {
+func (r *Result) setSymbolTypeAnnotation(id Symbol, expr ast.TypeExpr) {
 	if r == nil || id == 0 || expr == nil {
 		return
 	}
@@ -210,11 +233,11 @@ func (r *Result) setSymbolTypeAnnotation(id symbol.ID, expr ast.TypeExpr) {
 }
 
 type pendingScope struct {
-	names map[string]symbol.ID
+	names map[string]Symbol
 }
 
 type valueHead struct {
-	id    symbol.ID
+	id    Symbol
 	depth int
 }
 
@@ -227,18 +250,18 @@ type valueUndo struct {
 type pendingHead struct {
 	batch int
 	depth int
-	id    symbol.ID
+	id    Symbol
 }
 
 type binder struct {
 	result *Result
 
-	implicitGlobalSymbols map[symbol.ID]struct{}
-	staticOnlyGlobals     map[symbol.ID]struct{}
+	implicitGlobalSymbols map[Symbol]struct{}
+	staticOnlyGlobals     map[Symbol]struct{}
 	typeValueRefs         map[*ast.IdentExpr]TypeDecl
-	directCaptureSeen     map[*ast.FunctionExpr]map[symbol.ID]struct{}
-	declaringFunctions    map[symbol.ID]*ast.FunctionExpr
-	globals               map[string]symbol.ID
+	directCaptureSeen     map[*ast.FunctionExpr]map[Symbol]struct{}
+	declaringFunctions    map[Symbol]*ast.FunctionExpr
+	globals               map[string]Symbol
 	runtimeChunkTypes     map[string]TypeDecl
 	qualifiedTypeAliases  map[qualifiedTypeAliasKey]QualifiedTypeAlias
 
@@ -265,13 +288,13 @@ func newBinder(result *Result) binder {
 	return binder{result: result}
 }
 
-func (b *binder) global(name string) symbol.ID {
+func (b *binder) global(name string) Symbol {
 	if id := b.globals[name]; id != 0 {
 		return id
 	}
-	id := b.result.newSymbol(name, symbol.Global)
+	id := b.result.newSymbol(name, SymbolGlobal)
 	if b.globals == nil {
-		b.globals = make(map[string]symbol.ID)
+		b.globals = make(map[string]Symbol)
 	}
 	b.globals[name] = id
 	b.result.addGlobalRecord(id)
@@ -303,7 +326,7 @@ func (b *binder) popScope() {
 	b.control.popBlock()
 }
 
-func (b *binder) define(name string, id symbol.ID) {
+func (b *binder) define(name string, id Symbol) {
 	if name == "" || len(b.valueMarks) == 0 || id == 0 {
 		return
 	}
@@ -316,18 +339,18 @@ func (b *binder) define(name string, id symbol.ID) {
 	b.control.define(id)
 }
 
-func (b *binder) newSymbol(name string, kind symbol.Kind) symbol.ID {
+func (b *binder) newSymbol(name string, kind SymbolKind) Symbol {
 	id := b.result.newSymbol(name, kind)
 	if fn := b.currentFunction(); fn != nil {
 		if b.declaringFunctions == nil {
-			b.declaringFunctions = make(map[symbol.ID]*ast.FunctionExpr)
+			b.declaringFunctions = make(map[Symbol]*ast.FunctionExpr)
 		}
 		b.declaringFunctions[id] = fn
 	}
 	return id
 }
 
-func (b *binder) lookup(name string) (symbol.ID, bool, bool) {
+func (b *binder) lookup(name string) (Symbol, bool, bool) {
 	if name == "" {
 		return 0, false, false
 	}
@@ -345,7 +368,7 @@ func (b *binder) lookup(name string) (symbol.ID, bool, bool) {
 	return 0, false, false
 }
 
-func (b *binder) pushPending(names map[string]symbol.ID) int {
+func (b *binder) pushPending(names map[string]Symbol) int {
 	mark := len(b.pending)
 	if len(names) == 0 || len(b.valueMarks) == 0 {
 		return mark
@@ -432,7 +455,7 @@ func (b *binder) bindTypeQueryIdent(ident *ast.IdentExpr) {
 // source binding without publishing runtime read/global-use evidence. Static
 // queries lower through the same Program expressions, but they are
 // unreachable executable syntax.
-func (b *binder) bindTypeQueryIdentSymbol(ident *ast.IdentExpr) symbol.ID {
+func (b *binder) bindTypeQueryIdentSymbol(ident *ast.IdentExpr) Symbol {
 	if ident == nil {
 		return 0
 	}
@@ -444,7 +467,7 @@ func (b *binder) bindTypeQueryIdentSymbol(ident *ast.IdentExpr) symbol.ID {
 		id = b.global(ident.Value)
 	}
 	b.result.identSymbols[ident] = id
-	if kind, ok := b.result.Kind(id); ok && kind == symbol.Global {
+	if kind, ok := b.result.Kind(id); ok && kind == SymbolGlobal {
 		b.result.observeGlobal(id, ident, true)
 	}
 	return id
@@ -459,7 +482,7 @@ func (b *binder) bindTypeQueryWriteIdent(ident *ast.IdentExpr) {
 		id = b.global(ident.Value)
 	}
 	b.result.identSymbols[ident] = id
-	if kind, ok := b.result.Kind(id); ok && kind == symbol.Global {
+	if kind, ok := b.result.Kind(id); ok && kind == SymbolGlobal {
 		b.result.observeGlobal(id, ident, true)
 	}
 	if b.currentFunctionStatic() {
@@ -467,7 +490,7 @@ func (b *binder) bindTypeQueryWriteIdent(ident *ast.IdentExpr) {
 	}
 }
 
-func (b *binder) bindReadIdentSymbol(ident *ast.IdentExpr) symbol.ID {
+func (b *binder) bindReadIdentSymbol(ident *ast.IdentExpr) Symbol {
 	if ident == nil {
 		return 0
 	}
@@ -479,7 +502,7 @@ func (b *binder) bindReadIdentSymbol(ident *ast.IdentExpr) symbol.ID {
 		id = b.global(ident.Value)
 		b.result.implicitGlobalUses[ident] = struct{}{}
 		if b.implicitGlobalSymbols == nil {
-			b.implicitGlobalSymbols = make(map[symbol.ID]struct{})
+			b.implicitGlobalSymbols = make(map[Symbol]struct{})
 		}
 		b.implicitGlobalSymbols[id] = struct{}{}
 	} else if global {
@@ -487,7 +510,7 @@ func (b *binder) bindReadIdentSymbol(ident *ast.IdentExpr) symbol.ID {
 			delete(b.staticOnlyGlobals, id)
 			b.result.implicitGlobalUses[ident] = struct{}{}
 			if b.implicitGlobalSymbols == nil {
-				b.implicitGlobalSymbols = make(map[symbol.ID]struct{})
+				b.implicitGlobalSymbols = make(map[Symbol]struct{})
 			}
 			b.implicitGlobalSymbols[id] = struct{}{}
 		}
@@ -498,7 +521,7 @@ func (b *binder) bindReadIdentSymbol(ident *ast.IdentExpr) symbol.ID {
 		}
 	}
 	b.result.identSymbols[ident] = id
-	if kind, ok := b.result.Kind(id); ok && kind == symbol.Global {
+	if kind, ok := b.result.Kind(id); ok && kind == SymbolGlobal {
 		b.result.observeGlobal(id, ident, true)
 	}
 	return id
@@ -513,7 +536,7 @@ func (b *binder) bindWriteIdent(ident *ast.IdentExpr) {
 		id = b.global(ident.Value)
 	}
 	b.result.identSymbols[ident] = id
-	if kind, ok := b.result.Kind(id); ok && kind == symbol.Global {
+	if kind, ok := b.result.Kind(id); ok && kind == SymbolGlobal {
 		b.result.observeGlobal(id, ident, true)
 	}
 	delete(b.staticOnlyGlobals, id)

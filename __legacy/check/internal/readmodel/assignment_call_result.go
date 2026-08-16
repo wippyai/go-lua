@@ -3,8 +3,8 @@ package readmodel
 import (
 	readapi "github.com/wippyai/go-lua/analysis/check/readmodel"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
-	"github.com/wippyai/go-lua/analysis/type/refinement"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/refinement"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 )
 
 func (r Reader) assignmentCallResultSource(source sourceprovenance.ASTSource) readapi.CallResultAssignmentSource {

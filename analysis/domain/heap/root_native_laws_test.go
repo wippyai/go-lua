@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
 // TestHeapRuntimeKindUnionMapping keeps Target's closed fresh vocabulary at

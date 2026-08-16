@@ -1,73 +1,52 @@
-package analysis_test
+package analysis
 
 import (
-	"context"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/wippyai/go-lua/analysis"
-	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/program/link"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
-	"github.com/wippyai/go-lua/program/lower"
-	"github.com/wippyai/go-lua/program/target/profile"
 )
 
+// The prefix lane measures how one fixture's analysis cost grows with its
+// source. Its input is a truncation of a corpus fixture rather than a fixture
+// directory, so it seals a single-module Link itself and then runs the shared
+// harness spine: one compile, one diagnostic solve, one detached-Result
+// contract, one closed plan.
 func analyzeEdgeMatrixPrefix(t *testing.T, cases int) {
 	t.Helper()
-	source, err := os.ReadFile("../testdata/fixtures/semantic/type-engine-edge-matrix/main.lua")
-	if err != nil {
-		t.Fatal(err)
+	project := corpusHarnessFixture(t, "semantic/type-engine-edge-matrix")
+	source := corpusHarnessSourceText(t, project, "main.lua")
+	end := edgeMatrixPrefixEnd(t, source, cases)
+	run := &corpusHarnessRun{
+		project: project,
+		linked:  corpusHarnessSourceLink(t, corpusHarnessContract(t), "main.lua", source[:end]),
 	}
-	end := -1
+	_, class, err := corpusHarnessExecuteLink(t, run, corpusHarnessReceiptMode())
+	t.Logf("Analyze prefix%d: compile=%s solve=%s total=%s", cases, run.cost.compile, run.cost.solve, run.cost.total())
+	if err != nil {
+		t.Fatalf("Analyze prefix%d %s: %v", cases, class, err)
+	}
+}
+
+// edgeMatrixPrefixEnd resolves one measured prefix boundary: a case marker for
+// the sampled counts, a line boundary for the counts whose marker spans
+// several cases, and the whole source for the complete fixture.
+func edgeMatrixPrefixEnd(t *testing.T, source []byte, cases int) int {
+	t.Helper()
 	if cases == 370 {
-		end = len(source)
-	} else if lineEnd, ok := map[int]int{150: 390, 160: 426, 170: 461, 180: 496, 190: 531, 220: 636, 240: 716, 242: 723, 244: 732, 248: 748, 250: 755, 260: 796, 300: 966, 340: 1086}[cases]; ok {
+		return len(source)
+	}
+	if lineEnd, ok := map[int]int{150: 390, 160: 426, 170: 461, 180: 496, 190: 531, 220: 636, 240: 716, 242: 723, 244: 732, 248: 748, 250: 755, 260: 796, 300: 966, 340: 1086}[cases]; ok {
 		lines := strings.SplitAfter(string(source), "\n")
 		if lineEnd <= 0 || lineEnd > len(lines) {
 			t.Fatal("line boundary unavailable")
 		}
-		end = len(strings.Join(lines[:lineEnd], ""))
-	} else {
-		marker := []byte("-- case " + fmt.Sprintf("%03d", cases+1) + ":")
-		end = strings.Index(string(source), string(marker))
-		if end < 0 {
-			t.Fatal("case marker unavailable")
-		}
+		return len(strings.Join(lines[:lineEnd], ""))
 	}
-	program, err := lower.Lower(lower.Source{Name: "main.lua", Text: source[:end]})
-	if err != nil {
-		t.Fatal(err)
+	end := strings.Index(string(source), "-- case "+fmt.Sprintf("%03d", cases+1)+":")
+	if end < 0 {
+		t.Fatal("case marker unavailable")
 	}
-	contract, err := profile.Contract()
-	if err != nil {
-		t.Fatal(err)
-	}
-	linked, err := link.Seal(&link.Spec{Target: contract, Modules: []linkproject.Module{{Name: "main", Program: program}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	started := time.Now()
-	plan, compileStatus := analysis.Compile(linked)
-	compiled := time.Now()
-	if compileStatus != analysis.CompileComplete || plan == nil {
-		t.Fatalf("Compile prefix%d: status=%d plan=%v", cases, compileStatus, plan != nil)
-	}
-	result, status, diagnostics := plan.SolveWithDiagnostics(context.Background(), engine.SolveDiagnosticOptions{Flags: engine.SolveDiagnosticAll, MaxRows: 256})
-	solved := time.Now()
-	t.Logf("Analyze prefix%d: compile=%s solve=%s total=%s", cases, compiled.Sub(started), solved.Sub(compiled), solved.Sub(started))
-	if status != analysis.AnalyzeComplete || result == nil || result.BodyCount() == 0 {
-		failure := diagnostics.Engine.Failure
-		t.Logf("Analyze prefix%d diagnostics: phase=%s reason=%s rule=%s engine={flags:%d work:%d/%d cutoff:%t epochs:%d passes:%d refresh:%d eval:%d fail:%d fold:%d rhs:%d restart:%d activation:%d failure:{available:%t reason:%d phase:%s point:%v group:%v member:%v rule:%v}}",
-			cases, diagnostics.Phase, diagnostics.Reason, diagnostics.Rule,
-			diagnostics.Engine.Flags, diagnostics.Engine.Work, diagnostics.Engine.MaxWork, diagnostics.Engine.WorkCutoff,
-			diagnostics.Engine.Epochs, diagnostics.Engine.EpochPasses, diagnostics.Engine.Refreshes, diagnostics.Engine.Evaluates, diagnostics.Engine.EvaluateFailures, diagnostics.Engine.Folds, diagnostics.Engine.RegionRHS, diagnostics.Engine.Restarts, diagnostics.Engine.Activations,
-			failure.Available(), failure.Reason(), failure.Phase(), failure.Point(), failure.Group(), failure.Member(), failure.Rule())
-		t.Fatalf("Analyze prefix%d: status=%d result=%v", cases, status, result != nil)
-	}
+	return end
 }
 
 func TestDiagnosticEdgeMatrixPrefix40(t *testing.T)  { analyzeEdgeMatrixPrefix(t, 40) }

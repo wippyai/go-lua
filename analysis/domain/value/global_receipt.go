@@ -1,16 +1,14 @@
 package value
 
-import (
-	"github.com/wippyai/go-lua/program/keyspace"
-)
+import "github.com/wippyai/go-lua/analysis/identity"
 
 // GlobalBootstrapResult is the sealed Value-owned result of one Host global
 // binding. Bootstrap issues it only after validating Host, Module, Boundary,
 // Target, and Value ownership; hot callbacks consume this immutable receipt.
 type GlobalBootstrapResult struct {
 	schema     *Schema
-	bindingID  keyspace.ContentID
-	id         keyspace.ContentID
+	bindingID  identity.ContentID
+	id         identity.ContentID
 	coordinate Coordinate
 	fact       Value
 	absent     bool
@@ -19,7 +17,7 @@ type GlobalBootstrapResult struct {
 // NewGlobalBootstrapResult seals one fully validated bootstrap observation.
 // The bootstrap package remains responsible for proving the Host mapping;
 // this constructor fences the resulting Value state to the exact Schema.
-func NewGlobalBootstrapResult(schema *Schema, id keyspace.ContentID, coordinate Coordinate, fact Value, absent bool) (*GlobalBootstrapResult, bool) {
+func NewGlobalBootstrapResult(schema *Schema, id identity.ContentID, coordinate Coordinate, fact Value, absent bool) (*GlobalBootstrapResult, bool) {
 	if schema == nil || !id.Available() || !coordinate.Valid() || coordinate.schema != schema || (!absent && (!fact.valid() || fact.schema != schema)) {
 		return nil, false
 	}
@@ -32,9 +30,9 @@ func (result *GlobalBootstrapResult) Owns(schema *Schema) bool {
 }
 
 // ID returns the already-issued Host binding identity.
-func (result *GlobalBootstrapResult) ID() (keyspace.ContentID, bool) {
+func (result *GlobalBootstrapResult) ID() (identity.ContentID, bool) {
 	if result == nil || !result.id.Available() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return result.id, true
 }
@@ -61,7 +59,7 @@ func (result *GlobalBootstrapResult) Absent() bool { return result != nil && res
 // GlobalBootstrapResultFor returns the receipt issued during Schema sealing.
 // It performs only the exact binding-key lookup and receipt fence; all Host,
 // Module, Boundary, and Target validation happened before sealing.
-func (schema *Schema) GlobalBootstrapResultForID(id keyspace.ContentID) (*GlobalBootstrapResult, bool) {
+func (schema *Schema) GlobalBootstrapResultForID(id identity.ContentID) (*GlobalBootstrapResult, bool) {
 	if schema == nil || !id.Available() || schema.globalResults == nil {
 		return nil, false
 	}
@@ -69,7 +67,7 @@ func (schema *Schema) GlobalBootstrapResultForID(id keyspace.ContentID) (*Global
 	return result, ok && result.Owns(schema)
 }
 
-func (schema *Schema) GlobalBootstrapResultForReceiptID(id keyspace.ContentID) (*GlobalBootstrapResult, bool) {
+func (schema *Schema) GlobalBootstrapResultForReceiptID(id identity.ContentID) (*GlobalBootstrapResult, bool) {
 	if schema == nil || !id.Available() || schema.globalResults == nil {
 		return nil, false
 	}
@@ -86,9 +84,9 @@ func (schema *Schema) GlobalBootstrapResultCount() int {
 	return len(schema.globalIDs)
 }
 
-func (schema *Schema) GlobalBootstrapResultIDAt(index int) (keyspace.ContentID, bool) {
+func (schema *Schema) GlobalBootstrapResultIDAt(index int) (identity.ContentID, bool) {
 	if schema == nil || index < 0 || index >= len(schema.globalIDs) {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	id := schema.globalIDs[index]
 	_, ok := schema.GlobalBootstrapResultForID(id)

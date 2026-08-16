@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/wippyai/go-lua/analysis/type/annotation"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/annotation"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 )
 
 func (e *typeEncoder) encodeFunction(f *typ.Function) (*typeWire, error) {

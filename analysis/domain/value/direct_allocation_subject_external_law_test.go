@@ -6,19 +6,19 @@ import (
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
 	packdomain "github.com/wippyai/go-lua/analysis/domain/pack"
 	staticdomain "github.com/wippyai/go-lua/analysis/domain/static"
+	"github.com/wippyai/go-lua/analysis/domain/type/authority"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
-	programartifact "github.com/wippyai/go-lua/analysis/internal/programartifact"
-	"github.com/wippyai/go-lua/analysis/internal/programartifact/schemaadapter"
-	"github.com/wippyai/go-lua/analysis/internal/programschema"
-	"github.com/wippyai/go-lua/analysis/semantic/typeauthority"
-	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/program/flow"
-	flowkind "github.com/wippyai/go-lua/program/flow/kind"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/link"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
-	"github.com/wippyai/go-lua/program/lower"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/lua/lower"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
+	"github.com/wippyai/go-lua/analysis/program/flow"
+	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/link"
+	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 type directAllocationSubjectFixture struct {
@@ -65,7 +65,7 @@ func directAllocationSubjectFixtureFor(t testing.TB, label string) directAllocat
 	if err != nil {
 		t.Fatal(err)
 	}
-	grammar, grammarOK := programschema.Global()
+	grammar, grammarOK := grammar.Global()
 	if !grammarOK {
 		t.Fatal("direct allocation program schema")
 	}
@@ -110,7 +110,7 @@ func directAllocationSubjectFixtureFor(t testing.TB, label string) directAllocat
 	if !receiptOK {
 		t.Fatal("direct allocation Pack receipt")
 	}
-	var callID keyspace.ContentID
+	var callID identity.ContentID
 	for index := 0; index < packReceipt.CallCount(); index++ {
 		call, callOK := packReceipt.CallAt(index)
 		if callOK && call.Form() == flow.CallFormMethod {

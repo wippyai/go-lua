@@ -33,7 +33,7 @@ func assertDetachedValueRow(t testing.TB, typ reflect.Type, seen map[reflect.Typ
 		return
 	}
 	seen[typ] = true
-	if strings.HasPrefix(typ.PkgPath(), "github.com/wippyai/go-lua/program/link/") {
+	if strings.HasPrefix(typ.PkgPath(), "github.com/wippyai/go-lua/analysis/program/link/") {
 		t.Fatalf("published Value row retains Link carrier %s", typ)
 	}
 	if typ.PkgPath() != "" && typ.PkgPath() != "github.com/wippyai/go-lua/analysis/domain/value" {

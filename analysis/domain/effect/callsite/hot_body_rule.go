@@ -8,7 +8,7 @@ import (
 	effectfactor "github.com/wippyai/go-lua/analysis/domain/effect/factor"
 	effectowner "github.com/wippyai/go-lua/analysis/domain/effect/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // hotBodyOperand is the runtime-only body-summary operand. Mounted Project
@@ -17,7 +17,7 @@ type hotBodyOperand struct {
 	receipt *bodyCallReceipt
 	key     calldomain.Key
 	root    effectfactor.Root
-	id      keyspace.ContentID
+	id      identity.ContentID
 }
 
 func newHotBodyOperand(effects *effectfactor.Algebra, calls *calldomain.Algebra, root effectfactor.Root, key calldomain.Key) (hotBodyOperand, bool) {
@@ -34,7 +34,7 @@ func newHotBodyOperand(effects *effectfactor.Algebra, calls *calldomain.Algebra,
 	copy(payload[:], prefix)
 	copy(payload[len(prefix):], callID[:])
 	copy(payload[len(prefix)+sha256.Size:], rootID[:])
-	id := keyspace.ContentID(sha256.Sum256(payload[:]))
+	id := identity.ContentID(sha256.Sum256(payload[:]))
 	return hotBodyOperand{key: key, root: root, id: id}, id.Available()
 }
 
@@ -80,7 +80,7 @@ type BodyHotRule struct {
 	routes              map[calldomain.TargetRoleID]uint32
 	all                 []bodyRoute
 	receiptsSealed      bool
-	occurrences         map[keyspace.ContentID]*mountedBodyReceiptRows
+	occurrences         map[identity.ContentID]*mountedBodyReceiptRows
 	finalizationFailure BodyReceiptFinalizationFailure
 }
 

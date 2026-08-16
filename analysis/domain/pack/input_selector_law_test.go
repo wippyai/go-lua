@@ -5,18 +5,18 @@ import (
 
 	packdomain "github.com/wippyai/go-lua/analysis/domain/pack"
 	staticdomain "github.com/wippyai/go-lua/analysis/domain/static"
-	programartifact "github.com/wippyai/go-lua/analysis/internal/programartifact"
-	"github.com/wippyai/go-lua/analysis/internal/programartifact/schemaadapter"
-	"github.com/wippyai/go-lua/analysis/internal/programschema"
-	"github.com/wippyai/go-lua/analysis/semantic/typeauthority"
-	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/program/flow"
-	flowkind "github.com/wippyai/go-lua/program/flow/kind"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/link"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
-	"github.com/wippyai/go-lua/program/lower"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/domain/type/authority"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/lua/lower"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
+	"github.com/wippyai/go-lua/analysis/program/flow"
+	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/link"
+	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 func selectorLawContract(t testing.TB) (*target.Contract, target.Operation) {
@@ -40,10 +40,10 @@ func selectorLawContract(t testing.TB) (*target.Contract, target.Operation) {
 
 type selectorLawFixture struct {
 	schema    *packdomain.Schema
-	module    keyspace.ContentID
-	callID    keyspace.ContentID
-	receiver  keyspace.ContentID
-	argument0 keyspace.ContentID
+	module    identity.ContentID
+	callID    identity.ContentID
+	receiver  identity.ContentID
+	argument0 identity.ContentID
 }
 
 func selectorLawSchema(t testing.TB, contract *target.Contract, label string) selectorLawFixture {
@@ -56,7 +56,7 @@ func selectorLawSchema(t testing.TB, contract *target.Contract, label string) se
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, receiptOK := programschema.Global()
+	receipt, receiptOK := grammar.Global()
 	if !receiptOK {
 		t.Fatal("program schema receipt")
 	}

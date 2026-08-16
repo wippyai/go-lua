@@ -12,17 +12,18 @@ import (
 	heapindex "github.com/wippyai/go-lua/analysis/domain/heap/index"
 	packdomain "github.com/wippyai/go-lua/analysis/domain/pack"
 	staticdomain "github.com/wippyai/go-lua/analysis/domain/static"
+	"github.com/wippyai/go-lua/analysis/domain/type/authority"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/internal/artifactingress"
-	"github.com/wippyai/go-lua/analysis/internal/programartifact"
-	"github.com/wippyai/go-lua/analysis/internal/programartifact/schemaadapter"
-	"github.com/wippyai/go-lua/analysis/internal/programschema"
-	"github.com/wippyai/go-lua/analysis/semantic/typeauthority"
-	"github.com/wippyai/go-lua/program"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/link"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
+	"github.com/wippyai/go-lua/analysis/program/link"
+	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/analysis/schema/grammar"
+	"github.com/wippyai/go-lua/analysis/schema/ingress"
+	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
 
 // beginReceiptAssembly enters the sole receipt-native production seam. It
@@ -53,7 +54,7 @@ func (state *compiledState) beginReceiptAssembly() (*engine.ReceiptAssembly, *pr
 		return nil, nil, nil, receiptAssemblyDiagnostic{stage: AnalyzeDiagnosticReceiptStageBinding}, false
 	}
 	mounts := make([]engine.MountedArtifactReceipt, 0, len(state.artifacts.mounts))
-	receipts := make(map[keyspace.ContentID]*engine.ArtifactScalarReceipt, len(state.artifacts.mounts))
+	receipts := make(map[identity.ContentID]*engine.ArtifactScalarReceipt, len(state.artifacts.mounts))
 	for _, mount := range state.artifacts.mounts {
 		if !mount.valid() {
 			return nil, nil, nil, receiptAssemblyDiagnostic{stage: AnalyzeDiagnosticReceiptStageMount}, false
@@ -146,15 +147,15 @@ func (directory *artifactScalarRoleDirectory) role(programRole programartifact.R
 	return engine.ArtifactScalarRole{}, false
 }
 
-func artifactScalarRoleSemantic(artifact keyspace.ContentID, role programartifact.RuleRole) keyspace.ContentID {
+func artifactScalarRoleSemantic(artifact identity.ContentID, role programartifact.RuleRole) identity.ContentID {
 	if !artifact.Available() || role == programartifact.RuleRoleInvalid {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	input := make([]byte, 0, len("analysis/artifact-scalar-role/v1")+len(artifact)+1)
 	input = append(input, "analysis/artifact-scalar-role/v1"...)
 	input = append(input, artifact[:]...)
 	input = append(input, byte(role))
-	return keyspace.ContentID(sha256.Sum256(input))
+	return identity.ContentID(sha256.Sum256(input))
 }
 
 // newEngineArtifactScalarTemplate is the sole Program→Engine structural
@@ -163,7 +164,7 @@ func newEngineArtifactScalarTemplate(artifact *programartifact.Artifact) (*engin
 	if artifact == nil || !artifact.Available() {
 		return nil, nil, false
 	}
-	snapshot, lowered := artifactingress.Lower(artifact)
+	snapshot, lowered := ingress.Lower(artifact)
 	if !lowered {
 		return nil, nil, false
 	}
@@ -386,7 +387,7 @@ func newEngineArtifactScalarReceipt(template *engine.ArtifactScalarTemplate, rol
 		return nil, false
 	}
 	for _, row := range roles.rows {
-		capability, capabilityOK := mountedRole(binding, row.program)
+		capability, capabilityOK := binding.mountedCapability(row.program)
 		if !capabilityOK || !substitution.BindRole(row.scalar, capability) {
 			return nil, false
 		}
@@ -435,36 +436,36 @@ func engineArtifactRuleStage(role programartifact.RuleRole, stage programartifac
 	}
 }
 
-func engineStructuralArm(arm artifactingress.StructuralArm) (engine.ArtifactStructuralArm, bool) {
+func engineStructuralArm(arm ingress.StructuralArm) (engine.ArtifactStructuralArm, bool) {
 	switch arm {
-	case artifactingress.StructuralArmLocal:
+	case ingress.StructuralArmLocal:
 		return engine.ArtifactStructuralArmLocal, true
-	case artifactingress.StructuralArmResume:
+	case ingress.StructuralArmResume:
 		return engine.ArtifactStructuralArmResume, true
-	case artifactingress.StructuralArmTrue:
+	case ingress.StructuralArmTrue:
 		return engine.ArtifactStructuralArmTrue, true
-	case artifactingress.StructuralArmFalse:
+	case ingress.StructuralArmFalse:
 		return engine.ArtifactStructuralArmFalse, true
-	case artifactingress.StructuralArmTail:
+	case ingress.StructuralArmTail:
 		return engine.ArtifactStructuralArmTail, true
-	case artifactingress.StructuralArmThrow:
+	case ingress.StructuralArmThrow:
 		return engine.ArtifactStructuralArmThrow, true
-	case artifactingress.StructuralArmYield:
+	case ingress.StructuralArmYield:
 		return engine.ArtifactStructuralArmYield, true
-	case artifactingress.StructuralArmCancel:
+	case ingress.StructuralArmCancel:
 		return engine.ArtifactStructuralArmCancel, true
 	default:
 		return engine.ArtifactStructuralArmInvalid, false
 	}
 }
 
-func engineEventKind(kind artifactingress.EventKind) (engine.ArtifactEventKind, bool) {
+func engineEventKind(kind ingress.EventKind) (engine.ArtifactEventKind, bool) {
 	switch kind {
-	case artifactingress.EventEnter:
+	case ingress.EventEnter:
 		return engine.ArtifactEventEnter, true
-	case artifactingress.EventPoint:
+	case ingress.EventPoint:
 		return engine.ArtifactEventPoint, true
-	case artifactingress.EventExit:
+	case ingress.EventExit:
 		return engine.ArtifactEventExit, true
 	default:
 		return engine.ArtifactEventInvalid, false
@@ -544,32 +545,21 @@ func applyReceiptAssemblyDiagnostic(diagnostics *AnalyzeDiagnostics, receipt rec
 	diagnostics.ReceiptCommitPublish, _ = receipt.commit.Publish()
 }
 
-func linkBootstrapWitness(state *compiledState, binding *programBinding) ([]keyspace.ContentID, []keyspace.ContentID, engine.LinkBootstrapWitness, bool) {
-	if state == nil || binding == nil || !state.sourceID.Available() || binding.valueBootstrapCatalog == nil || binding.heapBootstrapCatalog == nil {
+func linkBootstrapWitness(state *compiledState, binding *programBinding) ([]identity.ContentID, []identity.ContentID, engine.LinkBootstrapWitness, bool) {
+	if state == nil || binding == nil || !state.sourceID.Available() {
 		return nil, nil, engine.LinkBootstrapWitness{}, false
 	}
-	valueIDs := make([]keyspace.ContentID, binding.valueBootstrapCatalog.Count())
-	for index := range valueIDs {
-		id, ok := binding.valueBootstrapCatalog.IDAt(index)
-		if !ok {
-			return nil, nil, engine.LinkBootstrapWitness{}, false
-		}
-		valueIDs[index] = id
+	valueIDs, valueIDsOK := binding.linkOccurrenceIDs(programartifact.RuleRoleValueBootstrap)
+	heapIDs, heapIDsOK := binding.linkOccurrenceIDs(programartifact.RuleRoleHeapBootstrap)
+	if !valueIDsOK || !heapIDsOK {
+		return nil, nil, engine.LinkBootstrapWitness{}, false
 	}
-	heapIDs := make([]keyspace.ContentID, binding.heapBootstrapCatalog.Count())
-	for index := range heapIDs {
-		id, ok := binding.heapBootstrapCatalog.IDAt(index)
-		if !ok {
-			return nil, nil, engine.LinkBootstrapWitness{}, false
-		}
-		heapIDs[index] = id
-	}
-	pointID, pointOK := analysisContentID("analysis/link-bootstrap-point/v1", state.sourceID[:])
+	pointID, pointOK := identity.DeriveContentID("analysis/link-bootstrap-point/v1", state.sourceID[:])
 	if !pointOK {
 		return nil, nil, engine.LinkBootstrapWitness{}, false
 	}
-	valueCapability, valueCapabilityOK := binding.linkCapability(binding.vocabulary.ValueBootstrapRule.Rule)
-	heapCapability, heapCapabilityOK := binding.linkCapability(binding.vocabulary.HeapBootstrapRule.Rule)
+	valueCapability, valueCapabilityOK := binding.linkCapability(programartifact.RuleRoleValueBootstrap)
+	heapCapability, heapCapabilityOK := binding.linkCapability(programartifact.RuleRoleHeapBootstrap)
 	if !valueCapabilityOK || !heapCapabilityOK {
 		return nil, nil, engine.LinkBootstrapWitness{}, false
 	}
@@ -591,7 +581,7 @@ func (state *compiledState) newProgramBinding(source *link.Link) (*programBindin
 	if !coldMountsOK {
 		return nil, ProgramBindingFailureInput, valuedomain.SealFailureNone, allocationcatalog.SealFailureNone
 	}
-	semantics, ok := newSemanticBundle()
+	semantics, ok := vocabulary.New()
 	if !ok {
 		return nil, ProgramBindingFailureSemantics, valuedomain.SealFailureNone, allocationcatalog.SealFailureNone
 	}
@@ -609,7 +599,7 @@ func (state *compiledState) newProgramBinding(source *link.Link) (*programBindin
 	staticMounts := make([]staticdomain.MountedArtifact, len(coldMounts))
 	staticValueIDs := make([]staticdomain.MountedValueID, 0)
 	staticValues := source.Boundary().Values()
-	seenStaticValues := make(map[[2]keyspace.ContentID]struct{})
+	seenStaticValues := make(map[[2]identity.ContentID]struct{})
 	for index, mounted := range coldMounts {
 		published := mounted.published
 		if published.artifact == nil || !published.artifact.Available() || !published.moduleKey.Available() || !published.programID.Available() {
@@ -624,7 +614,7 @@ func (state *compiledState) newProgramBinding(source *link.Link) (*programBindin
 			if !rowOK || !row.Available() {
 				return nil, ProgramBindingFailureStatic, valuedomain.SealFailureNone, allocationcatalog.SealFailureNone
 			}
-			key := [2]keyspace.ContentID{published.moduleKey, row.ID()}
+			key := [2]identity.ContentID{published.moduleKey, row.ID()}
 			if _, duplicate := seenStaticValues[key]; duplicate {
 				return nil, ProgramBindingFailureStatic, valuedomain.SealFailureNone, allocationcatalog.SealFailureNone
 			}
@@ -715,7 +705,7 @@ func valueArtifactMounts(mounts []mountedProgramArtifact) ([]valuedomain.Artifac
 		return nil, false
 	}
 	result := make([]valuedomain.ArtifactMount, len(mounts))
-	seen := make(map[keyspace.ContentID]struct{}, len(mounts))
+	seen := make(map[identity.ContentID]struct{}, len(mounts))
 	for index, mounted := range mounts {
 		mount, ok := valuedomain.NewArtifactMount(mounted.artifact, mounted.moduleKey, mounted.programID)
 		if !ok {
@@ -793,7 +783,7 @@ func targetBatchRows(mount constructionMountedProgramArtifact, algebra *calldoma
 	return rows, true
 }
 
-func artifactPlanOwnsBody(artifact *programartifact.Artifact, id keyspace.ContentID) bool {
+func artifactPlanOwnsBody(artifact *programartifact.Artifact, id identity.ContentID) bool {
 	if artifact == nil || !artifact.Available() || !id.Available() {
 		return false
 	}
@@ -813,8 +803,8 @@ type mountedProgramArtifact struct {
 	artifact  *programartifact.Artifact
 	template  *engine.ArtifactScalarTemplate
 	roles     *artifactScalarRoleDirectory
-	programID keyspace.ContentID
-	moduleKey keyspace.ContentID
+	programID identity.ContentID
+	moduleKey identity.ContentID
 
 	// ruleMembers is populated once by attachArtifactRules and then read by
 	// every solve. It is deliberately private and immutable after compilation.
@@ -855,7 +845,7 @@ func heapArtifactMounts(mounts []constructionMountedProgramArtifact) ([]heapdoma
 		return nil, false
 	}
 	result := make([]heapdomain.ArtifactMount, len(mounts))
-	seen := make(map[keyspace.ContentID]struct{}, len(mounts))
+	seen := make(map[identity.ContentID]struct{}, len(mounts))
 	for index, mounted := range mounts {
 		published := mounted.published
 		mount, ok := heapdomain.NewArtifactMount(published.artifact, published.moduleKey, published.programID)
@@ -876,7 +866,7 @@ func packArtifactMounts(mounts []mountedProgramArtifact) ([]packdomain.ArtifactM
 		return nil, false
 	}
 	result := make([]packdomain.ArtifactMount, len(mounts))
-	seen := make(map[keyspace.ContentID]struct{}, len(mounts))
+	seen := make(map[identity.ContentID]struct{}, len(mounts))
 	for index, mounted := range mounts {
 		mount, ok := packdomain.NewArtifactMount(mounted.artifact, mounted.moduleKey, mounted.programID)
 		if !ok {
@@ -896,8 +886,8 @@ func packArtifactMounts(mounts []mountedProgramArtifact) ([]packdomain.ArtifactM
 // by the Value schema and its summary query; result detachment therefore does
 // not reopen Link, Program, or Flow.
 type compiledValueCoordinate struct {
-	id    keyspace.ContentID
-	mount keyspace.ContentID
+	id    identity.ContentID
+	mount identity.ContentID
 }
 
 func compileValueCoordinates(source *link.Link) ([]compiledValueCoordinate, bool) {
@@ -910,8 +900,8 @@ func compileValueCoordinates(source *link.Link) ([]compiledValueCoordinate, bool
 	}
 	rows := make([]compiledValueCoordinate, values.Count())
 	seen := make(map[struct {
-		mount keyspace.ContentID
-		id    keyspace.ContentID
+		mount identity.ContentID
+		id    identity.ContentID
 	}]struct{}, len(rows))
 	for index := range rows {
 		value, valueOK := values.At(index)
@@ -923,8 +913,8 @@ func compileValueCoordinates(source *link.Link) ([]compiledValueCoordinate, bool
 			return nil, false
 		}
 		key := struct {
-			mount keyspace.ContentID
-			id    keyspace.ContentID
+			mount identity.ContentID
+			id    identity.ContentID
 		}{mount: module, id: id}
 		if _, duplicate := seen[key]; duplicate {
 			return nil, false
@@ -948,9 +938,9 @@ func (mount mountedProgramArtifact) valid() bool {
 }
 
 type compiledArtifactSet struct {
-	receipt   programschema.CompilationReceipt
+	receipt   grammar.CompilationReceipt
 	mounts    []mountedProgramArtifact
-	byProgram map[keyspace.ContentID]*programartifact.Artifact
+	byProgram map[identity.ContentID]*programartifact.Artifact
 }
 
 type artifactCacheState struct {
@@ -961,7 +951,7 @@ type artifactCacheState struct {
 // artifactCacheKey is the complete Program compiler identity, not merely a
 // Program/schema pair. A new grammar or compiler law therefore cannot alias
 // an immutable artifact compiled under a prior contract.
-type artifactCacheKey = keyspace.ContentID
+type artifactCacheKey = identity.ContentID
 
 type artifactCacheEntry struct {
 	ready    chan struct{}
@@ -975,7 +965,7 @@ type artifactCacheEntry struct {
 // its owner-neutral Engine template. Neither payload retains Link authority.
 var globalArtifactCache = artifactCacheState{entries: make(map[artifactCacheKey]*artifactCacheEntry)}
 
-func cachedProgramArtifact(input program.TransformerInput, receipt programschema.CompilationReceipt) (*programartifact.Artifact, *engine.ArtifactScalarTemplate, *artifactScalarRoleDirectory, bool) {
+func cachedProgramArtifact(input program.TransformerInput, receipt grammar.CompilationReceipt) (*programartifact.Artifact, *engine.ArtifactScalarTemplate, *artifactScalarRoleDirectory, bool) {
 	compileKey, keyOK := schemaadapter.NewCompileKey(input, receipt)
 	programID, schemaID := input.ContentID(), receipt.Digest()
 	if !keyOK || !compileKey.Available() || !input.Available() || !programID.Available() || !receipt.Available() || !schemaID.Available() {
@@ -1020,7 +1010,7 @@ func cachedProgramArtifact(input program.TransformerInput, receipt programschema
 // compileProgramArtifacts compiles each distinct ProgramID once and records
 // every mounted occurrence's exact Link substitution. No Link/domain/runtime
 // authority enters the reusable artifact cache.
-func compileProgramArtifacts(source *link.Link, receipt programschema.CompilationReceipt) (*compiledArtifactSet, bool) {
+func compileProgramArtifacts(source *link.Link, receipt grammar.CompilationReceipt) (*compiledArtifactSet, bool) {
 	if source == nil || !source.ContentID().Available() || !receipt.Available() || source.Project() == nil {
 		return nil, false
 	}
@@ -1028,13 +1018,13 @@ func compileProgramArtifacts(source *link.Link, receipt programschema.Compilatio
 	if mounts.Count() == 0 {
 		return nil, false
 	}
-	result := &compiledArtifactSet{receipt: receipt, mounts: make([]mountedProgramArtifact, 0, mounts.Count()), byProgram: make(map[keyspace.ContentID]*programartifact.Artifact)}
+	result := &compiledArtifactSet{receipt: receipt, mounts: make([]mountedProgramArtifact, 0, mounts.Count()), byProgram: make(map[identity.ContentID]*programartifact.Artifact)}
 	type cachedProduct struct {
 		artifact *programartifact.Artifact
 		template *engine.ArtifactScalarTemplate
 		roles    *artifactScalarRoleDirectory
 	}
-	products := make(map[keyspace.ContentID]cachedProduct)
+	products := make(map[identity.ContentID]cachedProduct)
 	for index := 0; index < mounts.Count(); index++ {
 		shard, shardOK := mounts.At(index)
 		mounted, programOK := mounts.Program(shard)

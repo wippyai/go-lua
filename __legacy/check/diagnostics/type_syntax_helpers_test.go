@@ -1,8 +1,8 @@
 package diagnostics
 
 import (
-	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/analysis/type/unwrap"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/unwrap"
 )
 
 func containsTypeParamSyntax(t typ.Type) bool {

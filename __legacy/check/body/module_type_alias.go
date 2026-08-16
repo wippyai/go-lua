@@ -1,9 +1,9 @@
 package body
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	"github.com/wippyai/go-lua/analysis/lua/moduleidentity"
 	"github.com/wippyai/go-lua/analysis/module/typelookup"
-	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // requireAliasTypeResolver resolves annotations such as store_mod.Store when

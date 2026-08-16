@@ -4,7 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value"
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // HotRule is Value Source's package-owned Link-local implementation. It
@@ -53,7 +53,7 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 // AttachMountedRule admits one complete ValueSource row before topology
 // commit. Every operand and output surface is issued by this exact Value
 // owner; AddRuleFromDraft seals the row atomically under the mounted witness.
-func (rule *HotRule) AttachMountedRule(assembly *engine.ReceiptAssembly, mountID, pointID, occurrenceID keyspace.ContentID) (engine.BindingRuleRowRef, bool) {
+func (rule *HotRule) AttachMountedRule(assembly *engine.ReceiptAssembly, mountID, pointID, occurrenceID identity.ContentID) (engine.BindingRuleRowRef, bool) {
 	if rule == nil || rule.owner == nil || assembly == nil {
 		return engine.BindingRuleRowRef{}, false
 	}
@@ -115,7 +115,7 @@ func (rule *HotRule) AttachReceiptMember(compilation *engine.ReceiptCompilation,
 
 // AttachMountedReceiptMember resolves the graph-owned mounted member and the
 // exact preissued SourceSeed internally, then delegates to AttachReceiptMember.
-func (rule *HotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, pointID, occurrenceID keyspace.ContentID) (*engine.ReceiptMember, bool) {
+func (rule *HotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, pointID, occurrenceID identity.ContentID) (*engine.ReceiptMember, bool) {
 	if rule == nil || graph == nil {
 		return nil, false
 	}
@@ -141,7 +141,7 @@ type MountedIssuer struct {
 }
 
 // ForMount returns the mounted occurrence issuer for one exact ModuleKey.
-func (rule *HotRule) ForMount(module keyspace.ContentID) (MountedIssuer, bool) {
+func (rule *HotRule) ForMount(module identity.ContentID) (MountedIssuer, bool) {
 	if rule == nil || rule.owner == nil || rule.owner.Schema() == nil || !module.Available() {
 		return MountedIssuer{}, false
 	}
@@ -152,7 +152,7 @@ func (rule *HotRule) ForMount(module keyspace.ContentID) (MountedIssuer, bool) {
 // ReceiptForOccurrence returns the preissued SourceSeed for one artifact
 // ValueSource row. It is a direct mounted map lookup; no Program term, Flow
 // traversal, or Link inverse is reconstructed on the hot path.
-func (issuer MountedIssuer) ReceiptForOccurrence(id keyspace.ContentID) (value.SourceSeed, bool) {
+func (issuer MountedIssuer) ReceiptForOccurrence(id identity.ContentID) (value.SourceSeed, bool) {
 	if issuer.rule == nil || issuer.rule.owner == nil || issuer.rule.owner.Schema() == nil || !id.Available() {
 		return value.SourceSeed{}, false
 	}
@@ -163,9 +163,9 @@ func (issuer MountedIssuer) ReceiptForOccurrence(id keyspace.ContentID) (value.S
 }
 
 // ModuleID returns the exact mounted substitution identity.
-func (issuer MountedIssuer) ModuleID() keyspace.ContentID {
+func (issuer MountedIssuer) ModuleID() identity.ContentID {
 	if issuer.rule == nil {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return issuer.mount.ModuleID()
 }

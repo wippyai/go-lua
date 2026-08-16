@@ -9,8 +9,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/guard"
 	"github.com/wippyai/go-lua/analysis/engine/internal/observation"
 	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
-	"github.com/wippyai/go-lua/program"
-	"github.com/wippyai/go-lua/program/link"
+	"github.com/wippyai/go-lua/analysis/program"
+	"github.com/wippyai/go-lua/analysis/program/link"
 )
 
 // compiledConfluence is one exact Program occurrence's incoming local edges

@@ -4,18 +4,18 @@ import (
 	"crypto/sha256"
 	"testing"
 
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
-// This in-package law intentionally stays fixture-free: programschema imports
+// This in-package law intentionally stays fixture-free: grammar imports
 // Value, so a full Link/Artifact setup here would form an import cycle. It
 // covers the private guard that both the constructor and validation route
 // through, including the AllocationResult-key-ID splice case.
 func TestDirectAllocationSubjectPrivateKeyIDAndScalarSealLaw(t *testing.T) {
-	module := keyspace.ContentID(sha256.Sum256([]byte("direct-module")))
-	semantic := keyspace.ContentID(sha256.Sum256([]byte("direct-semantic")))
-	key := keyspace.ContentID(sha256.Sum256([]byte("direct-key")))
-	splicedKey := keyspace.ContentID(sha256.Sum256([]byte("spliced-key")))
+	module := identity.ContentID(sha256.Sum256([]byte("direct-module")))
+	semantic := identity.ContentID(sha256.Sum256([]byte("direct-semantic")))
+	key := identity.ContentID(sha256.Sum256([]byte("direct-key")))
+	splicedKey := identity.ContentID(sha256.Sum256([]byte("spliced-key")))
 	id := directAllocationSubjectID(module, semantic, key, 1)
 	if !id.Available() || !directAllocationSubjectKeyIDMatches(key, key) || !directAllocationSubjectSealMatches(id, module, semantic, key, 1) {
 		t.Fatal("direct allocation key-ID setup")

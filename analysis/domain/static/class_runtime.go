@@ -4,8 +4,8 @@ import (
 	"crypto/sha256"
 	"errors"
 
-	"github.com/wippyai/go-lua/analysis/semantic/typeauthority"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/type/authority"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // sealRuntime transfers the complete evaluated structural denominator into
@@ -79,7 +79,7 @@ func (s *ClassSet) sealMountedTypeValueOccurrences(runtime *typeauthority.Runtim
 		return errors.New("static: mounted TypeValue source unavailable")
 	}
 	rows := make([]typeValueRow, 0)
-	seen := make(map[keyspace.ContentID]struct{})
+	seen := make(map[identity.ContentID]struct{})
 	for _, mount := range a.mounts {
 		if mount.Artifact == nil || !mount.Artifact.Available() {
 			return errors.New("static: unavailable mounted TypeValue artifact")
@@ -138,16 +138,16 @@ func staticPrimitiveTypeValueName(name string) bool {
 	}
 }
 
-func mountedTypeValueRootID(module, local keyspace.ContentID) keyspace.ContentID {
+func mountedTypeValueRootID(module, local identity.ContentID) identity.ContentID {
 	if !module.Available() || !local.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	hash := sha256.New()
 	_, _ = hash.Write([]byte("wippy.analysis.static/typevalue-mounted-root/v1"))
 	_, _ = hash.Write([]byte{0})
 	_, _ = hash.Write(module[:])
 	_, _ = hash.Write(local[:])
-	var id keyspace.ContentID
+	var id identity.ContentID
 	copy(id[:], hash.Sum(nil))
 	return id
 }

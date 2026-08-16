@@ -7,8 +7,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
-	typetable "github.com/wippyai/go-lua/analysis/type/table"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	typetable "github.com/wippyai/go-lua/analysis/domain/type/table"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 )
 
 // ObjectLiteralEntryProof is the body-owned proof projection for one lowered

@@ -8,8 +8,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/dependency"
 	"github.com/wippyai/go-lua/analysis/engine/internal/fiber"
 	"github.com/wippyai/go-lua/analysis/engine/internal/guard"
-	"github.com/wippyai/go-lua/program"
-	"github.com/wippyai/go-lua/program/link"
+	"github.com/wippyai/go-lua/analysis/program"
+	"github.com/wippyai/go-lua/analysis/program/link"
 )
 
 // bodyProjection identifies one existing local equation in a compiled Body.

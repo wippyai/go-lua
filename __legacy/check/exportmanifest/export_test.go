@@ -3,9 +3,9 @@ package exportmanifest
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/type/normalize"
-	typetable "github.com/wippyai/go-lua/analysis/type/table"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/normalize"
+	typetable "github.com/wippyai/go-lua/analysis/domain/type/table"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 )
 
 func TestMergeRecordMembersUnionsConflictingFieldEvidence(t *testing.T) {

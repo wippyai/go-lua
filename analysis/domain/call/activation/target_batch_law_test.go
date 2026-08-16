@@ -5,12 +5,12 @@ import (
 
 	calldomain "github.com/wippyai/go-lua/analysis/domain/call"
 	activation "github.com/wippyai/go-lua/analysis/domain/call/activation"
-	"github.com/wippyai/go-lua/analysis/internal/programartifact/schemaadapter"
-	"github.com/wippyai/go-lua/analysis/internal/programschema"
-	"github.com/wippyai/go-lua/program/link"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
-	"github.com/wippyai/go-lua/program/lower"
-	"github.com/wippyai/go-lua/program/target/profile"
+	"github.com/wippyai/go-lua/analysis/lua/lower"
+	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
+	"github.com/wippyai/go-lua/analysis/program/link"
+	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/analysis/program/target/profile"
+	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 func TestTargetBatchCatalogRejectsBodyFromAnotherArtifact(t *testing.T) {
@@ -33,7 +33,7 @@ invoke(callee)
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, ok := programschema.Global()
+	receipt, ok := grammar.Global()
 	if !ok {
 		t.Fatal("program schema receipt")
 	}

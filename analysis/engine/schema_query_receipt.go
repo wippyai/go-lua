@@ -352,7 +352,7 @@ func BindSummaryQuery[V, R any](binding *SchemaBinding, query *QuerySlot[R], fac
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	if state.phase != schemaBindingOpen || state.schema == nil || query == nil || factor == nil || query.Schema() != state.schema || factor.Schema() != state.schema || form.Schema() != state.schema || form.Kind() != SchemaFormReadSummary || (spec.Project == nil && !foldSelected) || !validFrozenResult(spec.Result) {
+	if state.phase != schemaBindingOpen || state.schema == nil || query == nil || factor == nil || query.Schema() != state.schema || factor.Schema() != state.schema || form.Schema() != state.schema || !summaryReadFormKind(form.Kind()) || (spec.Project == nil && !foldSelected) || !validFrozenResult(spec.Result) {
 		state.poisonLocked()
 		return false
 	}
@@ -368,7 +368,7 @@ func BindSummaryQuery[V, R any](binding *SchemaBinding, query *QuerySlot[R], fac
 	shape, shapeOK := state.schema.queryShapeAt(queryOrdinal)
 	projection, projectionOK := state.schema.queryProjectionShapeAt(queryOrdinal, 0)
 	formShape, formShapeOK := state.schema.factorFormShapeAt(factorOrdinal, formOrdinal)
-	if !shapeOK || !projectionOK || !formShapeOK || shape.ProjectionCount != 1 || projection.Kind != composition.QueryFactorSummary || projection.Factor != factorKey || projection.Normalizer != formShape.Semantic || formFactor != factorOrdinal || formShape.Kind != composition.FactorSummaryRead || !projection.Normalizer.Available() || !factorKey.Available() || state.queries[queryOrdinal] != nil {
+	if !shapeOK || !projectionOK || !formShapeOK || shape.ProjectionCount != 1 || projection.Kind != composition.QueryFactorSummary || projection.Factor != factorKey || projection.Normalizer != formShape.Semantic || formFactor != factorOrdinal || !summaryReadRowKind(formShape.Kind) || !projection.Normalizer.Available() || !factorKey.Available() || state.queries[queryOrdinal] != nil {
 		state.poisonLocked()
 		return false
 	}

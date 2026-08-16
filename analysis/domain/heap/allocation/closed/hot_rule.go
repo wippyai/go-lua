@@ -8,7 +8,7 @@ import (
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // HotRule is Heap closed allocation's typed receipt-native Rule issuer. The
@@ -94,7 +94,7 @@ type MountedIssuer struct {
 	mount allocationcatalog.Mount
 }
 
-func (rule *HotRule) ForMount(module keyspace.ContentID) (MountedIssuer, bool) {
+func (rule *HotRule) ForMount(module identity.ContentID) (MountedIssuer, bool) {
 	if rule == nil || rule.catalog == nil {
 		return MountedIssuer{}, false
 	}
@@ -102,7 +102,7 @@ func (rule *HotRule) ForMount(module keyspace.ContentID) (MountedIssuer, bool) {
 	return MountedIssuer{rule: rule, mount: mount}, ok && mount.OwnedBy(rule.catalog)
 }
 
-func (issuer MountedIssuer) ReceiptForOccurrence(id keyspace.ContentID) (source.Closed, bool) {
+func (issuer MountedIssuer) ReceiptForOccurrence(id identity.ContentID) (source.Closed, bool) {
 	if issuer.rule == nil || !issuer.mount.OwnedBy(issuer.rule.catalog) {
 		return source.Closed{}, false
 	}
@@ -113,7 +113,7 @@ func (issuer MountedIssuer) ReceiptForOccurrence(id keyspace.ContentID) (source.
 // AttachMountedOccurrence lowers one HeapClosed artifact row from the exact
 // allocation catalog receipt. Heap's exact predecessor/write and Value's
 // preissued summary vector remain sealed behind their respective owners.
-func (rule *HotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, mountID, reusablePointID, occurrenceID keyspace.ContentID) (engine.BindingRuleRowRef, bool) {
+func (rule *HotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, mountID, reusablePointID, occurrenceID identity.ContentID) (engine.BindingRuleRowRef, bool) {
 	if rule == nil || rule.heapOwner == nil || rule.valueOwner == nil || assembly == nil {
 		return engine.BindingRuleRowRef{}, false
 	}
@@ -171,7 +171,7 @@ func (rule *HotRule) summaryOwner() *valueowner.HotOwner {
 // AttachMountedReceiptMember resolves the exact committed HeapClosed member
 // and its preissued heterogeneous operand internally.  The Value summary
 // vector and both private owner coordinates remain sealed in their packages.
-func (rule *HotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, reusablePointID, occurrenceID keyspace.ContentID) (*engine.ReceiptMember, bool) {
+func (rule *HotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, reusablePointID, occurrenceID identity.ContentID) (*engine.ReceiptMember, bool) {
 	if rule == nil || rule.heapOwner == nil || graph == nil {
 		return nil, false
 	}

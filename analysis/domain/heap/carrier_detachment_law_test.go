@@ -51,7 +51,7 @@ func TestPublishedHeapRowsRetainNoLinkCoordinates(t *testing.T) {
 		if typ.Kind() != reflect.Struct {
 			return
 		}
-		if typ.PkgPath() == "github.com/wippyai/go-lua/program/link" && typ.Name() == "OwnerCapability" {
+		if typ.PkgPath() == "github.com/wippyai/go-lua/analysis/program/link" && typ.Name() == "OwnerCapability" {
 			return
 		}
 		if strings.Contains(typ.PkgPath(), "/program/link/") {

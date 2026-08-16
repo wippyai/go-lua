@@ -12,12 +12,12 @@ import (
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/internal/programartifact/schemaadapter"
-	"github.com/wippyai/go-lua/analysis/internal/programschema"
-	"github.com/wippyai/go-lua/program/link"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
-	"github.com/wippyai/go-lua/program/lower"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/lua/lower"
+	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
+	"github.com/wippyai/go-lua/analysis/program/link"
+	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 func TestHotIngressBindingIssuesOnlyItsExactMountedReceipt(t *testing.T) {
@@ -30,7 +30,7 @@ func TestHotIngressBindingIssuesOnlyItsExactMountedReceipt(t *testing.T) {
 
 	builder := engine.NewSchema()
 	heapFragment, heapOK := heapowner.DeclareSchema(builder, ingressKey(1))
-	valueFragment, valueOK := valueowner.DeclareSchema(builder, ingressKey(2), ingressKey(3))
+	valueFragment, valueOK := valueowner.DeclareSchema(builder, ingressKey(2), ingressKey(3), ingressKey(101))
 	fragment, fragmentOK := ingress.DeclareSchema(builder, ingressKey(4), ingressKey(5), ingressKey(6), heapFragment)
 	cold, coldOK := builder.Seal()
 	if !heapOK || !valueOK || !fragmentOK || !coldOK || cold == nil {
@@ -134,7 +134,7 @@ func ingressFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Schema, ingre
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, receiptOK := programschema.Global()
+	receipt, receiptOK := grammar.Global()
 	if !receiptOK {
 		t.Fatal("ingress artifact receipt")
 	}

@@ -5,11 +5,11 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
-func receiptSolverFallbackSemanticID(value byte) keyspace.ContentID {
-	var id keyspace.ContentID
+func receiptSolverFallbackSemanticID(value byte) identity.ContentID {
+	var id identity.ContentID
 	id[0] = value
 	return id
 }
@@ -81,7 +81,7 @@ func TestReceiptSolverFallbackCompilesWTORevision(t *testing.T) {
 	if !topologyOK || topology == nil {
 		t.Fatal("receipt WTO topology")
 	}
-	graph, graphOK := topology.Graph(nil)
+	graph, graphOK := initialEquationGraph(topology)
 	if !graphOK || graph == nil || graph.RegionCount() == 0 {
 		t.Fatal("receipt WTO schedule")
 	}
@@ -127,7 +127,11 @@ func TestReceiptSolverFallbackCompilesWTORevision(t *testing.T) {
 			return bindReceiptExactQueryRuntime[uint64, uint64](next, queryImplementation, resolved)
 		}},
 	}
-	runtime, phase, compiled := compiler.compile(nil)
+	baseRelation, baseRelationOK := topology.InitialRelation()
+	if !baseRelationOK {
+		t.Fatal("receipt WTO base publication")
+	}
+	runtime, phase, compiled := compiler.compile(baseRelation)
 	if !compiled || runtime == nil || phase != SolveFailurePhaseNone || runtime.graph.RegionCount() == 0 || len(runtime.queries) != 1 {
 		t.Fatalf("receipt WTO fallback runtime=%t phase=%v regions=%d queries=%d", runtime != nil, phase, func() int {
 			if runtime == nil {
@@ -330,8 +334,9 @@ func TestReceiptSolverFallbackRunsAcceptedActivationThroughWTORevision(t *testin
 	if status != SolveComplete || state == nil {
 		t.Fatalf("receipt activation solve state=%t status=%v", state != nil, status)
 	}
-	if solver.revision == 0 || solver.runtime == nil || solver.runtime.graph == graph.graph || solver.runtime.graph.RegionCount() == 0 {
-		t.Fatalf("receipt activation revision=%d runtime=%t distinct=%t regions=%d", solver.revision, solver.runtime != nil, solver.runtime != nil && solver.runtime.graph != graph.graph, func() int {
+	sealedRelation, sealedRelationOK := solver.runtime.topology.InitialRelation()
+	if !sealedRelationOK || !sealedRelation.Precedes(solver.relation) || solver.runtime == nil || solver.runtime.graph == graph.graph || solver.runtime.graph.RegionCount() == 0 {
+		t.Fatalf("receipt activation revision=%d runtime=%t distinct=%t regions=%d", solver.relation.Generation(), solver.runtime != nil, solver.runtime != nil && solver.runtime.graph != graph.graph, func() int {
 			if solver.runtime == nil || solver.runtime.graph == nil {
 				return 0
 			}
@@ -358,4 +363,27 @@ func TestReceiptExactObservationRejectsNonExactWriteMetadata(t *testing.T) {
 			t.Fatalf("exact observation accepted write metadata %s", name)
 		}
 	}
+}
+
+// initialReceiptGraph is the test-local spelling of "the sealed base
+// publication": the first Relation of a BindingTopology and its graph receipt.
+func initialReceiptGraph(topology *BindingTopology) (*ReceiptGraph, bool) {
+	if !topology.valid() {
+		return nil, false
+	}
+	relation, ok := topology.topology.InitialRelation()
+	if !ok {
+		return nil, false
+	}
+	return topology.Graph(relation)
+}
+
+// initialEquationGraph resolves the sealed base publication of a Topology and
+// the graph issued for it.
+func initialEquationGraph(topology *equation.Topology) (*equation.Graph, bool) {
+	relation, ok := topology.InitialRelation()
+	if !ok {
+		return nil, false
+	}
+	return topology.Graph(relation)
 }

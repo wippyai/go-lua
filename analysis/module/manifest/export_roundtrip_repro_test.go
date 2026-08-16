@@ -3,8 +3,8 @@ package manifest
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/analysis/type/typeexpr"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/typeexpr"
 )
 
 // A host module export is an interface of methods returning (value, LuaError?).

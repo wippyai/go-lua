@@ -7,7 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/internal/readmodel"
 	"github.com/wippyai/go-lua/analysis/check/judgment"
 	obligationpass "github.com/wippyai/go-lua/analysis/check/obligation/pass"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 )
 
 func TestCallCalleeReportsNotCallableAndMayBeNil(t *testing.T) {

@@ -4,10 +4,10 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 
-	"github.com/wippyai/go-lua/analysis/internal/programartifact"
-	"github.com/wippyai/go-lua/program/keyspace"
-	linkboundary "github.com/wippyai/go-lua/program/link/boundary"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/identity"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
+	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
 type targetKind uint8
@@ -19,41 +19,41 @@ const (
 
 type targetKey struct {
 	kind        targetKind
-	moduleKey   keyspace.ContentID
-	bodyContext keyspace.ContentID
-	seedID      keyspace.ContentID
+	moduleKey   identity.ContentID
+	bodyContext identity.ContentID
+	seedID      identity.ContentID
 }
 
 type functionTargetKey struct {
-	moduleKey       keyspace.ContentID
-	functionContext keyspace.ContentID
+	moduleKey       identity.ContentID
+	functionContext identity.ContentID
 }
 
 // allocationTargetKey is the sealed Program allocation proof lookup used by
 // dispatch. The allocation ID is owner-neutral; TargetForAllocation applies
 // the exact mounted Program owner fence before projecting it to Call.
 type allocationTargetKey struct {
-	moduleKey    keyspace.ContentID
-	allocationID keyspace.ContentID
+	moduleKey    identity.ContentID
+	allocationID identity.ContentID
 }
 
 // MountedArtifact is the exact reusable artifact mounted at one Link shard.
 // Call internally derives all closure target rows from it; no raw
 // allocation/body scalar bundle enters the domain boundary.
 type MountedArtifact struct {
-	ModuleKey keyspace.ContentID
+	ModuleKey identity.ContentID
 	Artifact  *programartifact.Artifact
 }
 
 type bodyTargetReceipt struct {
-	moduleKey       keyspace.ContentID
-	artifactID      keyspace.ContentID
-	programID       keyspace.ContentID
-	allocationID    keyspace.ContentID
-	bodyPath        keyspace.ContentID
-	bodyContext     keyspace.ContentID
-	functionContext keyspace.ContentID
-	formalID        keyspace.ContentID
+	moduleKey       identity.ContentID
+	artifactID      identity.ContentID
+	programID       identity.ContentID
+	allocationID    identity.ContentID
+	bodyPath        identity.ContentID
+	bodyContext     identity.ContentID
+	functionContext identity.ContentID
+	formalID        identity.ContentID
 }
 
 func (receipt bodyTargetReceipt) valid() bool {
@@ -66,11 +66,11 @@ func (receipt bodyTargetReceipt) valid() bool {
 // deliberately data-only: no Program, TransformerInput, Body, Flow, or Link
 // proof survives in Call's target rows.
 type bodyReceipt struct {
-	artifactID  keyspace.ContentID
-	programID   keyspace.ContentID
-	bodyPath    keyspace.ContentID
-	formalID    keyspace.ContentID
-	bodyContext keyspace.ContentID
+	artifactID  identity.ContentID
+	programID   identity.ContentID
+	bodyPath    identity.ContentID
+	formalID    identity.ContentID
+	bodyContext identity.ContentID
 }
 
 func (receipt bodyReceipt) valid() bool {
@@ -81,11 +81,11 @@ func (receipt bodyReceipt) valid() bool {
 type targetRow struct {
 	key             targetKey
 	role            TargetRoleID
-	functionContext keyspace.ContentID
-	bodyContext     keyspace.ContentID
+	functionContext identity.ContentID
+	bodyContext     identity.ContentID
 	body            bodyReceipt
 	seedOperation   target.Operation
-	seedFormalID    keyspace.ContentID
+	seedFormalID    identity.ContentID
 	seedKind        uint8
 }
 
@@ -94,7 +94,7 @@ func (algebra *Algebra) buildTargets(mounts []MountedArtifact, boundary *linkbou
 		return false
 	}
 	receipts := make([]bodyTargetReceipt, 0)
-	seenMounts := make(map[keyspace.ContentID]struct{}, len(mounts))
+	seenMounts := make(map[identity.ContentID]struct{}, len(mounts))
 	for _, mount := range mounts {
 		if mount.Artifact == nil || !mount.Artifact.Available() || !mount.ModuleKey.Available() {
 			return false
@@ -107,7 +107,7 @@ func (algebra *Algebra) buildTargets(mounts []MountedArtifact, boundary *linkbou
 			return false
 		}
 		seenMounts[mount.ModuleKey] = struct{}{}
-		bodies := make(map[keyspace.ContentID]programartifact.BodyRow, mount.Artifact.BodyCount())
+		bodies := make(map[identity.ContentID]programartifact.BodyRow, mount.Artifact.BodyCount())
 		for index := 0; index < mount.Artifact.BodyCount(); index++ {
 			body, ok := mount.Artifact.BodyAt(index)
 			if !ok || !body.Available() || !body.ID().Available() || !body.ContextID().Available() {
@@ -228,7 +228,7 @@ func (algebra *Algebra) roleIDForTarget(row targetRow) (TargetRoleID, bool) {
 		binary.BigEndian.PutUint64(payload[8:16], 1)
 		copy(payload[16:48], moduleID[:])
 		copy(payload[48:80], formalID[:])
-		id := keyspace.ContentID(sha256.Sum256(payload[:]))
+		id := identity.ContentID(sha256.Sum256(payload[:]))
 		return newTargetRoleID(TargetRoleBody, id)
 	case targetSeed:
 		if !row.key.seedID.Available() || !row.seedFormalID.Available() {
@@ -242,7 +242,7 @@ func (algebra *Algebra) roleIDForTarget(row targetRow) (TargetRoleID, bool) {
 		binary.BigEndian.PutUint64(payload[8:16], 1)
 		payload[16] = row.seedKind
 		copy(payload[17:], formalID[:])
-		id := keyspace.ContentID(sha256.Sum256(payload[:]))
+		id := identity.ContentID(sha256.Sum256(payload[:]))
 		return newTargetRoleID(TargetRoleSeed, id)
 	default:
 		return TargetRoleID{}, false

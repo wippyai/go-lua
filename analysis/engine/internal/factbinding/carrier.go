@@ -7,6 +7,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/semantic"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 	"github.com/wippyai/go-lua/analysis/engine/internal/guard"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"slices"
 	"sort"
 	"sync/atomic"
 )
@@ -354,22 +356,21 @@ type bindingWork[K scalar.Key, V any] struct {
 	poll             func() bool
 	observations     carrier.ObservationWork
 	observationLive  bool
-	generation       uint64
+	generation       identity.Generation
 	nextObservation  uint64
 	firstObservation uint64
 	// Preview roots are Work-local just like ordinary dynamic roots.  A
 	// Binding-wide table would let concurrent Works collide on compact preview
 	// IDs and would retain an aborted epoch's typed planes.
-	previewRoots   map[uint64]semantic.Plane[planeFactor, K, V]
-	previewNext    uint64
-	records        []observationRecord
-	entries        []ObservationEntry[V]
-	pieces         []observationPiece[V]
-	partials       []observationGroup
-	partialEntries []ObservationEntry[V]
-	nextPartials   []observationGroup
-	nextEntries    []ObservationEntry[V]
-	buckets        map[uint64]int
+	previewRoots map[uint64]semantic.Plane[planeFactor, K, V]
+	previewNext  uint64
+	records      []observationRecord
+	entries      []ObservationEntry[V]
+	pieces       []observationPiece[V]
+	partials     []observationGroup
+	nextPartials []observationGroup
+	spine        []observationCell[V]
+	buckets      map[uint64]int
 	// scratch and changes belong to the enclosing evaluator's merge/compare
 	// lifecycle, not to one observation generation. Every sole operation
 	// begins with SoleScratch.prepare (which Clear's it); Merge3Under clears
@@ -763,13 +764,13 @@ func (entry ObservationEntry[V]) Read() (V, bool) { return entry.value, entry.pr
 // closes, even if the SlotWork later reuses its flat scratch storage.
 type Observation[V any] struct {
 	resolver   observationResolver[V]
-	generation uint64
+	generation identity.Generation
 	id         uint64
 }
 
 type observationResolver[V any] interface {
-	observationCount(generation, id uint64) (int, bool)
-	observationEntry(generation, id uint64, index int) (ObservationEntry[V], bool)
+	observationCount(generation identity.Generation, id uint64) (int, bool)
+	observationEntry(generation identity.Generation, id uint64, index int) (ObservationEntry[V], bool)
 }
 
 // Valid reports whether this observation still belongs to its live callback
@@ -809,8 +810,21 @@ type observationPiece[V any] struct {
 	region      support.Mask
 }
 
+// observationCell is one entry of a discovered sequence linked to the prefix
+// group it extends. Every group owns exactly one cell and shares its whole
+// prefix with the group it was built from, so grouping storage is one cell per
+// discovered group rather than one per group and declared key.
+type observationCell[V any] struct {
+	entry  ObservationEntry[V]
+	parent int
+	depth  int
+}
+
+// observationGroup names one discovered sequence by its terminal spine cell.
+// count is that cell's depth, which is the declared entry count the emitted
+// row carries.
 type observationGroup struct {
-	first       int
+	cell        int
 	count       int
 	fingerprint uint64
 	region      support.Mask
@@ -1101,6 +1115,20 @@ func (work *bindingWork[K, V]) CloseContributionUnder(before, input carrier.Root
 	factor, units, regions, ok := work.binding.expandChanges(&work.changes, delta)
 	if !ok {
 		return carrier.ChangeHandle{}, false
+	}
+	// A recurrence head re-closes its stable exact RHS against the root it
+	// published last pass.  Whenever that close erases latent payload the
+	// candidate cut below cannot apply, yet the closed plane is the plane the
+	// predecessor already publishes.  Retaining that root is what makes the
+	// converged head observe no structural change; minting an equal-valued root
+	// would re-dirty the head every pass.  The reused root must be a normal
+	// published one, exactly as on the candidate side.
+	_, priorPreview := work.epoch.ResolvePreviewRoot(work.binding.issuer, before)
+	if !priorPreview && work.binding.plane.domain.Same(prior, closed) {
+		if work.changes.Count() != 0 {
+			return carrier.ChangeHandle{}, false
+		}
+		return work.prepareChange(before, before, closed, false, support.Mask{}, nil, nil, delta)
 	}
 	// Initial/non-carried roots often already equal the final closed plane.
 	// Reuse only a normal published root; a preview root must be converted into
@@ -1543,13 +1571,19 @@ func (work *bindingWork[K, V]) ObserveUnder(root carrier.RootHandle, unit carrie
 	if support.Empty(within) {
 		return true
 	}
+	// The fold is sealed into the Unit at declaration. A summary declared
+	// coordinate-wise is folded per declared key, so its cost is the sum of
+	// the per-key partitions rather than their joint product.
+	if descriptor.distributive {
+		return work.observeDistributiveSummary(input, root, unit, descriptor.keys, within, visit)
+	}
 	if len(descriptor.keys) == 1 {
 		return work.observeExact(input, root, unit, descriptor.keys[0], within, visit)
 	}
 	return work.observeSummary(input, root, unit, descriptor.keys, within, visit)
 }
 
-func (work *bindingWork[K, V]) resetObservationScratch(generation uint64) {
+func (work *bindingWork[K, V]) resetObservationScratch(generation identity.Generation) {
 	work.clearObservationScratch()
 	work.observationLive = true
 	work.generation = generation
@@ -1568,12 +1602,10 @@ func (work *bindingWork[K, V]) clearObservationScratch() {
 	work.pieces = work.pieces[:0]
 	clear(work.partials)
 	work.partials = work.partials[:0]
-	clear(work.partialEntries)
-	work.partialEntries = work.partialEntries[:0]
 	clear(work.nextPartials)
 	work.nextPartials = work.nextPartials[:0]
-	clear(work.nextEntries)
-	work.nextEntries = work.nextEntries[:0]
+	clear(work.spine)
+	work.spine = work.spine[:0]
 	clear(work.buckets)
 }
 
@@ -1622,6 +1654,67 @@ func (work *bindingWork[K, V]) exactPiecesDistinct() bool {
 	return true
 }
 
+// observeDistributiveSummary traverses each declared key once and emits the
+// single row that carries the per-coordinate fold over that key's pieces.
+// It builds no candidate support transaction and no group product: the
+// declared fold makes the joint partition unobservable, so the whole of
+// within is one region.
+func (work *bindingWork[K, V]) observeDistributiveSummary(input semantic.Plane[planeFactor, K, V], root carrier.RootHandle, unit carrier.Unit, keys []K, within support.Mask, visit func(carrier.ObservationRow) bool) bool {
+	if len(keys) == 0 {
+		return false
+	}
+	work.resetSpine()
+	cell, count := -1, 0
+	for _, key := range keys {
+		if !work.live() || !work.partitionKey(input, key, within) {
+			return false
+		}
+		entry, ok := work.foldPieces()
+		if !ok {
+			return false
+		}
+		cell, count = work.appendCell(cell, entry), count+1
+	}
+	clear(work.partials)
+	work.partials = work.partials[:0]
+	work.partials = append(work.partials, observationGroup{cell: cell, count: count, region: within, previous: -1})
+	return work.emitGroups(root, unit, visit)
+}
+
+// foldPieces reduces one declared coordinate's exact pieces to the cell a
+// coordinate-wise reader derives from the joint partition: stored pieces join
+// under the Factor lattice and absent pieces contribute nothing, so presence
+// is the disjunction over the pieces. An entirely absent coordinate keeps its
+// first absent token, whose value the reader ignores.
+func (work *bindingWork[K, V]) foldPieces() (ObservationEntry[V], bool) {
+	if work.binding == nil || work.binding.algebra == nil || len(work.pieces) == 0 {
+		return ObservationEntry[V]{}, false
+	}
+	var stored ObservationEntry[V]
+	var absent ObservationEntry[V]
+	found := false
+	for _, piece := range work.pieces {
+		if !piece.entry.present {
+			if !found {
+				absent, found = piece.entry, true
+			}
+			continue
+		}
+		if !stored.present {
+			stored = piece.entry
+			continue
+		}
+		stored.value = work.binding.algebra.join(stored.value, piece.entry.value)
+	}
+	if stored.present {
+		return stored, true
+	}
+	if found {
+		return absent, true
+	}
+	return ObservationEntry[V]{}, false
+}
+
 func (work *bindingWork[K, V]) observeSummary(input semantic.Plane[planeFactor, K, V], root carrier.RootHandle, unit carrier.Unit, keys []K, within support.Mask, visit func(carrier.ObservationRow) bool) bool {
 	if len(keys) == 0 {
 		return false
@@ -1630,9 +1723,9 @@ func (work *bindingWork[K, V]) observeSummary(input semantic.Plane[planeFactor, 
 	// raw ordered sequence for all of within. It needs neither pairwise
 	// intersections nor a candidate support transaction; retain that work for
 	// the first genuinely branched declared key.
-	clear(work.partialEntries)
-	work.partialEntries = work.partialEntries[:0]
+	work.resetSpine()
 	constant := true
+	cell, count := -1, 0
 	for _, key := range keys {
 		if !work.live() {
 			return false
@@ -1644,20 +1737,18 @@ func (work *bindingWork[K, V]) observeSummary(input semantic.Plane[planeFactor, 
 			constant = false
 			break
 		}
-		work.partialEntries = append(work.partialEntries, work.pieces[0].entry)
+		cell, count = work.appendCell(cell, work.pieces[0].entry), count+1
 	}
 	if constant {
 		clear(work.partials)
 		work.partials = work.partials[:0]
-		work.partials = append(work.partials, observationGroup{first: 0, count: len(work.partialEntries), region: within, previous: -1})
+		work.partials = append(work.partials, observationGroup{cell: cell, count: count, region: within, previous: -1})
 		return work.emitGroups(root, unit, visit)
 	}
 	// The preliminary constant probe intentionally avoids a second semantic
 	// authority. On a branched summary, restart the existing exact grouping
 	// algorithm from its first declared key rather than combining a partial
 	// prefix with a different traversal state.
-	clear(work.partialEntries)
-	work.partialEntries = work.partialEntries[:0]
 	unions := work.newSupportWork()
 	if unions == nil || !work.partitionKey(input, keys[0], within) || !work.seedGroups(unions) {
 		if unions != nil {
@@ -1699,7 +1790,7 @@ func (work *bindingWork[K, V]) seedGroups(unions *support.Work) bool {
 		return false
 	}
 	work.partials = work.partials[:0]
-	work.partialEntries = work.partialEntries[:0]
+	work.resetSpine()
 	work.clearBuckets()
 	empty := unions.False()
 	for _, piece := range work.pieces {
@@ -1707,7 +1798,7 @@ func (work *bindingWork[K, V]) seedGroups(unions *support.Work) bool {
 			return false
 		}
 		region, ok := unions.Or(empty, piece.region)
-		if !ok || !work.addGroup(&work.partials, &work.partialEntries, nil, piece.entry, foldObservationFingerprint(observationFingerprintSeed, piece.fingerprint), region, unions) {
+		if !ok || !work.addGroup(&work.partials, -1, piece.entry, foldObservationFingerprint(observationFingerprintSeed, piece.fingerprint), region, unions) {
 			return false
 		}
 	}
@@ -1719,13 +1810,11 @@ func (work *bindingWork[K, V]) extendGroups(unions *support.Work) bool {
 		return false
 	}
 	work.nextPartials = work.nextPartials[:0]
-	work.nextEntries = work.nextEntries[:0]
 	work.clearBuckets()
 	for _, prefix := range work.partials {
 		if !work.live() {
 			return false
 		}
-		entries := work.partialEntries[prefix.first : prefix.first+prefix.count]
 		for _, piece := range work.pieces {
 			if !work.live() {
 				return false
@@ -1741,27 +1830,29 @@ func (work *bindingWork[K, V]) extendGroups(unions *support.Work) bool {
 			if view.Terminal && !view.Value {
 				continue
 			}
-			if !work.addGroup(&work.nextPartials, &work.nextEntries, entries, piece.entry, foldObservationFingerprint(prefix.fingerprint, piece.fingerprint), region, unions) {
+			if !work.addGroup(&work.nextPartials, prefix.cell, piece.entry, foldObservationFingerprint(prefix.fingerprint, piece.fingerprint), region, unions) {
 				return false
 			}
 		}
 	}
 	work.partials, work.nextPartials = work.nextPartials, work.partials
-	work.partialEntries, work.nextEntries = work.nextEntries, work.partialEntries
 	return len(work.partials) != 0
 }
 
 // addGroup coalesces every semantically equal complete or partial sequence,
 // not merely adjacent symbolic cells. Bucket lookup is an optimization only:
 // Factor Equal and the stored/absent bit decide equality. groups remains the
-// deterministic first-discovery order used for final emission.
-func (work *bindingWork[K, V]) addGroup(groups *[]observationGroup, entries *[]ObservationEntry[V], prefix []ObservationEntry[V], tail ObservationEntry[V], fingerprint uint64, region support.Mask, unions *support.Work) bool {
-	if groups == nil || entries == nil || unions == nil {
+// deterministic first-discovery order used for final emission. prefix names
+// the spine cell this sequence extends, so a new group costs one cell and
+// keeps the prefix it was built from.
+func (work *bindingWork[K, V]) addGroup(groups *[]observationGroup, prefix int, tail ObservationEntry[V], fingerprint uint64, region support.Mask, unions *support.Work) bool {
+	if groups == nil || unions == nil || prefix >= len(work.spine) {
 		return false
 	}
+	count := work.cellDepth(prefix) + 1
 	for index, found := work.buckets[fingerprint]; found && index >= 0; {
 		candidate := &(*groups)[index]
-		if candidate.count != len(prefix)+1 || !work.sequenceEqual((*entries)[candidate.first:candidate.first+candidate.count], prefix, tail) {
+		if candidate.count != count || !work.sequenceEqual(candidate.cell, prefix, tail) {
 			index = candidate.previous
 			continue
 		}
@@ -1772,28 +1863,55 @@ func (work *bindingWork[K, V]) addGroup(groups *[]observationGroup, entries *[]O
 		candidate.region = merged
 		return true
 	}
-	start := len(*entries)
-	*entries = append(*entries, prefix...)
-	*entries = append(*entries, tail)
 	previous := -1
 	if last, found := work.buckets[fingerprint]; found {
 		previous = last
 	}
-	*groups = append(*groups, observationGroup{first: start, count: len(prefix) + 1, fingerprint: fingerprint, region: region, previous: previous})
+	*groups = append(*groups, observationGroup{cell: work.appendCell(prefix, tail), count: count, fingerprint: fingerprint, region: region, previous: previous})
 	work.buckets[fingerprint] = len(*groups) - 1
 	return true
 }
 
-func (work *bindingWork[K, V]) sequenceEqual(stored, prefix []ObservationEntry[V], tail ObservationEntry[V]) bool {
-	if len(stored) != len(prefix)+1 {
+// sequenceEqual compares one stored sequence against the prefix spine cell
+// extended by tail. Both walks have the same length because the caller has
+// already matched the stored count, and reaching one shared cell proves the
+// remaining prefixes are the same sequence.
+func (work *bindingWork[K, V]) sequenceEqual(stored, prefix int, tail ObservationEntry[V]) bool {
+	if stored < 0 || stored >= len(work.spine) {
 		return false
 	}
-	for index, entry := range prefix {
-		if !work.entryEqual(stored[index], entry) {
+	if !work.entryEqual(work.spine[stored].entry, tail) {
+		return false
+	}
+	for left, right := work.spine[stored].parent, prefix; left != right; {
+		if left < 0 || right < 0 {
 			return false
 		}
+		if !work.entryEqual(work.spine[left].entry, work.spine[right].entry) {
+			return false
+		}
+		left, right = work.spine[left].parent, work.spine[right].parent
 	}
-	return work.entryEqual(stored[len(stored)-1], tail)
+	return true
+}
+
+// appendCell stores one sequence terminal linked to the prefix cell it
+// extends. A negative parent starts a new sequence.
+func (work *bindingWork[K, V]) appendCell(parent int, entry ObservationEntry[V]) int {
+	work.spine = append(work.spine, observationCell[V]{entry: entry, parent: parent, depth: work.cellDepth(parent) + 1})
+	return len(work.spine) - 1
+}
+
+func (work *bindingWork[K, V]) cellDepth(cell int) int {
+	if cell < 0 || cell >= len(work.spine) {
+		return 0
+	}
+	return work.spine[cell].depth
+}
+
+func (work *bindingWork[K, V]) resetSpine() {
+	clear(work.spine)
+	work.spine = work.spine[:0]
 }
 
 func (work *bindingWork[K, V]) entryEqual(left, right ObservationEntry[V]) bool {
@@ -1834,7 +1952,9 @@ func (work *bindingWork[K, V]) emitGroups(root carrier.RootHandle, unit carrier.
 			return false
 		}
 		first := len(work.entries)
-		work.entries = append(work.entries, work.partialEntries[group.first:group.first+group.count]...)
+		if !work.appendSequence(group.cell, group.count) {
+			return false
+		}
 		work.nextObservation++
 		id := work.nextObservation
 		handle, ok := work.binding.issuer.IssueObservation(work.observations, work.generation, id)
@@ -1849,6 +1969,30 @@ func (work *bindingWork[K, V]) emitGroups(root carrier.RootHandle, unit carrier.
 		if !visit(row) {
 			return false
 		}
+	}
+	return true
+}
+
+// appendSequence materializes one group's declared-order sequence into the
+// flat entry slab that observationEntry indexes by position. The spine links
+// terminal to prefix, so the sequence is filled from its last entry back.
+func (work *bindingWork[K, V]) appendSequence(cell, count int) bool {
+	if count <= 0 {
+		return false
+	}
+	first := len(work.entries)
+	work.entries = slices.Grow(work.entries, count)[:first+count]
+	for index := count - 1; index >= 0; index-- {
+		if cell < 0 || cell >= len(work.spine) {
+			work.entries = work.entries[:first]
+			return false
+		}
+		work.entries[first+index] = work.spine[cell].entry
+		cell = work.spine[cell].parent
+	}
+	if cell >= 0 {
+		work.entries = work.entries[:first]
+		return false
 	}
 	return true
 }
@@ -1897,8 +2041,8 @@ func (binding *Binding[K, V]) ResolveObservation(slot carrier.SlotWork, row carr
 	return Observation[V]{resolver: work, generation: work.generation, id: id}, true
 }
 
-func (work *bindingWork[K, V]) record(generation, id uint64) (observationRecord, bool) {
-	if work == nil || !work.observationLive || generation == 0 || generation != work.generation || id < work.firstObservation {
+func (work *bindingWork[K, V]) record(generation identity.Generation, id uint64) (observationRecord, bool) {
+	if work == nil || !work.observationLive || !generation.Available() || generation != work.generation || id < work.firstObservation {
 		return observationRecord{}, false
 	}
 	index := id - work.firstObservation
@@ -1908,12 +2052,12 @@ func (work *bindingWork[K, V]) record(generation, id uint64) (observationRecord,
 	return work.records[index], true
 }
 
-func (work *bindingWork[K, V]) observationCount(generation, id uint64) (int, bool) {
+func (work *bindingWork[K, V]) observationCount(generation identity.Generation, id uint64) (int, bool) {
 	record, ok := work.record(generation, id)
 	return record.count, ok
 }
 
-func (work *bindingWork[K, V]) observationEntry(generation, id uint64, index int) (ObservationEntry[V], bool) {
+func (work *bindingWork[K, V]) observationEntry(generation identity.Generation, id uint64, index int) (ObservationEntry[V], bool) {
 	record, ok := work.record(generation, id)
 	if !ok || index < 0 || index >= record.count || record.first < 0 || record.first > len(work.entries)-record.count {
 		return ObservationEntry[V]{}, false
@@ -2433,8 +2577,12 @@ type rootStore[F ~uint64, K scalar.Key, V any] struct {
 	directory atomic.Pointer[rootDirectory[F, K, V]]
 }
 
+// rootDirectory holds one page slot per reserved page span. Slots are atomic
+// so a reservation can install a missing page inside the current span without
+// replacing the directory: page installation and lock-free readers would
+// otherwise race on the same slot.
 type rootDirectory[F ~uint64, K scalar.Key, V any] struct {
-	pages []*rootPage[F, K, V]
+	pages []atomic.Pointer[rootPage[F, K, V]]
 	count atomic.Uint64
 }
 
@@ -2457,10 +2605,13 @@ func newRootStore[F ~uint64, K scalar.Key, V any](domain *semantic.Domain[F, K, 
 // identity. It owns any replacement directory/page until Publish, so a later
 // Factor failure can drop every reservation without retaining a root.
 type rootReservation[F ~uint64, K scalar.Key, V any] struct {
-	store     *rootStore[F, K, V]
-	base      *rootDirectory[F, K, V]
-	next      *rootDirectory[F, K, V]
-	page      *rootPage[F, K, V]
+	store *rootStore[F, K, V]
+	base  *rootDirectory[F, K, V]
+	next  *rootDirectory[F, K, V]
+	page  *rootPage[F, K, V]
+	// install marks a page the reservation owns for a slot the base directory
+	// already spans; Publish stores it into that slot.
+	install   bool
 	pageIndex uint64
 	offset    uint64
 	id        uint64
@@ -2482,30 +2633,34 @@ func (store *rootStore[F, K, V]) reserve(plane semantic.Plane[F, K, V]) (*rootRe
 		return nil, false
 	}
 	reservation := &rootReservation[F, K, V]{store: store, base: directory, pageIndex: pageIndex, offset: offset, id: id, plane: plane}
-	if pageIndex >= uint64(len(directory.pages)) || directory.pages[pageIndex] == nil {
-		capacity := len(directory.pages)
-		if capacity == 0 {
-			capacity = 1
-		} else {
-			if capacity > int(^uint(0)>>1)/2 {
-				return nil, false
-			}
-			capacity *= 2
+	if pageIndex < uint64(len(directory.pages)) {
+		if page := directory.pages[pageIndex].Load(); page != nil {
+			reservation.page = page
+			return reservation, true
 		}
-		for pageIndex >= uint64(capacity) {
-			if capacity > int(^uint(0)>>1)/2 {
-				return nil, false
-			}
-			capacity *= 2
-		}
-		next := &rootDirectory[F, K, V]{pages: make([]*rootPage[F, K, V], capacity)}
-		copy(next.pages, directory.pages)
-		next.pages[pageIndex] = &rootPage[F, K, V]{}
-		next.pages[pageIndex].entries[offset] = plane
-		reservation.next, reservation.page = next, next.pages[pageIndex]
+		page := &rootPage[F, K, V]{}
+		page.entries[offset] = plane
+		reservation.page, reservation.install = page, true
 		return reservation, true
 	}
-	reservation.page = directory.pages[pageIndex]
+	capacity := len(directory.pages)
+	if capacity == 0 {
+		capacity = 1
+	}
+	for pageIndex >= uint64(capacity) {
+		if capacity > int(^uint(0)>>1)/2 {
+			return nil, false
+		}
+		capacity *= 2
+	}
+	next := &rootDirectory[F, K, V]{pages: make([]atomic.Pointer[rootPage[F, K, V]], capacity)}
+	for slot := range directory.pages {
+		next.pages[slot].Store(directory.pages[slot].Load())
+	}
+	page := &rootPage[F, K, V]{}
+	page.entries[offset] = plane
+	next.pages[pageIndex].Store(page)
+	reservation.next, reservation.page = next, page
 	return reservation, true
 }
 
@@ -2519,10 +2674,14 @@ func (reservation *rootReservation[F, K, V]) Publish() uint64 {
 	if reservation.next != nil {
 		reservation.next.count.Store(reservation.id)
 		reservation.store.directory.Store(reservation.next)
+		return reservation.id
+	}
+	if reservation.install {
+		reservation.base.pages[reservation.pageIndex].Store(reservation.page)
 	} else {
 		reservation.page.entries[reservation.offset] = reservation.plane
-		reservation.base.count.Store(reservation.id)
 	}
+	reservation.base.count.Store(reservation.id)
 	return reservation.id
 }
 
@@ -2539,10 +2698,14 @@ func (store *rootStore[F, K, V]) Plane(id uint64) (semantic.Plane[F, K, V], bool
 	}
 	index := id - 1
 	pageIndex, offset := index/rootsPerPage, index%rootsPerPage
-	if pageIndex >= uint64(len(directory.pages)) || directory.pages[pageIndex] == nil {
+	if pageIndex >= uint64(len(directory.pages)) {
 		return semantic.Plane[F, K, V]{}, false
 	}
-	plane := directory.pages[pageIndex].entries[offset]
+	page := directory.pages[pageIndex].Load()
+	if page == nil {
+		return semantic.Plane[F, K, V]{}, false
+	}
+	plane := page.entries[offset]
 	return plane, store.domain.Valid(plane)
 }
 

@@ -11,8 +11,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/type/factor/internal/values"
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/semantic/typeauthority"
-	"github.com/wippyai/go-lua/program"
-	"github.com/wippyai/go-lua/program/link"
+	"github.com/wippyai/go-lua/analysis/program"
+	"github.com/wippyai/go-lua/analysis/program/link"
 )
 
 // Domain owns one sealed type-label Table, one finite subject table, and one

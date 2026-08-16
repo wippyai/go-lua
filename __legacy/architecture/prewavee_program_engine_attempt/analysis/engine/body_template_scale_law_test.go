@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/program"
+	"github.com/wippyai/go-lua/analysis/program"
 )
 
 // TestNestedBodyDemandPreservesOnePublicFlow is a semantic scale law: a

@@ -12,14 +12,14 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/call"
 	"github.com/wippyai/go-lua/analysis/domain/pack"
+	"github.com/wippyai/go-lua/analysis/identity"
 	internalhash "github.com/wippyai/go-lua/analysis/internal/hash"
-	"github.com/wippyai/go-lua/analysis/internal/programartifact"
 	"github.com/wippyai/go-lua/analysis/lattice"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/link"
-	linkboundary "github.com/wippyai/go-lua/program/link/boundary"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
-	"github.com/wippyai/go-lua/program/target"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/program/link"
+	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
+	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
 const (
@@ -38,7 +38,7 @@ type Root struct {
 type Atom struct {
 	owner *Algebra
 	root  uint32
-	id    keyspace.ContentID
+	id    identity.ContentID
 }
 
 // Value is Bottom, an immutable sparse atom set, or Top.  UnknownExternal is
@@ -52,11 +52,11 @@ type Value struct {
 }
 
 type rootRow struct {
-	moduleKey keyspace.ContentID
-	programID keyspace.ContentID
-	bodyID    keyspace.ContentID
-	context   keyspace.ContentID
-	id        keyspace.ContentID
+	moduleKey identity.ContentID
+	programID identity.ContentID
+	bodyID    identity.ContentID
+	context   identity.ContentID
+	id        identity.ContentID
 }
 
 // Algebra owns the one finite Effect factor vocabulary.  The capacity is a
@@ -71,55 +71,55 @@ type Algebra struct {
 	rootBodyIndex        map[rootBodyRef]uint32
 	rootMountedBodyIndex map[rootMountedBodyRef]uint32
 	capacity             uint64
-	unknownID            keyspace.ContentID
-	content              keyspace.ContentID
-	applicationOps       map[keyspace.ContentID]map[target.Operation]int
+	unknownID            identity.ContentID
+	content              identity.ContentID
+	applicationOps       map[identity.ContentID]map[target.Operation]int
 	applicationCount     uint64
-	callRows             map[keyspace.ContentID]callRow
+	callRows             map[identity.ContentID]callRow
 	mountedCalls         []mountedCallRow
 	mountedCallIndex     map[mountedCallRef]uint32
 }
 
 type callRow struct {
-	moduleID keyspace.ContentID
-	context  keyspace.ContentID
+	moduleID identity.ContentID
+	context  identity.ContentID
 	root     uint32
 }
 
 type artifactCallRow struct {
-	programID keyspace.ContentID
-	bodyID    keyspace.ContentID
+	programID identity.ContentID
+	bodyID    identity.ContentID
 	root      uint32
 }
 
 type rootContextRef struct {
-	module  keyspace.ContentID
-	context keyspace.ContentID
+	module  identity.ContentID
+	context identity.ContentID
 }
 
 type rootBodyRef struct {
-	module keyspace.ContentID
-	bodyID keyspace.ContentID
+	module identity.ContentID
+	bodyID identity.ContentID
 }
 
 type rootMountedBodyRef struct {
-	moduleKey keyspace.ContentID
-	bodyID    keyspace.ContentID
+	moduleKey identity.ContentID
+	bodyID    identity.ContentID
 }
 
 // MountedArtifact is the exact mounted reusable artifact handle consumed by
 // Effect.  Body rows are enumerated and validated inside Effect; callers
 // cannot self-attest Body/Context scalar correspondence.
 type MountedArtifact struct {
-	ModuleKey keyspace.ContentID
+	ModuleKey identity.ContentID
 	Artifact  *programartifact.Artifact
 }
 
 type bodyRootReceipt struct {
-	moduleKey keyspace.ContentID
-	programID keyspace.ContentID
-	bodyID    keyspace.ContentID
-	contextID keyspace.ContentID
+	moduleKey identity.ContentID
+	programID identity.ContentID
+	bodyID    identity.ContentID
+	contextID identity.ContentID
 }
 
 // MountedCall is Effect's detached, exact ordinary-call placement receipt.
@@ -132,14 +132,14 @@ type MountedCall struct {
 }
 
 type mountedCallRow struct {
-	applicationID keyspace.ContentID
-	moduleID      keyspace.ContentID
-	contextID     keyspace.ContentID
+	applicationID identity.ContentID
+	moduleID      identity.ContentID
+	contextID     identity.ContentID
 }
 
 type mountedCallRef struct {
-	moduleID  keyspace.ContentID
-	contextID keyspace.ContentID
+	moduleID  identity.ContentID
+	contextID identity.ContentID
 }
 
 // New seals the Factor's small owner-local vocabulary.  It stores no Target
@@ -175,7 +175,7 @@ func NewWithMountedArtifacts(source *link.Link, packs *pack.Schema, contract *ta
 	if !ok || linked != contract {
 		return nil, false
 	}
-	a := &Algebra{linkOwner: owner, packs: packs, contract: contract, rootContextIndex: make(map[rootContextRef]uint32), rootBodyIndex: make(map[rootBodyRef]uint32), rootMountedBodyIndex: make(map[rootMountedBodyRef]uint32), applicationOps: make(map[keyspace.ContentID]map[target.Operation]int), callRows: make(map[keyspace.ContentID]callRow), mountedCallIndex: make(map[mountedCallRef]uint32)}
+	a := &Algebra{linkOwner: owner, packs: packs, contract: contract, rootContextIndex: make(map[rootContextRef]uint32), rootBodyIndex: make(map[rootBodyRef]uint32), rootMountedBodyIndex: make(map[rootMountedBodyRef]uint32), applicationOps: make(map[identity.ContentID]map[target.Operation]int), callRows: make(map[identity.ContentID]callRow), mountedCallIndex: make(map[mountedCallRef]uint32)}
 	project := source.Project()
 	if project == nil {
 		return nil, false
@@ -259,7 +259,7 @@ func (a *Algebra) captureApplicationOps(project *linkproject.Component, boundary
 	return true
 }
 
-func (a *Algebra) applicationOperation(applicationID keyspace.ContentID, operation target.Operation) (int, bool) {
+func (a *Algebra) applicationOperation(applicationID identity.ContentID, operation target.Operation) (int, bool) {
 	if a == nil || !applicationID.Available() || operation == 0 {
 		return 0, false
 	}
@@ -272,9 +272,9 @@ func (a *Algebra) applicationOperation(applicationID keyspace.ContentID, operati
 }
 
 // LinkID returns the detached content identity paired with LinkOwner.
-func (a *Algebra) LinkID() keyspace.ContentID {
+func (a *Algebra) LinkID() identity.ContentID {
 	if !a.Valid() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return a.linkOwner.ContentID()
 }
@@ -289,9 +289,9 @@ func (a *Algebra) Pack() *pack.Schema {
 	return a.packs
 }
 
-func (a *Algebra) ContentID() keyspace.ContentID {
+func (a *Algebra) ContentID() identity.ContentID {
 	if !a.Valid() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return a.content
 }
@@ -313,7 +313,7 @@ func (a *Algebra) RootAt(index int) (Root, bool) {
 // RootForMountedBodyID is the production artifact bridge. It accepts only
 // mounted and Program-issued scalar IDs and therefore cannot reopen a
 // Program Body proof after compilation.
-func (a *Algebra) RootForMountedBodyID(moduleKey, programID, bodyID keyspace.ContentID) (Root, bool) {
+func (a *Algebra) RootForMountedBodyID(moduleKey, programID, bodyID identity.ContentID) (Root, bool) {
 	if !a.Valid() || !moduleKey.Available() || !programID.Available() || !bodyID.Available() {
 		return Root{}, false
 	}
@@ -330,7 +330,7 @@ func (a *Algebra) RootForMountedBodyID(moduleKey, programID, bodyID keyspace.Con
 
 // RootForCall derives the exact containing Effect body for one existing
 // ordinary Project Call. It retains no application index or site relation.
-func (a *Algebra) RootForCallID(applicationID keyspace.ContentID) (Root, bool) {
+func (a *Algebra) RootForCallID(applicationID identity.ContentID) (Root, bool) {
 	if !a.Valid() || !applicationID.Available() {
 		return Root{}, false
 	}
@@ -350,23 +350,23 @@ func (a *Algebra) RootIndex(root Root) (int, bool) {
 
 // RootID is Effect's portable body-root proof. Dense root slots remain hot
 // owner state and never enter rule operands or replay identities.
-func (a *Algebra) RootID(root Root) (keyspace.ContentID, bool) {
+func (a *Algebra) RootID(root Root) (identity.ContentID, bool) {
 	if !a.ownsRoot(root) {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	row := a.roots[root.slot-1]
 	return row.id, row.id.Available()
 }
 
 // ContainsCallID validates an existing detached ordinary-call identity.
-func (a *Algebra) ContainsCallID(root Root, applicationID keyspace.ContentID) bool {
+func (a *Algebra) ContainsCallID(root Root, applicationID identity.ContentID) bool {
 	return a.callInRootID(root, applicationID)
 }
 
 // OpaqueCallUnknown converts an exact admitted opaque Call alternative into
 // the Factor's one unknown vocabulary atom. Call is evidence only: it is not
 // retained, enumerated, or made into a Factor root.
-func (a *Algebra) OpaqueCallUnknown(root Root, calls *call.Algebra, applicationID keyspace.ContentID, value call.Value) (Atom, bool) {
+func (a *Algebra) OpaqueCallUnknown(root Root, calls *call.Algebra, applicationID identity.ContentID, value call.Value) (Atom, bool) {
 	if !a.ownsRoot(root) || calls == nil || !calls.Valid() || !calls.LinkOwner().Matches(a.linkOwner) || !value.HasOpaqueAlternative() {
 		return Atom{}, false
 	}
@@ -379,7 +379,7 @@ func (a *Algebra) OpaqueCallUnknown(root Root, calls *call.Algebra, applicationI
 
 // OpenOperationUnknown requires an exact selected operation with its explicit
 // unknown-open effect row. Row variables remain unsupported and fail closed.
-func (a *Algebra) OpenOperationUnknown(root Root, applicationID keyspace.ContentID, owner target.Operation) (Atom, bool) {
+func (a *Algebra) OpenOperationUnknown(root Root, applicationID identity.ContentID, owner target.Operation) (Atom, bool) {
 	if !a.ownsRoot(root) || !a.selectedCall(root, applicationID, owner) {
 		return Atom{}, false
 	}
@@ -390,7 +390,7 @@ func (a *Algebra) OpenOperationUnknown(root Root, applicationID keyspace.Content
 	return Atom{owner: a, root: root.slot, id: a.unknownID}, true
 }
 
-func (a *Algebra) OpenCallbackUnknown(root Root, applicationID keyspace.ContentID, owner target.Operation, callback target.CallbackID) (Atom, bool) {
+func (a *Algebra) OpenCallbackUnknown(root Root, applicationID identity.ContentID, owner target.Operation, callback target.CallbackID) (Atom, bool) {
 	if !a.ownsRoot(root) || !a.selectedCall(root, applicationID, owner) {
 		return Atom{}, false
 	}
@@ -404,7 +404,7 @@ func (a *Algebra) OpenCallbackUnknown(root Root, applicationID keyspace.ContentI
 
 // CallEffectAtom validates one selected ordinary-call effect. Row variables and
 // row arguments fail closed; explicit closed/open rows retain known atoms.
-func (a *Algebra) CallEffectAtom(root Root, applicationID keyspace.ContentID, owner target.Operation, effect int) (Atom, bool) {
+func (a *Algebra) CallEffectAtom(root Root, applicationID identity.ContentID, owner target.Operation, effect int) (Atom, bool) {
 	mounted, mountedOK := a.mountedCallForApplication(applicationID)
 	if !mountedOK || !a.selectedMountedCall(root, mounted, owner) {
 		return Atom{}, false
@@ -419,7 +419,7 @@ func (a *Algebra) CallEffectAtom(root Root, applicationID keyspace.ContentID, ow
 
 // CallbackEffectAtom validates and issues one callback-owned selected-call
 // atom. Callback occurrence provenance does not enter atom identity.
-func (a *Algebra) CallbackEffectAtom(root Root, applicationID keyspace.ContentID, owner target.Operation, callback target.CallbackID, effect int) (Atom, bool) {
+func (a *Algebra) CallbackEffectAtom(root Root, applicationID identity.ContentID, owner target.Operation, callback target.CallbackID, effect int) (Atom, bool) {
 	mounted, mountedOK := a.mountedCallForApplication(applicationID)
 	if !mountedOK || !a.selectedMountedCall(root, mounted, owner) {
 		return Atom{}, false
@@ -436,7 +436,7 @@ func (a *Algebra) CallbackEffectAtom(root Root, applicationID keyspace.ContentID
 // one operation already selected by a Rule-owned Call target. It keeps no
 // selection state: every invocation revalidates the canonical witnesses.
 // Unsupported authored rows fail closed so a caller cannot silently omit them.
-func (a *Algebra) SelectedCallEffects(root Root, applicationID keyspace.ContentID, operation target.Operation) (Value, bool) {
+func (a *Algebra) SelectedCallEffects(root Root, applicationID identity.ContentID, operation target.Operation) (Value, bool) {
 	if !a.ownsRoot(root) || !a.selectedCall(root, applicationID, operation) {
 		return Value{}, false
 	}
@@ -488,7 +488,7 @@ func (a *Algebra) SelectedCallEffects(root Root, applicationID keyspace.ContentI
 // SelectedCallOpaque reduces only explicit unknown-open Target rows for one
 // Rule-selected operation. Fully closed rows contribute Bottom; RowVariable
 // is unsupported and therefore rejects the whole selected operation.
-func (a *Algebra) SelectedCallOpaque(root Root, applicationID keyspace.ContentID, operation target.Operation) (Value, bool) {
+func (a *Algebra) SelectedCallOpaque(root Root, applicationID identity.ContentID, operation target.Operation) (Value, bool) {
 	if !a.ownsRoot(root) || !a.selectedCall(root, applicationID, operation) {
 		return Value{}, false
 	}
@@ -594,9 +594,9 @@ func (a *Algebra) AtomAt(value Value, index int) (Atom, bool) {
 
 // AtomID exposes the portable certificate identity of an atom without
 // exposing an inverse constructor or any of its cross-domain preimage.
-func (a *Algebra) AtomID(atom Atom) (keyspace.ContentID, bool) {
+func (a *Algebra) AtomID(atom Atom) (identity.ContentID, bool) {
 	if !atom.validFor(a) {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return atom.id, true
 }
@@ -777,12 +777,12 @@ func (a *Algebra) Fingerprint(value Value) uint64 {
 func (a *Algebra) sealMountedArtifacts(mounts []MountedArtifact) (map[mountedCallRef]artifactCallRow, bool) {
 	receipts := make([]bodyRootReceipt, 0)
 	artifactCalls := make(map[mountedCallRef]artifactCallRow)
-	seenMounts := make(map[keyspace.ContentID]struct{}, len(mounts))
+	seenMounts := make(map[identity.ContentID]struct{}, len(mounts))
 	for _, mount := range mounts {
 		if mount.Artifact == nil || !mount.Artifact.Available() || !mount.ModuleKey.Available() {
 			return nil, false
 		}
-		if mount.Artifact.CompileKey().ProgramID() == (keyspace.ContentID{}) {
+		if mount.Artifact.CompileKey().ProgramID() == (identity.ContentID{}) {
 			return nil, false
 		}
 		if _, duplicate := seenMounts[mount.ModuleKey]; duplicate {
@@ -897,7 +897,7 @@ func (a *Algebra) sealCapacity() bool {
 	return true
 }
 
-func (a *Algebra) selectedCall(root Root, applicationID keyspace.ContentID, owner target.Operation) bool {
+func (a *Algebra) selectedCall(root Root, applicationID identity.ContentID, owner target.Operation) bool {
 	if _, available := a.applicationOperation(applicationID, owner); !available {
 		return false
 	}
@@ -913,7 +913,7 @@ func (a *Algebra) selectedCall(root Root, applicationID keyspace.ContentID, owne
 	return ok
 }
 
-func (a *Algebra) callInRootID(root Root, applicationID keyspace.ContentID) bool {
+func (a *Algebra) callInRootID(root Root, applicationID identity.ContentID) bool {
 	if !a.ownsRoot(root) {
 		return false
 	}
@@ -1012,10 +1012,10 @@ func (a *Algebra) valueSeal(root uint32, top bool, atoms []Atom) uint64 {
 	return h
 }
 
-func (a *Algebra) contentID() keyspace.ContentID {
+func (a *Algebra) contentID() identity.ContentID {
 	ownerID := a.linkOwner.ContentID()
 	if !ownerID.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	h := sha256.New()
 	_, _ = h.Write([]byte(effectFactorIDDomain))
@@ -1024,7 +1024,7 @@ func (a *Algebra) contentID() keyspace.ContentID {
 		_, _ = h.Write(root.moduleKey[:])
 		_, _ = h.Write(root.id[:])
 	}
-	var out keyspace.ContentID
+	var out identity.ContentID
 	copy(out[:], h.Sum(nil))
 	return out
 }
@@ -1032,24 +1032,24 @@ func (a *Algebra) contentID() keyspace.ContentID {
 // effectRootID is the v3 concrete mounted root identity. The exact Program
 // Body context remains opaque, while ModuleKey keeps duplicate mounts
 // disjoint without using Link identity or a dense shard ordinal.
-func effectRootID(programID, moduleKey, context keyspace.ContentID) keyspace.ContentID {
+func effectRootID(programID, moduleKey, context identity.ContentID) identity.ContentID {
 	if !programID.Available() || !moduleKey.Available() || !context.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	hash := sha256.New()
 	_, _ = hash.Write([]byte(effectRootIDDomain))
 	_, _ = hash.Write(programID[:])
 	_, _ = hash.Write(moduleKey[:])
 	_, _ = hash.Write(context[:])
-	var result keyspace.ContentID
+	var result identity.ContentID
 	copy(result[:], hash.Sum(nil))
 	return result
 }
 
-func externalID() keyspace.ContentID {
+func externalID() identity.ContentID {
 	h := sha256.New()
 	_, _ = h.Write([]byte("wippy.analysis.effect.atom.v2.unknown\x00"))
-	var out keyspace.ContentID
+	var out identity.ContentID
 	copy(out[:], h.Sum(nil))
 	return out
 }
@@ -1071,7 +1071,7 @@ func checkedIntAdd(left, right int) (int, bool) {
 	}
 	return left + right, true
 }
-func lessID(left, right keyspace.ContentID) bool {
+func lessID(left, right identity.ContentID) bool {
 	for i := range left {
 		if left[i] != right[i] {
 			return left[i] < right[i]

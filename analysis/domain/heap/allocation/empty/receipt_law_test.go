@@ -12,12 +12,12 @@ import (
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/internal/programartifact/schemaadapter"
-	"github.com/wippyai/go-lua/analysis/internal/programschema"
-	"github.com/wippyai/go-lua/program/link"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
-	"github.com/wippyai/go-lua/program/lower"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/lua/lower"
+	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
+	"github.com/wippyai/go-lua/analysis/program/link"
+	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 func TestHotEmptyBindingIssuesOnlyItsExactMountedReceipt(t *testing.T) {
@@ -35,7 +35,7 @@ func TestHotEmptyBindingIssuesOnlyItsExactMountedReceipt(t *testing.T) {
 	// complete binding with both declarations for the authoritative bind.
 	builder := engine.NewSchema()
 	heapFragment, heapFragmentOK := heapowner.DeclareSchema(builder, emptyKey(51))
-	valueFragment2, valueFragmentOK := valueowner.DeclareSchema(builder, emptyKey(52), emptyKey(53))
+	valueFragment2, valueFragmentOK := valueowner.DeclareSchema(builder, emptyKey(52), emptyKey(53), emptyKey(151))
 	fragment, fragmentOK := empty.DeclareSchema(builder, emptyKey(54), emptyKey(55), emptyKey(56), emptyKey(57), heapFragment)
 	if !heapFragmentOK || !valueFragmentOK || !fragmentOK {
 		t.Fatal("empty receipt fragments")
@@ -161,7 +161,7 @@ type emptyFixtureMounts struct {
 
 func emptyArtifactMounts(t testing.TB, linked *link.Link) emptyFixtureMounts {
 	t.Helper()
-	receipt, receiptOK := programschema.Global()
+	receipt, receiptOK := grammar.Global()
 	if !receiptOK || linked == nil || linked.Project() == nil {
 		t.Fatal("empty artifact receipt")
 	}

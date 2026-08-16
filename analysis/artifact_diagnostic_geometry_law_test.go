@@ -3,10 +3,10 @@ package analysis
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/internal/programartifact"
-	"github.com/wippyai/go-lua/analysis/internal/programschema"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/target/profile"
+	"github.com/wippyai/go-lua/analysis/identity"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/program/target/profile"
+	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 // TestDiagnosticBranchGeometryUsesExecutionPointAndBaseAnchor proves that
@@ -128,7 +128,7 @@ if flag then
     return 1
 end
 return 0`, contract)
-	receipt, receiptOK := programschema.Global()
+	receipt, receiptOK := grammar.Global()
 	if !receiptOK || !receipt.Available() {
 		t.Fatal("global schema unavailable")
 	}
@@ -149,11 +149,11 @@ return 0`, contract)
 	if !fullOK {
 		t.Fatal("fixture did not issue a full LocalTransfer")
 	}
-	evidence := []keyspace.ContentID{full.From()}
+	evidence := []identity.ContentID{full.From()}
 	if anchor, ok := diagnosticEvidenceAnchor(evidence, full.To(), nil); ok || anchor.Available() {
 		t.Fatal("missing transfer was accepted")
 	}
-	transfers := make(map[keyspace.ContentID]programartifact.LocalTransfer)
+	transfers := make(map[identity.ContentID]programartifact.LocalTransfer)
 	if !addDiagnosticFullLocalTransfer(transfers, full) {
 		t.Fatal("exact transfer index rejected its own sealed row")
 	}

@@ -3,7 +3,7 @@ package program
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 )
 
 // Distilled from wippy.llm.discovery:models. A returned object literal must

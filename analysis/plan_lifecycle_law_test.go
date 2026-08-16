@@ -14,11 +14,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wippyai/go-lua/analysis/internal/programartifact/schemaadapter"
-	"github.com/wippyai/go-lua/analysis/internal/programschema"
-	"github.com/wippyai/go-lua/program"
-	"github.com/wippyai/go-lua/program/link"
-	"github.com/wippyai/go-lua/program/target/profile"
+	"github.com/wippyai/go-lua/analysis/program"
+	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
+	"github.com/wippyai/go-lua/analysis/program/link"
+	"github.com/wippyai/go-lua/analysis/program/target/profile"
+	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 func TestPlanCloseWaitsForActiveSolveLease(t *testing.T) {
@@ -61,7 +61,7 @@ func TestArtifactCacheSurvivesSequentialPlanClose(t *testing.T) {
 	}
 	linked := mustLink(t, `local retained_cache_probe = 17
 return retained_cache_probe`, contract)
-	receipt, ok := programschema.Global()
+	receipt, ok := grammar.Global()
 	if !ok || !receipt.Available() {
 		t.Fatal("global schema unavailable")
 	}
@@ -185,7 +185,7 @@ func TestArtifactCacheChangedFullKeyDoesNotAlias(t *testing.T) {
 	}
 	defer leftPlan.Close()
 	defer rightPlan.Close()
-	receipt, receiptOK := programschema.Global()
+	receipt, receiptOK := grammar.Global()
 	leftInput := planLifecycleInput(t, left)
 	rightInput := planLifecycleInput(t, right)
 	leftKey, leftKeyOK := schemaadapter.NewCompileKey(leftInput, receipt)
@@ -417,31 +417,31 @@ func TestPublishedArtifactMountTypesExcludeProjectCoordinates(t *testing.T) {
 // and domain-owned detached capabilities.
 func TestCompiledPlanTypeGraphExcludesLegacyOwners(t *testing.T) {
 	forbidden := map[string]struct{}{
-		"github.com/wippyai/go-lua/program/link.Link":                    {},
-		"github.com/wippyai/go-lua/program/link/project.Application":     {},
-		"github.com/wippyai/go-lua/program/link/project.CallApplication": {},
-		"github.com/wippyai/go-lua/program/link/project.Component":       {},
-		"github.com/wippyai/go-lua/program/link/project.Key":             {},
-		"github.com/wippyai/go-lua/program/link/project.Shard":           {},
-		"github.com/wippyai/go-lua/program/link/boundary.Component":      {},
-		"github.com/wippyai/go-lua/program/link/boundary.Value":          {},
-		"github.com/wippyai/go-lua/program/link/boundary.Values":         {},
-		"github.com/wippyai/go-lua/program/link/boundary.Seed":           {},
-		"github.com/wippyai/go-lua/program/link/boundary.Endpoint":       {},
-		"github.com/wippyai/go-lua/program/link/host.Component":          {},
-		"github.com/wippyai/go-lua/program/link/host.GlobalBinding":      {},
-		"github.com/wippyai/go-lua/program/link/host.BootRoot":           {},
-		"github.com/wippyai/go-lua/program/link/host.ProviderCapability": {},
-		"github.com/wippyai/go-lua/program/link/static.Component":        {},
-		"github.com/wippyai/go-lua/program/link/static.Namespace":        {},
-		"github.com/wippyai/go-lua/program/link/static.Resolver":         {},
-		"github.com/wippyai/go-lua/program/link/static.InputRef":         {},
-		"github.com/wippyai/go-lua/program/link/static.Expression":       {},
-		"github.com/wippyai/go-lua/program/link/module.Component":        {},
-		"github.com/wippyai/go-lua/program.Program":                      {},
-		"github.com/wippyai/go-lua/program.TransformerInput":             {},
-		"github.com/wippyai/go-lua/program.CallOccurrence":               {},
-		"github.com/wippyai/go-lua/program/flow.Component":               {},
+		"github.com/wippyai/go-lua/analysis/program/link.Link":                    {},
+		"github.com/wippyai/go-lua/analysis/program/link/project.Application":     {},
+		"github.com/wippyai/go-lua/analysis/program/link/project.CallApplication": {},
+		"github.com/wippyai/go-lua/analysis/program/link/project.Component":       {},
+		"github.com/wippyai/go-lua/analysis/program/link/project.Key":             {},
+		"github.com/wippyai/go-lua/analysis/program/link/project.Shard":           {},
+		"github.com/wippyai/go-lua/analysis/program/link/boundary.Component":      {},
+		"github.com/wippyai/go-lua/analysis/program/link/boundary.Value":          {},
+		"github.com/wippyai/go-lua/analysis/program/link/boundary.Values":         {},
+		"github.com/wippyai/go-lua/analysis/program/link/boundary.Seed":           {},
+		"github.com/wippyai/go-lua/analysis/program/link/boundary.Endpoint":       {},
+		"github.com/wippyai/go-lua/analysis/program/link/host.Component":          {},
+		"github.com/wippyai/go-lua/analysis/program/link/host.GlobalBinding":      {},
+		"github.com/wippyai/go-lua/analysis/program/link/host.BootRoot":           {},
+		"github.com/wippyai/go-lua/analysis/program/link/host.ProviderCapability": {},
+		"github.com/wippyai/go-lua/analysis/program/link/static.Component":        {},
+		"github.com/wippyai/go-lua/analysis/program/link/static.Namespace":        {},
+		"github.com/wippyai/go-lua/analysis/program/link/static.Resolver":         {},
+		"github.com/wippyai/go-lua/analysis/program/link/static.InputRef":         {},
+		"github.com/wippyai/go-lua/analysis/program/link/static.Expression":       {},
+		"github.com/wippyai/go-lua/analysis/program/link/module.Component":        {},
+		"github.com/wippyai/go-lua/analysis/program.Program":                      {},
+		"github.com/wippyai/go-lua/analysis/program.TransformerInput":             {},
+		"github.com/wippyai/go-lua/analysis/program.CallOccurrence":               {},
+		"github.com/wippyai/go-lua/analysis/program/flow.Component":               {},
 	}
 	seen := make(map[reflect.Type]struct{})
 	var visit func(reflect.Type, []string)

@@ -6,8 +6,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/wippyai/go-lua/program"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program"
 )
 
 // RuntimeAllocationContextClass is the closed physical owner family selected
@@ -47,7 +47,7 @@ func (class RuntimeAllocationContextClass) Valid() bool {
 type RuntimeAllocationContextAuthority struct {
 	mu         sync.RWMutex
 	owner      *schema
-	policyID   keyspace.ContentID
+	policyID   identity.ContentID
 	generation *runtimeAllocationGeneration
 	closed     bool
 }
@@ -74,7 +74,7 @@ func newRuntimeAllocationGeneration() *runtimeAllocationGeneration {
 // BeginRuntimeAllocationContexts issues a runtime-local context authority.
 // policyID is a runtime-owned, content-addressed policy/revision identity; an
 // unavailable ID fails closed rather than silently selecting a default policy.
-func (schema Schema) BeginRuntimeAllocationContexts(policyID keyspace.ContentID) (*RuntimeAllocationContextAuthority, bool) {
+func (schema Schema) BeginRuntimeAllocationContexts(policyID identity.ContentID) (*RuntimeAllocationContextAuthority, bool) {
 	if !schema.valid() || !policyID.Available() {
 		return nil, false
 	}
@@ -111,9 +111,9 @@ func (authority *RuntimeAllocationContextAuthority) Close() {
 }
 
 // PolicyID identifies the runtime policy revision that issued this authority.
-func (authority *RuntimeAllocationContextAuthority) PolicyID() keyspace.ContentID {
+func (authority *RuntimeAllocationContextAuthority) PolicyID() identity.ContentID {
 	if !authority.live() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return authority.policyID
 }
@@ -127,20 +127,20 @@ type RuntimeAllocationOwner struct {
 	authority  *RuntimeAllocationContextAuthority
 	generation *runtimeAllocationGeneration
 	class      RuntimeAllocationContextClass
-	id         keyspace.ContentID
-	sealed     keyspace.ContentID
+	id         identity.ContentID
+	sealed     identity.ContentID
 }
 
-func runtimeAllocationOwnerID(owner *schema, policy keyspace.ContentID, class RuntimeAllocationContextClass, id keyspace.ContentID) keyspace.ContentID {
+func runtimeAllocationOwnerID(owner *schema, policy identity.ContentID, class RuntimeAllocationContextClass, id identity.ContentID) identity.ContentID {
 	if owner == nil || !owner.id.Available() || !policy.Available() || !class.Valid() || !id.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	var payload [104]byte
 	copy(payload[:32], owner.id[:])
 	copy(payload[32:64], policy[:])
 	copy(payload[64:96], id[:])
 	binary.BigEndian.PutUint64(payload[96:], uint64(class))
-	return keyspace.ContentID(sha256.Sum256(payload[:]))
+	return identity.ContentID(sha256.Sum256(payload[:]))
 }
 
 func (owner RuntimeAllocationOwner) valid() bool {
@@ -148,7 +148,7 @@ func (owner RuntimeAllocationOwner) valid() bool {
 		owner.class.Valid() && owner.id.Available() && owner.sealed == runtimeAllocationOwnerID(owner.authority.owner, owner.authority.policyID, owner.class, owner.id)
 }
 
-func (authority *RuntimeAllocationContextAuthority) issueOwner(class RuntimeAllocationContextClass, id keyspace.ContentID) (RuntimeAllocationOwner, bool) {
+func (authority *RuntimeAllocationContextAuthority) issueOwner(class RuntimeAllocationContextClass, id identity.ContentID) (RuntimeAllocationOwner, bool) {
 	if !authority.live() || !class.Valid() || !id.Available() {
 		return RuntimeAllocationOwner{}, false
 	}
@@ -157,22 +157,22 @@ func (authority *RuntimeAllocationContextAuthority) issueOwner(class RuntimeAllo
 	return owner, owner.valid()
 }
 
-func (authority *RuntimeAllocationContextAuthority) ProcessOwner(id keyspace.ContentID) (RuntimeAllocationOwner, bool) {
+func (authority *RuntimeAllocationContextAuthority) ProcessOwner(id identity.ContentID) (RuntimeAllocationOwner, bool) {
 	return authority.issueOwner(RuntimeAllocationContextProcess, id)
 }
-func (authority *RuntimeAllocationContextAuthority) ActorOwner(id keyspace.ContentID) (RuntimeAllocationOwner, bool) {
+func (authority *RuntimeAllocationContextAuthority) ActorOwner(id identity.ContentID) (RuntimeAllocationOwner, bool) {
 	return authority.issueOwner(RuntimeAllocationContextActor, id)
 }
-func (authority *RuntimeAllocationContextAuthority) SharedOwner(id keyspace.ContentID) (RuntimeAllocationOwner, bool) {
+func (authority *RuntimeAllocationContextAuthority) SharedOwner(id identity.ContentID) (RuntimeAllocationOwner, bool) {
 	return authority.issueOwner(RuntimeAllocationContextShared, id)
 }
-func (authority *RuntimeAllocationContextAuthority) ThreadOwner(id keyspace.ContentID) (RuntimeAllocationOwner, bool) {
+func (authority *RuntimeAllocationContextAuthority) ThreadOwner(id identity.ContentID) (RuntimeAllocationOwner, bool) {
 	return authority.issueOwner(RuntimeAllocationContextThread, id)
 }
 
-func (owner RuntimeAllocationOwner) ID() keyspace.ContentID {
+func (owner RuntimeAllocationOwner) ID() identity.ContentID {
 	if !owner.valid() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return owner.id
 }
@@ -189,8 +189,8 @@ func (owner RuntimeAllocationOwner) Class() RuntimeAllocationContextClass {
 type SharedAllocationAuthorization struct {
 	authority  *RuntimeAllocationContextAuthority
 	generation *runtimeAllocationGeneration
-	id         keyspace.ContentID
-	sealed     keyspace.ContentID
+	id         identity.ContentID
+	sealed     identity.ContentID
 }
 
 func (authorization SharedAllocationAuthorization) valid() bool {
@@ -200,20 +200,20 @@ func (authorization SharedAllocationAuthorization) valid() bool {
 	return authorization.sealed == sharedAllocationAuthorizationID(authorization.authority.owner, authorization.authority.policyID, authorization.id)
 }
 
-func sharedAllocationAuthorizationID(owner *schema, policy, authorization keyspace.ContentID) keyspace.ContentID {
+func sharedAllocationAuthorizationID(owner *schema, policy, authorization identity.ContentID) identity.ContentID {
 	if owner == nil || !owner.id.Available() || !policy.Available() || !authorization.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	var payload [96]byte
 	copy(payload[:32], owner.id[:])
 	copy(payload[32:64], policy[:])
 	copy(payload[64:96], authorization[:])
-	return keyspace.ContentID(sha256.Sum256(payload[:]))
+	return identity.ContentID(sha256.Sum256(payload[:]))
 }
 
 // AuthorizeShared admits a runtime-owned sharing policy identity. It does not
 // infer authorization from an allocation form, effect name, or actor label.
-func (authority *RuntimeAllocationContextAuthority) AuthorizeShared(id keyspace.ContentID) (SharedAllocationAuthorization, bool) {
+func (authority *RuntimeAllocationContextAuthority) AuthorizeShared(id identity.ContentID) (SharedAllocationAuthorization, bool) {
 	if !authority.live() || !id.Available() {
 		return SharedAllocationAuthorization{}, false
 	}
@@ -230,8 +230,8 @@ type RuntimeAllocationContext struct {
 	authority  *RuntimeAllocationContextAuthority
 	generation *runtimeAllocationGeneration
 	owner      RuntimeAllocationOwner
-	sharedBy   keyspace.ContentID
-	id         keyspace.ContentID
+	sharedBy   identity.ContentID
+	id         identity.ContentID
 }
 
 func (context RuntimeAllocationContext) valid() bool {
@@ -242,17 +242,17 @@ func (context RuntimeAllocationContext) valid() bool {
 	if context.owner.class == RuntimeAllocationContextShared {
 		return context.sharedBy.Available() && context.id == runtimeAllocationContextID(context.authority.owner, context.authority.policyID, context.owner.class, context.owner.id, context.sharedBy)
 	}
-	return !context.sharedBy.Available() && context.id == runtimeAllocationContextID(context.authority.owner, context.authority.policyID, context.owner.class, context.owner.id, keyspace.ContentID{})
+	return !context.sharedBy.Available() && context.id == runtimeAllocationContextID(context.authority.owner, context.authority.policyID, context.owner.class, context.owner.id, identity.ContentID{})
 }
 
 // Valid reports whether this exact runtime capability remains live.
 func (context RuntimeAllocationContext) Valid() bool { return context.valid() }
 
-func runtimeAllocationContextID(owner *schema, policy keyspace.ContentID, class RuntimeAllocationContextClass, isolation, shared keyspace.ContentID) keyspace.ContentID {
+func runtimeAllocationContextID(owner *schema, policy identity.ContentID, class RuntimeAllocationContextClass, isolation, shared identity.ContentID) identity.ContentID {
 	if owner == nil || !owner.id.Available() || !policy.Available() || !class.Valid() || !isolation.Available() ||
 		class == RuntimeAllocationContextShared && !shared.Available() ||
 		class != RuntimeAllocationContextShared && shared.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	var payload [32*4 + 8]byte
 	copy(payload[0:32], owner.id[:])
@@ -260,10 +260,10 @@ func runtimeAllocationContextID(owner *schema, policy keyspace.ContentID, class 
 	copy(payload[64:96], isolation[:])
 	copy(payload[96:128], shared[:])
 	binary.BigEndian.PutUint64(payload[128:], uint64(class))
-	return keyspace.ContentID(sha256.Sum256(payload[:]))
+	return identity.ContentID(sha256.Sum256(payload[:]))
 }
 
-func (authority *RuntimeAllocationContextAuthority) issue(owner RuntimeAllocationOwner, shared keyspace.ContentID) (RuntimeAllocationContext, bool) {
+func (authority *RuntimeAllocationContextAuthority) issue(owner RuntimeAllocationOwner, shared identity.ContentID) (RuntimeAllocationContext, bool) {
 	if !authority.live() || !owner.valid() || owner.authority != authority || owner.generation != authority.generation {
 		return RuntimeAllocationContext{}, false
 	}
@@ -277,7 +277,7 @@ func (authority *RuntimeAllocationContextAuthority) Process(owner RuntimeAllocat
 	if !owner.valid() || owner.class != RuntimeAllocationContextProcess {
 		return RuntimeAllocationContext{}, false
 	}
-	return authority.issue(owner, keyspace.ContentID{})
+	return authority.issue(owner, identity.ContentID{})
 }
 
 // Actor issues one actor-owned allocation context. The caller supplies an
@@ -286,7 +286,7 @@ func (authority *RuntimeAllocationContextAuthority) Actor(owner RuntimeAllocatio
 	if !owner.valid() || owner.class != RuntimeAllocationContextActor {
 		return RuntimeAllocationContext{}, false
 	}
-	return authority.issue(owner, keyspace.ContentID{})
+	return authority.issue(owner, identity.ContentID{})
 }
 
 // Thread issues one thread-owned allocation context. A thread identity is not
@@ -295,7 +295,7 @@ func (authority *RuntimeAllocationContextAuthority) Thread(owner RuntimeAllocati
 	if !owner.valid() || owner.class != RuntimeAllocationContextThread {
 		return RuntimeAllocationContext{}, false
 	}
-	return authority.issue(owner, keyspace.ContentID{})
+	return authority.issue(owner, identity.ContentID{})
 }
 
 // Shared issues one explicitly authorized shared context. It rejects a valid
@@ -314,25 +314,25 @@ func (context RuntimeAllocationContext) Class() RuntimeAllocationContextClass {
 	return context.owner.class
 }
 
-func (context RuntimeAllocationContext) IsolationOwnerID() keyspace.ContentID {
+func (context RuntimeAllocationContext) IsolationOwnerID() identity.ContentID {
 	if !context.valid() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return context.owner.id
 }
 
-func (context RuntimeAllocationContext) SharedAuthorizationID() keyspace.ContentID {
+func (context RuntimeAllocationContext) SharedAuthorizationID() identity.ContentID {
 	if !context.valid() || context.owner.class != RuntimeAllocationContextShared {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return context.sharedBy
 }
 
 // ContextID is deterministic for the sealed Heap schema, runtime policy,
 // context class, owner, and (for shared) explicit authorization.
-func (context RuntimeAllocationContext) ContextID() keyspace.ContentID {
+func (context RuntimeAllocationContext) ContextID() identity.ContentID {
 	if !context.valid() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return context.id
 }
@@ -342,16 +342,16 @@ func (context RuntimeAllocationContext) ContextID() keyspace.ContentID {
 // or physical object. ProgramArtifact therefore remains reusable across every
 // process, actor, shared, and thread context.
 type AllocationRequirement struct {
-	heapID     keyspace.ContentID
-	keyID      keyspace.ContentID
-	artifactID keyspace.ContentID
-	mount      keyspace.ContentID
-	program    keyspace.ContentID
-	allocation keyspace.ContentID
-	localID    keyspace.ContentID
+	heapID     identity.ContentID
+	keyID      identity.ContentID
+	artifactID identity.ContentID
+	mount      identity.ContentID
+	program    identity.ContentID
+	allocation identity.ContentID
+	localID    identity.ContentID
 	kind       AllocationKind
 	form       program.AllocationForm
-	id         keyspace.ContentID
+	id         identity.ContentID
 }
 
 func (requirement AllocationRequirement) valid() bool {
@@ -364,9 +364,9 @@ func (requirement AllocationRequirement) valid() bool {
 		requirement.program, requirement.allocation, requirement.localID, requirement.kind, requirement.form)
 }
 
-func allocationRequirementID(heapID, keyID, artifactID, mount, programID, allocation, localID keyspace.ContentID, kind AllocationKind, form program.AllocationForm) keyspace.ContentID {
+func allocationRequirementID(heapID, keyID, artifactID, mount, programID, allocation, localID identity.ContentID, kind AllocationKind, form program.AllocationForm) identity.ContentID {
 	if !heapID.Available() || !keyID.Available() || !artifactID.Available() || !mount.Available() || !programID.Available() || !allocation.Available() || !localID.Available() || !kind.Valid() || !form.Valid() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	var payload [32*7 + 16]byte
 	copy(payload[0:32], heapID[:])
@@ -378,7 +378,7 @@ func allocationRequirementID(heapID, keyID, artifactID, mount, programID, alloca
 	copy(payload[192:224], localID[:])
 	binary.BigEndian.PutUint64(payload[224:232], uint64(kind))
 	binary.BigEndian.PutUint64(payload[232:240], uint64(form))
-	return keyspace.ContentID(sha256.Sum256(payload[:]))
+	return identity.ContentID(sha256.Sum256(payload[:]))
 }
 
 // AllocationRequirementForKey projects an already-sealed Heap allocation root
@@ -405,54 +405,54 @@ func (schema Schema) AllocationRequirementForKey(key Key) (AllocationRequirement
 	return requirement, requirement.valid()
 }
 
-func (schema Schema) id() keyspace.ContentID { return schema.ContentID() }
+func (schema Schema) id() identity.ContentID { return schema.ContentID() }
 
 func (requirement AllocationRequirement) Valid() bool { return requirement.valid() }
-func (requirement AllocationRequirement) ID() keyspace.ContentID {
+func (requirement AllocationRequirement) ID() identity.ContentID {
 	if !requirement.valid() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return requirement.id
 }
-func (requirement AllocationRequirement) HeapID() keyspace.ContentID {
+func (requirement AllocationRequirement) HeapID() identity.ContentID {
 	if !requirement.valid() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return requirement.heapID
 }
-func (requirement AllocationRequirement) KeyID() keyspace.ContentID {
+func (requirement AllocationRequirement) KeyID() identity.ContentID {
 	if !requirement.valid() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return requirement.keyID
 }
-func (requirement AllocationRequirement) ArtifactID() keyspace.ContentID {
+func (requirement AllocationRequirement) ArtifactID() identity.ContentID {
 	if !requirement.valid() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return requirement.artifactID
 }
-func (requirement AllocationRequirement) AllocationID() keyspace.ContentID {
+func (requirement AllocationRequirement) AllocationID() identity.ContentID {
 	if !requirement.valid() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return requirement.allocation
 }
-func (requirement AllocationRequirement) ProgramID() keyspace.ContentID {
+func (requirement AllocationRequirement) ProgramID() identity.ContentID {
 	if !requirement.valid() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return requirement.program
 }
-func (requirement AllocationRequirement) MountID() keyspace.ContentID {
+func (requirement AllocationRequirement) MountID() identity.ContentID {
 	if !requirement.valid() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return requirement.mount
 }
-func (requirement AllocationRequirement) LocalID() keyspace.ContentID {
+func (requirement AllocationRequirement) LocalID() identity.ContentID {
 	if !requirement.valid() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return requirement.localID
 }
@@ -476,18 +476,18 @@ func (requirement AllocationRequirement) Form() program.AllocationForm {
 type MountedAllocationReceipt struct {
 	requirement AllocationRequirement
 	context     RuntimeAllocationContext
-	id          keyspace.ContentID
+	id          identity.ContentID
 }
 
-func mountedAllocationID(requirement, context keyspace.ContentID) keyspace.ContentID {
+func mountedAllocationID(requirement, context identity.ContentID) identity.ContentID {
 	if !requirement.Available() || !context.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	var payload [72]byte
 	copy(payload[:32], requirement[:])
 	copy(payload[32:64], context[:])
 	binary.BigEndian.PutUint64(payload[64:], 0x686561702d6d6f75) // heap-mou
-	return keyspace.ContentID(sha256.Sum256(payload[:]))
+	return identity.ContentID(sha256.Sum256(payload[:]))
 }
 
 func (receipt MountedAllocationReceipt) valid() bool {
@@ -515,9 +515,9 @@ func (authority *RuntimeAllocationContextAuthority) OwnsRuntimeAllocationContext
 }
 
 func (receipt MountedAllocationReceipt) Valid() bool { return receipt.valid() }
-func (receipt MountedAllocationReceipt) ID() keyspace.ContentID {
+func (receipt MountedAllocationReceipt) ID() identity.ContentID {
 	if !receipt.valid() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return receipt.id
 }
@@ -580,9 +580,9 @@ func (unavailable PlacementUnavailable) Availability() PlacementAvailability {
 	}
 	return unavailable.state
 }
-func (unavailable PlacementUnavailable) MountedID() keyspace.ContentID {
+func (unavailable PlacementUnavailable) MountedID() identity.ContentID {
 	if !unavailable.Valid() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return unavailable.mounted.ID()
 }

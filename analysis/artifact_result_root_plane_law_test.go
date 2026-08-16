@@ -3,7 +3,8 @@ package analysis
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
 func TestArtifactResultRootRowsPreserveOrderAndSeparateDuplicateMounts(t *testing.T) {
@@ -39,7 +40,7 @@ func TestArtifactResultRootRowsPreserveOrderAndSeparateDuplicateMounts(t *testin
 		t.Fatalf("root count = %d/%t, want 2/true", body.RootCount(), bodyOK)
 	}
 	for index, want := range []struct {
-		id     keyspace.ContentID
+		id     identity.ContentID
 		family keyspace.Family
 	}{{firstID, keyspace.FamilyBind}, {secondID, keyspace.FamilyReturn}} {
 		root, rootOK := body.RootAt(index)

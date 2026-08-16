@@ -6,8 +6,8 @@ import (
 	packdomain "github.com/wippyai/go-lua/analysis/domain/pack"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
 const publicationAllocationContextEventDomain = "analysis/publication-allocation-context-event/v1"
@@ -17,10 +17,10 @@ const publicationAllocationContextEventDomain = "analysis/publication-allocation
 // or placement.Placement: the class only records the runtime context that was
 // bound while its short-lived authority was live.
 type publicationAllocationRuntimeContext struct {
-	id          keyspace.ContentID
+	id          identity.ContentID
 	class       heapdomain.RuntimeAllocationContextClass
-	isolation   keyspace.ContentID
-	sharedBy    keyspace.ContentID
+	isolation   identity.ContentID
+	sharedBy    identity.ContentID
 	hasSharedBy bool
 }
 
@@ -57,27 +57,27 @@ func (context publicationAllocationRuntimeContext) valid() bool {
 // Solver, State, Plan, domain owner, runtime capability, Residence fact,
 // Footprint graph, placement class, alias claim, or lifetime-survival claim.
 type PublicationAllocationContextEvent struct {
-	id keyspace.ContentID
+	id identity.ContentID
 
-	transition       keyspace.ContentID
-	correlation      keyspace.ContentID
-	directAdmission  keyspace.ContentID
-	direct           keyspace.ContentID
-	membershipProof  keyspace.ContentID
-	membershipAttach keyspace.ContentID
+	transition       identity.ContentID
+	correlation      identity.ContentID
+	directAdmission  identity.ContentID
+	direct           identity.ContentID
+	membershipProof  identity.ContentID
+	membershipAttach identity.ContentID
 
-	mount                keyspace.ContentID
-	call                 keyspace.ContentID
-	descriptor           keyspace.ContentID
-	descriptorOccurrence keyspace.ContentID
+	mount                identity.ContentID
+	call                 identity.ContentID
+	descriptor           identity.ContentID
+	descriptorOccurrence identity.ContentID
 
-	subjectBinding     keyspace.ContentID
-	requirement        keyspace.ContentID
-	mountedAllocation  keyspace.ContentID
-	allocationKey      keyspace.ContentID
+	subjectBinding     identity.ContentID
+	requirement        identity.ContentID
+	mountedAllocation  identity.ContentID
+	allocationKey      identity.ContentID
 	membership         valuedomain.AllocationMembership
 	subjectContext     publicationAllocationRuntimeContext
-	destinationBinding keyspace.ContentID
+	destinationBinding identity.ContentID
 	destinationContext publicationAllocationRuntimeContext
 	hasDestination     bool
 
@@ -189,15 +189,15 @@ func publicationAllocationTargetVocabularyValid(kind target.PublicationEffectKin
 		lifetime >= target.PublicationLifetimePreserve && lifetime <= target.PublicationLifetimeRelease
 }
 
-func publicationAllocationContextEventID(event PublicationAllocationContextEvent) (keyspace.ContentID, bool) {
+func publicationAllocationContextEventID(event PublicationAllocationContextEvent) (identity.ContentID, bool) {
 	if !event.semanticPayloadValid() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	presence := byte(0)
 	if event.hasDestination {
 		presence = 1
 	}
-	return analysisContentID(
+	return identity.DeriveContentID(
 		publicationAllocationContextEventDomain,
 		event.transition[:], event.correlation[:], event.directAdmission[:], event.direct[:], event.membershipProof[:], event.membershipAttach[:],
 		event.mount[:], event.call[:], event.descriptor[:], event.descriptorOccurrence[:],
@@ -216,6 +216,6 @@ func (event PublicationAllocationContextEvent) valid() bool {
 
 func (event PublicationAllocationContextEvent) Valid() bool { return event.valid() }
 
-func (event PublicationAllocationContextEvent) ContentID() (keyspace.ContentID, bool) {
+func (event PublicationAllocationContextEvent) ContentID() (identity.ContentID, bool) {
 	return event.id, event.valid()
 }

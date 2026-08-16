@@ -307,7 +307,7 @@ func (rule *RawGetRule) applyHeap(tag heapdomain.RawRouteTag, fact heapdomain.Va
 		}
 		for index := 0; index < cell.PresentCount(); index++ {
 			present, ok := cell.PresentAt(index)
-			if !ok || !rule.applyPresent(raw, present, view, census, result, any) {
+			if !ok || !rule.applyPresent(tag, raw, present, view, census, result, any) {
 				return false
 			}
 		}
@@ -315,13 +315,13 @@ func (rule *RawGetRule) applyHeap(tag heapdomain.RawRouteTag, fact heapdomain.Va
 	})
 }
 
-func (rule *RawGetRule) applyPresent(raw heapdomain.RawAccess, present heapdomain.Present, view rawGetView, census *rawGetCensus, result *valuedomain.Value, any *bool) bool {
+func (rule *RawGetRule) applyPresent(route heapdomain.RawRouteTag, raw heapdomain.RawAccess, present heapdomain.Present, view rawGetView, census *rawGetCensus, result *valuedomain.Value, any *bool) bool {
 	valueContainment, _, ok := present.Containment()
 	if !ok {
 		return false
 	}
-	if root, initial, boot := raw.InitialPayload(present); boot {
-		value, ok := rule.valueSchema().TargetInitialID(root, initial)
+	if _, _, boot := raw.InitialPayload(present); boot {
+		value, ok := rule.bootInitial(route, raw, present)
 		return ok && rule.reduceAndJoin(valueContainment, value, result, any)
 	}
 	tag, ok := raw.PayloadTag(present)

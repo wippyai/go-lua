@@ -5,8 +5,8 @@ import (
 	"encoding/binary"
 
 	"github.com/wippyai/go-lua/analysis/domain/pack"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
 const (
@@ -29,10 +29,10 @@ const (
 // Program term.
 type FormalAtom struct {
 	call       pack.FormalCallRoot
-	operation  keyspace.ContentID
-	descriptor keyspace.ContentID
-	types      keyspace.ContentID
-	id         keyspace.ContentID
+	operation  identity.ContentID
+	descriptor identity.ContentID
+	types      identity.ContentID
+	id         identity.ContentID
 	role       formalAtomRole
 	sealed     bool
 }
@@ -45,9 +45,9 @@ func (atom FormalAtom) Valid() bool {
 // ContentID is the reusable formal atom identity. Ordinary and callback
 // occurrences with the same semantic effect substitution deliberately share
 // this quotient even though their typed capabilities remain distinct.
-func (atom FormalAtom) ContentID() (keyspace.ContentID, bool) {
+func (atom FormalAtom) ContentID() (identity.ContentID, bool) {
 	if !atom.Valid() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return atom.id, true
 }
@@ -91,7 +91,7 @@ type PublicationAtomBinding struct {
 	callback                   target.CallbackID
 	effect                     uint32
 	descriptor                 target.PublicationEffectDescriptor
-	descriptorID, occurrenceID keyspace.ContentID
+	descriptorID, occurrenceID identity.ContentID
 	subject                    pack.InputSelector
 	context                    pack.InputSelector
 	hasContext                 bool
@@ -126,7 +126,7 @@ func (binding PublicationAtomBinding) valid() bool {
 		return false
 	}
 	var expected target.PublicationEffectDescriptor
-	var descriptorID, occurrenceID keyspace.ContentID
+	var descriptorID, occurrenceID identity.ContentID
 	var selectorFormal target.ValueFormal
 	switch binding.role {
 	case publicationAtomBindingOrdinary:
@@ -232,10 +232,10 @@ func (binding PublicationAtomBinding) MountedCall() (MountedCall, bool) {
 func (binding PublicationAtomBinding) AtomBinding() (AtomBinding, bool) {
 	return binding.binding, binding.valid()
 }
-func (binding PublicationAtomBinding) DescriptorID() (keyspace.ContentID, bool) {
+func (binding PublicationAtomBinding) DescriptorID() (identity.ContentID, bool) {
 	return binding.descriptorID, binding.valid()
 }
-func (binding PublicationAtomBinding) OccurrenceID() (keyspace.ContentID, bool) {
+func (binding PublicationAtomBinding) OccurrenceID() (identity.ContentID, bool) {
 	return binding.occurrenceID, binding.valid()
 }
 func (binding PublicationAtomBinding) Kind() target.PublicationEffectKind {
@@ -277,7 +277,7 @@ func (binding AtomBinding) valid() bool {
 // atom certificate. It deliberately admits no inverse construction: callers
 // can prove membership in an observed Effect value, but cannot mint an Atom
 // or a beta binding from a portable ID.
-func (binding AtomBinding) MatchesCertificate(id keyspace.ContentID) bool {
+func (binding AtomBinding) MatchesCertificate(id identity.ContentID) bool {
 	return binding.valid() && id.Available() && binding.atom.id == id
 }
 
@@ -548,40 +548,40 @@ func (a *Algebra) bindFormalAtom(root Root, mounted MountedCall, formal, expecte
 	return binding, binding.valid()
 }
 
-func (a *Algebra) formalCallRoot(mounted MountedCall, owner target.Operation) (pack.FormalCallRoot, pack.FormalCallTypeArguments, keyspace.ContentID, bool) {
+func (a *Algebra) formalCallRoot(mounted MountedCall, owner target.Operation) (pack.FormalCallRoot, pack.FormalCallTypeArguments, identity.ContentID, bool) {
 	application, module, occurrence, ok := a.MountedCallIdentity(mounted)
 	root, rootOK := a.RootForMountedCall(mounted)
 	if !ok || !a.Valid() || !rootOK || !a.callInRootID(root, application) {
-		return pack.FormalCallRoot{}, pack.FormalCallTypeArguments{}, keyspace.ContentID{}, false
+		return pack.FormalCallRoot{}, pack.FormalCallTypeArguments{}, identity.ContentID{}, false
 	}
 	if _, available := a.applicationOperation(application, owner); !available {
-		return pack.FormalCallRoot{}, pack.FormalCallTypeArguments{}, keyspace.ContentID{}, false
+		return pack.FormalCallRoot{}, pack.FormalCallTypeArguments{}, identity.ContentID{}, false
 	}
 	formal, formalOK := a.packs.FormalCallRootForMountedSemantic(module, occurrence)
 	types, typesOK := a.packs.FormalTypeArgumentsForMountedSemantic(module, occurrence)
 	return formal, types, application, formalOK && typesOK
 }
 
-func (a *Algebra) ordinaryTypeFormalDescriptor(applicationID keyspace.ContentID, arguments pack.FormalCallTypeArguments, owner target.Operation, effect int) (keyspace.ContentID, bool) {
+func (a *Algebra) ordinaryTypeFormalDescriptor(applicationID identity.ContentID, arguments pack.FormalCallTypeArguments, owner target.Operation, effect int) (identity.ContentID, bool) {
 	count := a.contract.EffectTypeArgumentCount(owner, effect)
 	positions := make([]target.TypeFormal, count)
 	for index := range positions {
 		formal, ok := a.contract.EffectTypeArgumentAt(owner, effect, index)
 		if !ok {
-			return keyspace.ContentID{}, false
+			return identity.ContentID{}, false
 		}
 		positions[index] = formal
 	}
 	return a.selectedTypeFormalDescriptor(applicationID, arguments, owner, positions)
 }
 
-func (a *Algebra) callbackTypeFormalDescriptor(applicationID keyspace.ContentID, arguments pack.FormalCallTypeArguments, owner target.Operation, callback target.CallbackID, effect int) (keyspace.ContentID, bool) {
+func (a *Algebra) callbackTypeFormalDescriptor(applicationID identity.ContentID, arguments pack.FormalCallTypeArguments, owner target.Operation, callback target.CallbackID, effect int) (identity.ContentID, bool) {
 	count := a.contract.CallbackEffectTypeArgumentCount(callback, effect)
 	positions := make([]target.TypeFormal, count)
 	for index := range positions {
 		formal, ok := a.contract.CallbackEffectTypeArgumentAt(callback, effect, index)
 		if !ok {
-			return keyspace.ContentID{}, false
+			return identity.ContentID{}, false
 		}
 		positions[index] = formal
 	}
@@ -592,17 +592,17 @@ func (a *Algebra) callbackTypeFormalDescriptor(applicationID keyspace.ContentID,
 // call/Target-ABI admission proof. Reusable bytes contain Pack's ordered
 // canonical semantic type descriptor plus Target formal positions; Boundary's
 // Program/Static-fenced correspondence ID and raw Terms never enter them.
-func (a *Algebra) selectedTypeFormalDescriptor(applicationID keyspace.ContentID, formalArguments pack.FormalCallTypeArguments, owner target.Operation, positions []target.TypeFormal) (keyspace.ContentID, bool) {
+func (a *Algebra) selectedTypeFormalDescriptor(applicationID identity.ContentID, formalArguments pack.FormalCallTypeArguments, owner target.Operation, positions []target.TypeFormal) (identity.ContentID, bool) {
 	if len(positions) == 0 {
-		return keyspace.ContentID{}, true
+		return identity.ContentID{}, true
 	}
 	argumentCount, ok := a.applicationOperation(applicationID, owner)
 	if !ok {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	semanticTypes, typesOK := formalArguments.ContentID()
 	if !typesOK || formalArguments.Count() != argumentCount {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	hash := sha256.New()
 	_, _ = hash.Write([]byte(typeFormalDescriptorDomain))
@@ -612,17 +612,17 @@ func (a *Algebra) selectedTypeFormalDescriptor(applicationID keyspace.ContentID,
 	_, _ = hash.Write(word[:])
 	for _, formal := range positions {
 		if int(formal) < 0 || int(formal) >= argumentCount {
-			return keyspace.ContentID{}, false
+			return identity.ContentID{}, false
 		}
 		binary.BigEndian.PutUint32(word[:], uint32(formal))
 		_, _ = hash.Write(word[:])
 	}
-	var id keyspace.ContentID
+	var id identity.ContentID
 	copy(id[:], hash.Sum(nil))
 	return id, id.Available()
 }
 
-func newFormalAtom(role formalAtomRole, call pack.FormalCallRoot, operation, descriptor, types keyspace.ContentID) (FormalAtom, bool) {
+func newFormalAtom(role formalAtomRole, call pack.FormalCallRoot, operation, descriptor, types identity.ContentID) (FormalAtom, bool) {
 	if (role != formalAtomOrdinary && role != formalAtomCallback) || !call.Valid() || !operation.Available() || !descriptor.Available() {
 		return FormalAtom{}, false
 	}
@@ -635,9 +635,9 @@ func newFormalAtom(role formalAtomRole, call pack.FormalCallRoot, operation, des
 	return atom, atom.Valid()
 }
 
-func formalAtomID(operation, descriptor, call, types keyspace.ContentID) keyspace.ContentID {
+func formalAtomID(operation, descriptor, call, types identity.ContentID) identity.ContentID {
 	if !operation.Available() || !descriptor.Available() || !call.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	hash := sha256.New()
 	_, _ = hash.Write([]byte(formalAtomDomain))
@@ -645,7 +645,7 @@ func formalAtomID(operation, descriptor, call, types keyspace.ContentID) keyspac
 	_, _ = hash.Write(descriptor[:])
 	_, _ = hash.Write(call[:])
 	_, _ = hash.Write(types[:])
-	var id keyspace.ContentID
+	var id identity.ContentID
 	copy(id[:], hash.Sum(nil))
 	return id
 }

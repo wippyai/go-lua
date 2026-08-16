@@ -1,7 +1,6 @@
 package bind
 
 import (
-	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -318,10 +317,10 @@ func (b *binder) visitAssignTargets(step bindStep) {
 }
 
 func (b *binder) beginLocal(stmt *ast.LocalAssignStmt, mode exprBindMode) {
-	ids := make([]symbol.ID, len(stmt.Names))
-	pending := make(map[string]symbol.ID, len(stmt.Names))
+	ids := make([]Symbol, len(stmt.Names))
+	pending := make(map[string]Symbol, len(stmt.Names))
 	for i, name := range stmt.Names {
-		id := b.newSymbol(name, symbol.Local)
+		id := b.newSymbol(name, SymbolLocal)
 		b.result.setSymbolTypeAnnotation(id, typeAt(stmt.Types, i))
 		ids[i] = id
 		if name != "" {
@@ -403,7 +402,7 @@ func (b *binder) enterIfElse(stmt *ast.IfStmt, mode exprBindMode) {
 }
 
 func (b *binder) enterNumberFor(stmt *ast.NumberForStmt, mode exprBindMode) {
-	id := b.newSymbol(stmt.Name, symbol.Local)
+	id := b.newSymbol(stmt.Name, SymbolLocal)
 	b.result.numForSymbols[stmt] = id
 	b.control.enterLoop()
 	b.push(bindStep{kind: stepLeaveLoop})
@@ -414,12 +413,12 @@ func (b *binder) enterNumberFor(stmt *ast.NumberForStmt, mode exprBindMode) {
 }
 
 func (b *binder) enterGenericFor(stmt *ast.GenericForStmt, mode exprBindMode) {
-	ids := make([]symbol.ID, len(stmt.Names))
+	ids := make([]Symbol, len(stmt.Names))
 	b.control.enterLoop()
 	b.push(bindStep{kind: stepLeaveLoop})
 	b.pushScope()
 	for i, name := range stmt.Names {
-		id := b.newSymbol(name, symbol.Local)
+		id := b.newSymbol(name, SymbolLocal)
 		ids[i] = id
 		b.define(name, id)
 	}
@@ -807,7 +806,7 @@ func (b *binder) enterFunction(fn *ast.FunctionExpr, method bool, origin functio
 }
 
 func (b *binder) finishFunctionEntry(fn *ast.FunctionExpr, method bool, mode exprBindMode) {
-	params := make([]symbol.ID, 0)
+	params := make([]Symbol, 0)
 	slots := make([]ParamSlot, 0)
 	var names []string
 	var types []ast.TypeExpr
@@ -820,7 +819,7 @@ func (b *binder) finishFunctionEntry(fn *ast.FunctionExpr, method bool, mode exp
 		varargType = fn.ParList.VarargType
 	}
 	if method && (len(names) == 0 || names[0] != "self") {
-		id := b.newSymbol("self", symbol.Param)
+		id := b.newSymbol("self", SymbolParam)
 		params = append(params, id)
 		b.define("self", id)
 		slots = append(slots, ParamSlot{
@@ -828,7 +827,7 @@ func (b *binder) finishFunctionEntry(fn *ast.FunctionExpr, method bool, mode exp
 		})
 	}
 	for i, name := range names {
-		id := b.newSymbol(name, symbol.Param)
+		id := b.newSymbol(name, SymbolParam)
 		position := positionAt(fn.ParList, i)
 		annotation := typeAt(types, i)
 		b.result.setSymbolTypeAnnotation(id, annotation)
@@ -839,7 +838,7 @@ func (b *binder) finishFunctionEntry(fn *ast.FunctionExpr, method bool, mode exp
 		})
 	}
 	if hasVargs {
-		id := b.newSymbol("...", symbol.Param)
+		id := b.newSymbol("...", SymbolParam)
 		var position ast.Position
 		if fn.ParList != nil {
 			position = fn.ParList.VarargPosition

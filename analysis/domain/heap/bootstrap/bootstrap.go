@@ -8,7 +8,7 @@ import (
 	"sort"
 
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // Root is one sealed complete bootstrap image for one actor-local BootRoot.
@@ -27,7 +27,7 @@ type rootReceipt struct {
 	key       heapdomain.Key
 	kind      heapdomain.RootKind
 	entries   []heapdomain.BootEntry
-	id        keyspace.ContentID
+	id        identity.ContentID
 	value     heapdomain.Value
 	admitted  bool
 }
@@ -84,9 +84,9 @@ func NewRoot(schema heapdomain.Schema, key heapdomain.Key) (Root, bool) {
 	}}, true
 }
 
-func (root Root) ID() (keyspace.ContentID, bool) {
+func (root Root) ID() (identity.ContentID, bool) {
 	if root.receipt == nil || root.receipt.authority == nil || root.receipt.authority.marker != 1 || !root.receipt.id.Available() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return root.receipt.id, true
 }
@@ -111,7 +111,7 @@ func (root Root) keyValue() (heapdomain.Key, bool) {
 	return root.receipt.key, true
 }
 
-func compareID(left, right keyspace.ContentID) int {
+func compareID(left, right identity.ContentID) int {
 	for index := range left {
 		if left[index] < right[index] {
 			return -1
@@ -123,9 +123,9 @@ func compareID(left, right keyspace.ContentID) int {
 	return 0
 }
 
-func rootID(schemaID, bootID keyspace.ContentID) keyspace.ContentID {
+func rootID(schemaID, bootID identity.ContentID) identity.ContentID {
 	if !schemaID.Available() || !bootID.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	var image [32 + 32 + 16]byte
 	copy(image[:32], schemaID[:])

@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // RuleAdmission is the one sealed authority that permits a Rule evaluator to
@@ -66,7 +67,7 @@ type RuleDerivation[V, O any] struct {
 	proof          *ruleRuntimeProof
 	composition    CompositionID
 	identity       SemanticKey
-	epoch          uint64
+	epoch          identity.Generation
 	anchor         SemanticKey
 	operandContent [32]byte
 	coordinates    ActivationCoordinates
@@ -605,7 +606,7 @@ type RuleEvidence struct {
 	proof       *ruleRuntimeProof
 	composition CompositionID
 	identity    SemanticKey
-	epoch       uint64
+	epoch       identity.Generation
 	ticket      *ruleAdmissionTicket
 }
 
@@ -695,7 +696,7 @@ type ruleAdmissionTicket struct {
 	proof       *ruleRuntimeProof
 	composition CompositionID
 	identity    SemanticKey
-	epoch       uint64
+	epoch       identity.Generation
 	anchor      SemanticKey
 	execution   *ruleExecution
 	product     *productSession
@@ -715,9 +716,9 @@ func (ticket *ruleAdmissionTicket) evidence(proof *ruleRuntimeProof, composition
 
 func (ticket *ruleAdmissionTicket) liveFor(proof *ruleRuntimeProof, composition CompositionID, identity SemanticKey) bool {
 	return ticket != nil && ticket.live && !ticket.used && proof != nil && proof.valid() && composition.Available() && identity.Available() && ticket.proof == proof &&
-		ticket.composition == composition && ticket.identity == identity && ticket.epoch != 0 && ticket.anchor.Available() &&
+		ticket.composition == composition && ticket.identity == identity && ticket.epoch.Available() && ticket.anchor.Available() &&
 		ticket.execution != nil && ticket.product != nil && ticket.product.execution == ticket.execution &&
-		ticket.execution.epoch == ticket.epoch && ticket.execution.active.Load() == ticket.epoch && ticket.product.valid(ticket.execution, ticket.epoch)
+		ticket.execution.epoch == ticket.epoch && ticket.execution.active.holds(ticket.epoch) && ticket.product.valid(ticket.execution, ticket.epoch)
 }
 
 func (derivation RuleDerivation[V, O]) valid() bool {
@@ -725,7 +726,7 @@ func (derivation RuleDerivation[V, O]) valid() bool {
 	if derivation.proof == nil || !derivation.proof.valid() {
 		return false
 	}
-	return derivation.composition.Available() && derivation.identity.Available() && derivation.epoch != 0 && derivation.anchor.Available() &&
+	return derivation.composition.Available() && derivation.identity.Available() && derivation.epoch.Available() && derivation.anchor.Available() &&
 		derivation.product != nil && ticket != nil && ticket.live && !ticket.used && ticket.proof == derivation.proof && ticket.composition == derivation.composition && ticket.identity == derivation.identity && ticket.epoch == derivation.epoch && ticket.anchor == derivation.anchor && ticket.execution == derivation.product.execution && ticket.product == derivation.product
 }
 
@@ -734,7 +735,7 @@ func (derivation RuleDerivation[V, O]) liveProduct() bool {
 }
 
 func (evidence *RuleEvidence) consume() bool {
-	if evidence == nil || evidence.proof == nil || !evidence.proof.valid() || !evidence.composition.Available() || !evidence.identity.Available() || evidence.epoch == 0 || evidence.ticket == nil {
+	if evidence == nil || evidence.proof == nil || !evidence.proof.valid() || !evidence.composition.Available() || !evidence.identity.Available() || !evidence.epoch.Available() || evidence.ticket == nil {
 		return false
 	}
 	ticket := evidence.ticket

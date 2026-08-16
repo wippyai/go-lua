@@ -3,6 +3,7 @@ package body
 import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -15,7 +16,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/module/signature"
-	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func signatureCallOperations(reg *axis.Registry, bindings *bind.Result, types *typeresolve.Resolver, graph cfg.Graph, facts factflow.Facts, plan *operationplan.Plan, producer *effectlowering.SignatureProducer) map[cfg.Point]operationplan.SignatureCallOperation {

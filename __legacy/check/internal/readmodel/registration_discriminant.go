@@ -7,10 +7,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	typeformat "github.com/wippyai/go-lua/analysis/type/format"
-	"github.com/wippyai/go-lua/analysis/type/subst"
-	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/analysis/type/unwrap"
+	typeformat "github.com/wippyai/go-lua/analysis/domain/type/format"
+	"github.com/wippyai/go-lua/analysis/domain/type/subst"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/unwrap"
 )
 
 func (r Reader) registrationStringDiscriminantCasesForArgument(point cfg.Point, argPath path.Path) (path.Path, []registrationDiscriminantCase, bool) {

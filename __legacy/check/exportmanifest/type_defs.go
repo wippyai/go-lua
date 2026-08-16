@@ -2,8 +2,8 @@ package exportmanifest
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
-	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func publishTypeDefinitions(m *manifest.Manifest, result *body.Result) {

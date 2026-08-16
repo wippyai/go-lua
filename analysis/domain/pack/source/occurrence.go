@@ -9,13 +9,13 @@ import (
 	packdomain "github.com/wippyai/go-lua/analysis/domain/pack"
 	packowner "github.com/wippyai/go-lua/analysis/domain/pack/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 type mountedSourceRows struct {
 	rule   *HotRule
-	module keyspace.ContentID
-	rows   map[keyspace.ContentID]packdomain.SourceResult
+	module identity.ContentID
+	rows   map[identity.ContentID]packdomain.SourceResult
 }
 
 // MountedIssuer is the exact PackSource substitution authority for one
@@ -41,7 +41,7 @@ func (rule *HotRule) sealOccurrenceReceipts() bool {
 	if !rule.schema.LinkOwner().Available() {
 		return false
 	}
-	occurrences := make(map[keyspace.ContentID]*mountedSourceRows)
+	occurrences := make(map[identity.ContentID]*mountedSourceRows)
 	for index := 0; index < rule.schema.SourceOccurrenceCount(); index++ {
 		module, id, result, ok := rule.schema.SourceOccurrenceAt(index)
 		if !ok || !module.Available() || !id.Available() || !rule.schema.OwnsSourceResult(result) {
@@ -49,7 +49,7 @@ func (rule *HotRule) sealOccurrenceReceipts() bool {
 		}
 		rows := occurrences[module]
 		if rows == nil {
-			rows = &mountedSourceRows{rule: rule, module: module, rows: make(map[keyspace.ContentID]packdomain.SourceResult)}
+			rows = &mountedSourceRows{rule: rule, module: module, rows: make(map[identity.ContentID]packdomain.SourceResult)}
 			occurrences[module] = rows
 		}
 		if _, duplicate := rows.rows[id]; duplicate {
@@ -72,7 +72,7 @@ func (rule *HotRule) SealOccurrenceReceipts() bool {
 }
 
 // ForMount returns the exact mounted source issuer for one ModuleKey.
-func (rule *HotRule) ForMount(module keyspace.ContentID) (MountedIssuer, bool) {
+func (rule *HotRule) ForMount(module identity.ContentID) (MountedIssuer, bool) {
 	if rule == nil || !rule.receiptsSealed || !module.Available() {
 		return MountedIssuer{}, false
 	}
@@ -82,7 +82,7 @@ func (rule *HotRule) ForMount(module keyspace.ContentID) (MountedIssuer, bool) {
 }
 
 // ReceiptForOccurrence returns the exact presealed Pack source result in O(1).
-func (issuer MountedIssuer) ReceiptForOccurrence(id keyspace.ContentID) (packdomain.SourceResult, bool) {
+func (issuer MountedIssuer) ReceiptForOccurrence(id identity.ContentID) (packdomain.SourceResult, bool) {
 	if issuer.rows == nil || !id.Available() || !issuer.rows.valid(issuer.rows.rule) {
 		return packdomain.SourceResult{}, false
 	}
@@ -92,7 +92,7 @@ func (issuer MountedIssuer) ReceiptForOccurrence(id keyspace.ContentID) (packdom
 
 // SourceForOccurrence projects the typed source descriptor alongside its
 // already sealed result for callers that need both hot operands.
-func (issuer MountedIssuer) SourceForOccurrence(id keyspace.ContentID) (packdomain.Source, packdomain.SourceResult, bool) {
+func (issuer MountedIssuer) SourceForOccurrence(id identity.ContentID) (packdomain.Source, packdomain.SourceResult, bool) {
 	result, ok := issuer.ReceiptForOccurrence(id)
 	if !ok {
 		return packdomain.Source{}, packdomain.SourceResult{}, false
@@ -104,7 +104,7 @@ func (issuer MountedIssuer) SourceForOccurrence(id keyspace.ContentID) (packdoma
 // AttachMountedOccurrence admits one artifact PackSource row and supplies its
 // exact Pack output surface. The caller chooses no factor ordinal: Root and
 // its Ref are issued by Pack's sealed owner.
-func (rule *HotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, mountID, reusablePointID, occurrenceID keyspace.ContentID) (engine.BindingRuleRowRef, bool) {
+func (rule *HotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, mountID, reusablePointID, occurrenceID identity.ContentID) (engine.BindingRuleRowRef, bool) {
 	if rule == nil || rule.owner == nil || assembly == nil {
 		return engine.BindingRuleRowRef{}, false
 	}
@@ -154,7 +154,7 @@ func (rule *HotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, m
 // AttachMountedReceiptMember resolves and attaches the exact graph member
 // after receipt compilation has committed its graph. It is the post-commit
 // counterpart to AttachMountedOccurrence and retains no equation handle.
-func (rule *HotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, reusablePointID, occurrenceID keyspace.ContentID) (*engine.ReceiptMember, bool) {
+func (rule *HotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, reusablePointID, occurrenceID identity.ContentID) (*engine.ReceiptMember, bool) {
 	if rule == nil || compilation == nil || graph == nil || rule.implementation == nil {
 		return nil, false
 	}

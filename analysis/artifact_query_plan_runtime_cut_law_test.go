@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/target/profile"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/target/profile"
 )
 
 // An uncalled callable body is a reusable Program interior, not a Link-wide
@@ -33,8 +33,8 @@ return 42`, contract)
 		t.Fatalf("runtime topology = %+v", diagnostic)
 	}
 	mounted := plan.state.artifacts.mounts[0]
-	callableBodies := make(map[keyspace.ContentID]struct{})
-	rootBodies := make(map[keyspace.ContentID]struct{})
+	callableBodies := make(map[identity.ContentID]struct{})
+	rootBodies := make(map[identity.ContentID]struct{})
 	for bodyIndex := 0; bodyIndex < mounted.artifact.BodyCount(); bodyIndex++ {
 		body, bodyOK := mounted.artifact.BodyAt(bodyIndex)
 		if !bodyOK {
@@ -46,8 +46,8 @@ return 42`, contract)
 			rootBodies[body.ID()] = struct{}{}
 		}
 	}
-	callablePoints := make(map[keyspace.ContentID]struct{})
-	rootPoints := make(map[keyspace.ContentID]struct{})
+	callablePoints := make(map[identity.ContentID]struct{})
+	rootPoints := make(map[identity.ContentID]struct{})
 	for occurrenceIndex := 0; occurrenceIndex < mounted.artifact.OccurrenceCount(); occurrenceIndex++ {
 		occurrence, occurrenceOK := mounted.artifact.OccurrenceAt(occurrenceIndex)
 		body, bodyOK := occurrence.BodyID()
@@ -70,7 +70,7 @@ return 42`, contract)
 	if len(callablePoints) == 0 || len(rootPoints) == 0 || plan.state.queryPlan == nil || len(plan.state.queryPlan.rows) == 0 {
 		t.Fatalf("fixture/query geometry = callable %d root %d queries %d", len(callablePoints), len(rootPoints), len(plan.state.queryPlan.rows))
 	}
-	perPoint := make(map[keyspace.ContentID]int)
+	perPoint := make(map[identity.ContentID]int)
 	for _, row := range plan.state.queryPlan.rows {
 		if _, forbidden := callablePoints[row.point]; forbidden {
 			t.Fatal("uncalled callable interior became an unconditional query root")

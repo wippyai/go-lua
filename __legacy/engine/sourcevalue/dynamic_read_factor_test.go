@@ -21,8 +21,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
-	typetable "github.com/wippyai/go-lua/analysis/type/table"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	typetable "github.com/wippyai/go-lua/analysis/domain/type/table"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 )
 
 func resolveDynamicReadTest(t *testing.T, domain state.ProductDomain, keys *keyspace.KeySpace, cache *typevalue.Cache, request state.DynamicReadQuery, input state.State) (product.Value, bool, error) {

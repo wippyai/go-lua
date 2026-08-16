@@ -17,7 +17,7 @@ func TestDemandWithExplicitRootsAdmitsQuerylessGraphAndRejectsForeignRoots(t *te
 	if !sealed || topology == nil {
 		t.Fatal("queryless root topology")
 	}
-	graph, graphOK := topology.Graph(nil)
+	graph, graphOK := initialGraph(topology)
 	if !graphOK || graph == nil {
 		t.Fatal("queryless root graph")
 	}
@@ -44,7 +44,7 @@ func TestDemandWithExplicitRootsAdmitsQuerylessGraphAndRejectsForeignRoots(t *te
 	if !foreignMaterializedOK || !foreignSealed || foreignTopology == nil {
 		t.Fatal("foreign root graph")
 	}
-	foreignGraph, foreignGraphOK := foreignTopology.Graph(nil)
+	foreignGraph, foreignGraphOK := initialGraph(foreignTopology)
 	if !foreignGraphOK || foreignGraph == nil {
 		t.Fatal("foreign root graph")
 	}

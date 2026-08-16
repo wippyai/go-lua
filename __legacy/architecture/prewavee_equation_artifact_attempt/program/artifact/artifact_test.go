@@ -6,11 +6,11 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/wippyai/go-lua/program"
-	"github.com/wippyai/go-lua/program/artifact"
-	"github.com/wippyai/go-lua/program/lower"
-	"github.com/wippyai/go-lua/program/target"
-	"github.com/wippyai/go-lua/program/target/profile"
+	"github.com/wippyai/go-lua/analysis/program"
+	"github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/program/lower"
+	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/profile"
 )
 
 func TestArtifactRoundTripReplaysAuthoredProgram(t *testing.T) {

@@ -4,24 +4,24 @@ import (
 	"crypto/sha256"
 	"testing"
 
-	"github.com/wippyai/go-lua/program"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program"
 )
 
-func hostileRuntimeID(text string) keyspace.ContentID {
-	return keyspace.ContentID(sha256.Sum256([]byte(text)))
+func hostileRuntimeID(text string) identity.ContentID {
+	return identity.ContentID(sha256.Sum256([]byte(text)))
 }
 
 // hostileRuntimeAuthority is intentionally a private-field fixture for
 // recomputation tests only. The separately external equal-content law seals
 // two real Heap owners through the public artifact-native API; keeping that
-// construction out of package heap avoids an import cycle through programschema
+// construction out of package heap avoids an import cycle through grammar
 // and Call/dispatch.
-func hostileRuntimeAuthority(heapID, policyID keyspace.ContentID) *RuntimeAllocationContextAuthority {
+func hostileRuntimeAuthority(heapID, policyID identity.ContentID) *RuntimeAllocationContextAuthority {
 	return &RuntimeAllocationContextAuthority{owner: &schema{id: heapID}, policyID: policyID, generation: newRuntimeAllocationGeneration()}
 }
 
-func hostileRequirement(heapID keyspace.ContentID) AllocationRequirement {
+func hostileRequirement(heapID identity.ContentID) AllocationRequirement {
 	requirement := AllocationRequirement{
 		heapID:     heapID,
 		keyID:      hostileRuntimeID("key"),

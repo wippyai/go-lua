@@ -14,8 +14,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/symbol"
-	"github.com/wippyai/go-lua/analysis/type/projection"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/projection"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 )
 
 type genericForMembershipAuthority struct {

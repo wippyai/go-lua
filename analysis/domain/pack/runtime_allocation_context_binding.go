@@ -4,7 +4,7 @@ import (
 	"crypto/sha256"
 
 	"github.com/wippyai/go-lua/analysis/domain/heap"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // RuntimeAllocationContextBindingAvailability is the closed outcome of
@@ -64,16 +64,16 @@ func NewRuntimeAllocationContextBindingIssuer(packSchema *Schema, heapSchema hea
 type RuntimeAllocationContextBinding struct {
 	issuer   RuntimeAllocationContextBindingIssuer
 	mounted  heap.MountedAllocationReceipt
-	module   keyspace.ContentID
-	call     keyspace.ContentID
+	module   identity.ContentID
+	call     identity.ContentID
 	selector InputSelector
 	source   SemanticSource
-	id       keyspace.ContentID
+	id       identity.ContentID
 }
 
-func runtimeAllocationContextBindingID(linkID, mountedID, sourceModule, sourceID, callModule, callID keyspace.ContentID) keyspace.ContentID {
+func runtimeAllocationContextBindingID(linkID, mountedID, sourceModule, sourceID, callModule, callID identity.ContentID) identity.ContentID {
 	if !linkID.Available() || !mountedID.Available() || !sourceModule.Available() || !sourceID.Available() || !callModule.Available() || !callID.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	var payload [32 * 6]byte
 	copy(payload[0:32], linkID[:])
@@ -82,7 +82,7 @@ func runtimeAllocationContextBindingID(linkID, mountedID, sourceModule, sourceID
 	copy(payload[96:128], sourceID[:])
 	copy(payload[128:160], callModule[:])
 	copy(payload[160:192], callID[:])
-	return keyspace.ContentID(sha256.Sum256(payload[:]))
+	return identity.ContentID(sha256.Sum256(payload[:]))
 }
 
 func (binding RuntimeAllocationContextBinding) valid() bool {
@@ -111,9 +111,9 @@ func (binding RuntimeAllocationContextBinding) Valid() bool { return binding.val
 // ID is the deterministic scalar identity of this exact mounted call/source
 // and mounted allocation/context relation. It excludes private issuer
 // generation so equal-content live bindings have equal semantic IDs.
-func (binding RuntimeAllocationContextBinding) ID() keyspace.ContentID {
+func (binding RuntimeAllocationContextBinding) ID() identity.ContentID {
 	if !binding.valid() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return binding.id
 }
@@ -126,9 +126,9 @@ func (binding RuntimeAllocationContextBinding) MountedAllocation() (heap.Mounted
 	return binding.mounted, binding.valid()
 }
 
-func (binding RuntimeAllocationContextBinding) CallProvenance() (module, call keyspace.ContentID, ok bool) {
+func (binding RuntimeAllocationContextBinding) CallProvenance() (module, call identity.ContentID, ok bool) {
 	if !binding.valid() {
-		return keyspace.ContentID{}, keyspace.ContentID{}, false
+		return identity.ContentID{}, identity.ContentID{}, false
 	}
 	return binding.module, binding.call, true
 }
@@ -175,7 +175,7 @@ func SameRuntimeAllocationContextBindingIssuer(subject RuntimeAllocationContextB
 // authority that issued its context. Tail and whole selectors are explicitly
 // unavailable; they never receive a fabricated semantic source. A fixed
 // selector whose mounted call source is absent is likewise unavailable.
-func (issuer RuntimeAllocationContextBindingIssuer) BindRuntimeAllocationContext(module, callID keyspace.ContentID, selector InputSelector, requirement heap.AllocationRequirement, context heap.RuntimeAllocationContext) (RuntimeAllocationContextBinding, RuntimeAllocationContextBindingAvailability) {
+func (issuer RuntimeAllocationContextBindingIssuer) BindRuntimeAllocationContext(module, callID identity.ContentID, selector InputSelector, requirement heap.AllocationRequirement, context heap.RuntimeAllocationContext) (RuntimeAllocationContextBinding, RuntimeAllocationContextBindingAvailability) {
 	if !issuer.valid() || !module.Available() || !callID.Available() || !issuer.pack.OwnsInputSelector(selector) {
 		return RuntimeAllocationContextBinding{}, RuntimeAllocationContextBindingInvalid
 	}
@@ -211,11 +211,11 @@ func (issuer RuntimeAllocationContextBindingIssuer) BindRuntimeAllocationContext
 type RuntimeDestinationContextBinding struct {
 	issuer   RuntimeAllocationContextBindingIssuer
 	context  heap.RuntimeAllocationContext
-	module   keyspace.ContentID
-	call     keyspace.ContentID
+	module   identity.ContentID
+	call     identity.ContentID
 	selector InputSelector
 	source   SemanticSource
-	id       keyspace.ContentID
+	id       identity.ContentID
 }
 
 // RuntimeDestinationContextBindingAbsent is the only accepted absent value for
@@ -226,9 +226,9 @@ func RuntimeDestinationContextBindingAbsent(binding RuntimeDestinationContextBin
 	return binding == (RuntimeDestinationContextBinding{})
 }
 
-func runtimeDestinationContextBindingID(linkID, contextID, sourceModule, sourceID, callModule, callID keyspace.ContentID, class heap.RuntimeAllocationContextClass) keyspace.ContentID {
+func runtimeDestinationContextBindingID(linkID, contextID, sourceModule, sourceID, callModule, callID identity.ContentID, class heap.RuntimeAllocationContextClass) identity.ContentID {
 	if !linkID.Available() || !contextID.Available() || !sourceModule.Available() || !sourceID.Available() || !callModule.Available() || !callID.Available() || !class.Valid() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	var payload [32*6 + 1]byte
 	copy(payload[0:32], linkID[:])
@@ -238,7 +238,7 @@ func runtimeDestinationContextBindingID(linkID, contextID, sourceModule, sourceI
 	copy(payload[128:160], callModule[:])
 	copy(payload[160:192], callID[:])
 	payload[192] = byte(class)
-	return keyspace.ContentID(sha256.Sum256(payload[:]))
+	return identity.ContentID(sha256.Sum256(payload[:]))
 }
 
 func (binding RuntimeDestinationContextBinding) valid() bool {
@@ -254,9 +254,9 @@ func (binding RuntimeDestinationContextBinding) valid() bool {
 }
 
 func (binding RuntimeDestinationContextBinding) Valid() bool { return binding.valid() }
-func (binding RuntimeDestinationContextBinding) ID() keyspace.ContentID {
+func (binding RuntimeDestinationContextBinding) ID() identity.ContentID {
 	if !binding.valid() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return binding.id
 }
@@ -266,9 +266,9 @@ func (binding RuntimeDestinationContextBinding) Source() (SemanticSource, bool) 
 func (binding RuntimeDestinationContextBinding) Context() (heap.RuntimeAllocationContext, bool) {
 	return binding.context, binding.valid()
 }
-func (binding RuntimeDestinationContextBinding) CallProvenance() (module, call keyspace.ContentID, ok bool) {
+func (binding RuntimeDestinationContextBinding) CallProvenance() (module, call identity.ContentID, ok bool) {
 	if !binding.valid() {
-		return keyspace.ContentID{}, keyspace.ContentID{}, false
+		return identity.ContentID{}, identity.ContentID{}, false
 	}
 	return binding.module, binding.call, true
 }
@@ -280,7 +280,7 @@ func (binding RuntimeDestinationContextBinding) MatchesSelector(selector InputSe
 // same live authority's destination context. It has no allocation parameter by
 // design. Tail, whole and unavailable fixed sources remain explicit
 // unavailable outcomes.
-func (issuer RuntimeAllocationContextBindingIssuer) BindRuntimeDestinationContext(module, callID keyspace.ContentID, selector InputSelector, context heap.RuntimeAllocationContext) (RuntimeDestinationContextBinding, RuntimeAllocationContextBindingAvailability) {
+func (issuer RuntimeAllocationContextBindingIssuer) BindRuntimeDestinationContext(module, callID identity.ContentID, selector InputSelector, context heap.RuntimeAllocationContext) (RuntimeDestinationContextBinding, RuntimeAllocationContextBindingAvailability) {
 	if !issuer.valid() || !module.Available() || !callID.Available() || !issuer.pack.OwnsInputSelector(selector) || !issuer.authority.OwnsRuntimeAllocationContext(context) {
 		return RuntimeDestinationContextBinding{}, RuntimeAllocationContextBindingInvalid
 	}

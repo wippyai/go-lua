@@ -3,8 +3,8 @@ package owner
 import (
 	"github.com/wippyai/go-lua/analysis/domain/call"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/link"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/link"
 )
 
 // HotOwner is Call's Link-local Factor implementation.  The cold
@@ -27,7 +27,7 @@ func (owner *HotOwner) LinkOwner() link.OwnerCapability {
 }
 
 // LinkID returns the scalar identity carried by the authoritative owner.
-func (owner *HotOwner) LinkID() keyspace.ContentID {
+func (owner *HotOwner) LinkID() identity.ContentID {
 	return owner.LinkOwner().ContentID()
 }
 
@@ -93,25 +93,37 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, algebra *c
 	if binding == nil || fragment == nil || algebra == nil || !algebra.Valid() || !hotBindingOpen(binding) || !validCoordinateCount(algebra.KeyCount()) {
 		return nil, false
 	}
-	lattice, ok := algebra.Lattice()
-	if !ok {
+	owner := &HotOwner{binding: binding, fragment: fragment, algebra: algebra}
+	spec, specOK := owner.FactorSpec()
+	if !specOK || !engine.BindFactor[coordinate](binding, fragment.slot, spec) {
 		return nil, false
 	}
-	owner := &HotOwner{binding: binding, fragment: fragment, algebra: algebra}
-	if !engine.BindFactor[coordinate](binding, fragment.slot, engine.HotFactorSpec[coordinate, call.Value]{
-		KeyEnd:      uint64(algebra.KeyCount()),
+	return owner, true
+}
+
+// FactorSpec is Call's exact Factor algebra for this binding: the same value
+// BindHot hands to the engine. A declaration surface projects this record
+// instead of restating the lattice, admission, or widening law, so the two
+// cannot drift.
+func (owner *HotOwner) FactorSpec() (engine.HotFactorSpec[coordinate, call.Value], bool) {
+	if owner == nil || owner.algebra == nil || !owner.algebra.Valid() || !validCoordinateCount(owner.algebra.KeyCount()) {
+		return engine.HotFactorSpec[coordinate, call.Value]{}, false
+	}
+	lattice, ok := owner.algebra.Lattice()
+	if !ok {
+		return engine.HotFactorSpec[coordinate, call.Value]{}, false
+	}
+	return engine.HotFactorSpec[coordinate, call.Value]{
+		KeyEnd:      uint64(owner.algebra.KeyCount()),
 		Lattice:     lattice,
-		Default:     algebra.Default(),
+		Default:     owner.algebra.Default(),
 		AdmitAt:     owner.admits,
-		Fingerprint: algebra.Fingerprint,
+		Fingerprint: owner.algebra.Fingerprint,
 		WidenRank: engine.Measure[coordinate, call.Value]{
 			Width: 1,
 			At:    owner.widenRank,
 		},
-	}) {
-		return nil, false
-	}
-	return owner, true
+	}, true
 }
 
 // Algebra returns Call's exact Link-local semantic authority.

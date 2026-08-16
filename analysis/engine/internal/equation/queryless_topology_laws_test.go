@@ -114,17 +114,17 @@ func TestObservationTopologyDefersOnlyAllQueryFamilies(t *testing.T) {
 	if !deferred || topology == nil {
 		t.Fatal("observation topology rejected complete query deferral")
 	}
-	graph, graphOK := topology.Graph(nil)
+	graph, graphOK := initialGraph(topology)
 	if !graphOK || graph == nil || graph.QueryCount() != 0 {
 		t.Fatal("deferred topology exposed ordinary query rows")
 	}
 	if _, demanded := graph.Demand(); demanded {
 		t.Fatal("deferred topology acquired unowned demand")
 	}
-	strictGraph, strictGraphOK := strict.Graph(nil)
-	strictRevision, strictRevisionOK := strict.Revision(nil)
-	deferredRevision, deferredRevisionOK := topology.Revision(nil)
-	if !strictGraphOK || strictGraph == nil || !strictRevisionOK || !deferredRevisionOK || strict.Key() == topology.Key() || strictRevision == deferredRevision {
+	strictGraph, strictGraphOK := initialGraph(strict)
+	strictRelation, strictRelationOK := strict.InitialRelation()
+	deferredRelation, deferredRelationOK := topology.InitialRelation()
+	if !strictGraphOK || strictGraph == nil || !strictRelationOK || !deferredRelationOK || strict.Key() == topology.Key() || strictRelation.Digest() == deferredRelation.Digest() {
 		t.Fatal("strict and deferred topologies shared an identity")
 	}
 	if strict.OwnsGraph(graph) || topology.OwnsGraph(strictGraph) {

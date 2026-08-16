@@ -7,9 +7,9 @@ import (
 	effectfactor "github.com/wippyai/go-lua/analysis/domain/effect/factor"
 	"github.com/wippyai/go-lua/analysis/domain/pack"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/internal/programquery"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/schema/query"
 )
 
 const publicationObservationDomain = "wippy.analysis.effect.publication-observation.v1\x00"
@@ -21,16 +21,16 @@ type PublicationTransitionCandidates struct{ set *publicationTransitionSet }
 
 type publicationTransitionSet struct {
 	rule        *HotRule
-	mount       keyspace.ContentID
-	occurrence  keyspace.ContentID
+	mount       identity.ContentID
+	occurrence  identity.ContentID
 	stage       engine.MountedNativeCallStageReceipt
-	observation engine.ReceiptObservation[programquery.EffectObservation]
+	observation engine.ReceiptObservation[query.EffectObservation]
 	rows        []publicationTransitionRow
 	sealed      bool
 }
 
 type publicationTransitionRow struct {
-	id          keyspace.ContentID
+	id          identity.ContentID
 	publication effectfactor.PublicationAtomBinding
 }
 
@@ -73,7 +73,7 @@ type PublicationTransitionProof struct {
 // authored PublicationAtomBinding. One exact Effect observation is attached
 // for the whole occurrence, so multiple candidates never multiply solver
 // demand. Opaque and generic effect routes issue no candidate.
-func (rule *HotRule) AttachMountedPublicationCandidates(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, effectQuery *engine.ExactQueryImplementation[effectfactor.Value, programquery.EffectObservation], mount, occurrence keyspace.ContentID) (PublicationTransitionCandidates, bool) {
+func (rule *HotRule) AttachMountedPublicationCandidates(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, effectQuery *engine.ExactQueryImplementation[effectfactor.Value, query.EffectObservation], mount, occurrence identity.ContentID) (PublicationTransitionCandidates, bool) {
 	if rule == nil || rule.opaque || compilation == nil || graph == nil || effectQuery == nil || !mount.Available() || !occurrence.Available() {
 		return PublicationTransitionCandidates{}, false
 	}
@@ -100,13 +100,13 @@ func (rule *HotRule) AttachMountedPublicationCandidates(compilation *engine.Rece
 	return PublicationTransitionCandidates{set: set}, set.valid()
 }
 
-func (rule *HotRule) publicationTransitionRows(operand hotOperand, mount, occurrence keyspace.ContentID) ([]publicationTransitionRow, bool) {
+func (rule *HotRule) publicationTransitionRows(operand hotOperand, mount, occurrence identity.ContentID) ([]publicationTransitionRow, bool) {
 	if rule == nil || rule.opaque || !rule.accepts(operand) || operand.receipt == nil || operand.receipt.owner != rule || rule.effects == nil || rule.effects.Algebra() == nil {
 		return nil, false
 	}
 	effects := rule.effects.Algebra()
 	rows := make([]publicationTransitionRow, 0)
-	seen := make(map[keyspace.ContentID]struct{})
+	seen := make(map[identity.ContentID]struct{})
 	for _, target := range operand.receipt.targets {
 		if !target.applicable || !target.valid {
 			continue
@@ -141,19 +141,19 @@ func sortPublicationTransitionRows(rows []publicationTransitionRow) {
 	}
 }
 
-func publicationTransitionID(domain string, ids ...keyspace.ContentID) (keyspace.ContentID, bool) {
+func publicationTransitionID(domain string, ids ...identity.ContentID) (identity.ContentID, bool) {
 	if domain == "" {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	hash := sha256.New()
 	_, _ = hash.Write([]byte(domain))
 	for _, id := range ids {
 		if !id.Available() {
-			return keyspace.ContentID{}, false
+			return identity.ContentID{}, false
 		}
 		_, _ = hash.Write(id[:])
 	}
-	var result keyspace.ContentID
+	var result identity.ContentID
 	copy(result[:], hash.Sum(nil))
 	return result, result.Available()
 }
@@ -171,8 +171,8 @@ func (set *publicationTransitionSet) valid() bool {
 	if _, memberOK := set.stage.RuleMember(); !memberOK {
 		return false
 	}
-	previous := keyspace.ContentID{}
-	seen := make(map[keyspace.ContentID]struct{}, len(set.rows))
+	previous := identity.ContentID{}
+	seen := make(map[identity.ContentID]struct{}, len(set.rows))
 	for index := range set.rows {
 		row := set.rows[index]
 		publicationOccurrence, occurrenceOK := row.publication.OccurrenceID()
@@ -230,7 +230,7 @@ func (candidate PublicationTransitionCandidate) Available() bool {
 	return ok
 }
 
-func (candidate PublicationTransitionCandidate) ContentID() (keyspace.ContentID, bool) {
+func (candidate PublicationTransitionCandidate) ContentID() (identity.ContentID, bool) {
 	row, ok := candidate.row()
 	return row.id, ok
 }
@@ -301,37 +301,37 @@ func (proof PublicationTransitionProof) row() (publicationTransitionRow, bool) {
 	return row, ok && proof.valid()
 }
 
-func (proof PublicationTransitionProof) ContentID() (keyspace.ContentID, bool) {
+func (proof PublicationTransitionProof) ContentID() (identity.ContentID, bool) {
 	row, ok := proof.row()
 	return row.id, ok
 }
 
-func (proof PublicationTransitionProof) DescriptorID() (keyspace.ContentID, bool) {
+func (proof PublicationTransitionProof) DescriptorID() (identity.ContentID, bool) {
 	row, ok := proof.row()
 	if !ok {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return row.publication.DescriptorID()
 }
 
-func (proof PublicationTransitionProof) OccurrenceID() (keyspace.ContentID, bool) {
+func (proof PublicationTransitionProof) OccurrenceID() (identity.ContentID, bool) {
 	row, ok := proof.row()
 	if !ok {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return row.publication.OccurrenceID()
 }
 
-func (proof PublicationTransitionProof) MountID() keyspace.ContentID {
+func (proof PublicationTransitionProof) MountID() identity.ContentID {
 	if !proof.Valid() || proof.candidate.set == nil {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return proof.candidate.set.mount
 }
 
-func (proof PublicationTransitionProof) CallOccurrenceID() keyspace.ContentID {
+func (proof PublicationTransitionProof) CallOccurrenceID() identity.ContentID {
 	if !proof.Valid() || proof.candidate.set == nil {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return proof.candidate.set.occurrence
 }

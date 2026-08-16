@@ -4,18 +4,19 @@ import (
 	"math"
 
 	"github.com/wippyai/go-lua/analysis/domain/heap"
-	programartifact "github.com/wippyai/go-lua/analysis/internal/programartifact"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/lua/semantics/exactkey"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 
 	"github.com/wippyai/go-lua/analysis/domain/materialization"
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/link"
-	linkboundary "github.com/wippyai/go-lua/program/link/boundary"
-	linkhost "github.com/wippyai/go-lua/program/link/host"
-	linkmodule "github.com/wippyai/go-lua/program/link/module"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
-	programsource "github.com/wippyai/go-lua/program/source"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/program/link"
+	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
+	linkhost "github.com/wippyai/go-lua/analysis/program/link/host"
+	linkmodule "github.com/wippyai/go-lua/analysis/program/link/module"
+	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
 // Presence is the non-nil/nil projection of a Value relation.  Bottom means
@@ -256,18 +257,18 @@ func (reference Reference) AllocationKey() (heap.Key, bool) {
 }
 
 // BootRootID returns the exact actor-local boot-root receipt identity.
-func (reference Reference) BootRootID() (keyspace.ContentID, bool) {
+func (reference Reference) BootRootID() (identity.ContentID, bool) {
 	if !reference.valid() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	row := reference.schema.references[reference.id-1]
 	return row.boot, row.source == referenceSourceBoot
 }
 
 // EndpointID returns the exact host Function endpoint receipt identity.
-func (reference Reference) EndpointID() (keyspace.ContentID, bool) {
+func (reference Reference) EndpointID() (identity.ContentID, bool) {
 	if !reference.valid() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	row := reference.schema.references[reference.id-1]
 	return row.endpoint, row.source == referenceSourceEndpoint
@@ -277,9 +278,9 @@ func (reference Reference) EndpointID() (keyspace.ContentID, bool) {
 // Seed. Its disposition remains Link/Call-owned; Value retains only runtime
 // identity so aliases and table reads do not collapse a denied callable to an
 // opaque function.
-func (reference Reference) CallableID() (keyspace.ContentID, bool) {
+func (reference Reference) CallableID() (identity.ContentID, bool) {
 	if !reference.valid() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	row := reference.schema.references[reference.id-1]
 	return row.callable, row.source == referenceSourceCallable
@@ -299,9 +300,9 @@ func (reference Reference) ScopedLoader() (target.Operation, bool) {
 
 // TypeValueSource returns the existing Link Value used for one executable
 // Program TypeValue source. Its descriptor remains TypeValue-owned.
-func (reference Reference) TypeValueSourceID() (keyspace.ContentID, bool) {
+func (reference Reference) TypeValueSourceID() (identity.ContentID, bool) {
 	if !reference.valid() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	row := reference.schema.references[reference.id-1]
 	return row.value, row.source == referenceSourceRuntimeType
@@ -312,11 +313,11 @@ type referenceRow struct {
 	kind             ReferenceKind
 	allocation       heap.Key
 	allocationResult *AllocationResult
-	boot             keyspace.ContentID
-	endpoint         keyspace.ContentID
-	callable         keyspace.ContentID
+	boot             identity.ContentID
+	endpoint         identity.ContentID
+	callable         identity.ContentID
 	operation        target.Operation
-	value            keyspace.ContentID
+	value            identity.ContentID
 }
 
 type atomRow struct {
@@ -346,8 +347,8 @@ type coordinateRow struct {
 }
 
 type mountedCoordinateKey struct {
-	module keyspace.ContentID
-	value  keyspace.ContentID
+	module identity.ContentID
+	value  identity.ContentID
 }
 
 type literalSourceRow struct {
@@ -356,7 +357,7 @@ type literalSourceRow struct {
 }
 
 type targetInitialKey struct {
-	root    keyspace.ContentID
+	root    identity.ContentID
 	initial target.InitialValue
 }
 
@@ -370,14 +371,14 @@ type Schema struct {
 	// linkID is the sealed owner identity used by published receipts. The
 	// mounted Link pointer above is consumed only by the cold Seal pipeline;
 	// hot receipt validation must use this scalar fence instead.
-	linkID keyspace.ContentID
+	linkID identity.ContentID
 	heap   heap.Schema
 
 	atoms           []atomRow
 	atomByRow       map[atomRow]uint32
 	coordinateCount uint32
 	mountCount      uint32
-	coordinates     map[keyspace.ContentID]coordinateRow // complete detached Value identity range
+	coordinates     map[identity.ContentID]coordinateRow // complete detached Value identity range
 	// mountedCoordinates is the detached semantic lookup consumed by downstream
 	// domains after the Boundary source graph has been released.
 	mountedCoordinates map[mountedCoordinateKey]uint32
@@ -385,10 +386,10 @@ type Schema struct {
 	// SourceSeedForValueID and SourceResultForID resolve canonical source rows
 	// directly from coordinates; no parallel source-ID directory is retained.
 	sourceSeedMounts     []sourceSeedMount
-	sourceSeedMountIndex map[keyspace.ContentID]uint32
+	sourceSeedMountIndex map[identity.ContentID]uint32
 	sourceValuesSealed   bool
 	exactKeys            map[keyspace.LiteralValue]keyspace.LiteralValue
-	literalSources       map[keyspace.ContentID]literalSourceRow
+	literalSources       map[identity.ContentID]literalSourceRow
 
 	// storageTransfers is Value's complete fixed Read/Bind/Write relation.
 	// It is derived once from canonical Program terms and existing Link Values;
@@ -413,17 +414,17 @@ type Schema struct {
 
 	references     []referenceRow
 	allocRefs      map[heap.Key]uint32
-	globalResults  map[keyspace.ContentID]*GlobalBootstrapResult
-	globalIDs      []keyspace.ContentID
+	globalResults  map[identity.ContentID]*GlobalBootstrapResult
+	globalIDs      []identity.ContentID
 	targetInitials map[targetInitialKey]Value
-	bootRefs       map[keyspace.ContentID]uint32
-	endpointRefs   map[keyspace.ContentID]uint32
-	callableRefs   map[keyspace.ContentID]uint32
+	bootRefs       map[identity.ContentID]uint32
+	endpointRefs   map[identity.ContentID]uint32
+	callableRefs   map[identity.ContentID]uint32
 	scopedLoader   uint32
-	typeRefs       map[keyspace.ContentID]uint32
+	typeRefs       map[identity.ContentID]uint32
 
-	capabilities []keyspace.ContentID
-	capabilityID map[keyspace.ContentID]uint32
+	capabilities []identity.ContentID
+	capabilityID map[identity.ContentID]uint32
 	capWords     int
 
 	capabilitySeeds []capabilitySeedRow
@@ -461,7 +462,7 @@ type valueBuilder struct {
 	host     *linkhost.Component
 	// artifacts is the exact reusable ProgramArtifact substitution directory.
 	// It is cold builder state and cannot survive into the published Schema.
-	artifacts map[keyspace.ContentID]ArtifactMount
+	artifacts map[identity.ContentID]ArtifactMount
 }
 
 func (builder *valueBuilder) sealProject() *linkproject.Component   { return builder.project }
@@ -473,11 +474,11 @@ func (builder *valueBuilder) sealHost() *linkhost.Component         { return bui
 // mounted more than once without positional joins or shared occurrence IDs.
 type ArtifactMount struct {
 	artifact *programartifact.Artifact
-	module   keyspace.ContentID
-	program  keyspace.ContentID
+	module   identity.ContentID
+	program  identity.ContentID
 }
 
-func NewArtifactMount(artifact *programartifact.Artifact, module, programID keyspace.ContentID) (ArtifactMount, bool) {
+func NewArtifactMount(artifact *programartifact.Artifact, module, programID identity.ContentID) (ArtifactMount, bool) {
 	if artifact == nil || !artifact.Available() || !module.Available() || !programID.Available() || artifact.CompileKey().ProgramID() != programID {
 		return ArtifactMount{}, false
 	}
@@ -487,15 +488,15 @@ func NewArtifactMount(artifact *programartifact.Artifact, module, programID keys
 func (mount ArtifactMount) Available() bool {
 	return mount.artifact != nil && mount.artifact.Available() && mount.module.Available() && mount.program.Available() && mount.artifact.CompileKey().ProgramID() == mount.program
 }
-func (mount ArtifactMount) Module() keyspace.ContentID {
+func (mount ArtifactMount) Module() identity.ContentID {
 	if !mount.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return mount.module
 }
-func (mount ArtifactMount) ProgramID() keyspace.ContentID {
+func (mount ArtifactMount) ProgramID() identity.ContentID {
 	if !mount.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return mount.program
 }
@@ -508,9 +509,9 @@ func (mount ArtifactMount) Artifact() *programartifact.Artifact {
 
 // LinkID is the detached owner identity for this sealed Value schema. Hot
 // callers must compare this scalar fence; the Link object is construction-only.
-func (schema *Schema) LinkID() keyspace.ContentID {
+func (schema *Schema) LinkID() identity.ContentID {
 	if schema == nil {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return schema.linkID
 }
@@ -562,10 +563,10 @@ type Coordinate struct {
 }
 
 type capabilitySeedRow struct {
-	id         keyspace.ContentID
-	capability keyspace.ContentID
+	id         identity.ContentID
+	capability identity.ContentID
 	source     CapabilitySource
-	exposure   keyspace.ContentID
+	exposure   identity.ContentID
 }
 
 // CapabilitySource is Value's detached classification of a sealed Host
@@ -581,9 +582,9 @@ const (
 )
 
 type hostMember struct {
-	capability keyspace.ContentID
-	output     keyspace.ContentID
-	endpoint   keyspace.ContentID
+	capability identity.ContentID
+	output     identity.ContentID
+	endpoint   identity.ContentID
 }
 
 // SealFailure is the first closed Value-schema construction boundary that
@@ -655,7 +656,7 @@ func SealWithFailure(source *link.Link, heaps heap.Schema, mounts []ArtifactMoun
 	if source == nil || !source.ContentID().Available() || !heaps.LinkOwner().Matches(source.OwnerCapability()) || heaps.LinkContentID() != source.ContentID() || len(mounts) != source.Project().Mounts().Count() {
 		return nil, SealFailureInput
 	}
-	artifacts := make(map[keyspace.ContentID]ArtifactMount, len(mounts))
+	artifacts := make(map[identity.ContentID]ArtifactMount, len(mounts))
 	for _, mount := range mounts {
 		if !mount.Available() {
 			return nil, SealFailureInput
@@ -681,10 +682,10 @@ func SealWithFailure(source *link.Link, heaps heap.Schema, mounts []ArtifactMoun
 		atomByRow:                  make(map[atomRow]uint32),
 		coordinateCount:            uint32(source.Boundary().Values().Count()),
 		mountCount:                 uint32(source.Project().Mounts().Count()),
-		coordinates:                make(map[keyspace.ContentID]coordinateRow, source.Boundary().Values().Count()),
+		coordinates:                make(map[identity.ContentID]coordinateRow, source.Boundary().Values().Count()),
 		mountedCoordinates:         make(map[mountedCoordinateKey]uint32),
 		exactKeys:                  make(map[keyspace.LiteralValue]keyspace.LiteralValue, source.Project().Keys().Count()),
-		literalSources:             make(map[keyspace.ContentID]literalSourceRow),
+		literalSources:             make(map[identity.ContentID]literalSourceRow),
 		storageTransferOrdinals:    make(map[StorageTransferRef]uint32),
 		storageTransferOccurrences: make(map[storageTransferOccurrenceKey]uint32),
 		binaryEqualities:           make(map[computationKey]BinaryEquality),
@@ -696,13 +697,13 @@ func SealWithFailure(source *link.Link, heaps heap.Schema, mounts []ArtifactMoun
 		valueClaims:                make(map[computationKey]ValueClaim),
 		returnBoundaries:           make(map[computationKey]ReturnBoundary),
 		allocRefs:                  make(map[heap.Key]uint32),
-		globalResults:              make(map[keyspace.ContentID]*GlobalBootstrapResult),
+		globalResults:              make(map[identity.ContentID]*GlobalBootstrapResult),
 		targetInitials:             make(map[targetInitialKey]Value),
-		bootRefs:                   make(map[keyspace.ContentID]uint32),
-		endpointRefs:               make(map[keyspace.ContentID]uint32),
-		callableRefs:               make(map[keyspace.ContentID]uint32),
-		typeRefs:                   make(map[keyspace.ContentID]uint32),
-		capabilityID:               make(map[keyspace.ContentID]uint32),
+		bootRefs:                   make(map[identity.ContentID]uint32),
+		endpointRefs:               make(map[identity.ContentID]uint32),
+		callableRefs:               make(map[identity.ContentID]uint32),
+		typeRefs:                   make(map[identity.ContentID]uint32),
+		capabilityID:               make(map[identity.ContentID]uint32),
 	}
 	builder := &valueBuilder{Schema: schema, project: source.Project(), boundary: source.Boundary(), host: source.Host(), artifacts: artifacts}
 	if !builder.sealCoordinates() {
@@ -756,7 +757,7 @@ func (schema *valueBuilder) sealMountedCoordinateDirectory() bool {
 	}
 	values := schema.sealBoundary().Values()
 	complete := true
-	return values.VisitMountedSemantics(func(module, id keyspace.ContentID, value linkboundary.Value) bool {
+	return values.VisitMountedSemantics(func(module, id identity.ContentID, value linkboundary.Value) bool {
 		coordinate, coordinateOK := schema.coordinateForCold(value)
 		key := mountedCoordinateKey{module: module, value: id}
 		if !coordinateOK {
@@ -774,7 +775,7 @@ func (schema *valueBuilder) sealMountedCoordinateDirectory() bool {
 
 // CoordinateForMountedSemantic resolves an artifact semantic Value ID through
 // the cold-built detached directory. It never reopens Boundary or Project.
-func (schema *Schema) CoordinateForMountedSemantic(module, value keyspace.ContentID) (Coordinate, bool) {
+func (schema *Schema) CoordinateForMountedSemantic(module, value identity.ContentID) (Coordinate, bool) {
 	if schema == nil || !module.Available() || !value.Available() {
 		return Coordinate{}, false
 	}
@@ -919,7 +920,7 @@ func (schema *valueBuilder) sealSources() bool {
 			return false
 		}
 	}
-	if !schema.forEachExecutableTypeValue(func(value keyspace.ContentID) bool {
+	if !schema.forEachExecutableTypeValue(func(value identity.ContentID) bool {
 		return schema.addTypeValueReferenceID(value)
 	}) {
 		return false
@@ -1151,7 +1152,7 @@ func (schema *valueBuilder) addCallableReference(seed linkboundary.Seed) bool {
 	return schema.addReference(referenceRow{source: referenceSourceCallable, kind: ReferenceFunction, callable: id}) != 0
 }
 
-func (schema *valueBuilder) addTypeValueReferenceID(id keyspace.ContentID) bool {
+func (schema *valueBuilder) addTypeValueReferenceID(id identity.ContentID) bool {
 	if !id.Available() {
 		return false
 	}
@@ -1394,7 +1395,7 @@ func (schema *valueBuilder) sealStoredExactAtoms() bool {
 }
 
 func (schema *valueBuilder) sealReferenceSourceAtoms() bool {
-	return schema.forEachExecutableTypeValue(func(value keyspace.ContentID) bool {
+	return schema.forEachExecutableTypeValue(func(value identity.ContentID) bool {
 		atom, subject, present, ok := schema.sourceAtomForValue(value)
 		return ok && schema.assignSourceAtom(atom, subject, present)
 	})
@@ -1403,7 +1404,7 @@ func (schema *valueBuilder) sealReferenceSourceAtoms() bool {
 // forEachExecutableTypeValue reads only the canonical Program TypeValue rows
 // and validates their retained Link static resolver/expression tuple before a
 // Value-domain interpretation is admitted.
-func (schema *valueBuilder) forEachExecutableTypeValue(visit func(keyspace.ContentID) bool) bool {
+func (schema *valueBuilder) forEachExecutableTypeValue(visit func(identity.ContentID) bool) bool {
 	if schema == nil || schema.sealProject() == nil || visit == nil || schema.artifacts == nil {
 		return false
 	}
@@ -1424,7 +1425,7 @@ func (schema *valueBuilder) forEachExecutableTypeValue(visit func(keyspace.Conte
 	return true
 }
 
-func (schema *valueBuilder) assignSourceAtom(atom uint32, value keyspace.ContentID, present bool) bool {
+func (schema *valueBuilder) assignSourceAtom(atom uint32, value identity.ContentID, present bool) bool {
 	if !present {
 		return atom == 0
 	}
@@ -1634,14 +1635,14 @@ func (schema *valueBuilder) sealGlobalBootstrapResults(module *linkmodule.Compon
 // owner. Nil has no LiteralValue payload; its FamilyNil result is the direct
 // Source discriminator. Non-literal Values are rejected so runtime TypeValue
 // sources remain under their separate Link/static relation.
-func (schema *Schema) sourceLiteralID(id keyspace.ContentID) (keyspace.Family, keyspace.LiteralValue, bool) {
+func (schema *Schema) sourceLiteralID(id identity.ContentID) (keyspace.Family, keyspace.LiteralValue, bool) {
 	if schema == nil || schema.literalSources == nil || !id.Available() {
 		return keyspace.FamilyInvalid, keyspace.LiteralValue{}, false
 	}
 	return schema.sourceLiteralRow(id)
 }
 
-func (schema *Schema) sourceLiteralRow(id keyspace.ContentID) (keyspace.Family, keyspace.LiteralValue, bool) {
+func (schema *Schema) sourceLiteralRow(id identity.ContentID) (keyspace.Family, keyspace.LiteralValue, bool) {
 	row, ok := schema.literalSources[id]
 	if ok {
 		return row.family, row.literal, true
@@ -1649,14 +1650,14 @@ func (schema *Schema) sourceLiteralRow(id keyspace.ContentID) (keyspace.Family, 
 	return keyspace.FamilyInvalid, keyspace.LiteralValue{}, false
 }
 
-func (schema *valueBuilder) sourceAtomForValue(value keyspace.ContentID) (uint32, keyspace.ContentID, bool, bool) {
+func (schema *valueBuilder) sourceAtomForValue(value identity.ContentID) (uint32, identity.ContentID, bool, bool) {
 	family, literal, literalOK := schema.sourceLiteralID(value)
 	switch family {
 	case keyspace.FamilyNil:
 		return schema.atomByRow[atomRow{kind: atomNil}], value, literalOK, literalOK
 	case keyspace.FamilyBool:
 		if !literalOK {
-			return 0, keyspace.ContentID{}, false, false
+			return 0, identity.ContentID{}, false, false
 		}
 		if literal.Bool {
 			return schema.literalSourceAtom(value, runtimekind.Boolean, atomRow{kind: atomTrue})
@@ -1666,14 +1667,14 @@ func (schema *valueBuilder) sourceAtomForValue(value keyspace.ContentID) (uint32
 		return schema.literalSourceAtom(value, runtimekind.Number, atomRow{kind: atomPrimitive, runtime: runtimekind.Number})
 	case keyspace.FamilyFloat:
 		if !literalOK {
-			return 0, keyspace.ContentID{}, false, false
+			return 0, identity.ContentID{}, false, false
 		}
 		if atom, _, present, exact := schema.literalSourceAtom(value, runtimekind.Number, atomRow{}); exact && present {
 			return atom, value, true, true
 		}
 		atom, atomOK := schema.sourceFloatAtom(math.Float64frombits(literal.FloatBits))
 		if !atomOK {
-			return 0, keyspace.ContentID{}, false, false
+			return 0, identity.ContentID{}, false, false
 		}
 		return atom, value, true, true
 	case keyspace.FamilyString:
@@ -1683,21 +1684,21 @@ func (schema *valueBuilder) sourceAtomForValue(value keyspace.ContentID) (uint32
 			atom, found := schema.referenceAtom(reference, materialization.Exact)
 			return atom, value, found, found
 		}
-		return 0, keyspace.ContentID{}, false, false
+		return 0, identity.ContentID{}, false, false
 	default:
-		return 0, keyspace.ContentID{}, false, true
+		return 0, identity.ContentID{}, false, true
 	}
 }
 
 // literalSourceAtom attaches only an existing Link-normalized exact key to an
 // authored literal.  If Link has no key (notably NaN), the caller's existing
 // Value-owned fallback remains authoritative; Value never invents one.
-func (schema *valueBuilder) literalSourceAtom(value keyspace.ContentID, runtime runtimekind.Kind, fallback atomRow) (uint32, keyspace.ContentID, bool, bool) {
+func (schema *valueBuilder) literalSourceAtom(value identity.ContentID, runtime runtimekind.Kind, fallback atomRow) (uint32, identity.ContentID, bool, bool) {
 	key, keyOK := schema.sourceExactKey(value)
 	if keyOK {
 		_, literal, literalOK := schema.sourceLiteralID(value)
 		if !literalOK {
-			return 0, keyspace.ContentID{}, false, false
+			return 0, identity.ContentID{}, false, false
 		}
 		atom := schema.addAtom(atomRow{
 			kind:         atomLiteral,
@@ -1709,13 +1710,13 @@ func (schema *valueBuilder) literalSourceAtom(value keyspace.ContentID, runtime 
 		return atom, value, atom != 0, atom != 0
 	}
 	if fallback.kind == atomInvalid {
-		return 0, keyspace.ContentID{}, false, false
+		return 0, identity.ContentID{}, false, false
 	}
 	atom := schema.atomByRow[fallback]
 	return atom, value, atom != 0, atom != 0
 }
 
-func (schema *valueBuilder) sourceExactKey(value keyspace.ContentID) (keyspace.LiteralValue, bool) {
+func (schema *valueBuilder) sourceExactKey(value identity.ContentID) (keyspace.LiteralValue, bool) {
 	if schema == nil || schema.exactKeys == nil {
 		return keyspace.LiteralValue{}, false
 	}
@@ -1728,7 +1729,7 @@ func (schema *valueBuilder) sourceExactKey(value keyspace.ContentID) (keyspace.L
 	default:
 		return keyspace.LiteralValue{}, false
 	}
-	literal, ok = programsource.NormalizeExactKey(literal)
+	literal, ok = exactkey.Normalize(literal)
 	if !ok {
 		return keyspace.LiteralValue{}, false
 	}
@@ -2013,7 +2014,7 @@ func (schema *Schema) CoordinateAt(index int) (Coordinate, bool) {
 
 // CoordinateForID returns the preissued local coordinate for one portable
 // Boundary Value identity. It is the only post-seal coordinate lookup.
-func (schema *Schema) CoordinateForID(value keyspace.ContentID) (Coordinate, bool) {
+func (schema *Schema) CoordinateForID(value identity.ContentID) (Coordinate, bool) {
 	if schema == nil || !value.Available() {
 		return Coordinate{}, false
 	}
@@ -2067,7 +2068,7 @@ func (schema *Schema) AdmitsCoordinate(coordinate Coordinate, fact Value) bool {
 // Allocation coordinates deliberately have no source atom: their sole
 // executable authority is the allocation Rule's atomic Age+Fresh patch.
 // Dynamic reads, calls, cells and outcomes likewise have no source atom.
-func (schema *Schema) SourceID(value keyspace.ContentID) (Atom, bool) {
+func (schema *Schema) SourceID(value identity.ContentID) (Atom, bool) {
 	if schema == nil || !value.Available() {
 		return Atom{}, false
 	}
@@ -2095,7 +2096,7 @@ func (schema *Schema) Allocation(key heap.Key, role materialization.Role) (Atom,
 
 // Boot returns the exact actor-local boot root alternative.  Boot roots are
 // existing Link identities and therefore never become fabricated heap roots.
-func (schema *Schema) BootID(root keyspace.ContentID) (Atom, bool) {
+func (schema *Schema) BootID(root identity.ContentID) (Atom, bool) {
 	if schema == nil || !root.Available() {
 		return Atom{}, false
 	}
@@ -2108,7 +2109,7 @@ func (schema *Schema) BootID(root keyspace.ContentID) (Atom, bool) {
 }
 
 // Endpoint returns one exact host Function endpoint alternative.
-func (schema *Schema) EndpointID(endpoint keyspace.ContentID) (Atom, bool) {
+func (schema *Schema) EndpointID(endpoint identity.ContentID) (Atom, bool) {
 	if schema == nil || !endpoint.Available() {
 		return Atom{}, false
 	}
@@ -2123,7 +2124,7 @@ func (schema *Schema) EndpointID(endpoint keyspace.ContentID) (Atom, bool) {
 // Callable returns an exact bootstrap callable alternative. Link owns whether
 // it is admitted or denied and Call owns its outcomes; this method supplies
 // only the identity-preserving Value fact used by bootstrap/Heap projection.
-func (schema *Schema) CallableID(seed keyspace.ContentID) (Atom, bool) {
+func (schema *Schema) CallableID(seed identity.ContentID) (Atom, bool) {
 	if schema == nil || !seed.Available() {
 		return Atom{}, false
 	}

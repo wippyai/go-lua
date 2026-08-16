@@ -8,7 +8,7 @@ import (
 )
 
 // The sealed authority must publish the graph compiled during sealing. A
-// second Graph(nil) call is an identity lookup, not another spec copy or
+// second initial-publication call is an identity lookup, not another spec copy or
 // compilation.
 func TestTopologyGraphReturnsSealedInitialPayload(t *testing.T) {
 	fixture := newTemplateMaterializationFixture(t)
@@ -25,13 +25,20 @@ func TestTopologyGraphReturnsSealedInitialPayload(t *testing.T) {
 	if !sealed || topology == nil {
 		t.Fatal("topology seal")
 	}
-	first, firstOK := topology.Graph(nil)
-	second, secondOK := topology.Graph(nil)
+	first, firstOK := initialGraph(topology)
+	second, secondOK := initialGraph(topology)
 	if !firstOK || !secondOK || first == nil || first != second || first.payload != nil || !topology.OwnsGraph(first) {
-		t.Fatal("Graph(nil) did not return the sealed initial graph")
+		t.Fatal("the initial publication did not return the sealed initial graph")
 	}
-	if _, accepted := topology.Graph([]AcceptedMember{{}}); accepted {
+	relation, relationOK := topology.InitialRelation()
+	if !relationOK || !relation.Available() || relation.Generation() != 1 {
+		t.Fatal("sealed topology lacked its first publication stamp")
+	}
+	if _, published := topology.Publish(relation, []AcceptedMember{{}}); published {
 		t.Fatal("invalid accepted activation was admitted")
+	}
+	if _, issued := topology.Graph(Relation{}); issued {
+		t.Fatal("unpublished relation was admitted as a graph anchor")
 	}
 }
 
@@ -66,12 +73,17 @@ func TestTopologyGraphAcceptedRevisionIsACompactSharedView(t *testing.T) {
 	if _, rejected := topology.Accept(member, Expr{}); rejected {
 		t.Fatal("unavailable premise accepted")
 	}
-	initial, initialOK := topology.Graph(nil)
-	view, viewOK := topology.Graph([]AcceptedMember{accepted})
-	if !initialOK || !viewOK || initial == nil || view == nil || view == initial || view.payload != initial || !topology.OwnsGraph(view) {
+	base, baseRelationOK := topology.InitialRelation()
+	published, publishedOK := topology.Publish(base, []AcceptedMember{accepted})
+	initial, initialOK := initialGraph(topology)
+	view, viewOK := topology.Graph(published)
+	if !baseRelationOK || !publishedOK || !initialOK || !viewOK || initial == nil || view == nil || view == initial || view.payload != initial || !topology.OwnsGraph(view) {
 		t.Fatal("accepted graph was not a shared immutable view")
 	}
-	if view.revision == initial.revision || view.PointCount() != initial.PointCount() || view.GroupCount() != initial.GroupCount() || view.FactorEdgeTotal() != initial.FactorEdgeTotal() {
+	if !base.Precedes(published) || published.Generation() != base.Generation().Next() {
+		t.Fatal("accepted publication did not advance exactly one generation")
+	}
+	if view.relation.Digest() == initial.relation.Digest() || view.PointCount() != initial.PointCount() || view.GroupCount() != initial.GroupCount() || view.FactorEdgeTotal() != initial.FactorEdgeTotal() {
 		t.Fatal("accepted graph lost revision identity or structural equivalence")
 	}
 }
@@ -94,7 +106,7 @@ func TestActivationGraphOverlayBuildsFeedbackCertificate(t *testing.T) {
 	if !sealed || topology == nil {
 		t.Fatal("topology seal")
 	}
-	base, baseOK := topology.Graph(nil)
+	base, baseOK := initialGraph(topology)
 	if !baseOK || base == nil || base.FactorEdgeTotal() == 0 {
 		t.Fatal("base factor edge")
 	}
@@ -143,7 +155,7 @@ func TestActivationGraphOverlayCarriesInstalledDirectEdgesAcrossFrontiers(t *tes
 	if !sealed || topology == nil {
 		t.Fatal("topology seal")
 	}
-	base, baseOK := topology.Graph(nil)
+	base, baseOK := initialGraph(topology)
 	if !baseOK || base == nil || base.FactorEdgeTotal() == 0 {
 		t.Fatal("base factor edge")
 	}
@@ -197,4 +209,14 @@ func TestActivationGraphOverlayCarriesInstalledDirectEdgesAcrossFrontiers(t *tes
 			t.Fatal("feedback direct edge certificate")
 		}
 	}
+}
+
+// initialGraph is the test-local spelling of "the sealed base publication":
+// the first Relation of topology and the graph issued for it.
+func initialGraph(topology *Topology) (*Graph, bool) {
+	relation, ok := topology.InitialRelation()
+	if !ok {
+		return nil, false
+	}
+	return topology.Graph(relation)
 }

@@ -24,7 +24,7 @@ func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[value.Value, value.S
 
 // DeclareSchema records the one-input ordinary Value transfer Rule shape.
 func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evidence engine.SemanticKey, owner *valueowner.SchemaFragment) (*SchemaFragment, bool) {
-	if builder == nil || owner == nil || !distinct(semantic, operandFamily, evidence) {
+	if builder == nil || owner == nil || !engine.DistinctKeys(semantic, operandFamily, evidence) {
 		return nil, false
 	}
 	slot, ok := engine.NewRuleSlot[value.Value, value.StorageTransfer](builder, engine.SchemaRuleSpec[value.Value]{
@@ -52,18 +52,4 @@ func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evide
 		return nil, false
 	}
 	return &SchemaFragment{slot: slot, input: input, read: read, carry: carry, write: write, semantic: semantic, evidence: evidence}, true
-}
-
-func distinct(keys ...engine.SemanticKey) bool {
-	for index, key := range keys {
-		if !key.Available() {
-			return false
-		}
-		for _, prior := range keys[:index] {
-			if prior == key {
-				return false
-			}
-		}
-	}
-	return true
 }

@@ -10,13 +10,13 @@ import (
 	"math"
 
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
-	"github.com/wippyai/go-lua/analysis/internal/programartifact"
+	"github.com/wippyai/go-lua/analysis/domain/type/authority"
+	"github.com/wippyai/go-lua/analysis/domain/type/subtype"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
+	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lattice"
-	"github.com/wippyai/go-lua/analysis/semantic/typeauthority"
-	"github.com/wippyai/go-lua/analysis/type/subtype"
-	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/target"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
 // evaluatorLaw is part of Static's sealed identity.  Mounted-artifact
@@ -24,9 +24,9 @@ import (
 // law monotonically and use the same constant for every identity projection.
 const evaluatorLaw = "wippy.analysis.static/evaluator/v10"
 
-func staticLawContentID(targetID keyspace.ContentID) (id keyspace.ContentID) {
+func staticLawContentID(targetID identity.ContentID) (id identity.ContentID) {
 	if !targetID.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	h := sha256.New()
 	_, _ = h.Write([]byte(evaluatorLaw))
@@ -38,22 +38,22 @@ func staticLawContentID(targetID keyspace.ContentID) (id keyspace.ContentID) {
 
 type evaluationKey struct {
 	reference typeauthority.StaticTypeRef
-	resolver  keyspace.ContentID
-	env       keyspace.ContentID
+	resolver  identity.ContentID
+	env       identity.ContentID
 	operation target.Operation
 }
 
 type evaluationBase struct {
 	reference typeauthority.StaticTypeRef
-	resolver  keyspace.ContentID
+	resolver  identity.ContentID
 }
 
 // coordinateKey is the complete, portable meaning of one Static query cell.
 // The dense Coordinate that exposes it remains authority-local.
 type coordinateKey struct {
 	reference   typeauthority.StaticTypeRef
-	namespace   keyspace.ContentID
-	environment keyspace.ContentID
+	namespace   identity.ContentID
+	environment identity.ContentID
 	operation   target.Operation
 }
 
@@ -68,11 +68,11 @@ type coordinateRow struct {
 // decoded typ graphs are construction-only.
 type Authority struct {
 	// linkID is the exact mounted owner fence. No Link is retained.
-	linkID   keyspace.ContentID
-	types    *typeauthority.Authority
-	id       keyspace.ContentID
-	target   *target.Contract
-	lawID    keyspace.ContentID
+	linkID identity.ContentID
+	types  *typeauthority.Authority
+	id     identity.ContentID
+	target *target.Contract
+	lawID  identity.ContentID
 
 	results          []resultRow // 0=bottom, 1=top, semantic values follow.
 	closedByBytes    map[string]Value
@@ -83,9 +83,9 @@ type Authority struct {
 	memo             map[evaluationKey]Value
 	coordinates      []coordinateRow
 	coordinateIndex  map[coordinateKey]uint32
-	typeOfOutputs    map[keyspace.ContentID]Coordinate
-	operands         map[keyspace.ContentID]ContainedOperand
-	namespaceIDs     map[keyspace.ContentID]struct{}
+	typeOfOutputs    map[identity.ContentID]Coordinate
+	operands         map[identity.ContentID]ContainedOperand
+	namespaceIDs     map[identity.ContentID]struct{}
 	runtimeKinds     runtimeKindTable
 	runtimeKindMask  []runtimekind.Set // exact RuntimeTypeOf masks by Static result.
 	runtimeKindValue []bool            // exact RuntimeTypeOf result membership.
@@ -95,7 +95,7 @@ type Authority struct {
 	runtime    *typeauthority.Runtime
 	typeValues []typeValueRow
 	mounts     []MountedArtifact
-	valueIDs   map[mountedValueKey]keyspace.ContentID // construction-only scalar substitution
+	valueIDs   map[mountedValueKey]identity.ContentID // construction-only scalar substitution
 }
 
 // MountedValueID is the complete scalar Link substitution receipt for one
@@ -103,14 +103,14 @@ type Authority struct {
 // Static consumes this relation while sealing and retains only its own issued
 // result identities thereafter.
 type MountedValueID struct {
-	ModuleID   keyspace.ContentID
-	SemanticID keyspace.ContentID
-	ValueID    keyspace.ContentID
+	ModuleID   identity.ContentID
+	SemanticID identity.ContentID
+	ValueID    identity.ContentID
 }
 
 type mountedValueKey struct {
-	module   keyspace.ContentID
-	semantic keyspace.ContentID
+	module   identity.ContentID
+	semantic identity.ContentID
 }
 
 // MountContext is the complete Link-local substitution receipt Static needs
@@ -118,7 +118,7 @@ type mountedValueKey struct {
 // detached mounted-value identities only; it never exposes or retains a Link
 // or Boundary authority.
 type MountContext struct {
-	LinkID   keyspace.ContentID
+	LinkID   identity.ContentID
 	Target   *target.Contract
 	ValueIDs []MountedValueID
 }
@@ -136,8 +136,8 @@ func sealMounted(context MountContext, types *typeauthority.Authority, mounts []
 		results:       []resultRow{{kind: KindBottom}, {kind: KindTop}},
 		closedByBytes: make(map[string]Value), symbolicByKey: make(map[Symbolic]Value),
 		memo:            make(map[evaluationKey]Value),
-		coordinateIndex: make(map[coordinateKey]uint32), operands: make(map[keyspace.ContentID]ContainedOperand),
-		namespaceIDs: make(map[keyspace.ContentID]struct{}), mounts: append([]MountedArtifact(nil), mounts...),
+		coordinateIndex: make(map[coordinateKey]uint32), operands: make(map[identity.ContentID]ContainedOperand),
+		namespaceIDs: make(map[identity.ContentID]struct{}), mounts: append([]MountedArtifact(nil), mounts...),
 	}
 	targetID := context.Target.ContentID()
 	a.target = context.Target
@@ -195,8 +195,8 @@ func sealMounted(context MountContext, types *typeauthority.Authority, mounts []
 	return a, runtime, nil
 }
 
-func sealMountedValueIDs(rows []MountedValueID) (map[mountedValueKey]keyspace.ContentID, bool) {
-	sealed := make(map[mountedValueKey]keyspace.ContentID, len(rows))
+func sealMountedValueIDs(rows []MountedValueID) (map[mountedValueKey]identity.ContentID, bool) {
+	sealed := make(map[mountedValueKey]identity.ContentID, len(rows))
 	for _, row := range rows {
 		if !row.ModuleID.Available() || !row.SemanticID.Available() || !row.ValueID.Available() {
 			return nil, false
@@ -217,9 +217,9 @@ func sealMountedValueIDs(rows []MountedValueID) (map[mountedValueKey]keyspace.Co
 // mounted rows belong to the exact Program occurrence being linked.
 type MountedArtifact struct {
 	Artifact    *programartifact.Artifact
-	ModuleID    keyspace.ContentID
-	ProgramID   keyspace.ContentID
-	NamespaceID keyspace.ContentID
+	ModuleID    identity.ContentID
+	ProgramID   identity.ContentID
+	NamespaceID identity.ContentID
 }
 
 // SealMountedArtifacts is the production Static ingress.  It admits only
@@ -231,7 +231,7 @@ func SealMountedArtifacts(context MountContext, types *typeauthority.Authority, 
 	if len(mounts) == 0 {
 		return nil, nil, errors.New("static: no mounted artifacts")
 	}
-	seenModules := make(map[keyspace.ContentID]struct{}, len(mounts))
+	seenModules := make(map[identity.ContentID]struct{}, len(mounts))
 	for _, mount := range mounts {
 		if mount.Artifact == nil || !mount.Artifact.Available() || !mount.ModuleID.Available() || !mount.ProgramID.Available() {
 			return nil, nil, errors.New("static: unavailable mounted artifact")
@@ -262,16 +262,16 @@ func SealMountedArtifacts(context MountContext, types *typeauthority.Authority, 
 	return sealMounted(context, types, mounts)
 }
 
-func (a *Authority) ContentID() keyspace.ContentID {
+func (a *Authority) ContentID() identity.ContentID {
 	if a == nil {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return a.id
 }
 
-func (a *Authority) LinkID() keyspace.ContentID {
+func (a *Authority) LinkID() identity.ContentID {
 	if a == nil {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return a.linkID
 }
@@ -690,7 +690,7 @@ func denseOrdinal(length int) (uint32, error) {
 	return uint32(length), nil
 }
 
-func (a *Authority) contentID() (id keyspace.ContentID) {
+func (a *Authority) contentID() (id identity.ContentID) {
 	h := sha256.New()
 	h.Write([]byte(evaluatorLaw))
 	h.Write([]byte{0})
@@ -703,7 +703,7 @@ func (a *Authority) contentID() (id keyspace.ContentID) {
 		h.Write([]byte{byte(row.kind), byte(row.fault), byte(row.symbolic.reason)})
 		resultID, ok := staticResultIdentity(Value{owner: a, index: uint32(index)})
 		if !ok {
-			return keyspace.ContentID{}
+			return identity.ContentID{}
 		}
 		h.Write(resultID[:])
 	}
@@ -731,7 +731,7 @@ func (a *Authority) contentID() (id keyspace.ContentID) {
 		h.Write(coordinate.key.namespace[:])
 		resultID, ok := staticResultIdentity(coordinate.result)
 		if !ok {
-			return keyspace.ContentID{}
+			return identity.ContentID{}
 		}
 		h.Write(resultID[:])
 	}
@@ -742,7 +742,7 @@ func (a *Authority) contentID() (id keyspace.ContentID) {
 	h.Write(word[:])
 	for _, row := range a.typeValues {
 		if !row.id.Available() {
-			return keyspace.ContentID{}
+			return identity.ContentID{}
 		}
 		h.Write(row.id[:])
 	}
@@ -752,9 +752,9 @@ func (a *Authority) contentID() (id keyspace.ContentID) {
 
 // staticResultIdentity is the portable semantic image of an already-admitted
 // Static result. It never serializes Authority-local dense coordinates.
-func staticResultIdentity(value Value) (keyspace.ContentID, bool) {
+func staticResultIdentity(value Value) (identity.ContentID, bool) {
 	if value.owner == nil || value.isDerived() || uint64(value.index) >= uint64(len(value.owner.results)) {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	row := value.owner.results[value.index]
 	h := sha256.New()
@@ -767,7 +767,7 @@ func staticResultIdentity(value Value) (keyspace.ContentID, bool) {
 	if row.kind == KindSymbolic || row.kind == KindInvalid {
 		writeSymbolic(h, row.symbolic)
 	}
-	var id keyspace.ContentID
+	var id identity.ContentID
 	copy(id[:], h.Sum(nil))
 	return id, id.Available()
 }

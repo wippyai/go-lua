@@ -1,9 +1,9 @@
 package static
 
 import (
-	"github.com/wippyai/go-lua/analysis/semantic/typeauthority"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/domain/type/authority"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
 // Kind is the complete Static result algebra. Bottom and Top exist solely so
@@ -44,16 +44,16 @@ const (
 // authored Program SourceFrontier. Static never gives a non-executable Read a
 // runtime coordinate of its own.
 type RuntimeSubject struct {
-	linkID keyspace.ContentID
-	id     keyspace.ContentID
-	body   keyspace.ContentID
+	linkID identity.ContentID
+	id     identity.ContentID
+	body   identity.ContentID
 	cursor uint32
 }
 
 func (s RuntimeSubject) Valid() bool {
 	return s.linkID.Available() && s.id.Available() && s.body.Available()
 }
-func (s RuntimeSubject) SourceFrontier() (keyspace.ContentID, int, bool) {
+func (s RuntimeSubject) SourceFrontier() (identity.ContentID, int, bool) {
 	return s.body, int(s.cursor), s.Valid()
 }
 
@@ -63,25 +63,25 @@ func (s RuntimeSubject) SourceFrontier() (keyspace.ContentID, int, bool) {
 // evaluator provenance and are currently the canonical zero context.
 type Symbolic struct {
 	reference   typeauthority.StaticTypeRef
-	sourceOwner keyspace.ContentID
-	source      keyspace.ContentID
-	namespace   keyspace.ContentID
-	environment keyspace.ContentID
+	sourceOwner identity.ContentID
+	source      identity.ContentID
+	namespace   identity.ContentID
+	environment identity.ContentID
 	operation   target.Operation
-	law         keyspace.ContentID
-	dependency  keyspace.ContentID
+	law         identity.ContentID
+	dependency  identity.ContentID
 	reason      Reason
 	subject     RuntimeSubject
 }
 
 func (s Symbolic) Reference() typeauthority.StaticTypeRef { return s.reference }
-func (s Symbolic) Namespace() keyspace.ContentID          { return s.namespace }
-func (s Symbolic) Environment() keyspace.ContentID        { return s.environment }
+func (s Symbolic) Namespace() identity.ContentID          { return s.namespace }
+func (s Symbolic) Environment() identity.ContentID        { return s.environment }
 func (s Symbolic) Operation() target.Operation            { return s.operation }
-func (s Symbolic) Law() keyspace.ContentID                { return s.law }
-func (s Symbolic) Dependency() keyspace.ContentID         { return s.dependency }
+func (s Symbolic) Law() identity.ContentID                { return s.law }
+func (s Symbolic) Dependency() identity.ContentID         { return s.dependency }
 func (s Symbolic) Reason() Reason                         { return s.reason }
-func (s Symbolic) Source() (keyspace.ContentID, keyspace.ContentID, bool) {
+func (s Symbolic) Source() (identity.ContentID, identity.ContentID, bool) {
 	return s.sourceOwner, s.source, s.sourceOwner.Available() && s.source.Available()
 }
 func (s Symbolic) Subject() (RuntimeSubject, bool) {
@@ -160,24 +160,24 @@ func (v Value) Fault() (Fault, bool) {
 // structured site retained for an invalid judgment. They deliberately reuse
 // the same authored coordinate vocabulary as Symbolic; Fault remains the
 // diagnostic identity.
-func (v Value) InvalidSource() (keyspace.ContentID, keyspace.ContentID, bool) {
+func (v Value) InvalidSource() (identity.ContentID, identity.ContentID, bool) {
 	if !v.IsInvalid() {
-		return keyspace.ContentID{}, keyspace.ContentID{}, false
+		return identity.ContentID{}, identity.ContentID{}, false
 	}
 	return v.owner.results[v.index].symbolic.Source()
 }
 
-func (v Value) InvalidNamespace() (keyspace.ContentID, bool) {
+func (v Value) InvalidNamespace() (identity.ContentID, bool) {
 	if !v.IsInvalid() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	value := v.owner.results[v.index].symbolic.namespace
 	return value, value.Available()
 }
 
-func (v Value) InvalidEnvironment() (keyspace.ContentID, bool) {
+func (v Value) InvalidEnvironment() (identity.ContentID, bool) {
 	if !v.IsInvalid() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return v.owner.results[v.index].symbolic.environment, true
 }
@@ -189,17 +189,17 @@ func (v Value) InvalidOperation() (target.Operation, bool) {
 	return v.owner.results[v.index].symbolic.operation, true
 }
 
-func (v Value) InvalidLaw() (keyspace.ContentID, bool) {
+func (v Value) InvalidLaw() (identity.ContentID, bool) {
 	if !v.IsInvalid() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	value := v.owner.results[v.index].symbolic.law
 	return value, value.Available()
 }
 
-func (v Value) InvalidDependency() (keyspace.ContentID, bool) {
+func (v Value) InvalidDependency() (identity.ContentID, bool) {
 	if !v.IsInvalid() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	value := v.owner.results[v.index].symbolic.dependency
 	return value, value.Available()

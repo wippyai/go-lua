@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 type schemaRuleMemberGeometryFixture struct {
@@ -168,9 +169,9 @@ func TestSchemaBindingCheckerActivationDerivationCarriesExactProofLaw(t *testing
 		t.Fatal("checker activation live Work")
 	}
 
-	epoch := uint64(1)
+	epoch := identity.Generation(1)
 	execution := &ruleExecution{owner: compiledActivation, work: work, base: base, epoch: epoch}
-	execution.active.Store(epoch)
+	execution.active.open(epoch)
 	product := &productSession{execution: execution, work: work, live: true, current: -1}
 	execution.product = product
 	derivation, ticket, derived := compiledActivation.derivation(execution, nil, nil)
@@ -324,7 +325,7 @@ func receiptRuleGraph(t testing.TB, schema *Schema, proof *ruleRuntimeProof, con
 	if !topologyOK || topology == nil {
 		t.Fatal("receipt Rule topology")
 	}
-	graph, graphOK := topology.Graph(nil)
+	graph, graphOK := initialEquationGraph(topology)
 	group, groupOK := graph.HyperedgeAt(0)
 	member, memberOK := group.MemberAt(0)
 	if !graphOK || graph == nil || !groupOK || !memberOK || !graph.OwnsMember(member) {
@@ -380,9 +381,9 @@ func TestReceiptCompilerExecutesRuleThroughOneProofAndRejectsForeignBinding(t *t
 		t.Fatal("receipt Rule bound proof")
 	}
 	bound := boundMember.rule
-	ticketEpoch := uint64(1)
+	ticketEpoch := identity.Generation(1)
 	ticketExecution := &ruleExecution{owner: bound, work: work, base: base, epoch: ticketEpoch}
-	ticketExecution.active.Store(ticketEpoch)
+	ticketExecution.active.open(ticketEpoch)
 	ticketProduct := &productSession{execution: ticketExecution, work: work, live: true}
 	ticketExecution.product = ticketProduct
 	compositionID := bound.proof.compositionID()
@@ -530,7 +531,7 @@ func TestReceiptCompilerThreadsExactReadAndCarryThroughProductEvidenceAndPatch(t
 	if !topologyOK || topology == nil {
 		t.Fatal("exact-read topology")
 	}
-	graph, graphOK := topology.Graph(nil)
+	graph, graphOK := initialEquationGraph(topology)
 	if !graphOK || graph == nil {
 		t.Fatal("exact-read graph")
 	}
@@ -732,7 +733,7 @@ func runSummaryReadThroughProductAndEvidence(t testing.TB, summaryWidth int) {
 	if !topologyOK || topology == nil {
 		t.Fatal("summary topology")
 	}
-	graph, graphOK := topology.Graph(nil)
+	graph, graphOK := initialEquationGraph(topology)
 	if !graphOK || graph == nil {
 		t.Fatal("summary graph")
 	}
@@ -853,7 +854,7 @@ func TestReceiptCompilerThreadsOneExactCarryThroughProductAndEvidence(t *testing
 	if !topologyOK || topology == nil {
 		t.Fatal("carry receipt topology")
 	}
-	graph, graphOK := topology.Graph(nil)
+	graph, graphOK := initialEquationGraph(topology)
 	if !graphOK || graph == nil {
 		t.Fatal("carry receipt graph")
 	}
@@ -1025,7 +1026,7 @@ func TestReceiptCompilerThreadsSelectedReadRouteThroughProductAndEvidence(t *tes
 	if !topologyOK || topology == nil {
 		t.Fatal("selected-route topology")
 	}
-	graph, graphOK := topology.Graph(nil)
+	graph, graphOK := initialEquationGraph(topology)
 	if !graphOK || graph == nil {
 		t.Fatal("selected-route graph")
 	}

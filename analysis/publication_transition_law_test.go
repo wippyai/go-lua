@@ -9,16 +9,17 @@ import (
 	effectfactor "github.com/wippyai/go-lua/analysis/domain/effect/factor"
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
 	packdomain "github.com/wippyai/go-lua/analysis/domain/pack"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/internal/programartifact"
-	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/program/flow/kind"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/link"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
-	"github.com/wippyai/go-lua/program/lower"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/lua/lower"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/program/link"
+	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
 func publicationTransitionSpec(callback, published, reverseEffects bool) target.Spec {
@@ -130,7 +131,7 @@ func publicationTransitionPlanSource(t testing.TB, callback, published, reverseE
 	return plan
 }
 
-func selectedCallEffectOccurrence(t testing.TB, plan *Plan) (keyspace.ContentID, keyspace.ContentID) {
+func selectedCallEffectOccurrence(t testing.TB, plan *Plan) (identity.ContentID, identity.ContentID) {
 	t.Helper()
 	for _, mounted := range plan.state.artifacts.mounts {
 		if mounted.artifact == nil || mounted.artifact.RuleOccurrenceCount(programartifact.RuleRoleEffectSelected) == 0 {
@@ -143,10 +144,10 @@ func selectedCallEffectOccurrence(t testing.TB, plan *Plan) (keyspace.ContentID,
 		return mounted.moduleKey, row.ID()
 	}
 	t.Fatal("fixture has no selected CallEffect occurrence")
-	return keyspace.ContentID{}, keyspace.ContentID{}
+	return identity.ContentID{}, identity.ContentID{}
 }
 
-func selectedCallEffectOccurrences(t testing.TB, plan *Plan) (keyspace.ContentID, keyspace.ContentID, keyspace.ContentID) {
+func selectedCallEffectOccurrences(t testing.TB, plan *Plan) (identity.ContentID, identity.ContentID, identity.ContentID) {
 	t.Helper()
 	for _, mounted := range plan.state.artifacts.mounts {
 		if mounted.artifact == nil || mounted.artifact.RuleOccurrenceCount(programartifact.RuleRoleEffectSelected) < 2 {
@@ -160,16 +161,16 @@ func selectedCallEffectOccurrences(t testing.TB, plan *Plan) (keyspace.ContentID
 		return mounted.moduleKey, first.ID(), second.ID()
 	}
 	t.Fatal("fixture has fewer than two selected CallEffect occurrences")
-	return keyspace.ContentID{}, keyspace.ContentID{}, keyspace.ContentID{}
+	return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}
 }
 
-func publicationTransitionCompilation(t testing.TB, plan *Plan) (*engine.ReceiptCompilation, keyspace.ContentID, keyspace.ContentID) {
+func publicationTransitionCompilation(t testing.TB, plan *Plan) (*engine.ReceiptCompilation, identity.ContentID, identity.ContentID) {
 	t.Helper()
 	mount, occurrence := selectedCallEffectOccurrence(t, plan)
 	return publicationTransitionCompilationFor(t, plan, mount, occurrence), mount, occurrence
 }
 
-func publicationTransitionCompilationFor(t testing.TB, plan *Plan, mount, occurrence keyspace.ContentID) *engine.ReceiptCompilation {
+func publicationTransitionCompilationFor(t testing.TB, plan *Plan, mount, occurrence identity.ContentID) *engine.ReceiptCompilation {
 	t.Helper()
 	binding, graph := plan.state.binding, plan.state.graph
 	compilation, compiled := engine.BeginReceiptTopologyCompilation(binding.binding, graph)
@@ -180,8 +181,8 @@ func publicationTransitionCompilationFor(t testing.TB, plan *Plan, mount, occurr
 	return compilation
 }
 
-func publicationPlacementPolicyID(label string) keyspace.ContentID {
-	return keyspace.ContentID(sha256.Sum256([]byte("publication-placement-policy/" + label)))
+func publicationPlacementPolicyID(label string) identity.ContentID {
+	return identity.ContentID(sha256.Sum256([]byte("publication-placement-policy/" + label)))
 }
 
 func publicationPlacementRequirement(t testing.TB, binding *programBinding) heapdomain.AllocationRequirement {
@@ -251,20 +252,20 @@ func TestPublicationTransitionCandidateOwnerLaw(t *testing.T) {
 	foreignPlan := publicationTransitionPlan(t, true, true, true)
 	defer foreignPlan.Close()
 	foreignCompilation, foreignMount, foreignOccurrence := publicationTransitionCompilation(t, foreignPlan)
-	if _, accepted := plan.state.binding.effectSelected.AttachMountedPublicationCandidates(compilation, plan.state.graph, foreignPlan.state.binding.effectQuery, mount, occurrence); accepted {
+	if _, accepted := plan.state.binding.selectedEffectRule().AttachMountedPublicationCandidates(compilation, plan.state.graph, foreignPlan.state.binding.effectQuery, mount, occurrence); accepted {
 		t.Fatal("foreign Effect query implementation entered candidate attachment")
 	}
-	if _, accepted := plan.state.binding.effectSelected.AttachMountedPublicationCandidates(foreignCompilation, foreignPlan.state.graph, plan.state.binding.effectQuery, foreignMount, foreignOccurrence); accepted {
+	if _, accepted := plan.state.binding.selectedEffectRule().AttachMountedPublicationCandidates(foreignCompilation, foreignPlan.state.graph, plan.state.binding.effectQuery, foreignMount, foreignOccurrence); accepted {
 		t.Fatal("foreign graph entered selected CallEffect candidate attachment")
 	}
-	candidates, candidatesOK := plan.state.binding.effectSelected.AttachMountedPublicationCandidates(compilation, plan.state.graph, plan.state.binding.effectQuery, mount, occurrence)
+	candidates, candidatesOK := plan.state.binding.selectedEffectRule().AttachMountedPublicationCandidates(compilation, plan.state.graph, plan.state.binding.effectQuery, mount, occurrence)
 	if !candidatesOK || !candidates.Available() || candidates.Count() != 3 {
 		t.Fatalf("selected publication candidate inventory=%d ok=%t", candidates.Count(), candidatesOK)
 	}
-	if _, duplicate := plan.state.binding.effectSelected.AttachMountedPublicationCandidates(compilation, plan.state.graph, plan.state.binding.effectQuery, mount, occurrence); duplicate {
+	if _, duplicate := plan.state.binding.selectedEffectRule().AttachMountedPublicationCandidates(compilation, plan.state.graph, plan.state.binding.effectQuery, mount, occurrence); duplicate {
 		t.Fatal("candidate attachment issued more than one observation for one selected occurrence")
 	}
-	if _, opaqueOK := plan.state.binding.effectOpaque.AttachMountedPublicationCandidates(compilation, plan.state.graph, plan.state.binding.effectQuery, mount, occurrence); opaqueOK {
+	if _, opaqueOK := plan.state.binding.opaqueEffectRule().AttachMountedPublicationCandidates(compilation, plan.state.graph, plan.state.binding.effectQuery, mount, occurrence); opaqueOK {
 		t.Fatal("opaque CallEffect route issued publication candidates")
 	}
 	first, firstOK := candidates.At(0)
@@ -335,7 +336,7 @@ func TestPublicationTransitionCandidateOwnerLaw(t *testing.T) {
 	if _, failure := first.ProveWithFailure(nil, state); failure != callsite.PublicationTransitionProofFailureInvalidSolverState {
 		t.Fatal("candidate proved through a foreign solver")
 	}
-	foreignCandidates, foreignCandidatesOK := foreignPlan.state.binding.effectSelected.AttachMountedPublicationCandidates(foreignCompilation, foreignPlan.state.graph, foreignPlan.state.binding.effectQuery, foreignMount, foreignOccurrence)
+	foreignCandidates, foreignCandidatesOK := foreignPlan.state.binding.selectedEffectRule().AttachMountedPublicationCandidates(foreignCompilation, foreignPlan.state.graph, foreignPlan.state.binding.effectQuery, foreignMount, foreignOccurrence)
 	foreignSolver, foreignSolverOK := foreignCompilation.Solver()
 	if !foreignCandidatesOK || !foreignCandidates.Available() || !foreignSolverOK || foreignSolver == nil {
 		t.Fatal("foreign candidate fixture")
@@ -373,7 +374,7 @@ func TestPublicationPlacementCorrelationPlanOwnerLaw(t *testing.T) {
 	plan := publicationTransitionPlan(t, true, true, false)
 	defer plan.Close()
 	compilation, mount, occurrence := publicationTransitionCompilation(t, plan)
-	candidates, candidatesOK := plan.state.binding.effectSelected.AttachMountedPublicationCandidates(compilation, plan.state.graph, plan.state.binding.effectQuery, mount, occurrence)
+	candidates, candidatesOK := plan.state.binding.selectedEffectRule().AttachMountedPublicationCandidates(compilation, plan.state.graph, plan.state.binding.effectQuery, mount, occurrence)
 	solver, solverOK := compilation.Solver()
 	if !candidatesOK || !candidates.Available() || candidates.Count() == 0 || !solverOK || solver == nil {
 		t.Fatal("publication placement candidate fixture")
@@ -459,7 +460,7 @@ func TestPublicationDirectAllocationSubjectPlanOwnerLaw(t *testing.T) {
 	defer foreignPlan.Close()
 	mount, occurrence, secondOccurrence := selectedCallEffectOccurrences(t, plan)
 	compilation := publicationTransitionCompilationFor(t, plan, mount, occurrence)
-	candidates, candidatesOK := plan.state.binding.effectSelected.AttachMountedPublicationCandidates(compilation, plan.state.graph, plan.state.binding.effectQuery, mount, occurrence)
+	candidates, candidatesOK := plan.state.binding.selectedEffectRule().AttachMountedPublicationCandidates(compilation, plan.state.graph, plan.state.binding.effectQuery, mount, occurrence)
 	solver, solverOK := compilation.Solver()
 	if !candidatesOK || !candidates.Available() || candidates.Count() == 0 || !solverOK || solver == nil {
 		t.Fatal("publication direct allocation candidate fixture")
@@ -469,7 +470,7 @@ func TestPublicationDirectAllocationSubjectPlanOwnerLaw(t *testing.T) {
 		t.Fatalf("publication direct allocation solve=%v state=%t", status, state != nil)
 	}
 	secondCompilation := publicationTransitionCompilationFor(t, plan, mount, secondOccurrence)
-	secondCandidates, secondCandidatesOK := plan.state.binding.effectSelected.AttachMountedPublicationCandidates(secondCompilation, plan.state.graph, plan.state.binding.effectQuery, mount, secondOccurrence)
+	secondCandidates, secondCandidatesOK := plan.state.binding.selectedEffectRule().AttachMountedPublicationCandidates(secondCompilation, plan.state.graph, plan.state.binding.effectQuery, mount, secondOccurrence)
 	secondSolver, secondSolverOK := secondCompilation.Solver()
 	if !secondCandidatesOK || !secondCandidates.Available() || secondCandidates.Count() == 0 || !secondSolverOK || secondSolver == nil {
 		t.Fatal("publication second-call candidate fixture")
@@ -479,7 +480,7 @@ func TestPublicationDirectAllocationSubjectPlanOwnerLaw(t *testing.T) {
 		t.Fatalf("publication second-call solve=%v state=%t", secondStatus, secondState != nil)
 	}
 	foreignCompilation, foreignMount, foreignOccurrence := publicationTransitionCompilation(t, foreignPlan)
-	foreignCandidates, foreignCandidatesOK := foreignPlan.state.binding.effectSelected.AttachMountedPublicationCandidates(foreignCompilation, foreignPlan.state.graph, foreignPlan.state.binding.effectQuery, foreignMount, foreignOccurrence)
+	foreignCandidates, foreignCandidatesOK := foreignPlan.state.binding.selectedEffectRule().AttachMountedPublicationCandidates(foreignCompilation, foreignPlan.state.graph, foreignPlan.state.binding.effectQuery, foreignMount, foreignOccurrence)
 	foreignSolver, foreignSolverOK := foreignCompilation.Solver()
 	if !foreignCandidatesOK || !foreignCandidates.Available() || foreignCandidates.Count() == 0 || !foreignSolverOK || foreignSolver == nil {
 		t.Fatal("publication foreign direct candidate fixture")
@@ -648,7 +649,7 @@ func TestSelectedDirectAllocationMembershipOwnerLaw(t *testing.T) {
 	defer foreignPlan.Close()
 	mount, occurrence, secondOccurrence := selectedCallEffectOccurrences(t, plan)
 	compilation := publicationTransitionCompilationFor(t, plan, mount, occurrence)
-	candidates, candidatesOK := plan.state.binding.effectSelected.AttachMountedPublicationCandidates(compilation, plan.state.graph, plan.state.binding.effectQuery, mount, occurrence)
+	candidates, candidatesOK := plan.state.binding.selectedEffectRule().AttachMountedPublicationCandidates(compilation, plan.state.graph, plan.state.binding.effectQuery, mount, occurrence)
 	attachment, attached := attachSelectedDirectAllocationMembership(compilation, plan.state.binding, plan.state.graph, plan.state.artifacts.mounts, mount, occurrence)
 	if !candidatesOK || !candidates.Available() || candidates.Count() < 2 || !attached || !attachment.valid() {
 		t.Fatal("direct allocation membership pre-solve attachment")
@@ -662,7 +663,7 @@ func TestSelectedDirectAllocationMembershipOwnerLaw(t *testing.T) {
 	if _, accepted := attachSelectedDirectAllocationMembership(compilation, plan.state.binding, plan.state.graph, plan.state.artifacts.mounts, mount, publicationPlacementPolicyID("wrong-membership-call")); accepted {
 		t.Fatal("direct allocation membership accepted a foreign call")
 	}
-	var nonSelectedOccurrence keyspace.ContentID
+	var nonSelectedOccurrence identity.ContentID
 	for _, mounted := range plan.state.artifacts.mounts {
 		if mounted.moduleKey != mount || mounted.artifact == nil {
 			continue
@@ -867,7 +868,7 @@ func TestSelectedDirectAllocationMembershipOwnerLaw(t *testing.T) {
 	}
 
 	secondCompilation := publicationTransitionCompilationFor(t, plan, mount, secondOccurrence)
-	secondCandidates, secondCandidatesOK := plan.state.binding.effectSelected.AttachMountedPublicationCandidates(secondCompilation, plan.state.graph, plan.state.binding.effectQuery, mount, secondOccurrence)
+	secondCandidates, secondCandidatesOK := plan.state.binding.selectedEffectRule().AttachMountedPublicationCandidates(secondCompilation, plan.state.graph, plan.state.binding.effectQuery, mount, secondOccurrence)
 	secondSolver, secondSolverOK := secondCompilation.Solver()
 	if !secondCandidatesOK || !secondCandidates.Available() || secondCandidates.Count() == 0 || !secondSolverOK || secondSolver == nil {
 		t.Fatal("direct allocation membership second-call fixture")
@@ -908,7 +909,7 @@ func TestSelectedDirectAllocationMembershipOwnerLaw(t *testing.T) {
 	}
 
 	foreignCompilation, foreignMount, foreignOccurrence := publicationTransitionCompilation(t, foreignPlan)
-	foreignCandidates, foreignCandidatesOK := foreignPlan.state.binding.effectSelected.AttachMountedPublicationCandidates(foreignCompilation, foreignPlan.state.graph, foreignPlan.state.binding.effectQuery, foreignMount, foreignOccurrence)
+	foreignCandidates, foreignCandidatesOK := foreignPlan.state.binding.selectedEffectRule().AttachMountedPublicationCandidates(foreignCompilation, foreignPlan.state.graph, foreignPlan.state.binding.effectQuery, foreignMount, foreignOccurrence)
 	foreignSolver, foreignSolverOK := foreignCompilation.Solver()
 	if !foreignCandidatesOK || !foreignCandidates.Available() || foreignCandidates.Count() == 0 || !foreignSolverOK || foreignSolver == nil {
 		t.Fatal("direct allocation membership foreign fixture")
@@ -973,7 +974,7 @@ func TestPublicationTransitionCandidatesOmitGenericEffects(t *testing.T) {
 	plan := publicationTransitionPlan(t, false, false, false)
 	defer plan.Close()
 	compilation, mount, occurrence := publicationTransitionCompilation(t, plan)
-	candidates, ok := plan.state.binding.effectSelected.AttachMountedPublicationCandidates(compilation, plan.state.graph, plan.state.binding.effectQuery, mount, occurrence)
+	candidates, ok := plan.state.binding.selectedEffectRule().AttachMountedPublicationCandidates(compilation, plan.state.graph, plan.state.binding.effectQuery, mount, occurrence)
 	if !ok || !candidates.Available() || candidates.Count() != 0 {
 		t.Fatal("generic selected effect issued a publication candidate")
 	}

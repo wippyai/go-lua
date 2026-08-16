@@ -5,8 +5,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
-	"github.com/wippyai/go-lua/analysis/type/subtype"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/subtype"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 )
 
 func orderRootRefinementsBeforeDescendants(refinements []factflow.BranchRefinement) []factflow.BranchRefinement {

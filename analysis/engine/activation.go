@@ -2,7 +2,6 @@ package engine
 
 import (
 	"sort"
-	"sync/atomic"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
@@ -10,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 	"github.com/wippyai/go-lua/analysis/engine/internal/guard"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // ActivationResult is the checker-visible result of one activation Product
@@ -41,17 +41,17 @@ func (result ActivationResult) SelectionAt(index int) (application, target, endp
 // authority after the callback returns.
 type Activation struct {
 	execution *activationExecution
-	epoch     uint64
-	call      uint64
+	epoch     identity.Generation
+	call      identity.Generation
 	row       int
 	region    support.Mask
 }
 
 func (value Activation) live() bool {
-	return value.execution != nil && value.epoch != 0 && value.execution.epoch == value.epoch &&
-		value.execution.active.Load() == value.epoch && value.call != 0 && value.execution.activeCall.Load() == value.call &&
+	return value.execution != nil && value.epoch.Available() && value.execution.epoch == value.epoch &&
+		value.execution.active.holds(value.epoch) && value.execution.activeCall.holds(value.call) &&
 		value.row >= 0 && value.execution.row == value.row && value.region.Valid() &&
-		value.execution.frame != nil && value.execution.frame.active.Load() == value.epoch &&
+		value.execution.frame != nil && value.execution.frame.active.holds(value.epoch) &&
 		value.execution.frame.product != nil && value.row < len(value.execution.frame.product.values) &&
 		value.execution.region.Valid() && value.region.Manager() == value.execution.region.Manager() &&
 		value.region.Entails(value.execution.region) && value.execution.frame.product.requireCheckpoint()
@@ -131,10 +131,10 @@ func ActivationReadValue[S any](value Activation, read Read[S]) (S, bool) {
 type activationExecution struct {
 	owner      *compiledActivationRule
 	frame      *ruleExecution
-	epoch      uint64
-	active     atomic.Uint64
-	activeCall atomic.Uint64
-	nextCall   atomic.Uint64
+	epoch      identity.Generation
+	active     generationCell
+	activeCall generationCell
+	nextCall   generationSequence
 	row        int
 	region     support.Mask
 	selected   []activationSelection
@@ -162,7 +162,7 @@ type compiledActivationRule struct {
 	graph       *equation.Graph
 	anchor      SemanticKey
 	reads       []readRuntime
-	nextEpoch   atomic.Uint64
+	nextEpoch   generationSequence
 }
 
 func (compiled *compiledActivationRule) executableInstance() bool {
@@ -244,20 +244,20 @@ func (compiled *compiledActivationRule) execute(work *carrier.Work, base carrier
 	if uint64(len(compiled.reads)) != compiled.declaredReadCount() {
 		return nil, nil, false, SolveFailurePhaseActivationReads
 	}
-	epoch := compiled.nextEpoch.Add(1)
-	if epoch == 0 {
+	epoch, issued := compiled.nextEpoch.issue()
+	if !issued {
 		return nil, nil, false, SolveFailurePhaseActivationEpoch
 	}
 	frame := &ruleExecution{owner: compiled, work: work, base: base, inputs: append([]carrier.State(nil), inputs...), epoch: epoch}
-	frame.active.Store(epoch)
+	frame.active.open(epoch)
 	execution := &activationExecution{owner: compiled, frame: frame, epoch: epoch, row: -1}
-	execution.active.Store(epoch)
+	execution.active.open(epoch)
 	defer func() {
 		if frame.product != nil {
 			frame.product.close()
 		}
-		frame.active.CompareAndSwap(epoch, 0)
-		execution.active.CompareAndSwap(epoch, 0)
+		frame.active.revoke(epoch)
+		execution.active.revoke(epoch)
 		if recover() != nil {
 			selected, reads, accepted, phase = nil, nil, false, SolveFailurePhasePreflight
 		}
@@ -500,21 +500,21 @@ func activationPremise(graph *equation.Graph, region support.Mask, checkpoint fu
 
 func retainActivationRunReceipt(compiled *compiledActivationRule, run func(Activation) bool) func(*activationExecution) bool {
 	return func(execution *activationExecution) bool {
-		if compiled == nil || compiled.receipt == nil || run == nil || execution == nil || execution.owner != compiled || execution.epoch == 0 || execution.active.Load() != execution.epoch || execution.frame == nil || execution.frame.product == nil || !execution.frame.product.requireCheckpoint() || execution.row < 0 {
+		if compiled == nil || compiled.receipt == nil || run == nil || execution == nil || execution.owner != compiled || !execution.active.holds(execution.epoch) || execution.frame == nil || execution.frame.product == nil || !execution.frame.product.requireCheckpoint() || execution.row < 0 {
 			return false
 		}
-		call := execution.nextCall.Add(1)
-		if call == 0 || !execution.activeCall.CompareAndSwap(0, call) {
+		call, issued := execution.nextCall.issue()
+		if !issued || !execution.activeCall.claim(call) {
 			return false
 		}
-		defer execution.activeCall.CompareAndSwap(call, 0)
+		defer execution.activeCall.revoke(call)
 		result := run(Activation{execution: execution, epoch: execution.epoch, call: call, row: execution.row, region: execution.region})
 		return result && execution.frame.product.requireCheckpoint() && !execution.frame.failed.Load()
 	}
 }
 
 func (compiled *compiledActivationRule) derivation(execution *ruleExecution, reads []demand.Observation, dispositions []RuleDisposition[ActivationResult]) (RuleDerivation[ActivationResult, ruleUnit], *ruleAdmissionTicket, bool) {
-	if compiled == nil || execution == nil || execution.owner != compiled || execution.product == nil || !execution.product.requireCheckpoint() || execution.epoch == 0 || execution.active.Load() != execution.epoch || !compiled.anchor.Available() || !compiled.admission.valid() || compiled.receipt == nil {
+	if compiled == nil || execution == nil || execution.owner != compiled || execution.product == nil || !execution.product.requireCheckpoint() || !execution.active.holds(execution.epoch) || !compiled.anchor.Available() || !compiled.admission.valid() || compiled.receipt == nil {
 		return RuleDerivation[ActivationResult, ruleUnit]{}, nil, false
 	}
 	proof := compiled.proof

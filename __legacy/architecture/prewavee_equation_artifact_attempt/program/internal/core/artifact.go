@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/wippyai/go-lua/program/internal/canonical"
+	"github.com/wippyai/go-lua/analysis/program/internal/canonical"
 )
 
 // ArtifactDependency is an exact external semantic prerequisite of one

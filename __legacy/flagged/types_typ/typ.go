@@ -6,9 +6,9 @@
 package typ
 
 import (
-	"github.com/wippyai/go-lua/analysis/type/table"
-	core "github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/analysis/type/typeexpr"
+	"github.com/wippyai/go-lua/analysis/domain/type/table"
+	core "github.com/wippyai/go-lua/analysis/domain/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/typeexpr"
 )
 
 type Type = core.Type

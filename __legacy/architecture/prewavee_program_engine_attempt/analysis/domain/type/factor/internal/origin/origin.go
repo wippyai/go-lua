@@ -8,7 +8,7 @@ package origin
 import (
 	"sort"
 
-	"github.com/wippyai/go-lua/program/link"
+	"github.com/wippyai/go-lua/analysis/program/link"
 )
 
 // Position identifies either one fixed result or one tail result of a source

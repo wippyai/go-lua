@@ -3,8 +3,8 @@ package engine
 import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/coordinate"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
-	"github.com/wippyai/go-lua/program"
-	"github.com/wippyai/go-lua/program/link"
+	"github.com/wippyai/go-lua/analysis/program"
+	"github.com/wippyai/go-lua/analysis/program/link"
 )
 
 // activationSource is the exact active selector: one Rule semantic identity

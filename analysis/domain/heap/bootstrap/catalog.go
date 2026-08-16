@@ -2,7 +2,7 @@ package bootstrap
 
 import (
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 type catalogRow struct {
@@ -15,8 +15,8 @@ type catalogRow struct {
 // it has no Program-mount dimension.
 type Catalog struct {
 	schema    heapdomain.Schema
-	ids       []keyspace.ContentID
-	rows      map[keyspace.ContentID]catalogRow
+	ids       []identity.ContentID
+	rows      map[identity.ContentID]catalogRow
 	bootCount int
 }
 
@@ -27,8 +27,8 @@ func SealCatalog(schema heapdomain.Schema) (*Catalog, bool) {
 	if !schema.Valid() {
 		return nil, false
 	}
-	ids := make([]keyspace.ContentID, 0, schema.BootCount())
-	rows := make(map[keyspace.ContentID]catalogRow, schema.BootCount())
+	ids := make([]identity.ContentID, 0, schema.BootCount())
+	rows := make(map[identity.ContentID]catalogRow, schema.BootCount())
 	for index := 0; index < schema.BootCount(); index++ {
 		id, idOK := schema.BootIDAt(index)
 		key, keyOK := schema.KeyForBootID(id)
@@ -62,9 +62,9 @@ func (catalog *Catalog) Count() int {
 
 // IDAt returns one BootRoot semantic identity in the Host owner's canonical
 // order.  The returned scalar is immutable and never exposes the BootRoot.
-func (catalog *Catalog) IDAt(index int) (keyspace.ContentID, bool) {
+func (catalog *Catalog) IDAt(index int) (identity.ContentID, bool) {
 	if catalog == nil || !catalog.FencedTo(catalog.schema) || index < 0 || index >= len(catalog.ids) {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	id := catalog.ids[index]
 	_, _, exists := catalog.ReceiptForID(id)
@@ -73,7 +73,7 @@ func (catalog *Catalog) IDAt(index int) (keyspace.ContentID, bool) {
 
 // ReceiptForID returns the exact preissued bootstrap Root and its paired Heap
 // key from one owner-fenced catalog row in O(1).
-func (catalog *Catalog) ReceiptForID(id keyspace.ContentID) (Root, heapdomain.Key, bool) {
+func (catalog *Catalog) ReceiptForID(id identity.ContentID) (Root, heapdomain.Key, bool) {
 	if catalog == nil || !catalog.FencedTo(catalog.schema) || !id.Available() {
 		return Root{}, heapdomain.Key{}, false
 	}

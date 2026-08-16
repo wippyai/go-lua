@@ -4,7 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/factor"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // artifactQueryRole is deliberately closed: each mounted artifact point gets
@@ -17,9 +17,9 @@ const (
 )
 
 type artifactQueryAttachment struct {
-	id    keyspace.ContentID
-	mount keyspace.ContentID
-	point keyspace.ContentID
+	id    identity.ContentID
+	mount identity.ContentID
+	point identity.ContentID
 	role  artifactQueryRole
 }
 
@@ -45,7 +45,7 @@ func newArtifactQueryPlan(mounts []mountedProgramArtifact) (*artifactQueryPlan, 
 		if mount.artifact == nil || !mount.artifact.Available() || !mount.moduleKey.Available() {
 			return nil, false
 		}
-		rootBodies := make(map[keyspace.ContentID][]keyspace.ContentID)
+		rootBodies := make(map[identity.ContentID][]identity.ContentID)
 		for bodyIndex := 0; bodyIndex < mount.artifact.BodyCount(); bodyIndex++ {
 			body, bodyOK := mount.artifact.BodyAt(bodyIndex)
 			if !bodyOK || !body.Available() || !body.ID().Available() {
@@ -54,7 +54,7 @@ func newArtifactQueryPlan(mounts []mountedProgramArtifact) (*artifactQueryPlan, 
 			if body.Callable() {
 				continue
 			}
-			entries := make([]keyspace.ContentID, body.EntryPointCount())
+			entries := make([]identity.ContentID, body.EntryPointCount())
 			for entryIndex := range entries {
 				entry, entryOK := body.EntryPointAt(entryIndex)
 				if !entryOK || !entry.Available() {
@@ -70,8 +70,8 @@ func newArtifactQueryPlan(mounts []mountedProgramArtifact) (*artifactQueryPlan, 
 		if len(rootBodies) == 0 {
 			return nil, false
 		}
-		observed := make(map[keyspace.ContentID]struct{})
-		observedBodies := make(map[keyspace.ContentID]struct{}, len(rootBodies))
+		observed := make(map[identity.ContentID]struct{})
+		observedBodies := make(map[identity.ContentID]struct{}, len(rootBodies))
 		for occurrenceIndex := 0; occurrenceIndex < mount.artifact.OccurrenceCount(); occurrenceIndex++ {
 			occurrence, occurrenceOK := mount.artifact.OccurrenceAt(occurrenceIndex)
 			body, bodyOK := occurrence.BodyID()
@@ -121,7 +121,7 @@ func newArtifactQueryPlan(mounts []mountedProgramArtifact) (*artifactQueryPlan, 
 				{artifactQueryValueSummary, "value-summary"},
 				{artifactQueryEffectExact, "effect-exact"},
 			} {
-				id, idOK := analysisContentID("analysis/artifact-query/v1", mount.moduleKey[:], pointID[:], []byte(row.name))
+				id, idOK := identity.DeriveContentID("analysis/artifact-query/v1", mount.moduleKey[:], pointID[:], []byte(row.name))
 				if !idOK {
 					return nil, false
 				}

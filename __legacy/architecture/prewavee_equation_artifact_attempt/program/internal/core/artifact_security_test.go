@@ -5,7 +5,7 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/wippyai/go-lua/program/internal/canonical"
+	"github.com/wippyai/go-lua/analysis/program/internal/canonical"
 )
 
 // These are decoder laws, not implementation-composition tests. Each input

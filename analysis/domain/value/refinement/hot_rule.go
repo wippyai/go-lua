@@ -4,7 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value"
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // HotRule executes one artifact-issued storage nilability refinement. It sees
@@ -57,7 +57,7 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 	return &HotRule{implementation: implementation, read: read, owner: owner}, true
 }
 
-func (rule *HotRule) ReceiptForOccurrence(mount, id keyspace.ContentID) (value.PresenceRefinement, bool) {
+func (rule *HotRule) ReceiptForOccurrence(mount, id identity.ContentID) (value.PresenceRefinement, bool) {
 	if rule == nil || rule.owner == nil || rule.owner.Schema() == nil {
 		return value.PresenceRefinement{}, false
 	}
@@ -65,7 +65,7 @@ func (rule *HotRule) ReceiptForOccurrence(mount, id keyspace.ContentID) (value.P
 	return row, ok && rule.owner.Schema().OwnsPresenceRefinement(row)
 }
 
-func (rule *HotRule) AttachMountedRule(assembly *engine.ReceiptAssembly, mountID, pointID, occurrenceID keyspace.ContentID) (engine.BindingRuleRowRef, bool) {
+func (rule *HotRule) AttachMountedRule(assembly *engine.ReceiptAssembly, mountID, pointID, occurrenceID identity.ContentID) (engine.BindingRuleRowRef, bool) {
 	if rule == nil || rule.owner == nil || assembly == nil {
 		return engine.BindingRuleRowRef{}, false
 	}
@@ -109,7 +109,7 @@ func (rule *HotRule) BeginReceiptCompilation(graph *engine.ReceiptGraph) (*engin
 	return engine.BeginReceiptCompilation(implementation, graph)
 }
 
-func (rule *HotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, pointID, occurrenceID keyspace.ContentID) (*engine.ReceiptMember, bool) {
+func (rule *HotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, pointID, occurrenceID identity.ContentID) (*engine.ReceiptMember, bool) {
 	if rule == nil || graph == nil {
 		return nil, false
 	}

@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 	"github.com/wippyai/go-lua/analysis/engine/internal/guard"
 	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // runtimeMember is one typed attachment for a graph-owned RuleMember. It has
@@ -522,7 +523,10 @@ type runtimeStructuralOverlay struct {
 	dependencyAt    map[[2]int]struct{}
 	reindexes       runtimeReindexes
 	latePlans       map[composition.Key]carrier.ReindexPlan
-	generation      uint64
+	// generation stamps installed selected-edge state. It fences prepared
+	// overlays against a runtime that has moved on; it is not the activation
+	// relation stamp, which orders a different lifetime.
+	generation identity.Generation
 }
 
 func runtimeFactorEdgeOrigin(source, target int, factor, provenance, reindex composition.Key, post support.Mask) (runtimeFactorOrigin, bool) {

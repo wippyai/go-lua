@@ -8,6 +8,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier/shape"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // RootHandle identifies one immutable typed plane root.  A normal handle names
@@ -290,7 +291,7 @@ type changeRecord struct {
 type ObservationHandle struct {
 	issuer      *issuer
 	work        *observationWork
-	generation  uint64
+	generation  identity.Generation
 	observation uint64
 }
 
@@ -303,7 +304,7 @@ type ObservationWork struct{ value *observationWork }
 
 type observationWork struct {
 	issuer     *issuer
-	generation uint64
+	generation identity.Generation
 	active     bool
 	rows       []observationRow
 }
@@ -313,7 +314,7 @@ type observationWork struct {
 // generation, never a direct Mask reference. EndObservation clears this slice
 // before closing, so stale rows neither expose nor retain support pages.
 type observationRow struct {
-	generation uint64
+	generation identity.Generation
 	region     support.Mask
 }
 
@@ -606,21 +607,25 @@ func (issuer Issuer) NewObservationWork() (ObservationWork, bool) {
 // BeginObservation opens one explicit callback generation. A row is valid
 // only while this generation remains open; EndObservation rejects every row
 // that escaped its callback before a later generation can reuse scratch.
-func (issuer Issuer) BeginObservation(work ObservationWork) (uint64, bool) {
-	if issuerOwner(issuer.value, true) == nil || work.value == nil || work.value.issuer != issuer.value || work.value.active || work.value.generation == ^uint64(0) {
+func (issuer Issuer) BeginObservation(work ObservationWork) (identity.Generation, bool) {
+	if issuerOwner(issuer.value, true) == nil || work.value == nil || work.value.issuer != issuer.value || work.value.active {
+		return 0, false
+	}
+	opened := work.value.generation.Next()
+	if !opened.Available() {
 		return 0, false
 	}
 	clear(work.value.rows)
 	work.value.rows = work.value.rows[:0]
-	work.value.generation++
+	work.value.generation = opened
 	work.value.active = true
 	return work.value.generation, true
 }
 
 // EndObservation closes one exact callback generation. It is intentionally
 // idempotent for stale or already-aborted cleanup paths.
-func (issuer Issuer) EndObservation(work ObservationWork, generation uint64) {
-	if issuerOwner(issuer.value, true) == nil || work.value == nil || work.value.issuer != issuer.value || !work.value.active || generation == 0 || work.value.generation != generation {
+func (issuer Issuer) EndObservation(work ObservationWork, generation identity.Generation) {
+	if issuerOwner(issuer.value, true) == nil || work.value == nil || work.value.issuer != issuer.value || !work.value.active || !generation.Available() || work.value.generation != generation {
 		return
 	}
 	clear(work.value.rows)
@@ -630,8 +635,8 @@ func (issuer Issuer) EndObservation(work ObservationWork, generation uint64) {
 
 // IssueObservation converts a Binding-owned local record ID into an opaque
 // observation handle for exactly one open ObservationWork generation.
-func (issuer Issuer) IssueObservation(work ObservationWork, generation, id uint64) (ObservationHandle, bool) {
-	if issuerOwner(issuer.value, true) == nil || work.value == nil || work.value.issuer != issuer.value || !work.value.active || generation == 0 || work.value.generation != generation || id == 0 {
+func (issuer Issuer) IssueObservation(work ObservationWork, generation identity.Generation, id uint64) (ObservationHandle, bool) {
+	if issuerOwner(issuer.value, true) == nil || work.value == nil || work.value.issuer != issuer.value || !work.value.active || !generation.Available() || work.value.generation != generation || id == 0 {
 		return ObservationHandle{}, false
 	}
 	return ObservationHandle{issuer: issuer.value, work: work.value, generation: generation, observation: id}, true
@@ -756,8 +761,8 @@ func (selector Selector) Same(other Selector) bool {
 // ResolveObservation proves issuer, work, and live-generation ownership and
 // returns only the Binding-local record identity; it never returns a terminal
 // or domain value.
-func (issuer Issuer) ResolveObservation(work ObservationWork, generation uint64, handle ObservationHandle) (uint64, bool) {
-	if issuerOwner(issuer.value, true) == nil || work.value == nil || work.value.issuer != issuer.value || !work.value.active || generation == 0 || work.value.generation != generation || handle.issuer != issuer.value || handle.work != work.value || handle.generation != generation || handle.observation == 0 {
+func (issuer Issuer) ResolveObservation(work ObservationWork, generation identity.Generation, handle ObservationHandle) (uint64, bool) {
+	if issuerOwner(issuer.value, true) == nil || work.value == nil || work.value.issuer != issuer.value || !work.value.active || !generation.Available() || work.value.generation != generation || handle.issuer != issuer.value || handle.work != work.value || handle.generation != generation || handle.observation == 0 {
 		return 0, false
 	}
 	return handle.observation, true
@@ -766,7 +771,7 @@ func (issuer Issuer) ResolveObservation(work ObservationWork, generation uint64,
 // Row binds one opaque observation handle to its exact support piece.  The
 // caller cannot construct a row for another work or an unissued handle.
 func (work ObservationWork) Row(handle ObservationHandle, region support.Mask) (ObservationRow, bool) {
-	if work.value == nil || issuerOwner(work.value.issuer, true) == nil || !work.value.active || handle.issuer != work.value.issuer || handle.work != work.value || handle.generation == 0 || handle.generation != work.value.generation || handle.observation == 0 || !region.Valid() {
+	if work.value == nil || issuerOwner(work.value.issuer, true) == nil || !work.value.active || handle.issuer != work.value.issuer || handle.work != work.value || !handle.generation.Available() || handle.generation != work.value.generation || handle.observation == 0 || !region.Valid() {
 		return ObservationRow{}, false
 	}
 	if uint64(len(work.value.rows)) == ^uint64(0) {
@@ -779,7 +784,7 @@ func (work ObservationWork) Row(handle ObservationHandle, region support.Mask) (
 // ResolveRow proves this row came from exactly this evaluator-local
 // observation namespace.  The returned handle is still opaque.
 func (work ObservationWork) ResolveRow(row ObservationRow) (ObservationHandle, support.Mask, bool) {
-	if work.value == nil || issuerOwner(work.value.issuer, true) == nil || !work.value.active || row.work != work.value || row.row == 0 || row.row > uint64(len(work.value.rows)) || row.handle.issuer != work.value.issuer || row.handle.work != work.value || row.handle.generation == 0 || row.handle.generation != work.value.generation || row.handle.observation == 0 {
+	if work.value == nil || issuerOwner(work.value.issuer, true) == nil || !work.value.active || row.work != work.value || row.row == 0 || row.row > uint64(len(work.value.rows)) || row.handle.issuer != work.value.issuer || row.handle.work != work.value || !row.handle.generation.Available() || row.handle.generation != work.value.generation || row.handle.observation == 0 {
 		return ObservationHandle{}, support.Mask{}, false
 	}
 	record := work.value.rows[row.row-1]

@@ -59,7 +59,7 @@ func DeclareOpaqueSchema(builder *engine.SchemaBuilder, semantic, operandFamily,
 }
 
 func declareSchema[O any](builder *engine.SchemaBuilder, semantic, operandFamily, evidence engine.SemanticKey, calls *callowner.SchemaFragment, effects *effectowner.SchemaFragment) (*schemaFragment[O], bool) {
-	if builder == nil || calls == nil || effects == nil || !distinct(semantic, operandFamily, evidence) {
+	if builder == nil || calls == nil || effects == nil || !engine.DistinctKeys(semantic, operandFamily, evidence) {
 		return nil, false
 	}
 	slot, ok := engine.NewRuleSlot[effectfactor.Value, O](builder, engine.SchemaRuleSpec[effectfactor.Value]{
@@ -103,18 +103,4 @@ func DeclareBodySchema(builder *engine.SchemaBuilder, semantic, operandFamily, e
 		return nil, false
 	}
 	return &BodySchemaFragment{core: core, effectRead: effectRead}, true
-}
-
-func distinct(keys ...engine.SemanticKey) bool {
-	for index, key := range keys {
-		if !key.Available() {
-			return false
-		}
-		for _, prior := range keys[:index] {
-			if prior == key {
-				return false
-			}
-		}
-	}
-	return true
 }

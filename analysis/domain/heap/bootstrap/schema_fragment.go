@@ -16,7 +16,7 @@ type SchemaFragment struct {
 
 // DeclareSchema records the zero-input Heap bootstrap Rule shape.
 func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evidence engine.SemanticKey, owner *heapowner.SchemaFragment) (*SchemaFragment, bool) {
-	if builder == nil || owner == nil || !distinct(semantic, operandFamily, evidence) {
+	if builder == nil || owner == nil || !engine.DistinctKeys(semantic, operandFamily, evidence) {
 		return nil, false
 	}
 	slot, ok := engine.NewRuleSlot[heapdomain.Value, Root](builder, engine.SchemaRuleSpec[heapdomain.Value]{
@@ -36,18 +36,4 @@ func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evide
 
 func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[heapdomain.Value, Root] {
 	return fragment.slot
-}
-
-func distinct(keys ...engine.SemanticKey) bool {
-	for index, key := range keys {
-		if !key.Available() {
-			return false
-		}
-		for _, prior := range keys[:index] {
-			if prior == key {
-				return false
-			}
-		}
-	}
-	return true
 }

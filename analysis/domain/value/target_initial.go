@@ -4,15 +4,15 @@ import (
 	"math"
 
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
-	"github.com/wippyai/go-lua/program/keyspace"
-	linkhost "github.com/wippyai/go-lua/program/link/host"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/identity"
+	linkhost "github.com/wippyai/go-lua/analysis/program/link/host"
+	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
 // TargetInitialID is the sealed projection for one Host boot-root identity
 // and Target initial value. The host alias resolution was completed during
 // sealing; no hot caller can reopen Host or Boundary to recover it.
-func (schema *Schema) TargetInitialID(root keyspace.ContentID, initial target.InitialValue) (Value, bool) {
+func (schema *Schema) TargetInitialID(root identity.ContentID, initial target.InitialValue) (Value, bool) {
 	if schema == nil || !root.Available() || initial == 0 {
 		return Value{}, false
 	}

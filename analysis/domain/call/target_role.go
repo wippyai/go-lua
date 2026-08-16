@@ -1,6 +1,6 @@
 package call
 
-import "github.com/wippyai/go-lua/program/keyspace"
+import "github.com/wippyai/go-lua/analysis/identity"
 
 // TargetRoleKind distinguishes the two semantic target families owned by
 // Call. The kind is part of the role identity so a body and seed with equal
@@ -19,10 +19,10 @@ const (
 // owner; replay uses Algebra.TargetForRole.
 type TargetRoleID struct {
 	kind TargetRoleKind
-	id   keyspace.ContentID
+	id   identity.ContentID
 }
 
-func newTargetRoleID(kind TargetRoleKind, id keyspace.ContentID) (TargetRoleID, bool) {
+func newTargetRoleID(kind TargetRoleKind, id identity.ContentID) (TargetRoleID, bool) {
 	if (kind != TargetRoleBody && kind != TargetRoleSeed) || !id.Available() {
 		return TargetRoleID{}, false
 	}
@@ -37,9 +37,9 @@ func (role TargetRoleID) Kind() TargetRoleKind { return role.kind }
 
 // ContentID returns the stable semantic target identity without exposing any
 // live owner or dense coordinate.
-func (role TargetRoleID) ContentID() (keyspace.ContentID, bool) {
+func (role TargetRoleID) ContentID() (identity.ContentID, bool) {
 	if !role.Valid() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return role.id, true
 }

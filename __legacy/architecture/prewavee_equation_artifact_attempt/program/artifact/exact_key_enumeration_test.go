@@ -4,8 +4,8 @@ import (
 	"math"
 	"testing"
 
-	"github.com/wippyai/go-lua/program"
-	"github.com/wippyai/go-lua/program/artifact"
+	"github.com/wippyai/go-lua/analysis/program"
+	"github.com/wippyai/go-lua/analysis/program/artifact"
 )
 
 // TestArtifactExactKeyEnumerationReplaysCanonicalAtoms proves that sealed

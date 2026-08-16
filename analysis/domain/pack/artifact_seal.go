@@ -6,11 +6,12 @@ package pack
 
 import (
 	"crypto/sha256"
+
 	"github.com/wippyai/go-lua/analysis/domain/static"
-	programartifact "github.com/wippyai/go-lua/analysis/internal/programartifact"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/link"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/identity"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/program/link"
+	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
 // ArtifactMount is Pack's exact Link-local placement of one reusable artifact.
@@ -18,11 +19,11 @@ import (
 // Link locations without introducing a Shard coordinate.
 type ArtifactMount struct {
 	artifact *programartifact.Artifact
-	module   keyspace.ContentID
-	program  keyspace.ContentID
+	module   identity.ContentID
+	program  identity.ContentID
 }
 
-func NewArtifactMount(artifact *programartifact.Artifact, module, program keyspace.ContentID) (ArtifactMount, bool) {
+func NewArtifactMount(artifact *programartifact.Artifact, module, program identity.ContentID) (ArtifactMount, bool) {
 	if artifact == nil || !artifact.Available() || !module.Available() || !program.Available() || artifact.CompileKey().ProgramID() != program {
 		return ArtifactMount{}, false
 	}
@@ -31,9 +32,9 @@ func NewArtifactMount(artifact *programartifact.Artifact, module, program keyspa
 func (mount ArtifactMount) Available() bool {
 	return mount.artifact != nil && mount.artifact.Available() && mount.module.Available() && mount.program.Available() && mount.artifact.CompileKey().ProgramID() == mount.program
 }
-func (mount ArtifactMount) Module() keyspace.ContentID {
+func (mount ArtifactMount) Module() identity.ContentID {
 	if !mount.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return mount.module
 }
@@ -44,35 +45,35 @@ func (mount ArtifactMount) Artifact() *programartifact.Artifact {
 	return mount.artifact
 }
 
-type artifactValuesKey struct{ module, values keyspace.ContentID }
-type artifactCallKey struct{ module, call keyspace.ContentID }
-type artifactBodyKey struct{ module, body keyspace.ContentID }
-type artifactOutcomeKey struct{ module, outcome keyspace.ContentID }
+type artifactValuesKey struct{ module, values identity.ContentID }
+type artifactCallKey struct{ module, call identity.ContentID }
+type artifactBodyKey struct{ module, body identity.ContentID }
+type artifactOutcomeKey struct{ module, outcome identity.ContentID }
 
 // FormalCallRoot and FormalCallTypeArguments are portable Pack receipts. They
 // are issued only from the mounted artifact constructor below; no Program
 // proof-taking compatibility method remains.
 type FormalCallRoot struct {
-	call, id keyspace.ContentID
+	call, id identity.ContentID
 	sealed   bool
 }
 
 func (root FormalCallRoot) Valid() bool {
 	return root.sealed && root.call.Available() && root.id.Available()
 }
-func (root FormalCallRoot) ContentID() (keyspace.ContentID, bool) { return root.id, root.Valid() }
+func (root FormalCallRoot) ContentID() (identity.ContentID, bool) { return root.id, root.Valid() }
 func (root FormalCallRoot) Same(other FormalCallRoot) bool {
 	return root.Valid() && other.Valid() && root == other
 }
 
 type FormalCallTypeArguments struct {
-	id     keyspace.ContentID
+	id     identity.ContentID
 	count  uint32
 	sealed bool
 }
 
 func (formal FormalCallTypeArguments) Available() bool { return formal.sealed && formal.id.Available() }
-func (formal FormalCallTypeArguments) ContentID() (keyspace.ContentID, bool) {
+func (formal FormalCallTypeArguments) ContentID() (identity.ContentID, bool) {
 	return formal.id, formal.Available()
 }
 func (formal FormalCallTypeArguments) Count() int {
@@ -85,14 +86,14 @@ func (formal FormalCallTypeArguments) Same(other FormalCallTypeArguments) bool {
 	return formal.Available() && other.Available() && formal == other
 }
 
-func formalCallRootID(call keyspace.ContentID) keyspace.ContentID {
+func formalCallRootID(call identity.ContentID) identity.ContentID {
 	if !call.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	hash := sha256.New()
 	_, _ = hash.Write([]byte("wippy.analysis.pack.formal-call-root.v1\x00"))
 	_, _ = hash.Write(call[:])
-	return keyspace.ContentID(sha256.Sum256(hash.Sum(nil)))
+	return identity.ContentID(sha256.Sum256(hash.Sum(nil)))
 }
 
 func sealMountedFormalCallTypeArguments(arguments static.MountedTypeArguments) (FormalCallTypeArguments, bool) {
@@ -109,7 +110,7 @@ func sealMountedFormalCallTypeArguments(arguments static.MountedTypeArguments) (
 		}
 		_, _ = hash.Write(id[:])
 	}
-	return FormalCallTypeArguments{id: keyspace.ContentID(sha256.Sum256(hash.Sum(nil))), count: uint32(arguments.Count()), sealed: true}, true
+	return FormalCallTypeArguments{id: identity.ContentID(sha256.Sum256(hash.Sum(nil))), count: uint32(arguments.Count()), sealed: true}, true
 }
 
 // MountedPayload is Heap's closed mounted Values projection. Exactly one
@@ -160,7 +161,7 @@ func (payload MountedPayload) Tail() (Payload, bool) {
 
 // PayloadForMounted is the only Heap-facing Pack source projection. It takes
 // the mounted artifact Values ID, never a Shard or raw Program Term.
-func (schema *Schema) PayloadForMounted(module, valuesID keyspace.ContentID, offset int) (MountedPayload, bool) {
+func (schema *Schema) PayloadForMounted(module, valuesID identity.ContentID, offset int) (MountedPayload, bool) {
 	if schema == nil || schema.state == nil || !module.Available() || !valuesID.Available() || offset < 0 {
 		return MountedPayload{}, false
 	}
@@ -188,7 +189,7 @@ func (schema *Schema) PayloadForMounted(module, valuesID keyspace.ContentID, off
 
 // CallRootForMountedSemantic replaces the Project/Program proof projection
 // with Boundary's exact mounted artifact identity.
-func (schema *Schema) CallRootForMountedSemantic(module, callID keyspace.ContentID) (Root, bool) {
+func (schema *Schema) CallRootForMountedSemantic(module, callID identity.ContentID) (Root, bool) {
 	if schema == nil || schema.state == nil {
 		return Root{}, false
 	}
@@ -205,7 +206,7 @@ func (schema *Schema) CallRootForMountedSemantic(module, callID keyspace.Content
 // scalar selector and never manufactures a fixed source from an open actual
 // tail. This is cold operand evidence for later Effect publication admission,
 // not a runtime allocation or placement proof.
-func (schema *Schema) MountedInputSemanticSource(module, callID keyspace.ContentID, selector InputSelector) (SemanticSource, bool) {
+func (schema *Schema) MountedInputSemanticSource(module, callID identity.ContentID, selector InputSelector) (SemanticSource, bool) {
 	if schema == nil || schema.state == nil || !module.Available() || !callID.Available() || !schema.OwnsInputSelector(selector) || selector.kind != inputSelectionScalar {
 		return SemanticSource{}, false
 	}
@@ -225,7 +226,7 @@ func (schema *Schema) MountedInputSemanticSource(module, callID keyspace.Content
 	return source, source.Available() && source.module == module
 }
 
-func (schema *Schema) FormalCallRootForMountedSemantic(module, callID keyspace.ContentID) (FormalCallRoot, bool) {
+func (schema *Schema) FormalCallRootForMountedSemantic(module, callID identity.ContentID) (FormalCallRoot, bool) {
 	root, ok := schema.CallRootForMountedSemantic(module, callID)
 	if !ok {
 		return FormalCallRoot{}, false
@@ -234,7 +235,7 @@ func (schema *Schema) FormalCallRootForMountedSemantic(module, callID keyspace.C
 	formal := FormalCallRoot{call: row.formalID, id: formalCallRootID(row.formalID), sealed: true}
 	return formal, formal.Valid()
 }
-func (schema *Schema) FormalTypeArgumentsForMountedSemantic(module, callID keyspace.ContentID) (FormalCallTypeArguments, bool) {
+func (schema *Schema) FormalTypeArgumentsForMountedSemantic(module, callID identity.ContentID) (FormalCallTypeArguments, bool) {
 	root, ok := schema.CallRootForMountedSemantic(module, callID)
 	if !ok {
 		return FormalCallTypeArguments{}, false
@@ -274,7 +275,7 @@ func SealMountedArtifacts(source *link.Link, authority *static.Authority, mounts
 			maximum = fixed
 		}
 	}
-	seenModules := make(map[keyspace.ContentID]struct{}, len(mounts))
+	seenModules := make(map[identity.ContentID]struct{}, len(mounts))
 	for index, mount := range mounts {
 		if !mount.Available() {
 			return nil, false
@@ -478,7 +479,7 @@ func sealMountedArtifactValues(schema *Schema, mount ArtifactMount) bool {
 	return true
 }
 
-func sealMountedArtifactTail(schema *Schema, module keyspace.ContentID, tail programartifact.ValuesTail) (Port, bool) {
+func sealMountedArtifactTail(schema *Schema, module identity.ContentID, tail programartifact.ValuesTail) (Port, bool) {
 	state := schema.state
 	id := tail.ID()
 	endpoint, endpointOK := state.semanticEndpoints[artifactValuesKey{module, id}]
@@ -510,7 +511,7 @@ func sealMountedArtifactTail(schema *Schema, module keyspace.ContentID, tail pro
 	return port, true
 }
 
-func (state *schema) addArtifactRoot(classes *static.ClassSet, kind rootKind, module, id keyspace.ContentID, port Port, scalars []Endpoint) (uint32, bool) {
+func (state *schema) addArtifactRoot(classes *static.ClassSet, kind rootKind, module, id identity.ContentID, port Port, scalars []Endpoint) (uint32, bool) {
 	if state == nil || classes == nil || !id.Available() || !port.valid() || port.owner != state.owner {
 		return 0, false
 	}
@@ -592,7 +593,7 @@ func sealMountedArtifactBodies(schema *Schema, mount ArtifactMount) bool {
 			return false
 		}
 		formals := make([]Endpoint, row.FormalCount())
-		formalIDs := make([]keyspace.ContentID, row.FormalCount())
+		formalIDs := make([]identity.ContentID, row.FormalCount())
 		for j := range formals {
 			formal, formalOK := row.FormalAt(j)
 			endpoint, endpointOK := state.semanticEndpoints[artifactValuesKey{mount.module, formal.StorageCellID()}]
@@ -730,16 +731,16 @@ func sealMountedArtifactCalls(schema *Schema, authority *static.Authority, mount
 	return true
 }
 
-func mountedArtifactRootID(kind rootKind, module, semantic keyspace.ContentID) keyspace.ContentID {
+func mountedArtifactRootID(kind rootKind, module, semantic identity.ContentID) identity.ContentID {
 	if kind == rootInvalid || !module.Available() || !semantic.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	hash := sha256.New()
 	_, _ = hash.Write([]byte("wippy.analysis.pack.mounted-artifact-root.v1\x00"))
 	_, _ = hash.Write([]byte{byte(kind)})
 	_, _ = hash.Write(module[:])
 	_, _ = hash.Write(semantic[:])
-	return keyspace.ContentID(sha256.Sum256(hash.Sum(nil)))
+	return identity.ContentID(sha256.Sum256(hash.Sum(nil)))
 }
 
 func (state *schema) addRootWithID(classes *static.ClassSet, row rootRow) (uint32, Port, bool) {
@@ -762,7 +763,7 @@ func (state *schema) addRootWithID(classes *static.ClassSet, row rootRow) (uint3
 	return index, port, true
 }
 
-func mountedCallRootID(module, formal keyspace.ContentID) keyspace.ContentID {
+func mountedCallRootID(module, formal identity.ContentID) identity.ContentID {
 	return mountedArtifactRootID(rootCall, module, formal)
 }
 
@@ -770,7 +771,7 @@ func sealMountedSemanticEndpoints(state *schema, mount ArtifactMount) bool {
 	if state == nil || !mount.Available() {
 		return false
 	}
-	add := func(id keyspace.ContentID) bool {
+	add := func(id identity.ContentID) bool {
 		source, sourceOK := newSemanticSource(mount.module, id)
 		if !sourceOK {
 			return false

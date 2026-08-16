@@ -10,10 +10,11 @@ package heap
 import (
 	"github.com/wippyai/go-lua/analysis/domain/materialization"
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
-	programartifact "github.com/wippyai/go-lua/analysis/internal/programartifact"
-	"github.com/wippyai/go-lua/program"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
 // RootKind names one existing structural root family admitted by Heap.  The
@@ -47,9 +48,9 @@ func (key Key) valid() bool {
 func (key Key) Valid() bool { return key.valid() }
 
 // ContentID returns the stable owner-scoped identity of this exact coordinate.
-func (key Key) ContentID() (keyspace.ContentID, bool) {
+func (key Key) ContentID() (identity.ContentID, bool) {
 	if !key.valid() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return Schema{owner: key.owner}.KeyID(key)
 }
@@ -70,9 +71,9 @@ func (key Key) Kind() RootKind {
 // module key is the concrete mount receipt, so duplicate mounts of one
 // Program remain distinct while allocation identity stays reusable.
 type AllocationReceipt struct {
-	module       keyspace.ContentID
-	programID    keyspace.ContentID
-	allocationID keyspace.ContentID
+	module       identity.ContentID
+	programID    identity.ContentID
+	allocationID identity.ContentID
 	kind         AllocationKind
 	form         program.AllocationForm
 	artifact     *programartifact.Artifact
@@ -82,9 +83,9 @@ func (kind AllocationKind) Valid() bool { return kind == AllocationTable || kind
 func (receipt AllocationReceipt) Available() bool {
 	return receipt.module.Available() && receipt.programID.Available() && receipt.allocationID.Available() && receipt.kind.Valid() && receipt.form.Valid() && receipt.artifact != nil && receipt.artifact.Available() && receipt.artifact.CompileKey().ProgramID() == receipt.programID
 }
-func (receipt AllocationReceipt) Module() keyspace.ContentID       { return receipt.module }
-func (receipt AllocationReceipt) ProgramID() keyspace.ContentID    { return receipt.programID }
-func (receipt AllocationReceipt) AllocationID() keyspace.ContentID { return receipt.allocationID }
+func (receipt AllocationReceipt) Module() identity.ContentID       { return receipt.module }
+func (receipt AllocationReceipt) ProgramID() identity.ContentID    { return receipt.programID }
+func (receipt AllocationReceipt) AllocationID() identity.ContentID { return receipt.allocationID }
 func (receipt AllocationReceipt) Kind() AllocationKind {
 	if !receipt.Available() {
 		return AllocationInvalid
@@ -100,7 +101,7 @@ func (receipt AllocationReceipt) Form() program.AllocationForm {
 
 // AllocationReceipt issues an opaque owner receipt for an artifact allocation
 // occurrence. The artifact occurrence catalog is the sole Program fact plane.
-func (mount ArtifactMount) AllocationReceipt(id keyspace.ContentID, kind AllocationKind, form program.AllocationForm) (AllocationReceipt, bool) {
+func (mount ArtifactMount) AllocationReceipt(id identity.ContentID, kind AllocationKind, form program.AllocationForm) (AllocationReceipt, bool) {
 	if !mount.Available() || !id.Available() || !kind.Valid() || !form.Valid() {
 		return AllocationReceipt{}, false
 	}
@@ -132,30 +133,30 @@ func (key Key) AllocationReceipt() (AllocationReceipt, bool) {
 // FreshResult returns the exact creation occurrence selected by this Key.
 // Program aggregates return false. Its target Call coordinate remains opaque:
 // Heap never reissues or exposes the raw Program Term.
-func (key Key) FreshResultID() (keyspace.ContentID, int, uint32, uint32, bool) {
+func (key Key) FreshResultID() (identity.ContentID, int, uint32, uint32, bool) {
 	if !key.valid() || key.Kind() != RootAllocation {
-		return keyspace.ContentID{}, 0, 0, 0, false
+		return identity.ContentID{}, 0, 0, 0, false
 	}
 	root, ok := key.owner.rootAt(key.slot)
 	if !ok {
-		return keyspace.ContentID{}, 0, 0, 0, false
+		return identity.ContentID{}, 0, 0, 0, false
 	}
 	row := root.fresh
 	if !row.applicationID.Available() || !row.kinds.Valid() {
-		return keyspace.ContentID{}, 0, 0, 0, false
+		return identity.ContentID{}, 0, 0, 0, false
 	}
 	return row.applicationID, int(row.outcome), row.result, row.ordinal, true
 }
 
 // BootID returns the detached actor-local bootstrap root identity selected by
 // this key.  Heap never reissues Host's authority-bearing BootRoot.
-func (key Key) BootID() (keyspace.ContentID, bool) {
+func (key Key) BootID() (identity.ContentID, bool) {
 	if !key.valid() || key.Kind() != RootBoot {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	row, ok := key.owner.rootAt(key.slot)
 	if !ok {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return row.bootID, row.bootID.Available()
 }
@@ -367,13 +368,13 @@ func (selector KeySelector) RuntimeKinds() runtimekind.Set {
 // slots retain the globally unique opaque Boundary Value identity; exact
 // slots retain the Link canonical key arena identity. Heap never exposes a
 // raw authored Term or a redundant mount qualifier.
-func (slot Slot) Origin() (kind SlotKind, exact ExactKey, value keyspace.ContentID, ok bool) {
+func (slot Slot) Origin() (kind SlotKind, exact ExactKey, value identity.ContentID, ok bool) {
 	if !slot.valid() {
-		return SlotInvalid, ExactKey{}, keyspace.ContentID{}, false
+		return SlotInvalid, ExactKey{}, identity.ContentID{}, false
 	}
 	row := slot.owner.slots[slot.id-1]
 	if row.kind == SlotExact {
-		return row.kind, ExactKey{owner: slot.owner, ordinal: row.exact}, keyspace.ContentID{}, row.exact != 0
+		return row.kind, ExactKey{owner: slot.owner, ordinal: row.exact}, identity.ContentID{}, row.exact != 0
 	}
 	return row.kind, ExactKey{}, row.dynamic, row.dynamic.Available()
 }
@@ -392,13 +393,13 @@ func (payload Payload) valid() bool {
 
 // Source returns the mounted artifact Values identity and its scalar
 // adjustment. The ID is a Program-issued semantic receipt, not a raw Term.
-func (payload Payload) Source() (keyspace.ContentID, keyspace.ContentID, int, bool) {
+func (payload Payload) Source() (identity.ContentID, identity.ContentID, int, bool) {
 	if !payload.valid() {
-		return keyspace.ContentID{}, keyspace.ContentID{}, 0, false
+		return identity.ContentID{}, identity.ContentID{}, 0, false
 	}
 	row := payload.owner.payloads[payload.id-1]
 	if row.kind != payloadValues {
-		return keyspace.ContentID{}, keyspace.ContentID{}, 0, false
+		return identity.ContentID{}, identity.ContentID{}, 0, false
 	}
 	return row.module, row.valuesID, int(row.index), row.module.Available() && row.valuesID.Available()
 }
@@ -449,13 +450,13 @@ func (reference Reference) Key() (Key, materialization.Role, bool) {
 }
 
 // BootID projects a detached bootstrap-family reference.
-func (reference Reference) BootID() (keyspace.ContentID, materialization.Role, bool) {
+func (reference Reference) BootID() (identity.ContentID, materialization.Role, bool) {
 	if !reference.valid() || reference.Kind() != RootBoot {
-		return keyspace.ContentID{}, materialization.Invalid, false
+		return identity.ContentID{}, materialization.Invalid, false
 	}
 	row, ok := reference.owner.rootAt(reference.root)
 	if !ok {
-		return keyspace.ContentID{}, materialization.Invalid, false
+		return identity.ContentID{}, materialization.Invalid, false
 	}
 	return row.bootID, reference.role, row.bootID.Available()
 }

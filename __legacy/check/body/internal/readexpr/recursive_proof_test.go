@@ -6,7 +6,7 @@ import (
 	"github.com/wippyai/go-lua/__legacy/analysis/type/indexproof"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 )
 
 func TestSequenceAndIndexProofsAreDepthIndependent(t *testing.T) {

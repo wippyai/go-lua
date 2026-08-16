@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
-	"github.com/wippyai/go-lua/analysis/type/projection"
+	"github.com/wippyai/go-lua/analysis/domain/type/projection"
 )
 
 func encodeEffectReturn(ret returns.ReturnType) (*effectReturnWire, error) {

@@ -4,7 +4,7 @@ import (
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
 	heapowner "github.com/wippyai/go-lua/analysis/domain/heap/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // HotRule is Heap bootstrap's receipt-native zero-input rule. Root already
@@ -64,7 +64,7 @@ func (rule *HotRule) Catalog() *Catalog {
 // AttachLinkOccurrence lowers one Link-global HeapBootstrap row. The exact
 // bootstrap witness supplied to ReceiptAssembly owns the point/catalog; this
 // package contributes only its matching preissued Root and Heap write Ref.
-func (rule *HotRule) AttachLinkOccurrence(assembly *engine.ReceiptAssembly, occurrenceID keyspace.ContentID) (engine.BindingRuleRowRef, bool) {
+func (rule *HotRule) AttachLinkOccurrence(assembly *engine.ReceiptAssembly, occurrenceID identity.ContentID) (engine.BindingRuleRowRef, bool) {
 	if rule == nil || rule.owner == nil || rule.catalog == nil || assembly == nil {
 		return engine.BindingRuleRowRef{}, false
 	}
@@ -99,7 +99,7 @@ func (rule *HotRule) AttachLinkOccurrence(assembly *engine.ReceiptAssembly, occu
 // AttachLinkReceiptMember resolves the committed Link-global member and its
 // private Root internally. It deliberately has no mount or reusable-point
 // argument: HeapBootstrap is emitted once for the whole Link.
-func (rule *HotRule) AttachLinkReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, occurrenceID keyspace.ContentID) (*engine.ReceiptMember, bool) {
+func (rule *HotRule) AttachLinkReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, occurrenceID identity.ContentID) (*engine.ReceiptMember, bool) {
 	if rule == nil || rule.owner == nil || rule.catalog == nil || graph == nil {
 		return nil, false
 	}

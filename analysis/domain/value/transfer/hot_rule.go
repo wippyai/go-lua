@@ -4,7 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value"
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // HotRule is the receipt-native fixed-storage transfer. The Value owner keeps
@@ -66,7 +66,7 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 // ReceiptForOccurrence returns the exact preissued Value storage-transfer
 // operand for one mounted reusable Program occurrence. The mount qualifier is
 // required because equal Program artifacts may be installed more than once.
-func (rule *HotRule) ReceiptForOccurrence(mount, id keyspace.ContentID) (value.StorageTransfer, bool) {
+func (rule *HotRule) ReceiptForOccurrence(mount, id identity.ContentID) (value.StorageTransfer, bool) {
 	if rule == nil || rule.owner == nil || rule.owner.Schema() == nil || !mount.Available() || !id.Available() {
 		return value.StorageTransfer{}, false
 	}
@@ -76,7 +76,7 @@ func (rule *HotRule) ReceiptForOccurrence(mount, id keyspace.ContentID) (value.S
 
 // AttachMountedRule admits one complete ValueStorageTransfer row before
 // topology commit. Read/carry/write surfaces use only exact Value-owner Refs.
-func (rule *HotRule) AttachMountedRule(assembly *engine.ReceiptAssembly, mountID, pointID, occurrenceID keyspace.ContentID) (engine.BindingRuleRowRef, bool) {
+func (rule *HotRule) AttachMountedRule(assembly *engine.ReceiptAssembly, mountID, pointID, occurrenceID identity.ContentID) (engine.BindingRuleRowRef, bool) {
 	if rule == nil || rule.owner == nil || assembly == nil {
 		return engine.BindingRuleRowRef{}, false
 	}
@@ -137,7 +137,7 @@ func (rule *HotRule) AttachReceiptMember(compilation *engine.ReceiptCompilation,
 
 // AttachMountedReceiptMember resolves the graph-owned mounted member and the
 // exact transfer operand internally, then delegates to AttachReceiptMember.
-func (rule *HotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, pointID, occurrenceID keyspace.ContentID) (*engine.ReceiptMember, bool) {
+func (rule *HotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, pointID, occurrenceID identity.ContentID) (*engine.ReceiptMember, bool) {
 	if rule == nil || graph == nil {
 		return nil, false
 	}

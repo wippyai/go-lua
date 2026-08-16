@@ -4,7 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // SourceSeed is one unconditional, result-bearing Link Value admitted by this
@@ -12,14 +12,14 @@ import (
 // introduces neither a source row nor a second source identity.
 type SourceSeed struct {
 	schema  *Schema
-	valueID keyspace.ContentID
+	valueID identity.ContentID
 	result  *SourceResult
 }
 
 // SourceSeed admits exactly Program literals and binder-authorized runtime
 // TypeValue roots. Contextual boot, endpoint, fresh-result, capability, and
 // host-member relations remain available only through their owning relations.
-func (schema *Schema) SourceSeedForValueID(id keyspace.ContentID) (SourceSeed, bool) {
+func (schema *Schema) SourceSeedForValueID(id identity.ContentID) (SourceSeed, bool) {
 	if schema == nil || !id.Available() {
 		return SourceSeed{}, false
 	}
@@ -30,7 +30,7 @@ func (schema *Schema) SourceSeedForValueID(id keyspace.ContentID) (SourceSeed, b
 	return SourceSeed{schema: schema, valueID: id, result: row.sourceResult}, true
 }
 
-func (schema *Schema) unconditionalValueID(value keyspace.ContentID) bool {
+func (schema *Schema) unconditionalValueID(value identity.ContentID) bool {
 	if schema == nil || !value.Available() {
 		return false
 	}
@@ -49,9 +49,9 @@ func (seed SourceSeed) valid() bool {
 }
 
 // ID returns the existing canonical Link Value identity of this source.
-func (seed SourceSeed) ID() (keyspace.ContentID, bool) {
+func (seed SourceSeed) ID() (identity.ContentID, bool) {
 	if !seed.valid() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return seed.result.id, true
 }
@@ -59,9 +59,9 @@ func (seed SourceSeed) ID() (keyspace.ContentID, bool) {
 // Occurrence returns the exact mount-qualified ProgramArtifact row that
 // issued this source. Raw shard/term coordinates never cross this receipt
 // boundary.
-func (seed SourceSeed) Occurrence() (keyspace.ContentID, keyspace.ContentID, bool) {
+func (seed SourceSeed) Occurrence() (identity.ContentID, identity.ContentID, bool) {
 	if !seed.valid() || !seed.result.module.Available() || !seed.result.occurrence.Available() {
-		return keyspace.ContentID{}, keyspace.ContentID{}, false
+		return identity.ContentID{}, identity.ContentID{}, false
 	}
 	return seed.result.module, seed.result.occurrence, true
 }
@@ -81,11 +81,11 @@ func (seed SourceSeed) Result() (Coordinate, Value, bool) {
 type ReturnBoundary struct {
 	schema  *Schema
 	key     computationKey
-	content keyspace.ContentID
+	content identity.ContentID
 	values  Coordinate
 }
 
-func (schema *Schema) ReturnBoundary(module, occurrence keyspace.ContentID) (ReturnBoundary, bool) {
+func (schema *Schema) ReturnBoundary(module, occurrence identity.ContentID) (ReturnBoundary, bool) {
 	if schema == nil || schema.returnBoundaries == nil || !module.Available() || !occurrence.Available() {
 		return ReturnBoundary{}, false
 	}
@@ -105,9 +105,9 @@ func (schema *Schema) OwnsReturnBoundary(boundary ReturnBoundary) bool {
 	return schema != nil && boundary.schema == schema && boundary.valid()
 }
 
-func (boundary ReturnBoundary) ID() (keyspace.ContentID, bool) {
+func (boundary ReturnBoundary) ID() (identity.ContentID, bool) {
 	if !boundary.valid() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return boundary.content, true
 }
@@ -138,9 +138,9 @@ func (schema *Schema) CapabilityCount() int {
 	return len(schema.capabilities)
 }
 
-func (schema *Schema) CapabilityAt(index int) (keyspace.ContentID, bool) {
+func (schema *Schema) CapabilityAt(index int) (identity.ContentID, bool) {
 	if schema == nil || index < 0 || index >= len(schema.capabilities) {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return schema.capabilities[index], true
 }
@@ -159,7 +159,7 @@ func (schema *Schema) CapabilitySeedAt(index int) (CapabilitySeed, bool) {
 	return CapabilitySeed{schema: schema, index: uint32(index)}, true
 }
 
-func (schema *Schema) CapabilitySeedForID(id keyspace.ContentID) (CapabilitySeed, bool) {
+func (schema *Schema) CapabilitySeedForID(id identity.ContentID) (CapabilitySeed, bool) {
 	if schema == nil || !id.Available() {
 		return CapabilitySeed{}, false
 	}
@@ -178,9 +178,9 @@ func (seed CapabilitySeed) valid() bool {
 // ID identifies this exact Link capability-source row. Link retains the
 // canonical range and all source geometry; the Schema-fenced ordinal merely
 // gives a typed Rule operand its stable semantic content without a name key.
-func (seed CapabilitySeed) ID() (keyspace.ContentID, bool) {
+func (seed CapabilitySeed) ID() (identity.ContentID, bool) {
 	if !seed.valid() || !seed.schema.linkID.Available() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	var payload [32 + 8 + 8]byte
 	linkID := seed.schema.linkID
@@ -190,9 +190,9 @@ func (seed CapabilitySeed) ID() (keyspace.ContentID, bool) {
 	return sha256.Sum256(payload[:]), true
 }
 
-func (seed CapabilitySeed) CapabilityID() (keyspace.ContentID, bool) {
+func (seed CapabilitySeed) CapabilityID() (identity.ContentID, bool) {
 	if !seed.valid() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return seed.schema.capabilitySeeds[seed.index].capability, true
 }
@@ -278,23 +278,23 @@ func (member HostMember) valid() bool {
 	return member.schema != nil && int(member.index) < len(member.schema.hostMembers)
 }
 
-func (member HostMember) CapabilityID() (keyspace.ContentID, bool) {
+func (member HostMember) CapabilityID() (identity.ContentID, bool) {
 	if !member.valid() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return member.schema.hostMembers[member.index].capability, true
 }
 
-func (member HostMember) OutputID() (keyspace.ContentID, bool) {
+func (member HostMember) OutputID() (identity.ContentID, bool) {
 	if !member.valid() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return member.schema.hostMembers[member.index].output, true
 }
 
-func (member HostMember) EndpointID() (keyspace.ContentID, bool) {
+func (member HostMember) EndpointID() (identity.ContentID, bool) {
 	if !member.valid() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return member.schema.hostMembers[member.index].endpoint, true
 }

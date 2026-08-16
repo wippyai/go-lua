@@ -10,7 +10,7 @@ import (
 	enginesourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 )
 
 // evalValueCanonical is the concrete recursion adapter for the same stateless

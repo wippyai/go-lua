@@ -1,8 +1,8 @@
 package lua
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
-	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 type typeBinding struct {

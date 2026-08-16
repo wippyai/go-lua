@@ -3,9 +3,9 @@ package checktest
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/typeexpr"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
-	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 // luaErrorInterface mirrors moduletypes.LuaError: the structural error value

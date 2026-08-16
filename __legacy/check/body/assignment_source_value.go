@@ -2,7 +2,7 @@ package body
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 )
 
 // PreferredLocalAssignmentSourceValue selects the value that should represent a

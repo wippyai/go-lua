@@ -2,7 +2,7 @@
 // recursive type-graph queries used by engine transfer boundaries.
 package typegraph
 
-import "github.com/wippyai/go-lua/analysis/type/typ"
+import "github.com/wippyai/go-lua/analysis/domain/type/typ"
 
 type Path struct {
 	inline   [8]typ.Type

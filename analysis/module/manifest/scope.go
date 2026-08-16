@@ -1,9 +1,9 @@
 package manifest
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/type/transform"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	"github.com/wippyai/go-lua/analysis/module/signature"
-	"github.com/wippyai/go-lua/analysis/type/transform"
-	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // ScopeType gives bare references carried by a manifest its module identity.

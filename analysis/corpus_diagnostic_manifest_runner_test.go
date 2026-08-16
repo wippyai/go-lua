@@ -9,8 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // corpusDiagnosticFamilyStatus is deliberately separate from AnalyzeStatus.
@@ -58,7 +57,7 @@ func unsupportedCorpusDiagnosticFamily(code string, expected int, reason string)
 
 type corpusDiagnosticNativeFamilyRegistration struct {
 	code    DiagnosticCode
-	enabled []DiagnosticRule
+	enabled []DiagnosticCode
 	cases   []corpusDiagnosticNativeFamilyCase
 }
 
@@ -84,12 +83,12 @@ func (key corpusDiagnosticFixtureKey) String() string { return key.project + "/"
 var corpusDiagnosticNativeFamilies = [...]corpusDiagnosticNativeFamilyRegistration{
 	{
 		code:    DiagnosticCodeAlwaysTrueGuard,
-		enabled: []DiagnosticRule{DiagnosticRuleAlwaysTrueGuard},
+		enabled: []DiagnosticCode{DiagnosticCodeAlwaysTrueGuard},
 		cases:   []corpusDiagnosticNativeFamilyCase{{project: "advice/always-true-guard", expect: 1}},
 	},
 	{
 		code:    DiagnosticCodeAlwaysFalseGuard,
-		enabled: []DiagnosticRule{DiagnosticRuleAlwaysFalseGuard},
+		enabled: []DiagnosticCode{DiagnosticCodeAlwaysFalseGuard},
 		cases: []corpusDiagnosticNativeFamilyCase{
 			{project: "native/truthy-false-literal-is-falsy", expect: 1},
 			{project: "native/branch-always-not-taken", expect: 1},
@@ -97,12 +96,12 @@ var corpusDiagnosticNativeFamilies = [...]corpusDiagnosticNativeFamilyRegistrati
 	},
 	{
 		code:    DiagnosticCodeUnresolvedTypeReference,
-		enabled: []DiagnosticRule{DiagnosticRuleUnresolvedTypeReference},
+		enabled: []DiagnosticCode{DiagnosticCodeUnresolvedTypeReference},
 		cases:   []corpusDiagnosticNativeFamilyCase{{project: "semantic/unresolved-reference-diagnostics-evidence-chain", expect: 1}},
 	},
 	{
 		code:    DiagnosticCodeUnresolvedValueReference,
-		enabled: []DiagnosticRule{DiagnosticRuleUnresolvedValueReference},
+		enabled: []DiagnosticCode{DiagnosticCodeUnresolvedValueReference},
 		cases:   []corpusDiagnosticNativeFamilyCase{{project: "semantic/unresolved-reference-diagnostics-evidence-chain", expect: 1}},
 	},
 }
@@ -553,7 +552,7 @@ func runCorpusDiagnosticFamily(t *testing.T, projectName, code string) corpusDia
 		t.Fatalf("native fixture registration %s/%s expects %d rows, catalog has %d", projectName, code, fixtureCase.expect, expected)
 	}
 	plan, _, _, _ := testCorpusReceiptLaw(t, projectName)
-	_, report, status, diagnostics := plan.SolveWithReport(context.Background(), engine.SolveDiagnosticOptions{Flags: engine.SolveDiagnosticAll, MaxRows: 256}, DiagnosticPolicy{Enabled: family.enabled})
+	_, report, status, diagnostics := plan.SolveWithReport(context.Background(), corpusHarnessSolveOptions(), DiagnosticPolicy{Enabled: family.enabled})
 	if status != AnalyzeComplete {
 		t.Fatalf("manifest runner solve %s = %v diagnostics=%+v", projectName, status, diagnostics)
 	}
@@ -589,7 +588,6 @@ func TestCorpusDiagnosticManifestRunnerUnresolvedValueReferenceFamilyLaw(t *test
 // '^TestCorpusDiagnosticManifestRunnerNativeFamiliesLaw/<code>$'.
 func TestCorpusDiagnosticManifestRunnerNativeFamiliesLaw(t *testing.T) {
 	seenCodes := make(map[string]struct{}, len(corpusDiagnosticNativeFamilies))
-	seenRules := make(map[DiagnosticRule]struct{})
 	for _, family := range corpusDiagnosticNativeFamilies {
 		code := family.code.String()
 		if family.code == DiagnosticCodeInvalid || code == "" || len(family.enabled) == 0 || len(family.cases) == 0 {
@@ -599,14 +597,10 @@ func TestCorpusDiagnosticManifestRunnerNativeFamiliesLaw(t *testing.T) {
 			t.Fatalf("duplicate native diagnostic code %q", code)
 		}
 		seenCodes[code] = struct{}{}
-		for _, rule := range family.enabled {
-			if rule == DiagnosticRuleInvalid || rule.Code() != family.code {
-				t.Fatalf("native family %q has non-owning policy rule %q", code, rule.Code().String())
+		for _, enabled := range family.enabled {
+			if enabled != family.code {
+				t.Fatalf("native family %q enables the foreign code %q", code, enabled.String())
 			}
-			if _, duplicate := seenRules[rule]; duplicate {
-				t.Fatalf("native policy rule %q is registered twice", rule.Code().String())
-			}
-			seenRules[rule] = struct{}{}
 		}
 		t.Run(code, func(t *testing.T) { runCorpusDiagnosticNativeFamilyLaw(t, code) })
 	}
@@ -664,8 +658,8 @@ func TestCorpusDiagnosticManifestRunnerInstalledCodePendingProjectLaw(t *testing
 	}
 }
 
-func corpusDiagnosticManifestRunnerID(seed byte) keyspace.ContentID {
-	var id keyspace.ContentID
+func corpusDiagnosticManifestRunnerID(seed byte) identity.ContentID {
+	var id identity.ContentID
 	id[0] = seed
 	return id
 }

@@ -3,12 +3,11 @@ package analysis
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 func TestCorpusNativePublicationUsesTypedBranchValueIssuerLaw(t *testing.T) {
-	plan, result, _, _ := testCorpusReceiptLaw(t, "advice/always-true-guard")
-	defer plan.Close()
+	_, result, _, _ := testCorpusReceiptLaw(t, "advice/always-true-guard")
 	if !result.NativePublicationAvailable() || result.NativePublicationCount() == 0 {
 		t.Fatal("completed branch solve did not expose its typed native receipt")
 	}
@@ -35,8 +34,7 @@ func TestCorpusNativePublicationUsesTypedBranchValueIssuerLaw(t *testing.T) {
 		t.Fatalf("native branch families=%v, want constant/representation/truthiness/partition", seen)
 	}
 
-	foreignPlan, foreign, _, _ := testCorpusReceiptLaw(t, "advice/always-true-guard")
-	defer foreignPlan.Close()
+	_, foreign, _, _ := testCorpusReceiptLaw(t, "advice/always-true-guard")
 	row, _ := result.NativePublicationAt(0)
 	if _, ok := foreign.NativePublicationByToken(row.Token()); ok {
 		t.Fatal("foreign equal-content Result accepted native row token")
@@ -47,8 +45,7 @@ func TestCorpusNativePublicationUsesTypedBranchValueIssuerLaw(t *testing.T) {
 }
 
 func TestCorpusNativePublicationPublishesReusableExactScalarSummaryLaw(t *testing.T) {
-	plan, result, _, _ := testCorpusReceiptLaw(t, "native/const-folded-through-local")
-	defer plan.Close()
+	_, result, _, _ := testCorpusReceiptLaw(t, "native/const-folded-through-local")
 	if result == nil || !result.NativePublicationAvailable() {
 		t.Fatal("folded-local result has no typed native publication")
 	}
@@ -85,8 +82,7 @@ func TestCorpusNativePublicationPublishesReusableExactScalarSummaryLaw(t *testin
 }
 
 func TestNativePublicationRowSealRejectsPrivateSplicesLaw(t *testing.T) {
-	plan, result, _, _ := testCorpusReceiptLaw(t, "advice/always-true-guard")
-	defer plan.Close()
+	_, result, _, _ := testCorpusReceiptLaw(t, "advice/always-true-guard")
 	if result == nil || !result.NativePublicationAvailable() || result.NativePublicationCount() == 0 {
 		t.Fatal("native splice fixture unavailable")
 	}
@@ -94,7 +90,7 @@ func TestNativePublicationRowSealRejectsPrivateSplicesLaw(t *testing.T) {
 	clone := func() *nativePublicationReceipt {
 		copyReceipt := *original
 		copyReceipt.rows = append([]nativePublicationRow(nil), original.rows...)
-		copyReceipt.byID = make(map[keyspace.ContentID]uint32, len(original.byID))
+		copyReceipt.byID = make(map[identity.ContentID]uint32, len(original.byID))
 		for id, ordinal := range original.byID {
 			copyReceipt.byID[id] = ordinal
 		}

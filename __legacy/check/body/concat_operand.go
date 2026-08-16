@@ -10,9 +10,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/symbol"
-	"github.com/wippyai/go-lua/analysis/type/access"
-	"github.com/wippyai/go-lua/analysis/type/normalize"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/access"
+	"github.com/wippyai/go-lua/analysis/domain/type/normalize"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 

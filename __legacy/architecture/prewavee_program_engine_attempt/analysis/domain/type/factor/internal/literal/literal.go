@@ -11,9 +11,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/type/factor/internal/origin"
 	"github.com/wippyai/go-lua/analysis/domain/type/factor/internal/semantic"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/program"
-	"github.com/wippyai/go-lua/program/link"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
+	"github.com/wippyai/go-lua/analysis/program"
+	"github.com/wippyai/go-lua/analysis/program/link"
 )
 
 type Entry struct {

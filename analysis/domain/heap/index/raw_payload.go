@@ -37,6 +37,14 @@ type rawSource struct {
 	coordinate valuedomain.Coordinate
 }
 
+// rawBootInitial indexes one immutable Target boot slot by the exact route and
+// payload tags a hot raw read already holds. Both tags are Heap-issued and
+// schema-local, so the index never carries a second key plane.
+type rawBootInitial struct {
+	route   heapdomain.RawRouteTag
+	payload heapdomain.RawPayloadTag
+}
+
 // rawCatalog is the one immutable Topology/Link-scoped Pack/Value projection
 // shared by both raw operation directions. Heap remains the authority for
 // candidate geometry and payload tags; this catalog contains only the Pack
@@ -46,6 +54,7 @@ type rawCatalog struct {
 	sources         []rawSource
 	sourceRefs      []rawSourceTag
 	byPayloadSource map[rawPayloadSource]rawSourceTag
+	bootInitials    map[rawBootInitial]valuedomain.Value
 }
 
 // rawSetRouteFact is the immutable topology projection carried by one
@@ -130,6 +139,75 @@ func buildRawPayloads(topology *Topology, packs *pack.Schema) ([]rawPayload, []r
 		return nil, nil, nil, nil, false
 	}
 	return result, sources, sourceRefs, byPayloadSource, true
+}
+
+// buildRawBootInitials bakes Value's seal-time Target boot-slot projection into
+// this Topology's own cold table. Heap's immutable boot rows and Value's
+// initial results are both frozen before binding, so every fact is issued once
+// by its owner here and indexed by the route and payload tags the hot raw read
+// already carries. The hot lane consequently consumes a declared cold receipt
+// and never reopens the Value schema to manufacture a peer-domain fact whose
+// production no read slot could describe.
+//
+// A present boot slot with no owner-issued Value is a sealing contradiction,
+// not a solve-time miss: Heap admits the row only because Target classified it
+// as a stored non-nil initial, which is exactly the domain Value projects.
+func buildRawBootInitials(topology *Topology, values *valuedomain.Schema) (map[rawBootInitial]valuedomain.Value, bool) {
+	if topology == nil || !topology.baseValid() || values == nil || values != topology.values {
+		return nil, false
+	}
+	heap := topology.heap
+	tags := make(map[heapdomain.Payload]heapdomain.RawPayloadTag)
+	if !heap.VisitRawPayloadTags(func(tag heapdomain.RawPayloadTag, payload heapdomain.Payload) bool {
+		if _, duplicate := tags[payload]; duplicate || tag == 0 {
+			return false
+		}
+		tags[payload] = tag
+		return true
+	}) {
+		return nil, false
+	}
+	result := make(map[rawBootInitial]valuedomain.Value)
+	for index := 0; index < heap.BootEntryCount(); index++ {
+		entry, entryOK := heap.BootEntryAt(index)
+		if !entryOK {
+			return nil, false
+		}
+		presence, payload, projectionOK := entry.Projection()
+		if !projectionOK {
+			return nil, false
+		}
+		// Target keeps Nil and Absent as distinct contract rows; Heap projects
+		// both to raw absence, which stores no runtime value at all.
+		if presence != heapdomain.RawPresent {
+			continue
+		}
+		key, keyOK := entry.Key()
+		root, rootOK := key.BootID()
+		initial, initialOK := payload.InitialValue()
+		tag, tagOK := tags[payload]
+		if !keyOK || !rootOK || !initialOK || !tagOK {
+			return nil, false
+		}
+		value, valueOK := values.TargetInitialID(root, initial)
+		if !valueOK {
+			return nil, false
+		}
+		for _, role := range []materialization.Role{materialization.Exact, materialization.Recent, materialization.Summary} {
+			// RouteTag is the same producer the hot lane uses to reach this
+			// cell, so the roles it admits are exactly the ones to bake.
+			route, routeOK := heap.RouteTag(key, role)
+			if !routeOK {
+				continue
+			}
+			slot := rawBootInitial{route: route, payload: tag}
+			if prior, duplicate := result[slot]; duplicate && !values.Equal(prior, value) {
+				return nil, false
+			}
+			result[slot] = value
+		}
+	}
+	return result, true
 }
 
 func appendRawSource(all *[]rawSource, refs *[]rawSourceTag, tags map[pack.SemanticSource]rawSourceTag, byPayloadSource map[rawPayloadSource]rawSourceTag, payload *rawPayload, payloadTag heapdomain.RawPayloadTag, source pack.SemanticSource, coordinate valuedomain.Coordinate) bool {

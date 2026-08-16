@@ -3,7 +3,7 @@ package manifest
 import (
 	"fmt"
 
-	"github.com/wippyai/go-lua/analysis/type/projection"
+	"github.com/wippyai/go-lua/analysis/domain/type/projection"
 )
 
 func encodeProjectionSteps(steps []projection.Step) ([]projectionStepWire, error) {

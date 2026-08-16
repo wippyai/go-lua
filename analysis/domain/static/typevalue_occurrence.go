@@ -3,8 +3,8 @@ package static
 import (
 	"crypto/sha256"
 
-	"github.com/wippyai/go-lua/analysis/semantic/typeauthority"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/type/authority"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // TypeValueSeeds is Static's read-only finite observation of executable
@@ -19,12 +19,12 @@ type TypeValueSeed struct {
 }
 
 type typeValueRow struct {
-	valueID keyspace.ContentID
+	valueID identity.ContentID
 	name    string
-	root    keyspace.ContentID
+	root    identity.ContentID
 	inner   typeauthority.RuntimeInner
 	exact   bool
-	id      keyspace.ContentID
+	id      identity.ContentID
 }
 
 func (a *Authority) TypeValueSeeds() TypeValueSeeds { return TypeValueSeeds{authority: a} }
@@ -51,7 +51,7 @@ func (s TypeValueSeeds) Name(seed TypeValueSeed) (string, bool) {
 // RootIdentity is the Static-issued semantic representative key: primitives
 // share by primitive kind, and named objects only within their exact mounted
 // lexical activation.  TypeValue consumes it without rescanning Program.
-func (s TypeValueSeeds) RootIdentity(seed TypeValueSeed) (keyspace.ContentID, bool) {
+func (s TypeValueSeeds) RootIdentity(seed TypeValueSeed) (identity.ContentID, bool) {
 	row, ok := s.row(seed)
 	return row.root, ok && row.root.Available()
 }
@@ -59,7 +59,7 @@ func (s TypeValueSeeds) RootIdentity(seed TypeValueSeed) (keyspace.ContentID, bo
 // ValueIdentity is the detached Boundary identity for the occurrence. It is
 // the only source coordinate that downstream TypeValue needs after Static
 // sealing; no live Boundary Value crosses this surface.
-func (s TypeValueSeeds) ValueIdentity(seed TypeValueSeed) (keyspace.ContentID, bool) {
+func (s TypeValueSeeds) ValueIdentity(seed TypeValueSeed) (identity.ContentID, bool) {
 	row, ok := s.row(seed)
 	return row.valueID, ok && row.valueID.Available()
 }
@@ -85,9 +85,9 @@ func (a *Authority) Runtime() (*typeauthority.Runtime, bool) {
 	return a.runtime, true
 }
 
-func staticTypeValueRowID(sourceID keyspace.ContentID, runtime *typeauthority.Runtime, result Value, row typeValueRow) (keyspace.ContentID, bool) {
+func staticTypeValueRowID(sourceID identity.ContentID, runtime *typeauthority.Runtime, result Value, row typeValueRow) (identity.ContentID, bool) {
 	if !sourceID.Available() || !row.valueID.Available() || !row.root.Available() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	h := sha256.New()
 	_, _ = h.Write([]byte("wippy.analysis.static/typevalue-row\\x00\\x02"))
@@ -96,23 +96,23 @@ func staticTypeValueRowID(sourceID keyspace.ContentID, runtime *typeauthority.Ru
 	_, _ = h.Write(row.root[:])
 	resultID, ok := staticResultIdentity(result)
 	if !ok {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	_, _ = h.Write(resultID[:])
 	if row.exact {
 		if runtime == nil {
-			return keyspace.ContentID{}, false
+			return identity.ContentID{}, false
 		}
 		_, _ = h.Write([]byte{1})
 		inner, ok := runtime.Identity(row.inner)
 		if !ok {
-			return keyspace.ContentID{}, false
+			return identity.ContentID{}, false
 		}
 		_, _ = h.Write(inner[:])
 	} else {
 		_, _ = h.Write([]byte{0})
 	}
-	var id keyspace.ContentID
+	var id identity.ContentID
 	copy(id[:], h.Sum(nil))
 	return id, id.Available()
 }

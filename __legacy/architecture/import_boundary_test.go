@@ -1734,7 +1734,7 @@ func TestDiagnosticQueryHasPositiveProjectionOwner(t *testing.T) {
 		for _, banned := range []string{
 			`"github.com/wippyai/go-lua/analysis/check/internal/readmodel"`,
 			`"github.com/wippyai/go-lua/analysis/domain/value/typevalue"`,
-			`"github.com/wippyai/go-lua/analysis/type/table"`,
+			`"github.com/wippyai/go-lua/analysis/domain/type/table"`,
 			"readmodel.New",
 		} {
 			if bytes.Contains(content, []byte(banned)) {

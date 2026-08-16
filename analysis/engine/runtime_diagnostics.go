@@ -4,6 +4,7 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // SolveDiagnosticFlags selects the solve-local aggregate diagnostics. A zero
@@ -99,10 +100,11 @@ const (
 )
 
 // SolveDiagnosticRow is one bounded aggregate restart bucket. Rows are keyed
-// by revision, call site, reason, region, and head; all counters are sums of
-// events in that bucket. It deliberately retains no runtime or carrier value.
+// by the activation-relation stamp, call site, reason, region, and head; all
+// counters are sums of events in that bucket. It deliberately retains no
+// runtime or carrier value.
 type SolveDiagnosticRow struct {
-	Revision uint64
+	Revision identity.Generation
 	Kind     SolveDiagnosticKind
 	CallSite SolveDiagnosticRestartCallSite
 	Reason   SolveDiagnosticRestartReason
@@ -257,7 +259,7 @@ type solveDiagnosticState struct {
 }
 
 type solveDiagnosticRowKey struct {
-	revision uint64
+	revision identity.Generation
 	kind     SolveDiagnosticKind
 	callSite SolveDiagnosticRestartCallSite
 	reason   SolveDiagnosticRestartReason
@@ -393,12 +395,12 @@ func (diagnostics *solveDiagnosticState) foldEnabled() bool {
 	return diagnostics != nil && diagnostics.flags&SolveDiagnosticFold != 0
 }
 
-func (diagnostics *solveDiagnosticState) epochStarted(epoch *executorEpoch, revision uint64) {
+func (diagnostics *solveDiagnosticState) epochStarted(epoch *executorEpoch, relation identity.Generation) {
 	if diagnostics == nil {
 		return
 	}
 	diagnostics.epochs++
-	diagnostics.revisions = revision + 1
+	diagnostics.revisions = uint64(relation)
 	if epoch == nil {
 		return
 	}
@@ -410,15 +412,13 @@ func (diagnostics *solveDiagnosticState) epochStarted(epoch *executorEpoch, revi
 	}
 }
 
-func (diagnostics *solveDiagnosticState) observeRevision(revision uint64) {
+// observeRevision records the live activation-relation stamp. The stamp is
+// one-based, so it is also the count of relations this Solver has published.
+func (diagnostics *solveDiagnosticState) observeRevision(relation identity.Generation) {
 	if diagnostics == nil {
 		return
 	}
-	if revision == ^uint64(0) {
-		diagnostics.revisions = ^uint64(0)
-		return
-	}
-	diagnostics.revisions = revision + 1
+	diagnostics.revisions = uint64(relation)
 }
 
 func (diagnostics *solveDiagnosticState) resetRevisionEvidence() {

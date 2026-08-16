@@ -5,7 +5,7 @@ import (
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
-	"github.com/wippyai/go-lua/analysis/type/channelselect"
+	"github.com/wippyai/go-lua/analysis/domain/type/channelselect"
 )
 
 func TestChannelSelectCaseIndexPreservesDuplicateAndReversedMatches(t *testing.T) {

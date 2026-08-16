@@ -15,8 +15,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	internalhash "github.com/wippyai/go-lua/analysis/internal/hash"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
-	typetable "github.com/wippyai/go-lua/analysis/type/table"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	typetable "github.com/wippyai/go-lua/analysis/domain/type/table"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 )
 
 const objectLiteralPlanFingerprintSeed uint64 = 0x6f626a6c6974706c // "objlitpl"

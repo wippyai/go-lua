@@ -6,7 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/heap/allocation/internal/source"
 	heapowner "github.com/wippyai/go-lua/analysis/domain/heap/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // HotRule is Empty allocation's exact-read/one-carry receipt-native vertical.
@@ -26,7 +26,7 @@ func BindHot(fragment *SchemaFragment, owner *heapowner.HotOwner, catalog *alloc
 	if fragment == nil || fragment.slot == nil || owner == nil || !owner.Schema().Valid() ||
 		catalog == nil || !catalog.FencedToHeap(owner.Schema()) ||
 		!fragment.semantic.Available() || !fragment.transform.Available() || !fragment.evidence.Available() ||
-		!distinct(fragment.semantic, fragment.transform, fragment.evidence) {
+		!engine.DistinctKeys(fragment.semantic, fragment.transform, fragment.evidence) {
 		return nil, false
 	}
 	var runtimeRead engine.Read[engine.OrderedCells[heapdomain.Value]]
@@ -75,7 +75,7 @@ type MountedIssuer struct {
 	mount allocationcatalog.Mount
 }
 
-func (rule *HotRule) ForMount(module keyspace.ContentID) (MountedIssuer, bool) {
+func (rule *HotRule) ForMount(module identity.ContentID) (MountedIssuer, bool) {
 	if rule == nil || rule.catalog == nil {
 		return MountedIssuer{}, false
 	}
@@ -83,7 +83,7 @@ func (rule *HotRule) ForMount(module keyspace.ContentID) (MountedIssuer, bool) {
 	return MountedIssuer{rule: rule, mount: mount}, ok && mount.OwnedBy(rule.catalog)
 }
 
-func (issuer MountedIssuer) ReceiptForOccurrence(id keyspace.ContentID) (source.Root, bool) {
+func (issuer MountedIssuer) ReceiptForOccurrence(id identity.ContentID) (source.Root, bool) {
 	if issuer.rule == nil || !issuer.mount.OwnedBy(issuer.rule.catalog) {
 		return source.Root{}, false
 	}
@@ -93,7 +93,7 @@ func (issuer MountedIssuer) ReceiptForOccurrence(id keyspace.ContentID) (source.
 
 // AttachMountedOccurrence seals HeapEmpty's exact read/carry/write incidence
 // beneath the same mounted allocation proof that issued its operand.
-func (rule *HotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, mountID, reusablePointID, occurrenceID keyspace.ContentID) (engine.BindingRuleRowRef, bool) {
+func (rule *HotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, mountID, reusablePointID, occurrenceID identity.ContentID) (engine.BindingRuleRowRef, bool) {
 	if rule == nil || rule.owner == nil || rule.catalog == nil || assembly == nil {
 		return engine.BindingRuleRowRef{}, false
 	}
@@ -130,7 +130,7 @@ func (rule *HotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, m
 // AttachMountedReceiptMember resolves both the committed graph member and its
 // exact mounted allocation receipt internally.  No private Heap coordinate or
 // operand capability escapes to the central artifact compiler.
-func (rule *HotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, reusablePointID, occurrenceID keyspace.ContentID) (*engine.ReceiptMember, bool) {
+func (rule *HotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, reusablePointID, occurrenceID identity.ContentID) (*engine.ReceiptMember, bool) {
 	if rule == nil || rule.owner == nil || graph == nil {
 		return nil, false
 	}

@@ -15,10 +15,10 @@ type Graph struct {
 	self *Graph
 	// payload is non-nil only for an activation revision view. Views share
 	// every immutable structural row with the sealed initial graph and carry
-	// only a new identity/revision header.
+	// only the publication header of the Relation they were issued for.
 	payload        *Graph
 	owner          *Topology
-	revision       composition.Key
+	relation       Relation
 	composition    *composition.Composition
 	scheduleRanked bool
 	points         []Point

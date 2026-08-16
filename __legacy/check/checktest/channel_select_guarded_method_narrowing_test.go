@@ -3,9 +3,9 @@ package checktest
 import (
 	"testing"
 
+	typetable "github.com/wippyai/go-lua/analysis/domain/type/table"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
-	typetable "github.com/wippyai/go-lua/analysis/type/table"
-	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // Mirrors wippy-golua-seam tests/app/src/test/process/link_explicit.lua: a

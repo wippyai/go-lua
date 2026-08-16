@@ -2,7 +2,7 @@ package engine
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/coordinate"
-	"github.com/wippyai/go-lua/program"
+	"github.com/wippyai/go-lua/analysis/program"
 )
 
 // State is one completed immutable Solver result. It retains exactly one

@@ -7,27 +7,27 @@ import (
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
 	packdomain "github.com/wippyai/go-lua/analysis/domain/pack"
 	staticdomain "github.com/wippyai/go-lua/analysis/domain/static"
-	programartifact "github.com/wippyai/go-lua/analysis/internal/programartifact"
-	"github.com/wippyai/go-lua/analysis/internal/programartifact/schemaadapter"
-	"github.com/wippyai/go-lua/analysis/internal/programschema"
-	"github.com/wippyai/go-lua/analysis/semantic/typeauthority"
-	"github.com/wippyai/go-lua/program/flow"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/link"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
-	"github.com/wippyai/go-lua/program/lower"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/domain/type/authority"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/lua/lower"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
+	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/link"
+	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
-func bindingLawID(text string) keyspace.ContentID {
-	return keyspace.ContentID(sha256.Sum256([]byte(text)))
+func bindingLawID(text string) identity.ContentID {
+	return identity.ContentID(sha256.Sum256([]byte(text)))
 }
 
 type runtimeContextBindingFixture struct {
 	pack      *packdomain.Schema
 	heap      heapdomain.Schema
-	module    keyspace.ContentID
-	callID    keyspace.ContentID
+	module    identity.ContentID
+	callID    identity.ContentID
 	operation target.Operation
 }
 
@@ -41,7 +41,7 @@ func runtimeContextBindingSchema(t testing.TB, contract *target.Contract, operat
 	if err != nil {
 		t.Fatal(err)
 	}
-	grammar, grammarOK := programschema.Global()
+	grammar, grammarOK := grammar.Global()
 	if !grammarOK {
 		t.Fatal("program schema receipt")
 	}
@@ -142,8 +142,8 @@ func TestRuntimeAllocationContextBindingFencesAndAvailability(t *testing.T) {
 		t.Fatal("binding runtime contexts")
 	}
 	cases := []runtimeCase{{heapdomain.RuntimeAllocationContextProcess, process}, {heapdomain.RuntimeAllocationContextActor, actor}, {heapdomain.RuntimeAllocationContextShared, shared}, {heapdomain.RuntimeAllocationContextThread, thread}}
-	ids := make(map[keyspace.ContentID]struct{}, len(cases))
-	destinationIDs := make(map[keyspace.ContentID]struct{}, len(cases))
+	ids := make(map[identity.ContentID]struct{}, len(cases))
+	destinationIDs := make(map[identity.ContentID]struct{}, len(cases))
 	for _, candidate := range cases {
 		binding, availability := issuer.BindRuntimeAllocationContext(fixture.module, fixture.callID, fixed, requirement, candidate.context)
 		if availability != packdomain.RuntimeAllocationContextBindingBound || !binding.Valid() {

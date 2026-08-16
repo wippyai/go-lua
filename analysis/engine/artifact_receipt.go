@@ -6,7 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 const (
@@ -22,16 +22,16 @@ const (
 type artifactReceiptTopology struct {
 	sealed     *BindingTopology
 	mounts     []artifactMountReceipt
-	points     []keyspace.ContentID
-	pointMeta  map[keyspace.ContentID]artifactPointMetadata
-	sites      map[keyspace.ContentID]equation.Site
+	points     []identity.ContentID
+	pointMeta  map[identity.ContentID]artifactPointMetadata
+	sites      map[identity.ContentID]equation.Site
 	mounted    map[artifactMountedPoint]equation.Site
 	mountedRef map[artifactMountedPoint]equation.PointRef
 	bodies     map[artifactMountedBody]artifactBodyTransport
 	functions  []artifactMountedFunction
 	ruleSet    map[artifactMountedRule]artifactRuleInput
 	callStages map[artifactMountedRuleOccurrence]artifactNativeCallStage
-	pointRef   map[keyspace.ContentID]equation.PointRef
+	pointRef   map[identity.ContentID]equation.PointRef
 	edges      []artifactEnvironmentRow
 	regions    []artifactWTORegionRow
 	events     []artifactWTOEventRow
@@ -39,13 +39,13 @@ type artifactReceiptTopology struct {
 }
 
 type linkBootstrapReceipt struct {
-	owner       keyspace.ContentID
+	owner       identity.ContentID
 	point       LinkBootstrapPoint
 	site        equation.Site
-	occurrences map[keyspace.ContentID]struct{}
-	roles       map[keyspace.ContentID]RuleSlotCapability
-	claims      map[keyspace.ContentID]RuleSlotCapability
-	semantic    keyspace.ContentID
+	occurrences map[identity.ContentID]struct{}
+	roles       map[identity.ContentID]RuleSlotCapability
+	claims      map[identity.ContentID]RuleSlotCapability
+	semantic    identity.ContentID
 	ref         equation.PointRef
 	transports  []linkBootstrapTransport
 }
@@ -56,44 +56,44 @@ type linkBootstrapTransport struct {
 }
 
 type artifactMountedPoint struct {
-	mount    keyspace.ContentID
-	reusable keyspace.ContentID
+	mount    identity.ContentID
+	reusable identity.ContentID
 }
 
 // artifactMountedBody is the immutable parent-issued body transport anchor.
 // Point IDs remain reusable artifact IDs here; every later use must resolve
 // them through the same mount-qualified point receipt.
 type artifactMountedBody struct {
-	mount keyspace.ContentID
-	body  keyspace.ContentID
+	mount identity.ContentID
+	body  identity.ContentID
 }
 
 type artifactBodyTransport struct {
-	entry []keyspace.ContentID
-	exits []keyspace.ContentID
+	entry []identity.ContentID
+	exits []identity.ContentID
 }
 
 type artifactMountedFunction struct {
-	id, mount, artifact, reusable        keyspace.ContentID
-	body, bodyContext, entry, callFormal keyspace.ContentID
+	id, mount, artifact, reusable        identity.ContentID
+	body, bodyContext, entry, callFormal identity.ContentID
 	formals                              []ArtifactScalarFormalPort
 	vararg                               ArtifactScalarVarargPort
 	hasVararg                            bool
 	captures                             []ArtifactScalarCapturePort
-	outcomes                             []keyspace.ContentID
+	outcomes                             []identity.ContentID
 }
 
 type artifactMountedRule struct {
 	role       RuleSlotCapability
-	mount      keyspace.ContentID
-	point      keyspace.ContentID
-	occurrence keyspace.ContentID
+	mount      identity.ContentID
+	point      identity.ContentID
+	occurrence identity.ContentID
 }
 
 type artifactRuleInput struct {
-	point        keyspace.ContentID
-	mountedPoint keyspace.ContentID
-	mountedInput keyspace.ContentID
+	point        identity.ContentID
+	mountedPoint identity.ContentID
+	mountedInput identity.ContentID
 	stage        ArtifactRuleStage
 	predecessor  artifactEnvironmentRow
 	routed       bool
@@ -104,16 +104,16 @@ type artifactRuleInput struct {
 // point for the same owner/call is an alias and is rejected while snapshotting.
 type artifactMountedRuleOccurrence struct {
 	role       RuleSlotCapability
-	mount      keyspace.ContentID
-	occurrence keyspace.ContentID
+	mount      identity.ContentID
+	occurrence identity.ContentID
 }
 
 type artifactNativeCallStage struct {
 	stage        ArtifactRuleStage
-	point        keyspace.ContentID
-	input        keyspace.ContentID
-	mountedPoint keyspace.ContentID
-	mountedInput keyspace.ContentID
+	point        identity.ContentID
+	input        identity.ContentID
+	mountedPoint identity.ContentID
+	mountedInput identity.ContentID
 }
 
 // ArtifactStructuralArm is the engine-neutral structural-edge arm vocabulary.
@@ -149,13 +149,13 @@ const (
 // template. Engine compares the semantic identity but never interprets it as
 // a domain producer tag.
 type ArtifactScalarRole struct {
-	semantic keyspace.ContentID
+	semantic identity.ContentID
 }
 
 func (role ArtifactScalarRole) Available() bool { return role.semantic.Available() }
-func (role ArtifactScalarRole) ID() keyspace.ContentID {
+func (role ArtifactScalarRole) ID() identity.ContentID {
 	if !role.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return role.semantic
 }
@@ -165,9 +165,9 @@ func (role ArtifactScalarRole) ID() keyspace.ContentID {
 // be shared by independent Links and mounted repeatedly without rebuilding
 // the Program interior.
 type ArtifactScalarTemplate struct {
-	artifact  keyspace.ContentID
-	program   keyspace.ContentID
-	schema    keyspace.ContentID
+	artifact  identity.ContentID
+	program   identity.ContentID
+	schema    identity.ContentID
 	sealed    bool
 	roles     []ArtifactScalarRole
 	points    []ArtifactScalarPoint
@@ -183,21 +183,21 @@ type ArtifactScalarTemplate struct {
 func (template *ArtifactScalarTemplate) Available() bool {
 	return template != nil && template.sealed && template.artifact.Available() && template.program.Available() && template.schema.Available()
 }
-func (template *ArtifactScalarTemplate) ArtifactID() keyspace.ContentID {
+func (template *ArtifactScalarTemplate) ArtifactID() identity.ContentID {
 	if !template.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return template.artifact
 }
-func (template *ArtifactScalarTemplate) ProgramID() keyspace.ContentID {
+func (template *ArtifactScalarTemplate) ProgramID() identity.ContentID {
 	if !template.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return template.program
 }
-func (template *ArtifactScalarTemplate) SchemaID() keyspace.ContentID {
+func (template *ArtifactScalarTemplate) SchemaID() identity.ContentID {
 	if !template.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return template.schema
 }
@@ -213,7 +213,7 @@ func (template *ArtifactScalarTemplate) FunctionCount() int {
 // the structural template remains owner-neutral.
 type ArtifactScalarBinding struct {
 	template     *ArtifactScalarTemplate
-	capabilities map[keyspace.ContentID]RuleSlotCapability
+	capabilities map[identity.ContentID]RuleSlotCapability
 	sealed       bool
 }
 
@@ -221,7 +221,7 @@ type ArtifactScalarBinding struct {
 // shared Program template plus only Link-local role substitutions.
 type ArtifactScalarReceipt struct {
 	template     *ArtifactScalarTemplate
-	capabilities map[keyspace.ContentID]RuleSlotCapability
+	capabilities map[identity.ContentID]RuleSlotCapability
 	sealed       bool
 }
 
@@ -241,9 +241,9 @@ type ArtifactScalarSpec struct {
 }
 
 type artifactScalarSpecState struct {
-	ArtifactID keyspace.ContentID
-	ProgramID  keyspace.ContentID
-	SchemaID   keyspace.ContentID
+	ArtifactID identity.ContentID
+	ProgramID  identity.ContentID
+	SchemaID   identity.ContentID
 	Roles      []ArtifactScalarRole
 	Points     []ArtifactScalarPoint
 	Edges      []ArtifactScalarEdge
@@ -257,35 +257,35 @@ type artifactScalarSpecState struct {
 }
 
 type ArtifactScalarPoint struct {
-	ID        keyspace.ContentID
-	Decisions []keyspace.ContentID
+	ID        identity.ContentID
+	Decisions []identity.ContentID
 	Initial   bool
 }
 
 type ArtifactScalarEdge struct {
-	ID, From, To, Route, Guard, Decision keyspace.ContentID
-	Component, Mu, Reset                 keyspace.ContentID
-	Resets                               []keyspace.ContentID
+	ID, From, To, Route, Guard, Decision identity.ContentID
+	Component, Mu, Reset                 identity.ContentID
+	Resets                               []identity.ContentID
 	Arm                                  ArtifactStructuralArm
 	Guarded, Truth, HasReset             bool
 }
 
 type ArtifactScalarTransfer struct {
-	ID, From, To keyspace.ContentID
+	ID, From, To identity.ContentID
 	Full         bool
 	Factors      []ArtifactScalarRole
 }
 
 type ArtifactScalarRegion struct {
-	ID, Head, Parent keyspace.ContentID
+	ID, Head, Parent identity.ContentID
 	Cyclic           bool
-	Members          []keyspace.ContentID
+	Members          []identity.ContentID
 }
 
 type ArtifactScalarEvent struct {
 	Kind   ArtifactEventKind
-	Region keyspace.ContentID
-	Point  keyspace.ContentID
+	Region identity.ContentID
+	Point  identity.ContentID
 }
 
 // ArtifactRuleStage is the engine-neutral scalar encoding of the execution
@@ -313,27 +313,27 @@ func (stage ArtifactRuleStage) nativeCall() bool {
 type ArtifactScalarRule struct {
 	Role             ArtifactScalarRole
 	Stage            ArtifactRuleStage
-	Point, Input, ID keyspace.ContentID
-	Route            keyspace.ContentID
+	Point, Input, ID identity.ContentID
+	Route            identity.ContentID
 }
 
 type ArtifactScalarBody struct {
-	ID, Context, SemanticEntry keyspace.ContentID
-	Function, CallFormal       keyspace.ContentID
+	ID, Context, SemanticEntry identity.ContentID
+	Function, CallFormal       identity.ContentID
 	Callable                   bool
-	Entry, Exits               []keyspace.ContentID
+	Entry, Exits               []identity.ContentID
 }
 
 type ArtifactScalarFormalPort struct {
-	ID, Cell, Storage keyspace.ContentID
+	ID, Cell, Storage identity.ContentID
 	Position          uint32
 }
 
-type ArtifactScalarVarargPort struct{ ID, Cell keyspace.ContentID }
+type ArtifactScalarVarargPort struct{ ID, Cell identity.ContentID }
 
 type ArtifactScalarCapturePort struct {
-	ID, Inner, Outer     keyspace.ContentID
-	InnerBody, OuterBody keyspace.ContentID
+	ID, Inner, Outer     identity.ContentID
+	InnerBody, OuterBody identity.ContentID
 	Position             uint32
 }
 
@@ -341,15 +341,15 @@ type ArtifactScalarCapturePort struct {
 // rows are appended through the single-use builder; callers cannot retain a
 // mutable slice that aliases the sealed cached template.
 type ArtifactScalarFunction struct {
-	ID, Body, BodyContext, Entry, CallFormal keyspace.ContentID
+	ID, Body, BodyContext, Entry, CallFormal identity.ContentID
 	Formals                                  []ArtifactScalarFormalPort
 	Vararg                                   ArtifactScalarVarargPort
 	HasVararg                                bool
 	Captures                                 []ArtifactScalarCapturePort
-	Outcomes                                 []keyspace.ContentID
+	Outcomes                                 []identity.ContentID
 }
 
-func NewArtifactScalarSpec(artifactID, programID, schemaID keyspace.ContentID, capacity ArtifactScalarCapacity) (*ArtifactScalarSpec, bool) {
+func NewArtifactScalarSpec(artifactID, programID, schemaID identity.ContentID, capacity ArtifactScalarCapacity) (*ArtifactScalarSpec, bool) {
 	if !artifactID.Available() || !programID.Available() || !schemaID.Available() || capacity.Roles < 0 || capacity.Points < 0 || capacity.Edges < 0 || capacity.Transfers < 0 || capacity.Regions < 0 || capacity.Events < 0 || capacity.Rules < 0 || capacity.Bodies < 0 || capacity.Functions < 0 {
 		return nil, false
 	}
@@ -371,7 +371,7 @@ func NewArtifactScalarSpec(artifactID, programID, schemaID keyspace.ContentID, c
 
 // DeclareRole admits one stable Program-issued role identity. Role order is
 // retained exactly and forms the canonical Link binding order.
-func (spec *ArtifactScalarSpec) DeclareRole(semantic keyspace.ContentID) (ArtifactScalarRole, bool) {
+func (spec *ArtifactScalarSpec) DeclareRole(semantic identity.ContentID) (ArtifactScalarRole, bool) {
 	state, ok := spec.writable()
 	if !ok || !semantic.Available() {
 		return ArtifactScalarRole{}, false
@@ -414,7 +414,7 @@ func (spec *ArtifactScalarSpec) AddPoint(row ArtifactScalarPoint) (int, bool) {
 	return len(state.Points) - 1, true
 }
 
-func (spec *ArtifactScalarSpec) AddPointDecision(point int, decision keyspace.ContentID) bool {
+func (spec *ArtifactScalarSpec) AddPointDecision(point int, decision identity.ContentID) bool {
 	state, ok := spec.writable()
 	if !ok || point < 0 || point >= len(state.Points) || !decision.Available() {
 		return false
@@ -432,7 +432,7 @@ func (spec *ArtifactScalarSpec) AddEdge(row ArtifactScalarEdge) (int, bool) {
 	return len(state.Edges) - 1, true
 }
 
-func (spec *ArtifactScalarSpec) AddEdgeReset(edge int, reset keyspace.ContentID) bool {
+func (spec *ArtifactScalarSpec) AddEdgeReset(edge int, reset identity.ContentID) bool {
 	state, ok := spec.writable()
 	if !ok || edge < 0 || edge >= len(state.Edges) || !reset.Available() {
 		return false
@@ -468,7 +468,7 @@ func (spec *ArtifactScalarSpec) AddRegion(row ArtifactScalarRegion) (int, bool) 
 	return len(state.Regions) - 1, true
 }
 
-func (spec *ArtifactScalarSpec) AddRegionMember(region int, member keyspace.ContentID) bool {
+func (spec *ArtifactScalarSpec) AddRegionMember(region int, member identity.ContentID) bool {
 	state, ok := spec.writable()
 	if !ok || region < 0 || region >= len(state.Regions) || !member.Available() {
 		return false
@@ -504,7 +504,7 @@ func (spec *ArtifactScalarSpec) AddBody(row ArtifactScalarBody) (int, bool) {
 	return len(state.Bodies) - 1, true
 }
 
-func (spec *ArtifactScalarSpec) AddBodyEntry(body int, point keyspace.ContentID) bool {
+func (spec *ArtifactScalarSpec) AddBodyEntry(body int, point identity.ContentID) bool {
 	state, ok := spec.writable()
 	if !ok || body < 0 || body >= len(state.Bodies) || !point.Available() {
 		return false
@@ -513,7 +513,7 @@ func (spec *ArtifactScalarSpec) AddBodyEntry(body int, point keyspace.ContentID)
 	return true
 }
 
-func (spec *ArtifactScalarSpec) AddBodyExit(body int, point keyspace.ContentID) bool {
+func (spec *ArtifactScalarSpec) AddBodyExit(body int, point identity.ContentID) bool {
 	state, ok := spec.writable()
 	if !ok || body < 0 || body >= len(state.Bodies) || !point.Available() {
 		return false
@@ -559,7 +559,7 @@ func (spec *ArtifactScalarSpec) AddFunctionCapture(function int, port ArtifactSc
 	return true
 }
 
-func (spec *ArtifactScalarSpec) AddFunctionOutcome(function int, outcome keyspace.ContentID) bool {
+func (spec *ArtifactScalarSpec) AddFunctionOutcome(function int, outcome identity.ContentID) bool {
 	state, ok := spec.writable()
 	if !ok || function < 0 || function >= len(state.Functions) || !outcome.Available() {
 		return false
@@ -591,7 +591,7 @@ func NewArtifactScalarBinding(template *ArtifactScalarTemplate) (*ArtifactScalar
 	if !template.Available() {
 		return nil, false
 	}
-	return &ArtifactScalarBinding{template: template, capabilities: make(map[keyspace.ContentID]RuleSlotCapability, len(template.roles))}, true
+	return &ArtifactScalarBinding{template: template, capabilities: make(map[identity.ContentID]RuleSlotCapability, len(template.roles))}, true
 }
 
 func (binding *ArtifactScalarBinding) BindRole(role ArtifactScalarRole, capability RuleSlotCapability) bool {
@@ -651,7 +651,7 @@ func validArtifactScalarSpec(spec *ArtifactScalarSpec) bool {
 	if !open || !state.ArtifactID.Available() || !state.ProgramID.Available() || !state.SchemaID.Available() || len(state.Points) == 0 || len(state.Events) == 0 || len(state.Bodies) == 0 {
 		return false
 	}
-	points := make(map[keyspace.ContentID]struct{}, len(state.Points))
+	points := make(map[identity.ContentID]struct{}, len(state.Points))
 	for _, point := range state.Points {
 		if !point.ID.Available() {
 			return false
@@ -672,12 +672,12 @@ func validArtifactScalarSpec(spec *ArtifactScalarSpec) bool {
 		}
 	}
 
-	edgeIDs := make(map[keyspace.ContentID]struct{}, len(state.Edges)+len(state.Transfers))
-	routes := make(map[keyspace.ContentID]artifactEnvironmentRow, len(state.Edges))
-	duplicateRoutes := make(map[keyspace.ContentID]struct{})
-	pointDecisions := make(map[keyspace.ContentID]map[keyspace.ContentID]struct{}, len(state.Points))
+	edgeIDs := make(map[identity.ContentID]struct{}, len(state.Edges)+len(state.Transfers))
+	routes := make(map[identity.ContentID]artifactEnvironmentRow, len(state.Edges))
+	duplicateRoutes := make(map[identity.ContentID]struct{})
+	pointDecisions := make(map[identity.ContentID]map[identity.ContentID]struct{}, len(state.Points))
 	for _, point := range state.Points {
-		decisions := make(map[keyspace.ContentID]struct{}, len(point.Decisions))
+		decisions := make(map[identity.ContentID]struct{}, len(point.Decisions))
 		for _, decision := range point.Decisions {
 			decisions[decision] = struct{}{}
 		}
@@ -729,7 +729,7 @@ func validArtifactScalarSpec(spec *ArtifactScalarSpec) bool {
 		}
 	}
 
-	regions := make(map[keyspace.ContentID]ArtifactScalarRegion, len(state.Regions))
+	regions := make(map[identity.ContentID]ArtifactScalarRegion, len(state.Regions))
 	for _, region := range state.Regions {
 		if !region.ID.Available() || !region.Head.Available() || len(region.Members) == 0 || region.Members[0] != region.Head {
 			return false
@@ -737,7 +737,7 @@ func validArtifactScalarSpec(spec *ArtifactScalarSpec) bool {
 		if _, duplicate := regions[region.ID]; duplicate {
 			return false
 		}
-		members := make(map[keyspace.ContentID]struct{}, len(region.Members))
+		members := make(map[identity.ContentID]struct{}, len(region.Members))
 		for _, member := range region.Members {
 			if _, pointOK := points[member]; !pointOK {
 				return false
@@ -761,7 +761,7 @@ func validArtifactScalarSpec(spec *ArtifactScalarSpec) bool {
 		return false
 	}
 
-	pointRank := make(map[keyspace.ContentID]int, len(points))
+	pointRank := make(map[identity.ContentID]int, len(points))
 	for _, event := range state.Events {
 		if event.Kind == ArtifactEventPoint {
 			pointRank[event.Point] = len(pointRank)
@@ -769,12 +769,12 @@ func validArtifactScalarSpec(spec *ArtifactScalarSpec) bool {
 	}
 	type artifactStageGeometry struct {
 		stage ArtifactRuleStage
-		input keyspace.ContentID
+		input identity.ContentID
 	}
-	stageGeometry := make(map[keyspace.ContentID]artifactStageGeometry)
+	stageGeometry := make(map[identity.ContentID]artifactStageGeometry)
 	type artifactTemplateRuleOccurrence struct {
 		role ArtifactScalarRole
-		id   keyspace.ContentID
+		id   identity.ContentID
 	}
 	nativeOccurrences := make(map[artifactTemplateRuleOccurrence]struct{})
 	for _, rule := range state.Rules {
@@ -843,7 +843,7 @@ func validArtifactScalarSpec(spec *ArtifactScalarSpec) bool {
 		}
 	}
 
-	bodies := make(map[keyspace.ContentID]struct{}, len(state.Bodies))
+	bodies := make(map[identity.ContentID]struct{}, len(state.Bodies))
 	for _, body := range state.Bodies {
 		if !body.ID.Available() || !body.Context.Available() || !body.SemanticEntry.Available() || len(body.Entry) == 0 || len(body.Exits) == 0 ||
 			body.Callable != body.Function.Available() || body.Callable != body.CallFormal.Available() {
@@ -853,7 +853,7 @@ func validArtifactScalarSpec(spec *ArtifactScalarSpec) bool {
 			return false
 		}
 		bodies[body.ID] = struct{}{}
-		seenEntry := make(map[keyspace.ContentID]struct{}, len(body.Entry))
+		seenEntry := make(map[identity.ContentID]struct{}, len(body.Entry))
 		for _, point := range body.Entry {
 			if _, pointOK := points[point]; !pointOK {
 				return false
@@ -863,7 +863,7 @@ func validArtifactScalarSpec(spec *ArtifactScalarSpec) bool {
 			}
 			seenEntry[point] = struct{}{}
 		}
-		seenExit := make(map[keyspace.ContentID]struct{}, len(body.Exits))
+		seenExit := make(map[identity.ContentID]struct{}, len(body.Exits))
 		for _, point := range body.Exits {
 			if _, pointOK := points[point]; !pointOK {
 				return false
@@ -874,8 +874,8 @@ func validArtifactScalarSpec(spec *ArtifactScalarSpec) bool {
 			seenExit[point] = struct{}{}
 		}
 	}
-	seenFunctions := make(map[keyspace.ContentID]struct{}, len(state.Functions))
-	seenFunctionBodies := make(map[keyspace.ContentID]struct{}, len(state.Functions))
+	seenFunctions := make(map[identity.ContentID]struct{}, len(state.Functions))
+	seenFunctionBodies := make(map[identity.ContentID]struct{}, len(state.Functions))
 	for _, function := range state.Functions {
 		if !function.ID.Available() || !function.Body.Available() || !function.BodyContext.Available() || !function.Entry.Available() || !function.CallFormal.Available() ||
 			function.HasVararg != function.Vararg.ID.Available() || function.HasVararg != function.Vararg.Cell.Available() || len(function.Outcomes) == 0 {
@@ -898,9 +898,9 @@ func validArtifactScalarSpec(spec *ArtifactScalarSpec) bool {
 			return false
 		}
 		seenFunctions[function.ID], seenFunctionBodies[function.Body] = struct{}{}, struct{}{}
-		seenFormals := make(map[keyspace.ContentID]struct{}, len(function.Formals))
-		seenCells := make(map[keyspace.ContentID]struct{}, len(function.Formals))
-		seenStorage := make(map[keyspace.ContentID]struct{}, len(function.Formals))
+		seenFormals := make(map[identity.ContentID]struct{}, len(function.Formals))
+		seenCells := make(map[identity.ContentID]struct{}, len(function.Formals))
+		seenStorage := make(map[identity.ContentID]struct{}, len(function.Formals))
 		for index, port := range function.Formals {
 			if !port.ID.Available() || !port.Cell.Available() || !port.Storage.Available() || uint64(port.Position) != uint64(index) {
 				return false
@@ -916,7 +916,7 @@ func validArtifactScalarSpec(spec *ArtifactScalarSpec) bool {
 			}
 			seenFormals[port.ID], seenCells[port.Cell], seenStorage[port.Storage] = struct{}{}, struct{}{}, struct{}{}
 		}
-		seenCaptures := make(map[keyspace.ContentID]struct{}, len(function.Captures))
+		seenCaptures := make(map[identity.ContentID]struct{}, len(function.Captures))
 		for index, capture := range function.Captures {
 			if !capture.ID.Available() || !capture.Inner.Available() || !capture.Outer.Available() || capture.Inner == capture.Outer ||
 				capture.InnerBody != function.Body || capture.InnerBody == capture.OuterBody || uint64(capture.Position) != uint64(index) {
@@ -930,7 +930,7 @@ func validArtifactScalarSpec(spec *ArtifactScalarSpec) bool {
 			}
 			seenCaptures[capture.ID] = struct{}{}
 		}
-		seenOutcomes := make(map[keyspace.ContentID]struct{}, len(function.Outcomes))
+		seenOutcomes := make(map[identity.ContentID]struct{}, len(function.Outcomes))
 		for _, outcome := range function.Outcomes {
 			if !outcome.Available() {
 				return false
@@ -953,15 +953,15 @@ func validArtifactScalarSpec(spec *ArtifactScalarSpec) bool {
 	return true
 }
 
-func validArtifactScalarSchedule(points map[keyspace.ContentID]struct{}, regions map[keyspace.ContentID]ArtifactScalarRegion, events []ArtifactScalarEvent) bool {
+func validArtifactScalarSchedule(points map[identity.ContentID]struct{}, regions map[identity.ContentID]ArtifactScalarRegion, events []ArtifactScalarEvent) bool {
 	if len(events) == 0 {
 		return false
 	}
-	entered := make(map[keyspace.ContentID]bool, len(regions))
-	exited := make(map[keyspace.ContentID]bool, len(regions))
-	seenPoint := make(map[keyspace.ContentID]struct{}, len(points))
+	entered := make(map[identity.ContentID]bool, len(regions))
+	exited := make(map[identity.ContentID]bool, len(regions))
+	seenPoint := make(map[identity.ContentID]struct{}, len(points))
 	type frame struct {
-		region keyspace.ContentID
+		region identity.ContentID
 		next   int
 	}
 	stack := make([]frame, 0, len(regions))
@@ -1033,52 +1033,52 @@ func validArtifactScalarSchedule(points map[keyspace.ContentID]struct{}, regions
 // substitution identity, not a Program ID or a caller-selected ordinal.
 type MountedArtifactReceipt struct {
 	receipt *ArtifactScalarReceipt
-	mountID keyspace.ContentID
+	mountID identity.ContentID
 }
 
 // NewMountedArtifactReceipt binds one reusable Program artifact to one exact
 // Link mount identity.  The fields stay opaque so only the parent assembly
 // can preserve mount ordering and feed the lowerer.
-func NewMountedArtifactReceipt(receipt *ArtifactScalarReceipt, mountID keyspace.ContentID) (MountedArtifactReceipt, bool) {
+func NewMountedArtifactReceipt(receipt *ArtifactScalarReceipt, mountID identity.ContentID) (MountedArtifactReceipt, bool) {
 	row := MountedArtifactReceipt{receipt: receipt, mountID: mountID}
 	return row, receipt != nil && receipt.sealed && receipt.template.Available() && mountID.Available()
 }
 
 type artifactMountReceipt struct {
-	mount    keyspace.ContentID
-	artifact keyspace.ContentID
-	program  keyspace.ContentID
-	initial  keyspace.ContentID
+	mount    identity.ContentID
+	artifact identity.ContentID
+	program  identity.ContentID
+	initial  identity.ContentID
 }
 
 type artifactPointMetadata struct {
-	mount     keyspace.ContentID
-	artifact  keyspace.ContentID
-	reusable  keyspace.ContentID
-	decisions []keyspace.ContentID
+	mount     identity.ContentID
+	artifact  identity.ContentID
+	reusable  identity.ContentID
+	decisions []identity.ContentID
 	initial   bool
 }
 
 type artifactEnvironmentRow struct {
-	mount    keyspace.ContentID
-	artifact keyspace.ContentID
-	reusable keyspace.ContentID
-	id       keyspace.ContentID
-	from     keyspace.ContentID
-	to       keyspace.ContentID
-	route    keyspace.ContentID
-	guard    keyspace.ContentID
-	decision keyspace.ContentID
+	mount    identity.ContentID
+	artifact identity.ContentID
+	reusable identity.ContentID
+	id       identity.ContentID
+	from     identity.ContentID
+	to       identity.ContentID
+	route    identity.ContentID
+	guard    identity.ContentID
+	decision identity.ContentID
 	guarded  bool
 	truth    bool
 	// component, mu, arm, and reset are parent proof metadata. Equation has
 	// no corresponding runtime fields; lowerArtifactRows validates them before
 	// admitting the boundary and retains them in the immutable receipt.
-	component     keyspace.ContentID
-	mu            keyspace.ContentID
-	reset         keyspace.ContentID
+	component     identity.ContentID
+	mu            identity.ContentID
+	reset         identity.ContentID
 	hasReset      bool
-	resets        []keyspace.ContentID
+	resets        []identity.ContentID
 	arm           ArtifactStructuralArm
 	transportOnly bool
 	local         bool
@@ -1087,22 +1087,22 @@ type artifactEnvironmentRow struct {
 }
 
 type artifactWTORegionRow struct {
-	mount    keyspace.ContentID
-	artifact keyspace.ContentID
-	reusable keyspace.ContentID
-	id       keyspace.ContentID
-	head     keyspace.ContentID
-	parent   keyspace.ContentID
+	mount    identity.ContentID
+	artifact identity.ContentID
+	reusable identity.ContentID
+	id       identity.ContentID
+	head     identity.ContentID
+	parent   identity.ContentID
 	cyclic   bool
-	members  []keyspace.ContentID
+	members  []identity.ContentID
 }
 
 type artifactWTOEventRow struct {
-	mount    keyspace.ContentID
-	artifact keyspace.ContentID
+	mount    identity.ContentID
+	artifact identity.ContentID
 	kind     ArtifactEventKind
-	region   keyspace.ContentID
-	point    keyspace.ContentID
+	region   identity.ContentID
+	point    identity.ContentID
 }
 
 // ArtifactPointReceipt is a BindingTopology-issued view of one exact Program
@@ -1139,29 +1139,29 @@ func (receipt MountedNativeCallStageReceipt) Stage() ArtifactRuleStage {
 	}
 	return row.stage
 }
-func (receipt MountedNativeCallStageReceipt) MountID() keyspace.ContentID {
+func (receipt MountedNativeCallStageReceipt) MountID() identity.ContentID {
 	if _, ok := receipt.row(); !ok {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return receipt.key.mount
 }
-func (receipt MountedNativeCallStageReceipt) OccurrenceID() keyspace.ContentID {
+func (receipt MountedNativeCallStageReceipt) OccurrenceID() identity.ContentID {
 	if _, ok := receipt.row(); !ok {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return receipt.key.occurrence
 }
-func (receipt MountedNativeCallStageReceipt) ReusablePointID() keyspace.ContentID {
+func (receipt MountedNativeCallStageReceipt) ReusablePointID() identity.ContentID {
 	row, ok := receipt.row()
 	if !ok {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return row.point
 }
-func (receipt MountedNativeCallStageReceipt) ReusableInputPointID() keyspace.ContentID {
+func (receipt MountedNativeCallStageReceipt) ReusableInputPointID() identity.ContentID {
 	row, ok := receipt.row()
 	if !ok {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return row.input
 }
@@ -1178,7 +1178,7 @@ func (receipt MountedNativeCallStageReceipt) RuleMember() (ReceiptRuleMember, bo
 
 // MountedNativeCallStage resolves the exact native stage by owner capability,
 // mount, and occurrence. Point identity is output-only proof material.
-func (receipt *ReceiptGraph) MountedNativeCallStage(role RuleSlotCapability, mount, occurrence keyspace.ContentID) (MountedNativeCallStageReceipt, bool) {
+func (receipt *ReceiptGraph) MountedNativeCallStage(role RuleSlotCapability, mount, occurrence identity.ContentID) (MountedNativeCallStageReceipt, bool) {
 	if receipt == nil || !receipt.valid() || !role.mounted() || role.state != receipt.state || role.authority != receipt.authority || !mount.Available() || !occurrence.Available() || receipt.topology.nativeCallStages == nil {
 		return MountedNativeCallStageReceipt{}, false
 	}
@@ -1191,27 +1191,27 @@ func (receipt *ReceiptGraph) MountedNativeCallStage(role RuleSlotCapability, mou
 func (point ArtifactPointReceipt) Available() bool {
 	return point.topology != nil && point.topology.valid() && point.topology.artifact != nil && uint64(point.index) < uint64(len(point.topology.artifact.points))
 }
-func (point ArtifactPointReceipt) ID() keyspace.ContentID {
+func (point ArtifactPointReceipt) ID() identity.ContentID {
 	if !point.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return point.topology.artifact.points[point.index]
 }
-func (point ArtifactPointReceipt) MountID() keyspace.ContentID {
+func (point ArtifactPointReceipt) MountID() identity.ContentID {
 	if !point.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return point.topology.artifact.pointMeta[point.ID()].mount
 }
-func (point ArtifactPointReceipt) ArtifactID() keyspace.ContentID {
+func (point ArtifactPointReceipt) ArtifactID() identity.ContentID {
 	if !point.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return point.topology.artifact.pointMeta[point.ID()].artifact
 }
-func (point ArtifactPointReceipt) ReusableID() keyspace.ContentID {
+func (point ArtifactPointReceipt) ReusableID() identity.ContentID {
 	if !point.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return point.topology.artifact.pointMeta[point.ID()].reusable
 }
@@ -1231,31 +1231,31 @@ func (edge ArtifactEnvironmentReceipt) row() (artifactEnvironmentRow, bool) {
 	return edge.topology.artifact.edges[edge.index], true
 }
 func (edge ArtifactEnvironmentReceipt) Available() bool { _, ok := edge.row(); return ok }
-func (edge ArtifactEnvironmentReceipt) ID() keyspace.ContentID {
+func (edge ArtifactEnvironmentReceipt) ID() identity.ContentID {
 	row, ok := edge.row()
 	if !ok {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return row.id
 }
-func (edge ArtifactEnvironmentReceipt) From() keyspace.ContentID {
+func (edge ArtifactEnvironmentReceipt) From() identity.ContentID {
 	row, ok := edge.row()
 	if !ok {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return row.from
 }
-func (edge ArtifactEnvironmentReceipt) To() keyspace.ContentID {
+func (edge ArtifactEnvironmentReceipt) To() identity.ContentID {
 	row, ok := edge.row()
 	if !ok {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return row.to
 }
-func (edge ArtifactEnvironmentReceipt) RouteID() keyspace.ContentID {
+func (edge ArtifactEnvironmentReceipt) RouteID() identity.ContentID {
 	row, ok := edge.row()
 	if !ok {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return row.route
 }
@@ -1266,11 +1266,11 @@ func (edge ArtifactEnvironmentReceipt) Arm() ArtifactStructuralArm {
 	}
 	return row.arm
 }
-func (edge ArtifactEnvironmentReceipt) GuardID() (keyspace.ContentID, bool) {
+func (edge ArtifactEnvironmentReceipt) GuardID() (identity.ContentID, bool) {
 	row, ok := edge.row()
 	return row.guard, ok && row.guarded
 }
-func (edge ArtifactEnvironmentReceipt) DecisionID() (keyspace.ContentID, bool) {
+func (edge ArtifactEnvironmentReceipt) DecisionID() (identity.ContentID, bool) {
 	row, ok := edge.row()
 	return row.decision, ok && row.guarded && row.decision.Available()
 }
@@ -1278,14 +1278,14 @@ func (edge ArtifactEnvironmentReceipt) Truth() (bool, bool) {
 	row, ok := edge.row()
 	return row.truth, ok && row.guarded
 }
-func (edge ArtifactEnvironmentReceipt) ComponentID() keyspace.ContentID {
+func (edge ArtifactEnvironmentReceipt) ComponentID() identity.ContentID {
 	row, ok := edge.row()
 	if !ok {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return row.component
 }
-func (edge ArtifactEnvironmentReceipt) MuPathID() (keyspace.ContentID, bool) {
+func (edge ArtifactEnvironmentReceipt) MuPathID() (identity.ContentID, bool) {
 	row, ok := edge.row()
 	return row.mu, ok && row.mu.Available()
 }
@@ -1293,7 +1293,7 @@ func (edge ArtifactEnvironmentReceipt) HasResetWitness() bool {
 	row, ok := edge.row()
 	return ok && row.hasReset
 }
-func (edge ArtifactEnvironmentReceipt) ResetDigest() (keyspace.ContentID, bool) {
+func (edge ArtifactEnvironmentReceipt) ResetDigest() (identity.ContentID, bool) {
 	row, ok := edge.row()
 	return row.reset, ok && row.hasReset
 }
@@ -1304,24 +1304,24 @@ func (edge ArtifactEnvironmentReceipt) ResetCount() int {
 	}
 	return len(row.resets)
 }
-func (edge ArtifactEnvironmentReceipt) ResetAt(index int) (keyspace.ContentID, bool) {
+func (edge ArtifactEnvironmentReceipt) ResetAt(index int) (identity.ContentID, bool) {
 	row, ok := edge.row()
 	if !ok || index < 0 || index >= len(row.resets) {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return row.resets[index], true
 }
-func (edge ArtifactEnvironmentReceipt) MountID() keyspace.ContentID {
+func (edge ArtifactEnvironmentReceipt) MountID() identity.ContentID {
 	row, ok := edge.row()
 	if !ok {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return row.mount
 }
-func (edge ArtifactEnvironmentReceipt) ReusableID() keyspace.ContentID {
+func (edge ArtifactEnvironmentReceipt) ReusableID() identity.ContentID {
 	row, ok := edge.row()
 	if !ok {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return row.reusable
 }
@@ -1347,17 +1347,17 @@ func (event ArtifactWTOEventReceipt) Kind() ArtifactEventKind {
 	}
 	return row.kind
 }
-func (event ArtifactWTOEventReceipt) RegionID() keyspace.ContentID {
+func (event ArtifactWTOEventReceipt) RegionID() identity.ContentID {
 	row, ok := event.row()
 	if !ok {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return row.region
 }
-func (event ArtifactWTOEventReceipt) PointID() keyspace.ContentID {
+func (event ArtifactWTOEventReceipt) PointID() identity.ContentID {
 	row, ok := event.row()
 	if !ok {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return row.point
 }
@@ -1377,24 +1377,24 @@ func (region ArtifactWTORegionReceipt) row() (artifactWTORegionRow, bool) {
 	return region.topology.artifact.regions[region.index], true
 }
 func (region ArtifactWTORegionReceipt) Available() bool { _, ok := region.row(); return ok }
-func (region ArtifactWTORegionReceipt) ID() keyspace.ContentID {
+func (region ArtifactWTORegionReceipt) ID() identity.ContentID {
 	row, ok := region.row()
 	if !ok {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return row.id
 }
-func (region ArtifactWTORegionReceipt) Head() keyspace.ContentID {
+func (region ArtifactWTORegionReceipt) Head() identity.ContentID {
 	row, ok := region.row()
 	if !ok {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return row.head
 }
-func (region ArtifactWTORegionReceipt) ParentID() keyspace.ContentID {
+func (region ArtifactWTORegionReceipt) ParentID() identity.ContentID {
 	row, ok := region.row()
 	if !ok {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return row.parent
 }
@@ -1409,24 +1409,24 @@ func (region ArtifactWTORegionReceipt) MemberCount() int {
 	}
 	return len(row.members)
 }
-func (region ArtifactWTORegionReceipt) MemberAt(index int) (keyspace.ContentID, bool) {
+func (region ArtifactWTORegionReceipt) MemberAt(index int) (identity.ContentID, bool) {
 	row, ok := region.row()
 	if !ok || index < 0 || index >= len(row.members) {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return row.members[index], true
 }
-func (region ArtifactWTORegionReceipt) MountID() keyspace.ContentID {
+func (region ArtifactWTORegionReceipt) MountID() identity.ContentID {
 	row, ok := region.row()
 	if !ok {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return row.mount
 }
-func (region ArtifactWTORegionReceipt) ReusableID() keyspace.ContentID {
+func (region ArtifactWTORegionReceipt) ReusableID() identity.ContentID {
 	row, ok := region.row()
 	if !ok {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return row.reusable
 }
@@ -1437,7 +1437,7 @@ func (region ArtifactWTORegionReceipt) ReusableID() keyspace.ContentID {
 type MountedFunctionBoundaryReceipt struct {
 	graph *ReceiptGraph
 	index uint32
-	id    keyspace.ContentID
+	id    identity.ContentID
 }
 
 func (receipt MountedFunctionBoundaryReceipt) row() (artifactMountedFunction, bool) {
@@ -1448,59 +1448,59 @@ func (receipt MountedFunctionBoundaryReceipt) row() (artifactMountedFunction, bo
 	return row, row.id == receipt.id && row.id.Available()
 }
 func (receipt MountedFunctionBoundaryReceipt) Available() bool { _, ok := receipt.row(); return ok }
-func (receipt MountedFunctionBoundaryReceipt) ID() keyspace.ContentID {
+func (receipt MountedFunctionBoundaryReceipt) ID() identity.ContentID {
 	row, ok := receipt.row()
 	if !ok {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return row.id
 }
-func (receipt MountedFunctionBoundaryReceipt) MountID() keyspace.ContentID {
+func (receipt MountedFunctionBoundaryReceipt) MountID() identity.ContentID {
 	row, ok := receipt.row()
 	if !ok {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return row.mount
 }
-func (receipt MountedFunctionBoundaryReceipt) ArtifactID() keyspace.ContentID {
+func (receipt MountedFunctionBoundaryReceipt) ArtifactID() identity.ContentID {
 	row, ok := receipt.row()
 	if !ok {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return row.artifact
 }
-func (receipt MountedFunctionBoundaryReceipt) ReusableID() keyspace.ContentID {
+func (receipt MountedFunctionBoundaryReceipt) ReusableID() identity.ContentID {
 	row, ok := receipt.row()
 	if !ok {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return row.reusable
 }
-func (receipt MountedFunctionBoundaryReceipt) BodyID() keyspace.ContentID {
+func (receipt MountedFunctionBoundaryReceipt) BodyID() identity.ContentID {
 	row, ok := receipt.row()
 	if !ok {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return row.body
 }
-func (receipt MountedFunctionBoundaryReceipt) BodyContextID() keyspace.ContentID {
+func (receipt MountedFunctionBoundaryReceipt) BodyContextID() identity.ContentID {
 	row, ok := receipt.row()
 	if !ok {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return row.bodyContext
 }
-func (receipt MountedFunctionBoundaryReceipt) EntryID() keyspace.ContentID {
+func (receipt MountedFunctionBoundaryReceipt) EntryID() identity.ContentID {
 	row, ok := receipt.row()
 	if !ok {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return row.entry
 }
-func (receipt MountedFunctionBoundaryReceipt) CallFormalID() keyspace.ContentID {
+func (receipt MountedFunctionBoundaryReceipt) CallFormalID() identity.ContentID {
 	row, ok := receipt.row()
 	if !ok {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return row.callFormal
 }
@@ -1549,10 +1549,10 @@ func (receipt MountedFunctionBoundaryReceipt) OutcomeCount() int {
 	}
 	return len(row.outcomes)
 }
-func (receipt MountedFunctionBoundaryReceipt) OutcomeAt(index int) (keyspace.ContentID, bool) {
+func (receipt MountedFunctionBoundaryReceipt) OutcomeAt(index int) (identity.ContentID, bool) {
 	row, ok := receipt.row()
 	if !ok || index < 0 || index >= len(row.outcomes) {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return row.outcomes[index], true
 }
@@ -1560,7 +1560,7 @@ func (receipt MountedFunctionBoundaryReceipt) OutcomeAt(index int) (keyspace.Con
 type MountedFunctionFormalPort struct {
 	function MountedFunctionBoundaryReceipt
 	index    uint32
-	id       keyspace.ContentID
+	id       identity.ContentID
 }
 
 func (port MountedFunctionFormalPort) row() (ArtifactScalarFormalPort, bool) {
@@ -1572,24 +1572,24 @@ func (port MountedFunctionFormalPort) row() (ArtifactScalarFormalPort, bool) {
 	return row, row.ID == port.id && uint64(row.Position) == uint64(port.index)
 }
 func (port MountedFunctionFormalPort) Available() bool { _, ok := port.row(); return ok }
-func (port MountedFunctionFormalPort) ID() keyspace.ContentID {
+func (port MountedFunctionFormalPort) ID() identity.ContentID {
 	row, ok := port.row()
 	if !ok {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return row.ID
 }
-func (port MountedFunctionFormalPort) CellID() keyspace.ContentID {
+func (port MountedFunctionFormalPort) CellID() identity.ContentID {
 	row, ok := port.row()
 	if !ok {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return row.Cell
 }
-func (port MountedFunctionFormalPort) StorageCellID() keyspace.ContentID {
+func (port MountedFunctionFormalPort) StorageCellID() identity.ContentID {
 	row, ok := port.row()
 	if !ok {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return row.Storage
 }
@@ -1600,22 +1600,22 @@ func (port MountedFunctionFormalPort) Position() (int, bool) {
 
 type MountedFunctionVarargPort struct {
 	function MountedFunctionBoundaryReceipt
-	id, cell keyspace.ContentID
+	id, cell identity.ContentID
 }
 
 func (port MountedFunctionVarargPort) Available() bool {
 	row, ok := port.function.row()
 	return ok && row.hasVararg && row.vararg.ID == port.id && row.vararg.Cell == port.cell && port.id.Available() && port.cell.Available()
 }
-func (port MountedFunctionVarargPort) ID() keyspace.ContentID {
+func (port MountedFunctionVarargPort) ID() identity.ContentID {
 	if !port.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return port.id
 }
-func (port MountedFunctionVarargPort) CellID() keyspace.ContentID {
+func (port MountedFunctionVarargPort) CellID() identity.ContentID {
 	if !port.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return port.cell
 }
@@ -1623,7 +1623,7 @@ func (port MountedFunctionVarargPort) CellID() keyspace.ContentID {
 type MountedFunctionCapturePort struct {
 	function MountedFunctionBoundaryReceipt
 	index    uint32
-	id       keyspace.ContentID
+	id       identity.ContentID
 }
 
 func (port MountedFunctionCapturePort) row() (ArtifactScalarCapturePort, bool) {
@@ -1635,38 +1635,38 @@ func (port MountedFunctionCapturePort) row() (ArtifactScalarCapturePort, bool) {
 	return row, row.ID == port.id && uint64(row.Position) == uint64(port.index)
 }
 func (port MountedFunctionCapturePort) Available() bool { _, ok := port.row(); return ok }
-func (port MountedFunctionCapturePort) ID() keyspace.ContentID {
+func (port MountedFunctionCapturePort) ID() identity.ContentID {
 	row, ok := port.row()
 	if !ok {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return row.ID
 }
-func (port MountedFunctionCapturePort) InnerCellID() keyspace.ContentID {
+func (port MountedFunctionCapturePort) InnerCellID() identity.ContentID {
 	row, ok := port.row()
 	if !ok {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return row.Inner
 }
-func (port MountedFunctionCapturePort) OuterCellID() keyspace.ContentID {
+func (port MountedFunctionCapturePort) OuterCellID() identity.ContentID {
 	row, ok := port.row()
 	if !ok {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return row.Outer
 }
-func (port MountedFunctionCapturePort) InnerBodyID() keyspace.ContentID {
+func (port MountedFunctionCapturePort) InnerBodyID() identity.ContentID {
 	row, ok := port.row()
 	if !ok {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return row.InnerBody
 }
-func (port MountedFunctionCapturePort) OuterBodyID() keyspace.ContentID {
+func (port MountedFunctionCapturePort) OuterBodyID() identity.ContentID {
 	row, ok := port.row()
 	if !ok {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return row.OuterBody
 }
@@ -1791,7 +1791,7 @@ func BeginMountedArtifactReceiptAssemblyWithFailure(binding *SchemaBinding, moun
 	if schema == nil || !schema.Available() {
 		return nil, ReceiptAssemblyFailureSchema, false
 	}
-	rows, snapshotFailure := snapshotMountedArtifactReceipts(mounts, keyspace.ContentID(schema.ID().Digest()), bootstrap[0], binding.state)
+	rows, snapshotFailure := snapshotMountedArtifactReceipts(mounts, identity.ContentID(schema.ID().Digest()), bootstrap[0], binding.state)
 	if snapshotFailure != ReceiptAssemblyFailureNone {
 		return nil, snapshotFailure, false
 	}
@@ -1806,7 +1806,7 @@ func BeginMountedArtifactReceiptAssemblyWithFailure(binding *SchemaBinding, moun
 	return assembly, ReceiptAssemblyFailureNone, true
 }
 
-func artifactReceiptKey(id keyspace.ContentID, version uint64) (composition.Key, bool) {
+func artifactReceiptKey(id identity.ContentID, version uint64) (composition.Key, bool) {
 	key := composition.Key{ID: composition.ID(id), Version: version}
 	return key, id.Available() && key.Available()
 }
@@ -1815,7 +1815,7 @@ func lowerArtifactReceipt(assembly *ReceiptAssembly, rows *artifactReceiptTopolo
 	if assembly == nil || assembly.builder == nil || rows == nil {
 		return false
 	}
-	sites := make(map[keyspace.ContentID]equation.Site, len(rows.points))
+	sites := make(map[identity.ContentID]equation.Site, len(rows.points))
 	for _, id := range rows.points {
 		source, sourceOK := artifactReceiptKey(id, artifactPointSourceVersion)
 		metadata, metadataOK := rows.pointMeta[id]
@@ -1902,7 +1902,7 @@ func lowerArtifactReceipt(assembly *ReceiptAssembly, rows *artifactReceiptTopolo
 	return true
 }
 
-func mustArtifactReceiptKey(id keyspace.ContentID, version uint64) composition.Key {
+func mustArtifactReceiptKey(id identity.ContentID, version uint64) composition.Key {
 	key, _ := artifactReceiptKey(id, version)
 	return key
 }
@@ -1943,8 +1943,8 @@ func (builder *bindingTopologyBuilder) lowerArtifactRows() (ReceiptArtifactRowFa
 		return ReceiptArtifactRowFailureNone, 0, true
 	}
 	sites := rows.sites
-	refs := make(map[keyspace.ContentID]equation.PointRef, len(rows.points))
-	pointDecisions := make(map[keyspace.ContentID]map[keyspace.ContentID]equation.Decision, len(rows.points))
+	refs := make(map[identity.ContentID]equation.PointRef, len(rows.points))
+	pointDecisions := make(map[identity.ContentID]map[identity.ContentID]equation.Decision, len(rows.points))
 	for pointIndex, id := range rows.points {
 		site, siteOK := sites[id]
 		row, issued := builder.issuePointRow(equation.PointSpec{Site: site})
@@ -1957,7 +1957,7 @@ func (builder *bindingTopologyBuilder) lowerArtifactRows() (ReceiptArtifactRowFa
 		if !metadataOK {
 			return ReceiptArtifactRowFailurePoint, uint32(pointIndex), false
 		}
-		decisions := make(map[keyspace.ContentID]equation.Decision, len(metadata.decisions))
+		decisions := make(map[identity.ContentID]equation.Decision, len(metadata.decisions))
 		for _, semanticID := range metadata.decisions {
 			decisionKey := mountedArtifactID("analysis/engine/artifact-decision/v1", metadata.mount, metadata.artifact, semanticID)
 			decision, decisionOK := equation.NewDecision(mustArtifactReceiptKey(decisionKey, artifactPointSourceVersion))
@@ -1992,7 +1992,7 @@ func (builder *bindingTopologyBuilder) lowerArtifactRows() (ReceiptArtifactRowFa
 			return ReceiptArtifactRowFailureEdgeMetadata, uint32(edgeIndex), false
 		}
 		maps := make([]equation.DecisionMap, len(fromMetadata.decisions))
-		resetSet := make(map[keyspace.ContentID]struct{}, len(edge.resets))
+		resetSet := make(map[identity.ContentID]struct{}, len(edge.resets))
 		for _, resetID := range edge.resets {
 			// A recurrence reset is conditional on the decision being live at
 			// this source Point. Parent reset receipts may contain decisions
@@ -2104,7 +2104,7 @@ func (builder *bindingTopologyBuilder) lowerArtifactRows() (ReceiptArtifactRowFa
 	// The artifact WTO stream is the parent-issued semantic order.  Convert
 	// its point events to dense ranks aligned with the equation PointSpec
 	// rows; point IDs are mounted and therefore cannot be used as tie-breaks.
-	eventRank := make(map[keyspace.ContentID]int, len(rows.points))
+	eventRank := make(map[identity.ContentID]int, len(rows.points))
 	for eventIndex, event := range rows.events {
 		if event.kind != ArtifactEventPoint {
 			continue
@@ -2230,7 +2230,7 @@ func transportFactor(inner *bindingTopologyBuilderState, role RuleSlotCapability
 	return factor, shape.Output, true
 }
 
-func linkBootstrapTransportKey(owner keyspace.ContentID, target artifactPointMetadata, factor composition.Key) (composition.Key, bool) {
+func linkBootstrapTransportKey(owner identity.ContentID, target artifactPointMetadata, factor composition.Key) (composition.Key, bool) {
 	if !owner.Available() || !target.mount.Available() || !target.artifact.Available() || !target.reusable.Available() || !factor.Available() {
 		return composition.Key{}, false
 	}
@@ -2246,12 +2246,12 @@ func linkBootstrapTransportKey(owner keyspace.ContentID, target artifactPointMet
 			break
 		}
 	}
-	return artifactReceiptKey(keyspace.ContentID(sha256.Sum256(encoded)), artifactEdgeSourceVersion)
+	return artifactReceiptKey(identity.ContentID(sha256.Sum256(encoded)), artifactEdgeSourceVersion)
 }
 
-func mountedArtifactID(domain string, mount, artifact, id keyspace.ContentID) keyspace.ContentID {
+func mountedArtifactID(domain string, mount, artifact, id identity.ContentID) identity.ContentID {
 	if !mount.Available() || !artifact.Available() || !id.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	encoded := make([]byte, 0, len(domain)+1+len(mount)+len(artifact)+len(id))
 	encoded = append(encoded, domain...)
@@ -2259,14 +2259,14 @@ func mountedArtifactID(domain string, mount, artifact, id keyspace.ContentID) ke
 	encoded = append(encoded, mount[:]...)
 	encoded = append(encoded, artifact[:]...)
 	encoded = append(encoded, id[:]...)
-	return keyspace.ContentID(sha256.Sum256(encoded))
+	return identity.ContentID(sha256.Sum256(encoded))
 }
 
-func linkBootstrapPointSemanticID(owner, point keyspace.ContentID) keyspace.ContentID {
+func linkBootstrapPointSemanticID(owner, point identity.ContentID) identity.ContentID {
 	return mountedArtifactID("analysis/engine/link-bootstrap-point/v1", owner, owner, point)
 }
 
-func snapshotMountedArtifactReceipts(mounts []MountedArtifactReceipt, schemaID keyspace.ContentID, bootstrap LinkBootstrapWitness, bindingState *schemaBindingState) (*artifactReceiptTopology, ReceiptAssemblyFailure) {
+func snapshotMountedArtifactReceipts(mounts []MountedArtifactReceipt, schemaID identity.ContentID, bootstrap LinkBootstrapWitness, bindingState *schemaBindingState) (*artifactReceiptTopology, ReceiptAssemblyFailure) {
 	if len(mounts) == 0 || !schemaID.Available() || !bootstrap.Available() || bindingState == nil {
 		return nil, ReceiptAssemblyFailureSnapshotBootstrap
 	}
@@ -2274,7 +2274,7 @@ func snapshotMountedArtifactReceipts(mounts []MountedArtifactReceipt, schemaID k
 	if !pointOK {
 		return nil, ReceiptAssemblyFailureSnapshotBootstrap
 	}
-	occurrences := make(map[keyspace.ContentID]struct{}, bootstrap.OccurrenceCount())
+	occurrences := make(map[identity.ContentID]struct{}, bootstrap.OccurrenceCount())
 	for index := 0; index < bootstrap.OccurrenceCount(); index++ {
 		id, idOK := bootstrap.OccurrenceAt(index)
 		if !idOK {
@@ -2282,7 +2282,7 @@ func snapshotMountedArtifactReceipts(mounts []MountedArtifactReceipt, schemaID k
 		}
 		occurrences[id] = struct{}{}
 	}
-	roles := make(map[keyspace.ContentID]RuleSlotCapability, len(occurrences))
+	roles := make(map[identity.ContentID]RuleSlotCapability, len(occurrences))
 	for id := range occurrences {
 		capability, capabilityOK := bootstrap.capabilityFor(id)
 		if !capabilityOK || !capability.link() || capability.state != bindingState || capability.authority != bindingState.authority {
@@ -2316,8 +2316,8 @@ func snapshotMountedArtifactReceipts(mounts []MountedArtifactReceipt, schemaID k
 		seenTransportFactors[factor] = struct{}{}
 		transports[index] = linkBootstrapTransport{capability: capability, factor: factor}
 	}
-	result := &artifactReceiptTopology{pointMeta: make(map[keyspace.ContentID]artifactPointMetadata), sites: make(map[keyspace.ContentID]equation.Site), mounted: make(map[artifactMountedPoint]equation.Site), mountedRef: make(map[artifactMountedPoint]equation.PointRef), bodies: make(map[artifactMountedBody]artifactBodyTransport), ruleSet: make(map[artifactMountedRule]artifactRuleInput), callStages: make(map[artifactMountedRuleOccurrence]artifactNativeCallStage), pointRef: make(map[keyspace.ContentID]equation.PointRef), bootstrap: &linkBootstrapReceipt{owner: bootstrap.OwnerID(), point: bootstrapPoint, occurrences: occurrences, roles: roles, claims: make(map[keyspace.ContentID]RuleSlotCapability), transports: transports}}
-	seenMounts := make(map[keyspace.ContentID]struct{}, len(mounts))
+	result := &artifactReceiptTopology{pointMeta: make(map[identity.ContentID]artifactPointMetadata), sites: make(map[identity.ContentID]equation.Site), mounted: make(map[artifactMountedPoint]equation.Site), mountedRef: make(map[artifactMountedPoint]equation.PointRef), bodies: make(map[artifactMountedBody]artifactBodyTransport), ruleSet: make(map[artifactMountedRule]artifactRuleInput), callStages: make(map[artifactMountedRuleOccurrence]artifactNativeCallStage), pointRef: make(map[identity.ContentID]equation.PointRef), bootstrap: &linkBootstrapReceipt{owner: bootstrap.OwnerID(), point: bootstrapPoint, occurrences: occurrences, roles: roles, claims: make(map[identity.ContentID]RuleSlotCapability), transports: transports}}
+	seenMounts := make(map[identity.ContentID]struct{}, len(mounts))
 	for _, mount := range mounts {
 		if mount.receipt == nil || !mount.receipt.sealed || !mount.receipt.template.Available() || !mount.mountID.Available() || mount.receipt.template.schema != schemaID {
 			return nil, ReceiptAssemblyFailureSnapshotMount
@@ -2376,13 +2376,13 @@ func linkTransportFactorSemantic(state *schemaBindingState, capability RuleSlotC
 // the shared mounted planes. Scalar relations were closed once by
 // NewArtifactScalarTemplate; this pass only resolves Link roles, substitutes
 // mount-qualified IDs, and checks that those substitutions stay in the mount.
-func appendMountedArtifactReceipt(rows *artifactReceiptTopology, mount keyspace.ContentID, receipt *ArtifactScalarReceipt) bool {
+func appendMountedArtifactReceipt(rows *artifactReceiptTopology, mount identity.ContentID, receipt *ArtifactScalarReceipt) bool {
 	if rows == nil || rows.pointMeta == nil || rows.bodies == nil || rows.ruleSet == nil || rows.callStages == nil || receipt == nil || !receipt.sealed || !receipt.template.Available() || !mount.Available() {
 		return false
 	}
 	template := receipt.template
-	points := make(map[keyspace.ContentID]keyspace.ContentID, len(template.points))
-	var initial keyspace.ContentID
+	points := make(map[identity.ContentID]identity.ContentID, len(template.points))
+	var initial identity.ContentID
 	for _, point := range template.points {
 		mounted := mountedArtifactID("analysis/engine/artifact-point/v1", mount, template.artifact, point.ID)
 		if !mounted.Available() {
@@ -2408,8 +2408,8 @@ func appendMountedArtifactReceipt(rows *artifactReceiptTopology, mount keyspace.
 		return false
 	}
 
-	regions := make(map[keyspace.ContentID]keyspace.ContentID, len(template.regions))
-	seenRegionIDs := make(map[keyspace.ContentID]struct{}, len(rows.regions)+len(template.regions))
+	regions := make(map[identity.ContentID]identity.ContentID, len(template.regions))
+	seenRegionIDs := make(map[identity.ContentID]struct{}, len(rows.regions)+len(template.regions))
 	for _, prior := range rows.regions {
 		seenRegionIDs[prior.id] = struct{}{}
 	}
@@ -2443,7 +2443,7 @@ func appendMountedArtifactReceipt(rows *artifactReceiptTopology, mount keyspace.
 			}
 			row.parent = parent
 		}
-		row.members = make([]keyspace.ContentID, len(region.Members))
+		row.members = make([]identity.ContentID, len(region.Members))
 		for memberIndex, member := range region.Members {
 			mounted, memberOK := points[member]
 			if !memberOK {
@@ -2453,8 +2453,8 @@ func appendMountedArtifactReceipt(rows *artifactReceiptTopology, mount keyspace.
 		}
 	}
 
-	routes := make(map[keyspace.ContentID]artifactEnvironmentRow, len(template.edges))
-	seenEdgeIDs := make(map[keyspace.ContentID]struct{}, len(rows.edges)+len(template.edges)+len(template.local))
+	routes := make(map[identity.ContentID]artifactEnvironmentRow, len(template.edges))
+	seenEdgeIDs := make(map[identity.ContentID]struct{}, len(rows.edges)+len(template.edges)+len(template.local))
 	for _, prior := range rows.edges {
 		seenEdgeIDs[prior.id] = struct{}{}
 	}
@@ -2522,7 +2522,7 @@ func appendMountedArtifactReceipt(rows *artifactReceiptTopology, mount keyspace.
 		if !capabilityOK || !rule.Stage.valid() || !pointOK {
 			return false
 		}
-		input := keyspace.ContentID{}
+		input := identity.ContentID{}
 		if rule.Input.Available() {
 			var inputOK bool
 			input, inputOK = points[rule.Input]
@@ -2561,7 +2561,7 @@ func appendMountedArtifactReceipt(rows *artifactReceiptTopology, mount keyspace.
 		// mounted point inverse resolves them later.
 		rows.bodies[key] = artifactBodyTransport{entry: body.Entry, exits: body.Exits}
 	}
-	seenFunctionIDs := make(map[keyspace.ContentID]struct{}, len(rows.functions)+len(template.functions))
+	seenFunctionIDs := make(map[identity.ContentID]struct{}, len(rows.functions)+len(template.functions))
 	for _, prior := range rows.functions {
 		seenFunctionIDs[prior.id] = struct{}{}
 	}
@@ -2602,7 +2602,7 @@ func validArtifactMountedFunction(row artifactMountedFunction, bodies map[artifa
 	if _, bodyOK := bodies[artifactMountedBody{mount: row.mount, body: row.body}]; !bodyOK {
 		return false
 	}
-	seenFormals := make(map[keyspace.ContentID]struct{}, len(row.formals))
+	seenFormals := make(map[identity.ContentID]struct{}, len(row.formals))
 	for index, port := range row.formals {
 		if !port.ID.Available() || !port.Cell.Available() || !port.Storage.Available() || uint64(port.Position) != uint64(index) {
 			return false
@@ -2612,7 +2612,7 @@ func validArtifactMountedFunction(row artifactMountedFunction, bodies map[artifa
 		}
 		seenFormals[port.ID] = struct{}{}
 	}
-	seenCaptures := make(map[keyspace.ContentID]struct{}, len(row.captures))
+	seenCaptures := make(map[identity.ContentID]struct{}, len(row.captures))
 	for index, capture := range row.captures {
 		if !capture.ID.Available() || !capture.Inner.Available() || !capture.Outer.Available() || capture.Inner == capture.Outer ||
 			capture.InnerBody != row.body || capture.InnerBody == capture.OuterBody || uint64(capture.Position) != uint64(index) {
@@ -2626,7 +2626,7 @@ func validArtifactMountedFunction(row artifactMountedFunction, bodies map[artifa
 		}
 		seenCaptures[capture.ID] = struct{}{}
 	}
-	seenOutcomes := make(map[keyspace.ContentID]struct{}, len(row.outcomes))
+	seenOutcomes := make(map[identity.ContentID]struct{}, len(row.outcomes))
 	for _, outcome := range row.outcomes {
 		if !outcome.Available() {
 			return false
@@ -2648,7 +2648,7 @@ func sealArtifactFunctionDirectory(rows *artifactReceiptTopology) ([]artifactMou
 		return nil, rows == nil
 	}
 	result := make([]artifactMountedFunction, len(rows.functions))
-	seen := make(map[keyspace.ContentID]struct{}, len(rows.functions))
+	seen := make(map[identity.ContentID]struct{}, len(rows.functions))
 	for index, row := range rows.functions {
 		if !validArtifactMountedFunction(row, rows.bodies) {
 			return nil, false
@@ -2659,7 +2659,7 @@ func sealArtifactFunctionDirectory(rows *artifactReceiptTopology) ([]artifactMou
 		seen[row.id] = struct{}{}
 		row.formals = append([]ArtifactScalarFormalPort(nil), row.formals...)
 		row.captures = append([]ArtifactScalarCapturePort(nil), row.captures...)
-		row.outcomes = append([]keyspace.ContentID(nil), row.outcomes...)
+		row.outcomes = append([]identity.ContentID(nil), row.outcomes...)
 		result[index] = row
 	}
 	return result, true
@@ -2669,7 +2669,7 @@ func sealArtifactFunctionDirectory(rows *artifactReceiptTopology) ([]artifactMou
 // needed after the expanded artifact snapshot is released. Every entry must
 // already have an attached semantic member under the exact
 // role+mount+point+occurrence identity.
-func sealNativeCallStageDirectory(rows *artifactReceiptTopology, directory *bindingSemanticDirectory) (map[artifactMountedRuleOccurrence]artifactNativeCallStage, bool) {
+func sealNativeCallStageDirectory(rows *artifactReceiptTopology, directory *semanticDirectory) (map[artifactMountedRuleOccurrence]artifactNativeCallStage, bool) {
 	if rows == nil {
 		return nil, true
 	}
@@ -2683,7 +2683,7 @@ func sealNativeCallStageDirectory(rows *artifactReceiptTopology, directory *bind
 		if !found || !stage.stage.nativeCall() || rule.stage != stage.stage || rule.point != stage.input || rule.mountedPoint != stage.mountedPoint || rule.mountedInput != stage.mountedInput || !memberID.Available() {
 			return nil, false
 		}
-		if _, attached := directory.members[memberID]; !attached {
+		if _, attached := directory.member(memberID); !attached {
 			return nil, false
 		}
 		if _, duplicate := result[key]; duplicate {
@@ -2726,7 +2726,7 @@ func (rows *artifactReceiptTopology) validPayload(topology *BindingTopology) boo
 			seenFactors[transport.factor] = struct{}{}
 		}
 	}
-	mounts := make(map[keyspace.ContentID]artifactMountReceipt, len(rows.mounts))
+	mounts := make(map[identity.ContentID]artifactMountReceipt, len(rows.mounts))
 	for _, mount := range rows.mounts {
 		metadata, initialOK := rows.pointMeta[mount.initial]
 		if !mount.mount.Available() || !mount.artifact.Available() || !mount.program.Available() || !mount.initial.Available() || !initialOK || !metadata.initial || metadata.mount != mount.mount || metadata.artifact != mount.artifact {
@@ -2737,10 +2737,10 @@ func (rows *artifactReceiptTopology) validPayload(topology *BindingTopology) boo
 		}
 		mounts[mount.mount] = mount
 	}
-	points := make(map[keyspace.ContentID]struct{}, len(rows.points))
-	pointMounts := make(map[keyspace.ContentID]keyspace.ContentID, len(rows.points))
+	points := make(map[identity.ContentID]struct{}, len(rows.points))
+	pointMounts := make(map[identity.ContentID]identity.ContentID, len(rows.points))
 	sourcePoints := make(map[artifactMountedPoint]struct{}, len(rows.points))
-	initialCounts := make(map[keyspace.ContentID]int, len(rows.mounts))
+	initialCounts := make(map[identity.ContentID]int, len(rows.mounts))
 	for _, id := range rows.points {
 		if !id.Available() {
 			return false
@@ -2768,8 +2768,8 @@ func (rows *artifactReceiptTopology) validPayload(topology *BindingTopology) boo
 			return false
 		}
 	}
-	regions := make(map[keyspace.ContentID]struct{}, len(rows.regions))
-	regionMounts := make(map[keyspace.ContentID]keyspace.ContentID, len(rows.regions))
+	regions := make(map[identity.ContentID]struct{}, len(rows.regions))
+	regionMounts := make(map[identity.ContentID]identity.ContentID, len(rows.regions))
 	for _, region := range rows.regions {
 		mount, mountOK := mounts[region.mount]
 		if !region.id.Available() || !region.head.Available() || !mountOK || mount.artifact != region.artifact || !region.reusable.Available() {
@@ -2799,7 +2799,7 @@ func (rows *artifactReceiptTopology) validPayload(topology *BindingTopology) boo
 			}
 		}
 	}
-	edges := make(map[keyspace.ContentID]struct{}, len(rows.edges))
+	edges := make(map[identity.ContentID]struct{}, len(rows.edges))
 	for _, edge := range rows.edges {
 		mount, mountOK := mounts[edge.mount]
 		if !mountOK || mount.artifact != edge.artifact || !edge.reusable.Available() || !edge.id.Available() {
@@ -2892,7 +2892,7 @@ func (rows *artifactReceiptTopology) validPayload(topology *BindingTopology) boo
 			}
 		}
 	}
-	seenFunctionIDs := make(map[keyspace.ContentID]struct{}, len(rows.functions))
+	seenFunctionIDs := make(map[identity.ContentID]struct{}, len(rows.functions))
 	for _, function := range rows.functions {
 		if !validArtifactMountedFunction(function, rows.bodies) {
 			return false
@@ -2926,7 +2926,7 @@ func (rows *artifactReceiptTopology) validPayload(topology *BindingTopology) boo
 			if !id.Available() || ref == 0 {
 				return false
 			}
-			if _, found := topology.directory.points[id]; !found {
+			if _, found := topology.directory.point(id); !found {
 				return false
 			}
 		}
@@ -2934,7 +2934,7 @@ func (rows *artifactReceiptTopology) validPayload(topology *BindingTopology) boo
 			return false
 		}
 		if rows.bootstrap != nil {
-			if _, found := topology.directory.points[rows.bootstrap.semantic]; !found {
+			if _, found := topology.directory.point(rows.bootstrap.semantic); !found {
 				return false
 			}
 		}
@@ -2962,7 +2962,7 @@ func (rows *artifactReceiptTopology) seal(topology *BindingTopology) bool {
 	return true
 }
 
-func (rows *artifactReceiptTopology) mountedSite(mount, reusable keyspace.ContentID) (equation.Site, bool) {
+func (rows *artifactReceiptTopology) mountedSite(mount, reusable identity.ContentID) (equation.Site, bool) {
 	if rows == nil || rows.mounted == nil || !mount.Available() || !reusable.Available() {
 		return equation.Site{}, false
 	}
@@ -2974,7 +2974,7 @@ func (rows *artifactReceiptTopology) mountedSite(mount, reusable keyspace.Conten
 	return site, ok
 }
 
-func (rows *artifactReceiptTopology) mountedPoint(mount, reusable keyspace.ContentID) (equation.Site, equation.PointRef, bool) {
+func (rows *artifactReceiptTopology) mountedPoint(mount, reusable identity.ContentID) (equation.Site, equation.PointRef, bool) {
 	if rows == nil || rows.mounted == nil || rows.mountedRef == nil || !mount.Available() || !reusable.Available() {
 		return equation.Site{}, 0, false
 	}
@@ -2984,7 +2984,7 @@ func (rows *artifactReceiptTopology) mountedPoint(mount, reusable keyspace.Conte
 	return site, ref, siteOK && refOK && ref != 0
 }
 
-func (rows *artifactReceiptTopology) mountedBody(mount, body keyspace.ContentID) (artifactBodyTransport, bool) {
+func (rows *artifactReceiptTopology) mountedBody(mount, body identity.ContentID) (artifactBodyTransport, bool) {
 	if rows == nil || rows.bodies == nil || !mount.Available() || !body.Available() {
 		return artifactBodyTransport{}, false
 	}
@@ -2992,7 +2992,7 @@ func (rows *artifactReceiptTopology) mountedBody(mount, body keyspace.ContentID)
 	return value, ok && len(value.entry) != 0 && len(value.exits) != 0
 }
 
-func (rows *artifactReceiptTopology) mountedRule(role RuleSlotCapability, mount, point, occurrence keyspace.ContentID) (artifactRuleInput, bool) {
+func (rows *artifactReceiptTopology) mountedRule(role RuleSlotCapability, mount, point, occurrence identity.ContentID) (artifactRuleInput, bool) {
 	if rows == nil || rows.ruleSet == nil || !role.mounted() || !mount.Available() || !point.Available() || !occurrence.Available() {
 		return artifactRuleInput{}, false
 	}

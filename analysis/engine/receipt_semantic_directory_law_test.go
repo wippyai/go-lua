@@ -45,14 +45,33 @@ func TestReceiptAssemblySemanticDirectoryLookupIsExactAndRevisionOwned(t *testin
 	if _, found := first.lookupRuleMember(receiptAssemblySemanticID(0)); found {
 		t.Fatal("zero semantic member ID resolved")
 	}
-	second, secondOK := topology.Graph(nil)
+	second, secondOK := initialReceiptGraph(topology)
 	secondPoint, secondPointOK := second.lookupPoint(receiptAssemblySemanticID(1))
 	secondMember, secondMemberOK := second.lookupRuleMember(receiptAssemblySemanticID(2))
 	if !secondOK || second == nil || second == first || !secondPointOK || secondPoint.graph != second || !second.graph.OwnsPoint(secondPoint.point) || !secondMemberOK || secondMember.graph != second || !second.graph.OwnsMember(secondMember.member) {
 		t.Fatal("semantic directory exact second-revision receipts")
 	}
-	if second.graph.OwnsPoint(point.point) || second.graph.OwnsMember(member.member) || first.graph.OwnsPoint(secondPoint.point) || first.graph.OwnsMember(secondMember.member) {
-		t.Fatal("semantic directory receipt crossed graph revision")
+	// The directory is the topology's organ: every revision handle resolves
+	// one ContentID to the same immutable structural row.
+	if secondPoint.point.Key() != point.point.Key() || secondMember.member.Key() != member.member.Key() {
+		t.Fatal("semantic directory resolved one identity to two rows")
+	}
+	pointLocator, pointLocatorOK := topology.directory.point(receiptAssemblySemanticID(1))
+	memberLocator, memberLocatorOK := topology.directory.member(receiptAssemblySemanticID(2))
+	foreign := newReceiptAssemblyRuleFixture(t)
+	if !foreign.assembly.SealSources() {
+		t.Fatal("foreign topology source seal")
+	}
+	foreign.addTopology(t)
+	_, foreignGraph, foreignOK := foreign.assembly.Commit()
+	if !pointLocatorOK || !memberLocatorOK || !foreignOK || foreignGraph == nil {
+		t.Fatal("foreign topology commit")
+	}
+	if _, crossed := pointLocator.Resolve(foreignGraph.graph); crossed {
+		t.Fatal("directory Point locator resolved against a foreign topology graph")
+	}
+	if _, crossed := memberLocator.Resolve(foreignGraph.graph); crossed {
+		t.Fatal("directory member locator resolved against a foreign topology graph")
 	}
 }
 
@@ -142,9 +161,7 @@ func TestReceiptAssemblySemanticQueryDirectoryUsesExactParentReceipt(t *testing.
 		t.Fatal("semantic Query Rule source")
 	}
 	ruleReceipt, ruleReceiptOK := assembly.builder.issueRuleRow(draft)
-	member, memberOK := assembly.builder.addSemanticRule(receiptAssemblySemanticID(31), ruleReceipt)
-	group, groupOK := assembly.builder.issueGroup(equation.Group{Members: []equation.RuleRef{member.ref}, Output: point.ref})
-	if !ruleReceiptOK || !memberOK || !groupOK || !assembly.builder.addGroup(group) {
+	if _, memberOK := assembly.builder.addSemanticRule(receiptAssemblySemanticID(31), ruleReceipt); !ruleReceiptOK || !memberOK {
 		t.Fatal("semantic Query Rule topology")
 	}
 	queryRow := equation.QueryInstance{Family: schema.querySemanticAt(0), Point: point.ref, Surfaces: []equation.Surface{{Factor: proof.output, Form: equation.SurfaceReadExact, Local: 1}}}
@@ -206,14 +223,13 @@ func newReceiptSemanticActivationFixture(t testing.TB) receiptSemanticActivation
 		t.Fatal("semantic Activation source")
 	}
 	pointReceipt, pointReceiptOK := assembly.builder.issuePointRow(equation.PointSpec{Site: triggerSite})
-	point, pointOK := assembly.builder.addSemanticPoint(receiptAssemblySemanticID(40), pointReceipt)
+	_, pointOK := assembly.builder.addSemanticPoint(receiptAssemblySemanticID(40), pointReceipt)
 	proof := implementation.receipt.proof
 	source, sourceOK := assembly.builder.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{Schema: proof.semantic, OperandFamily: proof.operandFamily, Occurrence: occurrence, Operand: operand})
 	draft, draftOK := implementation.BeginBindingRuleRow(source)
 	ruleReceipt, ruleReceiptOK := assembly.builder.issueRuleRow(draft)
 	trigger, triggerRefOK := assembly.builder.addSemanticRule(receiptAssemblySemanticID(41), ruleReceipt)
-	group, groupOK := assembly.builder.issueGroup(equation.Group{Members: []equation.RuleRef{trigger.ref}, Output: point.ref})
-	if !pointReceiptOK || !pointOK || !sourceOK || !draftOK || !ruleReceiptOK || !triggerRefOK || !groupOK || !assembly.builder.addGroup(group) {
+	if !pointReceiptOK || !pointOK || !sourceOK || !draftOK || !ruleReceiptOK || !triggerRefOK {
 		t.Fatal("semantic Activation trigger member")
 	}
 
@@ -257,11 +273,29 @@ func TestReceiptAssemblySemanticActivationOwnsOneMemberIDAndManyCandidates(t *te
 	if !activationGraphOK || !activationMemberOK || !ordinaryMemberOK || activationMember.graph != activationGraph || activationMember.member.Key() != ordinaryMember.member.Key() {
 		t.Fatal("semantic Activation stable trigger lookup")
 	}
-	secondGraph, secondGraphOK := topology.Graph(nil)
+	secondGraph, secondGraphOK := initialReceiptGraph(topology)
 	secondActivationGraph, secondActivationGraphOK := activationReceiptGraph(secondGraph)
 	secondActivationMember, secondActivationMemberOK := secondActivationGraph.lookupActivationMember(activationID)
-	if !secondGraphOK || !secondActivationGraphOK || !secondActivationMemberOK || secondGraph == graph || secondActivationMember.graph != secondActivationGraph || graph.graph.OwnsMember(secondActivationMember.member) || secondGraph.graph.OwnsMember(activationMember.member) {
+	if !secondGraphOK || !secondActivationGraphOK || !secondActivationMemberOK || secondGraph == graph || secondActivationMember.graph != secondActivationGraph || secondActivationMember.member.Key() != activationMember.member.Key() {
 		t.Fatal("semantic Activation receipt crossed graph revision")
+	}
+	locator, locatorOK := topology.directory.activation(activationID)
+	foreign := newReceiptSemanticActivationFixture(t)
+	if !foreign.assembly.builder.addSemanticActivation(activationID, foreign.trigger) {
+		t.Fatal("foreign semantic Activation registration")
+	}
+	for _, value := range foreign.materialized {
+		receipt, issued := foreign.assembly.builder.issueMaterialization(value)
+		if !issued || !foreign.assembly.builder.addActivationCandidate(receipt) {
+			t.Fatal("foreign semantic Activation candidate")
+		}
+	}
+	_, foreignGraph, foreignCommitted := foreign.assembly.Commit()
+	if !locatorOK || !foreignCommitted || foreignGraph == nil {
+		t.Fatal("foreign semantic Activation commit")
+	}
+	if _, crossed := locator.Resolve(foreignGraph.graph); crossed {
+		t.Fatal("directory Activation locator resolved against a foreign topology graph")
 	}
 
 	duplicate := newReceiptSemanticActivationFixture(t)

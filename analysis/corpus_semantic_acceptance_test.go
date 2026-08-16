@@ -1,7 +1,6 @@
 package analysis
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,101 +8,63 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/program/target"
-	"github.com/wippyai/go-lua/program/target/profile"
-	"github.com/wippyai/go-lua/program/testfixture"
+	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 // TestCanonicalCorpusSemanticAcceptance is the one complete fixture semantic
 // gate.  The fixture source remains the sole expectation authority: this test
-// consumes the cached catalog shared with the inventory and narrow producer
-// laws instead of copying any fixture rows into Go.
+// consumes the shared harness enumeration used by the census and the narrow
+// producer laws instead of copying any fixture rows into Go.
 //
 // There is deliberately no local timeout, work budget, result cap, skip, or
 // fixture-family branch. The bounded repository runner owns process-tree
 // resource enforcement. A runner timeout is therefore a failed acceptance
 // invocation, never a successful fixture result.
 func TestCanonicalCorpusSemanticAcceptance(t *testing.T) {
-	catalog, err := frozenCorpusDiagnosticExpectationCatalog(t)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The frozen inventory law owns the literal 911 denominator. This gate
-	// consumes every project in that same catalog rather than duplicating a
-	// second fixture list or count.
-	if catalog.inventory.projects != len(catalog.projects) || len(catalog.projects) == 0 {
-		t.Fatalf("semantic acceptance catalog is inconsistent: inventory=%d projects=%d", catalog.inventory.projects, len(catalog.projects))
-	}
-	contract, err := profile.Contract()
-	if err != nil {
-		t.Fatalf("seal canonical target profile: %v", err)
-	}
-	for _, expectation := range catalog.projects {
-		expectation := expectation
-		t.Run(expectation.name, func(t *testing.T) {
-			corpusSemanticAcceptProject(t, contract, expectation)
-		})
+	corpusHarnessWalk(t, corpusHarnessProjects(t), corpusSemanticAcceptanceMode())
+}
+
+// corpusSemanticAcceptanceMode is the authoritative corpus judgment. The
+// harness always passes the project through the current Program -> Link ->
+// Plan -> Result path before this mode judges its source-authored contract; an
+// unavailable diagnostic family is reported as an acceptance failure after
+// that current-analyzer run, never treated as clean.
+func corpusSemanticAcceptanceMode() corpusHarnessMode {
+	return corpusHarnessMode{
+		name:      "acceptance",
+		execution: corpusHarnessReportSolve,
+		preflight: func(project *corpusHarnessProject) []string {
+			return corpusSemanticFixtureInputUnsupported(project.expectation)
+		},
+		policy: func(project *corpusHarnessProject) (DiagnosticPolicy, []string) {
+			return corpusSemanticAcceptancePolicy(project.expectation)
+		},
+		judge: corpusSemanticAcceptanceJudgment,
 	}
 }
 
-// corpusSemanticAcceptProject always passes the project through the current
-// Program -> Link -> Plan -> Result path before judging its source-authored
-// contract. An unavailable diagnostic family is reported as an acceptance
-// failure after that current-analyzer run; it is never treated as clean.
-func corpusSemanticAcceptProject(t *testing.T, contract *target.Contract, expectation *corpusDiagnosticProjectExpectations) {
-	t.Helper()
-	if contract == nil || expectation == nil || expectation.name == "" {
-		t.Fatal("unavailable canonical target profile or fixture expectation")
+func corpusSemanticAcceptanceJudgment(run *corpusHarnessRun) []string {
+	expectation := run.project.expectation
+	if len(run.policyUnsupported) != 0 {
+		return []string{"unsupported diagnostic contract:\n" + strings.Join(run.policyUnsupported, "\n")}
 	}
-	if unsupported := corpusSemanticFixtureInputUnsupported(expectation); len(unsupported) != 0 {
-		t.Fatalf("unsupported fixture contract before compile:\n%s", strings.Join(unsupported, "\n"))
-	}
-	project, err := testfixture.FrozenCorpusProject(expectation.name)
-	if err != nil {
-		t.Fatal(err)
-	}
-	linked, err := testfixture.SealCorpusProject(contract, project)
-	if err != nil {
-		t.Fatalf("link: %v", err)
-	}
-	plan, compileStatus, compileDiagnostics := CompileWithDiagnostics(linked)
-	if compileStatus != CompileComplete || plan == nil {
-		t.Fatalf("compile=%v plan=%t diagnostics=%+v", compileStatus, plan != nil, compileDiagnostics)
-	}
-	// A fixture is a sequential acceptance unit. Close the assembled Link
-	// topology on every post-compile path, including policy, solve, report, and
-	// matcher failures; immutable Program artifacts remain cache-owned.
-	t.Cleanup(func() {
-		if !plan.Close() {
-			t.Error("close compiled fixture plan")
+	if len(run.policy.Enabled) != 0 {
+		if run.report == nil || !run.report.Available() {
+			return []string{"DiagnosticReport unavailable"}
 		}
-	})
-
-	policy, unsupported := corpusSemanticAcceptancePolicy(expectation)
-	result, report, status, diagnostics := plan.SolveWithReport(context.Background(), engine.SolveDiagnosticOptions{}, policy)
-	if status != AnalyzeComplete || result == nil {
-		t.Fatalf("AnalyzeComplete required: status=%v result=%t diagnostics=%+v", status, result != nil, diagnostics)
-	}
-	if len(unsupported) != 0 {
-		t.Fatalf("unsupported diagnostic contract:\n%s", strings.Join(unsupported, "\n"))
-	}
-	if len(policy.Enabled) != 0 {
-		if report == nil || !report.Available() {
-			t.Fatal("DiagnosticReport unavailable")
+		if failure := run.report.CollectionFailure(); failure != DiagnosticCollectionOK {
+			return []string{fmt.Sprintf("DiagnosticReport collection failure=%d", failure)}
 		}
-		if failure := report.CollectionFailure(); failure != DiagnosticCollectionOK {
-			t.Fatalf("DiagnosticReport collection failure=%d", failure)
-		}
-	} else if report != nil {
-		t.Fatal("disabled diagnostic policy unexpectedly produced a DiagnosticReport")
+	} else if run.report != nil {
+		return []string{"disabled diagnostic policy unexpectedly produced a DiagnosticReport"}
 	}
-	if mismatches := corpusSemanticAcceptanceMismatches(expectation, report); len(mismatches) != 0 {
-		t.Fatalf("semantic diagnostic mismatch:\n%s", strings.Join(mismatches, "\n"))
+	if mismatches := corpusSemanticAcceptanceMismatches(expectation, run.report); len(mismatches) != 0 {
+		return []string{"semantic diagnostic mismatch:\n" + strings.Join(mismatches, "\n")}
 	}
-	if mismatches := corpusSemanticNativeMismatches(expectation, result); len(mismatches) != 0 {
-		t.Fatalf("semantic native mismatch:\n%s", strings.Join(mismatches, "\n"))
+	if mismatches := corpusSemanticNativeMismatches(expectation, run.result); len(mismatches) != 0 {
+		return []string{"semantic native mismatch:\n" + strings.Join(mismatches, "\n")}
 	}
+	return nil
 }
 
 // corpusSemanticFixtureInputUnsupported fences contracts the current
@@ -288,15 +249,21 @@ func corpusSemanticNativeValidityMatches(event, established, revoked string, val
 // manifest diagnostic_rules can disable or refine that default. A requested
 // code without a current collector is an explicit unsupported contract.
 func corpusSemanticAcceptancePolicy(expectation *corpusDiagnosticProjectExpectations) (DiagnosticPolicy, []string) {
-	selected := make(map[DiagnosticRule]bool, len(diagnosticCollectorRegistry))
-	severity := make(map[DiagnosticRule]FindingSeverity)
+	table, tableOK := grammar.Diagnostics()
+	if !tableOK {
+		return DiagnosticPolicy{}, []string{"sealed diagnostic declaration table unavailable"}
+	}
+	selected := make(map[DiagnosticCode]bool, table.Count())
+	severity := make(map[DiagnosticCode]FindingSeverity)
 	unsupported := make([]string, 0)
-	for _, spec := range diagnosticCollectorRegistry {
-		if selected[spec.rule] {
-			unsupported = append(unsupported, fmt.Sprintf("duplicate current collector for rule %q", spec.rule.Code().String()))
-			continue
+	for position := 0; position < table.Count(); position++ {
+		entry, entryOK := table.At(position)
+		if !entryOK {
+			return DiagnosticPolicy{}, []string{"sealed diagnostic declaration row unavailable"}
 		}
-		selected[spec.rule] = true
+		if entry.Collectable() {
+			selected[entry.Code()] = true
+		}
 	}
 
 	declared := make(map[string]corpusDiagnosticRuleExpectation)
@@ -307,7 +274,7 @@ func corpusSemanticAcceptancePolicy(expectation *corpusDiagnosticProjectExpectat
 				continue
 			}
 			declared[configured.Code] = configured
-			rule, available := corpusSemanticAcceptanceRule(configured.Code)
+			rule, available := corpusSemanticAcceptanceCode(configured.Code)
 			if !available {
 				unsupported = append(unsupported, fmt.Sprintf("diagnostic rule %q has no current collector", configured.Code))
 				continue
@@ -335,7 +302,7 @@ func corpusSemanticAcceptancePolicy(expectation *corpusDiagnosticProjectExpectat
 			}
 		}
 		for _, expected := range expectation.manifest.Check.Diagnostics {
-			rule, available := corpusSemanticAcceptanceRule(expected.Code)
+			rule, available := corpusSemanticAcceptanceCode(expected.Code)
 			if !available {
 				unsupported = append(unsupported, fmt.Sprintf("expected diagnostic %q has no current collector", expected.Code))
 				continue
@@ -348,7 +315,7 @@ func corpusSemanticAcceptancePolicy(expectation *corpusDiagnosticProjectExpectat
 		}
 	}
 
-	rules := make([]DiagnosticRule, 0, len(selected))
+	rules := make([]DiagnosticCode, 0, len(selected))
 	for rule := range selected {
 		rules = append(rules, rule)
 	}
@@ -359,16 +326,15 @@ func corpusSemanticAcceptancePolicy(expectation *corpusDiagnosticProjectExpectat
 	return DiagnosticPolicy{Enabled: rules, Severity: severity}, unsupported
 }
 
-// corpusSemanticAcceptanceRule is intentionally registry-driven. It makes no
-// diagnostic-family choice: a code is accepted only when its presentation
-// template and receipt collector are both currently installed.
-func corpusSemanticAcceptanceRule(code string) (DiagnosticRule, bool) {
-	for _, template := range diagnosticTemplateRegistry {
-		if template.codeText == code && template.rule.collectorInstalled() {
-			return template.rule, true
-		}
+// corpusSemanticAcceptanceCode is intentionally table-driven. It makes no
+// diagnostic-family choice: a code is accepted only when the sealed
+// declaration row it names installs a producer.
+func corpusSemanticAcceptanceCode(code string) (DiagnosticCode, bool) {
+	candidate := DiagnosticCode(code)
+	if !diagnosticCollectable(candidate) {
+		return DiagnosticCodeInvalid, false
 	}
-	return DiagnosticRuleInvalid, false
+	return candidate, true
 }
 
 type corpusSemanticAcceptanceFinding struct {
@@ -391,7 +357,7 @@ func corpusSemanticAcceptanceFindings(report *DiagnosticReport) ([]corpusSemanti
 	for index := 0; index < report.FindingCount(); index++ {
 		finding, findingOK := report.FindingAt(index)
 		location, locationOK := finding.Location()
-		if !findingOK || !locationOK || finding.Code().String() == "" || !finding.Severity().valid() {
+		if !findingOK || !locationOK || finding.Code().String() == "" || !finding.Severity().Available() {
 			mismatches = append(mismatches, fmt.Sprintf("finding %d has no complete public identity", index))
 			continue
 		}

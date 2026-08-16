@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 type receiptAssemblyRuleFixture struct {
@@ -16,8 +16,8 @@ type receiptAssemblyRuleFixture struct {
 	operand        equation.Operand
 }
 
-func receiptAssemblySemanticID(value byte) keyspace.ContentID {
-	var id keyspace.ContentID
+func receiptAssemblySemanticID(value byte) identity.ContentID {
+	var id identity.ContentID
 	id[0] = value
 	return id
 }
@@ -76,13 +76,8 @@ func (fixture receiptAssemblyRuleFixture) addTopology(t testing.TB) {
 		t.Fatal("receipt assembly typed Rule row")
 	}
 	row, rowOK := builder.issueRuleRow(draft)
-	rowRef, refOK := builder.addSemanticRule(receiptAssemblySemanticID(2), row)
-	if !rowOK || !refOK {
+	if _, refOK := builder.addSemanticRule(receiptAssemblySemanticID(2), row); !rowOK || !refOK {
 		t.Fatal("receipt assembly topology rows")
-	}
-	group, groupOK := builder.issueGroup(equation.Group{Members: []equation.RuleRef{rowRef.ref}, Output: equation.PointAt(0)})
-	if !groupOK || !builder.addGroup(group) {
-		t.Fatal("receipt assembly group")
 	}
 }
 
@@ -182,20 +177,12 @@ func TestReceiptAssemblySnapshotsAdmittedRowsBeforeCommit(t *testing.T) {
 		t.Fatal("snapshot Rule source")
 	}
 	row, rowOK := builder.issueRuleRow(draft)
-	rowRef, refOK := builder.addSemanticRule(receiptAssemblySemanticID(5), row)
-	if !rowOK || !refOK {
+	if _, refOK := builder.addSemanticRule(receiptAssemblySemanticID(5), row); !rowOK || !refOK {
 		t.Fatal("snapshot Rule row")
 	}
-	members := []equation.RuleRef{rowRef.ref}
-	group, groupOK := builder.issueGroup(equation.Group{Members: members, Output: equation.PointAt(0)})
-	if !groupOK {
-		t.Fatal("snapshot Group issue")
-	}
-	members[0] = equation.RuleAt(99)
-	if !builder.addGroup(group) {
-		t.Fatal("snapshot Group add")
-	}
-	group.row.Members[0] = equation.RuleAt(99)
+	// Admission clones the issued row into the spec, so mutating the receipt
+	// copy afterwards cannot rewrite the committed topology.
+	row.row.Writes[0].Surface.Local = 3
 	topology, graph, ok := fixture.assembly.Commit()
 	if !ok || topology == nil || graph == nil || !topology.valid() || !graph.valid() {
 		t.Fatal("caller mutation changed committed topology snapshot")

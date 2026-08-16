@@ -7,7 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/type/factor/internal/semantic"
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/lattice"
-	"github.com/wippyai/go-lua/program/link"
+	"github.com/wippyai/go-lua/analysis/program/link"
 )
 
 func config(source *link.Link, table *typedomain.Table, universe *origin.Universe) (engine.FactorConfig[link.Value, carrier.Value], bool) {

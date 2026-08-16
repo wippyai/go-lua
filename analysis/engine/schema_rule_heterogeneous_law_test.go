@@ -135,7 +135,7 @@ func TestReceiptCompilerThreadsExactAndSummaryReadThroughProductEvidencePatch(t 
 	if !topologyOK || topology == nil {
 		t.Fatal("exact-summary topology")
 	}
-	graph, graphOK := topology.Graph(nil)
+	graph, graphOK := initialEquationGraph(topology)
 	if !graphOK || graph == nil {
 		t.Fatal("exact-summary graph")
 	}

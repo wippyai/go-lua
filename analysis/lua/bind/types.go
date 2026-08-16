@@ -3,9 +3,8 @@ package bind
 import (
 	"strings"
 
-	"github.com/wippyai/go-lua/analysis/symbol"
+	programstatic "github.com/wippyai/go-lua/analysis/program/static"
 	"github.com/wippyai/go-lua/compiler/ast"
-	programstatic "github.com/wippyai/go-lua/program/static"
 )
 
 // TypeDeclID identifies a lexical type declaration independently of value
@@ -76,7 +75,7 @@ type StaticTypePublication struct {
 }
 
 type qualifiedTypeAliasKey struct {
-	root   symbol.ID
+	root   Symbol
 	suffix string
 }
 
@@ -124,6 +123,18 @@ func (r *Result) StaticTypePublications(stmt *ast.AssignStmt) []StaticTypePublic
 		return nil
 	}
 	return cloneStaticTypePublications(r.staticTypePublications[stmt])
+}
+
+// AssertedParam returns the formal ordinal selected by a return-position
+// assertion. The ordinal is relative to the immediate containing callable
+// signature, including an implicit method self formal when present. Missing,
+// unnamed, and outer-scope formals intentionally have no result.
+func (r *Result) AssertedParam(expr *ast.AssertsTypeExpr) (int, bool) {
+	if r == nil || expr == nil {
+		return 0, false
+	}
+	ordinal, ok := r.assertedParams[expr]
+	return ordinal, ok && ordinal >= 0
 }
 
 func (a QualifiedTypeAlias) valid() bool {
@@ -178,6 +189,28 @@ func (r *Result) FunctionTypeParams(fn ast.PositionHolder) []TypeDecl {
 		return nil
 	}
 	return cloneTypeDecls(r.functionTypeParams[fn])
+}
+
+func cloneTypeDecls(decls []TypeDecl) []TypeDecl {
+	if len(decls) == 0 {
+		return nil
+	}
+	return append([]TypeDecl(nil), decls...)
+}
+
+func cloneStaticTypePublications(publications []StaticTypePublication) []StaticTypePublication {
+	if len(publications) == 0 {
+		return nil
+	}
+	out := make([]StaticTypePublication, len(publications))
+	for i, publication := range publications {
+		out[i] = StaticTypePublication{
+			Index:  publication.Index,
+			Source: append([]string(nil), publication.Source...),
+			Alias:  publication.Alias.copy(),
+		}
+	}
+	return out
 }
 
 func functionTypeParamNode(node ast.PositionHolder) bool {
@@ -354,7 +387,7 @@ func (b *binder) bindRuntimeTypeValue(value RuntimeTypeValue) {
 		return
 	}
 	b.result.identSymbols[value.Base] = id
-	if kind, ok := b.result.Kind(id); ok && kind == symbol.Global {
+	if kind, ok := b.result.Kind(id); ok && kind == SymbolGlobal {
 		// A runtime type-base occurrence alone is not a mutable Program Cell.
 		// If a later ordinary/static value occurrence selects this identity,
 		// that path upgrades it through observeGlobal(..., true).
@@ -422,7 +455,7 @@ func (b *binder) bindTypeRef(ref *ast.TypeRefExpr) {
 		if !found {
 			id = b.global(ref.Path[0])
 			if b.staticOnlyGlobals == nil {
-				b.staticOnlyGlobals = make(map[symbol.ID]struct{})
+				b.staticOnlyGlobals = make(map[Symbol]struct{})
 			}
 			b.staticOnlyGlobals[id] = struct{}{}
 		}
@@ -534,7 +567,7 @@ func (b *binder) staticPublicationSourceCandidate(expr ast.Expr) (staticPublicat
 	}, true
 }
 
-func (b *binder) projectQualifiedTypeAlias(root symbol.ID, suffix []string, alias QualifiedTypeAlias) {
+func (b *binder) projectQualifiedTypeAlias(root Symbol, suffix []string, alias QualifiedTypeAlias) {
 	if b == nil || b.result == nil || root == 0 || len(suffix) == 0 || !alias.valid() {
 		return
 	}
@@ -638,7 +671,7 @@ func qualifiedTypeAliasEqual(left, right QualifiedTypeAlias) bool {
 // QualifiedTypeRootSymbol returns the exact lexical value symbol selected as
 // the root of one authored qualified type reference. Bare references have no
 // value root.
-func (r *Result) QualifiedTypeRootSymbol(ref *ast.TypeRefExpr) (symbol.ID, bool) {
+func (r *Result) QualifiedTypeRootSymbol(ref *ast.TypeRefExpr) (Symbol, bool) {
 	if r == nil || ref == nil {
 		return 0, false
 	}

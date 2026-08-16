@@ -3,7 +3,6 @@ package bind
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -58,7 +57,7 @@ type Remote = stream.Stream
 	if !ok || root == 0 {
 		t.Fatal("static-only qualified global has no root identity")
 	}
-	if kind, known := result.Kind(root); !known || kind != symbol.Global {
+	if kind, known := result.Kind(root); !known || kind != SymbolGlobal {
 		t.Fatalf("root kind = %v/%v, want Global", kind, known)
 	}
 	if len(result.implicitGlobalUses) != 0 {

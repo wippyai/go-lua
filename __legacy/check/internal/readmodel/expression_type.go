@@ -2,7 +2,7 @@ package readmodel
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 )
 
 // ExpressionEvaluationType projects the solved type at a body-owned

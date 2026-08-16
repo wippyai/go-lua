@@ -225,7 +225,17 @@ func diagnosticRowLess(left, right SolveDiagnosticRow) bool {
 // retired synthetic admission fixture.
 func newDiagnosticsReceiptSolver(t testing.TB, failTransfer bool) (*Solver, ReceiptQuery) {
 	t.Helper()
-	schema, factor, rule, write, query := receiptExactQuerySchemaFixture(t)
+	querySpec := hotExactQuerySpec()
+	querySpec.Project = func(cells OrderedCells[uint64]) uint64 { return uint64(len(cells.record.cells)) }
+	return newDiagnosticsReceiptSolverOf(t, failTransfer, querySpec)
+}
+
+// newDiagnosticsReceiptSolverOf is the same solver over an arbitrary declared
+// query result type, so a law can read a published result whose value carries a
+// mutable backing store.
+func newDiagnosticsReceiptSolverOf[R any](t testing.TB, failTransfer bool, querySpec HotExactQuerySpec[uint64, R]) (*Solver, ReceiptQuery) {
+	t.Helper()
+	schema, factor, rule, write, query := receiptExactQuerySchemaFixtureOf[R](t, querySpec.Result.Semantic)
 	binding := NewSchemaBinding(schema)
 	ruleSpec := HotRuleSpec[uint64, ruleUnit]{
 		OperandContent: ruleUnitContent,
@@ -237,15 +247,13 @@ func newDiagnosticsReceiptSolver(t testing.TB, failTransfer bool) (*Solver, Rece
 			return Product(access, func(row Row) bool { return StageValue(access, row, uint64(1)) })
 		},
 	}
-	querySpec := hotExactQuerySpec()
-	querySpec.Project = func(cells OrderedCells[uint64]) uint64 { return uint64(len(cells.record.cells)) }
 	if binding == nil || !BindFactor(binding, factor, hotUintFactorSpec()) ||
 		!BindRule[uint64, uint64, ruleUnit](binding, rule, write, factor, ruleSpec) ||
 		!BindExactQuery(binding, query, factor, querySpec) || !binding.Seal() {
 		t.Fatal("diagnostics receipt binding")
 	}
 	implementation, implementationOK := RuleImplementationAt[uint64, uint64, ruleUnit](binding, rule)
-	queryImplementation, queryImplementationOK := ExactQueryImplementationAt[uint64, uint64](binding, query)
+	queryImplementation, queryImplementationOK := ExactQueryImplementationAt[uint64, R](binding, query)
 	assembly, assemblyOK := beginReceiptAssembly(binding)
 	if !implementationOK || implementation == nil || !queryImplementationOK || queryImplementation == nil || !assemblyOK || assembly == nil {
 		t.Fatal("diagnostics receipt assembly")
@@ -344,7 +352,7 @@ type diagnosticsExternalInterfaceFixture struct {
 func collectDiagnosticsExternalInterfaceRows(t testing.TB, maxRows int) SolveDiagnostics {
 	t.Helper()
 	fixture := newDiagnosticsExternalInterfaceFixture(t)
-	epoch, epochOK := newRuntimeEpoch(fixture.solver.runtime, nil, context.Background())
+	epoch, epochOK := newRuntimeEpoch(fixture.solver.runtime, fixture.solver.relation, context.Background())
 	if !epochOK || epoch == nil {
 		t.Fatal("diagnostics external-interface epoch")
 	}

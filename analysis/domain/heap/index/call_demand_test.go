@@ -8,14 +8,15 @@ import (
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
 	indexdomain "github.com/wippyai/go-lua/analysis/domain/heap/index"
 	"github.com/wippyai/go-lua/analysis/domain/materialization"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
-	"github.com/wippyai/go-lua/analysis/type/typ"
-	flowkind "github.com/wippyai/go-lua/program/flow/kind"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/link"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
-	"github.com/wippyai/go-lua/program/lower"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/lua/lower"
+	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/program/link"
+	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
 func TestTopologyReceiverCallDemandFencesExactStaticBottomAndForeign(t *testing.T) {
@@ -94,7 +95,7 @@ return first, second
 	if !sealed {
 		t.Fatal("two-result fresh topology did not seal")
 	}
-	var application keyspace.ContentID
+	var application identity.ContentID
 	for index := 0; index < heap.KeyCount(); index++ {
 		root, _ := heap.KeyAt(index)
 		candidate, _, _, _, fresh := root.FreshResultID()
@@ -188,7 +189,7 @@ return first, second, ignored
 	}); allocations != 0 {
 		t.Fatalf("receipt-hot Top Call demand allocated %v times", allocations)
 	}
-	stateTags := make(map[keyspace.ContentID]uint64)
+	stateTags := make(map[identity.ContentID]uint64)
 	if !topology.VisitReceiver(values.Top(), func(key calldomain.Key, tag uint64) (calldomain.Value, bool) {
 		id, ok := key.ContentID()
 		if !ok || got[id] != tag {
@@ -276,10 +277,10 @@ func TestTopologyCallStateUsesDemandTagAndSeparatesBottomFromUnavailable(t *test
 	})
 }
 
-func callDemandTags(t testing.TB, topology *indexdomain.Topology, receiver valuedomain.Value) map[keyspace.ContentID]uint64 {
+func callDemandTags(t testing.TB, topology *indexdomain.Topology, receiver valuedomain.Value) map[identity.ContentID]uint64 {
 	t.Helper()
-	result := make(map[keyspace.ContentID]uint64)
-	seenTags := make(map[uint64]keyspace.ContentID)
+	result := make(map[identity.ContentID]uint64)
+	seenTags := make(map[uint64]identity.ContentID)
 	if !topology.VisitReceiverCallDemand(receiver, func(key calldomain.Key, tag uint64) bool {
 		id, ok := key.ContentID()
 		if !ok || tag == 0 {
@@ -300,7 +301,7 @@ func callDemandTags(t testing.TB, topology *indexdomain.Topology, receiver value
 	return result
 }
 
-func sameDemandUniverse(got, want map[keyspace.ContentID]uint64) bool {
+func sameDemandUniverse(got, want map[identity.ContentID]uint64) bool {
 	if len(got) != len(want) {
 		return false
 	}
@@ -312,9 +313,9 @@ func sameDemandUniverse(got, want map[keyspace.ContentID]uint64) bool {
 	return true
 }
 
-func freshCallIDs(t testing.TB, heap heapdomain.Schema, calls *calldomain.Algebra) map[keyspace.ContentID]uint64 {
+func freshCallIDs(t testing.TB, heap heapdomain.Schema, calls *calldomain.Algebra) map[identity.ContentID]uint64 {
 	t.Helper()
-	result := make(map[keyspace.ContentID]uint64)
+	result := make(map[identity.ContentID]uint64)
 	for index := 0; index < heap.KeyCount(); index++ {
 		root, ok := heap.KeyAt(index)
 		if !ok {
@@ -334,9 +335,9 @@ func freshCallIDs(t testing.TB, heap heapdomain.Schema, calls *calldomain.Algebr
 	return result
 }
 
-func allCallIDs(t testing.TB, calls *calldomain.Algebra) map[keyspace.ContentID]struct{} {
+func allCallIDs(t testing.TB, calls *calldomain.Algebra) map[identity.ContentID]struct{} {
 	t.Helper()
-	result := make(map[keyspace.ContentID]struct{})
+	result := make(map[identity.ContentID]struct{})
 	for index := 0; index < calls.KeyCount(); index++ {
 		key, ok := calls.KeyAt(index)
 		if ok && !key.IsApplication() {
@@ -351,7 +352,7 @@ func allCallIDs(t testing.TB, calls *calldomain.Algebra) map[keyspace.ContentID]
 	return result
 }
 
-func freshRootsForApplication(t testing.TB, heap heapdomain.Schema, application keyspace.ContentID) []heapdomain.Key {
+func freshRootsForApplication(t testing.TB, heap heapdomain.Schema, application identity.ContentID) []heapdomain.Key {
 	t.Helper()
 	var roots []heapdomain.Key
 	for index := 0; index < heap.KeyCount(); index++ {

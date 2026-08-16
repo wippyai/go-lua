@@ -1,34 +1,33 @@
 package bind
 
 import (
-	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 // Result records lexical declaration identities for identifier occurrences.
 type Result struct {
-	identSymbols       map[*ast.IdentExpr]symbol.ID
+	identSymbols       map[*ast.IdentExpr]Symbol
 	implicitGlobalUses map[*ast.IdentExpr]struct{}
 	runtimeTypeValues  map[*ast.IdentExpr]RuntimeTypeValue
 	directGlobalCalls  []DirectGlobalCall
 	globals            globalAuthority
 
-	nextSymbolID symbol.ID
+	nextSymbolID Symbol
 
-	names map[symbol.ID]string
-	kinds map[symbol.ID]symbol.Kind
+	names map[Symbol]string
+	kinds map[Symbol]SymbolKind
 
 	functions       []*ast.FunctionExpr
 	functionOrigins map[*ast.FunctionExpr]FunctionOrigin
 	directCaptures  map[*ast.FunctionExpr][]Capture
-	varargSymbols   map[*ast.FunctionExpr]symbol.ID
+	varargSymbols   map[*ast.FunctionExpr]Symbol
 	paramSlots      map[*ast.FunctionExpr][]ParamSlot
 	// symbolAnnotations retains exact declaration syntax independently of
 	// runtime-use evidence, including formals of static query Functions.
-	symbolAnnotations map[symbol.ID]ast.TypeExpr
-	localSymbols      map[*ast.LocalAssignStmt][]symbol.ID
-	numForSymbols     map[*ast.NumberForStmt]symbol.ID
-	genericForSymbols map[*ast.GenericForStmt][]symbol.ID
+	symbolAnnotations map[Symbol]ast.TypeExpr
+	localSymbols      map[*ast.LocalAssignStmt][]Symbol
+	numForSymbols     map[*ast.NumberForStmt]Symbol
+	genericForSymbols map[*ast.GenericForStmt][]Symbol
 
 	gotoTargets   map[*ast.GotoStmt]*ast.LabelStmt
 	controlIssues []ControlIssue
@@ -46,7 +45,7 @@ type Result struct {
 	staticTypePublications map[*ast.AssignStmt][]StaticTypePublication
 	// qualifiedTypeRootSymbols records the exact lexical value root selected by
 	// each authored qualified type-reference occurrence.
-	qualifiedTypeRootSymbols map[*ast.TypeRefExpr]symbol.ID
+	qualifiedTypeRootSymbols map[*ast.TypeRefExpr]Symbol
 }
 
 // DirectGlobalCall is one plain call whose exact function identifier resolved
@@ -60,18 +59,18 @@ type DirectGlobalCall struct {
 
 func newResult() *Result {
 	r := &Result{
-		identSymbols:             make(map[*ast.IdentExpr]symbol.ID),
+		identSymbols:             make(map[*ast.IdentExpr]Symbol),
 		implicitGlobalUses:       make(map[*ast.IdentExpr]struct{}),
-		names:                    make(map[symbol.ID]string),
-		kinds:                    make(map[symbol.ID]symbol.Kind),
+		names:                    make(map[Symbol]string),
+		kinds:                    make(map[Symbol]SymbolKind),
 		functionOrigins:          make(map[*ast.FunctionExpr]FunctionOrigin),
 		directCaptures:           make(map[*ast.FunctionExpr][]Capture),
-		varargSymbols:            make(map[*ast.FunctionExpr]symbol.ID),
+		varargSymbols:            make(map[*ast.FunctionExpr]Symbol),
 		paramSlots:               make(map[*ast.FunctionExpr][]ParamSlot),
-		symbolAnnotations:        make(map[symbol.ID]ast.TypeExpr),
-		localSymbols:             make(map[*ast.LocalAssignStmt][]symbol.ID),
-		numForSymbols:            make(map[*ast.NumberForStmt]symbol.ID),
-		genericForSymbols:        make(map[*ast.GenericForStmt][]symbol.ID),
+		symbolAnnotations:        make(map[Symbol]ast.TypeExpr),
+		localSymbols:             make(map[*ast.LocalAssignStmt][]Symbol),
+		numForSymbols:            make(map[*ast.NumberForStmt]Symbol),
+		genericForSymbols:        make(map[*ast.GenericForStmt][]Symbol),
 		typeRefs:                 make(map[*ast.TypeRefExpr]TypeDecl),
 		primitiveTypeRefs:        make(map[*ast.PrimitiveTypeExpr]TypeDecl),
 		typeDefDecls:             make(map[*ast.TypeDefStmt]TypeDecl),
@@ -80,7 +79,7 @@ func newResult() *Result {
 		functionTypeParams:       make(map[ast.PositionHolder][]TypeDecl),
 		methodReceiverTypes:      make(map[*ast.FunctionExpr]TypeDecl),
 		qualifiedTypeRefs:        make(map[*ast.TypeRefExpr]QualifiedTypeAlias),
-		qualifiedTypeRootSymbols: make(map[*ast.TypeRefExpr]symbol.ID),
+		qualifiedTypeRootSymbols: make(map[*ast.TypeRefExpr]Symbol),
 	}
 	return r
 }

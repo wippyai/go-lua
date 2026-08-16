@@ -8,12 +8,12 @@ import (
 	indexdomain "github.com/wippyai/go-lua/analysis/domain/heap/index"
 	packdomain "github.com/wippyai/go-lua/analysis/domain/pack"
 	staticdomain "github.com/wippyai/go-lua/analysis/domain/static"
+	"github.com/wippyai/go-lua/analysis/domain/type/authority"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
-	"github.com/wippyai/go-lua/analysis/internal/programartifact"
-	"github.com/wippyai/go-lua/analysis/internal/programartifact/schemaadapter"
-	"github.com/wippyai/go-lua/analysis/internal/programschema"
-	"github.com/wippyai/go-lua/analysis/semantic/typeauthority"
-	"github.com/wippyai/go-lua/program/link"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
+	"github.com/wippyai/go-lua/analysis/program/link"
+	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 type indexFixtureMounts struct {
@@ -26,7 +26,7 @@ type indexFixtureMounts struct {
 
 func indexMounts(t testing.TB, linked *link.Link) indexFixtureMounts {
 	t.Helper()
-	receipt, receiptOK := programschema.Global()
+	receipt, receiptOK := grammar.Global()
 	if !receiptOK || linked == nil || linked.Project() == nil {
 		t.Fatal("index fixture artifact receipt")
 	}
@@ -67,7 +67,7 @@ func indexSchemas(t testing.TB, linked *link.Link) (heapdomain.Schema, *valuedom
 	heap, heapFailure := heapdomain.SealWithArtifacts(linked, mounts.heap)
 	values, valueFailure := valuedomain.SealWithFailure(linked, heap, mounts.value)
 	calls, callsOK := calldomain.NewWithMountedArtifacts(linked, mounts.call)
-	receipt, receiptOK := programschema.Global()
+	receipt, receiptOK := grammar.Global()
 	if !receiptOK {
 		t.Fatal("index schemas program receipt")
 	}

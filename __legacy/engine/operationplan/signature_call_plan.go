@@ -2,7 +2,7 @@ package operationplan
 
 import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 )
 
 // WithSignatureCalls attaches resolved signature descriptors as an immutable,

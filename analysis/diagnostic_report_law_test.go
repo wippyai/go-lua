@@ -5,7 +5,9 @@ import (
 	"testing"
 
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
-	"github.com/wippyai/go-lua/analysis/internal/programartifact"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
+	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 func TestGuardPolarityCollectorMixedTruthsProveNeitherLaw(t *testing.T) {
@@ -26,13 +28,13 @@ func TestDiagnosticPolicyIsSeparateFromInferenceResultIdentity(t *testing.T) {
 		t.Fatal("synthetic inference Result unavailable")
 	}
 	off := DiagnosticPolicy{}
-	if _, enabled := off.enabled(DiagnosticRuleAlwaysTrueGuard); enabled {
+	if _, enabled := off.enabled(DiagnosticCodeAlwaysTrueGuard); enabled {
 		t.Fatal("zero policy enabled semantic collection")
 	}
-	on := DiagnosticPolicy{Enabled: []DiagnosticRule{DiagnosticRuleAlwaysTrueGuard}, Severity: map[DiagnosticRule]FindingSeverity{DiagnosticRuleAlwaysTrueGuard: FindingSeverityHint}}
-	severity, enabled := on.enabled(DiagnosticRuleAlwaysTrueGuard)
-	if !enabled || severity != FindingSeverityHint || DiagnosticRuleAlwaysTrueGuard.Code() != DiagnosticCodeAlwaysTrueGuard || DiagnosticCodeAlwaysTrueGuard.String() != "advice.always_true_guard" || severity.String() != "hint" {
-		t.Fatal("explicit policy did not enable analysis-owned rule")
+	on := DiagnosticPolicy{Enabled: []DiagnosticCode{DiagnosticCodeAlwaysTrueGuard}, Severity: map[DiagnosticCode]FindingSeverity{DiagnosticCodeAlwaysTrueGuard: FindingSeverityHint}}
+	severity, enabled := on.enabled(DiagnosticCodeAlwaysTrueGuard)
+	if !enabled || severity != FindingSeverityHint || DiagnosticCodeAlwaysTrueGuard.String() != "advice.always_true_guard" || severity.String() != "hint" {
+		t.Fatal("explicit policy did not enable the declared diagnostic")
 	}
 	report := &DiagnosticReport{source: result.SourceID(), result: result.ContentID(), sealed: true}
 	if !report.Available() || report.SourceID() != result.SourceID() || report.ResultID() != result.ContentID() || report.FindingCount() != 0 {
@@ -45,83 +47,79 @@ func TestDiagnosticPolicyIsSeparateFromInferenceResultIdentity(t *testing.T) {
 
 func TestDiagnosticPolicyRejectsAmbiguousAuthority(t *testing.T) {
 	invalid := []DiagnosticPolicy{
-		{Enabled: []DiagnosticRule{DiagnosticRuleInvalid}},
-		{Enabled: []DiagnosticRule{DiagnosticRuleAlwaysTrueGuard, DiagnosticRuleAlwaysTrueGuard}},
-		{Enabled: []DiagnosticRule{DiagnosticRuleAlwaysFalseGuard, DiagnosticRuleAlwaysFalseGuard}},
-		{Severity: map[DiagnosticRule]FindingSeverity{DiagnosticRuleAlwaysTrueGuard: FindingSeverityHint}},
-		{Enabled: []DiagnosticRule{DiagnosticRuleAlwaysTrueGuard}, Severity: map[DiagnosticRule]FindingSeverity{DiagnosticRuleAlwaysTrueGuard: FindingSeverityInvalid}},
-		{Enabled: []DiagnosticRule{DiagnosticRuleAlwaysTrueGuard}, Severity: map[DiagnosticRule]FindingSeverity{DiagnosticRuleInvalid: FindingSeverityHint}},
+		{Enabled: []DiagnosticCode{DiagnosticCodeInvalid}},
+		{Enabled: []DiagnosticCode{DiagnosticCodeAlwaysTrueGuard, DiagnosticCodeAlwaysTrueGuard}},
+		{Enabled: []DiagnosticCode{DiagnosticCodeAlwaysFalseGuard, DiagnosticCodeAlwaysFalseGuard}},
+		{Severity: map[DiagnosticCode]FindingSeverity{DiagnosticCodeAlwaysTrueGuard: FindingSeverityHint}},
+		{Enabled: []DiagnosticCode{DiagnosticCodeAlwaysTrueGuard}, Severity: map[DiagnosticCode]FindingSeverity{DiagnosticCodeAlwaysTrueGuard: FindingSeverityInvalid}},
+		{Enabled: []DiagnosticCode{DiagnosticCodeAlwaysTrueGuard}, Severity: map[DiagnosticCode]FindingSeverity{DiagnosticCodeInvalid: FindingSeverityHint}},
 	}
 	for index, policy := range invalid {
 		if policy.Valid() {
 			t.Fatalf("invalid policy %d admitted", index)
 		}
 	}
-	if !(DiagnosticPolicy{Enabled: []DiagnosticRule{DiagnosticRuleAlwaysTrueGuard}}).Valid() {
+	if !(DiagnosticPolicy{Enabled: []DiagnosticCode{DiagnosticCodeAlwaysTrueGuard}}).Valid() {
 		t.Fatal("known unique policy rejected")
 	}
-	if !(DiagnosticPolicy{Enabled: []DiagnosticRule{DiagnosticRuleAlwaysFalseGuard}}).Valid() {
+	if !(DiagnosticPolicy{Enabled: []DiagnosticCode{DiagnosticCodeAlwaysFalseGuard}}).Valid() {
 		t.Fatal("installed always-false producer rejected by policy")
 	}
-	if !(DiagnosticPolicy{Enabled: []DiagnosticRule{DiagnosticRuleUnresolvedTypeReference}}).Valid() {
+	if !(DiagnosticPolicy{Enabled: []DiagnosticCode{DiagnosticCodeUnresolvedTypeReference}}).Valid() {
 		t.Fatal("installed unresolved-type producer rejected by policy")
 	}
-	if !(DiagnosticPolicy{Enabled: []DiagnosticRule{DiagnosticRuleUnresolvedValueReference}}).Valid() {
+	if !(DiagnosticPolicy{Enabled: []DiagnosticCode{DiagnosticCodeUnresolvedValueReference}}).Valid() {
 		t.Fatal("installed unresolved-value producer rejected by policy")
 	}
-	for _, rule := range []DiagnosticRule{
-		DiagnosticRuleRedundantClaim,
-		DiagnosticRuleUnusedLocal,
+	for _, code := range []DiagnosticCode{
+		DiagnosticCodeRedundantClaim,
+		DiagnosticCodeUnusedLocal,
 	} {
-		if (DiagnosticPolicy{Enabled: []DiagnosticRule{rule}}).Valid() {
-			t.Fatalf("dormant template rule %q escaped the installed-producer policy fence", rule.Code().String())
+		if (DiagnosticPolicy{Enabled: []DiagnosticCode{code}}).Valid() {
+			t.Fatalf("declared code %q without a producer escaped the policy fence", code.String())
 		}
 	}
 }
 
-func TestDiagnosticCollectorRegistryIsPolicyAndDescriptorAuthority(t *testing.T) {
-	seenRules := make(map[DiagnosticRule]struct{}, len(diagnosticCollectorRegistry))
-	seenStaticKinds := make(map[programartifact.DiagnosticObservationKind]struct{})
-	for _, spec := range diagnosticCollectorRegistry {
-		if spec.rule == DiagnosticRuleInvalid || spec.code == DiagnosticCodeInvalid || !spec.rule.collectorInstalled() {
-			t.Fatalf("invalid native collector spec: %+v", spec)
-		}
-		if _, duplicate := seenRules[spec.rule]; duplicate {
-			t.Fatalf("duplicate collector rule %q", spec.rule.Code().String())
-		}
-		seenRules[spec.rule] = struct{}{}
-		template, templateOK := diagnosticTemplateForRule(spec.rule)
-		if !templateOK || template.rule != spec.rule || template.code != spec.code {
-			t.Fatalf("collector spec lost its closed descriptor: %+v", spec)
-		}
-		switch spec.surface {
-		case diagnosticCollectorSurfaceBranch:
-			if spec.staticKind != programartifact.DiagnosticObservationInvalid {
-				t.Fatalf("branch collector carries static kind: %+v", spec)
-			}
-		case diagnosticCollectorSurfaceStatic:
-			if spec.staticKind == programartifact.DiagnosticObservationInvalid {
-				t.Fatalf("static collector lacks row kind: %+v", spec)
-			}
-			if _, duplicate := seenStaticKinds[spec.staticKind]; duplicate {
-				t.Fatalf("duplicate static collector kind %d", spec.staticKind)
-			}
-			seenStaticKinds[spec.staticKind] = struct{}{}
-			mapped, mappedOK := diagnosticStaticCollectorSpec(spec.staticKind)
-			if !mappedOK || mapped != spec {
-				t.Fatalf("static collector dispatch lost spec %+v", spec)
-			}
-		default:
-			t.Fatalf("collector has no dispatch surface: %+v", spec)
-		}
+// TestDiagnosticDeclarationTableIsPolicyAndDispatchAuthority states that the
+// sealed declaration table is the sole authority for both halves of a
+// diagnostic's installation: a code is policy-admissible exactly when its row
+// declares a producing lane, and a static row is dispatchable exactly by the
+// observation population it declares.
+func TestDiagnosticDeclarationTableIsPolicyAndDispatchAuthority(t *testing.T) {
+	table, tableOK := grammar.Diagnostics()
+	if !tableOK {
+		t.Fatal("sealed diagnostic table unavailable")
 	}
-	for _, template := range diagnosticTemplateRegistry {
-		spec, installed := diagnosticCollectorSpecForRule(template.rule)
-		if installed && spec.code != template.code {
-			t.Fatalf("installed collector/descriptor code drift: spec=%+v template=%+v", spec, template)
+	staticKinds := make(map[programartifact.DiagnosticObservationKind]struct{}, table.Count())
+	for position := 0; position < table.Count(); position++ {
+		entry, entryOK := table.At(position)
+		if !entryOK || entry.Code() == DiagnosticCodeInvalid {
+			t.Fatalf("declaration row %d is unavailable", position)
 		}
-		if (DiagnosticPolicy{Enabled: []DiagnosticRule{template.rule}}).Valid() != installed {
-			t.Fatalf("policy installation drifted from collector registry for %q", template.codeText)
+		policy := DiagnosticPolicy{Enabled: []DiagnosticCode{entry.Code()}}
+		if policy.Valid() != entry.Collectable() {
+			t.Fatalf("policy admission drifted from the declared lane for %q", entry.Code().String())
+		}
+		if !entry.Collectable() {
+			if entry.Observation() != programartifact.DiagnosticObservationInvalid {
+				t.Fatalf("row %q without a producer declares an observation population", entry.Code().String())
+			}
+			continue
+		}
+		if entry.Observation() == programartifact.DiagnosticObservationInvalid {
+			t.Fatalf("producing row %q declares no observation population", entry.Code().String())
+		}
+		if entry.Lane() != diagnostic.LaneStatic {
+			continue
+		}
+		if _, duplicate := staticKinds[entry.Observation()]; duplicate {
+			t.Fatalf("duplicate static observation population %d", entry.Observation())
+		}
+		staticKinds[entry.Observation()] = struct{}{}
+		dispatched, dispatchedOK := staticDiagnosticDeclaration(entry.Observation())
+		if !dispatchedOK || dispatched != entry {
+			t.Fatalf("static dispatch lost row %q", entry.Code().String())
 		}
 	}
 }
@@ -134,13 +132,33 @@ func TestDiagnosticStaticCollectorRejectsUnknownRowKind(t *testing.T) {
 	}
 }
 
+// diagnosticLawSeed is the row's own position in the sealed declaration table.
+// The identities below are synthetic, so they are seeded from the one table
+// rather than from a second per-code numbering.
+func diagnosticLawSeed(t *testing.T, code DiagnosticCode) byte {
+	t.Helper()
+	table, tableOK := grammar.Diagnostics()
+	if !tableOK {
+		t.Fatal("sealed diagnostic table unavailable")
+	}
+	for position := 0; position < table.Count(); position++ {
+		entry, entryOK := table.At(position)
+		if entryOK && entry.Code() == code {
+			return byte(position + 1)
+		}
+	}
+	t.Fatalf("code %q is not declared", code.String())
+	return 0
+}
+
 func diagnosticTemplateLawFinding(t *testing.T, code DiagnosticCode) Finding {
 	t.Helper()
 	primary, primaryOK := newDiagnosticLocation("main.lua", 2, 4, 2, 8)
 	if !primaryOK {
 		t.Fatal("primary diagnostic location unavailable")
 	}
-	row := diagnosticFinding{id: artifactResultLawID(byte(code)*10 + 1), subject: artifactResultLawID(byte(code)*10 + 2), code: code, severity: FindingSeverityHint, location: primary}
+	seed := diagnosticLawSeed(t, code)
+	row := diagnosticFinding{id: artifactResultLawID(seed*10 + 1), subject: artifactResultLawID(seed*10 + 2), code: code, severity: FindingSeverityHint, location: primary}
 	switch code {
 	case DiagnosticCodeRedundantClaim:
 		subject, subjectOK := newDiagnosticSemanticName("typed")
@@ -173,9 +191,9 @@ func diagnosticTemplateLawFinding(t *testing.T, code DiagnosticCode) Finding {
 		row.severity = FindingSeverityHint
 	case DiagnosticCodeAlwaysTrueGuard, DiagnosticCodeAlwaysFalseGuard:
 	default:
-		t.Fatalf("test has no template payload for code %d", code)
+		t.Fatalf("test has no template payload for code %q", code.String())
 	}
-	report := &DiagnosticReport{source: artifactResultLawID(byte(code)*10 + 3), result: artifactResultLawID(byte(code)*10 + 4), findings: []diagnosticFinding{row}, sealed: true}
+	report := &DiagnosticReport{source: artifactResultLawID(seed*10 + 3), result: artifactResultLawID(seed*10 + 4), findings: []diagnosticFinding{row}, sealed: true}
 	finding, findingOK := report.FindingAt(0)
 	if !findingOK {
 		t.Fatalf("template finding %q unavailable", code.String())
@@ -185,25 +203,28 @@ func diagnosticTemplateLawFinding(t *testing.T, code DiagnosticCode) Finding {
 
 func TestDiagnosticTemplateRegistryClosedReportLaw(t *testing.T) {
 	tests := []struct {
-		rule          DiagnosticRule
 		code          DiagnosticCode
 		severity      FindingSeverity
 		message, help string
 		evidence      []string
 		labels        []string
 	}{
-		{DiagnosticRuleAlwaysTrueGuard, DiagnosticCodeAlwaysTrueGuard, FindingSeverityHint, "condition is proven always true", "Remove the guard or move the guarded code out of the branch.", []string{"condition is proven to be true on every reachable path"}, []string{"constant guard"}},
-		{DiagnosticRuleAlwaysFalseGuard, DiagnosticCodeAlwaysFalseGuard, FindingSeverityHint, "condition is proven always false", "Remove the unreachable branch or invert the guard.", []string{"condition is proven to be false on every reachable path"}, []string{"constant guard"}},
-		{DiagnosticRuleRedundantClaim, DiagnosticCodeRedundantClaim, FindingSeverityHint, "type cast call is redundant; value is already string", "Remove the runtime type claim when the proven source type is sufficient.", []string{"typed is proven to be string before the claim", "claim checks string at this site"}, []string{"claim site", "proven value"}},
-		{DiagnosticRuleUnresolvedTypeReference, DiagnosticCodeUnresolvedTypeReference, FindingSeverityError, "unknown type LocalPoint", "Declare the type in scope", []string{"no type named LocalPoint is declared in this scope"}, []string{"unknown type"}},
-		{DiagnosticRuleUnresolvedValueReference, DiagnosticCodeUnresolvedValueReference, FindingSeverityError, "unknown value missing_count", "Declare the value", []string{"no value named missing_count is declared, predeclared, imported, or configured global in this scope"}, []string{"unknown value"}},
-		{DiagnosticRuleUnusedLocal, DiagnosticCodeUnusedLocal, FindingSeverityHint, `local "unused_local" is never read`, "Remove it, use it, or rename it with a leading _ when intentionally unused.", []string{`no read of local "unused_local" was found in this scope`}, []string{"unused local"}},
+		{DiagnosticCodeAlwaysTrueGuard, FindingSeverityHint, "condition is proven always true", "Remove the guard or move the guarded code out of the branch.", []string{"condition is proven to be true on every reachable path"}, []string{"constant guard"}},
+		{DiagnosticCodeAlwaysFalseGuard, FindingSeverityHint, "condition is proven always false", "Remove the unreachable branch or invert the guard.", []string{"condition is proven to be false on every reachable path"}, []string{"constant guard"}},
+		{DiagnosticCodeRedundantClaim, FindingSeverityHint, "type cast call is redundant; value is already string", "Remove the runtime type claim when the proven source type is sufficient.", []string{"typed is proven to be string before the claim", "claim checks string at this site"}, []string{"claim site", "proven value"}},
+		{DiagnosticCodeUnresolvedTypeReference, FindingSeverityError, "unknown type LocalPoint", "Declare the type in scope", []string{"no type named LocalPoint is declared in this scope"}, []string{"unknown type"}},
+		{DiagnosticCodeUnresolvedValueReference, FindingSeverityError, "unknown value missing_count", "Declare the value", []string{"no value named missing_count is declared, predeclared, imported, or configured global in this scope"}, []string{"unknown value"}},
+		{DiagnosticCodeUnusedLocal, FindingSeverityHint, `local "unused_local" is never read`, "Remove it, use it, or rename it with a leading _ when intentionally unused.", []string{`no read of local "unused_local" was found in this scope`}, []string{"unused local"}},
 	}
 	for _, test := range tests {
 		t.Run(test.code.String(), func(t *testing.T) {
 			finding := diagnosticTemplateLawFinding(t, test.code)
-			if finding.Code() != test.code || test.rule.Code() != test.code || test.rule.DefaultSeverity() != test.severity || finding.Severity() != test.severity || finding.Message() != test.message || finding.Help() != test.help {
-				t.Fatalf("closed template contract lost: code=%q rule=%q severity=%q message=%q help=%q", finding.Code().String(), test.rule.Code().String(), finding.Severity().String(), finding.Message(), finding.Help())
+			declared, declaredOK := diagnosticDeclaration(test.code)
+			if !declaredOK || declared.DefaultSeverity() != test.severity {
+				t.Fatalf("declared default severity for %q lost", test.code.String())
+			}
+			if finding.Code() != test.code || finding.Severity() != test.severity || finding.Message() != test.message || finding.Help() != test.help {
+				t.Fatalf("closed template contract lost: code=%q severity=%q message=%q help=%q", finding.Code().String(), finding.Severity().String(), finding.Message(), finding.Help())
 			}
 			if finding.EvidenceCount() != len(test.evidence) || finding.LabelCount() != len(test.labels) {
 				t.Fatalf("template row counts = evidence %d labels %d, want %d/%d", finding.EvidenceCount(), finding.LabelCount(), len(test.evidence), len(test.labels))
@@ -238,7 +259,7 @@ func TestDiagnosticTemplateRowsRejectInvalidAndForeignPayloads(t *testing.T) {
 	missingPayload := base
 	missingPayload.code = DiagnosticCodeUnresolvedTypeReference
 	foreign := base
-	foreign.code = DiagnosticCode(255)
+	foreign.code = DiagnosticCode("advice.undeclared_family")
 	malformedName := base
 	malformedName.code = DiagnosticCodeUnresolvedValueReference
 	malformedName.data.subject = diagnosticSemanticName{value: "bad\nname"}

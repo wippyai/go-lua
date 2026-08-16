@@ -11,9 +11,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/heap"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
-	"github.com/wippyai/go-lua/program"
-	flowkind "github.com/wippyai/go-lua/program/flow/kind"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program"
+	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
 
 // Form is the complete source constructor disposition. Closed means that all
@@ -43,7 +43,7 @@ const (
 type Root struct {
 	schema heap.Schema
 	key    heap.Key
-	id     keyspace.ContentID
+	id     identity.ContentID
 	kind   heap.AllocationKind
 	form   Form
 }
@@ -93,7 +93,7 @@ func formFromProgram(form program.AllocationForm) (Form, bool) {
 	}
 }
 
-func (root Root) ID() (keyspace.ContentID, bool) { return root.id, root.id.Available() }
+func (root Root) ID() (identity.ContentID, bool) { return root.id, root.id.Available() }
 func (root Root) Key() heap.Key                  { return root.key }
 func (root Root) Kind() heap.AllocationKind      { return root.kind }
 func (root Root) Form() Form                     { return root.form }
@@ -145,7 +145,7 @@ func NewClosed(schema heap.Schema, valueSchema *valuedomain.Schema, allocation h
 	return Closed{root: root, heap: schema, values: valueSchema, coords: coords, fields: fields}, true
 }
 
-func (closed Closed) ID() (keyspace.ContentID, bool) { return closed.root.ID() }
+func (closed Closed) ID() (identity.ContentID, bool) { return closed.root.ID() }
 func (closed Closed) Key() heap.Key                  { return closed.root.Key() }
 
 // Count is source-order field count. It is defined only after complete
@@ -226,7 +226,7 @@ type Field struct {
 	keyOrd   uint32
 	keyKind  KeyKind
 	exact    heap.ExactKey
-	id       keyspace.ContentID
+	id       identity.ContentID
 }
 
 // At returns one canonical scalar field. Dynamic source keys retain a Value
@@ -447,9 +447,9 @@ func equalFields(left, right []Field) bool {
 	return true
 }
 
-func fieldID(root keyspace.ContentID, ordinal uint32) (keyspace.ContentID, bool) {
+func fieldID(root identity.ContentID, ordinal uint32) (identity.ContentID, bool) {
 	if !root.Available() || ordinal == 0 {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	var image [48]byte
 	copy(image[:32], root[:])
@@ -458,7 +458,7 @@ func fieldID(root keyspace.ContentID, ordinal uint32) (keyspace.ContentID, bool)
 	return sha256.Sum256(image[:]), true
 }
 
-func (field Field) ID() (keyspace.ContentID, bool) { return field.id, field.id.Available() }
+func (field Field) ID() (identity.ContentID, bool) { return field.id, field.id.Available() }
 func (field Field) Ordinal() uint32                { return field.ordinal }
 func (field Field) Slot() heap.Slot                { return field.slot }
 func (field Field) Payload() heap.Payload          { return field.payload }

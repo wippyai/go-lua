@@ -4,8 +4,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/type/ambient"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/ambient"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 )
 
 func channelPayloadTypeFromValue(reg *axis.Registry, value product.Value) (typ.Type, bool) {

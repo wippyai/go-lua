@@ -3,8 +3,8 @@ package engine
 import (
 	"sort"
 
-	"github.com/wippyai/go-lua/program"
-	"github.com/wippyai/go-lua/program/link"
+	"github.com/wippyai/go-lua/analysis/program"
+	"github.com/wippyai/go-lua/analysis/program/link"
 )
 
 // Rule owns one typed conclusion.  Its binding is fixed while the Solver is

@@ -5,8 +5,8 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/materialization"
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
 // RawRouteTag is the schema-local numeric root/role identity of one staged
@@ -135,19 +135,19 @@ func (access RawAccess) PayloadTag(present Present) (RawPayloadTag, bool) {
 // one selected Present tuple and returns the exact Target initial source
 // together with its owning boot root. Program Values payloads deliberately
 // fail here and continue through PayloadTag/PayloadForRawTag.
-func (access RawAccess) InitialPayload(present Present) (keyspace.ContentID, target.InitialValue, bool) {
+func (access RawAccess) InitialPayload(present Present) (identity.ContentID, target.InitialValue, bool) {
 	if !access.valid() || access.top || !present.valid() || present.owner != access.owner || access.cell.PresentCount() != 1 {
-		return keyspace.ContentID{}, 0, false
+		return identity.ContentID{}, 0, false
 	}
 	selected, selectedOK := access.cell.PresentAt(0)
 	if !selectedOK || comparePresent(selected, present) != 0 || access.key.Kind() != RootBoot {
-		return keyspace.ContentID{}, 0, false
+		return identity.ContentID{}, 0, false
 	}
 	payload, payloadOK := present.Payload()
 	initial, initialOK := payload.InitialValue()
 	root, rootOK := access.key.BootID()
 	if !payloadOK || !initialOK || !rootOK {
-		return keyspace.ContentID{}, 0, false
+		return identity.ContentID{}, 0, false
 	}
 	return root, initial, true
 }

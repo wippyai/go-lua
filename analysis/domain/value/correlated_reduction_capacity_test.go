@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // TestFullRowsCapacityTracksSelection ensures singleton reductions do not
@@ -42,7 +42,7 @@ func TestAtomTopReductionStorageScalesLinearly(t *testing.T) {
 	makeSchema := func(atomCount int) *Schema {
 		schema := &Schema{
 			atoms:              make([]atomRow, atomCount),
-			capabilities:       make([]keyspace.ContentID, capabilityCount),
+			capabilities:       make([]identity.ContentID, capabilityCount),
 			capWords:           1,
 			firstStoredUnknown: uint32(atomCount + 1),
 			firstStoredExact:   uint32(atomCount + 1),

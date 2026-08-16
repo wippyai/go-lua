@@ -8,17 +8,17 @@ import (
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
 	packdomain "github.com/wippyai/go-lua/analysis/domain/pack"
 	staticdomain "github.com/wippyai/go-lua/analysis/domain/static"
+	"github.com/wippyai/go-lua/analysis/domain/type/authority"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
-	programartifact "github.com/wippyai/go-lua/analysis/internal/programartifact"
-	"github.com/wippyai/go-lua/analysis/internal/programartifact/schemaadapter"
-	"github.com/wippyai/go-lua/analysis/internal/programschema"
-	"github.com/wippyai/go-lua/analysis/semantic/typeauthority"
-	flowkind "github.com/wippyai/go-lua/program/flow/kind"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/link"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
-	"github.com/wippyai/go-lua/program/lower"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/lua/lower"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
+	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/link"
+	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 type siteLawFixture struct {
@@ -26,7 +26,7 @@ type siteLawFixture struct {
 	heaps   heapdomain.Schema
 	values  *valuedomain.Schema
 	packs   *packdomain.Schema
-	apps    []keyspace.ContentID
+	apps    []identity.ContentID
 }
 
 func newSiteLawFixture(t testing.TB) siteLawFixture {
@@ -51,7 +51,7 @@ func newSiteLawFixture(t testing.TB) siteLawFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, receiptOK := programschema.Global()
+	receipt, receiptOK := grammar.Global()
 	if !receiptOK {
 		t.Fatal("program schema receipt")
 	}
@@ -100,7 +100,7 @@ func newSiteLawFixture(t testing.TB) siteLawFixture {
 	if !packsOK || packs == nil || !algebraOK || algebra == nil {
 		t.Fatal("site fixture Pack/Call")
 	}
-	apps := make([]keyspace.ContentID, algebra.MountedCallCount())
+	apps := make([]identity.ContentID, algebra.MountedCallCount())
 	for index := range apps {
 		mounted, mountedOK := algebra.MountedCallAtHandle(index)
 		application, _, _, _, _, identityOK := algebra.MountedCallIdentity(mounted)

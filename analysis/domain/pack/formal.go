@@ -8,18 +8,18 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/domain/static"
+	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/internal/canonical"
-	"github.com/wippyai/go-lua/program/keyspace"
 )
 
 // FormalValue is a Pack-owned view of a seal-time Program formal receipt. The
 // endpoint and content-addressed formal ID are retained; no Program proof is.
 type FormalValue struct {
 	owner       *algebra
-	formalID    keyspace.ContentID
+	formalID    identity.ContentID
 	endpoint    Endpoint
-	moduleKey   keyspace.ContentID
-	bodyContext keyspace.ContentID
+	moduleKey   identity.ContentID
+	bodyContext identity.ContentID
 	position    uint32
 	class       static.Class
 	sealed      bool
@@ -34,9 +34,9 @@ func (value FormalValue) Valid() bool { return value.valid() }
 
 // ContextID returns the opaque Program formal identity. It is not a Pack
 // endpoint coordinate and cannot mint another formal or scalar.
-func (value FormalValue) ContextID() keyspace.ContentID {
+func (value FormalValue) ContextID() identity.ContentID {
 	if !value.valid() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return value.formalID
 }
@@ -121,10 +121,10 @@ func (value FormalValue) EncodeCanonical(ctx context.Context) ([]byte, error) {
 
 // CanonicalID hashes the complete canonical formal stream for compact replay
 // comparisons. It is not an inverse constructor and cannot mint a formal.
-func (value FormalValue) CanonicalID(ctx context.Context) (keyspace.ContentID, error) {
+func (value FormalValue) CanonicalID(ctx context.Context) (identity.ContentID, error) {
 	encoded, err := value.EncodeCanonical(ctx)
 	if err != nil {
-		return keyspace.ContentID{}, err
+		return identity.ContentID{}, err
 	}
 	return sha256.Sum256(encoded), nil
 }

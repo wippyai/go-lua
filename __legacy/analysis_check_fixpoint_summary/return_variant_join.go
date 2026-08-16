@@ -7,9 +7,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
-	typelit "github.com/wippyai/go-lua/analysis/type/literal"
-	typenormalize "github.com/wippyai/go-lua/analysis/type/normalize"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	typelit "github.com/wippyai/go-lua/analysis/domain/type/literal"
+	typenormalize "github.com/wippyai/go-lua/analysis/domain/type/normalize"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 )
 
 func joinedTaggedReturnValue(reg *axis.Registry, joined, left, right product.Value) (product.Value, bool) {

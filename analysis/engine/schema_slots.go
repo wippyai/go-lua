@@ -179,7 +179,19 @@ func (form SchemaWriteForm[T]) Kind() SchemaFormKind {
 func (form SchemaReadForm[T]) valid(builder *SchemaBuilder) bool {
 	draft, ok := tokenDraft[schemaFormDraft](form.cell)
 	return ok && builder != nil && builder.phase != schemaBuilderPoisoned && builder.phase != schemaBuilderSealed && draft.builder == builder && draft.read &&
-		(draft.formKind == SchemaFormReadExact || draft.formKind == SchemaFormReadSummary)
+		(draft.formKind == SchemaFormReadExact || summaryReadFormKind(draft.formKind))
+}
+
+// summaryReadFormKind reports the two declared summary read folds. Both are
+// summary reads of the same declared key vector; they differ only in whether
+// the reader observes the joint partition or the coordinate-wise fold.
+func summaryReadFormKind(kind SchemaFormKind) bool {
+	return kind == SchemaFormReadSummary || kind == SchemaFormReadDistributiveSummary
+}
+
+// summaryReadRowKind is the cold counterpart of summaryReadFormKind.
+func summaryReadRowKind(kind coldcomposition.FactorFormKind) bool {
+	return kind == coldcomposition.FactorSummaryRead || kind == coldcomposition.FactorDistributiveSummaryRead
 }
 
 func (form SchemaWriteForm[T]) valid(builder *SchemaBuilder) bool {
@@ -207,6 +219,14 @@ func (slot *FactorSlot[T]) ExactRead() (SchemaReadForm[T], bool) {
 
 func (slot *FactorSlot[T]) SummaryRead(semantic SemanticKey) (SchemaReadForm[T], bool) {
 	return slot.addReadForm(SchemaFormReadSummary, semantic)
+}
+
+// DistributiveSummaryRead declares a summary read whose reader folds each
+// declared coordinate independently. The declaration is the sole authority
+// for that fold: readers of this form never observe the joint partition of
+// the declared vector, and no observation call may choose otherwise.
+func (slot *FactorSlot[T]) DistributiveSummaryRead(semantic SemanticKey) (SchemaReadForm[T], bool) {
+	return slot.addReadForm(SchemaFormReadDistributiveSummary, semantic)
 }
 
 func (slot *FactorSlot[T]) ExactWrite() (SchemaWriteForm[T], bool) {
@@ -289,6 +309,7 @@ const (
 	SchemaFormReadSummary
 	SchemaFormWriteExact
 	SchemaFormWriteSelector
+	SchemaFormReadDistributiveSummary
 )
 
 // schemaTokenCell is the shared mutable identity cell behind every issued
@@ -341,13 +362,27 @@ type schemaFormDraft struct {
 	token     *schemaTokenCell
 }
 
+// factorFormRowKind is the single mapping from a declared form token kind to
+// its cold Factor form row. Exact forms have no row: they are the Factor's
+// intrinsic surface.
+func factorFormRowKind(kind SchemaFormKind) coldcomposition.FactorFormKind {
+	switch kind {
+	case SchemaFormWriteSelector:
+		return coldcomposition.FactorSelectorWrite
+	case SchemaFormReadDistributiveSummary:
+		return coldcomposition.FactorDistributiveSummaryRead
+	default:
+		return coldcomposition.FactorSummaryRead
+	}
+}
+
 func (builder *SchemaBuilder) addForm(factor *schemaFactorDraft, read bool, kind SchemaFormKind, semantic SemanticKey) (*schemaFormDraft, bool) {
 	if builder == nil || factor == nil || factor.builder != builder || factor.index < 0 || factor.index >= len(builder.candidate.Factors) {
 		builder.poison()
 		return nil, false
 	}
 	if !schemaSlotCardinality(len(builder.forms)) ||
-		(read && kind != SchemaFormReadExact && kind != SchemaFormReadSummary) ||
+		(read && kind != SchemaFormReadExact && !summaryReadFormKind(kind)) ||
 		(!read && kind != SchemaFormWriteExact && kind != SchemaFormWriteSelector) {
 		builder.poison()
 		return nil, false
@@ -370,10 +405,7 @@ func (builder *SchemaBuilder) addForm(factor *schemaFactorDraft, read bool, kind
 	}
 	form := &schemaFormDraft{builder: builder, factor: factor, semantic: semantic, formKind: kind, read: read}
 	builder.forms = append(builder.forms, form)
-	rowKind := coldcomposition.FactorSummaryRead
-	if kind == SchemaFormWriteSelector {
-		rowKind = coldcomposition.FactorSelectorWrite
-	}
+	rowKind := factorFormRowKind(kind)
 	if kind != SchemaFormReadExact && kind != SchemaFormWriteExact {
 		builder.candidate.Factors[factor.index].Forms = append(builder.candidate.Factors[factor.index].Forms, coldcomposition.FactorForm{Kind: rowKind, Semantic: semantic.compositionKey()})
 	}
@@ -663,7 +695,7 @@ func appendSchemaRead[T any](ruleDraft *schemaRuleDraft, ok bool, form SchemaRea
 		return SchemaReadSlot[T]{}, false
 	}
 	row := coldcomposition.Read{Input: uint64(inputDraft.index), Factor: formDraft.factor.semantic.compositionKey()}
-	if formDraft.formKind == SchemaFormReadSummary {
+	if summaryReadFormKind(formDraft.formKind) {
 		row.Kind = coldcomposition.ReadSummary
 		row.Semantic = formDraft.semantic.compositionKey()
 		row.Normalizer = row.Semantic
@@ -1213,7 +1245,7 @@ func SchemaQueryRead[T, R any](query *QuerySlot[R], form SchemaReadForm[T]) bool
 	}
 	builder := queryDraft.builder
 	row := &builder.candidate.Queries[queryDraft.index]
-	if formDraft.formKind != SchemaFormReadExact && formDraft.formKind != SchemaFormReadSummary {
+	if formDraft.formKind != SchemaFormReadExact && !summaryReadFormKind(formDraft.formKind) {
 		return false
 	}
 	projection := coldcomposition.QueryProjection{Factor: formDraft.factor.semantic.compositionKey()}
@@ -1352,10 +1384,7 @@ func (builder *SchemaBuilder) bindSealed(schema *Schema, sealed *coldcomposition
 		var formIndex uint64
 		formFound := false
 		for index, candidate := range factors[int(factorIndex)].Forms {
-			wantKind := coldcomposition.FactorSummaryRead
-			if form.formKind == SchemaFormWriteSelector {
-				wantKind = coldcomposition.FactorSelectorWrite
-			}
+			wantKind := factorFormRowKind(form.formKind)
 			if candidate.Kind == wantKind && candidate.Semantic == form.semantic.compositionKey() {
 				formIndex = uint64(index)
 				formFound = true

@@ -19,9 +19,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
-	typenormalize "github.com/wippyai/go-lua/analysis/type/normalize"
-	typetable "github.com/wippyai/go-lua/analysis/type/table"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	typenormalize "github.com/wippyai/go-lua/analysis/domain/type/normalize"
+	typetable "github.com/wippyai/go-lua/analysis/domain/type/table"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 )
 
 func TestSummaryLaneRegistryCoversEveryPayloadField(t *testing.T) {

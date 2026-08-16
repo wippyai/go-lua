@@ -4,10 +4,10 @@ import (
 	"context"
 	"crypto/sha256"
 
-	"github.com/wippyai/go-lua/analysis/internal/programartifact"
-	"github.com/wippyai/go-lua/analysis/semantic/typeauthority"
-	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/type/authority"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
+	"github.com/wippyai/go-lua/analysis/identity"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 )
 
 const typeArgumentFormalDomain = "wippy.analysis.static.type-argument-formal.v1\x00"
@@ -15,7 +15,7 @@ const typeArgumentFormalDomain = "wippy.analysis.static.type-argument-formal.v1\
 // TypeArgumentFormal is the owner-neutral semantic content of one authored
 // call type argument. It carries neither a Program/Static owner nor the local
 // Static Term used to resolve it.
-type TypeArgumentFormal struct{ id keyspace.ContentID }
+type TypeArgumentFormal struct{ id identity.ContentID }
 
 // typeArgumentFormalTable is the seal-time semantic projection of exact
 // Program call type-argument proofs. The opaque proof itself is the sole live
@@ -23,7 +23,7 @@ type TypeArgumentFormal struct{ id keyspace.ContentID }
 // into this Authority. Semantic graphs and the construction type authority
 // are discarded after these scalar receipts are issued.
 type typeArgumentFormalTable struct {
-	byArgument map[keyspace.ContentID]TypeArgumentFormal
+	byArgument map[identity.ContentID]TypeArgumentFormal
 	mounted    map[mountedTypeArgumentsKey][]TypeArgumentFormal
 	sealed     bool
 }
@@ -32,8 +32,8 @@ type typeArgumentFormalTable struct {
 // reusable Program type-argument sequence. ModuleKey keeps duplicate mounts
 // distinct; the sequence ID is Program-issued and carries no local term.
 type mountedTypeArgumentsKey struct {
-	module keyspace.ContentID
-	types  keyspace.ContentID
+	module identity.ContentID
+	types  identity.ContentID
 }
 
 // MountedTypeArguments is Static's opaque, ordered receipt for one mounted
@@ -77,7 +77,7 @@ func (receipt MountedTypeArguments) At(index int) (TypeArgumentFormal, bool) {
 
 func (formal TypeArgumentFormal) Available() bool { return formal.id.Available() }
 
-func (formal TypeArgumentFormal) ContentID() (keyspace.ContentID, bool) {
+func (formal TypeArgumentFormal) ContentID() (identity.ContentID, bool) {
 	return formal.id, formal.Available()
 }
 
@@ -88,7 +88,7 @@ func (formal TypeArgumentFormal) Equal(other TypeArgumentFormal) bool {
 // MountedCallTypeArguments resolves Static's sealed module substitution for
 // an artifact CallTypeArguments semantic ID. No Program handle, ordinal, or
 // raw type term is accepted after Authority sealing.
-func (a *Authority) MountedCallTypeArguments(module, types keyspace.ContentID) (MountedTypeArguments, bool) {
+func (a *Authority) MountedCallTypeArguments(module, types identity.ContentID) (MountedTypeArguments, bool) {
 	if a == nil || !a.typeArguments.sealed || !module.Available() || !types.Available() {
 		return MountedTypeArguments{}, false
 	}
@@ -96,7 +96,7 @@ func (a *Authority) MountedCallTypeArguments(module, types keyspace.ContentID) (
 	return receipt, receipt.Available()
 }
 
-func issueMountedTypeArgumentFormal(types *typeauthority.Authority, referenceID keyspace.ContentID) (TypeArgumentFormal, bool) {
+func issueMountedTypeArgumentFormal(types *typeauthority.Authority, referenceID identity.ContentID) (TypeArgumentFormal, bool) {
 	if types == nil || !referenceID.Available() {
 		return TypeArgumentFormal{}, false
 	}
@@ -112,7 +112,7 @@ func issueMountedTypeArgumentFormal(types *typeauthority.Authority, referenceID 
 	hash := sha256.New()
 	_, _ = hash.Write([]byte(typeArgumentFormalDomain))
 	_, _ = hash.Write(encoded)
-	var id keyspace.ContentID
+	var id identity.ContentID
 	copy(id[:], hash.Sum(nil))
 	formal := TypeArgumentFormal{id: id}
 	return formal, formal.Available()
@@ -124,12 +124,12 @@ func (a *Authority) sealMountedTypeArgumentFormals() bool {
 	if a == nil || a.types == nil || len(a.mounts) == 0 {
 		return false
 	}
-	table := typeArgumentFormalTable{byArgument: make(map[keyspace.ContentID]TypeArgumentFormal), mounted: make(map[mountedTypeArgumentsKey][]TypeArgumentFormal), sealed: true}
+	table := typeArgumentFormalTable{byArgument: make(map[identity.ContentID]TypeArgumentFormal), mounted: make(map[mountedTypeArgumentsKey][]TypeArgumentFormal), sealed: true}
 	for _, mount := range a.mounts {
 		if mount.Artifact == nil || !mount.Artifact.Available() || !mount.ModuleID.Available() {
 			return false
 		}
-		grouped := make(map[keyspace.ContentID][]programartifact.StaticTypeArgumentRow)
+		grouped := make(map[identity.ContentID][]programartifact.StaticTypeArgumentRow)
 		if receipt, receiptOK := mount.Artifact.PackReceipt(); receiptOK {
 			for callIndex := 0; callIndex < receipt.CallCount(); callIndex++ {
 				call, callOK := receipt.CallAt(callIndex)

@@ -98,8 +98,9 @@ func wideRoutingGraph(t testing.TB, width int) *equation.Graph {
 	if !ok || topology == nil {
 		t.Fatal("routing topology")
 	}
-	graph, ok := topology.Graph(nil)
-	if !ok || graph == nil || graph.GroupCount() != width {
+	relation, relationOK := topology.InitialRelation()
+	graph, ok := topology.Graph(relation)
+	if !relationOK || !ok || graph == nil || graph.GroupCount() != width {
 		t.Fatal("routing graph")
 	}
 	return graph

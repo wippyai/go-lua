@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/wippyai/go-lua/analysis/domain/effect"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 )
 
 // Function carries a pure function type together with the effects produced by

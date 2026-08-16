@@ -4,7 +4,7 @@ import (
 	"crypto/sha256"
 	"testing"
 
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 func TestArtifactScalarReceiptConsumesPrivateBuilderStorageExactlyOnce(t *testing.T) {
@@ -53,6 +53,6 @@ func TestArtifactScalarReceiptConsumesPrivateBuilderStorageExactlyOnce(t *testin
 	}
 }
 
-func artifactScalarLawID(value byte) keyspace.ContentID {
-	return keyspace.ContentID(sha256.Sum256([]byte{0xA5, value}))
+func artifactScalarLawID(value byte) identity.ContentID {
+	return identity.ContentID(sha256.Sum256([]byte{0xA5, value}))
 }

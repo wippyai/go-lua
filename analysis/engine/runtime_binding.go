@@ -850,9 +850,19 @@ func (binding *runtimeBinding) freezeCatalog() bool {
 	return true
 }
 
+// summaryUnitKey is the carrier Unit identity of one declared summary read.
+// Two surfaces share a Unit only when they name the same canonical key vector
+// under the same declared fold: a coordinate-wise reader and a correlated
+// reader of the same keys observe different partitions, so they are distinct
+// Units even though their key vectors agree.
+type summaryUnitKey struct {
+	representative equation.Surface
+	distributive   bool
+}
+
 type summaryBindingRow[K ~uint32 | ~uint64] struct {
-	surface equation.Surface
-	keys    []K
+	unit summaryUnitKey
+	keys []K
 }
 
 // surfaceVectorRow keeps selector vectors positional. Weak rows later sort
@@ -865,7 +875,7 @@ type surfaceVectorRow struct {
 type factorGraphCatalog[K ~uint32 | ~uint64] struct {
 	exactReads     []equation.Surface
 	summaries      []summaryBindingRow[K]
-	summaryAliases map[equation.Surface]equation.Surface
+	summaryAliases map[equation.Surface]summaryUnitKey
 	strongWrites   []equation.Surface
 	weakWrites     []surfaceVectorRow
 	dynamicRead    bool
@@ -969,8 +979,15 @@ func bindFactorFromGraph[K ~uint32 | ~uint64, V any](implementation *FactorImple
 				bound.reads[surface] = boundUnit{unit: unit, kind: carrier.ExactUnit, local: surface.Local}
 			}
 		}
+		summaryUnits := make(map[summaryUnitKey]boundUnit, len(catalog.summaries))
 		for ordinal, summary := range catalog.summaries {
-			unit, declared := binding.DeclareSummary(summary.keys)
+			var unit carrier.Unit
+			var declared bool
+			if summary.unit.distributive {
+				unit, declared = binding.DeclareDistributiveSummary(summary.keys)
+			} else {
+				unit, declared = binding.DeclareSummary(summary.keys)
+			}
 			if !declared {
 				return false
 			}
@@ -978,10 +995,10 @@ func bindFactorFromGraph[K ~uint32 | ~uint64, V any](implementation *FactorImple
 			for index, key := range summary.keys {
 				keys[index] = uint64(key)
 			}
-			bound.reads[summary.surface] = boundUnit{unit: unit, kind: carrier.SummaryUnit, local: uint64(ordinal) + 1, summaryKeys: keys}
+			summaryUnits[summary.unit] = boundUnit{unit: unit, kind: carrier.SummaryUnit, local: uint64(ordinal) + 1, summaryKeys: keys}
 		}
-		for alias, representative := range catalog.summaryAliases {
-			unit, present := bound.reads[representative]
+		for alias, summary := range catalog.summaryAliases {
+			unit, present := summaryUnits[summary]
 			if !present {
 				return false
 			}
@@ -1074,11 +1091,32 @@ func matchesFactorReadShape(schema *Schema, ordinal uint64, surface equation.Sur
 	}
 	for index := 0; index < count; index++ {
 		form, formOK := schema.factorFormShapeAt(ordinal, uint64(index))
-		if formOK && form.Kind == composition.FactorSummaryRead && form.Semantic == surface.Semantic {
+		if formOK && summaryReadRowKind(form.Kind) && form.Semantic == surface.Semantic {
 			return true
 		}
 	}
 	return false
+}
+
+// summaryReadFormFold resolves the declared fold of one summary read form
+// from the sealed cold schema. The normalizer key names exactly one declared
+// form, so the fold is recovered without any Rule, Query, or caller input.
+func summaryReadFormFold(schema *Schema, ordinal uint64, semantic composition.Key) (bool, bool) {
+	if schema == nil || !schema.Available() || ordinal >= schema.factorCount() || !semantic.Available() {
+		return false, false
+	}
+	count, ok := schema.factorFormCount(ordinal)
+	if !ok {
+		return false, false
+	}
+	for index := 0; index < count; index++ {
+		form, formOK := schema.factorFormShapeAt(ordinal, uint64(index))
+		if !formOK || form.Semantic != semantic || !summaryReadRowKind(form.Kind) {
+			continue
+		}
+		return form.Kind == composition.FactorDistributiveSummaryRead, true
+	}
+	return false, false
 }
 
 // collectFactorGraphCatalog performs only cold work. Graph owns every
@@ -1091,8 +1129,8 @@ func collectFactorGraphCatalog[K ~uint32 | ~uint64, V any](descriptor factorRunt
 	}
 	key := descriptor.semantic
 	exact := make(map[equation.Surface]struct{})
-	summaries := make(map[equation.Surface][]K)
-	aliases := make(map[equation.Surface]equation.Surface)
+	summaries := make(map[summaryUnitKey][]K)
+	aliases := make(map[equation.Surface]summaryUnitKey)
 	strong := make(map[equation.Surface]struct{})
 	weak := make(map[equation.Surface][]equation.Surface)
 	writeSelectors := make(map[equation.Surface][]equation.Surface)
@@ -1102,6 +1140,12 @@ func collectFactorGraphCatalog[K ~uint32 | ~uint64, V any](descriptor factorRunt
 	var collectRead func(equation.Surface) bool
 	collectSummary := func(surface equation.Surface) bool {
 		if !matchesFactorReadShape(descriptor.schema, descriptor.ordinal, surface, summaryReadForm) || surface.Mode != equation.TargetModeNone {
+			return false
+		}
+		// The fold is read from the declared cold form the surface names, so a
+		// summary can never acquire a fold from the Rule or Query that reads it.
+		distributive, foldOK := summaryReadFormFold(descriptor.schema, descriptor.ordinal, surface.Semantic)
+		if !foldOK {
 			return false
 		}
 		representative, represented := graph.SummaryRepresentative(surface)
@@ -1123,11 +1167,24 @@ func collectFactorGraphCatalog[K ~uint32 | ~uint64, V any](descriptor factorRunt
 				return false
 			}
 		}
-		if prior, exists := summaries[representative]; exists && !sameSummaryKeys(prior, keys) {
+		unit := summaryUnitKey{representative: representative, distributive: distributive}
+		if prior, exists := summaries[unit]; exists && !sameSummaryKeys(prior, keys) {
 			return false
 		}
-		summaries[representative] = keys
-		aliases[surface], aliases[representative] = representative, representative
+		summaries[unit] = keys
+		aliases[surface] = unit
+		if _, present := aliases[representative]; !present {
+			representativeDistributive, representativeFoldOK := summaryReadFormFold(descriptor.schema, descriptor.ordinal, representative.Semantic)
+			if !representativeFoldOK {
+				return false
+			}
+			representativeUnit := summaryUnitKey{representative: representative, distributive: representativeDistributive}
+			if prior, exists := summaries[representativeUnit]; exists && !sameSummaryKeys(prior, keys) {
+				return false
+			}
+			summaries[representativeUnit] = keys
+			aliases[representative] = representativeUnit
+		}
 		return true
 	}
 	collectRead = func(surface equation.Surface) bool {
@@ -1266,14 +1323,17 @@ func collectFactorGraphCatalog[K ~uint32 | ~uint64, V any](descriptor factorRunt
 	sort.Slice(result.exactReads, func(left, right int) bool {
 		return result.exactReads[left].Local < result.exactReads[right].Local
 	})
-	for surface, keys := range summaries {
-		result.summaries = append(result.summaries, summaryBindingRow[K]{surface: surface, keys: keys})
+	for unit, keys := range summaries {
+		result.summaries = append(result.summaries, summaryBindingRow[K]{unit: unit, keys: keys})
 	}
 	sort.Slice(result.summaries, func(left, right int) bool {
-		if comparison := compareSummaryKeys(result.summaries[left].keys, result.summaries[right].keys); comparison != 0 {
+		if comparison := equation.CompareKeyVectors(result.summaries[left].keys, result.summaries[right].keys); comparison != 0 {
 			return comparison < 0
 		}
-		return lessRuntimeSurface(result.summaries[left].surface, result.summaries[right].surface)
+		if result.summaries[left].unit.distributive != result.summaries[right].unit.distributive {
+			return !result.summaries[left].unit.distributive
+		}
+		return lessRuntimeSurface(result.summaries[left].unit.representative, result.summaries[right].unit.representative)
 	})
 	for surface := range strong {
 		result.strongWrites = append(result.strongWrites, surface)
@@ -1326,24 +1386,6 @@ func compactCarrySurfaces(surfaces []equation.Surface) []equation.Surface {
 		}
 	}
 	return surfaces[:end]
-}
-
-func compareSummaryKeys[K ~uint32 | ~uint64](left, right []K) int {
-	for index := 0; index < len(left) && index < len(right); index++ {
-		if left[index] < right[index] {
-			return -1
-		}
-		if left[index] > right[index] {
-			return 1
-		}
-	}
-	if len(left) < len(right) {
-		return -1
-	}
-	if len(left) > len(right) {
-		return 1
-	}
-	return 0
 }
 
 func lessRuntimeSurface(left, right equation.Surface) bool {

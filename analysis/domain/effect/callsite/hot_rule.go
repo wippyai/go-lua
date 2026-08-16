@@ -8,7 +8,7 @@ import (
 	effectfactor "github.com/wippyai/go-lua/analysis/domain/effect/factor"
 	effectowner "github.com/wippyai/go-lua/analysis/domain/effect/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // hotOperand is the runtime-only Callsite operand. It retains no Project
@@ -17,7 +17,7 @@ type hotOperand struct {
 	receipt *callsiteReceipt
 	key     calldomain.Key
 	root    effectfactor.Root
-	id      keyspace.ContentID
+	id      identity.ContentID
 }
 
 func newHotOperand(effects *effectfactor.Algebra, calls *calldomain.Algebra, root effectfactor.Root, key calldomain.Key) (hotOperand, bool) {
@@ -34,7 +34,7 @@ func newHotOperand(effects *effectfactor.Algebra, calls *calldomain.Algebra, roo
 	copy(payload[:], prefix)
 	copy(payload[len(prefix):], callID[:])
 	copy(payload[len(prefix)+sha256.Size:], rootID[:])
-	id := keyspace.ContentID(sha256.Sum256(payload[:]))
+	id := identity.ContentID(sha256.Sum256(payload[:]))
 	return hotOperand{key: key, root: root, id: id}, id.Available()
 }
 
@@ -94,7 +94,7 @@ type HotRule struct {
 	read           engine.Read[engine.OrderedCells[calldomain.Value]]
 	opaque         bool
 	receiptsSealed bool
-	occurrences    map[keyspace.ContentID]*mountedReceiptRows
+	occurrences    map[identity.ContentID]*mountedReceiptRows
 }
 
 func BindSelectedHot(binding *engine.SchemaBinding, fragment *SelectedSchemaFragment, calls *callowner.HotOwner, effects *effectowner.HotOwner) (*HotRule, bool) {

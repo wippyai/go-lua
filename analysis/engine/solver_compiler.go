@@ -6,7 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // ReceiptGraph is an opaque graph receipt issued only by the exact sealed
@@ -29,14 +29,14 @@ type BindingTopology struct {
 	authority         *schemaBindingAuthority
 	factors           []schemaFactorBinding
 	plan              *bindingTopologyBuilderState
-	directory         *bindingSemanticDirectory
+	directory         *semanticDirectory
 	artifact          *artifactReceiptTopology
 	nativeCallStages  map[artifactMountedRuleOccurrence]artifactNativeCallStage
 	artifactFunctions []artifactMountedFunction
 	artifactBacked    bool
-	bootstrapOwner    keyspace.ContentID
-	bootstrapPoint    keyspace.ContentID
-	bootstrapSemantic keyspace.ContentID
+	bootstrapOwner    identity.ContentID
+	bootstrapPoint    identity.ContentID
+	bootstrapSemantic identity.ContentID
 }
 
 type bindingTopologyBuilderPhase uint8
@@ -75,31 +75,20 @@ const (
 )
 
 type bindingSemanticRows struct {
-	ids                   map[keyspace.ContentID]bindingSemanticRowKind
-	points                map[keyspace.ContentID]equation.PointRef
-	pointAt               map[equation.Site]keyspace.ContentID
-	members               map[keyspace.ContentID]equation.RuleRef
-	memberAt              map[equation.RuleRef]keyspace.ContentID
-	queries               map[keyspace.ContentID]uint64
-	activations           map[keyspace.ContentID]equation.RuleRef
-	activationAt          map[equation.RuleRef]keyspace.ContentID
+	ids                   map[identity.ContentID]bindingSemanticRowKind
+	points                map[identity.ContentID]equation.PointRef
+	pointAt               map[equation.Site]identity.ContentID
+	members               map[identity.ContentID]equation.RuleRef
+	memberAt              map[equation.RuleRef]identity.ContentID
+	queries               map[identity.ContentID]uint64
+	activations           map[identity.ContentID]equation.RuleRef
+	activationAt          map[equation.RuleRef]identity.ContentID
 	materializationAt     map[equation.TemplateMaterialization]equation.RuleRef
 	directCandidateAt     map[equation.DirectActivationCandidate]equation.RuleRef
 	directCandidateKey    map[composition.Key]equation.RuleRef
 	activationCandidates  map[equation.RuleRef]uint64
 	activationExpected    map[equation.RuleRef]uint64
 	activationApplication map[equation.RuleRef]composition.Key
-}
-
-type bindingSemanticDirectory struct {
-	topology    *equation.Topology
-	state       *schemaBindingState
-	authority   *schemaBindingAuthority
-	points      map[keyspace.ContentID]equation.PointRowLocator
-	members     map[keyspace.ContentID]equation.RuleMemberRowLocator
-	queries     map[keyspace.ContentID]equation.QueryRowLocator
-	queryOrder  []keyspace.ContentID
-	activations map[keyspace.ContentID]equation.ActivationMemberRowLocator
 }
 
 // bindingTopologyBuilder is the only receipt-native Link lowering surface.
@@ -515,13 +504,6 @@ func (assembly *ReceiptAssembly) CommitFailure() (ReceiptCommitFailure, bool) {
 	return assembly.commitFailure, true
 }
 
-type BindingGroupReceipt struct {
-	builder   *bindingTopologyBuilderState
-	row       equation.Group
-	state     *schemaBindingState
-	authority *schemaBindingAuthority
-}
-
 type bindingPointRowReceipt struct {
 	builder   *bindingTopologyBuilderState
 	state     *schemaBindingState
@@ -593,7 +575,7 @@ type BindingRuleRowReceipt struct {
 	ordinal     uint64
 	row         equation.RuleInstance
 	input       equation.Site
-	inputID     keyspace.ContentID
+	inputID     identity.ContentID
 	stage       ArtifactRuleStage
 	predecessor *artifactEnvironmentRow
 	routed      bool
@@ -1001,7 +983,7 @@ func (receipt *ReceiptGraph) valid() bool {
 }
 
 func (receipt *BindingTopology) valid() bool {
-	if receipt == nil || receipt.self != receipt || receipt.topology == nil || receipt.state == nil || receipt.authority == nil || receipt.plan == nil || receipt.directory == nil || (receipt.artifact != nil && !receipt.artifact.valid(receipt)) || receipt.directory.topology != receipt.topology || receipt.directory.state != receipt.state || receipt.directory.authority != receipt.authority || receipt.state.phase != schemaBindingSealed || receipt.state.authority != receipt.authority || receipt.state.schema == nil || !receipt.topology.OwnsComposition(receipt.state.schema.cold) || receipt.plan.state != receipt.state || receipt.plan.authority != receipt.authority || receipt.plan.topology != receipt.topology || receipt.plan.phase != bindingTopologyBuilderCommitted || !receipt.plan.sourceKey.Available() {
+	if receipt == nil || receipt.self != receipt || receipt.topology == nil || receipt.state == nil || receipt.authority == nil || receipt.plan == nil || (receipt.artifact != nil && !receipt.artifact.valid(receipt)) || !receipt.directory.ownedBy(receipt.topology, receipt.state, receipt.authority) || receipt.state.phase != schemaBindingSealed || receipt.state.authority != receipt.authority || receipt.state.schema == nil || !receipt.topology.OwnsComposition(receipt.state.schema.cold) || receipt.plan.state != receipt.state || receipt.plan.authority != receipt.authority || receipt.plan.topology != receipt.topology || receipt.plan.phase != bindingTopologyBuilderCommitted || !receipt.plan.sourceKey.Available() {
 		return false
 	}
 	ownerAvailable, pointAvailable, semanticAvailable := receipt.bootstrapOwner.Available(), receipt.bootstrapPoint.Available(), receipt.bootstrapSemantic.Available()
@@ -1010,7 +992,7 @@ func (receipt *BindingTopology) valid() bool {
 		if !ownerAvailable || !pointAvailable || !semanticAvailable || semantic != receipt.bootstrapSemantic || receipt.artifactFunctions == nil {
 			return false
 		}
-		if _, found := receipt.directory.points[receipt.bootstrapSemantic]; !found {
+		if _, found := receipt.directory.point(receipt.bootstrapSemantic); !found {
 			return false
 		}
 	} else if receipt.artifact != nil || receipt.artifactFunctions != nil || ownerAvailable || pointAvailable || semanticAvailable {
@@ -1056,9 +1038,9 @@ func (binding *SchemaBinding) beginBindingTopologyBuilder() (*bindingTopologyBui
 		state: state, batch: equation.NewBatch(), phase: bindingTopologyBuilderSourcesOpen,
 		authority: state.authority, factors: append([]schemaFactorBinding(nil), state.factors...),
 		semantic: &bindingSemanticRows{
-			ids: make(map[keyspace.ContentID]bindingSemanticRowKind), points: make(map[keyspace.ContentID]equation.PointRef), pointAt: make(map[equation.Site]keyspace.ContentID),
-			members: make(map[keyspace.ContentID]equation.RuleRef), memberAt: make(map[equation.RuleRef]keyspace.ContentID), queries: make(map[keyspace.ContentID]uint64),
-			activations: make(map[keyspace.ContentID]equation.RuleRef), activationAt: make(map[equation.RuleRef]keyspace.ContentID),
+			ids: make(map[identity.ContentID]bindingSemanticRowKind), points: make(map[identity.ContentID]equation.PointRef), pointAt: make(map[equation.Site]identity.ContentID),
+			members: make(map[identity.ContentID]equation.RuleRef), memberAt: make(map[equation.RuleRef]identity.ContentID), queries: make(map[identity.ContentID]uint64),
+			activations: make(map[identity.ContentID]equation.RuleRef), activationAt: make(map[equation.RuleRef]identity.ContentID),
 			materializationAt: make(map[equation.TemplateMaterialization]equation.RuleRef), directCandidateAt: make(map[equation.DirectActivationCandidate]equation.RuleRef), directCandidateKey: make(map[composition.Key]equation.RuleRef), activationCandidates: make(map[equation.RuleRef]uint64), activationExpected: make(map[equation.RuleRef]uint64),
 			activationApplication: make(map[equation.RuleRef]composition.Key),
 		},
@@ -1192,7 +1174,7 @@ func (builder *bindingTopologyBuilder) issuePointRow(point equation.PointSpec) (
 	return receipt, true
 }
 
-func claimBindingSemanticID(inner *bindingTopologyBuilderState, id keyspace.ContentID, kind bindingSemanticRowKind) bool {
+func claimBindingSemanticID(inner *bindingTopologyBuilderState, id identity.ContentID, kind bindingSemanticRowKind) bool {
 	if inner == nil || inner.semantic == nil || !id.Available() || kind < bindingSemanticPoint || kind > bindingSemanticActivation {
 		return false
 	}
@@ -1203,7 +1185,7 @@ func claimBindingSemanticID(inner *bindingTopologyBuilderState, id keyspace.Cont
 	return true
 }
 
-func (builder *bindingTopologyBuilder) addSemanticPoint(id keyspace.ContentID, receipt bindingPointRowReceipt) (bindingPointRowRef, bool) {
+func (builder *bindingTopologyBuilder) addSemanticPoint(id identity.ContentID, receipt bindingPointRowReceipt) (bindingPointRowRef, bool) {
 	inner, ok := builder.lockTopologyOpen()
 	if !ok {
 		return bindingPointRowRef{}, false
@@ -1266,7 +1248,7 @@ func (builder *bindingTopologyBuilder) addRule(receipt BindingRuleRowReceipt) (B
 	return result, ok
 }
 
-func (builder *bindingTopologyBuilder) addSemanticRule(id keyspace.ContentID, receipt BindingRuleRowReceipt) (BindingRuleRowRef, bool) {
+func (builder *bindingTopologyBuilder) addSemanticRule(id identity.ContentID, receipt BindingRuleRowReceipt) (BindingRuleRowRef, bool) {
 	inner, ok := builder.lockTopologyOpen()
 	if !ok {
 		return BindingRuleRowRef{}, false
@@ -1322,7 +1304,7 @@ func (builder *bindingTopologyBuilder) addSemanticRule(id keyspace.ContentID, re
 	return BindingRuleRowRef{builder: inner, ref: ref}, true
 }
 
-func artifactPredecessorRuleInput(rows *artifactReceiptTopology, edge artifactEnvironmentRow, source, target equation.Site, targetPoint keyspace.ContentID, provenance composition.Key) (equation.Input, bool) {
+func artifactPredecessorRuleInput(rows *artifactReceiptTopology, edge artifactEnvironmentRow, source, target equation.Site, targetPoint identity.ContentID, provenance composition.Key) (equation.Input, bool) {
 	if rows == nil || !validArtifactRouteProof(edge) || !edge.route.Available() || !provenance.Available() || !source.Available() || !target.Available() || !targetPoint.Available() {
 		return equation.Input{}, false
 	}
@@ -1337,7 +1319,7 @@ func artifactPredecessorRuleInput(rows *artifactReceiptTopology, edge artifactEn
 	if !sourceDecisionsOK || !targetDecisionsOK {
 		return equation.Input{}, false
 	}
-	resetSet := make(map[keyspace.ContentID]struct{}, len(edge.resets))
+	resetSet := make(map[identity.ContentID]struct{}, len(edge.resets))
 	for _, reset := range edge.resets {
 		if _, exists := sourceDecisions[reset]; !exists {
 			return equation.Input{}, false
@@ -1382,12 +1364,12 @@ func artifactPredecessorRuleInput(rows *artifactReceiptTopology, edge artifactEn
 	return input, reindexOK && input.Available()
 }
 
-func artifactRulePointDecisions(metadata artifactPointMetadata, site equation.Site) (map[keyspace.ContentID]equation.Decision, bool) {
+func artifactRulePointDecisions(metadata artifactPointMetadata, site equation.Site) (map[identity.ContentID]equation.Decision, bool) {
 	scope := site.Scope()
 	if !scope.Available() || len(metadata.decisions) != scope.Count() {
 		return nil, false
 	}
-	result := make(map[keyspace.ContentID]equation.Decision, len(metadata.decisions))
+	result := make(map[identity.ContentID]equation.Decision, len(metadata.decisions))
 	for index, semanticID := range metadata.decisions {
 		decision, ok := scope.At(index)
 		if !ok || !semanticID.Available() || !decision.Available() {
@@ -1428,40 +1410,6 @@ func ruleInputReindex(source, target equation.Scope) (equation.Reindex, bool) {
 	return equation.NewReindex(source, target, maps)
 }
 
-func (builder *bindingTopologyBuilder) issueGroup(group equation.Group) (BindingGroupReceipt, bool) {
-	inner, ok := builder.lockTopologyOpen()
-	if !ok {
-		return BindingGroupReceipt{}, false
-	}
-	defer inner.mu.Unlock()
-	if !validBindingGroup(inner.batch, group) {
-		return BindingGroupReceipt{}, false
-	}
-	return BindingGroupReceipt{builder: inner, row: cloneBindingGroup(group), state: inner.state, authority: inner.authority}, true
-}
-
-func (builder *bindingTopologyBuilder) addGroup(receipt BindingGroupReceipt) bool {
-	return builder.addRow(func(spec *equation.TopologySpec) bool {
-		if receipt.builder != builder.inner || receipt.state != builder.inner.state || receipt.authority != builder.inner.authority || !validBindingGroup(spec.Batch, receipt.row) {
-			return false
-		}
-		group := cloneBindingGroup(receipt.row)
-		if len(group.Members) == 0 || group.Output == 0 {
-			return false
-		}
-		for _, input := range group.Inputs {
-			if !bindingOwnsInput(spec.Batch, input) {
-				return false
-			}
-		}
-		if group.EnvironmentInput.Available() && !bindingOwnsInput(spec.Batch, group.EnvironmentInput) {
-			return false
-		}
-		spec.Groups = append(spec.Groups, group)
-		return true
-	})
-}
-
 func validBindingGroup(batch *equation.Batch, group equation.Group) bool {
 	if batch == nil || len(group.Members) == 0 || group.Output == 0 {
 		return false
@@ -1472,12 +1420,6 @@ func validBindingGroup(batch *equation.Batch, group equation.Group) bool {
 		}
 	}
 	return !group.EnvironmentInput.Available() || bindingOwnsInput(batch, group.EnvironmentInput)
-}
-
-func cloneBindingGroup(group equation.Group) equation.Group {
-	group.Members = append([]equation.RuleRef(nil), group.Members...)
-	group.Inputs = append([]equation.Input(nil), group.Inputs...)
-	return group
 }
 
 func cloneBindingRuleRow(row equation.RuleInstance) equation.RuleInstance {
@@ -1536,7 +1478,7 @@ func (builder *bindingTopologyBuilder) issueQueryRow(receipt bindingQueryReceipt
 	return result, true
 }
 
-func (builder *bindingTopologyBuilder) addSemanticQuery(id keyspace.ContentID, receipt bindingQueryRowReceipt) (bindingQueryRowRef, bool) {
+func (builder *bindingTopologyBuilder) addSemanticQuery(id identity.ContentID, receipt bindingQueryRowReceipt) (bindingQueryRowRef, bool) {
 	inner, ok := builder.lockTopologyOpen()
 	if !ok {
 		return bindingQueryRowRef{}, false
@@ -1678,7 +1620,7 @@ func bindingActivationRuleShape(inner *bindingTopologyBuilderState, ref equation
 // for an already-admitted trigger Rule. Candidate materializations are a
 // separate denominator: one trigger/member may own many exact target tuples,
 // but it can never receive two stable activation IDs.
-func (builder *bindingTopologyBuilder) addSemanticActivation(id keyspace.ContentID, member BindingRuleRowRef) bool {
+func (builder *bindingTopologyBuilder) addSemanticActivation(id identity.ContentID, member BindingRuleRowRef) bool {
 	inner, ok := builder.lockTopologyOpen()
 	if !ok {
 		return false
@@ -1828,53 +1770,6 @@ func completeBindingSemanticRowsWithFailure(inner *bindingTopologyBuilderState) 
 	return ReceiptCommitSemanticRowsFailureNone
 }
 
-func sealBindingSemanticDirectory(topology *equation.Topology, state *schemaBindingState, authority *schemaBindingAuthority, rows *bindingSemanticRows) (*bindingSemanticDirectory, bool) {
-	if topology == nil || state == nil || authority == nil || rows == nil || state.phase != schemaBindingSealed || state.authority != authority {
-		return nil, false
-	}
-	result := &bindingSemanticDirectory{
-		topology: topology, state: state, authority: authority,
-		points: make(map[keyspace.ContentID]equation.PointRowLocator, len(rows.points)), members: make(map[keyspace.ContentID]equation.RuleMemberRowLocator, len(rows.members)),
-		queries: make(map[keyspace.ContentID]equation.QueryRowLocator, len(rows.queries)), queryOrder: make([]keyspace.ContentID, len(rows.queries)),
-		activations: make(map[keyspace.ContentID]equation.ActivationMemberRowLocator, len(rows.activations)),
-	}
-	for id, ref := range rows.points {
-		locator, ok := topology.PointRow(ref)
-		if !id.Available() || !ok {
-			return nil, false
-		}
-		result.points[id] = locator
-	}
-	for id, ref := range rows.members {
-		locator, ok := topology.RuleMemberRow(ref)
-		if !id.Available() || !ok {
-			return nil, false
-		}
-		result.members[id] = locator
-	}
-	for id, ordinal := range rows.queries {
-		locator, ok := topology.QueryRow(ordinal)
-		if !id.Available() || !ok || ordinal >= uint64(len(result.queryOrder)) || result.queryOrder[ordinal].Available() {
-			return nil, false
-		}
-		result.queries[id] = locator
-		result.queryOrder[ordinal] = id
-	}
-	for _, id := range result.queryOrder {
-		if !id.Available() {
-			return nil, false
-		}
-	}
-	for id, ref := range rows.activations {
-		locator, ok := topology.ActivationMemberRow(ref)
-		if !id.Available() || !ok {
-			return nil, false
-		}
-		result.activations[id] = locator
-	}
-	return result, true
-}
-
 // SealSources closes source admission on the exact Batch retained by this
 // builder. The Batch remains the sole source identity authority for the
 // topology phase; no rows are copied into a second admission plane.
@@ -1984,7 +1879,11 @@ func (builder *bindingTopologyBuilder) commit(deferredQueries bool) (*BindingTop
 	}
 	var graph *equation.Graph
 	if ok && topology != nil && topology.OwnsComposition(state.schema.cold) {
-		graph, ok = topology.Graph(nil)
+		var relation equation.Relation
+		relation, ok = topology.InitialRelation()
+		if ok {
+			graph, ok = topology.Graph(relation)
+		}
 	} else {
 		if ok {
 			topologyFailure = equation.SealTopologyFailureInput
@@ -2014,7 +1913,7 @@ func (builder *bindingTopologyBuilder) commit(deferredQueries bool) (*BindingTop
 		}
 		return nil, nil, failure, false
 	}
-	directory, directoryOK := sealBindingSemanticDirectory(topology, state, authority, semantic)
+	directory, directoryOK := sealSemanticDirectory(topology, state, authority, semantic)
 	if !directoryOK {
 		inner.failLocked()
 		inner.mu.Unlock()
@@ -2080,14 +1979,14 @@ func (builder *bindingTopologyBuilder) abort() bool {
 	return true
 }
 
-// Graph constructs a revision only through this exact construction witness,
-// then immediately issues the opaque graph receipt. Foreign topologies and
-// equal-schema graphs cannot enter this path.
-func (receipt *BindingTopology) Graph(accepted []equation.AcceptedMember) (*ReceiptGraph, bool) {
+// Graph issues the opaque graph receipt for one published activation
+// relation, only through this exact construction witness. Foreign topologies
+// and equal-schema graphs cannot enter this path.
+func (receipt *BindingTopology) Graph(relation equation.Relation) (*ReceiptGraph, bool) {
 	if !receipt.valid() {
 		return nil, false
 	}
-	graph, ok := receipt.topology.Graph(accepted)
+	graph, ok := receipt.topology.Graph(relation)
 	if !ok {
 		return nil, false
 	}
@@ -2095,11 +1994,11 @@ func (receipt *BindingTopology) Graph(accepted []equation.AcceptedMember) (*Rece
 	return result, result.valid()
 }
 
-func (receipt *ReceiptGraph) lookupPoint(id keyspace.ContentID) (receiptPoint, bool) {
-	if !receipt.valid() || !id.Available() || receipt.topology.directory == nil {
+func (receipt *ReceiptGraph) lookupPoint(id identity.ContentID) (receiptPoint, bool) {
+	if !receipt.valid() {
 		return receiptPoint{}, false
 	}
-	locator, found := receipt.topology.directory.points[id]
+	locator, found := receipt.topology.directory.point(id)
 	if !found {
 		return receiptPoint{}, false
 	}
@@ -2110,11 +2009,11 @@ func (receipt *ReceiptGraph) lookupPoint(id keyspace.ContentID) (receiptPoint, b
 	return receiptPoint{graph: receipt, point: point}, true
 }
 
-func (receipt *ReceiptGraph) lookupRuleMember(id keyspace.ContentID) (ReceiptRuleMember, bool) {
-	if !receipt.valid() || !id.Available() || receipt.topology.directory == nil {
+func (receipt *ReceiptGraph) lookupRuleMember(id identity.ContentID) (ReceiptRuleMember, bool) {
+	if !receipt.valid() {
 		return ReceiptRuleMember{}, false
 	}
-	locator, found := receipt.topology.directory.members[id]
+	locator, found := receipt.topology.directory.member(id)
 	if !found {
 		return ReceiptRuleMember{}, false
 	}
@@ -2128,14 +2027,14 @@ func (receipt *ReceiptGraph) lookupRuleMember(id keyspace.ContentID) (ReceiptRul
 // RuleMember returns the exact graph-owned member admitted under id.  The
 // returned receipt is foreign-graph resistant and is accepted only by the
 // matching typed ReceiptCompilation transaction.
-func (receipt *ReceiptGraph) RuleMember(id keyspace.ContentID) (ReceiptRuleMember, bool) {
+func (receipt *ReceiptGraph) RuleMember(id identity.ContentID) (ReceiptRuleMember, bool) {
 	return receipt.lookupRuleMember(id)
 }
 
 // MountedRuleMember resolves an authored mounted occurrence through the
 // sealed artifact role directory. Callers cannot forge the member identity or
 // bypass the mount/point/role fence with a raw ContentID.
-func (receipt *ReceiptGraph) MountedRuleMember(role RuleSlotCapability, mount, reusablePoint, occurrence keyspace.ContentID) (ReceiptRuleMember, bool) {
+func (receipt *ReceiptGraph) MountedRuleMember(role RuleSlotCapability, mount, reusablePoint, occurrence identity.ContentID) (ReceiptRuleMember, bool) {
 	if !role.mounted() || !receipt.valid() || receipt.topology == nil {
 		return ReceiptRuleMember{}, false
 	}
@@ -2145,7 +2044,7 @@ func (receipt *ReceiptGraph) MountedRuleMember(role RuleSlotCapability, mount, r
 // LinkRuleMember resolves one Link-global bootstrap row through the sealed
 // witness catalog. The caller supplies only the closed role and witness
 // occurrence; owner/point identity remains engine-private.
-func (receipt *ReceiptGraph) LinkRuleMember(role RuleSlotCapability, occurrence keyspace.ContentID) (ReceiptRuleMember, bool) {
+func (receipt *ReceiptGraph) LinkRuleMember(role RuleSlotCapability, occurrence identity.ContentID) (ReceiptRuleMember, bool) {
 	if !role.link() || !receipt.valid() || receipt.topology == nil || role.state != receipt.state || role.authority != receipt.authority || !receipt.topology.bootstrapOwner.Available() || !receipt.topology.bootstrapPoint.Available() {
 		return ReceiptRuleMember{}, false
 	}
@@ -2183,7 +2082,7 @@ func (receipt *ReceiptGraph) ReleaseArtifactReceipt() bool {
 	return true
 }
 
-func (receipt *ReceiptGraph) ActivationMember(id keyspace.ContentID) (ActivationReceiptMember, bool) {
+func (receipt *ReceiptGraph) ActivationMember(id identity.ContentID) (ActivationReceiptMember, bool) {
 	graph, ok := receipt.ActivationGraph()
 	if !ok {
 		return ActivationReceiptMember{}, false
@@ -2191,7 +2090,7 @@ func (receipt *ReceiptGraph) ActivationMember(id keyspace.ContentID) (Activation
 	return graph.lookupActivationMember(id)
 }
 
-func (receipt *ReceiptGraph) MountedActivationMember(role RuleSlotCapability, mount, reusablePoint, occurrence keyspace.ContentID) (ActivationReceiptMember, bool) {
+func (receipt *ReceiptGraph) MountedActivationMember(role RuleSlotCapability, mount, reusablePoint, occurrence identity.ContentID) (ActivationReceiptMember, bool) {
 	graph, ok := receipt.ActivationGraph()
 	if !ok {
 		return ActivationReceiptMember{}, false
@@ -2199,11 +2098,11 @@ func (receipt *ReceiptGraph) MountedActivationMember(role RuleSlotCapability, mo
 	return graph.MountedRuleMember(role, mount, reusablePoint, occurrence)
 }
 
-func (receipt *ReceiptGraph) lookupQuery(id keyspace.ContentID) (ReceiptQuery, bool) {
-	if !receipt.valid() || !id.Available() || receipt.topology.directory == nil {
+func (receipt *ReceiptGraph) lookupQuery(id identity.ContentID) (ReceiptQuery, bool) {
+	if !receipt.valid() {
 		return ReceiptQuery{}, false
 	}
-	locator, found := receipt.topology.directory.queries[id]
+	locator, found := receipt.topology.directory.query(id)
 	if !found {
 		return ReceiptQuery{}, false
 	}
@@ -2229,11 +2128,11 @@ func (receipt *ReceiptGraph) ActivationGraph() (*ActivationReceiptGraph, bool) {
 	return activationReceiptGraph(receipt)
 }
 
-func (receipt *ActivationReceiptGraph) lookupActivationMember(id keyspace.ContentID) (ActivationReceiptMember, bool) {
-	if !receipt.valid() || !id.Available() || receipt.receipt.topology.directory == nil {
+func (receipt *ActivationReceiptGraph) lookupActivationMember(id identity.ContentID) (ActivationReceiptMember, bool) {
+	if !receipt.valid() {
 		return ActivationReceiptMember{}, false
 	}
-	locator, found := receipt.receipt.topology.directory.activations[id]
+	locator, found := receipt.receipt.topology.directory.activation(id)
 	if !found {
 		return ActivationReceiptMember{}, false
 	}
@@ -2246,14 +2145,14 @@ func (receipt *ActivationReceiptGraph) lookupActivationMember(id keyspace.Conten
 
 // ActivationMember returns the exact graph-owned activation member admitted
 // under id, preserving the activation graph authority for typed attachment.
-func (receipt *ActivationReceiptGraph) ActivationMember(id keyspace.ContentID) (ActivationReceiptMember, bool) {
+func (receipt *ActivationReceiptGraph) ActivationMember(id identity.ContentID) (ActivationReceiptMember, bool) {
 	return receipt.lookupActivationMember(id)
 }
 
 // MountedRuleMember resolves the activation member paired with one exact
 // mounted semantic occurrence. The role-qualified identity is issued by the
 // same artifact directory used for ordinary Rule members.
-func (receipt *ActivationReceiptGraph) MountedRuleMember(role RuleSlotCapability, mount, reusablePoint, occurrence keyspace.ContentID) (ActivationReceiptMember, bool) {
+func (receipt *ActivationReceiptGraph) MountedRuleMember(role RuleSlotCapability, mount, reusablePoint, occurrence identity.ContentID) (ActivationReceiptMember, bool) {
 	if !role.mounted() || !receipt.valid() || receipt.receipt == nil || receipt.receipt.topology == nil {
 		return ActivationReceiptMember{}, false
 	}
@@ -2263,20 +2162,18 @@ func (receipt *ActivationReceiptGraph) MountedRuleMember(role RuleSlotCapability
 // solverCompiler is the private activation-revision lowering seam. Receipt
 // compilations rebuild graph-owned runtime state without a cold Composition.
 type solverCompiler interface {
-	compile([]equation.AcceptedMember) (*solverRuntime, SolveFailurePhase, bool)
+	compile(equation.Relation) (*solverRuntime, SolveFailurePhase, bool)
 }
 
 func validAcceptedActivations(topology *equation.Topology, accepted []equation.AcceptedMember) bool {
 	if topology == nil {
 		return false
 	}
-	// Graph/Revision repeat this fail-closed validation at the authority
-	// boundary. The compiler keeps the same predicate here so an untrusted caller
-	// cannot get as far as carrier allocation with a foreign Member.
-	if _, ok := topology.Revision(accepted); !ok {
-		return false
-	}
-	return true
+	// Publish repeats this fail-closed validation at the authority boundary. The
+	// compiler keeps the same predicate here so an untrusted caller cannot get as
+	// far as carrier allocation with a foreign Member. It is membership only: no
+	// structural digest is derived for a set that is not being published.
+	return topology.ValidAccepted(accepted)
 }
 
 // receiptFactorCompilation is the private transaction state between Factor
@@ -2293,7 +2190,7 @@ type receiptFactorCompilation struct {
 	members             map[composition.Key]runtimeMember
 	queries             map[composition.Key]runtimeQuery
 	observations        []runtimeObservation
-	observationIDs      map[keyspace.ContentID]struct{}
+	observationIDs      map[identity.ContentID]struct{}
 	observationPoints   map[composition.Key]equation.Point
 	memberBuilders      []receiptMemberBuilder
 	queryBuilders       []receiptQueryBuilder
@@ -2318,11 +2215,11 @@ type receiptSolverCompiler struct {
 	observationBuilders []receiptObservationBuilder
 }
 
-func (compiler receiptSolverCompiler) compile(accepted []equation.AcceptedMember) (*solverRuntime, SolveFailurePhase, bool) {
-	if compiler.state == nil || compiler.topology == nil || !validAcceptedActivations(compiler.topology, accepted) {
+func (compiler receiptSolverCompiler) compile(relation equation.Relation) (*solverRuntime, SolveFailurePhase, bool) {
+	if compiler.state == nil || compiler.topology == nil || !relation.OwnedBy(compiler.topology) {
 		return nil, SolveFailurePhaseCompileValidation, false
 	}
-	graph, ok := compiler.topology.Graph(accepted)
+	graph, ok := compiler.topology.Graph(relation)
 	if !ok || graph == nil {
 		return nil, SolveFailurePhaseCompileValidation, false
 	}
@@ -2483,7 +2380,7 @@ func (compilation *ReceiptCompilation) Solver() (*Solver, bool) {
 		rows = append(rows, row)
 	}
 	directory := compilation.graph.topology.directory
-	if directory == nil || len(directory.queryOrder) != len(directory.queries) {
+	if !directory.ownedBy(compilation.graph.topology.topology, compilation.graph.state, compilation.graph.authority) {
 		inner.mu.Unlock()
 		return nil, false
 	}
@@ -2545,7 +2442,12 @@ func (compilation *ReceiptCompilation) Solver() (*Solver, bool) {
 	inner.observationPoints = nil
 	inner.carrier = nil
 	inner.mu.Unlock()
-	return &Solver{runtime: runtime, compiler: compiler}, true
+	relation, relationOK := runtime.topology.InitialRelation()
+	store, storeOK := solverStores.issue()
+	if !relationOK || !storeOK {
+		return nil, false
+	}
+	return &Solver{runtime: runtime, compiler: compiler, store: store, relation: relation}, true
 }
 
 // BeginReceiptCompilation starts a receipt compiler from one exact sealed Rule
@@ -2784,7 +2686,7 @@ func (compilation *ActivationReceiptCompilation) Solver() (*Solver, bool) {
 	inner := compilation.inner
 	inner.mu.Lock()
 	if inner.closed || inner.runtime == nil || inner.carrier == nil || inner.members == nil ||
-		compilation.graph.receipt.graph == nil || compilation.graph.receipt.topology.directory == nil || len(compilation.graph.receipt.topology.directory.queryOrder) != 0 {
+		compilation.graph.receipt.graph == nil || compilation.graph.receipt.topology.directory == nil || compilation.graph.receipt.topology.directory.queryCount() != 0 {
 		inner.mu.Unlock()
 		return nil, false
 	}
@@ -2830,7 +2732,12 @@ func (compilation *ActivationReceiptCompilation) Solver() (*Solver, bool) {
 	inner.members = nil
 	inner.carrier = nil
 	inner.mu.Unlock()
-	return &Solver{runtime: runtime, compiler: compiler}, true
+	relation, relationOK := runtime.topology.InitialRelation()
+	store, storeOK := solverStores.issue()
+	if !relationOK || !storeOK {
+		return nil, false
+	}
+	return &Solver{runtime: runtime, compiler: compiler, store: store, relation: relation}, true
 }
 
 // compileReceiptFactors is the sealed Factor-only compiler entry. It uses the
@@ -2864,7 +2771,7 @@ func compileReceiptFactors(binding *SchemaBinding, graph *equation.Graph) (*rece
 	return &receiptFactorCompilation{
 		runtime: runtime, factors: factors, byKey: byKey, carrier: attached, ordered: ordered,
 		members: make(map[composition.Key]runtimeMember), queries: make(map[composition.Key]runtimeQuery),
-		observationIDs: make(map[keyspace.ContentID]struct{}), frozen: true,
+		observationIDs: make(map[identity.ContentID]struct{}), frozen: true,
 	}, true
 }
 

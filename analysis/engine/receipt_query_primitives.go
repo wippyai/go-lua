@@ -6,8 +6,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 )
 
+// frozenValue is one published, transitively immutable result value. It is
+// never copied on the borrowed read path: a caller that needs an owned value
+// asks the typed freezer for one through an explicit detachment.
 type frozenValue interface {
-	clone() frozenValue
 	equal(frozenValue) bool
 	fingerprint() uint64
 }
@@ -17,12 +19,6 @@ type typedFrozenValue[R any] struct {
 	freeze FrozenResult[R]
 }
 
-func (value *typedFrozenValue[R]) clone() frozenValue {
-	if value == nil {
-		return nil
-	}
-	return &typedFrozenValue[R]{value: value.freeze.Clone(value.value), freeze: value.freeze}
-}
 func (value *typedFrozenValue[R]) equal(other frozenValue) bool {
 	right, ok := other.(*typedFrozenValue[R])
 	return ok && value != nil && right != nil && value.freeze.Equal(value.value, right.value)
@@ -38,13 +34,6 @@ type queryResult struct {
 	owner queryOwner
 	key   composition.Key
 	value frozenValue
-}
-
-func (result *queryResult) clone() *queryResult {
-	if result == nil || result.owner == nil || result.value == nil {
-		return nil
-	}
-	return &queryResult{owner: result.owner, key: result.key, value: result.value.clone()}
 }
 
 type runtimeQuery interface {

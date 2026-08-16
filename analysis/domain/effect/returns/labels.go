@@ -5,8 +5,8 @@ import (
 	"reflect"
 
 	"github.com/wippyai/go-lua/analysis/domain/effect"
-	"github.com/wippyai/go-lua/analysis/type/projection"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/projection"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 )
 
 type Return struct {

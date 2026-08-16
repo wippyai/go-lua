@@ -1,13 +1,12 @@
 package bind
 
 import (
-	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 // ParamSlot describes one parameter slot for a function.
 type ParamSlot struct {
-	Symbol       symbol.ID
+	Symbol       Symbol
 	Name         string
 	Position     ast.Position
 	Type         ast.TypeExpr
@@ -18,7 +17,7 @@ type ParamSlot struct {
 
 // Capture describes one declaration directly captured by a function body.
 type Capture struct {
-	Captured          symbol.ID
+	Captured          Symbol
 	CapturedName      string
 	DeclaringFunction *ast.FunctionExpr
 }
@@ -66,17 +65,17 @@ func (r *Result) ForEachEntryCapture(visit func(*ast.FunctionExpr, Capture) bool
 	if r == nil || visit == nil {
 		return
 	}
-	var seen map[*ast.FunctionExpr]map[symbol.ID]struct{}
+	var seen map[*ast.FunctionExpr]map[Symbol]struct{}
 	mark := func(fn *ast.FunctionExpr, capture Capture) bool {
 		if fn == nil || capture.Captured == 0 {
 			return false
 		}
 		if seen == nil {
-			seen = make(map[*ast.FunctionExpr]map[symbol.ID]struct{})
+			seen = make(map[*ast.FunctionExpr]map[Symbol]struct{})
 		}
 		symbols := seen[fn]
 		if symbols == nil {
-			symbols = make(map[symbol.ID]struct{})
+			symbols = make(map[Symbol]struct{})
 			seen[fn] = symbols
 		}
 		if _, exists := symbols[capture.Captured]; exists {
@@ -110,7 +109,7 @@ func (r *Result) ForEachEntryCapture(visit func(*ast.FunctionExpr, Capture) bool
 }
 
 // VarargSymbol returns the vararg parameter identity for fn, when present.
-func (r *Result) VarargSymbol(fn *ast.FunctionExpr) (symbol.ID, bool) {
+func (r *Result) VarargSymbol(fn *ast.FunctionExpr) (Symbol, bool) {
 	if r == nil || fn == nil {
 		return 0, false
 	}
@@ -124,6 +123,13 @@ func (r *Result) ParamSlots(fn *ast.FunctionExpr) []ParamSlot {
 		return nil
 	}
 	return cloneParamSlots(r.paramSlots[fn])
+}
+
+func cloneParamSlots(slots []ParamSlot) []ParamSlot {
+	if len(slots) == 0 {
+		return nil
+	}
+	return append([]ParamSlot(nil), slots...)
 }
 
 type functionOriginDetails struct {
@@ -172,7 +178,7 @@ func (b *binder) currentFunctionStatic() bool {
 	return ok && origin.Static
 }
 
-func (b *binder) recordDirectCapture(id symbol.ID) {
+func (b *binder) recordDirectCapture(id Symbol) {
 	if id == 0 {
 		return
 	}
@@ -181,7 +187,7 @@ func (b *binder) recordDirectCapture(id symbol.ID) {
 		return
 	}
 	kind, ok := b.result.kinds[id]
-	if !ok || (kind != symbol.Local && kind != symbol.Param) {
+	if !ok || (kind != SymbolLocal && kind != SymbolParam) {
 		return
 	}
 	declaringFn := b.declaringFunctions[id]
@@ -190,9 +196,9 @@ func (b *binder) recordDirectCapture(id symbol.ID) {
 	}
 	seen := b.directCaptureSeen[current]
 	if seen == nil {
-		seen = make(map[symbol.ID]struct{})
+		seen = make(map[Symbol]struct{})
 		if b.directCaptureSeen == nil {
-			b.directCaptureSeen = make(map[*ast.FunctionExpr]map[symbol.ID]struct{})
+			b.directCaptureSeen = make(map[*ast.FunctionExpr]map[Symbol]struct{})
 		}
 		b.directCaptureSeen[current] = seen
 	}
@@ -224,13 +230,6 @@ func positionAt(parlist *ast.ParList, index int) ast.Position {
 		return ast.Position{}
 	}
 	return parlist.NamePositions[index]
-}
-
-func namePosition(positions []ast.Position, index int) ast.Position {
-	if index < 0 || index >= len(positions) {
-		return ast.Position{}
-	}
-	return positions[index]
 }
 
 func typeAt(types []ast.TypeExpr, index int) ast.TypeExpr {

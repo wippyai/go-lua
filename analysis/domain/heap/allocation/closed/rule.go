@@ -305,17 +305,3 @@ func selectorFor(schema heapdomain.Schema, values *valuedomain.Schema, field sou
 	}
 	return alternative.Selector(), alternative.Containment(), true, true
 }
-
-func distinct(keys ...engine.SemanticKey) bool {
-	for index, key := range keys {
-		if !key.Available() {
-			return false
-		}
-		for prior := 0; prior < index; prior++ {
-			if keys[prior] == key {
-				return false
-			}
-		}
-	}
-	return true
-}

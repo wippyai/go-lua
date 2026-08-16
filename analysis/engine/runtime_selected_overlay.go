@@ -8,11 +8,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // preparedSelectedFactorOverlay is a stale-fenced, uninstalled structural
 // delta.  It carries only the newly bound relations, changed factor rows, and
-// touched CSR rows. Solver.accepted remains the sole activation relation;
+// touched CSR rows. Solver.relation remains the sole activation relation;
 // this type owns no Member or premise catalogue.
 //
 // Preparation never mutates runtime or epoch state. Installation is then a
@@ -21,7 +22,7 @@ import (
 // bounds-dependent operation, or recoverable validation remains.
 type preparedSelectedFactorOverlay struct {
 	runtime           *solverRuntime
-	generation        uint64
+	generation        identity.Generation
 	previousEdgeCount int
 	// grownFactorEdges is non-nil only when the runtime edge backing store must
 	// grow. It amortizes the unavoidable full edge copy; ordinary frontiers
@@ -90,11 +91,11 @@ type boundSelectedFactorEdge struct {
 // acyclic. A selected origin may widen its precondition in place exactly when
 // old.pre entails new.pre; that replaces, rather than duplicates, the bound
 // transport and forces an exact target fold.
-func (runtime *solverRuntime) prepareSelectedFactorOverlay(delta, accepted []equation.AcceptedMember) (*preparedSelectedFactorOverlay, bool) {
+func (runtime *solverRuntime) prepareSelectedFactorOverlay(delta []equation.AcceptedMember, published equation.Relation) (*preparedSelectedFactorOverlay, bool) {
 	if !runtimeSelectedOverlayEligible(runtime) {
 		return nil, false
 	}
-	if len(delta) == 0 || !canonicalAcceptedActivations(delta) || !validAcceptedActivations(runtime.topology, delta) || !validAcceptedActivations(runtime.topology, accepted) {
+	if len(delta) == 0 || !canonicalAcceptedActivations(delta) || !validAcceptedActivations(runtime.topology, delta) || !published.OwnedBy(runtime.topology) {
 		return nil, false
 	}
 	selected, materialized := runtime.topology.SelectedStructuralFactorEdges(runtime.graph, delta)
@@ -639,7 +640,7 @@ func runtimeSelectedOverlayIndexCachesValid(runtime *solverRuntime) bool {
 	return overlay.factorByKey != nil && overlay.staticOrigins != nil && overlay.originAt != nil && overlay.directAt != nil &&
 		overlay.dependencyAt != nil && overlay.reindexes.scopes != nil &&
 		overlay.reindexes.plans != nil && overlay.reindexes.decisions != nil &&
-		overlay.latePlans != nil && overlay.generation != 0
+		overlay.latePlans != nil && overlay.generation.Available()
 }
 
 func runtimeSelectedOverlayRecurrenceFree(runtime *solverRuntime) bool {

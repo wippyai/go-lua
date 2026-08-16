@@ -5,7 +5,7 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
-	"github.com/wippyai/go-lua/analysis/type/channelselect"
+	"github.com/wippyai/go-lua/analysis/domain/type/channelselect"
 )
 
 // ChannelSelectExhaustivenessProof records an elseif chain that handles only a

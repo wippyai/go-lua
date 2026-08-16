@@ -4,7 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // ReceiptObservation is one optional, solve-local, read-only projection. It is
@@ -16,7 +16,7 @@ import (
 // an observation-free Solver follows the original query-only closure.
 type ReceiptObservation[R any] struct {
 	owner   *receiptObservationOwner
-	id      keyspace.ContentID
+	id      identity.ContentID
 	ordinal uint64
 }
 
@@ -45,7 +45,7 @@ func (observation ReceiptObservation[R]) Available() bool {
 // by this handle. It deliberately exposes no observation payload, ordinal, or
 // owner; outer detached receipts use it only to detect a provenance seal
 // recomputed around a spliced Engine handle.
-func (observation ReceiptObservation[R]) MatchesID(id keyspace.ContentID) bool {
+func (observation ReceiptObservation[R]) MatchesID(id identity.ContentID) bool {
 	return observation.Available() && id.Available() && observation.id == id
 }
 
@@ -64,7 +64,7 @@ func (owner *receiptObservationOwner) valid(runtime *solverRuntime) bool {
 }
 
 type runtimeObservation interface {
-	observationID() keyspace.ContentID
+	observationID() identity.ContentID
 	observationOwner() *receiptObservationOwner
 	observationPoint() equation.Point
 	materializeObservation(*carrier.Work, carrier.State) (*observationResult, SolveFailurePhase, bool)
@@ -72,12 +72,12 @@ type runtimeObservation interface {
 
 type observationResult struct {
 	owner *receiptObservationOwner
-	id    keyspace.ContentID
+	id    identity.ContentID
 	value frozenValue
 }
 
 type receiptSummaryObservationRuntime[V, R any] struct {
-	id      keyspace.ContentID
+	id      identity.ContentID
 	owner   *receiptObservationOwner
 	point   equation.Point
 	factor  receiptQueryFactor[V]
@@ -93,7 +93,7 @@ type receiptSummaryObservationRuntime[V, R any] struct {
 // factor read has no normalizer: the sealed ExactQueryImplementation is the
 // only authority for its factor, freezer, and projection callbacks.
 type receiptExactObservationRuntime[V, R any] struct {
-	id      keyspace.ContentID
+	id      identity.ContentID
 	owner   *receiptObservationOwner
 	point   equation.Point
 	factor  receiptQueryFactor[V]
@@ -133,9 +133,9 @@ func exactObservationReadSurface(member exactObservationWriteMember, factor comp
 	return read, read.Available()
 }
 
-func (runtime *receiptExactObservationRuntime[V, R]) observationID() keyspace.ContentID {
+func (runtime *receiptExactObservationRuntime[V, R]) observationID() identity.ContentID {
 	if runtime == nil {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return runtime.id
 }
@@ -165,9 +165,9 @@ func (runtime *receiptExactObservationRuntime[V, R]) materializeObservation(work
 	return &observationResult{owner: runtime.owner, id: runtime.id, value: value}, SolveFailurePhaseNone, true
 }
 
-func (runtime *receiptSummaryObservationRuntime[V, R]) observationID() keyspace.ContentID {
+func (runtime *receiptSummaryObservationRuntime[V, R]) observationID() identity.ContentID {
 	if runtime == nil {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return runtime.id
 }
@@ -202,12 +202,12 @@ func (runtime *receiptSummaryObservationRuntime[V, R]) materializeObservation(wo
 // the occurrence/provenance proof; Engine resolves its Group output without
 // exposing a raw equation Point, Factor coordinate, or callback. Calls are
 // optional and therefore add zero rows or work to the policy-off solve path.
-func AttachRuleSummaryObservation[V, R any](compilation *ReceiptCompilation, implementation *SummaryQueryImplementation[V, R], id keyspace.ContentID, member ReceiptRuleMember) (ReceiptObservation[R], bool) {
+func AttachRuleSummaryObservation[V, R any](compilation *ReceiptCompilation, implementation *SummaryQueryImplementation[V, R], id identity.ContentID, member ReceiptRuleMember) (ReceiptObservation[R], bool) {
 	observation, failure := AttachRuleSummaryObservationWithFailure(compilation, implementation, id, member)
 	return observation, failure == ReceiptObservationAttachFailureNone
 }
 
-func AttachRuleSummaryObservationWithFailure[V, R any](compilation *ReceiptCompilation, implementation *SummaryQueryImplementation[V, R], id keyspace.ContentID, member ReceiptRuleMember) (ReceiptObservation[R], ReceiptObservationAttachFailure) {
+func AttachRuleSummaryObservationWithFailure[V, R any](compilation *ReceiptCompilation, implementation *SummaryQueryImplementation[V, R], id identity.ContentID, member ReceiptRuleMember) (ReceiptObservation[R], ReceiptObservationAttachFailure) {
 	if compilation == nil || compilation.inner == nil || compilation.graph == nil || !compilation.graph.valid() || implementation == nil || !id.Available() || member.graph != compilation.graph || !compilation.graph.graph.OwnsMember(member.member) {
 		return ReceiptObservation[R]{}, ReceiptObservationAttachFailureArguments
 	}
@@ -277,7 +277,7 @@ func AttachRuleSummaryObservationWithFailure[V, R any](compilation *ReceiptCompi
 // bindReceiptSummaryObservationRuntime rebuilds one optional observation for
 // an activation revision. It is the receipt counterpart to the member/query
 // rebinding closures retained by receiptSolverCompiler.
-func bindReceiptSummaryObservationRuntime[V, R any](compilation *receiptFactorCompilation, implementation *SummaryQueryImplementation[V, R], id keyspace.ContentID, member equation.RuleMember, owner *receiptObservationOwner) (runtimeObservation, bool) {
+func bindReceiptSummaryObservationRuntime[V, R any](compilation *receiptFactorCompilation, implementation *SummaryQueryImplementation[V, R], id identity.ContentID, member equation.RuleMember, owner *receiptObservationOwner) (runtimeObservation, bool) {
 	if compilation == nil || !compilation.frozen || compilation.runtime == nil || compilation.runtime.mode != runtimeBindingReceipt || implementation == nil || owner == nil || !id.Available() || !compilation.runtime.graph.OwnsMember(member) {
 		return nil, false
 	}
@@ -323,12 +323,12 @@ func bindReceiptSummaryObservationRuntime[V, R any](compilation *receiptFactorCo
 // output point; callers cannot provide a point, factor coordinate, atom, or
 // domain-specific selector. As with summary observations, this adds only a
 // solve-local demand root and does not alter reusable topology.
-func AttachRuleExactObservation[V, R any](compilation *ReceiptCompilation, implementation *ExactQueryImplementation[V, R], id keyspace.ContentID, member ReceiptRuleMember) (ReceiptObservation[R], bool) {
+func AttachRuleExactObservation[V, R any](compilation *ReceiptCompilation, implementation *ExactQueryImplementation[V, R], id identity.ContentID, member ReceiptRuleMember) (ReceiptObservation[R], bool) {
 	observation, failure := AttachRuleExactObservationWithFailure(compilation, implementation, id, member)
 	return observation, failure == ReceiptObservationAttachFailureNone
 }
 
-func AttachRuleExactObservationWithFailure[V, R any](compilation *ReceiptCompilation, implementation *ExactQueryImplementation[V, R], id keyspace.ContentID, member ReceiptRuleMember) (ReceiptObservation[R], ReceiptObservationAttachFailure) {
+func AttachRuleExactObservationWithFailure[V, R any](compilation *ReceiptCompilation, implementation *ExactQueryImplementation[V, R], id identity.ContentID, member ReceiptRuleMember) (ReceiptObservation[R], ReceiptObservationAttachFailure) {
 	if compilation == nil || compilation.inner == nil || compilation.graph == nil || !compilation.graph.valid() || implementation == nil || !id.Available() || member.graph != compilation.graph || !compilation.graph.graph.OwnsMember(member.member) {
 		return ReceiptObservation[R]{}, ReceiptObservationAttachFailureArguments
 	}
@@ -398,7 +398,7 @@ func AttachRuleExactObservationWithFailure[V, R any](compilation *ReceiptCompila
 // bindReceiptExactObservationRuntime rebuilds an exact rule observation for a
 // later activation revision using the same committed member locator and
 // sealed query implementation. It admits no caller-supplied point or factor.
-func bindReceiptExactObservationRuntime[V, R any](compilation *receiptFactorCompilation, implementation *ExactQueryImplementation[V, R], id keyspace.ContentID, member equation.RuleMember, owner *receiptObservationOwner) (runtimeObservation, bool) {
+func bindReceiptExactObservationRuntime[V, R any](compilation *receiptFactorCompilation, implementation *ExactQueryImplementation[V, R], id identity.ContentID, member equation.RuleMember, owner *receiptObservationOwner) (runtimeObservation, bool) {
 	if compilation == nil || !compilation.frozen || compilation.runtime == nil || compilation.runtime.mode != runtimeBindingReceipt || implementation == nil || owner == nil || !id.Available() || !compilation.runtime.graph.OwnsMember(member) {
 		return nil, false
 	}

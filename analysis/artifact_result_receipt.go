@@ -1,9 +1,10 @@
 package analysis
 
 import (
-	"github.com/wippyai/go-lua/analysis/internal/programartifact"
-	flowkind "github.com/wippyai/go-lua/program/flow/kind"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
 // artifactResultReceipt is the compile-time, mount-qualified geometry needed
@@ -11,9 +12,9 @@ import (
 // live ProgramArtifact handles: Solve copies only these detached rows before
 // applying query observations.
 type artifactResultReceipt struct {
-	source             keyspace.ContentID
+	source             identity.ContentID
 	bodies             []artifactResultBodyReceipt
-	values             []keyspace.ContentID
+	values             []identity.ContentID
 	branchObservations []compiledObservation
 	staticObservations []compiledObservation
 	nativeScalars      []compiledNativeScalarSource
@@ -24,14 +25,14 @@ type artifactResultReceipt struct {
 }
 
 type compiledNativeArithmeticSummary struct {
-	mount, artifact, proof, occurrence, body, point, span keyspace.ContentID
+	mount, artifact, proof, occurrence, body, point, span identity.ContentID
 	op                                                    flowkind.BinaryOp
 	left, right, result                                   programartifact.NumericRepresentation
 	divisor                                               programartifact.ArithmeticDivisorProperty
 }
 
 type compiledNativeUnarySummary struct {
-	mount, artifact, proof, occurrence, body, point, span keyspace.ContentID
+	mount, artifact, proof, occurrence, body, point, span identity.ContentID
 	op                                                    flowkind.UnaryOp
 	operand, result                                       programartifact.NumericRepresentation
 }
@@ -63,13 +64,13 @@ const (
 // result reaches this detached projection.
 type compiledNativeScalarSource struct {
 	kind       compiledNativeScalarSourceKind
-	mount      keyspace.ContentID
-	artifact   keyspace.ContentID
-	proof      keyspace.ContentID
-	occurrence keyspace.ContentID
-	body       keyspace.ContentID
-	point      keyspace.ContentID
-	span       keyspace.ContentID
+	mount      identity.ContentID
+	artifact   identity.ContentID
+	proof      identity.ContentID
+	occurrence identity.ContentID
+	body       identity.ContentID
+	point      identity.ContentID
+	span       identity.ContentID
 	family     keyspace.Family
 	literal    keyspace.LiteralValue
 }
@@ -106,12 +107,12 @@ func (source compiledNativeScalarSource) valid() bool {
 
 type artifactResultBodyReceipt struct {
 	key   artifactResultBody
-	id    keyspace.ContentID
+	id    identity.ContentID
 	roots []resultRoot
 }
 
 func compileArtifactResultReceipt(
-	sourceID keyspace.ContentID,
+	sourceID identity.ContentID,
 	mounts []mountedProgramArtifact,
 	coordinates []compiledValueCoordinate,
 	observations []compiledObservation,
@@ -122,7 +123,7 @@ func compileArtifactResultReceipt(
 	receipt := &artifactResultReceipt{
 		source:             sourceID,
 		bodies:             make([]artifactResultBodyReceipt, 0),
-		values:             make([]keyspace.ContentID, len(coordinates)),
+		values:             make([]identity.ContentID, len(coordinates)),
 		branchObservations: make([]compiledObservation, 0, len(observations)),
 		staticObservations: make([]compiledObservation, 0, len(observations)),
 		nativeScalars:      make([]compiledNativeScalarSource, 0),
@@ -136,7 +137,7 @@ func compileArtifactResultReceipt(
 			return nil, false
 		}
 		copy := observation
-		copy.points = append([]keyspace.ContentID(nil), observation.points...)
+		copy.points = append([]identity.ContentID(nil), observation.points...)
 		copy.producers = append([]compiledObservationProducer(nil), observation.producers...)
 		copy.path = append([]string(nil), observation.path...)
 		switch observation.kind {
@@ -151,7 +152,7 @@ func compileArtifactResultReceipt(
 	// The public Result contract projects every declared Value from each Body,
 	// but Value identity is global to this Result. Keep exactly one ordered axis;
 	// individual Body results retain only a canonical presence bitmap.
-	artifactIDs := make(map[keyspace.ContentID]keyspace.ContentID, len(mounts))
+	artifactIDs := make(map[identity.ContentID]identity.ContentID, len(mounts))
 	bodyIndexes := make(map[artifactResultBody]int)
 	for _, mount := range mounts {
 		if mount.artifact == nil || !mount.artifact.Available() || !mount.moduleKey.Available() || !mount.artifact.ID().Available() {
@@ -161,7 +162,7 @@ func compileArtifactResultReceipt(
 			return nil, false
 		}
 		artifactIDs[mount.moduleKey] = mount.artifact.ID()
-		localBodies := make(map[keyspace.ContentID]int)
+		localBodies := make(map[identity.ContentID]int)
 		for bodyIndex := 0; bodyIndex < mount.artifact.BodyCount(); bodyIndex++ {
 			body, bodyOK := mount.artifact.BodyAt(bodyIndex)
 			if !bodyOK || !body.Available() || !body.ID().Available() {
@@ -181,7 +182,7 @@ func compileArtifactResultReceipt(
 			localBodies[body.ID()] = len(receipt.bodies)
 			bodyIndexes[key] = len(receipt.bodies)
 			roots := make([]resultRoot, body.RootCount())
-			seenRoots := make(map[keyspace.ContentID]struct{}, len(roots))
+			seenRoots := make(map[identity.ContentID]struct{}, len(roots))
 			for rootIndex := range roots {
 				root, rootOK := body.RootAt(rootIndex)
 				if !rootOK || !root.Available() || !root.ID().Available() || root.Family() == keyspace.FamilyInvalid {
@@ -303,7 +304,7 @@ func compileArtifactResultReceipt(
 		if coordinate.mount != observation.mount {
 			return nil, false
 		}
-		seenPoints := make(map[keyspace.ContentID]struct{}, len(observation.points))
+		seenPoints := make(map[identity.ContentID]struct{}, len(observation.points))
 		for _, point := range observation.points {
 			if !point.Available() {
 				return nil, false
@@ -315,8 +316,8 @@ func compileArtifactResultReceipt(
 			key := artifactResultPoint{mount: observation.mount, point: point}
 			receipt.pointObservations[key] = append(receipt.pointObservations[key], observation)
 		}
-		seenAnchors := make(map[keyspace.ContentID]struct{}, len(observation.producers))
-		seenExecution := make(map[keyspace.ContentID]struct{}, len(observation.producers))
+		seenAnchors := make(map[identity.ContentID]struct{}, len(observation.producers))
+		seenExecution := make(map[identity.ContentID]struct{}, len(observation.producers))
 		for _, producer := range observation.producers {
 			if !mountedDiagnosticRuleRole(producer.role) || !producer.occurrence.Available() || !producer.point.Available() || !producer.anchor.Available() {
 				return nil, false
@@ -361,24 +362,24 @@ func compileArtifactResultReceipt(
 	return receipt, receipt.valid()
 }
 
-func exactNativeScalarRulePoint(artifact *programartifact.Artifact, role programartifact.RuleRole, occurrence keyspace.ContentID) (keyspace.ContentID, bool) {
+func exactNativeScalarRulePoint(artifact *programartifact.Artifact, role programartifact.RuleRole, occurrence identity.ContentID) (identity.ContentID, bool) {
 	if artifact == nil || !artifact.Available() || !occurrence.Available() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
-	var point keyspace.ContentID
+	var point identity.ContentID
 	found := false
 	for index := 0; index < artifact.RuleOccurrenceCount(role); index++ {
 		row, rowOK := artifact.RuleOccurrenceAt(role, index)
 		output, outputOK := row.OutputSemanticID()
 		candidate, pointOK := row.PointAt(0)
 		if !rowOK || !outputOK || !pointOK {
-			return keyspace.ContentID{}, false
+			return identity.ContentID{}, false
 		}
 		if row.ID() != occurrence || output != occurrence {
 			continue
 		}
 		if found || row.Stage() != programartifact.RuleStageLocal {
-			return keyspace.ContentID{}, false
+			return identity.ContentID{}, false
 		}
 		point, found = candidate, true
 	}

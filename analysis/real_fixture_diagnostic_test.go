@@ -1,98 +1,38 @@
-package analysis_test
+package analysis
 
-import (
-	"context"
-	"os"
-	"testing"
-	"time"
+import "testing"
 
-	"github.com/wippyai/go-lua/analysis"
-	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/program/link"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
-	"github.com/wippyai/go-lua/program/lower"
-	"github.com/wippyai/go-lua/program/target/profile"
-)
-
-func analyzeCanonicalRealFixture(t *testing.T, path string, diagnosticOptions ...engine.SolveDiagnosticOptions) {
+// The real-fixture lane names individual corpus fixtures whose analysis cost
+// or termination is worth reporting on its own, outside a shard walk. It runs
+// the shared harness spine and reports the fixture's measured cost; a work
+// cutoff is a failed analysis here, never a passed sample, so the lane carries
+// no work budget and the bounded runner remains the only resource authority.
+func analyzeCanonicalRealFixture(t *testing.T, name string) {
 	t.Helper()
-	source, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	started := time.Now()
-	program, err := lower.Lower(lower.Source{Name: "main.lua", Text: source})
-	if err != nil {
-		t.Fatal(err)
-	}
-	contract, err := profile.Contract()
-	if err != nil {
-		t.Fatal(err)
-	}
-	linked, err := link.Seal(&link.Spec{Target: contract, Modules: []linkproject.Module{{Name: "main", Program: program}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	lowered := time.Now()
-	plan, compileStatus := analysis.Compile(linked)
-	compiled := time.Now()
-	if compileStatus != analysis.CompileComplete || plan == nil {
-		t.Fatalf("Compile status=%d plan=%t", compileStatus, plan != nil)
-	}
-	var result *analysis.Result
-	var status analysis.AnalyzeStatus
-	var diagnostics analysis.AnalyzeDiagnostics
-	if len(diagnosticOptions) != 0 {
-		// The repository's bounded runner is the only wall/RSS safety authority.
-		// An inner fixture timeout would turn a termination oracle into a timing
-		// sample and discard the final permanent diagnostic snapshot.
-		result, status, diagnostics = plan.SolveWithDiagnostics(context.Background(), diagnosticOptions[0])
-	} else {
-		result, status = plan.Solve(context.Background())
-	}
-	solved := time.Now()
-	failure := diagnostics.Engine.Failure
-	t.Logf("canonical real fixture: lower+link=%s compile=%s solve=%s total=%s phase=%s reason=%s rule=%s receipt-stage=%d artifact-row=%d receipt-ordinal=%d lowering=%d commit=%d commit-precondition=%d topology=%d schedule=%d engine={flags:%d work:%d/%d cutoff:%t epochs:%d passes:%d refresh:%d eval:%d fail:%d fold:%d rhs:%d restart:%d activation:%d failure:{available:%t reason:%d phase:%s point:%v group:%v member:%v rule:%v}}",
-		lowered.Sub(started), compiled.Sub(lowered), solved.Sub(compiled), solved.Sub(started), diagnostics.Phase, diagnostics.Reason, diagnostics.Rule, diagnostics.ReceiptStage, diagnostics.ReceiptArtifactRow, diagnostics.ReceiptOrdinal, diagnostics.ReceiptLowering, diagnostics.ReceiptCommit, diagnostics.ReceiptCommitPrecondition, diagnostics.ReceiptTopology, diagnostics.ReceiptSchedule,
-		diagnostics.Engine.Flags, diagnostics.Engine.Work, diagnostics.Engine.MaxWork, diagnostics.Engine.WorkCutoff,
-		diagnostics.Engine.Epochs, diagnostics.Engine.EpochPasses, diagnostics.Engine.Refreshes, diagnostics.Engine.Evaluates, diagnostics.Engine.EvaluateFailures, diagnostics.Engine.Folds, diagnostics.Engine.RegionRHS, diagnostics.Engine.Restarts, diagnostics.Engine.Activations,
-		failure.Available(), failure.Reason(), failure.Phase(), failure.Point(), failure.Group(), failure.Member(), failure.Rule())
-	if diagnostics.Engine.WorkCutoff {
-		if status != analysis.AnalyzeIncomplete || diagnostics.Phase != analysis.AnalyzeDiagnosticPhaseSolve || diagnostics.Reason != analysis.AnalyzeDiagnosticReasonWorkCutoff {
-			t.Fatalf("diagnostic work cutoff = status:%d phase:%d reason:%d", status, diagnostics.Phase, diagnostics.Reason)
-		}
-		return
-	}
-	if status != analysis.AnalyzeComplete || result == nil || result.BodyCount() == 0 {
-		t.Fatalf("Analyze status=%d result=%t bodies=%d", status, result != nil, func() int {
-			if result == nil {
-				return 0
-			}
-			return result.BodyCount()
-		}())
-	}
+	run := corpusHarnessFixtureRun(t, name, corpusHarnessReceiptMode())
+	t.Logf("canonical real fixture %s: seal=%s compile=%s solve=%s total=%s", name, run.cost.seal, run.cost.compile, run.cost.solve, run.cost.total())
 }
 
 func TestDiagnosticCanonicalDeadlockCompilerLua(t *testing.T) {
-	analyzeCanonicalRealFixture(t, "../testdata/fixtures/regression/deadlock-compiler-lua/main.lua", engine.SolveDiagnosticOptions{Flags: engine.SolveDiagnosticAll, MaxRows: 256, MaxWork: 65536})
+	analyzeCanonicalRealFixture(t, "regression/deadlock-compiler-lua")
 }
 
 func TestDiagnosticCanonicalDeadlockDataflowNode(t *testing.T) {
-	analyzeCanonicalRealFixture(t, "../testdata/fixtures/regression/deadlock-dataflow-node/main.lua", engine.SolveDiagnosticOptions{Flags: engine.SolveDiagnosticAll, MaxRows: 256, MaxWork: 65536})
+	analyzeCanonicalRealFixture(t, "regression/deadlock-dataflow-node")
 }
 
 func TestDiagnosticCanonicalAdviceShapePolymorphic(t *testing.T) {
-	analyzeCanonicalRealFixture(t, "../testdata/fixtures/advice/shape-polymorphic/main.lua", engine.SolveDiagnosticOptions{Flags: engine.SolveDiagnosticAll, MaxRows: 256})
+	analyzeCanonicalRealFixture(t, "advice/shape-polymorphic")
 }
 
 func TestDiagnosticCanonicalControlForLoop(t *testing.T) {
-	analyzeCanonicalRealFixture(t, "../testdata/fixtures/core/control-for-loop/main.lua", engine.SolveDiagnosticOptions{Flags: engine.SolveDiagnosticAll, MaxRows: 256})
+	analyzeCanonicalRealFixture(t, "core/control-for-loop")
 }
 
 func TestDiagnosticCanonicalBreakOutsideLoop(t *testing.T) {
-	analyzeCanonicalRealFixture(t, "../testdata/fixtures/functions/break-outside-loop/main.lua", engine.SolveDiagnosticOptions{Flags: engine.SolveDiagnosticAll, MaxRows: 256})
+	analyzeCanonicalRealFixture(t, "functions/break-outside-loop")
 }
 
 func TestDiagnosticCanonicalBackwardGoto(t *testing.T) {
-	analyzeCanonicalRealFixture(t, "../testdata/fixtures/functions/goto-backward/main.lua", engine.SolveDiagnosticOptions{Flags: engine.SolveDiagnosticAll, MaxRows: 256})
+	analyzeCanonicalRealFixture(t, "functions/goto-backward")
 }

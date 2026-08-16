@@ -3,10 +3,10 @@ package static
 import (
 	"errors"
 
-	"github.com/wippyai/go-lua/analysis/internal/programartifact"
-	"github.com/wippyai/go-lua/analysis/semantic/typeauthority"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/domain/type/authority"
+	"github.com/wippyai/go-lua/analysis/identity"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
 type OperandKind uint8
@@ -27,15 +27,15 @@ type ContainedOperand struct {
 	subject        RuntimeSubject
 	reason         Reason
 	fault          Fault
-	owner          keyspace.ContentID
-	source         keyspace.ContentID
-	namespace      keyspace.ContentID
-	environment    keyspace.ContentID
+	owner          identity.ContentID
+	source         identity.ContentID
+	namespace      identity.ContentID
+	environment    identity.ContentID
 	operation      target.Operation
-	law            keyspace.ContentID
-	dependency     keyspace.ContentID
-	site           keyspace.ContentID
-	frontierBody   keyspace.ContentID
+	law            identity.ContentID
+	dependency     identity.ContentID
+	site           identity.ContentID
+	frontierBody   identity.ContentID
 	frontierCursor uint32
 }
 
@@ -52,20 +52,20 @@ func (o ContainedOperand) UnknownReason() (Reason, bool) {
 func (o ContainedOperand) Fault() (Fault, bool) {
 	return o.fault, o.kind == OperandInvalid && o.fault != 0
 }
-func (o ContainedOperand) Source() (keyspace.ContentID, keyspace.ContentID, bool) {
+func (o ContainedOperand) Source() (identity.ContentID, identity.ContentID, bool) {
 	return o.owner, o.source, o.owner.Available() && o.source.Available()
 }
-func (o ContainedOperand) Namespace() keyspace.ContentID          { return o.namespace }
-func (o ContainedOperand) Environment() keyspace.ContentID        { return o.environment }
+func (o ContainedOperand) Namespace() identity.ContentID          { return o.namespace }
+func (o ContainedOperand) Environment() identity.ContentID        { return o.environment }
 func (o ContainedOperand) Operation() target.Operation            { return o.operation }
-func (o ContainedOperand) Law() keyspace.ContentID                { return o.law }
-func (o ContainedOperand) Dependency() keyspace.ContentID         { return o.dependency }
-func (o ContainedOperand) StaticSite() (keyspace.ContentID, bool) { return o.site, o.site.Available() }
-func (o ContainedOperand) SourceFrontier() (keyspace.ContentID, int, bool) {
+func (o ContainedOperand) Law() identity.ContentID                { return o.law }
+func (o ContainedOperand) Dependency() identity.ContentID         { return o.dependency }
+func (o ContainedOperand) StaticSite() (identity.ContentID, bool) { return o.site, o.site.Available() }
+func (o ContainedOperand) SourceFrontier() (identity.ContentID, int, bool) {
 	return o.frontierBody, int(o.frontierCursor), o.frontierBody.Available()
 }
 
-func (a *Authority) Input(input keyspace.ContentID) (ContainedOperand, bool) {
+func (a *Authority) Input(input identity.ContentID) (ContainedOperand, bool) {
 	if a == nil || !input.Available() {
 		return ContainedOperand{}, false
 	}
@@ -73,7 +73,7 @@ func (a *Authority) Input(input keyspace.ContentID) (ContainedOperand, bool) {
 	return operand, ok
 }
 
-func (a *Authority) TypeOf(input keyspace.ContentID) (Coordinate, ContainedOperand, bool) {
+func (a *Authority) TypeOf(input identity.ContentID) (Coordinate, ContainedOperand, bool) {
 	if a == nil || !input.Available() {
 		return Coordinate{}, ContainedOperand{}, false
 	}
@@ -123,7 +123,7 @@ func (a *Authority) sealMountedCoordinates() error {
 	return nil
 }
 
-func (a *Authority) addCoordinate(ref typeauthority.StaticTypeRef, namespace keyspace.ContentID, environment Environment, operation target.Operation) error {
+func (a *Authority) addCoordinate(ref typeauthority.StaticTypeRef, namespace identity.ContentID, environment Environment, operation target.Operation) error {
 	if !namespace.Available() {
 		return errors.New("static: invalid namespace")
 	}

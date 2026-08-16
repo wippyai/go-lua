@@ -49,6 +49,22 @@ func semanticKeyFromComposition(key composition.Key) SemanticKey {
 	return SemanticKey{digest: [32]byte(key.ID), version: key.Version}
 }
 
+// DistinctKeys reports whether every key is usable and no two name the same
+// semantic role. It is the one admission law for a rule's identity tuple.
+func DistinctKeys(keys ...SemanticKey) bool {
+	for index, key := range keys {
+		if !key.Available() {
+			return false
+		}
+		for _, prior := range keys[:index] {
+			if prior == key {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // compareSemanticKey is the sole canonical ordering for authored schema
 // identities. Physical layout, if any, is derived later by the E compiler.
 func compareSemanticKey(left, right SemanticKey) int {

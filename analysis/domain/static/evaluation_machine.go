@@ -3,10 +3,10 @@ package static
 import (
 	"errors"
 
-	"github.com/wippyai/go-lua/analysis/semantic/typeauthority"
-	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/domain/type/authority"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
 // evaluationMachine is intentionally small: ProgramArtifact already owns the
@@ -22,7 +22,7 @@ func newEvaluationMachine(authority *Authority, operation target.Operation) *eva
 	return &evaluationMachine{authority: authority, operation: operation}
 }
 
-func (a *Authority) evaluate(ref typeauthority.StaticTypeRef, namespace keyspace.ContentID, environment Environment, operation target.Operation) (Value, error) {
+func (a *Authority) evaluate(ref typeauthority.StaticTypeRef, namespace identity.ContentID, environment Environment, operation target.Operation) (Value, error) {
 	if a == nil || a.types == nil || !ref.Valid() || !namespace.Available() {
 		return Value{}, errors.New("static: foreign evaluation coordinate")
 	}

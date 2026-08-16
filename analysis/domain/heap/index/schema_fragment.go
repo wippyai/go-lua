@@ -31,7 +31,7 @@ type RawGetSchemaFragment struct {
 
 // DeclareRawGetSchema records RawGet's exact four-input selector DAG.
 func DeclareRawGetSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evidence engine.SemanticKey, values *valueowner.SchemaFragment, calls *callowner.SchemaFragment, heap *heapowner.SchemaFragment, packs *packowner.SchemaFragment) (*RawGetSchemaFragment, bool) {
-	if builder == nil || values == nil || calls == nil || heap == nil || packs == nil || !distinct(semantic, operandFamily, evidence) {
+	if builder == nil || values == nil || calls == nil || heap == nil || packs == nil || !engine.DistinctKeys(semantic, operandFamily, evidence) {
 		return nil, false
 	}
 	slot, ok := engine.NewRuleSlot[valuedomain.Value, Access](builder, engine.SchemaRuleSpec[valuedomain.Value]{
@@ -122,7 +122,7 @@ func (fragment *RawSetSchemaFragment) RuleSlot() *engine.RuleSlot[heapdomain.Val
 // DeclareRawSetSchema records RawSet's exact three-input selector DAG and
 // routed Heap write.
 func DeclareRawSetSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evidence engine.SemanticKey, values *valueowner.SchemaFragment, heap *heapowner.SchemaFragment, packs *packowner.SchemaFragment) (*RawSetSchemaFragment, bool) {
-	if builder == nil || values == nil || heap == nil || packs == nil || !distinct(semantic, operandFamily, evidence) {
+	if builder == nil || values == nil || heap == nil || packs == nil || !engine.DistinctKeys(semantic, operandFamily, evidence) {
 		return nil, false
 	}
 	slot, ok := engine.NewRuleSlot[heapdomain.Value, Access](builder, engine.SchemaRuleSpec[heapdomain.Value]{
@@ -173,18 +173,4 @@ func DeclareRawSetSchema(builder *engine.SchemaBuilder, semantic, operandFamily,
 		return nil, false
 	}
 	return &RawSetSchemaFragment{slot: slot, semantic: semantic, evidence: evidence, valueRef: values.Ref(), heapRef: heap.Ref(), packRef: packs.Ref(), inputs: [3]engine.SchemaInput{in0, in1, in2}, receiver: receiver, key: key, heapRead: heapRead, packRead: packRead, sourceRead: sourceRead, carry: carry, write: write}, true
-}
-
-func distinct(keys ...engine.SemanticKey) bool {
-	for index, key := range keys {
-		if !key.Available() {
-			return false
-		}
-		for _, prior := range keys[:index] {
-			if prior == key {
-				return false
-			}
-		}
-	}
-	return true
 }

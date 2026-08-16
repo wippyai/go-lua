@@ -167,7 +167,7 @@ func (origin *schemaRuleReadOrigin) matches(proof *ruleRuntimeProof, ordinal uin
 			return false
 		}
 		form, formOK := origin.state.schema.factorFormShapeAt(origin.factor, origin.formOrdinal)
-		return formOK && form.Kind == composition.FactorSummaryRead && form.Semantic == origin.semantic && shape.Semantic == origin.semantic && shape.Normalizer == origin.semantic
+		return formOK && summaryReadRowKind(form.Kind) && form.Semantic == origin.semantic && shape.Semantic == origin.semantic && shape.Normalizer == origin.semantic
 	}
 	return origin.kind == composition.ReadExact && !origin.semantic.Available() && shape.DependencyCount == 0
 }
@@ -414,7 +414,7 @@ func AddSelectedRouteSummaryRead[K ~uint32 | ~uint64, V, O, RV, S any](tx *Selec
 	if shared.committed || shared.aborted || shared.token == nil || shared.state.pendingRules[shared.ordinal] != shared.token ||
 		shared.cell == nil || slot.cell == nil || slot.cell.schema != shared.state.schema || factor.cell == nil ||
 		factor.cell.schema != shared.state.schema || form.cell == nil || form.cell.schema != shared.state.schema ||
-		form.cell.kind != SchemaFormReadSummary || len(shared.reads) >= int(^uint(0)>>1) {
+		!summaryReadFormKind(form.cell.kind) || len(shared.reads) >= int(^uint(0)>>1) {
 		return Read[S]{}, false
 	}
 	index := uint64(len(shared.reads))
@@ -775,7 +775,7 @@ type schemaSummaryRuleReadBinding[K ~uint32 | ~uint64, V, S any] struct {
 }
 
 func (binding *schemaSummaryRuleReadBinding[K, V, S]) complete(state *schemaBindingState, cell schemaRuleBindingCell, ordinal uint64) bool {
-	if binding == nil || binding.origin == nil || binding.factor == nil || binding.form == nil || state == nil || cell == nil || binding.origin.state != state || binding.origin.cell != cell || binding.origin.ruleOrdinal != ordinal || binding.origin.kind != composition.ReadSummary || binding.read.origin != binding.origin || binding.read.index != int(binding.origin.readOrdinal) || binding.read.resolve == nil || binding.factor.impl == nil || binding.factor.impl.algebra == nil || binding.factor.impl.state != state || binding.factor.ordinal != binding.origin.factor || binding.form.schema != state.schema || binding.form.factor != binding.factor || binding.form.form.cell == nil || binding.form.form.cell.schema != state.schema || binding.form.form.cell.kind != SchemaFormReadSummary || !binding.form.schemaFactorFormComplete() {
+	if binding == nil || binding.origin == nil || binding.factor == nil || binding.form == nil || state == nil || cell == nil || binding.origin.state != state || binding.origin.cell != cell || binding.origin.ruleOrdinal != ordinal || binding.origin.kind != composition.ReadSummary || binding.read.origin != binding.origin || binding.read.index != int(binding.origin.readOrdinal) || binding.read.resolve == nil || binding.factor.impl == nil || binding.factor.impl.algebra == nil || binding.factor.impl.state != state || binding.factor.ordinal != binding.origin.factor || binding.form.schema != state.schema || binding.form.factor != binding.factor || binding.form.form.cell == nil || binding.form.form.cell.schema != state.schema || !summaryReadFormKind(binding.form.form.cell.kind) || !binding.form.schemaFactorFormComplete() {
 		return false
 	}
 	shape, ok := state.schema.ruleReadShapeAt(ordinal, binding.origin.readOrdinal)
@@ -1128,7 +1128,7 @@ func (receipt factorRuntimeReceipt) validForms() bool {
 			return false
 		}
 		want := composition.Key{}
-		if shape.Kind == composition.FactorSummaryRead || shape.Kind == composition.FactorSelectorWrite {
+		if summaryReadRowKind(shape.Kind) || shape.Kind == composition.FactorSelectorWrite {
 			want = shape.Semantic
 		}
 		if form.kind != schemaFormKind(shape.Kind) || form.semantic != want {
@@ -1150,6 +1150,8 @@ func schemaFormKind(kind composition.FactorFormKind) SchemaFormKind {
 	switch kind {
 	case composition.FactorSummaryRead:
 		return SchemaFormReadSummary
+	case composition.FactorDistributiveSummaryRead:
+		return SchemaFormReadDistributiveSummary
 	case composition.FactorSelectorWrite:
 		return SchemaFormWriteSelector
 	default:
@@ -1567,16 +1569,12 @@ func (cell *schemaFactorFormCell[K, V]) schemaFactorFormComplete() bool {
 	switch cell.kind {
 	case SchemaFormReadExact, SchemaFormWriteExact:
 		return cell.ordinal == cell.factor.ordinal
-	case SchemaFormWriteSelector, SchemaFormReadSummary:
+	case SchemaFormWriteSelector, SchemaFormReadSummary, SchemaFormReadDistributiveSummary:
 		if cell.ordinal>>32 != cell.factor.ordinal {
 			return false
 		}
 		shape, ok := cell.schema.factorFormShapeAt(cell.factor.ordinal, uint64(uint32(cell.ordinal)))
-		want := composition.FactorSummaryRead
-		if cell.kind == SchemaFormWriteSelector {
-			want = composition.FactorSelectorWrite
-		}
-		return ok && shape.Kind == want
+		return ok && shape.Kind == factorFormRowKind(cell.kind)
 	default:
 		return false
 	}
@@ -1696,21 +1694,21 @@ func (cell *schemaSummaryReadCell[K, V, S]) schemaBindingSchema() *Schema {
 }
 
 func (cell *schemaSummaryReadCell[K, V, S]) schemaFactorFormComplete() bool {
-	if cell == nil || cell.schema == nil || cell.factor == nil || cell.algebra == nil || cell.factor.impl == nil || cell.factor.impl.state == nil || cell.form.cell == nil || cell.form.cell.schema != cell.schema || cell.form.cell.kind != SchemaFormReadSummary || cell.normalize == nil || cell.equal == nil || cell.fingerprint == nil {
+	if cell == nil || cell.schema == nil || cell.factor == nil || cell.algebra == nil || cell.factor.impl == nil || cell.factor.impl.state == nil || cell.form.cell == nil || cell.form.cell.schema != cell.schema || !summaryReadFormKind(cell.form.cell.kind) || cell.normalize == nil || cell.equal == nil || cell.fingerprint == nil {
 		return false
 	}
 	if cell.ordinal>>32 != cell.factor.ordinal {
 		return false
 	}
 	shape, ok := cell.schema.factorFormShapeAt(cell.factor.ordinal, uint64(uint32(cell.ordinal)))
-	return ok && shape.Kind == composition.FactorSummaryRead
+	return ok && summaryReadRowKind(shape.Kind)
 }
 
 func (cell *schemaSummaryReadCell[K, V, S]) schemaSummaryRuleReadComplete(state *schemaBindingState, origin *schemaRuleReadOrigin) bool {
 	if cell == nil || state == nil || origin == nil || origin.state != state || origin.kind != composition.ReadSummary ||
 		cell.factor == nil || cell.factor.impl == nil || cell.factor.impl.algebra == nil || cell.factor.impl.state != state ||
 		cell.factor.ordinal != origin.factor || cell.schema != state.schema || cell.form.cell == nil ||
-		cell.form.cell.schema != state.schema || cell.form.cell.kind != SchemaFormReadSummary || !cell.schemaFactorFormComplete() {
+		cell.form.cell.schema != state.schema || !summaryReadFormKind(cell.form.cell.kind) || !cell.schemaFactorFormComplete() {
 		return false
 	}
 	shape, ok := state.schema.ruleReadShapeAt(origin.ruleOrdinal, origin.readOrdinal)
@@ -1763,7 +1761,7 @@ func BindSummaryReadForFactor[K ~uint32 | ~uint64, V, S any](binding *SchemaBind
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	if state.phase != schemaBindingOpen || factorSlot == nil || factorSlot.Schema() != state.schema || form.cell == nil || form.cell.schema != state.schema || form.cell.kind != SchemaFormReadSummary || normalize == nil || equal == nil || fingerprint == nil {
+	if state.phase != schemaBindingOpen || factorSlot == nil || factorSlot.Schema() != state.schema || form.cell == nil || form.cell.schema != state.schema || !summaryReadFormKind(form.cell.kind) || normalize == nil || equal == nil || fingerprint == nil {
 		state.poisonLocked()
 		return false
 	}
@@ -1774,7 +1772,7 @@ func BindSummaryReadForFactor[K ~uint32 | ~uint64, V, S any](binding *SchemaBind
 		return false
 	}
 	shape, shapeOK := state.schema.factorFormShapeAt(factorOrdinal, formOrdinal)
-	if !shapeOK || shape.Kind != composition.FactorSummaryRead {
+	if !shapeOK || !summaryReadRowKind(shape.Kind) {
 		state.poisonLocked()
 		return false
 	}
@@ -2144,7 +2142,7 @@ func BindRuleWithExactAndSummaryReadAndCarry[OK ~uint32 | ~uint64, V, O any, EK 
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	if state.phase != schemaBindingOpen || slot == nil || slot.cell == nil || slot.cell.schema != state.schema || exactSlot.cell == nil || exactSlot.cell.schema != state.schema || exactFactor == nil || exactFactor.cell == nil || exactFactor.cell.schema != state.schema || summarySlot.cell == nil || summarySlot.cell.schema != state.schema || summaryFactor == nil || summaryFactor.cell == nil || summaryFactor.cell.schema != state.schema || summaryForm.cell == nil || summaryForm.cell.schema != state.schema || summaryForm.cell.kind != SchemaFormReadSummary || carry.cell == nil || carry.cell.schema != state.schema || write.cell == nil || write.cell.schema != state.schema || output == nil || output.cell == nil || output.cell.schema != state.schema || spec.OperandContent == nil || !spec.Admission.valid() || spec.Transfer == nil {
+	if state.phase != schemaBindingOpen || slot == nil || slot.cell == nil || slot.cell.schema != state.schema || exactSlot.cell == nil || exactSlot.cell.schema != state.schema || exactFactor == nil || exactFactor.cell == nil || exactFactor.cell.schema != state.schema || summarySlot.cell == nil || summarySlot.cell.schema != state.schema || summaryFactor == nil || summaryFactor.cell == nil || summaryFactor.cell.schema != state.schema || summaryForm.cell == nil || summaryForm.cell.schema != state.schema || !summaryReadFormKind(summaryForm.cell.kind) || carry.cell == nil || carry.cell.schema != state.schema || write.cell == nil || write.cell.schema != state.schema || output == nil || output.cell == nil || output.cell.schema != state.schema || spec.OperandContent == nil || !spec.Admission.valid() || spec.Transfer == nil {
 		state.poisonLocked()
 		return Read[OrderedCells[EV]]{}, Read[S]{}, false
 	}
@@ -2189,7 +2187,7 @@ func BindRuleWithExactAndSummaryReadAndCarry[OK ~uint32 | ~uint64, V, O any, EK 
 	}
 	summary, summaryTyped := summaryCell.forms[formOrdinal].(*schemaSummaryReadCell[SK, SV, S])
 	shapeForm, shapeFormOK := state.schema.factorFormShapeAt(summaryFactorOrdinal, formOrdinal)
-	if !summaryTyped || summary == nil || summary.schema != state.schema || summary.factor != summaryCell || summary.form.cell != summaryForm.cell || summary.normalize == nil || summary.equal == nil || summary.fingerprint == nil || !shapeFormOK || shapeForm.Kind != composition.FactorSummaryRead || shapeForm.Semantic != summaryShape.Semantic {
+	if !summaryTyped || summary == nil || summary.schema != state.schema || summary.factor != summaryCell || summary.form.cell != summaryForm.cell || summary.normalize == nil || summary.equal == nil || summary.fingerprint == nil || !shapeFormOK || !summaryReadRowKind(shapeForm.Kind) || shapeForm.Semantic != summaryShape.Semantic {
 		state.poisonLocked()
 		return Read[OrderedCells[EV]]{}, Read[S]{}, false
 	}
@@ -2317,7 +2315,7 @@ func BindRuleWithSummaryRead[OK ~uint32 | ~uint64, V, O any, RK ~uint32 | ~uint6
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	if state.phase != schemaBindingOpen || slot == nil || slot.cell == nil || slot.cell.schema != state.schema || readSlot.cell == nil || readSlot.cell.schema != state.schema || readFactor == nil || readFactor.cell == nil || readFactor.cell.schema != state.schema || form.cell == nil || form.cell.schema != state.schema || form.cell.kind != SchemaFormReadSummary || write.cell == nil || write.cell.schema != state.schema || output == nil || output.cell == nil || output.cell.schema != state.schema || spec.OperandContent == nil || !spec.Admission.valid() || spec.Transfer == nil {
+	if state.phase != schemaBindingOpen || slot == nil || slot.cell == nil || slot.cell.schema != state.schema || readSlot.cell == nil || readSlot.cell.schema != state.schema || readFactor == nil || readFactor.cell == nil || readFactor.cell.schema != state.schema || form.cell == nil || form.cell.schema != state.schema || !summaryReadFormKind(form.cell.kind) || write.cell == nil || write.cell.schema != state.schema || output == nil || output.cell == nil || output.cell.schema != state.schema || spec.OperandContent == nil || !spec.Admission.valid() || spec.Transfer == nil {
 		state.poisonLocked()
 		return Read[S]{}, false
 	}
@@ -2358,12 +2356,12 @@ func BindRuleWithSummaryRead[OK ~uint32 | ~uint64, V, O any, RK ~uint32 | ~uint6
 		return Read[S]{}, false
 	}
 	summaryForm, summaryTyped := readCell.forms[formOrdinal].(*schemaSummaryReadCell[RK, RV, S])
-	if !summaryTyped || summaryForm == nil || summaryForm.schema != state.schema || summaryForm.factor != readCell || summaryForm.form.cell != form.cell || summaryForm.form.cell.kind != SchemaFormReadSummary || summaryForm.form.cell.ordinal != form.cell.ordinal || summaryForm.normalize == nil || summaryForm.equal == nil || summaryForm.fingerprint == nil || summaryForm.form.cell.ordinal != formFactor<<32|formOrdinal {
+	if !summaryTyped || summaryForm == nil || summaryForm.schema != state.schema || summaryForm.factor != readCell || summaryForm.form.cell != form.cell || !summaryReadFormKind(summaryForm.form.cell.kind) || summaryForm.form.cell.ordinal != form.cell.ordinal || summaryForm.normalize == nil || summaryForm.equal == nil || summaryForm.fingerprint == nil || summaryForm.form.cell.ordinal != formFactor<<32|formOrdinal {
 		state.poisonLocked()
 		return Read[S]{}, false
 	}
 	shapeForm, shapeFormOK := state.schema.factorFormShapeAt(readFactorOrdinal, formOrdinal)
-	if !shapeFormOK || shapeForm.Kind != composition.FactorSummaryRead || shapeForm.Semantic != readShape.Semantic {
+	if !shapeFormOK || !summaryReadRowKind(shapeForm.Kind) || shapeForm.Semantic != readShape.Semantic {
 		state.poisonLocked()
 		return Read[S]{}, false
 	}

@@ -1,8 +1,8 @@
 package origin
 
 import (
-	"github.com/wippyai/go-lua/program"
-	"github.com/wippyai/go-lua/program/link"
+	"github.com/wippyai/go-lua/analysis/program"
+	"github.com/wippyai/go-lua/analysis/program/link"
 )
 
 // Universe is the closed provenance vocabulary of the Type Factor installed

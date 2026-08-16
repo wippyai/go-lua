@@ -3,45 +3,51 @@ package analysis
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/internal/programartifact"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
+	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
-// DiagnosticCode and DiagnosticRule are Analysis-owned semantic policy
-// vocabularies. They intentionally do not reuse engine runtime diagnostics.
-type DiagnosticCode uint8
-type DiagnosticRule uint8
-
-const (
-	DiagnosticCodeInvalid DiagnosticCode = iota
-	DiagnosticCodeAlwaysTrueGuard
-	DiagnosticCodeAlwaysFalseGuard
-	DiagnosticCodeRedundantClaim
-	DiagnosticCodeUnresolvedTypeReference
-	DiagnosticCodeUnresolvedValueReference
-	DiagnosticCodeUnusedLocal
-)
-const (
-	DiagnosticRuleInvalid DiagnosticRule = iota
-	DiagnosticRuleAlwaysTrueGuard
-	DiagnosticRuleAlwaysFalseGuard
-	DiagnosticRuleRedundantClaim
-	DiagnosticRuleUnresolvedTypeReference
-	DiagnosticRuleUnresolvedValueReference
-	DiagnosticRuleUnusedLocal
-)
-
-type FindingSeverity uint8
+// DiagnosticCode is the analyzer's published diagnostic identity. The
+// declaration table owns the inventory: a code names one sealed declaration
+// row, and every per-code answer below is a lookup on that row.
+type DiagnosticCode = diagnostic.Code
 
 const (
-	FindingSeverityInvalid FindingSeverity = iota
-	FindingSeverityError
-	FindingSeverityWarning
-	FindingSeverityHint
+	DiagnosticCodeInvalid                  = diagnostic.CodeInvalid
+	DiagnosticCodeAlwaysTrueGuard          = grammar.DiagnosticCodeAlwaysTrueGuard
+	DiagnosticCodeAlwaysFalseGuard         = grammar.DiagnosticCodeAlwaysFalseGuard
+	DiagnosticCodeRedundantClaim           = grammar.DiagnosticCodeRedundantClaim
+	DiagnosticCodeUnresolvedTypeReference  = grammar.DiagnosticCodeUnresolvedTypeReference
+	DiagnosticCodeUnresolvedValueReference = grammar.DiagnosticCodeUnresolvedValueReference
+	DiagnosticCodeUnusedLocal              = grammar.DiagnosticCodeUnusedLocal
 )
+
+// FindingSeverity is the closed severity vocabulary the declaration table
+// declares a default in and a policy may refine within.
+type FindingSeverity = diagnostic.Severity
+
+const (
+	FindingSeverityInvalid = diagnostic.SeverityInvalid
+	FindingSeverityError   = diagnostic.SeverityError
+	FindingSeverityWarning = diagnostic.SeverityWarning
+	FindingSeverityHint    = diagnostic.SeverityHint
+)
+
+// diagnosticDeclaration resolves one published code in the sealed declaration
+// table. It is the only per-code lookup in Analysis; nothing here restates the
+// inventory.
+func diagnosticDeclaration(code DiagnosticCode) (*diagnostic.Entry, bool) {
+	table, tableOK := grammar.Diagnostics()
+	if !tableOK {
+		return nil, false
+	}
+	return table.ForCode(code)
+}
 
 // DiagnosticCollectionFailure is a closed receipt-collector classification;
 // it never changes inference status or Result identity.
@@ -53,40 +59,6 @@ const (
 	DiagnosticCollectionQueryUnreadable
 	DiagnosticCollectionQueryInvalid
 	DiagnosticCollectionValueShapeMismatch
-)
-
-// diagnosticTemplateText is a closed formatting vocabulary. The only dynamic
-// values it accepts come from typed row fields below; it never accepts caller
-// supplied diagnostic prose.
-type diagnosticTemplateText uint8
-
-const (
-	diagnosticTemplateTextInvalid diagnosticTemplateText = iota
-	diagnosticTemplateTextAlwaysTrueMessage
-	diagnosticTemplateTextAlwaysFalseMessage
-	diagnosticTemplateTextRedundantClaimMessage
-	diagnosticTemplateTextUnresolvedTypeMessage
-	diagnosticTemplateTextUnresolvedValueMessage
-	diagnosticTemplateTextUnusedLocalMessage
-	diagnosticTemplateTextAlwaysTrueEvidence
-	diagnosticTemplateTextAlwaysFalseEvidence
-	diagnosticTemplateTextRedundantClaimValueEvidence
-	diagnosticTemplateTextRedundantClaimCheckEvidence
-	diagnosticTemplateTextUnresolvedTypeEvidence
-	diagnosticTemplateTextUnresolvedValueEvidence
-	diagnosticTemplateTextUnusedLocalEvidence
-	diagnosticTemplateTextAlwaysTrueHelp
-	diagnosticTemplateTextAlwaysFalseHelp
-	diagnosticTemplateTextRedundantClaimHelp
-	diagnosticTemplateTextUnresolvedTypeHelp
-	diagnosticTemplateTextUnresolvedValueHelp
-	diagnosticTemplateTextUnusedLocalHelp
-	diagnosticTemplateTextConstantGuardLabel
-	diagnosticTemplateTextClaimSiteLabel
-	diagnosticTemplateTextProvenValueLabel
-	diagnosticTemplateTextUnknownTypeLabel
-	diagnosticTemplateTextUnknownValueLabel
-	diagnosticTemplateTextUnusedLocalLabel
 )
 
 // diagnosticSemanticName and diagnosticTargetType are deliberately distinct
@@ -139,6 +111,9 @@ func newDiagnosticTargetType(value string) (diagnosticTargetType, bool) {
 func (name diagnosticSemanticName) valid() bool { return diagnosticTemplateTokenValid(name.value) }
 func (target diagnosticTargetType) valid() bool { return diagnosticTemplateTokenValid(target.value) }
 
+// diagnosticClaimForm is the closed claim vocabulary one payload may carry.
+// Its rendered words are the only prose this file owns that a declaration row
+// does not: they are the vocabulary itself, not a per-code message.
 type diagnosticClaimForm uint8
 
 const (
@@ -151,207 +126,12 @@ func (form diagnosticClaimForm) valid() bool {
 	return form == diagnosticClaimFormTypeClaim || form == diagnosticClaimFormTypeCastCall
 }
 
-type diagnosticTemplateDataRequirement uint8
-
-const (
-	diagnosticTemplateNeedsSubject diagnosticTemplateDataRequirement = 1 << iota
-	diagnosticTemplateNeedsTarget
-	diagnosticTemplateNeedsClaimForm
-	diagnosticTemplateNeedsProofLocation
-)
-
-type diagnosticTemplateLocation uint8
-
-const (
-	diagnosticTemplateLocationInvalid diagnosticTemplateLocation = iota
-	diagnosticTemplateLocationPrimary
-	diagnosticTemplateLocationProof
-)
-
-type diagnosticEvidenceTemplate struct {
-	location            diagnosticTemplateLocation
-	kind, trust, reason string
-	detail              diagnosticTemplateText
-}
-
-type diagnosticLabelTemplate struct {
-	location diagnosticTemplateLocation
-	text     diagnosticTemplateText
-}
-
-type diagnosticRenderSection uint8
-
-const (
-	diagnosticRenderSectionInvalid diagnosticRenderSection = iota
-	diagnosticRenderSectionSummary
-	diagnosticRenderSectionLocation
-	diagnosticRenderSectionSource
-	diagnosticRenderSectionEvidence
-	diagnosticRenderSectionHelp
-)
-
-type diagnosticTemplate struct {
-	rule            DiagnosticRule
-	code            DiagnosticCode
-	codeText        string
-	defaultSeverity FindingSeverity
-	requirements    diagnosticTemplateDataRequirement
-	message, help   diagnosticTemplateText
-	evidence        []diagnosticEvidenceTemplate
-	labels          []diagnosticLabelTemplate
-	render          []diagnosticRenderSection
-}
-
-// diagnosticCollectorSpec is the sole installation authority for a native
-// producer. Templates describe every supported-or-pending public family;
-// collector specs describe only the families a receipt collector can actually
-// produce today. Policy validity and receipt dispatch both consult this same
-// closed registry, so a presentation descriptor alone can never become an
-// enabled-but-empty diagnostic.
-type diagnosticCollectorSurface uint8
-
-const (
-	diagnosticCollectorSurfaceInvalid diagnosticCollectorSurface = iota
-	diagnosticCollectorSurfaceBranch
-	diagnosticCollectorSurfaceStatic
-)
-
-type diagnosticCollectorSpec struct {
-	rule       DiagnosticRule
-	code       DiagnosticCode
-	surface    diagnosticCollectorSurface
-	staticKind programartifact.DiagnosticObservationKind
-}
-
-var diagnosticCollectorRegistry = [...]diagnosticCollectorSpec{
-	{rule: DiagnosticRuleAlwaysTrueGuard, code: DiagnosticCodeAlwaysTrueGuard, surface: diagnosticCollectorSurfaceBranch},
-	{rule: DiagnosticRuleAlwaysFalseGuard, code: DiagnosticCodeAlwaysFalseGuard, surface: diagnosticCollectorSurfaceBranch},
-	{rule: DiagnosticRuleUnresolvedTypeReference, code: DiagnosticCodeUnresolvedTypeReference, surface: diagnosticCollectorSurfaceStatic, staticKind: programartifact.DiagnosticObservationTypeReferenceUnresolved},
-	{rule: DiagnosticRuleUnresolvedValueReference, code: DiagnosticCodeUnresolvedValueReference, surface: diagnosticCollectorSurfaceStatic, staticKind: programartifact.DiagnosticObservationValueReferenceUnresolved},
-}
-
-func diagnosticCollectorSpecForRule(rule DiagnosticRule) (diagnosticCollectorSpec, bool) {
-	for _, spec := range diagnosticCollectorRegistry {
-		if spec.rule == rule {
-			return spec, true
-		}
-	}
-	return diagnosticCollectorSpec{}, false
-}
-
-func diagnosticStaticCollectorSpec(kind programartifact.DiagnosticObservationKind) (diagnosticCollectorSpec, bool) {
-	for _, spec := range diagnosticCollectorRegistry {
-		if spec.surface == diagnosticCollectorSurfaceStatic && spec.staticKind == kind {
-			return spec, true
-		}
-	}
-	return diagnosticCollectorSpec{}, false
-}
-
-var diagnosticTemplateRegistry = [...]diagnosticTemplate{
-	{
-		rule: DiagnosticRuleAlwaysTrueGuard, code: DiagnosticCodeAlwaysTrueGuard, codeText: "advice.always_true_guard", defaultSeverity: FindingSeverityHint,
-		message: diagnosticTemplateTextAlwaysTrueMessage, help: diagnosticTemplateTextAlwaysTrueHelp,
-		evidence: []diagnosticEvidenceTemplate{{location: diagnosticTemplateLocationPrimary, kind: "abstract fact", trust: "proven", reason: "unspecified", detail: diagnosticTemplateTextAlwaysTrueEvidence}},
-		labels:   []diagnosticLabelTemplate{{location: diagnosticTemplateLocationPrimary, text: diagnosticTemplateTextConstantGuardLabel}},
-		render:   []diagnosticRenderSection{diagnosticRenderSectionSummary, diagnosticRenderSectionLocation, diagnosticRenderSectionSource, diagnosticRenderSectionEvidence, diagnosticRenderSectionHelp},
-	},
-	{
-		rule: DiagnosticRuleAlwaysFalseGuard, code: DiagnosticCodeAlwaysFalseGuard, codeText: "advice.always_false_guard", defaultSeverity: FindingSeverityHint,
-		message: diagnosticTemplateTextAlwaysFalseMessage, help: diagnosticTemplateTextAlwaysFalseHelp,
-		evidence: []diagnosticEvidenceTemplate{{location: diagnosticTemplateLocationPrimary, kind: "abstract fact", trust: "proven", reason: "unspecified", detail: diagnosticTemplateTextAlwaysFalseEvidence}},
-		labels:   []diagnosticLabelTemplate{{location: diagnosticTemplateLocationPrimary, text: diagnosticTemplateTextConstantGuardLabel}},
-		render:   []diagnosticRenderSection{diagnosticRenderSectionSummary, diagnosticRenderSectionLocation, diagnosticRenderSectionSource, diagnosticRenderSectionEvidence, diagnosticRenderSectionHelp},
-	},
-	{
-		rule: DiagnosticRuleRedundantClaim, code: DiagnosticCodeRedundantClaim, codeText: "advice.redundant_claim", defaultSeverity: FindingSeverityHint,
-		requirements: diagnosticTemplateNeedsSubject | diagnosticTemplateNeedsTarget | diagnosticTemplateNeedsClaimForm | diagnosticTemplateNeedsProofLocation,
-		message:      diagnosticTemplateTextRedundantClaimMessage, help: diagnosticTemplateTextRedundantClaimHelp,
-		evidence: []diagnosticEvidenceTemplate{
-			{location: diagnosticTemplateLocationProof, kind: "abstract fact", trust: "proven", reason: "unspecified", detail: diagnosticTemplateTextRedundantClaimValueEvidence},
-			{location: diagnosticTemplateLocationPrimary, kind: "abstract fact", trust: "proven", reason: "unspecified", detail: diagnosticTemplateTextRedundantClaimCheckEvidence},
-		},
-		labels: []diagnosticLabelTemplate{{location: diagnosticTemplateLocationPrimary, text: diagnosticTemplateTextClaimSiteLabel}, {location: diagnosticTemplateLocationProof, text: diagnosticTemplateTextProvenValueLabel}},
-		render: []diagnosticRenderSection{diagnosticRenderSectionSummary, diagnosticRenderSectionLocation, diagnosticRenderSectionSource, diagnosticRenderSectionEvidence, diagnosticRenderSectionHelp},
-	},
-	{
-		rule: DiagnosticRuleUnresolvedTypeReference, code: DiagnosticCodeUnresolvedTypeReference, codeText: "type.reference.unresolved", defaultSeverity: FindingSeverityError,
-		requirements: diagnosticTemplateNeedsSubject,
-		message:      diagnosticTemplateTextUnresolvedTypeMessage, help: diagnosticTemplateTextUnresolvedTypeHelp,
-		evidence: []diagnosticEvidenceTemplate{{location: diagnosticTemplateLocationPrimary, kind: "abstract fact", trust: "proven", reason: "unspecified", detail: diagnosticTemplateTextUnresolvedTypeEvidence}},
-		labels:   []diagnosticLabelTemplate{{location: diagnosticTemplateLocationPrimary, text: diagnosticTemplateTextUnknownTypeLabel}},
-		render:   []diagnosticRenderSection{diagnosticRenderSectionSummary, diagnosticRenderSectionLocation, diagnosticRenderSectionSource, diagnosticRenderSectionEvidence, diagnosticRenderSectionHelp},
-	},
-	{
-		rule: DiagnosticRuleUnresolvedValueReference, code: DiagnosticCodeUnresolvedValueReference, codeText: "value.reference.unresolved", defaultSeverity: FindingSeverityError,
-		requirements: diagnosticTemplateNeedsSubject,
-		message:      diagnosticTemplateTextUnresolvedValueMessage, help: diagnosticTemplateTextUnresolvedValueHelp,
-		evidence: []diagnosticEvidenceTemplate{{location: diagnosticTemplateLocationPrimary, kind: "abstract fact", trust: "proven", reason: "unspecified", detail: diagnosticTemplateTextUnresolvedValueEvidence}},
-		labels:   []diagnosticLabelTemplate{{location: diagnosticTemplateLocationPrimary, text: diagnosticTemplateTextUnknownValueLabel}},
-		render:   []diagnosticRenderSection{diagnosticRenderSectionSummary, diagnosticRenderSectionLocation, diagnosticRenderSectionSource, diagnosticRenderSectionEvidence, diagnosticRenderSectionHelp},
-	},
-	{
-		rule: DiagnosticRuleUnusedLocal, code: DiagnosticCodeUnusedLocal, codeText: "lint.unused.local", defaultSeverity: FindingSeverityHint,
-		requirements: diagnosticTemplateNeedsSubject,
-		message:      diagnosticTemplateTextUnusedLocalMessage, help: diagnosticTemplateTextUnusedLocalHelp,
-		evidence: []diagnosticEvidenceTemplate{{location: diagnosticTemplateLocationPrimary, kind: "abstract fact", trust: "proven", reason: "unspecified", detail: diagnosticTemplateTextUnusedLocalEvidence}},
-		labels:   []diagnosticLabelTemplate{{location: diagnosticTemplateLocationPrimary, text: diagnosticTemplateTextUnusedLocalLabel}},
-		render:   []diagnosticRenderSection{diagnosticRenderSectionSummary, diagnosticRenderSectionLocation, diagnosticRenderSectionSource, diagnosticRenderSectionEvidence, diagnosticRenderSectionHelp},
-	},
-}
-
-func diagnosticTemplateForCode(code DiagnosticCode) (*diagnosticTemplate, bool) {
-	for index := range diagnosticTemplateRegistry {
-		template := &diagnosticTemplateRegistry[index]
-		if template.code == code {
-			return template, true
-		}
-	}
-	return nil, false
-}
-
-func diagnosticTemplateForRule(rule DiagnosticRule) (*diagnosticTemplate, bool) {
-	for index := range diagnosticTemplateRegistry {
-		template := &diagnosticTemplateRegistry[index]
-		if template.rule == rule {
-			return template, true
-		}
-	}
-	return nil, false
-}
-
-func (code DiagnosticCode) String() string {
-	template, ok := diagnosticTemplateForCode(code)
-	if !ok {
-		return ""
-	}
-	return template.codeText
-}
-
-func (rule DiagnosticRule) Code() DiagnosticCode {
-	template, ok := diagnosticTemplateForRule(rule)
-	if !ok {
-		return DiagnosticCodeInvalid
-	}
-	return template.code
-}
-
-func (rule DiagnosticRule) DefaultSeverity() FindingSeverity {
-	template, ok := diagnosticTemplateForRule(rule)
-	if !ok {
-		return FindingSeverityInvalid
-	}
-	return template.defaultSeverity
-}
-
-func (severity FindingSeverity) String() string {
-	switch severity {
-	case FindingSeverityError:
-		return "error"
-	case FindingSeverityWarning:
-		return "warning"
-	case FindingSeverityHint:
-		return "hint"
+func (form diagnosticClaimForm) text() string {
+	switch form {
+	case diagnosticClaimFormTypeClaim:
+		return "type claim"
+	case diagnosticClaimFormTypeCastCall:
+		return "type cast call"
 	default:
 		return ""
 	}
@@ -359,56 +139,57 @@ func (severity FindingSeverity) String() string {
 
 // DiagnosticPolicy is opt-in. A zero policy never collects semantic reports.
 type DiagnosticPolicy struct {
-	Enabled  []DiagnosticRule
-	Severity map[DiagnosticRule]FindingSeverity
+	Enabled  []DiagnosticCode
+	Severity map[DiagnosticCode]FindingSeverity
 }
 
-func (policy DiagnosticPolicy) enabled(rule DiagnosticRule) (FindingSeverity, bool) {
+func (policy DiagnosticPolicy) enabled(code DiagnosticCode) (FindingSeverity, bool) {
 	for _, candidate := range policy.Enabled {
-		if candidate == rule {
-			severity := rule.DefaultSeverity()
-			if policy.Severity != nil {
-				if override, ok := policy.Severity[rule]; ok {
-					severity = override
-				}
-			}
-			return severity, severity != FindingSeverityInvalid
+		if candidate != code {
+			continue
 		}
+		entry, entryOK := diagnosticDeclaration(code)
+		if !entryOK {
+			return FindingSeverityInvalid, false
+		}
+		severity := entry.DefaultSeverity()
+		if policy.Severity != nil {
+			if override, ok := policy.Severity[code]; ok {
+				severity = override
+			}
+		}
+		return severity, severity.Available()
 	}
 	return FindingSeverityInvalid, false
 }
 
-// collectorInstalled reports whether the native collector has this producer.
-// A presentation template alone is deliberately insufficient: accepting a
-// dormant rule would let an API caller receive a clean empty report for a
-// family no producer has collected yet.
-func (rule DiagnosticRule) collectorInstalled() bool {
-	_, ok := diagnosticCollectorSpecForRule(rule)
-	return ok
-}
-func (code DiagnosticCode) valid() bool { _, ok := diagnosticTemplateForCode(code); return ok }
-func (severity FindingSeverity) valid() bool {
-	return severity >= FindingSeverityError && severity <= FindingSeverityHint
+// diagnosticCollectable reports whether the declaration table installs a
+// producer for this code. A presentation row alone is deliberately
+// insufficient: accepting a dormant code would let an API caller receive a
+// clean empty report for a family no producer has collected yet.
+func diagnosticCollectable(code DiagnosticCode) bool {
+	entry, ok := diagnosticDeclaration(code)
+	return ok && entry.Collectable()
 }
 
-// Valid rejects ambiguous policy authority before a solve starts: every rule
-// is known and unique, and overrides may only refine an enabled known rule.
+// Valid rejects ambiguous policy authority before a solve starts: every code
+// is known and unique, and overrides may only refine an enabled known code.
 func (policy DiagnosticPolicy) Valid() bool {
-	enabled := make(map[DiagnosticRule]struct{}, len(policy.Enabled))
-	for _, rule := range policy.Enabled {
-		if !rule.collectorInstalled() {
+	enabled := make(map[DiagnosticCode]struct{}, len(policy.Enabled))
+	for _, code := range policy.Enabled {
+		if !diagnosticCollectable(code) {
 			return false
 		}
-		if _, duplicate := enabled[rule]; duplicate {
+		if _, duplicate := enabled[code]; duplicate {
 			return false
 		}
-		enabled[rule] = struct{}{}
+		enabled[code] = struct{}{}
 	}
-	for rule, severity := range policy.Severity {
-		if !rule.collectorInstalled() || !severity.valid() {
+	for code, severity := range policy.Severity {
+		if !diagnosticCollectable(code) || !severity.Available() {
 			return false
 		}
-		if _, selected := enabled[rule]; !selected {
+		if _, selected := enabled[code]; !selected {
 			return false
 		}
 	}
@@ -416,14 +197,14 @@ func (policy DiagnosticPolicy) Valid() bool {
 }
 
 type diagnosticFinding struct {
-	id, subject keyspace.ContentID
+	id, subject identity.ContentID
 	code        DiagnosticCode
 	severity    FindingSeverity
 	location    DiagnosticLocation
 	data        diagnosticTemplateData
 }
 
-// diagnosticTemplateData is the complete typed payload a descriptor may use.
+// diagnosticTemplateData is the complete typed payload a declaration may use.
 // It is intentionally private and row-shaped: an upstream producer supplies
 // semantic names, a target type, a claim form, and an already-authenticated
 // proof anchor; no producer can inject pre-rendered message/evidence prose.
@@ -434,104 +215,69 @@ type diagnosticTemplateData struct {
 	proof   DiagnosticLocation
 }
 
-func (data diagnosticTemplateData) validFor(template diagnosticTemplate) bool {
-	if template.requirements&diagnosticTemplateNeedsSubject != 0 && !data.subject.valid() {
+// validFor states the payload contract of one declaration: exactly the fields
+// the row requires are supplied, and nothing else is.
+func (data diagnosticTemplateData) validFor(entry *diagnostic.Entry) bool {
+	requirements := entry.Requirements()
+	if !payloadFieldValid(requirements&diagnostic.RequiresSubject != 0, data.subject.valid(), data.subject == diagnosticSemanticName{}) {
 		return false
 	}
-	if template.requirements&diagnosticTemplateNeedsSubject == 0 && data.subject != (diagnosticSemanticName{}) {
+	if !payloadFieldValid(requirements&diagnostic.RequiresTarget != 0, data.target.valid(), data.target == diagnosticTargetType{}) {
 		return false
 	}
-	if template.requirements&diagnosticTemplateNeedsTarget != 0 && !data.target.valid() {
+	if !payloadFieldValid(requirements&diagnostic.RequiresClaimForm != 0, data.claim.valid(), data.claim == diagnosticClaimFormInvalid) {
 		return false
 	}
-	if template.requirements&diagnosticTemplateNeedsTarget == 0 && data.target != (diagnosticTargetType{}) {
-		return false
-	}
-	if template.requirements&diagnosticTemplateNeedsClaimForm != 0 && !data.claim.valid() {
-		return false
-	}
-	if template.requirements&diagnosticTemplateNeedsClaimForm == 0 && data.claim != diagnosticClaimFormInvalid {
-		return false
-	}
-	if template.requirements&diagnosticTemplateNeedsProofLocation != 0 && !data.proof.Available() {
-		return false
-	}
-	if template.requirements&diagnosticTemplateNeedsProofLocation == 0 && data.proof != (DiagnosticLocation{}) {
-		return false
-	}
-	return true
+	return payloadFieldValid(requirements&diagnostic.RequiresProofLocation != 0, data.proof.Available(), data.proof == DiagnosticLocation{})
 }
 
-func (data diagnosticTemplateData) location(which diagnosticTemplateLocation, primary DiagnosticLocation) (DiagnosticLocation, bool) {
-	switch which {
-	case diagnosticTemplateLocationPrimary:
+// payloadFieldValid states one payload field's contract: a required field is
+// supplied and valid, and an unrequired field is absent entirely. Carrying an
+// unread value is a producer error, not a field a renderer may ignore.
+func payloadFieldValid(required, valid, absent bool) bool {
+	if required {
+		return valid
+	}
+	return absent
+}
+
+func (data diagnosticTemplateData) location(anchor diagnostic.Anchor, primary DiagnosticLocation) (DiagnosticLocation, bool) {
+	switch anchor {
+	case diagnostic.AnchorPrimary:
 		return primary, primary.Available()
-	case diagnosticTemplateLocationProof:
+	case diagnostic.AnchorProof:
 		return data.proof, data.proof.Available()
 	default:
 		return DiagnosticLocation{}, false
 	}
 }
 
-func (text diagnosticTemplateText) render(data diagnosticTemplateData) string {
-	switch text {
-	case diagnosticTemplateTextAlwaysTrueMessage:
-		return "condition is proven always true"
-	case diagnosticTemplateTextAlwaysFalseMessage:
-		return "condition is proven always false"
-	case diagnosticTemplateTextRedundantClaimMessage:
-		claim := "type claim"
-		if data.claim == diagnosticClaimFormTypeCastCall {
-			claim = "type cast call"
+// renderDiagnosticLine substitutes one already-parsed declaration line. The
+// surface proved at seal that every segment names a payload field this row
+// requires, so rendering is a walk with no parsing and no unresolved read.
+func renderDiagnosticLine(line diagnostic.Line, data diagnosticTemplateData) string {
+	var rendered strings.Builder
+	for index := 0; index < line.Count(); index++ {
+		segment, ok := line.At(index)
+		if !ok {
+			return ""
 		}
-		return fmt.Sprintf("%s is redundant; value is already %s", claim, data.target.value)
-	case diagnosticTemplateTextUnresolvedTypeMessage:
-		return "unknown type " + data.subject.value
-	case diagnosticTemplateTextUnresolvedValueMessage:
-		return "unknown value " + data.subject.value
-	case diagnosticTemplateTextUnusedLocalMessage:
-		return fmt.Sprintf("local %q is never read", data.subject.value)
-	case diagnosticTemplateTextAlwaysTrueEvidence:
-		return "condition is proven to be true on every reachable path"
-	case diagnosticTemplateTextAlwaysFalseEvidence:
-		return "condition is proven to be false on every reachable path"
-	case diagnosticTemplateTextRedundantClaimValueEvidence:
-		return fmt.Sprintf("%s is proven to be %s before the claim", data.subject.value, data.target.value)
-	case diagnosticTemplateTextRedundantClaimCheckEvidence:
-		return fmt.Sprintf("claim checks %s at this site", data.target.value)
-	case diagnosticTemplateTextUnresolvedTypeEvidence:
-		return fmt.Sprintf("no type named %s is declared in this scope", data.subject.value)
-	case diagnosticTemplateTextUnresolvedValueEvidence:
-		return fmt.Sprintf("no value named %s is declared, predeclared, imported, or configured global in this scope", data.subject.value)
-	case diagnosticTemplateTextUnusedLocalEvidence:
-		return fmt.Sprintf("no read of local %q was found in this scope", data.subject.value)
-	case diagnosticTemplateTextAlwaysTrueHelp:
-		return "Remove the guard or move the guarded code out of the branch."
-	case diagnosticTemplateTextAlwaysFalseHelp:
-		return "Remove the unreachable branch or invert the guard."
-	case diagnosticTemplateTextRedundantClaimHelp:
-		return "Remove the runtime type claim when the proven source type is sufficient."
-	case diagnosticTemplateTextUnresolvedTypeHelp:
-		return "Declare the type in scope"
-	case diagnosticTemplateTextUnresolvedValueHelp:
-		return "Declare the value"
-	case diagnosticTemplateTextUnusedLocalHelp:
-		return "Remove it, use it, or rename it with a leading _ when intentionally unused."
-	case diagnosticTemplateTextConstantGuardLabel:
-		return "constant guard"
-	case diagnosticTemplateTextClaimSiteLabel:
-		return "claim site"
-	case diagnosticTemplateTextProvenValueLabel:
-		return "proven value"
-	case diagnosticTemplateTextUnknownTypeLabel:
-		return "unknown type"
-	case diagnosticTemplateTextUnknownValueLabel:
-		return "unknown value"
-	case diagnosticTemplateTextUnusedLocalLabel:
-		return "unused local"
-	default:
-		return ""
+		switch segment.Placeholder {
+		case diagnostic.PlaceholderInvalid:
+			rendered.WriteString(segment.Literal)
+		case diagnostic.PlaceholderSubject:
+			rendered.WriteString(data.subject.value)
+		case diagnostic.PlaceholderQuotedSubject:
+			rendered.WriteString(strconv.Quote(data.subject.value))
+		case diagnostic.PlaceholderTarget:
+			rendered.WriteString(data.target.value)
+		case diagnostic.PlaceholderClaimForm:
+			rendered.WriteString(data.claim.text())
+		default:
+			return ""
+		}
 	}
+	return rendered.String()
 }
 
 // DiagnosticEvidence is one immutable proof row attached to a Finding. The
@@ -595,7 +341,7 @@ func (label DiagnosticLabel) Text() string {
 }
 
 type DiagnosticReport struct {
-	source, result    keyspace.ContentID
+	source, result    identity.ContentID
 	findings          []diagnosticFinding
 	collectionFailure DiagnosticCollectionFailure
 	sealed            bool
@@ -664,15 +410,15 @@ func (report *DiagnosticReport) Available() bool {
 	}
 	return true
 }
-func (report *DiagnosticReport) SourceID() keyspace.ContentID {
+func (report *DiagnosticReport) SourceID() identity.ContentID {
 	if !report.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return report.source
 }
-func (report *DiagnosticReport) ResultID() keyspace.ContentID {
+func (report *DiagnosticReport) ResultID() identity.ContentID {
 	if !report.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return report.result
 }
@@ -697,14 +443,14 @@ func (finding Finding) row() (diagnosticFinding, bool) {
 }
 
 func validDiagnosticFinding(row diagnosticFinding) bool {
-	template, templateOK := diagnosticTemplateForCode(row.code)
-	if !row.id.Available() || !row.subject.Available() || !templateOK || !row.severity.valid() || !row.location.Available() || !row.data.validFor(*template) {
+	entry, entryOK := diagnosticDeclaration(row.code)
+	if !row.id.Available() || !row.subject.Available() || !entryOK || !row.severity.Available() || !row.location.Available() || !row.data.validFor(entry) {
 		return false
 	}
 	return true
 }
-func (finding Finding) ID() (keyspace.ContentID, bool) { row, ok := finding.row(); return row.id, ok }
-func (finding Finding) SubjectID() (keyspace.ContentID, bool) {
+func (finding Finding) ID() (identity.ContentID, bool) { row, ok := finding.row(); return row.id, ok }
+func (finding Finding) SubjectID() (identity.ContentID, bool) {
 	row, ok := finding.row()
 	return row.subject, ok
 }
@@ -726,78 +472,70 @@ func (finding Finding) Location() (DiagnosticLocation, bool) {
 	row, ok := finding.row()
 	return row.location, ok
 }
+
+// declaration resolves the sealed row this finding publishes under.
+func (finding Finding) declaration() (diagnosticFinding, *diagnostic.Entry, bool) {
+	row, rowOK := finding.row()
+	if !rowOK {
+		return diagnosticFinding{}, nil, false
+	}
+	entry, entryOK := diagnosticDeclaration(row.code)
+	return row, entry, entryOK
+}
 func (finding Finding) EvidenceCount() int {
-	row, ok := finding.row()
+	_, entry, ok := finding.declaration()
 	if !ok {
 		return 0
 	}
-	template, ok := diagnosticTemplateForCode(row.code)
-	if !ok {
-		return 0
-	}
-	return len(template.evidence)
+	return entry.EvidenceCount()
 }
 func (finding Finding) EvidenceAt(index int) (DiagnosticEvidence, bool) {
-	row, ok := finding.row()
+	row, entry, ok := finding.declaration()
 	if !ok {
 		return DiagnosticEvidence{}, false
 	}
-	template, ok := diagnosticTemplateForCode(row.code)
-	if !ok || index < 0 || index >= len(template.evidence) {
+	declared, declaredOK := entry.EvidenceAt(index)
+	if !declaredOK {
 		return DiagnosticEvidence{}, false
 	}
-	descriptor := template.evidence[index]
-	location, locationOK := row.data.location(descriptor.location, row.location)
-	detail := descriptor.detail.render(row.data)
-	evidence := DiagnosticEvidence{location: location, kind: descriptor.kind, trust: descriptor.trust, reason: descriptor.reason, detail: detail}
+	location, locationOK := row.data.location(declared.Anchor, row.location)
+	detail := renderDiagnosticLine(declared.Detail, row.data)
+	evidence := DiagnosticEvidence{location: location, kind: declared.Kind, trust: declared.Trust, reason: declared.Reason, detail: detail}
 	return evidence, locationOK && evidence.Available()
 }
 func (finding Finding) LabelCount() int {
-	row, ok := finding.row()
+	_, entry, ok := finding.declaration()
 	if !ok {
 		return 0
 	}
-	template, ok := diagnosticTemplateForCode(row.code)
-	if !ok {
-		return 0
-	}
-	return len(template.labels)
+	return entry.LabelCount()
 }
 func (finding Finding) LabelAt(index int) (DiagnosticLabel, bool) {
-	row, ok := finding.row()
+	row, entry, ok := finding.declaration()
 	if !ok {
 		return DiagnosticLabel{}, false
 	}
-	template, ok := diagnosticTemplateForCode(row.code)
-	if !ok || index < 0 || index >= len(template.labels) {
+	declared, declaredOK := entry.LabelAt(index)
+	if !declaredOK {
 		return DiagnosticLabel{}, false
 	}
-	descriptor := template.labels[index]
-	location, locationOK := row.data.location(descriptor.location, row.location)
-	label := DiagnosticLabel{location: location, text: descriptor.text.render(row.data)}
+	location, locationOK := row.data.location(declared.Anchor, row.location)
+	label := DiagnosticLabel{location: location, text: renderDiagnosticLine(declared.Text, row.data)}
 	return label, locationOK && label.Available()
 }
 func (finding Finding) Message() string {
-	row, ok := finding.row()
+	row, entry, ok := finding.declaration()
 	if !ok {
 		return ""
 	}
-	template, ok := diagnosticTemplateForCode(row.code)
-	if !ok {
-		return ""
-	}
-	return template.message.render(row.data)
+	return renderDiagnosticLine(entry.Message(), row.data)
 }
 func (finding Finding) Help() string {
-	row, ok := finding.row()
+	row, entry, ok := finding.declaration()
 	if !ok {
 		return ""
 	}
-	template, ok := diagnosticTemplateForCode(row.code)
-	if !ok {
-		return ""
-	}
-	return template.help.render(row.data)
+	return renderDiagnosticLine(entry.Help(), row.data)
 }
 
 // Render returns the stable Analysis-owned diagnostic presentation. It uses
@@ -844,35 +582,39 @@ func sourceLine(sourceText string, line uint32) (string, bool) {
 
 func (finding Finding) render(row diagnosticFinding, sourceLineText string, includeSource bool) string {
 	line, column := row.location.Start()
-	template, templateOK := diagnosticTemplateForCode(row.code)
-	if !templateOK {
+	entry, entryOK := diagnosticDeclaration(row.code)
+	if !entryOK {
 		return ""
 	}
 	var rendered strings.Builder
-	for _, section := range template.render {
+	for position := 0; position < entry.RenderCount(); position++ {
+		section, sectionOK := entry.RenderAt(position)
+		if !sectionOK {
+			return ""
+		}
 		switch section {
-		case diagnosticRenderSectionSummary:
-			fmt.Fprintf(&rendered, "%s[%s]: %s\n", row.severity.String(), template.codeText, template.message.render(row.data))
-		case diagnosticRenderSectionLocation:
+		case diagnostic.SectionSummary:
+			fmt.Fprintf(&rendered, "%s[%s]: %s\n", row.severity.String(), row.code, renderDiagnosticLine(entry.Message(), row.data))
+		case diagnostic.SectionLocation:
 			fmt.Fprintf(&rendered, "--> %s:%d:%d\n", row.location.File(), line, column)
-		case diagnosticRenderSectionSource:
+		case diagnostic.SectionSource:
 			if includeSource {
 				fmt.Fprintf(&rendered, "%d | %s\n", line, sourceLineText)
 			}
-		case diagnosticRenderSectionEvidence:
-			if len(template.evidence) == 0 {
+		case diagnostic.SectionEvidence:
+			if entry.EvidenceCount() == 0 {
 				continue
 			}
 			rendered.WriteString("because:\n")
-			for index := range template.evidence {
+			for index := 0; index < entry.EvidenceCount(); index++ {
 				evidence, evidenceOK := finding.EvidenceAt(index)
 				if !evidenceOK {
 					return ""
 				}
 				fmt.Fprintf(&rendered, "%d. %s: %s\n", index+1, evidence.Trust(), evidence.Detail())
 			}
-		case diagnosticRenderSectionHelp:
-			if help := template.help.render(row.data); help != "" {
+		case diagnostic.SectionHelp:
+			if help := renderDiagnosticLine(entry.Help(), row.data); help != "" {
 				fmt.Fprintf(&rendered, "help: %s\n", help)
 			}
 		}

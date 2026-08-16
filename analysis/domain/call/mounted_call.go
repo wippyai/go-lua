@@ -1,6 +1,6 @@
 package call
 
-import "github.com/wippyai/go-lua/program/keyspace"
+import "github.com/wippyai/go-lua/analysis/identity"
 
 // MountedCall is Call's opaque, owner-issued receipt for one ordinary-call
 // placement.  The dense slot is meaningful only to the exact Algebra which
@@ -30,7 +30,7 @@ func (algebra *Algebra) MountedCallAtHandle(index int) (MountedCall, bool) {
 
 // MountedCallForApplication performs the sole O(1) application inverse for
 // mounted-call rows.  The returned receipt remains fenced to this Algebra.
-func (algebra *Algebra) MountedCallForApplication(applicationID keyspace.ContentID) (MountedCall, bool) {
+func (algebra *Algebra) MountedCallForApplication(applicationID identity.ContentID) (MountedCall, bool) {
 	if !algebra.Valid() || !applicationID.Available() {
 		return MountedCall{}, false
 	}
@@ -43,7 +43,7 @@ func (algebra *Algebra) MountedCallForApplication(applicationID keyspace.Content
 // MountedCallForOccurrence performs the sole O(1) module-scoped occurrence
 // inverse.  Context IDs are reusable across mounts, so ModuleKey is an
 // intentional part of the lookup key and exactness fence.
-func (algebra *Algebra) MountedCallForOccurrence(moduleID, contextID keyspace.ContentID) (MountedCall, bool) {
+func (algebra *Algebra) MountedCallForOccurrence(moduleID, contextID identity.ContentID) (MountedCall, bool) {
 	if !algebra.Valid() || !moduleID.Available() || !contextID.Available() {
 		return MountedCall{}, false
 	}
@@ -57,7 +57,7 @@ func (algebra *Algebra) MountedCallForOccurrence(moduleID, contextID keyspace.Co
 // mounted receipt. calleeValueID is the Link-owned Boundary Value identity;
 // contextID is the reusable artifact semantic identity qualified by moduleID.
 // No Project, Boundary, Shard, or Program authority is retained or reopened.
-func (algebra *Algebra) MountedCallIdentity(mounted MountedCall) (applicationID, contextID, moduleID, calleeValueID, loaderSeedID keyspace.ContentID, ok bool) {
+func (algebra *Algebra) MountedCallIdentity(mounted MountedCall) (applicationID, contextID, moduleID, calleeValueID, loaderSeedID identity.ContentID, ok bool) {
 	row, ok := algebra.mountedCallRow(mounted)
 	return row.applicationID, row.contextID, row.moduleID, row.calleeValueID, row.loaderSeedID, ok
 }
@@ -65,7 +65,7 @@ func (algebra *Algebra) MountedCallIdentity(mounted MountedCall) (applicationID,
 // OwnsMountedModule authenticates a Link mount identity against this exact
 // Call Algebra.  It lets module-scoped issuers reject foreign mounts even
 // when a mount contains no ordinary-call occurrence.
-func (algebra *Algebra) OwnsMountedModule(moduleID keyspace.ContentID) bool {
+func (algebra *Algebra) OwnsMountedModule(moduleID identity.ContentID) bool {
 	if !algebra.Valid() || !moduleID.Available() {
 		return false
 	}

@@ -3,7 +3,6 @@ package allocation
 import (
 	"github.com/wippyai/go-lua/analysis/domain/heap"
 	"github.com/wippyai/go-lua/analysis/domain/value"
-	"github.com/wippyai/go-lua/analysis/engine"
 )
 
 type operand struct {
@@ -62,18 +61,4 @@ func allocationResultForSchema(schema *value.Schema, key heap.Key) (value.Coordi
 		return value.Coordinate{}, value.Value{}, false
 	}
 	return coordinate, fresh, true
-}
-
-func distinct(keys ...engine.SemanticKey) bool {
-	for index, key := range keys {
-		if !key.Available() {
-			return false
-		}
-		for prior := 0; prior < index; prior++ {
-			if keys[prior] == key {
-				return false
-			}
-		}
-	}
-	return true
 }

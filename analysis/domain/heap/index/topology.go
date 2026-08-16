@@ -15,7 +15,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/pack"
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // Topology is the one cold, Link-scoped receiver-to-root support authority
@@ -37,7 +37,7 @@ type Topology struct {
 	fresh       []freshRoot
 	freshByRoot map[heapdomain.Key]uint32
 	freshApps   []freshApplication
-	freshByApp  map[keyspace.ContentID]uint32
+	freshByApp  map[identity.ContentID]uint32
 	indexRows   map[heapdomain.IndexAccess]*indexRow
 	staticByTag map[heapdomain.RawRouteTag]uint32
 	scratch     sync.Pool
@@ -103,7 +103,7 @@ func sealDiagnostic(failure SealFailure, mount, row int) SealDiagnostic {
 
 type freshRoot struct {
 	key           heapdomain.Key
-	applicationID keyspace.ContentID
+	applicationID identity.ContentID
 	tag           uint32
 }
 
@@ -111,7 +111,7 @@ type freshRoot struct {
 // relation. It deliberately stores no operation-selection relation. tag is
 // the canonical, topology-local grouping coordinate for this one group.
 type freshApplication struct {
-	applicationID keyspace.ContentID
+	applicationID identity.ContentID
 	tag           uint32
 }
 
@@ -145,7 +145,7 @@ type indexRow struct {
 	result      valuedomain.Coordinate
 	dynamicKey  valuedomain.Coordinate
 	slot        heapdomain.Slot
-	id          keyspace.ContentID
+	id          identity.ContentID
 }
 
 // Index is one exact existing Heap candidate projection. Its embedded row is
@@ -239,7 +239,7 @@ func SealWithFailure(heap heapdomain.Schema, values *valuedomain.Schema, calls *
 	if calls.MountModuleCount() != values.MountCount() {
 		return nil, sealDiagnostic(SealFailureBoundary, -1, -1)
 	}
-	seenModules := make(map[keyspace.ContentID]struct{}, calls.MountModuleCount())
+	seenModules := make(map[identity.ContentID]struct{}, calls.MountModuleCount())
 	for mountIndex := 0; mountIndex < calls.MountModuleCount(); mountIndex++ {
 		module, moduleOK := calls.MountModuleAt(mountIndex)
 		if !moduleOK || !module.Available() {
@@ -257,7 +257,7 @@ func SealWithFailure(heap heapdomain.Schema, values *valuedomain.Schema, calls *
 	if !selectorsOK {
 		return nil, sealDiagnostic(SealFailureValidity, -1, -1)
 	}
-	topology := &Topology{heap: heap, values: values, calls: calls, packs: packs, selectors: selectors, freshByRoot: make(map[heapdomain.Key]uint32), freshByApp: make(map[keyspace.ContentID]uint32)}
+	topology := &Topology{heap: heap, values: values, calls: calls, packs: packs, selectors: selectors, freshByRoot: make(map[heapdomain.Key]uint32), freshByApp: make(map[identity.ContentID]uint32)}
 	if !topology.build() {
 		return nil, sealDiagnostic(SealFailureRoots, -1, -1)
 	}
@@ -271,7 +271,11 @@ func SealWithFailure(heap heapdomain.Schema, values *valuedomain.Schema, calls *
 	if !payloadsOK {
 		return nil, sealDiagnostic(SealFailureValidity, -1, -1)
 	}
-	topology.catalog = &rawCatalog{payloads: payloads, sources: sources, sourceRefs: sourceRefs, byPayloadSource: byPayloadSource}
+	bootInitials, bootInitialsOK := buildRawBootInitials(topology, values)
+	if !bootInitialsOK {
+		return nil, sealDiagnostic(SealFailureValidity, -1, -1)
+	}
+	topology.catalog = &rawCatalog{payloads: payloads, sources: sources, sourceRefs: sourceRefs, byPayloadSource: byPayloadSource, bootInitials: bootInitials}
 	if !topology.valid() {
 		return nil, sealDiagnostic(SealFailureValidity, -1, -1)
 	}
@@ -526,9 +530,9 @@ func (access Access) Slot() (heapdomain.Slot, bool) {
 	}
 	return access.slot, true
 }
-func (access Access) ID() (keyspace.ContentID, bool) {
+func (access Access) ID() (identity.ContentID, bool) {
 	if !access.valid() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return access.id, true
 }

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"sort"
 
-	"github.com/wippyai/go-lua/analysis/semantic/typeauthority"
+	"github.com/wippyai/go-lua/analysis/domain/type/authority"
 )
 
 // sealClassOrder gives the finite Class rows a construction-order-independent

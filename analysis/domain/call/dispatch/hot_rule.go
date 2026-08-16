@@ -8,7 +8,7 @@ import (
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 type dispatchAtomReceipt struct {
@@ -45,7 +45,7 @@ func dispatchReceiptContent(receipt dispatchReceipt) (dispatchReceipt, [32]byte,
 	return receipt, receipt.id, receipt.valid()
 }
 
-func (rule *HotRule) receipt(applicationID keyspace.ContentID) (dispatchReceipt, bool) {
+func (rule *HotRule) receipt(applicationID identity.ContentID) (dispatchReceipt, bool) {
 	if rule == nil || rule.values == nil || rule.calls == nil || !rule.heaps.Valid() || rule.packs == nil {
 		return dispatchReceipt{}, false
 	}
@@ -225,7 +225,7 @@ func (rule *HotRule) SealOccurrenceReceipts() bool {
 // Receipt issues the complete cold application witness from the sealed
 // Link-local inverse. The first call seals the immutable catalog; subsequent
 // calls are O(1) by ApplicationID and never reopen Program/Flow.
-func (rule *HotRule) Receipt(applicationID keyspace.ContentID) (dispatchReceipt, bool) {
+func (rule *HotRule) Receipt(applicationID identity.ContentID) (dispatchReceipt, bool) {
 	if rule == nil || rule.binding == nil || !rule.binding.Sealed() {
 		return dispatchReceipt{}, false
 	}
@@ -248,11 +248,11 @@ func (rule *HotRule) Receipt(applicationID keyspace.ContentID) (dispatchReceipt,
 // Link or binding because the retained row is pointer-fenced to its HotRule.
 type MountedIssuer struct {
 	rule   *HotRule
-	module keyspace.ContentID
+	module identity.ContentID
 }
 
 // ForMount returns the exact issuer for one mounted Program ModuleKey.
-func (rule *HotRule) ForMount(module keyspace.ContentID) (MountedIssuer, bool) {
+func (rule *HotRule) ForMount(module identity.ContentID) (MountedIssuer, bool) {
 	if rule == nil || !module.Available() || !rule.receiptsSealed || rule.receipts == nil || rule.calls == nil || rule.calls.Algebra() == nil || !rule.calls.Algebra().OwnsMountedModule(module) {
 		return MountedIssuer{}, false
 	}
@@ -269,7 +269,7 @@ func (issuer MountedIssuer) valid() bool {
 // ReceiptForOccurrence returns the exact preissued dispatch receipt for one
 // artifact Call.ContextID.  It is an O(1) mounted map lookup and never
 // consults Program, Flow, Boundary, or the engine.
-func (issuer MountedIssuer) ReceiptForOccurrence(id keyspace.ContentID) (dispatchReceipt, bool) {
+func (issuer MountedIssuer) ReceiptForOccurrence(id identity.ContentID) (dispatchReceipt, bool) {
 	if !issuer.valid() || !id.Available() {
 		return dispatchReceipt{}, false
 	}
@@ -283,17 +283,17 @@ func (issuer MountedIssuer) ReceiptForOccurrence(id keyspace.ContentID) (dispatc
 
 // ApplicationIDForOccurrence exposes the detached application identity paired
 // with an artifact call occurrence.
-func (issuer MountedIssuer) ApplicationIDForOccurrence(id keyspace.ContentID) (keyspace.ContentID, bool) {
+func (issuer MountedIssuer) ApplicationIDForOccurrence(id identity.ContentID) (identity.ContentID, bool) {
 	receipt, ok := issuer.ReceiptForOccurrence(id)
 	if !ok {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return receipt.key.ApplicationID()
 }
 
 // AttachMountedOccurrence admits one artifact Call dispatch row using the
 // preissued mounted receipt and exact Value/Call owner surfaces.
-func (rule *HotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, mountID, reusablePointID, occurrenceID keyspace.ContentID) (engine.BindingRuleRowRef, bool) {
+func (rule *HotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, mountID, reusablePointID, occurrenceID identity.ContentID) (engine.BindingRuleRowRef, bool) {
 	if rule == nil || rule.implementation == nil || rule.values == nil || rule.calls == nil || assembly == nil {
 		return engine.BindingRuleRowRef{}, false
 	}
@@ -342,7 +342,7 @@ func (rule *HotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, m
 
 // AttachMountedReceiptMember resolves and attaches one exact post-commit
 // dispatch member from the mounted graph directory.
-func (rule *HotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, reusablePointID, occurrenceID keyspace.ContentID) (*engine.ReceiptMember, bool) {
+func (rule *HotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, reusablePointID, occurrenceID identity.ContentID) (*engine.ReceiptMember, bool) {
 	if rule == nil || compilation == nil || graph == nil || rule.implementation == nil {
 		return nil, false
 	}

@@ -8,11 +8,11 @@ import (
 	"fmt"
 
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
-	"github.com/wippyai/go-lua/analysis/semantic/typeauthority"
-	"github.com/wippyai/go-lua/analysis/type/typ"
-	flowkind "github.com/wippyai/go-lua/program/flow/kind"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/domain/type/authority"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
+	"github.com/wippyai/go-lua/analysis/identity"
+	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
 type ClassKind uint8
@@ -48,7 +48,7 @@ type classRow struct {
 // values and derives declaration classes directly from Target.
 type ClassSet struct {
 	authority        *Authority
-	id               keyspace.ContentID
+	id               identity.ContentID
 	rows             []classRow // zero is AnyValue
 	byBytes          map[string]Class
 	byStatic         map[uint32]Class
@@ -58,13 +58,30 @@ type ClassSet struct {
 	runtimeAtomKinds []runtimekind.Set // sealed Runtime atom index -> may-runtime-kind mask.
 	ranks            []uint64
 	universe         []uint64             // structurally ordered finite observation universe P.
-	universeIDs      []keyspace.ContentID // portable identity parallel to universe.
+	universeIDs      []identity.ContentID // portable identity parallel to universe.
+	universeID       identity.ContentID   // identity of the ordered universe as a whole.
 	unknownAtom      uint64               // preferred representative of universal principals.
-	runtime          *typeauthority.Runtime
-	descriptors      []classDescriptor
-	descriptorRows   map[string]Class
-	nil              Class
-	identities       []keyspace.ContentID
+
+	// Direct atom-to-position tables over the dense universe, indexed by the
+	// Runtime row and the opaque Class row respectively; -1 is absent.
+	runtimeAtomPositions []int32
+	opaqueAtomPositions  []int32
+
+	// The sealed principal relation. principals packs one coverage row D(a)
+	// per universe position, principalSizes is its popcount, and opaqueMask
+	// marks the opaque positions.
+	coverageStride int
+	principals     []uint64
+	principalSizes []uint32
+	opaqueMask     []uint64
+
+	runtime     *typeauthority.Runtime
+	descriptors []classDescriptor
+	// coverageIndex addresses sealed descriptors by coverage hash. A hot join
+	// probes it without materializing its result.
+	coverageIndex map[uint64][]uint32
+	nil           Class
+	identities    []identity.ContentID
 }
 
 func sealClassSet(authority *Authority) (*ClassSet, *typeauthority.Runtime, error) {
@@ -171,9 +188,9 @@ func sealClassSet(authority *Authority) (*ClassSet, *typeauthority.Runtime, erro
 	return set, runtime, nil
 }
 
-func (s *ClassSet) ContentID() keyspace.ContentID {
+func (s *ClassSet) ContentID() identity.ContentID {
 	if s == nil {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return s.id
 }
@@ -234,43 +251,24 @@ func (s *ClassSet) Equal(left, right Class) bool {
 	if left.descriptor == nil && right.descriptor == nil && left.index == right.index {
 		return true
 	}
-	leftAtoms, leftOK := s.classAtoms(left)
-	rightAtoms, rightOK := s.classAtoms(right)
-	return leftOK && rightOK && s.descriptorCoverageEqual(leftAtoms, rightAtoms)
+	leftCoverage, leftOK := s.classCoverage(left)
+	rightCoverage, rightOK := s.classCoverage(right)
+	return leftOK && rightOK && coverageEqual(leftCoverage, rightCoverage)
 }
 
 // Compare returns the exact owner-local semantic order of two classes. It is
-// deliberately descriptor/atom based rather than a truncated fingerprint, so
-// consumers can order derived classes without turning a hash into equality.
+// the coverage order rather than a truncated fingerprint, so consumers can
+// order derived classes without turning a hash into equality.
 func (s *ClassSet) Compare(left, right Class) int {
 	if !s.owns(left) || !s.owns(right) {
 		return 0
 	}
-	if s.Equal(left, right) {
-		return 0
-	}
-	leftAtoms, leftOK := s.classAtoms(left)
-	rightAtoms, rightOK := s.classAtoms(right)
+	leftCoverage, leftOK := s.classCoverage(left)
+	rightCoverage, rightOK := s.classCoverage(right)
 	if !leftOK || !rightOK {
 		return 0
 	}
-	for index := 0; index < len(leftAtoms) && index < len(rightAtoms); index++ {
-		leftPosition, leftFound := s.universePosition(leftAtoms[index])
-		rightPosition, rightFound := s.universePosition(rightAtoms[index])
-		if !leftFound || !rightFound {
-			return 0
-		}
-		if leftPosition < rightPosition {
-			return -1
-		}
-		if leftPosition > rightPosition {
-			return 1
-		}
-	}
-	if len(leftAtoms) < len(rightAtoms) {
-		return -1
-	}
-	return 1
+	return coverageCompare(leftCoverage, rightCoverage)
 }
 
 func (s *ClassSet) LessOrEq(left, right Class) bool {
@@ -280,50 +278,33 @@ func (s *ClassSet) LessOrEq(left, right Class) bool {
 	if left.descriptor == nil && right.descriptor == nil && left.index == right.index {
 		return true
 	}
-	leftAtoms, leftOK := s.classAtoms(left)
-	rightAtoms, rightOK := s.classAtoms(right)
-	return leftOK && rightOK && s.descriptorCoverageSubset(leftAtoms, rightAtoms)
+	leftCoverage, leftOK := s.classCoverage(left)
+	rightCoverage, rightOK := s.classCoverage(right)
+	return leftOK && rightOK && coverageSubset(leftCoverage, rightCoverage)
 }
+
+// Join is the coverage union. A recurrent widening step whose result is
+// already a sealed row is answered by bitwise containment and one indexed
+// probe; only a coverage no sealed row states constructs a derived value.
 func (s *ClassSet) Join(left, right Class) Class {
 	if !s.owns(left) || !s.owns(right) {
 		panic("static: foreign Pack class")
 	}
-	// Most recurrent joins are widening steps where one lower set already
-	// contains the other. Resolve those without constructing a descriptor.
-	leftToRight := s.LessOrEq(left, right)
-	rightToLeft := s.LessOrEq(right, left)
-	if leftToRight && rightToLeft {
-		atoms, ok := s.classAtoms(left)
-		if !ok {
-			panic("static: malformed equal ClassSet coverage")
-		}
-		key, ok := s.descriptorKeyAtoms(atoms)
-		if !ok {
-			panic("static: malformed equal ClassSet descriptor")
-		}
-		if canonical, found := s.descriptorRows[key]; found {
-			return canonical
-		}
-		return s.derivedClass(atoms)
+	leftCoverage, leftOK := s.classCoverage(left)
+	rightCoverage, rightOK := s.classCoverage(right)
+	if !leftOK || !rightOK {
+		panic("static: malformed ClassSet coverage")
 	}
-	if leftToRight {
+	if coverageSubset(leftCoverage, rightCoverage) {
 		return right
 	}
-	if rightToLeft {
+	if coverageSubset(rightCoverage, leftCoverage) {
 		return left
 	}
-	atoms, ok := s.joinDescriptorAtoms(left, right)
-	if !ok {
-		panic("static: malformed ClassSet descriptor join")
-	}
-	key, keyOK := s.descriptorKeyAtoms(atoms)
-	if !keyOK {
-		panic("static: malformed ClassSet descriptor identity")
-	}
-	if joined, found := s.descriptorRows[key]; found {
+	if joined, found := s.classForJoinedCoverage(leftCoverage, rightCoverage); found {
 		return joined
 	}
-	return s.derivedClass(atoms)
+	return s.derivedJoin(leftCoverage, rightCoverage)
 }
 func (s *ClassSet) Rank(class Class) uint64 {
 	if !s.owns(class) {
@@ -369,18 +350,7 @@ func (s *ClassSet) MayRuntimeKinds(class Class) (runtimekind.Set, bool) {
 		return 0, false
 	}
 	if class.descriptor != nil {
-		var kinds runtimekind.Set
-		for _, atom := range class.descriptor.atoms {
-			if atom&opaqueAtomBit != 0 {
-				// Opaque Target/formal atoms have no proven runtime shape.
-				kinds |= runtimekind.All
-				continue
-			}
-			if uint64(atom) < uint64(len(s.runtimeAtomKinds)) {
-				kinds |= s.runtimeAtomKinds[atom]
-			}
-		}
-		return kinds, true
+		return class.descriptor.derivedKinds, true
 	}
 	if uint64(class.index) >= uint64(len(s.runtimeKinds)) {
 		return 0, false
@@ -393,7 +363,7 @@ func (s *ClassSet) owns(class Class) bool {
 		return false
 	}
 	if class.descriptor != nil {
-		return class.descriptor.owner == s && len(class.descriptor.atoms) != 0
+		return class.descriptor.owner == s && len(class.descriptor.coverage) == s.coverageStride && class.descriptor.covered != 0
 	}
 	return uint64(class.index) < uint64(len(s.rows))
 }
@@ -402,17 +372,17 @@ func (s *ClassSet) isAny(class Class) bool {
 	return s != nil && class.owner == s && class.descriptor == nil && class.index == 0
 }
 
-func (s *ClassSet) classAtoms(class Class) ([]uint64, bool) {
+func (s *ClassSet) classCoverage(class Class) ([]uint64, bool) {
 	if !s.owns(class) {
 		return nil, false
 	}
 	if class.descriptor != nil {
-		return class.descriptor.atoms, true
+		return class.descriptor.coverage, true
 	}
 	if uint64(class.index) >= uint64(len(s.descriptors)) {
 		return nil, false
 	}
-	return s.descriptors[class.index].atoms, true
+	return s.descriptors[class.index].coverage, true
 }
 
 func (s *ClassSet) addConcrete(value typ.Type) (Class, error) {
@@ -605,12 +575,14 @@ func (s *ClassSet) addOperation(contract *target.Contract, operation target.Oper
 	return nil
 }
 
-func (s *ClassSet) contentID(runtime *typeauthority.Runtime, operations map[target.Operation]struct{}) (id keyspace.ContentID) {
+func (s *ClassSet) contentID(runtime *typeauthority.Runtime, operations map[target.Operation]struct{}) (id identity.ContentID) {
 	if runtime == nil || !runtime.ContentID().Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	h := sha256.New()
-	h.Write([]byte("wippy.analysis.static/class-set/v9"))
+	// v10 states the coverage descriptor law: a Class identity is its
+	// extensional coverage over the sealed universe, not an ordered basis.
+	h.Write([]byte("wippy.analysis.static/class-set/v10"))
 	linkID := s.authority.LinkID()
 	h.Write(linkID[:])
 	runtimeID := runtime.ContentID()
@@ -623,7 +595,7 @@ func (s *ClassSet) contentID(runtime *typeauthority.Runtime, operations map[targ
 		if row.kind == ClassConcrete {
 			innerID, ok := runtime.Identity(row.inner)
 			if !ok {
-				return keyspace.ContentID{}
+				return identity.ContentID{}
 			}
 			h.Write(innerID[:])
 			continue
@@ -634,7 +606,7 @@ func (s *ClassSet) contentID(runtime *typeauthority.Runtime, operations map[targ
 	}
 	contract := s.authority.target
 	if contract == nil {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	targetID := contract.ContentID()
 	h.Write(targetID[:])
@@ -644,7 +616,7 @@ func (s *ClassSet) contentID(runtime *typeauthority.Runtime, operations map[targ
 		if _, ok := operations[operation]; ok {
 			operationID, valid := contract.OperationContentID(operation)
 			if !valid {
-				return keyspace.ContentID{}
+				return identity.ContentID{}
 			}
 			h.Write(operationID[:])
 		}
@@ -656,14 +628,12 @@ func (s *ClassSet) contentID(runtime *typeauthority.Runtime, operations map[targ
 	for _, atomID := range s.universeIDs {
 		h.Write(atomID[:])
 	}
-	// Extensional lower-set descriptors, rather than declaration-order pair
-	// tables, are the complete Pack carrier identity.
+	// Extensional coverage descriptors, rather than declaration-order pair
+	// tables or ordered bases, are the complete Pack carrier identity.
 	binary.BigEndian.PutUint64(word[:], uint64(len(s.descriptors)))
 	h.Write(word[:])
 	for _, descriptor := range s.descriptors {
-		binary.BigEndian.PutUint64(word[:], uint64(len(descriptor.key)))
-		h.Write(word[:])
-		h.Write([]byte(descriptor.key))
+		h.Write(descriptor.coverageID[:])
 	}
 	nilableCount := 0
 	for _, answer := range s.nilable {
@@ -676,22 +646,16 @@ func (s *ClassSet) contentID(runtime *typeauthority.Runtime, operations map[targ
 	for index, answer := range s.nilable {
 		if answer {
 			if index >= len(s.descriptors) {
-				return keyspace.ContentID{}
+				return identity.ContentID{}
 			}
-			key := s.descriptors[index].key
-			binary.BigEndian.PutUint64(word[:], uint64(len(key)))
-			h.Write(word[:])
-			h.Write([]byte(key))
+			h.Write(s.descriptors[index].coverageID[:])
 		}
 	}
 	for index, rank := range s.ranks {
 		if index >= len(s.descriptors) {
-			return keyspace.ContentID{}
+			return identity.ContentID{}
 		}
-		key := s.descriptors[index].key
-		binary.BigEndian.PutUint64(word[:], uint64(len(key)))
-		h.Write(word[:])
-		h.Write([]byte(key))
+		h.Write(s.descriptors[index].coverageID[:])
 		binary.BigEndian.PutUint64(word[:], uint64(rank))
 		h.Write(word[:])
 	}

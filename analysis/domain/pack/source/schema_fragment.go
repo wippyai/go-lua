@@ -16,7 +16,7 @@ type SchemaFragment struct {
 
 // DeclareSchema records the zero-input Pack source Rule shape.
 func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evidence engine.SemanticKey, owner *packowner.SchemaFragment) (*SchemaFragment, bool) {
-	if builder == nil || owner == nil || !distinct(semantic, operandFamily, evidence) {
+	if builder == nil || owner == nil || !engine.DistinctKeys(semantic, operandFamily, evidence) {
 		return nil, false
 	}
 	slot, ok := engine.NewRuleSlot[packdomain.Value, packdomain.Source](builder, engine.SchemaRuleSpec[packdomain.Value]{
@@ -36,18 +36,4 @@ func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evide
 
 func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[packdomain.Value, packdomain.Source] {
 	return fragment.slot
-}
-
-func distinct(keys ...engine.SemanticKey) bool {
-	for index, key := range keys {
-		if !key.Available() {
-			return false
-		}
-		for _, prior := range keys[:index] {
-			if prior == key {
-				return false
-			}
-		}
-	}
-	return true
 }

@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 type nativeCallStageLawFixture struct {
@@ -12,14 +12,14 @@ type nativeCallStageLawFixture struct {
 	implementation *RuleImplementation[uint64, uint64, struct{}]
 	capability     RuleSlotCapability
 	foreignRole    RuleSlotCapability
-	mount          keyspace.ContentID
-	base           keyspace.ContentID
-	dispatch       keyspace.ContentID
-	summary        keyspace.ContentID
-	effect         keyspace.ContentID
-	dispatchID     keyspace.ContentID
-	summaryID      keyspace.ContentID
-	effectID       keyspace.ContentID
+	mount          identity.ContentID
+	base           identity.ContentID
+	dispatch       identity.ContentID
+	summary        identity.ContentID
+	effect         identity.ContentID
+	dispatchID     identity.ContentID
+	summaryID      identity.ContentID
+	effectID       identity.ContentID
 }
 
 func newNativeCallStageLawOwner(t testing.TB) nativeCallStageLawFixture {
@@ -69,9 +69,9 @@ func newNativeCallStageLawOwner(t testing.TB) nativeCallStageLawFixture {
 	}
 }
 
-func (fixture nativeCallStageLawFixture) scalarSpec(t testing.TB, rules []ArtifactScalarRule, order []keyspace.ContentID) *ArtifactScalarSpec {
+func (fixture nativeCallStageLawFixture) scalarSpec(t testing.TB, rules []ArtifactScalarRule, order []identity.ContentID) *ArtifactScalarSpec {
 	t.Helper()
-	artifact, program, schema := artifactScalarLawID(0x78), artifactScalarLawID(0x79), keyspace.ContentID(fixture.binding.Schema().ID().Digest())
+	artifact, program, schema := artifactScalarLawID(0x78), artifactScalarLawID(0x79), identity.ContentID(fixture.binding.Schema().ID().Digest())
 	regionID, bodyID := artifactScalarLawID(0x7A), artifactScalarLawID(0x7B)
 	points := []ArtifactScalarPoint{{ID: fixture.base, Initial: true}, {ID: fixture.dispatch}, {ID: fixture.summary}, {ID: fixture.effect}}
 	spec, ok := NewArtifactScalarSpec(artifact, program, schema, ArtifactScalarCapacity{Roles: 1, Points: len(points), Regions: 1, Events: len(order) + 2, Rules: len(rules), Bodies: 1})
@@ -130,7 +130,7 @@ func (fixture nativeCallStageLawFixture) rules() []ArtifactScalarRule {
 	}
 }
 
-func (fixture nativeCallStageLawFixture) scalarTemplate(t testing.TB, rules []ArtifactScalarRule, order []keyspace.ContentID) (*ArtifactScalarTemplate, bool) {
+func (fixture nativeCallStageLawFixture) scalarTemplate(t testing.TB, rules []ArtifactScalarRule, order []identity.ContentID) (*ArtifactScalarTemplate, bool) {
 	t.Helper()
 	return NewArtifactScalarTemplate(fixture.scalarSpec(t, rules, order))
 }
@@ -146,7 +146,7 @@ func bindNativeCallStageLawTemplate(template *ArtifactScalarTemplate, capability
 	return NewArtifactScalarReceipt(binding)
 }
 
-func (fixture nativeCallStageLawFixture) scalarReceipt(t testing.TB, rules []ArtifactScalarRule, order []keyspace.ContentID) (*ArtifactScalarReceipt, bool) {
+func (fixture nativeCallStageLawFixture) scalarReceipt(t testing.TB, rules []ArtifactScalarRule, order []identity.ContentID) (*ArtifactScalarReceipt, bool) {
 	template, templateOK := fixture.scalarTemplate(t, rules, order)
 	if !templateOK {
 		return nil, false
@@ -154,8 +154,8 @@ func (fixture nativeCallStageLawFixture) scalarReceipt(t testing.TB, rules []Art
 	return bindNativeCallStageLawTemplate(template, fixture.capability)
 }
 
-func (fixture nativeCallStageLawFixture) order() []keyspace.ContentID {
-	return []keyspace.ContentID{fixture.base, fixture.dispatch, fixture.summary, fixture.effect}
+func (fixture nativeCallStageLawFixture) order() []identity.ContentID {
+	return []identity.ContentID{fixture.base, fixture.dispatch, fixture.summary, fixture.effect}
 }
 
 func TestArtifactNativeCallStageRejectsTamperAliasAndOrder(t *testing.T) {
@@ -176,7 +176,7 @@ func TestArtifactNativeCallStageRejectsTamperAliasAndOrder(t *testing.T) {
 		t.Fatal("same owner occurrence aliased across native stage rows")
 	}
 
-	wrongOrder := []keyspace.ContentID{fixture.base, fixture.dispatch, fixture.effect, fixture.summary}
+	wrongOrder := []identity.ContentID{fixture.base, fixture.dispatch, fixture.effect, fixture.summary}
 	if receipt, ok := fixture.scalarReceipt(t, fixture.rules(), wrongOrder); ok || receipt != nil {
 		t.Fatal("native Call stage order tamper admitted")
 	}

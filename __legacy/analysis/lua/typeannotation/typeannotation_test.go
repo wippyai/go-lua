@@ -3,10 +3,10 @@ package typeannotation
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/type/annotation"
-	"github.com/wippyai/go-lua/analysis/type/kind"
-	luatable "github.com/wippyai/go-lua/analysis/type/table"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/annotation"
+	"github.com/wippyai/go-lua/analysis/domain/type/kind"
+	luatable "github.com/wippyai/go-lua/analysis/domain/type/table"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 

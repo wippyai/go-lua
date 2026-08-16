@@ -8,8 +8,8 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/wippyai/go-lua/program/artifact"
-	"github.com/wippyai/go-lua/program/lower"
+	"github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/program/lower"
 )
 
 const frozenArtifactFixtureCount = 1176

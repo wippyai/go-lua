@@ -3,7 +3,7 @@ package owner
 import (
 	"github.com/wippyai/go-lua/analysis/domain/pack"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/program/link"
+	"github.com/wippyai/go-lua/analysis/program/link"
 )
 
 // HotOwner is Pack's opaque Link-local Factor implementation. Its only cold
@@ -96,25 +96,37 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, schema *pa
 		fragment.exactWrite.Schema() != fragment.slot.Schema() {
 		return nil, false
 	}
-	rootCount := schema.RootCount()
-	if rootCount < 0 || uint64(rootCount) > uint64(^uint32(0))+1 {
+	owner := &HotOwner{binding: binding, fragment: fragment, schema: schema, linkOwner: schema.LinkOwner()}
+	spec, specOK := owner.FactorSpec()
+	if !specOK || !engine.BindFactor[coordinate](binding, fragment.slot, spec) {
 		return nil, false
 	}
-	owner := &HotOwner{binding: binding, fragment: fragment, schema: schema, linkOwner: schema.LinkOwner()}
-	if !engine.BindFactor[coordinate](binding, fragment.slot, engine.HotFactorSpec[coordinate, pack.Value]{
+	return owner, true
+}
+
+// FactorSpec is Pack's exact Factor algebra for this binding: the same value
+// BindHot hands to the engine. A declaration surface projects this record
+// instead of restating the lattice, admission, or widening law, so the two
+// cannot drift.
+func (owner *HotOwner) FactorSpec() (engine.HotFactorSpec[coordinate, pack.Value], bool) {
+	if owner == nil || !validPackSchema(owner.schema) {
+		return engine.HotFactorSpec[coordinate, pack.Value]{}, false
+	}
+	rootCount := owner.schema.RootCount()
+	if rootCount < 0 || uint64(rootCount) > uint64(^uint32(0))+1 {
+		return engine.HotFactorSpec[coordinate, pack.Value]{}, false
+	}
+	return engine.HotFactorSpec[coordinate, pack.Value]{
 		KeyEnd:      uint64(rootCount),
-		Lattice:     schema.Lattice(),
-		Default:     schema.Bottom(),
+		Lattice:     owner.schema.Lattice(),
+		Default:     owner.schema.Bottom(),
 		AdmitAt:     owner.admits,
-		Fingerprint: schema.Fingerprint,
+		Fingerprint: owner.schema.Fingerprint,
 		WidenRank: engine.Measure[coordinate, pack.Value]{
 			Width: 4,
 			At:    owner.widenRank,
 		},
-	}) {
-		return nil, false
-	}
-	return owner, true
+	}, true
 }
 
 // implementation obtains a fresh sealed receipt each time. The receipt is

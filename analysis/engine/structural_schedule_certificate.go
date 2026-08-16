@@ -4,7 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // validateMountedArtifactSchedule is the one composition gate between the
@@ -42,7 +42,7 @@ func validateMountedArtifactSchedule(rows *artifactReceiptTopology, topology *eq
 	if rows == nil || topology == nil || graph == nil || !topology.OwnsGraph(graph) || !rows.valid(nil) || graph.Schedule() == nil || graph.PointCount() != expectedPoints {
 		return ReceiptScheduleFailureInput, 0, false
 	}
-	pointByKey := make(map[composition.Key]keyspace.ContentID, len(rows.points))
+	pointByKey := make(map[composition.Key]identity.ContentID, len(rows.points))
 	for _, id := range rows.points {
 		ref, refOK := rows.pointRef[id]
 		locator, locatorOK := topology.PointRow(ref)
@@ -67,7 +67,7 @@ func validateMountedArtifactSchedule(rows *artifactReceiptTopology, topology *eq
 			return ReceiptScheduleFailureBootstrap, 0, false
 		}
 	}
-	pointRank := make(map[keyspace.ContentID]int, len(rows.points))
+	pointRank := make(map[identity.ContentID]int, len(rows.points))
 	bootstrapSeen := false
 	compiled := graph.Schedule()
 	for index := 0; index < compiled.EventCount(); index++ {
@@ -103,8 +103,8 @@ func validateMountedArtifactSchedule(rows *artifactReceiptTopology, topology *eq
 	// transports, so choosing an arbitrary LocalTransfer would make ownership
 	// depend on row order. All roles sharing a native stage must attest the same
 	// exact input.
-	stageBase := make(map[keyspace.ContentID]keyspace.ContentID)
-	stageKind := make(map[keyspace.ContentID]ArtifactRuleStage)
+	stageBase := make(map[identity.ContentID]identity.ContentID)
+	stageKind := make(map[identity.ContentID]ArtifactRuleStage)
 	for _, placement := range rows.callStages {
 		base, stage := placement.mountedInput, placement.mountedPoint
 		baseRank, baseOK := pointRank[base]
@@ -120,7 +120,7 @@ func validateMountedArtifactSchedule(rows *artifactReceiptTopology, topology *eq
 		}
 		stageBase[stage], stageKind[stage] = base, placement.stage
 	}
-	localStages := make(map[keyspace.ContentID]struct{})
+	localStages := make(map[identity.ContentID]struct{})
 	for _, placement := range rows.ruleSet {
 		switch placement.stage {
 		case ArtifactRuleStageBase:
@@ -137,7 +137,7 @@ func validateMountedArtifactSchedule(rows *artifactReceiptTopology, topology *eq
 			return ReceiptScheduleFailureStage, 0, false
 		}
 	}
-	localOwners := make(map[keyspace.ContentID]keyspace.ContentID, len(localStages))
+	localOwners := make(map[identity.ContentID]identity.ContentID, len(localStages))
 	for edgeIndex, edge := range rows.edges {
 		if !edge.local {
 			continue
@@ -174,7 +174,7 @@ func validateMountedArtifactSchedule(rows *artifactReceiptTopology, topology *eq
 			return ReceiptScheduleFailureOrder, 0, false
 		}
 	}
-	graphRegions := make([]map[keyspace.ContentID]struct{}, compiled.RegionCount())
+	graphRegions := make([]map[identity.ContentID]struct{}, compiled.RegionCount())
 	for graphIndex := range graphRegions {
 		view, viewOK := graph.RegionAt(graphIndex)
 		if !viewOK {
@@ -183,7 +183,7 @@ func validateMountedArtifactSchedule(rows *artifactReceiptTopology, topology *eq
 		if view.PointCount() == 0 {
 			return ReceiptScheduleFailureRegionPoint, uint32(graphIndex), false
 		}
-		members := make(map[keyspace.ContentID]struct{}, view.PointCount())
+		members := make(map[identity.ContentID]struct{}, view.PointCount())
 		for memberIndex := 0; memberIndex < view.PointCount(); memberIndex++ {
 			point, pointOK := view.PointAt(memberIndex)
 			id, idOK := pointByKey[point.Key()]
@@ -202,7 +202,7 @@ func validateMountedArtifactSchedule(rows *artifactReceiptTopology, topology *eq
 		for _, region := range graphRegions {
 			containsAll := true
 			for _, member := range parent.members {
-				seenStages := make(map[keyspace.ContentID]struct{}, 4)
+				seenStages := make(map[identity.ContentID]struct{}, 4)
 				for {
 					base, staged := stageBase[member]
 					if !staged {

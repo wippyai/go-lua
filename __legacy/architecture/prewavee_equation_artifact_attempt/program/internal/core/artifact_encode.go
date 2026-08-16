@@ -4,7 +4,7 @@ import (
 	"errors"
 	"io"
 
-	"github.com/wippyai/go-lua/program/internal/canonical"
+	"github.com/wippyai/go-lua/analysis/program/internal/canonical"
 )
 
 const (

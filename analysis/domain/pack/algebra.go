@@ -6,7 +6,7 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/domain/static"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // algebra is the immutable class fence for one Pack schema. It owns no type
@@ -20,16 +20,16 @@ import (
 // application cache, a type resolver, or a second static authority.
 type algebra struct {
 	classes *static.ClassSet
-	id      keyspace.ContentID
+	id      identity.ContentID
 	entries []classEntry
-	index   map[keyspace.ContentID]uint32 // cold artifact identity, one-based
-	ordinal map[keyspace.ContentID]uint32 // hot stable-class handle, one-based
+	index   map[identity.ContentID]uint32 // cold artifact identity, one-based
+	ordinal map[identity.ContentID]uint32 // hot stable-class handle, one-based
 	offsets []nat
 }
 
 type classEntry struct {
 	class static.Class
-	id    keyspace.ContentID
+	id    identity.ContentID
 }
 
 // newAlgebraWithOffsets is schema construction only. Callers must enumerate
@@ -45,8 +45,8 @@ func newAlgebraWithOffsets(classes *static.ClassSet, admitted []static.Class, of
 	}
 	owner := &algebra{
 		classes: classes,
-		index:   make(map[keyspace.ContentID]uint32),
-		ordinal: make(map[keyspace.ContentID]uint32),
+		index:   make(map[identity.ContentID]uint32),
+		ordinal: make(map[identity.ContentID]uint32),
 		offsets: frozenOffsets,
 	}
 	if !owner.add(classes.AnyValue()) {
@@ -63,8 +63,8 @@ func newAlgebraWithOffsets(classes *static.ClassSet, admitted []static.Class, of
 	sort.Slice(owner.entries, func(left, right int) bool {
 		return bytes.Compare(owner.entries[left].id[:], owner.entries[right].id[:]) < 0
 	})
-	owner.index = make(map[keyspace.ContentID]uint32, len(owner.entries))
-	owner.ordinal = make(map[keyspace.ContentID]uint32, len(owner.entries))
+	owner.index = make(map[identity.ContentID]uint32, len(owner.entries))
+	owner.ordinal = make(map[identity.ContentID]uint32, len(owner.entries))
 	for index, entry := range owner.entries {
 		if _, duplicate := owner.index[entry.id]; duplicate {
 			return nil, false
@@ -137,14 +137,14 @@ func (owner *algebra) classRank(class static.Class) uint64 {
 // does not fall back to Fingerprint: a derived class is not necessarily in
 // Pack's sealed entry table, and truncating its fingerprint into an ordinal
 // would turn distinct derived descriptors into equal Pack values.
-func (owner *algebra) classIdentity(class static.Class) (keyspace.ContentID, bool) {
+func (owner *algebra) classIdentity(class static.Class) (identity.ContentID, bool) {
 	if owner == nil || !owner.admits(class) {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return owner.classes.Identity(class)
 }
 
-func algebraID(classes keyspace.ContentID, entries []classEntry, offsets []nat) (id keyspace.ContentID) {
+func algebraID(classes identity.ContentID, entries []classEntry, offsets []nat) (id identity.ContentID) {
 	h := sha256.New()
 	_, _ = h.Write([]byte("wippy.analysis.pack/class-fence\x00\x01"))
 	_, _ = h.Write(classes[:])

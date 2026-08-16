@@ -137,7 +137,7 @@ func canonicalizeSummaryRepresentatives(rows []summaryMapping) bool {
 		if comparison := compareKey(leftRow.surface.Factor, rightRow.surface.Factor); comparison != 0 {
 			return comparison < 0
 		}
-		if comparison := compareRawKeySets(leftRow.keys, rightRow.keys); comparison != 0 {
+		if comparison := CompareKeyVectors(leftRow.keys, rightRow.keys); comparison != 0 {
 			return comparison < 0
 		}
 		return lessSurface(leftRow.surface, rightRow.surface)
@@ -160,10 +160,14 @@ func canonicalizeSummaryRepresentatives(rows []summaryMapping) bool {
 // are therefore not aliases: the unit equivalence is exactly the pair
 // (Factor, raw-key set), never the key set alone.
 func sameSummaryUnit(left, right summaryMapping) bool {
-	return left.surface.Factor == right.surface.Factor && compareRawKeySets(left.keys, right.keys) == 0
+	return left.surface.Factor == right.surface.Factor && CompareKeyVectors(left.keys, right.keys) == 0
 }
 
-func compareRawKeySets(left, right []uint64) int {
+// CompareKeyVectors orders two raw key vectors lexicographically, ranking a
+// proper prefix before its extension. Equation owns it because the vectors it
+// orders are its own summary key columns; the runtime binding that publishes
+// those columns compares them through this same total order.
+func CompareKeyVectors[K ~uint32 | ~uint64](left, right []K) int {
 	for index := 0; index < len(left) && index < len(right); index++ {
 		if left[index] < right[index] {
 			return -1

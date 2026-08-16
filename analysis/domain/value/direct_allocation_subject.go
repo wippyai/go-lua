@@ -5,7 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/heap"
 	"github.com/wippyai/go-lua/analysis/domain/pack"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 const directAllocationSubjectDomain = "wippy.analysis.value.direct-allocation-subject.v1\x00"
@@ -24,15 +24,15 @@ type DirectAllocationSubject struct {
 	packs      *pack.Schema
 	allocation *AllocationResult
 	key        heap.Key
-	module     keyspace.ContentID
-	semantic   keyspace.ContentID
+	module     identity.ContentID
+	semantic   identity.ContentID
 	coordinate uint32
-	id         keyspace.ContentID
+	id         identity.ContentID
 }
 
-func directAllocationSubjectID(module, semantic, key keyspace.ContentID, coordinate uint32) keyspace.ContentID {
+func directAllocationSubjectID(module, semantic, key identity.ContentID, coordinate uint32) identity.ContentID {
 	if !module.Available() || !semantic.Available() || !key.Available() || coordinate == 0 {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	var payload [32*3 + 4]byte
 	copy(payload[0:32], module[:])
@@ -45,7 +45,7 @@ func directAllocationSubjectID(module, semantic, key keyspace.ContentID, coordin
 	hash := sha256.New()
 	_, _ = hash.Write([]byte(directAllocationSubjectDomain))
 	_, _ = hash.Write(payload[:])
-	var id keyspace.ContentID
+	var id identity.ContentID
 	copy(id[:], hash.Sum(nil))
 	return id
 }
@@ -54,7 +54,7 @@ func directAllocationSubjectID(module, semantic, key keyspace.ContentID, coordin
 // between Value's AllocationResult cache row and Heap's owner-issued Key.
 // Both scalar IDs must be independently available and exactly equal before a
 // direct receipt can be sealed or remain valid.
-func directAllocationSubjectKeyIDMatches(result, issued keyspace.ContentID) bool {
+func directAllocationSubjectKeyIDMatches(result, issued identity.ContentID) bool {
 	return result.Available() && issued.Available() && result == issued
 }
 
@@ -62,7 +62,7 @@ func directAllocationSubjectKeyIDMatches(result, issued keyspace.ContentID) bool
 // for a stored direct-identity scalar seal. Keeping it separate makes every
 // mutation path—including a changed key, coordinate, or stored ID—fail at the
 // same boundary that receipt validation uses.
-func directAllocationSubjectSealMatches(id, module, semantic, key keyspace.ContentID, coordinate uint32) bool {
+func directAllocationSubjectSealMatches(id, module, semantic, key identity.ContentID, coordinate uint32) bool {
 	return id.Available() && id == directAllocationSubjectID(module, semantic, key, coordinate)
 }
 
@@ -126,7 +126,7 @@ func (schema *Schema) DirectAllocationSubjectFor(packs *pack.Schema, source pack
 	return receipt, receipt.valid()
 }
 
-func (receipt DirectAllocationSubject) ContentID() (keyspace.ContentID, bool) {
+func (receipt DirectAllocationSubject) ContentID() (identity.ContentID, bool) {
 	return receipt.id, receipt.valid()
 }
 
@@ -138,7 +138,7 @@ func (receipt DirectAllocationSubject) MatchesSource(source pack.SemanticSource)
 
 // MatchesAllocationKeyID proves that this receipt is bound to the same exact
 // Heap allocation key identity carried by a mounted requirement.
-func (receipt DirectAllocationSubject) MatchesAllocationKeyID(key keyspace.ContentID) bool {
+func (receipt DirectAllocationSubject) MatchesAllocationKeyID(key identity.ContentID) bool {
 	if !receipt.valid() || !key.Available() {
 		return false
 	}

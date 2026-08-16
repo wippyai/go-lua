@@ -21,6 +21,10 @@ type Topology struct {
 	initial *Graph
 	key     composition.Key
 	rows    compiledRowDirectory
+	// initialRelation is the first publication of this Topology. Every later
+	// Relation descends from it through Publish, so one Generation sequence
+	// orders every accepted set this Topology ever admits.
+	initialRelation Relation
 
 	receipts         []activationReceipt
 	receiptAt        map[composition.Key]int
@@ -183,11 +187,10 @@ func sealTopologyWithFailure(source *composition.Composition, spec TopologySpec,
 	}
 	topology.initial, topology.key, topology.rows = graph, key, rows
 	graph.owner = topology
-	initialRevision, revisionOK := topology.Revision(nil)
-	if !revisionOK {
+	if !topology.sealInitialRelation() {
 		return nil, SealTopologyFailureTopologyKey, false
 	}
-	graph.revision = initialRevision
+	graph.relation = topology.initialRelation
 	return topology, SealTopologyFailureNone, true
 }
 
@@ -521,10 +524,28 @@ func (topology *Topology) Key() composition.Key {
 	return topology.key
 }
 
-// Revision derives the exact structural identity for an accepted set.  The
-// evidence digest is part of the token: cancellation and a fresh epoch keep
-// the same accepted fact instead of remembering only the Member coordinate.
-func (topology *Topology) Revision(accepted []AcceptedMember) (composition.Key, bool) {
+// ValidAccepted proves that an accepted set belongs to this sealed Topology
+// and is canonically ordered. It is the whole membership fence and derives
+// nothing: a caller that only needs to reject a foreign or malformed set never
+// pays for a structural digest.
+func (topology *Topology) ValidAccepted(accepted []AcceptedMember) bool {
+	if topology == nil || !topology.key.Available() || !topology.validAccepted(accepted) {
+		return false
+	}
+	for _, row := range accepted {
+		if !topology.ownsMember(row.Member()) {
+			return false
+		}
+	}
+	return true
+}
+
+// deriveRelationDigest derives the exact structural identity for an accepted
+// set. The evidence digest is part of the token: cancellation and a fresh
+// epoch keep the same accepted fact instead of remembering only the Member
+// coordinate. It is called once per publication, by Publish and by seal; a
+// published Relation stores the result and no reader re-derives it.
+func (topology *Topology) deriveRelationDigest(accepted []AcceptedMember) (composition.Key, bool) {
 	if topology == nil || !topology.key.Available() || !topology.validAccepted(accepted) {
 		return composition.Key{}, false
 	}
@@ -582,39 +603,32 @@ func (topology *Topology) acceptedEvidenceKey(member Member, premise Expr) (comp
 	})
 }
 
-// Graph returns the sealed structural graph or a compact revision view over
-// it. It visits only accepted Members, never an eager candidate set or a
-// retained builder specification.
-func (topology *Topology) Graph(accepted []AcceptedMember) (*Graph, bool) {
-	if topology == nil || topology.source == nil || topology.initial == nil || !topology.validAccepted(accepted) {
+// Graph returns the structural graph for one published Relation: the sealed
+// initial graph at the first publication, and a compact view carrying that
+// publication's stamp and stored digest afterwards. It visits only accepted
+// Members, never an eager candidate set or a retained builder specification,
+// and it derives no digest: the Relation already carries the one derived at
+// its publication.
+func (topology *Topology) Graph(relation Relation) (*Graph, bool) {
+	if topology == nil || topology.source == nil || topology.initial == nil || !relation.OwnedBy(topology) {
 		return nil, false
 	}
-	for _, row := range accepted {
-		member := row.Member()
-		if !topology.ownsMember(member) {
-			return nil, false
-		}
-	}
-	revision, ok := topology.Revision(accepted)
-	if !ok {
-		return nil, false
-	}
-	if len(accepted) == 0 {
+	if relation.generation == topology.initialRelation.generation {
 		return topology.initial, true
 	}
 	view := *topology.initial
 	view.self = &view
 	view.payload = topology.initial
 	view.owner = topology
-	view.revision = revision
+	view.relation = relation
 	return &view, true
 }
 
 // OwnsGraph proves that a Graph was issued by this exact sealed Topology.
-// The pointer and immutable revision fence prevent equal-content topologies
+// The pointer and immutable publication fence prevent equal-content topologies
 // from exchanging graph members or runtime bindings.
 func (topology *Topology) OwnsGraph(graph *Graph) bool {
-	return topology != nil && graph != nil && graph.owner == topology && graph.revision.Available() && graph.valid() && topology.source != nil && graph.composition == topology.source
+	return topology != nil && graph != nil && graph.owner == topology && graph.relation.OwnedBy(topology) && graph.valid() && topology.source != nil && graph.composition == topology.source
 }
 
 // PointRowLocator, RuleMemberRowLocator, QueryRowLocator, and
@@ -639,6 +653,31 @@ type QueryRowLocator struct {
 type ActivationMemberRowLocator struct {
 	owner  *Topology
 	member composition.Key
+}
+
+// PointRowCount, RuleMemberRowCount, and QueryRowCount report the sealed row
+// spans of this Topology. They are the row denominator a consumer directory is
+// measured against, derived from the sealed topology alone and never from a
+// directory that indexes it.
+func (topology *Topology) PointRowCount() int {
+	if topology == nil {
+		return 0
+	}
+	return len(topology.rows.points)
+}
+
+func (topology *Topology) RuleMemberRowCount() int {
+	if topology == nil {
+		return 0
+	}
+	return len(topology.rows.members)
+}
+
+func (topology *Topology) QueryRowCount() int {
+	if topology == nil {
+		return 0
+	}
+	return len(topology.rows.queries)
 }
 
 func (topology *Topology) PointRow(ref PointRef) (PointRowLocator, bool) {

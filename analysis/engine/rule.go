@@ -1,5 +1,7 @@
 package engine
 
+import "github.com/wippyai/go-lua/analysis/identity"
+
 // Read is the typed, positional capability issued by SchemaBinding.
 // Its origin is sealed to one binding state and Rule ordinal; no declaration
 // object or cold execution carrier is retained here.
@@ -25,7 +27,7 @@ func (read Read[S]) matchesRuleProof(proof *ruleRuntimeProof) bool {
 type Access[V, O any] struct {
 	execution *ruleExecution
 	owner     *boundRule[V, O]
-	epoch     uint64
+	epoch     identity.Generation
 	output    outputAccess[V]
 }
 

@@ -10,8 +10,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
-	typeformat "github.com/wippyai/go-lua/analysis/type/format"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	typeformat "github.com/wippyai/go-lua/analysis/domain/type/format"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 )
 
 type DiscriminatedUnionExhaustiveness = readapi.DiscriminatedUnionExhaustiveness

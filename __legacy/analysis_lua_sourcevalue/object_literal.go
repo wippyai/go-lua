@@ -9,8 +9,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
-	typetable "github.com/wippyai/go-lua/analysis/type/table"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	typetable "github.com/wippyai/go-lua/analysis/domain/type/table"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 )
 
 func ObjectLiteralType(reg *axis.Registry, lit factflow.ObjectLiteral, resolver factflow.ValueSourceResolver) (typ.Type, bool) {

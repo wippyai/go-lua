@@ -24,7 +24,7 @@ func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[value.Value, operand
 
 // DeclareSchema records Value allocation's one-input transformed-carry Rule.
 func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, transform, evidence engine.SemanticKey, owner *valueowner.SchemaFragment) (*SchemaFragment, bool) {
-	if builder == nil || owner == nil || !distinct(semantic, operandFamily, transform, evidence) {
+	if builder == nil || owner == nil || !engine.DistinctKeys(semantic, operandFamily, transform, evidence) {
 		return nil, false
 	}
 	slot, ok := engine.NewRuleSlot[value.Value, operand](builder, engine.SchemaRuleSpec[value.Value]{

@@ -3,7 +3,7 @@ package transferfacts
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 )
 
 func TestTransferTypeReachabilityUsesExactRecursiveGraphs(t *testing.T) {

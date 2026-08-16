@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
-	flowkind "github.com/wippyai/go-lua/program/flow/kind"
-	"github.com/wippyai/go-lua/program/keyspace"
+	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
 func TestCompareOrderRetainsExactLiteralsAndConservativeUnknowns(t *testing.T) {

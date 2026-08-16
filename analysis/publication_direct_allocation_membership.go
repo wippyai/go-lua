@@ -5,8 +5,8 @@ import (
 	packdomain "github.com/wippyai/go-lua/analysis/domain/pack"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/internal/programartifact"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 )
 
 // selectedDirectAllocationMembershipAttachment is an Analysis-local bridge
@@ -15,19 +15,19 @@ import (
 // shaped ValueSummaryObservation to this path.
 type selectedDirectAllocationMembershipAttachment struct {
 	observation engine.ReceiptObservation[valueSummaryObservation]
-	id          keyspace.ContentID
-	mount       keyspace.ContentID
-	point       keyspace.ContentID
-	call        keyspace.ContentID
+	id          identity.ContentID
+	mount       identity.ContentID
+	point       identity.ContentID
+	call        identity.ContentID
 	width       uint32
 }
 
-func selectedDirectAllocationMembershipAttachmentID(mount, point, call keyspace.ContentID, width uint32) (keyspace.ContentID, bool) {
+func selectedDirectAllocationMembershipAttachmentID(mount, point, call identity.ContentID, width uint32) (identity.ContentID, bool) {
 	if !mount.Available() || !point.Available() || !call.Available() || width == 0 {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	widthBytes := [4]byte{byte(width >> 24), byte(width >> 16), byte(width >> 8), byte(width)}
-	return analysisContentID("analysis/direct-allocation-membership-observation/v1", mount[:], point[:], call[:], widthBytes[:])
+	return identity.DeriveContentID("analysis/direct-allocation-membership-observation/v1", mount[:], point[:], call[:], widthBytes[:])
 }
 
 func (attachment selectedDirectAllocationMembershipAttachment) valid() bool {
@@ -35,7 +35,7 @@ func (attachment selectedDirectAllocationMembershipAttachment) valid() bool {
 	return ok && attachment.id == want && attachment.observation.MatchesID(attachment.id)
 }
 
-func selectedEffectMemberRef(mounts []mountedProgramArtifact, mount, occurrence keyspace.ContentID) (artifactRuleMemberRef, bool) {
+func selectedEffectMemberRef(mounts []mountedProgramArtifact, mount, occurrence identity.ContentID) (artifactRuleMemberRef, bool) {
 	var found artifactRuleMemberRef
 	for _, candidate := range mounts {
 		if candidate.moduleKey != mount || !candidate.ruleMembersReady {
@@ -64,13 +64,13 @@ func attachSelectedDirectAllocationMembership(
 	binding *programBinding,
 	graph *engine.ReceiptGraph,
 	mounts []mountedProgramArtifact,
-	mount, call keyspace.ContentID,
+	mount, call identity.ContentID,
 ) (selectedDirectAllocationMembershipAttachment, bool) {
 	if compilation == nil || binding == nil || binding.valueQuery == nil || graph == nil || !mount.Available() || !call.Available() {
 		return selectedDirectAllocationMembershipAttachment{}, false
 	}
 	ref, refOK := selectedEffectMemberRef(mounts, mount, call)
-	role, roleOK := mountedRole(binding, programartifact.RuleRoleEffectSelected)
+	role, roleOK := binding.mountedCapability(programartifact.RuleRoleEffectSelected)
 	valueSchema := binding.value.Schema()
 	if !refOK || !roleOK || valueSchema == nil || valueSchema.CoordinateCount() <= 0 || uint64(valueSchema.CoordinateCount()) > uint64(^uint32(0)) {
 		return selectedDirectAllocationMembershipAttachment{}, false
@@ -96,18 +96,18 @@ func attachSelectedDirectAllocationMembership(
 // subject cell. It remains deliberately narrower than uniqueness or alias
 // evidence and cannot be projected as a placement result.
 type directAllocationMembershipProof struct {
-	id          keyspace.ContentID
-	attachment  keyspace.ContentID
-	correlation keyspace.ContentID
-	direct      keyspace.ContentID
+	id          identity.ContentID
+	attachment  identity.ContentID
+	correlation identity.ContentID
+	direct      identity.ContentID
 	membership  valuedomain.AllocationMembership
 }
 
-func directAllocationMembershipProofID(attachment, correlation, direct keyspace.ContentID, membership valuedomain.AllocationMembership) (keyspace.ContentID, bool) {
+func directAllocationMembershipProofID(attachment, correlation, direct identity.ContentID, membership valuedomain.AllocationMembership) (identity.ContentID, bool) {
 	if !attachment.Available() || !correlation.Available() || !direct.Available() || membership != valuedomain.MembershipRecent && membership != valuedomain.MembershipSummary {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
-	return analysisContentID("analysis/direct-allocation-membership/v1", attachment[:], correlation[:], direct[:], []byte{byte(membership)})
+	return identity.DeriveContentID("analysis/direct-allocation-membership/v1", attachment[:], correlation[:], direct[:], []byte{byte(membership)})
 }
 
 func (proof directAllocationMembershipProof) valid() bool {

@@ -1,0 +1,419 @@
+package axis
+
+import (
+	"testing"
+
+	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/lattice"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
+)
+
+// scratchInputs is a stand-in for a composition's Link input record. The
+// surface is blind to it, so a scratch record proves the same laws the
+// analyzer's own record does.
+type scratchInputs struct{ ready bool }
+
+type scratchFragment struct{ semantic engine.SemanticKey }
+
+type scratchAxis struct{ fragment *scratchFragment }
+
+// scratchRuleSurface stands in for one sibling surface. The declaration root
+// requires every catalog member to be registered, so an axis law is stated
+// against a complete table rather than a half-registered one.
+type scratchRuleSurface struct{ kind schema.SurfaceKind }
+
+type scratchRuleEntry struct{ key schema.Key }
+
+func (entry scratchRuleEntry) Key() schema.Key { return entry.key }
+
+func (entry scratchRuleEntry) EntryAvailable() bool { return entry.key.Available() }
+
+func (surface scratchRuleSurface) Kind() schema.SurfaceKind { return surface.kind }
+
+func (surface scratchRuleSurface) Entries() []schema.Entry {
+	return []schema.Entry{scratchRuleEntry{key: "scratch-rule"}}
+}
+
+func (surface scratchRuleSurface) Seal(schema.View, schema.Sealed) schema.SealFailure {
+	return schema.SealFailure{}
+}
+
+func scratchLattice() lattice.Lattice[uint64] {
+	return lattice.Lattice[uint64]{
+		Bottom:   func() uint64 { return 0 },
+		Top:      func() uint64 { return ^uint64(0) },
+		Equal:    func(a, b uint64) bool { return a == b },
+		LessOrEq: func(a, b uint64) bool { return a <= b },
+		Join: func(a, b uint64) uint64 {
+			if a > b {
+				return a
+			}
+			return b
+		},
+		Widen: func(prev, next uint64) uint64 {
+			if prev > next {
+				return prev
+			}
+			return next
+		},
+	}
+}
+
+func scratchAlgebra() Algebra[uint64] {
+	return Algebra[uint64]{
+		KeyEnd:      4,
+		Lattice:     scratchLattice(),
+		Default:     0,
+		AdmitAt:     func(key uint64, value uint64) bool { return key < 4 },
+		Fingerprint: func(value uint64) uint64 { return value },
+		Widen:       Rank[uint64]{Width: 1, At: func(key uint64, value uint64, component int) uint64 { return value }},
+	}
+}
+
+// scratchSpec is one complete axis declaration. Each law test starts from this
+// record and removes exactly the field the law is about.
+func scratchSpec(key schema.Key, principal programartifact.RuleOutputKind, semantic func(vocabulary.Bundle) engine.SemanticKey) Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64] {
+	return Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]{
+		Key:         key,
+		Principal:   principal,
+		Storage:     StorageFactor,
+		Cardinality: CardinalityDense,
+		Lifetime:    LifetimeLink,
+		Mutability:  MutabilitySolve,
+		Concurrency: ConcurrencySingleWriter,
+		Semantic:    semantic,
+		Declare: func(context Declaration) (*scratchFragment, bool) {
+			return &scratchFragment{semantic: semantic(context.Bundle)}, true
+		},
+		Bind: func(context Binding[scratchInputs, *scratchFragment]) (*scratchAxis, bool) {
+			return &scratchAxis{fragment: context.Fragment}, context.Inputs.ready
+		},
+		Algebra: func(bound *scratchAxis) (Algebra[uint64], bool) { return scratchAlgebra(), true },
+	}
+}
+
+func valueSemantic(bundle vocabulary.Bundle) engine.SemanticKey { return bundle.ValueFactor }
+
+func heapSemantic(bundle vocabulary.Bundle) engine.SemanticKey { return bundle.HeapFactor }
+
+// sealTemplates seals one axis inventory into a complete declaration table.
+// The catalog is walked rather than listed, so the surfaces the declaration
+// root settles on do not change what these laws assert.
+func sealTemplates(t *testing.T, templates []*Template[scratchInputs]) schema.SealFailure {
+	t.Helper()
+	builder := schema.NewBuilder()
+	for kind := schema.SurfaceKind(1); kind.Available(); kind++ {
+		if kind == schema.SurfaceKindAxis {
+			builder.Register(NewSurface(templates))
+			continue
+		}
+		builder.Register(scratchRuleSurface{kind: kind})
+	}
+	_, failure := builder.Seal()
+	return failure
+}
+
+func mustTemplate(t *testing.T, spec Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]) *Template[scratchInputs] {
+	t.Helper()
+	template, ok := New(spec)
+	if !ok || template == nil {
+		t.Fatalf("scratch axis %q rejected by construction", spec.Key)
+	}
+	return template
+}
+
+// TestAxisSurfaceSealsCompleteInventory is the baseline: a complete axis
+// declaration is admitted, indexed, and sealed with no verdict.
+func TestAxisSurfaceSealsCompleteInventory(t *testing.T) {
+	templates := []*Template[scratchInputs]{
+		mustTemplate(t, scratchSpec("value", programartifact.RuleOutputValue, valueSemantic)),
+		mustTemplate(t, scratchSpec("heap", programartifact.RuleOutputHeap, heapSemantic)),
+	}
+	if failure := sealTemplates(t, templates); failure.Available() {
+		t.Fatalf("complete axis inventory rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+}
+
+// TestAxisIdentityIsThisSurfaceDerivation states that an axis carries this
+// surface's own derivation of its key. An entry identity minted for another
+// surface names another entry, so it may not travel here.
+func TestAxisIdentityIsThisSurfaceDerivation(t *testing.T) {
+	template := mustTemplate(t, scratchSpec("value", programartifact.RuleOutputValue, valueSemantic))
+	template.id = schema.NewEntryID(schema.SurfaceKindRule, template.key)
+	failure := sealTemplates(t, []*Template[scratchInputs]{template})
+	if failure.Law != LawAxisIdentity || failure.Disposition != schema.DispositionMalformed {
+		t.Fatalf("foreign entry identity sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+}
+
+// TestAxisKeyIsUnique states that two axes cannot share one authored
+// identity. The entry identity is derived from the key, so the declaration
+// root rejects the duplicate before any axis law is reached.
+func TestAxisKeyIsUnique(t *testing.T) {
+	first := mustTemplate(t, scratchSpec("value", programartifact.RuleOutputValue, valueSemantic))
+	second := mustTemplate(t, scratchSpec("value", programartifact.RuleOutputHeap, heapSemantic))
+	failure := sealTemplates(t, []*Template[scratchInputs]{first, second})
+	if failure.Law != schema.LawEntryUnique || failure.Disposition != schema.DispositionDuplicate {
+		t.Fatalf("duplicate axis key sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+}
+
+// TestAxisSemanticIsDeclared states that an axis resolves to one canonical
+// engine identity in the vocabulary it is sealed against.
+func TestAxisSemanticIsDeclared(t *testing.T) {
+	template := mustTemplate(t, scratchSpec("value", programartifact.RuleOutputValue, valueSemantic))
+	template.semantic = func(vocabulary.Bundle) engine.SemanticKey { return engine.SemanticKey{} }
+	failure := sealTemplates(t, []*Template[scratchInputs]{template})
+	if failure.Law != LawSemanticIdentity || failure.Disposition != schema.DispositionMalformed {
+		t.Fatalf("axis without a canonical identity sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+}
+
+// TestAxisWriterPrincipalIsDeclared is the I1 down-payment: an axis names the
+// principal that writes it.
+func TestAxisWriterPrincipalIsDeclared(t *testing.T) {
+	template := mustTemplate(t, scratchSpec("value", programartifact.RuleOutputValue, valueSemantic))
+	template.principal = programartifact.RuleOutputInvalid
+	failure := sealTemplates(t, []*Template[scratchInputs]{template})
+	if failure.Law != LawPrincipalDeclared || failure.Disposition != schema.DispositionIncomplete {
+		t.Fatalf("undeclared writer principal sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	if failure.Contributor != schema.SurfaceKindAxis {
+		t.Fatalf("verdict contributor = %d", failure.Contributor)
+	}
+}
+
+// TestAxisWriterPrincipalIsUnique is the other half of I1: one principal
+// writes exactly one axis, so a fact cannot have two owners.
+func TestAxisWriterPrincipalIsUnique(t *testing.T) {
+	first := mustTemplate(t, scratchSpec("value", programartifact.RuleOutputValue, valueSemantic))
+	second := mustTemplate(t, scratchSpec("heap", programartifact.RuleOutputValue, heapSemantic))
+	failure := sealTemplates(t, []*Template[scratchInputs]{first, second})
+	if failure.Law != LawPrincipalUnique || failure.Disposition != schema.DispositionDuplicate {
+		t.Fatalf("shared writer principal sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	if failure.Entry != first.ID() {
+		t.Fatalf("verdict named entry %x, not the prior claimant", failure.Entry)
+	}
+}
+
+// TestAxisRequiredFieldsAreComplete states that every closure field of an axis
+// entry is present. An axis whose bind thunk is missing cannot be bound, and
+// the table says so at seal rather than at bind.
+func TestAxisRequiredFieldsAreComplete(t *testing.T) {
+	for _, missing := range []string{"semantic", "declare", "bind"} {
+		template := mustTemplate(t, scratchSpec("value", programartifact.RuleOutputValue, valueSemantic))
+		switch missing {
+		case "semantic":
+			template.semantic = nil
+		case "declare":
+			template.declare = nil
+		case "bind":
+			template.bind = nil
+		}
+		failure := sealTemplates(t, []*Template[scratchInputs]{template})
+		if failure.Law != LawFieldComplete || failure.Disposition != schema.DispositionIncomplete {
+			t.Fatalf("axis without %s sealed: law=%d disposition=%s", missing, failure.Law, failure.Disposition)
+		}
+	}
+}
+
+// TestAxisMetadataIsComplete states the declared half of the same
+// completeness: an axis identity alone is not a declaration.
+func TestAxisMetadataIsComplete(t *testing.T) {
+	for _, missing := range []string{"storage", "cardinality", "lifetime", "mutability", "concurrency"} {
+		template := mustTemplate(t, scratchSpec("value", programartifact.RuleOutputValue, valueSemantic))
+		switch missing {
+		case "storage":
+			template.storage = StorageInvalid
+		case "cardinality":
+			template.cardinality = CardinalityInvalid
+		case "lifetime":
+			template.lifetime = LifetimeInvalid
+		case "mutability":
+			template.mutability = MutabilityInvalid
+		case "concurrency":
+			template.concurrency = ConcurrencyInvalid
+		}
+		failure := sealTemplates(t, []*Template[scratchInputs]{template})
+		if failure.Law != LawMetadataComplete || failure.Disposition != schema.DispositionIncomplete {
+			t.Fatalf("axis without %s sealed: law=%d disposition=%s", missing, failure.Law, failure.Disposition)
+		}
+	}
+}
+
+// TestAxisDependencyEdgesResolve states that a declared dependency names an
+// axis in this table.
+func TestAxisDependencyEdgesResolve(t *testing.T) {
+	spec := scratchSpec("value", programartifact.RuleOutputValue, valueSemantic)
+	spec.Dependencies = []schema.Key{"absent"}
+	template := mustTemplate(t, spec)
+	failure := sealTemplates(t, []*Template[scratchInputs]{template})
+	if failure.Law != LawDependencyResolves || failure.Disposition != schema.DispositionIncomplete {
+		t.Fatalf("unresolved dependency sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	resolved := scratchSpec("heap", programartifact.RuleOutputHeap, heapSemantic)
+	resolved.Dependencies = []schema.Key{"value"}
+	if failure = sealTemplates(t, []*Template[scratchInputs]{
+		mustTemplate(t, scratchSpec("value", programartifact.RuleOutputValue, valueSemantic)),
+		mustTemplate(t, resolved),
+	}); failure.Available() {
+		t.Fatalf("resolved dependency rejected: law=%d", failure.Law)
+	}
+}
+
+// TestAxisSemanticIsUnique states that two axes cannot claim one canonical
+// engine identity.
+func TestAxisSemanticIsUnique(t *testing.T) {
+	first := mustTemplate(t, scratchSpec("value", programartifact.RuleOutputValue, valueSemantic))
+	second := mustTemplate(t, scratchSpec("heap", programartifact.RuleOutputHeap, valueSemantic))
+	failure := sealTemplates(t, []*Template[scratchInputs]{first, second})
+	if failure.Law != LawSemanticUnique || failure.Disposition != schema.DispositionDuplicate {
+		t.Fatalf("shared axis semantic sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+}
+
+// TestAxesBindBeforeRules is the phase law. The declaration catalog order is
+// the bind phase order, so the axis surface precedes the rule surface and a
+// table registered the other way round is rejected by the root.
+func TestAxesBindBeforeRules(t *testing.T) {
+	if schema.SurfaceKindAxis >= schema.SurfaceKindRule {
+		t.Fatalf("axis catalog ordinal %d does not precede rule ordinal %d", schema.SurfaceKindAxis, schema.SurfaceKindRule)
+	}
+	builder := schema.NewBuilder()
+	builder.Register(scratchRuleSurface{kind: schema.SurfaceKindRule})
+	builder.Register(NewSurface([]*Template[scratchInputs]{
+		mustTemplate(t, scratchSpec("value", programartifact.RuleOutputValue, valueSemantic)),
+	}))
+	_, failure := builder.Seal()
+	if failure.Law != schema.LawSurfacePhase || failure.Disposition != schema.DispositionMalformed {
+		t.Fatalf("rule surface registered before the axis surface sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+}
+
+// TestNewRejectsIncompleteSpec states the constructor half of completeness: a
+// spec missing any required field yields no template at all.
+func TestNewRejectsIncompleteSpec(t *testing.T) {
+	cases := map[string]func(*Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]){
+		"key": func(spec *Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]) { spec.Key = "" },
+		"principal": func(spec *Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]) {
+			spec.Principal = programartifact.RuleOutputInvalid
+		},
+		"storage": func(spec *Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]) { spec.Storage = StorageInvalid },
+		"cardinality": func(spec *Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]) {
+			spec.Cardinality = CardinalityInvalid
+		},
+		"lifetime": func(spec *Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]) {
+			spec.Lifetime = LifetimeInvalid
+		},
+		"mutability": func(spec *Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]) {
+			spec.Mutability = MutabilityInvalid
+		},
+		"concurrency": func(spec *Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]) {
+			spec.Concurrency = ConcurrencyInvalid
+		},
+		"semantic": func(spec *Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]) { spec.Semantic = nil },
+		"declare":  func(spec *Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]) { spec.Declare = nil },
+		"bind":     func(spec *Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]) { spec.Bind = nil },
+		"algebra":  func(spec *Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]) { spec.Algebra = nil },
+		"self-edge": func(spec *Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]) {
+			spec.Dependencies = []schema.Key{"value"}
+		},
+	}
+	for missing, damage := range cases {
+		spec := scratchSpec("value", programartifact.RuleOutputValue, valueSemantic)
+		damage(&spec)
+		if template, ok := New(spec); ok || template != nil {
+			t.Fatalf("spec without %s admitted", missing)
+		}
+	}
+}
+
+// TestBoundAxisPublishesItsAlgebra states that binding an axis and publishing
+// the algebra of that binding are one step: a bound axis without a complete
+// algebra is not published.
+func TestBoundAxisPublishesItsAlgebra(t *testing.T) {
+	bundle, bundleOK := vocabulary.New()
+	if !bundleOK {
+		t.Fatal("vocabulary")
+	}
+	spec := scratchSpec("value", programartifact.RuleOutputValue, valueSemantic)
+	template := mustTemplate(t, spec)
+	builder := engine.NewSchema()
+	fragment, declared := template.Declare(Declaration{Builder: builder, Bundle: bundle})
+	if !declared || !fragment.Available() {
+		t.Fatal("scratch axis did not declare")
+	}
+	// The bind thunk needs one open engine binding to carry; the scratch axis
+	// declares no engine slot of its own, so the schema below is the smallest
+	// sealable one.
+	if _, slotOK := engine.NewFactorSlot[uint64](builder, bundle.ValueFactor); !slotOK {
+		t.Fatal("scratch factor slot")
+	}
+	sealed, sealedOK := builder.Seal()
+	if !sealedOK {
+		t.Fatal("scratch schema did not seal")
+	}
+	binding := engine.NewSchemaBinding(sealed)
+	if binding == nil {
+		t.Fatal("scratch binding")
+	}
+	bound, boundOK := template.Bind(binding, scratchInputs{ready: true}, fragment)
+	if !boundOK || !bound.AlgebraAvailable() {
+		t.Fatal("bound axis published no algebra")
+	}
+	algebra, algebraOK := AlgebraOf[uint64](bound)
+	if !algebraOK || algebra.KeyEnd != 4 || !algebra.AdmitAt(3, 1) || algebra.AdmitAt(4, 1) {
+		t.Fatal("published algebra does not answer for the axis key space")
+	}
+	if _, wrongType := AlgebraOf[uint32](bound); wrongType {
+		t.Fatal("published algebra answered at a foreign fact type")
+	}
+	if _, rejected := template.Bind(binding, scratchInputs{}, fragment); rejected {
+		t.Fatal("axis published a cell for a rejected binding")
+	}
+	incomplete := scratchSpec("heap", programartifact.RuleOutputHeap, heapSemantic)
+	incomplete.Algebra = func(*scratchAxis) (Algebra[uint64], bool) { return Algebra[uint64]{}, true }
+	if _, published := mustTemplate(t, incomplete).Bind(binding, scratchInputs{ready: true}, fragment); published {
+		t.Fatal("axis published an incomplete algebra")
+	}
+}
+
+// TestAdoptProjectsOneEngineAlgebra states the single conversion law: the
+// surface's ordinal view of an algebra is the engine spec the owner binds,
+// projected, and a key outside the declared space is rejected rather than
+// truncated into a neighbour.
+func TestAdoptProjectsOneEngineAlgebra(t *testing.T) {
+	type carrier uint32
+	admitted := map[carrier]bool{0: true, 1: true}
+	spec := engine.HotFactorSpec[carrier, uint64]{
+		KeyEnd:      2,
+		Lattice:     scratchLattice(),
+		Default:     0,
+		AdmitAt:     func(key carrier, value uint64) bool { return admitted[key] },
+		Fingerprint: func(value uint64) uint64 { return value ^ 7 },
+		WidenRank:   engine.Measure[carrier, uint64]{Width: 2, At: func(key carrier, value uint64, component int) uint64 { return uint64(key) + uint64(component) }},
+	}
+	algebra, ok := Adopt(spec)
+	if !ok || !algebra.Available() {
+		t.Fatal("complete engine spec was not projected")
+	}
+	if algebra.KeyEnd != 2 || algebra.Fingerprint(1) != spec.Fingerprint(1) || algebra.Default != spec.Default {
+		t.Fatal("projection lost the declared algebra")
+	}
+	if !algebra.AdmitAt(1, 0) || algebra.AdmitAt(2, 0) {
+		t.Fatal("projected admission does not fence the declared key space")
+	}
+	if algebra.Widen.Width != 2 || algebra.Widen.At(1, 0, 1) != 2 || algebra.Widen.At(2, 0, 1) != 0 {
+		t.Fatal("projected widen rank does not fence the declared key space")
+	}
+	if !algebra.Narrow.Absent() || algebra.Narrow.Available() {
+		t.Fatal("undeclared narrow rank was projected as declared")
+	}
+	spec.AdmitAt = nil
+	if _, admitted := Adopt(spec); admitted {
+		t.Fatal("engine spec without an admission predicate was projected")
+	}
+}

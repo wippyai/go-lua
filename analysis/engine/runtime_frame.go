@@ -10,13 +10,14 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/demand"
 	"github.com/wippyai/go-lua/analysis/engine/internal/factbinding"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // Row is an opaque, synchronous product row. Its support and typed values
 // remain inside the private product session; it expires when Transfer returns.
 type Row struct {
 	session *productSession
-	epoch   uint64
+	epoch   identity.Generation
 	index   int
 }
 
@@ -58,15 +59,15 @@ type readSession interface {
 	dynamicObservations() []demand.Observation
 }
 
-func (session *productSession) valid(execution *ruleExecution, epoch uint64) bool {
-	return session != nil && session.live && session.execution == execution && execution != nil && epoch != 0 && execution.active.Load() == epoch && session.work != nil && session.work.Checkpoint()
+func (session *productSession) valid(execution *ruleExecution, epoch identity.Generation) bool {
+	return session != nil && session.live && session.execution == execution && execution != nil && execution.active.holds(epoch) && session.work != nil && session.work.Checkpoint()
 }
 
 // checkpoint samples the one carrier-owned epoch probe. Product owns no
 // second cancellation authority; it merely stops its private rows before a
 // Rule callback, patch, or evidence can escape.
 func (session *productSession) checkpoint() bool {
-	return session != nil && session.execution != nil && session.work != nil && session.execution.active.Load() == session.execution.epoch && session.work.Checkpoint()
+	return session != nil && session.execution != nil && session.work != nil && session.execution.active.holds(session.execution.epoch) && session.work.Checkpoint()
 }
 
 func (session *productSession) requireCheckpoint() bool {
@@ -152,7 +153,7 @@ func newProductSession(execution *ruleExecution, reads []readRuntime, work *carr
 // State path: a stale Access, duplicate Product, or escaped Row fails closed.
 func Product[V, O any](access Access[V, O], visit func(Row) bool) bool {
 	session := access.execution
-	if session == nil || access.owner == nil || session.owner != access.owner || access.epoch == 0 || session.active.Load() != access.epoch || session.product == nil || visit == nil {
+	if session == nil || access.owner == nil || session.owner != access.owner || !session.active.holds(access.epoch) || session.product == nil || visit == nil {
 		return false
 	}
 	product := session.product
@@ -179,7 +180,7 @@ func Product[V, O any](access Access[V, O], visit func(Row) bool) bool {
 func ReadValue[V, O, S any](access Access[V, O], row Row, read Read[S]) (S, bool) {
 	var zero S
 	execution := access.execution
-	if execution == nil || execution.owner == nil || access.owner != execution.owner || execution.active.Load() != access.epoch || execution.product == nil || !execution.product.requireCheckpoint() || !read.matchesRuntimeOwner(execution.owner) || row.session == nil || row.session != execution.product || row.epoch != access.epoch || row.index != execution.product.current || row.index < 0 || row.index >= len(row.session.values) || read.index >= len(row.session.reads) || row.session.reads[read.index] == nil {
+	if execution == nil || execution.owner == nil || access.owner != execution.owner || !execution.active.holds(access.epoch) || execution.product == nil || !execution.product.requireCheckpoint() || !read.matchesRuntimeOwner(execution.owner) || row.session == nil || row.session != execution.product || row.epoch != access.epoch || row.index != execution.product.current || row.index < 0 || row.index >= len(row.session.values) || read.index >= len(row.session.reads) || row.session.reads[read.index] == nil {
 		if execution != nil {
 			execution.failed.Store(true)
 		}
@@ -884,7 +885,7 @@ func resolveTypedSelection[V, S any, Tag selectionTag](session *productSession, 
 		return Selection[Tag, S]{}, false
 	}
 	epoch := session.execution.epoch
-	if epoch == 0 || session.execution.active.Load() != epoch {
+	if !session.execution.active.holds(epoch) {
 		return Selection[Tag, S]{}, false
 	}
 	return Selection[Tag, S]{
@@ -919,11 +920,11 @@ func resolveTypedSelection[V, S any, Tag selectionTag](session *productSession, 
 
 type outputAccess[V any] struct {
 	begin          func(*ruleExecution) outputSession
-	stage          func(*ruleExecution, uint64, int, V) bool
-	stageTransform func(*ruleExecution, uint64, int) bool
-	noCandidate    func(*ruleExecution, uint64, int) bool
-	stageSelection func(*ruleExecution, uint64, int, routeOutputBatch[V]) bool
-	noSelection    func(*ruleExecution, uint64, int, routeOutputBatch[V]) bool
+	stage          func(*ruleExecution, identity.Generation, int, V) bool
+	stageTransform func(*ruleExecution, identity.Generation, int) bool
+	noCandidate    func(*ruleExecution, identity.Generation, int) bool
+	stageSelection func(*ruleExecution, identity.Generation, int, routeOutputBatch[V]) bool
+	noSelection    func(*ruleExecution, identity.Generation, int, routeOutputBatch[V]) bool
 	derivation     func(outputSession) ([]RuleDisposition[V], bool)
 }
 
@@ -1162,7 +1163,7 @@ func newTypedOutputAccess[K ~uint32 | ~uint64, V any](output *boundFactor[K, V],
 			}
 			return typed
 		},
-		stage: func(execution *ruleExecution, epoch uint64, row int, value V) bool {
+		stage: func(execution *ruleExecution, epoch identity.Generation, row int, value V) bool {
 			if execution == nil || execution.owner != owner {
 				return false
 			}
@@ -1172,28 +1173,28 @@ func newTypedOutputAccess[K ~uint32 | ~uint64, V any](output *boundFactor[K, V],
 			}
 			return true
 		},
-		stageTransform: func(execution *ruleExecution, epoch uint64, row int) bool {
+		stageTransform: func(execution *ruleExecution, epoch identity.Generation, row int) bool {
 			if execution == nil || execution.owner != owner {
 				return false
 			}
 			typed, ok := execution.output.(*typedOutput[K, V])
 			return ok && typed.stageTransform(execution, epoch, row)
 		},
-		noCandidate: func(execution *ruleExecution, epoch uint64, row int) bool {
+		noCandidate: func(execution *ruleExecution, epoch identity.Generation, row int) bool {
 			if execution == nil || execution.owner != owner {
 				return false
 			}
 			typed, ok := execution.output.(*typedOutput[K, V])
 			return ok && typed.noCandidate(execution, epoch, row)
 		},
-		stageSelection: func(execution *ruleExecution, epoch uint64, row int, batch routeOutputBatch[V]) bool {
+		stageSelection: func(execution *ruleExecution, epoch identity.Generation, row int, batch routeOutputBatch[V]) bool {
 			if execution == nil || execution.owner != owner {
 				return false
 			}
 			typed, ok := execution.output.(*typedOutput[K, V])
 			return ok && typed.stageSelection(execution, epoch, row, batch)
 		},
-		noSelection: func(execution *ruleExecution, epoch uint64, row int, batch routeOutputBatch[V]) bool {
+		noSelection: func(execution *ruleExecution, epoch identity.Generation, row int, batch routeOutputBatch[V]) bool {
 			if execution == nil || execution.owner != owner {
 				return false
 			}
@@ -1235,8 +1236,8 @@ func (output *typedOutput[K, V]) applyCarryTransform(execution *ruleExecution, w
 	return output.beginPatch(execution) && output.patch.TransformClosures(output.transform.closures, when, output.transform.apply)
 }
 
-func (output *typedOutput[K, V]) stage(execution *ruleExecution, epoch uint64, row int, value V) bool {
-	if output == nil || output.closed || output.execution != execution || execution == nil || execution.active.Load() != epoch || execution.product == nil || !execution.product.requireCheckpoint() || row != execution.product.current || row < 0 || row >= len(execution.product.values) || output.disposition != nil && output.disposition[row] != outputUnset {
+func (output *typedOutput[K, V]) stage(execution *ruleExecution, epoch identity.Generation, row int, value V) bool {
+	if output == nil || output.closed || output.execution != execution || execution == nil || !execution.active.holds(epoch) || execution.product == nil || !execution.product.requireCheckpoint() || row != execution.product.current || row < 0 || row >= len(execution.product.values) || output.disposition != nil && output.disposition[row] != outputUnset {
 		return false
 	}
 	if output.routeRead != 0 || output.targets == nil || output.disposition != nil && output.disposition[row] != outputUnset || execution.owner != nil && execution.owner.requiresDerivation() && row != output.proofCount {
@@ -1288,8 +1289,8 @@ func (output *typedOutput[K, V]) stage(execution *ruleExecution, epoch uint64, r
 // stageTransform settles one row whose only semantic effect is its declared
 // transformed carry.  It exists so a transform-only Rule has no sentinel
 // write or parallel carry publication path.
-func (output *typedOutput[K, V]) stageTransform(execution *ruleExecution, epoch uint64, row int) bool {
-	if output == nil || output.closed || !output.transform.active() || output.execution != execution || execution == nil || execution.active.Load() != epoch || execution.product == nil || !execution.product.requireCheckpoint() || row != execution.product.current || row < 0 || row >= len(execution.product.values) || output.disposition != nil && output.disposition[row] != outputUnset || execution.owner != nil && execution.owner.requiresDerivation() && row != output.proofCount {
+func (output *typedOutput[K, V]) stageTransform(execution *ruleExecution, epoch identity.Generation, row int) bool {
+	if output == nil || output.closed || !output.transform.active() || output.execution != execution || execution == nil || !execution.active.holds(epoch) || execution.product == nil || !execution.product.requireCheckpoint() || row != execution.product.current || row < 0 || row >= len(execution.product.values) || output.disposition != nil && output.disposition[row] != outputUnset || execution.owner != nil && execution.owner.requiresDerivation() && row != output.proofCount {
 		return false
 	}
 	when, ok := execution.product.rows.At(row)
@@ -1311,8 +1312,8 @@ func (output *typedOutput[K, V]) stageTransform(execution *ruleExecution, epoch 
 	return true
 }
 
-func (output *typedOutput[K, V]) noCandidate(execution *ruleExecution, epoch uint64, row int) bool {
-	if output == nil || output.closed || output.execution != execution || execution == nil || execution.active.Load() != epoch || execution.product == nil || !execution.product.requireCheckpoint() || row != execution.product.current || row < 0 || row >= len(execution.product.values) || output.disposition != nil && output.disposition[row] != outputUnset || execution.owner != nil && execution.owner.requiresDerivation() && row != output.proofCount {
+func (output *typedOutput[K, V]) noCandidate(execution *ruleExecution, epoch identity.Generation, row int) bool {
+	if output == nil || output.closed || output.execution != execution || execution == nil || !execution.active.holds(epoch) || execution.product == nil || !execution.product.requireCheckpoint() || row != execution.product.current || row < 0 || row >= len(execution.product.values) || output.disposition != nil && output.disposition[row] != outputUnset || execution.owner != nil && execution.owner.requiresDerivation() && row != output.proofCount {
 		return false
 	}
 	if output.routeRead != 0 {
@@ -1336,8 +1337,8 @@ func (output *typedOutput[K, V]) noCandidate(execution *ruleExecution, epoch uin
 	return true
 }
 
-func (output *typedOutput[K, V]) validRouteBatch(execution *ruleExecution, epoch uint64, row int, batch routeOutputBatch[V]) bool {
-	if output == nil || output.closed || output.execution != execution || execution == nil || execution.active.Load() != epoch || execution.product == nil || !execution.product.requireCheckpoint() ||
+func (output *typedOutput[K, V]) validRouteBatch(execution *ruleExecution, epoch identity.Generation, row int, batch routeOutputBatch[V]) bool {
+	if output == nil || output.closed || output.execution != execution || execution == nil || !execution.active.holds(epoch) || execution.product == nil || !execution.product.requireCheckpoint() ||
 		output.routeRead == 0 || output.routeTarget == nil || row != execution.product.current || row < 0 || row >= len(execution.product.values) || output.disposition != nil && output.disposition[row] != outputUnset ||
 		batch.read < 0 || uint64(batch.read)+1 != output.routeRead || batch.selectionID == 0 || batch.count < 0 || batch.count > 0 && batch.at == nil {
 		return false
@@ -1350,7 +1351,7 @@ func (output *typedOutput[K, V]) validRouteBatch(execution *ruleExecution, epoch
 // every Ref against the output Factor, retains every ordinal pair as evidence,
 // then groups equal exact targets and delegates their reduction to the
 // Factor's admitted Join before a single strong Set per target.
-func (output *typedOutput[K, V]) stageSelection(execution *ruleExecution, epoch uint64, row int, batch routeOutputBatch[V]) bool {
+func (output *typedOutput[K, V]) stageSelection(execution *ruleExecution, epoch identity.Generation, row int, batch routeOutputBatch[V]) bool {
 	if !output.validRouteBatch(execution, epoch, row, batch) || batch.count == 0 || execution.owner != nil && execution.owner.requiresDerivation() && row != output.proofCount {
 		return false
 	}
@@ -1413,7 +1414,7 @@ func (output *typedOutput[K, V]) stageSelection(execution *ruleExecution, epoch 
 	return true
 }
 
-func (output *typedOutput[K, V]) noSelection(execution *ruleExecution, epoch uint64, row int, batch routeOutputBatch[V]) bool {
+func (output *typedOutput[K, V]) noSelection(execution *ruleExecution, epoch identity.Generation, row int, batch routeOutputBatch[V]) bool {
 	if !output.validRouteBatch(execution, epoch, row, batch) || batch.count != 0 || execution.owner != nil && execution.owner.requiresDerivation() && row != output.proofCount {
 		return false
 	}
@@ -1511,7 +1512,7 @@ type boundRule[V, O any] struct {
 	carryTargets   []carrier.Target
 	carryApply     func(V) (V, bool)
 	carryOnly      bool
-	nextEpoch      atomic.Uint64
+	nextEpoch      generationSequence
 }
 
 // ruleOperand is the private typed bridge used only while attaching a
@@ -1584,8 +1585,8 @@ type ruleExecution struct {
 	work    *carrier.Work
 	base    carrier.RuleContributionBase
 	inputs  []carrier.State
-	epoch   uint64
-	active  atomic.Uint64
+	epoch   identity.Generation
+	active  generationCell
 	failed  atomic.Bool
 	product *productSession
 	output  outputSession
@@ -1640,12 +1641,12 @@ func (bound *boundRule[V, O]) execute(work *carrier.Work, base carrier.RuleContr
 	if bound == nil || bound.transfer == nil || work == nil || !work.OwnsRuleContributionStates(base, inputs) {
 		return carrier.Patch{}, nil, false, false, SolveFailurePhasePreflight
 	}
-	epoch := bound.nextEpoch.Add(1)
-	if epoch == 0 {
+	epoch, issued := bound.nextEpoch.issue()
+	if !issued {
 		return carrier.Patch{}, nil, false, false, SolveFailurePhasePreflight
 	}
 	execution := &ruleExecution{owner: bound, work: work, base: base, inputs: append([]carrier.State(nil), inputs...), epoch: epoch}
-	execution.active.Store(epoch)
+	execution.active.open(epoch)
 	defer func() {
 		if execution.output != nil {
 			execution.output.discard()
@@ -1653,7 +1654,7 @@ func (bound *boundRule[V, O]) execute(work *carrier.Work, base carrier.RuleContr
 		if execution.product != nil {
 			execution.product.close()
 		}
-		execution.active.CompareAndSwap(epoch, 0)
+		execution.active.revoke(epoch)
 	}()
 	product, ok := newProductSession(execution, bound.reads, work, inputs, within)
 	if !ok {
@@ -1731,7 +1732,7 @@ func (bound *boundRule[V, O]) execute(work *carrier.Work, base carrier.RuleContr
 }
 
 func (bound *boundRule[V, O]) derivation(execution *ruleExecution, reads []demand.Observation) (RuleDerivation[V, O], *ruleAdmissionTicket, bool) {
-	if bound == nil || bound.proof == nil || !bound.proof.valid() || !bound.admission.same(bound.proof.admission) || execution == nil || execution.owner != bound || !bound.carryOnly && execution.output == nil || execution.product == nil || !execution.product.requireCheckpoint() || execution.epoch == 0 || execution.active.Load() != execution.epoch || !bound.anchor.Available() {
+	if bound == nil || bound.proof == nil || !bound.proof.valid() || !bound.admission.same(bound.proof.admission) || execution == nil || execution.owner != bound || !bound.carryOnly && execution.output == nil || execution.product == nil || !execution.product.requireCheckpoint() || !execution.active.holds(execution.epoch) || !bound.anchor.Available() {
 		return RuleDerivation[V, O]{}, nil, false
 	}
 	compositionID := bound.proof.compositionID()
@@ -1822,7 +1823,7 @@ func validRuleDispositionCoverage[V any](dispositions []RuleDisposition[V], rows
 // StageValue is the only typed output mutation capability. It cannot select a
 // target, support region, predecessor, or Factor slot.
 func StageValue[V, O any](access Access[V, O], row Row, value V) bool {
-	if access.execution == nil || access.owner == nil || access.execution.owner != access.owner || access.execution.active.Load() != access.epoch || access.execution.product == nil || row.session != access.execution.product || row.epoch != access.epoch || row.index != access.execution.product.current || access.output.stage == nil || !access.output.stage(access.execution, access.epoch, row.index, value) {
+	if access.execution == nil || access.owner == nil || access.execution.owner != access.owner || !access.execution.active.holds(access.epoch) || access.execution.product == nil || row.session != access.execution.product || row.epoch != access.epoch || row.index != access.execution.product.current || access.output.stage == nil || !access.output.stage(access.execution, access.epoch, row.index, value) {
 		if access.execution != nil {
 			access.execution.failed.Store(true)
 		}
@@ -1836,7 +1837,7 @@ func StageValue[V, O any](access Access[V, O], row Row, value V) bool {
 // installed the Factor-owned map; callers cannot choose a map, target, or
 // predecessor and it never encodes the effect as a sentinel value.
 func StageTransform[V, O any](access Access[V, O], row Row) bool {
-	if access.execution == nil || access.owner == nil || access.execution.owner != access.owner || access.execution.active.Load() != access.epoch || access.execution.product == nil || row.session != access.execution.product || row.epoch != access.epoch || row.index != access.execution.product.current || access.output.stageTransform == nil || !access.output.stageTransform(access.execution, access.epoch, row.index) {
+	if access.execution == nil || access.owner == nil || access.execution.owner != access.owner || !access.execution.active.holds(access.epoch) || access.execution.product == nil || row.session != access.execution.product || row.epoch != access.epoch || row.index != access.execution.product.current || access.output.stageTransform == nil || !access.output.stageTransform(access.execution, access.epoch, row.index) {
 		if access.execution != nil {
 			access.execution.failed.Store(true)
 		}
@@ -1873,7 +1874,7 @@ func StageSelection[V, O any, Tag selectionTag, S any](access Access[V, O], row 
 			return ref, output, true
 		},
 	}
-	if access.execution == nil || access.owner == nil || access.execution.owner != access.owner || access.execution.active.Load() != access.epoch || access.execution.product == nil || row.session != access.execution.product || row.epoch != access.epoch || row.index != access.execution.product.current || access.output.stageSelection == nil || !access.output.stageSelection(access.execution, access.epoch, row.index, batch) {
+	if access.execution == nil || access.owner == nil || access.execution.owner != access.owner || !access.execution.active.holds(access.epoch) || access.execution.product == nil || row.session != access.execution.product || row.epoch != access.epoch || row.index != access.execution.product.current || access.output.stageSelection == nil || !access.output.stageSelection(access.execution, access.epoch, row.index, batch) {
 		if access.execution != nil {
 			access.execution.failed.Store(true)
 		}
@@ -1896,7 +1897,7 @@ func NoSelection[V, O any, Tag selectionTag, S any](access Access[V, O], row Row
 		return false
 	}
 	batch := routeOutputBatch[V]{read: selection.read, selectionID: selection.selectionID, count: 0}
-	if access.execution == nil || access.owner == nil || access.execution.owner != access.owner || access.execution.active.Load() != access.epoch || access.execution.product == nil || row.session != access.execution.product || row.epoch != access.epoch || row.index != access.execution.product.current || access.output.noSelection == nil || !access.output.noSelection(access.execution, access.epoch, row.index, batch) {
+	if access.execution == nil || access.owner == nil || access.execution.owner != access.owner || !access.execution.active.holds(access.epoch) || access.execution.product == nil || row.session != access.execution.product || row.epoch != access.epoch || row.index != access.execution.product.current || access.output.noSelection == nil || !access.output.noSelection(access.execution, access.epoch, row.index, batch) {
 		if access.execution != nil {
 			access.execution.failed.Store(true)
 		}
@@ -1910,7 +1911,7 @@ func NoSelection[V, O any, Tag selectionTag, S any](access Access[V, O], row Row
 // Like StageValue, it is row-, owner-, and epoch-fenced, and a row may take
 // exactly one of the two dispositions.
 func NoCandidate[V, O any](access Access[V, O], row Row) bool {
-	if access.execution == nil || access.owner == nil || access.execution.owner != access.owner || access.execution.active.Load() != access.epoch || access.execution.product == nil || row.session != access.execution.product || row.epoch != access.epoch || row.index != access.execution.product.current || access.output.noCandidate == nil || !access.output.noCandidate(access.execution, access.epoch, row.index) {
+	if access.execution == nil || access.owner == nil || access.execution.owner != access.owner || !access.execution.active.holds(access.epoch) || access.execution.product == nil || row.session != access.execution.product || row.epoch != access.epoch || row.index != access.execution.product.current || access.output.noCandidate == nil || !access.output.noCandidate(access.execution, access.epoch, row.index) {
 		if access.execution != nil {
 			access.execution.failed.Store(true)
 		}
@@ -1924,7 +1925,7 @@ func NoCandidate[V, O any](access Access[V, O], row Row) bool {
 // retained as a capability to a later solve.
 func Operand[V, O any](access Access[V, O]) (O, bool) {
 	var zero O
-	if access.execution == nil || access.owner == nil || access.execution.owner != access.owner || access.epoch == 0 || access.execution.active.Load() != access.epoch {
+	if access.execution == nil || access.owner == nil || access.execution.owner != access.owner || !access.execution.active.holds(access.epoch) {
 		return zero, false
 	}
 	return access.owner.operand, true
@@ -1933,7 +1934,7 @@ func Operand[V, O any](access Access[V, O]) (O, bool) {
 // Coordinates returns the accepted activation tuple for this live transfer.
 // It is unavailable for ordinary Rule rows and after the transfer closes.
 func Coordinates[V, O any](access Access[V, O]) (ActivationCoordinates, bool) {
-	if access.execution == nil || access.owner == nil || access.execution.owner != access.owner || access.epoch == 0 || access.execution.active.Load() != access.epoch || !access.owner.coordinates.Available() {
+	if access.execution == nil || access.owner == nil || access.execution.owner != access.owner || !access.execution.active.holds(access.epoch) || !access.owner.coordinates.Available() {
 		return ActivationCoordinates{}, false
 	}
 	return access.owner.coordinates, true

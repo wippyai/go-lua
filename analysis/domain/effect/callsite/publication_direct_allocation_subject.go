@@ -5,7 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/pack"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 const publicationDirectAllocationSubjectDomain = "wippy.analysis.effect.publication-direct-allocation-subject.v1\x00"
@@ -15,20 +15,20 @@ const publicationDirectAllocationSubjectDomain = "wippy.analysis.effect.publicat
 // a placement fact: no alias, escape, uniqueness, frozen, COW, lifetime, or
 // residence conclusion is represented here.
 type PublicationDirectAllocationSubject struct {
-	id          keyspace.ContentID
-	correlation keyspace.ContentID
-	direct      keyspace.ContentID
+	id          identity.ContentID
+	correlation identity.ContentID
+	direct      identity.ContentID
 }
 
-func publicationDirectAllocationSubjectID(correlation, direct keyspace.ContentID) keyspace.ContentID {
+func publicationDirectAllocationSubjectID(correlation, direct identity.ContentID) identity.ContentID {
 	if !correlation.Available() || !direct.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	hash := sha256.New()
 	_, _ = hash.Write([]byte(publicationDirectAllocationSubjectDomain))
 	_, _ = hash.Write(correlation[:])
 	_, _ = hash.Write(direct[:])
-	var id keyspace.ContentID
+	var id identity.ContentID
 	copy(id[:], hash.Sum(nil))
 	return id
 }
@@ -71,14 +71,14 @@ func NewPublicationDirectAllocationSubject(correlation PublicationPlacementCorre
 	return receipt, receipt.valid()
 }
 
-func (receipt PublicationDirectAllocationSubject) ContentID() (keyspace.ContentID, bool) {
+func (receipt PublicationDirectAllocationSubject) ContentID() (identity.ContentID, bool) {
 	return receipt.id, receipt.valid()
 }
 
-func (receipt PublicationDirectAllocationSubject) CorrelationID() (keyspace.ContentID, bool) {
+func (receipt PublicationDirectAllocationSubject) CorrelationID() (identity.ContentID, bool) {
 	return receipt.correlation, receipt.valid()
 }
 
-func (receipt PublicationDirectAllocationSubject) DirectAllocationSubjectID() (keyspace.ContentID, bool) {
+func (receipt PublicationDirectAllocationSubject) DirectAllocationSubjectID() (identity.ContentID, bool) {
 	return receipt.direct, receipt.valid()
 }

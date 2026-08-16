@@ -6,7 +6,7 @@ import (
 	"encoding/binary"
 	"sort"
 
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 const (
@@ -20,7 +20,7 @@ const (
 // identity is intentionally absent: a Link is hot authority supplied to
 // BindSymbolic, while this versioned law ID is the only schema discriminator
 // carried by the artifact.
-var symbolicLawID = keyspace.ContentID(sha256.Sum256([]byte("wippy.analysis.call.symbolic.v1")))
+var symbolicLawID = identity.ContentID(sha256.Sum256([]byte("wippy.analysis.call.symbolic.v1")))
 
 // SymbolicValue is Call's portable, keyless dispatch relation. It contains
 // only owner-issued TargetRoleID values and opaque status; no Link, Algebra,
@@ -50,7 +50,7 @@ func (value SymbolicValue) IsOpen() bool {
 func (value SymbolicValue) HasOpaqueAlternative() bool {
 	return value.Valid() && (value.top || value.open)
 }
-func (value SymbolicValue) SchemaID() keyspace.ContentID { return symbolicLawID }
+func (value SymbolicValue) SchemaID() identity.ContentID { return symbolicLawID }
 func (value SymbolicValue) RoleCount() int {
 	if !value.Valid() || value.top {
 		return 0
@@ -151,7 +151,7 @@ func DecodeSymbolic(encoded []byte) (SymbolicValue, bool) {
 	if uint64(len(encoded)) != uint64(symbolicHeader)+uint64(count)*symbolicRole {
 		return SymbolicValue{}, false
 	}
-	var schemaID keyspace.ContentID
+	var schemaID identity.ContentID
 	copy(schemaID[:], encoded[16:48])
 	if schemaID != symbolicLawID {
 		return SymbolicValue{}, false
@@ -159,7 +159,7 @@ func DecodeSymbolic(encoded []byte) (SymbolicValue, bool) {
 	value := SymbolicValue{top: encoded[48] != 0, open: encoded[49] != 0, roles: make([]TargetRoleID, count)}
 	for index := range value.roles {
 		offset := symbolicHeader + symbolicRole*index
-		var id keyspace.ContentID
+		var id identity.ContentID
 		copy(id[:], encoded[offset+1:offset+33])
 		role, ok := newTargetRoleID(TargetRoleKind(encoded[offset]), id)
 		if !ok {

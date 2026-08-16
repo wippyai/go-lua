@@ -4,11 +4,11 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
-func artifactResultLawID(seed byte) keyspace.ContentID {
-	var id keyspace.ContentID
+func artifactResultLawID(seed byte) identity.ContentID {
+	var id identity.ContentID
 	id[0] = seed
 	return id
 }
@@ -17,10 +17,10 @@ func TestArtifactResultSharesOneValueAxisAcrossBodies(t *testing.T) {
 	if _, retained := reflect.TypeOf(resultBody{}).FieldByName("values"); retained {
 		t.Fatal("resultBody still owns a duplicate Value axis")
 	}
-	if axis, published := reflect.TypeOf(Result{}).FieldByName("values"); !published || axis.Type != reflect.TypeOf([]keyspace.ContentID(nil)) {
+	if axis, published := reflect.TypeOf(Result{}).FieldByName("values"); !published || axis.Type != reflect.TypeOf([]identity.ContentID(nil)) {
 		t.Fatal("Result does not own the canonical Value ContentID axis")
 	}
-	values := make([]keyspace.ContentID, 130)
+	values := make([]identity.ContentID, 130)
 	for index := range values {
 		values[index] = artifactResultLawID(byte(index + 1))
 	}
@@ -54,10 +54,10 @@ func TestArtifactResultSharesOneValueAxisAcrossBodies(t *testing.T) {
 }
 
 func TestArtifactResultAxisHashIsSequentiallyStable(t *testing.T) {
-	values := []keyspace.ContentID{artifactResultLawID(1), artifactResultLawID(2)}
+	values := []identity.ContentID{artifactResultLawID(1), artifactResultLawID(2)}
 	bodies := []resultBody{{id: artifactResultLawID(3), valuePresence: []uint64{1}}}
 	first, firstOK := analysisResultID(artifactResultLawID(4), values, bodies)
-	second, secondOK := analysisResultID(artifactResultLawID(4), append([]keyspace.ContentID(nil), values...), append([]resultBody(nil), bodies...))
+	second, secondOK := analysisResultID(artifactResultLawID(4), append([]identity.ContentID(nil), values...), append([]resultBody(nil), bodies...))
 	if !firstOK || !secondOK || first != second {
 		t.Fatalf("equivalent axis result IDs = %v/%t and %v/%t, want same available ID", first, firstOK, second, secondOK)
 	}

@@ -7,8 +7,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/program"
-	"github.com/wippyai/go-lua/program/link"
+	"github.com/wippyai/go-lua/analysis/program"
+	"github.com/wippyai/go-lua/analysis/program/link"
 )
 
 func installSourceRules(solver *engine.Solver, source *link.Link, factor *engine.Factor[uint64, product.Value], registry *axis.Registry, authority axis.SchemaIdentity) bool {

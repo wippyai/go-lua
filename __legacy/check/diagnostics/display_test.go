@@ -11,8 +11,8 @@ import (
 
 	"github.com/wippyai/go-lua/__legacy/analysis/lua/exprdisplay"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
-	typetable "github.com/wippyai/go-lua/analysis/type/table"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	typetable "github.com/wippyai/go-lua/analysis/domain/type/table"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 

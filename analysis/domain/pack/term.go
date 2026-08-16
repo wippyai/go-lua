@@ -2,7 +2,7 @@ package pack
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/static"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // SemanticSource is Pack's detached replay receipt for one mounted value.
@@ -11,12 +11,12 @@ import (
 // pointer.  It is minted while sealing and is the only carrier Heap may use
 // to ask Value for the corresponding coordinate.
 type SemanticSource struct {
-	module keyspace.ContentID
-	id     keyspace.ContentID
+	module identity.ContentID
+	id     identity.ContentID
 	sealed bool
 }
 
-func newSemanticSource(module, id keyspace.ContentID) (SemanticSource, bool) {
+func newSemanticSource(module, id identity.ContentID) (SemanticSource, bool) {
 	source := SemanticSource{module: module, id: id, sealed: module.Available() && id.Available()}
 	return source, source.Available()
 }
@@ -27,15 +27,15 @@ func (source SemanticSource) Available() bool {
 
 // Module and ID are opaque, stable semantic identities.  They do not expose
 // authored Terms or an owner object and are safe to retain in hot operands.
-func (source SemanticSource) Module() keyspace.ContentID {
+func (source SemanticSource) Module() identity.ContentID {
 	if !source.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return source.module
 }
-func (source SemanticSource) ID() keyspace.ContentID {
+func (source SemanticSource) ID() identity.ContentID {
 	if !source.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return source.id
 }

@@ -13,8 +13,10 @@ import (
 
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/internal/programartifact"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
+	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 const artifactResultIdentityDomain = "analysis/artifact-result/mounted-row/v1"
@@ -143,20 +145,28 @@ func collectBranchDiagnosticFindings(report *DiagnosticReport, receipt *artifact
 	if report == nil || receipt == nil {
 		return false
 	}
+	table, tableOK := grammar.Diagnostics()
+	if !tableOK {
+		return false
+	}
 	var trueSeverity, falseSeverity FindingSeverity
 	collectGuards := false
-	for _, spec := range diagnosticCollectorRegistry {
-		if spec.surface != diagnosticCollectorSurfaceBranch {
+	for position := 0; position < table.Count(); position++ {
+		entry, entryOK := table.At(position)
+		if !entryOK {
+			return false
+		}
+		if entry.Lane() != diagnostic.LaneBranch {
 			continue
 		}
-		severity, enabled := policy.enabled(spec.rule)
+		severity, enabled := policy.enabled(entry.Code())
 		if !enabled {
 			continue
 		}
-		switch spec.rule {
-		case DiagnosticRuleAlwaysTrueGuard:
+		switch entry.Code() {
+		case DiagnosticCodeAlwaysTrueGuard:
 			trueSeverity, collectGuards = severity, true
-		case DiagnosticRuleAlwaysFalseGuard:
+		case DiagnosticCodeAlwaysFalseGuard:
 			falseSeverity, collectGuards = severity, true
 		default:
 			return false
@@ -211,7 +221,7 @@ func classifyDiagnosticGuardPolarity(truths []valuedomain.Truth) diagnosticGuard
 // present value of that exact truthiness; mixed, unknown, missing, and
 // unreachable evidence therefore remains silent for both rules.
 func collectGuardPolarityFindings(report *DiagnosticReport, receipt *artifactResultReceipt, selected []artifactDiagnosticObservationReceipt, schema *valuedomain.Schema, solver *engine.Solver, state *engine.State, trueSeverity, falseSeverity FindingSeverity) bool {
-	if report == nil || receipt == nil || schema == nil || solver == nil || state == nil || (trueSeverity != FindingSeverityInvalid && !trueSeverity.valid()) || (falseSeverity != FindingSeverityInvalid && !falseSeverity.valid()) || (trueSeverity == FindingSeverityInvalid && falseSeverity == FindingSeverityInvalid) {
+	if report == nil || receipt == nil || schema == nil || solver == nil || state == nil || (trueSeverity != FindingSeverityInvalid && !trueSeverity.Available()) || (falseSeverity != FindingSeverityInvalid && !falseSeverity.Available()) || (trueSeverity == FindingSeverityInvalid && falseSeverity == FindingSeverityInvalid) {
 		return false
 	}
 	observations := make(map[artifactResultPoint]valueSummaryObservation, len(receipt.pointObservations))
@@ -284,14 +294,14 @@ func collectGuardPolarityFindings(report *DiagnosticReport, receipt *artifactRes
 		if !locationOK {
 			return false
 		}
-		if polarity == diagnosticGuardPolarityTrue && trueSeverity.valid() {
+		if polarity == diagnosticGuardPolarityTrue && trueSeverity.Available() {
 			id, idOK := mountedResultID("diagnostic-finding", subject.mount, subject.artifact, subject.local)
 			if !idOK {
 				return false
 			}
 			report.findings = append(report.findings, diagnosticFinding{id: id, subject: subject.id, code: DiagnosticCodeAlwaysTrueGuard, severity: trueSeverity, location: location})
 		}
-		if polarity == diagnosticGuardPolarityFalse && falseSeverity.valid() {
+		if polarity == diagnosticGuardPolarityFalse && falseSeverity.Available() {
 			id, idOK := mountedResultID("diagnostic-finding/always-false-guard", subject.mount, subject.artifact, subject.local)
 			if !idOK {
 				return false
@@ -300,6 +310,17 @@ func collectGuardPolarityFindings(report *DiagnosticReport, receipt *artifactRes
 		}
 	}
 	return true
+}
+
+// staticDiagnosticDeclaration resolves the declared row one artifact-issued
+// observation population feeds. The sealed table is the sole authority: a
+// population no row claims is a collector hole, not a row to skip.
+func staticDiagnosticDeclaration(kind programartifact.DiagnosticObservationKind) (*diagnostic.Entry, bool) {
+	table, tableOK := grammar.Diagnostics()
+	if !tableOK {
+		return nil, false
+	}
+	return table.ForStaticObservation(kind)
 }
 
 // collectStaticDiagnosticFindings owns policy selection for static rows. It
@@ -314,23 +335,23 @@ func collectStaticDiagnosticFindings(report *DiagnosticReport, receipt *artifact
 		if !observation.available() {
 			return false
 		}
-		spec, known := diagnosticStaticCollectorSpec(observation.kind)
+		entry, known := staticDiagnosticDeclaration(observation.kind)
 		if !known {
 			// A row that the artifact carrier admits but this Analysis collector
 			// does not recognize is not safely ignorable: it could otherwise turn
 			// an enabled policy into a false-clean report.
 			return false
 		}
-		severity, enabled := policy.enabled(spec.rule)
+		severity, enabled := policy.enabled(entry.Code())
 		if !enabled {
 			continue
 		}
-		switch spec.rule {
-		case DiagnosticRuleUnresolvedTypeReference:
+		switch entry.Code() {
+		case DiagnosticCodeUnresolvedTypeReference:
 			if !appendStaticUnresolvedTypeFinding(report, observation, severity) {
 				return false
 			}
-		case DiagnosticRuleUnresolvedValueReference:
+		case DiagnosticCodeUnresolvedValueReference:
 			if !appendStaticUnresolvedValueFinding(report, observation, severity) {
 				return false
 			}
@@ -345,7 +366,7 @@ func collectStaticDiagnosticFindings(report *DiagnosticReport, receipt *artifact
 // implicit-global receipt. It needs no Engine observation: Program issued the
 // read/cell evidence and Link proved the name had no configured global.
 func appendStaticUnresolvedValueFinding(report *DiagnosticReport, observation compiledObservation, severity FindingSeverity) bool {
-	if report == nil || observation.kind != programartifact.DiagnosticObservationValueReferenceUnresolved || !observation.available() || !severity.valid() {
+	if report == nil || observation.kind != programartifact.DiagnosticObservationValueReferenceUnresolved || !observation.available() || !severity.Available() {
 		return false
 	}
 	name, nameOK := newDiagnosticSemanticName(observation.name)
@@ -366,7 +387,7 @@ func appendStaticUnresolvedValueFinding(report *DiagnosticReport, observation co
 // issued by ProgramArtifact before it was mounted. It has no Engine dependency
 // and cannot add an Engine observation or affect the solve.
 func appendStaticUnresolvedTypeFinding(report *DiagnosticReport, observation compiledObservation, severity FindingSeverity) bool {
-	if report == nil || observation.kind != programartifact.DiagnosticObservationTypeReferenceUnresolved || !observation.available() || !severity.valid() {
+	if report == nil || observation.kind != programartifact.DiagnosticObservationTypeReferenceUnresolved || !observation.available() || !severity.Available() {
 		return false
 	}
 	name, nameOK := newDiagnosticSemanticName(strings.Join(observation.path, "."))
@@ -392,7 +413,7 @@ func buildDetachedArtifactResult(
 	if !receipt.valid() || solver == nil || state == nil {
 		return nil, false
 	}
-	values := append([]keyspace.ContentID(nil), receipt.values...)
+	values := append([]identity.ContentID(nil), receipt.values...)
 	bodies := make([]resultBody, len(receipt.bodies))
 	for index, body := range receipt.bodies {
 		bodies[index] = resultBody{id: body.id, roots: append([]resultRoot(nil), body.roots...), valuePresence: make([]uint64, resultValueWordCount(len(values)))}
@@ -486,13 +507,13 @@ func buildDetachedArtifactResult(
 }
 
 type artifactResultPoint struct {
-	mount keyspace.ContentID
-	point keyspace.ContentID
+	mount identity.ContentID
+	point identity.ContentID
 }
 
 type artifactResultBody struct {
-	mount keyspace.ContentID
-	body  keyspace.ContentID
+	mount identity.ContentID
+	body  identity.ContentID
 }
 
 func appendUniqueInt(values []int, value int) []int {
@@ -504,7 +525,7 @@ func appendUniqueInt(values []int, value int) []int {
 	return append(values, value)
 }
 
-func appendUniqueIDs(values, additions []keyspace.ContentID) []keyspace.ContentID {
+func appendUniqueIDs(values, additions []identity.ContentID) []identity.ContentID {
 	for _, addition := range additions {
 		if !addition.Available() {
 			continue
@@ -523,9 +544,9 @@ func appendUniqueIDs(values, additions []keyspace.ContentID) []keyspace.ContentI
 	return values
 }
 
-func mountedResultID(role string, mount, artifact, local keyspace.ContentID) (keyspace.ContentID, bool) {
+func mountedResultID(role string, mount, artifact, local identity.ContentID) (identity.ContentID, bool) {
 	if role == "" || !mount.Available() || !artifact.Available() || !local.Available() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	hash := sha256.New()
 	_, _ = hash.Write([]byte(artifactResultIdentityDomain))
@@ -535,5 +556,5 @@ func mountedResultID(role string, mount, artifact, local keyspace.ContentID) (ke
 	_, _ = hash.Write(mount[:])
 	_, _ = hash.Write(artifact[:])
 	_, _ = hash.Write(local[:])
-	return keyspace.ContentID(hash.Sum(nil)), true
+	return identity.ContentID(hash.Sum(nil)), true
 }

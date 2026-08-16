@@ -7,10 +7,10 @@ import (
 	"strings"
 
 	caplabel "github.com/wippyai/go-lua/analysis/domain/effect/capability/label"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup/internal/stdlib"
-	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // HasCapability reports whether the immutable signature selected for name

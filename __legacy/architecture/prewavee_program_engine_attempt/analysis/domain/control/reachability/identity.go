@@ -5,7 +5,7 @@ import (
 	"encoding/binary"
 
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/program"
+	"github.com/wippyai/go-lua/analysis/program"
 )
 
 const semanticVersion = 1

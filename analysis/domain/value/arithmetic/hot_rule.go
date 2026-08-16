@@ -4,8 +4,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value"
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
-	flowkind "github.com/wippyai/go-lua/program/flow/kind"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
+	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
 
 // HotRule is Value's receipt-native primitive arithmetic transfer. It keeps
@@ -70,7 +70,7 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 	return &HotRule{implementation: implementation, left: left, right: right, owner: owner}, true
 }
 
-func (rule *HotRule) ReceiptForOccurrence(mount, id keyspace.ContentID) (value.BinaryArithmetic, bool) {
+func (rule *HotRule) ReceiptForOccurrence(mount, id identity.ContentID) (value.BinaryArithmetic, bool) {
 	if rule == nil || rule.owner == nil || rule.owner.Schema() == nil {
 		return value.BinaryArithmetic{}, false
 	}
@@ -78,7 +78,7 @@ func (rule *HotRule) ReceiptForOccurrence(mount, id keyspace.ContentID) (value.B
 	return row, ok && rule.owner.Schema().OwnsBinaryArithmetic(row)
 }
 
-func (rule *HotRule) AttachMountedRule(assembly *engine.ReceiptAssembly, mountID, pointID, occurrenceID keyspace.ContentID) (engine.BindingRuleRowRef, bool) {
+func (rule *HotRule) AttachMountedRule(assembly *engine.ReceiptAssembly, mountID, pointID, occurrenceID identity.ContentID) (engine.BindingRuleRowRef, bool) {
 	if rule == nil || rule.owner == nil || assembly == nil {
 		return engine.BindingRuleRowRef{}, false
 	}
@@ -125,7 +125,7 @@ func (rule *HotRule) AttachReceiptMember(compilation *engine.ReceiptCompilation,
 	return engine.AttachReceiptRuleMember(compilation, implementation, member, operand)
 }
 
-func (rule *HotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, pointID, occurrenceID keyspace.ContentID) (*engine.ReceiptMember, bool) {
+func (rule *HotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, pointID, occurrenceID identity.ContentID) (*engine.ReceiptMember, bool) {
 	if rule == nil || graph == nil {
 		return nil, false
 	}

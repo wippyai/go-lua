@@ -5,14 +5,15 @@ import (
 
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
 	"github.com/wippyai/go-lua/analysis/domain/materialization"
-	"github.com/wippyai/go-lua/analysis/internal/programartifact/schemaadapter"
-	"github.com/wippyai/go-lua/analysis/internal/programschema"
-	flowkind "github.com/wippyai/go-lua/program/flow/kind"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/link"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
-	"github.com/wippyai/go-lua/program/lower"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/lua/lower"
+	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
+	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/program/link"
+	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 // These laws use Heap's post-seal artifact receipts.  The fixture helper is
@@ -195,7 +196,7 @@ return table.field
 	if !allocationOK || !rootOK || root != allocationKey || !ordinalOK || ordinal != 0 {
 		t.Fatal("allocation occurrence inverse roundtrip")
 	}
-	if _, ok := issuer.AllocationRootForOccurrence(keyspace.ContentID{}); ok {
+	if _, ok := issuer.AllocationRootForOccurrence(identity.ContentID{}); ok {
 		t.Fatal("zero allocation occurrence was admitted")
 	}
 	if allocations := testing.AllocsPerRun(200, func() {
@@ -212,7 +213,7 @@ return table.field
 		t.Fatal("occurrence fixture omitted index accesses")
 	}
 	var firstAccess heapdomain.IndexAccess
-	var firstID keyspace.ContentID
+	var firstID identity.ContentID
 	var firstRead bool
 	for index := 0; index < indexCount; index++ {
 		access, accessOK := fixture.schema.IndexAccessAt(index)
@@ -227,7 +228,7 @@ return table.field
 		if !mountedOK || !gotOK || got != access || !receiptOK || !fromReceiptOK || fromReceipt != access {
 			t.Fatalf("index occurrence inverse row %d", index)
 		}
-		if firstID == (keyspace.ContentID{}) {
+		if firstID == (identity.ContentID{}) {
 			firstAccess, firstID, firstRead = access, occurrence, read
 		}
 	}
@@ -259,7 +260,7 @@ return table.field
 	}
 	_ = foreignID
 	_ = foreignAccess
-	if _, ok := issuer.IndexAccessForOccurrence(keyspace.ContentID{}, firstRead); ok {
+	if _, ok := issuer.IndexAccessForOccurrence(identity.ContentID{}, firstRead); ok {
 		t.Fatal("zero index occurrence was admitted")
 	}
 }
@@ -510,8 +511,8 @@ type semanticHeapFixtureRecord struct {
 	linked  *link.Link
 	schema  heapdomain.Schema
 	mount   heapdomain.ArtifactMount
-	module  keyspace.ContentID
-	program keyspace.ContentID
+	module  identity.ContentID
+	program identity.ContentID
 }
 
 func newSemanticHeapFixture(t testing.TB, name, text string, spec target.Spec) semanticHeapFixtureRecord {
@@ -531,7 +532,7 @@ func newSemanticHeapFixture(t testing.TB, name, text string, spec target.Spec) s
 	shard, shardOK := linked.Project().Mounts().At(0)
 	module, moduleOK := linked.Project().ModuleKey(shard)
 	programID, programOK := linked.Project().Mounts().ProgramID(shard)
-	receipt, receiptOK := programschema.Global()
+	receipt, receiptOK := grammar.Global()
 	compiled, failure := schemaadapter.CompileDetailed(program.TransformerInput(), receipt)
 	mount, mountOK := heapdomain.NewArtifactMount(compiled, module, programID)
 	schema, sealFailure := heapdomain.SealWithArtifacts(linked, []heapdomain.ArtifactMount{mount})

@@ -3,10 +3,10 @@ package analysis
 import (
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/internal/programartifact"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/link"
-	programsource "github.com/wippyai/go-lua/program/source"
+	"github.com/wippyai/go-lua/analysis/identity"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/program/link"
+	programsource "github.com/wippyai/go-lua/analysis/program/source"
 )
 
 type artifactDiagnosticObservationReceipt struct {
@@ -25,7 +25,7 @@ func validMountedDiagnosticSpan(span programsource.Span) bool {
 // compiledBranchObservation is the mounted form of the branch payload. It
 // deliberately contains no static payload fields.
 type compiledBranchObservation struct {
-	points     []keyspace.ContentID
+	points     []identity.ContentID
 	producers  []compiledObservationProducer
 	valueIndex uint32
 }
@@ -37,7 +37,7 @@ func (payload compiledBranchObservation) available() bool {
 	if len(payload.points) != len(payload.producers) {
 		return false
 	}
-	seenPoints := make(map[keyspace.ContentID]struct{}, len(payload.points))
+	seenPoints := make(map[identity.ContentID]struct{}, len(payload.points))
 	for _, point := range payload.points {
 		if !point.Available() {
 			return false
@@ -47,7 +47,7 @@ func (payload compiledBranchObservation) available() bool {
 		}
 		seenPoints[point] = struct{}{}
 	}
-	seenAnchors := make(map[keyspace.ContentID]struct{}, len(payload.producers))
+	seenAnchors := make(map[identity.ContentID]struct{}, len(payload.producers))
 	for _, producer := range payload.producers {
 		if !producer.available() {
 			return false
@@ -65,7 +65,7 @@ func (payload compiledBranchObservation) available() bool {
 	if len(seenAnchors) != len(seenPoints) {
 		return false
 	}
-	seenExecution := make(map[keyspace.ContentID]struct{}, len(payload.producers))
+	seenExecution := make(map[identity.ContentID]struct{}, len(payload.producers))
 	for _, producer := range payload.producers {
 		if _, duplicate := seenExecution[producer.point]; duplicate {
 			return false
@@ -82,8 +82,8 @@ func (payload compiledBranchObservation) empty() bool {
 type compiledUnresolvedTypeReference struct {
 	// These remain owner-issued proof atoms copied from the sealed artifact;
 	// only compiledObservation.id is used as a mount-qualified identity.
-	reference keyspace.ContentID
-	root      keyspace.ContentID
+	reference identity.ContentID
+	root      identity.ContentID
 	path      []string
 }
 
@@ -104,8 +104,8 @@ func (payload compiledUnresolvedTypeReference) empty() bool {
 }
 
 type compiledUnresolvedValueReference struct {
-	read keyspace.ContentID
-	cell keyspace.ContentID
+	read identity.ContentID
+	cell identity.ContentID
 	name string
 }
 
@@ -122,10 +122,10 @@ func (payload compiledUnresolvedValueReference) empty() bool {
 // static unresolved references only for static rows. The validity check below
 // enforces the exact mask before the row reaches the persistent result receipt.
 type compiledObservation struct {
-	id       keyspace.ContentID
-	mount    keyspace.ContentID
-	artifact keyspace.ContentID
-	local    keyspace.ContentID
+	id       identity.ContentID
+	mount    identity.ContentID
+	artifact identity.ContentID
+	local    identity.ContentID
 	kind     programartifact.DiagnosticObservationKind
 	location programsource.Span
 	compiledBranchObservation
@@ -152,9 +152,9 @@ func (observation compiledObservation) available() bool {
 
 type compiledObservationProducer struct {
 	role       programartifact.RuleRole
-	occurrence keyspace.ContentID
-	point      keyspace.ContentID
-	anchor     keyspace.ContentID
+	occurrence identity.ContentID
+	point      identity.ContentID
+	anchor     identity.ContentID
 }
 
 func (producer compiledObservationProducer) available() bool {
@@ -169,25 +169,25 @@ func (producer compiledObservationProducer) available() bool {
 // that base point.
 // Factor transports are deliberately not interchangeable with the full
 // transfer proof required by branch evidence.
-func diagnosticEvidenceAnchor(evidence []keyspace.ContentID, execution keyspace.ContentID, transfers map[keyspace.ContentID]programartifact.LocalTransfer) (keyspace.ContentID, bool) {
+func diagnosticEvidenceAnchor(evidence []identity.ContentID, execution identity.ContentID, transfers map[identity.ContentID]programartifact.LocalTransfer) (identity.ContentID, bool) {
 	if !execution.Available() || len(evidence) == 0 {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	for _, point := range evidence {
 		if execution == point {
 			return point, true
 		}
 	}
-	seen := make(map[keyspace.ContentID]struct{}, len(transfers))
+	seen := make(map[identity.ContentID]struct{}, len(transfers))
 	current := execution
 	for steps := 0; steps <= len(transfers); steps++ {
 		if _, duplicate := seen[current]; duplicate {
-			return keyspace.ContentID{}, false
+			return identity.ContentID{}, false
 		}
 		seen[current] = struct{}{}
 		edge, found := transfers[current]
 		if !found || !edge.Available() || !edge.FullEnvironment() || edge.To() != current {
-			return keyspace.ContentID{}, false
+			return identity.ContentID{}, false
 		}
 		current = edge.From()
 		for _, point := range evidence {
@@ -196,7 +196,7 @@ func diagnosticEvidenceAnchor(evidence []keyspace.ContentID, execution keyspace.
 			}
 		}
 	}
-	return keyspace.ContentID{}, false
+	return identity.ContentID{}, false
 }
 
 // diagnosticLocalTransfersByDestination builds the sealed full-environment
@@ -204,11 +204,11 @@ func diagnosticEvidenceAnchor(evidence []keyspace.ContentID, execution keyspace.
 // lookup key; two full rows targeting one execution point are ambiguous even
 // when their sources happen to match, so admission rejects them instead of
 // selecting one. Factor transports are outside this bridge by design.
-func diagnosticLocalTransfersByDestination(artifact *programartifact.Artifact) (map[keyspace.ContentID]programartifact.LocalTransfer, bool) {
+func diagnosticLocalTransfersByDestination(artifact *programartifact.Artifact) (map[identity.ContentID]programartifact.LocalTransfer, bool) {
 	if artifact == nil || !artifact.Available() {
 		return nil, false
 	}
-	transfers := make(map[keyspace.ContentID]programartifact.LocalTransfer, artifact.LocalTransferCount())
+	transfers := make(map[identity.ContentID]programartifact.LocalTransfer, artifact.LocalTransferCount())
 	for index := 0; index < artifact.LocalTransferCount(); index++ {
 		edge, edgeOK := artifact.LocalTransferAt(index)
 		if !edgeOK || !addDiagnosticFullLocalTransfer(transfers, edge) {
@@ -222,7 +222,7 @@ func diagnosticLocalTransfersByDestination(artifact *programartifact.Artifact) (
 // destination index. It is intentionally a map mutation rather than a second
 // transfer slice: factor rows are ignored and duplicate full destinations are
 // rejected at the point of admission.
-func addDiagnosticFullLocalTransfer(transfers map[keyspace.ContentID]programartifact.LocalTransfer, edge programartifact.LocalTransfer) bool {
+func addDiagnosticFullLocalTransfer(transfers map[identity.ContentID]programartifact.LocalTransfer, edge programartifact.LocalTransfer) bool {
 	if transfers == nil || !edge.Available() {
 		return false
 	}
@@ -263,8 +263,8 @@ func compileDiagnosticObservations(source *link.Link, artifacts *compiledArtifac
 		return nil, false
 	}
 	type valueKey struct {
-		mount keyspace.ContentID
-		id    keyspace.ContentID
+		mount identity.ContentID
+		id    identity.ContentID
 	}
 	coordinateByID := make(map[valueKey]uint32, len(coordinates))
 	for index, coordinate := range coordinates {
@@ -280,15 +280,15 @@ func compileDiagnosticObservations(source *link.Link, artifacts *compiledArtifac
 	values := source.Boundary().Values()
 	rows := make([]compiledObservation, 0)
 	seen := make(map[struct {
-		mount keyspace.ContentID
-		local keyspace.ContentID
+		mount identity.ContentID
+		local identity.ContentID
 	}]struct{})
 	for _, mount := range artifacts.mounts {
 		if mount.artifact == nil || !mount.artifact.Available() || !mount.moduleKey.Available() || !mount.artifact.ID().Available() {
 			return nil, false
 		}
-		var localTransfers map[keyspace.ContentID]programartifact.LocalTransfer
-		var producersByValue map[keyspace.ContentID][]compiledObservationProducer
+		var localTransfers map[identity.ContentID]programartifact.LocalTransfer
+		var producersByValue map[identity.ContentID][]compiledObservationProducer
 		hasBranchObservation := false
 		for observationIndex := 0; observationIndex < mount.artifact.DiagnosticObservationCount(); observationIndex++ {
 			observation, observationOK := mount.artifact.DiagnosticObservationAt(observationIndex)
@@ -304,7 +304,7 @@ func compileDiagnosticObservations(source *link.Link, artifacts *compiledArtifac
 		// Link owner of both relations: observation span -> Value and the
 		// Program-issued rule-output semantic ID -> Value.
 		if hasBranchObservation {
-			producersByValue = make(map[keyspace.ContentID][]compiledObservationProducer)
+			producersByValue = make(map[identity.ContentID][]compiledObservationProducer)
 		}
 		for roleIndex := 0; hasBranchObservation && roleIndex < programartifact.MountedRuleRoleCount(); roleIndex++ {
 			role, roleOK := programartifact.MountedRuleRoleAt(roleIndex)
@@ -358,8 +358,8 @@ func compileDiagnosticObservations(source *link.Link, artifacts *compiledArtifac
 			localID := observation.ID()
 			id, idOK := mountedResultID("diagnostic-observation", mount.moduleKey, mount.artifact.ID(), localID)
 			key := struct {
-				mount keyspace.ContentID
-				local keyspace.ContentID
+				mount identity.ContentID
+				local identity.ContentID
 			}{mount: mount.moduleKey, local: localID}
 			if !idOK {
 				return nil, false
@@ -405,8 +405,8 @@ func compileDiagnosticObservations(source *link.Link, artifacts *compiledArtifac
 						return nil, false
 					}
 				}
-				anchors := make(map[keyspace.ContentID]struct{}, len(points))
-				executions := make(map[keyspace.ContentID]struct{}, len(producers))
+				anchors := make(map[identity.ContentID]struct{}, len(points))
+				executions := make(map[identity.ContentID]struct{}, len(producers))
 				for producerIndex := range producers {
 					anchor, anchorOK := diagnosticEvidenceAnchor(points, producers[producerIndex].point, localTransfers)
 					if !anchorOK {
@@ -478,7 +478,7 @@ func attachBranchValueObservations(compilation *engine.ReceiptCompilation, graph
 			if !executionKey.mount.Available() || !executionKey.point.Available() || !anchorKey.point.Available() {
 				return nil, engine.ReceiptObservationAttachFailureArguments, false
 			}
-			role, roleOK := mountedRole(binding, producer.role)
+			role, roleOK := binding.mountedCapability(producer.role)
 			member, memberOK := graph.MountedRuleMember(role, observation.mount, producer.point, producer.occurrence)
 			if !roleOK || !memberOK {
 				return nil, engine.ReceiptObservationAttachFailurePoint, false
@@ -486,7 +486,7 @@ func attachBranchValueObservations(compilation *engine.ReceiptCompilation, graph
 			if _, duplicate := seen[executionKey]; duplicate {
 				continue
 			}
-			id, idOK := analysisContentID("analysis/branch-value-observation/v1", executionKey.mount[:], executionKey.point[:], []byte("value-summary"))
+			id, idOK := identity.DeriveContentID("analysis/branch-value-observation/v1", executionKey.mount[:], executionKey.point[:], []byte("value-summary"))
 			if !idOK {
 				return nil, engine.ReceiptObservationAttachFailureArguments, false
 			}

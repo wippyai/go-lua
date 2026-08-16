@@ -89,6 +89,26 @@ func (rule *RawGetRule) sourceAt(tag rawSourceTag) (rawSource, bool) {
 	return sourceAt(rule.runtime.topology.catalog.sources, tag)
 }
 
+// bootInitial reads the sealed Target boot-slot receipt selected by this route
+// and Present tuple. Value issued the fact at Seal; the hot lane resolves it
+// from Topology's own cold table and never reopens the Value schema, so the
+// rule consumes nothing its declared footprint does not name.
+func (rule *RawGetRule) bootInitial(route heapdomain.RawRouteTag, raw heapdomain.RawAccess, present heapdomain.Present) (valuedomain.Value, bool) {
+	tag, ok := raw.PayloadTag(present)
+	if !ok {
+		return valuedomain.Value{}, false
+	}
+	return rule.bootInitialAt(route, tag)
+}
+
+func (rule *RawGetRule) bootInitialAt(route heapdomain.RawRouteTag, payload heapdomain.RawPayloadTag) (valuedomain.Value, bool) {
+	if rule == nil || rule.runtime == nil || rule.runtime.topology == nil || rule.runtime.topology.catalog == nil || route == 0 || payload == 0 {
+		return valuedomain.Value{}, false
+	}
+	value, ok := rule.runtime.topology.catalog.bootInitials[rawBootInitial{route: route, payload: payload}]
+	return value, ok
+}
+
 func (rule *RawGetRule) sourceTag(payload heapdomain.RawPayloadTag, source pack.SemanticSource) (rawSourceTag, bool) {
 	if rule == nil || rule.runtime == nil || rule.runtime.topology == nil || rule.runtime.topology.catalog == nil {
 		return 0, false

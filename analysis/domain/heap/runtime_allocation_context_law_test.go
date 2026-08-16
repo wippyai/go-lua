@@ -5,11 +5,11 @@ import (
 	"testing"
 
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
-func contextTestID(name string) keyspace.ContentID {
-	return keyspace.ContentID(sha256.Sum256([]byte(name)))
+func contextTestID(name string) identity.ContentID {
+	return identity.ContentID(sha256.Sum256([]byte(name)))
 }
 
 // TestRuntimeAllocationContextsFenceReuseAndRevocation keeps physical runtime
@@ -21,7 +21,7 @@ func TestRuntimeAllocationContextsFenceReuseAndRevocation(t *testing.T) {
 	_, schema, _ := compactHeapFixture(t, "runtime_allocation_context", compactHeapSource, nil)
 	key := compactAllocationKeys(t, schema, 1)[0]
 	requirement, requirementOK := schema.AllocationRequirementForKey(key)
-	if !requirementOK || !requirement.Valid() || requirement.AllocationID() == (keyspace.ContentID{}) || requirement.MountID() == (keyspace.ContentID{}) {
+	if !requirementOK || !requirement.Valid() || requirement.AllocationID() == (identity.ContentID{}) || requirement.MountID() == (identity.ContentID{}) {
 		t.Fatal("allocation requirement")
 	}
 

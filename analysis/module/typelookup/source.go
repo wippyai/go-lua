@@ -5,8 +5,8 @@ package typelookup
 import (
 	"strings"
 
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
-	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // Source is a narrow read view over named type definitions exported by module

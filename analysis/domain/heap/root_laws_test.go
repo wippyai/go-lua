@@ -5,13 +5,14 @@ import (
 
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
 	"github.com/wippyai/go-lua/analysis/domain/materialization"
-	"github.com/wippyai/go-lua/analysis/internal/programartifact/schemaadapter"
-	"github.com/wippyai/go-lua/analysis/internal/programschema"
-	"github.com/wippyai/go-lua/program/keyspace"
-	proglink "github.com/wippyai/go-lua/program/link"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
-	programlower "github.com/wippyai/go-lua/program/lower"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/identity"
+	lualower "github.com/wippyai/go-lua/analysis/lua/lower"
+	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	proglink "github.com/wippyai/go-lua/analysis/program/link"
+	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 // Keep the law prose compact while making the test's dependency direction
@@ -66,7 +67,7 @@ var (
 // published Heap carrier, not a legacy Link/Flow fixture helper.
 func compactHeapFixture(t testing.TB, name, source string, spec *target.Spec) (*proglink.Link, Schema, []ArtifactMount) {
 	t.Helper()
-	program, err := programlower.Lower(programlower.Source{Name: name + ".lua", Text: []byte(source)})
+	program, err := lualower.Lower(lualower.Source{Name: name + ".lua", Text: []byte(source)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +82,7 @@ func compactHeapFixture(t testing.TB, name, source string, spec *target.Spec) (*
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, receiptOK := programschema.Global()
+	receipt, receiptOK := grammar.Global()
 	if !receiptOK {
 		t.Fatal("program schema receipt")
 	}
@@ -274,7 +275,7 @@ func compactBootSpec() *target.Spec {
 	}
 }
 
-func compactModuleID(t testing.TB, linked *proglink.Link, index int) keyspace.ContentID {
+func compactModuleID(t testing.TB, linked *proglink.Link, index int) identity.ContentID {
 	t.Helper()
 	shard, ok := linked.Project().Mounts().At(index)
 	module, moduleOK := linked.Project().ModuleKey(shard)
@@ -651,8 +652,8 @@ func TestHeapOccurrenceInverseLaws(t *testing.T) {
 			t.Fatal("index occurrence inverse")
 		}
 	}
-	zeroRoot, zeroRootOK := issuer.AllocationRootForOccurrence(keyspace.ContentID{})
-	zeroOrdinal, zeroOrdinalOK := issuer.AllocationOrdinal(keyspace.ContentID{})
+	zeroRoot, zeroRootOK := issuer.AllocationRootForOccurrence(identity.ContentID{})
+	zeroOrdinal, zeroOrdinalOK := issuer.AllocationOrdinal(identity.ContentID{})
 	if zeroRootOK || zeroRoot.Valid() || zeroOrdinalOK || zeroOrdinal != 0 {
 		t.Fatal("zero occurrence admitted")
 	}

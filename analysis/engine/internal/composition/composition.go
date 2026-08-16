@@ -168,6 +168,11 @@ type FactorFormKind uint8
 const (
 	FactorSummaryRead FactorFormKind = iota + 1
 	FactorSelectorWrite
+	// FactorDistributiveSummaryRead is a summary read whose reader folds each
+	// declared coordinate independently. The fold belongs to the form because
+	// it decides how the carrier partitions the declared vector; it is never a
+	// property of a Rule, Query, or observation call.
+	FactorDistributiveSummaryRead
 )
 
 // FactorForm records one Factor-owned extension form. Semantic is globally
@@ -736,7 +741,7 @@ func validQueryFamily(query QueryFamily, factors map[Key]uint64, forms map[Key]m
 				return false
 			}
 		case QueryFactorSummary:
-			if _, ok := factors[projection.Factor]; !ok || !projection.Factor.Available() || !projection.Normalizer.Available() || !hasFactorForm(forms, projection.Factor, projection.Normalizer, FactorSummaryRead) {
+			if _, ok := factors[projection.Factor]; !ok || !projection.Factor.Available() || !projection.Normalizer.Available() || !hasSummaryReadForm(forms, projection.Factor, projection.Normalizer) {
 				return false
 			}
 		default:
@@ -751,7 +756,7 @@ func validFactor(factor Factor) bool {
 		return false
 	}
 	for index, form := range factor.Forms {
-		if !form.Semantic.Available() || form.Semantic == factor.Key || form.Kind < FactorSummaryRead || form.Kind > FactorSelectorWrite ||
+		if !form.Semantic.Available() || form.Semantic == factor.Key || form.Kind < FactorSummaryRead || form.Kind > FactorDistributiveSummaryRead ||
 			index > 0 && !lessFactorForm(factor.Forms[index-1], form) {
 			return false
 		}
@@ -867,7 +872,7 @@ func validReads(reads []Read, inputs uint64, factors map[Key]uint64, forms map[K
 				return false
 			}
 		case ReadSummary:
-			if !read.Semantic.Available() || read.Normalizer != read.Semantic || len(read.Dependencies) != 0 || !hasFactorForm(forms, read.Factor, read.Normalizer, FactorSummaryRead) {
+			if !read.Semantic.Available() || read.Normalizer != read.Semantic || len(read.Dependencies) != 0 || !hasSummaryReadForm(forms, read.Factor, read.Normalizer) {
 				return false
 			}
 		case ReadSelect:
@@ -922,6 +927,13 @@ func validWrites(writes []Write, output Key, reads []Read, factors map[Key]uint6
 	// disposition.  Carry may coexist to preserve coordinates not selected by
 	// the route, but a second static output would introduce a competing path.
 	return routeCount == 0 || len(writes) == 1
+}
+
+// hasSummaryReadForm accepts either declared summary read fold. The fold
+// changes how the carrier partitions the declared vector, never whether the
+// Rule or Query may name the form.
+func hasSummaryReadForm(forms map[Key]map[Key]FactorFormKind, factor, semantic Key) bool {
+	return hasFactorForm(forms, factor, semantic, FactorSummaryRead) || hasFactorForm(forms, factor, semantic, FactorDistributiveSummaryRead)
 }
 
 func hasFactorForm(forms map[Key]map[Key]FactorFormKind, factor, semantic Key, kind FactorFormKind) bool {

@@ -6,7 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value"
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // HotRule is Value/allocation's receipt-native transformed-carry Rule issuer.
@@ -24,7 +24,7 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner, heap heapdoma
 	if fragment == nil || fragment.slot == nil || owner == nil || owner.Schema() == nil ||
 		catalog == nil || !catalog.FencedTo(heap, owner.Schema()) ||
 		!fragment.semantic.Available() || !fragment.transform.Available() || !fragment.evidence.Available() ||
-		!distinct(fragment.semantic, fragment.transform, fragment.evidence) {
+		!engine.DistinctKeys(fragment.semantic, fragment.transform, fragment.evidence) {
 		return nil, false
 	}
 	schema := owner.Schema()
@@ -66,7 +66,7 @@ type MountedIssuer struct {
 	mount allocationcatalog.Mount
 }
 
-func (rule *HotRule) ForMount(module keyspace.ContentID) (MountedIssuer, bool) {
+func (rule *HotRule) ForMount(module identity.ContentID) (MountedIssuer, bool) {
 	if rule == nil || rule.catalog == nil {
 		return MountedIssuer{}, false
 	}
@@ -75,7 +75,7 @@ func (rule *HotRule) ForMount(module keyspace.ContentID) (MountedIssuer, bool) {
 }
 
 // ReceiptForOccurrence returns the exact presealed Value allocation operand.
-func (issuer MountedIssuer) ReceiptForOccurrence(id keyspace.ContentID) (operand, bool) {
+func (issuer MountedIssuer) ReceiptForOccurrence(id identity.ContentID) (operand, bool) {
 	if issuer.rule == nil || issuer.rule.owner == nil || issuer.rule.owner.Schema() == nil || !issuer.mount.OwnedBy(issuer.rule.catalog) {
 		return operand{}, false
 	}
@@ -88,7 +88,7 @@ func (issuer MountedIssuer) ReceiptForOccurrence(id keyspace.ContentID) (operand
 
 // AttachMountedRule admits one complete ValueAllocation row before topology
 // commit using the exact allocation catalog operand and Value Ref geometry.
-func (rule *HotRule) AttachMountedRule(assembly *engine.ReceiptAssembly, mountID, pointID, occurrenceID keyspace.ContentID) (engine.BindingRuleRowRef, bool) {
+func (rule *HotRule) AttachMountedRule(assembly *engine.ReceiptAssembly, mountID, pointID, occurrenceID identity.ContentID) (engine.BindingRuleRowRef, bool) {
 	if rule == nil || rule.owner == nil || assembly == nil {
 		return engine.BindingRuleRowRef{}, false
 	}
@@ -147,7 +147,7 @@ func (rule *HotRule) AttachReceiptMember(compilation *engine.ReceiptCompilation,
 
 // AttachMountedReceiptMember resolves the graph-owned mounted member and the
 // exact allocation operand internally, then delegates to AttachReceiptMember.
-func (rule *HotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, pointID, occurrenceID keyspace.ContentID) (*engine.ReceiptMember, bool) {
+func (rule *HotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, pointID, occurrenceID identity.ContentID) (*engine.ReceiptMember, bool) {
 	if rule == nil || graph == nil {
 		return nil, false
 	}

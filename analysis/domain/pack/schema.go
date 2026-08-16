@@ -1,12 +1,12 @@
 package pack
 
 import (
+	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lattice"
-	"github.com/wippyai/go-lua/program/flow"
-	flowkind "github.com/wippyai/go-lua/program/flow/kind"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/link"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/program/flow"
+	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/link"
+	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
 // Root and Values are Pack-private selectors over direct Program topology.
@@ -56,13 +56,13 @@ type rootRow struct {
 	kind        rootKind
 	port        Port
 	sourceIndex uint32
-	id          keyspace.ContentID
+	id          identity.ContentID
 }
 
 type valuesRow struct {
 	root         uint32
-	moduleKey    keyspace.ContentID
-	occurrenceID keyspace.ContentID
+	moduleKey    identity.ContentID
+	occurrenceID identity.ContentID
 	port         Port
 	fixed        []Endpoint
 	tail         Port
@@ -75,19 +75,19 @@ type inputSelectorKey struct {
 
 type callRow struct {
 	root         uint32
-	mountedID    keyspace.ContentID
-	occurrenceID keyspace.ContentID
-	valuesID     keyspace.ContentID
-	receiverID   keyspace.ContentID
-	typesID      keyspace.ContentID
+	mountedID    identity.ContentID
+	occurrenceID identity.ContentID
+	valuesID     identity.ContentID
+	receiverID   identity.ContentID
+	typesID      identity.ContentID
 	form         flow.CallForm
-	moduleKey    keyspace.ContentID
-	formalID     keyspace.ContentID
+	moduleKey    identity.ContentID
+	formalID     identity.ContentID
 	typeFormal   FormalCallTypeArguments
 	resultTail   uint32
 	hasResult    bool
-	actualTailID keyspace.ContentID
-	tailContext  keyspace.ContentID
+	actualTailID identity.ContentID
+	tailContext  identity.ContentID
 	port         Port
 	fixed        []Endpoint
 	tail         Port
@@ -95,8 +95,8 @@ type callRow struct {
 
 type tailRow struct {
 	root      uint32
-	moduleKey keyspace.ContentID
-	valueID   keyspace.ContentID
+	moduleKey identity.ContentID
+	valueID   identity.ContentID
 	port      Port
 	kind      TailProducerKind
 	sealed    bool
@@ -108,9 +108,9 @@ type tailRow struct {
 // root and Value owns the Cell transfer itself.
 type bindRow struct {
 	root      uint32
-	moduleKey keyspace.ContentID
-	bindID    keyspace.ContentID
-	bodyID    keyspace.ContentID
+	moduleKey identity.ContentID
+	bindID    identity.ContentID
+	bodyID    identity.ContentID
 	values    Values
 	port      Port
 	cells     []Endpoint
@@ -122,12 +122,12 @@ type bindRow struct {
 // by the body-boundary rules.
 type bodyRow struct {
 	root          uint32
-	bodyID        keyspace.ContentID
-	context       keyspace.ContentID
-	moduleKey     keyspace.ContentID
+	bodyID        identity.ContentID
+	context       identity.ContentID
+	moduleKey     identity.ContentID
 	port          Port
 	formals       []Endpoint
-	formalIDs     []keyspace.ContentID
+	formalIDs     []identity.ContentID
 	normal        uint32
 	returnOutcome uint32
 	hasReturn     bool
@@ -141,9 +141,9 @@ type bodyRow struct {
 type outcomeRow struct {
 	root       uint32
 	bodyIndex  uint32
-	moduleKey  keyspace.ContentID
-	bodyID     keyspace.ContentID
-	outcomeID  keyspace.ContentID
+	moduleKey  identity.ContentID
+	bodyID     identity.ContentID
+	outcomeID  identity.ContentID
 	kind       flowkind.OutcomeKind
 	valueRoots []uint32
 	port       Port
@@ -228,9 +228,9 @@ func (schema *Schema) RootOrder(root Root) (int, bool) {
 }
 
 // RootID is the canonical cold identity for a Pack source/root descriptor.
-func (schema *Schema) RootID(root Root) (keyspace.ContentID, bool) {
+func (schema *Schema) RootID(root Root) (identity.ContentID, bool) {
 	if schema == nil || schema.state == nil || !root.valid() || root.schema != schema.state {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	id := schema.state.roots[root.index].id
 	return id, id.Available()
@@ -248,7 +248,7 @@ func (schema *Schema) Port(values Values) (Port, bool) {
 // mounted Program semantic value. This replaces the former Boundary.Value
 // carrier: construction authenticates the source once, and post-seal callers
 // retain no Link-owned proof object.
-func (schema *Schema) EndpointForMountedSemantic(module, id keyspace.ContentID) (Endpoint, bool) {
+func (schema *Schema) EndpointForMountedSemantic(module, id identity.ContentID) (Endpoint, bool) {
 	if schema == nil || schema.state == nil {
 		return Endpoint{}, false
 	}
@@ -413,9 +413,9 @@ func (source Source) valid() bool {
 	return source.schema != nil && source.root.valid() && source.root.schema == source.schema && (source.schema.roots[source.root.index].kind == rootValues || source.schema.roots[source.root.index].kind == rootCall)
 }
 func (source Source) Root() (Root, bool) { return source.root, source.valid() }
-func (source Source) ContentID() (keyspace.ContentID, bool) {
+func (source Source) ContentID() (identity.ContentID, bool) {
 	if !source.valid() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	id := source.schema.roots[source.root.index].id
 	return id, id.Available()
@@ -918,10 +918,10 @@ func (producer TailProducer) Port() (Port, bool) {
 	port := producer.schema.tails[producer.index].port
 	return port, port.valid()
 }
-func (producer TailProducer) ContentID() (keyspace.ContentID, bool) {
+func (producer TailProducer) ContentID() (identity.ContentID, bool) {
 	root, rootOK := producer.Root()
 	if !rootOK {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	id := producer.schema.roots[root.index].id
 	return id, id.Available()

@@ -1,12 +1,12 @@
 package engine
 
-import "github.com/wippyai/go-lua/program/keyspace"
+import "github.com/wippyai/go-lua/analysis/identity"
 
 // LinkBootstrapPoint is the sole Link-global bootstrap point geometry. It is
 // not reusable-artifact point metadata and is never duplicated per mount.
 type LinkBootstrapPoint struct {
-	PointID    keyspace.ContentID
-	DecisionID []keyspace.ContentID
+	PointID    identity.ContentID
+	DecisionID []identity.ContentID
 	Known      bool
 	Initial    bool
 }
@@ -16,10 +16,10 @@ type LinkBootstrapPoint struct {
 // The owner also supplies a closed catalog of occurrence IDs; the engine may
 // admit those IDs only via its sealed Batch occurrence constructors.
 type LinkBootstrapWitness struct {
-	owner                 keyspace.ContentID
+	owner                 identity.ContentID
 	point                 LinkBootstrapPoint
-	occurrences           []keyspace.ContentID
-	byCapability          map[RuleSlotCapability]map[keyspace.ContentID]struct{}
+	occurrences           []identity.ContentID
+	byCapability          map[RuleSlotCapability]map[identity.ContentID]struct{}
 	transportCapabilities []RuleSlotCapability
 }
 
@@ -30,7 +30,7 @@ func (witness LinkBootstrapWitness) Available() bool {
 // NewLinkBootstrapWitness seals exactly one owner-issued bootstrap point and
 // its occurrence catalog. Empty occurrence catalogs are valid and remain
 // explicit; an unavailable catalog is not silently synthesized.
-func NewLinkBootstrapWitness(owner keyspace.ContentID, point LinkBootstrapPoint, occurrences []keyspace.ContentID) (LinkBootstrapWitness, bool) {
+func NewLinkBootstrapWitness(owner identity.ContentID, point LinkBootstrapPoint, occurrences []identity.ContentID) (LinkBootstrapWitness, bool) {
 	if !owner.Available() || !point.Known || !point.PointID.Available() {
 		return LinkBootstrapWitness{}, false
 	}
@@ -39,7 +39,7 @@ func NewLinkBootstrapWitness(owner keyspace.ContentID, point LinkBootstrapPoint,
 			return LinkBootstrapWitness{}, false
 		}
 	}
-	seen := make(map[keyspace.ContentID]struct{}, len(occurrences))
+	seen := make(map[identity.ContentID]struct{}, len(occurrences))
 	for _, id := range occurrences {
 		if !id.Available() {
 			return LinkBootstrapWitness{}, false
@@ -49,14 +49,14 @@ func NewLinkBootstrapWitness(owner keyspace.ContentID, point LinkBootstrapPoint,
 		}
 		seen[id] = struct{}{}
 	}
-	point.DecisionID = append([]keyspace.ContentID(nil), point.DecisionID...)
-	return LinkBootstrapWitness{owner: owner, point: point, occurrences: append([]keyspace.ContentID(nil), occurrences...), byCapability: make(map[RuleSlotCapability]map[keyspace.ContentID]struct{})}, true
+	point.DecisionID = append([]identity.ContentID(nil), point.DecisionID...)
+	return LinkBootstrapWitness{owner: owner, point: point, occurrences: append([]identity.ContentID(nil), occurrences...), byCapability: make(map[RuleSlotCapability]map[identity.ContentID]struct{})}, true
 }
 
 // NewLinkBootstrapWitnessByCapability seals Link-global occurrence namespaces
 // under parent-issued slot capabilities. A combined catalog is insufficient:
 // an occurrence admitted for one slot must not be claimable by another slot.
-func NewLinkBootstrapWitnessByCapability(owner keyspace.ContentID, point LinkBootstrapPoint, valueCapability RuleSlotCapability, valueOccurrences []keyspace.ContentID, heapCapability RuleSlotCapability, heapOccurrences []keyspace.ContentID) (LinkBootstrapWitness, bool) {
+func NewLinkBootstrapWitnessByCapability(owner identity.ContentID, point LinkBootstrapPoint, valueCapability RuleSlotCapability, valueOccurrences []identity.ContentID, heapCapability RuleSlotCapability, heapOccurrences []identity.ContentID) (LinkBootstrapWitness, bool) {
 	if !owner.Available() || !point.Known || !point.PointID.Available() {
 		return LinkBootstrapWitness{}, false
 	}
@@ -68,9 +68,9 @@ func NewLinkBootstrapWitnessByCapability(owner keyspace.ContentID, point LinkBoo
 			return LinkBootstrapWitness{}, false
 		}
 	}
-	valueSet := make(map[keyspace.ContentID]struct{}, len(valueOccurrences))
-	heapSet := make(map[keyspace.ContentID]struct{}, len(heapOccurrences))
-	combined := make([]keyspace.ContentID, 0, len(valueOccurrences)+len(heapOccurrences))
+	valueSet := make(map[identity.ContentID]struct{}, len(valueOccurrences))
+	heapSet := make(map[identity.ContentID]struct{}, len(heapOccurrences))
+	combined := make([]identity.ContentID, 0, len(valueOccurrences)+len(heapOccurrences))
 	for _, id := range valueOccurrences {
 		if !id.Available() {
 			return LinkBootstrapWitness{}, false
@@ -94,10 +94,10 @@ func NewLinkBootstrapWitnessByCapability(owner keyspace.ContentID, point LinkBoo
 		heapSet[id] = struct{}{}
 		combined = append(combined, id)
 	}
-	point.DecisionID = append([]keyspace.ContentID(nil), point.DecisionID...)
+	point.DecisionID = append([]identity.ContentID(nil), point.DecisionID...)
 	return LinkBootstrapWitness{
 		owner: owner, point: point, occurrences: combined,
-		byCapability:          map[RuleSlotCapability]map[keyspace.ContentID]struct{}{valueCapability: valueSet, heapCapability: heapSet},
+		byCapability:          map[RuleSlotCapability]map[identity.ContentID]struct{}{valueCapability: valueSet, heapCapability: heapSet},
 		transportCapabilities: []RuleSlotCapability{valueCapability, heapCapability},
 	}, true
 }
@@ -117,7 +117,7 @@ func (witness LinkBootstrapWitness) transportCapabilityAt(index int) (RuleSlotCa
 	return capability, capability.link()
 }
 
-func (witness LinkBootstrapWitness) ownsCapability(capability RuleSlotCapability, occurrence keyspace.ContentID) bool {
+func (witness LinkBootstrapWitness) ownsCapability(capability RuleSlotCapability, occurrence identity.ContentID) bool {
 	if !witness.Available() || !capability.link() || !occurrence.Available() {
 		return false
 	}
@@ -125,7 +125,7 @@ func (witness LinkBootstrapWitness) ownsCapability(capability RuleSlotCapability
 	return ok
 }
 
-func (witness LinkBootstrapWitness) capabilityFor(occurrence keyspace.ContentID) (RuleSlotCapability, bool) {
+func (witness LinkBootstrapWitness) capabilityFor(occurrence identity.ContentID) (RuleSlotCapability, bool) {
 	if !witness.Available() || !occurrence.Available() {
 		return RuleSlotCapability{}, false
 	}
@@ -137,9 +137,9 @@ func (witness LinkBootstrapWitness) capabilityFor(occurrence keyspace.ContentID)
 	return RuleSlotCapability{}, false
 }
 
-func (witness LinkBootstrapWitness) OwnerID() keyspace.ContentID {
+func (witness LinkBootstrapWitness) OwnerID() identity.ContentID {
 	if !witness.Available() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return witness.owner
 }
@@ -149,7 +149,7 @@ func (witness LinkBootstrapWitness) Point() (LinkBootstrapPoint, bool) {
 		return LinkBootstrapPoint{}, false
 	}
 	point := witness.point
-	point.DecisionID = append([]keyspace.ContentID(nil), point.DecisionID...)
+	point.DecisionID = append([]identity.ContentID(nil), point.DecisionID...)
 	return point, true
 }
 
@@ -160,9 +160,9 @@ func (witness LinkBootstrapWitness) OccurrenceCount() int {
 	return len(witness.occurrences)
 }
 
-func (witness LinkBootstrapWitness) OccurrenceAt(index int) (keyspace.ContentID, bool) {
+func (witness LinkBootstrapWitness) OccurrenceAt(index int) (identity.ContentID, bool) {
 	if !witness.Available() || index < 0 || index >= len(witness.occurrences) {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return witness.occurrences[index], true
 }

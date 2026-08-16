@@ -8,10 +8,11 @@ import (
 
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/internal/programartifact"
-	flowkind "github.com/wippyai/go-lua/program/flow/kind"
-	"github.com/wippyai/go-lua/program/keyspace"
-	programsource "github.com/wippyai/go-lua/program/source"
+	"github.com/wippyai/go-lua/analysis/identity"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	programsource "github.com/wippyai/go-lua/analysis/program/source"
 )
 
 // buildNativeBranchPublication is the sole post-convergence owner for the
@@ -43,7 +44,7 @@ func buildNativeBranchPublication(
 		observed[selectedObservation.point] = observation
 	}
 	rows := make([]nativePublicationRow, 0)
-	byID := make(map[keyspace.ContentID]struct{})
+	byID := make(map[identity.ContentID]struct{})
 	for _, source := range receipt.nativeScalars {
 		if !appendNativeStaticScalarRows(&rows, byID, source) {
 			return nil, false
@@ -66,7 +67,7 @@ func buildNativeBranchPublication(
 		}
 		truth := valuedomain.TruthNone
 		complete := true
-		var subjectBody keyspace.ContentID
+		var subjectBody identity.ContentID
 		for _, point := range subject.points {
 			key := artifactResultPoint{mount: subject.mount, point: point}
 			expected[key] = struct{}{}
@@ -111,7 +112,7 @@ func buildNativeBranchPublication(
 	return newNativePublicationReceipt(rows)
 }
 
-func appendNativeArithmeticRows(rows *[]nativePublicationRow, seen map[keyspace.ContentID]struct{}, summary compiledNativeArithmeticSummary) bool {
+func appendNativeArithmeticRows(rows *[]nativePublicationRow, seen map[identity.ContentID]struct{}, summary compiledNativeArithmeticSummary) bool {
 	left, leftOK := nativeNumericRepresentation(summary.left)
 	right, rightOK := nativeNumericRepresentation(summary.right)
 	result, resultOK := nativeNumericRepresentation(summary.result)
@@ -144,7 +145,7 @@ func appendNativeArithmeticRows(rows *[]nativePublicationRow, seen map[keyspace.
 	return true
 }
 
-func appendNativeArithmeticRow(rows *[]nativePublicationRow, seen map[keyspace.ContentID]struct{}, family nativePublicationFamily, summary compiledNativeArithmeticSummary, value string) bool {
+func appendNativeArithmeticRow(rows *[]nativePublicationRow, seen map[identity.ContentID]struct{}, family nativePublicationFamily, summary compiledNativeArithmeticSummary, value string) bool {
 	semantic, semanticOK := family.semanticID()
 	if !summary.valid() || !semanticOK || value == "" {
 		return false
@@ -173,7 +174,7 @@ func appendNativeArithmeticRow(rows *[]nativePublicationRow, seen map[keyspace.C
 	return true
 }
 
-func appendNativeUnaryRows(rows *[]nativePublicationRow, seen map[keyspace.ContentID]struct{}, summary compiledNativeUnarySummary) bool {
+func appendNativeUnaryRows(rows *[]nativePublicationRow, seen map[identity.ContentID]struct{}, summary compiledNativeUnarySummary) bool {
 	operand, operandOK := nativeNumericRepresentation(summary.operand)
 	result, resultOK := nativeNumericRepresentation(summary.result)
 	if !summary.valid() || !operandOK || !resultOK {
@@ -284,19 +285,19 @@ func nativeArithmeticDivisor(property programartifact.ArithmeticDivisorProperty)
 	}
 }
 
-func nativePublicationBodyAt(receipt *artifactResultReceipt, point artifactResultPoint) (keyspace.ContentID, bool) {
+func nativePublicationBodyAt(receipt *artifactResultReceipt, point artifactResultPoint) (identity.ContentID, bool) {
 	if receipt == nil {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	indexes := receipt.pointBodies[point]
 	if len(indexes) != 1 || indexes[0] < 0 || indexes[0] >= len(receipt.bodies) {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	body := receipt.bodies[indexes[0]].key.body
 	return body, body.Available()
 }
 
-func appendNativeStaticScalarRows(rows *[]nativePublicationRow, seen map[keyspace.ContentID]struct{}, source compiledNativeScalarSource) bool {
+func appendNativeStaticScalarRows(rows *[]nativePublicationRow, seen map[identity.ContentID]struct{}, source compiledNativeScalarSource) bool {
 	representation, rendered, ok := renderNativeScalarSummary(source)
 	if !ok {
 		return false
@@ -307,7 +308,7 @@ func appendNativeStaticScalarRows(rows *[]nativePublicationRow, seen map[keyspac
 	return appendNativeStaticScalarRow(rows, seen, nativePublicationFamilyRepresentation, source, "exact=true representation="+representation)
 }
 
-func appendNativeStaticScalarRow(rows *[]nativePublicationRow, seen map[keyspace.ContentID]struct{}, family nativePublicationFamily, source compiledNativeScalarSource, value string) bool {
+func appendNativeStaticScalarRow(rows *[]nativePublicationRow, seen map[identity.ContentID]struct{}, family nativePublicationFamily, source compiledNativeScalarSource, value string) bool {
 	semantic, semanticOK := family.semanticID()
 	if !source.valid() || !semanticOK || value == "" {
 		return false
@@ -340,7 +341,7 @@ func validNativeValueSummary(observation valueSummaryObservation, width int) boo
 	return observation.Valid && observation.Rows <= 1 && len(observation.Values) == width && len(observation.Present) == width
 }
 
-func appendNativeScalarRows(rows *[]nativePublicationRow, seen map[keyspace.ContentID]struct{}, schema *valuedomain.Schema, value valuedomain.Value, coordinate keyspace.ContentID, subject compiledObservation, body, point keyspace.ContentID) bool {
+func appendNativeScalarRows(rows *[]nativePublicationRow, seen map[identity.ContentID]struct{}, schema *valuedomain.Schema, value valuedomain.Value, coordinate identity.ContentID, subject compiledObservation, body, point identity.ContentID) bool {
 	scalar, exact := schema.ExactScalar(value)
 	if !exact {
 		return true
@@ -356,7 +357,7 @@ func appendNativeScalarRows(rows *[]nativePublicationRow, seen map[keyspace.Cont
 	return appendNativeBranchRow(rows, seen, nativePublicationFamilyRepresentation, subject, body, point, coordinate, "exact=true representation="+representation)
 }
 
-func appendNativeBranchRows(rows *[]nativePublicationRow, seen map[keyspace.ContentID]struct{}, subject compiledObservation, body keyspace.ContentID, truth valuedomain.Truth, complete bool) bool {
+func appendNativeBranchRows(rows *[]nativePublicationRow, seen map[identity.ContentID]struct{}, subject compiledObservation, body identity.ContentID, truth valuedomain.Truth, complete bool) bool {
 	classification := "dynamic_nil_or_false"
 	partition := "partition=dynamic"
 	if complete {
@@ -370,7 +371,7 @@ func appendNativeBranchRows(rows *[]nativePublicationRow, seen map[keyspace.Cont
 		}
 	}
 	point := subject.points[0]
-	coordinate := keyspace.ContentID{}
+	coordinate := identity.ContentID{}
 	// Branch rows are keyed by the exact Program-issued observation identity,
 	// not by a caller-provided coordinate or rendered source string.
 	coordinate = subject.id
@@ -380,7 +381,7 @@ func appendNativeBranchRows(rows *[]nativePublicationRow, seen map[keyspace.Cont
 	return appendNativeBranchRow(rows, seen, nativePublicationFamilyBranchPartition, subject, body, point, coordinate, partition)
 }
 
-func appendNativeBranchRow(rows *[]nativePublicationRow, seen map[keyspace.ContentID]struct{}, family nativePublicationFamily, subject compiledObservation, body, point, coordinate keyspace.ContentID, value string) bool {
+func appendNativeBranchRow(rows *[]nativePublicationRow, seen map[identity.ContentID]struct{}, family nativePublicationFamily, subject compiledObservation, body, point, coordinate identity.ContentID, value string) bool {
 	semantic, semanticOK := family.semanticID()
 	span, spanOK := nativePublicationSpanID(subject.location)
 	if !semanticOK || !spanOK || !coordinate.Available() || !body.Available() || !point.Available() || value == "" {
@@ -410,16 +411,16 @@ func appendNativeBranchRow(rows *[]nativePublicationRow, seen map[keyspace.Conte
 	return true
 }
 
-func nativePublicationSpanID(span programsource.Span) (keyspace.ContentID, bool) {
+func nativePublicationSpanID(span programsource.Span) (identity.ContentID, bool) {
 	if !validMountedDiagnosticSpan(span) {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	var coordinates [16]byte
 	binary.BigEndian.PutUint32(coordinates[0:4], span.StartLine)
 	binary.BigEndian.PutUint32(coordinates[4:8], span.StartCol)
 	binary.BigEndian.PutUint32(coordinates[8:12], span.EndLine)
 	binary.BigEndian.PutUint32(coordinates[12:16], span.EndCol)
-	return analysisContentID("analysis/native-publication/source-span/v1", []byte(span.File), coordinates[:])
+	return identity.DeriveContentID("analysis/native-publication/source-span/v1", []byte(span.File), coordinates[:])
 }
 
 func renderNativeExactScalar(scalar valuedomain.ExactScalar) (representation, value string, ok bool) {

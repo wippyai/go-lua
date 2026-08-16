@@ -2,8 +2,8 @@
 package call
 
 import (
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
 // Key is one arm of Call's closed source sum: a Project base Application, a
@@ -54,17 +54,17 @@ func (key Key) IsResume() bool {
 }
 
 // ContentID is the cold identity of this exact Call source-sum arm.
-func (key Key) ContentID() (keyspace.ContentID, bool) {
+func (key Key) ContentID() (identity.ContentID, bool) {
 	if !key.Valid() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return key.owner.keys[key.slot-1].id, true
 }
 
 // ApplicationID is the exact existing Project base-application identity.
-func (key Key) ApplicationID() (keyspace.ContentID, bool) {
+func (key Key) ApplicationID() (identity.ContentID, bool) {
 	if !key.IsApplication() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return key.owner.keys[key.slot-1].applicationID, true
 }

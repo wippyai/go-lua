@@ -9,10 +9,10 @@ import (
 	packdomain "github.com/wippyai/go-lua/analysis/domain/pack"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/program/link"
-	linkproject "github.com/wippyai/go-lua/program/link/project"
-	"github.com/wippyai/go-lua/program/lower"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/program/link"
+	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/analysis/lua/lower"
+	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
 func publicationAllocationContextEventPlan(t testing.TB) *Plan {
@@ -115,9 +115,9 @@ func TestPublicationAllocationContextEventOwnerLaw(t *testing.T) {
 	defer plan.Close()
 	mount, occurrence, secondOccurrence := selectedCallEffectOccurrences(t, plan)
 	compilation := publicationTransitionCompilationFor(t, plan, mount, occurrence)
-	candidates, candidatesOK := plan.state.binding.effectSelected.AttachMountedPublicationCandidates(compilation, plan.state.graph, plan.state.binding.effectQuery, mount, occurrence)
+	candidates, candidatesOK := plan.state.binding.selectedEffectRule().AttachMountedPublicationCandidates(compilation, plan.state.graph, plan.state.binding.effectQuery, mount, occurrence)
 	attachment, attached := attachSelectedDirectAllocationMembership(compilation, plan.state.binding, plan.state.graph, plan.state.artifacts.mounts, mount, occurrence)
-	secondCandidates, secondCandidatesOK := plan.state.binding.effectSelected.AttachMountedPublicationCandidates(compilation, plan.state.graph, plan.state.binding.effectQuery, mount, secondOccurrence)
+	secondCandidates, secondCandidatesOK := plan.state.binding.selectedEffectRule().AttachMountedPublicationCandidates(compilation, plan.state.graph, plan.state.binding.effectQuery, mount, secondOccurrence)
 	secondAttachment, secondAttached := attachSelectedDirectAllocationMembership(compilation, plan.state.binding, plan.state.graph, plan.state.artifacts.mounts, mount, secondOccurrence)
 	if !candidatesOK || !candidates.Available() || !attached || !attachment.valid() || !secondCandidatesOK || !secondCandidates.Available() || !secondAttached || !secondAttachment.valid() {
 		t.Fatal("publication allocation context event pre-solve attachments")

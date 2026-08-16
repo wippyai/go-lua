@@ -2,8 +2,8 @@ package reachability
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/program"
-	"github.com/wippyai/go-lua/program/link"
+	"github.com/wippyai/go-lua/analysis/program"
+	"github.com/wippyai/go-lua/analysis/program/link"
 )
 
 func installProgramRules(solver *engine.Solver, source *link.Link, factor *engine.Factor[uint64, Value]) bool {

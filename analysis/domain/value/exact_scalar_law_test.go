@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
 func TestExactScalarRequiresOneOwnedExactAlternativeLaw(t *testing.T) {

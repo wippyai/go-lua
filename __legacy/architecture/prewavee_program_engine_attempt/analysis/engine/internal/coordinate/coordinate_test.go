@@ -4,10 +4,10 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/wippyai/go-lua/program"
-	"github.com/wippyai/go-lua/program/link"
-	"github.com/wippyai/go-lua/program/lower"
-	"github.com/wippyai/go-lua/program/target"
+	"github.com/wippyai/go-lua/analysis/program"
+	"github.com/wippyai/go-lua/analysis/program/link"
+	"github.com/wippyai/go-lua/analysis/program/lower"
+	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
 func TestTableOnlyAdmitsEntryOrSelectedBodyActivation(t *testing.T) {

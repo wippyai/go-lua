@@ -7,8 +7,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	typeformat "github.com/wippyai/go-lua/analysis/type/format"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	typeformat "github.com/wippyai/go-lua/analysis/domain/type/format"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 )
 
 // ResultShapeExhaustivenessProof records a case-specific member read on a

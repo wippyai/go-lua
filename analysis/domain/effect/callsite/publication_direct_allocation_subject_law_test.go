@@ -6,11 +6,11 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/pack"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
-func directAllocationSubjectLawID(label string) keyspace.ContentID {
-	return keyspace.ContentID(sha256.Sum256([]byte("publication-direct-allocation-subject/" + label)))
+func directAllocationSubjectLawID(label string) identity.ContentID {
+	return identity.ContentID(sha256.Sum256([]byte("publication-direct-allocation-subject/" + label)))
 }
 
 // The positive owner join is intentionally exercised at the Plan boundary,

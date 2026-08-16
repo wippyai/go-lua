@@ -152,28 +152,42 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, schema *va
 		return nil, false
 	}
 	owner := &HotOwner{binding: binding, fragment: fragment, schema: schema}
-	keyEnd := schema.CoordinateCount()
-	if keyEnd < 0 || uint64(keyEnd) > uint64(^uint32(0)) {
-		return nil, false
-	}
-	ok := engine.BindFactor[coordinate](binding, fragment.slot, engine.HotFactorSpec[coordinate, value.Value]{
-		KeyEnd:      uint64(keyEnd),
-		Lattice:     schema.Domain(),
-		Default:     schema.Default(),
-		AdmitAt:     owner.admits,
-		Fingerprint: schema.Fingerprint,
-		WidenRank: engine.Measure[coordinate, value.Value]{
-			Width: 1,
-			At:    owner.widenRank,
-		},
-	})
-	if !ok {
+	spec, specOK := owner.FactorSpec()
+	if !specOK || !engine.BindFactor[coordinate](binding, fragment.slot, spec) {
 		return nil, false
 	}
 	if !engine.BindIdentitySummaryReadForFactor[coordinate, value.Value](binding, fragment.slot, fragment.summaryRead) {
 		return nil, false
 	}
+	if !engine.BindIdentitySummaryReadForFactor[coordinate, value.Value](binding, fragment.slot, fragment.foldRead) {
+		return nil, false
+	}
 	return owner, true
+}
+
+// FactorSpec is Value's exact Factor algebra for this binding: the same value
+// BindHot hands to the engine. A declaration surface projects this record
+// instead of restating the lattice, admission, or widening law, so the two
+// cannot drift.
+func (owner *HotOwner) FactorSpec() (engine.HotFactorSpec[coordinate, value.Value], bool) {
+	if owner == nil || owner.schema == nil {
+		return engine.HotFactorSpec[coordinate, value.Value]{}, false
+	}
+	keyEnd := owner.schema.CoordinateCount()
+	if keyEnd < 0 || uint64(keyEnd) > uint64(^uint32(0)) {
+		return engine.HotFactorSpec[coordinate, value.Value]{}, false
+	}
+	return engine.HotFactorSpec[coordinate, value.Value]{
+		KeyEnd:      uint64(keyEnd),
+		Lattice:     owner.schema.Domain(),
+		Default:     owner.schema.Default(),
+		AdmitAt:     owner.admits,
+		Fingerprint: owner.schema.Fingerprint,
+		WidenRank: engine.Measure[coordinate, value.Value]{
+			Width: 1,
+			At:    owner.widenRank,
+		},
+	}, true
 }
 
 // Schema returns the Link-local Value schema used to admit this binding.

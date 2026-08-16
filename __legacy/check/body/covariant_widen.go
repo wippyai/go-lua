@@ -3,7 +3,7 @@ package body
 import (
 	typecovariant "github.com/wippyai/go-lua/__legacy/analysis/type/covariant"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 )
 
 // luaCovariantWiden preserves the body execution seam while both concrete and

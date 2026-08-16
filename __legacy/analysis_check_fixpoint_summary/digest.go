@@ -13,7 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	internalhash "github.com/wippyai/go-lua/analysis/internal/hash"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 )
 
 // NormalizedPayloadDigest returns a deterministic content digest for a summary

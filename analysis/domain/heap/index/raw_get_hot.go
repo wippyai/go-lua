@@ -10,7 +10,7 @@ import (
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 type RawGetHotRule struct {
@@ -59,7 +59,7 @@ func (rule *RawGetHotRule) AttachReceiptMember(compilation *engine.ReceiptCompil
 // AttachMountedOccurrence lowers one RawGet artifact row entirely from the
 // exact mounted Access receipt. Selected surfaces are occurrence/operand
 // anchored; no arbitrary candidate Ref or factor ordinal is chosen here.
-func (rule *RawGetHotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, mountID, reusablePointID, occurrenceID keyspace.ContentID) (engine.BindingRuleRowRef, bool) {
+func (rule *RawGetHotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, mountID, reusablePointID, occurrenceID identity.ContentID) (engine.BindingRuleRowRef, bool) {
 	if rule == nil || rule.values == nil || assembly == nil {
 		return engine.BindingRuleRowRef{}, false
 	}
@@ -125,7 +125,7 @@ func (rule *RawGetHotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssem
 
 // AttachMountedReceiptMember resolves the committed RawGet member and its
 // private Access receipt internally before runtime attachment.
-func (rule *RawGetHotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, reusablePointID, occurrenceID keyspace.ContentID) (*engine.ReceiptMember, bool) {
+func (rule *RawGetHotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, reusablePointID, occurrenceID identity.ContentID) (*engine.ReceiptMember, bool) {
 	if rule == nil || graph == nil {
 		return nil, false
 	}
@@ -140,7 +140,7 @@ func (rule *RawGetHotRule) AttachMountedReceiptMember(compilation *engine.Receip
 // ReceiptForOccurrence resolves one exact mounted RawGet candidate directly
 // through Heap's mount-scoped inverse. No Topology occurrence directory or
 // operation-local wrapper is retained.
-func (rule *RawGetHotRule) ReceiptForOccurrence(module, occurrenceID keyspace.ContentID) (Access, bool) {
+func (rule *RawGetHotRule) ReceiptForOccurrence(module, occurrenceID identity.ContentID) (Access, bool) {
 	if rule == nil || rule.core == nil || rule.core.runtime == nil || rule.core.runtime.topology == nil {
 		return Access{}, false
 	}

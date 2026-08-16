@@ -10,10 +10,10 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/contract"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	typelit "github.com/wippyai/go-lua/analysis/type/literal"
-	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/analysis/type/typecall"
-	"github.com/wippyai/go-lua/analysis/type/unwrap"
+	typelit "github.com/wippyai/go-lua/analysis/domain/type/literal"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/typecall"
+	"github.com/wippyai/go-lua/analysis/domain/type/unwrap"
 )
 
 // ArgumentConstraintViolation describes an inferred generic argument that does

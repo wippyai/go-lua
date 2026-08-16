@@ -1,0 +1,155 @@
+{
+  "measured": "2026-08-16",
+  "note": "Enumerated by running the covered sets themselves on 2026-08-16. The anchor set is red in two distinct modes on this branch, and the recorded reasons describe the standing one: clause 3 finds no report row for the type.call collector and no inline error row for the recursive-union fixture, and clause 4 finds no solved placement projection. In the second mode the anchor fixtures do not compile at all - CompileWithDiagnostics reports Phase=item-issuance Reason=construction ItemIssuance=program-schema, artifact=schema-unavailable - and the standing clause reds are masked behind it. The same window turns the whole frozen-corpus census to AnalyzeUnsupported, so a census ratchet red and a masked anchor red are one cause. The anchor set runs a nested go test over ./analysis, so it reports a package-level <build failed> key whenever any test source in that package does not compile; that key is deliberately never listed, because a set that cannot build has no verdict to compare.",
+  "covered_sets": [
+    {
+      "name": "engine",
+      "reason": "the solver tree: analysis/engine and every package below it that has tests",
+      "packages": [
+        "./analysis/engine/..."
+      ],
+      "filter": "",
+      "subtests": false
+    },
+    {
+      "name": "anchor",
+      "reason": "the standing acceptance anchor of the analyzer, judged clause by clause",
+      "packages": [
+        "./analysis"
+      ],
+      "filter": "^TestAnchorTypesNarrowingDiagnosticsPlacement$",
+      "subtests": true
+    }
+  ],
+  "reds": [
+    {
+      "set": "anchor",
+      "package": "github.com/wippyai/go-lua/analysis",
+      "test": "TestAnchorTypesNarrowingDiagnosticsPlacement",
+      "reason": "both clauses below are red, so the parent is red",
+      "owner": "analysis/anchor_law_test.go"
+    },
+    {
+      "set": "anchor",
+      "package": "github.com/wippyai/go-lua/analysis",
+      "test": "TestAnchorTypesNarrowingDiagnosticsPlacement/multivariant-dispatch",
+      "reason": "anchor clause 3: the acceptance policy cannot express the pinned contract and type.call.direct.argument_type at main.lua:36:22 matches 0 report rows, want exactly 1 (the type.call collector is missing); anchor clause 4: the placement Result surface is unavailable, a solved placement projection is required",
+      "owner": "analysis type.call diagnostic collector and the placement Result surface"
+    },
+    {
+      "set": "anchor",
+      "package": "github.com/wippyai/go-lua/analysis",
+      "test": "TestAnchorTypesNarrowingDiagnosticsPlacement/recursive-union",
+      "reason": "anchor clause 3: the inline error at main.lua:22 matches 0 report rows, want exactly 1; the report carries no findings (recursive-union class-B compile)",
+      "owner": "analysis recursive-union class-B compile"
+    },
+    {
+      "set": "engine",
+      "package": "github.com/wippyai/go-lua/analysis/engine",
+      "test": "TestReceiptCompilerBindsSummaryQueryGraphSurface",
+      "reason": "summary graph topology is not bound (schema_summary_query_receipt_law_test.go:135)",
+      "owner": "analysis/engine summary query receipt binding"
+    },
+    {
+      "set": "engine",
+      "package": "github.com/wippyai/go-lua/analysis/engine",
+      "test": "TestSolveWithDiagnosticsBoundedDetachedSortedAndIsolated",
+      "reason": "the diagnostics external-interface query is unavailable (solve_diagnostics_law_test.go:97)",
+      "owner": "analysis/engine solve diagnostics"
+    },
+    {
+      "set": "engine",
+      "package": "github.com/wippyai/go-lua/analysis/engine",
+      "test": "TestReceiptSolverFallbackCompilesWTORevision (skipped)",
+      "reason": "skipped in place, claiming the end-to-end accepted-activation law covers the fallback path (receipt_solver_fallback_law_test.go:23). A covered test that never runs states nothing; it is listed so the skip is tracked rather than read as a pass.",
+      "owner": "analysis/engine receipt_solver_fallback_law_test.go"
+    },
+    {
+      "set": "engine",
+      "package": "github.com/wippyai/go-lua/analysis/engine/internal/carrier",
+      "test": "TestCarrierMatrixCarryOnlyProductArity",
+      "reason": "pair contribution input is rejected (matrix_laws_test.go:37)",
+      "owner": "analysis/engine/internal/carrier contribution construction"
+    },
+    {
+      "set": "engine",
+      "package": "github.com/wippyai/go-lua/analysis/engine/internal/carrier",
+      "test": "TestContributionAtomicallyCommitsFactorPatchAndStructuralPrune",
+      "reason": "pair contribution input is rejected (contribution_laws_test.go)",
+      "owner": "analysis/engine/internal/carrier contribution construction"
+    },
+    {
+      "set": "engine",
+      "package": "github.com/wippyai/go-lua/analysis/engine/internal/carrier",
+      "test": "TestContributionCarriesFromInputBeyondSecondPort",
+      "reason": "pair contribution input is rejected (contribution_laws_test.go)",
+      "owner": "analysis/engine/internal/carrier contribution construction"
+    },
+    {
+      "set": "engine",
+      "package": "github.com/wippyai/go-lua/analysis/engine/internal/carrier",
+      "test": "TestContributionMultiInputStructuralPrune",
+      "reason": "pair contribution input is rejected (contribution_laws_test.go)",
+      "owner": "analysis/engine/internal/carrier contribution construction"
+    },
+    {
+      "set": "engine",
+      "package": "github.com/wippyai/go-lua/analysis/engine/internal/carrier",
+      "test": "TestContributionProjectsOnlyDeclaredCarries",
+      "reason": "pair contribution input is rejected (contribution_laws_test.go)",
+      "owner": "analysis/engine/internal/carrier contribution construction"
+    },
+    {
+      "set": "engine",
+      "package": "github.com/wippyai/go-lua/analysis/engine/internal/carrier",
+      "test": "TestContributionSharesOnePatchPredecessorAndDropsOwnedDisallowedSlot",
+      "reason": "pair contribution input is rejected (contribution_laws_test.go)",
+      "owner": "analysis/engine/internal/carrier contribution construction"
+    },
+    {
+      "set": "engine",
+      "package": "github.com/wippyai/go-lua/analysis/engine/internal/carrier",
+      "test": "TestEnvironmentBaselinePreservesUnrelatedFactorSlots",
+      "reason": "environment contribution is rejected (environment_contribution_laws_test.go:24)",
+      "owner": "analysis/engine/internal/carrier contribution construction"
+    },
+    {
+      "set": "engine",
+      "package": "github.com/wippyai/go-lua/analysis/engine/internal/carrier",
+      "test": "TestMergeContributionRightEmptySlotSkipsTypedTraversalAndRetainsSupportChange",
+      "reason": "left contribution is rejected (sparse_contribution_fast_path_laws_test.go:105)",
+      "owner": "analysis/engine/internal/carrier contribution construction"
+    },
+    {
+      "set": "engine",
+      "package": "github.com/wippyai/go-lua/analysis/engine/internal/carrier",
+      "test": "TestProjectContributionKeepsOnlySelectedRoot",
+      "reason": "input contribution is rejected (projection_laws_test.go:18)",
+      "owner": "analysis/engine/internal/carrier contribution construction"
+    },
+    {
+      "set": "engine",
+      "package": "github.com/wippyai/go-lua/analysis/engine/internal/carrier",
+      "test": "TestSupportContributionRestrictsAllRoots",
+      "reason": "pair contribution input is rejected (contribution_laws_test.go)",
+      "owner": "analysis/engine/internal/carrier contribution construction"
+    },
+    {
+      "set": "engine",
+      "package": "github.com/wippyai/go-lua/analysis/engine/internal/facts/semantic",
+      "test": "TestPreserveRejectsOverlapMismatch",
+      "reason": "preserve accepts an overlap mismatch it must reject (semantic_test.go:289)",
+      "owner": "analysis/engine/internal/facts/semantic preserve"
+    }
+  ],
+  "excluded": [
+    {
+      "set": "engine",
+      "package": "github.com/wippyai/go-lua/analysis/engine",
+      "test": "TestReceiptCompilerThreadsSummaryReadThroughProductAndEvidence",
+      "reason": "segfaults with a nil dereference inside runSummaryReadThroughProductAndEvidence (schema_rule_binding_law_test.go:762) and takes the whole engine test binary down with it, erasing every other verdict in that package. It is selected out by name so the rest of the package still reports.",
+      "owner": "analysis/engine schema_rule_binding_law_test.go",
+      "excluded": true
+    }
+  ]
+}

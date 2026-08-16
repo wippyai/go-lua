@@ -4,10 +4,10 @@ import (
 	effectfactor "github.com/wippyai/go-lua/analysis/domain/effect/factor"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/internal/programquery"
+	"github.com/wippyai/go-lua/analysis/schema/query"
 )
 
-type valueSummaryObservation = programquery.ValueSummaryObservation
+type valueSummaryObservation = query.ValueSummaryObservation
 
 // Keep the production catalog's two concrete hot surfaces tied to their
 // typed implementations. These assignments are compile-time checks, not a
@@ -61,11 +61,11 @@ func valueSummaryQueryHotSpec(schema *valuedomain.Schema, freezer engine.Semanti
 			},
 		},
 		Result: engine.FrozenResult[valueSummaryObservation]{
-			Semantic: freezer, Freeze: programquery.CloneValueSummary, Clone: programquery.CloneValueSummary,
+			Semantic: freezer, Freeze: query.CloneValueSummary, Clone: query.CloneValueSummary,
 			Equal: func(left, right valueSummaryObservation) bool {
-				return programquery.EqualValueSummary(schema, left, right)
+				return query.EqualValueSummary(schema, left, right)
 			},
-			Fingerprint: func(value valueSummaryObservation) uint64 { return programquery.FingerprintValueSummary(schema, value) },
+			Fingerprint: func(value valueSummaryObservation) uint64 { return query.FingerprintValueSummary(schema, value) },
 		},
 	}
 }
@@ -73,18 +73,18 @@ func valueSummaryQueryHotSpec(schema *valuedomain.Schema, freezer engine.Semanti
 func effectExactQueryHotSpec(algebra *effectfactor.Algebra, freezer engine.SemanticKey) engine.HotExactQuerySpec[effectfactor.Value, effectObservation] {
 	return engine.HotExactQuerySpec[effectfactor.Value, effectObservation]{
 		Fold: engine.QueryFold[engine.OrderedCells[effectfactor.Value], effectObservation]{
-			Begin: func() effectObservation { return programquery.BeginEffect(algebra) },
+			Begin: func() effectObservation { return query.BeginEffect(algebra) },
 			Accumulate: func(result effectObservation, cells engine.OrderedCells[effectfactor.Value]) (effectObservation, bool) {
 				if cells.Count() != 1 {
 					return effectObservation{}, false
 				}
 				value, present, available := cells.At(0)
-				return programquery.AccumulateEffect(algebra, result, value, present, available)
+				return query.AccumulateEffect(algebra, result, value, present, available)
 			},
 		},
 		Result: engine.FrozenResult[effectObservation]{
-			Semantic: freezer, Freeze: programquery.CloneEffect, Clone: programquery.CloneEffect,
-			Equal: programquery.EqualEffect, Fingerprint: programquery.FingerprintEffect,
+			Semantic: freezer, Freeze: query.CloneEffect, Clone: query.CloneEffect,
+			Equal: query.EqualEffect, Fingerprint: query.FingerprintEffect,
 		},
 	}
 }

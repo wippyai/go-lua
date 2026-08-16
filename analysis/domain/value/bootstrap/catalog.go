@@ -2,7 +2,7 @@ package bootstrap
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // Catalog is Value/bootstrap's Link-global operand directory.  It is sealed
@@ -12,8 +12,8 @@ import (
 // mounted per Program or per Module.
 type Catalog struct {
 	schema      *value.Schema
-	rows        map[keyspace.ContentID]struct{}
-	ids         []keyspace.ContentID
+	rows        map[identity.ContentID]struct{}
+	ids         []identity.ContentID
 	globalCount int
 }
 
@@ -24,8 +24,8 @@ func SealCatalog(schema *value.Schema) (*Catalog, bool) {
 	if schema == nil {
 		return nil, false
 	}
-	rows := make(map[keyspace.ContentID]struct{}, schema.GlobalBootstrapResultCount())
-	ids := make([]keyspace.ContentID, 0, schema.GlobalBootstrapResultCount())
+	rows := make(map[identity.ContentID]struct{}, schema.GlobalBootstrapResultCount())
+	ids := make([]identity.ContentID, 0, schema.GlobalBootstrapResultCount())
 	for index := 0; index < schema.GlobalBootstrapResultCount(); index++ {
 		id, idOK := schema.GlobalBootstrapResultIDAt(index)
 		if !idOK || !id.Available() {
@@ -59,9 +59,9 @@ func (catalog *Catalog) Count() int {
 // IDAt returns the stable Host-global identity in Host declaration order.
 // This ordered projection is the Link-global bootstrap witness vocabulary;
 // callers never infer ordering from map iteration.
-func (catalog *Catalog) IDAt(index int) (keyspace.ContentID, bool) {
+func (catalog *Catalog) IDAt(index int) (identity.ContentID, bool) {
 	if catalog == nil || !catalog.FencedTo(catalog.schema) || index < 0 || index >= len(catalog.ids) {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	id := catalog.ids[index]
 	_, ok := catalog.ReceiptForID(id)
@@ -71,19 +71,19 @@ func (catalog *Catalog) IDAt(index int) (keyspace.ContentID, bool) {
 // ReceiptForID returns one exact preissued GlobalBinding in O(1).  The ID is
 // the Host's detached identity; no Host mapping or Program/Flow traversal is
 // performed here.
-func (catalog *Catalog) ReceiptForID(id keyspace.ContentID) (keyspace.ContentID, bool) {
+func (catalog *Catalog) ReceiptForID(id identity.ContentID) (identity.ContentID, bool) {
 	if catalog == nil || !catalog.FencedTo(catalog.schema) || !id.Available() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	_, ok := catalog.rows[id]
 	if !ok {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return id, true
 }
 
 // GlobalBindingForID is an explicit alias for callers attaching a bootstrap
 // receipt; it keeps the catalog's operand vocabulary visible at the API edge.
-func (catalog *Catalog) GlobalBindingForID(id keyspace.ContentID) (keyspace.ContentID, bool) {
+func (catalog *Catalog) GlobalBindingForID(id identity.ContentID) (identity.ContentID, bool) {
 	return catalog.ReceiptForID(id)
 }

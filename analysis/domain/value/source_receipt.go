@@ -1,8 +1,8 @@
 package value
 
 import (
-	programartifact "github.com/wippyai/go-lua/analysis/internal/programartifact"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 )
 
 // SourceResult is the sealed Value-owned result of one unconditional Link
@@ -10,26 +10,26 @@ import (
 // consume this receipt instead of re-reading Link topology or source literals.
 type SourceResult struct {
 	schema     *Schema
-	valueID    keyspace.ContentID
-	id         keyspace.ContentID
+	valueID    identity.ContentID
+	id         identity.ContentID
 	coordinate Coordinate
 	fact       Value
-	module     keyspace.ContentID
-	occurrence keyspace.ContentID
+	module     identity.ContentID
+	occurrence identity.ContentID
 }
 
 // sourceSeedMount is Schema's sealed, Link-qualified directory for reusable
 // Program ValueSource occurrence IDs. It is built while Schema still owns the
 // source census, then consumed by the source rule without reopening Program.
 type sourceSeedMount struct {
-	module          keyspace.ContentID
+	module          identity.ContentID
 	occurrences     []sourceSeedOccurrence
-	occurrenceIndex map[keyspace.ContentID]uint32
+	occurrenceIndex map[identity.ContentID]uint32
 }
 
 type sourceSeedOccurrence struct {
 	seed       SourceSeed
-	occurrence keyspace.ContentID
+	occurrence identity.ContentID
 }
 
 // SourceSeedMount is an opaque owner-fenced projection of one exact mounted
@@ -65,7 +65,7 @@ func (schema *Schema) SourceSeedMountAt(index int) (SourceSeedMount, bool) {
 // SourceSeedMountForModule returns the owner-issued mounted source directory
 // for one exact ModuleKey. The lookup is schema-owned and O(1); callers do
 // not reconstruct a module-to-occurrence catalog in a hot Rule.
-func (schema *Schema) SourceSeedMountForModule(module keyspace.ContentID) (SourceSeedMount, bool) {
+func (schema *Schema) SourceSeedMountForModule(module identity.ContentID) (SourceSeedMount, bool) {
 	if schema == nil || !module.Available() || schema.sourceSeedMountIndex == nil {
 		return SourceSeedMount{}, false
 	}
@@ -86,9 +86,9 @@ func (mount SourceSeedMount) valid() bool {
 	return ok && index == mount.index && row.module.Available() && row.occurrenceIndex != nil
 }
 
-func (mount SourceSeedMount) ModuleID() keyspace.ContentID {
+func (mount SourceSeedMount) ModuleID() identity.ContentID {
 	if !mount.valid() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return mount.schema.sourceSeedMounts[mount.index-1].module
 }
@@ -110,7 +110,7 @@ func (mount SourceSeedMount) OccurrenceAt(index int) (SourceSeedOccurrence, bool
 
 // OccurrenceForID returns one exact mounted occurrence through the sealed
 // owner index. It is O(1) in both the ModuleKey and artifact occurrence ID.
-func (mount SourceSeedMount) OccurrenceForID(id keyspace.ContentID) (SourceSeedOccurrence, bool) {
+func (mount SourceSeedMount) OccurrenceForID(id identity.ContentID) (SourceSeedOccurrence, bool) {
 	if !mount.valid() || !id.Available() {
 		return SourceSeedOccurrence{}, false
 	}
@@ -136,9 +136,9 @@ func (occurrence SourceSeedOccurrence) valid() bool {
 	return indexed && index == occurrence.index && row.occurrence.Available() && row.seed.valid() && row.seed.result.occurrence == row.occurrence && row.seed.result.module == occurrence.mount.ModuleID()
 }
 
-func (occurrence SourceSeedOccurrence) ID() keyspace.ContentID {
+func (occurrence SourceSeedOccurrence) ID() identity.ContentID {
 	if !occurrence.valid() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return occurrence.mount.schema.sourceSeedMounts[occurrence.mount.index-1].occurrences[occurrence.index-1].occurrence
 }
@@ -154,14 +154,14 @@ func (occurrence SourceSeedOccurrence) Seed() (SourceSeed, bool) {
 // SourceSeedForMountedOccurrence is the narrow direct lookup for callers that
 // need only the owner-issued source operand. It retains the same exact module
 // and occurrence fences as SourceSeedMount/Occurrence handles.
-func (schema *Schema) SourceSeedForMountedOccurrence(module, occurrence keyspace.ContentID) (SourceSeed, bool) {
+func (schema *Schema) SourceSeedForMountedOccurrence(module, occurrence identity.ContentID) (SourceSeed, bool) {
 	mount, mountOK := schema.SourceSeedMountForModule(module)
 	row, rowOK := mount.OccurrenceForID(occurrence)
 	seed, seedOK := row.Seed()
 	return seed, mountOK && rowOK && seedOK
 }
 
-func (result *SourceResult) validFor(schema *Schema, sourceID keyspace.ContentID) bool {
+func (result *SourceResult) validFor(schema *Schema, sourceID identity.ContentID) bool {
 	return result != nil && schema != nil && result.schema == schema && result.valueID == sourceID &&
 		result.id.Available() && result.coordinate.schema == schema && result.coordinate.Valid() &&
 		result.fact.schema == schema && result.fact.valid()
@@ -180,7 +180,7 @@ func (schema *valueBuilder) sealSourceSeedOccurrences() bool {
 	}
 	mounts := project.Mounts()
 	schema.sourceSeedMounts = make([]sourceSeedMount, mounts.Count())
-	schema.sourceSeedMountIndex = make(map[keyspace.ContentID]uint32, mounts.Count())
+	schema.sourceSeedMountIndex = make(map[identity.ContentID]uint32, mounts.Count())
 	for index := 0; index < mounts.Count(); index++ {
 		shard, shardOK := mounts.At(index)
 		module, moduleOK := project.ModuleKey(shard)
@@ -201,7 +201,7 @@ func (schema *valueBuilder) sealSourceSeedOccurrences() bool {
 			return false
 		}
 		rows := &schema.sourceSeedMounts[mountIndex]
-		rows.occurrenceIndex = make(map[keyspace.ContentID]uint32)
+		rows.occurrenceIndex = make(map[identity.ContentID]uint32)
 		artifact := mount.Artifact()
 		for index := 0; index < artifact.OccurrenceCount(); index++ {
 			row, rowOK := artifact.OccurrenceAt(index)
@@ -244,7 +244,7 @@ func (schema *valueBuilder) sealSourceSeedOccurrences() bool {
 // SourceResultFor returns the already-issued receipt for a canonical source
 // value. This is an issuance-time lookup; hot callbacks retain the receipt in
 // SourceSeed and never call this method.
-func (schema *Schema) SourceResultForID(id keyspace.ContentID) (*SourceResult, bool) {
+func (schema *Schema) SourceResultForID(id identity.ContentID) (*SourceResult, bool) {
 	if schema == nil || !id.Available() {
 		return nil, false
 	}

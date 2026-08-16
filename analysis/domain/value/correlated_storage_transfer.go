@@ -4,8 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 
-	programartifact "github.com/wippyai/go-lua/analysis/internal/programartifact"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 )
 
 // storageTransferKind is the closed Program occurrence family whose fixed
@@ -41,9 +41,9 @@ func storageTransferKindForArtifact(kind programartifact.OccurrenceKind) (storag
 // fixed storage relation. The tuple names an existing Program occurrence; it
 // never names a Link scalar row or allocation ordinal.
 type StorageTransferRef struct {
-	linkID     keyspace.ContentID
-	mount      keyspace.ContentID
-	occurrence keyspace.ContentID
+	linkID     identity.ContentID
+	mount      identity.ContentID
+	occurrence identity.ContentID
 	kind       storageTransferKind
 	position   uint32
 }
@@ -57,7 +57,7 @@ type StorageTransfer struct {
 
 type storageTransferRow struct {
 	ref     StorageTransferRef
-	id      keyspace.ContentID
+	id      identity.ContentID
 	from    Coordinate
 	to      Coordinate
 	ordinal uint32
@@ -67,8 +67,8 @@ type storageTransferRow struct {
 // to the exact Link mount that issued its Value operand. The mount qualifier
 // is mandatory: one reusable Program may appear in several Link modules.
 type storageTransferOccurrenceKey struct {
-	mount      keyspace.ContentID
-	occurrence keyspace.ContentID
+	mount      identity.ContentID
+	occurrence identity.ContentID
 }
 
 // StorageTransferCount reports Value's complete fixed Read/Bind/Write
@@ -93,7 +93,7 @@ func (schema *Schema) StorageTransferAt(index int) (StorageTransfer, bool) {
 // transfer operand for one mounted reusable Program occurrence. The mapping
 // is sealed with the Value schema; hot callers never reopen Program or Link
 // topology to reconstruct it.
-func (schema *Schema) StorageTransferForArtifactOccurrence(mount, occurrence keyspace.ContentID) (StorageTransfer, bool) {
+func (schema *Schema) StorageTransferForArtifactOccurrence(mount, occurrence identity.ContentID) (StorageTransfer, bool) {
 	if schema == nil || !mount.Available() || !occurrence.Available() || schema.storageTransferOccurrences == nil {
 		return StorageTransfer{}, false
 	}
@@ -159,9 +159,9 @@ func (transfer StorageTransfer) Ref() (StorageTransferRef, bool) {
 
 // ID returns Value's fixed-width content identity for the canonical Program
 // occurrence tuple. It is a pure domain-owned digest, not a Link row ID.
-func (transfer StorageTransfer) ID() (keyspace.ContentID, bool) {
+func (transfer StorageTransfer) ID() (identity.ContentID, bool) {
 	if !transfer.valid() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return transfer.schema.storageTransfers[transfer.index].id, true
 }
@@ -170,9 +170,9 @@ func (transfer StorageTransfer) ID() (keyspace.ContentID, bool) {
 // transfer.  The transfer's Value-coordinate endpoints stay owned by Value,
 // while control routing remains entirely in Flow; no from/to route is copied
 // out of the sealed relation.
-func (transfer StorageTransfer) Occurrence() (keyspace.ContentID, keyspace.ContentID, bool) {
+func (transfer StorageTransfer) Occurrence() (identity.ContentID, identity.ContentID, bool) {
 	if !transfer.valid() {
-		return keyspace.ContentID{}, keyspace.ContentID{}, false
+		return identity.ContentID{}, identity.ContentID{}, false
 	}
 	ref := transfer.schema.storageTransfers[transfer.index].ref
 	return ref.mount, ref.occurrence, true
@@ -210,7 +210,7 @@ func (schema *valueBuilder) sealStorageTransfersWithFailure() SealFailure {
 			if kind != storageTransferBind && position != 0 {
 				return SealFailureStorageTransferAddInput
 			}
-			var fromID, toID keyspace.ContentID
+			var fromID, toID identity.ContentID
 			switch kind {
 			case storageTransferRead:
 				fromID, _ = row.InputAt(0)
@@ -228,7 +228,7 @@ func (schema *valueBuilder) sealStorageTransfersWithFailure() SealFailure {
 	return SealFailureNone
 }
 
-func (schema *valueBuilder) addArtifactStorageTransfer(module keyspace.ContentID, kind storageTransferKind, occurrence keyspace.ContentID, position uint32, fromID, toID keyspace.ContentID) SealFailure {
+func (schema *valueBuilder) addArtifactStorageTransfer(module identity.ContentID, kind storageTransferKind, occurrence identity.ContentID, position uint32, fromID, toID identity.ContentID) SealFailure {
 	if schema == nil || schema.sealProject() == nil || schema.storageTransferOrdinals == nil || schema.storageTransferOccurrences == nil || !module.Available() || !kind.valid() || !occurrence.Available() || !fromID.Available() || !toID.Available() {
 		return SealFailureStorageTransferAddInput
 	}
@@ -272,9 +272,9 @@ func (schema *valueBuilder) addArtifactStorageTransfer(module keyspace.ContentID
 	return SealFailureNone
 }
 
-func storageTransferIdentity(ref StorageTransferRef) keyspace.ContentID {
+func storageTransferIdentity(ref StorageTransferRef) identity.ContentID {
 	if !ref.valid() {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	var payload [32 + 12*8]byte
 	copy(payload[:32], ref.linkID[:])

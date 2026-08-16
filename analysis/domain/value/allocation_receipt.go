@@ -2,7 +2,7 @@ package value
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/heap"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // AllocationResult is the sealed Value-owned result of one Heap allocation
@@ -13,7 +13,7 @@ import (
 type AllocationResult struct {
 	schema     *Schema
 	key        heap.Key
-	keyID      keyspace.ContentID
+	keyID      identity.ContentID
 	coordinate Coordinate
 	fresh      Value
 	recent     uint32
@@ -38,9 +38,9 @@ func (result *AllocationResult) Key() (heap.Key, bool) {
 }
 
 // KeyID returns the stable identity issued with the exact Heap key.
-func (result *AllocationResult) KeyID() (keyspace.ContentID, bool) {
+func (result *AllocationResult) KeyID() (identity.ContentID, bool) {
 	if result == nil || !result.keyID.Available() {
-		return keyspace.ContentID{}, false
+		return identity.ContentID{}, false
 	}
 	return result.keyID, true
 }

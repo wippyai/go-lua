@@ -3,7 +3,7 @@ package engine
 import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
-	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // MountedActivationCandidateIssuer is bound once to the sole activation
@@ -19,8 +19,8 @@ type MountedActivationCandidateIssuer struct {
 
 type directActivationTransportSetKey struct {
 	issuer *MountedActivationCandidateIssuer
-	mount  keyspace.ContentID
-	body   keyspace.ContentID
+	mount  identity.ContentID
+	body   identity.ContentID
 }
 
 // BindMountedActivationCandidateIssuer joins the exact already-bound
@@ -103,7 +103,7 @@ func (issuer *MountedActivationCandidateIssuer) validFor(assembly *ReceiptAssemb
 // application/target tuple and mounted body identity; the engine resolves all
 // point memberships from its own artifact snapshot and emits the five fixed
 // transport roles. It never accepts PointRefs, factor IDs, or edge slices.
-func (issuer *MountedActivationCandidateIssuer) AddMountedActivationCandidate(assembly *ReceiptAssembly, occurrence RuleOccurrenceReceipt, application, target, endpoint SemanticKey, mount, body keyspace.ContentID) bool {
+func (issuer *MountedActivationCandidateIssuer) AddMountedActivationCandidate(assembly *ReceiptAssembly, occurrence RuleOccurrenceReceipt, application, target, endpoint SemanticKey, mount, body identity.ContentID) bool {
 	if !issuer.validFor(assembly, occurrence) || !application.Available() || !target.Available() || !endpoint.Available() || target == endpoint || !mount.Available() || !body.Available() {
 		return false
 	}

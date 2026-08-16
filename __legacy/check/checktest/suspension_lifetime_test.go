@@ -4,9 +4,9 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/placementplan"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
-	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestDiesBeforeSuspensionPureHelperChain(t *testing.T) {

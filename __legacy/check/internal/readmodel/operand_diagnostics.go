@@ -3,7 +3,7 @@ package readmodel
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	readapi "github.com/wippyai/go-lua/analysis/check/readmodel"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 )
 
 // ForEachNonNilAssertion visits runtime non-nil assertions in deterministic RPO

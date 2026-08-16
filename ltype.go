@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/wippyai/go-lua/analysis/type/annotation"
-	"github.com/wippyai/go-lua/analysis/type/kind"
-	"github.com/wippyai/go-lua/analysis/type/subst"
-	"github.com/wippyai/go-lua/analysis/type/subtype"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/domain/type/annotation"
+	"github.com/wippyai/go-lua/analysis/domain/type/kind"
+	"github.com/wippyai/go-lua/analysis/domain/type/subst"
+	"github.com/wippyai/go-lua/analysis/domain/type/subtype"
+	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	"github.com/wippyai/go-lua/validate"
 )
 
@@ -374,7 +374,7 @@ func validateValueDepth(val LValue, t typ.Type, resolver *typeResolver, depth in
 		return true
 
 	case *typ.Literal:
-		switch lit := tt.Value.(type) {
+		switch lit := tt.Value().(type) {
 		case string:
 			if s, ok := val.(LString); ok {
 				return string(s) == lit
@@ -739,7 +739,7 @@ func validateWithErrorDepth(val LValue, t typ.Type, resolver *typeResolver, path
 		return true, nil
 
 	case *typ.Literal:
-		switch lit := tt.Value.(type) {
+		switch lit := tt.Value().(type) {
 		case string:
 			if s, ok := val.(LString); ok && string(s) == lit {
 				return true, nil

@@ -3,8 +3,8 @@ package owner
 import (
 	"github.com/wippyai/go-lua/analysis/domain/heap"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/program/keyspace"
-	"github.com/wippyai/go-lua/program/link"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/link"
 )
 
 // HotOwner is Heap's exact Link-local Factor implementation. The retained
@@ -28,9 +28,9 @@ func (owner *HotOwner) LinkOwner() link.OwnerCapability {
 }
 
 // LinkID returns the scalar identity paired with LinkOwner.
-func (owner *HotOwner) LinkID() keyspace.ContentID {
+func (owner *HotOwner) LinkID() identity.ContentID {
 	if owner == nil {
-		return keyspace.ContentID{}
+		return identity.ContentID{}
 	}
 	return owner.linkOwner.ContentID()
 }
@@ -143,16 +143,32 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, schema hea
 	if !bindingOpen(binding) || fragment == nil || !schema.Valid() || !schema.LinkOwner().Available() {
 		return nil, false
 	}
-	keyEnd := schema.KeyCount()
-	if keyEnd < 0 || uint64(keyEnd) > uint64(^uint32(0)) {
-		return nil, false
-	}
 	rank, ok := heap.NewWidenRank(schema)
 	if !ok {
 		return nil, false
 	}
 	owner := &HotOwner{binding: binding, fragment: fragment, schema: schema, linkOwner: schema.LinkOwner(), rank: rank}
-	if !engine.BindFactor[coordinate](binding, fragment.slot, engine.HotFactorSpec[coordinate, heap.Value]{
+	spec, specOK := owner.FactorSpec()
+	if !specOK || !engine.BindFactor[coordinate](binding, fragment.slot, spec) {
+		return nil, false
+	}
+	return owner, true
+}
+
+// FactorSpec is Heap's exact Factor algebra for this binding: the same value
+// BindHot hands to the engine. A declaration surface projects this record
+// instead of restating the lattice, admission, or widening law, so the two
+// cannot drift.
+func (owner *HotOwner) FactorSpec() (engine.HotFactorSpec[coordinate, heap.Value], bool) {
+	if owner == nil || !owner.schema.Valid() {
+		return engine.HotFactorSpec[coordinate, heap.Value]{}, false
+	}
+	keyEnd := owner.schema.KeyCount()
+	if keyEnd < 0 || uint64(keyEnd) > uint64(^uint32(0)) {
+		return engine.HotFactorSpec[coordinate, heap.Value]{}, false
+	}
+	schema := owner.schema
+	return engine.HotFactorSpec[coordinate, heap.Value]{
 		KeyEnd:  uint64(keyEnd),
 		Lattice: schema.Domain(),
 		Default: schema.Default(),
@@ -164,11 +180,8 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, schema hea
 			}
 			return fingerprint
 		},
-		WidenRank: engine.Measure[coordinate, heap.Value]{Width: rank.Width(), At: owner.widenRank},
-	}) {
-		return nil, false
-	}
-	return owner, true
+		WidenRank: engine.Measure[coordinate, heap.Value]{Width: owner.rank.Width(), At: owner.widenRank},
+	}, true
 }
 
 // Schema returns Heap's already-sealed Link-local semantic authority. It is

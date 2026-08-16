@@ -1,6 +1,10 @@
 package engine
 
-import "sync/atomic"
+import (
+	"sync/atomic"
+
+	"github.com/wippyai/go-lua/analysis/identity"
+)
 
 type coldWriteSelector struct {
 	write      int
@@ -26,7 +30,7 @@ const (
 // carrier capability, recover a key/unit, or retain a route after the call.
 type SelectorContext struct {
 	frame *selectorFrame
-	call  uint64
+	call  identity.Generation
 }
 
 // selectorFrame is one current Product-row selector invocation. Read and
@@ -35,7 +39,7 @@ type SelectorContext struct {
 // sparse owner-issued exact routes through routes.
 type selectorFrame struct {
 	execution *ruleExecution
-	epoch     uint64
+	epoch     identity.Generation
 	read      stagedReadSelector
 	write     *coldWriteSelector
 	product   *productSession
@@ -48,7 +52,7 @@ type selectorFrame struct {
 	requireCurrent bool
 	routes         selectorRouteSink
 	active         atomic.Bool
-	call           atomic.Uint64
+	call           generationCell
 
 	selected func(int, int) (bool, bool)
 }
@@ -64,8 +68,8 @@ type stagedReadSelector interface {
 }
 
 func (frame *selectorFrame) valid() bool {
-	return frame != nil && frame.execution != nil && frame.epoch != 0 &&
-		frame.execution.active.Load() == frame.epoch && (frame.read != nil || frame.write != nil) &&
+	return frame != nil && frame.execution != nil && frame.execution.active.holds(frame.epoch) &&
+		(frame.read != nil || frame.write != nil) &&
 		(frame.read == nil || frame.write == nil) && frame.active.Load()
 }
 
@@ -75,7 +79,7 @@ func (frame *selectorFrame) rowLive() bool {
 
 func (context SelectorContext) valid() bool {
 	frame := context.frame
-	return context.call != 0 && frame != nil && frame.valid() && frame.call.Load() == context.call
+	return frame != nil && frame.valid() && frame.call.holds(context.call)
 }
 
 func (frame *selectorFrame) poison() {
@@ -104,13 +108,13 @@ func runWriteSelector(frame *selectorFrame, decide func(SelectorContext) bool) b
 // contexts re-entering while active and invalidates escaped contexts before
 // the next row/candidate.
 func runSelector(frame *selectorFrame, invoke func(SelectorContext) bool) bool {
-	if frame == nil || frame.execution == nil || frame.epoch == 0 || frame.execution.active.Load() != frame.epoch || invoke == nil || !frame.active.CompareAndSwap(false, true) {
+	if frame == nil || frame.execution == nil || !frame.execution.active.holds(frame.epoch) || invoke == nil || !frame.active.CompareAndSwap(false, true) {
 		frame.poison()
 		return false
 	}
 	defer frame.active.Store(false)
-	call := frame.call.Add(1)
-	if call == 0 {
+	call, issued := frame.call.advance()
+	if !issued {
 		frame.poison()
 		return false
 	}
@@ -272,7 +276,7 @@ func SelectRoute[K ~uint32 | ~uint64, Tag selectionTag](context SelectorContext,
 // cannot be accidentally paired across ordinals.
 type Selection[Tag selectionTag, S any] struct {
 	session     *productSession
-	epoch       uint64
+	epoch       identity.Generation
 	read        int
 	selectionID uint64
 	count       func(int) (int, bool)
@@ -287,9 +291,9 @@ type Selection[Tag selectionTag, S any] struct {
 	// Selection while the current staged locator is running.  The ordinary
 	// Access/Row projection below remains the only post-Product path.
 	selectorSession *productSession
-	selectorEpoch   uint64
+	selectorEpoch   identity.Generation
 	selectorRow     int
-	selectorCall    uint64
+	selectorCall    identity.Generation
 	selectorRead    int
 }
 
@@ -298,10 +302,10 @@ type Selection[Tag selectionTag, S any] struct {
 // detects Selection values through this marker without turning its general S
 // result into an erased runtime payload.
 type selectorScopedSelection interface {
-	scopeSelector(*productSession, uint64, int, uint64, int) bool
+	scopeSelector(*productSession, identity.Generation, int, identity.Generation, int) bool
 }
 
-func (selection *Selection[Tag, S]) scopeSelector(session *productSession, epoch uint64, row int, call uint64, read int) bool {
+func (selection *Selection[Tag, S]) scopeSelector(session *productSession, epoch identity.Generation, row int, call identity.Generation, read int) bool {
 	if selection == nil || session == nil || selection.session != session || selection.epoch != epoch || selection.read != read ||
 		selection.selectionID == 0 || row < 0 || row >= len(session.values) || call == 0 {
 		return false
@@ -403,7 +407,7 @@ func SelectionAt[V, O any, Tag selectionTag, S any](access Access[V, O], row Row
 
 func validSelection[V, O any, Tag selectionTag, S any](access Access[V, O], row Row, selection Selection[Tag, S]) bool {
 	execution := access.execution
-	if execution == nil || access.owner == nil || execution.owner != access.owner || access.epoch == 0 || execution.active.Load() != access.epoch || execution.product == nil ||
+	if execution == nil || access.owner == nil || execution.owner != access.owner || !execution.active.holds(access.epoch) || execution.product == nil ||
 		row.session == nil || row.session != execution.product || row.epoch != access.epoch || row.index != execution.product.current || row.index < 0 || row.index >= len(row.session.values) ||
 		selection.session != row.session || selection.epoch != access.epoch || selection.read < 0 || selection.read >= len(row.session.reads) || selection.selectionID == 0 {
 		return false
