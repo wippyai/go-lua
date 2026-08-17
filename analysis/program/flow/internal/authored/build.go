@@ -703,7 +703,7 @@ func validateTableValueAdjustment(component *component) error {
 			fixed := values.Fixed.End - values.Fixed.Start
 			open := values.Tail != 0
 			finalOpen := at+1 == row.Fields.End && fieldRow.Kind == kind.FieldList && fixed == 0 && open
-			if !(fixed == 1 && !open) && !finalOpen {
+			if (fixed != 1 || open) && !finalOpen {
 				return errors.New("program/flow: invalid TableField value adjustment")
 			}
 		}

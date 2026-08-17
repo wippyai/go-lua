@@ -4,8 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/wippyai/go-lua/domain/type/typ"
-	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/flow"
@@ -17,6 +15,8 @@ import (
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
+	"github.com/wippyai/go-lua/domain/type/typ"
+	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
 )
 
 func targetStringKey(value string) keyspace.LiteralValue {
@@ -154,23 +154,6 @@ func onlyShardFor(t testing.TB, l *Link, p *program.Program) linkproject.Shard {
 		t.Fatal("missing Program shard")
 	}
 	return shard
-}
-
-func onlyProjectShardFor(t testing.TB, l *Link, p *program.Program) linkproject.Shard {
-	t.Helper()
-	if l == nil || l.Project() == nil || p == nil {
-		t.Fatalf("missing Project or Program")
-	}
-	mounts := l.Project().Mounts()
-	for index := 0; index < mounts.Count(); index++ {
-		shard, ok := mounts.At(index)
-		mounted, mountedOK := mounts.Program(shard)
-		if ok && mountedOK && mounted == p {
-			return shard
-		}
-	}
-	t.Fatalf("Program is not mounted")
-	return linkproject.Shard{}
 }
 
 func shardForProgram(l *Link, p *program.Program) (linkproject.Shard, bool) {

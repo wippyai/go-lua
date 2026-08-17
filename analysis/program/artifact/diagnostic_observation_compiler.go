@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	programstatic "github.com/wippyai/go-lua/analysis/program/static"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
 // copyDiagnosticObservationsFailure builds the complete immutable diagnostic
@@ -95,8 +96,8 @@ func (compiler *compiler) admitDiagnosticBranchFailure(route flow.FinalRoute, ro
 	}
 	branch := diagnosticBranchConditionRow{decision: decisionPath, value: span.ContextID(), points: points}
 	row := DiagnosticObservationRow{
-		id:   diagnosticObservationID(compiler.input.ContentID(), DiagnosticObservationBranchCondition, location, branch, diagnosticUnresolvedTypeReferenceRow{}, diagnosticUnresolvedValueReferenceRow{}),
-		kind: DiagnosticObservationBranchCondition, location: location, branch: branch,
+		id:   diagnosticObservationID(compiler.input.ContentID(), structure.DiagnosticObservationBranchCondition, location, branch, diagnosticUnresolvedTypeReferenceRow{}, diagnosticUnresolvedValueReferenceRow{}),
+		kind: structure.DiagnosticObservationBranchCondition, location: location, branch: branch,
 	}
 	if !row.Available() || !compiler.admitDiagnosticObservationRow(row) {
 		return compileFailure(CompileStageRoutes, CompileRowRoute, rowIndex, -1, CompileReasonRouteGuard)
@@ -220,8 +221,8 @@ func (compiler *compiler) copyUnresolvedTypeObservationsFailure() CompileFailure
 		}
 		payload := diagnosticUnresolvedTypeReferenceRow{reference: reference, root: root, path: path}
 		row := DiagnosticObservationRow{
-			id:   diagnosticObservationID(compiler.input.ContentID(), DiagnosticObservationTypeReferenceUnresolved, location, diagnosticBranchConditionRow{}, payload, diagnosticUnresolvedValueReferenceRow{}),
-			kind: DiagnosticObservationTypeReferenceUnresolved, location: location, unresolved: payload,
+			id:   diagnosticObservationID(compiler.input.ContentID(), structure.DiagnosticObservationTypeReferenceUnresolved, location, diagnosticBranchConditionRow{}, payload, diagnosticUnresolvedValueReferenceRow{}),
+			kind: structure.DiagnosticObservationTypeReferenceUnresolved, location: location, unresolved: payload,
 		}
 		if !row.Available() || !compiler.admitDiagnosticObservationRow(row) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
@@ -252,8 +253,8 @@ func (compiler *compiler) copyUnresolvedValueObservationsFailure() CompileFailur
 		}
 		payload := diagnosticUnresolvedValueReferenceRow{read: read.id, cell: read.cell, name: literal.String}
 		row := DiagnosticObservationRow{
-			id:   diagnosticObservationID(compiler.input.ContentID(), DiagnosticObservationValueReferenceUnresolved, location, diagnosticBranchConditionRow{}, diagnosticUnresolvedTypeReferenceRow{}, payload),
-			kind: DiagnosticObservationValueReferenceUnresolved, location: location, value: payload,
+			id:   diagnosticObservationID(compiler.input.ContentID(), structure.DiagnosticObservationValueReferenceUnresolved, location, diagnosticBranchConditionRow{}, diagnosticUnresolvedTypeReferenceRow{}, payload),
+			kind: structure.DiagnosticObservationValueReferenceUnresolved, location: location, value: payload,
 		}
 		if !row.Available() || !compiler.admitDiagnosticObservationRow(row) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceStorageRead)

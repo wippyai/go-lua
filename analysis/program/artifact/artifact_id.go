@@ -1,6 +1,9 @@
 package artifact
 
-import "github.com/wippyai/go-lua/analysis/identity"
+import (
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
+)
 
 func artifactID(artifact *Artifact) identity.ContentID {
 	fields := append([]field{bytesField(artifact.key.ID())}, artifact.key.identityFields()...)
@@ -159,17 +162,17 @@ func artifactID(artifact *Artifact) identity.ContentID {
 			uintField(uint64(row.location.StartCol)), uintField(uint64(row.location.EndLine)), uintField(uint64(row.location.EndCol)),
 		)
 		switch row.kind {
-		case DiagnosticObservationBranchCondition:
+		case structure.DiagnosticObservationBranchCondition:
 			fields = append(fields, bytesField(row.branch.decision), bytesField(row.branch.value), uintField(uint64(len(row.branch.points))))
 			for _, point := range row.branch.points {
 				fields = append(fields, bytesField(point))
 			}
-		case DiagnosticObservationTypeReferenceUnresolved:
+		case structure.DiagnosticObservationTypeReferenceUnresolved:
 			fields = append(fields, bytesField(row.unresolved.reference), bytesField(row.unresolved.root), uintField(uint64(len(row.unresolved.path))))
 			for _, component := range row.unresolved.path {
 				fields = append(fields, field{bytes: []byte(component), kind: fieldBytes})
 			}
-		case DiagnosticObservationValueReferenceUnresolved:
+		case structure.DiagnosticObservationValueReferenceUnresolved:
 			fields = append(fields, bytesField(row.value.read), bytesField(row.value.cell), field{bytes: []byte(row.value.name), kind: fieldBytes})
 		}
 	}

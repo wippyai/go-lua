@@ -6,12 +6,12 @@ import (
 )
 
 func (view View) Contracts() Contracts {
-	return Contracts{component: view.component, state: view.state}
+	return Contracts(view)
 }
 func (view Contracts) Functions() Functions {
-	return Functions{component: view.component, state: view.state}
+	return Functions(view)
 }
-func (view Contracts) Calls() Calls { return Calls{component: view.component, state: view.state} }
+func (view Contracts) Calls() Calls { return Calls(view) }
 
 func (view Functions) Count() int {
 	component := view.componentOf()

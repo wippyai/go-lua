@@ -491,7 +491,7 @@ func callbackGsubProfile() Operation {
 	// its own closed Rule coordinate rather than an invented callback input.
 	table.ArgumentOrigins = []ArgumentOrigin{{Segment: ArgumentFixed, Index: 0, Kind: ArgumentSourceInput, Source: InputSource{Kind: InputSourceValue, Ordinal: 2}}, {Segment: ArgumentFixed, Index: 1, Kind: ArgumentSourceRule}}
 	op.Subedges = []Subedge{function, table}
-	op.GsubTableReplacement = &GsubTableReplacement{Replacement: 2, Access: 2, ResultOutcome: 0, Result: 0, EffectAliases: []uint32{0}}
+	op.SubedgeRelation = &SubedgeRelation{Operand: 2, Selector: 1, Subedge: 2, ResultOutcome: 0, Result: 0, EffectAliases: []uint32{0}}
 	op.Effects = RowSpec{Tail: RowClosed}
 	return op
 }

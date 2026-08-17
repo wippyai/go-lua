@@ -25,7 +25,7 @@ func run(arguments []string) error {
 		return err
 	}
 	if *out == "" {
-		return fmt.Errorf("Program output owners: -out is required")
+		return fmt.Errorf("program output owners: -out is required")
 	}
 	return outputowners.Generate(*out, *check)
 }

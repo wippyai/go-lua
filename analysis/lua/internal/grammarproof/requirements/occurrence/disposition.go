@@ -94,7 +94,7 @@ type namedState struct {
 
 const (
 	dispositionGrammarDigest = "751315983a27d36121ace906bbc2216abbd0c082221bca99c7ace479874aa1d5"
-	dispositionSchemaDigest  = "50039764153aa2f7cb14ce40bdd5424f8b309afb024e9f331381946ccafb5688"
+	dispositionSchemaDigest  = "7b7e4cf3bd735684904b527f81d5dd6e4decd6e21e1416d17ac5b4b63c59d9ea"
 )
 
 // ClassifyResidue closes the parser-state observation residue against the

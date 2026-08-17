@@ -1,8 +1,8 @@
 package eval
 
 import (
-	"testing"
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
+	"testing"
 )
 
 func TestValuesRejectsSchedulingWithoutTypedEvaluationOwners(t *testing.T) {

@@ -534,7 +534,7 @@ func buildCarriers(schema parsersource.Schema) ([]Carrier, error) {
 	for _, constructor := range schema.Constructors {
 		for _, field := range constructor.Fields {
 			child, cardinality, ok := carrier(field.Type)
-			if !ok && !(field.Name == "AdjustRet" && field.Form == parsersource.FieldFormBool) {
+			if !ok && (field.Name != "AdjustRet" || field.Form != parsersource.FieldFormBool) {
 				continue
 			}
 			if field.Name == "AdjustRet" && field.Form == parsersource.FieldFormBool {

@@ -132,6 +132,23 @@ func TestArtifactVocabularyIsTheSealedTable(t *testing.T) {
 		pinned(t, table, structure.CategoryOutcome, uint16(member.ordinal), member.key, member.spelling)
 	}
 	counted(t, table, structure.CategoryOutcome, uint16(programartifact.OutcomeCancel), "programartifact.OutcomeCancel")
+
+	for _, member := range []struct {
+		key      schema.Key
+		spelling string
+		ordinal  programartifact.RuleStage
+		foreign  string
+	}{
+		{"stage/base", "base", programartifact.RuleStageBase, "programartifact.RuleStageBase"},
+		{"stage/local", "local", programartifact.RuleStageLocal, "programartifact.RuleStageLocal"},
+		{"stage/call-dispatch", "call-dispatch", programartifact.RuleStageCallDispatch, "programartifact.RuleStageCallDispatch"},
+		{"stage/call-summary", "call-summary", programartifact.RuleStageCallSummary, "programartifact.RuleStageCallSummary"},
+		{"stage/call-effect", "call-effect", programartifact.RuleStageCallEffect, "programartifact.RuleStageCallEffect"},
+	} {
+		pinned(t, table, structure.CategoryIssuanceStage, uint16(member.ordinal), member.key, member.foreign)
+		spelled(t, table, structure.CategoryIssuanceStage, uint16(member.ordinal), member.spelling)
+	}
+	counted(t, table, structure.CategoryIssuanceStage, uint16(programartifact.RuleStageCallEffect), "programartifact.RuleStageCallEffect")
 }
 
 // TestIngressVocabularyIsTheSealedTable pins the ingress boundary spellings.
@@ -207,6 +224,23 @@ func TestEngineArtifactVocabularyIsTheSealedTable(t *testing.T) {
 		pinned(t, table, structure.CategoryEvent, uint16(member.ordinal), member.key, member.spelling)
 	}
 	counted(t, table, structure.CategoryEvent, uint16(rows.ArtifactEventExit), "rows.ArtifactEventExit")
+
+	for _, member := range []struct {
+		key      schema.Key
+		spelling string
+		ordinal  rows.ArtifactRuleStage
+		foreign  string
+	}{
+		{"stage/base", "base", rows.ArtifactRuleStageBase, "rows.ArtifactRuleStageBase"},
+		{"stage/local", "local", rows.ArtifactRuleStageLocal, "rows.ArtifactRuleStageLocal"},
+		{"stage/call-dispatch", "call-dispatch", rows.ArtifactRuleStageCallDispatch, "rows.ArtifactRuleStageCallDispatch"},
+		{"stage/call-summary", "call-summary", rows.ArtifactRuleStageCallSummary, "rows.ArtifactRuleStageCallSummary"},
+		{"stage/call-effect", "call-effect", rows.ArtifactRuleStageCallEffect, "rows.ArtifactRuleStageCallEffect"},
+	} {
+		pinned(t, table, structure.CategoryIssuanceStage, uint16(member.ordinal), member.key, member.foreign)
+		spelled(t, table, structure.CategoryIssuanceStage, uint16(member.ordinal), member.spelling)
+	}
+	counted(t, table, structure.CategoryIssuanceStage, uint16(rows.ArtifactRuleStageCallEffect), "rows.ArtifactRuleStageCallEffect")
 }
 
 // TestDiagnosticVocabularyIsTheSealedTable pins the publication vocabularies.

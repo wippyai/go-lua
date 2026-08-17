@@ -24,12 +24,12 @@ func Generate(out string, check bool) error {
 	current, readErr := os.ReadFile(out)
 	if check {
 		if readErr != nil || !bytes.Equal(current, rendered) {
-			return fmt.Errorf("Program output owners: evidence is stale")
+			return fmt.Errorf("program output owners: evidence is stale")
 		}
 		return nil
 	}
 	if err := os.WriteFile(out, rendered, 0o644); err != nil {
-		return fmt.Errorf("Program output owners: write evidence: %w", err)
+		return fmt.Errorf("program output owners: write evidence: %w", err)
 	}
 	return nil
 }

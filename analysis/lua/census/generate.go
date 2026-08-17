@@ -6,7 +6,6 @@ import (
 	"go/format"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -87,6 +86,11 @@ func render(value Census) ([]byte, error) {
 		writeUse(&out, row)
 	}
 	out.WriteString("\t},\n")
+	out.WriteString("\tSequences: []parsersource.ActionSequence{\n")
+	for _, row := range value.Sequences {
+		writeSequence(&out, row)
+	}
+	out.WriteString("\t},\n")
 	out.WriteString("}\n")
 	formatted, err := format.Source([]byte(out.String()))
 	if err != nil {
@@ -145,6 +149,39 @@ func writeUse(out *strings.Builder, row parsersource.ActionUse) {
 	out.WriteString(", Symbols: ")
 	writeOrdinals(out, row.Symbols)
 	out.WriteString("},\n")
+}
+
+func writeSequence(out *strings.Builder, row parsersource.ActionSequence) {
+	fmt.Fprintf(out, "\t\t{Production: %q, Tag: %q, Field: %q, Construction: parsersource.SequenceConstruction(%d), Segments: ", row.Production, row.Tag, row.Field, row.Construction)
+	writeSegments(out, row.Segments)
+	out.WriteString("},\n")
+}
+
+// writeSegments keeps the difference between a construction that states no
+// operands and one that states an empty list of them. The first is a reduction
+// which leaves the carrier alone; the second is a reduction which builds a list
+// of length zero, and a renderer that spelled both as nil would let one be read
+// as the other.
+func writeSegments(out *strings.Builder, rows []parsersource.SequenceSegment) {
+	if rows == nil {
+		out.WriteString("nil")
+		return
+	}
+	if len(rows) == 0 {
+		out.WriteString("[]parsersource.SequenceSegment{}")
+		return
+	}
+	out.WriteString("[]parsersource.SequenceSegment{\n")
+	for _, row := range rows {
+		fmt.Fprintf(out, "{Ordinal: %d, Kind: parsersource.SequenceSegmentKind(%d), Origins: ", row.Ordinal, row.Kind)
+		writeOrigins(out, row.Origins)
+		out.WriteString(", Sources: ")
+		writeOrdinals(out, row.Sources)
+		out.WriteString(", Symbols: ")
+		writeOrdinals(out, row.Symbols)
+		out.WriteString("},\n")
+	}
+	out.WriteString("}")
 }
 
 func writeOrigins(out *strings.Builder, rows []parsersource.UseOrigin) {
@@ -234,12 +271,4 @@ func writeStrings(out *strings.Builder, name string, rows []string) {
 		out.WriteString(",\n")
 	}
 	out.WriteString("}")
-}
-
-// generatedNames is useful to tests and keeps the generated row order
-// explicit if a future renderer adds vertical files.
-func generatedNames() []string {
-	result := []string{"census_gen.go"}
-	sort.Strings(result)
-	return result
 }

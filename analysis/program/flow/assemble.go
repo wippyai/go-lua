@@ -258,7 +258,7 @@ func Assemble(
 		return fail("Module commit", err)
 	}
 	if moduleComponent == nil {
-		return fail("Module commit", errors.New("Module returned no Component"))
+		return fail("Module commit", errors.New("module returned no Component"))
 	}
 
 	// Static validation consumes the full transient forest/scope proof and
@@ -288,7 +288,7 @@ func Assemble(
 		return fail("Flow commit", err)
 	}
 	if !authoredView.Cold().ContentID().Available() {
-		return fail("Flow commit", errors.New("Flow returned no authored View"))
+		return fail("Flow commit", errors.New("flow returned no authored View"))
 	}
 	component := &Component{
 		provenance:  Provenance{Source: sourceID, Flow: flowID, Static: staticID, Module: moduleID},

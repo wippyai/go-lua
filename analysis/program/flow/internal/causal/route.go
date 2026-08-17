@@ -95,7 +95,7 @@ func (r *Result) semanticRoutePath(ref successorRef) (identity.ContentID, bool) 
 		}
 		row := r.boundaries.rows[ref.index]
 		var ok bool
-		from = row.CallBoundary.Call
+		from = row.Call
 		to, decision, truth, ok = boundarySuccessor(row.CallBoundary, ref.arm)
 		if !ok {
 			return identity.ContentID{}, false

@@ -28,6 +28,7 @@ const (
 	RowFieldState
 	RowProduct
 	RowUseSlot
+	RowSequence
 )
 
 // Row is one census row in the neutral vocabulary a seal-time disposition join
@@ -67,6 +68,14 @@ type Row struct {
 	// a value in this slot. An empty column is evidence in its own right: it
 	// names a slot the declarations admit and no action fills.
 	FilledBy []string
+	// Construction is, for a sequence row, the way the reduction obtains the
+	// list its result carrier holds, and Members the ordinal of every operand
+	// of that construction which adds exactly one position to the list. The two
+	// together are what a final-position law reads: the last member of a
+	// construction that adds no further positions after it is the list's own
+	// final position.
+	Construction parsersource.SequenceConstruction
+	Members      []int
 }
 
 // ProductionRow, FormRow, CarrierRow, and FieldStateRow are the row key
@@ -94,6 +103,18 @@ func ProductRow(owner string, ordinal int, constructor string) string {
 // row it belongs to without a second index.
 func UseSlotRow(form, field string) string { return "use:" + form + "." + field }
 
+// SequenceRow names one reduction's disposition of one list-valued result
+// carrier. The production is part of the key because the carrier belongs to the
+// nonterminal and every alternative of that nonterminal states its own law for
+// it, so a key naming only the carrier would collapse the alternatives that
+// seed a list with the ones that extend it.
+func SequenceRow(production, tag, field string) string {
+	if field == "" {
+		return "sequence:" + production + "@" + tag
+	}
+	return "sequence:" + production + "@" + tag + "." + field
+}
+
 // coordinateTypes are the compiler's source-coordinate aliases. A carrier of
 // one of these holds a position in the source text, not a parsed value, so no
 // rule can own it and the join states that rather than leaving it to a caller's
@@ -118,17 +139,53 @@ var coordinateTypes = map[string]bool{"Position": true, "[]Position": true}
 // for the same reason States is: which slots a language admits is a different
 // judgment from which carriers it declares, and a join total over Rows would
 // absorb it without ever accounting for a slot.
+// Sequences is the list-building denominator, published beside the others for
+// the same reason: how a reduction assembles its result list is a different
+// judgment from which carriers it declares or which slots it fills.
 type Projection struct {
-	Digest   string
-	Rows     []Row
-	States   []Row
-	Products []Row
-	Uses     []Row
+	Digest    string
+	Rows      []Row
+	States    []Row
+	Products  []Row
+	Uses      []Row
+	Sequences []Row
 }
 
 // Project derives the complete projection of a census value.
 func Project(value Census) Projection {
-	return Projection{Digest: value.Digest, Rows: rows(value), States: states(value), Products: products(value), Uses: uses(value)}
+	return Projection{
+		Digest:    value.Digest,
+		Rows:      rows(value),
+		States:    states(value),
+		Products:  products(value),
+		Uses:      uses(value),
+		Sequences: sequences(value),
+	}
+}
+
+// sequences projects a census into the list-building denominator. Members
+// carries the operand ordinals that add one position each, so a reader deciding
+// which operand supplies a list's final position reads this row rather than
+// re-deriving the construction from the alternative's action.
+func sequences(value Census) []Row {
+	result := make([]Row, 0, len(value.Sequences))
+	for _, sequence := range value.Sequences {
+		row := Row{
+			Key:          SequenceRow(sequence.Production, sequence.Tag, sequence.Field),
+			Kind:         RowSequence,
+			Owner:        ProductionRow(sequence.Production),
+			Construction: sequence.Construction,
+		}
+		for _, segment := range sequence.Segments {
+			if segment.Kind != parsersource.SequenceElement {
+				continue
+			}
+			row.Members = append(row.Members, segment.Ordinal)
+		}
+		result = append(result, row)
+	}
+	sort.Slice(result, func(left, right int) bool { return result[left].Key < result[right].Key })
+	return result
 }
 
 // uses projects a census into the typed parent-slot denominator. The slot rows
@@ -266,7 +323,7 @@ func CurrentProjection(root string) (Projection, error) {
 		return Projection{}, err
 	}
 	projection := Project(value)
-	if len(projection.Rows) == 0 || len(projection.States) == 0 || len(projection.Products) == 0 || len(projection.Uses) == 0 || projection.Digest == "" {
+	if len(projection.Rows) == 0 || len(projection.States) == 0 || len(projection.Products) == 0 || len(projection.Uses) == 0 || len(projection.Sequences) == 0 || projection.Digest == "" {
 		return Projection{}, fmt.Errorf("parser census: projection is empty")
 	}
 	return projection, nil

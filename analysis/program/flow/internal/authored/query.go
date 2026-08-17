@@ -142,7 +142,7 @@ func (view Fields) Values(term keyspace.Term) (values keyspace.Term, finalOpen b
 	if !ok {
 		return 0, false, false
 	}
-	valueRow, valuesOK := Values{viewAccess: view.viewAccess}.row(row.Values)
+	valueRow, valuesOK := Values(view).row(row.Values)
 	if !valuesOK {
 		return 0, false, false
 	}
@@ -161,10 +161,10 @@ func (view Fields) row(term keyspace.Term) (Field, bool) {
 }
 
 func (view Access) Exact() ExactLenses {
-	return ExactLenses{viewAccess: view.viewAccess}
+	return ExactLenses(view)
 }
 func (view Access) Dynamic() DynamicLenses {
-	return DynamicLenses{viewAccess: view.viewAccess}
+	return DynamicLenses(view)
 }
 
 func (view ExactLenses) Count() int {
@@ -212,22 +212,22 @@ func (view DynamicLenses) Get(term keyspace.Term) (owner, base, key keyspace.Ter
 }
 
 func (view Storage) Cells() Cells {
-	return Cells{viewAccess: view.viewAccess}
+	return Cells(view)
 }
 func (view Storage) Reads() Reads {
-	return Reads{viewAccess: view.viewAccess}
+	return Reads(view)
 }
 func (view Storage) Varargs() Varargs {
-	return Varargs{viewAccess: view.viewAccess}
+	return Varargs(view)
 }
 func (view Storage) Binds() Binds {
-	return Binds{viewAccess: view.viewAccess}
+	return Binds(view)
 }
 func (view Storage) Assigns() Assigns {
-	return Assigns{viewAccess: view.viewAccess}
+	return Assigns(view)
 }
 func (view Storage) Writes() Writes {
-	return Writes{viewAccess: view.viewAccess}
+	return Writes(view)
 }
 
 func (view Cells) Count() int {
@@ -465,22 +465,22 @@ func (view Calls) Get(term keyspace.Term) (owner, callee, receiver, actuals keys
 // Returns through Loops expose authored control evidence only. They never
 // expose Source-owned order or derived execution relations.
 func (view Control) Returns() Returns {
-	return Returns{viewAccess: view.viewAccess}
+	return Returns(view)
 }
 func (view Control) Breaks() Breaks {
-	return Breaks{viewAccess: view.viewAccess}
+	return Breaks(view)
 }
 func (view Control) Labels() Labels {
-	return Labels{viewAccess: view.viewAccess}
+	return Labels(view)
 }
 func (view Control) Gotos() Gotos {
-	return Gotos{viewAccess: view.viewAccess}
+	return Gotos(view)
 }
 func (view Control) Branches() Branches {
-	return Branches{viewAccess: view.viewAccess}
+	return Branches(view)
 }
 func (view Control) Loops() Loops {
-	return Loops{viewAccess: view.viewAccess}
+	return Loops(view)
 }
 
 func (view Returns) Count() int {

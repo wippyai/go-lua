@@ -38,6 +38,13 @@ type Manifest struct {
 	// module type surface is self-contained; catalogue sealing verifies equality.
 	FunctionAliases map[string]string
 
+	// InitialRoots, InitialEntries, and InitialMetatables describe provider-
+	// owned bootstrap structure that is not implied by ordinary module/global
+	// mounting. They are runtime-level declarations, not analyzer profiles.
+	InitialRoots      []InitialRoot
+	InitialEntries    []InitialEntry
+	InitialMetatables []InitialMetatableAttachment
+
 	// ErrorType is this module's canonical error type (for Wippy, the LuaError
 	// interface). When set, the signature lookup derives the value/error
 	// correlation for any member whose final return is Optional(this type), so
@@ -210,7 +217,10 @@ func (m *Manifest) TypestateProtocol(protocol typestate.Protocol) (typestate.Def
 // Validate checks manifest-level cross references that cannot be validated by
 // individual type/effect codecs alone.
 func (m *Manifest) Validate() error {
-	return validateManifestTypestateUsage(m)
+	if err := validateManifestTypestateUsage(m); err != nil {
+		return err
+	}
+	return validateInitialEnvironment(m)
 }
 
 // DefineFunctionSignature records effect-bearing metadata for a named function.
@@ -388,6 +398,9 @@ func encodeWire(m *Manifest) (*manifestWire, error) {
 			wm.FunctionOperations = append(wm.FunctionOperations, namedOperationWire{Name: name, Operation: CloneOperation(m.FunctionOperations[name])})
 		}
 	}
+	wm.InitialRoots = append([]InitialRoot(nil), m.InitialRoots...)
+	wm.InitialEntries = append([]InitialEntry(nil), m.InitialEntries...)
+	wm.InitialMetatables = append([]InitialMetatableAttachment(nil), m.InitialMetatables...)
 
 	return &wm, nil
 }
@@ -507,6 +520,9 @@ func Decode(data []byte) (decoded *Manifest, err error) {
 	for _, alias := range wm.FunctionAliases {
 		m.DefineFunctionAlias(alias.Alias, alias.Target)
 	}
+	m.InitialRoots = append([]InitialRoot(nil), wm.InitialRoots...)
+	m.InitialEntries = append([]InitialEntry(nil), wm.InitialEntries...)
+	m.InitialMetatables = append([]InitialMetatableAttachment(nil), wm.InitialMetatables...)
 
 	if err := m.Validate(); err != nil {
 		return nil, err
@@ -526,6 +542,9 @@ type manifestWire struct {
 	DetachedFunctions          []wire.FunctionSignatureWire    `json:"detachedFunctions,omitempty"`
 	FunctionOperations         []namedOperationWire            `json:"functionOperations,omitempty"`
 	FunctionAliases            []functionAliasWire             `json:"functionAliases,omitempty"`
+	InitialRoots               []InitialRoot                   `json:"initialRoots,omitempty"`
+	InitialEntries             []InitialEntry                  `json:"initialEntries,omitempty"`
+	InitialMetatables          []InitialMetatableAttachment    `json:"initialMetatables,omitempty"`
 	Globals                    []string                        `json:"globals,omitempty"`
 	CallbackPhaseRegistrations []callbackPhaseRegistrationWire `json:"callbackPhaseRegistrations,omitempty"`
 	CallbackPhaseInvocations   []callbackPhaseInvocationWire   `json:"callbackPhaseInvocations,omitempty"`

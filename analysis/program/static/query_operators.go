@@ -3,15 +3,15 @@ package static
 import "github.com/wippyai/go-lua/analysis/program/keyspace"
 
 func (view View) Operators() Operators {
-	return Operators{component: view.component, state: view.state}
+	return Operators(view)
 }
-func (view Operators) TypeOfs() TypeOfs { return TypeOfs{component: view.component, state: view.state} }
-func (view Operators) KeyOfs() KeyOfs   { return KeyOfs{component: view.component, state: view.state} }
+func (view Operators) TypeOfs() TypeOfs { return TypeOfs(view) }
+func (view Operators) KeyOfs() KeyOfs   { return KeyOfs(view) }
 func (view Operators) IndexAccesses() IndexAccesses {
-	return IndexAccesses{component: view.component, state: view.state}
+	return IndexAccesses(view)
 }
 func (view Operators) Conditionals() Conditionals {
-	return Conditionals{component: view.component, state: view.state}
+	return Conditionals(view)
 }
 
 func (view TypeOfs) Count() int {

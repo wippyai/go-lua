@@ -299,7 +299,8 @@ end`)
 		if !ok || member.Kind != want {
 			t.Fatalf("member[%d] = %#v/%v, want kind %v", index, member, ok, want)
 		}
-		if want == static.InterfaceField {
+		switch want {
+		case static.InterfaceField:
 			if member.Field == 0 || member.Name != 0 || member.Signature != 0 {
 				t.Fatalf("field member[%d] = %#v", index, member)
 			}
@@ -307,9 +308,10 @@ end`)
 			if !ok || span.StartLine != uint32([]int{2, 0, 4, 0}[index]) || span.StartCol != 3 {
 				t.Fatalf("field member[%d] span = %#v/%v", index, span, ok)
 			}
-		} else if member.Field != 0 || member.Name == 0 || member.Signature == 0 {
-			t.Fatalf("method member[%d] = %#v", index, member)
-		} else {
+		case static.InterfaceMethod:
+			if member.Field != 0 || member.Name == 0 || member.Signature == 0 {
+				t.Fatalf("method member[%d] = %#v", index, member)
+			}
 			span, spanOK := p.Source().Identity().Render(member.NameCoordinate)
 			if !spanOK || span.StartLine != uint32([]int{0, 3, 0, 5}[index]) || span.StartCol != 12 {
 				t.Fatalf("method member[%d] name span = %#v/%v", index, span, spanOK)

@@ -3,6 +3,7 @@ package artifact
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
 func (payload diagnosticBranchConditionRow) DecisionPathID() identity.ContentID {
@@ -86,9 +87,9 @@ func (row DiagnosticObservationRow) ID() identity.ContentID {
 	return row.id
 }
 
-func (row DiagnosticObservationRow) Kind() DiagnosticObservationKind {
+func (row DiagnosticObservationRow) Kind() structure.DiagnosticObservationKind {
 	if !row.Available() {
-		return DiagnosticObservationInvalid
+		return structure.DiagnosticObservationInvalid
 	}
 	return row.kind
 }
@@ -98,21 +99,21 @@ func (row DiagnosticObservationRow) Location() (programsource.Span, bool) {
 }
 
 func (row DiagnosticObservationRow) BranchCondition() (diagnosticBranchConditionRow, bool) {
-	if !row.Available() || row.kind != DiagnosticObservationBranchCondition {
+	if !row.Available() || row.kind != structure.DiagnosticObservationBranchCondition {
 		return diagnosticBranchConditionRow{}, false
 	}
 	return diagnosticBranchConditionRow{decision: row.branch.decision, value: row.branch.value, points: append([]identity.ContentID(nil), row.branch.points...)}, true
 }
 
 func (row DiagnosticObservationRow) UnresolvedTypeReference() (diagnosticUnresolvedTypeReferenceRow, bool) {
-	if !row.Available() || row.kind != DiagnosticObservationTypeReferenceUnresolved {
+	if !row.Available() || row.kind != structure.DiagnosticObservationTypeReferenceUnresolved {
 		return diagnosticUnresolvedTypeReferenceRow{}, false
 	}
 	return diagnosticUnresolvedTypeReferenceRow{reference: row.unresolved.reference, root: row.unresolved.root, path: append([]string(nil), row.unresolved.path...)}, true
 }
 
 func (row DiagnosticObservationRow) UnresolvedValueReference() (diagnosticUnresolvedValueReferenceRow, bool) {
-	if !row.Available() || row.kind != DiagnosticObservationValueReferenceUnresolved {
+	if !row.Available() || row.kind != structure.DiagnosticObservationValueReferenceUnresolved {
 		return diagnosticUnresolvedValueReferenceRow{}, false
 	}
 	return row.value, true

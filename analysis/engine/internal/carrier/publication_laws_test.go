@@ -125,9 +125,6 @@ func (adversarialWork) ContributionPresenceIncludedUnder(support.Mask, support.M
 func (adversarialWork) MergeTransportedPointUnder(RootHandle, RootHandle, support.Mask, support.Mask, support.Mask, support.Mask, guard.Reindex, SlotCoverage, SlotCoverage, *support.Work) (ChangeHandle, bool) {
 	return ChangeHandle{}, false
 }
-func (adversarialWork) MergeSelectedUnder(MergeKind, uint64, RootHandle, RootHandle, RootHandle, support.Split, support.Split, *support.Work) (ChangeHandle, bool) {
-	return ChangeHandle{}, false
-}
 func (adversarialWork) MergeSelectedContributionUnder(MergeKind, uint64, RootHandle, RootHandle, RootHandle, support.Split, support.Split, SlotCoverage, SlotCoverage, SlotCoverage, *support.Work) (ChangeHandle, bool) {
 	return ChangeHandle{}, false
 }

@@ -176,12 +176,12 @@ func (c *Contract) appendOperation(op Operation, draft *operationDraft, keys map
 		return err
 	}
 	row.effects = effectRange
-	if draft.gsubTable != nil {
-		branch, branchErr := c.appendGsubTableReplacement(op, *draft.gsubTable, row)
+	if draft.subedgeRelation != nil {
+		branch, branchErr := c.appendSubedgeRelation(op, *draft.subedgeRelation, row)
 		if branchErr != nil {
 			return branchErr
 		}
-		row.gsubTable = branch
+		row.subedgeRelation = branch
 	}
 	c.operations = append(c.operations, row)
 	if len(draft.bindings) != 0 {
@@ -358,10 +358,7 @@ func (c *Contract) appendSuspensions(input []suspensionDraft) (indexRange, error
 		return indexRange{}, err
 	}
 	for _, suspension := range input {
-		c.suspensions = append(c.suspensions, suspensionRow{
-			yield: suspension.yield, reentry: suspension.reentry,
-			source: suspension.source, multiplicity: suspension.multiplicity,
-		})
+		c.suspensions = append(c.suspensions, suspensionRow(suspension))
 	}
 	return rangeOut, nil
 }
@@ -562,7 +559,7 @@ func (c *Contract) appendFreshResults(input []freshResultDraft) (indexRange, err
 		return indexRange{}, err
 	}
 	for _, fresh := range input {
-		c.fresh = append(c.fresh, freshResultRow{result: fresh.result, ordinal: fresh.ordinal, kind: fresh.kind})
+		c.fresh = append(c.fresh, freshResultRow(fresh))
 	}
 	return rangeOut, nil
 }
@@ -586,7 +583,7 @@ func (c *Contract) appendResultAliases(input []resultAliasDraft) (indexRange, er
 		return indexRange{}, err
 	}
 	for _, alias := range input {
-		c.resultAliases = append(c.resultAliases, resultAliasRow{result: alias.result, source: alias.source})
+		c.resultAliases = append(c.resultAliases, resultAliasRow(alias))
 	}
 	return rangeOut, nil
 }

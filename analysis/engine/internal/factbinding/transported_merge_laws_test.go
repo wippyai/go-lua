@@ -490,14 +490,53 @@ func TestTransportedPointRHSAdoptsClosedOperandOverSupportBase(t *testing.T) {
 	if !ok {
 		t.Fatal("complete transported merge")
 	}
-	got, ok := work.FoldTransportedPointRHS(base, right, whole, plan, whole)
-	if !ok || !work.EqualContribution(got, want) {
+	wantRule, ok := work.AsRuleContribution(want)
+	if !ok {
+		t.Fatal("complete transported merge rule role")
+	}
+	wantRHS, ok := work.PointRHSFromRuleContribution(wantRule)
+	if !ok {
+		t.Fatal("complete transported merge RHS role")
+	}
+	// The canonical fold transaction is the live RHS assembly authority. A
+	// coordinate-identical whole transport of a closed operand over a
+	// support-only base must reach the same lifted surface as the complete
+	// transported merge while adopting that operand's immutable root.
+	rightRule, ok := work.AsRuleContribution(right)
+	if !ok {
+		t.Fatal("operand rule role")
+	}
+	rightPoint, ok := work.PointStateFromRuleContribution(rightRule)
+	if !ok {
+		t.Fatal("operand point role")
+	}
+	transported, ok := work.TransportPointState(rightPoint, whole, plan, whole)
+	if !ok {
+		t.Fatal("nominal point transport")
+	}
+	basePoint, ok := work.EmptyPointState(initial)
+	if !ok {
+		t.Fatal("support-only point base")
+	}
+	baseRHS, ok := work.PointRHSFromPointState(basePoint)
+	if !ok {
+		t.Fatal("support-only RHS base")
+	}
+	if !work.BeginPointRHSFold(basePoint, baseRHS) || !work.AddPointFoldEnvironment(transported) {
+		t.Fatal("transported fold inputs")
+	}
+	got, ok := work.FinishPointRHSFold()
+	if !ok || !work.EqualPointRHS(got, wantRHS) {
 		t.Fatal("RHS adoption differs from complete transported merge")
 	}
-	rightRoot, rightOK := right.HandleAt(slot)
+	transportedRoot, transportedOK := transported.HandleAt(slot)
 	gotRoot, gotOK := got.HandleAt(slot)
-	if !rightOK || !gotOK || rightRoot != gotRoot {
+	if !transportedOK || !gotOK || transportedRoot != gotRoot {
 		t.Fatal("RHS adoption rebuilt an immutable closed root")
+	}
+	rightRoot, rightOK := right.HandleAt(slot)
+	if !rightOK || rightRoot != transportedRoot {
+		t.Fatal("coordinate-identical whole transport rebuilt an immutable closed root")
 	}
 }
 
@@ -593,7 +632,7 @@ func assertTransportedContribution(t testing.TB, work *carrier.Work, composition
 	if !got.Scope().Same(target) || !want.Scope().Same(target) || !got.Support().Equal(want.Support()) {
 		t.Fatal("fused/baseline support or target scope differs")
 	}
-	if !work.EqualUnder(got.State(), want.State()) || !work.EqualContribution(got, want) {
+	if !work.EqualUnder(got.State(), want.State()) || !work.EqualPointState(closedPointOf(t, work, got), closedPointOf(t, work, want)) {
 		t.Fatal("fused/baseline semantic or coverage result differs")
 	}
 	assertTransportChangeSetsEqual(t, gotChanges, wantChanges)

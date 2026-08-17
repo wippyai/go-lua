@@ -94,6 +94,14 @@ type ProductAnalysis struct {
 	// slot it lands in and where the action obtained it. A product states what a
 	// reduction builds; a use states where each built value goes.
 	Uses []ActionUse
+	// Sequences is the list-building grain: one row for every list-valued
+	// result carrier every reduction can leave a value in, stating how that
+	// reduction assembles the list out of its operands. It is held apart from
+	// Products because a list is not a constructed AST value: it is the
+	// carrier a construction's coordinate later receives, so a law about how
+	// long a list is and where its final member comes from has no product row
+	// to be stated on.
+	Sequences []ActionSequence
 }
 
 // DiscoverProducts derives every whole-constructor field vector the shipped
@@ -122,7 +130,6 @@ type constructionSite struct {
 	typeName string
 	astType  bool
 	semantic bool
-	pointer  bool
 	literal  *goast.CompositeLit
 	elements map[string]goast.Expr
 	fields   []Field
@@ -159,9 +166,14 @@ type mutationSite struct {
 }
 
 type actionScope struct {
-	index       int
-	kind        ProductScope
-	owner       string
+	index int
+	kind  ProductScope
+	owner string
+	// body and resultTag are the reduction's own action block and the %union
+	// arm its nonterminal yields. They are stated for a production scope only:
+	// a helper has no reduction result, so a list law is never owned by one.
+	body        *goast.BlockStmt
+	resultTag   string
 	symbols     []string
 	formals     []string
 	results     int
@@ -170,11 +182,9 @@ type actionScope struct {
 	roots       []goast.Expr
 	returns     [][]goast.Expr
 	guarded     map[*goast.CompositeLit]bool
-	pointers    map[*goast.CompositeLit]bool
 	rejected    map[*goast.CompositeLit]bool
 	elementwise map[*goast.CompositeLit]bool
 	sites       map[*goast.CompositeLit]siteID
-	body        goast.Node
 	rejectedAt  map[goast.Node]bool
 }
 
@@ -214,6 +224,7 @@ type productBuilder struct {
 	diagnostics  map[string]bool
 	env          map[queryKey]value
 	slots        map[string]UseSlot
+	carriers     map[string][]SequenceCarrier
 }
 
 func newProductBuilder(root string) (*productBuilder, error) {
@@ -256,6 +267,14 @@ func newProductBuilder(root string) (*productBuilder, error) {
 		diagnostics:  make(map[string]bool),
 		env:          make(map[queryKey]value),
 		slots:        make(map[string]UseSlot),
+		carriers:     make(map[string][]SequenceCarrier),
+	}
+	carriers, err := SequenceCarriers(root)
+	if err != nil {
+		return nil, err
+	}
+	for _, carrier := range carriers {
+		builder.carriers[carrier.Tag] = append(builder.carriers[carrier.Tag], carrier)
 	}
 	slots, err := UseSlots(schema)
 	if err != nil {

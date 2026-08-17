@@ -66,6 +66,8 @@ func (b *productBuilder) collectProductions(root string) error {
 		}
 		scope := b.newScope(ProductScopeProduction, template.Key)
 		scope.symbols = symbols
+		scope.body = body
+		scope.resultTag = template.ResultTag
 		b.nonterminals[template.Nonterminal] = append(b.nonterminals[template.Nonterminal], scope.index)
 		b.walk(scope, body, false)
 		return nil

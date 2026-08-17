@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/manifest"
 	manifestwire "github.com/wippyai/go-lua/manifest/wire"
 	"github.com/wippyai/go-lua/stdlib"
+	"github.com/wippyai/go-lua/types/signature"
 )
 
 func TestNewProviderValuesMountWithoutTargetRegistration(t *testing.T) {
@@ -41,6 +42,54 @@ func TestNewProviderValuesMountWithoutTargetRegistration(t *testing.T) {
 	state, mutability, ok := contract.InitialEntry(root, exactStringKey(t, contract, "state"))
 	if kind, kindOK := contract.InitialValueKind(state); !ok || !kindOK || kind != target.InitialValueAbsent || mutability != target.InitialFrozen {
 		t.Fatalf("custom.state = kind:%d mutability:%d present:%t typed:%t", kind, mutability, ok, kindOK)
+	}
+}
+
+func TestProviderOwnedInitialTopologyMountsWithoutTargetRegistration(t *testing.T) {
+	providers := append(stdlib.Providers(), manifest.Provider{
+		Identity: "custom.topology", Mount: manifest.MountModule,
+		Declaration: func() *manifestwire.Manifest {
+			declaration := manifestwire.New("topology")
+			functionType := typ.Func().Returns(typ.String).Build()
+			declaration.DefineFunctionSignature("Thing.call", signature.Function{Type: functionType})
+			declaration.DefineInitialRoot(manifestwire.InitialRoot{
+				Identity: "CustomMethodRoot", Aggregate: manifestwire.InitialAggregateTable, Immutable: true,
+			})
+			declaration.DefineInitialEntry(manifestwire.InitialEntry{
+				Root: manifestwire.DeclaredInitialRoot("CustomMethodRoot"), Key: "call",
+				Value: manifestwire.InitialFunctionValue("Thing.call"), Mutability: manifestwire.InitialFrozen,
+			})
+			return declaration
+		},
+	})
+	catalogue, err := manifest.Seal(providers...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract, err := manifesttarget.SealCatalogue(catalogue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := initialRootByIdentity(t, contract, "CustomMethodRoot")
+	if _, ok := contract.InitialOperation(root, exactStringKey(t, contract, "call")); !ok {
+		t.Fatal("custom provider initial callable was not projected")
+	}
+}
+
+func TestStringModuleIndexIsItsExactRuntimeSelfAlias(t *testing.T) {
+	catalogue, err := manifest.Seal(stdlib.Providers()...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract, err := manifesttarget.SealCatalogue(catalogue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stringRoot := initialRootByIdentity(t, contract, "ModuleRoot:string")
+	value, mutability, ok := contract.InitialEntry(stringRoot, exactStringKey(t, contract, "__index"))
+	alias, aliasOK := contract.InitialValueRoot(value)
+	if !ok || !aliasOK || alias != stringRoot || mutability != target.InitialMutable {
+		t.Fatalf("string.__index = value:%d alias:%d mutability:%d present:%t typed:%t", value, alias, mutability, ok, aliasOK)
 	}
 }
 

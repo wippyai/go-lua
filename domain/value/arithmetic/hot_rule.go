@@ -165,7 +165,7 @@ func hotEndpoints(schema *value.Schema, row value.BinaryArithmetic) (result, lef
 		return value.Coordinate{}, value.Coordinate{}, value.Coordinate{}, 0, false
 	}
 	result, left, right, op, ok = row.Endpoints()
-	if !ok || !binaryArithmeticOperator(op) {
+	if !ok || !value.BinaryArithmeticOperator(op) {
 		return value.Coordinate{}, value.Coordinate{}, value.Coordinate{}, 0, false
 	}
 	if _, resultOK := schema.CoordinateIndex(result); !resultOK {
@@ -178,10 +178,6 @@ func hotEndpoints(schema *value.Schema, row value.BinaryArithmetic) (result, lef
 		return value.Coordinate{}, value.Coordinate{}, value.Coordinate{}, 0, false
 	}
 	return result, left, right, op, true
-}
-
-func binaryArithmeticOperator(op flowkind.BinaryOp) bool {
-	return op >= flowkind.BinaryAdd && op <= flowkind.BinaryPow
 }
 
 func hotChecker(owner *valueowner.HotOwner, semantic identity.SemanticKey, leftRead, rightRead *engine.Read[engine.OrderedCells[value.Value]]) engine.RuleDerivationChecker[value.Value, value.BinaryArithmetic] {

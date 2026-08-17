@@ -13,10 +13,10 @@ import (
 )
 
 var (
-	ErrMissingRow   = errors.New("Target ingress requirements: missing canonical Target relation")
-	ErrDuplicateRow = errors.New("Target ingress requirements: duplicate canonical Target relation")
-	ErrUnknownRow   = errors.New("Target ingress requirements: unknown Target ingress relation")
-	ErrInvalidRow   = errors.New("Target ingress requirements: invalid Target ingress row")
+	ErrMissingRow   = errors.New("target ingress requirements: missing canonical Target relation")
+	ErrDuplicateRow = errors.New("target ingress requirements: duplicate canonical Target relation")
+	ErrUnknownRow   = errors.New("target ingress requirements: unknown Target ingress relation")
+	ErrInvalidRow   = errors.New("target ingress requirements: invalid Target ingress row")
 )
 
 // Build derives the complete Target relation vocabulary and exact parent

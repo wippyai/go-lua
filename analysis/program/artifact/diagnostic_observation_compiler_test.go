@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
 func TestProgramArtifactDiagnosticCompilerKeepsBranchObservationIDsStable(t *testing.T) {
@@ -13,13 +13,13 @@ func TestProgramArtifactDiagnosticCompilerKeepsBranchObservationIDsStable(t *tes
 	leftIDs, rightIDs := make(map[identity.ContentID]struct{}), make(map[identity.ContentID]struct{})
 	for index := 0; index < left.DiagnosticObservationCount(); index++ {
 		row, ok := left.DiagnosticObservationAt(index)
-		if ok && row.Kind() == programartifact.DiagnosticObservationBranchCondition {
+		if ok && row.Kind() == structure.DiagnosticObservationBranchCondition {
 			leftIDs[row.ID()] = struct{}{}
 		}
 	}
 	for index := 0; index < right.DiagnosticObservationCount(); index++ {
 		row, ok := right.DiagnosticObservationAt(index)
-		if ok && row.Kind() == programartifact.DiagnosticObservationBranchCondition {
+		if ok && row.Kind() == structure.DiagnosticObservationBranchCondition {
 			rightIDs[row.ID()] = struct{}{}
 		}
 	}
@@ -63,7 +63,7 @@ func TestProgramArtifactBranchDiagnosticRequiresScopePreservingRewrite(t *testin
 				if !rowOK {
 					t.Fatalf("DiagnosticObservationAt(%d)", index)
 				}
-				if row.Kind() != programartifact.DiagnosticObservationBranchCondition {
+				if row.Kind() != structure.DiagnosticObservationBranchCondition {
 					continue
 				}
 				if _, payloadOK := row.BranchCondition(); !payloadOK || !row.ID().Available() {
@@ -84,7 +84,7 @@ func TestProgramArtifactUnresolvedTypeObservationCarriesExactStaticProof(t *test
 	var leftID, rightID identity.ContentID
 	for index := 0; index < left.DiagnosticObservationCount(); index++ {
 		row, rowOK := left.DiagnosticObservationAt(index)
-		if !rowOK || row.Kind() != programartifact.DiagnosticObservationTypeReferenceUnresolved {
+		if !rowOK || row.Kind() != structure.DiagnosticObservationTypeReferenceUnresolved {
 			continue
 		}
 		payload, payloadOK := row.UnresolvedTypeReference()
@@ -97,7 +97,7 @@ func TestProgramArtifactUnresolvedTypeObservationCarriesExactStaticProof(t *test
 	}
 	for index := 0; index < right.DiagnosticObservationCount(); index++ {
 		row, rowOK := right.DiagnosticObservationAt(index)
-		if rowOK && row.Kind() == programartifact.DiagnosticObservationTypeReferenceUnresolved {
+		if rowOK && row.Kind() == structure.DiagnosticObservationTypeReferenceUnresolved {
 			rightID = row.ID()
 		}
 	}
@@ -110,7 +110,7 @@ func TestProgramArtifactQualifiedUnresolvedTypeObservationCarriesRootProof(t *te
 	artifact := compileStaticReferenceLeafArtifact(t, "qualified-diagnostic-observation-artifact.lua", "type MissingAlias = Missing.Namespace\n")
 	for index := 0; index < artifact.DiagnosticObservationCount(); index++ {
 		row, rowOK := artifact.DiagnosticObservationAt(index)
-		if !rowOK || row.Kind() != programartifact.DiagnosticObservationTypeReferenceUnresolved {
+		if !rowOK || row.Kind() != structure.DiagnosticObservationTypeReferenceUnresolved {
 			continue
 		}
 		payload, payloadOK := row.UnresolvedTypeReference()
@@ -142,7 +142,7 @@ return total
 	name, nameOK := payload.Name()
 	replayedName, replayedNameOK := replayedPayload.Name()
 	location, locationOK := row.Location()
-	if !rowOK || !replayedOK || row.Kind() != programartifact.DiagnosticObservationValueReferenceUnresolved || replayed.Kind() != row.Kind() ||
+	if !rowOK || !replayedOK || row.Kind() != structure.DiagnosticObservationValueReferenceUnresolved || replayed.Kind() != row.Kind() ||
 		!payloadOK || !replayedPayloadOK || !nameOK || !replayedNameOK || name != "missing_count" || replayedName != name ||
 		!payload.ReadID().Available() || !payload.CellID().Available() || payload.ReadID() == payload.CellID() ||
 		payload.ReadID() != replayedPayload.ReadID() || payload.CellID() != replayedPayload.CellID() || row.ID() != replayed.ID() ||

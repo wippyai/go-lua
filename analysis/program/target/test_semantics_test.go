@@ -2,12 +2,11 @@ package target
 
 import (
 	"context"
-	"testing"
 
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"github.com/wippyai/go-lua/domain/type/annotation"
 	"github.com/wippyai/go-lua/domain/type/typ"
 	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
-	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 )
 
 // Raw domain values are confined to this file's adapters.  Laws may request a
@@ -23,11 +22,8 @@ const testRawStaticMemberStringIndex = typ.StaticMemberStringIndex
 
 var (
 	testRawAny     = typ.Any
-	testRawBoolean = typ.Boolean
-	testRawInteger = typ.Integer
 	testRawNumber  = typ.Number
 	testRawString  = typ.String
-	testRawNil     = typ.Nil
 	testRawSelf    = typ.Self
 	testRawUnknown = typ.Unknown
 )
@@ -42,8 +38,6 @@ var (
 	testInteger = testPrimitive(schematype.PrimitiveInteger)
 	testString  = testPrimitive(schematype.PrimitiveString)
 	testAny     = testPrimitive(schematype.PrimitiveAny)
-	testNever   = testPrimitive(schematype.PrimitiveNever)
-	testUnknown schematype.Type
 )
 
 func testLiteralString(value string) schematype.Type {
@@ -106,8 +100,6 @@ func testRawAnnotated(value typ.Type, annotations []annotation.Annotation) typ.T
 }
 
 func testRawRef(module, name string) typ.Type { return typ.NewRef(module, name) }
-
-func testRecord(parts typ.RecordParts) schematype.Type { return testEncode(testRawRecord(parts)) }
 
 func testRawArray(value typ.Type) typ.Type { return typ.NewArray(value) }
 
@@ -175,10 +167,6 @@ func testPrimitive(primitive schematype.Primitive) schematype.Type {
 	return value
 }
 
-func testTypes(values ...schematype.Type) []schematype.Type {
-	return append([]schematype.Type(nil), values...)
-}
-
 func testEncode(value typ.Type, formals ...*typ.TypeParam) schematype.Type {
 	encoded, err := domaincontract.Encode(context.Background(), value, formals)
 	if err != nil {
@@ -195,14 +183,6 @@ func testEncodeOrUnavailable(value typ.Type, formals ...*typ.TypeParam) schematy
 	return encoded
 }
 
-func testEncodeStorage(value typ.Type, formals ...*typ.TypeParam) schematype.Type {
-	encoded, err := domaincontract.EncodeStorage(context.Background(), value, formals)
-	if err != nil {
-		panic(err)
-	}
-	return encoded
-}
-
 // testSeal supplies the same explicit Lua type authority that production
 // profile authoring supplies. It is a test composition helper, not a target
 // default: production Seal still rejects an omitted Semantics implementation.
@@ -211,13 +191,4 @@ func testSeal(spec *Spec) (*Contract, error) {
 		spec.Semantics = domaincontract.NewSemantics()
 	}
 	return Seal(spec)
-}
-
-func requireTestSeal(t testing.TB, spec *Spec) *Contract {
-	t.Helper()
-	contract, err := testSeal(spec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return contract
 }

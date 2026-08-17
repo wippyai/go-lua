@@ -35,9 +35,6 @@ func tableDeclaration() declaration {
 		"sort": openAuthored("stdlib.table.sort.callback", typ.Func().
 			Param("list", typ.Any).OptParam("comp", typ.Any).Build(),
 			mutation.Mutate{Target: effect.ParamRef{Index: 0}, Transform: mutation.Unchanged{}}).operational(replacement(tableSortProfile())),
-		"unpack": authored(typ.Func().
-			Param("list", typ.Any).OptParam("i", typ.Integer).OptParam("j", typ.Integer).
-			Returns(typ.Any).Build(), ownership.BorrowAll{}),
 	}}
 }
 

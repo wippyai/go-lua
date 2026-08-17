@@ -123,6 +123,43 @@ func (m Module) ProviderIdentity() string { return m.providerID }
 func (m Module) Path() string             { return m.path }
 func (m Module) Immutable() bool          { return m.immutable }
 
+// InitialEnvironment is one provider's ownership-isolated bootstrap
+// declaration. It is projected on demand from the sealed manifest; Catalogue
+// does not maintain a second initial-environment registry.
+type InitialEnvironment struct {
+	providerID string
+	modulePath string
+	mount      Mount
+	roots      []moduleio.InitialRoot
+	entries    []moduleio.InitialEntry
+	metatables []moduleio.InitialMetatableAttachment
+}
+
+func (e InitialEnvironment) ProviderIdentity() string { return e.providerID }
+func (e InitialEnvironment) ModulePath() string       { return e.modulePath }
+func (e InitialEnvironment) Mount() Mount             { return e.mount }
+
+func (e InitialEnvironment) Roots() []moduleio.InitialRoot {
+	return append([]moduleio.InitialRoot(nil), e.roots...)
+}
+
+func (e InitialEnvironment) Entries() []moduleio.InitialEntry {
+	return append([]moduleio.InitialEntry(nil), e.entries...)
+}
+
+func (e InitialEnvironment) Metatables() []moduleio.InitialMetatableAttachment {
+	return append([]moduleio.InitialMetatableAttachment(nil), e.metatables...)
+}
+
+// CanonicalFunctionPath resolves a provider-local callable path by the same
+// mount law used by Catalogue.Functions.
+func (e InitialEnvironment) CanonicalFunctionPath(local string) string {
+	if e.mount == MountGlobals {
+		return local
+	}
+	return qualify(e.modulePath, local)
+}
+
 // Seal validates, ownership-isolates, and indexes providers. Duplicate
 // identities and duplicate manifest paths are rejected; ordering is retained
 // only for deterministic enumeration, never for override semantics.
@@ -134,6 +171,7 @@ func Seal(input ...Provider) (*Catalogue, error) {
 	}
 	identities := make(map[string]struct{}, len(input))
 	globals := make(map[string]struct{})
+	initialRootOwners := map[string]string{moduleio.GlobalEnvironmentRoot: "global environment"}
 	for index, item := range input {
 		if item.Identity == "" {
 			return nil, fmt.Errorf("manifest: provider %d has no identity", index)
@@ -155,6 +193,23 @@ func Seal(input ...Provider) (*Catalogue, error) {
 		}
 		if _, exists := catalogue.byPath[owned.Path]; exists {
 			return nil, fmt.Errorf("manifest: duplicate path %q", owned.Path)
+		}
+		claimInitialRoot := func(identity string) error {
+			if owner, exists := initialRootOwners[identity]; exists {
+				return fmt.Errorf("manifest: provider %q initial root %q collides with %s", item.Identity, identity, owner)
+			}
+			initialRootOwners[identity] = fmt.Sprintf("provider %q", item.Identity)
+			return nil
+		}
+		if item.Mount == MountModule {
+			if err := claimInitialRoot(moduleio.ModuleRootIdentity(item.Identity)); err != nil {
+				return nil, err
+			}
+		}
+		for _, root := range owned.InitialRoots {
+			if err := claimInitialRoot(root.Identity); err != nil {
+				return nil, err
+			}
 		}
 		catalogue.byPath[owned.Path] = len(catalogue.providers)
 		catalogue.providers = append(catalogue.providers, provider{
@@ -269,6 +324,30 @@ func (c *Catalogue) Modules() []Module {
 		if item.mount == MountModule {
 			out = append(out, Module{providerID: item.identity, path: item.manifest.Path, immutable: item.immutable})
 		}
+	}
+	return out
+}
+
+// InitialEnvironments returns only providers that declare additional
+// bootstrap structure. Ordinary module/global mounts are derived elsewhere
+// from the same provider rows.
+func (c *Catalogue) InitialEnvironments() []InitialEnvironment {
+	if c == nil {
+		return nil
+	}
+	var out []InitialEnvironment
+	for _, item := range c.providers {
+		if len(item.manifest.InitialRoots) == 0 && len(item.manifest.InitialEntries) == 0 && len(item.manifest.InitialMetatables) == 0 {
+			continue
+		}
+		out = append(out, InitialEnvironment{
+			providerID: item.identity,
+			modulePath: item.manifest.Path,
+			mount:      item.mount,
+			roots:      append([]moduleio.InitialRoot(nil), item.manifest.InitialRoots...),
+			entries:    append([]moduleio.InitialEntry(nil), item.manifest.InitialEntries...),
+			metatables: append([]moduleio.InitialMetatableAttachment(nil), item.manifest.InitialMetatables...),
+		})
 	}
 	return out
 }

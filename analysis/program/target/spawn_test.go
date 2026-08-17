@@ -37,7 +37,7 @@ func TestSpawnSealsOneTypedDetachedAuthority(t *testing.T) {
 	if !ok || contract.SpawnCount(op) != 1 {
 		t.Fatalf("spawn authority = %v/%d", ok, contract.SpawnCount(op))
 	}
-	id, ok := contract.SpawnIDAt(op, 0)
+	id, _ := contract.SpawnIDAt(op, 0)
 	owner, function, child, yield, resume, entry, resumed, ok := contract.Spawn(id)
 	if !ok || owner != op || function != (InputSource{Kind: InputSourceValueFormal}) || yield == resume || entry != resumed {
 		t.Fatalf("spawn relation = %#v/%#v/%d/%d/%d/%d/%d/%v", owner, function, child, yield, resume, entry, resumed, ok)

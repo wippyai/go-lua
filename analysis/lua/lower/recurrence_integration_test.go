@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	programlower "github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
 var (

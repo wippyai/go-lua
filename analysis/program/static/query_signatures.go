@@ -6,13 +6,13 @@ import (
 )
 
 func (view View) Signatures() Signatures {
-	return Signatures{component: view.component, state: view.state}
+	return Signatures(view)
 }
 func (view Signatures) TypeFunctions() TypeFunctions {
-	return TypeFunctions{component: view.component, state: view.state}
+	return TypeFunctions(view)
 }
 func (view Signatures) Assertions() Assertions {
-	return Assertions{component: view.component, state: view.state}
+	return Assertions(view)
 }
 
 func (view TypeFunctions) Count() int {

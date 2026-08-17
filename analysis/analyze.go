@@ -7,12 +7,12 @@ import (
 	"runtime"
 	"sync"
 
-	"github.com/wippyai/go-lua/domain/composite"
-	valuedomain "github.com/wippyai/go-lua/domain/value"
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/link"
+	"github.com/wippyai/go-lua/domain/composite"
+	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
 const resultFormat uint64 = 9
@@ -169,7 +169,7 @@ func CompileWithDiagnostics(source *link.Link) (*Plan, CompileStatus, AnalyzeDia
 		return nil, CompileUnsupported, diagnostics
 	}
 	diagnostics.enter(AnalyzeDiagnosticPhaseAssemble)
-	binding, bindingFailure, mountFailure, allocationFailure := state.newProgramBinding(source)
+	_, binding, bindingFailure, mountFailure, allocationFailure := state.newProgramBinding(source)
 	diagnostics.Binding = bindingFailure
 	// The mount phase's verdict carries the rejecting domain's own evidence
 	// erased. Recovering it at the value schema's own failure type is this

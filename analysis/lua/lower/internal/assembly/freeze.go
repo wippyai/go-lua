@@ -89,17 +89,17 @@ func (c *Collector) Publish() (*program.Program, error) {
 	preimage := sourceFinalizer.Preimage()
 	identity := preimage.Identity()
 	if identity.Name() != c.name || identity.Name() == "" {
-		return fail("Source preflight", errors.New("Source Preimage is absent or foreign"))
+		return fail("Source preflight", errors.New("source preimage is absent or foreign"))
 	}
 	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
 		if family == keyspace.FamilyOutcome {
 			if identity.FamilyCount(family) != 0 {
-				return fail("Source preflight", errors.New("Source Preimage contains authored Outcome"))
+				return fail("Source preflight", errors.New("source preimage contains authored outcome"))
 			}
 			continue
 		}
 		if identity.FamilyCount(family) != int(c.counts[family]) {
-			return fail("Source preflight", errors.New("Source Preimage cardinality disagrees with collector"))
+			return fail("Source preflight", errors.New("source preimage cardinality disagrees with collector"))
 		}
 	}
 	if identity.TermCount() == 0 {

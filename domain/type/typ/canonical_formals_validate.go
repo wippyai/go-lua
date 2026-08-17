@@ -17,6 +17,12 @@ import (
 // payload: an external formal ordinal is valid only when it names one of those
 // positions. The encoding itself carries no presentation names for formals.
 func ValidateCanonicalFormals(encoded []byte, externalFormalCount int) (err error) {
+	// A form this process already admitted at this external scope is valid, and
+	// the bytes are the form's whole identity, so there is nothing left to
+	// re-derive from them.
+	if canonicalValidatedWireForms.admits(encoded, externalFormalCount) {
+		return nil
+	}
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			err = fmt.Errorf("%w: validator panic: %v", ErrInvalidCanonicalType, recovered)
@@ -56,6 +62,12 @@ func validatedCanonicalFormalsGraph(ctx context.Context, encoded []byte, externa
 	}
 	if reader.at != len(reader.raw) {
 		return nil, nil, invalidCanonicalFormals("trailing bytes")
+	}
+	// The graph is parsed on every call because the caller may need its nodes,
+	// but the laws below judge the byte string, not this parse of it. An
+	// already admitted form carries their verdict.
+	if canonicalValidatedWireForms.admits(encoded, externalFormalCount) {
+		return nodes, shapes, nil
 	}
 	if err := validateCanonicalFormalRelations(ctx, admission, nodes, shapes); err != nil {
 		return nil, nil, err
@@ -98,6 +110,7 @@ func validatedCanonicalFormalsGraph(ctx context.Context, encoded []byte, externa
 	if !equal {
 		return nil, nil, invalidCanonicalFormals("noncanonical graph")
 	}
+	canonicalValidatedWireForms.admit(encoded, externalFormalCount)
 	return nodes, shapes, nil
 }
 

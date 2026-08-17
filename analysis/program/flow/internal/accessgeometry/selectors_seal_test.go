@@ -66,7 +66,7 @@ func TestSealDeepExactChain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("source.Finalizer: %v", err)
 	}
-	defer sourceFinalizer.Abort()
+	defer func() { _ = sourceFinalizer.Abort() }()
 
 	exact := make([]authored.ExactLens, depth)
 	reads := make([]authored.Read, depth+1)
@@ -97,7 +97,7 @@ func TestSealDeepExactChain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("authored.Finalizer: %v", err)
 	}
-	defer flowFinalizer.Abort()
+	defer func() { _ = flowFinalizer.Abort() }()
 
 	moduleDraft, err := imports.Build(imports.Input{})
 	if err != nil {
@@ -107,7 +107,7 @@ func TestSealDeepExactChain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("imports.Finalizer: %v", err)
 	}
-	defer moduleFinalizer.Abort()
+	defer func() { _ = moduleFinalizer.Abort() }()
 
 	staticDraft, err := static.Build(static.Input{})
 	if err != nil {
@@ -117,7 +117,7 @@ func TestSealDeepExactChain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("static.Finalizer: %v", err)
 	}
-	defer staticFinalizer.Abort()
+	defer func() { _ = staticFinalizer.Abort() }()
 
 	bindings := selectorBindingProof(t, sourceFinalizer.Preimage(), flowFinalizer.View(), staticFinalizer.View(), body)
 	bodyResult, err := flowbody.Seal(sourceFinalizer.Preimage(), flowFinalizer.View(), staticFinalizer.View(), body)
@@ -251,7 +251,7 @@ func sealReadCase(t *testing.T, cellBody, readOwner keyspace.Term) error {
 	if err != nil {
 		t.Fatalf("source.Finalizer: %v", err)
 	}
-	defer sourceFinalizer.Abort()
+	defer func() { _ = sourceFinalizer.Abort() }()
 
 	flowDraft, err := authored.Build(authored.Input{
 		Counts: counts,
@@ -275,7 +275,7 @@ func sealReadCase(t *testing.T, cellBody, readOwner keyspace.Term) error {
 	if err != nil {
 		t.Fatalf("flow.Finalizer: %v", err)
 	}
-	defer flowFinalizer.Abort()
+	defer func() { _ = flowFinalizer.Abort() }()
 
 	staticDraft, err := static.Build(static.Input{})
 	if err != nil {
@@ -285,7 +285,7 @@ func sealReadCase(t *testing.T, cellBody, readOwner keyspace.Term) error {
 	if err != nil {
 		t.Fatalf("static.Finalizer: %v", err)
 	}
-	defer staticFinalizer.Abort()
+	defer func() { _ = staticFinalizer.Abort() }()
 
 	moduleDraft, err := imports.Build(imports.Input{})
 	if err != nil {
@@ -295,7 +295,7 @@ func sealReadCase(t *testing.T, cellBody, readOwner keyspace.Term) error {
 	if err != nil {
 		t.Fatalf("imports.Finalizer: %v", err)
 	}
-	defer moduleFinalizer.Abort()
+	defer func() { _ = moduleFinalizer.Abort() }()
 
 	preimage, flowView, staticView := sourceFinalizer.Preimage(), flowFinalizer.View(), staticFinalizer.View()
 	bodies, err := flowbody.Seal(preimage, flowView, staticView, entry)
@@ -343,7 +343,7 @@ func TestSealIgnoresExactLensOverScalarBase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("source.Finalizer: %v", err)
 	}
-	defer sourceFinalizer.Abort()
+	defer func() { _ = sourceFinalizer.Abort() }()
 	flowDraft, err := authored.Build(authored.Input{
 		Counts: counts,
 		Values: authored.ValuesInput{Rows: []authored.Value{{Owner: body}}},
@@ -359,7 +359,7 @@ func TestSealIgnoresExactLensOverScalarBase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("authored.Finalizer: %v", err)
 	}
-	defer flowFinalizer.Abort()
+	defer func() { _ = flowFinalizer.Abort() }()
 	moduleDraft, err := imports.Build(imports.Input{})
 	if err != nil {
 		t.Fatalf("imports.Build: %v", err)
@@ -368,7 +368,7 @@ func TestSealIgnoresExactLensOverScalarBase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("imports.Finalizer: %v", err)
 	}
-	defer moduleFinalizer.Abort()
+	defer func() { _ = moduleFinalizer.Abort() }()
 	staticDraft, err := static.Build(static.Input{})
 	if err != nil {
 		t.Fatalf("static.Build: %v", err)
@@ -377,7 +377,7 @@ func TestSealIgnoresExactLensOverScalarBase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("static.Finalizer: %v", err)
 	}
-	defer staticFinalizer.Abort()
+	defer func() { _ = staticFinalizer.Abort() }()
 	flowView := flowFinalizer.View()
 	bindings := selectorBindingProof(t, sourceFinalizer.Preimage(), flowView, staticFinalizer.View(), body)
 	bodyResult, err := flowbody.Seal(sourceFinalizer.Preimage(), flowView, staticFinalizer.View(), body)
@@ -451,7 +451,7 @@ func TestSealRejectsBracketStringPublication(t *testing.T) {
 	if err != nil {
 		t.Fatalf("source.Finalizer: %v", err)
 	}
-	defer sourceFinalizer.Abort()
+	defer func() { _ = sourceFinalizer.Abort() }()
 
 	flowDraft, err := authored.Build(authored.Input{
 		Counts: counts,
@@ -473,7 +473,7 @@ func TestSealRejectsBracketStringPublication(t *testing.T) {
 	if err != nil {
 		t.Fatalf("authored.Finalizer: %v", err)
 	}
-	defer flowFinalizer.Abort()
+	defer func() { _ = flowFinalizer.Abort() }()
 
 	moduleDraft, err := imports.Build(imports.Input{})
 	if err != nil {
@@ -483,7 +483,7 @@ func TestSealRejectsBracketStringPublication(t *testing.T) {
 	if err != nil {
 		t.Fatalf("imports.Finalizer: %v", err)
 	}
-	defer moduleFinalizer.Abort()
+	defer func() { _ = moduleFinalizer.Abort() }()
 
 	staticDraft, err := static.Build(static.Input{
 		Counts: counts,
@@ -503,7 +503,7 @@ func TestSealRejectsBracketStringPublication(t *testing.T) {
 	if err != nil {
 		t.Fatalf("static.Finalizer: %v", err)
 	}
-	defer staticFinalizer.Abort()
+	defer func() { _ = staticFinalizer.Abort() }()
 
 	bindings := selectorBindingProof(t, sourceFinalizer.Preimage(), flowFinalizer.View(), staticFinalizer.View(), body)
 	bodyResult, bodyErr := flowbody.Seal(sourceFinalizer.Preimage(), flowFinalizer.View(), staticFinalizer.View(), body)
@@ -567,7 +567,7 @@ func TestSealSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatalf("source.Finalizer: %v", err)
 	}
-	defer sourceFinalizer.Abort()
+	defer func() { _ = sourceFinalizer.Abort() }()
 
 	flowInput := authored.Input{
 		Counts: counts,
@@ -595,7 +595,7 @@ func TestSealSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatalf("authored.Finalizer: %v", err)
 	}
-	defer flowFinalizer.Abort()
+	defer func() { _ = flowFinalizer.Abort() }()
 
 	moduleDraft, err := imports.Build(imports.Input{})
 	if err != nil {
@@ -605,7 +605,7 @@ func TestSealSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatalf("imports.Finalizer: %v", err)
 	}
-	defer moduleFinalizer.Abort()
+	defer func() { _ = moduleFinalizer.Abort() }()
 
 	staticInput := static.Input{}
 	staticInput.Counts[keyspace.FamilyBody] = 1
@@ -627,7 +627,7 @@ func TestSealSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatalf("static.Finalizer: %v", err)
 	}
-	defer staticFinalizer.Abort()
+	defer func() { _ = staticFinalizer.Abort() }()
 
 	bindings := selectorBindingProof(t, sourceFinalizer.Preimage(), flowFinalizer.View(), staticFinalizer.View(), body)
 	bodyResult, err := flowbody.Seal(sourceFinalizer.Preimage(), flowFinalizer.View(), staticFinalizer.View(), body)
@@ -680,10 +680,10 @@ func TestSealSmoke(t *testing.T) {
 	allocations := testing.AllocsPerRun(100, func() {
 		_, _, _ = selections.Get(read3)
 		cursor, _ := selections.PathCursor(read3)
-		_, cursor, _ = cursor.Segment()
+		_, _, _ = cursor.Segment()
 		_, _, _, _ = publicationPaths.Get(publication)
 		publicationCursor, _ := publicationPaths.PathCursor(publication)
-		_, publicationCursor, _ = publicationCursor.Segment()
+		_, _, _ = publicationCursor.Segment()
 		_, _, _ = result.DirectCalls().Get(call)
 	})
 	if allocations != 0 {

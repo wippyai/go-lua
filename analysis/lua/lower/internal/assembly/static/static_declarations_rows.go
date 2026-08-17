@@ -109,15 +109,16 @@ func (rows *staticRows) InterfaceMembersRaw(term keyspace.Term, members []static
 		if !validCoordinateOrZero(member.coordinate) {
 			return errors.New("program/lower/collector: invalid interface member coordinate")
 		}
-		if member.kind == programstatic.InterfaceField {
+		switch member.kind {
+		case programstatic.InterfaceField:
 			if member.field == 0 || member.name.present || member.signature != 0 || member.coordinate != (source.Coordinate{}) {
 				return errors.New("program/lower/collector: invalid interface field member")
 			}
-		} else if member.kind == programstatic.InterfaceMethod {
+		case programstatic.InterfaceMethod:
 			if member.field != 0 || !member.name.present || member.signature == 0 || member.coordinate == (source.Coordinate{}) {
 				return errors.New("program/lower/collector: invalid interface method member")
 			}
-		} else {
+		default:
 			return errors.New("program/lower/collector: invalid interface member kind")
 		}
 		copyRows[i] = member

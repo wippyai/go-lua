@@ -588,10 +588,10 @@ func (proof RouteRecurrence) ResetDigest() (identity.ContentID, bool) {
 
 type Causal struct{ result *causal.Result }
 
-func (view Causal) Edges() Edges           { return Edges{result: view.result} }
-func (view Causal) Boundaries() Boundaries { return Boundaries{result: view.result} }
-func (view Causal) Successors() Successors { return Successors{result: view.result} }
-func (view Causal) Sites() Sites           { return Sites{result: view.result} }
+func (view Causal) Edges() Edges           { return Edges(view) }
+func (view Causal) Boundaries() Boundaries { return Boundaries(view) }
+func (view Causal) Successors() Successors { return Successors(view) }
+func (view Causal) Sites() Sites           { return Sites(view) }
 
 func (view Causal) OwnsRouteRecurrence(proof RouteRecurrence) bool {
 	return view.result != nil && view.result.OwnsRouteRecurrence(proof.proof)

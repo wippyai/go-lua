@@ -24,7 +24,7 @@ func Seal(
 	executableResult *executable.Result,
 	staticID, moduleID identity.ContentID,
 ) (*Result, error) {
-	if sourceView.Identity().ContentID().Available() == false || !staticID.Available() || !moduleID.Available() {
+	if !sourceView.Identity().ContentID().Available() || !staticID.Available() || !moduleID.Available() {
 		return nil, errors.New("program/flow/returnprojection: owner provenance is unavailable")
 	}
 	sourceID, flowID := sourceView.Identity().ContentID(), authoredView.Cold().ContentID()

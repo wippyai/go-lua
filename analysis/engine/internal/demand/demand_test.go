@@ -15,6 +15,21 @@ import (
 	"github.com/wippyai/go-lua/analysis/lattice"
 )
 
+// demandPointOf puts one closed Contribution into the nominal point role that
+// the live coverage projection consumes.
+func demandPointOf(t testing.TB, work *carrier.Work, value carrier.Contribution) carrier.PointState {
+	t.Helper()
+	rule, ok := work.AsRuleContribution(value)
+	if !ok {
+		t.Fatal("closed rule role")
+	}
+	point, ok := work.PointStateFromRuleContribution(rule)
+	if !ok {
+		t.Fatal("closed point role")
+	}
+	return point
+}
+
 func demandBinding(keyEnd uint64, join, widen func(uint64, uint64) uint64, declare func(*factbinding.Binding[uint64, uint64]) bool, manager *guard.Manager) (*factbinding.Binding[uint64, uint64], bool) {
 	algebra, ok := factbinding.Admit(keyEnd, uint64(0), lattice.Lattice[uint64]{Bottom: func() uint64 { return 0 }, Top: func() uint64 { return ^uint64(0) }, Equal: func(left, right uint64) bool { return left == right }, LessOrEq: func(left, right uint64) bool { return left <= right }, Join: join, Widen: widen}, func(uint64, uint64) bool { return true }, func(value uint64) uint64 { return value }, factbinding.Measure[uint64, uint64]{}, factbinding.Measure[uint64, uint64]{})
 	if !ok {
@@ -217,7 +232,7 @@ func wideRouteChangeSet(t testing.TB, width int) (*carrier.Composition, []carrie
 	if !ok {
 		t.Fatal("routing authored finish")
 	}
-	coverageChanges, ok := work.CoverageChanges(emptyContribution, authored)
+	coverageChanges, ok := work.CoverageChangesPointStates(demandPointOf(t, work, emptyContribution), demandPointOf(t, work, authored))
 	if !ok || coverageChanges.Count() != 1 {
 		t.Fatal("routing coverage changes")
 	}

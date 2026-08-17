@@ -153,10 +153,10 @@ func (view DirectFunctions) GenericLoop(loop keyspace.Term) (keyspace.Term, bool
 
 type Candidates struct{ result *candidates.Result }
 
-func (view Candidates) Unary() UnaryCandidates   { return UnaryCandidates{result: view.result} }
-func (view Candidates) Binary() BinaryCandidates { return BinaryCandidates{result: view.result} }
-func (view Candidates) Access() AccessCandidates { return AccessCandidates{result: view.result} }
-func (view Candidates) Loops() LoopCandidates    { return LoopCandidates{result: view.result} }
+func (view Candidates) Unary() UnaryCandidates   { return UnaryCandidates(view) }
+func (view Candidates) Binary() BinaryCandidates { return BinaryCandidates(view) }
+func (view Candidates) Access() AccessCandidates { return AccessCandidates(view) }
+func (view Candidates) Loops() LoopCandidates    { return LoopCandidates(view) }
 
 type UnaryCandidates struct{ result *candidates.Result }
 

@@ -149,7 +149,7 @@ func (segment Segment) valid() bool {
 		return false
 	}
 	from, to, endpointsOK := segment.Endpoints()
-	if !endpointsOK || from.result != segment.owner || to.result != segment.owner || !segment.role.Available() || segment.relation == segmentRelationInvalid || !(from.OutcomePhase() || to.OutcomePhase()) {
+	if !endpointsOK || from.result != segment.owner || to.result != segment.owner || !segment.role.Available() || segment.relation == segmentRelationInvalid || (!from.OutcomePhase() && !to.OutcomePhase()) {
 		return false
 	}
 	switch segment.carrier.kind {
@@ -219,7 +219,7 @@ func carrierSideMatches(graph *Result, phase PhaseRef, node uint32) bool {
 func (r *Result) segmentForRoute(routeFrom, routeTo, owner keyspace.Term, from, to PhaseRef, carrier SegmentCarrier, operation operationOutcomeRole) (Segment, error) {
 	if r == nil || !r.available() || routeFrom == 0 || routeTo == 0 || !from.Available() || !to.Available() ||
 		!SamePhaseOwner(from, to) || from.result != r ||
-		!(from.OutcomePhase() || to.OutcomePhase()) {
+		!from.OutcomePhase() && !to.OutcomePhase() {
 		return Segment{}, errors.New("program/flow/sourcecontrol: route segment endpoint is unavailable")
 	}
 	view := r.outcomePhases

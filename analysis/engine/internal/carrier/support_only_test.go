@@ -15,6 +15,7 @@ type carryOnlyOperation struct {
 	issuer      Issuer
 	prepared    bool
 	failReplace bool
+	failClose   bool
 }
 
 func (operation *carryOnlyOperation) Preflight() (SlotOperation, bool) {
@@ -65,12 +66,13 @@ func (operation *carryOnlyOperation) NewWork() (SlotWork, bool) {
 	if operation == nil {
 		return nil, false
 	}
-	return &carryOnlyWork{issuer: operation.issuer, failReplace: operation.failReplace}, true
+	return &carryOnlyWork{issuer: operation.issuer, failReplace: operation.failReplace, failClose: operation.failClose}, true
 }
 
 type carryOnlyWork struct {
 	issuer      Issuer
 	failReplace bool
+	failClose   bool
 	reenter     func() bool
 }
 
@@ -123,11 +125,10 @@ func (work carryOnlyWork) ReindexPointContributionUnder(left RootHandle, _, _ su
 }
 
 func (work carryOnlyWork) CloseContributionUnder(left, input RootHandle, _ support.Split, _ SlotCoverage, delta *support.Work) (ChangeHandle, bool) {
+	if work.failClose {
+		return ChangeHandle{}, false
+	}
 	return work.issuer.IssueChange(left, input, nil, support.Mask{}, nil, nil, delta)
-}
-
-func (work carryOnlyWork) MergeSelectedUnder(_ MergeKind, _ uint64, left, _, right RootHandle, _, _ support.Split, delta *support.Work) (ChangeHandle, bool) {
-	return work.issuer.IssueChange(left, right, nil, support.Mask{}, nil, nil, delta)
 }
 
 func (work carryOnlyWork) MergeSelectedContributionUnder(_ MergeKind, _ uint64, left, _, right RootHandle, _, _ support.Split, _, _, _ SlotCoverage, delta *support.Work) (ChangeHandle, bool) {
@@ -344,10 +345,30 @@ func TestMergeSelectedUnderEmptyScopeRetractsExactSupport(t *testing.T) {
 	if !ok {
 		t.Fatal("work")
 	}
-	next, changes, ok := work.MergeSelectedUnder(Widen, current, exact, exact, selection)
+	currentPoint, exactRHS := selectedPointOperands(t, work, current, exact)
+	next, changes, ok := work.MergeSelectedPointState(Widen, currentPoint, exactRHS, exactRHS, selection)
 	if !ok || !next.Support().Equal(on) || !changes.Removed().Equal(off) || !support.Empty(changes.Added()) || changes.Count() != 0 || changes.FactorCount() != 0 {
 		t.Fatalf("exact reset: ok=%t support=%t removed=%t added-empty=%t rows=%d factors=%d", ok, next.Support().Equal(on), changes.Removed().Equal(off), support.Empty(changes.Added()), changes.Count(), changes.FactorCount())
 	}
+}
+
+// selectedPointOperands lifts two support-only States into the nominal point
+// roles taken by the recurrence publication boundary.
+func selectedPointOperands(t testing.TB, work *Work, current, right State) (PointState, PointRHS) {
+	t.Helper()
+	currentPoint, ok := work.EmptyPointState(current)
+	if !ok {
+		t.Fatal("current point")
+	}
+	rightPoint, ok := work.EmptyPointState(right)
+	if !ok {
+		t.Fatal("right point")
+	}
+	rightRHS, ok := work.PointRHSFromPointState(rightPoint)
+	if !ok {
+		t.Fatal("right RHS")
+	}
+	return currentPoint, rightRHS
 }
 
 func TestMergeSelectedUnderEmptyScopeIsFactorFreeExactRight(t *testing.T) {
@@ -379,9 +400,10 @@ func TestMergeSelectedUnderEmptyScopeIsFactorFreeExactRight(t *testing.T) {
 	if !ok {
 		t.Fatal("work")
 	}
-	next, changes, ok := work.MergeSelectedUnder(Widen, current, current, exact, selection)
-	if !ok || !work.EqualUnder(next, exact) || !changes.Empty() {
-		t.Fatalf("factor-free exact right: ok=%t equal=%t empty=%t", ok, work.EqualUnder(next, exact), changes.Empty())
+	currentPoint, exactRHS := selectedPointOperands(t, work, current, exact)
+	next, changes, ok := work.MergeSelectedPointState(Widen, currentPoint, exactRHS, exactRHS, selection)
+	if !ok || !work.EqualUnder(next.State(), exact) || !changes.Empty() {
+		t.Fatalf("factor-free exact right: ok=%t equal=%t empty=%t", ok, work.EqualUnder(next.State(), exact), changes.Empty())
 	}
 }
 
@@ -395,7 +417,7 @@ func TestMergeSelectedUnderFailureDropsEarlierPreparedChanges(t *testing.T) {
 		t.Fatal("support")
 	}
 	first := &carryOnlyOperation{guards: manager}
-	second := &carryOnlyOperation{guards: manager, failReplace: true}
+	second := &carryOnlyOperation{guards: manager, failClose: true}
 	composition, ok := attachTestComposition(t, []FactorOperation{first, second})
 	if !ok {
 		t.Fatal("composition")
@@ -412,15 +434,17 @@ func TestMergeSelectedUnderFailureDropsEarlierPreparedChanges(t *testing.T) {
 	if !ok {
 		t.Fatal("work")
 	}
-	if next, _, accepted := work.MergeSelectedUnder(Widen, current, current, current, selection); accepted || next.Valid() {
+	currentPoint, currentRHS := selectedPointOperands(t, work, current, current)
+	if next, _, accepted := work.MergeSelectedPointState(Widen, currentPoint, currentRHS, currentRHS, selection); accepted || next.Valid() {
 		t.Fatal("partial selected merge published")
 	}
-	second.failReplace = false
+	second.failClose = false
 	work, ok = composition.NewWork()
 	if !ok {
 		t.Fatal("retry work")
 	}
-	if next, changes, accepted := work.MergeSelectedUnder(Widen, current, current, current, selection); !accepted || !work.EqualUnder(next, current) || !changes.Empty() {
-		t.Fatalf("failed selected merge left partial state: ok=%t equal=%t empty=%t", accepted, work.EqualUnder(next, current), changes.Empty())
+	retryPoint, retryRHS := selectedPointOperands(t, work, current, current)
+	if next, changes, accepted := work.MergeSelectedPointState(Widen, retryPoint, retryRHS, retryRHS, selection); !accepted || !work.EqualUnder(next.State(), current) || !changes.Empty() {
+		t.Fatalf("failed selected merge left partial state: ok=%t equal=%t empty=%t", accepted, work.EqualUnder(next.State(), current), changes.Empty())
 	}
 }

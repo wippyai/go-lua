@@ -175,7 +175,11 @@ func (edge EnvironmentEdge) Available() bool {
 	if !edge.id.Available() || !edge.from.Available() || !edge.to.Available() || !edge.route.Available() || !edge.arm.Valid() {
 		return false
 	}
-	if !((edge.guarded && edge.guard.Available()) || (!edge.guarded && !edge.guard.Available() && !edge.truth)) {
+	if edge.guarded {
+		if !edge.guard.Available() {
+			return false
+		}
+	} else if edge.guard.Available() || edge.truth {
 		return false
 	}
 	if edge.condition.Available() && !edge.guarded {

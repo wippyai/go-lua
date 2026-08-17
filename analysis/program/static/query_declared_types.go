@@ -6,7 +6,7 @@ import "github.com/wippyai/go-lua/analysis/program/keyspace"
 // child of Declarations because it is authored declaration syntax, not a
 // ninth competing Static top-level view.
 func (view Declarations) DeclaredTypes() DeclaredTypes {
-	return DeclaredTypes{component: view.component, state: view.state}
+	return DeclaredTypes(view)
 }
 
 func (view DeclaredTypes) Count() int {

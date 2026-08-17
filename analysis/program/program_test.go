@@ -38,8 +38,8 @@ func TestRootContentIDIsCanonicalOrderedAndSensitive(t *testing.T) {
 			t.Fatalf("changing child %d retained root identity: %x, %v", index, got, err)
 		}
 	}
-	for left, right := 0, 1; left < len(ids); left++ {
-		for right = left + 1; right < len(ids); right++ {
+	for left := 0; left < len(ids); left++ {
+		for right := left + 1; right < len(ids); right++ {
 			permuted := ids
 			permuted[left], permuted[right] = permuted[right], permuted[left]
 			got, err := rootContentID(permuted[0], permuted[1], permuted[2], permuted[3])

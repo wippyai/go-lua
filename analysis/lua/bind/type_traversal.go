@@ -162,7 +162,6 @@ func (b *binder) enterFunction(fn *ast.FunctionExpr, method bool, origin functio
 }
 
 func (b *binder) finishFunctionEntry(fn *ast.FunctionExpr, method bool, mode exprBindMode) {
-	params := make([]Symbol, 0)
 	slots := make([]ParamSlot, 0)
 	var names []string
 	var types []ast.TypeExpr
@@ -176,7 +175,6 @@ func (b *binder) finishFunctionEntry(fn *ast.FunctionExpr, method bool, mode exp
 	}
 	if method && (len(names) == 0 || names[0] != "self") {
 		id := b.newSymbol("self", SymbolParam)
-		params = append(params, id)
 		b.define("self", id)
 		slots = append(slots, ParamSlot{
 			Symbol: id, Name: "self", SourceIndex: -1, ImplicitSelf: true,
@@ -187,7 +185,6 @@ func (b *binder) finishFunctionEntry(fn *ast.FunctionExpr, method bool, mode exp
 		position := positionAt(fn.ParList, i)
 		annotation := typeAt(types, i)
 		b.result.setSymbolTypeAnnotation(id, annotation)
-		params = append(params, id)
 		b.define(name, id)
 		slots = append(slots, ParamSlot{
 			Symbol: id, Name: name, Position: position, Type: annotation, SourceIndex: i,

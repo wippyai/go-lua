@@ -5,12 +5,9 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/internal/framing"
 )
-
-func (kind DiagnosticObservationKind) valid() bool {
-	return kind == DiagnosticObservationBranchCondition || kind == DiagnosticObservationTypeReferenceUnresolved || kind == DiagnosticObservationValueReferenceUnresolved
-}
 
 // validDiagnosticSpan is the artifact admission/seal predicate for the
 // owner-issued Source span. Source owns coordinate ordering; this lane adds
@@ -56,15 +53,15 @@ func (payload diagnosticUnresolvedValueReferenceRow) empty() bool {
 }
 
 func (row DiagnosticObservationRow) Available() bool {
-	if !row.id.Available() || !row.kind.valid() || !validDiagnosticSpan(row.location) {
+	if !row.id.Available() || !row.kind.Available() || !validDiagnosticSpan(row.location) {
 		return false
 	}
 	switch row.kind {
-	case DiagnosticObservationBranchCondition:
+	case structure.DiagnosticObservationBranchCondition:
 		return row.branch.available() && row.unresolved.empty() && row.value.empty()
-	case DiagnosticObservationTypeReferenceUnresolved:
+	case structure.DiagnosticObservationTypeReferenceUnresolved:
 		return row.unresolved.available() && row.branch.empty() && row.value.empty()
-	case DiagnosticObservationValueReferenceUnresolved:
+	case structure.DiagnosticObservationValueReferenceUnresolved:
 		return row.value.available() && row.branch.empty() && row.unresolved.empty()
 	default:
 		return false
@@ -93,7 +90,7 @@ func equalDiagnosticObservationRows(left, right DiagnosticObservationRow) bool {
 		return false
 	}
 	switch left.kind {
-	case DiagnosticObservationBranchCondition:
+	case structure.DiagnosticObservationBranchCondition:
 		if left.branch.decision != right.branch.decision || left.branch.value != right.branch.value || len(left.branch.points) != len(right.branch.points) {
 			return false
 		}
@@ -103,7 +100,7 @@ func equalDiagnosticObservationRows(left, right DiagnosticObservationRow) bool {
 			}
 		}
 		return true
-	case DiagnosticObservationTypeReferenceUnresolved:
+	case structure.DiagnosticObservationTypeReferenceUnresolved:
 		if left.unresolved.reference != right.unresolved.reference || left.unresolved.root != right.unresolved.root ||
 			len(left.unresolved.path) != len(right.unresolved.path) {
 			return false
@@ -114,15 +111,15 @@ func equalDiagnosticObservationRows(left, right DiagnosticObservationRow) bool {
 			}
 		}
 		return true
-	case DiagnosticObservationValueReferenceUnresolved:
+	case structure.DiagnosticObservationValueReferenceUnresolved:
 		return left.value == right.value
 	default:
 		return false
 	}
 }
 
-func diagnosticObservationID(owner identity.ContentID, kind DiagnosticObservationKind, location programsource.Span, branch diagnosticBranchConditionRow, unresolved diagnosticUnresolvedTypeReferenceRow, value diagnosticUnresolvedValueReferenceRow) identity.ContentID {
-	if !owner.Available() || !kind.valid() || !validDiagnosticSpan(location) {
+func diagnosticObservationID(owner identity.ContentID, kind structure.DiagnosticObservationKind, location programsource.Span, branch diagnosticBranchConditionRow, unresolved diagnosticUnresolvedTypeReferenceRow, value diagnosticUnresolvedValueReferenceRow) identity.ContentID {
+	if !owner.Available() || !kind.Available() || !validDiagnosticSpan(location) {
 		return identity.ContentID{}
 	}
 	hash := sha256.New()
@@ -134,12 +131,12 @@ func diagnosticObservationID(owner identity.ContentID, kind DiagnosticObservatio
 		return identity.ContentID{}
 	}
 	switch kind {
-	case DiagnosticObservationBranchCondition:
+	case structure.DiagnosticObservationBranchCondition:
 		if !branch.available() || writer.Bytes(branch.decision[:]) != nil || writer.Bytes(branch.value[:]) != nil ||
 			writer.Count(uint64(len(branch.points))) != nil || !writeDiagnosticEvidencePoints(&writer, branch.points) {
 			return identity.ContentID{}
 		}
-	case DiagnosticObservationTypeReferenceUnresolved:
+	case structure.DiagnosticObservationTypeReferenceUnresolved:
 		if !unresolved.available() || writer.Bytes(unresolved.reference[:]) != nil || writer.Bytes(unresolved.root[:]) != nil ||
 			writer.Count(uint64(len(unresolved.path))) != nil {
 			return identity.ContentID{}
@@ -149,7 +146,7 @@ func diagnosticObservationID(owner identity.ContentID, kind DiagnosticObservatio
 				return identity.ContentID{}
 			}
 		}
-	case DiagnosticObservationValueReferenceUnresolved:
+	case structure.DiagnosticObservationValueReferenceUnresolved:
 		if !value.available() || writer.Bytes(value.read[:]) != nil || writer.Bytes(value.cell[:]) != nil || writer.String(value.name) != nil {
 			return identity.ContentID{}
 		}

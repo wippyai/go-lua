@@ -181,7 +181,7 @@ func (boundary RootBoundary) available() bool {
 	if boundary.result == nil || !boundary.result.valid() || boundary.index == 0 {
 		return false
 	}
-	body := BodyBoundary{result: boundary.result, index: boundary.index}
+	body := BodyBoundary(boundary)
 	return boundary.index == keyspace.TermOrdinal(boundary.result.entry) && body.available()
 }
 
@@ -372,7 +372,7 @@ func (boundary RootBoundary) Equal(other RootBoundary) bool {
 	if !boundary.available() || !other.available() {
 		return false
 	}
-	return BodyBoundary{result: boundary.result, index: boundary.index}.Equal(BodyBoundary{result: other.result, index: other.index})
+	return BodyBoundary(boundary).Equal(BodyBoundary(other))
 }
 func (boundary RootBoundary) ContextID() identity.ContentID {
 	if !boundary.available() {
@@ -381,14 +381,14 @@ func (boundary RootBoundary) ContextID() identity.ContentID {
 	return boundary.result.bodies[boundary.index].context
 }
 func (boundary RootBoundary) Body() (keyspace.Term, bool) {
-	return BodyBoundary{result: boundary.result, index: boundary.index}.Body()
+	return BodyBoundary(boundary).Body()
 }
 func (boundary RootBoundary) Entry() (keyspace.Term, bool) {
-	return BodyBoundary{result: boundary.result, index: boundary.index}.Entry()
+	return BodyBoundary(boundary).Entry()
 }
 func (boundary RootBoundary) OutcomeCount() int {
-	return BodyBoundary{result: boundary.result, index: boundary.index}.OutcomeCount()
+	return BodyBoundary(boundary).OutcomeCount()
 }
 func (boundary RootBoundary) OutcomeAt(index int) (OutcomeExit, bool) {
-	return BodyBoundary{result: boundary.result, index: boundary.index}.OutcomeAt(index)
+	return BodyBoundary(boundary).OutcomeAt(index)
 }

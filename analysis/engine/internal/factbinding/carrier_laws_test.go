@@ -19,6 +19,71 @@ func scopedWidenScope(t testing.TB, composition *carrier.Composition, fixture te
 	return selection
 }
 
+// selectedPointCell is one authored key/value inside a single Factor.
+type selectedPointCell struct {
+	target carrier.Target
+	value  uint64
+}
+
+// selectedPointWrite is the authored surface one Factor contributes. Every cell
+// of a Factor is staged together because a contribution admits exactly one
+// patch per physical slot.
+type selectedPointWrite struct {
+	binding *Binding[uint64, uint64]
+	cells   []selectedPointCell
+}
+
+// closedSelectedPoint builds one closed PointState from independent per-Factor
+// authored writes. The recurrence publication boundary consumes nominal point
+// roles, so its operands must cross the ordinary contribution closure cut.
+func closedSelectedPoint(t testing.TB, work *carrier.Work, plan carrier.ContributionPlan, scope carrier.Scope, authored support.Mask, writes ...selectedPointWrite) carrier.PointState {
+	t.Helper()
+	base, ok := work.BeginContribution(plan, scope, nil, authored)
+	if !ok {
+		t.Fatal("begin closed operand")
+	}
+	patches := make([]carrier.Patch, 0, len(writes))
+	for _, write := range writes {
+		stage := write.binding.Begin(work, base.State())
+		if stage == nil {
+			t.Fatal("stage closed operand")
+		}
+		for _, cell := range write.cells {
+			if !stage.Write(cell.target, authored, cell.value) {
+				t.Fatal("write closed operand")
+			}
+		}
+		accepted, acceptedOK := stage.Accept(work)
+		if !acceptedOK {
+			t.Fatal("accept closed operand")
+		}
+		patches = append(patches, accepted)
+	}
+	result, ok := work.FinishContribution(base, patches)
+	if !ok || !result.Valid() {
+		t.Fatal("finish closed operand")
+	}
+	rule, ok := work.AsRuleContribution(result)
+	if !ok {
+		t.Fatal("closed operand rule role")
+	}
+	point, ok := work.PointStateFromRuleContribution(rule)
+	if !ok {
+		t.Fatal("closed operand point role")
+	}
+	return point
+}
+
+// selectedPointRHS puts one closed PointState into the RHS operand role.
+func selectedPointRHS(t testing.TB, work *carrier.Work, point carrier.PointState) carrier.PointRHS {
+	t.Helper()
+	rhs, ok := work.PointRHSFromPointState(point)
+	if !ok {
+		t.Fatal("closed operand RHS role")
+	}
+	return rhs
+}
+
 func TestUnselectedWidenReplacesRightRootAndReportsExactDelta(t *testing.T) {
 	manager, err := guard.New([]guard.Atom{1})
 	if err != nil {
@@ -228,7 +293,7 @@ func TestScopedWidenUsesTargetScopeAndInstallsExactRightElsewhere(t *testing.T) 
 	}
 }
 
-func TestMergeSelectedUnderUsesExactRightOutsideSelectedKeys(t *testing.T) {
+func TestMergeSelectedPointStateUsesExactRightOutsideSelectedKeys(t *testing.T) {
 	manager, err := guard.New(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -256,41 +321,41 @@ func TestMergeSelectedUnderUsesExactRightOutsideSelectedKeys(t *testing.T) {
 		t.Fatal("composition")
 	}
 	selection := scopedWidenScope(t, composition, selectedFixture, 0)
-	selectedSlot, passiveSlot := shape.Slot(0), shape.Slot(1)
-	base, ok := carrier.NewState(composition, composition.Scope(), whole)
+	plan, ok := composition.SealContribution(0, []shape.Slot{0, 1}, nil, false)
 	if !ok {
-		t.Fatal("base")
+		t.Fatal("all-writes plan")
 	}
-	writeKey := func(binding *Binding[uint64, uint64], fixture testFixture, state carrier.State, key, value uint64) carrier.State {
-		work := newWork(t, composition)
-		patch := binding.Begin(work, state)
-		if patch == nil || !patch.Write(fixture.target(t, key, carrier.StrongTarget), whole, value) {
-			t.Fatal("write")
-		}
-		accepted, ok := patch.Accept(work)
-		if !ok {
-			t.Fatal("accept")
-		}
-		return commit(t, work, state, accepted)
-	}
-	current := writeKey(selected, selectedFixture, base, 0, 1)
-	current = writeKey(selected, selectedFixture, current, 1, 10)
-	current = writeKey(passive, passiveFixture, current, 0, 9)
-	selectedRight := writeKey(selected, selectedFixture, base, 0, 2)
-	selectedRight = writeKey(selected, selectedFixture, selectedRight, 1, 20)
-	selectedRight = writeKey(passive, passiveFixture, selectedRight, 0, 40)
-	exactRight := writeKey(selected, selectedFixture, base, 0, 777)
-	exactRight = writeKey(selected, selectedFixture, exactRight, 1, 30)
-	exactRight = writeKey(passive, passiveFixture, exactRight, 0, 4)
+	selectedSlot, passiveSlot := shape.Slot(0), shape.Slot(1)
 	work := newWork(t, composition)
-	next, changes, ok := work.MergeSelectedUnder(carrier.Widen, current, selectedRight, exactRight, selection)
-	if !ok || !next.Support().Equal(exactRight.Support()) || !support.Empty(changes.Added()) || !support.Empty(changes.Removed()) {
-		t.Fatalf("selected merge shape: ok=%t support=%t added-empty=%t removed-empty=%t", ok, next.Support().Equal(exactRight.Support()), support.Empty(changes.Added()), support.Empty(changes.Removed()))
+	selectedKey0 := selectedFixture.target(t, 0, carrier.StrongTarget)
+	selectedKey1 := selectedFixture.target(t, 1, carrier.StrongTarget)
+	passiveKey0 := passiveFixture.target(t, 0, carrier.StrongTarget)
+
+	// Selected key 0 takes the Widen of current and selectedRight. Every other
+	// authored coordinate - the unselected key 1 and the whole passive Factor -
+	// must install exactRight, so each is deliberately lower in exactRight than
+	// in selectedRight. exactRight stays below selectedRight everywhere, which
+	// the closed recurrence requires before it publishes.
+	current := closedSelectedPoint(t, work, plan, composition.Scope(), whole,
+		selectedPointWrite{selected, []selectedPointCell{{selectedKey0, 1}, {selectedKey1, 10}}},
+		selectedPointWrite{passive, []selectedPointCell{{passiveKey0, 9}}},
+	)
+	selectedRight := selectedPointRHS(t, work, closedSelectedPoint(t, work, plan, composition.Scope(), whole,
+		selectedPointWrite{selected, []selectedPointCell{{selectedKey0, 2}, {selectedKey1, 30}}},
+		selectedPointWrite{passive, []selectedPointCell{{passiveKey0, 40}}},
+	))
+	exactRight := selectedPointRHS(t, work, closedSelectedPoint(t, work, plan, composition.Scope(), whole,
+		selectedPointWrite{selected, []selectedPointCell{{selectedKey0, 2}, {selectedKey1, 20}}},
+		selectedPointWrite{passive, []selectedPointCell{{passiveKey0, 4}}},
+	))
+	next, changes, ok := work.MergeSelectedPointState(carrier.Widen, current, selectedRight, exactRight, selection)
+	if !ok || !next.Support().Equal(whole) || !support.Empty(changes.Added()) || !support.Empty(changes.Removed()) {
+		t.Fatalf("selected merge shape: ok=%t support=%t added-empty=%t removed-empty=%t", ok, next.Support().Equal(whole), support.Empty(changes.Added()), support.Empty(changes.Removed()))
 	}
 	selectedRoot, _ := next.HandleAt(selectedSlot)
 	for _, want := range []struct {
 		key, value uint64
-	}{{0, 99}, {1, 30}} {
+	}{{0, 99}, {1, 20}} {
 		got, present, valid := observedExactValue(selected, work, selectedRoot, selectedFixture.unit(t, want.key), whole, func(guard.Atom) bool { return false })
 		if !valid || !present || got != want.value {
 			t.Fatalf("selected key %d = %d/%t/%t, want %d/true/true", want.key, got, present, valid, want.value)
@@ -302,7 +367,7 @@ func TestMergeSelectedUnderUsesExactRightOutsideSelectedKeys(t *testing.T) {
 	}
 }
 
-func TestMergeSelectedUnderWidenRequiresSelectedAndExactSupportEquality(t *testing.T) {
+func TestMergeSelectedPointStateWidenRequiresSelectedAndExactSupportEquality(t *testing.T) {
 	manager, err := guard.New([]guard.Atom{1})
 	if err != nil {
 		t.Fatal(err)
@@ -322,21 +387,37 @@ func TestMergeSelectedUnderWidenRequiresSelectedAndExactSupportEquality(t *testi
 		t.Fatal("composition")
 	}
 	selection := scopedWidenScope(t, composition, fixture, 0)
-	current, ok := carrier.NewState(composition, composition.Scope(), on)
+	currentState, ok := carrier.NewState(composition, composition.Scope(), on)
 	if !ok {
 		t.Fatal("current")
 	}
-	exact, ok := carrier.NewState(composition, composition.Scope(), whole)
+	exactState, ok := carrier.NewState(composition, composition.Scope(), whole)
 	if !ok {
 		t.Fatal("exact")
 	}
 	work := newWork(t, composition)
-	if next, _, accepted := work.MergeSelectedUnder(carrier.Widen, current, current, exact, selection); accepted || next.Valid() {
+	current, ok := work.EmptyPointState(currentState)
+	if !ok {
+		t.Fatal("current point")
+	}
+	currentRHS, ok := work.PointRHSFromPointState(current)
+	if !ok {
+		t.Fatal("current RHS")
+	}
+	exactPoint, ok := work.EmptyPointState(exactState)
+	if !ok {
+		t.Fatal("exact point")
+	}
+	exact, ok := work.PointRHSFromPointState(exactPoint)
+	if !ok {
+		t.Fatal("exact RHS")
+	}
+	if next, _, accepted := work.MergeSelectedPointState(carrier.Widen, current, currentRHS, exact, selection); accepted || next.Valid() {
 		t.Fatal("widen accepted selected/exact support mismatch")
 	}
 }
 
-func TestMergeSelectedUnderNarrowUsesFullExactRight(t *testing.T) {
+func TestMergeSelectedPointStateNarrowUsesFullExactRight(t *testing.T) {
 	manager, err := guard.New(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -368,35 +449,31 @@ func TestMergeSelectedUnderNarrowUsesFullExactRight(t *testing.T) {
 	if !ok {
 		t.Fatal("narrow selection")
 	}
-	selectedSlot, passiveSlot := shape.Slot(0), shape.Slot(1)
-	base, ok := carrier.NewState(composition, composition.Scope(), whole)
+	plan, ok := composition.SealContribution(0, []shape.Slot{0, 1}, nil, false)
 	if !ok {
-		t.Fatal("base")
+		t.Fatal("all-writes plan")
 	}
-	writeKey := func(binding *Binding[uint64, uint64], fixture testFixture, state carrier.State, key, value uint64) carrier.State {
-		work := newWork(t, composition)
-		patch := binding.Begin(work, state)
-		if patch == nil || !patch.Write(fixture.target(t, key, carrier.StrongTarget), whole, value) {
-			t.Fatal("write")
-		}
-		accepted, ok := patch.Accept(work)
-		if !ok {
-			t.Fatal("accept")
-		}
-		return commit(t, work, state, accepted)
-	}
-	current := writeState(t, newWork(t, composition), selected, selectedFixture, base, selectedSlot, whole, 3)
-	current = writeKey(selected, selectedFixture, current, 1, 9)
-	current = writeState(t, newWork(t, composition), passive, passiveFixture, current, passiveSlot, whole, 9)
-	selectedRight := writeState(t, newWork(t, composition), selected, selectedFixture, base, selectedSlot, whole, 2)
-	selectedRight = writeKey(selected, selectedFixture, selectedRight, 1, 20)
-	exactRight := writeState(t, newWork(t, composition), selected, selectedFixture, base, selectedSlot, whole, 1)
-	exactRight = writeKey(selected, selectedFixture, exactRight, 1, 4)
-	exactRight = writeState(t, newWork(t, composition), passive, passiveFixture, exactRight, passiveSlot, whole, 4)
+	selectedSlot, passiveSlot := shape.Slot(0), shape.Slot(1)
 	work := newWork(t, composition)
-	next, _, ok := work.MergeSelectedUnder(carrier.Narrow, current, selectedRight, exactRight, selection)
-	if !ok || !next.Support().Equal(exactRight.Support()) {
-		t.Fatalf("narrow selected merge: ok=%t support=%t", ok, next.Support().Equal(exactRight.Support()))
+	selectedKey0 := selectedFixture.target(t, 0, carrier.StrongTarget)
+	selectedKey1 := selectedFixture.target(t, 1, carrier.StrongTarget)
+	passiveKey0 := passiveFixture.target(t, 0, carrier.StrongTarget)
+
+	// Narrow takes one exact desired RHS, so the selected operand is that same
+	// closed surface. Selected key 0 descends to the narrow result while the
+	// unselected key 1 and the whole passive Factor install exactRight, none of
+	// which may retain the higher current value.
+	current := closedSelectedPoint(t, work, plan, composition.Scope(), whole,
+		selectedPointWrite{selected, []selectedPointCell{{selectedKey0, 3}, {selectedKey1, 9}}},
+		selectedPointWrite{passive, []selectedPointCell{{passiveKey0, 9}}},
+	)
+	exact := selectedPointRHS(t, work, closedSelectedPoint(t, work, plan, composition.Scope(), whole,
+		selectedPointWrite{selected, []selectedPointCell{{selectedKey0, 2}, {selectedKey1, 4}}},
+		selectedPointWrite{passive, []selectedPointCell{{passiveKey0, 4}}},
+	))
+	next, _, ok := work.MergeSelectedPointState(carrier.Narrow, current, exact, exact, selection)
+	if !ok || !next.Support().Equal(whole) {
+		t.Fatalf("narrow selected merge: ok=%t support=%t", ok, next.Support().Equal(whole))
 	}
 	selectedRoot, _ := next.HandleAt(selectedSlot)
 	if got, present, valid := observedExactValue(selected, work, selectedRoot, selectedFixture.unit(t, 0), whole, func(guard.Atom) bool { return false }); !valid || !present || got != 2 {
@@ -411,12 +488,12 @@ func TestMergeSelectedUnderNarrowUsesFullExactRight(t *testing.T) {
 	}
 }
 
-// TestMergeSelectedUnderNarrowRejectsUnselectedExactRightGrowth proves that
-// Narrow is a whole-carrier descent, not merely a descent in the selected
-// Factor.  The selected coordinate is a valid narrowing candidate, but the
-// exact-right state grows the unselected Factor; publishing that mixed result
+// TestMergeSelectedPointStateNarrowRejectsUnselectedExactRightGrowth proves
+// that Narrow is a whole-carrier descent, not merely a descent in the selected
+// Factor. The selected coordinate is a valid narrowing candidate, but the
+// exact-right surface grows the unselected Factor; publishing that mixed result
 // would make the transition globally incomparable.
-func TestMergeSelectedUnderNarrowRejectsUnselectedExactRightGrowth(t *testing.T) {
+func TestMergeSelectedPointStateNarrowRejectsUnselectedExactRightGrowth(t *testing.T) {
 	manager, err := guard.New(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -448,25 +525,28 @@ func TestMergeSelectedUnderNarrowRejectsUnselectedExactRightGrowth(t *testing.T)
 	if !ok {
 		t.Fatal("narrow selection")
 	}
-	selectedSlot, passiveSlot := shape.Slot(0), shape.Slot(1)
-	base, ok := carrier.NewState(composition, composition.Scope(), whole)
+	plan, ok := composition.SealContribution(0, []shape.Slot{0, 1}, nil, false)
 	if !ok {
-		t.Fatal("base")
+		t.Fatal("all-writes plan")
 	}
-	current := writeState(t, newWork(t, composition), selected, selectedFixture, base, selectedSlot, whole, 3)
-	current = writeState(t, newWork(t, composition), passive, passiveFixture, current, passiveSlot, whole, 5)
-	selectedRight := writeState(t, newWork(t, composition), selected, selectedFixture, base, selectedSlot, whole, 2)
-	exactRight := writeState(t, newWork(t, composition), selected, selectedFixture, base, selectedSlot, whole, 1)
-	exactRight = writeState(t, newWork(t, composition), passive, passiveFixture, exactRight, passiveSlot, whole, 6)
-
 	work := newWork(t, composition)
-	if !work.LessOrEqUnder(selectedRight, current) {
-		t.Fatal("selected narrow input must be below current")
-	}
-	if work.LessOrEqUnder(exactRight, current) {
+	selectedKey0 := selectedFixture.target(t, 0, carrier.StrongTarget)
+	passiveKey0 := passiveFixture.target(t, 0, carrier.StrongTarget)
+
+	current := closedSelectedPoint(t, work, plan, composition.Scope(), whole,
+		selectedPointWrite{selected, []selectedPointCell{{selectedKey0, 3}}},
+		selectedPointWrite{passive, []selectedPointCell{{passiveKey0, 5}}},
+	)
+	exactPoint := closedSelectedPoint(t, work, plan, composition.Scope(), whole,
+		selectedPointWrite{selected, []selectedPointCell{{selectedKey0, 1}}},
+		selectedPointWrite{passive, []selectedPointCell{{passiveKey0, 6}}},
+	)
+	exact := selectedPointRHS(t, work, exactPoint)
+	currentRHS := selectedPointRHS(t, work, current)
+	if work.LessOrEqPointRHS(exact, currentRHS) {
 		t.Fatal("exact right unexpectedly below current despite unselected growth")
 	}
-	if next, _, accepted := work.MergeSelectedUnder(carrier.Narrow, current, selectedRight, exactRight, selection); accepted || next.Valid() {
+	if next, _, accepted := work.MergeSelectedPointState(carrier.Narrow, current, exact, exact, selection); accepted || next.Valid() {
 		t.Fatal("narrow accepted exact-right growth in unselected Factor")
 	}
 }

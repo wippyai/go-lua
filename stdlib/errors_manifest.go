@@ -7,6 +7,12 @@ import (
 	typetable "github.com/wippyai/go-lua/domain/type/table"
 	"github.com/wippyai/go-lua/domain/type/typ"
 	"github.com/wippyai/go-lua/domain/type/typeexpr"
+	moduleio "github.com/wippyai/go-lua/manifest/wire"
+)
+
+const (
+	errorMetatableRoot = "ErrorMetatableRoot"
+	errorMethodRoot    = "ErrorMethodRoot"
 )
 
 func errorsDeclaration() declaration {
@@ -67,15 +73,21 @@ func errorsDeclaration() declaration {
 		methods: map[string]declaredFunction{
 			"Error.__concat": authored(typ.Func().
 				Param("self", errorType).Param("other", typ.Any).Returns(typ.String).Build(),
-				ownership.BorrowAll{}),
+				ownership.BorrowAll{}).mountedInitially(moduleio.DeclaredInitialRoot(errorMetatableRoot), "__concat", moduleio.InitialFrozen),
 			"Error.__tostring": authored(typ.Func().
-				Param("self", errorType).Returns(typ.String).Build(), ownership.BorrowAll{}),
+				Param("self", errorType).Returns(typ.String).Build(), ownership.BorrowAll{}).
+				mountedInitially(moduleio.DeclaredInitialRoot(errorMetatableRoot), "__tostring", moduleio.InitialFrozen),
 			"Error.details": openAuthored("stdlib.errors.details.allocate", detailMethod,
-				ownership.BorrowAll{}).operational(errorsDetailsOperationLaw()),
-			"Error.kind":      authored(kind, ownership.BorrowAll{}),
-			"Error.message":   authored(message, ownership.BorrowAll{}),
-			"Error.retryable": authored(retryable, ownership.BorrowAll{}),
-			"Error.stack":     authored(stackMethod, ownership.BorrowAll{}),
+				ownership.BorrowAll{}).operational(errorsDetailsOperationLaw()).
+				mountedInitially(moduleio.DeclaredInitialRoot(errorMethodRoot), "details", moduleio.InitialFrozen),
+			"Error.kind": authored(kind, ownership.BorrowAll{}).
+				mountedInitially(moduleio.DeclaredInitialRoot(errorMethodRoot), "kind", moduleio.InitialFrozen),
+			"Error.message": authored(message, ownership.BorrowAll{}).
+				mountedInitially(moduleio.DeclaredInitialRoot(errorMethodRoot), "message", moduleio.InitialFrozen),
+			"Error.retryable": authored(retryable, ownership.BorrowAll{}).
+				mountedInitially(moduleio.DeclaredInitialRoot(errorMethodRoot), "retryable", moduleio.InitialFrozen),
+			"Error.stack": authored(stackMethod, ownership.BorrowAll{}).
+				mountedInitially(moduleio.DeclaredInitialRoot(errorMethodRoot), "stack", moduleio.InitialFrozen),
 		},
 		values: map[string]typ.Type{
 			"NOT_FOUND":         typ.LiteralString("NotFound"),
@@ -97,5 +109,12 @@ func errorsDeclaration() declaration {
 		},
 		errorType: errorType,
 		readonly:  true,
+		initialRoots: []moduleio.InitialRoot{
+			{Identity: errorMetatableRoot, Aggregate: moduleio.InitialAggregateMetatable, Immutable: true},
+			{Identity: errorMethodRoot, Aggregate: moduleio.InitialAggregateTable, Immutable: true},
+		},
+		initialEntries: []moduleio.InitialEntry{
+			{Root: moduleio.DeclaredInitialRoot(errorMetatableRoot), Key: "__index", Value: moduleio.InitialRootValue(moduleio.DeclaredInitialRoot(errorMethodRoot)), Mutability: moduleio.InitialFrozen},
+		},
 	}
 }

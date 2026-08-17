@@ -5,11 +5,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"sync"
 
+	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/domain/composite"
 	allocationcatalog "github.com/wippyai/go-lua/domain/heap/allocation/catalog"
 	staticdomain "github.com/wippyai/go-lua/domain/static"
 	"github.com/wippyai/go-lua/domain/type/authority"
-	"github.com/wippyai/go-lua/analysis/engine"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program"
@@ -516,27 +516,31 @@ func linkBootstrapWitness(state *compiledState, binding *composite.ProgramBindin
 // newProgramBinding constructs the Link-local typed owners required by the
 // receipt compiler. The reusable artifact remains the only source of
 // structural rows; these domain schemas are solve-local substitutions.
-func (state *compiledState) newProgramBinding(source *link.Link) (*composite.ProgramBinding, ProgramBindingFailure, composite.MountFailure, allocationcatalog.SealFailure) {
+// The mounted record is returned beside the binding rather than retained: it
+// is the mount phase's own output and carries the Link every authority was
+// sealed from, and the assembled Plan holds no construction owner. A caller
+// that needs the record holds it for its own transaction.
+func (state *compiledState) newProgramBinding(source *link.Link) (composite.LinkInputs, *composite.ProgramBinding, ProgramBindingFailure, composite.MountFailure, allocationcatalog.SealFailure) {
 	if state == nil || source == nil || state.artifacts == nil || len(state.artifacts.mounts) == 0 {
-		return nil, ProgramBindingFailureInput, composite.MountFailure{}, allocationcatalog.SealFailureNone
+		return composite.LinkInputs{}, nil, ProgramBindingFailureInput, composite.MountFailure{}, allocationcatalog.SealFailureNone
 	}
 	// A Shard is a cold Project coordinate. It is reissued only while Link is
 	// live, to authenticate this mount set against the Project; the published
 	// artifact mount set has no Project type and cannot reopen a mounted
 	// Program after Compile returns.
 	if !projectAuthenticatesMounts(source, state.artifacts.mounts) {
-		return nil, ProgramBindingFailureInput, composite.MountFailure{}, allocationcatalog.SealFailureNone
+		return composite.LinkInputs{}, nil, ProgramBindingFailureInput, composite.MountFailure{}, allocationcatalog.SealFailureNone
 	}
 	artifactTypes := make([]*programartifact.Artifact, 0, len(state.artifacts.byProgram))
 	for _, artifact := range state.artifacts.byProgram {
 		if artifact == nil || !artifact.Available() {
-			return nil, ProgramBindingFailureTypes, composite.MountFailure{}, allocationcatalog.SealFailureNone
+			return composite.LinkInputs{}, nil, ProgramBindingFailureTypes, composite.MountFailure{}, allocationcatalog.SealFailureNone
 		}
 		artifactTypes = append(artifactTypes, artifact)
 	}
 	types, typesErr := typeauthority.SealArtifactRows(state.sourceID, artifactTypes)
 	if typesErr != nil {
-		return nil, ProgramBindingFailureTypes, composite.MountFailure{}, allocationcatalog.SealFailureNone
+		return composite.LinkInputs{}, nil, ProgramBindingFailureTypes, composite.MountFailure{}, allocationcatalog.SealFailureNone
 	}
 	staticMounts := make([]staticdomain.MountedArtifact, len(state.artifacts.mounts))
 	staticValueIDs := make([]staticdomain.MountedValueID, 0)
@@ -544,7 +548,7 @@ func (state *compiledState) newProgramBinding(source *link.Link) (*composite.Pro
 	seenStaticValues := make(map[[2]identity.ContentID]struct{})
 	for index, published := range state.artifacts.mounts {
 		if published.artifact == nil || !published.artifact.Available() || !published.moduleKey.Available() || !published.programID.Available() {
-			return nil, ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
+			return composite.LinkInputs{}, nil, ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
 		}
 		// ModuleKey is the Link-owned, detached namespace identity for this
 		// concrete mount.  The deleted LinkStatic relation used to rebuild the
@@ -553,16 +557,16 @@ func (state *compiledState) newProgramBinding(source *link.Link) (*composite.Pro
 		for rowIndex := 0; rowIndex < published.artifact.StaticTypeValueCount(); rowIndex++ {
 			row, rowOK := published.artifact.StaticTypeValueAt(rowIndex)
 			if !rowOK || !row.Available() {
-				return nil, ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
+				return composite.LinkInputs{}, nil, ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
 			}
 			key := [2]identity.ContentID{published.moduleKey, row.ID()}
 			if _, duplicate := seenStaticValues[key]; duplicate {
-				return nil, ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
+				return composite.LinkInputs{}, nil, ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
 			}
 			value, valueOK := staticValues.ForMountedSemantic(published.moduleKey, row.ID())
 			valueID, valueIDOK := staticValues.ID(value)
 			if !valueOK || !valueIDOK || !valueID.Available() {
-				return nil, ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
+				return composite.LinkInputs{}, nil, ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
 			}
 			seenStaticValues[key] = struct{}{}
 			staticValueIDs = append(staticValueIDs, staticdomain.MountedValueID{
@@ -572,7 +576,7 @@ func (state *compiledState) newProgramBinding(source *link.Link) (*composite.Pro
 	}
 	staticTarget, staticTargetOK := source.Boundary().Target()
 	if !staticTargetOK {
-		return nil, ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
+		return composite.LinkInputs{}, nil, ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
 	}
 	static, _, err := staticdomain.SealMountedArtifacts(staticdomain.MountContext{
 		LinkID:   state.sourceID,
@@ -580,7 +584,7 @@ func (state *compiledState) newProgramBinding(source *link.Link) (*composite.Pro
 		ValueIDs: staticValueIDs,
 	}, types, staticMounts)
 	if err != nil || static == nil {
-		return nil, ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
+		return composite.LinkInputs{}, nil, ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
 	}
 	// The neutral sealed artifact view is the mount phase's whole artifact
 	// input. Every axis that owns its mount seals its own Link authority from
@@ -588,7 +592,7 @@ func (state *compiledState) newProgramBinding(source *link.Link) (*composite.Pro
 	// is constructed here.
 	artifactRows, artifactRowsOK := linkArtifactRows(state.artifacts.mounts)
 	if !artifactRowsOK {
-		return nil, ProgramBindingFailureInput, composite.MountFailure{}, allocationcatalog.SealFailureNone
+		return composite.LinkInputs{}, nil, ProgramBindingFailureInput, composite.MountFailure{}, allocationcatalog.SealFailureNone
 	}
 	inputs, mountFailure := composite.MountLink(composite.LinkInputs{
 		Source:          source,
@@ -600,17 +604,17 @@ func (state *compiledState) newProgramBinding(source *link.Link) (*composite.Pro
 	// phase derives both itself, after every mount has sealed, and names the
 	// derivation that refused in its own verdict.
 	if mountFailure.Available() {
-		return nil, programMountFailure(mountFailure), mountFailure, allocationcatalog.SealFailureNone
+		return composite.LinkInputs{}, nil, programMountFailure(mountFailure), mountFailure, allocationcatalog.SealFailureNone
 	}
 	binding, failure := composite.BindProgram(state.receipt, inputs)
 	if failure.Available() {
-		return nil, programBindingFailure(failure), composite.MountFailure{}, failure.Allocation
+		return composite.LinkInputs{}, nil, programBindingFailure(failure), composite.MountFailure{}, failure.Allocation
 	}
 	// The receipt lowerer is issued per reusable Program artifact. The
 	// Link-wide catalog above still authenticates every mount; the first
 	// artifact is the current structural assembly unit and later units are
 	// admitted by repeated solve-local receipt transactions.
-	return binding, ProgramBindingFailureNone, composite.MountFailure{}, allocationcatalog.SealFailureNone
+	return inputs, binding, ProgramBindingFailureNone, composite.MountFailure{}, allocationcatalog.SealFailureNone
 }
 
 // linkArtifactRows projects the Link's private mount records onto the neutral

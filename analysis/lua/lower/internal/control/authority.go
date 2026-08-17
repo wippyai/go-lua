@@ -77,7 +77,6 @@ type step struct {
 	generic   *ast.GenericForStmt
 	condition keyspace.Term
 	whenTrue  keyspace.Term
-	whenFalse keyspace.Term
 	body      keyspace.Term
 	control   keyspace.Term
 	cellMark  int

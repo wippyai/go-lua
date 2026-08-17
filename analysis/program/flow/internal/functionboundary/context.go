@@ -82,11 +82,11 @@ func hashBodyContext(result *Result, row bodyRow) identity.ContentID {
 func writeTerm(hash interface{ Write([]byte) (int, error) }, term keyspace.Term) {
 	var encoded [4]byte
 	binary.BigEndian.PutUint32(encoded[:], uint32(term))
-	hash.Write(encoded[:])
+	_, _ = hash.Write(encoded[:])
 }
 
 func writeRangeCount(hash interface{ Write([]byte) (int, error) }, count uint32) {
 	var encoded [4]byte
 	binary.BigEndian.PutUint32(encoded[:], count)
-	hash.Write(encoded[:])
+	_, _ = hash.Write(encoded[:])
 }

@@ -269,21 +269,22 @@ func (walker *Session) selectStep(current *frame) (Event, bool, error) {
 	if !ok || current.owner != owner || (op != kind.SelectAnd && op != kind.SelectOr) {
 		return Event{}, false, errors.New("program/flow/evaluation: invalid Select row")
 	}
-	if current.stage == stageFirst {
+	switch current.stage {
+	case stageFirst:
 		walker.initPendingChildren(current, left, right)
 		current.stage = stageSecond
 		if err := walker.pushChildGuarded(current, left, owner); err != nil {
 			return Event{}, false, err
 		}
-	} else if current.stage == stageSecond {
+	case stageSecond:
 		current.stage = stageThird
 		return Event{Select: current.term}, true, nil
-	} else if current.stage == stageThird {
+	case stageThird:
 		current.stage = 3
 		if err := walker.pushChildGuarded(current, right, owner); err != nil {
 			return Event{}, false, err
 		}
-	} else {
+	default:
 		if err := walker.popCurrent(); err != nil {
 			return Event{}, false, err
 		}

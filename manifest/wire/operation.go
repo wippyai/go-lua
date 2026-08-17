@@ -2,8 +2,6 @@ package wire
 
 import "github.com/wippyai/go-lua/domain/type/typ"
 
-const GlobalEnvironmentRoot = "GlobalEnvRoot"
-
 type CapturedInitialReadSpec = CapturedInitialRead
 
 // Operation is the portable, provider-owned behavioral declaration for one
@@ -17,23 +15,23 @@ type Operation struct {
 	Replace bool
 	// SelfEffect requests the operation-occurrence row even when the callable
 	// has no direct mounted binding (for produced iterators).
-	SelfEffect           bool
-	ValuesVars           uint32
-	Input                Values
-	Outcomes             []Outcome
-	Callbacks            []Callback
-	Subedges             []Subedge
-	Suspensions          []Suspension
-	Spawns               []Spawn
-	Resumes              []Resume
-	GsubTableReplacement *GsubTableReplacement
-	Effects              RowSpec
-	AppendNormal         []Values
-	ReplaceNormal        []Values
-	ReplaceNormalSet     bool
-	InputTailType        typ.Type `json:"-"`
-	OutcomeTailTypes     []OutcomeTailType
-	OutcomeAmendments    []OutcomeAmendment
+	SelfEffect        bool
+	ValuesVars        uint32
+	Input             Values
+	Outcomes          []Outcome
+	Callbacks         []Callback
+	Subedges          []Subedge
+	Suspensions       []Suspension
+	Spawns            []Spawn
+	Resumes           []Resume
+	SubedgeRelation   *SubedgeRelation
+	Effects           RowSpec
+	AppendNormal      []Values
+	ReplaceNormal     []Values
+	ReplaceNormalSet  bool
+	InputTailType     typ.Type `json:"-"`
+	OutcomeTailTypes  []OutcomeTailType
+	OutcomeAmendments []OutcomeAmendment
 }
 
 type OutcomeTailType struct {
@@ -385,9 +383,13 @@ type Subedge struct {
 	Routes           []SubedgeRoute
 }
 
-type GsubTableReplacement struct {
-	Replacement   ValueFormal
-	Access        SubedgeRef
+// SubedgeRelation records one provider-owned correlation between an input
+// operand, an existing subedge, and an existing result. Selector is an opaque
+// provider token: consumers preserve it without inventing provider semantics.
+type SubedgeRelation struct {
+	Operand       ValueFormal
+	Selector      uint32
+	Subedge       SubedgeRef
 	ResultOutcome uint32
 	Result        uint32
 	EffectAliases []uint32
@@ -464,10 +466,10 @@ func CloneOperation(in Operation) Operation {
 		out.Resumes[i].Arguments = cloneValues(in.Resumes[i].Arguments)
 		out.Resumes[i].Outcomes = append([]ResumeOutcome(nil), in.Resumes[i].Outcomes...)
 	}
-	if in.GsubTableReplacement != nil {
-		value := *in.GsubTableReplacement
+	if in.SubedgeRelation != nil {
+		value := *in.SubedgeRelation
 		value.EffectAliases = append([]uint32(nil), value.EffectAliases...)
-		out.GsubTableReplacement = &value
+		out.SubedgeRelation = &value
 	}
 	return out
 }

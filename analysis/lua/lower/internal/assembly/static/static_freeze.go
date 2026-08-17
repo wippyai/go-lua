@@ -257,7 +257,7 @@ func (rows *staticRows) freeze(preimage source.Preimage, counts [keyspace.Family
 	for index, row := range rows.annotations {
 		name, err := resolveStaticKey(keys, row.name, false)
 		if err != nil {
-			return programstatic.Input{}, fmt.Errorf("Annotation %d name: %w", index, err)
+			return programstatic.Input{}, fmt.Errorf("annotation %d name: %w", index, err)
 		}
 		input.Operands.Annotation[index] = programstatic.Annotation{Scope: row.scope, Target: row.target, Name: name, Values: row.values}
 	}

@@ -90,12 +90,12 @@ func freezeOperation(source int, input OperationSpec, semantics schematype.Seman
 	if err := draft.freezeEffects(input.Effects); err != nil {
 		return operationDraft{}, err
 	}
-	if input.GsubTableReplacement != nil {
-		branch, branchErr := draft.freezeGsubTableReplacement(*input.GsubTableReplacement)
+	if input.SubedgeRelation != nil {
+		branch, branchErr := draft.freezeSubedgeRelation(*input.SubedgeRelation)
 		if branchErr != nil {
 			return operationDraft{}, branchErr
 		}
-		draft.gsubTable = &branch
+		draft.subedgeRelation = &branch
 	}
 	return draft, nil
 }

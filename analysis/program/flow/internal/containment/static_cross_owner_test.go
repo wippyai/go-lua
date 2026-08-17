@@ -38,7 +38,7 @@ func TestStaticCrossOwnerCardinalityLaws(t *testing.T) {
 	if err != nil {
 		t.Fatalf("authored.Finalizer: %v", err)
 	}
-	defer flowFinalizer.Abort()
+	defer func() { _ = flowFinalizer.Abort() }()
 	flowView := flowFinalizer.View()
 
 	staticInput := static.Input{
@@ -67,7 +67,7 @@ func TestStaticCrossOwnerCardinalityLaws(t *testing.T) {
 	if err != nil {
 		t.Fatalf("static.Finalizer: %v", err)
 	}
-	defer staticFinalizer.Abort()
+	defer func() { _ = staticFinalizer.Abort() }()
 
 	if err := validateStaticCrossOwnerCardinalities(staticFinalizer.View(), flowView, counts); err != nil {
 		t.Fatalf("valid cross-owner sidecars rejected: %v", err)
@@ -125,7 +125,7 @@ func TestStaticCrossOwnerCardinalityLaws(t *testing.T) {
 			if err != nil {
 				t.Fatalf("static.Finalizer: %v", err)
 			}
-			defer finalizer.Abort()
+			defer func() { _ = finalizer.Abort() }()
 			if err := validateStaticCrossOwnerCardinalities(finalizer.View(), flowView, counts); err == nil {
 				t.Fatal("invalid sparse ClaimTarget relation accepted")
 			}

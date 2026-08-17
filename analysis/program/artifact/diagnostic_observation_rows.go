@@ -3,17 +3,7 @@ package artifact
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
-)
-
-// DiagnosticObservationKind is the closed reusable semantic-observation
-// catalog. It contains no severity, message, or policy.
-type DiagnosticObservationKind uint8
-
-const (
-	DiagnosticObservationInvalid DiagnosticObservationKind = iota
-	DiagnosticObservationBranchCondition
-	DiagnosticObservationTypeReferenceUnresolved
-	DiagnosticObservationValueReferenceUnresolved
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
 type diagnosticBranchConditionRow struct {
@@ -41,7 +31,7 @@ type diagnosticUnresolvedValueReferenceRow struct {
 // reconstructing semantic families from optional scalar fields.
 type DiagnosticObservationRow struct {
 	id         identity.ContentID
-	kind       DiagnosticObservationKind
+	kind       structure.DiagnosticObservationKind
 	location   programsource.Span
 	branch     diagnosticBranchConditionRow
 	unresolved diagnosticUnresolvedTypeReferenceRow

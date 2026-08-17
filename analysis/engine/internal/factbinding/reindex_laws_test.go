@@ -382,9 +382,6 @@ func (reindexRejectWork) ContributionPresenceIncludedUnder(support.Mask, support
 func (reindexRejectWork) MergeTransportedPointUnder(carrier.RootHandle, carrier.RootHandle, support.Mask, support.Mask, support.Mask, support.Mask, guard.Reindex, carrier.SlotCoverage, carrier.SlotCoverage, *support.Work) (carrier.ChangeHandle, bool) {
 	return carrier.ChangeHandle{}, false
 }
-func (reindexRejectWork) MergeSelectedUnder(carrier.MergeKind, uint64, carrier.RootHandle, carrier.RootHandle, carrier.RootHandle, support.Split, support.Split, *support.Work) (carrier.ChangeHandle, bool) {
-	return carrier.ChangeHandle{}, false
-}
 func (reindexRejectWork) MergeSelectedContributionUnder(carrier.MergeKind, uint64, carrier.RootHandle, carrier.RootHandle, carrier.RootHandle, support.Split, support.Split, carrier.SlotCoverage, carrier.SlotCoverage, carrier.SlotCoverage, *support.Work) (carrier.ChangeHandle, bool) {
 	return carrier.ChangeHandle{}, false
 }

@@ -265,7 +265,7 @@ func (compiler *compiler) callBoundary(term keyspace.Term, spanID identity.Conte
 	if len(arms) == 0 {
 		return callBoundaryConstruction{}
 	}
-	boundaryID := artifactTransformerRoleID("program/transformer/call-boundary", compiler.input.ContentID(), func(writer *framing.Writer) bool {
+	boundaryID := artifactRoleID("program/transformer/call-boundary", compiler.input.ContentID(), func(writer *framing.Writer) bool {
 		if writer.Bytes(spanID[:]) != nil || writer.Count(uint64(len(arms))) != nil {
 			return false
 		}
@@ -281,7 +281,7 @@ func (compiler *compiler) callBoundary(term keyspace.Term, spanID identity.Conte
 	}
 	for index := range arms {
 		arm := &arms[index]
-		arm.id = artifactTransformerRoleID("program/transformer/call-arm", compiler.input.ContentID(), func(writer *framing.Writer) bool {
+		arm.id = artifactRoleID("program/transformer/call-arm", compiler.input.ContentID(), func(writer *framing.Writer) bool {
 			return writer.Bytes(boundaryID[:]) == nil && writer.Uint(uint64(arm.kind)) == nil && writer.Bytes(arm.route[:]) == nil && writer.Bytes(arm.target[:]) == nil
 		})
 		if !arm.id.Available() {
@@ -291,7 +291,7 @@ func (compiler *compiler) callBoundary(term keyspace.Term, spanID identity.Conte
 	return callBoundaryConstruction{id: boundaryID, arms: arms}
 }
 
-func artifactTransformerRoleID(domain string, owner identity.ContentID, write func(*framing.Writer) bool) identity.ContentID {
+func artifactRoleID(domain string, owner identity.ContentID, write func(*framing.Writer) bool) identity.ContentID {
 	if !owner.Available() || write == nil {
 		return identity.ContentID{}
 	}

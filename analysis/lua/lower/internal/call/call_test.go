@@ -1,9 +1,9 @@
 package call
 
 import (
-	"testing"
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/compiler/ast"
+	"testing"
 )
 
 func TestCallWriterRequiresAllTypedOwnersBeforeScheduling(t *testing.T) {

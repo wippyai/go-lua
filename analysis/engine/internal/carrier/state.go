@@ -118,11 +118,6 @@ type SlotWork interface {
 	// not lifted-partial RuleContribution transport.
 	MergeTransportedPointUnder(left, right RootHandle, leftSupport, sourceSupport, reindexedSupport, rightSupport support.Mask, relation guard.Reindex, leftCoverage, rightCoverage SlotCoverage, delta *support.Work) (ChangeHandle, bool)
 	Merge3Under(kind MergeKind, recurrence bool, scope uint64, left, right RootHandle, split support.Split, delta *support.Work) (ChangeHandle, bool)
-	// MergeSelectedUnder is the typed half of one three-State recurrence
-	// transition. Selected target keys apply kind to current and
-	// selectedRight; every other key installs exactRight. It returns one
-	// current-to-output change proof and never publishes an intermediate root.
-	MergeSelectedUnder(kind MergeKind, scope uint64, current, selectedRight, exactRight RootHandle, selectedSplit, exactSplit support.Split, delta *support.Work) (ChangeHandle, bool)
 	// MergeSelectedContributionUnder is the closed contribution recurrence
 	// boundary.  It publishes only the exact-right authored surface, never a
 	// historical current surface retained by Widen/Narrow.
@@ -1166,30 +1161,6 @@ func (work *Work) MergeContribution(left, right Contribution) (Contribution, Cha
 	return result, changes, valid
 }
 
-// FoldRHSContribution joins one operand while an equation RHS is still being
-// assembled and no intermediate semantic delta is observable. A closed
-// support-only base has no authored cells in any Factor, so the lifted product
-// law is exactly (S0, Abs) join (S1, R) = (S0 union S1, R). In that case the
-// immutable right roots and coverage are adopted without a typed merge or root
-// publication; the final Point replacement derives the one externally visible
-// ChangeSet. Every other shape uses the ordinary exact contribution join.
-func (work *Work) FoldRHSContribution(left, right Contribution) (Contribution, bool) {
-	if !work.live() || !work.admittedContribution(left) || !work.admittedContribution(right) || !work.liveFor(left.state, right.state) {
-		return Contribution{}, false
-	}
-	if len(left.coverage.slots) == 0 && sameRootVector(left.state.roots, work.composition.initial) {
-		union, ok := work.unionSupport(left.state.support, right.state.support)
-		if !ok {
-			return Contribution{}, false
-		}
-		state := right.state
-		state.support = union
-		return work.admitConstructedContribution(state, right.coverage)
-	}
-	result, _, ok := work.MergeContribution(left, right)
-	return result, ok
-}
-
 // contributionSlotIdentity is the closed-slot theorem used by
 // MergeContribution.  Empty compact coverage is exactly Absent, never a
 // sparse-root inference; the issuance cut already removed every physical
@@ -1271,94 +1242,6 @@ func (work *Work) merge3Under(kind MergeKind, left, right State, members []bool,
 		_ = operation
 	}
 	return work.commit(left, patches, nextSupport, added, removed, delta)
-}
-
-// MergeSelectedUnder computes one atomic recurrence update from three States.
-// Selected slots apply kind to current and selectedRight; every other slot
-// installs exactRight structurally. The published support is always exactly
-// exactRight's support, so a restart may retract stale carrier support without
-// letting an unselected coordinate retain current or selected-right meaning.
-//
-// Widen requires selectedRight to exactly equal exactRight at the atomic
-// boundary; when a slot is selected, current support must additionally be
-// contained by that right support. Narrow requires
-// selectedRight and exactRight to name the same output support, while
-// selectedRight remains contained by current. An empty scope references no
-// selected operand and is therefore an exact support-reset transition.
-func (work *Work) MergeSelectedUnder(kind MergeKind, current, selectedRight, exactRight State, selected MergeScope) (State, ChangeSet, bool) {
-	if !work.live() || !work.liveFor(current, selectedRight) || !work.liveFor(current, exactRight) || current.previewMarked() || selectedRight.previewMarked() || exactRight.previewMarked() || current.contributionMarked() || selectedRight.contributionMarked() || exactRight.contributionMarked() || !selected.validFor(work.composition, kind) {
-		return State{}, ChangeSet{}, false
-	}
-	if kind != Widen && kind != Narrow {
-		return State{}, ChangeSet{}, false
-	}
-	hasSelected := false
-	for _, member := range selected.members {
-		hasSelected = hasSelected || member
-	}
-	if kind == Widen && !selectedRight.support.Equal(exactRight.support) {
-		return State{}, ChangeSet{}, false
-	}
-	if hasSelected && kind == Widen && !current.support.Entails(selectedRight.support) {
-		return State{}, ChangeSet{}, false
-	}
-	if hasSelected && kind == Narrow && (!selectedRight.support.Entails(current.support) || !selectedRight.support.Equal(exactRight.support)) {
-		return State{}, ChangeSet{}, false
-	}
-	// Narrow publishes a mixed state whose unselected slots are copied from
-	// exactRight.  Checking only selectedRight's support is therefore not
-	// enough: an unselected Factor could grow in exactRight and make the
-	// allegedly descending transition globally incomparable.  The complete
-	// exact-right plane must be below current before any slot prepares a
-	// candidate.  LessOrEqUnder is the carrier's sole typed order authority;
-	// it checks every Factor on exactRight's support.
-	if kind == Narrow && !work.LessOrEqUnder(exactRight, current) {
-		return State{}, ChangeSet{}, false
-	}
-	selectedSplit, ok := work.threeSupport(current.support, selectedRight.support)
-	if !ok {
-		return State{}, ChangeSet{}, false
-	}
-	exactSplit, ok := work.threeSupport(current.support, exactRight.support)
-	if !ok {
-		return State{}, ChangeSet{}, false
-	}
-	delta := work.newSupportWork()
-	if delta == nil {
-		return State{}, ChangeSet{}, false
-	}
-	patches := make([]Patch, 0, len(current.authority.composition.operations))
-	for position, operation := range current.authority.composition.operations {
-		if !work.live() || work.slots[position] == nil {
-			delta.Discard()
-			dropPatches(patches)
-			return State{}, ChangeSet{}, false
-		}
-		var change ChangeHandle
-		var okay bool
-		if selected.members[position] {
-			scope := selected.scopes[position]
-			if scope == 0 {
-				delta.Discard()
-				dropPatches(patches)
-				return State{}, ChangeSet{}, false
-			}
-			change, okay = work.slots[position].MergeSelectedUnder(kind, scope, current.roots[position], selectedRight.roots[position], exactRight.roots[position], selectedSplit, exactSplit, delta)
-		} else {
-			change, okay = work.slots[position].ReplaceUnder(current.roots[position], exactRight.roots[position], exactSplit, delta)
-		}
-		if !okay {
-			delta.Discard()
-			dropPatches(patches)
-			return State{}, ChangeSet{}, false
-		}
-		if !work.acceptInto(&patches, current, change, delta) {
-			delta.Discard()
-			return State{}, ChangeSet{}, false
-		}
-		_ = operation
-	}
-	return work.commit(current, patches, exactRight.support, exactSplit.RightOnly(), exactSplit.LeftOnly(), delta)
 }
 
 // StateReindexBoundary is the first closed substage reached by one State

@@ -49,6 +49,15 @@ type Census struct {
 	// A product row states what an action builds; a use row states where each
 	// built value goes, so the two are the same relation read from its two ends.
 	Uses []parsersource.ActionUse
+	// Sequences is the list-building grain: one row for every list-valued
+	// result carrier every reduction can leave a value in, stating how that
+	// reduction assembles the list. It is a grain of its own because a list is
+	// not a constructed AST form - it is the value a sequence carrier later
+	// receives - so how long a reduction's list is, and which operand supplies
+	// its final member, has no product or use row it could be stated on. A law
+	// about a final-open expression list or an assignment target list is stated
+	// over these rows.
+	Sequences []parsersource.ActionSequence
 }
 
 // Canonical returns detached deterministic bytes for all census fields except
@@ -125,6 +134,21 @@ func clone(c Census) Census {
 		result.Uses[index].Origins = append([]parsersource.UseOrigin(nil), c.Uses[index].Origins...)
 		result.Uses[index].Sources = append([]int(nil), c.Uses[index].Sources...)
 		result.Uses[index].Symbols = append([]int(nil), c.Uses[index].Symbols...)
+	}
+	result.Sequences = append([]parsersource.ActionSequence(nil), c.Sequences...)
+	for index := range result.Sequences {
+		// A construction that states an empty list of operands is not the same
+		// row as one that states no operands, so the detached copy keeps an
+		// empty slice empty rather than letting it become an absent one.
+		if c.Sequences[index].Segments != nil {
+			result.Sequences[index].Segments = append(make([]parsersource.SequenceSegment, 0, len(c.Sequences[index].Segments)), c.Sequences[index].Segments...)
+		}
+		for segment := range result.Sequences[index].Segments {
+			source := c.Sequences[index].Segments[segment]
+			result.Sequences[index].Segments[segment].Origins = append([]parsersource.UseOrigin(nil), source.Origins...)
+			result.Sequences[index].Segments[segment].Sources = append([]int(nil), source.Sources...)
+			result.Sequences[index].Segments[segment].Symbols = append([]int(nil), source.Symbols...)
+		}
 	}
 	return result
 }

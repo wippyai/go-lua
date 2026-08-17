@@ -6,15 +6,15 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
-func (view View) Operands() Operands { return Operands{component: view.component, state: view.state} }
+func (view View) Operands() Operands { return Operands(view) }
 func (view Operands) Claims() ClaimTargets {
-	return ClaimTargets{component: view.component, state: view.state}
+	return ClaimTargets(view)
 }
 func (view Operands) TypeValues() TypeValueTargets {
-	return TypeValueTargets{component: view.component, state: view.state}
+	return TypeValueTargets(view)
 }
 func (view Operands) Annotations() Annotations {
-	return Annotations{component: view.component, state: view.state}
+	return Annotations(view)
 }
 
 // Count is the sparse semantic ClaimTarget denominator: only claims with an

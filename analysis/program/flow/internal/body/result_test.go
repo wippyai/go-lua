@@ -14,9 +14,9 @@ func TestBodyContainsSiblingIntervals(t *testing.T) {
 	right := keyspace.MakeTerm(keyspace.FamilyBody, 3)
 	input := authoredInputForIntervals(3)
 	view, staticView, finish, staticFinish, preimage, sourceFinish := prepare(t, [][]keyspace.Term{{left, right}, nil, nil}, input)
-	defer finish.Abort()
-	defer staticFinish.Abort()
-	defer sourceFinish.Abort()
+	defer func() { _ = finish.Abort() }()
+	defer func() { _ = staticFinish.Abort() }()
+	defer func() { _ = sourceFinish.Abort() }()
 
 	result, err := Seal(preimage, view, staticView, root)
 	if err != nil {
@@ -57,9 +57,9 @@ func TestBodyAncestryQueriesDoNotAllocate(t *testing.T) {
 	body := keyspace.MakeTerm(keyspace.FamilyBody, 1)
 	input := authoredInputForIntervals(1)
 	view, staticView, finish, staticFinish, preimage, sourceFinish := prepare(t, [][]keyspace.Term{nil}, input)
-	defer finish.Abort()
-	defer staticFinish.Abort()
-	defer sourceFinish.Abort()
+	defer func() { _ = finish.Abort() }()
+	defer func() { _ = staticFinish.Abort() }()
+	defer func() { _ = sourceFinish.Abort() }()
 	result, err := Seal(preimage, view, staticView, body)
 	if err != nil {
 		t.Fatalf("Seal: %v", err)
@@ -92,9 +92,9 @@ func TestBodyProvenanceRejectsEqualDenominatorForeignOwners(t *testing.T) {
 	}}}}
 
 	flowView, staticView, flowFinish, staticFinish, preimage, sourceFinish := prepareNamed(t, rows, base, "body-provenance-a.lua")
-	defer flowFinish.Abort()
-	defer staticFinish.Abort()
-	defer sourceFinish.Abort()
+	defer func() { _ = flowFinish.Abort() }()
+	defer func() { _ = staticFinish.Abort() }()
+	defer func() { _ = sourceFinish.Abort() }()
 	first, err := Seal(preimage, flowView, staticView, parent)
 	if err != nil {
 		t.Fatalf("first body.Seal: %v", err)
@@ -106,9 +106,9 @@ func TestBodyProvenanceRejectsEqualDenominatorForeignOwners(t *testing.T) {
 	}
 
 	foreignSourceView, foreignSourceStatic, foreignSourceFinish, foreignSourceStaticFinish, foreignSourcePreimage, foreignSourceFinalizer := prepareNamed(t, rows, base, "body-provenance-b.lua")
-	defer foreignSourceFinish.Abort()
-	defer foreignSourceStaticFinish.Abort()
-	defer foreignSourceFinalizer.Abort()
+	defer func() { _ = foreignSourceFinish.Abort() }()
+	defer func() { _ = foreignSourceStaticFinish.Abort() }()
+	defer func() { _ = foreignSourceFinalizer.Abort() }()
 	foreignSource, err := Seal(foreignSourcePreimage, foreignSourceView, foreignSourceStatic, parent)
 	if err != nil {
 		t.Fatalf("foreign Source body.Seal: %v", err)
@@ -127,9 +127,9 @@ func TestBodyProvenanceRejectsEqualDenominatorForeignOwners(t *testing.T) {
 		Control: keyspace.MakeTerm(keyspace.FamilyNil, 1),
 	}}
 	foreignFlowView, foreignFlowStatic, foreignFlowFinish, foreignFlowStaticFinish, foreignFlowPreimage, foreignFlowFinalizer := prepareNamed(t, rows, foreignFlowInput, "body-provenance-a.lua")
-	defer foreignFlowFinish.Abort()
-	defer foreignFlowStaticFinish.Abort()
-	defer foreignFlowFinalizer.Abort()
+	defer func() { _ = foreignFlowFinish.Abort() }()
+	defer func() { _ = foreignFlowStaticFinish.Abort() }()
+	defer func() { _ = foreignFlowFinalizer.Abort() }()
 	foreignFlow, err := Seal(foreignFlowPreimage, foreignFlowView, foreignFlowStatic, parent)
 	if err != nil {
 		t.Fatalf("foreign Flow body.Seal: %v", err)

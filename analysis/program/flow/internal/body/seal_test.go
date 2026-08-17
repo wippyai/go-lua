@@ -22,9 +22,9 @@ func TestSealNestedBodyAndDirectRootOrder(t *testing.T) {
 	view, staticView, finish, staticFinish, preimage, sourceFinish := prepare(t, [][]keyspace.Term{{
 		returnTerm, body2,
 	}, nil}, input)
-	defer finish.Abort()
-	defer staticFinish.Abort()
-	defer sourceFinish.Abort()
+	defer func() { _ = finish.Abort() }()
+	defer func() { _ = staticFinish.Abort() }()
+	defer func() { _ = sourceFinish.Abort() }()
 
 	result, err := Seal(preimage, view, staticView, body1)
 	if err != nil {
@@ -83,9 +83,9 @@ func TestSealNestedCallIsClosedByContainmentNotBody(t *testing.T) {
 	// The second Call is an expression child. Its absence from Source direct
 	// order is intentional: containment, not Body, will close that relation.
 	view, staticView, finish, staticFinish, preimage, sourceFinish := prepare(t, [][]keyspace.Term{{directCall}}, input)
-	defer finish.Abort()
-	defer staticFinish.Abort()
-	defer sourceFinish.Abort()
+	defer func() { _ = finish.Abort() }()
+	defer func() { _ = staticFinish.Abort() }()
+	defer func() { _ = sourceFinish.Abort() }()
 	result, err := Seal(preimage, view, staticView, body)
 	if err != nil {
 		t.Fatalf("Seal nested Call: %v", err)
@@ -120,9 +120,9 @@ func TestSealDirectCallRemainsBodyRoot(t *testing.T) {
 		{Owner: body, Callee: callee, Actuals: values},
 	}
 	view, staticView, finish, staticFinish, preimage, sourceFinish := prepare(t, [][]keyspace.Term{{firstCall, secondCall}}, input)
-	defer finish.Abort()
-	defer staticFinish.Abort()
-	defer sourceFinish.Abort()
+	defer func() { _ = finish.Abort() }()
+	defer func() { _ = staticFinish.Abort() }()
+	defer func() { _ = sourceFinish.Abort() }()
 	result, err := Seal(preimage, view, staticView, body)
 	if err != nil {
 		t.Fatalf("Seal direct Calls: %v", err)
@@ -162,9 +162,9 @@ func TestSealFunctionResetsOuterLoopAndBranchHosts(t *testing.T) {
 		{body4},
 		nil,
 	}, input)
-	defer finish.Abort()
-	defer staticFinish.Abort()
-	defer sourceFinish.Abort()
+	defer func() { _ = finish.Abort() }()
+	defer func() { _ = staticFinish.Abort() }()
+	defer func() { _ = sourceFinish.Abort() }()
 
 	result, err := Seal(preimage, view, staticView, body1)
 	if err != nil {
@@ -216,9 +216,9 @@ func TestSealNestedFunctionAndLoopReset(t *testing.T) {
 	view, staticView, finish, staticFinish, preimage, sourceFinish := prepare(t, [][]keyspace.Term{
 		{loopOuter}, nil, {loopInner}, nil, {bodies[5]}, nil,
 	}, input)
-	defer finish.Abort()
-	defer staticFinish.Abort()
-	defer sourceFinish.Abort()
+	defer func() { _ = finish.Abort() }()
+	defer func() { _ = staticFinish.Abort() }()
+	defer func() { _ = sourceFinish.Abort() }()
 	result, err := Seal(preimage, view, staticView, bodies[0])
 	if err != nil {
 		t.Fatalf("Seal: %v", err)
@@ -264,9 +264,9 @@ func TestSealBranchAndLoopHosts(t *testing.T) {
 	input.Control.Branches = []authored.Branch{{Owner: body1, Condition: keyspace.MakeTerm(keyspace.FamilyNil, 1), WhenTrue: body2, WhenFalse: body3}}
 	input.Control.Loops = []authored.Loop{{Owner: body2, Body: keyspace.MakeTerm(keyspace.FamilyBody, 4), Kind: kind.LoopWhile, Control: keyspace.MakeTerm(keyspace.FamilyNil, 1)}}
 	view, staticView, finish, staticFinish, preimage, sourceFinish := prepare(t, [][]keyspace.Term{{branch}, {loop}, nil, nil}, input)
-	defer finish.Abort()
-	defer staticFinish.Abort()
-	defer sourceFinish.Abort()
+	defer func() { _ = finish.Abort() }()
+	defer func() { _ = staticFinish.Abort() }()
+	defer func() { _ = sourceFinish.Abort() }()
 
 	result, err := Seal(preimage, view, staticView, body1)
 	if err != nil {
@@ -291,9 +291,9 @@ func TestSealRejectsDuplicateOrphanAndCycle(t *testing.T) {
 	input := authored.Input{Counts: [keyspace.FamilyCount]uint32{keyspace.FamilyBody: 2, keyspace.FamilyFunction: 1}}
 	input.Functions.Rows = []authored.Function{{Owner: body1, Body: body2}}
 	view, staticView, finish, staticFinish, preimage, sourceFinish := prepare(t, [][]keyspace.Term{{body2}, nil}, input)
-	defer finish.Abort()
-	defer staticFinish.Abort()
-	defer sourceFinish.Abort()
+	defer func() { _ = finish.Abort() }()
+	defer func() { _ = staticFinish.Abort() }()
+	defer func() { _ = sourceFinish.Abort() }()
 	if _, err := Seal(preimage, view, staticView, body1); err == nil {
 		t.Fatal("shared direct/Function child was accepted")
 	}
@@ -301,17 +301,17 @@ func TestSealRejectsDuplicateOrphanAndCycle(t *testing.T) {
 
 	input = authored.Input{Counts: [keyspace.FamilyCount]uint32{keyspace.FamilyBody: 3}}
 	view, staticView, finish, staticFinish, preimage, sourceFinish = prepare(t, [][]keyspace.Term{{body2}, {keyspace.MakeTerm(keyspace.FamilyBody, 1)}, nil}, input)
-	defer finish.Abort()
-	defer staticFinish.Abort()
-	defer sourceFinish.Abort()
+	defer func() { _ = finish.Abort() }()
+	defer func() { _ = staticFinish.Abort() }()
+	defer func() { _ = sourceFinish.Abort() }()
 	if _, err := Seal(preimage, view, staticView, body1); err == nil {
 		t.Fatal("cycle was accepted")
 	}
 
 	view, staticView, finish, staticFinish, preimage, sourceFinish = prepare(t, [][]keyspace.Term{{body2}, nil, nil}, input)
-	defer finish.Abort()
-	defer staticFinish.Abort()
-	defer sourceFinish.Abort()
+	defer func() { _ = finish.Abort() }()
+	defer func() { _ = staticFinish.Abort() }()
+	defer func() { _ = sourceFinish.Abort() }()
 	if _, err := Seal(preimage, view, staticView, body1); err == nil {
 		t.Fatal("orphan Body was accepted")
 	}
@@ -367,8 +367,8 @@ func TestSealStaticEmptyViewAvailability(t *testing.T) {
 	if _, err := Seal(preimage, view, staticView, body); err == nil {
 		t.Fatal("Seal accepted expired empty Static view")
 	}
-	finish.Abort()
-	sourceFinish.Abort()
+	_ = finish.Abort()
+	_ = sourceFinish.Abort()
 }
 
 func TestSealRejectsEachExpiredOwnerIndependently(t *testing.T) {
@@ -389,8 +389,8 @@ func TestSealRejectsEachExpiredOwnerIndependently(t *testing.T) {
 	if _, err := Seal(preimage, view, staticView, body); err == nil {
 		t.Fatal("expired authored View accepted")
 	}
-	staticFinish.Abort()
-	sourceFinish.Abort()
+	_ = staticFinish.Abort()
+	_ = sourceFinish.Abort()
 
 	view, staticView, finish, staticFinish, preimage, sourceFinish = prepare(t, [][]keyspace.Term{{keyspace.MakeTerm(keyspace.FamilyTypeAlias, 1)}}, authored.Input{Counts: [keyspace.FamilyCount]uint32{keyspace.FamilyBody: 1}}, staticInput)
 	if err := staticFinish.Abort(); err != nil {
@@ -399,8 +399,8 @@ func TestSealRejectsEachExpiredOwnerIndependently(t *testing.T) {
 	if _, err := Seal(preimage, view, staticView, body); err == nil {
 		t.Fatal("expired Static View accepted")
 	}
-	finish.Abort()
-	sourceFinish.Abort()
+	_ = finish.Abort()
+	_ = sourceFinish.Abort()
 
 	view, staticView, finish, staticFinish, preimage, sourceFinish = prepare(t, [][]keyspace.Term{{keyspace.MakeTerm(keyspace.FamilyTypeAlias, 1)}}, authored.Input{Counts: [keyspace.FamilyCount]uint32{keyspace.FamilyBody: 1}}, staticInput)
 	if err := sourceFinish.Abort(); err != nil {
@@ -409,8 +409,8 @@ func TestSealRejectsEachExpiredOwnerIndependently(t *testing.T) {
 	if _, err := Seal(preimage, view, staticView, body); err == nil {
 		t.Fatal("expired Source Preimage accepted")
 	}
-	finish.Abort()
-	staticFinish.Abort()
+	_ = finish.Abort()
+	_ = staticFinish.Abort()
 }
 
 func TestSealConcurrentTerminalDoesNotPanic(t *testing.T) {
@@ -443,9 +443,9 @@ func TestSealHandlesDeepBodyChain(t *testing.T) {
 	}
 	input := authored.Input{Counts: [keyspace.FamilyCount]uint32{keyspace.FamilyBody: depth}}
 	view, staticView, finish, staticFinish, preimage, sourceFinish := prepare(t, rows, input)
-	defer finish.Abort()
-	defer staticFinish.Abort()
-	defer sourceFinish.Abort()
+	defer func() { _ = finish.Abort() }()
+	defer func() { _ = staticFinish.Abort() }()
+	defer func() { _ = sourceFinish.Abort() }()
 	result, err := Seal(preimage, view, staticView, keyspace.MakeTerm(keyspace.FamilyBody, 1))
 	if err != nil {
 		t.Fatalf("Seal deep chain: %v", err)
@@ -464,9 +464,9 @@ func TestResultQueriesDoNotAllocate(t *testing.T) {
 	body := keyspace.MakeTerm(keyspace.FamilyBody, 1)
 	input := authored.Input{Counts: [keyspace.FamilyCount]uint32{keyspace.FamilyBody: 1}}
 	view, staticView, finish, staticFinish, preimage, sourceFinish := prepare(t, [][]keyspace.Term{nil}, input)
-	defer finish.Abort()
-	defer staticFinish.Abort()
-	defer sourceFinish.Abort()
+	defer func() { _ = finish.Abort() }()
+	defer func() { _ = staticFinish.Abort() }()
+	defer func() { _ = sourceFinish.Abort() }()
 	result, err := Seal(preimage, view, staticView, body)
 	if err != nil {
 		t.Fatal(err)
@@ -508,9 +508,9 @@ func TestSealAdmitsLabelFaultAliasAndInterfaceRoots(t *testing.T) {
 	input := authored.Input{Counts: [keyspace.FamilyCount]uint32{keyspace.FamilyBody: 1, keyspace.FamilyLabel: 1}}
 	input.Control.Labels = []authored.Label{{Owner: body}}
 	view, staticView, finish, staticFinish, preimage, sourceFinish := prepareWithSource(t, [][]keyspace.Term{{label, fault, alias, iface}}, input, staticInput, []source.ControlFault{{Owner: body, Kind: source.ControlFaultUndefinedGoto}})
-	defer finish.Abort()
-	defer staticFinish.Abort()
-	defer sourceFinish.Abort()
+	defer func() { _ = finish.Abort() }()
+	defer func() { _ = staticFinish.Abort() }()
+	defer func() { _ = sourceFinish.Abort() }()
 	result, err := Seal(preimage, view, staticView, body)
 	if err != nil {
 		t.Fatalf("Seal: %v", err)
@@ -534,18 +534,18 @@ func TestSealRejectsMissingAndWrongOwnerDenominatorRows(t *testing.T) {
 	if _, err := Seal(preimage, view, staticView, body1); err == nil {
 		t.Fatal("wrong-body Label accepted")
 	}
-	finish.Abort()
-	staticFinish.Abort()
-	sourceFinish.Abort()
+	_ = finish.Abort()
+	_ = staticFinish.Abort()
+	_ = sourceFinish.Abort()
 
 	labelInput.Control.Labels[0].Owner = body1
 	view, staticView, finish, staticFinish, preimage, sourceFinish = prepare(t, [][]keyspace.Term{nil, nil}, labelInput)
 	if _, err := Seal(preimage, view, staticView, body1); err == nil {
 		t.Fatal("missing Label source row accepted")
 	}
-	finish.Abort()
-	staticFinish.Abort()
-	sourceFinish.Abort()
+	_ = finish.Abort()
+	_ = staticFinish.Abort()
+	_ = sourceFinish.Abort()
 
 	alias := keyspace.MakeTerm(keyspace.FamilyTypeAlias, 1)
 	staticInput := static.Input{Counts: [keyspace.FamilyCount]uint32{
@@ -558,18 +558,18 @@ func TestSealRejectsMissingAndWrongOwnerDenominatorRows(t *testing.T) {
 	if _, err := Seal(preimage, view, staticView, body1); err == nil {
 		t.Fatal("wrong-body TypeAlias accepted")
 	}
-	finish.Abort()
-	staticFinish.Abort()
-	sourceFinish.Abort()
+	_ = finish.Abort()
+	_ = staticFinish.Abort()
+	_ = sourceFinish.Abort()
 
 	staticInput.Declarations.Alias[0].Owner = body1
 	view, staticView, finish, staticFinish, preimage, sourceFinish = prepare(t, [][]keyspace.Term{nil, nil}, plainInput, staticInput)
 	if _, err := Seal(preimage, view, staticView, body1); err == nil {
 		t.Fatal("missing TypeAlias source row accepted")
 	}
-	finish.Abort()
-	staticFinish.Abort()
-	sourceFinish.Abort()
+	_ = finish.Abort()
+	_ = staticFinish.Abort()
+	_ = sourceFinish.Abort()
 
 	iface := keyspace.MakeTerm(keyspace.FamilyTypeInterface, 1)
 	staticInterface := static.Input{Counts: [keyspace.FamilyCount]uint32{
@@ -581,18 +581,18 @@ func TestSealRejectsMissingAndWrongOwnerDenominatorRows(t *testing.T) {
 	if _, err := Seal(preimage, view, staticView, body1); err == nil {
 		t.Fatal("wrong-body TypeInterface accepted")
 	}
-	finish.Abort()
-	staticFinish.Abort()
-	sourceFinish.Abort()
+	_ = finish.Abort()
+	_ = staticFinish.Abort()
+	_ = sourceFinish.Abort()
 
 	staticInterface.Declarations.Interface[0].Owner = body1
 	view, staticView, finish, staticFinish, preimage, sourceFinish = prepare(t, [][]keyspace.Term{nil, nil}, plainInput, staticInterface)
 	if _, err := Seal(preimage, view, staticView, body1); err == nil {
 		t.Fatal("missing TypeInterface source row accepted")
 	}
-	finish.Abort()
-	staticFinish.Abort()
-	sourceFinish.Abort()
+	_ = finish.Abort()
+	_ = staticFinish.Abort()
+	_ = sourceFinish.Abort()
 }
 
 func TestSealSourceDenominatorRejectsDuplicateLabelFaultAliasInterface(t *testing.T) {

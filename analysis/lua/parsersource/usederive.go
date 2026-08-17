@@ -12,10 +12,7 @@ import (
 // nested construction its ordinal: the two grains are one relation read from
 // its two ends.
 func (b *productBuilder) scopeUses(scope *actionScope, ordered []siteID) []ActionUse {
-	ordinals := make(map[siteID]int, len(ordered))
-	for index, id := range ordered {
-		ordinals[id] = index + 1
-	}
+	ordinals := siteOrdinals(ordered)
 	var result []ActionUse
 	for index, id := range ordered {
 		site := b.sites[id]
@@ -43,13 +40,32 @@ func (b *productBuilder) scopeUses(scope *actionScope, ordered []siteID) []Actio
 	return result
 }
 
+// siteOrdinals numbers the constructions of one scope in the order the walk
+// that orders products reached them. It is the address a use row and a list
+// operand both name a construction by, so both read the same numbering.
+func siteOrdinals(ordered []siteID) map[siteID]int {
+	ordinals := make(map[siteID]int, len(ordered))
+	for index, id := range ordered {
+		ordinals[id] = index + 1
+	}
+	return ordinals
+}
+
 // origins walks one coordinate expression to the points at which its value
 // enters the action. A name is followed to what the action bound to it, so an
 // edge stated through a local reads the same as the one stated inline; a walk
 // already in progress through a name is not re-entered, so a sequence extended
 // from itself terminates at the bindings it was extended with.
 func (b *productBuilder) origins(scope *actionScope, expression goast.Expr, ordinals map[siteID]int) ([]UseOrigin, []int, []int) {
-	walk := &originWalk{builder: b, scope: scope, ordinals: ordinals, kinds: make(map[UseOrigin]bool, 4), sources: make(map[int]bool, 2), symbols: make(map[int]bool, 2), names: make(map[string]bool, 4)}
+	return b.originsIn(scope, expression, ordinals, nil)
+}
+
+// originsIn is the same walk read through a call. A frame binds the formals of
+// the scope being walked to the expressions one caller passed, so an operand a
+// helper states about its own parameter is reported at the coordinate the
+// caller supplied it from rather than as an anonymous parameter.
+func (b *productBuilder) originsIn(scope *actionScope, expression goast.Expr, ordinals map[siteID]int, frame *helperFrame) ([]UseOrigin, []int, []int) {
+	walk := &originWalk{builder: b, scope: scope, frame: frame, ordinals: ordinals, kinds: make(map[UseOrigin]bool, 4), sources: make(map[int]bool, 2), symbols: make(map[int]bool, 2), names: make(map[string]bool, 4)}
 	walk.visit(expression)
 	origins := make([]UseOrigin, 0, len(walk.kinds))
 	for kind := range walk.kinds {
@@ -77,6 +93,7 @@ func ordinalsOf(set map[int]bool) []int {
 type originWalk struct {
 	builder  *productBuilder
 	scope    *actionScope
+	frame    *helperFrame
 	ordinals map[siteID]int
 	kinds    map[UseOrigin]bool
 	sources  map[int]bool
@@ -151,6 +168,14 @@ func (w *originWalk) visitIdent(name string) {
 	}
 	if w.names[name] {
 		return
+	}
+	if w.frame != nil {
+		if actual, substituted := w.frame.actuals[name]; substituted {
+			w.names[name] = true
+			caller := &originWalk{builder: w.builder, scope: w.frame.caller, ordinals: w.ordinals, kinds: w.kinds, sources: w.sources, symbols: w.symbols, names: make(map[string]bool, 4)}
+			caller.visit(actual)
+			return
+		}
 	}
 	if bindings, bound := w.scope.locals[name]; bound {
 		w.names[name] = true

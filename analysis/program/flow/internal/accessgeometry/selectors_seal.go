@@ -217,15 +217,16 @@ func (b *selectorBuilder) ensureRead(read keyspace.Term) (uint32, bool, error) {
 			if !cellOK {
 				return 0, false, errors.New("program/flow/accessgeometry: Read Cell row is unavailable")
 			}
-			if cellKind == authored.CellGlobal {
+			switch cellKind {
+			case authored.CellGlobal:
 				if cellBody != 0 || exact == 0 {
 					return 0, false, errors.New("program/flow/accessgeometry: global Cell has a Body owner")
 				}
-			} else if cellKind == authored.CellLocal {
+			case authored.CellLocal:
 				if !validFlowBody(cellBody, b.bodyCount) || exact != 0 || b.bodies == nil || !b.bodies.Contains(cellBody, owner) {
 					return 0, false, errors.New("program/flow/accessgeometry: local Cell owner disagrees with Read")
 				}
-			} else {
+			default:
 				return 0, false, errors.New("program/flow/accessgeometry: Read Cell kind is unavailable")
 			}
 			row, ok := b.rootRow(owner, sourceTerm)

@@ -44,9 +44,7 @@ func (w *Writer) Assign(
 	}
 	targets := w.targets[mark.target:]
 	targetSpans := make([]source.Span, len(w.targetSpans)-mark.target)
-	for index, targetSpan := range w.targetSpans[mark.target:] {
-		targetSpans[index] = targetSpan
-	}
+	copy(targetSpans, w.targetSpans[mark.target:])
 	term := w.collector.Assign(
 		span, owner, targets, targetSpans, values,
 	)

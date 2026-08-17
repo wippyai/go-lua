@@ -92,7 +92,7 @@ func TestSuspensionCanonicalizesOutcomeOrdinalsAndKeepsCallbackValues(t *testing
 	}
 
 	resume, _ := contract.Lookup(BindingSpec{Namespace: BindingBuiltin, Member: []string{"resume"}})
-	resumeID, ok := contract.ResumeIDAt(resume, 0)
+	resumeID, _ := contract.ResumeIDAt(resume, 0)
 	owner, resumeSource, carrier, arguments, ok := contract.Resume(resumeID)
 	tail, variable, tailOK := contract.ValuesTail(arguments)
 	if !ok || owner != resume || resumeSource != ResumeSourceValueFormal || carrier != 0 || !tailOK || tail != ValuesVariable || variable != 0 {
@@ -137,7 +137,7 @@ func TestProducedResumeUsesCapturedCallbackWithoutCallableShadow(t *testing.T) {
 	if !ok || kind != CaptureCallback || CallbackID(capture) == 0 {
 		t.Fatal("wrap produced operation lost its retained CallbackID")
 	}
-	resumeID, ok := contract.ResumeIDAt(invoke, 0)
+	resumeID, _ := contract.ResumeIDAt(invoke, 0)
 	owner, source, carrier, arguments, ok := contract.Resume(resumeID)
 	tail, variable, tailOK := contract.ValuesTail(arguments)
 	if !ok || owner != invoke || source != ResumeSourceProduced || carrier != 0 || !tailOK || tail != ValuesVariable || variable != 0 {
@@ -356,7 +356,7 @@ func TestResumePayloadTransportUsesOnlyExistingValuesRelations(t *testing.T) {
 	if tail, variable, ok := contract.ValuesTail(reentryValues); !ok || tail != ValuesVariable || variable != 0 {
 		t.Fatalf("reentry Values = %d/%d/%v, want variable/0/true", tail, variable, ok)
 	}
-	resumeID, ok := contract.ResumeIDAt(resume, 0)
+	resumeID, _ := contract.ResumeIDAt(resume, 0)
 	owner, _, _, arguments, ok := contract.Resume(resumeID)
 	tail, variable, tailOK := contract.ValuesTail(arguments)
 	if !ok || owner != resume || !tailOK || tail != ValuesVariable || variable != 0 {
@@ -573,7 +573,7 @@ func TestDeepProducedResumesSealIteratively(t *testing.T) {
 		}
 		current = next
 	}
-	resumeID, ok := contract.ResumeIDAt(current, 0)
+	resumeID, _ := contract.ResumeIDAt(current, 0)
 	_, source, _, _, ok := contract.Resume(resumeID)
 	if !ok || source != ResumeSourceProduced {
 		t.Fatal("deep terminal produced resume missing")

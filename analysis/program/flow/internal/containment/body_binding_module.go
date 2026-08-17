@@ -95,7 +95,7 @@ func emitCellHosts(
 			result.roots = append(result.roots, cell)
 			continue
 		}
-		hostFamily := keyspace.FamilyInvalid
+		var hostFamily keyspace.Family
 		switch role {
 		case kind.CellLocal:
 			hostFamily = keyspace.FamilyBind

@@ -9,24 +9,24 @@ import (
 )
 
 type operationRow struct {
-	bindings    indexRange
-	input       Values
-	outcomes    indexRange
-	valuesTypes indexRange
-	callbacks   indexRange
-	subedges    indexRange
-	suspensions indexRange
-	spawns      indexRange
-	resumes     indexRange
-	transfers   indexRange
-	gsubTable   uint32
-	releases    indexRange
-	effects     indexRange
-	typeFormals indexRange
-	valuesVars  uint32
-	rowFormals  uint32
-	effectTail  RowTail
-	effectVar   RowVar
+	bindings        indexRange
+	input           Values
+	outcomes        indexRange
+	valuesTypes     indexRange
+	callbacks       indexRange
+	subedges        indexRange
+	suspensions     indexRange
+	spawns          indexRange
+	resumes         indexRange
+	transfers       indexRange
+	subedgeRelation uint32
+	releases        indexRange
+	effects         indexRange
+	typeFormals     indexRange
+	valuesVars      uint32
+	rowFormals      uint32
+	effectTail      RowTail
+	effectVar       RowVar
 }
 
 type bindingRange struct {
@@ -151,6 +151,15 @@ type transferRow struct {
 	identity     TransferIdentity
 	capabilities TransferCapabilities
 	outcomes     indexRange
+}
+
+type subedgeRelationRow struct {
+	operand       ValueFormal
+	selector      uint32
+	subedge       SubedgeID
+	resultOutcome uint32
+	result        uint32
+	effects       indexRange
 }
 
 type protocolRow struct {
@@ -289,56 +298,56 @@ type bindingIndexRow struct {
 // Contract is immutable after Seal. Every slice is private and every public
 // hot query returns only scalar handles or values.
 type Contract struct {
-	operations         []operationRow
-	types              []typeRow
-	values             []valuesRow
-	valueTypes         []Type
-	outcomes           []outcomeRow
-	effects            []effectRow
-	effectVals         []ValueFormal
-	effectType         []TypeFormal
-	effectVars         []ValuesVar
-	valuesVarTypes     []Type
-	effectRows         []RowVar
-	formals            []Type
-	bindings           []bindingRange
-	callbacks          []callbackRow
-	subedges           []subedgeRow
-	subedgeOrigins     []subedgeArgumentOriginRow
-	callbackResults    []callbackResultRow
-	resultAliases      []resultAliasRow
-	suspensions        []suspensionRow
-	spawns             []spawnRow
-	resumes            []resumeRow
-	transfers          []transferRow
-	gsubTables         []gsubTableReplacementRow
-	gsubEffects        []uint32
-	transferOutcomes   []TransferPossibility
-	callbackReleases   []callbackReleaseRow
-	protocols          []protocolRow
-	states             []stateRow
-	acquisitions       []acquisitionRow
-	transitions        []transitionRow
-	transitionOutcomes []transitionOutcomeRow
-	escapes            []escapeRow
-	callbackHolders    []protocolCallbackHolderRow
-	produced           []producedRow
-	fresh              []freshResultRow
-	captures           []captureRow
-	segments           []string
-	bindingKeys        []ExactKey
-	lookup             []bindingIndexRow
-	initialRoots       []initialRootRow
-	exactKeys          []keyspace.LiteralValue
-	bootShapes         []bootShapeRow
-	initialValues      []initialValueRow
-	initialValueBinds  []bindingRange
-	initialEntries     []initialEntryRow
-	initialBindings    []initialBindingRow
-	initialMetatables  []initialMetatableAttachmentRow
-	globalEnvRoot      InitialRoot
-	initialAbsent      InitialValue
-	counts             denominator.CountRows
+	operations             []operationRow
+	types                  []typeRow
+	values                 []valuesRow
+	valueTypes             []Type
+	outcomes               []outcomeRow
+	effects                []effectRow
+	effectVals             []ValueFormal
+	effectType             []TypeFormal
+	effectVars             []ValuesVar
+	valuesVarTypes         []Type
+	effectRows             []RowVar
+	formals                []Type
+	bindings               []bindingRange
+	callbacks              []callbackRow
+	subedges               []subedgeRow
+	subedgeOrigins         []subedgeArgumentOriginRow
+	callbackResults        []callbackResultRow
+	resultAliases          []resultAliasRow
+	suspensions            []suspensionRow
+	spawns                 []spawnRow
+	resumes                []resumeRow
+	transfers              []transferRow
+	subedgeRelations       []subedgeRelationRow
+	subedgeRelationEffects []uint32
+	transferOutcomes       []TransferPossibility
+	callbackReleases       []callbackReleaseRow
+	protocols              []protocolRow
+	states                 []stateRow
+	acquisitions           []acquisitionRow
+	transitions            []transitionRow
+	transitionOutcomes     []transitionOutcomeRow
+	escapes                []escapeRow
+	callbackHolders        []protocolCallbackHolderRow
+	produced               []producedRow
+	fresh                  []freshResultRow
+	captures               []captureRow
+	segments               []string
+	bindingKeys            []ExactKey
+	lookup                 []bindingIndexRow
+	initialRoots           []initialRootRow
+	exactKeys              []keyspace.LiteralValue
+	bootShapes             []bootShapeRow
+	initialValues          []initialValueRow
+	initialValueBinds      []bindingRange
+	initialEntries         []initialEntryRow
+	initialBindings        []initialBindingRow
+	initialMetatables      []initialMetatableAttachmentRow
+	globalEnvRoot          InitialRoot
+	initialAbsent          InitialValue
+	counts                 denominator.CountRows
 	// semantic identity columns are sealed with the contract.  They are not a
 	// second graph authority: each row is a cached canonical descriptor owned
 	// by Target and indexed only by the existing dense Target tables.

@@ -9,6 +9,22 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/guard"
 )
 
+// foldPointEnvironment folds one environment PointState into an RHS through the
+// canonical point-fold transaction, the live RHS assembly authority. The RHS's
+// own published point is the commit predecessor, so a single environment step
+// carries exactly the incremental meaning the executor publishes.
+func foldPointEnvironment(t testing.TB, work *carrier.Work, rhs carrier.PointRHS, environment carrier.PointState) (carrier.PointRHS, bool) {
+	t.Helper()
+	reference, ok := work.PublishPointRHS(rhs)
+	if !ok {
+		return carrier.PointRHS{}, false
+	}
+	if !work.BeginPointRHSFold(reference, rhs) || !work.AddPointFoldEnvironment(environment) {
+		return carrier.PointRHS{}, false
+	}
+	return work.FinishPointRHSFold()
+}
+
 // TestPointStateTransportSharesLatentRootButLiftClosesIt exercises the exact
 // role split used by the executor: a point boundary may keep an immutable
 // semantic root outside its current support, and a sparse RuleContribution
@@ -244,7 +260,7 @@ func TestPointRHSAbsentBaseDoesNotInjectDefault(t *testing.T) {
 	if !ok || !work.OwnsPointState(lowerPoint) {
 		t.Fatal("lower point")
 	}
-	adoptedEnvironment, ok := work.AddPointEnvironment(emptyRHS, lowerPoint)
+	adoptedEnvironment, ok := foldPointEnvironment(t, work, emptyRHS, lowerPoint)
 	if !ok || !work.OwnsPointRHS(adoptedEnvironment) {
 		t.Fatal("adopt environment into empty RHS")
 	}
@@ -541,7 +557,7 @@ func TestAddPointEnvironmentContainedSurfaceOverlay(t *testing.T) {
 	if got, present, valid := observedExactValue(binding, work, emptyRoot, fixture.unit(t, 0), whole, func(guard.Atom) bool { return false }); !valid || !present || got != 9 {
 		t.Fatalf("C-empty environment latent branch = %d/%t/%t, want 9/true/true", got, present, valid)
 	}
-	unchanged, ok := work.AddPointEnvironment(leftRHS, emptyEnvironment)
+	unchanged, ok := foldPointEnvironment(t, work, leftRHS, emptyEnvironment)
 	if !ok || !work.OwnsPointRHS(unchanged) {
 		t.Fatal("contained C-empty environment")
 	}
@@ -556,7 +572,7 @@ func TestAddPointEnvironmentContainedSurfaceOverlay(t *testing.T) {
 	// A contained authored environment overlays exactly its C row. It changes
 	// on from 4 to 5 but retains left's off=9 branch physically until lift.
 	authoredEnvironment := toPoint(finishContributionWithPremiseAt(t, work, plan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), on, on, 5))
-	overlaid, ok := work.AddPointEnvironment(unchanged, authoredEnvironment)
+	overlaid, ok := foldPointEnvironment(t, work, unchanged, authoredEnvironment)
 	if !ok || !overlaid.Support().Equal(on) {
 		t.Fatal("contained authored environment")
 	}
@@ -590,7 +606,7 @@ func TestAddPointEnvironmentContainedSurfaceOverlay(t *testing.T) {
 	// disappears. Joining it over the lower left value must therefore produce
 	// Default (7), not retain 4 as an absent environment would.
 	defaultEnvironment := toPoint(finishContributionWithPremiseAt(t, work, plan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), on, on, 7))
-	defaulted, ok := work.AddPointEnvironment(leftRHS, defaultEnvironment)
+	defaulted, ok := foldPointEnvironment(t, work, leftRHS, defaultEnvironment)
 	if !ok {
 		t.Fatal("contained explicit Default environment")
 	}
@@ -1090,7 +1106,7 @@ func TestMergeSelectedPointStateWidenKeepsExactPresenceAndClosesLatentRoot(t *te
 	if !ok {
 		t.Fatal("recurrence RHS")
 	}
-	confluent, ok := work.AddPointEnvironment(nextRHS, wholeEmpty)
+	confluent, ok := foldPointEnvironment(t, work, nextRHS, wholeEmpty)
 	if !ok || !confluent.Support().Equal(whole) {
 		t.Fatal("recurrence support confluence")
 	}

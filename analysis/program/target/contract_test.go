@@ -5,9 +5,9 @@ import (
 
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 
+	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/domain/type/annotation"
 	"github.com/wippyai/go-lua/domain/type/typeexpr"
-	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
 
 func TestSealDeterministicAcrossOperationOrder(t *testing.T) {
@@ -85,7 +85,7 @@ func TestGenericAndRecursiveTypesFreezeWithoutRawRetention(t *testing.T) {
 }
 
 func TestDeepAuthoringTypeUsesNoGoRecursion(t *testing.T) {
-	var deep testRawType = testRawString
+	deep := testRawString
 	for index := 0; index < 20000; index++ {
 		deep = testRawArray(deep)
 	}

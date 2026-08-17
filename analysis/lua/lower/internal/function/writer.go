@@ -11,9 +11,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/lower/internal/coord"
 	"github.com/wippyai/go-lua/analysis/lua/lower/internal/eval"
 	"github.com/wippyai/go-lua/analysis/lua/lower/internal/lexical"
-	"github.com/wippyai/go-lua/analysis/program/source"
 	staticlower "github.com/wippyai/go-lua/analysis/lua/lower/internal/static"
 	"github.com/wippyai/go-lua/analysis/lua/lower/internal/storage"
+	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 

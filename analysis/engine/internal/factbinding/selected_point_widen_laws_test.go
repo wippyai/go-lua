@@ -114,7 +114,7 @@ func TestMergeSelectedPointStateWidenAcceptsAscendingCachedExact(t *testing.T) {
 	// Independently fold X+E+B in the canonical fixed order used by a region
 	// selected RHS. This is the semantic reference for the recurrence result.
 	ePoint := toPoint(eRule)
-	canonical, ok := work.AddPointEnvironment(xRHS, ePoint)
+	canonical, ok := foldPointEnvironment(t, work, xRHS, ePoint)
 	if !ok {
 		t.Fatal("canonical X+E")
 	}

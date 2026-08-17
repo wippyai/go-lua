@@ -25,7 +25,7 @@ func run(arguments []string) error {
 		return err
 	}
 	if *out == "" {
-		return fmt.Errorf("Target ingress requirements: -out is required")
+		return fmt.Errorf("target ingress requirements: -out is required")
 	}
 	return targetingress.Generate(*out, *check)
 }

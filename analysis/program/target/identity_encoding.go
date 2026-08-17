@@ -183,27 +183,27 @@ func (c *Contract) encodePortableOperation(w *framing.Writer, op Operation) erro
 			return err
 		}
 	}
-	if row.gsubTable == 0 {
+	if row.subedgeRelation == 0 {
 		return w.Bool(false)
 	}
 	if err := w.Bool(true); err != nil {
 		return err
 	}
-	g := c.gsubTables[row.gsubTable-1]
-	for _, v := range []uint64{uint64(g.replacement), uint64(GsubTableKeyFirstCaptureOrWholeMatch), uint64(g.resultOutcome), uint64(g.result)} {
+	relation := c.subedgeRelations[row.subedgeRelation-1]
+	for _, v := range []uint64{uint64(relation.operand), uint64(relation.selector), uint64(relation.resultOutcome), uint64(relation.result)} {
 		if err := w.Uint(v); err != nil {
 			return err
 		}
 	}
-	role := c.subedges[g.access-1].role
+	role := c.subedges[relation.subedge-1].role
 	if err := w.Uint(uint64(role)); err != nil {
 		return err
 	}
-	if err := w.Count(uint64(g.effects.len())); err != nil {
+	if err := w.Count(uint64(relation.effects.len())); err != nil {
 		return err
 	}
-	for i := g.effects.start; i < g.effects.end; i++ {
-		if err := w.Uint(uint64(c.gsubEffects[i])); err != nil {
+	for i := relation.effects.start; i < relation.effects.end; i++ {
+		if err := w.Uint(uint64(c.subedgeRelationEffects[i])); err != nil {
 			return err
 		}
 	}

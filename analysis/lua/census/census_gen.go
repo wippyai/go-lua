@@ -8,8 +8,8 @@ import (
 
 var Generated = Census{
 	GrammarSourceDigest: "2040e60e0c4b729743658b0ca0dd70aeee17eafa1a4187a012e247f418163367",
-	ASTDigest:           "1138c85035b5d01ce2196707af460fee4cf17419eca80710e3523cde4b2f166d",
-	Digest:              "dd0d3827b4bc411b89aeddf5998db1fee6d8046de954cece4e68f7641b3eb87e",
+	ASTDigest:           "75f51480a51561c9924c54bfd27dac50028c775d1dbcd09d8a0fc565361b2093",
+	Digest:              "08a4f1da1675db82c14e230afff2888ee643f2bb0225dcb6eac4093b35c61f77",
 	Productions: []parsersource.ActionTemplate{
 		{
 			Key: "afunctioncall#1", Nonterminal: "afunctioncall", ResultTag: "expr", Ordinal: 1,
@@ -2720,5 +2720,168 @@ var Generated = Census{
 		{Owner: "var#7", Scope: parsersource.ProductScope(1), Ordinal: 1, Form: "AttrGetExpr", Field: "Key", Origins: []parsersource.UseOrigin{3}, Sources: []int{2}, Symbols: nil},
 		{Owner: "var#8", Scope: parsersource.ProductScope(1), Ordinal: 1, Form: "AttrGetExpr", Field: "Object", Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
 		{Owner: "var#8", Scope: parsersource.ProductScope(1), Ordinal: 1, Form: "AttrGetExpr", Field: "Key", Origins: []parsersource.UseOrigin{3}, Sources: []int{2}, Symbols: nil},
+	},
+	Sequences: []parsersource.ActionSequence{
+		{Production: "annotations#1", Tag: "annotations", Field: "", Construction: parsersource.SequenceConstruction(2), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(1), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
+		}},
+		{Production: "annotations#2", Tag: "annotations", Field: "", Construction: parsersource.SequenceConstruction(4), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(2), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
+			{Ordinal: 2, Kind: parsersource.SequenceSegmentKind(1), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{2}},
+		}},
+		{Production: "args#1", Tag: "callargs", Field: "values", Construction: parsersource.SequenceConstruction(2), Segments: []parsersource.SequenceSegment{}},
+		{Production: "args#2", Tag: "callargs", Field: "values", Construction: parsersource.SequenceConstruction(3), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(2), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{2}},
+		}},
+		{Production: "args#3", Tag: "callargs", Field: "values", Construction: parsersource.SequenceConstruction(2), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(1), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
+		}},
+		{Production: "args#4", Tag: "callargs", Field: "values", Construction: parsersource.SequenceConstruction(2), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(1), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
+		}},
+		{Production: "block#1", Tag: "stmts", Field: "", Construction: parsersource.SequenceConstruction(3), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(2), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
+		}},
+		{Production: "calltypeargs#1", Tag: "typeexprlist", Field: "", Construction: parsersource.SequenceConstruction(3), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(2), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{2}},
+		}},
+		{Production: "chunk#1", Tag: "stmts", Field: "", Construction: parsersource.SequenceConstruction(3), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(2), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
+		}},
+		{Production: "chunk#2", Tag: "stmts", Field: "", Construction: parsersource.SequenceConstruction(4), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(2), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
+			{Ordinal: 2, Kind: parsersource.SequenceSegmentKind(1), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{2}},
+		}},
+		{Production: "chunk#3", Tag: "stmts", Field: "", Construction: parsersource.SequenceConstruction(4), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(2), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
+			{Ordinal: 2, Kind: parsersource.SequenceSegmentKind(1), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{2}},
+		}},
+		{Production: "chunk1#1", Tag: "stmts", Field: "", Construction: parsersource.SequenceConstruction(2), Segments: []parsersource.SequenceSegment{}},
+		{Production: "chunk1#2", Tag: "stmts", Field: "", Construction: parsersource.SequenceConstruction(4), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(2), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
+			{Ordinal: 2, Kind: parsersource.SequenceSegmentKind(1), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{2}},
+		}},
+		{Production: "chunk1#3", Tag: "stmts", Field: "", Construction: parsersource.SequenceConstruction(3), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(2), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
+		}},
+		{Production: "elseifs#1", Tag: "stmts", Field: "", Construction: parsersource.SequenceConstruction(2), Segments: []parsersource.SequenceSegment{}},
+		{Production: "elseifs#2", Tag: "stmts", Field: "", Construction: parsersource.SequenceConstruction(4), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(2), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
+			{Ordinal: 2, Kind: parsersource.SequenceSegmentKind(1), Origins: []parsersource.UseOrigin{3}, Sources: []int{1}, Symbols: nil},
+		}},
+		{Production: "exprlist#1", Tag: "exprlist", Field: "", Construction: parsersource.SequenceConstruction(2), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(1), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
+		}},
+		{Production: "exprlist#2", Tag: "exprlist", Field: "", Construction: parsersource.SequenceConstruction(4), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(2), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
+			{Ordinal: 2, Kind: parsersource.SequenceSegmentKind(1), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{3}},
+		}},
+		{Production: "fieldlist#1", Tag: "fieldlist", Field: "", Construction: parsersource.SequenceConstruction(2), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(1), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
+		}},
+		{Production: "fieldlist#2", Tag: "fieldlist", Field: "", Construction: parsersource.SequenceConstruction(4), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(2), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
+			{Ordinal: 2, Kind: parsersource.SequenceSegmentKind(1), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{3}},
+		}},
+		{Production: "fieldlist#3", Tag: "fieldlist", Field: "", Construction: parsersource.SequenceConstruction(3), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(2), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
+		}},
+		{Production: "funcparamlist#1", Tag: "functionparams", Field: "Params", Construction: parsersource.SequenceConstruction(2), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(1), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
+		}},
+		{Production: "funcparamlist#2", Tag: "functionparams", Field: "Params", Construction: parsersource.SequenceConstruction(4), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(2), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
+			{Ordinal: 2, Kind: parsersource.SequenceSegmentKind(1), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{3}},
+		}},
+		{Production: "funcparamlist#3", Tag: "functionparams", Field: "Params", Construction: parsersource.SequenceConstruction(1), Segments: nil},
+		{Production: "funcparamlist#4", Tag: "functionparams", Field: "Params", Construction: parsersource.SequenceConstruction(3), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(2), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
+		}},
+		{Production: "interfacebody#1", Tag: "interfacebody", Field: "members", Construction: parsersource.SequenceConstruction(1), Segments: nil},
+		{Production: "interfacebody#2", Tag: "interfacebody", Field: "members", Construction: parsersource.SequenceConstruction(4), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(2), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
+			{Ordinal: 2, Kind: parsersource.SequenceSegmentKind(1), Origins: []parsersource.UseOrigin{3}, Sources: []int{1}, Symbols: nil},
+		}},
+		{Production: "interfacebody#3", Tag: "interfacebody", Field: "members", Construction: parsersource.SequenceConstruction(4), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(2), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
+			{Ordinal: 2, Kind: parsersource.SequenceSegmentKind(1), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{2}},
+		}},
+		{Production: "interfaceextends#1", Tag: "typereflist", Field: "", Construction: parsersource.SequenceConstruction(1), Segments: nil},
+		{Production: "interfaceextends#2", Tag: "typereflist", Field: "", Construction: parsersource.SequenceConstruction(2), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(1), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{2}},
+		}},
+		{Production: "interfaceextends#3", Tag: "typereflist", Field: "", Construction: parsersource.SequenceConstruction(4), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(2), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
+			{Ordinal: 2, Kind: parsersource.SequenceSegmentKind(1), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{3}},
+		}},
+		{Production: "namelist#1", Tag: "namelist", Field: "", Construction: parsersource.SequenceConstruction(2), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(1), Origins: []parsersource.UseOrigin{3}, Sources: nil, Symbols: nil},
+		}},
+		{Production: "namelist#2", Tag: "namelist", Field: "", Construction: parsersource.SequenceConstruction(4), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(2), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
+			{Ordinal: 2, Kind: parsersource.SequenceSegmentKind(1), Origins: []parsersource.UseOrigin{3}, Sources: nil, Symbols: nil},
+		}},
+		{Production: "optionaltypeparams#1", Tag: "typeparams", Field: "", Construction: parsersource.SequenceConstruction(1), Segments: nil},
+		{Production: "optionaltypeparams#2", Tag: "typeparams", Field: "", Construction: parsersource.SequenceConstruction(3), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(2), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
+		}},
+		{Production: "returntypeannot#1", Tag: "returntype", Field: "types", Construction: parsersource.SequenceConstruction(1), Segments: nil},
+		{Production: "returntypeannot#2", Tag: "returntype", Field: "types", Construction: parsersource.SequenceConstruction(3), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(2), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{2}},
+		}},
+		{Production: "returntypeannot#3", Tag: "returntype", Field: "types", Construction: parsersource.SequenceConstruction(1), Segments: nil},
+		{Production: "returntypeannot#4", Tag: "returntype", Field: "types", Construction: parsersource.SequenceConstruction(4), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(1), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{3}},
+			{Ordinal: 2, Kind: parsersource.SequenceSegmentKind(2), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{5}},
+		}},
+		{Production: "typednamelist#1", Tag: "typednames", Field: "", Construction: parsersource.SequenceConstruction(2), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(1), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
+		}},
+		{Production: "typednamelist#2", Tag: "typednames", Field: "", Construction: parsersource.SequenceConstruction(4), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(2), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
+			{Ordinal: 2, Kind: parsersource.SequenceSegmentKind(1), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{3}},
+		}},
+		{Production: "typeexprlist#1", Tag: "typeexprlist", Field: "", Construction: parsersource.SequenceConstruction(2), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(1), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
+		}},
+		{Production: "typeexprlist#2", Tag: "typeexprlist", Field: "", Construction: parsersource.SequenceConstruction(4), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(2), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
+			{Ordinal: 2, Kind: parsersource.SequenceSegmentKind(1), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{3}},
+		}},
+		{Production: "typeexprlist2#1", Tag: "typeexprlist", Field: "", Construction: parsersource.SequenceConstruction(2), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(1), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
+			{Ordinal: 2, Kind: parsersource.SequenceSegmentKind(1), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{3}},
+		}},
+		{Production: "typeexprlist2#2", Tag: "typeexprlist", Field: "", Construction: parsersource.SequenceConstruction(4), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(2), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
+			{Ordinal: 2, Kind: parsersource.SequenceSegmentKind(1), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{3}},
+		}},
+		{Production: "typefieldlist#1", Tag: "recordfields", Field: "", Construction: parsersource.SequenceConstruction(2), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(1), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
+		}},
+		{Production: "typefieldlist#2", Tag: "recordfields", Field: "", Construction: parsersource.SequenceConstruction(4), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(2), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
+			{Ordinal: 2, Kind: parsersource.SequenceSegmentKind(1), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{3}},
+		}},
+		{Production: "typefieldlist#3", Tag: "recordfields", Field: "", Construction: parsersource.SequenceConstruction(3), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(2), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
+		}},
+		{Production: "typeparamlist#1", Tag: "typeparams", Field: "", Construction: parsersource.SequenceConstruction(2), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(1), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
+		}},
+		{Production: "typeparamlist#2", Tag: "typeparams", Field: "", Construction: parsersource.SequenceConstruction(4), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(2), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
+			{Ordinal: 2, Kind: parsersource.SequenceSegmentKind(1), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{3}},
+		}},
+		{Production: "typeparams#1", Tag: "typeparams", Field: "", Construction: parsersource.SequenceConstruction(3), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(2), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{2}},
+		}},
+		{Production: "varlist#1", Tag: "exprlist", Field: "", Construction: parsersource.SequenceConstruction(2), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(1), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
+		}},
+		{Production: "varlist#2", Tag: "exprlist", Field: "", Construction: parsersource.SequenceConstruction(4), Segments: []parsersource.SequenceSegment{
+			{Ordinal: 1, Kind: parsersource.SequenceSegmentKind(2), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{1}},
+			{Ordinal: 2, Kind: parsersource.SequenceSegmentKind(1), Origins: []parsersource.UseOrigin{1}, Sources: nil, Symbols: []int{3}},
+		}},
 	},
 }

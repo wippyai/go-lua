@@ -187,7 +187,7 @@ func TestMergeContributionSameRootKeepsCoverageOnlyWakeWithoutTypedTraversal(t *
 	if !merged.Support().Equal(whole) || !changes.Added().Equal(rightSupport) || !support.Empty(changes.Removed()) {
 		t.Fatal("same-root support change was not published")
 	}
-	coverageChanges, ok := work.CoverageChanges(left, merged)
+	coverageChanges, ok := work.CoverageChangesPointStates(contributionPointOf(t, work, left), contributionPointOf(t, work, merged))
 	if !ok || coverageChanges.Count() != 1 || coverageChanges.TargetCount() != 1 {
 		t.Fatal("same-root authored coverage was not retained")
 	}

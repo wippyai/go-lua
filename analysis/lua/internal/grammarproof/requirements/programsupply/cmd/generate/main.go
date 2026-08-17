@@ -25,7 +25,7 @@ func run(arguments []string) error {
 		return err
 	}
 	if *out == "" {
-		return fmt.Errorf("Program supply: -out is required")
+		return fmt.Errorf("program supply: -out is required")
 	}
 	return programsupply.Generate(*out, *check)
 }

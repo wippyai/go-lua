@@ -213,10 +213,10 @@ func (program *Program) StorageWriteTransferIDAt(index, position int) (identity.
 	// transfer identity. Do not promote the full evaluation-span admission
 	// rule here: writes can be authored with no Entry port while still having a
 	// valid causal Finish site.
-	finishTerm, finishOK := view.Ports().Finish(writeTerm)
+	finishTerm, finishTermOK := view.Ports().Finish(writeTerm)
 	finish, finishOK := view.Causal().Sites().ForTerm(finishTerm)
 	predecessorID, _, predecessorOK := program.AssignmentPredecessorID(writeTerm)
-	if !finishOK || !finish.Available() || !predecessorOK || !predecessorID.Available() {
+	if !finishTermOK || !finishOK || !finish.Available() || !predecessorOK || !predecessorID.Available() {
 		return identity.ContentID{}, false
 	}
 	finishID := finish.ContextID()

@@ -42,7 +42,7 @@ func (rows *Rows) InterfaceMembers(term keyspace.Term, members []InterfaceMember
 		}
 		raw[index] = staticRawInterfaceMember{kind: member.Kind, field: member.Field, name: name, coordinate: member.Coordinate, signature: member.Signature}
 	}
-	return rows.staticRows.InterfaceMembersRaw(term, raw)
+	return rows.InterfaceMembersRaw(term, raw)
 }
 
 func (rows *Rows) TypeFunctionParameters(term keyspace.Term, params []Parameter) error {
@@ -61,7 +61,7 @@ func (rows *Rows) TypeFunctionParameters(term keyspace.Term, params []Parameter)
 		}
 		raw[index] = staticRawParameter{name: name, coordinate: parameter.Coordinate, typ: parameter.Type}
 	}
-	return rows.staticRows.TypeFunctionParametersRaw(term, raw)
+	return rows.TypeFunctionParametersRaw(term, raw)
 }
 
 func (rows *Rows) TypeFunctionScope(term keyspace.Term) (keyspace.Term, bool) {
@@ -134,7 +134,7 @@ func (rows *Rows) Freeze(preimage programsource.Preimage, counts [keyspace.Famil
 	if rows == nil {
 		return programstatic.Input{}, errNilRows()
 	}
-	return rows.staticRows.freeze(preimage, counts)
+	return rows.freeze(preimage, counts)
 }
 
 func errNilRows() error {

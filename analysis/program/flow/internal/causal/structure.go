@@ -200,18 +200,6 @@ func (s *structureState) emitBodyEntry(bodyTerm keyspace.Term) error {
 			continue
 		}
 		to, toOK := s.causalTarget(root)
-		if keyspace.TermFamily(root) == keyspace.FamilyLoop {
-			_, body, loopKind, _, loopOK := s.flow.Control().Loops().Get(root)
-			if loopOK && loopKind == kind.LoopRepeat {
-				if tail, tailOK := s.graph.Tail(body); tailOK && !s.graph.Reachable(tail) {
-					// A terminal Repeat child has no reachable hidden decision.
-					// The initial root projection enters its child Body directly;
-					// the Loop's own initial route remains a separate structural
-					// witness emitted by emitLoop.
-					to, toOK = body, true
-				}
-			}
-		}
 		if !toOK {
 			return errors.New("program/flow/causal: Body entry root has no causal Entry")
 		}
@@ -513,7 +501,8 @@ func (s *structureState) emitLoop(owner keyspace.Term, cursor int, loop, _ keysp
 			return err
 		}
 	}
-	if loopKind == kind.LoopNumericFor || loopKind == kind.LoopGenericFor {
+	switch loopKind {
+	case kind.LoopNumericFor, kind.LoopGenericFor:
 		// Header Values are evaluated once, then the existing Loop term owns
 		// iterator/range alternatives. A direct Call header uses its boundary.
 		if keyspace.TermFamily(controlEndpoint) == keyspace.FamilyCall {
@@ -548,7 +537,7 @@ func (s *structureState) emitLoop(owner keyspace.Term, cursor int, loop, _ keysp
 		if err := appendArm(loop, exit, false, exitRaw, exitArc); err != nil {
 			return err
 		}
-	} else if loopKind == kind.LoopRepeat {
+	case kind.LoopRepeat:
 		initialArc, initialOK := s.markArc(loop, body, 0, false)
 		if !initialOK {
 			return errors.New("program/flow/causal: Repeat initial Arc is unavailable")
@@ -586,7 +575,7 @@ func (s *structureState) emitLoop(owner keyspace.Term, cursor int, loop, _ keysp
 		if err := appendArm(controlEndpoint, exit, true, exitRaw, exitArc); err != nil {
 			return err
 		}
-	} else {
+	default:
 		if keyspace.TermFamily(controlEndpoint) == keyspace.FamilyCall {
 			controlEndpoint = loop
 		}

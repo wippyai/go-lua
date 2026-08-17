@@ -49,10 +49,6 @@ type routeDiagnostic struct {
 
 type wtoLogicalFamily keyspace.Family
 
-const (
-	wtoFamilyInvalid wtoLogicalFamily = wtoLogicalFamily(keyspace.FamilyInvalid)
-)
-
 var wtoLogicalFamilyNames = [...]string{
 	"invalid", "nil", "bool", "integer", "float", "string", "values", "lens-exact", "lens-key", "return", "break", "label", "goto", "body", "cell", "read", "vararg", "unary", "binary", "select", "bind", "assign", "function", "call", "branch", "loop", "table", "key", "type-alias", "type-interface", "type-param", "type-primitive", "type-literal", "type-optional", "type-union", "type-intersection", "type-ref", "type-generic", "type-array", "type-map", "type-record", "type-field", "type-function", "type-asserts", "declared-type", "type-publication", "type-value", "value-claim", "annotation", "type-of", "type-key-of", "type-index-access", "type-conditional", "write", "table-field", "outcome", "control-fault", "import",
 }

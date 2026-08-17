@@ -6,9 +6,9 @@ func init() {
 	Generated = Evidence{
 		GrammarDigest:      "505fe1f917db84431d0040d5536337692f4de6418b3650c69a874e832d687448",
 		ParserSourceDigest: "2040e60e0c4b729743658b0ca0dd70aeee17eafa1a4187a012e247f418163367",
-		SchemaDigest:       "50039764153aa2f7cb14ce40bdd5424f8b309afb024e9f331381946ccafb5688",
+		SchemaDigest:       "7b7e4cf3bd735684904b527f81d5dd6e4decd6e21e1416d17ac5b4b63c59d9ea",
 		IngressDigest:      "08c26cf4d5f800f6574e872a56e525c62a8817e3b413729e6a60e4b9ad532758",
-		Digest:             "45f902eddfa3dbd028d96a949efb40385f678920dca6aeeb1e61217be85315a7",
+		Digest:             "987098349e8b45847d3d3c82328e9debe153563c35d21fd8abee86add9de0637",
 		Fields:             generatedFields(),
 		Products:           generatedProducts(),
 		ProductLaws:        generatedProductLaws(),

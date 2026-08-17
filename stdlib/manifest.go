@@ -2,6 +2,7 @@ package stdlib
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/wippyai/go-lua/domain/effect"
 	typetable "github.com/wippyai/go-lua/domain/type/table"
@@ -27,16 +28,32 @@ type declaration struct {
 	types     map[string]typ.Type
 	errorType typ.Type
 	readonly  bool
+
+	initialRoots      []moduleio.InitialRoot
+	initialEntries    []moduleio.InitialEntry
+	initialMetatables []moduleio.InitialMetatableAttachment
 }
 
 type declaredFunction struct {
 	signature.Function
 	operation *moduleio.Operation
+	initial   []initialFunctionMount
+}
+
+type initialFunctionMount struct {
+	root       moduleio.InitialRootReference
+	key        string
+	mutability moduleio.InitialMutability
 }
 
 func (function declaredFunction) operational(operation moduleio.Operation) declaredFunction {
 	owned := moduleio.CloneOperation(operation)
 	function.operation = &owned
+	return function
+}
+
+func (function declaredFunction) mountedInitially(root moduleio.InitialRootReference, key string, mutability moduleio.InitialMutability) declaredFunction {
+	function.initial = append(function.initial, initialFunctionMount{root: root, key: key, mutability: mutability})
 	return function
 }
 
@@ -82,20 +99,39 @@ func buildManifest(library Library, decl declaration) *moduleio.Manifest {
 		if value.operation != nil {
 			m.DefineFunctionOperation(name, *value.operation)
 		}
+		defineInitialFunctionMounts(m, name, value)
 	}
 	for name, value := range decl.detached {
 		m.DefineDetachedFunction(name, value.signature, value.operation)
 	}
+	surfaceSignatures := make(map[string]declaredFunction, len(decl.signatures)+len(decl.aliases))
+	for name, function := range decl.signatures {
+		surfaceSignatures[name] = function
+	}
 	for alias, target := range decl.aliases {
+		function, ok := canonicalStdlibFunction(target)
+		if !ok {
+			panic("stdlib: alias " + alias + " targets unknown function " + target)
+		}
+		surfaceSignatures[alias] = function
 		m.DefineFunctionAlias(alias, target)
 	}
+	for _, root := range decl.initialRoots {
+		m.DefineInitialRoot(root)
+	}
+	for _, entry := range decl.initialEntries {
+		m.DefineInitialEntry(entry)
+	}
+	for _, attachment := range decl.initialMetatables {
+		m.DefineInitialMetatable(attachment)
+	}
 
-	names := make([]string, 0, len(decl.signatures)+len(decl.values))
-	for name := range decl.signatures {
+	names := make([]string, 0, len(surfaceSignatures)+len(decl.values))
+	for name := range surfaceSignatures {
 		names = append(names, name)
 	}
 	for name := range decl.values {
-		if _, callable := decl.signatures[name]; !callable {
+		if _, callable := surfaceSignatures[name]; !callable {
 			names = append(names, name)
 		}
 	}
@@ -103,13 +139,17 @@ func buildManifest(library Library, decl declaration) *moduleio.Manifest {
 
 	export := typetable.NewRecord()
 	for _, name := range names {
-		value, callable := decl.signatures[name]
+		value, callable := surfaceSignatures[name]
 		var valueType typ.Type
 		if callable {
 			valueType = value.Type
 			m.DefineFunctionSignature(name, value.Function.Clone())
-			if value.operation != nil {
+			_, alias := decl.aliases[name]
+			if value.operation != nil && !alias {
 				m.DefineFunctionOperation(name, *value.operation)
+			}
+			if !alias {
+				defineInitialFunctionMounts(m, name, value)
 			}
 		} else {
 			valueType = decl.values[name]
@@ -125,6 +165,34 @@ func buildManifest(library Library, decl declaration) *moduleio.Manifest {
 	}
 	m.SetExport(export.Build())
 	return m
+}
+
+// canonicalStdlibFunction resolves aliases from the canonical provider
+// declaration itself. It projects the exact signature/effect row into the
+// alias surface without authoring a second declaredFunction.
+func canonicalStdlibFunction(path string) (declaredFunction, bool) {
+	for _, library := range catalogue {
+		declaration := library.declaration()
+		for local, function := range declaration.signatures {
+			canonical := local
+			if library.Mount() == MountModule {
+				canonical = strings.TrimSuffix(library.Name(), ".") + "." + local
+			}
+			if canonical == path {
+				return function, true
+			}
+		}
+	}
+	return declaredFunction{}, false
+}
+
+func defineInitialFunctionMounts(manifest *moduleio.Manifest, local string, function declaredFunction) {
+	for _, mount := range function.initial {
+		manifest.DefineInitialEntry(moduleio.InitialEntry{
+			Root: mount.root, Key: mount.key,
+			Value: moduleio.InitialFunctionValue(local), Mutability: mount.mutability,
+		})
+	}
 }
 
 func authored(fn *typ.Function, labels ...effect.Label) declaredFunction {

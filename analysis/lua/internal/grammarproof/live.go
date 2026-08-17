@@ -74,10 +74,10 @@ func corpus(root string) ([]source, error) {
 func evidenceDigest(grammar []parsersource.Production, sources []source) string {
 	hash := sha256.New()
 	for _, production := range grammar {
-		fmt.Fprint(hash, parsersource.ProductionDigestLine(production))
+		_, _ = hash.Write([]byte(parsersource.ProductionDigestLine(production)))
 	}
 	for _, source := range sources {
-		fmt.Fprintf(hash, "%s\x00%s\n", source.id, source.text)
+		_, _ = fmt.Fprintf(hash, "%s\x00%s\n", source.id, source.text)
 	}
 	return hex.EncodeToString(hash.Sum(nil))
 }

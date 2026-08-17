@@ -307,7 +307,7 @@ func GrammarActionDigest(root string) (string, error) {
 	}
 	hash := sha256.New()
 	for _, row := range rows {
-		fmt.Fprint(hash, ProductionDigestLine(row))
+		_, _ = hash.Write([]byte(ProductionDigestLine(row)))
 	}
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }

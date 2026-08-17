@@ -205,7 +205,7 @@ func (v Keys) ForProgram(shard Shard, owner *program.Program, key keyspace.Key) 
 	if !v.live() || owner == nil || key == 0 {
 		return Key{}, false
 	}
-	shardIndex, shardOK := (Mounts{authority: v.authority, draft: v.draft}).Index(shard)
+	shardIndex, shardOK := Mounts(v).Index(shard)
 	if !shardOK || v.authority.mounts[shardIndex].program != owner {
 		return Key{}, false
 	}
@@ -297,16 +297,16 @@ func (v Applications) Index(application Application) (int, bool) {
 	return int(application.ordinal - 1), true
 }
 func (v Applications) Calls() Calls {
-	return Calls{authority: v.authority, draft: v.draft}
+	return Calls(v)
 }
 func (v Applications) Imports() Imports {
-	return Imports{authority: v.authority, draft: v.draft}
+	return Imports(v)
 }
 func (v Applications) Operators() Operators {
-	return Operators{authority: v.authority, draft: v.draft}
+	return Operators(v)
 }
 func (v Applications) Bases() Bases {
-	return Bases{authority: v.authority, draft: v.draft}
+	return Bases(v)
 }
 
 // IsBase reports whether application is a member of the sealed Bases
@@ -433,7 +433,7 @@ func (v Imports) At(index int) (Application, bool) {
 }
 
 func (v Operators) source(application Application, slot applicationSlot) (Shard, keyspace.Term, bool) {
-	applications := Applications{authority: v.authority, draft: v.draft}
+	applications := Applications(v)
 	row, ok := applications.application(application)
 	if !ok || row.kind != applicationMeta || row.slot != slot {
 		return Shard{}, 0, false

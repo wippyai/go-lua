@@ -110,6 +110,55 @@ func TestHighRiskSignaturesTrackNativeABIAndEffects(t *testing.T) {
 	}
 }
 
+func TestProviderManifestsOwnSpecialInitialTopology(t *testing.T) {
+	providers := Providers()
+	byIdentity := make(map[string]*modulemanifest.Manifest, len(providers))
+	for _, provider := range providers {
+		declared := provider.Declaration()
+		if _, err := modulemanifest.Encode(declared); err != nil {
+			t.Fatalf("provider %q manifest: %v", provider.Identity, err)
+		}
+		byIdentity[provider.Identity] = declared
+	}
+	stringManifest := byIdentity[string(String)]
+	if stringManifest == nil || len(stringManifest.InitialRoots) != 1 || len(stringManifest.InitialEntries) != 2 || len(stringManifest.InitialMetatables) != 1 {
+		t.Fatalf("string initial topology = %#v", stringManifest)
+	}
+	errorManifest := byIdentity[string(Errors)]
+	if errorManifest == nil || len(errorManifest.InitialRoots) != 2 || len(errorManifest.InitialEntries) != 8 {
+		t.Fatalf("errors initial topology = %#v", errorManifest)
+	}
+}
+
+func TestAliasesProjectCanonicalSignaturesWithoutSecondDeclarations(t *testing.T) {
+	stringDecl := stringDeclaration()
+	if _, duplicated := stringDecl.signatures["gfind"]; duplicated {
+		t.Fatal("string.gfind owns a duplicate declaredFunction")
+	}
+	tableDecl := tableDeclaration()
+	if _, duplicated := tableDecl.signatures["unpack"]; duplicated {
+		t.Fatal("table.unpack owns a duplicate declaredFunction")
+	}
+	for _, test := range []struct {
+		manifest *modulemanifest.Manifest
+		alias    string
+		target   string
+	}{
+		{manifest: manifestForTest(t, String), alias: "gfind", target: "string.gmatch"},
+		{manifest: manifestForTest(t, Table), alias: "unpack", target: "unpack"},
+	} {
+		if test.manifest.FunctionAliases[test.alias] != test.target {
+			t.Fatalf("alias %q = %q, want %q", test.alias, test.manifest.FunctionAliases[test.alias], test.target)
+		}
+		if _, ok := test.manifest.FunctionSignatures[test.alias]; !ok {
+			t.Fatalf("alias %q lost its projected surface signature", test.alias)
+		}
+		if _, duplicatedLaw := test.manifest.FunctionOperations[test.alias]; duplicatedLaw {
+			t.Fatalf("alias %q duplicated the canonical operation law", test.alias)
+		}
+	}
+}
+
 func TestManifestsRoundTripAndDoNotDeclareRuntimeScope(t *testing.T) {
 	for _, library := range catalogue {
 		m := manifestForTest(t, library.ID())
@@ -126,6 +175,20 @@ func TestManifestsRoundTripAndDoNotDeclareRuntimeScope(t *testing.T) {
 		}
 		if decoded.Path != m.Path || len(decoded.FunctionSignatures) != len(m.FunctionSignatures) {
 			t.Fatalf("%q manifest changed across wire round trip", library.ID())
+		}
+		for name, want := range m.FunctionSignatures {
+			if got, ok := decoded.FunctionSignatures[name]; !ok || !got.Effect.Equals(want.Effect) {
+				t.Fatalf("%q.%s lost its direct signature/effect row across wire round trip", library.ID(), name)
+			}
+		}
+		for name, want := range m.DetachedFunctions {
+			if got, ok := decoded.DetachedFunctions[name]; !ok || !got.Effect.Equals(want.Effect) {
+				t.Fatalf("%q.%s lost its detached signature/effect row across wire round trip", library.ID(), name)
+			}
+		}
+		if len(decoded.FunctionOperations) != len(m.FunctionOperations) || len(decoded.InitialRoots) != len(m.InitialRoots) ||
+			len(decoded.InitialEntries) != len(m.InitialEntries) || len(decoded.InitialMetatables) != len(m.InitialMetatables) {
+			t.Fatalf("%q lost operation/topology rows across wire round trip", library.ID())
 		}
 		if library.Mount() == MountModule && len(m.Globals) != 0 {
 			t.Fatalf("named library %q tried to establish analysis scope: %v", library.ID(), m.Globals)

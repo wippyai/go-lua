@@ -358,7 +358,7 @@ func (c *Contract) appendBoot(input bootDraft, keys map[keyspace.LiteralValue]Ex
 		if attachment.base != InitialValueString || attachment.metatable == 0 || uint64(attachment.metatable) > uint64(len(c.initialRoots)) {
 			return errors.New("target: malformed initial metatable attachment")
 		}
-		c.initialMetatables = append(c.initialMetatables, initialMetatableAttachmentRow{base: attachment.base, metatable: attachment.metatable})
+		c.initialMetatables = append(c.initialMetatables, initialMetatableAttachmentRow(attachment))
 	}
 	for _, binding := range input.bindings {
 		key, keyErr := exactKeyHandle(keys, binding.key)

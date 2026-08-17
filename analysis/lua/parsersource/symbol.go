@@ -85,7 +85,7 @@ func DiscoverVocabulary(path string) (GrammarVocabulary, error) {
 			if !known {
 				return fmt.Errorf("parser grammar %s: symbol %s uses %%union member %s which is not declared", path, name, tag)
 			}
-			typeName = declared
+			typeName = sourceExpr(declared)
 		}
 		symbols[name] = GrammarSymbol{Name: name, Kind: kind, Tag: tag, Type: typeName}
 		return nil
@@ -123,8 +123,10 @@ func DiscoverVocabulary(path string) (GrammarVocabulary, error) {
 
 // declaredUnion reads the %union declaration as the Go struct it is. yacc
 // copies the member list into the generated parser verbatim, so parsing it as
-// Go source is reading it in its own language rather than re-lexing it.
-func declaredUnion(path, source string) (map[string]string, error) {
+// Go source is reading it in its own language rather than re-lexing it. Each
+// arm is kept as the declared type expression, so a caller that needs the
+// member's form reads the declaration rather than a rendering of it.
+func declaredUnion(path, source string) (map[string]goast.Expr, error) {
 	masked, err := maskQuotedAndComments(source)
 	if err != nil {
 		return nil, err
@@ -146,7 +148,7 @@ func declaredUnion(path, source string) (map[string]string, error) {
 	if parseErr != nil {
 		return nil, fmt.Errorf("parser grammar %s: parse %%union declaration: %w", path, parseErr)
 	}
-	result := make(map[string]string)
+	result := make(map[string]goast.Expr)
 	for _, declaration := range file.Decls {
 		general, ok := declaration.(*goast.GenDecl)
 		if !ok || general.Tok != token.TYPE {
@@ -166,7 +168,7 @@ func declaredUnion(path, source string) (map[string]string, error) {
 					if _, duplicate := result[name.Name]; duplicate {
 						return nil, fmt.Errorf("parser grammar %s: %%union declares member %s twice", path, name.Name)
 					}
-					result[name.Name] = sourceExpr(field.Type)
+					result[name.Name] = field.Type
 				}
 			}
 		}

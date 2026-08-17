@@ -244,20 +244,33 @@ func TestContinuationSealRepeatMultipleIncomingPaths(t *testing.T) {
 	successors := fixture.causal.Successors()
 	condition := continuationTerm(keyspace.FamilyUnary, 1)
 	child := continuationTerm(keyspace.FamilyBody, 2)
-	incoming := 0
+	incoming := make([]causal.Successor, 0, 2)
 	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
 		for ordinal := uint32(1); ordinal <= uint32(identity.FamilyCount(family)); ordinal++ {
 			from := continuationTerm(family, ordinal)
 			for index := 0; index < successors.Count(from); index++ {
 				successor, ok := successors.At(from, index)
 				if ok && successor.To == child {
-					incoming++
+					incoming = append(incoming, successor)
 				}
 			}
 		}
 	}
-	if incoming < 2 {
-		t.Fatalf("Repeat child Body incoming path count = %d, want at least two", incoming)
+	if len(incoming) != 1 {
+		t.Fatalf("Repeat Return-only child Body incoming path count = %d, want exactly one initial path", len(incoming))
+	}
+	initial := incoming[0]
+	if initial.From != continuationTerm(keyspace.FamilyLoop, 1) || initial.Decision != 0 || initial.Truth {
+		t.Fatalf("Repeat Return-only child Body incoming path = %#v, want unguarded local Loop initial route", initial)
+	}
+	for index := 0; index < successors.TotalCount(); index++ {
+		successor, ok := successors.TotalAt(index)
+		if !ok {
+			t.Fatalf("Repeat successor %d is unavailable", index)
+		}
+		if successor.From == condition && successor.Decision == continuationTerm(keyspace.FamilyLoop, 1) {
+			t.Fatalf("Return-only Repeat child published unreachable condition route: %#v", successor)
+		}
 	}
 	for _, subject := range []keyspace.Term{condition, continuationTerm(keyspace.FamilyUnary, 2)} {
 		expected := make([]keyspace.Term, 0, len(want[subject]))

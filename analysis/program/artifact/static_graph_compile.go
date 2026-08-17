@@ -35,7 +35,7 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 		if !ok {
 			return StaticInputOperandInvalid, keyspace.LiteralValue{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
 		}
-		kind := StaticInputOperandInvalid
+		var kind StaticInputOperandKind
 		switch operand.Kind() {
 		case program.StaticOperandKnown:
 			kind = StaticInputOperandKnown

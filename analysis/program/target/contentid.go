@@ -16,7 +16,7 @@ import (
 // Version 20 adds the exact initial whole-object immutable header to every
 // boot shape. A target identity from any preceding layout must never be reused
 // for a different bootstrap Heap header.
-// Version 19 adds the closed string.gsub table-replacement branch.
+// Version 19 adds the closed operation-subedge relation branch.
 // Version 18 adds retained callback-holder protocol rows and the mandatory
 // zero-holder branch of a callback release. A target identity from any
 // preceding layout must never be reused as this schema.
@@ -82,7 +82,7 @@ const (
 	recordInitialValue
 	recordFreshResult
 	recordInitialMetatableAttachment
-	recordGsubTableReplacement
+	recordOperationSubedgeRelation
 )
 
 func encodeContractCanonical(dst interface{ Write([]byte) (int, error) }, c *Contract) error {

@@ -8,6 +8,7 @@ import (
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
@@ -56,7 +57,7 @@ func compareBranchProducer(left, right BranchProducer) int {
 type ObservationSite struct {
 	Mount     identity.ContentID
 	Local     identity.ContentID
-	Kind      programartifact.DiagnosticObservationKind
+	Kind      structure.DiagnosticObservationKind
 	Location  programsource.Span
 	producers []BranchProducer
 }
@@ -66,9 +67,9 @@ func (site ObservationSite) Available() bool {
 		return false
 	}
 	switch site.Kind {
-	case programartifact.DiagnosticObservationBranchCondition:
+	case structure.DiagnosticObservationBranchCondition:
 		return site.branchGeometryAvailable()
-	case programartifact.DiagnosticObservationTypeReferenceUnresolved, programartifact.DiagnosticObservationValueReferenceUnresolved:
+	case structure.DiagnosticObservationTypeReferenceUnresolved, structure.DiagnosticObservationValueReferenceUnresolved:
 		return len(site.producers) == 0
 	default:
 		return false
@@ -192,7 +193,7 @@ func mountObservationSites(values linkboundary.Values, contract *target.Contract
 		}
 		site := ObservationSite{Mount: mount.ModuleKey, Local: observation.ID(), Kind: observation.Kind(), Location: location}
 		switch observation.Kind() {
-		case programartifact.DiagnosticObservationBranchCondition:
+		case structure.DiagnosticObservationBranchCondition:
 			if producersByValue == nil {
 				var producersOK bool
 				producersByValue, producersOK = mountedValueProducers(values, mount)
@@ -222,13 +223,13 @@ func mountObservationSites(values linkboundary.Values, contract *target.Contract
 				return nil, false
 			}
 			site.producers = producers
-		case programartifact.DiagnosticObservationTypeReferenceUnresolved:
+		case structure.DiagnosticObservationTypeReferenceUnresolved:
 			unresolved, unresolvedOK := observation.UnresolvedTypeReference()
 			path, pathOK := unresolved.Path()
 			if !unresolvedOK || !pathOK || len(path) == 0 || !unresolved.StaticReferenceID().Available() {
 				return nil, false
 			}
-		case programartifact.DiagnosticObservationValueReferenceUnresolved:
+		case structure.DiagnosticObservationValueReferenceUnresolved:
 			unresolved, unresolvedOK := observation.UnresolvedValueReference()
 			name, nameOK := unresolved.Name()
 			if !unresolvedOK || !nameOK || name == "" || !unresolved.ReadID().Available() || !unresolved.CellID().Available() {

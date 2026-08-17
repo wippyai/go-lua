@@ -1001,7 +1001,8 @@ func loopKindSpec(loopKind kind.LoopKind) causalSpec {
 	}
 	spec.flow.Control.Loops = []authored.Loop{{Owner: parent, Body: child, Kind: loopKind, Control: condition}}
 	spec.flow.Control.Cells = nil
-	if loopKind == kind.LoopNumericFor {
+	switch loopKind {
+	case kind.LoopNumericFor:
 		values := causalTerm(keyspace.FamilyValues, 1)
 		spec.counts[keyspace.FamilyValues] = 1
 		spec.counts[keyspace.FamilyNil] = 2
@@ -1016,7 +1017,7 @@ func loopKindSpec(loopKind kind.LoopKind) causalSpec {
 		spec.flow.Storage.Cells = []authored.Cell{{Kind: authored.CellLocal, Body: child}}
 		spec.flow.Control.Cells = []keyspace.Term{cell}
 		spec.flow.Control.Loops[0].Cells = authored.Range{End: 1}
-	} else if loopKind == kind.LoopGenericFor {
+	case kind.LoopGenericFor:
 		values := causalTerm(keyspace.FamilyValues, 1)
 		spec.counts[keyspace.FamilyValues] = 1
 		spec.flow.Values = authored.ValuesInput{

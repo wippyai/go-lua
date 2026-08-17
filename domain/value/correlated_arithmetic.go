@@ -13,7 +13,7 @@ import (
 // translates its result into an already-sealed atom; it never mints hot
 // alternatives.
 func (schema *Schema) ApplyArithmetic(left, right Value, op flowkind.BinaryOp) (Value, bool) {
-	if schema == nil || !schema.owns(left) || !schema.owns(right) || !binaryArithmeticOperator(op) {
+	if schema == nil || !schema.owns(left) || !schema.owns(right) || !BinaryArithmeticOperator(op) {
 		return Value{}, false
 	}
 	leftScalar, leftOK := schema.ExactScalar(left)

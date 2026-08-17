@@ -1,6 +1,9 @@
 package artifact
 
-import "github.com/wippyai/go-lua/analysis/identity"
+import (
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
+)
 
 // sealValidationState carries the indexes built during the immutable seal
 // pass. Each index is constructed once and consumed by later validation
@@ -76,7 +79,7 @@ func (artifact *Artifact) validateSealFoundation(state *sealValidationState) Com
 		if !row.Available() {
 			return compileFailure(CompileStageSeal, CompileRowRoute, index, -1, CompileReasonRouteGuard)
 		}
-		if row.Kind() == DiagnosticObservationBranchCondition {
+		if row.Kind() == structure.DiagnosticObservationBranchCondition {
 			branch, branchOK := row.BranchCondition()
 			if !branchOK {
 				return compileFailure(CompileStageSeal, CompileRowRoute, index, -1, CompileReasonRouteGuard)

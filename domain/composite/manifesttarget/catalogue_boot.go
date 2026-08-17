@@ -3,21 +3,14 @@ package manifesttarget
 import (
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	. "github.com/wippyai/go-lua/analysis/program/target"
 	"github.com/wippyai/go-lua/domain/type/typ"
 	"github.com/wippyai/go-lua/domain/type/unwrap"
 	"github.com/wippyai/go-lua/manifest"
-)
-
-// The root identities below are the closed initial-environment ABI. They are
-// names, not runtime handles: Heap owns every later table instance and write.
-const (
-	globalEnvRoot   = "GlobalEnvRoot"
-	stringMetaRoot  = "StringMetatableRoot"
-	errorMetaRoot   = "ErrorMetatableRoot"
-	errorMethodRoot = "ErrorMethodRoot"
+	moduleio "github.com/wippyai/go-lua/manifest/wire"
 )
 
 type bootLedgerData struct {
@@ -32,19 +25,21 @@ type bootLedgerData struct {
 // just authored; this avoids a second hand-maintained operation identity list.
 func bootLedger(catalogue authoredCatalogue, declarations *manifest.Catalogue) (bootLedgerData, error) {
 	var ledger bootLedgerData
-	ledger.root(globalEnvRoot, BootAggregateTable, false)
+	ledger.root(moduleio.GlobalEnvironmentRoot, BootAggregateTable, false)
 	moduleRoots := make(map[string]string)
 	for _, module := range declarations.Modules() {
-		root := moduleRoot(module.ProviderIdentity())
+		root := moduleio.ModuleRootIdentity(module.ProviderIdentity())
 		moduleRoots[module.Path()] = root
 		ledger.root(root, BootAggregateTable, module.Immutable())
 	}
-	if _, ok := moduleRoots["string"]; ok {
-		ledger.root(stringMetaRoot, BootAggregateMetatable, false)
-	}
-	if _, ok := moduleRoots["errors"]; ok {
-		ledger.root(errorMetaRoot, BootAggregateMetatable, true)
-		ledger.root(errorMethodRoot, BootAggregateTable, true)
+	for _, environment := range declarations.InitialEnvironments() {
+		for _, root := range environment.Roots() {
+			aggregate, err := initialAggregate(root.Aggregate)
+			if err != nil {
+				return bootLedgerData{}, err
+			}
+			ledger.root(root.Identity, aggregate, root.Immutable)
+		}
 	}
 
 	// Every unshadowed global slot records the same initial root/key row that
@@ -53,7 +48,7 @@ func bootLedger(catalogue authoredCatalogue, declarations *manifest.Catalogue) (
 		ledger.global(module.Path(), rootValue(moduleRoots[module.Path()]))
 	}
 
-	if err := ledger.boundOperations(catalogue, globalEnvRoot, InitialMutable, BindingBuiltin, ""); err != nil {
+	if err := ledger.boundOperations(catalogue, moduleio.GlobalEnvironmentRoot, InitialMutable, BindingBuiltin, ""); err != nil {
 		return bootLedgerData{}, err
 	}
 	for _, operation := range catalogue.operations {
@@ -73,6 +68,17 @@ func bootLedger(catalogue authoredCatalogue, declarations *manifest.Catalogue) (
 		}
 	}
 
+	declaredEntries := make(map[string]struct{})
+	for _, environment := range declarations.InitialEnvironments() {
+		for _, entry := range environment.Entries() {
+			root, err := initialRoot(environment, entry.Root, moduleRoots)
+			if err != nil {
+				return bootLedgerData{}, err
+			}
+			declaredEntries[root+"\x00"+entry.Key] = struct{}{}
+		}
+	}
+
 	// Non-callable values come from the same provider export declarations as
 	// their types. Singleton types preserve exact boot literals; aggregates and
 	// runtime-populated values are represented as present-but-opaque entries.
@@ -82,7 +88,7 @@ func bootLedger(catalogue authoredCatalogue, declarations *manifest.Catalogue) (
 		if len(member) != 1 {
 			return bootLedgerData{}, fmt.Errorf("target catalogue: initial value has non-direct binding %q", member)
 		}
-		root := globalEnvRoot
+		root := moduleio.GlobalEnvironmentRoot
 		mutability := InitialMutable
 		switch binding.Mount() {
 		case manifest.MountGlobals:
@@ -102,32 +108,44 @@ func bootLedger(catalogue authoredCatalogue, declarations *manifest.Catalogue) (
 		}
 		initial := initialValueFromType(value.Type())
 		if binding.Mount() == manifest.MountGlobals && member[0] == "_G" {
-			initial = rootValue(globalEnvRoot)
+			initial = rootValue(moduleio.GlobalEnvironmentRoot)
 		}
-		ledger.entry(root, member[0], initial, mutability)
+		if _, explicitlyDeclared := declaredEntries[root+"\x00"+member[0]]; !explicitlyDeclared {
+			ledger.entry(root, member[0], initial, mutability)
+		}
 		if binding.Mount() == manifest.MountGlobals {
 			ledger.bindGlobal(member[0])
 		}
 	}
 
-	if _, ok := moduleRoots["errors"]; ok {
-		if err := ledger.operation(catalogue, errorMetaRoot, "__tostring", InitialFrozen, moduleBindingSpec("errors", "Error", "__tostring")); err != nil {
-			return bootLedgerData{}, err
+	for _, environment := range declarations.InitialEnvironments() {
+		for _, entry := range environment.Entries() {
+			root, err := initialRoot(environment, entry.Root, moduleRoots)
+			if err != nil {
+				return bootLedgerData{}, err
+			}
+			value, err := initialEntryValue(catalogue, environment, entry.Value, moduleRoots)
+			if err != nil {
+				return bootLedgerData{}, err
+			}
+			mutability, err := initialMutability(entry.Mutability)
+			if err != nil {
+				return bootLedgerData{}, err
+			}
+			ledger.entry(root, entry.Key, value, mutability)
 		}
-		if err := ledger.operation(catalogue, errorMetaRoot, "__concat", InitialFrozen, moduleBindingSpec("errors", "Error", "__concat")); err != nil {
-			return bootLedgerData{}, err
+		for _, attachment := range environment.Metatables() {
+			metatable, err := initialRoot(environment, attachment.Metatable, moduleRoots)
+			if err != nil {
+				return bootLedgerData{}, err
+			}
+			switch attachment.Primitive {
+			case moduleio.InitialPrimitiveString:
+				ledger.metatables = append(ledger.metatables, InitialMetatableAttachmentSpec{Base: InitialValueString, Metatable: metatable})
+			default:
+				return bootLedgerData{}, fmt.Errorf("target catalogue: unsupported initial primitive %d", attachment.Primitive)
+			}
 		}
-		ledger.entry(errorMetaRoot, "__index", rootValue(errorMethodRoot), InitialFrozen)
-		if err := ledger.operations(catalogue, errorMethodRoot, InitialFrozen, "errors", []string{"kind", "retryable", "details", "message", "stack"}, "Error"); err != nil {
-			return bootLedgerData{}, err
-		}
-	}
-
-	// String's primitive metatable is distinct from the library table; it
-	// shares only the exact __index alias to that library root.
-	if stringRoot, ok := moduleRoots["string"]; ok {
-		ledger.entry(stringMetaRoot, "__index", rootValue(stringRoot), InitialMutable)
-		ledger.metatables = append(ledger.metatables, InitialMetatableAttachmentSpec{Base: InitialValueString, Metatable: stringMetaRoot})
 	}
 
 	return ledger, nil
@@ -152,7 +170,66 @@ func initialValueFromType(value typ.Type) InitialValueSpec {
 	}
 }
 
-func moduleRoot(provider string) string { return "ModuleRoot:" + provider }
+func initialAggregate(aggregate moduleio.InitialAggregate) (BootAggregate, error) {
+	switch aggregate {
+	case moduleio.InitialAggregateTable:
+		return BootAggregateTable, nil
+	case moduleio.InitialAggregateMetatable:
+		return BootAggregateMetatable, nil
+	default:
+		return BootAggregateInvalid, fmt.Errorf("target catalogue: unsupported initial aggregate %d", aggregate)
+	}
+}
+
+func initialRoot(environment manifest.InitialEnvironment, reference moduleio.InitialRootReference, moduleRoots map[string]string) (string, error) {
+	if reference.Module {
+		root, ok := moduleRoots[environment.ModulePath()]
+		if !ok {
+			return "", fmt.Errorf("target catalogue: provider %q has no module root", environment.ProviderIdentity())
+		}
+		return root, nil
+	}
+	if reference.Identity == "" {
+		return "", fmt.Errorf("target catalogue: provider %q names an empty initial root", environment.ProviderIdentity())
+	}
+	return reference.Identity, nil
+}
+
+func initialEntryValue(catalogue authoredCatalogue, environment manifest.InitialEnvironment, value moduleio.InitialValue, moduleRoots map[string]string) (InitialValueSpec, error) {
+	switch value.Kind {
+	case moduleio.InitialValueRoot:
+		root, err := initialRoot(environment, value.Root, moduleRoots)
+		if err != nil {
+			return InitialValueSpec{}, err
+		}
+		return rootValue(root), nil
+	case moduleio.InitialValueFunction:
+		member := strings.Split(value.Function, ".")
+		var binding BindingSpec
+		switch environment.Mount() {
+		case manifest.MountGlobals:
+			binding = BindingSpec{Namespace: BindingBuiltin, Member: member}
+		case manifest.MountModule:
+			binding = moduleBindingSpec(environment.ModulePath(), member...)
+		default:
+			return InitialValueSpec{}, fmt.Errorf("target catalogue: provider %q cannot mount an initial function", environment.ProviderIdentity())
+		}
+		return operationValue(catalogue, binding)
+	default:
+		return InitialValueSpec{}, fmt.Errorf("target catalogue: unsupported initial value %d", value.Kind)
+	}
+}
+
+func initialMutability(mutability moduleio.InitialMutability) (InitialMutability, error) {
+	switch mutability {
+	case moduleio.InitialMutable:
+		return InitialMutable, nil
+	case moduleio.InitialFrozen:
+		return InitialFrozen, nil
+	default:
+		return InitialMutabilityInvalid, fmt.Errorf("target catalogue: unsupported initial mutability %d", mutability)
+	}
+}
 
 func (ledger *bootLedgerData) root(identity string, aggregate BootAggregate, immutable bool) {
 	ledger.roots = append(ledger.roots, InitialRootSpec{
@@ -166,26 +243,16 @@ func (ledger *bootLedgerData) entry(root, key string, value InitialValueSpec, mu
 }
 
 func (ledger *bootLedgerData) global(key string, value InitialValueSpec) {
-	ledger.entry(globalEnvRoot, key, value, InitialMutable)
+	ledger.entry(moduleio.GlobalEnvironmentRoot, key, value, InitialMutable)
 	ledger.bindGlobal(key)
 }
 
 func (ledger *bootLedgerData) bindGlobal(key string) {
-	ledger.bindings = append(ledger.bindings, InitialBindingSpec{Name: key, Root: globalEnvRoot, Key: exactKey(key)})
+	ledger.bindings = append(ledger.bindings, InitialBindingSpec{Name: key, Root: moduleio.GlobalEnvironmentRoot, Key: exactKey(key)})
 }
 
 func exactKey(text string) keyspace.LiteralValue {
 	return keyspace.LiteralValue{Kind: keyspace.LiteralString, String: text}
-}
-
-func (ledger *bootLedgerData) operations(catalogue authoredCatalogue, root string, mutability InitialMutability, owner string, names []string, memberPrefix ...string) error {
-	for _, name := range names {
-		member := append(append([]string(nil), memberPrefix...), name)
-		if err := ledger.operation(catalogue, root, name, mutability, moduleBindingSpec(owner, member...)); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // boundOperations projects the already-sealed Target bindings into boot

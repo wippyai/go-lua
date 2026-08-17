@@ -127,8 +127,8 @@ func (view DynamicLenses) key(term keyspace.Term, family keyspace.Family, keys [
 // candidate order.
 type IndexAccesses struct{ result *Result }
 
-func (view IndexAccesses) Reads() IndexReads   { return IndexReads{result: view.result} }
-func (view IndexAccesses) Writes() IndexWrites { return IndexWrites{result: view.result} }
+func (view IndexAccesses) Reads() IndexReads   { return IndexReads(view) }
+func (view IndexAccesses) Writes() IndexWrites { return IndexWrites(view) }
 
 // IndexReads is the typed candidate IndexGet Read projection.
 type IndexReads struct{ result *Result }
@@ -279,15 +279,16 @@ func indexAccessAt(result *Result, index int) (indexAccess, bool) {
 		}
 	}
 	lf := keyspace.TermFamily(access.Lens)
-	if lf == keyspace.FamilyLensExact {
+	switch lf {
+	case keyspace.FamilyLensExact:
 		if _, ok := result.ExactLenses().Get(access.Lens); !ok {
 			return indexAccess{}, false
 		}
-	} else if lf == keyspace.FamilyLensKey {
+	case keyspace.FamilyLensKey:
 		if _, ok := result.DynamicLenses().Get(access.Lens); !ok {
 			return indexAccess{}, false
 		}
-	} else {
+	default:
 		return indexAccess{}, false
 	}
 	return access, true

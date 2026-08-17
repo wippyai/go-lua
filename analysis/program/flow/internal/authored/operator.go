@@ -35,13 +35,13 @@ func validBinaryOp(op kind.BinaryOp) bool {
 func validSelectOp(op kind.SelectOp) bool { return op == kind.SelectAnd || op == kind.SelectOr }
 
 func (view Operators) Unaries() Unaries {
-	return Unaries{viewAccess: view.viewAccess}
+	return Unaries(view)
 }
 func (view Operators) Binaries() Binaries {
-	return Binaries{viewAccess: view.viewAccess}
+	return Binaries(view)
 }
 func (view Operators) Selects() Selects {
-	return Selects{viewAccess: view.viewAccess}
+	return Selects(view)
 }
 
 func (view Unaries) Count() int {

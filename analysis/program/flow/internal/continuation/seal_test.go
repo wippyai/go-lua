@@ -26,10 +26,12 @@ func continuationFixtureCorpus(t *testing.T) *testfixture.Corpus {
 	return corpus
 }
 
-// TestContinuationSealEdgeMatrixEndpointsAreTotal fixes the endpoint
-// denominator at the canonical semantic edge-matrix boundary. Causal emits
-// exactly 5,317 semantic routes there; every existing From/To term must have
-// an owner-local unpolarized Guard scope, including an available empty scope.
+// TestContinuationSealEdgeMatrixEndpointsAreTotal checks the endpoint
+// denominator at the canonical semantic edge-matrix boundary. The expected
+// route total is derived independently from the sealed local Edge and
+// CallBoundary planes. A same-point route is admissible only with its
+// owner-issued Mu/reset witness; Mu-less self-referential candidates are
+// classified as rejected rather than counted as semantic routes.
 func TestContinuationSealEdgeMatrixEndpointsAreTotal(t *testing.T) {
 	project, err := continuationFixtureCorpus(t).Project("semantic/type-engine-edge-matrix")
 	if err != nil {
@@ -57,10 +59,11 @@ func TestContinuationSealEdgeMatrixEndpointsAreTotal(t *testing.T) {
 	}
 
 	identity := program.Source().Identity()
+	causal := program.Flow().Causal()
 	successors := program.Flow().Causal().Successors()
 	continuation := program.Flow().Continuation()
 	endpoints := make(map[keyspace.Term]struct{})
-	routeCount := 0
+	routeCount := successors.TotalCount()
 	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
 		for ordinal := uint32(1); ordinal <= uint32(identity.FamilyCount(family)); ordinal++ {
 			from := keyspace.MakeTerm(family, ordinal)
@@ -69,14 +72,54 @@ func TestContinuationSealEdgeMatrixEndpointsAreTotal(t *testing.T) {
 				if !successorOK {
 					t.Fatalf("Causal Successors.At(%08x,%d) failed", uint32(from), index)
 				}
-				routeCount++
 				endpoints[successor.From] = struct{}{}
 				endpoints[successor.To] = struct{}{}
 			}
 		}
 	}
-	if routeCount != 5317 {
-		t.Fatalf("edge-matrix Causal route count = %d, want 5317", routeCount)
+	// Recompute the admissible denominator from the two sealed owner planes,
+	// rather than trusting the combined Successor index. Local self-edges are
+	// admitted only when their Mu witness is present; CallBoundary has no
+	// recurrence witness field, so a boundary endpoint equal to its Call is
+	// rejected as an unproven self-reference.
+	admitted, rejected := 0, 0
+	edges := causal.Edges()
+	for index := 0; index < edges.Count(); index++ {
+		edge, ok := edges.At(index)
+		if !ok {
+			t.Fatalf("edge-matrix Causal Edge %d is unavailable", index)
+		}
+		if edge.From == edge.To && edge.Mu == 0 {
+			rejected++
+			continue
+		}
+		admitted++
+	}
+	boundaries := causal.Boundaries()
+	for index := 0; index < boundaries.Count(); index++ {
+		boundary, ok := boundaries.At(index)
+		if !ok {
+			t.Fatalf("edge-matrix CallBoundary %d is unavailable", index)
+		}
+		for _, endpoint := range []keyspace.Term{
+			boundary.Normal, boundary.Other, boundary.TailReturn,
+			boundary.Throw, boundary.Yield, boundary.Cancel,
+		} {
+			if endpoint == 0 {
+				continue
+			}
+			if endpoint == boundary.Call {
+				rejected++
+				continue
+			}
+			admitted++
+		}
+	}
+	if routeCount != admitted {
+		t.Fatalf("edge-matrix Causal route total = %d, independently admissible = %d (rejected candidates = %d)", routeCount, admitted, rejected)
+	}
+	if rejected != 0 {
+		t.Fatalf("edge-matrix published Mu-less self-referential candidates = %d", rejected)
 	}
 	for endpoint := range endpoints {
 		count, available := continuation.GuardCount(endpoint)

@@ -393,7 +393,7 @@ func traceManifestDigest(manifest traceManifest) string {
 		if entry.destination != "" {
 			name += "=>" + filepath.ToSlash(entry.destination)
 		}
-		fmt.Fprintf(hash, "%s\x00%d\x00", name, len(entry.contents))
+		_, _ = fmt.Fprintf(hash, "%s\x00%d\x00", name, len(entry.contents))
 		hash.Write(entry.contents)
 		hash.Write([]byte{'\n'})
 	}
@@ -413,7 +413,7 @@ func traceReductionsWithManifest(root string, manifest traceManifest) (map[int][
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
-	defer os.RemoveAll(temporary)
+	defer func() { _ = os.RemoveAll(temporary) }()
 	for _, entry := range manifest.entries {
 		if entry.destination == "" {
 			continue
@@ -996,7 +996,7 @@ func collectIngress(sources []source) ([]Ingress, error) {
 func ingressDigest(rows []Ingress) string {
 	hash := sha256.New()
 	for _, row := range rows {
-		fmt.Fprintf(hash, "%s\x00%s\n", row.Source, row.ProgramID)
+		_, _ = fmt.Fprintf(hash, "%s\x00%s\n", row.Source, row.ProgramID)
 	}
 	return hex.EncodeToString(hash.Sum(nil))
 }

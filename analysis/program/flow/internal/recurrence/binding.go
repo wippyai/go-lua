@@ -380,7 +380,7 @@ func componentDirectory(parts components, heads []keyspace.Term, graph *sourceco
 	}
 	result := make([]Component, len(directory))
 	for index, entry := range directory {
-		result[index] = Component{head: entry.head, path: entry.path}
+		result[index] = Component(entry)
 	}
 	return result, nil
 }

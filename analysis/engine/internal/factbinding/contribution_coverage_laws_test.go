@@ -125,11 +125,16 @@ func TestContributionCoverageDistinguishesDefaultNoCandidateKeysAndGuards(t *tes
 		t.Fatalf("support-only fold = %d/%t/%t, want 4/true/true", got, present, valid)
 	}
 
-	replaced, replacementChanges, ok := work.ReplaceContribution(defaulted, noCandidate)
-	if !ok || !replacementChanges.Empty() || work.EqualContribution(defaulted, replaced) {
+	defaultedPoint := closedPointOf(t, work, defaulted)
+	noCandidateRHS, ok := work.PointRHSFromPointState(closedPointOf(t, work, noCandidate))
+	if !ok {
+		t.Fatal("replacement RHS role")
+	}
+	replaced, replacementChanges, ok := work.ReplacePointWithRHS(defaultedPoint, noCandidateRHS)
+	if !ok || !replacementChanges.Empty() || work.EqualPointState(defaultedPoint, replaced) {
 		t.Fatal("coverage deletion was hidden or fabricated a semantic change")
 	}
-	coverageChanges, ok := work.CoverageChanges(defaulted, replaced)
+	coverageChanges, ok := work.CoverageChangesPointStates(defaultedPoint, replaced)
 	if !ok || coverageChanges.Count() != 1 {
 		t.Fatal("replacement did not publish exact coverage deletion")
 	}
@@ -162,6 +167,21 @@ func TestContributionCoverageDistinguishesDefaultNoCandidateKeysAndGuards(t *tes
 	if got, present, valid := observedExactValue(binding, work, guardedRoot, fixture.unit(t, 0), whole, func(guard.Atom) bool { return false }); !valid || !present || got != 5 {
 		t.Fatalf("off guard = %d/%t/%t", got, present, valid)
 	}
+}
+
+// closedPointOf puts one closed Contribution into the nominal point role that
+// the live coverage and replacement operations consume.
+func closedPointOf(t testing.TB, work *carrier.Work, value carrier.Contribution) carrier.PointState {
+	t.Helper()
+	rule, ok := work.AsRuleContribution(value)
+	if !ok {
+		t.Fatal("closed rule role")
+	}
+	point, ok := work.PointStateFromRuleContribution(rule)
+	if !ok {
+		t.Fatal("closed point role")
+	}
+	return point
 }
 
 func finishContributionAt(t testing.TB, work *carrier.Work, plan carrier.ContributionPlan, scope carrier.Scope, binding *Binding[uint64, uint64], target carrier.Target, when support.Mask, value uint64) carrier.Contribution {

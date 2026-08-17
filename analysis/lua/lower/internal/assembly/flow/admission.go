@@ -175,7 +175,7 @@ func (r *Rows) AdmitLoop(counts [keyspace.FamilyCount]uint32, term, owner, bodyT
 			return reject("invalid Loop admission")
 		}
 		width := values.Fixed.End - values.Fixed.Start
-		if loopKind == flowkind.LoopNumericFor && !((width == 2 || width == 3) && values.Tail == 0) {
+		if loopKind == flowkind.LoopNumericFor && (width != 2 && width != 3 || values.Tail != 0) {
 			return reject("invalid Loop admission")
 		}
 		if loopKind == flowkind.LoopGenericFor && values.Fixed.Start == values.Fixed.End && values.Tail == 0 {

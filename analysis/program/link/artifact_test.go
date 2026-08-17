@@ -176,9 +176,12 @@ func TestArtifactReplayPreservesProjectCallIdentity(t *testing.T) {
 	linked := linked(t, sealed, linkproject.Module{Name: "main", Program: p})
 	term := call(t, p, 0)
 	originalApplication, originalApplicationOK := callApplicationForTerm(t, linked, term)
-	originalProof, originalOK := linked.Project().Applications().Calls().ForApplication(originalApplication)
-	original, originalApplicationOK := originalProof.Application()
-	if !originalOK || !originalApplicationOK {
+	if !originalApplicationOK {
+		t.Fatal("original Project Application unavailable")
+	}
+	originalProof, originalProofOK := linked.Project().Applications().Calls().ForApplication(originalApplication)
+	original, originalOK := originalProof.Application()
+	if !originalProofOK || !originalOK {
 		t.Fatal("original Project Call inverse unavailable")
 	}
 	originalCallID := originalProof.CallID()
@@ -198,9 +201,12 @@ func TestArtifactReplayPreservesProjectCallIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	reboundApplication, reboundApplicationOK := callApplicationForTerm(t, replayed, term)
-	reboundProof, reboundOK := replayed.Project().Applications().Calls().ForApplication(reboundApplication)
-	rebound, reboundApplicationOK := reboundProof.Application()
-	if !reboundOK || !reboundApplicationOK {
+	if !reboundApplicationOK {
+		t.Fatal("replayed Project Application unavailable")
+	}
+	reboundProof, reboundProofOK := replayed.Project().Applications().Calls().ForApplication(reboundApplication)
+	rebound, reboundOK := reboundProof.Application()
+	if !reboundProofOK || !reboundOK {
 		t.Fatal("replayed Project Call inverse unavailable")
 	}
 	if reboundProof.CallID() != originalCallID {

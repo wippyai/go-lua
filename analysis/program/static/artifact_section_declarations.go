@@ -148,11 +148,12 @@ func (decoder *staticArtifactDecoder) declarations(output *DeclarationsInput) er
 				NameCoordinate: coordinate,
 				Signature:      signature,
 			}
-			if member.Kind == InterfaceField {
+			switch member.Kind {
+			case InterfaceField:
 				if keyspace.TermFamily(field) != keyspace.FamilyTypeField || memberName != 0 || coordinate != (source.Coordinate{}) || signature != 0 {
 					return errInvalidArtifactSection
 				}
-			} else if member.Kind == InterfaceMethod {
+			case InterfaceMethod:
 				if field != 0 || memberName == 0 || coordinate == (source.Coordinate{}) || keyspace.TermFamily(signature) != keyspace.FamilyTypeFunction {
 					return errInvalidArtifactSection
 				}

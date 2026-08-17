@@ -311,29 +311,6 @@ func (work *Work) closedInitialPoint(point PointState) bool {
 	return work.admittedPointState(point) && point.closed && len(point.coverage.slots) == 0 && sameRootVector(point.state.roots, work.composition.initial)
 }
 
-// AddPointEnvironment folds one environment PointState into a PointRHS.
-// A proven initial, C-empty base can adopt the environment header directly.
-// A contained environment takes the directional Point-surface overlay below;
-// only a support-growing environment needs closed lifted confluence. In
-// particular, this never raw-joins State values, because C-absent cells are
-// not semantic Default operands in the RHS algebra.
-func (work *Work) AddPointEnvironment(rhs PointRHS, environment PointState) (PointRHS, bool) {
-	if !work.admittedPointRHS(rhs) || !work.admittedPointState(environment) || !work.liveFor(rhs.point.state, environment.state) {
-		return PointRHS{}, false
-	}
-	if work.closedInitialPoint(rhs.point) && rhs.point.state.support.Entails(environment.state.support) {
-		return work.PointRHSFromPointState(environment)
-	}
-	if environment.state.support.Entails(rhs.point.state.support) {
-		return work.OverlayPointEnvironment(rhs, environment)
-	}
-	right, ok := work.PointRHSFromPointState(environment)
-	if !ok {
-		return PointRHS{}, false
-	}
-	return work.JoinPointRHS(rhs, right)
-}
-
 // AddRuleContribution is the sole PointRHS rule-fold operation.  It chooses
 // the only three lawful cases: adopt into a proven empty initial base,
 // directional sparse overlay when the rule cannot grow support, or closed
@@ -392,19 +369,6 @@ func (work *Work) OverlayRuleContribution(rhs PointRHS, rule RuleContribution) (
 		return PointRHS{}, false
 	}
 	return work.overlayPointSurface(rhs, rule.value.state, rule.value.coverage)
-}
-
-// OverlayPointEnvironment folds a contained environment into a PointRHS
-// without lifting or closing either PointState. The environment's right root
-// is consulted only on its C surface, so its latent branches cannot act as
-// Default or payload. The left physical mask remains expand(left C) union
-// not(left support), preserving left latent branches until the explicit
-// LiftRuleContribution boundary.
-func (work *Work) OverlayPointEnvironment(rhs PointRHS, environment PointState) (PointRHS, bool) {
-	if !work.admittedPointRHS(rhs) || !work.admittedPointState(environment) || !work.liveFor(rhs.point.state, environment.state) {
-		return PointRHS{}, false
-	}
-	return work.overlayPointSurface(rhs, environment.state, environment.coverage)
 }
 
 // overlayPointSurface is the one directional PointRHS transaction. The right
@@ -543,12 +507,12 @@ func (work *Work) ReplacePointWithRHS(current PointState, rhs PointRHS) (PointSt
 	return point, changes, work.admittedPointState(point)
 }
 
-// MergeSelectedPointState is the nominal recurrence publication boundary.
-// It shares the exact same State+C transaction as compatibility
-// MergeSelectedContribution, but never casts a PointState/RHS through the
-// legacy Contribution role. The result always takes exactRight's authored
-// surface and is physically closed to it, so a latent current point root
-// cannot survive Widen or Narrow and reappear after a later support change.
+// MergeSelectedPointState is the sole recurrence publication boundary. It
+// drives the one State+C recurrence transaction directly from nominal point
+// roles and never casts a PointState/RHS through the legacy Contribution role.
+// The result always takes exactRight's authored surface and is physically
+// closed to it, so a latent current point root cannot survive Widen or Narrow
+// and reappear after a later support change.
 func (work *Work) MergeSelectedPointState(kind MergeKind, current PointState, selectedRight, exactRight PointRHS, selected MergeScope) (PointState, ChangeSet, bool) {
 	if !work.admittedPointState(current) || !work.admittedPointRHS(selectedRight) || !work.admittedPointRHS(exactRight) {
 		return PointState{}, ChangeSet{}, false

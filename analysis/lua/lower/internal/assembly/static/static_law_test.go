@@ -207,7 +207,7 @@ func TestCollectorStaticRolesRejectWrongFamiliesAndKeepTypeOfOperandOpen(t *test
 		cell := c.Cell(span, body)
 		return c, body, primitive, stringTerm, cell
 	}
-	c, _, _, stringTerm, cell := setup()
+	c, _, _, stringTerm, _ := setup()
 	if got := c.Optional(span, stringTerm); got != 0 {
 		t.Fatalf("Optional accepted non-Node String %v", got)
 	}
@@ -219,7 +219,7 @@ func TestCollectorStaticRolesRejectWrongFamiliesAndKeepTypeOfOperandOpen(t *test
 	if got := c.TypeParam(span, primitive, "T"); got != 0 {
 		t.Fatalf("TypeParam accepted Primitive owner %v", got)
 	}
-	c, _, _, stringTerm, cell = setup()
+	c, _, _, stringTerm, cell := setup()
 	if got := c.Annotation(span, cell, stringTerm, "note"); got != 0 {
 		t.Fatalf("Annotation accepted String target %v", got)
 	}

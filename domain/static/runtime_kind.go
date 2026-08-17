@@ -40,9 +40,11 @@ func (table *runtimeKindTable) lookup(a *Authority, kinds runtimekind.Set) (Valu
 }
 
 // sealRuntimeKinds admits the complete 8-bit Static runtime-kind denominator before
-// Static seals its order. Thread and userdata deliberately share the one
-// closed Unknown absorber: OptionalUnknown is structurally distinct from
-// Unknown and would break the carrier's strict extensional monotonicity.
+// Static seals its order. The vocabulary's opaque partition - the reference
+// families the analyzer models no structure for - shares the one closed Unknown
+// absorber: OptionalUnknown is structurally distinct from Unknown and would
+// break the carrier's strict extensional monotonicity. The partition is named
+// by runtimekind, so a family that joins or leaves it moves this seal with it.
 func sealRuntimeKinds(a *Authority) (runtimeKindTable, error) {
 	var table runtimeKindTable
 	if a == nil || a.closedByBytes == nil || len(a.results) < 2 {
@@ -59,7 +61,7 @@ func sealRuntimeKinds(a *Authority) (runtimeKindTable, error) {
 		}
 		var result Value
 		var err error
-		if runtimekind.Set(raw)&(runtimekind.Bit(runtimekind.Thread)|runtimekind.Bit(runtimekind.Userdata)) != 0 {
+		if runtimekind.Set(raw)&runtimekind.Opaque != 0 {
 			result, err = a.addClosed(typ.Unknown)
 		} else {
 			var members [6]typ.Type

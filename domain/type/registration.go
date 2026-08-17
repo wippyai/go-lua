@@ -1,0 +1,162 @@
+// Package typedomain is the root of the analyzer's Lua type domain and the
+// domain's registration statement against the analyzer declaration table.
+//
+// The domain's subject matter lives in the packages below this one: the type
+// graph and its canonical codec, the kind vocabulary the graph dispatches on,
+// subtyping, substitution, normalization, table and record construction, member
+// access and call resolution, the projection step language, the adapter to the
+// schema's neutral type envelope, and the artifact-row authority with its packed
+// runtime. None of it is in this file. What is here is the one place the domain
+// states what it declares, and the law beside it is stated over every source
+// beneath this directory rather than over this file's own imports.
+//
+// # What the domain owns
+//
+// Two closed vocabularies, and everything else is a graph algebra over them.
+//
+//   - The kind vocabulary. Twenty-eight members naming the structural category
+//     of a type, returned by every node in the graph, with a name table beside
+//     the members. Its ordinals are not a numbering the domain is free with:
+//     nine primitive nodes hash as their kind, and the recursive, literal,
+//     generic, and formal hashes mix it, so the ordinals are hash seeds in every
+//     content identity the analyzer computes over a type. The vocabulary is
+//     zero-based, has five holes left by removed members, and carries one member
+//     no node returns.
+//   - The projection step vocabulary. Four members naming the ways one type is
+//     reached from another - a field, a callable's return, a generic argument,
+//     an instantiation - dense from one, with a limit sentinel, a membership
+//     predicate, and a catalog function that is the one enumeration of them.
+//
+// # Registration
+//
+// The domain declares no row on any surface of the analyzer declaration table
+// today. The reason differs per surface, and where the reason is a missing
+// decision rather than a missing subject the decision is named:
+//
+//   - Axis. An axis is a coordinate space the solver writes during a fixpoint
+//     and a Link instantiates a carrier for. The domain writes no coordinate.
+//     It does hold the one shape that would become one: the type authority seals
+//     the artifact's static type rows into a Link-scoped directory, which is
+//     exactly what an axis mount is - it consumes the neutral mounted artifact
+//     view, produces a Link authority, and refuses with evidence of its own. It
+//     is reached today by direct call from the Program plan, before the mount
+//     transaction opens, so it is a caller-sealed input rather than a mounted
+//     factor. Declaring an axis for it is the domain's one open axis question,
+//     and it is a larger change than a row: the mount phase would have to carry
+//     the authority in its input record and recover it at this domain's type,
+//     and the domain would come under the composition registry that seals the
+//     table. Until the type authority is mounted rather than called, an axis row
+//     would declare a carrier nothing writes.
+//   - Rule. A rule declares an engine slot at an artifact rule role and attaches
+//     at a mount point. Nothing here is bound at a mount or evaluated at a point;
+//     every judgment the domain makes is a query over an immutable graph.
+//   - Diagnostic. A diagnostic row publishes a code from facts the analyzer
+//     already produces. The domain's refusals - an unresolvable member, a
+//     non-callable receiver, an interface mismatch, a runtime input that would
+//     not decode - are answered to the caller as a status beside the result, and
+//     the caller decides what to publish. The domain issues no code.
+//   - Composite. A composite is a relation over declared coordinate spaces, and
+//     every axis it names must resolve. The domain names none.
+//   - Denominator. A denominator names the surface entry whose universe it
+//     quantifies over. The domain owns no entry. The closed worlds it does
+//     carry, the sealed selector directory and the finite subtype relation the
+//     runtime materializes, are closed by construction inside one sealed
+//     authority.
+//   - Query. A query family reads declared coordinate spaces and publishes a
+//     result codec. The domain reads no coordinate space; its readers hold its
+//     graph and its handles directly.
+//   - Structure. The structural vocabulary hosts the closed catalogs the analyzer
+//     would otherwise spell once per consumer, and both of this domain's
+//     vocabularies are such catalogs. Neither is declared yet, for two different
+//     reasons, and both are stated as proposals below rather than left as an
+//     absence.
+//   - Library. A library contract kind addresses exported values under a member
+//     form algebra. The schema's type-contract package is not this surface and is
+//     not a surface at all: it is the neutral portable envelope one authored type
+//     declaration travels in, plus the semantics interface a domain satisfies to
+//     interpret it. This domain's adapter satisfies that interface and encodes
+//     and decodes the envelope, which is supplying an implementation value at
+//     composition, not declaring a row.
+//
+// # Proposal: the projection step vocabulary
+//
+// This one is ready and mechanical. The vocabulary is already dense from one,
+// already has a catalog function that supplies its membership without a second
+// list, and already has a downstream boundary spelling - the signature wire
+// codec's step variants - that is indexed by the catalog and held to it by its
+// own law. What the declaration would add is the third party the two are held
+// against, and the spelling the owner does not have: the step's rendered name
+// today comes from a display switch with a default arm rather than from a
+// declared member.
+//
+// The wiring is four parts. A category on the structural vocabulary for the
+// projection step. A StructureSpecs in the owning package built by ranging the
+// catalog, taking each member's ordinal from the member itself, in the shape the
+// expression-form declaration already uses. One contribution entry in the
+// composition that hosts the structural vocabulary. A law stating the sealed
+// catalog is the closed step vocabulary member for member, and that a member of
+// another category does not answer as a step.
+//
+// It is left as a proposal here because the composition tables are serialized
+// and the row set is not needed by anything today: the boundary spelling that
+// would read it is already pinned by a law of its own. The declaration is worth
+// landing when a second consumer needs the spelling, and it costs one category
+// and one contribution line when it is.
+//
+// # Proposal: the kind vocabulary, and what blocks it
+//
+// This one is not wiring. The structural vocabulary numbers a category dense
+// from one, and the kind vocabulary is zero-based with five holes; a member's
+// kind therefore cannot be its surface ordinal, the way a runtime family's kind
+// is. The holes cannot be closed either: the ordinals are hash seeds, so
+// renumbering them changes every content identity the analyzer has computed over
+// a type.
+//
+// A declaration must therefore carry a surface ordinal distinct from the kind,
+// with an explicit projection in both directions, and it must decide what to do
+// about the member no node returns and about the name table's collision - the
+// renderer answers "unknown" both for the member spelled unknown and for every
+// ordinal it does not cover. Those are decisions about the vocabulary, not about
+// the table, and the vocabulary's owner makes them first. Declaring rows over
+// the vocabulary as it stands would seal the holes and the collision into the
+// analyzer's one catalog rather than resolve them.
+//
+// # Second spellings
+//
+// The kind vocabulary is the most restated catalog the analyzer has, and none of
+// the restatements is held to it by a law:
+//
+//   - The canonical codec's wire tags are the graph's serialization commitment
+//     and its own vocabulary: it splits the nil member in two, carries no tag for
+//     the member no node returns, and is read back by a decode switch that
+//     restates the whole list a second time. A member added to the graph and not
+//     to the codec is a value that fails to encode at write time rather than a
+//     rejected build.
+//   - The public type facade renders kinds from a switch covering seventeen of
+//     the members and defaulting the rest to the name of a real member.
+//   - The signature wire codec spells the kinds as JSON strings, differing from
+//     the owner's spelling in one member's capitalization and adding three names
+//     that are not kinds at all.
+//   - The name table sits beside the const block in the owning package with no
+//     completeness statement outside its tests.
+//   - The artifact's static node kinds and the Program-side primitive kinds are
+//     two more ordinal vocabularies for the same subject matter, crossed by hand
+//     switches in the artifact authority, one of which round-trips through the
+//     primitive name strings to cross an ordinal boundary.
+//   - The adapter's admission and freshness kinds mirror the schema's own member
+//     for member, translated by hand switches whose default arms make a member
+//     added on one side a runtime error rather than a rejected build.
+//
+// None of these is a compensation to remove in place: each is a boundary that
+// legitimately owns its own spelling. What they are missing is the declaration to
+// be pinned against, which is what the proposals above would give the first two
+// of them.
+//
+// # Position
+//
+// The domain sits at the base of the domain layer. It imports no peer domain,
+// and the peer domains that reason about types - the static inventory, the pack
+// classification, the heap key algebra - import it. The law beside this file
+// states both directions, so a registration added here is added by a domain that
+// is still below the composition that would seal it.
+package typedomain

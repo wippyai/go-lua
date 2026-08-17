@@ -36,13 +36,13 @@ func derive(entries []*denominator.RelationEntry) (Evidence, error) {
 			continue
 		}
 		if !relation.ID().Available() || seen[relation.ID()] {
-			return Evidence{}, fmt.Errorf("Program output owners: duplicate or malformed output relation")
+			return Evidence{}, fmt.Errorf("program output owners: duplicate or malformed output relation")
 		}
 		seen[relation.ID()] = true
 		rows = append(rows, Row{Relation: relation.ID(), Owner: relation.Owner()})
 	}
 	if len(rows) == 0 {
-		return Evidence{}, fmt.Errorf("Program output owners: empty canonical output denominator")
+		return Evidence{}, fmt.Errorf("program output owners: empty canonical output denominator")
 	}
 	sort.Slice(rows, func(left, right int) bool { return less(rows[left].Relation, rows[right].Relation) })
 	evidence := Evidence{Rows: rows}
@@ -57,7 +57,7 @@ func derive(entries []*denominator.RelationEntry) (Evidence, error) {
 // output-owner row. It compares against the live generated denominator.
 func (e Evidence) Validate(entries []*denominator.RelationEntry) error {
 	if e.Digest != digest(e) {
-		return fmt.Errorf("Program output owners: invalid evidence digest")
+		return fmt.Errorf("program output owners: invalid evidence digest")
 	}
 	expected, err := expectedRows(entries)
 	if err != nil {
@@ -67,28 +67,28 @@ func (e Evidence) Validate(entries []*denominator.RelationEntry) error {
 	for index, row := range e.Rows {
 		owner, known := expected[row.Relation]
 		if !known {
-			return fmt.Errorf("Program output owners: unknown output relation")
+			return fmt.Errorf("program output owners: unknown output relation")
 		}
 		if seen[row.Relation] {
-			return fmt.Errorf("Program output owners: duplicate output relation")
+			return fmt.Errorf("program output owners: duplicate output relation")
 		}
 		if index != 0 && !less(e.Rows[index-1].Relation, row.Relation) {
-			return fmt.Errorf("Program output owners: output rows are not canonical")
+			return fmt.Errorf("program output owners: output rows are not canonical")
 		}
 		if row.Owner != owner {
-			return fmt.Errorf("Program output owners: output relation has owner %d, want %d", row.Owner, owner)
+			return fmt.Errorf("program output owners: output relation has owner %d, want %d", row.Owner, owner)
 		}
 		seen[row.Relation] = true
 	}
 	if len(seen) != len(expected) {
-		return fmt.Errorf("Program output owners: output denominator is incomplete")
+		return fmt.Errorf("program output owners: output denominator is incomplete")
 	}
 	return nil
 }
 
 func expectedRows(entries []*denominator.RelationEntry) (map[schema.EntryID]denominator.RelationOwner, error) {
 	if len(entries) == 0 {
-		return nil, fmt.Errorf("Program output owners: empty generated denominator catalog")
+		return nil, fmt.Errorf("program output owners: empty generated denominator catalog")
 	}
 	expected := make(map[schema.EntryID]denominator.RelationOwner)
 	for _, relation := range entries {
@@ -96,12 +96,12 @@ func expectedRows(entries []*denominator.RelationEntry) (map[schema.EntryID]deno
 			continue
 		}
 		if _, duplicate := expected[relation.ID()]; duplicate {
-			return nil, fmt.Errorf("Program output owners: duplicate canonical output")
+			return nil, fmt.Errorf("program output owners: duplicate canonical output")
 		}
 		expected[relation.ID()] = relation.Owner()
 	}
 	if len(expected) == 0 {
-		return nil, fmt.Errorf("Program output owners: empty canonical output denominator")
+		return nil, fmt.Errorf("program output owners: empty canonical output denominator")
 	}
 	return expected, nil
 }

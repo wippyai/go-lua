@@ -58,17 +58,17 @@ func (e Evidence) Validate(entries []*denominator.RelationEntry) error {
 	}
 	digest, err := evidenceDigest(e)
 	if err != nil || digest != e.Digest {
-		return fmt.Errorf("Program supply: invalid evidence digest")
+		return fmt.Errorf("program supply: invalid evidence digest")
 	}
 	for _, row := range e.BinderLaws {
 		if (len(row.Positive) == 0) == (len(row.Forbidden) == 0) {
-			return fmt.Errorf("Program supply: binder row must have exactly one polarity")
+			return fmt.Errorf("program supply: binder row must have exactly one polarity")
 		}
 	}
 	if !reflect.DeepEqual(e.ProgramLaws, want.ProgramLaws) ||
 		!reflect.DeepEqual(e.StaticLaws, want.StaticLaws) ||
 		!reflect.DeepEqual(e.BinderLaws, want.BinderLaws) {
-		return fmt.Errorf("Program supply: evidence differs from exact typed denominator")
+		return fmt.Errorf("program supply: evidence differs from exact typed denominator")
 	}
 	return nil
 }
@@ -87,12 +87,12 @@ func (e Evidence) Canonical() []byte {
 // denominator entries; no parallel relation projection is persisted.
 func Closure(entries []*denominator.RelationEntry, terminals []schema.EntryID) ([]Output, error) {
 	if len(entries) == 0 || len(terminals) == 0 {
-		return nil, fmt.Errorf("Program supply: empty terminal closure")
+		return nil, fmt.Errorf("program supply: empty terminal closure")
 	}
 	byID := make(map[schema.EntryID]*denominator.RelationEntry, len(entries))
 	for _, entry := range entries {
 		if entry == nil || !entry.ID().Available() {
-			return nil, fmt.Errorf("Program supply: malformed denominator entry")
+			return nil, fmt.Errorf("program supply: malformed denominator entry")
 		}
 		byID[entry.ID()] = entry
 	}
@@ -107,10 +107,10 @@ func Closure(entries []*denominator.RelationEntry, terminals []schema.EntryID) (
 		}
 		entry, ok := byID[id]
 		if !ok {
-			return nil, fmt.Errorf("Program supply: unknown terminal ID")
+			return nil, fmt.Errorf("program supply: unknown terminal ID")
 		}
 		if owner := entry.Owner(); owner < denominator.RelationOwnerProgramSource || owner > denominator.RelationOwnerProgramModule {
-			return nil, fmt.Errorf("Program supply: terminal closure escaped Program ownership")
+			return nil, fmt.Errorf("program supply: terminal closure escaped Program ownership")
 		}
 		seen[id] = true
 		stack = append(stack, entry.Parents()...)
@@ -150,7 +150,7 @@ const (
 
 func expected(entries []*denominator.RelationEntry) (Evidence, error) {
 	if len(entries) == 0 {
-		return Evidence{}, fmt.Errorf("Program supply: empty generated denominator catalog")
+		return Evidence{}, fmt.Errorf("program supply: empty generated denominator catalog")
 	}
 	resolve := func(key schema.Key) (schema.EntryID, error) {
 		for _, entry := range entries {
@@ -158,7 +158,7 @@ func expected(entries []*denominator.RelationEntry) (Evidence, error) {
 				return entry.ID(), nil
 			}
 		}
-		return schema.EntryID{}, fmt.Errorf("Program supply: canonical terminal %q is absent", key)
+		return schema.EntryID{}, fmt.Errorf("program supply: canonical terminal %q is absent", key)
 	}
 	type selector struct{ key schema.Key }
 	terminals := func(selectors ...selector) ([]schema.EntryID, error) {
@@ -186,7 +186,7 @@ func expected(entries []*denominator.RelationEntry) (Evidence, error) {
 				selected.key = programFlowLength
 			case flowkind.UnaryNot:
 			default:
-				return Evidence{}, fmt.Errorf("Program supply: unknown unary operator")
+				return Evidence{}, fmt.Errorf("program supply: unknown unary operator")
 			}
 		case programlaw.SiteBinary:
 			switch requirement.Binary {
@@ -203,7 +203,7 @@ func expected(entries []*denominator.RelationEntry) (Evidence, error) {
 			case flowkind.BinaryLess, flowkind.BinaryLessEqual, flowkind.BinaryGreater, flowkind.BinaryGreaterEqual:
 				selected.key = programFlowOrder
 			default:
-				return Evidence{}, fmt.Errorf("Program supply: unknown binary operator")
+				return Evidence{}, fmt.Errorf("program supply: unknown binary operator")
 			}
 		case programlaw.SiteSelect:
 		case programlaw.SiteCall:
@@ -213,7 +213,7 @@ func expected(entries []*denominator.RelationEntry) (Evidence, error) {
 		case programlaw.SiteOutcome:
 			selected.key = programFlowOutcome
 		default:
-			return Evidence{}, fmt.Errorf("Program supply: unknown Program law site")
+			return Evidence{}, fmt.Errorf("program supply: unknown Program law site")
 		}
 		values, err := terminals(selected)
 		if err != nil {
@@ -241,7 +241,7 @@ func expected(entries []*denominator.RelationEntry) (Evidence, error) {
 			staticlaw.FamilyArray, staticlaw.FamilyMap, staticlaw.FamilyRecord,
 			staticlaw.FamilyKeyOf, staticlaw.FamilyIndexAccess, staticlaw.FamilyConditional:
 		default:
-			return Evidence{}, fmt.Errorf("Program supply: unknown static law family")
+			return Evidence{}, fmt.Errorf("program supply: unknown static law family")
 		}
 		values, err := terminals(selected...)
 		if err != nil {
@@ -270,7 +270,7 @@ func expected(entries []*denominator.RelationEntry) (Evidence, error) {
 		case binder.TransitionDirectRequireGlobal:
 			selected = []selector{{key: programModuleImport}}
 		default:
-			return Evidence{}, fmt.Errorf("Program supply: unknown binder transition")
+			return Evidence{}, fmt.Errorf("program supply: unknown binder transition")
 		}
 		values, err := terminals(selected...)
 		if err != nil {
@@ -368,7 +368,7 @@ func writeIDs(writer *framing.Writer, ids []schema.EntryID) error {
 	}
 	for _, id := range ids {
 		if !id.Available() {
-			return fmt.Errorf("Program supply: malformed EntryID")
+			return fmt.Errorf("program supply: malformed EntryID")
 		}
 		if err := writer.Bytes(id[:]); err != nil {
 			return err

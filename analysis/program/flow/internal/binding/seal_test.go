@@ -85,7 +85,7 @@ func TestSealRejectsEmptyBindAndNonStringGlobal(t *testing.T) {
 	base.Values.Rows = []authored.Value{{Owner: body}}
 	base.Storage.Cells = []authored.Cell{{Kind: authored.CellLocal, Body: body}}
 	base.Storage.Binds = []authored.Bind{{Owner: body, Values: values}}
-	_, err, finish := trySealLawFixture(t, base, [][]keyspace.Term{{bind}}, []source.BindCells{{Bind: bind}}, nil, nil)
+	_, finish, err := trySealLawFixture(t, base, [][]keyspace.Term{{bind}}, []source.BindCells{{Bind: bind}}, nil, nil)
 	finish()
 	if err == nil {
 		t.Fatal("empty Bind order was accepted")
@@ -100,7 +100,7 @@ func TestSealRejectsEmptyBindAndNonStringGlobal(t *testing.T) {
 
 	global := authored.Input{Counts: [keyspace.FamilyCount]uint32{keyspace.FamilyBody: 1, keyspace.FamilyCell: 1}}
 	global.Storage.Cells = []authored.Cell{{Kind: authored.CellGlobal, Key: 1}}
-	_, err, finish = trySealLawFixture(t, global, [][]keyspace.Term{{}}, nil, nil,
+	_, finish, err = trySealLawFixture(t, global, [][]keyspace.Term{{}}, nil, nil,
 		[]keyspace.LiteralValue{{Kind: keyspace.LiteralInteger, Integer: 1}})
 	finish()
 	if err == nil {
@@ -128,18 +128,18 @@ func TestResultQueriesAllocateNothing(t *testing.T) {
 
 func sealLawFixture(t *testing.T, input authored.Input, rows [][]keyspace.Term, bindOrder []source.BindCells, formalOrder []source.FunctionFormals, exactAtoms []keyspace.LiteralValue) (Result, func()) {
 	t.Helper()
-	result, err, finish := trySealLawFixture(t, input, rows, bindOrder, formalOrder, exactAtoms)
+	result, finish, err := trySealLawFixture(t, input, rows, bindOrder, formalOrder, exactAtoms)
 	if err != nil {
 		t.Fatalf("binding.Seal: %v", err)
 	}
 	return result, finish
 }
 
-func trySealLawFixture(t *testing.T, input authored.Input, rows [][]keyspace.Term, bindOrder []source.BindCells, formalOrder []source.FunctionFormals, exactAtoms []keyspace.LiteralValue) (Result, error, func()) {
+func trySealLawFixture(t *testing.T, input authored.Input, rows [][]keyspace.Term, bindOrder []source.BindCells, formalOrder []source.FunctionFormals, exactAtoms []keyspace.LiteralValue) (Result, func(), error) {
 	return trySealLawFixtureAtEntry(t, input, rows, bindOrder, formalOrder, exactAtoms, keyspace.MakeTerm(keyspace.FamilyBody, 1))
 }
 
-func trySealLawFixtureAtEntry(t *testing.T, input authored.Input, rows [][]keyspace.Term, bindOrder []source.BindCells, formalOrder []source.FunctionFormals, exactAtoms []keyspace.LiteralValue, entry keyspace.Term) (Result, error, func()) {
+func trySealLawFixtureAtEntry(t *testing.T, input authored.Input, rows [][]keyspace.Term, bindOrder []source.BindCells, formalOrder []source.FunctionFormals, exactAtoms []keyspace.LiteralValue, entry keyspace.Term) (Result, func(), error) {
 	t.Helper()
 	input.Counts[keyspace.FamilyBody] = uint32(len(rows))
 	flowDraft, err := authored.Build(input)
@@ -210,7 +210,7 @@ func trySealLawFixtureAtEntry(t *testing.T, input authored.Input, rows [][]keysp
 		_ = staticFinish.Abort()
 		_ = sourceFinish.Abort()
 	}
-	return result, sealErr, finish
+	return result, finish, sealErr
 }
 func TestSealRejectsZeroInvalidAndNonParentlessEntries(t *testing.T) {
 	body := keyspace.MakeTerm(keyspace.FamilyBody, 1)
@@ -226,7 +226,7 @@ func TestSealRejectsZeroInvalidAndNonParentlessEntries(t *testing.T) {
 	order := []source.BindCells{{Bind: bind, Cells: []keyspace.Term{cell}}}
 
 	for _, entry := range []keyspace.Term{0, keyspace.MakeTerm(keyspace.FamilyCell, 1), keyspace.MakeTerm(keyspace.FamilyBody, 2)} {
-		_, err, finish := trySealLawFixtureAtEntry(t, input, [][]keyspace.Term{{bind}}, order, nil, nil, entry)
+		_, finish, err := trySealLawFixtureAtEntry(t, input, [][]keyspace.Term{{bind}}, order, nil, nil, entry)
 		finish()
 		if err == nil {
 			t.Fatalf("entry %v was accepted", entry)
@@ -240,7 +240,7 @@ func TestSealRejectsSelectingAValidNonParentlessBodyAsEntry(t *testing.T) {
 	function := keyspace.MakeTerm(keyspace.FamilyFunction, 1)
 	input := authored.Input{Counts: [keyspace.FamilyCount]uint32{keyspace.FamilyBody: 2, keyspace.FamilyFunction: 1}}
 	input.Functions.Rows = []authored.Function{{Owner: body1, Body: body2}}
-	_, err, finish := trySealLawFixtureAtEntry(t, input, [][]keyspace.Term{{}, {}}, nil,
+	_, finish, err := trySealLawFixtureAtEntry(t, input, [][]keyspace.Term{{}, {}}, nil,
 		[]source.FunctionFormals{{Function: function}}, nil, body2)
 	finish()
 	if err == nil {
@@ -287,7 +287,7 @@ func TestSealRejectsCaptureInnerDoubleRole(t *testing.T) {
 	input.Storage.Cells = []authored.Cell{{Kind: authored.CellLocal, Body: body2}, {Kind: authored.CellLocal, Body: body1}}
 	input.Functions.Rows = []authored.Function{{Owner: body1, Body: body2, Captures: authored.Range{Start: 0, End: 1}}}
 	input.Functions.Captures = []authored.Capture{{Inner: cell, Outer: outer}}
-	_, err, finish := trySealLawFixture(t, input, [][]keyspace.Term{{}, {}}, nil,
+	_, finish, err := trySealLawFixture(t, input, [][]keyspace.Term{{}, {}}, nil,
 		[]source.FunctionFormals{{Function: function, Formals: []keyspace.Term{cell}}}, nil)
 	finish()
 	if err == nil {
@@ -312,7 +312,7 @@ func TestSealRejectsCaptureOuterNonAncestorAndDuplicateOuter(t *testing.T) {
 	input.Functions.Captures = []authored.Capture{{Inner: inner, Outer: outer}}
 	input.Control.Loops = []authored.Loop{{Owner: body1, Body: body3, Kind: kind.LoopWhile, Control: keyspace.MakeTerm(keyspace.FamilyNil, 1)}}
 	rows := [][]keyspace.Term{{loop}, {}, {}}
-	_, err, finish := trySealLawFixture(t, input, rows, nil,
+	_, finish, err := trySealLawFixture(t, input, rows, nil,
 		[]source.FunctionFormals{{Function: function}}, nil)
 	finish()
 	if err == nil {
@@ -375,7 +375,7 @@ func TestSealRejectsCaptureAcrossFunctionActivation(t *testing.T) {
 		{Owner: body2, Body: body3, Captures: authored.Range{Start: 0, End: 1}},
 	}
 	input.Functions.Captures = []authored.Capture{{Inner: inner, Outer: outer}}
-	_, err, finish := trySealLawFixture(t, input, [][]keyspace.Term{{bind}, {}, {}},
+	_, finish, err := trySealLawFixture(t, input, [][]keyspace.Term{{bind}, {}, {}},
 		[]source.BindCells{{Bind: bind, Cells: []keyspace.Term{outer}}},
 		[]source.FunctionFormals{{Function: function1}, {Function: function2}}, nil)
 	finish()
@@ -421,7 +421,7 @@ func TestSealRejectsConflictingChunkOccurrenceCells(t *testing.T) {
 	input.Storage.Cells = []authored.Cell{{Kind: authored.CellLocal, Body: body1}, {Kind: authored.CellLocal, Body: body1}}
 	input.Storage.Varargs = []authored.Vararg{{Owner: body2, Cell: cell1}, {Owner: body3, Cell: cell2}}
 	input.Control.Branches = []authored.Branch{{Owner: body1, Condition: keyspace.MakeTerm(keyspace.FamilyNil, 1), WhenTrue: body2, WhenFalse: body3}}
-	_, err, finish := trySealLawFixture(t, input, [][]keyspace.Term{{branch}, {}, {}}, nil, nil, nil)
+	_, finish, err := trySealLawFixture(t, input, [][]keyspace.Term{{branch}, {}, {}}, nil, nil, nil)
 	finish()
 	if err == nil {
 		t.Fatal("conflicting chunk occurrence Cells were accepted")
@@ -440,7 +440,7 @@ func TestSealRejectsNonzeroActivationVarargProviderMismatch(t *testing.T) {
 	input.Storage.Cells = []authored.Cell{{Kind: authored.CellLocal, Body: body2}, {Kind: authored.CellLocal, Body: body2}}
 	input.Storage.Varargs = []authored.Vararg{{Owner: body2, Cell: cell2}}
 	input.Functions.Rows = []authored.Function{{Owner: body1, Body: body2, Vararg: cell1}}
-	_, err, finish := trySealLawFixture(t, input, [][]keyspace.Term{{}, {}}, nil,
+	_, finish, err := trySealLawFixture(t, input, [][]keyspace.Term{{}, {}}, nil,
 		[]source.FunctionFormals{{Function: function}}, nil)
 	finish()
 	if err == nil {
@@ -551,7 +551,7 @@ func TestSealRejectsDuplicateFunctionCellClaims(t *testing.T) {
 	}
 	input.Storage.Binds = []authored.Bind{{Owner: body1, Values: values}}
 	input.Functions.Rows = []authored.Function{{Owner: body1, Body: body2}}
-	_, err, finish := trySealLawFixture(t, input, [][]keyspace.Term{{bind}, nil},
+	_, finish, err := trySealLawFixture(t, input, [][]keyspace.Term{{bind}, nil},
 		[]source.BindCells{{Bind: bind, Cells: []keyspace.Term{cell1, cell2}}},
 		[]source.FunctionFormals{{Function: function}}, nil)
 	finish()
@@ -589,7 +589,7 @@ func TestSealRejectsInvalidAndEmptyGlobalExactStringAtoms(t *testing.T) {
 		{name: "empty-string", atoms: []keyspace.LiteralValue{{Kind: keyspace.LiteralString, String: ""}}},
 	}
 	for _, test := range cases {
-		_, err, finish := trySealLawFixture(t, input, [][]keyspace.Term{{}}, nil, nil, test.atoms)
+		_, finish, err := trySealLawFixture(t, input, [][]keyspace.Term{{}}, nil, nil, test.atoms)
 		finish()
 		if err == nil {
 			t.Fatalf("%s global atom was accepted", test.name)
@@ -752,7 +752,7 @@ func TestSealRejectsUnclassifiedAndDoubleClaimedCells(t *testing.T) {
 	cell := keyspace.MakeTerm(keyspace.FamilyCell, 1)
 	input := authored.Input{Counts: [keyspace.FamilyCount]uint32{keyspace.FamilyBody: 1, keyspace.FamilyCell: 1}}
 	input.Storage.Cells = []authored.Cell{{Kind: authored.CellLocal, Body: body}}
-	_, err, finish := trySealLawFixture(t, input, [][]keyspace.Term{{}}, nil, nil, nil)
+	_, finish, err := trySealLawFixture(t, input, [][]keyspace.Term{{}}, nil, nil, nil)
 	finish()
 	if err == nil {
 		t.Fatal("unclassified local Cell was accepted")
@@ -766,7 +766,7 @@ func TestSealRejectsUnclassifiedAndDoubleClaimedCells(t *testing.T) {
 	input.Values.Rows = []authored.Value{{Owner: body}}
 	input.Storage.Binds = []authored.Bind{{Owner: body, Values: values}}
 	input.Storage.Varargs = []authored.Vararg{{Owner: body, Cell: cell}}
-	_, err, finish = trySealLawFixture(t, input, [][]keyspace.Term{{bind}},
+	_, finish, err = trySealLawFixture(t, input, [][]keyspace.Term{{bind}},
 		[]source.BindCells{{Bind: bind, Cells: []keyspace.Term{cell}}}, nil, nil)
 	finish()
 	if err == nil {
@@ -784,7 +784,7 @@ func TestSealRejectsFormalWrongBodyAndDuplicateRole(t *testing.T) {
 	}}
 	input.Storage.Cells = []authored.Cell{{Kind: authored.CellLocal, Body: body1}}
 	input.Functions.Rows = []authored.Function{{Owner: body1, Body: body2}}
-	_, err, finish := trySealLawFixture(t, input, [][]keyspace.Term{{}, {}}, nil,
+	_, finish, err := trySealLawFixture(t, input, [][]keyspace.Term{{}, {}}, nil,
 		[]source.FunctionFormals{{Function: function, Formals: []keyspace.Term{cell}}}, nil)
 	finish()
 	if err == nil {
@@ -793,7 +793,7 @@ func TestSealRejectsFormalWrongBodyAndDuplicateRole(t *testing.T) {
 
 	input.Storage.Cells[0].Body = body2
 	input.Functions.Rows[0].Vararg = cell
-	_, err, finish = trySealLawFixture(t, input, [][]keyspace.Term{{}, {}}, nil,
+	_, finish, err = trySealLawFixture(t, input, [][]keyspace.Term{{}, {}}, nil,
 		[]source.FunctionFormals{{Function: function, Formals: []keyspace.Term{cell}}}, nil)
 	finish()
 	if err == nil {

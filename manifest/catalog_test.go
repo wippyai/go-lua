@@ -22,6 +22,25 @@ func TestCatalogueRejectsParallelPathAuthorities(t *testing.T) {
 	}
 }
 
+func TestCatalogueRejectsInitialRootIdentityCollisions(t *testing.T) {
+	provider := func(identity, path, root string) manifest.Provider {
+		return manifest.Provider{Identity: identity, Mount: manifest.MountModule, Declaration: func() *moduleio.Manifest {
+			declaration := moduleio.New(path)
+			declaration.DefineInitialRoot(moduleio.InitialRoot{Identity: root, Aggregate: moduleio.InitialAggregateTable})
+			return declaration
+		}}
+	}
+	if _, err := manifest.Seal(
+		provider("left", "left", "SharedRoot"),
+		provider("right", "right", "SharedRoot"),
+	); err == nil {
+		t.Fatal("duplicate provider-owned initial root accepted")
+	}
+	if _, err := manifest.Seal(provider("reserved", "reserved", moduleio.GlobalEnvironmentRoot)); err == nil {
+		t.Fatal("provider claimed the global environment root")
+	}
+}
+
 func TestCatalogueProjectsMountedNonCallableExportsWithoutSecondRegistry(t *testing.T) {
 	catalogue, err := manifest.Seal(manifest.Provider{
 		Identity: "constants", Mount: manifest.MountModule, Immutable: true,

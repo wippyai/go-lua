@@ -98,23 +98,23 @@ type Schema struct {
 func (s Schema) Digest() string {
 	hash := sha256.New()
 	for _, constructor := range s.Constructors {
-		fmt.Fprintf(hash, "%s\x00%d\x00%t\n", constructor.Name, constructor.Class, constructor.Semantic)
+		_, _ = fmt.Fprintf(hash, "%s\x00%d\x00%t\n", constructor.Name, constructor.Class, constructor.Semantic)
 		for _, field := range constructor.Fields {
-			fmt.Fprintf(hash, "%d\x00%s\x00%s\x00%d\n", field.Ordinal, field.Name, field.Type, field.Form)
+			_, _ = fmt.Fprintf(hash, "%d\x00%s\x00%s\x00%d\n", field.Ordinal, field.Name, field.Type, field.Form)
 		}
 	}
 	for _, declaration := range s.Declarations {
-		fmt.Fprintf(hash, "decl\x00%s\x00%d\x00%t\n", declaration.Name, declaration.Class, declaration.Semantic)
+		_, _ = fmt.Fprintf(hash, "decl\x00%s\x00%d\x00%t\n", declaration.Name, declaration.Class, declaration.Semantic)
 		for _, field := range declaration.Fields {
-			fmt.Fprintf(hash, "decl-field\x00%s\x00%d\x00%s\x00%s\x00%d\n", declaration.Name, field.Ordinal, field.Name, field.Type, field.Form)
+			_, _ = fmt.Fprintf(hash, "decl-field\x00%s\x00%d\x00%s\x00%s\x00%d\n", declaration.Name, field.Ordinal, field.Name, field.Type, field.Form)
 		}
 	}
 	for _, declaration := range s.Types {
-		fmt.Fprintf(hash, "type\x00%s\x00%d\x00%d\x00%s\x00%t", declaration.Name, declaration.Kind, declaration.Class, declaration.Normalized, declaration.Semantic)
+		_, _ = fmt.Fprintf(hash, "type\x00%s\x00%d\x00%d\x00%s\x00%t", declaration.Name, declaration.Kind, declaration.Class, declaration.Normalized, declaration.Semantic)
 		for _, reference := range declaration.References {
-			fmt.Fprintf(hash, "\x00%s", reference)
+			_, _ = fmt.Fprintf(hash, "\x00%s", reference)
 		}
-		fmt.Fprintln(hash)
+		_, _ = fmt.Fprintln(hash)
 	}
 	return hex.EncodeToString(hash.Sum(nil))
 }

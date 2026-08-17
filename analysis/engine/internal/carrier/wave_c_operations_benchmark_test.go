@@ -120,7 +120,7 @@ func (fixture waveCCarrierOperationFixture) run(tb testing.TB) (int, int) {
 		tb.Fatal("Wave-C product finish")
 	}
 
-	// Join, Widen, Narrow, and Mu (MergeSelectedUnder) are direct carrier
+	// Join, Widen, Narrow, and Mu (MergeSelectedPointState) are direct carrier
 	// calls. Empty authored target scopes are valid exact-reset selections and
 	// deliberately avoid inventing a private target capability.
 	if _, _, ok := fixture.work.Merge3Under(Join, fixture.left, fixture.right, fixture.join); !ok {
@@ -132,10 +132,12 @@ func (fixture waveCCarrierOperationFixture) run(tb testing.TB) (int, int) {
 	if _, _, ok := fixture.work.Merge3Under(Narrow, fixture.all, fixture.left, fixture.narrow); !ok {
 		tb.Fatal("Wave-C narrow")
 	}
-	if _, _, ok := fixture.work.MergeSelectedUnder(Widen, fixture.left, fixture.all, fixture.all, fixture.widen); !ok {
+	widenCurrent, widenRight := selectedPointOperands(tb, fixture.work, fixture.left, fixture.all)
+	if _, _, ok := fixture.work.MergeSelectedPointState(Widen, widenCurrent, widenRight, widenRight, fixture.widen); !ok {
 		tb.Fatal("Wave-C widen mu")
 	}
-	if _, _, ok := fixture.work.MergeSelectedUnder(Narrow, fixture.all, fixture.left, fixture.left, fixture.narrow); !ok {
+	narrowCurrent, narrowRight := selectedPointOperands(tb, fixture.work, fixture.all, fixture.left)
+	if _, _, ok := fixture.work.MergeSelectedPointState(Narrow, narrowCurrent, narrowRight, narrowRight, fixture.narrow); !ok {
 		tb.Fatal("Wave-C narrow mu")
 	}
 
@@ -274,9 +276,6 @@ func (work waveCDeltaWork) ReindexPointContributionUnder(left RootHandle, _, _ s
 }
 func (work waveCDeltaWork) CloseContributionUnder(left, _ RootHandle, _ support.Split, _ SlotCoverage, delta *support.Work) (ChangeHandle, bool) {
 	return work.issuer.IssueChange(left, left, nil, support.Mask{}, nil, nil, delta)
-}
-func (work waveCDeltaWork) MergeSelectedUnder(_ MergeKind, _ uint64, left, _, right RootHandle, _, _ support.Split, delta *support.Work) (ChangeHandle, bool) {
-	return work.issuer.IssueChange(left, right, nil, support.Mask{}, nil, nil, delta)
 }
 func (work waveCDeltaWork) MergeSelectedContributionUnder(_ MergeKind, _ uint64, left, _, right RootHandle, _, _ support.Split, _, _, _ SlotCoverage, delta *support.Work) (ChangeHandle, bool) {
 	return work.issuer.IssueChange(left, right, nil, support.Mask{}, nil, nil, delta)

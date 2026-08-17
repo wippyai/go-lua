@@ -23,7 +23,7 @@ type operationDraft struct {
 	spawns            []spawnDraft
 	resumes           []resumeDraft
 	transfers         []transferDraft
-	gsubTable         *gsubTableReplacementDraft
+	subedgeRelation   *subedgeRelationDraft
 	effects           []effectDraft
 	effectTail        RowTail
 	effectVar         RowVar
@@ -82,6 +82,16 @@ type transferDraft struct {
 	identity     TransferIdentity
 	capabilities TransferCapabilities
 	outcomes     []TransferPossibility
+}
+
+type subedgeRelationDraft struct {
+	operand       ValueFormal
+	selector      uint32
+	subedgeSource SubedgeRef
+	subedgeRank   uint32
+	resultOutcome uint32
+	result        uint32
+	effects       []uint32
 }
 
 type callbackResultDraft struct {

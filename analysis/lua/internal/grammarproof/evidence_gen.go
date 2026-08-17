@@ -4,7 +4,7 @@ package grammarproof
 
 var Generated = Evidence{
 	Digest:      "505fe1f917db84431d0040d5536337692f4de6418b3650c69a874e832d687448",
-	TraceDigest: "6f4ce2c576486f45f83c9de624634b84c897ebcfcaa2c1130f216993c8c4cafc",
+	TraceDigest: "370ba00040f5d3dd4c3241ed701f9ce4c331bfd406242b4079b768d55a193d58",
 	Productions: []Production{
 		{Key: "afunctioncall#1", Witness: "fixture:testdata/fixtures/semantic/call-result-callable-completion/main.lua"},
 		{Key: "annotation#1", Witness: "grammar:annotations"},

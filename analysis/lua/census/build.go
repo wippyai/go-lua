@@ -74,6 +74,7 @@ func Build(root string) (Census, error) {
 		Mutations:           analysis.Mutations,
 		Slots:               slots,
 		Uses:                analysis.Uses,
+		Sequences:           analysis.Sequences,
 	}
 	result.Digest = digest(result)
 	return result, nil

@@ -12,6 +12,17 @@ import (
 // finishContributionWithPremiseAt separates a rule's outer support from its
 // authored row.  That distinction is required by the closed-contribution
 // laws: an un-authored reachable cell is Absent, rather than Present(Default).
+// closedRHSOf puts one closed Contribution into the RHS operand role that the
+// live recurrence publication consumes.
+func closedRHSOf(t testing.TB, work *carrier.Work, value carrier.Contribution) carrier.PointRHS {
+	t.Helper()
+	rhs, ok := work.PointRHSFromPointState(closedPointOf(t, work, value))
+	if !ok {
+		t.Fatal("closed RHS role")
+	}
+	return rhs
+}
+
 func finishContributionWithPremiseAt(t testing.TB, work *carrier.Work, plan carrier.ContributionPlan, scope carrier.Scope, binding *Binding[uint64, uint64], target carrier.Target, premise, authored support.Mask, value uint64) carrier.Contribution {
 	t.Helper()
 	base, ok := work.BeginContribution(plan, scope, nil, premise)
@@ -117,7 +128,7 @@ func TestRuleContributionTransportPreservesExplicitDefaultDistinctFromAbsent(t *
 		t.Fatal("absent target state")
 	}
 	absent, ok := work.EmptyContribution(absentState)
-	if !ok || work.EqualContribution(transported, absent) {
+	if !ok || work.EqualPointState(closedPointOf(t, work, transported), closedPointOf(t, work, absent)) {
 		t.Fatal("Present(Default) collapsed to Absent")
 	}
 	preserved, _, ok := work.MergeContribution(lower, absent)
@@ -247,7 +258,7 @@ func TestSelectedContributionWidenPreservesPresenceAndClosesRootToExactCoverage(
 	// support is unchanged, so it must fail before recurrence closure.
 	illegalCurrent := finishContributionAt(t, work, plan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), whole, 9)
 	illegalExact := finishContributionWithPremiseAt(t, work, plan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), whole, on, 4)
-	if next, _, accepted := work.MergeSelectedContribution(carrier.Widen, illegalCurrent, illegalCurrent, illegalExact, selected); accepted || next.Valid() {
+	if next, _, accepted := work.MergeSelectedPointState(carrier.Widen, closedPointOf(t, work, illegalCurrent), closedRHSOf(t, work, illegalCurrent), closedRHSOf(t, work, illegalExact), selected); accepted || next.Valid() {
 		t.Fatal("selected Widen accepted authored-presence descent")
 	}
 
@@ -255,7 +266,7 @@ func TestSelectedContributionWidenPreservesPresenceAndClosesRootToExactCoverage(
 	// Widen operand may rise, but it cannot add an off-C Present cell.
 	illegalSelected := finishContributionAt(t, work, plan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), whole, 9)
 	legalCurrent := finishContributionWithPremiseAt(t, work, plan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), whole, on, 5)
-	if next, _, accepted := work.MergeSelectedContribution(carrier.Widen, legalCurrent, illegalSelected, illegalExact, selected); accepted || next.Valid() {
+	if next, _, accepted := work.MergeSelectedPointState(carrier.Widen, closedPointOf(t, work, legalCurrent), closedRHSOf(t, work, illegalSelected), closedRHSOf(t, work, illegalExact), selected); accepted || next.Valid() {
 		t.Fatal("selected Widen accepted selected authored-presence descent")
 	}
 
@@ -263,7 +274,7 @@ func TestSelectedContributionWidenPreservesPresenceAndClosesRootToExactCoverage(
 	// and selectedRight, so accepting this lower selected operand could publish
 	// a result that is not an exact-RHS postfix.
 	lowerSelected := finishContributionWithPremiseAt(t, work, plan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), whole, on, 3)
-	if next, _, accepted := work.MergeSelectedContribution(carrier.Widen, legalCurrent, lowerSelected, illegalExact, selected); accepted || next.Valid() {
+	if next, _, accepted := work.MergeSelectedPointState(carrier.Widen, closedPointOf(t, work, legalCurrent), closedRHSOf(t, work, lowerSelected), closedRHSOf(t, work, illegalExact), selected); accepted || next.Valid() {
 		t.Fatal("selected Widen accepted exact-not-below-selected operand")
 	}
 
@@ -272,7 +283,7 @@ func TestSelectedContributionWidenPreservesPresenceAndClosesRootToExactCoverage(
 	current := finishContributionWithPremiseAt(t, work, plan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), whole, on, 5)
 	selectedRight := finishContributionWithPremiseAt(t, work, plan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), whole, on, 9)
 	exact := finishContributionWithPremiseAt(t, work, plan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), whole, on, 4)
-	result, _, ok := work.MergeSelectedContribution(carrier.Widen, current, selectedRight, exact, selected)
+	result, _, ok := work.MergeSelectedPointState(carrier.Widen, closedPointOf(t, work, current), closedRHSOf(t, work, selectedRight), closedRHSOf(t, work, exact), selected)
 	if !ok || !result.Support().Equal(whole) {
 		t.Fatal("selected recurrence")
 	}
@@ -370,7 +381,7 @@ func TestSelectedContributionWidenClosesUnselectedFactorToPredecessorSupport(t *
 	current := finish(on, on, 5, 7)
 	selectedRight := finish(whole, whole, 9, 8)
 	exact := finish(whole, whole, 4, 8)
-	result, changes, ok := work.MergeSelectedContribution(carrier.Widen, current, selectedRight, exact, selected)
+	result, changes, ok := work.MergeSelectedPointState(carrier.Widen, closedPointOf(t, work, current), closedRHSOf(t, work, selectedRight), closedRHSOf(t, work, exact), selected)
 	if !ok || !result.Support().Equal(whole) || !changes.Added().Equal(off) || !support.Empty(changes.Removed()) || changes.FactorCount() != 2 || changes.Count() != 2 {
 		t.Fatalf("unselected closure: ok=%t support=%t added=%t removed-empty=%t factors=%d units=%d", ok, result.Support().Equal(whole), changes.Added().Equal(off), support.Empty(changes.Removed()), changes.FactorCount(), changes.Count())
 	}
@@ -441,10 +452,10 @@ func TestSelectedContributionNarrowRequiresExactSelectedOperand(t *testing.T) {
 	current := finishContributionAt(t, work, plan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), whole, 9)
 	exact := finishContributionAt(t, work, plan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), whole, 4)
 	foreignSelected := finishContributionWithPremiseAt(t, work, plan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), whole, on, 5)
-	if next, _, accepted := work.MergeSelectedContribution(carrier.Narrow, current, foreignSelected, exact, selected); accepted || next.Valid() {
+	if next, _, accepted := work.MergeSelectedPointState(carrier.Narrow, closedPointOf(t, work, current), closedRHSOf(t, work, foreignSelected), closedRHSOf(t, work, exact), selected); accepted || next.Valid() {
 		t.Fatal("selected Narrow accepted foreign selected RHS")
 	}
-	result, _, ok := work.MergeSelectedContribution(carrier.Narrow, current, exact, exact, selected)
+	result, _, ok := work.MergeSelectedPointState(carrier.Narrow, closedPointOf(t, work, current), closedRHSOf(t, work, exact), closedRHSOf(t, work, exact), selected)
 	if !ok {
 		t.Fatal("canonical selected Narrow")
 	}

@@ -1,5 +1,5 @@
 // Package manifesttarget composes canonical provider manifests into the
-// neutral target ABI. Providers own declarations; this package owns only the
+// neutral Target ABI. Providers own declarations; this package owns the
 // Lua-domain operational projection and boot policy.
 package manifesttarget
 

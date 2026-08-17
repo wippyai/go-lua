@@ -66,7 +66,7 @@ func TestBootLedgerSealsTypedCanonicalRows(t *testing.T) {
 	if alias, ok := contract.InitialValueRoot(shapeValue); !ok || alias != global {
 		t.Fatalf("boot root alias = %d/%v, want %d", alias, ok, global)
 	}
-	globalValue, _, ok := contract.InitialEntry(global, bootExactKey(t, contract, "_G"))
+	globalValue, _, _ := contract.InitialEntry(global, bootExactKey(t, contract, "_G"))
 	if class, value, root, key, ok := contract.InitialBinding("_G"); !ok || class != InitialBindingOrdinary || value != globalValue || root != global || bootExactKeyText(contract, key) != "_G" {
 		t.Fatalf("_G binding = %d/%d/%d/%d/%v", class, value, root, key, ok)
 	}
@@ -99,15 +99,15 @@ func TestBootLedgerSealsTypedCanonicalRows(t *testing.T) {
 	if class, value, _, _, ok := contract.InitialBinding("load"); !ok || class != InitialBindingDenied || value != denied {
 		t.Fatalf("load binding class = %d/%v", class, ok)
 	}
-	version, _, ok := contract.InitialEntry(global, bootExactKey(t, contract, "_VERSION"))
+	version, _, _ := contract.InitialEntry(global, bootExactKey(t, contract, "_VERSION"))
 	if text, ok := contract.InitialValueString(version); !ok || text != "Lua 5.3" {
 		t.Fatalf("version = %q/%v", text, ok)
 	}
-	pi, _, ok := contract.InitialEntry(global, bootExactKey(t, contract, "pi"))
+	pi, _, _ := contract.InitialEntry(global, bootExactKey(t, contract, "pi"))
 	if bits, ok := contract.InitialValueFloatBits(pi); !ok || bits != math.Float64bits(math.Pi) {
 		t.Fatalf("pi bits = %x/%v", bits, ok)
 	}
-	absent, _, ok := contract.InitialEntry(global, bootExactKey(t, contract, "not_present"))
+	absent, _, _ := contract.InitialEntry(global, bootExactKey(t, contract, "not_present"))
 	if kind, ok := contract.InitialValueKind(absent); !ok || kind != InitialValueAbsent {
 		t.Fatalf("absent kind = %d/%v", kind, ok)
 	}

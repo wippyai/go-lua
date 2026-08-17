@@ -186,7 +186,7 @@ func (compiler *compiler) copyValuesFailure() CompileFailure {
 			members[memberIndex] = ValuesMember{id: memberID}
 		}
 		tail := ValuesTail{}
-		tailKind := ValuesTailInvalid
+		var tailKind ValuesTailKind
 		if tailTerm != 0 {
 			tailFamily := keyspace.TermFamily(tailTerm)
 			var tailOK bool

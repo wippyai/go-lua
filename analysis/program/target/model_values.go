@@ -113,15 +113,15 @@ type ResultAliasSpec struct {
 	Source InputSource
 }
 
-// GsubTableReplacementSpec is the one closed string.gsub replacement-table
-// branch.  It is deliberately not a callback or a generic subedge recipe:
-// Lua chooses the first capture when present and otherwise the complete match
-// as the dynamic table key, then performs this exact IndexGet access.
-// ResultOutcome and Result correlate the completed substitution to the
-// existing outer result. EffectAliases name existing owning-operation effects.
-type GsubTableReplacementSpec struct {
-	Replacement   ValueFormal
-	Access        SubedgeRef
+// SubedgeRelationSpec records one neutral correlation between an operation's
+// existing value formal, one existing Subedge, and one existing outcome
+// result. Selector is an opaque domain-supplied discriminator; Target stores
+// it for canonical identity but does not assign it domain meaning. Effect
+// aliases name existing owning-operation effects.
+type SubedgeRelationSpec struct {
+	Operand       ValueFormal
+	Selector      uint32
+	Subedge       SubedgeRef
 	ResultOutcome uint32
 	Result        uint32
 	EffectAliases []uint32
@@ -383,20 +383,20 @@ type RowSpec struct {
 // a colon call contributes its receiver as Input.Fixed[0], so target has no
 // separate call-form or receiver plane.
 type OperationSpec struct {
-	Bindings             []BindingSpec
-	TypeFormals          []TypeFormalSpec
-	ValuesVars           uint32
-	RowFormals           uint32
-	Input                ValuesSpec
-	Outcomes             []OutcomeSpec
-	Callbacks            []CallbackSpec
-	Subedges             []SubedgeSpec
-	Suspensions          []SuspensionSpec
-	Spawns               []SpawnSpec
-	Resumes              []ResumeSpec
-	Transfers            []TransferSpec
-	GsubTableReplacement *GsubTableReplacementSpec
-	Effects              RowSpec
+	Bindings        []BindingSpec
+	TypeFormals     []TypeFormalSpec
+	ValuesVars      uint32
+	RowFormals      uint32
+	Input           ValuesSpec
+	Outcomes        []OutcomeSpec
+	Callbacks       []CallbackSpec
+	Subedges        []SubedgeSpec
+	Suspensions     []SuspensionSpec
+	Spawns          []SpawnSpec
+	Resumes         []ResumeSpec
+	Transfers       []TransferSpec
+	SubedgeRelation *SubedgeRelationSpec
+	Effects         RowSpec
 }
 
 // TypeFormalSpec declares one operation-local formal coordinate. The

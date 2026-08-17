@@ -76,7 +76,7 @@ func validateSubedgeRecurrence(edges []subedgeDraft, callbacks []callbackDraft) 
 	outgoing := make([][]int, len(edges))
 	incoming := make([][]int, len(edges))
 	addRoute := func(from int, route subedgeRouteDraft) error {
-		if route.route != RouteSubedge && !(route.route == RouteRejectYield && route.subedge != 0) {
+		if route.route != RouteSubedge && (route.route != RouteRejectYield || route.subedge == 0) {
 			return nil
 		}
 		if uint64(route.subedgeRank) >= uint64(len(edges)) {
@@ -199,7 +199,7 @@ func subedgeSelfReenters(index int, outgoing [][]int) bool {
 }
 
 func collectInboundSubedgeRoute(inbound [][]*subedgeRouteDraft, route *subedgeRouteDraft) {
-	if route.route != RouteSubedge && !(route.route == RouteRejectYield && route.subedge != 0) {
+	if route.route != RouteSubedge && (route.route != RouteRejectYield || route.subedge == 0) {
 		return
 	}
 	if uint64(route.subedgeRank) >= uint64(len(inbound)) {

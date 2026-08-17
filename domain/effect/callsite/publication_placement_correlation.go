@@ -34,6 +34,11 @@ type PublicationPlacementCorrelationCandidate struct {
 	escape      target.PublicationEscapeDisposition
 	mutability  target.PublicationMutabilityDisposition
 	lifetime    target.PublicationLifetimeDisposition
+	// sealed is stamped by the sole issuance path once the scalar derivation
+	// has been run over the retained fields. It is unreachable outside this
+	// package, so a hand-built or zero-valued row carries no seal and reads
+	// nothing, and the fields are never written again after issuance.
+	sealed bool
 }
 
 func publicationPlacementCorrelationID(proof, descriptor, occurrence, mount, call, subject, destination identity.ContentID, hasContext bool, kind target.PublicationEffectKind, escape target.PublicationEscapeDisposition, mutability target.PublicationMutabilityDisposition, lifetime target.PublicationLifetimeDisposition) identity.ContentID {
@@ -69,11 +74,17 @@ func publicationPlacementConsequencesValid(kind target.PublicationEffectKind, es
 		mutability != target.PublicationMutabilityInvalid && lifetime != target.PublicationLifetimeInvalid
 }
 
+// valid reads the seal stamped at issuance. The scalar derivation that
+// authenticates the retained fields runs once, where the row seals, and Valid
+// is where it is replayed; a projection therefore reads a sealed row rather
+// than rehashing the same twelve inputs on every scalar it hands back.
 func (candidate PublicationPlacementCorrelationCandidate) valid() bool {
-	if !candidate.id.Available() {
-		return false
-	}
-	return candidate.id == publicationPlacementCorrelationID(
+	return candidate.sealed && candidate.id.Available()
+}
+
+// derivedID recomputes the scalar seal from the retained fields.
+func (candidate PublicationPlacementCorrelationCandidate) derivedID() identity.ContentID {
+	return publicationPlacementCorrelationID(
 		candidate.proof, candidate.descriptor, candidate.occurrence, candidate.mount, candidate.call,
 		candidate.subject, candidate.destination, candidate.hasContext, candidate.kind, candidate.escape,
 		candidate.mutability, candidate.lifetime,
@@ -81,9 +92,13 @@ func (candidate PublicationPlacementCorrelationCandidate) valid() bool {
 }
 
 // Valid reports that the detached candidate's scalar seal has not been
-// spliced or mutated. It intentionally does not re-read its original proof:
-// the proof was consumed at issuance and is not retained.
-func (candidate PublicationPlacementCorrelationCandidate) Valid() bool { return candidate.valid() }
+// spliced or mutated, by rederiving it from the retained fields. It
+// intentionally does not re-read its original proof: the proof was consumed at
+// issuance and is not retained. Every cross-owner admission of a correlation
+// passes this fence before reading the row's scalars.
+func (candidate PublicationPlacementCorrelationCandidate) Valid() bool {
+	return candidate.valid() && candidate.id == candidate.derivedID()
+}
 
 // NewPublicationPlacementCorrelationCandidate admits one exact completed
 // PublicationTransitionProof. The subject must be the identical Pack selector
@@ -134,8 +149,9 @@ func NewPublicationPlacementCorrelationCandidate(proof PublicationTransitionProo
 		subject: subjectID, destination: destinationID, hasContext: hasContext,
 		kind: proof.Kind(), escape: proof.Escape(), mutability: proof.Mutability(), lifetime: proof.Lifetime(),
 	}
-	candidate.id = publicationPlacementCorrelationID(candidate.proof, candidate.descriptor, candidate.occurrence, candidate.mount, candidate.call, candidate.subject, candidate.destination, candidate.hasContext, candidate.kind, candidate.escape, candidate.mutability, candidate.lifetime)
-	return candidate, candidate.valid()
+	candidate.id = candidate.derivedID()
+	candidate.sealed = true
+	return candidate, candidate.Valid()
 }
 
 func (candidate PublicationPlacementCorrelationCandidate) ContentID() (identity.ContentID, bool) {

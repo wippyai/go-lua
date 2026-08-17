@@ -27,14 +27,12 @@
 // per-category population law is what makes the vocabulary total.
 //
 // The ingress boundary reads this table: its arm, event, and outcome
-// projections are lookups of the declared ordinals. The artifact, engine, and
-// solver-schedule spellings stay constants of their own packages, pinned to
-// these ordinals by law. Those artifact ordinals are compiled from the Program
-// at load and reach no byte stream of their own - the serialized authorities
-// are the program's source, flow, static, and imports sections - so which side
-// numbers a member is an architectural choice rather than a wire commitment.
-// What the pin laws hold is the agreement between the spellings, and that
-// agreement is what every projection here depends on.
+// projections are lookups of the declared ordinals. The artifact and engine
+// projections consume neutral identities from this package. Those ordinals are
+// compiled from the Program at load and reach no byte stream of their own - the
+// serialized authorities are the program's source, flow, static, and imports
+// sections - so the canonical identity remains a schema concern rather than a
+// domain-composition concern.
 //
 // The diagnostic publication catalogs - the observation populations a row is
 // measured over, the families publication is gated by, and the severities a row
@@ -107,10 +105,8 @@ const (
 	CategoryConstraintForm
 	// CategoryDiagnosticObservation is the vocabulary of reusable semantic
 	// observation populations an artifact issues and a diagnostic row is
-	// measured over. Its ordinals are the artifact's own observation numbering,
-	// which is folded into the identity of every issued observation, so a
-	// consumer holding an artifact-compiled kind resolves the declared member at
-	// that ordinal.
+	// measured over. Its canonical identities and ordinals are declared by this
+	// package and contributed to the sealed table by composition.
 	CategoryDiagnosticObservation
 	// CategoryDiagnosticFamily is the vocabulary of publication families: the
 	// gates a consumer enables findings by at the query boundary. A published

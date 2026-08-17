@@ -431,17 +431,17 @@ type TypeValues struct{ viewAccess }
 // identity must not retain the full authored Flow graph through it.
 type Cold struct{ contentID identity.ContentID }
 
-func (view View) Values() Values         { return Values{viewAccess: view.viewAccess} }
-func (view View) Access() Access         { return Access{viewAccess: view.viewAccess} }
-func (view View) Storage() Storage       { return Storage{viewAccess: view.viewAccess} }
-func (view View) Tables() Tables         { return Tables{viewAccess: view.viewAccess} }
-func (view View) Fields() Fields         { return Fields{viewAccess: view.viewAccess} }
-func (view View) Functions() Functions   { return Functions{viewAccess: view.viewAccess} }
-func (view View) Calls() Calls           { return Calls{viewAccess: view.viewAccess} }
-func (view View) Operators() Operators   { return Operators{viewAccess: view.viewAccess} }
-func (view View) Control() Control       { return Control{viewAccess: view.viewAccess} }
-func (view View) Claims() Claims         { return Claims{viewAccess: view.viewAccess} }
-func (view View) TypeValues() TypeValues { return TypeValues{viewAccess: view.viewAccess} }
+func (view View) Values() Values         { return Values(view) }
+func (view View) Access() Access         { return Access(view) }
+func (view View) Storage() Storage       { return Storage(view) }
+func (view View) Tables() Tables         { return Tables(view) }
+func (view View) Fields() Fields         { return Fields(view) }
+func (view View) Functions() Functions   { return Functions(view) }
+func (view View) Calls() Calls           { return Calls(view) }
+func (view View) Operators() Operators   { return Operators(view) }
+func (view View) Control() Control       { return Control(view) }
+func (view View) Claims() Claims         { return Claims(view) }
+func (view View) TypeValues() TypeValues { return TypeValues(view) }
 func (view View) Cold() Cold {
 	if !view.active() {
 		return Cold{}

@@ -101,9 +101,7 @@ func (c *Contract) appendSubedgeArgumentOrigins(input []subedgeArgumentOriginDra
 		return indexRange{}, err
 	}
 	for _, origin := range input {
-		c.subedgeOrigins = append(c.subedgeOrigins, subedgeArgumentOriginRow{
-			segment: origin.segment, index: origin.index, kind: origin.kind, source: origin.source,
-		})
+		c.subedgeOrigins = append(c.subedgeOrigins, subedgeArgumentOriginRow(origin))
 	}
 	return rangeOut, nil
 }

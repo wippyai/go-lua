@@ -58,7 +58,7 @@ func proveImportAlias(t *testing.T, openTail bool) {
 	if err != nil {
 		t.Fatalf("source.Finalizer: %v", err)
 	}
-	defer sourceFinalizer.Abort()
+	defer func() { _ = sourceFinalizer.Abort() }()
 
 	bindValues := authored.Value{Owner: body}
 	if openTail {
@@ -98,7 +98,7 @@ func proveImportAlias(t *testing.T, openTail bool) {
 	if err != nil {
 		t.Fatalf("authored.Finalizer: %v", err)
 	}
-	defer flowFinalizer.Abort()
+	defer func() { _ = flowFinalizer.Abort() }()
 
 	moduleDraft, err := imports.Build(imports.Input{Imports: []imports.Import{{Term: importTerm, Call: call, Alias: aliasCell, Request: keyspace.MakeTerm(keyspace.FamilyString, 1)}}})
 	if err != nil {
@@ -108,7 +108,7 @@ func proveImportAlias(t *testing.T, openTail bool) {
 	if err != nil {
 		t.Fatalf("imports.Finalizer: %v", err)
 	}
-	defer moduleFinalizer.Abort()
+	defer func() { _ = moduleFinalizer.Abort() }()
 
 	staticDraft, err := static.Build(static.Input{})
 	if err != nil {
@@ -118,7 +118,7 @@ func proveImportAlias(t *testing.T, openTail bool) {
 	if err != nil {
 		t.Fatalf("static.Finalizer: %v", err)
 	}
-	defer staticFinalizer.Abort()
+	defer func() { _ = staticFinalizer.Abort() }()
 
 	flowView := flowFinalizer.View()
 	bindings := selectorBindingProof(t, sourceFinalizer.Preimage(), flowView, staticFinalizer.View(), body)
@@ -168,7 +168,7 @@ func TestSealRejectsUnaryDenominatorMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("source.Finalizer: %v", err)
 	}
-	defer sourceFinalizer.Abort()
+	defer func() { _ = sourceFinalizer.Abort() }()
 
 	flowCounts := sourceCounts
 	flowCounts[keyspace.FamilyUnary] = 0
@@ -180,7 +180,7 @@ func TestSealRejectsUnaryDenominatorMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("authored.Finalizer: %v", err)
 	}
-	defer flowFinalizer.Abort()
+	defer func() { _ = flowFinalizer.Abort() }()
 
 	moduleDraft, err := imports.Build(imports.Input{})
 	if err != nil {
@@ -190,7 +190,7 @@ func TestSealRejectsUnaryDenominatorMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("imports.Finalizer: %v", err)
 	}
-	defer moduleFinalizer.Abort()
+	defer func() { _ = moduleFinalizer.Abort() }()
 
 	staticDraft, err := static.Build(static.Input{})
 	if err != nil {
@@ -200,7 +200,7 @@ func TestSealRejectsUnaryDenominatorMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("static.Finalizer: %v", err)
 	}
-	defer staticFinalizer.Abort()
+	defer func() { _ = staticFinalizer.Abort() }()
 
 	flowView := flowFinalizer.View()
 	bindings := selectorBindingProof(t, sourceFinalizer.Preimage(), flowView, staticFinalizer.View(), body)

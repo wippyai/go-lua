@@ -7,43 +7,43 @@ import (
 
 func (component *Component) View() View { return View{component: component} }
 
-func (view View) Types() Types { return Types{component: view.component, state: view.state} }
+func (view View) Types() Types { return Types(view) }
 func (view View) References() References {
-	return References{component: view.component, state: view.state}
+	return References(view)
 }
 func (view View) Declarations() Declarations {
-	return Declarations{component: view.component, state: view.state}
+	return Declarations(view)
 }
 func (view View) Publications() Publications {
-	return Publications{component: view.component, state: view.state}
+	return Publications(view)
 }
 
 func (view Declarations) Aliases() Aliases {
-	return Aliases{component: view.component, state: view.state}
+	return Aliases(view)
 }
 func (view Declarations) TypeParams() TypeParams {
-	return TypeParams{component: view.component, state: view.state}
+	return TypeParams(view)
 }
 func (view Declarations) Interfaces() Interfaces {
-	return Interfaces{component: view.component, state: view.state}
+	return Interfaces(view)
 }
 
 func (view Types) Primitives() Primitives {
-	return Primitives{component: view.component, state: view.state}
+	return Primitives(view)
 }
-func (view Types) Literals() Literals { return Literals{component: view.component, state: view.state} }
+func (view Types) Literals() Literals { return Literals(view) }
 func (view Types) Optionals() Optionals {
-	return Optionals{component: view.component, state: view.state}
+	return Optionals(view)
 }
-func (view Types) Unions() Unions { return Unions{component: view.component, state: view.state} }
+func (view Types) Unions() Unions { return Unions(view) }
 func (view Types) Intersections() Intersections {
-	return Intersections{component: view.component, state: view.state}
+	return Intersections(view)
 }
-func (view Types) Generics() Generics { return Generics{component: view.component, state: view.state} }
-func (view Types) Arrays() Arrays     { return Arrays{component: view.component, state: view.state} }
-func (view Types) Maps() Maps         { return Maps{component: view.component, state: view.state} }
-func (view Types) Records() Records   { return Records{component: view.component, state: view.state} }
-func (view Types) Fields() Fields     { return Fields{component: view.component, state: view.state} }
+func (view Types) Generics() Generics { return Generics(view) }
+func (view Types) Arrays() Arrays     { return Arrays(view) }
+func (view Types) Maps() Maps         { return Maps(view) }
+func (view Types) Records() Records   { return Records(view) }
+func (view Types) Fields() Fields     { return Fields(view) }
 
 func (view Primitives) Count() int {
 	component := view.componentOf()

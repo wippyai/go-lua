@@ -80,7 +80,7 @@ func (d *operationDraft) freezeSubedges(input []SubedgeSpec) ([]subedgeDraft, er
 }
 
 func resolveSubedgeRouteSibling(route *subedgeRouteDraft, ranks []uint32, all []subedgeDraft) error {
-	if route.route != RouteSubedge && !(route.route == RouteRejectYield && route.subedge != 0) {
+	if route.route != RouteSubedge && (route.route != RouteRejectYield || route.subedge == 0) {
 		return nil
 	}
 	if route.subedge == 0 || uint64(route.subedge) > uint64(len(ranks)) {
@@ -217,7 +217,7 @@ func (d *operationDraft) freezeCallCallee(edge *subedgeDraft, item SubedgeSpec, 
 		edge.arguments, edge.outcomes, edge.admission = arguments, outcomes, item.Admission
 		return nil
 	default:
-		return errors.New("Call family has invalid callee")
+		return errors.New("call family has invalid callee")
 	}
 }
 
@@ -308,7 +308,7 @@ func (d *operationDraft) validateArgumentOrigin(origin ArgumentOrigin, arguments
 	switch origin.Kind {
 	case ArgumentSourceRule:
 		if origin.Source != (InputSource{}) {
-			return errors.New("Rule origin carries direct input")
+			return errors.New("rule origin carries direct input")
 		}
 		return nil
 	case ArgumentSourceInput:

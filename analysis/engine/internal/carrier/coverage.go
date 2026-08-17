@@ -544,16 +544,6 @@ func slotCoverageContains(super, sub slotCoverage) bool {
 	return subIndex == len(sub.targets)
 }
 
-// EqualContribution compares closed contributions in the lifted authored
-// algebra.  Target rows are deliberately compared by their typed extensional
-// presence/value semantics rather than by their private generator spelling:
-// two aliasing Target rows can therefore be equal without manufacturing a
-// key-level carrier surface. A coverage-only change remains visible whenever
-// it changes that extensional surface.
-func (work *Work) EqualContribution(left, right Contribution) bool {
-	return work != nil && work.admittedContribution(left) && work.admittedContribution(right) && work.equalContributionSurface(left.state, left.coverage, right.state, right.coverage)
-}
-
 // validContributionSurface is the common private role fence for all lifted
 // comparisons.  A PointState and PointRHS use the same State+C storage as a
 // RuleContribution, but they may retain physical root fibers outside their
@@ -596,44 +586,14 @@ func (work *Work) equalContributionSurface(leftState State, leftCoverage contrib
 
 func coverageRows(slot slotCoverage) SlotCoverage { return SlotCoverage{value: &slot} }
 
-func (work *Work) ReplaceContribution(old, recomputed Contribution) (Contribution, ChangeSet, bool) {
-	if !work.admittedContribution(old) || !work.admittedContribution(recomputed) {
-		return Contribution{}, ChangeSet{}, false
-	}
-	state, changes, ok := work.Replace(old.state, recomputed.state)
-	if !ok {
-		return Contribution{}, ChangeSet{}, false
-	}
-	result, valid := work.admitConstructedContribution(state, recomputed.coverage)
-	return result, changes, valid
-}
-
-// MergeSelectedContribution is the paired closed recurrence publication.
-// Its output presence is always the exact RHS coverage.  The phase fences at
-// the executor establish that a selected Widen result remains within that
-// exact surface; retaining historical current coverage here would make
-// Present(Default) survive an exact RHS descent.
-func (work *Work) MergeSelectedContribution(kind MergeKind, current, selectedRight, exactRight Contribution, selected MergeScope) (Contribution, ChangeSet, bool) {
-	if !work.admittedContribution(current) || !work.admittedContribution(selectedRight) || !work.admittedContribution(exactRight) {
-		return Contribution{}, ChangeSet{}, false
-	}
-	state, changes, ok := work.mergeSelectedContributionSurface(kind, current.state, current.coverage, selectedRight.state, selectedRight.coverage, exactRight.state, exactRight.coverage, selected)
-	if !ok {
-		return Contribution{}, ChangeSet{}, false
-	}
-	result, valid := work.admitConstructedContribution(state, exactRight.coverage)
-	return result, changes, valid
-}
-
 // mergeSelectedContributionSurface is the sole physical recurrence
-// transaction for both legacy closed Contributions and nominal PointState /
-// PointRHS values.  The inputs are private paired State+C headers, never a
-// raw State relabelled as an RHS.  Its output is physically closed to exact C
-// even when the current PointState retains a latent root outside support.
+// transaction. Its inputs are private paired State+C headers, never a raw
+// State relabelled as an RHS.  Its output is physically closed to exact C even
+// when the current PointState retains a latent root outside support.
 //
 // Keeping this transaction role-neutral is important: recurrence has one
-// carrier authority and one exact-C law, regardless of whether the executor
-// is still using compatibility Contribution storage or nominal point roles.
+// carrier authority and one exact-C law for every nominal point role that
+// reaches it.
 func (work *Work) mergeSelectedContributionSurface(kind MergeKind, currentState State, currentCoverage contributionCoverage, selectedState State, selectedCoverage contributionCoverage, exactState State, exactCoverage contributionCoverage, selected MergeScope) (State, ChangeSet, bool) {
 	if !work.validContributionSurface(currentState, currentCoverage) || !work.validContributionSurface(selectedState, selectedCoverage) || !work.validContributionSurface(exactState, exactCoverage) || !selected.validFor(work.composition, kind) {
 		return State{}, ChangeSet{}, false
@@ -652,6 +612,16 @@ func (work *Work) mergeSelectedContributionSurface(kind MergeKind, currentState 
 	// selected operand would let a foreign authored surface or value influence
 	// selected keys before the final exact-C close.
 	if kind == Narrow && !work.equalContributionSurface(selectedState, selectedCoverage, exactState, exactCoverage) {
+		return State{}, ChangeSet{}, false
+	}
+	// Narrow publishes a mixed surface whose unselected slots are closed
+	// directly from exactRight. Proving descent only on the selected keys is
+	// therefore not enough: an unselected Factor could grow in exactRight and
+	// make the published transition globally incomparable to its predecessor.
+	// lessOrEqContributionSurface is the closed lifted order authority, so the
+	// whole exact surface must be below current before any slot prepares a
+	// candidate.
+	if kind == Narrow && !work.lessOrEqContributionSurface(exactState, exactCoverage, currentState, currentCoverage) {
 		return State{}, ChangeSet{}, false
 	}
 	// This proof applies even to an empty selection, whose implementation is
@@ -914,15 +884,6 @@ func (set CoverageChangeSet) TargetAt(index int) (CoverageTargetRegion, bool) {
 }
 func (composition *Composition) OwnsCoverageChangeSet(set CoverageChangeSet) bool {
 	return composition != nil && set.composition == composition
-}
-
-// CoverageChanges derives both the slot/guard wake projection and the exact
-// Target-local delta used by sparse structural transport.
-func (work *Work) CoverageChanges(left, right Contribution) (CoverageChangeSet, bool) {
-	if !work.live() || !work.admittedContribution(left) || !work.admittedContribution(right) || left.coverage.composition != work.composition || right.coverage.composition != work.composition {
-		return CoverageChangeSet{}, false
-	}
-	return work.coverageChangesSurface(left.coverage, right.coverage, true)
 }
 
 // coverageChangesSurface derives one Target-local delta from two private

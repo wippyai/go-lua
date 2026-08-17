@@ -3,8 +3,8 @@ package target
 import (
 	"errors"
 
-	"github.com/wippyai/go-lua/internal/framing"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 func encodeOperation(w *framing.Writer, c *Contract, op Operation) error {
@@ -413,33 +413,33 @@ func encodeOperation(w *framing.Writer, c *Contract, op Operation) error {
 			return err
 		}
 	}
-	if replacement, key, access, resultOutcome, result, present := c.GsubTableReplacement(op); present {
+	if operand, selector, subedge, resultOutcome, result, present := c.OperationSubedgeRelation(op); present {
 		if err := w.Bool(true); err != nil {
 			return err
 		}
-		if err := w.Record(recordGsubTableReplacement); err != nil {
+		if err := w.Record(recordOperationSubedgeRelation); err != nil {
 			return err
 		}
-		for _, value := range []uint64{uint64(replacement), uint64(key), uint64(resultOutcome), uint64(result)} {
+		for _, value := range []uint64{uint64(operand), uint64(selector), uint64(resultOutcome), uint64(result)} {
 			if err := w.Uint(value); err != nil {
 				return err
 			}
 		}
-		role, found := c.SubedgeRole(access)
+		role, found := c.SubedgeRole(subedge)
 		if !found || role == 0 {
-			return errors.New("target: malformed gsub table access")
+			return errors.New("target: malformed operation subedge relation")
 		}
 		if err := w.Uint(uint64(role)); err != nil {
 			return err
 		}
-		aliases := c.GsubTableReplacementEffectAliasCount(op)
+		aliases := c.OperationSubedgeRelationEffectAliasCount(op)
 		if err := w.Count(uint64(aliases)); err != nil {
 			return err
 		}
 		for index := 0; index < aliases; index++ {
-			effect, found := c.GsubTableReplacementEffectAliasAt(op, index)
+			effect, found := c.OperationSubedgeRelationEffectAliasAt(op, index)
 			if !found {
-				return errors.New("target: malformed gsub table effect alias")
+				return errors.New("target: malformed operation subedge relation effect alias")
 			}
 			if err := w.Uint(uint64(effect)); err != nil {
 				return err

@@ -63,7 +63,7 @@ func (s *resetState) appendEdgeOrigin(from, to, owner, decision keyspace.Term, t
 	if uint64(len(s.edgeRows)) >= uint64(^uint32(0)) {
 		return errors.New("program/flow/causal: Edge denominator overflows")
 	}
-	if s.planState == nil || s.planState.builder == nil {
+	if s.planState == nil || s.builder == nil {
 		return errors.New("program/flow/causal: route plan builder is unavailable")
 	}
 	origin := supplied
@@ -74,16 +74,16 @@ func (s *resetState) appendEdgeOrigin(from, to, owner, decision keyspace.Term, t
 			return err
 		}
 	}
-	ordinal := s.planState.nextOrdinal
-	if err := s.planState.builder.Emit(routeplan.Route{From: from, To: to, Decision: decision, Truth: truth, Arm: routeplan.ArmLocal}, origin); err != nil {
+	ordinal := s.nextOrdinal
+	if err := s.builder.Emit(routeplan.Route{From: from, To: to, Decision: decision, Truth: truth, Arm: routeplan.ArmLocal}, origin); err != nil {
 		return err
 	}
-	s.planState.nextOrdinal++
+	s.nextOrdinal++
 	if arcIndex >= 0 {
-		if arcIndex >= len(s.planState.arcOrdinal) || s.planState.arcOrdinal[arcIndex] >= 0 {
+		if arcIndex >= len(s.arcOrdinal) || s.arcOrdinal[arcIndex] >= 0 {
 			return errors.New("program/flow/causal: structural Arc has multiple planned routes")
 		}
-		s.planState.arcOrdinal[arcIndex] = ordinal
+		s.arcOrdinal[arcIndex] = ordinal
 	}
 	s.edgeRows = append(s.edgeRows, row)
 	s.edgeOwners = append(s.edgeOwners, owner)

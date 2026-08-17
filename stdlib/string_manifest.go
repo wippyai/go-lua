@@ -6,7 +6,10 @@ import (
 	typetable "github.com/wippyai/go-lua/domain/type/table"
 	"github.com/wippyai/go-lua/domain/type/typ"
 	"github.com/wippyai/go-lua/domain/type/typeexpr"
+	moduleio "github.com/wippyai/go-lua/manifest/wire"
 )
+
+const stringMetatableRoot = "StringMetatableRoot"
 
 var stringCapture = typeexpr.Union(typ.String, typ.Number)
 
@@ -37,9 +40,6 @@ func stringDeclaration() declaration {
 		"format": authored(typ.Func().
 			Param("format", typ.String).Variadic(typ.Any).Returns(typ.String).Build(),
 			ownership.BorrowAll{}).operational(replacement(formatProfile())),
-		"gfind": openAuthored("stdlib.string.gmatch.iterator", typ.Func().
-			Param("s", typ.String).Param("pattern", typ.String).
-			Returns(iterator, typ.Any).Build(), ownership.BorrowAll{}),
 		"gmatch": openAuthored("stdlib.string.gmatch.iterator", typ.Func().
 			Param("s", typ.String).Param("pattern", typ.String).
 			Returns(iterator, typ.Any).Build(), ownership.BorrowAll{}).operational(stringGmatchOperationLaw()),
@@ -76,5 +76,18 @@ func stringDeclaration() declaration {
 		// OpenString publishes the module itself under this visible field while
 		// also using it as the string metatable's index target.
 		"__index": typ.Any,
+	}, initialRoots: []moduleio.InitialRoot{
+		{Identity: stringMetatableRoot, Aggregate: moduleio.InitialAggregateMetatable},
+	}, initialEntries: []moduleio.InitialEntry{
+		{
+			Root: moduleio.DeclaredInitialRoot(stringMetatableRoot), Key: "__index",
+			Value: moduleio.InitialRootValue(moduleio.ProviderModuleRoot()), Mutability: moduleio.InitialMutable,
+		},
+		{
+			Root: moduleio.ProviderModuleRoot(), Key: "__index",
+			Value: moduleio.InitialRootValue(moduleio.ProviderModuleRoot()), Mutability: moduleio.InitialMutable,
+		},
+	}, initialMetatables: []moduleio.InitialMetatableAttachment{
+		{Primitive: moduleio.InitialPrimitiveString, Metatable: moduleio.DeclaredInitialRoot(stringMetatableRoot)},
 	}}
 }

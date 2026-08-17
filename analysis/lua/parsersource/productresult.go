@@ -19,6 +19,11 @@ func (b *productBuilder) result() (ProductAnalysis, error) {
 		}
 		analysis.Products = append(analysis.Products, products...)
 		analysis.Uses = append(analysis.Uses, b.scopeUses(scope, ordered)...)
+		sequences, sequenceErr := b.scopeSequences(scope, ordered)
+		if sequenceErr != nil {
+			return ProductAnalysis{}, sequenceErr
+		}
+		analysis.Sequences = append(analysis.Sequences, sequences...)
 	}
 	analysis.Mutations = b.scopeMutations()
 	if len(analysis.Products) == 0 {

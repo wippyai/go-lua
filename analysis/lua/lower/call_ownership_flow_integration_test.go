@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/program/flow"
-	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
@@ -238,7 +237,7 @@ func TestSourceApplicationSelectKeepsBothArms(t *testing.T) {
 	p := parseBindLower(t, `local left, right = true, false; return left and right, left or right`)
 	flow := p.Flow()
 	selects := flow.Authored().Operators().Selects()
-	for index, want := range []kind.SelectOp{kind.SelectAnd, kind.SelectOr} {
+	for index, want := range []flowkind.SelectOp{flowkind.SelectAnd, flowkind.SelectOr} {
 		term, ok := selects.At(index)
 		if !ok {
 			t.Fatalf("missing Select %d", index)

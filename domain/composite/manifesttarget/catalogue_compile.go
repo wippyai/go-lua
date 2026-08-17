@@ -57,6 +57,13 @@ func operationFromManifest(declaration manifest.Function) (OperationSpec, error)
 		base = converted
 	}
 	applyOperationAmendments(&base, law)
+	if value := law.SubedgeRelation; value != nil {
+		base.SubedgeRelation = &SubedgeRelationSpec{
+			Operand: ValueFormal(value.Operand), Selector: value.Selector, Subedge: SubedgeRef(value.Subedge),
+			ResultOutcome: value.ResultOutcome, Result: value.Result,
+			EffectAliases: append([]uint32(nil), value.EffectAliases...),
+		}
+	}
 	return base, nil
 }
 
@@ -100,9 +107,9 @@ func convertOperation(in moduleio.Operation) (OperationSpec, error) {
 		}
 		out.Resumes = append(out.Resumes, resume)
 	}
-	if value := in.GsubTableReplacement; value != nil {
-		out.GsubTableReplacement = &GsubTableReplacementSpec{
-			Replacement: ValueFormal(value.Replacement), Access: SubedgeRef(value.Access),
+	if value := in.SubedgeRelation; value != nil {
+		out.SubedgeRelation = &SubedgeRelationSpec{
+			Operand: ValueFormal(value.Operand), Selector: value.Selector, Subedge: SubedgeRef(value.Subedge),
 			ResultOutcome: value.ResultOutcome, Result: value.Result,
 			EffectAliases: append([]uint32(nil), value.EffectAliases...),
 		}

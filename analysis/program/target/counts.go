@@ -81,7 +81,7 @@ func (c *Contract) buildCountRows() (denominator.CountRows, error) {
 	put(ids.TargetBootEntry, uint64(c.InitialEntryCount()))
 	put(ids.TargetBootMetatableAttachment, uint64(c.InitialMetatableAttachmentCount()))
 	put(ids.TargetBootBinding, uint64(c.InitialBindingCount()))
-	put(ids.TargetGsub, 0)
+	put(ids.TargetSubedgeRelation, 0)
 
 	for index := 0; index < c.OperationCount(); index++ {
 		op, ok := c.OperationAt(index)
@@ -160,7 +160,7 @@ func (c *Contract) buildCountRows() (denominator.CountRows, error) {
 				}
 			}
 		}
-		if _, _, _, _, _, found := c.GsubTableReplacement(op); found && !add(ids.TargetGsub, 1) {
+		if _, _, _, _, _, found := c.OperationSubedgeRelation(op); found && !add(ids.TargetSubedgeRelation, 1) {
 			return denominator.CountRows{}, errCountRows
 		}
 	}

@@ -108,28 +108,6 @@ func (work *Work) MergeTransportedPointContribution(left, right Contribution, pr
 	return result, changes, valid
 }
 
-// FoldTransportedPointRHS is the no-intermediate-delta counterpart of
-// MergeTransportedPointContribution used only while assembling one complete
-// equation RHS. Coordinate-identical whole boundaries can rescope immutable
-// roots and enter FoldRHSContribution directly; every other boundary retains
-// the existing fused transport semantics.
-func (work *Work) FoldTransportedPointRHS(left, right Contribution, pre support.Mask, omega ReindexPlan, post support.Mask) (Contribution, bool) {
-	if !work.live() || !work.admittedContribution(left) || !work.admittedContribution(right) || !omega.validFor(work.composition) ||
-		!left.state.scope.same(omega.target()) || !right.state.scope.same(omega.source()) ||
-		!validBoundaryMask(pre, right.state.scope) || !validBoundaryMask(post, left.state.scope) {
-		return Contribution{}, false
-	}
-	if omega.coordinateIdentity() && pre.IsTrue() && post.IsTrue() {
-		transported, ok := work.rescopeContribution(right, omega.target())
-		if !ok {
-			return Contribution{}, false
-		}
-		return work.FoldRHSContribution(left, transported)
-	}
-	result, _, ok := work.MergeTransportedPointContribution(left, right, pre, omega, post)
-	return result, ok
-}
-
 // transportContributionCoverage applies the same source-pre, reindex, and
 // target-post relation to authored rows that Point/Rule transport use.  It
 // remains carrier-owned: target capabilities stay opaque and only their

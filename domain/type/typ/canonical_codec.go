@@ -152,14 +152,6 @@ func (e *CanonicalEncoder) encode(t Type, domain string, version uint64) ([]byte
 			e.abort()
 			return nil, err
 		}
-		if err := validateCanonicalFormalNodeGraph(e.ctx, e.admission, e.nodes, uint64(len(e.formals))); err != nil {
-			e.abort()
-			return nil, err
-		}
-		if err := ValidateStaticGenericRecurrenceWithFormals(t, e.formalScope); err != nil {
-			e.abort()
-			return nil, fmt.Errorf("%w: static generic recurrence: %v", ErrInvalidCanonicalType, err)
-		}
 	}
 	if err := e.checkpoint(); err != nil {
 		e.abort()
@@ -190,6 +182,12 @@ func (e *CanonicalEncoder) encode(t Type, domain string, version uint64) ([]byte
 		e.abort()
 		return nil, err
 	}
+	if e.scoped {
+		if err := e.admitScopedForm(t); err != nil {
+			e.abort()
+			return nil, err
+		}
+	}
 	var out []byte
 	if e.admission != nil {
 		out, err = canonicalFormalsClone(e.ctx, e.admission, e.out)
@@ -202,6 +200,31 @@ func (e *CanonicalEncoder) encode(t Type, domain string, version uint64) ([]byte
 	}
 	e.ctx = nil
 	return out, nil
+}
+
+// admitScopedForm applies the scoped scope laws to the graph that produced
+// e.out.
+//
+// The laws are applied after emission rather than before it because the emitted
+// bytes are the form's complete identity, and emission is what produces them.
+// Emission itself reads nothing the laws establish: it is the same bisimulation
+// quotient and the same emitter the unscoped path already runs on an
+// unvalidated discovered graph. A graph that violates a scope law emits bytes
+// carrying that violation, so those bytes are never a form any validator
+// admitted, and an already admitted byte string is the canonical spelling of a
+// lawful graph bisimilar to this one.
+func (e *CanonicalEncoder) admitScopedForm(t Type) error {
+	if canonicalValidatedGraphForms.admits(e.out, len(e.formals)) {
+		return nil
+	}
+	if err := validateCanonicalFormalNodeGraph(e.ctx, e.admission, e.nodes, uint64(len(e.formals))); err != nil {
+		return err
+	}
+	if err := ValidateStaticGenericRecurrenceWithFormals(t, e.formalScope); err != nil {
+		return fmt.Errorf("%w: static generic recurrence: %v", ErrInvalidCanonicalType, err)
+	}
+	canonicalValidatedGraphForms.admit(e.out, len(e.formals))
+	return nil
 }
 
 // Digest is the reusable form of DigestCanonical.

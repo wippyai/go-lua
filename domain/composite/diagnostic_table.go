@@ -12,10 +12,6 @@ import (
 // are members of the structural vocabulary, so a row names them by reference
 // and the sealed table resolves them.
 const (
-	diagnosticObservationBranchCondition          = schema.Key("observation/branch-condition")
-	diagnosticObservationTypeReferenceUnresolved  = schema.Key("observation/type-reference-unresolved")
-	diagnosticObservationValueReferenceUnresolved = schema.Key("observation/value-reference-unresolved")
-
 	diagnosticFamilyAdvice = schema.Key("family/advice")
 	diagnosticFamilyType   = schema.Key("family/type")
 	diagnosticFamilyValue  = schema.Key("family/value")
@@ -27,28 +23,24 @@ const (
 // observation populations a row is measured over, and the severities a row
 // defaults to are declared here, beside the rows that name them.
 //
-// The observation ordinals are authored: the artifact numbers the same
-// populations at load and folds that number into the identity of every
-// observation it issues, so the declaration names the positions its spelling is
-// pinned to. The severity ordinals are authored for the same reason - the
-// severity a policy carries is that position. Families are numbered by
-// declaration order: no foreign spelling numbers them, and a row resolves one
-// by key.
+// The observation rows come from the neutral structure vocabulary, whose
+// ordinals are the identities an artifact carries. The severity ordinals are
+// authored for the same reason - the severity a policy carries is that
+// position. Families are numbered by declaration order: no foreign spelling
+// numbers them, and a row resolves one by key.
 func diagnosticVocabulary() []structure.Spec {
-	return []structure.Spec{
-		{Key: diagnosticObservationBranchCondition, Category: structure.CategoryDiagnosticObservation, Ordinal: 1, Spelling: "branch-condition", Accepted: true},
-		{Key: diagnosticObservationTypeReferenceUnresolved, Category: structure.CategoryDiagnosticObservation, Ordinal: 2, Spelling: "type-reference-unresolved", Accepted: true},
-		{Key: diagnosticObservationValueReferenceUnresolved, Category: structure.CategoryDiagnosticObservation, Ordinal: 3, Spelling: "value-reference-unresolved", Accepted: true},
+	specs := structure.DiagnosticObservationSpecs()
+	specs = append(specs,
+		structure.Spec{Key: diagnosticFamilyAdvice, Category: structure.CategoryDiagnosticFamily, Spelling: "advice", Accepted: true},
+		structure.Spec{Key: diagnosticFamilyType, Category: structure.CategoryDiagnosticFamily, Spelling: "type", Accepted: true},
+		structure.Spec{Key: diagnosticFamilyValue, Category: structure.CategoryDiagnosticFamily, Spelling: "value", Accepted: true},
+		structure.Spec{Key: diagnosticFamilyLint, Category: structure.CategoryDiagnosticFamily, Spelling: "lint", Accepted: true},
 
-		{Key: diagnosticFamilyAdvice, Category: structure.CategoryDiagnosticFamily, Spelling: "advice", Accepted: true},
-		{Key: diagnosticFamilyType, Category: structure.CategoryDiagnosticFamily, Spelling: "type", Accepted: true},
-		{Key: diagnosticFamilyValue, Category: structure.CategoryDiagnosticFamily, Spelling: "value", Accepted: true},
-		{Key: diagnosticFamilyLint, Category: structure.CategoryDiagnosticFamily, Spelling: "lint", Accepted: true},
-
-		{Key: "severity/error", Category: structure.CategoryDiagnosticSeverity, Ordinal: diagnostic.SeverityError.Ordinal(), Spelling: "error", Accepted: true},
-		{Key: "severity/warning", Category: structure.CategoryDiagnosticSeverity, Ordinal: diagnostic.SeverityWarning.Ordinal(), Spelling: "warning", Accepted: true},
-		{Key: "severity/hint", Category: structure.CategoryDiagnosticSeverity, Ordinal: diagnostic.SeverityHint.Ordinal(), Spelling: "hint", Accepted: true},
-	}
+		structure.Spec{Key: "severity/error", Category: structure.CategoryDiagnosticSeverity, Ordinal: diagnostic.SeverityError.Ordinal(), Spelling: "error", Accepted: true},
+		structure.Spec{Key: "severity/warning", Category: structure.CategoryDiagnosticSeverity, Ordinal: diagnostic.SeverityWarning.Ordinal(), Spelling: "warning", Accepted: true},
+		structure.Spec{Key: "severity/hint", Category: structure.CategoryDiagnosticSeverity, Ordinal: diagnostic.SeverityHint.Ordinal(), Spelling: "hint", Accepted: true},
+	...)
+	return specs
 }
 
 // declaredMember names one member of the structural vocabulary from a
@@ -116,7 +108,7 @@ func diagnosticSpecs() []diagnostic.Spec {
 			Code: DiagnosticCodeAlwaysTrueGuard, Family: declaredMember(diagnosticFamilyAdvice),
 			DefaultSeverity: diagnostic.SeverityHint,
 			Lane:            diagnostic.LaneBranch,
-			Observation:     declaredMember(diagnosticObservationBranchCondition),
+			Observation:     declaredMember(structure.DiagnosticObservationBranchCondition.Key()),
 			Fact:            diagnostic.Reference{Surface: schema.SurfaceKindAxis, Key: valueAxis},
 			Message:         "condition is proven always true",
 			Help:            "Remove the guard or move the guarded code out of the branch.",
@@ -128,7 +120,7 @@ func diagnosticSpecs() []diagnostic.Spec {
 			Code: DiagnosticCodeAlwaysFalseGuard, Family: declaredMember(diagnosticFamilyAdvice),
 			DefaultSeverity: diagnostic.SeverityHint,
 			Lane:            diagnostic.LaneBranch,
-			Observation:     declaredMember(diagnosticObservationBranchCondition),
+			Observation:     declaredMember(structure.DiagnosticObservationBranchCondition.Key()),
 			Fact:            diagnostic.Reference{Surface: schema.SurfaceKindAxis, Key: valueAxis},
 			Message:         "condition is proven always false",
 			Help:            "Remove the unreachable branch or invert the guard.",
@@ -157,7 +149,7 @@ func diagnosticSpecs() []diagnostic.Spec {
 			Code: DiagnosticCodeUnresolvedTypeReference, Family: declaredMember(diagnosticFamilyType),
 			DefaultSeverity: diagnostic.SeverityError,
 			Lane:            diagnostic.LaneStatic,
-			Observation:     declaredMember(diagnosticObservationTypeReferenceUnresolved),
+			Observation:     declaredMember(structure.DiagnosticObservationTypeReferenceUnresolved.Key()),
 			Requirements:    diagnostic.RequiresSubject,
 			Message:         "unknown type {subject}",
 			Help:            "Declare the type in scope",
@@ -169,7 +161,7 @@ func diagnosticSpecs() []diagnostic.Spec {
 			Code: DiagnosticCodeUnresolvedValueReference, Family: declaredMember(diagnosticFamilyValue),
 			DefaultSeverity: diagnostic.SeverityError,
 			Lane:            diagnostic.LaneStatic,
-			Observation:     declaredMember(diagnosticObservationValueReferenceUnresolved),
+			Observation:     declaredMember(structure.DiagnosticObservationValueReferenceUnresolved.Key()),
 			Requirements:    diagnostic.RequiresSubject,
 			Message:         "unknown value {subject}",
 			Help:            "Declare the value",

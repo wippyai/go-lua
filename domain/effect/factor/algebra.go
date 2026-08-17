@@ -920,6 +920,23 @@ func (a *Algebra) callInRootID(root Root, applicationID identity.ContentID) bool
 	return Root{owner: a, slot: row.root} == root
 }
 
+// inputTailArgument reports which position of an effect's Values argument
+// vector substitutes the target operation's input tail. The vector is indexed
+// by the target's own ValuesVar ordinals, so that position is the target's
+// input var; every other position substitutes an outcome-scoped var, which
+// names no input and therefore selects nothing out of the caller's Pack.
+func (a *Algebra) inputTailArgument(operation target.Operation) (int, bool) {
+	input, inputOK := a.contract.Input(operation)
+	if !inputOK {
+		return 0, false
+	}
+	tail, variable, tailOK := a.contract.ValuesTail(input)
+	if !tailOK || tail != target.ValuesVariable {
+		return 0, false
+	}
+	return int(variable), true
+}
+
 func (a *Algebra) validateOrdinaryInputs(owner target.Operation, effect int) bool {
 	for i := 0; i < a.contract.EffectValueArgumentCount(owner, effect); i++ {
 		formal, ok := a.contract.EffectValueArgumentAt(owner, effect, i)
@@ -930,10 +947,18 @@ func (a *Algebra) validateOrdinaryInputs(owner target.Operation, effect int) boo
 			return false
 		}
 	}
+	targetOperation, targetOK := a.contract.EffectTarget(owner, effect)
+	if !targetOK {
+		return false
+	}
+	tailArgument, tailed := a.inputTailArgument(targetOperation)
 	for i := 0; i < a.contract.EffectValuesArgumentCount(owner, effect); i++ {
 		formal, ok := a.contract.EffectValuesArgumentAt(owner, effect, i)
 		if !ok {
 			return false
+		}
+		if !tailed || i != tailArgument {
+			continue
 		}
 		if _, ok = a.packs.InputSelector(owner, target.InputSource{Kind: target.InputSourceValuesVar, Ordinal: uint32(formal)}); !ok {
 			return false
@@ -952,10 +977,18 @@ func (a *Algebra) validateCallbackInputs(owner target.Operation, callback target
 			return false
 		}
 	}
+	targetOperation, targetOK := a.contract.CallbackEffectTarget(callback, effect)
+	if !targetOK {
+		return false
+	}
+	tailArgument, tailed := a.inputTailArgument(targetOperation)
 	for i := 0; i < a.contract.CallbackEffectValuesArgumentCount(callback, effect); i++ {
 		formal, ok := a.contract.CallbackEffectValuesArgumentAt(callback, effect, i)
 		if !ok {
 			return false
+		}
+		if !tailed || i != tailArgument {
+			continue
 		}
 		if _, ok = a.packs.InputSelector(owner, target.InputSource{Kind: target.InputSourceValuesVar, Ordinal: uint32(formal)}); !ok {
 			return false

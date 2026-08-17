@@ -50,7 +50,7 @@ func (s *boundaryState) appendBoundary(boundary CallBoundary, owner keyspace.Ter
 	if uint64(len(s.boundaryRows)) >= uint64(^uint32(0)) {
 		return errors.New("program/flow/causal: CallBoundary denominator overflows")
 	}
-	if s.planState == nil || s.planState.builder == nil {
+	if s.planState == nil || s.builder == nil {
 		return errors.New("program/flow/causal: route plan builder is unavailable")
 	}
 	planned := boundaryPlanOrdinals{}
@@ -63,19 +63,19 @@ func (s *boundaryState) appendBoundary(boundary CallBoundary, owner keyspace.Ter
 		if err != nil {
 			return err
 		}
-		ordinal := s.planState.nextOrdinal
-		if err := s.planState.builder.Emit(routeplan.Route{From: boundary.Call, To: to, Decision: decision, Truth: truth, Arm: routePlanArm(arm)}, origin); err != nil {
+		ordinal := s.nextOrdinal
+		if err := s.builder.Emit(routeplan.Route{From: boundary.Call, To: to, Decision: decision, Truth: truth, Arm: routePlanArm(arm)}, origin); err != nil {
 			return err
 		}
-		s.planState.nextOrdinal++
+		s.nextOrdinal++
 		if boundary.mode == boundaryDirect && arm == BoundaryResume {
 			callOrdinal := keyspace.TermOrdinal(boundary.Call)
 			if callOrdinal != 0 && uint64(callOrdinal) < uint64(len(s.normalArc)) && s.normalArc[callOrdinal] >= 0 {
 				arcIndex := s.normalArc[callOrdinal]
-				if arcIndex >= len(s.planState.arcOrdinal) || s.planState.arcOrdinal[arcIndex] >= 0 {
+				if arcIndex >= len(s.arcOrdinal) || s.arcOrdinal[arcIndex] >= 0 {
 					return errors.New("program/flow/causal: Call normal Arc has multiple planned routes")
 				}
-				s.planState.arcOrdinal[arcIndex] = ordinal
+				s.arcOrdinal[arcIndex] = ordinal
 			}
 		}
 		planned.ordinals[arm], planned.present[arm] = ordinal, true

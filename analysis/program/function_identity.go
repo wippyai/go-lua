@@ -35,10 +35,10 @@ func (input *Program) FunctionID(boundary flow.FunctionBoundary) (identity.Conte
 	if !input.Available() || !boundary.Available() || !input.Flow().FunctionBoundaries().OwnsFunction(boundary) {
 		return identity.ContentID{}, false
 	}
-	bodyTerm, bodyOK := boundary.Body()
+	bodyTerm, bodyTermOK := boundary.Body()
 	body, bodyOK := input.Body(bodyTerm)
 	context := boundary.ContextID()
-	if !bodyOK || !input.OwnsBody(body) || !context.Available() {
+	if !bodyTermOK || !bodyOK || !input.OwnsBody(body) || !context.Available() {
 		return identity.ContentID{}, false
 	}
 	id := programRoleID("program/transformer/function", input.ContentID(), func(writer *framing.Writer) bool {
