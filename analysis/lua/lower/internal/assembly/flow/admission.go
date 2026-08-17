@@ -35,7 +35,12 @@ func (r *Rows) AdmitValues(counts [keyspace.FamilyCount]uint32, term, owner keys
 	if tail != 0 && !flowrole.OpenOccurrence(counts, tail) {
 		return reject("invalid Values tail")
 	}
-	if _, ok := r.AppendValue(programflow.Value{Owner: owner, Tail: tail}, fixed); !ok {
+	span, ok := rangeFor(len(r.values.terms), len(fixed))
+	if !ok {
+		return reject("Values fixed operand range overflow")
+	}
+	row := programflow.Value{Owner: owner, Fixed: span, Tail: tail}
+	if _, ok := r.AppendValue(row, fixed); !ok {
 		return reject("Values fixed operand range overflow")
 	}
 	return nil

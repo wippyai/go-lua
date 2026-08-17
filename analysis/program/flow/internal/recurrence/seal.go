@@ -123,14 +123,15 @@ func sealWithPlan(
 	if err := validateDecisionCoverage(sourceView, flow, forest, graph, parts, trace, counts); err != nil {
 		return nil, nil, err
 	}
-	work, err := classifyArcs(sourceView, flow, graph, parts, heads, trace, counts)
+	layout := deriveNestedHeadLayout(flow, bodies, forest, parts, heads, trace, counts)
+	work, err := classifyArcs(sourceView, flow, graph, parts, heads, trace, counts, layout)
 	if err != nil {
 		return nil, nil, err
 	}
 	if err := requireCyclicWitness(parts, heads, work); err != nil {
 		return nil, nil, err
 	}
-	result, err := materialize(counts, parts, heads, trace, work, sourceID, flowID, staticID, moduleID)
+	result, err := materialize(counts, parts, heads, trace, work, layout.aliases, sourceID, flowID, staticID, moduleID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -255,20 +256,16 @@ func installHead(
 	if component == unassignedComponent || !parts.cyclic[component] {
 		return
 	}
-	// Head identity is selected by the semantic vertex path, with the
-	// authored term only as a deterministic collision tie-breaker. This keeps
-	// component directories stable when physical/source ordinals are rebased.
-	path, pathOK := graph.VertexPathAt(node)
-	if !pathOK {
-		return
-	}
+	// Head identity is selected by the existing authored Term order.  Vertex
+	// paths identify the component directory after this choice; they are not a
+	// substitute for the canonical Label/Loop identity.  In an irreducible
+	// crossed-goto component, path order can place a later Label before the
+	// authored first Label and thereby leak a noncanonical Mu head.
 	if heads[component] == 0 {
 		heads[component] = term
 		return
 	}
-	currentNode, currentOK := decisionCoordinate(sourceView, flow, graph, heads[component])
-	currentPath, currentPathOK := graph.VertexPathAt(currentNode)
-	if !currentOK || !currentPathOK || string(path[:]) < string(currentPath[:]) || (path == currentPath && term < heads[component]) {
+	if term < heads[component] {
 		heads[component] = term
 	}
 }

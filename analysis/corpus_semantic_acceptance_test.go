@@ -70,17 +70,20 @@ func corpusSemanticAcceptanceJudgment(run *corpusHarnessRun) []string {
 // corpusSemanticFixtureInputUnsupported fences contracts the current
 // Program-owned fixture adapter cannot preserve. The strict frozen catalog is
 // the only source of this classification. In particular, this acceptance gate
-// must not run a fixture through the old all-module-root adapter when its
-// manifest selected a different entry/order or host surface, nor quietly drop
-// native, placement, or rendering obligations after a successful solve.
+// must not run a fixture through the adapter when its manifest declared a host
+// surface the adapter drops, nor quietly drop native, placement, or rendering
+// obligations after a successful solve.
+//
+// A declared module inventory is not such a contract. Link canonicalizes mount
+// order by Program identity, requires an analysis root for every mount, and
+// resolves every require against a mount name, so a fixture's declared file
+// order and its selected entry carry no obligation the sealed Link could hold
+// differently: the whole declared inventory is mounted, rooted, and wired.
 func corpusSemanticFixtureInputUnsupported(expectation *corpusDiagnosticProjectExpectations) []string {
 	if expectation == nil {
 		return []string{"fixture expectation unavailable"}
 	}
 	unsupported := make([]string, 0, 6)
-	if len(expectation.files) > 1 {
-		unsupported = append(unsupported, "selected module entry/order is not preserved by the current fixture input adapter")
-	}
 	if expectation.manifest == nil {
 		return unsupported
 	}
@@ -88,7 +91,12 @@ func corpusSemanticFixtureInputUnsupported(expectation *corpusDiagnosticProjectE
 		unsupported = append(unsupported, "manifest stdlib contract is not preserved by the current fixture input adapter")
 	}
 	if len(expectation.manifest.Packages) != 0 {
-		unsupported = append(unsupported, "manifest package host contract is not preserved by the current fixture input adapter")
+		// Link resolves a require only against a project mount, and Host binds
+		// capabilities to initial roots rather than to require-able modules, so a
+		// declared system package has no canonical surface to be admitted through
+		// at all. The fence names that missing surface instead of running the
+		// fixture with its host types silently absent.
+		unsupported = append(unsupported, "manifest package host contract has no canonical require-able host module surface")
 	}
 	if expectation.manifest.Check == nil {
 		return unsupported
@@ -500,9 +508,15 @@ func TestCorpusSemanticFixtureContractPreflight(t *testing.T) {
 	if unsupported := corpusSemanticFixtureInputUnsupported(declaredSingleton); len(unsupported) != 0 {
 		t.Fatalf("declared singleton fixture input rejected: %v", unsupported)
 	}
-	multiModule := &corpusDiagnosticProjectExpectations{name: "multi-module", files: []string{"module.lua", "main.lua"}, entryFile: "main.lua", entryModule: "main"}
-	if unsupported := corpusSemanticFixtureInputUnsupported(multiModule); len(unsupported) != 1 {
-		t.Fatalf("multi-module fixture contracts=%v, want selected-entry/order rejection", unsupported)
+	multiModule := &corpusDiagnosticProjectExpectations{
+		name:          "multi-module",
+		files:         []string{"main.lua", "module.lua"},
+		declaredFiles: []string{"module.lua", "main.lua"},
+		entryFile:     "main.lua",
+		entryModule:   "main",
+	}
+	if unsupported := corpusSemanticFixtureInputUnsupported(multiModule); len(unsupported) != 0 {
+		t.Fatalf("declared multi-module fixture input rejected: %v", unsupported)
 	}
 	unsupported := corpusSemanticFixtureInputUnsupported(&corpusDiagnosticProjectExpectations{
 		name:          "all-contracts",
@@ -518,8 +532,8 @@ func TestCorpusSemanticFixtureContractPreflight(t *testing.T) {
 			},
 		},
 	})
-	if len(unsupported) != 5 {
-		t.Fatalf("unsupported fixture contracts=%v, want all five non-input unpreserved surfaces", unsupported)
+	if len(unsupported) != 4 {
+		t.Fatalf("unsupported fixture contracts=%v, want all four unpreserved non-input surfaces", unsupported)
 	}
 }
 

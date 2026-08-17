@@ -350,6 +350,21 @@ func (w *Writer) RuntimeTypeTarget(span source.Span, value bind.RuntimeTypeValue
 	}
 }
 
+// TypeValueTarget lowers a value-position type-name occurrence to the exact
+// Static target used by a runtime TypeValue. The caller has already selected
+// the call-argument context; ordinary identifier lowering never enters this
+// path.
+func (w *Writer) TypeValueTarget(ident *ast.IdentExpr) (keyspace.Term, error) {
+	if w == nil || w.binding == nil || ident == nil || ident.Value == "" {
+		return 0, fmt.Errorf("lualower: invalid type-value reference")
+	}
+	decl, ok := w.binding.TypeValueRef(ident)
+	if !ok || decl.ID == 0 || decl.Name != ident.Value {
+		return 0, fmt.Errorf("lualower: identifier %q is not a type-value reference", ident.Value)
+	}
+	return w.declarationRef(w.span(ident), []string{ident.Value}, decl)
+}
+
 // PublicationRef creates the one authored TypeRef owned by a static type
 // publication. Source spelling and binder resolution remain distinct: a
 // declaration target uses its exact lexical identity, while a module target

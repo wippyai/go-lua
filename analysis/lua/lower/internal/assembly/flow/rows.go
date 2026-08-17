@@ -192,7 +192,6 @@ func (r *Rows) AppendValue(row programflow.Value, terms []keyspace.Term) (progra
 		return programflow.Range{}, false
 	}
 	r.values.terms = append(r.values.terms, terms...)
-	row.Fixed = span
 	r.values.rows = append(r.values.rows, row)
 	return span, true
 }

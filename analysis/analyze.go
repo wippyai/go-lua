@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/wippyai/go-lua/analysis/domain/composite"
+	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
@@ -168,9 +169,13 @@ func CompileWithDiagnostics(source *link.Link) (*Plan, CompileStatus, AnalyzeDia
 		return nil, CompileUnsupported, diagnostics
 	}
 	diagnostics.enter(AnalyzeDiagnosticPhaseAssemble)
-	binding, bindingFailure, valueFailure, allocationFailure := state.newProgramBinding(source)
+	binding, bindingFailure, mountFailure, allocationFailure := state.newProgramBinding(source)
 	diagnostics.Binding = bindingFailure
-	diagnostics.ValueSeal = valueFailure
+	// The mount phase's verdict carries the rejecting domain's own evidence
+	// erased. Recovering it at the value schema's own failure type is this
+	// projection's job; a verdict from another axis carries no value evidence
+	// and leaves the field absent.
+	diagnostics.ValueSeal, _ = composite.MountRejection[valuedomain.SealFailure](mountFailure)
 	diagnostics.AllocationCatalog = allocationFailure
 	diagnostics.ReceiptStage = AnalyzeDiagnosticReceiptStageBinding
 	if bindingFailure != ProgramBindingFailureNone || binding == nil || binding.SchemaBinding() == nil || !binding.SchemaBinding().Sealed() {

@@ -14,7 +14,7 @@ import (
 // ScopeObservationKind is the closed observation vocabulary used by the
 // assembly-local Static scope proof.  It is intentionally defined in this
 // internal package: it is not a Program term family, an artifact row, or an
-// analysis/domain fact.
+// runtime analysis fact.
 type ScopeObservationKind uint8
 
 const (

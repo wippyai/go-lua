@@ -90,12 +90,20 @@ func (s *sealState) finalizeBinding(plan *routeplan.Plan, binding *recurrence.Bi
 				}
 				continue
 			}
-			if !member || head == 0 || head != component || past < first {
+			if !member || head == 0 || past < first || !canonicalComponent(head, true) {
 				return errors.New("program/flow/causal: CallBoundary Mu/reset disagrees with component")
 			}
 			streamCount, streamOK := s.proof.recur.DecisionCount(head)
 			if !streamOK || streamCount < 0 || uint64(past) > uint64(streamCount) {
 				return errors.New("program/flow/causal: CallBoundary reset range is unavailable")
+			}
+			// A nested head can be a local interval over its component's
+			// primary stream. Issue that owner first so route order cannot
+			// accidentally claim the same decision under the nested view.
+			if component != head {
+				if err := s.reset.ensureMuStream(component); err != nil {
+					return err
+				}
 			}
 			if err := s.reset.ensureMuStream(head); err != nil {
 				return err
@@ -180,7 +188,7 @@ func (s *sealState) applyLocalBinding(row *edgeRow, bound recurrence.BoundRoute)
 	if !hasMu {
 		return nil // ordinary intra-SCC route: component retained only by the binding cut.
 	}
-	if head == 0 || head != component || past < first {
+	if head == 0 || past < first || !canonicalComponent(head, true) {
 		return errors.New("program/flow/causal: Mu/reset disagrees with recurrence component")
 	}
 	streamCount, ok := s.proof.recur.DecisionCount(head)
@@ -188,6 +196,11 @@ func (s *sealState) applyLocalBinding(row *edgeRow, bound recurrence.BoundRoute)
 		return errors.New("program/flow/causal: recurrence reset range is unavailable")
 	}
 	row.Mu, row.resetStart, row.resetPast = head, first, past
+	if component != head {
+		if err := s.reset.ensureMuStream(component); err != nil {
+			return err
+		}
+	}
 	if err := s.reset.ensureMuStream(head); err != nil {
 		return err
 	}

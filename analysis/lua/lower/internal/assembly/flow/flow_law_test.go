@@ -71,14 +71,34 @@ func TestFlowRowsFreezeUsesSourceGlobalKey(t *testing.T) {
 
 func TestFlowModuleRequestFollowsCallValuesToSourceString(t *testing.T) {
 	const name = "collector-module.lua"
-	c := assembly.New(name, 1, bind.GlobalCensus{})
+	statements, err := parse.ParseString(`local value = require("dep")`, name)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	binding := bind.BindChunk(statements)
+	callSyntax, ok := statements[0].(*ast.LocalAssignStmt).Exprs[0].(*ast.FuncCallExpr)
+	if !ok {
+		t.Fatal("module fixture lost direct require call")
+	}
+	requireIdent, ok := callSyntax.Func.(*ast.IdentExpr)
+	if !ok {
+		t.Fatal("module fixture lost require identifier")
+	}
+	requireIdentity, ok := binding.GlobalIdentity(requireIdent)
+	if !ok || !requireIdentity.Matches("require") {
+		t.Fatal("module fixture require is not binder-proven global")
+	}
+	c := assembly.New(name, 1, binding.GlobalCensus())
 	span := programsource.Span{File: name}
 	body := c.Body(span)
+	requireCell := c.Global(requireIdentity)
+	callee := c.ImplicitRead(span, body, requireCell)
 	request := c.String(span, body, "dep")
 	values := c.Values(span, body, []keyspace.Term{request}, 0)
-	call := c.DeclareCall(span, body, request, 0, values)
+	call := c.DeclareCall(span, body, callee, 0, values)
+	callArgsOK := c.SetCallTypeArgs(call, nil)
 	importTerm := c.Import(0, span, call)
-	if body == 0 || request == 0 || values == 0 || call == 0 || importTerm == 0 || !c.SetBody(body, call) || !c.SetEntry(body) {
+	if body == 0 || requireCell == 0 || callee == 0 || request == 0 || values == 0 || call == 0 || !callArgsOK || importTerm == 0 || !c.SetBody(body, call) || !c.SetEntry(body) {
 		t.Fatal("Module request construction failed")
 	}
 	_, _, moduleView := publishedViews(t, c)
@@ -102,21 +122,34 @@ func TestFlowExactAccessAdmitsSourceAtomWithoutCandidateStorage(t *testing.T) {
 	span := programsource.Span{File: name}
 	c := assembly.New(name, 0, bind.GlobalCensus{})
 	body := c.Body(span)
+	base := c.Integer(span, body, 7)
 	key := c.Integer(span, body, 7)
-	lens := c.LensExact(span, body, key, key, kind.FieldExact)
+	value := c.Bool(span, body, true)
+	lens := c.LensExact(span, body, base, key, kind.FieldExact)
+	read := c.Read(span, body, lens)
 	table := c.DeclareTable(span, body)
-	values := c.Values(span, body, []keyspace.Term{key}, 0)
+	values := c.Values(span, body, []keyspace.Term{value}, 0)
 	field := c.TableField(span, table, key, values, kind.FieldExact)
-	if body == 0 || key == 0 || lens == 0 || table == 0 || values == 0 || field == 0 ||
-		!c.FillTable(table, []keyspace.Term{field}) || !c.SetBody(body) || !c.SetEntry(body) {
-		t.Fatal("exact access setup failed")
+	rootValues := c.Values(span, body, []keyspace.Term{read, table}, 0)
+	ret := c.Return(span, body, rootValues)
+	if body == 0 || base == 0 || key == 0 || value == 0 || lens == 0 || read == 0 || table == 0 || values == 0 || field == 0 || rootValues == 0 || ret == 0 {
+		t.Fatalf("exact term setup failed: body=%v base=%v key=%v value=%v lens=%v read=%v table=%v values=%v field=%v rootValues=%v ret=%v", body, base, key, value, lens, read, table, values, field, rootValues, ret)
+	}
+	if !c.FillTable(table, []keyspace.Term{field}) {
+		t.Fatal("exact table fill failed")
+	}
+	if !c.SetBody(body, ret) {
+		t.Fatal("exact body fill failed")
+	}
+	if !c.SetEntry(body) {
+		t.Fatal("exact entry fill failed")
 	}
 	sourceView, flowView := flowView(t, c)
 	if got := sourceView.Keys().ExactCount(); got != 1 {
 		t.Fatalf("Source exact count = %d, want one", got)
 	}
-	if got := flowView.Authored().Access().Exact().Count(); got != 2 {
-		t.Fatalf("exact lens count = %d, want access and table field", got)
+	if got := flowView.Authored().Access().Exact().Count(); got != 1 {
+		t.Fatalf("exact lens count = %d, want one authored lens", got)
 	}
 }
 
@@ -286,8 +319,15 @@ func TestCollectorFlowRolesPreserveRowOwnership(t *testing.T) {
 	if got := c.Loop(span, owner, child, values, []keyspace.Term{local}, kind.LoopNumericFor); got != 0 {
 		t.Fatalf("Loop Cell rejection = %v", got)
 	}
-	function := c.DeclareFunction(span, owner)
-	if function == 0 || c.FillFunction(function, owner, nil, local, nil) {
+	// Rejections terminalize a Collector. Use a fresh construction for the
+	// Function-specific check so the earlier row-role probes cannot mask the
+	// foreign-body vararg admission.
+	functionCollector := assembly.New(name, 0, bind.GlobalCensus{})
+	functionOwner := functionCollector.Body(span)
+	functionBody := functionCollector.Body(span)
+	functionVararg := functionCollector.Cell(span, functionBody)
+	function := functionCollector.DeclareFunction(span, functionOwner)
+	if function == 0 || functionCollector.FillFunction(function, functionOwner, nil, functionVararg, nil) {
 		t.Fatal("foreign-body Function Vararg was accepted")
 	}
 }

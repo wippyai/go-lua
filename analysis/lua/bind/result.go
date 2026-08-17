@@ -32,7 +32,11 @@ type Result struct {
 	gotoTargets   map[*ast.GotoStmt]*ast.LabelStmt
 	controlIssues []ControlIssue
 
-	nextTypeDeclID         TypeDeclID
+	nextTypeDeclID TypeDeclID
+	// typeValueRefs retains binder-owned value-position occurrences whose
+	// lexical spelling denotes a declared type. Lowering consults this only at
+	// a call-argument boundary; ordinary value positions remain reads.
+	typeValueRefs          map[*ast.IdentExpr]TypeDecl
 	typeRefs               map[*ast.TypeRefExpr]TypeDecl
 	primitiveTypeRefs      map[*ast.PrimitiveTypeExpr]TypeDecl
 	typeDefDecls           map[*ast.TypeDefStmt]TypeDecl
@@ -71,6 +75,7 @@ func newResult() *Result {
 		localSymbols:             make(map[*ast.LocalAssignStmt][]Symbol),
 		numForSymbols:            make(map[*ast.NumberForStmt]Symbol),
 		genericForSymbols:        make(map[*ast.GenericForStmt][]Symbol),
+		typeValueRefs:            make(map[*ast.IdentExpr]TypeDecl),
 		typeRefs:                 make(map[*ast.TypeRefExpr]TypeDecl),
 		primitiveTypeRefs:        make(map[*ast.PrimitiveTypeExpr]TypeDecl),
 		typeDefDecls:             make(map[*ast.TypeDefStmt]TypeDecl),

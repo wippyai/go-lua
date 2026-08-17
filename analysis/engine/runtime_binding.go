@@ -910,10 +910,12 @@ func bindFactorFromGraph[K ~uint32 | ~uint64, V any](implementation *FactorImple
 	}
 	uses, taken := runtime.takeFactorUses(descriptor.semantic)
 	if !taken {
+		println("ZZPROBE takeFactorUses false")
 		return nil, false
 	}
 	catalog, catalogOK := collectFactorGraphCatalog[K, V](descriptor, runtime.graph, uses)
 	if !catalogOK {
+		println("ZZPROBE catalog false")
 		return nil, false
 	}
 	bound := &boundFactor[K, V]{

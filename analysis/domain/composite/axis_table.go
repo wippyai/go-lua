@@ -143,6 +143,17 @@ func AxisSemantic(principal programartifact.RuleOutputKind) (identity.SemanticKe
 	return semantic, semantic.Available()
 }
 
+// AxisMountDeclared reports whether one axis seals its own Link authority from
+// the mounted artifacts. A derived inventory reads this to tell an axis whose
+// authority is composed for it from one that composes its own.
+func AxisMountDeclared(principal programartifact.RuleOutputKind) (bool, bool) {
+	entry, ok := axisForPrincipal(principal)
+	if !ok {
+		return false, false
+	}
+	return entry.MountDeclared(), true
+}
+
 // AxisStorage returns where one axis's facts live.
 func AxisStorage(principal programartifact.RuleOutputKind) (axis.Storage, bool) {
 	entry, ok := axisForPrincipal(principal)

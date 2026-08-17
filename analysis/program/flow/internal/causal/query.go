@@ -124,15 +124,22 @@ func (v Edges) ResetContains(index int, decision keyspace.Term) bool {
 	family, ordinal := keyspace.TermFamily(decision), keyspace.TermOrdinal(decision)
 	if ordinal == 0 || family <= keyspace.FamilyInvalid || family >= keyspace.FamilyCount ||
 		uint64(ordinal) >= uint64(len(v.result.reset.decisionHead[family])) ||
-		v.result.reset.decisionHead[family][ordinal] != edge.Mu {
+		v.result.reset.decisionHead[family][ordinal] == 0 {
 		return false
 	}
 	ranks := v.result.reset.decisionRank[family]
 	if uint64(ordinal) >= uint64(len(ranks)) {
 		return false
 	}
-	rank := ranks[ordinal]
-	return uint64(rank) < uint64(end-start) && edge.resetStart <= rank && rank < edge.resetPast
+	owner := v.result.reset.decisionHead[family][ordinal]
+	ownerStart, ownerEnd, ownerOK := v.result.muRange(owner)
+	if !ownerOK || ownerEnd < ownerStart || uint64(ranks[ordinal]) >= uint64(ownerEnd-ownerStart) {
+		return false
+	}
+	position := uint64(ownerStart) + uint64(ranks[ordinal])
+	resetStart := uint64(start) + uint64(edge.resetStart)
+	resetPast := uint64(start) + uint64(edge.resetPast)
+	return resetStart <= position && position < resetPast && resetPast <= uint64(end)
 }
 
 func (v Edges) BodyCount(body keyspace.Term) (int, bool) {
@@ -586,7 +593,7 @@ func (r *Result) validEdgeRow(row edgeRow) bool {
 	}
 	if row.Mu != 0 {
 		family := keyspace.TermFamily(row.Mu)
-		if row.component != row.Mu || (family != keyspace.FamilyLabel && family != keyspace.FamilyLoop) || !r.validResultTerm(row.Mu) || row.resetPast < row.resetStart {
+		if row.component == 0 || (family != keyspace.FamilyLabel && family != keyspace.FamilyLoop) || !r.validResultTerm(row.Mu) || row.resetPast < row.resetStart {
 			return false
 		}
 		// Before route sealing the witness fields must still be empty; they
@@ -654,7 +661,7 @@ func (r *Result) validBoundaryProof(row boundaryRow, arm BoundaryArmKind) bool {
 	if proof.mu == 0 {
 		return proof.resetStart == 0 && proof.resetPast == 0 && proof.resetCount == 0 && !proof.resetDigest.Available()
 	}
-	if row.components[arm] != proof.mu || proof.resetPast < proof.resetStart || !r.validResultTerm(proof.mu) {
+	if row.components[arm] == 0 || proof.resetPast < proof.resetStart || !r.validResultTerm(proof.mu) {
 		return false
 	}
 	family := keyspace.TermFamily(proof.mu)
@@ -729,7 +736,7 @@ func (r *Result) boundaryResetContains(index uint32, arm BoundaryArmKind, decisi
 	}
 	proof := row.proofs[arm]
 	family, ordinal := keyspace.TermFamily(decision), keyspace.TermOrdinal(decision)
-	if uint64(ordinal) >= uint64(len(r.reset.decisionHead[family])) || r.reset.decisionHead[family][ordinal] != proof.mu {
+	if uint64(ordinal) >= uint64(len(r.reset.decisionHead[family])) || r.reset.decisionHead[family][ordinal] == 0 {
 		return false
 	}
 	ranks := r.reset.decisionRank[family]
@@ -740,8 +747,15 @@ func (r *Result) boundaryResetContains(index uint32, arm BoundaryArmKind, decisi
 	if !ok || proof.resetPast > end-start {
 		return false
 	}
-	rank := ranks[ordinal]
-	return uint64(rank) < uint64(end-start) && proof.resetStart <= rank && rank < proof.resetPast
+	owner := r.reset.decisionHead[family][ordinal]
+	ownerStart, ownerEnd, ownerOK := r.muRange(owner)
+	if !ownerOK || ownerEnd < ownerStart || uint64(ranks[ordinal]) >= uint64(ownerEnd-ownerStart) {
+		return false
+	}
+	position := uint64(ownerStart) + uint64(ranks[ordinal])
+	resetStart := uint64(start) + uint64(proof.resetStart)
+	resetPast := uint64(start) + uint64(proof.resetPast)
+	return resetStart <= position && position < resetPast && resetPast <= uint64(end)
 }
 
 func (r *Result) successorRange(from keyspace.Term) (uint32, uint32, bool) {

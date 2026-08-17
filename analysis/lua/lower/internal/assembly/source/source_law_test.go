@@ -9,6 +9,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
+	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/parse"
 )
 
 func testSpan() programsource.Span { return programsource.Span{} }
@@ -112,7 +114,16 @@ func TestSourceBuildPreimageUsesOneCanonicalExactDenominator(t *testing.T) {
 	c := assembly.New("fixture.lua", 0, bind.GlobalCensus{})
 	body := c.Body(testSpan())
 	key := c.Name(testSpan(), body, "stable")
-	if key == 0 || !c.SetBody(body) || !c.SetEntry(body) {
+	table := c.DeclareTable(testSpan(), body)
+	fieldValue := c.Nil(testSpan(), body)
+	fieldValues := c.Values(testSpan(), body, []keyspace.Term{fieldValue}, 0)
+	field := c.TableField(testSpan(), table, key, fieldValues, kind.FieldName)
+	returnValue := c.Nil(testSpan(), body)
+	returnValues := c.Values(testSpan(), body, []keyspace.Term{returnValue, table}, 0)
+	ret := c.Return(testSpan(), body, returnValues)
+	if key == 0 || table == 0 || fieldValue == 0 || fieldValues == 0 || field == 0 ||
+		returnValue == 0 || returnValues == 0 || ret == 0 || !c.FillTable(table, []keyspace.Term{field}) ||
+		!c.SetBody(body, ret) || !c.SetEntry(body) {
 		t.Fatal("failed Source setup")
 	}
 	view := sourceView(t, c)
@@ -200,12 +211,31 @@ func TestFieldExactDoesNotTreatNonNegUnaryAsLiteralNegation(t *testing.T) {
 
 func TestModuleRequestExactAddsOnlyRawLiteralBeforeSourceFreeze(t *testing.T) {
 	const name = "module-source.lua"
-	c := assembly.New(name, 1, bind.GlobalCensus{})
+	statements, err := parse.ParseString(`local value = require("pkg.core")`, name)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	binding := bind.BindChunk(statements)
+	callSyntax, ok := statements[0].(*ast.LocalAssignStmt).Exprs[0].(*ast.FuncCallExpr)
+	if !ok {
+		t.Fatal("module fixture lost direct require call")
+	}
+	requireIdent, ok := callSyntax.Func.(*ast.IdentExpr)
+	if !ok {
+		t.Fatal("module fixture lost require identifier")
+	}
+	requireIdentity, ok := binding.GlobalIdentity(requireIdent)
+	if !ok || !requireIdentity.Matches("require") {
+		t.Fatal("module fixture require is not binder-proven global")
+	}
+	c := assembly.New(name, 1, binding.GlobalCensus())
 	body := c.Body(programsource.Span{File: name})
+	requireCell := c.Global(requireIdentity)
+	callee := c.ImplicitRead(programsource.Span{File: name}, body, requireCell)
 	request := c.String(programsource.Span{File: name}, body, "pkg.core")
 	values := c.Values(programsource.Span{File: name}, body, []keyspace.Term{request}, 0)
-	call := c.DeclareCall(programsource.Span{File: name}, body, request, 0, values)
-	if body == 0 || request == 0 || values == 0 || call == 0 || !c.SetCallTypeArgs(call, nil) {
+	call := c.DeclareCall(programsource.Span{File: name}, body, callee, 0, values)
+	if body == 0 || requireCell == 0 || callee == 0 || request == 0 || values == 0 || call == 0 || !c.SetCallTypeArgs(call, nil) {
 		t.Fatal("module request construction failed")
 	}
 	importTerm := c.Import(0, programsource.Span{File: name}, call)
@@ -214,7 +244,9 @@ func TestModuleRequestExactAddsOnlyRawLiteralBeforeSourceFreeze(t *testing.T) {
 	}
 	view := sourceView(t, c)
 	atom, ok := view.Keys().Find(keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "pkg.core"})
-	if !ok || atom == 0 || view.Keys().ExactCount() != 1 {
+	// The binder-censused global require seed is the other Source exact atom;
+	// Import contributes exactly the request literal on top of it.
+	if !ok || atom == 0 || view.Keys().ExactCount() != 2 {
 		t.Fatalf("Source exact denominator omitted module request: atom=%v ok=%v count=%d", atom, ok, view.Keys().ExactCount())
 	}
 	if c.SetImportAlias(importTerm, 0) {
@@ -317,6 +349,11 @@ func sourceFixtureFamilyCount(family keyspace.Family) int {
 		return 2
 	case keyspace.FamilyTableField:
 		return 2
+	case keyspace.FamilyOutcome:
+		// Published Source installs four mandatory exits plus one Return
+		// outcome for this one-Body fixture. Outcome is derived by Flow,
+		// not authored by the Collector.
+		return 5
 	default:
 		return 0
 	}

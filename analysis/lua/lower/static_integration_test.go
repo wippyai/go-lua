@@ -585,7 +585,7 @@ func sourceTypeRefPath(t *testing.T, p *program.Program, ref keyspace.Term, want
 // syntax is not mirrored through a root Program forwarding vocabulary.
 func TestSourceTypesVerticalWitnesses(t *testing.T) {
 	t.Run("compound type rows", func(t *testing.T) {
-		p := parseBindLower(t, "type Item = { readonly name: string, optional count: number }[] | {[string]: number}")
+		p := parseBindLower(t, "type Item = readonly {name: string, count?: number}[] | {[string]: number}")
 		alias, ok := p.Static().Declarations().Aliases().At(0)
 		if !ok {
 			t.Fatal("missing Alias")
@@ -824,7 +824,7 @@ func TestStaticAliasesPrimitivesAndReferencesUseStaticVocabulary(t *testing.T) {
 }
 
 func TestStaticCompositeRowsKeepExactChildren(t *testing.T) {
-	p := parseBindLower(t, "type Box<T: typeof(subject)> = T\ntype Values = number | string | boolean | nil\ntype Nested = readonly number[][]\ntype Dictionary<K, V> = {[K]: V}\ntype Shape = { readonly name: string, optional count: number }")
+	p := parseBindLower(t, "type Box<T: typeof(subject)> = T\ntype Values = number | string | boolean | nil\ntype Nested = readonly {number[]}\ntype Dictionary<K, V> = {[K]: V}\ntype Shape = readonly {name: string, count?: number}")
 	aliases := p.Static().Declarations().Aliases()
 	box, _ := aliases.At(0)
 	values, _ := aliases.At(1)
@@ -871,7 +871,7 @@ func TestStaticCompositeRowsKeepExactChildren(t *testing.T) {
 }
 
 func TestStaticAnnotationsAndDeclaredTypesStayInStaticOwner(t *testing.T) {
-	p := parseBindLower(t, "local first: number = 1\nlocal second: typeof(first) @note(7) = 2\nlocal third = 3")
+	p := parseBindLower(t, "local first: number @note(7) = 1\nlocal second: typeof(first) = 2\nlocal third = 3")
 	declared := p.Static().Declarations().DeclaredTypes()
 	if declared.Count() != 2 {
 		t.Fatalf("DeclaredType count = %d, want 2", declared.Count())
@@ -900,7 +900,7 @@ func TestStaticAnnotationsAndDeclaredTypesStayInStaticOwner(t *testing.T) {
 }
 
 func TestStaticSignatureRowsKeepParametersAndReturns(t *testing.T) {
-	p := parseBindLower(t, "type Handler = fun(...: number, value: any): (asserts value is string, number)")
+	p := parseBindLower(t, "type Handler = fun(value: any, ... number): (asserts value is string, number)")
 	alias, ok := p.Static().Declarations().Aliases().At(0)
 	if !ok {
 		t.Fatal("missing Handler Alias")

@@ -244,6 +244,102 @@ func corpusHarnessSourceLink(t testing.TB, contract *target.Contract, name strin
 	return linked
 }
 
+// TestCorpusFixtureDeclaredModulesAreSealed is the multi-module fixture input
+// law. A manifest declares a module inventory and an entry, and the sealed Link
+// must hold that whole contract: every declared file is one mount, every mount
+// carries an analysis root, and the entry root's module-cache closure reaches
+// every declared module. Mount order is Link-canonical by Program identity, so
+// the declared order is carried by the inventory and its ingress rather than by
+// a position in the manifest.
+func TestCorpusFixtureDeclaredModulesAreSealed(t *testing.T) {
+	project := corpusHarnessFixture(t, "realworld/lookup-table-cast")
+	expectation := project.expectation
+	if expectation == nil || len(expectation.declaredFiles) < 2 || expectation.entryModule == "" {
+		t.Fatalf("fixture %q does not declare a multi-module inventory", project.name)
+	}
+	linked, err := testfixture.SealCorpusProject(corpusHarnessContract(t), project.source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mounts := linked.Project().Mounts()
+	roots := linked.Module().Roots()
+	if mounts.Count() != len(expectation.declaredFiles) {
+		t.Fatalf("sealed mounts=%d, declared modules=%d", mounts.Count(), len(expectation.declaredFiles))
+	}
+	shards := make(map[string]linkproject.Shard, mounts.Count())
+	for index := 0; index < mounts.Count(); index++ {
+		shard, ok := mounts.At(index)
+		if !ok {
+			t.Fatalf("mount %d is not addressable", index)
+		}
+		name, ok := mounts.Name(shard)
+		if !ok {
+			t.Fatalf("mount %d has no module name", index)
+		}
+		if roots.ForShardCount(shard) == 0 {
+			t.Fatalf("mounted module %q carries no analysis root", name)
+		}
+		shards[name] = shard
+	}
+	for _, file := range expectation.declaredFiles {
+		if _, mounted := shards[strings.TrimSuffix(file, ".lua")]; !mounted {
+			t.Fatalf("declared module %q is not mounted", file)
+		}
+	}
+	entry, mounted := shards[expectation.entryModule]
+	if !mounted {
+		t.Fatalf("selected entry module %q is not mounted", expectation.entryModule)
+	}
+	reached := corpusHarnessModuleClosure(t, linked, entry)
+	for name := range shards {
+		if !reached[name] {
+			t.Fatalf("module %q is unreachable from the selected entry %q", name, expectation.entryModule)
+		}
+	}
+}
+
+// corpusHarnessModuleClosure walks the sealed module-cache ingress from one
+// mount and names every module it loads, directly or transitively.
+func corpusHarnessModuleClosure(t *testing.T, linked *link.Link, entry linkproject.Shard) map[string]bool {
+	t.Helper()
+	mounts := linked.Project().Mounts()
+	roots := linked.Module().Roots()
+	cache := linked.Module().Cache()
+	loads := make(map[linkproject.Shard][]linkproject.Shard, mounts.Count())
+	for index := 0; index < cache.EntryCount(); index++ {
+		entryRow, ok := cache.EntryAt(index)
+		if !ok {
+			t.Fatalf("module cache entry %d is not addressable", index)
+		}
+		_, from, to, ok := cache.EntryMapping(entryRow)
+		if !ok {
+			t.Fatalf("module cache entry %d has no root mapping", index)
+		}
+		fromShard, _, _, fromOK := roots.Mapping(from)
+		toShard, _, _, toOK := roots.Mapping(to)
+		if !fromOK || !toOK {
+			t.Fatalf("module cache entry %d has no mount mapping", index)
+		}
+		loads[fromShard] = append(loads[fromShard], toShard)
+	}
+	reached := make(map[string]bool, mounts.Count())
+	frontier := []linkproject.Shard{entry}
+	for len(frontier) != 0 {
+		shard := frontier[len(frontier)-1]
+		frontier = frontier[:len(frontier)-1]
+		name, ok := mounts.Name(shard)
+		if !ok {
+			t.Fatal("reached mount has no module name")
+		}
+		if reached[name] {
+			continue
+		}
+		reached[name] = true
+		frontier = append(frontier, loads[shard]...)
+	}
+	return reached
+}
+
 // corpusHarnessSourceText reads one file of a fixture project. The fixture
 // directory stays owned by the enumeration; no test reconstructs a corpus path.
 func corpusHarnessSourceText(t testing.TB, project corpusHarnessProject, file string) []byte {

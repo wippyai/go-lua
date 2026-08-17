@@ -29,6 +29,7 @@ func classifyArcs(
 	heads []keyspace.Term,
 	trace eventTrace,
 	counts [keyspace.FamilyCount]uint32,
+	layout headLayout,
 ) ([]arcWork, error) {
 	work := make([]arcWork, graph.ArcCount())
 	loops := flow.Control().Loops()
@@ -56,7 +57,21 @@ func classifyArcs(
 		if !recurrent {
 			continue
 		}
-		work[index] = arcWork{head: heads[component], component: component, first: first, past: past, recurrent: true}
+		head := heads[component]
+		if keyspace.TermFamily(arc.Target) == keyspace.FamilyLoop {
+			ordinal := keyspace.TermOrdinal(arc.Target)
+			if uint64(ordinal) < uint64(len(layout.byLoop)) && layout.byLoop[ordinal] != 0 {
+				head = layout.byLoop[ordinal]
+				if head != heads[component] {
+					// Alias heads are one-decision views over the primary stream.
+					// Their feedback witness is therefore local to that head even
+					// though the source-control Arc boundary is nested in the
+					// primary component's event interval.
+					first, past = 0, 1
+				}
+			}
+		}
+		work[index] = arcWork{head: head, component: component, first: first, past: past, recurrent: true}
 	}
 	return work, nil
 }

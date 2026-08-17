@@ -7,12 +7,22 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
+// headAlias is a nested recurrence head whose decision stream is a local
+// interval over the primary SCC stream.  Keeping the interval as a view over
+// the already-materialized stream preserves one graph and one decision
+// identity while allowing nested feedback edges to carry their own Mu head.
+type headAlias struct {
+	head      keyspace.Term
+	component uint32
+}
+
 func materialize(
 	counts [keyspace.FamilyCount]uint32,
 	parts components,
 	heads []keyspace.Term,
 	trace eventTrace,
 	work []arcWork,
+	aliases []headAlias,
 	sourceID identity.ContentID,
 	flowID identity.ContentID,
 	staticID identity.ContentID,
@@ -44,6 +54,14 @@ func materialize(
 				return nil, errors.New("program/flow/recurrence: component stream count overflows")
 			}
 			componentCounts[event.component]++
+		}
+	}
+	// Nested head aliases reuse one already-issued decision position from the
+	// owning SCC stream.  Their head ranges are installed after the primary
+	// stream is populated below; no second decision stream is retained.
+	for _, alias := range aliases {
+		if alias.component >= uint32(len(parts.sizes)) || alias.head == 0 || heads[alias.component] == 0 {
+			return nil, errors.New("program/flow/recurrence: nested Mu alias is not owned by a cyclic component")
 		}
 	}
 	componentStart := make([]uint32, len(parts.sizes)+1)
@@ -88,7 +106,29 @@ func materialize(
 		}
 		result.decisionSlots[family][ordinal] = decisionSlot{head: heads[component], rank: at - componentStart[component]}
 	}
-	if err := fillRanges(result, heads, trace, work); err != nil {
+	for _, alias := range aliases {
+		family, ordinal := keyspace.TermFamily(alias.head), keyspace.TermOrdinal(alias.head)
+		if (family != keyspace.FamilyLabel && family != keyspace.FamilyLoop) || ordinal == 0 || uint64(ordinal) >= uint64(len(result.headSlots[family])) {
+			return nil, errors.New("program/flow/recurrence: nested Mu alias is not an existing head")
+		}
+		if result.headSlots[family][ordinal].live {
+			continue
+		}
+		decisionFamily, decisionOrdinal := keyspace.TermFamily(alias.head), keyspace.TermOrdinal(alias.head)
+		if uint64(decisionOrdinal) >= uint64(len(result.decisionSlots[decisionFamily])) {
+			return nil, errors.New("program/flow/recurrence: nested Mu alias decision slot is unavailable")
+		}
+		slot := result.decisionSlots[decisionFamily][decisionOrdinal]
+		if slot.head == 0 || slot.head != heads[alias.component] {
+			return nil, errors.New("program/flow/recurrence: nested Mu alias decision is outside primary stream")
+		}
+		if uint64(componentStart[alias.component])+uint64(slot.rank) >= uint64(len(result.streams)) {
+			return nil, errors.New("program/flow/recurrence: nested Mu alias position escapes stream")
+		}
+		start := componentStart[alias.component] + slot.rank
+		result.headSlots[family][ordinal] = headSlot{start: start, end: start + 1, live: true}
+	}
+	if err := fillRangesWithAliases(result, heads, aliases, trace, work); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -100,6 +140,10 @@ func materialize(
 // stream. Boundary hooks keep the conversion deterministic and linear:
 // hooks are bucketed by global stamp, then one scan counts events per head.
 func fillRanges(result *Result, heads []keyspace.Term, trace eventTrace, work []arcWork) error {
+	return fillRangesWithAliases(result, heads, nil, trace, work)
+}
+
+func fillRangesWithAliases(result *Result, heads []keyspace.Term, aliases []headAlias, trace eventTrace, work []arcWork) error {
 	eventCount := len(trace.events)
 	if uint64(eventCount) >= uint64(^uint(0)>>1) || uint64(eventCount) > uint64(^uint32(0))-1 {
 		return errors.New("program/flow/recurrence: event denominator overflows boundary stamp")
@@ -113,7 +157,7 @@ func fillRanges(result *Result, heads []keyspace.Term, trace eventTrace, work []
 			continue
 		}
 		recurrentCount++
-		if item.component >= uint32(len(heads)) || heads[item.component] == 0 || heads[item.component] != item.head ||
+		if item.component >= uint32(len(heads)) || heads[item.component] == 0 || !headOwnedByComponent(item.head, item.component, heads, aliases) ||
 			item.first > item.past || uint64(item.past) > uint64(eventCount) {
 			return errors.New("program/flow/recurrence: recurrence range boundary is invalid")
 		}
@@ -141,7 +185,7 @@ func fillRanges(result *Result, heads []keyspace.Term, trace eventTrace, work []
 		for _, raw := range startHooks[startOffsets[stamp]:startOffsets[stamp+1]] {
 			index := int(raw)
 			item := work[index]
-			if item.component >= uint32(len(local)) || heads[item.component] != item.head || started[index] {
+			if item.component >= uint32(len(local)) || !headOwnedByComponent(item.head, item.component, heads, aliases) || started[index] {
 				return errors.New("program/flow/recurrence: duplicate or foreign range start hook")
 			}
 			result.annotations[index].Head = item.head
@@ -151,7 +195,7 @@ func fillRanges(result *Result, heads []keyspace.Term, trace eventTrace, work []
 		for _, raw := range endHooks[endOffsets[stamp]:endOffsets[stamp+1]] {
 			index := int(raw)
 			item := work[index]
-			if item.component >= uint32(len(local)) || heads[item.component] != item.head || ended[index] {
+			if item.component >= uint32(len(local)) || !headOwnedByComponent(item.head, item.component, heads, aliases) || ended[index] {
 				return errors.New("program/flow/recurrence: duplicate or foreign range end hook")
 			}
 			if !started[index] || result.annotations[index].First > local[item.component] {
@@ -185,6 +229,21 @@ func fillRanges(result *Result, heads []keyspace.Term, trace eventTrace, work []
 		}
 	}
 	return nil
+}
+
+func headOwnedByComponent(head keyspace.Term, component uint32, heads []keyspace.Term, aliases []headAlias) bool {
+	if component >= uint32(len(heads)) || heads[component] == 0 {
+		return false
+	}
+	if heads[component] == head {
+		return true
+	}
+	for _, alias := range aliases {
+		if alias.component == component && alias.head == head {
+			return true
+		}
+	}
+	return false
 }
 
 // boundaryHooks returns a dense [stamp,stamp+1) index over arc ordinals. It

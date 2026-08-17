@@ -58,6 +58,7 @@ type step struct {
 	index    int
 	awaiting bool
 	mark     int
+	scalar   bool
 
 	unary   flowkind.UnaryOp
 	binary  flowkind.BinaryOp
@@ -106,10 +107,24 @@ func (v *Values) ScheduleExpression(expr ast.Expr, owner keyspace.Term, span sou
 // The final tail decision consumes completed-result metadata, not source AST
 // shape: only a producer that publishes open=true may become the Values tail.
 func (v *Values) ScheduleValues(exprs []ast.Expr, owner keyspace.Term, span source.Span) error {
+	return v.scheduleValues(exprs, owner, span, false)
+}
+
+// ScheduleScalarValues lowers one expression list in a scalar-adjusting
+// context. The expressions are still all evaluated left-to-right, but a
+// final open producer is retained as an ordinary fixed member because the
+// enclosing owner has exactly one scalar destination. This context belongs
+// to the storage assignment producer; other Values owners retain Lua's open
+// tail adjustment.
+func (v *Values) ScheduleScalarValues(exprs []ast.Expr, owner keyspace.Term, span source.Span) error {
+	return v.scheduleValues(exprs, owner, span, true)
+}
+
+func (v *Values) scheduleValues(exprs []ast.Expr, owner keyspace.Term, span source.Span, scalar bool) error {
 	if v == nil || v.phase == nil || v.collector == nil || v.expressions == nil || v.statics == nil || owner == 0 || span.File == "" {
 		return fmt.Errorf("lualower: invalid eval Values authority")
 	}
-	v.schedule(step{kind: stepValues, owner: owner, span: span, exprs: exprs, mark: len(v.terms)})
+	v.schedule(step{kind: stepValues, owner: owner, span: span, exprs: exprs, mark: len(v.terms), scalar: scalar})
 	return nil
 }
 
@@ -157,6 +172,22 @@ func (v *Values) Fixed(span source.Span, owner keyspace.Term, terms []keyspace.T
 	term := v.collector.Values(span, owner, terms, 0)
 	if term == 0 {
 		return 0, fmt.Errorf("lualower: could not create fixed Values")
+	}
+	return term, nil
+}
+
+// Pack closes an already evaluated call argument list. It is the narrow
+// handoff used by Call when one argument was a runtime TypeValue and the
+// remaining arguments were evaluated through ordinary expression lowering.
+// The caller supplies the final fixed terms and optional open tail; no source
+// syntax is reinterpreted here.
+func (v *Values) Pack(span source.Span, owner keyspace.Term, fixed []keyspace.Term, tail keyspace.Term) (keyspace.Term, error) {
+	if v == nil || v.collector == nil || owner == 0 || span.File == "" {
+		return 0, fmt.Errorf("lualower: invalid packed Values authority")
+	}
+	term := v.collector.Values(span, owner, fixed, tail)
+	if term == 0 {
+		return 0, fmt.Errorf("lualower: could not create packed Values")
 	}
 	return term, nil
 }
@@ -324,7 +355,7 @@ func (v *Values) runValues(current step) error {
 		}
 		fixedCount := len(fixed)
 		var tail keyspace.Term
-		if fixedCount != 0 && open[fixedCount-1] {
+		if !current.scalar && fixedCount != 0 && open[fixedCount-1] {
 			tail = fixed[fixedCount-1]
 			fixedCount--
 		}

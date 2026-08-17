@@ -71,7 +71,16 @@ func emitFlowExpressions(
 			return emission{}, errFlowExpression("invalid exact Lens foreign key")
 		}
 		edges = append(edges, kernelEdge{child: base, parent: term})
-		edges = append(edges, kernelEdge{child: source, parent: term})
+		// Name and scalar exact sources are Source-owned metadata, not
+		// evaluated expression children. A single authored Source atom may be
+		// referenced by multiple access rows, so retain only its first typed
+		// access parent in the forest. The later references remain validated
+		// rows, while the one retained edge supplies the atom's structural path.
+		if staticFieldReference(source, fieldKind) {
+			edges = appendUniqueStaticEdge(edges, source, term)
+		} else {
+			edges = append(edges, kernelEdge{child: source, parent: term})
+		}
 	}
 
 	dynamic := view.Access().Dynamic()
@@ -269,10 +278,13 @@ func emitFlowExpressions(
 			return emission{}, errFlowExpression("invalid TableField foreign key")
 		}
 		edges = append(edges, kernelEdge{child: field, parent: table})
-		edges = append(edges, kernelEdge{child: key, parent: field})
+		if staticFieldReference(key, fieldKind) {
+			edges = appendUniqueStaticEdge(edges, key, field)
+		} else {
+			edges = append(edges, kernelEdge{child: key, parent: field})
+		}
 		edges = append(edges, kernelEdge{child: valuesTerm, parent: field})
 	}
-
 	control := view.Control()
 	returns := control.Returns()
 	for index := uint32(0); index < counts[keyspace.FamilyReturn]; index++ {
@@ -332,7 +344,6 @@ func emitFlowExpressions(
 		edges = append(edges, kernelEdge{child: callee, parent: term})
 		edges = append(edges, kernelEdge{child: actuals, parent: term})
 	}
-
 	if err := validateFlowEdgeOwners(preimage, view, counts, edges[edgeStart:]); err != nil {
 		return emission{}, err
 	}
@@ -411,6 +422,34 @@ func fieldKeyTerm(view authored.View, term keyspace.Term, fieldKind kind.FieldKi
 	default:
 		return false
 	}
+}
+
+// staticFieldReference identifies a field source whose spelling/constant is
+// owned by Source rather than evaluated as a Flow child. Such terms remain
+// fully validated as foreign keys, and a single Source atom may be referenced
+// by many access rows; emitFlowExpressions retains only the first structural
+// access edge for a reused atom.
+func staticFieldReference(term keyspace.Term, fieldKind kind.FieldKind) bool {
+	switch fieldKind {
+	case kind.FieldList, kind.FieldName:
+		return keyspace.TermFamily(term) == keyspace.FamilyKey
+	case kind.FieldExact:
+		switch keyspace.TermFamily(term) {
+		case keyspace.FamilyNil, keyspace.FamilyBool, keyspace.FamilyInteger,
+			keyspace.FamilyFloat, keyspace.FamilyString:
+			return true
+		}
+	}
+	return false
+}
+
+func appendUniqueStaticEdge(edges []kernelEdge, child, parent keyspace.Term) []kernelEdge {
+	for _, edge := range edges {
+		if edge.child == child {
+			return edges
+		}
+	}
+	return append(edges, kernelEdge{child: child, parent: parent})
 }
 
 func errFlowExpression(detail string) error {

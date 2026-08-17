@@ -303,9 +303,10 @@ func validateStaticRowsTerms(rows *staticRows, counts [keyspace.FamilyCount]uint
 		}
 	}
 	for index, row := range rows.callContracts {
-		if !row.filled {
-			return fmt.Errorf("program/lower/collector: incomplete CallContract %d", index)
-		}
+		// An omitted type-argument list is the authored empty contract. The
+		// explicit setter still records a filled row when arguments are
+		// present, but a plain Call declaration must not be forced through a
+		// second sidecar mutation merely to spell an empty slice.
 		for child, value := range row.arguments {
 			if err := term(value, fmt.Sprintf("CallContract %d argument %d", index, child)); err != nil {
 				return err

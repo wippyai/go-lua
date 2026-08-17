@@ -125,15 +125,23 @@ func (r *Result) ResetContains(index int, decision keyspace.Term) bool {
 	}
 	family, ordinal := keyspace.TermFamily(decision), keyspace.TermOrdinal(decision)
 	if uint64(ordinal) >= uint64(len(r.decisionSlots[family])) ||
-		r.decisionSlots[family][ordinal].head != annotation.Head {
+		r.decisionSlots[family][ordinal].head == 0 {
 		return false
 	}
-	rank := r.decisionSlots[family][ordinal].rank
-	start, end, ok := r.headRange(annotation.Head)
-	if !ok || uint64(rank) >= uint64(end-start) {
+	slot := r.decisionSlots[family][ordinal]
+	ownerStart, ownerEnd, ownerOK := r.headRange(slot.head)
+	targetStart, targetEnd, targetOK := r.headRange(annotation.Head)
+	if !ownerOK || ownerEnd < ownerStart || uint64(slot.rank) >= uint64(ownerEnd-ownerStart) || !targetOK || targetEnd < targetStart || uint64(annotation.Past) > uint64(targetEnd-targetStart) {
 		return false
 	}
-	return annotation.First <= rank && rank < annotation.Past
+	// A nested Mu head may be a local view over a decision interval already
+	// materialized for its enclosing SCC head. Compare absolute stream
+	// positions so one decision can be queried through either issued head
+	// without duplicating the stream or inventing a second graph.
+	position := uint64(ownerStart) + uint64(slot.rank)
+	resetStart := uint64(targetStart) + uint64(annotation.First)
+	resetPast := uint64(targetStart) + uint64(annotation.Past)
+	return resetStart <= position && position < resetPast && resetPast <= uint64(targetEnd)
 }
 
 // DecisionCount reports the sealed semantic stream for an existing Mu head.
@@ -179,6 +187,29 @@ func (r *Result) headRange(head keyspace.Term) (uint32, uint32, bool) {
 		return 0, 0, false
 	}
 	return start, end, true
+}
+
+// headOwnedBy reports whether head is the component's canonical head or a
+// sealed one-decision nested view rooted in that component's stream. Keeping
+// this fence in the recurrence owner prevents a route plan from substituting
+// an unrelated but otherwise valid Label/Loop term for an Arc's Mu witness.
+func (r *Result) headOwnedBy(component, head keyspace.Term) bool {
+	if component == 0 || head == 0 {
+		return false
+	}
+	if component == head {
+		return true
+	}
+	family, ordinal := keyspace.TermFamily(head), keyspace.TermOrdinal(head)
+	if family != keyspace.FamilyLoop || ordinal == 0 || uint64(ordinal) >= uint64(len(r.decisionSlots[family])) {
+		return false
+	}
+	slot := r.decisionSlots[family][ordinal]
+	if slot.head != component {
+		return false
+	}
+	start, end, ok := r.headRange(head)
+	return ok && end == start+1 && start < uint32(len(r.streams)) && r.streams[start] == head
 }
 
 func (r *Result) validDecision(term keyspace.Term) bool {

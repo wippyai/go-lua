@@ -4,6 +4,7 @@ import (
 	calldomain "github.com/wippyai/go-lua/analysis/domain/call"
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/schema/axis"
 )
 
 // TargetBatchRow is one mounted Program body selector row. BodyPath is the
@@ -124,6 +125,63 @@ func NewTargetBatchCatalog(mounts []MountedTargetBatch) (*TargetBatchCatalog, bo
 	}
 	result.self = result
 	return result, result.valid()
+}
+
+// SealMountedBatches derives the Link-wide selector catalog from a sealed Call
+// algebra and the neutral mounted artifact view. Every row is resolved through
+// the algebra's own target inverse, so the catalog states nothing the algebra
+// did not already admit, and the mounted body denominator must match the
+// algebra's exactly.
+//
+// It lives with the catalog it produces: the derivation reads one factor's
+// sealed authority plus the artifacts it was sealed from, so no composition
+// root needs to enumerate Call target rows on this package's behalf.
+func SealMountedBatches(algebra *calldomain.Algebra, mounts []axis.MountedArtifact) (*TargetBatchCatalog, bool) {
+	if len(mounts) == 0 || algebra == nil || !algebra.Valid() {
+		return nil, false
+	}
+	batches := make([]MountedTargetBatch, 0, len(mounts))
+	rowCount := 0
+	for _, mount := range mounts {
+		if !mount.Available() {
+			return nil, false
+		}
+		rows, built := mountedTargetBatchRows(mount, algebra)
+		if !built {
+			return nil, false
+		}
+		rowCount += len(rows)
+		batches = append(batches, MountedTargetBatch{Artifact: mount.Artifact, ModuleKey: mount.ModuleKey, Rows: rows})
+	}
+	if rowCount != algebra.Bodies().Count() {
+		return nil, false
+	}
+	return NewTargetBatchCatalog(batches)
+}
+
+// mountedTargetBatchRows projects one mount's artifact call targets onto the
+// algebra's sealed body capabilities. The artifact supplies the target rows and
+// the algebra supplies every selector; a row whose body path or program does
+// not match the artifact it was read from is rejected.
+func mountedTargetBatchRows(mount axis.MountedArtifact, algebra *calldomain.Algebra) ([]TargetBatchRow, bool) {
+	artifact := mount.Artifact
+	if artifact == nil || algebra == nil {
+		return nil, false
+	}
+	rows := make([]TargetBatchRow, 0, artifact.CallTargetCount())
+	for index := 0; index < artifact.CallTargetCount(); index++ {
+		target, targetOK := artifact.CallTargetAt(index)
+		capability, capabilityOK := algebra.TargetForAllocation(mount.ModuleKey, target.AllocationID())
+		body, bodyCapabilityOK := capability.Body()
+		role, roleOK := body.RoleID()
+		bodyPath, pathOK := body.BodyPath()
+		programID, programOK := body.ProgramID()
+		if !targetOK || !target.Available() || !capabilityOK || !bodyCapabilityOK || !roleOK || !pathOK || !programOK || bodyPath != target.BodyID() || programID != mount.ProgramID {
+			return nil, false
+		}
+		rows = append(rows, TargetBatchRow{Body: body, BodyPath: target.BodyID(), Role: role})
+	}
+	return rows, true
 }
 
 const (

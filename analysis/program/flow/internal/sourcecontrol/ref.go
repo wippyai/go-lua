@@ -204,10 +204,11 @@ func (r *Result) ResolveArcRoutePhases(view source.View, outcomes *outcome.Resul
 		loopDecision := keyspace.TermFamily(toTerm) == keyspace.FamilyLoop && decisionOK && decision == arc.To && arc.Target == toTerm
 		// A predecessor entering Repeat targets the authored Loop cursor. The
 		// generic Loop coordinate denotes Repeat's post-body hidden decision,
-		// so distinguish the exact unguarded entry Arc from the Body feedback
-		// Arc (whose physical target is that decision).
+		// so distinguish an external entry Arc from the Body feedback Arc
+		// (whose physical target is that decision). The entry may be guarded;
+		// for example, a preceding Loop/Branch can select this Repeat arm.
 		repeatEntry := keyspace.TermFamily(toTerm) == keyspace.FamilyLoop && decisionOK && arc.Target == toTerm &&
-			arc.To != decision && arc.Decision == 0 && !arc.Truth
+			arc.To != decision
 		if !directBodyTarget && !loopDecision && !repeatEntry {
 			return PhaseRef{}, PhaseRef{}, false
 		}

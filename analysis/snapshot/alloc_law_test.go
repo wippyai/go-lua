@@ -162,6 +162,13 @@ func BenchmarkRead(b *testing.B) {
 			sinkInt, sinkStatus = Read(&sealed, totalAxis, "absent")
 		}
 	})
+	b.Run("invalid", func(b *testing.B) {
+		rejected := Axis[string, int]{SchemaID: fixtureOtherSchema, Slot: totalAxis.Slot}
+		b.ReportAllocs()
+		for range b.N {
+			sinkInt, sinkStatus = Read(&sealed, rejected, "present")
+		}
+	})
 	b.Run("resolve", func(b *testing.B) {
 		b.ReportAllocs()
 		for range b.N {

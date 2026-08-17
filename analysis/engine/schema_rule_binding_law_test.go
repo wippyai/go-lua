@@ -756,11 +756,18 @@ func runSummaryReadThroughProductAndEvidence(t testing.TB, summaryWidth int) {
 			}
 		}
 	}
+	probeCompileReceiptFactors(t, binding, graph)
 	compilation, compiled := compileReceiptFactors(binding, graph)
 	sourceRow, sourceRowOK := bindReceiptRuleMember(compilation, sourceImplementation, sourceMember, sourceOperand)
 	readerRow, readerRowOK := bindReceiptRuleMember(compilation, readerImplementation, readerMember, readerOperand)
+	if !compiled || !sourceRowOK || !readerRowOK {
+		t.Fatalf("summary receipt Rule members: compiled=%v source=%v reader=%v sourceMember=%v readerMember=%v", compiled, sourceRowOK, readerRowOK, sourceMember.Key().Available(), readerMember.Key().Available())
+	}
 	sourceSlot, sourceSlotOK := sourceRow.outputSlot()
 	readerSlot, readerSlotOK := readerRow.outputSlot()
+	if !sourceSlotOK || !readerSlotOK {
+		t.Fatal("summary receipt output slots")
+	}
 	sourcePlan, sourcePlanOK := compilation.carrier.SealContribution(0, []shape.Slot{sourceSlot}, nil, false)
 	readerPlan, readerPlanOK := compilation.carrier.SealContribution(1, []shape.Slot{readerSlot}, nil, false)
 	work, workOK := compilation.carrier.NewWork()
@@ -772,7 +779,7 @@ func runSummaryReadThroughProductAndEvidence(t testing.TB, summaryWidth int) {
 	readerBase, readerBaseOK := work.BeginRuleContribution(readerPlan, compilation.carrier.Scope(), []carrier.PointState{sourcePoint}, whole)
 	readerResult := readerRow.execute(work, readerBase, []carrier.State{sourcePoint.State()}, whole)
 	readerContribution, readerFinished := work.FinishRuleContribution(readerBase, []carrier.Patch{readerResult.patch})
-	if !compiled || !sourceRowOK || !readerRowOK || !sourceSlotOK || !readerSlotOK || !sourcePlanOK || !readerPlanOK || !workOK || !wholeOK || !sourceBaseOK || !sourceResult.valid || !sourceResult.wrote || !sourceFinished || !sourceContribution.Valid() || !sourcePointOK || !readerBaseOK || !readerResult.valid || !readerResult.wrote || !readerFinished || !readerContribution.Valid() {
+	if !sourcePlanOK || !readerPlanOK || !workOK || !wholeOK || !sourceBaseOK || !sourceResult.valid || !sourceResult.wrote || !sourceFinished || !sourceContribution.Valid() || !sourcePointOK || !readerBaseOK || !readerResult.valid || !readerResult.wrote || !readerFinished || !readerContribution.Valid() {
 		t.Fatal("summary Product/evidence/publication")
 	}
 	if runtimeRead.origin == nil || runtimeRead.origin.kind != composition.ReadSummary || runtimeRead.origin.semantic != compositionKeyOf(coldKey(947_301)) {

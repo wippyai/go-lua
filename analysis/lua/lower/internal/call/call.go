@@ -68,6 +68,8 @@ type step struct {
 	staticMark int
 	index      int
 	waiting    bool
+	argTerms   []keyspace.Term
+	argOpen    []bool
 }
 
 // New creates the canonical Call lowering authority. Every dependency is a
@@ -282,30 +284,78 @@ func (w *Writer) scheduleArguments(call *ast.FuncCallExpr, owner keyspace.Term, 
 	if err := w.schedule(step{kind: stepArguments, call: call, owner: owner, span: span, callee: callee, receiver: receiver}); err != nil {
 		return err
 	}
-	return w.values.ScheduleValues(call.Args, owner, span)
+	return nil
 }
 
 func (w *Writer) finishArguments(current step) error {
-	actuals, _ := w.phase.Result()
-	if current.call == nil || current.owner == 0 || current.callee == 0 || actuals == 0 {
+	if current.call == nil || current.owner == 0 || current.callee == 0 {
 		return fmt.Errorf("lualower: incomplete Call arguments")
 	}
-	term := w.calls.DeclareCall(current.span, current.owner, current.callee, current.receiver, actuals)
-	if term == 0 {
-		return fmt.Errorf("lualower: could not declare Call")
+	if current.waiting {
+		argument, open := w.phase.Result()
+		if argument == 0 {
+			return fmt.Errorf("lualower: missing Call argument")
+		}
+		current.argTerms = append(current.argTerms, argument)
+		current.argOpen = append(current.argOpen, open)
+		current.waiting = false
 	}
-	mark := w.static.Mark()
-	if mark < 0 {
-		return fmt.Errorf("lualower: invalid Call static argument mark")
+	if current.index == len(current.call.Args) {
+		fixed := current.argTerms
+		var tail keyspace.Term
+		if len(current.argOpen) != len(current.argTerms) {
+			return fmt.Errorf("lualower: incomplete Call argument metadata")
+		}
+		if len(fixed) != 0 && current.argOpen[len(fixed)-1] {
+			tail = fixed[len(fixed)-1]
+			fixed = fixed[:len(fixed)-1]
+		}
+		actuals, err := w.values.Pack(current.span, current.owner, fixed, tail)
+		if err != nil {
+			return err
+		}
+		term := w.calls.DeclareCall(current.span, current.owner, current.callee, current.receiver, actuals)
+		if term == 0 {
+			return fmt.Errorf("lualower: could not declare Call")
+		}
+		mark := w.static.Mark()
+		if mark < 0 {
+			return fmt.Errorf("lualower: invalid Call static argument mark")
+		}
+		return w.schedule(step{
+			kind:       stepTypeArguments,
+			call:       current.call,
+			owner:      current.owner,
+			span:       current.span,
+			callTerm:   term,
+			staticMark: mark,
+		})
 	}
-	return w.schedule(step{
-		kind:       stepTypeArguments,
-		call:       current.call,
-		owner:      current.owner,
-		span:       current.span,
-		callTerm:   term,
-		staticMark: mark,
-	})
+	if current.index < 0 || current.index >= len(current.call.Args) || current.call.Args[current.index] == nil {
+		return fmt.Errorf("lualower: invalid Call argument %d", current.index)
+	}
+	argument := current.call.Args[current.index]
+	current.index++
+	if ident, ok := argument.(*ast.IdentExpr); ok && ident != nil {
+		if _, marked := w.binding.TypeValueRef(ident); marked {
+			target, err := w.static.TypeValueTarget(ident)
+			if err != nil {
+				return err
+			}
+			term := w.operands.TypeValue(w.span(ident), current.owner, target)
+			if term == 0 {
+				return fmt.Errorf("lualower: could not create Call TypeValue argument")
+			}
+			current.argTerms = append(current.argTerms, term)
+			current.argOpen = append(current.argOpen, false)
+			return w.schedule(current)
+		}
+	}
+	current.waiting = true
+	if err := w.schedule(current); err != nil {
+		return err
+	}
+	return w.expression(argument, current.owner, w.span(argument))
 }
 
 func (w *Writer) finishTypeArguments(current step) error {

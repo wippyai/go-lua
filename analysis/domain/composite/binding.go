@@ -138,7 +138,10 @@ func bind(compilation Compilation, inputs LinkInputs, bindPrincipals func(value 
 	if !valueOK || !effectOK {
 		return catalogBinding{}, BindFailure{Stage: BindStagePrincipal}
 	}
-	allocations, allocationFailure := allocationcatalog.BeginWithFailure(inputs.HeapSchema, inputs.ValueSchema, value, inputs.HeapMounts)
+	// The mount set the allocation catalog joins is the heap schema's own: it
+	// sealed those mounts, so the list is read back from it rather than carried
+	// beside it as a second copy.
+	allocations, allocationFailure := allocationcatalog.BeginWithFailure(inputs.HeapSchema, inputs.ValueSchema, value, inputs.HeapSchema.ArtifactMounts())
 	if allocationFailure != allocationcatalog.SealFailureNone {
 		return catalogBinding{}, BindFailure{Stage: BindStageAllocationCatalog, Allocation: allocationFailure}
 	}

@@ -288,7 +288,7 @@ func bindPlan(result *Result, plan *routeplan.Plan, graph *sourcecontrol.Result,
 			}
 			if annotation.Head != 0 {
 				streamCount, streamOK := result.DecisionCount(annotation.Head)
-				if !row.member || row.component != annotation.Head || annotation.Past < annotation.First || !streamOK || streamCount < 0 || annotation.Past > uint32(streamCount) || !canonicalHead(annotation.Head) {
+				if !row.member || !result.headOwnedBy(row.component, annotation.Head) || annotation.Past < annotation.First || !streamOK || streamCount < 0 || annotation.Past > uint32(streamCount) || !canonicalHead(annotation.Head) {
 					return nil, errors.New("program/flow/recurrence: Mu Arc binding disagrees with component")
 				}
 				row.muHead, row.first, row.past = annotation.Head, annotation.First, annotation.Past

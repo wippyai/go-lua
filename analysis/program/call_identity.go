@@ -127,7 +127,7 @@ func (program *Program) CallArgumentIDAt(index, argument int) (identity.ContentI
 }
 
 // CallTypeArgumentsIDAt returns the canonical scalar identity of one call's
-// Static type-argument column. The authored term and Static receipt remain
+// Static type-argument column. The authored term and Static view remain
 // behind this query; only the detached column identity crosses the owner
 // boundary.
 func (program *Program) CallTypeArgumentsIDAt(index int) (identity.ContentID, bool) {

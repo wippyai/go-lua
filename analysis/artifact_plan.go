@@ -5,24 +5,19 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"sync"
 
-	calldomain "github.com/wippyai/go-lua/analysis/domain/call"
 	callactivation "github.com/wippyai/go-lua/analysis/domain/call/activation"
 	"github.com/wippyai/go-lua/analysis/domain/composite"
-	effectfactor "github.com/wippyai/go-lua/analysis/domain/effect/factor"
-	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
 	allocationcatalog "github.com/wippyai/go-lua/analysis/domain/heap/allocation/catalog"
 	heapindex "github.com/wippyai/go-lua/analysis/domain/heap/index"
-	packdomain "github.com/wippyai/go-lua/analysis/domain/pack"
 	staticdomain "github.com/wippyai/go-lua/analysis/domain/static"
 	"github.com/wippyai/go-lua/analysis/domain/type/authority"
-	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/analysis/engine"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/link"
-	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
@@ -40,7 +35,6 @@ type receiptAssemblyDiagnostic struct {
 	finalizer  engine.RuleFinalizerFailure
 	lowering   engine.ReceiptAssemblyFailure
 	binding    ProgramBindingFailure
-	valueSeal  valuedomain.SealFailure
 	allocation allocationcatalog.SealFailure
 	commit     engine.ReceiptCommitFailure
 }
@@ -535,9 +529,6 @@ func applyReceiptAssemblyDiagnostic(diagnostics *AnalyzeDiagnostics, receipt rec
 	diagnostics.ReceiptRuleFinalizer = receipt.finalizer
 	diagnostics.ReceiptLowering = receipt.lowering
 	diagnostics.Binding = receipt.binding
-	if receipt.valueSeal != 0 {
-		diagnostics.ValueSeal = receipt.valueSeal
-	}
 	if receipt.allocation != 0 {
 		diagnostics.AllocationCatalog = receipt.allocation
 	}
@@ -575,40 +566,39 @@ func linkBootstrapWitness(state *compiledState, binding *composite.ProgramBindin
 // newProgramBinding constructs the Link-local typed owners required by the
 // receipt compiler. The reusable artifact remains the only source of
 // structural rows; these domain schemas are solve-local substitutions.
-func (state *compiledState) newProgramBinding(source *link.Link) (*composite.ProgramBinding, ProgramBindingFailure, valuedomain.SealFailure, allocationcatalog.SealFailure) {
+func (state *compiledState) newProgramBinding(source *link.Link) (*composite.ProgramBinding, ProgramBindingFailure, composite.MountFailure, allocationcatalog.SealFailure) {
 	if state == nil || source == nil || state.artifacts == nil || len(state.artifacts.mounts) == 0 {
-		return nil, ProgramBindingFailureInput, valuedomain.SealFailureNone, allocationcatalog.SealFailureNone
+		return nil, ProgramBindingFailureInput, composite.MountFailure{}, allocationcatalog.SealFailureNone
 	}
-	// A Shard is a cold Project coordinate. Reissue it only while Link is live
-	// to build substitutions; the published artifact mount set has no Project
-	// type and cannot reopen a mounted Program after Compile returns.
-	coldMounts, coldMountsOK := constructionMountedArtifacts(source, state.artifacts.mounts)
-	if !coldMountsOK {
-		return nil, ProgramBindingFailureInput, valuedomain.SealFailureNone, allocationcatalog.SealFailureNone
+	// A Shard is a cold Project coordinate. It is reissued only while Link is
+	// live, to authenticate this mount set against the Project; the published
+	// artifact mount set has no Project type and cannot reopen a mounted
+	// Program after Compile returns.
+	if !projectAuthenticatesMounts(source, state.artifacts.mounts) {
+		return nil, ProgramBindingFailureInput, composite.MountFailure{}, allocationcatalog.SealFailureNone
 	}
 	semantics, ok := vocabulary.New()
 	if !ok || !semantics.Available() {
-		return nil, ProgramBindingFailureSemantics, valuedomain.SealFailureNone, allocationcatalog.SealFailureNone
+		return nil, ProgramBindingFailureSemantics, composite.MountFailure{}, allocationcatalog.SealFailureNone
 	}
 	artifactTypes := make([]*programartifact.Artifact, 0, len(state.artifacts.byProgram))
 	for _, artifact := range state.artifacts.byProgram {
 		if artifact == nil || !artifact.Available() {
-			return nil, ProgramBindingFailureTypes, valuedomain.SealFailureNone, allocationcatalog.SealFailureNone
+			return nil, ProgramBindingFailureTypes, composite.MountFailure{}, allocationcatalog.SealFailureNone
 		}
 		artifactTypes = append(artifactTypes, artifact)
 	}
 	types, typesErr := typeauthority.SealArtifactRows(state.sourceID, artifactTypes)
 	if typesErr != nil {
-		return nil, ProgramBindingFailureTypes, valuedomain.SealFailureNone, allocationcatalog.SealFailureNone
+		return nil, ProgramBindingFailureTypes, composite.MountFailure{}, allocationcatalog.SealFailureNone
 	}
-	staticMounts := make([]staticdomain.MountedArtifact, len(coldMounts))
+	staticMounts := make([]staticdomain.MountedArtifact, len(state.artifacts.mounts))
 	staticValueIDs := make([]staticdomain.MountedValueID, 0)
 	staticValues := source.Boundary().Values()
 	seenStaticValues := make(map[[2]identity.ContentID]struct{})
-	for index, mounted := range coldMounts {
-		published := mounted.published
+	for index, published := range state.artifacts.mounts {
 		if published.artifact == nil || !published.artifact.Available() || !published.moduleKey.Available() || !published.programID.Available() {
-			return nil, ProgramBindingFailureStatic, valuedomain.SealFailureNone, allocationcatalog.SealFailureNone
+			return nil, ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
 		}
 		// ModuleKey is the Link-owned, detached namespace identity for this
 		// concrete mount.  The deleted LinkStatic relation used to rebuild the
@@ -617,16 +607,16 @@ func (state *compiledState) newProgramBinding(source *link.Link) (*composite.Pro
 		for rowIndex := 0; rowIndex < published.artifact.StaticTypeValueCount(); rowIndex++ {
 			row, rowOK := published.artifact.StaticTypeValueAt(rowIndex)
 			if !rowOK || !row.Available() {
-				return nil, ProgramBindingFailureStatic, valuedomain.SealFailureNone, allocationcatalog.SealFailureNone
+				return nil, ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
 			}
 			key := [2]identity.ContentID{published.moduleKey, row.ID()}
 			if _, duplicate := seenStaticValues[key]; duplicate {
-				return nil, ProgramBindingFailureStatic, valuedomain.SealFailureNone, allocationcatalog.SealFailureNone
+				return nil, ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
 			}
 			value, valueOK := staticValues.ForMountedSemantic(published.moduleKey, row.ID())
 			valueID, valueIDOK := staticValues.ID(value)
 			if !valueOK || !valueIDOK || !valueID.Available() {
-				return nil, ProgramBindingFailureStatic, valuedomain.SealFailureNone, allocationcatalog.SealFailureNone
+				return nil, ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
 			}
 			seenStaticValues[key] = struct{}{}
 			staticValueIDs = append(staticValueIDs, staticdomain.MountedValueID{
@@ -636,7 +626,7 @@ func (state *compiledState) newProgramBinding(source *link.Link) (*composite.Pro
 	}
 	staticTarget, staticTargetOK := source.Boundary().Target()
 	if !staticTargetOK {
-		return nil, ProgramBindingFailureStatic, valuedomain.SealFailureNone, allocationcatalog.SealFailureNone
+		return nil, ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
 	}
 	static, _, err := staticdomain.SealMountedArtifacts(staticdomain.MountContext{
 		LinkID:   state.sourceID,
@@ -644,158 +634,69 @@ func (state *compiledState) newProgramBinding(source *link.Link) (*composite.Pro
 		ValueIDs: staticValueIDs,
 	}, types, staticMounts)
 	if err != nil || static == nil {
-		return nil, ProgramBindingFailureStatic, valuedomain.SealFailureNone, allocationcatalog.SealFailureNone
+		return nil, ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
 	}
-	heapMounts, mountsOK := heapArtifactMounts(coldMounts)
-	if !mountsOK {
-		return nil, ProgramBindingFailureHeapSchema, valuedomain.SealFailureNone, allocationcatalog.SealFailureNone
+	// The neutral sealed artifact view is the mount phase's whole artifact
+	// input. Every axis that owns its mount seals its own Link authority from
+	// it and from the peers it declared an edge to, so no per-domain mount row
+	// is constructed here.
+	artifactRows, artifactRowsOK := linkArtifactRows(state.artifacts.mounts)
+	if !artifactRowsOK {
+		return nil, ProgramBindingFailureInput, composite.MountFailure{}, allocationcatalog.SealFailureNone
 	}
-	heapSchema, heapFailure := heapdomain.SealWithArtifacts(source, heapMounts)
-	if heapFailure != heapdomain.SealFailureNone {
-		return nil, ProgramBindingFailureHeapSchema, valuedomain.SealFailureNone, allocationcatalog.SealFailureNone
+	inputs, mountFailure := composite.MountLink(composite.LinkInputs{
+		Source:          source,
+		Artifacts:       artifactRows,
+		StaticAuthority: static,
+	})
+	if mountFailure.Available() {
+		return nil, programMountFailure(mountFailure), mountFailure, allocationcatalog.SealFailureNone
 	}
-	valueMounts, valueMountsOK := valueArtifactMounts(state.artifacts.mounts)
-	if !valueMountsOK {
-		return nil, ProgramBindingFailureValueSchema, valuedomain.SealFailureInput, allocationcatalog.SealFailureNone
-	}
-	valueSchema, valueSealFailure := valuedomain.SealWithFailure(source, heapSchema, valueMounts)
-	if valueSealFailure != valuedomain.SealFailureNone {
-		return nil, ProgramBindingFailureValueSchema, valueSealFailure, allocationcatalog.SealFailureNone
-	}
-	packMounts, mountsOK := packArtifactMounts(state.artifacts.mounts)
-	if !mountsOK {
-		return nil, ProgramBindingFailurePackSchema, valuedomain.SealFailureNone, allocationcatalog.SealFailureNone
-	}
-	packSchema, ok := packdomain.SealMountedArtifacts(source, static, packMounts)
+	// Topology and the activation catalog are derivations over several sealed
+	// factors at once, so neither is any one axis's authority to mount. They are
+	// composed here, after the mount phase, from the authorities it produced.
+	topology, ok := heapindex.Seal(inputs.HeapSchema, inputs.ValueSchema, inputs.CallAlgebra, inputs.PackSchema)
 	if !ok {
-		return nil, ProgramBindingFailurePackSchema, valuedomain.SealFailureNone, allocationcatalog.SealFailureNone
+		return nil, ProgramBindingFailureHeapIndex, composite.MountFailure{}, allocationcatalog.SealFailureNone
 	}
-	callMounts, effectMounts, receiptsOK := mountedBodyReceipts(coldMounts)
-	if !receiptsOK {
-		return nil, ProgramBindingFailureCallAlgebra, valuedomain.SealFailureNone, allocationcatalog.SealFailureNone
-	}
-	callAlgebra, ok := calldomain.NewWithMountedArtifacts(source, callMounts)
+	catalog, ok := callactivation.SealMountedBatches(inputs.CallAlgebra, inputs.Artifacts)
 	if !ok {
-		return nil, ProgramBindingFailureCallAlgebra, valuedomain.SealFailureNone, allocationcatalog.SealFailureNone
+		return nil, ProgramBindingFailureTargetCatalog, composite.MountFailure{}, allocationcatalog.SealFailureNone
 	}
-	contract, ok := source.Boundary().Target()
-	if !ok || contract == nil {
-		return nil, ProgramBindingFailureTarget, valuedomain.SealFailureNone, allocationcatalog.SealFailureNone
-	}
-	effectAlgebra, ok := effectfactor.NewWithMountedArtifacts(source, packSchema, contract, effectMounts)
-	if !ok {
-		return nil, ProgramBindingFailureEffectAlgebra, valuedomain.SealFailureNone, allocationcatalog.SealFailureNone
-	}
-	topology, ok := heapindex.Seal(heapSchema, valueSchema, callAlgebra, packSchema)
-	if !ok {
-		return nil, ProgramBindingFailureHeapIndex, valuedomain.SealFailureNone, allocationcatalog.SealFailureNone
-	}
-	catalog, ok := newTargetBatchCatalog(coldMounts, callAlgebra)
-	if !ok {
-		return nil, ProgramBindingFailureTargetCatalog, valuedomain.SealFailureNone, allocationcatalog.SealFailureNone
-	}
-	binding, failure := composite.BindProgram(state.receipt, composite.LinkInputs{
-		ValueSchema:       valueSchema,
-		CallAlgebra:       callAlgebra,
-		HeapSchema:        heapSchema,
-		HeapMounts:        heapMounts,
-		PackSchema:        packSchema,
-		EffectAlgebra:     effectAlgebra,
-		Topology:          topology,
-		ActivationCatalog: catalog,
-	}, composite.ProgramQuerySpecs{
-		Value:  valueSummaryQueryHotSpec(valueSchema, semantics.ValueCodec),
-		Effect: effectExactQueryHotSpec(effectAlgebra, semantics.EffectCodec),
+	inputs.Topology = topology
+	inputs.ActivationCatalog = catalog
+	binding, failure := composite.BindProgram(state.receipt, inputs, composite.ProgramQuerySpecs{
+		Value:  valueSummaryQueryHotSpec(inputs.ValueSchema, semantics.ValueCodec),
+		Effect: effectExactQueryHotSpec(inputs.EffectAlgebra, semantics.EffectCodec),
 	})
 	if failure.Available() {
-		return nil, programBindingFailure(failure), valuedomain.SealFailureNone, failure.Allocation
+		return nil, programBindingFailure(failure), composite.MountFailure{}, failure.Allocation
 	}
 	// The receipt lowerer is issued per reusable Program artifact. The
 	// Link-wide catalog above still authenticates every mount; the first
 	// artifact is the current structural assembly unit and later units are
 	// admitted by repeated solve-local receipt transactions.
-	return binding, ProgramBindingFailureNone, valuedomain.SealFailureNone, allocationcatalog.SealFailureNone
+	return binding, ProgramBindingFailureNone, composite.MountFailure{}, allocationcatalog.SealFailureNone
 }
 
-func valueArtifactMounts(mounts []mountedProgramArtifact) ([]valuedomain.ArtifactMount, bool) {
+// linkArtifactRows projects the Link's private mount records onto the neutral
+// artifact view the mount phase consumes. It is the sole conversion out of
+// root-private mount state: a mounting domain reads the immutable artifact and
+// the two Link-local identities that place it, and nothing else.
+func linkArtifactRows(mounts []mountedProgramArtifact) ([]axis.MountedArtifact, bool) {
 	if len(mounts) == 0 {
 		return nil, false
 	}
-	result := make([]valuedomain.ArtifactMount, len(mounts))
-	seen := make(map[identity.ContentID]struct{}, len(mounts))
+	rows := make([]axis.MountedArtifact, len(mounts))
 	for index, mounted := range mounts {
-		mount, ok := valuedomain.NewArtifactMount(mounted.artifact, mounted.moduleKey, mounted.programID)
-		if !ok {
+		if !mounted.valid() {
 			return nil, false
 		}
-		if _, duplicate := seen[mount.Module()]; duplicate {
+		row := axis.MountedArtifact{Artifact: mounted.artifact, ModuleKey: mounted.moduleKey, ProgramID: mounted.programID}
+		if !row.Available() {
 			return nil, false
 		}
-		seen[mount.Module()] = struct{}{}
-		result[index] = mount
-	}
-	return result, true
-}
-
-func newTargetBatchCatalog(mounts []constructionMountedProgramArtifact, algebra *calldomain.Algebra) (*callactivation.TargetBatchCatalog, bool) {
-	if len(mounts) == 0 || algebra == nil || !algebra.Valid() {
-		return nil, false
-	}
-	rows := make([]callactivation.MountedTargetBatch, 0, len(mounts))
-	rowCount := 0
-	for _, mount := range mounts {
-		published := mount.published
-		if published.artifact == nil || !published.programID.Available() || !published.moduleKey.Available() {
-			return nil, false
-		}
-		mountedRows, built := targetBatchRows(mount, algebra)
-		if !built {
-			return nil, false
-		}
-		rowCount += len(mountedRows)
-		rows = append(rows, callactivation.MountedTargetBatch{Artifact: published.artifact, ModuleKey: published.moduleKey, Rows: mountedRows})
-	}
-	if rowCount != algebra.Bodies().Count() {
-		return nil, false
-	}
-	return callactivation.NewTargetBatchCatalog(rows)
-}
-
-// mountedBodyReceipts is the only central conversion from reusable artifact
-// rows into Call and Effect constructor receipts.  It runs after Program
-// compilation, never asks a mount for its Program, and keeps all semantic
-// correspondence in IDs issued while that Program proof was live.
-func mountedBodyReceipts(mounts []constructionMountedProgramArtifact) ([]calldomain.MountedArtifact, []effectfactor.MountedArtifact, bool) {
-	callMounts := make([]calldomain.MountedArtifact, 0, len(mounts))
-	effectMounts := make([]effectfactor.MountedArtifact, 0, len(mounts))
-	for _, mount := range mounts {
-		published := mount.published
-		if published.artifact == nil || !published.artifact.Available() || mount.shard == (linkproject.Shard{}) || !published.moduleKey.Available() || !published.programID.Available() || published.artifact.CompileKey().ProgramID() != published.programID {
-			return nil, nil, false
-		}
-		callMounts = append(callMounts, calldomain.MountedArtifact{ModuleKey: published.moduleKey, Artifact: published.artifact})
-		effectMounts = append(effectMounts, effectfactor.MountedArtifact{ModuleKey: published.moduleKey, Artifact: published.artifact})
-	}
-	return callMounts, effectMounts, true
-}
-
-func targetBatchRows(mount constructionMountedProgramArtifact, algebra *calldomain.Algebra) ([]callactivation.TargetBatchRow, bool) {
-	published := mount.published
-	if published.artifact == nil || algebra == nil {
-		return nil, false
-	}
-	rows := make([]callactivation.TargetBatchRow, 0, published.artifact.CallTargetCount())
-	for index := 0; index < published.artifact.CallTargetCount(); index++ {
-		target, targetOK := published.artifact.CallTargetAt(index)
-		capability, capabilityOK := algebra.TargetForAllocation(published.moduleKey, target.AllocationID())
-		body, bodyCapabilityOK := capability.Body()
-		role, roleOK := body.RoleID()
-		bodyPath, pathOK := body.BodyPath()
-		programID, programOK := body.ProgramID()
-		if !targetOK || !target.Available() || !capabilityOK || !bodyCapabilityOK || !roleOK || !pathOK || !programOK || bodyPath != target.BodyID() || programID != published.programID {
-			return nil, false
-		}
-		rows = append(rows, callactivation.TargetBatchRow{Body: body, BodyPath: target.BodyID(), Role: role})
+		rows[index] = row
 	}
 	return rows, true
 }
@@ -829,73 +730,27 @@ type mountedProgramArtifact struct {
 	ruleMembersReady bool
 }
 
-// constructionMountedProgramArtifact is stack-confined to construction. Its
-// Project shard is consumed before the Plan is published.
-type constructionMountedProgramArtifact struct {
-	published mountedProgramArtifact
-	shard     linkproject.Shard
-}
-
-func constructionMountedArtifacts(source *link.Link, published []mountedProgramArtifact) ([]constructionMountedProgramArtifact, bool) {
+// projectAuthenticatesMounts states that this published mount set is exactly
+// the live Project's mount set: same count, same order, and each row's Program
+// and module identity reissued from the Project's own shard. It is the sole
+// place a Shard is opened during construction, and no shard survives it.
+func projectAuthenticatesMounts(source *link.Link, published []mountedProgramArtifact) bool {
 	if source == nil || source.Project() == nil || len(published) == 0 {
-		return nil, false
+		return false
 	}
 	mounts := source.Project().Mounts()
 	if mounts.Count() != len(published) {
-		return nil, false
+		return false
 	}
-	result := make([]constructionMountedProgramArtifact, len(published))
 	for index, mount := range published {
 		shard, shardOK := mounts.At(index)
 		mounted, mountedOK := mounts.Program(shard)
 		module, moduleOK := source.Project().ModuleKey(shard)
 		if !shardOK || !mountedOK || mounted == nil || !moduleOK || !mount.valid() || mounted.ContentID() != mount.programID || module != mount.moduleKey {
-			return nil, false
+			return false
 		}
-		result[index] = constructionMountedProgramArtifact{published: mount, shard: shard}
 	}
-	return result, true
-}
-
-func heapArtifactMounts(mounts []constructionMountedProgramArtifact) ([]heapdomain.ArtifactMount, bool) {
-	if len(mounts) == 0 {
-		return nil, false
-	}
-	result := make([]heapdomain.ArtifactMount, len(mounts))
-	seen := make(map[identity.ContentID]struct{}, len(mounts))
-	for index, mounted := range mounts {
-		published := mounted.published
-		mount, ok := heapdomain.NewArtifactMount(published.artifact, published.moduleKey, published.programID)
-		if !ok {
-			return nil, false
-		}
-		if _, duplicate := seen[mount.Module()]; duplicate {
-			return nil, false
-		}
-		seen[mount.Module()] = struct{}{}
-		result[index] = mount
-	}
-	return result, true
-}
-
-func packArtifactMounts(mounts []mountedProgramArtifact) ([]packdomain.ArtifactMount, bool) {
-	if len(mounts) == 0 {
-		return nil, false
-	}
-	result := make([]packdomain.ArtifactMount, len(mounts))
-	seen := make(map[identity.ContentID]struct{}, len(mounts))
-	for index, mounted := range mounts {
-		mount, ok := packdomain.NewArtifactMount(mounted.artifact, mounted.moduleKey, mounted.programID)
-		if !ok {
-			return nil, false
-		}
-		if _, duplicate := seen[mount.Module()]; duplicate {
-			return nil, false
-		}
-		seen[mount.Module()] = struct{}{}
-		result[index] = mount
-	}
-	return result, true
+	return true
 }
 
 // compiledValueCoordinate is the immutable Link substitution for one Value

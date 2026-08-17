@@ -96,6 +96,18 @@ func (r *Result) RuntimeTypeValue(ident *ast.IdentExpr) (RuntimeTypeValue, bool)
 	return value, true
 }
 
+// TypeValueRef returns the lexical declaration selected for a value-position
+// type name. Binder records this evidence independently of compiler-special
+// runtime-type call bases so lowerers can materialize the same declaration as
+// a runtime TypeValue when the authored value occurrence requires it.
+func (r *Result) TypeValueRef(ident *ast.IdentExpr) (TypeDecl, bool) {
+	if r == nil || ident == nil {
+		return TypeDecl{}, false
+	}
+	decl, ok := r.typeValueRefs[ident]
+	return decl, ok && decl.ID != 0
+}
+
 // TypeRef returns the lexical type declaration bound to ref.
 func (r *Result) TypeRef(ref *ast.TypeRefExpr) (TypeDecl, bool) {
 	if r == nil || ref == nil {

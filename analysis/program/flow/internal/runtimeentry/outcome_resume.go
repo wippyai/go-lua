@@ -34,7 +34,11 @@ func (r *Result) NormalizeOutcomeResume(sourceView source.View, control *sourcec
 		if !entryOK {
 			return OutcomeResumeRow{}, errors.New("program/flow/runtimeentry: Resume anchor has no executable Entry")
 		}
-		to, entryOK = control.CoordinatePhase(sourceView, toTerm)
+		// Entry normalization can expose a Body activation anchor (notably a
+		// dynamic Repeat's child Body). Resolve it through SourceControl's
+		// typed route endpoint so Body phases use their exact Entry port rather
+		// than the generic authored-occurrence coordinate lookup.
+		to, entryOK = control.ResolveRouteEndpoint(sourceView, outcomes, toTerm, false)
 		if !entryOK {
 			return OutcomeResumeRow{}, errors.New("program/flow/runtimeentry: normalized Resume phase is unavailable")
 		}

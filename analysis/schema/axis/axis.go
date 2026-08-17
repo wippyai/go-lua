@@ -54,6 +54,10 @@ const (
 	// selects nothing, so this surface observes it as an axis with no canonical
 	// identity and states that under LawSemanticIdentity.
 	_
+	// LawDependencyAcyclic states that the declared edges admit an order. A
+	// cycle names no first axis, so a phase that walks the edges could not
+	// begin; the table is rejected at seal rather than at the walk.
+	LawDependencyAcyclic
 )
 
 // Storage is the closed catalog of places an axis's facts live. A factor axis
@@ -240,6 +244,55 @@ type Declaration struct {
 	Bundle  vocabulary.Bundle
 }
 
+// MountedArtifact is one Link mount's neutral view: the immutable compiled
+// artifact together with the Link-local identities that place that artifact at
+// one mount. It is the whole artifact vocabulary the mount phase carries, so a
+// mounting axis builds its own domain mount row from these three terms and no
+// composition-private mount type reaches a domain.
+type MountedArtifact struct {
+	Artifact  *programartifact.Artifact
+	ModuleKey identity.ContentID
+	ProgramID identity.ContentID
+}
+
+func (row MountedArtifact) Available() bool {
+	return row.Artifact != nil && row.Artifact.Available() && row.ModuleKey.Available() && row.ProgramID.Available()
+}
+
+// Mounting is the Link context an axis's Mount hook receives. Inputs is the
+// composition's own Link input record, which carries the neutral sealed
+// artifact view and every peer authority already mounted in this phase. The
+// mount phase runs after the cold declaration and before any binding, so no
+// engine binding is reachable here.
+type Mounting[A any] struct{ Inputs A }
+
+// MountEntry is one axis's typed mount declaration, erased in the authority it
+// seals and in its own rejection evidence but still typed in the composition's
+// Link input record. The zero value is an axis that declares no mount: its
+// authority is supplied to the composition by some other owner.
+type MountEntry[A any] struct {
+	run func(A) (Cell, Cell, bool)
+}
+
+func (entry MountEntry[A]) Available() bool { return entry.run != nil }
+
+// NewMount admits one authored mount hook. M is the Link authority this axis
+// seals from the mounted artifacts; R is the domain's own rejection evidence,
+// which travels back to the composition erased and is recovered at the domain's
+// type by Payload. A successful mount returns the domain's zero rejection.
+func NewMount[A, M, R any](hook func(Mounting[A]) (M, R, bool)) MountEntry[A] {
+	if hook == nil {
+		return MountEntry[A]{}
+	}
+	return MountEntry[A]{run: func(inputs A) (Cell, Cell, bool) {
+		authority, rejection, ok := hook(Mounting[A]{Inputs: inputs})
+		if !ok {
+			return Cell{}, Cell{value: rejection}, false
+		}
+		return Cell{value: authority}, Cell{}, true
+	}}
+}
+
 // Binding is the hot binding context. Fragment is the cold fragment this
 // axis's Declare hook produced; Inputs is the composition's own Link input
 // record. Axes bind before rules, so no rule authority is reachable here.
@@ -273,6 +326,10 @@ type Spec[A, F, H, V any] struct {
 	Dependencies []schema.Key
 	// Semantic selects the axis identity from the canonical vocabulary.
 	Semantic func(vocabulary.Bundle) identity.SemanticKey
+	// Mount seals this axis's own Link authority from the neutral mounted
+	// artifact view. It is optional: an axis that declares no mount has its
+	// authority supplied to the composition by some other owner.
+	Mount MountEntry[A]
 	// Declare records the axis's cold Schema shape and returns its fragment.
 	Declare func(Declaration) (F, bool)
 	// Bind instantiates the axis's typed factor binding and returns the hot
@@ -328,6 +385,7 @@ type Template[A any] struct {
 	dependencies []schema.Key
 
 	semantic func(vocabulary.Bundle) identity.SemanticKey
+	mount    MountEntry[A]
 	declare  func(Declaration) (Cell, bool)
 	bind     func(*engine.SchemaBinding, A, Cell) (Cell, bool)
 }
@@ -349,6 +407,7 @@ func New[A, F, H, V any](spec Spec[A, F, H, V]) (*Template[A], bool) {
 		concurrency:  spec.Concurrency,
 		dependencies: append([]schema.Key(nil), spec.Dependencies...),
 		semantic:     spec.Semantic,
+		mount:        spec.Mount,
 	}
 	template.declare = func(context Declaration) (Cell, bool) {
 		fragment, ok := spec.Declare(context)
@@ -475,9 +534,11 @@ func (template *Template[A]) EntryAvailable() bool {
 //
 // The typed hooks are not content. A hook is a function value with no canonical
 // bytes, and the algebra one publishes is produced at bind against a live
-// binding rather than declared here, so neither is written. What the hooks are
-// declared against is covered by the identity and metadata above and by the
-// surface's own admission laws.
+// binding rather than declared here, so neither is written. The mount hook is a
+// hook by the same reading: which owner seals an axis's Link authority is
+// wiring, and the coordinate space that authority is a binding of is already
+// stated by the identity and metadata above. What the hooks are declared
+// against is covered by those and by the surface's own admission laws.
 func (template *Template[A]) EntryContent(content *framing.Writer) error {
 	semantic := template.semanticIdentity()
 	digest := semantic.Digest()
@@ -523,6 +584,29 @@ func (template *Template[A]) metadataComplete() bool {
 
 func (template *Template[A]) fieldsComplete() bool {
 	return template.semantic != nil && template.declare != nil && template.bind != nil
+}
+
+// MountDeclared reports whether this axis seals its own Link authority.
+func (template *Template[A]) MountDeclared() bool {
+	return template != nil && template.mount.Available()
+}
+
+// Mount seals this axis's Link authority from the composition's input record.
+// It returns the sealed authority cell, and on rejection the domain's own
+// erased evidence. An axis that declares no mount returns an absent cell and
+// admits: mounting nothing is not a failure to mount.
+func (template *Template[A]) Mount(inputs A) (Cell, Cell, bool) {
+	if template == nil {
+		return Cell{}, Cell{}, false
+	}
+	if !template.mount.Available() {
+		return Cell{}, Cell{}, true
+	}
+	authority, rejection, ok := template.mount.run(inputs)
+	if !ok || !authority.Available() {
+		return Cell{}, rejection, false
+	}
+	return authority, Cell{}, true
 }
 
 // Declare records this axis's cold shape.
@@ -617,5 +701,83 @@ func (contribution surface[A]) Seal(view schema.View, _ schema.Sealed) schema.Se
 			}
 		}
 	}
+	// The edges must admit an order, because a phase that seals one axis over
+	// another's authority walks them. The first axis on an unresolvable cycle
+	// carries the verdict.
+	if blamed, cyclic := firstCyclicEntry(templates); cyclic {
+		return schema.SurfaceLawFailure(schema.SurfaceKindAxis, blamed, LawDependencyAcyclic, schema.DispositionMalformed)
+	}
 	return schema.SealFailure{}
+}
+
+// firstCyclicEntry reports the first declaration that no dependency order can
+// place. It is the seal's own reading of the same edges DependencyOrder walks,
+// so a table that seals is a table that orders.
+func firstCyclicEntry[A any](templates []*Template[A]) (schema.EntryID, bool) {
+	ordered, ok := DependencyOrder(templates)
+	if ok {
+		return schema.EntryID{}, false
+	}
+	placed := make(map[schema.Key]struct{}, len(ordered))
+	for _, template := range ordered {
+		placed[template.key] = struct{}{}
+	}
+	for _, template := range templates {
+		if _, done := placed[template.key]; !done {
+			return template.id, true
+		}
+	}
+	return schema.EntryID{}, true
+}
+
+// DependencyOrder derives the order a dependency-respecting phase walks one
+// axis inventory in: every axis follows the axes it declared an edge to, and
+// axes that no edge separates keep their catalog order. It is the surface's
+// own derivation because the surface owns the edges; a phase consumes the
+// order rather than restating what an edge means.
+//
+// A cycle admits no order and is reported as such. The already-placed prefix
+// travels with the rejection so a caller can name the axes the cycle blocked.
+func DependencyOrder[A any](templates []*Template[A]) ([]*Template[A], bool) {
+	positions := make(map[schema.Key]int, len(templates))
+	for index, template := range templates {
+		if template == nil || !template.key.Available() {
+			return nil, false
+		}
+		if _, duplicate := positions[template.key]; duplicate {
+			return nil, false
+		}
+		positions[template.key] = index
+	}
+	ordered := make([]*Template[A], 0, len(templates))
+	placed := make(map[schema.Key]struct{}, len(templates))
+	for len(ordered) < len(templates) {
+		progressed := false
+		for _, template := range templates {
+			if _, done := placed[template.key]; done {
+				continue
+			}
+			ready := true
+			for _, dependency := range template.dependencies {
+				position, resolved := positions[dependency]
+				if !resolved {
+					return ordered, false
+				}
+				if _, done := placed[templates[position].key]; !done {
+					ready = false
+					break
+				}
+			}
+			if !ready {
+				continue
+			}
+			ordered = append(ordered, template)
+			placed[template.key] = struct{}{}
+			progressed = true
+		}
+		if !progressed {
+			return ordered, false
+		}
+	}
+	return ordered, true
 }

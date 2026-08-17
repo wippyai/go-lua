@@ -544,11 +544,15 @@ func (b *binder) bindWriteIdent(ident *ast.IdentExpr) {
 }
 
 func (b *binder) recordTypeValueRef(ident *ast.IdentExpr, decl TypeDecl) {
-	if ident == nil || decl.ID == 0 {
+	if b == nil || b.result == nil || ident == nil || decl.ID == 0 {
 		return
 	}
 	if b.typeValueRefs == nil {
 		b.typeValueRefs = make(map[*ast.IdentExpr]TypeDecl)
 	}
 	b.typeValueRefs[ident] = decl
+	if b.result.typeValueRefs == nil {
+		b.result.typeValueRefs = make(map[*ast.IdentExpr]TypeDecl)
+	}
+	b.result.typeValueRefs[ident] = decl
 }

@@ -584,6 +584,13 @@ func (w *Writer) runTargets(current step) error {
 			kind: stepFinishAssign, assign: current.assign, owner: current.owner,
 			span: current.span, mark: current.mark,
 		})
+		// A one-target assignment consumes a scalar result. Keep a final open
+		// producer as the authored fixed member so Assign's Values relation
+		// preserves the exact RHS occurrence while wider assignments retain the
+		// open tail for Lua adjustment.
+		if len(current.assign.Lhs) == 1 {
+			return w.values.ScheduleScalarValues(current.assign.Rhs, current.owner, current.span)
+		}
 		return w.values.ScheduleValues(current.assign.Rhs, current.owner, current.span)
 	}
 	expr := current.assign.Lhs[current.index]

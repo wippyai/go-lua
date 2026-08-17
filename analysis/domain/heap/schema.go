@@ -187,6 +187,17 @@ func (mount ArtifactMount) Artifact() *programartifact.Artifact {
 	return mount.artifact
 }
 
+// ArtifactMounts returns the artifact mounts this schema sealed, in the Link's
+// own mount order. It is Heap's own enumeration of the mount set it admitted,
+// so a consumer that needs the whole list reads it from the sealed owner
+// instead of holding a second copy beside the schema.
+func (schema Schema) ArtifactMounts() []ArtifactMount {
+	if !schema.valid() || len(schema.owner.artifactOrder) == 0 {
+		return nil
+	}
+	return append([]ArtifactMount(nil), schema.owner.artifactOrder...)
+}
+
 // ArtifactMountForModule returns Heap's canonical seal-time artifact receipt
 // for one concrete Link module. Consumers that admit a second mounted owner
 // must compare this exact artifact pointer and ProgramID; module identity
@@ -323,6 +334,10 @@ type schema struct {
 	programAllocationOrdinals map[programAllocationOccurrence]uint32
 	indexAccessOrdinals       map[indexAccessOccurrence]uint32
 	artifacts                 map[identity.ContentID]ArtifactMount
+	// artifactOrder is the same sealed mount set in the Link's own mount
+	// order. The map answers by module; this answers "which mounts, in which
+	// order", so a consumer never carries a second copy of the mount list.
+	artifactOrder []ArtifactMount
 
 	// These are sealed finite denominators for Heap's canonical Mu carrier;
 	// they are rank witnesses, never work budgets or cardinality caps.
@@ -694,6 +709,7 @@ func newArtifactSchemaOwner(source *link.Link, mounts []ArtifactMount) (*heapBui
 		}
 		byModule[mount.module] = mount
 	}
+	ordered := make([]ArtifactMount, 0, len(mounts))
 	for index := 0; index < source.Project().Mounts().Count(); index++ {
 		shard, shardOK := source.Project().Mounts().At(index)
 		module, moduleOK := source.Project().ModuleKey(shard)
@@ -702,8 +718,9 @@ func newArtifactSchemaOwner(source *link.Link, mounts []ArtifactMount) (*heapBui
 		if !shardOK || !moduleOK || !programOK || !mountOK || !mount.Available() || mount.module != module || mount.programID != programID || mount.artifact.CompileKey().ProgramID() != programID {
 			return nil, nil, SealFailureProgramAllocations
 		}
+		ordered = append(ordered, mount)
 	}
-	owner := &schema{linkOwner: linkOwner, bootIndex: make(map[identity.ContentID]uint32), exactSlots: make(map[uint32]uint32), exactIndex: make(map[keyspace.LiteralValue]uint32), dynamicSlots: make(map[identity.ContentID]uint32), freshByKey: make(map[freshTemplateKey]uint32), payloadIndex: make(map[payloadRow]uint32), localSlots: make(map[rootSlot]struct{}), bootEntries: make(map[rootSlot]bootEntryRow), bootInitials: make(map[rootPayload]bootEntryRow)}
+	owner := &schema{linkOwner: linkOwner, artifactOrder: ordered, bootIndex: make(map[identity.ContentID]uint32), exactSlots: make(map[uint32]uint32), exactIndex: make(map[keyspace.LiteralValue]uint32), dynamicSlots: make(map[identity.ContentID]uint32), freshByKey: make(map[freshTemplateKey]uint32), payloadIndex: make(map[payloadRow]uint32), localSlots: make(map[rootSlot]struct{}), bootEntries: make(map[rootSlot]bootEntryRow), bootInitials: make(map[rootPayload]bootEntryRow)}
 	builder := &heapBuilder{schema: owner, seal: heapSealContext{project: source.Project(), boundary: source.Boundary(), host: source.Host()}}
 	return builder, byModule, SealFailureNone
 }

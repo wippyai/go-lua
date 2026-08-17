@@ -30,9 +30,11 @@ type Snapshot struct {
 	// columns holds one erased *column[K, V] per dense slot. The slice is
 	// never handed out and never appended to after Seal.
 	columns []any
-	// directory is the immutable ContentID to slot map Resolve consults. It
-	// holds at most one entry per published identity.
-	directory    map[identity.ContentID]uint32
+	// directory is the immutable ContentID to slot mapping Resolve consults.
+	// It holds at most one entry per published identity and, like every
+	// other published structure here, is shared with the publications
+	// derived from this one rather than copied.
+	directory    *trie[identity.ContentID, uint32]
 	denominators Denominators
 	mounts       Mounts
 	queries      Queries
@@ -112,7 +114,7 @@ func Resolve(s *Snapshot, id identity.ContentID) (Locator, bool) {
 	if s == nil || !s.Published() {
 		return Locator{}, false
 	}
-	slot, published := s.directory[id]
+	slot, published := trieLookup(s.directory, hashKey(identityPlan, id), id)
 	if !published || uint64(slot) >= uint64(len(s.columns)) {
 		return Locator{}, false
 	}

@@ -246,6 +246,47 @@ func (s *resetState) ensureMuStream(head keyspace.Term) error {
 	if !ok || count < 0 {
 		return errors.New("program/flow/causal: Mu decision stream is unavailable")
 	}
+	// A nested Mu head may be a one-decision view over an enclosing stream.
+	// Reuse the existing physical stream interval when every decision already
+	// has an issued position; this keeps one reset store and lets the query
+	// owner distinguish head-local ranges without duplicating graph state.
+	if count > 0 {
+		positions := make([]uint32, count)
+		allExisting := true
+		for index := 0; index < count; index++ {
+			decision, decisionOK := s.recur.DecisionAt(head, index)
+			if !decisionOK || !isDecision(decision) {
+				return errors.New("program/flow/causal: Mu decision stream contains an invalid decision")
+			}
+			decisionFamily, decisionOrdinal := keyspace.TermFamily(decision), keyspace.TermOrdinal(decision)
+			if uint64(decisionOrdinal) >= uint64(len(s.result.reset.decisionHead[decisionFamily])) {
+				return errors.New("program/flow/causal: Mu decision slot is unavailable")
+			}
+			if uint64(decisionOrdinal) >= uint64(len(s.result.reset.decisionRank[decisionFamily])) {
+				return errors.New("program/flow/causal: Mu decision rank is unavailable")
+			}
+			existing := s.result.reset.decisionHead[decisionFamily][decisionOrdinal]
+			if existing == 0 {
+				allExisting = false
+				continue
+			}
+			ownerStart, ownerEnd, ownerOK := s.result.muRange(existing)
+			rank := s.result.reset.decisionRank[decisionFamily][decisionOrdinal]
+			if !ownerOK || uint64(rank) >= uint64(ownerEnd-ownerStart) {
+				return errors.New("program/flow/causal: existing Mu decision position is unavailable")
+			}
+			positions[index] = ownerStart + rank
+		}
+		if allExisting {
+			for index := 1; index < len(positions); index++ {
+				if positions[index] != positions[index-1]+1 {
+					return errors.New("program/flow/causal: nested Mu stream is not a contiguous issued interval")
+				}
+			}
+			s.result.reset.headRanges[family][ordinal] = range32{start: positions[0], end: positions[len(positions)-1] + 1}
+			return nil
+		}
+	}
 	start := uint32(len(s.result.reset.streams))
 	for index := 0; index < count; index++ {
 		decision, decisionOK := s.recur.DecisionAt(head, index)

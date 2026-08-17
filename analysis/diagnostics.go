@@ -5,6 +5,7 @@ import (
 	allocationcatalog "github.com/wippyai/go-lua/analysis/domain/heap/allocation/catalog"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/analysis/engine"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 )
 
 // AnalyzeDiagnosticPhase is the coarse permanent production phase reached by
@@ -245,6 +246,32 @@ func programBindingFailure(failure composite.BindFailure) ProgramBindingFailure 
 		return ProgramBindingFailurePackSchema
 	default:
 		return ProgramBindingFailureNone
+	}
+}
+
+// programMountFailure projects the mount phase's closed verdict into the
+// analyzer's own boundary. The rejecting axis is the factor whose authority
+// failed to seal, so the verdict names that factor's schema boundary.
+func programMountFailure(failure composite.MountFailure) ProgramBindingFailure {
+	if !failure.Available() {
+		return ProgramBindingFailureNone
+	}
+	if failure.Stage != composite.MountStageAxis {
+		return ProgramBindingFailureInput
+	}
+	switch programartifact.RuleOutputKind(failure.Axis) {
+	case programartifact.RuleOutputValue:
+		return ProgramBindingFailureValueSchema
+	case programartifact.RuleOutputHeap:
+		return ProgramBindingFailureHeapSchema
+	case programartifact.RuleOutputPack:
+		return ProgramBindingFailurePackSchema
+	case programartifact.RuleOutputCall:
+		return ProgramBindingFailureCallAlgebra
+	case programartifact.RuleOutputEffect:
+		return ProgramBindingFailureEffectAlgebra
+	default:
+		return ProgramBindingFailureInput
 	}
 }
 

@@ -202,11 +202,16 @@ func TestAxisAvailability(t *testing.T) {
 // published. Anything not published reports nothing.
 func TestSealedSubValuesPublishTheirBindings(t *testing.T) {
 	sealed := newFixture(t)
-	slot, published := sealed.Denominators().Slot(fixtureDenominator)
-	if !published || slot != totalAxis.Slot {
-		t.Fatalf("denominator slot = (%d, %t), want (%d, true)", slot, published, totalAxis.Slot)
+	if !sealed.Denominators().Published(fixtureDenominator) {
+		t.Fatal("published denominator does not report itself published")
 	}
-	if _, published := sealed.Denominators().Slot(fixtureUnknownID); published {
+	if !sealed.Denominators().Proves(fixtureDenominator, totalAxis.Slot) {
+		t.Fatalf("denominator does not prove slot %d", totalAxis.Slot)
+	}
+	if sealed.Denominators().Proves(fixtureDenominator, partialAxis.Slot) {
+		t.Fatalf("denominator proves slot %d, which never declared it", partialAxis.Slot)
+	}
+	if sealed.Denominators().Published(fixtureUnknownID) {
 		t.Fatal("unpublished denominator resolves")
 	}
 	if sealed.Denominators().Len() != 1 {
@@ -228,7 +233,7 @@ func TestSealedSubValuesPublishTheirBindings(t *testing.T) {
 	if zero.Denominators().Len() != 0 || zero.Mounts().Len() != 0 || zero.Queries().Len() != 0 {
 		t.Fatal("zero snapshot publishes bindings")
 	}
-	if _, published := zero.Denominators().Slot(fixtureDenominator); published {
+	if zero.Denominators().Published(fixtureDenominator) || zero.Denominators().Proves(fixtureDenominator, 0) {
 		t.Fatal("zero snapshot resolves a denominator")
 	}
 	if zero.Mounts().Bound(fixtureMount) || zero.Queries().Published(fixtureQueryPlan) {
