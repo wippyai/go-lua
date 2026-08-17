@@ -1,6 +1,6 @@
 // Package schema is the analyzer's declaration root. It owns the one sealed
 // table that every declaration surface plugs into: rules today, and further
-// surfaces (axes, queries, observations, libraries) later. The root knows only
+// surfaces (axes, queries, observations) later. The root knows only
 // how to hold entries, identify them, and seal them; every entry-kind law
 // belongs to the surface's own package.
 //
@@ -46,9 +46,6 @@ func (key Key) Available() bool { return key != "" }
 // diagnostics follow both. Composites relate coordinate spaces and queries read
 // them, so both follow axes; a denominator quantifies over the entries of a
 // surface sealed below it, so it follows every surface it may name as an owner.
-// A library contract kind resolves the validation law set its instances are
-// checked under against a surface sealed below it, so libraries seal last,
-// after every surface a kind may name.
 type SurfaceKind uint8
 
 const (
@@ -60,7 +57,6 @@ const (
 	SurfaceKindComposite
 	SurfaceKindDenominator
 	SurfaceKindQuery
-	SurfaceKindLibrary
 	surfaceKindLimit
 )
 

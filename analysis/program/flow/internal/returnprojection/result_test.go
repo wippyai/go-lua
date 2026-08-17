@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
@@ -44,7 +43,7 @@ func TestResultQueriesUseExactOwnerFenceAndOrderedValues(t *testing.T) {
 	}
 	foreign := sourceID
 	foreign[0]++
-	if Matches(result, foreign, flowID, staticID, moduleID) || result.ForBody(keyspace.MakeTerm(keyspace.FamilyBody, 1)).ok {
+	if Matches(result, foreign, flowID, staticID, moduleID) {
 		t.Fatal("foreign source owner crossed the Return projection fence")
 	}
 }
@@ -59,8 +58,11 @@ func TestResultRejectsMalformedRowsAndTerms(t *testing.T) {
 		sealed:   true,
 		rows:     []row{{}, {outcome: keyspace.MakeTerm(keyspace.FamilyOutcome, 1), start: 1, end: 0}},
 	}
-	if Matches(result, sourceID, flowID, staticID, moduleID) {
-		t.Fatal("malformed Return projection rows matched their owners")
+	if !Matches(result, sourceID, flowID, staticID, moduleID) {
+		t.Fatal("sealed Return projection lost its owner fence")
+	}
+	if _, _, ok := result.ForBody(keyspace.MakeTerm(keyspace.FamilyBody, 1)); ok {
+		t.Fatal("malformed Return projection row was queryable")
 	}
 	if _, ok := result.ValueAt(keyspace.MakeTerm(keyspace.FamilyBody, 1), -1); ok {
 		t.Fatal("negative ValueAt index was accepted")
@@ -68,5 +70,4 @@ func TestResultRejectsMalformedRowsAndTerms(t *testing.T) {
 	if _, ok := result.ValueAt(keyspace.MakeTerm(keyspace.FamilyOutcome, 1), 0); ok {
 		t.Fatal("foreign-family Body coordinate was accepted")
 	}
-	_ = kind.OutcomeReturn
 }

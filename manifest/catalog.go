@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/wippyai/go-lua/domain/type/typ"
+	"github.com/wippyai/go-lua/domain/type/unwrap"
 	moduleio "github.com/wippyai/go-lua/manifest/wire"
 	"github.com/wippyai/go-lua/types/signature"
 )
@@ -52,6 +53,21 @@ type Function struct {
 	canonicalPath string
 	signature     signature.Function
 }
+
+// Value is one mounted, non-callable export. Its type is the declaration of
+// the initial value: singleton types preserve exact literals while aggregate
+// and otherwise non-literal values remain intentionally opaque to consumers.
+type Value struct {
+	providerID string
+	binding    Binding
+	valueType  typ.Type
+	immutable  bool
+}
+
+func (v Value) ProviderIdentity() string { return v.providerID }
+func (v Value) Binding() Binding         { return v.binding.clone() }
+func (v Value) Type() typ.Type           { return v.valueType }
+func (v Value) Immutable() bool          { return v.immutable }
 
 func (f Function) ProviderIdentity() string { return f.providerID }
 func (f Function) CanonicalPath() string    { return f.canonicalPath }
@@ -285,6 +301,54 @@ func (c *Catalogue) Functions() []Function {
 		return out[left].canonicalPath < out[right].canonicalPath
 	})
 	return out
+}
+
+// Values returns every mounted non-callable export directly from provider
+// manifests. It is deliberately projected on demand rather than cached as a
+// second export registry.
+func (c *Catalogue) Values() []Value {
+	if c == nil {
+		return nil
+	}
+	var out []Value
+	for _, item := range c.providers {
+		if item.mount == MountDetached {
+			continue
+		}
+		seen := make(map[string]struct{})
+		callable := func(name string) bool {
+			_, ok := item.manifest.FunctionSignatures[name]
+			return ok
+		}
+		if record, ok := unwrap.Annotated(item.manifest.Export).(*typ.Record); ok {
+			for _, field := range record.Fields {
+				if callable(field.Name) {
+					continue
+				}
+				binding := Binding{mount: item.mount, modulePath: item.manifest.Path, member: []string{field.Name}}
+				out = append(out, Value{providerID: item.identity, binding: binding, valueType: item.manifest.ScopeType(field.Type), immutable: item.immutable})
+				seen[valueBindingKey(binding)] = struct{}{}
+			}
+		}
+		for name, valueType := range item.manifest.GlobalTypes {
+			if callable(name) {
+				continue
+			}
+			binding := Binding{mount: MountGlobals, modulePath: item.manifest.Path, member: []string{name}}
+			if _, exists := seen[valueBindingKey(binding)]; exists {
+				continue
+			}
+			out = append(out, Value{providerID: item.identity, binding: binding, valueType: item.manifest.ScopeType(valueType), immutable: false})
+		}
+	}
+	sort.Slice(out, func(left, right int) bool {
+		return valueBindingKey(out[left].binding) < valueBindingKey(out[right].binding)
+	})
+	return out
+}
+
+func valueBindingKey(binding Binding) string {
+	return fmt.Sprintf("%d/%s/%s", binding.mount, binding.modulePath, strings.Join(binding.member, "\x00"))
 }
 
 func (f Function) clone() Function {

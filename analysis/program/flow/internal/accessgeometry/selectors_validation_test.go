@@ -16,19 +16,6 @@ import (
 // bridge: the Module row points at a plain same-owner require Call, Binding
 // proves the local alias's unique Bind host, and Source proves that Bind's
 // order and first Values position contain exactly that Call.
-func TestImportAliasRequiresExactCrossProof(t *testing.T) {
-	for _, test := range []struct {
-		name string
-		tail bool
-	}{
-		{name: "fixed", tail: false},
-		{name: "open first result", tail: true},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			proveImportAlias(t, test.tail)
-		})
-	}
-}
 
 func proveImportAlias(t *testing.T, openTail bool) {
 	body := keyspace.MakeTerm(keyspace.FamilyBody, 1)

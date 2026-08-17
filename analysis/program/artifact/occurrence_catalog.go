@@ -191,7 +191,7 @@ func (compiler *compiler) deriveBinaryPresenceRefinementsFailure() CompileFailur
 		}
 		_, leftNil := nilSources[left]
 		_, rightNil := nilSources[right]
-		operand, target := identity.ContentID{}, identity.ContentID{}
+		var operand, target identity.ContentID
 		switch {
 		case leftNil && !rightNil:
 			operand, target = right, storageOrigins[right]

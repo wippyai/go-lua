@@ -2,10 +2,12 @@ package lua
 
 import (
 	"unicode/utf8"
+
+	"github.com/wippyai/go-lua/stdlib"
 )
 
 func OpenUtf8(L *LState) int {
-	mod := L.RegisterGoModule(Utf8LibName, utf8Funcs).(*LTable)
+	mod := L.RegisterGoModule(stdlib.UTF8Name, utf8Funcs).(*LTable)
 	mod.RawSetString("charpattern", LString("[\x00-\x7F\xC2-\xFD][\x80-\xBF]*"))
 	L.Push(mod)
 	return 1

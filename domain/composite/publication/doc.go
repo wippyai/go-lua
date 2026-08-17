@@ -7,7 +7,7 @@
 // so per the composite placement law the relation lives here, and this package
 // is the one writer of its result.
 //
-// The relation is held as two typed evidence paths. An attachment binds one
+// The relation is held as three typed evidence paths. An attachment binds one
 // selected call effect member to a value summary root before solving, and
 // proves one solved subject cell into a membership classification. An
 // allocation context event rebuilds the two cross-owner admissions from live
@@ -18,6 +18,13 @@
 // dispositions the transition declared. Both paths reauthenticate every input
 // they are handed, so a caller cannot supply a detached membership scalar,
 // context identity, heap key, or target consequence.
+//
+// The third path binds one mounted branch evidence point to the same Value
+// summary surface and reads it back after solving. It carries the same private
+// handle discipline: the point coordinates derive the identity that authorizes
+// the Engine observation, a second producer naming that point reauthenticates
+// its own member through the attachment, and the observation itself is never
+// accepted from a caller.
 //
 // The relation carries no composite.Spec row on the schema composite surface
 // and declares no output axis. Both land with the store cut, which brings the

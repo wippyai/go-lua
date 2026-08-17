@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/wippyai/go-lua/pm"
+	"github.com/wippyai/go-lua/stdlib"
 )
 
 const emptyLString = LString("")
@@ -31,7 +32,7 @@ var strFuncs = map[string]LGoFunc{
 }
 
 func OpenString(L *LState) int {
-	mod := L.RegisterGoModule(StringLibName, strFuncs).(*LTable)
+	mod := L.RegisterGoModule(stdlib.StringName, strFuncs).(*LTable)
 	gmatch := L.NewClosure(strGmatch, L.NewFunction(strGmatchIter))
 	mod.RawSetString("gmatch", gmatch)
 	mod.RawSetString("gfind", gmatch)

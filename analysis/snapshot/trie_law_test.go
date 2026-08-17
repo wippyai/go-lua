@@ -176,6 +176,48 @@ func TestTrieDerivationsAreIndependent(t *testing.T) {
 	}
 }
 
+// TestTrieAnswersWhereItHoldsNothing fixes the edges of the storage where
+// there is nothing to walk. Sealing no rows publishes no storage rather than
+// an empty node, withdrawing from storage that holds nothing changes nothing,
+// and withdrawing a key that only shares a hash with the rows a collision node
+// holds leaves that node exactly as it was.
+func TestTrieAnswersWhereItHoldsNothing(t *testing.T) {
+	t.Run("sealing no rows publishes no storage", func(t *testing.T) {
+		if built := trieBuild[int, int](nil, nil, 0); built != nil {
+			t.Fatal("sealing no rows published a node")
+		}
+		if built := trieBuild([]trieEntry[int, int]{}, []trieEntry[int, int]{}, 0); built != nil {
+			t.Fatal("sealing an empty row set published a node")
+		}
+	})
+	t.Run("withdrawing from no storage", func(t *testing.T) {
+		plan := mustPlan[int]()
+		withdrawn, removed := trieRemove[int, int](nil, 0, hashKey(plan, 1), 1)
+		if withdrawn != nil || removed {
+			t.Fatalf("withdrawal from no storage = (%v, %t), want (nil, false)", withdrawn, removed)
+		}
+	})
+	t.Run("withdrawing a key a collision node does not hold", func(t *testing.T) {
+		const shared = uint64(0x99)
+		var stored *trie[int, string]
+		for _, key := range []int{1, 2} {
+			stored, _ = trieInsert(stored, 0, trieEntry[int, string]{hash: shared, key: key, value: name(key)})
+		}
+		withdrawn, removed := trieRemove(stored, 0, shared, 3)
+		if removed {
+			t.Fatal("withdrawing a key the storage never held reports a removal")
+		}
+		if withdrawn != stored {
+			t.Fatal("a withdrawal that removed nothing copied the storage it walked")
+		}
+		for _, key := range []int{1, 2} {
+			if value, held := trieLookup(withdrawn, shared, key); !held || value != name(key) {
+				t.Fatalf("colliding row %d = (%q, %t) after a withdrawal of another key", key, value, held)
+			}
+		}
+	})
+}
+
 // TestKeyHashFollowsEquality is the hashing law. A key is hashed by what
 // makes two keys equal and by nothing else: two equal keys hash alike whether
 // they share storage or not, padding a struct carries never enters the hash,

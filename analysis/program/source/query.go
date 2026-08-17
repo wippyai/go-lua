@@ -53,7 +53,7 @@ func (v View) Binds() BindOrder   { return BindOrder{authority: v.authority} }
 func (v View) Formals() FormalOrder {
 	return FormalOrder{authority: v.authority}
 }
-func (v View) Index() Index       { return Index{authority: v.authority} }
+func (v View) Index() Index       { return Index(v) }
 func (v View) Literals() Literals { return Literals{authority: v.authority} }
 func (v View) Keys() Keys         { return Keys{authority: v.authority} }
 func (v View) Faults() Faults     { return Faults{authority: v.authority} }
@@ -300,19 +300,19 @@ func (v Index) rootRange(body keyspace.Term) (termRange, bool) {
 }
 
 func (v Literals) Nils() Nils {
-	return Nils{authority: v.authority, state: v.state}
+	return Nils(v)
 }
 func (v Literals) Bools() Bools {
-	return Bools{authority: v.authority, state: v.state}
+	return Bools(v)
 }
 func (v Literals) Integers() Integers {
-	return Integers{authority: v.authority, state: v.state}
+	return Integers(v)
 }
 func (v Literals) Floats() Floats {
-	return Floats{authority: v.authority, state: v.state}
+	return Floats(v)
 }
 func (v Literals) Strings() Strings {
-	return Strings{authority: v.authority, state: v.state}
+	return Strings(v)
 }
 
 func (v Nils) Count() int {

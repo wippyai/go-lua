@@ -13,10 +13,9 @@ import (
 // role outside the table has a capability. A rule added to the table alone is
 // therefore fully wired.
 func TestProgramBindingDerivesEveryRuleFromTheTable(t *testing.T) {
-	run := corpusHarnessFixtureRun(t, "advice/always-true-guard", corpusHarnessCompileMode())
-	plan := run.plan
+	plan, _, compileDiagnostics := fixtureCompile(t, "advice/always-true-guard")
 	if plan.state == nil || plan.state.binding == nil || plan.state.binding.Rules() == nil {
-		t.Fatalf("rule table binding compile diagnostics=%+v", run.compileDiagnostics)
+		t.Fatalf("rule table binding compile diagnostics=%+v", compileDiagnostics)
 	}
 	binding := plan.state.binding
 	if composite.RuleCount() == 0 {

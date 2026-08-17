@@ -3,10 +3,12 @@ package lua
 import (
 	"math"
 	"math/rand/v2"
+
+	"github.com/wippyai/go-lua/stdlib"
 )
 
 func OpenMath(L *LState) int {
-	mod := L.RegisterGoModule(MathLibName, mathFuncs).(*LTable)
+	mod := L.RegisterGoModule(stdlib.MathName, mathFuncs).(*LTable)
 	mod.RawSetString("pi", LNumber(math.Pi))
 	mod.RawSetString("huge", LNumber(math.MaxFloat64))
 	mod.RawSetString("maxinteger", LInteger(math.MaxInt64))

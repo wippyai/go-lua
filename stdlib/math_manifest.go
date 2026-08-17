@@ -57,8 +57,8 @@ func mathDeclaration() declaration {
 		values: map[string]typ.Type{
 			"pi":         typ.LiteralNumber(math.Pi),
 			"huge":       typ.LiteralNumber(math.MaxFloat64),
-			"maxinteger": typ.Integer,
-			"mininteger": typ.Integer,
+			"maxinteger": typ.LiteralInt(math.MaxInt64),
+			"mininteger": typ.LiteralInt(math.MinInt64),
 		},
 	}
 }

@@ -6,6 +6,9 @@ import (
 )
 
 func (artifact *Artifact) validateSealIndexes(state *sealValidationState) CompileFailure {
+	if artifact == nil || state == nil {
+		return compileFailure(CompileStageSeal, CompileRowAuthority, -1, -1, CompileReasonArtifactIdentity)
+	}
 	// Calls and their ordered child columns are a single Artifact-owned plane.
 	// Validate contiguous ranges and owner joins here.
 	seenCalls := make(map[identity.ContentID]struct{}, len(artifact.calls))

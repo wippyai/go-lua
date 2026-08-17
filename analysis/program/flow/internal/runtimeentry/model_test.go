@@ -3,12 +3,13 @@ package runtimeentry
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
 func TestResultAndResumeRowsRequireTheirExactSealedParents(t *testing.T) {
 	var result Result
-	if result.Entry(keyspace.MakeTerm(keyspace.FamilyBody, 1)) != 0 {
+	if entry, ok := result.Entry(keyspace.MakeTerm(keyspace.FamilyBody, 1)); ok || entry != 0 {
 		t.Fatal("zero runtime-entry result resolved a Body")
 	}
 	if Matches(&result, testRuntimeEntryOwner(1), testRuntimeEntryOwner(2), testRuntimeEntryOwner(3), testRuntimeEntryOwner(4)) {
@@ -26,7 +27,7 @@ func TestResultAndResumeRowsRequireTheirExactSealedParents(t *testing.T) {
 	}
 }
 
-func testRuntimeEntryOwner(value byte) (id [32]byte) {
+func testRuntimeEntryOwner(value byte) (id identity.ContentID) {
 	id[0] = value
 	return id
 }

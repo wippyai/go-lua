@@ -11,7 +11,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/composite"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
-	"github.com/wippyai/go-lua/analysis/schema/library"
 	"github.com/wippyai/go-lua/analysis/schema/query"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
@@ -106,19 +105,12 @@ func sealRegistry() {
 			registry.failure = schema.SealFailure{Contributor: schema.SurfaceKindQuery, Law: schema.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
 			return
 		}
-		kinds, kindsOK := libraryKinds(roles)
-		if !kindsOK {
-			registry.failure = schema.SealFailure{Contributor: schema.SurfaceKindLibrary, Law: schema.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
-			return
-		}
 		// The registration order is the catalog order, which is the bind phase
 		// order: the structural vocabulary first, because it names no other
 		// surface and every surface above it may name a member of it, then axes
 		// before the rules that write them and before every surface that names a
 		// coordinate space, diagnostics after the rules and axes they reference,
-		// denominators after the surfaces they may be owned by, and the contract
-		// kinds last, after every surface a validation reference may resolve
-		// against.
+		// denominators after the surfaces they may be owned by.
 		builder := schema.NewBuilder()
 		builder.Register(structure.NewSurface(structures))
 		builder.Register(axis.NewSurface(axes))
@@ -131,7 +123,6 @@ func sealRegistry() {
 		// vocabulary is allowed in this composition root.
 		builder.Register(denominator.NewSurface(denominators, denominator.GeneratedRelationEntries()))
 		builder.Register(query.NewSurface(queries))
-		builder.Register(library.NewSurface(kinds))
 		sealed, failure := builder.Seal()
 		if failure.Available() {
 			registry.failure = failure

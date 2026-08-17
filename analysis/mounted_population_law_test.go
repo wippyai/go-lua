@@ -35,18 +35,10 @@ type mountedPopulationCase struct {
 
 func mountedPopulationCases(t *testing.T) []mountedPopulationCase {
 	t.Helper()
-	corpus, err := testfixture.LoadCorpus(architectureBatteryRepositoryRoot(t))
-	if err != nil {
-		t.Fatalf("load frozen corpus: %v", err)
-	}
-	contract := corpusHarnessContract(t)
+	contract := fixtureContract(t)
 	cases := make([]mountedPopulationCase, 0, len(mountedPopulationFixtures))
 	for _, name := range mountedPopulationFixtures {
-		project, err := corpus.Project(name)
-		if err != nil {
-			t.Fatalf("fixture project %q: %v", name, err)
-		}
-		linked, err := testfixture.SealCorpusProject(contract, project)
+		linked, err := testfixture.SealCorpusProject(contract, fixtureProject(t, name))
 		if err != nil {
 			t.Fatalf("seal fixture %q: %v", name, err)
 		}

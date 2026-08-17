@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/wippyai/go-lua/compiler/parse"
+	"github.com/wippyai/go-lua/stdlib"
 )
 
 func TestLStateIsClosed(t *testing.T) {
@@ -893,19 +894,19 @@ func BenchmarkNewStateCoreOnly(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		L := NewState(Options{SkipOpenLibs: true})
 		L.Push(L.NewFunction(OpenBase))
-		L.Push(LString(BaseLibName))
+		L.Push(LString(stdlib.BaseName))
 		L.Call(1, 0)
 		L.Push(L.NewFunction(OpenTable))
-		L.Push(LString(TabLibName))
+		L.Push(LString(stdlib.TableName))
 		L.Call(1, 0)
 		L.Push(L.NewFunction(OpenString))
-		L.Push(LString(StringLibName))
+		L.Push(LString(stdlib.StringName))
 		L.Call(1, 0)
 		L.Push(L.NewFunction(OpenMath))
-		L.Push(LString(MathLibName))
+		L.Push(LString(stdlib.MathName))
 		L.Call(1, 0)
 		L.Push(L.NewFunction(OpenCoroutine))
-		L.Push(LString(CoroutineLibName))
+		L.Push(LString(stdlib.CoroutineName))
 		L.Call(1, 0)
 		L.Close()
 	}
@@ -954,19 +955,19 @@ func BenchmarkNewStateEngine2Options(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		L := NewState(opts)
 		L.Push(L.NewFunction(OpenBase))
-		L.Push(LString(BaseLibName))
+		L.Push(LString(stdlib.BaseName))
 		L.Call(1, 0)
 		L.Push(L.NewFunction(OpenTable))
-		L.Push(LString(TabLibName))
+		L.Push(LString(stdlib.TableName))
 		L.Call(1, 0)
 		L.Push(L.NewFunction(OpenString))
-		L.Push(LString(StringLibName))
+		L.Push(LString(stdlib.StringName))
 		L.Call(1, 0)
 		L.Push(L.NewFunction(OpenMath))
-		L.Push(LString(MathLibName))
+		L.Push(LString(stdlib.MathName))
 		L.Call(1, 0)
 		L.Push(L.NewFunction(OpenCoroutine))
-		L.Push(LString(CoroutineLibName))
+		L.Push(LString(stdlib.CoroutineName))
 		L.Call(1, 0)
 		L.Close()
 	}
@@ -1001,7 +1002,7 @@ func BenchmarkLibBaseOnly(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		L := NewState(opts)
 		L.Push(L.NewFunction(OpenBase))
-		L.Push(LString(BaseLibName))
+		L.Push(LString(stdlib.BaseName))
 		L.Call(1, 0)
 		L.Close()
 	}
@@ -1020,7 +1021,7 @@ func BenchmarkLibCoroutineOnly(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		L := NewState(opts)
 		L.Push(L.NewFunction(OpenCoroutine))
-		L.Push(LString(CoroutineLibName))
+		L.Push(LString(stdlib.CoroutineName))
 		L.Call(1, 0)
 		L.Close()
 	}
@@ -1039,13 +1040,13 @@ func BenchmarkLibImmutableOnly(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		L := NewState(opts)
 		L.Push(L.NewFunction(OpenTable))
-		L.Push(LString(TabLibName))
+		L.Push(LString(stdlib.TableName))
 		L.Call(1, 0)
 		L.Push(L.NewFunction(OpenString))
-		L.Push(LString(StringLibName))
+		L.Push(LString(stdlib.StringName))
 		L.Call(1, 0)
 		L.Push(L.NewFunction(OpenMath))
-		L.Push(LString(MathLibName))
+		L.Push(LString(stdlib.MathName))
 		L.Call(1, 0)
 		L.Close()
 	}

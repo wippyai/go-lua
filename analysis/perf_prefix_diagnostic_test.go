@@ -1,29 +1,38 @@
 package analysis
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The prefix lane measures how one fixture's analysis cost grows with its
 // source. Its input is a truncation of a corpus fixture rather than a fixture
-// directory, so it seals a single-module Link itself and then runs the shared
-// harness spine: one compile, one diagnostic solve, one detached-Result
-// contract, one closed plan.
+// directory, so it seals a single-module Link itself and then runs one compile,
+// one diagnostic solve, and one closed plan.
 func analyzeEdgeMatrixPrefix(t *testing.T, cases int) {
 	t.Helper()
-	project := corpusHarnessFixture(t, "semantic/type-engine-edge-matrix")
-	source := corpusHarnessSourceText(t, project, "main.lua")
-	end := edgeMatrixPrefixEnd(t, source, cases)
-	run := &corpusHarnessRun{
-		project: project,
-		linked:  corpusHarnessSourceLink(t, corpusHarnessContract(t), "main.lua", source[:end]),
-	}
-	_, class, err := corpusHarnessExecuteLink(t, run, corpusHarnessDiagnosticMode())
-	t.Logf("Analyze prefix%d: compile=%s solve=%s total=%s", cases, run.cost.compile, run.cost.solve, run.cost.total())
+	source, err := fixtureProject(t, "semantic/type-engine-edge-matrix").SourceText("main.lua")
 	if err != nil {
-		t.Fatalf("Analyze prefix%d %s: %v", cases, class, err)
+		t.Fatal(err)
+	}
+	end := edgeMatrixPrefixEnd(t, source, cases)
+	linked := fixtureSourceLink(t, fixtureContract(t), "main.lua", source[:end])
+	started := time.Now()
+	plan, status, diagnostics := CompileWithDiagnostics(linked)
+	compile := time.Since(started)
+	if status != CompileComplete || plan == nil {
+		t.Fatalf("Analyze prefix%d compile = %v plan=%t diagnostics=%+v", cases, status, plan != nil, diagnostics)
+	}
+	defer plan.Close()
+	started = time.Now()
+	result, analyzeStatus, solveDiagnostics := plan.SolveWithDiagnostics(context.Background(), fixtureSolveOptions())
+	solve := time.Since(started)
+	t.Logf("Analyze prefix%d: compile=%s solve=%s total=%s", cases, compile, solve, compile+solve)
+	if analyzeStatus != AnalyzeComplete || result == nil {
+		t.Fatalf("Analyze prefix%d solve = %v result=%t diagnostics=%+v", cases, analyzeStatus, result != nil, solveDiagnostics)
 	}
 }
 

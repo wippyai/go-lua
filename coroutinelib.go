@@ -1,6 +1,10 @@
 package lua
 
-import "sync"
+import (
+	"sync"
+
+	"github.com/wippyai/go-lua/stdlib"
+)
 
 // SpawnRequest is yielded by coroutine.spawn to signal the scheduler
 type SpawnRequest struct {
@@ -23,7 +27,7 @@ func ReleaseSpawnRequest(sr *SpawnRequest) {
 }
 
 func OpenCoroutine(L *LState) int {
-	mod := L.RegisterGoModule(CoroutineLibName, coFuncs).(*LTable)
+	mod := L.RegisterGoModule(stdlib.CoroutineName, coFuncs).(*LTable)
 	L.Push(mod)
 	return 1
 }

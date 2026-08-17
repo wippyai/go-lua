@@ -2,27 +2,6 @@ package lua
 
 import "github.com/wippyai/go-lua/stdlib"
 
-const (
-	// BaseLibName is here for consistency; the base functions have no namespace/library.
-	BaseLibName = stdlib.BaseName
-	// LoadLibName is here for consistency; the loading system has no namespace/library.
-	LoadLibName = stdlib.PackageName
-	// TabLibName is the name of the table Library.
-	TabLibName = stdlib.TableName
-	// StringLibName is the name of the string Library.
-	StringLibName = stdlib.StringName
-	// MathLibName is the name of the math Library.
-	MathLibName = stdlib.MathName
-	// DebugLibName is the name of the debug Library.
-	DebugLibName = stdlib.DebugName
-	// CoroutineLibName is the name of the coroutine Library.
-	CoroutineLibName = stdlib.CoroutineName
-	// Utf8LibName is the name of the utf8 Library.
-	Utf8LibName = stdlib.UTF8Name
-	// ErrorsLibName is the name of the errors Library.
-	ErrorsLibName = stdlib.ErrorsName
-)
-
 type luaLib struct {
 	libName string
 	libFunc LGoFunc

@@ -13,10 +13,9 @@ import (
 )
 
 func TestCallsiteMountedSelectedCallEffectStageOwnerFenceLaw(t *testing.T) {
-	run := corpusHarnessFixtureRun(t, "advice/always-true-guard", corpusHarnessCompileMode())
-	plan := run.plan
+	plan, _, compileDiagnostics := fixtureCompile(t, "advice/always-true-guard")
 	if plan.state == nil || plan.state.binding == nil || plan.state.artifacts == nil {
-		t.Fatalf("callsite native-stage compile diagnostics=%+v", run.compileDiagnostics)
+		t.Fatalf("callsite native-stage compile diagnostics=%+v", compileDiagnostics)
 	}
 	if runtimeDiagnostic, instantiated := plan.state.instantiateRuntimeTopology(); !instantiated || plan.state.graph == nil {
 		t.Fatalf("callsite native-stage runtime topology=%+v", runtimeDiagnostic)

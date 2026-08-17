@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/domain/effect"
+	typetable "github.com/wippyai/go-lua/domain/type/table"
 	"github.com/wippyai/go-lua/domain/type/typ"
 	"github.com/wippyai/go-lua/manifest"
 	moduleio "github.com/wippyai/go-lua/manifest/wire"
@@ -18,6 +19,35 @@ func TestCatalogueRejectsParallelPathAuthorities(t *testing.T) {
 	}
 	if _, err := manifest.Seal(provider("left"), provider("right")); err == nil {
 		t.Fatal("duplicate manifest path accepted")
+	}
+}
+
+func TestCatalogueProjectsMountedNonCallableExportsWithoutSecondRegistry(t *testing.T) {
+	catalogue, err := manifest.Seal(manifest.Provider{
+		Identity: "constants", Mount: manifest.MountModule, Immutable: true,
+		Declaration: func() *moduleio.Manifest {
+			declaration := moduleio.New("constants")
+			declaration.DefineFunctionSignature("call", signature.Function{Type: typ.Func().Build(), Effect: effect.Empty})
+			declaration.SetExport(typetable.NewRecord().
+				ReadonlyField("answer", typ.LiteralInt(42)).
+				ReadonlyField("call", typ.Func().Build()).Build())
+			return declaration
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := catalogue.Values()
+	if len(values) != 1 {
+		t.Fatalf("non-callable exports = %d, want 1", len(values))
+	}
+	binding := values[0].Binding()
+	member := binding.Member()
+	if binding.Mount() != manifest.MountModule || binding.ModulePath() != "constants" || len(member) != 1 || member[0] != "answer" {
+		t.Fatalf("value binding = %d/%q/%v", binding.Mount(), binding.ModulePath(), member)
+	}
+	if !values[0].Immutable() || !typ.TypeEquals(values[0].Type(), typ.LiteralInt(42)) {
+		t.Fatalf("value declaration = immutable:%t type:%v", values[0].Immutable(), values[0].Type())
 	}
 }
 

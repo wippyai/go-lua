@@ -158,6 +158,19 @@ func TestKeyHashCoversEveryKeyShape(t *testing.T) {
 	assertKeyHashLaw(t, "float64", 1.5, 1.5, -1.5)
 	assertKeyHashLaw(t, "complex64", complex64(complex(1, 2)), complex64(complex(1, 2)), complex64(complex(2, 1)))
 	assertKeyHashLaw(t, "complex128", complex(1, 2), complex(1, 2), complex(2, 1))
+	// A complex is two floating point parts, so it is where the two zeros of a
+	// float meet a schedule of more than one step: the parts are normalized
+	// where they are hashed rather than where the key is read.
+	assertKeyHashLaw(t,
+		"complex64 zero part",
+		complex64(complex(float32(0), 1)),
+		complex64(complex(negativeZero32(), 1)),
+		complex64(complex(float32(1), 1)))
+	assertKeyHashLaw(t,
+		"complex128 zero part",
+		complex(1, float64(0)),
+		complex(1, math0Negative()),
+		complex(1, float64(1)))
 	assertKeyHashLaw(t, "string", "present", string([]byte("present")), "absent")
 	assertKeyHashLaw(t, "byte array", [3]byte{1, 2, 3}, [3]byte{1, 2, 3}, [3]byte{1, 2, 4})
 	assertKeyHashLaw(t, "int array", [2]int{5, 6}, [2]int{5, 6}, [2]int{6, 5})
@@ -459,3 +472,10 @@ func assertHashSpread[K comparable](t *testing.T, name string, corpus int, keyAt
 // throughKey passes a key by value so the copy under test is a real parameter
 // copy rather than an alias.
 func throughKey(key sealedKey) sealedKey { return key }
+
+// negativeZero32 returns the negative zero of a 32 bit float without a
+// constant expression the compiler would fold into positive zero.
+func negativeZero32() float32 {
+	zero := float32(0)
+	return -zero
+}

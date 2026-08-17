@@ -86,8 +86,8 @@ func baseDeclaration() declaration {
 		},
 		values: map[string]typ.Type{
 			"_G":                  typ.BuiltinTableTopMarker(),
-			"_VERSION":            typ.String,
-			"_GOPHER_LUA_VERSION": typ.String,
+			"_VERSION":            typ.LiteralString(LanguageVersion),
+			"_GOPHER_LUA_VERSION": typ.LiteralString(ImplementationString),
 		},
 	}
 }

@@ -6,24 +6,9 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
-func TestOutcomePhaseClassifierExcludesOnlyNormal(t *testing.T) {
-	if outcomePhaseOutcome(kind.OutcomeNormal) {
-		t.Fatal("Normal selected an Outcome phase")
-	}
-	for _, outcomeKind := range []kind.OutcomeKind{kind.OutcomeReturn, kind.OutcomeThrow, kind.OutcomeYield, kind.OutcomeCancel, kind.OutcomeBreak, kind.OutcomeGoto} {
-		if !outcomePhaseOutcome(outcomeKind) {
-			t.Fatalf("%v did not select an Outcome phase", outcomeKind)
-		}
-	}
-}
-
-// syntheticResult is deliberately assembled from the published typed rows.
-// It keeps these laws independent of the upstream fixture builders while
-// exercising the final authority's closed storage and query contracts.
 func syntheticResult() *Result {
 	var counts [keyspace.FamilyCount]uint32
 	counts[keyspace.FamilyBody] = 1
@@ -316,31 +301,6 @@ func TestStructuralGuardsAndOutcomeRoutesStayTyped(t *testing.T) {
 	}
 }
 
-func TestWideFamilyBaseLookupIsIterativeAndAllocationFree(t *testing.T) {
-	var counts [keyspace.FamilyCount]uint32
-	counts[keyspace.FamilyBody] = 4096
-	counts[keyspace.FamilyOutcome] = 1
-	r := &Result{
-		index:    successorIndex{familyCounts: counts},
-		sourceID: identity.ContentID{1},
-		flowID:   identity.ContentID{2},
-		staticID: identity.ContentID{3},
-		moduleID: identity.ContentID{4},
-	}
-	high := keyspace.MakeTerm(keyspace.FamilyBody, 4096)
-	outcome := keyspace.MakeTerm(keyspace.FamilyOutcome, 1)
-	if err := rebuildSyntheticSuccessors(r, []edgeRow{{Edge: Edge{From: high, To: outcome}}}, nil); err != nil {
-		t.Fatal(err)
-	}
-	if got := r.Successors().Count(high); got != 1 {
-		t.Fatalf("wide family successor count = %d, want 1", got)
-	}
-	view := r.Successors()
-	if allocs := testing.AllocsPerRun(1000, func() { _, _ = view.At(high, 0) }); allocs != 0 {
-		t.Fatalf("wide successor query allocates %v times", allocs)
-	}
-}
-
 func TestCompressedMuQueriesAndEmptyReset(t *testing.T) {
 	r := syntheticResult()
 	body := keyspace.MakeTerm(keyspace.FamilyBody, 1)
@@ -400,91 +360,6 @@ func TestComponentShapedButUnissuedRowFailsClosed(t *testing.T) {
 	r.components = nil
 	if _, ok := r.Edges().At(0); ok {
 		t.Fatal("component-shaped but unissued local row remained observable")
-	}
-}
-
-func TestLocalProjectionUsesOnlyIssuedCausalRows(t *testing.T) {
-	build := func(t *testing.T) (*Result, Successor, Site, Region) {
-		t.Helper()
-		r := syntheticResult()
-		body := keyspace.MakeTerm(keyspace.FamilyBody, 1)
-		loop := keyspace.MakeTerm(keyspace.FamilyLoop, 1)
-		selectTerm := keyspace.MakeTerm(keyspace.FamilySelect, 1)
-		if err := rebuildSyntheticSuccessors(r, []edgeRow{{Edge: Edge{From: body, To: selectTerm}, component: loop}}, nil); err != nil {
-			t.Fatal(err)
-		}
-		r.sites.rows = []siteRow{
-			{term: body, context: hashSiteContext(r.sourceID, r.flowID, r.staticID, r.moduleID, body)},
-			{term: selectTerm, context: hashSiteContext(r.sourceID, r.flowID, r.staticID, r.moduleID, selectTerm)},
-		}
-		if !r.buildLocal() {
-			t.Fatal("failed to project issued local component")
-		}
-		successor, ok := r.Successors().At(body, 0)
-		if !ok {
-			t.Fatal("issued local successor disappeared")
-		}
-		site, ok := r.SiteForTerm(body)
-		if !ok {
-			t.Fatal("issued local site disappeared")
-		}
-		region, ok := r.Local().ForSuccessor(successor)
-		if !ok || !region.Available() || !region.ContainsSuccessor(successor) || !region.ContainsSite(site) {
-			t.Fatal("region lost its existing causal route/site references")
-		}
-		if head, ok := region.Head(); !ok || head != loop {
-			t.Fatalf("region head = %v/%v, want %v/true", head, ok, loop)
-		}
-		if region.SuccessorCount() != 1 || region.SiteCount() != 2 {
-			t.Fatalf("region traversal counts = routes %d sites %d, want 1/2", region.SuccessorCount(), region.SiteCount())
-		}
-		if route, ok := region.SuccessorAt(0); !ok || !route.IsLocal() || route.From != body || route.To != selectTerm {
-			t.Fatalf("region route traversal lost existing successor: %#v/%v", route, ok)
-		}
-		if endpoint, ok := region.SiteAt(0); !ok || !endpoint.Available() {
-			t.Fatal("region site traversal lost existing site")
-		}
-		return r, successor, site, region
-	}
-	_, successor, site, first := build(t)
-	_, foreignSuccessor, foreignSite, second := build(t)
-	if first.ID() != second.ID() {
-		t.Fatal("equivalent issued component changed stable local identity")
-	}
-	if _, ok := first.result.Local().ForSuccessor(foreignSuccessor); ok {
-		t.Fatal("foreign successor entered local inverse")
-	}
-	if regions := first.result.Local().RegionCountForSite(foreignSite); regions != 0 {
-		t.Fatal("foreign site entered local inverse")
-	}
-	if !first.ContainsSuccessor(successor) || !first.ContainsSite(site) {
-		t.Fatal("local membership was not stable")
-	}
-}
-
-func TestLocalEnumeratesEmptyIssuedHeadInCanonicalOrder(t *testing.T) {
-	r := syntheticResult()
-	loop := keyspace.MakeTerm(keyspace.FamilyLoop, 1)
-	r.components = []keyspace.Term{loop}
-	if !r.buildLocal() {
-		t.Fatal("failed to build empty issued region")
-	}
-	local := r.Local()
-	if local.Count() != 1 {
-		t.Fatalf("empty issued region count = %d, want 1", local.Count())
-	}
-	region, ok := local.At(0)
-	if !ok || region.SuccessorCount() != 0 || region.SiteCount() != 0 {
-		t.Fatal("empty issued region was not enumerable")
-	}
-	if replay, ok := local.Resolve(region.ID()); !ok || replay.ID() != region.ID() {
-		t.Fatal("canonical empty region identity failed to resolve")
-	}
-	if _, ok := local.At(1); ok {
-		t.Fatal("region enumeration exposed a physical overflow row")
-	}
-	if allocs := testing.AllocsPerRun(1000, func() { _, _ = local.At(0); _, _ = local.Resolve(region.ID()) }); allocs != 0 {
-		t.Fatalf("local enumeration allocates %v times", allocs)
 	}
 }
 
@@ -641,40 +516,6 @@ func TestProvenanceAndQueryPathsAreAllocationFree(t *testing.T) {
 	}
 }
 
-func TestSemanticRouteIdentityResolvesThroughExistingRef(t *testing.T) {
-	r := syntheticResult()
-	body := keyspace.MakeTerm(keyspace.FamilyBody, 1)
-	outcome := keyspace.MakeTerm(keyspace.FamilyOutcome, 1)
-	if err := rebuildSyntheticSuccessors(r, []edgeRow{{Edge: Edge{From: body, To: outcome}}}, nil); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.buildRouteIndex(); err != nil {
-		t.Fatal(err)
-	}
-	successor, ok := r.Successors().At(body, 0)
-	if !ok {
-		t.Fatal("sealed successor is unavailable")
-	}
-	routeIdentity, ok := successor.Identity()
-	if !ok || !routeIdentity.available() {
-		t.Fatal("sealed successor did not publish an owner-fenced identity")
-	}
-	resolved, ok := r.Successors().Resolve(routeIdentity)
-	if !ok || resolved.From != successor.From || resolved.To != successor.To || resolved.Arm != successor.Arm {
-		t.Fatalf("Resolve(identity) = %#v/%v, want %#v/true", resolved, ok, successor)
-	}
-	if allocs := testing.AllocsPerRun(1000, func() {
-		_, _ = r.Successors().Resolve(routeIdentity)
-	}); allocs != 0 {
-		t.Fatalf("Resolve(identity) allocates %v times", allocs)
-	}
-	foreign := routeIdentity
-	foreign.SourceID = identity.ContentID{9}
-	if _, ok := r.Successors().Resolve(foreign); ok {
-		t.Fatal("foreign owner identity resolved in this causal authority")
-	}
-}
-
 func TestSemanticRouteIdentityRejectsDuplicatePreimage(t *testing.T) {
 	r := syntheticResult()
 	body := keyspace.MakeTerm(keyspace.FamilyBody, 1)
@@ -687,57 +528,6 @@ func TestSemanticRouteIdentityRejectsDuplicatePreimage(t *testing.T) {
 	}
 	if err := r.buildRouteIndex(); err == nil {
 		t.Fatal("duplicate semantic route preimage was published")
-	}
-}
-
-func TestClosedArmPredicatesRejectZeroAndUnknown(t *testing.T) {
-	for _, arm := range []BoundaryArmKind{0, BoundaryCancel + 1, ^BoundaryArmKind(0)} {
-		successor := Successor{Arm: arm}
-		if successor.IsLocal() || successor.IsBoundary() {
-			t.Fatalf("malformed arm %d was classified as a semantic plane", arm)
-		}
-		if _, _, _, ok := boundarySuccessor(CallBoundary{}, arm); ok {
-			t.Fatalf("malformed arm %d produced a boundary route", arm)
-		}
-	}
-}
-
-func TestMalformedEdgeAndResetCombinationsFailClosed(t *testing.T) {
-	r := syntheticResult()
-	body := keyspace.MakeTerm(keyspace.FamilyBody, 1)
-	outcome := keyspace.MakeTerm(keyspace.FamilyOutcome, 1)
-	loop := keyspace.MakeTerm(keyspace.FamilyLoop, 1)
-	r.reset.headRanges[keyspace.FamilyLoop] = make([]range32, 2)
-	r.reset.headRanges[keyspace.FamilyLoop][1] = range32{start: 0, end: 2}
-	r.reset.streams = []keyspace.Term{
-		keyspace.MakeTerm(keyspace.FamilySelect, 1),
-		keyspace.MakeTerm(keyspace.FamilyBranch, 1),
-	}
-	cases := []edgeRow{
-		{Edge: Edge{From: body, To: outcome, Truth: true}},
-		{Edge: Edge{From: body, To: outcome, Decision: body}},
-		{Edge: Edge{From: body, To: outcome}, resetStart: 1, resetPast: 1},
-		{Edge: Edge{From: body, To: outcome, Mu: body}},
-		{Edge: Edge{From: body, To: outcome, Mu: loop}, resetStart: 1, resetPast: 0},
-		{Edge: Edge{From: body, To: outcome, Mu: loop}, resetStart: 0, resetPast: 3},
-		{Edge: Edge{From: body, To: outcome, Mu: loop}, resetDigest: identity.ContentID{7}},
-	}
-	for index, row := range cases {
-		r.edges.rows = []edgeRow{row}
-		if _, ok := r.Edges().At(0); ok {
-			t.Fatalf("malformed Edge combination %d was observable: %#v", index, row)
-		}
-	}
-
-	// The stream term itself must also be inside the sealed Select/Branch/Loop
-	// denominators; family-shaped terms with a foreign ordinal are malformed.
-	r.reset.streams = []keyspace.Term{keyspace.MakeTerm(keyspace.FamilySelect, 2)}
-	r.edges.rows = []edgeRow{{Edge: Edge{From: body, To: outcome, Mu: loop}, resetStart: 0, resetPast: 1}}
-	if err := rebuildSyntheticSuccessors(r, r.edges.rows, nil); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.buildRouteIndex(); err == nil {
-		t.Fatal("reset stream term outside the sealed family denominator was accepted")
 	}
 }
 

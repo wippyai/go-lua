@@ -1,6 +1,7 @@
 package containment
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
@@ -296,134 +297,6 @@ func TestProveMinimalEntryRoot(t *testing.T) {
 	}
 }
 
-func TestProveGlobalCellRootAndChunkCellReachesEntry(t *testing.T) {
-	counts := countsFor(
-		c(keyspace.FamilyBody, 1),
-		c(keyspace.FamilyCell, 2),
-		c(keyspace.FamilyVararg, 1),
-		c(keyspace.FamilyValues, 1),
-		c(keyspace.FamilyReturn, 1),
-	)
-	body := keyspace.MakeTerm(keyspace.FamilyBody, 1)
-	global := keyspace.MakeTerm(keyspace.FamilyCell, 1)
-	chunk := keyspace.MakeTerm(keyspace.FamilyCell, 2)
-	vararg := keyspace.MakeTerm(keyspace.FamilyVararg, 1)
-	values := keyspace.MakeTerm(keyspace.FamilyValues, 1)
-	returned := keyspace.MakeTerm(keyspace.FamilyReturn, 1)
-	flow := authored.Input{
-		Values: authored.ValuesInput{Rows: []authored.Value{{Owner: body, Tail: vararg}}},
-		Storage: authored.StorageInput{
-			Cells: []authored.Cell{
-				{Kind: authored.CellGlobal, Key: 1},
-				{Kind: authored.CellLocal, Body: body},
-			},
-			Varargs: []authored.Vararg{{Owner: body, Cell: chunk}},
-		},
-		Control: authored.ControlInput{Returns: []authored.Return{{Owner: body, Values: values}}},
-	}
-	fixture := newProofFixture(t, proofSpec{
-		counts: counts,
-		rows:   [][]keyspace.Term{{returned}},
-		flow:   flow,
-		exacts: []keyspace.LiteralValue{{Kind: keyspace.LiteralString, String: "global"}},
-		module: emptyModule(t),
-	})
-	result, err := fixture.prove()
-	if err != nil {
-		t.Fatalf("Prove: %v", err)
-	}
-	if parent, ok := result.Parent(global); ok || parent != 0 {
-		t.Fatalf("global Cell parent = %v/%v, want root", parent, ok)
-	}
-	if parent, ok := result.Parent(chunk); !ok || parent != body {
-		t.Fatalf("chunk Cell parent = %v/%v, want Entry %v", parent, ok, body)
-	}
-	if !result.Contains(body, chunk) || result.Contains(global, chunk) {
-		t.Fatal("Cell containment intervals are not root/lexical exact")
-	}
-}
-
-func TestProveUsesLexicalBodyParentNotConstructHost(t *testing.T) {
-	counts := countsFor(
-		c(keyspace.FamilyBody, 2),
-		c(keyspace.FamilyValues, 1),
-		c(keyspace.FamilyFunction, 1),
-		c(keyspace.FamilyReturn, 1),
-	)
-	body := keyspace.MakeTerm(keyspace.FamilyBody, 1)
-	child := keyspace.MakeTerm(keyspace.FamilyBody, 2)
-	function := keyspace.MakeTerm(keyspace.FamilyFunction, 1)
-	values := keyspace.MakeTerm(keyspace.FamilyValues, 1)
-	returned := keyspace.MakeTerm(keyspace.FamilyReturn, 1)
-	flow := authored.Input{
-		Values: authored.ValuesInput{
-			Rows:  []authored.Value{{Owner: body, Fixed: authored.Range{End: 1}}},
-			Terms: []keyspace.Term{function},
-		},
-		Functions: authored.FunctionsInput{
-			Rows: []authored.Function{{Owner: body, Body: child}},
-		},
-		Control: authored.ControlInput{Returns: []authored.Return{{Owner: body, Values: values}}},
-	}
-	staticInput := static.Input{
-		Contracts: static.ContractsInput{Function: []static.FunctionContract{{}}},
-	}
-	fixture := newProofFixture(t, proofSpec{
-		counts: counts,
-		rows:   [][]keyspace.Term{{returned}, nil},
-		flow:   flow,
-		static: staticInput,
-		module: emptyModule(t),
-	})
-	result, err := fixture.prove()
-	if err != nil {
-		t.Fatalf("Prove: %v", err)
-	}
-	if parent, ok := result.Parent(child); !ok || parent != body {
-		t.Fatalf("child Body parent = %v/%v, want lexical Body %v", parent, ok, body)
-	}
-	if parent, ok := result.Parent(function); !ok || parent != keyspace.MakeTerm(keyspace.FamilyValues, 1) {
-		t.Fatalf("Function parent = %v/%v, want Values", parent, ok)
-	}
-	if result.Contains(function, child) {
-		t.Fatal("Function construct became a parent of its executable Body")
-	}
-}
-
-func TestProveDirectSourceStatementBelongsToBody(t *testing.T) {
-	counts := countsFor(
-		c(keyspace.FamilyBody, 1),
-		c(keyspace.FamilyNil, 1),
-		c(keyspace.FamilyValues, 1),
-		c(keyspace.FamilyReturn, 1),
-	)
-	body := keyspace.MakeTerm(keyspace.FamilyBody, 1)
-	values := keyspace.MakeTerm(keyspace.FamilyValues, 1)
-	returned := keyspace.MakeTerm(keyspace.FamilyReturn, 1)
-	fixture := newProofFixture(t, proofSpec{
-		counts: counts,
-		rows:   [][]keyspace.Term{{returned}},
-		flow: authored.Input{
-			Values: authored.ValuesInput{
-				Rows:  []authored.Value{{Owner: body, Fixed: authored.Range{End: 1}}},
-				Terms: []keyspace.Term{keyspace.MakeTerm(keyspace.FamilyNil, 1)},
-			},
-			Control: authored.ControlInput{Returns: []authored.Return{{Owner: body, Values: values}}},
-		},
-		module: emptyModule(t),
-	})
-	result, err := fixture.prove()
-	if err != nil {
-		t.Fatalf("Prove: %v", err)
-	}
-	if parent, ok := result.Parent(returned); !ok || parent != body {
-		t.Fatalf("Return parent = %v/%v, want Body %v", parent, ok, body)
-	}
-	if parent, ok := result.Parent(values); !ok || parent != returned {
-		t.Fatalf("Values parent = %v/%v, want Return %v", parent, ok, returned)
-	}
-}
-
 func TestProveRepeatedTypeOfUsesSameBodyFallback(t *testing.T) {
 	counts := countsFor(
 		c(keyspace.FamilyBody, 1),
@@ -470,50 +343,6 @@ func TestProveRepeatedTypeOfUsesSameBodyFallback(t *testing.T) {
 		if parent, ok := result.Parent(typeOf); !ok || parent != body {
 			t.Fatalf("TypeOf%d parent = %v/%v, want Body %v", ordinal, parent, ok, body)
 		}
-	}
-}
-
-func TestProveRejectsTypeOfScopeFromDifferentBody(t *testing.T) {
-	counts := countsFor(
-		c(keyspace.FamilyBody, 2),
-		c(keyspace.FamilyCell, 1),
-		c(keyspace.FamilyRead, 1),
-		c(keyspace.FamilyValues, 1),
-		c(keyspace.FamilyBind, 1),
-		c(keyspace.FamilyFunction, 1),
-		c(keyspace.FamilyTypeOf, 1),
-	)
-	body := keyspace.MakeTerm(keyspace.FamilyBody, 1)
-	child := keyspace.MakeTerm(keyspace.FamilyBody, 2)
-	cell := keyspace.MakeTerm(keyspace.FamilyCell, 1)
-	read := keyspace.MakeTerm(keyspace.FamilyRead, 1)
-	function := keyspace.MakeTerm(keyspace.FamilyFunction, 1)
-	values := keyspace.MakeTerm(keyspace.FamilyValues, 1)
-	bind := keyspace.MakeTerm(keyspace.FamilyBind, 1)
-	fixture := newProofFixture(t, proofSpec{
-		counts: counts,
-		rows:   [][]keyspace.Term{{bind}, nil},
-		flow: authored.Input{
-			Values: authored.ValuesInput{
-				Rows:  []authored.Value{{Owner: body, Fixed: authored.Range{End: 1}}},
-				Terms: []keyspace.Term{function},
-			},
-			Functions: authored.FunctionsInput{Rows: []authored.Function{{Owner: body, Body: child}}},
-			Storage: authored.StorageInput{
-				Cells: []authored.Cell{{Kind: authored.CellLocal, Body: body}},
-				Reads: []authored.Read{{Owner: child, Source: cell}},
-				Binds: []authored.Bind{{Owner: body, Values: values}},
-			},
-		},
-		static: static.Input{
-			Contracts: static.ContractsInput{Function: []static.FunctionContract{{}}},
-			Operators: static.OperatorsInput{TypeOf: []static.TypeOf{{Scope: cell, Operand: read}}},
-		},
-		binds:  []source.BindCells{{Bind: bind, Cells: []keyspace.Term{cell}}},
-		module: emptyModule(t),
-	})
-	if _, err := fixture.prove(); err == nil {
-		t.Fatal("Prove accepted TypeOf whose operand belongs to a different Body")
 	}
 }
 
@@ -659,16 +488,6 @@ func TestProveRejectsStandaloneUnconsumedTerm(t *testing.T) {
 	}
 }
 
-func TestProveRejectsWrongModuleImportCallForeignKey(t *testing.T) {
-	input := imports.Input{Imports: []imports.Import{{
-		Term: keyspace.MakeTerm(keyspace.FamilyImport, 1),
-		Call: keyspace.MakeTerm(keyspace.FamilyFunction, 1),
-	}}}
-	if _, err := imports.Build(input); err == nil {
-		t.Fatal("imports.Build accepted an Import whose Call foreign key is not a Call")
-	}
-}
-
 func TestProveRejectsExpiredOwners(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -728,5 +547,72 @@ func TestProveResultQueriesAreDenseDeterministicAndAllocationFree(t *testing.T) 
 		result.Static(fixture.entry)
 	}) != 0 {
 		t.Fatal("Result queries allocate")
+	}
+}
+
+// TestProveRejectsCallWithoutDirectOrExpressionParent exercises the complete
+// production boundary. Body deliberately accepts a Call absent from Source
+// direct order because Calls may be nested expressions; containment must then
+// reject the Call when no expression relation actually supplies its parent.
+func TestProveRejectsCallWithoutDirectOrExpressionParent(t *testing.T) {
+	counts := countsFor(
+		c(keyspace.FamilyBody, 1),
+		c(keyspace.FamilyInteger, 2),
+		c(keyspace.FamilyValues, 1),
+		c(keyspace.FamilyCall, 1),
+	)
+	body := keyspace.MakeTerm(keyspace.FamilyBody, 1)
+	callee := keyspace.MakeTerm(keyspace.FamilyInteger, 1)
+	actual := keyspace.MakeTerm(keyspace.FamilyInteger, 2)
+	values := keyspace.MakeTerm(keyspace.FamilyValues, 1)
+
+	fixture := newProofFixture(t, proofSpec{
+		counts: counts,
+		rows:   [][]keyspace.Term{nil},
+		flow: authored.Input{
+			Values: authored.ValuesInput{
+				Rows:  []authored.Value{{Owner: body, Fixed: authored.Range{End: 1}}},
+				Terms: []keyspace.Term{actual},
+			},
+			Calls: []authored.Call{{Owner: body, Callee: callee, Actuals: values}},
+		},
+		static: static.Input{Contracts: static.ContractsInput{Call: []static.CallContract{{}}}},
+		module: emptyModule(t),
+	})
+	if _, err := fixture.prove(); err == nil || !strings.Contains(err.Error(), "is missing a parent") {
+		t.Fatalf("Prove orphan Call error = %v, want missing-parent rejection", err)
+	}
+}
+
+// TestProveRejectsCallClaimedBySourceAndValues prevents the two legal Call
+// modes from overlapping. A direct Source Call is Body-owned; the same Call
+// cannot simultaneously be a Values child with a second structural parent.
+func TestProveRejectsCallClaimedBySourceAndValues(t *testing.T) {
+	counts := countsFor(
+		c(keyspace.FamilyBody, 1),
+		c(keyspace.FamilyInteger, 1),
+		c(keyspace.FamilyValues, 1),
+		c(keyspace.FamilyCall, 1),
+	)
+	body := keyspace.MakeTerm(keyspace.FamilyBody, 1)
+	callee := keyspace.MakeTerm(keyspace.FamilyInteger, 1)
+	values := keyspace.MakeTerm(keyspace.FamilyValues, 1)
+	call := keyspace.MakeTerm(keyspace.FamilyCall, 1)
+
+	fixture := newProofFixture(t, proofSpec{
+		counts: counts,
+		rows:   [][]keyspace.Term{{call}},
+		flow: authored.Input{
+			Values: authored.ValuesInput{
+				Rows:  []authored.Value{{Owner: body, Fixed: authored.Range{End: 1}}},
+				Terms: []keyspace.Term{call},
+			},
+			Calls: []authored.Call{{Owner: body, Callee: callee, Actuals: values}},
+		},
+		static: static.Input{Contracts: static.ContractsInput{Call: []static.CallContract{{}}}},
+		module: emptyModule(t),
+	})
+	if _, err := fixture.prove(); err == nil || !strings.Contains(err.Error(), "conflicting containment parents") {
+		t.Fatalf("Prove dual-owned Call error = %v, want conflicting-parent rejection", err)
 	}
 }

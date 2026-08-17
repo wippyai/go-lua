@@ -267,7 +267,7 @@ func (f Finalizer) Preimage() Preimage {
 	if f.authority() == nil {
 		return Preimage{}
 	}
-	return Preimage{state: f.state}
+	return Preimage(f)
 }
 
 // Identity returns the authored identity view while the Preimage is live.
@@ -661,7 +661,6 @@ func validateBodyForest(a *authority, index *indexStore, locations directLocatio
 				for _, visited := range path {
 					state[visited] = 2
 				}
-				path = nil
 			default:
 				state[current] = 1
 				path = append(path, current)
@@ -803,14 +802,14 @@ func makeRange(start, count int) (termRange, bool) {
 
 func compactSpan(name string, span Span) (storedSpan, bool) {
 	allZero := span.StartLine == 0 && span.StartCol == 0 && span.EndLine == 0 && span.EndCol == 0
-	if name == "" || (span.File != name && !(span.File == "" && allZero)) {
+	if name == "" || span.File != name && (span.File != "" || !allZero) {
 		return storedSpan{}, false
 	}
 	if allZero {
 		return storedSpan{}, true
 	}
 	if span.StartLine == 0 || span.StartCol == 0 ||
-		(span.EndLine == 0 || span.EndCol == 0) && !(span.EndLine == 0 && span.EndCol == 0) ||
+		(span.EndLine == 0) != (span.EndCol == 0) ||
 		span.EndLine != 0 && (span.EndLine < span.StartLine || span.EndLine == span.StartLine && span.EndCol < span.StartCol) {
 		return storedSpan{}, false
 	}

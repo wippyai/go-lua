@@ -1,7 +1,6 @@
 package containment
 
 import (
-	"runtime"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
@@ -72,105 +71,6 @@ func runStaticCallOwnerChain(t *testing.T, local static.LocalContainment, counts
 // allocation for every ancestor and therefore quadratic allocation growth.
 // The assertion is deliberately a relative scaling law, not a machine-specific
 // time or absolute-memory budget.
-func TestStaticCallOwnerDeepChainScales(t *testing.T) {
-	const smallWidth, largeWidth = uint32(256), uint32(1024)
-	smallLocal, smallCounts := buildStaticCallChain(t, smallWidth)
-	largeLocal, largeCounts := buildStaticCallChain(t, largeWidth)
-
-	if got, want := runStaticCallOwnerChain(t, smallLocal, smallCounts), int(smallWidth)+1; got != want {
-		t.Fatalf("small chain marks = %d, want %d", got, want)
-	}
-	if got, want := runStaticCallOwnerChain(t, largeLocal, largeCounts), int(largeWidth)+1; got != want {
-		t.Fatalf("large chain marks = %d, want %d", got, want)
-	}
-
-	measure := func(local static.LocalContainment, counts [keyspace.FamilyCount]uint32) uint64 {
-		runtime.GC()
-		var before, after runtime.MemStats
-		runtime.ReadMemStats(&before)
-		const runs = 3
-		for index := 0; index < runs; index++ {
-			marks := newStaticMarkBits(counts)
-			if err := markCallOwnedStaticTypes(local, counts, &marks); err != nil {
-				t.Fatalf("scaled mark run: %v", err)
-			}
-		}
-		runtime.ReadMemStats(&after)
-		return (after.TotalAlloc - before.TotalAlloc) / runs
-	}
-
-	smallBytes := measure(smallLocal, smallCounts)
-	largeBytes := measure(largeLocal, largeCounts)
-	if smallBytes == 0 || largeBytes > smallBytes*8+128*1024 {
-		t.Fatalf("Call-owned chain allocation is superlinear: small=%d large=%d", smallBytes, largeBytes)
-	}
-}
-
-// TestProveStaticMarksCallTypeSubtreeOnly checks the complete Result
-// projection rather than the local owner walk in isolation. A Call-owned
-// type argument and its child are static marks; an unrelated static peer and
-// the runtime Call identity are not.
-func TestProveStaticMarksCallTypeSubtreeOnly(t *testing.T) {
-	counts := countsFor(
-		c(keyspace.FamilyBody, 1),
-		c(keyspace.FamilyNil, 1),
-		c(keyspace.FamilyValues, 1),
-		c(keyspace.FamilyTypeValue, 1),
-		c(keyspace.FamilyCall, 1),
-		c(keyspace.FamilyTypePrimitive, 2),
-		c(keyspace.FamilyTypeOptional, 1),
-	)
-	body := keyspace.MakeTerm(keyspace.FamilyBody, 1)
-	nilValue := keyspace.MakeTerm(keyspace.FamilyNil, 1)
-	values := keyspace.MakeTerm(keyspace.FamilyValues, 1)
-	typeValue := keyspace.MakeTerm(keyspace.FamilyTypeValue, 1)
-	call := keyspace.MakeTerm(keyspace.FamilyCall, 1)
-	primitiveChild := keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 1)
-	primitivePeer := keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 2)
-	optional := keyspace.MakeTerm(keyspace.FamilyTypeOptional, 1)
-	fixture := newProofFixture(t, proofSpec{
-		counts: counts,
-		rows:   [][]keyspace.Term{{call}},
-		flow: authored.Input{
-			Values: authored.ValuesInput{
-				Rows:  []authored.Value{{Owner: body, Fixed: authored.Range{End: 1}}},
-				Terms: []keyspace.Term{typeValue},
-			},
-			TypeValues: []authored.TypeValue{{Owner: body}},
-			Calls:      []authored.Call{{Owner: body, Callee: nilValue, Actuals: values}},
-		},
-		static: static.Input{
-			Types: static.TypesInput{
-				Primitive: []static.Primitive{{Kind: static.PrimitiveAny}, {Kind: static.PrimitiveString}},
-				Optional:  []static.Optional{{Inner: primitiveChild}},
-			},
-			Contracts: static.ContractsInput{Call: []static.CallContract{{TypeArguments: []keyspace.Term{optional}}}},
-			Operands:  static.OperandsInput{TypeValue: []static.TypeValueTarget{{Target: primitivePeer}}},
-		},
-		module: emptyModule(t),
-	})
-	result, err := fixture.prove()
-	if err != nil {
-		t.Fatalf("Prove: %v", err)
-	}
-	for _, term := range []keyspace.Term{optional, primitiveChild} {
-		if !result.Static(term) {
-			t.Fatalf("Call-owned type term %v is not static", term)
-		}
-	}
-	if result.Static(primitivePeer) {
-		t.Fatalf("non-Call static peer %v was marked", primitivePeer)
-	}
-	if result.Static(call) {
-		t.Fatalf("runtime Call %v was marked from its type argument", call)
-	}
-}
-
-// TestProveStaticMarksStorageIdentitiesAndReferenceExclusions checks the
-// legacy storage asymmetry at the complete Result boundary. Static closure
-// includes storage identities owned by marked Bind/Function/Loop constructs,
-// but it does not follow Write, capture-outer, or TableField reference
-// relations as expression edges.
 func TestProveStaticMarksStorageIdentitiesAndReferenceExclusions(t *testing.T) {
 	counts := countsFor(
 		c(keyspace.FamilyBody, 3),

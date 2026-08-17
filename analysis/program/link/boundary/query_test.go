@@ -3,13 +3,13 @@ package boundary
 import (
 	"testing"
 
-	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
 )
 
 func TestInitialOperationIsBoundaryOwnedLocalAndAllocationFree(t *testing.T) {

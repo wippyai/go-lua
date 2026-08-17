@@ -61,7 +61,7 @@ func TestCorpusAlwaysFalseGuardDiagnosticLaw(t *testing.T) {
 	} {
 		t.Run(test.project, func(t *testing.T) {
 			plan, baseline, baselineDiagnostics, _ := testCorpusDiagnosticLaw(t, test.project)
-			offResult, offReport, offStatus, offDiagnostics := plan.SolveWithReport(context.Background(), corpusHarnessSolveOptions(), DiagnosticPolicy{})
+			offResult, offReport, offStatus, offDiagnostics := plan.SolveWithReport(context.Background(), fixtureSolveOptions(), DiagnosticPolicy{})
 			if offStatus != AnalyzeComplete || offResult == nil || offReport != nil || offResult.ContentID() != baseline.ContentID() || offDiagnostics.ObservationAttach.Available() || !reflect.DeepEqual(offDiagnostics.Engine, baselineDiagnostics.Engine) {
 				t.Fatalf("policy-off false guard changed inference = status=%v result=%t report=%t identity=%v/%v diagnostics=%+v", offStatus, offResult != nil, offReport != nil, offResult.ContentID(), baseline.ContentID(), offDiagnostics)
 			}
@@ -107,7 +107,7 @@ func TestCorpusGuardPolarityMissingEvidenceSuppressesBothRulesLaw(t *testing.T) 
 
 func TestCorpusAlwaysTrueGuardPolicyDisabledIdentityLaw(t *testing.T) {
 	plan, baseline, baselineDiagnostics, _ := testCorpusDiagnosticLaw(t, "advice/always-true-guard")
-	result, report, status, diagnostics := plan.SolveWithReport(context.Background(), corpusHarnessSolveOptions(), DiagnosticPolicy{})
+	result, report, status, diagnostics := plan.SolveWithReport(context.Background(), fixtureSolveOptions(), DiagnosticPolicy{})
 	if status != AnalyzeComplete || result == nil || report != nil || result.ContentID() != baseline.ContentID() || !reflect.DeepEqual(diagnostics.Engine, baselineDiagnostics.Engine) {
 		t.Fatalf("disabled-policy solve = %v result=%t report=%t identity=%v/%v diagnostics=%+v", status, result != nil, report != nil, result.ContentID(), baseline.ContentID(), diagnostics)
 	}
@@ -119,7 +119,7 @@ func TestCorpusAlwaysTrueGuardPolicyDisabledIdentityLaw(t *testing.T) {
 // collector.
 func TestCorpusUnresolvedTypeReferenceStaticDiagnosticLaw(t *testing.T) {
 	plan, baseline, _, _ := testCorpusDiagnosticLaw(t, "semantic/unresolved-reference-diagnostics-evidence-chain")
-	offResult, offReport, offStatus, offDiagnostics := plan.SolveWithReport(context.Background(), corpusHarnessSolveOptions(), DiagnosticPolicy{})
+	offResult, offReport, offStatus, offDiagnostics := plan.SolveWithReport(context.Background(), fixtureSolveOptions(), DiagnosticPolicy{})
 	if offStatus != AnalyzeComplete || offResult == nil || offReport != nil || offResult.ContentID() != baseline.ContentID() {
 		t.Fatalf("disabled unresolved-type policy changed result = status=%v result=%t report=%t identity=%v/%v diagnostics=%+v", offStatus, offResult != nil, offReport != nil, offResult.ContentID(), baseline.ContentID(), offDiagnostics)
 	}
@@ -258,7 +258,7 @@ return 0`)
 		artifacts.mounts[0].moduleKey == artifacts.mounts[1].moduleKey {
 		t.Fatal("duplicate diagnostic mounts did not reuse one artifact with distinct substitutions")
 	}
-	baseline, baselineStatus, baselineDiagnostics := plan.SolveWithDiagnostics(context.Background(), corpusHarnessSolveOptions())
+	baseline, baselineStatus, baselineDiagnostics := plan.SolveWithDiagnostics(context.Background(), fixtureSolveOptions())
 	result, report, solveStatus, solveDiagnostics := solveAlwaysTrueGuardReport(plan)
 	bodyCount, findingCount, collectionFailure := 0, 0, DiagnosticCollectionSubjectQueryAbsent
 	if result != nil {
@@ -290,19 +290,19 @@ return 0`)
 }
 
 func solveAlwaysTrueGuardReport(plan *Plan) (*Result, *DiagnosticReport, AnalyzeStatus, AnalyzeDiagnostics) {
-	return plan.SolveWithReport(context.Background(), corpusHarnessSolveOptions(), DiagnosticPolicy{Enabled: []DiagnosticCode{DiagnosticCodeAlwaysTrueGuard}})
+	return plan.SolveWithReport(context.Background(), fixtureSolveOptions(), DiagnosticPolicy{Enabled: []DiagnosticCode{DiagnosticCodeAlwaysTrueGuard}})
 }
 
 func solveGuardPolarityReport(plan *Plan) (*Result, *DiagnosticReport, AnalyzeStatus, AnalyzeDiagnostics) {
-	return plan.SolveWithReport(context.Background(), corpusHarnessSolveOptions(), DiagnosticPolicy{Enabled: []DiagnosticCode{DiagnosticCodeAlwaysTrueGuard, DiagnosticCodeAlwaysFalseGuard}})
+	return plan.SolveWithReport(context.Background(), fixtureSolveOptions(), DiagnosticPolicy{Enabled: []DiagnosticCode{DiagnosticCodeAlwaysTrueGuard, DiagnosticCodeAlwaysFalseGuard}})
 }
 
 func solveUnresolvedTypeReferenceReport(plan *Plan) (*Result, *DiagnosticReport, AnalyzeStatus, AnalyzeDiagnostics) {
-	return plan.SolveWithReport(context.Background(), corpusHarnessSolveOptions(), DiagnosticPolicy{Enabled: []DiagnosticCode{DiagnosticCodeUnresolvedTypeReference}})
+	return plan.SolveWithReport(context.Background(), fixtureSolveOptions(), DiagnosticPolicy{Enabled: []DiagnosticCode{DiagnosticCodeUnresolvedTypeReference}})
 }
 
 func solveUnresolvedValueReferenceReport(plan *Plan) (*Result, *DiagnosticReport, AnalyzeStatus, AnalyzeDiagnostics) {
-	return plan.SolveWithReport(context.Background(), corpusHarnessSolveOptions(), DiagnosticPolicy{Enabled: []DiagnosticCode{DiagnosticCodeUnresolvedValueReference}})
+	return plan.SolveWithReport(context.Background(), fixtureSolveOptions(), DiagnosticPolicy{Enabled: []DiagnosticCode{DiagnosticCodeUnresolvedValueReference}})
 }
 
 func assertAlwaysTrueGuardLocations(t *testing.T, report *DiagnosticReport, expected, forbidden map[uint32]uint32) {
@@ -340,6 +340,5 @@ func assertAlwaysTrueGuardLocations(t *testing.T, report *DiagnosticReport, expe
 // contract. Its callers prove the public diagnostic behavior they own.
 func testCorpusDiagnosticLaw(t *testing.T, name string) (*Plan, *Result, AnalyzeDiagnostics, *link.Link) {
 	t.Helper()
-	run := corpusHarnessFixtureRun(t, name, corpusHarnessDiagnosticMode())
-	return run.plan, run.result, run.solveDiagnostics, run.linked
+	return fixtureSolve(t, name)
 }

@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/wippyai/go-lua/stdlib"
 )
 
 /* load lib {{{ */
@@ -47,7 +49,7 @@ func loFindFile(L *LState, name, pname string) (string, string) {
 }
 
 func OpenPackage(L *LState) int {
-	packagemod := L.RegisterGoModule(LoadLibName, loFuncs)
+	packagemod := L.RegisterGoModule(stdlib.PackageName, loFuncs)
 
 	L.SetField(packagemod, "preload", L.NewTable())
 

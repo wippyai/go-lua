@@ -154,9 +154,8 @@ func occurrenceCategoryPrefix(category structure.Category) string {
 // semanticRoleVocabulary is the analyzer's semantic role catalog, aggregated
 // from the domains that own the roles. Each axis owner contributes the identity
 // its coordinate space is bound under and the forms its schema is declared
-// with, each rule owner the three or four forms its rules are identified by,
-// and this table the contract identities its own library inventory is declared
-// under. An engine-published axis contributes its identity alone: it declares no
+// with, and each rule owner the three or four forms its rules are identified
+// by. An engine-published axis contributes its identity alone: it declares no
 // schema, so it declares none of the forms one is declared with.
 //
 // The order is the declaration order of the axis and rule tables, so a reader
@@ -189,7 +188,6 @@ func semanticRoleVocabulary() []structure.Spec {
 		valueorder.StructureSpecs(),
 		valuerefinement.StructureSpecs(),
 		denominatorpublication.StructureSpecs(),
-		contractRoles(),
 	}
 	var specs []structure.Spec
 	for _, contribution := range contributions {

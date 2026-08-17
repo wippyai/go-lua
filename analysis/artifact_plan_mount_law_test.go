@@ -1,10 +1,14 @@
 package analysis
 
 import (
+	"go/parser"
+	"go/token"
+	"path/filepath"
+	"strconv"
 	"testing"
 
-	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/domain/composite"
 )
 
 // The Link construction root composes; it does not seal a factor's authority.
@@ -37,22 +41,26 @@ var postMountDerivationPackages = map[string]string{
 const artifactPlanSourcePath = "analysis/artifact_plan.go"
 
 // artifactPlanImports reads the Link construction root's own import set. It is
-// the one source both mount laws below are stated over.
+// the one source both mount laws below are stated over, and is named
+// module-relative so the law states which file it is about rather than where a
+// test happened to run from.
 func artifactPlanImports(t *testing.T) map[string]struct{} {
 	t.Helper()
-	imports := make(map[string]struct{})
-	found := false
-	architectureBatteryWalk(t, "analysis", func(source architectureBatterySource) {
-		if source.path != artifactPlanSourcePath {
-			return
+	path := filepath.Join(fixtureRepositoryRoot(t), filepath.FromSlash(artifactPlanSourcePath))
+	parsed, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly)
+	if err != nil {
+		t.Fatalf("%s: %v", artifactPlanSourcePath, err)
+	}
+	imports := make(map[string]struct{}, len(parsed.Imports))
+	for _, imported := range parsed.Imports {
+		value, unquoteErr := strconv.Unquote(imported.Path.Value)
+		if unquoteErr != nil {
+			t.Fatalf("%s: unquote import %s: %v", artifactPlanSourcePath, imported.Path.Value, unquoteErr)
 		}
-		found = true
-		for _, path := range source.imports(t) {
-			imports[path] = struct{}{}
-		}
-	})
-	if !found {
-		t.Fatalf("%s was not walked; the law has nothing to state", artifactPlanSourcePath)
+		imports[value] = struct{}{}
+	}
+	if len(imports) == 0 {
+		t.Fatalf("%s declares no import; the law has nothing to state", artifactPlanSourcePath)
 	}
 	return imports
 }

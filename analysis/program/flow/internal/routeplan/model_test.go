@@ -3,6 +3,7 @@ package routeplan
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/program/flow/internal/runtimeentry"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/sourcecontrol"
 )
 
@@ -20,15 +21,13 @@ func TestTypedOriginsFailClosedUntilEndpointsAreIssued(t *testing.T) {
 	if _, ok := origin.RecurrenceCarrier(); ok {
 		t.Fatal("zero CSR origin exposed a recurrence carrier")
 	}
-	if _, _, ok := OutcomeSubdivision(nil, sourcecontrol.Segment{}); ok {
+	if _, ok := OutcomeSubdivision(nil, sourcecontrol.Segment{}); ok {
 		t.Fatal("nil SourceControl graph admitted an Outcome subdivision")
 	}
-	if _, _, ok := OutcomeResumeSubdivision(nil, nil, runtimeResumeRowForTest()); ok {
+	if _, _, ok := OutcomeResumeSubdivision(nil, nil, runtimeentry.OutcomeResumeRow{}); ok {
 		t.Fatal("nil owners admitted an Outcome resume subdivision")
 	}
 }
-
-func runtimeResumeRowForTest() (row sourcecontrol.OutcomeResumeRow) { return row }
 
 func TestZeroRouteCannotBeEmittedWithoutAnOrigin(t *testing.T) {
 	var builder *Builder

@@ -3,6 +3,8 @@ package lua
 import (
 	"fmt"
 	"strings"
+
+	"github.com/wippyai/go-lua/stdlib"
 )
 
 var debugFuncs = map[string]LGoFunc{
@@ -17,7 +19,7 @@ var debugFuncs = map[string]LGoFunc{
 }
 
 func OpenDebug(L *LState) int {
-	mod := L.RegisterGoModule(DebugLibName, debugFuncs).(*LTable)
+	mod := L.RegisterGoModule(stdlib.DebugName, debugFuncs).(*LTable)
 	L.Push(mod)
 	return 1
 }

@@ -170,7 +170,7 @@ func (compiler *compiler) copyValuesFailure() CompileFailure {
 		} else if !rootSpanID.Available() {
 			return compileFailure(CompileStageValues, CompileRowValues, index, -1, CompileReasonValuesUnavailable)
 		}
-		rowID := identity.ContentID{}
+		var rowID identity.ContentID
 		members := make([]ValuesMember, width)
 		seenMembers := make(map[identity.ContentID]struct{}, width)
 		for memberIndex := range members {
@@ -198,7 +198,8 @@ func (compiler *compiler) copyValuesFailure() CompileFailure {
 			}
 			tail = ValuesTail{id: tailID, span: tailSpanID, kind: tailKind, present: true}
 		}
-		rowID, rowIDOK := compiler.input.ValuesOccurrenceID(term)
+		var rowIDOK bool
+		rowID, rowIDOK = compiler.input.ValuesOccurrenceID(term)
 		if !rowIDOK || !rowID.Available() {
 			return compileFailure(CompileStageValues, CompileRowValues, index, -1, CompileReasonValuesIdentity)
 		}

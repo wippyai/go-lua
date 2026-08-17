@@ -1,0 +1,76 @@
+{
+  "measured": "2026-08-16",
+  "note": "Enumerated by running the covered sets themselves on 2026-08-16, re-measured after the static authority cycle fixes and the branch-condition admission landed. Both anchor fixtures compile and solve; every remaining anchor red is a missing diagnostic or projection surface, not a seal or compile failure. The anchor set runs a nested go test over ./analysis, so it reports a package-level <build failed> key whenever any test source in that package does not compile; that key is deliberately never listed, because a set that cannot build has no verdict to compare.",
+  "covered_sets": [
+    {
+      "name": "engine",
+      "reason": "the solver tree: analysis/engine and every package below it that has tests",
+      "packages": [
+        "./analysis/engine/..."
+      ],
+      "filter": "",
+      "subtests": false
+    },
+    {
+      "name": "anchor",
+      "reason": "the standing acceptance anchor of the analyzer, judged clause by clause",
+      "packages": [
+        "./oracle"
+      ],
+      "filter": "^TestAnchorTypesNarrowingDiagnosticsPlacement$",
+      "subtests": true
+    }
+  ],
+  "reds": [
+    {
+      "set": "anchor",
+      "package": "github.com/wippyai/go-lua/oracle",
+      "test": "TestAnchorTypesNarrowingDiagnosticsPlacement",
+      "reason": "both clauses below are red, so the parent is red",
+      "owner": "analysis/anchor_law_test.go"
+    },
+    {
+      "set": "anchor",
+      "package": "github.com/wippyai/go-lua/oracle",
+      "test": "TestAnchorTypesNarrowingDiagnosticsPlacement/multivariant-dispatch",
+      "reason": "anchor clause 3: the acceptance policy cannot express the pinned contract and type.call.direct.argument_type at main.lua:36:22 matches 0 report rows, want exactly 1 (the type.call collector is missing); anchor clause 4: the placement Result surface is unavailable, a solved placement projection is required",
+      "owner": "analysis type.call diagnostic collector and the placement Result surface"
+    },
+    {
+      "set": "anchor",
+      "package": "github.com/wippyai/go-lua/oracle",
+      "test": "TestAnchorTypesNarrowingDiagnosticsPlacement/recursive-union",
+      "reason": "anchor clause 3: the inline error at main.lua:22 matches 0 report rows, want exactly 1; the fixture compiles and solves to AnalyzeComplete and the report carries no findings, so the gap is diagnostic production, not the static seal",
+      "owner": "analysis diagnostic production for solved recursive fixtures"
+    },
+    {
+      "set": "engine",
+      "package": "github.com/wippyai/go-lua/analysis/engine",
+      "test": "TestReceiptCompilerBindsSummaryQueryGraphSurface",
+      "reason": "summary graph topology is not bound (schema_summary_query_receipt_law_test.go:135)",
+      "owner": "analysis/engine summary query receipt binding"
+    },
+    {
+      "set": "engine",
+      "package": "github.com/wippyai/go-lua/analysis/engine",
+      "test": "TestSolveWithDiagnosticsBoundedDetachedSortedAndIsolated",
+      "reason": "the diagnostics external-interface query is unavailable (solve_diagnostics_law_test.go:97)",
+      "owner": "analysis/engine solve diagnostics"
+    },
+    {
+      "set": "engine",
+      "package": "github.com/wippyai/go-lua/analysis/engine/internal/facts/semantic",
+      "test": "TestPreserveRejectsOverlapMismatch",
+      "reason": "preserve accepts an overlap mismatch it must reject (semantic_test.go:289)",
+      "owner": "analysis/engine/internal/facts/semantic preserve"
+    },
+    {
+      "set": "engine",
+      "package": "github.com/wippyai/go-lua/analysis/engine",
+      "test": "TestReceiptCompilerThreadsSummaryReadThroughProductAndEvidence",
+      "reason": "summary read-through binding fails inside compileReceiptFactors -> bindFactorFromGraph -> collectFactorGraphCatalog returning false; the former nil-dereference crash at schema_rule_binding_law_test.go:762 is fixed, so the test reports instead of killing the binary",
+      "owner": "analysis/engine summary query receipt binding"
+    }
+  ],
+  "excluded": []
+}

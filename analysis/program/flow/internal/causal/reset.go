@@ -100,7 +100,7 @@ func (s *resetState) localOrigin(from, to, owner keyspace.Term, arcIndex int) (r
 	fromPhase, fromPhaseOK := s.graph.ResolveRouteEndpoint(s.source, s.outs, from, true)
 	toPhase, toPhaseOK := s.graph.ResolveRouteEndpoint(s.source, s.outs, to, false)
 	if !fromPhaseOK || !toPhaseOK {
-		return routeplan.Origin{}, errors.New("program/flow/causal: route endpoint phase is unavailable")
+		return routeplan.Origin{}, fmt.Errorf("program/flow/causal: route endpoint phase is unavailable from=%v/%t to=%v/%t catalog=%t", from, fromPhaseOK, to, toPhaseOK, s.graph.VertexCatalogAvailable())
 	}
 	if fromPhase.OutcomePhase() || toPhase.OutcomePhase() {
 		if fromPhase.OutcomePhase() && !toPhase.OutcomePhase() {

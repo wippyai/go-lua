@@ -5,6 +5,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/wippyai/go-lua/stdlib"
 )
 
 // TestPCallYield tests that pcall is yield-transparent (Lua 5.3 behavior).
@@ -445,9 +447,9 @@ func TestPCallYieldGoFunctionRegisterPressureWippyShape(t *testing.T) {
 	})
 	defer L.Close()
 	for _, lib := range []luaLib{
-		{BaseLibName, OpenBase},
-		{TabLibName, OpenTable},
-		{StringLibName, OpenString},
+		{stdlib.BaseName, OpenBase},
+		{stdlib.TableName, OpenTable},
+		{stdlib.StringName, OpenString},
 	} {
 		L.Push(L.NewFunction(LGFunction(lib.libFunc)))
 		L.Push(LString(lib.libName))

@@ -2,6 +2,8 @@ package lua
 
 import (
 	"os"
+
+	"github.com/wippyai/go-lua/stdlib"
 )
 
 var FieldsPerFlush = 50
@@ -16,7 +18,7 @@ type LNumber float64
 type LInteger int64
 
 const LNumberBit = 64
-const Version = "Lua 5.3 - Wippy Modification"
+const Version = stdlib.LanguageVersion
 
 var PathEnvVar = "LUA_PATH"
 var LDir string

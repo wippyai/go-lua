@@ -54,6 +54,26 @@ func (project CorpusProject) FileAt(index int) (string, bool) {
 	return filepath.ToSlash(filepath.Join(project.relative, project.files[index])), true
 }
 
+// SourceText reads one declared Lua file of the project. The fixture directory
+// stays private: a caller names a file the project declares and never
+// reconstructs a corpus path of its own.
+func (project CorpusProject) SourceText(file string) ([]byte, error) {
+	if project.relative == "" || project.directory == "" {
+		return nil, fmt.Errorf("testfixture: unavailable corpus project")
+	}
+	for _, declared := range project.files {
+		if declared != file {
+			continue
+		}
+		text, err := os.ReadFile(filepath.Join(project.directory, declared))
+		if err != nil {
+			return nil, fmt.Errorf("testfixture: read %s: %w", filepath.ToSlash(filepath.Join(project.relative, declared)), err)
+		}
+		return text, nil
+	}
+	return nil, fmt.Errorf("testfixture: fixture %s declares no file %q", project.relative, file)
+}
+
 // RepositoryRoot walks up from a caller-supplied directory to the module root
 // that holds go.mod. Discovery stays caller-supplied: the caller names its own
 // source position, and this package never locates the repository itself.
@@ -161,6 +181,22 @@ func cloneCorpusProjects(projects []CorpusProject) []CorpusProject {
 func cloneCorpusProject(project CorpusProject) CorpusProject {
 	project.files = append([]string(nil), project.files...)
 	return project
+}
+
+// SealSource is the sole raw-source-to-Link constructor. Its input is a source
+// text a caller synthesized or truncated rather than a fixture directory, so it
+// seals one module through the ordinary lowerer and Link admission surfaces and
+// derives no module-cache ingress. Sealing lives here, with the project seal, so
+// a fixture Link and a synthetic Link are built by one construction path.
+func SealSource(contract *target.Contract, name string, text []byte) (*link.Link, error) {
+	if contract == nil || !contract.ContentID().Available() || name == "" {
+		return nil, fmt.Errorf("testfixture: unavailable source name or canonical target profile")
+	}
+	sealed, err := lower.Lower(lower.Source{Name: name, Text: text})
+	if err != nil {
+		return nil, fmt.Errorf("testfixture: lower %s: %w", name, err)
+	}
+	return link.Seal(&link.Spec{Target: contract, Modules: []linkproject.Module{{Name: "main", Program: sealed}}})
 }
 
 // SealCorpusProject is the sole fixture Project-to-Link constructor. It uses

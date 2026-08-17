@@ -29,6 +29,16 @@ const (
 	Errors    ID = "errors"
 )
 
+// Runtime identity strings are declared beside the standard-library
+// catalogue so the native base opener and its manifest publish the same
+// values from one owner.
+const (
+	LanguageVersion       = "Lua 5.3 - Wippy Modification"
+	ImplementationName    = "GopherLua"
+	ImplementationVersion = "0.2 Wippy Edition"
+	ImplementationString  = ImplementationName + " " + ImplementationVersion
+)
+
 // Public module names. These remain constants so existing runtime constants
 // can alias them without introducing a second spelling authority.
 const (

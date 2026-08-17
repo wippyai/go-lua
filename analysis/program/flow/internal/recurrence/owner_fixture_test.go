@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/control"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/outcome"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/position"
+	"github.com/wippyai/go-lua/analysis/program/flow/internal/semanticpath"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/sourcecontrol"
 	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
@@ -26,6 +27,7 @@ type ownerFixture struct {
 	bodies     *body.Result
 	forest     *containment.Result
 	graph      *sourcecontrol.Result
+	graphLease *sourcecontrol.VertexCatalogLease
 
 	staticFinalize static.Finalizer
 	flowFinalize   authored.Finalizer
@@ -155,27 +157,49 @@ func openOwnerFixture(t *testing.T, spec ownerSpec) *ownerFixture {
 		closeOwnerFinalizers(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("position.Seal: %v", err)
 	}
-	sourceComponent, err := sourceFinalize.Commit(indexInput)
+	sourceComponent, issuance, err := sourceFinalize.CommitWithSemanticPathIssuance(indexInput)
 	if err != nil {
 		closeOwnerFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("source.Commit: %v", err)
 	}
-	fixture := &ownerFixture{
-		sourceView:     sourceComponent.View(),
-		flow:           flowView,
-		bodies:         bodies,
-		forest:         forest,
-		staticFinalize: staticFinalize,
-		flowFinalize:   flowFinalize,
-		moduleFinalize: moduleFinalize,
-	}
-	fixture.graph, err = sourcecontrol.Seal(fixture.sourceView, flowView, bodies, forest, shape, entry,
+	sourceView := sourceComponent.View()
+	graph, err := sourcecontrol.Seal(sourceView, flowView, bodies, forest, shape, entry,
 		staticFinalize.View().ContentID(), moduleFinalize.View().ContentID())
 	if err != nil {
 		closeOwnerFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("sourcecontrol.Seal: %v", err)
 	}
+	cellRoles := sourceView.CellRoles()
+	if !cellRoles.Matches(sourceView) {
+		closeOwnerFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+		t.Fatal("source.CellRoles: unavailable")
+	}
+	certificate, err := semanticpath.Seal(issuance, cellRoles, sourceView, flowView, bodies, bindingResult, forest, outcomes,
+		flowView.Cold().ContentID(), staticFinalize.View().ContentID(), moduleFinalize.View().ContentID())
+	if err != nil {
+		closeOwnerFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+		t.Fatalf("semanticpath.Seal: %v", err)
+	}
+	vertexPaths, pathsOK := certificate.VertexCatalog(sourceView.Identity().ContentID(), flowView.Cold().ContentID(),
+		staticFinalize.View().ContentID(), moduleFinalize.View().ContentID())
+	vertexLease, err := graph.InstallVertexCatalogLease(bodies, vertexPaths)
+	if !pathsOK || err != nil || vertexLease == nil {
+		closeOwnerFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+		t.Fatal("sourcecontrol.InstallVertexCatalog: no exact path view")
+	}
+	fixture := &ownerFixture{
+		sourceView:     sourceView,
+		flow:           flowView,
+		bodies:         bodies,
+		forest:         forest,
+		graph:          graph,
+		graphLease:     vertexLease,
+		staticFinalize: staticFinalize,
+		flowFinalize:   flowFinalize,
+		moduleFinalize: moduleFinalize,
+	}
 	t.Cleanup(func() {
+		fixture.graph.ReleaseVertexCatalog(fixture.graphLease)
 		closeOwnerFinalizers(source.Finalizer{}, fixture.staticFinalize, fixture.flowFinalize, fixture.moduleFinalize)
 	})
 	return fixture

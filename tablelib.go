@@ -1,6 +1,10 @@
 package lua
 
-import "sort"
+import (
+	"sort"
+
+	"github.com/wippyai/go-lua/stdlib"
+)
 
 var tableFuncs = map[string]LGoFunc{
 	"getn":     tableGetN,
@@ -16,7 +20,7 @@ var tableFuncs = map[string]LGoFunc{
 }
 
 func OpenTable(L *LState) int {
-	mod := L.RegisterGoModule(TabLibName, tableFuncs).(*LTable)
+	mod := L.RegisterGoModule(stdlib.TableName, tableFuncs).(*LTable)
 	L.Push(mod)
 	return 1
 }

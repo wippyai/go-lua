@@ -2,8 +2,8 @@ package artifact
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/internal/canonical"
 	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/internal/canonical"
 )
 
 func routeKind(kind flow.BoundaryArmKind) (RouteKind, bool) {

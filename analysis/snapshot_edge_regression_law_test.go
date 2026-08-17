@@ -3,7 +3,7 @@ package analysis
 import "testing"
 
 func TestCompileWithDiagnosticsAlwaysTrueGuardRejectsNoSnapshotTopologyEdge(t *testing.T) {
-	diagnostics := corpusHarnessFixtureRun(t, "advice/always-true-guard", corpusHarnessCompileMode()).compileDiagnostics
+	_, _, diagnostics := fixtureCompile(t, "advice/always-true-guard")
 	if diagnostics.ReceiptCommit.Available() {
 		t.Fatalf("receipt commit boundary reported a failure after repair: %v", diagnostics.ReceiptCommit)
 	}

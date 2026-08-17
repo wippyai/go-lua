@@ -9,7 +9,6 @@ import (
 	schemacomposite "github.com/wippyai/go-lua/analysis/schema/composite"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
-	"github.com/wippyai/go-lua/analysis/schema/library"
 	"github.com/wippyai/go-lua/analysis/schema/query"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
@@ -125,8 +124,7 @@ func composeWalk(t *testing.T, spec diagnostic.Spec) (*schema.Schema, schema.Sea
 	composites, compositesOK := compositeEntries()
 	denominators, denominatorsOK := denominatorEntries(axes, roles)
 	queries, queriesOK := queryRegistrations(roles)
-	kinds, kindsOK := libraryKinds(roles)
-	if !compositesOK || !denominatorsOK || !queriesOK || !kindsOK {
+	if !compositesOK || !denominatorsOK || !queriesOK {
 		t.Fatal("a derived analyzer inventory rejected the extended axis and role sets")
 	}
 
@@ -138,7 +136,6 @@ func composeWalk(t *testing.T, spec diagnostic.Spec) (*schema.Schema, schema.Sea
 	builder.Register(schemacomposite.NewSurface(composites))
 	builder.Register(denominator.NewSurface(denominators))
 	builder.Register(query.NewSurface(queries))
-	builder.Register(library.NewSurface(kinds))
 	sealed, failure := builder.Seal()
 	return sealed, failure, inventory
 }

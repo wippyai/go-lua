@@ -575,9 +575,10 @@ func largeMalformedSpanArtifact(t *testing.T, spanCount, badRow int) []byte {
 			t.Fatal(err)
 		}
 		count := 0
-		if family == keyspace.FamilyNil {
+		switch family {
+		case keyspace.FamilyNil:
 			count = spanCount
-		} else if family == keyspace.FamilyBody {
+		case keyspace.FamilyBody:
 			count = 1
 		}
 		if err := writer.Count(uint64(count)); err != nil {
