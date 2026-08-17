@@ -91,30 +91,37 @@ func TestAxisTableDrivesEveryDerivedView(t *testing.T) {
 			t.Fatalf("axis %q shares a canonical identity", entry.Key())
 		}
 		semantics[semantic] = true
-		// Every declared axis is a Link-bound factor over a dense ordinal key
-		// space. A later inventory that is neither reads these fields rather
-		// than assuming this shape.
+		// Every declared axis states where its facts live, how its key space is
+		// shaped, and how long it is valid for, and a consumer reads those
+		// fields rather than assuming one shape for the inventory. What the
+		// storage settles is the rest: a factor axis is bound with one Link
+		// binding and dies with it, and an engine-published axis is not bound at
+		// all.
 		storage, storageOK := AxisStorage(key)
 		cardinality, cardinalityOK := AxisCardinality(key)
 		lifetime, lifetimeOK := AxisLifetime(key)
-		if !storageOK || storage != axis.StorageFactor {
+		if !storageOK || !storage.Available() {
 			t.Fatalf("axis %q declares storage %d", entry.Key(), storage)
 		}
 		if !cardinalityOK || !cardinality.Available() {
 			t.Fatalf("axis %q declares no key cardinality", entry.Key())
 		}
-		if !lifetimeOK || lifetime != axis.LifetimeLink {
+		if !lifetimeOK || !lifetime.Available() {
 			t.Fatalf("axis %q declares lifetime %d", entry.Key(), lifetime)
 		}
+		if storage == axis.StorageFactor && lifetime != axis.LifetimeLink {
+			t.Fatalf("factor axis %q declares lifetime %d, not the Link binding it is bound with", entry.Key(), lifetime)
+		}
 	}
-	// The canonical identity of an axis is the vocabulary's factor identity;
-	// the table is not free to invent one.
+	// The canonical identity of an axis is the identity the vocabulary declares
+	// for its coordinate space; the table is not free to invent one.
 	for key, role := range map[schema.Key]schema.Key{
-		axisKeyValue:  "semantic/factor/value",
-		axisKeyPack:   "semantic/factor/pack",
-		axisKeyHeap:   "semantic/factor/heap",
-		axisKeyCall:   "semantic/factor/call",
-		axisKeyEffect: "semantic/factor/effect",
+		axisKeyValue:                 "semantic/factor/value",
+		axisKeyPack:                  "semantic/factor/pack",
+		axisKeyHeap:                  "semantic/factor/heap",
+		axisKeyCall:                  "semantic/factor/call",
+		axisKeyEffect:                "semantic/factor/effect",
+		axisKeyExecutionReachability: "semantic/axis/execution-reachability",
 	} {
 		expected, expectedOK := roles.Key(role)
 		semantic, ok := AxisSemantic(key)

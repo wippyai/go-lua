@@ -3,6 +3,7 @@ package composite
 import (
 	callowner "github.com/wippyai/go-lua/analysis/domain/call/owner"
 	effectowner "github.com/wippyai/go-lua/analysis/domain/effect/owner"
+	executionowner "github.com/wippyai/go-lua/analysis/domain/execution/owner"
 	allocationcatalog "github.com/wippyai/go-lua/analysis/domain/heap/allocation/catalog"
 	heapowner "github.com/wippyai/go-lua/analysis/domain/heap/owner"
 	packowner "github.com/wippyai/go-lua/analysis/domain/pack/owner"
@@ -21,11 +22,12 @@ type axisTemplate = axis.Template[LinkInputs]
 // payload names it exactly as its owner spells it rather than by a factor lane
 // ordinal declared somewhere else.
 const (
-	axisKeyValue  schema.Key = "value"
-	axisKeyPack   schema.Key = "pack"
-	axisKeyHeap   schema.Key = "heap"
-	axisKeyCall   schema.Key = "call"
-	axisKeyEffect schema.Key = "effect"
+	axisKeyValue                 schema.Key = "value"
+	axisKeyPack                  schema.Key = "pack"
+	axisKeyHeap                  schema.Key = "heap"
+	axisKeyCall                  schema.Key = "call"
+	axisKeyEffect                schema.Key = "effect"
+	axisKeyExecutionReachability schema.Key = "execution-reachability"
 )
 
 // axisCells is one pass's per-axis payload, indexed by axis slot: the axis's
@@ -100,6 +102,18 @@ func axisTemplates() ([]*axisTemplate, bool) {
 	add(axis.New(heapowner.AxisEntry[LinkInputs]()))
 	add(axis.New(callowner.AxisEntry[LinkInputs]()))
 	add(axis.New(effectowner.AxisEntry[LinkInputs]()))
+	// The execution-reachability axis is declared after the factor axes. It is
+	// an engine-published space: no artifact factor lane addresses it, so the
+	// lane-addressed axes keep the positions their ordinals name and this one
+	// follows them.
+	//
+	// What is registered here is the declaration. That every engine-published
+	// column reaches this inventory is not guarded yet: the cold and hot passes
+	// below index by principal slot, and a coverage guard stated over them
+	// would state the factor pass's shape rather than the publication's, so the
+	// guard belongs beside the publication and the gap is named here rather
+	// than approximated.
+	add(axis.New(executionowner.AxisEntry[LinkInputs]()))
 
 	if rejected {
 		return nil, false
@@ -347,7 +361,7 @@ func (cells axisCells) hotPrincipals(inputs LinkInputs, allocations *allocationc
 	set := authorities{
 		value: value, call: call, heap: heap, pack: pack, effect: effect,
 		valueSchema: inputs.ValueSchema, heapSchema: inputs.HeapSchema, packSchema: inputs.PackSchema,
-		topology: inputs.Topology, allocations: allocations, activation: inputs.ActivationCatalog,
+		topology: inputs.topology, allocations: allocations, activation: inputs.activation,
 	}
 	return set, set.available()
 }

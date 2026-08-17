@@ -123,6 +123,7 @@ func pinnedSemanticRoles() []struct {
 		{"contract-payload/environment-slot", "d7853268d3ef13544a98759b262ea3e1e9d5737a395fddf295f7f33f3e985673"},
 		{"contract-payload/primitive-metatable", "25fda498cbe0df6dd62d5edd2019c87f5b2bf7206282e9ef51d1cf669ab69f91"},
 		{"contract-payload/host-capability", "2e690e77a7162bd95aef556c550a04428b412865d02dc855ee2dd57ba4b47b86"},
+		{"axis/execution-reachability", "d31d901aa14d3abfc6eb87d1ffd0cc75cf908cff5d353cf7290912ce55658132"},
 	}
 }
 

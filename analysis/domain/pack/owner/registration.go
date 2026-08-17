@@ -95,7 +95,11 @@ func AxisEntry[A axisInputs]() axis.Spec[A, *SchemaFragment, *HotOwner, pack.Val
 		Lifetime:    axis.LifetimeLink,
 		Mutability:  axis.MutabilitySolve,
 		Concurrency: axis.ConcurrencySingleWriter,
-		Semantic:    "semantic/factor/pack",
+		// The pack factor's facts are published as one column, written by this
+		// axis's own principal: the lane whose rules write the factor is the lane
+		// the engine admits to fill the column a consumer reads it out of.
+		Frame:    axis.Frame{Outputs: []axis.Output{{Key: "pack/facts", Writer: "pack"}}},
+		Semantic: "semantic/factor/pack",
 		Mount: axis.NewMount(func(context axis.Mounting[A]) (*pack.Schema, MountRejection, bool) {
 			return mountPackSchema[A](context.Inputs)
 		}),

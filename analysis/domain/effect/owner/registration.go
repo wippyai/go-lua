@@ -109,7 +109,11 @@ func AxisEntry[A axisInputs]() axis.Spec[A, *SchemaFragment, *HotOwner, factor.V
 		// is this axis's declared dependency and its authority is present
 		// before this mount opens.
 		Dependencies: []schema.Key{"pack"},
-		Semantic:     "semantic/factor/effect",
+		// The effect factor's facts are published as one column, written by this
+		// axis's own principal: the lane whose rules write the factor is the lane
+		// the engine admits to fill the column a consumer reads it out of.
+		Frame:    axis.Frame{Outputs: []axis.Output{{Key: "effect/facts", Writer: "effect"}}},
+		Semantic: "semantic/factor/effect",
 		Mount: axis.NewMount(func(context axis.Mounting[A]) (*factor.Algebra, MountRejection, bool) {
 			return mountEffectAlgebra[A](context.Inputs)
 		}),

@@ -2,8 +2,10 @@ package composite
 
 import (
 	calldomain "github.com/wippyai/go-lua/analysis/domain/call"
+	callactivation "github.com/wippyai/go-lua/analysis/domain/call/activation"
 	effectfactor "github.com/wippyai/go-lua/analysis/domain/effect/factor"
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
+	heapindex "github.com/wippyai/go-lua/analysis/domain/heap/index"
 	packdomain "github.com/wippyai/go-lua/analysis/domain/pack"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/analysis/schema"
@@ -19,6 +21,12 @@ const (
 	MountStageInput
 	MountStageAxis
 	MountStageAdopt
+	// MountStageTopology and MountStageActivation are the phase's own post-mount
+	// derivations. Each names the derivation that refused, which is the whole of
+	// what a derivation over several sealed factors can blame: no axis owns one,
+	// so no axis is named beside it.
+	MountStageTopology
+	MountStageActivation
 )
 
 func (stage MountStage) String() string {
@@ -31,6 +39,10 @@ func (stage MountStage) String() string {
 		return "axis"
 	case MountStageAdopt:
 		return "adopt"
+	case MountStageTopology:
+		return "topology"
+	case MountStageActivation:
+		return "activation"
 	default:
 		return "none"
 	}
@@ -80,6 +92,10 @@ func MountRejection[R any](failure MountFailure) (R, bool) {
 // transaction consumes. An axis that declares no mount is passed over and the
 // authority its caller supplied stays exactly as supplied.
 //
+// The phase closes on the derivations no axis owns: an authority derived from
+// several sealed factors at once has no single owning axis to mount it, so the
+// phase derives it itself once every mount has sealed.
+//
 // The phase is the composition's, the seal is the domain's: this function names
 // no domain's mount procedure and constructs no domain's mount row.
 func MountLink(inputs LinkInputs) (LinkInputs, MountFailure) {
@@ -98,7 +114,30 @@ func MountLink(inputs LinkInputs) (LinkInputs, MountFailure) {
 	if !ok {
 		return LinkInputs{}, MountFailure{Stage: MountStageAdopt, Axis: failedAxis}
 	}
-	return mounted, MountFailure{}
+	return mounted.derive()
+}
+
+// derive runs the phase's post-mount derivations over the record every declared
+// mount has already sealed into. Each derivation is opened by the package that
+// owns it, from the mounted authorities and the neutral artifact view alone, and
+// a refusal names that derivation rather than an axis: the factors it reads
+// belong to several axes at once, so no axis is answerable for the join.
+//
+// Ordering is the reason this is a phase of its own. A derivation reads sealed
+// authorities from axes that mount in different positions of the dependency
+// order, so it can only run once the whole order has run.
+func (inputs LinkInputs) derive() (LinkInputs, MountFailure) {
+	topology, topologyOK := heapindex.Seal(inputs.HeapSchema, inputs.ValueSchema, inputs.CallAlgebra, inputs.PackSchema)
+	if !topologyOK {
+		return LinkInputs{}, MountFailure{Stage: MountStageTopology}
+	}
+	activation, activationOK := callactivation.SealMountedBatches(inputs.CallAlgebra, inputs.Artifacts)
+	if !activationOK {
+		return LinkInputs{}, MountFailure{Stage: MountStageActivation}
+	}
+	inputs.topology = topology
+	inputs.activation = activation
+	return inputs, MountFailure{}
 }
 
 // mountAxes invokes every declared mount exactly once, in the order the

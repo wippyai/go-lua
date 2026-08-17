@@ -25,11 +25,21 @@ var mountingDomainPackages = map[schema.Key]string{
 	"effect": "github.com/wippyai/go-lua/analysis/domain/effect/factor",
 }
 
+// postMountDerivationPackages pairs each post-mount derivation with the package
+// that owns it. A derivation over several sealed factors at once is no axis's
+// authority to mount, so it is derived by the mount phase after every mount has
+// sealed; the root that hands the phase its inputs names neither package.
+var postMountDerivationPackages = map[string]string{
+	"github.com/wippyai/go-lua/analysis/domain/heap/index":      "the receiver-to-root topology",
+	"github.com/wippyai/go-lua/analysis/domain/call/activation": "the mounted activation catalog",
+}
+
 const artifactPlanSourcePath = "analysis/artifact_plan.go"
 
-// TestArtifactPlanNamesNoSelfMountingDomain fails when the Link construction
-// root still imports a domain whose axis seals its own Link authority.
-func TestArtifactPlanNamesNoSelfMountingDomain(t *testing.T) {
+// artifactPlanImports reads the Link construction root's own import set. It is
+// the one source both mount laws below are stated over.
+func artifactPlanImports(t *testing.T) map[string]struct{} {
+	t.Helper()
 	imports := make(map[string]struct{})
 	found := false
 	architectureBatteryWalk(t, "analysis", func(source architectureBatterySource) {
@@ -44,6 +54,13 @@ func TestArtifactPlanNamesNoSelfMountingDomain(t *testing.T) {
 	if !found {
 		t.Fatalf("%s was not walked; the law has nothing to state", artifactPlanSourcePath)
 	}
+	return imports
+}
+
+// TestArtifactPlanNamesNoSelfMountingDomain fails when the Link construction
+// root still imports a domain whose axis seals its own Link authority.
+func TestArtifactPlanNamesNoSelfMountingDomain(t *testing.T) {
+	imports := artifactPlanImports(t)
 	mounting := 0
 	for key, path := range mountingDomainPackages {
 		declared, known := composite.AxisMountDeclared(key)
@@ -60,5 +77,18 @@ func TestArtifactPlanNamesNoSelfMountingDomain(t *testing.T) {
 	}
 	if mounting == 0 {
 		t.Fatalf("no factor axis seals its own authority; the law measures nothing")
+	}
+}
+
+// TestArtifactPlanNamesNoPostMountDerivation fails when the Link construction
+// root still names a package whose authority the mount phase derives for
+// itself. A derivation over several sealed factors belongs to the phase that
+// produced them; the root hands that phase its inputs and reads its verdict.
+func TestArtifactPlanNamesNoPostMountDerivation(t *testing.T) {
+	imports := artifactPlanImports(t)
+	for path, derivation := range postMountDerivationPackages {
+		if _, named := imports[path]; named {
+			t.Errorf("%s imports %s; %s is derived by the mount phase, not by the root", artifactPlanSourcePath, path, derivation)
+		}
 	}
 }

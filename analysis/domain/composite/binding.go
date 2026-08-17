@@ -108,8 +108,8 @@ func (bound catalogBinding) available() bool {
 // duration of that call, seals, and finalizes.
 //
 // Every rule-plane sequence is a pass over the sealed table. The caller
-// supplies Link authorities and its own query binder and receives back only
-// the neutral execution surface.
+// supplies the mount phase's own record and its own query binder and receives
+// back only the neutral execution surface.
 func bind(compilation Compilation, inputs LinkInputs, bindPrincipals func(value *valueowner.HotOwner, effect *effectowner.HotOwner, views QueryViews) bool) (catalogBinding, BindFailure) {
 	sealRegistry()
 	if registry.sealed == nil {

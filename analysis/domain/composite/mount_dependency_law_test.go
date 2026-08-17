@@ -64,20 +64,20 @@ func TestMountPhaseWalksAxesInDependencyOrder(t *testing.T) {
 // absent and is rejected by that axis's own seal.
 func TestMountScopeCarriesNoUndeclaredAuthority(t *testing.T) {
 	inputs := LinkInputs{
-		Artifacts:         []axis.MountedArtifact{{}},
-		StaticAuthority:   &staticdomain.Authority{},
-		ValueSchema:       &valuedomain.Schema{},
-		PackSchema:        &packdomain.Schema{},
-		CallAlgebra:       &calldomain.Algebra{},
-		EffectAlgebra:     &effectfactor.Algebra{},
-		Topology:          &heapindex.Topology{},
-		ActivationCatalog: &callactivation.TargetBatchCatalog{},
+		Artifacts:       []axis.MountedArtifact{{}},
+		StaticAuthority: &staticdomain.Authority{},
+		ValueSchema:     &valuedomain.Schema{},
+		PackSchema:      &packdomain.Schema{},
+		CallAlgebra:     &calldomain.Algebra{},
+		EffectAlgebra:   &effectfactor.Algebra{},
+		topology:        &heapindex.Topology{},
+		activation:      &callactivation.TargetBatchCatalog{},
 	}
 	neutral := inputs.neutral()
 	if neutral.ValueSchema != nil || neutral.PackSchema != nil || neutral.CallAlgebra != nil || neutral.EffectAlgebra != nil {
 		t.Fatalf("the phase's neutral input half carried a mounted factor authority")
 	}
-	if neutral.HeapSchema.Valid() || neutral.Topology != nil || neutral.ActivationCatalog != nil {
+	if neutral.HeapSchema.Valid() || neutral.topology != nil || neutral.activation != nil {
 		t.Fatalf("the phase's neutral input half carried a derived authority")
 	}
 	if neutral.StaticAuthority == nil || len(neutral.Artifacts) != len(inputs.Artifacts) {

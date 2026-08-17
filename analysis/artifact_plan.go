@@ -5,10 +5,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"sync"
 
-	callactivation "github.com/wippyai/go-lua/analysis/domain/call/activation"
 	"github.com/wippyai/go-lua/analysis/domain/composite"
 	allocationcatalog "github.com/wippyai/go-lua/analysis/domain/heap/allocation/catalog"
-	heapindex "github.com/wippyai/go-lua/analysis/domain/heap/index"
 	staticdomain "github.com/wippyai/go-lua/analysis/domain/static"
 	"github.com/wippyai/go-lua/analysis/domain/type/authority"
 	"github.com/wippyai/go-lua/analysis/engine"
@@ -604,22 +602,13 @@ func (state *compiledState) newProgramBinding(source *link.Link) (*composite.Pro
 		Artifacts:       artifactRows,
 		StaticAuthority: static,
 	})
+	// Topology and the activation catalog are derivations over several sealed
+	// factors at once, so neither is any one axis's authority to mount. The mount
+	// phase derives both itself, after every mount has sealed, and names the
+	// derivation that refused in its own verdict.
 	if mountFailure.Available() {
 		return nil, programMountFailure(mountFailure), mountFailure, allocationcatalog.SealFailureNone
 	}
-	// Topology and the activation catalog are derivations over several sealed
-	// factors at once, so neither is any one axis's authority to mount. They are
-	// composed here, after the mount phase, from the authorities it produced.
-	topology, ok := heapindex.Seal(inputs.HeapSchema, inputs.ValueSchema, inputs.CallAlgebra, inputs.PackSchema)
-	if !ok {
-		return nil, ProgramBindingFailureHeapIndex, composite.MountFailure{}, allocationcatalog.SealFailureNone
-	}
-	catalog, ok := callactivation.SealMountedBatches(inputs.CallAlgebra, inputs.Artifacts)
-	if !ok {
-		return nil, ProgramBindingFailureTargetCatalog, composite.MountFailure{}, allocationcatalog.SealFailureNone
-	}
-	inputs.Topology = topology
-	inputs.ActivationCatalog = catalog
 	binding, failure := composite.BindProgram(state.receipt, inputs, composite.ProgramQuerySpecs{
 		Value:  valueSummaryQueryHotSpec(inputs.ValueSchema, valueCodec),
 		Effect: effectExactQueryHotSpec(inputs.EffectAlgebra, effectCodec),

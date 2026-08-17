@@ -253,14 +253,27 @@ func programBindingFailure(failure composite.BindFailure) ProgramBindingFailure 
 // which axis it was is the declaration table's identity rather than a
 // coordinate space this boundary re-enumerates, so the verdict is one and the
 // axis travels with it.
+//
+// A post-mount derivation is owned by no axis, so it keeps its own verdict:
+// which derivation refused is the phase's whole evidence, and each is spelled
+// here as the boundary member that derivation has always published.
 func programMountFailure(failure composite.MountFailure) ProgramBindingFailure {
 	if !failure.Available() {
 		return ProgramBindingFailureNone
 	}
-	if failure.Stage != composite.MountStageAxis || failure.Axis == composite.DiagnosticAxisUnknown {
+	switch failure.Stage {
+	case composite.MountStageTopology:
+		return ProgramBindingFailureHeapIndex
+	case composite.MountStageActivation:
+		return ProgramBindingFailureTargetCatalog
+	case composite.MountStageAxis:
+		if failure.Axis == composite.DiagnosticAxisUnknown {
+			return ProgramBindingFailureInput
+		}
+		return ProgramBindingFailureAxisAuthority
+	default:
 		return ProgramBindingFailureInput
 	}
-	return ProgramBindingFailureAxisAuthority
 }
 
 // AnalyzeDiagnosticRule is the closed analyzer-owned classification of the

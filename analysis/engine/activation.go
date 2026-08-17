@@ -570,3 +570,10 @@ func compileActivationRuleReceipt(implementation *ActivationRuleImplementation, 
 	compiled.run = retainActivationRunReceipt(compiled, implementation.receipt.cell.impl.run)
 	return compiled, true
 }
+
+// AdmitActivationByTrustedTheorem names the reviewed receipt-native theorem
+// used by mounted activation Rule slots. It carries no declaration
+// authority or Composition dependency.
+func AdmitActivationByTrustedTheorem(identity identity.SemanticKey) RuleAdmission[ActivationResult, ruleUnit] {
+	return AdmitRuleByTrustedTheorem[ActivationResult, ruleUnit](identity)
+}

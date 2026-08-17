@@ -71,7 +71,11 @@ func AxisEntry[A axisInputs]() axis.Spec[A, *SchemaFragment, *HotOwner, heap.Val
 		Lifetime:    axis.LifetimeLink,
 		Mutability:  axis.MutabilitySolve,
 		Concurrency: axis.ConcurrencySingleWriter,
-		Semantic:    "semantic/factor/heap",
+		// The heap factor's facts are published as one column, written by this
+		// axis's own principal: the lane whose rules write the factor is the lane
+		// the engine admits to fill the column a consumer reads it out of.
+		Frame:    axis.Frame{Outputs: []axis.Output{{Key: "heap/facts", Writer: "heap"}}},
+		Semantic: "semantic/factor/heap",
 		Mount: axis.NewMount(func(context axis.Mounting[A]) (heap.Schema, heap.SealFailure, bool) {
 			return mountHeapSchema[A](context.Inputs)
 		}),

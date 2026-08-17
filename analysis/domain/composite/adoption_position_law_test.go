@@ -5,6 +5,7 @@ import (
 
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/axis"
 )
 
 // The declaration surfaces name no artifact catalog: an axis is its own writer
@@ -112,11 +113,37 @@ func sealedRuleKeys(t *testing.T) []schema.Key {
 	return keys
 }
 
+// sealedFactorAxisKeys is the prefix of the axis inventory the artifact's
+// factor lane catalog addresses, and it states that the prefix is one: the
+// lane-addressed axes are declared first, so a factor axis's declaration
+// position is its lane ordinal and an axis no lane numbers cannot displace one.
+// An engine-published axis is such a row - the artifact numbers factor lanes,
+// and that axis is not one - so it is declared after them and the pins below
+// stay a member-for-member agreement rather than a count.
+func sealedFactorAxisKeys(t *testing.T) []schema.Key {
+	t.Helper()
+	keys := sealedAxisKeys(t)
+	addressed := len(axisPositionPins())
+	if len(keys) < addressed {
+		t.Fatalf("the table declares %d axes, the artifact addresses %d factor lanes", len(keys), addressed)
+	}
+	for position, key := range keys {
+		storage, storageOK := AxisStorage(key)
+		if !storageOK {
+			t.Fatalf("axis %q declares no storage", key)
+		}
+		if factor := storage == axis.StorageFactor; factor != (position < addressed) {
+			t.Fatalf("axis %q declares storage %d at position %d, outside the artifact-addressed prefix", key, storage, position)
+		}
+	}
+	return keys[:addressed]
+}
+
 // TestAxisDeclarationPositionAgreesWithTheArtifactLaneOrdinal states the axis
 // half of the agreement, and states it as a law rather than as an observation:
 // a table whose members have moved is rejected, naming the member.
 func TestAxisDeclarationPositionAgreesWithTheArtifactLaneOrdinal(t *testing.T) {
-	keys := sealedAxisKeys(t)
+	keys := sealedFactorAxisKeys(t)
 	if blamed, agreed := positionAgreement(keys, axisPositionPins()); !agreed {
 		t.Fatalf("axis %q is not declared at the position its artifact lane ordinal addresses", blamed)
 	}

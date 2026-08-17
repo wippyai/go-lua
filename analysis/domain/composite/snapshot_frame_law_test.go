@@ -17,11 +17,9 @@ import (
 const pilotOutput schema.Key = "value/facts"
 
 var (
-	pilotStore        = identity.StoreID(1)
-	pilotGeneration   = identity.Generation(1)
-	pilotDenominator  = identity.ContentID{0x11, 0x22}
-	pilotQueryFamily  = identity.ContentID{0x33, 0x44}
-	pilotQueryMembers = identity.ContentID{0x55, 0x66}
+	pilotStore       = identity.StoreID(1)
+	pilotGeneration  = identity.Generation(1)
+	pilotDenominator = identity.ContentID{0x11, 0x22}
 )
 
 // TestPublishedColumnIsAddressedByItsDeclaration is the stitch: a column
@@ -85,62 +83,170 @@ func TestPublishedColumnIsAddressedByItsDeclaration(t *testing.T) {
 	}
 }
 
-// TestPublishedQueryAnswersTheSameFourOutcomes states that a query family
-// materialized against the published plan reports the same outcomes a column
-// read reports, so a materialized absence stays distinguishable from ignorance
-// on the way out of the analyzer as well as inside it.
-func TestPublishedQueryAnswersTheSameFourOutcomes(t *testing.T) {
+// TestEveryMountedAuthorityPublishesAColumn is the coverage law between the two
+// halves of an axis declaration. An axis that seals its own Link authority from
+// the mounted artifacts holds facts about the program that authority describes,
+// and facts no column names are facts no consumer of the analyzer can reach. A
+// mounted authority that published nothing would be a solver-internal
+// coordinate space, and the inventory holds none: every mount in it is a factor
+// whose facts are read out.
+func TestEveryMountedAuthorityPublishesAColumn(t *testing.T) {
+	sealRegistry()
+	if registry.sealed == nil {
+		t.Fatal("the declaration table is unavailable")
+	}
+	for _, entry := range registry.axes {
+		if !entry.MountDeclared() {
+			continue
+		}
+		if entry.OutputCount() == 0 {
+			t.Fatalf("axis %q mounts its own authority and publishes no column", entry.Key())
+		}
+	}
+}
+
+// TestEverySealedQueryFamilyRequestsAResultColumn is the query half of the
+// issuance set. A family the table seals is a family the analyzer answers, so
+// the projection requests one result column for each of them, addressed by the
+// same schema and the same dense slot discipline the axis columns are addressed
+// by, and identified by the identity the table sealed the family under rather
+// than by one a publisher minted.
+func TestEverySealedQueryFamilyRequestsAResultColumn(t *testing.T) {
+	requests, ok := QueryRequests()
+	if !ok {
+		t.Fatal("the sealed table requests no query result columns")
+	}
+	if len(requests) != sealedQueryFamilies(t) {
+		t.Fatalf("%d result columns requested for %d sealed query families", len(requests), sealedQueryFamilies(t))
+	}
+	schemaID, _ := PublicationSchema()
+	columns, columnsOK := WriteRequests()
+	if !columnsOK {
+		t.Fatal("the sealed table issues no write requests")
+	}
+	families := make(map[identity.ContentID]schema.Key, len(requests))
+	for index, request := range requests {
+		if request.Schema != schemaID {
+			t.Fatalf("the request for family %q names a schema other than the sealed table", request.Family)
+		}
+		if !request.Family.Available() || !request.ID.Available() {
+			t.Fatalf("request %d names family %q under identity %v", index, request.Family, request.ID)
+		}
+		projected, projects := ProjectQuery(request.Family)
+		if !projects || projected != request.ID {
+			t.Fatalf("family %q is answered under an identity its own projection does not name", request.Family)
+		}
+		if prior, duplicate := families[request.ID]; duplicate {
+			t.Fatalf("families %q and %q are answered under one identity", prior, request.Family)
+		}
+		families[request.ID] = request.Family
+		// The result columns continue the one dense slot range the axis columns
+		// opened, so a family's answers are addressed by the sealed table alone.
+		if int(request.Slot) >= PublicationColumns() {
+			t.Fatalf("family %q answers at slot %d outside the %d published columns", request.Family, request.Slot, PublicationColumns())
+		}
+		expected := uint32(len(columns) + index)
+		if request.Slot != expected {
+			t.Fatalf("family %q answers at slot %d, not at slot %d where the axis columns leave off", request.Family, request.Slot, expected)
+		}
+	}
+	if _, projects := ProjectQuery("no-such-family"); projects {
+		t.Fatal("a family the table never sealed projects an identity")
+	}
+}
+
+// TestSealedQueryFamiliesAreAnswerableOnAPublishedSnapshot is the stitch on the
+// query side: a snapshot built from the sealed catalog fills every declared
+// column and materializes every sealed family's answers at the slot the
+// projection requested, and each family then opens on that snapshot and answers
+// the same four outcomes a column read reports. A materialized absence stays
+// distinguishable from ignorance on the way out of the analyzer as well as
+// inside it.
+func TestSealedQueryFamiliesAreAnswerableOnAPublishedSnapshot(t *testing.T) {
 	schemaID, schemaOK := PublicationSchema()
 	if !schemaOK {
 		t.Fatal("the sealed table publishes no schema identity")
 	}
-	column, projected := ProjectAxis[uint64, uint64](pilotOutput)
-	if !projected {
-		t.Fatalf("the declared output %q projects no address", pilotOutput)
+	columns, columnsOK := WriteRequests()
+	queries, queriesOK := QueryRequests()
+	if !columnsOK || !queriesOK || len(queries) == 0 {
+		t.Fatal("the sealed table publishes no column plan")
 	}
+
 	builder := snapshot.NewBuilder(schemaID, pilotStore, pilotGeneration)
-	if err := snapshot.PutColumn(&builder, column, snapshot.Content[uint64, uint64]{
-		Rows:        map[uint64]uint64{1: 11},
-		Denominator: pilotDenominator,
-		Members:     []uint64{1, 2},
-	}); err != nil {
-		t.Fatalf("seal the published column: %v", err)
+	// The publication is dense: a family's result column is addressed above
+	// every axis column, so every one of them is filled before it.
+	for _, column := range columns {
+		if err := snapshot.PutColumn(&builder, snapshot.Axis[uint64, uint64]{SchemaID: schemaID, Slot: column.Slot}, snapshot.Content[uint64, uint64]{
+			Rows:        map[uint64]uint64{1: 11},
+			Denominator: columnDenominator(column.Slot),
+			Members:     []uint64{1, 2},
+		}); err != nil {
+			t.Fatalf("seal the published column %q: %v", column.Output, err)
+		}
 	}
-	// A query family is answered by a result column of its own, addressed at
-	// the next dense slot the publication reaches.
-	plan, err := snapshot.DeclareQuery(&builder, pilotQueryFamily, uint32(PublicationColumns()), snapshot.Content[uint64, uint64]{
-		Rows:        map[uint64]uint64{4: 44},
-		Denominator: pilotQueryMembers,
-		Members:     []uint64{4, 5},
-	})
-	if err != nil {
-		t.Fatalf("declare the query family: %v", err)
+	plans := make([]snapshot.QueryPlan[uint64, uint64], 0, len(queries))
+	for _, query := range queries {
+		plan, err := snapshot.DeclareQuery(&builder, query.ID, query.Slot, snapshot.Content[uint64, uint64]{
+			Rows:        map[uint64]uint64{4: 44},
+			Denominator: columnDenominator(query.Slot),
+			Members:     []uint64{4, 5},
+		})
+		if err != nil {
+			t.Fatalf("materialize the query family %q: %v", query.Family, err)
+		}
+		plans = append(plans, plan)
 	}
 	sealed, err := builder.Seal()
 	if err != nil {
 		t.Fatalf("seal the publication: %v", err)
 	}
 
-	opened, opens := snapshot.OpenQuery[uint64, uint64](&sealed, pilotQueryFamily)
-	if !opens || opened != plan {
-		t.Fatal("the published family opens a plan other than the one it declared")
+	for index, query := range queries {
+		opened, opens := snapshot.OpenQuery[uint64, uint64](&sealed, query.ID)
+		if !opens || opened != plans[index] {
+			t.Fatalf("family %q opens a plan other than the one it declared", query.Family)
+		}
+		if answer, status := snapshot.Query(&sealed, opened, 4); status != snapshot.ReadHit || answer != 44 {
+			t.Fatalf("a materialized answer of %q read back as %s with %d", query.Family, status, answer)
+		}
+		if _, status := snapshot.Query(&sealed, opened, 5); status != snapshot.ReadProvenAbsent {
+			t.Fatalf("a covered key with no answer of %q read back as %s, not a proven absence", query.Family, status)
+		}
+		if _, status := snapshot.Query(&sealed, opened, 9); status != snapshot.ReadMiss {
+			t.Fatalf("an uncovered key of %q read back as %s, not a miss", query.Family, status)
+		}
+		if _, opens := snapshot.OpenQuery[uint64, string](&sealed, query.ID); opens {
+			t.Fatalf("a wrong answer claim opened family %q", query.Family)
+		}
+		foreign := snapshot.QueryPlan[uint64, uint64]{SchemaID: identity.ContentID{0x77}, Slot: opened.Slot}
+		if _, status := snapshot.Query(&sealed, foreign, 4); status != snapshot.ReadInvalid {
+			t.Fatalf("a plan of another schema answered %q with %s", query.Family, status)
+		}
 	}
-	if answer, status := snapshot.Query(&sealed, opened, 4); status != snapshot.ReadHit || answer != 44 {
-		t.Fatalf("a materialized answer read back as %s with %d", status, answer)
+}
+
+// columnDenominator is one column's own key universe identity. A denominator
+// identity carries its members exactly once, so each column of this publication
+// proves its coverage against a set of its own.
+func columnDenominator(slot uint32) identity.ContentID {
+	return identity.ContentID{0x40, byte(slot)}
+}
+
+// sealedQueryFamilies is the number of families the declaration table sealed.
+// Reading it from the table rather than through the projection is what makes
+// the request set a claim this law can check.
+func sealedQueryFamilies(t *testing.T) int {
+	t.Helper()
+	sealed, failure := Table()
+	if failure.Available() || sealed == nil {
+		t.Fatalf("the declaration table is unavailable: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
-	if _, status := snapshot.Query(&sealed, opened, 5); status != snapshot.ReadProvenAbsent {
-		t.Fatalf("a covered key with no answer read back as %s, not a proven absence", status)
+	view, viewOK := sealed.Surface(schema.SurfaceKindQuery)
+	if !viewOK {
+		t.Fatal("the sealed table registers no query surface")
 	}
-	if _, status := snapshot.Query(&sealed, opened, 9); status != snapshot.ReadMiss {
-		t.Fatalf("an uncovered key read back as %s, not a miss", status)
-	}
-	if _, opens := snapshot.OpenQuery[uint64, string](&sealed, pilotQueryFamily); opens {
-		t.Fatal("a wrong answer claim opened the published family")
-	}
-	unregistered := snapshot.QueryPlan[uint64, uint64]{SchemaID: identity.ContentID{0x77}, Slot: plan.Slot}
-	if _, status := snapshot.Query(&sealed, unregistered, 4); status != snapshot.ReadInvalid {
-		t.Fatalf("a plan of another schema answered %s", status)
-	}
+	return view.Count()
 }
 
 // TestEveryPublishedColumnRequestsOneWriter states the issuance half. The
@@ -148,13 +254,22 @@ func TestPublishedQueryAnswersTheSameFourOutcomes(t *testing.T) {
 // naming the principal the table sealed as that column's writer; the engine
 // mints at most one per column, so the seal's one-writer law and the runtime's
 // are the same law stated at two ends.
+//
+// The issuance set covers the axis columns and the query result columns cover
+// the rest of the same dense range, so the two request sets together account
+// for every slot the publication addresses and neither leaves a column no
+// request names.
 func TestEveryPublishedColumnRequestsOneWriter(t *testing.T) {
 	requests, ok := WriteRequests()
 	if !ok {
 		t.Fatal("the sealed table issues no write requests")
 	}
-	if len(requests) != PublicationColumns() {
-		t.Fatalf("%d write requests for %d published columns", len(requests), PublicationColumns())
+	answers, answersOK := QueryRequests()
+	if !answersOK {
+		t.Fatal("the sealed table requests no query result columns")
+	}
+	if len(requests)+len(answers) != PublicationColumns() {
+		t.Fatalf("%d write requests and %d result columns for %d published columns", len(requests), len(answers), PublicationColumns())
 	}
 	schemaID, _ := PublicationSchema()
 	claimed := make(map[schema.Key]schema.Key, len(requests))

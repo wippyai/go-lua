@@ -154,8 +154,8 @@ type ProgramQuerySpecs struct {
 
 // BindProgram binds the complete global schema in one SchemaBinding. The factor
 // principals, the allocation catalog, and every rule are admitted by the
-// grammar's own transaction; the caller supplies the Link authorities and its
-// own query specs, and receives the sealed hot binding.
+// grammar's own transaction; the caller supplies the record the mount phase
+// produced and its own query specs, and receives the sealed hot binding.
 func BindProgram(compilation Compilation, inputs LinkInputs, queries ProgramQuerySpecs) (*ProgramBinding, BindFailure) {
 	var (
 		value           *valueowner.HotOwner

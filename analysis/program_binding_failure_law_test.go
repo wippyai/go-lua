@@ -68,3 +68,23 @@ func TestMountPhaseWithoutAnAxisNamesNoAxisVerdict(t *testing.T) {
 		t.Fatalf("an axis phase naming no axis projected onto %q", verdict)
 	}
 }
+
+// TestPostMountDerivationKeepsItsOwnVerdict states that moving the two
+// post-mount derivations into the mount phase kept this boundary's evidence:
+// a topology that did not seal and an activation catalog that did not seal are
+// each still their own verdict, distinct from every axis authority and from the
+// phase's input rejection.
+func TestPostMountDerivationKeepsItsOwnVerdict(t *testing.T) {
+	verdicts := map[composite.MountStage]ProgramBindingFailure{
+		composite.MountStageTopology:   ProgramBindingFailureHeapIndex,
+		composite.MountStageActivation: ProgramBindingFailureTargetCatalog,
+	}
+	for stage, want := range verdicts {
+		if verdict := programMountFailure(composite.MountFailure{Stage: stage}); verdict != want {
+			t.Fatalf("derivation stage %q projected onto %q, not %q", stage, verdict, want)
+		}
+	}
+	if ProgramBindingFailureHeapIndex.String() != "heap-index" || ProgramBindingFailureTargetCatalog.String() != "target-catalog" {
+		t.Fatalf("a derivation verdict lost its own name: %q %q", ProgramBindingFailureHeapIndex, ProgramBindingFailureTargetCatalog)
+	}
+}

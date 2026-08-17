@@ -59,13 +59,6 @@
     },
     {
       "set": "engine",
-      "package": "github.com/wippyai/go-lua/analysis/engine",
-      "test": "TestReceiptSolverFallbackCompilesWTORevision (skipped)",
-      "reason": "skipped in place, claiming the end-to-end accepted-activation law covers the fallback path (receipt_solver_fallback_law_test.go:23). A covered test that never runs states nothing; it is listed so the skip is tracked rather than read as a pass.",
-      "owner": "analysis/engine receipt_solver_fallback_law_test.go"
-    },
-    {
-      "set": "engine",
       "package": "github.com/wippyai/go-lua/analysis/engine/internal/carrier",
       "test": "TestCarrierMatrixCarryOnlyProductArity",
       "reason": "pair contribution input is rejected (matrix_laws_test.go:37)",
@@ -140,16 +133,14 @@
       "test": "TestPreserveRejectsOverlapMismatch",
       "reason": "preserve accepts an overlap mismatch it must reject (semantic_test.go:289)",
       "owner": "analysis/engine/internal/facts/semantic preserve"
-    }
-  ],
-  "excluded": [
+    },
     {
       "set": "engine",
       "package": "github.com/wippyai/go-lua/analysis/engine",
       "test": "TestReceiptCompilerThreadsSummaryReadThroughProductAndEvidence",
-      "reason": "segfaults with a nil dereference inside runSummaryReadThroughProductAndEvidence (schema_rule_binding_law_test.go:762) and takes the whole engine test binary down with it, erasing every other verdict in that package. It is selected out by name so the rest of the package still reports.",
-      "owner": "analysis/engine schema_rule_binding_law_test.go",
-      "excluded": true
+      "reason": "summary read-through binding fails inside compileReceiptFactors -> bindFactorFromGraph -> collectFactorGraphCatalog returning false; the former nil-dereference crash at schema_rule_binding_law_test.go:762 is fixed, so the test reports instead of killing the binary",
+      "owner": "analysis/engine summary query receipt binding"
     }
-  ]
+  ],
+  "excluded": []
 }

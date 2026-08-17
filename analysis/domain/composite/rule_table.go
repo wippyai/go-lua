@@ -203,11 +203,12 @@ func ruleTemplates() ([]*template, bool) {
 
 // LinkInputs is the neutral set of Link inputs one mount and binding
 // transaction consumes: the Link itself, the neutral view of its mounted
-// artifacts, the static authority no factor axis owns, and the sealed factor
-// authorities. An authority an axis mounts for itself is written here by the
-// mount phase; one whose owner has not moved is supplied by the caller. No
-// runtime policy or live capability enters here, and no principal or catalog is
-// handed back out.
+// artifacts, the static authority no factor axis owns, the sealed factor
+// authorities, and the authorities the mount phase derives once every mount has
+// sealed. An authority an axis mounts for itself is written here by the mount
+// phase; one whose owner has not moved is supplied by the caller. No runtime
+// policy or live capability enters here, and no principal or catalog is handed
+// back out.
 type LinkInputs struct {
 	// Source is the sealed Link every mounted authority is derived from.
 	Source *link.Link
@@ -220,13 +221,19 @@ type LinkInputs struct {
 	// own need interface.
 	StaticAuthority *staticdomain.Authority
 
-	ValueSchema       *valuedomain.Schema
-	CallAlgebra       *calldomain.Algebra
-	HeapSchema        heapdomain.Schema
-	PackSchema        *packdomain.Schema
-	EffectAlgebra     *effectfactor.Algebra
-	Topology          *heapindex.Topology
-	ActivationCatalog *callactivation.TargetBatchCatalog
+	ValueSchema   *valuedomain.Schema
+	CallAlgebra   *calldomain.Algebra
+	HeapSchema    heapdomain.Schema
+	PackSchema    *packdomain.Schema
+	EffectAlgebra *effectfactor.Algebra
+
+	// topology and activation are the mount phase's own post-mount derivations.
+	// Each is a derivation over several sealed factors at once, so neither is any
+	// one axis's authority to mount and neither is a caller's to supply: the
+	// phase derives both from the authorities it sealed and writes them here for
+	// the binding transaction that follows.
+	topology   *heapindex.Topology
+	activation *callactivation.TargetBatchCatalog
 }
 
 // mountable is the mount phase's admission: the Link, its artifact view, and
@@ -255,8 +262,8 @@ func (inputs LinkInputs) neutral() LinkInputs {
 func (inputs LinkInputs) available() bool {
 	return inputs.mountable() && inputs.ValueSchema != nil && inputs.CallAlgebra != nil && inputs.CallAlgebra.Valid() &&
 		inputs.HeapSchema.Valid() && inputs.PackSchema != nil &&
-		inputs.EffectAlgebra != nil && inputs.EffectAlgebra.Valid() && inputs.Topology != nil &&
-		inputs.ActivationCatalog != nil
+		inputs.EffectAlgebra != nil && inputs.EffectAlgebra.Valid() && inputs.topology != nil &&
+		inputs.activation != nil
 }
 
 // The mount input getters are the record's read surface for the mount pass. A

@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/constraint"
 	callsite "github.com/wippyai/go-lua/analysis/domain/effect/callsite"
 	effectowner "github.com/wippyai/go-lua/analysis/domain/effect/owner"
+	executionowner "github.com/wippyai/go-lua/analysis/domain/execution/owner"
 	heapclosed "github.com/wippyai/go-lua/analysis/domain/heap/allocation/closed"
 	heapempty "github.com/wippyai/go-lua/analysis/domain/heap/allocation/empty"
 	heapingress "github.com/wippyai/go-lua/analysis/domain/heap/allocation/ingress"
@@ -150,10 +151,12 @@ func occurrenceCategoryPrefix(category structure.Category) string {
 }
 
 // semanticRoleVocabulary is the analyzer's semantic role catalog, aggregated
-// from the domains that own the roles. Each axis owner contributes its factor's
-// identity and the forms its schema is declared with, each rule owner the three
-// or four forms its rules are identified by, and this table the contract
-// identities its own library inventory is declared under.
+// from the domains that own the roles. Each axis owner contributes the identity
+// its coordinate space is bound under and the forms its schema is declared
+// with, each rule owner the three or four forms its rules are identified by,
+// and this table the contract identities its own library inventory is declared
+// under. An engine-published axis contributes its identity alone: it declares no
+// schema, so it declares none of the forms one is declared with.
 //
 // The order is the declaration order of the axis and rule tables, so a reader
 // following one table reads the same sequence in the other. Position carries no
@@ -166,6 +169,7 @@ func semanticRoleVocabulary() []structure.Spec {
 		heapowner.StructureSpecs(),
 		callowner.StructureSpecs(),
 		effectowner.StructureSpecs(),
+		executionowner.StructureSpecs(),
 		valuesource.StructureSpecs(),
 		packsource.StructureSpecs(),
 		heapingress.StructureSpecs(),
