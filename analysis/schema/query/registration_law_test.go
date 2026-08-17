@@ -1,12 +1,14 @@
 package query
 
 import (
-	"crypto/sha256"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/internal/framing"
+	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
+	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
 
 // scratchEntry is a stand-in row for a sibling surface. The query
@@ -44,8 +46,38 @@ func (contribution scratchSurface) Seal(schema.View, schema.Sealed) schema.SealF
 	return schema.SealFailure{}
 }
 
-func contractID(role string) identity.ContentID {
-	return identity.ContentID(sha256.Sum256([]byte(role)))
+// scratchRoles is the role vocabulary the scratch families below are admitted
+// against. A family names its identities as roles, so a law over one needs a
+// resolved vocabulary exactly as the analyzer's own table does.
+func scratchRoles(t *testing.T) vocabulary.Roles {
+	t.Helper()
+	entries, entriesOK := structure.Collect(vocabulary.RoleSpecs(
+		"query/value-summary", "query-result/value-summary", "fold-contract/value-summary",
+		"query/effect-exact", "query-result/effect-exact", "fold-contract/effect-exact",
+	))
+	if !entriesOK {
+		t.Fatal("scratch role inventory rejected by construction")
+	}
+	roles, ok := vocabulary.NewRoles(entries)
+	if !ok {
+		t.Fatal("scratch role vocabulary did not resolve")
+	}
+	return roles
+}
+
+// scratchContributor is a stand-in contributor: it declares the three hooks a
+// family is answered by without opening a real slot, so a law over the
+// declaration is stated without a schema builder behind it.
+func scratchContributor[F, R any](spec *Spec[F, R]) {
+	spec.Declare = func(Declaration) (F, bool) {
+		var fragment F
+		return fragment, true
+	}
+	spec.Bind = func(Binding[F]) bool { return true }
+	spec.Receipt = func(Receipt[F]) (R, bool) {
+		var receipt R
+		return receipt, true
+	}
 }
 
 // sealRegistrations seals one query inventory into a complete declaration
@@ -99,29 +131,42 @@ func (foreignSurface) Seal(view schema.View, sealed schema.Sealed) schema.SealFa
 	return surface{}.Seal(view, sealed)
 }
 
-func summarySpec(family schema.Key) RegistrationSpec {
-	return RegistrationSpec{
+// scratchFragment and scratchReceipt are the cold and sealed payload types of
+// the scratch families. They carry nothing: what these laws state is the
+// declaration, and the payloads only have to be recoverable at their own type.
+type scratchFragment struct{}
+
+type scratchReceipt struct{}
+
+func summarySpec(family schema.Key) Spec[scratchFragment, scratchReceipt] {
+	spec := Spec[scratchFragment, scratchReceipt]{
 		Family:   family,
-		Codec:    contractID("codec/" + string(family)),
+		Semantic: "semantic/query/value-summary",
+		Codec:    "semantic/query-result/value-summary",
 		Fold:     FoldDistributive,
-		Contract: contractID("fold-contract/" + string(family)),
+		Contract: "semantic/fold-contract/value-summary",
 		Subjects: []schema.Key{"value"},
 	}
+	scratchContributor(&spec)
+	return spec
 }
 
-func exactSpec(family schema.Key) RegistrationSpec {
-	return RegistrationSpec{
+func exactSpec(family schema.Key) Spec[scratchFragment, scratchReceipt] {
+	spec := Spec[scratchFragment, scratchReceipt]{
 		Family:   family,
-		Codec:    contractID("codec/" + string(family)),
+		Semantic: "semantic/query/effect-exact",
+		Codec:    "semantic/query-result/effect-exact",
 		Fold:     FoldGeneral,
-		Contract: contractID("fold-contract/" + string(family)),
+		Contract: "semantic/fold-contract/effect-exact",
 		Subjects: []schema.Key{"effect", "value"},
 	}
+	scratchContributor(&spec)
+	return spec
 }
 
-func mustRegistration(t *testing.T, spec RegistrationSpec) *Registration {
+func mustRegistration(t *testing.T, spec Spec[scratchFragment, scratchReceipt]) *Registration {
 	t.Helper()
-	registration, ok := NewRegistration(spec)
+	registration, ok := New(spec, scratchRoles(t))
 	if !ok || registration == nil {
 		t.Fatalf("scratch query family %q rejected by construction", spec.Family)
 	}
@@ -304,24 +349,75 @@ func TestQueryForeignRowIsRejected(t *testing.T) {
 }
 
 // TestNewRegistrationRejectsIncompleteSpec states the constructor half: a spec
-// that violates a law yields no registration at all.
+// that violates a law, names an identity the vocabulary does not resolve, or
+// withholds one hook of its contributor yields no registration at all.
 func TestNewRegistrationRejectsIncompleteSpec(t *testing.T) {
-	cases := map[string]func(*RegistrationSpec){
-		"family":           func(spec *RegistrationSpec) { spec.Family = "" },
-		"codec":            func(spec *RegistrationSpec) { spec.Codec = identity.ContentID{} },
-		"fold":             func(spec *RegistrationSpec) { spec.Fold = FoldInvalid },
-		"contract":         func(spec *RegistrationSpec) { spec.Contract = identity.ContentID{} },
-		"subjects":         func(spec *RegistrationSpec) { spec.Subjects = nil },
-		"unnamed subject":  func(spec *RegistrationSpec) { spec.Subjects = []schema.Key{""} },
-		"repeated subject": func(spec *RegistrationSpec) { spec.Subjects = []schema.Key{"value", "value"} },
-		"catalog ordinal":  func(spec *RegistrationSpec) { spec.Fold = FoldGeneral + 1 },
+	type damaged = Spec[scratchFragment, scratchReceipt]
+	cases := map[string]func(*damaged){
+		"family":           func(spec *damaged) { spec.Family = "" },
+		"semantic":         func(spec *damaged) { spec.Semantic = "semantic/query/absent" },
+		"codec":            func(spec *damaged) { spec.Codec = "" },
+		"fold":             func(spec *damaged) { spec.Fold = FoldInvalid },
+		"contract":         func(spec *damaged) { spec.Contract = "semantic/fold-contract/absent" },
+		"subjects":         func(spec *damaged) { spec.Subjects = nil },
+		"unnamed subject":  func(spec *damaged) { spec.Subjects = []schema.Key{""} },
+		"repeated subject": func(spec *damaged) { spec.Subjects = []schema.Key{"value", "value"} },
+		"catalog ordinal":  func(spec *damaged) { spec.Fold = FoldGeneral + 1 },
+		"declare hook":     func(spec *damaged) { spec.Declare = nil },
+		"bind hook":        func(spec *damaged) { spec.Bind = nil },
+		"receipt hook":     func(spec *damaged) { spec.Receipt = nil },
 	}
 	for name, damage := range cases {
 		spec := summarySpec("value-summary")
 		damage(&spec)
-		if registration, ok := NewRegistration(spec); ok || registration != nil {
+		if registration, ok := New(spec, scratchRoles(t)); ok || registration != nil {
 			t.Fatalf("spec with a rejected %s admitted", name)
 		}
+	}
+}
+
+// TestQueryContributorIsDeclared is the surface's own half of the same law: a
+// family that reaches the table without the contributor that answers it is
+// refused at seal, so a withdrawn contributor is a rejected table rather than a
+// family that seals and is then answered from a fallback.
+func TestQueryContributorIsDeclared(t *testing.T) {
+	for name, withdraw := range map[string]func(*Registration){
+		"declare": func(registration *Registration) { registration.declare = nil },
+		"bind":    func(registration *Registration) { registration.bind = nil },
+		"receipt": func(registration *Registration) { registration.receipt = nil },
+	} {
+		registration := mustRegistration(t, summarySpec("value-summary"))
+		withdraw(registration)
+		failure := sealRegistrations(t, []*Registration{registration})
+		if failure.Law != LawContributorDeclared || failure.Disposition != schema.DispositionIncomplete {
+			t.Fatalf("family without its %s hook sealed: law=%d disposition=%s", name, failure.Law, failure.Disposition)
+		}
+		if failure.Entry != registration.ID() {
+			t.Fatalf("verdict named entry %x, not the family whose contributor was withdrawn", failure.Entry)
+		}
+	}
+}
+
+// TestQueryContributorRunsOnlyOverPresentSubjects states the narrowing law's
+// closed half: a family's declared subjects are narrowed before its hooks run,
+// so a pass that produced no payload for one of them runs no hook at all rather
+// than running one over a coordinate space that is not there.
+func TestQueryContributorRunsOnlyOverPresentSubjects(t *testing.T) {
+	ran := false
+	spec := exactSpec("effect-exact")
+	spec.Declare = func(Declaration) (scratchFragment, bool) {
+		ran = true
+		return scratchFragment{}, true
+	}
+	registration, ok := New(spec, scratchRoles(t))
+	if !ok {
+		t.Fatal("scratch query family rejected by construction")
+	}
+	if _, declared := registration.Declare(engine.NewSchema(), NewSubjects(nil)); declared {
+		t.Fatal("a family declared against a pass that produced none of its subjects")
+	}
+	if ran {
+		t.Fatal("a contributor ran with no payload for a subject its family declared")
 	}
 }
 

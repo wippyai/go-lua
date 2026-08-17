@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
-	"github.com/wippyai/go-lua/analysis/internal/canonical"
+	"github.com/wippyai/go-lua/internal/canonical"
 )
 
 const surfaceLocalLawDomain = "analysis/engine/equation/surface-local-law"

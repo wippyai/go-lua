@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/composite"
+	"github.com/wippyai/go-lua/domain/composite"
 )
 
 // TestCanonicalCorpusSemanticAcceptance is the one complete fixture semantic

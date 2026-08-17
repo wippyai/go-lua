@@ -5,7 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
-	"github.com/wippyai/go-lua/analysis/internal/canonical"
+	"github.com/wippyai/go-lua/internal/canonical"
 )
 
 // Graph is the one immutable Point/Group equation topology. Points are the
@@ -169,59 +169,51 @@ type compiledRowDirectory struct {
 	queries []composition.Key
 }
 
-// compileTopology is the one raw topology compiler. Its input is reachable
-// only through a sealed Topology selection; direct compilation of a mutable
-// builder spelling is deliberately not exposed outside this package.
-func compileTopology(source *composition.Composition, topology TopologySpec, activationReverses []derivedActivationReverse) (*Graph, compiledRowDirectory, bool) {
-	graph, directory, _, ok := compileTopologyWithFailure(source, topology, activationReverses, false)
-	return graph, directory, ok
-}
-
 // compileTopologyWithFailure is the sealed topology compiler's closed
 // diagnostic form. The returned phase names only a compiler boundary; no
 // mutable row or raw builder reference escapes this package.
-func compileTopologyWithFailure(source *composition.Composition, topology TopologySpec, activationReverses []derivedActivationReverse, deferredQueries bool) (*Graph, compiledRowDirectory, SealTopologyFailure, bool) {
+func compileTopologyWithFailure(source *composition.Composition, topology TopologySpec, activationReverses []derivedActivationReverse, deferredQueries bool) (*Graph, compiledRowDirectory, SealFailure, bool) {
 	if source == nil || !validTopologyBatch(topology.Batch, topology) || len(topology.Points) == 0 {
-		return nil, compiledRowDirectory{}, SealTopologyFailureCompileInput, false
+		return nil, compiledRowDirectory{}, sealRefused(SealFailureFamilyCompile, "input"), false
 	}
 	catalog, ok := buildTopologyCatalog(topology)
 	if !ok {
-		return nil, compiledRowDirectory{}, SealTopologyFailureCompileCatalog, false
+		return nil, compiledRowDirectory{}, sealRefused(SealFailureFamilyCompile, "catalog"), false
 	}
 	if !validateTopologyCatalogUsage(topology, catalog) {
-		return nil, compiledRowDirectory{}, SealTopologyFailureCompileUsage, false
+		return nil, compiledRowDirectory{}, sealRefused(SealFailureFamilyCompile, "catalog-usage"), false
 	}
 	instances, ok := buildInstances(source, topology.Batch, topology.Rules, catalog)
 	if !ok {
-		return nil, compiledRowDirectory{}, SealTopologyFailureCompileInstances, false
+		return nil, compiledRowDirectory{}, sealRefused(SealFailureFamilyCompile, "instances"), false
 	}
 	declared, sites, points, ok := buildPoints(topology.Points)
 	if !ok {
-		return nil, compiledRowDirectory{}, SealTopologyFailureCompilePoints, false
+		return nil, compiledRowDirectory{}, sealRefused(SealFailureFamilyCompile, "points"), false
 	}
 	groups, ok := buildGroups(source, instances, declared, sites, topology.Groups)
 	if !ok {
-		return nil, compiledRowDirectory{}, SealTopologyFailureCompileGroups, false
+		return nil, compiledRowDirectory{}, sealRefused(SealFailureFamilyCompile, "groups"), false
 	}
 	environments, ok := buildEnvironmentEdges(topology.EnvironmentEdges, declared, sites)
 	if !ok {
-		return nil, compiledRowDirectory{}, SealTopologyFailureCompileEnvironment, false
+		return nil, compiledRowDirectory{}, sealRefused(SealFailureFamilyCompile, "environment-edges"), false
 	}
 	factorEdges, ok := buildFactorEdges(source, topology.FactorEdges, declared, sites)
 	if !ok {
-		return nil, compiledRowDirectory{}, SealTopologyFailureCompileFactor, false
+		return nil, compiledRowDirectory{}, sealRefused(SealFailureFamilyCompile, "factor-edges"), false
 	}
 	queries, ok := buildQueries(source, declared, topology.Queries, catalog, deferredQueries)
 	if !ok {
-		return nil, compiledRowDirectory{}, SealTopologyFailureCompileQueries, false
+		return nil, compiledRowDirectory{}, sealRefused(SealFailureFamilyCompile, "queries"), false
 	}
 	reverses, ok := buildActivationReverseIndex(activationReverses, instances, declared, groups)
 	if !ok {
-		return nil, compiledRowDirectory{}, SealTopologyFailureCompileActivation, false
+		return nil, compiledRowDirectory{}, sealRefused(SealFailureFamilyCompile, "activation"), false
 	}
 	decisions, ok := collectDecisions(points, groups, environments, factorEdges)
 	if !ok {
-		return nil, compiledRowDirectory{}, SealTopologyFailureCompileDecisions, false
+		return nil, compiledRowDirectory{}, sealRefused(SealFailureFamilyCompile, "decisions"), false
 	}
 	denseRanks := make([]int, 0)
 	if len(topology.PointRanks) != 0 {
@@ -229,7 +221,7 @@ func compileTopologyWithFailure(source *composition.Composition, topology Topolo
 		denseAt := make(map[composition.Key]int, len(points))
 		for index, point := range points {
 			if _, duplicate := denseAt[point.key]; duplicate {
-				return nil, compiledRowDirectory{}, SealTopologyFailureCompileRanks, false
+				return nil, compiledRowDirectory{}, sealRefused(SealFailureFamilyCompile, "point-ranks"), false
 			}
 			denseAt[point.key] = index
 		}
@@ -237,14 +229,14 @@ func compileTopologyWithFailure(source *composition.Composition, topology Topolo
 			point, found := declared[PointAt(index)]
 			denseIndex, indexed := denseAt[point.key]
 			if !found || !indexed {
-				return nil, compiledRowDirectory{}, SealTopologyFailureCompileRanks, false
+				return nil, compiledRowDirectory{}, sealRefused(SealFailureFamilyCompile, "point-ranks"), false
 			}
 			denseRanks[denseIndex] = topology.PointRanks[index]
 		}
 	}
 	graph, assembled := assembleGraph(source, points, groups, environments, factorEdges, queries, reverses, decisions, catalog, denseRanks)
 	if !assembled || graph == nil {
-		return nil, compiledRowDirectory{}, SealTopologyFailureCompileAssembly, false
+		return nil, compiledRowDirectory{}, sealRefused(SealFailureFamilyCompile, "assembly"), false
 	}
 	directory := compiledRowDirectory{
 		points:  make([]composition.Key, len(topology.Points)),
@@ -255,30 +247,30 @@ func compileTopologyWithFailure(source *composition.Composition, topology Topolo
 		point, found := declared[PointAt(index)]
 		node, indexed := graph.pointAt[point.key]
 		if !found || !indexed || int(node) < 0 || int(node) >= len(graph.points) || !graph.OwnsPoint(graph.points[node]) {
-			return nil, compiledRowDirectory{}, SealTopologyFailureCompileDirectory, false
+			return nil, compiledRowDirectory{}, sealRefused(SealFailureFamilyCompile, "row-directory"), false
 		}
 		directory.points[index] = point.key
 	}
 	for index, instance := range instances {
 		member, found := graph.memberAt[instance.key]
 		if !found || !graph.OwnsMember(member) {
-			return nil, compiledRowDirectory{}, SealTopologyFailureCompileDirectory, false
+			return nil, compiledRowDirectory{}, sealRefused(SealFailureFamilyCompile, "row-directory"), false
 		}
 		directory.members[index] = instance.key
 	}
 	for index, row := range topology.Queries {
 		point, found := declared[row.Point]
 		if !found {
-			return nil, compiledRowDirectory{}, SealTopologyFailureCompileDirectory, false
+			return nil, compiledRowDirectory{}, sealRefused(SealFailureFamilyCompile, "row-directory"), false
 		}
 		key, keyed := deriveQueryKey(row, point, catalog)
 		query, found := graph.queryAt[key]
 		if !keyed || !found || !graph.OwnsQuery(query) {
-			return nil, compiledRowDirectory{}, SealTopologyFailureCompileDirectory, false
+			return nil, compiledRowDirectory{}, sealRefused(SealFailureFamilyCompile, "row-directory"), false
 		}
 		directory.queries[index] = key
 	}
-	return graph, directory, SealTopologyFailureNone, true
+	return graph, directory, SealFailure{}, true
 }
 
 func validTopologyBatch(batch *Batch, topology TopologySpec) bool {
@@ -1275,29 +1267,6 @@ func (graph *Graph) ConsumerAt(point Point, index int) (GroupNode, bool) {
 	return graph.groups[graph.consumers[node][index]], true
 }
 
-// EnvironmentEdgeCount reports structural control transports entering point.
-func (graph *Graph) EnvironmentEdgeCount(point Point) int {
-	if !graph.valid() {
-		return 0
-	}
-	node, ok := graph.pointAt[point.key]
-	if !ok {
-		return 0
-	}
-	return len(graph.environmentIncoming[node])
-}
-
-func (graph *Graph) EnvironmentEdgeAt(point Point, index int) (EnvironmentEdgeNode, bool) {
-	if !graph.valid() {
-		return EnvironmentEdgeNode{}, false
-	}
-	node, ok := graph.pointAt[point.key]
-	if !ok || index < 0 || index >= len(graph.environmentIncoming[node]) {
-		return EnvironmentEdgeNode{}, false
-	}
-	return graph.environments[graph.environmentIncoming[node][index]], true
-}
-
 func (graph *Graph) EnvironmentEdgeAtIndex(index int) (EnvironmentEdgeNode, bool) {
 	if !graph.valid() || index < 0 || index >= len(graph.environments) {
 		return EnvironmentEdgeNode{}, false
@@ -1369,29 +1338,6 @@ func (graph *Graph) EnvironmentGroupAt(point Point, index int) (GroupNode, bool)
 		return GroupNode{}, false
 	}
 	return graph.groups[graph.environmentGroups[node][index]], true
-}
-
-// FactorEdgeCount reports Factor-local structural transports entering point.
-func (graph *Graph) FactorEdgeCount(point Point) int {
-	if !graph.valid() {
-		return 0
-	}
-	node, ok := graph.pointAt[point.key]
-	if !ok {
-		return 0
-	}
-	return len(graph.factorIncoming[node])
-}
-
-func (graph *Graph) FactorEdgeAt(point Point, index int) (FactorEdgeNode, bool) {
-	if !graph.valid() {
-		return FactorEdgeNode{}, false
-	}
-	node, ok := graph.pointAt[point.key]
-	if !ok || index < 0 || index >= len(graph.factorIncoming[node]) {
-		return FactorEdgeNode{}, false
-	}
-	return graph.factorEdges[graph.factorIncoming[node][index]], true
 }
 
 func (graph *Graph) FactorEdgeAtIndex(index int) (FactorEdgeNode, bool) {

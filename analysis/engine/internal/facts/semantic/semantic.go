@@ -403,49 +403,6 @@ func (domain *Domain[F, K, V]) EqualAt(left Plane[F, K, V], leftValuation func(g
 	return true
 }
 
-// LessOrEqAt proves the domain's pointwise order for every explicit
-// factor/key at two representative valuations.  Missing columns are the
-// declared Default on supported state, so the finite union of populated
-// coordinates is the complete comparison surface.  It is the order
-// authority used by the heterogeneous carrier State; it does not infer order
-// from Join or manufacture a second lattice carrier.
-func (domain *Domain[F, K, V]) LessOrEqAt(left Plane[F, K, V], leftValuation func(guard.Atom) bool, right Plane[F, K, V], rightValuation func(guard.Atom) bool) bool {
-	if !domain.validPlane(left) || !domain.validPlane(right) || leftValuation == nil || rightValuation == nil {
-		return false
-	}
-	type coordinate struct {
-		factor F
-		key    K
-	}
-	coordinates := make([]coordinate, 0)
-	seen := make(map[coordinate]struct{})
-	collect := func(root diagram.Root[F, K, V]) bool {
-		completed, valid := domain.diagram.ForEach(root, func(fact diagram.Fact[F, K, V]) bool {
-			coordinate := coordinate{factor: fact.Factor, key: fact.Key}
-			if _, exists := seen[coordinate]; !exists {
-				seen[coordinate] = struct{}{}
-				coordinates = append(coordinates, coordinate)
-			}
-			return true
-		})
-		return completed && valid
-	}
-	if !collect(left.root) || !collect(right.root) {
-		return false
-	}
-	for _, coordinate := range coordinates {
-		leftValue, ok := domain.valueAt(left.root, coordinate.factor, coordinate.key, leftValuation)
-		if !ok {
-			return false
-		}
-		rightValue, ok := domain.valueAt(right.root, coordinate.factor, coordinate.key, rightValuation)
-		if !ok || !domain.ops.LessOrEq(leftValue, rightValue) {
-			return false
-		}
-	}
-	return true
-}
-
 // FingerprintAt is a non-authoritative row bucket key.  EqualAt remains the
 // equality authority: this value is deterministic only to avoid comparing
 // every disconnected Product cell quadratically.

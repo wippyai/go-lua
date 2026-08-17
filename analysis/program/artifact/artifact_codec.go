@@ -11,7 +11,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/wippyai/go-lua/analysis/internal/framing"
+	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/flow"
 	"github.com/wippyai/go-lua/analysis/program/imports"
@@ -30,10 +30,6 @@ func Encode(p *program.Program, contract *target.Contract, metadata Metadata) ([
 	if p == nil || !p.ContentID().Available() || !ownerViewsAvailable(p) {
 		return nil, ErrUnavailableProgram
 	}
-	relationsSchema, err := canonicalRelationsSchemaDigest()
-	if err != nil {
-		return nil, err
-	}
 	dependencies, err := canonicalDependencies(metadata)
 	if err != nil {
 		return nil, err
@@ -48,11 +44,11 @@ func Encode(p *program.Program, contract *target.Contract, metadata Metadata) ([
 	if err := writer.Reset(destination, artifactDomain, artifactVersion); err != nil {
 		return nil, encodeError(err)
 	}
-	if err := writeEnvelope(&writer, targetID, p.ContentID(), relationsSchema, entry, metadata.Provenance, dependencies); err != nil {
+	if err := writeEnvelope(&writer, targetID, p.ContentID(), entry, metadata.Provenance, dependencies); err != nil {
 		return nil, encodeError(err)
 	}
 	// These are the only four payload authorities and their order is part of
-	// the v19 stream grammar.
+	// the v20 stream grammar.
 	if err := source.WriteArtifactSection(&writer, p.Source()); err != nil {
 		return nil, encodeError(err)
 	}
@@ -80,7 +76,7 @@ func Encode(p *program.Program, contract *target.Contract, metadata Metadata) ([
 	return data, nil
 }
 
-// Decode accepts only the v19 stream bound to contract and reconstructs a
+// Decode accepts only the v20 stream bound to contract and reconstructs a
 // fresh owner quartet through the ordinary Build/Finalizer/Assemble/Publish
 // path. No derived section is read or retained.
 func Decode(data []byte, contract *target.Contract, expectedDependencies []Dependency) (*program.Program, Metadata, error) {
@@ -105,10 +101,6 @@ func Decode(data []byte, contract *target.Contract, expectedDependencies []Depen
 	if !artifactMeasureAllowed(measure) {
 		return nil, Metadata{}, ErrLimit
 	}
-	relationsSchema, err := canonicalRelationsSchemaDigest()
-	if err != nil {
-		return nil, Metadata{}, err
-	}
 	reader, err := framing.NewReader(data, artifactMaxBytes)
 	if err != nil {
 		return nil, Metadata{}, decodeError(err)
@@ -116,7 +108,7 @@ func Decode(data []byte, contract *target.Contract, expectedDependencies []Depen
 	if err := reader.Header(artifactDomain, artifactVersion); err != nil {
 		return nil, Metadata{}, decodeError(err)
 	}
-	envelope, err := readEnvelope(reader, targetID, relationsSchema, measure.StringBytes, expected)
+	envelope, err := readEnvelope(reader, targetID, measure.StringBytes, expected)
 	if err != nil {
 		return nil, Metadata{}, decodeError(err)
 	}

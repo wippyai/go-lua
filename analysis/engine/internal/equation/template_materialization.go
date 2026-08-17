@@ -4,7 +4,7 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
-	"github.com/wippyai/go-lua/analysis/internal/canonical"
+	"github.com/wippyai/go-lua/internal/canonical"
 )
 
 // TemplateMaterialization is the sealed receipt of one target-owned lowering
@@ -604,46 +604,6 @@ func templateMaterializationAlpha(binding TemplateBinding) (decisionAlpha, bool)
 		}
 	}
 	return result, true
-}
-
-func materializationResolvedPoint(binding TemplateBinding, formal Site, targets []Site, required PortMode) (templateResolvedPoint, bool) {
-	if !binding.Available() || !formal.Available() || formal.batch != binding.data.formals || formal.dynamic != nil || formal.row == 0 || uint64(formal.row) > uint64(len(targets)) {
-		return templateResolvedPoint{}, false
-	}
-	target := targets[formal.row-1]
-	if !target.Available() || target.dynamic != nil {
-		return templateResolvedPoint{}, false
-	}
-	formalRow, ok := binding.data.formals.sealedSite(formal.row)
-	if !ok {
-		return templateResolvedPoint{}, false
-	}
-	if !formalRow.formal {
-		return templateResolvedPoint{ref: PointRef(formal.row), site: target, scope: target.Scope(), rawScope: formal.Scope(), local: true}, true
-	}
-	port := FormalPort{batch: binding.data.formals, row: formal.row}
-	var actual Site
-	if required == PortImport {
-		var ingress Reindex
-		var resolved bool
-		actual, _, ingress, resolved = binding.ResolveImport(port)
-		if !resolved || !ingress.Available() {
-			return templateResolvedPoint{}, false
-		}
-	} else if required == PortExport {
-		var egress Reindex
-		var resolved bool
-		actual, egress, resolved = binding.ResolveExport(port)
-		if !resolved || !egress.Available() {
-			return templateResolvedPoint{}, false
-		}
-	} else {
-		return templateResolvedPoint{}, false
-	}
-	if target.Key() != actual.Key() || !sameScope(target.Scope(), actual.Scope()) {
-		return templateResolvedPoint{}, false
-	}
-	return templateResolvedPoint{ref: PointRef(formal.row), site: target, scope: target.Scope(), rawScope: formal.Scope()}, true
 }
 
 func templateMaterializationKey(source *composition.Composition, binding TemplateBinding, batch *Batch, inputs []Input) (composition.Key, bool) {

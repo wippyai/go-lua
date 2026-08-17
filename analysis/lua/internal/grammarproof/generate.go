@@ -21,6 +21,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/astcodec"
 	lualower "github.com/wippyai/go-lua/analysis/lua/lower"
+	"github.com/wippyai/go-lua/analysis/lua/parsersource"
 )
 
 // The traced parser copy sits below analysis/lua inside the throw-away module
@@ -76,7 +77,7 @@ func Generate(root, out string, check bool) error {
 // pass by resemblance, but an unchanged proof need not rebuild a temporary
 // parser on every ordinary test run.
 func validateGeneratedEvidence(root, out string) error {
-	grammar, err := extractGrammar(filepath.Join(root, "compiler", "parse", "parser.go.y"))
+	grammar, err := parsersource.ExtractGrammar(filepath.Join(root, "compiler", "parse", "parser.go.y"))
 	if err != nil {
 		return fmt.Errorf("extract parser grammar: %w", err)
 	}
@@ -118,7 +119,7 @@ func validateGeneratedEvidence(root, out string) error {
 // downstream matrix cannot accidentally combine evidence from different
 // corpus or grammar revisions.
 func Collect(root string) (Snapshot, error) {
-	grammar, err := extractGrammar(filepath.Join(root, "compiler", "parse", "parser.go.y"))
+	grammar, err := parsersource.ExtractGrammar(filepath.Join(root, "compiler", "parse", "parser.go.y"))
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("extract parser grammar: %w", err)
 	}

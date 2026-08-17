@@ -4,7 +4,7 @@ import (
 	"errors"
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/analysis/internal/framing"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 func compactPublications(component *Component, counts [keyspace.FamilyCount]uint32, input PublicationsInput) error {

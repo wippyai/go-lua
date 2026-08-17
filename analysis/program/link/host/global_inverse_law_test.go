@@ -3,7 +3,7 @@ package host
 import (
 	"testing"
 
-	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
+	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/flow"

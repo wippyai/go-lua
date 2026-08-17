@@ -913,17 +913,6 @@ func (state State) Valid() bool {
 // issued.
 func (state State) Same(other State) bool { return sameState(state, other) }
 
-// SamePublishedInput reports the identity visible at a Rule input and Point
-// publication boundary. It deliberately differs from Same: predecessor
-// provenance keeps the exact support handle, while an input/publication
-// identity keeps the carrier authority and scope, compares support by its
-// semantic formula, and retains exact immutable root-vector identity. Compact
-// authored coverage is a PointState concern and is compared by the owning
-// Work's ExactSamePointRepresentation predicate.
-func (state State) SamePublishedInput(other State) bool {
-	return samePublishedInputState(state, other)
-}
-
 func (state State) live() bool {
 	return state.authority.live() && state.scope.validFor(state.authority.composition) && state.support.Valid() && state.support.Manager() == state.authority.composition.guards && len(state.roots) == len(state.authority.composition.operations) && (!state.previewMarked() || state.previewOwner() != nil && state.previewOwner().live) && (!state.contributionMarked() || state.contributionOwner() != nil && state.contributionOwner().live)
 }

@@ -5,10 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/type/annotation"
-	typetable "github.com/wippyai/go-lua/analysis/domain/type/table"
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
-	"github.com/wippyai/go-lua/analysis/domain/type/typeexpr"
+	"github.com/wippyai/go-lua/domain/type/annotation"
+	typetable "github.com/wippyai/go-lua/domain/type/table"
+	"github.com/wippyai/go-lua/domain/type/typ"
+	"github.com/wippyai/go-lua/domain/type/typeexpr"
 )
 
 // errMessage extracts the message string from a validation error.

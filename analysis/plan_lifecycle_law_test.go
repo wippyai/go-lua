@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wippyai/go-lua/analysis/domain/composite"
-	profile "github.com/wippyai/go-lua/analysis/library/lualib/targetprofile"
+	"github.com/wippyai/go-lua/domain/composite"
+	profile "github.com/wippyai/go-lua/analysis/targetprofile"
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/link"
 )

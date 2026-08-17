@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/wippyai/go-lua/analysis/lua/parsersource"
 )
 
 // The generated ingress ledger makes the parser-production witness useful to
@@ -86,7 +88,7 @@ func moduleRoot(t *testing.T) string {
 }
 
 func collectLive(root string) ([]liveProduction, string, error) {
-	grammar, err := extractGrammar(filepath.Join(root, "compiler", "parse", "parser.go.y"))
+	grammar, err := parsersource.ExtractGrammar(filepath.Join(root, "compiler", "parse", "parser.go.y"))
 	if err != nil {
 		return nil, "", err
 	}

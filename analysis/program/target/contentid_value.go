@@ -3,7 +3,7 @@ package target
 import (
 	"errors"
 
-	"github.com/wippyai/go-lua/analysis/internal/framing"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 func encodeValues(w *framing.Writer, c *Contract, values Values) error {

@@ -5,8 +5,8 @@ import (
 
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 
-	"github.com/wippyai/go-lua/analysis/domain/type/annotation"
-	"github.com/wippyai/go-lua/analysis/domain/type/typeexpr"
+	"github.com/wippyai/go-lua/domain/type/annotation"
+	"github.com/wippyai/go-lua/domain/type/typeexpr"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
 

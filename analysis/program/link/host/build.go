@@ -6,7 +6,7 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/internal/framing"
+	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/flow"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
@@ -127,8 +127,8 @@ func (a *authority) sealResolved() error {
 	if !a.content.Available() {
 		return errUnavailable
 	}
-	var viewsOK bool
-	if a.sourceViews, viewsOK = a.component.buildSourceViews(); !viewsOK {
+	var countsErr error
+	if a.counts, countsErr = a.component.buildCountRows(); countsErr != nil {
 		return errUnavailable
 	}
 	return nil

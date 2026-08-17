@@ -6,53 +6,45 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/binder"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/programlaw"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/staticlaw"
-	"github.com/wippyai/go-lua/analysis/program/relations"
-	"github.com/wippyai/go-lua/analysis/program/semanticsource"
+	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/denominator"
 )
-
-// Reference is one exact issued relation token without a string catalog name.
-type Reference struct {
-	Origin   semanticsource.Origin
-	Facet    semanticsource.Facet
-	Revision semanticsource.Revision
-}
 
 // ProgramLawRow binds one Program law to its complete positive terminal vector.
 type ProgramLawRow struct {
 	Requirement programlaw.Requirement
-	Terminals   []Reference
+	Terminals   []schema.EntryID
 }
 
 // StaticLawRow binds one static constructor family to its complete positive
 // terminal vector.
 type StaticLawRow struct {
 	Family    staticlaw.Family
-	Terminals []Reference
+	Terminals []schema.EntryID
 }
 
 // BinderRow binds one binder transition to exactly one polarity. Positive and
 // Forbidden are deliberately separate typed vectors, not a generic input union.
 type BinderRow struct {
 	Requirement binder.Requirement
-	Positive    []Reference
-	Forbidden   []Reference
+	Positive    []schema.EntryID
+	Forbidden   []schema.EntryID
 }
 
 // Evidence is the generated terminal-only supply denominator. Relation owner,
 // form, and parent closure remain derived exclusively from the canonical schema.
 type Evidence struct {
-	SchemaDigest string
-	Digest       string
-	ProgramLaws  []ProgramLawRow
-	StaticLaws   []StaticLawRow
-	BinderLaws   []BinderRow
+	Digest      string
+	ProgramLaws []ProgramLawRow
+	StaticLaws  []StaticLawRow
+	BinderLaws  []BinderRow
 }
 
 // Output is one schema-derived member of a terminal's transitive parent closure.
 type Output struct {
-	Relation Reference
-	Owner    relations.Owner
-	Form     relations.Form
+	Relation schema.EntryID
+	Owner    denominator.RelationOwner
+	Form     denominator.RelationForm
 }
 
 // Generated is assigned by the checked-in generated evidence source.

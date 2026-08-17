@@ -1,10 +1,6 @@
 package equation
 
-import (
-	"sort"
-
-	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
-)
+import "github.com/wippyai/go-lua/analysis/engine/internal/schedule"
 
 // Demand is the selected Point closure for registered Queries. It references
 // the one point-only schedule and never builds another recurrence order.
@@ -279,11 +275,4 @@ func (demand *Demand) EventAt(index int) (schedule.Event, int, bool) {
 	original := demand.events[index]
 	event, ok := demand.graph.schedule.EventAt(original)
 	return event, original, ok
-}
-func (demand *Demand) PositionAtOrAfter(original int) (int, bool) {
-	if demand == nil || demand.graph == nil || original < 0 {
-		return 0, false
-	}
-	position := sort.SearchInts(demand.events, original)
-	return position, position < len(demand.events)
 }

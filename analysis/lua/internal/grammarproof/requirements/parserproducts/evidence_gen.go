@@ -8,7 +8,7 @@ func init() {
 		ParserSourceDigest: "2040e60e0c4b729743658b0ca0dd70aeee17eafa1a4187a012e247f418163367",
 		SchemaDigest:       "50039764153aa2f7cb14ce40bdd5424f8b309afb024e9f331381946ccafb5688",
 		IngressDigest:      "08c26cf4d5f800f6574e872a56e525c62a8817e3b413729e6a60e4b9ad532758",
-		Digest:             "c0442dc9c58fb5e0e46d0476f88e2d2c332739614b80d7ee599789bf4beeeb30",
+		Digest:             "45f902eddfa3dbd028d96a949efb40385f678920dca6aeeb1e61217be85315a7",
 		Fields:             generatedFields(),
 		Products:           generatedProducts(),
 		ProductLaws:        generatedProductLaws(),

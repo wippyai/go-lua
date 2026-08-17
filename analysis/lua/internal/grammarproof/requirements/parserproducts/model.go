@@ -3,9 +3,9 @@ package parserproducts
 
 import (
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/astcodec"
-	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/grammar"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/occurrence"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/recursion"
+	"github.com/wippyai/go-lua/analysis/lua/parsersource"
 )
 
 type Disposition uint8
@@ -229,7 +229,7 @@ type ChainLaw struct {
 type Carrier struct {
 	Form        string
 	Field       string
-	Class       grammar.ConstructorClass
+	Class       parsersource.ConstructorClass
 	ChildType   string
 	Cardinality astcodec.FieldState
 }

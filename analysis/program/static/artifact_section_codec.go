@@ -3,7 +3,7 @@ package static
 import (
 	"errors"
 
-	"github.com/wippyai/go-lua/analysis/internal/framing"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 // The Static artifact is a payload inside an owner-selected artifact stream.

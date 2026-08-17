@@ -18,7 +18,7 @@ import (
 //
 // The manifest names files in the engine flat root only; engineSourceFiles
 // skips directories, so a surviving package under analysis/engine is out of
-// scope by construction. analysis/engine/artifact is such a package: it holds
+// scope by construction. analysis/engine/rows is such a package: it holds
 // the ProgramArtifact declaration surface that outlives the cut, and
 // artifact_receipt.go keeps only the lowering that dies with the receipt.
 var deletionManifestFiles = []string{

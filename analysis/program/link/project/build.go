@@ -45,6 +45,10 @@ func Build(input Input) (*Draft, error) {
 	if err != nil {
 		return nil, err
 	}
+	counts, err := buildCountRows(mounts, bases)
+	if err != nil {
+		return nil, err
+	}
 	mountContentID := mountRelationID(mounts)
 	if !mountContentID.Available() {
 		return nil, errors.New("link/project: unavailable mount relation identity")
@@ -59,16 +63,12 @@ func Build(input Input) (*Draft, error) {
 	}
 	authority := &authority{
 		target: input.Target, contentID: projectID,
+		counts:         counts,
 		mountContentID: mountContentID, applicationContentID: applicationContentID,
 		mounts: mounts, keys: keys,
 		targetKeys: targetKeys, targetKeyByProject: targetKeyByProject, initialKeys: initialKeys, programKeys: programKeys,
 		applications: applications, baseApplications: bases, callApplications: calls,
 		callApplicationsBySource: callsBySource, importApplications: imports,
-	}
-	component := &Component{authority: authority}
-	authority.sourceViews, err = component.buildSourceViews()
-	if err != nil {
-		return nil, err
 	}
 	return &Draft{state: &draftState{fence: &draftFence{}, authority: authority}}, nil
 }

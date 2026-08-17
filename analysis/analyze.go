@@ -7,8 +7,8 @@ import (
 	"runtime"
 	"sync"
 
-	"github.com/wippyai/go-lua/analysis/domain/composite"
-	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
+	"github.com/wippyai/go-lua/domain/composite"
+	valuedomain "github.com/wippyai/go-lua/domain/value"
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"

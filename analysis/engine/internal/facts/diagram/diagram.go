@@ -1192,20 +1192,6 @@ func (diagram *Diagram[F, K, V]) Partition(root Root[F, K, V], region support.Ma
 	return true, true
 }
 
-// PartitionValue refines region by one opaque FDD value.  It is the
-// coordinate-level counterpart to Partition: callers receive only exact
-// nonempty support cells, never a terminal identity or node topology.  A
-// semantic plane delta uses it to compare one key at a time, avoiding a
-// cross-key Cartesian product merely to discover a local change.
-func (diagram *Diagram[F, K, V]) PartitionValue(value Value[V], region support.Mask, visit func(support.Mask) bool) (completed, valid bool) {
-	if visit == nil {
-		return false, false
-	}
-	return diagram.PartitionValueTerminals(value, region, func(_ terminal.ID[V], cell support.Mask) bool {
-		return visit(cell)
-	})
-}
-
 // PartitionValueTerminals refines region by one FDD value and reports the
 // exact terminal selected on every resulting nonempty cell. The zero terminal
 // is deliberately reported: semantic callers distinguish sparse absence from

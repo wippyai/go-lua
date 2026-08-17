@@ -8,12 +8,12 @@ import (
 	"reflect"
 	"sort"
 
-	"github.com/wippyai/go-lua/analysis/internal/framing"
+	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/astcodec"
-	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/grammar"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/occurrence"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/recursion"
+	"github.com/wippyai/go-lua/analysis/lua/parsersource"
 )
 
 // Build derives every parser construction coordinate from fresh cold syntax.
@@ -42,7 +42,7 @@ func derive(root string, snapshot grammarproof.Snapshot) (Evidence, error) {
 	if err := snapshot.ValidateGenerated(); err != nil {
 		return Evidence{}, err
 	}
-	schema, err := grammar.Discover(root)
+	schema, err := parsersource.Discover(root)
 	if err != nil {
 		return Evidence{}, err
 	}
@@ -81,7 +81,7 @@ func derive(root string, snapshot grammarproof.Snapshot) (Evidence, error) {
 	if err := requiredRecursion.Validate(); err != nil {
 		return Evidence{}, err
 	}
-	parserSourceDigest, err := grammarproof.ParserSourceDigest(root)
+	parserSourceDigest, err := parsersource.ParserSourceDigest(root)
 	if err != nil {
 		return Evidence{}, fmt.Errorf("parser products: parser source digest: %w", err)
 	}
@@ -835,7 +835,7 @@ func (use *evidenceUsage) finish() error {
 	return nil
 }
 
-func schemaConstructorFields(schema grammar.Schema) map[string]constructorFields {
+func schemaConstructorFields(schema parsersource.Schema) map[string]constructorFields {
 	known := make(map[string]constructorFields, len(schema.Constructors))
 	for _, constructor := range schema.Constructors {
 		if !constructor.Semantic {
@@ -851,12 +851,12 @@ func schemaConstructorFields(schema grammar.Schema) map[string]constructorFields
 }
 
 type constructorFields struct {
-	class    grammar.ConstructorClass
+	class    parsersource.ConstructorClass
 	semantic bool
 	fields   []string
 }
 
-func buildFields(schema grammar.Schema, report occurrence.Report, dispositions []occurrence.Disposition, snapshot grammarproof.Snapshot) ([]FieldState, error) {
+func buildFields(schema parsersource.Schema, report occurrence.Report, dispositions []occurrence.Disposition, snapshot grammarproof.Snapshot) ([]FieldState, error) {
 	fields, err := schemaFieldNames(schema)
 	if err != nil {
 		return nil, err
@@ -916,7 +916,7 @@ func buildFields(schema grammar.Schema, report occurrence.Report, dispositions [
 			}
 			row.Disposition, row.Source, row.SemanticLaw = DispositionSemanticWitness, source, disposition.Semantic
 		case occurrence.DispositionPublicIngressRejected:
-			if disposition.Ingress != occurrence.IngressLawMalformedNumericLiteral || disposition.Parser != occurrence.ParserLawInvalid || disposition.Semantic != occurrence.SemanticLawInvalid {
+			if disposition.Ingress == occurrence.IngressLawInvalid || disposition.Parser != occurrence.ParserLawInvalid || disposition.Semantic != occurrence.SemanticLawInvalid {
 				return nil, fmt.Errorf("parser products: invalid public-ingress-rejected disposition")
 			}
 			row.Disposition, row.IngressLaw = DispositionPublicIngressRejected, disposition.Ingress
@@ -929,7 +929,7 @@ func buildFields(schema grammar.Schema, report occurrence.Report, dispositions [
 	return rows, nil
 }
 
-func buildProducts(schema grammar.Schema, snapshot grammarproof.Snapshot, fieldRows []FieldState) ([]Product, error) {
+func buildProducts(schema parsersource.Schema, snapshot grammarproof.Snapshot, fieldRows []FieldState) ([]Product, error) {
 	fields, err := schemaFieldNames(schema)
 	if err != nil {
 		return nil, err
@@ -1000,7 +1000,7 @@ func buildProducts(schema grammar.Schema, snapshot grammarproof.Snapshot, fieldR
 	return products, nil
 }
 
-func schemaFieldNames(schema grammar.Schema) (map[string]constructorFields, error) {
+func schemaFieldNames(schema parsersource.Schema) (map[string]constructorFields, error) {
 	result := make(map[string]constructorFields, len(schema.Constructors))
 	for _, constructor := range schema.Constructors {
 		if constructor.Name == "" || constructor.Class == 0 {
@@ -1056,13 +1056,13 @@ func corpusSources(snapshot grammarproof.Snapshot) map[string]grammarproof.Corpu
 	}
 	return result
 }
-func ContextFor(class grammar.ConstructorClass) occurrence.Context {
+func ContextFor(class parsersource.ConstructorClass) occurrence.Context {
 	switch class {
-	case grammar.ConstructorStatement:
+	case parsersource.ConstructorStatement:
 		return occurrence.ContextStatement
-	case grammar.ConstructorExpression:
+	case parsersource.ConstructorExpression:
 		return occurrence.ContextExpression
-	case grammar.ConstructorTypeExpression:
+	case parsersource.ConstructorTypeExpression:
 		return occurrence.ContextStaticType
 	default:
 		return occurrence.ContextStructural

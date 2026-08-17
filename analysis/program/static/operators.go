@@ -4,7 +4,7 @@ import (
 	"errors"
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/analysis/internal/framing"
+	"github.com/wippyai/go-lua/internal/framing"
 	flowrole "github.com/wippyai/go-lua/analysis/program/flow/role"
 	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
 )

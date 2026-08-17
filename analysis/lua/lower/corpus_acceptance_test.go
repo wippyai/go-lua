@@ -12,8 +12,7 @@ import (
 
 	programlower "github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program"
-	"github.com/wippyai/go-lua/analysis/program/relations"
-	"github.com/wippyai/go-lua/analysis/program/semanticsource"
+	"github.com/wippyai/go-lua/analysis/schema/denominator"
 )
 
 // Content identity is a semantic artifact boundary, not a cached lowerer
@@ -103,7 +102,7 @@ func TestFrozenFixtureCorpusLowersAndSeals(t *testing.T) {
 			lowered, loweredErr := programlower.Lower(programlower.Source{Name: fixture.relative, Text: source})
 			err = loweredErr
 			if err == nil {
-				_, err = programSemanticSourcePublications(lowered)
+				_, err = programCountRows(lowered)
 			}
 		}
 		if err == nil {
@@ -145,19 +144,20 @@ func TestFrozenFixtureCorpusLowersAndSeals(t *testing.T) {
 	t.Fatal(report.String())
 }
 
-func programSemanticSourcePublications(p *program.Program) ([]semanticsource.Publication, error) {
+func programCountRows(p *program.Program) (denominator.CountRows, error) {
 	if p == nil {
-		return nil, fmt.Errorf("nil Program")
+		return denominator.CountRows{}, fmt.Errorf("nil Program")
 	}
-	schema, err := relations.CanonicalSchema()
-	if err != nil {
-		return nil, fmt.Errorf("canonical relation schema: %w", err)
+	rows := p.CountRows()
+	if !denominator.GeneratedCountRowsCompleteForOwners(rows,
+		denominator.RelationOwnerProgramSource,
+		denominator.RelationOwnerProgramFlow,
+		denominator.RelationOwnerProgramStatic,
+		denominator.RelationOwnerProgramModule,
+	) {
+		return denominator.CountRows{}, fmt.Errorf("Program denominator rows unavailable or incomplete")
 	}
-	publications := p.SemanticSourcePublications(schema)
-	if publications == nil {
-		return nil, fmt.Errorf("Program semantic-source publications unavailable")
-	}
-	return publications, nil
+	return rows, nil
 }
 
 type fixturePath struct {

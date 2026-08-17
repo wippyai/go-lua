@@ -8,12 +8,12 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/internal/testfixture"
-	"github.com/wippyai/go-lua/analysis/library/lualib/targetprofile"
+	"github.com/wippyai/go-lua/internal/testfixture"
+	"github.com/wippyai/go-lua/analysis/targetprofile"
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/link"
-	"github.com/wippyai/go-lua/analysis/program/relations"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/schema/denominator"
 )
 
 // frozenFixtureLinkFiles is the parser-valid source denominator fixed by the
@@ -124,18 +124,11 @@ func checkFrozenFixtureLinkProject(contract *target.Contract, project testfixtur
 	if err != nil {
 		return err
 	}
-	publications, err := linked.SourcePublications()
+	rows, err := linked.CountRows()
 	if err != nil {
 		return err
 	}
-	schema, err := relations.CanonicalSchema()
-	if err != nil {
-		return fmt.Errorf("relation schema: %w", err)
-	}
-	if publications.Count() != schema.Count() || publications.SchemaDigest() != schema.SchemaDigest() {
-		return fmt.Errorf("semantic-source publications = %d/%x, want exact %d/%x", publications.Count(), publications.SchemaDigest(), schema.Count(), schema.SchemaDigest())
-	}
-	return nil
+	return assertCompleteCountRows(rows)
 }
 
 func roundTripFixtureProject(linked *link.Link, contract *target.Contract) error {
@@ -167,16 +160,16 @@ func roundTripFixtureProject(linked *link.Link, contract *target.Contract) error
 	if !bytes.Equal(encoded, reencoded) {
 		return fmt.Errorf("Link artifact changed canonical bytes")
 	}
-	publications, err := replayed.SourcePublications()
+	rows, err := replayed.CountRows()
 	if err != nil {
-		return fmt.Errorf("replayed semantic-source publication: %w", err)
+		return fmt.Errorf("replayed Link denominator: %w", err)
 	}
-	schema, err := relations.CanonicalSchema()
-	if err != nil {
-		return fmt.Errorf("replayed relation schema: %w", err)
-	}
-	if publications.Count() != schema.Count() || publications.SchemaDigest() != schema.SchemaDigest() {
-		return fmt.Errorf("replayed semantic-source publications = %d/%x, want exact %d/%x", publications.Count(), publications.SchemaDigest(), schema.Count(), schema.SchemaDigest())
+	return assertCompleteCountRows(rows)
+}
+
+func assertCompleteCountRows(rows denominator.CountRows) error {
+	if !denominator.GeneratedCountRowsComplete(rows) {
+		return fmt.Errorf("Link denominator rows = %d/%t, want exact generated relation coverage", rows.Count(), rows.Available())
 	}
 	return nil
 }

@@ -4,7 +4,7 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
-	"github.com/wippyai/go-lua/analysis/internal/canonical"
+	"github.com/wippyai/go-lua/internal/canonical"
 )
 
 // FormalPort is a Batch-issued, Link-independent boundary Site. Its Site is

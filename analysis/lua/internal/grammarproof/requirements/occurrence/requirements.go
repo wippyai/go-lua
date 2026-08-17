@@ -9,7 +9,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/astcodec"
-	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/grammar"
+	"github.com/wippyai/go-lua/analysis/lua/parsersource"
 )
 
 // Context is the parser-owned semantic class in which a constructor first
@@ -63,7 +63,7 @@ func (r Report) ResidueCount() int  { return len(r.Residue) }
 // parser state until an action-level impossibility proof is present; that is
 // intentional, because silently treating unobserved states as impossible was
 // the former false-completion defect.
-func Derive(schema grammar.Schema) (Report, error) {
+func Derive(schema parsersource.Schema) (Report, error) {
 	report := Report{}
 	for _, constructor := range schema.Constructors {
 		if !constructor.Semantic {
@@ -87,7 +87,7 @@ func Derive(schema grammar.Schema) (Report, error) {
 // trace field must be represented in the independently derived schema or the
 // inventory fails closed. This function deliberately cannot discharge a
 // Program-law obligation.
-func Observe(report Report, schema grammar.Schema, traces []grammarproof.SemanticTrace) (Report, error) {
+func Observe(report Report, schema parsersource.Schema, traces []grammarproof.SemanticTrace) (Report, error) {
 	if len(report.Required) == 0 {
 		return Report{}, fmt.Errorf("occurrence requirements: empty denominator")
 	}
@@ -116,7 +116,7 @@ func Observe(report Report, schema grammar.Schema, traces []grammarproof.Semanti
 			for _, field := range occurrence.Fields {
 				ordinal, exists := constructor.byName[field.Name]
 				if !exists {
-					if grammar.StructuralEmbedding(field.Name) {
+					if parsersource.StructuralEmbedding(field.Name) {
 						continue
 					}
 					return Report{}, fmt.Errorf("occurrence requirements: ast.%s emitted unknown exported field %s", occurrence.Type, field.Name)
@@ -156,12 +156,12 @@ func Observe(report Report, schema grammar.Schema, traces []grammarproof.Semanti
 }
 
 type constructorFields struct {
-	class    grammar.ConstructorClass
+	class    parsersource.ConstructorClass
 	semantic bool
 	byName   map[string]int
 }
 
-func schemaFields(schema grammar.Schema) (map[string]constructorFields, error) {
+func schemaFields(schema parsersource.Schema) (map[string]constructorFields, error) {
 	result := make(map[string]constructorFields, len(schema.Constructors))
 	for _, constructor := range schema.Constructors {
 		if constructor.Name == "" || constructor.Class == 0 {
@@ -182,28 +182,28 @@ func schemaFields(schema grammar.Schema) (map[string]constructorFields, error) {
 	return result, nil
 }
 
-func contextFor(class grammar.ConstructorClass) Context {
+func contextFor(class parsersource.ConstructorClass) Context {
 	switch class {
-	case grammar.ConstructorStatement:
+	case parsersource.ConstructorStatement:
 		return ContextStatement
-	case grammar.ConstructorExpression:
+	case parsersource.ConstructorExpression:
 		return ContextExpression
-	case grammar.ConstructorTypeExpression:
+	case parsersource.ConstructorTypeExpression:
 		return ContextStaticType
 	default:
 		return ContextStructural
 	}
 }
 
-func statesFor(form grammar.FieldForm) []astcodec.FieldState {
+func statesFor(form parsersource.FieldForm) []astcodec.FieldState {
 	switch form {
-	case grammar.FieldFormOptional, grammar.FieldFormMapping, grammar.FieldFormInterface:
+	case parsersource.FieldFormOptional, parsersource.FieldFormMapping, parsersource.FieldFormInterface:
 		return []astcodec.FieldState{astcodec.FieldStateAbsent, astcodec.FieldStatePresent}
-	case grammar.FieldFormSequence, grammar.FieldFormString:
+	case parsersource.FieldFormSequence, parsersource.FieldFormString:
 		return []astcodec.FieldState{astcodec.FieldStateEmpty, astcodec.FieldStateNonEmpty}
-	case grammar.FieldFormBool:
+	case parsersource.FieldFormBool:
 		return []astcodec.FieldState{astcodec.FieldStateFalse, astcodec.FieldStateTrue}
-	case grammar.FieldFormNamed, grammar.FieldFormScalar:
+	case parsersource.FieldFormNamed, parsersource.FieldFormScalar:
 		return []astcodec.FieldState{astcodec.FieldStateZero, astcodec.FieldStateNonZero}
 	default:
 		return nil

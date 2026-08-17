@@ -5,10 +5,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"sync"
 
-	"github.com/wippyai/go-lua/analysis/domain/composite"
-	allocationcatalog "github.com/wippyai/go-lua/analysis/domain/heap/allocation/catalog"
-	staticdomain "github.com/wippyai/go-lua/analysis/domain/static"
-	"github.com/wippyai/go-lua/analysis/domain/type/authority"
+	"github.com/wippyai/go-lua/domain/composite"
+	allocationcatalog "github.com/wippyai/go-lua/domain/heap/allocation/catalog"
+	staticdomain "github.com/wippyai/go-lua/domain/static"
+	"github.com/wippyai/go-lua/domain/type/authority"
 	"github.com/wippyai/go-lua/analysis/engine"
 
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -525,15 +525,6 @@ func (state *compiledState) newProgramBinding(source *link.Link) (*composite.Pro
 	if !projectAuthenticatesMounts(source, state.artifacts.mounts) {
 		return nil, ProgramBindingFailureInput, composite.MountFailure{}, allocationcatalog.SealFailureNone
 	}
-	// The sealed declaration table resolved every declared role once. The query
-	// codecs below are read from that resolution rather than derived here, so a
-	// published result carries the identity the schema was composed under.
-	roles, rolesOK := composite.SemanticRoles()
-	valueCodec, valueCodecOK := roles.Key("semantic/query-result/value-summary")
-	effectCodec, effectCodecOK := roles.Key("semantic/query-result/effect-exact")
-	if !rolesOK || !valueCodecOK || !effectCodecOK {
-		return nil, ProgramBindingFailureSemantics, composite.MountFailure{}, allocationcatalog.SealFailureNone
-	}
 	artifactTypes := make([]*programartifact.Artifact, 0, len(state.artifacts.byProgram))
 	for _, artifact := range state.artifacts.byProgram {
 		if artifact == nil || !artifact.Available() {
@@ -609,10 +600,7 @@ func (state *compiledState) newProgramBinding(source *link.Link) (*composite.Pro
 	if mountFailure.Available() {
 		return nil, programMountFailure(mountFailure), mountFailure, allocationcatalog.SealFailureNone
 	}
-	binding, failure := composite.BindProgram(state.receipt, inputs, composite.ProgramQuerySpecs{
-		Value:  valueSummaryQueryHotSpec(inputs.ValueSchema, valueCodec),
-		Effect: effectExactQueryHotSpec(inputs.EffectAlgebra, effectCodec),
-	})
+	binding, failure := composite.BindProgram(state.receipt, inputs)
 	if failure.Available() {
 		return nil, programBindingFailure(failure), composite.MountFailure{}, failure.Allocation
 	}

@@ -5,10 +5,9 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/internal/framing"
+	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/analysis/program/relations"
 	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
@@ -36,7 +35,6 @@ type Metadata struct {
 type envelope struct {
 	Target       identity.ContentID
 	Program      identity.ContentID
-	Relations    identity.ContentID
 	Entry        keyspace.Term
 	Provenance   string
 	Dependencies []Dependency
@@ -45,7 +43,6 @@ type envelope struct {
 func writeEnvelope(
 	writer *framing.Writer,
 	targetID, programID identity.ContentID,
-	relationsSchema identity.ContentID,
 	entry keyspace.Term,
 	provenance string,
 	dependencies []Dependency,
@@ -57,9 +54,6 @@ func writeEnvelope(
 		return err
 	}
 	if err := writer.Bytes(programID[:]); err != nil {
-		return err
-	}
-	if err := writer.Bytes(relationsSchema[:]); err != nil {
 		return err
 	}
 	if err := writer.Uint(uint64(entry)); err != nil {
@@ -88,7 +82,6 @@ func writeEnvelope(
 func readEnvelope(
 	reader *framing.Reader,
 	expectedTarget identity.ContentID,
-	expectedRelationsSchema identity.ContentID,
 	stringBytes uint64,
 	expected []Dependency,
 ) (envelope, error) {
@@ -109,13 +102,6 @@ func readEnvelope(
 	programID, err := readID(reader)
 	if err != nil || !programID.Available() {
 		return envelope{}, framing.ErrMalformed
-	}
-	relationsSchema, err := readID(reader)
-	if err != nil || !relationsSchema.Available() {
-		return envelope{}, framing.ErrMalformed
-	}
-	if relationsSchema != expectedRelationsSchema {
-		return envelope{}, ErrSchemaMismatch
 	}
 	entryValue, err := reader.Uint()
 	if err != nil {
@@ -183,7 +169,6 @@ func readEnvelope(
 	return envelope{
 		Target:       targetID,
 		Program:      programID,
-		Relations:    relationsSchema,
 		Entry:        entry,
 		Provenance:   provenance,
 		Dependencies: dependencies,
@@ -310,18 +295,6 @@ func targetIdentity(contract *target.Contract) (identity.ContentID, bool) {
 	}
 	id := contract.ContentID()
 	return id, id.Available()
-}
-
-func canonicalRelationsSchemaDigest() (identity.ContentID, error) {
-	schema, err := relations.CanonicalSchema()
-	if err != nil || schema == nil {
-		return identity.ContentID{}, ErrUnavailableSchema
-	}
-	digest := schema.Digest()
-	if !digest.Available() {
-		return identity.ContentID{}, ErrUnavailableSchema
-	}
-	return digest, nil
 }
 
 func ownerViewsAvailable(p *program.Program) bool {

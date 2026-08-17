@@ -5,7 +5,7 @@ import (
 	"errors"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/internal/framing"
+	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
@@ -50,7 +50,7 @@ func Build(input Input) (*Draft, error) {
 	authority.content = content
 	component := &Component{authority: authority}
 	authority.component = component
-	if authority.sourceViews, err = component.buildSourceViews(); err != nil {
+	if authority.countRows, err = component.buildCountRows(); err != nil {
 		return nil, err
 	}
 	return &Draft{state: &draftState{authority: authority}}, nil

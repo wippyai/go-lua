@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof"
-	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/grammar"
+	"github.com/wippyai/go-lua/analysis/lua/parsersource"
 )
 
 // moduleRoot walks up from this test source until it finds the directory that
@@ -34,7 +34,7 @@ func moduleRoot(t *testing.T) string {
 
 func TestParserFieldStateInventoryRemainsIndependentOfSemanticLaws(t *testing.T) {
 	root := moduleRoot(t)
-	schema, err := grammar.Discover(root)
+	schema, err := parsersource.Discover(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestParserFieldStateInventoryRemainsIndependentOfSemanticLaws(t *testing.T)
 			}
 			sourceReachable++
 		case DispositionPublicIngressRejected:
-			if disposition.Ingress != IngressLawMalformedNumericLiteral || disposition.Parser != ParserLawInvalid || disposition.Semantic != SemanticLawInvalid {
+			if disposition.Ingress == IngressLawInvalid || disposition.Parser != ParserLawInvalid || disposition.Semantic != SemanticLawInvalid {
 				t.Fatalf("invalid public-ingress-rejected disposition: %#v", disposition)
 			}
 			ingressRejected++

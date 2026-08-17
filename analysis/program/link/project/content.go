@@ -5,7 +5,7 @@ import (
 	"crypto/sha256"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/internal/framing"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 const contentVersion = 1

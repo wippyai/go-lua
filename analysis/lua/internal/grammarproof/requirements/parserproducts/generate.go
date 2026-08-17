@@ -285,11 +285,11 @@ func renderCarriersFile(rows []Carrier) string {
 	var out strings.Builder
 	out.WriteString(generatedHeader(
 		"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/astcodec",
-		"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/grammar",
+		"github.com/wippyai/go-lua/analysis/lua/parsersource",
 	))
 	out.WriteString("\nfunc generatedCarriers() []Carrier { return []Carrier{\n")
 	for _, row := range rows {
-		fmt.Fprintf(&out, "{Form:%q, Field:%q, Class:grammar.ConstructorClass(%d), ChildType:%q, Cardinality:astcodec.FieldState(%d)},\n", row.Form, row.Field, row.Class, row.ChildType, row.Cardinality)
+		fmt.Fprintf(&out, "{Form:%q, Field:%q, Class:parsersource.ConstructorClass(%d), ChildType:%q, Cardinality:astcodec.FieldState(%d)},\n", row.Form, row.Field, row.Class, row.ChildType, row.Cardinality)
 	}
 	out.WriteString("} }\n")
 	return out.String()

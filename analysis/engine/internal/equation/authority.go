@@ -4,7 +4,7 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
-	"github.com/wippyai/go-lua/analysis/internal/canonical"
+	"github.com/wippyai/go-lua/internal/canonical"
 )
 
 // Topology is the one sealed structural authority for a Solver. It owns the
@@ -70,42 +70,6 @@ func (receipt *activationReceipt) issue(owner *Topology, locator PairLocator) (M
 // a raw locator only through Topology.SelectMember, which validates that
 // trigger's sole binding and mints one Member. It deliberately does not
 // compile one graph per inactive relation.
-type SealTopologyFailure uint8
-
-const (
-	SealTopologyFailureNone SealTopologyFailure = iota
-	SealTopologyFailureInput
-	SealTopologyFailureAssembly
-	SealTopologyFailureReissue
-	SealTopologyFailureTargets
-	SealTopologyFailurePoints
-	SealTopologyFailureCatalog
-	SealTopologyFailureInstances
-	SealTopologyFailureReceipts
-	SealTopologyFailureRealms
-	SealTopologyFailureCompile
-	SealTopologyFailureGraphKey
-	SealTopologyFailureTopologyKey
-	SealTopologyFailureGraphKeyStructure
-	SealTopologyFailureGraphKeySchedule
-	SealTopologyFailureGraphKeyIdentity
-	SealTopologyFailureCompileInput
-	SealTopologyFailureCompileCatalog
-	SealTopologyFailureCompileUsage
-	SealTopologyFailureCompileInstances
-	SealTopologyFailureCompilePoints
-	SealTopologyFailureCompileGroups
-	SealTopologyFailureCompileEnvironment
-	SealTopologyFailureCompileFactor
-	SealTopologyFailureCompileQueries
-	SealTopologyFailureCompileActivation
-	SealTopologyFailureCompileDecisions
-	SealTopologyFailureCompileRanks
-	SealTopologyFailureCompileAssembly
-	SealTopologyFailureCompileDirectory
-	SealTopologyFailureDeferredQueries
-)
-
 func SealTopology(source *composition.Composition, spec TopologySpec) (*Topology, bool) {
 	topology, _, ok := SealTopologyWithFailure(source, spec)
 	return topology, ok
@@ -114,7 +78,7 @@ func SealTopology(source *composition.Composition, spec TopologySpec) (*Topology
 // SealTopologyWithFailure is the production diagnostic companion to
 // SealTopology. It exposes only the first closed phase, never caller rows,
 // coordinates, or mutable compiler state.
-func SealTopologyWithFailure(source *composition.Composition, spec TopologySpec) (*Topology, SealTopologyFailure, bool) {
+func SealTopologyWithFailure(source *composition.Composition, spec TopologySpec) (*Topology, SealFailure, bool) {
 	return sealTopologyWithFailure(source, spec, false)
 }
 
@@ -122,44 +86,44 @@ func SealTopologyWithFailure(source *composition.Composition, spec TopologySpec)
 // seal for a schema whose Query families are all deferred to solve-local
 // observation roots. It admits exactly zero ordinary Query rows; partial and
 // ordinary-query topologies remain the responsibility of SealTopology.
-func SealObservationTopologyWithFailure(source *composition.Composition, spec TopologySpec) (*Topology, SealTopologyFailure, bool) {
+func SealObservationTopologyWithFailure(source *composition.Composition, spec TopologySpec) (*Topology, SealFailure, bool) {
 	return sealTopologyWithFailure(source, spec, true)
 }
 
-func sealTopologyWithFailure(source *composition.Composition, spec TopologySpec, deferredQueries bool) (*Topology, SealTopologyFailure, bool) {
+func sealTopologyWithFailure(source *composition.Composition, spec TopologySpec, deferredQueries bool) (*Topology, SealFailure, bool) {
 	if source == nil || !validTopologyBatch(spec.Batch, spec) {
-		return nil, SealTopologyFailureInput, false
+		return nil, sealRefused(SealFailureFamilyTopology, "input"), false
 	}
 	if deferredQueries && len(source.Queries()) == 0 {
-		return nil, SealTopologyFailureDeferredQueries, false
+		return nil, sealRefused(SealFailureFamilyTopology, "deferred-queries"), false
 	}
 	assembly, assembled := SealTopologyAssembly(spec.Batch, spec.Materializations)
 	if !assembled || !assembly.Available() {
-		return nil, SealTopologyFailureAssembly, false
+		return nil, sealRefused(SealFailureFamilyTopology, "assembly"), false
 	}
 	materializations := append([]TemplateMaterialization(nil), spec.Materializations...)
 	directCandidates := append([]DirectActivationCandidate(nil), spec.DirectCandidates...)
 	sealed := copyTopologySpec(spec)
 	if !reissueTopologySpec(&sealed, assembly) {
-		return nil, SealTopologyFailureReissue, false
+		return nil, sealRefused(SealFailureFamilyTopology, "reissue"), false
 	}
 	if !appendAssemblyTargets(&sealed, assembly.Targets()) {
-		return nil, SealTopologyFailureTargets, false
+		return nil, sealRefused(SealFailureFamilyTopology, "targets"), false
 	}
 	if deferredQueries && len(sealed.Queries) != 0 {
-		return nil, SealTopologyFailureDeferredQueries, false
+		return nil, sealRefused(SealFailureFamilyTopology, "deferred-queries"), false
 	}
 	_, _, _, baseOK := buildPoints(sealed.Points)
 	if !baseOK {
-		return nil, SealTopologyFailurePoints, false
+		return nil, sealRefused(SealFailureFamilyTopology, "points"), false
 	}
 	catalog, catalogOK := buildTopologyCatalog(TopologySpec{Rules: sealed.Rules, Summaries: sealed.Summaries, WeakTargets: sealed.WeakTargets})
 	if !catalogOK {
-		return nil, SealTopologyFailureCatalog, false
+		return nil, sealRefused(SealFailureFamilyTopology, "catalog"), false
 	}
 	instances, instancesOK := buildInstances(source, sealed.Batch, sealed.Rules, catalog)
 	if !instancesOK {
-		return nil, SealTopologyFailureInstances, false
+		return nil, sealRefused(SealFailureFamilyTopology, "instances"), false
 	}
 	topology := &Topology{
 		source:           source,
@@ -168,10 +132,10 @@ func sealTopologyWithFailure(source *composition.Composition, spec TopologySpec,
 		receiptByTrigger: make(map[composition.Key][]int),
 	}
 	if !topology.sealReceipts(sealed.Batch, len(sealed.Points), materializations, directCandidates, instances) {
-		return nil, SealTopologyFailureReceipts, false
+		return nil, sealRefused(SealFailureFamilyTopology, "receipts"), false
 	}
 	if !sealed.Batch.closesOperandRealms(sealed.Rules) {
-		return nil, SealTopologyFailureRealms, false
+		return nil, sealRefused(SealFailureFamilyTopology, "operand-realms"), false
 	}
 	graph, rows, compileFailure, compiled := compileTopologyWithFailure(source, sealed, topology.reverses, deferredQueries)
 	if !compiled || graph == nil {
@@ -183,15 +147,15 @@ func sealTopologyWithFailure(source *composition.Composition, spec TopologySpec,
 	}
 	key, keyed := topology.deriveKey(baseKey)
 	if !keyed {
-		return nil, SealTopologyFailureTopologyKey, false
+		return nil, sealRefused(SealFailureFamilyIdentity, "topology-key"), false
 	}
 	topology.initial, topology.key, topology.rows = graph, key, rows
 	graph.owner = topology
 	if !topology.sealInitialRelation() {
-		return nil, SealTopologyFailureTopologyKey, false
+		return nil, sealRefused(SealFailureFamilyIdentity, "topology-key"), false
 	}
 	graph.relation = topology.initialRelation
-	return topology, SealTopologyFailureNone, true
+	return topology, SealFailure{}, true
 }
 
 // appendAssemblyTargets joins the already-directory-owned target rows to the
@@ -791,26 +755,21 @@ func (topology *Topology) MergeAccepted(left, right AcceptedMember) (AcceptedMem
 	return AcceptedMember{member: left.member, premise: premise, evidence: evidence}, true
 }
 
-func graphSemanticKey(graph *Graph) (composition.Key, bool) {
-	key, _, ok := graphSemanticKeyWithFailure(graph)
-	return key, ok
-}
-
 // graphSemanticKeyWithFailure retains the graph-key failure boundary for the
 // receipt compiler without exposing mutable Graph state to callers.
-func graphSemanticKeyWithFailure(graph *Graph) (composition.Key, SealTopologyFailure, bool) {
+func graphSemanticKeyWithFailure(graph *Graph) (composition.Key, SealFailure, bool) {
 	if graph == nil || graph.self != graph || graph.composition == nil {
-		return composition.Key{}, SealTopologyFailureGraphKeyStructure, false
+		return composition.Key{}, sealRefused(SealFailureFamilyIdentity, "graph-key-structure"), false
 	}
 	type reverse struct{ target, trigger composition.Key }
 	reverses := make([]reverse, 0)
 	for target, triggers := range graph.activationReverses {
 		if target < 0 || target >= len(graph.points) {
-			return composition.Key{}, SealTopologyFailureGraphKeyStructure, false
+			return composition.Key{}, sealRefused(SealFailureFamilyIdentity, "graph-key-structure"), false
 		}
 		for _, trigger := range triggers {
 			if trigger < 0 || int(trigger) >= len(graph.points) {
-				return composition.Key{}, SealTopologyFailureGraphKeyStructure, false
+				return composition.Key{}, sealRefused(SealFailureFamilyIdentity, "graph-key-structure"), false
 			}
 			reverses = append(reverses, reverse{target: graph.points[target].key, trigger: graph.points[trigger].key})
 		}
@@ -903,11 +862,11 @@ func graphSemanticKeyWithFailure(graph *Graph) (composition.Key, SealTopologyFai
 	})
 	if !ok {
 		if scheduleInvalid {
-			return composition.Key{}, SealTopologyFailureGraphKeySchedule, false
+			return composition.Key{}, sealRefused(SealFailureFamilyIdentity, "graph-key-schedule"), false
 		}
-		return composition.Key{}, SealTopologyFailureGraphKeyIdentity, false
+		return composition.Key{}, sealRefused(SealFailureFamilyIdentity, "graph-key-identity"), false
 	}
-	return key, SealTopologyFailureNone, true
+	return key, SealFailure{}, true
 }
 
 func copyTopologySpec(spec TopologySpec) TopologySpec {

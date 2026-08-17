@@ -4,12 +4,12 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/wippyai/go-lua/analysis/internal/framing"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 const (
 	artifactDomain  = "program/artifact"
-	artifactVersion = 19
+	artifactVersion = 20
 
 	// These limits are deliberately owned by this package. They bound both
 	// the encoded byte stream and the amount of reconstruction work admitted
@@ -27,9 +27,7 @@ const (
 var (
 	ErrUnavailableTarget  = errors.New("program artifact: unavailable target contract")
 	ErrUnavailableProgram = errors.New("program artifact: unavailable Program")
-	ErrUnavailableSchema  = errors.New("program artifact: unavailable canonical relations schema")
 	ErrTargetMismatch     = errors.New("program artifact: target identity mismatch")
-	ErrSchemaMismatch     = errors.New("program artifact: relations schema digest mismatch")
 	ErrDependencyMismatch = errors.New("program artifact: dependency manifest mismatch")
 	ErrNoncanonical       = errors.New("program artifact: noncanonical encoding")
 	ErrLimit              = errors.New("program artifact: resource limit")
@@ -117,12 +115,6 @@ func decodeError(err error) error {
 	}
 	if errors.Is(err, ErrTargetMismatch) {
 		return ErrTargetMismatch
-	}
-	if errors.Is(err, ErrSchemaMismatch) {
-		return ErrSchemaMismatch
-	}
-	if errors.Is(err, ErrUnavailableSchema) {
-		return ErrUnavailableSchema
 	}
 	if errors.Is(err, ErrDependencyMismatch) {
 		return ErrDependencyMismatch

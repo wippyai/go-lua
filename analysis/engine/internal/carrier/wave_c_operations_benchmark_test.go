@@ -103,7 +103,8 @@ func newWaveCCarrierOperationFixture(tb testing.TB, factors, inputs int, shared 
 
 func (fixture waveCCarrierOperationFixture) run(tb testing.TB) (int, int) {
 	tb.Helper()
-	// Restrict, carrier Product (Begin/FinishContribution), equality and order.
+	// Restrict, carrier Product (Begin/FinishRuleContribution), equality and
+	// order.
 	if !fixture.work.OwnsViewOf(fixture.whole, fixture.view) || !fixture.work.EqualUnder(fixture.whole, fixture.whole) || !fixture.work.LessOrEqUnder(fixture.left, fixture.all) {
 		tb.Fatal("Wave-C restrict/equality/order")
 	}
@@ -111,11 +112,11 @@ func (fixture waveCCarrierOperationFixture) run(tb testing.TB) (int, int) {
 	for index := range inputs {
 		inputs[index] = fixture.whole
 	}
-	base, begun := fixture.work.BeginContribution(fixture.plan, fixture.whole.Scope(), contributionInputs(tb, fixture.work, inputs...), fixture.whole.Support())
+	base, begun := fixture.work.BeginRuleContribution(fixture.plan, fixture.whole.Scope(), contributionPoints(tb, fixture.work, inputs...), fixture.whole.Support())
 	if !begun {
 		tb.Fatal("Wave-C product begin")
 	}
-	if _, finished := fixture.work.FinishContribution(base, nil); !finished {
+	if _, finished := fixture.work.FinishRuleContribution(base, nil); !finished {
 		tb.Fatal("Wave-C product finish")
 	}
 

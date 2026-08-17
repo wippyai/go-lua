@@ -33,14 +33,6 @@ type ExprNode struct {
 	High     uint32
 }
 
-// NewExprDAG seals a reduced ordered decision DAG in linear reachable size.
-// It accepts transport row order but canonicalizes the reachable graph, so
-// callers avoid repeatedly importing growing Exprs while transposing a carrier
-// BDD back into equation evidence.
-func NewExprDAG(rows []ExprNode, root uint32) (Expr, bool) {
-	return NewExprDAGWithCheckpoint(rows, root, nil)
-}
-
 // NewExprDAGWithCheckpoint is NewExprDAG with an evaluator-owned liveness
 // probe. A canceled conversion returns no partial equation evidence.
 func NewExprDAGWithCheckpoint(rows []ExprNode, root uint32, checkpoint func() bool) (Expr, bool) {
@@ -149,20 +141,6 @@ func AndExpr(left, right Expr) (Expr, bool) {
 }
 func OrExpr(left, right Expr) (Expr, bool) {
 	return combineExpr(left, right, exprOr)
-}
-func ITEExpr(test, whenTrue, whenFalse Expr) (Expr, bool) {
-	if !test.Available() || !whenTrue.Available() || !whenFalse.Available() {
-		return Expr{}, false
-	}
-	builder, roots, ok := importExprs(test, whenTrue, whenFalse)
-	if !ok {
-		return Expr{}, false
-	}
-	root, ok := builder.ite(roots[0], roots[1], roots[2])
-	if !ok {
-		return Expr{}, false
-	}
-	return builder.freeze(root)
 }
 
 func (expr Expr) Available() bool { return expr.valid && expr.root <= uint32(len(expr.nodes)+1) }

@@ -66,20 +66,76 @@ func contributionWrite(t testing.TB, work *Work, operation *carryOnlyOperation, 
 	return next
 }
 
-func contributionInputs(t testing.TB, work *Work, states ...State) []Contribution {
+// contributionPoint pairs one immutable initial State with the empty authored
+// surface a Rule input port carries when no producer has published a factor
+// yet. It is the same route the executor takes for a neutral point base.
+func contributionPoint(t testing.TB, work *Work, state State) PointState {
 	t.Helper()
-	result := make([]Contribution, len(states))
+	point, ok := work.EmptyPointState(state)
+	if !ok {
+		t.Fatal("pair point input")
+	}
+	return point
+}
+
+func contributionPoints(t testing.TB, work *Work, states ...State) []PointState {
+	t.Helper()
+	result := make([]PointState, len(states))
 	for index, state := range states {
-		var ok bool
-		result[index], ok = work.EmptyContribution(state)
-		if !ok {
-			t.Fatal("pair contribution input")
-		}
+		result[index] = contributionPoint(t, work, state)
 	}
 	return result
 }
 
-func contributionSevered(t testing.TB, base ContributionBase) {
+// contributionPointOf republishes one closed contribution in the nominal point
+// role so a law can state a demand-facing point projection over it.
+func contributionPointOf(t testing.TB, work *Work, value Contribution) PointState {
+	t.Helper()
+	rule, ok := work.AsRuleContribution(value)
+	if !ok {
+		t.Fatal("rule role")
+	}
+	point, ok := work.PointStateFromRuleContribution(rule)
+	if !ok {
+		t.Fatal("point role")
+	}
+	return point
+}
+
+// contributionSlotWrite names one declared factor write of a published input.
+type contributionSlotWrite struct {
+	operation *carryOnlyOperation
+	slot      shape.Slot
+	root      uint64
+}
+
+// contributionWrittenPoint publishes the named factor writes through one
+// zero-input rule contribution and returns the result as the PointState a
+// later input port reads. A Rule input is reachable only from a closed rule
+// publication, so the fixture builds one instead of relabelling a raw
+// committed State as an empty authored surface.
+func contributionWrittenPoint(t testing.TB, work *Work, plan ContributionPlan, target Scope, premise support.Mask, writes ...contributionSlotWrite) PointState {
+	t.Helper()
+	base, ok := work.BeginRuleContribution(plan, target, nil, premise)
+	if !ok {
+		t.Fatal("begin input publication")
+	}
+	patches := make([]Patch, 0, len(writes))
+	for _, write := range writes {
+		patches = append(patches, contributionPatch(t, work, write.operation, base.State(), write.slot, write.root))
+	}
+	rule, ok := work.FinishRuleContribution(base, patches)
+	if !ok {
+		t.Fatal("finish input publication")
+	}
+	point, ok := work.PointStateFromRuleContribution(rule)
+	if !ok {
+		t.Fatal("publish input point")
+	}
+	return point
+}
+
+func contributionSevered(t testing.TB, base RuleContributionBase) {
 	t.Helper()
 	owner := base.value
 	if owner == nil || owner.live || owner.work != nil || owner.plan != nil || owner.inputs != nil || owner.rootsOwned || owner.state.authority != nil || owner.state.roots != nil || owner.state.support.Valid() || base.State().authority != nil {
@@ -135,8 +191,8 @@ func TestContributionZeroInputFactorIngress(t *testing.T) {
 	if !ok {
 		t.Fatal("work")
 	}
-	base, ok := work.BeginContribution(plan, composition.Scope(), nil, whole)
-	if !ok || !work.OwnsContribution(base, nil) || !base.State().Scope().Same(composition.Scope()) {
+	base, ok := work.BeginRuleContribution(plan, composition.Scope(), nil, whole)
+	if !ok || !work.OwnsRuleContributionBase(base, nil) || !base.State().Scope().Same(composition.Scope()) {
 		t.Fatal("begin zero-input ingress")
 	}
 	before, _ := initial.HandleAt(0)
@@ -145,7 +201,7 @@ func TestContributionZeroInputFactorIngress(t *testing.T) {
 		t.Fatal("zero-input ingress did not start from initial root")
 	}
 	patch := contributionPatch(t, work, operations[0], base.State(), 0, 2)
-	result, ok := work.FinishContribution(base, []Patch{patch})
+	result, ok := work.FinishRuleContribution(base, []Patch{patch})
 	if !ok || !result.Valid() || !result.Support().Equal(whole) {
 		t.Fatal("finish zero-input ingress")
 	}
@@ -186,12 +242,12 @@ func TestContributionZeroInputIngressUsesExplicitStrictTargetScope(t *testing.T)
 	if !ok {
 		t.Fatal("work")
 	}
-	base, ok := work.BeginContribution(plan, target, nil, within)
+	base, ok := work.BeginRuleContribution(plan, target, nil, within)
 	if !ok || !base.State().Scope().Same(target) || base.State().Scope().Same(composition.Scope()) {
 		t.Fatal("zero-input ingress did not retain its explicit strict target scope")
 	}
 	patch := contributionPatch(t, work, operation, base.State(), 0, 2)
-	result, ok := work.FinishContribution(base, []Patch{patch})
+	result, ok := work.FinishRuleContribution(base, []Patch{patch})
 	if !ok || !result.Valid() || !result.Scope().Same(target) || !result.Support().Equal(within) {
 		t.Fatal("strict-scope zero-input ingress did not publish exactly in its target scope")
 	}
@@ -209,7 +265,7 @@ func TestContributionZeroInputStructuralIngressUsesInitialRoots(t *testing.T) {
 		t.Fatal("work")
 	}
 	changed := contributionWrite(t, work, operations[0], initial, 0, 2)
-	base, ok := work.BeginContribution(plan, composition.Scope(), nil, whole)
+	base, ok := work.BeginRuleContribution(plan, composition.Scope(), nil, whole)
 	if !ok {
 		t.Fatal("begin zero-input structural ingress")
 	}
@@ -219,7 +275,7 @@ func TestContributionZeroInputStructuralIngressUsesInitialRoots(t *testing.T) {
 	if baseRoot != initialRoot || baseRoot == changedRoot {
 		t.Fatal("zero-input structural ingress inherited a predecessor root")
 	}
-	result, ok := work.FinishContribution(base, nil)
+	result, ok := work.FinishRuleContribution(base, nil)
 	if !ok || !result.Valid() || !result.Support().Equal(whole) {
 		t.Fatal("finish zero-input structural ingress")
 	}
@@ -227,21 +283,25 @@ func TestContributionZeroInputStructuralIngressUsesInitialRoots(t *testing.T) {
 }
 
 func TestContributionMultiInputStructuralPrune(t *testing.T) {
-	manager, _, composition, operations, initial := contributionFixture(t, 1)
+	manager, whole, composition, operations, initial := contributionFixture(t, 1)
 	plan, ok := composition.SealContribution(3, nil, nil, true)
 	if !ok {
 		t.Fatal("seal multi-input structural prune")
+	}
+	inputPlan, ok := composition.SealContribution(0, []shape.Slot{0}, nil, false)
+	if !ok {
+		t.Fatal("seal input publication")
 	}
 	work, ok := composition.NewWork()
 	if !ok {
 		t.Fatal("work")
 	}
-	first := contributionWrite(t, work, operations[0], initial, 0, 2)
+	first := contributionWrittenPoint(t, work, inputPlan, composition.Scope(), whole, contributionSlotWrite{operation: operations[0], slot: 0, root: 2})
 	empty, ok := support.FromGuard(manager, manager.False())
 	if !ok {
 		t.Fatal("empty support")
 	}
-	base, ok := work.BeginContribution(plan, composition.Scope(), contributionInputs(t, work, first, initial, initial), empty)
+	base, ok := work.BeginRuleContribution(plan, composition.Scope(), append([]PointState{first}, contributionPoints(t, work, initial, initial)...), empty)
 	if !ok {
 		t.Fatal("begin multi-input structural prune")
 	}
@@ -251,7 +311,7 @@ func TestContributionMultiInputStructuralPrune(t *testing.T) {
 	if baseRoot != initialRoot || baseRoot == firstRoot {
 		t.Fatal("structural prune acquired an undeclared implicit carry")
 	}
-	result, ok := work.FinishContribution(base, nil)
+	result, ok := work.FinishRuleContribution(base, nil)
 	if !ok || !result.Valid() || !support.Empty(result.Support()) {
 		t.Fatal("finish multi-input structural prune")
 	}
@@ -259,17 +319,21 @@ func TestContributionMultiInputStructuralPrune(t *testing.T) {
 }
 
 func TestContributionAtomicallyCommitsFactorPatchAndStructuralPrune(t *testing.T) {
-	manager, whole, composition, operations, initial := contributionFixture(t, 1)
+	manager, whole, composition, operations, _ := contributionFixture(t, 1)
 	plan, ok := composition.SealContribution(1, []shape.Slot{0}, nil, true)
 	if !ok {
 		t.Fatal("seal mixed factor/support contribution")
+	}
+	inputPlan, ok := composition.SealContribution(0, []shape.Slot{0}, nil, false)
+	if !ok {
+		t.Fatal("seal input publication")
 	}
 	work, ok := composition.NewWork()
 	if !ok {
 		t.Fatal("work")
 	}
-	input := contributionWrite(t, work, operations[0], initial, 0, 2)
-	base, ok := work.BeginContribution(plan, composition.Scope(), contributionInputs(t, work, input), whole)
+	input := contributionWrittenPoint(t, work, inputPlan, composition.Scope(), whole, contributionSlotWrite{operation: operations[0], slot: 0, root: 2})
+	base, ok := work.BeginRuleContribution(plan, composition.Scope(), []PointState{input}, whole)
 	if !ok {
 		t.Fatal("begin mixed contribution")
 	}
@@ -278,7 +342,7 @@ func TestContributionAtomicallyCommitsFactorPatchAndStructuralPrune(t *testing.T
 	if !ok {
 		t.Fatal("empty support")
 	}
-	result, ok := work.FinishContributionWithSupport(base, []Patch{patch}, empty)
+	result, ok := work.FinishRuleContributionWithSupport(base, []Patch{patch}, empty)
 	if !ok || !result.Valid() || !support.Empty(result.Support()) {
 		t.Fatal("mixed contribution did not publish the atomic retained support")
 	}
@@ -296,12 +360,16 @@ func TestContributionCarriesFromInputBeyondSecondPort(t *testing.T) {
 	if !ok {
 		t.Fatal("seal third-input carry")
 	}
+	inputPlan, ok := composition.SealContribution(0, []shape.Slot{0}, nil, false)
+	if !ok {
+		t.Fatal("seal input publication")
+	}
 	work, ok := composition.NewWork()
 	if !ok {
 		t.Fatal("work")
 	}
-	third := contributionWrite(t, work, operations[0], initial, 0, 2)
-	base, ok := work.BeginContribution(plan, composition.Scope(), contributionInputs(t, work, initial, initial, third), whole)
+	third := contributionWrittenPoint(t, work, inputPlan, composition.Scope(), whole, contributionSlotWrite{operation: operations[0], slot: 0, root: 2})
+	base, ok := work.BeginRuleContribution(plan, composition.Scope(), append(contributionPoints(t, work, initial, initial), third), whole)
 	if !ok {
 		t.Fatal("begin third-input carry")
 	}
@@ -310,7 +378,7 @@ func TestContributionCarriesFromInputBeyondSecondPort(t *testing.T) {
 	if got != want {
 		t.Fatal("carry did not use input port two")
 	}
-	result, ok := work.FinishContribution(base, nil)
+	result, ok := work.FinishRuleContribution(base, nil)
 	if !ok || !result.Valid() {
 		t.Fatal("finish third-input carry")
 	}
@@ -331,7 +399,7 @@ func TestContributionFailedPublicationIsAtomicAndConsumesBase(t *testing.T) {
 	if !ok {
 		t.Fatal("work")
 	}
-	base, ok := work.BeginContribution(plan, composition.Scope(), nil, whole)
+	base, ok := work.BeginRuleContribution(plan, composition.Scope(), nil, whole)
 	if !ok {
 		t.Fatal("begin")
 	}
@@ -339,7 +407,7 @@ func TestContributionFailedPublicationIsAtomicAndConsumesBase(t *testing.T) {
 	second := &contributionPublisher{reserve: false}
 	firstPatch := contributionPendingPatch(t, work, operations[0], base.State(), 0, whole, first)
 	secondPatch := contributionPendingPatch(t, work, operations[1], base.State(), 1, whole, second)
-	if _, ok := work.FinishContribution(base, []Patch{firstPatch, secondPatch}); ok {
+	if _, ok := work.FinishRuleContribution(base, []Patch{firstPatch, secondPatch}); ok {
 		t.Fatal("finish accepted a failed pending publication")
 	}
 	if first.reserved != 1 || second.reserved != 1 || first.published != 0 || second.published != 0 || first.dropped != 1 || second.dropped != 1 {
@@ -362,14 +430,19 @@ func TestContributionProjectsOnlyDeclaredCarries(t *testing.T) {
 	if !ok {
 		t.Fatal("seal contribution")
 	}
+	inputPlan, ok := composition.SealContribution(0, []shape.Slot{0, 1}, nil, false)
+	if !ok {
+		t.Fatal("seal input publication")
+	}
 	work, ok := composition.NewWork()
 	if !ok {
 		t.Fatal("work")
 	}
-	input := contributionWrite(t, work, operations[0], initial, 0, 2)
-	input = contributionWrite(t, work, operations[1], input, 1, 2)
-	base, ok := work.BeginContribution(plan, composition.Scope(), contributionInputs(t, work, input), whole)
-	if !ok || !work.OwnsContributionStates(base, []State{input}) {
+	input := contributionWrittenPoint(t, work, inputPlan, composition.Scope(), whole,
+		contributionSlotWrite{operation: operations[0], slot: 0, root: 2},
+		contributionSlotWrite{operation: operations[1], slot: 1, root: 2})
+	base, ok := work.BeginRuleContribution(plan, composition.Scope(), []PointState{input}, whole)
+	if !ok || !work.OwnsRuleContributionStates(base, []State{input.State()}) {
 		t.Fatal("begin contribution")
 	}
 	projected := base.State()
@@ -390,7 +463,7 @@ func TestContributionProjectsOnlyDeclaredCarries(t *testing.T) {
 	if unrelated != initialUnrelated || unrelated == inputUnrelated {
 		t.Fatal("undeclared input root leaked into contribution")
 	}
-	result, ok := work.FinishContribution(base, nil)
+	result, ok := work.FinishRuleContribution(base, nil)
 	if !ok || !result.Valid() || !result.Support().Equal(whole) {
 		t.Fatal("finish contribution")
 	}
@@ -408,14 +481,22 @@ func TestContributionSharesOnePatchPredecessorAndDropsOwnedDisallowedSlot(t *tes
 	if !ok {
 		t.Fatal("seal two-input contribution")
 	}
+	leftPlan, ok := composition.SealContribution(0, []shape.Slot{0}, nil, false)
+	if !ok {
+		t.Fatal("seal left input publication")
+	}
+	rightPlan, ok := composition.SealContribution(0, []shape.Slot{1}, nil, false)
+	if !ok {
+		t.Fatal("seal right input publication")
+	}
 	work, ok := composition.NewWork()
 	if !ok {
 		t.Fatal("work")
 	}
-	left := contributionWrite(t, work, operations[0], initial, 0, 2)
-	right := contributionWrite(t, work, operations[1], initial, 1, 2)
-	base, ok := work.BeginContribution(plan, composition.Scope(), contributionInputs(t, work, left, right), whole)
-	if !ok || work.OwnsContributionStates(base, []State{initial, right}) {
+	left := contributionWrittenPoint(t, work, leftPlan, composition.Scope(), whole, contributionSlotWrite{operation: operations[0], slot: 0, root: 2})
+	right := contributionWrittenPoint(t, work, rightPlan, composition.Scope(), whole, contributionSlotWrite{operation: operations[1], slot: 1, root: 2})
+	base, ok := work.BeginRuleContribution(plan, composition.Scope(), []PointState{left, right}, whole)
+	if !ok || work.OwnsRuleContributionStates(base, []State{initial, right.State()}) {
 		t.Fatal("contribution input fence")
 	}
 	first := contributionPatch(t, work, operations[0], base.State(), 0, 1)
@@ -423,29 +504,29 @@ func TestContributionSharesOnePatchPredecessorAndDropsOwnedDisallowedSlot(t *tes
 	if !sameState(first.state, second.state) || !sameState(first.state, base.State()) {
 		t.Fatal("siblings did not share exact projected predecessor")
 	}
-	result, ok := work.FinishContribution(base, []Patch{first, second})
+	result, ok := work.FinishRuleContribution(base, []Patch{first, second})
 	if !ok || !result.Valid() {
 		t.Fatal("finish shared-base patches")
 	}
 
-	base, ok = work.BeginContribution(plan, composition.Scope(), contributionInputs(t, work, left, right), whole)
+	base, ok = work.BeginRuleContribution(plan, composition.Scope(), []PointState{left, right}, whole)
 	if !ok {
 		t.Fatal("foreign-predecessor base")
 	}
-	foreignPredecessor := contributionPatch(t, work, operations[0], left, 0, 1)
-	if _, ok := work.FinishContribution(base, []Patch{foreignPredecessor}); ok {
+	foreignPredecessor := contributionPatch(t, work, operations[0], left.State(), 0, 1)
+	if _, ok := work.FinishRuleContribution(base, []Patch{foreignPredecessor}); ok {
 		t.Fatal("finish accepted a patch from an equal-looking source state")
 	}
 	if foreignPredecessor.change.record == nil || foreignPredecessor.change.record.consumed || !work.Discard(foreignPredecessor) {
 		t.Fatal("foreign predecessor patch was consumed or could not be cleaned")
 	}
 
-	base, ok = work.BeginContribution(plan, composition.Scope(), contributionInputs(t, work, left, right), whole)
+	base, ok = work.BeginRuleContribution(plan, composition.Scope(), []PointState{left, right}, whole)
 	if !ok {
 		t.Fatal("second base")
 	}
 	foreign := contributionPatch(t, work, operations[2], base.State(), 2, 2)
-	if _, ok := work.FinishContribution(base, []Patch{foreign}); ok {
+	if _, ok := work.FinishRuleContribution(base, []Patch{foreign}); ok {
 		t.Fatal("finish accepted patch outside sealed write membership")
 	}
 	if foreign.change.record == nil || !foreign.change.record.consumed {
@@ -462,16 +543,20 @@ func TestSupportContributionRestrictsAllRoots(t *testing.T) {
 	if !ok {
 		t.Fatal("seal support contribution")
 	}
+	inputPlan, ok := composition.SealContribution(0, []shape.Slot{0}, nil, false)
+	if !ok {
+		t.Fatal("seal input publication")
+	}
 	work, ok := composition.NewWork()
 	if !ok {
 		t.Fatal("work")
 	}
-	input := contributionWrite(t, work, operations[0], initial, 0, 2)
+	input := contributionWrittenPoint(t, work, inputPlan, composition.Scope(), whole, contributionSlotWrite{operation: operations[0], slot: 0, root: 2})
 	empty, ok := support.FromGuard(manager, manager.False())
 	if !ok {
 		t.Fatal("empty support")
 	}
-	base, ok := work.BeginContribution(plan, composition.Scope(), contributionInputs(t, work, input), empty)
+	base, ok := work.BeginRuleContribution(plan, composition.Scope(), []PointState{input}, empty)
 	if !ok {
 		t.Fatal("begin support contribution")
 	}
@@ -481,7 +566,7 @@ func TestSupportContributionRestrictsAllRoots(t *testing.T) {
 	if baseRoot != initialRoot || baseRoot == inputRoot {
 		t.Fatal("support contribution acquired an undeclared implicit carry")
 	}
-	result, ok := work.FinishContribution(base, nil)
+	result, ok := work.FinishRuleContribution(base, nil)
 	if !ok || !result.Valid() || !support.Empty(result.Support()) {
 		t.Fatal("finish support contribution")
 	}
@@ -489,11 +574,11 @@ func TestSupportContributionRestrictsAllRoots(t *testing.T) {
 	if resultRoot != initialRoot {
 		t.Fatal("support contribution did not retain the initial root")
 	}
-	full, ok := work.BeginContribution(plan, composition.Scope(), contributionInputs(t, work, input), whole)
+	full, ok := work.BeginRuleContribution(plan, composition.Scope(), []PointState{input}, whole)
 	if !ok {
 		t.Fatal("support contribution rejected full retained input support")
 	}
-	if !work.AbortContribution(full, nil) {
+	if !work.AbortRuleContribution(full, nil) {
 		t.Fatal("abort full support contribution")
 	}
 }
@@ -508,25 +593,25 @@ func TestContributionAbortConsumesBaseAndRejectsZeroOrForeign(t *testing.T) {
 	if !ok {
 		t.Fatal("work")
 	}
-	if work.AbortContribution(ContributionBase{}, nil) {
+	if work.AbortRuleContribution(RuleContributionBase{}, nil) {
 		t.Fatal("zero contribution base accepted")
 	}
-	base, ok := work.BeginContribution(plan, composition.Scope(), contributionInputs(t, work, initial), whole)
+	base, ok := work.BeginRuleContribution(plan, composition.Scope(), contributionPoints(t, work, initial), whole)
 	if !ok {
 		t.Fatal("begin")
 	}
 	patch := contributionPatch(t, work, operations[0], base.State(), 0, 2)
 	other, ok := composition.NewWork()
-	if !ok || other.AbortContribution(base, nil) {
+	if !ok || other.AbortRuleContribution(base, nil) {
 		t.Fatal("foreign work accepted contribution base")
 	}
-	if !work.AbortContribution(base, []Patch{patch}) || base.State().authority != nil {
+	if !work.AbortRuleContribution(base, []Patch{patch}) || base.State().authority != nil {
 		t.Fatal("abort contribution")
 	}
 	if patch.change.record == nil || !patch.change.record.consumed {
 		t.Fatal("abort did not consume staged patch")
 	}
-	if work.AbortContribution(base, nil) {
+	if work.AbortRuleContribution(base, nil) {
 		t.Fatal("aborted base remained reusable")
 	}
 	contributionSevered(t, base)
@@ -571,11 +656,11 @@ func TestContributionComputesInputIntersectionAndStructuralPremise(t *testing.T)
 	// The caller supplies only the declared premise.  With P ∩ true inputs,
 	// an ordinary group computes P internally rather than accepting a claimed
 	// input intersection from the executor.
-	base, ok := work.BeginContribution(plan, composition.Scope(), contributionInputs(t, work, left, right), whole)
+	base, ok := work.BeginRuleContribution(plan, composition.Scope(), contributionPoints(t, work, left, right), whole)
 	if !ok || !base.State().Support().Equal(on) {
 		t.Fatal("ordinary contribution did not compute input intersection")
 	}
-	published, ok := work.FinishContribution(base, nil)
+	published, ok := work.FinishRuleContribution(base, nil)
 	if !ok || !published.Support().Equal(on) {
 		t.Fatal("ordinary contribution did not publish computed intersection")
 	}
@@ -583,19 +668,19 @@ func TestContributionComputesInputIntersectionAndStructuralPremise(t *testing.T)
 	if !ok {
 		t.Fatal("true input")
 	}
-	premised, ok := work.BeginContribution(plan, composition.Scope(), contributionInputs(t, work, trueInput, trueInput), on)
+	premised, ok := work.BeginRuleContribution(plan, composition.Scope(), contributionPoints(t, work, trueInput, trueInput), on)
 	if !ok || !premised.State().Support().Equal(on) {
 		t.Fatal("ordinary contribution did not apply structural premise")
 	}
-	published, ok = work.FinishContribution(premised, nil)
+	published, ok = work.FinishRuleContribution(premised, nil)
 	if !ok || !published.Support().Equal(on) {
 		t.Fatal("ordinary premise support did not survive publication")
 	}
-	zero, ok := work.BeginContribution(zeroPlan, composition.Scope(), nil, on)
+	zero, ok := work.BeginRuleContribution(zeroPlan, composition.Scope(), nil, on)
 	if !ok || !zero.State().Support().Equal(on) {
 		t.Fatal("zero-input contribution did not retain premise")
 	}
-	published, ok = work.FinishContribution(zero, nil)
+	published, ok = work.FinishRuleContribution(zero, nil)
 	if !ok || !published.Support().Equal(on) {
 		t.Fatal("zero-input premise did not survive publication")
 	}
@@ -611,7 +696,7 @@ func TestContributionForeignWorkCannotConsumeOwnerPatch(t *testing.T) {
 	if !ok {
 		t.Fatal("owner work")
 	}
-	base, ok := ownerWork.BeginContribution(plan, composition.Scope(), contributionInputs(t, ownerWork, initial), whole)
+	base, ok := ownerWork.BeginRuleContribution(plan, composition.Scope(), contributionPoints(t, ownerWork, initial), whole)
 	if !ok {
 		t.Fatal("base")
 	}
@@ -620,13 +705,13 @@ func TestContributionForeignWorkCannotConsumeOwnerPatch(t *testing.T) {
 	if !ok {
 		t.Fatal("foreign work")
 	}
-	if _, ok := foreignWork.FinishContribution(base, []Patch{patch}); ok {
+	if _, ok := foreignWork.FinishRuleContribution(base, []Patch{patch}); ok {
 		t.Fatal("foreign Work finished owner contribution")
 	}
 	if patch.change.record == nil || patch.change.record.consumed || base.State().authority == nil {
 		t.Fatal("foreign Work consumed owner patch or base")
 	}
-	if !ownerWork.AbortContribution(base, []Patch{patch}) {
+	if !ownerWork.AbortRuleContribution(base, []Patch{patch}) {
 		t.Fatal("owner could not clean its retained patch")
 	}
 	contributionSevered(t, base)
@@ -647,16 +732,16 @@ func TestContributionForeignPatchRemainsUntouchedAndSeversOwnedBase(t *testing.T
 		t.Fatal("foreign work")
 	}
 	for _, abort := range []bool{false, true} {
-		base, ok := ownerWork.BeginContribution(plan, composition.Scope(), contributionInputs(t, ownerWork, initial), whole)
+		base, ok := ownerWork.BeginRuleContribution(plan, composition.Scope(), contributionPoints(t, ownerWork, initial), whole)
 		if !ok {
 			t.Fatal("base")
 		}
 		foreignPatch := contributionPatch(t, foreignWork, operations[0], base.State(), 0, 2)
 		if abort {
-			if ownerWork.AbortContribution(base, []Patch{foreignPatch}) {
+			if ownerWork.AbortRuleContribution(base, []Patch{foreignPatch}) {
 				t.Fatal("abort consumed foreign patch")
 			}
-		} else if _, ok := ownerWork.FinishContribution(base, []Patch{foreignPatch}); ok {
+		} else if _, ok := ownerWork.FinishRuleContribution(base, []Patch{foreignPatch}); ok {
 			t.Fatal("finish consumed foreign patch")
 		}
 		if foreignPatch.change.record == nil || foreignPatch.change.record.consumed {
@@ -683,12 +768,12 @@ func TestSupportContributionForeignPatchRemainsCallerOwned(t *testing.T) {
 	if !ok {
 		t.Fatal("foreign work")
 	}
-	base, ok := ownerWork.BeginContribution(plan, composition.Scope(), contributionInputs(t, ownerWork, initial), whole)
+	base, ok := ownerWork.BeginRuleContribution(plan, composition.Scope(), contributionPoints(t, ownerWork, initial), whole)
 	if !ok {
 		t.Fatal("base")
 	}
 	foreign := contributionPatch(t, foreignWork, operations[0], base.State(), 0, 2)
-	if _, finished := ownerWork.FinishContributionWithSupport(base, []Patch{foreign}, whole); finished {
+	if _, finished := ownerWork.FinishRuleContributionWithSupport(base, []Patch{foreign}, whole); finished {
 		t.Fatal("support finish consumed foreign patch")
 	}
 	if foreign.change.record == nil || foreign.change.record.consumed {
@@ -714,14 +799,14 @@ func TestContributionCancellationAtFinishDropsOwnedPatchAndBase(t *testing.T) {
 	if !work.SetCheckpoint(func() bool { return live }) {
 		t.Fatal("checkpoint")
 	}
-	base, ok := work.BeginContribution(plan, composition.Scope(), nil, whole)
+	base, ok := work.BeginRuleContribution(plan, composition.Scope(), nil, whole)
 	if !ok {
 		t.Fatal("base")
 	}
 	publisher := &contributionPublisher{reserve: true}
 	patch := contributionPendingPatch(t, work, operations[0], base.State(), 0, whole, publisher)
 	live = false
-	if _, finished := work.FinishContribution(base, []Patch{patch}); finished {
+	if _, finished := work.FinishRuleContribution(base, []Patch{patch}); finished {
 		t.Fatal("cancelled finish published")
 	}
 	if publisher.reserved != 0 || publisher.published != 0 || publisher.dropped != 1 {

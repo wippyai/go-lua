@@ -32,6 +32,30 @@ func TestMalformedNumericLiteralIsParserReachableButPublicIngressRejected(t *tes
 	}
 }
 
+// TestUntypedFunctionTypeParameterIsParserReachableButPublicIngressRejected is
+// the source witness for the second public-ingress-rejected state. An interface
+// method declaration parses its parameters as typed-name entries, so omitting
+// the annotation builds a function-type parameter with an absent type, and the
+// public ingress refuses the signature.
+func TestUntypedFunctionTypeParameterIsParserReachableButPublicIngressRejected(t *testing.T) {
+	const input = "interface Subject\n function method(value)\nend"
+	statements := parseResidueSource(t, input)
+	declaration, ok := statements[0].(*ast.InterfaceDefStmt)
+	if !ok || len(declaration.Members) != 1 {
+		t.Fatalf("untyped-parameter root = %T", statements[0])
+	}
+	signature, ok := declaration.Members[0].Type.(*ast.FunctionTypeExpr)
+	if !ok || len(signature.Params) != 1 {
+		t.Fatalf("untyped-parameter method signature = %T", declaration.Members[0].Type)
+	}
+	if signature.Params[0].Type != nil {
+		t.Fatalf("untyped-parameter parser type = %#v, want nil", signature.Params[0].Type)
+	}
+	if _, err := lualower.Lower(lualower.Source{Name: "untyped-parameter.lua", Text: []byte(input)}); err == nil || !strings.Contains(err.Error(), "function type parameter 0 has no type") {
+		t.Fatalf("untyped-parameter public ingress error = %v, want function type parameter 0 has no type", err)
+	}
+}
+
 // These four public vertical witnesses are the exact successful-source states
 // which a reduction-time trace cannot see reliably. They prove source syntax,
 // final parser state, and the corresponding sealed Program relation together;

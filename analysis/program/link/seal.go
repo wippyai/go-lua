@@ -104,9 +104,5 @@ func seal(spec *Spec, replay *linkhost.ReplaySpec) (*Link, error) {
 	if err != nil || link.static == nil {
 		return nil, errors.New("link: unavailable static namespace binding")
 	}
-	link.sourcePublications, err = buildSemanticSourcePublications(link)
-	if err != nil {
-		return nil, err
-	}
 	return link, nil
 }

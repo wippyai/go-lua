@@ -4,9 +4,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/wippyai/go-lua/analysis/domain/type/annotation"
-	"github.com/wippyai/go-lua/analysis/domain/type/kind"
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
+	"github.com/wippyai/go-lua/domain/type/annotation"
+	"github.com/wippyai/go-lua/domain/type/kind"
+	"github.com/wippyai/go-lua/domain/type/typ"
 	"github.com/wippyai/go-lua/validate"
 )
 

@@ -5,7 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/internal/canonical"
+	"github.com/wippyai/go-lua/internal/canonical"
 	"github.com/wippyai/go-lua/analysis/schema"
 )
 

@@ -1,9 +1,9 @@
 package analysis
 
 import (
-	"github.com/wippyai/go-lua/analysis/domain/composite"
-	allocationcatalog "github.com/wippyai/go-lua/analysis/domain/heap/allocation/catalog"
-	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
+	"github.com/wippyai/go-lua/domain/composite"
+	allocationcatalog "github.com/wippyai/go-lua/domain/heap/allocation/catalog"
+	valuedomain "github.com/wippyai/go-lua/domain/value"
 	"github.com/wippyai/go-lua/analysis/engine"
 )
 
@@ -160,7 +160,6 @@ type ProgramBindingFailure uint8
 const (
 	ProgramBindingFailureNone ProgramBindingFailure = iota
 	ProgramBindingFailureInput
-	ProgramBindingFailureSemantics
 	ProgramBindingFailureTypes
 	ProgramBindingFailureStatic
 	// ProgramBindingFailureAxisAuthority is the one axis-authority verdict: an
@@ -184,19 +183,18 @@ const (
 	ProgramBindingFailureQueryCatalog
 	ProgramBindingFailureSeal
 	ProgramBindingFailureAllocations
-	ProgramBindingFailureValueQueryReceipt
-	ProgramBindingFailureEffectQueryReceipt
+	ProgramBindingFailureQueryReceipt
 	// programBindingFailureRuleBase is the first ordinal of the derived
 	// per-rule tail. Nothing is declared past it.
 	programBindingFailureRuleBase
 )
 
 var programBindingFailureNames = [...]string{
-	"none", "input", "semantics", "types", "static",
+	"none", "input", "types", "static",
 	"axis-authority", "runtime-contexts", "heap-index",
 	"target", "target-catalog", "table", "receipt", "binding", "principal",
 	"allocation-catalog", "query-catalog", "seal", "allocations",
-	"value-query-receipt", "effect-query-receipt",
+	"query-receipt",
 }
 
 func (failure ProgramBindingFailure) String() string {
@@ -237,10 +235,8 @@ func programBindingFailure(failure composite.BindFailure) ProgramBindingFailure 
 		return ProgramBindingFailureSeal
 	case composite.BindStageAllocations:
 		return ProgramBindingFailureAllocations
-	case composite.BindStageValueQueryReceipt:
-		return ProgramBindingFailureValueQueryReceipt
-	case composite.BindStageEffectQueryReceipt:
-		return ProgramBindingFailureEffectQueryReceipt
+	case composite.BindStageQueryReceipt:
+		return ProgramBindingFailureQueryReceipt
 	case composite.BindStageRuntimeContexts:
 		return ProgramBindingFailureRuntimeContexts
 	default:

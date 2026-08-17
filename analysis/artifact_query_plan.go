@@ -1,9 +1,9 @@
 package analysis
 
 import (
-	"github.com/wippyai/go-lua/analysis/domain/composite"
-	"github.com/wippyai/go-lua/analysis/domain/effect/factor"
-	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
+	"github.com/wippyai/go-lua/domain/composite"
+	"github.com/wippyai/go-lua/domain/effect/factor"
+	valuedomain "github.com/wippyai/go-lua/domain/value"
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 )

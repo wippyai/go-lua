@@ -57,7 +57,7 @@ func (compiler *compiler) sealArtifact() (*Artifact, CompileFailure) {
 		functionBoundaryByBody[row.BodyID()] = uint32(index)
 	}
 	artifact := &Artifact{
-		key: compiler.key, pointAttachments: compiler.pointAttachments, points: points, environment: compiler.environment, localTransfers: compiler.localTransfers,
+		key: compiler.key, counts: compiler.counts, pointAttachments: compiler.pointAttachments, points: points, environment: compiler.environment, localTransfers: compiler.localTransfers,
 		regions: compiler.regions, events: compiler.events, values: compiler.values, calls: compiler.calls, callOperands: compiler.callOperands, callArguments: compiler.callArguments, callTypeArguments: compiler.callTypeArguments,
 		bodies: compiler.bodies, functionBoundaries: compiler.functionBoundaries, callTargets: compiler.callTargets, outcomes: compiler.outcomes, returnValues: compiler.returnValues,
 		boundaries:      compiler.boundaries,

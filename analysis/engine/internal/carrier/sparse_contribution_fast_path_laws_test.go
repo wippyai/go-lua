@@ -94,21 +94,25 @@ func TestMergeContributionRightEmptySlotSkipsTypedTraversalAndRetainsSupportChan
 	if !ok {
 		t.Fatal("right state")
 	}
+	leftPlan, ok := composition.SealContribution(0, []shape.Slot{0}, nil, false)
+	if !ok {
+		t.Fatal("left publication plan")
+	}
 	work, ok := composition.NewWork()
 	if !ok {
 		t.Fatal("work")
 	}
 	defer work.Close()
-	changedLeft := contributionWrite(t, work, operation.carryOnlyOperation, leftState, shape.Slot(0), 2)
-	left, ok := work.EmptyContribution(changedLeft)
+	leftPoint := contributionWrittenPoint(t, work, leftPlan, leftState.Scope(), leftSupport, contributionSlotWrite{operation: operation.carryOnlyOperation, slot: shape.Slot(0), root: 2})
+	left, ok := work.LiftRuleContribution(leftPoint)
 	if !ok {
 		t.Fatal("left contribution")
 	}
-	right, ok := work.EmptyContribution(rightState)
+	right, ok := work.LiftRuleContribution(contributionPoint(t, work, rightState))
 	if !ok {
 		t.Fatal("right contribution")
 	}
-	merged, changes, ok := work.MergeContribution(left, right)
+	merged, changes, ok := work.MergeRuleContributions(left, right)
 	if !ok {
 		t.Fatal("merge")
 	}
@@ -118,8 +122,9 @@ func TestMergeContributionRightEmptySlotSkipsTypedTraversalAndRetainsSupportChan
 	if !merged.Support().Equal(whole) || !changes.Added().Equal(rightSupport) || !support.Empty(changes.Removed()) {
 		t.Fatal("support union change was not published")
 	}
+	leftRoot, leftRootOK := leftPoint.HandleAt(shape.Slot(0))
 	root, ok := merged.HandleAt(shape.Slot(0))
-	if !ok || root != changedLeft.roots[0] {
+	if !ok || !leftRootOK || root != leftRoot {
 		t.Fatal("right-empty fold replaced the left root")
 	}
 }
@@ -186,7 +191,7 @@ func TestMergeContributionSameRootKeepsCoverageOnlyWakeWithoutTypedTraversal(t *
 	if !ok || coverageChanges.Count() != 1 || coverageChanges.TargetCount() != 1 {
 		t.Fatal("same-root authored coverage was not retained")
 	}
-	wakeChanges, ok := work.CoverageWakeChanges(left, merged)
+	wakeChanges, ok := work.CoverageWakeChangesPointStates(contributionPointOf(t, work, left), contributionPointOf(t, work, merged))
 	if !ok || wakeChanges.Count() != coverageChanges.Count() || wakeChanges.TargetCount() != 0 {
 		t.Fatal("coverage wake projection retained target-detail rows")
 	}

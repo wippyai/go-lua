@@ -12,9 +12,9 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/astcodec"
-	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/grammar"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/occurrence"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/parserproducts"
+	"github.com/wippyai/go-lua/analysis/lua/parsersource"
 )
 
 func TestBuildConsumesOnlySealedProducts(t *testing.T) {
@@ -205,8 +205,8 @@ func testProducts() parserproducts.Evidence {
 		}},
 		Sequences: []parserproducts.SequenceLaw{{Production: "form", Scope: 1, Destination: parserproducts.SequenceDestination{Tag: "form"}, Construction: parserproducts.SequenceConstructionForward, Segments: []parserproducts.SequenceSegment{}}},
 		Carriers: []parserproducts.Carrier{
-			{Form: "Form", Field: "Left", Class: grammar.ConstructorExpression, ChildType: "Expr", Cardinality: astcodec.FieldStatePresent},
-			{Form: "Form", Field: "Right", Class: grammar.ConstructorExpression, ChildType: "Expr", Cardinality: astcodec.FieldStatePresent},
+			{Form: "Form", Field: "Left", Class: parsersource.ConstructorExpression, ChildType: "Expr", Cardinality: astcodec.FieldStatePresent},
+			{Form: "Form", Field: "Right", Class: parsersource.ConstructorExpression, ChildType: "Expr", Cardinality: astcodec.FieldStatePresent},
 		},
 		ActionTerms: parserproducts.ActionTerms{
 			Symbols: []parserproducts.ActionSymbol{

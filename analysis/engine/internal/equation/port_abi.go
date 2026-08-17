@@ -4,7 +4,7 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
-	"github.com/wippyai/go-lua/analysis/internal/canonical"
+	"github.com/wippyai/go-lua/internal/canonical"
 )
 
 // PortMode is the closed direction of one formal/concrete Point connection.

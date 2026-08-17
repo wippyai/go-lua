@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/wippyai/go-lua/analysis/program/relations"
-	"github.com/wippyai/go-lua/analysis/program/semanticsource"
+	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/denominator"
 )
 
 var (
@@ -20,101 +20,94 @@ var (
 )
 
 // Build derives the complete Target relation vocabulary and exact parent
-// ingress contexts from the canonical relation schema. It does not inspect a
-// Target implementation or create a secondary relation vocabulary.
+// ingress contexts from the generated denominator catalog. It does not
+// inspect a Target implementation or create a secondary relation vocabulary.
 func Build() (Evidence, error) {
-	schema, err := relations.CanonicalSchema()
-	if err != nil {
-		return Evidence{}, fmt.Errorf("Target ingress requirements: canonical schema: %w", err)
-	}
-	return derive(schema.Rows(), schema.Digest(), schema)
+	return derive(denominator.GeneratedRelationEntries())
 }
 
 // Current validates the checked-in generated evidence against the live
-// canonical Target relation semantics before a matrix can consume it.
+// denominator catalog before a matrix can consume it.
 func Current() (Evidence, error) {
-	schema, err := relations.CanonicalSchema()
-	if err != nil {
-		return Evidence{}, fmt.Errorf("Target ingress requirements: canonical schema: %w", err)
-	}
-	if err := Generated.Validate(schema); err != nil {
+	entries := denominator.GeneratedRelationEntries()
+	if err := Generated.Validate(entries); err != nil {
 		return Evidence{}, err
 	}
-	return Generated, nil
+	return clone(Generated), nil
 }
 
-func derive(rows []relations.Row, schemaDigest [sha256.Size]byte, vocabulary semanticsource.ProgramSchema) (Evidence, error) {
-	expected := targetVocabulary(vocabulary)
+func derive(entries []*denominator.RelationEntry) (Evidence, error) {
+	expected := targetVocabulary(entries)
 	if len(expected) == 0 {
 		return Evidence{}, ErrMissingRow
 	}
-	seen := make(map[semanticsource.Token]bool, len(expected))
+	seen := make(map[schema.EntryID]bool, len(expected))
 	result := make([]Row, 0, len(expected))
-	for _, source := range rows {
-		token := source.Definition.Token()
-		if source.Owner != relations.OwnerTarget {
+	for _, source := range entries {
+		if source == nil || source.Owner() != denominator.RelationOwnerTarget {
 			continue
 		}
-		if !expected[token] {
-			return Evidence{}, fmt.Errorf("%w: %v", ErrUnknownRow, token)
+		id := source.ID()
+		if !expected[id] {
+			return Evidence{}, fmt.Errorf("%w: %x", ErrUnknownRow, id)
 		}
-		if seen[token] {
-			return Evidence{}, fmt.Errorf("%w: %v", ErrDuplicateRow, token)
+		if seen[id] {
+			return Evidence{}, fmt.Errorf("%w: %x", ErrDuplicateRow, id)
 		}
 		row, err := deriveRow(source)
 		if err != nil {
 			return Evidence{}, err
 		}
-		seen[token] = true
+		seen[id] = true
 		result = append(result, row)
 	}
-	for token := range expected {
-		if !seen[token] {
-			return Evidence{}, fmt.Errorf("%w: %v", ErrMissingRow, token)
+	for id := range expected {
+		if !seen[id] {
+			return Evidence{}, fmt.Errorf("%w: %x", ErrMissingRow, id)
 		}
 	}
 	sort.Slice(result, func(left, right int) bool { return less(result[left].Relation, result[right].Relation) })
-	evidence := Evidence{SchemaDigest: hex.EncodeToString(schemaDigest[:]), Rows: result}
+	evidence := Evidence{Rows: result}
 	evidence.Digest = digest(evidence)
-	return evidence, evidence.ValidateRows(expected, vocabulary)
+	return evidence, evidence.Validate(entries)
 }
 
-func deriveRow(source relations.Row) (Row, error) {
-	if source.Owner != relations.OwnerTarget || !targetOrigin(source.Definition.Token().Origin()) || source.Form == relations.FormUnset {
+func deriveRow(source *denominator.RelationEntry) (Row, error) {
+	if source == nil || source.Owner() != denominator.RelationOwnerTarget || !source.Owner().Available() || !source.Form().Available() {
 		return Row{}, ErrInvalidRow
 	}
-	ingress := make([]Reference, len(source.Parents))
-	for index, parent := range source.Parents {
-		if parent == (semanticsource.Token{}) {
+	parents := source.Parents()
+	for _, parent := range parents {
+		if !parent.Available() {
 			return Row{}, ErrInvalidRow
 		}
-		ingress[index] = reference(parent)
 	}
-	return Row{Relation: reference(source.Definition.Token()), Owner: source.Owner, Form: source.Form, Ingress: ingress}, nil
+	sort.Slice(parents, func(left, right int) bool { return less(parents[left], parents[right]) })
+	return Row{Relation: source.ID(), Owner: source.Owner(), Form: source.Form(), Ingress: append([]schema.EntryID(nil), parents...)}, nil
 }
 
 // Validate verifies generated evidence against the supplied live canonical
-// schema, detecting staleness and every missing, duplicate, or unknown row.
-func (e Evidence) Validate(schema *relations.Schema) error {
-	if schema == nil || e.SchemaDigest != schema.Digest().String() || e.Digest != digest(e) {
+// denominator, detecting staleness and every missing, duplicate, or unknown
+// row.
+func (e Evidence) Validate(entries []*denominator.RelationEntry) error {
+	if e.Digest != digest(e) {
 		return ErrInvalidRow
 	}
-	if err := e.ValidateRows(targetVocabulary(schema), schema); err != nil {
+	expected := targetVocabulary(entries)
+	if err := e.ValidateRows(expected, entries); err != nil {
 		return err
 	}
-	canonical := make(map[semanticsource.Token]relations.Row, schema.Count())
-	for _, source := range schema.Rows() {
-		token := source.Definition.Token()
-		if source.Owner != relations.OwnerTarget {
-			continue
+	canonical := make(map[schema.EntryID]*denominator.RelationEntry, len(entries))
+	for _, source := range entries {
+		if source == nil {
+			return ErrInvalidRow
 		}
-		if !targetOrigin(token.Origin()) {
-			return fmt.Errorf("%w: %v", ErrUnknownRow, token)
+		if source.Owner() == denominator.RelationOwnerTarget {
+			canonical[source.ID()] = source
 		}
-		canonical[token] = source
 	}
 	for _, row := range e.Rows {
-		source, ok := canonical[tokenFor(row.Relation, schema)]
+		source, ok := canonical[row.Relation]
 		if !ok {
 			return ErrMissingRow
 		}
@@ -127,108 +120,60 @@ func (e Evidence) Validate(schema *relations.Schema) error {
 }
 
 // ValidateRows validates the evidence's typed vocabulary independently of
-// construction. When supplied, vocabulary is the live ProgramSchema used to
-// fence ingress parents to the same canonical denominator. It is kept small
-// for mutation laws; production callers use Validate so the schema digest and
-// relation semantics are both checked.
-func (e Evidence) ValidateRows(expected map[semanticsource.Token]bool, vocabulary ...semanticsource.ProgramSchema) error {
+// construction. When entries are supplied, ingress parents are fenced to the
+// same generated denominator catalog.
+func (e Evidence) ValidateRows(expected map[schema.EntryID]bool, catalogs ...[]*denominator.RelationEntry) error {
 	if len(e.Rows) != len(expected) || len(expected) == 0 {
 		return ErrMissingRow
 	}
-	var schema semanticsource.ProgramSchema
-	if len(vocabulary) != 0 {
-		schema = vocabulary[0]
+	known := make(map[schema.EntryID]bool)
+	if len(catalogs) != 0 {
+		for _, entry := range catalogs[0] {
+			if entry != nil {
+				known[entry.ID()] = true
+			}
+		}
 	}
-	seen := make(map[semanticsource.Token]bool, len(e.Rows))
+	seen := make(map[schema.EntryID]bool, len(e.Rows))
 	for index, row := range e.Rows {
-		token := issuedToken(row.Relation)
-		if token == (semanticsource.Token{}) || !expected[token] {
+		if !row.Relation.Available() || !expected[row.Relation] {
 			return ErrUnknownRow
 		}
-		if seen[token] || index != 0 && !less(e.Rows[index-1].Relation, row.Relation) {
+		if seen[row.Relation] || index != 0 && !less(e.Rows[index-1].Relation, row.Relation) {
 			return ErrDuplicateRow
 		}
-		if row.Owner != relations.OwnerTarget || !targetOrigin(row.Relation.Origin) || row.Form == relations.FormUnset || row.Form > relations.FormVirtualPredicate {
+		if row.Owner != denominator.RelationOwnerTarget || !row.Owner.Available() || !row.Form.Available() {
 			return ErrInvalidRow
 		}
-		parents := make(map[semanticsource.Token]bool, len(row.Ingress))
+		parents := make(map[schema.EntryID]bool, len(row.Ingress))
 		for parentIndex, parent := range row.Ingress {
-			parentToken := issuedToken(parent)
-			if schema != nil {
-				parentToken = tokenFor(parent, schema)
-			}
-			if parentToken == (semanticsource.Token{}) || parents[parentToken] || parentIndex != 0 && !less(row.Ingress[parentIndex-1], parent) {
+			if !parent.Available() || len(known) != 0 && !known[parent] || parents[parent] || parentIndex != 0 && !less(row.Ingress[parentIndex-1], parent) {
 				return ErrInvalidRow
 			}
-			parents[parentToken] = true
+			parents[parent] = true
 		}
-		seen[token] = true
+		seen[row.Relation] = true
 	}
-	for token := range expected {
-		if !seen[token] {
+	for id := range expected {
+		if !seen[id] {
 			return ErrMissingRow
 		}
 	}
 	return nil
 }
 
-func targetVocabulary(vocabulary semanticsource.ProgramSchema) map[semanticsource.Token]bool {
-	rows := make(map[semanticsource.Token]bool)
-	if vocabulary == nil {
-		return rows
-	}
-	for index := 0; index < vocabulary.Count(); index++ {
-		definition, ok := vocabulary.DefinitionAt(index)
-		if !ok {
-			continue
-		}
-		if targetOrigin(definition.Token().Origin()) {
-			rows[definition.Token()] = true
+func targetVocabulary(entries []*denominator.RelationEntry) map[schema.EntryID]bool {
+	rows := make(map[schema.EntryID]bool)
+	for _, entry := range entries {
+		if entry != nil && entry.Owner() == denominator.RelationOwnerTarget {
+			rows[entry.ID()] = true
 		}
 	}
 	return rows
 }
 
-func targetOrigin(origin semanticsource.Origin) bool {
-	switch origin {
-	case semanticsource.OriginTargetContract, semanticsource.OriginTargetOperation, semanticsource.OriginTargetProtocol, semanticsource.OriginTargetBoot, semanticsource.OriginTargetGsub:
-		return true
-	default:
-		return false
-	}
-}
-
-func reference(token semanticsource.Token) Reference {
-	return Reference{Origin: token.Origin(), Facet: token.Facet(), Revision: token.Revision()}
-}
-
-func tokenFor(reference Reference, schema semanticsource.ProgramSchema) semanticsource.Token {
-	if schema == nil {
-		return semanticsource.Token{}
-	}
-	definition, ok := schema.Definition(reference.Origin, reference.Facet)
-	if !ok || definition.Token().Revision() != reference.Revision {
-		return semanticsource.Token{}
-	}
-	return definition.Token()
-}
-
-func issuedToken(reference Reference) semanticsource.Token {
-	definition, ok := semanticsource.Declare(reference.Origin, reference.Facet)
-	if !ok || definition.Token().Revision() != reference.Revision {
-		return semanticsource.Token{}
-	}
-	return definition.Token()
-}
-
-func less(left, right Reference) bool {
-	if left.Origin != right.Origin {
-		return left.Origin < right.Origin
-	}
-	if left.Facet != right.Facet {
-		return left.Facet < right.Facet
-	}
-	return left.Revision < right.Revision
+func less(left, right schema.EntryID) bool {
+	return bytes.Compare(left[:], right[:]) < 0
 }
 
 func equalRow(left, right Row) bool {
@@ -244,16 +189,19 @@ func equalRow(left, right Row) bool {
 }
 
 // Canonical returns the exact detached byte stream used to derive Digest.
-// Digest itself is omitted because it is derivable from these bytes.
 func (e Evidence) Canonical() []byte {
 	var out bytes.Buffer
-	fmt.Fprintf(&out, "%s\n", e.SchemaDigest)
 	for _, row := range e.Rows {
-		fmt.Fprintf(&out, "%d\x00%d\x00%d\x00%d\x00%d", row.Relation.Origin, row.Relation.Facet, row.Relation.Revision, row.Owner, row.Form)
+		out.Write(row.Relation[:])
+		out.WriteByte(0)
+		out.WriteByte(byte(row.Owner))
+		out.WriteByte(0)
+		out.WriteByte(byte(row.Form))
 		for _, ingress := range row.Ingress {
-			fmt.Fprintf(&out, "\x00%d\x00%d\x00%d", ingress.Origin, ingress.Facet, ingress.Revision)
+			out.WriteByte(0)
+			out.Write(ingress[:])
 		}
-		fmt.Fprintln(&out)
+		out.WriteByte('\n')
 	}
 	return append([]byte(nil), out.Bytes()...)
 }
@@ -261,4 +209,12 @@ func (e Evidence) Canonical() []byte {
 func digest(e Evidence) string {
 	sum := sha256.Sum256(e.Canonical())
 	return hex.EncodeToString(sum[:])
+}
+
+func clone(e Evidence) Evidence {
+	e.Rows = append([]Row(nil), e.Rows...)
+	for index := range e.Rows {
+		e.Rows[index].Ingress = append([]schema.EntryID(nil), e.Rows[index].Ingress...)
+	}
+	return e
 }

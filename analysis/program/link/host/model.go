@@ -12,6 +12,7 @@ import (
 	linkmodule "github.com/wippyai/go-lua/analysis/program/link/module"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/schema/denominator"
 )
 
 type ProviderCapability struct {
@@ -124,10 +125,10 @@ type ReplayMemberSelector struct {
 type Draft struct{ state *draftState }
 type Component struct{ authority *authority }
 type Cold struct {
-	content     identity.ContentID
-	replay      ReplaySpec
-	sourceViews SourceViews
-	fence       *coldFence
+	content identity.ContentID
+	replay  ReplaySpec
+	counts  denominator.CountRows
+	fence   *coldFence
 }
 type coldFence struct{ sealed bool }
 type draftState struct {
@@ -211,10 +212,10 @@ type authority struct {
 	content           identity.ContentID
 	// replay is the sole portable construction contract retained after sealing.
 	// Authored coordinates are reduced to this relation before content is made.
-	replay      ReplaySpec
-	sourceViews SourceViews
-	spec        Spec // transient authored input; never exposed by Cold.
-	fence       *coldFence
+	replay ReplaySpec
+	counts denominator.CountRows
+	spec   Spec // transient authored input; never exposed by Cold.
+	fence  *coldFence
 }
 
 func (c *Component) ContentID() identity.ContentID {
@@ -230,7 +231,7 @@ func (c *Component) Cold() Cold {
 	if !c.authority.content.Available() {
 		return Cold{}
 	}
-	return Cold{content: c.authority.content, replay: cloneReplaySpec(c.authority.replay), sourceViews: c.authority.sourceViews, fence: c.authority.fence}
+	return Cold{content: c.authority.content, replay: cloneReplaySpec(c.authority.replay), counts: c.authority.counts, fence: c.authority.fence}
 }
 func (c Cold) ContentID() identity.ContentID { return c.content }
 func (c Cold) ReplaySpec() (ReplaySpec, bool) {
@@ -247,7 +248,7 @@ func (d *Draft) Cold() Cold {
 	if !a.content.Available() {
 		return Cold{}
 	}
-	return Cold{content: a.content, replay: cloneReplaySpec(a.replay), fence: a.fence}
+	return Cold{content: a.content, replay: cloneReplaySpec(a.replay), counts: a.counts, fence: a.fence}
 }
 func (d *Draft) Finalize() (*Component, error) {
 	if d == nil || d.state == nil || d.state.consumed || d.state.authority == nil {

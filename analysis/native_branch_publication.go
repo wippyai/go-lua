@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
+	valuedomain "github.com/wippyai/go-lua/domain/value"
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"

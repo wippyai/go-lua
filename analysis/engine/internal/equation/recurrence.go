@@ -398,15 +398,6 @@ func (view RegionView) InterfaceCount() int {
 	return data.interfaceEnd - data.interfaceBegin
 }
 
-func (view RegionView) InterfaceAt(index int) (InterfaceInput, bool) {
-	data, ok := view.data()
-	if !ok || index < 0 || data.interfaceBegin+index >= data.interfaceEnd {
-		return InterfaceInput{}, false
-	}
-	row := view.graph.regionInterfaces[data.interfaceBegin+index]
-	return InterfaceInput{graph: view.graph, group: row.group, input: row.input}, true
-}
-
 // FaceAt returns one external source Point version that can affect this
 // Region's exact head RHS. Faces include ordinary Group inputs, designated
 // environment inputs, structural environment edges, and Factor edges;
@@ -599,8 +590,6 @@ func (input InterfaceInput) Group() (GroupNode, bool) {
 	}
 	return input.graph.HyperedgeAt(input.group)
 }
-
-func (input InterfaceInput) InputIndex() int { return input.input }
 
 func (input InterfaceInput) Input() (Input, bool) {
 	group, ok := input.Group()

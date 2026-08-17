@@ -102,9 +102,8 @@ func (work *Work) Begin() bool {
 	return true
 }
 
-// Reset and Reopen are explicit aliases for the same linear reopen cut.
-func (work *Work) Reset() bool  { return work.Begin() }
-func (work *Work) Reopen() bool { return work.Begin() }
+// Reset is the explicit spelling of the linear reopen cut.
+func (work *Work) Reset() bool { return work.Begin() }
 
 // BeginTransaction reserves this shell for one helper transaction. It is
 // intentionally separate from Begin: a freshly-created support shell is

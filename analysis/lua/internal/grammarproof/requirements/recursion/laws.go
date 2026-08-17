@@ -6,7 +6,7 @@ package recursion
 import (
 	"fmt"
 
-	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof"
+	"github.com/wippyai/go-lua/analysis/lua/parsersource"
 )
 
 // Family is a closed source-grammar recursion family with a distinct semantic
@@ -75,7 +75,7 @@ var families = [...]familySpec{
 // family, plus the explicit parser nesting production. It derives only from
 // grammar alternatives; no accepted source or fixture can alter the result.
 func Discover(root string) (Report, error) {
-	alternatives, err := grammarproof.Alternatives(root)
+	alternatives, err := parsersource.Alternatives(root)
 	if err != nil {
 		return Report{}, err
 	}

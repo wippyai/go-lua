@@ -8,7 +8,7 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
-	"github.com/wippyai/go-lua/analysis/internal/canonical"
+	"github.com/wippyai/go-lua/internal/canonical"
 )
 
 // identityVersion changes whenever retained equation identity changes.  This
@@ -307,13 +307,6 @@ func (input Input) Reindex() Reindex            { return input.omega }
 func (input Input) Post() Expr                  { return input.post }
 func (input Input) Key() composition.Key        { return input.key }
 
-// IdentityTransport is the only fast path allowed to retain an immutable
-// input state.  Equal-looking scopes are insufficient: the issued scope,
-// complete identity reindex, and both canonical formulas must all match.
-func (input Input) IdentityTransport() bool {
-	return input.identity
-}
-
 func (input Input) identityTransport() bool {
 	return input.key.Available() && input.source.Scope().Key() == input.target.Scope().Key() && sameScope(input.source.Scope(), input.target.Scope()) &&
 		input.omega.Identity() && input.pre.IsTrue() && input.post.IsTrue()
@@ -441,24 +434,6 @@ func (surface Surface) LocalSpace() (surfaceLocalSpace, bool) {
 func (surface Surface) LocalAvailable() bool {
 	_, ok := surface.LocalSpace()
 	return ok
-}
-
-// OrdinalLocal returns the one-based declared coordinate of an ordinal-space
-// surface.
-func (surface Surface) OrdinalLocal() (uint64, bool) {
-	if space, ok := surface.LocalSpace(); !ok || space != surfaceLocalOrdinal {
-		return 0, false
-	}
-	return surface.Local, true
-}
-
-// ContentLocal returns the full-width content identity of a content-space
-// surface.
-func (surface Surface) ContentLocal() ([32]byte, bool) {
-	if space, ok := surface.LocalSpace(); !ok || space != surfaceLocalContent {
-		return emptySurfaceContent, false
-	}
-	return surface.Content, true
 }
 
 func (surface Surface) Available() bool {
@@ -806,13 +781,6 @@ func deriveInputKey(input Input) (composition.Key, bool) {
 		return input.source.Available() && input.target.Available() && input.provenance.Available() && input.pre.Available() && input.omega.Available() && input.post.Available() &&
 			writeSite(writer, input.source) && writeSite(writer, input.target) && writeKey(writer, input.provenance) && writeExpr(writer, input.pre) && writeReindex(writer, input.omega) && writeExpr(writer, input.post)
 	})
-}
-
-// deriveGroupKey retains the stable output coordinate and every ordered
-// resolved predecessor relation directly.  Point identities have already been
-// issued, so this is one finite non-recursive encoding even for feedback.
-func deriveGroupKey(core groupCore, output Point, inputs []Input) (composition.Key, bool) {
-	return derivePremisedGroupKey(core, output, inputs, TrueExpr())
 }
 
 // derivePremisedGroupKey is the one identity authority for both ordinary and

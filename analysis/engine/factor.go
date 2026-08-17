@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
-	"github.com/wippyai/go-lua/analysis/internal/canonical"
+	"github.com/wippyai/go-lua/internal/canonical"
 )
 
 // Measure is a key-aware, well-founded transition witness for a Factor's

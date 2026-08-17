@@ -146,10 +146,6 @@ func (w *Work) Begin() bool {
 // intentionally unavailable to an open transaction.
 func (w *Work) Reset() bool { return w.Begin() }
 
-// Reopen is retained as a descriptive alias for Begin at ownership-heavy
-// call sites.  All three entry points share the same lawful state transition.
-func (w *Work) Reopen() bool { return w.Begin() }
-
 // Published reports whether w successfully sealed its pages for Manager reads.
 // Discarded work is terminal but never published.
 func (w *Work) Published() bool {

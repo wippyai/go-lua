@@ -118,7 +118,7 @@ type ReceiptAssembly struct {
 
 type ReceiptCommitFailurePhase uint8
 
-type ReceiptTopologyFailure = equation.SealTopologyFailure
+type ReceiptTopologyFailure = equation.SealFailure
 
 const (
 	ReceiptCommitFailureNone ReceiptCommitFailurePhase = iota
@@ -134,7 +134,7 @@ type ReceiptCommitFailure struct {
 	phase        ReceiptCommitFailurePhase
 	precondition ReceiptCommitPrecondition
 	semanticRows ReceiptCommitSemanticRowsFailure
-	topology     equation.SealTopologyFailure
+	topology     equation.SealFailure
 	schedule     ReceiptScheduleFailure
 	scheduleRow  uint32
 	publish      ReceiptCommitPublishFailure
@@ -195,8 +195,8 @@ func (failure ReceiptCommitFailure) Precondition() (ReceiptCommitPrecondition, b
 func (failure ReceiptCommitFailure) SemanticRows() (ReceiptCommitSemanticRowsFailure, bool) {
 	return failure.semanticRows, failure.precondition == ReceiptCommitPreconditionSemanticRows && failure.semanticRows != ReceiptCommitSemanticRowsFailureNone
 }
-func (failure ReceiptCommitFailure) Topology() (equation.SealTopologyFailure, bool) {
-	return failure.topology, failure.phase == ReceiptCommitFailureTopology && failure.topology != equation.SealTopologyFailureNone
+func (failure ReceiptCommitFailure) Topology() (equation.SealFailure, bool) {
+	return failure.topology, failure.phase == ReceiptCommitFailureTopology && failure.topology.Available()
 }
 func (failure ReceiptCommitFailure) Publish() (ReceiptCommitPublishFailure, bool) {
 	return failure.publish, failure.phase == ReceiptCommitFailurePublish && failure.publish != ReceiptCommitPublishFailureNone
@@ -209,9 +209,10 @@ func (failure ReceiptCommitFailure) Failure() SolveFailure {
 	if failure.phase == ReceiptCommitFailureNone {
 		return SolveFailure{}
 	}
+	topologyFamily, topologySite := failure.topology.Ordinals()
 	return receiptFailure(SolveFailureFamilyCompile, "receipt-commit",
 		uint64(failure.phase), uint64(failure.precondition), uint64(failure.semanticRows),
-		uint64(failure.topology), uint64(failure.schedule), uint64(failure.publish))
+		topologyFamily, topologySite, uint64(failure.schedule), uint64(failure.publish))
 }
 
 type queuedRuleFinalizer struct {
@@ -259,29 +260,11 @@ const (
 // ReceiptSourceSealFailure is the generic equation Batch predicate that
 // rejected source sealing. It is re-exported here so analyzer diagnostics do
 // not expose equation internals or source row payloads.
-type ReceiptSourceSealFailure = equation.BatchSealFailure
+type ReceiptSourceSealFailure = equation.SealFailure
 
-const (
-	ReceiptSourceSealFailureNone                   = equation.BatchSealFailureNone
-	ReceiptSourceSealFailurePrecondition           = equation.BatchSealFailurePrecondition
-	ReceiptSourceSealFailureSiteRow                = equation.BatchSealFailureSiteRow
-	ReceiptSourceSealFailureFormalCoverage         = equation.BatchSealFailureFormalCoverage
-	ReceiptSourceSealFailureSiteIdentity           = equation.BatchSealFailureSiteIdentity
-	ReceiptSourceSealFailureOccurrenceRow          = equation.BatchSealFailureOccurrenceRow
-	ReceiptSourceSealFailureOccurrenceIdentity     = equation.BatchSealFailureOccurrenceIdentity
-	ReceiptSourceSealFailureOperandRow             = equation.BatchSealFailureOperandRow
-	ReceiptSourceSealFailureOperandIdentity        = equation.BatchSealFailureOperandIdentity
-	ReceiptSourceSealFailureBatchIdentity          = equation.BatchSealFailureBatchIdentity
-	ReceiptSourceSealFailureTargetRule             = equation.BatchSealFailureTargetRule
-	ReceiptSourceSealFailureTargetInput            = equation.BatchSealFailureTargetInput
-	ReceiptSourceSealFailureTargetGroup            = equation.BatchSealFailureTargetGroup
-	ReceiptSourceSealFailureTargetGroupInput       = equation.BatchSealFailureTargetGroupInput
-	ReceiptSourceSealFailureTargetEnvironmentInput = equation.BatchSealFailureTargetEnvironmentInput
-	ReceiptSourceSealFailureTargetFactorEdge       = equation.BatchSealFailureTargetFactorEdge
-	ReceiptSourceSealFailureTargetEnvironmentEdge  = equation.BatchSealFailureTargetEnvironmentEdge
-	ReceiptSourceSealFailureTargetSummary          = equation.BatchSealFailureTargetSummary
-	ReceiptSourceSealFailureTargetWeak             = equation.BatchSealFailureTargetWeak
-	ReceiptSourceSealFailureTargetState            = equation.BatchSealFailureTargetState
+var (
+	ReceiptSourceSealFailurePrecondition  = equation.SealFailureSourcePrecondition
+	ReceiptSourceSealFailureBatchIdentity = equation.SealFailureSourceBatchIdentity
 )
 
 // ReceiptSealFailure is detached scalar evidence for the first failed source
@@ -301,7 +284,7 @@ type ReceiptSealFailure struct {
 func (failure ReceiptSealFailure) Phase() ReceiptSealFailurePhase { return failure.phase }
 func (failure ReceiptSealFailure) Ordinal() uint32                { return failure.ordinal }
 func (failure ReceiptSealFailure) Source() (ReceiptSourceSealFailure, bool) {
-	return failure.source, failure.phase == ReceiptSealFailureSources && failure.source != ReceiptSourceSealFailureNone
+	return failure.source, failure.phase == ReceiptSealFailureSources && failure.source.Available()
 }
 func (failure ReceiptSealFailure) RuleSource() (RuleSourceSealFailure, bool) {
 	return failure.rule, failure.phase == ReceiptSealFailureRuleFinalizer && failure.rule != RuleSourceSealFailureNone
@@ -326,8 +309,9 @@ func (failure ReceiptSealFailure) Failure() SolveFailure {
 	if failure.phase == ReceiptSealFailureNone {
 		return SolveFailure{}
 	}
+	sourceFamily, sourceSite := failure.source.Ordinals()
 	return receiptFailure(SolveFailureFamilyCompile, "receipt-seal",
-		uint64(failure.phase), uint64(failure.ordinal), uint64(failure.source),
+		uint64(failure.phase), uint64(failure.ordinal), sourceFamily, sourceSite,
 		uint64(failure.rule), uint64(failure.finalizer), uint64(failure.artifact))
 }
 
@@ -512,7 +496,7 @@ func (assembly *ReceiptAssembly) SealSources() bool {
 	if assembly == nil || assembly.builder == nil {
 		return false
 	}
-	if sourceFailure := assembly.builder.sealSources(); sourceFailure != ReceiptSourceSealFailureNone {
+	if sourceFailure := assembly.builder.sealSources(); sourceFailure.Available() {
 		assembly.sealFailure = ReceiptSealFailure{phase: ReceiptSealFailureSources, source: sourceFailure}
 		return false
 	}
@@ -1741,7 +1725,7 @@ func (builder *bindingTopologyBuilder) sealSources() ReceiptSourceSealFailure {
 	if !ok {
 		return ReceiptSourceSealFailurePrecondition
 	}
-	if failure := inner.batch.SealWithFailure(); failure != ReceiptSourceSealFailureNone {
+	if failure := inner.batch.SealWithFailure(); failure.Available() {
 		inner.failLocked()
 		inner.mu.Unlock()
 		return failure
@@ -1755,7 +1739,7 @@ func (builder *bindingTopologyBuilder) sealSources() ReceiptSourceSealFailure {
 	inner.sourceKey = key
 	inner.phase = bindingTopologyBuilderTopologyOpen
 	inner.mu.Unlock()
-	return ReceiptSourceSealFailureNone
+	return equation.SealFailure{}
 }
 
 func (inner *bindingTopologyBuilderState) failLocked() {
@@ -1833,7 +1817,7 @@ func (builder *bindingTopologyBuilder) commit(deferredQueries bool) (*BindingTop
 	state, authority, factors := inner.state, inner.authority, append([]schemaFactorBinding(nil), inner.factors...)
 	inner.mu.Unlock()
 	var topology *equation.Topology
-	var topologyFailure equation.SealTopologyFailure
+	var topologyFailure equation.SealFailure
 	var ok bool
 	if deferredQueries {
 		topology, topologyFailure, ok = equation.SealObservationTopologyWithFailure(state.schema.cold, spec)
@@ -1849,7 +1833,7 @@ func (builder *bindingTopologyBuilder) commit(deferredQueries bool) (*BindingTop
 		}
 	} else {
 		if ok {
-			topologyFailure = equation.SealTopologyFailureInput
+			topologyFailure = equation.SealFailureTopologyInput
 		}
 		ok = false
 	}

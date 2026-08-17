@@ -5,7 +5,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/grammar"
+	"github.com/wippyai/go-lua/analysis/lua/parsersource"
 )
 
 func TestGeneratedCensusIsCurrent(t *testing.T) {
@@ -24,7 +24,7 @@ func TestGeneratedCensusCoversParserAndASTSources(t *testing.T) {
 	if len(value.Productions) == 0 || len(value.Constructors) == 0 {
 		t.Fatalf("incomplete parser census: productions=%d constructors=%d", len(value.Productions), len(value.Constructors))
 	}
-	declarations, err := grammar.Discover(root)
+	declarations, err := parsersource.Discover(root)
 	if err != nil {
 		t.Fatal(err)
 	}

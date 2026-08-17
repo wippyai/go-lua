@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/type/annotation"
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
-	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
+	"github.com/wippyai/go-lua/domain/type/annotation"
+	"github.com/wippyai/go-lua/domain/type/typ"
+	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 )
 

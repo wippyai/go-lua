@@ -5,10 +5,11 @@ import (
 	"errors"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/program/relations"
-	"github.com/wippyai/go-lua/analysis/program/semanticsource"
+	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/denominator"
 )
 
 func TestGeneratedEvidenceIsCurrent(t *testing.T) {
@@ -37,31 +38,26 @@ func TestCanonicalIsDetachedAndAgreesWithCurrentGeneratedEvidence(t *testing.T) 
 }
 
 func TestEvidenceRejectsMissingDuplicateAndUnknownRows(t *testing.T) {
-	schema, err := relations.CanonicalSchema()
-	if err != nil {
-		t.Fatal(err)
-	}
 	evidence, err := Build()
 	if err != nil {
 		t.Fatal(err)
 	}
+	entries := denominator.GeneratedRelationEntries()
 	cases := []struct {
 		name   string
 		want   error
 		mutate func(*Evidence)
 	}{
-		{name: "missing", want: ErrMissingRow, mutate: func(e *Evidence) { e.Rows = append([]Row(nil), e.Rows[1:]...) }},
-		{name: "duplicate", want: ErrDuplicateRow, mutate: func(e *Evidence) { e.Rows[len(e.Rows)-1] = e.Rows[0] }},
-		{name: "unknown", want: ErrUnknownRow, mutate: func(e *Evidence) {
-			e.Rows[len(e.Rows)-1] = Row{Relation: Reference{}, Owner: relations.OwnerTarget, Form: relations.FormAuthored}
-		}},
+		{"missing", ErrMissingRow, func(e *Evidence) { e.Rows = e.Rows[1:] }},
+		{"duplicate", ErrDuplicateRow, func(e *Evidence) { e.Rows[len(e.Rows)-1] = e.Rows[0] }},
+		{"unknown", ErrUnknownRow, func(e *Evidence) { e.Rows[len(e.Rows)-1].Relation = schema.EntryID{} }},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			changed := Evidence{SchemaDigest: evidence.SchemaDigest, Rows: append([]Row(nil), evidence.Rows...)}
+			changed := clone(evidence)
 			test.mutate(&changed)
 			changed.Digest = digest(changed)
-			if err := changed.Validate(schema); !errors.Is(err, test.want) {
+			if err := changed.Validate(entries); !errors.Is(err, test.want) {
 				t.Fatalf("Validate() error = %v, want %v", err, test.want)
 			}
 		})
@@ -69,48 +65,56 @@ func TestEvidenceRejectsMissingDuplicateAndUnknownRows(t *testing.T) {
 }
 
 func TestDeriveRejectsMissingDuplicateAndUnknownIngressRows(t *testing.T) {
-	rows, digest, schema := canonicalRows(t)
-	missing := append([]relations.Row(nil), rows...)
-	for index, row := range missing {
-		if row.Owner == relations.OwnerTarget {
-			missing = append(missing[:index], missing[index+1:]...)
+	entries := denominator.GeneratedRelationEntries()
+	duplicate := append([]*denominator.RelationEntry(nil), entries...)
+	for _, entry := range entries {
+		if entry.Owner() == denominator.RelationOwnerTarget {
+			duplicate = append(duplicate, entry)
 			break
 		}
 	}
-	if _, err := derive(missing, digest, schema); !errors.Is(err, ErrMissingRow) {
-		t.Fatalf("missing derive() error = %v, want %v", err, ErrMissingRow)
-	}
-
-	duplicate := append([]relations.Row(nil), rows...)
-	for _, row := range rows {
-		if row.Owner == relations.OwnerTarget {
-			duplicate = append(duplicate, row)
-			break
-		}
-	}
-	if _, err := derive(duplicate, digest, schema); !errors.Is(err, ErrDuplicateRow) {
+	if _, err := derive(duplicate); !errors.Is(err, ErrDuplicateRow) {
 		t.Fatalf("duplicate derive() error = %v, want %v", err, ErrDuplicateRow)
 	}
 
-	unknown := append([]relations.Row(nil), rows...)
-	for index := range unknown {
-		if unknown[index].Owner != relations.OwnerTarget {
-			unknown[index].Owner = relations.OwnerTarget
-			break
-		}
-	}
-	if _, err := derive(unknown, digest, schema); !errors.Is(err, ErrUnknownRow) {
-		t.Fatalf("unknown derive() error = %v, want %v", err, ErrUnknownRow)
-	}
-}
-
-func canonicalRows(t *testing.T) ([]relations.Row, [32]byte, semanticsource.ProgramSchema) {
-	t.Helper()
-	schema, err := relations.CanonicalSchema()
+	// The one-catalog design makes a missing or foreign row fail at Evidence
+	// validation, where the expected set is the catalog's closed Target set.
+	evidence, err := Build()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return schema.Rows(), schema.Digest(), schema
+	evidence.Rows = evidence.Rows[:len(evidence.Rows)-1]
+	evidence.Digest = digest(evidence)
+	if err := evidence.Validate(entries); !errors.Is(err, ErrMissingRow) {
+		t.Fatalf("missing Validate() error = %v, want %v", err, ErrMissingRow)
+	}
+}
+
+func TestTargetRowsPreserveExactDenominatorParents(t *testing.T) {
+	evidence, err := Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := make(map[schema.EntryID]*denominator.RelationEntry)
+	for _, entry := range denominator.GeneratedRelationEntries() {
+		byID[entry.ID()] = entry
+	}
+	for _, row := range evidence.Rows {
+		entry := byID[row.Relation]
+		if entry == nil || entry.Owner() != denominator.RelationOwnerTarget || entry.Form() != row.Form || entry.Owner() != row.Owner {
+			t.Fatalf("row does not preserve denominator owner/form: %#v", row)
+		}
+		parents := entry.Parents()
+		sort.Slice(parents, func(left, right int) bool { return bytes.Compare(parents[left][:], parents[right][:]) < 0 })
+		if len(parents) != len(row.Ingress) {
+			t.Fatalf("row %x ingress length = %d, want %d", row.Relation, len(row.Ingress), len(parents))
+		}
+		for index := range parents {
+			if parents[index] != row.Ingress[index] {
+				t.Fatalf("row %x ingress[%d] changed", row.Relation, index)
+			}
+		}
+	}
 }
 
 func packageDir(t *testing.T) string {

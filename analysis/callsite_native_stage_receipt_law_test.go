@@ -5,8 +5,8 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine/rows"
 
-	"github.com/wippyai/go-lua/analysis/domain/composite"
-	callsite "github.com/wippyai/go-lua/analysis/domain/effect/callsite"
+	"github.com/wippyai/go-lua/domain/composite"
+	callsite "github.com/wippyai/go-lua/domain/effect/callsite"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"

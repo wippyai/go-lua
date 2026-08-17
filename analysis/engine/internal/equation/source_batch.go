@@ -4,7 +4,7 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
-	"github.com/wippyai/go-lua/analysis/internal/canonical"
+	"github.com/wippyai/go-lua/internal/canonical"
 )
 
 // Batch is the sole admission authority for source topology.  It is a
@@ -39,34 +39,6 @@ const (
 	batchOpen batchPhase = iota + 1
 	batchSealed
 	batchRejected
-)
-
-// BatchSealFailure is the closed, domain-neutral source/target row predicate
-// that rejected an immutable Batch. It contains no source identity or row
-// payload and is safe to propagate through production diagnostics.
-type BatchSealFailure uint8
-
-const (
-	BatchSealFailureNone BatchSealFailure = iota
-	BatchSealFailurePrecondition
-	BatchSealFailureSiteRow
-	BatchSealFailureFormalCoverage
-	BatchSealFailureSiteIdentity
-	BatchSealFailureOccurrenceRow
-	BatchSealFailureOccurrenceIdentity
-	BatchSealFailureOperandRow
-	BatchSealFailureOperandIdentity
-	BatchSealFailureBatchIdentity
-	BatchSealFailureTargetRule
-	BatchSealFailureTargetInput
-	BatchSealFailureTargetGroup
-	BatchSealFailureTargetGroupInput
-	BatchSealFailureTargetEnvironmentInput
-	BatchSealFailureTargetFactorEdge
-	BatchSealFailureTargetEnvironmentEdge
-	BatchSealFailureTargetSummary
-	BatchSealFailureTargetWeak
-	BatchSealFailureTargetState
 )
 
 // InitDisposition says whether a Site has an initial contribution.  The
@@ -191,14 +163,6 @@ type Admission struct {
 	Operand     composition.Key
 }
 
-// AdmissionResult contains the opaque capabilities issued for one Admission.
-// They remain unreadable until the Batch itself seals.
-type AdmissionResult struct {
-	Site       Site
-	Occurrence Occurrence
-	Operand    Operand
-}
-
 // NewBatch opens one topology-owned source admission transaction.
 func NewBatch() *Batch {
 	return &Batch{
@@ -310,123 +274,55 @@ func (batch *Batch) admitOperandInRealm(occurrence Occurrence, entity, realm com
 	return Operand{batch: batch, row: row}, true
 }
 
-// AdmitAll admits a complete set of site, occurrence, and operand rows as
-// one open-Batch commit. Every input is first checked against a private
-// prospective topology; only a fully valid set replaces the Batch's open
-// row tables. Invalid input rejects the open Batch just as the single-row
-// admission methods do.
-func (batch *Batch) AdmitAll(values []Admission) ([]AdmissionResult, bool) {
-	if batch == nil || batch.phase != batchOpen || len(values) == 0 {
-		if batch != nil && batch.phase == batchOpen {
-			batch.rejectOpen()
-		}
-		return nil, false
-	}
-	sites := append([]siteRow(nil), batch.sites...)
-	siteBySource := make(map[composition.Key]uint32, len(batch.siteBySource)+len(values))
-	for source, row := range batch.siteBySource {
-		siteBySource[source] = row
-	}
-	occurrences := append([]occurrenceRow(nil), batch.occurrences...)
-	occurrenceAt := make(map[occurrenceIndex]uint32, len(batch.occurrenceAt)+len(values))
-	for index, row := range batch.occurrenceAt {
-		occurrenceAt[index] = row
-	}
-	operands := append([]operandRow(nil), batch.operands...)
-	operandAt := make(map[operandIndex]uint32, len(batch.operandAt)+len(values))
-	for index, row := range batch.operandAt {
-		operandAt[index] = row
-	}
-	results := make([]AdmissionResult, len(values))
-	for index, value := range values {
-		if !validSiteSource(value.Source, value.Scope, value.Init, value.Disposition) || !validOccurrenceKind(value.Kind) || !value.Entity.Available() || !value.Operand.Available() ||
-			value.Kind == OccurrenceAt && value.Entity != value.Source {
-			batch.rejectOpen()
-			return nil, false
-		}
-		site, found := siteBySource[value.Source]
-		if found {
-			row := sites[site-1]
-			if row.formal || !sameScope(row.scope, value.Scope) || !sameExpr(row.init, value.Init) || row.disposition != value.Disposition {
-				batch.rejectOpen()
-				return nil, false
-			}
-		} else {
-			site = uint32(len(sites) + 1)
-			sites = append(sites, siteRow{source: value.Source, scope: value.Scope, init: value.Init, disposition: value.Disposition})
-			siteBySource[value.Source] = site
-		}
-		occurrenceIndex := occurrenceIndex{kind: value.Kind, site: site, entity: value.Entity}
-		occurrence, found := occurrenceAt[occurrenceIndex]
-		if !found {
-			occurrence = uint32(len(occurrences) + 1)
-			occurrences = append(occurrences, occurrenceRow{kind: value.Kind, site: site, entity: value.Entity})
-			occurrenceAt[occurrenceIndex] = occurrence
-		}
-		operandIndex := operandIndex{occurrence: occurrence, entity: value.Operand}
-		operand, found := operandAt[operandIndex]
-		if !found {
-			operand = uint32(len(operands) + 1)
-			operands = append(operands, operandRow{occurrence: occurrence, entity: value.Operand})
-			operandAt[operandIndex] = operand
-		}
-		results[index] = AdmissionResult{Site: Site{batch: batch, row: site}, Occurrence: Occurrence{batch: batch, row: occurrence}, Operand: Operand{batch: batch, row: operand}}
-	}
-	batch.sites, batch.siteBySource = sites, siteBySource
-	batch.occurrences, batch.occurrenceAt = occurrences, occurrenceAt
-	batch.operands, batch.operandAt = operands, operandAt
-	return results, true
-}
-
 // Seal validates the complete cross-row topology and derives every canonical
 // identity once.  It performs no row sorting or capability rewriting, so
 // issued opaque handles remain compact stable row references.
-func (batch *Batch) Seal() bool { return batch.SealWithFailure() == BatchSealFailureNone }
+func (batch *Batch) Seal() bool { return !batch.SealWithFailure().Available() }
 
-func (batch *Batch) SealWithFailure() BatchSealFailure {
+func (batch *Batch) SealWithFailure() SealFailure {
 	if batch == nil || batch.phase != batchOpen || len(batch.sites) == 0 {
 		if batch != nil {
 			batch.rejectOpen()
 		}
-		return BatchSealFailurePrecondition
+		return sealRefused(SealFailureFamilySource, "precondition")
 	}
 	formalCount := 0
 	for index := range batch.sites {
 		row := &batch.sites[index]
 		if !validSiteRow(*row) {
 			batch.rejectOpen()
-			return BatchSealFailureSiteRow
+			return sealRefused(SealFailureFamilySource, "site-row")
 		}
 		if row.formal {
 			formalCount++
 			mapped, found := batch.formalAt[row.formalRole]
 			if !found || mapped != uint32(index+1) {
 				batch.rejectOpen()
-				return BatchSealFailureFormalCoverage
+				return sealRefused(SealFailureFamilySource, "formal-coverage")
 			}
 		}
 		key, ok := deriveSiteKey(*row)
 		if !ok {
 			batch.rejectOpen()
-			return BatchSealFailureSiteIdentity
+			return sealRefused(SealFailureFamilySource, "site-identity")
 		}
 		row.key = key
 	}
 	if formalCount != len(batch.formalAt) {
 		batch.rejectOpen()
-		return BatchSealFailureFormalCoverage
+		return sealRefused(SealFailureFamilySource, "formal-coverage")
 	}
 	for index := range batch.occurrences {
 		row := &batch.occurrences[index]
 		site, ok := batch.openSite(row.site)
 		if !ok || !validOccurrenceKind(row.kind) || !row.entity.Available() {
 			batch.rejectOpen()
-			return BatchSealFailureOccurrenceRow
+			return sealRefused(SealFailureFamilySource, "occurrence-row")
 		}
 		key, ok := deriveOccurrenceKey(row.kind, site.key, row.entity)
 		if !ok {
 			batch.rejectOpen()
-			return BatchSealFailureOccurrenceIdentity
+			return sealRefused(SealFailureFamilySource, "occurrence-identity")
 		}
 		row.key = key
 	}
@@ -435,19 +331,19 @@ func (batch *Batch) SealWithFailure() BatchSealFailure {
 		occurrence, ok := batch.openOccurrence(row.occurrence)
 		if !ok || !row.entity.Available() {
 			batch.rejectOpen()
-			return BatchSealFailureOperandRow
+			return sealRefused(SealFailureFamilySource, "operand-row")
 		}
 		key, ok := deriveOperandKey(occurrence.key, row.entity, row.realm)
 		if !ok {
 			batch.rejectOpen()
-			return BatchSealFailureOperandIdentity
+			return sealRefused(SealFailureFamilySource, "operand-identity")
 		}
 		row.key = key
 	}
 	key, ok := deriveBatchKey(batch)
 	if !ok {
 		batch.rejectOpen()
-		return BatchSealFailureBatchIdentity
+		return sealRefused(SealFailureFamilySource, "batch-identity")
 	}
 	batch.key, batch.phase = key, batchSealed
 	for index := range batch.operands {
@@ -455,7 +351,7 @@ func (batch *Batch) SealWithFailure() BatchSealFailure {
 			batch.operands[index].realm = key
 		}
 	}
-	if failure := batch.sealTargetRowsWithFailure(); failure != BatchSealFailureNone {
+	if failure := batch.sealTargetRowsWithFailure(); failure.Available() {
 		batch.phase = batchRejected
 		return failure
 	}
@@ -467,7 +363,7 @@ func (batch *Batch) SealWithFailure() BatchSealFailure {
 	batch.formalAt = nil
 	batch.occurrenceAt = nil
 	batch.operandAt = nil
-	return BatchSealFailureNone
+	return SealFailure{}
 }
 
 // Reject permanently poisons one still-open construction transaction. It is
@@ -937,21 +833,6 @@ func sameBaseSite(left, right Site) bool {
 
 func sameBaseOccurrence(left, right Occurrence) bool {
 	return left.Available() && right.Available() && left.batch == right.batch && left.row == right.row
-}
-
-func boundSite(base Site, scope Scope, init Expr, disposition InitDisposition, binding, member composition.Key) (Site, bool) {
-	baseRow, rowOK := base.batch.sealedSite(base.row)
-	if !base.Available() || !rowOK || baseRow.formal || base.dynamic != nil || !validSiteSource(base.Source(), scope, init, disposition) || !binding.Available() || !member.Available() {
-		return Site{}, false
-	}
-	rowKey := base.Key()
-	key, ok := identityKey("analysis/engine/equation/dynamic-site", func(writer *canonical.DigestWriter) bool {
-		return writeSite(writer, base) && writeScope(writer, scope) && writeExpr(writer, init) && writer.Uint(uint64(disposition)) == nil && writeKey(writer, binding) && writeKey(writer, member) && writeKey(writer, rowKey)
-	})
-	if !ok {
-		return Site{}, false
-	}
-	return Site{batch: base.batch, row: base.row, dynamic: &overlaySite{scope: scope, init: init, disposition: disposition, key: key, binding: binding, member: member, row: rowKey}}, true
 }
 
 func deriveSiteKey(row siteRow) (composition.Key, bool) {

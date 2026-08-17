@@ -9,7 +9,7 @@ import (
 	"reflect"
 	"sort"
 
-	"github.com/wippyai/go-lua/analysis/internal/canonical"
+	"github.com/wippyai/go-lua/internal/canonical"
 )
 
 // codecVersion changes whenever a cold semantic term changes meaning. The

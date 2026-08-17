@@ -3,10 +3,10 @@ package lua
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/type/annotation"
-	typetable "github.com/wippyai/go-lua/analysis/domain/type/table"
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
-	typemanifest "github.com/wippyai/go-lua/analysis/module/manifest"
+	"github.com/wippyai/go-lua/domain/type/annotation"
+	typetable "github.com/wippyai/go-lua/domain/type/table"
+	"github.com/wippyai/go-lua/domain/type/typ"
+	typemanifest "github.com/wippyai/go-lua/types/io"
 )
 
 func TestTypeInfoInjection_TypeIs(t *testing.T) {

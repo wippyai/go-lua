@@ -3,7 +3,7 @@ package analysis
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/composite"
+	"github.com/wippyai/go-lua/domain/composite"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 )
 

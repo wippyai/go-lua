@@ -7,28 +7,25 @@ import (
 )
 
 func TestEnvironmentBaselinePreservesUnrelatedFactorSlots(t *testing.T) {
-	_, whole, composition, operations, initial := contributionFixture(t, 2)
+	_, whole, composition, operations, _ := contributionFixture(t, 2)
 	plan, ok := composition.SealContribution(0, []shape.Slot{0}, nil, false, true)
 	if !ok {
 		t.Fatal("environment plan")
 	}
+	environmentPlan, ok := composition.SealContribution(0, []shape.Slot{0, 1}, nil, false)
+	if !ok {
+		t.Fatal("environment publication plan")
+	}
 	work := mustWork(t, composition)
-	leftPatch := contributionPatch(t, work, operations[0], initial, 0, 2)
-	rightPatch := contributionPatch(t, work, operations[1], initial, 1, 2)
-	environmentState, _, ok := work.Commit(initial, []Patch{leftPatch, rightPatch})
-	if !ok {
-		t.Fatal("environment state")
-	}
-	environment, ok := work.EmptyContribution(environmentState)
-	if !ok {
-		t.Fatal("environment contribution")
-	}
-	base, ok := work.BeginContribution(plan, composition.Scope(), nil, whole, environment)
+	environment := contributionWrittenPoint(t, work, environmentPlan, composition.Scope(), whole,
+		contributionSlotWrite{operation: operations[0], slot: 0, root: 2},
+		contributionSlotWrite{operation: operations[1], slot: 1, root: 2})
+	base, ok := work.BeginRuleContribution(plan, composition.Scope(), nil, whole, environment)
 	if !ok {
 		t.Fatal("environment base")
 	}
 	patch := contributionPatch(t, work, operations[0], base.State(), 0, 2)
-	next, ok := work.FinishContribution(base, []Patch{patch})
+	next, ok := work.FinishRuleContribution(base, []Patch{patch})
 	if !ok {
 		t.Fatal("environment finish")
 	}
@@ -48,7 +45,7 @@ func TestEnvironmentBaselineRequiresSeparateEnvironmentContribution(t *testing.T
 		t.Fatal("environment plan")
 	}
 	work := mustWork(t, composition)
-	if _, began := work.BeginContribution(plan, composition.Scope(), nil, whole); began {
+	if _, began := work.BeginRuleContribution(plan, composition.Scope(), nil, whole); began {
 		t.Fatal("environment plan accepted missing environment input")
 	}
 }

@@ -214,58 +214,58 @@ func copyTargetInput(value BatchInput) Input {
 	return BoundaryInput(value.Source, value.Target, value.Provenance, value.Pre, value.Reindex, value.Post)
 }
 
-func (batch *Batch) sealTargetRowsWithFailure() BatchSealFailure {
+func (batch *Batch) sealTargetRowsWithFailure() SealFailure {
 	if batch == nil || !batch.Sealed() || batch.targets.sealed {
 		if batch != nil && batch.targets.sealed {
-			return BatchSealFailureNone
+			return SealFailure{}
 		}
-		return BatchSealFailureTargetState
+		return sealRefused(SealFailureFamilySource, "target-state")
 	}
 	for _, rule := range batch.targets.rules {
 		if !batch.ownsOccurrence(rule.Occurrence) || !batch.ownsOperand(rule.Operand) || !rule.Operand.Occurrence().Same(rule.Occurrence) {
-			return BatchSealFailureTargetRule
+			return sealRefused(SealFailureFamilySource, "target-rule")
 		}
 	}
 	for _, input := range batch.targets.inputs {
 		if !copyTargetInput(input).Available() {
-			return BatchSealFailureTargetInput
+			return sealRefused(SealFailureFamilySource, "target-input")
 		}
 	}
 	for _, group := range batch.targets.groups {
 		if !validTargetMembers(group.Members) {
-			return BatchSealFailureTargetGroup
+			return sealRefused(SealFailureFamilySource, "target-group")
 		}
 		for _, input := range group.Inputs {
 			if !copyTargetInput(input).Available() {
-				return BatchSealFailureTargetGroupInput
+				return sealRefused(SealFailureFamilySource, "target-group-input")
 			}
 		}
 		if group.EnvironmentInput != nil && !copyTargetInput(*group.EnvironmentInput).Available() {
-			return BatchSealFailureTargetEnvironmentInput
+			return sealRefused(SealFailureFamilySource, "target-environment-input")
 		}
 	}
 	for _, edge := range batch.targets.factorEdges {
 		if !edge.Factor.Available() || !copyTargetInput(edge.Input).Available() {
-			return BatchSealFailureTargetFactorEdge
+			return sealRefused(SealFailureFamilySource, "target-factor-edge")
 		}
 	}
 	for _, edge := range batch.targets.environment {
 		if !copyTargetInput(edge.Input).Available() {
-			return BatchSealFailureTargetEnvironmentEdge
+			return sealRefused(SealFailureFamilySource, "target-environment-edge")
 		}
 	}
 	for _, value := range batch.targets.summaries {
 		if !validSummaryMapping(value) {
-			return BatchSealFailureTargetSummary
+			return sealRefused(SealFailureFamilySource, "target-summary")
 		}
 	}
 	for _, value := range batch.targets.weakTargets {
 		if !validWeakTargetMapping(value) {
-			return BatchSealFailureTargetWeak
+			return sealRefused(SealFailureFamilySource, "target-weak")
 		}
 	}
 	batch.targets.sealed = true
-	return BatchSealFailureNone
+	return SealFailure{}
 }
 
 func (batch *Batch) TargetMetadataRows() ([]SummaryMapping, []WeakTargetMapping, bool) {

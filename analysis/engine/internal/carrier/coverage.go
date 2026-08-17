@@ -106,14 +106,6 @@ func (work *Work) admittedContribution(contribution Contribution) bool {
 	return coverage.composition == work.composition && (len(coverage.slots) == 0 || len(coverage.slots) == work.composition.Count())
 }
 
-// OwnsAdmittedContribution is the exported internal owner fence used by the
-// runtime when a Contribution already crossed this exact Work. It is kept
-// separate from OwnsContribution, whose historical signature proves a live
-// ContributionBase and its callback inputs.
-func (work *Work) OwnsAdmittedContribution(contribution Contribution) bool {
-	return work.admittedContribution(contribution)
-}
-
 // admitContribution attaches the Work-local seal only after the existing
 // state/coverage validator succeeds. Every carrier construction route goes
 // through this helper so an unsealed or malformed internal value cannot enter
@@ -552,39 +544,6 @@ func slotCoverageContains(super, sub slotCoverage) bool {
 	return subIndex == len(sub.targets)
 }
 
-func (work *Work) mergeCoverage(left, right contributionCoverage, within support.Mask) (contributionCoverage, bool) {
-	if !work.live() || left.composition != work.composition || right.composition != work.composition || !within.Valid() {
-		return contributionCoverage{}, false
-	}
-	count := work.composition.Count()
-	result := contributionCoverage{composition: work.composition, slots: make([]slotCoverage, count)}
-	nonempty := false
-	for position := 0; position < count; position++ {
-		var leftSlot, rightSlot slotCoverage
-		if len(left.slots) != 0 {
-			leftSlot = left.slots[position]
-		}
-		if len(right.slots) != 0 {
-			rightSlot = right.slots[position]
-		}
-		merged, ok := work.mergeSlotCoverage(leftSlot, rightSlot, within)
-		if !ok {
-			return contributionCoverage{}, false
-		}
-		result.slots[position] = merged
-		nonempty = nonempty || len(merged.targets) != 0
-	}
-	if !nonempty {
-		result.slots = nil
-	}
-	return result, true
-}
-
-func (work *Work) restrictCoverage(input contributionCoverage, within support.Mask) (contributionCoverage, bool) {
-	empty := contributionCoverage{composition: work.composition}
-	return work.mergeCoverage(input, empty, within)
-}
-
 // EqualContribution compares closed contributions in the lifted authored
 // algebra.  Target rows are deliberately compared by their typed extensional
 // presence/value semantics rather than by their private generator spelling:
@@ -957,24 +916,13 @@ func (composition *Composition) OwnsCoverageChangeSet(set CoverageChangeSet) boo
 	return composition != nil && set.composition == composition
 }
 
-// CoverageWakeChanges derives only the slot/guard projection consumed by
-// Demand. It deliberately does not retain Target rows: those are needed only
-// when an environment edge later asks for an exact sparse transport delta.
-func (work *Work) CoverageWakeChanges(left, right Contribution) (CoverageChangeSet, bool) {
-	return work.coverageChanges(left, right, false)
-}
-
 // CoverageChanges derives both the slot/guard wake projection and the exact
 // Target-local delta used by sparse structural transport.
 func (work *Work) CoverageChanges(left, right Contribution) (CoverageChangeSet, bool) {
-	return work.coverageChanges(left, right, true)
-}
-
-func (work *Work) coverageChanges(left, right Contribution, retainTargets bool) (CoverageChangeSet, bool) {
 	if !work.live() || !work.admittedContribution(left) || !work.admittedContribution(right) || left.coverage.composition != work.composition || right.coverage.composition != work.composition {
 		return CoverageChangeSet{}, false
 	}
-	return work.coverageChangesSurface(left.coverage, right.coverage, retainTargets)
+	return work.coverageChangesSurface(left.coverage, right.coverage, true)
 }
 
 // coverageChangesSurface derives one Target-local delta from two private

@@ -3,7 +3,7 @@ package project
 import (
 	"testing"
 
-	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
+	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/target"

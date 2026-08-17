@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/schema/denominator"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 )
 
@@ -337,7 +338,7 @@ type Contract struct {
 	initialMetatables  []initialMetatableAttachmentRow
 	globalEnvRoot      InitialRoot
 	initialAbsent      InitialValue
-	sourceViews        SourceViews
+	counts             denominator.CountRows
 	// semantic identity columns are sealed with the contract.  They are not a
 	// second graph authority: each row is a cached canonical descriptor owned
 	// by Target and indexed only by the existing dense Target tables.

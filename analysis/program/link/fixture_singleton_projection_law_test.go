@@ -7,8 +7,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/internal/testfixture"
-	"github.com/wippyai/go-lua/analysis/library/lualib/targetprofile"
+	"github.com/wippyai/go-lua/internal/testfixture"
+	"github.com/wippyai/go-lua/analysis/targetprofile"
 )
 
 // loadFixtureCorpus enumerates the checked-in corpus once per package run. The

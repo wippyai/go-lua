@@ -6,7 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis"
 	"github.com/wippyai/go-lua/analysis/engine"
-	profile "github.com/wippyai/go-lua/analysis/library/lualib/targetprofile"
+	profile "github.com/wippyai/go-lua/analysis/targetprofile"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"

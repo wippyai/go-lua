@@ -319,21 +319,6 @@ func sameContributionInput(left, right contributionInput) bool {
 	return sameState(left.state, right.state) && sameContributionCoverage(left.coverage, right.coverage)
 }
 
-// OwnsContribution proves this Work owns the exact still-live group base and
-// that every legacy closed source is the one used to construct it.
-func (work *Work) OwnsContribution(base ContributionBase, inputs []Contribution) bool {
-	if !work.ownsContributionBase(base.value) || len(inputs) != len(base.value.inputs) {
-		return false
-	}
-	for index := range inputs {
-		input, ok := work.contributionInputFromContribution(inputs[index])
-		if !ok || !sameContributionInput(input, base.value.inputs[index]) {
-			return false
-		}
-	}
-	return true
-}
-
 // OwnsRuleContributionBase proves this Work owns a nominal PointState-input
 // base and the exact paired PointState headers which opened it. It prevents a
 // sibling Rule from substituting an equal-looking raw State or dropping C.
@@ -355,7 +340,12 @@ func (work *Work) OwnsRuleContributionBase(base RuleContributionBase, inputs []P
 	return true
 }
 
-func (work *Work) ownsContributionStates(owner *contributionBase, inputs []State) bool {
+// OwnsRuleContributionStates validates the semantic input vector passed to Rule
+// callbacks against the exact paired inputs used to open base. Coverage never
+// crosses the typed callback surface, but it remains retained by base for the
+// sole Finish carry publication.
+func (work *Work) OwnsRuleContributionStates(base RuleContributionBase, inputs []State) bool {
+	owner := base.value
 	if !work.ownsContributionBase(owner) || len(inputs) != len(owner.inputs) {
 		return false
 	}
@@ -365,20 +355,6 @@ func (work *Work) ownsContributionStates(owner *contributionBase, inputs []State
 		}
 	}
 	return true
-}
-
-// OwnsContributionStates validates the semantic input vector passed to Rule
-// callbacks against the exact paired inputs used to open base. Coverage never
-// crosses the typed callback surface, but it remains retained by base for the
-// sole Finish carry publication.
-func (work *Work) OwnsContributionStates(base ContributionBase, inputs []State) bool {
-	return work.ownsContributionStates(base.value, inputs)
-}
-
-// OwnsRuleContributionStates is the nominal PointState-input counterpart of
-// OwnsContributionStates. Rule callbacks retain the same []State surface.
-func (work *Work) OwnsRuleContributionStates(base RuleContributionBase, inputs []State) bool {
-	return work.ownsContributionStates(base.value, inputs)
 }
 
 // FinishContribution admits the group’s already accepted patches at the sole

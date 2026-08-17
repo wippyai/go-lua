@@ -6,7 +6,8 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/program/relations"
+	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/denominator"
 )
 
 func TestGeneratedEvidenceIsCurrent(t *testing.T) {
@@ -38,35 +39,49 @@ func TestCanonicalIsDetachedAndAgreesWithCurrentGeneratedEvidence(t *testing.T) 
 	}
 }
 
-func TestEvidenceRejectsMissingDuplicateAndUnknownRows(t *testing.T) {
-	schema, err := relations.CanonicalSchema()
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestEvidenceRejectsMissingDuplicateUnknownAndReorderedRows(t *testing.T) {
 	evidence, err := Build()
 	if err != nil {
 		t.Fatal(err)
 	}
+	entries := denominator.GeneratedRelationEntries()
 	cases := []struct {
 		name   string
 		mutate func(*Evidence)
 	}{
-		{name: "missing", mutate: func(e *Evidence) { e.Rows = append([]Row(nil), e.Rows[1:]...) }},
-		{name: "duplicate", mutate: func(e *Evidence) { e.Rows = append(e.Rows, e.Rows[0]) }},
-		{name: "unknown", mutate: func(e *Evidence) {
-			e.Rows = append(e.Rows, Row{Output: "TargetContract@-", Owner: relations.OwnerProgramFlow})
+		{"missing", func(e *Evidence) { e.Rows = e.Rows[1:] }},
+		{"duplicate", func(e *Evidence) { e.Rows = append(e.Rows, e.Rows[0]) }},
+		{"unknown", func(e *Evidence) {
+			e.Rows = append(e.Rows, Row{Relation: schema.EntryID{}, Owner: denominator.RelationOwnerProgramFlow})
 		}},
-		{name: "reordered", mutate: func(e *Evidence) { e.Rows[0], e.Rows[1] = e.Rows[1], e.Rows[0] }},
+		{"reordered", func(e *Evidence) { e.Rows[0], e.Rows[1] = e.Rows[1], e.Rows[0] }},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			changed := Evidence{SchemaDigest: evidence.SchemaDigest, Rows: append([]Row(nil), evidence.Rows...)}
+			changed := clone(evidence)
 			test.mutate(&changed)
 			changed.Digest = digest(changed)
-			if err := changed.Validate(schema); err == nil {
+			if err := changed.Validate(entries); err == nil {
 				t.Fatal("invalid Program output-owner evidence was accepted")
 			}
 		})
+	}
+}
+
+func TestEveryProgramRelationHasItsDeclaredOwner(t *testing.T) {
+	evidence, err := Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := make(map[schema.EntryID]*denominator.RelationEntry)
+	for _, entry := range denominator.GeneratedRelationEntries() {
+		byID[entry.ID()] = entry
+	}
+	for _, row := range evidence.Rows {
+		entry := byID[row.Relation]
+		if entry == nil || entry.Owner() != row.Owner {
+			t.Fatalf("output owner row %#v is not sourced from denominator", row)
+		}
 	}
 }
 

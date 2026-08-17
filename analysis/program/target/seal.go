@@ -136,10 +136,10 @@ func Seal(spec *Spec) (*Contract, error) {
 	// Content identity is available only after every immutable table and its
 	// derived lookup authority has been completely assembled.
 	contract.sealed = true
-	sourceViews, viewsOK := buildTargetSourceViews(contract)
-	if !viewsOK {
-		return nil, errors.New("target: unavailable semantic-source rows")
+	counts, countsErr := contract.buildCountRows()
+	if countsErr != nil {
+		return nil, countsErr
 	}
-	contract.sourceViews = sourceViews
+	contract.counts = counts
 	return contract, nil
 }

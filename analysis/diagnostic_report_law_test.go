@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/composite"
-	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
+	"github.com/wippyai/go-lua/domain/composite"
+	valuedomain "github.com/wippyai/go-lua/domain/value"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/diagnostic"

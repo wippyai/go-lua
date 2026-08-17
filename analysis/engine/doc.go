@@ -1,5 +1,8 @@
-// doc.go is the package file map: it names the twelve planes of the engine and
-// the files that belong to each one. The package doc itself lives with the
+// doc.go is the package file map: it names the ten planes of the engine, the one
+// shared leaf vocabulary, the subpackages, and the files that belong to each. A
+// file's plane is the plane its measured couplings point at: the map states
+// where a file's declarations are consumed and which plane's declarations it
+// consumes, not where its name sorts. The package doc itself lives with the
 // semantic key declaration.
 //
 // # Declaration plane
@@ -12,10 +15,6 @@
 //	factor.go             Factor measure, algebra and transition witness
 //	rule.go               typed positional Read and Rule capabilities
 //	rule_operand.go       the synthetic operand engine laws declare against
-//	rule_surface.go       binding-surface value constructors
-//	rule_capability.go    declaration-time Rule slot capability machinery
-//	selector.go           the row-local SelectorContext capability
-//	exact_ref.go          the private factor-coordinate projection
 //	operand_entity.go     the opaque equation-owned content identity
 //	framed_identity.go    canonical framed preimages for engine identities
 //	semantic_key.go       the one-way conversion to the cold canonical key
@@ -35,6 +34,9 @@
 //	schema_activation_binding.go the Link-local activation implementation half
 //	schema_query_binding.go      the query binding cells and sealed implementations
 //	schema_query_runtime.go      the common solver query implementation
+//	rule_capability.go           declaration-time Rule slot capability machinery
+//	rule_surface.go              binding-surface value constructors
+//	exact_ref.go                 the private factor-coordinate projection
 //
 // # Runtime assembly plane
 //
@@ -49,7 +51,6 @@
 //	runtime_member.go          the Rule and activation members and their geometry
 //	runtime_regions.go         static dependency edges, region binding, demand membership
 //	runtime_reindex.go         the immutable lowering of every equation reindex
-//	runtime_selected_overlay.go the stale-fenced structural overlay
 //
 // # Solve loop plane
 //
@@ -62,6 +63,8 @@
 //	runtime_point_fold.go       producer inputs, Rule evaluation, fold term algebra
 //	runtime_point_refresh.go    point publication and refresh
 //	runtime_region_interface.go region right-hand sides, interface refresh, restart, settlement
+//	runtime_selected_overlay.go the stale-fenced structural overlay
+//	runtime_diagnostics.go      the solve-local aggregate diagnostics
 //
 // # Execution frame plane
 //
@@ -71,6 +74,7 @@
 //	runtime_read.go   typed and staged read runtimes, selection sessions, materialization
 //	runtime_output.go output access, typed staging, carry transform, patch accept
 //	runtime_rule.go   the bound Rule, its execution and its derivation
+//	selector.go       the row-local SelectorContext capability
 //
 // # Admission plane
 //
@@ -99,13 +103,14 @@
 //
 //	state.go one completed immutable Solver result
 //
-// # Diagnostics plane
+// # Failure vocabulary
 //
-// Solve-local aggregates and the failure boundary they name. Advisory tiers are
-// config-gated, never removed.
+// One leaf shared by the solve loop, activation and receipt compilation: the
+// reason a solve refused, the boundary that named it, and the published report.
+// It belongs to no plane because it declares nothing about any plane's
+// machinery. Advisory tiers are config-gated, never removed.
 //
-//	runtime_diagnostics.go the solve-local aggregate diagnostics
-//	solve_report.go        the failure reason and the solve report
+//	solve_report.go the failure reason, the solve boundary and the solve report
 //
 // # Condemned compile plane
 //

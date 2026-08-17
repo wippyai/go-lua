@@ -5,9 +5,9 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/internal/testfixture"
+	"github.com/wippyai/go-lua/internal/testfixture"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/analysis/library/lualib/targetprofile"
+	"github.com/wippyai/go-lua/analysis/targetprofile"
 )
 
 // continuationFixtureCorpus loads the checked-in fixture corpus for one test.

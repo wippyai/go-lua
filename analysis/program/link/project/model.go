@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/schema/denominator"
 )
 
 // Module is one authored source module. Build establishes its canonical
@@ -38,9 +39,9 @@ type authority struct {
 	// target is retained as the exact immutable Target authority.  A digest
 	// alone cannot fence same-ordinal Target coordinates from another
 	// contract, while Project's ForTarget/ForInitial mappings need that fence.
-	target      *target.Contract
-	contentID   identity.ContentID
-	sourceViews SourceViews
+	target    *target.Contract
+	contentID identity.ContentID
+	counts    denominator.CountRows
 	// mountContentID and applicationContentID are relation-local semantic
 	// digests.  They deliberately exclude the enclosing Link identity (and,
 	// for mounts/applications, the unrelated Target/dependent relations), so
@@ -156,9 +157,9 @@ type Bases struct {
 type Cold struct {
 	targetID  identity.ContentID
 	contentID identity.ContentID
-	// sourceViews is the detached owner-bound source rows. It contains
-	// only typed row identities and the exact Project owner identity.
-	sourceViews SourceViews
+	// counts is the detached, schema-addressed Project denominator state.
+	// It contains no row digest, token, or wrapper.
+	counts denominator.CountRows
 	// draft is a construction-only lifecycle fence. It is not a semantic
 	// authority or a Program pointer and is nil on Component snapshots.
 	fence *draftFence

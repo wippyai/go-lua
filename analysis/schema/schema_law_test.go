@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/internal/framing"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 // scratchEntry is one anonymous row of a stand-in surface. The root reads an

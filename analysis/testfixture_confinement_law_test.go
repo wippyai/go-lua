@@ -18,7 +18,7 @@ import (
 // to the import path's convention.
 
 const (
-	testfixtureConfinementPackage = "github.com/wippyai/go-lua/analysis/internal/testfixture"
+	testfixtureConfinementPackage = "github.com/wippyai/go-lua/internal/testfixture"
 	testfixtureConfinementOwner   = "analysis/internal/testfixture"
 	testfixtureConfinementLegacy  = "__legacy"
 )

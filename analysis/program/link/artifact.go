@@ -6,7 +6,7 @@ import (
 	"fmt"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/internal/framing"
+	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/program"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"

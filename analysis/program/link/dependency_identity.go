@@ -7,7 +7,7 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/internal/framing"
+	"github.com/wippyai/go-lua/internal/framing"
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
 	linkmodule "github.com/wippyai/go-lua/analysis/program/link/module"
 	linkstatic "github.com/wippyai/go-lua/analysis/program/link/static"

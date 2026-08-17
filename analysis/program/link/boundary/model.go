@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/link/internal/radix"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/schema/denominator"
 )
 
 // Input is the complete construction boundary for the topology component.
@@ -100,7 +101,7 @@ type authority struct {
 	seedTable      *seedTable
 	moduleRelation identity.ContentID
 	content        identity.ContentID
-	sourceViews    SourceViews
+	countRows      denominator.CountRows
 }
 
 type valueTable struct {

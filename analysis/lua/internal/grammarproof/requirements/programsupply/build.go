@@ -8,13 +8,13 @@ import (
 	"reflect"
 	"sort"
 
-	"github.com/wippyai/go-lua/analysis/internal/framing"
+	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/binder"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/programlaw"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/staticlaw"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
-	"github.com/wippyai/go-lua/analysis/program/relations"
-	"github.com/wippyai/go-lua/analysis/program/semanticsource"
+	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/denominator"
 )
 
 const (
@@ -26,18 +26,15 @@ const (
 	binderRecord  = 3
 )
 
-// Build derives exact terminal tokens from the canonical relation schema and
-// the three independently owned closed law denominators.
+// Build derives exact terminal IDs from the one generated denominator
+// catalog and the three independently owned closed law denominators.
 func Build() (Evidence, error) {
-	schema, err := relations.CanonicalSchema()
-	if err != nil {
-		return Evidence{}, fmt.Errorf("Program supply: canonical schema: %w", err)
-	}
-	evidence, err := expected(schema)
+	entries := denominator.GeneratedRelationEntries()
+	evidence, err := expected(entries)
 	if err != nil {
 		return Evidence{}, err
 	}
-	if err := evidence.Validate(schema); err != nil {
+	if err := evidence.Validate(entries); err != nil {
 		return Evidence{}, err
 	}
 	return evidence, nil
@@ -45,23 +42,17 @@ func Build() (Evidence, error) {
 
 // Current validates and returns a detached copy of the generated evidence.
 func Current() (Evidence, error) {
-	schema, err := relations.CanonicalSchema()
-	if err != nil {
-		return Evidence{}, fmt.Errorf("Program supply: canonical schema: %w", err)
-	}
-	if err := Generated.Validate(schema); err != nil {
+	entries := denominator.GeneratedRelationEntries()
+	if err := Generated.Validate(entries); err != nil {
 		return Evidence{}, err
 	}
 	return clone(Generated), nil
 }
 
-// Validate rejects every stale, missing, extra, reordered, mistagged,
-// wrong-terminal, and wrong-polarity row against the live canonical schema.
-func (e Evidence) Validate(schema *relations.Schema) error {
-	if schema == nil || e.SchemaDigest != schema.Digest().String() {
-		return fmt.Errorf("Program supply: stale relation schema")
-	}
-	want, err := expected(schema)
+// Validate rejects every stale, missing, extra, reordered, wrong-terminal,
+// and wrong-polarity row against the live generated denominator catalog.
+func (e Evidence) Validate(entries []*denominator.RelationEntry) error {
+	want, err := expected(entries)
 	if err != nil {
 		return err
 	}
@@ -83,7 +74,6 @@ func (e Evidence) Validate(schema *relations.Schema) error {
 }
 
 // Canonical returns the detached package-owned bytes whose SHA-256 is Digest.
-// It returns nil when fixed-width identity material is malformed.
 func (e Evidence) Canonical() []byte {
 	encoded, err := canonicalEvidence(e)
 	if err != nil {
@@ -93,76 +83,92 @@ func (e Evidence) Canonical() []byte {
 }
 
 // Closure derives a cycle-safe transitive parent closure, including the exact
-// terminal relations themselves. No owner, form, or closure row is persisted.
-func Closure(schema *relations.Schema, terminals []Reference) ([]Output, error) {
-	if schema == nil || len(terminals) == 0 {
+// terminal relations themselves. Owner and form are read from the generated
+// denominator entries; no parallel relation projection is persisted.
+func Closure(entries []*denominator.RelationEntry, terminals []schema.EntryID) ([]Output, error) {
+	if len(entries) == 0 || len(terminals) == 0 {
 		return nil, fmt.Errorf("Program supply: empty terminal closure")
 	}
-	rows := schema.Rows()
-	byReference := make(map[Reference]relations.Row, len(rows))
-	byToken := make(map[semanticsource.Token]relations.Row, len(rows))
-	for _, row := range rows {
-		ref := reference(row.Definition.Token())
-		byReference[ref] = row
-		byToken[row.Definition.Token()] = row
-	}
-	stack := make([]semanticsource.Token, 0, len(terminals))
-	for _, terminal := range terminals {
-		row, ok := byReference[terminal]
-		if !ok {
-			return nil, fmt.Errorf("Program supply: unknown terminal reference")
+	byID := make(map[schema.EntryID]*denominator.RelationEntry, len(entries))
+	for _, entry := range entries {
+		if entry == nil || !entry.ID().Available() {
+			return nil, fmt.Errorf("Program supply: malformed denominator entry")
 		}
-		stack = append(stack, row.Definition.Token())
+		byID[entry.ID()] = entry
 	}
-	seen := make(map[semanticsource.Token]bool, len(stack))
+	stack := append([]schema.EntryID(nil), terminals...)
+	seen := make(map[schema.EntryID]bool, len(stack))
 	for len(stack) != 0 {
 		last := len(stack) - 1
-		token := stack[last]
+		id := stack[last]
 		stack = stack[:last]
-		if seen[token] {
+		if seen[id] {
 			continue
 		}
-		row, ok := byToken[token]
-		if !ok || row.Owner < relations.OwnerProgramSource || row.Owner > relations.OwnerProgramModule {
+		entry, ok := byID[id]
+		if !ok {
+			return nil, fmt.Errorf("Program supply: unknown terminal ID")
+		}
+		if owner := entry.Owner(); owner < denominator.RelationOwnerProgramSource || owner > denominator.RelationOwnerProgramModule {
 			return nil, fmt.Errorf("Program supply: terminal closure escaped Program ownership")
 		}
-		seen[token] = true
-		stack = append(stack, row.Parents...)
+		seen[id] = true
+		stack = append(stack, entry.Parents()...)
 	}
 	result := make([]Output, 0, len(seen))
-	for token := range seen {
-		row := byToken[token]
-		result = append(result, Output{Relation: reference(token), Owner: row.Owner, Form: row.Form})
+	for id := range seen {
+		entry := byID[id]
+		result = append(result, Output{Relation: id, Owner: entry.Owner(), Form: entry.Form()})
 	}
 	sort.Slice(result, func(left, right int) bool { return less(result[left].Relation, result[right].Relation) })
 	return result, nil
 }
 
-func expected(schema *relations.Schema) (Evidence, error) {
-	if schema == nil {
-		return Evidence{}, fmt.Errorf("Program supply: nil canonical schema")
+const (
+	programFlowOperators          = schema.Key("ProgramFlowOperators@-")
+	programFlowUnaryNumeric       = schema.Key("ProgramFlowOperators@ProgramFlowUnaryNumeric")
+	programFlowLength             = schema.Key("ProgramFlowOperators@ProgramFlowLength")
+	programFlowArithmetic         = schema.Key("ProgramFlowOperators@ProgramFlowArithmetic")
+	programFlowConcat             = schema.Key("ProgramFlowOperators@ProgramFlowConcat")
+	programFlowBitwise            = schema.Key("ProgramFlowOperators@ProgramFlowBitwise")
+	programFlowEquality           = schema.Key("ProgramFlowOperators@ProgramFlowEquality")
+	programFlowOrder              = schema.Key("ProgramFlowOperators@ProgramFlowOrder")
+	programFlowCall               = schema.Key("ProgramFlowCall@-")
+	programFlowValues             = schema.Key("ProgramFlowValues@-")
+	programFlowOutcome            = schema.Key("ProgramFlowOutcome@-")
+	programFlowTypeValue          = schema.Key("ProgramFlowTypeValue@-")
+	programStatic                 = schema.Key("ProgramStatic@-")
+	programStaticTypeRef          = schema.Key("ProgramStatic@ProgramStaticTypeRef")
+	programStaticFunctionContract = schema.Key("ProgramStatic@ProgramStaticFunctionContract")
+	programStaticClaimTarget      = schema.Key("ProgramStatic@ProgramStaticClaimTarget")
+	programStaticTypeValueTarget  = schema.Key("ProgramStatic@ProgramStaticTypeValueTarget")
+	programStaticTypeof           = schema.Key("ProgramStatic@ProgramStaticTypeof")
+	programStaticAnnotation       = schema.Key("ProgramStatic@ProgramStaticAnnotation")
+	programStaticPublication      = schema.Key("ProgramStatic@ProgramStaticPublication")
+	programModuleImport           = schema.Key("ProgramModuleImport@-")
+)
+
+func expected(entries []*denominator.RelationEntry) (Evidence, error) {
+	if len(entries) == 0 {
+		return Evidence{}, fmt.Errorf("Program supply: empty generated denominator catalog")
 	}
-	resolve := func(origin semanticsource.Origin, facet semanticsource.Facet) (Reference, error) {
-		for _, row := range schema.Rows() {
-			token := row.Definition.Token()
-			if token.Origin() == origin && token.Facet() == facet {
-				return reference(token), nil
+	resolve := func(key schema.Key) (schema.EntryID, error) {
+		for _, entry := range entries {
+			if entry != nil && entry.Key() == key {
+				return entry.ID(), nil
 			}
 		}
-		return Reference{}, fmt.Errorf("Program supply: canonical terminal is absent")
+		return schema.EntryID{}, fmt.Errorf("Program supply: canonical terminal %q is absent", key)
 	}
-	type selector struct {
-		origin semanticsource.Origin
-		facet  semanticsource.Facet
-	}
-	terminals := func(selectors ...selector) ([]Reference, error) {
-		result := make([]Reference, 0, len(selectors))
+	type selector struct{ key schema.Key }
+	terminals := func(selectors ...selector) ([]schema.EntryID, error) {
+		result := make([]schema.EntryID, 0, len(selectors))
 		for _, selected := range selectors {
-			item, err := resolve(selected.origin, selected.facet)
+			id, err := resolve(selected.key)
 			if err != nil {
 				return nil, err
 			}
-			result = append(result, item)
+			result = append(result, id)
 		}
 		sort.Slice(result, func(left, right int) bool { return less(result[left], result[right]) })
 		return result, nil
@@ -170,17 +176,15 @@ func expected(schema *relations.Schema) (Evidence, error) {
 
 	programRows := make([]ProgramLawRow, 0, len(programlaw.Requirements()))
 	for _, requirement := range programlaw.Requirements() {
-		selected := selector{origin: semanticsource.OriginProgramFlowOperators}
+		selected := selector{key: programFlowOperators}
 		switch requirement.Site {
 		case programlaw.SiteUnary:
 			switch requirement.Unary {
 			case flowkind.UnaryNeg, flowkind.UnaryBitNot:
-				selected.facet = semanticsource.FacetProgramFlowUnaryNumeric
+				selected.key = programFlowUnaryNumeric
 			case flowkind.UnaryLen:
-				selected.facet = semanticsource.FacetProgramFlowLength
+				selected.key = programFlowLength
 			case flowkind.UnaryNot:
-				// Logical negation is an exact member of the authored Operators
-				// relation. It has no independent semantic source range.
 			default:
 				return Evidence{}, fmt.Errorf("Program supply: unknown unary operator")
 			}
@@ -188,123 +192,100 @@ func expected(schema *relations.Schema) (Evidence, error) {
 			switch requirement.Binary {
 			case flowkind.BinaryAdd, flowkind.BinarySub, flowkind.BinaryMul, flowkind.BinaryDiv,
 				flowkind.BinaryIDiv, flowkind.BinaryMod, flowkind.BinaryPow:
-				selected.facet = semanticsource.FacetProgramFlowArithmetic
+				selected.key = programFlowArithmetic
 			case flowkind.BinaryConcat:
-				selected.facet = semanticsource.FacetProgramFlowConcat
+				selected.key = programFlowConcat
 			case flowkind.BinaryBitAnd, flowkind.BinaryBitOr, flowkind.BinaryBitXor,
 				flowkind.BinaryShiftLeft, flowkind.BinaryShiftRight:
-				selected.facet = semanticsource.FacetProgramFlowBitwise
+				selected.key = programFlowBitwise
 			case flowkind.BinaryEqual, flowkind.BinaryNotEqual:
-				selected.facet = semanticsource.FacetProgramFlowEquality
+				selected.key = programFlowEquality
 			case flowkind.BinaryLess, flowkind.BinaryLessEqual, flowkind.BinaryGreater, flowkind.BinaryGreaterEqual:
-				selected.facet = semanticsource.FacetProgramFlowOrder
+				selected.key = programFlowOrder
 			default:
 				return Evidence{}, fmt.Errorf("Program supply: unknown binary operator")
 			}
 		case programlaw.SiteSelect:
-			// Short-circuit selection is not a parallel "arms" source. Its
-			// control and value branches are one exact Operators relation.
 		case programlaw.SiteCall:
-			selected.origin = semanticsource.OriginProgramFlowCall
+			selected.key = programFlowCall
 		case programlaw.SiteValues:
-			selected.origin = semanticsource.OriginProgramFlowValues
+			selected.key = programFlowValues
 		case programlaw.SiteOutcome:
-			selected.origin = semanticsource.OriginProgramFlowOutcome
+			selected.key = programFlowOutcome
 		default:
 			return Evidence{}, fmt.Errorf("Program supply: unknown Program law site")
 		}
-		terminals, err := terminals(selected)
+		values, err := terminals(selected)
 		if err != nil {
 			return Evidence{}, err
 		}
-		programRows = append(programRows, ProgramLawRow{Requirement: requirement, Terminals: terminals})
+		programRows = append(programRows, ProgramLawRow{Requirement: requirement, Terminals: values})
 	}
 
 	staticRows := make([]StaticLawRow, 0, len(staticlaw.Requirements()))
 	for _, family := range staticlaw.Requirements() {
-		selected := []selector{{origin: semanticsource.OriginProgramStatic}}
+		selected := []selector{{key: programStatic}}
 		switch family {
 		case staticlaw.FamilyTypeRef:
-			selected = []selector{{origin: semanticsource.OriginProgramStatic, facet: semanticsource.FacetProgramStaticTypeRef}}
+			selected = []selector{{key: programStaticTypeRef}}
 		case staticlaw.FamilySignature:
-			selected = []selector{
-				{origin: semanticsource.OriginProgramStatic},
-				{origin: semanticsource.OriginProgramStatic, facet: semanticsource.FacetProgramStaticFunctionContract},
-			}
+			selected = []selector{{key: programStatic}, {key: programStaticFunctionContract}}
 		case staticlaw.FamilyAssertion:
-			selected = []selector{
-				{origin: semanticsource.OriginProgramStatic},
-				{origin: semanticsource.OriginProgramStatic, facet: semanticsource.FacetProgramStaticClaimTarget},
-			}
+			selected = []selector{{key: programStatic}, {key: programStaticClaimTarget}}
 		case staticlaw.FamilyTypeOf:
-			selected = []selector{{origin: semanticsource.OriginProgramStatic, facet: semanticsource.FacetProgramStaticTypeof}}
+			selected = []selector{{key: programStaticTypeof}}
 		case staticlaw.FamilyAnnotated:
-			selected = []selector{{origin: semanticsource.OriginProgramStatic, facet: semanticsource.FacetProgramStaticAnnotation}}
+			selected = []selector{{key: programStaticAnnotation}}
 		case staticlaw.FamilyPrimitive, staticlaw.FamilyLiteral, staticlaw.FamilyOptional,
 			staticlaw.FamilyUnion, staticlaw.FamilyIntersection, staticlaw.FamilyGeneric,
 			staticlaw.FamilyArray, staticlaw.FamilyMap, staticlaw.FamilyRecord,
-			staticlaw.FamilyKeyOf,
-			staticlaw.FamilyIndexAccess, staticlaw.FamilyConditional:
+			staticlaw.FamilyKeyOf, staticlaw.FamilyIndexAccess, staticlaw.FamilyConditional:
 		default:
 			return Evidence{}, fmt.Errorf("Program supply: unknown static law family")
 		}
-		terminals, err := terminals(selected...)
+		values, err := terminals(selected...)
 		if err != nil {
 			return Evidence{}, err
 		}
-		staticRows = append(staticRows, StaticLawRow{Family: family, Terminals: terminals})
+		staticRows = append(staticRows, StaticLawRow{Family: family, Terminals: values})
 	}
 
 	binderRows := make([]BinderRow, 0, len(binder.Required()))
 	for _, requirement := range binder.Required() {
-		selected := []selector{{origin: semanticsource.OriginProgramStatic}}
+		selected := []selector{{key: programStatic}}
 		forbidden := false
 		switch requirement.Transition {
 		case binder.TransitionTypeDeclaration:
 		case binder.TransitionTypeParameter, binder.TransitionUnresolvedTypeReference, binder.TransitionQualifiedTypeRoot:
-			selected = []selector{{origin: semanticsource.OriginProgramStatic, facet: semanticsource.FacetProgramStaticTypeRef}}
+			selected = []selector{{key: programStaticTypeRef}}
 		case binder.TransitionRuntimePrimitive:
-			selected = []selector{
-				{origin: semanticsource.OriginProgramStatic},
-				{origin: semanticsource.OriginProgramStatic, facet: semanticsource.FacetProgramStaticTypeValueTarget},
-			}
+			selected = []selector{{key: programStatic}, {key: programStaticTypeValueTarget}}
 		case binder.TransitionRuntimeDeclaration:
-			selected = []selector{
-				{origin: semanticsource.OriginProgramStatic, facet: semanticsource.FacetProgramStaticTypeValueTarget},
-				{origin: semanticsource.OriginProgramStatic, facet: semanticsource.FacetProgramStaticTypeRef},
-			}
+			selected = []selector{{key: programStaticTypeValueTarget}, {key: programStaticTypeRef}}
 		case binder.TransitionRuntimeShadowRejected:
-			selected = []selector{
-				{origin: semanticsource.OriginProgramFlowTypeValue},
-				{origin: semanticsource.OriginProgramStatic, facet: semanticsource.FacetProgramStaticTypeValueTarget},
-			}
+			selected = []selector{{key: programFlowTypeValue}, {key: programStaticTypeValueTarget}}
 			forbidden = true
 		case binder.TransitionStaticPublicationPair:
-			selected = []selector{{origin: semanticsource.OriginProgramStatic, facet: semanticsource.FacetProgramStaticPublication}}
+			selected = []selector{{key: programStaticPublication}}
 		case binder.TransitionDirectRequireGlobal:
-			selected = []selector{{origin: semanticsource.OriginProgramModuleImport}}
+			selected = []selector{{key: programModuleImport}}
 		default:
 			return Evidence{}, fmt.Errorf("Program supply: unknown binder transition")
 		}
-		terminals, err := terminals(selected...)
+		values, err := terminals(selected...)
 		if err != nil {
 			return Evidence{}, err
 		}
 		row := BinderRow{Requirement: requirement}
 		if forbidden {
-			row.Forbidden = terminals
+			row.Forbidden = values
 		} else {
-			row.Positive = terminals
+			row.Positive = values
 		}
 		binderRows = append(binderRows, row)
 	}
 
-	evidence := Evidence{
-		SchemaDigest: schema.Digest().String(),
-		ProgramLaws:  programRows,
-		StaticLaws:   staticRows,
-		BinderLaws:   binderRows,
-	}
+	evidence := Evidence{ProgramLaws: programRows, StaticLaws: staticRows, BinderLaws: binderRows}
 	digest, err := evidenceDigest(evidence)
 	if err != nil {
 		return Evidence{}, err
@@ -323,16 +304,9 @@ func evidenceDigest(e Evidence) (string, error) {
 }
 
 func canonicalEvidence(e Evidence) ([]byte, error) {
-	schemaDigest, err := hex.DecodeString(e.SchemaDigest)
-	if err != nil || len(schemaDigest) != sha256.Size {
-		return nil, fmt.Errorf("Program supply: malformed schema digest")
-	}
 	var out bytes.Buffer
 	var writer framing.Writer
 	if err := writer.Reset(&out, digestDomain, digestVersion); err != nil {
-		return nil, err
-	}
-	if err := writer.String(e.SchemaDigest); err != nil {
 		return nil, err
 	}
 	if err := writer.Count(uint64(len(e.ProgramLaws))); err != nil {
@@ -347,7 +321,7 @@ func canonicalEvidence(e Evidence) ([]byte, error) {
 				return nil, err
 			}
 		}
-		if err := writeReferences(&writer, row.Terminals); err != nil {
+		if err := writeIDs(&writer, row.Terminals); err != nil {
 			return nil, err
 		}
 	}
@@ -361,7 +335,7 @@ func canonicalEvidence(e Evidence) ([]byte, error) {
 		if err := writer.Uint(uint64(row.Family)); err != nil {
 			return nil, err
 		}
-		if err := writeReferences(&writer, row.Terminals); err != nil {
+		if err := writeIDs(&writer, row.Terminals); err != nil {
 			return nil, err
 		}
 	}
@@ -375,10 +349,10 @@ func canonicalEvidence(e Evidence) ([]byte, error) {
 		if err := writer.Uint(uint64(row.Requirement.Transition)); err != nil {
 			return nil, err
 		}
-		if err := writeReferences(&writer, row.Positive); err != nil {
+		if err := writeIDs(&writer, row.Positive); err != nil {
 			return nil, err
 		}
-		if err := writeReferences(&writer, row.Forbidden); err != nil {
+		if err := writeIDs(&writer, row.Forbidden); err != nil {
 			return nil, err
 		}
 	}
@@ -388,47 +362,38 @@ func canonicalEvidence(e Evidence) ([]byte, error) {
 	return append([]byte(nil), out.Bytes()...), nil
 }
 
-func writeReferences(writer *framing.Writer, references []Reference) error {
-	if err := writer.Count(uint64(len(references))); err != nil {
+func writeIDs(writer *framing.Writer, ids []schema.EntryID) error {
+	if err := writer.Count(uint64(len(ids))); err != nil {
 		return err
 	}
-	for _, item := range references {
-		for _, value := range [...]uint64{uint64(item.Origin), uint64(item.Facet), uint64(item.Revision)} {
-			if err := writer.Uint(value); err != nil {
-				return err
-			}
+	for _, id := range ids {
+		if !id.Available() {
+			return fmt.Errorf("Program supply: malformed EntryID")
+		}
+		if err := writer.Bytes(id[:]); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-func reference(token semanticsource.Token) Reference {
-	return Reference{Origin: token.Origin(), Facet: token.Facet(), Revision: token.Revision()}
-}
-
-func less(left, right Reference) bool {
-	if left.Origin != right.Origin {
-		return left.Origin < right.Origin
-	}
-	if left.Facet != right.Facet {
-		return left.Facet < right.Facet
-	}
-	return left.Revision < right.Revision
+func less(left, right schema.EntryID) bool {
+	return bytes.Compare(left[:], right[:]) < 0
 }
 
 func clone(e Evidence) Evidence {
 	e.ProgramLaws = append([]ProgramLawRow(nil), e.ProgramLaws...)
 	for index := range e.ProgramLaws {
-		e.ProgramLaws[index].Terminals = append([]Reference(nil), e.ProgramLaws[index].Terminals...)
+		e.ProgramLaws[index].Terminals = append([]schema.EntryID(nil), e.ProgramLaws[index].Terminals...)
 	}
 	e.StaticLaws = append([]StaticLawRow(nil), e.StaticLaws...)
 	for index := range e.StaticLaws {
-		e.StaticLaws[index].Terminals = append([]Reference(nil), e.StaticLaws[index].Terminals...)
+		e.StaticLaws[index].Terminals = append([]schema.EntryID(nil), e.StaticLaws[index].Terminals...)
 	}
 	e.BinderLaws = append([]BinderRow(nil), e.BinderLaws...)
 	for index := range e.BinderLaws {
-		e.BinderLaws[index].Positive = append([]Reference(nil), e.BinderLaws[index].Positive...)
-		e.BinderLaws[index].Forbidden = append([]Reference(nil), e.BinderLaws[index].Forbidden...)
+		e.BinderLaws[index].Positive = append([]schema.EntryID(nil), e.BinderLaws[index].Positive...)
+		e.BinderLaws[index].Forbidden = append([]schema.EntryID(nil), e.BinderLaws[index].Forbidden...)
 	}
 	return e
 }

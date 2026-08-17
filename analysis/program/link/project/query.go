@@ -513,9 +513,9 @@ func coldSnapshot(a *authority, fence *draftFence) Cold {
 		return Cold{}
 	}
 	return Cold{
-		targetID:    a.target.ContentID(),
-		contentID:   a.contentID,
-		sourceViews: a.sourceViews,
-		fence:       fence,
+		targetID:  a.target.ContentID(),
+		contentID: a.contentID,
+		counts:    a.counts,
+		fence:     fence,
 	}
 }

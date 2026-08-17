@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 
-	"github.com/wippyai/go-lua/analysis/internal/canonical"
+	"github.com/wippyai/go-lua/internal/canonical"
 )
 
 // FormulaID is the fixed, collision-resistant canonical identity of one

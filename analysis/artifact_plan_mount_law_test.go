@@ -3,7 +3,7 @@ package analysis
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/composite"
+	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/analysis/schema"
 )
 
@@ -18,11 +18,11 @@ import (
 // mountingDomainPackages pairs each factor with the package the root would have
 // to name to build that factor's mount rows and open its seal by hand.
 var mountingDomainPackages = map[schema.Key]string{
-	"value":  "github.com/wippyai/go-lua/analysis/domain/value",
-	"heap":   "github.com/wippyai/go-lua/analysis/domain/heap",
-	"pack":   "github.com/wippyai/go-lua/analysis/domain/pack",
-	"call":   "github.com/wippyai/go-lua/analysis/domain/call",
-	"effect": "github.com/wippyai/go-lua/analysis/domain/effect/factor",
+	"value":  "github.com/wippyai/go-lua/domain/value",
+	"heap":   "github.com/wippyai/go-lua/domain/heap",
+	"pack":   "github.com/wippyai/go-lua/domain/pack",
+	"call":   "github.com/wippyai/go-lua/domain/call",
+	"effect": "github.com/wippyai/go-lua/domain/effect/factor",
 }
 
 // postMountDerivationPackages pairs each post-mount derivation with the package
@@ -30,8 +30,8 @@ var mountingDomainPackages = map[schema.Key]string{
 // authority to mount, so it is derived by the mount phase after every mount has
 // sealed; the root that hands the phase its inputs names neither package.
 var postMountDerivationPackages = map[string]string{
-	"github.com/wippyai/go-lua/analysis/domain/heap/index":      "the receiver-to-root topology",
-	"github.com/wippyai/go-lua/analysis/domain/call/activation": "the mounted activation catalog",
+	"github.com/wippyai/go-lua/domain/heap/index":      "the receiver-to-root topology",
+	"github.com/wippyai/go-lua/domain/call/activation": "the mounted activation catalog",
 }
 
 const artifactPlanSourcePath = "analysis/artifact_plan.go"

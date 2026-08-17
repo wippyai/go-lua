@@ -1,21 +1,22 @@
-// Package outputowners generates the exact Program relation-to-owner evidence
-// from the canonical Program/Target/Link relation schema.
 package outputowners
 
-import "github.com/wippyai/go-lua/analysis/program/relations"
+import (
+	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/denominator"
+)
 
-// Row binds one canonical Program output relation to its sole component owner.
-// Output is the generated catalog name, never a source-spelled approximation.
+// Row binds one canonical Program output relation to its sole component
+// owner. The relation identity is the schema EntryID; its key is recovered
+// only by the generated renderer when a human-readable output is needed.
 type Row struct {
-	Output string
-	Owner  relations.Owner
+	Relation schema.EntryID
+	Owner    denominator.RelationOwner
 }
 
 // Evidence is the generated, canonical Program output-owner denominator.
 type Evidence struct {
-	SchemaDigest string
-	Digest       string
-	Rows         []Row
+	Digest string
+	Rows   []Row
 }
 
 // Generated is assigned by the checked-in generated evidence source.

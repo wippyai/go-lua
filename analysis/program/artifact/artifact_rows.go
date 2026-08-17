@@ -5,12 +5,14 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/schema/denominator"
 )
 
 type Artifact struct {
 	key                    CompileKey
 	id                     identity.ContentID
 	sealed                 identity.ContentID
+	counts                 denominator.CountRows
 	pointAttachments       []PointAttachmentRow
 	points                 []Point
 	environment            []EnvironmentEdge
@@ -258,7 +260,7 @@ func (row HeapIndexRow) ValuesID() identity.ContentID {
 }
 
 func (artifact *Artifact) Available() bool {
-	return artifact != nil && artifact.key.Available() && artifact.id.Available() && artifact.sealed == artifact.id
+	return artifact != nil && artifact.key.Available() && artifact.id.Available() && artifact.counts.Available() && artifact.sealed == artifact.id
 }
 
 func (artifact *Artifact) CompileKey() CompileKey {
@@ -273,6 +275,15 @@ func (artifact *Artifact) ID() identity.ContentID {
 		return identity.ContentID{}
 	}
 	return artifact.id
+}
+
+// CountRows returns the immutable Program denominator rows frozen into this
+// artifact. The rows are keyed by schema EntryID and contain no owner payload.
+func (artifact *Artifact) CountRows() denominator.CountRows {
+	if !artifact.Available() {
+		return denominator.CountRows{}
+	}
+	return artifact.counts
 }
 
 func (artifact *Artifact) PointCount() int {

@@ -7,11 +7,12 @@ import (
 	"fmt"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/internal/framing"
+	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/program/flow"
 	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	"github.com/wippyai/go-lua/analysis/schema/denominator"
 )
 
 // Program is the immutable root of one published canonical owner quartet.
@@ -23,6 +24,7 @@ type Program struct {
 	static *static.Component
 	module *imports.Component
 	id     identity.ContentID
+	counts denominator.CountRows
 }
 
 var (
@@ -68,12 +70,33 @@ func Publish(assembly *flow.Assembly) (*Program, error) {
 	if err != nil {
 		return nil, fmt.Errorf("program: derive root identity: %w", err)
 	}
+	sourceCounts, err := source.CountRows(sourceComponent.View())
+	if err != nil {
+		return nil, err
+	}
+	flowCounts, err := flow.CountRows(flowComponent.View())
+	if err != nil {
+		return nil, err
+	}
+	staticCounts, err := static.CountRows(staticComponent.View())
+	if err != nil {
+		return nil, err
+	}
+	moduleCounts, err := imports.CountRows(moduleComponent.View())
+	if err != nil {
+		return nil, err
+	}
+	counts, err := combineProgramCountRows(sourceCounts, flowCounts, staticCounts, moduleCounts)
+	if err != nil {
+		return nil, err
+	}
 	program := &Program{
 		source: sourceComponent,
 		flow:   flowComponent,
 		static: staticComponent,
 		module: moduleComponent,
 		id:     id,
+		counts: counts,
 	}
 	return program, nil
 }

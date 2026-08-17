@@ -1,6 +1,10 @@
 package factbinding
 
 import (
+	"slices"
+	"sort"
+	"sync/atomic"
+
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/diagram"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/scalar"
@@ -8,9 +12,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 	"github.com/wippyai/go-lua/analysis/engine/internal/guard"
 	"github.com/wippyai/go-lua/analysis/identity"
-	"slices"
-	"sort"
-	"sync/atomic"
 )
 
 const previewRootLimit uint64 = 1<<63 - 1

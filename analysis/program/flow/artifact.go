@@ -3,7 +3,7 @@ package flow
 import (
 	"errors"
 
-	"github.com/wippyai/go-lua/analysis/internal/framing"
+	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
 )
 

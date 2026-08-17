@@ -3,7 +3,7 @@ package analysis
 import (
 	"testing"
 
-	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
+	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/program/target"
 )

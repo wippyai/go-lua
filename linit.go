@@ -1,24 +1,26 @@
 package lua
 
+import "github.com/wippyai/go-lua/stdlib"
+
 const (
 	// BaseLibName is here for consistency; the base functions have no namespace/library.
-	BaseLibName = ""
+	BaseLibName = stdlib.BaseName
 	// LoadLibName is here for consistency; the loading system has no namespace/library.
-	LoadLibName = "package"
+	LoadLibName = stdlib.PackageName
 	// TabLibName is the name of the table Library.
-	TabLibName = "table"
+	TabLibName = stdlib.TableName
 	// StringLibName is the name of the string Library.
-	StringLibName = "string"
+	StringLibName = stdlib.StringName
 	// MathLibName is the name of the math Library.
-	MathLibName = "math"
+	MathLibName = stdlib.MathName
 	// DebugLibName is the name of the debug Library.
-	DebugLibName = "debug"
+	DebugLibName = stdlib.DebugName
 	// CoroutineLibName is the name of the coroutine Library.
-	CoroutineLibName = "coroutine"
+	CoroutineLibName = stdlib.CoroutineName
 	// Utf8LibName is the name of the utf8 Library.
-	Utf8LibName = "utf8"
+	Utf8LibName = stdlib.UTF8Name
 	// ErrorsLibName is the name of the errors Library.
-	ErrorsLibName = "errors"
+	ErrorsLibName = stdlib.ErrorsName
 )
 
 type luaLib struct {
@@ -26,16 +28,31 @@ type luaLib struct {
 	libFunc LGoFunc
 }
 
-var luaLibs = []luaLib{
-	{LoadLibName, OpenPackage},
-	{BaseLibName, OpenBase},
-	{TabLibName, OpenTable},
-	{StringLibName, OpenString},
-	{MathLibName, OpenMath},
-	{DebugLibName, OpenDebug},
-	{CoroutineLibName, OpenCoroutine},
-	{Utf8LibName, OpenUtf8},
-	{ErrorsLibName, OpenErrors},
+var luaLibs = bindStandardLibraryOpeners(map[stdlib.ID]LGoFunc{
+	stdlib.Package:   OpenPackage,
+	stdlib.Base:      OpenBase,
+	stdlib.Table:     OpenTable,
+	stdlib.String:    OpenString,
+	stdlib.Math:      OpenMath,
+	stdlib.Debug:     OpenDebug,
+	stdlib.Coroutine: OpenCoroutine,
+	stdlib.UTF8:      OpenUtf8,
+	stdlib.Errors:    OpenErrors,
+})
+
+func bindStandardLibraryOpeners(openers map[stdlib.ID]LGoFunc) []luaLib {
+	bound, err := stdlib.Bind(openers)
+	if err != nil {
+		panic(err)
+	}
+	libraries := make([]luaLib, 0, len(bound))
+	for _, item := range bound {
+		if item.Value == nil {
+			panic("lua: nil standard-library opener for " + string(item.Library.ID()))
+		}
+		libraries = append(libraries, luaLib{libName: item.Library.Name(), libFunc: item.Value})
+	}
+	return libraries
 }
 
 // OpenLibs loads the built-in libraries. It is equivalent to running OpenLoad,

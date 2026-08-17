@@ -3,7 +3,7 @@ package analysis
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/composite"
+	"github.com/wippyai/go-lua/domain/composite"
 )
 
 // The mount phase rejects one axis's own authority. Which axis that is belongs

@@ -1,8 +1,8 @@
 package analysis
 
 import (
-	"github.com/wippyai/go-lua/analysis/domain/composite"
-	callsite "github.com/wippyai/go-lua/analysis/domain/effect/callsite"
+	"github.com/wippyai/go-lua/domain/composite"
+	callsite "github.com/wippyai/go-lua/domain/effect/callsite"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 )
 

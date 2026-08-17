@@ -2,7 +2,7 @@ package equation
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
-	"github.com/wippyai/go-lua/analysis/internal/canonical"
+	"github.com/wippyai/go-lua/internal/canonical"
 )
 
 // PairLocator is the closed symbolic locator for one dynamic relation. It is

@@ -4,8 +4,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
-	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
+	"github.com/wippyai/go-lua/domain/type/typ"
+	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program"

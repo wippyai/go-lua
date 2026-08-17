@@ -8,7 +8,7 @@ import (
 	"strconv"
 
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof"
-	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/grammar"
+	"github.com/wippyai/go-lua/analysis/lua/parsersource"
 )
 
 // typedRelation is private cold extraction state. Every expression is turned
@@ -48,8 +48,8 @@ type typedAnalyzer struct {
 	builder      *actionTermBuilder
 	scope        *actionTermScope
 	products     map[string]constructorFields
-	declarations map[string]grammar.Declaration
-	types        map[string]grammar.TypeDeclaration
+	declarations map[string]parsersource.Declaration
+	types        map[string]parsersource.TypeDeclaration
 	helpers      map[string]bool
 	forms        map[string]string
 
@@ -74,11 +74,11 @@ type typedAnalyzer struct {
 	err            error
 }
 
-func newTypedAnalyzer(builder *actionTermBuilder, scope *actionTermScope, schema grammar.Schema, helpers map[string]bool, forms map[string]string) *typedAnalyzer {
+func newTypedAnalyzer(builder *actionTermBuilder, scope *actionTermScope, schema parsersource.Schema, helpers map[string]bool, forms map[string]string) *typedAnalyzer {
 	item := &typedAnalyzer{
 		builder: builder, scope: scope, products: schemaConstructorFields(schema), helpers: helpers,
-		declarations: make(map[string]grammar.Declaration, len(schema.Declarations)),
-		types:        make(map[string]grammar.TypeDeclaration, len(schema.Types)), forms: forms,
+		declarations: make(map[string]parsersource.Declaration, len(schema.Declarations)),
+		types:        make(map[string]parsersource.TypeDeclaration, len(schema.Types)), forms: forms,
 		definitions: make(map[string][]goast.Expr), aliases: make(map[string][]string), writes: make(map[string][]indexedWrite),
 		mutations: make(map[string][]indexedMutation), assemblies: make(map[string][]indexedAssembly),
 		callResults: make(map[*goast.CallExpr][]goast.Expr), literalOwner: make(map[*goast.CompositeLit]goast.Expr),
@@ -990,8 +990,8 @@ func negatedGuard(guard Guard) (Guard, error) {
 
 // deriveTypedRelations consumes grammarproof's ephemeral syntax visitors and
 // emits all parser action rows into one ActionTerms arena.
-func deriveTypedRelations(root string, schema grammar.Schema) ([]ProductLaw, []HelperLaw, []SequenceLaw, []FieldMutation, ActionTerms, error) {
-	templates, err := grammarproof.HelperTemplates(root)
+func deriveTypedRelations(root string, schema parsersource.Schema) ([]ProductLaw, []HelperLaw, []SequenceLaw, []FieldMutation, ActionTerms, error) {
+	templates, err := parsersource.HelperTemplates(root)
 	if err != nil {
 		return nil, nil, nil, nil, ActionTerms{}, err
 	}
@@ -1013,7 +1013,7 @@ func deriveTypedRelations(root string, schema grammar.Schema) ([]ProductLaw, []H
 	diagnosticHelpers := 0
 	acceptedReturns := 0
 	rejectRows := 0
-	if err := grammarproof.VisitHelperSyntax(root, func(template grammarproof.HelperTemplate, function *goast.FuncDecl) error {
+	if err := parsersource.VisitHelperSyntax(root, func(template parsersource.HelperTemplate, function *goast.FuncDecl) error {
 		helperSyntax[template.Name] = function
 		formals, formErr := helperFormalNames(function)
 		if formErr != nil {
@@ -1079,7 +1079,7 @@ func deriveTypedRelations(root string, schema grammar.Schema) ([]ProductLaw, []H
 	var productLaws []ProductLaw
 	var sequences []SequenceLaw
 	var mutations []FieldMutation
-	if err := grammarproof.VisitActionSyntax(root, func(template grammarproof.ActionTemplate, block *goast.BlockStmt) error {
+	if err := parsersource.VisitActionSyntax(root, func(template parsersource.ActionTemplate, block *goast.BlockStmt) error {
 		scope := builder.scope(ActionScopeProduction, template.Key, uint16(len(template.RHS)), 1, nil)
 		analyzer := newTypedAnalyzer(builder, &scope, schema, helperNames, make(map[string]string))
 		handled, controlErr := deriveControlledAction(template, block, analyzer)

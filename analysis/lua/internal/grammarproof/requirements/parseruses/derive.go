@@ -5,8 +5,8 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/astcodec"
-	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/grammar"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/parserproducts"
+	"github.com/wippyai/go-lua/analysis/lua/parsersource"
 )
 
 // sequenceIndex validates the one parserproducts-owned sequence authority.
@@ -840,14 +840,14 @@ func carrierIndex(rows []parserproducts.Carrier) (map[string]parserproducts.Carr
 
 func carrierKey(form, field string) string { return form + "\x00" + field }
 
-func useRole(form string, class grammar.ConstructorClass, field, child string) UseRole {
+func useRole(form string, class parsersource.ConstructorClass, field, child string) UseRole {
 	if child == "ValuesAdjustment" {
 		return UseRoleAdjustment
 	}
 	if form == "AssignStmt" && field == "Lhs" {
 		return UseRoleLValue
 	}
-	if class == grammar.ConstructorTypeExpression || child == "TypeExpr" || child == "FunctionParamExpr" || child == "InterfaceMember" {
+	if class == parsersource.ConstructorTypeExpression || child == "TypeExpr" || child == "FunctionParamExpr" || child == "InterfaceMember" {
 		return UseRoleStatic
 	}
 	switch form {

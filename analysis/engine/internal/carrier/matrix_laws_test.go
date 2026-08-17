@@ -25,33 +25,36 @@ func TestCarrierMatrixCarryOnlyProductArity(t *testing.T) {
 				if !ok {
 					t.Fatal("seal carry-only contribution")
 				}
+				anchorWrite, ok := composition.SealContribution(0, []shape.Slot{anchor}, nil, false)
+				if !ok {
+					t.Fatal("seal anchor input publication")
+				}
 				work, ok := composition.NewWork()
 				if !ok {
 					t.Fatal("work")
 				}
-				states := make([]State, inputs)
-				for index := range states {
-					states[index] = initial
+				product := make([]PointState, inputs)
+				for index := range product[:inputs-1] {
+					product[index] = contributionPoint(t, work, initial)
 				}
-				states[inputs-1] = contributionWrite(t, work, operations[int(anchor)], initial, anchor, 2)
-				product := contributionInputs(t, work, states...)
+				product[inputs-1] = contributionWrittenPoint(t, work, anchorWrite, composition.Scope(), whole, contributionSlotWrite{operation: operations[int(anchor)], slot: anchor, root: 2})
 
-				zeroBase, ok := work.BeginContribution(zeroRead, composition.Scope(), product, whole)
+				zeroBase, ok := work.BeginRuleContribution(zeroRead, composition.Scope(), product, whole)
 				if !ok {
 					t.Fatal("begin zero-read contribution")
 				}
-				zeroResult, ok := work.FinishContribution(zeroBase, nil)
-				if !ok || !zeroResult.Valid() || !work.EqualUnder(zeroResult.State(), states[0]) {
+				zeroResult, ok := work.FinishRuleContribution(zeroBase, nil)
+				if !ok || !zeroResult.Valid() || !work.EqualUnder(zeroResult.State(), product[0].State()) {
 					t.Fatal("zero-read contribution did not retain exactly its support input")
 				}
 
-				carryBase, ok := work.BeginContribution(carryOnly, composition.Scope(), product, whole)
+				carryBase, ok := work.BeginRuleContribution(carryOnly, composition.Scope(), product, whole)
 				if !ok {
 					t.Fatal("begin carry-only contribution")
 				}
 				projected := carryBase.State()
 				carried, carriedOK := projected.HandleAt(anchor)
-				inputRoot, inputOK := states[inputs-1].HandleAt(anchor)
+				inputRoot, inputOK := product[inputs-1].HandleAt(anchor)
 				if !carriedOK || !inputOK || carried != inputRoot {
 					t.Fatal("carry-only projection did not retain the declared exact source root")
 				}
@@ -65,7 +68,7 @@ func TestCarrierMatrixCarryOnlyProductArity(t *testing.T) {
 						t.Fatalf("carry-only leaked source slot %d", slot)
 					}
 				}
-				carriedResult, ok := work.FinishContribution(carryBase, nil)
+				carriedResult, ok := work.FinishRuleContribution(carryBase, nil)
 				if !ok || !carriedResult.Valid() {
 					t.Fatal("finish carry-only contribution")
 				}
@@ -88,24 +91,27 @@ func BenchmarkCarrierMatrixCarryOnly(b *testing.B) {
 				if !ok {
 					b.Fatal("seal contribution")
 				}
+				anchorWrite, ok := composition.SealContribution(0, []shape.Slot{anchor}, nil, false)
+				if !ok {
+					b.Fatal("seal anchor input publication")
+				}
 				work, ok := composition.NewWork()
 				if !ok {
 					b.Fatal("work")
 				}
-				states := make([]State, inputs)
-				for index := range states {
-					states[index] = initial
+				product := make([]PointState, inputs)
+				for index := range product[:inputs-1] {
+					product[index] = contributionPoint(b, work, initial)
 				}
-				states[inputs-1] = contributionWrite(b, work, operations[int(anchor)], initial, anchor, 2)
-				product := contributionInputs(b, work, states...)
+				product[inputs-1] = contributionWrittenPoint(b, work, anchorWrite, composition.Scope(), whole, contributionSlotWrite{operation: operations[int(anchor)], slot: anchor, root: 2})
 				b.ReportAllocs()
 				b.ResetTimer()
 				for index := 0; index < b.N; index++ {
-					base, ok := work.BeginContribution(plan, composition.Scope(), product, whole)
+					base, ok := work.BeginRuleContribution(plan, composition.Scope(), product, whole)
 					if !ok {
 						b.Fatal("begin")
 					}
-					result, ok := work.FinishContribution(base, nil)
+					result, ok := work.FinishRuleContribution(base, nil)
 					if !ok || !result.Valid() {
 						b.Fatal("finish")
 					}

@@ -5,14 +5,14 @@ import (
 	goast "go/ast"
 	"sort"
 
-	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof"
+	"github.com/wippyai/go-lua/analysis/lua/parsersource"
 )
 
 // deriveControlledAction owns the parser actions whose semantic relation
 // depends on a branch, range, or parser diagnostic. Generic action indexing
 // intentionally never descends into those paths: each case below names the
 // finite source shape and emits the corresponding guarded rows.
-func deriveControlledAction(template grammarproof.ActionTemplate, block *goast.BlockStmt, analyzer *typedAnalyzer) (bool, error) {
+func deriveControlledAction(template parsersource.ActionTemplate, block *goast.BlockStmt, analyzer *typedAnalyzer) (bool, error) {
 	switch template.Key {
 	case "chunk#1", "chunk#2", "chunk#3":
 		return true, deriveLexerStatementSnapshotControl(block, analyzer)

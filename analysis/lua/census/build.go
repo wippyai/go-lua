@@ -5,8 +5,7 @@ import (
 	goast "go/ast"
 	"sort"
 
-	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof"
-	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/grammar"
+	"github.com/wippyai/go-lua/analysis/lua/parsersource"
 )
 
 // Build derives the complete census from parser.go.y semantic actions and the
@@ -17,7 +16,7 @@ func Build(root string) (Census, error) {
 	if err != nil {
 		return Census{}, err
 	}
-	schema, err := grammar.Discover(root)
+	schema, err := parsersource.Discover(root)
 	if err != nil {
 		return Census{}, fmt.Errorf("parser census: discover AST declarations: %w", err)
 	}
@@ -29,22 +28,36 @@ func Build(root string) (Census, error) {
 	if err != nil {
 		return Census{}, err
 	}
-	grammarDigest, err := grammarproof.ParserSourceDigest(root)
+	grammarDigest, err := parsersource.ParserSourceDigest(root)
 	if err != nil {
 		return Census{}, fmt.Errorf("parser census: digest parser.go.y: %w", err)
 	}
-	astOnly := grammar.Schema{Declarations: schema.Declarations, Types: schema.Types}
+	analysis, err := parsersource.DiscoverProducts(root)
+	if err != nil {
+		return Census{}, err
+	}
+	// The slot denominator is stated over the census's own form rows, so every
+	// slot it publishes belongs to a carrier row the same census states.
+	slots, err := parsersource.UseSlots(parsersource.Schema{Constructors: constructors, Types: schema.Types})
+	if err != nil {
+		return Census{}, err
+	}
+	astOnly := parsersource.Schema{Declarations: schema.Declarations, Types: schema.Types}
 	result := Census{
 		GrammarSourceDigest: grammarDigest,
 		ASTDigest:           astOnly.Digest(),
 		Productions:         productions,
 		Constructors:        constructors,
+		Products:            analysis.Products,
+		Mutations:           analysis.Mutations,
+		Slots:               slots,
+		Uses:                analysis.Uses,
 	}
 	result.Digest = digest(result)
 	return result, nil
 }
 
-func filterProductionConstructors(productions []grammarproof.ActionTemplate, schema grammar.Schema) ([]grammarproof.ActionTemplate, error) {
+func filterProductionConstructors(productions []parsersource.ActionTemplate, schema parsersource.Schema) ([]parsersource.ActionTemplate, error) {
 	declarations := make(map[string]bool, len(schema.Declarations))
 	for _, declaration := range schema.Declarations {
 		declarations[declaration.Name] = true
@@ -53,7 +66,7 @@ func filterProductionConstructors(productions []grammarproof.ActionTemplate, sch
 	for _, declaration := range schema.Types {
 		types[declaration.Name] = true
 	}
-	result := make([]grammarproof.ActionTemplate, len(productions))
+	result := make([]parsersource.ActionTemplate, len(productions))
 	for index, production := range productions {
 		result[index] = production
 		result[index].Constructors = nil
@@ -73,13 +86,13 @@ func filterProductionConstructors(productions []grammarproof.ActionTemplate, sch
 	return result, nil
 }
 
-func actionTemplates(root string) ([]grammarproof.ActionTemplate, []string, error) {
+func actionTemplates(root string) ([]parsersource.ActionTemplate, []string, error) {
 	helpers, helperConstructors, err := helperClosure(root)
 	if err != nil {
 		return nil, nil, err
 	}
-	var result []grammarproof.ActionTemplate
-	err = grammarproof.VisitActionSyntax(root, func(template grammarproof.ActionTemplate, block *goast.BlockStmt) error {
+	var result []parsersource.ActionTemplate
+	err = parsersource.VisitActionSyntax(root, func(template parsersource.ActionTemplate, block *goast.BlockStmt) error {
 		// The existing ActionTemplate index is intentionally lexical and can
 		// also see ast constants. The census needs concrete constructor
 		// literals only, so derive this narrow projection from the parsed Go
@@ -117,7 +130,7 @@ type helper struct {
 // the constructor universe a helper contributes even when no action reaches it.
 func helperClosure(root string) (map[string][]string, []string, error) {
 	direct := make(map[string]helper)
-	err := grammarproof.VisitHelperSyntax(root, func(template grammarproof.HelperTemplate, function *goast.FuncDecl) error {
+	err := parsersource.VisitHelperSyntax(root, func(template parsersource.HelperTemplate, function *goast.FuncDecl) error {
 		if function == nil || function.Body == nil || function.Name == nil {
 			return nil
 		}
@@ -233,12 +246,12 @@ func compositeConstructors(root goast.Node) []string {
 	return sorted(seen)
 }
 
-func constructorsFromActions(productions []grammarproof.ActionTemplate, helpers []string, schema grammar.Schema) ([]grammar.Constructor, error) {
-	declarations := make(map[string]grammar.Declaration, len(schema.Declarations))
+func constructorsFromActions(productions []parsersource.ActionTemplate, helpers []string, schema parsersource.Schema) ([]parsersource.Constructor, error) {
+	declarations := make(map[string]parsersource.Declaration, len(schema.Declarations))
 	for _, declaration := range schema.Declarations {
 		declarations[declaration.Name] = declaration
 	}
-	types := make(map[string]grammar.TypeDeclaration, len(schema.Types))
+	types := make(map[string]parsersource.TypeDeclaration, len(schema.Types))
 	for _, declaration := range schema.Types {
 		types[declaration.Name] = declaration
 	}
@@ -280,12 +293,12 @@ func constructorsFromActions(productions []grammarproof.ActionTemplate, helpers 
 		}
 	}
 	sort.Strings(names)
-	result := make([]grammar.Constructor, 0, len(names))
+	result := make([]parsersource.Constructor, 0, len(names))
 	for _, name := range names {
 		declaration := declarations[name]
-		result = append(result, grammar.Constructor{
+		result = append(result, parsersource.Constructor{
 			Name: declaration.Name, Class: declaration.Class, Semantic: declaration.Semantic,
-			Fields: append([]grammar.Field(nil), declaration.Fields...),
+			Fields: append([]parsersource.Field(nil), declaration.Fields...),
 		})
 	}
 	if len(result) == 0 {

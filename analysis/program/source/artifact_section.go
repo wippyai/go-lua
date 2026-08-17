@@ -6,7 +6,7 @@ package source
 // the parent artifact codec owns the surrounding envelope and seal replay.
 
 import (
-	"github.com/wippyai/go-lua/analysis/internal/framing"
+	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 

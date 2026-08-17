@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/wippyai/go-lua/analysis/lua/parsersource"
 )
 
 // SequenceCarrier is a yacc-result slice location. A blank Field denotes the
@@ -32,7 +34,7 @@ func SequenceCarriers(root string) ([]SequenceCarrier, error) {
 		return nil, err
 	}
 	source := string(contents)
-	tags, err := declaredResultTags(path)
+	tags, err := parsersource.DeclaredResultTags(path)
 	if err != nil {
 		return nil, err
 	}

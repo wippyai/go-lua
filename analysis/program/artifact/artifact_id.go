@@ -4,6 +4,14 @@ import "github.com/wippyai/go-lua/analysis/identity"
 
 func artifactID(artifact *Artifact) identity.ContentID {
 	fields := append([]field{bytesField(artifact.key.ID())}, artifact.key.identityFields()...)
+	fields = append(fields, uintField(uint64(artifact.counts.Count())))
+	for index := 0; index < artifact.counts.Count(); index++ {
+		row, ok := artifact.counts.At(index)
+		if !ok {
+			return identity.ContentID{}
+		}
+		fields = append(fields, bytesField(identity.ContentID(row.ID())), uintField(row.Count()))
+	}
 	fields = append(fields, uintField(pointGeometryLawVersion))
 	fields = append(fields, uintField(pointAttachmentLawVersion))
 	fields = append(fields, uintField(uint64(len(artifact.points))))

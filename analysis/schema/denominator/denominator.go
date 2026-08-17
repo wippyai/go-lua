@@ -21,8 +21,11 @@
 package denominator
 
 import (
+	"bytes"
+	"sort"
+
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/internal/framing"
+	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/schema"
 )
 
@@ -37,6 +40,12 @@ const (
 	LawUniverseDeclared
 	LawUniverseUnique
 	LawPhaseDeclared
+	LawRelationOwnerDeclared
+	LawRelationFormDeclared
+	LawRelationParentResolves
+	LawRelationParentUnique
+	LawRelationParentCycle
+	LawRelationOwnerCycle
 )
 
 // Phase is the point at which a denominator's universe stops admitting
@@ -151,18 +160,152 @@ func (entry *Entry) declarationComplete() bool {
 	return entry.owner.Available() && entry.universe.Available() && entry.phase.Available()
 }
 
-// surface is the denominator contribution to the analyzer declaration root.
-type surface struct{ entries []*Entry }
+// RelationOwner identifies the immutable component that publishes one
+// relation family. It is denominator vocabulary, not a runtime dispatch
+// value: a relation declaration records the owner that is responsible for its
+// published rows, and the denominator validates the owner graph at seal.
+type RelationOwner uint8
 
-// NewSurface hands one ordered set of denominator declarations to the table.
-func NewSurface(entries []*Entry) schema.Surface { return surface{entries: entries} }
+const (
+	RelationOwnerUnset RelationOwner = iota
+	RelationOwnerProgramSource
+	RelationOwnerProgramFlow
+	RelationOwnerProgramStatic
+	RelationOwnerProgramModule
+	RelationOwnerTarget
+	RelationOwnerLinkProject
+	RelationOwnerLinkBoundary
+	RelationOwnerLinkModule
+	RelationOwnerLinkStatic
+	RelationOwnerLinkHost
+)
+
+func (owner RelationOwner) Available() bool {
+	return owner >= RelationOwnerProgramSource && owner <= RelationOwnerLinkHost
+}
+
+// RelationForm states how one relation family exists at publication. The
+// form is declaration data and is deliberately not an executable hook.
+type RelationForm uint8
+
+const (
+	RelationFormUnset RelationForm = iota
+	RelationFormAuthored
+	RelationFormSealDerived
+	RelationFormVirtualPredicate
+)
+
+func (form RelationForm) Available() bool {
+	return form >= RelationFormAuthored && form <= RelationFormVirtualPredicate
+}
+
+// RelationSpec is the authored declaration of one semantic relation family.
+// Parent identities are resolved only when the complete denominator surface
+// seals, because a relation may refer to a row declared later in the same
+// contribution.
+type RelationSpec struct {
+	Key     schema.Key
+	Owner   RelationOwner
+	Form    RelationForm
+	Parents []schema.EntryID
+}
+
+// RelationEntry is one immutable relation-family declaration in the unified
+// denominator surface. Its identity is the denominator surface's derivation
+// of Key, exactly like the existing closed-world Entry.
+type RelationEntry struct {
+	key     schema.Key
+	id      schema.EntryID
+	owner   RelationOwner
+	form    RelationForm
+	parents []schema.EntryID
+}
+
+// NewRelation admits one relation declaration. Parent existence and graph
+// laws are intentionally deferred to the unified surface seal.
+func NewRelation(spec RelationSpec) (*RelationEntry, bool) {
+	if !spec.Key.Available() || !spec.Owner.Available() || !spec.Form.Available() {
+		return nil, false
+	}
+	entry := &RelationEntry{
+		key:     spec.Key,
+		id:      schema.NewEntryID(schema.SurfaceKindDenominator, spec.Key),
+		owner:   spec.Owner,
+		form:    spec.Form,
+		parents: append([]schema.EntryID(nil), spec.Parents...),
+	}
+	return entry, entry.EntryAvailable()
+}
+
+func (entry *RelationEntry) Key() schema.Key { return entry.key }
+
+func (entry *RelationEntry) ID() schema.EntryID { return entry.id }
+
+func (entry *RelationEntry) Owner() RelationOwner { return entry.owner }
+
+func (entry *RelationEntry) Form() RelationForm { return entry.form }
+
+func (entry *RelationEntry) Parents() []schema.EntryID {
+	if entry == nil {
+		return nil
+	}
+	return append([]schema.EntryID(nil), entry.parents...)
+}
+
+func (entry *RelationEntry) EntryAvailable() bool {
+	return entry != nil && entry.key.Available() && entry.id.Available()
+}
+
+// EntryContent writes the relation declaration's data. Parent IDs are sorted
+// for the content stream so a caller's input order cannot create a second
+// spelling of the same declaration.
+func (entry *RelationEntry) EntryContent(content *framing.Writer) error {
+	if err := content.Uint(uint64(entry.owner)); err != nil {
+		return err
+	}
+	if err := content.Uint(uint64(entry.form)); err != nil {
+		return err
+	}
+	parents := sortedEntryIDs(entry.parents)
+	if err := content.Count(uint64(len(parents))); err != nil {
+		return err
+	}
+	for _, parent := range parents {
+		if err := content.Bytes(parent[:]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// surface is the denominator contribution to the analyzer declaration root.
+type surface struct {
+	entries   []*Entry
+	relations []*RelationEntry
+}
+
+// NewSurface hands one ordered set of closed-world declarations and, when
+// supplied, one or more ordered sets of relation declarations to the table.
+// The variadic relation argument preserves the existing one-argument caller
+// while making both declaration kinds one SurfaceKindDenominator
+// contribution.
+func NewSurface(entries []*Entry, relationSets ...[]*RelationEntry) schema.Surface {
+	var relations []*RelationEntry
+	for _, relationSet := range relationSets {
+		relations = append(relations, relationSet...)
+	}
+	return surface{entries: entries, relations: relations}
+}
 
 func (contribution surface) Kind() schema.SurfaceKind { return schema.SurfaceKindDenominator }
 
 func (contribution surface) Entries() []schema.Entry {
-	entries := make([]schema.Entry, len(contribution.entries))
-	for index, entry := range contribution.entries {
-		entries[index] = entry
+	entries := make([]schema.Entry, 0, len(contribution.entries)+len(contribution.relations))
+	for _, entry := range contribution.entries {
+		entries = append(entries, entry)
+	}
+	for _, entry := range contribution.relations {
+		entries = append(entries, entry)
 	}
 	return entries
 }
@@ -172,10 +315,33 @@ func (contribution surface) Entries() []schema.Entry {
 // surface is being sealed into.
 func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.SealFailure {
 	universes := make(map[identity.ContentID]schema.EntryID, view.Count())
+	relations := make(map[schema.EntryID]*RelationEntry, view.Count())
 	for position := 0; position < view.Count(); position++ {
 		row, rowOK := view.At(position)
+		if !rowOK || row == nil {
+			return failure(schema.EntryID{}, LawEntryShape, schema.DispositionMalformed)
+		}
+		if relation, relationOK := row.(*RelationEntry); relationOK {
+			if relation == nil {
+				return failure(schema.EntryID{}, LawEntryShape, schema.DispositionMalformed)
+			}
+			if !relation.key.Available() || relation.id != schema.NewEntryID(schema.SurfaceKindDenominator, relation.key) {
+				return failure(relation.id, LawDenominatorIdentity, schema.DispositionMalformed)
+			}
+			if !relation.owner.Available() {
+				return failure(relation.id, LawRelationOwnerDeclared, schema.DispositionIncomplete)
+			}
+			if !relation.form.Available() {
+				return failure(relation.id, LawRelationFormDeclared, schema.DispositionIncomplete)
+			}
+			if _, duplicate := relations[relation.id]; duplicate {
+				return failure(relation.id, schema.LawEntryUnique, schema.DispositionDuplicate)
+			}
+			relations[relation.id] = relation
+			continue
+		}
 		entry, entryOK := row.(*Entry)
-		if !rowOK || !entryOK || entry == nil {
+		if !entryOK || entry == nil {
 			return failure(schema.EntryID{}, LawEntryShape, schema.DispositionMalformed)
 		}
 		// Entry uniqueness is the root's law. What the surface states here is
@@ -215,9 +381,201 @@ func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.
 			return failure(entry.id, LawPhaseDeclared, schema.DispositionIncomplete)
 		}
 	}
+	if relationFailure, failed := validateRelations(relations); failed {
+		return relationFailure
+	}
 	return schema.SealFailure{}
 }
 
 func failure(entry schema.EntryID, law schema.LawID, disposition schema.Disposition) schema.SealFailure {
 	return schema.SurfaceLawFailure(schema.SurfaceKindDenominator, entry, law, disposition)
+}
+
+func validateRelations(relations map[schema.EntryID]*RelationEntry) (schema.SealFailure, bool) {
+	ids := make([]schema.EntryID, 0, len(relations))
+	for id := range relations {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(left, right int) bool { return bytes.Compare(ids[left][:], ids[right][:]) < 0 })
+	for _, id := range ids {
+		relation := relations[id]
+		parents := relation.parents
+		seen := make(map[schema.EntryID]struct{}, len(parents))
+		for _, parent := range parents {
+			if !parent.Available() {
+				return failure(id, LawRelationParentResolves, schema.DispositionIncomplete), true
+			}
+			if _, exists := relations[parent]; !exists {
+				return failure(id, LawRelationParentResolves, schema.DispositionIncomplete), true
+			}
+			if _, duplicate := seen[parent]; duplicate {
+				return failure(id, LawRelationParentUnique, schema.DispositionDuplicate), true
+			}
+			seen[parent] = struct{}{}
+		}
+	}
+	if id, cyclic := relationSelfCycle(relations, ids); cyclic {
+		return failure(id, LawRelationParentCycle, schema.DispositionMalformed), true
+	}
+	if id, crossOwner := crossOwnerRelationCycle(relations, ids); crossOwner {
+		return failure(id, LawRelationParentCycle, schema.DispositionMalformed), true
+	}
+	if id, cyclic := relationOwnerCycle(relations, ids); cyclic {
+		return failure(id, LawRelationOwnerCycle, schema.DispositionMalformed), true
+	}
+	return schema.SealFailure{}, false
+}
+
+func relationSelfCycle(relations map[schema.EntryID]*RelationEntry, ids []schema.EntryID) (schema.EntryID, bool) {
+	for _, id := range ids {
+		for _, parent := range relations[id].parents {
+			if parent == id {
+				return id, true
+			}
+		}
+	}
+	return schema.EntryID{}, false
+}
+
+// crossOwnerRelationCycle rejects a parent SCC that crosses component
+// ownership. A recursive SCC inside one owner is permitted; it is a local
+// relation recursion, not a cycle in the owner dependency graph.
+func crossOwnerRelationCycle(relations map[schema.EntryID]*RelationEntry, ids []schema.EntryID) (schema.EntryID, bool) {
+	for _, component := range relationSCCs(relations, ids) {
+		if len(component) < 2 {
+			continue
+		}
+		owner := relations[component[0]].owner
+		for _, id := range component[1:] {
+			if relations[id].owner != owner {
+				return component[0], true
+			}
+		}
+	}
+	return schema.EntryID{}, false
+}
+
+func relationSCCs(relations map[schema.EntryID]*RelationEntry, ids []schema.EntryID) [][]schema.EntryID {
+	index := 0
+	indices := make(map[schema.EntryID]int, len(ids))
+	lowlink := make(map[schema.EntryID]int, len(ids))
+	onStack := make(map[schema.EntryID]bool, len(ids))
+	stack := make([]schema.EntryID, 0, len(ids))
+	components := make([][]schema.EntryID, 0)
+	var visit func(schema.EntryID)
+	visit = func(id schema.EntryID) {
+		indices[id] = index
+		lowlink[id] = index
+		index++
+		stack = append(stack, id)
+		onStack[id] = true
+		parents := sortedEntryIDs(relations[id].parents)
+		for _, parent := range parents {
+			if _, seen := indices[parent]; !seen {
+				visit(parent)
+				if lowlink[parent] < lowlink[id] {
+					lowlink[id] = lowlink[parent]
+				}
+			} else if onStack[parent] && indices[parent] < lowlink[id] {
+				lowlink[id] = indices[parent]
+			}
+		}
+		if lowlink[id] != indices[id] {
+			return
+		}
+		component := make([]schema.EntryID, 0)
+		for {
+			last := len(stack) - 1
+			member := stack[last]
+			stack = stack[:last]
+			onStack[member] = false
+			component = append(component, member)
+			if member == id {
+				break
+			}
+		}
+		sort.Slice(component, func(left, right int) bool { return bytes.Compare(component[left][:], component[right][:]) < 0 })
+		components = append(components, component)
+	}
+	for _, id := range ids {
+		if _, seen := indices[id]; !seen {
+			visit(id)
+		}
+	}
+	return components
+}
+
+func relationOwnerCycle(relations map[schema.EntryID]*RelationEntry, ids []schema.EntryID) (schema.EntryID, bool) {
+	edges := make(map[RelationOwner]map[RelationOwner]struct{})
+	witness := make(map[RelationOwner]map[RelationOwner]schema.EntryID)
+	owners := make(map[RelationOwner]struct{})
+	for _, id := range ids {
+		relation := relations[id]
+		owners[relation.owner] = struct{}{}
+		for _, parent := range relation.parents {
+			parentRelation := relations[parent]
+			if parentRelation.owner == relation.owner {
+				continue
+			}
+			if edges[relation.owner] == nil {
+				edges[relation.owner] = make(map[RelationOwner]struct{})
+				witness[relation.owner] = make(map[RelationOwner]schema.EntryID)
+			}
+			edges[relation.owner][parentRelation.owner] = struct{}{}
+			if prior, exists := witness[relation.owner][parentRelation.owner]; !exists || bytes.Compare(id[:], prior[:]) < 0 {
+				witness[relation.owner][parentRelation.owner] = id
+			}
+		}
+	}
+	orderedOwners := make([]RelationOwner, 0, len(owners))
+	for owner := range owners {
+		orderedOwners = append(orderedOwners, owner)
+	}
+	sort.Slice(orderedOwners, func(left, right int) bool { return orderedOwners[left] < orderedOwners[right] })
+	const (
+		ownerUnseen uint8 = iota
+		ownerVisiting
+		ownerComplete
+	)
+	state := make(map[RelationOwner]uint8, len(owners))
+	var visit func(RelationOwner) (schema.EntryID, bool)
+	visit = func(owner RelationOwner) (schema.EntryID, bool) {
+		switch state[owner] {
+		case ownerVisiting:
+			return schema.EntryID{}, true
+		case ownerComplete:
+			return schema.EntryID{}, false
+		}
+		state[owner] = ownerVisiting
+		parents := make([]RelationOwner, 0, len(edges[owner]))
+		for parent := range edges[owner] {
+			parents = append(parents, parent)
+		}
+		sort.Slice(parents, func(left, right int) bool { return parents[left] < parents[right] })
+		for _, parent := range parents {
+			if id, cyclic := visit(parent); cyclic {
+				if id.Available() {
+					return id, true
+				}
+				return witness[owner][parent], true
+			}
+		}
+		state[owner] = ownerComplete
+		return schema.EntryID{}, false
+	}
+	for _, owner := range orderedOwners {
+		if id, cyclic := visit(owner); cyclic {
+			if id.Available() {
+				return id, true
+			}
+			return schema.EntryID{}, true
+		}
+	}
+	return schema.EntryID{}, false
+}
+
+func sortedEntryIDs(ids []schema.EntryID) []schema.EntryID {
+	ordered := append([]schema.EntryID(nil), ids...)
+	sort.Slice(ordered, func(left, right int) bool { return bytes.Compare(ordered[left][:], ordered[right][:]) < 0 })
+	return ordered
 }

@@ -2,7 +2,7 @@ package engine
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/internal/canonical"
+	"github.com/wippyai/go-lua/internal/canonical"
 )
 
 // ruleUnit is the private synthetic operand used by engine laws whose Rule has

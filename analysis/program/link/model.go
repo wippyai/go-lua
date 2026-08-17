@@ -10,7 +10,6 @@ import (
 	linkmodule "github.com/wippyai/go-lua/analysis/program/link/module"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	linkstatic "github.com/wippyai/go-lua/analysis/program/link/static"
-	"github.com/wippyai/go-lua/analysis/program/semanticsource"
 	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
@@ -41,8 +40,7 @@ type Link struct {
 	// module is the sole actor/cache/init owner.  The remaining legacy root
 	// fields below are being removed in the same atomic cut; no new root query
 	// is permitted to consume them.
-	module             *linkmodule.Component
-	host               *linkhost.Component
-	id                 identity.ContentID
-	sourcePublications semanticsource.Publications
+	module *linkmodule.Component
+	host   *linkhost.Component
+	id     identity.ContentID
 }

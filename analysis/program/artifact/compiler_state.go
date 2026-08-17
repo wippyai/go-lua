@@ -3,11 +3,13 @@ package artifact
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program"
+	"github.com/wippyai/go-lua/analysis/schema/denominator"
 )
 
 type compiler struct {
 	input                      *program.Program
 	key                        CompileKey
+	counts                     denominator.CountRows
 	pointAttachments           []PointAttachmentRow
 	points                     map[identity.ContentID]struct{}
 	environment                []EnvironmentEdge

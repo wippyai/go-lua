@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/internal/framing"
+	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/schema"
 )
 
@@ -111,6 +111,25 @@ func mustEntry(t *testing.T, spec Spec) *Entry {
 		t.Fatalf("scratch denominator %q rejected by construction", spec.Key)
 	}
 	return entry
+}
+
+func relationSpec(key schema.Key, owner RelationOwner, form RelationForm, parents ...schema.EntryID) RelationSpec {
+	return RelationSpec{Key: key, Owner: owner, Form: form, Parents: parents}
+}
+
+func mustRelation(t *testing.T, spec RelationSpec) *RelationEntry {
+	t.Helper()
+	entry, ok := NewRelation(spec)
+	if !ok || entry == nil {
+		t.Fatalf("scratch relation %q rejected by construction", spec.Key)
+	}
+	return entry
+}
+
+func sealRelations(t *testing.T, entries []*Entry, relations []*RelationEntry) schema.SealFailure {
+	t.Helper()
+	_, failure := sealContribution(t, NewSurface(entries, relations))
+	return failure
 }
 
 // TestDenominatorSurfaceSealsCompleteInventory is the baseline: a complete
@@ -316,5 +335,95 @@ func TestTableDigestCoversDeclaredContent(t *testing.T) {
 	}
 	if declared.Digest() == shifted.Digest() {
 		t.Fatal("a denominator's declared closure phase left the table digest unchanged")
+	}
+}
+
+func TestUnifiedSurfaceSealsClosedWorldAndRelations(t *testing.T) {
+	closed := mustEntry(t, axisSpec("container-coordinates"))
+	primary := mustRelation(t, relationSpec("relation/primary", RelationOwnerProgramSource, RelationFormAuthored))
+	child := mustRelation(t, relationSpec("relation/child", RelationOwnerProgramSource, RelationFormSealDerived, primary.ID()))
+	if failure := sealRelations(t, []*Entry{closed}, []*RelationEntry{primary, child}); failure.Available() {
+		t.Fatalf("unified denominator rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	if got := child.Parents(); len(got) != 1 || got[0] != primary.ID() {
+		t.Fatal("relation parent identity was not retained")
+	}
+}
+
+func TestRelationIdentityAndContentAreDeclaredByDenominatorSurface(t *testing.T) {
+	left := mustRelation(t, relationSpec("relation/order", RelationOwnerProgramFlow, RelationFormAuthored))
+	right := mustRelation(t, relationSpec("relation/order", RelationOwnerProgramFlow, RelationFormAuthored))
+	if left.ID() != schema.NewEntryID(schema.SurfaceKindDenominator, left.Key()) || left.ID() != right.ID() {
+		t.Fatal("relation identity is not the denominator derivation of its key")
+	}
+	first, failure := sealTable(t, []*Entry{mustEntry(t, axisSpec("container-coordinates"))})
+	if failure.Available() {
+		t.Fatalf("baseline denominator rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	second, failure := sealContribution(t, NewSurface([]*Entry{mustEntry(t, axisSpec("container-coordinates"))}, []*RelationEntry{left}))
+	if failure.Available() {
+		t.Fatalf("relation denominator rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	if first.Digest() == second.Digest() {
+		t.Fatal("relation declaration did not participate in the root digest")
+	}
+}
+
+func TestRelationOwnerAndFormAreDeclared(t *testing.T) {
+	for name, damage := range map[string]func(*RelationEntry){
+		"owner": func(entry *RelationEntry) { entry.owner = RelationOwnerUnset },
+		"form":  func(entry *RelationEntry) { entry.form = RelationFormUnset },
+	} {
+		relation := mustRelation(t, relationSpec(schema.Key("relation/declared/"+name), RelationOwnerProgramSource, RelationFormAuthored))
+		damage(relation)
+		failure := sealRelations(t, nil, []*RelationEntry{relation})
+		want := LawRelationOwnerDeclared
+		if name == "form" {
+			want = LawRelationFormDeclared
+		}
+		if failure.Law != want || failure.Disposition != schema.DispositionIncomplete {
+			t.Fatalf("relation without %s sealed: law=%d disposition=%s", name, failure.Law, failure.Disposition)
+		}
+	}
+}
+
+func TestRelationParentsResolveAndAreUnique(t *testing.T) {
+	parent := mustRelation(t, relationSpec("relation/parent", RelationOwnerProgramSource, RelationFormAuthored))
+	missing := mustRelation(t, relationSpec("relation/missing", RelationOwnerProgramSource, RelationFormAuthored, schema.NewEntryID(schema.SurfaceKindDenominator, "relation/absent")))
+	if failure := sealRelations(t, nil, []*RelationEntry{parent, missing}); failure.Law != LawRelationParentResolves || failure.Disposition != schema.DispositionIncomplete {
+		t.Fatalf("unresolved relation parent sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	duplicate := mustRelation(t, relationSpec("relation/duplicate", RelationOwnerProgramSource, RelationFormAuthored, parent.ID(), parent.ID()))
+	if failure := sealRelations(t, nil, []*RelationEntry{parent, duplicate}); failure.Law != LawRelationParentUnique || failure.Disposition != schema.DispositionDuplicate {
+		t.Fatalf("duplicate relation parent sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+}
+
+func TestRelationParentCycleLaws(t *testing.T) {
+	left := mustRelation(t, relationSpec("relation/cycle/left", RelationOwnerProgramSource, RelationFormAuthored))
+	right := mustRelation(t, relationSpec("relation/cycle/right", RelationOwnerProgramFlow, RelationFormAuthored))
+	left.parents = []schema.EntryID{right.ID()}
+	right.parents = []schema.EntryID{left.ID()}
+	if failure := sealRelations(t, nil, []*RelationEntry{left, right}); failure.Law != LawRelationParentCycle || failure.Disposition != schema.DispositionMalformed {
+		t.Fatalf("cross-owner relation SCC sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+
+	localLeft := mustRelation(t, relationSpec("relation/local-cycle/left", RelationOwnerProgramSource, RelationFormAuthored))
+	localRight := mustRelation(t, relationSpec("relation/local-cycle/right", RelationOwnerProgramSource, RelationFormAuthored))
+	localLeft.parents = []schema.EntryID{localRight.ID()}
+	localRight.parents = []schema.EntryID{localLeft.ID()}
+	if failure := sealRelations(t, nil, []*RelationEntry{localLeft, localRight}); failure.Available() {
+		t.Fatalf("same-owner relation recursion rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+}
+
+func TestRelationOwnerCycleIsRejectedWithoutRelationSCC(t *testing.T) {
+	first := mustRelation(t, relationSpec("relation/owner-cycle/first", RelationOwnerProgramSource, RelationFormAuthored))
+	second := mustRelation(t, relationSpec("relation/owner-cycle/second", RelationOwnerProgramFlow, RelationFormAuthored))
+	third := mustRelation(t, relationSpec("relation/owner-cycle/third", RelationOwnerProgramSource, RelationFormAuthored))
+	first.parents = []schema.EntryID{second.ID()}
+	second.parents = []schema.EntryID{third.ID()}
+	if failure := sealRelations(t, nil, []*RelationEntry{first, second, third}); failure.Law != LawRelationOwnerCycle || failure.Disposition != schema.DispositionMalformed {
+		t.Fatalf("cross-owner dependency cycle sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
 }

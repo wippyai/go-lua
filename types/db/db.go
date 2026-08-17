@@ -1,7 +1,7 @@
 // Package db is a legacy manifest registry facade.
 package db
 
-import "github.com/wippyai/go-lua/analysis/module/manifest"
+import manifest "github.com/wippyai/go-lua/types/io"
 
 type DB struct {
 	imports map[string]*manifest.Manifest

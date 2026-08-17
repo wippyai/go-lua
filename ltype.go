@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/wippyai/go-lua/analysis/domain/type/annotation"
-	"github.com/wippyai/go-lua/analysis/domain/type/kind"
-	"github.com/wippyai/go-lua/analysis/domain/type/subst"
-	"github.com/wippyai/go-lua/analysis/domain/type/subtype"
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
+	"github.com/wippyai/go-lua/domain/type/annotation"
+	"github.com/wippyai/go-lua/domain/type/kind"
+	"github.com/wippyai/go-lua/domain/type/subst"
+	"github.com/wippyai/go-lua/domain/type/subtype"
+	"github.com/wippyai/go-lua/domain/type/typ"
 	"github.com/wippyai/go-lua/validate"
 )
 

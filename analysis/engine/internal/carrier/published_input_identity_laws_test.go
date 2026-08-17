@@ -47,9 +47,6 @@ func TestPublishedInputIdentitySeparatesSemanticSupportFromPredecessorHandles(t 
 	if firstState.Same(secondState) {
 		t.Fatal("strict predecessor identity ignored support-handle replacement")
 	}
-	if !firstState.SamePublishedInput(secondState) {
-		t.Fatal("published input identity rejected equivalent support")
-	}
 
 	work, ok := composition.NewWork()
 	if !ok {
@@ -78,7 +75,11 @@ func TestPublishedInputIdentitySeparatesSemanticSupportFromPredecessorHandles(t 
 	changedState := firstState
 	changedState.roots = append([]RootHandle(nil), firstState.roots...)
 	changedState.roots[0] = replacement
-	if changedState.SamePublishedInput(firstState) {
+	changedContribution, ok := work.admitContribution(changedState, contributionCoverage{composition: composition})
+	if !ok {
+		t.Fatal("replaced-root contribution")
+	}
+	if work.ExactSamePointRepresentation(contributionPointOf(t, work, changedContribution), firstPoint) {
 		t.Fatal("root-vector replacement did not cross publication identity")
 	}
 	if work.ExactSamePointRepresentation(firstPoint, secondPoint) && !work.EqualPointState(firstPoint, secondPoint) {

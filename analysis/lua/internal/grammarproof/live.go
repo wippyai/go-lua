@@ -7,25 +7,26 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
+
+	"github.com/wippyai/go-lua/analysis/lua/parsersource"
 )
 
-func liveFromGrammar(grammar []grammarProduction) []liveProduction {
+func liveFromGrammar(grammar []parsersource.Production) []liveProduction {
 	live := make([]liveProduction, 0, len(grammar))
 	for _, production := range grammar {
 		if recoveryOnly(production) {
 			continue
 		}
-		live = append(live, liveProduction{key: grammarKey(production)})
+		live = append(live, liveProduction{key: parsersource.ProductionKey(production)})
 	}
 	sort.Slice(live, func(left, right int) bool { return live[left].key < live[right].key })
 	return live
 }
 
-func allGrammarKeys(grammar []grammarProduction) map[string]bool {
+func allGrammarKeys(grammar []parsersource.Production) map[string]bool {
 	keys := make(map[string]bool, len(grammar))
 	for _, production := range grammar {
-		keys[grammarKey(production)] = true
+		keys[parsersource.ProductionKey(production)] = true
 	}
 	return keys
 }
@@ -34,8 +35,8 @@ func allGrammarKeys(grammar []grammarProduction) map[string]bool {
 // recovery mechanics, not accepted Lua productions, so no accepted source can
 // honestly witness them. The current grammar has none; retaining this filter
 // makes that boundary explicit if one is added later.
-func recoveryOnly(production grammarProduction) bool {
-	for _, symbol := range production.rhs {
+func recoveryOnly(production parsersource.Production) bool {
+	for _, symbol := range production.RHS {
 		if symbol == "error" {
 			return true
 		}
@@ -70,10 +71,10 @@ func corpus(root string) ([]source, error) {
 	return all, nil
 }
 
-func evidenceDigest(grammar []grammarProduction, sources []source) string {
+func evidenceDigest(grammar []parsersource.Production, sources []source) string {
 	hash := sha256.New()
 	for _, production := range grammar {
-		fmt.Fprintf(hash, "%s\x00%s\x00%s\n", grammarKey(production), strings.Join(production.rhs, "\x1f"), production.actionSignature)
+		fmt.Fprint(hash, parsersource.ProductionDigestLine(production))
 	}
 	for _, source := range sources {
 		fmt.Fprintf(hash, "%s\x00%s\n", source.id, source.text)

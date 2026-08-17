@@ -185,7 +185,7 @@ func TestScopedStatesRejectMixedEqualityOrderMergeReplaceAndContribution(t *test
 	if _, _, ok := work.Replace(state, reindexed); ok {
 		t.Fatal("mixed scopes replaced")
 	}
-	if _, ok := work.BeginContribution(contribution, composition.Scope(), contributionInputs(t, work, state, reindexed), whole); ok {
+	if _, ok := work.BeginRuleContribution(contribution, composition.Scope(), contributionPoints(t, work, state, reindexed), whole); ok {
 		t.Fatal("mixed scopes entered contribution")
 	}
 }

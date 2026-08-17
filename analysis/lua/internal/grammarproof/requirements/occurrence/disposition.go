@@ -3,9 +3,8 @@ package occurrence
 import (
 	"fmt"
 
-	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/astcodec"
-	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/grammar"
+	"github.com/wippyai/go-lua/analysis/lua/parsersource"
 )
 
 // ParserLaw is the finite reason a schema-derived field state cannot be
@@ -31,6 +30,7 @@ type IngressLaw uint8
 const (
 	IngressLawInvalid IngressLaw = iota
 	IngressLawMalformedNumericLiteral
+	IngressLawUntypedFunctionTypeParameter
 )
 
 // SemanticLaw names the exact valid source permutation which was absent from
@@ -102,8 +102,8 @@ const (
 // residue row appears. A source-reachable row may become directly observed
 // when its exact witness joins the canonical corpus; it then leaves this
 // residue ledger and is carried by ordinary public-ingress evidence.
-func ClassifyResidue(root string, report Report, schema grammar.Schema) ([]Disposition, error) {
-	digest, err := grammarproof.GrammarActionDigest(root)
+func ClassifyResidue(root string, report Report, schema parsersource.Schema) ([]Disposition, error) {
+	digest, err := parsersource.GrammarActionDigest(root)
 	if err != nil {
 		return nil, fmt.Errorf("occurrence dispositions: parser action digest: %w", err)
 	}
@@ -171,13 +171,20 @@ func ClassifyResidue(root string, report Report, schema grammar.Schema) ([]Dispo
 // constructed by parser actions but rejected by public Lower. The malformed
 // numeric literal branch is a parser fact with an ingress error, never an
 // impossible parser state.
+//
+// The absent function-type parameter type is the same shape. An interface
+// method declaration carries its parameters as typed-name entries, and the
+// conversion to function-type parameters copies an entry whose type is absent
+// when the source omits the annotation, so the parser builds the state and
+// public Lower rejects the resulting signature.
 func parserReachableIngressRejectedStates() map[namedState]IngressLaw {
 	return map[namedState]IngressLaw{
-		{"LiteralTypeExpr", "Value", astcodec.FieldStateAbsent}: IngressLawMalformedNumericLiteral,
+		{"LiteralTypeExpr", "Value", astcodec.FieldStateAbsent}:  IngressLawMalformedNumericLiteral,
+		{"FunctionParamExpr", "Type", astcodec.FieldStateAbsent}: IngressLawUntypedFunctionTypeParameter,
 	}
 }
 
-func dispositionFields(schema grammar.Schema) (map[string][]string, error) {
+func dispositionFields(schema parsersource.Schema) (map[string][]string, error) {
 	result := make(map[string][]string, len(schema.Constructors))
 	for _, constructor := range schema.Constructors {
 		fields := make([]string, len(constructor.Fields))
@@ -228,7 +235,6 @@ func parserImpossibleStates() map[namedState]ParserLaw {
 		{"FuncCallStmt", "Expr", astcodec.FieldStateAbsent}:            ParserLawRequiredChild,
 		{"FuncDefStmt", "Name", astcodec.FieldStateAbsent}:             ParserLawRequiredChild,
 		{"FuncDefStmt", "Func", astcodec.FieldStateAbsent}:             ParserLawRequiredChild,
-		{"FunctionParamExpr", "Type", astcodec.FieldStateAbsent}:       ParserLawRequiredChild,
 		{"FunctionExpr", "ParList", astcodec.FieldStateAbsent}:         ParserLawRequiredChild,
 		{"GenericForStmt", "Names", astcodec.FieldStateEmpty}:          ParserLawNonEmptyList,
 		{"GenericForStmt", "NamePositions", astcodec.FieldStateEmpty}:  ParserLawNonEmptyList,

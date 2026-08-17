@@ -7,111 +7,98 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/wippyai/go-lua/analysis/program/relations"
+	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/denominator"
 )
 
-// Build derives every Program-owned output from the canonical relation schema.
-// The schema is the sole owner authority; this package adds no owner mapping.
+// Build derives every Program-owned output from the generated denominator
+// catalog. The catalog is the sole owner authority; this package adds no
+// owner mapping.
 func Build() (Evidence, error) {
-	schema, err := relations.CanonicalSchema()
-	if err != nil {
-		return Evidence{}, fmt.Errorf("Program output owners: canonical schema: %w", err)
-	}
-	return derive(schema)
+	return derive(denominator.GeneratedRelationEntries())
 }
 
-// Current validates the checked-in generated evidence against its canonical
-// schema before a consumer may use it.
+// Current validates the checked-in generated evidence against the live
+// denominator catalog before a consumer may use it.
 func Current() (Evidence, error) {
-	schema, err := relations.CanonicalSchema()
-	if err != nil {
-		return Evidence{}, fmt.Errorf("Program output owners: canonical schema: %w", err)
-	}
-	if err := Generated.Validate(schema); err != nil {
+	entries := denominator.GeneratedRelationEntries()
+	if err := Generated.Validate(entries); err != nil {
 		return Evidence{}, err
 	}
-	return Generated, nil
+	return clone(Generated), nil
 }
 
-func derive(schema *relations.Schema) (Evidence, error) {
-	if schema == nil {
-		return Evidence{}, fmt.Errorf("Program output owners: nil canonical schema")
-	}
-	rows := make([]Row, 0, schema.Count())
-	for _, relation := range schema.Rows() {
-		if relation.Owner < relations.OwnerProgramSource || relation.Owner > relations.OwnerProgramModule {
+func derive(entries []*denominator.RelationEntry) (Evidence, error) {
+	rows := make([]Row, 0, len(entries))
+	seen := make(map[schema.EntryID]bool)
+	for _, relation := range entries {
+		if relation == nil || relation.Owner() < denominator.RelationOwnerProgramSource || relation.Owner() > denominator.RelationOwnerProgramModule {
 			continue
 		}
-		output, ok := relations.CatalogName(relation.Definition.Token())
-		if !ok {
-			return Evidence{}, fmt.Errorf("Program output owners: unnamed canonical output")
+		if !relation.ID().Available() || seen[relation.ID()] {
+			return Evidence{}, fmt.Errorf("Program output owners: duplicate or malformed output relation")
 		}
-		rows = append(rows, Row{Output: output, Owner: relation.Owner})
+		seen[relation.ID()] = true
+		rows = append(rows, Row{Relation: relation.ID(), Owner: relation.Owner()})
 	}
-	sort.Slice(rows, func(left, right int) bool { return rows[left].Output < rows[right].Output })
-	evidence := Evidence{SchemaDigest: schema.Digest().String(), Rows: rows}
+	if len(rows) == 0 {
+		return Evidence{}, fmt.Errorf("Program output owners: empty canonical output denominator")
+	}
+	sort.Slice(rows, func(left, right int) bool { return less(rows[left].Relation, rows[right].Relation) })
+	evidence := Evidence{Rows: rows}
 	evidence.Digest = digest(evidence)
-	if err := evidence.Validate(schema); err != nil {
+	if err := evidence.Validate(entries); err != nil {
 		return Evidence{}, err
 	}
 	return evidence, nil
 }
 
 // Validate rejects every incomplete, duplicate, foreign, stale, or malformed
-// output-owner row. It compares against the live canonical schema, not a
-// second maintained list.
-func (e Evidence) Validate(schema *relations.Schema) error {
-	expected, err := expectedRows(schema)
+// output-owner row. It compares against the live generated denominator.
+func (e Evidence) Validate(entries []*denominator.RelationEntry) error {
+	if e.Digest != digest(e) {
+		return fmt.Errorf("Program output owners: invalid evidence digest")
+	}
+	expected, err := expectedRows(entries)
 	if err != nil {
 		return err
 	}
-	if e.SchemaDigest != schema.Digest().String() || e.Digest != digest(e) {
-		return fmt.Errorf("Program output owners: stale or invalid evidence digest")
-	}
-	seen := make(map[string]bool, len(e.Rows))
+	seen := make(map[schema.EntryID]bool, len(e.Rows))
 	for index, row := range e.Rows {
-		owner, known := expected[row.Output]
+		owner, known := expected[row.Relation]
 		if !known {
-			return fmt.Errorf("Program output owners: unknown output row %q", row.Output)
+			return fmt.Errorf("Program output owners: unknown output relation")
 		}
-		if seen[row.Output] {
-			return fmt.Errorf("Program output owners: duplicate output row %q", row.Output)
+		if seen[row.Relation] {
+			return fmt.Errorf("Program output owners: duplicate output relation")
 		}
-		if index != 0 && e.Rows[index-1].Output >= row.Output {
+		if index != 0 && !less(e.Rows[index-1].Relation, row.Relation) {
 			return fmt.Errorf("Program output owners: output rows are not canonical")
 		}
 		if row.Owner != owner {
-			return fmt.Errorf("Program output owners: output %q has owner %d, want %d", row.Output, row.Owner, owner)
+			return fmt.Errorf("Program output owners: output relation has owner %d, want %d", row.Owner, owner)
 		}
-		seen[row.Output] = true
+		seen[row.Relation] = true
 	}
 	if len(seen) != len(expected) {
-		for output := range expected {
-			if !seen[output] {
-				return fmt.Errorf("Program output owners: missing output row %q", output)
-			}
-		}
+		return fmt.Errorf("Program output owners: output denominator is incomplete")
 	}
 	return nil
 }
 
-func expectedRows(schema *relations.Schema) (map[string]relations.Owner, error) {
-	if schema == nil {
-		return nil, fmt.Errorf("Program output owners: nil canonical schema")
+func expectedRows(entries []*denominator.RelationEntry) (map[schema.EntryID]denominator.RelationOwner, error) {
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("Program output owners: empty generated denominator catalog")
 	}
-	expected := make(map[string]relations.Owner)
-	for _, relation := range schema.Rows() {
-		if relation.Owner < relations.OwnerProgramSource || relation.Owner > relations.OwnerProgramModule {
+	expected := make(map[schema.EntryID]denominator.RelationOwner)
+	for _, relation := range entries {
+		if relation == nil || relation.Owner() < denominator.RelationOwnerProgramSource || relation.Owner() > denominator.RelationOwnerProgramModule {
 			continue
 		}
-		output, ok := relations.CatalogName(relation.Definition.Token())
-		if !ok {
-			return nil, fmt.Errorf("Program output owners: unnamed canonical output")
+		if _, duplicate := expected[relation.ID()]; duplicate {
+			return nil, fmt.Errorf("Program output owners: duplicate canonical output")
 		}
-		if _, duplicate := expected[output]; duplicate {
-			return nil, fmt.Errorf("Program output owners: duplicate canonical output %q", output)
-		}
-		expected[output] = relation.Owner
+		expected[relation.ID()] = relation.Owner()
 	}
 	if len(expected) == 0 {
 		return nil, fmt.Errorf("Program output owners: empty canonical output denominator")
@@ -120,12 +107,13 @@ func expectedRows(schema *relations.Schema) (map[string]relations.Owner, error) 
 }
 
 // Canonical returns the exact detached byte stream used to derive Digest.
-// Digest itself is omitted because it is derivable from these bytes.
 func (e Evidence) Canonical() []byte {
 	var out bytes.Buffer
-	fmt.Fprintf(&out, "%s\n", e.SchemaDigest)
 	for _, row := range e.Rows {
-		fmt.Fprintf(&out, "%s\x00%d\n", row.Output, row.Owner)
+		out.Write(row.Relation[:])
+		out.WriteByte(0)
+		out.WriteByte(byte(row.Owner))
+		out.WriteByte('\n')
 	}
 	return append([]byte(nil), out.Bytes()...)
 }
@@ -133,4 +121,13 @@ func (e Evidence) Canonical() []byte {
 func digest(e Evidence) string {
 	sum := sha256.Sum256(e.Canonical())
 	return hex.EncodeToString(sum[:])
+}
+
+func less(left, right schema.EntryID) bool {
+	return bytes.Compare(left[:], right[:]) < 0
+}
+
+func clone(e Evidence) Evidence {
+	e.Rows = append([]Row(nil), e.Rows...)
+	return e
 }

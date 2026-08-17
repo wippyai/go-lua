@@ -3,7 +3,7 @@ package target
 import (
 	"errors"
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/internal/framing"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 // descriptor while retaining distinct occurrence evidence.

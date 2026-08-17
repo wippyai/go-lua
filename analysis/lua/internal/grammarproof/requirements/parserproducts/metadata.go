@@ -8,7 +8,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/astcodec"
-	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/grammar"
+	"github.com/wippyai/go-lua/analysis/lua/parsersource"
 )
 
 // deriveHelperSummary admits the three finite range relations in parser.go.y.
@@ -203,7 +203,7 @@ func rangeAssignments(loop *goast.RangeStmt, targets []string) (map[string]goast
 // deriveActionSequences is the one sequence denominator. Its source inputs
 // are the current action AST and (only for wrapper forwarding) a helper AST;
 // it never serializes or reparses an expression.
-func deriveActionSequences(template grammarproof.ActionTemplate, block *goast.BlockStmt, builder *actionTermBuilder, scope *actionTermScope, carriers []grammarproof.SequenceCarrier, helpers map[string]*goast.FuncDecl) ([]SequenceLaw, error) {
+func deriveActionSequences(template parsersource.ActionTemplate, block *goast.BlockStmt, builder *actionTermBuilder, scope *actionTermScope, carriers []grammarproof.SequenceCarrier, helpers map[string]*goast.FuncDecl) ([]SequenceLaw, error) {
 	if len(carriers) == 0 {
 		return nil, nil
 	}
@@ -529,15 +529,15 @@ func sequenceLess(left, right SequenceLaw) bool {
 	return left.Destination.Field < right.Destination.Field
 }
 
-func buildCarriers(schema grammar.Schema) ([]Carrier, error) {
+func buildCarriers(schema parsersource.Schema) ([]Carrier, error) {
 	var rows []Carrier
 	for _, constructor := range schema.Constructors {
 		for _, field := range constructor.Fields {
 			child, cardinality, ok := carrier(field.Type)
-			if !ok && !(field.Name == "AdjustRet" && field.Form == grammar.FieldFormBool) {
+			if !ok && !(field.Name == "AdjustRet" && field.Form == parsersource.FieldFormBool) {
 				continue
 			}
-			if field.Name == "AdjustRet" && field.Form == grammar.FieldFormBool {
+			if field.Name == "AdjustRet" && field.Form == parsersource.FieldFormBool {
 				child, cardinality = "ValuesAdjustment", astcodec.FieldStateTrue
 			}
 			rows = append(rows, Carrier{Form: constructor.Name, Field: field.Name, Class: constructor.Class, ChildType: child, Cardinality: cardinality})

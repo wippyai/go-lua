@@ -3,10 +3,10 @@ package lua
 import (
 	"testing"
 
-	typetable "github.com/wippyai/go-lua/analysis/domain/type/table"
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
-	typemanifest "github.com/wippyai/go-lua/analysis/module/manifest"
+	typetable "github.com/wippyai/go-lua/domain/type/table"
+	"github.com/wippyai/go-lua/domain/type/typ"
 	"github.com/wippyai/go-lua/compiler/parse"
+	typemanifest "github.com/wippyai/go-lua/types/io"
 )
 
 func TestCompileWithOptions_StringCastAndLib(t *testing.T) {

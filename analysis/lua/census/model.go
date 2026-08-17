@@ -8,8 +8,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof"
-	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/grammar"
+	"github.com/wippyai/go-lua/analysis/lua/parsersource"
 )
 
 // Census is the compact parser/AST construct denominator. Productions are
@@ -17,15 +16,39 @@ import (
 // from compiler/ast declarations. No row is authored by hand and no row is a
 // fixture observation.
 //
-// The shape intentionally reuses grammarproof.ActionTemplate and
-// grammar.Schema vocabulary. The future S1 seal join can therefore consume
+// The shape intentionally reuses parsersource.ActionTemplate and
+// parsersource.Schema vocabulary. The future S1 seal join can therefore consume
 // these rows without introducing another parser or AST type universe.
 type Census struct {
 	GrammarSourceDigest string
 	ASTDigest           string
 	Digest              string
-	Productions         []grammarproof.ActionTemplate
-	Constructors        []grammar.Constructor
+	Productions         []parsersource.ActionTemplate
+	Constructors        []parsersource.Constructor
+	// Products is the per-action construction grain: one whole-constructor
+	// field vector for every construction a reduction or a parser helper
+	// performs. A production row states which forms a reduction builds;
+	// a product row states what that reduction puts in each of the form's
+	// carriers, which is the grain a carrier-state law is stated at.
+	Products []parsersource.ActionProduct
+	// Mutations is the same grain for the field assignments an action performs
+	// on a value it has already constructed. They are held apart from products
+	// because a mutation can move a carrier into a state no construction of its
+	// form ever names, so folding them into products would lose exactly the
+	// distinction a state law depends on.
+	Mutations []parsersource.FieldMutation
+	// Slots is the typed parent-slot denominator: one row for every carrier of a
+	// constructed form that holds another AST value, with the role its parent
+	// gives it and the cardinality it holds it at. It is the grain a consumption
+	// law is stated at: a carrier row says a form declares a field, a slot row
+	// says that field is where a child of an exact type and class lands.
+	Slots []parsersource.UseSlot
+	// Uses is the per-action half of that grain and the dual of Products: one
+	// row for every coordinate of a construction that receives another AST
+	// value, naming the slot it fills and where the action obtained the value.
+	// A product row states what an action builds; a use row states where each
+	// built value goes, so the two are the same relation read from its two ends.
+	Uses []parsersource.ActionUse
 }
 
 // Canonical returns detached deterministic bytes for all census fields except
@@ -76,14 +99,32 @@ func Current(root string) (Census, error) {
 
 func clone(c Census) Census {
 	result := c
-	result.Productions = append([]grammarproof.ActionTemplate(nil), c.Productions...)
+	result.Productions = append([]parsersource.ActionTemplate(nil), c.Productions...)
 	for index := range result.Productions {
 		result.Productions[index].RHS = append([]string(nil), c.Productions[index].RHS...)
 		result.Productions[index].Constructors = append([]string(nil), c.Productions[index].Constructors...)
 	}
-	result.Constructors = append([]grammar.Constructor(nil), c.Constructors...)
+	result.Constructors = append([]parsersource.Constructor(nil), c.Constructors...)
 	for index := range result.Constructors {
-		result.Constructors[index].Fields = append([]grammar.Field(nil), c.Constructors[index].Fields...)
+		result.Constructors[index].Fields = append([]parsersource.Field(nil), c.Constructors[index].Fields...)
+	}
+	result.Products = append([]parsersource.ActionProduct(nil), c.Products...)
+	for index := range result.Products {
+		result.Products[index].Fields = append([]parsersource.ProductField(nil), c.Products[index].Fields...)
+		for coordinate := range result.Products[index].Fields {
+			result.Products[index].Fields[coordinate].States = append([]parsersource.FieldState(nil), c.Products[index].Fields[coordinate].States...)
+		}
+	}
+	result.Mutations = append([]parsersource.FieldMutation(nil), c.Mutations...)
+	for index := range result.Mutations {
+		result.Mutations[index].States = append([]parsersource.FieldState(nil), c.Mutations[index].States...)
+	}
+	result.Slots = append([]parsersource.UseSlot(nil), c.Slots...)
+	result.Uses = append([]parsersource.ActionUse(nil), c.Uses...)
+	for index := range result.Uses {
+		result.Uses[index].Origins = append([]parsersource.UseOrigin(nil), c.Uses[index].Origins...)
+		result.Uses[index].Sources = append([]int(nil), c.Uses[index].Sources...)
+		result.Uses[index].Symbols = append([]int(nil), c.Uses[index].Symbols...)
 	}
 	return result
 }

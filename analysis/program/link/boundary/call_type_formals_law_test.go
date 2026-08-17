@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
-	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
+	"github.com/wippyai/go-lua/domain/type/typ"
+	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
