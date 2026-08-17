@@ -4,20 +4,21 @@ import (
 	"crypto/sha256"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
 	allocationcatalog "github.com/wippyai/go-lua/analysis/domain/heap/allocation/catalog"
 	closed "github.com/wippyai/go-lua/analysis/domain/heap/allocation/closed"
 	"github.com/wippyai/go-lua/analysis/domain/heap/allocation/internal/source"
 	heapowner "github.com/wippyai/go-lua/analysis/domain/heap/owner"
+	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
-	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
-	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 // TestClosedMountedReceiptAdmission keeps the valid ownership law at the
@@ -89,7 +90,7 @@ func closedReceiptFixture(t testing.TB, text string) (heapdomain.Schema, *valued
 	if err != nil {
 		t.Fatal(err)
 	}
-	contract, err := target.Seal(&target.Spec{})
+	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +109,7 @@ func closedReceiptFixture(t testing.TB, text string) (heapdomain.Schema, *valued
 
 func closedArtifactMounts(t testing.TB, linked *link.Link) closedFixtureMounts {
 	t.Helper()
-	receipt, receiptOK := grammar.Global()
+	receipt, receiptOK := composite.Global()
 	if !receiptOK || linked == nil || linked.Project() == nil {
 		t.Fatal("closed artifact receipt")
 	}
@@ -122,7 +123,7 @@ func closedArtifactMounts(t testing.TB, linked *link.Link) closedFixtureMounts {
 		if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 			t.Fatal("closed artifact mount")
 		}
-		artifact, failure := schemaadapter.CompileDetailed(program.TransformerInput(), receipt)
+		artifact, failure := composite.CompileArtifactDetailed(program, receipt)
 		if failure.Available() || artifact == nil {
 			t.Fatalf("closed artifact compile: %v", failure)
 		}
@@ -149,8 +150,8 @@ func tableRoot(t testing.TB, schema heapdomain.Schema, fields int) heapdomain.Ke
 	return heapdomain.Key{}
 }
 
-func closedKey(value byte) engine.SemanticKey {
+func closedKey(value byte) identity.SemanticKey {
 	digest := sha256.Sum256([]byte{0xC1, value})
-	key, _ := engine.NewSemanticKey(digest, 1)
+	key, _ := identity.NewSemanticKey(digest, 1)
 	return key
 }

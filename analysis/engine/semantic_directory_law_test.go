@@ -60,7 +60,7 @@ func newSemanticDirectoryScaleFixture(t testing.TB, count int) semanticDirectory
 	occurrences := make([]equation.Occurrence, count)
 	operands := make([]equation.Operand, count)
 	for index := 0; index < count; index++ {
-		site, siteOK := assembly.builder.admitSite(coldKey(960_000+index).compositionKey(), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent)
+		site, siteOK := assembly.builder.admitSite(compositionKeyOf(coldKey(960_000+index)), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent)
 		occurrence, occurrenceOK := assembly.builder.admitAt(site)
 		entity, entityOK := operandEntityForContent(ruleUnitForSemantic(coldKey(970_000 + index)).content)
 		operand, operandOK := assembly.builder.admitOperand(occurrence, entity)

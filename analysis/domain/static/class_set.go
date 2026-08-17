@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/type/authority"
 	"github.com/wippyai/go-lua/analysis/domain/type/typ"
+	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
 	"github.com/wippyai/go-lua/analysis/identity"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/target"
@@ -423,11 +424,11 @@ func (s *ClassSet) addTarget(contract *target.Contract, value target.Type) error
 	if _, exists := s.byTarget[value]; exists {
 		return nil
 	}
-	encoded, ok := contract.TypeBytes(value)
+	declaration, ok := contract.TypeDeclaration(value)
 	if !ok {
-		return errors.New("static: Target type bytes unavailable")
+		return errors.New("static: Target type declaration unavailable")
 	}
-	decoded, err := typ.DecodeCanonicalFormals(context.Background(), encoded, nil)
+	decoded, err := domaincontract.Decode(context.Background(), declaration, nil)
 	if err == nil && decoded != nil {
 		class, addErr := s.addConcrete(decoded)
 		if addErr != nil {
@@ -439,12 +440,13 @@ func (s *ClassSet) addTarget(contract *target.Contract, value target.Type) error
 	// A scoped endpoint with operation formals is still a finite opaque class.
 	// Static does not manufacture a parallel Target-formal authority to decode it.
 	contractID := contract.ContentID()
-	identity := make([]byte, 0, len(contractID)+8+len(encoded))
+	digest := declaration.Digest()
+	identity := make([]byte, 0, len(contractID)+8+len(digest))
 	identity = append(identity, contractID[:]...)
 	var ordinal [8]byte
 	binary.BigEndian.PutUint64(ordinal[:], uint64(value))
 	identity = append(identity, ordinal[:]...)
-	identity = append(identity, encoded...)
+	identity = append(identity, digest[:]...)
 	index, ordinalErr := denseOrdinal(len(s.rows))
 	if ordinalErr != nil {
 		return fmt.Errorf("static: Target class handle: %w", ordinalErr)

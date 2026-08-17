@@ -14,11 +14,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wippyai/go-lua/analysis/domain/composite"
+	"github.com/wippyai/go-lua/analysis/library/lualib/targetprofile"
 	"github.com/wippyai/go-lua/analysis/program"
-	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
 	"github.com/wippyai/go-lua/analysis/program/link"
-	"github.com/wippyai/go-lua/analysis/program/target/profile"
-	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 func TestPlanCloseWaitsForActiveSolveLease(t *testing.T) {
@@ -61,7 +60,7 @@ func TestArtifactCacheSurvivesSequentialPlanClose(t *testing.T) {
 	}
 	linked := mustLink(t, `local retained_cache_probe = 17
 return retained_cache_probe`, contract)
-	receipt, ok := grammar.Global()
+	receipt, ok := composite.Global()
 	if !ok || !receipt.Available() {
 		t.Fatal("global schema unavailable")
 	}
@@ -71,7 +70,7 @@ return retained_cache_probe`, contract)
 	if !shardOK || !mountedOK || mounted == nil {
 		t.Fatal("probe mount unavailable")
 	}
-	compileKey, keyOK := schemaadapter.NewCompileKey(mounted.TransformerInput(), receipt)
+	compileKey, keyOK := composite.NewArtifactCompileKey(mounted, receipt)
 	if !keyOK || !compileKey.Available() {
 		t.Fatal("compile key unavailable")
 	}
@@ -79,7 +78,7 @@ return retained_cache_probe`, contract)
 	if firstStatus != CompileComplete || first == nil || first.state == nil || first.state.artifacts == nil {
 		t.Fatalf("first compile = %v/%v diagnostics=%+v", firstStatus, first, firstDiagnostics)
 	}
-	firstArtifact := first.state.artifacts.byProgram[mounted.TransformerInput().ContentID()]
+	firstArtifact := first.state.artifacts.byProgram[mounted.ContentID()]
 	if len(first.state.artifacts.mounts) == 0 {
 		t.Fatal("first compile retained no mounted artifact")
 	}
@@ -93,7 +92,7 @@ return retained_cache_probe`, contract)
 		t.Fatalf("second compile = %v/%v", secondStatus, second)
 	}
 	defer second.Close()
-	secondArtifact := second.state.artifacts.byProgram[mounted.TransformerInput().ContentID()]
+	secondArtifact := second.state.artifacts.byProgram[mounted.ContentID()]
 	if len(second.state.artifacts.mounts) == 0 {
 		t.Fatal("second compile retained no mounted artifact")
 	}
@@ -140,7 +139,7 @@ return concurrent_cache_probe`, contract)
 	if !shardOK || !mountedOK || mounted == nil {
 		t.Fatal("concurrent probe mount unavailable")
 	}
-	programID := mounted.TransformerInput().ContentID()
+	programID := mounted.ContentID()
 	var artifact any
 	var template any
 	for index, plan := range plans {
@@ -185,11 +184,11 @@ func TestArtifactCacheChangedFullKeyDoesNotAlias(t *testing.T) {
 	}
 	defer leftPlan.Close()
 	defer rightPlan.Close()
-	receipt, receiptOK := grammar.Global()
+	receipt, receiptOK := composite.Global()
 	leftInput := planLifecycleInput(t, left)
 	rightInput := planLifecycleInput(t, right)
-	leftKey, leftKeyOK := schemaadapter.NewCompileKey(leftInput, receipt)
-	rightKey, rightKeyOK := schemaadapter.NewCompileKey(rightInput, receipt)
+	leftKey, leftKeyOK := composite.NewArtifactCompileKey(leftInput, receipt)
+	rightKey, rightKeyOK := composite.NewArtifactCompileKey(rightInput, receipt)
 	if !receiptOK || !leftKeyOK || !rightKeyOK || leftKey.ID() == rightKey.ID() {
 		t.Fatal("changed Program did not issue a distinct full compiler key")
 	}
@@ -304,7 +303,7 @@ return shared_template_probe(43)`
 	}
 }
 
-func planLifecycleInput(t testing.TB, linked *link.Link) program.TransformerInput {
+func planLifecycleInput(t testing.TB, linked *link.Link) *program.Program {
 	t.Helper()
 	if linked == nil || linked.Project() == nil {
 		t.Fatal("link unavailable")
@@ -315,7 +314,7 @@ func planLifecycleInput(t testing.TB, linked *link.Link) program.TransformerInpu
 	if !shardOK || !mountedOK || mounted == nil {
 		t.Fatal("mounted Program unavailable")
 	}
-	return mounted.TransformerInput()
+	return mounted
 }
 
 func TestCompiledStateDirectFieldsExcludeLegacyOwners(t *testing.T) {
@@ -348,7 +347,7 @@ func TestCompiledStateDirectFieldsExcludeLegacyOwners(t *testing.T) {
 			}
 			for _, field := range structure.Fields.List {
 				fieldSource := source[field.Pos()-1 : field.End()-1]
-				for _, forbidden := range []string{"link.Link", "linkproject.", "program.Program", "program.TransformerInput", "flow."} {
+				for _, forbidden := range []string{"link.Link", "linkproject.", "program.Program", "flow."} {
 					if strings.Contains(string(fieldSource), forbidden) {
 						t.Fatalf("compiledState retains forbidden owner field %q", fieldSource)
 					}
@@ -439,8 +438,6 @@ func TestCompiledPlanTypeGraphExcludesLegacyOwners(t *testing.T) {
 		"github.com/wippyai/go-lua/analysis/program/link/static.Expression":       {},
 		"github.com/wippyai/go-lua/analysis/program/link/module.Component":        {},
 		"github.com/wippyai/go-lua/analysis/program.Program":                      {},
-		"github.com/wippyai/go-lua/analysis/program.TransformerInput":             {},
-		"github.com/wippyai/go-lua/analysis/program.CallOccurrence":               {},
 		"github.com/wippyai/go-lua/analysis/program/flow.Component":               {},
 	}
 	seen := make(map[reflect.Type]struct{})

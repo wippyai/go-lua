@@ -2,18 +2,18 @@ package target
 
 import (
 	"fmt"
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
 
-func protocolOperation(name string, input []typ.Type) OperationSpec {
+func protocolOperation(name string, input []schematype.Type) OperationSpec {
 	return OperationSpec{
 		Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{name}}},
 		Input:    ValuesSpec{Fixed: input, Tail: ValuesClosed},
 		Outcomes: []OutcomeSpec{{
-			Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed},
+			Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed},
 		}},
 		Effects: RowSpec{Tail: RowClosed},
 	}
@@ -21,7 +21,7 @@ func protocolOperation(name string, input []typ.Type) OperationSpec {
 
 func TestProtocolMultipleAcquisitionsAndEntryRows(t *testing.T) {
 	accept := protocolOperation("accept", nil)
-	close := protocolOperation("close", []typ.Type{typ.Any})
+	close := protocolOperation("close", []schematype.Type{testAny})
 	connect := protocolOperation("connect", nil)
 	contract := mustSeal(t, Spec{
 		Operations: []OperationSpec{accept, close, connect},
@@ -79,7 +79,7 @@ func TestProtocolMultipleAcquisitionsAndEntryRows(t *testing.T) {
 }
 
 func TestProtocolRejectsInvalidNominalAuthority(t *testing.T) {
-	base := protocolOperation("acquire", []typ.Type{typ.Any})
+	base := protocolOperation("acquire", []schematype.Type{testAny})
 	valid := ProtocolSpec{Acquisitions: []AcquisitionSpec{{Operation: 1, Outcome: 0, Result: 0, State: 1}}, States: []StateSpec{{Name: "open"}}}
 	for _, test := range []struct {
 		name      string
@@ -93,7 +93,7 @@ func TestProtocolRejectsInvalidNominalAuthority(t *testing.T) {
 		{"shared acquisition", []ProtocolSpec{valid, valid}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := Seal(&Spec{Operations: []OperationSpec{base}, Protocols: test.protocols}); err == nil {
+			if _, err := testSeal(&Spec{Operations: []OperationSpec{base}, Protocols: test.protocols}); err == nil {
 				t.Fatal("invalid protocol accepted")
 			}
 		})
@@ -101,7 +101,7 @@ func TestProtocolRejectsInvalidNominalAuthority(t *testing.T) {
 }
 
 func TestProtocolRejectsBadOutcomeAndTransitionCoordinates(t *testing.T) {
-	base := protocolOperation("protocol-coordinates", []typ.Type{typ.Any})
+	base := protocolOperation("protocol-coordinates", []schematype.Type{testAny})
 	valid := ProtocolSpec{
 		Acquisitions: []AcquisitionSpec{{Operation: 1, Outcome: 0, Result: 0, State: 1}},
 		States:       []StateSpec{{Name: "open"}, {Name: "closed", Final: true}},
@@ -118,7 +118,7 @@ func TestProtocolRejectsBadOutcomeAndTransitionCoordinates(t *testing.T) {
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := Seal(&Spec{Operations: []OperationSpec{base}, Protocols: []ProtocolSpec{test.value}}); err == nil {
+			if _, err := testSeal(&Spec{Operations: []OperationSpec{base}, Protocols: []ProtocolSpec{test.value}}); err == nil {
 				t.Fatal("invalid protocol coordinate accepted")
 			}
 		})
@@ -143,7 +143,7 @@ func TestProtocolPublicObservablesIgnoreStateAndAcquisitionAuthorOrder(t *testin
 
 func TestProtocolStateCoordinatesAreAlphaInvariantAcrossCyclesAndRoots(t *testing.T) {
 	operations := []OperationSpec{
-		protocolOperation("root-a", []typ.Type{typ.Any}),
+		protocolOperation("root-a", []schematype.Type{testAny}),
 		protocolOperation("root-b", nil),
 	}
 	left := mustSeal(t, Spec{Operations: operations, Protocols: []ProtocolSpec{{
@@ -186,7 +186,7 @@ func TestProtocolStateCoordinatesAreAlphaInvariantAcrossCyclesAndRoots(t *testin
 }
 
 func TestProtocolRejectsUnreachableState(t *testing.T) {
-	_, err := Seal(&Spec{Operations: []OperationSpec{protocolOperation("reachable", nil)}, Protocols: []ProtocolSpec{{
+	_, err := testSeal(&Spec{Operations: []OperationSpec{protocolOperation("reachable", nil)}, Protocols: []ProtocolSpec{{
 		Acquisitions: []AcquisitionSpec{{Operation: 1, Outcome: 0, Result: 0, State: 1}},
 		States:       []StateSpec{{Name: "root"}, {Name: "orphan"}},
 	}}})
@@ -209,7 +209,7 @@ func TestProtocolWideStatesSealIteratively(t *testing.T) {
 		}
 	}
 	contract := mustSeal(t, Spec{
-		Operations: []OperationSpec{protocolOperation("wide-protocol", []typ.Type{typ.Any})},
+		Operations: []OperationSpec{protocolOperation("wide-protocol", []schematype.Type{testAny})},
 		Protocols: []ProtocolSpec{{
 			Acquisitions: []AcquisitionSpec{{Operation: 1, Outcome: 0, Result: 0, State: 1}}, States: states, Transitions: transitions,
 		}},
@@ -232,8 +232,8 @@ func TestProtocolWideOutcomeRemapAvoidsQuadraticSearch(t *testing.T) {
 	outcomes := make([]OutcomeSpec, width)
 	acquisitions := make([]AcquisitionSpec, width)
 	for index := range outcomes {
-		record := typ.RebuildRecord(typ.RecordParts{Fields: []typ.Field{{Name: fmt.Sprintf("field-%05d", index), Type: typ.Any}}})
-		outcomes[width-index-1] = OutcomeSpec{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{record}, Tail: ValuesClosed}}
+		record := testRawRecord(testRawRecordParts{Fields: []testRawField{{Name: fmt.Sprintf("field-%05d", index), Type: testRawAny}}})
+		outcomes[width-index-1] = OutcomeSpec{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testEncode(record)}, Tail: ValuesClosed}}
 		acquisitions[index] = AcquisitionSpec{Operation: 1, Outcome: uint32(index), Result: 0, State: 1}
 	}
 	op := protocolOperation("wide-outcome-protocol", nil)

@@ -3,16 +3,16 @@ package heap_test
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
 	"github.com/wippyai/go-lua/analysis/domain/materialization"
+	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
 	"github.com/wippyai/go-lua/analysis/identity"
 	lualower "github.com/wippyai/go-lua/analysis/lua/lower"
-	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	proglink "github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
-	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 // Keep the law prose compact while making the test's dependency direction
@@ -72,7 +72,7 @@ func compactHeapFixture(t testing.TB, name, source string, spec *target.Spec) (*
 		t.Fatal(err)
 	}
 	if spec == nil {
-		spec = &target.Spec{}
+		spec = &target.Spec{Semantics: domaincontract.NewSemantics()}
 	}
 	contract, err := target.Seal(spec)
 	if err != nil {
@@ -82,7 +82,7 @@ func compactHeapFixture(t testing.TB, name, source string, spec *target.Spec) (*
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, receiptOK := grammar.Global()
+	receipt, receiptOK := composite.Global()
 	if !receiptOK {
 		t.Fatal("program schema receipt")
 	}
@@ -96,7 +96,7 @@ func compactHeapFixture(t testing.TB, name, source string, spec *target.Spec) (*
 		if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 			t.Fatal("artifact mount source")
 		}
-		artifact, failure := schemaadapter.CompileDetailed(program.TransformerInput(), receipt)
+		artifact, failure := composite.CompileArtifactDetailed(program, receipt)
 		if failure.Available() || artifact == nil {
 			t.Fatalf("artifact compile: %v", failure)
 		}
@@ -261,6 +261,7 @@ func compactObjectRaw(t testing.TB, schema Schema, key Key, object Object, selec
 
 func compactBootSpec() *target.Spec {
 	return &target.Spec{
+		Semantics: domaincontract.NewSemantics(),
 		InitialRoots: []target.InitialRootSpec{{
 			Identity: "GlobalEnvRoot",
 			Shape: target.BootShapeSpec{

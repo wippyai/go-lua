@@ -5,7 +5,7 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/analysis/lua/semantics/exactkey"
+	"github.com/wippyai/go-lua/analysis/program/scalar"
 )
 
 // keyForm is private because Source preserves spelling metadata only: name
@@ -89,7 +89,7 @@ func buildKeyFault(a *authority, input Input) error {
 		if !a.validFamilyTerm(row.owner, keyspace.FamilyBody) {
 			return errors.New("program/source: invalid source-key owner")
 		}
-		exact, ok := exactkey.Normalize(row.exact)
+		exact, ok := scalar.Normalize(row.exact)
 		if !ok || !validSourceKey(row.form, exact) {
 			return errors.New("program/source: invalid source key")
 		}
@@ -118,7 +118,7 @@ func buildExactAtoms(store *exactStore, rows []keyspace.LiteralValue) (map[keysp
 	unique := make(map[keyspace.LiteralValue]struct{}, len(rows))
 	store.atoms = make([]keyspace.LiteralValue, 0, len(rows))
 	for _, raw := range rows {
-		atom, ok := exactkey.Normalize(raw)
+		atom, ok := scalar.Normalize(raw)
 		if !ok {
 			return nil, errors.New("program/source: invalid exact key atom")
 		}
@@ -129,7 +129,7 @@ func buildExactAtoms(store *exactStore, rows []keyspace.LiteralValue) (map[keysp
 		store.atoms = append(store.atoms, atom)
 	}
 	sort.Slice(store.atoms, func(left, right int) bool {
-		return exactkey.CompareCanonical(exactkey.FromLiteral(store.atoms[left]), exactkey.FromLiteral(store.atoms[right])) < 0
+		return scalar.CompareCanonical(scalar.FromLiteral(store.atoms[left]), scalar.FromLiteral(store.atoms[right])) < 0
 	})
 	lookup := make(map[keyspace.LiteralValue]keyspace.Key, len(store.atoms))
 	for index, atom := range store.atoms {

@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/internal/framing"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
@@ -20,7 +21,7 @@ type lawHot struct{ id int }
 
 // lawSpec is one admissible declaration. Every law below starts from it and
 // breaks exactly one field, so a rejection names the law it violated.
-func lawSpec(key schema.Key, role programartifact.RuleRole, lane Lane, semantic func(vocabulary.Bundle) engine.SemanticKey) Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot] {
+func lawSpec(key schema.Key, role programartifact.RuleRole, lane Lane, semantic func(vocabulary.Bundle) identity.SemanticKey) Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot] {
 	spec := Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot]{
 		Key:      key,
 		Role:     role,
@@ -57,32 +58,27 @@ func (lawCatalog) IDAt(int) (identity.ContentID, bool) { return identity.Content
 // a law can break exactly one row and keep every other law satisfied.
 func lawTable(t *testing.T, mutate func(int, *Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot])) []*Template[lawPrincipals, lawAuthorities] {
 	t.Helper()
-	bundle, bundleOK := vocabulary.New()
-	if !bundleOK {
-		t.Fatal("vocabulary")
-	}
-	_ = bundle
-	semantics := []func(vocabulary.Bundle) engine.SemanticKey{
-		func(b vocabulary.Bundle) engine.SemanticKey { return b.ValueSourceRule.Rule },
-		func(b vocabulary.Bundle) engine.SemanticKey { return b.PackSourceRule.Rule },
-		func(b vocabulary.Bundle) engine.SemanticKey { return b.HeapIngressRule.Rule },
-		func(b vocabulary.Bundle) engine.SemanticKey { return b.ValueAllocationRule.Rule },
-		func(b vocabulary.Bundle) engine.SemanticKey { return b.HeapEmptyRule.Rule },
-		func(b vocabulary.Bundle) engine.SemanticKey { return b.HeapClosedRule.Rule },
-		func(b vocabulary.Bundle) engine.SemanticKey { return b.RawGetRule.Rule },
-		func(b vocabulary.Bundle) engine.SemanticKey { return b.RawSetRule.Rule },
-		func(b vocabulary.Bundle) engine.SemanticKey { return b.CallDispatchRule.Rule },
-		func(b vocabulary.Bundle) engine.SemanticKey { return b.EffectSelectedRule.Rule },
-		func(b vocabulary.Bundle) engine.SemanticKey { return b.EffectOpaqueRule.Rule },
-		func(b vocabulary.Bundle) engine.SemanticKey { return b.EffectBodyRule.Rule },
-		func(b vocabulary.Bundle) engine.SemanticKey { return b.CallActivation },
-		func(b vocabulary.Bundle) engine.SemanticKey { return b.ValueBootstrapRule.Rule },
-		func(b vocabulary.Bundle) engine.SemanticKey { return b.HeapBootstrapRule.Rule },
-		func(b vocabulary.Bundle) engine.SemanticKey { return b.ValueTransferRule.Rule },
-		func(b vocabulary.Bundle) engine.SemanticKey { return b.ValueBinaryArithmeticRule.Rule },
-		func(b vocabulary.Bundle) engine.SemanticKey { return b.ValueBinaryEqualityRule.Rule },
-		func(b vocabulary.Bundle) engine.SemanticKey { return b.ValueBinaryOrderRule.Rule },
-		func(b vocabulary.Bundle) engine.SemanticKey { return b.ValuePresenceRefinementRule.Rule },
+	semantics := []func(vocabulary.Bundle) identity.SemanticKey{
+		func(b vocabulary.Bundle) identity.SemanticKey { return b.ValueSourceRule.Rule },
+		func(b vocabulary.Bundle) identity.SemanticKey { return b.PackSourceRule.Rule },
+		func(b vocabulary.Bundle) identity.SemanticKey { return b.HeapIngressRule.Rule },
+		func(b vocabulary.Bundle) identity.SemanticKey { return b.ValueAllocationRule.Rule },
+		func(b vocabulary.Bundle) identity.SemanticKey { return b.HeapEmptyRule.Rule },
+		func(b vocabulary.Bundle) identity.SemanticKey { return b.HeapClosedRule.Rule },
+		func(b vocabulary.Bundle) identity.SemanticKey { return b.RawGetRule.Rule },
+		func(b vocabulary.Bundle) identity.SemanticKey { return b.RawSetRule.Rule },
+		func(b vocabulary.Bundle) identity.SemanticKey { return b.CallDispatchRule.Rule },
+		func(b vocabulary.Bundle) identity.SemanticKey { return b.EffectSelectedRule.Rule },
+		func(b vocabulary.Bundle) identity.SemanticKey { return b.EffectOpaqueRule.Rule },
+		func(b vocabulary.Bundle) identity.SemanticKey { return b.EffectBodyRule.Rule },
+		func(b vocabulary.Bundle) identity.SemanticKey { return b.CallActivation },
+		func(b vocabulary.Bundle) identity.SemanticKey { return b.ValueBootstrapRule.Rule },
+		func(b vocabulary.Bundle) identity.SemanticKey { return b.HeapBootstrapRule.Rule },
+		func(b vocabulary.Bundle) identity.SemanticKey { return b.ValueTransferRule.Rule },
+		func(b vocabulary.Bundle) identity.SemanticKey { return b.ValueBinaryArithmeticRule.Rule },
+		func(b vocabulary.Bundle) identity.SemanticKey { return b.ValueBinaryEqualityRule.Rule },
+		func(b vocabulary.Bundle) identity.SemanticKey { return b.ValueBinaryOrderRule.Rule },
+		func(b vocabulary.Bundle) identity.SemanticKey { return b.ValuePresenceRefinementRule.Rule },
 	}
 	keys := []schema.Key{
 		"law-value-source", "law-pack-source", "law-heap-ingress", "law-value-allocation", "law-heap-empty",
@@ -129,6 +125,8 @@ func (entry lawSiblingEntry) Key() schema.Key { return entry.key }
 
 func (entry lawSiblingEntry) EntryAvailable() bool { return entry.key.Available() }
 
+func (entry lawSiblingEntry) EntryContent(*framing.Writer) error { return nil }
+
 func (surface lawSiblingSurface) Kind() schema.SurfaceKind { return surface.kind }
 
 func (surface lawSiblingSurface) Entries() []schema.Entry {
@@ -143,6 +141,13 @@ func (lawSiblingSurface) Seal(schema.View, schema.Sealed) schema.SealFailure {
 // catalog is walked rather than listed, so the surfaces the declaration root
 // settles on do not change what these laws assert.
 func sealLawTable(templates []*Template[lawPrincipals, lawAuthorities]) schema.SealFailure {
+	_, failure := sealLawTableFor(templates)
+	return failure
+}
+
+// sealLawTableFor is the same seal, read for the table it produces rather than
+// for the verdict alone.
+func sealLawTableFor(templates []*Template[lawPrincipals, lawAuthorities]) (*schema.Schema, schema.SealFailure) {
 	builder := schema.NewBuilder()
 	for kind := schema.SurfaceKind(1); kind.Available(); kind++ {
 		if kind == schema.SurfaceKindRule {
@@ -151,8 +156,7 @@ func sealLawTable(templates []*Template[lawPrincipals, lawAuthorities]) schema.S
 		}
 		builder.Register(lawSiblingSurface{kind: kind})
 	}
-	_, failure := builder.Seal()
-	return failure
+	return builder.Seal()
 }
 
 func TestRuleSurfaceAdmitsTheCompleteRoleCatalog(t *testing.T) {
@@ -245,9 +249,14 @@ func TestRuleSurfaceRejectsADriftedTable(t *testing.T) {
 				spec.Role = programartifact.RuleRoleRawGet
 			}
 		}, LawRoleOrdinal},
+		{"absent-semantic", func(position int, spec *Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot]) {
+			if position == 0 {
+				spec.Semantic = func(vocabulary.Bundle) identity.SemanticKey { return identity.SemanticKey{} }
+			}
+		}, LawSemanticIdentity},
 		{"duplicate-semantic", func(position int, spec *Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot]) {
 			if position == 1 {
-				spec.Semantic = func(b vocabulary.Bundle) engine.SemanticKey { return b.ValueSourceRule.Rule }
+				spec.Semantic = func(b vocabulary.Bundle) identity.SemanticKey { return b.ValueSourceRule.Rule }
 			}
 		}, LawSemanticUnique},
 		{"mounted-role-declared-on-the-link-lane", func(position int, spec *Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot]) {
@@ -273,6 +282,47 @@ func TestRuleSurfaceRejectsADriftedTable(t *testing.T) {
 				t.Fatalf("contributor = %d, want the rule surface", failure.Contributor)
 			}
 		})
+	}
+}
+
+// lawForeignSurface contributes rows of a foreign record under this surface's
+// own kind and states this surface's laws over them. It is how a contribution
+// that is not a rule declaration reaches the rule surface through the public
+// seal path.
+type lawForeignSurface struct{}
+
+func (lawForeignSurface) Kind() schema.SurfaceKind { return schema.SurfaceKindRule }
+
+func (lawForeignSurface) Entries() []schema.Entry {
+	return []schema.Entry{lawSiblingEntry{key: "law-foreign"}}
+}
+
+func (lawForeignSurface) Seal(view schema.View, sealed schema.Sealed) schema.SealFailure {
+	return surface[lawPrincipals, lawAuthorities]{}.Seal(view, sealed)
+}
+
+// TestRuleSurfaceRejectsAForeignRow states that the rule surface reads rule
+// declarations and nothing else. A row of another record type carries none of
+// the declared data every rule law is stated over, so it is rejected as the
+// wrong shape rather than read as a partially declared rule.
+func TestRuleSurfaceRejectsAForeignRow(t *testing.T) {
+	builder := schema.NewBuilder()
+	for kind := schema.SurfaceKind(1); kind.Available(); kind++ {
+		if kind == schema.SurfaceKindRule {
+			builder.Register(lawForeignSurface{})
+			continue
+		}
+		builder.Register(lawSiblingSurface{kind: kind})
+	}
+	sealed, failure := builder.Seal()
+	if sealed != nil {
+		t.Fatal("a foreign row was admitted into the rule surface")
+	}
+	if failure.Law != LawEntryShape || failure.Disposition != schema.DispositionMalformed {
+		t.Fatalf("foreign row rejected under law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	if failure.Contributor != schema.SurfaceKindRule {
+		t.Fatalf("shape verdict named surface %d, not the rule surface", failure.Contributor)
 	}
 }
 
@@ -313,5 +363,54 @@ func TestRuleTemplateHandsBackOnlyItsOwnCell(t *testing.T) {
 	}
 	if second.Role() == first.Role() {
 		t.Fatal("law table roles collided")
+	}
+}
+
+// TestTableDigestCoversDeclaredContent is the drift law of this surface: the
+// digest is what a derived inventory is checked against, so two catalogs that
+// name the same rules and admit them on different lanes are two tables. The
+// lane decides which admission path an occurrence takes, so moving one moves
+// the digest.
+func TestTableDigestCoversDeclaredContent(t *testing.T) {
+	declared, failure := sealLawTableFor(lawTable(t, nil))
+	if failure.Available() {
+		t.Fatalf("complete role catalog rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	templates := lawTable(t, func(_ int, spec *Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot]) {
+		if spec.Role == programartifact.RuleRoleCallActivation {
+			spec.Lane = LaneMounted
+		}
+	})
+	shifted, failure := sealLawTableFor(templates)
+	if failure.Available() {
+		t.Fatalf("catalog with a shifted lane rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	if declared.Digest() == shifted.Digest() {
+		t.Fatal("a rule's declared admission lane left the table digest unchanged")
+	}
+}
+
+// TestTableDigestCoversSemanticIdentity is the identity half of the same drift
+// law. A rule's canonical identity is the role it selects from the closed
+// vocabulary, and the engine slot it binds is resolved under that identity, so
+// two catalogs whose rules occupy the same artifact roles and select different
+// roles from the vocabulary are two tables. The two inventories below differ in
+// one selected role and in nothing else.
+func TestTableDigestCoversSemanticIdentity(t *testing.T) {
+	declared, failure := sealLawTableFor(lawTable(t, nil))
+	if failure.Available() {
+		t.Fatalf("complete role catalog rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	templates := lawTable(t, func(_ int, spec *Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot]) {
+		if spec.Role == programartifact.RuleRoleValueSource {
+			spec.Semantic = func(bundle vocabulary.Bundle) identity.SemanticKey { return bundle.ValueSourceRule.Operand }
+		}
+	})
+	shifted, failure := sealLawTableFor(templates)
+	if failure.Available() {
+		t.Fatalf("catalog with a shifted semantic role rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	if declared.Digest() == shifted.Digest() {
+		t.Fatal("a rule's selected semantic role left the table digest unchanged")
 	}
 }

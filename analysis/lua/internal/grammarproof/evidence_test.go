@@ -1,6 +1,7 @@
 package grammarproof
 
 import (
+	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -57,18 +58,31 @@ func TestGeneratedEvidenceRejectsChangedTraceInputs(t *testing.T) {
 // accepting a trace from different parser, corpus, or probe inputs.
 func TestGeneratedEvidenceTraceIsCurrent(t *testing.T) {
 	root := moduleRoot(t)
-	if err := Generate(root, filepath.Join(root, "program", "internal", "grammarproof", "evidence_gen.go"), true); err != nil {
+	if err := Generate(root, filepath.Join(root, "analysis", "lua", "internal", "grammarproof", "evidence_gen.go"), true); err != nil {
 		t.Fatal(err)
 	}
 }
 
+// moduleRoot walks up from this test source until it finds the directory that
+// owns go.mod. Anchoring on the module marker keeps the proof independent of
+// where the grammarproof tree sits inside the module.
 func moduleRoot(t *testing.T) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("locate grammarproof source")
 	}
-	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
+	root := filepath.Dir(file)
+	for {
+		if _, err := os.Stat(filepath.Join(root, "go.mod")); err == nil {
+			return root
+		}
+		parent := filepath.Dir(root)
+		if parent == root {
+			t.Fatal("module root: no go.mod above test file")
+		}
+		root = parent
+	}
 }
 
 func collectLive(root string) ([]liveProduction, string, error) {

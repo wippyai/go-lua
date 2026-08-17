@@ -2,7 +2,7 @@
 package parserproducts
 
 import (
-	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof"
+	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/astcodec"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/grammar"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/occurrence"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/recursion"
@@ -22,7 +22,7 @@ const (
 type FieldState struct {
 	Form        string
 	Field       string
-	State       grammarproof.FieldState
+	State       astcodec.FieldState
 	Context     occurrence.Context
 	Disposition Disposition
 	Source      string
@@ -35,7 +35,7 @@ type FieldState struct {
 type Product struct {
 	Form    string
 	Context occurrence.Context
-	States  []grammarproof.FieldState
+	States  []astcodec.FieldState
 	Source  string
 }
 
@@ -231,7 +231,7 @@ type Carrier struct {
 	Field       string
 	Class       grammar.ConstructorClass
 	ChildType   string
-	Cardinality grammarproof.FieldState
+	Cardinality astcodec.FieldState
 }
 
 type SequenceConstruction uint8

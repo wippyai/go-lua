@@ -1895,9 +1895,9 @@ func (work *Work) commit(state State, patches []Patch, nextSupport, added, remov
 			if !state.authority.composition.operations[int(patch.slot)].ValidRoot(root) {
 				panic("prepared root publication violated carrier invariant")
 			}
-				next[int(patch.slot)] = root
-			} else if prepared.rootsChanged {
-				next[int(patch.slot)] = record.after
+			next[int(patch.slot)] = root
+		} else if prepared.rootsChanged {
+			next[int(patch.slot)] = record.after
 		}
 	}
 	dropPatches(patches)

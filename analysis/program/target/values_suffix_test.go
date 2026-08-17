@@ -1,20 +1,20 @@
 package target
 
 import (
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
 
 func TestValuesSuffixCanonicalizationAndQueries(t *testing.T) {
-	contract, err := Seal(&Spec{Operations: []OperationSpec{{
+	contract, err := testSeal(&Spec{Operations: []OperationSpec{{
 		Bindings:   []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"suffix"}}},
 		ValuesVars: 1,
-		Input:      ValuesSpec{Fixed: []typ.Type{typ.String, typ.Integer}, Tail: ValuesClosed},
+		Input:      ValuesSpec{Fixed: []schematype.Type{testString, testInteger}, Tail: ValuesClosed},
 		Outcomes: []OutcomeSpec{
-			{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{typ.String}, Tail: ValuesClosed, Suffix: []typ.Type{typ.Integer}}},
-			{Kind: flowkind.OutcomeThrow, Values: ValuesSpec{Fixed: []typ.Type{typ.String}, Tail: ValuesVariable, Var: 0, Suffix: []typ.Type{typ.Integer}}},
+			{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testString}, Tail: ValuesClosed, Suffix: []schematype.Type{testInteger}}},
+			{Kind: flowkind.OutcomeThrow, Values: ValuesSpec{Fixed: []schematype.Type{testString}, Tail: ValuesVariable, Var: 0, Suffix: []schematype.Type{testInteger}}},
 		},
 		Effects: RowSpec{Tail: RowClosed},
 	}}})
@@ -61,14 +61,14 @@ func TestValuesSuffixRejectsInvalidInputAndTypes(t *testing.T) {
 		name string
 		edit func(*OperationSpec)
 	}{
-		{"input suffix", func(op *OperationSpec) { op.Input.Suffix = []typ.Type{typ.String} }},
-		{"nil suffix type", func(op *OperationSpec) { op.Outcomes[0].Values.Suffix = []typ.Type{nil} }},
+		{"input suffix", func(op *OperationSpec) { op.Input.Suffix = []schematype.Type{testString} }},
+		{"nil suffix type", func(op *OperationSpec) { op.Outcomes[0].Values.Suffix = []schematype.Type{{}} }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			op := base
 			op.Outcomes = append([]OutcomeSpec(nil), base.Outcomes...)
 			test.edit(&op)
-			if _, err := Seal(&Spec{Operations: []OperationSpec{op}}); err == nil {
+			if _, err := testSeal(&Spec{Operations: []OperationSpec{op}}); err == nil {
 				t.Fatal("Seal accepted invalid suffix")
 			}
 		})
@@ -77,10 +77,10 @@ func TestValuesSuffixRejectsInvalidInputAndTypes(t *testing.T) {
 
 func TestValuesSuffixOutcomePermutationHasOnePublicContract(t *testing.T) {
 	makeContract := func(outcomes []OutcomeSpec) *Contract {
-		contract, err := Seal(&Spec{Operations: []OperationSpec{{
+		contract, err := testSeal(&Spec{Operations: []OperationSpec{{
 			Bindings:   []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"suffix-permutation"}}},
 			ValuesVars: 1,
-			Input:      ValuesSpec{Fixed: []typ.Type{typ.String}, Tail: ValuesClosed},
+			Input:      ValuesSpec{Fixed: []schematype.Type{testString}, Tail: ValuesClosed},
 			Outcomes:   outcomes,
 			Effects:    RowSpec{Tail: RowClosed},
 		}}})
@@ -89,8 +89,8 @@ func TestValuesSuffixOutcomePermutationHasOnePublicContract(t *testing.T) {
 		}
 		return contract
 	}
-	normal := OutcomeSpec{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{typ.String}, Tail: ValuesVariable, Var: 0, Suffix: []typ.Type{typ.Integer}}}
-	throwing := OutcomeSpec{Kind: flowkind.OutcomeThrow, Values: ValuesSpec{Tail: ValuesClosed, Suffix: []typ.Type{typ.String}}}
+	normal := OutcomeSpec{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testString}, Tail: ValuesVariable, Var: 0, Suffix: []schematype.Type{testInteger}}}
+	throwing := OutcomeSpec{Kind: flowkind.OutcomeThrow, Values: ValuesSpec{Tail: ValuesClosed, Suffix: []schematype.Type{testString}}}
 	left := makeContract([]OutcomeSpec{normal, throwing})
 	right := makeContract([]OutcomeSpec{throwing, normal})
 	assertPublicContractEqual(t, left, right)
@@ -98,11 +98,11 @@ func TestValuesSuffixOutcomePermutationHasOnePublicContract(t *testing.T) {
 
 func TestWideValuesSuffixSealsAndQueries(t *testing.T) {
 	const width = 2048
-	suffix := make([]typ.Type, width)
+	suffix := make([]schematype.Type, width)
 	for index := range suffix {
-		suffix[index] = typ.Integer
+		suffix[index] = testInteger
 	}
-	contract, err := Seal(&Spec{Operations: []OperationSpec{{
+	contract, err := testSeal(&Spec{Operations: []OperationSpec{{
 		Bindings:   []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"wide-suffix"}}},
 		ValuesVars: 1,
 		Input:      ValuesSpec{Tail: ValuesVariable, Var: 0},

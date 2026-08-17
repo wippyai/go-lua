@@ -171,11 +171,3 @@ func (directory *semanticDirectory) activation(id identity.ContentID) (equation.
 	}
 	return directory.activations[entry.slot], true
 }
-
-// queryCount reports the published query rows this directory addresses.
-func (directory *semanticDirectory) queryCount() int {
-	if directory == nil {
-		return 0
-	}
-	return len(directory.queryOrder)
-}

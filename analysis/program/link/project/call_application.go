@@ -5,7 +5,6 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/internal/framing"
-	"github.com/wippyai/go-lua/analysis/program"
 )
 
 const (
@@ -14,25 +13,25 @@ const (
 )
 
 // CallApplication is Project's opaque proof that one exact mounted Program
-// CallOccurrence is the source of one existing ordinary-call Application.
-// It retains both parent-issued proofs and reconstructs neither membership.
+// call ID is the source of one existing ordinary-call Application. It retains
+// only the immutable scalar IDs needed after Project sealing.
 type CallApplication struct {
 	application Application
-	occurrence  program.CallOccurrence
+	callID      identity.ContentID
 	formal      identity.ContentID
 }
 
 // MountedIdentity consumes Project's already-sealed ordinary-call row into
 // the exact detached scalars needed by artifact substitution. It validates
-// only immutable Project rows and their owner-local inverse; it never opens
-// the retained Program, TransformerInput, Flow, or CallOccurrence proof.
-func (v Calls) MountedIdentity(application Application) (applicationKey, moduleID, occurrenceID identity.ContentID, ok bool) {
+// only immutable Project rows and their owner-local inverse; it never opens a
+// Program or Flow authority.
+func (v Calls) MountedIdentity(application Application) (applicationKey, moduleID, callID identity.ContentID, ok bool) {
 	if !v.live() || application.authority != v.authority || application.ordinal == 0 || uint64(application.ordinal) > uint64(len(v.authority.applications)) || !v.authority.applicationContentID.Available() {
 		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
 	}
 	row := v.authority.applications[application.ordinal-1]
-	if row.kind != applicationCall || row.shard == 0 || uint64(row.shard) > uint64(len(v.authority.mounts)) || !row.callContext.Available() || !row.callFormal.Available() ||
-		v.authority.callApplicationsBySource[callSource{shard: row.shard, context: row.callContext}] != application.ordinal {
+	if row.kind != applicationCall || row.shard == 0 || uint64(row.shard) > uint64(len(v.authority.mounts)) || !row.callID.Available() || !row.callFormal.Available() ||
+		v.authority.callApplicationsBySource[callSource{shard: row.shard, callID: row.callID}] != application.ordinal {
 		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
 	}
 	mount := v.authority.mounts[row.shard-1]
@@ -40,11 +39,10 @@ func (v Calls) MountedIdentity(application Application) (applicationKey, moduleI
 	if !applicationOK || !applicationKey.Available() || !mount.id.Available() || !mount.key.Available() {
 		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
 	}
-	return applicationKey, mount.key, row.callContext, true
+	return applicationKey, mount.key, row.callID, true
 }
 
-// MountedAt issues the complete proof at one canonical Calls position. The
-// occurrence was retained from Program while Project sealed this row; no raw
+// MountedAt issues the complete proof at one canonical Calls position. No raw
 // term lookup, Program scan, or second index is performed here.
 func (v Calls) MountedAt(index int) (CallApplication, bool) {
 	application, ok := v.At(index)
@@ -63,54 +61,28 @@ func (v Calls) ForApplication(application Application) (CallApplication, bool) {
 		return CallApplication{}, false
 	}
 	row := v.authority.applications[application.ordinal-1]
-	if row.kind != applicationCall || !row.callContext.Available() || !row.callFormal.Available() {
+	if row.kind != applicationCall || !row.callID.Available() || !row.callFormal.Available() {
 		return CallApplication{}, false
 	}
-	proof := CallApplication{application: application, occurrence: row.callProof, formal: row.callFormal}
+	proof := CallApplication{application: application, callID: row.callID, formal: row.callFormal}
 	return proof, proof.Available()
 }
 
-// ForOccurrence joins an exact Project mount and its Program-issued call
-// occurrence to the sole existing executable ordinary-call Application.
-func (v Calls) ForOccurrence(shard Shard, occurrence program.CallOccurrence) (CallApplication, bool) {
-	if !v.live() || shard.authority != v.authority || shard.ordinal == 0 || uint64(shard.ordinal) > uint64(len(v.authority.mounts)) {
-		return CallApplication{}, false
-	}
-	mounted := v.authority.mounts[shard.ordinal-1].program
-	if mounted == nil {
-		return CallApplication{}, false
-	}
-	input := mounted.TransformerInput()
-	context := occurrence.ContextID()
-	if !input.OwnsCallOccurrence(occurrence) || !context.Available() {
-		return CallApplication{}, false
-	}
-	ordinal := v.authority.callApplicationsBySource[callSource{shard: shard.ordinal, context: context}]
-	if ordinal == 0 || uint64(ordinal) > uint64(len(v.authority.applications)) {
-		return CallApplication{}, false
-	}
-	proof := CallApplication{
-		application: Application{authority: v.authority, ordinal: ordinal},
-		occurrence:  occurrence,
-		formal:      v.authority.applications[ordinal-1].callFormal,
-	}
-	return proof, proof.Available()
-}
-
-// Available revalidates both exact parent owners and the sealed inverse row.
+// Available revalidates the exact parent owner and the sealed scalar inverse
+// row.
 func (proof CallApplication) Available() bool {
 	authority := proof.application.authority
 	if authority == nil || proof.application.ordinal == 0 || uint64(proof.application.ordinal) > uint64(len(authority.applications)) {
 		return false
 	}
 	row := authority.applications[proof.application.ordinal-1]
-	if row.kind != applicationCall || row.shard == 0 || uint64(row.shard) > uint64(len(authority.mounts)) || !row.callContext.Available() || !row.callFormal.Available() || proof.formal != row.callFormal {
+	if row.kind != applicationCall || row.shard == 0 || uint64(row.shard) > uint64(len(authority.mounts)) || !row.callID.Available() || !row.callFormal.Available() || proof.callID != row.callID || proof.formal != row.callFormal {
 		return false
 	}
-	if authority.mounts[row.shard-1].program == nil || row.callProof != proof.occurrence {
+	if authority.mounts[row.shard-1].program == nil {
 		return false
 	}
-	return authority.callApplicationsBySource[callSource{shard: row.shard, context: row.callContext}] == proof.application.ordinal
+	return authority.callApplicationsBySource[callSource{shard: row.shard, callID: row.callID}] == proof.application.ordinal
 }
 
 // Mount returns the exact Project mount joined by this proof.
@@ -122,15 +94,23 @@ func (proof CallApplication) Mount() (Shard, bool) {
 	return Shard{authority: proof.application.authority, ordinal: row.shard}, true
 }
 
-// ContextID is Project's mount-independent source-join key for the exact
-// Program CallOccurrence and this closed ordinary-application role. It is not
-// an owner-neutral semantic CallFormal: Program.CallFormal supplies that
-// separate ordinal-free identity to reusable transformer artifacts.
+// ContextID is Project's mount-independent identity for this closed
+// ordinary-application role. It is not the Program call ID; callers that need
+// the mounted semantic call identity use MountedIdentity on the Application.
 func (proof CallApplication) ContextID() (id identity.ContentID) {
 	if !proof.Available() {
 		return identity.ContentID{}
 	}
 	return proof.formal
+}
+
+// CallID returns the immutable scalar semantic identity of the mounted
+// Program call. It carries no Program authority.
+func (proof CallApplication) CallID() (id identity.ContentID) {
+	if !proof.Available() {
+		return identity.ContentID{}
+	}
+	return proof.callID
 }
 
 // ApplicationID is the compact identity consumed by detached domain rows.
@@ -158,14 +138,14 @@ func (proof CallApplication) ModuleID() (identity.ContentID, bool) {
 // callApplicationID is construction-only. The formal identity is retained in
 // the sealed application row, so hot proof queries return one scalar rather
 // than rerunning the canonical codec.
-func callApplicationID(occurrenceID identity.ContentID) (id identity.ContentID) {
-	if !occurrenceID.Available() {
+func callApplicationID(callID identity.ContentID) (id identity.ContentID) {
+	if !callID.Available() {
 		return identity.ContentID{}
 	}
 	h := sha256.New()
 	var writer framing.Writer
 	if writer.Reset(h, "program/link/project/call-application", callApplicationIdentityVersion) != nil ||
-		writer.Record(1) != nil || writer.Bytes(occurrenceID[:]) != nil ||
+		writer.Record(1) != nil || writer.Bytes(callID[:]) != nil ||
 		writer.Uint(callApplicationRoleOrdinary) != nil || writer.Finish() != nil {
 		return identity.ContentID{}
 	}
@@ -181,14 +161,6 @@ func (proof CallApplication) Application() (Application, bool) {
 		return Application{}, false
 	}
 	return proof.application, true
-}
-
-// Occurrence returns the exact Program-owned occurrence used for the join.
-func (proof CallApplication) Occurrence() (program.CallOccurrence, bool) {
-	if !proof.Available() {
-		return program.CallOccurrence{}, false
-	}
-	return proof.occurrence, true
 }
 
 // Owns authenticates a CallApplication against this exact Calls owner.

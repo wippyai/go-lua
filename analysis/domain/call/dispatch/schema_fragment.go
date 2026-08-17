@@ -6,6 +6,7 @@ import (
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // SchemaFragment is Call dispatch's callback-free one-input Rule surface.
@@ -16,13 +17,13 @@ type SchemaFragment struct {
 	write    engine.SchemaWriteSlot[calldomain.Value]
 	value    engine.FactorRef[valuedomain.Value]
 	call     engine.FactorRef[calldomain.Value]
-	semantic engine.SemanticKey
-	evidence engine.SemanticKey
+	semantic identity.SemanticKey
+	evidence identity.SemanticKey
 }
 
 // DeclareSchema records the exact Value-read/Call-write dispatch incidence.
-func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evidence engine.SemanticKey, values *valueowner.SchemaFragment, calls *callowner.SchemaFragment) (*SchemaFragment, bool) {
-	if builder == nil || values == nil || calls == nil || !engine.DistinctKeys(semantic, operandFamily, evidence) {
+func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evidence identity.SemanticKey, values *valueowner.SchemaFragment, calls *callowner.SchemaFragment) (*SchemaFragment, bool) {
+	if builder == nil || values == nil || calls == nil || !identity.DistinctKeys(semantic, operandFamily, evidence) {
 		return nil, false
 	}
 	slot, ok := engine.NewRuleSlot[calldomain.Value, dispatchReceipt](builder, engine.SchemaRuleSpec[calldomain.Value]{

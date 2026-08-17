@@ -1,9 +1,9 @@
 package target
 
 import (
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	"github.com/wippyai/go-lua/analysis/identity"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
@@ -11,7 +11,7 @@ import (
 func endpointIdentityOperation(name string) OperationSpec {
 	return OperationSpec{
 		Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{name}}},
-		Input:    ValuesSpec{Fixed: []typ.Type{typ.String}, Tail: ValuesClosed},
+		Input:    ValuesSpec{Fixed: []schematype.Type{testString}, Tail: ValuesClosed},
 		Outcomes: []OutcomeSpec{
 			{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesClosed}},
 			{Kind: flowkind.OutcomeThrow, Values: ValuesSpec{Tail: ValuesClosed}},
@@ -241,7 +241,7 @@ func TestEndpointIdentityTracksExactLocalSemanticMutations(t *testing.T) {
 	prior := endpointIdentitySnapshotFor(t, base, "alpha")
 
 	operationMutation := endpointIdentityOperation("alpha")
-	operationMutation.Input.Fixed[0] = typ.Integer
+	operationMutation.Input.Fixed[0] = testInteger
 	assertEndpointIdentityChanged(t,
 		endpointIdentitySnapshotFor(t, mustSeal(t, Spec{Operations: []OperationSpec{operationMutation}}), "alpha"),
 		prior,
@@ -594,7 +594,7 @@ func endpointIdentityTransferDependencies(callback CallbackRef) Spec {
 		{Function: InputSource{Kind: InputSourceValueFormal, Ordinal: 1}, Admission: OrdinaryCallable, Arguments: closed, Outcomes: []TerminalSpec{{Kind: flowkind.OutcomeNormal, Values: closed}, {Kind: flowkind.OutcomeReturn, Values: closed}, {Kind: flowkind.OutcomeThrow, Values: closed}, {Kind: flowkind.OutcomeYield, Values: closed}, {Kind: flowkind.OutcomeCancel, Values: closed}}, Lifecycle: CallbackRetainedOptionalOnce, Effects: RowSpec{Tail: RowClosed}},
 	}
 	return Spec{Operations: []OperationSpec{
-		{Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"transfer-dependencies"}}}, Input: ValuesSpec{Fixed: []typ.Type{typ.Any, typ.Any}, Tail: ValuesClosed}, Callbacks: callbacks, Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{typ.Any, typ.Any}, Tail: ValuesClosed}, Produced: []ProducedSpec{{Result: 0, Operation: 2, Captures: []CaptureSpec{{Kind: CaptureCallback, Ordinal: 1}}}}, CallbackResults: []CallbackResultSpec{{Result: 1, Callback: callback}}}, {Kind: flowkind.OutcomeThrow, Values: closed}}, Transfers: []TransferSpec{transfer(TransferEndpoint{Kind: TransferEndpointExternal}, InputSource{Kind: InputSourceValueFormal}, TransferIdentitySame, TransferCapabilitiesPreserveAll, []TransferOutcomeSpec{{Outcome: 0, Possibility: TransferMayDeliver}, {Outcome: 1, Possibility: TransferMayReject}})}, Effects: RowSpec{Tail: RowClosed}},
+		{Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"transfer-dependencies"}}}, Input: ValuesSpec{Fixed: []schematype.Type{testAny, testAny}, Tail: ValuesClosed}, Callbacks: callbacks, Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testAny, testAny}, Tail: ValuesClosed}, Produced: []ProducedSpec{{Result: 0, Operation: 2, Captures: []CaptureSpec{{Kind: CaptureCallback, Ordinal: 1}}}}, CallbackResults: []CallbackResultSpec{{Result: 1, Callback: callback}}}, {Kind: flowkind.OutcomeThrow, Values: closed}}, Transfers: []TransferSpec{transfer(TransferEndpoint{Kind: TransferEndpointExternal}, InputSource{Kind: InputSourceValueFormal}, TransferIdentitySame, TransferCapabilitiesPreserveAll, []TransferOutcomeSpec{{Outcome: 0, Possibility: TransferMayDeliver}, {Outcome: 1, Possibility: TransferMayReject}})}, Effects: RowSpec{Tail: RowClosed}},
 		{Input: closed, Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: closed}}, Effects: RowSpec{Tail: RowClosed}},
 	}}
 }
@@ -627,7 +627,7 @@ func endpointIdentityEffectCycle(reverse bool) Spec {
 func endpointIdentityReleaseCycle(reverse bool) Spec {
 	closed := ValuesSpec{Tail: ValuesClosed}
 	makeOp := func(name string, target SpecRef) OperationSpec {
-		return OperationSpec{Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{name}}}, Input: ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed}, Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: closed}, {Kind: flowkind.OutcomeThrow, Values: closed}}, Callbacks: []CallbackSpec{{Function: InputSource{Kind: InputSourceValueFormal}, Admission: OrdinaryCallable, Arguments: closed, Outcomes: []TerminalSpec{{Kind: flowkind.OutcomeNormal, Values: closed}, {Kind: flowkind.OutcomeReturn, Values: closed}, {Kind: flowkind.OutcomeThrow, Values: closed}, {Kind: flowkind.OutcomeYield, Values: closed}, {Kind: flowkind.OutcomeCancel, Values: closed}}, Lifecycle: CallbackRetainedOptionalOnce, Effects: RowSpec{Tail: RowClosed}, Release: &CallbackReleaseSpec{Operation: target, Input: 0, Outcome: 0, Mode: CallbackReleaseOne, Zero: CallbackReleaseZeroSpec{Behavior: CallbackReleaseZeroThrow, Outcome: 1}}}}, Effects: RowSpec{Tail: RowClosed}}
+		return OperationSpec{Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{name}}}, Input: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}, Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: closed}, {Kind: flowkind.OutcomeThrow, Values: closed}}, Callbacks: []CallbackSpec{{Function: InputSource{Kind: InputSourceValueFormal}, Admission: OrdinaryCallable, Arguments: closed, Outcomes: []TerminalSpec{{Kind: flowkind.OutcomeNormal, Values: closed}, {Kind: flowkind.OutcomeReturn, Values: closed}, {Kind: flowkind.OutcomeThrow, Values: closed}, {Kind: flowkind.OutcomeYield, Values: closed}, {Kind: flowkind.OutcomeCancel, Values: closed}}, Lifecycle: CallbackRetainedOptionalOnce, Effects: RowSpec{Tail: RowClosed}, Release: &CallbackReleaseSpec{Operation: target, Input: 0, Outcome: 0, Mode: CallbackReleaseOne, Zero: CallbackReleaseZeroSpec{Behavior: CallbackReleaseZeroThrow, Outcome: 1}}}}, Effects: RowSpec{Tail: RowClosed}}
 	}
 	a, b := makeOp("release-cycle-a", 2), makeOp("release-cycle-b", 1)
 	if reverse {

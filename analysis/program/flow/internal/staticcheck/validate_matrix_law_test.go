@@ -51,17 +51,17 @@ func TestStaticCheckValidateRejectsImplicitStaticRead(t *testing.T) {
 			Operators:    static.OperatorsInput{TypeOf: []static.TypeOf{{Scope: cell, Operand: read}}},
 		},
 	})
-	receipt, err := Validate(
+	result, err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
-		fixture.bindings, fixture.forest, fixture.proof, fixture.direct,
+		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
 		fixture.moduleView.ContentID(), fixture.entry,
 	)
-	if err == nil || len(receipt.TypeOf) != 0 || len(receipt.Annotations) != 0 || len(receipt.Publications) != 0 {
-		t.Fatalf("implicit static Read Validate = %#v/%v", receipt, err)
+	if err == nil || len(result.TypeOf) != 0 || len(result.Annotations) != 0 || len(result.Publications) != 0 {
+		t.Fatalf("implicit static Read Validate = %#v/%v", result, err)
 	}
 }
 
-func TestStaticCheckValidateCombinedCanonicalReceipt(t *testing.T) {
+func TestStaticCheckValidateCombinedCanonicalResult(t *testing.T) {
 	body := keyspace.MakeTerm(keyspace.FamilyBody, 1)
 	scopeCell := keyspace.MakeTerm(keyspace.FamilyCell, 1)
 	rootCell := keyspace.MakeTerm(keyspace.FamilyCell, 2)
@@ -89,7 +89,7 @@ func TestStaticCheckValidateCombinedCanonicalReceipt(t *testing.T) {
 		checkCount(keyspace.FamilyTypePublication, 1), checkCount(keyspace.FamilyDeclaredType, 1),
 	)
 	fixture := newCheckFixture(t, checkSpec{
-		name: "staticcheck-combined-receipt.lua", counts: counts,
+		name: "staticcheck-combined-result.lua", counts: counts,
 		rows:   [][]keyspace.Term{{bind, assign}},
 		exacts: []keyspace.LiteralValue{{Kind: keyspace.LiteralString, String: "field"}},
 		keys:   []source.KeyInput{source.NameKey(body, "field")},
@@ -117,16 +117,16 @@ func TestStaticCheckValidateCombinedCanonicalReceipt(t *testing.T) {
 			Publications: static.PublicationsInput{Type: []static.Publication{{Assign: assign, Pair: 0, Target: typeRef}}},
 		},
 	})
-	receipt, err := Validate(
+	result, err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
-		fixture.bindings, fixture.forest, fixture.proof, fixture.direct,
+		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
 		fixture.moduleView.ContentID(), fixture.entry,
 	)
 	if err != nil {
 		t.Fatalf("combined Validate: %v", err)
 	}
-	if len(receipt.TypeOf) != 1 || len(receipt.Annotations) != 1 || len(receipt.Publications) != 1 {
-		t.Fatalf("combined receipt = %#v", receipt)
+	if len(result.TypeOf) != 1 || len(result.Annotations) != 1 || len(result.Publications) != 1 {
+		t.Fatalf("combined result = %#v", result)
 	}
 }
 
@@ -171,11 +171,11 @@ func TestStaticCheckValidateFunctionVarargHeader(t *testing.T) {
 			Contracts: static.ContractsInput{Function: []static.FunctionContract{{}}},
 		},
 	})
-	if receipt, err := Validate(
+	if result, err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
-		fixture.bindings, fixture.forest, fixture.proof, fixture.direct,
+		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
 		fixture.moduleView.ContentID(), fixture.entry,
-	); err != nil || len(receipt.TypeOf) != 1 || len(receipt.Annotations) != 0 || len(receipt.Publications) != 0 {
-		t.Fatalf("Function vararg integrated Validate = %#v/%v", receipt, err)
+	); err != nil || len(result.TypeOf) != 1 || len(result.Annotations) != 0 || len(result.Publications) != 0 {
+		t.Fatalf("Function vararg integrated Validate = %#v/%v", result, err)
 	}
 }

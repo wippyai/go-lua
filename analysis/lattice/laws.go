@@ -52,13 +52,13 @@ type LawSuite[T any] struct {
 func (s LawSuite[T]) Run(t reporter) {
 	t.Helper()
 	if s.Name == "" {
-		t.Fatalf("latticelaws.LawSuite: Name is required")
+		t.Fatalf("lattice.LawSuite: Name is required")
 	}
 	if !s.domainValid() {
-		t.Fatalf("latticelaws.LawSuite[%s]: Domain is required (all function fields must be set)", s.Name)
+		t.Fatalf("lattice.LawSuite[%s]: Domain is required (all function fields must be set)", s.Name)
 	}
 	if len(s.Sample) < 2 {
-		t.Fatalf("latticelaws.LawSuite[%s]: Sample must contain at least Bottom and Top", s.Name)
+		t.Fatalf("lattice.LawSuite[%s]: Sample must contain at least Bottom and Top", s.Name)
 	}
 
 	s.checkBottomTop(t)

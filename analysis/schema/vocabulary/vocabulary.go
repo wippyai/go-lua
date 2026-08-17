@@ -8,7 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 
-	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // SemanticFormat is the version of the global semantic vocabulary.  Changing
@@ -19,16 +19,16 @@ const SemanticFormat uint64 = 6
 // RuleSemantics is the closed identity tuple for one rule: its rule identity,
 // operand form, and evidence form.
 type RuleSemantics struct {
-	Rule     engine.SemanticKey
-	Operand  engine.SemanticKey
-	Evidence engine.SemanticKey
+	Rule     identity.SemanticKey
+	Operand  identity.SemanticKey
+	Evidence identity.SemanticKey
 }
 
 // TransformedRuleSemantics adds the transform form used by rules whose output
 // is normalized before admission.
 type TransformedRuleSemantics struct {
 	RuleSemantics
-	Transform engine.SemanticKey
+	Transform identity.SemanticKey
 }
 
 // Bundle is the complete global cold vocabulary: factor identities, fixed
@@ -40,9 +40,9 @@ type TransformedRuleSemantics struct {
 // The activation family and admission fields are part of the call-activation
 // law and remain stable across Links and Programs.
 type Bundle struct {
-	ValueFactor, ValueSummary, ValueSummaryFold, CallFactor, HeapFactor, PackFactor, EffectFactor engine.SemanticKey
-	ValueQuery, ValueCodec, EffectQuery, EffectCodec                                              engine.SemanticKey
-	CallActivation, CallActivationFamily, CallActivationAdmission                                 engine.SemanticKey
+	ValueFactor, ValueSummary, ValueSummaryFold, CallFactor, HeapFactor, PackFactor, EffectFactor identity.SemanticKey
+	ValueQuery, ValueCodec, EffectQuery, EffectCodec                                              identity.SemanticKey
+	CallActivation, CallActivationFamily, CallActivationAdmission                                 identity.SemanticKey
 
 	ValueSourceRule, PackSourceRule, HeapIngressRule, RawGetRule, RawSetRule, CallDispatchRule                               RuleSemantics
 	EffectSelectedRule, EffectOpaqueRule, EffectBodyRule, ValueBootstrapRule, HeapBootstrapRule                              RuleSemantics
@@ -53,7 +53,7 @@ type Bundle struct {
 // New returns the canonical global vocabulary and whether every closed role
 // is available and distinct.  Construction is pure and replayable.
 func New() (Bundle, bool) {
-	key := func(role string) engine.SemanticKey {
+	key := func(role string) identity.SemanticKey {
 		value, _ := Key(role)
 		return value
 	}
@@ -83,7 +83,7 @@ func New() (Bundle, bool) {
 // Available reports whether every key in the closed vocabulary is usable and
 // no two roles share an identity.
 func (bundle Bundle) Available() bool {
-	keys := [...]engine.SemanticKey{
+	keys := [...]identity.SemanticKey{
 		bundle.ValueFactor, bundle.ValueSummary, bundle.ValueSummaryFold, bundle.CallFactor, bundle.HeapFactor, bundle.PackFactor, bundle.EffectFactor,
 		bundle.ValueQuery, bundle.ValueCodec, bundle.EffectQuery, bundle.EffectCodec,
 		bundle.CallActivation, bundle.CallActivationFamily, bundle.CallActivationAdmission,
@@ -123,21 +123,21 @@ func (bundle Bundle) Available() bool {
 // Key derives one global semantic role.  The framing and domain are part of
 // the stable preimage and intentionally match the historical analysis key
 // derivation.
-func Key(role string) (engine.SemanticKey, bool) {
+func Key(role string) (identity.SemanticKey, bool) {
 	if role == "" {
-		return engine.SemanticKey{}, false
+		return identity.SemanticKey{}, false
 	}
 	hash := sha256.New()
 	var version [8]byte
 	binary.BigEndian.PutUint64(version[:], SemanticFormat)
 	if !writeFramedHash(hash, []byte("analysis/global-schema")) || !writeFramedHash(hash, version[:]) || !writeFramedHash(hash, []byte(role)) {
-		return engine.SemanticKey{}, false
+		return identity.SemanticKey{}, false
 	}
 	var digest [32]byte
 	if sum := hash.Sum(digest[:0]); len(sum) != len(digest) {
-		return engine.SemanticKey{}, false
+		return identity.SemanticKey{}, false
 	}
-	return engine.NewSemanticKey(digest, SemanticFormat)
+	return identity.NewSemanticKey(digest, SemanticFormat)
 }
 
 func writeFramedHash(hash interface{ Write([]byte) (int, error) }, value []byte) bool {

@@ -7,19 +7,18 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/library/lualib/targetprofile"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
-	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target/profile"
-	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 func planLawLink(t testing.TB) *link.Link {
@@ -57,7 +56,7 @@ func planLawArtifactFailure(linked *link.Link) string {
 	if linked == nil || linked.Project() == nil {
 		return "link-unavailable"
 	}
-	receipt, ok := grammar.Global()
+	receipt, ok := composite.Global()
 	if !ok {
 		return "schema-unavailable"
 	}
@@ -68,7 +67,7 @@ func planLawArtifactFailure(linked *link.Link) string {
 		if !shardOK || !mountedOK || mounted == nil {
 			return fmt.Sprintf("mount=%d:unavailable", index)
 		}
-		_, failure := schemaadapter.CompileDetailed(mounted.TransformerInput(), receipt)
+		_, failure := composite.CompileArtifactDetailed(mounted, receipt)
 		if failure.Available() {
 			detail := ""
 			if failure.Reason() == programartifact.CompileReasonOccurrenceValueSourceProof {
@@ -91,7 +90,7 @@ func planLawArtifactScheduleRow(linked *link.Link, ordinal uint32) string {
 	if linked == nil || linked.Project() == nil {
 		return "unavailable"
 	}
-	receipt, ok := grammar.Global()
+	receipt, ok := composite.Global()
 	if !ok {
 		return "schema-unavailable"
 	}
@@ -103,7 +102,7 @@ func planLawArtifactScheduleRow(linked *link.Link, ordinal uint32) string {
 		if !shardOK || !mountedOK || mounted == nil {
 			return fmt.Sprintf("mount=%d:unavailable", mountIndex)
 		}
-		artifact, failure := schemaadapter.CompileDetailed(mounted.TransformerInput(), receipt)
+		artifact, failure := composite.CompileArtifactDetailed(mounted, receipt)
 		if failure.Available() || artifact == nil {
 			return fmt.Sprintf("mount=%d:%s", mountIndex, failure.Error())
 		}
@@ -152,7 +151,7 @@ func planLawHeapSealFailure(linked *link.Link) string {
 	if linked == nil || linked.Project() == nil {
 		return "link-unavailable"
 	}
-	receipt, ok := grammar.Global()
+	receipt, ok := composite.Global()
 	if !ok {
 		return "schema-unavailable"
 	}
@@ -165,11 +164,11 @@ func planLawHeapSealFailure(linked *link.Link) string {
 		if !shardOK || !mountedOK || mounted == nil || !moduleOK {
 			return fmt.Sprintf("mount=%d:unavailable", index)
 		}
-		artifact, failure := schemaadapter.CompileDetailed(mounted.TransformerInput(), receipt)
+		artifact, failure := composite.CompileArtifactDetailed(mounted, receipt)
 		if failure.Available() || artifact == nil {
 			return fmt.Sprintf("mount=%d:artifact:%s", index, failure.Error())
 		}
-		programID := mounted.TransformerInput().ContentID()
+		programID := mounted.ContentID()
 		var mountOK bool
 		rows[index], mountOK = heapdomain.NewArtifactMount(artifact, module, programID)
 		if !mountOK {
@@ -184,7 +183,7 @@ func planLawValueSourceFailure(p *program.Program, family, row int) string {
 	if p == nil || row < 0 {
 		return "value-source-state"
 	}
-	input := p.TransformerInput()
+	input := p
 	var term, owner keyspace.Term
 	var rowOK bool
 	switch family {
@@ -204,13 +203,17 @@ func planLawValueSourceFailure(p *program.Program, family, row int) string {
 	body, bodyOK := input.Body(owner)
 	containing, containingOK := input.ContainingBody(term)
 	_, directOK := input.Span(term)
-	_, rootOK := input.RootSpan(term)
-	anchor, anchorOK := input.ValueSourceAnchor(term)
-	_, finishOK := anchor.Finish()
+	root, rootExists := p.Source().Index().Root(term)
+	rootOK := false
+	if rootExists {
+		_, rootOK = input.Span(root)
+	}
+	sourceID, sourceSpan, sourceTerm, anchorOK := p.ValueSourceIDAt(keyspace.Family(family), row)
+	finishOK := sourceSpan.Available() && sourceTerm == term
 	path, pathOK := p.Flow().ValueSourcePath(term)
 	return fmt.Sprintf("value-source-family=%d row=%d row-ok=%v executable=%v body=%v containing=%v body-equal=%v direct-span=%v root-span=%v path=%v anchor=%v finish=%v",
 		family, row, rowOK, p.Flow().Executable().Contains(term), bodyOK, containingOK,
-		bodyOK && containingOK && body.Equal(containing), directOK, rootOK, pathOK && path.Available(), anchorOK, finishOK)
+		bodyOK && containingOK && body.Equal(containing), directOK, rootOK, pathOK && path.Available(), anchorOK && sourceID.Available(), finishOK)
 }
 
 func planLawRuleGeometryFailure(plan *Plan) string {
@@ -342,8 +345,8 @@ func TestCompiledPlanProgramChangeInvalidatesOnlyChangedArtifact(t *testing.T) {
 		first.state == nil || second.state == nil || first.state.artifacts == nil || second.state.artifacts == nil {
 		t.Fatal("incremental artifact fixtures did not compile")
 	}
-	stableID := stable.TransformerInput().ContentID()
-	changedID := changed.TransformerInput().ContentID()
+	stableID := stable.ContentID()
+	changedID := changed.ContentID()
 	firstStable := first.state.artifacts.byProgram[stableID]
 	secondStable := second.state.artifacts.byProgram[stableID]
 	secondChanged := second.state.artifacts.byProgram[changedID]
@@ -521,7 +524,7 @@ func planLawStorageTransferPlacementFailure(plan *Plan) string {
 
 func TestCompiledPlanRepeatedSolveLaw(t *testing.T) {
 	plan, status := Compile(planLawLink(t))
-	if status != CompileComplete || plan == nil || plan.state == nil || plan.state.binding == nil || plan.state.binding.binding == nil || !plan.state.binding.binding.Sealed() {
+	if status != CompileComplete || plan == nil || plan.state == nil || plan.state.binding == nil || plan.state.binding.SchemaBinding() == nil || !plan.state.binding.SchemaBinding().Sealed() {
 		t.Fatalf("compile = %v/%v", status, plan)
 	}
 	defer plan.Close()
@@ -541,7 +544,7 @@ func TestCompiledPlanRepeatedSolveLaw(t *testing.T) {
 	if first.SourceID() != second.SourceID() || first.ContentID() != second.ContentID() || first.BodyCount() != second.BodyCount() {
 		t.Fatal("repeated plan solve changed detached projection")
 	}
-	if plan.state.binding != binding || plan.state.binding.binding != binding.binding || !binding.binding.Sealed() {
+	if plan.state.binding != binding || plan.state.binding.SchemaBinding() != binding.SchemaBinding() || !binding.SchemaBinding().Sealed() {
 		t.Fatal("repeated plan solve rebuilt or mutated the sealed Link binding")
 	}
 	if plan.state.ordinary != ordinary {

@@ -2,16 +2,16 @@ package target
 
 import (
 	"fmt"
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"strings"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
 
 func TestAllPublicObservablesArePermutationAndAlphaInvariant(t *testing.T) {
-	leftFormal := typ.NewTypeParam("Element", typ.String)
-	rightFormal := typ.NewTypeParam("Item", typ.String)
+	leftFormal := testNewTypeParam("Element", testString)
+	rightFormal := testNewTypeParam("Item", testString)
 	left := mustSeal(t, Spec{Operations: []OperationSpec{
 		genericAlpha(leftFormal, 2),
 		providerBeta(),
@@ -33,7 +33,7 @@ func TestPublicLawTargetHasNoCallFormPlane(t *testing.T) {
 		// Program owns plain-versus-colon CallForm. A method-capable target
 		// operation is authored once; the colon receiver is Input.Fixed[0].
 		Bindings: []BindingSpec{binding},
-		Input:    ValuesSpec{Fixed: []typ.Type{typ.String}, Tail: ValuesClosed},
+		Input:    ValuesSpec{Fixed: []schematype.Type{testString}, Tail: ValuesClosed},
 		Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesClosed}}},
 		Effects:  RowSpec{Tail: RowClosed},
 	}}})
@@ -155,16 +155,17 @@ func TestOpaqueHasExactlyFourUnknownOutcomes(t *testing.T) {
 	}
 }
 
-func genericAlpha(formal *typ.TypeParam, beta SpecRef) OperationSpec {
+func genericAlpha(formal *testRawTypeParam, beta SpecRef) OperationSpec {
+	declarations, formals := testOperationTypes(formal)
 	return OperationSpec{
 		Bindings:    []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"alpha"}}},
-		TypeFormals: []*typ.TypeParam{formal},
+		TypeFormals: formals,
 		ValuesVars:  1,
 		RowFormals:  1,
-		Input:       ValuesSpec{Fixed: []typ.Type{formal}, Tail: ValuesVariable, Var: 0},
+		Input:       ValuesSpec{Fixed: []schematype.Type{declarations[0]}, Tail: ValuesVariable, Var: 0},
 		Outcomes: []OutcomeSpec{
-			{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{formal}, Tail: ValuesClosed}},
-			{Kind: flowkind.OutcomeThrow, Values: ValuesSpec{Fixed: []typ.Type{typ.String}, Tail: ValuesVariable, Var: 0}},
+			{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{declarations[0]}, Tail: ValuesClosed}},
+			{Kind: flowkind.OutcomeThrow, Values: ValuesSpec{Fixed: []schematype.Type{testString}, Tail: ValuesVariable, Var: 0}},
 		},
 		Effects: RowSpec{
 			Occurrences: []EffectSpec{{Target: beta, ValueArgs: []ValueFormal{0}}},
@@ -181,8 +182,8 @@ func providerBeta() OperationSpec {
 			Owner:     []string{"network", "channel"},
 			Member:    []string{"case", "receive"},
 		}},
-		Input:    ValuesSpec{Fixed: []typ.Type{typ.String}, Tail: ValuesClosed},
-		Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{typ.Boolean}, Tail: ValuesClosed}}},
+		Input:    ValuesSpec{Fixed: []schematype.Type{testString}, Tail: ValuesClosed},
+		Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testBoolean}, Tail: ValuesClosed}}},
 		Effects:  RowSpec{Tail: RowClosed},
 	}
 }
@@ -261,11 +262,11 @@ func writeOperationSnapshot(t *testing.T, out *strings.Builder, contract *Contra
 		contract.TypeFormalCount(op), contract.ValueFormalCount(op), contract.ValuesVarCount(op), contract.RowFormalCount(op))
 	for index := 0; index < contract.ValuesVarCount(op); index++ {
 		class, ok := contract.ValuesVarType(op, ValuesVar(index))
-		fmt.Fprintf(out, "values-var-type[%d]=%d/%v:%s;", index, class, ok, publicTypeBytes(t, contract, class, ok))
+		fmt.Fprintf(out, "values-var-type[%d]=%d/%v:%s;", index, class, ok, publicTypeDigest(t, contract, class, ok))
 	}
 	for index := 0; index < contract.TypeFormalCount(op); index++ {
 		constraint, ok := contract.TypeFormalConstraint(op, TypeFormal(index))
-		fmt.Fprintf(out, "constraint[%d]=%d/%v:%s;", index, constraint, ok, publicTypeBytes(t, contract, constraint, ok))
+		fmt.Fprintf(out, "constraint[%d]=%d/%v:%s;", index, constraint, ok, publicTypeDigest(t, contract, constraint, ok))
 	}
 	for index := 0; index < contract.OutcomeCount(op); index++ {
 		kind, values, ok := contract.OutcomeAt(op, index)
@@ -480,25 +481,25 @@ func publicValuesSnapshot(t *testing.T, contract *Contract, values Values, value
 	var out strings.Builder
 	tail, variable, tailOK := contract.ValuesTail(values)
 	tailType, tailTypeOK := contract.ValuesTailType(values)
-	fmt.Fprintf(&out, "count=%d,suffix=%d,tail=%d/%d/%v,tail-type=%d/%v:%s:[", contract.ValuesCount(values), contract.ValuesSuffixCount(values), tail, variable, tailOK, tailType, tailTypeOK, publicTypeBytes(t, contract, tailType, tailTypeOK))
+	fmt.Fprintf(&out, "count=%d,suffix=%d,tail=%d/%d/%v,tail-type=%d/%v:%s:[", contract.ValuesCount(values), contract.ValuesSuffixCount(values), tail, variable, tailOK, tailType, tailTypeOK, publicTypeDigest(t, contract, tailType, tailTypeOK))
 	for index := 0; index < contract.ValuesCount(values); index++ {
 		value, ok := contract.ValuesAt(values, index)
-		fmt.Fprintf(&out, "%d/%v:%s,", value, ok, publicTypeBytes(t, contract, value, ok))
+		fmt.Fprintf(&out, "%d/%v:%s,", value, ok, publicTypeDigest(t, contract, value, ok))
 	}
 	out.WriteString("];suffix[")
 	for index := 0; index < contract.ValuesSuffixCount(values); index++ {
 		value, ok := contract.ValuesSuffixAt(values, index)
-		fmt.Fprintf(&out, "%d/%v:%s,", value, ok, publicTypeBytes(t, contract, value, ok))
+		fmt.Fprintf(&out, "%d/%v:%s,", value, ok, publicTypeDigest(t, contract, value, ok))
 	}
 	out.WriteByte(']')
 	return out.String()
 }
 
-func publicTypeBytes(t *testing.T, contract *Contract, value Type, ok bool) string {
+func publicTypeDigest(t *testing.T, contract *Contract, value Type, ok bool) string {
 	t.Helper()
 	if !ok {
 		return "invalid"
 	}
-	bytes, bytesOK := contract.TypeBytes(value)
-	return fmt.Sprintf("%x/%v", bytes, bytesOK)
+	declaration, declarationOK := contract.TypeDeclaration(value)
+	return fmt.Sprintf("%x/%v", declaration.Digest(), declarationOK)
 }

@@ -46,7 +46,7 @@ func SealWithPlan(
 	forest *containment.Result,
 	graph *sourcecontrol.Result,
 	plan *routeplan.Plan,
-	outcomePhases *sourcecontrol.OutcomePhaseReceipt,
+	outcomePhases *sourcecontrol.OutcomePhases,
 	staticID identity.ContentID,
 	moduleID identity.ContentID,
 ) (*Result, *Binding, error) {
@@ -63,7 +63,7 @@ func sealWithPlan(
 	forest *containment.Result,
 	graph *sourcecontrol.Result,
 	plan *routeplan.Plan,
-	outcomePhases *sourcecontrol.OutcomePhaseReceipt,
+	outcomePhases *sourcecontrol.OutcomePhases,
 	staticID identity.ContentID,
 	moduleID identity.ContentID,
 ) (*Result, *Binding, error) {
@@ -105,11 +105,10 @@ func sealWithPlan(
 		return nil, nil, err
 	}
 	if outcomePhases != nil {
-		paths, receiptOK := outcomePhases.Consume(graph)
-		if !receiptOK {
-			return nil, nil, errors.New("program/flow/recurrence: Outcome-phase receipt is foreign or consumed")
+		if !outcomePhases.Matches(graph) {
+			return nil, nil, errors.New("program/flow/recurrence: Outcome-phase view is foreign")
 		}
-		if err := draft.placeOutcomePhasePoints(paths, plan, graph, parts, heads); err != nil {
+		if err := draft.placeOutcomePhasePoints(outcomePhases, plan, graph, parts, heads); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -256,7 +255,7 @@ func installHead(
 	if component == unassignedComponent || !parts.cyclic[component] {
 		return
 	}
-	// Head identity is selected by the semantic vertex receipt, with the
+	// Head identity is selected by the semantic vertex path, with the
 	// authored term only as a deterministic collision tie-breaker. This keeps
 	// component directories stable when physical/source ordinals are rebased.
 	path, pathOK := graph.VertexPathAt(node)

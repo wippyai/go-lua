@@ -33,6 +33,13 @@ import (
 
 const architectureBatteryModule = "github.com/wippyai/go-lua"
 
+// architectureBatteryCompositionRoot is the analyzer composition root: the one
+// package that composes the artifact columns with the domain registrations and
+// seals the catalog. It carries domain edges because composing them is its
+// role, so a spine source naming it is reaching for the sealed catalog, not for
+// a domain's semantics.
+const architectureBatteryCompositionRoot = architectureBatteryModule + "/analysis/domain/composite"
+
 // architectureBatteryRepositoryRoot locates the module root from this source
 // file, so the battery is independent of the working directory a test runs in.
 func architectureBatteryRepositoryRoot(t *testing.T) string {
@@ -172,12 +179,14 @@ func architectureBatterySetRatchet(t *testing.T, law string, inventory map[strin
 // under analysis/program and analysis/schema that still reach into a semantic
 // domain. Program and schema are the neutral compilation spine: a domain is a
 // consumer of what they publish, never an input to how they publish it. The
-// grammar subtree is excluded by construction; it is the schema compiler and
-// owns domain rule surfaces by design.
+// composition root that knows both worlds is analysis/domain/composite; it
+// sits above the spine by role while sitting under analysis/domain by
+// directory, so this scan names it and excludes it rather than reading its
+// position. Its subpackages are ordinary cross-domain relations and stay in
+// scope.
 var architectureBatteryProgramDomainProduction = map[string]int{
-	"analysis/program/target":         6,
-	"analysis/program/target/profile": 1,
-	"analysis/schema/query":           1,
+	"analysis/program/target":               6,
+	"analysis/library/lualib/targetprofile": 1,
 }
 
 // architectureBatteryProgramDomainTest is the same freeze for test sources.
@@ -185,11 +194,10 @@ var architectureBatteryProgramDomainProduction = map[string]int{
 // decision: production code may be clean while its tests keep the coupling
 // alive and make the eventual production cut look larger than it is.
 var architectureBatteryProgramDomainTest = map[string]int{
-	"analysis/program/link":           1,
-	"analysis/program/link/boundary":  2,
-	"analysis/program/target":         29,
-	"analysis/program/target/profile": 1,
-	"analysis/schema/query":           1,
+	"analysis/program/link":                 1,
+	"analysis/program/link/boundary":        2,
+	"analysis/program/target":               29,
+	"analysis/library/lualib/targetprofile": 1,
 }
 
 // TestArchitectureProgramAndSchemaDomainCouplingOnlyShrinks is the L13 law with
@@ -200,11 +208,11 @@ func TestArchitectureProgramAndSchemaDomainCouplingOnlyShrinks(t *testing.T) {
 	tests := make(map[string]int)
 	for _, root := range []string{"analysis/program", "analysis/schema"} {
 		architectureBatteryWalk(t, root, func(source architectureBatterySource) {
-			if strings.HasPrefix(source.path, "analysis/schema/grammar/") {
-				return
-			}
 			coupled := false
 			for _, imported := range source.imports(t) {
+				if imported == architectureBatteryCompositionRoot {
+					continue
+				}
 				if strings.HasPrefix(imported, architectureBatteryModule+"/analysis/domain") {
 					coupled = true
 					break
@@ -439,9 +447,6 @@ var architectureBatteryReceiptVocabulary = map[string]struct{}{
 	"analysis/engine:SummarySurfaceReceipt":                                   {},
 	"analysis/engine:WeakSurfaceReceipt":                                      {},
 	"analysis/engine/internal/equation:RuleSurfaceSourceReceipt":              {},
-	"analysis/program/artifact:PackBodyReceiptRow":                            {},
-	"analysis/program/artifact:PackCallReceiptRow":                            {},
-	"analysis/program/artifact:PackReceipt":                                   {},
 	"analysis/program/flow/internal/routeplan:EndpointPhaseReceipt":           {},
 	"analysis/program/flow/internal/semanticpath:CausalReceipt":               {},
 	"analysis/program/flow/internal/semanticpath:OutcomePhaseReceipt":         {},
@@ -457,7 +462,6 @@ var architectureBatteryReceiptVocabulary = map[string]struct{}{
 	"analysis/program/link/module:SemanticSourceReceipt":                      {},
 	"analysis/program/link/project:SemanticSourceReceipt":                     {},
 	"analysis/program/target:SemanticSourceReceipt":                           {},
-	"analysis/schema/grammar:CompilationReceipt":                              {},
 }
 
 // TestArchitectureReceiptVocabularyOnlyShrinks is the receipt tripwire. It

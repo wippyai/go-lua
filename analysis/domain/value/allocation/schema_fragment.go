@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value"
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // SchemaFragment is Value-allocation's callback-free transformed Rule
@@ -13,9 +14,9 @@ type SchemaFragment struct {
 	input     engine.SchemaInput
 	carry     engine.SchemaCarrySlot[value.Value]
 	write     engine.SchemaWriteSlot[value.Value]
-	semantic  engine.SemanticKey
-	transform engine.SemanticKey
-	evidence  engine.SemanticKey
+	semantic  identity.SemanticKey
+	transform identity.SemanticKey
+	evidence  identity.SemanticKey
 }
 
 func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[value.Value, operand] {
@@ -23,8 +24,8 @@ func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[value.Value, operand
 }
 
 // DeclareSchema records Value allocation's one-input transformed-carry Rule.
-func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, transform, evidence engine.SemanticKey, owner *valueowner.SchemaFragment) (*SchemaFragment, bool) {
-	if builder == nil || owner == nil || !engine.DistinctKeys(semantic, operandFamily, transform, evidence) {
+func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, transform, evidence identity.SemanticKey, owner *valueowner.SchemaFragment) (*SchemaFragment, bool) {
+	if builder == nil || owner == nil || !identity.DistinctKeys(semantic, operandFamily, transform, evidence) {
 		return nil, false
 	}
 	slot, ok := engine.NewRuleSlot[value.Value, operand](builder, engine.SchemaRuleSpec[value.Value]{

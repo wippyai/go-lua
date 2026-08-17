@@ -152,7 +152,7 @@ type boundaryRow struct {
 	// sum. No successor index duplicates or reconstructs this projection.
 	components [BoundaryCancel + 1]keyspace.Term
 	proofs     [BoundaryCancel + 1]boundaryRecurrenceProof
-	// refs are sealed O(1) arm receipts populated from the canonical union
+	// refs are sealed O(1) arm rows populated from the canonical union
 	// index. They point back to this row; no successor scan is needed to
 	// reissue an arm or its route identity.
 	refs [BoundaryCancel + 1]successorRef
@@ -186,13 +186,13 @@ type successorRef struct {
 	// guarded decision. It is copied while the private structural path lease is
 	// live so RouteGuardProof never reopens that released authority.
 	guardDecisionPath identity.ContentID
-	// fromPoint/toPoint are the exact SourceControl VertexCatalog receipts
+	// fromPoint/toPoint are the exact SourceControl VertexCatalog path refs
 	// for this final route.  They are copied while the catalog lease is live;
 	// no later Site/term reconstruction may substitute for them.
 	fromPoint identity.ContentID
 	toPoint   identity.ContentID
 	// planOrdinal is seal-local exact Plan provenance. It is copied from the
-	// emitters' ordinal receipts into the combined ref only long enough to bind
+	// emitters' ordinal rows into the combined ref only long enough to bind
 	// the recurrence hierarchy to final routes, then cleared before Result is
 	// published.
 	planOrdinal    uint32
@@ -204,9 +204,9 @@ type successorRef struct {
 	// wtoRegion is the sole parent-issued local schedule membership for this
 	// final route. It is a semantic ID, never a region row/index capability.
 	wtoRegion identity.ContentID
-	// diagnostic is seal-private route provenance used only if hierarchy
-	// receipt attachment fails. It is cleared before Result publication.
-	diagnostic routeReceiptDiagnostic
+	// diagnostic is seal-private route provenance used only if hierarchy row
+	// attachment fails. It is cleared before Result publication.
+	diagnostic routeDiagnostic
 }
 
 type routeLookup struct {
@@ -269,10 +269,10 @@ type pendingWTORoute struct {
 	toPath   identity.ContentID
 }
 
-type boundRouteReceipt struct {
+type boundRouteRow struct {
 	fromPath   identity.ContentID
 	toPath     identity.ContentID
-	diagnostic routeReceiptDiagnostic
+	diagnostic routeDiagnostic
 }
 
 type successorPlane struct {
@@ -317,7 +317,7 @@ type Result struct {
 	pendingNodeSites   [][]uint32
 	pendingWTORoutes   []pendingWTORoute
 	pendingVertexPaths []identity.ContentID
-	boundRouteReceipts []boundRouteReceipt
+	boundRouteRows     []boundRouteRow
 	outcomePhasePaths  map[keyspace.Term]identity.ContentID
 
 	sourceID identity.ContentID

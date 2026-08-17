@@ -3,6 +3,7 @@ package module
 import (
 	"testing"
 
+	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
@@ -12,7 +13,7 @@ import (
 
 func moduleFixture(t *testing.T) (*linkproject.Component, *linkboundary.Component, Spec) {
 	t.Helper()
-	contract, err := target.Seal(&target.Spec{Operations: []target.OperationSpec{
+	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []target.OperationSpec{
 		{Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"require"}}}, Input: target.ValuesSpec{Tail: target.ValuesClosed}, Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}}, Effects: target.RowSpec{Tail: target.RowClosed}},
 		{Bindings: []target.BindingSpec{{Namespace: target.BindingProvider, Owner: []string{"host"}, Member: []string{"send"}}}, Input: target.ValuesSpec{Tail: target.ValuesClosed}, Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}}, Effects: target.RowSpec{Tail: target.RowClosed}},
 	}})

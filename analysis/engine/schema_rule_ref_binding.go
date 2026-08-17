@@ -58,15 +58,3 @@ func BindRuleWithOpaqueExactRead[OK ~uint32 | ~uint64, V, O, RV any](binding *Sc
 	state.rules[ruleOrdinal] = cell
 	return read, true
 }
-
-// BindRuleWithExactReadRefs is the ref-only bridge for a cross-owner exact
-// read Rule. It resolves both FactorRefs inside engine and deliberately does
-// not expose FactorSlots or owner coordinate types to the caller.
-func BindRuleWithExactReadRefs[V, O, RV any](binding *SchemaBinding, slot *RuleSlot[V, O], readSlot SchemaReadSlot[RV], readFactor FactorRef[RV], write SchemaWriteSlot[V], output FactorRef[V], spec HotRuleSpec[V, O]) (Read[OrderedCells[RV]], bool) {
-	if readFactor.cell == nil || output.cell == nil {
-		return Read[OrderedCells[RV]]{}, false
-	}
-	readFactorSlot := &FactorSlot[RV]{cell: readFactor.cell}
-	outputSlot := &FactorSlot[V]{cell: output.cell}
-	return BindRuleWithExactRead[uint32, V, O, uint32, RV](binding, slot, readSlot, readFactorSlot, write, outputSlot, spec)
-}

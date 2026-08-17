@@ -13,7 +13,7 @@ var errModuleRequestEmpty = errors.New("program/lower/collector: empty Module Im
 // It proves the Call's exact first String request through Flow and Source,
 // admits that request to Source's sole exact denominator, fills the reserved
 // Import span, then submits the complete typed row to the Module owner.
-func (c *Collector) Import(ordinal int, span source.Span, call Term) Term {
+func (c *Collector) Import(ordinal int, span source.Span, call keyspace.Term) keyspace.Term {
 	if !mutationReady(c) {
 		return 0
 	}
@@ -53,7 +53,7 @@ func (c *Collector) Import(ordinal int, span source.Span, call Term) Term {
 // SetImportAlias is the second and final Module orchestration boundary. Core
 // proves the alias Cell against the live census; the Module owner records the
 // one-shot authored alias state and never receives another owner store.
-func (c *Collector) SetImportAlias(importTerm, alias Term) bool {
+func (c *Collector) SetImportAlias(importTerm, alias keyspace.Term) bool {
 	if !mutationReady(c) {
 		return false
 	}

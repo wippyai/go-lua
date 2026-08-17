@@ -3,7 +3,6 @@ package sourcecontrol
 import (
 	"errors"
 	"math/bits"
-	"sync"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
@@ -15,41 +14,27 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/source"
 )
 
-// outcomePhaseLifecycle owns the one parent-issued extension for exact
-// non-Normal Outcome phases.  It retains only sealed paths and the dense
-// Outcome-to-path lookup needed while Causal issues endpoint capabilities.
-type outcomePhaseLifecycle struct {
-	mu     sync.Mutex
+// OutcomePhases is the immutable SourceControl-owned schedule for exact
+// reachable non-Normal Outcome phases. It retains only sealed paths and the
+// dense Outcome-to-path relations needed by route planning and recurrence.
+// The owner fence is intentionally the SourceControl Result itself: callers
+// can retain the view, but cannot use it with a different sealed graph.
+type OutcomePhases struct {
 	owner  *Result
 	phases []OutcomePhase
 	byTerm []identity.ContentID
 	// nonNormal and normalByTerm are seal-local relation guards. They retain
 	// no Outcome terms or ordinals, only the dense denominator classification
-	// and the exact ordinary BodyTail path for Normal rows while issuance is
-	// live.
+	// and the exact ordinary BodyTail path for Normal rows.
 	nonNormal    []bool
 	normalByTerm []identity.ContentID
 	parentByTerm []identity.ContentID
 	targetByTerm []identity.ContentID
 	ownerByTerm  []identity.ContentID
 	kindByTerm   []kind.OutcomeKind
-	state        uint8
 }
 
-const (
-	outcomePhaseUnissued uint8 = iota
-	outcomePhaseIssued
-	outcomePhaseConsumed
-)
-
-// OutcomePhaseReceipt is a one-shot SourceControl schedule receipt.  Its
-// payload is path-only and cannot be used by a foreign Result value.
-type OutcomePhaseReceipt struct {
-	state *outcomePhaseLifecycle
-	owner *Result
-}
-
-// OutcomePhase is one parent-issued non-Normal Outcome path in propagation
+// OutcomePhase is one SourceControl-owned non-Normal Outcome path in propagation
 // order. It has no Body/Outcome ordinal or structural graph coordinate.
 type OutcomePhase struct {
 	path       identity.ContentID
@@ -65,10 +50,6 @@ func (phase OutcomePhase) ParentPath() (identity.ContentID, bool) {
 	}
 	return phase.parentPath, true
 }
-
-// OutcomePhases is the consumed, path-only schedule extension handed to
-// recurrence. The path plane cannot be manufactured by downstream callers.
-type OutcomePhases struct{ phases []OutcomePhase }
 
 func (proof OutcomePhases) Count() int { return len(proof.phases) }
 func (proof OutcomePhases) At(index int) (OutcomePhase, bool) {
@@ -86,33 +67,31 @@ type outcomePhaseCandidate struct {
 
 const vertexOutcomePhaseDomain = "wippy/program/flow/vertex-outcome-phase"
 
-// IssueOutcomePhases consumes the exact certificate Outcome-path receipt and
-// issues one distinct phase for every non-Normal Outcome owned by a reachable
-// Body. Normal remains the ordinary BodyTail phase; no Body-aligned terminal
-// path is retained or issued here.
-func (r *Result) IssueOutcomePhases(
+// BuildOutcomePhases reads the exact certificate Outcome-path view and builds
+// one immutable phase for every non-Normal Outcome owned by a reachable Body.
+// Normal remains the ordinary BodyTail phase; no Body-aligned terminal path is
+// retained or issued here. The view is installed on r exactly once and is
+// subsequently read by direct queries and recurrence without a lifecycle
+// transaction.
+func (r *Result) BuildOutcomePhases(
 	sourceView source.View,
 	flow authored.View,
 	bodies *body.Result,
 	outcomes *outcome.Result,
-	pathsReceipt *semanticpath.OutcomePhaseReceipt,
-) (*OutcomePhaseReceipt, error) {
-	if r == nil || !r.ownerAvailable() || r.outcomePhases == nil || r.outcomePhases.owner != r ||
+	paths *semanticpath.OutcomePhasePaths,
+) (*OutcomePhases, error) {
+	if r == nil || !r.ownerAvailable() ||
 		!body.Matches(bodies, r.sourceID, r.flowID) ||
 		!outcome.Matches(outcomes, r.sourceID, r.flowID, r.staticID, r.moduleID) ||
 		sourceView.Identity().ContentID() != r.sourceID || flow.Cold().ContentID() != r.flowID ||
-		pathsReceipt == nil || bodies.BodyCount() != len(r.coordinates.bodyOffsets)-1 {
+		paths == nil || !paths.Matches(r.sourceID, r.flowID, r.staticID, r.moduleID) || bodies.BodyCount() != len(r.coordinates.bodyOffsets)-1 {
 		return nil, errors.New("program/flow/sourcecontrol: outcome-phase owner is unavailable")
 	}
-	state := r.outcomePhases
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	if state.state != outcomePhaseUnissued {
-		return nil, errors.New("program/flow/sourcecontrol: outcome-phase receipt is unavailable")
+	if r.outcomePhases != nil {
+		return nil, errors.New("program/flow/sourcecontrol: outcome-phase view is already built")
 	}
-	paths, pathsOK := pathsReceipt.Consume(r.sourceID, r.flowID, r.staticID, r.moduleID)
-	if !pathsOK || paths == nil || paths.Count() != outcomes.Count() {
-		return nil, errors.New("program/flow/sourcecontrol: Outcome path receipt is unavailable")
+	if paths.Count() != outcomes.Count() {
+		return nil, errors.New("program/flow/sourcecontrol: Outcome path view is unavailable")
 	}
 
 	byTerm := make([]identity.ContentID, outcomes.Count()+1)
@@ -184,43 +163,30 @@ func (r *Result) IssueOutcomePhases(
 			return nil, errors.New("program/flow/sourcecontrol: semantic Outcome phase collision")
 		}
 	}
-	state.phases, state.byTerm, state.nonNormal, state.normalByTerm, state.parentByTerm, state.targetByTerm, state.ownerByTerm, state.kindByTerm, state.state = phases, byTerm, nonNormal, normalByTerm, parentByTerm, targetByTerm, ownerByTerm, kindByTerm, outcomePhaseIssued
-	return &OutcomePhaseReceipt{state: state, owner: r}, nil
+	view := &OutcomePhases{owner: r, phases: phases, byTerm: byTerm, nonNormal: nonNormal, normalByTerm: normalByTerm, parentByTerm: parentByTerm, targetByTerm: targetByTerm, ownerByTerm: ownerByTerm, kindByTerm: kindByTerm}
+	r.outcomePhases = view
+	return view, nil
 }
 
-// OutcomePhase issues the exact phase for one reachable non-Normal Outcome
-// while the parent-issued SourceControl receipt is live.
+// OutcomePhase resolves the exact phase for one reachable non-Normal Outcome
+// from the immutable SourceControl-owned schedule.
 func (r *Result) OutcomePhase(term keyspace.Term) (PhaseRef, bool) {
 	if r == nil || !r.ownerAvailable() || r.outcomePhases == nil || keyspace.TermFamily(term) != keyspace.FamilyOutcome {
 		return PhaseRef{}, false
 	}
 	ordinal := keyspace.TermOrdinal(term)
-	state := r.outcomePhases
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	if state.owner != r || state.state != outcomePhaseIssued || ordinal == 0 || uint64(ordinal) >= uint64(len(state.byTerm)) || !state.byTerm[ordinal].Available() {
+	view := r.outcomePhases
+	if view.owner != r || ordinal == 0 || uint64(ordinal) >= uint64(len(view.byTerm)) || !view.byTerm[ordinal].Available() {
 		return PhaseRef{}, false
 	}
-	return PhaseRef{result: r, path: state.byTerm[ordinal], class: phaseOutcome, node: noNode}, true
+	return PhaseRef{result: r, path: view.byTerm[ordinal], class: phaseOutcome, node: noNode}, true
 }
 
-// Consume destructively clears the schedule before validating the graph
-// owner. A foreign/copy consume therefore burns the exact retry.
-func (receipt *OutcomePhaseReceipt) Consume(graph *Result) (OutcomePhases, bool) {
-	if receipt == nil || receipt.state == nil {
-		return OutcomePhases{}, false
-	}
-	state := receipt.state
-	state.mu.Lock()
-	owner, phase := state.owner, state.state
-	phases := append([]OutcomePhase(nil), state.phases...)
-	state.phases, state.byTerm, state.nonNormal, state.normalByTerm, state.parentByTerm, state.targetByTerm, state.ownerByTerm, state.kindByTerm, state.owner = nil, nil, nil, nil, nil, nil, nil, nil, nil
-	state.state = outcomePhaseConsumed
-	state.mu.Unlock()
-	if owner == nil || phase != outcomePhaseIssued || receipt.owner != owner || graph != owner || !graph.available() {
-		return OutcomePhases{}, false
-	}
-	return OutcomePhases{phases: phases}, true
+// Matches reports whether view was built by the exact SourceControl Result.
+// It is the only admissibility check needed when the immutable schedule is
+// handed across the causal/recurrence boundary.
+func (view *OutcomePhases) Matches(graph *Result) bool {
+	return view != nil && graph != nil && view.owner == graph && graph.outcomePhases == view && graph.available()
 }
 
 // outcomePhaseOrder emits each propagation child before its parent, retaining

@@ -2,7 +2,7 @@ package artifact
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
 // ValuesTailKind is the artifact-owned closed classification of an open
@@ -24,15 +24,16 @@ func (kind ValuesTailKind) valid() bool {
 // and its closed kind.
 type ValuesTail struct {
 	id      identity.ContentID
+	span    identity.ContentID
 	kind    ValuesTailKind
 	present bool
 }
 
 func (tail ValuesTail) Available() bool {
 	if !tail.present {
-		return !tail.id.Available() && tail.kind == ValuesTailInvalid
+		return !tail.id.Available() && !tail.span.Available() && tail.kind == ValuesTailInvalid
 	}
-	return tail.id.Available() && tail.kind.valid()
+	return tail.id.Available() && tail.span.Available() && tail.kind.valid()
 }
 
 func (tail ValuesTail) Present() bool { return tail.Available() && tail.present }
@@ -42,6 +43,15 @@ func (tail ValuesTail) ID() identity.ContentID {
 		return identity.ContentID{}
 	}
 	return tail.id
+}
+
+// SpanID returns the exact Flow evaluation-span identity of this open tail.
+// Closed Values rows intentionally have no tail span.
+func (tail ValuesTail) SpanID() identity.ContentID {
+	if !tail.Available() || !tail.present {
+		return identity.ContentID{}
+	}
+	return tail.span
 }
 
 func (tail ValuesTail) Kind() ValuesTailKind {
@@ -68,6 +78,7 @@ func (member ValuesMember) ID() identity.ContentID {
 type ValuesRow struct {
 	id      identity.ContentID
 	body    identity.ContentID
+	span    identity.ContentID
 	members []ValuesMember
 	tail    ValuesTail
 	sealed  bool
@@ -91,6 +102,13 @@ func (row ValuesRow) BodyPathID() identity.ContentID {
 	return row.body
 }
 
+// RootSpanID returns the exact Flow span identity for this Values root when
+// Flow publishes one. Values rows used only as static/source payloads may be
+// spanless; callers must distinguish that from an unavailable row.
+func (row ValuesRow) RootSpanID() (identity.ContentID, bool) {
+	return row.span, row.Available() && row.span.Available()
+}
+
 func (row ValuesRow) MemberCount() int {
 	if !row.Available() {
 		return 0
@@ -112,11 +130,11 @@ func (row ValuesRow) Tail() (ValuesTail, bool) {
 	return row.tail, true
 }
 
-func valuesTailKind(kind program.TailProducerKind) (ValuesTailKind, bool) {
-	switch kind {
-	case program.TailProducerCall:
+func valuesTailKind(family keyspace.Family) (ValuesTailKind, bool) {
+	switch family {
+	case keyspace.FamilyCall:
 		return ValuesTailCall, true
-	case program.TailProducerVararg:
+	case keyspace.FamilyVararg:
 		return ValuesTailVararg, true
 	default:
 		return ValuesTailInvalid, false
@@ -124,10 +142,10 @@ func valuesTailKind(kind program.TailProducerKind) (ValuesTailKind, bool) {
 }
 
 func (compiler *compiler) copyValuesFailure() CompileFailure {
-	view := compiler.input.Values()
-	if !view.Available() {
+	if compiler == nil || !compiler.input.Available() {
 		return compileFailure(CompileStageValues, CompileRowValues, -1, -1, CompileReasonValuesUnavailable)
 	}
+	view := compiler.input.Flow().Authored().Values()
 	count := view.Count()
 	if count < 0 {
 		return compileFailure(CompileStageValues, CompileRowValues, -1, -1, CompileReasonValuesUnavailable)
@@ -135,35 +153,30 @@ func (compiler *compiler) copyValuesFailure() CompileFailure {
 	rows := make([]ValuesRow, count)
 	seenRows := make(map[identity.ContentID]struct{}, count)
 	for index := 0; index < count; index++ {
-		occurrence, ok := view.At(index)
-		if !ok || !occurrence.Available() {
+		term, ok := view.At(index)
+		owner, tailTerm, rowOK := view.Get(term)
+		width, widthOK := view.Len(term)
+		if !ok || !rowOK || !widthOK || width < 0 {
 			return compileFailure(CompileStageValues, CompileRowValues, index, -1, CompileReasonValuesUnavailable)
 		}
-		if !compiler.input.OwnsValuesOccurrence(occurrence) {
-			return compileFailure(CompileStageValues, CompileRowValues, index, -1, CompileReasonValuesForeign)
-		}
-		rowID, bodyPath := occurrence.ID(), occurrence.BodyPathID()
-		if !rowID.Available() {
-			return compileFailure(CompileStageValues, CompileRowValues, index, -1, CompileReasonValuesIdentity)
-		}
-		if !bodyPath.Available() {
+		body, bodyOK := compiler.input.Body(owner)
+		bodyPathID, bodyPathOK := compiler.input.Flow().BodyPath(owner)
+		if !bodyOK || !body.Available() || !bodyPathOK {
 			return compileFailure(CompileStageValues, CompileRowValues, index, -1, CompileReasonValuesBody)
 		}
-		if _, duplicate := seenRows[rowID]; duplicate {
-			return compileFailure(CompileStageValues, CompileRowValues, index, -1, CompileReasonValuesDuplicate)
+		rootSpanID, _, _, rootSpanOK := compiler.input.EvaluationSpan(term)
+		if !rootSpanOK {
+			rootSpanID = identity.ContentID{}
+		} else if !rootSpanID.Available() {
+			return compileFailure(CompileStageValues, CompileRowValues, index, -1, CompileReasonValuesUnavailable)
 		}
-		seenRows[rowID] = struct{}{}
-
-		members := make([]ValuesMember, occurrence.Count())
-		seenMembers := make(map[identity.ContentID]struct{}, len(members))
+		rowID := identity.ContentID{}
+		members := make([]ValuesMember, width)
+		seenMembers := make(map[identity.ContentID]struct{}, width)
 		for memberIndex := range members {
-			member, memberOK := occurrence.At(memberIndex)
-			parent, parentOK := member.Values()
-			position, positionOK := member.Position()
-			memberID := member.ID()
-			if !memberOK || !member.Available() || !parentOK || !parent.Available() ||
-				!compiler.input.OwnsValuesMember(member) || !compiler.input.OwnsValuesOccurrence(parent) ||
-				parent.ID() != rowID || !positionOK || position != memberIndex || !memberID.Available() {
+			_, memberOK := view.Member(term, memberIndex)
+			memberID, memberIDOK := compiler.input.ValuesMemberID(term, memberIndex)
+			if !memberOK || !memberIDOK || !memberID.Available() {
 				return compileFailure(CompileStageValues, CompileRowValues, index, memberIndex, CompileReasonValuesMember)
 			}
 			if _, duplicate := seenMembers[memberID]; duplicate {
@@ -172,24 +185,54 @@ func (compiler *compiler) copyValuesFailure() CompileFailure {
 			seenMembers[memberID] = struct{}{}
 			members[memberIndex] = ValuesMember{id: memberID}
 		}
-
 		tail := ValuesTail{}
-		if producer, present := occurrence.Tail(); present {
-			if !compiler.input.OwnsTailProducer(producer) {
-				return compileFailure(CompileStageValues, CompileRowValues, index, -1, CompileReasonValuesForeign)
-			}
-			kind, kindOK := valuesTailKind(producer.Kind())
-			producerID := producer.ContextID()
-			if !kindOK || !producerID.Available() {
+		tailKind := ValuesTailInvalid
+		if tailTerm != 0 {
+			tailFamily := keyspace.TermFamily(tailTerm)
+			var tailOK bool
+			tailKind, tailOK = valuesTailKind(tailFamily)
+			tailID, tailIDOK := compiler.input.ValuesTailID(term)
+			tailSpanID, _, _, tailSpanOK := compiler.input.EvaluationSpan(tailTerm)
+			if !tailOK || !tailIDOK || !tailSpanOK || !tailID.Available() || !tailSpanID.Available() {
 				return compileFailure(CompileStageValues, CompileRowValues, index, -1, CompileReasonValuesTail)
 			}
-			tail = ValuesTail{id: producerID, kind: kind, present: true}
+			tail = ValuesTail{id: tailID, span: tailSpanID, kind: tailKind, present: true}
 		}
-		rows[index] = ValuesRow{id: rowID, body: bodyPath, members: members, tail: tail, sealed: true}
+		rowID, rowIDOK := compiler.input.ValuesOccurrenceID(term)
+		if !rowIDOK || !rowID.Available() {
+			return compileFailure(CompileStageValues, CompileRowValues, index, -1, CompileReasonValuesIdentity)
+		}
+		if !bodyPathID.Available() {
+			return compileFailure(CompileStageValues, CompileRowValues, index, -1, CompileReasonValuesBody)
+		}
+		if _, duplicate := seenRows[rowID]; duplicate {
+			return compileFailure(CompileStageValues, CompileRowValues, index, -1, CompileReasonValuesDuplicate)
+		}
+		seenRows[rowID] = struct{}{}
+
+		rows[index] = ValuesRow{id: rowID, body: bodyPathID, span: rootSpanID, members: members, tail: tail, sealed: true}
 		if !rows[index].Available() {
 			return compileFailure(CompileStageValues, CompileRowValues, index, -1, CompileReasonValuesUnavailable)
 		}
 	}
 	compiler.values = rows
 	return CompileFailure{}
+}
+
+// valueRowForTerm resolves an existing authored Values term to the row already
+// copied into this artifact transaction. The ordinal is the canonical Flow
+// Values order; no Program Values catalog or second occurrence handle is
+// retained by the body/outcome compiler.
+func (compiler *compiler) valueRowForTerm(term keyspace.Term) (ValuesRow, bool) {
+	if compiler == nil || keyspace.TermFamily(term) != keyspace.FamilyValues {
+		return ValuesRow{}, false
+	}
+	ordinal := keyspace.TermOrdinal(term)
+	if ordinal == 0 || uint64(ordinal) > uint64(len(compiler.values)) {
+		return ValuesRow{}, false
+	}
+	index := int(ordinal) - 1
+	authoredTerm, termOK := compiler.input.Flow().Authored().Values().At(index)
+	row := compiler.values[index]
+	return row, termOK && authoredTerm == term && row.Available()
 }

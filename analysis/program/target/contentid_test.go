@@ -2,9 +2,9 @@ package target
 
 import (
 	"crypto/sha256"
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/internal/framing"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
@@ -13,16 +13,16 @@ import (
 func TestContentIDIsCanonicalAndOwned(t *testing.T) {
 	left := mustSeal(t, Spec{Operations: []OperationSpec{
 		contentIDOperation("alpha", []OutcomeSpec{
-			{Kind: flowkind.OutcomeThrow, Values: ValuesSpec{Fixed: []typ.Type{typ.String}, Tail: ValuesClosed}},
-			{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{typ.Boolean}, Tail: ValuesClosed}},
+			{Kind: flowkind.OutcomeThrow, Values: ValuesSpec{Fixed: []schematype.Type{testString}, Tail: ValuesClosed}},
+			{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testBoolean}, Tail: ValuesClosed}},
 		}),
 		contentIDOperation("beta", []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesClosed}}}),
 	}})
 	right := mustSeal(t, Spec{Operations: []OperationSpec{
 		contentIDOperation("beta", []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesClosed}}}),
 		contentIDOperation("alpha", []OutcomeSpec{
-			{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{typ.Boolean}, Tail: ValuesClosed}},
-			{Kind: flowkind.OutcomeThrow, Values: ValuesSpec{Fixed: []typ.Type{typ.String}, Tail: ValuesClosed}},
+			{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testBoolean}, Tail: ValuesClosed}},
+			{Kind: flowkind.OutcomeThrow, Values: ValuesSpec{Fixed: []schematype.Type{testString}, Tail: ValuesClosed}},
 		}),
 	}})
 	leftID, rightID := left.ContentID(), right.ContentID()
@@ -32,8 +32,8 @@ func TestContentIDIsCanonicalAndOwned(t *testing.T) {
 
 	changed := mustSeal(t, Spec{Operations: []OperationSpec{
 		contentIDOperation("alpha", []OutcomeSpec{
-			{Kind: flowkind.OutcomeThrow, Values: ValuesSpec{Fixed: []typ.Type{typ.String}, Tail: ValuesClosed}},
-			{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{typ.String}, Tail: ValuesClosed}},
+			{Kind: flowkind.OutcomeThrow, Values: ValuesSpec{Fixed: []schematype.Type{testString}, Tail: ValuesClosed}},
+			{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testString}, Tail: ValuesClosed}},
 		}),
 		contentIDOperation("beta", []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesClosed}}}),
 	}})
@@ -44,9 +44,9 @@ func TestContentIDIsCanonicalAndOwned(t *testing.T) {
 
 func TestContentIDTypeOccurrenceAllocationsAreConstant(t *testing.T) {
 	seal := func(width int) *Contract {
-		values := make([]typ.Type, width)
+		values := make([]schematype.Type, width)
 		for index := range values {
-			values[index] = typ.String
+			values[index] = testString
 		}
 		return mustSeal(t, Spec{Operations: []OperationSpec{{
 			Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"allocation"}}},
@@ -73,7 +73,7 @@ func TestContentIDIncludesDerivedOpaqueSemanticsAndFailsClosed(t *testing.T) {
 	}
 
 	withProtocol := mustSeal(t, Spec{Operations: []OperationSpec{contentIDOperation("acquire", []OutcomeSpec{{
-		Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed},
+		Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed},
 	}})}, Protocols: []ProtocolSpec{{
 		Acquisitions: []AcquisitionSpec{{Operation: 1, Outcome: 0, Result: 0, State: 1}},
 		States:       []StateSpec{{Name: "open"}},
@@ -84,8 +84,8 @@ func TestContentIDIncludesDerivedOpaqueSemanticsAndFailsClosed(t *testing.T) {
 }
 
 func TestContentIDTypeFormalAlphaInvariant(t *testing.T) {
-	leftFormal := typ.NewTypeParam("T", typ.String)
-	rightFormal := typ.NewTypeParam("Renamed", typ.String)
+	leftFormal := testNewTypeParam("T", testString)
+	rightFormal := testNewTypeParam("Renamed", testString)
 	left := mustSeal(t, Spec{Operations: []OperationSpec{genericBuiltin("identity", leftFormal)}})
 	right := mustSeal(t, Spec{Operations: []OperationSpec{genericBuiltin("identity", rightFormal)}})
 	if left.ContentID() != right.ContentID() {
@@ -124,7 +124,7 @@ func TestContentIDNamespaceSeparatesPriorContractIdentity(t *testing.T) {
 func contentIDOperation(name string, outcomes []OutcomeSpec) OperationSpec {
 	return OperationSpec{
 		Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{name}}},
-		Input:    ValuesSpec{Fixed: []typ.Type{typ.String}, Tail: ValuesClosed},
+		Input:    ValuesSpec{Fixed: []schematype.Type{testString}, Tail: ValuesClosed},
 		Outcomes: outcomes,
 		Effects:  RowSpec{Tail: RowClosed},
 	}

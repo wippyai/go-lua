@@ -1,9 +1,9 @@
 package target
 
 import (
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
 
@@ -12,8 +12,8 @@ func TestTransferCanonicalizesEndpointPayloadAndOutcomes(t *testing.T) {
 		[]OutcomeSpec{
 			{Kind: flowkind.OutcomeYield, Values: ValuesSpec{Tail: ValuesVariable, Var: 0}},
 			{Kind: flowkind.OutcomeCancel, Values: ValuesSpec{Tail: ValuesClosed}},
-			{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{typ.Boolean}, Tail: ValuesClosed}},
-			{Kind: flowkind.OutcomeThrow, Values: ValuesSpec{Fixed: []typ.Type{typ.String}, Tail: ValuesClosed}},
+			{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testBoolean}, Tail: ValuesClosed}},
+			{Kind: flowkind.OutcomeThrow, Values: ValuesSpec{Fixed: []schematype.Type{testString}, Tail: ValuesClosed}},
 		},
 		[]TransferSpec{
 			transfer(TransferEndpoint{Kind: TransferEndpointExternal}, InputSource{Kind: InputSourceValuesVar}, TransferIdentityUnspecified, TransferCapabilitiesLoseAll,
@@ -67,7 +67,7 @@ func TestTransferCanonicalizesEndpointPayloadAndOutcomes(t *testing.T) {
 }
 
 func TestTransferAuthorPermutationHasOnePublicContract(t *testing.T) {
-	leftOutcomes := []OutcomeSpec{{Kind: flowkind.OutcomeYield, Values: ValuesSpec{Tail: ValuesVariable, Var: 0}}, {Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesClosed}}, {Kind: flowkind.OutcomeThrow, Values: ValuesSpec{Fixed: []typ.Type{typ.String}, Tail: ValuesClosed}}}
+	leftOutcomes := []OutcomeSpec{{Kind: flowkind.OutcomeYield, Values: ValuesSpec{Tail: ValuesVariable, Var: 0}}, {Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesClosed}}, {Kind: flowkind.OutcomeThrow, Values: ValuesSpec{Fixed: []schematype.Type{testString}, Tail: ValuesClosed}}}
 	rightOutcomes := []OutcomeSpec{leftOutcomes[2], leftOutcomes[0], leftOutcomes[1]}
 	left := mustSeal(t, Spec{Operations: []OperationSpec{transferOperation(leftOutcomes, []TransferSpec{
 		transfer(TransferEndpoint{Kind: TransferEndpointExternal}, InputSource{Kind: InputSourceValuesVar}, TransferIdentityDistinct, TransferCapabilitiesLoseAll, []TransferOutcomeSpec{{Outcome: 2, Possibility: TransferMayReject}, {Outcome: 0, Possibility: TransferMayDeliver}, {Outcome: 1, Possibility: TransferMayDeliver | TransferMayReject}}),
@@ -132,14 +132,14 @@ func TestTransferRejectsIncompleteOrInvalidAuthority(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			spec := baseTransfer()
 			test.edit(&spec)
-			if contract, err := Seal(&Spec{Operations: []OperationSpec{transferOperation(base, []TransferSpec{spec})}}); err == nil || contract != nil {
+			if contract, err := testSeal(&Spec{Operations: []OperationSpec{transferOperation(base, []TransferSpec{spec})}}); err == nil || contract != nil {
 				t.Fatal("invalid transfer was published")
 			}
 		})
 	}
 	first, second := baseTransfer(), baseTransfer()
 	second.Outcomes = []TransferOutcomeSpec{{Outcome: 0, Possibility: TransferMayReject}, {Outcome: 1, Possibility: TransferMayDeliver}}
-	if contract, err := Seal(&Spec{Operations: []OperationSpec{transferOperation(base, []TransferSpec{first, second})}}); err == nil || contract != nil {
+	if contract, err := testSeal(&Spec{Operations: []OperationSpec{transferOperation(base, []TransferSpec{first, second})}}); err == nil || contract != nil {
 		t.Fatal("duplicate endpoint/payload/alias was published")
 	}
 }
@@ -172,10 +172,10 @@ func TestOpaqueTransferIsMaximalAndAllocationFree(t *testing.T) {
 
 func TestTransferWideAndDeepValidationHasNoSemanticCap(t *testing.T) {
 	const width = 4096
-	fixed := make([]typ.Type, width)
+	fixed := make([]schematype.Type, width)
 	transfers := make([]TransferSpec, width)
 	for index := 0; index < width; index++ {
-		fixed[index] = typ.Any
+		fixed[index] = testAny
 		transfers[width-index-1] = transfer(TransferEndpoint{Kind: TransferEndpointInput, Input: ValueFormal(index)}, InputSource{Kind: InputSourceValueFormal, Ordinal: uint32(index)}, TransferIdentitySame, TransferCapabilitiesPreserveAll,
 			[]TransferOutcomeSpec{{Outcome: 3, Possibility: TransferMayReject}, {Outcome: 1, Possibility: TransferMayReject}, {Outcome: 2, Possibility: TransferMayDeliver}, {Outcome: 0, Possibility: TransferMayDeliver | TransferMayReject}})
 	}
@@ -194,5 +194,5 @@ func transfer(endpoint TransferEndpoint, payload InputSource, identity TransferI
 }
 
 func transferOperation(outcomes []OutcomeSpec, transfers []TransferSpec) OperationSpec {
-	return OperationSpec{Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"transfer"}}}, ValuesVars: 1, Input: ValuesSpec{Fixed: []typ.Type{typ.Any, typ.String}, Tail: ValuesVariable, Var: 0}, Outcomes: outcomes, Transfers: transfers, Effects: RowSpec{Tail: RowClosed}}
+	return OperationSpec{Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"transfer"}}}, ValuesVars: 1, Input: ValuesSpec{Fixed: []schematype.Type{testAny, testString}, Tail: ValuesVariable, Var: 0}, Outcomes: outcomes, Transfers: transfers, Effects: RowSpec{Tail: RowClosed}}
 }

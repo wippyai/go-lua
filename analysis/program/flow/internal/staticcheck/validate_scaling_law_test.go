@@ -45,16 +45,16 @@ func TestStaticCheckValidateGenericScopeScaling(t *testing.T) {
 			Contracts:    static.ContractsInput{Function: []static.FunctionContract{{TypeParams: contractParams}}},
 		},
 	})
-	receipt, err := Validate(
+	result, err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
-		fixture.bindings, fixture.forest, fixture.proof, fixture.direct,
+		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
 		fixture.moduleView.ContentID(), fixture.entry,
 	)
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
-	if len(receipt.TypeOf) != n {
-		t.Fatalf("TypeOf receipt length = %d, want %d", len(receipt.TypeOf), n)
+	if len(result.TypeOf) != n {
+		t.Fatalf("TypeOf result length = %d, want %d", len(result.TypeOf), n)
 	}
 }
 
@@ -89,11 +89,11 @@ func TestStaticCheckValidatePositionlessFunctionBodyScaling(t *testing.T) {
 		},
 		static: static.Input{Contracts: static.ContractsInput{Function: contracts}, Operators: static.OperatorsInput{TypeOf: typeOfs}},
 	})
-	receipt, err := Validate(fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies, fixture.bindings, fixture.forest, fixture.proof, fixture.direct, fixture.moduleView.ContentID(), fixture.entry)
+	result, err := Validate(fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies, fixture.bindings, fixture.forest, fixture.proof, fixture.access, fixture.moduleView.ContentID(), fixture.entry)
 	if err != nil {
 		t.Fatalf("Validate positionless Function scaling: %v", err)
 	}
-	if len(receipt.TypeOf) != n {
-		t.Fatalf("TypeOf receipt length = %d, want %d", len(receipt.TypeOf), n)
+	if len(result.TypeOf) != n {
+		t.Fatalf("TypeOf result length = %d, want %d", len(result.TypeOf), n)
 	}
 }

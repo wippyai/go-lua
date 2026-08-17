@@ -4,7 +4,7 @@ import "github.com/wippyai/go-lua/analysis/identity"
 
 // DigestView is one detached owner-fenced interval of typed row identities.
 // It stores identities only: the owner's typed rows never cross the boundary,
-// so a receipt can be replayed and compared without copying relation payload.
+// so a detached view can be replayed and compared without copying relation payload.
 type DigestView struct {
 	owner   identity.ContentID
 	digests []identity.ContentID

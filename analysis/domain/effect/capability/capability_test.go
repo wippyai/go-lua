@@ -49,9 +49,9 @@ func TestDescriptorsClassifyAuditedVocabularyExactlyOnce(t *testing.T) {
 		capability.MutationLengthChange: capability.StatusPartial,
 		capability.MutationTableMutator: capability.StatusOperational,
 
-		capability.LifecycleAcquire:    capability.StatusOperational,
-		capability.LifecycleTransition: capability.StatusOperational,
-		capability.LifecycleEscape:     capability.StatusOperational,
+		capability.LifecycleAcquire:    capability.StatusManifestValidated,
+		capability.LifecycleTransition: capability.StatusManifestValidated,
+		capability.LifecycleEscape:     capability.StatusManifestValidated,
 
 		capability.ControlThrow: capability.StatusReservedHighRisk,
 		capability.ControlIO:    capability.StatusReservedHighRisk,
@@ -256,6 +256,44 @@ func TestDispatchModuleLoadDocumentsCapabilityBinding(t *testing.T) {
 		if !strings.Contains(desc.Rationale, want) {
 			t.Fatalf("ModuleLoad rationale = %q, want to contain %q", desc.Rationale, want)
 		}
+	}
+}
+
+// TestLifecycleLabelsArePinnedManifestValidated states the operational truth of
+// the lifecycle vocabulary: manifests carry it and the typestate conformance
+// relation validates it, and nothing lowers it into analysis facts. The reserved
+// tiers are excluded because they bar a label from manifests entirely, which is
+// the opposite of how this vocabulary is used.
+func TestLifecycleLabelsArePinnedManifestValidated(t *testing.T) {
+	for _, id := range []string{
+		capability.LifecycleAcquire,
+		capability.LifecycleTransition,
+		capability.LifecycleEscape,
+	} {
+		t.Run(id, func(t *testing.T) {
+			desc, ok := capability.Lookup(id)
+			if !ok {
+				t.Fatalf("missing descriptor %s", id)
+			}
+			switch desc.Status {
+			case capability.StatusOperational:
+				t.Fatalf("%s claims operational lowering that no consumer performs", id)
+			case capability.StatusReserved, capability.StatusReservedHighRisk:
+				t.Fatalf("%s is reserved out of manifests it is declared in", id)
+			}
+			if desc.Status != capability.StatusManifestValidated {
+				t.Fatalf("%s status = %q, want %q", id, desc.Status, capability.StatusManifestValidated)
+			}
+			for _, want := range []string{
+				"carried in signature manifests",
+				"validated against the declared typestate FSM",
+				"no lowering consumes it",
+			} {
+				if !strings.Contains(desc.Rationale, want) {
+					t.Fatalf("%s rationale = %q, want to contain %q", id, desc.Rationale, want)
+				}
+			}
+		})
 	}
 }
 

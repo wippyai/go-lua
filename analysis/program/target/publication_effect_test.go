@@ -67,7 +67,7 @@ func publicationFor(kind PublicationEffectKind) *PublicationEffectSpec {
 
 func publicationSealError(publication *PublicationEffectSpec) error {
 	spec := publicationEffectSpec(publication, false)
-	_, err := Seal(&spec)
+	_, err := testSeal(&spec)
 	return err
 }
 
@@ -140,9 +140,9 @@ func TestPublicationEffectDescriptorOwnerLaw(t *testing.T) {
 	if _, err := tampered.effectDescriptorID(owner, tampered.effects[ownerRow.effects.start]); err == nil {
 		t.Fatal("stale out-of-ABI publication row retained an effect descriptor identity")
 	}
-	views, viewsOK := contract.SemanticSourceViews()
+	views, viewsOK := contract.SourceViews()
 	if !viewsOK || views.PublicationEffect().OwnerID() != contract.ContentID() || views.PublicationEffect().Count() != 2 {
-		t.Fatal("publication semantic-source receipt lost its Target owner fence or duplicate occurrences")
+		t.Fatal("publication semantic-source rows lost its Target owner fence or duplicate occurrences")
 	}
 
 	without, withoutOwner := publicationEffectContract(t, nil, false)
@@ -167,11 +167,11 @@ func TestPublicationEffectDescriptorOwnerLaw(t *testing.T) {
 	if firstDistinct.ContentID() != secondDistinct.ContentID() {
 		t.Fatal("permuted distinct publication effects changed Contract identity")
 	}
-	firstViews, firstViewsOK := firstDistinct.SemanticSourceViews()
-	secondViews, secondViewsOK := secondDistinct.SemanticSourceViews()
+	firstViews, firstViewsOK := firstDistinct.SourceViews()
+	secondViews, secondViewsOK := secondDistinct.SourceViews()
 	if !firstViewsOK || !secondViewsOK || firstViews.PublicationEffect().OwnerID() != secondViews.PublicationEffect().OwnerID() ||
 		firstViews.PublicationEffect().Count() != secondViews.PublicationEffect().Count() {
-		t.Fatal("permuted distinct publication effects changed semantic receipt owner or cardinality")
+		t.Fatal("permuted distinct publication effects changed semantic rows owner or cardinality")
 	}
 	for index := 0; index < firstDistinct.EffectCount(firstDistinctOwner); index++ {
 		firstDescriptorID, firstDescriptorOK := firstDistinct.PublicationEffectDescriptorID(firstDistinctOwner, index)
@@ -183,7 +183,7 @@ func TestPublicationEffectDescriptorOwnerLaw(t *testing.T) {
 		if !firstDescriptorOK || !secondDescriptorOK || firstDescriptorID != secondDescriptorID ||
 			!firstOccurrenceOK || !secondOccurrenceOK || firstOccurrenceID != secondOccurrenceID ||
 			!firstRowOK || !secondRowOK || firstRow != secondRow {
-			t.Fatalf("permuted distinct publication effect %d changed a sealed identity or receipt row", index)
+			t.Fatalf("permuted distinct publication effect %d changed a sealed identity or rows row", index)
 		}
 	}
 
@@ -210,9 +210,9 @@ func TestPublicationEffectDescriptorOwnerLaw(t *testing.T) {
 	}, RowSpec{Tail: RowClosed})), "publication-callback")
 	callbackDescriptor, callbackOK := callbackContract.CallbackPublicationEffectDescriptor(callback, 0)
 	callbackID, callbackIDOK := callbackContract.CallbackPublicationEffectOccurrenceID(callback, 0)
-	callbackViews, callbackViewsOK := callbackContract.SemanticSourceViews()
+	callbackViews, callbackViewsOK := callbackContract.SourceViews()
 	if !callbackOK || !callbackIDOK || !callbackID.Available() || callbackDescriptor.Kind() != PublicationEffectCallbackEscape ||
 		!callbackViewsOK || callbackViews.PublicationEffect().OwnerID() != callbackContract.ContentID() || callbackViews.PublicationEffect().Count() != 1 || callbackOwner == 0 {
-		t.Fatal("callback publication descriptor or its Contract-owned semantic receipt is unavailable")
+		t.Fatal("callback publication descriptor or its Contract-owned semantic rows is unavailable")
 	}
 }

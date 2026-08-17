@@ -140,7 +140,7 @@ func TestReceiptAssemblySemanticQueryDirectoryUsesExactParentReceipt(t *testing.
 	if !ruleOK || !queryOK || !assemblyOK {
 		t.Fatal("semantic Query implementations")
 	}
-	site, siteOK := assembly.builder.admitSite(coldKey(949_100).compositionKey(), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent)
+	site, siteOK := assembly.builder.admitSite(compositionKeyOf(coldKey(949_100)), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent)
 	occurrence, occurrenceOK := assembly.builder.admitAt(site)
 	operandValue := ruleUnitForSemantic(coldKey(949_101))
 	entity, entityOK := operandEntityForContent(operandValue.content)
@@ -214,8 +214,8 @@ func newReceiptSemanticActivationFixture(t testing.TB) receiptSemanticActivation
 		t.Fatal("semantic Activation implementation")
 	}
 	scope := equation.EmptyScope()
-	triggerSite, triggerSiteOK := assembly.builder.admitSite(coldKey(949_203).compositionKey(), scope, equation.TrueExpr(), equation.InitPresent)
-	targetSite, targetSiteOK := assembly.builder.admitSite(coldKey(949_204).compositionKey(), scope, equation.TrueExpr(), equation.InitPresent)
+	triggerSite, triggerSiteOK := assembly.builder.admitSite(compositionKeyOf(coldKey(949_203)), scope, equation.TrueExpr(), equation.InitPresent)
+	targetSite, targetSiteOK := assembly.builder.admitSite(compositionKeyOf(coldKey(949_204)), scope, equation.TrueExpr(), equation.InitPresent)
 	occurrence, occurrenceOK := assembly.builder.admitAt(triggerSite)
 	entity, entityOK := operandEntityForContent([32]byte{31})
 	operand, operandOK := assembly.builder.admitOperand(occurrence, entity)
@@ -234,8 +234,8 @@ func newReceiptSemanticActivationFixture(t testing.TB) receiptSemanticActivation
 	}
 
 	formals := equation.NewBatch()
-	input, inputOK := formals.AdmitFormalPort(coldKey(949_205).compositionKey(), equation.PortImport, nil)
-	output, outputOK := formals.AdmitFormalPort(coldKey(949_206).compositionKey(), equation.PortExport, nil)
+	input, inputOK := formals.AdmitFormalPort(compositionKeyOf(coldKey(949_205)), equation.PortImport, nil)
+	output, outputOK := formals.AdmitFormalPort(compositionKeyOf(coldKey(949_206)), equation.PortExport, nil)
 	if !inputOK || !outputOK || !formals.Seal() {
 		t.Fatal("semantic Activation formal ports")
 	}
@@ -243,8 +243,8 @@ func newReceiptSemanticActivationFixture(t testing.TB) receiptSemanticActivation
 	first, firstOK := equation.MaterializeTemplateBoundary(schema.cold, templateBinding, []equation.Site{input.Site(), output.Site()}, nil)
 	second, secondOK := equation.MaterializeTemplateBoundary(schema.cold, templateBinding, []equation.Site{output.Site(), input.Site()}, nil)
 	shape, shapeOK := schema.cold.RuleShapeAt(proof.ordinal)
-	first, firstOriginOK := first.WithOrigin(equation.MaterializationOrigin{Family: shape.ActivationFamily, Application: coldKey(949_207).compositionKey(), Target: coldKey(949_208).compositionKey(), Endpoint: coldKey(949_209).compositionKey(), TriggerOrdinal: 0})
-	second, secondOriginOK := second.WithOrigin(equation.MaterializationOrigin{Family: shape.ActivationFamily, Application: coldKey(949_207).compositionKey(), Target: coldKey(949_210).compositionKey(), Endpoint: coldKey(949_211).compositionKey(), TriggerOrdinal: 0})
+	first, firstOriginOK := first.WithOrigin(equation.MaterializationOrigin{Family: shape.ActivationFamily, Application: compositionKeyOf(coldKey(949_207)), Target: compositionKeyOf(coldKey(949_208)), Endpoint: compositionKeyOf(coldKey(949_209)), TriggerOrdinal: 0})
+	second, secondOriginOK := second.WithOrigin(equation.MaterializationOrigin{Family: shape.ActivationFamily, Application: compositionKeyOf(coldKey(949_207)), Target: compositionKeyOf(coldKey(949_210)), Endpoint: compositionKeyOf(coldKey(949_211)), TriggerOrdinal: 0})
 	if !templateBindingOK || !firstOK || !secondOK || !shapeOK || shape.OutputKind != composition.StructuralOutput || !firstOriginOK || !secondOriginOK || first.Key() == second.Key() || first.Batch() == second.Batch() {
 		t.Fatal("semantic Activation materializations")
 	}
@@ -318,7 +318,7 @@ func TestReceiptAssemblySemanticActivationOwnsOneMemberIDAndManyCandidates(t *te
 		t.Fatal("mixed-application first candidate")
 	}
 	origin, originOK := mixedApplication.materialized[1].Origin()
-	origin.Application = coldKey(949_212).compositionKey()
+	origin.Application = compositionKeyOf(coldKey(949_212))
 	foreignApplication, rebound := mixedApplication.materialized[1].WithOrigin(origin)
 	foreignReceipt, foreignIssued := mixedApplication.assembly.builder.issueMaterialization(foreignApplication)
 	if !originOK || !rebound || !foreignIssued {

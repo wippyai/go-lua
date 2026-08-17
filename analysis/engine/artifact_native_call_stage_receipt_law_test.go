@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
@@ -69,12 +70,12 @@ func newNativeCallStageLawOwner(t testing.TB) nativeCallStageLawFixture {
 	}
 }
 
-func (fixture nativeCallStageLawFixture) scalarSpec(t testing.TB, rules []ArtifactScalarRule, order []identity.ContentID) *ArtifactScalarSpec {
+func (fixture nativeCallStageLawFixture) scalarSpec(t testing.TB, rules []rows.ArtifactScalarRule, order []identity.ContentID) *rows.ArtifactScalarSpec {
 	t.Helper()
-	artifact, program, schema := artifactScalarLawID(0x78), artifactScalarLawID(0x79), identity.ContentID(fixture.binding.Schema().ID().Digest())
+	artifactID, program, schema := artifactScalarLawID(0x78), artifactScalarLawID(0x79), identity.ContentID(fixture.binding.Schema().ID().Digest())
 	regionID, bodyID := artifactScalarLawID(0x7A), artifactScalarLawID(0x7B)
-	points := []ArtifactScalarPoint{{ID: fixture.base, Initial: true}, {ID: fixture.dispatch}, {ID: fixture.summary}, {ID: fixture.effect}}
-	spec, ok := NewArtifactScalarSpec(artifact, program, schema, ArtifactScalarCapacity{Roles: 1, Points: len(points), Regions: 1, Events: len(order) + 2, Rules: len(rules), Bodies: 1})
+	points := []rows.ArtifactScalarPoint{{ID: fixture.base, Initial: true}, {ID: fixture.dispatch}, {ID: fixture.summary}, {ID: fixture.effect}}
+	spec, ok := rows.NewArtifactScalarSpec(artifactID, program, schema, rows.ArtifactScalarCapacity{Roles: 1, Points: len(points), Regions: 1, Events: len(order) + 2, Rules: len(rules), Bodies: 1})
 	if !ok {
 		t.Fatal("native Call stage scalar spec")
 	}
@@ -87,7 +88,7 @@ func (fixture nativeCallStageLawFixture) scalarSpec(t testing.TB, rules []Artifa
 			t.Fatal("native Call stage point")
 		}
 	}
-	region, regionOK := spec.AddRegion(ArtifactScalarRegion{ID: regionID, Head: order[0]})
+	region, regionOK := spec.AddRegion(rows.ArtifactScalarRegion{ID: regionID, Head: order[0]})
 	if !regionOK {
 		t.Fatal("native Call stage region")
 	}
@@ -96,18 +97,18 @@ func (fixture nativeCallStageLawFixture) scalarSpec(t testing.TB, rules []Artifa
 			t.Fatal("native Call stage region member")
 		}
 	}
-	if !spec.AddEvent(ArtifactScalarEvent{Kind: ArtifactEventEnter, Region: regionID}) {
+	if !spec.AddEvent(rows.ArtifactScalarEvent{Kind: rows.ArtifactEventEnter, Region: regionID}) {
 		t.Fatal("native Call stage enter")
 	}
 	for _, point := range order {
-		if !spec.AddEvent(ArtifactScalarEvent{Kind: ArtifactEventPoint, Point: point}) {
+		if !spec.AddEvent(rows.ArtifactScalarEvent{Kind: rows.ArtifactEventPoint, Point: point}) {
 			t.Fatal("native Call stage event")
 		}
 	}
-	if !spec.AddEvent(ArtifactScalarEvent{Kind: ArtifactEventExit, Region: regionID}) {
+	if !spec.AddEvent(rows.ArtifactScalarEvent{Kind: rows.ArtifactEventExit, Region: regionID}) {
 		t.Fatal("native Call stage exit")
 	}
-	body, bodyOK := spec.AddBody(ArtifactScalarBody{ID: bodyID, Context: artifactScalarLawID(0x7C), SemanticEntry: artifactScalarLawID(0x7D)})
+	body, bodyOK := spec.AddBody(rows.ArtifactScalarBody{ID: bodyID, Context: artifactScalarLawID(0x7C), SemanticEntry: artifactScalarLawID(0x7D)})
 	if !bodyOK || !spec.AddBodyEntry(body, fixture.base) || !spec.AddBodyExit(body, fixture.effect) {
 		t.Fatal("native Call stage body")
 	}
@@ -120,33 +121,34 @@ func (fixture nativeCallStageLawFixture) scalarSpec(t testing.TB, rules []Artifa
 	return spec
 }
 
-func (fixture nativeCallStageLawFixture) rules() []ArtifactScalarRule {
+func (fixture nativeCallStageLawFixture) rules() []rows.ArtifactScalarRule {
 	// Deliberately not stage order: admission must follow committed stage
 	// geometry, never input slice order.
-	return []ArtifactScalarRule{
-		{Stage: ArtifactRuleStageCallEffect, Point: fixture.effect, Input: fixture.summary, ID: fixture.effectID},
-		{Stage: ArtifactRuleStageCallDispatch, Point: fixture.dispatch, Input: fixture.base, ID: fixture.dispatchID},
-		{Stage: ArtifactRuleStageCallSummary, Point: fixture.summary, Input: fixture.dispatch, ID: fixture.summaryID},
+	return []rows.ArtifactScalarRule{
+		{Stage: rows.ArtifactRuleStageCallEffect, Point: fixture.effect, Input: fixture.summary, ID: fixture.effectID},
+		{Stage: rows.ArtifactRuleStageCallDispatch, Point: fixture.dispatch, Input: fixture.base, ID: fixture.dispatchID},
+		{Stage: rows.ArtifactRuleStageCallSummary, Point: fixture.summary, Input: fixture.dispatch, ID: fixture.summaryID},
 	}
 }
 
-func (fixture nativeCallStageLawFixture) scalarTemplate(t testing.TB, rules []ArtifactScalarRule, order []identity.ContentID) (*ArtifactScalarTemplate, bool) {
+func (fixture nativeCallStageLawFixture) scalarTemplate(t testing.TB, rules []rows.ArtifactScalarRule, order []identity.ContentID) (*rows.ArtifactScalarTemplate, bool) {
 	t.Helper()
-	return NewArtifactScalarTemplate(fixture.scalarSpec(t, rules, order))
+	return rows.NewArtifactScalarTemplate(fixture.scalarSpec(t, rules, order))
 }
 
-func bindNativeCallStageLawTemplate(template *ArtifactScalarTemplate, capability RuleSlotCapability) (*ArtifactScalarReceipt, bool) {
-	if template == nil || !template.Available() || len(template.roles) != 1 {
+func bindNativeCallStageLawTemplate(template *rows.ArtifactScalarTemplate, capability RuleSlotCapability) (*ArtifactScalarReceipt, bool) {
+	if template == nil || !template.Available() || template.RoleCount() != 1 {
 		return nil, false
 	}
+	role, roleOK := template.RoleAt(0)
 	binding, bindingOK := NewArtifactScalarBinding(template)
-	if !bindingOK || !binding.BindRole(template.roles[0], capability) {
+	if !roleOK || !bindingOK || !binding.BindRole(role, capability) {
 		return nil, false
 	}
 	return NewArtifactScalarReceipt(binding)
 }
 
-func (fixture nativeCallStageLawFixture) scalarReceipt(t testing.TB, rules []ArtifactScalarRule, order []identity.ContentID) (*ArtifactScalarReceipt, bool) {
+func (fixture nativeCallStageLawFixture) scalarReceipt(t testing.TB, rules []rows.ArtifactScalarRule, order []identity.ContentID) (*ArtifactScalarReceipt, bool) {
 	template, templateOK := fixture.scalarTemplate(t, rules, order)
 	if !templateOK {
 		return nil, false
@@ -165,7 +167,7 @@ func TestArtifactNativeCallStageRejectsTamperAliasAndOrder(t *testing.T) {
 	}
 
 	tampered := fixture.rules()
-	tampered[0].Stage = ArtifactRuleStageCallSummary
+	tampered[0].Stage = rows.ArtifactRuleStageCallSummary
 	if receipt, ok := fixture.scalarReceipt(t, tampered, fixture.order()); ok || receipt != nil {
 		t.Fatal("retagged Effect stage admitted")
 	}
@@ -188,7 +190,8 @@ func TestArtifactScalarTemplateReusesStructureButFencesLinkCapabilities(t *testi
 	template, templateOK := owner.scalarTemplate(t, owner.rules(), owner.order())
 	localReceipt, localOK := bindNativeCallStageLawTemplate(template, owner.capability)
 	foreignReceipt, foreignOK := bindNativeCallStageLawTemplate(template, foreign.capability)
-	if !templateOK || !localOK || !foreignOK || localReceipt.template != template || foreignReceipt.template != template || localReceipt.capabilities[template.roles[0].semantic] == foreignReceipt.capabilities[template.roles[0].semantic] {
+	sharedRole, sharedRoleOK := template.RoleAt(0)
+	if !templateOK || !localOK || !foreignOK || !sharedRoleOK || localReceipt.template != template || foreignReceipt.template != template || localReceipt.capabilities[sharedRole] == foreignReceipt.capabilities[sharedRole] {
 		t.Fatal("shared neutral template with distinct Link substitutions")
 	}
 	missing, missingOK := NewArtifactScalarBinding(template)
@@ -199,7 +202,7 @@ func TestArtifactScalarTemplateReusesStructureButFencesLinkCapabilities(t *testi
 		t.Fatal("template receipt accepted a missing Link role")
 	}
 	duplicate, duplicateOK := NewArtifactScalarBinding(template)
-	if !duplicateOK || !duplicate.BindRole(template.roles[0], owner.capability) || duplicate.BindRole(template.roles[0], owner.capability) {
+	if !duplicateOK || !duplicate.BindRole(sharedRole, owner.capability) || duplicate.BindRole(sharedRole, owner.capability) {
 		t.Fatal("duplicate Link role substitution was not fenced")
 	}
 	foreignSpec := owner.scalarSpec(t, owner.rules(), owner.order())
@@ -210,10 +213,11 @@ func TestArtifactScalarTemplateReusesStructureButFencesLinkCapabilities(t *testi
 	}
 	twoRoleSpec := owner.scalarSpec(t, owner.rules(), owner.order())
 	secondRole, secondRoleOK := twoRoleSpec.DeclareRole(artifactScalarLawID(0x6B))
-	twoRoleTemplate, twoRoleTemplateOK := NewArtifactScalarTemplate(twoRoleSpec)
+	twoRoleTemplate, twoRoleTemplateOK := rows.NewArtifactScalarTemplate(twoRoleSpec)
 	aliasedCapabilities, aliasedCapabilitiesOK := NewArtifactScalarBinding(twoRoleTemplate)
-	if !secondRoleOK || !twoRoleTemplateOK || !aliasedCapabilitiesOK ||
-		!aliasedCapabilities.BindRole(twoRoleTemplate.roles[0], owner.capability) ||
+	twoRoleFirst, twoRoleFirstOK := twoRoleTemplate.RoleAt(0)
+	if !secondRoleOK || !twoRoleTemplateOK || !aliasedCapabilitiesOK || !twoRoleFirstOK ||
+		!aliasedCapabilities.BindRole(twoRoleFirst, owner.capability) ||
 		!aliasedCapabilities.BindRole(secondRole, owner.capability) {
 		t.Fatal("two-role alias fixture")
 	}
@@ -280,7 +284,7 @@ func TestMountedNativeCallStageReceiptSurvivesArtifactReleaseAndRejectsForeignOc
 	receipt, receiptOK := graph.MountedNativeCallStage(fixture.capability, fixture.mount, fixture.effectID)
 	member, memberOK := receipt.RuleMember()
 	expectedMember, expectedMemberOK := graph.MountedRuleMember(fixture.capability, fixture.mount, fixture.effect, fixture.effectID)
-	if !receiptOK || !receipt.Available() || receipt.Stage() != ArtifactRuleStageCallEffect || receipt.MountID() != fixture.mount || receipt.OccurrenceID() != fixture.effectID || receipt.ReusablePointID() != fixture.effect || receipt.ReusableInputPointID() != fixture.summary || !memberOK || !expectedMemberOK || member.graph != graph || member.member.Key() != expectedMember.member.Key() || member.locator != expectedMember.locator {
+	if !receiptOK || !receipt.Available() || receipt.Stage() != rows.ArtifactRuleStageCallEffect || receipt.MountID() != fixture.mount || receipt.OccurrenceID() != fixture.effectID || receipt.ReusablePointID() != fixture.effect || receipt.ReusableInputPointID() != fixture.summary || !memberOK || !expectedMemberOK || member.graph != graph || member.member.Key() != expectedMember.member.Key() || member.locator != expectedMember.locator {
 		t.Fatal("exact mounted native Call stage receipt")
 	}
 	if _, ok := graph.MountedNativeCallStage(fixture.capability, fixture.mount, artifactScalarLawID(0x7F)); ok {
@@ -293,7 +297,7 @@ func TestMountedNativeCallStageReceiptSurvivesArtifactReleaseAndRejectsForeignOc
 		t.Fatal("foreign role capability entered mounted native Call stage inverse")
 	}
 	alias := receipt
-	alias.stage.stage = ArtifactRuleStageCallSummary
+	alias.stage.stage = rows.ArtifactRuleStageCallSummary
 	if alias.Available() {
 		t.Fatal("caller-mutated stage receipt remained valid")
 	}

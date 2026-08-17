@@ -96,7 +96,10 @@ type ExprVisitor[R any] struct {
 	Default  func(Expr) R
 }
 
-// VisitExpr applies the first matching handler in v to e.
+// VisitExpr applies the first matching handler in v to e. A term reaching the
+// grammar by pointer is the term it points at, so an absent one - a nil pointer
+// of a member's type - carries no term to hand a handler and reaches Default
+// alongside a term outside the grammar.
 func VisitExpr[R any](e Expr, v ExprVisitor[R]) R {
 	switch ee := e.(type) {
 	case Var:
@@ -104,7 +107,7 @@ func VisitExpr[R any](e Expr, v ExprVisitor[R]) R {
 			return v.Var(ee)
 		}
 	case *Var:
-		if v.Var != nil {
+		if ee != nil && v.Var != nil {
 			return v.Var(*ee)
 		}
 	case Const:
@@ -112,7 +115,7 @@ func VisitExpr[R any](e Expr, v ExprVisitor[R]) R {
 			return v.Const(ee)
 		}
 	case *Const:
-		if v.Const != nil {
+		if ee != nil && v.Const != nil {
 			return v.Const(*ee)
 		}
 	case BinOp:
@@ -120,7 +123,7 @@ func VisitExpr[R any](e Expr, v ExprVisitor[R]) R {
 			return v.BinOp(ee)
 		}
 	case *BinOp:
-		if v.BinOp != nil {
+		if ee != nil && v.BinOp != nil {
 			return v.BinOp(*ee)
 		}
 	case Len:
@@ -128,7 +131,7 @@ func VisitExpr[R any](e Expr, v ExprVisitor[R]) R {
 			return v.Len(ee)
 		}
 	case *Len:
-		if v.Len != nil {
+		if ee != nil && v.Len != nil {
 			return v.Len(*ee)
 		}
 	case Param:
@@ -136,7 +139,7 @@ func VisitExpr[R any](e Expr, v ExprVisitor[R]) R {
 			return v.Param(ee)
 		}
 	case *Param:
-		if v.Param != nil {
+		if ee != nil && v.Param != nil {
 			return v.Param(*ee)
 		}
 	case Ret:
@@ -144,7 +147,7 @@ func VisitExpr[R any](e Expr, v ExprVisitor[R]) R {
 			return v.Ret(ee)
 		}
 	case *Ret:
-		if v.Ret != nil {
+		if ee != nil && v.Ret != nil {
 			return v.Ret(*ee)
 		}
 	case ParamLen:
@@ -152,7 +155,7 @@ func VisitExpr[R any](e Expr, v ExprVisitor[R]) R {
 			return v.ParamLen(ee)
 		}
 	case *ParamLen:
-		if v.ParamLen != nil {
+		if ee != nil && v.ParamLen != nil {
 			return v.ParamLen(*ee)
 		}
 	case RetLen:
@@ -160,7 +163,7 @@ func VisitExpr[R any](e Expr, v ExprVisitor[R]) R {
 			return v.RetLen(ee)
 		}
 	case *RetLen:
-		if v.RetLen != nil {
+		if ee != nil && v.RetLen != nil {
 			return v.RetLen(*ee)
 		}
 	case Min:
@@ -168,7 +171,7 @@ func VisitExpr[R any](e Expr, v ExprVisitor[R]) R {
 			return v.Min(ee)
 		}
 	case *Min:
-		if v.Min != nil {
+		if ee != nil && v.Min != nil {
 			return v.Min(*ee)
 		}
 	case Max:
@@ -176,7 +179,7 @@ func VisitExpr[R any](e Expr, v ExprVisitor[R]) R {
 			return v.Max(ee)
 		}
 	case *Max:
-		if v.Max != nil {
+		if ee != nil && v.Max != nil {
 			return v.Max(*ee)
 		}
 	}

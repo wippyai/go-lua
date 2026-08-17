@@ -184,7 +184,7 @@ func (rule *HotRule) Implementation() (*valueowner.RuleImplementation[value.Sour
 	return rule.implementation, true
 }
 
-func hotSourceChecker(owner *valueowner.HotOwner, ruleSemantic engine.SemanticKey) engine.RuleDerivationChecker[value.Value, value.SourceSeed] {
+func hotSourceChecker(owner *valueowner.HotOwner, ruleSemantic identity.SemanticKey) engine.RuleDerivationChecker[value.Value, value.SourceSeed] {
 	return func(derivation engine.RuleDerivation[value.Value, value.SourceSeed]) (engine.RuleEvidence, bool) {
 		if owner == nil || owner.Schema() == nil || derivation.Rule() != ruleSemantic || derivation.InputCount() != 0 ||
 			derivation.ReadCount() != 0 || derivation.DispositionCount() != 1 {

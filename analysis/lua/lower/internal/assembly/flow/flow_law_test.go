@@ -15,8 +15,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/parse"
 )
 
-type Term = assembly.Term
-
 func flowView(t *testing.T, c *assembly.Collector) (programsource.View, programflow.View) {
 	t.Helper()
 	published, err := c.Publish()
@@ -77,7 +75,7 @@ func TestFlowModuleRequestFollowsCallValuesToSourceString(t *testing.T) {
 	span := programsource.Span{File: name}
 	body := c.Body(span)
 	request := c.String(span, body, "dep")
-	values := c.Values(span, body, []Term{request}, 0)
+	values := c.Values(span, body, []keyspace.Term{request}, 0)
 	call := c.DeclareCall(span, body, request, 0, values)
 	importTerm := c.Import(0, span, call)
 	if body == 0 || request == 0 || values == 0 || call == 0 || importTerm == 0 || !c.SetBody(body, call) || !c.SetEntry(body) {
@@ -110,7 +108,7 @@ func TestFlowExactAccessAdmitsSourceAtomWithoutCandidateStorage(t *testing.T) {
 	values := c.Values(span, body, []keyspace.Term{key}, 0)
 	field := c.TableField(span, table, key, values, kind.FieldExact)
 	if body == 0 || key == 0 || lens == 0 || table == 0 || values == 0 || field == 0 ||
-		!c.FillTable(table, []Term{field}) || !c.SetBody(body) || !c.SetEntry(body) {
+		!c.FillTable(table, []keyspace.Term{field}) || !c.SetBody(body) || !c.SetEntry(body) {
 		t.Fatal("exact access setup failed")
 	}
 	sourceView, flowView := flowView(t, c)
@@ -159,21 +157,21 @@ func TestFlowRejectsFutureTermsBeforeLaterMint(t *testing.T) {
 	span := programsource.Span{File: name}
 	cases := []struct {
 		name   string
-		reject func(*assembly.Collector, Term)
+		reject func(*assembly.Collector, keyspace.Term)
 	}{
-		{"Values future String", func(c *assembly.Collector, body Term) {
-			c.Values(span, body, []Term{keyspace.MakeTerm(keyspace.FamilyString, 1)}, 0)
+		{"Values future String", func(c *assembly.Collector, body keyspace.Term) {
+			c.Values(span, body, []keyspace.Term{keyspace.MakeTerm(keyspace.FamilyString, 1)}, 0)
 		}},
-		{"Table future Body", func(c *assembly.Collector, body Term) {
+		{"Table future Body", func(c *assembly.Collector, body keyspace.Term) {
 			c.DeclareTable(span, keyspace.MakeTerm(keyspace.FamilyBody, 2))
 		}},
-		{"Vararg future Cell", func(c *assembly.Collector, body Term) {
+		{"Vararg future Cell", func(c *assembly.Collector, body keyspace.Term) {
 			c.Vararg(span, body, keyspace.MakeTerm(keyspace.FamilyCell, 1))
 		}},
-		{"Goto future Label", func(c *assembly.Collector, body Term) {
+		{"Goto future Label", func(c *assembly.Collector, body keyspace.Term) {
 			c.Goto(span, body, keyspace.MakeTerm(keyspace.FamilyLabel, 1))
 		}},
-		{"TypeValue future Static", func(c *assembly.Collector, body Term) {
+		{"TypeValue future Static", func(c *assembly.Collector, body keyspace.Term) {
 			c.TypeValue(span, body, keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 1))
 		}},
 	}
@@ -234,26 +232,26 @@ func TestCollectorFlowRolesRejectCurrentWrongFamilies(t *testing.T) {
 	value := c.String(span, owner, "value")
 	nilValue := c.Nil(span, owner)
 	key := c.Name(span, owner, "field")
-	values := c.Values(span, owner, []Term{value}, 0)
+	values := c.Values(span, owner, []keyspace.Term{value}, 0)
 	table := c.DeclareTable(span, owner)
 	if owner == 0 || child == 0 || other == 0 || value == 0 || nilValue == 0 || key == 0 || values == 0 || table == 0 {
 		t.Fatal("role fixture setup failed")
 	}
 	cases := []struct {
 		name   string
-		reject func() Term
+		reject func() keyspace.Term
 	}{
-		{"Values Key", func() Term { return c.Values(span, owner, []Term{key}, 0) }},
-		{"Values bad tail", func() Term { return c.Values(span, owner, []Term{value}, key) }},
-		{"LensKey Key base", func() Term { return c.LensKey(span, owner, key, value) }},
-		{"LensExact Nil source", func() Term { return c.LensExact(span, owner, value, nilValue, kind.FieldName) }},
-		{"Read Key source", func() Term { return c.Read(span, owner, key) }},
-		{"Unary Key operand", func() Term { return c.Unary(span, owner, kind.UnaryNeg, key) }},
-		{"Binary Key operand", func() Term { return c.Binary(span, owner, kind.BinaryAdd, key, value) }},
-		{"Branch Key condition", func() Term { return c.Branch(span, owner, key, child, other) }},
-		{"Loop Key control", func() Term { return c.Loop(span, owner, child, key, nil, kind.LoopWhile) }},
-		{"TableField Key source", func() Term { return c.TableField(span, table, key, values, kind.FieldKey) }},
-		{"ValueClaim Key operand", func() Term { return c.ValueClaim(span, owner, kind.ValueClaimNonNil, key, 0) }},
+		{"Values Key", func() keyspace.Term { return c.Values(span, owner, []keyspace.Term{key}, 0) }},
+		{"Values bad tail", func() keyspace.Term { return c.Values(span, owner, []keyspace.Term{value}, key) }},
+		{"LensKey Key base", func() keyspace.Term { return c.LensKey(span, owner, key, value) }},
+		{"LensExact Nil source", func() keyspace.Term { return c.LensExact(span, owner, value, nilValue, kind.FieldName) }},
+		{"Read Key source", func() keyspace.Term { return c.Read(span, owner, key) }},
+		{"Unary Key operand", func() keyspace.Term { return c.Unary(span, owner, kind.UnaryNeg, key) }},
+		{"Binary Key operand", func() keyspace.Term { return c.Binary(span, owner, kind.BinaryAdd, key, value) }},
+		{"Branch Key condition", func() keyspace.Term { return c.Branch(span, owner, key, child, other) }},
+		{"Loop Key control", func() keyspace.Term { return c.Loop(span, owner, child, key, nil, kind.LoopWhile) }},
+		{"TableField Key source", func() keyspace.Term { return c.TableField(span, table, key, values, kind.FieldKey) }},
+		{"ValueClaim Key operand", func() keyspace.Term { return c.ValueClaim(span, owner, kind.ValueClaimNonNil, key, 0) }},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -275,7 +273,7 @@ func TestCollectorFlowRolesPreserveRowOwnership(t *testing.T) {
 	child := c.Body(span)
 	local := c.Cell(span, child)
 	value := c.Bool(span, owner, true)
-	values := c.Values(span, owner, []Term{value}, 0)
+	values := c.Values(span, owner, []keyspace.Term{value}, 0)
 	if owner == 0 || child == 0 || local == 0 || values == 0 {
 		t.Fatal("row setup failed")
 	}
@@ -285,7 +283,7 @@ func TestCollectorFlowRolesPreserveRowOwnership(t *testing.T) {
 	if got := c.ImplicitRead(span, owner, local); got != 0 {
 		t.Fatalf("ImplicitRead local rejection = %v", got)
 	}
-	if got := c.Loop(span, owner, child, values, []Term{local}, kind.LoopNumericFor); got != 0 {
+	if got := c.Loop(span, owner, child, values, []keyspace.Term{local}, kind.LoopNumericFor); got != 0 {
 		t.Fatalf("Loop Cell rejection = %v", got)
 	}
 	function := c.DeclareFunction(span, owner)

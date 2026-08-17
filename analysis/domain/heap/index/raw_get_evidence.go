@@ -6,9 +6,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/pack"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
-func (rule *RawGetRule) check(semantic engine.SemanticKey) engine.RuleDerivationChecker[valuedomain.Value, Access] {
+func (rule *RawGetRule) check(semantic identity.SemanticKey) engine.RuleDerivationChecker[valuedomain.Value, Access] {
 	return func(derivation engine.RuleDerivation[valuedomain.Value, Access]) (engine.RuleEvidence, bool) {
 		if rule == nil || derivation.Rule() != semantic || derivation.InputCount() != 4 || derivation.DispositionCount() == 0 {
 			return engine.RuleEvidence{}, false

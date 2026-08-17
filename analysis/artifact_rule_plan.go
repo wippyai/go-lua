@@ -1,10 +1,10 @@
 package analysis
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/composite"
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
-	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 // artifactRuleMemberRef is the private handoff from mounted-row admission to
@@ -19,8 +19,9 @@ type artifactRuleMemberRef struct {
 // attachArtifactRuleMembers binds the already-admitted mounted members to one
 // committed topology compilation. Roles without a complete post-commit owner
 // bridge fail closed; they are not silently omitted from the solver.
-func (binding *programBinding) attachArtifactRuleMembers(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mounts []mountedProgramArtifact) bool {
-	if binding == nil || binding.rules == nil || compilation == nil || graph == nil || len(mounts) == 0 {
+func attachArtifactRuleMembers(binding *composite.ProgramBinding, compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mounts []mountedProgramArtifact) bool {
+	rules := binding.Rules()
+	if rules == nil || compilation == nil || graph == nil || len(mounts) == 0 {
 		return false
 	}
 	for _, mount := range mounts {
@@ -28,7 +29,7 @@ func (binding *programBinding) attachArtifactRuleMembers(compilation *engine.Rec
 			return false
 		}
 		for _, member := range mount.ruleMembers {
-			if !binding.rules.AttachMember(member.role, compilation, graph, member.mount, member.point, member.occurrence) {
+			if !rules.AttachMember(member.role, compilation, graph, member.mount, member.point, member.occurrence) {
 				return false
 			}
 		}
@@ -39,31 +40,30 @@ func (binding *programBinding) attachArtifactRuleMembers(compilation *engine.Rec
 // attachLinkBootstrapRules admits the one non-mounted bootstrap plane. Each
 // Link-lane rule in the table publishes its own occurrence inventory, so the
 // plane is admitted by walking the table rather than by naming its members.
-func (binding *programBinding) attachLinkBootstrapRules(assembly *engine.ReceiptAssembly, valueIDs, heapIDs []identity.ContentID) bool {
-	if assembly == nil {
+func attachLinkBootstrapRules(binding *composite.ProgramBinding, assembly *engine.ReceiptAssembly, valueIDs, heapIDs []identity.ContentID) bool {
+	rules := binding.Rules()
+	if rules == nil || assembly == nil {
 		return false
 	}
-	return binding.walkLinkBootstrap(valueIDs, heapIDs, func(role programartifact.RuleRole, id identity.ContentID) bool {
-		return binding.rules.AttachLink(role, assembly, id)
+	return walkLinkBootstrap(valueIDs, heapIDs, func(role programartifact.RuleRole, id identity.ContentID) bool {
+		return rules.AttachLink(role, assembly, id)
 	})
 }
 
-func (binding *programBinding) attachLinkBootstrapMembers(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, valueIDs, heapIDs []identity.ContentID) bool {
-	if compilation == nil || graph == nil {
+func attachLinkBootstrapMembers(binding *composite.ProgramBinding, compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, valueIDs, heapIDs []identity.ContentID) bool {
+	rules := binding.Rules()
+	if rules == nil || compilation == nil || graph == nil {
 		return false
 	}
-	return binding.walkLinkBootstrap(valueIDs, heapIDs, func(role programartifact.RuleRole, id identity.ContentID) bool {
-		return binding.rules.AttachLinkMember(role, compilation, graph, id)
+	return walkLinkBootstrap(valueIDs, heapIDs, func(role programartifact.RuleRole, id identity.ContentID) bool {
+		return rules.AttachLinkMember(role, compilation, graph, id)
 	})
 }
 
 // walkLinkBootstrap pairs each Link-lane role with the occurrence identities
 // its own catalog published, in table order.
-func (binding *programBinding) walkLinkBootstrap(valueIDs, heapIDs []identity.ContentID, admit func(programartifact.RuleRole, identity.ContentID) bool) bool {
-	if binding == nil || binding.rules == nil {
-		return false
-	}
-	roles := grammar.LinkRoles()
+func walkLinkBootstrap(valueIDs, heapIDs []identity.ContentID, admit func(programartifact.RuleRole, identity.ContentID) bool) bool {
+	roles := composite.LinkRoles()
 	if len(roles) == 0 {
 		return false
 	}
@@ -84,8 +84,9 @@ func (binding *programBinding) walkLinkBootstrap(valueIDs, heapIDs []identity.Co
 // attachArtifactRules is the central RuleRole admission pass. Every row is
 // admitted while ReceiptAssembly sources remain open, through the sealed rule
 // table; no role is inferred or routed through a generic fallback.
-func (binding *programBinding) attachArtifactRules(assembly *engine.ReceiptAssembly, mounts []mountedProgramArtifact) (AnalyzeDiagnosticRule, bool) {
-	if binding == nil || binding.rules == nil || assembly == nil || len(mounts) == 0 {
+func attachArtifactRules(binding *composite.ProgramBinding, assembly *engine.ReceiptAssembly, mounts []mountedProgramArtifact) (AnalyzeDiagnosticRule, bool) {
+	rules := binding.Rules()
+	if rules == nil || assembly == nil || len(mounts) == 0 {
 		return AnalyzeDiagnosticRuleUnknown, false
 	}
 	memberRefs := make([][]artifactRuleMemberRef, len(mounts))
@@ -107,12 +108,12 @@ func (binding *programBinding) attachArtifactRules(assembly *engine.ReceiptAssem
 			for index := 0; index < mount.artifact.RuleOccurrenceCount(role); index++ {
 				row, ok := mount.artifact.RuleOccurrenceAt(role, index)
 				if !ok || row.PointCount() == 0 {
-					return grammar.DiagnosticRuleForRole(role), false
+					return composite.DiagnosticRuleForRole(role), false
 				}
 				for pointIndex := 0; pointIndex < row.PointCount(); pointIndex++ {
 					point, pointOK := row.PointAt(pointIndex)
-					if !pointOK || !binding.rules.Attach(role, assembly, mount.moduleKey, point, row.ID()) {
-						return grammar.DiagnosticRuleForRole(role), false
+					if !pointOK || !rules.Attach(role, assembly, mount.moduleKey, point, row.ID()) {
+						return composite.DiagnosticRuleForRole(role), false
 					}
 					memberRefs[mountIndex] = append(memberRefs[mountIndex], artifactRuleMemberRef{role: role, mount: mount.moduleKey, point: point, occurrence: row.ID()})
 				}
@@ -126,16 +127,60 @@ func (binding *programBinding) attachArtifactRules(assembly *engine.ReceiptAssem
 	return AnalyzeDiagnosticRuleUnknown, true
 }
 
-func diagnosticRuleForMountedRole(binding *programBinding, role engine.RuleSlotCapability) AnalyzeDiagnosticRule {
-	if binding == nil || binding.rules == nil || !role.Mounted() {
+func diagnosticRuleForMountedRole(binding *composite.ProgramBinding, role engine.RuleSlotCapability) AnalyzeDiagnosticRule {
+	rules := binding.Rules()
+	if rules == nil || !role.Mounted() {
 		return AnalyzeDiagnosticRuleUnknown
 	}
-	return binding.rules.DiagnosticForCapability(role)
+	return rules.DiagnosticForCapability(role)
 }
 
-func diagnosticRuleForLinkRole(binding *programBinding, role engine.RuleSlotCapability) AnalyzeDiagnosticRule {
-	if binding == nil || binding.rules == nil || !role.Link() {
+func diagnosticRuleForLinkRole(binding *composite.ProgramBinding, role engine.RuleSlotCapability) AnalyzeDiagnosticRule {
+	rules := binding.Rules()
+	if rules == nil || !role.Link() {
 		return AnalyzeDiagnosticRuleUnknown
 	}
-	return binding.rules.DiagnosticForCapability(role)
+	return rules.DiagnosticForCapability(role)
+}
+
+// mountedCapability resolves a mounted rule by its sealed table role.
+func mountedCapability(binding *composite.ProgramBinding, role programartifact.RuleRole) (engine.RuleSlotCapability, bool) {
+	rules := binding.Rules()
+	if rules == nil {
+		return engine.RuleSlotCapability{}, false
+	}
+	capability, ok := rules.Capability(role)
+	return capability, ok && capability.Mounted()
+}
+
+// linkCapability is the mount-neutral counterpart for Link-owned rules.
+func linkCapability(binding *composite.ProgramBinding, role programartifact.RuleRole) (engine.RuleSlotCapability, bool) {
+	rules := binding.Rules()
+	if rules == nil {
+		return engine.RuleSlotCapability{}, false
+	}
+	capability, ok := rules.Capability(role)
+	return capability, ok && capability.Link()
+}
+
+// linkOccurrenceIDs enumerates one Link rule's admitted occurrences from its
+// own published catalog.
+func linkOccurrenceIDs(binding *composite.ProgramBinding, role programartifact.RuleRole) ([]identity.ContentID, bool) {
+	rules := binding.Rules()
+	if rules == nil {
+		return nil, false
+	}
+	catalog, ok := rules.LinkCatalog(role)
+	if !ok {
+		return nil, false
+	}
+	ids := make([]identity.ContentID, catalog.Count())
+	for index := range ids {
+		id, idOK := catalog.IDAt(index)
+		if !idOK {
+			return nil, false
+		}
+		ids[index] = id
+	}
+	return ids, true
 }

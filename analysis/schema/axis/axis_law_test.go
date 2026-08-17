@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/internal/framing"
 	"github.com/wippyai/go-lua/analysis/lattice"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema"
@@ -15,7 +17,7 @@ import (
 // analyzer's own record does.
 type scratchInputs struct{ ready bool }
 
-type scratchFragment struct{ semantic engine.SemanticKey }
+type scratchFragment struct{ semantic identity.SemanticKey }
 
 type scratchAxis struct{ fragment *scratchFragment }
 
@@ -29,6 +31,8 @@ type scratchRuleEntry struct{ key schema.Key }
 func (entry scratchRuleEntry) Key() schema.Key { return entry.key }
 
 func (entry scratchRuleEntry) EntryAvailable() bool { return entry.key.Available() }
+
+func (entry scratchRuleEntry) EntryContent(*framing.Writer) error { return nil }
 
 func (surface scratchRuleSurface) Kind() schema.SurfaceKind { return surface.kind }
 
@@ -74,7 +78,7 @@ func scratchAlgebra() Algebra[uint64] {
 
 // scratchSpec is one complete axis declaration. Each law test starts from this
 // record and removes exactly the field the law is about.
-func scratchSpec(key schema.Key, principal programartifact.RuleOutputKind, semantic func(vocabulary.Bundle) engine.SemanticKey) Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64] {
+func scratchSpec(key schema.Key, principal programartifact.RuleOutputKind, semantic func(vocabulary.Bundle) identity.SemanticKey) Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64] {
 	return Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]{
 		Key:         key,
 		Principal:   principal,
@@ -94,14 +98,22 @@ func scratchSpec(key schema.Key, principal programartifact.RuleOutputKind, seman
 	}
 }
 
-func valueSemantic(bundle vocabulary.Bundle) engine.SemanticKey { return bundle.ValueFactor }
+func valueSemantic(bundle vocabulary.Bundle) identity.SemanticKey { return bundle.ValueFactor }
 
-func heapSemantic(bundle vocabulary.Bundle) engine.SemanticKey { return bundle.HeapFactor }
+func heapSemantic(bundle vocabulary.Bundle) identity.SemanticKey { return bundle.HeapFactor }
 
 // sealTemplates seals one axis inventory into a complete declaration table.
 // The catalog is walked rather than listed, so the surfaces the declaration
 // root settles on do not change what these laws assert.
 func sealTemplates(t *testing.T, templates []*Template[scratchInputs]) schema.SealFailure {
+	t.Helper()
+	_, failure := sealTable(t, templates)
+	return failure
+}
+
+// sealTable is the same seal, read for the table it produces rather than for
+// the verdict alone.
+func sealTable(t *testing.T, templates []*Template[scratchInputs]) (*schema.Schema, schema.SealFailure) {
 	t.Helper()
 	builder := schema.NewBuilder()
 	for kind := schema.SurfaceKind(1); kind.Available(); kind++ {
@@ -111,8 +123,7 @@ func sealTemplates(t *testing.T, templates []*Template[scratchInputs]) schema.Se
 		}
 		builder.Register(scratchRuleSurface{kind: kind})
 	}
-	_, failure := builder.Seal()
-	return failure
+	return builder.Seal()
 }
 
 func mustTemplate(t *testing.T, spec Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]) *Template[scratchInputs] {
@@ -133,6 +144,47 @@ func TestAxisSurfaceSealsCompleteInventory(t *testing.T) {
 	}
 	if failure := sealTemplates(t, templates); failure.Available() {
 		t.Fatalf("complete axis inventory rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+}
+
+// scratchForeignSurface contributes rows of a foreign record under this
+// surface's own kind and states this surface's laws over them. It is how a
+// contribution that is not an axis declaration reaches the axis surface through
+// the public seal path.
+type scratchForeignSurface struct{}
+
+func (scratchForeignSurface) Kind() schema.SurfaceKind { return schema.SurfaceKindAxis }
+
+func (scratchForeignSurface) Entries() []schema.Entry {
+	return []schema.Entry{scratchRuleEntry{key: "scratch-foreign"}}
+}
+
+func (scratchForeignSurface) Seal(view schema.View, sealed schema.Sealed) schema.SealFailure {
+	return surface[scratchInputs]{}.Seal(view, sealed)
+}
+
+// TestAxisSurfaceRejectsAForeignRow states that the axis surface reads axis
+// declarations and nothing else. A row of another record type carries none of
+// the declared data every axis law is stated over, so it is rejected as the
+// wrong shape rather than read as a partially declared axis.
+func TestAxisSurfaceRejectsAForeignRow(t *testing.T) {
+	builder := schema.NewBuilder()
+	for kind := schema.SurfaceKind(1); kind.Available(); kind++ {
+		if kind == schema.SurfaceKindAxis {
+			builder.Register(scratchForeignSurface{})
+			continue
+		}
+		builder.Register(scratchRuleSurface{kind: kind})
+	}
+	sealed, failure := builder.Seal()
+	if sealed != nil {
+		t.Fatal("a foreign row was admitted into the axis surface")
+	}
+	if failure.Law != LawEntryShape || failure.Disposition != schema.DispositionMalformed {
+		t.Fatalf("foreign row rejected under law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	if failure.Contributor != schema.SurfaceKindAxis {
+		t.Fatalf("shape verdict named surface %d, not the axis surface", failure.Contributor)
 	}
 }
 
@@ -164,7 +216,7 @@ func TestAxisKeyIsUnique(t *testing.T) {
 // engine identity in the vocabulary it is sealed against.
 func TestAxisSemanticIsDeclared(t *testing.T) {
 	template := mustTemplate(t, scratchSpec("value", programartifact.RuleOutputValue, valueSemantic))
-	template.semantic = func(vocabulary.Bundle) engine.SemanticKey { return engine.SemanticKey{} }
+	template.semantic = func(vocabulary.Bundle) identity.SemanticKey { return identity.SemanticKey{} }
 	failure := sealTemplates(t, []*Template[scratchInputs]{template})
 	if failure.Law != LawSemanticIdentity || failure.Disposition != schema.DispositionMalformed {
 		t.Fatalf("axis without a canonical identity sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
@@ -275,13 +327,10 @@ func TestAxisSemanticIsUnique(t *testing.T) {
 	}
 }
 
-// TestAxesBindBeforeRules is the phase law. The declaration catalog order is
-// the bind phase order, so the axis surface precedes the rule surface and a
-// table registered the other way round is rejected by the root.
+// TestAxesBindBeforeRules states the root's phase law over the axis surface.
+// The declaration catalog order is the bind phase order, so a table that
+// registers the rule surface before the axis surface is rejected by the root.
 func TestAxesBindBeforeRules(t *testing.T) {
-	if schema.SurfaceKindAxis >= schema.SurfaceKindRule {
-		t.Fatalf("axis catalog ordinal %d does not precede rule ordinal %d", schema.SurfaceKindAxis, schema.SurfaceKindRule)
-	}
 	builder := schema.NewBuilder()
 	builder.Register(scratchRuleSurface{kind: schema.SurfaceKindRule})
 	builder.Register(NewSurface([]*Template[scratchInputs]{
@@ -415,5 +464,52 @@ func TestAdoptProjectsOneEngineAlgebra(t *testing.T) {
 	spec.AdmitAt = nil
 	if _, admitted := Adopt(spec); admitted {
 		t.Fatal("engine spec without an admission predicate was projected")
+	}
+}
+
+// TestTableDigestCoversDeclaredContent is the drift law of this surface: the
+// digest is what a derived inventory is checked against, so two catalogs that
+// name the same axes and declare different coordinate spaces are two tables.
+// The storage an axis's facts live in is read by every consumer of the space,
+// so moving it moves the digest.
+func TestTableDigestCoversDeclaredContent(t *testing.T) {
+	declared, failure := sealTable(t, []*Template[scratchInputs]{
+		mustTemplate(t, scratchSpec("value", programartifact.RuleOutputValue, valueSemantic)),
+	})
+	if failure.Available() {
+		t.Fatalf("scratch axis inventory rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	spec := scratchSpec("value", programartifact.RuleOutputValue, valueSemantic)
+	spec.Storage = StorageStatic
+	shifted, failure := sealTable(t, []*Template[scratchInputs]{mustTemplate(t, spec)})
+	if failure.Available() {
+		t.Fatalf("axis with a shifted storage rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	if declared.Digest() == shifted.Digest() {
+		t.Fatal("an axis's declared storage left the table digest unchanged")
+	}
+}
+
+// TestTableDigestCoversSemanticIdentity is the identity half of the same drift
+// law. An axis's canonical identity is the role it selects from the closed
+// vocabulary, and every engine binding of the axis is made under that identity,
+// so two catalogs whose axes name the same key and select different roles are
+// two tables. The two inventories below differ in the selected role and in
+// nothing else.
+func TestTableDigestCoversSemanticIdentity(t *testing.T) {
+	declared, failure := sealTable(t, []*Template[scratchInputs]{
+		mustTemplate(t, scratchSpec("value", programartifact.RuleOutputValue, valueSemantic)),
+	})
+	if failure.Available() {
+		t.Fatalf("scratch axis inventory rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	shifted, failure := sealTable(t, []*Template[scratchInputs]{
+		mustTemplate(t, scratchSpec("value", programartifact.RuleOutputValue, heapSemantic)),
+	})
+	if failure.Available() {
+		t.Fatalf("axis with a shifted semantic role rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	if declared.Digest() == shifted.Digest() {
+		t.Fatal("an axis's selected semantic role left the table digest unchanged")
 	}
 }

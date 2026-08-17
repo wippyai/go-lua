@@ -30,6 +30,12 @@ type kernelInput struct {
 type kernelEdge struct {
 	child  keyspace.Term
 	parent keyspace.Term
+	// role/rank are an owner-issued semantic label for consumers that need
+	// the edge identity after the kernel has sealed Parent. They do not
+	// participate in graph construction; zero means that the edge has no
+	// additional published role.
+	role uint32
+	rank uint32
 }
 
 // buildKernel validates and seals one dense containment forest.  Every term

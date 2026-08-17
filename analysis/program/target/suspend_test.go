@@ -1,9 +1,9 @@
 package target
 
 import (
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
 
@@ -31,7 +31,7 @@ func TestSuspensionCanonicalizesOutcomeOrdinalsAndKeepsCallbackValues(t *testing
 		{
 			Bindings:   []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"create"}}},
 			ValuesVars: 5,
-			Input:      ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed},
+			Input:      ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed},
 			Callbacks: []CallbackSpec{{
 				Function:  InputSource{Kind: InputSourceValueFormal, Ordinal: 0},
 				Admission: OrdinaryCallable, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: CallbackRetainedOptionalOnce,
@@ -39,7 +39,7 @@ func TestSuspensionCanonicalizesOutcomeOrdinalsAndKeepsCallbackValues(t *testing
 			}},
 			Outcomes: []OutcomeSpec{{
 				Kind:            flowkind.OutcomeNormal,
-				Values:          ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed},
+				Values:          ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed},
 				CallbackResults: []CallbackResultSpec{{Result: 0, Callback: 1}},
 			}},
 			Effects: RowSpec{Tail: RowClosed},
@@ -47,7 +47,7 @@ func TestSuspensionCanonicalizesOutcomeOrdinalsAndKeepsCallbackValues(t *testing
 		{
 			Bindings:   []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"resume"}}},
 			ValuesVars: 1,
-			Input:      ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesVariable, Var: 0},
+			Input:      ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesVariable, Var: 0},
 			Outcomes:   []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesVariable, Var: 0}}},
 			Resumes:    []ResumeSpec{completeResume(ResumeSourceValueFormal, 0, 0)},
 			Effects:    RowSpec{Tail: RowClosed},
@@ -104,7 +104,7 @@ func TestProducedResumeUsesCapturedCallbackWithoutCallableShadow(t *testing.T) {
 		{
 			Bindings:   []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"wrap"}}},
 			ValuesVars: 5,
-			Input:      ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed},
+			Input:      ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed},
 			Callbacks: []CallbackSpec{{
 				Function:  InputSource{Kind: InputSourceValueFormal, Ordinal: 0},
 				Admission: OrdinaryCallable, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: CallbackRetainedOptionalOnce,
@@ -112,7 +112,7 @@ func TestProducedResumeUsesCapturedCallbackWithoutCallableShadow(t *testing.T) {
 			}},
 			Outcomes: []OutcomeSpec{{
 				Kind:   flowkind.OutcomeNormal,
-				Values: ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed},
+				Values: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed},
 				Produced: []ProducedSpec{{
 					Result: 0, Operation: 2, Captures: []CaptureSpec{{Kind: CaptureCallback, Ordinal: 1}},
 				}},
@@ -149,7 +149,7 @@ func TestResumeSealsCompleteCanonicalOutcomeCorrespondence(t *testing.T) {
 		return mustSeal(t, Spec{Operations: []OperationSpec{{
 			Bindings:   []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"resume-canonical"}}},
 			ValuesVars: 1,
-			Input:      ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesVariable, Var: 0},
+			Input:      ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesVariable, Var: 0},
 			Outcomes:   outcomes,
 			Resumes: []ResumeSpec{{
 				Source: ResumeSourceValueFormal, Carrier: 0, Arguments: callbackTail(0), Outcomes: mapping,
@@ -226,7 +226,7 @@ func TestResumeIDsCanonicalizePermutationAndRoundTrip(t *testing.T) {
 		return OperationSpec{
 			Bindings:   []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"resume-id"}}},
 			ValuesVars: 1,
-			Input:      ValuesSpec{Fixed: []typ.Type{typ.Any, typ.Any}, Tail: ValuesVariable, Var: 0},
+			Input:      ValuesSpec{Fixed: []schematype.Type{testAny, testAny}, Tail: ValuesVariable, Var: 0},
 			Outcomes:   []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesVariable, Var: 0}}},
 			Resumes:    resumes,
 			Effects:    RowSpec{Tail: RowClosed},
@@ -272,7 +272,7 @@ func TestResumeRejectsIncompleteInvalidAndDuplicateOutcomeAuthority(t *testing.T
 	base := OperationSpec{
 		Bindings:   []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"bad-resume"}}},
 		ValuesVars: 1,
-		Input:      ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesVariable, Var: 0},
+		Input:      ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesVariable, Var: 0},
 		Outcomes: []OutcomeSpec{
 			{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesClosed}},
 			{Kind: flowkind.OutcomeThrow, Values: ValuesSpec{Tail: ValuesClosed}},
@@ -288,9 +288,9 @@ func TestResumeRejectsIncompleteInvalidAndDuplicateOutcomeAuthority(t *testing.T
 		resume ResumeSpec
 	}{
 		{"arguments outside scope", base.Input, base.ValuesVars, base.Outcomes, completeResume(ResumeSourceValueFormal, 0, 1)},
-		{"arguments must be input tail", ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed}, 1, base.Outcomes, completeResume(ResumeSourceValueFormal, 0, 0)},
-		{"different input tail variable", ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesVariable, Var: 1}, 2, base.Outcomes, completeResume(ResumeSourceValueFormal, 0, 0)},
-		{"unknown input tail", ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesUnknown}, 1, base.Outcomes, completeResume(ResumeSourceValueFormal, 0, 0)},
+		{"arguments must be input tail", ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}, 1, base.Outcomes, completeResume(ResumeSourceValueFormal, 0, 0)},
+		{"different input tail variable", ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesVariable, Var: 1}, 2, base.Outcomes, completeResume(ResumeSourceValueFormal, 0, 0)},
+		{"unknown input tail", ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesUnknown}, 1, base.Outcomes, completeResume(ResumeSourceValueFormal, 0, 0)},
 		{"missing kind", base.Input, base.ValuesVars, base.Outcomes, ResumeSpec{Source: ResumeSourceValueFormal, Carrier: 0, Arguments: callbackTail(0), Outcomes: valid.Outcomes[:4]}},
 		{"duplicate kind", base.Input, base.ValuesVars, base.Outcomes, ResumeSpec{Source: ResumeSourceValueFormal, Carrier: 0, Arguments: callbackTail(0), Outcomes: append(append([]ResumeOutcomeSpec(nil), valid.Outcomes[:4]...), ResumeOutcomeSpec{Kind: flowkind.OutcomeNormal, Outcome: 0})}},
 		{"break cannot cross activation", base.Input, base.ValuesVars, base.Outcomes, ResumeSpec{Source: ResumeSourceValueFormal, Carrier: 0, Arguments: callbackTail(0), Outcomes: append(append([]ResumeOutcomeSpec(nil), valid.Outcomes[:4]...), ResumeOutcomeSpec{Kind: flowkind.OutcomeBreak, Outcome: 0})}},
@@ -303,7 +303,7 @@ func TestResumeRejectsIncompleteInvalidAndDuplicateOutcomeAuthority(t *testing.T
 			op.ValuesVars = test.vars
 			op.Outcomes = test.out
 			op.Resumes = []ResumeSpec{test.resume}
-			if _, err := Seal(&Spec{Operations: []OperationSpec{op}}); err == nil {
+			if _, err := testSeal(&Spec{Operations: []OperationSpec{op}}); err == nil {
 				t.Fatal("Seal accepted invalid resume outcome authority")
 			}
 		})
@@ -326,10 +326,10 @@ func TestResumePayloadTransportUsesOnlyExistingValuesRelations(t *testing.T) {
 		{
 			Bindings:   []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"transport-resume"}}},
 			ValuesVars: 2,
-			Input:      ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesVariable, Var: 0},
+			Input:      ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesVariable, Var: 0},
 			Outcomes: []OutcomeSpec{
 				{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesVariable, Var: 1}},
-				{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{typ.LiteralBool(false)}, Tail: ValuesClosed}},
+				{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testLiteralBool(false)}, Tail: ValuesClosed}},
 			},
 			Resumes: []ResumeSpec{{
 				Source: ResumeSourceValueFormal, Carrier: 0, Arguments: callbackTail(0),
@@ -424,7 +424,7 @@ func TestSuspensionAuthorPermutationHasOnePublicContract(t *testing.T) {
 func TestSuspensionRejectsInvalidAuthority(t *testing.T) {
 	base := OperationSpec{
 		Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"bad"}}},
-		Input:    ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed},
+		Input:    ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed},
 		Outcomes: []OutcomeSpec{
 			{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesClosed}},
 			{Kind: flowkind.OutcomeYield, Values: ValuesSpec{Tail: ValuesClosed}},
@@ -459,7 +459,7 @@ func TestSuspensionRejectsInvalidAuthority(t *testing.T) {
 			operation := base
 			operation.Suspensions = test.suspension
 			operation.Resumes = test.resumes
-			if _, err := Seal(&Spec{Operations: []OperationSpec{operation}}); err == nil {
+			if _, err := testSeal(&Spec{Operations: []OperationSpec{operation}}); err == nil {
 				t.Fatal("invalid suspension authority accepted")
 			}
 		})
@@ -489,15 +489,15 @@ func TestOpaqueSuspensionIsDerivedAndQueriesAllocateNothing(t *testing.T) {
 
 func TestWideProducedResumesSealWithoutQuadraticValidation(t *testing.T) {
 	const width = 4096
-	values := make([]typ.Type, width)
+	values := make([]schematype.Type, width)
 	for index := range values {
-		values[index] = typ.Any
+		values[index] = testAny
 	}
 	operations := make([]OperationSpec, width+1)
 	operations[0] = OperationSpec{
 		Bindings:   []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"wide"}}},
 		ValuesVars: 5,
-		Input:      ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed},
+		Input:      ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed},
 		Callbacks: []CallbackSpec{{
 			Function:  InputSource{Kind: InputSourceValueFormal, Ordinal: 0},
 			Admission: OrdinaryCallable, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: CallbackRetainedOptionalOnce,
@@ -539,7 +539,7 @@ func TestDeepProducedResumesSealIteratively(t *testing.T) {
 	for index := range operations {
 		operation := OperationSpec{
 			ValuesVars: 5,
-			Input:      ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesVariable, Var: 0},
+			Input:      ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesVariable, Var: 0},
 			Callbacks: []CallbackSpec{{
 				Function:  InputSource{Kind: InputSourceValueFormal, Ordinal: 0},
 				Admission: OrdinaryCallable, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: CallbackRetainedOptionalOnce,
@@ -547,7 +547,7 @@ func TestDeepProducedResumesSealIteratively(t *testing.T) {
 			}},
 			Outcomes: []OutcomeSpec{{
 				Kind:   flowkind.OutcomeNormal,
-				Values: ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed},
+				Values: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed},
 			}},
 			Effects: RowSpec{Tail: RowClosed},
 		}

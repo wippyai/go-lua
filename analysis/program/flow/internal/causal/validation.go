@@ -32,18 +32,18 @@ func (s *proofState) buildTypedIndexes() error {
 		if !tableOwnerOK || keyspace.TermFamily(tableOwner) != keyspace.FamilyBody {
 			return errors.New("program/flow/causal: TableField owner is unavailable")
 		}
-		proof, proofErr := s.graph.IssueTableFieldThrowEligibility(s.source, s.flow, s.outs, field, tableOwner)
+		eligibility, proofErr := s.graph.TableFieldThrowEligibility(s.source, s.flow, s.outs, field, tableOwner)
 		if proofErr != nil {
 			return proofErr
 		}
-		if fieldKind == kind.FieldKey && proof == nil {
+		if fieldKind == kind.FieldKey && !eligibility.Available() {
 			return errors.New("program/flow/causal: FieldKey Throw eligibility is unavailable")
 		}
-		invalidExact := fieldKind == kind.FieldExact && proof != nil
+		invalidExact := fieldKind == kind.FieldExact && eligibility.Available()
 		if invalidExact {
 			s.invalidExactFields[ordinal] = true
 		}
-		s.tableFieldThrowProof[ordinal] = proof
+		s.tableFieldThrowProof[ordinal] = eligibility
 		if invalidExact && keyspace.TermFamily(key) == keyspace.FamilyUnary {
 			keyOrdinal := keyspace.TermOrdinal(key)
 			if keyOrdinal == 0 || uint64(keyOrdinal) >= uint64(len(s.invalidExactKeys)) {

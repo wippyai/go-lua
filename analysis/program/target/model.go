@@ -8,18 +8,18 @@
 package target
 
 import (
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	"github.com/wippyai/go-lua/analysis/identity"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 )
 
 // Operation is the sole sealed target-operation identity. It is also the
 // effect-row label. Zero is invalid.
 type Operation uint32
 
-// Type is a contract-local frozen static type handle. Its canonical bytes are
-// owned by the Contract; it never exposes a typ.Type.
+// Type is a contract-local frozen static type handle. Its portable declaration
+// is owned by the schema type-contract envelope; target never decodes it.
 type Type uint32
 
 // Values is a contract-local Lua Values relation: a fixed Type prefix, one
@@ -888,13 +888,14 @@ type FreshResultSpec struct {
 }
 
 // ValuesSpec is the authoring form of a Lua Values relation. Fixed elements
-// are typ authoring inputs only; a sealed Contract retains frozen Type handles.
+// are neutral schema declarations supplied by the owning domain; a sealed
+// Contract retains frozen Type handles.
 type ValuesSpec struct {
-	Fixed    []typ.Type
+	Fixed    []schematype.Type
 	Tail     ValuesTail
 	Var      ValuesVar
-	TailType typ.Type
-	Suffix   []typ.Type
+	TailType schematype.Type
+	Suffix   []schematype.Type
 }
 
 // OutcomeSpec is one finite correlated operation outcome case. Several cases
@@ -1047,7 +1048,7 @@ type RowSpec struct {
 // separate call-form or receiver plane.
 type OperationSpec struct {
 	Bindings             []BindingSpec
-	TypeFormals          []*typ.TypeParam
+	TypeFormals          []TypeFormalSpec
 	ValuesVars           uint32
 	RowFormals           uint32
 	Input                ValuesSpec
@@ -1062,9 +1063,21 @@ type OperationSpec struct {
 	Effects              RowSpec
 }
 
+// TypeFormalSpec declares one operation-local formal coordinate. The
+// constraint is already a neutral schema declaration; its domain adapter
+// validates and encodes it before target sealing. An unavailable constraint
+// means the formal is unconstrained.
+type TypeFormalSpec struct {
+	Constraint schematype.Type
+}
+
 // Spec is a one-shot authoring container. Seal consumes it on its first
 // attempt, including an attempt that fails validation.
 type Spec struct {
+	// Semantics is the explicit domain implementation of the schema type
+	// contract. Target never supplies a default: every sealed target must name
+	// the type authority that validates declarations and proves relations.
+	Semantics         schematype.Semantics
 	Operations        []OperationSpec
 	Protocols         []ProtocolSpec
 	InitialRoots      []InitialRootSpec
@@ -1153,8 +1166,9 @@ type valuesRow struct {
 }
 
 type typeRow struct {
-	owner Operation
-	bytes []byte
+	owner       Operation
+	declaration schematype.Type
+	bytes       []byte
 }
 
 type outcomeRow struct {
@@ -1403,7 +1417,7 @@ type Contract struct {
 	initialMetatables  []initialMetatableAttachmentRow
 	globalEnvRoot      InitialRoot
 	initialAbsent      InitialValue
-	semanticReceipt    SemanticSourceReceipt
+	sourceViews        SourceViews
 	// semantic identity columns are sealed with the contract.  They are not a
 	// second graph authority: each row is a cached canonical descriptor owned
 	// by Target and indexed only by the existing dense Target tables.

@@ -61,57 +61,6 @@ func TestManifestRoundTripMutuallyRecursiveTypeFamily(t *testing.T) {
 	}
 }
 
-func TestManifestRoundTripPreservesSharedRecursiveFamily(t *testing.T) {
-	left := typ.NewRecursivePlaceholder("Left")
-	right := typ.NewRecursivePlaceholder("Right")
-	left.SetBody(typetable.NewRecord().Field("right", typeexpr.Optional(right)).Build())
-	right.SetBody(typetable.NewRecord().Field("left", typeexpr.Optional(left)).Build())
-	root := typetable.NewRecord().
-		Field("left", left).
-		Field("leftAgain", left).
-		Field("right", right).
-		Field("rightAgain", right).
-		Build()
-
-	wire, err := encodeType(root)
-	if err != nil {
-		t.Fatalf("encodeType: %v", err)
-	}
-	decoded, err := decodeType(wire)
-	if err != nil {
-		t.Fatalf("decodeType: %v", err)
-	}
-	record, ok := decoded.(*typ.Record)
-	if !ok {
-		t.Fatalf("decoded root = %T, want *typ.Record", decoded)
-	}
-	fields := make(map[string]typ.Type, len(record.Fields))
-	for _, field := range record.Fields {
-		fields[field.Name] = field.Type
-	}
-	if fields["left"] != fields["leftAgain"] {
-		t.Fatal("shared Left recursive node lost identity across sibling fields")
-	}
-	if fields["right"] != fields["rightAgain"] {
-		t.Fatal("shared Right recursive node lost identity across sibling fields")
-	}
-	decodedLeft, ok := fields["left"].(*typ.Recursive)
-	if !ok {
-		t.Fatalf("decoded Left = %T, want *typ.Recursive", fields["left"])
-	}
-	decodedRight, ok := fields["right"].(*typ.Recursive)
-	if !ok {
-		t.Fatalf("decoded Right = %T, want *typ.Recursive", fields["right"])
-	}
-	leftBody := decodedLeft.Body.(*typ.Record)
-	rightBody := decodedRight.Body.(*typ.Record)
-	leftRight := leftBody.Fields[0].Type.(*typ.Optional).Inner
-	rightLeft := rightBody.Fields[0].Type.(*typ.Optional).Inner
-	if leftRight != decodedRight || rightLeft != decodedLeft {
-		t.Fatal("mutually recursive edges do not point at the shared decoded family")
-	}
-}
-
 func TestRecursiveManifestBytesAreDeterministic(t *testing.T) {
 	node := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
 		return typetable.NewRecord().Field("next", typeexpr.Optional(self)).Build()
@@ -129,27 +78,6 @@ func TestRecursiveManifestBytesAreDeterministic(t *testing.T) {
 	}
 	if !bytes.Equal(first, second) {
 		t.Fatalf("recursive manifest bytes changed across encode:\n%s\n%s", first, second)
-	}
-}
-
-func TestDecodeRejectsOutOfScopeRecursiveReference(t *testing.T) {
-	_, err := decodeType(&typeWire{Kind: "recursiveRef", Binder: 1})
-	if err == nil {
-		t.Fatal("Decode accepted an out-of-scope recursive reference")
-	}
-}
-
-func TestDecodeRejectsDuplicateRecursiveBinder(t *testing.T) {
-	wire := &typeWire{
-		Kind: "record",
-		Fields: []fieldWire{
-			{Name: "first", Type: &typeWire{Kind: "recursive", Binder: 1, Name: "First", Body: &typeWire{Kind: "string"}}},
-			{Name: "second", Type: &typeWire{Kind: "recursive", Binder: 1, Name: "Second", Body: &typeWire{Kind: "number"}}},
-		},
-	}
-	_, err := decodeType(wire)
-	if err == nil {
-		t.Fatal("Decode accepted a duplicate recursive binder")
 	}
 }
 

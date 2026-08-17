@@ -1,9 +1,11 @@
 package link
 
 import (
+	"context"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/type/typ"
+	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/flow"
@@ -14,6 +16,7 @@ import (
 	linkmodule "github.com/wippyai/go-lua/analysis/program/link/module"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 )
 
 func targetStringKey(value string) keyspace.LiteralValue {
@@ -115,7 +118,7 @@ func testBootContractWithProtocols(t testing.TB, operations []target.OperationSp
 		entries = append(entries, target.InitialEntrySpec{Root: "GlobalEnvRoot", Key: targetStringKey(name), Value: target.InitialValueSpec{Kind: target.InitialValueOperation, Operation: binding}, Mutability: target.InitialMutable})
 		bindings = append(bindings, target.InitialBindingSpec{Name: name, Root: "GlobalEnvRoot", Key: targetStringKey(name)})
 	}
-	sealed, err := target.Seal(&target.Spec{Operations: operations, Protocols: protocols, InitialRoots: testBootRoots(), InitialEntries: entries, InitialBindings: bindings})
+	sealed, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), Operations: operations, Protocols: protocols, InitialRoots: testBootRoots(), InitialEntries: entries, InitialBindings: bindings})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +284,7 @@ func actorBootContract(t *testing.T, operations []target.OperationSpec, entries 
 		{Root: "GlobalEnvRoot", Key: targetStringKey("__actor_boot_absent"), Value: target.InitialValueSpec{Kind: target.InitialValueAbsent}, Mutability: target.InitialMutable},
 	}, entries...)
 	bindings = append([]target.InitialBindingSpec{{Name: "_G", Root: "GlobalEnvRoot", Key: targetStringKey("_G")}}, bindings...)
-	sealed, err := target.Seal(&target.Spec{Operations: operations, InitialRoots: testBootRoots(), InitialEntries: entries, InitialBindings: bindings})
+	sealed, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), Operations: operations, InitialRoots: testBootRoots(), InitialEntries: entries, InitialBindings: bindings})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,8 +297,8 @@ func capabilityFixture(t *testing.T, permuted bool) (*Link, *target.Contract, *p
 	binding := target.BindingSpec{Namespace: target.BindingProvider, Owner: []string{"actor"}, Member: []string{"send"}}
 	sealed := testBootContract(t, []target.OperationSpec{{
 		Bindings: []target.BindingSpec{binding},
-		Input:    target.ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: target.ValuesClosed},
-		Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: target.ValuesClosed}}},
+		Input:    target.ValuesSpec{Fixed: portableTypes(t, []typ.Type{typ.Any}), Tail: target.ValuesClosed},
+		Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Fixed: portableTypes(t, []typ.Type{typ.Any}), Tail: target.ValuesClosed}}},
 		Effects:  target.RowSpec{Tail: target.RowClosed},
 	}}, p)
 	op, ok := sealed.Lookup(binding)
@@ -328,6 +331,22 @@ func capabilityFixture(t *testing.T, permuted bool) (*Link, *target.Contract, *p
 		t.Fatal(err)
 	}
 	return l, sealed, p, op, actor, member
+}
+
+func portableTypes(t testing.TB, values []typ.Type) []schematype.Type {
+	t.Helper()
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]schematype.Type, len(values))
+	for index, value := range values {
+		encoded, err := domaincontract.EncodeStorage(context.Background(), value, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out[index] = encoded
+	}
+	return out
 }
 
 func reverseCapabilities(items []linkhost.ProviderCapabilitySpec) {

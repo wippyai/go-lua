@@ -1,9 +1,9 @@
 package target
 
 import (
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
 
@@ -11,7 +11,7 @@ func spawnTestOperation(name string) OperationSpec {
 	return OperationSpec{
 		Bindings:   []BindingSpec{{Namespace: BindingModule, Owner: []string{"coroutine"}, Member: []string{name}}},
 		ValuesVars: 7,
-		Input:      ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesVariable, Var: 0},
+		Input:      ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesVariable, Var: 0},
 		Callbacks: []CallbackSpec{{
 			Function: InputSource{Kind: InputSourceValueFormal}, Admission: OrdinaryCallable, Arguments: callbackTail(1),
 			Outcomes: callbackOutcomes(2, 3, 4, 5, 6), Lifecycle: CallbackRetainedRequiredOnce, Effects: RowSpec{Tail: RowClosed},
@@ -19,7 +19,7 @@ func spawnTestOperation(name string) OperationSpec {
 		Outcomes: []OutcomeSpec{
 			{Kind: flowkind.OutcomeYield, Values: ValuesSpec{Tail: ValuesClosed}},
 			{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesClosed}},
-			{Kind: flowkind.OutcomeThrow, Values: ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed}},
+			{Kind: flowkind.OutcomeThrow, Values: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}},
 		},
 		Suspensions: []SuspensionSpec{{Yield: 0, Reentry: 1, Source: ReentryByProvider, Multiplicity: ReentryOnce}},
 		Spawns: []SpawnSpec{{
@@ -62,11 +62,11 @@ func TestSpawnSealsOneTypedDetachedAuthority(t *testing.T) {
 func TestSpawnRejectsIncompleteAndDuplicateAuthority(t *testing.T) {
 	bad := spawnTestOperation("bad")
 	bad.Spawns[0].Alternatives = bad.Spawns[0].Alternatives[:1]
-	if _, err := Seal(&Spec{Operations: []OperationSpec{bad}}); err == nil {
+	if _, err := testSeal(&Spec{Operations: []OperationSpec{bad}}); err == nil {
 		t.Fatal("incomplete sibling alternatives sealed")
 	}
 	left, right := spawnTestOperation("left"), spawnTestOperation("right")
-	if _, err := Seal(&Spec{Operations: []OperationSpec{left, right}}); err == nil {
+	if _, err := testSeal(&Spec{Operations: []OperationSpec{left, right}}); err == nil {
 		t.Fatal("duplicate spawn authority sealed")
 	}
 }

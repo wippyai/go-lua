@@ -9,6 +9,7 @@ import (
 	"sort"
 
 	coldcomposition "github.com/wippyai/go-lua/analysis/engine/internal/composition"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 const schemaSlotMax = uint64(^uint32(0))
@@ -35,7 +36,7 @@ type SchemaBuilder struct {
 	families   []*schemaFamilyDraft
 	tokens     []*schemaTokenCell
 	completion *schemaCompletionCell
-	claims     map[SemanticKey]struct{}
+	claims     map[identity.SemanticKey]struct{}
 }
 
 type schemaBuilderPhase uint8
@@ -49,14 +50,14 @@ const (
 
 // NewSchema opens an empty callback-free cold-schema builder.
 func NewSchema() *SchemaBuilder {
-	return &SchemaBuilder{phase: schemaBuilderFactors, claims: make(map[SemanticKey]struct{})}
+	return &SchemaBuilder{phase: schemaBuilderFactors, claims: make(map[identity.SemanticKey]struct{})}
 }
 
 // claim reserves each public semantic identity exactly once before its row is
 // appended. References (operand families, admissions, route families) are not
 // claims; Factors, optional forms, completion/prune, activation families,
 // Rules, carry transforms, and Query/freezer rows are.
-func (builder *SchemaBuilder) claim(keys ...SemanticKey) bool {
+func (builder *SchemaBuilder) claim(keys ...identity.SemanticKey) bool {
 	if builder == nil || builder.phase == schemaBuilderPoisoned || builder.phase == schemaBuilderSealed || len(keys) == 0 {
 		return false
 	}
@@ -86,7 +87,7 @@ func (builder *SchemaBuilder) claim(keys ...SemanticKey) bool {
 // identity is semantic evidence, not an executable checker.
 type SchemaAdmission struct {
 	Basis    RuleAdmissionBasis
-	Identity SemanticKey
+	Identity identity.SemanticKey
 }
 
 func (admission SchemaAdmission) cold() (coldcomposition.Admission, bool) {
@@ -102,7 +103,7 @@ func (admission SchemaAdmission) cold() (coldcomposition.Admission, bool) {
 	default:
 		return coldcomposition.Admission{}, false
 	}
-	return coldcomposition.Admission{Kind: kind, Identity: admission.Identity.compositionKey()}, true
+	return coldcomposition.Admission{Kind: kind, Identity: compositionKeyOf(admission.Identity)}, true
 }
 
 // FactorRef is a typed output/reference projection of a FactorSlot.  It
@@ -115,10 +116,6 @@ type FactorRef[V any] struct {
 func (ref FactorRef[V]) validBuilder(builder *SchemaBuilder) bool {
 	draft, ok := tokenDraft[schemaFactorDraft](ref.cell)
 	return ok && builder != nil && draft.builder == builder && builder.phase != schemaBuilderPoisoned && builder.phase != schemaBuilderSealed
-}
-
-func (ref FactorRef[V]) validSchema(schema *Schema) bool {
-	return schema != nil && schema.Available() && ref.cell != nil && ref.cell.schema == schema
 }
 
 // FactorSlot is a typed Factor owner handle.  Before Seal it is a draft
@@ -214,10 +211,10 @@ func (form SchemaWriteForm[T]) Schema() *Schema {
 }
 
 func (slot *FactorSlot[T]) ExactRead() (SchemaReadForm[T], bool) {
-	return slot.addReadForm(SchemaFormReadExact, SemanticKey{})
+	return slot.addReadForm(SchemaFormReadExact, identity.SemanticKey{})
 }
 
-func (slot *FactorSlot[T]) SummaryRead(semantic SemanticKey) (SchemaReadForm[T], bool) {
+func (slot *FactorSlot[T]) SummaryRead(semantic identity.SemanticKey) (SchemaReadForm[T], bool) {
 	return slot.addReadForm(SchemaFormReadSummary, semantic)
 }
 
@@ -225,19 +222,19 @@ func (slot *FactorSlot[T]) SummaryRead(semantic SemanticKey) (SchemaReadForm[T],
 // declared coordinate independently. The declaration is the sole authority
 // for that fold: readers of this form never observe the joint partition of
 // the declared vector, and no observation call may choose otherwise.
-func (slot *FactorSlot[T]) DistributiveSummaryRead(semantic SemanticKey) (SchemaReadForm[T], bool) {
+func (slot *FactorSlot[T]) DistributiveSummaryRead(semantic identity.SemanticKey) (SchemaReadForm[T], bool) {
 	return slot.addReadForm(SchemaFormReadDistributiveSummary, semantic)
 }
 
 func (slot *FactorSlot[T]) ExactWrite() (SchemaWriteForm[T], bool) {
-	return slot.addWriteForm(SchemaFormWriteExact, SemanticKey{})
+	return slot.addWriteForm(SchemaFormWriteExact, identity.SemanticKey{})
 }
 
-func (slot *FactorSlot[T]) SelectorWrite(semantic SemanticKey) (SchemaWriteForm[T], bool) {
+func (slot *FactorSlot[T]) SelectorWrite(semantic identity.SemanticKey) (SchemaWriteForm[T], bool) {
 	return slot.addWriteForm(SchemaFormWriteSelector, semantic)
 }
 
-func (slot *FactorSlot[T]) addReadForm(kind SchemaFormKind, semantic SemanticKey) (SchemaReadForm[T], bool) {
+func (slot *FactorSlot[T]) addReadForm(kind SchemaFormKind, semantic identity.SemanticKey) (SchemaReadForm[T], bool) {
 	draft, ok := factorDraft(slot)
 	if !ok || draft.builder.phase != schemaBuilderFactors {
 		return SchemaReadForm[T]{}, false
@@ -252,7 +249,7 @@ func (slot *FactorSlot[T]) addReadForm(kind SchemaFormKind, semantic SemanticKey
 	return result, true
 }
 
-func (slot *FactorSlot[T]) addWriteForm(kind SchemaFormKind, semantic SemanticKey) (SchemaWriteForm[T], bool) {
+func (slot *FactorSlot[T]) addWriteForm(kind SchemaFormKind, semantic identity.SemanticKey) (SchemaWriteForm[T], bool) {
 	draft, ok := factorDraft(slot)
 	if !ok || draft.builder.phase != schemaBuilderFactors {
 		return SchemaWriteForm[T]{}, false
@@ -269,7 +266,7 @@ func (slot *FactorSlot[T]) addWriteForm(kind SchemaFormKind, semantic SemanticKe
 
 // DeclareFactorSlot adds one typed Factor schema without asking for algebra
 // callbacks or a key-domain enumeration.
-func DeclareFactorSlot[T any](builder *SchemaBuilder, semantic SemanticKey) (*FactorSlot[T], bool) {
+func DeclareFactorSlot[T any](builder *SchemaBuilder, semantic identity.SemanticKey) (*FactorSlot[T], bool) {
 	if builder == nil || builder.phase != schemaBuilderFactors || !semantic.Available() {
 		if builder != nil {
 			builder.poison()
@@ -285,7 +282,7 @@ func DeclareFactorSlot[T any](builder *SchemaBuilder, semantic SemanticKey) (*Fa
 		return nil, false
 	}
 	draft := &schemaFactorDraft{builder: builder, index: index, semantic: semantic}
-	builder.candidate.Factors = append(builder.candidate.Factors, coldcomposition.Factor{Key: semantic.compositionKey()})
+	builder.candidate.Factors = append(builder.candidate.Factors, coldcomposition.Factor{Key: compositionKeyOf(semantic)})
 	builder.factors = append(builder.factors, draft)
 	slot := &FactorSlot[T]{cell: &schemaTokenCell{builder: builder, draft: draft}}
 	builder.tokens = append(builder.tokens, slot.cell)
@@ -294,7 +291,7 @@ func DeclareFactorSlot[T any](builder *SchemaBuilder, semantic SemanticKey) (*Fa
 
 // FactorSlot is a concise alias for DeclareFactorSlot at call sites that use
 // the new API's role vocabulary.
-func NewFactorSlot[T any](builder *SchemaBuilder, semantic SemanticKey) (*FactorSlot[T], bool) {
+func NewFactorSlot[T any](builder *SchemaBuilder, semantic identity.SemanticKey) (*FactorSlot[T], bool) {
 	return DeclareFactorSlot[T](builder, semantic)
 }
 
@@ -349,13 +346,13 @@ func factorDraft[T any](slot *FactorSlot[T]) (*schemaFactorDraft, bool) {
 type schemaFactorDraft struct {
 	builder  *SchemaBuilder
 	index    int
-	semantic SemanticKey
+	semantic identity.SemanticKey
 }
 
 type schemaFormDraft struct {
 	builder   *SchemaBuilder
 	factor    *schemaFactorDraft
-	semantic  SemanticKey
+	semantic  identity.SemanticKey
 	formKind  SchemaFormKind
 	read      bool
 	canonical uint64
@@ -376,7 +373,7 @@ func factorFormRowKind(kind SchemaFormKind) coldcomposition.FactorFormKind {
 	}
 }
 
-func (builder *SchemaBuilder) addForm(factor *schemaFactorDraft, read bool, kind SchemaFormKind, semantic SemanticKey) (*schemaFormDraft, bool) {
+func (builder *SchemaBuilder) addForm(factor *schemaFactorDraft, read bool, kind SchemaFormKind, semantic identity.SemanticKey) (*schemaFormDraft, bool) {
 	if builder == nil || factor == nil || factor.builder != builder || factor.index < 0 || factor.index >= len(builder.candidate.Factors) {
 		builder.poison()
 		return nil, false
@@ -407,7 +404,7 @@ func (builder *SchemaBuilder) addForm(factor *schemaFactorDraft, read bool, kind
 	builder.forms = append(builder.forms, form)
 	rowKind := factorFormRowKind(kind)
 	if kind != SchemaFormReadExact && kind != SchemaFormWriteExact {
-		builder.candidate.Factors[factor.index].Forms = append(builder.candidate.Factors[factor.index].Forms, coldcomposition.FactorForm{Kind: rowKind, Semantic: semantic.compositionKey()})
+		builder.candidate.Factors[factor.index].Forms = append(builder.candidate.Factors[factor.index].Forms, coldcomposition.FactorForm{Kind: rowKind, Semantic: compositionKeyOf(semantic)})
 	}
 	return form, true
 }
@@ -426,8 +423,8 @@ func (input SchemaInput) validBuilder(builder *SchemaBuilder, rule *schemaRuleDr
 // SchemaRuleSpec declares one Factor-output Rule.  Structural Rules use the
 // dedicated support/activation constructors below.
 type SchemaRuleSpec[V any] struct {
-	Semantic      SemanticKey
-	OperandFamily SemanticKey
+	Semantic      identity.SemanticKey
+	OperandFamily identity.SemanticKey
 	Inputs        uint64
 	Admission     SchemaAdmission
 	Output        FactorRef[V]
@@ -440,13 +437,6 @@ type RuleSlot[V, O any] struct {
 func (slot *RuleSlot[V, O]) Available() bool {
 	return slot != nil && slot.cell != nil && (slot.cell.schema != nil || slot.cell.builder != nil && slot.cell.builder.phase != schemaBuilderPoisoned && slot.cell.builder.phase != schemaBuilderSealed)
 }
-func (slot *RuleSlot[V, O]) Schema() *Schema {
-	if slot == nil || slot.cell == nil {
-		return nil
-	}
-	return slot.cell.schema
-}
-
 func (slot *RuleSlot[V, O]) Ordinal() (uint64, bool) {
 	if slot.cell != nil && slot.cell.schema != nil && slot.cell.schema.Available() {
 		return slot.cell.ordinal, true
@@ -501,7 +491,7 @@ func DeclareRuleSlot[V, O any](builder *SchemaBuilder, spec SchemaRuleSpec[V]) (
 		return nil, false
 	}
 	draft := &schemaRuleDraft{builder: builder, index: index, output: outputDraft}
-	builder.candidate.Rules = append(builder.candidate.Rules, coldcomposition.Rule{Key: spec.Semantic.compositionKey(), OperandFamily: spec.OperandFamily.compositionKey(), Admission: admission, OutputKind: coldcomposition.FactorOutput, Output: outputDraft.semantic.compositionKey(), Inputs: spec.Inputs})
+	builder.candidate.Rules = append(builder.candidate.Rules, coldcomposition.Rule{Key: compositionKeyOf(spec.Semantic), OperandFamily: compositionKeyOf(spec.OperandFamily), Admission: admission, OutputKind: coldcomposition.FactorOutput, Output: compositionKeyOf(outputDraft.semantic), Inputs: spec.Inputs})
 	builder.rules = append(builder.rules, draft)
 	slot := &RuleSlot[V, O]{cell: &schemaTokenCell{builder: builder, draft: draft}}
 	builder.tokens = append(builder.tokens, slot.cell)
@@ -535,14 +525,6 @@ func (slot *RuleSlot[V, O]) Input(index uint64) (SchemaInput, bool) {
 	rule.builder.tokens = append(rule.builder.tokens, result.cell)
 	input.token = result.cell
 	return result, true
-}
-
-func (slot *RuleSlot[V, O]) ruleInputs() int {
-	rule, ok := ruleDraft(slot)
-	if !ok {
-		return -1
-	}
-	return ruleInputs(rule)
 }
 
 func ruleDraft[V, O any](slot *RuleSlot[V, O]) (*schemaRuleDraft, bool) {
@@ -618,23 +600,11 @@ type SchemaReadSlot[T any] struct {
 	cell *schemaTokenCell
 }
 
-func (slot SchemaReadSlot[T]) Schema() *Schema {
-	if slot.cell == nil {
-		return nil
-	}
-	return slot.cell.schema
-}
-
 // SchemaReadRef is an opaque same-rule predecessor capability. It never
 // exposes a cold row index.
 type SchemaReadRef struct{ cell *schemaTokenCell }
 
 func (slot SchemaReadSlot[T]) Ref() SchemaReadRef { return SchemaReadRef{cell: slot.cell} }
-
-// Dependency returns opaque predecessor evidence for this read. A write slot
-// exposes the same narrow capability below; both are accepted only by the
-// exact rule that issued them.
-func (slot SchemaReadSlot[T]) Dependency() SchemaDependency { return SchemaDependency{cell: slot.cell} }
 
 type schemaReadDraft struct {
 	builder *SchemaBuilder
@@ -665,13 +635,6 @@ func SchemaReadAs[T, V, O any](rule *RuleSlot[V, O], form SchemaReadForm[V], inp
 	return SchemaReadSlot[T]{cell: base.cell}, true
 }
 
-// SchemaSupportRead attaches a typed Factor projection to the exact opaque
-// structural support Rule.  The structural hot operand remains engine-owned.
-func SchemaSupportRead[T any](rule *SchemaSupportRuleSlot, form SchemaReadForm[T], input SchemaInput) (SchemaReadSlot[T], bool) {
-	ruleDraft, ok := tokenDraft[schemaRuleDraft](slotCell(rule))
-	return appendSchemaRead(ruleDraft, ok, form, input)
-}
-
 // SchemaActivationRead attaches a typed Factor projection to the exact opaque
 // structural activation Rule.  It never exports ActivationResult/ruleUnit.
 func SchemaActivationRead[T any](rule *SchemaActivationRuleSlot, form SchemaReadForm[T], input SchemaInput) (SchemaReadSlot[T], bool) {
@@ -694,10 +657,10 @@ func appendSchemaRead[T any](ruleDraft *schemaRuleDraft, ok bool, form SchemaRea
 		builder.poison()
 		return SchemaReadSlot[T]{}, false
 	}
-	row := coldcomposition.Read{Input: uint64(inputDraft.index), Factor: formDraft.factor.semantic.compositionKey()}
+	row := coldcomposition.Read{Input: uint64(inputDraft.index), Factor: compositionKeyOf(formDraft.factor.semantic)}
 	if summaryReadFormKind(formDraft.formKind) {
 		row.Kind = coldcomposition.ReadSummary
-		row.Semantic = formDraft.semantic.compositionKey()
+		row.Semantic = compositionKeyOf(formDraft.semantic)
 		row.Normalizer = row.Semantic
 	} else {
 		row.Kind = coldcomposition.ReadExact
@@ -740,13 +703,6 @@ type SchemaWriteSlot[V any] struct {
 	cell *schemaTokenCell
 }
 
-func (slot SchemaWriteSlot[V]) Schema() *Schema {
-	if slot.cell == nil {
-		return nil
-	}
-	return slot.cell.schema
-}
-
 type schemaWriteDraft struct {
 	builder *SchemaBuilder
 	rule    *schemaRuleDraft
@@ -774,10 +730,10 @@ func appendSchemaWrite[V, O any](rule *RuleSlot[V, O], form SchemaWriteForm[V]) 
 		builder.poison()
 		return SchemaWriteSlot[V]{}, false
 	}
-	row := coldcomposition.Write{Factor: formDraft.factor.semantic.compositionKey()}
+	row := coldcomposition.Write{Factor: compositionKeyOf(formDraft.factor.semantic)}
 	if formDraft.formKind == SchemaFormWriteSelector {
 		row.Kind = coldcomposition.WriteSelect
-		row.Semantic = formDraft.semantic.compositionKey()
+		row.Semantic = compositionKeyOf(formDraft.semantic)
 	} else {
 		row.Kind = coldcomposition.WriteExact
 	}
@@ -794,7 +750,7 @@ func SchemaRouteWrite[V, O, T any](rule *RuleSlot[V, O], form SchemaWriteForm[V]
 	formDraft, formOK := tokenDraft[schemaFormDraft](form.cell)
 	ruleDraft, ruleOK := ruleDraft(rule)
 	readDraft, readOK := tokenDraft[schemaReadDraft](read.cell)
-	if !formOK || !ruleOK || !readOK || !ruleDraft.factorOutput() || ruleDraft.route || len(ruleDraft.builder.candidate.Rules[ruleDraft.index].Writes) != 0 || formDraft.formKind != SchemaFormWriteExact || readDraft.rule != ruleDraft || readDraft.index < 0 || readDraft.index >= len(ruleDraft.builder.candidate.Rules[ruleDraft.index].Reads) || ruleDraft.builder.candidate.Rules[ruleDraft.index].Reads[readDraft.index].Kind != coldcomposition.ReadSelect || ruleDraft.builder.candidate.Rules[ruleDraft.index].Reads[readDraft.index].Factor != ruleDraft.output.semantic.compositionKey() || ruleDraft.builder.phase != schemaBuilderChildren {
+	if !formOK || !ruleOK || !readOK || !ruleDraft.factorOutput() || ruleDraft.route || len(ruleDraft.builder.candidate.Rules[ruleDraft.index].Writes) != 0 || formDraft.formKind != SchemaFormWriteExact || readDraft.rule != ruleDraft || readDraft.index < 0 || readDraft.index >= len(ruleDraft.builder.candidate.Rules[ruleDraft.index].Reads) || ruleDraft.builder.candidate.Rules[ruleDraft.index].Reads[readDraft.index].Kind != coldcomposition.ReadSelect || ruleDraft.builder.candidate.Rules[ruleDraft.index].Reads[readDraft.index].Factor != compositionKeyOf(ruleDraft.output.semantic) || ruleDraft.builder.phase != schemaBuilderChildren {
 		return SchemaWriteSlot[V]{}, false
 	}
 	write, ok := appendSchemaWrite[V](rule, form)
@@ -813,10 +769,6 @@ func SchemaRouteWrite[V, O, T any](rule *RuleSlot[V, O], form SchemaWriteForm[V]
 // does not expose either a target bit or a cold row index.
 type SchemaDependency struct {
 	cell *schemaTokenCell
-}
-
-func (slot SchemaWriteSlot[V]) Dependency() SchemaDependency {
-	return SchemaDependency{cell: slot.cell}
 }
 
 func SchemaSelectWrite[V, O any](rule *RuleSlot[V, O], form SchemaWriteForm[V], candidates []SchemaReadRef, dependencies []SchemaDependency) (SchemaWriteSlot[V], bool) {
@@ -863,17 +815,17 @@ type schemaCarryDraft struct {
 // by CarryFrom. Its zero Transform is a closed cold disposition, not a
 // missing semantic identity and not permission to infer an executable map.
 func SchemaCarryFrom[V, O any](rule *RuleSlot[V, O], input SchemaInput, factor FactorRef[V]) (SchemaCarrySlot[V], bool) {
-	return appendSchemaCarry(rule, input, factor, SemanticKey{}, false)
+	return appendSchemaCarry(rule, input, factor, identity.SemanticKey{}, false)
 }
 
 // SchemaCarry records the transformed whole-output-Factor predecessor used
 // by TransformCarryFrom. The transform identity is globally claimed exactly
 // once; executable behavior belongs to the later hot Binding.
-func SchemaCarry[V, O any](rule *RuleSlot[V, O], input SchemaInput, factor FactorRef[V], transform SemanticKey) (SchemaCarrySlot[V], bool) {
+func SchemaCarry[V, O any](rule *RuleSlot[V, O], input SchemaInput, factor FactorRef[V], transform identity.SemanticKey) (SchemaCarrySlot[V], bool) {
 	return appendSchemaCarry(rule, input, factor, transform, true)
 }
 
-func appendSchemaCarry[V, O any](rule *RuleSlot[V, O], input SchemaInput, factor FactorRef[V], transform SemanticKey, transformed bool) (SchemaCarrySlot[V], bool) {
+func appendSchemaCarry[V, O any](rule *RuleSlot[V, O], input SchemaInput, factor FactorRef[V], transform identity.SemanticKey, transformed bool) (SchemaCarrySlot[V], bool) {
 	ruleDraft, ok := ruleDraft(rule)
 	factorDraft, factorOK := tokenDraft[schemaFactorDraft](factor.cell)
 	inputDraft, inputOK := tokenDraft[schemaInputDraft](input.cell)
@@ -891,7 +843,7 @@ func appendSchemaCarry[V, O any](rule *RuleSlot[V, O], input SchemaInput, factor
 	}
 	draft := &schemaCarryDraft{builder: builder, rule: ruleDraft, index: index}
 	builder.carries = append(builder.carries, draft)
-	builder.candidate.Rules[ruleDraft.index].Carries = append(builder.candidate.Rules[ruleDraft.index].Carries, coldcomposition.Carry{Input: uint64(inputDraft.index), Factor: factorDraft.semantic.compositionKey(), Transform: transform.compositionKey()})
+	builder.candidate.Rules[ruleDraft.index].Carries = append(builder.candidate.Rules[ruleDraft.index].Carries, coldcomposition.Carry{Input: uint64(inputDraft.index), Factor: compositionKeyOf(factorDraft.semantic), Transform: compositionKeyOf(transform)})
 	result := SchemaCarrySlot[V]{cell: &schemaTokenCell{builder: builder, draft: draft}}
 	builder.tokens = append(builder.tokens, result.cell)
 	draft.token = result.cell
@@ -905,7 +857,7 @@ type SchemaCompletion struct {
 }
 type schemaCompletionCell struct {
 	builder         *SchemaBuilder
-	semantic, prune SemanticKey
+	semantic, prune identity.SemanticKey
 	schema          *Schema
 	ordinal         uint64
 }
@@ -924,7 +876,7 @@ func (prune SchemaPrune) Schema() *Schema {
 	return prune.cell.schema
 }
 
-func DeclareSchemaCompletion(builder *SchemaBuilder, semantic SemanticKey) (SchemaCompletion, bool) {
+func DeclareSchemaCompletion(builder *SchemaBuilder, semantic identity.SemanticKey) (SchemaCompletion, bool) {
 	if builder == nil || builder.phase != schemaBuilderFactors && builder.phase != schemaBuilderChildren || !semantic.Available() || builder.candidate.Completion.Semantic.Available() {
 		if builder != nil {
 			builder.poison()
@@ -935,13 +887,13 @@ func DeclareSchemaCompletion(builder *SchemaBuilder, semantic SemanticKey) (Sche
 		return SchemaCompletion{}, false
 	}
 	builder.phase = schemaBuilderChildren
-	builder.candidate.Completion.Semantic = semantic.compositionKey()
+	builder.candidate.Completion.Semantic = compositionKeyOf(semantic)
 	cell := &schemaCompletionCell{builder: builder, semantic: semantic}
 	builder.completion = cell
 	return SchemaCompletion{cell: cell}, true
 }
 
-func (completion SchemaCompletion) Prune(semantic SemanticKey) (SchemaPrune, bool) {
+func (completion SchemaCompletion) Prune(semantic identity.SemanticKey) (SchemaPrune, bool) {
 	if completion.cell == nil || completion.cell.builder == nil || completion.cell.builder.phase != schemaBuilderChildren || !completion.cell.semantic.Available() || !semantic.Available() || completion.cell.prune.Available() || semantic == completion.cell.semantic {
 		return SchemaPrune{}, false
 	}
@@ -949,7 +901,7 @@ func (completion SchemaCompletion) Prune(semantic SemanticKey) (SchemaPrune, boo
 		return SchemaPrune{}, false
 	}
 	completion.cell.prune = semantic
-	completion.cell.builder.candidate.Completion.Prune = semantic.compositionKey()
+	completion.cell.builder.candidate.Completion.Prune = compositionKeyOf(semantic)
 	return SchemaPrune{cell: completion.cell}, true
 }
 
@@ -963,18 +915,11 @@ func (family SchemaActivationFamily) Schema() *Schema {
 	}
 	return family.cell.schema
 }
-func (family SchemaActivationFamily) Ordinal() (uint64, bool) {
-	if family.cell == nil || family.cell.schema == nil {
-		return 0, false
-	}
-	return family.cell.ordinal, true
-}
-
 func activationDraft(family SchemaActivationFamily) (*schemaFamilyDraft, bool) {
 	return tokenDraft[schemaFamilyDraft](family.cell)
 }
 
-func DeclareSchemaActivationFamily(builder *SchemaBuilder, semantic SemanticKey) (SchemaActivationFamily, bool) {
+func DeclareSchemaActivationFamily(builder *SchemaBuilder, semantic identity.SemanticKey) (SchemaActivationFamily, bool) {
 	if builder == nil || builder.phase != schemaBuilderFactors && builder.phase != schemaBuilderChildren || !semantic.Available() {
 		if builder != nil {
 			builder.poison()
@@ -990,7 +935,7 @@ func DeclareSchemaActivationFamily(builder *SchemaBuilder, semantic SemanticKey)
 		builder.poison()
 		return SchemaActivationFamily{}, false
 	}
-	builder.candidate.ActivationFamilies = append(builder.candidate.ActivationFamilies, coldcomposition.ActivationFamily{Semantic: semantic.compositionKey()})
+	builder.candidate.ActivationFamilies = append(builder.candidate.ActivationFamilies, coldcomposition.ActivationFamily{Semantic: compositionKeyOf(semantic)})
 	family := &schemaFamilyDraft{builder: builder, index: index, semantic: semantic}
 	builder.families = append(builder.families, family)
 	cell := &schemaTokenCell{builder: builder, draft: family}
@@ -999,7 +944,7 @@ func DeclareSchemaActivationFamily(builder *SchemaBuilder, semantic SemanticKey)
 }
 
 type SchemaStructuralRuleSpec struct {
-	Semantic   SemanticKey
+	Semantic   identity.SemanticKey
 	Inputs     uint64
 	Admission  SchemaAdmission
 	Completion SchemaCompletion
@@ -1023,18 +968,8 @@ func (slot *SchemaSupportRuleSlot) Available() bool { return structuralSlotAvail
 func (slot *SchemaActivationRuleSlot) Available() bool {
 	return structuralSlotAvailable(slotCell(slot))
 }
-func (slot *SchemaSupportRuleSlot) Schema() *Schema { return structuralSlotSchema(slotCell(slot)) }
-func (slot *SchemaActivationRuleSlot) Schema() *Schema {
-	return structuralSlotSchema(slotCell(slot))
-}
-func (slot *SchemaSupportRuleSlot) Ordinal() (uint64, bool) {
-	return structuralSlotOrdinal(slotCell(slot))
-}
 func (slot *SchemaActivationRuleSlot) Ordinal() (uint64, bool) {
 	return structuralSlotOrdinal(slotCell(slot))
-}
-func (slot *SchemaSupportRuleSlot) Input(index uint64) (SchemaInput, bool) {
-	return structuralSlotInput(slotCell(slot), index)
 }
 func (slot *SchemaActivationRuleSlot) Input(index uint64) (SchemaInput, bool) {
 	return structuralSlotInput(slotCell(slot), index)
@@ -1056,13 +991,6 @@ func slotCell(slot any) *schemaTokenCell {
 
 func structuralSlotAvailable(cell *schemaTokenCell) bool {
 	return cell != nil && (cell.schema != nil || cell.builder != nil && cell.builder.phase != schemaBuilderPoisoned && cell.builder.phase != schemaBuilderSealed)
-}
-
-func structuralSlotSchema(cell *schemaTokenCell) *Schema {
-	if cell == nil {
-		return nil
-	}
-	return cell.schema
 }
 
 func structuralSlotOrdinal(cell *schemaTokenCell) (uint64, bool) {
@@ -1148,13 +1076,13 @@ func (builder *SchemaBuilder) addStructuralRule(spec SchemaStructuralRuleSpec, a
 	// Structural Rules have the engine-owned unit operand family.  It is not a
 	// caller-supplied semantic identity: support and activation execution both
 	// consume the engine's private ruleUnit proof.
-	row := coldcomposition.Rule{Key: spec.Semantic.compositionKey(), OperandFamily: unitOperandFamily.compositionKey(), Admission: admission, OutputKind: coldcomposition.StructuralOutput, Inputs: spec.Inputs}
+	row := coldcomposition.Rule{Key: compositionKeyOf(spec.Semantic), OperandFamily: compositionKeyOf(unitOperandFamily), Admission: admission, OutputKind: coldcomposition.StructuralOutput, Inputs: spec.Inputs}
 	if activation {
 		family, _ := activationDraft(spec.Activation)
-		row.Activations = []coldcomposition.ActivationRange{{Family: family.semantic.compositionKey()}}
+		row.Activations = []coldcomposition.ActivationRange{{Family: compositionKeyOf(family.semantic)}}
 	} else {
-		row.Supports = []coldcomposition.Support{{Semantic: spec.Completion.cell.semantic.compositionKey()}}
-		row.Prunes = []coldcomposition.Prune{{Semantic: spec.Prune.cell.prune.compositionKey()}}
+		row.Supports = []coldcomposition.Support{{Semantic: compositionKeyOf(spec.Completion.cell.semantic)}}
+		row.Prunes = []coldcomposition.Prune{{Semantic: compositionKeyOf(spec.Prune.cell.prune)}}
 	}
 	builder.candidate.Rules = append(builder.candidate.Rules, row)
 	builder.rules = append(builder.rules, draft)
@@ -1166,13 +1094,13 @@ func (builder *SchemaBuilder) addStructuralRule(spec SchemaStructuralRuleSpec, a
 type schemaFamilyDraft struct {
 	builder  *SchemaBuilder
 	index    int
-	semantic SemanticKey
+	semantic identity.SemanticKey
 }
 
 // SchemaQuerySpec is the callback-free Query family shape.
 type SchemaQuerySpec struct {
-	Semantic SemanticKey
-	Freezer  SemanticKey
+	Semantic identity.SemanticKey
+	Freezer  identity.SemanticKey
 }
 
 type QuerySlot[R any] struct {
@@ -1225,7 +1153,7 @@ func DeclareQuerySlot[R any](builder *SchemaBuilder, spec SchemaQuerySpec) (*Que
 		builder.poison()
 		return nil, false
 	}
-	builder.candidate.Queries = append(builder.candidate.Queries, coldcomposition.QueryFamily{Key: spec.Semantic.compositionKey(), Freezer: spec.Freezer.compositionKey()})
+	builder.candidate.Queries = append(builder.candidate.Queries, coldcomposition.QueryFamily{Key: compositionKeyOf(spec.Semantic), Freezer: compositionKeyOf(spec.Freezer)})
 	draft := &schemaQueryDraft{builder: builder, index: index}
 	builder.queries = append(builder.queries, draft)
 	slot := &QuerySlot[R]{cell: &schemaTokenCell{builder: builder, draft: draft}}
@@ -1248,12 +1176,12 @@ func SchemaQueryRead[T, R any](query *QuerySlot[R], form SchemaReadForm[T]) bool
 	if formDraft.formKind != SchemaFormReadExact && !summaryReadFormKind(formDraft.formKind) {
 		return false
 	}
-	projection := coldcomposition.QueryProjection{Factor: formDraft.factor.semantic.compositionKey()}
+	projection := coldcomposition.QueryProjection{Factor: compositionKeyOf(formDraft.factor.semantic)}
 	if formDraft.formKind == SchemaFormReadExact {
 		projection.Kind = coldcomposition.QueryFactorExact
 	} else {
 		projection.Kind = coldcomposition.QueryFactorSummary
-		projection.Normalizer = formDraft.semantic.compositionKey()
+		projection.Normalizer = compositionKeyOf(formDraft.semantic)
 	}
 	row.Projections = append(row.Projections, projection)
 	return true
@@ -1311,7 +1239,7 @@ func (builder *SchemaBuilder) bindSealed(schema *Schema, sealed *coldcomposition
 	}
 	ruleOrdinals := make(map[*schemaRuleDraft]uint64, len(builder.rules))
 	for _, factor := range builder.factors {
-		index, ok := sealed.FactorIndex(factor.semantic.compositionKey())
+		index, ok := sealed.FactorIndex(compositionKeyOf(factor.semantic))
 		if !ok {
 			return false
 		}
@@ -1356,7 +1284,7 @@ func (builder *SchemaBuilder) bindSealed(schema *Schema, sealed *coldcomposition
 		}
 	}
 	for _, family := range builder.families {
-		familyIndex, familyOK := sealed.ActivationIndex(family.semantic.compositionKey())
+		familyIndex, familyOK := sealed.ActivationIndex(compositionKeyOf(family.semantic))
 		if !familyOK {
 			return false
 		}
@@ -1376,7 +1304,7 @@ func (builder *SchemaBuilder) bindSealed(schema *Schema, sealed *coldcomposition
 		}
 	}
 	for _, form := range builder.forms {
-		factorIndex, ok := sealed.FactorIndex(form.factor.semantic.compositionKey())
+		factorIndex, ok := sealed.FactorIndex(compositionKeyOf(form.factor.semantic))
 		if !ok {
 			return false
 		}
@@ -1385,7 +1313,7 @@ func (builder *SchemaBuilder) bindSealed(schema *Schema, sealed *coldcomposition
 		formFound := false
 		for index, candidate := range factors[int(factorIndex)].Forms {
 			wantKind := factorFormRowKind(form.formKind)
-			if candidate.Kind == wantKind && candidate.Semantic == form.semantic.compositionKey() {
+			if candidate.Kind == wantKind && candidate.Semantic == compositionKeyOf(form.semantic) {
 				formIndex = uint64(index)
 				formFound = true
 				break

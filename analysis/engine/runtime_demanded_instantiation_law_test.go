@@ -43,7 +43,7 @@ func TestReceiptRuntimeInstantiatesOnlyDemandedProducerGroups(t *testing.T) {
 	operandRows := make([]equation.Operand, len(operands))
 	pointRefs := make([]bindingPointRowRef, len(operands))
 	for index, operandValue := range operands {
-		site, siteOK := assembly.builder.admitSite(coldKey(957_010+index).compositionKey(), scope, equation.TrueExpr(), equation.InitPresent)
+		site, siteOK := assembly.builder.admitSite(compositionKeyOf(coldKey(957_010+index)), scope, equation.TrueExpr(), equation.InitPresent)
 		occurrence, occurrenceOK := assembly.builder.admitAt(site)
 		entity, entityOK := operandEntityForContent(operandValue.content)
 		operand, operandOK := assembly.builder.admitOperand(occurrence, entity)

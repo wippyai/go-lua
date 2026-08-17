@@ -797,12 +797,8 @@ func (a *Algebra) sealMountedArtifacts(mounts []MountedArtifact) (map[mountedCal
 			}
 			receipts = append(receipts, bodyRootReceipt{moduleKey: mount.ModuleKey, programID: programID, bodyID: body.ID(), contextID: body.ContextID()})
 		}
-		packReceipt, ok := mount.Artifact.PackReceipt()
-		if !ok {
-			return nil, false
-		}
-		for index := 0; index < packReceipt.CallCount(); index++ {
-			call, callOK := packReceipt.CallAt(index)
+		for index := 0; index < mount.Artifact.CallCount(); index++ {
+			call, callOK := mount.Artifact.CallAt(index)
 			if !callOK || !call.Available() || !call.ID().Available() || !call.BodyID().Available() {
 				return nil, false
 			}

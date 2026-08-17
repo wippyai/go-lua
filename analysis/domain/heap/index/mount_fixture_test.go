@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	calldomain "github.com/wippyai/go-lua/analysis/domain/call"
+	"github.com/wippyai/go-lua/analysis/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
 	indexdomain "github.com/wippyai/go-lua/analysis/domain/heap/index"
 	packdomain "github.com/wippyai/go-lua/analysis/domain/pack"
@@ -11,9 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/type/authority"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
-	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
 	"github.com/wippyai/go-lua/analysis/program/link"
-	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 type indexFixtureMounts struct {
@@ -26,7 +25,7 @@ type indexFixtureMounts struct {
 
 func indexMounts(t testing.TB, linked *link.Link) indexFixtureMounts {
 	t.Helper()
-	receipt, receiptOK := grammar.Global()
+	receipt, receiptOK := composite.Global()
 	if !receiptOK || linked == nil || linked.Project() == nil {
 		t.Fatal("index fixture artifact receipt")
 	}
@@ -45,7 +44,7 @@ func indexMounts(t testing.TB, linked *link.Link) indexFixtureMounts {
 		if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 			t.Fatal("index fixture mount")
 		}
-		artifact, failure := schemaadapter.CompileDetailed(program.TransformerInput(), receipt)
+		artifact, failure := composite.CompileArtifactDetailed(program, receipt)
 		if failure.Available() || artifact == nil {
 			t.Fatalf("index fixture artifact: %v", failure)
 		}
@@ -67,7 +66,7 @@ func indexSchemas(t testing.TB, linked *link.Link) (heapdomain.Schema, *valuedom
 	heap, heapFailure := heapdomain.SealWithArtifacts(linked, mounts.heap)
 	values, valueFailure := valuedomain.SealWithFailure(linked, heap, mounts.value)
 	calls, callsOK := calldomain.NewWithMountedArtifacts(linked, mounts.call)
-	receipt, receiptOK := grammar.Global()
+	receipt, receiptOK := composite.Global()
 	if !receiptOK {
 		t.Fatal("index schemas program receipt")
 	}
@@ -78,7 +77,7 @@ func indexSchemas(t testing.TB, linked *link.Link) (heapdomain.Schema, *valuedom
 		if !shardOK || !programOK || program == nil {
 			t.Fatal("index schemas artifact program")
 		}
-		artifact, failure := schemaadapter.CompileDetailed(program.TransformerInput(), receipt)
+		artifact, failure := composite.CompileArtifactDetailed(program, receipt)
 		if failure.Available() || artifact == nil {
 			t.Fatalf("index schemas artifact: %v", failure)
 		}

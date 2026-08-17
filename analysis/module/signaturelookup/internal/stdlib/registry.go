@@ -22,6 +22,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/module/signature"
 )
 
+// todo: move outside of analysis
+
 const (
 	Assert         = "assert"
 	Error          = "error"
@@ -411,6 +413,20 @@ var registry = map[string]signature.Function{
 			Build(),
 		ownership.BorrowAll{},
 	),
+	"table.getn": sig(
+		typ.Func().
+			Param("list", typ.Any).
+			Returns(typ.Number).
+			Build(),
+		ownership.BorrowAll{},
+	),
+	"table.maxn": sig(
+		typ.Func().
+			Param("list", typ.Any).
+			Returns(typ.Number).
+			Build(),
+		ownership.BorrowAll{},
+	),
 
 	// string library: see init() below, populated from type/stringlib (single source).
 
@@ -478,6 +494,11 @@ var registry = map[string]signature.Function{
 	"coroutine.running": sig(typ.Func().
 		Returns(typ.Any, typ.Boolean).
 		Build()),
+	"coroutine.spawn": sig(typ.Func().
+		Param("f", typ.Any).
+		Variadic(typ.Any).
+		Build(),
+		ownership.Send{FromParam: 0}),
 	"coroutine.status": sig(typ.Func().
 		Param("co", typ.Any).
 		Returns(typ.String).
@@ -545,6 +566,13 @@ var registry = map[string]signature.Function{
 // luaTypeName is the complete Lua 5.4 type-name result domain.  It is kept as
 // literals rather than string so a call-result consumer can retain the exact
 // contract instead of silently weakening type(v) to an arbitrary string.
+//
+// The names are spelled here rather than projected from the runtime family
+// vocabulary because this table is a leaf of module lookup and the vocabulary's
+// one declaration of the names is the sealed structural catalog, which carries
+// the whole program declaration graph behind it.  The literals are pinned to
+// that declaration by TestLuaTypeNameIsTheDeclaredFamilyVocabulary, so they
+// cannot drift from the families type(v) distinguishes.
 var luaTypeName = typ.MaterializeUnion([]typ.Type{
 	typ.LiteralString("nil"),
 	typ.LiteralString("boolean"),

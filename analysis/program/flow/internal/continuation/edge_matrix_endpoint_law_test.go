@@ -1,19 +1,41 @@
 package continuation_test
 
 import (
+	"path/filepath"
+	"runtime"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/analysis/program/target/profile"
 	"github.com/wippyai/go-lua/analysis/internal/testfixture"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/library/lualib/targetprofile"
 )
+
+// continuationFixtureCorpus loads the checked-in fixture corpus for one test.
+// The repository root is derived from this source file, so the census is
+// independent of the working directory a test runs in.
+func continuationFixtureCorpus(t *testing.T) *testfixture.Corpus {
+	t.Helper()
+	_, current, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("continuation test source location unavailable")
+	}
+	repository, err := testfixture.RepositoryRoot(filepath.Dir(current))
+	if err != nil {
+		t.Fatal(err)
+	}
+	corpus, err := testfixture.LoadCorpus(repository)
+	if err != nil {
+		t.Fatalf("load frozen corpus: %v", err)
+	}
+	return corpus
+}
 
 // TestContinuationSealEdgeMatrixEndpointsAreTotal fixes the endpoint
 // denominator at the canonical semantic edge-matrix boundary. Causal emits
 // exactly 5,317 semantic routes there; every existing From/To term must have
 // an owner-local unpolarized Guard scope, including an available empty scope.
 func TestContinuationSealEdgeMatrixEndpointsAreTotal(t *testing.T) {
-	project, err := testfixture.FrozenCorpusProject("semantic/type-engine-edge-matrix")
+	project, err := continuationFixtureCorpus(t).Project("semantic/type-engine-edge-matrix")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -4,12 +4,12 @@ import (
 	"math"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/analysis/lua/semantics/exactkey"
 	"github.com/wippyai/go-lua/analysis/program"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/analysis/program/scalar"
 	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
@@ -187,7 +187,7 @@ func TestLinkKeyDeduplicatesExactLuaKeysAndTargetPaths(t *testing.T) {
 }
 
 func findProjectKey(keys linkproject.Keys, literal keyspace.LiteralValue) (linkproject.Key, bool) {
-	normalized, ok := exactkey.Normalize(literal)
+	normalized, ok := scalar.Normalize(literal)
 	if !ok {
 		return linkproject.Key{}, false
 	}
@@ -197,7 +197,7 @@ func findProjectKey(keys linkproject.Keys, literal keyspace.LiteralValue) (linkp
 		if !present || !exact {
 			return linkproject.Key{}, false
 		}
-		order, comparable := exactkey.Compare(normalized, value)
+		order, comparable := scalar.Compare(normalized, value)
 		if comparable && order == 0 {
 			return key, true
 		}
@@ -206,29 +206,29 @@ func findProjectKey(keys linkproject.Keys, literal keyspace.LiteralValue) (linkp
 }
 
 func TestLinkKeyNormalizesLuaNumericEquality(t *testing.T) {
-	integer, ok := exactkey.Normalize(keyspace.LiteralValue{Kind: keyspace.LiteralInteger, Integer: 1})
+	integer, ok := scalar.Normalize(keyspace.LiteralValue{Kind: keyspace.LiteralInteger, Integer: 1})
 	if !ok {
 		t.Fatal("integer key rejected")
 	}
-	floating, ok := exactkey.Normalize(keyspace.LiteralValue{Kind: keyspace.LiteralFloat, FloatBits: math.Float64bits(1.0)})
-	order, ordered := exactkey.Compare(integer, floating)
+	floating, ok := scalar.Normalize(keyspace.LiteralValue{Kind: keyspace.LiteralFloat, FloatBits: math.Float64bits(1.0)})
+	order, ordered := scalar.Compare(integer, floating)
 	if !ok || !ordered || order != 0 {
 		t.Fatal("1 and 1.0 did not normalize together")
 	}
-	zero, ok := exactkey.Normalize(keyspace.LiteralValue{Kind: keyspace.LiteralInteger, Integer: 0})
+	zero, ok := scalar.Normalize(keyspace.LiteralValue{Kind: keyspace.LiteralInteger, Integer: 0})
 	if !ok {
 		t.Fatal("zero key rejected")
 	}
-	negativeZero, ok := exactkey.Normalize(keyspace.LiteralValue{Kind: keyspace.LiteralFloat, FloatBits: math.Float64bits(math.Copysign(0, -1))})
-	order, ordered = exactkey.Compare(zero, negativeZero)
+	negativeZero, ok := scalar.Normalize(keyspace.LiteralValue{Kind: keyspace.LiteralFloat, FloatBits: math.Float64bits(math.Copysign(0, -1))})
+	order, ordered = scalar.Compare(zero, negativeZero)
 	if !ok || !ordered || order != 0 {
 		t.Fatal("-0 and 0 did not normalize together")
 	}
-	infinite, ok := exactkey.Normalize(keyspace.LiteralValue{Kind: keyspace.LiteralFloat, FloatBits: math.Float64bits(math.Inf(1))})
+	infinite, ok := scalar.Normalize(keyspace.LiteralValue{Kind: keyspace.LiteralFloat, FloatBits: math.Float64bits(math.Inf(1))})
 	if !ok || infinite.Kind != keyspace.LiteralFloat {
 		t.Fatal("infinite float key lost its exact identity")
 	}
-	if _, ok := exactkey.Normalize(keyspace.LiteralValue{Kind: keyspace.LiteralFloat, FloatBits: math.Float64bits(math.NaN())}); ok {
+	if _, ok := scalar.Normalize(keyspace.LiteralValue{Kind: keyspace.LiteralFloat, FloatBits: math.Float64bits(math.NaN())}); ok {
 		t.Fatal("NaN key normalized")
 	}
 }

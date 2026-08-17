@@ -3,23 +3,31 @@ package value_test
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
 	packdomain "github.com/wippyai/go-lua/analysis/domain/pack"
 	staticdomain "github.com/wippyai/go-lua/analysis/domain/static"
 	"github.com/wippyai/go-lua/analysis/domain/type/authority"
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
+	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
-	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
 	"github.com/wippyai/go-lua/analysis/program/flow"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
-	"github.com/wippyai/go-lua/analysis/schema/grammar"
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 )
+
+func portableAnyType() schematype.Type {
+	value, ok := schematype.NewPrimitive(schematype.PrimitiveAny)
+	if !ok {
+		panic("portable any type")
+	}
+	return value
+}
 
 type directAllocationSubjectFixture struct {
 	values      *valuedomain.Schema
@@ -33,9 +41,9 @@ type directAllocationSubjectFixture struct {
 
 func directAllocationSubjectContract(t testing.TB) (*target.Contract, target.Operation) {
 	t.Helper()
-	contract, err := target.Seal(&target.Spec{Operations: []target.OperationSpec{{
+	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []target.OperationSpec{{
 		Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"send"}}},
-		Input:    target.ValuesSpec{Fixed: []typ.Type{typ.Any, typ.Any}, Tail: target.ValuesClosed},
+		Input:    target.ValuesSpec{Fixed: []schematype.Type{portableAnyType(), portableAnyType()}, Tail: target.ValuesClosed},
 		Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}},
 		Effects:  target.RowSpec{Tail: target.RowClosed},
 	}}})
@@ -65,7 +73,7 @@ func directAllocationSubjectFixtureFor(t testing.TB, label string) directAllocat
 	if err != nil {
 		t.Fatal(err)
 	}
-	grammar, grammarOK := grammar.Global()
+	grammar, grammarOK := composite.Global()
 	if !grammarOK {
 		t.Fatal("direct allocation program schema")
 	}
@@ -77,7 +85,7 @@ func directAllocationSubjectFixtureFor(t testing.TB, label string) directAllocat
 	if mounts.Count() != 1 || !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 		t.Fatal("direct allocation mount")
 	}
-	artifact, failure := schemaadapter.CompileDetailed(program.TransformerInput(), grammar)
+	artifact, failure := composite.CompileArtifactDetailed(program, grammar)
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile direct allocation artifact: %s", failure.Error())
 	}
@@ -106,13 +114,9 @@ func directAllocationSubjectFixtureFor(t testing.TB, label string) directAllocat
 	if !selectorOK || !otherSelectorOK {
 		t.Fatal("direct allocation fixed selectors")
 	}
-	packReceipt, receiptOK := artifact.PackReceipt()
-	if !receiptOK {
-		t.Fatal("direct allocation Pack receipt")
-	}
 	var callID identity.ContentID
-	for index := 0; index < packReceipt.CallCount(); index++ {
-		call, callOK := packReceipt.CallAt(index)
+	for index := 0; index < artifact.CallCount(); index++ {
+		call, callOK := artifact.CallAt(index)
 		if callOK && call.Form() == flow.CallFormMethod {
 			callID = call.ID()
 			break

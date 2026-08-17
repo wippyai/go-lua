@@ -2,7 +2,7 @@
 // from the canonical Program/Target/Link relation schema.
 package outputowners
 
-import "github.com/wippyai/go-lua/analysis/schema/relations"
+import "github.com/wippyai/go-lua/analysis/program/relations"
 
 // Row binds one canonical Program output relation to its sole component owner.
 // Output is the generated catalog name, never a source-spelled approximation.

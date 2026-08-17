@@ -1,9 +1,9 @@
 package target
 
 import (
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
 
@@ -20,25 +20,25 @@ func TestContentIDSemanticFamilyDeltas(t *testing.T) {
 		}},
 		{"input type", func() (*Contract, *Contract) {
 			left, right := deltaPlain("input"), deltaPlain("input")
-			right.Input.Fixed[0] = typ.Number
+			right.Input.Fixed[0] = testNumber
 			return deltaSeal(t, Spec{Operations: []OperationSpec{left}}), deltaSeal(t, Spec{Operations: []OperationSpec{right}})
 		}},
 		{"formal constraint", func() (*Contract, *Contract) {
-			left := typ.NewTypeParam("T", typ.String)
-			right := typ.NewTypeParam("T", typ.Number)
+			left := testNewTypeParam("T", testString)
+			right := testNewTypeParam("T", testNumber)
 			return deltaSeal(t, Spec{Operations: []OperationSpec{genericBuiltin("formal", left)}}), deltaSeal(t, Spec{Operations: []OperationSpec{genericBuiltin("formal", right)}})
 		}},
 		{"Values tail", func() (*Contract, *Contract) {
-			left, right := deltaOpenValues("tail", ValuesVariable, typ.Integer), deltaOpenValues("tail", ValuesClosed, typ.Integer)
+			left, right := deltaOpenValues("tail", ValuesVariable, testInteger), deltaOpenValues("tail", ValuesClosed, testInteger)
 			return deltaSeal(t, Spec{Operations: []OperationSpec{left}}), deltaSeal(t, Spec{Operations: []OperationSpec{right}})
 		}},
 		{"Values tail class", func() (*Contract, *Contract) {
-			left, right := deltaOpenValues("tail-class", ValuesVariable, typ.Integer), deltaOpenValues("tail-class", ValuesVariable, typ.Integer)
-			left.Outcomes[0].Values.TailType, right.Outcomes[0].Values.TailType = typ.String, typ.Number
+			left, right := deltaOpenValues("tail-class", ValuesVariable, testInteger), deltaOpenValues("tail-class", ValuesVariable, testInteger)
+			left.Outcomes[0].Values.TailType, right.Outcomes[0].Values.TailType = testString, testNumber
 			return deltaSeal(t, Spec{Operations: []OperationSpec{left}}), deltaSeal(t, Spec{Operations: []OperationSpec{right}})
 		}},
 		{"Values suffix", func() (*Contract, *Contract) {
-			left, right := deltaOpenValues("suffix", ValuesVariable, typ.Integer), deltaOpenValues("suffix", ValuesVariable, typ.Boolean)
+			left, right := deltaOpenValues("suffix", ValuesVariable, testInteger), deltaOpenValues("suffix", ValuesVariable, testBoolean)
 			return deltaSeal(t, Spec{Operations: []OperationSpec{left}}), deltaSeal(t, Spec{Operations: []OperationSpec{right}})
 		}},
 		{"callback", func() (*Contract, *Contract) {
@@ -65,8 +65,8 @@ func TestContentIDSemanticFamilyDeltas(t *testing.T) {
 		}},
 		{"fresh result", func() (*Contract, *Contract) {
 			left, right := deltaPlain("fresh"), deltaPlain("fresh")
-			left.Outcomes[0].Values.Fixed[0] = typ.BuiltinTableTopMarker()
-			right.Outcomes[0].Values.Fixed[0] = typ.Func().Build()
+			left.Outcomes[0].Values.Fixed[0] = testBuiltinTableTop()
+			right.Outcomes[0].Values.Fixed[0] = testFunction()
 			left.Outcomes[0].FreshResults = []FreshResultSpec{{Result: 0, Kind: FreshTable}}
 			right.Outcomes[0].FreshResults = []FreshResultSpec{{Result: 0, Kind: FreshFunction}}
 			return deltaSeal(t, Spec{Operations: []OperationSpec{left}}), deltaSeal(t, Spec{Operations: []OperationSpec{right}})
@@ -111,11 +111,11 @@ func TestContentIDSemanticFamilyDeltas(t *testing.T) {
 func deltaSeal(t *testing.T, spec Spec) *Contract { return mustSeal(t, spec) }
 
 func deltaPlain(name string) OperationSpec {
-	return OperationSpec{Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{name}}}, Input: ValuesSpec{Fixed: []typ.Type{typ.String}, Tail: ValuesClosed}, Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{typ.String}, Tail: ValuesClosed}}}, Effects: RowSpec{Tail: RowClosed}}
+	return OperationSpec{Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{name}}}, Input: ValuesSpec{Fixed: []schematype.Type{testString}, Tail: ValuesClosed}, Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testString}, Tail: ValuesClosed}}}, Effects: RowSpec{Tail: RowClosed}}
 }
 
-func deltaOpenValues(name string, tail ValuesTail, suffix typ.Type) OperationSpec {
-	return OperationSpec{Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{name}}}, ValuesVars: 1, Input: ValuesSpec{Fixed: []typ.Type{typ.String}, Tail: ValuesClosed}, Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{typ.String}, Tail: tail, Var: 0, Suffix: []typ.Type{suffix}}}}, Effects: RowSpec{Tail: RowClosed}}
+func deltaOpenValues(name string, tail ValuesTail, suffix schematype.Type) OperationSpec {
+	return OperationSpec{Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{name}}}, ValuesVars: 1, Input: ValuesSpec{Fixed: []schematype.Type{testString}, Tail: ValuesClosed}, Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testString}, Tail: tail, Var: 0, Suffix: []schematype.Type{suffix}}}}, Effects: RowSpec{Tail: RowClosed}}
 }
 
 func deltaCallbackOperation(name string, function, callback uint32, result bool) OperationSpec {
@@ -123,19 +123,19 @@ func deltaCallbackOperation(name string, function, callback uint32, result bool)
 	if result {
 		callbacks = []CallbackSpec{{Function: InputSource{Kind: InputSourceValueFormal}, Admission: OrdinaryCallable, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: CallbackRetainedOptionalOnce, Effects: RowSpec{Tail: RowClosed}}, {Function: InputSource{Kind: InputSourceValueFormal, Ordinal: 1}, Admission: OrdinaryCallable, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: CallbackRetainedOptionalOnce, Effects: RowSpec{Tail: RowClosed}}}
 	}
-	outcome := OutcomeSpec{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{typ.Any, typ.Any}, Tail: ValuesClosed}}
+	outcome := OutcomeSpec{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testAny, testAny}, Tail: ValuesClosed}}
 	if result {
 		outcome.CallbackResults = []CallbackResultSpec{{Result: 0, Callback: CallbackRef(callback)}}
 	}
-	return OperationSpec{Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{name}}}, ValuesVars: 5, Input: ValuesSpec{Fixed: []typ.Type{typ.Any, typ.Any}, Tail: ValuesVariable, Var: 0}, Callbacks: callbacks, Outcomes: []OutcomeSpec{outcome}, Effects: RowSpec{Tail: RowClosed}}
+	return OperationSpec{Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{name}}}, ValuesVars: 5, Input: ValuesSpec{Fixed: []schematype.Type{testAny, testAny}, Tail: ValuesVariable, Var: 0}, Callbacks: callbacks, Outcomes: []OutcomeSpec{outcome}, Effects: RowSpec{Tail: RowClosed}}
 }
 
 func deltaAliasOperation(name string, ordinal uint32) OperationSpec {
-	return OperationSpec{Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{name}}}, Input: ValuesSpec{Fixed: []typ.Type{typ.String, typ.String}, Tail: ValuesClosed}, Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{typ.String, typ.String}, Tail: ValuesClosed}, ResultAliases: []ResultAliasSpec{{Result: 0, Source: InputSource{Kind: InputSourceValueFormal, Ordinal: ordinal}}}}}, Effects: RowSpec{Tail: RowClosed}}
+	return OperationSpec{Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{name}}}, Input: ValuesSpec{Fixed: []schematype.Type{testString, testString}, Tail: ValuesClosed}, Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testString, testString}, Tail: ValuesClosed}, ResultAliases: []ResultAliasSpec{{Result: 0, Source: InputSource{Kind: InputSourceValueFormal, Ordinal: ordinal}}}}}, Effects: RowSpec{Tail: RowClosed}}
 }
 
 func deltaProduced(capture uint32) Spec {
-	parent := OperationSpec{Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"produced"}}}, Input: ValuesSpec{Fixed: []typ.Type{typ.String, typ.String}, Tail: ValuesClosed}, Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed}, Produced: []ProducedSpec{{Result: 0, Operation: 2, Captures: []CaptureSpec{{Kind: CaptureValueFormal, Ordinal: capture}}}}}}, Effects: RowSpec{Tail: RowClosed}}
+	parent := OperationSpec{Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"produced"}}}, Input: ValuesSpec{Fixed: []schematype.Type{testString, testString}, Tail: ValuesClosed}, Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}, Produced: []ProducedSpec{{Result: 0, Operation: 2, Captures: []CaptureSpec{{Kind: CaptureValueFormal, Ordinal: capture}}}}}}, Effects: RowSpec{Tail: RowClosed}}
 	child := OperationSpec{Input: ValuesSpec{Tail: ValuesClosed}, Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesClosed}}}, Effects: RowSpec{Tail: RowClosed}}
 	return Spec{Operations: []OperationSpec{parent, child}}
 }
@@ -145,11 +145,11 @@ func deltaSuspension(multiplicity ReentryMultiplicity) OperationSpec {
 }
 
 func deltaResume(carrier ValueFormal) OperationSpec {
-	return OperationSpec{Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"resume"}}}, ValuesVars: 1, Input: ValuesSpec{Fixed: []typ.Type{typ.String, typ.String}, Tail: ValuesVariable, Var: 0}, Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesClosed}}}, Resumes: []ResumeSpec{completeResume(ResumeSourceValueFormal, carrier, 0)}, Effects: RowSpec{Tail: RowClosed}}
+	return OperationSpec{Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"resume"}}}, ValuesVars: 1, Input: ValuesSpec{Fixed: []schematype.Type{testString, testString}, Tail: ValuesVariable, Var: 0}, Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesClosed}}}, Resumes: []ResumeSpec{completeResume(ResumeSourceValueFormal, carrier, 0)}, Effects: RowSpec{Tail: RowClosed}}
 }
 
 func deltaTransfer(normal TransferPossibility) OperationSpec {
-	return OperationSpec{Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"transfer"}}}, Input: ValuesSpec{Fixed: []typ.Type{typ.String}, Tail: ValuesClosed}, Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesClosed}}, {Kind: flowkind.OutcomeThrow, Values: ValuesSpec{Tail: ValuesClosed}}}, Transfers: []TransferSpec{{Endpoint: TransferEndpoint{Kind: TransferEndpointExternal}, Payload: InputSource{Kind: InputSourceValueFormal}, Alias: InputSource{Kind: InputSourceValueFormal}, Identity: TransferIdentityUnspecified, Capabilities: TransferCapabilitiesUnspecified, Outcomes: []TransferOutcomeSpec{{Outcome: 0, Possibility: normal}, {Outcome: 1, Possibility: TransferMayReject}}}}, Effects: RowSpec{Tail: RowClosed}}
+	return OperationSpec{Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"transfer"}}}, Input: ValuesSpec{Fixed: []schematype.Type{testString}, Tail: ValuesClosed}, Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesClosed}}, {Kind: flowkind.OutcomeThrow, Values: ValuesSpec{Tail: ValuesClosed}}}, Transfers: []TransferSpec{{Endpoint: TransferEndpoint{Kind: TransferEndpointExternal}, Payload: InputSource{Kind: InputSourceValueFormal}, Alias: InputSource{Kind: InputSourceValueFormal}, Identity: TransferIdentityUnspecified, Capabilities: TransferCapabilitiesUnspecified, Outcomes: []TransferOutcomeSpec{{Outcome: 0, Possibility: normal}, {Outcome: 1, Possibility: TransferMayReject}}}}, Effects: RowSpec{Tail: RowClosed}}
 }
 
 func deltaEffects(target SpecRef) Spec {
@@ -173,8 +173,8 @@ func deltaProtocolTransition(swapped bool) Spec {
 	if swapped {
 		toNormal, toThrow = toThrow, toNormal
 	}
-	op := protocolOperation("protocol-transition", []typ.Type{typ.String})
-	op.Outcomes = []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed}}, {Kind: flowkind.OutcomeThrow, Values: ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed}}}
+	op := protocolOperation("protocol-transition", []schematype.Type{testString})
+	op.Outcomes = []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}}, {Kind: flowkind.OutcomeThrow, Values: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}}}
 	return Spec{
 		Operations: []OperationSpec{op},
 		Protocols: []ProtocolSpec{{
@@ -190,7 +190,7 @@ func deltaProtocolTransition(swapped bool) Spec {
 
 func deltaProtocolEscape(ordinal uint32) Spec {
 	return Spec{
-		Operations: []OperationSpec{protocolOperation("protocol-escape", []typ.Type{typ.String, typ.String})},
+		Operations: []OperationSpec{protocolOperation("protocol-escape", []schematype.Type{testString, testString})},
 		Protocols: []ProtocolSpec{{
 			Acquisitions: []AcquisitionSpec{{Operation: 1, Outcome: 0, Result: 0, State: 1}},
 			States:       []StateSpec{{Name: "state"}},

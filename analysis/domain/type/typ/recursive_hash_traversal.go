@@ -132,7 +132,9 @@ func (m *hashMachine) enterWith(frame *hashFrame) {
 		}
 		m.scratch.visitedPush(rec)
 		frame.rec = rec
-		frame.hash = hash.MixHash(uint64(kind.Recursive), hash.FnvString(rec.Name))
+		// The binder name is presentation, so it is not hashed: equality joins
+		// two spellings of one fixed point and the hash has to join them too.
+		frame.hash = hash.MixHash(uint64(kind.Recursive), 0)
 		if rec.Body == nil {
 			m.scratch.visitedPop(rec)
 			m.scratch.memoSet(rec, frame.hash)

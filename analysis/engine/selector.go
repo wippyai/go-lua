@@ -139,34 +139,6 @@ func (frame *selectorFrame) declaresRead(index int) bool {
 	return false
 }
 
-func (frame *selectorFrame) isCurrent(index int) bool {
-	return frame != nil && frame.write != nil && frame.current >= 0 && frame.current < len(frame.write.candidates) && frame.write.candidates[frame.current] == index
-}
-
-func (frame *selectorFrame) declaresCandidate(index int) bool {
-	if frame == nil || frame.write == nil {
-		return false
-	}
-	for _, candidate := range frame.write.candidates {
-		if candidate == index {
-			return true
-		}
-	}
-	return false
-}
-
-func (frame *selectorFrame) declaresWrite(index int) bool {
-	if frame == nil || frame.write == nil {
-		return false
-	}
-	for _, dependency := range frame.write.depends {
-		if dependency.kind == writeDependency && dependency.index == index {
-			return true
-		}
-	}
-	return false
-}
-
 // SelectorRead returns an already-completed declared predecessor observation
 // for the current selector. A later staged locator can therefore consume an
 // earlier Selection without a final Product freeze or any ambient State read.
@@ -199,38 +171,6 @@ func SelectorRead[S any](context SelectorContext, read Read[S]) (S, bool) {
 		return zero, false
 	}
 	return value, true
-}
-
-// CurrentCandidate reports whether a read is the currently evaluated write
-// selector candidate. It is invalid for staged read locators.
-func CurrentCandidate[S any](context SelectorContext, read Read[S]) bool {
-	frame := context.frame
-	if !context.valid() || !frame.rowLive() || frame.write == nil || !read.matchesRuntimeOwner(frame.execution.owner) || read.index < 0 || !frame.declaresCandidate(read.index) {
-		frame.poison()
-		return false
-	}
-	return frame.isCurrent(read.index)
-}
-
-// SelectorSelected resolves a presealed write-target relation for the current
-// positional write selector candidate. It is unavailable to staged reads.
-type receiptWrite[V any] struct {
-	proof *ruleRuntimeProof
-	index int
-}
-
-func SelectorSelected[V, S any](context SelectorContext, prior receiptWrite[V], current Read[S]) bool {
-	frame := context.frame
-	if !context.valid() || !frame.rowLive() || frame.write == nil || prior.proof == nil || !prior.proof.valid() || prior.index < 0 || !current.matchesRuntimeOwner(frame.execution.owner) || current.index < 0 || !frame.declaresWrite(prior.index) || !frame.isCurrent(current.index) || frame.selected == nil {
-		frame.poison()
-		return false
-	}
-	selected, ok := frame.selected(prior.index, frame.current)
-	if !ok {
-		frame.poison()
-		return false
-	}
-	return selected
 }
 
 // selectorEmission is private transport from the generic SelectRoute helper

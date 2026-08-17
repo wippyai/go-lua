@@ -4,20 +4,21 @@ import (
 	"crypto/sha256"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
 	allocationcatalog "github.com/wippyai/go-lua/analysis/domain/heap/allocation/catalog"
 	empty "github.com/wippyai/go-lua/analysis/domain/heap/allocation/empty"
 	"github.com/wippyai/go-lua/analysis/domain/heap/allocation/internal/source"
 	heapowner "github.com/wippyai/go-lua/analysis/domain/heap/owner"
+	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
-	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
-	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 func TestHotEmptyBindingIssuesOnlyItsExactMountedReceipt(t *testing.T) {
@@ -136,7 +137,7 @@ func emptyFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Schema, emptyFi
 	if err != nil {
 		t.Fatal(err)
 	}
-	contract, err := target.Seal(&target.Spec{})
+	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +162,7 @@ type emptyFixtureMounts struct {
 
 func emptyArtifactMounts(t testing.TB, linked *link.Link) emptyFixtureMounts {
 	t.Helper()
-	receipt, receiptOK := grammar.Global()
+	receipt, receiptOK := composite.Global()
 	if !receiptOK || linked == nil || linked.Project() == nil {
 		t.Fatal("empty artifact receipt")
 	}
@@ -175,7 +176,7 @@ func emptyArtifactMounts(t testing.TB, linked *link.Link) emptyFixtureMounts {
 		if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 			t.Fatal("empty artifact mount")
 		}
-		artifact, failure := schemaadapter.CompileDetailed(program.TransformerInput(), receipt)
+		artifact, failure := composite.CompileArtifactDetailed(program, receipt)
 		if failure.Available() || artifact == nil {
 			t.Fatalf("empty artifact compile: %v", failure)
 		}
@@ -202,8 +203,8 @@ func emptyRoot(t testing.TB, schema heapdomain.Schema) heapdomain.Key {
 	return heapdomain.Key{}
 }
 
-func emptyKey(value byte) engine.SemanticKey {
+func emptyKey(value byte) identity.SemanticKey {
 	digest := sha256.Sum256([]byte{0xE1, value})
-	key, _ := engine.NewSemanticKey(digest, 1)
+	key, _ := identity.NewSemanticKey(digest, 1)
 	return key
 }

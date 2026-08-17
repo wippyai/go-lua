@@ -193,7 +193,7 @@ func buildRawBootInitials(topology *Topology, values *valuedomain.Schema) (map[r
 		if !valueOK {
 			return nil, false
 		}
-		for _, role := range []materialization.Role{materialization.Exact, materialization.Recent, materialization.Summary} {
+		for _, role := range materialization.Roles() {
 			// RouteTag is the same producer the hot lane uses to reach this
 			// cell, so the roles it admits are exactly the ones to bake.
 			route, routeOK := heap.RouteTag(key, role)

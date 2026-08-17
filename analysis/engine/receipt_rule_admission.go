@@ -2,9 +2,9 @@ package engine
 
 import (
 	"crypto/sha256"
-
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
+	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"github.com/wippyai/go-lua/analysis/identity"
 )
 
@@ -22,7 +22,7 @@ type RuleOccurrenceReceipt struct {
 	reusable    identity.ContentID
 	input       equation.Site
 	inputID     identity.ContentID
-	stage       ArtifactRuleStage
+	stage       rows.ArtifactRuleStage
 	predecessor *artifactEnvironmentRow
 	routed      bool
 }
@@ -40,244 +40,6 @@ type RuleSurfaceSourceReceipt struct {
 	assembly *ReceiptAssembly
 }
 
-// RuleSlotCapability is the parent-issued identity of one rule slot.  The
-// engine deliberately has no domain-role vocabulary: a capability is tied to
-// the exact SchemaBinding authority and slot ordinal that issued it.  The
-// artifact/analysis owner maps its domain role to this opaque capability.
-type RuleSlotCapability struct {
-	state      *schemaBindingState
-	authority  *schemaBindingAuthority
-	ordinal    uint64
-	kind       ruleCapabilityKind
-	activation bool
-}
-
-type ruleCapabilityKind uint8
-
-const (
-	ruleCapabilityInvalid ruleCapabilityKind = iota
-	ruleCapabilityMounted
-	ruleCapabilityLink
-)
-
-func (capability RuleSlotCapability) available() bool {
-	return capability.state != nil && capability.authority != nil && capability.kind != ruleCapabilityInvalid && capability.ordinal != ^uint64(0) && capability.state.authority == capability.authority
-}
-
-func (capability RuleSlotCapability) Available() bool { return capability.available() }
-func (capability RuleSlotCapability) Mounted() bool   { return capability.mounted() }
-func (capability RuleSlotCapability) Link() bool      { return capability.link() }
-func (capability RuleSlotCapability) Activation() bool {
-	return capability.mounted() && capability.activation
-}
-
-func (capability RuleSlotCapability) mounted() bool {
-	return capability.available() && capability.kind == ruleCapabilityMounted
-}
-
-func (capability RuleSlotCapability) link() bool {
-	return capability.available() && capability.kind == ruleCapabilityLink
-}
-
-// IssueMountedRuleCapability issues an opaque capability for an ordinary
-// mounted Rule slot.  It is intentionally issued by the schema boundary, not
-// from a domain enum or caller-supplied code.
-func IssueMountedRuleCapability[V, O any](binding *SchemaBinding, slot *RuleSlot[V, O]) (RuleSlotCapability, bool) {
-	if slot == nil || slot.cell == nil {
-		return RuleSlotCapability{}, false
-	}
-	return issueRuleSlotCapability(binding, slot.cell.schema, slot.cell.ordinal, ruleCapabilityMounted, false)
-}
-
-// IssueActivationRuleCapability issues the structural mounted capability for
-// an activation slot.  Activation is slot geometry, not an engine role.
-func IssueActivationRuleCapability(binding *SchemaBinding, slot *SchemaActivationRuleSlot) (RuleSlotCapability, bool) {
-	if slot == nil || slot.cell == nil {
-		return RuleSlotCapability{}, false
-	}
-	return issueRuleSlotCapability(binding, slot.cell.schema, slot.cell.ordinal, ruleCapabilityMounted, true)
-}
-
-// IssueLinkRuleCapability issues the mount-neutral capability for a Link
-// bootstrap slot.  There is no separate Link role namespace in the engine.
-func IssueLinkRuleCapability[V, O any](binding *SchemaBinding, slot *RuleSlot[V, O]) (RuleSlotCapability, bool) {
-	if slot == nil || slot.cell == nil {
-		return RuleSlotCapability{}, false
-	}
-	return issueRuleSlotCapability(binding, slot.cell.schema, slot.cell.ordinal, ruleCapabilityLink, false)
-}
-
-func issueRuleSlotCapability(binding *SchemaBinding, schema *Schema, ordinal uint64, kind ruleCapabilityKind, activation bool) (RuleSlotCapability, bool) {
-	state := bindingState(binding)
-	if state == nil || state.phase != schemaBindingOpen || state.authority == nil {
-		return RuleSlotCapability{}, false
-	}
-	if schema == nil || schema != state.schema {
-		return RuleSlotCapability{}, false
-	}
-	return RuleSlotCapability{state: state, authority: state.authority, ordinal: ordinal, kind: kind, activation: activation}, true
-}
-
-// RegisterRuleSlot is the pre-seal owner bridge.  The parent supplies the
-// capability previously issued by this exact SchemaBinding; the engine never
-// interprets a domain role or numeric role code.
-func RegisterRuleSlot[V, O any](binding *SchemaBinding, slot *RuleSlot[V, O], capability RuleSlotCapability) bool {
-	if slot == nil || slot.cell == nil {
-		return false
-	}
-	return registerRuleSlot(binding, slot.cell.schema, slot.cell.ordinal, capability)
-}
-
-func RegisterActivationRuleSlot(binding *SchemaBinding, slot *SchemaActivationRuleSlot, capability RuleSlotCapability) bool {
-	if slot == nil || slot.cell == nil {
-		return false
-	}
-	return registerRuleSlot(binding, slot.cell.schema, slot.cell.ordinal, capability)
-}
-
-// RegisterLinkBootstrapTransportPair is the one pre-seal authorization for
-// the two factors allowed to leave the Link-global bootstrap point. Ordering
-// is owner-significant and retained exactly; a same-Binding Link capability
-// is not sufficient unless it occupies its registered position in this pair.
-func RegisterLinkBootstrapTransportPair(binding *SchemaBinding, first, second RuleSlotCapability) bool {
-	state := bindingState(binding)
-	if state == nil || !first.link() || !second.link() || first == second || first.state != state || second.state != state || first.authority != state.authority || second.authority != state.authority {
-		return false
-	}
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	if state.phase != schemaBindingOpen || state.linkBootstrapTransportPair {
-		return false
-	}
-	state.linkBootstrapTransports = [2]RuleSlotCapability{first, second}
-	state.linkBootstrapTransportPair = true
-	if !completeLinkBootstrapTransportPairLocked(state) {
-		state.linkBootstrapTransports = [2]RuleSlotCapability{}
-		state.linkBootstrapTransportPair = false
-		return false
-	}
-	return true
-}
-
-func sealedLinkBootstrapTransportPair(state *schemaBindingState) ([2]RuleSlotCapability, bool) {
-	if state == nil {
-		return [2]RuleSlotCapability{}, false
-	}
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	if state.phase != schemaBindingSealed || !completeLinkBootstrapTransportPairLocked(state) {
-		return [2]RuleSlotCapability{}, false
-	}
-	return state.linkBootstrapTransports, true
-}
-
-// BindingRuleSlot resolves one runtime Rule semantic through the exact sealed
-// role directory. It exists only for closed diagnostics: callers receive a
-// role enum, never a Schema ordinal, callback, or mutable binding row.
-func BindingRuleSlot(binding *SchemaBinding, semantic SemanticKey) (RuleSlotCapability, bool) {
-	state := bindingState(binding)
-	if state == nil || !semantic.Available() {
-		return RuleSlotCapability{}, false
-	}
-	key := semantic.compositionKey()
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	if state.phase != schemaBindingSealed {
-		return RuleSlotCapability{}, false
-	}
-	ordinal, found := state.schema.ruleOrdinalOf(key)
-	if !found {
-		return RuleSlotCapability{}, false
-	}
-	if role, candidate, found := lookupRuleSlotCapabilityLocked(state, ordinal, ruleCapabilityMounted, false); found && candidate == key {
-		return role, true
-	}
-	if role, candidate, found := lookupRuleSlotCapabilityLocked(state, ordinal, ruleCapabilityMounted, true); found && candidate == key {
-		return role, true
-	}
-	if role, candidate, found := lookupRuleSlotCapabilityLocked(state, ordinal, ruleCapabilityLink, false); found && candidate == key {
-		return role, true
-	}
-	return RuleSlotCapability{}, false
-}
-
-// MountedCapabilityForSlot returns the parent-issued capability registered
-// for this exact ordinary Rule slot.  It is the post-seal owner lookup used by
-// domain adapters; no semantic role name crosses this boundary.
-func MountedCapabilityForSlot[V, O any](binding *SchemaBinding, slot *RuleSlot[V, O]) (RuleSlotCapability, bool) {
-	if slot == nil || slot.cell == nil {
-		return RuleSlotCapability{}, false
-	}
-	return capabilityForSlot(binding, slot.cell.schema, slot.cell.ordinal, ruleCapabilityMounted, false)
-}
-
-// ActivationCapabilityForSlot is the structural counterpart for an
-// activation slot.
-func ActivationCapabilityForSlot(binding *SchemaBinding, slot *SchemaActivationRuleSlot) (RuleSlotCapability, bool) {
-	if slot == nil || slot.cell == nil {
-		return RuleSlotCapability{}, false
-	}
-	return capabilityForSlot(binding, slot.cell.schema, slot.cell.ordinal, ruleCapabilityMounted, true)
-}
-
-func LinkCapabilityForSlot[V, O any](binding *SchemaBinding, slot *RuleSlot[V, O]) (RuleSlotCapability, bool) {
-	if slot == nil || slot.cell == nil {
-		return RuleSlotCapability{}, false
-	}
-	return capabilityForSlot(binding, slot.cell.schema, slot.cell.ordinal, ruleCapabilityLink, false)
-}
-
-func capabilityForSlot(binding *SchemaBinding, schema *Schema, ordinal uint64, kind ruleCapabilityKind, activation bool) (RuleSlotCapability, bool) {
-	state := bindingState(binding)
-	if state == nil || schema == nil || state.schema != schema || state.phase != schemaBindingSealed {
-		return RuleSlotCapability{}, false
-	}
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	capability, _, found := lookupRuleSlotCapabilityLocked(state, ordinal, kind, activation)
-	return capability, found
-}
-
-// lookupRuleSlotCapabilityLocked probes the exact opaque capability key. The
-// caller must hold state.mu; capability kind is a small closed set, so callers
-// needing a semantic reverse lookup can probe it without walking the directory.
-func lookupRuleSlotCapabilityLocked(state *schemaBindingState, ordinal uint64, kind ruleCapabilityKind, activation bool) (RuleSlotCapability, composition.Key, bool) {
-	if state == nil || state.authority == nil || state.roleSlots == nil || kind == ruleCapabilityInvalid || (activation && kind != ruleCapabilityMounted) {
-		return RuleSlotCapability{}, composition.Key{}, false
-	}
-	capability := RuleSlotCapability{state: state, authority: state.authority, ordinal: ordinal, kind: kind, activation: activation}
-	semantic, found := state.roleSlots[capability]
-	return capability, semantic, found
-}
-
-func registerRuleSlot(binding *SchemaBinding, schema *Schema, ordinal uint64, capability RuleSlotCapability) bool {
-	if binding == nil || binding.state == nil || schema == nil || binding.state.schema != schema || !capability.available() || capability.state != binding.state || capability.authority != binding.state.authority {
-		return false
-	}
-	semantic := schema.ruleSemanticAt(ordinal)
-	if !semantic.Available() {
-		return false
-	}
-	state := binding.state
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	if state.phase != schemaBindingOpen || state.roleSlots == nil {
-		return false
-	}
-	if capability.ordinal != ordinal || capability.kind == ruleCapabilityInvalid || (capability.activation && capability.kind != ruleCapabilityMounted) {
-		return false
-	}
-	if _, exists := state.roleSlots[capability]; exists {
-		return false
-	}
-	state.roleSlots[capability] = semantic
-	return true
-}
-
-func completeCapabilityDirectory(state *schemaBindingState) bool {
-	return state != nil && len(state.roleSlots) != 0
-}
-
 // AdmitMountedRuleOccurrence resolves one exact mounted point and occurrence
 // identity. The member identity is mount+point+occurrence qualified, so equal
 // reusable artifacts and same IDs on different mounts cannot alias.
@@ -289,19 +51,19 @@ func (assembly *ReceiptAssembly) AdmitMountedRuleOccurrence(role RuleSlotCapabil
 	if !ok {
 		return RuleOccurrenceReceipt{}, false
 	}
-	rows := inner.artifact
+	artifactRows := inner.artifact
 	var site equation.Site
 	var inputSite equation.Site
 	var inputID identity.ContentID
-	var stage ArtifactRuleStage
+	var stage rows.ArtifactRuleStage
 	var predecessor *artifactEnvironmentRow
 	var routed bool
 	found := false
-	if rows != nil {
-		site, found = rows.mountedSite(mountID, reusablePointID)
+	if artifactRows != nil {
+		site, found = artifactRows.mountedSite(mountID, reusablePointID)
 		if found {
 			var input artifactRuleInput
-			input, found = rows.mountedRule(role, mountID, reusablePointID, occurrenceID)
+			input, found = artifactRows.mountedRule(role, mountID, reusablePointID, occurrenceID)
 			inputID, stage, routed = input.point, input.stage, input.routed
 			if routed {
 				row := input.predecessor
@@ -309,7 +71,7 @@ func (assembly *ReceiptAssembly) AdmitMountedRuleOccurrence(role RuleSlotCapabil
 			}
 		}
 		if found && inputID.Available() {
-			inputSite, found = rows.mountedSite(mountID, inputID)
+			inputSite, found = artifactRows.mountedSite(mountID, inputID)
 		}
 	}
 	inner.mu.Unlock()
@@ -321,7 +83,7 @@ func (assembly *ReceiptAssembly) AdmitMountedRuleOccurrence(role RuleSlotCapabil
 	member := mountedRuleMemberID(role, mountID, reusablePointID, occurrenceID)
 	activation := mountedRuleActivationID(role, mountID, reusablePointID, occurrenceID)
 	result := RuleOccurrenceReceipt{assembly: assembly, role: role, value: occurrence, member: member, activation: activation, mount: mountID, reusable: reusablePointID, input: inputSite, inputID: inputID, stage: stage, predecessor: predecessor, routed: routed}
-	return result, stage.valid() && entityOK && occurrenceOK && member.Available() && activation.Available()
+	return result, stage.Valid() && entityOK && occurrenceOK && member.Available() && activation.Available()
 }
 
 // AdmitLinkRuleOccurrence resolves only the two Link-global bootstrap roles
@@ -417,103 +179,11 @@ func BeginMountedActivationRuleAdmission(assembly *ReceiptAssembly, implementati
 	}, true
 }
 
-func (implementation *RuleImplementation[K, V, O]) SelectedReadReceipt(index uint64) (SchemaSelectedReadReceipt, bool) {
-	if implementation == nil || !implementation.receipt.valid() || implementation.receipt.proof == nil {
-		return SchemaSelectedReadReceipt{}, false
-	}
-	selected := implementation.receipt.proof.selectedReadAt(index)
-	returnValue := selected != nil && selected.Valid()
-	if !returnValue {
-		return SchemaSelectedReadReceipt{}, false
-	}
-	return *selected, true
-}
-
-// SchemaSummaryReadReceipt is the implementation-owned summary form proof.
-// It retains only the exact sealed Rule/Read fence and Schema normalizer key.
-type SchemaSummaryReadReceipt struct {
-	fence    schemaRuleReceiptFence
-	read     uint64
-	factor   uint64
-	semantic composition.Key
-	issued   bool
-}
-
-// boundTopologySummarySurfaceReceipt exposes only the sealed Factor/form
-// fence needed by topology catalog admission. The raw ClosedRefs vector stays
-// private to the RuleReadSurface issued below.
-func (receipt SchemaSummaryReadReceipt) boundTopologySummarySurfaceReceipt() (*schemaBindingState, *schemaBindingAuthority, composition.Key, composition.Key, bool) {
-	if !receipt.Valid() || receipt.fence.schema == nil {
-		return nil, nil, composition.Key{}, composition.Key{}, false
-	}
-	factor := receipt.fence.schema.factorSemanticAt(receipt.factor)
-	if !factor.Available() {
-		return nil, nil, composition.Key{}, composition.Key{}, false
-	}
-	return receipt.fence.state, receipt.fence.authority, factor, receipt.semantic, true
-}
-
-func (receipt SchemaSummaryReadReceipt) Valid() bool {
-	if !receipt.issued || !receipt.fence.valid() {
-		return false
-	}
-	rule, ruleOK := receipt.fence.schema.ruleShapeAt(receipt.fence.rule)
-	shape, ok := receipt.fence.schema.ruleReadShapeAt(receipt.fence.rule, receipt.read)
-	factor, factorOK := receipt.fence.schema.factorOrdinalOf(shape.Factor)
-	return ruleOK && ok && factorOK && shape.Kind == composition.ReadSummary && shape.DependencyCount == 0 && receipt.read < rule.ReadCount && factor == receipt.factor && shape.Semantic.Available() && shape.Semantic == shape.Normalizer && shape.Semantic == receipt.semantic
-}
-
-func (implementation *RuleImplementation[K, V, O]) SummaryReadReceipt(index uint64) (SchemaSummaryReadReceipt, bool) {
-	if implementation == nil || !implementation.receipt.valid() || implementation.receipt.proof == nil {
-		return SchemaSummaryReadReceipt{}, false
-	}
-	fence := schemaRuleReceiptFence{state: implementation.receipt.proof.state, authority: implementation.receipt.proof.bindingAuthority, schema: implementation.receipt.proof.schema, rule: implementation.receipt.proof.ordinal}
-	if fence.state == nil || fence.schema == nil || fence.rule >= uint64(len(fence.state.rules)) {
-		return SchemaSummaryReadReceipt{}, false
-	}
-	fence.cell, _ = fence.state.rules[fence.rule].(schemaRuleBindingCell)
-	shape, ok := fence.schema.ruleReadShapeAt(fence.rule, index)
-	if !ok || shape.Kind != composition.ReadSummary || !fence.valid() {
-		return SchemaSummaryReadReceipt{}, false
-	}
-	factor, factorOK := fence.schema.factorOrdinalOf(shape.Factor)
-	if !factorOK {
-		return SchemaSummaryReadReceipt{}, false
-	}
-	result := SchemaSummaryReadReceipt{fence: fence, read: index, factor: factor, semantic: shape.Semantic, issued: true}
-	return result, result.Valid()
-}
-
-func (implementation *RuleImplementation[K, V, O]) SelectorWriteReceipt() (SchemaSelectWriteReceipt, bool) {
-	if implementation == nil || !implementation.receipt.valid() || implementation.receipt.proof == nil || implementation.receipt.proof.selectWrite == nil || !implementation.receipt.proof.selectWrite.Valid() {
-		return SchemaSelectWriteReceipt{}, false
-	}
-	return *implementation.receipt.proof.selectWrite, true
-}
-
-func (implementation *RuleImplementation[K, V, O]) RouteWriteReceipt() (SchemaRouteWriteReceipt, bool) {
-	if implementation == nil || !implementation.receipt.valid() || implementation.receipt.proof == nil || implementation.receipt.proof.routeWrite == nil || !implementation.receipt.proof.routeWrite.Valid() {
-		return SchemaRouteWriteReceipt{}, false
-	}
-	return *implementation.receipt.proof.routeWrite, true
-}
-
-func (implementation *ActivationRuleImplementation) SelectedReadReceipt(index uint64) (SchemaSelectedReadReceipt, bool) {
-	if implementation == nil || !implementation.receipt.valid() || implementation.receipt.proof == nil {
-		return SchemaSelectedReadReceipt{}, false
-	}
-	selected := implementation.receipt.proof.selectedReadAt(index)
-	if selected == nil || !selected.Valid() {
-		return SchemaSelectedReadReceipt{}, false
-	}
-	return *selected, true
-}
-
 // AddRule admits the row under the exact mounted occurrence authority that
 // issued its source. Callers cannot forge or reuse a semantic member ID.
 func (assembly *ReceiptAssembly) AddRule(occurrence RuleOccurrenceReceipt, receipt BindingRuleRowReceipt) (BindingRuleRowRef, bool) {
 	mounted, link := occurrence.role.mounted(), occurrence.linkRole.link()
-	if assembly == nil || assembly.builder == nil || occurrence.assembly != assembly || !occurrence.member.Available() || mounted == link || mounted && (!occurrence.activation.Available() || !occurrence.stage.valid()) {
+	if assembly == nil || assembly.builder == nil || occurrence.assembly != assembly || !occurrence.member.Available() || mounted == link || mounted && (!occurrence.activation.Available() || !occurrence.stage.Valid()) {
 		assembly.recordRuleFinalizerFailure(RuleFinalizerFailureAddRuleArguments)
 		return BindingRuleRowRef{}, false
 	}
@@ -566,7 +236,7 @@ func (assembly *ReceiptAssembly) AddRuleFromDraft(occurrence RuleOccurrenceRecei
 }
 
 func (assembly *ReceiptAssembly) AddActivationRule(occurrence RuleOccurrenceReceipt, receipt BindingRuleRowReceipt) bool {
-	if assembly == nil || assembly.builder == nil || occurrence.assembly != assembly || !occurrence.role.mounted() || !occurrence.stage.valid() || !occurrence.member.Available() {
+	if assembly == nil || assembly.builder == nil || occurrence.assembly != assembly || !occurrence.role.mounted() || !occurrence.stage.Valid() || !occurrence.member.Available() {
 		assembly.recordRuleFinalizerFailure(RuleFinalizerFailureAddRuleArguments)
 		return false
 	}
@@ -599,138 +269,6 @@ func (assembly *ReceiptAssembly) AddActivationRuleFromDraft(occurrence RuleOccur
 		return false
 	}
 	return assembly.AddActivationRule(occurrence, receipt)
-}
-
-// RuleReadSurface and RuleWriteSurface are owner-issued exact coordinate
-// receipts. The Ref factory preserves the originating Binding authority and
-// the source transaction rejects foreign/equal-but-distinct refs.
-type RuleReadSurface struct {
-	value     equation.Surface
-	authority *schemaBindingAuthority
-	anchor    *mountedSelectedSurfaceAnchor
-	summary   *ruleSummaryMapping
-}
-
-type ruleSummaryMapping struct {
-	receipt bindingSummarySurfaceReceipt
-	surface equation.Surface
-	keys    []uint64
-}
-
-type RuleWriteSurface struct {
-	value     equation.Surface
-	targets   []equation.Surface
-	relations []equation.CandidateRelation
-	authority *schemaBindingAuthority
-	route     *SchemaRouteWriteReceipt
-	selector  *SchemaSelectWriteReceipt
-	anchor    *mountedSelectedSurfaceAnchor
-}
-
-func ExactReadSurface[K ~uint32 | ~uint64](ref Ref[K]) (RuleReadSurface, bool) {
-	if ref.bindingAuthority == nil || !ref.factorKey.Available() || uint64(ref.raw) == ^uint64(0) {
-		return RuleReadSurface{}, false
-	}
-	return RuleReadSurface{value: equation.Surface{Factor: ref.factorKey, Form: equation.SurfaceReadExact, Local: uint64(ref.raw) + 1}, authority: ref.bindingAuthority}, true
-}
-
-func ExactWriteSurface[K ~uint32 | ~uint64](ref Ref[K]) (RuleWriteSurface, bool) {
-	if ref.bindingAuthority == nil || !ref.factorKey.Available() || uint64(ref.raw) == ^uint64(0) {
-		return RuleWriteSurface{}, false
-	}
-	return RuleWriteSurface{value: equation.Surface{Factor: ref.factorKey, Form: equation.SurfaceWriteExact, Local: uint64(ref.raw) + 1, Mode: equation.TargetModeStrong}, authority: ref.bindingAuthority}, true
-}
-
-func summaryLocal(digest [32]byte) uint64 {
-	var value uint64
-	for index := 0; index < 8; index++ {
-		value |= uint64(digest[index]) << (8 * index)
-	}
-	if value == 0 {
-		value = 1
-	}
-	return value
-}
-
-// SummaryReadSurface consumes a sealed ClosedRefs vector and the exact
-// implementation-issued summary proof. Semantic/normalizer identity is read
-// from Schema, never supplied by the caller.
-func SummaryReadSurface[K ~uint32 | ~uint64](receipt SchemaSummaryReadReceipt, refs *ClosedRefs[K]) (RuleReadSurface, bool) {
-	if !receipt.Valid() || refs == nil || !refs.closed || !refs.receipt.valid() || refs.receipt.authority != receipt.fence.authority {
-		return RuleReadSurface{}, false
-	}
-	return RuleReadSurface{
-		value:     equation.Surface{Factor: refs.receipt.semantic, Form: equation.SurfaceReadSummary, Local: summaryLocal(refs.digest), Semantic: receipt.semantic, Normalizer: receipt.semantic},
-		authority: refs.receipt.authority,
-		summary: &ruleSummaryMapping{
-			receipt: receipt,
-			surface: equation.Surface{Factor: refs.receipt.semantic, Form: equation.SurfaceReadSummary, Local: summaryLocal(refs.digest), Semantic: receipt.semantic, Normalizer: receipt.semantic},
-			keys: func() []uint64 {
-				keys := make([]uint64, len(refs.refs))
-				for index, ref := range refs.refs {
-					keys[index] = uint64(ref.raw)
-				}
-				return keys
-			}(),
-		},
-	}, true
-}
-
-// SelectedReadSurface consumes the sealed selected-read schema proof and one
-// exact output Ref. Dependencies are exact owner surfaces for the declared
-// predecessor reads; their order is checked against the sealed Schema.
-func SelectedReadSurface[K ~uint32 | ~uint64](receipt SchemaSelectedReadReceipt, ref Ref[K], dependencies []RuleReadSurface) (RuleReadSurface, bool) {
-	if !receipt.Valid() || receipt.fence.authority == nil || ref.bindingAuthority != receipt.fence.authority || uint64(ref.raw) == ^uint64(0) || len(dependencies) != int(receipt.dependencyCount) {
-		return RuleReadSurface{}, false
-	}
-	factor := receipt.fence.schema.factorSemanticAt(receipt.factor)
-	if !factor.Available() || ref.factorKey != factor {
-		return RuleReadSurface{}, false
-	}
-	for index, dependency := range dependencies {
-		readIndex, ok := receipt.fence.schema.ruleReadDependencyAt(receipt.fence.rule, receipt.read, uint64(index))
-		shape, shapeOK := receipt.fence.schema.ruleReadShapeAt(receipt.fence.rule, readIndex)
-		if !ok || !shapeOK || dependency.authority != receipt.fence.authority || dependency.value.Mode != equation.TargetModeNone || dependency.value.Factor != shape.Factor || dependency.value.Local == 0 || !validSelectedDependencySurface(shape, dependency.value) {
-			return RuleReadSurface{}, false
-		}
-	}
-	return RuleReadSurface{value: equation.Surface{Factor: factor, Form: equation.SurfaceReadSelect, Local: uint64(ref.raw) + 1, Semantic: factor}, authority: ref.bindingAuthority}, true
-}
-
-func anchoredSelectedLocal(occurrence equation.Occurrence, operand equation.Operand, receipt SchemaSelectedReadReceipt) uint64 {
-	occurrenceKey := occurrence.IdentityKey()
-	operandKey := operand.IdentityKey()
-	encoded := []byte("analysis/engine/selected-surface/v2")
-	encoded = append(encoded, occurrenceKey.ID[:]...)
-	encoded = appendUint64(encoded, occurrenceKey.Version)
-	encoded = append(encoded, operandKey.ID[:]...)
-	encoded = appendUint64(encoded, operandKey.Version)
-	encoded = appendUint64(encoded, receipt.fence.rule)
-	encoded = appendUint64(encoded, receipt.read)
-	digest := sha256.Sum256(encoded)
-	return summaryLocal(digest)
-}
-
-func anchoredRouteLocal(occurrence equation.Occurrence, operand equation.Operand, receipt SchemaRouteWriteReceipt) uint64 {
-	occurrenceKey := occurrence.IdentityKey()
-	operandKey := operand.IdentityKey()
-	encoded := []byte("analysis/engine/route-surface/v1")
-	encoded = append(encoded, occurrenceKey.ID[:]...)
-	encoded = appendUint64(encoded, occurrenceKey.Version)
-	encoded = append(encoded, operandKey.ID[:]...)
-	encoded = appendUint64(encoded, operandKey.Version)
-	encoded = appendUint64(encoded, receipt.fence.rule)
-	encoded = appendUint64(encoded, receipt.write)
-	encoded = appendUint64(encoded, receipt.read)
-	digest := sha256.Sum256(encoded)
-	return summaryLocal(digest)
-}
-
-func appendUint64(encoded []byte, value uint64) []byte {
-	for index := uint(0); index < 8; index++ {
-		encoded = append(encoded, byte(value>>(index*8)))
-	}
-	return encoded
 }
 
 // AnchoredSelectedReadSurface issues the ReadSelect surface from the exact
@@ -798,17 +336,6 @@ func (transaction *RuleSourceTransaction) AnchoredSelectedReadSurfaceWithFailure
 	return RuleReadSurface{value: surface, authority: receipt.fence.authority, anchor: &anchor}, AnchoredSelectedReadFailureNone
 }
 
-func validSelectedDependencySurface(shape composition.RuleReadShape, surface equation.Surface) bool {
-	switch shape.Kind {
-	case composition.ReadExact:
-		return surface.Form == equation.SurfaceReadExact && !surface.Semantic.Available() && !surface.Normalizer.Available()
-	case composition.ReadSelect:
-		return surface.Form == equation.SurfaceReadSelect && surface.Semantic == surface.Factor && !surface.Normalizer.Available()
-	default:
-		return false
-	}
-}
-
 // AnchoredRouteWriteSurface is the route sibling: the output has no single
 // exact Ref because runtime chooses zero-or-many selected targets. Its local
 // is tied to the admitted occurrence/operand and sealed route proof.
@@ -829,110 +356,13 @@ func (transaction *RuleSourceTransaction) AnchoredRouteWriteSurface(receipt Sche
 	return RuleWriteSurface{value: surface, authority: receipt.fence.authority, route: &receipt, anchor: &anchor}, true
 }
 
-// SelectorRelation is an opaque proof of one prior target relation. The
-// constructor checks every ordinal against the sealed selector shape before
-// retaining the private equation relation.
-type SelectorRelation struct {
-	receipt SchemaSelectWriteReceipt
-	value   equation.CandidateRelation
-}
-
-func NewSelectorRelation(receipt SchemaSelectWriteReceipt, prior uint64, matches [][]uint64) (SelectorRelation, bool) {
-	if !receipt.Valid() || len(matches) != int(receipt.candidateCount) {
-		return SelectorRelation{}, false
-	}
-	found := false
-	for index := uint64(0); ; index++ {
-		dependency, target, ok := receipt.fence.schema.ruleWriteDependencyAt(receipt.fence.rule, receipt.write, index)
-		if !ok {
-			break
-		}
-		if target {
-			if found || dependency != prior {
-				continue
-			}
-			found = true
-		}
-	}
-	if !found {
-		return SelectorRelation{}, false
-	}
-	for _, row := range matches {
-		previous := uint64(0)
-		for index, value := range row {
-			if value >= receipt.candidateCount || index > 0 && value <= previous {
-				return SelectorRelation{}, false
-			}
-			previous = value
-		}
-	}
-	return SelectorRelation{receipt: receipt, value: equation.CandidateRelation{Prior: prior, Matches: cloneRelationMatches(matches)}}, true
-}
-
-func cloneRelationMatches(values [][]uint64) [][]uint64 {
-	result := make([][]uint64, len(values))
-	for index, row := range values {
-		result[index] = append([]uint64(nil), row...)
-	}
-	return result
-}
-
-func SelectorWriteSurface[K ~uint32 | ~uint64](receipt SchemaSelectWriteReceipt, ref Ref[K], targets []Ref[K], relations []SelectorRelation) (RuleWriteSurface, bool) {
-	if !receipt.Valid() || receipt.fence.authority == nil || ref.bindingAuthority != receipt.fence.authority || uint64(ref.raw) == ^uint64(0) || len(targets) != int(receipt.candidateCount) {
-		return RuleWriteSurface{}, false
-	}
-	factor := receipt.fence.schema.factorSemanticAt(receipt.factor)
-	if !factor.Available() || ref.factorKey != factor || len(relations) == 0 {
-		return RuleWriteSurface{}, false
-	}
-	targetSurfaces := make([]equation.Surface, len(targets))
-	for index, target := range targets {
-		if target.bindingAuthority != receipt.fence.authority || target.factorKey != factor || uint64(target.raw) == ^uint64(0) {
-			return RuleWriteSurface{}, false
-		}
-		targetSurfaces[index] = equation.Surface{Factor: factor, Form: equation.SurfaceWriteExact, Local: uint64(target.raw) + 1, Mode: equation.TargetModeStrong}
-	}
-	targetDependencies := 0
-	for index := uint64(0); ; index++ {
-		_, target, ok := receipt.fence.schema.ruleWriteDependencyAt(receipt.fence.rule, receipt.write, index)
-		if !ok {
-			break
-		}
-		if target {
-			targetDependencies++
-		}
-	}
-	if len(relations) != targetDependencies {
-		return RuleWriteSurface{}, false
-	}
-	resolved := make([]equation.CandidateRelation, len(relations))
-	for index, relation := range relations {
-		if !relation.receipt.Valid() || relation.receipt.fence.authority != receipt.fence.authority || relation.receipt.write != receipt.write || relation.receipt.fence.rule != receipt.fence.rule {
-			return RuleWriteSurface{}, false
-		}
-		resolved[index] = equation.CandidateRelation{Prior: relation.value.Prior, Matches: cloneRelationMatches(relation.value.Matches)}
-	}
-	return RuleWriteSurface{value: equation.Surface{Factor: factor, Form: equation.SurfaceWriteSelect, Local: uint64(ref.raw) + 1, Mode: equation.TargetModeStrong, Semantic: receipt.semantic}, targets: targetSurfaces, relations: resolved, authority: ref.bindingAuthority, selector: &receipt}, true
-}
-
-func RouteWriteSurface[K ~uint32 | ~uint64](receipt SchemaRouteWriteReceipt, ref Ref[K]) (RuleWriteSurface, bool) {
-	if !receipt.Valid() || receipt.fence.authority == nil || ref.bindingAuthority != receipt.fence.authority || uint64(ref.raw) == ^uint64(0) {
-		return RuleWriteSurface{}, false
-	}
-	factor := receipt.fence.schema.factorSemanticAt(receipt.factor)
-	if !factor.Available() || ref.factorKey != factor {
-		return RuleWriteSurface{}, false
-	}
-	return RuleWriteSurface{value: equation.Surface{Factor: factor, Form: equation.SurfaceWriteRoute, Local: uint64(ref.raw) + 1}, authority: ref.bindingAuthority, route: &receipt}, true
-}
-
 // RuleSourceTransaction is the closed, occurrence-owned source admission
 // envelope. It records only owner-issued geometry; no equation coordinates or
 // cold factor ordinals can be supplied through this API.
 type RuleSourceTransaction struct {
 	assembly   *ReceiptAssembly
-	semantic   SemanticKey
-	family     SemanticKey
+	semantic   identity.SemanticKey
+	family     identity.SemanticKey
 	occurrence RuleOccurrenceReceipt
 	operand    RuleOperandReceipt
 	reads      []RuleReadSurface
@@ -1001,7 +431,7 @@ func (transaction *RuleSourceTransaction) ownsSurfaceAnchor(anchor *mountedSelec
 	if anchor.assembly != transaction.assembly || !occurrenceMatches || !operandMatches || anchor.form != form || anchor.index != index {
 		return false
 	}
-	ordinal, ok := transaction.assembly.builder.inner.state.schema.ruleOrdinalOf(transaction.semantic.compositionKey())
+	ordinal, ok := transaction.assembly.builder.inner.state.schema.ruleOrdinalOf(compositionKeyOf(transaction.semantic))
 	return ok && anchor.rule == ordinal
 }
 
@@ -1118,9 +548,9 @@ func (transaction *RuleSourceTransaction) SealWithFailure() (sourceResult RuleSu
 	if !ok {
 		return RuleSurfaceSourceReceipt{}, RuleSourceSealFailurePrecondition
 	}
-	ordinal, found := inner.state.schema.cold.RuleIndex(transaction.semantic.compositionKey())
+	ordinal, found := inner.state.schema.cold.RuleIndex(compositionKeyOf(transaction.semantic))
 	rule, rowOK := inner.state.schema.cold.RuleAt(ordinal)
-	valid := found && rowOK && rule.OperandFamily == transaction.family.compositionKey() && uint64(len(transaction.reads)) == uint64(len(rule.Reads)) && uint64(len(transaction.writes)) == uint64(len(rule.Writes)) && transaction.carries == uint64(len(rule.Carries))
+	valid := found && rowOK && rule.OperandFamily == compositionKeyOf(transaction.family) && uint64(len(transaction.reads)) == uint64(len(rule.Reads)) && uint64(len(transaction.writes)) == uint64(len(rule.Writes)) && transaction.carries == uint64(len(rule.Carries))
 	inner.mu.Unlock()
 	if !valid {
 		return RuleSurfaceSourceReceipt{}, RuleSourceSealFailureColdShape
@@ -1165,14 +595,14 @@ func (transaction *RuleSourceTransaction) SealWithFailure() (sourceResult RuleSu
 
 // IssueRuleSourceWithSurfaces finalizes a typed source only after every
 // occurrence-specific read/write Ref has been supplied by the domain owner.
-func (assembly *ReceiptAssembly) IssueRuleSourceWithSurfaces(semantic, operandFamily SemanticKey, occurrence RuleOccurrenceReceipt, operand RuleOperandReceipt, reads []RuleReadSurface, writes []RuleWriteSurface) (RuleSurfaceSourceReceipt, bool) {
+func (assembly *ReceiptAssembly) IssueRuleSourceWithSurfaces(semantic, operandFamily identity.SemanticKey, occurrence RuleOccurrenceReceipt, operand RuleOperandReceipt, reads []RuleReadSurface, writes []RuleWriteSurface) (RuleSurfaceSourceReceipt, bool) {
 	source, failure := assembly.IssueRuleSourceWithSurfacesWithFailure(semantic, operandFamily, occurrence, operand, reads, writes)
 	return source, failure == RuleSourceIssueFailureNone
 }
 
 // IssueRuleSourceWithSurfacesWithFailure issues a complete typed source and
 // returns the closed rejected predicate without exposing equation internals.
-func (assembly *ReceiptAssembly) IssueRuleSourceWithSurfacesWithFailure(semantic, operandFamily SemanticKey, occurrence RuleOccurrenceReceipt, operand RuleOperandReceipt, reads []RuleReadSurface, writes []RuleWriteSurface) (RuleSurfaceSourceReceipt, RuleSourceIssueFailure) {
+func (assembly *ReceiptAssembly) IssueRuleSourceWithSurfacesWithFailure(semantic, operandFamily identity.SemanticKey, occurrence RuleOccurrenceReceipt, operand RuleOperandReceipt, reads []RuleReadSurface, writes []RuleWriteSurface) (RuleSurfaceSourceReceipt, RuleSourceIssueFailure) {
 	if assembly == nil || assembly.builder == nil || !semantic.Available() || !operandFamily.Available() || occurrence.assembly != assembly || operand.assembly != assembly || operand.occurrence != occurrence || !occurrence.value.Available() || !operand.value.Available() {
 		return RuleSurfaceSourceReceipt{}, RuleSourceIssueFailureArguments
 	}
@@ -1180,8 +610,8 @@ func (assembly *ReceiptAssembly) IssueRuleSourceWithSurfacesWithFailure(semantic
 	if !ok {
 		return RuleSurfaceSourceReceipt{}, RuleSourceIssueFailureTopology
 	}
-	ruleKey := semantic.compositionKey()
-	familyKey := operandFamily.compositionKey()
+	ruleKey := compositionKeyOf(semantic)
+	familyKey := compositionKeyOf(operandFamily)
 	ruleOrdinal, ruleOK := inner.state.schema.cold.RuleIndex(ruleKey)
 	rule, rowOK := inner.state.schema.cold.RuleAt(ruleOrdinal)
 	if !ruleOK || !rowOK || rule.OperandFamily != familyKey {
@@ -1379,6 +809,7 @@ func (implementation *RuleImplementation[K, V, O]) BeginReceiptRuleRow(source Ru
 	draft.assembly = source.assembly
 	return draft, true
 }
+
 func (implementation *ActivationRuleImplementation) BeginReceiptRuleRow(source RuleSurfaceSourceReceipt) (*BindingRuleRowDraft, bool) {
 	draft, ok := implementation.BeginBindingRuleRow(source.value)
 	if !ok {
@@ -1388,6 +819,7 @@ func (implementation *ActivationRuleImplementation) BeginReceiptRuleRow(source R
 	draft.assembly = source.assembly
 	return draft, true
 }
+
 func (implementation *ActivationRuleImplementation) ReceiptReadPart(source RuleSurfaceSourceReceipt, index uint64) (BindingRuleReadPartReceipt, bool) {
 	part, ok := implementation.ReadPart(source.value, index)
 	if !ok {
@@ -1395,6 +827,7 @@ func (implementation *ActivationRuleImplementation) ReceiptReadPart(source RuleS
 	}
 	return part, ok
 }
+
 func (implementation *RuleImplementation[K, V, O]) ReceiptReadPart(source RuleSurfaceSourceReceipt, index uint64) (BindingRuleReadPartReceipt, bool) {
 	part, ok := implementation.ReadPart(source.value, index)
 	if !ok {
@@ -1402,6 +835,7 @@ func (implementation *RuleImplementation[K, V, O]) ReceiptReadPart(source RuleSu
 	}
 	return part, ok
 }
+
 func (implementation *RuleImplementation[K, V, O]) ReceiptCarryPart(source RuleSurfaceSourceReceipt, index uint64) (BindingRuleCarryPartReceipt, bool) {
 	part, ok := implementation.CarryPart(source.value, index)
 	if !ok {
@@ -1409,6 +843,7 @@ func (implementation *RuleImplementation[K, V, O]) ReceiptCarryPart(source RuleS
 	}
 	return part, ok
 }
+
 func (implementation *RuleImplementation[K, V, O]) ReceiptWritePart(source RuleSurfaceSourceReceipt, index uint64) (BindingRuleWritePartReceipt, bool) {
 	part, ok := implementation.WritePart(source.value, index)
 	if !ok {
@@ -1416,6 +851,7 @@ func (implementation *RuleImplementation[K, V, O]) ReceiptWritePart(source RuleS
 	}
 	return part, ok
 }
+
 func (implementation *RuleImplementation[K, V, O]) ReceiptSupportPart(source RuleSurfaceSourceReceipt, index uint64) (BindingRuleSupportPartReceipt, bool) {
 	part, ok := implementation.SupportPart(source.value, index)
 	if !ok {
@@ -1423,6 +859,7 @@ func (implementation *RuleImplementation[K, V, O]) ReceiptSupportPart(source Rul
 	}
 	return part, ok
 }
+
 func (implementation *RuleImplementation[K, V, O]) ReceiptPrunePart(source RuleSurfaceSourceReceipt, index uint64) (BindingRulePrunePartReceipt, bool) {
 	part, ok := implementation.PrunePart(source.value, index)
 	if !ok {

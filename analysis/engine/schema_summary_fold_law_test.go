@@ -38,19 +38,19 @@ func TestSummaryReadFoldIsSealedIntoTheDeclaredForm(t *testing.T) {
 		}
 		kinds[shape.Semantic] = shape.Kind
 	}
-	if kinds[coldKey(948_002).compositionKey()] != composition.FactorSummaryRead {
+	if kinds[compositionKeyOf(coldKey(948_002))] != composition.FactorSummaryRead {
 		t.Fatal("correlated summary lost its cold row kind")
 	}
-	if kinds[coldKey(948_003).compositionKey()] != composition.FactorDistributiveSummaryRead {
+	if kinds[compositionKeyOf(coldKey(948_003))] != composition.FactorDistributiveSummaryRead {
 		t.Fatal("distributive summary lost its cold row kind")
 	}
 
-	correlatedFold, correlatedFoldOK := summaryReadFormFold(schema, ordinal, coldKey(948_002).compositionKey())
-	distributiveFold, distributiveFoldOK := summaryReadFormFold(schema, ordinal, coldKey(948_003).compositionKey())
+	correlatedFold, correlatedFoldOK := summaryReadFormFold(schema, ordinal, compositionKeyOf(coldKey(948_002)))
+	distributiveFold, distributiveFoldOK := summaryReadFormFold(schema, ordinal, compositionKeyOf(coldKey(948_003)))
 	if !correlatedFoldOK || correlatedFold || !distributiveFoldOK || !distributiveFold {
 		t.Fatalf("recovered folds = %t/%t (%t/%t)", correlatedFold, distributiveFold, correlatedFoldOK, distributiveFoldOK)
 	}
-	if _, ok := summaryReadFormFold(schema, ordinal, coldKey(948_004).compositionKey()); ok {
+	if _, ok := summaryReadFormFold(schema, ordinal, compositionKeyOf(coldKey(948_004))); ok {
 		t.Fatal("undeclared normalizer resolved a fold")
 	}
 }

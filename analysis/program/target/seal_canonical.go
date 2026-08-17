@@ -8,6 +8,7 @@ import (
 
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 )
 
 func canonicalizeBindings(drafts []operationDraft) error {
@@ -698,7 +699,7 @@ func (c *Contract) appendOperation(op Operation, draft *operationDraft, keys map
 	if op != Operation(expected) {
 		return errors.New("target: noncanonical operation handle")
 	}
-	typeHandle, err := c.appendTypes(op, draft.types)
+	typeHandle, err := c.appendTypes(op, draft.types, draft.declarations)
 	if err != nil {
 		return err
 	}
@@ -871,7 +872,7 @@ func (c *Contract) appendOperation(op Operation, draft *operationDraft, keys map
 	return nil
 }
 
-func (c *Contract) appendTypes(owner Operation, input map[string][]byte) (map[string]Type, error) {
+func (c *Contract) appendTypes(owner Operation, input map[string][]byte, declarations map[string]schematype.Type) (map[string]Type, error) {
 	keys := make([]string, 0, len(input))
 	for key := range input {
 		keys = append(keys, key)
@@ -882,6 +883,10 @@ func (c *Contract) appendTypes(owner Operation, input map[string][]byte) (map[st
 	}
 	handles := make(map[string]Type, len(keys))
 	for _, key := range keys {
+		declaration, declarationOK := declarations[key]
+		if !declarationOK || !declaration.Available() {
+			return nil, errors.New("target: missing neutral type declaration")
+		}
 		if _, err := checkedStoredLength("type bytes", len(input[key])); err != nil {
 			return nil, err
 		}
@@ -889,7 +894,10 @@ func (c *Contract) appendTypes(owner Operation, input map[string][]byte) (map[st
 		if err != nil {
 			return nil, err
 		}
-		c.types = append(c.types, typeRow{owner: owner, bytes: append([]byte(nil), input[key]...)})
+		c.types = append(c.types, typeRow{
+			owner: owner, declaration: declaration,
+			bytes: append([]byte(nil), input[key]...),
+		})
 		handles[key] = Type(handle)
 	}
 	return handles, nil

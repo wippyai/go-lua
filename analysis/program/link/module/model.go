@@ -10,9 +10,9 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/internal/framing"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 )
@@ -88,10 +88,10 @@ type Component struct{ authority *authority }
 // authority, so a persisted snapshot cannot retain the hot Project/Boundary
 // graph through an incidental pointer.
 type Cold struct {
-	content         identity.ContentID
-	spec            Spec
-	semanticReceipt SemanticSourceReceipt
-	fence           *coldFence
+	content     identity.ContentID
+	spec        Spec
+	sourceViews SourceViews
+	fence       *coldFence
 }
 
 type ModuleInitGenerationRef struct {
@@ -179,7 +179,7 @@ type authority struct {
 	terminalByID       map[identity.ContentID]uint32
 	spec               Spec
 	content            identity.ContentID
-	semanticReceipt    SemanticSourceReceipt
+	sourceViews        SourceViews
 	hostRelation       identity.ContentID
 	fence              *coldFence
 }
@@ -220,7 +220,7 @@ func cold(a *authority) Cold {
 	if a == nil || !a.content.Available() || a.fence == nil {
 		return Cold{}
 	}
-	return Cold{content: a.content, spec: cloneSpec(a.spec), semanticReceipt: a.semanticReceipt, fence: a.fence}
+	return Cold{content: a.content, spec: cloneSpec(a.spec), sourceViews: a.sourceViews, fence: a.fence}
 }
 func (c Cold) ContentID() identity.ContentID { return c.content }
 func (c Cold) Spec() (Spec, bool) {
@@ -479,8 +479,8 @@ func (a *authority) build(spec Spec) error {
 		return err
 	}
 	var ok bool
-	if a.semanticReceipt, ok = a.component.buildSemanticSourceReceipt(); !ok {
-		return errors.New("link/module: unavailable semantic-source receipt")
+	if a.sourceViews, ok = a.component.buildSourceViews(); !ok {
+		return errors.New("link/module: unavailable semantic-source rows")
 	}
 	return nil
 }

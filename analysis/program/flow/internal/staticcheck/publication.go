@@ -3,9 +3,9 @@ package staticcheck
 import (
 	"errors"
 
+	"github.com/wippyai/go-lua/analysis/program/flow/internal/accessgeometry"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/binding"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/directbinding"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
@@ -18,7 +18,7 @@ func validatePublications(
 	flowView authored.View,
 	staticView static.View,
 	bindings binding.Result,
-	direct *directbinding.Result,
+	access *accessgeometry.Result,
 	tree *contextTree,
 ) error {
 	publications := staticView.Publications()
@@ -26,7 +26,7 @@ func validatePublications(
 	writes := flowView.Storage().Writes()
 	values := flowView.Values()
 	cells := flowView.Storage().Cells()
-	paths := direct.PublicationPaths()
+	paths := access.TypePublications()
 	references := staticView.References()
 	if paths.Count() != publications.Count() {
 		return errors.New("program/flow/staticcheck: Publication path denominator mismatch")

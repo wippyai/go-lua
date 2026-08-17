@@ -2,7 +2,6 @@ package artifact
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/flow"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
@@ -491,7 +490,7 @@ func (row RuleOccurrenceRow) OutputKind() RuleOutputKind {
 // a placement when that relation is already retained by its occurrence row.
 // It never equates the occurrence identity with its output: storage writes
 // and index reads name their destination explicitly in the sealed operand
-// vector. Roles whose output belongs to another owner receipt return false.
+// vector. Roles whose output belongs to another owner return false.
 func (row RuleOccurrenceRow) OutputSemanticID() (identity.ContentID, bool) {
 	if !row.Available() || row.OutputKind() != RuleOutputValue {
 		return identity.ContentID{}, false
@@ -588,6 +587,30 @@ func (artifact *Artifact) OccurrenceAt(index int) (OccurrenceRow, bool) {
 	return artifact.occurrences[index], true
 }
 
+// OccurrenceKindCount returns the exact sealed denominator for one generic
+// occurrence family. The index is built with the Artifact seal; consumers do
+// not construct parallel family indexes over the raw occurrence stream.
+func (artifact *Artifact) OccurrenceKindCount(kind OccurrenceKind) int {
+	if artifact == nil || !artifact.Available() || !kind.valid() || artifact.occurrenceByKind == nil {
+		return 0
+	}
+	return len(artifact.occurrenceByKind[kind])
+}
+
+// OccurrenceKindAt returns one row from the sealed family index while keeping
+// the canonical Artifact occurrence row as the sole data owner.
+func (artifact *Artifact) OccurrenceKindAt(kind OccurrenceKind, index int) (OccurrenceRow, bool) {
+	if artifact == nil || !artifact.Available() || !kind.valid() || index < 0 || artifact.occurrenceByKind == nil {
+		return OccurrenceRow{}, false
+	}
+	indexes := artifact.occurrenceByKind[kind]
+	if index >= len(indexes) || uint64(indexes[index]) >= uint64(len(artifact.occurrences)) {
+		return OccurrenceRow{}, false
+	}
+	row := artifact.occurrences[indexes[index]]
+	return row, row.Available() && row.kind == kind
+}
+
 // OccurrenceForID is the immutable artifact-local inverse for one typed
 // semantic occurrence. The kind is part of the key because IDs are only
 // required to be unique within their closed occurrence family.
@@ -657,7 +680,7 @@ func (compiler *compiler) pointIDs(site flow.Site) []identity.ContentID {
 
 // indexPointAttachmentsFailure copies the immutable Site-to-LocalWTO point
 // column once from canonical Flow schedule data. All occurrence families
-// subsequently reuse this artifact-owned point order; no root receipt or
+// subsequently reuse this artifact-owned point order; no root row or
 // transformer attachment query remains live after this stage.
 func (compiler *compiler) indexPointAttachmentsFailure() CompileFailure {
 	if compiler == nil || !compiler.input.Available() {
@@ -671,7 +694,7 @@ func (compiler *compiler) indexPointAttachmentsFailure() CompileFailure {
 	}
 	compiler.pointAttachments = compiler.pointAttachments[:0]
 
-	wto := compiler.input.LocalWTO()
+	wto := compiler.input.Flow().Local().WTO()
 	seenPoints := make(map[identity.ContentID]struct{})
 	seenAttachments := make(map[struct {
 		site  identity.ContentID
@@ -792,16 +815,18 @@ func canonicalPoints(points []identity.ContentID) []identity.ContentID {
 func (compiler *compiler) copyOccurrenceCatalogFailure() CompileFailure {
 	// Existing Values/Body/Outcome planes are copied first, then restated as
 	// generic rows so all later role derivations share exactly one catalog.
-	parentValues := compiler.input.Values()
+	authoredValues := compiler.input.Flow().Authored().Values()
 	for valuesIndex, values := range compiler.values {
-		proof, proofOK := parentValues.At(valuesIndex)
-		if !proofOK || !compiler.input.OwnsValuesOccurrence(proof) || proof.ID() != values.ID() || proof.BodyPathID() != values.BodyPathID() {
+		term, termOK := authoredValues.At(valuesIndex)
+		if !termOK || !values.Available() {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, valuesIndex, -1, CompileReasonOccurrenceValues)
 		}
 		var points []identity.ContentID
-		if span, spanOK := proof.Span(); spanOK {
+		if span, spanOK := compiler.input.Span(term); spanOK {
 			finish, finishOK := span.Finish()
-			if !finishOK || !compiler.input.OwnsSpan(span) || !compiler.input.OwnsSite(finish) {
+			rootSpanID, rootSpanOK := values.RootSpanID()
+			if !finishOK || !compiler.input.OwnsSpan(span) || !compiler.input.OwnsSite(finish) ||
+				!rootSpanOK || rootSpanID != span.ContextID() {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, valuesIndex, -1, CompileReasonOccurrenceValues)
 			}
 			points = compiler.pointIDs(finish)
@@ -811,10 +836,10 @@ func (compiler *compiler) copyOccurrenceCatalogFailure() CompileFailure {
 		}
 		for memberIndex := 0; memberIndex < values.MemberCount(); memberIndex++ {
 			member, ok := values.MemberAt(memberIndex)
-			proofMember, proofMemberOK := proof.At(memberIndex)
-			memberSpan, memberSpanOK := proofMember.Span()
-			if !ok || !proofMemberOK || !memberSpanOK || !compiler.input.OwnsValuesMember(proofMember) || !compiler.input.OwnsSpan(memberSpan) ||
-				proofMember.ID() != member.ID() || !compiler.appendOccurrence(OccurrenceValuesMember, member.ID(), values.BodyPathID(), nil, []identity.ContentID{values.ID(), memberSpan.ContextID()}, uint64(memberIndex)) {
+			memberTerm, memberTermOK := authoredValues.Member(term, memberIndex)
+			memberSpan, memberSpanOK := compiler.input.Span(memberTerm)
+			if !ok || !memberTermOK || !memberSpanOK || !compiler.input.OwnsSpan(memberSpan) ||
+				!compiler.appendOccurrence(OccurrenceValuesMember, member.ID(), values.BodyPathID(), nil, []identity.ContentID{values.ID(), memberSpan.ContextID()}, uint64(memberIndex)) {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, valuesIndex, memberIndex, CompileReasonOccurrenceValues)
 			}
 		}
@@ -871,7 +896,7 @@ func (compiler *compiler) copyOccurrenceCatalogFailure() CompileFailure {
 
 // deriveBinaryPresenceRefinementsFailure compiles the reusable nilability
 // transfer already proved by Program's BinaryPrimitive, storage, and causal
-// route receipts. The join runs once while the Program artifact is built:
+// route rows. The join runs once while the Program artifact is built:
 // Link and Runtime receive only the resulting scalar rows and never reopen or
 // rescan Program/Flow.
 func (compiler *compiler) deriveBinaryPresenceRefinementsFailure() CompileFailure {
@@ -1041,19 +1066,18 @@ func (compiler *compiler) copyPointAttachments() CompileFailure {
 }
 
 func (compiler *compiler) copyValueSources() CompileFailure {
-	type sourceAt func(int) (program.ValueSourceOccurrence, bool)
+	input, view := compiler.input, compiler.input.Flow()
 	rows := []struct {
 		count int
-		at    sourceAt
 		code  uint64
 	}{
-		{compiler.input.NilSourceCount(), compiler.input.NilSourceAt, 1}, {compiler.input.BoolSourceCount(), compiler.input.BoolSourceAt, 2},
-		{compiler.input.IntegerSourceCount(), compiler.input.IntegerSourceAt, 3}, {compiler.input.FloatSourceCount(), compiler.input.FloatSourceAt, 4},
-		{compiler.input.StringSourceCount(), compiler.input.StringSourceAt, 5}, {compiler.input.TypeValueSourceCount(), compiler.input.TypeValueSourceAt, 6},
+		{input.Source().Literals().Nils().Count(), 1}, {input.Source().Literals().Bools().Count(), 2},
+		{input.Source().Literals().Integers().Count(), 3}, {input.Source().Literals().Floats().Count(), 4},
+		{input.Source().Literals().Strings().Count(), 5}, {view.Authored().TypeValues().Count(), 6},
 	}
 	for _, family := range rows {
 		for index := 0; index < family.count; index++ {
-			source, ok := family.at(index)
+			source, ok := compiler.valueSourceAt(family.code, index)
 			if !ok && family.code == 6 {
 				// TypeValue's authored denominator includes dead candidates;
 				// only an executable proof becomes a ValueSource rule row.
@@ -1062,150 +1086,225 @@ func (compiler *compiler) copyValueSources() CompileFailure {
 			if !ok {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, int(family.code), CompileReasonOccurrenceValueSourceProof)
 			}
-			if !compiler.input.OwnsValueSourceOccurrence(source) {
-				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, int(family.code), CompileReasonOccurrenceValueSourceOwner)
-			}
-			body, bodyOK := source.Body()
-			if !bodyOK {
-				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, int(family.code), CompileReasonOccurrenceValueSourceBody)
-			}
-			finish, finishOK := source.Finish()
-			if !finishOK {
-				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, int(family.code), CompileReasonOccurrenceValueSourceFinish)
-			}
-			points := compiler.pointIDs(finish)
-			span, spanOK := source.Span()
+			points := compiler.pointIDs(source.finish)
+			span, spanOK := source.span, source.span.Available()
 			if len(points) == 0 {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, int(family.code), CompileReasonOccurrenceValueSourcePoints)
 			}
-			if !spanOK || !compiler.input.OwnsSpan(span) || !compiler.appendOccurrence(OccurrenceValueSource, source.ContextID(), body.PathID(), points, []identity.ContentID{span.ContextID()}, family.code) {
+			if !spanOK || !compiler.appendOccurrence(OccurrenceValueSource, source.id, source.body, points, []identity.ContentID{span.ContextID()}, family.code) {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, int(family.code), CompileReasonOccurrenceValueSourceAppend)
 			}
-			literalFamily, literal, literalOK := source.LiteralPayload()
-			if family.code != 6 && !literalOK {
+			if family.code != 6 && !source.literalOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, int(family.code), CompileReasonOccurrenceValueSourceAppend)
 			}
 			row := &compiler.occurrences[len(compiler.occurrences)-1]
-			row.literalFamily, row.literal, row.literalOK = literalFamily, literal, literalOK
+			row.literalFamily, row.literal, row.literalOK = source.literalFamily, source.literal, source.literalOK
 		}
 	}
 	return CompileFailure{}
 }
 
 func (compiler *compiler) copyComputations() CompileFailure {
-	for index := 0; index < compiler.input.BinaryArithmeticOccurrenceCount(); index++ {
-		row, ok := compiler.input.BinaryArithmeticOccurrenceAt(index)
-		entry, entryOK := row.Entry()
-		finish, finishOK := row.Finish()
-		if !ok || !entryOK || !finishOK || !compiler.input.OwnsSite(entry) || !compiler.input.OwnsSite(finish) {
+	flowView := compiler.input.Flow()
+	executable := flowView.Executable()
+	primitives := flowView.BinaryPrimitives()
+
+	arithmetic := primitives.Arithmetic()
+	for index := 0; index < arithmetic.Count(); index++ {
+		term, termOK := arithmetic.At(index)
+		primitive, primitiveOK := primitives.Primitive(term)
+		source, sourceOK := primitive.Source()
+		operation, operationOK := primitive.Operation()
+		span, spanOK := compiler.input.Span(term)
+		body, bodyOK := compiler.input.ContainingBody(term)
+		leftSpan, leftOK := compiler.input.Span(operation.Left)
+		rightSpan, rightOK := compiler.input.Span(operation.Right)
+		entry, entryOK := span.Entry()
+		finish, finishOK := span.Finish()
+		if !termOK || !primitiveOK || !sourceOK || source != term || !operationOK || !binaryArithmeticOperator(operation.Op) ||
+			!spanOK || !bodyOK || !compiler.input.OwnsSpan(span) || !compiler.input.OwnsBody(body) ||
+			!leftOK || !rightOK || !compiler.input.OwnsSpan(leftSpan) || !compiler.input.OwnsSpan(rightSpan) ||
+			!entryOK || !finishOK || !compiler.input.OwnsSite(entry) || !compiler.input.OwnsSite(finish) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 		entryPoints := compiler.pointIDs(entry)
 		finishPoints := compiler.pointIDs(finish)
-		if len(entryPoints) == 0 || len(finishPoints) == 0 || !compiler.recordOccurrenceSpan(OccurrenceBinaryArithmetic, row.ContextID(), entryPoints, finishPoints) {
+		if len(entryPoints) == 0 || len(finishPoints) == 0 || !compiler.recordOccurrenceSpan(OccurrenceBinaryArithmetic, span.ContextID(), entryPoints, finishPoints) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceAttachment)
 		}
 		points := append(append([]identity.ContentID(nil), entryPoints...), finishPoints...)
-		if !binaryArithmeticOperator(row.Op()) || !compiler.appendOccurrence(OccurrenceBinaryArithmetic, row.ContextID(), row.BodyPathID(), points, []identity.ContentID{row.LeftID(), row.RightID()}, uint64(row.Op())) {
+		if !compiler.appendOccurrence(OccurrenceBinaryArithmetic, span.ContextID(), body.PathID(), points, []identity.ContentID{leftSpan.ContextID(), rightSpan.ContextID()}, uint64(operation.Op)) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 	}
-	for index := 0; index < compiler.input.BinaryEqualityOccurrenceCount(); index++ {
-		row, ok := compiler.input.BinaryEqualityOccurrenceAt(index)
-		entry, entryOK := row.Entry()
-		finish, finishOK := row.Finish()
-		if !ok || !entryOK || !finishOK || !compiler.input.OwnsSite(entry) || !compiler.input.OwnsSite(finish) {
-			// BinaryEqualityOccurrenceCount is Flow's dense executable primitive
+
+	equality := primitives.Equality()
+	for index := 0; index < equality.Count(); index++ {
+		term, termOK := equality.At(index)
+		primitive, primitiveOK := primitives.Primitive(term)
+		source, sourceOK := primitive.Source()
+		operation, operationOK := primitive.Operation()
+		span, spanOK := compiler.input.Span(term)
+		body, bodyOK := compiler.input.ContainingBody(term)
+		leftSpan, leftOK := compiler.input.Span(operation.Left)
+		rightSpan, rightOK := compiler.input.Span(operation.Right)
+		entry, entryOK := span.Entry()
+		finish, finishOK := span.Finish()
+		if !termOK || !primitiveOK || !sourceOK || source != term || !operationOK ||
+			(operation.Op != flowkind.BinaryEqual && operation.Op != flowkind.BinaryNotEqual) || !spanOK || !bodyOK ||
+			!compiler.input.OwnsSpan(span) || !compiler.input.OwnsBody(body) || !leftOK || !rightOK ||
+			!compiler.input.OwnsSpan(leftSpan) || !compiler.input.OwnsSpan(rightSpan) || !entryOK || !finishOK ||
+			!compiler.input.OwnsSite(entry) || !compiler.input.OwnsSite(finish) {
+			// BinaryEquality's dense primitive bucket is an executable
 			// denominator. A missing row is corruption, never a dead authored hole.
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 		entryPoints := compiler.pointIDs(entry)
 		finishPoints := compiler.pointIDs(finish)
-		if len(entryPoints) == 0 || len(finishPoints) == 0 || !compiler.recordOccurrenceSpan(OccurrenceBinaryEquality, row.ContextID(), entryPoints, finishPoints) {
+		if len(entryPoints) == 0 || len(finishPoints) == 0 || !compiler.recordOccurrenceSpan(OccurrenceBinaryEquality, span.ContextID(), entryPoints, finishPoints) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceAttachment)
 		}
-		inputs := []identity.ContentID{row.LeftID(), row.RightID()}
-		hasComparison, invert := false, row.Op() == flowkind.BinaryNotEqual
-		if branch, whenTrue, whenFalse, comparisonInvert, comparisonOK := row.Comparison(); comparisonOK {
-			inputs = append(inputs, branch, whenTrue, whenFalse)
-			hasComparison, invert = true, comparisonInvert
+		inputs := []identity.ContentID{leftSpan.ContextID(), rightSpan.ContextID()}
+		hasComparison, invert := false, operation.Op == flowkind.BinaryNotEqual
+		if comparison, comparisonOK := primitive.Comparison(); comparisonOK && comparison.Left == operation.Left && comparison.Right == operation.Right && comparison.Invert == (operation.Op == flowkind.BinaryNotEqual) {
+			branch, branchOK := flowView.SemanticTermPath(comparison.Branch)
+			whenTrue, trueOK := compiler.input.ContainingBody(comparison.TrueBody)
+			whenFalse, falseOK := compiler.input.ContainingBody(comparison.FalseBody)
+			if branchOK && branch.Available() && trueOK && falseOK && compiler.input.OwnsBody(whenTrue) && compiler.input.OwnsBody(whenFalse) {
+				inputs = append(inputs, branch, whenTrue.PathID(), whenFalse.PathID())
+				hasComparison, invert = true, comparison.Invert
+			}
 		}
-		code, codeOK := binaryEqualityCode(row.Op(), hasComparison, invert)
+		code, codeOK := binaryEqualityCode(operation.Op, hasComparison, invert)
 		points := append(append([]identity.ContentID(nil), entryPoints...), finishPoints...)
-		if !codeOK || !compiler.appendOccurrence(OccurrenceBinaryEquality, row.ContextID(), row.BodyPathID(), points, inputs, code) {
+		if !codeOK || !compiler.appendOccurrence(OccurrenceBinaryEquality, span.ContextID(), body.PathID(), points, inputs, code) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 	}
-	for index := 0; index < compiler.input.BinaryOrderOccurrenceCount(); index++ {
-		row, ok := compiler.input.BinaryOrderOccurrenceAt(index)
-		entry, entryOK := row.Entry()
-		finish, finishOK := row.Finish()
-		if !ok || !entryOK || !finishOK || !compiler.input.OwnsSite(entry) || !compiler.input.OwnsSite(finish) {
+
+	order := primitives.Order()
+	for index := 0; index < order.Count(); index++ {
+		term, termOK := order.At(index)
+		primitive, primitiveOK := primitives.Primitive(term)
+		source, sourceOK := primitive.Source()
+		operation, operationOK := primitive.Operation()
+		span, spanOK := compiler.input.Span(term)
+		body, bodyOK := compiler.input.ContainingBody(term)
+		leftSpan, leftOK := compiler.input.Span(operation.Left)
+		rightSpan, rightOK := compiler.input.Span(operation.Right)
+		entry, entryOK := span.Entry()
+		finish, finishOK := span.Finish()
+		if !termOK || !primitiveOK || !sourceOK || source != term || !operationOK || !binaryOrderOperator(operation.Op) ||
+			!spanOK || !bodyOK || !compiler.input.OwnsSpan(span) || !compiler.input.OwnsBody(body) ||
+			!leftOK || !rightOK || !compiler.input.OwnsSpan(leftSpan) || !compiler.input.OwnsSpan(rightSpan) ||
+			!entryOK || !finishOK || !compiler.input.OwnsSite(entry) || !compiler.input.OwnsSite(finish) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 		entryPoints := compiler.pointIDs(entry)
 		finishPoints := compiler.pointIDs(finish)
-		if len(entryPoints) == 0 || len(finishPoints) == 0 || !compiler.recordOccurrenceSpan(OccurrenceBinaryOrder, row.ContextID(), entryPoints, finishPoints) {
+		if len(entryPoints) == 0 || len(finishPoints) == 0 || !compiler.recordOccurrenceSpan(OccurrenceBinaryOrder, span.ContextID(), entryPoints, finishPoints) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceAttachment)
 		}
 		points := append(append([]identity.ContentID(nil), entryPoints...), finishPoints...)
-		if !binaryOrderOperator(row.Op()) || !compiler.appendOccurrence(OccurrenceBinaryOrder, row.ContextID(), row.BodyPathID(), points, []identity.ContentID{row.LeftID(), row.RightID()}, uint64(row.Op())) {
+		if !compiler.appendOccurrence(OccurrenceBinaryOrder, span.ContextID(), body.PathID(), points, []identity.ContentID{leftSpan.ContextID(), rightSpan.ContextID()}, uint64(operation.Op)) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 	}
-	for index := 0; index < compiler.input.UnaryOccurrenceCount(); index++ {
-		row, ok := compiler.input.UnaryOccurrenceAt(index)
-		entry, entryOK := row.Entry()
-		finish, finishOK := row.Finish()
-		if !ok || !entryOK || !finishOK || !compiler.input.OwnsSite(entry) || !compiler.input.OwnsSite(finish) {
+
+	unaries := flowView.Authored().Operators().Unaries()
+	for index := 0; index < unaries.Count(); index++ {
+		term, termOK := unaries.At(index)
+		if !termOK || !executable.Contains(term) {
+			continue
+		}
+		_, op, operand, rowOK := unaries.Get(term)
+		span, spanOK := compiler.input.Span(term)
+		body, bodyOK := compiler.input.ContainingBody(term)
+		operandSpan, operandOK := compiler.input.Span(operand)
+		entry, entryOK := span.Entry()
+		finish, finishOK := span.Finish()
+		if !rowOK || !spanOK || !bodyOK || !compiler.input.OwnsSpan(span) || !compiler.input.OwnsBody(body) ||
+			!operandOK || !compiler.input.OwnsSpan(operandSpan) || !entryOK || !finishOK ||
+			!compiler.input.OwnsSite(entry) || !compiler.input.OwnsSite(finish) {
 			continue
 		}
 		entryPoints := compiler.pointIDs(entry)
 		finishPoints := compiler.pointIDs(finish)
 		points := append(append([]identity.ContentID(nil), entryPoints...), finishPoints...)
 		if len(entryPoints) == 0 || len(finishPoints) == 0 ||
-			!compiler.recordOccurrenceSpan(OccurrenceUnary, row.ContextID(), entryPoints, finishPoints) ||
-			!compiler.appendOccurrence(OccurrenceUnary, row.ContextID(), row.BodyPathID(), points, []identity.ContentID{row.OperandID()}, uint64(row.Op())) {
+			!compiler.recordOccurrenceSpan(OccurrenceUnary, span.ContextID(), entryPoints, finishPoints) ||
+			!compiler.appendOccurrence(OccurrenceUnary, span.ContextID(), body.PathID(), points, []identity.ContentID{operandSpan.ContextID()}, uint64(op)) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 	}
-	for index := 0; index < compiler.input.SelectOccurrenceCount(); index++ {
-		row, ok := compiler.input.SelectOccurrenceAt(index)
-		entry, entryOK := row.Entry()
-		finish, finishOK := row.Finish()
-		if !ok || !entryOK || !finishOK || !compiler.input.OwnsSite(entry) || !compiler.input.OwnsSite(finish) {
+
+	selects := flowView.Authored().Operators().Selects()
+	for index := 0; index < selects.Count(); index++ {
+		term, termOK := selects.At(index)
+		if !termOK || !executable.Contains(term) {
+			continue
+		}
+		_, op, left, right, rowOK := selects.Get(term)
+		span, spanOK := compiler.input.Span(term)
+		body, bodyOK := compiler.input.ContainingBody(term)
+		leftSpan, leftOK := compiler.input.Span(left)
+		rightSpan, rightOK := compiler.input.Span(right)
+		entry, entryOK := span.Entry()
+		finish, finishOK := span.Finish()
+		if !rowOK || !spanOK || !bodyOK || !compiler.input.OwnsSpan(span) || !compiler.input.OwnsBody(body) ||
+			!leftOK || !rightOK || !compiler.input.OwnsSpan(leftSpan) || !compiler.input.OwnsSpan(rightSpan) ||
+			!entryOK || !finishOK || !compiler.input.OwnsSite(entry) || !compiler.input.OwnsSite(finish) {
 			continue
 		}
 		points := append(compiler.pointIDs(entry), compiler.pointIDs(finish)...)
-		if !compiler.appendOccurrence(OccurrenceSelect, row.ContextID(), row.BodyPathID(), points, []identity.ContentID{row.LeftID(), row.RightID()}, uint64(row.Op())) {
+		if !compiler.appendOccurrence(OccurrenceSelect, span.ContextID(), body.PathID(), points, []identity.ContentID{leftSpan.ContextID(), rightSpan.ContextID()}, uint64(op)) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 	}
-	for index := 0; index < compiler.input.ClaimOccurrenceCount(); index++ {
-		row, ok := compiler.input.ClaimOccurrenceAt(index)
-		entry, entryOK := row.Entry()
-		finish, finishOK := row.Finish()
-		if !ok || !entryOK || !finishOK || !compiler.input.OwnsSite(entry) || !compiler.input.OwnsSite(finish) {
+
+	claims := flowView.Authored().Claims()
+	for index := 0; index < claims.Count(); index++ {
+		term, termOK := claims.At(index)
+		if !termOK || !executable.Contains(term) {
+			continue
+		}
+		_, operand, claimKind, rowOK := claims.Get(term)
+		span, spanOK := compiler.input.Span(term)
+		body, bodyOK := compiler.input.ContainingBody(term)
+		operandSpan, operandOK := compiler.input.Span(operand)
+		entry, entryOK := span.Entry()
+		finish, finishOK := span.Finish()
+		if !rowOK || !spanOK || !bodyOK || !compiler.input.OwnsSpan(span) || !compiler.input.OwnsBody(body) ||
+			!operandOK || !compiler.input.OwnsSpan(operandSpan) || !entryOK || !finishOK ||
+			!compiler.input.OwnsSite(entry) || !compiler.input.OwnsSite(finish) {
 			continue
 		}
 		points := append(compiler.pointIDs(entry), compiler.pointIDs(finish)...)
-		if !compiler.appendOccurrence(OccurrenceValueClaim, row.ContextID(), row.BodyPathID(), points, []identity.ContentID{row.OperandID()}, uint64(row.Kind())) {
+		if !compiler.appendOccurrence(OccurrenceValueClaim, span.ContextID(), body.PathID(), points, []identity.ContentID{operandSpan.ContextID()}, uint64(claimKind)) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 	}
-	for index := 0; index < compiler.input.ReturnOccurrenceCount(); index++ {
-		row, ok := compiler.input.ReturnOccurrenceAt(index)
-		entry, entryOK := row.Entry()
-		finish, finishOK := row.Finish()
-		if !ok || !entryOK || !finishOK || !compiler.input.OwnsSite(entry) || !compiler.input.OwnsSite(finish) {
-			// ReturnOccurrenceCount is Program's already-sealed executable
-			// denominator. Every position must therefore issue one complete
-			// Return receipt; omission here would turn corrupted executable
-			// geometry into a silently missing artifact boundary.
+
+	returns := flowView.Authored().Control().Returns()
+	for index := 0; index < returns.Count(); index++ {
+		term, termOK := returns.At(index)
+		if !termOK || !executable.Contains(term) {
+			continue
+		}
+		_, valuesTerm, rowOK := returns.Get(term)
+		span, spanOK := compiler.input.Span(term)
+		body, bodyOK := compiler.input.ContainingBody(term)
+		entry, entryOK := span.Entry()
+		finish, finishOK := span.Finish()
+		values, valuesOK := compiler.valueRowForTerm(valuesTerm)
+		valuesID := values.ID()
+		if keyspace.TermFamily(valuesTerm) != keyspace.FamilyValues || !rowOK || !spanOK || !bodyOK ||
+			!compiler.input.OwnsSpan(span) || !compiler.input.OwnsBody(body) || !entryOK || !finishOK ||
+			!compiler.input.OwnsSite(entry) || !compiler.input.OwnsSite(finish) || !valuesOK || !values.Available() || !valuesID.Available() {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 		points := append(compiler.pointIDs(entry), compiler.pointIDs(finish)...)
-		if !compiler.appendOccurrence(OccurrenceReturnBoundary, row.ContextID(), row.BodyPathID(), points, []identity.ContentID{row.ValuesID()}, 0) {
+		if !compiler.appendOccurrence(OccurrenceReturnBoundary, span.ContextID(), body.PathID(), points, []identity.ContentID{valuesID}, 0) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 	}
@@ -1213,99 +1312,71 @@ func (compiler *compiler) copyComputations() CompileFailure {
 }
 
 func (compiler *compiler) copyStorage() CompileFailure {
-	for index := 0; index < compiler.input.StorageReadCount(); index++ {
-		read, ok := compiler.input.StorageReadAt(index)
+	reads := compiler.input.Flow().Authored().Storage().Reads()
+	for index := 0; index < reads.Count(); index++ {
+		row, ok := compiler.storageReadAt(index)
 		if !ok {
-			// The Program facade deliberately preserves authored denominator
-			// positions while withholding dead/non-executable occurrences.
-			// Such a position has no executable artifact row.
+			// Flow preserves authored denominator positions while withholding
+			// dead/non-executable occurrences. Such a position has no artifact
+			// row.
 			continue
 		}
-		body, bodyOK := read.Body()
-		entry, entryOK := read.Entry()
-		finish, finishOK := read.Finish()
-		cell, cellOK := read.Cell()
-		span, spanOK := read.Span()
-		entryPoints, finishPoints := compiler.pointIDs(entry), compiler.pointIDs(finish)
-		if !compiler.input.OwnsStorageReadOccurrence(read) || !bodyOK || !entryOK || !finishOK || !cellOK || !spanOK || !compiler.input.OwnsCell(cell) || !compiler.input.OwnsSpan(span) ||
-			// A one-input rule cannot select an Entry attachment from the
-			// parent's deliberately multi-valued Site relation.  Refuse such
-			// a Program until it publishes an explicit occurrence-to-point
-			// pairing; never zip or cross-product attachments here.
-			len(entryPoints) != 1 ||
-			!compiler.appendOccurrence(OccurrenceStorageRead, read.ContextID(), body.PathID(), append(append([]identity.ContentID(nil), entryPoints...), finishPoints...), []identity.ContentID{cell.ContextID(), span.ContextID()}, 0) ||
-			!compiler.recordOccurrenceSpan(OccurrenceStorageRead, read.ContextID(), entryPoints, finishPoints) {
+		entryPoints, finishPoints := compiler.pointIDs(row.entry), compiler.pointIDs(row.finish)
+		spanID := row.span.ContextID()
+		// A one-input rule cannot select an Entry attachment from the
+		// parent's deliberately multi-valued Site relation. Refuse such a
+		// Flow until it publishes an explicit occurrence-to-point pairing;
+		// never zip or cross-product attachments here.
+		if len(entryPoints) != 1 || !spanID.Available() ||
+			!compiler.appendOccurrence(OccurrenceStorageRead, row.id, row.body, append(append([]identity.ContentID(nil), entryPoints...), finishPoints...), []identity.ContentID{row.cell, spanID}, 0) ||
+			!compiler.recordOccurrenceSpan(OccurrenceStorageRead, row.id, entryPoints, finishPoints) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceStorageRead)
 		}
 	}
-	for index := 0; index < compiler.input.StorageBindCount(); index++ {
-		bind, ok := compiler.input.StorageBindAt(index)
+	binds := compiler.input.Flow().Authored().Storage().Binds()
+	for index := 0; index < binds.Count(); index++ {
+		bind, ok := compiler.storageBindAt(index)
 		if !ok {
 			continue
 		}
-		body, bodyOK := bind.Body()
-		entry, entryOK := bind.Entry()
-		finish, finishOK := bind.Finish()
-		values, valuesOK := bind.Values()
-		entryPoints, finishPoints := compiler.pointIDs(entry), compiler.pointIDs(finish)
-		if !compiler.input.OwnsStorageBind(bind) || !bodyOK || !entryOK || !finishOK || !valuesOK || !compiler.appendOccurrence(OccurrenceStorageBind, bind.ContextID(), body.PathID(), append(entryPoints, finishPoints...), []identity.ContentID{values.ID()}, 0) {
+		values, valuesOK := compiler.valueRowForTerm(bind.values)
+		entryPoints, finishPoints := compiler.pointIDs(bind.entry), compiler.pointIDs(bind.finish)
+		bindInputs := make([]identity.ContentID, 1, 1+len(bind.cells))
+		bindInputs[0] = values.ID()
+		// The generic storage-bind occurrence owns the complete destination
+		// Cell column. Pack consumes this canonical row directly; it must not
+		// receive a second bind/Cell row plane.
+		bindInputs = append(bindInputs, bind.cells...)
+		if !valuesOK || !values.Available() || !compiler.appendOccurrence(OccurrenceStorageBind, bind.id, bind.body, append(entryPoints, finishPoints...), bindInputs, 0) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceStorageBind)
 		}
-		for position := 0; position < bind.TransferCount(); position++ {
-			transfer, transferOK := bind.TransferAt(position)
-			if !transferOK {
-				// A Bind may declare more destination Cells than its source
-				// Values row fixes. The parent position denominator is exact;
-				// only fixed positions issue transfer occurrences.
-				continue
-			}
-			transferEntry, transferEntryOK := transfer.Entry()
-			transferFinish, transferFinishOK := transfer.Finish()
-			value, valueOK := transfer.Value()
-			cell, cellOK := transfer.Cell()
-			transferEntryPoints, transferFinishPoints := compiler.pointIDs(transferEntry), compiler.pointIDs(transferFinish)
-			if !compiler.input.OwnsStorageBindOccurrence(transfer) || !transferEntryOK || !transferFinishOK || !valueOK || !cellOK ||
-				// As with a read, the Program must issue one unambiguous Entry
-				// attachment for this one-input transfer rule.
-				len(transferEntryPoints) != 1 ||
-				!compiler.appendOccurrence(OccurrenceStorageBindTransfer, transfer.ContextID(), body.PathID(), transferFinishPoints, []identity.ContentID{bind.ContextID(), value.ID(), cell.ContextID()}, uint64(position)) ||
-				!compiler.recordOccurrenceSpan(OccurrenceStorageBindTransfer, transfer.ContextID(), transferEntryPoints, transferFinishPoints) {
-				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, position, CompileReasonOccurrenceStorageBind)
+		for _, transfer := range bind.transfers {
+			transferEntryPoints, transferFinishPoints := compiler.pointIDs(bind.entry), compiler.pointIDs(bind.finish)
+			// As with a read, this one-input transfer rule requires one
+			// unambiguous Entry attachment.
+			if len(transferEntryPoints) != 1 ||
+				!compiler.appendOccurrence(OccurrenceStorageBindTransfer, transfer.id, bind.body, transferFinishPoints, []identity.ContentID{bind.id, transfer.value, transfer.cell}, uint64(transfer.position)) ||
+				!compiler.recordOccurrenceSpan(OccurrenceStorageBindTransfer, transfer.id, transferEntryPoints, transferFinishPoints) {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, transfer.position, CompileReasonOccurrenceStorageBind)
 			}
 		}
 	}
-	for index := 0; index < compiler.input.StorageAssignmentCount(); index++ {
-		assignment, ok := compiler.input.StorageAssignmentAt(index)
+	assigns := compiler.input.Flow().Authored().Storage().Assigns()
+	for index := 0; index < assigns.Count(); index++ {
+		assignment, ok := compiler.storageAssignmentAt(index)
 		if !ok {
 			continue
 		}
-		body, bodyOK := assignment.Body()
-		span, spanOK := assignment.Span()
-		values, valuesOK := assignment.Values()
-		entry, entryOK := span.Entry()
-		finish, finishOK := span.Finish()
-		entryPoints, finishPoints := compiler.pointIDs(entry), compiler.pointIDs(finish)
-		if !compiler.input.OwnsStorageAssignment(assignment) || !bodyOK || !spanOK || !valuesOK || !entryOK || !finishOK || !compiler.appendOccurrence(OccurrenceStorageAssignment, assignment.ContextID(), body.PathID(), append(entryPoints, finishPoints...), []identity.ContentID{values.ID()}, 0) {
+		values, valuesOK := compiler.valueRowForTerm(assignment.values)
+		entryPoints, finishPoints := compiler.pointIDs(assignment.entry), compiler.pointIDs(assignment.finish)
+		if !valuesOK || !values.Available() || !compiler.appendOccurrence(OccurrenceStorageAssignment, assignment.id, assignment.body, append(entryPoints, finishPoints...), []identity.ContentID{values.ID()}, 0) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceStorageAssignment)
 		}
-		for position := 0; position < assignment.TransferCount(); position++ {
-			write, writeOK := assignment.TransferAt(position)
-			if !writeOK {
-				// Assignment width follows the destination denominator; a
-				// non-fixed source Values position issues no transfer row.
-				continue
-			}
-			writeBody, writeBodyOK := write.Body()
-			writeFinish, writeFinishOK := write.Finish()
-			predecessor, predecessorOK := write.Predecessor()
-			route, routeOK := predecessor.RouteID()
-			value, valueOK := write.Value()
-			cell, cellOK := write.Cell()
-			writeFinishPoints := compiler.pointIDs(writeFinish)
-			if !compiler.input.OwnsStorageWriteOccurrence(write) || !writeBodyOK || !writeFinishOK || !predecessorOK || !routeOK || !valueOK || !cellOK ||
-				!compiler.appendOccurrence(OccurrenceStorageWrite, write.ContextID(), writeBody.PathID(), writeFinishPoints, []identity.ContentID{assignment.ContextID(), value.ID(), cell.ContextID(), predecessor.ContextID(), route}, uint64(position)) ||
-				!compiler.recordOccurrencePredecessor(OccurrenceStorageWrite, write.ContextID(), route, writeFinishPoints) {
-				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, position, CompileReasonOccurrenceStorageAssignment)
+		for _, write := range assignment.transfers {
+			writeFinishPoints := compiler.pointIDs(write.finish)
+			if !compiler.appendOccurrence(OccurrenceStorageWrite, write.id, assignment.body, writeFinishPoints, []identity.ContentID{assignment.id, write.value, write.cell, write.predecessor, write.route}, uint64(write.position)) ||
+				!compiler.recordOccurrencePredecessor(OccurrenceStorageWrite, write.id, write.route, writeFinishPoints) {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, write.position, CompileReasonOccurrenceStorageAssignment)
 			}
 		}
 	}
@@ -1313,54 +1384,38 @@ func (compiler *compiler) copyStorage() CompileFailure {
 }
 
 func (compiler *compiler) copyIndexAccess() CompileFailure {
-	reads, writes := compiler.input.IndexReads(), compiler.input.IndexWrites()
+	geometry := compiler.input.Flow().AccessGeometry()
+	reads, writes := geometry.IndexAccesses().Reads(), geometry.IndexAccesses().Writes()
 	for index := 0; index < reads.Count(); index++ {
-		read, ok := reads.At(index)
+		read, ok := compiler.indexReadAt(index)
 		if !ok {
 			// AccessGeometry preserves candidate ordinals whose executable
-			// Span proof can be absent. Only an issued role is executable.
+			// Span proof can be absent. Only a complete artifact row is
+			// executable.
 			continue
 		}
-		if !compiler.input.OwnsIndexRead(read) {
-			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceIndexCandidate)
-		}
-		span, spanOK := read.Span()
-		base, baseOK := read.Base()
-		lens, lensOK := read.Lens()
-		result, resultOK := read.Result()
-		entry, entryOK := span.Entry()
-		finish, finishOK := span.Finish()
-		if !spanOK || !baseOK || !lensOK || !resultOK || !entryOK || !finishOK {
+		entry, entryOK := read.resultSpan.Entry()
+		finish, finishOK := read.resultSpan.Finish()
+		if !entryOK || !finishOK {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceIndexShape)
 		}
-		id := read.ContextID()
 		entryPoints, finishPoints := compiler.pointIDs(entry), compiler.pointIDs(finish)
-		if !compiler.appendOccurrence(OccurrenceIndexRead, id, identity.ContentID{}, append(append([]identity.ContentID(nil), entryPoints...), finishPoints...), []identity.ContentID{base.ContextID(), lens.ContextID(), result.ContextID()}, 0) ||
-			!compiler.recordOccurrenceSpan(OccurrenceIndexRead, id, entryPoints, finishPoints) {
+		if !compiler.appendOccurrence(OccurrenceIndexRead, read.id, identity.ContentID{}, append(append([]identity.ContentID(nil), entryPoints...), finishPoints...), []identity.ContentID{read.baseID, read.lensID, read.resultID}, 0) ||
+			!compiler.recordOccurrenceSpan(OccurrenceIndexRead, read.id, entryPoints, finishPoints) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceIndexAppend)
 		}
 	}
 	for index := 0; index < writes.Count(); index++ {
-		write, ok := writes.At(index)
+		write, ok := compiler.indexWriteAt(index)
 		if !ok {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceIndexCandidate)
 		}
-		if !compiler.input.OwnsIndexWrite(write) {
-			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceIndexCandidate)
-		}
-		finish, finishOK := write.Finish()
-		predecessor, predecessorOK := write.Predecessor()
-		route, routeOK := predecessor.RouteID()
-		base, baseOK := write.Base()
-		lens, lensOK := write.Lens()
-		values, valuesOK := write.Values()
-		finishPoints := compiler.pointIDs(finish)
-		if !finishOK || !predecessorOK || !routeOK || !baseOK || !lensOK || !valuesOK || len(finishPoints) == 0 {
+		finishPoints := compiler.pointIDs(write.finish)
+		if len(finishPoints) == 0 {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceIndexShape)
 		}
-		id := write.ContextID()
-		if !compiler.appendOccurrence(OccurrenceIndexWrite, id, identity.ContentID{}, finishPoints, []identity.ContentID{base.ContextID(), lens.ContextID(), values.ContextID(), predecessor.ContextID(), route}, 0) ||
-			!compiler.recordOccurrencePredecessor(OccurrenceIndexWrite, id, route, finishPoints) {
+		if !compiler.appendOccurrence(OccurrenceIndexWrite, write.id, identity.ContentID{}, finishPoints, []identity.ContentID{write.baseID, write.lensID, write.valuesID, write.predecessorID, write.route}, 0) ||
+			!compiler.recordOccurrencePredecessor(OccurrenceIndexWrite, write.id, write.route, finishPoints) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceIndexAppend)
 		}
 	}
@@ -1370,91 +1425,41 @@ func (compiler *compiler) copyIndexAccess() CompileFailure {
 // copyHeapGeometryFailure captures Heap's complete cold source denominator
 // while the Program proof is live.  Link later substitutes these scalar rows
 // through its own mounted Values/Keys authority; Heap never needs to reopen a
-// Program or TransformerInput after artifact compilation.
+// Program after artifact compilation.
 func (compiler *compiler) copyHeapGeometryFailure() CompileFailure {
-	allocations := compiler.input.Allocations()
-	compiler.heapAllocations = make([]HeapAllocationRow, 0, allocations.Count())
-	for allocationIndex := 0; allocationIndex < allocations.Count(); allocationIndex++ {
-		allocation, allocationOK := allocations.At(allocationIndex)
-		geometry := allocation.Geometry()
-		rootSpan, rootSpanOK := geometry.RootSpan()
-		if !allocationOK || !allocations.Owns(allocation) || !geometry.Available() || !rootSpanOK {
-			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, allocationIndex, -1, CompileReasonOccurrenceAllocation)
-		}
-		row := HeapAllocationRow{id: allocation.ID(), role: allocation.Role(), form: allocation.Form(), rootSpan: rootSpan.ContextID()}
-		if !row.id.Available() || (row.role != program.AllocationTable && row.role != program.AllocationClosure) {
-			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, allocationIndex, -1, CompileReasonOccurrenceAllocation)
-		}
-		for fieldIndex := 0; fieldIndex < geometry.FieldCount(); fieldIndex++ {
-			field, fieldOK := geometry.FieldAt(fieldIndex)
-			raw, rawOK := field.Field()
-			kind, kindOK := field.Kind()
-			_, width, finalOpen, valuesOK := field.Values()
-			valueOccurrence, valueOccurrenceOK := field.ValueOccurrence()
-			valueSpan, valueSpanOK := valueOccurrence.Span()
-			normalized, normalizedOK := field.NormalizedKey()
-			fieldSpan, fieldSpanOK := field.FieldSpan()
-			fieldRow := HeapFieldRow{id: raw.ID(), kind: kind, fieldSpan: fieldSpan.ContextID(), valuesSpan: valueSpan.ContextID(), valuesID: valueOccurrence.ContextID(), width: width, finalOpen: finalOpen, sharesFirstValueCell: field.SharesFirstValueCell(), normalized: normalized, normalizedOK: normalizedOK}
-			if kind == flowkind.FieldKey {
-				selectorSpan, selectorSpanOK := field.SelectorSpan()
-				if !selectorSpanOK {
-					return compileFailure(CompileStageOccurrences, CompileRowOccurrence, allocationIndex, fieldIndex, CompileReasonOccurrenceAllocation)
-				}
-				fieldRow.selectorSpan = selectorSpan.ContextID()
-			}
-			if !fieldOK || !rawOK || !kindOK || !valuesOK || !valueOccurrenceOK || !valueSpanOK || !fieldSpanOK || !fieldRow.Available() {
-				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, allocationIndex, fieldIndex, CompileReasonOccurrenceAllocation)
-			}
-			row.fields = append(row.fields, fieldRow)
-		}
-		if !row.Available() {
-			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, allocationIndex, -1, CompileReasonOccurrenceAllocation)
-		}
-		compiler.heapAllocations = append(compiler.heapAllocations, row)
-	}
-	reads, writes := compiler.input.IndexReads(), compiler.input.IndexWrites()
+	geometry := compiler.input.Flow().AccessGeometry()
+	reads, writes := geometry.IndexAccesses().Reads(), geometry.IndexAccesses().Writes()
 	compiler.heapIndexes = make([]HeapIndexRow, 0, reads.Count()+writes.Count())
 	for index := 0; index < reads.Count(); index++ {
-		occurrence, occurrenceOK := reads.At(index)
-		base, baseOK := occurrence.Base()
-		baseSpan, baseSpanOK := base.Span()
-		lens, lensOK := occurrence.Lens()
-		result, resultOK := occurrence.Result()
-		resultSpan, resultSpanOK := result.Span()
-		row := HeapIndexRow{id: occurrence.ContextID(), read: true, baseSpan: baseSpan.ContextID(), resultSpan: resultSpan.ContextID(), position: -1}
-		if lensOK && lens.Kind() == program.IndexLensExact {
+		occurrence, occurrenceOK := compiler.indexReadAt(index)
+		row := HeapIndexRow{id: occurrence.id, read: true, baseSpan: occurrence.baseSpan.ContextID(), resultSpan: occurrence.resultSpan.ContextID(), position: -1}
+		if occurrence.exact {
 			row.lensKind = 1
-			row.exactKey, _ = lens.ExactKey()
-		} else if lensOK && lens.Kind() == program.IndexLensDynamic {
-			source, sourceOK := lens.Source()
-			if sourceOK {
-				row.lensKind, row.keySpan = 2, source.ContextID()
+			row.exactKey = occurrence.exactKey
+		} else {
+			if occurrence.dynamicKeySpan.Available() {
+				row.lensKind, row.keySpan = 2, occurrence.dynamicKeySpan.ContextID()
 			}
 		}
-		if !occurrenceOK || !baseOK || !baseSpanOK || !lensOK || !resultOK || !resultSpanOK || !compiler.input.OwnsIndexRead(occurrence) || !row.Available() {
+		if !occurrenceOK || !row.Available() {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceIndexShape)
 		}
 		compiler.heapIndexes = append(compiler.heapIndexes, row)
 	}
 	for index := 0; index < writes.Count(); index++ {
-		occurrence, occurrenceOK := writes.At(index)
-		value, valueOK := occurrence.Values()
-		valueOccurrence, valueOccurrenceOK := value.Occurrence()
-		valueSpan, valueSpanOK := valueOccurrence.Span()
-		base, baseOK := occurrence.Base()
-		baseSpan, baseSpanOK := base.Span()
-		lens, lensOK := occurrence.Lens()
-		row := HeapIndexRow{id: occurrence.ContextID(), baseSpan: baseSpan.ContextID(), valuesSpan: valueSpan.ContextID(), valuesID: valueOccurrence.ContextID(), position: value.Position()}
-		if lensOK && lens.Kind() == program.IndexLensExact {
+		occurrence, occurrenceOK := compiler.indexWriteAt(index)
+		valueRow, valueRowOK := compiler.valueRowForTerm(occurrence.values)
+		valueSpan, valueSpanOK := valueRow.RootSpanID()
+		row := HeapIndexRow{id: occurrence.id, baseSpan: occurrence.baseSpan.ContextID(), valuesSpan: valueSpan, valuesID: valueRow.ID(), position: occurrence.position}
+		if occurrence.exact {
 			row.lensKind = 1
-			row.exactKey, _ = lens.ExactKey()
-		} else if lensOK && lens.Kind() == program.IndexLensDynamic {
-			source, sourceOK := lens.Source()
-			if sourceOK {
-				row.lensKind, row.keySpan = 2, source.ContextID()
+			row.exactKey = occurrence.exactKey
+		} else {
+			if occurrence.dynamicKeySpan.Available() {
+				row.lensKind, row.keySpan = 2, occurrence.dynamicKeySpan.ContextID()
 			}
 		}
-		if !occurrenceOK || !valueOK || !valueOccurrenceOK || !valueSpanOK || !baseOK || !baseSpanOK || !lensOK || !compiler.input.OwnsIndexWrite(occurrence) || !row.Available() {
+		if !occurrenceOK || !valueRowOK || !valueSpanOK || !row.Available() {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceIndexShape)
 		}
 		compiler.heapIndexes = append(compiler.heapIndexes, row)
@@ -1463,37 +1468,30 @@ func (compiler *compiler) copyHeapGeometryFailure() CompileFailure {
 }
 
 func (compiler *compiler) copyAllocations() CompileFailure {
-	allocations := compiler.input.Allocations()
-	for index := 0; index < allocations.Count(); index++ {
-		allocation, ok := allocations.At(index)
-		geometry := allocation.Geometry()
-		span := geometry.Span()
-		entry, entryOK := span.Entry()
-		finish, finishOK := span.Finish()
-		entryPoints, finishPoints := compiler.pointIDs(entry), compiler.pointIDs(finish)
-		template := allocation.Template()
-		occurrence := allocation.SemanticOccurrence()
-		if !ok || !allocations.Owns(allocation) || !geometry.Available() || !entryOK || !finishOK || !template.Available() || !occurrence.Available() ||
-			!compiler.appendOccurrence(OccurrenceAllocation, allocation.ID(), identity.ContentID{}, append(append([]identity.ContentID(nil), entryPoints...), finishPoints...), []identity.ContentID{template.ID(), occurrence.ID()}, uint64(allocation.Form())) ||
-			!compiler.recordOccurrenceSpan(OccurrenceAllocation, allocation.ID(), entryPoints, finishPoints) {
+	if compiler == nil || len(compiler.allocationRows) != len(compiler.heapAllocations) {
+		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceAllocation)
+	}
+	for index, allocation := range compiler.allocationRows {
+		entryPoints, finishPoints := compiler.pointIDs(allocation.entry), compiler.pointIDs(allocation.finish)
+		if !allocation.occurrence.Available() || !allocation.template.Available() || len(entryPoints) == 0 || len(finishPoints) == 0 ||
+			!compiler.appendOccurrence(OccurrenceAllocation, allocation.template, identity.ContentID{}, append(append([]identity.ContentID(nil), entryPoints...), finishPoints...), []identity.ContentID{allocation.template, allocation.occurrence.ID()}, uint64(allocation.form)) ||
+			!compiler.recordOccurrenceSpan(OccurrenceAllocation, allocation.template, entryPoints, finishPoints) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceAllocation)
 		}
-		for fieldIndex := 0; fieldIndex < geometry.FieldCount(); fieldIndex++ {
-			field, fieldOK := geometry.FieldAt(fieldIndex)
-			raw, rawOK := field.Field()
-			values, valuesOK := field.ValueOccurrence()
-			inputs := []identity.ContentID{allocation.ID()}
-			if valuesOK {
+		for fieldIndex, field := range allocation.fields {
+			values := field.valuesRow
+			inputs := []identity.ContentID{allocation.template}
+			if values.Available() {
 				inputs = append(inputs, values.ID())
-				for memberIndex := 0; memberIndex < values.Count(); memberIndex++ {
-					member, memberOK := values.At(memberIndex)
+				for memberIndex := 0; memberIndex < values.MemberCount(); memberIndex++ {
+					member, memberOK := values.MemberAt(memberIndex)
 					if !memberOK {
 						return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, fieldIndex, CompileReasonOccurrenceAllocation)
 					}
 					inputs = append(inputs, member.ID())
 				}
 			}
-			if !fieldOK || !rawOK || !valuesOK || !compiler.appendOccurrence(OccurrenceAllocationField, raw.ID(), identity.ContentID{}, nil, inputs, uint64(fieldIndex)) {
+			if !field.field.Available() || !values.Available() || !compiler.appendOccurrence(OccurrenceAllocationField, field.id, identity.ContentID{}, nil, inputs, uint64(fieldIndex)) {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, fieldIndex, CompileReasonOccurrenceAllocation)
 			}
 		}
@@ -1502,55 +1500,46 @@ func (compiler *compiler) copyAllocations() CompileFailure {
 }
 
 func (compiler *compiler) copyCalls() CompileFailure {
-	for index := 0; index < compiler.input.CallCount(); index++ {
-		call, ok := compiler.input.CallAt(index)
+	for index := 0; index < compiler.input.Flow().Authored().Calls().Count(); index++ {
+		call, ok := compiler.callConstruction(index)
 		if !ok {
-			// CallCount preserves authored rows whose later executable proof
-			// join is intentionally unavailable.
+			// The authored denominator remains canonical; a missing direct join
+			// is a non-executable candidate and is not compacted into a new
+			// proof table.
 			continue
 		}
-		body, bodyOK := call.Body()
-		span, spanOK := call.Span()
-		callee, calleeOK := call.Callee()
-		actuals, actualsOK := call.Actuals()
-		values, valuesOK := call.Values()
-		formal, formalOK := call.Formal()
-		types, typesOK := call.TypeArguments()
-		entry, entryOK := span.Entry()
-		finish, finishOK := span.Finish()
-		inputs := []identity.ContentID{callee.ContextID(), actuals.ContextID(), values.ContextID(), formal.ID(), types.ContextID()}
-		if receiver, receiverOK := call.Receiver(); receiverOK {
-			inputs = append(inputs, receiver.ContextID())
+		inputs := []identity.ContentID{call.callee.id, call.actuals.id, call.values, call.formal, call.types}
+		if call.receiver.id.Available() {
+			inputs = append(inputs, call.receiver.id)
 		}
-		entryPoints, finishPoints := compiler.pointIDs(entry), compiler.pointIDs(finish)
-		if !compiler.input.OwnsCallOccurrence(call) || !bodyOK || !spanOK || !calleeOK || !actualsOK || !valuesOK || !formalOK || !typesOK || !entryOK || !finishOK || len(entryPoints) == 0 || len(finishPoints) == 0 ||
-			!compiler.appendOccurrence(OccurrenceCall, call.ContextID(), body.PathID(), append(append([]identity.ContentID(nil), entryPoints...), finishPoints...), inputs, uint64(call.Disposition())) ||
-			!compiler.recordOccurrenceSpan(OccurrenceCall, call.ContextID(), entryPoints, finishPoints) ||
-			!compiler.appendOccurrence(OccurrenceCallActivation, call.ContextID(), body.PathID(), append([]identity.ContentID(nil), finishPoints...), inputs, uint64(call.Disposition())) ||
-			!compiler.recordOccurrenceSpan(OccurrenceCallActivation, call.ContextID(), nil, finishPoints) {
+		entryPoints, finishPoints := compiler.pointIDs(call.entry), compiler.pointIDs(call.finish)
+		disposition := uint64(1)
+		if call.executable {
+			disposition = uint64(2)
+		}
+		if len(entryPoints) == 0 || len(finishPoints) == 0 ||
+			!compiler.appendOccurrence(OccurrenceCall, call.id, call.bodyPath, append(append([]identity.ContentID(nil), entryPoints...), finishPoints...), inputs, disposition) ||
+			!compiler.recordOccurrenceSpan(OccurrenceCall, call.id, entryPoints, finishPoints) ||
+			!compiler.appendOccurrence(OccurrenceCallActivation, call.id, call.bodyPath, append([]identity.ContentID(nil), finishPoints...), inputs, disposition) ||
+			!compiler.recordOccurrenceSpan(OccurrenceCallActivation, call.id, nil, finishPoints) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceCall)
 		}
-		for argIndex := 0; argIndex < values.Count(); argIndex++ {
-			argument, argumentOK := values.At(argIndex)
-			if !argumentOK || !compiler.input.OwnsCallArgument(argument) || !compiler.appendOccurrence(OccurrenceCallArgument, argument.ContextID(), body.PathID(), nil, []identity.ContentID{call.ContextID()}, uint64(argIndex)) {
+		for argIndex, argument := range call.arguments {
+			if !compiler.appendOccurrence(OccurrenceCallArgument, argument.id, call.bodyPath, nil, []identity.ContentID{call.id}, uint64(argIndex)) {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, argIndex, CompileReasonOccurrenceCall)
 			}
 		}
-		for typeIndex := 0; typeIndex < types.Count(); typeIndex++ {
-			argument, argumentOK := types.At(typeIndex)
-			if !argumentOK || !compiler.input.OwnsCallTypeArgument(argument) || !compiler.appendOccurrence(OccurrenceCallTypeArgument, argument.ContextID(), body.PathID(), nil, []identity.ContentID{call.ContextID()}, uint64(typeIndex)) {
+		for typeIndex, argument := range call.typeArguments {
+			if !compiler.appendOccurrence(OccurrenceCallTypeArgument, argument.id, call.bodyPath, nil, []identity.ContentID{call.id}, uint64(typeIndex)) {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, typeIndex, CompileReasonOccurrenceCall)
 			}
 		}
-		if boundary, boundaryOK := call.Boundary(); boundaryOK {
-			if !compiler.input.OwnsCallBoundary(boundary) || !compiler.appendOccurrence(OccurrenceCallBoundary, boundary.ContextID(), body.PathID(), nil, []identity.ContentID{call.ContextID()}, 0) {
+		if call.boundary.id.Available() {
+			if !compiler.appendOccurrence(OccurrenceCallBoundary, call.boundary.id, call.bodyPath, nil, []identity.ContentID{call.id}, 0) {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceCall)
 			}
-			for armIndex := 0; armIndex < boundary.ArmCount(); armIndex++ {
-				arm, armOK := boundary.ArmAt(armIndex)
-				target, targetOK := arm.Target()
-				route, routeOK := arm.RouteDigest()
-				if !armOK || !targetOK || !routeOK || !compiler.input.OwnsCallArm(arm) || !compiler.appendOccurrence(OccurrenceCallArm, arm.ContextID(), body.PathID(), compiler.pointIDs(target), []identity.ContentID{boundary.ContextID(), route, target.ContextID()}, uint64(armIndex)) {
+			for armIndex, arm := range call.boundary.arms {
+				if !compiler.appendOccurrence(OccurrenceCallArm, arm.id, call.bodyPath, arm.points, []identity.ContentID{call.boundary.id, arm.route, arm.target}, uint64(armIndex)) {
 					return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, armIndex, CompileReasonOccurrenceCall)
 				}
 			}
@@ -1722,10 +1711,10 @@ func (compiler *compiler) deriveRuleOccurrencesFailure() CompileFailure {
 		case OccurrenceAllocation:
 			ok = appendBase(RuleRoleHeapIngress, RuleInputNone, nil) &&
 				appendLocal(RuleRoleValueAllocation, RuleInputEntry, geometry.entry)
-			if ok && row.code == uint64(program.AllocationFormEmpty) {
+			if ok && row.code == uint64(flow.AllocationFormEmpty) {
 				ok = appendLocal(RuleRoleHeapEmpty, RuleInputFinish, finish)
 			}
-			if ok && row.code == uint64(program.AllocationFormClosed) {
+			if ok && row.code == uint64(flow.AllocationFormClosed) {
 				ok = appendLocal(RuleRoleHeapClosed, RuleInputFinish, finish)
 			}
 		}

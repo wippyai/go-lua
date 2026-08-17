@@ -3,28 +3,40 @@ package pack_test
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/composite"
 	packdomain "github.com/wippyai/go-lua/analysis/domain/pack"
 	staticdomain "github.com/wippyai/go-lua/analysis/domain/static"
 	"github.com/wippyai/go-lua/analysis/domain/type/authority"
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
+	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
-	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
 	"github.com/wippyai/go-lua/analysis/program/flow"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
-	"github.com/wippyai/go-lua/analysis/schema/grammar"
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 )
+
+func portableAnyTypes(count int) []schematype.Type {
+	values := make([]schematype.Type, count)
+	for index := range values {
+		value, ok := schematype.NewPrimitive(schematype.PrimitiveAny)
+		if !ok {
+			panic("portable any type")
+		}
+		values[index] = value
+	}
+	return values
+}
 
 func selectorLawContract(t testing.TB) (*target.Contract, target.Operation) {
 	t.Helper()
-	contract, err := target.Seal(&target.Spec{Operations: []target.OperationSpec{{
+	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []target.OperationSpec{{
 		Bindings:   []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"send"}}},
 		ValuesVars: 1,
-		Input:      target.ValuesSpec{Fixed: []typ.Type{typ.Any, typ.Any}, Tail: target.ValuesVariable, Var: 0},
+		Input:      target.ValuesSpec{Fixed: portableAnyTypes(2), Tail: target.ValuesVariable, Var: 0},
 		Outcomes:   []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}},
 		Effects:    target.RowSpec{Tail: target.RowClosed},
 	}}})
@@ -56,7 +68,7 @@ func selectorLawSchema(t testing.TB, contract *target.Contract, label string) se
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, receiptOK := grammar.Global()
+	receipt, receiptOK := composite.Global()
 	if !receiptOK {
 		t.Fatal("program schema receipt")
 	}
@@ -71,7 +83,7 @@ func selectorLawSchema(t testing.TB, contract *target.Contract, label string) se
 	if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 		t.Fatal("selector mount")
 	}
-	artifact, failure := schemaadapter.CompileDetailed(program.TransformerInput(), receipt)
+	artifact, failure := composite.CompileArtifactDetailed(program, receipt)
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile selector artifact: %s", failure.Error())
 	}
@@ -91,17 +103,14 @@ func selectorLawSchema(t testing.TB, contract *target.Contract, label string) se
 	if !ok || schema == nil {
 		t.Fatal("seal selector Pack")
 	}
-	packReceipt, receiptOK := artifact.PackReceipt()
-	if !receiptOK {
-		t.Fatal("selector Pack receipt")
-	}
-	for index := 0; index < packReceipt.CallCount(); index++ {
-		call, callOK := packReceipt.CallAt(index)
+	for index := 0; index < artifact.CallCount(); index++ {
+		call, callOK := artifact.CallAt(index)
 		if !callOK || call.Form() != flow.CallFormMethod {
 			continue
 		}
 		receiver, receiverOK := call.ReceiverID()
-		argument, argumentOK := call.ArgumentAt(0)
+		argumentRow, argumentOK := artifact.CallArgumentFor(index, 0)
+		argument := argumentRow.ValueID()
 		if !receiverOK || !argumentOK {
 			t.Fatal("selector method operands")
 		}

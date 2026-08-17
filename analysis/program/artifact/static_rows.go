@@ -2,7 +2,7 @@ package artifact
 
 import "github.com/wippyai/go-lua/analysis/identity"
 
-// StaticTypeArgumentRow is the closed Program receipt for one authored call
+// StaticTypeArgumentRow is the closed Program row for one authored call
 // type argument.  The argument and target are owner-issued identities; no
 // authored Term or Program/Static capability crosses the artifact boundary.
 type StaticTypeArgumentRow struct {
@@ -47,7 +47,7 @@ func (row StaticTypeArgumentRow) Index() uint32 {
 	return row.index
 }
 
-// StaticTypeValueRow is the closed Program receipt for one executable
+// StaticTypeValueRow is the closed Program row for one executable
 // TypeValue source. Its BodyPath and occurrence identity are sufficient for
 // mounted substitution; Static decides the semantic class and runtime
 // disposition after admission.
@@ -97,49 +97,29 @@ func (compiler *compiler) copyStaticRowsFailure() CompileFailure {
 	if compiler == nil || !compiler.input.Available() {
 		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
 	}
-	compiler.staticTypeArguments = make([]StaticTypeArgumentRow, 0)
-	for callIndex := 0; callIndex < compiler.input.CallCount(); callIndex++ {
-		call, callOK := compiler.input.CallAt(callIndex)
-		if !callOK || !compiler.input.OwnsCallOccurrence(call) {
-			continue
+	// copyCallRowsFailure is the sole call source stage. Static's ordered
+	// type-argument references are already copied into the Artifact-owned
+	// CallTypeArgumentRow column there, so this stage only projects that direct
+	// column into StaticTypeArgumentRow without reopening Program wrappers.
+	compiler.staticTypeArguments = make([]StaticTypeArgumentRow, 0, len(compiler.callTypeArguments))
+	for index, argument := range compiler.callTypeArguments {
+		row := StaticTypeArgumentRow{id: argument.id, call: argument.call, types: argument.types, reference: argument.reference, index: argument.position}
+		if !argument.Available() || !row.Available() {
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
-		arguments, argumentsOK := call.TypeArguments()
-		if !argumentsOK {
-			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, callIndex, -1, CompileReasonOccurrenceUnavailable)
-		}
-		for argumentIndex := 0; argumentIndex < arguments.Count(); argumentIndex++ {
-			argument, argumentOK := arguments.At(argumentIndex)
-			argumentID, idOK := argument.ContextID(), argumentOK
-			referenceID, referenceOK := argument.StaticTypeReferenceID()
-			if !argumentOK || !compiler.input.OwnsCallTypeArgument(argument) || !idOK || !referenceOK || !call.ContextID().Available() {
-				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, callIndex, argumentIndex, CompileReasonOccurrenceUnavailable)
-			}
-			typesID, typesOK := arguments.ContextID(), arguments.ContextID().Available()
-			row := StaticTypeArgumentRow{id: argumentID, call: call.ContextID(), types: typesID, reference: referenceID, index: uint32(argumentIndex)}
-			if !typesOK || !row.Available() {
-				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, callIndex, argumentIndex, CompileReasonOccurrenceUnavailable)
-			}
-			compiler.staticTypeArguments = append(compiler.staticTypeArguments, row)
-		}
+		compiler.staticTypeArguments = append(compiler.staticTypeArguments, row)
 	}
 	compiler.staticTypeValues = make([]StaticTypeValueRow, 0)
-	for index := 0; index < compiler.input.TypeValueSourceCount(); index++ {
-		source, sourceOK := compiler.input.TypeValueSourceAt(index)
+	typeValues := compiler.input.Flow().Authored().TypeValues()
+	for index := 0; index < typeValues.Count(); index++ {
+		source, referenceID, rootID, name, sourceOK := compiler.typeValueCompileRow(index)
 		if !sourceOK {
 			continue // authored denominator includes dead TypeValue candidates
 		}
-		if !compiler.input.OwnsValueSourceOccurrence(source) {
+		if !source.id.Available() || !source.body.Available() {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
-		body, bodyOK := source.Body()
-		id, idOK := source.ContextID(), source.ContextID().Available()
-		referenceID, referenceOK := source.StaticTypeReferenceID()
-		rootID, rootOK := source.StaticTypeValueRootID()
-		name, nameOK := source.StaticTypeValueName()
-		if !bodyOK || !idOK || !referenceOK || !rootOK || !nameOK || !body.PathID().Available() {
-			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
-		}
-		row := StaticTypeValueRow{id: id, body: body.PathID(), reference: referenceID, root: rootID, name: name}
+		row := StaticTypeValueRow{id: source.id, body: source.body, reference: referenceID, root: rootID, name: name}
 		if !row.Available() {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}

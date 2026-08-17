@@ -1085,7 +1085,7 @@ type typedOutput[K ~uint32 | ~uint64, V any] struct {
 // carried target closure on which it may act.  It has no domain vocabulary;
 // only the owner-specific V callback is retained here.
 type typedCarryTransform[K ~uint32 | ~uint64, V any] struct {
-	semantic SemanticKey
+	semantic identity.SemanticKey
 	closures []factbinding.TransformClosure[K, V]
 	apply    func(V) (V, bool)
 }
@@ -1095,7 +1095,7 @@ func (transform typedCarryTransform[K, V]) active() bool {
 }
 
 type transformedCarryOwner[V any] interface {
-	transformedCarry() (SemanticKey, []carrier.Target, func(V) (V, bool), bool)
+	transformedCarry() (identity.SemanticKey, []carrier.Target, func(V) (V, bool), bool)
 }
 
 type transformedCarryRouteOwner interface {
@@ -1496,7 +1496,7 @@ func (output *typedOutput[K, V]) discard() {
 type boundRule[V, O any] struct {
 	proof          *ruleRuntimeProof
 	admission      RuleAdmission[V, O]
-	anchor         SemanticKey
+	anchor         identity.SemanticKey
 	operandContent [32]byte
 	coordinates    ActivationCoordinates
 	transfer       func(Access[V, O]) bool
@@ -1508,7 +1508,7 @@ type boundRule[V, O any] struct {
 	// member retains only authored carry surfaces plus the route bit.
 	routeScope     runtimeFactor
 	routeTransform bool
-	carrySemantic  SemanticKey
+	carrySemantic  identity.SemanticKey
 	carryTargets   []carrier.Target
 	carryApply     func(V) (V, bool)
 	carryOnly      bool
@@ -1527,9 +1527,9 @@ func (bound *boundRule[V, O]) ruleOperand() O {
 	return bound.operand
 }
 
-func (bound *boundRule[V, O]) transformedCarry() (SemanticKey, []carrier.Target, func(V) (V, bool), bool) {
+func (bound *boundRule[V, O]) transformedCarry() (identity.SemanticKey, []carrier.Target, func(V) (V, bool), bool) {
 	if bound == nil || !bound.carrySemantic.Available() || bound.carryApply == nil {
-		return SemanticKey{}, nil, nil, false
+		return identity.SemanticKey{}, nil, nil, false
 	}
 	return bound.carrySemantic, bound.carryTargets, bound.carryApply, true
 }
@@ -1832,20 +1832,6 @@ func StageValue[V, O any](access Access[V, O], row Row, value V) bool {
 	return true
 }
 
-// StageTransform settles one Product row by applying that Rule's sole
-// declared transformed carry.  It is available only when TransformCarryFrom
-// installed the Factor-owned map; callers cannot choose a map, target, or
-// predecessor and it never encodes the effect as a sentinel value.
-func StageTransform[V, O any](access Access[V, O], row Row) bool {
-	if access.execution == nil || access.owner == nil || access.execution.owner != access.owner || !access.execution.active.holds(access.epoch) || access.execution.product == nil || row.session != access.execution.product || row.epoch != access.epoch || row.index != access.execution.product.current || access.output.stageTransform == nil || !access.output.stageTransform(access.execution, access.epoch, row.index) {
-		if access.execution != nil {
-			access.execution.failed.Store(true)
-		}
-		return false
-	}
-	return true
-}
-
 // StageSelection is the sole route-output capability. It consumes every
 // selected ordinal of exactly one preceding Selection and stages one atomic
 // row batch of authenticated target/value pairs. A transfer cannot select a
@@ -1929,13 +1915,4 @@ func Operand[V, O any](access Access[V, O]) (O, bool) {
 		return zero, false
 	}
 	return access.owner.operand, true
-}
-
-// Coordinates returns the accepted activation tuple for this live transfer.
-// It is unavailable for ordinary Rule rows and after the transfer closes.
-func Coordinates[V, O any](access Access[V, O]) (ActivationCoordinates, bool) {
-	if access.execution == nil || access.owner == nil || access.execution.owner != access.owner || !access.execution.active.holds(access.epoch) || !access.owner.coordinates.Available() {
-		return ActivationCoordinates{}, false
-	}
-	return access.owner.coordinates, true
 }

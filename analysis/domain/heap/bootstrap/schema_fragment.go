@@ -4,19 +4,20 @@ import (
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
 	heapowner "github.com/wippyai/go-lua/analysis/domain/heap/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // SchemaFragment is Heap/bootstrap's callback-free Rule surface.
 type SchemaFragment struct {
 	slot     *engine.RuleSlot[heapdomain.Value, Root]
 	write    engine.SchemaWriteSlot[heapdomain.Value]
-	semantic engine.SemanticKey
-	evidence engine.SemanticKey
+	semantic identity.SemanticKey
+	evidence identity.SemanticKey
 }
 
 // DeclareSchema records the zero-input Heap bootstrap Rule shape.
-func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evidence engine.SemanticKey, owner *heapowner.SchemaFragment) (*SchemaFragment, bool) {
-	if builder == nil || owner == nil || !engine.DistinctKeys(semantic, operandFamily, evidence) {
+func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evidence identity.SemanticKey, owner *heapowner.SchemaFragment) (*SchemaFragment, bool) {
+	if builder == nil || owner == nil || !identity.DistinctKeys(semantic, operandFamily, evidence) {
 		return nil, false
 	}
 	slot, ok := engine.NewRuleSlot[heapdomain.Value, Root](builder, engine.SchemaRuleSpec[heapdomain.Value]{

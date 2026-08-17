@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof"
+	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/astcodec"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/grammar"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/occurrence"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/parserproducts"
@@ -167,13 +167,26 @@ func TestGeneratedEvidenceMatchesSealedProducts(t *testing.T) {
 	}
 }
 
+// parserUsesRepositoryRoot walks up from this test source until it finds the
+// directory that owns go.mod. Anchoring on the module marker keeps the proof
+// independent of where the grammarproof tree sits inside the module.
 func parserUsesRepositoryRoot(t *testing.T) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("discover parser-uses test path")
 	}
-	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", "..", "..", ".."))
+	root := filepath.Dir(file)
+	for {
+		if _, err := os.Stat(filepath.Join(root, "go.mod")); err == nil {
+			return root
+		}
+		parent := filepath.Dir(root)
+		if parent == root {
+			t.Fatal("module root: no go.mod above test file")
+		}
+		root = parent
+	}
 }
 
 func testProducts() parserproducts.Evidence {
@@ -183,8 +196,8 @@ func testProducts() parserproducts.Evidence {
 		SchemaDigest:       "schema",
 		IngressDigest:      "ingress",
 		Fields: []parserproducts.FieldState{
-			{Form: "Form", Field: "Left", State: grammarproof.FieldStatePresent, Context: occurrence.ContextExpression, Disposition: parserproducts.DispositionObserved, Source: "source", ParserLaw: 1},
-			{Form: "Form", Field: "Right", State: grammarproof.FieldStatePresent, Context: occurrence.ContextExpression, Disposition: parserproducts.DispositionObserved, Source: "source", ParserLaw: 1},
+			{Form: "Form", Field: "Left", State: astcodec.FieldStatePresent, Context: occurrence.ContextExpression, Disposition: parserproducts.DispositionObserved, Source: "source", ParserLaw: 1},
+			{Form: "Form", Field: "Right", State: astcodec.FieldStatePresent, Context: occurrence.ContextExpression, Disposition: parserproducts.DispositionObserved, Source: "source", ParserLaw: 1},
 		},
 		ProductLaws: []parserproducts.ProductLaw{{
 			Production: "form", Nonterminal: "form", RHS: []string{"expr", "expr"}, ActionDigest: "action", Scope: 1, Form: parserproducts.ActionFormDirectConstruct,
@@ -192,8 +205,8 @@ func testProducts() parserproducts.Evidence {
 		}},
 		Sequences: []parserproducts.SequenceLaw{{Production: "form", Scope: 1, Destination: parserproducts.SequenceDestination{Tag: "form"}, Construction: parserproducts.SequenceConstructionForward, Segments: []parserproducts.SequenceSegment{}}},
 		Carriers: []parserproducts.Carrier{
-			{Form: "Form", Field: "Left", Class: grammar.ConstructorExpression, ChildType: "Expr", Cardinality: grammarproof.FieldStatePresent},
-			{Form: "Form", Field: "Right", Class: grammar.ConstructorExpression, ChildType: "Expr", Cardinality: grammarproof.FieldStatePresent},
+			{Form: "Form", Field: "Left", Class: grammar.ConstructorExpression, ChildType: "Expr", Cardinality: astcodec.FieldStatePresent},
+			{Form: "Form", Field: "Right", Class: grammar.ConstructorExpression, ChildType: "Expr", Cardinality: astcodec.FieldStatePresent},
 		},
 		ActionTerms: parserproducts.ActionTerms{
 			Symbols: []parserproducts.ActionSymbol{

@@ -3,11 +3,10 @@ package artifact_test
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/composite"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
-	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
-	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 const functionBoundaryArtifactSource = `
@@ -31,11 +30,11 @@ func compileFunctionBoundaryArtifact(t testing.TB) *programartifact.Artifact {
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, receiptOK := grammar.Global()
-	if !receiptOK {
+	compilation, compilationOK := composite.Global()
+	if !compilationOK {
 		t.Fatal("Program schema unavailable")
 	}
-	artifact, failure := schemaadapter.CompileDetailed(published.TransformerInput(), receipt)
+	artifact, failure := composite.CompileArtifactDetailed(published, compilation)
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile function boundary artifact: %s", failure.Error())
 	}
@@ -46,18 +45,6 @@ func TestProgramArtifactOwnsCanonicalFunctionBoundaryPorts(t *testing.T) {
 	left, right := compileFunctionBoundaryArtifact(t), compileFunctionBoundaryArtifact(t)
 	if left.ID() != right.ID() || left.FunctionBoundaryCount() != right.FunctionBoundaryCount() || left.FunctionBoundaryCount() < 2 {
 		t.Fatalf("replayed function interfaces = id %v/%v count %d/%d", left.ID(), right.ID(), left.FunctionBoundaryCount(), right.FunctionBoundaryCount())
-	}
-	pack, packOK := left.PackReceipt()
-	if !packOK {
-		t.Fatal("Pack refinement unavailable")
-	}
-	packBodies := make(map[identity.ContentID]programartifact.PackBodyReceiptRow, pack.BodyCount())
-	for index := 0; index < pack.BodyCount(); index++ {
-		row, ok := pack.BodyAt(index)
-		if !ok {
-			t.Fatalf("Pack BodyAt(%d)", index)
-		}
-		packBodies[row.ID()] = row
 	}
 	bodyRows := make(map[identity.ContentID]programartifact.BodyRow, left.BodyCount())
 	for index := 0; index < left.BodyCount(); index++ {
@@ -78,25 +65,19 @@ func TestProgramArtifactOwnsCanonicalFunctionBoundaryPorts(t *testing.T) {
 			t.Fatalf("function boundary replay[%d] diverged", index)
 		}
 		body, bodyOK := bodyRows[got.BodyID()]
-		packBody, packBodyOK := packBodies[got.BodyID()]
-		if !bodyOK || !packBodyOK || !body.Callable() || !packBody.Callable() || body.ContextID() != got.BodyContextID() || body.EntryID() != got.EntryID() {
-			t.Fatalf("function boundary[%d] did not refine its exact Body/Pack rows", index)
-		}
-		if got.FormalCount() != packBody.FormalCount() {
-			t.Fatalf("function boundary[%d] formal count %d, Pack %d", index, got.FormalCount(), packBody.FormalCount())
+		if !bodyOK || !body.Callable() || body.ContextID() != got.BodyContextID() || body.EntryID() != got.EntryID() {
+			t.Fatalf("function boundary[%d] did not refine its exact Body row", index)
 		}
 		for position := 0; position < got.FormalCount(); position++ {
 			port, portOK := got.FormalAt(position)
 			replayedPort, replayedPortOK := replayed.FormalAt(position)
-			packPort, packPortOK := packBody.FormalAt(position)
 			gotPosition, positionOK := port.Position()
 			declared, declaredOK := port.DeclaredStaticTypeID()
 			replayedDeclared, replayedDeclaredOK := replayedPort.DeclaredStaticTypeID()
-			if !portOK || !replayedPortOK || !packPortOK || !positionOK || gotPosition != position ||
+			if !portOK || !replayedPortOK || !positionOK || gotPosition != position ||
 				port.ID() != replayedPort.ID() || port.CellID() != replayedPort.CellID() || port.StorageCellID() != replayedPort.StorageCellID() ||
-				port.ID() != packPort.FormalID() || port.CellID() != packPort.CellID() || port.StorageCellID() != packPort.StorageCellID() ||
 				declaredOK != replayedDeclaredOK || declared != replayedDeclared || declaredOK {
-				t.Fatalf("function boundary[%d] formal[%d] lost order or Pack refinement", index, position)
+				t.Fatalf("function boundary[%d] formal[%d] lost order", index, position)
 			}
 		}
 		leftVararg, leftVarargOK := got.Vararg()
@@ -163,11 +144,11 @@ return add
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, receiptOK := grammar.Global()
-	if !receiptOK {
+	compilation, compilationOK := composite.Global()
+	if !compilationOK {
 		t.Fatal("Program schema unavailable")
 	}
-	artifact, failure := schemaadapter.CompileDetailed(published.TransformerInput(), receipt)
+	artifact, failure := composite.CompileArtifactDetailed(published, compilation)
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile declared formal artifact: %s", failure.Error())
 	}

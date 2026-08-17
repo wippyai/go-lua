@@ -3,9 +3,9 @@ package target_test
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/library/lualib/targetprofile"
+	"github.com/wippyai/go-lua/analysis/program/relations"
 	"github.com/wippyai/go-lua/analysis/program/semanticsource"
-	"github.com/wippyai/go-lua/analysis/program/target/profile"
-	"github.com/wippyai/go-lua/analysis/schema/relations"
 )
 
 // The profile owns the one closed string.gsub table-replacement branch. This
@@ -16,7 +16,7 @@ func TestSourcePublicationsMatchProfileGsubProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, ok := contract.SemanticSourceReceipt()
+	rows, ok := contract.SourceViews()
 	if !ok {
 		t.Fatal("profile Contract has no semantic-source publication")
 	}
@@ -24,7 +24,7 @@ func TestSourcePublicationsMatchProfileGsubProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	publications := receipt.Publications(schema)
+	publications := rows.Publications(schema)
 	var published int
 	found := false
 	for _, publication := range publications {

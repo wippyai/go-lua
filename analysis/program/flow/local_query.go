@@ -3,10 +3,9 @@ package flow
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/causal"
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
-// Local is Flow's sole public Program-local cyclic-region facade. It projects
+// Local is Flow's sole public Program-local WTO facade. It projects
 // recurrence-issued Causal rows; it never derives membership from routes,
 // Mu/reset witnesses, or authored topology.
 type Local struct{ result *causal.Result }
@@ -20,18 +19,8 @@ func (view View) Local() Local {
 	return Local{result: view.component.programStructure.causal}
 }
 
-type Regions struct{ local causal.Local }
-
-func (local Local) Regions() Regions {
-	if local.result == nil {
-		return Regions{}
-	}
-	return Regions{local: local.result.Local()}
-}
-
-// LocalWTO is the complete parent-issued local schedule.  Unlike Regions,
-// which is the legacy flat cyclic-component diagnostic projection, WTO also
-// contains acyclic singleton leaves and balanced Enter/Point/Exit events.
+// LocalWTO is the complete parent-issued local schedule. It contains acyclic
+// singleton leaves and balanced Enter/Point/Exit events.
 // Consumers must copy this certificate; they must not reconstruct an order
 // from final routes.
 type LocalWTO struct{ local causal.LocalWTO }
@@ -130,71 +119,4 @@ func (event WTOEvent) Point() (WTOPoint, bool) {
 func (wto LocalWTO) EventAt(index int) (WTOEvent, bool) {
 	event, ok := wto.local.EventAt(index)
 	return publicWTOEvent(event), ok
-}
-
-// Region is an opaque stable Program-local cyclic component. Its ID commits
-// to the exact owner quartet and canonical component head, never a physical
-// node, arc, SCC ordinal, or storage index.
-type Region struct{ region causal.Region }
-
-func publicRegion(region causal.Region) Region { return Region{region: region} }
-
-func (region Region) Available() bool        { return region.region.Available() }
-func (region Region) ID() identity.ContentID { return region.region.ID() }
-func (region Region) Head() (keyspace.Term, bool) {
-	return region.region.Head()
-}
-
-// ForHead resolves only an exact recurrence-issued component head.
-func (regions Regions) ForHead(head keyspace.Term) (Region, bool) {
-	region, ok := regions.local.ForHead(head)
-	return publicRegion(region), ok
-}
-
-// Count and At enumerate recurrence-issued Regions in canonical head order.
-func (regions Regions) Count() int { return regions.local.Count() }
-func (regions Regions) At(index int) (Region, bool) {
-	region, ok := regions.local.At(index)
-	return publicRegion(region), ok
-}
-
-// Resolve authenticates a stable exact-quartet Region ID.
-func (regions Regions) Resolve(id identity.ContentID) (Region, bool) {
-	region, ok := regions.local.Resolve(id)
-	return publicRegion(region), ok
-}
-
-// ForSuccessor is the singular membership inverse for an existing Flow
-// Successor. A forged or foreign value has no region.
-func (regions Regions) ForSuccessor(successor Successor) (Region, bool) {
-	region, ok := regions.local.ForSuccessor(successor.route)
-	return publicRegion(region), ok
-}
-
-// RegionCountForSite and RegionAtSite are the allocation-free multi-valued
-// inverse for a term-level Site which may participate in several Regions.
-func (regions Regions) RegionCountForSite(site Site) int {
-	return regions.local.RegionCountForSite(site.site)
-}
-func (regions Regions) RegionAtSite(site Site, index int) (Region, bool) {
-	region, ok := regions.local.RegionAtSite(site.site, index)
-	return publicRegion(region), ok
-}
-
-func (region Region) ContainsSuccessor(successor Successor) bool {
-	return region.region.ContainsSuccessor(successor.route)
-}
-
-func (region Region) ContainsSite(site Site) bool { return region.region.ContainsSite(site.site) }
-
-// SuccessorCount/At and SiteCount/At traverse only existing Causal rows.
-func (region Region) SuccessorCount() int { return region.region.SuccessorCount() }
-func (region Region) SuccessorAt(index int) (Successor, bool) {
-	successor, ok := region.region.SuccessorAt(index)
-	return publicSuccessor(successor), ok
-}
-func (region Region) SiteCount() int { return region.region.SiteCount() }
-func (region Region) SiteAt(index int) (Site, bool) {
-	site, ok := region.region.SiteAt(index)
-	return publicSite(site), ok
 }

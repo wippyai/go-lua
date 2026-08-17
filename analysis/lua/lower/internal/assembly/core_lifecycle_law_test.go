@@ -20,11 +20,11 @@ import (
 func TestCollectorAdmissionGapMatrixTerminalizes(t *testing.T) {
 	const name = "collector-admission-gaps.lua"
 	span := source.Span{File: name, StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 2}
-	body := func(c *Collector) Term { return c.Body(span) }
-	assign := func(c *Collector, owner, cell Term) Term {
+	body := func(c *Collector) keyspace.Term { return c.Body(span) }
+	assign := func(c *Collector, owner, cell keyspace.Term) keyspace.Term {
 		value := c.Bool(span, owner, true)
-		values := c.Values(span, owner, []Term{value}, 0)
-		return c.Assign(span, owner, []Term{cell}, []source.Span{span}, values)
+		values := c.Values(span, owner, []keyspace.Term{value}, 0)
+		return c.Assign(span, owner, []keyspace.Term{cell}, []source.Span{span}, values)
 	}
 	tests := []struct {
 		name  string
@@ -74,7 +74,7 @@ func TestCollectorAdmissionGapMatrixTerminalizes(t *testing.T) {
 				owner := body(c)
 				integer := c.Integer(span, owner, 7)
 				nonExact := c.Unary(span, owner, kind.UnaryBitNot, integer)
-				values := c.Values(span, owner, []Term{integer}, 0)
+				values := c.Values(span, owner, []keyspace.Term{integer}, 0)
 				table := c.DeclareTable(span, owner)
 				return c, func(c *Collector) { c.TableField(span, table, nonExact, values, kind.FieldExact) }
 			},
@@ -86,7 +86,7 @@ func TestCollectorAdmissionGapMatrixTerminalizes(t *testing.T) {
 				owner := body(c)
 				first := c.Alias(span, span, owner, "A")
 				param := c.TypeParam(span, first, "T")
-				return c, func(c *Collector) { c.AliasParams(first, []Term{param, param}) }
+				return c, func(c *Collector) { c.AliasParams(first, []keyspace.Term{param, param}) }
 			},
 		},
 		{
@@ -98,7 +98,7 @@ func TestCollectorAdmissionGapMatrixTerminalizes(t *testing.T) {
 				first := c.TypeFunction(span, host)
 				second := c.TypeFunction(span, host)
 				param := c.TypeParam(span, first, "T")
-				return c, func(c *Collector) { c.TypeFunctionGenerics(second, []Term{param}) }
+				return c, func(c *Collector) { c.TypeFunctionGenerics(second, []keyspace.Term{param}) }
 			},
 		},
 		{
@@ -109,7 +109,7 @@ func TestCollectorAdmissionGapMatrixTerminalizes(t *testing.T) {
 				first := c.DeclareFunction(span, owner)
 				second := c.DeclareFunction(span, owner)
 				param := c.TypeParam(span, first, "T")
-				return c, func(c *Collector) { c.SetFunctionGenerics(second, []Term{param}) }
+				return c, func(c *Collector) { c.SetFunctionGenerics(second, []keyspace.Term{param}) }
 			},
 		},
 		{
@@ -119,7 +119,7 @@ func TestCollectorAdmissionGapMatrixTerminalizes(t *testing.T) {
 				owner := body(c)
 				cell := c.Cell(span, owner)
 				function := c.DeclareFunction(span, owner)
-				return c, func(c *Collector) { c.FillFunction(function, owner, []Term{cell, cell}, 0, nil) }
+				return c, func(c *Collector) { c.FillFunction(function, owner, []keyspace.Term{cell, cell}, 0, nil) }
 			},
 		},
 		{
@@ -129,7 +129,7 @@ func TestCollectorAdmissionGapMatrixTerminalizes(t *testing.T) {
 				owner := body(c)
 				cell := c.Cell(span, owner)
 				values := c.Values(span, owner, nil, 0)
-				return c, func(c *Collector) { c.Bind(span, owner, []Term{cell, cell}, values) }
+				return c, func(c *Collector) { c.Bind(span, owner, []keyspace.Term{cell, cell}, values) }
 			},
 		},
 		{
@@ -424,7 +424,7 @@ func TestRepresentativeMutationRejectionIsTerminalAndRetainsFirstCause(t *testin
 				body := c.Body(span)
 				future := keyspace.MakeTerm(keyspace.FamilyString, 1)
 				return c, func(c *Collector) {
-					c.Values(span, body, []Term{future}, 0)
+					c.Values(span, body, []keyspace.Term{future}, 0)
 				}
 			},
 		},
@@ -529,7 +529,7 @@ func TestCopiedTermMutationsRejectAtAdmission(t *testing.T) {
 	}
 	const name = "copied-term-admission.lua"
 	span := source.Span{File: name}
-	newBody := func(c *Collector) Term { return c.Body(span) }
+	newBody := func(c *Collector) keyspace.Term { return c.Body(span) }
 	cases := []testCase{
 		{
 			name: "Function generics future TypeParam",
@@ -538,7 +538,7 @@ func TestCopiedTermMutationsRejectAtAdmission(t *testing.T) {
 				body := newBody(c)
 				function := c.DeclareFunction(span, body)
 				future := keyspace.MakeTerm(keyspace.FamilyTypeParam, 1)
-				return c, func(c *Collector) { c.SetFunctionGenerics(function, []Term{future}) }
+				return c, func(c *Collector) { c.SetFunctionGenerics(function, []keyspace.Term{future}) }
 			},
 		},
 		{
@@ -548,7 +548,7 @@ func TestCopiedTermMutationsRejectAtAdmission(t *testing.T) {
 				body := newBody(c)
 				function := c.DeclareFunction(span, body)
 				future := keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 1)
-				return c, func(c *Collector) { c.SetFunctionReturns(function, true, []Term{future}) }
+				return c, func(c *Collector) { c.SetFunctionReturns(function, true, []keyspace.Term{future}) }
 			},
 		},
 		{
@@ -557,10 +557,10 @@ func TestCopiedTermMutationsRejectAtAdmission(t *testing.T) {
 				c := New(name, 0, bind.GlobalCensus{})
 				body := newBody(c)
 				value := c.String(span, body, "callee")
-				values := c.Values(span, body, []Term{value}, 0)
+				values := c.Values(span, body, []keyspace.Term{value}, 0)
 				call := c.DeclareCall(span, body, value, 0, values)
 				future := keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 1)
-				return c, func(c *Collector) { c.SetCallTypeArgs(call, []Term{future}) }
+				return c, func(c *Collector) { c.SetCallTypeArgs(call, []keyspace.Term{future}) }
 			},
 		},
 		{
@@ -579,7 +579,7 @@ func TestCopiedTermMutationsRejectAtAdmission(t *testing.T) {
 				owner, foreign := newBody(c), newBody(c)
 				cell := c.Cell(span, foreign)
 				function := c.DeclareFunction(span, owner)
-				return c, func(c *Collector) { c.FillFunction(function, owner, []Term{cell}, 0, nil) }
+				return c, func(c *Collector) { c.FillFunction(function, owner, []keyspace.Term{cell}, 0, nil) }
 			},
 		},
 		{
@@ -588,9 +588,9 @@ func TestCopiedTermMutationsRejectAtAdmission(t *testing.T) {
 				c := New(name, 0, bind.GlobalCensus{})
 				owner, foreign := newBody(c), newBody(c)
 				value := c.Bool(span, owner, true)
-				values := c.Values(span, owner, []Term{value}, 0)
+				values := c.Values(span, owner, []keyspace.Term{value}, 0)
 				cell := c.Cell(span, foreign)
-				return c, func(c *Collector) { c.Bind(span, owner, []Term{cell}, values) }
+				return c, func(c *Collector) { c.Bind(span, owner, []keyspace.Term{cell}, values) }
 			},
 		},
 	}
@@ -636,5 +636,74 @@ func TestNewFailureStopsConstructionAndPublishRetainsCause(t *testing.T) {
 				t.Fatalf("Publish after New failure = %#v/%v, want exact cause", published, err)
 			}
 		})
+	}
+}
+
+// Module admission is part of the Collector lifecycle: reserved Import rows
+// are owned by the module vertical, and an invalid alias must terminalize the
+// same Collector that owns the Source, Flow, and Static rows.
+func TestModuleRootRejectsFutureCellAliasAtOwnerBoundary(t *testing.T) {
+	c := New("module-future-cell.lua", 1, bind.GlobalCensus{})
+	future := keyspace.MakeTerm(keyspace.FamilyCell, 2)
+	if c.SetImportAlias(keyspace.MakeTerm(keyspace.FamilyImport, 1), future) {
+		t.Fatal("future Cell alias unexpectedly accepted")
+	}
+	if c.Body(source.Span{}) != 0 {
+		t.Fatal("future alias rejection did not terminalize Collector")
+	}
+}
+
+func TestModuleRootReservedImportCannotPopulateAnotherOrdinal(t *testing.T) {
+	c := New("module-reserved.lua", 2, bind.GlobalCensus{})
+	if c.SetImportAlias(keyspace.MakeTerm(keyspace.FamilyImport, 2), keyspace.MakeTerm(keyspace.FamilyCell, 1)) {
+		t.Fatal("unfilled reserved Import accepted an alias")
+	}
+	if c.Body(source.Span{}) != 0 {
+		t.Fatal("reserved Import rejection did not terminalize Collector")
+	}
+	outside := New("module-outside.lua", 1, bind.GlobalCensus{})
+	if outside.SetImportAlias(keyspace.MakeTerm(keyspace.FamilyImport, 2), keyspace.MakeTerm(keyspace.FamilyCell, 1)) {
+		t.Fatal("Import beyond census accepted an alias")
+	}
+}
+
+func TestCollectorModuleObservationFillsReservedSlotsOutOfOrder(t *testing.T) {
+	c := New("module.lua", 3, bind.GlobalCensus{})
+	span := func(line uint32) source.Span {
+		return source.Span{File: "module.lua", StartLine: line, StartCol: 1, EndLine: line, EndCol: 8}
+	}
+	body := c.Body(span(1))
+	makeCall := func(line uint32) keyspace.Term {
+		request := c.String(span(line), body, "pkg")
+		values := c.Values(span(line), body, []keyspace.Term{request}, 0)
+		return c.DeclareCall(span(line), body, request, 0, values)
+	}
+	call1, call2, call3 := makeCall(10), makeCall(20), makeCall(30)
+	if c.Import(2, span(30), call3) != keyspace.MakeTerm(keyspace.FamilyImport, 3) ||
+		c.Import(0, span(10), call1) != keyspace.MakeTerm(keyspace.FamilyImport, 1) ||
+		c.Import(1, span(20), call2) != keyspace.MakeTerm(keyspace.FamilyImport, 2) {
+		t.Fatal("reserved Import slots did not retain census order")
+	}
+	if c.Import(0, span(11), call1) != 0 {
+		t.Fatal("duplicate reserved Import was accepted")
+	}
+}
+
+func TestModuleRootRejectsEmptyStringRequestBeforeExactAdmission(t *testing.T) {
+	const name = "module-empty-request.lua"
+	c := New(name, 1, bind.GlobalCensus{})
+	span := source.Span{File: name, StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 8}
+	body := c.Body(span)
+	request := c.String(span, body, "")
+	values := c.Values(span, body, []keyspace.Term{request}, 0)
+	call := c.DeclareCall(span, body, request, 0, values)
+	if body == 0 || request == 0 || values == 0 || call == 0 {
+		t.Fatal("empty request construction failed")
+	}
+	if got := c.Import(0, span, call); got != 0 {
+		t.Fatalf("empty Module Import = %v, want rejection", got)
+	}
+	if c.Body(span) != 0 {
+		t.Fatal("empty Module request rejection did not terminalize")
 	}
 }

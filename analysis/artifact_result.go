@@ -11,12 +11,13 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/wippyai/go-lua/analysis/domain/composite"
+	effectfactor "github.com/wippyai/go-lua/analysis/domain/effect/factor"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
-	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 const artifactResultIdentityDomain = "analysis/artifact-result/mounted-row/v1"
@@ -43,8 +44,7 @@ type artifactResultProjection struct {
 // typed surfaces (for example placement) extend this handoff rather than
 // recovering facts from Engine state here.
 type artifactResultProjectionReceipts struct {
-	native     *nativePublicationReceipt
-	placements *placementResultReceipt
+	native *nativePublicationReceipt
 }
 
 func (receipts artifactResultProjectionReceipts) detachNative() (*nativePublicationReceipt, bool) {
@@ -52,18 +52,6 @@ func (receipts artifactResultProjectionReceipts) detachNative() (*nativePublicat
 		return nil, false
 	}
 	return receipts.native, true
-}
-
-func (receipts artifactResultProjectionReceipts) detachPlacement() (*placementResultReceipt, bool) {
-	if receipts.placements == nil {
-		// A runtime context requirement is not a solved placement fact. Leave
-		// this surface unavailable until its owner emits a sealed receipt.
-		return nil, true
-	}
-	// placementResultReceipt intentionally has no solved DTO until the one
-	// semantic transfer/factor exists. A non-nil marker cannot be detached or
-	// made available by this Result layer.
-	return nil, false
 }
 
 // detachArtifactResult consumes the new artifact query plan and the exact
@@ -145,7 +133,7 @@ func collectBranchDiagnosticFindings(report *DiagnosticReport, receipt *artifact
 	if report == nil || receipt == nil {
 		return false
 	}
-	table, tableOK := grammar.Diagnostics()
+	table, tableOK := composite.Diagnostics()
 	if !tableOK {
 		return false
 	}
@@ -224,7 +212,7 @@ func collectGuardPolarityFindings(report *DiagnosticReport, receipt *artifactRes
 	if report == nil || receipt == nil || schema == nil || solver == nil || state == nil || (trueSeverity != FindingSeverityInvalid && !trueSeverity.Available()) || (falseSeverity != FindingSeverityInvalid && !falseSeverity.Available()) || (trueSeverity == FindingSeverityInvalid && falseSeverity == FindingSeverityInvalid) {
 		return false
 	}
-	observations := make(map[artifactResultPoint]valueSummaryObservation, len(receipt.pointObservations))
+	observations := make(map[artifactResultPoint]valuedomain.ValueSummaryObservation, len(receipt.pointObservations))
 	for _, selectedObservation := range selected {
 		key := selectedObservation.point
 		if len(receipt.pointObservations[key]) == 0 {
@@ -316,7 +304,7 @@ func collectGuardPolarityFindings(report *DiagnosticReport, receipt *artifactRes
 // observation population feeds. The sealed table is the sole authority: a
 // population no row claims is a collector hole, not a row to skip.
 func staticDiagnosticDeclaration(kind programartifact.DiagnosticObservationKind) (*diagnostic.Entry, bool) {
-	table, tableOK := grammar.Diagnostics()
+	table, tableOK := composite.Diagnostics()
 	if !tableOK {
 		return nil, false
 	}
@@ -423,7 +411,7 @@ func buildDetachedArtifactResult(
 		indexes := receipt.pointBodies[key]
 		switch query.attachment.role {
 		case artifactQueryValueSummary:
-			observation, readable := engine.ReceiptQueryResult[valueSummaryObservation](query.query, solver, state)
+			observation, readable := engine.ReceiptQueryResult[valuedomain.ValueSummaryObservation](query.query, solver, state)
 			if !readable || !observation.Valid {
 				return nil, false
 			}
@@ -453,7 +441,7 @@ func buildDetachedArtifactResult(
 				}
 			}
 		case artifactQueryEffectExact:
-			observation, readable := engine.ReceiptQueryResult[effectObservation](query.query, solver, state)
+			observation, readable := engine.ReceiptQueryResult[effectfactor.EffectObservation](query.query, solver, state)
 			if !readable || !observation.Valid {
 				return nil, false
 			}
@@ -490,15 +478,14 @@ func buildDetachedArtifactResult(
 		}
 	}
 	native, nativeOK := publications.detachNative()
-	placement, placementOK := publications.detachPlacement()
-	if !nativeOK || !placementOK {
+	if !nativeOK {
 		return nil, false
 	}
-	content, ok := analysisResultIDWithPublication(receipt.source, values, bodies, native, placement)
+	content, ok := analysisResultIDWithPublication(receipt.source, values, bodies, native)
 	if !ok {
 		return nil, false
 	}
-	result := &Result{source: receipt.source, content: content, values: values, bodies: bodies, native: native, placement: placement}
+	result := &Result{source: receipt.source, content: content, values: values, bodies: bodies, native: native}
 	if !result.validPayload() {
 		return nil, false
 	}

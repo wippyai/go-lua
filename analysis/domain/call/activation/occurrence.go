@@ -68,12 +68,12 @@ func (issuer MountedIssuer) occurrenceKey(id identity.ContentID) (calldomain.Key
 	return key, applicationID, keyOK && issuer.rule.owner.Algebra().OwnsKey(key)
 }
 
-func (issuer MountedIssuer) occurrenceOperands(id identity.ContentID) (calldomain.Key, engine.SemanticKey, bool) {
+func (issuer MountedIssuer) occurrenceOperands(id identity.ContentID) (calldomain.Key, identity.SemanticKey, bool) {
 	key, applicationID, keyOK := issuer.occurrenceKey(id)
 	if !keyOK {
-		return calldomain.Key{}, engine.SemanticKey{}, false
+		return calldomain.Key{}, identity.SemanticKey{}, false
 	}
-	application, applicationOK := engine.NewSemanticKey([32]byte(applicationID), 1)
+	application, applicationOK := identity.NewSemanticKey([32]byte(applicationID), 1)
 	return key, application, applicationOK && application.Available()
 }
 
@@ -82,12 +82,12 @@ func (issuer MountedIssuer) KeyForOccurrence(id identity.ContentID) (calldomain.
 	return key, ok
 }
 
-func (issuer MountedIssuer) ApplicationForOccurrence(id identity.ContentID) (engine.SemanticKey, bool) {
+func (issuer MountedIssuer) ApplicationForOccurrence(id identity.ContentID) (identity.SemanticKey, bool) {
 	_, applicationID, ok := issuer.occurrenceKey(id)
 	if !ok {
-		return engine.SemanticKey{}, false
+		return identity.SemanticKey{}, false
 	}
-	application, applicationOK := engine.NewSemanticKey([32]byte(applicationID), 1)
+	application, applicationOK := identity.NewSemanticKey([32]byte(applicationID), 1)
 	return application, applicationOK && application.Available()
 }
 

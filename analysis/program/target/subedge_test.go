@@ -1,12 +1,14 @@
 package target
 
 import (
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
+
+const rejectedYieldMessage = "attempt to yield across a C-call boundary"
 
 // protectedSubedgeOperation is the complete Target relation for a protected
 // callback and its error handler. The only internal flow is explicit through
@@ -16,7 +18,7 @@ func protectedSubedgeOperation(name string, scalar, reverseCallbacks, reverseOut
 	handlerEdge := SubedgeRef(2)
 	handlerArguments := callbackTail(2)
 	if scalar {
-		handlerArguments = ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed}
+		handlerArguments = ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}
 	}
 	callbacks := []CallbackSpec{
 		{
@@ -67,7 +69,7 @@ func protectedSubedgeOperation(name string, scalar, reverseCallbacks, reverseOut
 	return OperationSpec{
 		Bindings:   []BindingSpec{{Namespace: BindingBuiltin, Member: []string{name}}},
 		ValuesVars: 7,
-		Input:      ValuesSpec{Fixed: []typ.Type{typ.Any, typ.Any}, Tail: ValuesVariable, Var: 0},
+		Input:      ValuesSpec{Fixed: []schematype.Type{testAny, testAny}, Tail: ValuesVariable, Var: 0},
 		Callbacks:  callbacks,
 		Subedges: []SubedgeSpec{
 			{
@@ -221,19 +223,19 @@ func TestSubedgeAdmissionFailureAndArgumentAuthorityAreExplicit(t *testing.T) {
 			Kind: flowkind.OutcomeThrow, Route: RouteOutcome, Adjustment: AdjustmentPreserve, Result: callbackTail(2), Placement: PlacementTail, Outcome: 5,
 		}
 	}
-	if _, err := Seal(&Spec{Operations: []OperationSpec{orphaned}}); err == nil {
+	if _, err := testSeal(&Spec{Operations: []OperationSpec{orphaned}}); err == nil {
 		t.Fatal("equal Values handles created an implicit handler entry")
 	}
 
 	mixed := protectedSubedgeOperation("pcall-xpcall-mixed-entry", true, false, false)
 	mixed.Subedges[1].ArgumentOrigins = []ArgumentOrigin{{Segment: ArgumentFixed, Kind: ArgumentSourceRule}}
-	if _, err := Seal(&Spec{Operations: []OperationSpec{mixed}}); err == nil {
+	if _, err := testSeal(&Spec{Operations: []OperationSpec{mixed}}); err == nil {
 		t.Fatal("route-fed handler accepted a parallel direct argument origin")
 	}
 
 	partial := protectedSubedgeOperation("pcall-xpcall-partial-entry", true, false, false)
 	partial.Subedges[0].Routes[2].Result = ValuesSpec{Tail: ValuesClosed}
-	if _, err := Seal(&Spec{Operations: []OperationSpec{partial}}); err == nil {
+	if _, err := testSeal(&Spec{Operations: []OperationSpec{partial}}); err == nil {
 		t.Fatal("partial route accepted as complete handler argument authority")
 	}
 }
@@ -242,7 +244,7 @@ func TestSubedgeNonCallFamiliesHaveClosedABIAndCanonicalOrigins(t *testing.T) {
 	empty := ValuesSpec{Tail: ValuesClosed}
 	left := exactProjectionOperation("noncall-origin-order", empty, empty)
 	left.Subedges[0].Family = SubedgeFamilyIndexGet
-	left.Subedges[0].Arguments = ValuesSpec{Fixed: []typ.Type{typ.Any, typ.Any}, Tail: ValuesClosed}
+	left.Subedges[0].Arguments = ValuesSpec{Fixed: []schematype.Type{testAny, testAny}, Tail: ValuesClosed}
 	left.Subedges[0].ArgumentOrigins = []ArgumentOrigin{
 		{Segment: ArgumentFixed, Index: 1, Kind: ArgumentSourceRule},
 		{Segment: ArgumentFixed, Index: 0, Kind: ArgumentSourceRule},
@@ -271,9 +273,9 @@ func TestSubedgeNonCallFamiliesHaveClosedABIAndCanonicalOrigins(t *testing.T) {
 
 	invalid := left
 	invalid.Subedges = append([]SubedgeSpec(nil), left.Subedges...)
-	invalid.Subedges[0].Arguments = ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed}
+	invalid.Subedges[0].Arguments = ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}
 	invalid.Subedges[0].ArgumentOrigins = []ArgumentOrigin{{Segment: ArgumentFixed, Kind: ArgumentSourceRule}}
-	if _, err := Seal(&Spec{Operations: []OperationSpec{invalid}}); err == nil {
+	if _, err := testSeal(&Spec{Operations: []OperationSpec{invalid}}); err == nil {
 		t.Fatal("IndexGet accepted a non-closed two-argument ABI")
 	}
 }
@@ -310,7 +312,7 @@ func TestSubedgeRejectsInvalidAuthority(t *testing.T) {
 		t.Run(check.name, func(t *testing.T) {
 			op := protectedSubedgeOperation("invalid-subedge", false, false, false)
 			check.edit(&op)
-			if _, err := Seal(&Spec{Operations: []OperationSpec{op}}); err == nil {
+			if _, err := testSeal(&Spec{Operations: []OperationSpec{op}}); err == nil {
 				t.Fatal("invalid Subedge relation sealed")
 			}
 		})
@@ -321,11 +323,11 @@ func TestSubedgeRejectYieldUsesTheExistingCanonicalThrow(t *testing.T) {
 	op := protectedSubedgeOperation("reject-yield", false, false, false)
 	op.Outcomes = append(op.Outcomes, OutcomeSpec{
 		Kind:   flowkind.OutcomeThrow,
-		Values: ValuesSpec{Fixed: []typ.Type{typ.LiteralString(rejectedYieldMessage)}, Tail: ValuesClosed},
+		Values: ValuesSpec{Fixed: []schematype.Type{testLiteralString(rejectedYieldMessage)}, Tail: ValuesClosed},
 	})
 	op.Subedges[0].Routes[3] = SubedgeRouteSpec{
 		Kind: flowkind.OutcomeYield, Route: RouteRejectYield, Adjustment: AdjustmentExact,
-		Result:    ValuesSpec{Fixed: []typ.Type{typ.LiteralString(rejectedYieldMessage)}, Tail: ValuesClosed},
+		Result:    ValuesSpec{Fixed: []schematype.Type{testLiteralString(rejectedYieldMessage)}, Tail: ValuesClosed},
 		Placement: PlacementFixed, Outcome: uint32(len(op.Outcomes) - 1),
 	}
 	contract := mustSeal(t, Spec{Operations: []OperationSpec{op}})
@@ -340,13 +342,13 @@ func TestSubedgeRejectYieldUsesTheExistingCanonicalThrow(t *testing.T) {
 		t.Fatalf("RejectYield destination = %d/%d/%d/%v", kind, values, destination, outcomeOK)
 	}
 	invalid := protectedSubedgeOperation("reject-yield-invalid", false, false, false)
-	invalid.Outcomes = append(invalid.Outcomes, OutcomeSpec{Kind: flowkind.OutcomeThrow, Values: ValuesSpec{Fixed: []typ.Type{typ.LiteralString("wrong")}, Tail: ValuesClosed}})
+	invalid.Outcomes = append(invalid.Outcomes, OutcomeSpec{Kind: flowkind.OutcomeThrow, Values: ValuesSpec{Fixed: []schematype.Type{testLiteralString("wrong")}, Tail: ValuesClosed}})
 	invalid.Subedges[0].Routes[3] = SubedgeRouteSpec{
 		Kind: flowkind.OutcomeYield, Route: RouteRejectYield, Adjustment: AdjustmentExact,
-		Result:    ValuesSpec{Fixed: []typ.Type{typ.LiteralString(rejectedYieldMessage)}, Tail: ValuesClosed},
+		Result:    ValuesSpec{Fixed: []schematype.Type{testLiteralString(rejectedYieldMessage)}, Tail: ValuesClosed},
 		Placement: PlacementFixed, Outcome: uint32(len(invalid.Outcomes) - 1),
 	}
-	if _, err := Seal(&Spec{Operations: []OperationSpec{invalid}}); err == nil {
+	if _, err := testSeal(&Spec{Operations: []OperationSpec{invalid}}); err == nil {
 		t.Fatal("RejectYield accepted a noncanonical error payload")
 	}
 }
@@ -362,12 +364,12 @@ func xpcallHandlerSelfRecurrence(name string, lifecycle CallbackLifecycle, rever
 		}
 		op.Callbacks[index].Admission = DirectFunction
 		op.Callbacks[index].Lifecycle = lifecycle
-		op.Callbacks[index].Outcomes[2].Values = ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed}
+		op.Callbacks[index].Outcomes[2].Values = ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}
 	}
-	canonicalError := ValuesSpec{Fixed: []typ.Type{typ.LiteralString(rejectedYieldMessage)}, Tail: ValuesClosed}
+	canonicalError := ValuesSpec{Fixed: []schematype.Type{testLiteralString(rejectedYieldMessage)}, Tail: ValuesClosed}
 	op.Subedges[1].Routes[2] = SubedgeRouteSpec{
 		Kind: flowkind.OutcomeThrow, Route: RouteSubedge, Adjustment: AdjustmentExact,
-		Result: ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed}, Placement: PlacementFixed, Subedge: 2,
+		Result: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}, Placement: PlacementFixed, Subedge: 2,
 	}
 	op.Subedges[1].Routes[3] = SubedgeRouteSpec{
 		Kind: flowkind.OutcomeYield, Route: RouteRejectYield, Adjustment: AdjustmentExact,
@@ -384,10 +386,10 @@ func xpcallHandlerMultiEdgeRecurrence(name string, lifecycle CallbackLifecycle) 
 		}
 		op.Callbacks[index].Admission = DirectFunction
 		op.Callbacks[index].Lifecycle = lifecycle
-		op.Callbacks[index].Outcomes[2].Values = ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed}
+		op.Callbacks[index].Outcomes[2].Values = ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}
 	}
 	empty := ValuesSpec{Tail: ValuesClosed}
-	any := ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed}
+	any := ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}
 	op.Subedges[1].Routes[2] = SubedgeRouteSpec{
 		Kind: flowkind.OutcomeThrow, Route: RouteSubedge, Adjustment: AdjustmentExact,
 		Result: any, Placement: PlacementFixed, Subedge: 3,
@@ -462,7 +464,7 @@ func nullaryCallbackMuOperation(name string, lifecycle CallbackLifecycle) Operat
 	empty := ValuesSpec{Tail: ValuesClosed}
 	return OperationSpec{
 		Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{name}}},
-		Input:    ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed},
+		Input:    ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed},
 		Callbacks: []CallbackSpec{{
 			Function:  InputSource{Kind: InputSourceValueFormal},
 			Admission: OrdinaryCallable,
@@ -509,7 +511,7 @@ func TestSubedgeOnceCallbackRejectsReachableRecurrence(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			op := xpcallHandlerSelfRecurrence("xpcall-once", test.lifecycle, false, false)
-			if _, err := Seal(&Spec{Operations: []OperationSpec{op}}); err == nil {
+			if _, err := testSeal(&Spec{Operations: []OperationSpec{op}}); err == nil {
 				t.Fatal("Once callback sealed despite reachable self-reentry")
 			}
 		})
@@ -518,7 +520,7 @@ func TestSubedgeOnceCallbackRejectsReachableRecurrence(t *testing.T) {
 
 func TestSubedgeNullaryCallbackMuRespectsLifecycleMultiplicity(t *testing.T) {
 	once := nullaryCallbackMuOperation("nullary-callback-once", CallbackSyncOptionalOnce)
-	if _, err := Seal(&Spec{Operations: []OperationSpec{once}}); err == nil {
+	if _, err := testSeal(&Spec{Operations: []OperationSpec{once}}); err == nil {
 		t.Fatal("nullary Once callback Mu head sealed")
 	}
 	many := nullaryCallbackMuOperation("nullary-callback-many", CallbackSyncOptionalMany)
@@ -533,7 +535,7 @@ func TestSubedgeNullaryCallbackMuRespectsLifecycleMultiplicity(t *testing.T) {
 
 func TestSubedgeOnceCallbackRejectsReachableMultiEdgeRecurrence(t *testing.T) {
 	op := xpcallHandlerMultiEdgeRecurrence("xpcall-multi-once", CallbackSyncOptionalOnce)
-	if _, err := Seal(&Spec{Operations: []OperationSpec{op}}); err == nil {
+	if _, err := testSeal(&Spec{Operations: []OperationSpec{op}}); err == nil {
 		t.Fatal("Once callback sealed despite reachable multi-edge reentry")
 	}
 }
@@ -575,7 +577,7 @@ func TestSubedgeRecurrenceManyLifecycleIsCanonicalUnderAuthoringPermutation(t *t
 
 func TestSubedgeReachabilityRequiresAnExplicitRoot(t *testing.T) {
 	closed := nullarySubedgeOperation("closed-route-fed", nullarySubedge(10, 2, false), nullarySubedge(20, 1, false))
-	if _, err := Seal(&Spec{Operations: []OperationSpec{closed}}); err == nil {
+	if _, err := testSeal(&Spec{Operations: []OperationSpec{closed}}); err == nil {
 		t.Fatal("closed route-fed Subedge SCC sealed without an executable root")
 	}
 
@@ -595,13 +597,13 @@ func TestSubedgeReachabilityRequiresAnExplicitRoot(t *testing.T) {
 		Kind: flowkind.OutcomeNormal, Route: RouteOutcome, Adjustment: AdjustmentExact,
 		Result: ValuesSpec{Tail: ValuesClosed}, Placement: PlacementFixed, Outcome: 0,
 	}
-	if _, err := Seal(&Spec{Operations: []OperationSpec{missing}}); err == nil {
+	if _, err := testSeal(&Spec{Operations: []OperationSpec{missing}}); err == nil {
 		t.Fatal("nullary Subedge sealed without RuleEntry or an inbound route")
 	}
 
 	nonempty := exactProjectionOperation("nonempty-rule-entry", ValuesSpec{Tail: ValuesClosed}, ValuesSpec{Tail: ValuesClosed})
 	nonempty.Subedges[0].RuleEntry = true
-	if _, err := Seal(&Spec{Operations: []OperationSpec{nonempty}}); err == nil {
+	if _, err := testSeal(&Spec{Operations: []OperationSpec{nonempty}}); err == nil {
 		t.Fatal("RuleEntry accepted a nonempty argument product")
 	}
 }

@@ -43,8 +43,8 @@ func (fixture exactObservationWriteFixture) WriteRelationCount(index int) (int, 
 }
 
 func TestExactObservationDerivesCommittedExactWriteCoordinate(t *testing.T) {
-	factor := coldKey(948_010).compositionKey()
-	other := coldKey(948_011).compositionKey()
+	factor := compositionKeyOf(coldKey(948_010))
+	other := compositionKeyOf(coldKey(948_011))
 	write := equation.Surface{Factor: factor, Form: equation.SurfaceWriteExact, Local: 7, Mode: equation.TargetModeStrong}
 	read, readOK := exactObservationReadSurface(exactObservationWriteFixture{count: 1, surface: write}, factor)
 	if !readOK || read.Factor != factor || read.Form != equation.SurfaceReadExact || read.Local != write.Local || read.Mode != equation.TargetModeNone || read.Semantic.Available() || read.Normalizer.Available() {
@@ -294,7 +294,7 @@ func buildExactRuleObservationFixture[R any](t testing.TB, querySpec HotExactQue
 	if proof == nil || otherProof == nil {
 		t.Fatal("exact observation rule proof")
 	}
-	site, siteOK := assembly.builder.admitSite(coldKey(949_900).compositionKey(), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent)
+	site, siteOK := assembly.builder.admitSite(compositionKeyOf(coldKey(949_900)), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent)
 	occurrence, occurrenceOK := assembly.builder.admitAt(site)
 	operandValue := ruleUnitForSemantic(coldKey(949_901))
 	entity, entityOK := operandEntityForContent(operandValue.content)

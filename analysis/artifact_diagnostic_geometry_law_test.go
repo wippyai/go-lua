@@ -3,10 +3,10 @@ package analysis
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/composite"
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/library/lualib/targetprofile"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
-	"github.com/wippyai/go-lua/analysis/program/target/profile"
-	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 // TestDiagnosticBranchGeometryUsesExecutionPointAndBaseAnchor proves that
@@ -32,8 +32,8 @@ return 0`,
 		{
 			name: "binary-arithmetic",
 			role: programartifact.RuleRoleValueBinaryArithmetic,
-			source: `local cap = 3 + 2
-if cap then
+			source: `local cap = 3
+if cap + 2 then
     return 1
 end
 return 0`,
@@ -128,7 +128,7 @@ if flag then
     return 1
 end
 return 0`, contract)
-	receipt, receiptOK := grammar.Global()
+	receipt, receiptOK := composite.Global()
 	if !receiptOK || !receipt.Available() {
 		t.Fatal("global schema unavailable")
 	}

@@ -32,37 +32,37 @@ type preparationState struct {
 	mu            sync.Mutex
 	state         *sealState
 	plan          *routeplan.Plan
-	outcomePhases *sourcecontrol.OutcomePhaseReceipt
+	outcomePhases *sourcecontrol.OutcomePhases
 	used          bool
 }
 
 // PrepareRoutePlanWithStructuralPaths is Flow's production route transaction.
-// The structural term path plane was issued immediately after Source commit;
-// Causal consumes it before it emits or binds any final route.
+// The structural term path plane was sealed immediately after Source commit;
+// Causal installs its immutable view before it emits or binds any final route.
 func PrepareRoutePlanWithStructuralPaths(
 	sourceView source.View, flow authored.View, bodies *body.Result, forest *containment.Result,
 	outcomes *outcome.Result, control *sourcecontrol.Result, ports *evaluation.Ports,
-	executableResult *executable.Result, entries *runtimeentry.Result, receipt *semanticpath.CausalReceipt, outcomePhases *sourcecontrol.OutcomePhaseReceipt,
+	executableResult *executable.Result, entries *runtimeentry.Result, paths *semanticpath.CausalPaths, outcomePhases *sourcecontrol.OutcomePhases,
 	staticID identity.ContentID, moduleID identity.ContentID,
 ) (*Preparation, error) {
-	if receipt == nil || outcomePhases == nil {
-		return nil, errors.New("program/flow/causal: parent path receipt is required")
+	if paths == nil || outcomePhases == nil || !outcomePhases.Matches(control) {
+		return nil, errors.New("program/flow/causal: parent path view is required")
 	}
-	return prepareRoutePlan(sourceView, flow, bodies, forest, outcomes, control, ports, executableResult, entries, receipt, outcomePhases, staticID, moduleID)
+	return prepareRoutePlan(sourceView, flow, bodies, forest, outcomes, control, ports, executableResult, entries, paths, outcomePhases, staticID, moduleID)
 }
 
 func prepareRoutePlan(
 	sourceView source.View, flow authored.View, bodies *body.Result, forest *containment.Result,
 	outcomes *outcome.Result, control *sourcecontrol.Result, ports *evaluation.Ports,
-	executableResult *executable.Result, entries *runtimeentry.Result, receipt *semanticpath.CausalReceipt, outcomePhases *sourcecontrol.OutcomePhaseReceipt,
+	executableResult *executable.Result, entries *runtimeentry.Result, paths *semanticpath.CausalPaths, outcomePhases *sourcecontrol.OutcomePhases,
 	staticID identity.ContentID, moduleID identity.ContentID,
 ) (*Preparation, error) {
 	state, err := newSealState(sourceView, flow, bodies, forest, outcomes, control, nil, ports, executableResult, entries, staticID, moduleID)
 	if err != nil {
 		return nil, err
 	}
-	if receipt == nil || !state.pub.result.consumeStructuralPathReceipt(receipt) {
-		return nil, errors.New("program/flow/causal: parent structural path lease is malformed")
+	if paths == nil || !state.pub.result.installStructuralPaths(paths) {
+		return nil, errors.New("program/flow/causal: parent structural path view is malformed")
 	}
 	if err := state.pub.result.captureOutcomePhasePaths(control, outcomes); err != nil {
 		return nil, err
@@ -179,11 +179,11 @@ func finalizePrepared(state *sealState, plan *routeplan.Plan, recur *recurrence.
 	if err := state.pub.result.buildSites(state.proof.source, state.proof.graph, state.proof.outs); err != nil {
 		return nil, err
 	}
-	if err := state.pub.result.prepareWTOReceipts(); err != nil {
+	if err := state.pub.result.prepareWTORows(); err != nil {
 		return nil, err
 	}
 	if !state.pub.result.installRouteSemanticPaths() {
-		return nil, errors.New("program/flow/causal: final route publication phase=semantic-paths row=-1 reason=receipt-or-directory-mismatch")
+		return nil, errors.New("program/flow/causal: final route publication phase=semantic-paths row=-1 reason=path-or-directory-mismatch")
 	}
 	if err := state.pub.result.finalizeLocalWTO(); err != nil {
 		return nil, err
@@ -234,7 +234,7 @@ type typedScratch struct {
 	bodyParentCursor     []int
 	invalidExactKeys     []bool
 	invalidExactFields   []bool
-	tableFieldThrowProof []*sourcecontrol.TableFieldThrowEligibility
+	tableFieldThrowProof []sourcecontrol.TableFieldThrowEligibility
 }
 
 // proofState owns immutable typed prerequisites and their denominator fence.
@@ -304,7 +304,7 @@ type callState struct {
 	callPlans   []callNormalRoute
 	callPlanSet []bool
 	tailPlans   []keyspace.Term
-	tailProofs  []*sourcecontrol.CallTailReturnReceipt
+	tailProofs  []sourcecontrol.CallTailProof
 
 	// Direct Call structural coordinates are filled while the Body root pass
 	// visits each root. Boundary sealing performs O(1) lookup rather than
@@ -321,7 +321,7 @@ type resetState struct {
 	arc *arcState
 	*edgeRowsScratch
 	*planState
-	tailProofs []*sourcecontrol.CallTailReturnReceipt
+	tailProofs []sourcecontrol.CallTailProof
 }
 
 type evalState struct {
@@ -450,7 +450,7 @@ func newSealState(
 		return nil, errors.New("program/flow/causal: recurrence Arc denominator disagrees with sourcecontrol")
 	}
 	arc.arcDisposition = make([]arcDisposition, control.ArcCount())
-	proof.tableFieldThrowProof = make([]*sourcecontrol.TableFieldThrowEligibility, proof.counts[keyspace.FamilyTableField]+1)
+	proof.tableFieldThrowProof = make([]sourcecontrol.TableFieldThrowEligibility, proof.counts[keyspace.FamilyTableField]+1)
 	if err := proof.buildTypedIndexes(); err != nil {
 		return nil, err
 	}
@@ -458,7 +458,7 @@ func newSealState(
 	calls.callPlans = make([]callNormalRoute, proof.counts[keyspace.FamilyCall]+1)
 	calls.callPlanSet = make([]bool, proof.counts[keyspace.FamilyCall]+1)
 	calls.tailPlans = make([]keyspace.Term, proof.counts[keyspace.FamilyCall]+1)
-	calls.tailProofs = make([]*sourcecontrol.CallTailReturnReceipt, proof.counts[keyspace.FamilyCall]+1)
+	calls.tailProofs = make([]sourcecontrol.CallTailProof, proof.counts[keyspace.FamilyCall]+1)
 	reset.tailProofs = calls.tailProofs
 	calls.directCallOwner = make([]keyspace.Term, proof.counts[keyspace.FamilyCall]+1)
 	calls.directCallCursor = make([]int, proof.counts[keyspace.FamilyCall]+1)

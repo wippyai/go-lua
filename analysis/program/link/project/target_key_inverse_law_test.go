@@ -3,6 +3,7 @@ package project
 import (
 	"testing"
 
+	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/target"
@@ -105,6 +106,7 @@ func projectOperationTarget(t testing.TB, root string) *target.Contract {
 	t.Helper()
 	emit := target.BindingSpec{Namespace: target.BindingBuiltin, Member: []string{"emit"}}
 	contract, err := target.Seal(&target.Spec{
+		Semantics: domaincontract.NewSemantics(),
 		Operations: []target.OperationSpec{{
 			Bindings: []target.BindingSpec{emit},
 			Input:    target.ValuesSpec{Tail: target.ValuesClosed},

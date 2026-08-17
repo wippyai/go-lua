@@ -10,6 +10,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/internal/framing"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof"
+	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/astcodec"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/grammar"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/occurrence"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/recursion"
@@ -162,7 +163,7 @@ func normalizeEvidenceSlices(evidence *Evidence) {
 	}
 	for index := range evidence.Products {
 		if evidence.Products[index].States == nil {
-			evidence.Products[index].States = []grammarproof.FieldState{}
+			evidence.Products[index].States = []astcodec.FieldState{}
 		}
 	}
 	for index := range evidence.ProductLaws {
@@ -935,7 +936,7 @@ func buildProducts(schema grammar.Schema, snapshot grammarproof.Snapshot, fieldR
 	}
 	ingress := ingressSources(snapshot)
 	products := make([]Product, 0)
-	add := func(source string, occurrences []grammarproof.ASTOccurrence) error {
+	add := func(source string, occurrences []astcodec.Occurrence) error {
 		if !ingress[source] {
 			return fmt.Errorf("parser products: product source bypasses public ingress")
 		}
@@ -1023,15 +1024,15 @@ func requirementField(fields map[string]constructorFields, requirement occurrenc
 	}
 	return constructor.fields[requirement.Field], nil
 }
-func productStates(constructor constructorFields, observed grammarproof.ASTOccurrence) ([]grammarproof.FieldState, error) {
-	byName := make(map[string]grammarproof.FieldState, len(observed.Fields))
+func productStates(constructor constructorFields, observed astcodec.Occurrence) ([]astcodec.FieldState, error) {
+	byName := make(map[string]astcodec.FieldState, len(observed.Fields))
 	for _, field := range observed.Fields {
 		if _, exists := byName[field.Name]; exists {
 			return nil, fmt.Errorf("parser products: duplicate observed field")
 		}
 		byName[field.Name] = field.State
 	}
-	states := make([]grammarproof.FieldState, len(constructor.fields))
+	states := make([]astcodec.FieldState, len(constructor.fields))
 	for index, name := range constructor.fields {
 		state, exists := byName[name]
 		if !exists {
@@ -1265,7 +1266,7 @@ func (e Evidence) Canonical() []byte {
 	return out.Bytes()
 }
 
-func statesCanonical(w *framing.Writer, rows []grammarproof.FieldState, must func(error)) {
+func statesCanonical(w *framing.Writer, rows []astcodec.FieldState, must func(error)) {
 	must(w.Count(uint64(len(rows))))
 	for _, row := range rows {
 		must(w.Uint(uint64(row)))

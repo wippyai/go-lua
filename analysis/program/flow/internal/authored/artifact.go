@@ -3,9 +3,9 @@ package authored
 import (
 	"math"
 
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/internal/framing"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
 // Every canonical event has a two-byte minimum frame. These exact minima are
@@ -40,6 +40,7 @@ const (
 
 	artifactReturnWireMin = artifactTermWireMin * 2
 	artifactOwnerWireMin  = artifactTermWireMin
+	artifactBreakWireMin  = artifactTermWireMin * 2
 	artifactGotoWireMin   = artifactTermWireMin * 2
 	artifactBranchWireMin = artifactTermWireMin * 4
 	artifactLoopWireMin   = artifactTermWireMin*3 + artifactUintWireMin*3
@@ -927,11 +928,14 @@ func (decoder *artifactDecoder) scanControl() error {
 			return err
 		}
 	}
-	breakCount, err := decoder.count(artifactOwnerWireMin)
+	breakCount, err := decoder.count(artifactBreakWireMin)
 	if err != nil {
 		return err
 	}
 	for index := 0; index < breakCount; index++ {
+		if _, err := decoder.term(); err != nil {
+			return err
+		}
 		if _, err := decoder.term(); err != nil {
 			return err
 		}
@@ -1026,7 +1030,7 @@ func (decoder *artifactDecoder) decodeControl() (ControlInput, error) {
 		returns[index] = Return{Owner: owner, Values: values}
 	}
 
-	breakCount, err := decoder.count(artifactOwnerWireMin)
+	breakCount, err := decoder.count(artifactBreakWireMin)
 	if err != nil {
 		return ControlInput{}, err
 	}
@@ -1036,7 +1040,11 @@ func (decoder *artifactDecoder) decodeControl() (ControlInput, error) {
 		if readErr != nil {
 			return ControlInput{}, readErr
 		}
-		breaks[index] = Break{Owner: owner}
+		target, readErr := decoder.term()
+		if readErr != nil {
+			return ControlInput{}, readErr
+		}
+		breaks[index] = Break{Owner: owner, Target: target}
 	}
 
 	labelCount, err := decoder.count(artifactOwnerWireMin)

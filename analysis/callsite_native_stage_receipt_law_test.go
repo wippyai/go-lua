@@ -1,13 +1,14 @@
 package analysis
 
 import (
+	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/composite"
 	callsite "github.com/wippyai/go-lua/analysis/domain/effect/callsite"
-	"github.com/wippyai/go-lua/analysis/engine"
+
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
-	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 func TestCallsiteMountedSelectedCallEffectStageOwnerFenceLaw(t *testing.T) {
@@ -41,14 +42,14 @@ func TestCallsiteMountedSelectedCallEffectStageOwnerFenceLaw(t *testing.T) {
 		t.Fatal("fixture has no selected CallEffect occurrence")
 	}
 
-	selected, selectedOK := grammar.RuleHandle[*callsite.HotRule](plan.state.binding.rules, programartifact.RuleRoleEffectSelected)
-	opaqueRule, opaqueRuleOK := grammar.RuleHandle[*callsite.HotRule](plan.state.binding.rules, programartifact.RuleRoleEffectOpaque)
+	selected, selectedOK := composite.RuleHandle[*callsite.HotRule](plan.state.binding.Rules(), programartifact.RuleRoleEffectSelected)
+	opaqueRule, opaqueRuleOK := composite.RuleHandle[*callsite.HotRule](plan.state.binding.Rules(), programartifact.RuleRoleEffectOpaque)
 	if !selectedOK || !opaqueRuleOK {
 		t.Fatal("rule table did not publish the callsite effect rules")
 	}
 	receipt, receiptOK := selected.MountedSelectedCallEffectStage(plan.state.graph, mount, occurrence)
 	_, memberOK := receipt.RuleMember()
-	if !receiptOK || !receipt.Available() || receipt.Stage() != engine.ArtifactRuleStageCallEffect || receipt.MountID() != mount || receipt.OccurrenceID() != occurrence || receipt.ReusablePointID() != point || !memberOK {
+	if !receiptOK || !receipt.Available() || receipt.Stage() != rows.ArtifactRuleStageCallEffect || receipt.MountID() != mount || receipt.OccurrenceID() != occurrence || receipt.ReusablePointID() != point || !memberOK {
 		t.Fatal("selected callsite did not issue its exact cold CallEffect-stage receipt")
 	}
 	if opaque, ok := opaqueRule.MountedSelectedCallEffectStage(plan.state.graph, mount, occurrence); ok || opaque.Available() {

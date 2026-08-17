@@ -35,10 +35,10 @@ type wtoFailure struct {
 	routeID     identity.ContentID
 }
 
-// routeReceiptDiagnostic is deliberately seal-private. Its fields are closed
+// routeDiagnostic is deliberately seal-private. Its fields are closed
 // classifications or semantic path/route scalars; it never retains a Term,
 // owner, graph node, or plan capability.
-type routeReceiptDiagnostic struct {
+type routeDiagnostic struct {
 	fromFamily  wtoLogicalFamily
 	toFamily    wtoLogicalFamily
 	fromOutcome wtoOutcomeKind
@@ -151,7 +151,7 @@ const (
 	wtoFailurePhaseEvent
 	wtoFailurePhasePoint
 	wtoFailurePhaseBracket
-	wtoFailurePhaseReceipts
+	wtoFailurePhaseRows
 	wtoFailurePhaseClassify
 )
 
@@ -174,17 +174,17 @@ const (
 	wtoFailureReasonExitBracket
 	wtoFailureReasonEventKind
 	wtoFailureReasonUnclosedBracket
-	wtoFailureReasonReceiptPreflight
-	wtoFailureReasonReceiptEvent
-	wtoFailureReasonReceiptPathEmpty
-	wtoFailureReasonReceiptRouteFromSite
-	wtoFailureReasonReceiptRouteToSite
-	wtoFailureReasonReceiptRouteFromAttach
-	wtoFailureReasonReceiptRouteToAttach
-	wtoFailureReasonReceiptOutcomeSite
-	wtoFailureReasonReceiptOutcomeAttach
-	wtoFailureReasonReceiptRouteFromPath
-	wtoFailureReasonReceiptRouteToPath
+	wtoFailureReasonRowPreflight
+	wtoFailureReasonRowEvent
+	wtoFailureReasonRowPathEmpty
+	wtoFailureReasonRowRouteFromSite
+	wtoFailureReasonRowRouteToSite
+	wtoFailureReasonRowRouteFromAttach
+	wtoFailureReasonRowRouteToAttach
+	wtoFailureReasonRowOutcomeSite
+	wtoFailureReasonRowOutcomeAttach
+	wtoFailureReasonRowRouteFromPath
+	wtoFailureReasonRowRouteToPath
 	wtoFailureReasonClassifyPreflight
 	wtoFailureReasonClassifyParent
 	wtoFailureReasonClassifyEndpoint
@@ -207,17 +207,17 @@ func failWTO(phase wtoFailurePhase, reason wtoFailureReason, row, event, route i
 	return &wtoFailure{phase: phase, reason: reason, row: row, event: event, path: -1, site: -1, route: route, ref: -1}
 }
 
-func failWTOReceipt(reason wtoFailureReason, row, event, path, site, route int) error {
-	return &wtoFailure{phase: wtoFailurePhaseReceipts, reason: reason, row: row, event: event, path: path, site: site, route: route, ref: -1}
+func failWTORow(reason wtoFailureReason, row, event, path, site, route int) error {
+	return &wtoFailure{phase: wtoFailurePhaseRows, reason: reason, row: row, event: event, path: path, site: site, route: route, ref: -1}
 }
 
-func failWTOReceiptRef(reason wtoFailureReason, ref successorRef, route, path, site int) error {
+func failWTORowRef(reason wtoFailureReason, ref successorRef, route, path, site int) error {
 	endpoint := ref.fromPoint
-	if reason == wtoFailureReasonReceiptRouteToPath || reason == wtoFailureReasonReceiptRouteToSite || reason == wtoFailureReasonReceiptRouteToAttach {
+	if reason == wtoFailureReasonRowRouteToPath || reason == wtoFailureReasonRowRouteToSite || reason == wtoFailureReasonRowRouteToAttach {
 		endpoint = ref.toPoint
 	}
 	diagnostic := ref.diagnostic
-	return &wtoFailure{phase: wtoFailurePhaseReceipts, reason: reason, row: -1, event: -1, path: path, site: site, route: route, ref: int(ref.index), local: ref.local, arm: ref.arm,
+	return &wtoFailure{phase: wtoFailurePhaseRows, reason: reason, row: -1, event: -1, path: path, site: site, route: route, ref: int(ref.index), local: ref.local, arm: ref.arm,
 		fromFamily: diagnostic.fromFamily, toFamily: diagnostic.toFamily, fromOutcome: diagnostic.fromOutcome, toOutcome: diagnostic.toOutcome,
 		fromPhase: diagnostic.fromPhase, toPhase: diagnostic.toPhase, endpoint: endpoint, routeID: ref.routeDigest}
 }
@@ -257,8 +257,8 @@ func (phase wtoFailurePhase) String() string {
 		return "point"
 	case wtoFailurePhaseBracket:
 		return "bracket"
-	case wtoFailurePhaseReceipts:
-		return "hierarchy-receipts"
+	case wtoFailurePhaseRows:
+		return "hierarchy-rows"
 	case wtoFailurePhaseClassify:
 		return "classify"
 	default:
@@ -298,28 +298,28 @@ func (reason wtoFailureReason) String() string {
 		return "event-kind"
 	case wtoFailureReasonUnclosedBracket:
 		return "unclosed-bracket"
-	case wtoFailureReasonReceiptPreflight:
-		return "receipt-preflight"
-	case wtoFailureReasonReceiptEvent:
-		return "receipt-event"
-	case wtoFailureReasonReceiptPathEmpty:
-		return "receipt-path-empty"
-	case wtoFailureReasonReceiptRouteFromSite:
-		return "receipt-route-from-site"
-	case wtoFailureReasonReceiptRouteToSite:
-		return "receipt-route-to-site"
-	case wtoFailureReasonReceiptRouteFromAttach:
-		return "receipt-route-from-attach"
-	case wtoFailureReasonReceiptRouteToAttach:
-		return "receipt-route-to-attach"
-	case wtoFailureReasonReceiptOutcomeSite:
-		return "receipt-outcome-site"
-	case wtoFailureReasonReceiptOutcomeAttach:
-		return "receipt-outcome-attach"
-	case wtoFailureReasonReceiptRouteFromPath:
-		return "receipt-route-from-path"
-	case wtoFailureReasonReceiptRouteToPath:
-		return "receipt-route-to-path"
+	case wtoFailureReasonRowPreflight:
+		return "row-preflight"
+	case wtoFailureReasonRowEvent:
+		return "row-event"
+	case wtoFailureReasonRowPathEmpty:
+		return "row-path-empty"
+	case wtoFailureReasonRowRouteFromSite:
+		return "row-route-from-site"
+	case wtoFailureReasonRowRouteToSite:
+		return "row-route-to-site"
+	case wtoFailureReasonRowRouteFromAttach:
+		return "row-route-from-attach"
+	case wtoFailureReasonRowRouteToAttach:
+		return "row-route-to-attach"
+	case wtoFailureReasonRowOutcomeSite:
+		return "row-outcome-site"
+	case wtoFailureReasonRowOutcomeAttach:
+		return "row-outcome-attach"
+	case wtoFailureReasonRowRouteFromPath:
+		return "row-route-from-path"
+	case wtoFailureReasonRowRouteToPath:
+		return "row-route-to-path"
 	case wtoFailureReasonClassifyPreflight:
 		return "classify-preflight"
 	case wtoFailureReasonClassifyParent:
@@ -668,11 +668,11 @@ func (s Successor) WTORegionID() identity.ContentID {
 	return s.ref.wtoRegion
 }
 
-// installBoundRoutePaths consumes recurrence endpoint receipts after the
+// installBoundRoutePaths attaches recurrence endpoint rows after the
 // combined index is sealed. It performs no Plan/graph lookup.
 func (r *Result) installBoundRoutePaths() error {
-	if r == nil || (len(r.boundRouteReceipts) == 0 && len(r.index.refs) != 0) {
-		return fmt.Errorf("bound-route phase=directory row=-1 arm=none reason=receipt-empty")
+	if r == nil || (len(r.boundRouteRows) == 0 && len(r.index.refs) != 0) {
+		return fmt.Errorf("bound-route phase=directory row=-1 arm=none reason=row-empty")
 	}
 	canonicalIndexBySlot := make([]int, len(r.routeIndex))
 	for index := range canonicalIndexBySlot {
@@ -686,15 +686,15 @@ func (r *Result) installBoundRoutePaths() error {
 	}
 	for index := range r.index.refs {
 		ref := &r.index.refs[index]
-		if !ref.planOrdinalSet || int(ref.planOrdinal) >= len(r.boundRouteReceipts) {
+		if !ref.planOrdinalSet || int(ref.planOrdinal) >= len(r.boundRouteRows) {
 			return fmt.Errorf("bound-route phase=index row=%d arm=%d reason=plan-ordinal-missing", index, ref.arm)
 		}
-		receipt := r.boundRouteReceipts[ref.planOrdinal]
-		if !receipt.fromPath.Available() || !receipt.toPath.Available() {
-			return fmt.Errorf("bound-route phase=index row=%d arm=%d reason=receipt-oob", index, ref.arm)
+		row := r.boundRouteRows[ref.planOrdinal]
+		if !row.fromPath.Available() || !row.toPath.Available() {
+			return fmt.Errorf("bound-route phase=index row=%d arm=%d reason=row-oob", index, ref.arm)
 		}
-		ref.fromPoint, ref.toPoint = receipt.fromPath, receipt.toPath
-		ref.diagnostic = receipt.diagnostic
+		ref.fromPoint, ref.toPoint = row.fromPath, row.toPath
+		ref.diagnostic = row.diagnostic
 		if uint64(ref.routeIndexOrdinal) >= uint64(len(r.routeIndex)) {
 			return fmt.Errorf("bound-route phase=index row=%d arm=%d reason=from-to-unavailable", index, ref.arm)
 		}
@@ -710,15 +710,15 @@ func (r *Result) installBoundRoutePaths() error {
 				continue
 			}
 			ref := &r.boundaries.rows[index].refs[arm]
-			if !ref.planOrdinalSet || int(ref.planOrdinal) >= len(r.boundRouteReceipts) {
+			if !ref.planOrdinalSet || int(ref.planOrdinal) >= len(r.boundRouteRows) {
 				return fmt.Errorf("bound-route phase=boundary row=%d arm=%d reason=plan-ordinal-missing", index, arm)
 			}
 			{
-				receipt := r.boundRouteReceipts[ref.planOrdinal]
-				if !receipt.fromPath.Available() || !receipt.toPath.Available() {
-					return fmt.Errorf("bound-route phase=boundary row=%d arm=%d reason=receipt-oob", index, arm)
+				row := r.boundRouteRows[ref.planOrdinal]
+				if !row.fromPath.Available() || !row.toPath.Available() {
+					return fmt.Errorf("bound-route phase=boundary row=%d arm=%d reason=row-oob", index, arm)
 				}
-				ref.fromPoint, ref.toPoint = receipt.fromPath, receipt.toPath
+				ref.fromPoint, ref.toPoint = row.fromPath, row.toPath
 				if uint64(ref.routeIndexOrdinal) >= uint64(len(r.routeIndex)) {
 					return fmt.Errorf("bound-route phase=boundary row=%d arm=%d reason=route-index-oob", index, arm)
 				}
@@ -734,7 +734,7 @@ func (r *Result) installBoundRoutePaths() error {
 				if ref.routeIndexOrdinal != slot || canonical.routeIndexOrdinal != slot || r.index.refs[canonicalIndex].routeIndexOrdinal != slot ||
 					!canonical.fromPoint.Available() || !canonical.toPoint.Available() ||
 					ref.fromPoint != canonical.fromPoint || ref.toPoint != canonical.toPoint {
-					return fmt.Errorf("bound-route phase=boundary row=%d arm=%d reason=endpoint-receipt-mismatch", index, arm)
+					return fmt.Errorf("bound-route phase=boundary row=%d arm=%d reason=endpoint-row-mismatch", index, arm)
 				}
 				ref.fromPoint, ref.toPoint, ref.diagnostic = canonical.fromPoint, canonical.toPoint, canonical.diagnostic
 			}
@@ -769,13 +769,13 @@ func (r *Result) installBoundRoutePaths() error {
 	return nil
 }
 
-// prepareWTOReceipts converts the recurrence path-only hierarchy and bound
-// route endpoint receipts into the private dense working planes expected by
+// prepareWTORows converts the recurrence path-only hierarchy and bound route
+// endpoint rows into the private dense working planes expected by
 // the WTO materializer. No Plan, SourceControl coordinate, or authored term
 // is consulted for this conversion.
-func (r *Result) prepareWTOReceipts() error {
+func (r *Result) prepareWTORows() error {
 	if r == nil || r.pendingWTO.Count() == 0 || len(r.pendingNodeSites) != 0 {
-		return failWTOReceipt(wtoFailureReasonReceiptPreflight, -1, -1, -1, -1, -1)
+		return failWTORow(wtoFailureReasonRowPreflight, -1, -1, -1, -1, -1)
 	}
 	pathNode := make(map[identity.ContentID]uint32)
 	paths := make([]identity.ContentID, 0)
@@ -783,7 +783,7 @@ func (r *Result) prepareWTOReceipts() error {
 		event, ok := r.pendingWTO.At(index)
 		path, pathOK := event.VertexPath()
 		if !ok || !pathOK {
-			return failWTOReceipt(wtoFailureReasonReceiptEvent, -1, index, -1, -1, -1)
+			return failWTORow(wtoFailureReasonRowEvent, -1, index, -1, -1, -1)
 		}
 		if _, exists := pathNode[path]; !exists {
 			pathNode[path] = uint32(len(paths))
@@ -791,7 +791,7 @@ func (r *Result) prepareWTOReceipts() error {
 		}
 	}
 	if len(paths) == 0 {
-		return failWTOReceipt(wtoFailureReasonReceiptPathEmpty, -1, -1, -1, -1, -1)
+		return failWTORow(wtoFailureReasonRowPathEmpty, -1, -1, -1, -1, -1)
 	}
 	sitesByPath := make([][]uint32, len(paths))
 	addSite := func(path identity.ContentID, site Site) bool {
@@ -810,25 +810,25 @@ func (r *Result) prepareWTOReceipts() error {
 	for index, ref := range r.index.refs {
 		from := mustSite(r, ref, true)
 		if !from.Available() {
-			return failWTOReceiptRef(wtoFailureReasonReceiptRouteFromSite, ref, index, -1, -1)
+			return failWTORowRef(wtoFailureReasonRowRouteFromSite, ref, index, -1, -1)
 		}
 		fromPath, fromOK := pathNode[ref.fromPoint]
 		if !fromOK {
-			return failWTOReceiptRef(wtoFailureReasonReceiptRouteFromPath, ref, index, -1, int(from.index))
+			return failWTORowRef(wtoFailureReasonRowRouteFromPath, ref, index, -1, int(from.index))
 		}
 		if !addSite(ref.fromPoint, from) {
-			return failWTOReceiptRef(wtoFailureReasonReceiptRouteFromAttach, ref, index, int(fromPath), int(from.index))
+			return failWTORowRef(wtoFailureReasonRowRouteFromAttach, ref, index, int(fromPath), int(from.index))
 		}
 		to := mustSite(r, ref, false)
 		if !to.Available() {
-			return failWTOReceiptRef(wtoFailureReasonReceiptRouteToSite, ref, index, -1, -1)
+			return failWTORowRef(wtoFailureReasonRowRouteToSite, ref, index, -1, -1)
 		}
 		toPath, toOK := pathNode[ref.toPoint]
 		if !toOK {
-			return failWTOReceiptRef(wtoFailureReasonReceiptRouteToPath, ref, index, -1, int(to.index))
+			return failWTORowRef(wtoFailureReasonRowRouteToPath, ref, index, -1, int(to.index))
 		}
 		if !addSite(ref.toPoint, to) {
-			return failWTOReceiptRef(wtoFailureReasonReceiptRouteToAttach, ref, index, int(toPath), int(to.index))
+			return failWTORowRef(wtoFailureReasonRowRouteToAttach, ref, index, int(toPath), int(to.index))
 		}
 	}
 	for term, path := range r.outcomePhasePaths {
@@ -840,9 +840,9 @@ func (r *Result) prepareWTOReceipts() error {
 		}
 		if !siteOK || !addSite(path, site) {
 			if !siteOK {
-				return failWTOReceipt(wtoFailureReasonReceiptOutcomeSite, -1, -1, -1, -1, -1)
+				return failWTORow(wtoFailureReasonRowOutcomeSite, -1, -1, -1, -1, -1)
 			}
-			return failWTOReceipt(wtoFailureReasonReceiptOutcomeAttach, -1, -1, int(pathNode[path]), int(site.index), -1)
+			return failWTORow(wtoFailureReasonRowOutcomeAttach, -1, -1, int(pathNode[path]), int(site.index), -1)
 		}
 	}
 	r.pendingNodeSites = sitesByPath
@@ -852,32 +852,32 @@ func (r *Result) prepareWTOReceipts() error {
 		from, fromOK := pathNode[ref.fromPoint]
 		to, toOK := pathNode[ref.toPoint]
 		if !fromOK {
-			return failWTOReceiptRef(wtoFailureReasonReceiptRouteFromPath, ref, index, -1, -1)
+			return failWTORowRef(wtoFailureReasonRowRouteFromPath, ref, index, -1, -1)
 		}
 		if !toOK {
-			return failWTOReceiptRef(wtoFailureReasonReceiptRouteToPath, ref, index, -1, -1)
+			return failWTORowRef(wtoFailureReasonRowRouteToPath, ref, index, -1, -1)
 		}
 		r.pendingWTORoutes[index] = pendingWTORoute{from: from, to: to, fromPath: ref.fromPoint, toPath: ref.toPoint}
 	}
-	// Both receipt maps have now been projected into the final WTO working
+	// Both seal-local row maps have now been projected into the final WTO working
 	// planes; retaining them would create a second endpoint authority.
-	r.boundRouteReceipts = nil
+	r.boundRouteRows = nil
 	r.outcomePhasePaths = nil
-	// Receipt diagnostics are valid only while attaching the parent hierarchy.
+	// Row diagnostics are valid only while attaching the parent hierarchy.
 	// They must not survive as a second route/provenance authority.
 	for index := range r.index.refs {
-		r.index.refs[index].diagnostic = routeReceiptDiagnostic{}
+		r.index.refs[index].diagnostic = routeDiagnostic{}
 	}
 	for index := range r.routeIndex {
-		r.routeIndex[index].ref.diagnostic = routeReceiptDiagnostic{}
+		r.routeIndex[index].ref.diagnostic = routeDiagnostic{}
 	}
 	for row := range r.boundaries.rows {
 		for _, arm := range [...]BoundaryArmKind{BoundaryResume, BoundarySelectTrue, BoundarySelectFalse, BoundaryTail, BoundaryThrow, BoundaryYield, BoundaryCancel} {
-			r.boundaries.rows[row].refs[arm].diagnostic = routeReceiptDiagnostic{}
+			r.boundaries.rows[row].refs[arm].diagnostic = routeDiagnostic{}
 		}
 	}
 	for index := range r.index.writeCommitRefs {
-		r.index.writeCommitRefs[index].diagnostic = routeReceiptDiagnostic{}
+		r.index.writeCommitRefs[index].diagnostic = routeDiagnostic{}
 	}
 	return nil
 }

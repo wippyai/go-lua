@@ -3,6 +3,7 @@ package diagnostic
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/internal/framing"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema"
 )
@@ -22,6 +23,8 @@ type scratchSiblingEntry struct{ key schema.Key }
 func (entry scratchSiblingEntry) Key() schema.Key { return entry.key }
 
 func (entry scratchSiblingEntry) EntryAvailable() bool { return entry.key.Available() }
+
+func (entry scratchSiblingEntry) EntryContent(*framing.Writer) error { return nil }
 
 func (surface scratchSiblingSurface) Kind() schema.SurfaceKind { return surface.kind }
 
@@ -73,11 +76,19 @@ func mustEntry(t *testing.T, spec Spec) *Entry {
 // two surfaces a diagnostic reference resolves against carry real inventories.
 func sealSurfaces(t *testing.T, entries []*Entry, axes []schema.Key) (*schema.Schema, schema.SealFailure) {
 	t.Helper()
+	return sealContribution(t, NewSurface(entries), axes)
+}
+
+// sealContribution seals one arbitrary contribution under this surface's kind,
+// so a law about what this surface accepts as a row is stated against the
+// public seal path rather than against the unexported entry type alone.
+func sealContribution(t *testing.T, contribution schema.Surface, axes []schema.Key) (*schema.Schema, schema.SealFailure) {
+	t.Helper()
 	builder := schema.NewBuilder()
 	for kind := schema.SurfaceKind(1); kind.Available(); kind++ {
 		switch kind {
 		case schema.SurfaceKindDiagnostic:
-			builder.Register(NewSurface(entries))
+			builder.Register(contribution)
 		case schema.SurfaceKindAxis:
 			builder.Register(scratchSiblingSurface{kind: kind, keys: axes})
 		case schema.SurfaceKindRule:
@@ -104,6 +115,37 @@ func TestDiagnosticSurfaceSealsCompleteInventory(t *testing.T) {
 	}
 	if failure := sealEntries(t, entries); failure.Available() {
 		t.Fatalf("complete diagnostic inventory rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+}
+
+// foreignSurface contributes a row that is not this surface's entry type,
+// under this surface's kind, and states this surface's own seal over it.
+type foreignSurface struct{}
+
+func (foreignSurface) Kind() schema.SurfaceKind { return schema.SurfaceKindDiagnostic }
+
+func (foreignSurface) Entries() []schema.Entry {
+	return []schema.Entry{scratchSiblingEntry{key: "advice.foreign"}}
+}
+
+func (contribution foreignSurface) Seal(view schema.View, sealed schema.Sealed) schema.SealFailure {
+	return surface{}.Seal(view, sealed)
+}
+
+// TestForeignRowIsRejected states the shape law: a diagnostic is read from a
+// row this surface itself built, so a row that identifies one entry and is not
+// one of this surface's declarations is rejected rather than published as a
+// code with no declared presentation.
+func TestForeignRowIsRejected(t *testing.T) {
+	sealed, failure := sealContribution(t, foreignSurface{}, []schema.Key{"value", "heap"})
+	if sealed != nil || !failure.Available() {
+		t.Fatal("a foreign row was admitted into the diagnostic surface")
+	}
+	if failure.Law != LawEntryShape || failure.Disposition != schema.DispositionMalformed {
+		t.Fatalf("law=%d disposition=%s want entry-shape/malformed", failure.Law, failure.Disposition)
+	}
+	if failure.Contributor != schema.SurfaceKindDiagnostic {
+		t.Fatalf("contributor=%d want the diagnostic surface", failure.Contributor)
 	}
 }
 
@@ -415,5 +457,34 @@ func TestDerivedTableProjectsEverySealedRow(t *testing.T) {
 	}
 	if _, unknown := table.ForStaticObservation(programartifact.DiagnosticObservationBranchCondition); unknown {
 		t.Fatal("static observation lookup answered for a branch population")
+	}
+}
+
+// TestTableDigestCoversDeclaredContent is the drift law of this surface: the
+// digest is what a derived inventory is checked against, so two catalogs that
+// publish the same codes at different tiers are two tables. A row's publication
+// tier is read from its declared default severity, so moving the severity moves
+// the tier and the digest with it.
+func TestTableDigestCoversDeclaredContent(t *testing.T) {
+	advisory := mustEntry(t, scratchSpec("advice.always_true_guard", FamilyAdvice))
+	if advisory.Tier() != TierAdvisory {
+		t.Fatalf("scratch row publishes tier %d, want the advisory tier", advisory.Tier())
+	}
+	declared, failure := sealSurfaces(t, []*Entry{advisory}, []schema.Key{"value", "heap"})
+	if failure.Available() {
+		t.Fatalf("advisory row rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	spec := scratchSpec("advice.always_true_guard", FamilyAdvice)
+	spec.DefaultSeverity = SeverityError
+	errorTier := mustEntry(t, spec)
+	if errorTier.Tier() != TierError {
+		t.Fatalf("shifted row publishes tier %d, want the error tier", errorTier.Tier())
+	}
+	shifted, failure := sealSurfaces(t, []*Entry{errorTier}, []schema.Key{"value", "heap"})
+	if failure.Available() {
+		t.Fatalf("error-tier row rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	if declared.Digest() == shifted.Digest() {
+		t.Fatal("a row's declared publication tier left the table digest unchanged")
 	}
 }

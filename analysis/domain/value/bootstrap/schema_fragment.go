@@ -12,13 +12,13 @@ import (
 type SchemaFragment struct {
 	slot     *engine.RuleSlot[value.Value, identity.ContentID]
 	write    engine.SchemaWriteSlot[value.Value]
-	semantic engine.SemanticKey
-	evidence engine.SemanticKey
+	semantic identity.SemanticKey
+	evidence identity.SemanticKey
 }
 
 // DeclareSchema records the zero-input Value bootstrap Rule shape.
-func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evidence engine.SemanticKey, owner *valueowner.SchemaFragment) (*SchemaFragment, bool) {
-	if builder == nil || owner == nil || !engine.DistinctKeys(semantic, operandFamily, evidence) {
+func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evidence identity.SemanticKey, owner *valueowner.SchemaFragment) (*SchemaFragment, bool) {
+	if builder == nil || owner == nil || !identity.DistinctKeys(semantic, operandFamily, evidence) {
 		return nil, false
 	}
 	slot, ok := engine.NewRuleSlot[value.Value, identity.ContentID](builder, engine.SchemaRuleSpec[value.Value]{

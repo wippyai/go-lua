@@ -3,16 +3,15 @@ package artifact_test
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/composite"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
-	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
 	"github.com/wippyai/go-lua/analysis/program/flow"
 	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	programstatic "github.com/wippyai/go-lua/analysis/program/static"
-	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 func compileStaticReferenceLeafArtifact(t *testing.T, name, text string) *programartifact.Artifact {
@@ -21,11 +20,11 @@ func compileStaticReferenceLeafArtifact(t *testing.T, name, text string) *progra
 	if err != nil {
 		t.Fatalf("Lower(%s): %v", name, err)
 	}
-	receipt, receiptOK := grammar.Global()
-	if !receiptOK {
-		t.Fatal("program schema receipt unavailable")
+	compilation, compilationOK := composite.Global()
+	if !compilationOK {
+		t.Fatal("program schema unavailable")
 	}
-	artifact, failure := schemaadapter.CompileDetailed(published.TransformerInput(), receipt)
+	artifact, failure := composite.CompileArtifactDetailed(published, compilation)
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("CompileDetailed(%s): %s", name, failure.Error())
 	}
@@ -174,11 +173,11 @@ return value
 	}
 
 	canonical := canonicalPathStaticReferenceProgram(t)
-	receipt, receiptOK := grammar.Global()
-	if !receiptOK {
-		t.Fatal("program schema receipt unavailable")
+	compilation, compilationOK := composite.Global()
+	if !compilationOK {
+		t.Fatal("program schema unavailable")
 	}
-	artifact, failure := schemaadapter.CompileDetailed(canonical.TransformerInput(), receipt)
+	artifact, failure := composite.CompileArtifactDetailed(canonical, compilation)
 	if artifact != nil || !failure.Available() || failure.Stage() != programartifact.CompileStageSeal ||
 		failure.RowKind() != programartifact.CompileRowOccurrence || failure.Reason() != programartifact.CompileReasonOccurrenceUnavailable {
 		t.Fatalf("CompileDetailed admitted targetless canonical reference: artifact=%v failure=%s", artifact != nil, failure.Error())

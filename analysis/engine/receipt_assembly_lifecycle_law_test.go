@@ -30,7 +30,7 @@ func newReceiptAssemblyRuleFixture(t testing.TB) receiptAssemblyRuleFixture {
 	if !ok || assembly == nil || assembly.builder == nil {
 		t.Fatal("receipt assembly")
 	}
-	site, siteOK := assembly.builder.admitSite(coldKey(949_001).compositionKey(), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent)
+	site, siteOK := assembly.builder.admitSite(compositionKeyOf(coldKey(949_001)), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent)
 	occurrence, occurrenceOK := assembly.builder.admitAt(site)
 	entity, entityOK := operandEntityForContent([32]byte{3})
 	operand, operandOK := assembly.builder.admitOperand(occurrence, entity)
@@ -90,7 +90,7 @@ func TestReceiptAssemblyThreePhaseAliasLifecycle(t *testing.T) {
 	if !alias.SealSources() || fixture.assembly.SealSources() {
 		t.Fatal("copied assembly did not share one source-seal transition")
 	}
-	if _, ok := fixture.assembly.builder.admitSite(coldKey(949_002).compositionKey(), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent); ok {
+	if _, ok := fixture.assembly.builder.admitSite(compositionKeyOf(coldKey(949_002)), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent); ok {
 		t.Fatal("source admission remained open during topology construction")
 	}
 	fixture.addTopology(t)
@@ -198,9 +198,9 @@ func TestReceiptAssemblyRejectsForeignEqualBindingSourcesAndRows(t *testing.T) {
 	if !firstOK || !secondOK {
 		t.Fatal("foreign receipt assemblies")
 	}
-	admit := func(t testing.TB, assembly *ReceiptAssembly, semantic SemanticKey) (equation.Site, equation.Occurrence, equation.Operand) {
+	admit := func(t testing.TB, assembly *ReceiptAssembly, semantic identity.SemanticKey) (equation.Site, equation.Occurrence, equation.Operand) {
 		t.Helper()
-		site, siteOK := assembly.builder.admitSite(semantic.compositionKey(), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent)
+		site, siteOK := assembly.builder.admitSite(compositionKeyOf(semantic), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent)
 		occurrence, occurrenceOK := assembly.builder.admitAt(site)
 		entity, entityOK := operandEntityForContent([32]byte{3})
 		operand, operandOK := assembly.builder.admitOperand(occurrence, entity)

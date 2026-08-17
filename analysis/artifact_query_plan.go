@@ -1,6 +1,7 @@
 package analysis
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/composite"
 	"github.com/wippyai/go-lua/analysis/domain/effect/factor"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/analysis/engine"
@@ -133,16 +134,16 @@ func newArtifactQueryPlan(mounts []mountedProgramArtifact) (*artifactQueryPlan, 
 }
 
 // AddRows emits query rows after source sealing and before graph commit.
-func (plan *artifactQueryPlan) AddRows(assembly *engine.ReceiptAssembly, binding *programBinding) bool {
-	if plan == nil || assembly == nil || binding == nil || binding.valueQuery == nil || binding.effectQuery == nil || len(plan.rows) == 0 {
+func (plan *artifactQueryPlan) AddRows(assembly *engine.ReceiptAssembly, binding *composite.ProgramBinding) bool {
+	if plan == nil || assembly == nil || binding == nil || binding.ValueQuery() == nil || binding.EffectQuery() == nil || len(plan.rows) == 0 {
 		return false
 	}
 	for _, row := range plan.rows {
 		var ok bool
 		if row.role == artifactQueryValueSummary {
-			ok = engine.AddMountedSummaryQuery(assembly, binding.valueQuery, row.id, row.mount, row.point)
+			ok = engine.AddMountedSummaryQuery(assembly, binding.ValueQuery(), row.id, row.mount, row.point)
 		} else if row.role == artifactQueryEffectExact {
-			ok = engine.AddMountedExactQuery(assembly, binding.effectQuery, row.id, row.mount, row.point)
+			ok = engine.AddMountedExactQuery(assembly, binding.EffectQuery(), row.id, row.mount, row.point)
 		}
 		if !ok {
 			return false
@@ -153,8 +154,8 @@ func (plan *artifactQueryPlan) AddRows(assembly *engine.ReceiptAssembly, binding
 
 // Attach binds every query row to the existing Link-local implementation
 // receipts. Rule dispatch remains a separate attachment lane.
-func (plan *artifactQueryPlan) Attach(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, binding *programBinding) bool {
-	if plan == nil || compilation == nil || graph == nil || binding == nil || binding.valueQuery == nil || binding.effectQuery == nil || len(plan.rows) == 0 {
+func (plan *artifactQueryPlan) Attach(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, binding *composite.ProgramBinding) bool {
+	if plan == nil || compilation == nil || graph == nil || binding == nil || binding.ValueQuery() == nil || binding.EffectQuery() == nil || len(plan.rows) == 0 {
 		return false
 	}
 	for _, row := range plan.rows {
@@ -163,9 +164,9 @@ func (plan *artifactQueryPlan) Attach(compilation *engine.ReceiptCompilation, gr
 			return false
 		}
 		if row.role == artifactQueryValueSummary {
-			ok = engine.AttachReceiptSummaryQuery(compilation, binding.valueQuery, query)
+			ok = engine.AttachReceiptSummaryQuery(compilation, binding.ValueQuery(), query)
 		} else if row.role == artifactQueryEffectExact {
-			ok = engine.AttachReceiptExactQuery(compilation, binding.effectQuery, query)
+			ok = engine.AttachReceiptExactQuery(compilation, binding.EffectQuery(), query)
 		} else {
 			ok = false
 		}
@@ -177,6 +178,6 @@ func (plan *artifactQueryPlan) Attach(compilation *engine.ReceiptCompilation, gr
 }
 
 // Keep the concrete query result types in this file's dependency surface so
-// the lane remains tied to the existing programBinding implementations.
-var _ *engine.SummaryQueryImplementation[valuedomain.Value, valueSummaryObservation]
-var _ *engine.ExactQueryImplementation[factor.Value, effectObservation]
+// the lane remains tied to the existing ProgramBinding implementations.
+var _ *engine.SummaryQueryImplementation[valuedomain.Value, valuedomain.ValueSummaryObservation]
+var _ *engine.ExactQueryImplementation[factor.Value, factor.EffectObservation]

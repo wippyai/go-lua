@@ -1,18 +1,18 @@
 package target
 
 import (
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
 
 func callbackLifecycleOperation(name string, lifecycles ...CallbackLifecycle) OperationSpec {
 	callbacks := make([]CallbackSpec, len(lifecycles))
 	subedges := make([]SubedgeSpec, 0, len(lifecycles))
-	input := make([]typ.Type, len(lifecycles))
+	input := make([]schematype.Type, len(lifecycles))
 	for index, lifecycle := range lifecycles {
-		input[index] = typ.Any
+		input[index] = testAny
 		callbacks[index] = CallbackSpec{
 			Function:  InputSource{Kind: InputSourceValueFormal, Ordinal: uint32(index)},
 			Admission: OrdinaryCallable,
@@ -164,7 +164,7 @@ func TestCallbackSubedgeProjectsOnlyImmediateDirectExecution(t *testing.T) {
 
 func TestCallbackLifecycleRejectsInvalidAndConflictingDefinitions(t *testing.T) {
 	for _, lifecycle := range []CallbackLifecycle{CallbackLifecycleInvalid, CallbackLifecycle(255)} {
-		if _, err := Seal(&Spec{Operations: []OperationSpec{callbackLifecycleOperation("invalid-lifecycle", lifecycle)}}); err == nil {
+		if _, err := testSeal(&Spec{Operations: []OperationSpec{callbackLifecycleOperation("invalid-lifecycle", lifecycle)}}); err == nil {
 			t.Fatalf("invalid callback lifecycle %d accepted", lifecycle)
 		}
 	}
@@ -172,7 +172,7 @@ func TestCallbackLifecycleRejectsInvalidAndConflictingDefinitions(t *testing.T) 
 	conflict := operation.Callbacks[0]
 	conflict.Lifecycle = CallbackRetainedOptionalOnce
 	operation.Callbacks = append(operation.Callbacks, conflict)
-	if _, err := Seal(&Spec{Operations: []OperationSpec{operation}}); err == nil {
+	if _, err := testSeal(&Spec{Operations: []OperationSpec{operation}}); err == nil {
 		t.Fatal("conflicting lifecycle definitions for one callback identity accepted")
 	}
 }
@@ -180,7 +180,7 @@ func TestCallbackLifecycleRejectsInvalidAndConflictingDefinitions(t *testing.T) 
 func TestSyncCallbackRequiresExactlyOneDirectSubedge(t *testing.T) {
 	missing := callbackLifecycleOperation("sync-missing-direct", CallbackSyncRequiredOnce)
 	missing.Subedges = nil
-	if _, err := Seal(&Spec{Operations: []OperationSpec{missing}}); err == nil {
+	if _, err := testSeal(&Spec{Operations: []OperationSpec{missing}}); err == nil {
 		t.Fatal("Sync callback sealed without its direct Subedge")
 	}
 }

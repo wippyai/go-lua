@@ -41,7 +41,7 @@ func TestReceiptSolverFallbackCompilesWTORevision(t *testing.T) {
 	sites := make([]equation.Site, 2)
 	for index := range sites {
 		var admitted bool
-		sites[index], admitted = batch.AdmitSite(coldKey(949_500+index).compositionKey(), scope, equation.TrueExpr(), equation.InitPresent)
+		sites[index], admitted = batch.AdmitSite(compositionKeyOf(coldKey(949_500+index)), scope, equation.TrueExpr(), equation.InitPresent)
 		if !admitted {
 			t.Fatal("receipt WTO site")
 		}
@@ -67,8 +67,8 @@ func TestReceiptSolverFallbackCompilesWTORevision(t *testing.T) {
 	if !batch.Seal() {
 		t.Fatal("receipt WTO batch")
 	}
-	left := equation.BoundaryInput(sites[1], sites[0], coldKey(949_520).compositionKey(), equation.TrueExpr(), equation.IdentityReindex(scope), equation.TrueExpr())
-	right := equation.BoundaryInput(sites[0], sites[1], coldKey(949_521).compositionKey(), equation.TrueExpr(), equation.IdentityReindex(scope), equation.TrueExpr())
+	left := equation.BoundaryInput(sites[1], sites[0], compositionKeyOf(coldKey(949_520)), equation.TrueExpr(), equation.IdentityReindex(scope), equation.TrueExpr())
+	right := equation.BoundaryInput(sites[0], sites[1], compositionKeyOf(coldKey(949_521)), equation.TrueExpr(), equation.IdentityReindex(scope), equation.TrueExpr())
 	topology, topologyOK := equation.SealTopology(schema.cold, equation.TopologySpec{
 		Batch: batch, Rules: instances,
 		Points: []equation.PointSpec{{Site: sites[0]}, {Site: sites[1]}},
@@ -211,8 +211,8 @@ func TestReceiptSolverFallbackRunsAcceptedActivationThroughWTORevision(t *testin
 		t.Fatal("receipt activation assembly")
 	}
 	scope := equation.EmptyScope()
-	triggerSite, triggerSiteOK := assembly.builder.admitSite(coldKey(949_609).compositionKey(), scope, equation.TrueExpr(), equation.InitPresent)
-	targetSite, targetSiteOK := assembly.builder.admitSite(coldKey(949_610).compositionKey(), scope, equation.TrueExpr(), equation.InitPresent)
+	triggerSite, triggerSiteOK := assembly.builder.admitSite(compositionKeyOf(coldKey(949_609)), scope, equation.TrueExpr(), equation.InitPresent)
+	targetSite, targetSiteOK := assembly.builder.admitSite(compositionKeyOf(coldKey(949_610)), scope, equation.TrueExpr(), equation.InitPresent)
 	occurrence, occurrenceOK := assembly.builder.admitAt(triggerSite)
 	entity, entityOK := operandEntityForContent([32]byte{62})
 	operand, operandOK := assembly.builder.admitOperand(occurrence, entity)
@@ -248,8 +248,8 @@ func TestReceiptSolverFallbackRunsAcceptedActivationThroughWTORevision(t *testin
 			ordinaryRowRef, ordinaryRowSemanticOK = assembly.builder.addSemanticRule(receiptSolverFallbackSemanticID(67), ordinaryRow)
 		}
 	}
-	loop := equation.BoundaryInput(triggerSite, triggerSite, coldKey(949_611).compositionKey(), equation.TrueExpr(), equation.IdentityReindex(scope), equation.TrueExpr())
-	triggerDependency := equation.BoundaryInput(triggerSite, targetSite, coldKey(949_617).compositionKey(), equation.TrueExpr(), equation.IdentityReindex(scope), equation.TrueExpr())
+	loop := equation.BoundaryInput(triggerSite, triggerSite, compositionKeyOf(coldKey(949_611)), equation.TrueExpr(), equation.IdentityReindex(scope), equation.TrueExpr())
+	triggerDependency := equation.BoundaryInput(triggerSite, targetSite, compositionKeyOf(coldKey(949_617)), equation.TrueExpr(), equation.IdentityReindex(scope), equation.TrueExpr())
 	setGroupEnvironmentInput := func(member BindingRuleRowRef, input equation.Input) bool {
 		if member.builder != assembly.builder.inner || !input.Available() {
 			return false
@@ -278,15 +278,15 @@ func TestReceiptSolverFallbackRunsAcceptedActivationThroughWTORevision(t *testin
 		t.Fatal("receipt activation topology rows")
 	}
 	formals := equation.NewBatch()
-	input, inputOK := formals.AdmitFormalPort(coldKey(949_612).compositionKey(), equation.PortImport, nil)
-	output, outputOK := formals.AdmitFormalPort(coldKey(949_613).compositionKey(), equation.PortExport, nil)
+	input, inputOK := formals.AdmitFormalPort(compositionKeyOf(coldKey(949_612)), equation.PortImport, nil)
+	output, outputOK := formals.AdmitFormalPort(compositionKeyOf(coldKey(949_613)), equation.PortExport, nil)
 	if !inputOK || !outputOK || !formals.Seal() {
 		t.Fatal("receipt activation formals")
 	}
 	templateBinding, templateBindingOK := equation.SealTemplateBinding(formals, assembly.builder.inner.batch, []equation.FormalPortActual{{Role: input, Site: triggerSite}, {Role: output, Site: targetSite}})
 	materialization, materializationOK := equation.MaterializeTemplateBoundary(schema.cold, templateBinding, []equation.Site{input.Site(), output.Site()}, nil)
 	shape, shapeOK := schema.cold.RuleShapeAt(proof.ordinal)
-	materialization, originOK := materialization.WithOrigin(equation.MaterializationOrigin{Family: shape.ActivationFamily, Application: application.compositionKey(), Target: target.compositionKey(), Endpoint: endpoint.compositionKey(), TriggerOrdinal: 0})
+	materialization, originOK := materialization.WithOrigin(equation.MaterializationOrigin{Family: shape.ActivationFamily, Application: compositionKeyOf(application), Target: compositionKeyOf(target), Endpoint: compositionKeyOf(endpoint), TriggerOrdinal: 0})
 	activationID := receiptSolverFallbackSemanticID(65)
 	materializationReceipt, materializationReceiptOK := assembly.builder.issueMaterialization(materialization)
 	if !templateBindingOK || !materializationOK || !shapeOK || !originOK || !assembly.builder.addSemanticActivation(activationID, triggerRowRef) || !materializationReceiptOK || !assembly.builder.addActivationCandidate(materializationReceipt) {
@@ -350,7 +350,7 @@ func TestReceiptSolverFallbackRunsAcceptedActivationThroughWTORevision(t *testin
 }
 
 func TestReceiptExactObservationRejectsNonExactWriteMetadata(t *testing.T) {
-	factor := coldKey(949_620).compositionKey()
+	factor := compositionKeyOf(coldKey(949_620))
 	write := equation.Surface{Factor: factor, Form: equation.SurfaceWriteExact, Local: 7, Mode: equation.TargetModeStrong}
 	for name, fixture := range map[string]exactObservationWriteFixture{
 		"route":        {count: 1, surface: write, route: 1},

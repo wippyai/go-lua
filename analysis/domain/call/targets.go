@@ -63,7 +63,7 @@ func (receipt bodyTargetReceipt) valid() bool {
 }
 
 // bodyReceipt is the compact seal-time projection of a Program body. It is
-// deliberately data-only: no Program, TransformerInput, Body, Flow, or Link
+// deliberately data-only: no Program, Body, Flow, or Link
 // proof survives in Call's target rows.
 type bodyReceipt struct {
 	artifactID  identity.ContentID

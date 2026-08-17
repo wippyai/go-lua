@@ -3,10 +3,9 @@ package artifact_test
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/composite"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
-	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
-	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 // TestProgramArtifactPresenceRefinementUsesExactGuardedPredecessor keeps the
@@ -26,11 +25,11 @@ return redundant
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, receiptOK := grammar.Global()
-	if !receiptOK {
-		t.Fatal("Program artifact grammar capability unavailable")
+	compilation, compilationOK := composite.Global()
+	if !compilationOK {
+		t.Fatal("Program artifact grammar unavailable")
 	}
-	artifact, failure := schemaadapter.CompileDetailed(published.TransformerInput(), receipt)
+	artifact, failure := composite.CompileArtifactDetailed(published, compilation)
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile: %s", failure.Error())
 	}

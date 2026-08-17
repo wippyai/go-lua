@@ -8,50 +8,31 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/semanticsource"
 )
 
-// SemanticSourceView is one detached Module-owned typed relation receipt.
-// Digests authenticate the exact typed At/ID traversal without copying rows.
-type SemanticSourceView = semanticsource.DigestView
-
-// SemanticSourceCursor walks one exact Module-owned digest interval.
-type SemanticSourceCursor = semanticsource.DigestCursor
-
-type SemanticSourceViews struct {
+// SourceViews is Module's sealed source-column set. Rows retain only
+// owner-fenced identities; module hot tables do not cross this API.
+type SourceViews struct {
 	owner                                                                                             identity.ContentID
-	module, cache, representative, transport, analysisRoot, initGeneration, initOutcome, initTerminal SemanticSourceView
+	module, cache, representative, transport, analysisRoot, initGeneration, initOutcome, initTerminal semanticsource.DigestView
 }
 
-func (views SemanticSourceViews) valid() bool {
+func (views SourceViews) valid() bool {
 	return semanticsource.FencedDigestViews(views.owner, views.module, views.cache, views.representative, views.transport,
 		views.analysisRoot, views.initGeneration, views.initOutcome, views.initTerminal)
 }
-func (views SemanticSourceViews) OwnerID() identity.ContentID        { return views.owner }
-func (views SemanticSourceViews) Module() SemanticSourceView         { return views.module }
-func (views SemanticSourceViews) Cache() SemanticSourceView          { return views.cache }
-func (views SemanticSourceViews) Representative() SemanticSourceView { return views.representative }
-func (views SemanticSourceViews) Transport() SemanticSourceView      { return views.transport }
-func (views SemanticSourceViews) AnalysisRoot() SemanticSourceView   { return views.analysisRoot }
-func (views SemanticSourceViews) InitGeneration() SemanticSourceView { return views.initGeneration }
-func (views SemanticSourceViews) InitOutcome() SemanticSourceView    { return views.initOutcome }
-func (views SemanticSourceViews) InitTerminal() SemanticSourceView   { return views.initTerminal }
+func (views SourceViews) Valid() bool                               { return views.owner.Available() && views.valid() }
+func (views SourceViews) OwnerID() identity.ContentID               { return views.owner }
+func (views SourceViews) Module() semanticsource.DigestView         { return views.module }
+func (views SourceViews) Cache() semanticsource.DigestView          { return views.cache }
+func (views SourceViews) Representative() semanticsource.DigestView { return views.representative }
+func (views SourceViews) Transport() semanticsource.DigestView      { return views.transport }
+func (views SourceViews) AnalysisRoot() semanticsource.DigestView   { return views.analysisRoot }
+func (views SourceViews) InitGeneration() semanticsource.DigestView { return views.initGeneration }
+func (views SourceViews) InitOutcome() semanticsource.DigestView    { return views.initOutcome }
+func (views SourceViews) InitTerminal() semanticsource.DigestView   { return views.initTerminal }
 
-type SemanticSourceReceipt struct {
-	owner identity.ContentID
-	views SemanticSourceViews
-}
-
-func (receipt SemanticSourceReceipt) Valid() bool {
-	return receipt.owner.Available() && receipt.views.valid() && receipt.views.owner == receipt.owner
-}
-func (receipt SemanticSourceReceipt) OwnerID() identity.ContentID { return receipt.owner }
-func (receipt SemanticSourceReceipt) Views() (SemanticSourceViews, bool) {
-	if !receipt.Valid() {
-		return SemanticSourceViews{}, false
-	}
-	return receipt.views, true
-}
-func (views SemanticSourceViews) viewFor(token semanticsource.Token) (SemanticSourceView, bool) {
+func (views SourceViews) viewFor(token semanticsource.Token) (semanticsource.DigestView, bool) {
 	if token.Origin() != semanticsource.OriginLinkModule {
-		return SemanticSourceView{}, false
+		return semanticsource.DigestView{}, false
 	}
 	switch token.Facet() {
 	case 0:
@@ -71,57 +52,37 @@ func (views SemanticSourceViews) viewFor(token semanticsource.Token) (SemanticSo
 	case semanticsource.FacetLinkModuleInitTerminal:
 		return views.initTerminal, true
 	default:
-		return SemanticSourceView{}, false
+		return semanticsource.DigestView{}, false
 	}
 }
 
-// Publications projects this owner through the injected sealed ProgramSchema.
-// Module contributes only detached row cardinalities; relation membership and
-// order remain owned by the schema.
-func (receipt SemanticSourceReceipt) Publications(schema semanticsource.ProgramSchema) []semanticsource.Publication {
-	if !receipt.Valid() {
-		return nil
-	}
-	views, ok := receipt.Views()
-	if !ok {
+func (views SourceViews) Publications(schema semanticsource.ProgramSchema) []semanticsource.Publication {
+	if !views.Valid() {
 		return nil
 	}
 	return semanticsource.OriginPublications(schema, func(token semanticsource.Token) (int, bool) {
-		view, found := views.viewFor(token)
+		row, found := views.viewFor(token)
 		if !found {
 			return 0, false
 		}
-		return view.Count(), true
+		return row.Count(), true
 	}, semanticsource.OriginLinkModule)
 }
-func (c *Component) SemanticSourceReceipt() (SemanticSourceReceipt, bool) {
-	if !live(c) || !c.authority.semanticReceipt.Valid() || c.authority.semanticReceipt.OwnerID() != c.authority.content {
-		return SemanticSourceReceipt{}, false
+
+func (c *Component) SourceViews() (SourceViews, bool) {
+	if !live(c) || !c.authority.sourceViews.Valid() || c.authority.sourceViews.OwnerID() != c.authority.content {
+		return SourceViews{}, false
 	}
-	return c.authority.semanticReceipt, true
+	return c.authority.sourceViews, true
 }
-func (c *Component) SemanticSourceViews() (SemanticSourceViews, bool) {
-	receipt, ok := c.SemanticSourceReceipt()
-	if !ok {
-		return SemanticSourceViews{}, false
+func (v Cold) SourceViews() (SourceViews, bool) {
+	if v.fence == nil || !v.fence.sealed || !v.content.Available() || !v.sourceViews.Valid() || v.sourceViews.OwnerID() != v.content {
+		return SourceViews{}, false
 	}
-	return receipt.Views()
-}
-func (v Cold) SemanticSourceReceipt() (SemanticSourceReceipt, bool) {
-	if v.fence == nil || !v.fence.sealed || !v.content.Available() || !v.semanticReceipt.Valid() || v.semanticReceipt.OwnerID() != v.content {
-		return SemanticSourceReceipt{}, false
-	}
-	return v.semanticReceipt, true
-}
-func (v Cold) SemanticSourceViews() (SemanticSourceViews, bool) {
-	receipt, ok := v.SemanticSourceReceipt()
-	if !ok {
-		return SemanticSourceViews{}, false
-	}
-	return receipt.Views()
+	return v.sourceViews, true
 }
 
-func moduleReceiptDigest(owner identity.ContentID, token semanticsource.Token, index int, id identity.ContentID) (identity.ContentID, bool) {
+func sourceRowDigest(owner identity.ContentID, token semanticsource.Token, index int, id identity.ContentID) (identity.ContentID, bool) {
 	if !owner.Available() || index < 0 || !id.Available() {
 		return identity.ContentID{}, false
 	}
@@ -140,12 +101,12 @@ func moduleReceiptDigest(owner identity.ContentID, token semanticsource.Token, i
 	copy(digest[:], h.Sum(nil))
 	return digest, digest.Available()
 }
-func moduleReceiptRows(owner identity.ContentID, token semanticsource.Token, ids []identity.ContentID) (SemanticSourceView, bool) {
+func sourceRows(owner identity.ContentID, token semanticsource.Token, ids []identity.ContentID) (semanticsource.DigestView, bool) {
 	digests := make([]identity.ContentID, 0, len(ids))
 	for index, id := range ids {
-		digest, ok := moduleReceiptDigest(owner, token, index, id)
+		digest, ok := sourceRowDigest(owner, token, index, id)
 		if !ok {
-			return SemanticSourceView{}, false
+			return semanticsource.DigestView{}, false
 		}
 		digests = append(digests, digest)
 	}
@@ -158,12 +119,12 @@ func moduleToken(origin semanticsource.Origin, facet semanticsource.Facet) (sema
 	}
 	return d.Token(), true
 }
-func (c *Component) buildSemanticSourceReceipt() (SemanticSourceReceipt, bool) {
+func (c *Component) buildSourceViews() (SourceViews, bool) {
 	if !live(c) || !c.authority.content.Available() {
-		return SemanticSourceReceipt{}, false
+		return SourceViews{}, false
 	}
 	owner := c.authority.content
-	views := SemanticSourceViews{owner: owner}
+	views := SourceViews{owner: owner}
 	makeIDs := func(count int, at func(int) (identity.ContentID, bool)) ([]identity.ContentID, bool) {
 		ids := make([]identity.ContentID, 0, count)
 		for index := 0; index < count; index++ {
@@ -175,12 +136,12 @@ func (c *Component) buildSemanticSourceReceipt() (SemanticSourceReceipt, bool) {
 		}
 		return ids, true
 	}
-	set := func(origin semanticsource.Origin, facet semanticsource.Facet, ids []identity.ContentID, dst *SemanticSourceView) bool {
+	set := func(origin semanticsource.Origin, facet semanticsource.Facet, ids []identity.ContentID, dst *semanticsource.DigestView) bool {
 		token, ok := moduleToken(origin, facet)
 		if !ok {
 			return false
 		}
-		view, ok := moduleReceiptRows(owner, token, ids)
+		view, ok := sourceRows(owner, token, ids)
 		if !ok {
 			return false
 		}
@@ -195,7 +156,7 @@ func (c *Component) buildSemanticSourceReceipt() (SemanticSourceReceipt, bool) {
 		return c.Cache().EntryID(e)
 	})
 	if !ok || !set(semanticsource.OriginLinkModule, 0, ids, &views.module) {
-		return SemanticSourceReceipt{}, false
+		return SourceViews{}, false
 	}
 	ids, ok = makeIDs(c.Cache().InstanceCount(), func(i int) (identity.ContentID, bool) {
 		x, ok := c.Cache().InstanceAt(i)
@@ -205,7 +166,7 @@ func (c *Component) buildSemanticSourceReceipt() (SemanticSourceReceipt, bool) {
 		return c.Cache().InstanceID(x)
 	})
 	if !ok || !set(semanticsource.OriginLinkModule, semanticsource.FacetLinkModuleCache, ids, &views.cache) {
-		return SemanticSourceReceipt{}, false
+		return SourceViews{}, false
 	}
 	ids, ok = makeIDs(c.Cache().InstanceCount(), func(i int) (identity.ContentID, bool) {
 		x, ok := c.Cache().InstanceAt(i)
@@ -219,7 +180,7 @@ func (c *Component) buildSemanticSourceReceipt() (SemanticSourceReceipt, bool) {
 		return c.Cache().InstanceID(rep)
 	})
 	if !ok || !set(semanticsource.OriginLinkModule, semanticsource.FacetLinkModuleRepresentative, ids, &views.representative) {
-		return SemanticSourceReceipt{}, false
+		return SourceViews{}, false
 	}
 	ids, ok = makeIDs(c.Coordinates().Count(), func(i int) (identity.ContentID, bool) {
 		x, ok := c.Coordinates().At(i)
@@ -229,7 +190,7 @@ func (c *Component) buildSemanticSourceReceipt() (SemanticSourceReceipt, bool) {
 		return c.Coordinates().ID(x)
 	})
 	if !ok || !set(semanticsource.OriginLinkModule, semanticsource.FacetLinkModuleTransport, ids, &views.transport) {
-		return SemanticSourceReceipt{}, false
+		return SourceViews{}, false
 	}
 	ids, ok = makeIDs(c.Roots().Count(), func(i int) (identity.ContentID, bool) {
 		x, ok := c.Roots().At(i)
@@ -239,7 +200,7 @@ func (c *Component) buildSemanticSourceReceipt() (SemanticSourceReceipt, bool) {
 		return c.Roots().ID(x)
 	})
 	if !ok || !set(semanticsource.OriginLinkModule, semanticsource.FacetLinkModuleAnalysisRoot, ids, &views.analysisRoot) {
-		return SemanticSourceReceipt{}, false
+		return SourceViews{}, false
 	}
 	ids, ok = makeIDs(c.Generations().Count(), func(i int) (identity.ContentID, bool) {
 		x, ok := c.Generations().At(i)
@@ -249,28 +210,28 @@ func (c *Component) buildSemanticSourceReceipt() (SemanticSourceReceipt, bool) {
 		return c.Generations().ID(x)
 	})
 	if !ok || !set(semanticsource.OriginLinkModule, semanticsource.FacetLinkModuleInitGeneration, ids, &views.initGeneration) {
-		return SemanticSourceReceipt{}, false
+		return SourceViews{}, false
 	}
 	var outcomes []identity.ContentID
 	for i := 0; i < c.Generations().Count(); i++ {
 		g, good := c.Generations().At(i)
 		if !good {
-			return SemanticSourceReceipt{}, false
+			return SourceViews{}, false
 		}
 		for j := 0; j < c.Outcomes().Count(g); j++ {
 			o, good := c.Outcomes().At(g, j)
 			if !good {
-				return SemanticSourceReceipt{}, false
+				return SourceViews{}, false
 			}
 			id, good := c.Outcomes().ID(o)
 			if !good {
-				return SemanticSourceReceipt{}, false
+				return SourceViews{}, false
 			}
 			outcomes = append(outcomes, id)
 		}
 	}
 	if !set(semanticsource.OriginLinkModule, semanticsource.FacetLinkModuleInitOutcome, outcomes, &views.initOutcome) {
-		return SemanticSourceReceipt{}, false
+		return SourceViews{}, false
 	}
 	ids, ok = makeIDs(c.Terminals().Count(), func(i int) (identity.ContentID, bool) {
 		x, ok := c.Terminals().At(i)
@@ -280,8 +241,7 @@ func (c *Component) buildSemanticSourceReceipt() (SemanticSourceReceipt, bool) {
 		return c.Terminals().ID(x)
 	})
 	if !ok || !set(semanticsource.OriginLinkModule, semanticsource.FacetLinkModuleInitTerminal, ids, &views.initTerminal) {
-		return SemanticSourceReceipt{}, false
+		return SourceViews{}, false
 	}
-	receipt := SemanticSourceReceipt{owner: owner, views: views}
-	return receipt, receipt.Valid()
+	return views, views.Valid()
 }

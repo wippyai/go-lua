@@ -3,10 +3,11 @@ package index_test
 import (
 	"testing"
 
+	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
+	"github.com/wippyai/go-lua/analysis/lua/lower"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
@@ -50,7 +51,7 @@ func twoModuleRequireLink(t testing.TB) *link.Link {
 	if err != nil {
 		t.Fatal(err)
 	}
-	contract, err := target.Seal(&target.Spec{Operations: []target.OperationSpec{{
+	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []target.OperationSpec{{
 		Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"require"}}},
 		Input:    target.ValuesSpec{Tail: target.ValuesClosed},
 		Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}},

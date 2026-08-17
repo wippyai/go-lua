@@ -9,7 +9,7 @@ import (
 
 // Nil, Bool, Integer, FloatBits, and String each mint one fresh authored
 // literal occurrence. Equal payloads remain distinct Terms.
-func (c *Collector) Nil(span source.Span, owner Term) Term {
+func (c *Collector) Nil(span source.Span, owner keyspace.Term) keyspace.Term {
 	if !validOwner(c, owner) {
 		return 0
 	}
@@ -21,7 +21,7 @@ func (c *Collector) Nil(span source.Span, owner Term) Term {
 	return term
 }
 
-func (c *Collector) Bool(span source.Span, owner Term, value bool) Term {
+func (c *Collector) Bool(span source.Span, owner keyspace.Term, value bool) keyspace.Term {
 	if !validOwner(c, owner) {
 		return 0
 	}
@@ -33,7 +33,7 @@ func (c *Collector) Bool(span source.Span, owner Term, value bool) Term {
 	return term
 }
 
-func (c *Collector) Integer(span source.Span, owner Term, value int64) Term {
+func (c *Collector) Integer(span source.Span, owner keyspace.Term, value int64) keyspace.Term {
 	if !validOwner(c, owner) {
 		return 0
 	}
@@ -45,7 +45,7 @@ func (c *Collector) Integer(span source.Span, owner Term, value int64) Term {
 	return term
 }
 
-func (c *Collector) FloatBits(span source.Span, owner Term, bits uint64) Term {
+func (c *Collector) FloatBits(span source.Span, owner keyspace.Term, bits uint64) keyspace.Term {
 	if !validOwner(c, owner) {
 		return 0
 	}
@@ -59,11 +59,11 @@ func (c *Collector) FloatBits(span source.Span, owner Term, bits uint64) Term {
 
 // Float is a convenience for lowerer code that has already decoded a parser
 // float. FloatBits remains the exact-authority operation.
-func (c *Collector) Float(span source.Span, owner Term, value float64) Term {
+func (c *Collector) Float(span source.Span, owner keyspace.Term, value float64) keyspace.Term {
 	return c.FloatBits(span, owner, math.Float64bits(value))
 }
 
-func (c *Collector) String(span source.Span, owner Term, value string) Term {
+func (c *Collector) String(span source.Span, owner keyspace.Term, value string) keyspace.Term {
 	if !validOwner(c, owner) {
 		return 0
 	}
@@ -78,7 +78,7 @@ func (c *Collector) String(span source.Span, owner Term, value string) Term {
 // exactLiteral returns the raw storable candidate represented by a Source
 // scalar literal. Nil has no storable exact-key payload, and NaN is rejected
 // rather than smuggled into the denominator. The returned value is not a Key.
-func (c *Collector) exactLiteral(term Term) (keyspace.LiteralValue, bool) {
+func (c *Collector) exactLiteral(term keyspace.Term) (keyspace.LiteralValue, bool) {
 	if c == nil || c.err != nil || !validTermInCounts(c, term) {
 		return keyspace.LiteralValue{}, false
 	}
@@ -90,7 +90,7 @@ func (c *Collector) exactLiteral(term Term) (keyspace.LiteralValue, bool) {
 // for its proof context; no recursive expression walk or second authority is
 // introduced here. Integer minimum is represented as a float exactly as the
 // Source/Flow semantic law requires.
-func (c *Collector) unaryNegExact(unary, operand Term) (keyspace.LiteralValue, bool) {
+func (c *Collector) unaryNegExact(unary, operand keyspace.Term) (keyspace.LiteralValue, bool) {
 	if c == nil || c.err != nil || keyspace.TermFamily(unary) != keyspace.FamilyUnary ||
 		!validTermInCounts(c, unary) {
 		return keyspace.LiteralValue{}, false
@@ -117,7 +117,7 @@ func (c *Collector) unaryNegExact(unary, operand Term) (keyspace.LiteralValue, b
 // exactCandidate is a compact Flow-facing spelling: scalar terms are
 // resolved directly; UnaryNeg terms must provide their already-authored
 // operand. It never inspects or infers Flow rows.
-func (c *Collector) sourceExactCandidate(term, unaryOperand Term) (keyspace.LiteralValue, bool) {
+func (c *Collector) sourceExactCandidate(term, unaryOperand keyspace.Term) (keyspace.LiteralValue, bool) {
 	if keyspace.TermFamily(term) == keyspace.FamilyUnary {
 		return c.unaryNegExact(term, unaryOperand)
 	}

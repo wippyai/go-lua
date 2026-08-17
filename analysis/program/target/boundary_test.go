@@ -1,9 +1,9 @@
 package target
 
 import (
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
 
@@ -28,12 +28,12 @@ func TestEffectRowsCarryTotalRowFormalSubstitutions(t *testing.T) {
 
 	badScope := rowBoundarySpec(RowVariable, CallbackReleaseOne)
 	badScope.Operations[0].Effects.Occurrences[0].RowArgs[0] = 1
-	if contract, err := Seal(&badScope); err == nil || contract != nil {
+	if contract, err := testSeal(&badScope); err == nil || contract != nil {
 		t.Fatal("effect row argument outside source scope was published")
 	}
 	badABI := rowBoundarySpec(RowVariable, CallbackReleaseOne)
 	badABI.Operations[1].RowFormals = 2
-	if contract, err := Seal(&badABI); err == nil || contract != nil {
+	if contract, err := testSeal(&badABI); err == nil || contract != nil {
 		t.Fatal("incomplete effect row substitution was published")
 	}
 }
@@ -73,17 +73,17 @@ func TestCallbackExpectedRowsAndRetainedReleaseAreDirectAndCanonical(t *testing.
 
 	missingRow := rowBoundarySpec(RowVariable, CallbackReleaseOne)
 	missingRow.Operations[0].Callbacks[0].Effects = RowSpec{}
-	if contract, err := Seal(&missingRow); err == nil || contract != nil {
+	if contract, err := testSeal(&missingRow); err == nil || contract != nil {
 		t.Fatal("callback without an expected row was published")
 	}
 	syncRelease := rowBoundarySpec(RowVariable, CallbackReleaseOne)
 	syncRelease.Operations[0].Callbacks[0].Lifecycle = CallbackSyncOptionalOnce
-	if contract, err := Seal(&syncRelease); err == nil || contract != nil {
+	if contract, err := testSeal(&syncRelease); err == nil || contract != nil {
 		t.Fatal("sync callback release was published")
 	}
 	badRelease := rowBoundarySpec(RowVariable, CallbackReleaseOne)
 	badRelease.Operations[0].Callbacks[0].Release.Outcome = 1
-	if contract, err := Seal(&badRelease); err == nil || contract != nil {
+	if contract, err := testSeal(&badRelease); err == nil || contract != nil {
 		t.Fatal("release outcome outside target operation was published")
 	}
 }
@@ -94,7 +94,7 @@ func rowBoundarySpec(callbackRowTail RowTail, mode CallbackReleaseMode) Spec {
 			Bindings:   []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"row-owner"}}},
 			ValuesVars: 5,
 			RowFormals: 1,
-			Input:      ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesVariable, Var: 0},
+			Input:      ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesVariable, Var: 0},
 			Outcomes:   []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesClosed}}},
 			Effects:    RowSpec{Occurrences: []EffectSpec{{Target: 2, ValueArgs: []ValueFormal{0}, RowArgs: []RowVar{0}}}, Tail: RowVariable, Var: 0},
 			Callbacks: []CallbackSpec{{
@@ -107,7 +107,7 @@ func rowBoundarySpec(callbackRowTail RowTail, mode CallbackReleaseMode) Spec {
 		{
 			Bindings:   []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"row-target"}}},
 			RowFormals: 1,
-			Input:      ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed},
+			Input:      ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed},
 			Outcomes:   []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesClosed}}},
 			Effects:    RowSpec{Tail: RowClosed},
 		},

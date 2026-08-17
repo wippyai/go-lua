@@ -159,7 +159,7 @@ func hotTarget(schema *value.Schema, row value.PresenceRefinement) (value.Coordi
 	return target, present, true
 }
 
-func hotChecker(owner *valueowner.HotOwner, semantic engine.SemanticKey, read *engine.Read[engine.OrderedCells[value.Value]]) engine.RuleDerivationChecker[value.Value, value.PresenceRefinement] {
+func hotChecker(owner *valueowner.HotOwner, semantic identity.SemanticKey, read *engine.Read[engine.OrderedCells[value.Value]]) engine.RuleDerivationChecker[value.Value, value.PresenceRefinement] {
 	return func(derivation engine.RuleDerivation[value.Value, value.PresenceRefinement]) (engine.RuleEvidence, bool) {
 		if owner == nil || owner.Schema() == nil || read == nil || derivation.Rule() != semantic || derivation.InputCount() != 1 || derivation.ReadCount() != 1 || derivation.DispositionCount() == 0 {
 			return engine.RuleEvidence{}, false

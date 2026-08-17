@@ -9,7 +9,7 @@ import (
 
 // testSchema is a small sealed-schema fixture for the publication laws. It is
 // deliberately not a generated denominator: the production relation table is
-// owned by schema/relations and is exercised there.
+// owned by program/relations and is exercised there.
 type testSchema struct {
 	definitions []RelationDef
 	digest      identity.ContentID

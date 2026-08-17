@@ -44,7 +44,7 @@ type derivedPlanes struct {
 // operation.  The source and authored views provide the canonical dense
 // denominators; body, containment, and outcome results provide the exact
 // sealed relations.  No identity plane is accepted from the caller.
-func derive(sourceView source.View, cellRoles source.CellRoleCatalog, authoredView authored.View, bodies *body.Result, bindings binding.Result, forest *containment.Result, outcomes *outcome.Result, sourceID, flowID, staticID, moduleID identity.ContentID) (derivedPlanes, error) {
+func derive(sourceView source.View, cellRoles source.CellRoles, authoredView authored.View, bodies *body.Result, bindings binding.Result, forest *containment.Result, outcomes *outcome.Result, sourceID, flowID, staticID, moduleID identity.ContentID) (derivedPlanes, error) {
 	var out derivedPlanes
 	if !sourceID.Available() || !flowID.Available() || !staticID.Available() || !moduleID.Available() ||
 		sourceView.Identity().ContentID() != sourceID || authoredView.Cold().ContentID() != flowID {
@@ -63,7 +63,7 @@ func derive(sourceView source.View, cellRoles source.CellRoleCatalog, authoredVi
 		return out, errors.New("semanticpath: Body denominator disagrees with Source")
 	}
 	if !cellRoles.Matches(sourceView) || cellRoles.CellCount() != authoredView.Storage().Cells().Count() || !binding.Matches(&bindings, sourceID, flowID) || bindings.CellCount() != cellRoles.CellCount() {
-		return out, errors.New("semanticpath: Cell role receipt or Binding disagrees with exact owners")
+		return out, errors.New("semanticpath: Cell roles or Binding disagrees with exact owners")
 	}
 
 	edges, err := deriveEdges(sourceView, authoredView, forest)
@@ -730,7 +730,7 @@ func deriveRootPaths(sourceView source.View, bodies *body.Result, bodyPaths []id
 	return paths, nil
 }
 
-func deriveTermPaths(sourceView source.View, cellRoles source.CellRoleCatalog, view authored.View, bindings binding.Result, bodies *body.Result, forest *containment.Result, outcomes *outcome.Result, edges [keyspace.FamilyCount][]edgeDescriptor, bodyPaths []identity.ContentID, descriptors [keyspace.FamilyCount][]identity.ContentID, roots [keyspace.FamilyCount][]identity.ContentID, resolver *structuralResolver) ([keyspace.FamilyCount][]identity.ContentID, error) {
+func deriveTermPaths(sourceView source.View, cellRoles source.CellRoles, view authored.View, bindings binding.Result, bodies *body.Result, forest *containment.Result, outcomes *outcome.Result, edges [keyspace.FamilyCount][]edgeDescriptor, bodyPaths []identity.ContentID, descriptors [keyspace.FamilyCount][]identity.ContentID, roots [keyspace.FamilyCount][]identity.ContentID, resolver *structuralResolver) ([keyspace.FamilyCount][]identity.ContentID, error) {
 	var paths [keyspace.FamilyCount][]identity.ContentID
 	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
 		// Every family owns its ordinal-zero sentinel, including an empty
@@ -753,7 +753,10 @@ func deriveTermPaths(sourceView source.View, cellRoles source.CellRoleCatalog, v
 			term := keyspace.MakeTerm(family, uint32(ordinal))
 			bodyTerm, _, _, positioned := sourceView.Index().Position(term)
 			if !positioned {
-				return fmt.Errorf("semanticpath: term %v has no Source position", term)
+				// Static expression rows are valid Flow terms but deliberately
+				// have no Source coordinate. The resolver anchors their exact
+				// containment chain at the owner-issued Static scope boundary.
+				bodyTerm = 0
 			}
 			path, ok := resolver.resolve(term, bodyTerm)
 			if !ok {
@@ -785,7 +788,7 @@ func deriveTermPaths(sourceView source.View, cellRoles source.CellRoleCatalog, v
 		cell := keyspace.MakeTerm(keyspace.FamilyCell, uint32(ordinal))
 		path := paths[keyspace.FamilyCell][ordinal]
 		if !path.Available() {
-			return paths, errors.New("semanticpath: Cell path is unavailable after role issuance")
+			return paths, errors.New("semanticpath: Cell path is unavailable after role column derivation")
 		}
 		resolver.memo[cell] = path
 	}
@@ -850,11 +853,11 @@ func (r *structuralResolver) missingStructuralEdge(term, expectedBody keyspace.T
 	return 0, 0
 }
 
-// deriveCellTermPaths joins the closed Source Cell receipt to Flow's sealed
+// deriveCellTermPaths joins the closed Source Cell roles to Flow's sealed
 // Binding roles.  It has no fallback relation: every Cell is claimed once by
 // one typed definition role, and local identities fold both lexical Body and
 // definition host paths without using a Cell Term or global ordinal.
-func deriveCellTermPaths(sourceView source.View, catalog source.CellRoleCatalog, view authored.View, bindings binding.Result, forest *containment.Result, bodyPaths []identity.ContentID, paths *[keyspace.FamilyCount][]identity.ContentID) error {
+func deriveCellTermPaths(sourceView source.View, catalog source.CellRoles, view authored.View, bindings binding.Result, forest *containment.Result, bodyPaths []identity.ContentID, paths *[keyspace.FamilyCount][]identity.ContentID) error {
 	if paths == nil || forest == nil || !catalog.Matches(sourceView) || !binding.Matches(&bindings, sourceView.Identity().ContentID(), view.Cold().ContentID()) {
 		return errors.New("semanticpath: Cell role join owners are unavailable")
 	}
@@ -1009,7 +1012,10 @@ type structuralResolver struct {
 }
 
 func (r *structuralResolver) resolve(term, expectedBody keyspace.Term) (identity.ContentID, bool) {
-	if r == nil || term == 0 || keyspace.TermFamily(expectedBody) != keyspace.FamilyBody || keyspace.TermOrdinal(expectedBody) == 0 || uint64(keyspace.TermOrdinal(expectedBody)) > uint64(len(r.body)) {
+	if r == nil || term == 0 {
+		return identity.ContentID{}, false
+	}
+	if expectedBody != 0 && (keyspace.TermFamily(expectedBody) != keyspace.FamilyBody || keyspace.TermOrdinal(expectedBody) == 0 || uint64(keyspace.TermOrdinal(expectedBody)) > uint64(len(r.body))) {
 		return identity.ContentID{}, false
 	}
 	if id, ok := r.memo[term]; ok {
@@ -1035,24 +1041,56 @@ func (r *structuralResolver) resolve(term, expectedBody keyspace.Term) (identity
 		}
 		r.visiting[current] = true
 		stack = append(stack, current)
-		body, _, _, ok := r.source.Index().Position(current)
-		if !ok || body != expectedBody {
-			clear()
-			return identity.ContentID{}, false
-		}
-		root, ok := r.source.Index().Root(current)
-		if !ok || root == 0 {
-			clear()
-			return identity.ContentID{}, false
-		}
-		if current == root {
-			f, o := keyspace.TermFamily(root), keyspace.TermOrdinal(root)
-			if f <= keyspace.FamilyInvalid || f >= keyspace.FamilyCount || o == 0 || uint64(o) > uint64(len(r.descriptors[f])) || !r.descriptors[f][o-1].Available() {
+		body, _, _, positioned := r.source.Index().Position(current)
+		if positioned {
+			if expectedBody != 0 && body != expectedBody {
 				clear()
 				return identity.ContentID{}, false
 			}
-			r.memo[current] = digestBytes("semantic-root-occurrence-v2", r.body[keyspace.TermOrdinal(expectedBody)-1], r.descriptors[f][o-1])
-			break
+			root, ok := r.source.Index().Root(current)
+			if !ok || root == 0 {
+				clear()
+				return identity.ContentID{}, false
+			}
+			if current == root {
+				f, o := keyspace.TermFamily(root), keyspace.TermOrdinal(root)
+				if f <= keyspace.FamilyInvalid || f >= keyspace.FamilyCount || o == 0 || uint64(o) > uint64(len(r.descriptors[f])) || !r.descriptors[f][o-1].Available() {
+					clear()
+					return identity.ContentID{}, false
+				}
+				if keyspace.TermOrdinal(body) == 0 || uint64(keyspace.TermOrdinal(body)) > uint64(len(r.body)) {
+					clear()
+					return identity.ContentID{}, false
+				}
+				r.memo[current] = digestBytes("semantic-root-occurrence-v2", r.body[keyspace.TermOrdinal(body)-1], r.descriptors[f][o-1])
+				break
+			}
+		} else {
+			// Positionless terms are not malformed Source rows. They are
+			// Static-owned expression descendants, whose first canonical
+			// boundary is supplied by the containment owner (usually a lexical
+			// Body, or an already-issued Cell path).
+			parent, ok := r.forest.Parent(current)
+			if !ok || parent == 0 {
+				clear()
+				return identity.ContentID{}, false
+			}
+			if parentPath, ok := r.anchorPath(parent, expectedBody); ok {
+				f, o := keyspace.TermFamily(current), keyspace.TermOrdinal(current)
+				if f <= keyspace.FamilyInvalid || f >= keyspace.FamilyCount || o == 0 || uint64(o) > uint64(len(r.edges[f])) {
+					clear()
+					return identity.ContentID{}, false
+				}
+				e := r.edges[f][o-1]
+				if e.kind == 0 {
+					clear()
+					return identity.ContentID{}, false
+				}
+				r.memo[current] = digestPath3("semantic-rootless-occurrence-v2", parentPath, e.kind, e.rank, uint32(f), source.Span{})
+				break
+			}
+			current = parent
+			continue
 		}
 		parent, ok := r.forest.Parent(current)
 		if !ok || parent == 0 {
@@ -1071,7 +1109,7 @@ func (r *structuralResolver) resolve(term, expectedBody keyspace.Term) (identity
 			clear()
 			return identity.ContentID{}, false
 		}
-		parentPath, ok := r.memo[parent]
+		parentPath, ok := r.anchorPath(parent, expectedBody)
 		f, o := keyspace.TermFamily(child), keyspace.TermOrdinal(child)
 		if !ok || f <= keyspace.FamilyInvalid || f >= keyspace.FamilyCount || o == 0 || uint64(o) > uint64(len(r.edges[f])) || r.edges[f][o-1].kind == 0 {
 			clear()
@@ -1083,6 +1121,30 @@ func (r *structuralResolver) resolve(term, expectedBody keyspace.Term) (identity
 	clear()
 	id, ok := r.memo[term]
 	return id, ok
+}
+
+// anchorPath returns an already-issued path for a containment parent. Body
+// paths are held in the dedicated Body plane, while all other anchors (most
+// notably Cells and resolved Source roots) are memoized by the resolver.
+func (r *structuralResolver) anchorPath(parent, expectedBody keyspace.Term) (identity.ContentID, bool) {
+	if parent == 0 {
+		return identity.ContentID{}, false
+	}
+	if id, ok := r.memo[parent]; ok && id.Available() {
+		return id, true
+	}
+	if keyspace.TermFamily(parent) != keyspace.FamilyBody {
+		return identity.ContentID{}, false
+	}
+	if expectedBody != 0 && parent != expectedBody {
+		return identity.ContentID{}, false
+	}
+	ordinal := keyspace.TermOrdinal(parent)
+	if ordinal == 0 || uint64(ordinal) > uint64(len(r.body)) {
+		return identity.ContentID{}, false
+	}
+	id := r.body[ordinal-1]
+	return id, id.Available()
 }
 
 func digestOutcome(bodyPath identity.ContentID, outcomeKind uint32, targetPath identity.ContentID) identity.ContentID {

@@ -11,8 +11,6 @@ import (
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
 )
 
-type Term = assembly.Term
-
 func testSpan() programsource.Span { return programsource.Span{} }
 
 func sourceView(t *testing.T, c *assembly.Collector) programsource.View {
@@ -77,14 +75,14 @@ func TestSourceRowsPreserveFreshLiteralsRawKeysAndBodyOrder(t *testing.T) {
 		t.Fatalf("fresh Source terms contain zero")
 	}
 	table := c.DeclareTable(testSpan(), body)
-	nameValues := c.Values(testSpan(), body, []Term{stringTerm}, 0)
-	listValues := c.Values(testSpan(), body, []Term{integerTerm}, 0)
-	rootValues := c.Values(testSpan(), body, []Term{nilTerm, boolTerm, floatTerm, table}, 0)
+	nameValues := c.Values(testSpan(), body, []keyspace.Term{stringTerm}, 0)
+	listValues := c.Values(testSpan(), body, []keyspace.Term{integerTerm}, 0)
+	rootValues := c.Values(testSpan(), body, []keyspace.Term{nilTerm, boolTerm, floatTerm, table}, 0)
 	nameField := c.TableField(testSpan(), table, nameTerm, nameValues, kind.FieldName)
 	listField := c.TableField(testSpan(), table, listTerm, listValues, kind.FieldList)
 	ret := c.Return(testSpan(), body, rootValues)
 	if nameValues == 0 || listValues == 0 || table == 0 || rootValues == 0 || nameField == 0 || listField == 0 ||
-		!c.FillTable(table, []Term{nameField, listField}) || ret == 0 || !c.SetBody(body, ret) || !c.SetEntry(body) {
+		!c.FillTable(table, []keyspace.Term{nameField, listField}) || ret == 0 || !c.SetBody(body, ret) || !c.SetEntry(body) {
 		t.Fatalf("failed to build Source/Flow containment")
 	}
 	view := sourceView(t, c)
@@ -97,7 +95,7 @@ func TestSourceRowsPreserveFreshLiteralsRawKeysAndBodyOrder(t *testing.T) {
 	if count, ok := view.Order().BodyLen(body); !ok || count != 1 {
 		t.Fatalf("Body order length = %d/%v, want one Return root", count, ok)
 	}
-	for _, term := range []Term{nilTerm, boolTerm, integerTerm, floatTerm, stringTerm, nameTerm, listTerm} {
+	for _, term := range []keyspace.Term{nilTerm, boolTerm, integerTerm, floatTerm, stringTerm, nameTerm, listTerm} {
 		if _, ok := view.Identity().Span(term); !ok {
 			t.Fatalf("Source omitted authored leaf %v", term)
 		}
@@ -205,7 +203,7 @@ func TestModuleRequestExactAddsOnlyRawLiteralBeforeSourceFreeze(t *testing.T) {
 	c := assembly.New(name, 1, bind.GlobalCensus{})
 	body := c.Body(programsource.Span{File: name})
 	request := c.String(programsource.Span{File: name}, body, "pkg.core")
-	values := c.Values(programsource.Span{File: name}, body, []Term{request}, 0)
+	values := c.Values(programsource.Span{File: name}, body, []keyspace.Term{request}, 0)
 	call := c.DeclareCall(programsource.Span{File: name}, body, request, 0, values)
 	if body == 0 || request == 0 || values == 0 || call == 0 || !c.SetCallTypeArgs(call, nil) {
 		t.Fatal("module request construction failed")
@@ -228,7 +226,7 @@ func TestReservedImportSpansAreCensusStableAndRequireFills(t *testing.T) {
 	c := assembly.New("fixture.lua", 2, bind.GlobalCensus{})
 	body := c.Body(testSpan())
 	request := c.String(testSpan(), body, "pkg")
-	values := c.Values(testSpan(), body, []Term{request}, 0)
+	values := c.Values(testSpan(), body, []keyspace.Term{request}, 0)
 	call := c.DeclareCall(testSpan(), body, request, 0, values)
 	if body == 0 || request == 0 || values == 0 || call == 0 || !c.SetCallTypeArgs(call, nil) {
 		t.Fatal("reserved Import setup failed")
@@ -254,7 +252,7 @@ func TestSourceFaultsAreOwnedByTheirDedicatedLeaf(t *testing.T) {
 }
 
 func TestSourceFaultsEnforceClosedLabelAndBlockerShapes(t *testing.T) {
-	newFaultInputs := func() (*assembly.Collector, Term, Term, Term) {
+	newFaultInputs := func() (*assembly.Collector, keyspace.Term, keyspace.Term, keyspace.Term) {
 		c := assembly.New("fault-shapes.lua", 0, bind.GlobalCensus{})
 		body := c.Body(testSpan())
 		label := c.Label(testSpan(), body)
@@ -300,7 +298,7 @@ func TestSourceFaultsEnforceClosedLabelAndBlockerShapes(t *testing.T) {
 	}
 }
 
-func chooseTerm(present bool, term Term) Term {
+func chooseTerm(present bool, term keyspace.Term) keyspace.Term {
 	if present {
 		return term
 	}

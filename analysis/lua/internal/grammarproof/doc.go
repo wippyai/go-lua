@@ -4,5 +4,5 @@
 // production dependency: tracing is injected only into a throw-away generated
 // parser copy.
 //
-//go:generate go run ./cmd/generate -root ../../.. -out evidence_gen.go
+//go:generate go run ./cmd/generate -root ../../../.. -out evidence_gen.go
 package grammarproof

@@ -4,8 +4,10 @@ import (
 	"encoding/binary"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
 	allocationcatalog "github.com/wippyai/go-lua/analysis/domain/heap/allocation/catalog"
+	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	allocation "github.com/wippyai/go-lua/analysis/domain/value/allocation"
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
@@ -13,11 +15,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
-	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
-	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 func TestHotAllocationRuleBindsCarryReceiptAndRejectsForeignBinding(t *testing.T) {
@@ -128,7 +128,7 @@ func allocationFixture(t testing.TB, name string) *allocationFixtureState {
 	if err != nil {
 		t.Fatal(err)
 	}
-	contract, err := target.Seal(&target.Spec{})
+	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,11 +136,11 @@ func allocationFixture(t testing.TB, name string) *allocationFixtureState {
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, ok := grammar.Global()
+	receipt, ok := composite.Global()
 	if !ok {
 		t.Fatal("program schema receipt")
 	}
-	artifact, failure := schemaadapter.CompileDetailed(programValue.TransformerInput(), receipt)
+	artifact, failure := composite.CompileArtifactDetailed(programValue, receipt)
 	if failure.Available() || artifact == nil {
 		t.Fatalf("compile artifact: %s", failure.Error())
 	}
@@ -187,17 +187,17 @@ func allocationColdSchema(t testing.TB) (*engine.Schema, *valueowner.SchemaFragm
 	return cold, ownerFragment, fragment, query
 }
 
-func allocationKey(number uint64) engine.SemanticKey {
+func allocationKey(number uint64) identity.SemanticKey {
 	var digest [32]byte
 	binary.BigEndian.PutUint64(digest[24:], number)
-	key, ok := engine.NewSemanticKey(digest, 1)
+	key, ok := identity.NewSemanticKey(digest, 1)
 	if !ok {
 		panic("allocation semantic key")
 	}
 	return key
 }
 
-func allocationBoolResult(semantic engine.SemanticKey) engine.FrozenResult[bool] {
+func allocationBoolResult(semantic identity.SemanticKey) engine.FrozenResult[bool] {
 	return engine.FrozenResult[bool]{
 		Semantic: semantic,
 		Freeze:   func(value bool) bool { return value },

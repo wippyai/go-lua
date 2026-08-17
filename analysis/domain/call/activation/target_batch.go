@@ -2,7 +2,6 @@ package activation
 
 import (
 	calldomain "github.com/wippyai/go-lua/analysis/domain/call"
-	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 )
@@ -30,8 +29,8 @@ type MountedTargetBatch struct {
 // expose the artifact's backing storage or any target-batch ordinal.
 type Route struct {
 	Body     calldomain.Body
-	Target   engine.SemanticKey
-	Endpoint engine.SemanticKey
+	Target   identity.SemanticKey
+	Endpoint identity.SemanticKey
 }
 
 type targetBatchRow struct {
@@ -39,8 +38,8 @@ type targetBatchRow struct {
 	bodyID     identity.ContentID
 	bodyPath   identity.ContentID
 	role       calldomain.TargetRoleID
-	target     engine.SemanticKey
-	endpoint   engine.SemanticKey
+	target     identity.SemanticKey
+	endpoint   identity.SemanticKey
 	artifactID identity.ContentID
 	programID  identity.ContentID
 	moduleKey  identity.ContentID
@@ -135,13 +134,13 @@ const (
 // callActivationRoleSemantics frames the exact Call-owned Body role twice;
 // target and endpoint are distinct semantic axes but neither is a new hash
 // authority or a caller-supplied scalar.
-func callActivationRoleSemantics(role calldomain.TargetRoleID) (engine.SemanticKey, engine.SemanticKey, bool) {
+func callActivationRoleSemantics(role calldomain.TargetRoleID) (identity.SemanticKey, identity.SemanticKey, bool) {
 	id, ok := role.ContentID()
 	if !ok {
-		return engine.SemanticKey{}, engine.SemanticKey{}, false
+		return identity.SemanticKey{}, identity.SemanticKey{}, false
 	}
-	target, targetOK := engine.NewSemanticKey([32]byte(id), callActivationTargetFrame)
-	endpoint, endpointOK := engine.NewSemanticKey([32]byte(id), callActivationEndpointFrame)
+	target, targetOK := identity.NewSemanticKey([32]byte(id), callActivationTargetFrame)
+	endpoint, endpointOK := identity.NewSemanticKey([32]byte(id), callActivationEndpointFrame)
 	return target, endpoint, targetOK && endpointOK && target != endpoint
 }
 
@@ -203,6 +202,6 @@ func (catalog *TargetBatchCatalog) RouteForBody(moduleKey identity.ContentID, id
 // the exact Call owner when BindHot validates the catalog.
 type route struct {
 	body     calldomain.Body
-	target   engine.SemanticKey
-	endpoint engine.SemanticKey
+	target   identity.SemanticKey
+	endpoint identity.SemanticKey
 }

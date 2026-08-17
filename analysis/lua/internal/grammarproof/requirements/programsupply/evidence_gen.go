@@ -12,8 +12,8 @@ import (
 
 func init() {
 	Generated = Evidence{
-		SchemaDigest: "89314d3703983030a04cb0b9ff73aac41912e6b3bd06ab941f45862554a893f7",
-		Digest:       "8074364cd06f6f85b15f2380b42557048bd1de70fc3ae95a486f442925f54dbf",
+		SchemaDigest: "9b15a963276c27be60e7c1c09335c360d837230f4b9d7300fc38c1f1b527d1aa",
+		Digest:       "714b4f1ca7a69cfd2ffa2751254dcc000048b21bd8c0c2d6447315402dcdf14f",
 		ProgramLaws: []ProgramLawRow{
 			{Requirement: programlaw.Requirement{Site: programlaw.Site(1), Unary: flowkind.UnaryOp(1), Binary: flowkind.BinaryOp(0), Select: flowkind.SelectOp(0), Call: programlaw.CallMode(0), Values: programlaw.ValuesMode(0), Outcome: flowkind.OutcomeKind(0)}, Terminals: []Reference{{Origin: semanticsource.Origin(131078), Facet: semanticsource.Facet(2), Revision: semanticsource.Revision(5)}}},
 			{Requirement: programlaw.Requirement{Site: programlaw.Site(1), Unary: flowkind.UnaryOp(2), Binary: flowkind.BinaryOp(0), Select: flowkind.SelectOp(0), Call: programlaw.CallMode(0), Values: programlaw.ValuesMode(0), Outcome: flowkind.OutcomeKind(0)}, Terminals: []Reference{{Origin: semanticsource.Origin(131078), Facet: semanticsource.Facet(0), Revision: semanticsource.Revision(5)}}},

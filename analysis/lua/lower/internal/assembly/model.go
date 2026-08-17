@@ -22,10 +22,6 @@ import (
 
 var errCollectorTerminal = errors.New("program/lower/collector: collector is terminal")
 
-// Term is the lower construction spelling of a canonical Program identity.
-// It is an alias, not a second identity type or encoding.
-type Term = keyspace.Term
-
 // Collector is one unfinished, single-owner lower construction.  The fields
 // are intentionally flat and typed by owner.  In particular, no core Builder,
 // generic node table, provisional Key map, or semantic adapter is retained.
@@ -143,7 +139,7 @@ func rejectMutationf(c *Collector, format string, args ...any) bool {
 	return rejectMutation(c, fmt.Errorf(format, args...))
 }
 
-func rejectTermMutationf(c *Collector, format string, args ...any) Term {
+func rejectTermMutationf(c *Collector, format string, args ...any) keyspace.Term {
 	rejectMutationf(c, format, args...)
 	return 0
 }

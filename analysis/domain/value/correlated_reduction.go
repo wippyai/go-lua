@@ -23,7 +23,7 @@ func (schema *Schema) FilterPresent(input Value) (Value, bool) {
 		return Value{}, false
 	}
 	if input.top {
-		return schema.ForRuntimeKinds(runtimekind.All &^ runtimekind.Bit(runtimekind.Nil))
+		return schema.ForRuntimeKinds(runtimekind.NonNil)
 	}
 	if len(input.image) == 0 || input.image[0] != 1 { // atomNil is sealed first.
 		return input, true

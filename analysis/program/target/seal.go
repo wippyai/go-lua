@@ -1,14 +1,13 @@
 package target
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"sort"
 
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 )
 
 // Seal validates, freezes, and canonically orders one target contract. Spec
@@ -21,6 +20,9 @@ func Seal(spec *Spec) (*Contract, error) {
 		return nil, errors.New("target: consumed spec")
 	}
 	defer func() { *spec = Spec{consumed: true} }()
+	if err := schematype.ValidateSemantics(spec.Semantics); err != nil {
+		return nil, fmt.Errorf("target: %w", err)
+	}
 
 	operationCount, err := checkedStoredTotal("operation table", len(spec.Operations), 1)
 	if err != nil {
@@ -28,7 +30,7 @@ func Seal(spec *Spec) (*Contract, error) {
 	}
 	drafts := make([]operationDraft, len(spec.Operations))
 	for index := range spec.Operations {
-		draft, err := freezeOperation(index, spec.Operations[index])
+		draft, err := freezeOperation(index, spec.Operations[index], spec.Semantics)
 		if err != nil {
 			return nil, err
 		}
@@ -136,38 +138,39 @@ func Seal(spec *Spec) (*Contract, error) {
 	// Content identity is available only after every immutable table and its
 	// derived lookup authority has been completely assembled.
 	contract.sealed = true
-	semanticReceipt, receiptOK := buildTargetSemanticSourceReceipt(contract)
-	if !receiptOK {
-		return nil, errors.New("target: unavailable semantic-source receipt")
+	sourceViews, viewsOK := buildTargetSourceViews(contract)
+	if !viewsOK {
+		return nil, errors.New("target: unavailable semantic-source rows")
 	}
-	contract.semanticReceipt = semanticReceipt
+	contract.sourceViews = sourceViews
 	return contract, nil
 }
 
 type operationDraft struct {
-	source      int
-	bindings    []BindingSpec
-	canonical   uint32
-	formals     []*typ.TypeParam
-	valuesVars  uint32
-	valuesTypes []string
-	rowFormals  uint32
-	input       valuesDraft
-	outcomes    []outcomeDraft
-	callbacks   []callbackDraft
-	subedges    []subedgeDraft
-	suspensions []suspensionDraft
-	spawns      []spawnDraft
-	resumes     []resumeDraft
-	transfers   []transferDraft
-	gsubTable   *gsubTableReplacementDraft
-	effects     []effectDraft
-	effectTail  RowTail
-	effectVar   RowVar
-	types       map[string][]byte
-	decoded     map[string]typ.Type
-	assignable  map[typePair]bool
-	constraints []string
+	source            int
+	semantics         schematype.Semantics
+	bindings          []BindingSpec
+	canonical         uint32
+	formals           []TypeFormalSpec
+	valuesVars        uint32
+	valuesTypes       []string
+	rowFormals        uint32
+	input             valuesDraft
+	outcomes          []outcomeDraft
+	callbacks         []callbackDraft
+	subedges          []subedgeDraft
+	suspensions       []suspensionDraft
+	spawns            []spawnDraft
+	resumes           []resumeDraft
+	transfers         []transferDraft
+	gsubTable         *gsubTableReplacementDraft
+	effects           []effectDraft
+	effectTail        RowTail
+	effectVar         RowVar
+	types             map[string][]byte
+	declarations      map[string]schematype.Type
+	formalConstraints []schematype.Type
+	constraints       []string
 }
 
 type valuesDraft struct {
@@ -334,7 +337,7 @@ type rowDraft struct {
 	variable RowVar
 }
 
-func freezeOperation(source int, input OperationSpec) (operationDraft, error) {
+func freezeOperation(source int, input OperationSpec, semantics schematype.Semantics) (operationDraft, error) {
 	if err := checkedCoordinateCount("Values variable count", input.ValuesVars); err != nil {
 		return operationDraft{}, err
 	}
@@ -349,17 +352,19 @@ func freezeOperation(source int, input OperationSpec) (operationDraft, error) {
 		return operationDraft{}, err
 	}
 	draft := operationDraft{
-		source:      source,
-		formals:     formals,
-		valuesVars:  input.ValuesVars,
-		rowFormals:  input.RowFormals,
-		types:       make(map[string][]byte),
-		decoded:     make(map[string]typ.Type),
-		assignable:  make(map[typePair]bool),
-		constraints: make([]string, len(formals)),
+		source:            source,
+		semantics:         semantics,
+		formals:           formals,
+		valuesVars:        input.ValuesVars,
+		rowFormals:        input.RowFormals,
+		types:             make(map[string][]byte),
+		declarations:      make(map[string]schematype.Type),
+		formalConstraints: make([]schematype.Type, len(formals)),
+		constraints:       make([]string, len(formals)),
 	}
 	for index, formal := range formals {
-		if formal.Constraint == nil {
+		draft.formalConstraints[index] = formal.Constraint
+		if !formal.Constraint.Available() {
 			continue
 		}
 		key, freezeErr := draft.freezeType(formal.Constraint)
@@ -480,38 +485,38 @@ func emptyClosedValues(values valuesDraft) bool {
 	return len(values.types) == 0 && len(values.suffix) == 0 && values.tail == ValuesClosed && values.varID == 0
 }
 
-func copyFormals(input []*typ.TypeParam) ([]*typ.TypeParam, error) {
+func copyFormals(input []TypeFormalSpec) ([]TypeFormalSpec, error) {
 	if len(input) == 0 {
 		return nil, nil
 	}
-	out := append([]*typ.TypeParam(nil), input...)
-	seen := make(map[*typ.TypeParam]struct{}, len(out))
-	for index, formal := range out {
-		if formal == nil {
-			return nil, fmt.Errorf("target: nil type formal %d", index)
-		}
-		if _, duplicate := seen[formal]; duplicate {
-			return nil, fmt.Errorf("target: duplicate type formal %d", index)
-		}
-		seen[formal] = struct{}{}
-	}
-	return out, nil
+	return append([]TypeFormalSpec(nil), input...), nil
 }
 
-func (d *operationDraft) freezeType(value typ.Type) (string, error) {
-	if err := validateAuthoringType(value); err != nil {
-		return "", err
+func (d *operationDraft) freezeType(value schematype.Type) (string, error) {
+	if !value.Available() {
+		return "", errors.New("unavailable type declaration")
 	}
-	encoded, err := typ.EncodeCanonicalFormals(context.Background(), value, d.formals)
-	if err != nil {
-		return "", fmt.Errorf("target: nonportable type: %w", err)
+	if err := d.semantics.Validate(value, d.formalConstraints); err != nil {
+		return "", fmt.Errorf("type declaration rejected: %w", err)
 	}
+	encoded := value.Bytes()
 	if _, err := checkedStoredLength("type bytes", len(encoded)); err != nil {
 		return "", err
 	}
 	key := string(encoded)
+	if key == "" {
+		// Primitive envelopes intentionally have no domain bytes. Their digest
+		// remains a stable, collision-free local key while the declaration is
+		// retained for the domain semantic adapter.
+		digest := value.Digest()
+		key = string(digest[:])
+	}
+	if existing, exists := d.declarations[key]; exists && !existing.Equal(value) {
+		return "", errors.New("distinct neutral type declarations share a storage key")
+	}
 	if _, exists := d.types[key]; !exists {
 		d.types[key] = append([]byte(nil), encoded...)
+		d.declarations[key] = value
 	}
 	return key, nil
 }
@@ -522,13 +527,17 @@ func (d *operationDraft) freezeValues(input ValuesSpec, opaque bool) (valuesDraf
 	}
 	out := valuesDraft{tail: input.Tail, varID: input.Var}
 	if input.Tail != ValuesVariable {
-		if input.TailType != nil {
+		if input.TailType.Available() {
 			return valuesDraft{}, errors.New("target: Values tail type requires a ValuesVariable tail")
 		}
 	} else {
 		tailType := input.TailType
-		if tailType == nil {
-			tailType = typ.Any
+		if !tailType.Available() {
+			any, ok := schematype.NewPrimitive(schematype.PrimitiveAny)
+			if !ok {
+				return valuesDraft{}, errors.New("target: unavailable default Values tail type")
+			}
+			tailType = any
 		}
 		key, err := d.freezeType(tailType)
 		if err != nil {
@@ -547,7 +556,7 @@ func (d *operationDraft) freezeValues(input ValuesSpec, opaque bool) (valuesDraf
 	fixed := input.Fixed
 	suffix := input.Suffix
 	if input.Tail == ValuesClosed && len(suffix) != 0 {
-		fixed = make([]typ.Type, 0, len(input.Fixed)+len(suffix))
+		fixed = make([]schematype.Type, 0, len(input.Fixed)+len(suffix))
 		fixed = append(fixed, input.Fixed...)
 		fixed = append(fixed, suffix...)
 		suffix = nil
@@ -556,7 +565,7 @@ func (d *operationDraft) freezeValues(input ValuesSpec, opaque bool) (valuesDraf
 		out.types = make([]string, len(fixed))
 	}
 	for index, value := range fixed {
-		if value == nil {
+		if !value.Available() {
 			return valuesDraft{}, fmt.Errorf("target: nil Values element %d", index)
 		}
 		key, err := d.freezeType(value)
@@ -569,7 +578,7 @@ func (d *operationDraft) freezeValues(input ValuesSpec, opaque bool) (valuesDraf
 		out.suffix = make([]string, len(suffix))
 	}
 	for index, value := range suffix {
-		if value == nil {
+		if !value.Available() {
 			return valuesDraft{}, fmt.Errorf("target: nil Values suffix element %d", index)
 		}
 		key, err := d.freezeType(value)
@@ -672,13 +681,18 @@ func outcomeAnchor(kind flowkind.OutcomeKind, values valuesDraft, fresh []freshR
 }
 
 // sealValuesVarTypes makes the ValuesVar class table total. A variable which
-// no ValuesSpec directly constrains still carries the ABI default typ.Any.
+// no ValuesSpec directly constrains still carries the ABI default neutral Any
+// declaration; the domain adapter interprets that atom during later reads.
 func (d *operationDraft) sealValuesVarTypes() error {
 	if d.valuesVars == 0 {
 		d.valuesTypes = nil
 		return nil
 	}
-	any, err := d.freezeType(typ.Any)
+	any, ok := schematype.NewPrimitive(schematype.PrimitiveAny)
+	if !ok {
+		return errors.New("target: unavailable default Values tail type")
+	}
+	anyKey, err := d.freezeType(any)
 	if err != nil {
 		return fmt.Errorf("target: default Values tail type: %w", err)
 	}
@@ -728,7 +742,7 @@ func (d *operationDraft) sealValuesVarTypes() error {
 	}
 	for index := range classes {
 		if !seen[index] {
-			classes[index] = any
+			classes[index] = anyKey
 		}
 	}
 	d.valuesTypes = classes
@@ -947,10 +961,22 @@ func (d operationDraft) freezeCallbackResults(input []CallbackResultSpec, outcom
 		}
 		sourceType := d.input.types[callback.function.Ordinal]
 		resultType := outcome.types[result.Result]
-		if !d.typeAssignable(sourceType, resultType) {
+		assignable, relationErr := d.typeAssignable(sourceType, resultType)
+		if relationErr != nil {
+			return nil, fmt.Errorf("callback result %d type relation: %w", index, relationErr)
+		}
+		if !assignable {
 			return nil, fmt.Errorf("callback result %d is type-incompatible with its callback", index)
 		}
-		if !d.admitsAdmission(sourceType, callback.admission) || !d.admitsAdmission(resultType, callback.admission) {
+		sourceCallable, sourceErr := d.admitsAdmission(sourceType, callback.admission)
+		if sourceErr != nil {
+			return nil, fmt.Errorf("callback result %d source callable relation: %w", index, sourceErr)
+		}
+		resultCallable, resultErr := d.admitsAdmission(resultType, callback.admission)
+		if resultErr != nil {
+			return nil, fmt.Errorf("callback result %d result callable relation: %w", index, resultErr)
+		}
+		if !sourceCallable || !resultCallable {
 			return nil, fmt.Errorf("callback result %d is not callable under its admission", index)
 		}
 		out[index] = callbackResultDraft{result: result.Result, callback: result.Callback}
@@ -997,7 +1023,11 @@ func (d operationDraft) freezeResultAliases(input []ResultAliasSpec, outcome val
 		if alias.Source.Kind != InputSourceValueFormal || uint64(alias.Source.Ordinal) >= uint64(d.valueFormalCount()) {
 			return nil, fmt.Errorf("result alias %d source is not a ValueFormal in scope", index)
 		}
-		if !d.typeAssignable(d.input.types[alias.Source.Ordinal], outcome.types[alias.Result]) {
+		assignable, relationErr := d.typeAssignable(d.input.types[alias.Source.Ordinal], outcome.types[alias.Result])
+		if relationErr != nil {
+			return nil, fmt.Errorf("result alias %d type relation: %w", index, relationErr)
+		}
+		if !assignable {
 			return nil, fmt.Errorf("result alias %d is type-incompatible with its input", index)
 		}
 		out[index] = resultAliasDraft{result: alias.Result, source: alias.Source}
@@ -1023,7 +1053,11 @@ func (d operationDraft) freezeFreshResults(input []FreshResultSpec, outcome valu
 		if !validFreshKind(fresh.Kind) {
 			return nil, fmt.Errorf("fresh result %d has invalid kind", index)
 		}
-		if !d.freshCompatible(outcome.types[fresh.Result], fresh.Kind) {
+		compatible, relationErr := d.freshCompatible(outcome.types[fresh.Result], fresh.Kind)
+		if relationErr != nil {
+			return nil, fmt.Errorf("fresh result %d type relation: %w", index, relationErr)
+		}
+		if !compatible {
 			return nil, fmt.Errorf("fresh result %d contradicts its runtime kind", index)
 		}
 		out[index] = freshResultDraft{result: fresh.Result, kind: fresh.Kind}
@@ -1166,7 +1200,11 @@ func (d operationDraft) freezeProduced(input []ProducedSpec, outcome valuesDraft
 		if uint64(produced.Result) >= uint64(len(outcome.types)) {
 			return nil, fmt.Errorf("produced operation %d result is not a fixed outcome slot", index)
 		}
-		if !d.admitsAdmission(outcome.types[produced.Result], DirectFunction) {
+		callable, relationErr := d.admitsAdmission(outcome.types[produced.Result], DirectFunction)
+		if relationErr != nil {
+			return nil, fmt.Errorf("produced operation %d callable relation: %w", index, relationErr)
+		}
+		if !callable {
 			return nil, fmt.Errorf("produced operation %d result is not a direct function", index)
 		}
 		if _, err := checkedStoredLength("produced capture table", len(produced.Captures)); err != nil {

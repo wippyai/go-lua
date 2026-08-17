@@ -306,21 +306,17 @@ func SealMountedArtifacts(source *link.Link, authority *static.Authority, mounts
 				maximum = position
 			}
 		}
-		receipt, ok := artifact.PackReceipt()
-		if !ok {
-			return nil, false
-		}
-		for i := 0; i < receipt.BindCount(); i++ {
-			row, ok := receipt.BindAt(i)
-			if !ok {
+		for i := 0; i < artifact.OccurrenceKindCount(programartifact.OccurrenceStorageBind); i++ {
+			row, ok := artifact.OccurrenceKindAt(programartifact.OccurrenceStorageBind, i)
+			if !ok || row.InputCount() == 0 {
 				return nil, false
 			}
-			if row.CellCount() > maximum {
-				maximum = row.CellCount()
+			if width := row.InputCount() - 1; width > maximum {
+				maximum = width
 			}
 		}
-		for i := 0; i < receipt.BodyCount(); i++ {
-			row, ok := receipt.BodyAt(i)
+		for i := 0; i < artifact.FunctionBoundaryCount(); i++ {
+			row, ok := artifact.FunctionBoundaryAt(i)
 			if !ok {
 				return nil, false
 			}
@@ -536,22 +532,23 @@ func (state *schema) addArtifactRoot(classes *static.ClassSet, kind rootKind, mo
 
 func sealMountedArtifactBinds(schema *Schema, mount ArtifactMount) bool {
 	state, artifact := schema.state, mount.artifact
-	receipt, ok := artifact.PackReceipt()
-	if !ok {
-		return false
-	}
-	for i := 0; i < receipt.BindCount(); i++ {
-		row, ok := receipt.BindAt(i)
-		if !ok {
+	for i := 0; i < artifact.OccurrenceKindCount(programartifact.OccurrenceStorageBind); i++ {
+		row, ok := artifact.OccurrenceKindAt(programartifact.OccurrenceStorageBind, i)
+		if !ok || row.InputCount() == 0 {
 			return false
 		}
-		valuesIndex, exists := state.artifactValues[artifactValuesKey{mount.module, row.ValuesID()}]
+		valuesID, valuesOK := row.InputAt(0)
+		bodyID, bodyOK := row.BodyID()
+		if !valuesOK || !bodyOK {
+			return false
+		}
+		valuesIndex, exists := state.artifactValues[artifactValuesKey{mount.module, valuesID}]
 		if !exists {
 			return false
 		}
-		cells := make([]Endpoint, row.CellCount())
+		cells := make([]Endpoint, row.InputCount()-1)
 		for j := range cells {
-			id, ok := row.CellAt(j)
+			id, ok := row.InputAt(j + 1)
 			endpoint, endpointOK := state.semanticEndpoints[artifactValuesKey{mount.module, id}]
 			if !ok || !endpointOK {
 				return false
@@ -566,41 +563,42 @@ func sealMountedArtifactBinds(schema *Schema, mount ArtifactMount) bool {
 		if !rootOK {
 			return false
 		}
-		state.binds = append(state.binds, bindRow{root: root, moduleKey: mount.module, bindID: row.ID(), bodyID: row.BodyID(), values: Values{schema: state, index: valuesIndex}, port: port, cells: cells})
+		state.binds = append(state.binds, bindRow{root: root, moduleKey: mount.module, bindID: row.ID(), bodyID: bodyID, values: Values{schema: state, index: valuesIndex}, port: port, cells: cells})
 		state.roots[root].sourceIndex = uint32(len(state.binds) - 1)
 	}
 	return true
 }
 
-// Bodies are retained as receipt-native boundary roots even though Call owns
-// interprocedural selection.  The current hot Pack source plane consumes only
-// Values and Calls; body/outcome identities remain closed for its direct
-// boundary rules and cannot be reconstructed from Program later.
+// Bodies are mounted directly from the canonical Artifact Body and callable
+// boundary columns. Pack retains only its runtime substitution state.
 func sealMountedArtifactBodies(schema *Schema, mount ArtifactMount) bool {
 	state, artifact := schema.state, mount.artifact
-	receipt, ok := artifact.PackReceipt()
-	if !ok || receipt.BodyCount() != artifact.BodyCount() {
-		return false
-	}
-	for i := 0; i < receipt.BodyCount(); i++ {
-		row, rowOK := receipt.BodyAt(i)
-		artifactRow, artifactOK := artifact.BodyAt(i)
-		if !rowOK || !artifactOK || row.ID() != artifactRow.ID() || row.ContextID() != artifactRow.ContextID() {
+	for i := 0; i < artifact.BodyCount(); i++ {
+		row, rowOK := artifact.BodyAt(i)
+		if !rowOK {
 			return false
 		}
 		key := artifactBodyKey{mount.module, row.ID()}
 		if _, duplicate := state.artifactBodies[key]; duplicate {
 			return false
 		}
-		formals := make([]Endpoint, row.FormalCount())
-		formalIDs := make([]identity.ContentID, row.FormalCount())
+		boundary, callable := artifact.FunctionBoundaryForBody(row.ID())
+		if row.Callable() != callable {
+			return false
+		}
+		formalCount := 0
+		if callable {
+			formalCount = boundary.FormalCount()
+		}
+		formals := make([]Endpoint, formalCount)
+		formalIDs := make([]identity.ContentID, formalCount)
 		for j := range formals {
-			formal, formalOK := row.FormalAt(j)
+			formal, formalOK := boundary.FormalAt(j)
 			endpoint, endpointOK := state.semanticEndpoints[artifactValuesKey{mount.module, formal.StorageCellID()}]
 			if !formalOK || !endpointOK {
 				return false
 			}
-			formals[j], formalIDs[j] = endpoint, formal.FormalID()
+			formals[j], formalIDs[j] = endpoint, formal.ID()
 		}
 		port, portOK := newPort(state.owner, uint32(len(state.roots)+1), state.owner.classes.AnyValue(), true)
 		if !portOK {
@@ -668,12 +666,8 @@ func sealMountedArtifactBodies(schema *Schema, mount ArtifactMount) bool {
 
 func sealMountedArtifactCalls(schema *Schema, authority *static.Authority, mount ArtifactMount) bool {
 	state, artifact := schema.state, mount.artifact
-	receipt, ok := artifact.PackReceipt()
-	if !ok {
-		return false
-	}
-	for i := 0; i < receipt.CallCount(); i++ {
-		row, rowOK := receipt.CallAt(i)
+	for i := 0; i < artifact.CallCount(); i++ {
+		row, rowOK := artifact.CallAt(i)
 		if !rowOK {
 			return false
 		}
@@ -702,8 +696,8 @@ func sealMountedArtifactCalls(schema *Schema, authority *static.Authority, mount
 			out.fixed = append(out.fixed, endpoint)
 		}
 		for j := 0; j < row.ArgumentCount(); j++ {
-			argumentID, argumentOK := row.ArgumentAt(j)
-			endpoint, endpointOK := state.semanticEndpoints[artifactValuesKey{mount.module, argumentID}]
+			argument, argumentOK := artifact.CallArgumentFor(i, j)
+			endpoint, endpointOK := state.semanticEndpoints[artifactValuesKey{mount.module, argument.ValueID()}]
 			if !argumentOK || !endpointOK {
 				return false
 			}
@@ -808,24 +802,20 @@ func sealMountedSemanticEndpoints(state *schema, mount ArtifactMount) bool {
 			return false
 		}
 	}
-	receipt, ok := artifact.PackReceipt()
-	if !ok {
-		return false
-	}
-	for i := 0; i < receipt.BindCount(); i++ {
-		row, ok := receipt.BindAt(i)
-		if !ok {
+	for i := 0; i < artifact.OccurrenceKindCount(programartifact.OccurrenceStorageBind); i++ {
+		row, ok := artifact.OccurrenceKindAt(programartifact.OccurrenceStorageBind, i)
+		if !ok || row.InputCount() == 0 {
 			return false
 		}
-		for j := 0; j < row.CellCount(); j++ {
-			id, ok := row.CellAt(j)
-			if !ok || !add(id) {
+		for j := 1; j < row.InputCount(); j++ {
+			id, idOK := row.InputAt(j)
+			if !idOK || !add(id) {
 				return false
 			}
 		}
 	}
-	for i := 0; i < receipt.BodyCount(); i++ {
-		row, ok := receipt.BodyAt(i)
+	for i := 0; i < artifact.FunctionBoundaryCount(); i++ {
+		row, ok := artifact.FunctionBoundaryAt(i)
 		if !ok {
 			return false
 		}
@@ -836,8 +826,8 @@ func sealMountedSemanticEndpoints(state *schema, mount ArtifactMount) bool {
 			}
 		}
 	}
-	for i := 0; i < receipt.CallCount(); i++ {
-		row, ok := receipt.CallAt(i)
+	for i := 0; i < artifact.CallCount(); i++ {
+		row, ok := artifact.CallAt(i)
 		if !ok {
 			return false
 		}
@@ -845,8 +835,8 @@ func sealMountedSemanticEndpoints(state *schema, mount ArtifactMount) bool {
 			return false
 		}
 		for j := 0; j < row.ArgumentCount(); j++ {
-			argument, argumentOK := row.ArgumentAt(j)
-			if !argumentOK || !add(argument) {
+			argument, argumentOK := artifact.CallArgumentFor(i, j)
+			if !argumentOK || !add(argument.ValueID()) {
 				return false
 			}
 		}

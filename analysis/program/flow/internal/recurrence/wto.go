@@ -158,7 +158,7 @@ func (regions hierarchyRegions) lcas(queries []regionLCAQuery) ([]int, error) {
 // carrierless and acyclic phases remain root singleton points. More than one
 // carrier for the same phase must select the same component.
 func (draft *hierarchyDraft) placeOutcomePhasePoints(
-	proof sourcecontrol.OutcomePhases,
+	proof *sourcecontrol.OutcomePhases,
 	plan *routeplan.Plan,
 	graph *sourcecontrol.Result,
 	parts components,
@@ -175,10 +175,10 @@ func (draft *hierarchyDraft) placeOutcomePhasePoints(
 		phase, ok := proof.At(index)
 		path, pathOK := phase.VertexPath()
 		if !ok || !pathOK {
-			return errors.New("program/flow/recurrence: Outcome phase receipt is unavailable")
+			return errors.New("program/flow/recurrence: Outcome phase view is unavailable")
 		}
 		if _, duplicate := pathSet[path]; duplicate {
-			return errors.New("program/flow/recurrence: Outcome phase receipt is duplicated")
+			return errors.New("program/flow/recurrence: Outcome phase path is duplicated")
 		}
 		paths[index], pathSet[path], pathOrder[path] = path, struct{}{}, index
 		if parent, parentOK := phase.ParentPath(); parentOK {
@@ -188,7 +188,7 @@ func (draft *hierarchyDraft) placeOutcomePhasePoints(
 	for child, parent := range parentByPath {
 		parentIndex, present := pathOrder[parent]
 		if !present || parentIndex <= pathOrder[child] {
-			return errors.New("program/flow/recurrence: Outcome receipt is not child-before-parent")
+			return errors.New("program/flow/recurrence: Outcome phase order is not child-before-parent")
 		}
 	}
 	regions, err := hierarchyRegionsFor(draft.events, parts)
@@ -203,7 +203,7 @@ func (draft *hierarchyDraft) placeOutcomePhasePoints(
 	children := make(map[identity.ContentID]map[identity.ContentID]struct{})
 	anchorPhase := func(path identity.ContentID, region int) error {
 		if _, scheduled := pathSet[path]; !scheduled {
-			return errors.New("program/flow/recurrence: route Outcome phase is outside receipt")
+			return errors.New("program/flow/recurrence: route Outcome phase is outside view")
 		}
 		current := anchors[path]
 		current.seen = true
@@ -230,13 +230,9 @@ func (draft *hierarchyDraft) placeOutcomePhasePoints(
 		if !ok {
 			return errors.New("program/flow/recurrence: Outcome placement route is malformed")
 		}
-		endpoint, endpointOK := origin.EndpointPhaseReceipt()
+		fromPhase, toPhase, endpointOK := origin.Endpoints()
 		if !endpointOK {
-			return errors.New("program/flow/recurrence: Outcome placement endpoint is unavailable")
-		}
-		fromPhase, toPhase, endpointsOK := endpoint.Endpoints()
-		if !endpointsOK {
-			return errors.New("program/flow/recurrence: Outcome placement endpoints are malformed")
+			return errors.New("program/flow/recurrence: Outcome placement endpoints are unavailable")
 		}
 		fromPath, fromPathOK := graph.ResolvePhaseRef(fromPhase)
 		toPath, toPathOK := graph.ResolvePhaseRef(toPhase)
@@ -248,13 +244,13 @@ func (draft *hierarchyDraft) placeOutcomePhasePoints(
 		// before carrier filtering so carrierless propagation cannot disappear.
 		if fromPhase.OutcomePhase() && toPhase.OutcomePhase() && fromPath != toPath {
 			if _, fromKnown := pathSet[fromPath]; !fromKnown {
-				return errors.New("program/flow/recurrence: Outcome propagation source is outside receipt")
+				return errors.New("program/flow/recurrence: Outcome propagation source is outside view")
 			}
 			if _, toKnown := pathSet[toPath]; !toKnown {
-				return errors.New("program/flow/recurrence: Outcome propagation target is outside receipt")
+				return errors.New("program/flow/recurrence: Outcome propagation target is outside view")
 			}
 			if parentByPath[fromPath] != toPath {
-				return errors.New("program/flow/recurrence: Outcome propagation disagrees with parent receipt")
+				return errors.New("program/flow/recurrence: Outcome propagation disagrees with parent view")
 			}
 		}
 		if fromPhase.OutcomePhase() && !toPhase.OutcomePhase() {
@@ -310,15 +306,15 @@ func (draft *hierarchyDraft) placeOutcomePhasePoints(
 	// above only attest that any observed Outcome→Outcome edge agrees with it.
 	for child, parent := range parentByPath {
 		if _, present := pathSet[parent]; !present {
-			return errors.New("program/flow/recurrence: Outcome parent is outside receipt")
+			return errors.New("program/flow/recurrence: Outcome parent is outside view")
 		}
 		if children[child] == nil {
 			children[child] = make(map[identity.ContentID]struct{})
 		}
 		children[child][parent] = struct{}{}
 	}
-	// OutcomePhases is the parent-issued Kahn certificate, ordered child before
-	// parent. Follow it verbatim: Plan can omit static/dead rows and therefore
+	// OutcomePhases is the immutable SourceControl schedule, ordered child
+	// before parent. Follow it verbatim: Plan can omit static/dead rows and therefore
 	// has no authority to rebuild or reorder propagation.
 	for _, path := range paths {
 		current, anchored := anchors[path]
@@ -416,7 +412,7 @@ func (draft hierarchyDraft) transfer() (HierarchyProof, error) {
 	events := make([]HierarchyEvent, len(draft.events))
 	for index, event := range draft.events {
 		if !event.path.Available() {
-			return HierarchyProof{}, errors.New("program/flow/recurrence: hierarchy path receipt is unavailable")
+			return HierarchyProof{}, errors.New("program/flow/recurrence: hierarchy path view is unavailable")
 		}
 		events[index] = HierarchyEvent{Kind: event.Kind, path: event.path}
 	}
@@ -431,7 +427,7 @@ func (proof HierarchyProof) At(index int) (HierarchyEvent, bool) {
 	return proof.events[index], true
 }
 
-// VertexPath is the semantic receipt for the event's vertex. It is copied
+// VertexPath is the semantic path for the event's vertex. It is copied
 // from SourceControl during recurrence sealing so downstream consumers do not
 // need to retain or re-query the graph coordinate.
 func (event HierarchyEvent) VertexPath() (identity.ContentID, bool) {

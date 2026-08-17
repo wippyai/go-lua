@@ -34,18 +34,12 @@ type Access[V, O any] struct {
 // ActivationCoordinates is the exact accepted dynamic relation that
 // materialized one Rule row. Ordinary Rules have no coordinates.
 type ActivationCoordinates struct {
-	binding     SemanticKey
-	application SemanticKey
-	target      SemanticKey
-	endpoint    SemanticKey
+	binding     identity.SemanticKey
+	application identity.SemanticKey
+	target      identity.SemanticKey
+	endpoint    identity.SemanticKey
 }
 
 func (value ActivationCoordinates) Available() bool {
 	return value.binding.Available() && value.application.Available() && value.target.Available() && value.endpoint.Available()
 }
-func (value ActivationCoordinates) Binding() SemanticKey     { return value.binding }
-func (value ActivationCoordinates) Application() SemanticKey { return value.application }
-func (value ActivationCoordinates) Target() SemanticKey      { return value.target }
-func (value ActivationCoordinates) Endpoint() SemanticKey    { return value.endpoint }
-
-type accessToken[V any] struct{}

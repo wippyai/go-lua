@@ -1,13 +1,13 @@
 package target
 
 import (
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	"github.com/wippyai/go-lua/analysis/identity"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/relations"
 	"github.com/wippyai/go-lua/analysis/program/semanticsource"
-	"github.com/wippyai/go-lua/analysis/schema/relations"
 )
 
 func TestSourcePublicationsMatchTypedTargetProjections(t *testing.T) {
@@ -18,7 +18,7 @@ func TestSourcePublicationsMatchTypedTargetProjections(t *testing.T) {
 		OperationSpec{
 			Bindings:   []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"source-resume"}}},
 			ValuesVars: 1,
-			Input:      ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesVariable, Var: 0},
+			Input:      ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesVariable, Var: 0},
 			Outcomes: []OutcomeSpec{
 				{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesVariable, Var: 0}},
 			},
@@ -28,11 +28,11 @@ func TestSourcePublicationsMatchTypedTargetProjections(t *testing.T) {
 	)
 	contract := mustSeal(t, spec)
 
-	receipt, ok := contract.SemanticSourceReceipt()
+	rows, ok := contract.SourceViews()
 	if !ok {
 		t.Fatal("sealed Contract has no semantic-source publication")
 	}
-	publications := receipt.Publications(semanticSourceSchema(t))
+	publications := rows.Publications(semanticSourceSchema(t))
 	if len(publications) != 37 {
 		t.Fatalf("Target publications = %d, want 37", len(publications))
 	}
@@ -49,8 +49,8 @@ func TestSourcePublicationsMatchTypedTargetProjections(t *testing.T) {
 }
 
 func TestSourcePublicationsAreReplayAndPermutationStable(t *testing.T) {
-	leftFormal := typ.NewTypeParam("Element", typ.String)
-	rightFormal := typ.NewTypeParam("Item", typ.String)
+	leftFormal := testNewTypeParam("Element", testString)
+	rightFormal := testNewTypeParam("Item", testString)
 	left := mustSeal(t, Spec{Operations: []OperationSpec{
 		genericAlpha(leftFormal, 2),
 		providerBeta(),
@@ -60,16 +60,16 @@ func TestSourcePublicationsAreReplayAndPermutationStable(t *testing.T) {
 		genericAlpha(rightFormal, 1),
 	}})
 
-	leftReceipt, leftOK := left.SemanticSourceReceipt()
-	replayReceipt, replayOK := left.SemanticSourceReceipt()
-	rightReceipt, rightOK := right.SemanticSourceReceipt()
+	leftRows, leftOK := left.SourceViews()
+	replayRows, replayOK := left.SourceViews()
+	rightRows, rightOK := right.SourceViews()
 	if !leftOK || !replayOK || !rightOK {
 		t.Fatal("sealed publication unavailable")
 	}
 	schema := semanticSourceSchema(t)
-	first := leftReceipt.Publications(schema)
-	replay := replayReceipt.Publications(schema)
-	second := rightReceipt.Publications(schema)
+	first := leftRows.Publications(schema)
+	replay := replayRows.Publications(schema)
+	second := rightRows.Publications(schema)
 	if len(first) != len(replay) || len(first) != len(second) {
 		t.Fatal("sealed publication count changed")
 	}
@@ -81,36 +81,36 @@ func TestSourcePublicationsAreReplayAndPermutationStable(t *testing.T) {
 			t.Fatalf("publication permutation changed at %d", index)
 		}
 	}
-	if _, ok := (&Contract{}).SemanticSourceReceipt(); ok {
+	if _, ok := (&Contract{}).SourceViews(); ok {
 		t.Fatal("unsealed Contract published semantic-source rows")
 	}
 }
 
-func TestSemanticSourceReceiptRejectsForeignOrStaleOwner(t *testing.T) {
+func TestSourceViewsRejectsForeignOrStaleOwner(t *testing.T) {
 	left := mustSeal(t, completeBootSpec("Lua 5.3", InitialMutable))
 	right := mustSeal(t, completeBootSpec("Lua 5.4", InitialMutable))
 	if left.ContentID() == right.ContentID() {
 		t.Fatal("owner-fence fixture identities unexpectedly match")
 	}
 
-	cached := left.semanticReceipt
-	left.semanticReceipt = right.semanticReceipt
-	if _, ok := left.SemanticSourceReceipt(); ok {
-		t.Fatal("foreign cached Target receipt crossed the Contract owner fence")
+	cached := left.sourceViews
+	left.sourceViews = right.sourceViews
+	if _, ok := left.SourceViews(); ok {
+		t.Fatal("foreign cached Target rows crossed the Contract owner fence")
 	}
 
-	left.semanticReceipt = cached
+	left.sourceViews = cached
 	stale := cached
 	stale.owner = right.ContentID()
-	left.semanticReceipt = stale
-	if _, ok := left.SemanticSourceReceipt(); ok {
-		t.Fatal("stale cached Target receipt crossed the Contract owner fence")
+	left.sourceViews = stale
+	if _, ok := left.SourceViews(); ok {
+		t.Fatal("stale cached Target rows crossed the Contract owner fence")
 	}
 }
 
 func TestSourcePublicationsIncludeOpaqueDerivedRows(t *testing.T) {
 	contract := mustSeal(t, Spec{
-		Operations: []OperationSpec{protocolOperation("source-protocol", []typ.Type{typ.Any})},
+		Operations: []OperationSpec{protocolOperation("source-protocol", []schematype.Type{testAny})},
 		Protocols: []ProtocolSpec{{
 			Acquisitions: []AcquisitionSpec{{Operation: 1, Outcome: 0, Result: 0, State: 1}},
 			States:       []StateSpec{{Name: "open"}, {Name: "closed", Final: true}},
@@ -123,11 +123,11 @@ func TestSourcePublicationsIncludeOpaqueDerivedRows(t *testing.T) {
 			Escapes: []EscapeSpec{{Operation: 1, Input: InputSource{Kind: InputSourceValueFormal}}},
 		}},
 	})
-	receipt, ok := contract.SemanticSourceReceipt()
+	rows, ok := contract.SourceViews()
 	if !ok {
 		t.Fatal("sealed Contract has no semantic-source publication")
 	}
-	publications := receipt.Publications(semanticSourceSchema(t))
+	publications := rows.Publications(semanticSourceSchema(t))
 	counts := targetPublishedCounts(t, publications)
 	if got := counts[targetSourceKey{origin: semanticsource.OriginTargetOperation, facet: semanticsource.FacetTargetSuspension}]; got != 3 {
 		t.Fatalf("opaque suspension rows = %d, want 3", got)
@@ -140,9 +140,9 @@ func TestSourcePublicationsIncludeOpaqueDerivedRows(t *testing.T) {
 	}
 }
 
-func TestTypedSemanticSourceViewsAreDetachedAndRetainEmptyFamilies(t *testing.T) {
+func TestTypedSourceViewsAreDetachedAndRetainEmptyFamilies(t *testing.T) {
 	contract := mustSeal(t, completeBootSpec("Lua 5.3", InitialMutable))
-	views, ok := contract.SemanticSourceViews()
+	views, ok := contract.SourceViews()
 	if !ok {
 		t.Fatal("sealed Contract has no typed semantic-source views")
 	}

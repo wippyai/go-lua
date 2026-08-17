@@ -1,9 +1,9 @@
 package target
 
 import (
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
 
@@ -20,8 +20,8 @@ func TestFreshOutcomeOrderingRemapsSuspensionAndResumeCoordinates(t *testing.T) 
 			// The Fresh Table case is source ordinal zero but sorts after the
 			// otherwise-identical no-fresh case.
 			Outcomes: []OutcomeSpec{
-				{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed}, FreshResults: []FreshResultSpec{{Result: 0, Kind: FreshTable}}},
-				{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed}},
+				{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}, FreshResults: []FreshResultSpec{{Result: 0, Kind: FreshTable}}},
+				{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}},
 				{Kind: flowkind.OutcomeYield, Values: ValuesSpec{Tail: ValuesClosed}},
 			},
 			Suspensions: []SuspensionSpec{{Yield: 2, Reentry: 0, Source: ReentryByCall, Multiplicity: ReentryOnce}},
@@ -30,10 +30,10 @@ func TestFreshOutcomeOrderingRemapsSuspensionAndResumeCoordinates(t *testing.T) 
 		{
 			Bindings:   []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"fresh-resume"}}},
 			ValuesVars: 1,
-			Input:      ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesVariable, Var: 0},
+			Input:      ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesVariable, Var: 0},
 			Outcomes: []OutcomeSpec{
-				{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed}, FreshResults: []FreshResultSpec{{Result: 0, Kind: FreshThread}}},
-				{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed}},
+				{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}, FreshResults: []FreshResultSpec{{Result: 0, Kind: FreshThread}}},
+				{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}},
 			},
 			Resumes: []ResumeSpec{{Source: ResumeSourceValueFormal, Carrier: 0, Arguments: callbackTail(0), Outcomes: resumeMappings}},
 			Effects: RowSpec{Tail: RowClosed},
@@ -41,7 +41,7 @@ func TestFreshOutcomeOrderingRemapsSuspensionAndResumeCoordinates(t *testing.T) 
 		{
 			Bindings:   []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"fresh-spawn"}}},
 			ValuesVars: 7,
-			Input:      ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesVariable, Var: 0},
+			Input:      ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesVariable, Var: 0},
 			Callbacks: []CallbackSpec{{
 				Function: InputSource{Kind: InputSourceValueFormal}, Admission: OrdinaryCallable, Arguments: callbackTail(1),
 				Outcomes: callbackOutcomes(2, 3, 4, 5, 6), Lifecycle: CallbackRetainedRequiredOnce,
@@ -49,9 +49,9 @@ func TestFreshOutcomeOrderingRemapsSuspensionAndResumeCoordinates(t *testing.T) 
 			}},
 			Outcomes: []OutcomeSpec{
 				{Kind: flowkind.OutcomeYield, Values: ValuesSpec{Tail: ValuesClosed}},
-				{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed}, FreshResults: []FreshResultSpec{{Result: 0, Kind: FreshTable}}},
+				{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}, FreshResults: []FreshResultSpec{{Result: 0, Kind: FreshTable}}},
 				{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesClosed}},
-				{Kind: flowkind.OutcomeThrow, Values: ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed}},
+				{Kind: flowkind.OutcomeThrow, Values: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}},
 			},
 			Suspensions: []SuspensionSpec{{Yield: 0, Reentry: 2, Source: ReentryByProvider, Multiplicity: ReentryOnce}},
 			Spawns: []SpawnSpec{{

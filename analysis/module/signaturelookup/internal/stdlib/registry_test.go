@@ -417,6 +417,7 @@ func TestSignaturesSeededNames(t *testing.T) {
 		"rawlen", "setmetatable", "getmetatable", "collectgarbage", "unpack", OwnershipStore,
 		TableInsert, "table.remove", "table.concat", "table.sort", "table.unpack",
 		"table.pack", "table.move", "table.create", "table.freeze", "table.isfrozen",
+		"table.getn", "table.maxn",
 		"json.encode", "json.decode",
 		"env.get",
 		"string.byte", "string.char", "string.dump", "string.find", "string.format",
@@ -430,7 +431,8 @@ func TestSignaturesSeededNames(t *testing.T) {
 		"math.sin", "math.sinh", "math.sqrt", "math.tan", "math.tanh", "math.tointeger",
 		"math.type", "math.ult",
 		"coroutine.close", "coroutine.create", "coroutine.isyieldable", "coroutine.resume",
-		"coroutine.running", "coroutine.status", "coroutine.wrap", "coroutine.yield",
+		"coroutine.running", "coroutine.spawn", "coroutine.status", "coroutine.wrap",
+		"coroutine.yield",
 		"os.clock", "os.date", "os.difftime", "os.getenv", "os.time", "os.tmpname",
 		"os.exit", "os.remove", "os.rename", "os.execute",
 	}

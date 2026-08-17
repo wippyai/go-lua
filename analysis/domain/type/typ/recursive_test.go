@@ -155,7 +155,7 @@ func TestRecursiveHashNoPanic(t *testing.T) {
 
 	assertRecursiveRecord(t, rec, "Node", []Field{{Name: "next", Type: rec, Optional: true}})
 	first, second := rec.Hash(), rec.Hash()
-	const wantHash uint64 = 17775587563959000762
+	const wantHash uint64 = 13282620527444473375
 	if first != wantHash || second != wantHash {
 		t.Fatalf("recursive hash calls = %d, %d; want %d", first, second, wantHash)
 	}
@@ -720,8 +720,11 @@ func TestRecursiveInUnionMultiple(t *testing.T) {
 	}
 }
 
-// TestRecursiveEqualsDifferentNames tests that name affects equality.
-func TestRecursiveEqualsDifferentNames(t *testing.T) {
+// TestRecursiveEqualsIgnoresBinderName holds that a recursive binder is a
+// bound variable. Two declarations that reach one fixed point spell its binder
+// after themselves, so a name-bearing identity would make one type present as
+// two; the body still decides, and two bodies remain two types.
+func TestRecursiveEqualsIgnoresBinderName(t *testing.T) {
 	rec1 := NewRecursive("Node", func(self Type) Type {
 		return newRecord().OptField("next", self).Build()
 	})
@@ -730,14 +733,20 @@ func TestRecursiveEqualsDifferentNames(t *testing.T) {
 		return newRecord().OptField("next", self).Build()
 	})
 
-	// Different names means different types
-	if typeEquals(rec1, rec2) {
-		t.Error("recursive types with different names should not be equal")
+	if !typeEquals(rec1, rec2) {
+		t.Error("one fixed point spelled with two binder names should be one type")
 	}
 
-	// Hashes should differ
-	if rec1.Hash() == rec2.Hash() {
-		t.Error("recursive types with different names should have different hashes")
+	if rec1.Hash() != rec2.Hash() {
+		t.Error("one fixed point spelled with two binder names should have one hash")
+	}
+
+	other := NewRecursive("Node", func(self Type) Type {
+		return newRecord().OptField("previous", self).Build()
+	})
+
+	if typeEquals(rec1, other) {
+		t.Error("two fixed points should stay two types under one binder name")
 	}
 }
 

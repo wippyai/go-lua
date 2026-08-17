@@ -5,11 +5,13 @@ import (
 	"errors"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/internal/framing"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
+// Version 22 carries the complete neutral type-contract declaration for each
+// frozen type row, including primitive identity and external formal scope.
 // Version 21 adds explicit publication-effect presence and typed descriptor
 // bytes to each effect row. A target identity from any preceding layout must
 // never be reused for a contract with publication semantics.
@@ -20,7 +22,7 @@ import (
 // Version 18 adds retained callback-holder protocol rows and the mandatory
 // zero-holder branch of a callback release. A target identity from any
 // preceding layout must never be reused as this schema.
-const contentIDCodecVersion = 21
+const contentIDCodecVersion = 22
 
 // ContentID derives the SHA-256 identity of the complete observable sealed
 // contract. It encodes no authoring references, Go object identities, lookup
@@ -1135,10 +1137,25 @@ func encodeType(w *framing.Writer, c *Contract, value Type) error {
 	if value == 0 || uint64(value) > uint64(len(c.types)) {
 		return errors.New("target: malformed frozen type")
 	}
-	// Writer synchronously drains this immutable private byte slice into its
-	// sink. Unlike TypeBytes, identity encoding never makes a per-occurrence
-	// ownership copy.
-	return w.Bytes(c.types[uint32(value)-1].bytes)
+	declaration := c.types[uint32(value)-1].declaration
+	if !declaration.Available() {
+		return errors.New("target: unavailable neutral type declaration")
+	}
+	primitive, primitiveOK := declaration.Primitive()
+	if err := w.Bool(primitiveOK); err != nil {
+		return err
+	}
+	if primitiveOK {
+		if err := w.Uint(uint64(primitive)); err != nil {
+			return err
+		}
+	} else if err := w.Uint(0); err != nil {
+		return err
+	}
+	if err := w.Uint(uint64(declaration.ExternalFormals())); err != nil {
+		return err
+	}
+	return w.Bytes(declaration.Bytes())
 }
 
 func encodeOutcome(w *framing.Writer, c *Contract, op Operation, outcome int) error {

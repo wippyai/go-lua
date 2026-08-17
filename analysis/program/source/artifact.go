@@ -6,9 +6,9 @@ package source
 // the parent artifact codec owns the surrounding envelope and seal replay.
 
 import (
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/internal/framing"
-	"github.com/wippyai/go-lua/analysis/lua/semantics/exactkey"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/program/scalar"
 )
 
 const (
@@ -772,15 +772,15 @@ func readSourceRangeTag(reader *framing.Reader, family keyspace.Family) error {
 // readSourceLiteralRef returns a zero-copy semantic view used only by
 // preflight. A String payload points into the immutable Reader input; the
 // conversion to a Go string is deferred until the allocation/fill pass.
-func readSourceLiteralRef(reader *framing.Reader) (exactkey.Ref, error) {
+func readSourceLiteralRef(reader *framing.Reader) (scalar.Ref, error) {
 	kind, err := reader.Uint()
 	if err != nil {
-		return exactkey.Ref{}, err
+		return scalar.Ref{}, err
 	}
 	if kind < uint64(keyspace.LiteralBool) || kind > uint64(keyspace.LiteralString) {
-		return exactkey.Ref{}, framing.ErrMalformed
+		return scalar.Ref{}, framing.ErrMalformed
 	}
-	ref := exactkey.Ref{Kind: keyspace.LiteralKind(kind)}
+	ref := scalar.Ref{Kind: keyspace.LiteralKind(kind)}
 	switch ref.Kind {
 	case keyspace.LiteralBool:
 		ref.Bool, err = reader.Bool()
@@ -794,7 +794,7 @@ func readSourceLiteralRef(reader *framing.Reader) (exactkey.Ref, error) {
 		ref.Bytes, err = sourceStringBytes(reader)
 	}
 	if err != nil {
-		return exactkey.Ref{}, err
+		return scalar.Ref{}, err
 	}
 	return ref, nil
 }
@@ -826,18 +826,18 @@ func preflightSourceKeys(reader *framing.Reader, counts [keyspace.FamilyCount]ui
 		return framing.ErrMalformed
 	}
 
-	exactRows := make([]exactkey.Ref, exactCount)
-	var previous exactkey.Ref
+	exactRows := make([]scalar.Ref, exactCount)
+	var previous scalar.Ref
 	for index := 0; index < exactCount; index++ {
 		value, err := readSourceLiteralRef(reader)
 		if err != nil {
 			return err
 		}
-		normalized, ok := exactkey.NormalizeRef(value)
-		if !ok || !exactkey.EqualCanonical(value, normalized) {
+		normalized, ok := scalar.NormalizeRef(value)
+		if !ok || !scalar.EqualCanonical(value, normalized) {
 			return framing.ErrMalformed
 		}
-		if index > 0 && exactkey.CompareCanonical(previous, value) >= 0 {
+		if index > 0 && scalar.CompareCanonical(previous, value) >= 0 {
 			return framing.ErrMalformed
 		}
 		exactRows[index] = value
@@ -987,11 +987,11 @@ func readSourceKeys(reader *framing.Reader, input *Input, counts [keyspace.Famil
 		if err != nil {
 			return err
 		}
-		normalized, ok := exactkey.Normalize(value)
+		normalized, ok := scalar.Normalize(value)
 		if !ok || !equalLiteral(value, normalized) {
 			return framing.ErrMalformed
 		}
-		if index > 0 && exactkey.CompareCanonical(exactkey.FromLiteral(input.ExactAtoms[index-1]), exactkey.FromLiteral(value)) >= 0 {
+		if index > 0 && scalar.CompareCanonical(scalar.FromLiteral(input.ExactAtoms[index-1]), scalar.FromLiteral(value)) >= 0 {
 			return framing.ErrMalformed
 		}
 		input.ExactAtoms[index] = value

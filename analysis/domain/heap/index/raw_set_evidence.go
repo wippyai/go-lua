@@ -5,9 +5,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/pack"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
-func (rule *RawSetRule) check(semantic engine.SemanticKey) engine.RuleDerivationChecker[heapdomain.Value, Access] {
+func (rule *RawSetRule) check(semantic identity.SemanticKey) engine.RuleDerivationChecker[heapdomain.Value, Access] {
 	return func(derivation engine.RuleDerivation[heapdomain.Value, Access]) (engine.RuleEvidence, bool) {
 		// ReadCount is the number of completed product observations, not the
 		// number of declared reads: staged selector routes can contribute

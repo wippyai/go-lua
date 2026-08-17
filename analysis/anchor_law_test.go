@@ -147,11 +147,13 @@ func anchorMultivariantDispatch(t *testing.T) {
 
 	// Clause 4: the placement plane. This is the architect's anchor
 	// expectation, not an aspirational skip: Result must publish a solved
-	// placement projection for this fixture. It is unavailable today, so this
-	// clause is a standing red that defines done.
-	if run.result.placement == nil || !run.result.placement.valid() {
-		t.Error("anchor clause 4: placement Result surface is unavailable; a solved placement projection is required")
-	}
+	// placement projection for this fixture. The placement domain declares no
+	// axis, rule role, or factor, so Result has no placement surface at all and
+	// this clause is a standing red that defines done: it clears when the closed
+	// semantic transfer over Value, Heap, Residence, Footprint, and Effect
+	// converges into a placement factor (journal seq 2134) and Result publishes
+	// the projection that factor issues.
+	t.Error("anchor clause 4: placement Result surface is unavailable; a solved placement projection is required")
 }
 
 // anchorRecursiveUnion anchors the recursive Json union: the mu-type recurses

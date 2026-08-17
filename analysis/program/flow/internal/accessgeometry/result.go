@@ -46,6 +46,32 @@ type indexProjection struct {
 	writeCount int
 }
 
+type selectorPlane uint8
+
+const (
+	selectorPlaneInvalid selectorPlane = iota
+	selectorPlaneRead
+	selectorPlanePublication
+)
+
+// selectorRow is the compact parent-chain row shared by exact Read and Static
+// publication columns. A row contains only canonical Terms/Keys; owner views
+// are not retained after sealing.
+type selectorRow struct {
+	root     keyspace.Term
+	parent   uint32
+	suffix   keyspace.Key
+	depth    uint32
+	external bool
+	plane    selectorPlane
+	typePath bool
+}
+
+type directCallRow struct {
+	read keyspace.Term
+	form uint8
+}
+
 // Result is the immutable derived access-geometry projection.  The four
 // scalar identities are the only retained provenance; no Source, authored
 // Flow, or candidates owner is retained after Seal.
@@ -59,6 +85,18 @@ type Result struct {
 	exactLenses   exactLensProjection
 	dynamicLenses dynamicLensProjection
 	indexAccesses indexProjection
+
+	// Exact selectors are access-derived Flow columns. They deliberately live
+	// beside normalized access geometry rather than in a second selector owner:
+	// all rows are keyed by the authored Read/Publication/Call ordinals and
+	// share the same Source/Flow/Static/Module fence.
+	selectorRows      []selectorRow
+	selectorRowReads  []keyspace.Term
+	selectorReadSlots []uint32
+	publicationSlots  []uint32
+	publicationStart  uint32
+	publicationOwners []keyspace.Term
+	directCalls       []directCallRow
 }
 
 // Matches reports whether result belongs to the exact Source, authored Flow,
@@ -90,3 +128,14 @@ func (result *Result) DynamicLenses() DynamicLenses { return DynamicLenses{resul
 // Reads and Writes are separate typed planes; no combined arm/kind API is
 // retained.
 func (result *Result) IndexAccesses() IndexAccesses { return IndexAccesses{result: result} }
+
+// ExactReads returns the canonical exact lexical-read selector column.
+func (result *Result) ExactReads() ExactReads { return ExactReads{result: result} }
+
+// TypePublications returns the exact Static publication path column.
+func (result *Result) TypePublications() TypePublications {
+	return TypePublications{result: result}
+}
+
+// DirectCalls returns the direct-call syntax column.
+func (result *Result) DirectCalls() DirectCalls { return DirectCalls{result: result} }

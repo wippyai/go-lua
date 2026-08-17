@@ -27,15 +27,11 @@ func (r *Result) componentPath(head keyspace.Term) (identity.ContentID, bool) {
 	return path, path.Available()
 }
 
-// SetStructuralPaths installs the parent-issued semantic path plane used by
-// final route receipts. Paths are parallel to the Source family denominators;
+// installStructuralPaths installs the parent-issued semantic path view used
+// by final route rows. Paths are parallel to the Source family denominators;
 // zero entries are rejected when a route later requires that role.
-func (r *Result) consumeStructuralPathReceipt(receipt *semanticpath.CausalReceipt) bool {
-	if r == nil || receipt == nil || r.structuralPaths != nil {
-		return false
-	}
-	paths, ok := receipt.Consume(r.sourceID, r.flowID, r.staticID, r.moduleID)
-	if !ok {
+func (r *Result) installStructuralPaths(paths *semanticpath.CausalPaths) bool {
+	if r == nil || paths == nil || r.structuralPaths != nil || !paths.Matches(r.sourceID, r.flowID, r.staticID, r.moduleID) {
 		return false
 	}
 	// The certificate already checked the exact Source family denominator.

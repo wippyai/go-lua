@@ -13,7 +13,7 @@ import (
 // derived by Flow's finalization and therefore cannot be minted here.  A
 // failed allocation poisons the cursor; callers cannot continue with a
 // partially authoritative construction.
-func (c *Collector) mint(family keyspace.Family, span source.Span) Term {
+func (c *Collector) mint(family keyspace.Family, span source.Span) keyspace.Term {
 	if c == nil {
 		return 0
 	}
@@ -73,7 +73,7 @@ func validRawExactCandidate(value keyspace.LiteralValue) bool {
 // not minted during visitation and therefore remain stable under traversal
 // order. The returned Term is the reserved canonical identity.
 
-func (c *Collector) fillReservedImport(ordinal uint32, span source.Span) Term {
+func (c *Collector) fillReservedImport(ordinal uint32, span source.Span) keyspace.Term {
 	if c == nil || c.err != nil || c.terminal || ordinal == 0 || ordinal > c.counts[keyspace.FamilyImport] ||
 		ordinal-1 >= uint32(len(c.spans[keyspace.FamilyImport])) ||
 		!validSpan(c, span) {
@@ -91,7 +91,7 @@ func (c *Collector) fillReservedImport(ordinal uint32, span source.Span) Term {
 	return keyspace.MakeTerm(keyspace.FamilyImport, ordinal)
 }
 
-func validOwner(c *Collector, owner Term) bool {
+func validOwner(c *Collector, owner keyspace.Term) bool {
 	if c == nil || c.err != nil || !validBody(c, owner) {
 		if c != nil && c.err == nil && !c.terminal {
 			c.fail(errors.New("program/lower/collector: invalid Body owner"))
@@ -101,7 +101,7 @@ func validOwner(c *Collector, owner Term) bool {
 	return true
 }
 
-func validBody(c *Collector, body Term) bool {
+func validBody(c *Collector, body keyspace.Term) bool {
 	if c == nil || c.err != nil || c.terminal || !validBodyTerm(body) || keyspace.TermOrdinal(body) > c.counts[keyspace.FamilyBody] {
 		return false
 	}
@@ -110,7 +110,7 @@ func validBody(c *Collector, body Term) bool {
 	return ok && row.Body == body
 }
 
-func validFamilyTerm(c *Collector, term Term, family keyspace.Family) bool {
+func validFamilyTerm(c *Collector, term keyspace.Term, family keyspace.Family) bool {
 	return c != nil && c.err == nil && !c.terminal && keyspace.TermFamily(term) == family &&
 		keyspace.TermOrdinal(term) != 0 && keyspace.TermOrdinal(term) <= c.counts[family]
 }
@@ -131,7 +131,7 @@ func sourceDirectFamily(family keyspace.Family) bool {
 	}
 }
 
-func validDirectBodyTerm(c *Collector, body, term Term) bool {
+func validDirectBodyTerm(c *Collector, body, term keyspace.Term) bool {
 	if c == nil || !validBody(c, body) || !validTermInCounts(c, term) || !sourceDirectFamily(keyspace.TermFamily(term)) {
 		return false
 	}
@@ -149,7 +149,7 @@ func validDirectBodyTerm(c *Collector, body, term Term) bool {
 // sourceDirectTermOwner is the one owner-role authority used by SetBody.
 // Every direct family with a row-local Body owner is resolved here, so the
 // admission boundary cannot drift through several subtly different switches.
-func sourceDirectTermOwner(c *Collector, term Term) (Term, bool) {
+func sourceDirectTermOwner(c *Collector, term keyspace.Term) (keyspace.Term, bool) {
 	if c == nil || !validTermInCounts(c, term) {
 		return 0, false
 	}

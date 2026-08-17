@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/internal/framing"
 	"github.com/wippyai/go-lua/analysis/schema"
 )
 
@@ -17,6 +18,8 @@ type scratchEntry struct{ key schema.Key }
 func (entry scratchEntry) Key() schema.Key { return entry.key }
 
 func (entry scratchEntry) EntryAvailable() bool { return entry.key.Available() }
+
+func (entry scratchEntry) EntryContent(*framing.Writer) error { return nil }
 
 // scratchSurface stands in for one sibling surface of the catalog. The
 // declaration root requires every catalog member to be populated, so a
@@ -61,19 +64,49 @@ func contractID(role string) identity.ContentID {
 // composite resolves its membership against carries a real inventory.
 func sealEntries(t *testing.T, entries []*Entry) schema.SealFailure {
 	t.Helper()
+	_, failure := sealTable(t, entries)
+	return failure
+}
+
+// sealTable is the same seal, read for the table it produces rather than for
+// the verdict alone.
+func sealTable(t *testing.T, entries []*Entry) (*schema.Schema, schema.SealFailure) {
+	t.Helper()
+	return sealSurface(t, NewSurface(entries))
+}
+
+// sealSurface seals one composite contribution into a complete declaration
+// table. It is the same table sealTable builds, stated over the contribution
+// rather than over the inventory, so a contribution that is not this package's
+// own surface is sealed under exactly the laws above.
+func sealSurface(t *testing.T, contribution schema.Surface) (*schema.Schema, schema.SealFailure) {
+	t.Helper()
 	builder := schema.NewBuilder()
 	for kind := schema.SurfaceKind(1); kind.Available(); kind++ {
 		switch kind {
 		case schema.SurfaceKindComposite:
-			builder.Register(NewSurface(entries))
+			builder.Register(contribution)
 		case schema.SurfaceKindAxis:
 			builder.Register(scratchSurface{kind: kind, keys: scratchAxes()})
 		default:
 			builder.Register(scratchSurface{kind: kind})
 		}
 	}
-	_, failure := builder.Seal()
-	return failure
+	return builder.Seal()
+}
+
+// foreignSurface contributes a row that is not this surface's entry type, under
+// this surface's own kind, and states this surface's laws over it.
+type foreignSurface struct{}
+
+func (foreignSurface) Kind() schema.SurfaceKind { return schema.SurfaceKindComposite }
+
+func (foreignSurface) Entries() []schema.Entry {
+	return []schema.Entry{scratchEntry{key: "foreign"}}
+}
+
+func (foreignSurface) Seal(view schema.View, sealed schema.Sealed) schema.SealFailure {
+	return surface{}.Seal(view, sealed)
 }
 
 // containmentSpec is the toy relation this surface is proved against: a
@@ -157,7 +190,8 @@ func TestCompositeSurfaceSealsCompleteInventory(t *testing.T) {
 // onto a third axis, and a declared intermediate - and reads it back
 // unchanged.
 func TestToyCompositeModelsAContainmentRelation(t *testing.T) {
-	entry := mustEntry(t, containmentSpec("containment"))
+	spec := containmentSpec("containment")
+	entry := mustEntry(t, spec)
 	if failure := sealEntries(t, []*Entry{entry}); failure.Available() {
 		t.Fatalf("containment composite rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
@@ -191,16 +225,41 @@ func TestToyCompositeModelsAContainmentRelation(t *testing.T) {
 		discipline.Reentrancy != ReentrancyExclusive {
 		t.Fatal("declared solver discipline lost")
 	}
-	// The declaration is a value: a caller that mutates what it handed in, or
-	// what it read back, cannot reach the sealed entry.
-	spec := containmentSpec("containment")
+	// The declaration is a value: the entry was built from this very spec, so
+	// rewriting the authored slices now must not reach what was sealed.
 	spec.Roles[0].Axis = "member"
 	spec.Output.Reducer.Descent[0] = 9
-	if again, _ := entry.RoleAt(0); again.Axis != "container" {
+	if again, ok := entry.RoleAt(0); !ok || again.Axis != "container" {
 		t.Fatal("the sealed membership aliases its authored spec")
 	}
-	if output.Reducer.Descent[0] != 0 {
+	if entry.Output().Reducer.Descent[0] != 0 {
 		t.Fatal("the sealed reducer aliases its authored spec")
+	}
+	// The other half of the same law: the reducer descent read back above is a
+	// collection, so a reader that rewrites it must not reach the entry either.
+	output.Reducer.Descent[0] = 9
+	if entry.Output().Reducer.Descent[0] != 0 {
+		t.Fatal("the sealed reducer aliases the descent it handed back")
+	}
+}
+
+// TestSealedCapabilityDoesNotAliasItsReader states the same value law over the
+// other case of the output union: the patch contracts a capability hands back
+// are a collection, and rewriting them may not reach the sealed entry.
+func TestSealedCapabilityDoesNotAliasItsReader(t *testing.T) {
+	spec := overlapSpec("overlap")
+	entry := mustEntry(t, spec)
+	if failure := sealEntries(t, []*Entry{entry}); failure.Available() {
+		t.Fatalf("overlap composite rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	authored := entry.Output().Capability.Patches[0].Contract
+	spec.Output.Capability.Patches[0].Contract = contractID("patch/rewritten")
+	if entry.Output().Capability.Patches[0].Contract != authored {
+		t.Fatal("the sealed capability aliases its authored spec")
+	}
+	entry.Output().Capability.Patches[0].Contract = contractID("patch/rewritten")
+	if entry.Output().Capability.Patches[0].Contract != authored {
+		t.Fatal("the sealed capability aliases the patch list it handed back")
 	}
 }
 
@@ -511,15 +570,56 @@ func TestCompositeDependencyEdgesResolve(t *testing.T) {
 // membership against the axis inventory, so the axis surface is sealed below
 // it and a table registered the other way round is rejected by the root.
 func TestCompositesSealAfterAxes(t *testing.T) {
-	if schema.SurfaceKindAxis >= schema.SurfaceKindComposite {
-		t.Fatalf("axis catalog ordinal %d does not precede composite ordinal %d", schema.SurfaceKindAxis, schema.SurfaceKindComposite)
-	}
 	builder := schema.NewBuilder()
 	builder.Register(NewSurface([]*Entry{mustEntry(t, containmentSpec("containment"))}))
 	builder.Register(scratchSurface{kind: schema.SurfaceKindAxis, keys: scratchAxes()})
 	_, failure := builder.Seal()
 	if failure.Law != schema.LawSurfacePhase || failure.Disposition != schema.DispositionMalformed {
 		t.Fatalf("axis surface registered after the composite surface sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+}
+
+// TestCompositesRequireASealedAxisSurface is the other half of the phase law,
+// stated by this surface rather than by the root. Registration order is only
+// strictly increasing, so a table may skip the axis surface entirely; a
+// composite that cannot reach the axis inventory cannot resolve one role, and
+// says so instead of sealing a membership over nothing.
+func TestCompositesRequireASealedAxisSurface(t *testing.T) {
+	builder := schema.NewBuilder()
+	for kind := schema.SurfaceKind(1); kind.Available(); kind++ {
+		switch kind {
+		case schema.SurfaceKindAxis:
+		case schema.SurfaceKindComposite:
+			builder.Register(NewSurface([]*Entry{mustEntry(t, containmentSpec("containment"))}))
+		default:
+			builder.Register(scratchSurface{kind: kind})
+		}
+	}
+	sealed, failure := builder.Seal()
+	if sealed != nil {
+		t.Fatal("a composite surface sealed without the axis inventory it resolves against")
+	}
+	if failure.Law != LawAxisPhase || failure.Disposition != schema.DispositionIncomplete {
+		t.Fatalf("law=%d disposition=%s want axis-phase/incomplete", failure.Law, failure.Disposition)
+	}
+	if failure.Contributor != schema.SurfaceKindComposite {
+		t.Fatalf("verdict attributed to surface %d, not the composite surface", failure.Contributor)
+	}
+}
+
+// TestCompositeForeignRowIsRejected states the entry-shape law: this surface's
+// laws are stated over its own record, so a row admitted under the composite
+// kind that is not a composite entry is rejected rather than read as one.
+func TestCompositeForeignRowIsRejected(t *testing.T) {
+	sealed, failure := sealSurface(t, foreignSurface{})
+	if sealed != nil {
+		t.Fatal("a foreign row was admitted into the composite surface")
+	}
+	if failure.Law != LawEntryShape || failure.Disposition != schema.DispositionMalformed {
+		t.Fatalf("law=%d disposition=%s want entry-shape/malformed", failure.Law, failure.Disposition)
+	}
+	if failure.Contributor != schema.SurfaceKindComposite {
+		t.Fatalf("verdict attributed to surface %d, not the composite surface", failure.Contributor)
 	}
 }
 
@@ -578,5 +678,25 @@ func TestNewRejectsIncompleteSpec(t *testing.T) {
 		if entry, ok := New(spec); ok || entry != nil {
 			t.Fatalf("capability spec with a rejected %s admitted", name)
 		}
+	}
+}
+
+// TestTableDigestCoversDeclaredContent is the drift law of this surface: the
+// digest is what a derived inventory is checked against, so two catalogs that
+// name the same composites and declare different relations are two tables. A
+// cone form is the read a role performs, so moving one moves the digest.
+func TestTableDigestCoversDeclaredContent(t *testing.T) {
+	declared, failure := sealTable(t, []*Entry{mustEntry(t, containmentSpec("containment"))})
+	if failure.Available() {
+		t.Fatalf("toy composite rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	spec := containmentSpec("containment")
+	spec.Roles[0].Cone = Cone{Form: ConeSummary}
+	shifted, failure := sealTable(t, []*Entry{mustEntry(t, spec)})
+	if failure.Available() {
+		t.Fatalf("composite with a shifted cone form rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	if declared.Digest() == shifted.Digest() {
+		t.Fatal("a composite's declared cone form left the table digest unchanged")
 	}
 }

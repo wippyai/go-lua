@@ -27,8 +27,6 @@ const (
 	SolveInvalid
 )
 
-func (status SolveStatus) Complete() bool { return status == SolveComplete }
-
 // producerEpoch is an epoch-local candidate cache in graph Group order. A
 // generation marks it dirty; the runnable identity is always its output Point.
 type producerEpoch struct {
@@ -1574,25 +1572,6 @@ func (epoch *executorEpoch) pointBase(point equation.Point, pointIndex int) (car
 		if !feasible.Valid() {
 			return carrier.PointRHS{}, false
 		}
-	}
-	state, ok := carrier.NewState(epoch.runtime.carrier, epoch.runtime.pointScopes[pointIndex], feasible)
-	if !ok {
-		return carrier.PointRHS{}, false
-	}
-	pointState, ok := epoch.work.EmptyPointState(state)
-	if !ok {
-		return carrier.PointRHS{}, false
-	}
-	return epoch.work.PointRHSFromPointState(pointState)
-}
-
-func (epoch *executorEpoch) pointBottom(pointIndex int) (carrier.PointRHS, bool) {
-	if epoch == nil || epoch.runtime == nil || pointIndex < 0 || pointIndex >= len(epoch.runtime.pointScopes) || !epoch.runtime.pointScopes[pointIndex].Valid() {
-		return carrier.PointRHS{}, false
-	}
-	feasible, ok := support.FromGuard(epoch.runtime.carrier.Guards(), epoch.runtime.carrier.Guards().False())
-	if !ok {
-		return carrier.PointRHS{}, false
 	}
 	state, ok := carrier.NewState(epoch.runtime.carrier, epoch.runtime.pointScopes[pointIndex], feasible)
 	if !ok {
@@ -3346,7 +3325,7 @@ func (solver *Solver) solve(ctx context.Context, report *SolveReport, diagnostic
 		}
 		if status == SolveIncomplete {
 			if !report.Available() {
-				report.record(SolveFailureReasonExecution, SolveFailurePhaseNone, SemanticKey{}, SemanticKey{}, SemanticKey{}, SemanticKey{})
+				report.record(SolveFailureReasonExecution, SolveFailurePhaseNone, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
 			}
 			return
 		}
@@ -3375,7 +3354,7 @@ runtimeRevisions:
 				return nil, SolveCanceled
 			}
 			if report != nil {
-				report.record(SolveFailureReasonEpoch, SolveFailurePhaseNone, SemanticKey{}, SemanticKey{}, SemanticKey{}, SemanticKey{})
+				report.record(SolveFailureReasonEpoch, SolveFailurePhaseNone, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
 			}
 			return nil, SolveIncomplete
 		}
@@ -3405,7 +3384,7 @@ runtimeRevisions:
 					return nil, SolveIncomplete
 				}
 				if report != nil {
-					report.record(SolveFailureReasonExecution, SolveFailurePhaseNone, SemanticKey{}, SemanticKey{}, SemanticKey{}, SemanticKey{})
+					report.record(SolveFailureReasonExecution, SolveFailurePhaseNone, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
 				}
 				return nil, SolveIncomplete
 			}
@@ -3417,7 +3396,7 @@ runtimeRevisions:
 				epoch.incomplete()
 				epoch.discard()
 				if report != nil {
-					report.record(SolveFailureReasonActivationMerge, SolveFailurePhaseNone, SemanticKey{}, SemanticKey{}, SemanticKey{}, SemanticKey{})
+					report.record(SolveFailureReasonActivationMerge, SolveFailurePhaseNone, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
 				}
 				return nil, SolveIncomplete
 			}
@@ -3426,7 +3405,7 @@ runtimeRevisions:
 				epoch.incomplete()
 				epoch.discard()
 				if report != nil {
-					report.record(SolveFailureReasonActivationMerge, SolveFailurePhaseNone, SemanticKey{}, SemanticKey{}, SemanticKey{}, SemanticKey{})
+					report.record(SolveFailureReasonActivationMerge, SolveFailurePhaseNone, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
 				}
 				return nil, SolveIncomplete
 			}
@@ -3442,7 +3421,7 @@ runtimeRevisions:
 				epoch.incomplete()
 				epoch.discard()
 				if report != nil {
-					report.record(SolveFailureReasonActivationMerge, SolveFailurePhaseNone, SemanticKey{}, SemanticKey{}, SemanticKey{}, SemanticKey{})
+					report.record(SolveFailureReasonActivationMerge, SolveFailurePhaseNone, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
 				}
 				return nil, SolveIncomplete
 			}
@@ -3484,14 +3463,14 @@ runtimeRevisions:
 			}
 			if !publishedOK {
 				if report != nil {
-					report.record(SolveFailureReasonActivationRevisionOverflow, SolveFailurePhaseNone, SemanticKey{}, SemanticKey{}, SemanticKey{}, SemanticKey{})
+					report.record(SolveFailureReasonActivationRevisionOverflow, SolveFailurePhaseNone, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
 				}
 				return nil, SolveIncomplete
 			}
 			rebuilt, phase, built := solver.compiler.compile(published)
 			if !built || rebuilt == nil {
 				if report != nil {
-					report.record(SolveFailureReasonActivationCompile, phase, SemanticKey{}, SemanticKey{}, SemanticKey{}, SemanticKey{})
+					report.record(SolveFailureReasonActivationCompile, phase, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
 				}
 				return nil, SolveIncomplete
 			}
@@ -3501,7 +3480,7 @@ runtimeRevisions:
 			runtime.completed = nil
 			if runtime.retained != nil && !runtime.retained.Close() {
 				if report != nil {
-					report.record(SolveFailureReasonActivationRetainedClose, SolveFailurePhaseNone, SemanticKey{}, SemanticKey{}, SemanticKey{}, SemanticKey{})
+					report.record(SolveFailureReasonActivationRetainedClose, SolveFailurePhaseNone, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
 				}
 				return nil, SolveIncomplete
 			}
@@ -3529,13 +3508,13 @@ runtimeRevisions:
 			if owner == nil || !owner.validQueryOwner(runtime, query.query()) || !query.query().Key().Available() || index < 0 || index >= len(results) {
 				epoch.incomplete()
 				epoch.discard()
-				reportFailureQuery(report, SolveFailureReasonQuery, SemanticKey{})
+				reportFailureQuery(report, SolveFailureReasonQuery, identity.SemanticKey{})
 				return nil, SolveIncomplete
 			}
 			if results[index] != nil {
 				epoch.incomplete()
 				epoch.discard()
-				reportFailureQuery(report, SolveFailureReasonQuery, SemanticKey{})
+				reportFailureQuery(report, SolveFailureReasonQuery, identity.SemanticKey{})
 				return nil, SolveIncomplete
 			}
 			point := query.query().Point()
@@ -3575,7 +3554,7 @@ runtimeRevisions:
 			if result == nil {
 				epoch.incomplete()
 				epoch.discard()
-				reportFailureQuery(report, SolveFailureReasonQuery, SemanticKey{})
+				reportFailureQuery(report, SolveFailureReasonQuery, identity.SemanticKey{})
 				return nil, SolveIncomplete
 			}
 		}
@@ -3589,7 +3568,7 @@ runtimeRevisions:
 			if observation == nil || index < 0 || index >= len(observationResults) {
 				epoch.incomplete()
 				epoch.discard()
-				reportFailureQuery(report, SolveFailureReasonQuery, SemanticKey{})
+				reportFailureQuery(report, SolveFailureReasonQuery, identity.SemanticKey{})
 				return nil, SolveIncomplete
 			}
 			owner, id, point := observation.observationOwner(), observation.observationID(), observation.observationPoint()
@@ -3610,7 +3589,7 @@ runtimeRevisions:
 				epoch.incomplete()
 				epoch.discard()
 				if report != nil {
-					report.record(SolveFailureReasonQuery, observationPhase, semanticKeyFromComposition(point.Key()), SemanticKey{}, SemanticKey{}, SemanticKey{})
+					report.record(SolveFailureReasonQuery, observationPhase, semanticKeyFromComposition(point.Key()), identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
 				}
 				return nil, SolveIncomplete
 			}
@@ -3620,7 +3599,7 @@ runtimeRevisions:
 			if result == nil {
 				epoch.incomplete()
 				epoch.discard()
-				reportFailureQuery(report, SolveFailureReasonQuery, SemanticKey{})
+				reportFailureQuery(report, SolveFailureReasonQuery, identity.SemanticKey{})
 				return nil, SolveIncomplete
 			}
 		}
@@ -3633,7 +3612,7 @@ runtimeRevisions:
 		if !nextCompletion.Available() {
 			epoch.incomplete()
 			epoch.discard()
-			reportFailureQuery(report, SolveFailureReasonPublication, SemanticKey{})
+			reportFailureQuery(report, SolveFailureReasonPublication, identity.SemanticKey{})
 			return nil, SolveIncomplete
 		}
 		state = &State{completion: &completionAuthority{store: solver.store, serial: nextCompletion, relation: solver.relation.Generation()}, results: results, observations: observationResults}
@@ -3642,7 +3621,7 @@ runtimeRevisions:
 		retained, retainedOK := epoch.work.Retain()
 		if !retainedOK {
 			epoch.discard()
-			reportFailureQuery(report, SolveFailureReasonPublication, SemanticKey{})
+			reportFailureQuery(report, SolveFailureReasonPublication, identity.SemanticKey{})
 			return nil, SolveIncomplete
 		}
 		epoch.work = nil
@@ -3658,7 +3637,7 @@ runtimeRevisions:
 			retained.Close()
 			prepared = nil
 			epoch.discard()
-			reportFailureQuery(report, SolveFailureReasonPublication, SemanticKey{})
+			reportFailureQuery(report, SolveFailureReasonPublication, identity.SemanticKey{})
 			return nil, SolveIncomplete
 		}
 		// A successfully evicted lease is no longer a cache, even if the

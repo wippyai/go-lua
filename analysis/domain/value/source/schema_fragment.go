@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value"
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // SchemaFragment is Value/source's callback-free Rule surface. It retains no
@@ -11,13 +12,13 @@ import (
 type SchemaFragment struct {
 	slot     *engine.RuleSlot[value.Value, value.SourceSeed]
 	write    engine.SchemaWriteSlot[value.Value]
-	semantic engine.SemanticKey
-	evidence engine.SemanticKey
+	semantic identity.SemanticKey
+	evidence identity.SemanticKey
 }
 
 // DeclareSchema records the zero-input Value source Rule shape.
-func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evidence engine.SemanticKey, owner *valueowner.SchemaFragment) (*SchemaFragment, bool) {
-	if builder == nil || owner == nil || !engine.DistinctKeys(semantic, operandFamily, evidence) {
+func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evidence identity.SemanticKey, owner *valueowner.SchemaFragment) (*SchemaFragment, bool) {
+	if builder == nil || owner == nil || !identity.DistinctKeys(semantic, operandFamily, evidence) {
 		return nil, false
 	}
 	slot, ok := engine.NewRuleSlot[value.Value, value.SourceSeed](builder, engine.SchemaRuleSpec[value.Value]{

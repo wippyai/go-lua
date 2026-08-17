@@ -174,7 +174,7 @@ func (rule *RawSetHotRule) ReceiptForOccurrence(module, occurrenceID identity.Co
 // through one owner-native transaction. No cold Owner, Composition Rule, or
 // copied Factor geometry is retained.
 func BindRawSetHot(binding *engine.SchemaBinding, fragment *RawSetSchemaFragment, topology *Topology, values *valueowner.HotOwner, heap *heapowner.HotOwner, packs *packowner.HotOwner) (*RawSetHotRule, bool) {
-	if binding == nil || fragment == nil || fragment.slot == nil || topology == nil || !topology.valid() || values == nil || !values.MatchesBinding(binding) || heap == nil || !heap.MatchesBinding(binding) || packs == nil || !packs.MatchesBinding(binding) || !packs.OwnsSchema(topology.packs) || fragment.semantic == (engine.SemanticKey{}) || fragment.evidence == (engine.SemanticKey{}) || values.Schema() != topology.values || heap.Schema() != topology.heap || !topology.packs.LinkOwner().Matches(values.Schema().LinkOwner()) {
+	if binding == nil || fragment == nil || fragment.slot == nil || topology == nil || !topology.valid() || values == nil || !values.MatchesBinding(binding) || heap == nil || !heap.MatchesBinding(binding) || packs == nil || !packs.MatchesBinding(binding) || !packs.OwnsSchema(topology.packs) || fragment.semantic == (identity.SemanticKey{}) || fragment.evidence == (identity.SemanticKey{}) || values.Schema() != topology.values || heap.Schema() != topology.heap || !topology.packs.LinkOwner().Matches(values.Schema().LinkOwner()) {
 		return nil, false
 	}
 	core := &RawSetRule{topology: topology}

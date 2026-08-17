@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 func exactQuerySchemaFixture(t testing.TB) (*Schema, *FactorSlot[uint64], *QuerySlot[uint64]) {
@@ -91,7 +92,7 @@ func TestSchemaExactQueryReceiptRejectsSummaryAndSupportRows(t *testing.T) {
 func exactQueryReceiptGraph(t testing.TB, schema *Schema, factor *FactorSlot[uint64], query *QuerySlot[uint64]) (*equation.Graph, equation.Query) {
 	t.Helper()
 	batch := equation.NewBatch()
-	site, siteOK := batch.AdmitSite(coldKey(948_030).compositionKey(), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent)
+	site, siteOK := batch.AdmitSite(compositionKeyOf(coldKey(948_030)), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent)
 	if !siteOK {
 		t.Fatal("exact query graph batch")
 	}
@@ -144,7 +145,7 @@ func receiptExactQuerySchemaFixture(t testing.TB) (*Schema, *FactorSlot[uint64],
 // receiptExactQuerySchemaFixtureOf is the same fixture over an arbitrary
 // declared result type, so a law can bind a query whose result carries a
 // mutable backing store rather than a scalar.
-func receiptExactQuerySchemaFixtureOf[R any](t testing.TB, freezer SemanticKey) (*Schema, *FactorSlot[uint64], *RuleSlot[uint64, ruleUnit], SchemaWriteSlot[uint64], *QuerySlot[R]) {
+func receiptExactQuerySchemaFixtureOf[R any](t testing.TB, freezer identity.SemanticKey) (*Schema, *FactorSlot[uint64], *RuleSlot[uint64, ruleUnit], SchemaWriteSlot[uint64], *QuerySlot[R]) {
 	t.Helper()
 	builder := NewSchema()
 	factor, factorOK := DeclareFactorSlot[uint64](builder, coldKey(948_001))
@@ -241,7 +242,7 @@ func dualExactQueryReceiptFixture(t testing.TB) (*Schema, *FactorSlot[uint64], *
 		t.Fatal("dual exact query schema")
 	}
 	batch := equation.NewBatch()
-	site, siteOK := batch.AdmitSite(coldKey(948_046).compositionKey(), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent)
+	site, siteOK := batch.AdmitSite(compositionKeyOf(coldKey(948_046)), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent)
 	if !siteOK {
 		t.Fatal("dual exact query batch")
 	}
@@ -255,7 +256,7 @@ func dualExactQueryReceiptFixture(t testing.TB) (*Schema, *FactorSlot[uint64], *
 	topology, topologyOK := equation.SealTopology(schema.cold, equation.TopologySpec{
 		Batch: batch,
 		Rules: []equation.RuleInstance{{
-			Schema: schema.ruleSemanticAt(0), OperandFamily: unitOperandFamily.compositionKey(), Occurrence: occurrence, Operand: operand,
+			Schema: schema.ruleSemanticAt(0), OperandFamily: compositionKeyOf(unitOperandFamily), Occurrence: occurrence, Operand: operand,
 			Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: schema.factorSemanticAt(0), Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}},
 		}},
 		Points: []equation.PointSpec{{Site: site}},

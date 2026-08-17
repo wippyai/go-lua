@@ -5,13 +5,10 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
-	"github.com/wippyai/go-lua/analysis/lua/semantics/exactkey"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/program/scalar"
 )
-
-const rejectedYieldMessage = "attempt to yield across a C-call boundary"
 
 // freezeSubedges seals the one Target-owned internal-application relation.
 // It resolves local route references by dense table coordinates only: a local
@@ -329,7 +326,14 @@ func (d *operationDraft) validateDirectArgumentOrigin(origin ArgumentOrigin, arg
 			return errors.New("fixed argument origin is not an owner ValueFormal")
 		}
 		destination, ok := argumentSegmentType(arguments, origin.Segment, origin.Index)
-		if !ok || !d.typeAssignable(d.input.types[origin.Source.Ordinal], destination) {
+		if !ok {
+			return errors.New("fixed argument origin is type-incompatible")
+		}
+		assignable, relationErr := d.typeAssignable(d.input.types[origin.Source.Ordinal], destination)
+		if relationErr != nil {
+			return fmt.Errorf("fixed argument origin type relation: %w", relationErr)
+		}
+		if !assignable {
 			return errors.New("fixed argument origin is type-incompatible")
 		}
 		return nil
@@ -587,7 +591,11 @@ func (d *operationDraft) validateResultPlacement(result, destination valuesDraft
 			return errors.New("invalid fixed placement")
 		}
 		for index := range result.types {
-			if !d.typeAssignable(result.types[index], destination.types[uint32(index)+offset]) {
+			assignable, relationErr := d.typeAssignable(result.types[index], destination.types[uint32(index)+offset])
+			if relationErr != nil {
+				return fmt.Errorf("fixed placement type relation: %w", relationErr)
+			}
+			if !assignable {
 				return errors.New("fixed placement rejects result type")
 			}
 		}
@@ -602,11 +610,9 @@ func pureValuesTail(values valuesDraft) bool {
 }
 
 func (d *operationDraft) canonicalRejectedYield(values valuesDraft) bool {
-	want, err := d.freezeValues(ValuesSpec{
-		Fixed: []typ.Type{typ.LiteralString(rejectedYieldMessage)},
-		Tail:  ValuesClosed,
-	}, false)
-	return err == nil && compareValues(values, want) == 0
+	// The Lua-domain authoring layer owns the exact rejection literal. Target
+	// retains only the structural route shape here.
+	return values.tail == ValuesClosed && len(values.types) == 1 && len(values.suffix) == 0 && d.hasType(values.types[0])
 }
 
 func validateSubedgeEntries(edges []subedgeDraft, callbacks []callbackDraft) error {
@@ -837,7 +843,7 @@ func validSubedgeFamily(family SubedgeFamily) bool {
 func zeroLiteral(value keyspace.LiteralValue) bool { return value == (keyspace.LiteralValue{}) }
 
 func normalizeRequiredExactKey(value keyspace.LiteralValue) (keyspace.LiteralValue, error) {
-	normalized, ok := exactkey.Normalize(value)
+	normalized, ok := scalar.Normalize(value)
 	if !ok {
 		return keyspace.LiteralValue{}, errors.New("not an exact Lua key")
 	}
@@ -854,7 +860,7 @@ func emptySubedgeCallee(callee SubedgeCalleeSpec) bool {
 }
 
 func emptyValuesSpec(values ValuesSpec) bool {
-	return len(values.Fixed) == 0 && values.Tail == 0 && values.Var == 0 && values.TailType == nil && len(values.Suffix) == 0
+	return len(values.Fixed) == 0 && values.Tail == 0 && values.Var == 0 && !values.TailType.Available() && len(values.Suffix) == 0
 }
 
 func compareSubedgeIdentity(left, right subedgeDraft) int {
@@ -921,7 +927,7 @@ func compareNormalizedKey(left, right keyspace.LiteralValue) int {
 	if zeroLiteral(right) {
 		return 1
 	}
-	order, ok := exactkey.Compare(left, right)
+	order, ok := scalar.Compare(left, right)
 	if !ok {
 		panic("target: unnormalized exact key")
 	}

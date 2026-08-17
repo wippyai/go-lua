@@ -5,6 +5,7 @@ import (
 
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 )
 
 // InitialRootCount returns every sealed Target boot aggregate.
@@ -439,7 +440,7 @@ func (c *Contract) ValuesVarCount(op Operation) int {
 }
 
 // ValuesVarType returns the total sealed class for one operation-local open
-// Values port. Unconstrained ports use the ABI default typ.Any class.
+// Values port. Unconstrained ports use the ABI default neutral Any class.
 func (c *Contract) ValuesVarType(op Operation, variable ValuesVar) (Type, bool) {
 	row, ok := c.operation(op)
 	if !ok || uint64(variable) >= uint64(row.valuesVars) || row.valuesTypes.len() != int(row.valuesVars) {
@@ -499,7 +500,7 @@ func (c *Contract) ValuesTail(values Values) (ValuesTail, ValuesVar, bool) {
 }
 
 // ValuesTailType returns the sealed class of one open ValuesVariable tail.
-// An omitted authored class is sealed as typ.Any. Closed and unknown tails do
+// An omitted authored class is sealed as neutral Any. Closed and unknown tails do
 // not carry an authored class and return found=false.
 func (c *Contract) ValuesTailType(values Values) (Type, bool) {
 	row, ok := c.valuesRow(values)
@@ -1752,13 +1753,15 @@ func (c *Contract) ProducedTypeValueCapture(op Operation, outcome, produced int)
 	return ValueFormal(capture.ordinal), true
 }
 
-// TypeBytes is deliberately cold: it returns an ownership-isolated copy of
-// the frozen scoped canonical type bytes.
-func (c *Contract) TypeBytes(typ Type) ([]byte, bool) {
+// TypeDeclaration returns the complete neutral declaration retained by the
+// sealed target type row. It preserves primitive atoms and formal-scope
+// framing; domain consumers pass this value to their explicit
+// schema/typecontract semantic adapter.
+func (c *Contract) TypeDeclaration(typ Type) (schematype.Type, bool) {
 	if c == nil || typ == 0 || uint64(typ) > uint64(len(c.types)) {
-		return nil, false
+		return schematype.Type{}, false
 	}
-	return append([]byte(nil), c.types[uint32(typ)-1].bytes...), true
+	return c.types[uint32(typ)-1].declaration, true
 }
 
 func (r indexRange) len() int { return int(r.end - r.start) }

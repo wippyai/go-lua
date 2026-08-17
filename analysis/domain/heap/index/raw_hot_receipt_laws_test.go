@@ -3,10 +3,12 @@ package index_test
 import (
 	"context"
 	"crypto/sha256"
+	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"testing"
 
 	calldomain "github.com/wippyai/go-lua/analysis/domain/call"
 	callowner "github.com/wippyai/go-lua/analysis/domain/call/owner"
+	"github.com/wippyai/go-lua/analysis/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
 	indexdomain "github.com/wippyai/go-lua/analysis/domain/heap/index"
 	heapowner "github.com/wippyai/go-lua/analysis/domain/heap/owner"
@@ -15,19 +17,19 @@ import (
 	packowner "github.com/wippyai/go-lua/analysis/domain/pack/owner"
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
 	staticdomain "github.com/wippyai/go-lua/analysis/domain/static"
-	"github.com/wippyai/go-lua/analysis/domain/type/authority"
+	typeauthority "github.com/wippyai/go-lua/analysis/domain/type/authority"
+	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
+
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
-	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
-	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 type rawHotQueryObservation struct {
@@ -600,7 +602,7 @@ return b.source`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	contract, err := target.Seal(&target.Spec{Operations: []target.OperationSpec{{
+	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []target.OperationSpec{{
 		Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"require"}}},
 		Input:    target.ValuesSpec{Tail: target.ValuesClosed},
 		Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}},
@@ -613,7 +615,7 @@ return b.source`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, receiptOK := grammar.Global()
+	receipt, receiptOK := composite.Global()
 	if !receiptOK {
 		t.Fatal("program schema")
 	}
@@ -623,7 +625,7 @@ return b.source`)})
 	if !shardOK || !moduleOK || !programIDOK {
 		t.Fatal("mount identity")
 	}
-	artifact, failure := schemaadapter.CompileDetailed(program.TransformerInput(), receipt)
+	artifact, failure := composite.CompileArtifactDetailed(program, receipt)
 	if failure.Available() || artifact == nil {
 		t.Fatalf("artifact: %v", failure)
 	}
@@ -795,7 +797,7 @@ func (seed rawHotHeapSeed) rawHotSeedValue() rawHotSeed  { return seed.rawHotSee
 func rawHotScalarReceipt(artifact *programartifact.Artifact, schemaID [32]byte, getCapability, setCapability engine.RuleSlotCapability, getPoint, setPoint, getID, setID, seedPoint identity.ContentID, valueSeeds, heapSeeds []rawHotSeed) (*engine.ArtifactScalarReceipt, bool) {
 	// Observe the read only after the write. A pre-write read would let the
 	// cross-root non-interference law pass even if RawSet later fanned out.
-	points := []engine.ArtifactScalarPoint{{ID: seedPoint, Initial: true}, {ID: setPoint}, {ID: getPoint}}
+	points := []rows.ArtifactScalarPoint{{ID: seedPoint, Initial: true}, {ID: setPoint}, {ID: getPoint}}
 	regionID, bodyID := rawHotID(60), rawHotID(61)
 	members := make([]identity.ContentID, len(points))
 	for index, point := range points {
@@ -803,21 +805,21 @@ func rawHotScalarReceipt(artifact *programartifact.Artifact, schemaID [32]byte, 
 	}
 	type scalarRuleBinding struct {
 		capability engine.RuleSlotCapability
-		rule       engine.ArtifactScalarRule
+		rule       rows.ArtifactScalarRule
 	}
 	rules := make([]scalarRuleBinding, 0, len(valueSeeds)+len(heapSeeds)+2)
 	for _, seed := range append(append([]rawHotSeed(nil), valueSeeds...), heapSeeds...) {
-		rules = append(rules, scalarRuleBinding{capability: seed.Capability, rule: engine.ArtifactScalarRule{Stage: engine.ArtifactRuleStageBase, Point: seed.Point, ID: seed.Occurrence}})
+		rules = append(rules, scalarRuleBinding{capability: seed.Capability, rule: rows.ArtifactScalarRule{Stage: rows.ArtifactRuleStageBase, Point: seed.Point, ID: seed.Occurrence}})
 	}
 	rules = append(rules,
-		scalarRuleBinding{capability: getCapability, rule: engine.ArtifactScalarRule{Stage: engine.ArtifactRuleStageLocal, Point: getPoint, Input: setPoint, ID: getID}},
-		scalarRuleBinding{capability: setCapability, rule: engine.ArtifactScalarRule{Stage: engine.ArtifactRuleStageLocal, Point: setPoint, Input: seedPoint, ID: setID}},
+		scalarRuleBinding{capability: getCapability, rule: rows.ArtifactScalarRule{Stage: rows.ArtifactRuleStageLocal, Point: getPoint, Input: setPoint, ID: getID}},
+		scalarRuleBinding{capability: setCapability, rule: rows.ArtifactScalarRule{Stage: rows.ArtifactRuleStageLocal, Point: setPoint, Input: seedPoint, ID: setID}},
 	)
-	spec, specOK := engine.NewArtifactScalarSpec(artifact.ID(), artifact.CompileKey().ProgramID(), identity.ContentID(schemaID), engine.ArtifactScalarCapacity{Roles: len(rules), Points: len(points), Transfers: 2, Regions: 1, Events: 5, Rules: len(rules), Bodies: 1})
+	spec, specOK := rows.NewArtifactScalarSpec(artifact.ID(), artifact.CompileKey().ProgramID(), identity.ContentID(schemaID), rows.ArtifactScalarCapacity{Roles: len(rules), Points: len(points), Transfers: 2, Regions: 1, Events: 5, Rules: len(rules), Bodies: 1})
 	if !specOK {
 		return nil, false
 	}
-	roleByCapability := make(map[engine.RuleSlotCapability]engine.ArtifactScalarRole, len(rules))
+	roleByCapability := make(map[engine.RuleSlotCapability]rows.ArtifactScalarRole, len(rules))
 	roleOrder := make([]scalarRuleBinding, 0, len(rules))
 	for _, row := range rules {
 		if _, declared := roleByCapability[row.capability]; declared {
@@ -835,13 +837,13 @@ func rawHotScalarReceipt(artifact *programartifact.Artifact, schemaID [32]byte, 
 			return nil, false
 		}
 	}
-	if _, ok := spec.AddTransfer(engine.ArtifactScalarTransfer{ID: rawHotID(0xD0), From: seedPoint, To: setPoint, Full: true}); !ok {
+	if _, ok := spec.AddTransfer(rows.ArtifactScalarTransfer{ID: rawHotID(0xD0), From: seedPoint, To: setPoint, Full: true}); !ok {
 		return nil, false
 	}
-	if _, ok := spec.AddTransfer(engine.ArtifactScalarTransfer{ID: rawHotID(0xD1), From: setPoint, To: getPoint, Full: true}); !ok {
+	if _, ok := spec.AddTransfer(rows.ArtifactScalarTransfer{ID: rawHotID(0xD1), From: setPoint, To: getPoint, Full: true}); !ok {
 		return nil, false
 	}
-	region, regionOK := spec.AddRegion(engine.ArtifactScalarRegion{ID: regionID, Head: members[0]})
+	region, regionOK := spec.AddRegion(rows.ArtifactScalarRegion{ID: regionID, Head: members[0]})
 	if !regionOK {
 		return nil, false
 	}
@@ -850,12 +852,12 @@ func rawHotScalarReceipt(artifact *programartifact.Artifact, schemaID [32]byte, 
 			return nil, false
 		}
 	}
-	for _, event := range []engine.ArtifactScalarEvent{{Kind: engine.ArtifactEventEnter, Region: regionID}, {Kind: engine.ArtifactEventPoint, Point: members[0]}, {Kind: engine.ArtifactEventPoint, Point: members[1]}, {Kind: engine.ArtifactEventPoint, Point: members[2]}, {Kind: engine.ArtifactEventExit, Region: regionID}} {
+	for _, event := range []rows.ArtifactScalarEvent{{Kind: rows.ArtifactEventEnter, Region: regionID}, {Kind: rows.ArtifactEventPoint, Point: members[0]}, {Kind: rows.ArtifactEventPoint, Point: members[1]}, {Kind: rows.ArtifactEventPoint, Point: members[2]}, {Kind: rows.ArtifactEventExit, Region: regionID}} {
 		if !spec.AddEvent(event) {
 			return nil, false
 		}
 	}
-	body, bodyOK := spec.AddBody(engine.ArtifactScalarBody{ID: bodyID, Context: rawHotID(0xE0), SemanticEntry: rawHotID(0xE1)})
+	body, bodyOK := spec.AddBody(rows.ArtifactScalarBody{ID: bodyID, Context: rawHotID(0xE0), SemanticEntry: rawHotID(0xE1)})
 	if !bodyOK || !spec.AddBodyEntry(body, members[0]) || !spec.AddBodyExit(body, members[len(members)-1]) {
 		return nil, false
 	}
@@ -865,7 +867,7 @@ func rawHotScalarReceipt(artifact *programartifact.Artifact, schemaID [32]byte, 
 			return nil, false
 		}
 	}
-	template, templateOK := engine.NewArtifactScalarTemplate(spec)
+	template, templateOK := rows.NewArtifactScalarTemplate(spec)
 	binding, bindingOK := engine.NewArtifactScalarBinding(template)
 	if !templateOK || !bindingOK {
 		return nil, false
@@ -878,7 +880,7 @@ func rawHotScalarReceipt(artifact *programartifact.Artifact, schemaID [32]byte, 
 	return engine.NewArtifactScalarReceipt(binding)
 }
 
-func rawHotKey(value byte) engine.SemanticKey {
+func rawHotKey(value byte) identity.SemanticKey {
 	return rawHotSemantic(value)
 }
 
@@ -887,8 +889,8 @@ func rawHotID(value byte) identity.ContentID {
 	return identity.ContentID(digest)
 }
 
-func rawHotSemantic(value byte) engine.SemanticKey {
+func rawHotSemantic(value byte) identity.SemanticKey {
 	digest := sha256.Sum256([]byte{0xE2, value})
-	key, _ := engine.NewSemanticKey(digest, 1)
+	key, _ := identity.NewSemanticKey(digest, 1)
 	return key
 }

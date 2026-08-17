@@ -93,6 +93,19 @@ func emitStaticCrossParents(
 	if result == nil || resolver == nil {
 		return errors.New("program/flow/containment: invalid Static cross-owner emitter")
 	}
+	// Scope roots are ranked within their lexical Body and relation family;
+	// the rank is a semantic sibling slot, never a published Term ordinal.
+	scopeRanks := make(map[keyspace.Term]uint32)
+	nextScopeRank := make(map[keyspace.Term]uint32)
+	scopeEdge := func(child, parent keyspace.Term) kernelEdge {
+		rank, ok := scopeRanks[child]
+		if !ok {
+			nextScopeRank[parent]++
+			rank = nextScopeRank[parent]
+			scopeRanks[child] = rank
+		}
+		return kernelEdge{child: child, parent: parent, role: structuralRoleStaticScope, rank: rank}
+	}
 
 	// Type parameters have an explicit declared owner. Static's local proof
 	// does not own this declaration edge, so it is installed here unless a
@@ -174,7 +187,7 @@ func emitStaticCrossParents(
 		if !ok {
 			return errors.New("program/flow/containment: TypeFunction scope has no lexical Body")
 		}
-		result.edges = append(result.edges, kernelEdge{child: term, parent: body})
+		result.edges = append(result.edges, scopeEdge(term, body))
 	}
 
 	typeOfs := staticView.Operators().TypeOfs()
@@ -195,7 +208,7 @@ func emitStaticCrossParents(
 		if !ok {
 			return errors.New("program/flow/containment: TypeOf scope has no lexical Body")
 		}
-		result.edges = append(result.edges, kernelEdge{child: term, parent: body})
+		result.edges = append(result.edges, scopeEdge(term, body))
 	}
 
 	annotations := staticView.Operands().Annotations()

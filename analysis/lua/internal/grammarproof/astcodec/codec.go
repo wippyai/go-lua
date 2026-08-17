@@ -7,8 +7,8 @@
 package astcodec
 
 // FieldState is the closed state vocabulary used by grammarproof traces.
-// Values intentionally match grammarproof.FieldState without importing the
-// parent package (which would create an import cycle).
+// Values are kept independent of the parent proof package so this codec does
+// not need to import it (which would create an import cycle).
 type FieldState uint8
 
 const (

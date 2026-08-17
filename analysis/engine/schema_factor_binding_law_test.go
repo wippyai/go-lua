@@ -1,8 +1,12 @@
 package engine
 
-import "testing"
+import (
+	"testing"
 
-func factorOnlySlotSchema(t testing.TB, semantic SemanticKey) (*Schema, *FactorSlot[uint64]) {
+	"github.com/wippyai/go-lua/analysis/identity"
+)
+
+func factorOnlySlotSchema(t testing.TB, semantic identity.SemanticKey) (*Schema, *FactorSlot[uint64]) {
 	t.Helper()
 	builder := NewSchema()
 	factor, factorOK := DeclareFactorSlot[uint64](builder, semantic)

@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/factbinding"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 	"github.com/wippyai/go-lua/analysis/engine/internal/guard"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 type readFormKind uint8
@@ -67,7 +68,7 @@ type boundFactor[K ~uint32 | ~uint64, V any] struct {
 }
 
 type runtimeFactor interface {
-	semantic() SemanticKey
+	semantic() identity.SemanticKey
 	operation() carrier.FactorOperation
 	runtimeSlot() (shape.Slot, bool)
 	carryTargetsFor(equation.RuleMember) ([]carrier.Target, bool)
@@ -118,13 +119,6 @@ type schemaRuleRef struct {
 
 func (ref *schemaRuleRef) valid() bool {
 	return ref != nil && ref.schema != nil && ref.schema.Available() && ref.schema.ruleSemanticAt(ref.ordinal).Available()
-}
-
-func (ref *schemaRuleRef) key() composition.Key {
-	if !ref.valid() {
-		return composition.Key{}
-	}
-	return ref.schema.ruleSemanticAt(ref.ordinal)
 }
 
 func (ref *schemaRuleRef) shape() (composition.RuleShape, bool) {
@@ -1067,10 +1061,6 @@ func exactReadDescriptorSurface(descriptor factorRuntimeDescriptor, local uint64
 	return equation.Surface{Factor: descriptor.semantic, Form: equation.SurfaceReadExact, Local: local}
 }
 
-func exactReadReceiptSurface(receipt factorRuntimeReceipt, local uint64) equation.Surface {
-	return equation.Surface{Factor: receipt.semantic, Form: equation.SurfaceReadExact, Local: local}
-}
-
 func exactWriteReceiptSurface(receipt factorRuntimeReceipt, local uint64) equation.Surface {
 	return equation.Surface{Factor: receipt.semantic, Form: equation.SurfaceWriteExact, Local: local, Mode: equation.TargetModeStrong}
 }
@@ -1607,9 +1597,9 @@ func sameTargetVector(left, right []boundTarget) bool {
 	return !lessTargetVector(left, right) && !lessTargetVector(right, left)
 }
 
-func (bound *boundFactor[K, V]) semantic() SemanticKey {
+func (bound *boundFactor[K, V]) semantic() identity.SemanticKey {
 	if bound == nil || bound.implementation == nil || !bound.implementation.descriptor.valid() {
-		return SemanticKey{}
+		return identity.SemanticKey{}
 	}
 	return semanticKeyFromComposition(bound.implementation.descriptor.semantic)
 }
@@ -1939,11 +1929,11 @@ func prepareRuntimeComposition(factors []runtimeFactor, guards *guard.Manager) (
 	}
 	ordered := append([]runtimeFactor(nil), factors...)
 	sort.Slice(ordered, func(left, right int) bool {
-		return compareSemanticKey(ordered[left].semantic(), ordered[right].semantic()) < 0
+		return identity.CompareSemanticKey(ordered[left].semantic(), ordered[right].semantic()) < 0
 	})
 	operations := make([]carrier.FactorOperation, len(ordered))
 	for index, factor := range ordered {
-		if factor == nil || !factor.semantic().Available() || index > 0 && compareSemanticKey(ordered[index-1].semantic(), factor.semantic()) >= 0 {
+		if factor == nil || !factor.semantic().Available() || index > 0 && identity.CompareSemanticKey(ordered[index-1].semantic(), factor.semantic()) >= 0 {
 			return nil, nil, false
 		}
 		operations[index] = factor.operation()

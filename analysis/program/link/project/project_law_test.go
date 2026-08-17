@@ -3,6 +3,7 @@ package project
 import (
 	"testing"
 
+	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program"
@@ -627,6 +628,7 @@ func projectDraft(t testing.TB, modules []Module) *Draft {
 func projectTarget(t testing.TB, root string) *target.Contract {
 	t.Helper()
 	contract, err := target.Seal(&target.Spec{
+		Semantics:    domaincontract.NewSemantics(),
 		InitialRoots: []target.InitialRootSpec{{Identity: root, Shape: target.BootShapeSpec{Aggregate: target.BootAggregateTable, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: root}}}},
 		InitialEntries: []target.InitialEntrySpec{
 			{Root: root, Key: targetStringKey("_G"), Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: root}, Mutability: target.InitialMutable},

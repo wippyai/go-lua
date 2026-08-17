@@ -102,7 +102,7 @@ type CompileReason uint16
 const (
 	CompileReasonInvalid CompileReason = iota
 	CompileReasonProgramUnavailable
-	CompileReasonGrammarAuthorityUnavailable
+	CompileReasonGrammarUnavailable
 	CompileReasonCompileKeyUnavailable
 	CompileReasonRegionUnavailable
 	CompileReasonRegionDuplicate
@@ -203,8 +203,8 @@ func (reason CompileReason) String() string {
 	switch reason {
 	case CompileReasonProgramUnavailable:
 		return "program-unavailable"
-	case CompileReasonGrammarAuthorityUnavailable:
-		return "grammar-authority-unavailable"
+	case CompileReasonGrammarUnavailable:
+		return "grammar-unavailable"
 	case CompileReasonCompileKeyUnavailable:
 		return "compile-key-unavailable"
 	case CompileReasonRegionUnavailable:
@@ -390,7 +390,7 @@ func (reason CompileReason) String() string {
 	}
 }
 
-// CompileFailure is an immutable failure receipt. A zero value means success.
+// CompileFailure is an immutable compilation failure. A zero value means success.
 // Row and Subrow are stable positions in the exact parent denominator only;
 // no Program/Flow proof or builder escapes.
 type CompileFailure struct {

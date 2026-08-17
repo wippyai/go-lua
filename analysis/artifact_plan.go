@@ -2,10 +2,12 @@ package analysis
 
 import (
 	"crypto/sha256"
+	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"sync"
 
 	calldomain "github.com/wippyai/go-lua/analysis/domain/call"
 	callactivation "github.com/wippyai/go-lua/analysis/domain/call/activation"
+	"github.com/wippyai/go-lua/analysis/domain/composite"
 	effectfactor "github.com/wippyai/go-lua/analysis/domain/effect/factor"
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
 	allocationcatalog "github.com/wippyai/go-lua/analysis/domain/heap/allocation/catalog"
@@ -15,13 +17,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/type/authority"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/analysis/engine"
+
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
-	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/schema/grammar"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
@@ -44,8 +45,8 @@ type receiptAssemblyDiagnostic struct {
 	commit     engine.ReceiptCommitFailure
 }
 
-func (state *compiledState) beginReceiptAssembly() (*engine.ReceiptAssembly, *programBinding, *artifactQueryPlan, receiptAssemblyDiagnostic, bool) {
-	if state == nil || state.artifacts == nil || !state.receipt.Available() || state.binding == nil || state.binding.binding == nil || !state.binding.binding.Sealed() {
+func (state *compiledState) beginReceiptAssembly() (*engine.ReceiptAssembly, *composite.ProgramBinding, *artifactQueryPlan, receiptAssemblyDiagnostic, bool) {
+	if state == nil || state.artifacts == nil || !state.receipt.Available() || state.binding == nil || state.binding.SchemaBinding() == nil || !state.binding.SchemaBinding().Sealed() {
 		return nil, nil, nil, receiptAssemblyDiagnostic{}, false
 	}
 	binding := state.binding
@@ -74,7 +75,7 @@ func (state *compiledState) beginReceiptAssembly() (*engine.ReceiptAssembly, *pr
 		}
 		mounts = append(mounts, mounted)
 	}
-	assembly, loweringFailure, assembled := engine.BeginMountedArtifactReceiptAssemblyWithFailure(binding.binding, mounts, witness)
+	assembly, loweringFailure, assembled := engine.BeginMountedArtifactReceiptAssemblyWithFailure(binding.SchemaBinding(), mounts, witness)
 	if !assembled {
 		return nil, nil, nil, receiptAssemblyDiagnostic{stage: AnalyzeDiagnosticReceiptStageLowering, lowering: loweringFailure}, false
 	}
@@ -83,11 +84,11 @@ func (state *compiledState) beginReceiptAssembly() (*engine.ReceiptAssembly, *pr
 		assembly.Abort()
 		return nil, nil, nil, receiptAssemblyDiagnostic{stage: AnalyzeDiagnosticReceiptStageQueryPlan}, false
 	}
-	if !binding.attachLinkBootstrapRules(assembly, valueIDs, heapIDs) {
+	if !attachLinkBootstrapRules(binding, assembly, valueIDs, heapIDs) {
 		assembly.Abort()
 		return nil, nil, nil, receiptAssemblyDiagnostic{stage: AnalyzeDiagnosticReceiptStageBootstrapRules}, false
 	}
-	artifactRule, artifactRulesOK := binding.attachArtifactRules(assembly, state.artifacts.mounts)
+	artifactRule, artifactRulesOK := attachArtifactRules(binding, assembly, state.artifacts.mounts)
 	if !artifactRulesOK {
 		assembly.Abort()
 		return nil, nil, nil, receiptAssemblyDiagnostic{stage: AnalyzeDiagnosticReceiptStageArtifactRules, rule: artifactRule}, false
@@ -129,14 +130,14 @@ func (state *compiledState) beginReceiptAssembly() (*engine.ReceiptAssembly, *pr
 
 type artifactScalarRoleBinding struct {
 	program programartifact.RuleRole
-	scalar  engine.ArtifactScalarRole
+	scalar  rows.ArtifactScalarRole
 }
 
 // artifactScalarRoleDirectory is immutable Program-template metadata. It
 // contains no Link-local capability and is shared with the template cache.
 type artifactScalarRoleDirectory struct{ rows []artifactScalarRoleBinding }
 
-func (directory *artifactScalarRoleDirectory) role(programRole programartifact.RuleRole) (engine.ArtifactScalarRole, bool) {
+func (directory *artifactScalarRoleDirectory) role(programRole programartifact.RuleRole) (rows.ArtifactScalarRole, bool) {
 	if directory != nil {
 		for _, row := range directory.rows {
 			if row.program == programRole {
@@ -144,7 +145,7 @@ func (directory *artifactScalarRoleDirectory) role(programRole programartifact.R
 			}
 		}
 	}
-	return engine.ArtifactScalarRole{}, false
+	return rows.ArtifactScalarRole{}, false
 }
 
 func artifactScalarRoleSemantic(artifact identity.ContentID, role programartifact.RuleRole) identity.ContentID {
@@ -160,11 +161,15 @@ func artifactScalarRoleSemantic(artifact identity.ContentID, role programartifac
 
 // newEngineArtifactScalarTemplate is the sole Program→Engine structural
 // boundary. It runs once while publishing the content-addressed cache entry.
-func newEngineArtifactScalarTemplate(artifact *programartifact.Artifact) (*engine.ArtifactScalarTemplate, *artifactScalarRoleDirectory, bool) {
+func newEngineArtifactScalarTemplate(artifact *programartifact.Artifact) (*rows.ArtifactScalarTemplate, *artifactScalarRoleDirectory, bool) {
 	if artifact == nil || !artifact.Available() {
 		return nil, nil, false
 	}
-	snapshot, lowered := ingress.Lower(artifact)
+	structural, structuralOK := composite.StructureVocabulary()
+	if !structuralOK {
+		return nil, nil, false
+	}
+	snapshot, lowered := ingress.Lower(artifact, structural)
 	if !lowered {
 		return nil, nil, false
 	}
@@ -189,7 +194,7 @@ func newEngineArtifactScalarTemplate(artifact *programartifact.Artifact) (*engin
 		}
 		usedRoles[programartifact.RuleRole(row.Tag())] = struct{}{}
 	}
-	spec, specOK := engine.NewArtifactScalarSpec(snapshot.ArtifactID(), snapshot.ProgramID(), snapshot.SchemaID(), engine.ArtifactScalarCapacity{
+	spec, specOK := rows.NewArtifactScalarSpec(snapshot.ArtifactID(), snapshot.ProgramID(), snapshot.SchemaID(), rows.ArtifactScalarCapacity{
 		Roles: len(usedRoles), Points: snapshot.PointCount(), Edges: snapshot.StructuralEdgeCount(), Transfers: snapshot.LocalTransferCount(), Regions: snapshot.RegionCount(), Events: snapshot.EventCount(), Rules: snapshot.RulePlacementCount(), Bodies: snapshot.BodyTransportCount(), Functions: snapshot.FunctionBoundaryCount(),
 	})
 	if !specOK {
@@ -216,7 +221,7 @@ func newEngineArtifactScalarTemplate(artifact *programartifact.Artifact) (*engin
 		if !ok || !row.ID().Available() {
 			return nil, nil, false
 		}
-		point, pointOK := spec.AddPoint(engine.ArtifactScalarPoint{ID: row.ID(), Initial: row.Initial()})
+		point, pointOK := spec.AddPoint(rows.ArtifactScalarPoint{ID: row.ID(), Initial: row.Initial()})
 		if !pointOK {
 			return nil, nil, false
 		}
@@ -244,7 +249,7 @@ func newEngineArtifactScalarTemplate(artifact *programartifact.Artifact) (*engin
 		if !armOK {
 			return nil, nil, false
 		}
-		edge, edgeOK := spec.AddEdge(engine.ArtifactScalarEdge{ID: row.ID(), From: row.From(), To: row.To(), Route: row.RouteID(), Guard: guard, Decision: decision, Component: row.ComponentID(), Mu: mu, Reset: reset, Arm: arm, Guarded: guarded, Truth: truth, HasReset: hasReset})
+		edge, edgeOK := spec.AddEdge(rows.ArtifactScalarEdge{ID: row.ID(), From: row.From(), To: row.To(), Route: row.RouteID(), Guard: guard, Decision: decision, Component: row.ComponentID(), Mu: mu, Reset: reset, Arm: arm, Guarded: guarded, Truth: truth, HasReset: hasReset})
 		if !edgeOK {
 			return nil, nil, false
 		}
@@ -260,7 +265,7 @@ func newEngineArtifactScalarTemplate(artifact *programartifact.Artifact) (*engin
 		if !ok {
 			return nil, nil, false
 		}
-		transfer, transferOK := spec.AddTransfer(engine.ArtifactScalarTransfer{ID: row.ID(), From: row.From(), To: row.To(), Full: row.Full()})
+		transfer, transferOK := spec.AddTransfer(rows.ArtifactScalarTransfer{ID: row.ID(), From: row.From(), To: row.To(), Full: row.Full()})
 		if !transferOK {
 			return nil, nil, false
 		}
@@ -277,7 +282,7 @@ func newEngineArtifactScalarTemplate(artifact *programartifact.Artifact) (*engin
 		if !ok {
 			return nil, nil, false
 		}
-		region, regionOK := spec.AddRegion(engine.ArtifactScalarRegion{ID: row.ID(), Head: row.Head(), Parent: row.ParentID(), Cyclic: row.Cyclic()})
+		region, regionOK := spec.AddRegion(rows.ArtifactScalarRegion{ID: row.ID(), Head: row.Head(), Parent: row.ParentID(), Cyclic: row.Cyclic()})
 		if !regionOK {
 			return nil, nil, false
 		}
@@ -294,7 +299,7 @@ func newEngineArtifactScalarTemplate(artifact *programartifact.Artifact) (*engin
 			return nil, nil, false
 		}
 		kind, kindOK := engineEventKind(row.Kind())
-		if !kindOK || !spec.AddEvent(engine.ArtifactScalarEvent{Kind: kind, Region: row.RegionID(), Point: row.PointID()}) {
+		if !kindOK || !spec.AddEvent(rows.ArtifactScalarEvent{Kind: kind, Region: row.RegionID(), Point: row.PointID()}) {
 			return nil, nil, false
 		}
 	}
@@ -303,7 +308,7 @@ func newEngineArtifactScalarTemplate(artifact *programartifact.Artifact) (*engin
 		role := programartifact.RuleRole(row.Tag())
 		scalarRole, scalarRoleOK := directory.role(role)
 		stage, stageOK := engineArtifactRuleStage(role, programartifact.RuleStage(row.Stage()))
-		if !ok || !scalarRoleOK || !stageOK || !spec.AddRule(engine.ArtifactScalarRule{Role: scalarRole, Stage: stage, Point: row.PointID(), Input: row.InputPointID(), ID: row.OccurrenceID(), Route: row.PredecessorRouteID()}) {
+		if !ok || !scalarRoleOK || !stageOK || !spec.AddRule(rows.ArtifactScalarRule{Role: scalarRole, Stage: stage, Point: row.PointID(), Input: row.InputPointID(), ID: row.OccurrenceID(), Route: row.PredecessorRouteID()}) {
 			return nil, nil, false
 		}
 	}
@@ -312,7 +317,7 @@ func newEngineArtifactScalarTemplate(artifact *programartifact.Artifact) (*engin
 		if !ok {
 			return nil, nil, false
 		}
-		body, bodyOK := spec.AddBody(engine.ArtifactScalarBody{
+		body, bodyOK := spec.AddBody(rows.ArtifactScalarBody{
 			ID: row.BodyID(), Context: row.ContextID(), SemanticEntry: row.SemanticEntryID(),
 			Callable: row.Callable(), Function: row.FunctionID(), CallFormal: row.CallFormalID(),
 		})
@@ -337,7 +342,7 @@ func newEngineArtifactScalarTemplate(artifact *programartifact.Artifact) (*engin
 		if !ok {
 			return nil, nil, false
 		}
-		function, functionOK := spec.AddFunction(engine.ArtifactScalarFunction{
+		function, functionOK := spec.AddFunction(rows.ArtifactScalarFunction{
 			ID: row.ID(), Body: row.BodyID(), BodyContext: row.BodyContextID(), Entry: row.EntryID(), CallFormal: row.CallFormalID(),
 		})
 		if !functionOK {
@@ -346,19 +351,19 @@ func newEngineArtifactScalarTemplate(artifact *programartifact.Artifact) (*engin
 		for inner := 0; inner < row.FormalCount(); inner++ {
 			port, portOK := row.FormalAt(inner)
 			position, positionOK := port.Position()
-			if !portOK || !positionOK || position != inner || !spec.AddFunctionFormal(function, engine.ArtifactScalarFormalPort{ID: port.ID(), Cell: port.CellID(), Storage: port.StorageCellID(), Position: uint32(position)}) {
+			if !portOK || !positionOK || position != inner || !spec.AddFunctionFormal(function, rows.ArtifactScalarFormalPort{ID: port.ID(), Cell: port.CellID(), Storage: port.StorageCellID(), Position: uint32(position)}) {
 				return nil, nil, false
 			}
 		}
 		if port, hasVararg := row.Vararg(); hasVararg {
-			if !spec.SetFunctionVararg(function, engine.ArtifactScalarVarargPort{ID: port.ID(), Cell: port.CellID()}) {
+			if !spec.SetFunctionVararg(function, rows.ArtifactScalarVarargPort{ID: port.ID(), Cell: port.CellID()}) {
 				return nil, nil, false
 			}
 		}
 		for inner := 0; inner < row.CaptureCount(); inner++ {
 			capture, captureOK := row.CaptureAt(inner)
 			position, positionOK := capture.Position()
-			if !captureOK || !positionOK || position != inner || !spec.AddFunctionCapture(function, engine.ArtifactScalarCapturePort{
+			if !captureOK || !positionOK || position != inner || !spec.AddFunctionCapture(function, rows.ArtifactScalarCapturePort{
 				ID: capture.ID(), Inner: capture.InnerCellID(), Outer: capture.OuterCellID(),
 				InnerBody: capture.InnerBodyID(), OuterBody: capture.OuterBodyID(), Position: uint32(position),
 			}) {
@@ -372,13 +377,13 @@ func newEngineArtifactScalarTemplate(artifact *programartifact.Artifact) (*engin
 			}
 		}
 	}
-	template, templateOK := engine.NewArtifactScalarTemplate(spec)
+	template, templateOK := rows.NewArtifactScalarTemplate(spec)
 	return template, directory, templateOK
 }
 
 // newEngineArtifactScalarReceipt binds only this Link's exact capabilities to
 // the cached neutral Program template; it never reopens structural rows.
-func newEngineArtifactScalarReceipt(template *engine.ArtifactScalarTemplate, roles *artifactScalarRoleDirectory, binding *programBinding) (*engine.ArtifactScalarReceipt, bool) {
+func newEngineArtifactScalarReceipt(template *rows.ArtifactScalarTemplate, roles *artifactScalarRoleDirectory, binding *composite.ProgramBinding) (*engine.ArtifactScalarReceipt, bool) {
 	if template == nil || !template.Available() || roles == nil || binding == nil {
 		return nil, false
 	}
@@ -387,7 +392,7 @@ func newEngineArtifactScalarReceipt(template *engine.ArtifactScalarTemplate, rol
 		return nil, false
 	}
 	for _, row := range roles.rows {
-		capability, capabilityOK := binding.mountedCapability(row.program)
+		capability, capabilityOK := mountedCapability(binding, row.program)
 		if !capabilityOK || !substitution.BindRole(row.scalar, capability) {
 			return nil, false
 		}
@@ -399,7 +404,7 @@ func newEngineArtifactScalarReceipt(template *engine.ArtifactScalarTemplate, rol
 // ProgramArtifact owns this closed pairing; a scalar caller cannot retag an
 // Effect rule as a different native Call cut and ask engine to infer it from
 // transport geometry.
-func engineArtifactRuleStage(role programartifact.RuleRole, stage programartifact.RuleStage) (engine.ArtifactRuleStage, bool) {
+func engineArtifactRuleStage(role programartifact.RuleRole, stage programartifact.RuleStage) (rows.ArtifactRuleStage, bool) {
 	want := programartifact.RuleStageInvalid
 	switch role {
 	case programartifact.RuleRoleValueSource, programartifact.RuleRolePackSource, programartifact.RuleRoleHeapIngress:
@@ -415,60 +420,60 @@ func engineArtifactRuleStage(role programartifact.RuleRole, stage programartifac
 	case programartifact.RuleRoleEffectSelected, programartifact.RuleRoleEffectOpaque, programartifact.RuleRoleEffectBody:
 		want = programartifact.RuleStageCallEffect
 	default:
-		return engine.ArtifactRuleStageInvalid, false
+		return rows.ArtifactRuleStageInvalid, false
 	}
 	if stage != want {
-		return engine.ArtifactRuleStageInvalid, false
+		return rows.ArtifactRuleStageInvalid, false
 	}
 	switch stage {
 	case programartifact.RuleStageBase:
-		return engine.ArtifactRuleStageBase, true
+		return rows.ArtifactRuleStageBase, true
 	case programartifact.RuleStageLocal:
-		return engine.ArtifactRuleStageLocal, true
+		return rows.ArtifactRuleStageLocal, true
 	case programartifact.RuleStageCallDispatch:
-		return engine.ArtifactRuleStageCallDispatch, true
+		return rows.ArtifactRuleStageCallDispatch, true
 	case programartifact.RuleStageCallSummary:
-		return engine.ArtifactRuleStageCallSummary, true
+		return rows.ArtifactRuleStageCallSummary, true
 	case programartifact.RuleStageCallEffect:
-		return engine.ArtifactRuleStageCallEffect, true
+		return rows.ArtifactRuleStageCallEffect, true
 	default:
-		return engine.ArtifactRuleStageInvalid, false
+		return rows.ArtifactRuleStageInvalid, false
 	}
 }
 
-func engineStructuralArm(arm ingress.StructuralArm) (engine.ArtifactStructuralArm, bool) {
+func engineStructuralArm(arm ingress.StructuralArm) (rows.ArtifactStructuralArm, bool) {
 	switch arm {
 	case ingress.StructuralArmLocal:
-		return engine.ArtifactStructuralArmLocal, true
+		return rows.ArtifactStructuralArmLocal, true
 	case ingress.StructuralArmResume:
-		return engine.ArtifactStructuralArmResume, true
+		return rows.ArtifactStructuralArmResume, true
 	case ingress.StructuralArmTrue:
-		return engine.ArtifactStructuralArmTrue, true
+		return rows.ArtifactStructuralArmTrue, true
 	case ingress.StructuralArmFalse:
-		return engine.ArtifactStructuralArmFalse, true
+		return rows.ArtifactStructuralArmFalse, true
 	case ingress.StructuralArmTail:
-		return engine.ArtifactStructuralArmTail, true
+		return rows.ArtifactStructuralArmTail, true
 	case ingress.StructuralArmThrow:
-		return engine.ArtifactStructuralArmThrow, true
+		return rows.ArtifactStructuralArmThrow, true
 	case ingress.StructuralArmYield:
-		return engine.ArtifactStructuralArmYield, true
+		return rows.ArtifactStructuralArmYield, true
 	case ingress.StructuralArmCancel:
-		return engine.ArtifactStructuralArmCancel, true
+		return rows.ArtifactStructuralArmCancel, true
 	default:
-		return engine.ArtifactStructuralArmInvalid, false
+		return rows.ArtifactStructuralArmInvalid, false
 	}
 }
 
-func engineEventKind(kind ingress.EventKind) (engine.ArtifactEventKind, bool) {
+func engineEventKind(kind ingress.EventKind) (rows.ArtifactEventKind, bool) {
 	switch kind {
 	case ingress.EventEnter:
-		return engine.ArtifactEventEnter, true
+		return rows.ArtifactEventEnter, true
 	case ingress.EventPoint:
-		return engine.ArtifactEventPoint, true
+		return rows.ArtifactEventPoint, true
 	case ingress.EventExit:
-		return engine.ArtifactEventExit, true
+		return rows.ArtifactEventExit, true
 	default:
-		return engine.ArtifactEventInvalid, false
+		return rows.ArtifactEventInvalid, false
 	}
 }
 
@@ -545,12 +550,12 @@ func applyReceiptAssemblyDiagnostic(diagnostics *AnalyzeDiagnostics, receipt rec
 	diagnostics.ReceiptCommitPublish, _ = receipt.commit.Publish()
 }
 
-func linkBootstrapWitness(state *compiledState, binding *programBinding) ([]identity.ContentID, []identity.ContentID, engine.LinkBootstrapWitness, bool) {
+func linkBootstrapWitness(state *compiledState, binding *composite.ProgramBinding) ([]identity.ContentID, []identity.ContentID, engine.LinkBootstrapWitness, bool) {
 	if state == nil || binding == nil || !state.sourceID.Available() {
 		return nil, nil, engine.LinkBootstrapWitness{}, false
 	}
-	valueIDs, valueIDsOK := binding.linkOccurrenceIDs(programartifact.RuleRoleValueBootstrap)
-	heapIDs, heapIDsOK := binding.linkOccurrenceIDs(programartifact.RuleRoleHeapBootstrap)
+	valueIDs, valueIDsOK := linkOccurrenceIDs(binding, programartifact.RuleRoleValueBootstrap)
+	heapIDs, heapIDsOK := linkOccurrenceIDs(binding, programartifact.RuleRoleHeapBootstrap)
 	if !valueIDsOK || !heapIDsOK {
 		return nil, nil, engine.LinkBootstrapWitness{}, false
 	}
@@ -558,8 +563,8 @@ func linkBootstrapWitness(state *compiledState, binding *programBinding) ([]iden
 	if !pointOK {
 		return nil, nil, engine.LinkBootstrapWitness{}, false
 	}
-	valueCapability, valueCapabilityOK := binding.linkCapability(programartifact.RuleRoleValueBootstrap)
-	heapCapability, heapCapabilityOK := binding.linkCapability(programartifact.RuleRoleHeapBootstrap)
+	valueCapability, valueCapabilityOK := linkCapability(binding, programartifact.RuleRoleValueBootstrap)
+	heapCapability, heapCapabilityOK := linkCapability(binding, programartifact.RuleRoleHeapBootstrap)
 	if !valueCapabilityOK || !heapCapabilityOK {
 		return nil, nil, engine.LinkBootstrapWitness{}, false
 	}
@@ -570,7 +575,7 @@ func linkBootstrapWitness(state *compiledState, binding *programBinding) ([]iden
 // newProgramBinding constructs the Link-local typed owners required by the
 // receipt compiler. The reusable artifact remains the only source of
 // structural rows; these domain schemas are solve-local substitutions.
-func (state *compiledState) newProgramBinding(source *link.Link) (*programBinding, ProgramBindingFailure, valuedomain.SealFailure, allocationcatalog.SealFailure) {
+func (state *compiledState) newProgramBinding(source *link.Link) (*composite.ProgramBinding, ProgramBindingFailure, valuedomain.SealFailure, allocationcatalog.SealFailure) {
 	if state == nil || source == nil || state.artifacts == nil || len(state.artifacts.mounts) == 0 {
 		return nil, ProgramBindingFailureInput, valuedomain.SealFailureNone, allocationcatalog.SealFailureNone
 	}
@@ -582,7 +587,7 @@ func (state *compiledState) newProgramBinding(source *link.Link) (*programBindin
 		return nil, ProgramBindingFailureInput, valuedomain.SealFailureNone, allocationcatalog.SealFailureNone
 	}
 	semantics, ok := vocabulary.New()
-	if !ok {
+	if !ok || !semantics.Available() {
 		return nil, ProgramBindingFailureSemantics, valuedomain.SealFailureNone, allocationcatalog.SealFailureNone
 	}
 	artifactTypes := make([]*programartifact.Artifact, 0, len(state.artifacts.byProgram))
@@ -689,9 +694,21 @@ func (state *compiledState) newProgramBinding(source *link.Link) (*programBindin
 	if !ok {
 		return nil, ProgramBindingFailureTargetCatalog, valuedomain.SealFailureNone, allocationcatalog.SealFailureNone
 	}
-	binding, failure, allocationFailure := newProgramBinding(state.receipt, semantics, valueSchema, callAlgebra, heapSchema, heapMounts, packSchema, effectAlgebra, topology, catalog)
-	if failure != ProgramBindingFailureNone {
-		return nil, failure, valuedomain.SealFailureNone, allocationFailure
+	binding, failure := composite.BindProgram(state.receipt, composite.LinkInputs{
+		ValueSchema:       valueSchema,
+		CallAlgebra:       callAlgebra,
+		HeapSchema:        heapSchema,
+		HeapMounts:        heapMounts,
+		PackSchema:        packSchema,
+		EffectAlgebra:     effectAlgebra,
+		Topology:          topology,
+		ActivationCatalog: catalog,
+	}, composite.ProgramQuerySpecs{
+		Value:  valueSummaryQueryHotSpec(valueSchema, semantics.ValueCodec),
+		Effect: effectExactQueryHotSpec(effectAlgebra, semantics.EffectCodec),
+	})
+	if failure.Available() {
+		return nil, programBindingFailure(failure), valuedomain.SealFailureNone, failure.Allocation
 	}
 	// The receipt lowerer is issued per reusable Program artifact. The
 	// Link-wide catalog above still authenticates every mount; the first
@@ -801,7 +818,7 @@ func artifactPlanOwnsBody(artifact *programartifact.Artifact, id identity.Conten
 // artifact itself is shared by ProgramID; the mount row is never shared.
 type mountedProgramArtifact struct {
 	artifact  *programartifact.Artifact
-	template  *engine.ArtifactScalarTemplate
+	template  *rows.ArtifactScalarTemplate
 	roles     *artifactScalarRoleDirectory
 	programID identity.ContentID
 	moduleKey identity.ContentID
@@ -832,7 +849,7 @@ func constructionMountedArtifacts(source *link.Link, published []mountedProgramA
 		shard, shardOK := mounts.At(index)
 		mounted, mountedOK := mounts.Program(shard)
 		module, moduleOK := source.Project().ModuleKey(shard)
-		if !shardOK || !mountedOK || mounted == nil || !moduleOK || !mount.valid() || mounted.TransformerInput().ContentID() != mount.programID || module != mount.moduleKey {
+		if !shardOK || !mountedOK || mounted == nil || !moduleOK || !mount.valid() || mounted.ContentID() != mount.programID || module != mount.moduleKey {
 			return nil, false
 		}
 		result[index] = constructionMountedProgramArtifact{published: mount, shard: shard}
@@ -938,7 +955,7 @@ func (mount mountedProgramArtifact) valid() bool {
 }
 
 type compiledArtifactSet struct {
-	receipt   grammar.CompilationReceipt
+	receipt   composite.Compilation
 	mounts    []mountedProgramArtifact
 	byProgram map[identity.ContentID]*programartifact.Artifact
 }
@@ -956,7 +973,7 @@ type artifactCacheKey = identity.ContentID
 type artifactCacheEntry struct {
 	ready    chan struct{}
 	artifact *programartifact.Artifact
-	template *engine.ArtifactScalarTemplate
+	template *rows.ArtifactScalarTemplate
 	roles    *artifactScalarRoleDirectory
 	complete bool
 }
@@ -965,8 +982,8 @@ type artifactCacheEntry struct {
 // its owner-neutral Engine template. Neither payload retains Link authority.
 var globalArtifactCache = artifactCacheState{entries: make(map[artifactCacheKey]*artifactCacheEntry)}
 
-func cachedProgramArtifact(input program.TransformerInput, receipt grammar.CompilationReceipt) (*programartifact.Artifact, *engine.ArtifactScalarTemplate, *artifactScalarRoleDirectory, bool) {
-	compileKey, keyOK := schemaadapter.NewCompileKey(input, receipt)
+func cachedProgramArtifact(input *program.Program, receipt composite.Compilation) (*programartifact.Artifact, *rows.ArtifactScalarTemplate, *artifactScalarRoleDirectory, bool) {
+	compileKey, keyOK := composite.NewArtifactCompileKey(input, receipt)
 	programID, schemaID := input.ContentID(), receipt.Digest()
 	if !keyOK || !compileKey.Available() || !input.Available() || !programID.Available() || !receipt.Available() || !schemaID.Available() {
 		return nil, nil, nil, false
@@ -979,8 +996,8 @@ func cachedProgramArtifact(input program.TransformerInput, receipt grammar.Compi
 		globalArtifactCache.entries[key] = entry
 		globalArtifactCache.Unlock()
 
-		artifact, compiled := schemaadapter.Compile(input, receipt)
-		var template *engine.ArtifactScalarTemplate
+		artifact, compiled := composite.CompileArtifact(input, receipt)
+		var template *rows.ArtifactScalarTemplate
 		var roles *artifactScalarRoleDirectory
 		if compiled {
 			template, roles, compiled = newEngineArtifactScalarTemplate(artifact)
@@ -1010,7 +1027,7 @@ func cachedProgramArtifact(input program.TransformerInput, receipt grammar.Compi
 // compileProgramArtifacts compiles each distinct ProgramID once and records
 // every mounted occurrence's exact Link substitution. No Link/domain/runtime
 // authority enters the reusable artifact cache.
-func compileProgramArtifacts(source *link.Link, receipt grammar.CompilationReceipt) (*compiledArtifactSet, bool) {
+func compileProgramArtifacts(source *link.Link, receipt composite.Compilation) (*compiledArtifactSet, bool) {
 	if source == nil || !source.ContentID().Available() || !receipt.Available() || source.Project() == nil {
 		return nil, false
 	}
@@ -1021,7 +1038,7 @@ func compileProgramArtifacts(source *link.Link, receipt grammar.CompilationRecei
 	result := &compiledArtifactSet{receipt: receipt, mounts: make([]mountedProgramArtifact, 0, mounts.Count()), byProgram: make(map[identity.ContentID]*programartifact.Artifact)}
 	type cachedProduct struct {
 		artifact *programartifact.Artifact
-		template *engine.ArtifactScalarTemplate
+		template *rows.ArtifactScalarTemplate
 		roles    *artifactScalarRoleDirectory
 	}
 	products := make(map[identity.ContentID]cachedProduct)
@@ -1032,7 +1049,7 @@ func compileProgramArtifacts(source *link.Link, receipt grammar.CompilationRecei
 		if !shardOK || !programOK || mounted == nil || !moduleOK || !moduleKey.Available() {
 			return nil, false
 		}
-		input := mounted.TransformerInput()
+		input := mounted
 		programID := input.ContentID()
 		if !input.Available() || !programID.Available() {
 			return nil, false

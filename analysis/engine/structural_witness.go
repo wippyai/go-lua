@@ -117,14 +117,6 @@ func (witness LinkBootstrapWitness) transportCapabilityAt(index int) (RuleSlotCa
 	return capability, capability.link()
 }
 
-func (witness LinkBootstrapWitness) ownsCapability(capability RuleSlotCapability, occurrence identity.ContentID) bool {
-	if !witness.Available() || !capability.link() || !occurrence.Available() {
-		return false
-	}
-	_, ok := witness.byCapability[capability][occurrence]
-	return ok
-}
-
 func (witness LinkBootstrapWitness) capabilityFor(occurrence identity.ContentID) (RuleSlotCapability, bool) {
 	if !witness.Available() || !occurrence.Available() {
 		return RuleSlotCapability{}, false

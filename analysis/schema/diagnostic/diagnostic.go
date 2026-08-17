@@ -14,15 +14,20 @@
 // consumes facts the analyzer already produces is added by writing one row
 // here, and every derived lookup projects it without a second table.
 //
-// Deferred resolutions. Three identities a row will eventually name are not
-// yet spellable, because the surfaces that own them are not in the declaration
-// catalog:
+// Deferred resolutions. Three identities a row is eventually read under are
+// not yet spellable:
 //
 //   - the collection plan, which awaits the query surface. The branch lane's
 //     subjects arrive through the value-summary query today, unnamed here.
-//   - the denominator, which awaits the observation surface. It is declared
-//     today as the observation population the row is measured over, in the
-//     artifact's own closed observation catalog.
+//   - the denominator, which awaits the observation surface. The denominator
+//     surface is in the catalog and declares closed worlds, but it sits above
+//     this one and a denominator names the entry that owns it, so the
+//     resolution lands there rather than as a reference out of a row. The
+//     worlds declared today are the axes' coordinate populations; none
+//     quantifies over a diagnostic row's population, because the universe
+//     identity such a world needs is what the observation surface supplies.
+//     The population is declared today as the observation the row is measured
+//     over, in the artifact's own closed observation catalog.
 //   - the evidence projection, which awaits the same observation surface. It is
 //     declared today as the row's own evidence lines.
 //
@@ -35,8 +40,17 @@ package diagnostic
 import (
 	"strings"
 
+	"github.com/wippyai/go-lua/analysis/internal/framing"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema"
+)
+
+// Content record markers. They separate the presentation collections one row
+// writes, so an evidence line can never be read as a label.
+const (
+	contentRecordEvidence uint64 = iota + 1
+	contentRecordLabel
+	contentRecordSection
 )
 
 // Surface law ordinals. They are numeric identities; rendering a verdict is
@@ -50,6 +64,7 @@ const (
 	LawObservationUnique
 	LawFactResolves
 	LawRenderComplete
+	LawSurfacePopulated
 )
 
 // Code is the stable published identity of one diagnostic. It is the only part
@@ -618,6 +633,103 @@ func (entry *Entry) Renders(section Section) bool {
 	return false
 }
 
+// EntryContent writes this row's declared data: the family it is gated by, the
+// severity it defaults to, the lane its subjects arrive on, the population it
+// is measured over, the declaration whose facts decide it, the payload a
+// producer must supply, and the exact presentation it is rendered from. A row
+// is pure data, so all of it is content.
+//
+// The publication tier is not written: it is derived from the declared default
+// severity, which is, so a tier that moves moves the digest through the
+// severity it is read from. A parsed line is written as its authored template
+// for the same reason: the segments and the payload a line reads are derived
+// from that template.
+func (entry *Entry) EntryContent(content *framing.Writer) error {
+	if err := content.Uint(uint64(entry.family)); err != nil {
+		return err
+	}
+	if err := content.Uint(uint64(entry.defaultSeverity)); err != nil {
+		return err
+	}
+	if err := content.Uint(uint64(entry.lane)); err != nil {
+		return err
+	}
+	if err := content.Uint(uint64(entry.observation)); err != nil {
+		return err
+	}
+	if err := content.Uint(uint64(entry.fact.Surface)); err != nil {
+		return err
+	}
+	if err := content.String(string(entry.fact.Key)); err != nil {
+		return err
+	}
+	if err := content.Uint(uint64(entry.requirements)); err != nil {
+		return err
+	}
+	if err := content.String(string(entry.message.text)); err != nil {
+		return err
+	}
+	if err := content.String(string(entry.help.text)); err != nil {
+		return err
+	}
+	return entry.presentationContent(content)
+}
+
+// presentationContent writes the row's evidence lines, source labels, and
+// render plan, each in declaration order behind its own arity: the order a row
+// declares them in is the order they are published in.
+func (entry *Entry) presentationContent(content *framing.Writer) error {
+	if err := content.Count(uint64(len(entry.evidence))); err != nil {
+		return err
+	}
+	for _, evidence := range entry.evidence {
+		if err := content.Record(contentRecordEvidence); err != nil {
+			return err
+		}
+		if err := content.Uint(uint64(evidence.Anchor)); err != nil {
+			return err
+		}
+		if err := content.String(evidence.Kind); err != nil {
+			return err
+		}
+		if err := content.String(evidence.Trust); err != nil {
+			return err
+		}
+		if err := content.String(evidence.Reason); err != nil {
+			return err
+		}
+		if err := content.String(string(evidence.Detail.text)); err != nil {
+			return err
+		}
+	}
+	if err := content.Count(uint64(len(entry.labels))); err != nil {
+		return err
+	}
+	for _, label := range entry.labels {
+		if err := content.Record(contentRecordLabel); err != nil {
+			return err
+		}
+		if err := content.Uint(uint64(label.Anchor)); err != nil {
+			return err
+		}
+		if err := content.String(string(label.Text.text)); err != nil {
+			return err
+		}
+	}
+	if err := content.Count(uint64(len(entry.render))); err != nil {
+		return err
+	}
+	for _, section := range entry.render {
+		if err := content.Record(contentRecordSection); err != nil {
+			return err
+		}
+		if err := content.Uint(uint64(section)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // reads is the payload every part of this row's presentation consumes.
 func (entry *Entry) reads() Requirement {
 	reads := entry.message.Requires() | entry.help.Requires()
@@ -649,6 +761,13 @@ func (contribution surface) Entries() []schema.Entry {
 // Seal states the diagnostic surface's own laws over the indexed view and the
 // surfaces sealed below it.
 func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.SealFailure {
+	// How many rows a surface holds is that surface's own law. This one is the
+	// analyzer's whole published vocabulary and every reader of a verdict
+	// resolves its row here, so an inventory of none is an unusable table rather
+	// than a surface with nothing in it yet.
+	if view.Count() == 0 {
+		return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, schema.EntryID{}, LawSurfacePopulated, schema.DispositionIncomplete)
+	}
 	observations := make(map[programartifact.DiagnosticObservationKind]schema.EntryID, view.Count())
 	for position := 0; position < view.Count(); position++ {
 		row, rowOK := view.At(position)

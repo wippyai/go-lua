@@ -165,7 +165,7 @@ func ingressResult(schema heapdomain.Schema, operand source.Root) (heapdomain.Ke
 	return operand.Key(), value, ok
 }
 
-func hotIngressChecker(owner *heapowner.HotOwner, semantic engine.SemanticKey) engine.RuleDerivationChecker[heapdomain.Value, source.Root] {
+func hotIngressChecker(owner *heapowner.HotOwner, semantic identity.SemanticKey) engine.RuleDerivationChecker[heapdomain.Value, source.Root] {
 	return func(derivation engine.RuleDerivation[heapdomain.Value, source.Root]) (engine.RuleEvidence, bool) {
 		if owner == nil || !owner.Schema().Valid() || derivation.Rule() != semantic || derivation.InputCount() != 0 || derivation.ReadCount() != 0 || derivation.DispositionCount() != 1 {
 			return engine.RuleEvidence{}, false

@@ -11,7 +11,7 @@ import (
 // returns every concrete compiler-AST value and its exported field states.
 // It is cold proof support only. The returned observations are never consumed
 // by Program construction and cannot define a requirement denominator.
-func ObserveSource(text, name string) ([]ASTOccurrence, error) {
+func ObserveSource(text, name string) ([]astcodec.Occurrence, error) {
 	statements, err := parse.ParseString(text, name)
 	if err != nil {
 		return nil, err
@@ -22,7 +22,7 @@ func ObserveSource(text, name string) ([]ASTOccurrence, error) {
 // RequireObservedState verifies an exact constructor-field-state source witness.
 // It is intentionally a verifier, not a discovery API: callers must derive
 // their required rows independently from the parser schema.
-func RequireObservedState(occurrences []ASTOccurrence, constructor, field string, state FieldState) error {
+func RequireObservedState(occurrences []astcodec.Occurrence, constructor, field string, state astcodec.FieldState) error {
 	for _, occurrence := range occurrences {
 		if occurrence.Type != constructor {
 			continue

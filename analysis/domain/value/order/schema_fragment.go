@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value"
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // SchemaFragment is the callback-free reusable relational-order Rule shape.
@@ -16,8 +17,8 @@ type SchemaFragment struct {
 	left, right engine.SchemaReadSlot[value.Value]
 	carry       engine.SchemaCarrySlot[value.Value]
 	write       engine.SchemaWriteSlot[value.Value]
-	semantic    engine.SemanticKey
-	evidence    engine.SemanticKey
+	semantic    identity.SemanticKey
+	evidence    identity.SemanticKey
 }
 
 func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[value.Value, value.BinaryOrder] {
@@ -27,8 +28,8 @@ func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[value.Value, value.B
 	return fragment.slot
 }
 
-func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evidence engine.SemanticKey, owner *valueowner.SchemaFragment) (*SchemaFragment, bool) {
-	if builder == nil || owner == nil || !engine.DistinctKeys(semantic, operandFamily, evidence) {
+func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evidence identity.SemanticKey, owner *valueowner.SchemaFragment) (*SchemaFragment, bool) {
+	if builder == nil || owner == nil || !identity.DistinctKeys(semantic, operandFamily, evidence) {
 		return nil, false
 	}
 	slot, ok := engine.NewRuleSlot[value.Value, value.BinaryOrder](builder, engine.SchemaRuleSpec[value.Value]{

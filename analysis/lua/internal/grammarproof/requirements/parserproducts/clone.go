@@ -1,7 +1,7 @@
 package parserproducts
 
 import (
-	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof"
+	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/astcodec"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/recursion"
 )
 
@@ -14,7 +14,7 @@ func clone(source Evidence) Evidence {
 	result.Products = make([]Product, len(source.Products))
 	for index, row := range source.Products {
 		result.Products[index] = row
-		result.Products[index].States = append([]grammarproof.FieldState(nil), row.States...)
+		result.Products[index].States = append([]astcodec.FieldState(nil), row.States...)
 	}
 	result.ProductLaws = make([]ProductLaw, len(source.ProductLaws))
 	for index, law := range source.ProductLaws {

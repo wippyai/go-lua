@@ -26,7 +26,7 @@ func BindHot(fragment *SchemaFragment, owner *heapowner.HotOwner, catalog *alloc
 	if fragment == nil || fragment.slot == nil || owner == nil || !owner.Schema().Valid() ||
 		catalog == nil || !catalog.FencedToHeap(owner.Schema()) ||
 		!fragment.semantic.Available() || !fragment.transform.Available() || !fragment.evidence.Available() ||
-		!engine.DistinctKeys(fragment.semantic, fragment.transform, fragment.evidence) {
+		!identity.DistinctKeys(fragment.semantic, fragment.transform, fragment.evidence) {
 		return nil, false
 	}
 	var runtimeRead engine.Read[engine.OrderedCells[heapdomain.Value]]
@@ -189,7 +189,7 @@ func emptyResult(schema heapdomain.Schema, operand source.Root, predecessor heap
 	return operand.Key(), next, nextOK
 }
 
-func hotEmptyChecker(owner *heapowner.HotOwner, semantic, transform engine.SemanticKey, read *engine.Read[engine.OrderedCells[heapdomain.Value]]) engine.RuleDerivationChecker[heapdomain.Value, source.Root] {
+func hotEmptyChecker(owner *heapowner.HotOwner, semantic, transform identity.SemanticKey, read *engine.Read[engine.OrderedCells[heapdomain.Value]]) engine.RuleDerivationChecker[heapdomain.Value, source.Root] {
 	return func(derivation engine.RuleDerivation[heapdomain.Value, source.Root]) (engine.RuleEvidence, bool) {
 		if owner == nil || read == nil || !owner.Schema().Valid() || derivation.Rule() != semantic || derivation.InputCount() != 1 || derivation.ReadCount() != 1 {
 			return engine.RuleEvidence{}, false

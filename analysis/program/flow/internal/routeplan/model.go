@@ -35,11 +35,12 @@ func (arm Arm) valid() bool { return arm >= ArmLocal && arm <= ArmCancel }
 // proof and optional recurrence witness; no physical ordinal or raw endpoint
 // term is present in the neutral plan.
 type Origin struct {
-	endpoint    EndpointPhaseReceipt
+	from        sourcecontrol.PhaseRef
+	to          sourcecontrol.PhaseRef
 	carrier     RecurrenceCarrier
 	subdivision subdivisionKind
-	segment     sourcecontrol.RouteSegment
-	resume      runtimeentry.OutcomeResumeSegment
+	segment     sourcecontrol.Segment
+	resume      runtimeentry.OutcomeResumeRow
 }
 
 type subdivisionKind uint8
@@ -50,17 +51,8 @@ const (
 	subdivisionRuntimeEntry
 )
 
-// EndpointPhaseReceipt is the mandatory endpoint proof for a final route.
-// It is deliberately phase-shaped even when both endpoints are ordinary CSR
-// vertices: endpoint paths are owned by this receipt, while recurrence
-// membership is supplied independently by RecurrenceCarrier.
-type EndpointPhaseReceipt struct {
-	from sourcecontrol.PhaseRef
-	to   sourcecontrol.PhaseRef
-}
-
-func (receipt EndpointPhaseReceipt) Endpoints() (sourcecontrol.PhaseRef, sourcecontrol.PhaseRef, bool) {
-	return receipt.from, receipt.to, receipt.from.Available() && receipt.to.Available()
+func (origin Origin) endpoints() (sourcecontrol.PhaseRef, sourcecontrol.PhaseRef, bool) {
+	return origin.from, origin.to, origin.from.Available() && origin.to.Available()
 }
 
 type RecurrenceCarrierKind uint8
@@ -101,22 +93,20 @@ func (carrier RecurrenceCarrier) NodePair() (sourcecontrol.NodeRef, sourcecontro
 // catalog phases. Outcome phases are rejected by valid: their endpoint and
 // carrier relation must instead arrive through OutcomeSubdivision below.
 func CSRPhasePair(from, to sourcecontrol.PhaseRef) Origin {
-	return Origin{endpoint: EndpointPhaseReceipt{from: from, to: to}, carrier: noRecurrenceCarrier()}
+	return Origin{from: from, to: to, carrier: noRecurrenceCarrier()}
 }
 func CSRArcPair(from, to sourcecontrol.PhaseRef, ref sourcecontrol.ArcRef) Origin {
-	return Origin{endpoint: EndpointPhaseReceipt{from: from, to: to}, carrier: arcCarrier(ref)}
+	return Origin{from: from, to: to, carrier: arcCarrier(ref)}
 }
 func CSRNodePair(from, to sourcecontrol.PhaseRef, fromNode, toNode sourcecontrol.NodeRef) Origin {
-	return Origin{endpoint: EndpointPhaseReceipt{from: from, to: to}, carrier: nodePairCarrier(fromNode, toNode)}
+	return Origin{from: from, to: to, carrier: nodePairCarrier(fromNode, toNode)}
 }
 
-// OutcomeSubdivision consumes SourceControl's exact one-shot route segment.
-// A caller cannot pair a sibling Outcome phase with an unrelated structural
-// carrier after this boundary: the consumed capability is the only ingress
-// for a row containing an Outcome phase.
-func OutcomeSubdivision(graph *sourcecontrol.Result, receipt *sourcecontrol.RouteSegmentReceipt) (Origin, bool) {
-	segment, ok := receipt.Consume(graph)
-	if !ok {
+// OutcomeSubdivision admits SourceControl's exact immutable route segment.
+// The Builder owns one-shot publication; this boundary only checks the row's
+// owner fence and never introduces a second per-row lifecycle.
+func OutcomeSubdivision(graph *sourcecontrol.Result, segment sourcecontrol.Segment) (Origin, bool) {
+	if !segment.Valid(graph) {
 		return Origin{}, false
 	}
 	from, to, endpoints := segment.Endpoints()
@@ -124,7 +114,7 @@ func OutcomeSubdivision(graph *sourcecontrol.Result, receipt *sourcecontrol.Rout
 	if !endpoints || !carrierOK {
 		return Origin{}, false
 	}
-	origin := Origin{endpoint: EndpointPhaseReceipt{from: from, to: to}, subdivision: subdivisionSourceControl, segment: segment}
+	origin := Origin{from: from, to: to, subdivision: subdivisionSourceControl, segment: segment}
 	switch carrier.Kind() {
 	case sourcecontrol.SegmentCarrierNone:
 		origin.carrier = noRecurrenceCarrier()
@@ -146,26 +136,25 @@ func OutcomeSubdivision(graph *sourcecontrol.Result, receipt *sourcecontrol.Rout
 	return origin, true
 }
 
-// OutcomeResumeSubdivision consumes the exact neutral join between a
-// SourceControl abrupt-resume anchor and runtimeentry's normalized endpoint.
+// OutcomeResumeSubdivision admits the exact owner-fenced normalized endpoint.
 // It is the only RoutePlan ingress for an Outcome→CSR runtime resume.
 func OutcomeResumeSubdivision(entries *runtimeentry.Result, graph *sourcecontrol.Result,
-	receipt *runtimeentry.OutcomeResumeProjection) (Origin, keyspace.Term, bool) {
-	segment, ok := runtimeentry.ConsumeOutcomeResumeProjection(entries, graph, receipt)
-	if !ok {
+	row runtimeentry.OutcomeResumeRow) (Origin, keyspace.Term, bool) {
+	if !row.OwnedBy(entries, graph) {
 		return Origin{}, 0, false
 	}
-	from, to, endpoints := segment.Endpoints(entries, graph)
-	_, toTerm, routeOK := segment.RouteTerms(entries, graph)
+	from, to, endpoints := row.Endpoints(entries, graph)
+	_, toTerm := row.RouteTerms()
+	routeOK := toTerm != 0
 	if !endpoints || !routeOK || toTerm == 0 {
 		return Origin{}, 0, false
 	}
-	return Origin{endpoint: EndpointPhaseReceipt{from: from, to: to}, carrier: noRecurrenceCarrier(),
-		subdivision: subdivisionRuntimeEntry, resume: segment}, toTerm, true
+	return Origin{from: from, to: to, carrier: noRecurrenceCarrier(),
+		subdivision: subdivisionRuntimeEntry, resume: row}, toTerm, true
 }
 
 func (origin Origin) valid() bool {
-	from, to, endpointOK := origin.endpoint.Endpoints()
+	from, to, endpointOK := origin.endpoints()
 	if endpointOK && sourcecontrol.SamePhaseOwner(from, to) {
 		if (from.OutcomePhase() || to.OutcomePhase()) != (origin.subdivision != subdivisionNone) {
 			return false
@@ -292,15 +281,14 @@ func (plan *Plan) At(index int) (Route, Origin, bool) {
 	return route, route.origin, validRoute(route, route.origin, plan.owner)
 }
 
-// EndpointPhaseReceipt exposes only opaque endpoint capabilities to
-// recurrence. The actual semantic paths are resolved exactly once by the
-// binding while SourceControl is live.
-func (origin Origin) EndpointPhaseReceipt() (EndpointPhaseReceipt, bool) {
-	from, to, ok := origin.endpoint.Endpoints()
+// Endpoints exposes only opaque endpoint phases to recurrence. The phases are
+// resolved once while SourceControl is live and retained on this route row.
+func (origin Origin) Endpoints() (sourcecontrol.PhaseRef, sourcecontrol.PhaseRef, bool) {
+	from, to, ok := origin.endpoints()
 	if !ok || !sourcecontrol.SamePhaseOwner(from, to) || !origin.valid() {
-		return EndpointPhaseReceipt{}, false
+		return sourcecontrol.PhaseRef{}, sourcecontrol.PhaseRef{}, false
 	}
-	return origin.endpoint, true
+	return from, to, true
 }
 
 func (origin Origin) RecurrenceCarrier() (RecurrenceCarrier, bool) {
@@ -311,7 +299,7 @@ func (origin Origin) RecurrenceCarrier() (RecurrenceCarrier, bool) {
 }
 
 // ArcRef and NodePair expose only opaque sourcecontrol capabilities to
-// recurrence. New recurrence code must inspect the endpoint receipt
+// recurrence. New recurrence code must inspect the endpoint row
 // separately from the carrier.
 func (origin Origin) ArcRef() (sourcecontrol.ArcRef, bool) {
 	return origin.carrier.ArcRef()
@@ -320,7 +308,7 @@ func validRoute(route Route, origin Origin, owner sourcecontrol.Owner) bool {
 	if !origin.valid() || !route.Arm.valid() || route.From == 0 || route.To == 0 || route.Decision == 0 && route.Truth {
 		return false
 	}
-	from, to, endpointOK := origin.endpoint.Endpoints()
+	from, to, endpointOK := origin.endpoints()
 	if !endpointOK || !owner.OwnsPhaseRef(from) || !owner.OwnsPhaseRef(to) {
 		return false
 	}

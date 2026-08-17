@@ -3,9 +3,9 @@ package target_test
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/library/lualib/targetprofile"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/target"
-	"github.com/wippyai/go-lua/analysis/program/target/profile"
 )
 
 func TestGsubTableReplacementClosedDenominatorAndAliases(t *testing.T) {

@@ -1,16 +1,15 @@
 // Package semanticpath is Flow's sole structural semantic-path authority.
 //
-// It deliberately sits below SourceControl and Causal.  A certificate is
-// sealed once from Flow's exact Source/containment publication, and can issue
-// one typed, destructive receipt to each consumer.  Consumers never receive
-// a ContentID plane, so they cannot splice a sibling's paths into an
-// otherwise authentic owner tuple.
+// It deliberately sits below SourceControl and Causal. A certificate is
+// sealed once from Flow's exact Source/containment publication and exposes
+// narrow immutable views to its consumers. Consumers never receive a mutable
+// ContentID plane, so they cannot splice a sibling's paths into an otherwise
+// authentic owner tuple.
 package semanticpath
 
 import (
 	"errors"
 	"fmt"
-	"sync"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
@@ -23,23 +22,19 @@ import (
 )
 
 // Certificate owns the body-qualified structural path planes for exactly one
-// committed Source/Flow/Static/Module quartet.  Its rows are private and are
-// released as narrow, one-shot consumer receipts only.
+// committed Source/Flow/Static/Module quartet. Its rows are private and are
+// exposed only through narrow immutable consumer views.
 type Certificate struct {
 	state *certificateState
 }
 type certificateState struct {
-	mu            sync.Mutex
-	sourceID      identity.ContentID
-	flowID        identity.ContentID
-	staticID      identity.ContentID
-	moduleID      identity.ContentID
-	body          []identity.ContentID
-	roots         [keyspace.FamilyCount][]identity.ContentID
-	terms         [keyspace.FamilyCount][]identity.ContentID
-	vertexIssued  bool
-	causalIssued  bool
-	outcomeIssued bool
+	sourceID identity.ContentID
+	flowID   identity.ContentID
+	staticID identity.ContentID
+	moduleID identity.ContentID
+	body     []identity.ContentID
+	roots    [keyspace.FamilyCount][]identity.ContentID
+	terms    [keyspace.FamilyCount][]identity.ContentID
 }
 
 // Seal's failure classes remain intentionally narrow: assembly reports the
@@ -97,7 +92,7 @@ func (c *Certificate) TermPathAt(sourceID, flowID, staticID, moduleID identity.C
 // It derives its planes directly from exact Source/Authored/Body/Containment/
 // Outcome proofs. No ContentID plane crosses this boundary, so an adjacent
 // package cannot authenticate fabricated sibling paths by matching lengths.
-func Seal(issuance *source.SemanticPathIssuance, cellRoles source.CellRoleCatalog, view source.View, authoredView authored.View, bodies *body.Result, bindings binding.Result, forest *containment.Result, outcomes *outcome.Result, flowID, staticID, moduleID identity.ContentID) (*Certificate, error) {
+func Seal(issuance *source.SemanticPathIssuance, cellRoles source.CellRoles, view source.View, authoredView authored.View, bodies *body.Result, bindings binding.Result, forest *containment.Result, outcomes *outcome.Result, flowID, staticID, moduleID identity.ContentID) (*Certificate, error) {
 	sourceID := view.Identity().ContentID()
 	if issuance == nil || !issuance.ConsumeSemanticPathIssuance(view) {
 		return nil, ErrIssuanceRejected
@@ -106,7 +101,7 @@ func Seal(issuance *source.SemanticPathIssuance, cellRoles source.CellRoleCatalo
 		return nil, ErrOwnerMismatch
 	}
 	if !cellRoles.Matches(view) || cellRoles.CellCount() != view.Identity().FamilyCount(keyspace.FamilyCell) || cellRoles.CellCount() != authoredView.Storage().Cells().Count() || !binding.Matches(&bindings, sourceID, flowID) || bindings.CellCount() != cellRoles.CellCount() {
-		return nil, fmt.Errorf("semanticpath: Cell role catalog or Binding denominator disagrees with exact owners")
+		return nil, fmt.Errorf("semanticpath: Cell roles or Binding denominator disagrees with exact owners")
 	}
 	if bodies != nil && bodies.BodyCount() != view.Identity().FamilyCount(keyspace.FamilyBody) {
 		return nil, fmt.Errorf("%w: got %d, want %d", ErrBodyCardinalityMismatch, bodies.BodyCount(), view.Identity().FamilyCount(keyspace.FamilyBody))
@@ -134,7 +129,7 @@ func Seal(issuance *source.SemanticPathIssuance, cellRoles source.CellRoleCatalo
 		for ordinal := 0; ordinal < count; ordinal++ {
 			// A direct root may be absent from the route plane only when it can
 			// never be a causal term.  SourceControl independently proves the
-			// relevant root/loop rows while consuming its receipt.
+			// relevant root/loop rows while consuming its immutable view.
 			if !certificate.state.roots[family][ordinal].Available() && !certificate.state.terms[family][ordinal+1].Available() {
 				return nil, fmt.Errorf("%w: family %d ordinal %d has no root or term path", ErrUncoveredOrdinal, family, ordinal+1)
 			}
@@ -151,102 +146,42 @@ func (c *certificateState) matches(sourceID, flowID, staticID, moduleID identity
 		sourceID.Available() && flowID.Available() && staticID.Available() && moduleID.Available()
 }
 
-// VertexCatalogReceipt is an exact, destructive grant for SourceControl's
-// vertex catalogue.  It contains no exported plane or public constructor.
-type VertexCatalogReceipt struct {
-	state *vertexCatalogReceiptState
-}
-type vertexCatalogReceiptState struct {
-	mu          sync.Mutex
-	certificate *certificateState
-	used        bool
-}
-
-func (c *Certificate) IssueVertexCatalogReceipt() (*VertexCatalogReceipt, bool) {
-	if c == nil || c.state == nil {
+// VertexCatalog returns the immutable structural paths used by SourceControl's
+// vertex catalogue. The quartet is checked at the boundary and checked again
+// by the receiving owner before any path is consumed.
+func (c *Certificate) VertexCatalog(sourceID, flowID, staticID, moduleID identity.ContentID) (*VertexCatalogPaths, bool) {
+	if c == nil || !c.matches(sourceID, flowID, staticID, moduleID) {
 		return nil, false
 	}
-	c.state.mu.Lock()
-	defer c.state.mu.Unlock()
-	if c.state.vertexIssued {
-		return nil, false
-	}
-	c.state.vertexIssued = true
-	return &VertexCatalogReceipt{state: &vertexCatalogReceiptState{certificate: c.state}}, true
+	return &VertexCatalogPaths{certificate: c.state}, true
 }
 
-func (r *VertexCatalogReceipt) Consume(sourceID, flowID, staticID, moduleID identity.ContentID) (*VertexCatalogPaths, bool) {
-	if r == nil || r.state == nil {
+// OutcomePhases returns the immutable Outcome path view used by SourceControl
+// to materialize its separate runtime phase schedule.
+func (c *Certificate) OutcomePhases(sourceID, flowID, staticID, moduleID identity.ContentID) (*OutcomePhasePaths, bool) {
+	if c == nil || !c.matches(sourceID, flowID, staticID, moduleID) {
 		return nil, false
 	}
-	state := r.state
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	if state.used {
-		return nil, false
-	}
-	certificate := state.certificate
-	state.used = true
-	state.certificate = nil
-	if certificate == nil || !certificate.matches(sourceID, flowID, staticID, moduleID) {
-		return nil, false
-	}
-	return &VertexCatalogPaths{certificate: certificate}, true
+	return &OutcomePhasePaths{certificate: c.state}, true
 }
 
-// OutcomePhaseReceipt is an exact, destructive grant for SourceControl's
-// per-Outcome phase issuer.  It is deliberately separate from both the
-// vertex-catalog and Causal receipts: a copied Certificate can issue neither
-// a second receipt nor a fresh projection of the same Outcome plane.
-type OutcomePhaseReceipt struct {
-	state *outcomePhaseReceiptState
-}
-
-type outcomePhaseReceiptState struct {
-	mu          sync.Mutex
-	certificate *certificateState
-	used        bool
-}
-
-func (c *Certificate) IssueOutcomePhaseReceipt() (*OutcomePhaseReceipt, bool) {
-	if c == nil || c.state == nil {
+// Causal returns the immutable term-path view used by Causal route assembly.
+func (c *Certificate) Causal(sourceID, flowID, staticID, moduleID identity.ContentID) (*CausalPaths, bool) {
+	if c == nil || !c.matches(sourceID, flowID, staticID, moduleID) {
 		return nil, false
 	}
-	c.state.mu.Lock()
-	defer c.state.mu.Unlock()
-	if c.state.outcomeIssued {
-		return nil, false
-	}
-	c.state.outcomeIssued = true
-	return &OutcomePhaseReceipt{state: &outcomePhaseReceiptState{certificate: c.state}}, true
-}
-
-// Consume destructively clears the receipt before checking the caller's
-// quartet.  Foreign or copied callers therefore burn the exact retry and
-// cannot probe a live semantic Outcome plane.
-func (r *OutcomePhaseReceipt) Consume(sourceID, flowID, staticID, moduleID identity.ContentID) (*OutcomePhasePaths, bool) {
-	if r == nil || r.state == nil {
-		return nil, false
-	}
-	state := r.state
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	if state.used {
-		return nil, false
-	}
-	certificate := state.certificate
-	state.used = true
-	state.certificate = nil
-	if certificate == nil || !certificate.matches(sourceID, flowID, staticID, moduleID) {
-		return nil, false
-	}
-	return &OutcomePhasePaths{certificate: certificate}, true
+	return &CausalPaths{certificate: c.state}, true
 }
 
 // OutcomePhasePaths is a read-only projection of the exact sealed Outcome
 // path plane.  The caller supplies an Outcome key it already owns; no dense
 // ordinal or caller-supplied path plane crosses this boundary.
 type OutcomePhasePaths struct{ certificate *certificateState }
+
+// Matches is the exact owner fence for a SourceControl phase view.
+func (p *OutcomePhasePaths) Matches(sourceID, flowID, staticID, moduleID identity.ContentID) bool {
+	return p != nil && p.certificate != nil && p.certificate.matches(sourceID, flowID, staticID, moduleID)
+}
 
 func (p *OutcomePhasePaths) Count() int {
 	if p == nil || p.certificate == nil || len(p.certificate.terms[keyspace.FamilyOutcome]) == 0 {
@@ -271,6 +206,11 @@ func (p *OutcomePhasePaths) At(term keyspace.Term) (identity.ContentID, bool) {
 // VertexCatalogPaths is a read-only, owner-qualified projection.  It exposes
 // only the three coordinates SourceControl needs to derive phase paths.
 type VertexCatalogPaths struct{ certificate *certificateState }
+
+// Matches is the exact owner fence for a SourceControl vertex view.
+func (p *VertexCatalogPaths) Matches(sourceID, flowID, staticID, moduleID identity.ContentID) bool {
+	return p != nil && p.certificate != nil && p.certificate.matches(sourceID, flowID, staticID, moduleID)
+}
 
 func (p *VertexCatalogPaths) BodyCount() int {
 	if p == nil || p.certificate == nil {
@@ -303,53 +243,15 @@ func (p *VertexCatalogPaths) TermAt(family keyspace.Family, ordinal uint32) (ide
 	return id, id.Available()
 }
 
-// CausalReceipt is a second exact, destructive grant.  Causal receives a
-// distinct typed projection and cannot replay SourceControl's receipt.
-type CausalReceipt struct {
-	state *causalReceiptState
-}
-type causalReceiptState struct {
-	mu          sync.Mutex
-	certificate *certificateState
-	used        bool
-}
-
-func (c *Certificate) IssueCausalReceipt() (*CausalReceipt, bool) {
-	if c == nil || c.state == nil {
-		return nil, false
-	}
-	c.state.mu.Lock()
-	defer c.state.mu.Unlock()
-	if c.state.causalIssued {
-		return nil, false
-	}
-	c.state.causalIssued = true
-	return &CausalReceipt{state: &causalReceiptState{certificate: c.state}}, true
-}
-
-func (r *CausalReceipt) Consume(sourceID, flowID, staticID, moduleID identity.ContentID) (*CausalPaths, bool) {
-	if r == nil || r.state == nil {
-		return nil, false
-	}
-	state := r.state
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	if state.used {
-		return nil, false
-	}
-	certificate := state.certificate
-	state.used = true
-	state.certificate = nil
-	if certificate == nil || !certificate.matches(sourceID, flowID, staticID, moduleID) {
-		return nil, false
-	}
-	return &CausalPaths{certificate: certificate}, true
-}
-
 // CausalPaths is intentionally a coordinate-pair projection rather than a
 // raw Term mapper.  Causal validates a Term under its own owner fence then
 // asks for the exact family/ordinal row it already owns.
 type CausalPaths struct{ certificate *certificateState }
+
+// Matches is the exact owner fence for a Causal path view.
+func (p *CausalPaths) Matches(sourceID, flowID, staticID, moduleID identity.ContentID) bool {
+	return p != nil && p.certificate != nil && p.certificate.matches(sourceID, flowID, staticID, moduleID)
+}
 
 func (p *CausalPaths) At(family keyspace.Family, ordinal uint32) (identity.ContentID, bool) {
 	if p == nil || p.certificate == nil || family <= keyspace.FamilyInvalid || family >= keyspace.FamilyCount || ordinal == 0 || uint64(ordinal) >= uint64(len(p.certificate.terms[family])) {

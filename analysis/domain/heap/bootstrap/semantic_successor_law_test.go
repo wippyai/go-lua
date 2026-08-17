@@ -8,7 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
-	"github.com/wippyai/go-lua/analysis/program/target/profile"
+	"github.com/wippyai/go-lua/analysis/library/lualib/targetprofile"
 )
 
 // Link bootstrap is validated only after the complete value (header,

@@ -4,13 +4,14 @@ import (
 	calldomain "github.com/wippyai/go-lua/analysis/domain/call"
 	callowner "github.com/wippyai/go-lua/analysis/domain/call/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // SchemaFragment is Call activation's callback-free structural Rule surface.
 // It retains only the activation family, structural Rule, and exact Call read.
 type SchemaFragment struct {
-	semantic  engine.SemanticKey
-	admission engine.SemanticKey
+	semantic  identity.SemanticKey
+	admission identity.SemanticKey
 	family    engine.SchemaActivationFamily
 	slot      *engine.SchemaActivationRuleSlot
 	input     engine.SchemaInput
@@ -18,8 +19,8 @@ type SchemaFragment struct {
 }
 
 // DeclareSchema records the one-input trusted structural activation Rule.
-func DeclareSchema(builder *engine.SchemaBuilder, semantic, familySemantic, admission engine.SemanticKey, owner *callowner.SchemaFragment) (*SchemaFragment, bool) {
-	if builder == nil || owner == nil || !engine.DistinctKeys(semantic, familySemantic, admission) {
+func DeclareSchema(builder *engine.SchemaBuilder, semantic, familySemantic, admission identity.SemanticKey, owner *callowner.SchemaFragment) (*SchemaFragment, bool) {
+	if builder == nil || owner == nil || !identity.DistinctKeys(semantic, familySemantic, admission) {
 		return nil, false
 	}
 	family, ok := engine.DeclareSchemaActivationFamily(builder, familySemantic)

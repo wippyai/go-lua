@@ -11,7 +11,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/candidates"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/causal"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/continuation"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/directbinding"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/directfunction"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/evaluation"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/executable"
@@ -81,7 +80,6 @@ type Component struct {
 	directFunction   *directfunction.Result
 	candidates       *candidates.Result
 	accessGeometry   *accessgeometry.Result
-	directBinding    *directbinding.Result
 	binaryPrimitives *binaryprimitive.Result
 	continuation     *continuation.Result
 	allocationPaths  [keyspace.FamilyCount][]allocationPath
@@ -181,7 +179,6 @@ func (view View) projectionAvailable() bool {
 		!directfunction.Matches(component.directFunction, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) ||
 		!candidates.Matches(component.candidates, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) ||
 		!accessgeometry.Matches(component.accessGeometry, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) ||
-		!directbinding.Matches(component.directBinding, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) ||
 		!causal.Matches(component.programStructure.causal, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) ||
 		!binaryprimitive.Matches(component.binaryPrimitives, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) ||
 		!continuation.Matches(component.continuation, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) {
@@ -305,11 +302,11 @@ func (view View) AccessGeometry() AccessGeometry {
 	return AccessGeometry{result: view.component.accessGeometry, available: true}
 }
 
-func (view View) DirectBindings() DirectBindings {
+func (view View) Selectors() Selectors {
 	if !view.available() {
-		return DirectBindings{}
+		return Selectors{}
 	}
-	return DirectBindings{result: view.component.directBinding}
+	return Selectors{result: view.component.accessGeometry}
 }
 
 func (view View) Causal() Causal {

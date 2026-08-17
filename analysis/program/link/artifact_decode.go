@@ -5,9 +5,9 @@ import (
 	"fmt"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/internal/framing"
 	"github.com/wippyai/go-lua/analysis/program"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
 	linkhost "github.com/wippyai/go-lua/analysis/program/link/host"
 	linkmodule "github.com/wippyai/go-lua/analysis/program/link/module"

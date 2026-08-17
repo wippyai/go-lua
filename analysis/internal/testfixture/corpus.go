@@ -5,14 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
-	"sync"
 
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkmodule "github.com/wippyai/go-lua/analysis/program/link/module"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
@@ -37,11 +35,13 @@ type CorpusProject struct {
 	files     []string
 }
 
-var (
-	frozenCorpusOnce     sync.Once
-	frozenCorpusProjects []CorpusProject
-	frozenCorpusErr      error
-)
+// Corpus is one caller-scoped census of the checked-in fixture corpus. The
+// enumeration is performed once per Corpus and belongs to the caller that
+// named the repository: this package holds no census state of its own and
+// never locates the repository itself.
+type Corpus struct {
+	projects []CorpusProject
+}
 
 func (project CorpusProject) Name() string { return project.relative }
 
@@ -54,35 +54,64 @@ func (project CorpusProject) FileAt(index int) (string, bool) {
 	return filepath.ToSlash(filepath.Join(project.relative, project.files[index])), true
 }
 
-// FrozenCorpusProjects returns every checked-in fixture directory in canonical
-// path order. The filesystem census is process-cached and every returned slice
-// is a defensive view. A manifest, when present, must name exactly the local Lua
-// files; diagnostics, skip fields, package metadata, and outputs are never
-// consulted.
-func FrozenCorpusProjects() ([]CorpusProject, error) {
-	projects, err := frozenCorpusCatalog()
+// RepositoryRoot walks up from a caller-supplied directory to the module root
+// that holds go.mod. Discovery stays caller-supplied: the caller names its own
+// source position, and this package never locates the repository itself.
+func RepositoryRoot(fromDir string) (string, error) {
+	if fromDir == "" {
+		return "", fmt.Errorf("testfixture: empty repository search directory")
+	}
+	directory, err := filepath.Abs(fromDir)
+	if err != nil {
+		return "", fmt.Errorf("testfixture: resolve repository search directory %q: %w", fromDir, err)
+	}
+	for {
+		info, statErr := os.Stat(filepath.Join(directory, "go.mod"))
+		if statErr == nil && !info.IsDir() {
+			return directory, nil
+		}
+		if statErr != nil && !os.IsNotExist(statErr) {
+			return "", fmt.Errorf("testfixture: search repository root above %q: %w", fromDir, statErr)
+		}
+		parent := filepath.Dir(directory)
+		if parent == directory {
+			return "", fmt.Errorf("testfixture: no module root above %q", fromDir)
+		}
+		directory = parent
+	}
+}
+
+// LoadCorpus enumerates every checked-in fixture directory under the named
+// repository root in canonical path order. A manifest, when present, must name
+// exactly the local Lua files; diagnostics, skip fields, package metadata, and
+// outputs are never consulted.
+func LoadCorpus(repository string) (*Corpus, error) {
+	if repository == "" {
+		return nil, fmt.Errorf("testfixture: empty repository root")
+	}
+	projects, err := loadFrozenCorpusProjects(repository)
 	if err != nil {
 		return nil, err
 	}
-	return cloneCorpusProjects(projects), nil
+	return &Corpus{projects: projects}, nil
 }
 
-func frozenCorpusCatalog() ([]CorpusProject, error) {
-	frozenCorpusOnce.Do(func() {
-		frozenCorpusProjects, frozenCorpusErr = loadFrozenCorpusProjects()
-	})
-	return frozenCorpusProjects, frozenCorpusErr
+// Projects returns the whole census as a defensive view.
+func (corpus *Corpus) Projects() []CorpusProject {
+	return cloneCorpusProjects(corpus.projects)
 }
 
-func loadFrozenCorpusProjects() ([]CorpusProject, error) {
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		return nil, fmt.Errorf("testfixture: cannot resolve corpus owner location")
+// Project returns one named fixture directory as a defensive view.
+func (corpus *Corpus) Project(name string) (CorpusProject, error) {
+	projects := corpus.projects
+	index := sort.Search(len(projects), func(index int) bool { return projects[index].relative >= name })
+	if index >= len(projects) || projects[index].relative != name {
+		return CorpusProject{}, fmt.Errorf("testfixture: missing fixture project %q", name)
 	}
-	repository, err := repositoryRoot(filepath.Dir(thisFile))
-	if err != nil {
-		return nil, err
-	}
+	return cloneCorpusProject(projects[index]), nil
+}
+
+func loadFrozenCorpusProjects(repository string) ([]CorpusProject, error) {
 	root := filepath.Join(repository, "testdata", "fixtures")
 	projects := make(map[string]*CorpusProject)
 	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
@@ -119,18 +148,6 @@ func loadFrozenCorpusProjects() ([]CorpusProject, error) {
 	}
 	sort.Slice(result, func(left, right int) bool { return result[left].relative < result[right].relative })
 	return result, nil
-}
-
-func FrozenCorpusProject(name string) (CorpusProject, error) {
-	projects, err := frozenCorpusCatalog()
-	if err != nil {
-		return CorpusProject{}, err
-	}
-	index := sort.Search(len(projects), func(index int) bool { return projects[index].relative >= name })
-	if index >= len(projects) || projects[index].relative != name {
-		return CorpusProject{}, fmt.Errorf("testfixture: missing fixture project %q", name)
-	}
-	return cloneCorpusProject(projects[index]), nil
 }
 
 func cloneCorpusProjects(projects []CorpusProject) []CorpusProject {
@@ -198,17 +215,21 @@ func SealCorpusProject(contract *target.Contract, project CorpusProject) (*link.
 				return nil, fmt.Errorf("testfixture: fixture %s %s has malformed Program Import table", project.relative, module.Name)
 			}
 			row, ok := module.Program.Module().Import(item.Term)
-			call, literal := row.Call, row.Request
-			if !ok || call == 0 {
+			if !ok || row.Call == 0 {
 				return nil, fmt.Errorf("testfixture: fixture %s %s has malformed Program Import", project.relative, module.Name)
 			}
-			if literal == 0 || !module.Program.Flow().Executable().Contains(call) {
+			// Project admits an Import application exactly when its Call is
+			// executable, and resolves the requested module through the Key the
+			// Module finalizer derived. Both surfaces are read here, never
+			// recomputed, so the declared ingress matches the one Link builds.
+			if !module.Program.Flow().Executable().Contains(row.Call) {
 				continue
 			}
-			name, literalOK := programStringValue(module.Program, literal)
-			if !literalOK {
-				return nil, fmt.Errorf("testfixture: fixture %s %s Import has non-string literal", project.relative, module.Name)
+			requested, requestedOK := module.Program.Source().Keys().Exact(row.Key)
+			if !requestedOK || requested.Kind != keyspace.LiteralString {
+				return nil, fmt.Errorf("testfixture: fixture %s %s Import has non-string request", project.relative, module.Name)
 			}
+			name := requested.String
 			if _, registered := programs[name]; !registered {
 				continue
 			}
@@ -250,31 +271,4 @@ func validateManifest(project *CorpusProject) error {
 		}
 	}
 	return nil
-}
-
-func programStringValue(source *program.Program, term keyspace.Term) (string, bool) {
-	if source == nil {
-		return "", false
-	}
-	strings := source.Source().Literals().Strings()
-	for index := 0; index < strings.Count(); index++ {
-		candidate, _, value, ok := strings.At(index)
-		if ok && candidate == term {
-			return value, true
-		}
-	}
-	return "", false
-}
-
-func repositoryRoot(start string) (string, error) {
-	for directory := filepath.Clean(start); ; {
-		if info, err := os.Stat(filepath.Join(directory, "go.mod")); err == nil && !info.IsDir() {
-			return directory, nil
-		}
-		parent := filepath.Dir(directory)
-		if parent == directory {
-			return "", fmt.Errorf("testfixture: cannot locate repository root from %q", start)
-		}
-		directory = parent
-	}
 }

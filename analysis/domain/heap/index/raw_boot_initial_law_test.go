@@ -54,7 +54,7 @@ func bootInitialExpectation(t testing.TB, heap heapdomain.Schema, values *valued
 		if !valueOK {
 			t.Fatal("owner boot initial value")
 		}
-		for _, role := range []materialization.Role{materialization.Exact, materialization.Recent, materialization.Summary} {
+		for _, role := range materialization.Roles() {
 			route, routeOK := heap.RouteTag(key, role)
 			if !routeOK {
 				continue

@@ -58,13 +58,13 @@ func vertexPhasePath(domain string, path identity.ContentID) identity.ContentID 
 	return identity.ContentID(sha256.Sum256(encoded[:offset]))
 }
 
-// InstallVertexCatalog is SourceControl's sole semantic vertex issuance cut.
+// InstallVertexCatalog is SourceControl's sole semantic vertex materialization cut.
 // It covers every structural node exactly once: a non-empty Body root entry,
 // a Body tail, an empty Body, or a hidden dynamic-loop decision.  The
 // existing adjacency arrays are reordered in place by the issued target
 // paths, becoming the sole canonical CSR; no second graph is retained.
-func (r *Result) InstallVertexCatalogLease(bodies *body.Result, receipt *semanticpath.VertexCatalogReceipt) (*VertexCatalogLease, error) {
-	if r == nil || !r.ownerAvailable() || bodies == nil || receipt == nil || r.catalog == nil || r.catalog.owner != r {
+func (r *Result) InstallVertexCatalogLease(bodies *body.Result, pathView *semanticpath.VertexCatalogPaths) (*VertexCatalogLease, error) {
+	if r == nil || !r.ownerAvailable() || bodies == nil || pathView == nil || r.catalog == nil || r.catalog.owner != r || !pathView.Matches(r.sourceID, r.flowID, r.staticID, r.moduleID) {
 		return nil, errors.New("program/flow/sourcecontrol: vertex path lease is unavailable")
 	}
 	lifecycle := r.catalog
@@ -73,12 +73,8 @@ func (r *Result) InstallVertexCatalogLease(bodies *body.Result, receipt *semanti
 	if lifecycle.phase != catalogUninstalled {
 		return nil, errors.New("program/flow/sourcecontrol: vertex path lease is unavailable")
 	}
-	pathsLease, leaseOK := receipt.Consume(r.sourceID, r.flowID, r.staticID, r.moduleID)
-	if !leaseOK {
-		return nil, errors.New("program/flow/sourcecontrol: vertex path receipt is unavailable")
-	}
 	if !body.Matches(bodies, r.sourceID, r.flowID) || len(r.coordinates.bodyOffsets) == 0 || bodies.BodyCount() != len(r.coordinates.bodyOffsets)-1 ||
-		r.coordinates.nodeCount == 0 || pathsLease.BodyCount() != bodies.BodyCount() || len(r.adjacency.forwardOffsets) != int(r.coordinates.nodeCount)+1 || len(r.adjacency.reverseOffsets) != int(r.coordinates.nodeCount)+1 {
+		r.coordinates.nodeCount == 0 || pathView.BodyCount() != bodies.BodyCount() || len(r.adjacency.forwardOffsets) != int(r.coordinates.nodeCount)+1 || len(r.adjacency.reverseOffsets) != int(r.coordinates.nodeCount)+1 {
 		return nil, errors.New("program/flow/sourcecontrol: vertex catalog denominator disagrees with geometry")
 	}
 	paths := make([]identity.ContentID, r.coordinates.nodeCount)
@@ -86,11 +82,11 @@ func (r *Result) InstallVertexCatalogLease(bodies *body.Result, receipt *semanti
 	for ordinal := uint32(1); ordinal <= uint32(bodies.BodyCount()); ordinal++ {
 		bodyTerm := keyspace.MakeTerm(keyspace.FamilyBody, ordinal)
 		rootCount, ok := bodies.RootCount(bodyTerm)
-		if !ok || rootCount < 0 || int(ordinal) > pathsLease.BodyCount() {
+		if !ok || rootCount < 0 || int(ordinal) > pathView.BodyCount() {
 			return nil, errors.New("program/flow/sourcecontrol: Body vertex denominator is unavailable")
 		}
 		start, tail := r.coordinates.bodyOffsets[ordinal-1], r.coordinates.bodyOffsets[ordinal]-1
-		bodyPath, bodyPathOK := pathsLease.BodyAt(ordinal)
+		bodyPath, bodyPathOK := pathView.BodyAt(ordinal)
 		if tail < start || !bodyPathOK {
 			return nil, errors.New("program/flow/sourcecontrol: Body path is unavailable")
 		}
@@ -108,9 +104,9 @@ func (r *Result) InstallVertexCatalogLease(bodies *body.Result, receipt *semanti
 			// RootEntry is body-qualified by RootPath.  The general structural
 			// term plane intentionally omits that Body join for direct roots and
 			// would collapse identical local root classes in sibling Bodies.
-			rootPath, rootPathOK := pathsLease.RootAt(family, rootOrdinal)
+			rootPath, rootPathOK := pathView.RootAt(family, rootOrdinal)
 			if !rootPathOK {
-				return nil, errors.New("program/flow/sourcecontrol: root receipt is unavailable")
+				return nil, errors.New("program/flow/sourcecontrol: root path is unavailable")
 			}
 			paths[start+uint32(cursor)] = vertexPhasePath(vertexRootEntryDomain, rootPath)
 		}
@@ -124,9 +120,9 @@ func (r *Result) InstallVertexCatalogLease(bodies *body.Result, receipt *semanti
 		if node >= r.coordinates.nodeCount {
 			return nil, errors.New("program/flow/sourcecontrol: dynamic-loop vertex is unavailable")
 		}
-		rootPath, rootPathOK := pathsLease.TermAt(keyspace.FamilyLoop, ordinal)
+		rootPath, rootPathOK := pathView.TermAt(keyspace.FamilyLoop, ordinal)
 		if !rootPathOK {
-			return nil, errors.New("program/flow/sourcecontrol: dynamic-loop root receipt is unavailable")
+			return nil, errors.New("program/flow/sourcecontrol: dynamic-loop root path is unavailable")
 		}
 		paths[node] = vertexPhasePath(vertexDynamicDecisionDomain, rootPath)
 	}
@@ -200,7 +196,7 @@ func (r *Result) VertexPath(ref NodeRef) (identity.ContentID, bool) {
 	return r.VertexPathAt(node)
 }
 
-// BodyEntryPath returns the exact phase receipt for a Body's entry vertex.
+// BodyEntryPath returns the exact phase path for a Body's entry vertex.
 // For an empty Body this is the BodyEmpty phase; for a non-empty Body it is
 // the first RootEntry phase.  It is intentionally a typed Body projection,
 // not a generic node/Term path mapper.
@@ -212,7 +208,7 @@ func (r *Result) BodyEntryPath(body keyspace.Term) (identity.ContentID, bool) {
 	return r.VertexPathAt(node)
 }
 
-// BodyTailPath returns the exact BodyTail (or BodyEmpty) phase receipt.  It
+// BodyTailPath returns the exact BodyTail (or BodyEmpty) phase path.  It
 // stays available while Causal attaches terminal Outcome Sites even if no
 // final route names that endpoint.
 func (r *Result) BodyTailPath(body keyspace.Term) (identity.ContentID, bool) {
@@ -240,7 +236,7 @@ func (r *Result) CanonicalNodeAt(index int) (uint32, bool) {
 }
 
 // ReleaseVertexCatalog clears the transient semantic paths/permutation after
-// all consumers have copied their exact point receipts.  SourceControl's Arc
+// all consumers have copied their exact point paths.  SourceControl's Arc
 // witnesses remain available for the rest of the assembly, but no topology
 // or path lease can escape Flow publication.
 func (r *Result) ReleaseVertexCatalog(lease *VertexCatalogLease) bool {

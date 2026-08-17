@@ -222,56 +222,45 @@ func (compiler *compiler) copyFunctionBoundariesFailure() CompileFailure {
 		if !bodyOK || !compiler.input.OwnsBody(body) || bodyIndex >= len(compiler.bodies) {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, -1, CompileReasonBodyUnavailable)
 		}
-		function, callable := body.TransformerFunction()
+		function, callable := body.Function()
+		functionID, functionOK := compiler.input.FunctionID(function)
 		if !callable {
 			continue
 		}
 		copiedBody := compiler.bodies[bodyIndex]
 		callFormal, callFormalOK := body.CallTarget()
 		callFormalID, callFormalIDOK := callFormal.ID()
-		if !compiler.input.OwnsFunction(function) || !copiedBody.Callable() || !callFormalOK || !callFormalIDOK {
+		if !functionOK || !copiedBody.Callable() || !callFormalOK || !callFormalIDOK {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, -1, CompileReasonBodyUnavailable)
 		}
 		row := FunctionBoundaryRow{
-			id: function.ContextID(), body: copiedBody.ID(), bodyContext: copiedBody.ContextID(),
+			id: functionID, body: copiedBody.ID(), bodyContext: copiedBody.ContextID(),
 			entry: copiedBody.EntryID(), callFormal: callFormalID, sealed: true,
 		}
 		for position := 0; position < function.FormalCount(); position++ {
-			formal, formalOK := function.FormalAt(position)
-			cell, cellOK := formal.Cell()
-			storage, storageOK := formal.StorageCell()
-			declared, _ := formal.DeclaredStaticTypeReferenceID()
-			formalPosition, positionOK := formal.Position()
-			if !formalOK || !cellOK || !storageOK || !positionOK || formalPosition != position ||
-				!compiler.input.OwnsFormal(formal) || !compiler.input.OwnsCell(cell) || !compiler.input.OwnsCell(storage) ||
-				uint64(position) > uint64(^uint32(0)) {
+			formalID, cellID, storageID, declared, formalOK := compiler.input.FunctionFormalAt(function, position)
+			if !formalOK || uint64(position) > uint64(^uint32(0)) {
 				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, position, CompileReasonBodyUnavailable)
 			}
 			row.formals = append(row.formals, FunctionFormalPort{
-				id: formal.ContextID(), cell: cell.ContextID(), storage: storage.ContextID(), declared: declared, position: uint32(position),
+				id: formalID, cell: cellID, storage: storageID, declared: declared, position: uint32(position),
 			})
 		}
-		if vararg, varargOK := function.Vararg(); varargOK {
-			cell, cellOK := vararg.Cell()
-			if !cellOK || !compiler.input.OwnsVararg(vararg) || !compiler.input.OwnsCell(cell) {
+		if varargID, cellID, varargOK := compiler.input.FunctionVararg(function); varargOK {
+			if !varargID.Available() || !cellID.Available() {
 				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, -1, CompileReasonBodyUnavailable)
 			}
-			row.vararg = FunctionVarargPort{id: vararg.ContextID(), cell: cell.ContextID()}
+			row.vararg = FunctionVarargPort{id: varargID, cell: cellID}
 			row.hasVararg = true
 		}
 		for position := 0; position < function.CaptureCount(); position++ {
-			capture, captureOK := function.CaptureAt(position)
-			inner, innerOK := capture.Inner()
-			outer, outerOK := capture.Outer()
-			capturePosition, positionOK := capture.Position()
-			if !captureOK || !innerOK || !outerOK || !positionOK || capturePosition != position ||
-				!compiler.input.OwnsCapture(capture) || !compiler.input.OwnsCell(inner) || !compiler.input.OwnsCell(outer) ||
-				uint64(position) > uint64(^uint32(0)) {
+			captureID, innerID, outerID, innerBodyID, outerBodyID, captureOK := compiler.input.FunctionCaptureAt(function, position)
+			if !captureOK || uint64(position) > uint64(^uint32(0)) {
 				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, position, CompileReasonBodyUnavailable)
 			}
 			row.captures = append(row.captures, FunctionCapturePort{
-				id: capture.ContextID(), inner: inner.ContextID(), outer: outer.ContextID(),
-				innerBody: capture.InnerBodyPathID(), outerBody: capture.OuterBodyPathID(), position: uint32(position),
+				id: captureID, inner: innerID, outer: outerID,
+				innerBody: innerBodyID, outerBody: outerBodyID, position: uint32(position),
 			})
 		}
 		for outcomeIndex := copiedBody.outcomeStart; outcomeIndex < copiedBody.outcomeEnd; outcomeIndex++ {

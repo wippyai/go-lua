@@ -174,17 +174,17 @@ func (schema Schema) CellAbsent() (CellState, bool) {
 	return CellState{owner: schema.owner, raw: RawAbsent}, true
 }
 
-const legalKeyKindCount = int(runtimekind.Userdata-runtimekind.Boolean) + 1
+// Every runtime family but nil is a legal Lua table key. That partition is the
+// vocabulary's own, so the count, the enumeration, and the admission test are
+// projections of it rather than an ordinal range restated here.
+var legalKeyKindCount = runtimekind.NonNil.Members()
 
 func legalKeyKindAt(index int) (runtimekind.Kind, bool) {
-	if index < 0 || index >= legalKeyKindCount {
-		return runtimekind.Invalid, false
-	}
-	return runtimekind.Kind(int(runtimekind.Boolean) + index), true
+	return runtimekind.NonNil.MemberAt(index)
 }
 
 func legalKeyKind(kind runtimekind.Kind) bool {
-	return kind >= runtimekind.Boolean && kind <= runtimekind.Userdata
+	return runtimekind.NonNil.Contains(kind)
 }
 
 // Partition is a complete, canonical key-space partition. `rest[k]` covers
@@ -248,7 +248,7 @@ func (partition Partition) defaultFor(atom keyAtom) (CellState, bool) {
 }
 
 func (partition Partition) defaultForKinds(kinds runtimekind.Set) (CellState, bool) {
-	if partition.owner == nil || kinds == 0 || kinds&^legalTableKeyKinds != 0 {
+	if partition.owner == nil || kinds == 0 || kinds&^runtimekind.NonNil != 0 {
 		return CellState{}, false
 	}
 	return partition.defaultForKindsAdmitted(kinds)
@@ -262,7 +262,7 @@ func (partition Partition) defaultForAdmitted(atom keyAtom) (CellState, bool) {
 }
 
 func (partition Partition) defaultForKindsAdmitted(kinds runtimekind.Set) (CellState, bool) {
-	if partition.owner == nil || kinds == 0 || kinds&^legalTableKeyKinds != 0 {
+	if partition.owner == nil || kinds == 0 || kinds&^runtimekind.NonNil != 0 {
 		return CellState{}, false
 	}
 	var result CellState
@@ -557,8 +557,6 @@ func (value Value) WorldAt(index int) (World, bool) {
 	return value.worlds[index], true
 }
 
-var legalTableKeyKinds = runtimekind.All &^ runtimekind.Bit(runtimekind.Nil)
-
 // ExactSelector creates the singleton already-normalized exact-key selection.
 // The literal is matched against Heap's sealed quotient, so caller input
 // cannot mint an unseen key or carry a Project coordinate.
@@ -604,14 +602,14 @@ func (schema Schema) FiniteSelector(selectors ...KeySelector) (KeySelector, bool
 }
 
 func (schema Schema) KindSelector() (KeySelector, bool) {
-	return schema.KindsSelector(legalTableKeyKinds)
+	return schema.KindsSelector(runtimekind.NonNil)
 }
 
 // KindsSelector is the explicit typed loss of key identity. Source
 // occurrences, strings, decoded syntax, and caller-supplied exclusions never
 // enter this representation.
 func (schema Schema) KindsSelector(kinds runtimekind.Set) (KeySelector, bool) {
-	if !schema.valid() || !kinds.Valid() || kinds == 0 || kinds&^legalTableKeyKinds != 0 {
+	if !schema.valid() || !kinds.Valid() || kinds == 0 || kinds&^runtimekind.NonNil != 0 {
 		return KeySelector{}, false
 	}
 	return KeySelector{owner: schema.owner, kinds: kinds}, true

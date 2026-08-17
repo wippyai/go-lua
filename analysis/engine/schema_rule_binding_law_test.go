@@ -285,7 +285,7 @@ func TestSchemaRuleReceiptMemberGeometryIsExactAndStatic(t *testing.T) {
 		name string
 		edit func(*schemaRuleMemberGeometryFixture)
 	}{
-		{"foreign-family", func(row *schemaRuleMemberGeometryFixture) { row.family = coldKey(947_099).compositionKey() }},
+		{"foreign-family", func(row *schemaRuleMemberGeometryFixture) { row.family = compositionKeyOf(coldKey(947_099)) }},
 		{"dynamic", func(row *schemaRuleMemberGeometryFixture) { row.dynamic = true }},
 		{"hidden-route", func(row *schemaRuleMemberGeometryFixture) { row.route = 1 }},
 		{"selector-candidate", func(row *schemaRuleMemberGeometryFixture) { row.candidates = 1 }},
@@ -307,7 +307,7 @@ func receiptRuleGraph(t testing.TB, schema *Schema, proof *ruleRuntimeProof, con
 	t.Helper()
 	batch := equation.NewBatch()
 	scope := equation.EmptyScope()
-	site, siteOK := batch.AdmitSite(coldKey(947_110).compositionKey(), scope, equation.TrueExpr(), equation.InitPresent)
+	site, siteOK := batch.AdmitSite(compositionKeyOf(coldKey(947_110)), scope, equation.TrueExpr(), equation.InitPresent)
 	occurrence, occurrenceOK := batch.At(site)
 	entity, entityOK := operandEntityForContent(content)
 	operand, operandOK := batch.AdmitOperand(occurrence, entity)
@@ -501,8 +501,8 @@ func TestReceiptCompilerThreadsExactReadAndCarryThroughProductEvidenceAndPatch(t
 
 	batch := equation.NewBatch()
 	scope := equation.EmptyScope()
-	sourceSite, sourceSiteOK := batch.AdmitSite(coldKey(947_207).compositionKey(), scope, equation.TrueExpr(), equation.InitPresent)
-	readerSite, readerSiteOK := batch.AdmitSite(coldKey(947_208).compositionKey(), scope, equation.TrueExpr(), equation.InitPresent)
+	sourceSite, sourceSiteOK := batch.AdmitSite(compositionKeyOf(coldKey(947_207)), scope, equation.TrueExpr(), equation.InitPresent)
+	readerSite, readerSiteOK := batch.AdmitSite(compositionKeyOf(coldKey(947_208)), scope, equation.TrueExpr(), equation.InitPresent)
 	sourceOccurrence, sourceOccurrenceOK := batch.At(sourceSite)
 	readerOccurrence, readerOccurrenceOK := batch.At(readerSite)
 	sourceEntity, sourceEntityOK := operandEntityForContent(sourceOperand.content)
@@ -512,15 +512,15 @@ func TestReceiptCompilerThreadsExactReadAndCarryThroughProductEvidenceAndPatch(t
 	if !sourceSiteOK || !readerSiteOK || !sourceOccurrenceOK || !readerOccurrenceOK || !sourceEntityOK || !readerEntityOK || !sourceOperandOK || !readerOperandOK || !batch.Seal() {
 		t.Fatal("exact-read source batch")
 	}
-	boundary := equation.BoundaryInput(sourceSite, readerSite, coldKey(947_209).compositionKey(), equation.TrueExpr(), equation.IdentityReindex(scope), equation.TrueExpr())
+	boundary := equation.BoundaryInput(sourceSite, readerSite, compositionKeyOf(coldKey(947_209)), equation.TrueExpr(), equation.IdentityReindex(scope), equation.TrueExpr())
 	if !boundary.Available() {
 		t.Fatal("exact-read boundary")
 	}
 	topology, topologyOK := equation.SealTopology(schema.cold, equation.TopologySpec{
 		Batch: batch,
 		Rules: []equation.RuleInstance{
-			{Schema: sourceImplementation.receipt.proof.semantic, OperandFamily: unitOperandFamily.compositionKey(), Occurrence: sourceOccurrence, Operand: sourceOperandRow, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: factorImplementation.receipt.semantic, Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}}},
-			{Schema: readerImplementation.receipt.proof.semantic, OperandFamily: unitOperandFamily.compositionKey(), Occurrence: readerOccurrence, Operand: readerOperandRow, Reads: []equation.ResolvedRead{{Index: 0, Surface: equation.Surface{Factor: factorImplementation.receipt.semantic, Form: equation.SurfaceReadExact, Local: 1}}}, Carries: []equation.ResolvedCarry{{Index: 0}}, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: factorImplementation.receipt.semantic, Form: equation.SurfaceWriteExact, Local: 2, Mode: equation.TargetModeStrong}}}},
+			{Schema: sourceImplementation.receipt.proof.semantic, OperandFamily: compositionKeyOf(unitOperandFamily), Occurrence: sourceOccurrence, Operand: sourceOperandRow, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: factorImplementation.receipt.semantic, Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}}},
+			{Schema: readerImplementation.receipt.proof.semantic, OperandFamily: compositionKeyOf(unitOperandFamily), Occurrence: readerOccurrence, Operand: readerOperandRow, Reads: []equation.ResolvedRead{{Index: 0, Surface: equation.Surface{Factor: factorImplementation.receipt.semantic, Form: equation.SurfaceReadExact, Local: 1}}}, Carries: []equation.ResolvedCarry{{Index: 0}}, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: factorImplementation.receipt.semantic, Form: equation.SurfaceWriteExact, Local: 2, Mode: equation.TargetModeStrong}}}},
 		},
 		Points: []equation.PointSpec{{Site: sourceSite}, {Site: readerSite}},
 		Groups: []equation.Group{
@@ -709,8 +709,8 @@ func runSummaryReadThroughProductAndEvidence(t testing.TB, summaryWidth int) {
 	}
 	batch := equation.NewBatch()
 	scope := equation.EmptyScope()
-	sourceSite, sourceSiteOK := batch.AdmitSite(coldKey(947_308).compositionKey(), scope, equation.TrueExpr(), equation.InitPresent)
-	readerSite, readerSiteOK := batch.AdmitSite(coldKey(947_309).compositionKey(), scope, equation.TrueExpr(), equation.InitPresent)
+	sourceSite, sourceSiteOK := batch.AdmitSite(compositionKeyOf(coldKey(947_308)), scope, equation.TrueExpr(), equation.InitPresent)
+	readerSite, readerSiteOK := batch.AdmitSite(compositionKeyOf(coldKey(947_309)), scope, equation.TrueExpr(), equation.InitPresent)
 	sourceOccurrence, sourceOccurrenceOK := batch.At(sourceSite)
 	readerOccurrence, readerOccurrenceOK := batch.At(readerSite)
 	sourceEntity, sourceEntityOK := operandEntityForContent(sourceOperand.content)
@@ -720,15 +720,15 @@ func runSummaryReadThroughProductAndEvidence(t testing.TB, summaryWidth int) {
 	if !sourceSiteOK || !readerSiteOK || !sourceOccurrenceOK || !readerOccurrenceOK || !sourceEntityOK || !readerEntityOK || !sourceOperandOK || !readerOperandOK || !batch.Seal() {
 		t.Fatal("summary source batch")
 	}
-	boundary := equation.BoundaryInput(sourceSite, readerSite, coldKey(947_310).compositionKey(), equation.TrueExpr(), equation.IdentityReindex(scope), equation.TrueExpr())
-	summarySurface := equation.Surface{Factor: factorImplementation.receipt.semantic, Form: equation.SurfaceReadSummary, Local: 1, Semantic: coldKey(947_301).compositionKey(), Normalizer: coldKey(947_301).compositionKey()}
+	boundary := equation.BoundaryInput(sourceSite, readerSite, compositionKeyOf(coldKey(947_310)), equation.TrueExpr(), equation.IdentityReindex(scope), equation.TrueExpr())
+	summarySurface := equation.Surface{Factor: factorImplementation.receipt.semantic, Form: equation.SurfaceReadSummary, Local: 1, Semantic: compositionKeyOf(coldKey(947_301)), Normalizer: compositionKeyOf(coldKey(947_301))}
 	keys := make([]uint64, summaryWidth)
 	for index := range keys {
 		keys[index] = uint64(index)
 	}
 	topology, topologyOK := equation.SealTopology(schema.cold, equation.TopologySpec{Batch: batch, Rules: []equation.RuleInstance{
-		{Schema: sourceImplementation.receipt.proof.semantic, OperandFamily: unitOperandFamily.compositionKey(), Occurrence: sourceOccurrence, Operand: sourceOperandRow, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: factorImplementation.receipt.semantic, Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}}},
-		{Schema: readerImplementation.receipt.proof.semantic, OperandFamily: unitOperandFamily.compositionKey(), Occurrence: readerOccurrence, Operand: readerOperandRow, Reads: []equation.ResolvedRead{{Index: 0, Surface: summarySurface}}, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: factorImplementation.receipt.semantic, Form: equation.SurfaceWriteExact, Local: 2, Mode: equation.TargetModeStrong}}}},
+		{Schema: sourceImplementation.receipt.proof.semantic, OperandFamily: compositionKeyOf(unitOperandFamily), Occurrence: sourceOccurrence, Operand: sourceOperandRow, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: factorImplementation.receipt.semantic, Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}}},
+		{Schema: readerImplementation.receipt.proof.semantic, OperandFamily: compositionKeyOf(unitOperandFamily), Occurrence: readerOccurrence, Operand: readerOperandRow, Reads: []equation.ResolvedRead{{Index: 0, Surface: summarySurface}}, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: factorImplementation.receipt.semantic, Form: equation.SurfaceWriteExact, Local: 2, Mode: equation.TargetModeStrong}}}},
 	}, Points: []equation.PointSpec{{Site: sourceSite}, {Site: readerSite}}, Groups: []equation.Group{{Members: []equation.RuleRef{equation.RuleAt(0)}, Output: equation.PointAt(0)}, {Members: []equation.RuleRef{equation.RuleAt(1)}, Output: equation.PointAt(1), Inputs: []equation.Input{boundary}}}, Summaries: []equation.SummaryMapping{{Surface: summarySurface, Keys: keys}}})
 	if !topologyOK || topology == nil {
 		t.Fatal("summary topology")
@@ -775,7 +775,7 @@ func runSummaryReadThroughProductAndEvidence(t testing.TB, summaryWidth int) {
 	if !compiled || !sourceRowOK || !readerRowOK || !sourceSlotOK || !readerSlotOK || !sourcePlanOK || !readerPlanOK || !workOK || !wholeOK || !sourceBaseOK || !sourceResult.valid || !sourceResult.wrote || !sourceFinished || !sourceContribution.Valid() || !sourcePointOK || !readerBaseOK || !readerResult.valid || !readerResult.wrote || !readerFinished || !readerContribution.Valid() {
 		t.Fatal("summary Product/evidence/publication")
 	}
-	if runtimeRead.origin == nil || runtimeRead.origin.kind != composition.ReadSummary || runtimeRead.origin.semantic != coldKey(947_301).compositionKey() {
+	if runtimeRead.origin == nil || runtimeRead.origin.kind != composition.ReadSummary || runtimeRead.origin.semantic != compositionKeyOf(coldKey(947_301)) {
 		t.Fatal("summary read origin fence")
 	}
 }
@@ -832,8 +832,8 @@ func TestReceiptCompilerThreadsOneExactCarryThroughProductAndEvidence(t *testing
 	carryOperand := ruleUnitForSemantic(coldKey(947_406))
 	batch := equation.NewBatch()
 	scope := equation.EmptyScope()
-	sourceSite, sourceSiteOK := batch.AdmitSite(coldKey(947_407).compositionKey(), scope, equation.TrueExpr(), equation.InitPresent)
-	carrySite, carrySiteOK := batch.AdmitSite(coldKey(947_408).compositionKey(), scope, equation.TrueExpr(), equation.InitPresent)
+	sourceSite, sourceSiteOK := batch.AdmitSite(compositionKeyOf(coldKey(947_407)), scope, equation.TrueExpr(), equation.InitPresent)
+	carrySite, carrySiteOK := batch.AdmitSite(compositionKeyOf(coldKey(947_408)), scope, equation.TrueExpr(), equation.InitPresent)
 	sourceOccurrence, sourceOccurrenceOK := batch.At(sourceSite)
 	carryOccurrence, carryOccurrenceOK := batch.At(carrySite)
 	sourceEntity, sourceEntityOK := operandEntityForContent(sourceOperand.content)
@@ -843,10 +843,10 @@ func TestReceiptCompilerThreadsOneExactCarryThroughProductAndEvidence(t *testing
 	if !sourceSiteOK || !carrySiteOK || !sourceOccurrenceOK || !carryOccurrenceOK || !sourceEntityOK || !carryEntityOK || !sourceOperandOK || !carryOperandOK || !batch.Seal() {
 		t.Fatal("carry receipt batch")
 	}
-	boundary := equation.BoundaryInput(sourceSite, carrySite, coldKey(947_409).compositionKey(), equation.TrueExpr(), equation.IdentityReindex(scope), equation.TrueExpr())
+	boundary := equation.BoundaryInput(sourceSite, carrySite, compositionKeyOf(coldKey(947_409)), equation.TrueExpr(), equation.IdentityReindex(scope), equation.TrueExpr())
 	topology, topologyOK := equation.SealTopology(schema.cold, equation.TopologySpec{Batch: batch, Rules: []equation.RuleInstance{
-		{Schema: sourceImplementation.receipt.proof.semantic, OperandFamily: unitOperandFamily.compositionKey(), Occurrence: sourceOccurrence, Operand: sourceOperandRow, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: sourceImplementation.receipt.output.semantic, Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}}},
-		{Schema: carryImplementation.receipt.proof.semantic, OperandFamily: unitOperandFamily.compositionKey(), Occurrence: carryOccurrence, Operand: carryOperandRow, Carries: []equation.ResolvedCarry{{Index: 0}}, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: carryImplementation.receipt.output.semantic, Form: equation.SurfaceWriteExact, Local: 2, Mode: equation.TargetModeStrong}}}},
+		{Schema: sourceImplementation.receipt.proof.semantic, OperandFamily: compositionKeyOf(unitOperandFamily), Occurrence: sourceOccurrence, Operand: sourceOperandRow, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: sourceImplementation.receipt.output.semantic, Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}}},
+		{Schema: carryImplementation.receipt.proof.semantic, OperandFamily: compositionKeyOf(unitOperandFamily), Occurrence: carryOccurrence, Operand: carryOperandRow, Carries: []equation.ResolvedCarry{{Index: 0}}, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: carryImplementation.receipt.output.semantic, Form: equation.SurfaceWriteExact, Local: 2, Mode: equation.TargetModeStrong}}}},
 	}, Points: []equation.PointSpec{{Site: sourceSite}, {Site: carrySite}}, Groups: []equation.Group{
 		{Members: []equation.RuleRef{equation.RuleAt(0)}, Output: equation.PointAt(0)},
 		{Members: []equation.RuleRef{equation.RuleAt(1)}, Output: equation.PointAt(1), Inputs: []equation.Input{boundary}},
@@ -1005,8 +1005,8 @@ func TestReceiptCompilerThreadsSelectedReadRouteThroughProductAndEvidence(t *tes
 	routeOperand := ruleUnitForSemantic(coldKey(947_806))
 	batch := equation.NewBatch()
 	scope := equation.EmptyScope()
-	sourceSite, sourceSiteOK := batch.AdmitSite(coldKey(947_807).compositionKey(), scope, equation.TrueExpr(), equation.InitPresent)
-	routeSite, routeSiteOK := batch.AdmitSite(coldKey(947_808).compositionKey(), scope, equation.TrueExpr(), equation.InitPresent)
+	sourceSite, sourceSiteOK := batch.AdmitSite(compositionKeyOf(coldKey(947_807)), scope, equation.TrueExpr(), equation.InitPresent)
+	routeSite, routeSiteOK := batch.AdmitSite(compositionKeyOf(coldKey(947_808)), scope, equation.TrueExpr(), equation.InitPresent)
 	sourceOccurrence, sourceOccurrenceOK := batch.At(sourceSite)
 	routeOccurrence, routeOccurrenceOK := batch.At(routeSite)
 	sourceEntity, sourceEntityOK := operandEntityForContent(sourceOperand.content)
@@ -1016,10 +1016,10 @@ func TestReceiptCompilerThreadsSelectedReadRouteThroughProductAndEvidence(t *tes
 	if !sourceSiteOK || !routeSiteOK || !sourceOccurrenceOK || !routeOccurrenceOK || !sourceEntityOK || !routeEntityOK || !sourceOperandOK || !routeOperandOK || !batch.Seal() {
 		t.Fatal("selected-route batch")
 	}
-	boundary := equation.BoundaryInput(sourceSite, routeSite, coldKey(947_809).compositionKey(), equation.TrueExpr(), equation.IdentityReindex(scope), equation.TrueExpr())
+	boundary := equation.BoundaryInput(sourceSite, routeSite, compositionKeyOf(coldKey(947_809)), equation.TrueExpr(), equation.IdentityReindex(scope), equation.TrueExpr())
 	topology, topologyOK := equation.SealTopology(schema.cold, equation.TopologySpec{Batch: batch, Rules: []equation.RuleInstance{
-		{Schema: sourceImplementation.receipt.proof.semantic, OperandFamily: unitOperandFamily.compositionKey(), Occurrence: sourceOccurrence, Operand: sourceOperandRow, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: factorImplementation.receipt.semantic, Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}}},
-		{Schema: routeImplementation.receipt.proof.semantic, OperandFamily: unitOperandFamily.compositionKey(), Occurrence: routeOccurrence, Operand: routeOperandRow,
+		{Schema: sourceImplementation.receipt.proof.semantic, OperandFamily: compositionKeyOf(unitOperandFamily), Occurrence: sourceOccurrence, Operand: sourceOperandRow, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: factorImplementation.receipt.semantic, Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}}},
+		{Schema: routeImplementation.receipt.proof.semantic, OperandFamily: compositionKeyOf(unitOperandFamily), Occurrence: routeOccurrence, Operand: routeOperandRow,
 			Reads:  []equation.ResolvedRead{{Index: 0, Surface: equation.Surface{Factor: factorImplementation.receipt.semantic, Form: equation.SurfaceReadExact, Local: 1}}, {Index: 1, Surface: equation.Surface{Factor: factorImplementation.receipt.semantic, Form: equation.SurfaceReadSelect, Local: 1, Semantic: factorImplementation.receipt.semantic}}},
 			Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: factorImplementation.receipt.semantic, Form: equation.SurfaceWriteRoute, Local: 1}, Route: 2}}},
 	}, Points: []equation.PointSpec{{Site: sourceSite}, {Site: routeSite}}, Groups: []equation.Group{{Members: []equation.RuleRef{equation.RuleAt(0)}, Output: equation.PointAt(0)}, {Members: []equation.RuleRef{equation.RuleAt(1)}, Output: equation.PointAt(1), Inputs: []equation.Input{boundary}}}})

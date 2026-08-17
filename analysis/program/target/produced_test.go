@@ -1,9 +1,9 @@
 package target
 
 import (
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
 
@@ -11,10 +11,10 @@ func TestProducedOperationUsesOneOrdinaryOperationIdentity(t *testing.T) {
 	contract := mustSeal(t, Spec{Operations: []OperationSpec{
 		{
 			Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"factory"}}},
-			Input:    ValuesSpec{Fixed: []typ.Type{typ.String}, Tail: ValuesClosed},
+			Input:    ValuesSpec{Fixed: []schematype.Type{testString}, Tail: ValuesClosed},
 			Outcomes: []OutcomeSpec{{
 				Kind:   flowkind.OutcomeNormal,
-				Values: ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed},
+				Values: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed},
 				Produced: []ProducedSpec{{
 					Result: 0, Operation: 2,
 					Captures: []CaptureSpec{{Kind: CaptureValueFormal, Ordinal: 0}},
@@ -27,7 +27,7 @@ func TestProducedOperationUsesOneOrdinaryOperationIdentity(t *testing.T) {
 			Input:      ValuesSpec{Tail: ValuesVariable, Var: 0},
 			Outcomes: []OutcomeSpec{{
 				Kind:   flowkind.OutcomeNormal,
-				Values: ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed},
+				Values: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed},
 				Produced: []ProducedSpec{{
 					Result: 0, Operation: 3,
 					Captures: []CaptureSpec{{Kind: CaptureValuesVar, Ordinal: 0}},
@@ -63,7 +63,7 @@ func TestProducedCallbackCaptureRemapsToSealedID(t *testing.T) {
 		{
 			Bindings:   []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"wrap"}}},
 			ValuesVars: 5,
-			Input:      ValuesSpec{Fixed: []typ.Type{typ.String}, Tail: ValuesVariable, Var: 0},
+			Input:      ValuesSpec{Fixed: []schematype.Type{testString}, Tail: ValuesVariable, Var: 0},
 			Callbacks: []CallbackSpec{{
 				Function:  InputSource{Kind: InputSourceValueFormal, Ordinal: 0},
 				Admission: OrdinaryCallable, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: CallbackRetainedOptionalOnce,
@@ -71,7 +71,7 @@ func TestProducedCallbackCaptureRemapsToSealedID(t *testing.T) {
 			}},
 			Outcomes: []OutcomeSpec{{
 				Kind:   flowkind.OutcomeNormal,
-				Values: ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed},
+				Values: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed},
 				Produced: []ProducedSpec{{
 					Result: 0, Operation: 2,
 					Captures: []CaptureSpec{{Kind: CaptureCallback, Ordinal: 1}},
@@ -125,7 +125,7 @@ func TestBoundOperationsStayCanonicalPrefixWithProducedChildren(t *testing.T) {
 	alpha := OperationSpec{
 		Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"alpha"}}},
 		Input:    ValuesSpec{Tail: ValuesClosed},
-		Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed}}},
+		Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}}},
 		Effects:  RowSpec{Tail: RowClosed},
 	}
 	beta := OperationSpec{
@@ -162,21 +162,21 @@ func TestBoundOperationsStayCanonicalPrefixWithProducedChildren(t *testing.T) {
 
 func TestProducedAnchorsRejectAmbiguityAndCycles(t *testing.T) {
 	plain := func(name string, target SpecRef) OperationSpec {
-		outcome := OutcomeSpec{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed}}
+		outcome := OutcomeSpec{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}}
 		if target != 0 {
 			outcome.Produced = []ProducedSpec{{Result: 0, Operation: target}}
 		}
 		return OperationSpec{Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{name}}}, Input: ValuesSpec{Tail: ValuesClosed}, Outcomes: []OutcomeSpec{outcome}, Effects: RowSpec{Tail: RowClosed}}
 	}
-	if _, err := Seal(&Spec{Operations: []OperationSpec{{Input: ValuesSpec{Tail: ValuesClosed}, Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesClosed}}}, Effects: RowSpec{Tail: RowClosed}}}}); err == nil {
+	if _, err := testSeal(&Spec{Operations: []OperationSpec{{Input: ValuesSpec{Tail: ValuesClosed}, Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesClosed}}}, Effects: RowSpec{Tail: RowClosed}}}}); err == nil {
 		t.Fatal("unanchored produced-only operation accepted")
 	}
-	if _, err := Seal(&Spec{Operations: []OperationSpec{plain("left", 3), plain("right", 3), OperationSpec{Input: ValuesSpec{Tail: ValuesClosed}, Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesClosed}}}, Effects: RowSpec{Tail: RowClosed}}}}); err == nil {
+	if _, err := testSeal(&Spec{Operations: []OperationSpec{plain("left", 3), plain("right", 3), OperationSpec{Input: ValuesSpec{Tail: ValuesClosed}, Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesClosed}}}, Effects: RowSpec{Tail: RowClosed}}}}); err == nil {
 		t.Fatal("multiply anchored produced-only operation accepted")
 	}
-	if _, err := Seal(&Spec{Operations: []OperationSpec{
-		{Input: ValuesSpec{Tail: ValuesClosed}, Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed}, Produced: []ProducedSpec{{Result: 0, Operation: 2}}}}, Effects: RowSpec{Tail: RowClosed}},
-		{Input: ValuesSpec{Tail: ValuesClosed}, Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed}, Produced: []ProducedSpec{{Result: 0, Operation: 1}}}}, Effects: RowSpec{Tail: RowClosed}},
+	if _, err := testSeal(&Spec{Operations: []OperationSpec{
+		{Input: ValuesSpec{Tail: ValuesClosed}, Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}, Produced: []ProducedSpec{{Result: 0, Operation: 2}}}}, Effects: RowSpec{Tail: RowClosed}},
+		{Input: ValuesSpec{Tail: ValuesClosed}, Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}, Produced: []ProducedSpec{{Result: 0, Operation: 1}}}}, Effects: RowSpec{Tail: RowClosed}},
 	}}); err == nil {
 		t.Fatal("produced cycle accepted")
 	}
@@ -188,7 +188,7 @@ func TestDeepProducedChainSealsIteratively(t *testing.T) {
 	for index := range operations {
 		operations[index] = OperationSpec{
 			Input:    ValuesSpec{Tail: ValuesClosed},
-			Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed}}},
+			Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}}},
 			Effects:  RowSpec{Tail: RowClosed},
 		}
 		if index == 0 {

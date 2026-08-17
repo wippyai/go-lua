@@ -5,19 +5,20 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/heap/allocation/internal/source"
 	heapowner "github.com/wippyai/go-lua/analysis/domain/heap/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // SchemaFragment is Heap-ingress's callback-free zero-input Rule surface.
 type SchemaFragment struct {
 	slot     *engine.RuleSlot[heapdomain.Value, source.Root]
 	write    engine.SchemaWriteSlot[heapdomain.Value]
-	semantic engine.SemanticKey
-	evidence engine.SemanticKey
+	semantic identity.SemanticKey
+	evidence identity.SemanticKey
 }
 
 // DeclareSchema records the WorldZero ingress Rule shape.
-func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evidence engine.SemanticKey, owner *heapowner.SchemaFragment) (*SchemaFragment, bool) {
-	if builder == nil || owner == nil || !engine.DistinctKeys(semantic, operandFamily, evidence) {
+func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evidence identity.SemanticKey, owner *heapowner.SchemaFragment) (*SchemaFragment, bool) {
+	if builder == nil || owner == nil || !identity.DistinctKeys(semantic, operandFamily, evidence) {
 		return nil, false
 	}
 	slot, ok := engine.NewRuleSlot[heapdomain.Value, source.Root](builder, engine.SchemaRuleSpec[heapdomain.Value]{

@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/module/signature"
+	"github.com/wippyai/go-lua/analysis/module/signature/wire"
 )
 
 // Manifest is the stable module-boundary type metadata exchanged between
@@ -234,7 +235,7 @@ func encodeWire(m *Manifest) (*manifestWire, error) {
 		CallbackPhaseInvocations:   encodeCallbackPhaseInvocations(m.CallbackPhaseInvocations),
 	}
 	if m.Export != nil {
-		export, err := encodeType(m.Export)
+		export, err := wire.EncodeType(m.Export)
 		if err != nil {
 			return nil, fmt.Errorf("manifest: encode export: %w", err)
 		}
@@ -250,7 +251,7 @@ func encodeWire(m *Manifest) (*manifestWire, error) {
 
 		wm.Types = make([]namedTypeWire, 0, len(names))
 		for _, name := range names {
-			encoded, err := encodeType(m.Types[name])
+			encoded, err := wire.EncodeType(m.Types[name])
 			if err != nil {
 				return nil, fmt.Errorf("manifest: encode type %q: %w", name, err)
 			}
@@ -267,7 +268,7 @@ func encodeWire(m *Manifest) (*manifestWire, error) {
 
 		wm.GlobalTypes = make([]namedTypeWire, 0, len(names))
 		for _, name := range names {
-			encoded, err := encodeType(m.GlobalTypes[name])
+			encoded, err := wire.EncodeType(m.GlobalTypes[name])
 			if err != nil {
 				return nil, fmt.Errorf("manifest: encode global type %q: %w", name, err)
 			}
@@ -300,9 +301,9 @@ func encodeWire(m *Manifest) (*manifestWire, error) {
 		}
 		sort.Strings(names)
 
-		wm.FunctionSignatures = make([]functionSignatureWire, 0, len(names))
+		wm.FunctionSignatures = make([]wire.FunctionSignatureWire, 0, len(names))
 		for _, name := range names {
-			encoded, err := encodeFunctionSignature(m.FunctionSignatures[name])
+			encoded, err := wire.EncodeFunctionSignature(m.FunctionSignatures[name])
 			if err != nil {
 				return nil, fmt.Errorf("manifest: encode function signature %q: %w", name, err)
 			}
@@ -376,7 +377,7 @@ func Decode(data []byte) (decoded *Manifest, err error) {
 		m.DefineCallbackPhaseInvocation(invocation.Function, invocation.CallbackParam, invocation.Before, invocation.After)
 	}
 	if wm.Export != nil {
-		export, err := decodeType(wm.Export)
+		export, err := wire.DecodeType(wm.Export)
 		if err != nil {
 			return nil, fmt.Errorf("manifest: decode export: %w", err)
 		}
@@ -384,7 +385,7 @@ func Decode(data []byte) (decoded *Manifest, err error) {
 	}
 
 	for _, named := range wm.Types {
-		t, err := decodeType(named.Type)
+		t, err := wire.DecodeType(named.Type)
 		if err != nil {
 			return nil, fmt.Errorf("manifest: decode type %q: %w", named.Name, err)
 		}
@@ -392,7 +393,7 @@ func Decode(data []byte) (decoded *Manifest, err error) {
 	}
 
 	for _, named := range wm.GlobalTypes {
-		t, err := decodeType(named.Type)
+		t, err := wire.DecodeType(named.Type)
 		if err != nil {
 			return nil, fmt.Errorf("manifest: decode global type %q: %w", named.Name, err)
 		}
@@ -410,7 +411,7 @@ func Decode(data []byte) (decoded *Manifest, err error) {
 	}
 
 	for _, named := range wm.FunctionSignatures {
-		sig, err := decodeFunctionSignature(named)
+		sig, err := wire.DecodeFunctionSignature(named)
 		if err != nil {
 			return nil, fmt.Errorf("manifest: decode function signature %q: %w", named.Name, err)
 		}
@@ -427,19 +428,19 @@ func Decode(data []byte) (decoded *Manifest, err error) {
 type manifestWire struct {
 	Path                       string                          `json:"path"`
 	Version                    string                          `json:"version,omitempty"`
-	Export                     *typeWire                       `json:"export,omitempty"`
+	Export                     *wire.TypeWire                  `json:"export,omitempty"`
 	Types                      []namedTypeWire                 `json:"types,omitempty"`
 	GlobalTypes                []namedTypeWire                 `json:"globalTypes,omitempty"`
 	TypestateProtocols         []typestateProtocolWire         `json:"typestateProtocols,omitempty"`
-	FunctionSignatures         []functionSignatureWire         `json:"functionSignatures,omitempty"`
+	FunctionSignatures         []wire.FunctionSignatureWire    `json:"functionSignatures,omitempty"`
 	Globals                    []string                        `json:"globals,omitempty"`
 	CallbackPhaseRegistrations []callbackPhaseRegistrationWire `json:"callbackPhaseRegistrations,omitempty"`
 	CallbackPhaseInvocations   []callbackPhaseInvocationWire   `json:"callbackPhaseInvocations,omitempty"`
 }
 
 type namedTypeWire struct {
-	Name string    `json:"name"`
-	Type *typeWire `json:"type,omitempty"`
+	Name string         `json:"name"`
+	Type *wire.TypeWire `json:"type,omitempty"`
 }
 
 type callbackPhaseRegistrationWire struct {
@@ -453,12 +454,6 @@ type callbackPhaseInvocationWire struct {
 	CallbackParam int      `json:"callbackParam"`
 	Before        []string `json:"before,omitempty"`
 	After         []string `json:"after,omitempty"`
-}
-
-type functionSignatureWire struct {
-	Name   string         `json:"name"`
-	Type   *typeWire      `json:"type,omitempty"`
-	Effect *effectRowWire `json:"effect,omitempty"`
 }
 
 func encodeCallbackPhaseRegistrations(in []CallbackPhaseRegistration) []callbackPhaseRegistrationWire {
@@ -517,49 +512,4 @@ func encodeCallbackPhaseInvocations(in []CallbackPhaseInvocation) []callbackPhas
 		return strings.Join(out[i].After, "\x00") < strings.Join(out[j].After, "\x00")
 	})
 	return out
-}
-
-func encodeFunctionSignature(sig signature.Function) (functionSignatureWire, error) {
-	var encodedType *typeWire
-	if sig.Type != nil {
-		var err error
-		encodedType, err = encodeType(sig.Type)
-		if err != nil {
-			return functionSignatureWire{}, err
-		}
-	}
-	encodedEffect, err := encodeEffectRow(sig.Effect)
-	if err != nil {
-		return functionSignatureWire{}, err
-	}
-	if encodedType == nil && encodedEffect == nil {
-		return functionSignatureWire{}, errors.New("missing function type or effects")
-	}
-	return functionSignatureWire{
-		Type:   encodedType,
-		Effect: encodedEffect,
-	}, nil
-}
-
-func decodeFunctionSignature(w functionSignatureWire) (signature.Function, error) {
-	var fn *typ.Function
-	if w.Type != nil {
-		decodedType, err := decodeType(w.Type)
-		if err != nil {
-			return signature.Function{}, err
-		}
-		var ok bool
-		fn, ok = decodedType.(*typ.Function)
-		if !ok {
-			return signature.Function{}, fmt.Errorf("type is %T, want *typ.Function", decodedType)
-		}
-	}
-	row, err := decodeEffectRow(w.Effect)
-	if err != nil {
-		return signature.Function{}, err
-	}
-	if fn == nil && row.Pure() {
-		return signature.Function{}, errors.New("missing function type or effects")
-	}
-	return signature.Function{Type: fn, Effect: row}, nil
 }

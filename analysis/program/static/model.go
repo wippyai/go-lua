@@ -354,7 +354,8 @@ type recordRow struct {
 	readOnly bool
 }
 
-// Component is immutable authored Static syntax with no inferred/domain resolution, query index, or receipt.
+// Component is immutable authored Static syntax with no inferred/domain
+// resolution, query index, or construction state.
 // staticTypes is fixed-size prefix metadata over the authored typed families;
 // it retains no duplicate Term stream or second graph.
 type Component struct {

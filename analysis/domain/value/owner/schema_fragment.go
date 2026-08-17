@@ -3,6 +3,7 @@ package owner
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // SchemaFragment is Value's callback-free cold Factor surface. It owns only
@@ -55,7 +56,7 @@ func (fragment *SchemaFragment) ExactWrite() engine.SchemaWriteForm[value.Value]
 
 // DeclareSchema records Value's global Factor shape in a callback-free schema
 // builder. The supplied keys are the sole semantic authority for this row.
-func DeclareSchema(builder *engine.SchemaBuilder, semantic, summarySemantic, foldSemantic engine.SemanticKey) (*SchemaFragment, bool) {
+func DeclareSchema(builder *engine.SchemaBuilder, semantic, summarySemantic, foldSemantic identity.SemanticKey) (*SchemaFragment, bool) {
 	if builder == nil || !semantic.Available() || !summarySemantic.Available() || !foldSemantic.Available() ||
 		semantic == summarySemantic || semantic == foldSemantic || summarySemantic == foldSemantic {
 		return nil, false

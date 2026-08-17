@@ -4,7 +4,9 @@ import (
 	"encoding/binary"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
+	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
 	transfer "github.com/wippyai/go-lua/analysis/domain/value/transfer"
@@ -12,11 +14,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
-	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
-	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 func TestHotStorageTransferBindsExactReadCarryReceiptAndRejectsForeignProof(t *testing.T) {
@@ -89,7 +89,7 @@ func transferFixture(t testing.TB, name string) *transferFixtureState {
 	if err != nil {
 		t.Fatal(err)
 	}
-	contract, err := target.Seal(&target.Spec{})
+	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,11 +97,11 @@ func transferFixture(t testing.TB, name string) *transferFixtureState {
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, ok := grammar.Global()
+	receipt, ok := composite.Global()
 	if !ok {
 		t.Fatal("program schema receipt")
 	}
-	artifact, failure := schemaadapter.CompileDetailed(programValue.TransformerInput(), receipt)
+	artifact, failure := composite.CompileArtifactDetailed(programValue, receipt)
 	if failure.Available() || artifact == nil {
 		t.Fatalf("compile artifact: %s", failure.Error())
 	}
@@ -147,10 +147,10 @@ func transferColdSchema(t testing.TB) (*engine.Schema, *valueowner.SchemaFragmen
 	return cold, ownerFragment, fragment
 }
 
-func transferKey(number uint64) engine.SemanticKey {
+func transferKey(number uint64) identity.SemanticKey {
 	var digest [32]byte
 	binary.BigEndian.PutUint64(digest[24:], number)
-	key, ok := engine.NewSemanticKey(digest, 1)
+	key, ok := identity.NewSemanticKey(digest, 1)
 	if !ok {
 		panic("storage transfer semantic key")
 	}

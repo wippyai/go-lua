@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/internal/framing"
 	"github.com/wippyai/go-lua/analysis/schema"
 )
 
@@ -17,6 +18,8 @@ type scratchEntry struct{ key schema.Key }
 func (entry scratchEntry) Key() schema.Key { return entry.key }
 
 func (entry scratchEntry) EntryAvailable() bool { return entry.key.Available() }
+
+func (entry scratchEntry) EntryContent(*framing.Writer) error { return nil }
 
 type scratchSurface struct {
 	kind schema.SurfaceKind
@@ -51,11 +54,27 @@ func universeID(description string) identity.ContentID {
 // surfaces a denominator names as an owner carry real inventories.
 func sealEntries(t *testing.T, entries []*Entry) schema.SealFailure {
 	t.Helper()
+	_, failure := sealTable(t, entries)
+	return failure
+}
+
+// sealTable is the same seal, read for the table it produces rather than for
+// the verdict alone.
+func sealTable(t *testing.T, entries []*Entry) (*schema.Schema, schema.SealFailure) {
+	t.Helper()
+	return sealContribution(t, NewSurface(entries))
+}
+
+// sealContribution seals one arbitrary contribution under this surface's kind,
+// so a law about what this surface accepts as a row is stated against the
+// public seal path rather than against the unexported entry type alone.
+func sealContribution(t *testing.T, contribution schema.Surface) (*schema.Schema, schema.SealFailure) {
+	t.Helper()
 	builder := schema.NewBuilder()
 	for kind := schema.SurfaceKind(1); kind.Available(); kind++ {
 		switch kind {
 		case schema.SurfaceKindDenominator:
-			builder.Register(NewSurface(entries))
+			builder.Register(contribution)
 		case schema.SurfaceKindAxis:
 			builder.Register(scratchSurface{kind: kind, keys: []schema.Key{"container", "member"}})
 		case schema.SurfaceKindComposite:
@@ -64,8 +83,7 @@ func sealEntries(t *testing.T, entries []*Entry) schema.SealFailure {
 			builder.Register(scratchSurface{kind: kind})
 		}
 	}
-	_, failure := builder.Seal()
-	return failure
+	return builder.Seal()
 }
 
 func axisSpec(key schema.Key) Spec {
@@ -111,6 +129,36 @@ func TestDenominatorSurfaceSealsCompleteInventory(t *testing.T) {
 	}
 	if entry.Universe() != universeID("universe/container-coordinates") || entry.Phase() != PhasePublication {
 		t.Fatal("declared universe or closure phase lost")
+	}
+}
+
+// foreignSurface contributes a row that is not this surface's entry type,
+// under this surface's kind, and states this surface's own seal over it.
+type foreignSurface struct{}
+
+func (foreignSurface) Kind() schema.SurfaceKind { return schema.SurfaceKindDenominator }
+
+func (foreignSurface) Entries() []schema.Entry {
+	return []schema.Entry{scratchEntry{key: "foreign"}}
+}
+
+func (contribution foreignSurface) Seal(view schema.View, sealed schema.Sealed) schema.SealFailure {
+	return surface{}.Seal(view, sealed)
+}
+
+// TestForeignRowIsRejected states the shape law: a denominator is read from a
+// row this surface itself built, so a row that identifies one entry and is not
+// one of this surface's declarations is rejected rather than skipped.
+func TestForeignRowIsRejected(t *testing.T) {
+	sealed, failure := sealContribution(t, foreignSurface{})
+	if sealed != nil || !failure.Available() {
+		t.Fatal("a foreign row was admitted into the denominator surface")
+	}
+	if failure.Law != LawEntryShape || failure.Disposition != schema.DispositionMalformed {
+		t.Fatalf("law=%d disposition=%s want entry-shape/malformed", failure.Law, failure.Disposition)
+	}
+	if failure.Contributor != schema.SurfaceKindDenominator {
+		t.Fatalf("contributor=%d want the denominator surface", failure.Contributor)
 	}
 }
 
@@ -247,5 +295,26 @@ func TestNewRejectsIncompleteSpec(t *testing.T) {
 		if entry, ok := New(spec); ok || entry != nil {
 			t.Fatalf("spec with a rejected %s admitted", name)
 		}
+	}
+}
+
+// TestTableDigestCoversDeclaredContent is the drift law of this surface: the
+// digest is what a derived inventory is checked against, so two catalogs that
+// name the same denominators and close their universes at different points are
+// two tables. A phase is when a totality claim becomes answerable, so moving one
+// moves the digest.
+func TestTableDigestCoversDeclaredContent(t *testing.T) {
+	declared, failure := sealTable(t, []*Entry{mustEntry(t, axisSpec("container-coordinates"))})
+	if failure.Available() {
+		t.Fatalf("toy denominator rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	spec := axisSpec("container-coordinates")
+	spec.Phase = PhaseSeal
+	shifted, failure := sealTable(t, []*Entry{mustEntry(t, spec)})
+	if failure.Available() {
+		t.Fatalf("denominator with a shifted phase rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	if declared.Digest() == shifted.Digest() {
+		t.Fatal("a denominator's declared closure phase left the table digest unchanged")
 	}
 }

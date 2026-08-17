@@ -360,7 +360,7 @@ func (topology *Topology) build() bool {
 
 func (topology *Topology) appendStatic(key heapdomain.Key) bool {
 	added := false
-	for _, role := range []materialization.Role{materialization.Exact, materialization.Recent, materialization.Summary} {
+	for _, role := range materialization.Roles() {
 		if _, ok := topology.heap.Reference(key, role); ok {
 			topology.static = append(topology.static, rawSetRouteFact{key: key, role: role})
 			added = true

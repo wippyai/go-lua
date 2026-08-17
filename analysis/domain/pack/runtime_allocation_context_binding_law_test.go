@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
 	packdomain "github.com/wippyai/go-lua/analysis/domain/pack"
 	staticdomain "github.com/wippyai/go-lua/analysis/domain/static"
@@ -11,12 +12,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
-	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
 	"github.com/wippyai/go-lua/analysis/program/flow"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
-	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 func bindingLawID(text string) identity.ContentID {
@@ -41,7 +40,7 @@ func runtimeContextBindingSchema(t testing.TB, contract *target.Contract, operat
 	if err != nil {
 		t.Fatal(err)
 	}
-	grammar, grammarOK := grammar.Global()
+	grammar, grammarOK := composite.Global()
 	if !grammarOK {
 		t.Fatal("program schema receipt")
 	}
@@ -53,7 +52,7 @@ func runtimeContextBindingSchema(t testing.TB, contract *target.Contract, operat
 	if mounted.Count() != 1 || !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 		t.Fatal("binding mount")
 	}
-	artifact, failure := schemaadapter.CompileDetailed(program.TransformerInput(), grammar)
+	artifact, failure := composite.CompileArtifactDetailed(program, grammar)
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile binding artifact: %s", failure.Error())
 	}
@@ -75,12 +74,8 @@ func runtimeContextBindingSchema(t testing.TB, contract *target.Contract, operat
 	if !packOK || packSchema == nil || heapFailure != heapdomain.SealFailureNone || !heapSchema.Valid() {
 		t.Fatal("binding schemas")
 	}
-	packReceipt, receiptOK := artifact.PackReceipt()
-	if !receiptOK {
-		t.Fatal("binding Pack receipt")
-	}
-	for index := 0; index < packReceipt.CallCount(); index++ {
-		call, callOK := packReceipt.CallAt(index)
+	for index := 0; index < artifact.CallCount(); index++ {
+		call, callOK := artifact.CallAt(index)
 		if callOK && call.Form() == flow.CallFormMethod {
 			return runtimeContextBindingFixture{pack: packSchema, heap: heapSchema, module: module, callID: call.ID(), operation: operation}
 		}

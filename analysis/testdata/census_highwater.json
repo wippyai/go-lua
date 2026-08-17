@@ -1,22 +1,22 @@
 {
   "measured": "2026-08-16",
-  "note": "Provenance: the first full-census completion of 2026-08-16 (journaled receipt seq 2071: 911 fixtures, 504 complete, 111 incomplete, 296 unsupported, 0 invalid) established this ratchet. A later full run the same day, in this lane, measured 584 complete / 143 incomplete / 184 unsupported / 0 invalid over 45m34s of analysis wall across 32 workers, so the mark is recorded at that higher measured floor: complete rose by 80 and unsupported fell by 112. Incomplete rose from 111 to 143 in that run, because the distribution moved out of unsupported into complete and incomplete together; the incomplete ceiling is therefore recorded where it was measured rather than where it was hoped. The sample lane is the stride-6 projection of the same walk. The full lane is authoritative only on a full-corpus run; the next full bounded run revalidates both numbers.",
+  "note": "Provenance: full bounded census on the settled tree after the four landings of 2026-08-16 (class-A commit-route disjunction, class-B static authority cycle fixes, role-17 branch-condition admission, canonical binder frames) and the static admission law rewrite (exponential scope-chain visitation replaced by a linear free-formal fixpoint, seq 2140). Measured 680 complete / 153 incomplete / 78 unsupported / 0 invalid over 8m2.3s of analysis wall across 32 workers, against the prior floor of 584/143/184. Complete rose by 96 and unsupported fell by 106; incomplete rose from 143 to 153 because the distribution moved out of unsupported through incomplete into complete, so the incomplete ceiling is recorded where it was measured. The sample lane is the stride-6 projection of the same walk. The full lane is authoritative only on a full-corpus run; the next full bounded run revalidates both numbers.",
   "corpus_projects": 911,
   "full": {
     "measured": true,
     "projects": 911,
-    "complete_min": 584,
-    "incomplete_max": 143,
-    "unsupported_max": 184,
+    "complete_min": 680,
+    "incomplete_max": 153,
+    "unsupported_max": 78,
     "invalid_max": 0
   },
   "sample": {
     "measured": true,
     "stride": 6,
     "projects": 152,
-    "complete_min": 99,
-    "incomplete_max": 26,
-    "unsupported_max": 27,
+    "complete_min": 111,
+    "incomplete_max": 28,
+    "unsupported_max": 13,
     "invalid_max": 0
   }
 }

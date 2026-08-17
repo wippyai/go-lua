@@ -1,4 +1,4 @@
-// Code generated from schema/relations/catalog.schema; DO NOT EDIT.
+// Code generated from program/relations/catalog.schema; DO NOT EDIT.
 
 package semanticsource
 

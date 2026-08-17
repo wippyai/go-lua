@@ -2,7 +2,7 @@ package program
 
 // This file is the only semantic-source composition point for Program.  The
 // child packages own typed columns; they do not retain a semantic-source
-// range, receipt, or generic publication stream. The public query below is
+// range, row, or generic publication stream. The public query below is
 // the one root-owned composition surface and derives detached publications
 // from those immutable typed columns.
 
@@ -361,7 +361,7 @@ func programFlowCounts(view flow.View) ([33]int, error) {
 		if !ok {
 			return counts, errors.New("invalid Flow call column")
 		}
-		if _, _, ok := view.DirectBindings().Call(term); ok {
+		if _, _, ok := view.Selectors().DirectCall(term); ok {
 			directCalls++
 		}
 	}

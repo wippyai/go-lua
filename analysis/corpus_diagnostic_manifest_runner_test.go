@@ -551,7 +551,7 @@ func runCorpusDiagnosticFamily(t *testing.T, projectName, code string) corpusDia
 	if expected := corpusDiagnosticProjectExpectedCount(project, code); expected != fixtureCase.expect {
 		t.Fatalf("native fixture registration %s/%s expects %d rows, catalog has %d", projectName, code, fixtureCase.expect, expected)
 	}
-	plan, _, _, _ := testCorpusReceiptLaw(t, projectName)
+	plan, _, _, _ := testCorpusDiagnosticLaw(t, projectName)
 	_, report, status, diagnostics := plan.SolveWithReport(context.Background(), corpusHarnessSolveOptions(), DiagnosticPolicy{Enabled: family.enabled})
 	if status != AnalyzeComplete {
 		t.Fatalf("manifest runner solve %s = %v diagnostics=%+v", projectName, status, diagnostics)

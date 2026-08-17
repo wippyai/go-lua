@@ -234,6 +234,9 @@ type canonicalDiscoveryFrame struct {
 	next     int
 }
 
+// canonicalFormalBinder is one binder frame's claim on one parameter. A
+// parameter installed in the external scope carries its external ordinal, so
+// only binder-local parameters are read back from this claim.
 type canonicalFormalBinder struct {
 	owner   Type
 	ordinal uint64
@@ -658,10 +661,11 @@ func (e *CanonicalEncoder) discoverNode(input Type) (int, bool, []Type, error) {
 			return 0, false, nil, fmt.Errorf("typ: recursive ID %d names distinct nodes", value.ID)
 		}
 		e.recursiveID[value.ID] = value
+		// A recursive binder is a bound variable: its name is presentation and
+		// its occurrences are graph edges. Writing the name would make one
+		// fixed point reached through two declarations encode as two types,
+		// splitting an identity the graph quotient has already joined.
 		node.scalar = []byte{canonicalRecursive}
-		if !e.scoped {
-			node.scalar = appendFrameString(node.scalar, value.Name)
-		}
 		node.scalar = appendBool(node.scalar, value.Body != nil)
 		if value.Body != nil {
 			children = []Type{value.Body}
@@ -742,6 +746,12 @@ func (e *CanonicalEncoder) installFormals(formals []*TypeParam) error {
 // children are explored. The value node is later wired back to this owner in
 // finalizeScopedTypeParams, making outer-vs-inner references explicit to the
 // graph quotient without ever serializing a Go pointer or generated ID.
+//
+// A scoped root is one cut of a declaration graph, so the declaration owning
+// the installed external scope is reachable again from inside its own body.
+// That binder re-enters the external scope instead of introducing parameters,
+// so its parameters keep their external ordinals and the claim recorded here
+// is read back only for a binder-local parameter.
 func (e *CanonicalEncoder) registerBinder(owner Type, params []*TypeParam) error {
 	if !e.scoped {
 		return nil
@@ -752,15 +762,12 @@ func (e *CanonicalEncoder) registerBinder(owner Type, params []*TypeParam) error
 		}
 		e.binders = make(map[*TypeParam]canonicalFormalBinder, len(params))
 	}
+	if err := e.externalScopeBinder(params); err != nil {
+		return err
+	}
 	for ordinal, param := range params {
 		if err := e.checkpoint(); err != nil {
 			return err
-		}
-		if param == nil {
-			return fmt.Errorf("typ: nil local canonical formal at ordinal %d", ordinal)
-		}
-		if _, external := e.formals[param]; external {
-			return fmt.Errorf("typ: canonical formal %q is both external and locally bound", param.Name)
 		}
 		if prior, exists := e.binders[param]; exists {
 			if prior.owner == owner {
@@ -772,6 +779,32 @@ func (e *CanonicalEncoder) registerBinder(owner Type, params []*TypeParam) error
 			return err
 		}
 		e.binders[param] = canonicalFormalBinder{owner: owner, ordinal: uint64(ordinal)}
+	}
+	return nil
+}
+
+// externalScopeBinder admits one binder frame against the installed external
+// scope. Every parameter installed externally makes the frame the owner of that
+// scope, re-entered through a cycle in the cut graph; no parameter installed
+// externally makes it an ordinary introducing frame. A frame drawn from both
+// would leave a parameter without a single owner. A frame is classified only
+// once each of its parameters is a parameter, so an absent one is reported as
+// itself rather than as the mixture it produces.
+func (e *CanonicalEncoder) externalScopeBinder(params []*TypeParam) error {
+	installed := 0
+	for ordinal, param := range params {
+		if err := e.checkpoint(); err != nil {
+			return err
+		}
+		if param == nil {
+			return fmt.Errorf("typ: nil local canonical formal at ordinal %d", ordinal)
+		}
+		if _, external := e.formals[param]; external {
+			installed++
+		}
+	}
+	if installed != 0 && installed != len(params) {
+		return fmt.Errorf("typ: canonical binder mixes external and locally bound formals")
 	}
 	return nil
 }

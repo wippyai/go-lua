@@ -8,10 +8,10 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/lua/semantics/exactkey"
 	"github.com/wippyai/go-lua/analysis/program"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/program/scalar"
 	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
@@ -66,7 +66,7 @@ func Build(input Input) (*Draft, error) {
 		callApplicationsBySource: callsBySource, importApplications: imports,
 	}
 	component := &Component{authority: authority}
-	authority.semanticReceipt, err = component.buildSemanticSourceReceipt()
+	authority.sourceViews, err = component.buildSourceViews()
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +122,6 @@ func buildApplications(mounts []mountRow) ([]applicationRow, []uint32, []uint32,
 		executable := flowView.Executable()
 		directFunctions := flowView.DirectFunctions()
 		functions := authored.Functions()
-		transformer := p.TransformerInput()
 		for at := 0; at < callsView.Count(); at++ {
 			call, ok := callsView.At(at)
 			if !ok {
@@ -131,9 +130,8 @@ func buildApplications(mounts []mountRow) ([]applicationRow, []uint32, []uint32,
 			if !executable.Contains(call) {
 				continue
 			}
-			occurrence, occurrenceOK := transformer.CallAt(at)
-			context := occurrence.ContextID()
-			if !occurrenceOK || !transformer.OwnsCallOccurrence(occurrence) || !context.Available() {
+			callID, callOK := p.CallIDAt(at)
+			if !callOK || !callID.Available() {
 				return nil, nil, nil, nil, nil, errors.New("link/project: malformed executable Program Call occurrence proof")
 			}
 			_, callee, _, _, callOK := callsView.Get(call)
@@ -146,7 +144,7 @@ func buildApplications(mounts []mountRow) ([]applicationRow, []uint32, []uint32,
 					return nil, nil, nil, nil, nil, errors.New("link/project: direct Call names malformed Function")
 				}
 			}
-			appendItem(applicationKey{kind: applicationCall, shard: uint32(shard), term: call, callContext: context, callProof: occurrence})
+			appendItem(applicationKey{kind: applicationCall, shard: uint32(shard), term: call, callID: callID})
 		}
 		if err := appendFunctionStyleApplications(p, shard, appendItem); err != nil {
 			return nil, nil, nil, nil, nil, err
@@ -184,17 +182,17 @@ func buildApplications(mounts []mountRow) ([]applicationRow, []uint32, []uint32,
 		}
 		ordinal := uint32(index + 1)
 		lookup[applicationLookupKey(item)] = ordinal
-		applications[index] = applicationRow{kind: item.kind, shard: item.shard, term: item.term, slot: item.slot, callContext: item.callContext, callProof: item.callProof}
+		applications[index] = applicationRow{kind: item.kind, shard: item.shard, term: item.term, slot: item.slot, callID: item.callID}
 		switch item.kind {
 		case applicationCall:
-			formal := callApplicationID(item.callContext)
-			if !item.callContext.Available() || !item.callProof.Available() || item.callProof.ContextID() != item.callContext || !formal.Available() {
+			formal := callApplicationID(item.callID)
+			if !item.callID.Available() || !formal.Available() {
 				return nil, nil, nil, nil, nil, errors.New("link/project: Call Application lacks occurrence identity")
 			}
 			applications[index].callFormal = formal
 			bases = append(bases, ordinal)
 			calls = append(calls, ordinal)
-			source := callSource{shard: item.shard, context: item.callContext}
+			source := callSource{shard: item.shard, callID: item.callID}
 			if prior := callsBySource[source]; prior != 0 {
 				return nil, nil, nil, nil, nil, errors.New("link/project: ambiguous Call Application")
 			}
@@ -309,13 +307,12 @@ func compareApplicationKey(left, right applicationKey) int {
 	return 0
 }
 
-// applicationLookupKey deliberately strips the Program proof identity from
-// the construction-only physical-row lookup. Import roots name the existing
-// portable Application row, while the retained CallOccurrence identity is
-// used only by the exact mounted inverse and is not part of artifact wire.
+// applicationLookupKey deliberately strips the call identity from the
+// construction-only physical-row lookup. Import roots name the existing
+// portable Application row; the owner-local call inverse is populated from
+// the sealed scalar call identity separately.
 func applicationLookupKey(key applicationKey) applicationKey {
-	key.callContext = identity.ContentID{}
-	key.callProof = program.CallOccurrence{}
+	key.callID = identity.ContentID{}
 	return key
 }
 
@@ -355,7 +352,7 @@ func canonicalMounts(input []Module) ([]mountRow, error) {
 func buildKeys(mounts []mountRow, contract *target.Contract) ([]keyRow, []uint32, map[target.InitialValue]uint32, [][]uint32, error) {
 	unique := make(map[keyspace.LiteralValue]struct{})
 	addExact := func(value keyspace.LiteralValue) error {
-		normalized, ok := exactkey.Normalize(value)
+		normalized, ok := scalar.Normalize(value)
 		if !ok {
 			return errors.New("link/project: nil or NaN exact key")
 		}
@@ -363,7 +360,7 @@ func buildKeys(mounts []mountRow, contract *target.Contract) ([]keyRow, []uint32
 		return nil
 	}
 	addLiteral := func(value keyspace.LiteralValue) error {
-		if normalized, ok := exactkey.Normalize(value); ok {
+		if normalized, ok := scalar.Normalize(value); ok {
 			unique[normalized] = struct{}{}
 		}
 		return nil
@@ -406,7 +403,7 @@ func buildKeys(mounts []mountRow, contract *target.Contract) ([]keyRow, []uint32
 		identities = append(identities, identity)
 	}
 	sort.Slice(identities, func(left, right int) bool {
-		order, ok := exactkey.Compare(identities[left], identities[right])
+		order, ok := scalar.Compare(identities[left], identities[right])
 		return ok && order < 0
 	})
 	keys := make([]keyRow, len(identities))
@@ -419,7 +416,7 @@ func buildKeys(mounts []mountRow, contract *target.Contract) ([]keyRow, []uint32
 	for index := range targetKeys {
 		targetKey, ok := contract.ExactKeyAt(index)
 		value, valueOK := contract.ExactKeyValue(targetKey)
-		normalized, normalizedOK := exactkey.Normalize(value)
+		normalized, normalizedOK := scalar.Normalize(value)
 		mapped, found := lookup[normalized]
 		if !ok || !valueOK || !normalizedOK || !found {
 			return nil, nil, nil, nil, errors.New("link/project: missing sealed Target exact key")
@@ -428,7 +425,7 @@ func buildKeys(mounts []mountRow, contract *target.Contract) ([]keyRow, []uint32
 	}
 	initialKeys := make(map[target.InitialValue]uint32, len(initialLiterals))
 	for initial, value := range initialLiterals {
-		normalized, ok := exactkey.Normalize(value)
+		normalized, ok := scalar.Normalize(value)
 		mapped, found := lookup[normalized]
 		if !ok || !found {
 			return nil, nil, nil, nil, errors.New("link/project: missing sealed Target initial literal key")
@@ -443,7 +440,7 @@ func buildKeys(mounts []mountRow, contract *target.Contract) ([]keyRow, []uint32
 		for index := 0; index < count; index++ {
 			key, _, keyOK := programKeysView.ExactAt(index)
 			value, valueOK := programKeysView.Exact(key)
-			normalized, normalizedOK := exactkey.Normalize(value)
+			normalized, normalizedOK := scalar.Normalize(value)
 			mapped, found := lookup[normalized]
 			if !keyOK || key == 0 || uint64(key) > uint64(count) || !valueOK || !normalizedOK || !found {
 				return nil, nil, nil, nil, errors.New("link/project: missing sealed Program exact key")
@@ -543,7 +540,7 @@ func addInitialLiterals(contract *target.Contract, add func(keyspace.LiteralValu
 		default:
 			return errors.New("link/project: malformed Target initial value kind")
 		}
-		if _, ok := exactkey.Normalize(literal); ok {
+		if _, ok := scalar.Normalize(literal); ok {
 			literals[value] = literal
 		}
 		return add(literal)

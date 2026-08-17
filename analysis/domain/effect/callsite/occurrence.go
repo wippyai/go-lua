@@ -7,6 +7,8 @@ package callsite
 import (
 	effectowner "github.com/wippyai/go-lua/analysis/domain/effect/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/engine/rows"
+
 	"github.com/wippyai/go-lua/analysis/identity"
 )
 
@@ -92,7 +94,7 @@ func (rule *HotRule) MountedSelectedCallEffectStage(graph *engine.ReceiptGraph, 
 		return engine.MountedNativeCallStageReceipt{}, false
 	}
 	receipt, ok := graph.MountedNativeCallStage(capability, mountID, occurrenceID)
-	return receipt, ok && receipt.Stage() == engine.ArtifactRuleStageCallEffect
+	return receipt, ok && receipt.Stage() == rows.ArtifactRuleStageCallEffect
 }
 
 // AttachMountedOccurrence admits one Selected/Opaque artifact Call row with

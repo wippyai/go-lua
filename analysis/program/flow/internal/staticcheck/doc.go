@@ -1,4 +1,4 @@
-// Package staticcheck is Flow's final Static receipt check.
+// Package staticcheck is Flow's final Static commit-input check.
 //
 // It joins the already sealed Source, authored Flow, Static, Body, Binding,
 // containment, and direct-binding proofs.  The package intentionally returns

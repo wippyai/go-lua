@@ -4,18 +4,18 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
 	keymatch "github.com/wippyai/go-lua/analysis/domain/heap/keymatch"
 	"github.com/wippyai/go-lua/analysis/domain/materialization"
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
+	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	lualower "github.com/wippyai/go-lua/analysis/lua/lower"
-	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
-	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 func TestProjectPreservesOneAtomAlternativeWithoutInventingIdentity(t *testing.T) {
@@ -195,7 +195,7 @@ func TestProjectTopSupportIsCompleteDeterministicAndSchemaFenced(t *testing.T) {
 		if !keyOK {
 			t.Fatal("Heap key")
 		}
-		for _, role := range []materialization.Role{materialization.Exact, materialization.Recent, materialization.Summary} {
+		for _, role := range materialization.Roles() {
 			reference, referenceOK := heap.Reference(key, role)
 			if !referenceOK {
 				continue
@@ -295,7 +295,7 @@ func fixture(t testing.TB, module, text string) (heapdomain.Schema, *valuedomain
 	if err != nil {
 		t.Fatal(err)
 	}
-	contract, err := target.Seal(&target.Spec{})
+	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,7 +317,7 @@ func bootFixture(t testing.TB, module string) (heapdomain.Schema, *valuedomain.S
 	if err != nil {
 		t.Fatal(err)
 	}
-	contract, err := target.Seal(&target.Spec{InitialRoots: []target.InitialRootSpec{{
+	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), InitialRoots: []target.InitialRootSpec{{
 		Identity: "GlobalEnvRoot",
 		Shape: target.BootShapeSpec{
 			Aggregate: target.BootAggregateTable,
@@ -372,7 +372,7 @@ func keymatchValueMounts(t testing.TB, linked *link.Link) []valuedomain.Artifact
 
 func keymatchArtifactMounts(t testing.TB, linked *link.Link) ([]heapdomain.ArtifactMount, []valuedomain.ArtifactMount) {
 	t.Helper()
-	receipt, receiptOK := grammar.Global()
+	receipt, receiptOK := composite.Global()
 	if !receiptOK || linked == nil || linked.Project() == nil {
 		t.Fatal("keymatch artifact receipt")
 	}
@@ -387,7 +387,7 @@ func keymatchArtifactMounts(t testing.TB, linked *link.Link) ([]heapdomain.Artif
 		if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 			t.Fatal("keymatch artifact mount")
 		}
-		artifact, failure := schemaadapter.CompileDetailed(program.TransformerInput(), receipt)
+		artifact, failure := composite.CompileArtifactDetailed(program, receipt)
 		if failure.Available() || artifact == nil {
 			t.Fatalf("keymatch artifact: %v", failure)
 		}

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/internal/framing"
 	"github.com/wippyai/go-lua/analysis/schema"
 )
 
@@ -16,6 +17,8 @@ type scratchEntry struct{ key schema.Key }
 func (entry scratchEntry) Key() schema.Key { return entry.key }
 
 func (entry scratchEntry) EntryAvailable() bool { return entry.key.Available() }
+
+func (entry scratchEntry) EntryContent(*framing.Writer) error { return nil }
 
 type scratchSurface struct{ kind schema.SurfaceKind }
 
@@ -100,6 +103,8 @@ func formName(form Form) string {
 		return "suspension"
 	case FormRuleDelegation:
 		return "rule-delegation"
+	case FormExportType:
+		return "export-type"
 	case FormBootRoot:
 		return "boot-root"
 	case FormDeniedEntry:
@@ -262,6 +267,58 @@ func TestFormCatalogExcludesTheEnvironmentFloorSentinel(t *testing.T) {
 	}
 }
 
+// TestFormCatalogPartitionsAtTheEnvironmentFloor pins which half of the
+// member-form algebra each form belongs to. The partition is declared data: a
+// form below the floor is one any contract owner may state about its own
+// members, and a form at or above it is a shape whose only effect is on the
+// global environment. A denial is owner-declared member data - a library states
+// a member it declares and refuses to publish - so it belongs to the base half,
+// and only the four shapes that reach outside a contract's own export graph
+// belong to the environment's.
+func TestFormCatalogPartitionsAtTheEnvironmentFloor(t *testing.T) {
+	base := []Form{
+		FormCallableSignature,
+		FormIntrinsicMarker,
+		FormEffectLabel,
+		FormMetatableEdge,
+		FormExportValue,
+		FormResultProvenance,
+		FormResultRefinement,
+		FormSuspension,
+		FormRuleDelegation,
+		FormDeniedEntry,
+		FormExportType,
+	}
+	environment := []Form{
+		FormBootRoot,
+		FormEnvironmentSlot,
+		FormPrimitiveMetatable,
+		FormHostCapability,
+	}
+	for _, form := range base {
+		if !form.Available() {
+			t.Fatalf("base form %s is outside the catalog", formName(form))
+		}
+		if form.Environment() {
+			t.Fatalf("base form %s is partitioned as an environment form", formName(form))
+		}
+	}
+	for _, form := range environment {
+		if !form.Available() {
+			t.Fatalf("environment form %s is outside the catalog", formName(form))
+		}
+		if !form.Environment() {
+			t.Fatalf("environment form %s is partitioned as a base form", formName(form))
+		}
+	}
+	if declared := len(ClassLibrary.Required()); declared != len(base) {
+		t.Fatalf("the library class requires %d forms, the partition pins %d", declared, len(base))
+	}
+	if declared := len(ClassEnvironment.Required()); declared != len(base)+len(environment) {
+		t.Fatalf("the environment class requires %d forms, the partition pins %d", declared, len(base)+len(environment))
+	}
+}
+
 // TestCoverageMappingIsCarriedByTheDeclaredForms is the executable half of the
 // absorption coverage mapping. Each row is a shape one of the four absorption
 // targets expresses today, and the form the environment contract kind declares
@@ -272,7 +329,7 @@ func TestCoverageMappingIsCarriedByTheDeclaredForms(t *testing.T) {
 		shape  string
 		form   Form
 	}{
-		// analysis/program/target/profile/profile.go
+		// analysis/library/lualib/targetprofile/profile.go
 		{"profile", "OperationSpec.Input / Outcomes ValuesSpec", FormCallableSignature},
 		{"profile", "OperationSpec.Callbacks", FormCallableSignature},
 		{"profile", "OperationSpec.Subedges", FormCallableSignature},
@@ -283,7 +340,7 @@ func TestCoverageMappingIsCarriedByTheDeclaredForms(t *testing.T) {
 		{"profile", "OutcomeSpec.Produced + CaptureSpec", FormResultProvenance},
 		{"profile", "OperationSpec.Suspensions", FormSuspension},
 		{"profile", "Rule-owned conditional result selection", FormRuleDelegation},
-		// analysis/program/target/profile/boot.go
+		// analysis/library/lualib/targetprofile/boot.go
 		{"boot", "InitialRootSpec", FormBootRoot},
 		{"boot", "InitialEntrySpec operation value", FormCallableSignature},
 		{"boot", "InitialEntrySpec constant/root value + mutability", FormExportValue},
@@ -297,7 +354,15 @@ func TestCoverageMappingIsCarriedByTheDeclaredForms(t *testing.T) {
 		{"stdlib", "capability descriptor status gate", FormHostCapability},
 		{"stdlib", "ResultSlotCondition", FormResultRefinement},
 		{"stdlib", "PositionalResultSlot", FormResultRefinement},
-		{"stdlib", "postcondition.NormalReturnRefinement", FormResultRefinement},
+		// postcondition.NormalReturnRefinement is a label of the callable's own
+		// effect row, so it is carried by the envelope this map already maps that
+		// row to. It is named here as the effect label it is rather than as a
+		// second member form: one fact, one statement, and a refinement published
+		// both in the row and beside it would be one fact under two authorities
+		// with nothing to keep them agreeing. The refinements the
+		// FormResultRefinement rows above carry are the other kind - a predicate
+		// over caller DATA, which no effect label states.
+		{"stdlib", "postcondition.NormalReturnRefinement", FormEffectLabel},
 		{"stdlib", "returns.Return callback transform", FormResultProvenance},
 		{"stdlib", "bareGlobals", FormEnvironmentSlot},
 		// analysis/module/signature/intrinsic.go
@@ -306,6 +371,13 @@ func TestCoverageMappingIsCarriedByTheDeclaredForms(t *testing.T) {
 		{"stringlib", "methods table entry", FormCallableSignature},
 		{"stringlib", "colon-method receiver binding via __index", FormMetatableEdge},
 		{"stringlib", "MatchReturnTypes / CaptureTypes over a literal pattern", FormRuleDelegation},
+		// string.dump is modeled as a member that never returns, which is the
+		// library refusing to publish it. The refusal is the library's own
+		// statement about its own member, so the base algebra carries it.
+		{"stringlib", "dump modeled as a member that never returns", FormDeniedEntry},
+		// analysis/domain/type/ambient/types.go
+		{"ambient", "ChannelGeneric named runtime type", FormExportType},
+		{"ambient", "BuiltinTableTopMarker named runtime type", FormExportType},
 	}
 	sealed, failure := sealEntries(t, toyContract(t))
 	if failure.Available() {
@@ -337,10 +409,16 @@ func TestCoverageMappingIsCarriedByTheDeclaredForms(t *testing.T) {
 	if len(library) != 1 {
 		t.Fatalf("library kinds=%d want 1", len(library))
 	}
-	for _, form := range []Form{FormBootRoot, FormDeniedEntry, FormEnvironmentSlot, FormPrimitiveMetatable, FormHostCapability} {
+	for _, form := range []Form{FormBootRoot, FormEnvironmentSlot, FormPrimitiveMetatable, FormHostCapability} {
 		if library[0].Declares(form) {
 			t.Fatalf("library contract kind declares environment form %s", formName(form))
 		}
+	}
+	// A denial is not one of them. The boot ledger's denied entries are the
+	// environment stating its own refusals, and a library states its own the
+	// same way, so both classes carry the form.
+	if !library[0].Declares(FormDeniedEntry) {
+		t.Fatal("the library contract kind cannot state a member it declares and refuses to publish")
 	}
 }
 
@@ -621,5 +699,40 @@ func TestSealedDeclarationCannotBeRewrittenThroughItsMemberSlice(t *testing.T) {
 	handed[0] = Member{}
 	if !entry.Declares(FormCallableSignature) {
 		t.Fatal("mutating a handed member slice rewrote the sealed declaration")
+	}
+}
+
+// TestTableDigestCoversDeclaredContent is the drift law of this surface: the
+// digest is what a derived inventory is checked against, so two catalogs that
+// name the same contract kinds and declare different member vocabularies are
+// two tables. A member form is the shape an instance is decoded as, so both the
+// payload format one form is serialized in and the order the forms are declared
+// in move the digest.
+func TestTableDigestCoversDeclaredContent(t *testing.T) {
+	baseline, failure := sealEntries(t, toyContract(t))
+	if failure.Available() {
+		t.Fatalf("toy contract rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	repaid := toyContract(t)
+	repaid[0] = mutate(repaid[0], func(entry *Entry) {
+		entry.members[0].Payload = format("member/shifted-payload")
+	})
+	shifted, failure := sealEntries(t, repaid)
+	if failure.Available() {
+		t.Fatalf("contract with a shifted member payload rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	if baseline.Digest() == shifted.Digest() {
+		t.Fatal("a member form's declared payload format left the table digest unchanged")
+	}
+	reordered := toyContract(t)
+	reordered[0] = mutate(reordered[0], func(entry *Entry) {
+		entry.members[0], entry.members[1] = entry.members[1], entry.members[0]
+	})
+	permuted, failure := sealEntries(t, reordered)
+	if failure.Available() {
+		t.Fatalf("contract with a permuted member vocabulary rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	if baseline.Digest() == permuted.Digest() {
+		t.Fatal("the declared order of a kind's member forms left the table digest unchanged")
 	}
 }

@@ -3,13 +3,14 @@ package callsite
 import (
 	"bytes"
 	"crypto/sha256"
+	"github.com/wippyai/go-lua/analysis/engine/rows"
 
 	effectfactor "github.com/wippyai/go-lua/analysis/domain/effect/factor"
 	"github.com/wippyai/go-lua/analysis/domain/pack"
 	"github.com/wippyai/go-lua/analysis/engine"
+
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/target"
-	"github.com/wippyai/go-lua/analysis/schema/query"
 )
 
 const publicationObservationDomain = "wippy.analysis.effect.publication-observation.v1\x00"
@@ -24,7 +25,7 @@ type publicationTransitionSet struct {
 	mount       identity.ContentID
 	occurrence  identity.ContentID
 	stage       engine.MountedNativeCallStageReceipt
-	observation engine.ReceiptObservation[query.EffectObservation]
+	observation engine.ReceiptObservation[effectfactor.EffectObservation]
 	rows        []publicationTransitionRow
 	sealed      bool
 }
@@ -73,7 +74,7 @@ type PublicationTransitionProof struct {
 // authored PublicationAtomBinding. One exact Effect observation is attached
 // for the whole occurrence, so multiple candidates never multiply solver
 // demand. Opaque and generic effect routes issue no candidate.
-func (rule *HotRule) AttachMountedPublicationCandidates(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, effectQuery *engine.ExactQueryImplementation[effectfactor.Value, query.EffectObservation], mount, occurrence identity.ContentID) (PublicationTransitionCandidates, bool) {
+func (rule *HotRule) AttachMountedPublicationCandidates(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, effectQuery *engine.ExactQueryImplementation[effectfactor.Value, effectfactor.EffectObservation], mount, occurrence identity.ContentID) (PublicationTransitionCandidates, bool) {
 	if rule == nil || rule.opaque || compilation == nil || graph == nil || effectQuery == nil || !mount.Available() || !occurrence.Available() {
 		return PublicationTransitionCandidates{}, false
 	}
@@ -81,7 +82,7 @@ func (rule *HotRule) AttachMountedPublicationCandidates(compilation *engine.Rece
 	operand, operandOK := issuer.ReceiptForOccurrence(occurrence)
 	stage, stageOK := rule.MountedSelectedCallEffectStage(graph, mount, occurrence)
 	member, memberOK := stage.RuleMember()
-	if !issuerOK || !operandOK || !stageOK || !stage.Available() || stage.Stage() != engine.ArtifactRuleStageCallEffect || stage.MountID() != mount || stage.OccurrenceID() != occurrence || !memberOK {
+	if !issuerOK || !operandOK || !stageOK || !stage.Available() || stage.Stage() != rows.ArtifactRuleStageCallEffect || stage.MountID() != mount || stage.OccurrenceID() != occurrence || !memberOK {
 		return PublicationTransitionCandidates{}, false
 	}
 	rows, rowsOK := rule.publicationTransitionRows(operand, mount, occurrence)
@@ -159,7 +160,7 @@ func publicationTransitionID(domain string, ids ...identity.ContentID) (identity
 }
 
 func (set *publicationTransitionSet) valid() bool {
-	if set == nil || !set.sealed || set.rule == nil || set.rule.opaque || set.rule.binding == nil || !set.rule.binding.Sealed() || !set.mount.Available() || !set.occurrence.Available() || !set.stage.Available() || set.stage.Stage() != engine.ArtifactRuleStageCallEffect || set.stage.MountID() != set.mount || set.stage.OccurrenceID() != set.occurrence {
+	if set == nil || !set.sealed || set.rule == nil || set.rule.opaque || set.rule.binding == nil || !set.rule.binding.Sealed() || !set.mount.Available() || !set.occurrence.Available() || !set.stage.Available() || set.stage.Stage() != rows.ArtifactRuleStageCallEffect || set.stage.MountID() != set.mount || set.stage.OccurrenceID() != set.occurrence {
 		return false
 	}
 	if len(set.rows) == 0 {

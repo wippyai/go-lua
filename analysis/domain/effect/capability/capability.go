@@ -10,9 +10,16 @@ import "sort"
 type Status string
 
 const (
-	StatusOperational      Status = "operational"
-	StatusImportOrStdlib   Status = "import_or_stdlib_operational"
-	StatusPartial          Status = "partial"
+	StatusOperational    Status = "operational"
+	StatusImportOrStdlib Status = "import_or_stdlib_operational"
+	StatusPartial        Status = "partial"
+
+	// StatusManifestValidated classifies vocabulary that a manifest declares and
+	// the module boundary validates, while no lowering turns it into analysis
+	// facts. It is distinct from the reserved tiers, which bar a label from
+	// manifests and from stdlib signatures.
+	StatusManifestValidated Status = "manifest_validated"
+
 	StatusReserved         Status = "reserved"
 	StatusReservedHighRisk Status = "reserved_high_risk"
 )
@@ -96,9 +103,9 @@ var descriptors = map[string]Descriptor{
 	MutationLengthChange: descriptor(MutationLengthChange, "mutation", "LengthChange", StatusPartial, "Operational lowering consumes Target as a path-invalidation authority and positive Delta as a length-floor proof; negative Delta remains metadata until precise shrink semantics are implemented."),
 	MutationTableMutator: descriptor(MutationTableMutator, "mutation", "TableMutator", StatusOperational, "Operational lowering invalidates the target and publishes indexed element evidence from Value end-to-end."),
 
-	LifecycleAcquire:    descriptor(LifecycleAcquire, "lifecycle", "Acquire", StatusOperational, "Lifecycle acquire is lowered into canonical typestate facts."),
-	LifecycleTransition: descriptor(LifecycleTransition, "lifecycle", "Transition", StatusOperational, "Lifecycle transition is lowered into canonical typestate facts."),
-	LifecycleEscape:     descriptor(LifecycleEscape, "lifecycle", "Escape", StatusOperational, "Lifecycle escape is lowered into canonical typestate facts."),
+	LifecycleAcquire:    descriptor(LifecycleAcquire, "lifecycle", "Acquire", StatusManifestValidated, "Acquire state and obligation are carried in signature manifests and validated against the declared typestate FSM; no lowering consumes it."),
+	LifecycleTransition: descriptor(LifecycleTransition, "lifecycle", "Transition", StatusManifestValidated, "Transition endpoints are carried in signature manifests and validated against the declared typestate FSM; no lowering consumes it."),
+	LifecycleEscape:     descriptor(LifecycleEscape, "lifecycle", "Escape", StatusManifestValidated, "Escaping protocol is carried in signature manifests and validated against the declared typestate FSM; no lowering consumes it."),
 
 	ControlThrow: descriptor(ControlThrow, "control", "Throw", StatusReservedHighRisk, "Reserved metadata; control throw lowering is inactive, so stdlib must not declare it while behavior is represented by Never/postconditions/module-load."),
 	ControlIO:    descriptor(ControlIO, "control", "IO", StatusReservedHighRisk, "Reserved metadata; IO policy/enforcement is inactive, so stdlib must not declare it while inactive."),

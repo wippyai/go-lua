@@ -3,13 +3,12 @@ package artifact_test
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/composite"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
-	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 func TestProgramArtifactExactScalarSummaryCrossesLocalStorageOnce(t *testing.T) {
@@ -24,11 +23,11 @@ return total
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, receiptOK := grammar.Global()
-	if !receiptOK {
-		t.Fatal("Program artifact grammar capability unavailable")
+	compilation, compilationOK := composite.Global()
+	if !compilationOK {
+		t.Fatal("Program artifact grammar unavailable")
 	}
-	artifact, failure := schemaadapter.CompileDetailed(published.TransformerInput(), receipt)
+	artifact, failure := composite.CompileArtifactDetailed(published, compilation)
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile scalar summary fixture: %s", failure.Error())
 	}
@@ -103,11 +102,11 @@ return pick
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, receiptOK := grammar.Global()
-	if !receiptOK {
-		t.Fatal("Program artifact grammar capability unavailable")
+	compilation, compilationOK := composite.Global()
+	if !compilationOK {
+		t.Fatal("Program artifact grammar unavailable")
 	}
-	artifact, failure := schemaadapter.CompileDetailed(published.TransformerInput(), receipt)
+	artifact, failure := composite.CompileArtifactDetailed(published, compilation)
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile scalar merge fixture: %s", failure.Error())
 	}
@@ -146,11 +145,11 @@ func TestProgramArtifactArithmeticSummaryAuthenticatesGuardedDivisor(t *testing.
 		if err != nil {
 			t.Fatal(err)
 		}
-		receipt, receiptOK := grammar.Global()
-		if !receiptOK {
-			t.Fatal("Program artifact grammar capability unavailable")
+		compilation, compilationOK := composite.Global()
+		if !compilationOK {
+			t.Fatal("Program artifact grammar unavailable")
 		}
-		artifact, failure := schemaadapter.CompileDetailed(published.TransformerInput(), receipt)
+		artifact, failure := composite.CompileArtifactDetailed(published, compilation)
 		if failure.Available() || artifact == nil || !artifact.Available() {
 			t.Fatalf("compile guarded divisor fixture: %s", failure.Error())
 		}
@@ -207,11 +206,11 @@ func TestProgramArtifactUnarySummaryNamesExactOutputPoint(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		receipt, receiptOK := grammar.Global()
-		if !receiptOK {
-			t.Fatal("Program artifact grammar capability unavailable")
+		compilation, compilationOK := composite.Global()
+		if !compilationOK {
+			t.Fatal("Program artifact grammar unavailable")
 		}
-		artifact, failure := schemaadapter.CompileDetailed(published.TransformerInput(), receipt)
+		artifact, failure := composite.CompileArtifactDetailed(published, compilation)
 		if failure.Available() || artifact == nil || !artifact.Available() {
 			t.Fatalf("compile unary summary fixture: %s", failure.Error())
 		}
@@ -268,11 +267,11 @@ return guard
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, receiptOK := grammar.Global()
-	if !receiptOK {
-		t.Fatal("Program artifact grammar capability unavailable")
+	compilation, compilationOK := composite.Global()
+	if !compilationOK {
+		t.Fatal("Program artifact grammar unavailable")
 	}
-	artifact, failure := schemaadapter.CompileDetailed(published.TransformerInput(), receipt)
+	artifact, failure := composite.CompileArtifactDetailed(published, compilation)
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile computation fixture: %s", failure.Error())
 	}
@@ -355,11 +354,11 @@ return guard
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, receiptOK := grammar.Global()
-	if !receiptOK {
-		t.Fatal("Program artifact grammar capability unavailable")
+	compilation, compilationOK := composite.Global()
+	if !compilationOK {
+		t.Fatal("Program artifact grammar unavailable")
 	}
-	artifact, failure := schemaadapter.CompileDetailed(published.TransformerInput(), receipt)
+	artifact, failure := composite.CompileArtifactDetailed(published, compilation)
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile nested computation fixture: %s", failure.Error())
 	}

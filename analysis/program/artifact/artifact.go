@@ -18,10 +18,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow"
 	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/program/relations"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
 	"github.com/wippyai/go-lua/analysis/program/target"
-	"github.com/wippyai/go-lua/analysis/schema/relations"
 )
 
 const (

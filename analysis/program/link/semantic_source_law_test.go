@@ -9,9 +9,9 @@ import (
 	linkhost "github.com/wippyai/go-lua/analysis/program/link/host"
 	linkmodule "github.com/wippyai/go-lua/analysis/program/link/module"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/analysis/program/relations"
 	"github.com/wippyai/go-lua/analysis/program/semanticsource"
 	"github.com/wippyai/go-lua/analysis/program/target"
-	"github.com/wippyai/go-lua/analysis/schema/relations"
 )
 
 func TestSourcePublicationsMatchTypedLinkProjectionsAndReplay(t *testing.T) {
@@ -98,7 +98,7 @@ func semanticSourcePublicationCounts(t testing.TB, l *Link) map[semanticsource.T
 	if err != nil {
 		t.Fatalf("relation schema: %v", err)
 	}
-	publications, ok := l.sourcePublications(schema)
+	publications, ok := l.childSourcePublications(schema)
 	if !ok || len(publications) != 17 {
 		t.Fatalf("Link semantic-source publications = %d/%t, want 17/true", len(publications), ok)
 	}

@@ -82,7 +82,7 @@ func (r *Recursive) String() string {
 // String method enters here so child presentation never falls back to a
 // recursive per-kind String implementation.
 func renderTypeString(root Type) string {
-	renderer := recursiveStringRenderer{active: make(map[*Recursive]bool)}
+	renderer := recursiveStringRenderer{active: make(map[*Recursive]string)}
 	return renderer.render(root)
 }
 
@@ -90,7 +90,11 @@ func renderTypeString(root Type) string {
 // explicit frame stack keeps deeply nested graphs off the Go call stack and
 // writes every byte into one builder rather than concatenating child strings.
 type recursiveStringRenderer struct {
-	active map[*Recursive]bool
+	// active maps an open binder to the name its occurrences print. A binder
+	// carries no name of its own once it comes back from the canonical codec,
+	// so the renderer names it by its nesting depth and every occurrence under
+	// it reads back the same name.
+	active map[*Recursive]string
 	stack  []recursiveStringFrame
 	out    strings.Builder
 }
@@ -234,13 +238,17 @@ func (p *recursiveStringRenderer) renderType(t Type, root bool) {
 			p.out.WriteString("unknown")
 			return
 		}
-		if p.active[t] {
-			p.out.WriteString(t.Name)
+		if name, open := p.active[t]; open {
+			p.out.WriteString(name)
 			return
 		}
-		p.active[t] = true
+		name := t.Name
+		if name == "" {
+			name = "_" + strconv.Itoa(len(p.active))
+		}
+		p.active[t] = name
 		p.out.WriteString("μ")
-		p.out.WriteString(t.Name)
+		p.out.WriteString(name)
 		if t.Body == nil {
 			delete(p.active, t)
 			return

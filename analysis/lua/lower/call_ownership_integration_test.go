@@ -274,18 +274,18 @@ func sourceKeyText(t testing.TB, p *program.Program, key keyspace.Key) string {
 	return value.String
 }
 
-func TestFlowDirectBindingsKeepDirectSelectorCalls(t *testing.T) {
+func TestFlowSelectorsKeepDirectSelectorCalls(t *testing.T) {
 	p := parseBindLower(t, "\nlocal key = \"abs\"\nmath.abs(1)\nmath[key](2)\nmath:abs(3)\n")
 	calls := p.Flow().Authored().Calls()
-	bindings := p.Flow().DirectBindings()
+	bindings := p.Flow().Selectors()
 	var plain, method keyspace.Term
 	for index := 0; index < calls.Count(); index++ {
 		call, _ := calls.At(index)
-		read, form, ok := bindings.Call(call)
+		read, form, ok := bindings.DirectCall(call)
 		if !ok {
 			continue
 		}
-		root, depth, selected := bindings.Selection(read)
+		root, depth, selected := bindings.ExactRead(read)
 		if !selected || root == 0 || depth != 1 {
 			t.Fatalf("direct Call[%d] selection = root %v depth %d ok %v", index, root, depth, selected)
 		}
@@ -333,11 +333,11 @@ func TestModuleImportAndStaticPublicationUseTheirFinalOwners(t *testing.T) {
 	if !publicationRowOK || assign == 0 || pair != 0 || target == 0 {
 		t.Fatalf("Static publication = assign %v pair %d target %v ok %v", assign, pair, target, publicationRowOK)
 	}
-	root, owner, depth, bindingOK := p.Flow().DirectBindings().Publication(publication)
+	root, owner, depth, bindingOK := p.Flow().Selectors().TypePublication(publication)
 	if !bindingOK || root != imported.Alias || owner == 0 || depth != 2 {
 		t.Fatalf("Flow publication binding = root %v owner %v depth %d ok %v", root, owner, depth, bindingOK)
 	}
-	path, pathOK := p.Flow().DirectBindings().PublicationPath(publication)
+	path, pathOK := p.Flow().Selectors().TypePublicationPath(publication)
 	if !pathOK {
 		t.Fatal("missing Flow publication path cursor")
 	}
@@ -366,7 +366,7 @@ func TestModuleEntryKeepsReturnedRootAndMembers(t *testing.T) {
 	}
 }
 
-func TestFlowDirectBindingDeepSelectorPathIsAllocationFree(t *testing.T) {
+func TestFlowExactSelectorDeepPathIsAllocationFree(t *testing.T) {
 	const depth = 256
 	var input strings.Builder
 	input.WriteString("api")
@@ -380,15 +380,15 @@ func TestFlowDirectBindingDeepSelectorPathIsAllocationFree(t *testing.T) {
 	if !ok {
 		t.Fatal("missing Call")
 	}
-	read, form, bindingOK := p.Flow().DirectBindings().Call(call)
+	read, form, bindingOK := p.Flow().Selectors().DirectCall(call)
 	if !bindingOK || form != flow.CallFormPlain {
 		t.Fatalf("direct Call binding = read %v form %v ok %v", read, form, bindingOK)
 	}
-	if _, gotDepth, ok := p.Flow().DirectBindings().Selection(read); !ok || gotDepth != depth {
+	if _, gotDepth, ok := p.Flow().Selectors().ExactRead(read); !ok || gotDepth != depth {
 		t.Fatalf("deep selector depth = %d/%v, want %d", gotDepth, ok, depth)
 	}
 	if allocations := testing.AllocsPerRun(1000, func() {
-		path, _ := p.Flow().DirectBindings().SelectionPath(read)
+		path, _ := p.Flow().Selectors().ExactReadPath(read)
 		for {
 			_, next, ok := path.Segment()
 			if !ok {

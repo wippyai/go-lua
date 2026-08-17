@@ -4,20 +4,21 @@ import (
 	"crypto/sha256"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
 	allocationcatalog "github.com/wippyai/go-lua/analysis/domain/heap/allocation/catalog"
 	"github.com/wippyai/go-lua/analysis/domain/heap/allocation/ingress"
 	"github.com/wippyai/go-lua/analysis/domain/heap/allocation/internal/source"
 	heapowner "github.com/wippyai/go-lua/analysis/domain/heap/owner"
+	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
-	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
-	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 func TestHotIngressBindingIssuesOnlyItsExactMountedReceipt(t *testing.T) {
@@ -126,7 +127,7 @@ func ingressFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Schema, ingre
 	if err != nil {
 		t.Fatal(err)
 	}
-	contract, err := target.Seal(&target.Spec{})
+	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +135,7 @@ func ingressFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Schema, ingre
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, receiptOK := grammar.Global()
+	receipt, receiptOK := composite.Global()
 	if !receiptOK {
 		t.Fatal("ingress artifact receipt")
 	}
@@ -148,7 +149,7 @@ func ingressFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Schema, ingre
 		if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 			t.Fatal("ingress artifact mount")
 		}
-		artifact, failure := schemaadapter.CompileDetailed(program.TransformerInput(), receipt)
+		artifact, failure := composite.CompileArtifactDetailed(program, receipt)
 		if failure.Available() || artifact == nil {
 			t.Fatalf("ingress artifact compile: %v", failure)
 		}
@@ -180,8 +181,8 @@ func tableRoot(t testing.TB, schema heapdomain.Schema) heapdomain.Key {
 	return heapdomain.Key{}
 }
 
-func ingressKey(value byte) engine.SemanticKey {
+func ingressKey(value byte) identity.SemanticKey {
 	digest := sha256.Sum256([]byte{0xD1, value})
-	key, _ := engine.NewSemanticKey(digest, 1)
+	key, _ := identity.NewSemanticKey(digest, 1)
 	return key
 }

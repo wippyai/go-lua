@@ -5,16 +5,16 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/analysis/lua/semantics/exactkey"
+	"github.com/wippyai/go-lua/analysis/program/scalar"
 )
 
 // freezeExactKeys builds Target's only exact-key pool from semantic rows.
-// Source owns canonical Lua key normalization; Target owns only its dense
+// Program scalar owns canonical key normalization; Target owns only its dense
 // contract-local handles. No string reconstruction participates in this ABI.
 func freezeExactKeys(drafts []operationDraft, boot bootDraft) ([]keyspace.LiteralValue, map[keyspace.LiteralValue]ExactKey, error) {
 	set := make(map[keyspace.LiteralValue]struct{})
 	add := func(value keyspace.LiteralValue) error {
-		normalized, ok := exactkey.Normalize(value)
+		normalized, ok := scalar.Normalize(value)
 		if !ok || normalized != value {
 			return errors.New("target: unnormalized exact key")
 		}
@@ -77,7 +77,7 @@ func freezeExactKeys(drafts []operationDraft, boot bootDraft) ([]keyspace.Litera
 		values = append(values, value)
 	}
 	sort.Slice(values, func(left, right int) bool {
-		order, ok := exactkey.Compare(values[left], values[right])
+		order, ok := scalar.Compare(values[left], values[right])
 		if !ok {
 			panic("target: unnormalized exact key")
 		}
@@ -102,7 +102,7 @@ func (c *Contract) appendExactKeys(input []keyspace.LiteralValue) error {
 		return err
 	}
 	for _, value := range input {
-		normalized, ok := exactkey.Normalize(value)
+		normalized, ok := scalar.Normalize(value)
 		if !ok || normalized != value {
 			return errors.New("target: malformed exact key")
 		}

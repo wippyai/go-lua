@@ -1,43 +1,49 @@
 package target
 
 import (
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
 
-func identityOperation(name string, input, output typ.Type) OperationSpec {
+func identityOperation(name string, input, output interface{}) OperationSpec {
+	declarations, formals := testOperationTypes(input, output)
 	return OperationSpec{
-		Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{name}}},
-		Input:    ValuesSpec{Fixed: []typ.Type{input}, Tail: ValuesClosed},
+		Bindings:    []BindingSpec{{Namespace: BindingBuiltin, Member: []string{name}}},
+		TypeFormals: formals,
+		Input:       ValuesSpec{Fixed: []schematype.Type{declarations[0]}, Tail: ValuesClosed},
 		Outcomes: []OutcomeSpec{{
-			Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{output}, Tail: ValuesClosed},
+			Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{declarations[1]}, Tail: ValuesClosed},
 			ResultAliases: []ResultAliasSpec{{Result: 0, Source: InputSource{Kind: InputSourceValueFormal}}},
 		}},
 		Effects: RowSpec{Tail: RowClosed},
 	}
 }
 
-func freshOperation(name string, output typ.Type, fresh FreshKind) OperationSpec {
+func freshOperation(name string, output interface{}, fresh FreshKind) OperationSpec {
+	declarations, formals := testOperationTypes(output)
 	return OperationSpec{
-		Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{name}}},
-		Input:    ValuesSpec{Tail: ValuesClosed},
+		Bindings:    []BindingSpec{{Namespace: BindingBuiltin, Member: []string{name}}},
+		TypeFormals: formals,
+		Input:       ValuesSpec{Tail: ValuesClosed},
 		Outcomes: []OutcomeSpec{{
-			Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{output}, Tail: ValuesClosed},
+			Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{declarations[0]}, Tail: ValuesClosed},
 			FreshResults: []FreshResultSpec{{Result: 0, Kind: fresh}},
 		}},
 		Effects: RowSpec{Tail: RowClosed},
 	}
 }
 
-func producedOperation(name string, output typ.Type) Spec {
+func producedOperation(name string, output interface{}) Spec {
+	declarations, formals := testOperationTypes(output)
 	return Spec{Operations: []OperationSpec{
 		{
-			Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{name}}},
-			Input:    ValuesSpec{Tail: ValuesClosed},
+			Bindings:    []BindingSpec{{Namespace: BindingBuiltin, Member: []string{name}}},
+			TypeFormals: formals,
+			Input:       ValuesSpec{Tail: ValuesClosed},
 			Outcomes: []OutcomeSpec{{
-				Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{output}, Tail: ValuesClosed},
+				Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{declarations[0]}, Tail: ValuesClosed},
 				Produced: []ProducedSpec{{Result: 0, Operation: 2}},
 			}},
 			Effects: RowSpec{Tail: RowClosed},
@@ -46,10 +52,12 @@ func producedOperation(name string, output typ.Type) Spec {
 	}}
 }
 
-func callbackResultOperation(name string, callbackType, output typ.Type, admission Admission) OperationSpec {
+func callbackResultOperation(name string, callbackType, output interface{}, admission Admission) OperationSpec {
+	declarations, formals := testOperationTypes(callbackType, output)
 	return OperationSpec{
-		Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{name}}},
-		Input:    ValuesSpec{Fixed: []typ.Type{callbackType}, Tail: ValuesClosed},
+		Bindings:    []BindingSpec{{Namespace: BindingBuiltin, Member: []string{name}}},
+		TypeFormals: formals,
+		Input:       ValuesSpec{Fixed: []schematype.Type{declarations[0]}, Tail: ValuesClosed},
 		Callbacks: []CallbackSpec{{
 			Function: InputSource{Kind: InputSourceValueFormal}, Admission: admission,
 			Arguments: ValuesSpec{Tail: ValuesClosed},
@@ -63,7 +71,7 @@ func callbackResultOperation(name string, callbackType, output typ.Type, admissi
 			Lifecycle: CallbackRetainedOptionalOnce, Effects: RowSpec{Tail: RowClosed},
 		}},
 		Outcomes: []OutcomeSpec{{
-			Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{output}, Tail: ValuesClosed},
+			Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{declarations[1]}, Tail: ValuesClosed},
 			CallbackResults: []CallbackResultSpec{{Result: 0, Callback: 1}},
 		}},
 		Effects: RowSpec{Tail: RowClosed},
@@ -75,15 +83,15 @@ func TestIdentityAnnotationsRejectConcreteContradictions(t *testing.T) {
 		name string
 		spec Spec
 	}{
-		{"alias-string-number", Spec{Operations: []OperationSpec{identityOperation("alias-string-number", typ.String, typ.Number)}}},
-		{"fresh-table-string", Spec{Operations: []OperationSpec{freshOperation("fresh-table-string", typ.String, FreshTable)}}},
-		{"fresh-function-string", Spec{Operations: []OperationSpec{freshOperation("fresh-function-string", typ.String, FreshFunction)}}},
-		{"fresh-thread-string", Spec{Operations: []OperationSpec{freshOperation("fresh-thread-string", typ.String, FreshThread)}}},
-		{"produced-string", producedOperation("produced-string", typ.String)},
-		{"callback-string", Spec{Operations: []OperationSpec{callbackResultOperation("callback-string", typ.String, typ.String, OrdinaryCallable)}}},
+		{"alias-string-number", Spec{Operations: []OperationSpec{identityOperation("alias-string-number", testString, testNumber)}}},
+		{"fresh-table-string", Spec{Operations: []OperationSpec{freshOperation("fresh-table-string", testString, FreshTable)}}},
+		{"fresh-function-string", Spec{Operations: []OperationSpec{freshOperation("fresh-function-string", testString, FreshFunction)}}},
+		{"fresh-thread-string", Spec{Operations: []OperationSpec{freshOperation("fresh-thread-string", testString, FreshThread)}}},
+		{"produced-string", producedOperation("produced-string", testString)},
+		{"callback-string", Spec{Operations: []OperationSpec{callbackResultOperation("callback-string", testString, testString, OrdinaryCallable)}}},
 	} {
 		t.Run(item.name, func(t *testing.T) {
-			if _, err := Seal(&item.spec); err == nil {
+			if _, err := testSeal(&item.spec); err == nil {
 				t.Fatal("concrete identity contradiction sealed")
 			}
 		})
@@ -91,79 +99,77 @@ func TestIdentityAnnotationsRejectConcreteContradictions(t *testing.T) {
 }
 
 func TestIdentityAnnotationsKeepProvenAndGradualCases(t *testing.T) {
-	if _, err := Seal(&Spec{Operations: []OperationSpec{identityOperation("alias-integer-number", typ.Integer, typ.Number)}}); err != nil {
+	if _, err := testSeal(&Spec{Operations: []OperationSpec{identityOperation("alias-integer-number", testInteger, testNumber)}}); err != nil {
 		t.Fatalf("integer alias to number rejected: %v", err)
 	}
-	if _, err := Seal(&Spec{Operations: []OperationSpec{identityOperation("alias-any-string", typ.Any, typ.String)}}); err != nil {
+	if _, err := testSeal(&Spec{Operations: []OperationSpec{identityOperation("alias-any-string", testAny, testString)}}); err != nil {
 		t.Fatalf("Any alias to string rejected: %v", err)
 	}
-	if _, err := Seal(&Spec{Operations: []OperationSpec{freshOperation("fresh-table-marker", typ.BuiltinTableTopMarker(), FreshTable)}}); err != nil {
+	if _, err := testSeal(&Spec{Operations: []OperationSpec{freshOperation("fresh-table-marker", testBuiltinTableTop(), FreshTable)}}); err != nil {
 		t.Fatalf("table marker freshness rejected: %v", err)
 	}
-	if _, err := Seal(&Spec{Operations: []OperationSpec{freshOperation("fresh-table-record", typ.RebuildRecord(typ.RecordParts{}), FreshTable)}}); err != nil {
+	if _, err := testSeal(&Spec{Operations: []OperationSpec{freshOperation("fresh-table-record", testRawRecord(testRawRecordParts{}), FreshTable)}}); err != nil {
 		t.Fatalf("record freshness rejected: %v", err)
 	}
-	function := typ.Func().Build()
-	if _, err := Seal(&Spec{Operations: []OperationSpec{freshOperation("fresh-function", function, FreshFunction)}}); err != nil {
+	function := testRawFunction()
+	if _, err := testSeal(&Spec{Operations: []OperationSpec{freshOperation("fresh-function", function, FreshFunction)}}); err != nil {
 		t.Fatalf("function freshness rejected: %v", err)
 	}
-	if _, err := Seal(&Spec{Operations: []OperationSpec{freshOperation("fresh-thread-any", typ.Any, FreshThread)}}); err != nil {
+	if _, err := testSeal(&Spec{Operations: []OperationSpec{freshOperation("fresh-thread-any", testAny, FreshThread)}}); err != nil {
 		t.Fatalf("gradual thread freshness rejected: %v", err)
 	}
 	producedFunction := producedOperation("produced-function", function)
-	if _, err := Seal(&producedFunction); err != nil {
+	if _, err := testSeal(&producedFunction); err != nil {
 		t.Fatalf("produced direct function rejected: %v", err)
 	}
-	producedAny := producedOperation("produced-any", typ.Any)
-	if _, err := Seal(&producedAny); err != nil {
+	producedAny := producedOperation("produced-any", testAny)
+	if _, err := testSeal(&producedAny); err != nil {
 		t.Fatalf("produced Any rejected: %v", err)
 	}
-	if _, err := Seal(&Spec{Operations: []OperationSpec{callbackResultOperation("callback-function", function, function, DirectFunction)}}); err != nil {
+	if _, err := testSeal(&Spec{Operations: []OperationSpec{callbackResultOperation("callback-function", function, function, DirectFunction)}}); err != nil {
 		t.Fatalf("direct callback function rejected: %v", err)
 	}
 
-	callMeta := typ.RebuildRecord(typ.RecordParts{StaticMembers: []typ.StaticMember{{Kind: typ.StaticMemberStringIndex, Name: "__call", Type: function}}})
-	ordinaryCallable := typ.RebuildRecord(typ.RecordParts{Metatable: callMeta})
-	if _, err := Seal(&Spec{Operations: []OperationSpec{callbackResultOperation("callback-ordinary-callable", ordinaryCallable, ordinaryCallable, OrdinaryCallable)}}); err != nil {
+	callMeta := testRawRecord(testRawRecordParts{StaticMembers: []testRawStaticMember{{Kind: testRawStaticMemberStringIndex, Name: "__call", Type: function}}})
+	ordinaryCallable := testRawRecord(testRawRecordParts{Metatable: callMeta})
+	if _, err := testSeal(&Spec{Operations: []OperationSpec{callbackResultOperation("callback-ordinary-callable", ordinaryCallable, ordinaryCallable, OrdinaryCallable)}}); err != nil {
 		t.Fatalf("ordinary callable callback result rejected: %v", err)
 	}
 	producedCallableRecord := producedOperation("produced-callable-record", ordinaryCallable)
-	if _, err := Seal(&producedCallableRecord); err == nil {
+	if _, err := testSeal(&producedCallableRecord); err == nil {
 		t.Fatal("Produced accepted a record callable only through __call")
 	}
 }
 
 func TestIdentityAliasDoesNotReplaceFormalWithItsConstraint(t *testing.T) {
-	formal := typ.NewTypeParam("T", typ.Number)
+	formal := testNewTypeParam("T", testNumber)
 	equal := identityOperation("alias-formal-equal", formal, formal)
-	equal.TypeFormals = []*typ.TypeParam{formal}
-	if _, err := Seal(&Spec{Operations: []OperationSpec{equal}}); err != nil {
+	if _, err := testSeal(&Spec{Operations: []OperationSpec{equal}}); err != nil {
 		t.Fatalf("T to T alias rejected: %v", err)
 	}
-	narrow := identityOperation("alias-formal-narrow", typ.Integer, formal)
-	narrow.TypeFormals = []*typ.TypeParam{formal}
-	if _, err := Seal(&Spec{Operations: []OperationSpec{narrow}}); err == nil {
+	narrow := identityOperation("alias-formal-narrow", testInteger, formal)
+	if _, err := testSeal(&Spec{Operations: []OperationSpec{narrow}}); err == nil {
 		t.Fatal("integer alias was accepted as unconstrained T:number")
 	}
 }
 
 func TestIdentityAnnotationsUnfoldRecursiveAndInstantiatedSemanticHeads(t *testing.T) {
-	record := typ.RebuildRecord(typ.RecordParts{})
-	function := typ.Func().Build()
+	record := testRawRecord(testRawRecordParts{})
+	function := testRawFunction()
 
-	recursiveRecord := typ.NewRecursive("RecursiveRecord", func(self typ.Type) typ.Type { return record })
-	recursiveFunction := typ.NewRecursive("RecursiveFunction", func(self typ.Type) typ.Type { return function })
-	recursiveString := typ.NewRecursive("RecursiveString", func(self typ.Type) typ.Type { return typ.String })
+	recursiveRecord := testRawRecursive("RecursiveRecord", func(self testRawType) testRawType { return record })
+	recursiveFunction := testRawRecursive("RecursiveFunction", func(self testRawType) testRawType { return function })
+	recursiveString := testRawRecursive("RecursiveString", func(self testRawType) testRawType { return testRawString })
 
-	recordParam := typ.NewTypeParam("T", nil)
-	recordGeneric := typ.NewGeneric("RecordBox", []*typ.TypeParam{recordParam}, record)
-	functionParam := typ.NewTypeParam("T", nil)
-	functionGeneric := typ.NewGeneric("FunctionBox", []*typ.TypeParam{functionParam}, function)
-	stringParam := typ.NewTypeParam("T", nil)
-	stringGeneric := typ.NewGeneric("Id", []*typ.TypeParam{stringParam}, stringParam)
-	instantiatedRecord := typ.Instantiate(recordGeneric, typ.String)
-	instantiatedFunction := typ.Instantiate(functionGeneric, typ.String)
-	instantiatedString := typ.Instantiate(stringGeneric, typ.String)
+	recordParam := testNewTypeParam("T", nil)
+	recordGeneric := testRawGeneric("RecordBox", []*testRawTypeParam{recordParam}, record)
+	functionParam := testNewTypeParam("T", nil)
+	functionGeneric := testRawGeneric("FunctionBox", []*testRawTypeParam{functionParam}, function)
+	stringParam := testNewTypeParam("T", nil)
+	stringGeneric := testRawGeneric("Id", []*testRawTypeParam{stringParam}, stringParam)
+	instantiatedRecord := testRawInstantiate(recordGeneric, testRawString)
+	instantiatedFunction := testRawInstantiate(functionGeneric, testRawString)
+	instantiatedString := testRawInstantiate(stringGeneric, testRawString)
 
 	for _, item := range []struct {
 		name string
@@ -179,7 +185,7 @@ func TestIdentityAnnotationsUnfoldRecursiveAndInstantiatedSemanticHeads(t *testi
 		{"instantiated-function-direct-callback", Spec{Operations: []OperationSpec{callbackResultOperation("instantiated-function-direct-callback", instantiatedFunction, instantiatedFunction, DirectFunction)}}},
 	} {
 		t.Run(item.name, func(t *testing.T) {
-			if _, err := Seal(&item.spec); err != nil {
+			if _, err := testSeal(&item.spec); err != nil {
 				t.Fatalf("semantic wrapper rejected: %v", err)
 			}
 		})
@@ -201,7 +207,7 @@ func TestIdentityAnnotationsUnfoldRecursiveAndInstantiatedSemanticHeads(t *testi
 		{"instantiated-record-fresh-thread", Spec{Operations: []OperationSpec{freshOperation("instantiated-record-fresh-thread", instantiatedRecord, FreshThread)}}},
 	} {
 		t.Run(item.name, func(t *testing.T) {
-			if _, err := Seal(&item.spec); err == nil {
+			if _, err := testSeal(&item.spec); err == nil {
 				t.Fatal("concrete semantic wrapper contradiction sealed")
 			}
 		})
@@ -209,13 +215,13 @@ func TestIdentityAnnotationsUnfoldRecursiveAndInstantiatedSemanticHeads(t *testi
 }
 
 func TestIdentityAnnotationsRecursiveCyclesRequireAProductiveHead(t *testing.T) {
-	self := typ.NewRecursive("Self", func(self typ.Type) typ.Type { return self })
-	left := typ.NewRecursivePlaceholder("Left")
-	right := typ.NewRecursivePlaceholder("Right")
+	self := testRawRecursive("Self", func(self testRawType) testRawType { return self })
+	left := testRawRecursivePlaceholder("Left")
+	right := testRawRecursivePlaceholder("Right")
 	left.SetBody(right)
 	right.SetBody(left)
-	mutualTable := typ.NewRecursivePlaceholder("MutualTable")
-	mutualTable.SetBody(typ.NewRecursive("MutualTableBody", func(self typ.Type) typ.Type { return typ.RebuildRecord(typ.RecordParts{}) }))
+	mutualTable := testRawRecursivePlaceholder("MutualTable")
+	mutualTable.SetBody(testRawRecursive("MutualTableBody", func(self testRawType) testRawType { return testRawRecord(testRawRecordParts{}) }))
 
 	for _, item := range []struct {
 		name string
@@ -228,7 +234,7 @@ func TestIdentityAnnotationsRecursiveCyclesRequireAProductiveHead(t *testing.T) 
 		{"mutual-table-fresh-table", Spec{Operations: []OperationSpec{freshOperation("mutual-table-fresh-table", mutualTable, FreshTable)}}, true},
 	} {
 		t.Run(item.name, func(t *testing.T) {
-			_, err := Seal(&item.spec)
+			_, err := testSeal(&item.spec)
 			if (err == nil) != item.want {
 				t.Fatalf("Seal error = %v, want accepted=%t", err, item.want)
 			}
@@ -238,16 +244,16 @@ func TestIdentityAnnotationsRecursiveCyclesRequireAProductiveHead(t *testing.T) 
 
 func TestIdentityAnnotationsDeepSemanticWrappersDoNotUseTheHostStack(t *testing.T) {
 	const depth = 20_000
-	deeplyRecursive := func(head typ.Type) typ.Type {
+	deeplyRecursive := func(head testRawType) testRawType {
 		for range depth {
 			body := head
-			head = typ.NewRecursive("", func(self typ.Type) typ.Type { return body })
+			head = testRawRecursive("", func(self testRawType) testRawType { return body })
 		}
 		return head
 	}
 
-	deepRecord := deeplyRecursive(typ.RebuildRecord(typ.RecordParts{}))
-	deepFunction := deeplyRecursive(typ.Func().Build())
+	deepRecord := deeplyRecursive(testRawRecord(testRawRecordParts{}))
+	deepFunction := deeplyRecursive(testRawFunction())
 	for _, item := range []struct {
 		name string
 		spec Spec
@@ -257,7 +263,7 @@ func TestIdentityAnnotationsDeepSemanticWrappersDoNotUseTheHostStack(t *testing.
 		{"direct-callback", Spec{Operations: []OperationSpec{callbackResultOperation("deep-direct-callback", deepFunction, deepFunction, DirectFunction)}}},
 	} {
 		t.Run(item.name, func(t *testing.T) {
-			if _, err := Seal(&item.spec); err != nil {
+			if _, err := testSeal(&item.spec); err != nil {
 				t.Fatalf("deep semantic wrapper rejected: %v", err)
 			}
 		})
@@ -265,9 +271,9 @@ func TestIdentityAnnotationsDeepSemanticWrappersDoNotUseTheHostStack(t *testing.
 }
 
 func TestIdentityAnnotationsFormalBoundsAreOnlyNegativeEvidence(t *testing.T) {
-	stringFormal := typ.NewTypeParam("T", typ.String)
-	functionFormal := typ.NewTypeParam("F", typ.Func().Build())
-	unconstrained := typ.NewTypeParam("U", nil)
+	stringFormal := testNewTypeParam("T", testString)
+	functionFormal := testNewTypeParam("F", testFunction())
+	unconstrained := testNewTypeParam("U", nil)
 
 	for _, item := range []struct {
 		name string
@@ -281,7 +287,7 @@ func TestIdentityAnnotationsFormalBoundsAreOnlyNegativeEvidence(t *testing.T) {
 		{"function-bound-direct-callback", Spec{Operations: []OperationSpec{withTypeFormal(callbackResultOperation("function-bound-direct-callback", functionFormal, functionFormal, DirectFunction), functionFormal)}}, false},
 	} {
 		t.Run(item.name, func(t *testing.T) {
-			_, err := Seal(&item.spec)
+			_, err := testSeal(&item.spec)
 			if (err == nil) != item.want {
 				t.Fatalf("Seal error = %v, want accepted=%t", err, item.want)
 			}
@@ -290,7 +296,7 @@ func TestIdentityAnnotationsFormalBoundsAreOnlyNegativeEvidence(t *testing.T) {
 }
 
 func TestIdentityAnnotationsMetaIsReflectionOnly(t *testing.T) {
-	meta := typ.NewMeta(typ.String)
+	meta := testMeta(testString)
 	for _, item := range []struct {
 		name  string
 		fresh FreshKind
@@ -302,7 +308,7 @@ func TestIdentityAnnotationsMetaIsReflectionOnly(t *testing.T) {
 		{"error", FreshError, false},
 	} {
 		t.Run(item.name, func(t *testing.T) {
-			_, err := Seal(&Spec{Operations: []OperationSpec{freshOperation("meta-"+item.name, meta, item.fresh)}})
+			_, err := testSeal(&Spec{Operations: []OperationSpec{freshOperation("meta-"+item.name, meta, item.fresh)}})
 			if (err == nil) != item.want {
 				t.Fatalf("Seal error = %v, want accepted=%t", err, item.want)
 			}
@@ -310,7 +316,6 @@ func TestIdentityAnnotationsMetaIsReflectionOnly(t *testing.T) {
 	}
 }
 
-func withTypeFormal(operation OperationSpec, formal *typ.TypeParam) OperationSpec {
-	operation.TypeFormals = []*typ.TypeParam{formal}
+func withTypeFormal(operation OperationSpec, formal *testRawTypeParam) OperationSpec {
 	return operation
 }

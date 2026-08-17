@@ -8,6 +8,7 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof"
+	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/astcodec"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/grammar"
 )
 
@@ -30,7 +31,7 @@ const (
 type Requirement struct {
 	Constructor string
 	Field       int
-	State       grammarproof.FieldState
+	State       astcodec.FieldState
 	Context     Context
 }
 
@@ -194,16 +195,16 @@ func contextFor(class grammar.ConstructorClass) Context {
 	}
 }
 
-func statesFor(form grammar.FieldForm) []grammarproof.FieldState {
+func statesFor(form grammar.FieldForm) []astcodec.FieldState {
 	switch form {
 	case grammar.FieldFormOptional, grammar.FieldFormMapping, grammar.FieldFormInterface:
-		return []grammarproof.FieldState{grammarproof.FieldStateAbsent, grammarproof.FieldStatePresent}
+		return []astcodec.FieldState{astcodec.FieldStateAbsent, astcodec.FieldStatePresent}
 	case grammar.FieldFormSequence, grammar.FieldFormString:
-		return []grammarproof.FieldState{grammarproof.FieldStateEmpty, grammarproof.FieldStateNonEmpty}
+		return []astcodec.FieldState{astcodec.FieldStateEmpty, astcodec.FieldStateNonEmpty}
 	case grammar.FieldFormBool:
-		return []grammarproof.FieldState{grammarproof.FieldStateFalse, grammarproof.FieldStateTrue}
+		return []astcodec.FieldState{astcodec.FieldStateFalse, astcodec.FieldStateTrue}
 	case grammar.FieldFormNamed, grammar.FieldFormScalar:
-		return []grammarproof.FieldState{grammarproof.FieldStateZero, grammarproof.FieldStateNonZero}
+		return []astcodec.FieldState{astcodec.FieldStateZero, astcodec.FieldStateNonZero}
 	default:
 		return nil
 	}

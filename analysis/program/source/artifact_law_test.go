@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/internal/framing"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
 func TestArtifactSectionRoundTripRebuildsAuthoredContent(t *testing.T) {
@@ -130,7 +130,7 @@ func TestArtifactSectionRejectsNoncanonicalDuplicateAndOutOfOrderExactAtoms(t *t
 			name: "noncanonical integral float",
 			mutate: func(data []byte) {
 				// The first exact atom is integer 1. Re-labeling its same-width
-				// payload as float 1 violates exactkey.Normalize.
+				// payload as float 1 violates scalar.Normalize.
 				data[offsets.exactKinds[0]] = byte(keyspace.LiteralFloat)
 			},
 		},

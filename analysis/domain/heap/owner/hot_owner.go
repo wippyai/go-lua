@@ -393,7 +393,7 @@ func (owner *HotOwner) keyAt(index coordinate) (heap.Key, bool) {
 
 // KeyForAllocationReceipt is the owner-native post-seal allocation seam. The
 // receipt is issued by Heap's mounted artifact catalog; no Program or
-// TransformerInput is reopened on this path.
+// Program construction state is reopened on this path.
 func (owner *HotOwner) KeyForAllocationReceipt(receipt heap.AllocationReceipt) (heap.Key, bool) {
 	if owner == nil || owner.schema == (heap.Schema{}) {
 		return heap.Key{}, false

@@ -1,89 +1,9 @@
 package engine
 
 import (
-	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/identity"
 )
-
-// MountedActivationCandidateIssuer is bound once to the sole activation
-// slot and the five factor capabilities which make its existing-body
-// transport meaningful. Its fields are private: no domain can mint selected
-// factor edges, PointRefs, or a candidate from scalar transport coordinates.
-type MountedActivationCandidateIssuer struct {
-	state   *schemaBindingState
-	rule    composition.Key
-	family  composition.Key
-	factors [5]composition.Key
-}
-
-type directActivationTransportSetKey struct {
-	issuer *MountedActivationCandidateIssuer
-	mount  identity.ContentID
-	body   identity.ContentID
-}
-
-// BindMountedActivationCandidateIssuer joins the exact already-bound
-// activation implementation slot with the five factor refs while Binding is
-// open. The issuer becomes usable only after the activation row itself is
-// admitted to a ReceiptAssembly.
-func BindMountedActivationCandidateIssuer[V, C, H, P, E any](binding *SchemaBinding, slot *SchemaActivationRuleSlot, value FactorRef[V], call FactorRef[C], heap FactorRef[H], pack FactorRef[P], effect FactorRef[E]) (*MountedActivationCandidateIssuer, bool) {
-	state := bindingState(binding)
-	if state == nil || slot == nil || slot.cell == nil || slot.cell.schema != state.schema {
-		return nil, false
-	}
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	if state.phase != schemaBindingOpen {
-		return nil, false
-	}
-	activationOrdinal, activationOK := slot.Ordinal()
-	if !activationOK || activationOrdinal >= uint64(len(state.rules)) {
-		return nil, false
-	}
-	activationCell, activationBound := state.rules[activationOrdinal].(*schemaActivationRuleBindingCell)
-	if !activationBound || !activationCell.schemaRuleComplete() {
-		return nil, false
-	}
-	ordinals := []uint64{0, 0, 0, 0, 0}
-	refsOK := true
-	if ordinals[0], refsOK = factorRefOrdinal(value, state.schema); !refsOK {
-		return nil, false
-	}
-	if ordinals[1], refsOK = factorRefOrdinal(call, state.schema); !refsOK {
-		return nil, false
-	}
-	if ordinals[2], refsOK = factorRefOrdinal(heap, state.schema); !refsOK {
-		return nil, false
-	}
-	if ordinals[3], refsOK = factorRefOrdinal(pack, state.schema); !refsOK {
-		return nil, false
-	}
-	if ordinals[4], refsOK = factorRefOrdinal(effect, state.schema); !refsOK {
-		return nil, false
-	}
-	keys := make([]composition.Key, len(ordinals))
-	seen := make(map[uint64]struct{}, len(ordinals))
-	for index, ordinal := range ordinals {
-		if ordinal >= uint64(len(state.factors)) || state.factors[ordinal] == nil {
-			return nil, false
-		}
-		if _, duplicate := seen[ordinal]; duplicate {
-			return nil, false
-		}
-		seen[ordinal] = struct{}{}
-		keys[index] = state.schema.factorSemanticAt(ordinal)
-		if !keys[index].Available() {
-			return nil, false
-		}
-	}
-	ruleSemantic := state.schema.ruleSemanticAt(activationOrdinal)
-	shape, shapeOK := state.schema.ruleShapeAt(activationOrdinal)
-	if !ruleSemantic.Available() || !shapeOK || shape.ActivationCount != 1 || !shape.ActivationFamily.Available() {
-		return nil, false
-	}
-	return &MountedActivationCandidateIssuer{state: state, rule: ruleSemantic, family: shape.ActivationFamily, factors: [5]composition.Key{keys[0], keys[1], keys[2], keys[3], keys[4]}}, true
-}
 
 func (issuer *MountedActivationCandidateIssuer) validFor(assembly *ReceiptAssembly, occurrence RuleOccurrenceReceipt) bool {
 	if issuer == nil || issuer.state == nil || assembly == nil || assembly.builder == nil || assembly.builder.inner == nil || occurrence.assembly != assembly || !occurrence.role.mounted() || !occurrence.role.activation || !issuer.rule.Available() || !issuer.family.Available() {
@@ -103,7 +23,7 @@ func (issuer *MountedActivationCandidateIssuer) validFor(assembly *ReceiptAssemb
 // application/target tuple and mounted body identity; the engine resolves all
 // point memberships from its own artifact snapshot and emits the five fixed
 // transport roles. It never accepts PointRefs, factor IDs, or edge slices.
-func (issuer *MountedActivationCandidateIssuer) AddMountedActivationCandidate(assembly *ReceiptAssembly, occurrence RuleOccurrenceReceipt, application, target, endpoint SemanticKey, mount, body identity.ContentID) bool {
+func (issuer *MountedActivationCandidateIssuer) AddMountedActivationCandidate(assembly *ReceiptAssembly, occurrence RuleOccurrenceReceipt, application, target, endpoint identity.SemanticKey, mount, body identity.ContentID) bool {
 	if !issuer.validFor(assembly, occurrence) || !application.Available() || !target.Available() || !endpoint.Available() || target == endpoint || !mount.Available() || !body.Available() {
 		return false
 	}
@@ -153,7 +73,7 @@ func (issuer *MountedActivationCandidateIssuer) AddMountedActivationCandidate(as
 		}
 		inner.directTransportSets[setKey] = set
 	}
-	origin := equation.MaterializationOrigin{Family: shape.ActivationFamily, Application: application.compositionKey(), Target: target.compositionKey(), Endpoint: endpoint.compositionKey(), TriggerOrdinal: triggerIndex}
+	origin := equation.MaterializationOrigin{Family: shape.ActivationFamily, Application: compositionKeyOf(application), Target: compositionKeyOf(target), Endpoint: compositionKeyOf(endpoint), TriggerOrdinal: triggerIndex}
 	base, source := inner.batch, issuer.state.schema.cold
 	inner.mu.Unlock()
 	candidate, candidateOK := equation.NewDirectActivationCandidate(source, base, origin, triggerPoint, set)
@@ -168,7 +88,7 @@ func (issuer *MountedActivationCandidateIssuer) AddMountedActivationCandidate(as
 // exact candidate denominator, including the lawful zero-candidate case. The
 // expected count is checked against candidates already admitted through this
 // same issuer; it cannot turn an omitted or rejected candidate into success.
-func (issuer *MountedActivationCandidateIssuer) CompleteMountedActivationCandidates(assembly *ReceiptAssembly, occurrence RuleOccurrenceReceipt, application SemanticKey, expected uint64) bool {
+func (issuer *MountedActivationCandidateIssuer) CompleteMountedActivationCandidates(assembly *ReceiptAssembly, occurrence RuleOccurrenceReceipt, application identity.SemanticKey, expected uint64) bool {
 	if !issuer.validFor(assembly, occurrence) || !application.Available() {
 		return false
 	}
@@ -181,14 +101,14 @@ func (issuer *MountedActivationCandidateIssuer) CompleteMountedActivationCandida
 	actual := inner.semantic.activationCandidates[trigger]
 	knownApplication, hasApplication := inner.semantic.activationApplication[trigger]
 	_, completed := inner.semantic.activationExpected[trigger]
-	valid := registered && !completed && actual == expected && (!hasApplication || knownApplication == application.compositionKey()) && shapeOK && shape.ActivationCount == 1 && shape.ActivationFamily == issuer.family
+	valid := registered && !completed && actual == expected && (!hasApplication || knownApplication == compositionKeyOf(application)) && shapeOK && shape.ActivationCount == 1 && shape.ActivationFamily == issuer.family
 	if !valid {
 		inner.mu.Unlock()
 		return false
 	}
 	inner.semantic.activationCandidates[trigger] = actual
 	inner.semantic.activationExpected[trigger] = expected
-	inner.semantic.activationApplication[trigger] = application.compositionKey()
+	inner.semantic.activationApplication[trigger] = compositionKeyOf(application)
 	inner.mu.Unlock()
 	return true
 }

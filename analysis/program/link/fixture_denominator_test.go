@@ -9,11 +9,11 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/internal/testfixture"
+	"github.com/wippyai/go-lua/analysis/library/lualib/targetprofile"
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/link"
+	"github.com/wippyai/go-lua/analysis/program/relations"
 	"github.com/wippyai/go-lua/analysis/program/target"
-	"github.com/wippyai/go-lua/analysis/program/target/profile"
-	"github.com/wippyai/go-lua/analysis/schema/relations"
 )
 
 // frozenFixtureLinkFiles is the parser-valid source denominator fixed by the
@@ -35,7 +35,7 @@ func TestFixtureProjectLinksClosedSiblingModules(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seal canonical target profile: %v", err)
 	}
-	project, err := testfixture.FrozenCorpusProject("modules/simple-export")
+	project, err := fixtureCorpus(t).Project("modules/simple-export")
 	if err != nil {
 		t.Fatalf("fixture project: %v", err)
 	}
@@ -60,10 +60,7 @@ func TestFrozenFixtureCorpusLinks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seal canonical target profile: %v", err)
 	}
-	projects, err := testfixture.FrozenCorpusProjects()
-	if err != nil {
-		t.Fatalf("fixture projects: %v", err)
-	}
+	projects := fixtureCorpus(t).Projects()
 	denominator := 0
 	failures := make(map[string]*fixtureLinkFailure)
 	for _, project := range projects {

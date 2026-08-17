@@ -1,8 +1,10 @@
 package ingress
 
 import (
+	"bytes"
 	"go/ast"
 	"go/parser"
+	"go/printer"
 	"go/token"
 	"os"
 	"path/filepath"
@@ -43,8 +45,32 @@ func TestBorrowedIngressHasNoOwnedRowStorage(t *testing.T) {
 			if !ok {
 				t.Fatalf("%s is not a struct", typeSpec.Name.Name)
 			}
-			if typeSpec.Name.Name == "Snapshot" && structType.Fields.NumFields() != 1 {
-				t.Fatalf("Snapshot fields = %d, want only its borrowed artifact pointer", structType.Fields.NumFields())
+			// Snapshot admits exactly two fields, and the law names both: the
+			// borrowed artifact pointer every row accessor indexes into, and the
+			// sealed structural vocabulary those rows are projected through. A
+			// third field would be ingress-owned state, which is the thing this
+			// law exists to forbid.
+			if typeSpec.Name.Name == "Snapshot" {
+				admitted := map[string]string{"artifact": "*programartifact.Artifact", "vocabulary": "structure.Table"}
+				if structType.Fields.NumFields() != len(admitted) {
+					t.Fatalf("Snapshot fields = %d, want its borrowed artifact pointer and the sealed vocabulary", structType.Fields.NumFields())
+				}
+				for _, field := range structType.Fields.List {
+					if len(field.Names) != 1 {
+						t.Fatal("Snapshot declares an unnamed or grouped field")
+					}
+					want, admissible := admitted[field.Names[0].Name]
+					if !admissible {
+						t.Fatalf("Snapshot retains the field %q", field.Names[0].Name)
+					}
+					var rendered bytes.Buffer
+					if err := printer.Fprint(&rendered, token.NewFileSet(), field.Type); err != nil {
+						t.Fatal(err)
+					}
+					if rendered.String() != want {
+						t.Fatalf("Snapshot field %q is %s, want %s", field.Names[0].Name, rendered.String(), want)
+					}
+				}
 			}
 			for _, field := range structType.Fields.List {
 				if _, slice := field.Type.(*ast.ArrayType); slice {

@@ -6,11 +6,11 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/internal/framing"
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/flow"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
 	linkmodule "github.com/wippyai/go-lua/analysis/program/link/module"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
@@ -127,8 +127,8 @@ func (a *authority) sealResolved() error {
 	if !a.content.Available() {
 		return errUnavailable
 	}
-	var receiptOK bool
-	if a.semanticReceipt, receiptOK = a.component.buildSemanticSourceReceipt(); !receiptOK {
+	var viewsOK bool
+	if a.sourceViews, viewsOK = a.component.buildSourceViews(); !viewsOK {
 		return errUnavailable
 	}
 	return nil

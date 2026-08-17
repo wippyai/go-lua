@@ -22,6 +22,7 @@ package denominator
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/internal/framing"
 	"github.com/wippyai/go-lua/analysis/schema"
 )
 
@@ -126,6 +127,24 @@ func (entry *Entry) Phase() Phase { return entry.phase }
 // the surface's own law, stated by Seal.
 func (entry *Entry) EntryAvailable() bool {
 	return entry != nil && entry.key.Available() && entry.id.Available()
+}
+
+// EntryContent writes this closed world's declared data: the surface entry that
+// owns its universe, the declared identity of the universe itself, and the
+// phase at which that universe stops admitting members. A totality claim is
+// read against exactly these, so a denominator that moves any of them quantifies
+// over a different set and the table digest says so.
+func (entry *Entry) EntryContent(content *framing.Writer) error {
+	if err := content.Uint(uint64(entry.owner.Surface)); err != nil {
+		return err
+	}
+	if err := content.String(string(entry.owner.Entry)); err != nil {
+		return err
+	}
+	if err := content.Bytes(entry.universe[:]); err != nil {
+		return err
+	}
+	return content.Uint(uint64(entry.phase))
 }
 
 func (entry *Entry) declarationComplete() bool {

@@ -241,7 +241,7 @@ func (c Cache) EntryID(entry ModuleCacheEntry) (identity.ContentID, bool) {
 }
 
 // InstanceID is the detached identity of one exact cache instance. The typed
-// owner helper is intentionally narrow: the semantic receipt needs a stable
+// owner helper is intentionally narrow: the source rows needs a stable
 // identity, while no generic relation registry is introduced.
 func (c Cache) InstanceID(instance ModuleCacheInstance) (identity.ContentID, bool) {
 	if !valid(c.component, instance.ordinal, len(c.component.authority.instances)) || instance.component != c.component {

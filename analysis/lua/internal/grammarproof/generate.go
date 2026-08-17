@@ -19,7 +19,17 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/astcodec"
 	lualower "github.com/wippyai/go-lua/analysis/lua/lower"
+)
+
+// The traced parser copy sits below analysis/lua inside the throw-away module
+// so it may import the cold analysis/lua/internal/grammarproof/astcodec
+// package under Go's internal visibility rule. The canonical copy is only read
+// back for byte comparison and is never built.
+const (
+	traceParseDestination     = "analysis/lua/parse"
+	traceCanonicalDestination = "analysis/lua/canonical/parse"
 )
 
 // Generate recreates cold grammar-reduction evidence. The parser is copied to
@@ -217,14 +227,14 @@ func traceInputManifest(root string, sources []source) (traceManifest, error) {
 	}{
 		{"module:go.mod", "go.mod", "go.mod"},
 		{"module:go.sum", "go.sum", "go.sum"},
-		{"parser:grammar", "compiler/parse/parser.go.y", "program/parse/parser.go.y"},
-		{"parser:canonical", "compiler/parse/parser.go", "canonical/parse/parser.go"},
-		{"parser:lexer", "compiler/parse/lexer.go", "program/parse/lexer.go"},
-		{"proof:generate", "lua/internal/grammarproof/generate.go", ""},
-		{"proof:astcodec-generate", "lua/internal/grammarproof/astcodec_generate.go", ""},
-		{"proof:astcodec", "lua/internal/grammarproof/astcodec/codec.go", "lua/internal/grammarproof/astcodec/codec.go"},
-		{"proof:astcodec-generated", astCodecRelativePath, "lua/internal/grammarproof/astcodec/codec_gen.go"},
-		{"proof:model", "lua/internal/grammarproof/model.go", ""},
+		{"parser:grammar", "compiler/parse/parser.go.y", traceParseDestination + "/parser.go.y"},
+		{"parser:canonical", "compiler/parse/parser.go", traceCanonicalDestination + "/parser.go"},
+		{"parser:lexer", "compiler/parse/lexer.go", traceParseDestination + "/lexer.go"},
+		{"proof:generate", "analysis/lua/internal/grammarproof/generate.go", ""},
+		{"proof:astcodec-generate", "analysis/lua/internal/grammarproof/astcodec_generate.go", ""},
+		{"proof:astcodec", "analysis/lua/internal/grammarproof/astcodec/codec.go", "analysis/lua/internal/grammarproof/astcodec/codec.go"},
+		{"proof:astcodec-generated", astCodecRelativePath, "analysis/lua/internal/grammarproof/astcodec/codec_gen.go"},
+		{"proof:model", "analysis/lua/internal/grammarproof/model.go", ""},
 	} {
 		if err := appendFile(item.name, item.relative, item.destination); err != nil {
 			return traceManifest{}, err
@@ -253,8 +263,8 @@ func traceInputManifest(root string, sources []source) (traceManifest, error) {
 			}
 		}
 	}
-	appendBytes("protocol:trace-hook", "program/parse/grammarproof_trace.go", []byte(traceHook))
-	appendBytes("protocol:trace-test", "program/parse/grammarproof_trace_test.go", []byte(traceTest))
+	appendBytes("protocol:trace-hook", traceParseDestination+"/grammarproof_trace.go", []byte(traceHook))
+	appendBytes("protocol:trace-test", traceParseDestination+"/grammarproof_trace_test.go", []byte(traceTest))
 	corpus, err := json.Marshal(traceSources(sources))
 	if err != nil {
 		return traceManifest{}, fmt.Errorf("encode grammar proof trace corpus: %w", err)
@@ -395,11 +405,10 @@ func traceReductionsWithManifest(root string, manifest traceManifest) (map[int][
 		return nil, nil, nil, nil, fmt.Errorf("resolve grammarproof root: %w", err)
 	}
 	root = absoluteRoot
-	// Keep the throw-away module below its program subtree so it may import the
-	// cold internal/grammarproof/astcodec package under Go's internal visibility
-	// rule. It is still outside every shipped package and is removed before this
-	// function returns.
-	temporary, err := os.MkdirTemp(filepath.Join(root, "program"), ".grammarproof-")
+	// The throw-away module carries its own go.mod, so Go prunes it from the
+	// shipped module and its dot-prefixed name keeps it out of every package
+	// pattern. It is removed before this function returns.
+	temporary, err := os.MkdirTemp(filepath.Join(root, "analysis", "lua", "internal", "grammarproof"), ".grammarproof-")
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
@@ -416,7 +425,7 @@ func traceReductionsWithManifest(root string, manifest traceManifest) (map[int][
 			return nil, nil, nil, nil, err
 		}
 	}
-	parseDirectory := filepath.Join(temporary, "program", "parse")
+	parseDirectory := filepath.Join(temporary, filepath.FromSlash(traceParseDestination))
 	if err := os.MkdirAll(parseDirectory, 0o755); err != nil {
 		return nil, nil, nil, nil, err
 	}
@@ -434,7 +443,7 @@ func traceReductionsWithManifest(root string, manifest traceManifest) (map[int][
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
-	canonicalParser, err := os.ReadFile(filepath.Join(temporary, "canonical", "parse", "parser.go"))
+	canonicalParser, err := os.ReadFile(filepath.Join(temporary, filepath.FromSlash(traceCanonicalDestination), "parser.go"))
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
@@ -531,7 +540,7 @@ func validateSemanticTrace(traces []traceSemantic) error {
 				return fmt.Errorf("semantic parser trace has unnamed AST occurrence")
 			}
 			for _, field := range occurrence.Fields {
-				if field.Name == "" || field.State == FieldStateInvalid || field.State > FieldStateNonZero {
+				if field.Name == "" || field.State == astcodec.FieldStateInvalid || field.State > astcodec.FieldStateNonZero {
 					return fmt.Errorf("semantic parser trace has invalid field state for %s", occurrence.Type)
 				}
 			}
@@ -948,9 +957,9 @@ type traceResult struct {
 }
 
 type traceSemantic struct {
-	Source      string          `json:"source"`
-	Production  int             `json:"production"`
-	Occurrences []ASTOccurrence `json:"occurrences"`
+	Source      string                `json:"source"`
+	Production  int                   `json:"production"`
+	Occurrences []astcodec.Occurrence `json:"occurrences"`
 }
 
 type traceSource struct {

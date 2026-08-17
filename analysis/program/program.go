@@ -18,21 +18,17 @@ import (
 // Owner-specific relations remain behind their typed Views; the root exposes
 // only generated schema queries over those immutable columns.
 type Program struct {
-	source            *source.Component
-	flow              *flow.Component
-	static            *static.Component
-	module            *imports.Component
-	id                identity.ContentID
-	allocationReceipt *allocationReceipt
-	valuesCatalog     *valuesCatalog
-	returnCatalog     *returnCatalog
+	source *source.Component
+	flow   *flow.Component
+	static *static.Component
+	module *imports.Component
+	id     identity.ContentID
 }
 
 var (
 	errInvalidAssembly = errors.New("program: invalid Assembly")
 	errUnavailable     = errors.New("program: unavailable owner identity")
 	errProvenance      = errors.New("program: Flow provenance does not match owner quartet")
-	errAllocation      = errors.New("program: allocation receipt unavailable")
 )
 
 // Publish consumes assembly and publishes the one immutable Program root.
@@ -79,21 +75,6 @@ func Publish(assembly *flow.Assembly) (*Program, error) {
 		module: moduleComponent,
 		id:     id,
 	}
-	allocationReceipt, allocationErr := buildAllocationReceipt(program)
-	if allocationErr != nil {
-		return nil, fmt.Errorf("%w: %v", errAllocation, allocationErr)
-	}
-	program.allocationReceipt = allocationReceipt
-	valuesCatalog, valuesOK := buildValuesCatalog(program)
-	if !valuesOK {
-		return nil, errors.New("program: Values catalog unavailable")
-	}
-	program.valuesCatalog = valuesCatalog
-	returnCatalog, returnsOK := buildReturnCatalog(program)
-	if !returnsOK {
-		return nil, errors.New("program: Return catalog unavailable")
-	}
-	program.returnCatalog = returnCatalog
 	return program, nil
 }
 

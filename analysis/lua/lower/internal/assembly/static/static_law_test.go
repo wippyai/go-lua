@@ -12,8 +12,6 @@ import (
 	programstatic "github.com/wippyai/go-lua/analysis/program/static"
 )
 
-type Term = assembly.Term
-
 func staticViews(t *testing.T, c *assembly.Collector) (programsource.View, programstatic.View) {
 	t.Helper()
 	published, err := c.Publish()
@@ -23,13 +21,13 @@ func staticViews(t *testing.T, c *assembly.Collector) (programsource.View, progr
 	return published.Source(), published.Static()
 }
 
-func staticFixture(name string) (*assembly.Collector, Term) {
+func staticFixture(name string) (*assembly.Collector, keyspace.Term) {
 	c := assembly.New(name, 0, bind.GlobalCensus{})
 	body := c.Body(programsource.Span{File: name})
 	return c, body
 }
 
-func completeStatic(t *testing.T, c *assembly.Collector, body Term, roots ...Term) (programsource.View, programstatic.View) {
+func completeStatic(t *testing.T, c *assembly.Collector, body keyspace.Term, roots ...keyspace.Term) (programsource.View, programstatic.View) {
 	t.Helper()
 	if body == 0 || !c.SetBody(body, roots...) || !c.SetEntry(body) {
 		t.Fatal("Source completion failed")
@@ -43,8 +41,8 @@ func TestStaticFreezeResolvesOnlyThroughSourcePreimage(t *testing.T) {
 	primitive := c.Primitive(span, programstatic.PrimitiveString)
 	literal := c.LiteralString(span, "literal")
 	field := c.Field(span, "field", primitive, false)
-	record := c.Record(span, []Term{field}, false)
-	union := c.Union(span, []Term{literal, record})
+	record := c.Record(span, []keyspace.Term{field}, false)
+	union := c.Union(span, []keyspace.Term{literal, record})
 	declarationSpan := programsource.Span{File: "static-law.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 2}
 	alias := c.Alias(declarationSpan, declarationSpan, body, "Root")
 	if primitive == 0 || literal == 0 || field == 0 || record == 0 || union == 0 || alias == 0 ||
@@ -87,7 +85,7 @@ func TestStaticRowsFillsAreOneShotAndClaimsCanonical(t *testing.T) {
 		param := c.TypeParam(span, alias, "T")
 		primitive := c.Primitive(span, programstatic.PrimitiveString)
 		if alias == 0 || param == 0 || primitive == 0 || !c.TypeParamConstraint(param, 0) ||
-			!c.AliasParams(alias, []Term{param}) || !c.AliasTarget(alias, primitive) {
+			!c.AliasParams(alias, []keyspace.Term{param}) || !c.AliasTarget(alias, primitive) {
 			t.Fatal("Alias construction failed")
 		}
 		_, staticView := completeStatic(t, c, body, alias)
@@ -99,10 +97,10 @@ func TestStaticRowsFillsAreOneShotAndClaimsCanonical(t *testing.T) {
 		c, body := staticFixture(name)
 		alias := c.Alias(span, span, body, "Alias")
 		param := c.TypeParam(span, alias, "T")
-		if alias == 0 || param == 0 || !c.TypeParamConstraint(param, 0) || !c.AliasParams(alias, []Term{param}) {
+		if alias == 0 || param == 0 || !c.TypeParamConstraint(param, 0) || !c.AliasParams(alias, []keyspace.Term{param}) {
 			t.Fatal("Alias setup failed")
 		}
-		if c.AliasParams(alias, []Term{param}) {
+		if c.AliasParams(alias, []keyspace.Term{param}) {
 			t.Fatal("duplicate Alias parameter fill was accepted")
 		}
 		if published, err := c.Publish(); err == nil || published != nil {
@@ -119,7 +117,7 @@ func TestStaticClaimStateMachineSeparatesOneShotAndFill(t *testing.T) {
 		operand := c.Bool(span, body, true)
 		target := c.Primitive(span, programstatic.PrimitiveString)
 		claim := c.DeclareValueClaim(span, body, kind.ValueClaimTypeColonColon, operand)
-		values := c.Values(span, body, []Term{claim}, 0)
+		values := c.Values(span, body, []keyspace.Term{claim}, 0)
 		ret := c.Return(span, body, values)
 		if operand == 0 || target == 0 || claim == 0 || values == 0 || ret == 0 || !c.FillValueClaimTarget(claim, target) {
 			t.Fatal("ValueClaim declaration/fill failed")
@@ -166,8 +164,8 @@ func TestStaticPublicationDuplicateIsDelegatedToStaticBuild(t *testing.T) {
 	span := programsource.Span{File: "static-publication.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 2}
 	cell := c.Cell(span, body)
 	value := c.Bool(span, body, true)
-	values := c.Values(span, body, []Term{value}, 0)
-	assign := c.Assign(span, body, []Term{cell}, []programsource.Span{span}, values)
+	values := c.Values(span, body, []keyspace.Term{value}, 0)
+	assign := c.Assign(span, body, []keyspace.Term{cell}, []programsource.Span{span}, values)
 	primitive := c.Primitive(span, programstatic.PrimitiveString)
 	alias := c.Alias(span, span, body, "Alias")
 	ref := c.Declaration(span, []string{"Alias"}, body, alias)
@@ -201,7 +199,7 @@ func TestStaticClaimDeclarationRequiresTargetBeforeFreeze(t *testing.T) {
 func TestCollectorStaticRolesRejectWrongFamiliesAndKeepTypeOfOperandOpen(t *testing.T) {
 	const name = "collector-static-role-admission.lua"
 	span := programsource.Span{File: name}
-	setup := func() (*assembly.Collector, Term, Term, Term, Term) {
+	setup := func() (*assembly.Collector, keyspace.Term, keyspace.Term, keyspace.Term, keyspace.Term) {
 		c := assembly.New(name, 0, bind.GlobalCensus{})
 		body := c.Body(span)
 		primitive := c.Primitive(span, programstatic.PrimitiveString)

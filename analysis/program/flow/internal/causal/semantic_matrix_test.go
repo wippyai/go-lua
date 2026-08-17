@@ -1306,7 +1306,7 @@ func TestSemanticMatrixForeignProvenanceFailsClosed(t *testing.T) {
 	if Matches(left.result, right.sourceView.Identity().ContentID(), left.flow.Cold().ContentID(), left.staticFinalize.View().ContentID(), left.moduleFinalize.View().ContentID()) {
 		t.Fatal("equal-shape foreign Source identity matched causal Result")
 	}
-	// Route planning is now receipt-only: a Source commit issuance is consumed
+	// Route planning is now path-only: a Source commit issuance is consumed
 	// before Causal receives any plan capability, so no View-only foreign-plan
 	// entry remains to probe here. The Result provenance fence remains the
 	// published foreign-owner law.

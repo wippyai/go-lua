@@ -3,11 +3,11 @@ package manifest
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
 
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/lifecycle"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
+	"github.com/wippyai/go-lua/analysis/module/signature/wire"
 )
 
 type typestateProtocolWire struct {
@@ -29,8 +29,8 @@ func encodeTypestateProtocol(def typestate.Definition) (typestateProtocolWire, e
 	normalized := def.Normalized()
 	out := typestateProtocolWire{
 		Name:        normalized.Protocol.String(),
-		States:      encodeTypestateStates(normalized.States),
-		FinalStates: encodeTypestateStates(normalized.FinalStates),
+		States:      wire.EncodeTypestateStates(normalized.States),
+		FinalStates: wire.EncodeTypestateStates(normalized.FinalStates),
 		Transitions: make([]typestateTransitionWire, 0, len(normalized.Transitions)),
 	}
 	for _, transition := range normalized.Transitions {
@@ -58,11 +58,11 @@ func decodeTypestateProtocol(w typestateProtocolWire) (typestate.Definition, err
 	if !ok {
 		return typestate.Definition{}, fmt.Errorf("missing protocol name")
 	}
-	states, err := decodeTypestateStates(w.States, "state")
+	states, err := wire.DecodeTypestateStates(w.States, "state")
 	if err != nil {
 		return typestate.Definition{}, err
 	}
-	finals, err := decodeTypestateStates(w.FinalStates, "final state")
+	finals, err := wire.DecodeTypestateStates(w.FinalStates, "final state")
 	if err != nil {
 		return typestate.Definition{}, err
 	}
@@ -84,33 +84,6 @@ func decodeTypestateProtocol(w typestateProtocolWire) (typestate.Definition, err
 		FinalStates: finals,
 		Transitions: transitions,
 	}, nil
-}
-
-func encodeTypestateStates(states []typestate.State) []string {
-	if len(states) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(states))
-	for _, state := range states {
-		out = append(out, state.String())
-	}
-	sort.Strings(out)
-	return out
-}
-
-func decodeTypestateStates(raw []string, role string) ([]typestate.State, error) {
-	if len(raw) == 0 {
-		return nil, nil
-	}
-	out := make([]typestate.State, 0, len(raw))
-	for _, name := range raw {
-		state, ok := typestate.StateFromString(name)
-		if !ok {
-			return nil, fmt.Errorf("empty %s", role)
-		}
-		out = append(out, state)
-	}
-	return out, nil
 }
 
 func validateManifestTypestateUsage(m *Manifest) error {
@@ -135,15 +108,35 @@ func validateManifestTypestateUsage(m *Manifest) error {
 	return nil
 }
 
+// validateEffectRowTypestateUsage walks the lifecycle labels of one manifest
+// row, checks the row's own well-formedness and protocol declaration, and
+// defers the conformance relation to the declared state machine.
 func validateEffectRowTypestateUsage(defs map[typestate.Protocol]typestate.Definition, row effect.Row) error {
 	for _, label := range row.Labels {
 		switch l := effect.NormalizeLabel(label).(type) {
 		case lifecycle.Acquire:
-			if err := validateLifecycleAcquire(defs, l.Protocol, l.State, l.Obligation); err != nil {
+			if l.State == "" {
+				return fmt.Errorf("lifecycle acquire missing state")
+			}
+			def, err := declaredTypestateProtocol(defs, l.Protocol)
+			if err != nil {
+				return err
+			}
+			if err := def.AdmitsAcquire(l.State, l.Obligation); err != nil {
 				return err
 			}
 		case lifecycle.Transition:
-			if err := validateLifecycleTransition(defs, l.Protocol, l.From, l.To); err != nil {
+			if l.From == "" {
+				return fmt.Errorf("lifecycle transition missing source state")
+			}
+			if l.To == "" {
+				return fmt.Errorf("lifecycle transition missing target state")
+			}
+			def, err := declaredTypestateProtocol(defs, l.Protocol)
+			if err != nil {
+				return err
+			}
+			if err := def.AdmitsTransition(l.From, l.To); err != nil {
 				return err
 			}
 		case lifecycle.Escape:
@@ -151,48 +144,6 @@ func validateEffectRowTypestateUsage(defs map[typestate.Protocol]typestate.Defin
 				return err
 			}
 		}
-	}
-	return nil
-}
-
-func validateLifecycleAcquire(defs map[typestate.Protocol]typestate.Definition, protocol typestate.Protocol, state typestate.State, obligation typestate.Obligation) error {
-	if state == "" {
-		return fmt.Errorf("lifecycle acquire missing state")
-	}
-	def, err := declaredTypestateProtocol(defs, protocol)
-	if err != nil {
-		return err
-	}
-	if !def.HasState(state) {
-		return fmt.Errorf("protocol %q does not declare acquire state %q", protocol, state)
-	}
-	for _, final := range obligation.FinalStateList() {
-		if !def.IsFinal(final) {
-			return fmt.Errorf("protocol %q does not declare obligation final state %q", protocol, final)
-		}
-	}
-	return nil
-}
-
-func validateLifecycleTransition(defs map[typestate.Protocol]typestate.Definition, protocol typestate.Protocol, from, to typestate.State) error {
-	if from == "" {
-		return fmt.Errorf("lifecycle transition missing source state")
-	}
-	if to == "" {
-		return fmt.Errorf("lifecycle transition missing target state")
-	}
-	def, err := declaredTypestateProtocol(defs, protocol)
-	if err != nil {
-		return err
-	}
-	if !def.HasState(to) {
-		return fmt.Errorf("protocol %q does not declare transition target state %q", protocol, to)
-	}
-	if !def.HasState(from) {
-		return fmt.Errorf("protocol %q does not declare transition source state %q", protocol, from)
-	}
-	if !def.AllowsTransition(from, to) {
-		return fmt.Errorf("protocol %q does not declare transition %q -> %q", protocol, from, to)
 	}
 	return nil
 }

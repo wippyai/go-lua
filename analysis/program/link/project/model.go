@@ -38,9 +38,9 @@ type authority struct {
 	// target is retained as the exact immutable Target authority.  A digest
 	// alone cannot fence same-ordinal Target coordinates from another
 	// contract, while Project's ForTarget/ForInitial mappings need that fence.
-	target          *target.Contract
-	contentID       identity.ContentID
-	semanticReceipt SemanticSourceReceipt
+	target      *target.Contract
+	contentID   identity.ContentID
+	sourceViews SourceViews
 	// mountContentID and applicationContentID are relation-local semantic
 	// digests.  They deliberately exclude the enclosing Link identity (and,
 	// for mounts/applications, the unrelated Target/dependent relations), so
@@ -156,9 +156,9 @@ type Bases struct {
 type Cold struct {
 	targetID  identity.ContentID
 	contentID identity.ContentID
-	// semanticReceipt is the detached owner-bound source receipt. It contains
+	// sourceViews is the detached owner-bound source rows. It contains
 	// only typed row identities and the exact Project owner identity.
-	semanticReceipt SemanticSourceReceipt
+	sourceViews SourceViews
 	// draft is a construction-only lifecycle fence. It is not a semantic
 	// authority or a Program pointer and is nil on Component snapshots.
 	fence *draftFence
@@ -190,30 +190,27 @@ const (
 )
 
 type applicationKey struct {
-	kind        applicationKind
-	shard       uint32
-	term        keyspace.Term
-	slot        applicationSlot
-	callContext identity.ContentID
-	callProof   program.CallOccurrence
+	kind   applicationKind
+	shard  uint32
+	term   keyspace.Term
+	slot   applicationSlot
+	callID identity.ContentID
 }
 
-// callSource is the owner-local inverse key for one exact mounted Program
-// CallOccurrence. Its dense shard ordinal is meaningful only with the exact
-// authority that owns the map; the public query validates both that authority
-// and the mounted Program proof before consulting it.
+// callSource is the owner-local inverse key for one exact mounted Program call
+// ID. Its dense shard ordinal is meaningful only with the exact authority that
+// owns the map.
 type callSource struct {
-	shard   uint32
-	context identity.ContentID
+	shard  uint32
+	callID identity.ContentID
 }
 
 type applicationRow struct {
-	kind        applicationKind
-	shard       uint32
-	term        keyspace.Term
-	slot        applicationSlot
-	root        uint32
-	callContext identity.ContentID
-	callFormal  identity.ContentID
-	callProof   program.CallOccurrence
+	kind       applicationKind
+	shard      uint32
+	term       keyspace.Term
+	slot       applicationSlot
+	root       uint32
+	callID     identity.ContentID
+	callFormal identity.ContentID
 }

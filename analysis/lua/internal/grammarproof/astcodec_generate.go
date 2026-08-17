@@ -15,7 +15,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/astcodec"
 )
 
-const astCodecRelativePath = "lua/internal/grammarproof/astcodec/codec_gen.go"
+const astCodecRelativePath = "analysis/lua/internal/grammarproof/astcodec/codec_gen.go"
 
 type astCodecFieldKind uint8
 

@@ -1,9 +1,9 @@
 package target
 
 import (
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	"github.com/wippyai/go-lua/analysis/identity"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
@@ -12,7 +12,7 @@ func callbackResumeContentOperation(name string, callbackFormal, resumeCarrier V
 	return OperationSpec{
 		Bindings:   []BindingSpec{{Namespace: BindingBuiltin, Member: []string{name}}},
 		ValuesVars: 5,
-		Input:      ValuesSpec{Fixed: []typ.Type{typ.Any, typ.Any}, Tail: ValuesVariable, Var: 0},
+		Input:      ValuesSpec{Fixed: []schematype.Type{testAny, testAny}, Tail: ValuesVariable, Var: 0},
 		Outcomes: []OutcomeSpec{
 			{Kind: flowkind.OutcomeNormal, Values: callbackTail(0)},
 		},

@@ -17,11 +17,11 @@
 //
 // The environment contract is a specialization on the same algebra, not a
 // second algebra. It declares every form a library kind declares and adds the
-// five forms only the environment may own: the boot roots, the denied entries,
-// the environment-slot bindings, the primitive metatable attachments, and the
-// host capabilities. An individual library therefore cannot declare a form
-// that would let it mutate the global environment, and the surface states that
-// as a law rather than as a convention.
+// four forms only the environment may own: the boot roots, the
+// environment-slot bindings, the primitive metatable attachments, and the host
+// capabilities. An individual library therefore cannot declare a form that
+// would let it mutate the global environment, and the surface states that as a
+// law rather than as a convention.
 //
 // What this surface does NOT own: contract instances. A contract instance is
 // mount-time data, and its mount identity is Link-local; no mount identity
@@ -44,7 +44,15 @@ package library
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/internal/framing"
 	"github.com/wippyai/go-lua/analysis/schema"
+)
+
+// Content record markers. They separate the parts one kind writes, so a member
+// row can never be read as the validation reference.
+const (
+	contentRecordValidation uint64 = iota + 1
+	contentRecordMember
 )
 
 // Surface law ordinals. They are numeric identities; rendering a verdict is
@@ -176,6 +184,25 @@ const (
 	// literal cannot be enumerated as contract data, so the contract names
 	// the rule instead of pretending to carry the computation.
 	FormRuleDelegation
+	// FormDeniedEntry is a member its owner declares and refuses to publish. A
+	// denial is owner-declared member data, so each class states its own: a
+	// library declares a member it models and will not hand out, and the
+	// environment declares an entry it boots refused or absent. Denial is
+	// contract data rather than omission, so coverage of the unsupported
+	// boundary can be checked instead of assumed, and the refusal rides the
+	// contract that owns the member rather than whoever observes it missing.
+	FormDeniedEntry
+	// FormExportType is a named runtime TYPE one contract publishes: the type
+	// itself, addressed by the export key an annotation spells it under. It is
+	// the one member form whose payload IS a type, so the payload format belongs
+	// to the layer that owns the type wire and nothing about the type is
+	// restated here. A contract that exports a name a type annotation resolves -
+	// the runtime channel marker, the top of the table lattice - states it as
+	// contract data rather than leaving a resolver to carry a table of built-in
+	// names it invented. It is a base form: publishing a type under one's own
+	// export key reaches nothing outside the contract's own export graph, and a
+	// host module publishes named types exactly as a library would.
+	FormExportType
 
 	// formEnvironmentFloor is the first form only the environment class may
 	// declare. It is not itself a form.
@@ -184,10 +211,6 @@ const (
 	// FormBootRoot is one root of the initial environment: its identity, the
 	// aggregate it is, and whether it is published frozen.
 	FormBootRoot
-	// FormDeniedEntry is an entry the environment publishes as refused or as
-	// absent. Denial is contract data rather than omission, so coverage of the
-	// unsupported boundary can be checked instead of assumed.
-	FormDeniedEntry
 	// FormEnvironmentSlot binds one environment slot to the exported value
 	// that initially occupies it. The binding is the only place a name meets a
 	// value, and it is owned by the environment, which is why a library kind
@@ -215,7 +238,7 @@ func (form Form) Environment() bool { return form > formEnvironmentFloor && form
 
 // Required is the set of forms one class must declare. The environment class
 // extends the base set rather than replacing it, so an environment contract
-// carries every library-contract shape and its own five besides.
+// carries every library-contract shape and its own four besides.
 func (class Class) Required() []Form {
 	if !class.Available() {
 		return nil
@@ -417,6 +440,67 @@ func (entry *Entry) Payload(form Form) (identity.ContentID, bool) {
 // the surface's own law, stated by Seal.
 func (entry *Entry) EntryAvailable() bool {
 	return entry != nil && entry.key.Available() && entry.id.Available()
+}
+
+// EntryContent writes this contract kind's declared data: which algebra it is,
+// the serialized format and version its instances are published in, the law set
+// its instances are checked under, how it addresses a member, and the member
+// shapes it declares, in declaration order. A mount resolves a kind from
+// exactly these, so a kind that gains or loses a member form is a different
+// kind and the table digest says so.
+func (entry *Entry) EntryContent(content *framing.Writer) error {
+	if err := content.Uint(uint64(entry.class)); err != nil {
+		return err
+	}
+	if err := content.Bytes(entry.codec.Format[:]); err != nil {
+		return err
+	}
+	if err := content.Uint(uint64(entry.codec.Version)); err != nil {
+		return err
+	}
+	if err := entry.validationContent(content); err != nil {
+		return err
+	}
+	if err := content.Uint(uint64(entry.addressing)); err != nil {
+		return err
+	}
+	if err := content.Count(uint64(len(entry.members))); err != nil {
+		return err
+	}
+	for _, member := range entry.members {
+		if err := content.Record(contentRecordMember); err != nil {
+			return err
+		}
+		if err := content.Uint(uint64(member.Form)); err != nil {
+			return err
+		}
+		if err := content.Bytes(member.Payload[:]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validationContent writes the law-set reference. The resolution is written
+// first and only the half that resolution declares follows it, so a sealed
+// reference and a deferred one are written as the different references they are.
+func (entry *Entry) validationContent(content *framing.Writer) error {
+	if err := content.Record(contentRecordValidation); err != nil {
+		return err
+	}
+	if err := content.Uint(uint64(entry.validation.Resolution)); err != nil {
+		return err
+	}
+	switch entry.validation.Resolution {
+	case ResolutionSealed:
+		if err := content.Uint(uint64(entry.validation.Surface)); err != nil {
+			return err
+		}
+		return content.String(string(entry.validation.Entry))
+	case ResolutionDeferred:
+		return content.Bytes(entry.validation.Deferred[:])
+	}
+	return nil
 }
 
 func (entry *Entry) declarationComplete() bool {

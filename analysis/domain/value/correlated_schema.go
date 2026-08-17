@@ -5,7 +5,6 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/heap"
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/lua/semantics/exactkey"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 
 	"github.com/wippyai/go-lua/analysis/domain/materialization"
@@ -16,6 +15,7 @@ import (
 	linkhost "github.com/wippyai/go-lua/analysis/program/link/host"
 	linkmodule "github.com/wippyai/go-lua/analysis/program/link/module"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/analysis/program/scalar"
 	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
@@ -1233,7 +1233,11 @@ func (schema *valueBuilder) sealOpaqueAlternatives() bool {
 	// Scalar opaque kinds are non-reference alternatives. Reference-capable
 	// opaque kinds are emitted with the Unknown stored class below, so finite
 	// stored reductions can select each class as one immutable image range.
-	for kind := runtimekind.Boolean; kind < runtimekind.Table; kind++ {
+	for index := 0; ; index++ {
+		kind, ok := runtimekind.Scalar.MemberAt(index)
+		if !ok {
+			break
+		}
 		if schema.addAtom(atomRow{kind: atomOpaqueKind, runtime: kind}) == 0 {
 			return false
 		}
@@ -1359,7 +1363,11 @@ func (schema *valueBuilder) sealStoredUnknownAtoms() bool {
 		return false
 	}
 	schema.firstStoredUnknown = uint32(len(schema.atoms) + 1)
-	for kind := runtimekind.Table; kind < runtimekind.Count; kind++ {
+	for index := 0; ; index++ {
+		kind, ok := runtimekind.Reference.MemberAt(index)
+		if !ok {
+			break
+		}
 		if schema.addAtom(atomRow{kind: atomOpaqueKind, runtime: kind}) == 0 {
 			return false
 		}
@@ -1443,7 +1451,7 @@ func (schema *valueBuilder) addReferenceAtoms(reference uint32, exact bool) bool
 		return false
 	}
 	runtime := runtimeForReference(schema.references[reference-1].kind)
-	for _, role := range []materialization.Role{materialization.Exact, materialization.Recent, materialization.Summary} {
+	for _, role := range materialization.Roles() {
 		row := atomRow{kind: atomReference, runtime: runtime, reference: reference, role: role}
 		if schema.storedExactReference(row) != exact {
 			continue
@@ -1488,7 +1496,7 @@ func (schema *Schema) storedUnknownReference(id uint32) bool {
 	case atomReference, atomOpaqueReference:
 		return true
 	case atomOpaqueKind:
-		return row.runtime >= runtimekind.Table && row.runtime < runtimekind.Count
+		return runtimekind.Reference.Contains(row.runtime)
 	default:
 		return false
 	}
@@ -1729,7 +1737,7 @@ func (schema *valueBuilder) sourceExactKey(value identity.ContentID) (keyspace.L
 	default:
 		return keyspace.LiteralValue{}, false
 	}
-	literal, ok = exactkey.Normalize(literal)
+	literal, ok = scalar.Normalize(literal)
 	if !ok {
 		return keyspace.LiteralValue{}, false
 	}
@@ -1934,7 +1942,7 @@ func referenceKinds(kind ReferenceKind) runtimekind.Set {
 	case ReferenceUserdata:
 		return runtimekind.Bit(runtimekind.Userdata)
 	case ReferenceOpaque:
-		return runtimekind.Bit(runtimekind.Table) | runtimekind.Bit(runtimekind.Function) | runtimekind.Bit(runtimekind.Thread) | runtimekind.Bit(runtimekind.Userdata)
+		return runtimekind.Reference
 	default:
 		return 0
 	}

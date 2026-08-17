@@ -24,7 +24,7 @@ import (
 // carrier, or Patch capability.
 type RuleAdmission[V, O any] struct {
 	kind     ruleAdmissionKind
-	identity SemanticKey
+	identity identity.SemanticKey
 	check    RuleDerivationChecker[V, O]
 }
 
@@ -66,9 +66,9 @@ type RuleDerivationChecker[V, O any] func(RuleDerivation[V, O]) (RuleEvidence, b
 type RuleDerivation[V, O any] struct {
 	proof          *ruleRuntimeProof
 	composition    CompositionID
-	identity       SemanticKey
+	identity       identity.SemanticKey
 	epoch          identity.Generation
-	anchor         SemanticKey
+	anchor         identity.SemanticKey
 	operandContent [32]byte
 	coordinates    ActivationCoordinates
 	inputs         []RuleInput
@@ -80,9 +80,9 @@ type RuleDerivation[V, O any] struct {
 }
 
 // Rule returns the exact Rule schema identity that produced this derivation.
-func (derivation RuleDerivation[V, O]) Rule() SemanticKey {
+func (derivation RuleDerivation[V, O]) Rule() identity.SemanticKey {
 	if derivation.proof == nil || !derivation.proof.valid() {
-		return SemanticKey{}
+		return identity.SemanticKey{}
 	}
 	return semanticKeyFromComposition(derivation.proof.semantic)
 }
@@ -96,9 +96,9 @@ func (derivation RuleDerivation[V, O]) Composition() CompositionID {
 // Anchor returns the exact compiled Rule-instance identity. It is derived by
 // the sole equation compiler and includes that instance's sealed structural
 // anchor and resolved surface, never a caller-supplied occurrence label.
-func (derivation RuleDerivation[V, O]) Anchor() SemanticKey {
+func (derivation RuleDerivation[V, O]) Anchor() identity.SemanticKey {
 	if !derivation.valid() {
-		return SemanticKey{}
+		return identity.SemanticKey{}
 	}
 	return derivation.anchor
 }
@@ -112,16 +112,6 @@ func (derivation RuleDerivation[V, O]) Operand() (O, bool) {
 		return zero, false
 	}
 	return derivation.operand, true
-}
-
-// Coordinates exposes the exact accepted dynamic relation when this
-// derivation came from an activation-materialized Rule row. It does not
-// expose the equation Member, family axes, or any selection authority.
-func (derivation RuleDerivation[V, O]) Coordinates() (ActivationCoordinates, bool) {
-	if !derivation.valid() || !derivation.coordinates.Available() {
-		return ActivationCoordinates{}, false
-	}
-	return derivation.coordinates, true
 }
 
 // OperandContentMatches proves that the typed O was bound to an equation
@@ -153,13 +143,6 @@ func (derivation RuleDerivation[V, O]) ReadCount() int {
 		return 0
 	}
 	return len(derivation.reads)
-}
-
-func (derivation RuleDerivation[V, O]) ReadAt(index int) (RuleRead, bool) {
-	if !derivation.valid() || index < 0 || index >= len(derivation.reads) {
-		return RuleRead{}, false
-	}
-	return derivation.reads[index], true
 }
 
 func (derivation RuleDerivation[V, O]) DispositionCount() int {
@@ -363,19 +346,13 @@ func DerivationDispositionRouteValue[V any, O any, Tag selectionTag, S any](deri
 // Factor root or attach a new one.
 type RuleInput struct{ state carrier.State }
 
-func (input RuleInput) Same(other RuleInput) bool { return input.state.SamePublishedInput(other.state) }
-func (input RuleInput) Guard() RuleGuard          { return RuleGuard{mask: input.state.Support()} }
+func (input RuleInput) Guard() RuleGuard { return RuleGuard{mask: input.state.Support()} }
 
 // RuleRead is one exact input-qualified resolved read observation. Unit stays
 // opaque; Same is the only capability exposed to local proof code.
 type RuleRead struct {
 	input uint64
 	unit  carrier.Unit
-}
-
-func (read RuleRead) Input() uint64 { return read.input }
-func (read RuleRead) Same(other RuleRead) bool {
-	return read.input == other.input && read.unit.Same(other.unit)
 }
 
 // ruleReadProof is the compact sealed identity retained only for exact reads.
@@ -445,9 +422,6 @@ func DerivationReadMatchesSummaryRefs[V, O, S any, K ~uint32 | ~uint64](derivati
 // opaque shared-support value and cannot create, widen, or restrict guards.
 type RuleGuard struct{ mask support.Mask }
 
-func (guard RuleGuard) Same(other RuleGuard) bool {
-	return guard.mask.Valid() && other.mask.Valid() && guard.mask.Equal(other.mask)
-}
 func (guard RuleGuard) Empty() bool { return !guard.mask.Valid() || support.Empty(guard.mask) }
 
 // RuleTarget is an opaque resolved write capability. It permits identity
@@ -516,7 +490,7 @@ type RuleDisposition[V any] struct {
 	// transformed-carry form that was applied before this row's writes.  Its
 	// callback never enters evidence; a checker can verify only this sealed
 	// form identity.
-	carryTransform SemanticKey
+	carryTransform identity.SemanticKey
 	transformOnly  bool
 	// outputs is an atomic route-output batch. Each entry retains both the
 	// route-local value and its authenticated exact target; no caller can
@@ -540,7 +514,7 @@ func (disposition RuleDisposition[V]) Value() (V, bool) {
 
 // CarryTransform reports the exact declared transformed-carry form applied
 // for this staged row.  NoCandidate is deliberately transform-free.
-func (disposition RuleDisposition[V]) CarryTransform() (SemanticKey, bool) {
+func (disposition RuleDisposition[V]) CarryTransform() (identity.SemanticKey, bool) {
 	return disposition.carryTransform, disposition.kind == RuleDispositionStaged && disposition.carryTransform.Available()
 }
 
@@ -583,8 +557,6 @@ type ruleRouteOutputWitness struct {
 
 func (output RuleOutput[V]) Target() RuleTarget { return output.target }
 func (output RuleOutput[V]) Value() V           { return output.value }
-func (output RuleOutput[V]) Ordinal() int       { return output.ordinal }
-
 func (disposition RuleDisposition[V]) OutputCount() int {
 	if disposition.kind != RuleDispositionStaged {
 		return 0
@@ -605,7 +577,7 @@ func (disposition RuleDisposition[V]) OutputAt(index int) (RuleOutput[V], bool) 
 type RuleEvidence struct {
 	proof       *ruleRuntimeProof
 	composition CompositionID
-	identity    SemanticKey
+	identity    identity.SemanticKey
 	epoch       identity.Generation
 	ticket      *ruleAdmissionTicket
 }
@@ -624,7 +596,7 @@ func (derivation RuleDerivation[V, O]) Accept() (RuleEvidence, bool) {
 // identity denotes the trusted theorem, not the Rule evaluator closure. The
 // resulting TrustedTheorem row is sealed into Rule/Composition identity and
 // remains an explicit TCB obligation in Composition's admission inventory.
-func AdmitRuleByTrustedTheorem[V, O any](identity SemanticKey) RuleAdmission[V, O] {
+func AdmitRuleByTrustedTheorem[V, O any](identity identity.SemanticKey) RuleAdmission[V, O] {
 	return RuleAdmission[V, O]{kind: ruleAdmissionTrustedTheorem, identity: identity}
 }
 
@@ -632,7 +604,7 @@ func AdmitRuleByTrustedTheorem[V, O any](identity SemanticKey) RuleAdmission[V, 
 // Nil or unavailable inputs produce an invalid admission that declaration
 // rejects.  Determinism and totality are law obligations of the named checker;
 // runtime admission is fail-closed around it.
-func AdmitRuleByDerivation[V, O any](identity SemanticKey, check RuleDerivationChecker[V, O]) RuleAdmission[V, O] {
+func AdmitRuleByDerivation[V, O any](identity identity.SemanticKey, check RuleDerivationChecker[V, O]) RuleAdmission[V, O] {
 	return RuleAdmission[V, O]{kind: ruleAdmissionDerivation, identity: identity, check: check}
 }
 
@@ -645,13 +617,6 @@ func (admission RuleAdmission[V, O]) valid() bool {
 	default:
 		return false
 	}
-}
-
-func (admission RuleAdmission[V, O]) cold() (ruleAdmissionSchema, bool) {
-	if !admission.valid() {
-		return ruleAdmissionSchema{}, false
-	}
-	return ruleAdmissionSchema{kind: admission.kind, identity: admission.identity}, true
 }
 
 func (admission RuleAdmission[V, O]) same(schema ruleAdmissionSchema) bool {
@@ -695,9 +660,9 @@ func (admission RuleAdmission[V, O]) admit(derivation RuleDerivation[V, O], proo
 type ruleAdmissionTicket struct {
 	proof       *ruleRuntimeProof
 	composition CompositionID
-	identity    SemanticKey
+	identity    identity.SemanticKey
 	epoch       identity.Generation
-	anchor      SemanticKey
+	anchor      identity.SemanticKey
 	execution   *ruleExecution
 	product     *productSession
 	live        bool
@@ -707,14 +672,14 @@ type ruleAdmissionTicket struct {
 // evidence is the trusted-theorem admission cut. It exposes no derivation
 // operands, but still binds evidence to the exact live rule instance, product,
 // anchor, epoch, composition, and one-shot ticket.
-func (ticket *ruleAdmissionTicket) evidence(proof *ruleRuntimeProof, composition CompositionID, identity SemanticKey) (RuleEvidence, bool) {
+func (ticket *ruleAdmissionTicket) evidence(proof *ruleRuntimeProof, composition CompositionID, identity identity.SemanticKey) (RuleEvidence, bool) {
 	if !ticket.liveFor(proof, composition, identity) {
 		return RuleEvidence{}, false
 	}
 	return RuleEvidence{proof: proof, composition: composition, identity: identity, epoch: ticket.epoch, ticket: ticket}, true
 }
 
-func (ticket *ruleAdmissionTicket) liveFor(proof *ruleRuntimeProof, composition CompositionID, identity SemanticKey) bool {
+func (ticket *ruleAdmissionTicket) liveFor(proof *ruleRuntimeProof, composition CompositionID, identity identity.SemanticKey) bool {
 	return ticket != nil && ticket.live && !ticket.used && proof != nil && proof.valid() && composition.Available() && identity.Available() && ticket.proof == proof &&
 		ticket.composition == composition && ticket.identity == identity && ticket.epoch.Available() && ticket.anchor.Available() &&
 		ticket.execution != nil && ticket.product != nil && ticket.product.execution == ticket.execution &&
@@ -756,7 +721,7 @@ func (ticket *ruleAdmissionTicket) invalidate() {
 
 type ruleAdmissionSchema struct {
 	kind     ruleAdmissionKind
-	identity SemanticKey
+	identity identity.SemanticKey
 }
 
 // ruleRuntimeProof is the sole private runtime identity of one sealed receipt

@@ -9,7 +9,7 @@ import (
 
 // Name and List retain source spelling only. Their canonical exact Key is
 // resolved later from the live Source Preimage by dependent freeze passes.
-func (c *Collector) Name(span source.Span, owner Term, text string) Term {
+func (c *Collector) Name(span source.Span, owner keyspace.Term, text string) keyspace.Term {
 	if !validOwner(c, owner) || text == "" {
 		if c != nil && !c.terminal {
 			c.fail(errors.New("program/lower/collector: invalid source name key"))
@@ -27,7 +27,7 @@ func (c *Collector) Name(span source.Span, owner Term, text string) Term {
 	return term
 }
 
-func (c *Collector) List(span source.Span, owner Term, ordinal int64) Term {
+func (c *Collector) List(span source.Span, owner keyspace.Term, ordinal int64) keyspace.Term {
 	if !validOwner(c, owner) || ordinal <= 0 {
 		if c != nil && !c.terminal {
 			c.fail(errors.New("program/lower/collector: invalid source list key"))

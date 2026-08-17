@@ -1,8 +1,8 @@
 package flow
 
 import (
+	"github.com/wippyai/go-lua/analysis/program/flow/internal/accessgeometry"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/candidates"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/directbinding"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/directfunction"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/evaluation"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/executable"
@@ -290,54 +290,56 @@ func (view LoopCandidates) GenericAt(index int) (keyspace.Term, bool) {
 	return view.result.GenericLoop().At(index)
 }
 
-type DirectBindings struct{ result *directbinding.Result }
+type Selectors struct{ result *accessgeometry.Result }
 
-func (view DirectBindings) Selection(read keyspace.Term) (keyspace.Term, int, bool) {
+func (view Selectors) ExactRead(read keyspace.Term) (keyspace.Term, int, bool) {
 	if view.result == nil {
 		return 0, 0, false
 	}
-	return view.result.BindingSelections().Get(read)
+	return view.result.ExactReads().Get(read)
 }
 
-// SelectionPath opens one immutable leaf-to-root cursor over a sealed exact
-// binding path. Each Segment advances one existing parent-chain edge in O(1)
+// ExactReadPath opens one immutable leaf-to-root cursor over a sealed exact
+// selector chain. Each Segment advances one existing parent-chain edge in O(1)
 // without materializing or restarting the path.
-func (view DirectBindings) SelectionPath(read keyspace.Term) (BindingPath, bool) {
+func (view Selectors) ExactReadPath(read keyspace.Term) (ExactReadPath, bool) {
 	if view.result == nil {
-		return BindingPath{}, false
+		return ExactReadPath{}, false
 	}
-	path, ok := view.result.BindingSelections().PathCursor(read)
-	return BindingPath{path: path}, ok
+	path, ok := view.result.ExactReads().PathCursor(read)
+	return ExactReadPath{path: path}, ok
 }
 
-type BindingPath struct{ path directbinding.BindingPath }
+type ExactReadPath struct{ path accessgeometry.ExactReadPath }
 
-func (path BindingPath) Segment() (keyspace.Key, BindingPath, bool) {
+func (path ExactReadPath) Segment() (keyspace.Key, ExactReadPath, bool) {
 	key, next, ok := path.path.Segment()
 	if !ok {
-		return 0, BindingPath{}, false
+		return 0, ExactReadPath{}, false
 	}
-	return key, BindingPath{path: next}, true
+	return key, ExactReadPath{path: next}, true
 }
 
-func (view DirectBindings) Publication(publication keyspace.Term) (root, owner keyspace.Term, depth int, ok bool) {
+func (view Selectors) TypePublication(publication keyspace.Term) (root, owner keyspace.Term, depth int, ok bool) {
 	if view.result == nil {
 		return 0, 0, 0, false
 	}
-	return view.result.PublicationPaths().Get(publication)
+	return view.result.TypePublications().Get(publication)
 }
 
 // PublicationPath opens one immutable leaf-to-root cursor over the sealed
 // exact Static publication path. Segment is O(1) and allocation-free.
-func (view DirectBindings) PublicationPath(publication keyspace.Term) (PublicationPath, bool) {
+func (view Selectors) TypePublicationPath(publication keyspace.Term) (PublicationPath, bool) {
 	if view.result == nil {
 		return PublicationPath{}, false
 	}
-	path, ok := view.result.PublicationPaths().PathCursor(publication)
+	path, ok := view.result.TypePublications().PathCursor(publication)
 	return PublicationPath{path: path}, ok
 }
 
-type PublicationPath struct{ path directbinding.PublicationPath }
+type PublicationPath struct {
+	path accessgeometry.PublicationPath
+}
 
 func (path PublicationPath) Segment() (keyspace.Key, PublicationPath, bool) {
 	key, next, ok := path.path.Segment()
@@ -346,7 +348,7 @@ func (path PublicationPath) Segment() (keyspace.Key, PublicationPath, bool) {
 	}
 	return key, PublicationPath{path: next}, true
 }
-func (view DirectBindings) Call(call keyspace.Term) (keyspace.Term, CallForm, bool) {
+func (view Selectors) DirectCall(call keyspace.Term) (keyspace.Term, CallForm, bool) {
 	if view.result == nil {
 		return 0, 0, false
 	}
@@ -365,11 +367,11 @@ const (
 	CallFormMethod CallForm = 2
 )
 
-func publicCallForm(form directbinding.CallForm) CallForm {
+func publicCallForm(form uint8) CallForm {
 	switch form {
-	case directbinding.CallFormPlain:
+	case 1:
 		return CallFormPlain
-	case directbinding.CallFormMethod:
+	case 2:
 		return CallFormMethod
 	default:
 		return 0

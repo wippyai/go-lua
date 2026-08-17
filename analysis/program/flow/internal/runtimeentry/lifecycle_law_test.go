@@ -3,35 +3,8 @@ package runtimeentry
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/sourcecontrol"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
-
-func TestOutcomeResumeProjectionForeignConsumeClearsSharedRetention(t *testing.T) {
-	owner := &Result{}
-	control := &sourcecontrol.Result{}
-	state := &projectionState{
-		owner: owner, control: control,
-		fromTerm: keyspace.MakeTerm(keyspace.FamilyOutcome, 1),
-		toTerm:   keyspace.MakeTerm(keyspace.FamilyNil, 1),
-	}
-	receipt := &OutcomeResumeProjection{state: state}
-	copyReceipt := *receipt
-	if _, ok := ConsumeOutcomeResumeProjection(nil, nil, receipt); ok {
-		t.Fatal("foreign owner consumed fabricated projection")
-	}
-	if !state.used || state.owner != nil || state.control != nil || state.fromTerm != 0 || state.toTerm != 0 ||
-		state.from != (sourcecontrol.PhaseRef{}) || state.to != (sourcecontrol.PhaseRef{}) {
-		t.Fatalf("terminal projection retained proof state: %#v", state)
-	}
-	if _, ok := ConsumeOutcomeResumeProjection(owner, control, &copyReceipt); ok {
-		t.Fatal("copied terminal projection consumed")
-	}
-	if state.owner != nil || state.control != nil || state.fromTerm != 0 || state.toTerm != 0 ||
-		state.from != (sourcecontrol.PhaseRef{}) || state.to != (sourcecontrol.PhaseRef{}) {
-		t.Fatal("copied projection probe restored cleared retention")
-	}
-}
 
 func TestEntryBuilderDeepFrameLifecycleIsIterativeAndClears(t *testing.T) {
 	const depth = 1 << 16

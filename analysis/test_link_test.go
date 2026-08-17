@@ -3,6 +3,7 @@ package analysis
 import (
 	"testing"
 
+	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/program/target"
 )
@@ -11,7 +12,7 @@ import (
 // one construction path serves both fixture text and inline law text.
 func directFieldHostileLink(t testing.TB, text string) *link.Link {
 	t.Helper()
-	contract, err := target.Seal(&target.Spec{})
+	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics()})
 	if err != nil {
 		t.Fatal(err)
 	}

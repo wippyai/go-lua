@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
+	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"github.com/wippyai/go-lua/analysis/identity"
 )
 
@@ -31,20 +32,20 @@ const (
 	ReceiptScheduleFailureStage
 )
 
-func validateMountedArtifactSchedule(rows *artifactReceiptTopology, topology *equation.Topology, graph *equation.Graph) (ReceiptScheduleFailure, uint32, bool) {
+func validateMountedArtifactSchedule(artifactRows *artifactReceiptTopology, topology *equation.Topology, graph *equation.Graph) (ReceiptScheduleFailure, uint32, bool) {
 	expectedPoints := 0
-	if rows != nil {
-		expectedPoints = len(rows.points)
-		if rows.bootstrap != nil {
+	if artifactRows != nil {
+		expectedPoints = len(artifactRows.points)
+		if artifactRows.bootstrap != nil {
 			expectedPoints++
 		}
 	}
-	if rows == nil || topology == nil || graph == nil || !topology.OwnsGraph(graph) || !rows.valid(nil) || graph.Schedule() == nil || graph.PointCount() != expectedPoints {
+	if artifactRows == nil || topology == nil || graph == nil || !topology.OwnsGraph(graph) || !artifactRows.valid(nil) || graph.Schedule() == nil || graph.PointCount() != expectedPoints {
 		return ReceiptScheduleFailureInput, 0, false
 	}
-	pointByKey := make(map[composition.Key]identity.ContentID, len(rows.points))
-	for _, id := range rows.points {
-		ref, refOK := rows.pointRef[id]
+	pointByKey := make(map[composition.Key]identity.ContentID, len(artifactRows.points))
+	for _, id := range artifactRows.points {
+		ref, refOK := artifactRows.pointRef[id]
 		locator, locatorOK := topology.PointRow(ref)
 		point, pointOK := locator.Resolve(graph)
 		if !refOK || !locatorOK || !pointOK || !point.Available() {
@@ -56,8 +57,8 @@ func validateMountedArtifactSchedule(rows *artifactReceiptTopology, topology *eq
 		pointByKey[point.Key()] = id
 	}
 	bootstrapKey := composition.Key{}
-	if rows.bootstrap != nil {
-		locator, locatorOK := topology.PointRow(rows.bootstrap.ref)
+	if artifactRows.bootstrap != nil {
+		locator, locatorOK := topology.PointRow(artifactRows.bootstrap.ref)
 		point, pointOK := locator.Resolve(graph)
 		if !locatorOK || !pointOK || !point.Available() {
 			return ReceiptScheduleFailureBootstrap, 0, false
@@ -67,7 +68,7 @@ func validateMountedArtifactSchedule(rows *artifactReceiptTopology, topology *eq
 			return ReceiptScheduleFailureBootstrap, 0, false
 		}
 	}
-	pointRank := make(map[identity.ContentID]int, len(rows.points))
+	pointRank := make(map[identity.ContentID]int, len(artifactRows.points))
 	bootstrapSeen := false
 	compiled := graph.Schedule()
 	for index := 0; index < compiled.EventCount(); index++ {
@@ -95,7 +96,7 @@ func validateMountedArtifactSchedule(rows *artifactReceiptTopology, topology *eq
 		}
 		pointRank[id] = len(pointRank)
 	}
-	if len(pointRank) != len(rows.points) || rows.bootstrap != nil && !bootstrapSeen {
+	if len(pointRank) != len(artifactRows.points) || artifactRows.bootstrap != nil && !bootstrapSeen {
 		return ReceiptScheduleFailureCoverage, uint32(len(pointRank)), false
 	}
 	// Native Call ownership comes only from ProgramArtifact's sealed rule
@@ -104,12 +105,12 @@ func validateMountedArtifactSchedule(rows *artifactReceiptTopology, topology *eq
 	// depend on row order. All roles sharing a native stage must attest the same
 	// exact input.
 	stageBase := make(map[identity.ContentID]identity.ContentID)
-	stageKind := make(map[identity.ContentID]ArtifactRuleStage)
-	for _, placement := range rows.callStages {
+	stageKind := make(map[identity.ContentID]rows.ArtifactRuleStage)
+	for _, placement := range artifactRows.callStages {
 		base, stage := placement.mountedInput, placement.mountedPoint
 		baseRank, baseOK := pointRank[base]
 		stageRank, stageOK := pointRank[stage]
-		if !placement.stage.nativeCall() || !baseOK || !stageOK || baseRank >= stageRank {
+		if !placement.stage.NativeCall() || !baseOK || !stageOK || baseRank >= stageRank {
 			return ReceiptScheduleFailureStage, uint32(stageRank), false
 		}
 		if prior, duplicate := stageBase[stage]; duplicate && prior != base {
@@ -121,15 +122,15 @@ func validateMountedArtifactSchedule(rows *artifactReceiptTopology, topology *eq
 		stageBase[stage], stageKind[stage] = base, placement.stage
 	}
 	localStages := make(map[identity.ContentID]struct{})
-	for _, placement := range rows.ruleSet {
+	for _, placement := range artifactRows.ruleSet {
 		switch placement.stage {
-		case ArtifactRuleStageBase:
-		case ArtifactRuleStageLocal:
+		case rows.ArtifactRuleStageBase:
+		case rows.ArtifactRuleStageLocal:
 			if _, native := stageKind[placement.mountedPoint]; native {
 				return ReceiptScheduleFailureStage, uint32(pointRank[placement.mountedPoint]), false
 			}
 			localStages[placement.mountedPoint] = struct{}{}
-		case ArtifactRuleStageCallDispatch, ArtifactRuleStageCallSummary, ArtifactRuleStageCallEffect:
+		case rows.ArtifactRuleStageCallDispatch, rows.ArtifactRuleStageCallSummary, rows.ArtifactRuleStageCallEffect:
 			if owner, native := stageKind[placement.mountedPoint]; !native || owner != placement.stage {
 				return ReceiptScheduleFailureStage, uint32(pointRank[placement.mountedPoint]), false
 			}
@@ -138,7 +139,7 @@ func validateMountedArtifactSchedule(rows *artifactReceiptTopology, topology *eq
 		}
 	}
 	localOwners := make(map[identity.ContentID]identity.ContentID, len(localStages))
-	for edgeIndex, edge := range rows.edges {
+	for edgeIndex, edge := range artifactRows.edges {
 		if !edge.local {
 			continue
 		}
@@ -166,8 +167,8 @@ func validateMountedArtifactSchedule(rows *artifactReceiptTopology, topology *eq
 	// Every parent point event must resolve to the exact scheduled point. The
 	// dense parent rank has already been supplied through TopologySpec.PointRanks;
 	// dependencies in the composed graph are allowed to override that tie-break.
-	for _, event := range rows.events {
-		if event.kind != ArtifactEventPoint {
+	for _, event := range artifactRows.events {
+		if event.kind != rows.ArtifactEventPoint {
 			continue
 		}
 		if _, rankOK := pointRank[event.point]; !rankOK {
@@ -194,7 +195,7 @@ func validateMountedArtifactSchedule(rows *artifactReceiptTopology, topology *eq
 		}
 		graphRegions[graphIndex] = members
 	}
-	for _, parent := range rows.regions {
+	for _, parent := range artifactRows.regions {
 		if !parent.cyclic {
 			continue
 		}

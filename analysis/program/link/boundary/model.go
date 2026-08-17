@@ -8,8 +8,6 @@ package boundary
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program"
-	"github.com/wippyai/go-lua/analysis/program/flow"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/link/internal/radix"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
@@ -94,51 +92,15 @@ const (
 )
 
 type authority struct {
-	component       *Component
-	project         *linkproject.Component
-	target          *target.Contract
-	require         target.Operation
-	valueTable      *valueTable
-	mountedCalls    *mountedCallTable
-	seedTable       *seedTable
-	moduleRelation  identity.ContentID
-	content         identity.ContentID
-	semanticReceipt SemanticSourceReceipt
-}
-
-// mountedCallTable is the one typed call/value projection. Keeping it behind
-// its own owner prevents Boundary's top-level authority from becoming a
-// generic retained product or row store.
-type mountedCallTable struct {
-	rows     []mountedCallRow
-	semantic map[mountedCallSemanticKey]uint32
-}
-
-type mountedCallSemanticKey struct {
-	module identity.ContentID
-	call   identity.ContentID
-}
-
-// mountedCallRow is Boundary's sealed exact join from a Project/Program call
-// proof to existing Boundary Value ordinals. Rows align with Project's full
-// Application relation; non-call positions remain unavailable.
-type mountedCallRow struct {
-	ready       bool
-	module      identity.ContentID
-	mounted     linkproject.CallApplication
-	occurrence  program.CallOccurrence
-	values      program.CallValues
-	form        flow.CallForm
-	callee      uint32
-	receiver    uint32
-	hasReceiver bool
-	actuals     uint32
-	arguments   []uint32
-	result      uint32
-	actualTail  uint32
-	tailSpan    program.Span
-	tailContext identity.ContentID
-	hasTail     bool
+	component      *Component
+	project        *linkproject.Component
+	target         *target.Contract
+	require        target.Operation
+	valueTable     *valueTable
+	seedTable      *seedTable
+	moduleRelation identity.ContentID
+	content        identity.ContentID
+	sourceViews    SourceViews
 }
 
 type valueTable struct {

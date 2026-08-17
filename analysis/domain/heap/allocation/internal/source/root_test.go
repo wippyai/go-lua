@@ -3,16 +3,16 @@ package source_test
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
 	source "github.com/wippyai/go-lua/analysis/domain/heap/allocation/internal/source"
+	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	lualower "github.com/wippyai/go-lua/analysis/lua/lower"
-	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
-	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 func TestRootClassifiesCompleteSourceConstructorForms(t *testing.T) {
@@ -394,7 +394,7 @@ func sourceFixture(t testing.TB, text string) (heapdomain.Schema, *valuedomain.S
 	if err != nil {
 		t.Fatal(err)
 	}
-	contract, err := target.Seal(&target.Spec{})
+	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -427,7 +427,7 @@ func sourceValueMounts(t testing.TB, linked *link.Link) []valuedomain.ArtifactMo
 
 func sourceArtifactMounts(t testing.TB, linked *link.Link) ([]heapdomain.ArtifactMount, []valuedomain.ArtifactMount) {
 	t.Helper()
-	receipt, receiptOK := grammar.Global()
+	receipt, receiptOK := composite.Global()
 	if !receiptOK || linked == nil || linked.Project() == nil {
 		t.Fatal("source artifact receipt")
 	}
@@ -442,7 +442,7 @@ func sourceArtifactMounts(t testing.TB, linked *link.Link) ([]heapdomain.Artifac
 		if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 			t.Fatal("source artifact mount")
 		}
-		artifact, failure := schemaadapter.CompileDetailed(program.TransformerInput(), receipt)
+		artifact, failure := composite.CompileArtifactDetailed(program, receipt)
 		if failure.Available() || artifact == nil {
 			t.Fatalf("source artifact: %v", failure)
 		}

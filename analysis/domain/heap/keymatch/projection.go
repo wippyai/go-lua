@@ -84,7 +84,7 @@ func Project(heap heapdomain.Schema, values *valuedomain.Schema, atom valuedomai
 		}
 	}
 
-	kinds := atom.RuntimeKinds() & (runtimekind.All &^ runtimekind.Bit(runtimekind.Nil))
+	kinds := atom.RuntimeKinds() & runtimekind.NonNil
 	selector, selectorOK := heap.KindsSelector(kinds)
 	if !selectorOK {
 		return Alternative{}, false
@@ -111,9 +111,7 @@ func Containment(heap heapdomain.Schema, values *valuedomain.Schema, atom valued
 	// Any untracked reference-family alternative still carries a possibly
 	// retained graph. Heap must preserve that as Unknown, not turn it into a
 	// zero reference or a proof of absence.
-	referenceKinds := runtimekind.Bit(runtimekind.Table) | runtimekind.Bit(runtimekind.Function) |
-		runtimekind.Bit(runtimekind.Thread) | runtimekind.Bit(runtimekind.Userdata)
-	if atom.RuntimeKinds()&referenceKinds != 0 {
+	if atom.RuntimeKinds()&runtimekind.Reference != 0 {
 		containment, contained := heap.ContainmentUnknown()
 		return containment, contained
 	}

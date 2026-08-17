@@ -105,7 +105,7 @@ func (r *Result) semanticRoutePath(ref successorRef) (identity.ContentID, bool) 
 	}
 	// Endpoints are SourceControl VertexCatalog phases, not term/Site paths.
 	// They were copied into the exact successor ref while the catalog lease
-	// was live, so a later semantic receipt cannot silently collapse two
+	// was live, so a later semantic path cannot silently collapse two
 	// phases which share an authored term.
 	fromPath, toPath := ref.fromPoint, ref.toPoint
 	if !fromPath.Available() || !toPath.Available() {
@@ -190,7 +190,7 @@ func (r *Result) semanticResetPathMembers(ref successorRef, resetMembers []ident
 	return identity.ContentID(sha256.Sum256(encoded.Bytes())), true
 }
 
-// installRouteSemanticPaths publishes semantic route receipts into the sole
+// installRouteSemanticPaths publishes semantic route paths into the sole
 // canonical ref directory and its already-sealed sorted inverse. The route
 // ordinal stamped by buildRouteIndex is the exact join key; this method is
 // intentionally separate from the final WTO publication cut so its linear
@@ -216,8 +216,8 @@ func (r *Result) installRouteSemanticPaths() bool {
 			if !membersOK {
 				return false
 			}
-			memberReceipt := append([]identity.ContentID(nil), members...)
-			r.index.refs[index].resetMembers = &memberReceipt
+			membersCopy := append([]identity.ContentID(nil), members...)
+			r.index.refs[index].resetMembers = &membersCopy
 			resetPath, resetOK := r.semanticResetPathMembers(ref, members)
 			if !resetOK {
 				return false
@@ -271,7 +271,7 @@ func (r *Result) installRouteSemanticPaths() bool {
 		ref.guardContext = identity.ContentID(sha256.Sum256(encoded[:offset]))
 	}
 	// buildRouteIndex stamped each canonical ref with its exact slot in the
-	// sorted route directory. Publish semantic receipts directly through that
+	// sorted route directory. Publish semantic paths directly through that
 	// directory: this is linear in the route count and does not scan/rebuild
 	// the existing ref authority.
 	for _, ref := range r.index.refs {
@@ -705,13 +705,13 @@ func (r *Result) buildRouteIndex() error {
 			return errors.New("program/flow/causal: route directory source is unavailable")
 		}
 		// Stamp the exact sorted directory slot onto the existing canonical ref.
-		// Both the canonical ref and the lookup copy carry the same receipt.
+		// Both the canonical ref and the lookup copy carry the same path.
 		r.index.refs[descriptor.sourceIndex].routeIndexOrdinal = uint32(index)
 		descriptor.ref.routeIndexOrdinal = uint32(index)
 		// The boundary row is an alias of the canonical combined-index ref.
 		// Stamp its private directory slot at the same time; otherwise a
 		// direct-call arm retains the pre-directory zero and cannot be proven
-		// equal to its canonical route during endpoint receipt installation.
+		// equal to its canonical route during endpoint path installation.
 		if !descriptor.ref.local && uint64(descriptor.ref.index) < uint64(len(r.boundaries.rows)) && isBoundaryArm(descriptor.ref.arm) {
 			r.boundaries.rows[descriptor.ref.index].refs[descriptor.ref.arm].routeIndexOrdinal = uint32(index)
 		}

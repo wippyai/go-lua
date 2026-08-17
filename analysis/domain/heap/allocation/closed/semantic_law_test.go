@@ -3,17 +3,17 @@ package closed_test
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
 	"github.com/wippyai/go-lua/analysis/domain/heap/allocation/internal/source"
 	"github.com/wippyai/go-lua/analysis/domain/materialization"
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
+	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
-	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
-	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 func TestClosedSemanticDiagonalKeepsSameCoordinateAndOpaqueContainment(t *testing.T) {
@@ -148,7 +148,7 @@ func closedSemanticFixture(t testing.TB, text string) (heapdomain.Schema, *value
 	if err != nil {
 		t.Fatal(err)
 	}
-	contract, err := target.Seal(&target.Spec{})
+	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,11 +156,11 @@ func closedSemanticFixture(t testing.TB, text string) (heapdomain.Schema, *value
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, receiptOK := grammar.Global()
+	receipt, receiptOK := composite.Global()
 	shard, shardOK := linked.Project().Mounts().At(0)
 	module, moduleOK := linked.Project().ModuleKey(shard)
 	programID, programIDOK := linked.Project().Mounts().ProgramID(shard)
-	artifact, failure := schemaadapter.CompileDetailed(program.TransformerInput(), receipt)
+	artifact, failure := composite.CompileArtifactDetailed(program, receipt)
 	mount, mountOK := heapdomain.NewArtifactMount(artifact, module, programID)
 	heap, heapFailure := heapdomain.SealWithArtifacts(linked, []heapdomain.ArtifactMount{mount})
 	if !receiptOK || !shardOK || !moduleOK || !programIDOK || failure.Available() || !mountOK || heapFailure != heapdomain.SealFailureNone {

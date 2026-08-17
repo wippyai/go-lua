@@ -37,7 +37,7 @@ type bindingRow struct {
 	member    bool
 	component keyspace.Term
 	// Endpoint paths are copied from the one SourceControl vertex catalog
-	// while the route binding is live.  Causal consumes these receipts after
+	// while the route binding is live.  Causal consumes these endpoint rows after
 	// the graph/Plan capabilities have been released; it must not resolve the
 	// route origin a second time.
 	fromPath identity.ContentID
@@ -237,13 +237,9 @@ func bindPlan(result *Result, plan *routeplan.Plan, graph *sourcecontrol.Result,
 		if !ok {
 			return nil, errors.New("program/flow/recurrence: route plan row is malformed")
 		}
-		endpoint, endpointOK := origin.EndpointPhaseReceipt()
+		fromPhase, toPhase, endpointOK := origin.Endpoints()
 		if !endpointOK {
-			return nil, errors.New("program/flow/recurrence: route endpoint phase receipt is unavailable")
-		}
-		fromPhase, toPhase, phasesOK := endpoint.Endpoints()
-		if !phasesOK {
-			return nil, errors.New("program/flow/recurrence: route endpoint phase receipt is malformed")
+			return nil, errors.New("program/flow/recurrence: route endpoint phases are unavailable")
 		}
 		fromPath, fromPathOK := graph.ResolvePhaseRef(fromPhase)
 		toPath, toPathOK := graph.ResolvePhaseRef(toPhase)

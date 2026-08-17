@@ -6,7 +6,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/schema/relations"
+	"github.com/wippyai/go-lua/analysis/program/relations"
 )
 
 func TestGeneratedEvidenceIsCurrent(t *testing.T) {

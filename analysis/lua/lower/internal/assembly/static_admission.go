@@ -27,7 +27,7 @@ func staticCoordinate(w *Collector, span source.Span) (source.Coordinate, bool) 
 	return coordinate, true
 }
 
-func staticEmit(w *Collector, family keyspace.Family, span source.Span, accept func(Term) error) Term {
+func staticEmit(w *Collector, family keyspace.Family, span source.Span, accept func(keyspace.Term) error) keyspace.Term {
 	if w == nil {
 		return 0
 	}
@@ -140,7 +140,7 @@ func staticFloatBitsValid(w *Collector, bits uint64) bool {
 // staticExistingTerm closes the construction-time child edge against the one
 // Collector census. A Static relation may point to a predeclared term, but it
 // may not smuggle a future ordinal that only becomes valid after a later mint.
-func staticExistingTerm(w *Collector, term Term) bool {
+func staticExistingTerm(w *Collector, term keyspace.Term) bool {
 	if w == nil || !mutationReady(w) {
 		return false
 	}
@@ -153,7 +153,7 @@ func staticExistingTerm(w *Collector, term Term) bool {
 	return true
 }
 
-func staticExistingNode(w *Collector, term Term) bool {
+func staticExistingNode(w *Collector, term keyspace.Term) bool {
 	if !staticExistingTerm(w, term) {
 		return false
 	}
@@ -164,7 +164,7 @@ func staticExistingNode(w *Collector, term Term) bool {
 	return true
 }
 
-func staticExistingNodeTerms(w *Collector, terms []Term) bool {
+func staticExistingNodeTerms(w *Collector, terms []keyspace.Term) bool {
 	for _, term := range terms {
 		if !staticExistingNode(w, term) {
 			return false
@@ -173,11 +173,11 @@ func staticExistingNodeTerms(w *Collector, terms []Term) bool {
 	return true
 }
 
-func staticExistingOptionalNode(w *Collector, term Term) bool {
+func staticExistingOptionalNode(w *Collector, term keyspace.Term) bool {
 	return term == 0 || staticExistingNode(w, term)
 }
 
-func staticExistingScope(w *Collector, term Term) bool {
+func staticExistingScope(w *Collector, term keyspace.Term) bool {
 	if !staticExistingTerm(w, term) {
 		return false
 	}
@@ -188,7 +188,7 @@ func staticExistingScope(w *Collector, term Term) bool {
 	return true
 }
 
-func staticExistingReferenceTarget(w *Collector, term Term) bool {
+func staticExistingReferenceTarget(w *Collector, term keyspace.Term) bool {
 	if !staticExistingTerm(w, term) {
 		return false
 	}
@@ -199,7 +199,7 @@ func staticExistingReferenceTarget(w *Collector, term Term) bool {
 	return true
 }
 
-func staticExistingTypeParameterOwner(w *Collector, term Term) bool {
+func staticExistingTypeParameterOwner(w *Collector, term keyspace.Term) bool {
 	if !staticExistingTerm(w, term) {
 		return false
 	}
@@ -210,7 +210,7 @@ func staticExistingTypeParameterOwner(w *Collector, term Term) bool {
 	return true
 }
 
-func staticExistingAnnotationTarget(w *Collector, term Term) bool {
+func staticExistingAnnotationTarget(w *Collector, term keyspace.Term) bool {
 	if !staticExistingTerm(w, term) {
 		return false
 	}
@@ -221,7 +221,7 @@ func staticExistingAnnotationTarget(w *Collector, term Term) bool {
 	return true
 }
 
-func staticExistingFamily(w *Collector, term Term, family keyspace.Family) bool {
+func staticExistingFamily(w *Collector, term keyspace.Term, family keyspace.Family) bool {
 	if !staticExistingTerm(w, term) {
 		return false
 	}
@@ -232,11 +232,11 @@ func staticExistingFamily(w *Collector, term Term, family keyspace.Family) bool 
 	return true
 }
 
-func staticExistingOptional(w *Collector, term Term) bool {
+func staticExistingOptional(w *Collector, term keyspace.Term) bool {
 	return term == 0 || staticExistingTerm(w, term)
 }
 
-func staticExistingFamilyTerms(w *Collector, terms []Term, family keyspace.Family) bool {
+func staticExistingFamilyTerms(w *Collector, terms []keyspace.Term, family keyspace.Family) bool {
 	for _, term := range terms {
 		if !staticExistingFamily(w, term, family) {
 			return false
@@ -245,7 +245,7 @@ func staticExistingFamilyTerms(w *Collector, terms []Term, family keyspace.Famil
 	return true
 }
 
-func staticTypeFunctionForScope(w *Collector, signature, scope Term) bool {
+func staticTypeFunctionForScope(w *Collector, signature, scope keyspace.Term) bool {
 	if !staticExistingFamily(w, signature, keyspace.FamilyTypeFunction) {
 		return false
 	}
@@ -261,7 +261,7 @@ func staticTypeFunctionForScope(w *Collector, signature, scope Term) bool {
 	return true
 }
 
-func staticPublicationAdmission(w *Collector, assign Term, pair uint32, target Term) bool {
+func staticPublicationAdmission(w *Collector, assign keyspace.Term, pair uint32, target keyspace.Term) bool {
 	if !staticExistingFamily(w, assign, keyspace.FamilyAssign) || !staticExistingFamily(w, target, keyspace.FamilyTypeRef) {
 		return false
 	}
@@ -285,11 +285,11 @@ func staticPublicationAdmission(w *Collector, assign Term, pair uint32, target T
 // TypeParam declaration row. A family/count check alone permits a parameter
 // belonging to another alias/signature/function and permits duplicate claims
 // in one generic list; both would otherwise survive until Static freeze.
-func staticTypeParamsForOwner(w *Collector, owner Term, params []Term) bool {
+func staticTypeParamsForOwner(w *Collector, owner keyspace.Term, params []keyspace.Term) bool {
 	if w == nil {
 		return false
 	}
-	seen := make(map[Term]struct{}, len(params))
+	seen := make(map[keyspace.Term]struct{}, len(params))
 	for _, param := range params {
 		if !staticExistingFamily(w, param, keyspace.FamilyTypeParam) {
 			return false

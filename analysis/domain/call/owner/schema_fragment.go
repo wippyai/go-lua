@@ -3,6 +3,7 @@ package owner
 import (
 	"github.com/wippyai/go-lua/analysis/domain/call"
 	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // SchemaFragment is Call's callback-free cold Factor surface. It contains no
@@ -35,7 +36,7 @@ func (fragment *SchemaFragment) ExactWrite() engine.SchemaWriteForm[call.Value] 
 
 // DeclareSchema records Call's exact-read/exact-write Factor shape using only
 // caller-supplied semantic identity.
-func DeclareSchema(builder *engine.SchemaBuilder, semantic engine.SemanticKey) (*SchemaFragment, bool) {
+func DeclareSchema(builder *engine.SchemaBuilder, semantic identity.SemanticKey) (*SchemaFragment, bool) {
 	if builder == nil || !semantic.Available() {
 		return nil, false
 	}

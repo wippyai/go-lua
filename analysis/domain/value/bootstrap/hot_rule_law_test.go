@@ -4,19 +4,19 @@ import (
 	"encoding/binary"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
+	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	bootstrap "github.com/wippyai/go-lua/analysis/domain/value/bootstrap"
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
-	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
-	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 func TestHotBootstrapRuleBindsReceiptAndRejectsForeignOperand(t *testing.T) {
@@ -90,6 +90,7 @@ func bootstrapFixture(t testing.TB, name string) *bootstrapFixtureState {
 		t.Fatal(err)
 	}
 	contract, err := target.Seal(&target.Spec{
+		Semantics:    domaincontract.NewSemantics(),
 		InitialRoots: []target.InitialRootSpec{{Identity: "GlobalEnvRoot", Shape: target.BootShapeSpec{Aggregate: target.BootAggregateTable, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}}}},
 		InitialEntries: []target.InitialEntrySpec{
 			{Root: "GlobalEnvRoot", Key: bootstrapLiteral("_G"), Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: target.InitialMutable},
@@ -107,11 +108,11 @@ func bootstrapFixture(t testing.TB, name string) *bootstrapFixtureState {
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, ok := grammar.Global()
+	receipt, ok := composite.Global()
 	if !ok {
 		t.Fatal("program schema receipt")
 	}
-	artifact, failure := schemaadapter.CompileDetailed(programValue.TransformerInput(), receipt)
+	artifact, failure := composite.CompileArtifactDetailed(programValue, receipt)
 	if failure.Available() || artifact == nil {
 		t.Fatalf("compile artifact: %s", failure.Error())
 	}
@@ -146,10 +147,10 @@ func bootstrapColdSchema(t testing.TB) (*engine.Schema, *valueowner.SchemaFragme
 	return cold, ownerFragment, fragment
 }
 
-func bootstrapKey(number uint64) engine.SemanticKey {
+func bootstrapKey(number uint64) identity.SemanticKey {
 	var digest [32]byte
 	binary.BigEndian.PutUint64(digest[24:], number)
-	key, ok := engine.NewSemanticKey(digest, 1)
+	key, ok := identity.NewSemanticKey(digest, 1)
 	if !ok {
 		panic("bootstrap semantic key")
 	}

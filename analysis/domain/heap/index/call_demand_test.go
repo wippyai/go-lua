@@ -8,7 +8,7 @@ import (
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
 	indexdomain "github.com/wippyai/go-lua/analysis/domain/heap/index"
 	"github.com/wippyai/go-lua/analysis/domain/materialization"
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
+	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
@@ -380,12 +380,10 @@ func callDemandTopologyFixture(t testing.TB, name, text string, freshResults []t
 			resultCount = int(fresh.Result) + 1
 		}
 	}
-	outputs := make([]typ.Type, resultCount)
-	for index := range outputs {
-		outputs[index] = typ.Any
-	}
+	outputs := portableAnyTypes(resultCount)
 	binding := target.BindingSpec{Namespace: target.BindingBuiltin, Member: []string{"fresh"}}
 	contract, err := target.Seal(&target.Spec{
+		Semantics:    domaincontract.NewSemantics(),
 		InitialRoots: []target.InitialRootSpec{{Identity: "GlobalEnvRoot", Shape: target.BootShapeSpec{Aggregate: target.BootAggregateTable, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}}}},
 		Operations: []target.OperationSpec{{
 			Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"require"}}},

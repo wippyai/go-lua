@@ -1,15 +1,16 @@
 package typeauthority_test
 
 import (
+	"bytes"
+	"context"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/composite"
 	"github.com/wippyai/go-lua/analysis/domain/type/authority"
 	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
-	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
 	programstatic "github.com/wippyai/go-lua/analysis/program/static"
-	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 func TestArtifactAuthorityResolvesUnresolvedReferenceAsUnknown(t *testing.T) {
@@ -155,11 +156,11 @@ func compileArtifactForAuthorityTest(t testing.TB, source string) *programartifa
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, ok := grammar.Global()
+	receipt, ok := composite.Global()
 	if !ok || !receipt.Available() {
 		t.Fatal("global program schema unavailable")
 	}
-	artifact, ok := schemaadapter.Compile(program.TransformerInput(), receipt)
+	artifact, ok := composite.CompileArtifact(program, receipt)
 	if !ok || artifact == nil || !artifact.Available() {
 		t.Fatal("ProgramArtifact compilation failed")
 	}
@@ -325,5 +326,220 @@ return identity
 	}
 	if formals == 0 {
 		t.Fatal("fixture published no formal rows")
+	}
+}
+
+// An application whose base names no declaration is complete and targetless,
+// exactly like the reference it applies: Unknown carries the missing
+// information, and no generic binder is fabricated to stand in for it.
+func TestArtifactAuthorityResolvesApplicationOfTargetlessReferenceAsUnknown(t *testing.T) {
+	artifact := compileArtifactForAuthorityTest(t, `
+local function route(primary: Missing<number>): number
+    return 1
+end
+return route
+`)
+	authority, err := typeauthority.SealArtifacts([]*programartifact.Artifact{artifact})
+	if err != nil {
+		t.Fatal(err)
+	}
+	applications := 0
+	for index := 0; index < artifact.StaticTypeNodeCount(); index++ {
+		row, ok := artifact.StaticTypeNodeAt(index)
+		if !ok || row.Kind() != programartifact.StaticNodeGeneric {
+			continue
+		}
+		applications++
+		value, resolved := authority.Resolve(row.ID())
+		if !resolved || value != typ.Unknown {
+			t.Fatalf("application row %d = %T/%v resolved=%t, want typ.Unknown", index, value, value, resolved)
+		}
+	}
+	if applications != 1 {
+		t.Fatalf("fixture published %d application rows, want 1", applications)
+	}
+}
+
+// An application whose base names a declaration that binds no parameters has
+// no generic to apply. The artifact holds a complete, concrete target, so the
+// application is malformed rather than targetless and no value is issued.
+func TestArtifactAuthorityRejectsApplicationOfConcreteNonGenericBase(t *testing.T) {
+	artifact := compileArtifactForAuthorityTest(t, `
+type Plain = number
+local function route(primary: Plain<number>): number
+    return 1
+end
+return route
+`)
+	authority, err := typeauthority.SealArtifacts([]*programartifact.Artifact{artifact})
+	if err != nil {
+		t.Fatal(err)
+	}
+	applications := 0
+	for index := 0; index < artifact.StaticTypeNodeCount(); index++ {
+		row, ok := artifact.StaticTypeNodeAt(index)
+		if !ok || row.Kind() != programartifact.StaticNodeGeneric {
+			continue
+		}
+		applications++
+		value, resolved := authority.Resolve(row.ID())
+		if resolved || value != nil {
+			t.Fatalf("application row %d = %T/%v resolved=%t, want no value", index, value, value, resolved)
+		}
+	}
+	if applications != 1 {
+		t.Fatalf("fixture published %d application rows, want 1", applications)
+	}
+}
+
+// One fixed point is one type, and the binder that names it belongs to the
+// cycle rather than to the node resolution happened to enter through. A cycle
+// running through two named declarations is re-entered at an unnamed interior
+// node from either entry, so both entries must carry one canonical identity.
+func TestArtifactAuthorityMutualDeclarationCycleHasOneCanonicalIdentity(t *testing.T) {
+	artifact := compileArtifactForAuthorityTest(t, `
+type A = { next: B }
+type B = { next: A }
+`)
+	authority, err := typeauthority.SealArtifacts([]*programartifact.Artifact{artifact})
+	if err != nil {
+		t.Fatal(err)
+	}
+	type entry struct {
+		presentation string
+		encoded      []byte
+	}
+	var entries []entry
+	for index := 0; index < artifact.StaticTypeNodeCount(); index++ {
+		row, ok := artifact.StaticTypeNodeAt(index)
+		if !ok || row.Kind() != programartifact.StaticNodeRecord {
+			continue
+		}
+		value, resolved := authority.Resolve(row.ID())
+		if !resolved {
+			t.Fatalf("interior row %d did not resolve", index)
+		}
+		encoded, encodeErr := typ.EncodeCanonical(context.Background(), value)
+		if encodeErr != nil || len(encoded) == 0 {
+			t.Fatalf("interior row %d has no canonical identity: %v", index, encodeErr)
+		}
+		entries = append(entries, entry{presentation: value.String(), encoded: encoded})
+	}
+	if len(entries) != 2 {
+		t.Fatalf("fixture published %d interior rows of the mutual cycle, want 2", len(entries))
+	}
+	if !bytes.Equal(entries[0].encoded, entries[1].encoded) {
+		t.Fatalf("two entries of one fixed point carry two identities:\n  %s\n  %s", entries[0].presentation, entries[1].presentation)
+	}
+}
+
+// One fixed point is one type. A recursive declaration is reachable from its
+// declaration row and from the interior row that carries its structure; both
+// entries close the same cycle, so both must carry one canonical identity.
+func TestArtifactAuthorityRecursiveFixedPointHasOneCanonicalIdentity(t *testing.T) {
+	artifact := compileArtifactForAuthorityTest(t, `
+type Counter = {
+    count: number,
+    increment: (self: Counter) -> number
+}
+local c: Counter = {
+    count = 0,
+    increment = function(self: Counter): number
+        return self.count
+    end
+}
+return c
+`)
+	authority, err := typeauthority.SealArtifacts([]*programartifact.Artifact{artifact})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identities := make(map[programartifact.StaticNodeKind]string, 2)
+	for index := 0; index < artifact.StaticTypeNodeCount(); index++ {
+		row, ok := artifact.StaticTypeNodeAt(index)
+		if !ok || (row.Kind() != programartifact.StaticNodeAlias && row.Kind() != programartifact.StaticNodeRecord) {
+			continue
+		}
+		value, resolved := authority.Resolve(row.ID())
+		if !resolved {
+			t.Fatalf("row %d (%v) did not resolve", index, row.Kind())
+		}
+		encoded, encodeErr := typ.EncodeCanonical(context.Background(), value)
+		if encodeErr != nil || len(encoded) == 0 {
+			t.Fatalf("row %d (%v) has no canonical identity: %v", index, row.Kind(), encodeErr)
+		}
+		if previous, seen := identities[row.Kind()]; seen && previous != string(encoded) {
+			t.Fatalf("two %v rows carry different identities", row.Kind())
+		}
+		identities[row.Kind()] = string(encoded)
+	}
+	if len(identities) != 2 {
+		t.Fatalf("fixture published %d of the two declaration/interior rows", len(identities))
+	}
+	if identities[programartifact.StaticNodeAlias] != identities[programartifact.StaticNodeRecord] {
+		t.Fatalf("declaration and interior entries of one fixed point carry two identities:\n  alias  = %q\n  record = %q",
+			identities[programartifact.StaticNodeAlias], identities[programartifact.StaticNodeRecord])
+	}
+}
+
+// The binder of a cycle belongs to the cycle, not to the rotation the walk
+// entered through. Static classifies its concrete rows by the structural
+// canonical bytes, which carry the binder name, while Runtime identifies the
+// same fixed point by the name-erased encoding. One fixed point re-entered at
+// two of its rows must therefore present one binder name: otherwise Static
+// admits two classes that Runtime maps onto one row, and the static plane
+// seal rejects the pair.
+func TestArtifactAuthorityMutualCycleEntriesShareOneBinderName(t *testing.T) {
+	artifact := compileArtifactForAuthorityTest(t, `
+type Text = { kind: "text", value: string }
+type Group = { kind: "group", children: {Node} }
+type Node = Text | Group
+
+local n: Node = {kind = "text", value = "a"}
+return n
+`)
+	authority, err := typeauthority.SealArtifacts([]*programartifact.Artifact{artifact})
+	if err != nil {
+		t.Fatal(err)
+	}
+	structural := make(map[string]map[string]struct{})
+	recursions := 0
+	for index := 0; index < artifact.StaticTypeNodeCount(); index++ {
+		row, ok := artifact.StaticTypeNodeAt(index)
+		if !ok {
+			continue
+		}
+		value, resolved := authority.Resolve(row.ID())
+		if !resolved || value == nil || !typ.IsGraphClosed(value) || typ.ContainsTypeParam(value) {
+			continue
+		}
+		if _, isRecursive := value.(*typ.Recursive); isRecursive {
+			recursions++
+		}
+		erased, erasedErr := typ.EncodeCanonicalFormals(context.Background(), value, nil)
+		if erasedErr != nil || len(erased) == 0 {
+			continue
+		}
+		exact, exactErr := typ.EncodeCanonical(context.Background(), value)
+		if exactErr != nil || len(exact) == 0 {
+			t.Fatalf("row %d has no structural canonical identity: %v", index, exactErr)
+		}
+		if structural[string(erased)] == nil {
+			structural[string(erased)] = make(map[string]struct{})
+		}
+		structural[string(erased)][string(exact)] = struct{}{}
+	}
+	if recursions == 0 {
+		t.Fatal("fixture published no recursive fixed point")
+	}
+	for erased, exact := range structural {
+		if len(exact) == 1 {
+			continue
+		}
+		split := make([]string, 0, len(exact))
+		for bytes := range exact {
+			split = append(split, bytes)
+		}
+		t.Fatalf("one fixed point carries %d structural identities:\n  erased = %q\n  %q", len(exact), erased, split)
 	}
 }

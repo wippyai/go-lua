@@ -1,10 +1,12 @@
 package engine
 
+import "github.com/wippyai/go-lua/analysis/identity"
+
 // FrozenResult is the typed persistence contract for one receipt-native Query
 // projection. Its callbacks are behavior owned by the sealed query cell; no
 // declaration carrier or cold execution root is retained here.
 type FrozenResult[R any] struct {
-	Semantic    SemanticKey
+	Semantic    identity.SemanticKey
 	Freeze      func(R) R
 	Clone       func(R) R
 	Equal       func(R, R) bool

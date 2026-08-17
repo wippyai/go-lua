@@ -21,7 +21,7 @@ type draftState struct {
 }
 type draftFence struct{ consumed bool }
 
-// Component contains no Project, Shard, Program, TransformerInput, Flow, or
+// Component contains no Project, Shard, Program, Flow, or
 // source-term handle. Namespace IDs are exact scalar Link substitution keys.
 type Component struct {
 	contentID identity.ContentID

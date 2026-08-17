@@ -5,8 +5,8 @@ import (
 	"errors"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/internal/framing"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
 )
 
@@ -46,16 +46,16 @@ func compactContracts(component *Component, counts [keyspace.FamilyCount]uint32,
 			return errors.New("program/static: oversized call type arguments")
 		}
 		store.calls = append(store.calls, typeArguments)
-		receipt, receiptOK := callTypeArgumentReceipt(row.TypeArguments)
-		if !receiptOK {
-			return errors.New("program/static: unavailable call type-argument receipt")
+		id, idOK := callTypeArgumentID(row.TypeArguments)
+		if !idOK {
+			return errors.New("program/static: unavailable call type-argument identity")
 		}
-		store.callReceipts = append(store.callReceipts, receipt)
+		store.callTypeArgumentIDs = append(store.callTypeArgumentIDs, id)
 	}
 	return nil
 }
 
-func callTypeArgumentReceipt(terms []keyspace.Term) (id identity.ContentID, ok bool) {
+func callTypeArgumentID(terms []keyspace.Term) (id identity.ContentID, ok bool) {
 	hash := sha256.New()
 	var writer framing.Writer
 	if writer.Reset(hash, "program/static/call-type-arguments", 1) != nil || writeTypeTermsContent(&writer, terms) != nil || writer.Finish() != nil {

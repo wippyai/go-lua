@@ -1,15 +1,18 @@
 package boundary
 
 import (
+	"context"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/type/typ"
+	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 )
 
 func TestBoundaryCallTypeFormalArgumentsExactZeroAndUnconstrainedBinding(t *testing.T) {
@@ -154,7 +157,7 @@ return generic::<integer, string>()`)
 
 	changedABIContract := typeFormalContractWithInput(t, []*typ.TypeParam{
 		typ.NewTypeParam("T", nil), typ.NewTypeParam("U", nil),
-	}, target.ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: target.ValuesClosed})
+	}, target.ValuesSpec{Fixed: neutralTypes(t, typ.Any), Tail: target.ValuesClosed})
 	changedABI, changedABIProject := typeFormalBoundaryForContract(t, p, changedABIContract)
 	changedABIView, changedABIOK := changedABI.Calls().TypeFormalArguments(changedABIContract, typeFormalCall(t, changedABIProject, 0), typeFormalOperation(t, changedABIContract))
 	changedABIID, changedABIIDOK := changedABIView.CorrespondenceID()
@@ -194,9 +197,9 @@ func typeFormalContract(t testing.TB, formals []*typ.TypeParam) *target.Contract
 
 func typeFormalContractWithInput(t testing.TB, formals []*typ.TypeParam, input target.ValuesSpec) *target.Contract {
 	t.Helper()
-	contract, err := target.Seal(&target.Spec{Operations: []target.OperationSpec{{
+	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []target.OperationSpec{{
 		Bindings:    []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"op"}}},
-		TypeFormals: formals,
+		TypeFormals: neutralFormals(t, formals),
 		Input:       input,
 		Outcomes:    []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}},
 		Effects:     target.RowSpec{Tail: target.RowClosed},
@@ -205,6 +208,38 @@ func typeFormalContractWithInput(t testing.TB, formals []*typ.TypeParam, input t
 		t.Fatal(err)
 	}
 	return contract
+}
+
+func neutralFormals(t testing.TB, formals []*typ.TypeParam) []target.TypeFormalSpec {
+	t.Helper()
+	if len(formals) == 0 {
+		return nil
+	}
+	out := make([]target.TypeFormalSpec, len(formals))
+	for index, formal := range formals {
+		if formal == nil || formal.Constraint == nil {
+			continue
+		}
+		value, err := domaincontract.EncodeStorage(context.Background(), formal.Constraint, formals)
+		if err != nil {
+			t.Fatalf("encode formal %d: %v", index, err)
+		}
+		out[index].Constraint = value
+	}
+	return out
+}
+
+func neutralTypes(t testing.TB, values ...typ.Type) []schematype.Type {
+	t.Helper()
+	out := make([]schematype.Type, len(values))
+	for index, value := range values {
+		encoded, err := domaincontract.EncodeStorage(context.Background(), value, nil)
+		if err != nil {
+			t.Fatalf("encode type %d: %v", index, err)
+		}
+		out[index] = encoded
+	}
+	return out
 }
 
 func typeFormalBoundary(t testing.TB, p *program.Program, formals []*typ.TypeParam) (*Component, *target.Contract, *linkproject.Component) {

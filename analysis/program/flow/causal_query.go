@@ -420,7 +420,7 @@ func (route FinalRoute) ResetCount() (int, bool) {
 	return route.successor.ResetCount()
 }
 
-// ResetPathAt returns the immutable semantic receipt for one reset member.
+// ResetPathAt returns the immutable semantic path for one reset member.
 // It does not expose the authored decision term or a Site context identity.
 func (route FinalRoute) ResetPathAt(index int) (identity.ContentID, bool) {
 	if !route.Available() || index < 0 {

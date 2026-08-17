@@ -5,12 +5,12 @@ import (
 	"errors"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/internal/framing"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
 // Derived causal ports deliberately do not affect this authored identity.
-const contentVersion = 7
+const contentVersion = 8
 
 var (
 	errInvalidArtifactComponent = errors.New("program/flow: invalid artifact component")
@@ -287,8 +287,10 @@ func writeAuthoredControl(writer *framing.Writer, control authoredControlStore) 
 		return err
 	}
 	for _, row := range control.breaks {
-		if err := writeTerm(writer, row.Owner); err != nil {
-			return err
+		for _, term := range [...]keyspace.Term{row.Owner, row.Target} {
+			if err := writeTerm(writer, term); err != nil {
+				return err
+			}
 		}
 	}
 	if err := writer.Count(uint64(len(control.labels))); err != nil {

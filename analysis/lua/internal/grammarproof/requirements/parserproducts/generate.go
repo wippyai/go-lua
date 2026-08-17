@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof"
+	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/astcodec"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/recursion"
 )
 
@@ -215,12 +216,12 @@ func renderAssembly(e Evidence) string {
 func renderFields(rows []FieldState) string {
 	var out strings.Builder
 	out.WriteString(generatedHeader(
-		"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof",
+		"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/astcodec",
 		"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/occurrence",
 	))
 	out.WriteString("\nfunc generatedFields() []FieldState { return []FieldState{\n")
 	for _, row := range rows {
-		fmt.Fprintf(&out, "{Form:%q, Field:%q, State:grammarproof.FieldState(%d), Context:occurrence.Context(%d), Disposition:Disposition(%d), Source:%q,\nParserLaw:occurrence.ParserLaw(%d), SemanticLaw:occurrence.SemanticLaw(%d), IngressLaw:occurrence.IngressLaw(%d)},\n", row.Form, row.Field, row.State, row.Context, row.Disposition, row.Source, row.ParserLaw, row.SemanticLaw, row.IngressLaw)
+		fmt.Fprintf(&out, "{Form:%q, Field:%q, State:astcodec.FieldState(%d), Context:occurrence.Context(%d), Disposition:Disposition(%d), Source:%q,\nParserLaw:occurrence.ParserLaw(%d), SemanticLaw:occurrence.SemanticLaw(%d), IngressLaw:occurrence.IngressLaw(%d)},\n", row.Form, row.Field, row.State, row.Context, row.Disposition, row.Source, row.ParserLaw, row.SemanticLaw, row.IngressLaw)
 	}
 	out.WriteString("} }\n")
 	return out.String()
@@ -229,7 +230,7 @@ func renderFields(rows []FieldState) string {
 func renderProductsFile(rows []Product) string {
 	var out strings.Builder
 	out.WriteString(generatedHeader(
-		"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof",
+		"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/astcodec",
 		"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/occurrence",
 	))
 	out.WriteString("\nfunc generatedProducts() []Product { return []Product{\n")
@@ -283,12 +284,12 @@ func renderMutationsFile(rows []FieldMutation) string {
 func renderCarriersFile(rows []Carrier) string {
 	var out strings.Builder
 	out.WriteString(generatedHeader(
-		"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof",
+		"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/astcodec",
 		"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/grammar",
 	))
 	out.WriteString("\nfunc generatedCarriers() []Carrier { return []Carrier{\n")
 	for _, row := range rows {
-		fmt.Fprintf(&out, "{Form:%q, Field:%q, Class:grammar.ConstructorClass(%d), ChildType:%q, Cardinality:grammarproof.FieldState(%d)},\n", row.Form, row.Field, row.Class, row.ChildType, row.Cardinality)
+		fmt.Fprintf(&out, "{Form:%q, Field:%q, Class:grammar.ConstructorClass(%d), ChildType:%q, Cardinality:astcodec.FieldState(%d)},\n", row.Form, row.Field, row.Class, row.ChildType, row.Cardinality)
 	}
 	out.WriteString("} }\n")
 	return out.String()
@@ -424,10 +425,10 @@ func generatedDirectory() string {
 	return filepath.Dir(file)
 }
 
-func renderFieldStates(out *strings.Builder, rows []grammarproof.FieldState) {
-	out.WriteString("[]grammarproof.FieldState{\n")
+func renderFieldStates(out *strings.Builder, rows []astcodec.FieldState) {
+	out.WriteString("[]astcodec.FieldState{\n")
 	for _, row := range rows {
-		fmt.Fprintf(out, "grammarproof.FieldState(%d),\n", row)
+		fmt.Fprintf(out, "astcodec.FieldState(%d),\n", row)
 	}
 	out.WriteByte('}')
 }

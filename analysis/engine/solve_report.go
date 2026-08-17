@@ -1,5 +1,7 @@
 package engine
 
+import "github.com/wippyai/go-lua/analysis/identity"
+
 // SolveFailureReason identifies the first engine lifecycle boundary that made
 // a solve incomplete.  It is deliberately a closed enum: callers receive no
 // implementation error text, mutable runtime object, or second diagnostic
@@ -311,17 +313,17 @@ func (phase SolveFailurePhase) String() string {
 }
 
 // SolveReport is a detached first-failure certificate for one incomplete
-// solve.  Every coordinate is an opaque SemanticKey copied out of the sealed
+// solve.  Every coordinate is an opaque identity.SemanticKey copied out of the sealed
 // engine authority.  The zero value means that no incomplete solve was
 // reported; all fields are private so the report cannot be forged or retain a
 // Solver, State, callback, domain value, or mutable slice.
 type SolveReport struct {
 	reason SolveFailureReason
 	phase  SolveFailurePhase
-	point  SemanticKey
-	group  SemanticKey
-	member SemanticKey
-	rule   SemanticKey
+	point  identity.SemanticKey
+	group  identity.SemanticKey
+	member identity.SemanticKey
+	rule   identity.SemanticKey
 }
 
 // Available reports whether this report is a certificate for SolveIncomplete.
@@ -335,20 +337,20 @@ func (report SolveReport) Reason() SolveFailureReason { return report.reason }
 func (report SolveReport) Phase() SolveFailurePhase { return report.phase }
 
 // Point returns the failed Point semantic identity when the boundary had one.
-func (report SolveReport) Point() SemanticKey { return report.point }
+func (report SolveReport) Point() identity.SemanticKey { return report.point }
 
 // Group returns the failed Group semantic identity when the boundary had one.
-func (report SolveReport) Group() SemanticKey { return report.group }
+func (report SolveReport) Group() identity.SemanticKey { return report.group }
 
 // Member returns the failed RuleMember semantic identity when member execution
 // reached one.
-func (report SolveReport) Member() SemanticKey { return report.member }
+func (report SolveReport) Member() identity.SemanticKey { return report.member }
 
 // Rule returns the failed Rule semantic identity when member execution reached
 // one.
-func (report SolveReport) Rule() SemanticKey { return report.rule }
+func (report SolveReport) Rule() identity.SemanticKey { return report.rule }
 
-func (report *SolveReport) record(reason SolveFailureReason, phase SolveFailurePhase, point, group, member, rule SemanticKey) {
+func (report *SolveReport) record(reason SolveFailureReason, phase SolveFailurePhase, point, group, member, rule identity.SemanticKey) {
 	if report == nil || report.Available() || reason == SolveFailureReasonNone {
 		return
 	}
@@ -360,8 +362,8 @@ func (report *SolveReport) record(reason SolveFailureReason, phase SolveFailureP
 	report.rule = rule
 }
 
-func reportFailureQuery(report *SolveReport, reason SolveFailureReason, point SemanticKey) {
+func reportFailureQuery(report *SolveReport, reason SolveFailureReason, point identity.SemanticKey) {
 	if report != nil {
-		report.record(reason, SolveFailurePhaseNone, point, SemanticKey{}, SemanticKey{}, SemanticKey{})
+		report.record(reason, SolveFailurePhaseNone, point, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
 	}
 }

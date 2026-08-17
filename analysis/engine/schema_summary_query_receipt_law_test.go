@@ -117,7 +117,7 @@ func TestReceiptCompilerBindsSummaryQueryGraphSurface(t *testing.T) {
 	}
 
 	batch := equation.NewBatch()
-	site, siteOK := batch.AdmitSite(coldKey(949_016).compositionKey(), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent)
+	site, siteOK := batch.AdmitSite(compositionKeyOf(coldKey(949_016)), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent)
 	occurrence, occurrenceOK := batch.At(site)
 	operandValue := ruleUnitForSemantic(coldKey(949_017))
 	operandEntity, operandEntityOK := operandEntityForContent(operandValue.content)
@@ -125,10 +125,10 @@ func TestReceiptCompilerBindsSummaryQueryGraphSurface(t *testing.T) {
 	if !siteOK || !occurrenceOK || !operandEntityOK || !operandOK || !batch.Seal() {
 		t.Fatal("summary graph batch")
 	}
-	surface := equation.Surface{Factor: schema.factorSemanticAt(0), Form: equation.SurfaceReadSummary, Local: 1, Semantic: coldKey(949_011).compositionKey(), Normalizer: coldKey(949_011).compositionKey()}
+	surface := equation.Surface{Factor: schema.factorSemanticAt(0), Form: equation.SurfaceReadSummary, Local: 1, Semantic: compositionKeyOf(coldKey(949_011)), Normalizer: compositionKeyOf(coldKey(949_011))}
 	topology, topologyOK := equation.SealTopology(schema.cold, equation.TopologySpec{
 		Batch:  batch,
-		Rules:  []equation.RuleInstance{{Schema: schema.ruleSemanticAt(0), OperandFamily: unitOperandFamily.compositionKey(), Occurrence: occurrence, Operand: operand, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: schema.factorSemanticAt(0), Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}}}},
+		Rules:  []equation.RuleInstance{{Schema: schema.ruleSemanticAt(0), OperandFamily: compositionKeyOf(unitOperandFamily), Occurrence: occurrence, Operand: operand, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: schema.factorSemanticAt(0), Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}}}},
 		Points: []equation.PointSpec{{Site: site}}, Groups: []equation.Group{{Members: []equation.RuleRef{equation.RuleAt(0)}, Output: equation.PointAt(0)}}, Queries: []equation.QueryInstance{{Family: schema.querySemanticAt(0), Point: equation.PointAt(0), Surfaces: []equation.Surface{surface}}},
 	})
 	if !topologyOK || topology == nil {
@@ -154,7 +154,7 @@ func TestReceiptCompilerBindsSummaryQueryGraphSurface(t *testing.T) {
 	implementation, implementationOK := SummaryQueryImplementationAt[uint64, uint64](binding, query)
 	compilation, compiled := compileReceiptFactors(binding, graph)
 	runtime, joined := bindReceiptSummaryQuery[uint64, uint64](compilation, implementation, identity)
-	if !implementationOK || !compiled || !joined || runtime == nil || runtime.query().Key() != identity.Key() || runtime.surface.Form != equation.SurfaceReadSummary || runtime.surface.Semantic != coldKey(949_011).compositionKey() {
+	if !implementationOK || !compiled || !joined || runtime == nil || runtime.query().Key() != identity.Key() || runtime.surface.Form != equation.SurfaceReadSummary || runtime.surface.Semantic != compositionKeyOf(coldKey(949_011)) {
 		t.Fatal("summary graph evidence join")
 	}
 }

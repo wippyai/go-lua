@@ -44,7 +44,18 @@ package composite
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/internal/framing"
 	"github.com/wippyai/go-lua/analysis/schema"
+)
+
+// Content record markers. They separate the collections one entry writes, so a
+// role row can never be read as a patch row.
+const (
+	contentRecordRole uint64 = iota + 1
+	contentRecordOutput
+	contentRecordPatch
+	contentRecordIntermediate
+	contentRecordDependency
 )
 
 // Surface law ordinals. They are numeric identities; rendering a verdict is
@@ -447,7 +458,16 @@ func (entry *Entry) ID() schema.EntryID { return entry.id }
 
 func (entry *Entry) Ordering() Ordering { return entry.ordering }
 
-func (entry *Entry) Output() Output { return entry.output }
+// Output returns the declared output discipline with its collections copied, so
+// a reader cannot rewrite a sealed declaration through the descent or the patch
+// list it was handed. An absent case stays absent: copying an empty collection
+// yields an empty collection.
+func (entry *Entry) Output() Output {
+	output := entry.output
+	output.Reducer.Descent = append([]uint16(nil), entry.output.Reducer.Descent...)
+	output.Capability.Patches = append([]Patch(nil), entry.output.Capability.Patches...)
+	return output
+}
 
 func (entry *Entry) Discipline() Discipline { return entry.discipline }
 
@@ -496,6 +516,121 @@ func (entry *Entry) EntryAvailable() bool {
 	return entry != nil && entry.key.Available() && entry.id.Available()
 }
 
+// EntryContent writes this relation's declared data: its membership, the
+// ordering that membership is read under, its output discipline, its behaviour
+// under the solver, the coordinate spaces it routes through, and the composites
+// it depends on. Every collection is written in declaration order behind its
+// arity, because declaration order is part of a positional membership and part
+// of every projection derived from one.
+func (entry *Entry) EntryContent(content *framing.Writer) error {
+	if err := content.Count(uint64(len(entry.roles))); err != nil {
+		return err
+	}
+	for _, role := range entry.roles {
+		if err := content.Record(contentRecordRole); err != nil {
+			return err
+		}
+		if err := content.String(string(role.Key)); err != nil {
+			return err
+		}
+		if err := content.String(string(role.Axis)); err != nil {
+			return err
+		}
+		if err := content.Uint(uint64(role.Cone.Form)); err != nil {
+			return err
+		}
+		if err := content.String(string(role.Cone.Source)); err != nil {
+			return err
+		}
+	}
+	if err := content.Uint(uint64(entry.ordering)); err != nil {
+		return err
+	}
+	if err := entry.outputContent(content); err != nil {
+		return err
+	}
+	if err := content.Uint(uint64(entry.discipline.Determinism)); err != nil {
+		return err
+	}
+	if err := content.Uint(uint64(entry.discipline.Monotonicity)); err != nil {
+		return err
+	}
+	if err := content.Uint(uint64(entry.discipline.Reentrancy)); err != nil {
+		return err
+	}
+	if err := content.Count(uint64(len(entry.intermediates))); err != nil {
+		return err
+	}
+	for _, intermediate := range entry.intermediates {
+		if err := content.Record(contentRecordIntermediate); err != nil {
+			return err
+		}
+		if err := content.String(string(intermediate)); err != nil {
+			return err
+		}
+	}
+	if err := content.Count(uint64(len(entry.dependencies))); err != nil {
+		return err
+	}
+	for _, dependency := range entry.dependencies {
+		if err := content.Record(contentRecordDependency); err != nil {
+			return err
+		}
+		if err := content.String(string(dependency)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// outputContent writes the closed two-case output discipline. The discriminant
+// is written first and only the selected case follows it, so the union is
+// written as the union it is rather than as both of its cases.
+func (entry *Entry) outputContent(content *framing.Writer) error {
+	if err := content.Record(contentRecordOutput); err != nil {
+		return err
+	}
+	if err := content.Uint(uint64(entry.output.Kind)); err != nil {
+		return err
+	}
+	switch entry.output.Kind {
+	case OutputReducer:
+		if err := content.String(string(entry.output.Reducer.Axis)); err != nil {
+			return err
+		}
+		if err := content.Count(uint64(len(entry.output.Reducer.Descent))); err != nil {
+			return err
+		}
+		for _, component := range entry.output.Reducer.Descent {
+			if err := content.Uint(uint64(component)); err != nil {
+				return err
+			}
+		}
+	case OutputCapability:
+		if err := content.Count(uint64(len(entry.output.Capability.Patches))); err != nil {
+			return err
+		}
+		for _, patch := range entry.output.Capability.Patches {
+			if err := content.Record(contentRecordPatch); err != nil {
+				return err
+			}
+			if err := content.String(string(patch.Role)); err != nil {
+				return err
+			}
+			if err := content.Bytes(patch.Contract[:]); err != nil {
+				return err
+			}
+		}
+		if err := content.Bytes(entry.output.Capability.Closure[:]); err != nil {
+			return err
+		}
+		if err := content.Bytes(entry.output.Capability.Commit[:]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (entry *Entry) membershipComplete() bool {
 	if len(entry.roles) == 0 {
 		return false
@@ -535,10 +670,10 @@ func (contribution surface) Entries() []schema.Entry {
 func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.SealFailure {
 	// A composite resolves its membership against the axis inventory, so the
 	// axis surface must be sealed below it. The catalog order is the bind phase
-	// order; stating the composite surface's position states the phase.
-	if schema.SurfaceKindAxis >= schema.SurfaceKindComposite {
-		return failure(schema.EntryID{}, LawAxisPhase, schema.DispositionMalformed)
-	}
+	// order, and asking the sealed projection for the axis surface is what
+	// states that phase: a projection reaches the surfaces below the one
+	// currently sealing and none at or above it, so an axis surface that is
+	// absent from it is an axis surface this composite may not resolve against.
 	axes, axesOK := sealed.Surface(schema.SurfaceKindAxis)
 	if !axesOK {
 		return failure(schema.EntryID{}, LawAxisPhase, schema.DispositionIncomplete)

@@ -92,7 +92,7 @@ func (s *resetState) appendEdgeOrigin(from, to, owner, decision keyspace.Term, t
 }
 
 func originAvailable(origin routeplan.Origin) bool {
-	_, ok := origin.EndpointPhaseReceipt()
+	_, _, ok := origin.Endpoints()
 	return ok
 }
 
@@ -106,7 +106,7 @@ func (s *resetState) localOrigin(from, to, owner keyspace.Term, arcIndex int) (r
 		if fromPhase.OutcomePhase() && !toPhase.OutcomePhase() {
 			return routeplan.Origin{}, errors.New("program/flow/causal: Outcome resume must be projection-bound before row declaration")
 		}
-		var receipt *sourcecontrol.RouteSegmentReceipt
+		var segment sourcecontrol.Segment
 		var err error
 		switch {
 		case !fromPhase.OutcomePhase() && toPhase.OutcomePhase():
@@ -118,9 +118,9 @@ func (s *resetState) localOrigin(from, to, owner keyspace.Term, arcIndex int) (r
 				}
 				switch loopKind {
 				case kind.LoopNumericFor:
-					receipt, err = s.graph.IssueNumericForOutcomeSegment(s.source, s.flow, s.outs, from, to, owner)
+					segment, err = s.graph.NumericForOutcomeSegment(s.source, s.flow, s.outs, from, to, owner)
 				case kind.LoopGenericFor:
-					receipt, err = s.graph.IssueGenericForOutcomeSegment(s.source, s.flow, s.outs, from, to, owner)
+					segment, err = s.graph.GenericForOutcomeSegment(s.source, s.flow, s.outs, from, to, owner)
 				default:
 					return routeplan.Origin{}, errors.New("program/flow/causal: Loop does not issue an Outcome arm")
 				}
@@ -129,8 +129,8 @@ func (s *resetState) localOrigin(from, to, owner keyspace.Term, arcIndex int) (r
 				if ordinal == 0 || uint64(ordinal) >= uint64(len(s.tableFieldThrowProof)) {
 					return routeplan.Origin{}, errors.New("program/flow/causal: TableField eligibility proof is unavailable")
 				}
-				receipt, err = s.graph.IssueTableFieldOutcomeSegmentWithEligibility(s.source, s.outs, s.tableFieldThrowProof[ordinal], from, to, owner)
-				s.tableFieldThrowProof[ordinal] = nil
+				segment, err = s.graph.TableFieldOutcomeSegment(s.source, s.outs, s.tableFieldThrowProof[ordinal], from, to, owner)
+				s.tableFieldThrowProof[ordinal] = sourcecontrol.TableFieldThrowEligibility{}
 			case keyspace.FamilyCall:
 				_, outcomeKind, _, outcomeOK := s.outs.Get(to)
 				if !outcomeOK {
@@ -138,13 +138,13 @@ func (s *resetState) localOrigin(from, to, owner keyspace.Term, arcIndex int) (r
 				}
 				if outcomeKind == kind.OutcomeReturn {
 					ordinal := keyspace.TermOrdinal(from)
-					if ordinal == 0 || uint64(ordinal) >= uint64(len(s.tailProofs)) || s.tailProofs[ordinal] == nil {
+					if ordinal == 0 || uint64(ordinal) >= uint64(len(s.tailProofs)) || !s.tailProofs[ordinal].Available() {
 						return routeplan.Origin{}, errors.New("program/flow/causal: Call-tail parent proof is unavailable")
 					}
-					receipt, err = s.graph.IssueCallTailReturnSegmentWithReceipt(s.source, s.outs, s.tailProofs[ordinal], from, to, owner)
-					s.tailProofs[ordinal] = nil
+					segment, err = s.graph.CallTailOutcomeSegment(s.source, s.outs, s.tailProofs[ordinal], from, to, owner)
+					s.tailProofs[ordinal] = sourcecontrol.CallTailProof{}
 				} else {
-					receipt, err = s.graph.IssueCallOutcomeSegment(s.source, s.flow, s.outs, from, to, owner)
+					segment, err = s.graph.CallOutcomeSegment(s.source, s.flow, s.outs, from, to, owner)
 				}
 			default:
 				carrier := sourcecontrol.NoSegmentCarrier()
@@ -155,17 +155,17 @@ func (s *resetState) localOrigin(from, to, owner keyspace.Term, arcIndex int) (r
 					}
 					carrier = sourcecontrol.ArcSegmentCarrier(ref)
 				}
-				receipt, err = s.graph.IssueRootOutcomeSegment(s.source, s.outs, from, to, owner, carrier)
+				segment, err = s.graph.RootOutcomeSegment(s.source, s.outs, from, to, owner, carrier)
 			}
 		case fromPhase.OutcomePhase() && toPhase.OutcomePhase():
-			receipt, err = s.graph.IssueOutcomePropagationSegment(s.source, s.outs, from, to)
+			segment, err = s.graph.OutcomePropagationSegment(s.source, s.outs, from, to)
 		default:
 			return routeplan.Origin{}, errors.New("program/flow/causal: Outcome route relation is malformed")
 		}
 		if err != nil {
 			return routeplan.Origin{}, err
 		}
-		origin, issued := routeplan.OutcomeSubdivision(s.graph, receipt)
+		origin, issued := routeplan.OutcomeSubdivision(s.graph, segment)
 		if !issued {
 			return routeplan.Origin{}, errors.New("program/flow/causal: Outcome route subdivision is unavailable")
 		}

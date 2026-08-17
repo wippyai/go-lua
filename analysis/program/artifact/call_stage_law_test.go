@@ -19,7 +19,7 @@ return identity(true)
 		t.Fatal(err)
 	}
 	transaction := compiler{
-		input: compiled.TransformerInput(), occurrenceSpans: make(map[occurrenceLookup]occurrenceSpanGeometry),
+		input: compiled, occurrenceSpans: make(map[occurrenceLookup]occurrenceSpanGeometry),
 		pointIDsBySite: make(map[identity.ContentID][]identity.ContentID),
 	}
 	if failure := transaction.indexPointAttachmentsFailure(); failure.Available() {
@@ -28,20 +28,48 @@ return identity(true)
 	if failure := transaction.copyCalls(); failure.Available() {
 		t.Fatalf("copy calls: %+v", failure)
 	}
-	if transaction.input.CallCount() == 0 {
+	if failure := transaction.copyValuesFailure(); failure.Available() {
+		t.Fatalf("copy values: %+v", failure)
+	}
+	if failure := transaction.copyCallRowsFailure(); failure.Available() {
+		t.Fatalf("copy call rows: %+v", failure)
+	}
+	callCount := compiled.Flow().Authored().Calls().Count()
+	if callCount == 0 {
 		t.Fatal("fixture did not issue a call")
 	}
-	for index := 0; index < transaction.input.CallCount(); index++ {
-		call, callOK := transaction.input.CallAt(index)
-		span, spanOK := call.Span()
-		entry, entryOK := span.Entry()
-		finish, finishOK := span.Finish()
-		geometry, geometryOK := transaction.occurrenceSpans[occurrenceLookup{kind: OccurrenceCall, id: call.ContextID()}]
-		activation, activationOK := transaction.occurrenceSpans[occurrenceLookup{kind: OccurrenceCallActivation, id: call.ContextID()}]
+	if len(transaction.calls) != callCount {
+		t.Fatalf("artifact call rows = %d, want authored denominator %d", len(transaction.calls), callCount)
+	}
+	for index := 0; index < callCount; index++ {
+		callID, callOK := compiled.CallIDAt(index)
+		callTerm, callTermOK := compiled.Flow().Authored().Calls().At(index)
+		row := transaction.calls[index]
+		spanID, entryTerm, finishTerm, spanOK := compiled.EvaluationSpan(callTerm)
+		entry, entryOK := compiled.Flow().Causal().Sites().ForTerm(entryTerm)
+		finish, finishOK := compiled.Flow().Causal().Sites().ForTerm(finishTerm)
+		geometry, geometryOK := transaction.occurrenceSpans[occurrenceLookup{kind: OccurrenceCall, id: callID}]
+		activation, activationOK := transaction.occurrenceSpans[occurrenceLookup{kind: OccurrenceCallActivation, id: callID}]
 		wantEntry, wantFinish := canonicalPoints(transaction.pointIDs(entry)), canonicalPoints(transaction.pointIDs(finish))
-		if !callOK || !spanOK || !entryOK || !finishOK || !geometryOK || !activationOK ||
+		if !callOK || !callTermOK || !spanOK || !entryOK || !finishOK || !geometryOK || !activationOK ||
 			!slices.Equal(geometry.entry, wantEntry) || !slices.Equal(geometry.finish, wantFinish) || len(activation.entry) != 0 || !slices.Equal(activation.finish, wantFinish) {
 			t.Fatalf("call %d did not preserve exact Entry/Finish geometry", index)
+		}
+		if !row.Available() || row.ID() != callID || row.SpanID() != spanID {
+			t.Fatalf("call %d artifact row did not preserve authored identity and span", index)
+		}
+		if row.OperandCount() != 2 || row.ArgumentCount() != 1 || row.TypeArgumentCount() != 0 {
+			t.Fatalf("call %d child counts operands=%d arguments=%d types=%d, want 2/1/0", index, row.OperandCount(), row.ArgumentCount(), row.TypeArgumentCount())
+		}
+		for childIndex := 0; childIndex < row.OperandCount(); childIndex++ {
+			operand := transaction.callOperands[int(row.operandStart)+childIndex]
+			if !operand.Available() || operand.CallID() != row.ID() || !operand.SpanID().Available() {
+				t.Fatalf("call %d operand %d is not a closed artifact child", index, childIndex)
+			}
+		}
+		argument := transaction.callArguments[row.argumentStart]
+		if !argument.Available() || argument.CallID() != row.ID() || argument.ValuesID() != row.ValuesID() || argument.Index() != 0 {
+			t.Fatalf("call %d argument is not joined to its artifact call/value parent", index)
 		}
 	}
 }

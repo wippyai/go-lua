@@ -2,7 +2,7 @@
 package parseruses
 
 import (
-	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof"
+	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/astcodec"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/occurrence"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/parserproducts"
 )
@@ -160,7 +160,7 @@ type UseSlot struct {
 	ParentContext occurrence.Context
 	Role          UseRole
 	ChildType     string
-	Cardinality   grammarproof.FieldState
+	Cardinality   astcodec.FieldState
 	// Target is the sole semantic owner of this schema-declared carrier. It
 	// remains present even when the yacc action constructs the enclosing AST
 	// form through local assembly rather than a root Result literal.

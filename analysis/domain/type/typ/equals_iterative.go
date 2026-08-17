@@ -254,9 +254,8 @@ func typeEqualsStep(a, b Type, seen *typePairSet, work *typeEqualsWorkStack) boo
 		if va.ID == vb.ID {
 			return true
 		}
-		if va.Name != vb.Name {
-			return false
-		}
+		// The binder name is presentation. Two declarations reaching one fixed
+		// point spell its binder differently and are still one type.
 		work.push(va.Body, vb.Body)
 	case *Interface:
 		vb, ok := b.(*Interface)

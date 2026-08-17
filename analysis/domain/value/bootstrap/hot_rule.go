@@ -21,7 +21,7 @@ type HotRule struct {
 // the typed callbacks; no legacy declaration path is consulted.
 func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bool) {
 	if fragment == nil || fragment.slot == nil || owner == nil || owner.Schema() == nil ||
-		!fragment.semantic.Available() || !fragment.evidence.Available() || !engine.DistinctKeys(fragment.semantic, fragment.evidence) {
+		!fragment.semantic.Available() || !fragment.evidence.Available() || !identity.DistinctKeys(fragment.semantic, fragment.evidence) {
 		return nil, false
 	}
 	schema := owner.Schema()
@@ -171,7 +171,7 @@ func (rule *HotRule) Implementation() (*valueowner.RuleImplementation[identity.C
 	return rule.implementation, true
 }
 
-func hotBootstrapChecker(owner *valueowner.HotOwner, ruleSemantic engine.SemanticKey) engine.RuleDerivationChecker[value.Value, identity.ContentID] {
+func hotBootstrapChecker(owner *valueowner.HotOwner, ruleSemantic identity.SemanticKey) engine.RuleDerivationChecker[value.Value, identity.ContentID] {
 	return func(derivation engine.RuleDerivation[value.Value, identity.ContentID]) (engine.RuleEvidence, bool) {
 		if owner == nil || owner.Schema() == nil || derivation.Rule() != ruleSemantic || derivation.InputCount() != 0 || derivation.ReadCount() != 0 || derivation.DispositionCount() != 1 {
 			return engine.RuleEvidence{}, false

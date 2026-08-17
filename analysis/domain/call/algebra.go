@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
@@ -61,20 +62,29 @@ type Algebra struct {
 // relation. No Project/Shard/CallApplication authority is retained.
 type mountedCallRow struct {
 	applicationID identity.ContentID
-	contextID     identity.ContentID
+	callID        identity.ContentID
 	moduleID      identity.ContentID
 	calleeValueID identity.ContentID
 	loaderSeedID  identity.ContentID
 }
 
 type mountedCallOccurrenceRef struct {
-	moduleID  identity.ContentID
-	contextID identity.ContentID
+	moduleID identity.ContentID
+	callID   identity.ContentID
+}
+
+// mountedArtifactCallIndex is construction-only.  Project owns the mounted
+// application relation, while Artifact owns the reusable authored-call rows;
+// this index joins their scalar CallID values once per mount and dies before
+// Algebra is published.
+type mountedArtifactCallIndex struct {
+	artifact *programartifact.Artifact
+	byID     map[identity.ContentID]int
 }
 
 // New builds the boundary-only Call family. Production callers that need
 // executable body targets must use NewWithMountedArtifacts; New never scans
-// mounted Programs or TransformerInput.
+// mounted Programs or construction views.
 func New(source *link.Link) (*Algebra, bool) {
 	return NewWithMountedArtifacts(source, nil)
 }
@@ -118,6 +128,7 @@ func NewWithMountedArtifacts(source *link.Link, mounts []MountedArtifact) (*Alge
 	if len(mounts) != mountsView.Count() {
 		return nil, false
 	}
+	artifactCalls := make(map[identity.ContentID]mountedArtifactCallIndex, len(mounts))
 	for index := 0; index < mountsView.Count(); index++ {
 		shard, ok := mountsView.At(index)
 		moduleID, moduleOK := project.ModuleKey(shard)
@@ -131,6 +142,19 @@ func NewWithMountedArtifacts(source *link.Link, mounts []MountedArtifact) (*Alge
 			!programOK || !programID.Available() || artifactProgramID != programID {
 			return nil, false
 		}
+		callRows := make(map[identity.ContentID]int, artifact.CallCount())
+		for callIndex := 0; callIndex < artifact.CallCount(); callIndex++ {
+			call, callOK := artifact.CallAt(callIndex)
+			callID := call.ID()
+			if !callOK || !callID.Available() {
+				return nil, false
+			}
+			if _, duplicate := callRows[callID]; duplicate {
+				return nil, false
+			}
+			callRows[callID] = callIndex
+		}
+		artifactCalls[moduleID] = mountedArtifactCallIndex{artifact: artifact, byID: callRows}
 		algebra.mountModules = append(algebra.mountModules, moduleID)
 		algebra.mountModuleIndex[moduleID] = uint32(len(algebra.mountModules))
 		require, requireOK := boundary.Seeds().ScopedLoader(shard)
@@ -150,30 +174,74 @@ func NewWithMountedArtifacts(source *link.Link, mounts []MountedArtifact) (*Alge
 		if !ok {
 			return nil, false
 		}
-		applicationID, applicationOK := mounted.ApplicationID()
+		application, applicationOK := mounted.Application()
+		applicationID, moduleID, callID, identityOK := project.Applications().Calls().MountedIdentity(application)
+		issuedCallID := mounted.CallID()
 		shard, shardOK := mounted.Mount()
-		occurrence, occurrenceOK := mounted.Occurrence()
-		context := occurrence.ContextID()
-		callee, calleeOK := boundary.Calls().MountedCallCallee(mounted, occurrence)
+		callArtifact, callIndex, callIndexOK := mountedArtifactCallAt(artifactCalls, moduleID, callID)
+		call := programartifact.CallRow{}
+		callRowOK := false
+		if callIndexOK {
+			call, callRowOK = callArtifact.CallAt(callIndex)
+		}
+		calleeOperand, calleeOperandOK := mountedCalleeOperand(callArtifact, callIndex, call)
+		callee, calleeOK := boundary.Values().ForMountedSemantic(moduleID, calleeOperand.ValueID())
+		if !calleeOK {
+			callee, calleeOK = boundary.Values().ForMountedSpan(moduleID, calleeOperand.SpanID())
+		}
 		calleeValueID, calleeIDOK := boundary.Values().ID(callee)
 		loader, loaderOK := boundary.Seeds().ScopedLoader(shard)
 		loaderSeedID, loaderIDOK := boundary.Seeds().ID(loader)
 		_, keyOK := algebra.KeyForApplicationID(applicationID)
-		if !applicationOK || !shardOK || !occurrenceOK || !calleeOK || !calleeIDOK || !loaderOK || !loaderIDOK || !keyOK || !context.Available() || !calleeValueID.Available() || !loaderSeedID.Available() {
+		if !applicationOK || !identityOK || issuedCallID != callID || !shardOK || !callIndexOK || !callRowOK || !calleeOperandOK || !calleeOK || !calleeIDOK || !loaderOK || !loaderIDOK || !keyOK || !callID.Available() || !calleeValueID.Available() || !loaderSeedID.Available() {
 			return nil, false
 		}
-		moduleID, moduleIDOK := project.ModuleKey(shard)
-		if !moduleIDOK || !moduleID.Available() || algebra.mountedCallIndex[applicationID] != 0 || algebra.mountedCallOccurrenceIndex[mountedCallOccurrenceRef{moduleID: moduleID, contextID: context}] != 0 {
+		moduleIDFromShard, moduleIDOK := project.ModuleKey(shard)
+		if !moduleIDOK || !moduleIDFromShard.Available() || moduleIDFromShard != moduleID || algebra.mountedCallIndex[applicationID] != 0 || algebra.mountedCallOccurrenceIndex[mountedCallOccurrenceRef{moduleID: moduleID, callID: callID}] != 0 {
 			return nil, false
 		}
-		algebra.mountedCalls = append(algebra.mountedCalls, mountedCallRow{applicationID: applicationID, contextID: context, calleeValueID: calleeValueID, loaderSeedID: loaderSeedID, moduleID: moduleID})
+		algebra.mountedCalls = append(algebra.mountedCalls, mountedCallRow{applicationID: applicationID, callID: callID, calleeValueID: calleeValueID, loaderSeedID: loaderSeedID, moduleID: moduleID})
 		slot := uint32(len(algebra.mountedCalls))
 		algebra.mountedCallIndex[applicationID] = slot
-		algebra.mountedCallOccurrenceIndex[mountedCallOccurrenceRef{moduleID: moduleID, contextID: context}] = slot
+		algebra.mountedCallOccurrenceIndex[mountedCallOccurrenceRef{moduleID: moduleID, callID: callID}] = slot
 	}
 	algebra.bottom = Value{owner: algebra, known: true}
 	algebra.top = Value{owner: algebra, top: true}
 	return algebra, true
+}
+
+func mountedArtifactCallAt(index map[identity.ContentID]mountedArtifactCallIndex, moduleID, callID identity.ContentID) (*programartifact.Artifact, int, bool) {
+	if index == nil || !moduleID.Available() || !callID.Available() {
+		return nil, 0, false
+	}
+	mount, mountOK := index[moduleID]
+	if !mountOK || mount.artifact == nil || mount.byID == nil {
+		return nil, 0, false
+	}
+	callIndex, callOK := mount.byID[callID]
+	return mount.artifact, callIndex, callOK
+}
+
+func mountedCalleeOperand(artifact *programartifact.Artifact, callIndex int, call programartifact.CallRow) (programartifact.CallOperandRow, bool) {
+	if artifact == nil || !call.Available() || callIndex < 0 {
+		return programartifact.CallOperandRow{}, false
+	}
+	var callee programartifact.CallOperandRow
+	calleeOK := false
+	for operandIndex := 0; operandIndex < call.OperandCount(); operandIndex++ {
+		operand, operandOK := artifact.CallOperandFor(callIndex, operandIndex)
+		if !operandOK || operand.CallID() != call.ID() {
+			return programartifact.CallOperandRow{}, false
+		}
+		if operand.Kind() != programartifact.CallOperandCallee {
+			continue
+		}
+		if calleeOK {
+			return programartifact.CallOperandRow{}, false
+		}
+		callee, calleeOK = operand, true
+	}
+	return callee, calleeOK && callee.ID() == call.CalleeID() && callee.ValueID() == call.CalleeID()
 }
 
 func (algebra *Algebra) MountModuleCount() int {
@@ -505,7 +573,7 @@ func (algebra *Algebra) Equivalent(other *Algebra) bool {
 	}
 	for index := range algebra.mountedCalls {
 		left, right := algebra.mountedCalls[index], other.mountedCalls[index]
-		if left.applicationID != right.applicationID || left.contextID != right.contextID || left.moduleID != right.moduleID || left.calleeValueID != right.calleeValueID || left.loaderSeedID != right.loaderSeedID {
+		if left.applicationID != right.applicationID || left.callID != right.callID || left.moduleID != right.moduleID || left.calleeValueID != right.calleeValueID || left.loaderSeedID != right.loaderSeedID {
 			return false
 		}
 	}

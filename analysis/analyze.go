@@ -7,11 +7,11 @@ import (
 	"runtime"
 	"sync"
 
+	"github.com/wippyai/go-lua/analysis/domain/composite"
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/link"
-	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 const resultFormat uint64 = 9
@@ -49,8 +49,8 @@ type Plan struct {
 type compiledState struct {
 	artifacts            *compiledArtifactSet
 	resultReceipt        *artifactResultReceipt
-	receipt              grammar.CompilationReceipt
-	binding              *programBinding
+	receipt              composite.Compilation
+	binding              *composite.ProgramBinding
 	graph                *engine.ReceiptGraph
 	queryPlan            *artifactQueryPlan
 	sourceID             identity.ContentID
@@ -80,11 +80,11 @@ type Result struct {
 	// native is the one sealed post-convergence publication receipt. An
 	// available empty receipt is distinct from a missing producer.
 	native *nativePublicationReceipt
-	// placement remains nil until its typed post-convergence owner can issue a
-	// solved receipt. Nil is deliberately unavailable, not an empty placement
-	// result.
-	placement *placementResultReceipt
-	sealed    bool
+	// Result carries no placement plane. The placement domain declares no axis,
+	// rule role, or factor, so there is no owner able to issue a placement
+	// receipt; the plane lands with that factor (journal seq 2134), and the
+	// identity format below already reserves its frames.
+	sealed bool
 }
 
 type resultBody struct {
@@ -129,7 +129,7 @@ func CompileWithDiagnostics(source *link.Link) (*Plan, CompileStatus, AnalyzeDia
 		return nil, CompileInvalid, diagnostics
 	}
 	diagnostics.enter(AnalyzeDiagnosticPhaseItemIssuance)
-	receipt, receiptOK := grammar.Global()
+	receipt, receiptOK := composite.Global()
 	if !receiptOK || !receipt.Available() {
 		diagnostics.ItemIssuance = AnalyzeDiagnosticItemIssuanceFailureProgramSchema
 		diagnostics.failCurrentPhase()
@@ -173,7 +173,7 @@ func CompileWithDiagnostics(source *link.Link) (*Plan, CompileStatus, AnalyzeDia
 	diagnostics.ValueSeal = valueFailure
 	diagnostics.AllocationCatalog = allocationFailure
 	diagnostics.ReceiptStage = AnalyzeDiagnosticReceiptStageBinding
-	if bindingFailure != ProgramBindingFailureNone || binding == nil || binding.binding == nil || !binding.binding.Sealed() {
+	if bindingFailure != ProgramBindingFailureNone || binding == nil || binding.SchemaBinding() == nil || !binding.SchemaBinding().Sealed() {
 		state.release()
 		diagnostics.failCurrentPhase()
 		return nil, CompileUnsupported, diagnostics
@@ -293,7 +293,7 @@ func (plan *Plan) solveWithPolicy(ctx context.Context, options engine.SolveDiagn
 	}
 	diagnostics.enter(AnalyzeDiagnosticPhaseObservation)
 	diagnostics.enter(AnalyzeDiagnosticPhaseDetach)
-	projection, detached := detachArtifactResult(state.resultReceipt, binding.value.Schema(), policy, queryPlan, diagnosticObservations, graph, solver, stateResult, artifactResultProjectionReceipts{})
+	projection, detached := detachArtifactResult(state.resultReceipt, binding.ValueSchema(), policy, queryPlan, diagnosticObservations, graph, solver, stateResult, artifactResultProjectionReceipts{})
 	if !detached || projection == nil || projection.result == nil {
 		diagnostics.fail(AnalyzeDiagnosticReasonDetach)
 		return nil, nil, AnalyzeIncomplete, diagnostics
@@ -328,16 +328,16 @@ func (state *compiledState) ordinaryRuntimeSolver() (*engine.Solver, []artifactD
 // its result through ordinaryRuntimeSolver; diagnostic-policy solves invoke it
 // afresh because their observation inventory is explicitly flag-controlled.
 func (state *compiledState) buildRuntimeSolver(policy *DiagnosticPolicy) (*engine.Solver, *artifactQueryPlan, []artifactDiagnosticObservationReceipt, engine.ReceiptObservationAttachFailure, bool) {
-	if state == nil || state.binding == nil || state.binding.binding == nil || state.graph == nil || state.queryPlan == nil || state.artifacts == nil || state.resultReceipt == nil {
+	if state == nil || state.binding == nil || state.binding.SchemaBinding() == nil || state.graph == nil || state.queryPlan == nil || state.artifacts == nil || state.resultReceipt == nil {
 		return nil, nil, nil, engine.ReceiptObservationAttachFailureNone, false
 	}
 	binding, graph, queryPlan := state.binding, state.graph, state.queryPlan
-	compilation, compiled := engine.BeginReceiptTopologyCompilation(binding.binding, graph)
+	compilation, compiled := engine.BeginReceiptTopologyCompilation(binding.SchemaBinding(), graph)
 	if !compiled || compilation == nil {
 		return nil, nil, nil, engine.ReceiptObservationAttachFailureNone, false
 	}
 	valueIDs, heapIDs, _, witnessOK := linkBootstrapWitness(state, binding)
-	compiled = witnessOK && binding.attachLinkBootstrapMembers(compilation, graph, valueIDs, heapIDs) && binding.attachArtifactRuleMembers(compilation, graph, state.artifacts.mounts) && queryPlan.Attach(compilation, graph, binding)
+	compiled = witnessOK && attachLinkBootstrapMembers(binding, compilation, graph, valueIDs, heapIDs) && attachArtifactRuleMembers(binding, compilation, graph, state.artifacts.mounts) && queryPlan.Attach(compilation, graph, binding)
 	var observations []artifactDiagnosticObservationReceipt
 	var observationFailure engine.ReceiptObservationAttachFailure
 	if compiled {
@@ -405,7 +405,7 @@ func (plan *Plan) acquire() (*compiledState, bool) {
 	state.lifecycleMu.Lock()
 	defer state.lifecycleMu.Unlock()
 	if state.closing || state.closed || !state.admitted || state.artifacts == nil || !state.resultReceipt.valid() || !state.receipt.Available() ||
-		state.binding == nil || state.binding.binding == nil || !state.binding.binding.Sealed() || !state.sourceID.Available() {
+		state.binding == nil || state.binding.SchemaBinding() == nil || !state.binding.SchemaBinding().Sealed() || !state.sourceID.Available() {
 		return nil, false
 	}
 	state.leases++
@@ -619,9 +619,6 @@ func (result *Result) validPayload() bool {
 			}
 		}
 	}
-	if result.placement != nil && !result.placement.valid() {
-		return false
-	}
 	if result.native == nil || !result.native.valid() {
 		return false
 	}
@@ -629,11 +626,7 @@ func (result *Result) validPayload() bool {
 }
 
 func analysisResultID(source identity.ContentID, values []identity.ContentID, bodies []resultBody) (identity.ContentID, bool) {
-	return analysisResultIDWithProjections(source, values, bodies, nil)
-}
-
-func analysisResultIDWithProjections(source identity.ContentID, values []identity.ContentID, bodies []resultBody, placement *placementResultReceipt) (identity.ContentID, bool) {
-	return analysisResultIDWithPublication(source, values, bodies, nil, placement)
+	return analysisResultIDWithPublication(source, values, bodies, nil)
 }
 
 func writeResultFrame(hash interface{ Write([]byte) (int, error) }, value []byte) bool {
@@ -644,7 +637,7 @@ func writeResultFrame(hash interface{ Write([]byte) (int, error) }, value []byte
 	return firstErr == nil && secondErr == nil && first == len(size) && second == len(value)
 }
 
-func analysisResultIDWithPublication(source identity.ContentID, values []identity.ContentID, bodies []resultBody, native *nativePublicationReceipt, placement *placementResultReceipt) (identity.ContentID, bool) {
+func analysisResultIDWithPublication(source identity.ContentID, values []identity.ContentID, bodies []resultBody, native *nativePublicationReceipt) (identity.ContentID, bool) {
 	if !source.Available() || len(bodies) == 0 {
 		return identity.ContentID{}, false
 	}
@@ -710,16 +703,13 @@ func analysisResultIDWithPublication(source identity.ContentID, values []identit
 	if !write(count[:]) || nativeAvailable && !write(native.content[:]) {
 		return identity.ContentID{}, false
 	}
-	placementAvailable := placement != nil && placement.valid()
-	if placement != nil && !placementAvailable {
-		return identity.ContentID{}, false
-	}
-	if !write([]byte{boolByte(placementAvailable)}) {
-		return identity.ContentID{}, false
-	}
-	// The marker is unavailable-only today. Retain the count field in the
-	// Result format so a future solved typed placement receipt extends this
+	// The placement plane has no owner able to issue a receipt, so its
+	// availability flag and row count are written as absent. The frames stay in
+	// the Result format so a future solved typed placement receipt extends this
 	// identity without a parallel Result family.
+	if !write([]byte{boolByte(false)}) {
+		return identity.ContentID{}, false
+	}
 	binary.BigEndian.PutUint64(count[:], 0)
 	if !write(count[:]) {
 		return identity.ContentID{}, false

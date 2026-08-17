@@ -29,7 +29,7 @@ func buildNativeBranchPublication(
 	if !receipt.valid() || schema == nil || solver == nil || state == nil {
 		return nil, false
 	}
-	observed := make(map[artifactResultPoint]valueSummaryObservation, len(selected))
+	observed := make(map[artifactResultPoint]valuedomain.ValueSummaryObservation, len(selected))
 	for _, selectedObservation := range selected {
 		if !selectedObservation.point.mount.Available() || !selectedObservation.point.point.Available() {
 			return nil, false
@@ -337,7 +337,7 @@ func appendNativeStaticScalarRow(rows *[]nativePublicationRow, seen map[identity
 	return true
 }
 
-func validNativeValueSummary(observation valueSummaryObservation, width int) bool {
+func validNativeValueSummary(observation valuedomain.ValueSummaryObservation, width int) bool {
 	return observation.Valid && observation.Rows <= 1 && len(observation.Values) == width && len(observation.Present) == width
 }
 

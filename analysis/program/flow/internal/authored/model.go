@@ -182,14 +182,18 @@ type Call struct {
 }
 
 // Return, Break, Label, and Goto are direct authored control evidence.
-// Source owns their per-Body source order; Flow does not infer positions,
-// exits, or lexical targets beyond Goto's resolved Label identity.
+// Source owns their per-Body source order; Flow does not infer positions or
+// exits. A Break retains both its lexical Body owner and its canonical Loop
+// target so owner and target are never conflated by a query surface.
 type Return struct {
 	Owner  keyspace.Term
 	Values keyspace.Term
 }
 
-type Break struct{ Owner keyspace.Term }
+type Break struct {
+	Owner  keyspace.Term
+	Target keyspace.Term
+}
 type Label struct{ Owner keyspace.Term }
 
 type Goto struct {

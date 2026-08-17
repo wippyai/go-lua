@@ -180,11 +180,12 @@ func (s *structureState) emitBodyEntry(bodyTerm keyspace.Term) error {
 		parentRoot := s.bodyParentRoot[ordinal]
 		if keyspace.TermFamily(parentRoot) == keyspace.FamilyBody && !s.static(bodyTerm) {
 			var arcOK bool
-			if s.live(bodyTerm) {
-				entryArc, arcOK = s.markArc(bodyTerm, bodyTerm, 0, false)
-			} else {
-				_, arcOK = s.markLivenessArc(bodyTerm, bodyTerm, 0, false)
-			}
+			// The Body->Body witness is the parent's activation edge. The
+			// Body-entry route below begins at the child Body phase and continues
+			// to its first root, so it cannot carry that parent edge's Arc.
+			// Consume the witness as liveness-only here; structural recurrence is
+			// attached to the actual child-tail/parent continuation Arc instead.
+			_, arcOK = s.markLivenessArc(bodyTerm, bodyTerm, 0, false)
 			if !arcOK {
 				return errors.New("program/flow/causal: nested Body self Arc is unavailable")
 			}
@@ -675,9 +676,10 @@ func (s *structureState) emitRoot(owner keyspace.Term, cursor int, root keyspace
 	case keyspace.FamilyGoto:
 		return s.emitGotoRoot(owner, root)
 	case keyspace.FamilyBody:
-		// A direct nested Body's self Arc is claimed by emitBodyEntry alongside
-		// its Body -> first-root/Normal route. Branch/Loop child Arcs are owned
-		// by their guarded parent route; no self Edge is emitted here.
+		// A direct nested Body's self Arc is consumed as a liveness witness by
+		// emitBodyEntry; its Body -> first-root/Normal route has a distinct
+		// synthetic BodyEntry origin. Branch/Loop child Arcs are owned by their
+		// guarded parent route; no self Edge is emitted here.
 		return nil
 	case keyspace.FamilyBranch:
 		return s.emitBranch(owner, cursor, root, nextRaw)

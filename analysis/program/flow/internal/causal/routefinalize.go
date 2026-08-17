@@ -23,7 +23,7 @@ func (s *sealState) finalizeBinding(plan *routeplan.Plan, binding *recurrence.Bi
 	if err := s.validateArcPlanBijection(plan); err != nil {
 		return err
 	}
-	s.pub.result.boundRouteReceipts = make([]boundRouteReceipt, plan.Count())
+	s.pub.result.boundRouteRows = make([]boundRouteRow, plan.Count())
 	for index := range s.edges.edgeRows {
 		ordinal := s.edges.planOrdinals[index]
 		if !matchesPlanRoute(plan, ordinal, s.edges.edgeRows[index].From, s.edges.edgeRows[index].To, s.edges.edgeRows[index].Decision, s.edges.edgeRows[index].Truth, routeplan.ArmLocal) {
@@ -39,13 +39,13 @@ func (s *sealState) finalizeBinding(plan *routeplan.Plan, binding *recurrence.Bi
 		fromPath, fromOK := bound.FromPath()
 		toPath, toOK := bound.ToPath()
 		if !fromOK || !toOK {
-			return fmt.Errorf("program/flow/causal: local route %d lacks endpoint path receipts", index)
+			return fmt.Errorf("program/flow/causal: local route %d lacks endpoint path views", index)
 		}
-		diagnostic, diagnosticOK := s.routeReceiptDiagnostic(plan, ordinal)
+		diagnostic, diagnosticOK := s.routeDiagnostic(plan, ordinal)
 		if !diagnosticOK {
-			return fmt.Errorf("program/flow/causal: local route %d diagnostic phase receipt is unavailable", index)
+			return fmt.Errorf("program/flow/causal: local route %d diagnostic phase row is unavailable", index)
 		}
-		s.pub.result.boundRouteReceipts[ordinal] = boundRouteReceipt{fromPath: fromPath, toPath: toPath, diagnostic: diagnostic}
+		s.pub.result.boundRouteRows[ordinal] = boundRouteRow{fromPath: fromPath, toPath: toPath, diagnostic: diagnostic}
 	}
 	for index := range s.rows.boundaryRows {
 		row := &s.rows.boundaryRows[index]
@@ -76,13 +76,13 @@ func (s *sealState) finalizeBinding(plan *routeplan.Plan, binding *recurrence.Bi
 			fromPath, fromOK := bound.FromPath()
 			toPath, toOK := bound.ToPath()
 			if !fromOK || !toOK {
-				return fmt.Errorf("program/flow/causal: CallBoundary %d arm %d lacks endpoint path receipts", index, arm)
+				return fmt.Errorf("program/flow/causal: CallBoundary %d arm %d lacks endpoint path views", index, arm)
 			}
-			diagnostic, diagnosticOK := s.routeReceiptDiagnostic(plan, planned.ordinals[arm])
+			diagnostic, diagnosticOK := s.routeDiagnostic(plan, planned.ordinals[arm])
 			if !diagnosticOK {
-				return fmt.Errorf("program/flow/causal: CallBoundary %d arm %d diagnostic phase receipt is unavailable", index, arm)
+				return fmt.Errorf("program/flow/causal: CallBoundary %d arm %d diagnostic phase row is unavailable", index, arm)
 			}
-			s.pub.result.boundRouteReceipts[planned.ordinals[arm]] = boundRouteReceipt{fromPath: fromPath, toPath: toPath, diagnostic: diagnostic}
+			s.pub.result.boundRouteRows[planned.ordinals[arm]] = boundRouteRow{fromPath: fromPath, toPath: toPath, diagnostic: diagnostic}
 			head, first, past, hasMu := bound.Mu()
 			if !hasMu {
 				if head != 0 || first != 0 || past != 0 {
@@ -106,18 +106,18 @@ func (s *sealState) finalizeBinding(plan *routeplan.Plan, binding *recurrence.Bi
 	return nil
 }
 
-// routeReceiptDiagnostic classifies a route while the exact Plan and outcome
+// routeDiagnostic classifies a route while the exact Plan and outcome
 // owner are still live. It stores no Plan/term capability; publication clears
-// the resulting scratch after hierarchy receipt attachment succeeds.
-func (s *sealState) routeReceiptDiagnostic(plan *routeplan.Plan, ordinal int) (routeReceiptDiagnostic, bool) {
+// the resulting scratch after hierarchy row attachment succeeds.
+func (s *sealState) routeDiagnostic(plan *routeplan.Plan, ordinal int) (routeDiagnostic, bool) {
 	if s == nil || s.proof == nil || s.proof.outs == nil {
-		return routeReceiptDiagnostic{}, false
+		return routeDiagnostic{}, false
 	}
 	route, origin, ok := plan.At(ordinal)
 	if !ok {
-		return routeReceiptDiagnostic{}, false
+		return routeDiagnostic{}, false
 	}
-	diagnostic := routeReceiptDiagnostic{
+	diagnostic := routeDiagnostic{
 		fromFamily: wtoLogicalFamily(keyspace.TermFamily(route.From)),
 		toFamily:   wtoLogicalFamily(keyspace.TermFamily(route.To)),
 		fromPhase:  wtoPhaseCSR,
@@ -126,24 +126,20 @@ func (s *sealState) routeReceiptDiagnostic(plan *routeplan.Plan, ordinal int) (r
 	if keyspace.TermFamily(route.From) == keyspace.FamilyOutcome {
 		_, outcomeKind, _, outcomeOK := s.proof.outs.Get(route.From)
 		if !outcomeOK {
-			return routeReceiptDiagnostic{}, false
+			return routeDiagnostic{}, false
 		}
 		diagnostic.fromOutcome = wtoOutcome(outcomeKind)
 	}
 	if keyspace.TermFamily(route.To) == keyspace.FamilyOutcome {
 		_, outcomeKind, _, outcomeOK := s.proof.outs.Get(route.To)
 		if !outcomeOK {
-			return routeReceiptDiagnostic{}, false
+			return routeDiagnostic{}, false
 		}
 		diagnostic.toOutcome = wtoOutcome(outcomeKind)
 	}
-	endpoint, endpointOK := origin.EndpointPhaseReceipt()
+	from, to, endpointOK := origin.Endpoints()
 	if !endpointOK {
-		return routeReceiptDiagnostic{}, false
-	}
-	from, to, phasesOK := endpoint.Endpoints()
-	if !phasesOK {
-		return routeReceiptDiagnostic{}, false
+		return routeDiagnostic{}, false
 	}
 	if from.OutcomePhase() {
 		diagnostic.fromPhase = wtoPhaseOutcome

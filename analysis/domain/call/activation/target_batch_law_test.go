@@ -5,12 +5,11 @@ import (
 
 	calldomain "github.com/wippyai/go-lua/analysis/domain/call"
 	activation "github.com/wippyai/go-lua/analysis/domain/call/activation"
+	"github.com/wippyai/go-lua/analysis/domain/composite"
+	"github.com/wippyai/go-lua/analysis/library/lualib/targetprofile"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
-	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target/profile"
-	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 func TestTargetBatchCatalogRejectsBodyFromAnotherArtifact(t *testing.T) {
@@ -33,7 +32,7 @@ invoke(callee)
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, ok := grammar.Global()
+	receipt, ok := composite.Global()
 	if !ok {
 		t.Fatal("program schema receipt")
 	}
@@ -50,7 +49,7 @@ invoke(callee)
 	if !ok {
 		t.Fatal("module key")
 	}
-	artifact, failure := schemaadapter.CompileDetailed(mounted.TransformerInput(), receipt)
+	artifact, failure := composite.CompileArtifactDetailed(mounted, receipt)
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile artifact: %s", failure.Error())
 	}
@@ -85,7 +84,7 @@ invoke(callee)
 	if err != nil {
 		t.Fatal(err)
 	}
-	foreignArtifact, foreignFailure := schemaadapter.CompileDetailed(foreignProgram.TransformerInput(), receipt)
+	foreignArtifact, foreignFailure := composite.CompileArtifactDetailed(foreignProgram, receipt)
 	if foreignFailure.Available() || foreignArtifact == nil || !foreignArtifact.Available() {
 		t.Fatalf("compile foreign artifact: %s", foreignFailure.Error())
 	}

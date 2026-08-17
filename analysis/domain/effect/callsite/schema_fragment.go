@@ -6,6 +6,7 @@ import (
 	effectfactor "github.com/wippyai/go-lua/analysis/domain/effect/factor"
 	effectowner "github.com/wippyai/go-lua/analysis/domain/effect/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 type schemaFragment[O any] struct {
@@ -13,8 +14,8 @@ type schemaFragment[O any] struct {
 	input    engine.SchemaInput
 	callRead engine.SchemaReadSlot[calldomain.Value]
 	write    engine.SchemaWriteSlot[effectfactor.Value]
-	semantic engine.SemanticKey
-	evidence engine.SemanticKey
+	semantic identity.SemanticKey
+	evidence identity.SemanticKey
 }
 
 // SelectedSchemaFragment and OpaqueSchemaFragment are disjoint cold
@@ -42,7 +43,7 @@ func (fragment *BodySchemaFragment) RuleSlot() *engine.RuleSlot[effectfactor.Val
 	return fragment.core.slot
 }
 
-func DeclareSelectedSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evidence engine.SemanticKey, calls *callowner.SchemaFragment, effects *effectowner.SchemaFragment) (*SelectedSchemaFragment, bool) {
+func DeclareSelectedSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evidence identity.SemanticKey, calls *callowner.SchemaFragment, effects *effectowner.SchemaFragment) (*SelectedSchemaFragment, bool) {
 	core, ok := declareSchema[hotOperand](builder, semantic, operandFamily, evidence, calls, effects)
 	if !ok {
 		return nil, false
@@ -50,7 +51,7 @@ func DeclareSelectedSchema(builder *engine.SchemaBuilder, semantic, operandFamil
 	return &SelectedSchemaFragment{core: core}, true
 }
 
-func DeclareOpaqueSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evidence engine.SemanticKey, calls *callowner.SchemaFragment, effects *effectowner.SchemaFragment) (*OpaqueSchemaFragment, bool) {
+func DeclareOpaqueSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evidence identity.SemanticKey, calls *callowner.SchemaFragment, effects *effectowner.SchemaFragment) (*OpaqueSchemaFragment, bool) {
 	core, ok := declareSchema[hotOperand](builder, semantic, operandFamily, evidence, calls, effects)
 	if !ok {
 		return nil, false
@@ -58,8 +59,8 @@ func DeclareOpaqueSchema(builder *engine.SchemaBuilder, semantic, operandFamily,
 	return &OpaqueSchemaFragment{core: core}, true
 }
 
-func declareSchema[O any](builder *engine.SchemaBuilder, semantic, operandFamily, evidence engine.SemanticKey, calls *callowner.SchemaFragment, effects *effectowner.SchemaFragment) (*schemaFragment[O], bool) {
-	if builder == nil || calls == nil || effects == nil || !engine.DistinctKeys(semantic, operandFamily, evidence) {
+func declareSchema[O any](builder *engine.SchemaBuilder, semantic, operandFamily, evidence identity.SemanticKey, calls *callowner.SchemaFragment, effects *effectowner.SchemaFragment) (*schemaFragment[O], bool) {
+	if builder == nil || calls == nil || effects == nil || !identity.DistinctKeys(semantic, operandFamily, evidence) {
 		return nil, false
 	}
 	slot, ok := engine.NewRuleSlot[effectfactor.Value, O](builder, engine.SchemaRuleSpec[effectfactor.Value]{
@@ -93,7 +94,7 @@ type BodySchemaFragment struct {
 
 // DeclareBodySchema records BodyCall's exact Call-read, dependent selected
 // Effect-read, and exact Effect-write incidence.
-func DeclareBodySchema(builder *engine.SchemaBuilder, semantic, operandFamily, evidence engine.SemanticKey, calls *callowner.SchemaFragment, effects *effectowner.SchemaFragment) (*BodySchemaFragment, bool) {
+func DeclareBodySchema(builder *engine.SchemaBuilder, semantic, operandFamily, evidence identity.SemanticKey, calls *callowner.SchemaFragment, effects *effectowner.SchemaFragment) (*BodySchemaFragment, bool) {
 	core, ok := declareSchema[hotBodyOperand](builder, semantic, operandFamily, evidence, calls, effects)
 	if !ok {
 		return nil, false

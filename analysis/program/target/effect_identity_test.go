@@ -1,9 +1,9 @@
 package target
 
 import (
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	"github.com/wippyai/go-lua/analysis/identity"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
@@ -12,7 +12,7 @@ func effectIdentityOperation(name string, effects RowSpec) OperationSpec {
 	return OperationSpec{
 		Bindings:   []BindingSpec{{Namespace: BindingBuiltin, Member: []string{name}}},
 		RowFormals: 1,
-		Input:      ValuesSpec{Fixed: []typ.Type{typ.Any, typ.String}, Tail: ValuesClosed},
+		Input:      ValuesSpec{Fixed: []schematype.Type{testAny, testString}, Tail: ValuesClosed},
 		Outcomes:   []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesClosed}}},
 		Effects:    effects,
 	}
@@ -30,7 +30,7 @@ func effectIdentityCallbackOperation(name string, callbackEffects, operationEffe
 	return OperationSpec{
 		Bindings:   []BindingSpec{{Namespace: BindingBuiltin, Member: []string{name}}},
 		RowFormals: 1,
-		Input:      ValuesSpec{Fixed: []typ.Type{typ.Any, typ.String}, Tail: ValuesClosed},
+		Input:      ValuesSpec{Fixed: []schematype.Type{testAny, testString}, Tail: ValuesClosed},
 		Callbacks: []CallbackSpec{{
 			Function: InputSource{Kind: InputSourceValueFormal}, Admission: OrdinaryCallable,
 			Arguments: empty, Outcomes: terminals, Lifecycle: CallbackRetainedOptionalOnce,
@@ -118,7 +118,7 @@ func TestEffectIdentityExcludesUnrelatedRowsButTracksABI(t *testing.T) {
 	}
 
 	outcomeMutation := effectIdentityOperation("effect-owner", baseEffects)
-	outcomeMutation.Outcomes = []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{typ.Integer}, Tail: ValuesClosed}}}
+	outcomeMutation.Outcomes = []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testInteger}, Tail: ValuesClosed}}}
 	withOutcome, outcomeOwner, _ := firstEffectIdentityContract(t, effectIdentitySpec(outcomeMutation), "effect-owner")
 	if got, ok := withOutcome.EffectOperationID(outcomeOwner); !ok || got != baseOperation {
 		t.Fatal("unrelated owner outcome changed EffectOperationID")
@@ -128,7 +128,7 @@ func TestEffectIdentityExcludesUnrelatedRowsButTracksABI(t *testing.T) {
 	}
 
 	abiMutation := effectIdentityOperation("effect-owner", baseEffects)
-	abiMutation.Input.Fixed[0] = typ.Integer
+	abiMutation.Input.Fixed[0] = testInteger
 	withABI, abiOwner, _ := firstEffectIdentityContract(t, effectIdentitySpec(abiMutation), "effect-owner")
 	if got, ok := withABI.EffectOperationID(abiOwner); !ok || got == baseOperation {
 		t.Fatal("input ABI mutation did not change EffectOperationID")
@@ -262,7 +262,7 @@ func TestEffectIdentityCallbackEmptyFamilyIgnoresOwnerABI(t *testing.T) {
 		t.Fatal("empty callback effect family unavailable")
 	}
 	changedOperation := effectIdentityCallbackOperation("effect-callback-empty", empty, empty)
-	changedOperation.Input.Fixed[0] = typ.Integer
+	changedOperation.Input.Fixed[0] = testInteger
 	changed, _, changedCallback := firstEffectIdentityContract(t, effectIdentitySpec(changedOperation), "effect-callback-empty")
 	if got, ok := changed.CallbackEffectRowFamilyID(changedCallback); !ok || got != baseFamily {
 		t.Fatal("empty callback family churned with owner ABI")
@@ -270,12 +270,13 @@ func TestEffectIdentityCallbackEmptyFamilyIgnoresOwnerABI(t *testing.T) {
 }
 
 func TestEffectIdentityTracksFormalAndOpenABI(t *testing.T) {
-	formalSpec := func(constraint typ.Type) Spec {
-		formal := typ.NewTypeParam("T", constraint)
+	formalSpec := func(constraint schematype.Type) Spec {
+		formal := testNewTypeParam("T", constraint)
+		declarations, formals := testOperationTypes(formal)
 		return Spec{Operations: []OperationSpec{{
 			Bindings:    []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"effect-formal-abi"}}},
-			TypeFormals: []*typ.TypeParam{formal},
-			Input:       ValuesSpec{Fixed: []typ.Type{formal}, Tail: ValuesClosed},
+			TypeFormals: formals,
+			Input:       ValuesSpec{Fixed: []schematype.Type{declarations[0]}, Tail: ValuesClosed},
 			Outcomes:    []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesClosed}}},
 			Effects:     RowSpec{Tail: RowClosed},
 		}}}
@@ -288,20 +289,20 @@ func TestEffectIdentityTracksFormalAndOpenABI(t *testing.T) {
 		}
 		return contract.EffectOperationID(op)
 	}
-	formalNumber, ok := formalID(formalSpec(typ.Number))
+	formalNumber, ok := formalID(formalSpec(testNumber))
 	if !ok {
 		t.Fatal("number formal ABI identity unavailable")
 	}
-	formalString, ok := formalID(formalSpec(typ.String))
+	formalString, ok := formalID(formalSpec(testString))
 	if !ok || formalString == formalNumber {
 		t.Fatal("type formal constraint mutation did not change EffectOperationID")
 	}
 
-	valuesSpec := func(tailType typ.Type) Spec {
+	valuesSpec := func(tailType schematype.Type) Spec {
 		return Spec{Operations: []OperationSpec{{
 			Bindings:   []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"effect-values-abi"}}},
 			ValuesVars: 1,
-			Input:      ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesVariable, Var: 0, TailType: tailType},
+			Input:      ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesVariable, Var: 0, TailType: tailType},
 			Outcomes:   []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesClosed}}},
 			Effects:    RowSpec{Tail: RowClosed},
 		}}}
@@ -314,11 +315,11 @@ func TestEffectIdentityTracksFormalAndOpenABI(t *testing.T) {
 		}
 		return contract.EffectOperationID(op)
 	}
-	valuesString, ok := valuesID(valuesSpec(typ.String))
+	valuesString, ok := valuesID(valuesSpec(testString))
 	if !ok {
 		t.Fatal("string Values ABI identity unavailable")
 	}
-	valuesInteger, ok := valuesID(valuesSpec(typ.Integer))
+	valuesInteger, ok := valuesID(valuesSpec(testInteger))
 	if !ok || valuesInteger == valuesString {
 		t.Fatal("ValuesVar ABI mutation did not change EffectOperationID")
 	}

@@ -162,7 +162,7 @@ func (c *Collector) Publish() (*program.Program, error) {
 // view over Collector-owned rows for the immediate synchronous source.Build
 // call. Publish has already closed the serial Collector construction cursor;
 // this view is neither published nor safe for concurrent mutation.
-func materializeSourceInput(c *Collector) (source.Input, Term, error) {
+func materializeSourceInput(c *Collector) (source.Input, keyspace.Term, error) {
 	if c == nil {
 		return source.Input{}, 0, errors.New("program/lower/collector: nil collector")
 	}

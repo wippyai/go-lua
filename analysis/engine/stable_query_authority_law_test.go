@@ -186,7 +186,7 @@ func newReceiptQueryMatrixFixture(t testing.TB, count int, order, declarationOrd
 	operands := make([]equation.Operand, count)
 	operandValues := make([]ruleUnit, count)
 	for index := 0; index < count; index++ {
-		site, siteOK := assembly.builder.admitSite(coldKey(951_100+index).compositionKey(), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent)
+		site, siteOK := assembly.builder.admitSite(compositionKeyOf(coldKey(951_100+index)), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent)
 		occurrence, occurrenceOK := assembly.builder.admitAt(site)
 		value := ruleUnitForSemantic(coldKey(955_000 + index))
 		entity, entityOK := operandEntityForContent(value.content)

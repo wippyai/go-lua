@@ -159,7 +159,7 @@ func TestBootLedgerRejectsMalformedRows(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			spec := completeBootSpec("Lua 5.3", InitialMutable)
 			test.edit(&spec)
-			if _, err := Seal(&spec); err == nil {
+			if _, err := testSeal(&spec); err == nil {
 				t.Fatal("Seal accepted malformed boot ledger")
 			}
 		})
@@ -189,7 +189,7 @@ func TestBootLedgerRequiresGlobalSelfAlias(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			spec := completeBootSpec("Lua 5.3", InitialMutable)
 			test.edit(&spec)
-			if _, err := Seal(&spec); err == nil {
+			if _, err := testSeal(&spec); err == nil {
 				t.Fatal("Seal accepted an invalid _G global self-alias")
 			}
 		})
@@ -277,7 +277,7 @@ func TestInitialMetatableAttachmentIsTypedCanonicalBootstrapData(t *testing.T) {
 		malformed := completeBootSpec("Lua 5.3", InitialMutable)
 		malformed.InitialMetatables = []InitialMetatableAttachmentSpec{{Base: InitialValueString, Metatable: "StringMetatableRoot"}}
 		edit(&malformed)
-		if _, err := Seal(&malformed); err == nil {
+		if _, err := testSeal(&malformed); err == nil {
 			t.Fatal("Seal accepted malformed initial metatable attachment")
 		}
 	}
@@ -378,7 +378,7 @@ func TestBootLedgerOptionalAsAWholeButNeverPartial(t *testing.T) {
 		t.Fatal("empty complete boot ledger lacks ContentID")
 	}
 	partial := Spec{Operations: []OperationSpec{bootOperation("plain")}, InitialEntries: []InitialEntrySpec{{Root: "missing", Key: bootLiteralKey("key"), Value: InitialValueSpec{Kind: InitialValueNil}, Mutability: InitialFrozen}}}
-	if _, err := Seal(&partial); err == nil {
+	if _, err := testSeal(&partial); err == nil {
 		t.Fatal("partial boot ledger sealed without roots")
 	}
 }

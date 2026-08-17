@@ -5,13 +5,17 @@ import (
 	"math"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/analysis/lua/semantics/exactkey"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
+	"github.com/wippyai/go-lua/analysis/program/flow/internal/binding"
+	"github.com/wippyai/go-lua/analysis/program/flow/internal/body"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/candidates"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	flowrole "github.com/wippyai/go-lua/analysis/program/flow/role"
+	"github.com/wippyai/go-lua/analysis/program/imports"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/program/scalar"
 	"github.com/wippyai/go-lua/analysis/program/source"
+	"github.com/wippyai/go-lua/analysis/program/static"
 )
 
 // Seal derives Flow's normalized table/access geometry.  Source and Flow are
@@ -22,9 +26,13 @@ func Seal(
 	sourceView source.View,
 	flow authored.View,
 	candidateResult *candidates.Result,
-	staticID identity.ContentID,
-	moduleID identity.ContentID,
+	bodies *body.Result,
+	bindings binding.Result,
+	staticView static.View,
+	moduleView imports.View,
 ) (*Result, error) {
+	staticID := staticView.ContentID()
+	moduleID := moduleView.ContentID()
 	sourceID := sourceView.Identity().ContentID()
 	flowID := flow.Cold().ContentID()
 	if !sourceID.Available() || !flowID.Available() || !staticID.Available() || !moduleID.Available() {
@@ -71,6 +79,17 @@ func Seal(
 	if err := deriveIndexAccesses(sourceView, flow, candidateResult, result, counts.writes, counts.assigns); err != nil {
 		return nil, err
 	}
+	selectors, err := sealSelectors(sourceView, flow, bodies, bindings, staticView, moduleView)
+	if err != nil {
+		return nil, err
+	}
+	result.selectorRows = selectors.selectorRows
+	result.selectorRowReads = selectors.selectorRowReads
+	result.selectorReadSlots = selectors.selectorReadSlots
+	result.publicationSlots = selectors.publicationSlots
+	result.publicationStart = selectors.publicationStart
+	result.publicationOwners = selectors.publicationOwners
+	result.directCalls = selectors.directCalls
 	return result, nil
 }
 
@@ -321,13 +340,13 @@ func normalizedFieldKey(
 		if !literalOK {
 			return 0, false, errors.New("program/flow/accessgeometry: FieldExact source is malformed")
 		}
-		// Nil and NaN have no storable key. NormalizeExactKey is the Source
-		// authority for every other exact literal; this pass never interns or
-		// compares literals itself.
+		// Nil and NaN have no storable key. Program scalar is the authority for
+		// every other exact literal; this pass never interns or compares literals
+		// itself.
 		if keyspace.TermFamily(sourceTerm) == keyspace.FamilyNil {
 			return 0, true, nil
 		}
-		normalized, normalOK := exactkey.Normalize(literal)
+		normalized, normalOK := scalar.Normalize(literal)
 		if !normalOK {
 			return 0, true, nil
 		}

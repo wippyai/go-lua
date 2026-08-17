@@ -1,11 +1,12 @@
 package engine
 
 import (
+	"sync"
+
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	coldcomposition "github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/identity"
-	"sync"
 )
 
 // CompositionID is the canonical identity of a sealed Schema. It is retained

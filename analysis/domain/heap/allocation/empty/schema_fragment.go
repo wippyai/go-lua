@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/heap/allocation/internal/source"
 	heapowner "github.com/wippyai/go-lua/analysis/domain/heap/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // SchemaFragment is Heap-empty's callback-free transformed Rule surface.
@@ -14,9 +15,9 @@ type SchemaFragment struct {
 	read      engine.SchemaReadSlot[heapdomain.Value]
 	carry     engine.SchemaCarrySlot[heapdomain.Value]
 	write     engine.SchemaWriteSlot[heapdomain.Value]
-	semantic  engine.SemanticKey
-	transform engine.SemanticKey
-	evidence  engine.SemanticKey
+	semantic  identity.SemanticKey
+	transform identity.SemanticKey
+	evidence  identity.SemanticKey
 }
 
 func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[heapdomain.Value, source.Root] {
@@ -25,8 +26,8 @@ func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[heapdomain.Value, so
 
 // DeclareSchema records Heap empty allocation's one-input transformed-carry
 // Rule with one exact Heap read and write.
-func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, transform, evidence engine.SemanticKey, owner *heapowner.SchemaFragment) (*SchemaFragment, bool) {
-	if builder == nil || owner == nil || !engine.DistinctKeys(semantic, operandFamily, transform, evidence) {
+func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, transform, evidence identity.SemanticKey, owner *heapowner.SchemaFragment) (*SchemaFragment, bool) {
+	if builder == nil || owner == nil || !identity.DistinctKeys(semantic, operandFamily, transform, evidence) {
 		return nil, false
 	}
 	slot, ok := engine.NewRuleSlot[heapdomain.Value, source.Root](builder, engine.SchemaRuleSpec[heapdomain.Value]{

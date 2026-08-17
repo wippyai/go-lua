@@ -12,6 +12,13 @@ import (
 // authored relation slots, never Term ordinals or pool offsets.
 const structuralRoleImportCall uint32 = 20
 
+// structuralRoleStaticScope labels a Static-owned expression endpoint which
+// is forwarded to its lexical Body.  Unlike ordinary expression edges, this
+// boundary has no Flow row describing a child slot; retaining the owner-issued
+// role here lets downstream structural paths anchor the positionless subtree
+// without manufacturing a Source position.
+const structuralRoleStaticScope uint32 = 21
+
 const (
 	staticRoleOptional uint32 = iota + 32
 	staticRoleUnion
@@ -395,6 +402,40 @@ func sealStaticStructuralRoles(result *Result, view static.View, moduleView impo
 		if !ok || !rowOK || set(term, target, staticRolePublicationTarget, 1) != nil || pair == ^uint32(0) || set(assign, term, staticRolePublicationAssign, pair+1) != nil {
 			return errors.New("program/flow/containment: invalid Publication semantic role")
 		}
+	}
+	return nil
+}
+
+// sealEmittedStructuralRoles publishes the semantic labels carried by owner
+// emissions after the containment kernel has accepted their canonical Parent
+// rows.  The role column already belongs to Result; this pass only fills the
+// labels for edges whose owner has supplied one (currently Static scope
+// forwarding). It retains no alternate relation or lookup table.
+func sealEmittedStructuralRoles(result *Result, edges []kernelEdge) error {
+	if result == nil || !result.available() {
+		return errors.New("program/flow/containment: semantic role owner is unavailable")
+	}
+	for _, edge := range edges {
+		if edge.role == 0 && edge.rank == 0 {
+			continue
+		}
+		if edge.role == 0 || edge.rank == 0 {
+			return errors.New("program/flow/containment: incomplete emitted semantic role")
+		}
+		parent, ok := result.Parent(edge.child)
+		if !ok || parent != edge.parent {
+			return errors.New("program/flow/containment: emitted semantic role disagrees with Parent")
+		}
+		family, ordinal, ok := result.ordinal(edge.child)
+		if !ok || uint64(ordinal) > uint64(len(result.roles[family])) {
+			return errors.New("program/flow/containment: emitted semantic role child is unavailable")
+		}
+		packed := uint64(edge.role)<<32 | uint64(edge.rank)
+		slot := &result.roles[family][ordinal-1]
+		if *slot != 0 && *slot != packed {
+			return errors.New("program/flow/containment: conflicting emitted semantic roles")
+		}
+		*slot = packed
 	}
 	return nil
 }

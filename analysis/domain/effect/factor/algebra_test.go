@@ -3,21 +3,29 @@ package factor_test
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/composite"
 	effectfactor "github.com/wippyai/go-lua/analysis/domain/effect/factor"
 	"github.com/wippyai/go-lua/analysis/domain/pack"
 	staticdomain "github.com/wippyai/go-lua/analysis/domain/static"
 	"github.com/wippyai/go-lua/analysis/domain/type/authority"
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
+	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
-	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
-	"github.com/wippyai/go-lua/analysis/schema/grammar"
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 )
+
+func portableAnyType() schematype.Type {
+	value, ok := schematype.NewPrimitive(schematype.PrimitiveAny)
+	if !ok {
+		panic("portable any type")
+	}
+	return value
+}
 
 type effectFactorFixture struct {
 	contract    *target.Contract
@@ -47,7 +55,7 @@ func newEffectFactorFixture(t testing.TB, spec target.Spec, source string) effec
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, ok := grammar.Global()
+	receipt, ok := composite.Global()
 	if !ok {
 		t.Fatal("program schema receipt")
 	}
@@ -65,7 +73,7 @@ func newEffectFactorFixture(t testing.TB, spec target.Spec, source string) effec
 		if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 			t.Fatalf("effect fixture mount %d", index)
 		}
-		artifact, failure := schemaadapter.CompileDetailed(program.TransformerInput(), receipt)
+		artifact, failure := composite.CompileArtifactDetailed(program, receipt)
 		if failure.Available() || artifact == nil || !artifact.Available() {
 			t.Fatalf("compile effect artifact %d: %s", index, failure.Error())
 		}
@@ -118,7 +126,7 @@ func effectFactorSpec(rowTail target.RowTail, callback bool) target.Spec {
 	args := target.EffectSpec{Target: 2}
 	owner := target.OperationSpec{
 		Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"sink"}}},
-		Input:    target.ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: target.ValuesClosed},
+		Input:    target.ValuesSpec{Fixed: []schematype.Type{portableAnyType()}, Tail: target.ValuesClosed},
 		Outcomes: []target.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}},
 		Effects:  target.RowSpec{Occurrences: []target.EffectSpec{args}, Tail: rowTail},
 	}
@@ -141,7 +149,7 @@ func effectFactorSpec(rowTail target.RowTail, callback bool) target.Spec {
 		Outcomes: []target.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}},
 		Effects:  target.RowSpec{Tail: target.RowClosed},
 	}
-	return target.Spec{Operations: []target.OperationSpec{owner, targetOperation}}
+	return target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []target.OperationSpec{owner, targetOperation}}
 }
 
 func effectKnownAtom(t testing.TB, fixture effectFactorFixture) effectfactor.Atom {
@@ -298,7 +306,7 @@ func publicationEffectFactorSpec(publicationKind target.PublicationEffectKind, c
 	effect := target.EffectSpec{Target: 2, ValueArgs: []target.ValueFormal{1, 0}, Publication: publication}
 	owner := target.OperationSpec{
 		Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"sink"}}},
-		Input:    target.ValuesSpec{Fixed: []typ.Type{typ.Any, typ.Any}, Tail: target.ValuesClosed},
+		Input:    target.ValuesSpec{Fixed: []schematype.Type{portableAnyType(), portableAnyType()}, Tail: target.ValuesClosed},
 		Outcomes: []target.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}},
 		Effects:  target.RowSpec{Occurrences: []target.EffectSpec{effect, {Target: 2, ValueArgs: []target.ValueFormal{1, 0}}}, Tail: target.RowClosed},
 	}
@@ -313,11 +321,11 @@ func publicationEffectFactorSpec(publicationKind target.PublicationEffectKind, c
 	}
 	targetOperation := target.OperationSpec{
 		Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"effect-target"}}},
-		Input:    target.ValuesSpec{Fixed: []typ.Type{typ.Any, typ.Any}, Tail: target.ValuesClosed},
+		Input:    target.ValuesSpec{Fixed: []schematype.Type{portableAnyType(), portableAnyType()}, Tail: target.ValuesClosed},
 		Outcomes: []target.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}},
 		Effects:  target.RowSpec{Tail: target.RowClosed},
 	}
-	return target.Spec{Operations: []target.OperationSpec{owner, targetOperation}}
+	return target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []target.OperationSpec{owner, targetOperation}}
 }
 
 func publicationEffectIndexes(t testing.TB, contract *target.Contract, owner target.Operation) (publication, generic int) {

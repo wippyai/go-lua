@@ -209,17 +209,20 @@ func sealBranchComparisons(result *Result, branches branchReader, causalResult *
 		if branchOwner != row.operation.Owner || whenTrue == whenFalse {
 			return errors.New("program/flow/binaryprimitive: Branch owner or arms disagree with Binary")
 		}
-		if binaryCategoryFor(row.operation.Op) != kindBinaryEquality && binaryCategoryFor(row.operation.Op) != kindBinaryOrder {
-			return errors.New("program/flow/binaryprimitive: non-comparison Binary used as Branch condition")
-		}
 		comparison := Comparison{
 			Branch: branch, TrueBody: whenTrue, FalseBody: whenFalse,
 			Left: row.operation.Left, Right: row.operation.Right,
 		}
-		normalizeComparison(row.operation.Op, &comparison)
+		// Every Binary Branch condition owns the exact two causal decision arms,
+		// comparison or not. Only equality and order state an operand relation,
+		// so a truth-tested Binary keeps its arms and seals no refinement.
 		if err := validateCausalComparison(causalResult, row.source, comparison); err != nil {
 			return err
 		}
+		if binaryCategoryFor(row.operation.Op) != kindBinaryEquality && binaryCategoryFor(row.operation.Op) != kindBinaryOrder {
+			continue
+		}
+		normalizeComparison(row.operation.Op, &comparison)
 		row.comparison = comparison
 		row.hasCompare = true
 	}
@@ -252,13 +255,13 @@ func validateCausalComparison(result *causal.Result, binary keyspace.Term, compa
 
 func validateCausalSuccessorArms(successors causalSuccessorReader, binary keyspace.Term, comparison Comparison) error {
 	if successors.Count(binary) != 2 {
-		return errors.New("program/flow/binaryprimitive: comparison causal arm count is not exactly two")
+		return errors.New("program/flow/binaryprimitive: Branch condition causal arm count is not exactly two")
 	}
 	seenTrue, seenFalse := false, false
 	for index := 0; index < 2; index++ {
 		successor, ok := successors.At(binary, index)
 		if !ok || !successor.IsLocal() || successor.From != binary || successor.Decision != comparison.Branch {
-			return errors.New("program/flow/binaryprimitive: comparison causal arm is malformed")
+			return errors.New("program/flow/binaryprimitive: Branch condition causal arm is malformed")
 		}
 		switch {
 		case successor.Truth && successor.To == comparison.TrueBody && !seenTrue:
@@ -266,11 +269,11 @@ func validateCausalSuccessorArms(successors causalSuccessorReader, binary keyspa
 		case !successor.Truth && successor.To == comparison.FalseBody && !seenFalse:
 			seenFalse = true
 		default:
-			return errors.New("program/flow/binaryprimitive: comparison causal arm does not match Branch")
+			return errors.New("program/flow/binaryprimitive: Branch condition causal arm does not match Branch")
 		}
 	}
 	if !seenTrue || !seenFalse {
-		return errors.New("program/flow/binaryprimitive: comparison causal arms are incomplete")
+		return errors.New("program/flow/binaryprimitive: Branch condition causal arms are incomplete")
 	}
 	return nil
 }

@@ -9,7 +9,7 @@ import "testing"
 // no work budget and the bounded runner remains the only resource authority.
 func analyzeCanonicalRealFixture(t *testing.T, name string) {
 	t.Helper()
-	run := corpusHarnessFixtureRun(t, name, corpusHarnessReceiptMode())
+	run := corpusHarnessFixtureRun(t, name, corpusHarnessDiagnosticMode())
 	t.Logf("canonical real fixture %s: seal=%s compile=%s solve=%s total=%s", name, run.cost.seal, run.cost.compile, run.cost.solve, run.cost.total())
 }
 

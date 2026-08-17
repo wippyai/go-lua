@@ -26,6 +26,10 @@ type accessGeometryFixture struct {
 	sourceView source.View
 	flowView   authored.View
 	candidates *candidates.Result
+	bodies     *flowbody.Result
+	bindings   binding.Result
+	staticView static.View
+	moduleView imports.View
 	staticID   identity.ContentID
 	moduleID   identity.ContentID
 
@@ -155,6 +159,10 @@ func openAccessGeometryFixtureNamed(t *testing.T, name string) *accessGeometryFi
 		sourceView:  sourceView,
 		flowView:    flowView,
 		candidates:  candidateResult,
+		bodies:      bodies,
+		bindings:    bindingResult,
+		staticView:  staticView,
+		moduleView:  moduleView,
 		staticID:    staticID,
 		moduleID:    moduleID,
 		sourceFinal: source.Finalizer{},
@@ -368,7 +376,7 @@ func accessFlowInput(body keyspace.Term) authored.Input {
 
 func TestAccessGeometrySealHonestFixture(t *testing.T) {
 	fixture := openAccessGeometryFixture(t)
-	result, err := Seal(fixture.sourceView, fixture.flowView, fixture.candidates, fixture.staticID, fixture.moduleID)
+	result, err := Seal(fixture.sourceView, fixture.flowView, fixture.candidates, fixture.bodies, fixture.bindings, fixture.staticView, fixture.moduleView)
 	if err != nil {
 		t.Fatalf("accessgeometry.Seal: %v", err)
 	}
@@ -560,27 +568,24 @@ func TestAccessGeometrySealHonestFixture(t *testing.T) {
 
 func TestAccessGeometrySealRejectsUnavailableForeignAndMalformedOwners(t *testing.T) {
 	fixture := openAccessGeometryFixture(t)
-	if _, err := Seal(source.View{}, fixture.flowView, fixture.candidates, fixture.staticID, fixture.moduleID); err == nil {
+	if _, err := Seal(source.View{}, fixture.flowView, fixture.candidates, fixture.bodies, fixture.bindings, fixture.staticView, fixture.moduleView); err == nil {
 		t.Fatal("Seal accepted an unavailable Source owner")
 	}
-	if _, err := Seal(fixture.sourceView, authored.View{}, fixture.candidates, fixture.staticID, fixture.moduleID); err == nil {
+	if _, err := Seal(fixture.sourceView, authored.View{}, fixture.candidates, fixture.bodies, fixture.bindings, fixture.staticView, fixture.moduleView); err == nil {
 		t.Fatal("Seal accepted an unavailable authored Flow owner")
 	}
-	if _, err := Seal(fixture.sourceView, fixture.flowView, nil, fixture.staticID, fixture.moduleID); err == nil {
+	if _, err := Seal(fixture.sourceView, fixture.flowView, nil, fixture.bodies, fixture.bindings, fixture.staticView, fixture.moduleView); err == nil {
 		t.Fatal("Seal accepted a nil candidate provenance fence")
 	}
 	foreign := openAccessGeometryFixtureNamed(t, "foreign-access-geometry.lua")
-	if _, err := Seal(fixture.sourceView, fixture.flowView, foreign.candidates, fixture.staticID, fixture.moduleID); err == nil {
+	if _, err := Seal(fixture.sourceView, fixture.flowView, foreign.candidates, fixture.bodies, fixture.bindings, fixture.staticView, fixture.moduleView); err == nil {
 		t.Fatal("Seal accepted a candidate Result from a foreign Source/Flow")
 	}
-	if _, err := Seal(fixture.sourceView, fixture.flowView, fixture.candidates, accessGeometryTestID(99), fixture.moduleID); err == nil {
+	if _, err := Seal(fixture.sourceView, fixture.flowView, fixture.candidates, fixture.bodies, fixture.bindings, foreign.staticView, fixture.moduleView); err == nil {
 		t.Fatal("Seal accepted a foreign Static identity")
 	}
-	if _, err := Seal(fixture.sourceView, fixture.flowView, fixture.candidates, fixture.staticID, accessGeometryTestID(98)); err == nil {
-		t.Fatal("Seal accepted a foreign Module identity")
-	}
 
-	sealed, err := Seal(fixture.sourceView, fixture.flowView, fixture.candidates, fixture.staticID, fixture.moduleID)
+	sealed, err := Seal(fixture.sourceView, fixture.flowView, fixture.candidates, fixture.bodies, fixture.bindings, fixture.staticView, fixture.moduleView)
 	if err != nil {
 		t.Fatalf("honest Seal: %v", err)
 	}
@@ -609,7 +614,7 @@ func TestAccessGeometrySealRejectsUnavailableForeignAndMalformedOwners(t *testin
 
 func TestAccessGeometrySealScalesThroughDenseSeal(t *testing.T) {
 	fixture := openAccessGeometryFixture(t)
-	sealed, err := Seal(fixture.sourceView, fixture.flowView, fixture.candidates, fixture.staticID, fixture.moduleID)
+	sealed, err := Seal(fixture.sourceView, fixture.flowView, fixture.candidates, fixture.bodies, fixture.bindings, fixture.staticView, fixture.moduleView)
 	if err != nil {
 		t.Fatalf("initial Seal: %v", err)
 	}
@@ -621,7 +626,7 @@ func TestAccessGeometrySealScalesThroughDenseSeal(t *testing.T) {
 	}
 	var sealErr error
 	allocations := testing.AllocsPerRun(50, func() {
-		if _, err := Seal(fixture.sourceView, fixture.flowView, fixture.candidates, fixture.staticID, fixture.moduleID); err != nil {
+		if _, err := Seal(fixture.sourceView, fixture.flowView, fixture.candidates, fixture.bodies, fixture.bindings, fixture.staticView, fixture.moduleView); err != nil {
 			sealErr = err
 		}
 	})

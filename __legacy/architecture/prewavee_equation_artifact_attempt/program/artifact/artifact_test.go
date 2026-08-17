@@ -10,7 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/lower"
 	"github.com/wippyai/go-lua/analysis/program/target"
-	"github.com/wippyai/go-lua/analysis/program/target/profile"
+	"github.com/wippyai/go-lua/analysis/library/lualib/targetprofile"
 )
 
 func TestArtifactRoundTripReplaysAuthoredProgram(t *testing.T) {

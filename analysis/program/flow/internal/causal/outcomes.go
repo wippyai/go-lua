@@ -58,20 +58,16 @@ func (s *outcomeState) emitOutcomes() error {
 	return s.emitOperationOutcomes()
 }
 
-// outcomeResumeOrigin completes the exact parent proof chain before any
-// RoutePlan or Edge row is declared. The consumed neutral projection is the
-// sole source of the emitted endpoint Term.
+// outcomeResumeOrigin resolves the exact owner-fenced continuation before any
+// RoutePlan or Edge row is declared. The immutable normalized row is the sole
+// source of the emitted endpoint Term.
 func (s *outcomeState) outcomeResumeOrigin(from keyspace.Term) (keyspace.Term, routeplan.Origin, error) {
-	anchor, err := s.graph.IssueOutcomeResumeAnchor(s.source, s.outs, from)
+	row, err := s.entries.NormalizeOutcomeResume(s.source, s.graph, s.outs, from)
 	if err != nil {
 		return 0, routeplan.Origin{}, err
 	}
-	projection, err := s.entries.IssueOutcomeResumeProjection(s.source, s.graph, anchor)
-	if err != nil {
-		return 0, routeplan.Origin{}, err
-	}
-	origin, to, issued := routeplan.OutcomeResumeSubdivision(s.entries, s.graph, projection)
-	if !issued || to == 0 {
+	origin, to, valid := routeplan.OutcomeResumeSubdivision(s.entries, s.graph, row)
+	if !valid || to == 0 {
 		return 0, routeplan.Origin{}, errors.New("program/flow/causal: normalized Outcome resume subdivision is unavailable")
 	}
 	return to, origin, nil
@@ -88,7 +84,7 @@ func (s *outcomeState) emitOperationOutcomes() error {
 		if !ok {
 			return errors.New("program/flow/causal: TableField row is unavailable")
 		}
-		if ordinal >= uint32(len(s.tableFieldThrowProof)) || s.tableFieldThrowProof[ordinal] == nil {
+		if ordinal >= uint32(len(s.tableFieldThrowProof)) || !s.tableFieldThrowProof[ordinal].Available() {
 			continue
 		}
 		owner, ownerOK := s.bodyOf(table)

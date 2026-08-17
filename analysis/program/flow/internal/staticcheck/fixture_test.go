@@ -3,12 +3,12 @@ package staticcheck
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/program/flow/internal/accessgeometry"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/binding"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/body"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/containment"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/control"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/directbinding"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/outcome"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/position"
 	"github.com/wippyai/go-lua/analysis/program/imports"
@@ -41,7 +41,7 @@ type checkFixture struct {
 	bindings   binding.Result
 	forest     *containment.Result
 	proof      *containment.StaticScopeProof
-	direct     *directbinding.Result
+	access     *accessgeometry.Result
 	entry      keyspace.Term
 
 	sourceFinal source.Finalizer
@@ -142,19 +142,20 @@ func newCheckFixture(t *testing.T, spec checkSpec) *checkFixture {
 		cleanupCheckFixture(sourceFinal, flowFinal, staticFinal, moduleFinal)
 		t.Fatalf("position.Seal: %v", err)
 	}
-	direct, err := directbinding.Seal(preimage, flowView, bodies, bindings, staticView, moduleView)
-	if err != nil {
-		cleanupCheckFixture(sourceFinal, flowFinal, staticFinal, moduleFinal)
-		t.Fatalf("directbinding.Seal: %v", err)
-	}
 	sourceComponent, err := sourceFinal.Commit(index)
 	if err != nil {
 		cleanupCheckFixture(sourceFinal, flowFinal, staticFinal, moduleFinal)
 		t.Fatalf("source.Commit: %v", err)
 	}
+	sourceView := sourceComponent.View()
+	access, err := accessgeometry.SealSelectors(sourceView, flowView, bodies, bindings, staticView, moduleView)
+	if err != nil {
+		cleanupCheckFixture(source.Finalizer{}, flowFinal, staticFinal, moduleFinal)
+		t.Fatalf("accessgeometry.Seal: %v", err)
+	}
 	fixture := &checkFixture{
-		sourceView: sourceComponent.View(), flowView: flowView, staticView: staticView, moduleView: moduleView,
-		preimage: preimage, bodies: bodies, bindings: bindings, forest: forest, proof: proof, direct: direct, entry: entry,
+		sourceView: sourceView, flowView: flowView, staticView: staticView, moduleView: moduleView,
+		preimage: preimage, bodies: bodies, bindings: bindings, forest: forest, proof: proof, access: access, entry: entry,
 		sourceFinal: sourceFinal, flowFinal: flowFinal, staticFinal: staticFinal, moduleFinal: moduleFinal,
 	}
 	t.Cleanup(func() {

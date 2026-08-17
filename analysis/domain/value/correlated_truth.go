@@ -120,10 +120,8 @@ func (schema *Schema) compareOrderAtoms(left, right Atom, op flowkind.BinaryOp) 
 	// Lua may delegate same-family reference order to __lt/__le. Value does
 	// not own that method result, so retain both outcomes rather than inventing
 	// either an error-only or definite ordering fact.
-	for kind := runtimekind.Table; kind < runtimekind.Count; kind++ {
-		if leftKinds.Contains(kind) && rightKinds.Contains(kind) {
-			return true, true
-		}
+	if leftKinds&rightKinds&runtimekind.Reference != 0 {
+		return true, true
 	}
 	return false, false
 }

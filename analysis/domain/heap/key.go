@@ -11,8 +11,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/materialization"
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/program/flow"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/target"
 )
@@ -75,7 +75,7 @@ type AllocationReceipt struct {
 	programID    identity.ContentID
 	allocationID identity.ContentID
 	kind         AllocationKind
-	form         program.AllocationForm
+	form         flow.AllocationForm
 	artifact     *programartifact.Artifact
 }
 
@@ -92,16 +92,16 @@ func (receipt AllocationReceipt) Kind() AllocationKind {
 	}
 	return receipt.kind
 }
-func (receipt AllocationReceipt) Form() program.AllocationForm {
+func (receipt AllocationReceipt) Form() flow.AllocationForm {
 	if !receipt.Available() {
-		return program.AllocationFormInvalid
+		return flow.AllocationFormInvalid
 	}
 	return receipt.form
 }
 
 // AllocationReceipt issues an opaque owner receipt for an artifact allocation
 // occurrence. The artifact occurrence catalog is the sole Program fact plane.
-func (mount ArtifactMount) AllocationReceipt(id identity.ContentID, kind AllocationKind, form program.AllocationForm) (AllocationReceipt, bool) {
+func (mount ArtifactMount) AllocationReceipt(id identity.ContentID, kind AllocationKind, form flow.AllocationForm) (AllocationReceipt, bool) {
 	if !mount.Available() || !id.Available() || !kind.Valid() || !form.Valid() {
 		return AllocationReceipt{}, false
 	}
@@ -261,7 +261,7 @@ func (selector KeySelector) valid() bool {
 		return false
 	}
 	if selector.kinds != 0 {
-		return len(selector.atoms) == 0 && selector.kinds.Valid() && selector.kinds&^legalTableKeyKinds == 0
+		return len(selector.atoms) == 0 && selector.kinds.Valid() && selector.kinds&^runtimekind.NonNil == 0
 	}
 	return len(selector.atoms) != 0 && validExactKeyAtoms(selector.owner, selector.atoms)
 }

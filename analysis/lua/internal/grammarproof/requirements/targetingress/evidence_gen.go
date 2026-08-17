@@ -3,8 +3,8 @@
 package targetingress
 
 import (
+	"github.com/wippyai/go-lua/analysis/program/relations"
 	"github.com/wippyai/go-lua/analysis/program/semanticsource"
-	"github.com/wippyai/go-lua/analysis/schema/relations"
 )
 
 func init() {

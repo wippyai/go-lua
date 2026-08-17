@@ -3,6 +3,7 @@ package owner
 import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/factor"
 	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // SchemaFragment is Effect's callback-free cold Factor surface. Effect roots,
@@ -34,7 +35,7 @@ func (fragment *SchemaFragment) ExactWrite() engine.SchemaWriteForm[factor.Value
 }
 
 // DeclareSchema records Effect's exact-read/exact-write Factor shape.
-func DeclareSchema(builder *engine.SchemaBuilder, semantic engine.SemanticKey) (*SchemaFragment, bool) {
+func DeclareSchema(builder *engine.SchemaBuilder, semantic identity.SemanticKey) (*SchemaFragment, bool) {
 	if builder == nil || !semantic.Available() {
 		return nil, false
 	}

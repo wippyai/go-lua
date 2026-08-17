@@ -2,7 +2,7 @@ package artifact
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program"
+	"github.com/wippyai/go-lua/analysis/program/flow"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
@@ -101,7 +101,7 @@ func (row BodyRow) ContextID() identity.ContentID {
 func (row BodyRow) Callable() bool { return row.Available() && row.callable }
 
 // FunctionContextID and CallFormalID expose the parent-issued IDs needed to
-// construct Call target receipts.  Non-callable bodies fail closed.
+// construct Call target rows.  Non-callable bodies fail closed.
 func (row BodyRow) FunctionContextID() (identity.ContentID, bool) {
 	return row.function, row.Callable() && row.function.Available()
 }
@@ -164,7 +164,7 @@ func (row BodyRow) OutcomeCount() int {
 
 // EntryPointCount and EntryPointAt expose the exact existing LocalWTO point
 // memberships for this Body's entry Site. They are retained from the sealed
-// Program attachment receipt and are never derived from a Body path.
+// Program attachment row and are never derived from a Body path.
 func (row BodyRow) EntryPointCount() int {
 	if !row.Available() {
 		return 0
@@ -333,6 +333,11 @@ func (compiler *compiler) copyBodiesAndOutcomesFailure() CompileFailure {
 	bodies := make([]BodyRow, bodyCount)
 	outcomes := make([]OutcomeRow, 0)
 	returnValues := make([]ReturnValue, 0)
+	flowView := compiler.input.Flow()
+	boundaries := flowView.FunctionBoundaries()
+	bodyReturns := flowView.BodyReturns()
+	outcomesView := flowView.Outcomes()
+	sites := flowView.Causal().Sites()
 	seenBodies := make(map[identity.ContentID]struct{}, bodyCount)
 	seenBodyContexts := make(map[identity.ContentID]struct{}, bodyCount)
 	seenOutcomes := make(map[identity.ContentID]int)
@@ -353,6 +358,11 @@ func (compiler *compiler) copyBodiesAndOutcomesFailure() CompileFailure {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, -1, CompileReasonBodyDuplicate)
 		}
 		context := body.ContextID()
+		bodyBoundary, bodyBoundaryOK := boundaries.ResolveBodyContextID(context)
+		bodyTerm, bodyTermOK := bodyBoundary.Body()
+		if !bodyBoundaryOK || !bodyBoundary.Available() || !bodyTermOK || bodyBoundary.ContextID() != context || !boundaries.OwnsBody(bodyBoundary) {
+			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, -1, CompileReasonBodyUnavailable)
+		}
 		entry, entryOK := body.EntrySite()
 		entryID := entry.PathID()
 		entryPoints := compiler.pointIDs(entry)
@@ -364,13 +374,14 @@ func (compiler *compiler) copyBodiesAndOutcomesFailure() CompileFailure {
 		}
 		functionID, formalID := identity.ContentID{}, identity.ContentID{}
 		callable := false
-		if function, functionOK := body.TransformerFunction(); functionOK {
+		if function, functionOK := body.Function(); functionOK {
 			formal, formalOK := body.CallTarget()
-			functionID, formalID = function.ContextID(), identity.ContentID{}
+			var functionIDOK bool
+			functionID, functionIDOK = compiler.input.FunctionID(function)
 			if formalOK {
 				formalID, formalOK = formal.ID()
 			}
-			if !formalOK || !functionID.Available() || !formalID.Available() {
+			if !formalOK || !functionIDOK || !functionID.Available() || !formalID.Available() {
 				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, -1, CompileReasonBodyUnavailable)
 			}
 			callable = true
@@ -404,74 +415,99 @@ func (compiler *compiler) copyBodiesAndOutcomesFailure() CompileFailure {
 		}
 		start := uint32(len(outcomes))
 
-		returned, hasReturn := body.Return()
+		returned, hasReturn := bodyReturns.ForBody(bodyBoundary)
 		returnedID := identity.ContentID{}
 		if hasReturn {
-			if !compiler.input.OwnsBodyOutcome(returned) || !returned.BelongsTo(body) {
-				return compileFailure(CompileStageBodyOutcomes, CompileRowOutcome, bodyIndex, -1, CompileReasonOutcomeReturn)
-			}
-			returnedID = returned.PathID()
-			if !returnedID.Available() {
-				return compileFailure(CompileStageBodyOutcomes, CompileRowOutcome, bodyIndex, -1, CompileReasonOutcomeIdentity)
+			returnSite, siteOK := returned.Outcome()
+			returnedTerm, termOK := returnSite.Term()
+			returnExit, _, returnOK := bodyBoundary.OutcomeForTerm(returnedTerm)
+			if !siteOK || !sites.Owns(returnSite) || !termOK || !returnOK || returnExit.Outcome != returnedTerm || returnExit.Kind != flowkind.OutcomeReturn || returnExit.Target != 0 {
+				hasReturn = false
+			} else {
+				returnedID, _ = flowView.SemanticTermPath(returnedTerm)
 			}
 		}
 		matchedReturn := false
-		outcomeCount := body.OutcomeCount()
+		outcomeCount := bodyBoundary.OutcomeCount()
 		if outcomeCount <= 0 || !fitsUint32(outcomeCount) {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, -1, CompileReasonBodyRange)
 		}
 		for outcomeIndex := 0; outcomeIndex < outcomeCount; outcomeIndex++ {
-			outcome, outcomeOK := body.OutcomeAt(outcomeIndex)
-			if !outcomeOK || !outcome.Available() {
+			exit, outcomeOK := bodyBoundary.OutcomeAt(outcomeIndex)
+			if !outcomeOK || exit.Outcome == 0 {
 				return compileFailure(CompileStageBodyOutcomes, CompileRowOutcome, bodyIndex, outcomeIndex, CompileReasonOutcomeUnavailable)
 			}
-			if !compiler.input.OwnsBodyOutcome(outcome) || !outcome.BelongsTo(body) {
+			ownerBoundary, ownerOK := boundaries.ForOutcome(exit.Outcome)
+			ownerBody, ownerBodyOK := ownerBoundary.Body()
+			ownerExit, ownerOrdinal, ownerExitOK := ownerBoundary.OutcomeForTerm(exit.Outcome)
+			metadata, metadataOK := outcomesView.Get(exit.Outcome)
+			if !ownerOK || !ownerBoundary.Available() || !boundaries.OwnsBody(ownerBoundary) || !ownerBodyOK || ownerBody != bodyTerm || !ownerExitOK || ownerOrdinal != outcomeIndex || ownerExit.Outcome != exit.Outcome || !metadataOK || metadata.Body != bodyTerm || metadata.Kind != exit.Kind || metadata.Target != exit.Target {
 				return compileFailure(CompileStageBodyOutcomes, CompileRowOutcome, bodyIndex, outcomeIndex, CompileReasonOutcomeForeign)
 			}
-			outcomeID := outcome.PathID()
-			if !outcomeID.Available() {
+			if site, siteOK := sites.ForTerm(exit.Outcome); siteOK && (!site.Available() || !sites.Owns(site)) {
+				return compileFailure(CompileStageBodyOutcomes, CompileRowOutcome, bodyIndex, outcomeIndex, CompileReasonOutcomeUnavailable)
+			}
+			outcomeID, outcomePathOK := flowView.SemanticTermPath(exit.Outcome)
+			if !outcomePathOK || !outcomeID.Available() {
 				return compileFailure(CompileStageBodyOutcomes, CompileRowOutcome, bodyIndex, outcomeIndex, CompileReasonOutcomeIdentity)
 			}
 			if _, duplicate := seenOutcomes[outcomeID]; duplicate {
 				return compileFailure(CompileStageBodyOutcomes, CompileRowOutcome, bodyIndex, outcomeIndex, CompileReasonOutcomeDuplicate)
 			}
-			parentKind, kindOK := outcome.Kind()
-			kind, converted := outcomeKind(parentKind)
-			if !kindOK || !converted {
+			kind, converted := outcomeKind(exit.Kind)
+			if !converted {
 				return compileFailure(CompileStageBodyOutcomes, CompileRowOutcome, bodyIndex, outcomeIndex, CompileReasonOutcomeKind)
 			}
-			target, targetKind, hasTarget := outcome.TargetPath()
+			target := identity.ContentID{}
+			hasTarget := false
 			switch kind {
 			case OutcomeBreak:
-				if !hasTarget || targetKind != program.OutcomeTargetLoop || !target.Available() {
+				if keyspace.TermFamily(exit.Target) != keyspace.FamilyLoop {
 					return compileFailure(CompileStageBodyOutcomes, CompileRowOutcome, bodyIndex, outcomeIndex, CompileReasonOutcomeTarget)
 				}
+				var targetOK bool
+				target, targetOK = flowView.SemanticTermPath(exit.Target)
+				if !targetOK || !target.Available() {
+					return compileFailure(CompileStageBodyOutcomes, CompileRowOutcome, bodyIndex, outcomeIndex, CompileReasonOutcomeTarget)
+				}
+				hasTarget = true
 			case OutcomeGoto:
-				if !hasTarget || targetKind != program.OutcomeTargetLabel || !target.Available() {
+				if keyspace.TermFamily(exit.Target) != keyspace.FamilyLabel {
 					return compileFailure(CompileStageBodyOutcomes, CompileRowOutcome, bodyIndex, outcomeIndex, CompileReasonOutcomeTarget)
 				}
-			default:
-				if hasTarget || targetKind != program.OutcomeTargetInvalid || target.Available() {
+				var targetOK bool
+				target, targetOK = flowView.SemanticTermPath(exit.Target)
+				if !targetOK || !target.Available() {
 					return compileFailure(CompileStageBodyOutcomes, CompileRowOutcome, bodyIndex, outcomeIndex, CompileReasonOutcomeTarget)
 				}
+				hasTarget = true
 			}
 
 			propagationID := identity.ContentID{}
-			if next, propagated := outcome.Propagation(); propagated {
-				if !compiler.input.OwnsBodyOutcome(next) {
+			if nextTerm, propagated := outcomesView.Propagation(exit.Outcome); propagated {
+				nextBoundary, nextOK := boundaries.ForOutcome(nextTerm)
+				nextBody, nextBodyOK := nextBoundary.Body()
+				nextExit, _, nextExitOK := nextBoundary.OutcomeForTerm(nextTerm)
+				nextMetadata, nextMetadataOK := outcomesView.Get(nextTerm)
+				nextPath, nextPathOK := flowView.SemanticTermPath(nextTerm)
+				nextSite, nextSiteOK := sites.ForTerm(nextTerm)
+				if nextSiteOK && (!nextSite.Available() || !sites.Owns(nextSite)) {
 					return compileFailure(CompileStageBodyOutcomes, CompileRowOutcome, bodyIndex, outcomeIndex, CompileReasonOutcomePropagation)
 				}
-				propagationID = next.PathID()
-				if !propagationID.Available() || propagationID == outcomeID {
+				if !nextOK || !nextBoundary.Available() || !boundaries.OwnsBody(nextBoundary) || !nextBodyOK || nextBody == 0 || !nextExitOK || nextExit.Outcome != nextTerm || !nextMetadataOK || nextMetadata.Body != nextBody || nextExit.Kind != exit.Kind || nextExit.Target != exit.Target || !nextPathOK || !nextPath.Available() {
+					return compileFailure(CompileStageBodyOutcomes, CompileRowOutcome, bodyIndex, outcomeIndex, CompileReasonOutcomePropagation)
+				}
+				propagationID = nextPath
+				if propagationID == outcomeID {
 					return compileFailure(CompileStageBodyOutcomes, CompileRowOutcome, bodyIndex, outcomeIndex, CompileReasonOutcomePropagation)
 				}
 			}
 			points := []identity.ContentID(nil)
-			if site, siteOK := outcome.Site(); siteOK {
-				points = compiler.pointIDs(site)
-				if !compiler.input.OwnsSite(site) {
+			if site, siteOK := sites.ForTerm(exit.Outcome); siteOK {
+				if !site.Available() || !sites.Owns(site) {
 					return compileFailure(CompileStageBodyOutcomes, CompileRowOutcome, bodyIndex, outcomeIndex, CompileReasonOutcomeAttachment)
 				}
+				points = compiler.pointIDs(site)
 			}
 
 			if !fitsUint32(len(returnValues)) {
@@ -483,10 +519,12 @@ func (compiler *compiler) copyBodiesAndOutcomesFailure() CompileFailure {
 					return compileFailure(CompileStageBodyOutcomes, CompileRowOutcome, bodyIndex, outcomeIndex, CompileReasonOutcomeReturn)
 				}
 				matchedReturn = true
-				for returnIndex := 0; returnIndex < returned.ReturnValuesCount(); returnIndex++ {
-					values, valuesOK := returned.ReturnValueOccurrenceAt(returnIndex)
-					valuesID := values.ID()
-					if !valuesOK || !compiler.input.OwnsValuesOccurrence(values) || !valuesID.Available() {
+				for returnIndex := 0; returnIndex < returned.ValuesCount(); returnIndex++ {
+					valueSite, valueOK := returned.ValueAt(returnIndex)
+					valueTerm, termOK := valueSite.Term()
+					valueRow, rowOK := compiler.valueRowForTerm(valueTerm)
+					valuesID := valueRow.ID()
+					if !valueOK || !valueSite.Available() || !sites.Owns(valueSite) || !termOK || !rowOK || !valuesID.Available() {
 						return compileFailure(CompileStageBodyOutcomes, CompileRowReturnValue, bodyIndex, returnIndex, CompileReasonReturnValueUnavailable)
 					}
 					if _, exists := valueIDs[valuesID]; !exists {
@@ -535,9 +573,9 @@ func (compiler *compiler) copyBodiesAndOutcomesFailure() CompileFailure {
 	return CompileFailure{}
 }
 
-// copyCallTargetsFailure captures the exact closure-allocation mapping once,
-// while Program owns both allocation and callable Body proofs.  Call later
-// consumes only these immutable IDs and never scans TransformerInput.
+// copyCallTargetsFailure captures the exact closure-allocation mapping once
+// from the canonical Flow allocation and function-boundary rows. Call later
+// consumes only these immutable IDs and never scans Program construction state.
 func (compiler *compiler) copyCallTargetsFailure() CompileFailure {
 	if compiler == nil || len(compiler.bodies) == 0 {
 		return compileFailure(CompileStageBodyOutcomes, CompileRowBody, -1, -1, CompileReasonBodyUnavailable)
@@ -549,27 +587,28 @@ func (compiler *compiler) copyCallTargetsFailure() CompileFailure {
 		}
 		bodyByContext[body.ContextID()] = body
 	}
-	allocations := compiler.input.Allocations()
 	rows := make([]CallTargetRow, 0)
 	seenAllocations := make(map[identity.ContentID]struct{})
 	seenBodies := make(map[identity.ContentID]struct{})
-	for index := 0; index < allocations.Count(); index++ {
-		allocation, ok := allocations.At(index)
-		if !ok || !allocations.Owns(allocation) {
-			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
-		}
-		if allocation.Role() != program.AllocationClosure {
+	flowView := compiler.input.Flow()
+	boundaries := flowView.FunctionBoundaries()
+	for index, allocation := range compiler.allocationRows {
+		if allocation.role != flow.AllocationClosure {
 			continue
 		}
-		target, targetOK := allocation.ClosureTarget()
-		body, bodyOK := target.Body()
-		function, functionOK := target.Function()
-		formal, formalOK := target.CallTarget()
-		allocationID, bodyID := allocation.ID(), body.PathID()
-		context, functionID := body.ContextID(), function.ContextID()
+		boundary, boundaryOK := boundaries.For(allocation.term)
+		functionTerm, functionTermOK := boundary.Function()
+		bodyTerm, bodyTermOK := boundary.Body()
+		body, bodyOK := compiler.input.Body(bodyTerm)
+		function, functionOK := body.Function()
+		formal, formalOK := body.CallTarget()
+		allocationID, bodyID := allocation.template, body.PathID()
+		context := body.ContextID()
+		functionID, functionIDOK := compiler.input.FunctionID(function)
 		formalID, formalIDOK := formal.ID()
 		copied, copiedOK := bodyByContext[context]
-		if !targetOK || !bodyOK || !functionOK || !formalOK || !formalIDOK || !allocationID.Available() || !bodyID.Available() || !context.Available() || !functionID.Available() || !formalID.Available() || !copiedOK || !copied.Callable() || copied.ID() != bodyID || copied.ContextID() != context {
+		owner, authoredBody, _, authoredOK := flowView.Authored().Functions().Get(allocation.term)
+		if !boundaryOK || !boundaries.OwnsFunction(boundary) || !functionTermOK || functionTerm != allocation.term || !bodyTermOK || owner == 0 || authoredBody != bodyTerm || !authoredOK || !bodyOK || !functionOK || !functionIDOK || !formalOK || !formalIDOK || !allocationID.Available() || !bodyID.Available() || !context.Available() || !functionID.Available() || !formalID.Available() || !copiedOK || !copied.Callable() || copied.ID() != bodyID || copied.ContextID() != context {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
 		}
 		copiedFunction, copiedFunctionOK := copied.FunctionContextID()

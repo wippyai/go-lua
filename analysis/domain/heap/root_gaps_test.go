@@ -6,11 +6,20 @@ import (
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
 	"github.com/wippyai/go-lua/analysis/domain/materialization"
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
+	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 )
+
+func portableAnyType() schematype.Type {
+	value, ok := schematype.NewPrimitive(schematype.PrimitiveAny)
+	if !ok {
+		panic("portable any type")
+	}
+	return value
+}
 
 const compactDynamicHeapSource = `
 local key = {}
@@ -20,7 +29,7 @@ return record, child
 `
 
 func compactIndexSpec() *target.Spec {
-	return &target.Spec{Operations: []target.OperationSpec{{
+	return &target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []target.OperationSpec{{
 		Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"require"}}},
 		Input:    target.ValuesSpec{Tail: target.ValuesClosed},
 		Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}},
@@ -172,10 +181,10 @@ func compactDynamicSlotAndPayload(t testing.TB, schema Schema) (Slot, Payload) {
 func compactFreshOperation(name string, kind target.FreshKind) target.OperationSpec {
 	return target.OperationSpec{
 		Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{name}}},
-		Input:    target.ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: target.ValuesClosed},
+		Input:    target.ValuesSpec{Fixed: []schematype.Type{portableAnyType()}, Tail: target.ValuesClosed},
 		Outcomes: []target.OutcomeSpec{{
 			Kind:         flowkind.OutcomeNormal,
-			Values:       target.ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: target.ValuesClosed},
+			Values:       target.ValuesSpec{Fixed: []schematype.Type{portableAnyType()}, Tail: target.ValuesClosed},
 			FreshResults: []target.FreshResultSpec{{Result: 0, Kind: kind}},
 		}},
 		Effects: target.RowSpec{Tail: target.RowClosed},
@@ -184,6 +193,7 @@ func compactFreshOperation(name string, kind target.FreshKind) target.OperationS
 
 func compactFreshSpec(operations ...target.OperationSpec) *target.Spec {
 	spec := &target.Spec{
+		Semantics:  domaincontract.NewSemantics(),
 		Operations: operations,
 		InitialRoots: []target.InitialRootSpec{{
 			Identity: "GlobalEnvRoot",

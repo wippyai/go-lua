@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"testing"
 
-	latticelaws "github.com/wippyai/go-lua/analysis/test/laws/lattice"
+	"github.com/wippyai/go-lua/analysis/lattice"
 )
 
 func TestPlacementLatticeLaws(t *testing.T) {
-	suite := latticelaws.LawSuite[Placement]{
+	suite := lattice.LawSuite[Placement]{
 		Name:   "placement",
 		Domain: Lattice(),
 		Sample: []Placement{

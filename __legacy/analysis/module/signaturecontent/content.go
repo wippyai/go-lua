@@ -11,6 +11,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
+	"github.com/wippyai/go-lua/analysis/module/signature/wire"
 )
 
 const identityDomain = "go-lua.signature.content-id/v1"
@@ -18,7 +19,7 @@ const allocationDomain = "go-lua.signature.allocation-content-id/v1"
 
 // Derive returns the full semantic content identity of sig.
 func Derive(ctx context.Context, sig signature.Function) (signature.ContentID, error) {
-	canonical, err := manifest.CanonicalFunctionSignatureBytesContext(ctx, sig)
+	canonical, err := wire.CanonicalFunctionSignatureBytesContext(ctx, sig)
 	if err != nil {
 		return signature.ContentID{}, err
 	}

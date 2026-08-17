@@ -1,9 +1,9 @@
 package target
 
 import (
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
 
@@ -11,7 +11,7 @@ func callbackOutcomeOperation(name string, outcomes []TerminalSpec) OperationSpe
 	return OperationSpec{
 		Bindings:   []BindingSpec{{Namespace: BindingBuiltin, Member: []string{name}}},
 		ValuesVars: 6,
-		Input:      ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesVariable, Var: 0},
+		Input:      ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesVariable, Var: 0},
 		Callbacks: []CallbackSpec{{
 			Function: InputSource{Kind: InputSourceValueFormal}, Admission: OrdinaryCallable,
 			Arguments: ValuesSpec{Tail: ValuesVariable, Var: 0},
@@ -85,7 +85,7 @@ func TestCallbackOutcomeRejectsIncompleteDuplicateInvalidAndOutOfScope(t *testin
 		{name: "Values outside scope", outcomes: outOfScope},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := Seal(&Spec{Operations: []OperationSpec{callbackOutcomeOperation("invalid-callback-outcome", test.outcomes)}}); err == nil {
+			if _, err := testSeal(&Spec{Operations: []OperationSpec{callbackOutcomeOperation("invalid-callback-outcome", test.outcomes)}}); err == nil {
 				t.Fatal("invalid callback outcome relation accepted")
 			}
 		})

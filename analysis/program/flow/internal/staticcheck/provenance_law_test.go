@@ -45,7 +45,7 @@ func TestStaticCheckRejectsForeignStaticAndModuleProofSplice(t *testing.T) {
 	})
 	if _, err := Validate(
 		first.sourceView, first.flowView, second.staticView, first.bodies,
-		first.bindings, first.forest, first.proof, first.direct,
+		first.bindings, first.forest, first.proof, first.access,
 		first.moduleView.ContentID(), first.entry,
 	); err == nil {
 		t.Fatal("Validate accepted a same-cardinality foreign Static proof splice")
@@ -54,27 +54,27 @@ func TestStaticCheckRejectsForeignStaticAndModuleProofSplice(t *testing.T) {
 	foreignModule[0] ^= 0xff
 	if _, err := Validate(
 		first.sourceView, first.flowView, first.staticView, first.bodies,
-		first.bindings, first.forest, first.proof, first.direct,
+		first.bindings, first.forest, first.proof, first.access,
 		foreignModule, first.entry,
 	); err == nil {
 		t.Fatal("Validate accepted a foreign Module proof splice")
 	}
 	if _, err := Validate(
 		first.sourceView, first.flowView, first.staticView, first.bodies,
-		first.bindings, first.forest, first.proof, second.direct,
+		first.bindings, first.forest, first.proof, second.access,
 		first.moduleView.ContentID(), first.entry,
 	); err == nil {
-		t.Fatal("Validate accepted a foreign DirectBinding proof splice")
+		t.Fatal("Validate accepted a foreign selector proof splice")
 	}
 }
 
-func TestStaticCheckNilOrMalformedInputsReturnEmptyReceipt(t *testing.T) {
+func TestStaticCheckNilOrMalformedInputsReturnEmptyResult(t *testing.T) {
 	counts := checkCounts(checkCount(keyspace.FamilyBody, 1))
 	fixture := newCheckFixture(t, checkSpec{counts: counts})
 	empty := static.CommitInput{}
 	got, err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
-		fixture.bindings, nil, fixture.proof, fixture.direct,
+		fixture.bindings, nil, fixture.proof, fixture.access,
 		fixture.moduleView.ContentID(), fixture.entry,
 	)
 	if err == nil || len(got.TypeOf) != len(empty.TypeOf) || len(got.Annotations) != len(empty.Annotations) || len(got.Publications) != len(empty.Publications) {
@@ -82,7 +82,7 @@ func TestStaticCheckNilOrMalformedInputsReturnEmptyReceipt(t *testing.T) {
 	}
 	got, err = Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
-		fixture.bindings, fixture.forest, nil, fixture.direct,
+		fixture.bindings, fixture.forest, nil, fixture.access,
 		fixture.moduleView.ContentID(), fixture.entry,
 	)
 	if err == nil || len(got.TypeOf) != 0 || len(got.Annotations) != 0 || len(got.Publications) != 0 {
@@ -138,20 +138,20 @@ func TestStaticCheckRejectsEveryForeignIdentitySubstitution(t *testing.T) {
 	foreignSource := newCheckFixture(t, makeSpec("staticcheck-four-id-foreign.lua", false))
 	if _, err := Validate(
 		foreignSource.sourceView, base.flowView, base.staticView, base.bodies,
-		base.bindings, base.forest, base.proof, base.direct, base.moduleView.ContentID(), base.entry,
+		base.bindings, base.forest, base.proof, base.access, base.moduleView.ContentID(), base.entry,
 	); err == nil {
 		t.Fatal("Validate accepted a foreign Source identity")
 	}
 	foreignFlow := newCheckFixture(t, makeSpec("staticcheck-four-id.lua", true))
 	if _, err := Validate(
 		base.sourceView, base.flowView, base.staticView, base.bodies,
-		foreignFlow.bindings, base.forest, base.proof, base.direct, base.moduleView.ContentID(), base.entry,
+		foreignFlow.bindings, base.forest, base.proof, base.access, base.moduleView.ContentID(), base.entry,
 	); err == nil {
 		t.Fatal("Validate accepted a foreign Binding result")
 	}
 	if _, err := Validate(
 		base.sourceView, foreignFlow.flowView, base.staticView, base.bodies,
-		base.bindings, base.forest, base.proof, base.direct, base.moduleView.ContentID(), base.entry,
+		base.bindings, base.forest, base.proof, base.access, base.moduleView.ContentID(), base.entry,
 	); err == nil {
 		t.Fatal("Validate accepted a foreign Flow identity")
 	}

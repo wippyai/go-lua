@@ -6,10 +6,10 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/wippyai/go-lua/analysis/domain/composite"
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
-	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 // DiagnosticCode is the analyzer's published diagnostic identity. The
@@ -19,12 +19,12 @@ type DiagnosticCode = diagnostic.Code
 
 const (
 	DiagnosticCodeInvalid                  = diagnostic.CodeInvalid
-	DiagnosticCodeAlwaysTrueGuard          = grammar.DiagnosticCodeAlwaysTrueGuard
-	DiagnosticCodeAlwaysFalseGuard         = grammar.DiagnosticCodeAlwaysFalseGuard
-	DiagnosticCodeRedundantClaim           = grammar.DiagnosticCodeRedundantClaim
-	DiagnosticCodeUnresolvedTypeReference  = grammar.DiagnosticCodeUnresolvedTypeReference
-	DiagnosticCodeUnresolvedValueReference = grammar.DiagnosticCodeUnresolvedValueReference
-	DiagnosticCodeUnusedLocal              = grammar.DiagnosticCodeUnusedLocal
+	DiagnosticCodeAlwaysTrueGuard          = composite.DiagnosticCodeAlwaysTrueGuard
+	DiagnosticCodeAlwaysFalseGuard         = composite.DiagnosticCodeAlwaysFalseGuard
+	DiagnosticCodeRedundantClaim           = composite.DiagnosticCodeRedundantClaim
+	DiagnosticCodeUnresolvedTypeReference  = composite.DiagnosticCodeUnresolvedTypeReference
+	DiagnosticCodeUnresolvedValueReference = composite.DiagnosticCodeUnresolvedValueReference
+	DiagnosticCodeUnusedLocal              = composite.DiagnosticCodeUnusedLocal
 )
 
 // FindingSeverity is the closed severity vocabulary the declaration table
@@ -42,7 +42,7 @@ const (
 // table. It is the only per-code lookup in Analysis; nothing here restates the
 // inventory.
 func diagnosticDeclaration(code DiagnosticCode) (*diagnostic.Entry, bool) {
-	table, tableOK := grammar.Diagnostics()
+	table, tableOK := composite.Diagnostics()
 	if !tableOK {
 		return nil, false
 	}

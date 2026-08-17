@@ -492,7 +492,7 @@ func (schema *Schema) scalarMayReference(scalar Scalar) (bool, bool) {
 	if !classOK || !kindsOK {
 		return false, false
 	}
-	return kinds.Contains(runtimekind.Table) || kinds.Contains(runtimekind.Function) || kinds.Contains(runtimekind.Thread) || kinds.Contains(runtimekind.Userdata), true
+	return kinds&runtimekind.Reference != 0, true
 }
 func (payload Payload) ScalarMayRuntimeKinds(s Scalar) (runtimekind.Set, bool) {
 	if payload.schema == nil || !s.valid() {

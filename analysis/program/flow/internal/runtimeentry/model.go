@@ -4,8 +4,6 @@
 package runtimeentry
 
 import (
-	"sync"
-
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/evaluation"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/executable"
@@ -66,9 +64,11 @@ func (r *Result) Entry(term keyspace.Term) (keyspace.Term, bool) {
 	return entry, entry != 0 && r.exec.Executable(entry)
 }
 
-type projectionState struct {
-	mu       sync.Mutex
-	used     bool
+// OutcomeResumeRow is the immutable exact join between SourceControl's
+// structural Outcome continuation and this owner's normalized executable
+// endpoint. The owner pointers are fences, not mutable capabilities; the
+// route-plan Builder owns the one-shot publication transaction.
+type OutcomeResumeRow struct {
 	owner    *Result
 	control  *sourcecontrol.Result
 	fromTerm keyspace.Term
@@ -77,40 +77,31 @@ type projectionState struct {
 	to       sourcecontrol.PhaseRef
 }
 
-// OutcomeResumeProjection is the one-shot exact join between SourceControl's
-// structural resume anchor and this owner's normalized runtime endpoint.
-type OutcomeResumeProjection struct{ state *projectionState }
-
-// OutcomeResumeSegment is the consumed immutable route proof retained by the
-// seal-local RoutePlan. It exposes only opaque phases and exact route matching.
-type OutcomeResumeSegment struct {
-	owner    *Result
-	control  *sourcecontrol.Result
-	fromTerm keyspace.Term
-	toTerm   keyspace.Term
-	from     sourcecontrol.PhaseRef
-	to       sourcecontrol.PhaseRef
+func (row OutcomeResumeRow) Available() bool {
+	return row.owner != nil && row.owner.available() && row.control != nil && row.owner.control == row.control &&
+		row.fromTerm != 0 && row.toTerm != 0 && row.from.Available() &&
+		row.to.Available() && row.from.OutcomePhase() && !row.to.OutcomePhase() &&
+		sourcecontrol.SamePhaseOwner(row.from, row.to)
 }
 
-func (segment OutcomeResumeSegment) Available() bool {
-	return segment.owner != nil && segment.owner.available() && segment.control != nil && segment.owner.control == segment.control &&
-		segment.fromTerm != 0 && segment.toTerm != 0 && segment.from.Available() &&
-		segment.to.Available() && segment.from.OutcomePhase() && !segment.to.OutcomePhase() &&
-		sourcecontrol.SamePhaseOwner(segment.from, segment.to)
+func (row OutcomeResumeRow) OwnedBy(owner *Result, control *sourcecontrol.Result) bool {
+	return row.Available() && owner != nil && control != nil && row.owner == owner && row.control == control
 }
 
-func (segment OutcomeResumeSegment) OwnedBy(owner *Result, control *sourcecontrol.Result) bool {
-	return segment.Available() && owner != nil && control != nil && segment.owner == owner && segment.control == control
-}
-
-func (segment OutcomeResumeSegment) Endpoints(owner *Result, control *sourcecontrol.Result) (sourcecontrol.PhaseRef, sourcecontrol.PhaseRef, bool) {
-	if !segment.OwnedBy(owner, control) {
+func (row OutcomeResumeRow) Endpoints(owner *Result, control *sourcecontrol.Result) (sourcecontrol.PhaseRef, sourcecontrol.PhaseRef, bool) {
+	if !row.OwnedBy(owner, control) {
 		return sourcecontrol.PhaseRef{}, sourcecontrol.PhaseRef{}, false
 	}
-	return segment.from, segment.to, true
+	return row.from, row.to, true
 }
 
-func (segment OutcomeResumeSegment) MatchesRoute(from, to keyspace.Term) bool {
-	return segment.Available() &&
-		from == segment.fromTerm && to == segment.toTerm
+func (row OutcomeResumeRow) MatchesRoute(from, to keyspace.Term) bool {
+	return row.Available() &&
+		from == row.fromTerm && to == row.toTerm
+}
+
+// RouteTerms returns the exact authored Outcome and executable Entry terms
+// after the caller has checked OwnedBy. A zero term is never a valid row.
+func (row OutcomeResumeRow) RouteTerms() (keyspace.Term, keyspace.Term) {
+	return row.fromTerm, row.toTerm
 }

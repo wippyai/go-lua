@@ -14,7 +14,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/containment"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/continuation"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/control"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/directbinding"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/directfunction"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/evaluation"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/executable"
@@ -85,7 +84,7 @@ func Assemble(
 		return fail("owner preflight", errors.New("entry is not a canonical Body term"))
 	}
 
-	// Pre-Source-commit lane.  DirectBinding and Position deliberately consume
+	// Pre-Source-commit lane. Position deliberately consumes
 	// the Source Preimage while exact keys, bind order, and authored spans are
 	// still live.  Nothing in this lane can observe a committed Source View.
 	bodies, err := body.Seal(preimage, authoredLive, staticView, entry)
@@ -119,10 +118,6 @@ func Assemble(
 	if err != nil {
 		return fail("Function boundaries", err)
 	}
-	direct, err := directbinding.Seal(preimage, authoredLive, bodies, bindings, staticView, moduleView)
-	if err != nil {
-		return fail("DirectBinding", err)
-	}
 	indexInput, err := position.Seal(preimage, authoredLive, bodies, forest, outcomes, entry, staticID, moduleID)
 	if err != nil {
 		return fail("Position", err)
@@ -144,14 +139,7 @@ func Assemble(
 	// and retain only their own scalar quartet.  All topology, recurrence, and
 	// control proofs remain local to this call.
 	sourceView := sourceComponent.View()
-	cellRoleIssuance, cellRoleOK := semanticPathIssuance.IssueCellRoles(sourceView)
-	if !cellRoleOK {
-		return fail("Semantic path Cell roles", errors.New("Source Cell role issuance failed"))
-	}
-	cellRoles, cellRolesOK := cellRoleIssuance.Consume(sourceView)
-	if !cellRolesOK {
-		return fail("Semantic path Cell roles", errors.New("Source Cell role receipt failed"))
-	}
+	cellRoles := sourceView.CellRoles()
 	pathCertificate, err := semanticpath.Seal(semanticPathIssuance, cellRoles, sourceView, authoredLive, bodies, bindings, forest, outcomes, flowID, staticID, moduleID)
 	if err != nil {
 		return fail("Semantic path certificate", err)
@@ -160,14 +148,14 @@ func Assemble(
 	if err != nil {
 		return fail("Source control", err)
 	}
-	vertexReceipt, receiptOK := pathCertificate.IssueVertexCatalogReceipt()
-	vertexLease, vertexErr := controlGraph.InstallVertexCatalogLease(bodies, vertexReceipt)
-	if !receiptOK || vertexErr != nil || vertexLease == nil {
-		return fail("Source control vertex catalog", errors.New("semantic vertex catalog issuance failed"))
+	vertexPaths, pathsOK := pathCertificate.VertexCatalog(sourceID, flowID, staticID, moduleID)
+	vertexLease, vertexErr := controlGraph.InstallVertexCatalogLease(bodies, vertexPaths)
+	if !pathsOK || vertexErr != nil || vertexLease == nil {
+		return fail("Source control vertex catalog", errors.New("semantic vertex catalog paths unavailable"))
 	}
-	outcomePhasePaths, outcomePhasePathsOK := pathCertificate.IssueOutcomePhaseReceipt()
-	outcomePhases, err := controlGraph.IssueOutcomePhases(sourceView, authoredLive, bodies, outcomes, outcomePhasePaths)
-	if !outcomePhasePathsOK || err != nil || outcomePhases == nil {
+	outcomePaths, outcomePathsOK := pathCertificate.OutcomePhases(sourceID, flowID, staticID, moduleID)
+	outcomePhases, err := controlGraph.BuildOutcomePhases(sourceView, authoredLive, bodies, outcomes, outcomePaths)
+	if !outcomePathsOK || err != nil || outcomePhases == nil {
 		return fail("Source control Outcome phases", errors.New("Outcome phase issuance failed"))
 	}
 	executableResult, err := executable.Seal(sourceView, authoredLive, forest, controlGraph, staticID, moduleID)
@@ -182,11 +170,11 @@ func Assemble(
 	if err != nil {
 		return fail("Body returns", err)
 	}
-	causalReceipt, receiptOK := pathCertificate.IssueCausalReceipt()
-	if !receiptOK {
-		return fail("Causal structural path receipt", errors.New("structural path receipt issuance failed"))
+	causalPaths, pathsOK := pathCertificate.Causal(sourceID, flowID, staticID, moduleID)
+	if !pathsOK {
+		return fail("Causal structural paths", errors.New("structural path view unavailable"))
 	}
-	causalPreparation, err := causal.PrepareRoutePlanWithStructuralPaths(sourceView, authoredLive, bodies, forest, outcomes, controlGraph, ports, executableResult, runtimeEntries, causalReceipt, outcomePhases, staticID, moduleID)
+	causalPreparation, err := causal.PrepareRoutePlanWithStructuralPaths(sourceView, authoredLive, bodies, forest, outcomes, controlGraph, ports, executableResult, runtimeEntries, causalPaths, outcomePhases, staticID, moduleID)
 	if err != nil {
 		return fail("Causal route plan", err)
 	}
@@ -199,7 +187,7 @@ func Assemble(
 		return fail("DirectFunction", err)
 	}
 	// No published Flow projection may retain SourceControl's catalog/CSR or
-	// opaque NodeRefs. Every Causal point/route receipt was copied while the
+	// opaque NodeRefs. Every Causal point/route row was copied while the
 	// lease was live; DirectFunction is the last structural consumer.
 	if !controlGraph.ReleaseVertexCatalog(vertexLease) {
 		return fail("Source control vertex catalog release", errors.New("vertex catalog release authority was unavailable"))
@@ -208,7 +196,7 @@ func Assemble(
 	if err != nil {
 		return fail("Candidates", err)
 	}
-	accessGeometryResult, err := accessgeometry.Seal(sourceView, authoredLive, candidateResult, staticID, moduleID)
+	accessGeometryResult, err := accessgeometry.Seal(sourceView, authoredLive, candidateResult, bodies, bindings, staticView, moduleView)
 	if err != nil {
 		return fail("AccessGeometry", err)
 	}
@@ -274,15 +262,15 @@ func Assemble(
 	}
 
 	// Static validation consumes the full transient forest/scope proof and
-	// the still-live authored Flow view, then returns only Static-owned receipt
-	// terms. The receipt itself is not retained by Flow or Assembly.
-	receipt, err := staticcheck.Validate(sourceView, authoredLive, staticView, bodies, bindings, forest, scopeProof, direct, moduleID, entry)
+	// the still-live authored Flow view, then returns only Static-owned result
+	// terms. The result itself is not retained by Flow or Assembly.
+	staticResult, err := staticcheck.Validate(sourceView, authoredLive, staticView, bodies, bindings, forest, scopeProof, accessGeometryResult, moduleID, entry)
 	if err != nil {
 		return fail("StaticCheck", err)
 	}
 
 	staticTerminal = true
-	staticComponent, err := staticFinalizer.Commit(receipt)
+	staticComponent, err := staticFinalizer.Commit(staticResult)
 	if err != nil {
 		return fail("Static commit", err)
 	}
@@ -319,7 +307,6 @@ func Assemble(
 		directFunction:   directFunctionResult,
 		candidates:       candidateResult,
 		accessGeometry:   accessGeometryResult,
-		directBinding:    direct,
 		binaryPrimitives: binaryPrimitivesResult,
 		continuation:     continuationResult,
 		allocationPaths:  allocationPaths,

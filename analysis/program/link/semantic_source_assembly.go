@@ -3,8 +3,8 @@ package link
 import (
 	"errors"
 
+	"github.com/wippyai/go-lua/analysis/program/relations"
 	"github.com/wippyai/go-lua/analysis/program/semanticsource"
-	"github.com/wippyai/go-lua/analysis/schema/relations"
 )
 
 var (
@@ -52,14 +52,14 @@ func buildSemanticSourcePublications(l *Link) (semanticsource.Publications, erro
 	if !ok || contract == nil {
 		return semanticsource.Publications{}, errSemanticSourceAssemblyUnavailable
 	}
-	targetReceipt, ok := contract.SemanticSourceReceipt()
-	if !ok || targetReceipt.OwnerID() != contract.ContentID() {
+	targetViews, ok := contract.SourceViews()
+	if !ok || targetViews.OwnerID() != contract.ContentID() {
 		return semanticsource.Publications{}, errSemanticSourceAssemblyFragment
 	}
-	if err := assembly.acceptOne(semanticSourceTarget, targetReceipt.Publications(schema)); err != nil {
+	if err := assembly.acceptOne(semanticSourceTarget, targetViews.Publications(schema)); err != nil {
 		return semanticsource.Publications{}, err
 	}
-	linkRows, ok := l.sourcePublications(schema)
+	linkRows, ok := l.childSourcePublications(schema)
 	if !ok {
 		return semanticsource.Publications{}, errSemanticSourceAssemblyFragment
 	}

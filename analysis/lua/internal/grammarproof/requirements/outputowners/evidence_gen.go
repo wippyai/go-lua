@@ -2,12 +2,12 @@
 
 package outputowners
 
-import "github.com/wippyai/go-lua/analysis/schema/relations"
+import "github.com/wippyai/go-lua/analysis/program/relations"
 
 func init() {
 	Generated = Evidence{
-		SchemaDigest: "89314d3703983030a04cb0b9ff73aac41912e6b3bd06ab941f45862554a893f7",
-		Digest:       "3859cd00c28b5e41d3f1f7f363cf2dd49f89b1a9df46b0ecb95c705334049f13",
+		SchemaDigest: "9b15a963276c27be60e7c1c09335c360d837230f4b9d7300fc38c1f1b527d1aa",
+		Digest:       "6b31fd2fbebfcbf132e7a3b2798922d30f22a28d7296631f5ed18f9a069fad26",
 		Rows: []Row{
 			{Output: "ProgramFlowBody@-", Owner: relations.Owner(1)},
 			{Output: "ProgramFlowBody@ProgramFlowBodyRoots", Owner: relations.Owner(1)},

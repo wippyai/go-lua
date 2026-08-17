@@ -17,6 +17,33 @@ const (
 
 var _ effect.Label = NormalReturnRefinement{}
 
+// RefinementCount is the size of the closed refinement vocabulary.
+const RefinementCount = 2
+
+// Refinements is the refinement catalog. It is the one enumeration of the
+// members this package owns, so a consumer that visits, serializes, or declares
+// every refinement projects it instead of restating the member list. The
+// catalog is returned by value and costs no allocation to range over.
+func Refinements() [RefinementCount]Refinement {
+	return [RefinementCount]Refinement{Present{}, Absent{}}
+}
+
+// RefinementForKind returns the catalog member that declares kind. The kind
+// spellings come from the members' own Kind methods, so the name a refinement
+// answers to and the name it is found by are one statement and cannot drift: a
+// refinement the catalog holds is readable by construction.
+func RefinementForKind(kind string) (Refinement, bool) {
+	if kind == "" {
+		return nil, false
+	}
+	for _, refinement := range Refinements() {
+		if refinement.Kind() == kind {
+			return refinement, true
+		}
+	}
+	return nil, false
+}
+
 // Refinement is one argument refinement that can be declared by a function
 // signature postcondition.
 type Refinement interface {

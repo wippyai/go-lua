@@ -4,10 +4,8 @@ import (
 	effectfactor "github.com/wippyai/go-lua/analysis/domain/effect/factor"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/schema/query"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
-
-type valueSummaryObservation = query.ValueSummaryObservation
 
 // Keep the production catalog's two concrete hot surfaces tied to their
 // typed implementations. These assignments are compile-time checks, not a
@@ -17,74 +15,44 @@ var (
 	_ effectExactHotSpecSignature  = effectExactQueryHotSpec
 )
 
-type valueSummaryHotSpecSignature = func(*valuedomain.Schema, engine.SemanticKey) engine.HotSummaryQuerySpec[valuedomain.Value, valueSummaryObservation]
-type effectExactHotSpecSignature = func(*effectfactor.Algebra, engine.SemanticKey) engine.HotExactQuerySpec[effectfactor.Value, effectObservation]
+type valueSummaryHotSpecSignature = func(*valuedomain.Schema, identity.SemanticKey) engine.HotSummaryQuerySpec[valuedomain.Value, valuedomain.ValueSummaryObservation]
+type effectExactHotSpecSignature = func(*effectfactor.Algebra, identity.SemanticKey) engine.HotExactQuerySpec[effectfactor.Value, effectfactor.EffectObservation]
 
-func valueSummaryQueryHotSpec(schema *valuedomain.Schema, freezer engine.SemanticKey) engine.HotSummaryQuerySpec[valuedomain.Value, valueSummaryObservation] {
-	return engine.HotSummaryQuerySpec[valuedomain.Value, valueSummaryObservation]{
-		Fold: engine.QueryFold[engine.OrderedCells[valuedomain.Value], valueSummaryObservation]{
-			Begin: func() valueSummaryObservation {
-				if schema == nil || schema.CoordinateCount() == 0 {
-					return valueSummaryObservation{}
-				}
-				return valueSummaryObservation{
-					Values:  make([]valuedomain.Value, schema.CoordinateCount()),
-					Present: make([]bool, schema.CoordinateCount()),
-					Valid:   true,
-				}
-			},
-			Accumulate: func(result valueSummaryObservation, cells engine.OrderedCells[valuedomain.Value]) (valueSummaryObservation, bool) {
-				if schema == nil || !result.Valid || cells.Count() == 0 || len(result.Values) != cells.Count() || len(result.Present) != cells.Count() {
-					return valueSummaryObservation{}, false
-				}
-				for index := range result.Values {
-					value, present, ok := cells.At(index)
-					if !ok {
-						return valueSummaryObservation{}, false
-					}
-					if !present {
-						continue
-					}
-					if !result.Present[index] {
-						result.Values[index], result.Present[index] = value, true
-						continue
-					}
-					joined, ok := schema.Join(result.Values[index], value)
-					if !ok {
-						return valueSummaryObservation{}, false
-					}
-					result.Values[index] = joined
-				}
-				// Correlated observations are folded into one detached summary row.
-				result.Rows = 1
-				return result, true
+func valueSummaryQueryHotSpec(schema *valuedomain.Schema, freezer identity.SemanticKey) engine.HotSummaryQuerySpec[valuedomain.Value, valuedomain.ValueSummaryObservation] {
+	return engine.HotSummaryQuerySpec[valuedomain.Value, valuedomain.ValueSummaryObservation]{
+		Fold: engine.QueryFold[engine.OrderedCells[valuedomain.Value], valuedomain.ValueSummaryObservation]{
+			Begin: func() valuedomain.ValueSummaryObservation { return valuedomain.BeginValueSummary(schema) },
+			Accumulate: func(result valuedomain.ValueSummaryObservation, cells engine.OrderedCells[valuedomain.Value]) (valuedomain.ValueSummaryObservation, bool) {
+				return valuedomain.AccumulateValueSummary(schema, result, cells)
 			},
 		},
-		Result: engine.FrozenResult[valueSummaryObservation]{
-			Semantic: freezer, Freeze: query.CloneValueSummary, Clone: query.CloneValueSummary,
-			Equal: func(left, right valueSummaryObservation) bool {
-				return query.EqualValueSummary(schema, left, right)
+		Result: engine.FrozenResult[valuedomain.ValueSummaryObservation]{
+			Semantic: freezer, Freeze: valuedomain.CloneValueSummary, Clone: valuedomain.CloneValueSummary,
+			Equal: func(left, right valuedomain.ValueSummaryObservation) bool {
+				return valuedomain.EqualValueSummary(schema, left, right)
 			},
-			Fingerprint: func(value valueSummaryObservation) uint64 { return query.FingerprintValueSummary(schema, value) },
+			Fingerprint: func(value valuedomain.ValueSummaryObservation) uint64 {
+				return valuedomain.FingerprintValueSummary(schema, value)
+			},
 		},
 	}
 }
 
-func effectExactQueryHotSpec(algebra *effectfactor.Algebra, freezer engine.SemanticKey) engine.HotExactQuerySpec[effectfactor.Value, effectObservation] {
-	return engine.HotExactQuerySpec[effectfactor.Value, effectObservation]{
-		Fold: engine.QueryFold[engine.OrderedCells[effectfactor.Value], effectObservation]{
-			Begin: func() effectObservation { return query.BeginEffect(algebra) },
-			Accumulate: func(result effectObservation, cells engine.OrderedCells[effectfactor.Value]) (effectObservation, bool) {
+func effectExactQueryHotSpec(algebra *effectfactor.Algebra, freezer identity.SemanticKey) engine.HotExactQuerySpec[effectfactor.Value, effectfactor.EffectObservation] {
+	return engine.HotExactQuerySpec[effectfactor.Value, effectfactor.EffectObservation]{
+		Fold: engine.QueryFold[engine.OrderedCells[effectfactor.Value], effectfactor.EffectObservation]{
+			Begin: func() effectfactor.EffectObservation { return effectfactor.BeginEffect(algebra) },
+			Accumulate: func(result effectfactor.EffectObservation, cells engine.OrderedCells[effectfactor.Value]) (effectfactor.EffectObservation, bool) {
 				if cells.Count() != 1 {
-					return effectObservation{}, false
+					return effectfactor.EffectObservation{}, false
 				}
 				value, present, available := cells.At(0)
-				return query.AccumulateEffect(algebra, result, value, present, available)
+				return effectfactor.AccumulateEffect(algebra, result, value, present, available)
 			},
 		},
-		Result: engine.FrozenResult[effectObservation]{
-			Semantic: freezer, Freeze: query.CloneEffect, Clone: query.CloneEffect,
-			Equal: query.EqualEffect, Fingerprint: query.FingerprintEffect,
+		Result: engine.FrozenResult[effectfactor.EffectObservation]{
+			Semantic: freezer, Freeze: effectfactor.CloneEffect, Clone: effectfactor.CloneEffect,
+			Equal: effectfactor.EqualEffect, Fingerprint: effectfactor.FingerprintEffect,
 		},
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof"
+	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/astcodec"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/grammar"
 )
 
@@ -537,7 +538,7 @@ func buildCarriers(schema grammar.Schema) ([]Carrier, error) {
 				continue
 			}
 			if field.Name == "AdjustRet" && field.Form == grammar.FieldFormBool {
-				child, cardinality = "ValuesAdjustment", grammarproof.FieldStateTrue
+				child, cardinality = "ValuesAdjustment", astcodec.FieldStateTrue
 			}
 			rows = append(rows, Carrier{Form: constructor.Name, Field: field.Name, Class: constructor.Class, ChildType: child, Cardinality: cardinality})
 		}
@@ -548,16 +549,16 @@ func buildCarriers(schema grammar.Schema) ([]Carrier, error) {
 	return rows, nil
 }
 
-func carrier(typ string) (string, grammarproof.FieldState, bool) {
+func carrier(typ string) (string, astcodec.FieldState, bool) {
 	sequence := strings.HasPrefix(typ, "[]")
 	typ = strings.TrimPrefix(strings.TrimPrefix(typ, "[]"), "*")
 	typ = strings.TrimPrefix(typ, "ast.")
 	switch typ {
 	case "Expr", "Stmt", "TypeExpr", "FunctionParamExpr", "InterfaceMember", "AnnotationExpr", "RecordFieldExpr", "TypeParamExpr":
 		if sequence {
-			return typ, grammarproof.FieldStateNonEmpty, true
+			return typ, astcodec.FieldStateNonEmpty, true
 		}
-		return typ, grammarproof.FieldStatePresent, true
+		return typ, astcodec.FieldStatePresent, true
 	}
 	return "", 0, false
 }

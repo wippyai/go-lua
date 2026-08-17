@@ -239,7 +239,7 @@ func (runtime *solverRuntime) prevalidateSelectedFactorEdges(selected []equation
 		if factorOK && factor != nil {
 			slot, slotOK = factor.runtimeSlot()
 		}
-		if !sourceOK || !targetOK || !factorOK || factor == nil || factor.semantic().compositionKey() != edge.Factor() || !slotOK || slot < 0 || int(slot) >= runtime.carrier.Count() || source < 0 || target < 0 || source >= runtime.graph.PointCount() || target >= runtime.graph.PointCount() {
+		if !sourceOK || !targetOK || !factorOK || factor == nil || compositionKeyOf(factor.semantic()) != edge.Factor() || !slotOK || slot < 0 || int(slot) >= runtime.carrier.Count() || source < 0 || target < 0 || source >= runtime.graph.PointCount() || target >= runtime.graph.PointCount() {
 			return nil, nil, nil, false, nil, false
 		}
 		if _, duplicate := seen[edge.Key()]; duplicate {
@@ -316,7 +316,7 @@ func (runtime *solverRuntime) bindSelectedFactorEdge(descriptor selectedFactorDe
 	}
 	sourceScope, sourceScoped := runtime.overlay.reindexes.scope(input.Source().Scope())
 	targetScope, targetScoped := runtime.overlay.reindexes.scope(input.Target().Scope())
-	if !edge.Available() || !input.Available() || !factorOK || factor == nil || factor.semantic().compositionKey() != edge.Factor() || !slotOK || slot < 0 || int(slot) >= runtime.carrier.Count() || !sourceScoped || !targetScoped || !sourceScope.Same(runtime.pointScopes[descriptor.source]) || !targetScope.Same(runtime.pointScopes[descriptor.target]) {
+	if !edge.Available() || !input.Available() || !factorOK || factor == nil || compositionKeyOf(factor.semantic()) != edge.Factor() || !slotOK || slot < 0 || int(slot) >= runtime.carrier.Count() || !sourceScoped || !targetScoped || !sourceScope.Same(runtime.pointScopes[descriptor.source]) || !targetScope.Same(runtime.pointScopes[descriptor.target]) {
 		return boundSelectedFactorEdge{}, false
 	}
 	planKey := input.Reindex().Key()

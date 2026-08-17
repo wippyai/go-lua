@@ -8,7 +8,7 @@ import (
 )
 
 // ControlFault records one binder-produced fault with its direct Body owner.
-func (c *Collector) ControlFault(span source.Span, owner Term, kind source.ControlFaultKind, label, blocker Term) Term {
+func (c *Collector) ControlFault(span source.Span, owner keyspace.Term, kind source.ControlFaultKind, label, blocker keyspace.Term) keyspace.Term {
 	if !validOwner(c, owner) || !validControlFaultTerms(c, kind, label, blocker) {
 		if c != nil && c.err == nil && !c.terminal {
 			c.fail(errors.New("program/lower/collector: invalid control fault"))
@@ -27,7 +27,7 @@ func (c *Collector) ControlFault(span source.Span, owner Term, kind source.Contr
 // construction boundary. Rejecting malformed label/blocker combinations here
 // keeps a bad row from surviving until Source.Build, where it would otherwise
 // become a late, less-local failure.
-func validControlFaultTerms(c *Collector, kind source.ControlFaultKind, label, blocker Term) bool {
+func validControlFaultTerms(c *Collector, kind source.ControlFaultKind, label, blocker keyspace.Term) bool {
 	if c == nil || kind < source.ControlFaultDuplicateLabel || kind > source.ControlFaultBreakOutsideLoop {
 		return false
 	}

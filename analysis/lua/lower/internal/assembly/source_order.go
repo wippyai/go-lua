@@ -8,7 +8,7 @@ import (
 )
 
 // Body declares an empty authored Body. SetBody must fill it exactly once.
-func (c *Collector) Body(span source.Span) Term {
+func (c *Collector) Body(span source.Span) keyspace.Term {
 	term := c.mint(keyspace.FamilyBody, span)
 	if term == 0 {
 		return 0
@@ -19,15 +19,15 @@ func (c *Collector) Body(span source.Span) Term {
 
 // SetBody installs one Body's exact direct source order. It never derives
 // statement roots or containment; those belong to typed Flow finalization.
-func (c *Collector) SetBody(body Term, terms ...Term) bool {
+func (c *Collector) SetBody(body keyspace.Term, terms ...keyspace.Term) bool {
 	if !mutationReady(c) {
 		return false
 	}
 	if !validBody(c, body) {
 		return rejectMutation(c, errors.New("program/lower/collector: invalid Body fill"))
 	}
-	copyTerms := append([]Term(nil), terms...)
-	seen := make(map[Term]struct{}, len(copyTerms))
+	copyTerms := append([]keyspace.Term(nil), terms...)
+	seen := make(map[keyspace.Term]struct{}, len(copyTerms))
 	for _, term := range copyTerms {
 		if !validDirectBodyTerm(c, body, term) {
 			return rejectMutation(c, errors.New("program/lower/collector: Body contains invalid authored Term"))
@@ -44,7 +44,7 @@ func (c *Collector) SetBody(body Term, terms ...Term) bool {
 	return true
 }
 
-func sourceBodyTermSeen(c *Collector, term Term) bool {
+func sourceBodyTermSeen(c *Collector, term keyspace.Term) bool {
 	if c == nil {
 		return false
 	}
@@ -53,7 +53,7 @@ func sourceBodyTermSeen(c *Collector, term Term) bool {
 
 // SetEntry fixes the one top-level Body. It is a scalar construction fact;
 // Source validates the completed forest when Flow consumes its Finalizer.
-func (c *Collector) SetEntry(body Term) bool {
+func (c *Collector) SetEntry(body keyspace.Term) bool {
 	if !mutationReady(c) {
 		return false
 	}
@@ -68,7 +68,7 @@ func (c *Collector) SetEntry(body Term) bool {
 
 // Entry returns the scalar entry Body while construction remains local. It
 // does not expose Source or a query authority.
-func (c *Collector) Entry() Term {
+func (c *Collector) Entry() keyspace.Term {
 	if c == nil || c.err != nil {
 		return 0
 	}
@@ -78,7 +78,7 @@ func (c *Collector) Entry() Term {
 // BindCells records Source's authored Cell order for one Bind. The evaluated
 // Values relation remains Flow-owned; this helper stores only the ordered Cell
 // provenance required by Source.Build.
-func (c *Collector) BindCells(bind Term, cells []Term) bool {
+func (c *Collector) BindCells(bind keyspace.Term, cells []keyspace.Term) bool {
 	if !mutationReady(c) {
 		return false
 	}
@@ -94,7 +94,7 @@ func (c *Collector) BindCells(bind Term, cells []Term) bool {
 		return rejectMutation(c, errors.New("program/lower/collector: Bind order owner is absent or foreign"))
 	}
 	owner := bindRow.Owner
-	seen := make(map[Term]struct{}, len(cells))
+	seen := make(map[keyspace.Term]struct{}, len(cells))
 	for _, cell := range cells {
 		if !localCellInBodyAdmission(c, cell, owner) {
 			return rejectMutation(c, errors.New("program/lower/collector: invalid Bind Cell"))
@@ -110,7 +110,7 @@ func (c *Collector) BindCells(bind Term, cells []Term) bool {
 
 // FunctionFormals records Source's authored formal Cell order. Static
 // signature relations are a separate owner and are not inferred here.
-func (c *Collector) FunctionFormals(function Term, formals []Term) bool {
+func (c *Collector) FunctionFormals(function keyspace.Term, formals []keyspace.Term) bool {
 	if !mutationReady(c) {
 		return false
 	}
@@ -126,7 +126,7 @@ func (c *Collector) FunctionFormals(function Term, formals []Term) bool {
 		return rejectMutation(c, errors.New("program/lower/collector: Function formal owner body is absent or foreign"))
 	}
 	body := functionRow.Body
-	seen := make(map[Term]struct{}, len(formals))
+	seen := make(map[keyspace.Term]struct{}, len(formals))
 	for _, formal := range formals {
 		if !localCellInBodyAdmission(c, formal, body) {
 			return rejectMutation(c, errors.New("program/lower/collector: invalid Function formal Cell"))
@@ -140,7 +140,7 @@ func (c *Collector) FunctionFormals(function Term, formals []Term) bool {
 	return true
 }
 
-func sourceCellAlreadyOrdered(c *Collector, cell Term) bool {
+func sourceCellAlreadyOrdered(c *Collector, cell keyspace.Term) bool {
 	if c == nil {
 		return false
 	}

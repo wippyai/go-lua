@@ -64,11 +64,11 @@ func TestStaticCheckReadMembershipAndBindVisibilityPhases(t *testing.T) {
 	if !ok || !tree.cellVisible(post, cell) {
 		t.Fatalf("Bind cell not visible after Bind: point=%d", post)
 	}
-	if receipt, err := Validate(
+	if result, err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
-		fixture.bindings, fixture.forest, fixture.proof, fixture.direct,
+		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
 		fixture.moduleView.ContentID(), fixture.entry,
-	); err != nil || len(receipt.TypeOf) != 1 || len(receipt.Annotations) != 0 || len(receipt.Publications) != 0 {
-		t.Fatalf("Bind integrated Validate = %#v/%v", receipt, err)
+	); err != nil || len(result.TypeOf) != 1 || len(result.Annotations) != 0 || len(result.Publications) != 0 {
+		t.Fatalf("Bind integrated Validate = %#v/%v", result, err)
 	}
 }

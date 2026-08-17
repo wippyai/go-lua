@@ -180,7 +180,7 @@ func hotEndpoints(schema *value.Schema, row value.BinaryOrder) (result, left, ri
 	return result, left, right, op, true
 }
 
-func hotChecker(owner *valueowner.HotOwner, semantic engine.SemanticKey, leftRead, rightRead *engine.Read[engine.OrderedCells[value.Value]]) engine.RuleDerivationChecker[value.Value, value.BinaryOrder] {
+func hotChecker(owner *valueowner.HotOwner, semantic identity.SemanticKey, leftRead, rightRead *engine.Read[engine.OrderedCells[value.Value]]) engine.RuleDerivationChecker[value.Value, value.BinaryOrder] {
 	return func(derivation engine.RuleDerivation[value.Value, value.BinaryOrder]) (engine.RuleEvidence, bool) {
 		if owner == nil || owner.Schema() == nil || leftRead == nil || rightRead == nil || derivation.Rule() != semantic || derivation.InputCount() != 1 || derivation.ReadCount() != 2 || derivation.DispositionCount() == 0 {
 			return engine.RuleEvidence{}, false

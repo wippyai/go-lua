@@ -8,8 +8,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/materialization"
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/program/flow"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/link"
@@ -393,7 +393,7 @@ type allocationSource struct {
 	// remain distinct without retaining the Link Project Shard authority.
 	module       identity.ContentID
 	kind         AllocationKind
-	form         program.AllocationForm
+	form         flow.AllocationForm
 	programID    identity.ContentID
 	allocationID identity.ContentID
 	artifactRow  uint32
@@ -632,7 +632,7 @@ type payloadSupport struct {
 
 // SealWithArtifacts is the artifact-native Heap admission seam. It consumes
 // only immutable artifact rows and Link's sealed substitution inverses; it
-// never reopens a mounted Program, TransformerInput, or Flow geometry.
+// never reopens a mounted Program or Flow geometry.
 func SealWithArtifacts(source *link.Link, mounts []ArtifactMount) (Schema, SealFailure) {
 	builder, byModule, failure := newArtifactSchemaOwner(source, mounts)
 	if failure != SealFailureNone {
@@ -754,9 +754,9 @@ func (owner *heapBuilder) addArtifactAllocations(mounts map[identity.ContentID]A
 			}
 			kind := AllocationInvalid
 			switch allocation.Role() {
-			case program.AllocationTable:
+			case flow.AllocationTable:
 				kind = AllocationTable
-			case program.AllocationClosure:
+			case flow.AllocationClosure:
 				kind = AllocationClosure
 			default:
 				return false
@@ -1646,7 +1646,7 @@ func (owner *heapBuilder) buildRootKinds() bool {
 	}
 	for index := uint64(0); index < owner.rootCount(); index++ {
 		mask, ok := owner.rootRuntimeKinds(uint32(index + 1))
-		if !ok || mask == 0 || !mask.Valid() || mask&^legalTableKeyKinds != 0 {
+		if !ok || mask == 0 || !mask.Valid() || mask&^runtimekind.NonNil != 0 {
 			return false
 		}
 	}
@@ -1945,7 +1945,7 @@ func (schema Schema) KeyAt(index int) (Key, bool) {
 }
 
 // KeyForAllocationReceipt resolves a compact artifact-owned allocation
-// receipt without reopening Link, Program, or TransformerInput. Mount
+// receipt without reopening Link or Program. Mount
 // identity is part of the receipt, preserving duplicate mounts.
 func (schema Schema) KeyForAllocationReceipt(receipt AllocationReceipt) (Key, bool) {
 	if !schema.valid() || !receipt.Available() || schema.owner.artifacts == nil {
@@ -1984,13 +1984,13 @@ func (schema Schema) AllocationRootValueID(key Key) (identity.ContentID, bool) {
 // existing Program allocation root.  Consumers that only need the source
 // disposition must use this row projection rather than rescanning artifact
 // fields to classify the root again.
-func (schema Schema) AllocationFormForKey(key Key) (program.AllocationForm, bool) {
+func (schema Schema) AllocationFormForKey(key Key) (flow.AllocationForm, bool) {
 	if !schema.valid() || !schema.OwnsKey(key) || key.Kind() != RootAllocation {
-		return program.AllocationFormInvalid, false
+		return flow.AllocationFormInvalid, false
 	}
 	row, ok := schema.owner.rootAt(key.slot)
 	if !ok || row.kind != RootAllocation || !row.allocation.form.Valid() {
-		return program.AllocationFormInvalid, false
+		return flow.AllocationFormInvalid, false
 	}
 	return row.allocation.form, true
 }
@@ -2165,7 +2165,7 @@ func (schema Schema) ArtifactAllocationForKey(key Key) (programartifact.HeapAllo
 		return programartifact.HeapAllocationRow{}, false
 	}
 	allocation, allocationOK := artifact.HeapAllocationAt(int(root.allocation.artifactRow - 1))
-	if !allocationOK || allocation.ID() != receipt.allocationID || allocation.Form() != root.allocation.form || allocation.Role() == program.AllocationInvalid {
+	if !allocationOK || allocation.ID() != receipt.allocationID || allocation.Form() != root.allocation.form || allocation.Role() == flow.AllocationInvalid {
 		return programartifact.HeapAllocationRow{}, false
 	}
 	return allocation, true
@@ -2253,7 +2253,7 @@ func (schema Schema) IndexAccessAt(index int) (IndexAccess, bool) {
 }
 
 // IndexAccessForReceipt resolves a mounted artifact occurrence in O(1) after
-// Heap seal. It never reopens the mounted Program or TransformerInput.
+// Heap seal. It never reopens the mounted Program.
 func (schema Schema) IndexAccessForReceipt(receipt IndexAccessReceipt) (IndexAccess, bool) {
 	if !schema.valid() || !receipt.Available() || schema.owner.artifacts == nil {
 		return IndexAccess{}, false

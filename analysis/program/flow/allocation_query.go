@@ -94,7 +94,7 @@ func (allocations Allocations) Count() int {
 
 // Visit emits the canonical executable allocation denominator in one pass.
 // It is a cold sealing primitive; callers must not retain or mutate the
-// supplied proof outside their owner-fenced receipt.
+// supplied proof outside its owner-fenced Flow view.
 func (allocations Allocations) Visit(visit func(Allocation) bool) bool {
 	if !allocations.view.available() || visit == nil {
 		return false
@@ -206,7 +206,7 @@ func (allocation Allocation) Role() AllocationRole {
 }
 
 // Occurrence returns the exact Source/Flow-issued structural path for this
-// allocation. The receipt is opaque and contains no source coordinate.
+// allocation. The occurrence is opaque and contains no source coordinate.
 func (allocation Allocation) Occurrence() AllocationOccurrence {
 	if !allocation.Available() {
 		return AllocationOccurrence{}
@@ -226,15 +226,6 @@ func (allocation Allocation) ID() identity.ContentID {
 	payload[allocationIDPrefixLen+sha256.Size] = byte(allocation.role)
 	binary.BigEndian.PutUint32(payload[allocationIDPrefixLen+sha256.Size+1:], uint32(allocation.term))
 	return sha256.Sum256(payload[:])
-}
-
-// SourceTerm is a cold-only adapter coordinate for domain projections. It is
-// not used by Allocation identity or ownership checks.
-func (allocation Allocation) SourceTerm() (keyspace.Term, bool) {
-	if !allocation.Available() {
-		return 0, false
-	}
-	return allocation.term, true
 }
 
 // Form returns the cold constructor geometry from the existing authored
@@ -361,15 +352,6 @@ func (field AllocationField) ID() identity.ContentID {
 	copy(payload[fieldIDPrefixLen:fieldIDPrefixLen+sha256.Size], parent[:])
 	binary.BigEndian.PutUint32(payload[fieldIDPrefixLen+sha256.Size:], uint32(field.term))
 	return sha256.Sum256(payload[:])
-}
-
-// SourceTerm is a cold-only adapter coordinate for domain projections. It is
-// not used by AllocationField identity or ownership checks.
-func (field AllocationField) SourceTerm() (keyspace.Term, bool) {
-	if !field.Available() {
-		return 0, false
-	}
-	return field.term, true
 }
 
 const (

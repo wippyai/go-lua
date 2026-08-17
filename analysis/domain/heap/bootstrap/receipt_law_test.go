@@ -4,18 +4,19 @@ import (
 	"crypto/sha256"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
 	bootstrap "github.com/wippyai/go-lua/analysis/domain/heap/bootstrap"
 	heapowner "github.com/wippyai/go-lua/analysis/domain/heap/owner"
 	"github.com/wippyai/go-lua/analysis/domain/materialization"
+	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
 	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
-	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
-	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 func TestHotBootstrapUsesSealedRootReceiptAndRejectsForeignBinding(t *testing.T) {
@@ -163,6 +164,7 @@ func bootstrapFixture(t testing.TB) (heapdomain.Schema, bootstrapFixtureMounts) 
 		t.Fatal(err)
 	}
 	contract, err := target.Seal(&target.Spec{
+		Semantics: domaincontract.NewSemantics(),
 		InitialRoots: []target.InitialRootSpec{
 			{Identity: "GlobalEnvRoot", Shape: target.BootShapeSpec{Aggregate: target.BootAggregateTable, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}}},
 			{Identity: "StringMetatableRoot", Shape: target.BootShapeSpec{Aggregate: target.BootAggregateMetatable, Immutable: true, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "StringMetatableRoot"}}},
@@ -180,7 +182,7 @@ func bootstrapFixture(t testing.TB) (heapdomain.Schema, bootstrapFixtureMounts) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, receiptOK := grammar.Global()
+	receipt, receiptOK := composite.Global()
 	if !receiptOK {
 		t.Fatal("bootstrap artifact receipt")
 	}
@@ -194,7 +196,7 @@ func bootstrapFixture(t testing.TB) (heapdomain.Schema, bootstrapFixtureMounts) 
 		if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 			t.Fatal("bootstrap artifact mount")
 		}
-		artifact, failure := schemaadapter.CompileDetailed(program.TransformerInput(), receipt)
+		artifact, failure := composite.CompileArtifactDetailed(program, receipt)
 		if failure.Available() || artifact == nil {
 			t.Fatalf("bootstrap artifact compile: %v", failure)
 		}
@@ -211,8 +213,8 @@ func bootstrapFixture(t testing.TB) (heapdomain.Schema, bootstrapFixtureMounts) 
 	return schema, mounts
 }
 
-func bootstrapKey(value byte) engine.SemanticKey {
+func bootstrapKey(value byte) identity.SemanticKey {
 	digest := sha256.Sum256([]byte{0xB1, value})
-	key, _ := engine.NewSemanticKey(digest, 1)
+	key, _ := identity.NewSemanticKey(digest, 1)
 	return key
 }

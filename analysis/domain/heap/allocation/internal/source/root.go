@@ -12,7 +12,7 @@ import (
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program"
+	"github.com/wippyai/go-lua/analysis/program/flow"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
 
@@ -80,13 +80,13 @@ func classify(schema heap.Schema, root heap.Key, kind heap.AllocationKind) (Form
 	}
 }
 
-func formFromProgram(form program.AllocationForm) (Form, bool) {
+func formFromProgram(form flow.AllocationForm) (Form, bool) {
 	switch form {
-	case program.AllocationFormEmpty:
+	case flow.AllocationFormEmpty:
 		return FormEmpty, true
-	case program.AllocationFormClosed:
+	case flow.AllocationFormClosed:
 		return FormClosed, true
-	case program.AllocationFormFinalOpen:
+	case flow.AllocationFormFinalOpen:
 		return FormFinalOpen, true
 	default:
 		return FormInvalid, false

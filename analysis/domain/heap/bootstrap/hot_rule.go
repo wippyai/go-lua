@@ -121,7 +121,7 @@ func (rule *HotRule) Implementation() (*heapowner.RuleImplementation[Root], bool
 	return rule.implementation, ok
 }
 
-func hotBootstrapChecker(owner *heapowner.HotOwner, semantic engine.SemanticKey) engine.RuleDerivationChecker[heapdomain.Value, Root] {
+func hotBootstrapChecker(owner *heapowner.HotOwner, semantic identity.SemanticKey) engine.RuleDerivationChecker[heapdomain.Value, Root] {
 	return func(derivation engine.RuleDerivation[heapdomain.Value, Root]) (engine.RuleEvidence, bool) {
 		if owner == nil || !owner.Schema().Valid() || derivation.Rule() != semantic || derivation.InputCount() != 0 || derivation.ReadCount() != 0 || derivation.DispositionCount() != 1 {
 			return engine.RuleEvidence{}, false

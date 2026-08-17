@@ -1,19 +1,19 @@
 package target
 
 import (
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
 
 func TestResultAliasesCanonicalizeAndRemainConjunctive(t *testing.T) {
-	contract, err := Seal(&Spec{Operations: []OperationSpec{
+	contract, err := testSeal(&Spec{Operations: []OperationSpec{
 		{
 			Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"aliases"}}},
-			Input:    ValuesSpec{Fixed: []typ.Type{typ.Any, typ.String}, Tail: ValuesClosed},
+			Input:    ValuesSpec{Fixed: []schematype.Type{testAny, testString}, Tail: ValuesClosed},
 			Outcomes: []OutcomeSpec{{
-				Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{typ.Any, typ.String}, Tail: ValuesClosed},
+				Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testAny, testString}, Tail: ValuesClosed},
 				Produced: []ProducedSpec{{Result: 0, Operation: 2}},
 				ResultAliases: []ResultAliasSpec{
 					{Result: 1, Source: InputSource{Kind: InputSourceValueFormal, Ordinal: 1}},
@@ -48,14 +48,14 @@ func TestResultAliasesCanonicalizeAndRemainConjunctive(t *testing.T) {
 }
 
 func TestResultAliasCoexistsWithCallbackResult(t *testing.T) {
-	contract, err := Seal(&Spec{Operations: []OperationSpec{{
+	contract, err := testSeal(&Spec{Operations: []OperationSpec{{
 		Bindings:   []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"callback-alias"}}},
 		ValuesVars: 5,
-		Input:      ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed},
+		Input:      ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed},
 		Callbacks:  []CallbackSpec{{Function: InputSource{Kind: InputSourceValueFormal}, Admission: OrdinaryCallable, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: CallbackRetainedOptionalOnce, Effects: RowSpec{Tail: RowClosed}}},
 		Outcomes: []OutcomeSpec{{
 			Kind:            flowkind.OutcomeNormal,
-			Values:          ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed},
+			Values:          ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed},
 			CallbackResults: []CallbackResultSpec{{Result: 0, Callback: 1}},
 			ResultAliases:   []ResultAliasSpec{{Result: 0, Source: InputSource{Kind: InputSourceValueFormal}}},
 		}},
@@ -72,8 +72,8 @@ func TestResultAliasCoexistsWithCallbackResult(t *testing.T) {
 
 func TestResultAliasesRejectInvalidAndDuplicate(t *testing.T) {
 	base := OperationSpec{
-		Input:    ValuesSpec{Fixed: []typ.Type{typ.String}, Tail: ValuesClosed},
-		Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{typ.String}, Tail: ValuesClosed}}},
+		Input:    ValuesSpec{Fixed: []schematype.Type{testString}, Tail: ValuesClosed},
+		Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testString}, Tail: ValuesClosed}}},
 		Effects:  RowSpec{Tail: RowClosed},
 	}
 	for _, test := range []struct {
@@ -89,7 +89,7 @@ func TestResultAliasesRejectInvalidAndDuplicate(t *testing.T) {
 			op := base
 			op.Outcomes = append([]OutcomeSpec(nil), base.Outcomes...)
 			op.Outcomes[0].ResultAliases = test.aliases
-			if _, err := Seal(&Spec{Operations: []OperationSpec{op}}); err == nil {
+			if _, err := testSeal(&Spec{Operations: []OperationSpec{op}}); err == nil {
 				t.Fatal("Seal accepted invalid result alias")
 			}
 		})
@@ -98,16 +98,16 @@ func TestResultAliasesRejectInvalidAndDuplicate(t *testing.T) {
 
 func TestResultAliasPermutationAndWideLookup(t *testing.T) {
 	const width = 1024
-	fixed := make([]typ.Type, width)
+	fixed := make([]schematype.Type, width)
 	aliases := make([]ResultAliasSpec, width)
 	for index := range fixed {
-		fixed[index] = typ.Any
+		fixed[index] = testAny
 		aliases[width-index-1] = ResultAliasSpec{
 			Result: uint32(width - index - 1), Source: InputSource{Kind: InputSourceValueFormal, Ordinal: uint32(width - index - 1)},
 		}
 	}
 	seal := func(aliasRows []ResultAliasSpec) *Contract {
-		contract, err := Seal(&Spec{Operations: []OperationSpec{{
+		contract, err := testSeal(&Spec{Operations: []OperationSpec{{
 			Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"wide-alias"}}},
 			Input:    ValuesSpec{Fixed: fixed, Tail: ValuesClosed},
 			Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: fixed, Tail: ValuesClosed}, ResultAliases: aliasRows}},

@@ -4,7 +4,8 @@
 // how to hold entries, identify them, and seal them; every entry-kind law
 // belongs to the surface's own package.
 //
-// The root imports nothing below identity, so it is reachable from anywhere.
+// The root names identity and the framed encoding primitive the table's
+// content stream is written with, and nothing else.
 package schema
 
 import (
@@ -12,6 +13,15 @@ import (
 	"encoding/binary"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/internal/framing"
+)
+
+// contentDomain and contentVersion separate the table's content stream from
+// every other stream hashed in the analyzer, and pin the framing this digest
+// was computed under.
+const (
+	contentDomain         = "wippy.analysis/schema/table"
+	contentVersion uint64 = 1
 )
 
 // Key is the authored identity of one entry inside its surface. It is a
@@ -96,13 +106,18 @@ const (
 	LawNone LawID = iota
 	LawSurfaceCatalog
 	LawSurfaceUnique
-	LawSurfacePopulated
+	// The ordinal here is retired. The root states coverage of the catalog and
+	// not population of a surface, so it has no such law to raise, and a surface
+	// that does require members states that requirement under its own ordinal
+	// above SurfaceLawFloor rather than claiming this one.
+	_
 	LawEntryPresent
 	LawEntryIdentity
 	LawEntryAdmissible
 	LawEntryUnique
 	LawSurfaceCoverage
 	LawSurfacePhase
+	LawEntryContent
 	// SurfaceLawFloor is the first law ordinal a surface may claim.
 	SurfaceLawFloor LawID = 1024
 )
@@ -156,12 +171,38 @@ func SurfaceLawFailure(kind SurfaceKind, entry EntryID, law LawID, disposition D
 	return SealFailure{Contributor: kind, Entry: entry, Law: law, Disposition: disposition}
 }
 
-// Entry is one declared row of any surface. The root reads only the identity
-// and the surface-owned admissibility verdict; the concrete record type stays
-// in its surface package.
+// Entry is one declared row of any surface. The root reads the identity, the
+// surface-owned admissibility verdict, and the entry's declared content; the
+// concrete record type stays in its surface package.
 type Entry interface {
 	Key() Key
 	EntryAvailable() bool
+	// EntryContent writes the canonical bytes of this entry's own declared data
+	// into the table's content stream, which the table digest is folded from. An
+	// identity names an entry; content is what the entry says. Both are folded,
+	// so a catalog that differs from another only in a declared property differs
+	// from it in the digest as well.
+	//
+	// Canonical means the bytes are a function of the declaration alone. A
+	// surface writes its record's fields in one fixed order, writes every
+	// collection in its declared order prefixed by its arity, and lets the
+	// writer's own tags and lengths delimit each item. Nothing formats a struct,
+	// nothing iterates a map, and nothing reflects: two entries that differ in
+	// any declared field write different bytes, and one entry writes the same
+	// bytes on every run.
+	//
+	// Content is declared DATA. The identities an entry references, its keys,
+	// and its metadata scalars - a role, a cone form, a tier, an ordinal, an
+	// accepted row - are content, because they are what the declaration says and
+	// what every derived inventory is projected from. A hook is not: the typed
+	// function values a rule or an axis declares carry no canonical bytes, so
+	// they are never written, and neither is the shape of the hook set they
+	// form. What such a hook is declared against is written - the axis
+	// identities it names, the principal it writes, the lane it enters on - so
+	// the declarative half of a hooked entry is covered, and the executable half
+	// is left to the surface's own admission laws. A value derived from a
+	// written field is not written a second time.
+	EntryContent(content *framing.Writer) error
 }
 
 // Surface is one registered contributor of entries. Seal runs after the root
@@ -334,10 +375,14 @@ func (builder *Builder) Seal() (*Schema, SealFailure) {
 		return nil, SealFailure{Law: LawSurfaceCatalog, Disposition: DispositionIncomplete}
 	}
 	schema := &Schema{}
-	digest := sha256.New()
+	hash := sha256.New()
+	var content framing.Writer
+	if content.Reset(hash, contentDomain, contentVersion) != nil {
+		return nil, SealFailure{Law: LawSurfaceCatalog, Disposition: DispositionMalformed}
+	}
 	for _, surface := range builder.surfaces {
 		kind := surface.Kind()
-		view, failure := indexSurface(kind, surface.Entries(), digest)
+		view, failure := indexSurface(kind, surface.Entries(), &content)
 		if failure.Available() {
 			return nil, failure
 		}
@@ -354,7 +399,10 @@ func (builder *Builder) Seal() (*Schema, SealFailure) {
 			return nil, SealFailure{Contributor: kind, Law: LawSurfaceCoverage, Disposition: DispositionIncomplete}
 		}
 	}
-	copy(schema.digest[:], digest.Sum(nil))
+	if content.Finish() != nil {
+		return nil, SealFailure{Law: LawEntryContent, Disposition: DispositionMalformed}
+	}
+	copy(schema.digest[:], hash.Sum(nil))
 	if !schema.digest.Available() {
 		return nil, SealFailure{Law: LawSurfaceCatalog, Disposition: DispositionMalformed}
 	}
@@ -366,7 +414,12 @@ func (builder *Builder) Seal() (*Schema, SealFailure) {
 // about how many rows a surface holds: an inventory of none is indexed like
 // any other, and the surface that requires members states that requirement in
 // its own Seal.
-func indexSurface(kind SurfaceKind, entries []Entry, digest interface{ Write([]byte) (int, error) }) (View, SealFailure) {
+//
+// Each admitted row is folded into the content stream as its identity followed
+// by its declared content, in catalog order. The identity says which entry this
+// is and the content says what it declares, so neither a renamed entry nor a
+// rewritten declaration can reach the same digest.
+func indexSurface(kind SurfaceKind, entries []Entry, content *framing.Writer) (View, SealFailure) {
 	index := make(map[EntryID]int, len(entries))
 	for position, entry := range entries {
 		if entry == nil {
@@ -383,8 +436,11 @@ func indexSurface(kind SurfaceKind, entries []Entry, digest interface{ Write([]b
 			return View{}, SealFailure{Contributor: kind, Entry: id, Law: LawEntryUnique, Disposition: DispositionDuplicate}
 		}
 		index[id] = position
-		if _, err := digest.Write(id[:]); err != nil {
+		if content.Record(uint64(kind)) != nil || content.Bytes(id[:]) != nil {
 			return View{}, SealFailure{Contributor: kind, Entry: id, Law: LawEntryIdentity, Disposition: DispositionMalformed}
+		}
+		if entry.EntryContent(content) != nil {
+			return View{}, SealFailure{Contributor: kind, Entry: id, Law: LawEntryContent, Disposition: DispositionMalformed}
 		}
 	}
 	return View{kind: kind, entries: append([]Entry(nil), entries...), index: index}, SealFailure{}

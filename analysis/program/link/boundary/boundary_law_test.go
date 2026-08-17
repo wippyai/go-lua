@@ -5,11 +5,12 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/type/typ"
+	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
 )
@@ -1097,8 +1098,9 @@ func boundaryTarget(t testing.TB, extraRequireBinding bool) *target.Contract {
 		require.Bindings = append(require.Bindings, target.BindingSpec{Namespace: target.BindingBuiltin, Member: []string{"other"}})
 	}
 	spec := target.Spec{
+		Semantics: domaincontract.NewSemantics(),
 		Operations: []target.OperationSpec{
-			{Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"op"}}}, Input: target.ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: target.ValuesClosed}, Outcomes: []target.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}}, Effects: target.RowSpec{Tail: target.RowClosed}},
+			{Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"op"}}}, Input: target.ValuesSpec{Fixed: neutralTypes(t, typ.Any), Tail: target.ValuesClosed}, Outcomes: []target.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}}, Effects: target.RowSpec{Tail: target.RowClosed}},
 			require,
 		},
 		InitialRoots: []target.InitialRootSpec{{Identity: "GlobalEnvRoot", Shape: target.BootShapeSpec{Aggregate: target.BootAggregateTable, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}}}},
@@ -1132,7 +1134,7 @@ func boundaryEndpointTargetWithSecondDenied(t testing.TB, secondDenied bool) *ta
 
 func boundaryEndpointTargetVariant(t testing.TB, secondDenied, unrelated, changeOperation, changeDenied bool) *target.Contract {
 	t.Helper()
-	spec := target.Spec{Operations: []target.OperationSpec{
+	spec := target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []target.OperationSpec{
 		{Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"op"}}}, Input: target.ValuesSpec{Tail: target.ValuesClosed}, Outcomes: []target.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}}, Effects: target.RowSpec{Tail: target.RowClosed}},
 		{Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"require"}}}, Input: target.ValuesSpec{Tail: target.ValuesClosed}, Outcomes: []target.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}}, Effects: target.RowSpec{Tail: target.RowClosed}},
 		{Bindings: []target.BindingSpec{{Namespace: target.BindingProvider, Owner: []string{"host", "pkg"}, Member: []string{"service", "f"}}}, Input: target.ValuesSpec{Tail: target.ValuesClosed}, Outcomes: []target.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}}, Effects: target.RowSpec{Tail: target.RowClosed}},
@@ -1149,7 +1151,7 @@ func boundaryEndpointTargetVariant(t testing.TB, secondDenied, unrelated, change
 		spec.InitialBindings = spec.InitialBindings[:len(spec.InitialBindings)-1]
 	}
 	if changeOperation {
-		spec.Operations[0].Input = target.ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: target.ValuesClosed}
+		spec.Operations[0].Input = target.ValuesSpec{Fixed: neutralTypes(t, typ.Any), Tail: target.ValuesClosed}
 	}
 	if changeDenied {
 		spec.InitialEntries[4].Value.Operation = target.BindingSpec{Namespace: target.BindingBuiltin, Member: []string{"load_changed"}}
@@ -1168,7 +1170,7 @@ func boundaryEndpointTargetVariant(t testing.TB, secondDenied, unrelated, change
 func boundaryTargetWithRequireBindings(t testing.TB, requireBindings ...[]target.BindingSpec) *target.Contract {
 	t.Helper()
 	operations := []target.OperationSpec{
-		{Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"op"}}}, Input: target.ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: target.ValuesClosed}, Outcomes: []target.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}}, Effects: target.RowSpec{Tail: target.RowClosed}},
+		{Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"op"}}}, Input: target.ValuesSpec{Fixed: neutralTypes(t, typ.Any), Tail: target.ValuesClosed}, Outcomes: []target.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}}, Effects: target.RowSpec{Tail: target.RowClosed}},
 	}
 	for _, bindings := range requireBindings {
 		operations = append(operations, target.OperationSpec{
@@ -1179,6 +1181,7 @@ func boundaryTargetWithRequireBindings(t testing.TB, requireBindings ...[]target
 		})
 	}
 	spec := target.Spec{
+		Semantics:    domaincontract.NewSemantics(),
 		Operations:   operations,
 		InitialRoots: []target.InitialRootSpec{{Identity: "GlobalEnvRoot", Shape: target.BootShapeSpec{Aggregate: target.BootAggregateTable, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}}}},
 		InitialEntries: []target.InitialEntrySpec{

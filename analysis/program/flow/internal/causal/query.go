@@ -504,7 +504,7 @@ func (s Successor) ResetAt(offset int) (keyspace.Term, bool) {
 	return s.result.boundaryResetAt(s.edgeIndex, s.Arm, offset)
 }
 
-// ResetPathAt returns the parent-issued semantic reset-member receipt. It is
+// ResetPathAt returns the parent-issued semantic reset-member path. It is
 // O(1), immutable, and remains valid for an empty Mu witness (count zero).
 func (s Successor) ResetPathAt(offset int) (identity.ContentID, bool) {
 	if s.result == nil || !s.refValid || s.ref.resetMembers == nil || offset < 0 || uint64(offset) >= uint64(len(*s.ref.resetMembers)) {

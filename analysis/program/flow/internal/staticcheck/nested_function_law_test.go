@@ -95,15 +95,15 @@ func TestStaticCheckNestedStaticFunctionSelfCaptureValidate(t *testing.T) {
 	if self, ok := fixture.bindings.FunctionCell(inner); !ok || self != innerSelf {
 		t.Fatalf("inner FunctionCell = %v/%v, want %v/true", self, ok, innerSelf)
 	}
-	receipt, err := Validate(
+	result, err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
-		fixture.bindings, fixture.forest, fixture.proof, fixture.direct,
+		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
 		fixture.moduleView.ContentID(), fixture.entry,
 	)
 	if err != nil {
 		t.Fatalf("nested self-capture Validate: %v", err)
 	}
-	if len(receipt.TypeOf) != 1 || receipt.TypeOf[0] != keyspace.MakeTerm(keyspace.FamilyTypeOf, 1) || len(receipt.Annotations) != 0 || len(receipt.Publications) != 0 {
-		t.Fatalf("nested self-capture receipt = %#v", receipt)
+	if len(result.TypeOf) != 1 || result.TypeOf[0] != keyspace.MakeTerm(keyspace.FamilyTypeOf, 1) || len(result.Annotations) != 0 || len(result.Publications) != 0 {
+		t.Fatalf("nested self-capture result = %#v", result)
 	}
 }

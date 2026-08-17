@@ -171,7 +171,7 @@ func (component *Component) ContentID() identity.ContentID {
 
 // ContentID returns the authored Static identity through a lifecycle-bound
 // construction View. A claimed View exposes the draft's identity; once its
-// Finalizer commits or aborts (including an invalid terminal receipt), the
+// Finalizer commits or aborts (including an invalid terminal input), the
 // same copied View returns an unavailable identity. A published Component
 // View remains identity-bearing because it has no construction state.
 func (view View) ContentID() identity.ContentID {

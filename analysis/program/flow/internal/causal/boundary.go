@@ -247,7 +247,7 @@ func (s *boundaryState) buildTailPlans() error {
 		if err := validateChain(exit); err != nil {
 			return err
 		}
-		proof, proofErr := s.graph.IssueCallTailReturnReceipt(s.source, s.flow, s.outs, tail, ret, exit, owner)
+		proof, proofErr := s.graph.CallTailProof(s.source, s.flow, s.outs, tail, ret, exit, owner)
 		if proofErr != nil {
 			return proofErr
 		}

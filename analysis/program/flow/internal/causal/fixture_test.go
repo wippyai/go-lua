@@ -40,7 +40,7 @@ type causalFixture struct {
 	entries    *runtimeentry.Result
 	result     *Result
 
-	// These path receipts are captured while the SourceControl VertexCatalog
+	// These path views are captured while the SourceControl VertexCatalog
 	// lease is live.  Semantic-matrix laws must not reopen it after release.
 	capturedBodyEntryPath identity.ContentID
 	capturedBodyTailPath  identity.ContentID
@@ -68,8 +68,8 @@ type causalSpec struct {
 	keys        []source.KeyInput
 	exactAtoms  []keyspace.LiteralValue
 
-	// Test-only exact point receipts to capture before the catalog lease is
-	// released. Zero leaves the corresponding receipt unspecified.
+	// Test-only exact point paths to capture before the catalog lease is
+	// released. Zero leaves the corresponding path unspecified.
 	captureBodyEntryPath keyspace.Term
 	captureBodyTailPath  keyspace.Term
 	captureVertexPath    keyspace.Term
@@ -242,22 +242,21 @@ func openCausalFixture(t *testing.T, spec causalSpec) *causalFixture {
 		closeCausalFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("sourcecontrol.Seal: %v", err)
 	}
-	cellRoleIssuance, cellRoleOK := issuance.IssueCellRoles(sourceView)
-	cellRoles, cellRolesOK := cellRoleIssuance.Consume(sourceView)
-	if !cellRoleOK || !cellRolesOK {
+	cellRoles := sourceView.CellRoles()
+	if !cellRoles.Matches(sourceView) {
 		closeCausalFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
-		t.Fatal("source.CellRoleCatalog: unavailable")
+		t.Fatal("source.CellRoles: unavailable")
 	}
 	certificate, certificateErr := semanticpath.Seal(issuance, cellRoles, sourceView, flowView, bodies, bindingResult, forest, outcomes, flowView.Cold().ContentID(), staticID, moduleID)
 	if certificateErr != nil {
 		closeCausalFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("semanticpath.Seal: %v", certificateErr)
 	}
-	vertexReceipt, receiptOK := certificate.IssueVertexCatalogReceipt()
-	vertexLease, vertexErr := graph.InstallVertexCatalogLease(bodies, vertexReceipt)
-	if !receiptOK || vertexErr != nil || vertexLease == nil {
+	vertexPaths, pathsOK := certificate.VertexCatalog(sourceView.Identity().ContentID(), flowView.Cold().ContentID(), staticID, moduleID)
+	vertexLease, vertexErr := graph.InstallVertexCatalogLease(bodies, vertexPaths)
+	if !pathsOK || vertexErr != nil || vertexLease == nil {
 		closeCausalFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
-		t.Fatal("sourcecontrol.InstallVertexCatalog: no exact receipt")
+		t.Fatal("sourcecontrol.InstallVertexCatalog: no exact path view")
 	}
 	defer graph.ReleaseVertexCatalog(vertexLease)
 	capturedBodyEntryPath, capturedBodyTailPath, capturedVertexPath := identity.ContentID{}, identity.ContentID{}, identity.ContentID{}
@@ -327,11 +326,11 @@ func openCausalFixture(t *testing.T, spec causalSpec) *causalFixture {
 			}
 		}
 	}
-	outcomePhasePaths, outcomePhasePathsOK := certificate.IssueOutcomePhaseReceipt()
-	outcomePhases, outcomeErr := graph.IssueOutcomePhases(sourceView, flowView, bodies, outcomes, outcomePhasePaths)
-	if !outcomePhasePathsOK || outcomeErr != nil || outcomePhases == nil {
+	outcomePaths, outcomePathsOK := certificate.OutcomePhases(sourceView.Identity().ContentID(), flowView.Cold().ContentID(), staticID, moduleID)
+	outcomePhases, outcomeErr := graph.BuildOutcomePhases(sourceView, flowView, bodies, outcomes, outcomePaths)
+	if !outcomePathsOK || outcomeErr != nil || outcomePhases == nil {
 		closeCausalFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
-		t.Fatal("sourcecontrol.IssueOutcomePhases: unavailable")
+		t.Fatal("sourcecontrol.BuildOutcomePhases: unavailable")
 	}
 	execResult, err := executable.Seal(sourceView, flowView, forest, graph, staticID, moduleID)
 	if err != nil {
@@ -347,12 +346,12 @@ func openCausalFixture(t *testing.T, spec causalSpec) *causalFixture {
 		spec.runtimeEntryProbe(&runtimeEntryFixture{sourceView: sourceView, flow: flowView, outcomes: outcomes,
 			control: graph, ports: ports, executable: execResult, entries: entries, staticID: staticID, moduleID: moduleID})
 	}
-	causalReceipt, receiptOK := certificate.IssueCausalReceipt()
-	if !receiptOK {
+	causalPaths, pathsOK := certificate.Causal(sourceView.Identity().ContentID(), flowView.Cold().ContentID(), staticID, moduleID)
+	if !pathsOK {
 		closeCausalFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
-		t.Fatal("semanticpath.IssueCausalReceipt: receipt unavailable")
+		t.Fatal("semanticpath.Causal: view unavailable")
 	}
-	preparation, err := PrepareRoutePlanWithStructuralPaths(sourceView, flowView, bodies, forest, outcomes, graph, ports, execResult, entries, causalReceipt, outcomePhases, staticID, moduleID)
+	preparation, err := PrepareRoutePlanWithStructuralPaths(sourceView, flowView, bodies, forest, outcomes, graph, ports, execResult, entries, causalPaths, outcomePhases, staticID, moduleID)
 	if err != nil {
 		closeCausalFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("causal.PrepareRoutePlan: %v", err)

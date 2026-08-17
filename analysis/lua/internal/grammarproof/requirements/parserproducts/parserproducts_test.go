@@ -428,11 +428,24 @@ func sortedGeneratedNames(rendered map[string][]byte) []string {
 	return result
 }
 
+// repositoryRoot walks up from this test source until it finds the directory
+// that owns go.mod. Anchoring on the module marker keeps the proof independent
+// of where the grammarproof tree sits inside the module.
 func repositoryRoot(t *testing.T) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("discover parser-products test path")
 	}
-	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", "..", "..", ".."))
+	root := filepath.Dir(file)
+	for {
+		if _, err := os.Stat(filepath.Join(root, "go.mod")); err == nil {
+			return root
+		}
+		parent := filepath.Dir(root)
+		if parent == root {
+			t.Fatal("module root: no go.mod above test file")
+		}
+		root = parent
+	}
 }

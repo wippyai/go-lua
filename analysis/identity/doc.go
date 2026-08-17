@@ -20,8 +20,8 @@
 // # Owns
 //
 // This tree owns MountID, StoreID, Generation, Locator, ContentID, LexicalID,
-// and the domain-separated digest construction. The identity tree is the
-// dependency leaf every other component may depend on.
+// SemanticKey, and the domain-separated digest construction. The identity tree
+// is the dependency leaf every other component may depend on.
 //
 // # Does not own
 //

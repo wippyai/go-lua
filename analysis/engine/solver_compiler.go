@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"sync"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
@@ -576,7 +577,7 @@ type BindingRuleRowReceipt struct {
 	row         equation.RuleInstance
 	input       equation.Site
 	inputID     identity.ContentID
-	stage       ArtifactRuleStage
+	stage       rows.ArtifactRuleStage
 	predecessor *artifactEnvironmentRow
 	routed      bool
 }
@@ -774,48 +775,6 @@ func (draft *BindingRuleRowDraft) AddWrite(receipt BindingRuleWritePartReceipt) 
 		return false
 	}
 	draft.row.Writes = append(draft.row.Writes, receipt.value)
-	return true
-}
-
-func (draft *BindingRuleRowDraft) AddSupport(receipt BindingRuleSupportPartReceipt) (ok bool) {
-	defer func() {
-		if !ok && draft != nil {
-			draft.assembly.recordRuleFinalizerFailure(RuleFinalizerFailureDraftSupport)
-		}
-	}()
-	if draft == nil {
-		return false
-	}
-	draft.mu.Lock()
-	defer draft.mu.Unlock()
-	if draft.consumed {
-		return false
-	}
-	if draft == nil || draft.state == nil || receipt.issuer != draft.receipt || !receipt.sourceIdentity.Same(draft.source) || receipt.state != draft.state || receipt.authority != draft.authority || receipt.index != uint64(len(draft.row.Supports)) {
-		return false
-	}
-	draft.row.Supports = append(draft.row.Supports, receipt.value)
-	return true
-}
-
-func (draft *BindingRuleRowDraft) AddPrune(receipt BindingRulePrunePartReceipt) (ok bool) {
-	defer func() {
-		if !ok && draft != nil {
-			draft.assembly.recordRuleFinalizerFailure(RuleFinalizerFailureDraftPrune)
-		}
-	}()
-	if draft == nil {
-		return false
-	}
-	draft.mu.Lock()
-	defer draft.mu.Unlock()
-	if draft.consumed {
-		return false
-	}
-	if draft == nil || draft.state == nil || receipt.issuer != draft.receipt || !receipt.sourceIdentity.Same(draft.source) || receipt.state != draft.state || receipt.authority != draft.authority || receipt.index != uint64(len(draft.row.Prunes)) {
-		return false
-	}
-	draft.row.Prunes = append(draft.row.Prunes, receipt.value)
 	return true
 }
 
@@ -1108,15 +1067,6 @@ func (builder *bindingTopologyBuilder) admitFrom(site equation.Site, entity comp
 	return inner.batch.From(site, entity)
 }
 
-func (builder *bindingTopologyBuilder) admitRelation(site equation.Site, entity composition.Key) (equation.Occurrence, bool) {
-	inner, ok := builder.lockSourcesOpen()
-	if !ok {
-		return equation.Occurrence{}, false
-	}
-	defer inner.mu.Unlock()
-	return inner.batch.Relation(site, entity)
-}
-
 func (builder *bindingTopologyBuilder) admitOperand(occurrence equation.Occurrence, entity composition.Key) (equation.Operand, bool) {
 	inner, ok := builder.lockSourcesOpen()
 	if !ok {
@@ -1233,19 +1183,6 @@ func (builder *bindingTopologyBuilder) issueRuleRow(draft *BindingRuleRowDraft) 
 		return BindingRuleRowReceipt{}, false
 	}
 	return BindingRuleRowReceipt{builder: builder.inner, state: state, authority: authority, ordinal: ordinal, row: cloneBindingRuleRow(row)}, true
-}
-
-func (builder *bindingTopologyBuilder) addRule(receipt BindingRuleRowReceipt) (BindingRuleRowRef, bool) {
-	var result BindingRuleRowRef
-	ok := builder.addRow(func(spec *equation.TopologySpec) bool {
-		if receipt.builder != builder.inner || receipt.state != builder.inner.state || receipt.authority != builder.inner.authority || receipt.ordinal != uint64(len(spec.Rules)) || !validateBindingRuleRows(builder.inner.state.schema, receipt.row) {
-			return false
-		}
-		spec.Rules = append(spec.Rules, cloneBindingRuleRow(receipt.row))
-		result = BindingRuleRowRef{builder: builder.inner, ref: equation.RuleAt(int(receipt.ordinal))}
-		return true
-	})
-	return result, ok
 }
 
 func (builder *bindingTopologyBuilder) addSemanticRule(id identity.ContentID, receipt BindingRuleRowReceipt) (BindingRuleRowRef, bool) {
@@ -1447,19 +1384,6 @@ func cloneBindingCandidateRelations(rows []equation.CandidateRelation) []equatio
 	return result
 }
 
-func (builder *bindingTopologyBuilder) addQuery(receipt bindingQueryReceipt, query equation.QueryInstance) bool {
-	return builder.addRow(func(spec *equation.TopologySpec) bool {
-		inner := builder.inner
-		state, authority, family, ordinal, receiptOK := receipt.boundTopologyQueryReceipt()
-		if !receiptOK || state != inner.state || authority != inner.authority || !query.Family.Available() || query.Family != family || !bindingOwnsQuerySchema(inner.state.schema, query.Family) || ordinal >= inner.state.schema.queryCount() || !validBindingQueryInstance(inner.state.schema, ordinal, query) || duplicateBindingQuery(spec.Queries, query) {
-			return false
-		}
-		query.Surfaces = append([]equation.Surface(nil), query.Surfaces...)
-		spec.Queries = append(spec.Queries, query)
-		return true
-	})
-}
-
 func (builder *bindingTopologyBuilder) issueQueryRow(receipt bindingQueryReceipt, query equation.QueryInstance) (bindingQueryRowReceipt, bool) {
 	inner, ok := builder.lockTopologyOpen()
 	if !ok {
@@ -1565,17 +1489,6 @@ func (builder *bindingTopologyBuilder) addSummary(receipt bindingSummarySurfaceR
 		}
 		summary.Keys = append([]uint64(nil), summary.Keys...)
 		spec.Summaries = append(spec.Summaries, summary)
-		return true
-	})
-}
-
-func (builder *bindingTopologyBuilder) addWeakTarget(receipt bindingWeakSurfaceReceipt, target equation.WeakTargetMapping) bool {
-	return builder.addRow(func(spec *equation.TopologySpec) bool {
-		if !validateWeakSurfaceReceipt(receipt, builder.inner.state, builder.inner.authority, target.Surface) || len(target.Candidates) == 0 || duplicateWeakTargetMapping(spec.WeakTargets, target) {
-			return false
-		}
-		target.Candidates = append([]equation.Surface(nil), target.Candidates...)
-		spec.WeakTargets = append(spec.WeakTargets, target)
 		return true
 	})
 }
@@ -2143,12 +2056,6 @@ func (receipt *ActivationReceiptGraph) lookupActivationMember(id identity.Conten
 	return ActivationReceiptMember{graph: receipt, member: member, locator: locator}, true
 }
 
-// ActivationMember returns the exact graph-owned activation member admitted
-// under id, preserving the activation graph authority for typed attachment.
-func (receipt *ActivationReceiptGraph) ActivationMember(id identity.ContentID) (ActivationReceiptMember, bool) {
-	return receipt.lookupActivationMember(id)
-}
-
 // MountedRuleMember resolves the activation member paired with one exact
 // mounted semantic occurrence. The role-qualified identity is issued by the
 // same artifact directory used for ordinary Rule members.
@@ -2480,22 +2387,6 @@ func BeginReceiptActivationCompilation(implementation *ActivationRuleImplementat
 	return &ReceiptCompilation{inner: compiled, graph: graph}, true
 }
 
-// BeginActivationReceiptCompilation starts the activation analogue of the
-// ordinary receipt transaction.  It accepts no raw Topology or RuleMember:
-// the exact materialization proof remains carried by ActivationReceiptGraph.
-func BeginActivationReceiptCompilation(implementation *ActivationRuleImplementation, graph *ActivationReceiptGraph) (*ActivationReceiptCompilation, bool) {
-	if implementation == nil || !implementation.receipt.valid() || !graph.valid() ||
-		implementation.receipt.state != graph.receipt.state || implementation.receipt.authority != graph.receipt.authority {
-		return nil, false
-	}
-	binding := &SchemaBinding{state: graph.receipt.state}
-	compiled, ok := compileReceiptFactors(binding, graph.receipt.graph)
-	if !ok || compiled == nil {
-		return nil, false
-	}
-	return &ActivationReceiptCompilation{inner: compiled, graph: graph}, true
-}
-
 // AttachRuleMember attaches one exact graph-owned member through the existing
 // typed receipt binder. The generic boundary preserves the Rule operand type;
 // no erased operand, Factor slot, callback, or raw Ref is accepted.
@@ -2523,16 +2414,6 @@ func AttachReceiptRuleMember[K ~uint32 | ~uint64, V, O any](compilation *Receipt
 	})
 	compilation.inner.mu.Unlock()
 	return &ReceiptMember{inner: row}, true
-}
-
-func attachReceiptQuery(compilation *ReceiptCompilation, query ReceiptQuery, row runtimeQuery) bool {
-	if compilation == nil || compilation.inner == nil || compilation.graph == nil || query.graph != compilation.graph || row == nil {
-		return false
-	}
-	inner := compilation.inner
-	inner.mu.Lock()
-	defer inner.mu.Unlock()
-	return attachReceiptQueryLocked(inner, query, row)
 }
 
 func attachReceiptQueryLocked(inner *receiptFactorCompilation, query ReceiptQuery, row runtimeQuery) bool {
@@ -2601,45 +2482,6 @@ func AttachReceiptSummaryQuery[V, R any](compilation *ReceiptCompilation, implem
 	return true
 }
 
-// AttachActivationReceiptMember attaches one exact materialized structural
-// member through the same boundActivationMember runtime path used by normal
-// execution.  A foreign Binding, graph, topology, or duplicate member fails
-// before any callback is made reachable.
-func AttachActivationReceiptMember(compilation *ActivationReceiptCompilation, implementation *ActivationRuleImplementation, member ActivationReceiptMember) (*AttachedActivationReceiptMember, bool) {
-	if compilation == nil || compilation.inner == nil || compilation.graph == nil || !compilation.graph.valid() || member.graph != compilation.graph || implementation == nil || !implementation.receipt.valid() {
-		return nil, false
-	}
-	inner := compilation.inner
-	inner.mu.Lock()
-	defer inner.mu.Unlock()
-	if inner.closed || !inner.frozen || inner.runtime == nil || inner.runtime.mode != runtimeBindingReceipt ||
-		implementation.receipt.state != inner.runtime.state || implementation.receipt.authority != inner.runtime.authority ||
-		!compilation.graph.receipt.graph.OwnsMember(member.member) || !member.member.Key().Available() {
-		return nil, false
-	}
-	if _, duplicate := inner.members[member.member.Key()]; duplicate {
-		return nil, false
-	}
-	locator := member.locator
-	resolved, located := locator.Resolve(compilation.graph.receipt.graph)
-	if !located || resolved.Key() != member.member.Key() {
-		return nil, false
-	}
-	row, ok := bindActivationMemberReceipt(member.member, implementation, compilation.graph.topology, member.member.Key(), compilation.graph.receipt.graph, inner.byKey)
-	if !ok || row == nil || row.member().Key() != member.member.Key() {
-		return nil, false
-	}
-	inner.members[member.member.Key()] = row
-	inner.memberBuilders = append(inner.memberBuilders, func(next *receiptFactorCompilation) (runtimeMember, bool) {
-		resolved, ok := locator.Resolve(next.runtime.graph)
-		if !ok {
-			return nil, false
-		}
-		return bindActivationMemberReceipt(resolved, implementation, compilation.graph.topology, resolved.Key(), next.runtime.graph, next.byKey)
-	})
-	return &AttachedActivationReceiptMember{inner: row}, true
-}
-
 // AttachReceiptActivationMember attaches an activation into the ordinary
 // ReceiptCompilation. The activation graph must be the projection of that
 // compilation's exact ReceiptGraph; equal-but-foreign graphs are rejected.
@@ -2674,70 +2516,6 @@ func AttachReceiptActivationMember(compilation *ReceiptCompilation, implementati
 		return bindActivationMemberReceipt(resolved, implementation, compilation.graph.topology.topology, resolved.Key(), next.runtime.graph, next.byKey)
 	})
 	return &AttachedActivationReceiptMember{inner: row}, true
-}
-
-// Solver terminally assembles attached activation members through the normal
-// executable runtime.  It is intentionally the same receipt compilation
-// completion path as factor-output rules, not an activation-only evaluator.
-func (compilation *ActivationReceiptCompilation) Solver() (*Solver, bool) {
-	if compilation == nil || compilation.inner == nil || compilation.graph == nil || !compilation.graph.valid() {
-		return nil, false
-	}
-	inner := compilation.inner
-	inner.mu.Lock()
-	if inner.closed || inner.runtime == nil || inner.carrier == nil || inner.members == nil ||
-		compilation.graph.receipt.graph == nil || compilation.graph.receipt.topology.directory == nil || compilation.graph.receipt.topology.directory.queryCount() != 0 {
-		inner.mu.Unlock()
-		return nil, false
-	}
-	inner.closed = true
-	rows := make([]runtimeMember, 0, len(inner.members))
-	for _, row := range inner.members {
-		if row == nil {
-			inner.mu.Unlock()
-			return nil, false
-		}
-		rows = append(rows, row)
-	}
-	carrier := inner.carrier
-	graph := compilation.graph.receipt.graph
-	ordered := append([]runtimeFactor(nil), inner.ordered...)
-	byKey := inner.byKey
-	state, authority := inner.runtime.state, inner.runtime.authority
-	compiler := receiptSolverCompiler{
-		state: state, topology: compilation.graph.topology,
-		memberBuilders:      append([]receiptMemberBuilder(nil), inner.memberBuilders...),
-		queryBuilders:       append([]receiptQueryBuilder(nil), inner.queryBuilders...),
-		observationBuilders: append([]receiptObservationBuilder(nil), inner.observationBuilders...),
-	}
-	inner.mu.Unlock()
-
-	runtime, ok := assembleReceiptRuntime(state, authority, graph, carrier, byKey, rows, nil, nil)
-	if !ok || runtime == nil {
-		return nil, false
-	}
-	runtime.factors = append([]runtimeFactor(nil), ordered...)
-	runtime.topology = compilation.graph.topology
-	for _, factor := range ordered {
-		if factor == nil {
-			return nil, false
-		}
-		factor.releaseColdBindings()
-	}
-	inner.mu.Lock()
-	inner.runtime = nil
-	inner.factors = nil
-	inner.byKey = nil
-	inner.ordered = nil
-	inner.members = nil
-	inner.carrier = nil
-	inner.mu.Unlock()
-	relation, relationOK := runtime.topology.InitialRelation()
-	store, storeOK := solverStores.issue()
-	if !relationOK || !storeOK {
-		return nil, false
-	}
-	return &Solver{runtime: runtime, compiler: compiler, store: store, relation: relation}, true
 }
 
 // compileReceiptFactors is the sealed Factor-only compiler entry. It uses the
@@ -2831,7 +2609,7 @@ func bindReceiptFactors(binding *SchemaBinding, runtime *runtimeBinding) ([]runt
 		}
 		factor, bound := cell.schemaFactorRuntimeBinding(runtime)
 		key := schema.factorSemanticAt(uint64(ordinal))
-		if !bound || factor == nil || !key.Available() || factor.semantic().compositionKey() != key {
+		if !bound || factor == nil || !key.Available() || compositionKeyOf(factor.semantic()) != key {
 			return nil, nil, false
 		}
 		if _, duplicate := byKey[key]; duplicate {

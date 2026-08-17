@@ -210,29 +210,28 @@ func openBinaryPrimitiveFixture(t *testing.T, comparisonOp flowkind.BinaryOp) *b
 		closeBinaryPrimitiveFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("sourcecontrol.Seal: %v", err)
 	}
-	cellRoleIssuance, cellRoleOK := issuance.IssueCellRoles(sourceView)
-	cellRoles, cellRolesOK := cellRoleIssuance.Consume(sourceView)
-	if !cellRoleOK || !cellRolesOK {
+	cellRoles := sourceView.CellRoles()
+	if !cellRoles.Matches(sourceView) {
 		closeBinaryPrimitiveFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
-		t.Fatal("source.CellRoleCatalog: unavailable")
+		t.Fatal("source.CellRoles: unavailable")
 	}
 	certificate, certificateErr := semanticpath.Seal(issuance, cellRoles, sourceView, flowView, bodies, bindingResult, forest, outcomes, flowView.Cold().ContentID(), staticID, moduleID)
 	if certificateErr != nil {
 		closeBinaryPrimitiveFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("semanticpath.Seal: %v", certificateErr)
 	}
-	vertexReceipt, receiptOK := certificate.IssueVertexCatalogReceipt()
-	vertexLease, vertexErr := graph.InstallVertexCatalogLease(bodies, vertexReceipt)
-	if !receiptOK || vertexErr != nil || vertexLease == nil {
+	vertexPaths, pathsOK := certificate.VertexCatalog(sourceView.Identity().ContentID(), flowView.Cold().ContentID(), staticID, moduleID)
+	vertexLease, vertexErr := graph.InstallVertexCatalogLease(bodies, vertexPaths)
+	if !pathsOK || vertexErr != nil || vertexLease == nil {
 		closeBinaryPrimitiveFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
-		t.Fatal("sourcecontrol.InstallVertexCatalog: no exact receipt")
+		t.Fatal("sourcecontrol.InstallVertexCatalog: no exact path view")
 	}
 	defer graph.ReleaseVertexCatalog(vertexLease)
-	outcomePhasePaths, outcomePhasePathsOK := certificate.IssueOutcomePhaseReceipt()
-	outcomePhases, outcomeErr := graph.IssueOutcomePhases(sourceView, flowView, bodies, outcomes, outcomePhasePaths)
-	if !outcomePhasePathsOK || outcomeErr != nil || outcomePhases == nil {
+	outcomePaths, outcomePathsOK := certificate.OutcomePhases(sourceView.Identity().ContentID(), flowView.Cold().ContentID(), staticID, moduleID)
+	outcomePhases, outcomeErr := graph.BuildOutcomePhases(sourceView, flowView, bodies, outcomes, outcomePaths)
+	if !outcomePathsOK || outcomeErr != nil || outcomePhases == nil {
 		closeBinaryPrimitiveFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
-		t.Fatal("sourcecontrol.IssueOutcomePhases: unavailable")
+		t.Fatal("sourcecontrol.BuildOutcomePhases: unavailable")
 	}
 	executableResult, err := executable.Seal(sourceView, flowView, forest, graph, staticID, moduleID)
 	if err != nil {
@@ -244,12 +243,12 @@ func openBinaryPrimitiveFixture(t *testing.T, comparisonOp flowkind.BinaryOp) *b
 		closeBinaryPrimitiveFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("runtimeentry.Seal: %v", err)
 	}
-	causalReceipt, receiptOK := certificate.IssueCausalReceipt()
-	if !receiptOK {
+	causalPaths, pathsOK := certificate.Causal(sourceView.Identity().ContentID(), flowView.Cold().ContentID(), staticID, moduleID)
+	if !pathsOK {
 		closeBinaryPrimitiveFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
-		t.Fatal("semanticpath.IssueCausalReceipt: receipt unavailable")
+		t.Fatal("semanticpath.Causal: view unavailable")
 	}
-	preparation, err := causal.PrepareRoutePlanWithStructuralPaths(sourceView, flowView, bodies, forest, outcomes, graph, ports, executableResult, entries, causalReceipt, outcomePhases, staticID, moduleID)
+	preparation, err := causal.PrepareRoutePlanWithStructuralPaths(sourceView, flowView, bodies, forest, outcomes, graph, ports, executableResult, entries, causalPaths, outcomePhases, staticID, moduleID)
 	if err != nil {
 		closeBinaryPrimitiveFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("causal.PrepareRoutePlan: %v", err)

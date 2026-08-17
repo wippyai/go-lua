@@ -640,6 +640,11 @@ func validateCanonicalFormalRelations(ctx context.Context, admission *canonicalF
 			if shape.binderParams > uint64(len(node.edges)) {
 				return invalidCanonicalFormals("binder parameter count")
 			}
+			// A binder frame either introduces every parameter as a fresh
+			// local formal, or owns the receiving external scope and is
+			// re-entered through a cycle in the cut graph. A frame drawn from
+			// both leaves a parameter without a single owner.
+			var mode byte
 			for ordinal := uint64(0); ordinal < shape.binderParams; ordinal++ {
 				if err := canonicalFormalValidationCheckpoint(ctx, admission, &steps); err != nil {
 					return err
@@ -649,7 +654,29 @@ func validateCanonicalFormalRelations(ctx context.Context, admission *canonicalF
 					return invalidCanonicalFormals("binder formal edge")
 				}
 				formal := shapes[formalIndex]
-				if formal.tag != canonicalTypeParam || formal.formalMode != canonicalScopedLocalFormal || formal.formalOrdinal != ordinal || len(nodes[formalIndex].edges) == 0 || nodes[formalIndex].edges[0] != nodeIndex {
+				if formal.tag != canonicalTypeParam {
+					return invalidCanonicalFormals("binder formal relation")
+				}
+				if ordinal == 0 {
+					mode = formal.formalMode
+				} else if formal.formalMode != mode {
+					return invalidCanonicalFormals("binder frame mixes external and local formals")
+				}
+				switch formal.formalMode {
+				case canonicalScopedLocalFormal:
+					if formal.formalOrdinal != ordinal || len(nodes[formalIndex].edges) == 0 || nodes[formalIndex].edges[0] != nodeIndex {
+						return invalidCanonicalFormals("binder formal relation")
+					}
+				case canonicalScopedExternalFormal:
+					for prior := uint64(0); prior < ordinal; prior++ {
+						if err := canonicalFormalValidationCheckpoint(ctx, admission, &steps); err != nil {
+							return err
+						}
+						if node.edges[int(prior)] == formalIndex {
+							return invalidCanonicalFormals("binder repeats an external formal")
+						}
+					}
+				default:
 					return invalidCanonicalFormals("binder formal relation")
 				}
 			}

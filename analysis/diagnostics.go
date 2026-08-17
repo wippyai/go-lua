@@ -1,10 +1,10 @@
 package analysis
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/composite"
 	allocationcatalog "github.com/wippyai/go-lua/analysis/domain/heap/allocation/catalog"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 // AnalyzeDiagnosticPhase is the coarse permanent production phase reached by
@@ -151,15 +151,112 @@ func (failure AnalyzeDiagnosticItemIssuanceFailure) String() string {
 	}
 }
 
+// ProgramBindingFailure is the closed Link-local binding boundary. It names
+// only the owner transaction that rejected; no Schema slot, callback,
+// coordinate, Program proof, or mutable binding state escapes diagnostics.
+//
+// The per-rule ordinals are derived from the sealed rule table rather than
+// restated: a rule failure occupies programBindingFailureRuleBase plus that
+// rule's diagnostic ordinal.
+type ProgramBindingFailure uint8
+
+const (
+	ProgramBindingFailureNone ProgramBindingFailure = iota
+	ProgramBindingFailureInput
+	ProgramBindingFailureSemantics
+	ProgramBindingFailureTypes
+	ProgramBindingFailureStatic
+	ProgramBindingFailureValueSchema
+	ProgramBindingFailureHeapSchema
+	ProgramBindingFailurePackSchema
+	ProgramBindingFailureCallAlgebra
+	ProgramBindingFailureEffectAlgebra
+	ProgramBindingFailureHeapIndex
+	ProgramBindingFailureTarget
+	ProgramBindingFailureTargetCatalog
+	ProgramBindingFailureTable
+	ProgramBindingFailureReceipt
+	ProgramBindingFailureBinding
+	ProgramBindingFailurePrincipal
+	ProgramBindingFailureAllocationCatalog
+	ProgramBindingFailureQueryCatalog
+	ProgramBindingFailureSeal
+	ProgramBindingFailureAllocations
+	ProgramBindingFailureValueQueryReceipt
+	ProgramBindingFailureEffectQueryReceipt
+	// programBindingFailureRuleBase is the first ordinal of the derived
+	// per-rule tail. Nothing is declared past it.
+	programBindingFailureRuleBase
+)
+
+var programBindingFailureNames = [...]string{
+	"none", "input", "semantics", "types", "static",
+	"value-schema", "heap-schema", "pack-schema", "call-algebra", "effect-algebra", "heap-index",
+	"target", "target-catalog", "table", "receipt", "binding", "principal",
+	"allocation-catalog", "query-catalog", "seal", "allocations",
+	"value-query-receipt", "effect-query-receipt",
+}
+
+func (failure ProgramBindingFailure) String() string {
+	if failure >= programBindingFailureRuleBase {
+		return "rule/" + composite.DiagnosticRule(failure-programBindingFailureRuleBase).String()
+	}
+	if int(failure) >= len(programBindingFailureNames) {
+		return "invalid"
+	}
+	return programBindingFailureNames[failure]
+}
+
+func programBindingFailureForRule(rule composite.DiagnosticRule) ProgramBindingFailure {
+	return programBindingFailureRuleBase + ProgramBindingFailure(rule)
+}
+
+// programBindingFailure projects the grammar's closed verdict into the
+// analyzer's own boundary. A per-rule phase keeps the exact rule identity.
+func programBindingFailure(failure composite.BindFailure) ProgramBindingFailure {
+	switch failure.Stage {
+	case composite.BindStageInput:
+		return ProgramBindingFailureInput
+	case composite.BindStageTable:
+		return ProgramBindingFailureTable
+	case composite.BindStageCompilation:
+		return ProgramBindingFailureReceipt
+	case composite.BindStageBinding:
+		return ProgramBindingFailureBinding
+	case composite.BindStagePrincipal:
+		return ProgramBindingFailurePrincipal
+	case composite.BindStageAllocationCatalog:
+		return ProgramBindingFailureAllocationCatalog
+	case composite.BindStageRule:
+		return programBindingFailureForRule(failure.Rule)
+	case composite.BindStageQueries:
+		return ProgramBindingFailureQueryCatalog
+	case composite.BindStageSeal:
+		return ProgramBindingFailureSeal
+	case composite.BindStageAllocations:
+		return ProgramBindingFailureAllocations
+	case composite.BindStageValueQueryReceipt:
+		return ProgramBindingFailureValueQueryReceipt
+	case composite.BindStageEffectQueryReceipt:
+		return ProgramBindingFailureEffectQueryReceipt
+	case composite.BindStageRuntimeContexts:
+		// The runtime allocation context owner joins the already-sealed
+		// Pack/Heap pair, so its only rejection is an unmatched pack schema.
+		return ProgramBindingFailurePackSchema
+	default:
+		return ProgramBindingFailureNone
+	}
+}
+
 // AnalyzeDiagnosticRule is the closed analyzer-owned classification of the
 // Engine first-failure Rule key. It is the sealed rule table's own
 // classification: the inventory, the ordinals, and the names all come from
 // that one table, so a rule added there is classified without a second list.
 // Unknown includes empty, foreign, and generic engine lifecycle failures
 // without a bound analyzer rule.
-type AnalyzeDiagnosticRule = grammar.DiagnosticRule
+type AnalyzeDiagnosticRule = composite.DiagnosticRule
 
-const AnalyzeDiagnosticRuleUnknown = grammar.DiagnosticRuleUnknown
+const AnalyzeDiagnosticRuleUnknown = composite.DiagnosticRuleUnknown
 
 // AnalyzeDiagnostics is the detached analysis-level envelope for one Plan
 // solve. Engine contains optional bounded runtime evidence; Phase and Reason

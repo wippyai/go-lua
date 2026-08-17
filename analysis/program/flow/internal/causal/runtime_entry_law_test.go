@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/runtimeentry"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
@@ -81,36 +80,13 @@ func TestRuntimeEntryBindsOutcomeResumeToExactBranchConditionDespiteSharedCSRPha
 		if !branchOK || !conditionOK || !branchPathOK || !conditionPathOK || branchPath != conditionPath {
 			t.Fatal("fixture does not exercise two exact endpoints sharing one CSR phase")
 		}
-		anchor, err := input.control.IssueOutcomeResumeAnchor(input.sourceView, input.outcomes, resumeOutcome)
+		row, err := input.entries.NormalizeOutcomeResume(input.sourceView, input.control, input.outcomes, resumeOutcome)
 		if err != nil {
-			t.Fatalf("IssueOutcomeResumeAnchor: %v", err)
+			t.Fatalf("NormalizeOutcomeResume: %v", err)
 		}
-		projection, err := input.entries.IssueOutcomeResumeProjection(input.sourceView, input.control, anchor)
-		if err != nil {
-			t.Fatalf("IssueOutcomeResumeProjection: %v", err)
-		}
-		projectionCopy := *projection
-		segment, ok := runtimeentry.ConsumeOutcomeResumeProjection(input.entries, input.control, projection)
-		if !ok {
-			t.Fatal("exact Outcome resume projection did not consume")
-		}
-		from, to, ok := segment.RouteTerms(input.entries, input.control)
-		if !ok || from != resumeOutcome || to != condition || segment.MatchesRoute(resumeOutcome, branch) {
-			t.Fatalf("normalized route = %v -> %v/%v", from, to, ok)
-		}
-		if _, ok := runtimeentry.ConsumeOutcomeResumeProjection(input.entries, input.control, &projectionCopy); ok {
-			t.Fatal("copied Outcome resume projection consumed twice")
-		}
-		anchor, err = input.control.IssueOutcomeResumeAnchor(input.sourceView, input.outcomes, resumeOutcome)
-		if err != nil {
-			t.Fatalf("second IssueOutcomeResumeAnchor: %v", err)
-		}
-		anchorCopy := *anchor
-		if _, err := input.entries.IssueOutcomeResumeProjection(input.sourceView, input.control, anchor); err != nil {
-			t.Fatalf("exact copied-anchor setup failed: %v", err)
-		}
-		if _, err := input.entries.IssueOutcomeResumeProjection(input.sourceView, input.control, &anchorCopy); err == nil {
-			t.Fatal("copied Outcome resume anchor consumed twice")
+		from, to := row.RouteTerms()
+		if !row.OwnedBy(input.entries, input.control) || from != resumeOutcome || to != condition || row.MatchesRoute(resumeOutcome, branch) {
+			t.Fatalf("normalized route = %v -> %v", from, to)
 		}
 		if entry, ok := input.entries.Entry(label); ok || entry != 0 {
 			t.Fatalf("non-executable Label acquired runtime Entry %v/%v", entry, ok)
@@ -136,32 +112,18 @@ func TestRuntimeEntryOutcomeResumeRejectsForeignExactOwner(t *testing.T) {
 	gotoTerm := causalTerm(keyspace.FamilyGoto, 1)
 	openCausalFixture(t, gotoBranchResumeSpec("runtime-entry-owner-a.lua", func(first *runtimeEntryFixture) {
 		out := directOutcome(t, first, gotoTerm)
-		foreignAnchor, err := first.control.IssueOutcomeResumeAnchor(first.sourceView, first.outcomes, out)
+		row, err := first.entries.NormalizeOutcomeResume(first.sourceView, first.control, first.outcomes, out)
 		if err != nil {
-			t.Fatalf("IssueOutcomeResumeAnchor: %v", err)
-		}
-		projectionAnchor, err := first.control.IssueOutcomeResumeAnchor(first.sourceView, first.outcomes, out)
-		if err != nil {
-			t.Fatalf("IssueOutcomeResumeAnchor for projection: %v", err)
-		}
-		foreignProjection, err := first.entries.IssueOutcomeResumeProjection(first.sourceView, first.control, projectionAnchor)
-		if err != nil {
-			t.Fatalf("IssueOutcomeResumeProjection: %v", err)
+			t.Fatalf("NormalizeOutcomeResume: %v", err)
 		}
 		openCausalFixture(t, gotoBranchResumeSpec("runtime-entry-owner-b.lua", func(second *runtimeEntryFixture) {
-			if _, err := second.entries.IssueOutcomeResumeProjection(first.sourceView, first.control, foreignAnchor); err == nil {
-				t.Fatal("foreign runtime-entry owner accepted exact first-owner anchor")
+			if row.OwnedBy(second.entries, second.control) {
+				t.Fatal("foreign runtime-entry owner accepted exact first-owner row")
 			}
-			if _, ok := runtimeentry.ConsumeOutcomeResumeProjection(second.entries, second.control, foreignProjection); ok {
-				t.Fatal("foreign runtime-entry owner consumed exact first-owner projection")
+			if _, _, ok := row.Endpoints(second.entries, second.control); ok {
+				t.Fatal("foreign runtime-entry owner resolved exact first-owner row")
 			}
 		}))
-		if _, err := first.entries.IssueOutcomeResumeProjection(first.sourceView, first.control, foreignAnchor); err == nil {
-			t.Fatal("foreign anchor probe did not consume and clear receipt terminally")
-		}
-		if _, ok := runtimeentry.ConsumeOutcomeResumeProjection(first.entries, first.control, foreignProjection); ok {
-			t.Fatal("foreign projection probe did not consume and clear receipt terminally")
-		}
 	}))
 }
 
@@ -194,23 +156,15 @@ func TestRuntimeEntryBodyResumeKeepsNormalBodyTail(t *testing.T) {
 				}
 				out = next
 			}
-			anchor, err := input.control.IssueOutcomeResumeAnchor(input.sourceView, input.outcomes, out)
+			row, err := input.entries.NormalizeOutcomeResume(input.sourceView, input.control, input.outcomes, out)
 			if err != nil {
-				t.Fatalf("IssueOutcomeResumeAnchor: %v", err)
+				t.Fatalf("NormalizeOutcomeResume: %v", err)
 			}
-			projection, err := input.entries.IssueOutcomeResumeProjection(input.sourceView, input.control, anchor)
-			if err != nil {
-				t.Fatalf("IssueOutcomeResumeProjection: %v", err)
-			}
-			segment, ok := runtimeentry.ConsumeOutcomeResumeProjection(input.entries, input.control, projection)
-			if !ok {
-				t.Fatal("Body resume projection did not consume")
-			}
-			_, to, ok := segment.RouteTerms(input.entries, input.control)
+			_, to := row.RouteTerms()
 			normal, normalOK := input.outcomes.BodyExit(parent, kind.OutcomeNormal)
 			_, tailOK := input.control.BodyTailPhase(parent)
-			if !ok || !normalOK || !tailOK || to != normal {
-				t.Fatalf("Body resume = %v/%v, want Normal %v/%v with tail %v", to, ok, normal, normalOK, tailOK)
+			if !row.OwnedBy(input.entries, input.control) || !normalOK || !tailOK || to != normal {
+				t.Fatalf("Body resume = %v, want Normal %v/%v with tail %v", to, normal, normalOK, tailOK)
 			}
 		},
 	})

@@ -1,16 +1,19 @@
 package engine
 
-import "github.com/wippyai/go-lua/analysis/lattice"
+import (
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/lattice"
+)
 
 // coldKey produces deterministic, versioned semantic identities for engine
 // laws that exercise the callback-free Schema/receipt boundary.
-func coldKey[N ~int | ~int8 | ~int16 | ~int32 | ~int64 | ~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64](n N) SemanticKey {
+func coldKey[N ~int | ~int8 | ~int16 | ~int32 | ~int64 | ~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64](n N) identity.SemanticKey {
 	var digest [32]byte
 	value := uint64(n)
 	for index := 0; index < 8; index++ {
 		digest[24+index] = byte(value >> uint((7-index)*8))
 	}
-	key, ok := NewSemanticKey(digest, 1)
+	key, ok := identity.NewSemanticKey(digest, 1)
 	if !ok {
 		panic("engine law semantic key")
 	}

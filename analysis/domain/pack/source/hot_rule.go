@@ -60,7 +60,7 @@ func (rule *HotRule) Implementation() (*packowner.RuleImplementation[packdomain.
 	return rule.implementation, true
 }
 
-func hotSourceChecker(owner *packowner.HotOwner, schema *packdomain.Schema, ruleSemantic engine.SemanticKey) engine.RuleDerivationChecker[packdomain.Value, packdomain.Source] {
+func hotSourceChecker(owner *packowner.HotOwner, schema *packdomain.Schema, ruleSemantic identity.SemanticKey) engine.RuleDerivationChecker[packdomain.Value, packdomain.Source] {
 	return func(derivation engine.RuleDerivation[packdomain.Value, packdomain.Source]) (engine.RuleEvidence, bool) {
 		if owner == nil || schema == nil || derivation.Rule() != ruleSemantic || derivation.InputCount() != 0 || derivation.ReadCount() != 0 || derivation.DispositionCount() != 1 {
 			return engine.RuleEvidence{}, false

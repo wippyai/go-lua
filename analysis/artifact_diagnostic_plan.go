@@ -1,6 +1,7 @@
 package analysis
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/composite"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -11,7 +12,7 @@ import (
 
 type artifactDiagnosticObservationReceipt struct {
 	point       artifactResultPoint
-	observation engine.ReceiptObservation[valueSummaryObservation]
+	observation engine.ReceiptObservation[valuedomain.ValueSummaryObservation]
 }
 
 func validMountedDiagnosticSpan(span programsource.Span) bool {
@@ -462,8 +463,8 @@ func compileDiagnosticObservations(source *link.Link, artifacts *compiledArtifac
 // by native publication and optional diagnostics. Static observations never
 // enter this function. Diagnostic flags control only report collectors; they
 // cannot create a second observation authority or alter native facts.
-func attachBranchValueObservations(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, binding *programBinding, receipt *artifactResultReceipt) ([]artifactDiagnosticObservationReceipt, engine.ReceiptObservationAttachFailure, bool) {
-	if compilation == nil || graph == nil || binding == nil || binding.valueQuery == nil || !receipt.valid() {
+func attachBranchValueObservations(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, binding *composite.ProgramBinding, receipt *artifactResultReceipt) ([]artifactDiagnosticObservationReceipt, engine.ReceiptObservationAttachFailure, bool) {
+	if compilation == nil || graph == nil || binding == nil || binding.ValueQuery() == nil || !receipt.valid() {
 		return nil, engine.ReceiptObservationAttachFailureArguments, false
 	}
 	rows := make([]artifactDiagnosticObservationReceipt, 0)
@@ -478,7 +479,7 @@ func attachBranchValueObservations(compilation *engine.ReceiptCompilation, graph
 			if !executionKey.mount.Available() || !executionKey.point.Available() || !anchorKey.point.Available() {
 				return nil, engine.ReceiptObservationAttachFailureArguments, false
 			}
-			role, roleOK := binding.mountedCapability(producer.role)
+			role, roleOK := mountedCapability(binding, producer.role)
 			member, memberOK := graph.MountedRuleMember(role, observation.mount, producer.point, producer.occurrence)
 			if !roleOK || !memberOK {
 				return nil, engine.ReceiptObservationAttachFailurePoint, false
@@ -490,7 +491,7 @@ func attachBranchValueObservations(compilation *engine.ReceiptCompilation, graph
 			if !idOK {
 				return nil, engine.ReceiptObservationAttachFailureArguments, false
 			}
-			observation, failure := engine.AttachRuleSummaryObservationWithFailure[valuedomain.Value, valueSummaryObservation](compilation, binding.valueQuery, id, member)
+			observation, failure := engine.AttachRuleSummaryObservationWithFailure[valuedomain.Value, valuedomain.ValueSummaryObservation](compilation, binding.ValueQuery(), id, member)
 			if failure != engine.ReceiptObservationAttachFailureNone || !observation.Available() {
 				return nil, failure, false
 			}

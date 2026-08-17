@@ -22,7 +22,7 @@ func TestProgramBindingUsesCanonicalCapabilityDirectory(t *testing.T) {
 	if !ok {
 		t.Fatal("program binding source location unavailable")
 	}
-	path := filepath.Join(filepath.Dir(current), "program_binding.go")
+	path := filepath.Join(filepath.Dir(current), "domain", "composite", "program_binding.go")
 	source, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -31,7 +31,7 @@ func TestProgramBindingUsesCanonicalCapabilityDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	registryPath := filepath.Join(filepath.Dir(current), "schema", "grammar", "rule_registry.go")
+	registryPath := filepath.Join(filepath.Dir(current), "domain", "composite", "rule_registry.go")
 	registrySource, err := os.ReadFile(registryPath)
 	if err != nil {
 		t.Fatal(err)
@@ -49,29 +49,29 @@ func TestProgramBindingUsesCanonicalCapabilityDirectory(t *testing.T) {
 		}
 		for _, spec := range gen.Specs {
 			typeSpec, ok := spec.(*ast.TypeSpec)
-			if !ok || typeSpec.Name.Name != "programBinding" {
+			if !ok || typeSpec.Name.Name != "ProgramBinding" {
 				continue
 			}
 			binding, _ = typeSpec.Type.(*ast.StructType)
 		}
 	}
 	if binding == nil {
-		t.Fatal("programBinding struct not found")
+		t.Fatal("ProgramBinding struct not found")
 	}
 	for _, field := range binding.Fields.List {
 		for _, name := range field.Names {
 			if strings.HasSuffix(name.Name, "Capability") {
-				t.Errorf("programBinding retains copied capability field %q", name.Name)
+				t.Errorf("ProgramBinding retains copied capability field %q", name.Name)
 			}
 			switch name.Name {
 			case "call", "heap", "pack", "effect":
-				t.Errorf("programBinding retains unused cached owner field %q", name.Name)
+				t.Errorf("ProgramBinding retains unused cached owner field %q", name.Name)
 			}
 		}
 	}
 
 	if capabilityStores(file) != 0 {
-		t.Error("programBinding stores RuleSlotCapability; use SchemaBinding's canonical directory")
+		t.Error("ProgramBinding stores RuleSlotCapability; use SchemaBinding's canonical directory")
 	}
 
 	hasVocabulary := false

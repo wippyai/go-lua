@@ -297,7 +297,7 @@ func materializeCanonicalStructuralGraph(ctx context.Context, nodes []decodedCan
 		if tag != canonicalRecursive {
 			continue
 		}
-		name, hasBody, err := canonicalRecursiveHeader(node.scalar)
+		hasBody, err := canonicalRecursiveHeader(node.scalar)
 		if err != nil {
 			return nil, err
 		}
@@ -308,7 +308,7 @@ func materializeCanonicalStructuralGraph(ctx context.Context, nodes []decodedCan
 		if len(node.edges) != childCount {
 			return nil, fmt.Errorf("%w: recursive child shape", ErrInvalidCanonicalType)
 		}
-		built[index] = NewRecursivePlaceholder(name)
+		built[index] = NewRecursivePlaceholder("")
 		ready[index], recursive[index] = true, true
 	}
 
@@ -438,18 +438,21 @@ func canonicalNodeTag(scalar []byte) (byte, bool) {
 	return scalar[0], true
 }
 
-func canonicalRecursiveHeader(scalar []byte) (string, bool, error) {
+// canonicalRecursiveHeader reads one binder frame. The binder carries no name:
+// it is a bound variable whose occurrences are graph edges, so the decoded
+// placeholder is anonymous and presentation is restored by the caller that
+// owns a declaration name.
+func canonicalRecursiveHeader(scalar []byte) (bool, error) {
 	r := canonicalRawReader{raw: scalar}
 	tag, ok := r.byte()
 	if !ok || tag != canonicalRecursive {
-		return "", false, fmt.Errorf("%w: recursive scalar", ErrInvalidCanonicalType)
+		return false, fmt.Errorf("%w: recursive scalar", ErrInvalidCanonicalType)
 	}
-	name, nameOK := r.frame()
 	hasBody, bodyOK := r.bool()
-	if !nameOK || !bodyOK || r.at != len(r.raw) {
-		return "", false, fmt.Errorf("%w: recursive shape", ErrInvalidCanonicalType)
+	if !bodyOK || r.at != len(r.raw) {
+		return false, fmt.Errorf("%w: recursive shape", ErrInvalidCanonicalType)
 	}
-	return string(name), hasBody, nil
+	return hasBody, nil
 }
 
 func canonicalGenericHeader(scalar []byte) (string, int, bool, error) {

@@ -13,17 +13,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wippyai/go-lua/analysis/domain/composite"
 	callsite "github.com/wippyai/go-lua/analysis/domain/effect/callsite"
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/internal/testfixture"
+	"github.com/wippyai/go-lua/analysis/library/lualib/targetprofile"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
-	"github.com/wippyai/go-lua/analysis/program/target/profile"
-	"github.com/wippyai/go-lua/analysis/internal/testfixture"
-	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 // The corpus harness is this package's single fixture spine. One enumeration
@@ -142,7 +142,7 @@ func corpusHarnessProjects(t *testing.T) []corpusHarnessProject {
 		t.Fatal(err)
 	}
 	corpusHarnessOnce.Do(func() {
-		corpusHarnessProjectsValue, corpusHarnessProjectsErr = buildCorpusHarnessProjects(catalog)
+		corpusHarnessProjectsValue, corpusHarnessProjectsErr = buildCorpusHarnessProjects(architectureBatteryRepositoryRoot(t), catalog)
 	})
 	if corpusHarnessProjectsErr != nil {
 		t.Fatal(corpusHarnessProjectsErr)
@@ -150,14 +150,15 @@ func corpusHarnessProjects(t *testing.T) []corpusHarnessProject {
 	return corpusHarnessProjectsValue
 }
 
-func buildCorpusHarnessProjects(catalog *corpusDiagnosticExpectationCatalog) ([]corpusHarnessProject, error) {
+func buildCorpusHarnessProjects(repository string, catalog *corpusDiagnosticExpectationCatalog) ([]corpusHarnessProject, error) {
 	if catalog == nil {
 		return nil, fmt.Errorf("frozen corpus expectation catalog is unavailable")
 	}
-	sources, err := testfixture.FrozenCorpusProjects()
+	corpus, err := testfixture.LoadCorpus(repository)
 	if err != nil {
 		return nil, fmt.Errorf("load frozen corpus: %w", err)
 	}
+	sources := corpus.Projects()
 	if len(sources) != corpusHarnessProjectCount || len(catalog.projects) != corpusHarnessProjectCount || catalog.inventory.projects != corpusHarnessProjectCount {
 		return nil, fmt.Errorf("frozen corpus projects = %d executable, %d expectation, %d inventory, want exactly %d", len(sources), len(catalog.projects), catalog.inventory.projects, corpusHarnessProjectCount)
 	}
@@ -635,11 +636,11 @@ func corpusHarnessBindingFailure(plan *Plan, source *link.Link) string {
 	return "complete"
 }
 
-func corpusHarnessEffectBodyReceiptFailure(plan *Plan, binding *programBinding) string {
+func corpusHarnessEffectBodyReceiptFailure(plan *Plan, binding *composite.ProgramBinding) string {
 	if plan == nil || plan.state == nil || plan.state.artifacts == nil || binding == nil {
 		return "state"
 	}
-	effectBody, effectBodyOK := grammar.RuleHandle[*callsite.BodyHotRule](binding.rules, programartifact.RuleRoleEffectBody)
+	effectBody, effectBodyOK := composite.RuleHandle[*callsite.BodyHotRule](binding.Rules(), programartifact.RuleRoleEffectBody)
 	if !effectBodyOK {
 		return "state"
 	}
@@ -659,12 +660,12 @@ func corpusHarnessEffectBodyReceiptFailure(plan *Plan, binding *programBinding) 
 		}
 		mounts = append(mounts, mounted)
 	}
-	assembly, _, assemblyOK := engine.BeginMountedArtifactReceiptAssemblyWithFailure(binding.binding, mounts, witness)
+	assembly, _, assemblyOK := engine.BeginMountedArtifactReceiptAssemblyWithFailure(binding.SchemaBinding(), mounts, witness)
 	if !assemblyOK {
 		return "assembly"
 	}
 	defer assembly.Abort()
-	if !binding.attachLinkBootstrapRules(assembly, valueIDs, heapIDs) {
+	if !attachLinkBootstrapRules(binding, assembly, valueIDs, heapIDs) {
 		return "bootstrap-rules"
 	}
 	for _, mount := range plan.state.artifacts.mounts {
@@ -704,10 +705,11 @@ func corpusHarnessCensusMode() corpusHarnessMode {
 	return corpusHarnessMode{name: "census", execution: corpusHarnessAnalyzeOnce}
 }
 
-// corpusHarnessReceiptMode is the closed-phase receipt lane: one compile and
-// one diagnostic solve, reporting the exact construction boundary on failure.
-func corpusHarnessReceiptMode() corpusHarnessMode {
-	return corpusHarnessMode{name: "receipt", execution: corpusHarnessDiagnosticSolve, options: corpusHarnessSolveOptions()}
+// corpusHarnessDiagnosticMode is the root diagnostic integration lane: one
+// compile and one diagnostic solve, reporting the exact construction boundary
+// on failure.
+func corpusHarnessDiagnosticMode() corpusHarnessMode {
+	return corpusHarnessMode{name: "diagnostic", execution: corpusHarnessDiagnosticSolve, options: corpusHarnessSolveOptions()}
 }
 
 // corpusHarnessCompileMode stops at the compiled plan, for laws that judge the

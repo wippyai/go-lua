@@ -24,6 +24,8 @@ package axis
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/internal/framing"
 	"github.com/wippyai/go-lua/analysis/lattice"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema"
@@ -42,8 +44,16 @@ const (
 	LawDependencyResolves
 	LawSemanticIdentity
 	LawSemanticUnique
-	LawBindPhase
-	LawVocabulary
+	// The ordinal here is retired. The bind phase is the root's law: the
+	// declaration catalog order is the bind phase order, and the root rejects
+	// out-of-order registration under schema.LawSurfacePhase.
+	_
+	// The ordinal here is retired. Whether the closed vocabulary is itself
+	// available is that package's own law, stated by vocabulary.Bundle.Available
+	// and pinned by its own tests. A vocabulary that is not the canonical one
+	// selects nothing, so this surface observes it as an axis with no canonical
+	// identity and states that under LawSemanticIdentity.
+	_
 )
 
 // Storage is the closed catalog of places an axis's facts live. A factor axis
@@ -262,7 +272,7 @@ type Spec[A, F, H, V any] struct {
 	// self-edge.
 	Dependencies []schema.Key
 	// Semantic selects the axis identity from the canonical vocabulary.
-	Semantic func(vocabulary.Bundle) engine.SemanticKey
+	Semantic func(vocabulary.Bundle) identity.SemanticKey
 	// Declare records the axis's cold Schema shape and returns its fragment.
 	Declare func(Declaration) (F, bool)
 	// Bind instantiates the axis's typed factor binding and returns the hot
@@ -317,7 +327,7 @@ type Template[A any] struct {
 	concurrency  Concurrency
 	dependencies []schema.Key
 
-	semantic func(vocabulary.Bundle) engine.SemanticKey
+	semantic func(vocabulary.Bundle) identity.SemanticKey
 	declare  func(Declaration) (Cell, bool)
 	bind     func(*engine.SchemaBinding, A, Cell) (Cell, bool)
 }
@@ -414,9 +424,29 @@ func (template *Template[A]) DependencyAt(index int) (schema.Key, bool) {
 }
 
 // Semantic resolves this axis's canonical identity in one vocabulary bundle.
-func (template *Template[A]) Semantic(bundle vocabulary.Bundle) engine.SemanticKey {
+func (template *Template[A]) Semantic(bundle vocabulary.Bundle) identity.SemanticKey {
 	if template == nil || template.semantic == nil {
-		return engine.SemanticKey{}
+		return identity.SemanticKey{}
+	}
+	return template.semantic(bundle)
+}
+
+// semanticIdentity resolves this axis's identity in the canonical vocabulary.
+// It is the one evaluation both the content fold and this surface's admission
+// laws read, so the identity a catalog is digested under and the identity it is
+// sealed under cannot differ.
+//
+// It is total: an axis that declares no selector, and one whose selector names
+// nothing in the canonical vocabulary, both resolve to the absent identity. The
+// surface's own LawFieldComplete and LawSemanticIdentity state those cases, so
+// the content stream stays writable for every row the root hands it.
+func (template *Template[A]) semanticIdentity() identity.SemanticKey {
+	if template == nil || template.semantic == nil {
+		return identity.SemanticKey{}
+	}
+	bundle, canonical := vocabulary.New()
+	if !canonical {
+		return identity.SemanticKey{}
 	}
 	return template.semantic(bundle)
 }
@@ -427,6 +457,63 @@ func (template *Template[A]) Semantic(bundle vocabulary.Bundle) engine.SemanticK
 // incomplete axis it is rather than as an unidentifiable row.
 func (template *Template[A]) EntryAvailable() bool {
 	return template != nil && template.key.Available() && template.id.Available()
+}
+
+// EntryContent writes this axis's declarative half: the canonical identity it
+// is bound under, the principal that writes it, the storage its facts live in,
+// the shape of its key space, and its lifetime, mutability, and concurrency
+// disciplines, followed by its dependency edges in declaration order. A derived
+// inventory reads a coordinate space from exactly these, so an axis that changes
+// one of them is a different space and the table digest says so.
+//
+// The semantic identity is content. The selector is a hook, but what it selects
+// is a role of the closed vocabulary, and the engine binds this axis's factor
+// under that role, so two catalogs whose axes select different roles declare
+// different coordinate spaces. The identity is written as its canonical bytes -
+// the digest and the interpretation version - rather than as the role's
+// spelling, so no authored text reaches the stream.
+//
+// The typed hooks are not content. A hook is a function value with no canonical
+// bytes, and the algebra one publishes is produced at bind against a live
+// binding rather than declared here, so neither is written. What the hooks are
+// declared against is covered by the identity and metadata above and by the
+// surface's own admission laws.
+func (template *Template[A]) EntryContent(content *framing.Writer) error {
+	semantic := template.semanticIdentity()
+	digest := semantic.Digest()
+	if err := content.Bytes(digest[:]); err != nil {
+		return err
+	}
+	if err := content.Uint(semantic.Version()); err != nil {
+		return err
+	}
+	if err := content.Uint(uint64(template.principal)); err != nil {
+		return err
+	}
+	if err := content.Uint(uint64(template.storage)); err != nil {
+		return err
+	}
+	if err := content.Uint(uint64(template.cardinality)); err != nil {
+		return err
+	}
+	if err := content.Uint(uint64(template.lifetime)); err != nil {
+		return err
+	}
+	if err := content.Uint(uint64(template.mutability)); err != nil {
+		return err
+	}
+	if err := content.Uint(uint64(template.concurrency)); err != nil {
+		return err
+	}
+	if err := content.Count(uint64(len(template.dependencies))); err != nil {
+		return err
+	}
+	for _, dependency := range template.dependencies {
+		if err := content.String(string(dependency)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (template *Template[A]) metadataComplete() bool {
@@ -477,19 +564,9 @@ func (contribution surface[A]) Entries() []schema.Entry {
 // Seal states the axis surface's own laws over the indexed view. Axes are the
 // first surface in the catalog, so no sealed sibling is reachable here.
 func (contribution surface[A]) Seal(view schema.View, _ schema.Sealed) schema.SealFailure {
-	// The bind phase is the declaration catalog order: an axis is bound before
-	// any surface that binds against it. The root admits surfaces in ascending
-	// catalog order, so stating the axis surface's position states the phase.
-	if schema.SurfaceKindAxis >= schema.SurfaceKindRule {
-		return schema.SurfaceLawFailure(schema.SurfaceKindAxis, schema.EntryID{}, LawBindPhase, schema.DispositionMalformed)
-	}
-	bundle, bundleOK := vocabulary.New()
-	if !bundleOK {
-		return schema.SurfaceLawFailure(schema.SurfaceKindAxis, schema.EntryID{}, LawVocabulary, schema.DispositionMalformed)
-	}
 	keys := make(map[schema.Key]schema.EntryID, view.Count())
 	principals := make(map[programartifact.RuleOutputKind]schema.EntryID, view.Count())
-	semantics := make(map[engine.SemanticKey]schema.EntryID, view.Count())
+	semantics := make(map[identity.SemanticKey]schema.EntryID, view.Count())
 	templates := make([]*Template[A], 0, view.Count())
 	for position := 0; position < view.Count(); position++ {
 		entry, entryOK := view.At(position)
@@ -519,7 +596,7 @@ func (contribution surface[A]) Seal(view schema.View, _ schema.Sealed) schema.Se
 		if !template.fieldsComplete() {
 			return schema.SurfaceLawFailure(schema.SurfaceKindAxis, template.id, LawFieldComplete, schema.DispositionIncomplete)
 		}
-		semantic := template.Semantic(bundle)
+		semantic := template.semanticIdentity()
 		if !semantic.Available() {
 			return schema.SurfaceLawFailure(schema.SurfaceKindAxis, template.id, LawSemanticIdentity, schema.DispositionMalformed)
 		}

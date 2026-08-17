@@ -4,10 +4,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/composite"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
-	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 func TestGuardPolarityCollectorMixedTruthsProveNeitherLaw(t *testing.T) {
@@ -87,7 +87,7 @@ func TestDiagnosticPolicyRejectsAmbiguousAuthority(t *testing.T) {
 // declares a producing lane, and a static row is dispatchable exactly by the
 // observation population it declares.
 func TestDiagnosticDeclarationTableIsPolicyAndDispatchAuthority(t *testing.T) {
-	table, tableOK := grammar.Diagnostics()
+	table, tableOK := composite.Diagnostics()
 	if !tableOK {
 		t.Fatal("sealed diagnostic table unavailable")
 	}
@@ -137,7 +137,7 @@ func TestDiagnosticStaticCollectorRejectsUnknownRowKind(t *testing.T) {
 // rather than from a second per-code numbering.
 func diagnosticLawSeed(t *testing.T, code DiagnosticCode) byte {
 	t.Helper()
-	table, tableOK := grammar.Diagnostics()
+	table, tableOK := composite.Diagnostics()
 	if !tableOK {
 		t.Fatal("sealed diagnostic table unavailable")
 	}

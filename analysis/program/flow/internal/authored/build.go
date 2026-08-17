@@ -78,7 +78,7 @@ func Build(input Input) (*Draft, error) {
 		},
 		authoredControl: authoredControlStore{
 			returns:  append([]Return(nil), input.Control.Returns...),
-			breaks:   append([]Break(nil), input.Control.Breaks...),
+			breaks:   normalizeBreakTargets(input.Control.Breaks, input.Control.Loops),
 			labels:   append([]Label(nil), input.Control.Labels...),
 			gotos:    append([]Goto(nil), input.Control.Gotos...),
 			branches: append([]Branch(nil), input.Control.Branches...),
@@ -94,6 +94,27 @@ func Build(input Input) (*Draft, error) {
 		return nil, errors.New("program/flow: unavailable content identity")
 	}
 	return &Draft{state: &draftState{component: component, phase: draftOpen}}, nil
+}
+
+// normalizeBreakTargets fills the unambiguous direct Loop target for authored
+// inputs that provide only the lexical Body owner. Lowered Lua rows are
+// resolved against the complete Source Body tree during assembly Freeze; this
+// construction normalization keeps the row boundary explicit for direct
+// authored inputs without retaining another index.
+func normalizeBreakTargets(rows []Break, loops []Loop) []Break {
+	breaks := append([]Break(nil), rows...)
+	for index := range breaks {
+		if breaks[index].Target != 0 {
+			continue
+		}
+		for loopIndex, loop := range loops {
+			if loop.Body == breaks[index].Owner {
+				breaks[index].Target = keyspace.MakeTerm(keyspace.FamilyLoop, uint32(loopIndex+1))
+				break
+			}
+		}
+	}
+	return breaks
 }
 
 // Finalizer claims the authored Draft exactly once. The returned capability
@@ -372,7 +393,8 @@ func validateAuthoredControl(component *component, counts [keyspace.FamilyCount]
 		}
 	}
 	for _, row := range component.authoredControl.breaks {
-		if !hasFamily(counts, row.Owner, keyspace.FamilyBody) {
+		if !hasFamily(counts, row.Owner, keyspace.FamilyBody) ||
+			(row.Target != 0 && !hasFamily(counts, row.Target, keyspace.FamilyLoop)) {
 			return errors.New("program/flow: invalid Break row")
 		}
 	}

@@ -18,21 +18,9 @@ import (
 type ActivationResult struct{ selections []activationLocator }
 
 type activationLocator struct {
-	application SemanticKey
-	target      SemanticKey
-	endpoint    SemanticKey
-}
-
-// SelectionCount and SelectionAt expose the exact semantic triples selected
-// by this Product row. They are proof observations only: passing a returned
-// key back through a later callback still requires topology validation.
-func (result ActivationResult) SelectionCount() int { return len(result.selections) }
-func (result ActivationResult) SelectionAt(index int) (application, target, endpoint SemanticKey, ok bool) {
-	if index < 0 || index >= len(result.selections) {
-		return SemanticKey{}, SemanticKey{}, SemanticKey{}, false
-	}
-	selection := result.selections[index]
-	return selection.application, selection.target, selection.endpoint, true
+	application identity.SemanticKey
+	target      identity.SemanticKey
+	endpoint    identity.SemanticKey
 }
 
 // Activation is the synchronous capability passed to an ActivationRule Run.
@@ -62,7 +50,7 @@ func (value Activation) live() bool {
 // a private locator and asks the sealed topology for that trigger's one
 // binding. A false return is fail-closed when local constituent membership
 // does not admit the triple.
-func Activate(value Activation, application, target, endpoint SemanticKey) bool {
+func Activate(value Activation, application, target, endpoint identity.SemanticKey) bool {
 	if !value.live() || !application.Available() || !target.Available() || !endpoint.Available() || value.execution.owner == nil || value.execution.owner.topology == nil || !value.execution.owner.trigger.Available() {
 		if value.execution != nil && value.execution.frame != nil {
 			value.execution.frame.failed.Store(true)
@@ -70,9 +58,9 @@ func Activate(value Activation, application, target, endpoint SemanticKey) bool 
 		return false
 	}
 	member, selected := value.execution.owner.topology.SelectReceiptMember(value.execution.owner.trigger, equation.PairLocator{
-		Application: application.compositionKey(),
-		Target:      target.compositionKey(),
-		Endpoint:    endpoint.compositionKey(),
+		Application: compositionKeyOf(application),
+		Target:      compositionKeyOf(target),
+		Endpoint:    compositionKeyOf(endpoint),
 	})
 	if !selected {
 		value.execution.frame.failed.Store(true)
@@ -94,12 +82,12 @@ func Activate(value Activation, application, target, endpoint SemanticKey) bool 
 // ActivationApplication returns the exact application sealed on the current
 // trigger binding. It is a projection of existing topology authority, not a
 // reconstruction from caller facts, target descriptors, or product rows.
-func ActivationApplication(value Activation) (SemanticKey, bool) {
+func ActivationApplication(value Activation) (identity.SemanticKey, bool) {
 	if !value.live() || value.execution.owner == nil || !value.execution.owner.application.Available() {
 		if value.execution != nil && value.execution.frame != nil {
 			value.execution.frame.failed.Store(true)
 		}
-		return SemanticKey{}, false
+		return identity.SemanticKey{}, false
 	}
 	return value.execution.owner.application, true
 }
@@ -143,9 +131,9 @@ type activationExecution struct {
 
 type activationSelection struct {
 	member      equation.Member
-	application SemanticKey
-	target      SemanticKey
-	endpoint    SemanticKey
+	application identity.SemanticKey
+	target      identity.SemanticKey
+	endpoint    identity.SemanticKey
 	row         int
 	region      support.Mask
 }
@@ -158,9 +146,9 @@ type compiledActivationRule struct {
 	run         func(*activationExecution) bool
 	topology    *equation.Topology
 	trigger     composition.Key
-	application SemanticKey
+	application identity.SemanticKey
 	graph       *equation.Graph
-	anchor      SemanticKey
+	anchor      identity.SemanticKey
 	reads       []readRuntime
 	nextEpoch   generationSequence
 }
@@ -363,20 +351,20 @@ func canonicalActivationSelections(values []activationSelection, checkpoint func
 func canonicalActivationLocators(values []activationLocator) ([]activationLocator, bool) {
 	result := append([]activationLocator(nil), values...)
 	sort.Slice(result, func(left, right int) bool {
-		if result[left].application.compositionKey() != result[right].application.compositionKey() {
-			return lessRuntimeKey(result[left].application.compositionKey(), result[right].application.compositionKey())
+		if compositionKeyOf(result[left].application) != compositionKeyOf(result[right].application) {
+			return lessRuntimeKey(compositionKeyOf(result[left].application), compositionKeyOf(result[right].application))
 		}
-		if result[left].target.compositionKey() != result[right].target.compositionKey() {
-			return lessRuntimeKey(result[left].target.compositionKey(), result[right].target.compositionKey())
+		if compositionKeyOf(result[left].target) != compositionKeyOf(result[right].target) {
+			return lessRuntimeKey(compositionKeyOf(result[left].target), compositionKeyOf(result[right].target))
 		}
-		return lessRuntimeKey(result[left].endpoint.compositionKey(), result[right].endpoint.compositionKey())
+		return lessRuntimeKey(compositionKeyOf(result[left].endpoint), compositionKeyOf(result[right].endpoint))
 	})
 	retained := 0
 	for _, locator := range result {
 		if !locator.application.Available() || !locator.target.Available() || !locator.endpoint.Available() {
 			return nil, false
 		}
-		if retained != 0 && result[retained-1].application.compositionKey() == locator.application.compositionKey() && result[retained-1].target.compositionKey() == locator.target.compositionKey() && result[retained-1].endpoint.compositionKey() == locator.endpoint.compositionKey() {
+		if retained != 0 && compositionKeyOf(result[retained-1].application) == compositionKeyOf(locator.application) && compositionKeyOf(result[retained-1].target) == compositionKeyOf(locator.target) && compositionKeyOf(result[retained-1].endpoint) == compositionKeyOf(locator.endpoint) {
 			continue
 		}
 		result[retained] = locator

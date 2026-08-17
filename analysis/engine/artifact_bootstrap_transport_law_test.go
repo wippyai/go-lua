@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"crypto/sha256"
+	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"sync/atomic"
 	"testing"
 
@@ -16,15 +17,15 @@ type bootstrapTransportLawOwner struct {
 	factors                        [3]*FactorSlot[uint64]
 	rules                          [3]*RuleSlot[uint64, struct{}]
 	writes                         [3]SchemaWriteSlot[uint64]
-	admissions                     [3]SemanticKey
+	admissions                     [3]identity.SemanticKey
 	queries                        [3]*QuerySlot[uint64]
 	implementations                [3]*RuleImplementation[uint64, uint64, struct{}]
 	queryImplementations           [3]*ExactQueryImplementation[uint64, uint64]
 	activationFamily               SchemaActivationFamily
 	activationRule                 *SchemaActivationRuleSlot
 	activationImplementation       *ActivationRuleImplementation
-	activationSemantic             SemanticKey
-	activationAdmission            SemanticKey
+	activationSemantic             identity.SemanticKey
+	activationAdmission            identity.SemanticKey
 	transfers                      [3]*atomic.Int64
 	activationRuns                 *atomic.Int64
 	binding                        *SchemaBinding
@@ -157,7 +158,7 @@ func bindBootstrapTransportLawOwner(t testing.TB, owner bootstrapTransportLawOwn
 	return binding, value, heap, excluded
 }
 
-func bootstrapTransportQuerySpec(freezer SemanticKey) HotExactQuerySpec[uint64, uint64] {
+func bootstrapTransportQuerySpec(freezer identity.SemanticKey) HotExactQuerySpec[uint64, uint64] {
 	return HotExactQuerySpec[uint64, uint64]{
 		Project: func(cells OrderedCells[uint64]) uint64 {
 			value, present, valid := cells.At(0)
@@ -186,36 +187,36 @@ func newBootstrapTransportLawArtifact(t testing.TB, schema *Schema, salt byte) b
 
 func newBootstrapTransportLawArtifactWithInitials(t testing.TB, schema *Schema, salt byte, firstInitial, secondInitial bool) bootstrapTransportLawArtifact {
 	t.Helper()
-	artifact := bootstrapTransportLawID(salt, 1)
+	artifactID := bootstrapTransportLawID(salt, 1)
 	program := bootstrapTransportLawID(salt, 2)
 	initial := bootstrapTransportLawID(salt, 3)
 	noninitial := bootstrapTransportLawID(salt, 4)
 	regionID := bootstrapTransportLawID(salt, 5)
 	bodyID := bootstrapTransportLawID(salt, 6)
-	spec, specOK := NewArtifactScalarSpec(artifact, program, identity.ContentID(schema.ID().Digest()), ArtifactScalarCapacity{Points: 2, Regions: 1, Events: 4, Bodies: 1})
+	spec, specOK := rows.NewArtifactScalarSpec(artifactID, program, identity.ContentID(schema.ID().Digest()), rows.ArtifactScalarCapacity{Points: 2, Regions: 1, Events: 4, Bodies: 1})
 	if !specOK || spec == nil {
 		t.Fatal("bootstrap transport artifact spec")
 	}
-	initialRow, initialOK := spec.AddPoint(ArtifactScalarPoint{ID: initial, Initial: firstInitial})
-	_, noninitialOK := spec.AddPoint(ArtifactScalarPoint{ID: noninitial, Initial: secondInitial})
-	region, regionOK := spec.AddRegion(ArtifactScalarRegion{ID: regionID, Head: initial})
-	body, bodyOK := spec.AddBody(ArtifactScalarBody{ID: bodyID, Context: bootstrapTransportLawID(salt, 7), SemanticEntry: bootstrapTransportLawID(salt, 8)})
+	initialRow, initialOK := spec.AddPoint(rows.ArtifactScalarPoint{ID: initial, Initial: firstInitial})
+	_, noninitialOK := spec.AddPoint(rows.ArtifactScalarPoint{ID: noninitial, Initial: secondInitial})
+	region, regionOK := spec.AddRegion(rows.ArtifactScalarRegion{ID: regionID, Head: initial})
+	body, bodyOK := spec.AddBody(rows.ArtifactScalarBody{ID: bodyID, Context: bootstrapTransportLawID(salt, 7), SemanticEntry: bootstrapTransportLawID(salt, 8)})
 	if initialRow != 0 || !initialOK || !noninitialOK || !regionOK || !bodyOK ||
 		!spec.AddRegionMember(region, initial) || !spec.AddRegionMember(region, noninitial) ||
-		!spec.AddEvent(ArtifactScalarEvent{Kind: ArtifactEventEnter, Region: regionID}) ||
-		!spec.AddEvent(ArtifactScalarEvent{Kind: ArtifactEventPoint, Point: initial}) ||
-		!spec.AddEvent(ArtifactScalarEvent{Kind: ArtifactEventPoint, Point: noninitial}) ||
-		!spec.AddEvent(ArtifactScalarEvent{Kind: ArtifactEventExit, Region: regionID}) ||
+		!spec.AddEvent(rows.ArtifactScalarEvent{Kind: rows.ArtifactEventEnter, Region: regionID}) ||
+		!spec.AddEvent(rows.ArtifactScalarEvent{Kind: rows.ArtifactEventPoint, Point: initial}) ||
+		!spec.AddEvent(rows.ArtifactScalarEvent{Kind: rows.ArtifactEventPoint, Point: noninitial}) ||
+		!spec.AddEvent(rows.ArtifactScalarEvent{Kind: rows.ArtifactEventExit, Region: regionID}) ||
 		!spec.AddBodyEntry(body, initial) || !spec.AddBodyExit(body, noninitial) {
 		t.Fatal("bootstrap transport artifact rows")
 	}
-	template, templateOK := NewArtifactScalarTemplate(spec)
+	template, templateOK := rows.NewArtifactScalarTemplate(spec)
 	binding, bindingOK := NewArtifactScalarBinding(template)
 	receipt, receiptOK := NewArtifactScalarReceipt(binding)
 	if !templateOK || !bindingOK || !receiptOK || receipt == nil {
 		t.Fatal("bootstrap transport artifact")
 	}
-	return bootstrapTransportLawArtifact{receipt: receipt, artifact: artifact, initial: initial, noninitial: noninitial}
+	return bootstrapTransportLawArtifact{receipt: receipt, artifact: artifactID, initial: initial, noninitial: noninitial}
 }
 
 func bootstrapTransportLawID(salt, value byte) identity.ContentID {
@@ -446,7 +447,7 @@ func TestLinkBootstrapValueAndHeapProducersReachMountedInitialAfterReleaseAndRev
 		}
 	}
 	initialRelation, relationOK := topology.topology.InitialRelation()
-	selected, selectedOK := topology.topology.SelectReceiptMember(baseActivation.member.Key(), equation.PairLocator{Application: application.compositionKey(), Target: target.compositionKey(), Endpoint: endpoint.compositionKey()})
+	selected, selectedOK := topology.topology.SelectReceiptMember(baseActivation.member.Key(), equation.PairLocator{Application: compositionKeyOf(application), Target: compositionKeyOf(target), Endpoint: compositionKeyOf(endpoint)})
 	accepted, acceptedOK := topology.topology.Accept(selected, equation.TrueExpr())
 	acceptedRows := []equation.AcceptedMember{accepted}
 	acceptedRelation, acceptedRelationOK := topology.topology.Publish(initialRelation, acceptedRows)
@@ -696,7 +697,7 @@ func queueBootstrapTransportLawActivation(t testing.TB, assembly *ReceiptAssembl
 	return result
 }
 
-func addBootstrapTransportLawActivationCandidate(t testing.TB, assembly *ReceiptAssembly, owner bootstrapTransportLawOwner, trigger *BindingRuleRowRef, initialID identity.ContentID, application, target, endpoint SemanticKey) bool {
+func addBootstrapTransportLawActivationCandidate(t testing.TB, assembly *ReceiptAssembly, owner bootstrapTransportLawOwner, trigger *BindingRuleRowRef, initialID identity.ContentID, application, target, endpoint identity.SemanticKey) bool {
 	t.Helper()
 	if assembly == nil || assembly.builder == nil || assembly.builder.inner == nil || owner.activationImplementation == nil || trigger == nil || trigger.builder != assembly.builder.inner || trigger.ref == 0 {
 		return false
@@ -708,8 +709,8 @@ func addBootstrapTransportLawActivationCandidate(t testing.TB, assembly *Receipt
 	bootstrapSite := assembly.builder.inner.artifact.bootstrap.site
 	initialSite, initialOK := assembly.builder.inner.artifact.sites[initialID]
 	formals := equation.NewBatch()
-	input, inputOK := formals.AdmitFormalPort(coldKey(947_995).compositionKey(), equation.PortImport, nil)
-	output, outputOK := formals.AdmitFormalPort(coldKey(947_996).compositionKey(), equation.PortExport, nil)
+	input, inputOK := formals.AdmitFormalPort(compositionKeyOf(coldKey(947_995)), equation.PortImport, nil)
+	output, outputOK := formals.AdmitFormalPort(compositionKeyOf(coldKey(947_996)), equation.PortExport, nil)
 	if !initialOK || !inputOK || !outputOK || !formals.Seal() {
 		return false
 	}
@@ -721,7 +722,7 @@ func addBootstrapTransportLawActivationCandidate(t testing.TB, assembly *Receipt
 	}
 	shape, shapeOK := owner.schema.cold.RuleShapeAt(proof.ordinal)
 	materialization, originOK := materialization.WithOrigin(equation.MaterializationOrigin{
-		Family: shape.ActivationFamily, Application: application.compositionKey(), Target: target.compositionKey(), Endpoint: endpoint.compositionKey(), TriggerOrdinal: triggerOrdinal,
+		Family: shape.ActivationFamily, Application: compositionKeyOf(application), Target: compositionKeyOf(target), Endpoint: compositionKeyOf(endpoint), TriggerOrdinal: triggerOrdinal,
 	})
 	receipt, receiptOK := assembly.builder.issueMaterialization(materialization)
 	return bindingOK && materializationOK && shapeOK && originOK && receiptOK && assembly.builder.addActivationCandidate(receipt)

@@ -1,9 +1,9 @@
 package target
 
 import (
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
 
@@ -37,7 +37,7 @@ func TestCallbackReleaseZeroPolicyIsRequiredAndExact(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			spec := callbackReleaseZeroSpec(test.zero)
-			if contract, err := Seal(&spec); err == nil || contract != nil {
+			if contract, err := testSeal(&spec); err == nil || contract != nil {
 				t.Fatal("invalid zero-holder policy was published")
 			}
 		})
@@ -58,7 +58,7 @@ func callbackReleaseZeroSpec(zero CallbackReleaseZeroSpec) Spec {
 	return Spec{Operations: []OperationSpec{
 		{
 			Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"release-zero-owner"}}},
-			Input:    ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed},
+			Input:    ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed},
 			Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: closed}},
 			Callbacks: []CallbackSpec{{
 				Function: InputSource{Kind: InputSourceValueFormal}, Admission: OrdinaryCallable,
@@ -75,7 +75,7 @@ func callbackReleaseZeroSpec(zero CallbackReleaseZeroSpec) Spec {
 		},
 		{
 			Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"release-zero-target"}}},
-			Input:    ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed},
+			Input:    ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed},
 			Outcomes: []OutcomeSpec{
 				{Kind: flowkind.OutcomeNormal, Values: closed},
 				{Kind: flowkind.OutcomeThrow, Values: closed},

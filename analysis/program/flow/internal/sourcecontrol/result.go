@@ -63,10 +63,11 @@ type Result struct {
 	// catalog is shared by copied Result values. Its lifecycle cannot be
 	// forked by struct copying and release requires the assembler-held lease.
 	catalog *catalogLifecycle
-	// outcomePhases is the one-shot parent-issued extension for non-Normal
-	// Outcome phases. It is deliberately separate from Reachable/CSR: an
-	// Outcome phase is a schedule point, never a structural fallthrough.
-	outcomePhases *outcomePhaseLifecycle
+	// outcomePhases is the immutable SourceControl-owned extension for
+	// non-Normal Outcome phases. It is deliberately separate from
+	// Reachable/CSR: an Outcome phase is a schedule point, never a structural
+	// fallthrough.
+	outcomePhases *OutcomePhases
 }
 
 func (r *Result) ownerAvailable() bool {

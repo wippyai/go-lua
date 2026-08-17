@@ -212,8 +212,114 @@ func (artifact *Artifact) validUnsealedFailure() CompileFailure {
 			}
 		}
 	}
-	if len(artifact.functionBoundaries) != callableBodies || !artifact.packReceipt.Available() || !artifact.packReceipt.validAgainst(artifact) {
+	// Calls and their ordered child columns are a single Artifact-owned plane.
+	// Validate contiguous ranges and owner joins here.
+	seenCalls := make(map[identity.ContentID]struct{}, len(artifact.calls))
+	seenCallOperands := make(map[identity.ContentID]struct{}, len(artifact.callOperands))
+	seenCallArguments := make(map[identity.ContentID]struct{}, len(artifact.callArguments))
+	seenCallTypeArguments := make(map[identity.ContentID]struct{}, len(artifact.callTypeArguments))
+	operandCursor, argumentCursor, typeArgumentCursor := 0, 0, 0
+	for index, row := range artifact.calls {
+		if !row.Available() || uint64(row.operandStart) != uint64(operandCursor) || uint64(row.argumentStart) != uint64(argumentCursor) || uint64(row.typeArgumentStart) != uint64(typeArgumentCursor) || uint64(row.operandEnd) > uint64(len(artifact.callOperands)) || uint64(row.argumentEnd) > uint64(len(artifact.callArguments)) || uint64(row.typeArgumentEnd) > uint64(len(artifact.callTypeArguments)) {
+			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceCall)
+		}
+		if _, duplicate := seenCalls[row.id]; duplicate {
+			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceCall)
+		}
+		if _, bodyOK := bodyRows[row.body]; !bodyOK {
+			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceCall)
+		}
+		if _, valuesOK := valueRows[row.valuesRoot]; !valuesOK {
+			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceCall)
+		}
+		occurrenceIndex, occurrenceOK := artifact.occurrenceByID[occurrenceLookup{kind: OccurrenceCall, id: row.id}]
+		if !occurrenceOK || uint64(occurrenceIndex) >= uint64(len(artifact.occurrences)) || !artifact.occurrences[occurrenceIndex].Available() {
+			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceCall)
+		}
+		for childIndex := int(row.operandStart); childIndex < int(row.operandEnd); childIndex++ {
+			child := artifact.callOperands[childIndex]
+			if !child.Available() || child.call != row.id {
+				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, childIndex-int(row.operandStart), CompileReasonOccurrenceCall)
+			}
+			if _, duplicate := seenCallOperands[child.id]; duplicate {
+				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, childIndex-int(row.operandStart), CompileReasonOccurrenceCall)
+			}
+			seenCallOperands[child.id] = struct{}{}
+		}
+		for childIndex := int(row.argumentStart); childIndex < int(row.argumentEnd); childIndex++ {
+			child := artifact.callArguments[childIndex]
+			position := childIndex - int(row.argumentStart)
+			if !child.Available() || child.call != row.id || child.values != row.values || child.position != uint32(position) {
+				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, position, CompileReasonOccurrenceCall)
+			}
+			if _, duplicate := seenCallArguments[child.id]; duplicate {
+				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, position, CompileReasonOccurrenceCall)
+			}
+			seenCallArguments[child.id] = struct{}{}
+		}
+		for childIndex := int(row.typeArgumentStart); childIndex < int(row.typeArgumentEnd); childIndex++ {
+			child := artifact.callTypeArguments[childIndex]
+			position := childIndex - int(row.typeArgumentStart)
+			if !child.Available() || child.call != row.id || child.types != row.types || child.position != uint32(position) {
+				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, position, CompileReasonOccurrenceCall)
+			}
+			if _, duplicate := seenCallTypeArguments[child.id]; duplicate {
+				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, position, CompileReasonOccurrenceCall)
+			}
+			seenCallTypeArguments[child.id] = struct{}{}
+		}
+		seenCalls[row.id] = struct{}{}
+		operandCursor, argumentCursor, typeArgumentCursor = int(row.operandEnd), int(row.argumentEnd), int(row.typeArgumentEnd)
+	}
+	if operandCursor != len(artifact.callOperands) || argumentCursor != len(artifact.callArguments) || typeArgumentCursor != len(artifact.callTypeArguments) {
+		return compileFailure(CompileStageSeal, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceCall)
+	}
+	if len(artifact.functionBoundaries) != callableBodies {
 		return compileFailure(CompileStageSeal, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceStorage)
+	}
+	// Storage binds are one generic occurrence row whose inputs are ordered as
+	// ValuesID followed by every destination CellID. This is the canonical
+	// storage-cell column consumed by Pack; no Pack-specific refinement may
+	// duplicate it.
+	for index, row := range artifact.occurrences {
+		if row.kind != OccurrenceStorageBind && row.kind != OccurrenceStorageBindTransfer {
+			continue
+		}
+		if _, bodyOK := bodyRows[row.body]; !bodyOK {
+			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceStorageBind)
+		}
+		switch row.kind {
+		case OccurrenceStorageBind:
+			if row.InputCount() < 1 {
+				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceStorageBind)
+			}
+			valuesID, valuesOK := row.InputAt(0)
+			if !valuesOK {
+				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceStorageBind)
+			}
+			if _, valuesKnown := valueRows[valuesID]; !valuesKnown {
+				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceStorageBind)
+			}
+			for cellIndex := 1; cellIndex < row.InputCount(); cellIndex++ {
+				cell, cellOK := row.InputAt(cellIndex)
+				if !cellOK || !cell.Available() {
+					return compileFailure(CompileStageSeal, CompileRowOccurrence, index, cellIndex, CompileReasonOccurrenceStorageBind)
+				}
+			}
+		case OccurrenceStorageBindTransfer:
+			if row.InputCount() != 3 {
+				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceStorageBind)
+			}
+			parent, parentOK := row.InputAt(0)
+			value, valueOK := row.InputAt(1)
+			cell, cellOK := row.InputAt(2)
+			if !parentOK || !valueOK || !cellOK || !parent.Available() || !value.Available() || !cell.Available() {
+				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceStorageBind)
+			}
+			if _, bindOK := artifact.occurrenceByID[occurrenceLookup{kind: OccurrenceStorageBind, id: parent}]; !bindOK {
+				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceStorageBind)
+			}
+		}
 	}
 	seenCallAllocations := make(map[identity.ContentID]struct{}, len(artifact.callTargets))
 	seenCallBodies := make(map[identity.ContentID]struct{}, len(artifact.callTargets))
@@ -745,39 +851,28 @@ func artifactID(artifact *Artifact) identity.ContentID {
 		}
 		fields = append(fields, boolField(row.tail.present), uintField(uint64(row.tail.kind)), bytesField(row.tail.id))
 	}
-	fields = append(fields, uintField(packReceiptLawVersion), uintField(uint64(artifact.packReceipt.BindCount())))
-	for index := 0; index < artifact.packReceipt.BindCount(); index++ {
-		row, _ := artifact.packReceipt.BindAt(index)
-		fields = append(fields, bytesField(row.ID()), bytesField(row.BodyID()), bytesField(row.ValuesID()), uintField(uint64(row.CellCount())))
-		for cellIndex := 0; cellIndex < row.CellCount(); cellIndex++ {
-			cell, _ := row.CellAt(cellIndex)
-			fields = append(fields, bytesField(cell))
+	// Calls are an Artifact-owned source column. Keep
+	// every scalar and ordered child identity in the artifact seal so replay,
+	// mutation, and mounted joins authenticate the direct plane exactly.
+	fields = append(fields, uintField(callRowsLawVersion), uintField(uint64(len(artifact.calls))))
+	for _, row := range artifact.calls {
+		fields = append(fields,
+			bytesField(row.id), bytesField(row.body), bytesField(row.span), bytesField(row.formal),
+			bytesField(row.values), bytesField(row.valuesRoot), bytesField(row.types), bytesField(row.callee), bytesField(row.actuals),
+			uintField(uint64(row.form)), boolField(row.hasReceiver), bytesField(row.receiver), boolField(row.hasTail), bytesField(row.tail),
+			uintField(uint64(row.OperandCount())), uintField(uint64(row.ArgumentCount())), uintField(uint64(row.TypeArgumentCount())),
+		)
+		for index := int(row.operandStart); index < int(row.operandEnd); index++ {
+			operand := artifact.callOperands[index]
+			fields = append(fields, bytesField(operand.id), bytesField(operand.call), bytesField(operand.value), bytesField(operand.span), uintField(uint64(operand.kind)))
 		}
-	}
-	fields = append(fields, uintField(uint64(artifact.packReceipt.BodyCount())))
-	for index := 0; index < artifact.packReceipt.BodyCount(); index++ {
-		row, _ := artifact.packReceipt.BodyAt(index)
-		fields = append(fields, bytesField(row.ID()), bytesField(row.ContextID()), boolField(row.Callable()), uintField(uint64(row.FormalCount())))
-		for formalIndex := 0; formalIndex < row.FormalCount(); formalIndex++ {
-			formal, _ := row.FormalAt(formalIndex)
-			fields = append(fields, bytesField(formal.FormalID()), bytesField(formal.CellID()), bytesField(formal.StorageCellID()))
+		for index := int(row.argumentStart); index < int(row.argumentEnd); index++ {
+			argument := artifact.callArguments[index]
+			fields = append(fields, bytesField(argument.id), bytesField(argument.call), bytesField(argument.values), bytesField(argument.member), bytesField(argument.span), uintField(uint64(argument.position)))
 		}
-	}
-	fields = append(fields, uintField(uint64(artifact.packReceipt.CallCount())))
-	for index := 0; index < artifact.packReceipt.CallCount(); index++ {
-		row, _ := artifact.packReceipt.CallAt(index)
-		fields = append(fields, bytesField(row.ID()), bytesField(row.BodyID()), bytesField(row.FormalID()), bytesField(row.ValuesID()), bytesField(row.TypeArgumentsID()), bytesField(row.CalleeID()), bytesField(row.ActualsID()), uintField(uint64(row.Form())))
-		receiver, hasReceiver := row.ReceiverID()
-		tail, hasTail := row.TailID()
-		fields = append(fields, boolField(hasReceiver), bytesField(receiver), boolField(hasTail), bytesField(tail), uintField(uint64(row.ArgumentCount())))
-		for argumentIndex := 0; argumentIndex < row.ArgumentCount(); argumentIndex++ {
-			argument, _ := row.ArgumentAt(argumentIndex)
-			fields = append(fields, bytesField(argument))
-		}
-		fields = append(fields, uintField(uint64(row.TypeArgumentCount())))
-		for argumentIndex := 0; argumentIndex < row.TypeArgumentCount(); argumentIndex++ {
-			argument, _ := row.TypeArgumentAt(argumentIndex)
-			fields = append(fields, bytesField(argument))
+		for index := int(row.typeArgumentStart); index < int(row.typeArgumentEnd); index++ {
+			argument := artifact.callTypeArguments[index]
+			fields = append(fields, bytesField(argument.id), bytesField(argument.call), bytesField(argument.types), bytesField(argument.reference), uintField(uint64(argument.position)))
 		}
 	}
 	fields = append(fields, uintField(uint64(len(artifact.bodies))))

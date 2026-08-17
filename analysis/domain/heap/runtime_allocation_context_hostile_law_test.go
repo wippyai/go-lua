@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program"
+	"github.com/wippyai/go-lua/analysis/program/flow"
 )
 
 func hostileRuntimeID(text string) identity.ContentID {
@@ -31,7 +31,7 @@ func hostileRequirement(heapID identity.ContentID) AllocationRequirement {
 		allocation: hostileRuntimeID("allocation"),
 		localID:    hostileRuntimeID("local"),
 		kind:       AllocationTable,
-		form:       program.AllocationFormClosed,
+		form:       flow.AllocationFormClosed,
 	}
 	requirement.id = allocationRequirementID(requirement.heapID, requirement.keyID, requirement.artifactID, requirement.mount, requirement.program, requirement.allocation, requirement.localID, requirement.kind, requirement.form)
 	return requirement

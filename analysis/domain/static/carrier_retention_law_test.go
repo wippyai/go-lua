@@ -9,7 +9,7 @@ import (
 // TestStaticCarrierBoundaryGate makes the Static seal boundary structural,
 // rather than relying on a convention that construction-only Link handles are
 // cleared later. It recursively follows Static-owned state types and rejects
-// any direct Boundary, Project, Program, Term, or TransformerInput carrier.
+// any direct Boundary, Project, Program, or Term carrier.
 // External sealed scalar/domain types are leaves: their own packages own their
 // retention gates.
 func TestStaticCarrierBoundaryGate(t *testing.T) {

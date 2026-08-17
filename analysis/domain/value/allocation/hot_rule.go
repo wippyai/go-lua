@@ -24,7 +24,7 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner, heap heapdoma
 	if fragment == nil || fragment.slot == nil || owner == nil || owner.Schema() == nil ||
 		catalog == nil || !catalog.FencedTo(heap, owner.Schema()) ||
 		!fragment.semantic.Available() || !fragment.transform.Available() || !fragment.evidence.Available() ||
-		!engine.DistinctKeys(fragment.semantic, fragment.transform, fragment.evidence) {
+		!identity.DistinctKeys(fragment.semantic, fragment.transform, fragment.evidence) {
 		return nil, false
 	}
 	schema := owner.Schema()
@@ -176,7 +176,7 @@ func (rule *HotRule) Implementation() (*valueowner.RuleImplementation[operand], 
 	return rule.implementation, true
 }
 
-func hotAllocationChecker(owner *valueowner.HotOwner, ruleSemantic, transformSemantic engine.SemanticKey) engine.RuleDerivationChecker[value.Value, operand] {
+func hotAllocationChecker(owner *valueowner.HotOwner, ruleSemantic, transformSemantic identity.SemanticKey) engine.RuleDerivationChecker[value.Value, operand] {
 	return func(derivation engine.RuleDerivation[value.Value, operand]) (engine.RuleEvidence, bool) {
 		if owner == nil || owner.Schema() == nil || derivation.Rule() != ruleSemantic || derivation.InputCount() != 1 || derivation.ReadCount() != 0 || derivation.DispositionCount() != 1 {
 			return engine.RuleEvidence{}, false

@@ -335,6 +335,14 @@ func (f Finalizer) commit(input IndexInput, issueSemanticPath bool) (*Component,
 		state.mu.Unlock()
 		return nil, nil, err
 	}
+	cellRoles, err := buildCellRoleAuthority(&authority)
+	if err != nil {
+		state.phase = draftTerminal
+		state.authority = nil
+		state.mu.Unlock()
+		return nil, nil, err
+	}
+	authority.cellRoles = cellRoles
 	state.phase = draftTerminal
 	state.authority = nil
 	state.mu.Unlock()
@@ -342,11 +350,7 @@ func (f Finalizer) commit(input IndexInput, issueSemanticPath bool) (*Component,
 	if !issueSemanticPath {
 		return component, nil, nil
 	}
-	cellRoles, err := buildCellRoleAuthority(&authority)
-	if err != nil {
-		return nil, nil, err
-	}
-	return component, &SemanticPathIssuance{state: &semanticPathIssuanceState{authority: &authority, cellRoles: cellRoles}}, nil
+	return component, &SemanticPathIssuance{state: &semanticPathIssuanceState{authority: &authority}}, nil
 }
 
 // ConsumeSemanticPathIssuance transfers the exact commit-only capability to

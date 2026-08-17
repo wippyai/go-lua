@@ -40,26 +40,26 @@ func (algebra *Algebra) MountedCallForApplication(applicationID identity.Content
 	return mounted, ok && row.applicationID == applicationID
 }
 
-// MountedCallForOccurrence performs the sole O(1) module-scoped occurrence
-// inverse.  Context IDs are reusable across mounts, so ModuleKey is an
-// intentional part of the lookup key and exactness fence.
-func (algebra *Algebra) MountedCallForOccurrence(moduleID, contextID identity.ContentID) (MountedCall, bool) {
-	if !algebra.Valid() || !moduleID.Available() || !contextID.Available() {
+// MountedCallForOccurrence performs the sole O(1) module-scoped artifact-call
+// inverse. Call IDs are reusable across mounts, so ModuleKey is an intentional
+// part of the lookup key and exactness fence.
+func (algebra *Algebra) MountedCallForOccurrence(moduleID, callID identity.ContentID) (MountedCall, bool) {
+	if !algebra.Valid() || !moduleID.Available() || !callID.Available() {
 		return MountedCall{}, false
 	}
-	slot := algebra.mountedCallOccurrenceIndex[mountedCallOccurrenceRef{moduleID: moduleID, contextID: contextID}]
+	slot := algebra.mountedCallOccurrenceIndex[mountedCallOccurrenceRef{moduleID: moduleID, callID: callID}]
 	mounted := MountedCall{owner: algebra, slot: slot}
 	row, ok := algebra.mountedCallRow(mounted)
-	return mounted, ok && row.moduleID == moduleID && row.contextID == contextID
+	return mounted, ok && row.moduleID == moduleID && row.callID == callID
 }
 
 // MountedCallIdentity projects the canonical detached row behind an exact
 // mounted receipt. calleeValueID is the Link-owned Boundary Value identity;
-// contextID is the reusable artifact semantic identity qualified by moduleID.
+// callID is the reusable artifact call identity qualified by moduleID.
 // No Project, Boundary, Shard, or Program authority is retained or reopened.
-func (algebra *Algebra) MountedCallIdentity(mounted MountedCall) (applicationID, contextID, moduleID, calleeValueID, loaderSeedID identity.ContentID, ok bool) {
+func (algebra *Algebra) MountedCallIdentity(mounted MountedCall) (applicationID, callID, moduleID, calleeValueID, loaderSeedID identity.ContentID, ok bool) {
 	row, ok := algebra.mountedCallRow(mounted)
-	return row.applicationID, row.contextID, row.moduleID, row.calleeValueID, row.loaderSeedID, ok
+	return row.applicationID, row.callID, row.moduleID, row.calleeValueID, row.loaderSeedID, ok
 }
 
 // OwnsMountedModule authenticates a Link mount identity against this exact
@@ -78,5 +78,5 @@ func (algebra *Algebra) mountedCallRow(mounted MountedCall) (mountedCallRow, boo
 		return mountedCallRow{}, false
 	}
 	row := algebra.mountedCalls[mounted.slot-1]
-	return row, row.applicationID.Available() && row.contextID.Available() && row.moduleID.Available() && row.calleeValueID.Available() && row.loaderSeedID.Available()
+	return row, row.applicationID.Available() && row.callID.Available() && row.moduleID.Available() && row.calleeValueID.Available() && row.loaderSeedID.Available()
 }

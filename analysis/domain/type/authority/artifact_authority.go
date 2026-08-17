@@ -249,11 +249,6 @@ func (a *artifactResolver) resolve(id identity.ContentID) (typ.Type, bool) {
 		if !ok {
 			break
 		}
-		generic, genericOK := base.(*typ.Generic)
-		if !genericOK {
-			ok = false
-			break
-		}
 		args := make([]typ.Type, 0, row.ChildCount()-1)
 		for index := 1; index < row.ChildCount() && ok; index++ {
 			var arg typ.Type
@@ -262,9 +257,23 @@ func (a *artifactResolver) resolve(id identity.ContentID) (typ.Type, bool) {
 				args = append(args, arg)
 			}
 		}
-		if ok {
-			value = typ.Instantiate(generic, args...)
+		if !ok {
+			break
 		}
+		// An application of a targetless reference is itself complete and
+		// targetless: the artifact holds no declaration to bind, and Unknown
+		// is the carrier for that missing information. A generic binder is
+		// never fabricated to stand in for one.
+		if base == typ.Unknown {
+			value = typ.Unknown
+			break
+		}
+		generic, genericOK := base.(*typ.Generic)
+		if !genericOK {
+			ok = false
+			break
+		}
+		value = typ.Instantiate(generic, args...)
 	case programartifact.StaticNodeReference:
 		// A resolved declaration or canonical reference is an exact graph edge
 		// in the artifact. An unresolved reference is instead a complete,
@@ -480,13 +489,16 @@ func staticReferenceResolutionShape(resolution programstatic.TypeRefResolution, 
 	}
 }
 
-// closeCycle binds the fixed point at the node the walk re-enters. A static
-// coordinate addresses one artifact node, so resolution legitimately starts at
-// an interior node of a recursive declaration and the binder belongs to that
-// entry. A resolved reference is the one transparent edge: it names a
-// declaration that is still under construction on this walk, and that
-// declaration owns the binder, so an instantiation still observes its generic
-// rather than an opaque placeholder.
+// closeCycle binds the fixed point of a cycle. A static coordinate addresses
+// one artifact node, so resolution legitimately starts at an interior node of
+// a recursive declaration and the binder belongs to the node re-entered: only
+// that position recurs. The name carried by that node is the binder's
+// presentation and nothing else; a fixed point reached from two entry points
+// spells its binder twice and stays one type, because the canonical identity
+// of a binder is its body and its edges. A resolved reference is the one
+// transparent edge - the declaration it names owns the binder and is still
+// under construction, so an instantiation observes its generic instead of an
+// opaque placeholder.
 func (a *artifactResolver) closeCycle(row programartifact.StaticTypeNodeRow, entry *artifactResolution) (typ.Type, bool) {
 	if row.Kind() == programartifact.StaticNodeReference {
 		if targetID, targetOK := row.ChildAt(0); targetOK {

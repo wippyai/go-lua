@@ -36,6 +36,23 @@ func emitStaticFallbacks(
 	// appended in authored TypeOf order followed by authored Annotation order;
 	// no map or sort can become a second ordering authority here.
 	var seen [keyspace.FamilyCount][]bool
+	// Scope forwarding is an owner-issued semantic boundary, not a generic
+	// fallback graph. Keep its rank construction-local and keyed by the exact
+	// endpoint so repeated TypeOf/Annotation observations retain one role.
+	var scopeRanks = make(map[keyspace.Term]uint32)
+	var nextScopeRank = make(map[keyspace.Term]uint32)
+	appendFallback := func(child, parent keyspace.Term) {
+		rank, ok := scopeRanks[child]
+		if !ok {
+			nextScopeRank[parent]++
+			rank = nextScopeRank[parent]
+			scopeRanks[child] = rank
+		}
+		fallback = append(fallback, kernelEdge{
+			child: child, parent: parent,
+			role: structuralRoleStaticScope, rank: rank,
+		})
+	}
 	addRoot := func(endpoint keyspace.Term) error {
 		if !flowrole.ValueOccurrence(counts, endpoint) &&
 			!termInFamily(endpoint, keyspace.FamilyValues, counts) {
@@ -73,7 +90,7 @@ func emitStaticFallbacks(
 		if !ok || owner != body {
 			return nil, nil, errors.New("program/flow/containment: TypeOf operand crosses lexical owner")
 		}
-		fallback = append(fallback, kernelEdge{child: operand, parent: body})
+		appendFallback(operand, body)
 		if err := addRoot(operand); err != nil {
 			return nil, nil, err
 		}
@@ -100,7 +117,7 @@ func emitStaticFallbacks(
 		if !ok || owner != body {
 			return nil, nil, errors.New("program/flow/containment: Annotation Values crosses lexical owner")
 		}
-		fallback = append(fallback, kernelEdge{child: row.Values, parent: body})
+		appendFallback(row.Values, body)
 		if err := addRoot(row.Values); err != nil {
 			return nil, nil, err
 		}

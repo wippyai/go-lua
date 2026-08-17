@@ -1,8 +1,9 @@
 // Package structure owns the structural vocabulary surface of the analyzer
-// declaration table: the one place the arm, event, and outcome catalogs are
-// declared, and the surface laws the declaration root seals them under.
+// declaration table: the one place the arm, event, outcome, runtime family, and
+// constraint form catalogs are declared, and the surface laws the declaration
+// root seals them under.
 //
-// These three catalogs are today spelled three times over. The arm catalog is
+// Three of these catalogs are today spelled three times over. The arm catalog is
 // programartifact.RouteKind and ingress.StructuralArm, related by a private
 // mapping function; the event catalog is programartifact.WTOEventKind,
 // ingress.EventKind, and the solver schedule's own EventKind; the outcome
@@ -11,24 +12,33 @@
 // that they do: a member added to one spelling and not another is a silent
 // hole, and a member reordered in one is a silent mistranslation.
 //
+// The runtime family catalog is spelled twice: the runtimekind domain owns the
+// families as ordinals, and the standard library owns the same eight members
+// again as the name domain of type(v). The constraint form catalog is spelled
+// twice as well: the expression grammar owns the shapes, and the module
+// manifest codec owns the same ten members again as the wire kinds it encodes
+// and decodes.
+//
 // This surface is the single declaration those spellings become projections
 // of. A row is a category, a name, and the row's dense ordinal inside its
 // category. That is all a closed catalog is: the ordinal is what a consumer
 // switches on, the density law is what makes an exhaustive switch exhaustive,
 // and the per-category population law is what makes the vocabulary total.
 //
-// The consumer cutover is not performed here. Every one of the six spellings
-// lives in a package this surface may not edit, so replacing them with a
-// projection of this table is a following lane; what lands here is the
-// declaration those projections will be derived from. Declaring the catalog
-// without cutting the consumers over leaves the triplication visible rather
-// than hidden, which is the honest intermediate state.
+// The ingress boundary reads this table: its arm, event, and outcome
+// projections are lookups of the declared ordinals. The artifact, engine, and
+// solver-schedule spellings stay constants of their own packages, pinned to
+// these ordinals by law, because the artifact ordinals are serialized ABI this
+// declaration adopts rather than restates.
 //
 // Nothing registers itself: declarations are values, handed to the table at
 // composition.
 package structure
 
-import "github.com/wippyai/go-lua/analysis/schema"
+import (
+	"github.com/wippyai/go-lua/analysis/internal/framing"
+	"github.com/wippyai/go-lua/analysis/schema"
+)
 
 // Surface law ordinals. They are numeric identities; rendering a verdict is
 // the caller's job, from the identity.
@@ -40,6 +50,7 @@ const (
 	LawOrdinalUnique
 	LawOrdinalDense
 	LawCategoryPopulated
+	LawAcceptedDeclared
 )
 
 // Category is the closed catalog of structural vocabularies this surface
@@ -57,6 +68,17 @@ const (
 	// CategoryOutcome is the vocabulary of body outcomes: the ways a body's
 	// execution concludes.
 	CategoryOutcome
+	// CategoryRuntimeKind is the vocabulary of observable Lua runtime
+	// families: the values type() distinguishes.
+	CategoryRuntimeKind
+	// CategoryConstraintForm is the vocabulary of symbolic integer expression
+	// shapes: the closed grammar the constraint domain builds terms from. Its
+	// ordinals are the grammar's own numbering, and its members are the wire
+	// catalog of the module manifest's expression codec. They are not a
+	// serialized graph ABI: a term crosses the manifest boundary under the
+	// codec's own wire spelling, and this vocabulary is what that spelling is
+	// pinned to.
+	CategoryConstraintForm
 	categoryLimit
 )
 
@@ -77,6 +99,12 @@ type Spec struct {
 	// and unique within the category: a gap would make an exhaustive switch
 	// unprovable, and a repeat would make two members one.
 	Ordinal uint16
+	// Accepted is the member's admission into the projection its vocabulary
+	// feeds. An outcome that concludes a body inside its own function contributes
+	// no transfer exit, so the outcome vocabulary declares which of its members a
+	// consumer projects. An arm and an event are projected whole, so every member
+	// of those vocabularies is accepted.
+	Accepted bool
 }
 
 // Entry is one admitted structural vocabulary member. It is immutable once
@@ -86,12 +114,13 @@ type Entry struct {
 	id       schema.EntryID
 	category Category
 	ordinal  uint16
+	accepted bool
 }
 
 // New admits one authored declaration. A rejected spec returns false rather
 // than a partially usable entry.
 func New(spec Spec) (*Entry, bool) {
-	if !spec.Key.Available() || !spec.Category.Available() || spec.Ordinal == 0 {
+	if !spec.Key.Available() || !spec.Category.Available() || spec.Ordinal == 0 || (spec.Category != CategoryOutcome && !spec.Accepted) {
 		return nil, false
 	}
 	entry := &Entry{
@@ -99,6 +128,7 @@ func New(spec Spec) (*Entry, bool) {
 		id:       schema.NewEntryID(schema.SurfaceKindStructure, spec.Key),
 		category: spec.Category,
 		ordinal:  spec.Ordinal,
+		accepted: spec.Accepted,
 	}
 	return entry, entry.EntryAvailable() && entry.declarationComplete()
 }
@@ -111,6 +141,11 @@ func (entry *Entry) Category() Category { return entry.category }
 
 func (entry *Entry) Ordinal() uint16 { return entry.ordinal }
 
+// Accepted is the member's declared admission into the projection its
+// vocabulary feeds. A consumer reads it instead of keeping its own list of the
+// members it projects.
+func (entry *Entry) Accepted() bool { return entry != nil && entry.accepted }
+
 // EntryAvailable is the root's admissibility question: does this row identify
 // one entry. Whether the vocabulary it belongs to is completely declared is
 // the surface's own law, stated by Seal.
@@ -118,8 +153,23 @@ func (entry *Entry) EntryAvailable() bool {
 	return entry != nil && entry.key.Available() && entry.id.Available()
 }
 
+// EntryContent writes this member's declared data: the vocabulary it belongs
+// to, its dense ordinal inside that vocabulary, and its declared admission into
+// the projection the vocabulary feeds. A consumer projects a member from these
+// three, so a member that changes any of them is a different declaration and
+// the table digest says so.
+func (entry *Entry) EntryContent(content *framing.Writer) error {
+	if err := content.Uint(uint64(entry.category)); err != nil {
+		return err
+	}
+	if err := content.Uint(uint64(entry.ordinal)); err != nil {
+		return err
+	}
+	return content.Bool(entry.accepted)
+}
+
 func (entry *Entry) declarationComplete() bool {
-	return entry.category.Available() && entry.ordinal != 0
+	return entry.category.Available() && entry.ordinal != 0 && (entry.category == CategoryOutcome || entry.accepted)
 }
 
 // Table is the immutable projection a consumer reads the sealed vocabulary
@@ -201,6 +251,7 @@ func (contribution surface) Entries() []schema.Entry {
 // at every consumer.
 func (contribution surface) Seal(view schema.View, _ schema.Sealed) schema.SealFailure {
 	var counts [categoryLimit]int
+	var accepted [categoryLimit]int
 	var claimed [categoryLimit]map[uint16]schema.EntryID
 	for position := 0; position < view.Count(); position++ {
 		row, rowOK := view.At(position)
@@ -220,6 +271,17 @@ func (contribution surface) Seal(view schema.View, _ schema.Sealed) schema.SealF
 		}
 		if entry.ordinal == 0 {
 			return failure(entry.id, LawOrdinalDeclared, schema.DispositionIncomplete)
+		}
+		// Only the outcome vocabulary distinguishes the members its consumers
+		// project: an arm and an event are projected whole. A rejected member of
+		// those vocabularies is a malformed declaration rather than a smaller
+		// catalog, so it is a verdict here rather than a member a consumer
+		// quietly never sees.
+		if entry.category != CategoryOutcome && !entry.accepted {
+			return failure(entry.id, LawAcceptedDeclared, schema.DispositionMalformed)
+		}
+		if entry.accepted {
+			accepted[entry.category]++
 		}
 		if claimed[entry.category] == nil {
 			claimed[entry.category] = make(map[uint16]schema.EntryID, view.Count())
@@ -241,6 +303,11 @@ func (contribution surface) Seal(view schema.View, _ schema.Sealed) schema.SealF
 			if _, declared := claimed[category][uint16(ordinal)]; !declared {
 				return failure(schema.EntryID{}, LawOrdinalDense, schema.DispositionIncomplete)
 			}
+		}
+		// A vocabulary every member of which is rejected projects nothing, so the
+		// consumer reading the property would silently produce an empty result.
+		if accepted[category] == 0 {
+			return failure(schema.EntryID{}, LawAcceptedDeclared, schema.DispositionIncomplete)
 		}
 	}
 	return schema.SealFailure{}

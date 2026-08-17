@@ -9,31 +9,26 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/semanticsource"
 )
 
-// SemanticSourceView is one detached Project-owned source-family receipt.
-// It stores only owner-fenced typed-row identities; Project rows and Programs
-// never cross this boundary.
-type SemanticSourceView = semanticsource.DigestView
-
-// SemanticSourceCursor walks one exact Project-owned digest interval.
-type SemanticSourceCursor = semanticsource.DigestCursor
-
-// SemanticSourceViews names Project's two generated source families.
-type SemanticSourceViews struct {
+// SourceViews is the sealed Project-owned source-column set. It contains only
+// owner-fenced row identities; Project rows and Programs never cross this API.
+type SourceViews struct {
 	owner           identity.ContentID
-	shardMount      SemanticSourceView
-	baseApplication SemanticSourceView
+	shardMount      semanticsource.DigestView
+	baseApplication semanticsource.DigestView
 }
 
-func (views SemanticSourceViews) valid() bool {
+func (views SourceViews) valid() bool {
 	return semanticsource.FencedDigestViews(views.owner, views.shardMount, views.baseApplication)
 }
+func (views SourceViews) Valid() bool {
+	return views.owner.Available() && views.valid()
+}
+func (views SourceViews) OwnerID() identity.ContentID                { return views.owner }
+func (views SourceViews) ShardMount() semanticsource.DigestView      { return views.shardMount }
+func (views SourceViews) Mount() semanticsource.DigestView           { return views.shardMount }
+func (views SourceViews) BaseApplication() semanticsource.DigestView { return views.baseApplication }
 
-func (views SemanticSourceViews) OwnerID() identity.ContentID         { return views.owner }
-func (views SemanticSourceViews) ShardMount() SemanticSourceView      { return views.shardMount }
-func (views SemanticSourceViews) Mount() SemanticSourceView           { return views.shardMount }
-func (views SemanticSourceViews) BaseApplication() SemanticSourceView { return views.baseApplication }
-
-func (views SemanticSourceViews) viewFor(token semanticsource.Token) (SemanticSourceView, bool) {
+func (views SourceViews) viewFor(token semanticsource.Token) (semanticsource.DigestView, bool) {
 	switch token.Origin() {
 	case semanticsource.OriginLinkProjectShardMount:
 		if token.Facet() == 0 {
@@ -44,96 +39,57 @@ func (views SemanticSourceViews) viewFor(token semanticsource.Token) (SemanticSo
 			return views.baseApplication, true
 		}
 	}
-	return SemanticSourceView{}, false
+	return semanticsource.DigestView{}, false
 }
 
-type SemanticSourceReceipt struct {
-	owner identity.ContentID
-	views SemanticSourceViews
-}
-
-// Publications projects this owner through the injected sealed ProgramSchema.
-// The child owns row cardinalities; the schema owns relation membership and
-// canonical enumeration.
-func (receipt SemanticSourceReceipt) Publications(schema semanticsource.ProgramSchema) []semanticsource.Publication {
-	if !receipt.Valid() {
-		return nil
-	}
-	views, ok := receipt.Views()
-	if !ok {
+// Publications projects the Project source columns through the sealed schema.
+func (views SourceViews) Publications(schema semanticsource.ProgramSchema) []semanticsource.Publication {
+	if !views.Valid() {
 		return nil
 	}
 	return semanticsource.OriginPublications(schema, func(token semanticsource.Token) (int, bool) {
-		view, found := views.viewFor(token)
+		row, found := views.viewFor(token)
 		if !found {
 			return 0, false
 		}
-		return view.Count(), true
+		return row.Count(), true
 	}, semanticsource.OriginLinkProjectShardMount, semanticsource.OriginLinkProjectBaseApplication)
 }
 
-func (receipt SemanticSourceReceipt) Valid() bool {
-	return receipt.owner.Available() && receipt.views.valid() && receipt.views.owner == receipt.owner
-}
-func (receipt SemanticSourceReceipt) OwnerID() identity.ContentID { return receipt.owner }
-func (receipt SemanticSourceReceipt) Views() (SemanticSourceViews, bool) {
-	if !receipt.Valid() {
-		return SemanticSourceViews{}, false
+func (c *Component) SourceViews() (SourceViews, bool) {
+	if c == nil || c.authority == nil || !c.authority.contentID.Available() || !c.authority.sourceViews.Valid() || c.authority.sourceViews.OwnerID() != c.authority.contentID {
+		return SourceViews{}, false
 	}
-	return receipt.views, true
+	return c.authority.sourceViews, true
 }
 
-func (c *Component) SemanticSourceReceipt() (SemanticSourceReceipt, bool) {
-	if c == nil || c.authority == nil || !c.authority.contentID.Available() || c.authority.semanticReceipt.Valid() == false {
-		return SemanticSourceReceipt{}, false
-	}
-	return c.authority.semanticReceipt, true
-}
-
-func (c *Component) buildSemanticSourceReceipt() (SemanticSourceReceipt, error) {
+func (c *Component) buildSourceViews() (SourceViews, error) {
 	if c == nil || c.authority == nil || !c.authority.contentID.Available() {
-		return SemanticSourceReceipt{}, errors.New("link/project: unavailable semantic-source owner")
+		return SourceViews{}, errors.New("link/project: unavailable semantic-source owner")
 	}
 	owner := c.authority.contentID
-	views := SemanticSourceViews{owner: owner}
+	views := SourceViews{owner: owner}
 	mountToken, mountOK := projectSourceToken(semanticsource.OriginLinkProjectShardMount, 0)
 	baseToken, baseOK := projectSourceToken(semanticsource.OriginLinkProjectBaseApplication, 0)
 	if !mountOK || !baseOK {
-		return SemanticSourceReceipt{}, errors.New("link/project: unavailable semantic-source token")
+		return SourceViews{}, errors.New("link/project: unavailable semantic-source token")
 	}
 	views.shardMount, mountOK = projectRows(c, mountToken, true)
 	views.baseApplication, baseOK = projectRows(c, baseToken, false)
 	if !mountOK || !baseOK {
-		return SemanticSourceReceipt{}, errors.New("link/project: unavailable semantic-source rows")
+		return SourceViews{}, errors.New("link/project: unavailable semantic-source rows")
 	}
-	receipt := SemanticSourceReceipt{owner: owner, views: views}
-	if !receipt.Valid() {
-		return SemanticSourceReceipt{}, errors.New("link/project: malformed semantic-source receipt")
+	if !views.Valid() {
+		return SourceViews{}, errors.New("link/project: malformed semantic-source rows")
 	}
-	return receipt, nil
+	return views, nil
 }
 
-func (c *Component) SemanticSourceViews() (SemanticSourceViews, bool) {
-	receipt, ok := c.SemanticSourceReceipt()
-	if !ok {
-		return SemanticSourceViews{}, false
+func (v Cold) SourceViews() (SourceViews, bool) {
+	if !v.live() || !v.sourceViews.Valid() || v.sourceViews.OwnerID() != v.contentID {
+		return SourceViews{}, false
 	}
-	return receipt.Views()
-}
-
-func (v Cold) SemanticSourceReceipt() (SemanticSourceReceipt, bool) {
-	if !v.live() || !v.semanticReceipt.Valid() || v.semanticReceipt.OwnerID() != v.contentID {
-		return SemanticSourceReceipt{}, false
-	}
-	return v.semanticReceipt, true
-}
-
-func (v Cold) SemanticSourceViews() (SemanticSourceViews, bool) {
-	receipt, ok := v.SemanticSourceReceipt()
-	if !ok {
-		return SemanticSourceViews{}, false
-	}
-	return receipt.Views()
+	return v.sourceViews, true
 }
 
 func projectSourceToken(origin semanticsource.Origin, facet semanticsource.Facet) (semanticsource.Token, bool) {
@@ -144,13 +100,13 @@ func projectSourceToken(origin semanticsource.Origin, facet semanticsource.Facet
 	return definition.Token(), true
 }
 
-func projectRows(c *Component, token semanticsource.Token, mounts bool) (SemanticSourceView, bool) {
+func projectRows(c *Component, token semanticsource.Token, mounts bool) (semanticsource.DigestView, bool) {
 	owner := c.authority.contentID
 	var digests []identity.ContentID
 	h := sha256.New()
 	var writer framing.Writer
 	if writer.Reset(h, "wippy.link/project/semantic-source", 1) != nil || writer.Record(1) != nil || writer.Uint(uint64(token.Origin())) != nil || writer.Uint(uint64(token.Facet())) != nil || writer.Uint(uint64(token.Revision())) != nil || writer.Uint(token.Digest()) != nil {
-		return SemanticSourceView{}, false
+		return semanticsource.DigestView{}, false
 	}
 	appendRow := func(index int, id identity.ContentID) bool {
 		if !id.Available() || writer.Record(2) != nil || writer.Uint(uint64(index+1)) != nil || writer.Bytes(id[:]) != nil {
@@ -166,7 +122,7 @@ func projectRows(c *Component, token semanticsource.Token, mounts bool) (Semanti
 			shard, ok := mountsView.At(index)
 			id, idOK := c.ModuleKey(shard)
 			if !ok || !idOK || !appendRow(index, id) {
-				return SemanticSourceView{}, false
+				return semanticsource.DigestView{}, false
 			}
 		}
 	} else {
@@ -175,12 +131,12 @@ func projectRows(c *Component, token semanticsource.Token, mounts bool) (Semanti
 			application, ok := bases.At(index)
 			id, idOK := c.ApplicationID(application)
 			if !ok || !idOK || !appendRow(index, id) {
-				return SemanticSourceView{}, false
+				return semanticsource.DigestView{}, false
 			}
 		}
 	}
 	if writer.Finish() != nil {
-		return SemanticSourceView{}, false
+		return semanticsource.DigestView{}, false
 	}
 	return semanticsource.SealDigestView(owner, digests)
 }

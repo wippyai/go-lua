@@ -266,7 +266,7 @@ func newDiagnosticsReceiptSolverOf[R any](t testing.TB, failTransfer bool, query
 	operands := make([]equation.Operand, 1)
 	operandValues := make([]ruleUnit, 1)
 	for index := range sites {
-		site, siteOK := assembly.builder.admitSite(coldKey(949_700+index).compositionKey(), scope, equation.TrueExpr(), equation.InitPresent)
+		site, siteOK := assembly.builder.admitSite(compositionKeyOf(coldKey(949_700+index)), scope, equation.TrueExpr(), equation.InitPresent)
 		occurrence, occurrenceOK := assembly.builder.admitAt(site)
 		operandValue := ruleUnitForSemantic(coldKey(949_710 + index))
 		entity, entityOK := operandEntityForContent(operandValue.content)
@@ -436,7 +436,7 @@ func newDiagnosticsExternalInterfaceFixture(t testing.TB) diagnosticsExternalInt
 	scope := equation.EmptyScope()
 	sites := make([]equation.Site, 4)
 	for index := range sites {
-		site, admitted := assembly.builder.admitSite(coldKey(949_820+index).compositionKey(), scope, equation.TrueExpr(), equation.InitPresent)
+		site, admitted := assembly.builder.admitSite(compositionKeyOf(coldKey(949_820+index)), scope, equation.TrueExpr(), equation.InitPresent)
 		if !admitted {
 			t.Fatal("diagnostics external-interface site")
 		}
@@ -493,11 +493,11 @@ func newDiagnosticsExternalInterfaceFixture(t testing.TB) diagnosticsExternalInt
 		groupSpec := equation.Group{Output: pointRefs[siteIndex].ref}
 		switch index {
 		case 1, 4:
-			groupSpec.EnvironmentInput = equation.BoundaryInput(sites[siteIndex], sites[siteIndex], coldKey(949_840+index).compositionKey(), equation.TrueExpr(), equation.IdentityReindex(scope), equation.TrueExpr())
+			groupSpec.EnvironmentInput = equation.BoundaryInput(sites[siteIndex], sites[siteIndex], compositionKeyOf(coldKey(949_840+index)), equation.TrueExpr(), equation.IdentityReindex(scope), equation.TrueExpr())
 		case 2:
-			groupSpec.EnvironmentInput = equation.BoundaryInput(sites[0], sites[1], coldKey(949_842).compositionKey(), equation.TrueExpr(), equation.IdentityReindex(scope), equation.TrueExpr())
+			groupSpec.EnvironmentInput = equation.BoundaryInput(sites[0], sites[1], compositionKeyOf(coldKey(949_842)), equation.TrueExpr(), equation.IdentityReindex(scope), equation.TrueExpr())
 		case 5:
-			groupSpec.EnvironmentInput = equation.BoundaryInput(sites[2], sites[3], coldKey(949_845).compositionKey(), equation.TrueExpr(), equation.IdentityReindex(scope), equation.TrueExpr())
+			groupSpec.EnvironmentInput = equation.BoundaryInput(sites[2], sites[3], compositionKeyOf(coldKey(949_845)), equation.TrueExpr(), equation.IdentityReindex(scope), equation.TrueExpr())
 		}
 		if !rowOK || !semanticOK || len(assembly.builder.inner.spec.Groups) == 0 {
 			t.Fatal("diagnostics external-interface group")

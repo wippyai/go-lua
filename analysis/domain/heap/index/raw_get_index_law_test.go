@@ -6,20 +6,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wippyai/go-lua/analysis/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
 	indexdomain "github.com/wippyai/go-lua/analysis/domain/heap/index"
 	packdomain "github.com/wippyai/go-lua/analysis/domain/pack"
 	staticdomain "github.com/wippyai/go-lua/analysis/domain/static"
 	"github.com/wippyai/go-lua/analysis/domain/type/authority"
+	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
-	"github.com/wippyai/go-lua/analysis/program/artifact/schemaadapter"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
-	"github.com/wippyai/go-lua/analysis/schema/grammar"
 )
 
 // TestRawGetSemanticSourceLookupStaysLinearAcrossOnePayloadFrontier exercises
@@ -81,7 +81,7 @@ func rawSemanticSourceFrontierFixture(t testing.TB, count int) rawSemanticSource
 	if err != nil {
 		t.Fatal(err)
 	}
-	contract, err := target.Seal(&target.Spec{Operations: []target.OperationSpec{{
+	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []target.OperationSpec{{
 		Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"require"}}},
 		Input:    target.ValuesSpec{Tail: target.ValuesClosed},
 		Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}},
@@ -94,14 +94,14 @@ func rawSemanticSourceFrontierFixture(t testing.TB, count int) rawSemanticSource
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, receiptOK := grammar.Global()
+	receipt, receiptOK := composite.Global()
 	if !receiptOK {
 		t.Fatal("program schema receipt")
 	}
 	shard, shardOK := linked.Project().Mounts().At(0)
 	module, moduleOK := linked.Project().ModuleKey(shard)
 	programID, programIDOK := linked.Project().Mounts().ProgramID(shard)
-	artifact, failure := schemaadapter.CompileDetailed(program.TransformerInput(), receipt)
+	artifact, failure := composite.CompileArtifactDetailed(program, receipt)
 	heapMount, heapMountOK := heapdomain.NewArtifactMount(artifact, module, programID)
 	valueMount, valueMountOK := valuedomain.NewArtifactMount(artifact, module, programID)
 	packMount, packMountOK := packdomain.NewArtifactMount(artifact, module, programID)

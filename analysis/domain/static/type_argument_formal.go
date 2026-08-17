@@ -102,7 +102,19 @@ func issueMountedTypeArgumentFormal(types *typeauthority.Authority, referenceID 
 	}
 	reference, referenceOK := types.FindByReferenceID(referenceID)
 	value, valueOK := types.Resolve(reference)
-	if !referenceOK || !valueOK || value == nil {
+	if !referenceOK || !valueOK {
+		return TypeArgumentFormal{}, false
+	}
+	return typeArgumentFormalIdentity(value)
+}
+
+// typeArgumentFormalIdentity mints the owner-neutral identity of one resolved
+// type-argument node. A formal annotation node and every reference to it are
+// lawfully open, so the node's own free formals are its external scope and the
+// declaration law is discharged here: EncodeCanonical carries no recurrence
+// law, and an open node that violates it would otherwise become an identity.
+func typeArgumentFormalIdentity(value typ.Type) (TypeArgumentFormal, bool) {
+	if value == nil || typ.ValidateStaticGenericRecurrenceOpen(value) != nil {
 		return TypeArgumentFormal{}, false
 	}
 	encoded, err := typ.EncodeCanonical(context.Background(), value)
@@ -130,19 +142,15 @@ func (a *Authority) sealMountedTypeArgumentFormals() bool {
 			return false
 		}
 		grouped := make(map[identity.ContentID][]programartifact.StaticTypeArgumentRow)
-		if receipt, receiptOK := mount.Artifact.PackReceipt(); receiptOK {
-			for callIndex := 0; callIndex < receipt.CallCount(); callIndex++ {
-				call, callOK := receipt.CallAt(callIndex)
-				typesID := call.TypeArgumentsID()
-				if !callOK || !typesID.Available() {
-					return false
-				}
-				if _, exists := grouped[typesID]; !exists {
-					grouped[typesID] = nil
-				}
+		for callIndex := 0; callIndex < mount.Artifact.CallCount(); callIndex++ {
+			call, callOK := mount.Artifact.CallAt(callIndex)
+			typesID := call.TypeArgumentsID()
+			if !callOK || !typesID.Available() {
+				return false
 			}
-		} else {
-			return false
+			if _, exists := grouped[typesID]; !exists {
+				grouped[typesID] = nil
+			}
 		}
 		for index := 0; index < mount.Artifact.StaticTypeArgumentCount(); index++ {
 			row, rowOK := mount.Artifact.StaticTypeArgumentAt(index)

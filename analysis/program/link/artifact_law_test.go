@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
@@ -165,22 +165,25 @@ func TestArtifactRoundTripAndTamperRejection(t *testing.T) {
 	}
 }
 
-// TestArtifactReplayPreservesProjectCallInverse proves that Project's
-// source-occurrence inverse is rebuilt from the portable Program mount during
-// artifact replay. The hot Shard/Application handles are intentionally new,
-// while their exact stable Application identity and source grounding remain
-// unchanged.
-func TestArtifactReplayPreservesProjectCallInverse(t *testing.T) {
+// TestArtifactReplayPreservesProjectCallIdentity proves that Project's
+// mounted scalar call identity is rebuilt from the portable Program mount
+// during artifact replay. The hot Shard/Application handles are intentionally
+// new, while their exact stable Application identity and source grounding
+// remain unchanged.
+func TestArtifactReplayPreservesProjectCallIdentity(t *testing.T) {
 	sealed := contract(t)
 	p := source(t, `require("dependency")`)
 	linked := linked(t, sealed, linkproject.Module{Name: "main", Program: p})
-	shard := onlyProjectShardFor(t, linked, p)
 	term := call(t, p, 0)
-	occurrence := artifactCallOccurrence(t, p, term)
-	originalProof, originalOK := linked.Project().Applications().Calls().ForOccurrence(shard, occurrence)
+	originalApplication, originalApplicationOK := callApplicationForTerm(t, linked, term)
+	originalProof, originalOK := linked.Project().Applications().Calls().ForApplication(originalApplication)
 	original, originalApplicationOK := originalProof.Application()
 	if !originalOK || !originalApplicationOK {
 		t.Fatal("original Project Call inverse unavailable")
+	}
+	originalCallID := originalProof.CallID()
+	if !originalCallID.Available() {
+		t.Fatal("original Project scalar call identity unavailable")
 	}
 	originalID, originalIDOK := linked.Project().ApplicationID(original)
 	if !originalIDOK {
@@ -194,37 +197,34 @@ func TestArtifactReplayPreservesProjectCallInverse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	replayedShard := onlyProjectShardFor(t, replayed, p)
-	reboundProof, reboundOK := replayed.Project().Applications().Calls().ForOccurrence(replayedShard, occurrence)
+	reboundApplication, reboundApplicationOK := callApplicationForTerm(t, replayed, term)
+	reboundProof, reboundOK := replayed.Project().Applications().Calls().ForApplication(reboundApplication)
 	rebound, reboundApplicationOK := reboundProof.Application()
 	if !reboundOK || !reboundApplicationOK {
 		t.Fatal("replayed Project Call inverse unavailable")
+	}
+	if reboundProof.CallID() != originalCallID {
+		t.Fatalf("replayed Project scalar call identity = %x, want %x", reboundProof.CallID(), originalCallID)
 	}
 	reboundID, reboundIDOK := replayed.Project().ApplicationID(rebound)
 	if !reboundIDOK || reboundID != originalID {
 		t.Fatalf("replayed Project Application identity = %x/%v, want %x", reboundID, reboundIDOK, originalID)
 	}
-	foreign := source(t, `require("dependency")`)
-	foreignOccurrence := artifactCallOccurrence(t, foreign, call(t, foreign, 0))
-	if _, ok := replayed.Project().Applications().Calls().ForOccurrence(replayedShard, foreignOccurrence); ok {
-		t.Fatal("replayed Project accepted equal-term foreign Program")
-	}
 }
 
-func artifactCallOccurrence(t testing.TB, owner *program.Program, term keyspace.Term) program.CallOccurrence {
+func callApplicationForTerm(t testing.TB, linked *Link, term keyspace.Term) (linkproject.Application, bool) {
 	t.Helper()
-	calls := owner.Flow().Authored().Calls()
-	input := owner.TransformerInput()
+	applications := linked.Project().Applications()
+	calls := applications.Calls()
 	for index := 0; index < calls.Count(); index++ {
-		candidate, ok := calls.At(index)
-		if ok && candidate == term {
-			occurrence, occurrenceOK := input.CallAt(index)
-			if !occurrenceOK {
-				t.Fatal("Program CallOccurrence unavailable")
-			}
-			return occurrence
+		application, ok := calls.At(index)
+		if !ok {
+			continue
+		}
+		_, gotTerm, callOK := applications.Call(application)
+		if callOK && gotTerm == term {
+			return application, true
 		}
 	}
-	t.Fatal("Program CallOccurrence absent")
-	return program.CallOccurrence{}
+	return linkproject.Application{}, false
 }

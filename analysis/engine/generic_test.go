@@ -1,8 +1,11 @@
 package engine
 
-import "github.com/wippyai/go-lua/analysis/engine/internal/composition"
+import (
+	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
+	"github.com/wippyai/go-lua/analysis/identity"
+)
 
-func testSemanticKey(version uint64) SemanticKey {
+func testSemanticKey(version uint64) identity.SemanticKey {
 	var id composition.ID
 	// Keep fixture spelling canonical: the semantic digest is ordered by the
 	// numeric fixture version, so tests asserting Composition's sorted output
@@ -10,7 +13,7 @@ func testSemanticKey(version uint64) SemanticKey {
 	for index := 0; index < 8; index++ {
 		id[index] = byte(version >> uint((7-index)*8))
 	}
-	key, ok := NewSemanticKey([32]byte(id), version)
+	key, ok := identity.NewSemanticKey([32]byte(id), version)
 	if !ok {
 		panic("test semantic key")
 	}

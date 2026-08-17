@@ -13,7 +13,7 @@ func (c *Collector) exactCandidate(term keyspace.Term) (keyspace.LiteralValue, b
 	if c == nil || !validTermInCounts(c, term) {
 		return keyspace.LiteralValue{}, false
 	}
-	operand := Term(0)
+	operand := keyspace.Term(0)
 	if keyspace.TermFamily(term) == keyspace.FamilyUnary {
 		ordinal := keyspace.TermOrdinal(term)
 		if ordinal == 0 {

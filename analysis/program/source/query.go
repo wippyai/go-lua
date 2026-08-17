@@ -5,7 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/analysis/lua/semantics/exactkey"
+	"github.com/wippyai/go-lua/analysis/program/scalar"
 )
 
 // CoordinateFromParts validates one compact coordinate. The all-zero value is
@@ -57,6 +57,16 @@ func (v View) Index() Index       { return Index{authority: v.authority} }
 func (v View) Literals() Literals { return Literals{authority: v.authority} }
 func (v View) Keys() Keys         { return Keys{authority: v.authority} }
 func (v View) Faults() Faults     { return Faults{authority: v.authority} }
+
+// CellRoles returns Source's immutable authored Cell role column. The view
+// remains fenced to the exact committed authority pointer; callers cannot
+// construct a role or substitute an equal-content Source component.
+func (v View) CellRoles() CellRoles {
+	if v.authority == nil {
+		return CellRoles{}
+	}
+	return CellRoles{authority: v.authority, roles: v.authority.cellRoles}
+}
 
 // liveAuthority validates a lifecycle-bound authored view. Published
 // Component views pass a nil state and remain ordinary immutable reads;
@@ -426,19 +436,19 @@ func findExact(a *authority, raw keyspace.LiteralValue) (keyspace.Key, bool) {
 	if a == nil {
 		return 0, false
 	}
-	value, ok := exactkey.Normalize(raw)
+	value, ok := scalar.Normalize(raw)
 	if !ok {
 		return 0, false
 	}
 	atoms := a.keys.exact.atoms
 	at := sort.Search(len(atoms), func(index int) bool {
-		return exactkey.CompareCanonical(exactkey.FromLiteral(atoms[index]), exactkey.FromLiteral(value)) >= 0
+		return scalar.CompareCanonical(scalar.FromLiteral(atoms[index]), scalar.FromLiteral(value)) >= 0
 	})
 	if at == len(atoms) {
 		return 0, false
 	}
 	candidate := atoms[at]
-	return keyspace.Key(at + 1), exactkey.CompareCanonical(exactkey.FromLiteral(candidate), exactkey.FromLiteral(value)) == 0
+	return keyspace.Key(at + 1), scalar.CompareCanonical(scalar.FromLiteral(candidate), scalar.FromLiteral(value)) == 0
 }
 
 // ExactAt enumerates atom handles in canonical value order, independent of their

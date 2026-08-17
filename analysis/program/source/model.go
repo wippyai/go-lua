@@ -478,12 +478,13 @@ func (locations directLocations) lookup(term keyspace.Term) (directLocation, boo
 }
 
 type authority struct {
-	identity identityStore
-	literals literalStore
-	order    orderStore
-	keys     keyFaultStore
-	index    indexStore
-	content  identity.ContentID
+	identity  identityStore
+	literals  literalStore
+	order     orderStore
+	keys      keyFaultStore
+	index     indexStore
+	cellRoles *cellRoleAuthority
+	content   identity.ContentID
 }
 
 type draftPhase uint8
@@ -532,11 +533,9 @@ type SemanticPathIssuance struct {
 }
 
 type semanticPathIssuanceState struct {
-	mu              sync.Mutex
-	authority       *authority
-	used            bool
-	cellRoles       *cellRoleAuthority
-	cellRolesIssued bool
+	mu        sync.Mutex
+	authority *authority
+	used      bool
 }
 
 // Cold is the allocation-free Source identity snapshot. It intentionally

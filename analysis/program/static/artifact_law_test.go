@@ -103,7 +103,7 @@ func TestArtifactSectionCanonicalizesSparseClaimOrder(t *testing.T) {
 }
 
 func TestArtifactSectionExcludesCommittedDerivedState(t *testing.T) {
-	component := staticContentComponent(t, receiptFixture(t))
+	component := staticContentComponent(t, staticFixture(t))
 	before := encodeStaticArtifactComponent(t, component, false)
 
 	component.staticTypes.prefix[1]++
@@ -119,7 +119,7 @@ func TestArtifactSectionExcludesCommittedDerivedState(t *testing.T) {
 }
 
 func TestArtifactSectionConstructionViewMatchesPublishedViewAndExpires(t *testing.T) {
-	draft, err := Build(receiptFixture(t))
+	draft, err := Build(staticFixture(t))
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
@@ -129,7 +129,7 @@ func TestArtifactSectionConstructionViewMatchesPublishedViewAndExpires(t *testin
 	}
 	constructionView := finalizer.View()
 	live := encodeStaticArtifactView(t, constructionView, false)
-	component, err := finalizer.Commit(validReceiptForFixture())
+	component, err := finalizer.Commit(validCommitInputForFixture())
 	if err != nil {
 		t.Fatalf("Commit() error = %v", err)
 	}
@@ -138,7 +138,7 @@ func TestArtifactSectionConstructionViewMatchesPublishedViewAndExpires(t *testin
 		t.Fatal("construction View artifact bytes differ from published Component View")
 	}
 
-	abortDraft, err := Build(receiptFixture(t))
+	abortDraft, err := Build(staticFixture(t))
 	if err != nil {
 		t.Fatalf("Build(abort) error = %v", err)
 	}

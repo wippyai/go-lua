@@ -200,7 +200,7 @@ func hotClosedContent(heapSchema heapdomain.Schema, values *valuedomain.Schema, 
 	return candidate, [32]byte(id), true
 }
 
-func hotClosedChecker(heapOwner *heapowner.HotOwner, valueOwner *valueowner.HotOwner, transform, semantic engine.SemanticKey, heapRead *engine.Read[engine.OrderedCells[heapdomain.Value]], valueRead *engine.Read[engine.OrderedCells[valuedomain.Value]]) engine.RuleDerivationChecker[heapdomain.Value, source.Closed] {
+func hotClosedChecker(heapOwner *heapowner.HotOwner, valueOwner *valueowner.HotOwner, transform, semantic identity.SemanticKey, heapRead *engine.Read[engine.OrderedCells[heapdomain.Value]], valueRead *engine.Read[engine.OrderedCells[valuedomain.Value]]) engine.RuleDerivationChecker[heapdomain.Value, source.Closed] {
 	return func(derivation engine.RuleDerivation[heapdomain.Value, source.Closed]) (engine.RuleEvidence, bool) {
 		if heapOwner == nil || valueOwner == nil || heapRead == nil || valueRead == nil || !heapOwner.Schema().Valid() || valueOwner.Schema() == nil || derivation.Rule() != semantic || derivation.InputCount() != 1 || derivation.ReadCount() != 2 || derivation.DispositionCount() == 0 {
 			return engine.RuleEvidence{}, false

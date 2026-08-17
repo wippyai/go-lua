@@ -7,11 +7,12 @@ import (
 	"strings"
 	"testing"
 
+	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
+	"github.com/wippyai/go-lua/analysis/library/lualib/targetprofile"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program"
 	artifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/target"
-	"github.com/wippyai/go-lua/analysis/program/target/profile"
 )
 
 func TestV19RoundTripRebuildsDerivedOwners(t *testing.T) {
@@ -99,7 +100,7 @@ func TestV19RejectsTargetClaimedIDAndEntryMutation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	other, err := target.Seal(&target.Spec{})
+	other, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics()})
 	if err != nil {
 		t.Fatal(err)
 	}

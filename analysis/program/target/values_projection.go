@@ -2,8 +2,9 @@ package target
 
 import (
 	"errors"
+	"fmt"
 
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 )
 
 // validateProjectedResult is the complete Lua Values transport law. Preserve
@@ -32,7 +33,11 @@ func (d *operationDraft) validateExactProjection(source, result valuesDraft) err
 	}
 	for index, destination := range result.types {
 		if index < len(source.types) {
-			if !d.typeAssignable(source.types[index], destination) {
+			assignable, relationErr := d.typeAssignable(source.types[index], destination)
+			if relationErr != nil {
+				return fmt.Errorf("exact adjustment fixed source type relation: %w", relationErr)
+			}
+			if !assignable {
 				return errors.New("exact adjustment fixed source is type-incompatible")
 			}
 			continue
@@ -40,32 +45,80 @@ func (d *operationDraft) validateExactProjection(source, result valuesDraft) err
 		position := index - len(source.types)
 		switch source.tail {
 		case ValuesClosed:
-			if !d.typeAccepts(typ.Nil, destination) {
+			nilType, ok := schematype.NewPrimitive(schematype.PrimitiveNil)
+			if !ok {
+				return errors.New("exact adjustment nil primitive unavailable")
+			}
+			accepted, relationErr := d.typeAccepts(nilType, destination)
+			if relationErr != nil {
+				return fmt.Errorf("exact adjustment nil fill type relation: %w", relationErr)
+			}
+			if !accepted {
 				return errors.New("exact adjustment nil fill is type-incompatible")
 			}
 		case ValuesVariable:
-			if !d.typeAssignable(source.tailType, destination) {
-				return errors.New("exact adjustment tail source is type-incompatible")
+			assignable, relationErr := d.typeAssignable(source.tailType, destination)
+			if relationErr != nil {
+				return fmt.Errorf("exact adjustment tail source type relation: %w", relationErr)
+			}
+			if !assignable {
+				return errors.New("exact adjustment tail source has unavailable type")
 			}
 			for suffix := 0; suffix <= position && suffix < len(source.suffix); suffix++ {
-				if !d.typeAssignable(source.suffix[suffix], destination) {
+				assignable, relationErr := d.typeAssignable(source.suffix[suffix], destination)
+				if relationErr != nil {
+					return fmt.Errorf("exact adjustment suffix type relation: %w", relationErr)
+				}
+				if !assignable {
 					return errors.New("exact adjustment suffix source is type-incompatible")
 				}
 			}
-			if position >= len(source.suffix) && !d.typeAccepts(typ.Nil, destination) {
-				return errors.New("exact adjustment tail nil fill is type-incompatible")
+			if position >= len(source.suffix) {
+				nilType, ok := schematype.NewPrimitive(schematype.PrimitiveNil)
+				if !ok {
+					return errors.New("exact adjustment nil primitive unavailable")
+				}
+				accepted, relationErr := d.typeAccepts(nilType, destination)
+				if relationErr != nil {
+					return fmt.Errorf("exact adjustment tail nil fill type relation: %w", relationErr)
+				}
+				if !accepted {
+					return errors.New("exact adjustment tail nil fill is type-incompatible")
+				}
 			}
 		case ValuesUnknown:
-			if !d.typeAccepts(typ.Any, destination) {
+			anyType, ok := schematype.NewPrimitive(schematype.PrimitiveAny)
+			if !ok {
+				return errors.New("exact adjustment any primitive unavailable")
+			}
+			accepted, relationErr := d.typeAccepts(anyType, destination)
+			if relationErr != nil {
+				return fmt.Errorf("exact adjustment unknown source type relation: %w", relationErr)
+			}
+			if !accepted {
 				return errors.New("exact adjustment unknown source is type-incompatible")
 			}
 			for suffix := 0; suffix <= position && suffix < len(source.suffix); suffix++ {
-				if !d.typeAssignable(source.suffix[suffix], destination) {
+				assignable, relationErr := d.typeAssignable(source.suffix[suffix], destination)
+				if relationErr != nil {
+					return fmt.Errorf("exact adjustment unknown suffix type relation: %w", relationErr)
+				}
+				if !assignable {
 					return errors.New("exact adjustment unknown suffix is type-incompatible")
 				}
 			}
-			if position >= len(source.suffix) && !d.typeAccepts(typ.Nil, destination) {
-				return errors.New("exact adjustment unknown nil fill is type-incompatible")
+			if position >= len(source.suffix) {
+				nilType, ok := schematype.NewPrimitive(schematype.PrimitiveNil)
+				if !ok {
+					return errors.New("exact adjustment nil primitive unavailable")
+				}
+				accepted, relationErr := d.typeAccepts(nilType, destination)
+				if relationErr != nil {
+					return fmt.Errorf("exact adjustment unknown nil fill type relation: %w", relationErr)
+				}
+				if !accepted {
+					return errors.New("exact adjustment unknown nil fill is type-incompatible")
+				}
 			}
 		default:
 			return errors.New("exact adjustment source has invalid tail")

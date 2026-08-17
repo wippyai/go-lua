@@ -6,8 +6,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/binder"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/programlaw"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/staticlaw"
+	"github.com/wippyai/go-lua/analysis/program/relations"
 	"github.com/wippyai/go-lua/analysis/program/semanticsource"
-	"github.com/wippyai/go-lua/analysis/schema/relations"
 )
 
 // Reference is one exact issued relation token without a string catalog name.

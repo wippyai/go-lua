@@ -12,8 +12,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/programlaw"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/staticlaw"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/relations"
 	"github.com/wippyai/go-lua/analysis/program/semanticsource"
-	"github.com/wippyai/go-lua/analysis/schema/relations"
 )
 
 func TestGeneratedEvidenceIsCurrent(t *testing.T) {

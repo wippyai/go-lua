@@ -52,94 +52,38 @@ func transformEquals(a, b TypeTransform) bool {
 	if aNil || bNil {
 		return aNil && bNil
 	}
-	switch av := a.(type) {
-	case Unchanged:
-		return unchangedEquals(av, b)
-	case *Unchanged:
-		return unchangedEquals(*av, b)
-	case ElementUnion:
-		return elementUnionEquals(av, b)
-	case *ElementUnion:
-		return elementUnionEquals(*av, b)
-	case ContainerElementUnion:
-		return containerElementUnionEquals(av, b)
-	case *ContainerElementUnion:
-		return containerElementUnionEquals(*av, b)
-	case ToArray:
-		return toArrayEquals(av, b)
-	case *ToArray:
-		return toArrayEquals(*av, b)
+	kind := KindOfTransform(a)
+	if !kind.Valid() || kind != KindOfTransform(b) {
+		return false
+	}
+	switch kind {
+	case TransformUnchanged:
+		return true
+	case TransformElementUnion:
+		aa, aok := AsElementUnion(a)
+		bb, bok := AsElementUnion(b)
+		return aok && bok && aa.Source.Index == bb.Source.Index
+	case TransformContainerElementUnion:
+		aa, aok := AsContainerElementUnion(a)
+		bb, bok := AsContainerElementUnion(b)
+		return aok && bok &&
+			aa.Container.Index == bb.Container.Index &&
+			aa.Value.Index == bb.Value.Index
+	case TransformToArray:
+		aa, aok := AsToArray(a)
+		bb, bok := AsToArray(b)
+		return aok && bok && aa.Element.Index == bb.Element.Index
 	default:
 		return false
 	}
 }
 
+// isNilTypeTransform reports whether transform is absent, including typed nil
+// pointer values stored behind the TypeTransform interface.
 func isNilTypeTransform(transform TypeTransform) bool {
 	if transform == nil {
 		return true
 	}
 	v := reflect.ValueOf(transform)
 	return v.Kind() == reflect.Pointer && v.IsNil()
-}
-
-func unchangedEquals(_ Unchanged, b TypeTransform) bool {
-	switch b.(type) {
-	case Unchanged, *Unchanged:
-		return true
-	default:
-		return false
-	}
-}
-
-func elementUnionEquals(a ElementUnion, b TypeTransform) bool {
-	bb, ok := normalizeElementUnion(b)
-	return ok && a.Source.Index == bb.Source.Index
-}
-
-func containerElementUnionEquals(a ContainerElementUnion, b TypeTransform) bool {
-	bb, ok := normalizeContainerElementUnion(b)
-	return ok &&
-		a.Container.Index == bb.Container.Index &&
-		a.Value.Index == bb.Value.Index
-}
-
-func toArrayEquals(a ToArray, b TypeTransform) bool {
-	bb, ok := normalizeToArray(b)
-	return ok && a.Element.Index == bb.Element.Index
-}
-
-func normalizeElementUnion(t TypeTransform) (ElementUnion, bool) {
-	switch tt := t.(type) {
-	case ElementUnion:
-		return tt, true
-	case *ElementUnion:
-		if tt != nil {
-			return *tt, true
-		}
-	}
-	return ElementUnion{}, false
-}
-
-func normalizeContainerElementUnion(t TypeTransform) (ContainerElementUnion, bool) {
-	switch tt := t.(type) {
-	case ContainerElementUnion:
-		return tt, true
-	case *ContainerElementUnion:
-		if tt != nil {
-			return *tt, true
-		}
-	}
-	return ContainerElementUnion{}, false
-}
-
-func normalizeToArray(t TypeTransform) (ToArray, bool) {
-	switch tt := t.(type) {
-	case ToArray:
-		return tt, true
-	case *ToArray:
-		if tt != nil {
-			return *tt, true
-		}
-	}
-	return ToArray{}, false
 }

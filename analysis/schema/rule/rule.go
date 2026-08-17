@@ -19,6 +19,7 @@ package rule
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/internal/framing"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
@@ -28,13 +29,21 @@ import (
 // the caller's job, from the identity.
 const (
 	LawRoleOrdinal schema.LawID = schema.SurfaceLawFloor + iota
-	LawRoleUnique
+	// The ordinal here is retired. Role uniqueness was subsumed by
+	// LawRoleOrdinal: the ordinal law pins every row's role to its declaration
+	// position, so two rows can no longer carry one role.
+	_
 	LawSemanticIdentity
 	LawSemanticUnique
 	LawEntryShape
 	LawMountedRoleCovered
 	LawMountedRoleLane
-	LawVocabulary
+	// The ordinal here is retired. Whether the closed vocabulary is itself
+	// available is that package's own law, stated by vocabulary.Bundle.Available
+	// and pinned by its own tests. A vocabulary that is not the canonical one
+	// selects nothing, so this surface observes it as a rule with no canonical
+	// identity and states that under LawSemanticIdentity.
+	_
 )
 
 // Lane is the closed admission lane of one rule. Mounted rules enter through a
@@ -152,7 +161,7 @@ type Spec[P, A, F, H any] struct {
 	Role programartifact.RuleRole
 	Lane Lane
 	// Semantic selects the rule identity from the canonical vocabulary.
-	Semantic func(vocabulary.Bundle) engine.SemanticKey
+	Semantic func(vocabulary.Bundle) identity.SemanticKey
 	// Declare records the rule's cold Schema shape and returns its fragment.
 	Declare func(Declaration[P]) (F, bool)
 	// Register performs the pre-seal owner handoff for the declared slot.
@@ -189,7 +198,7 @@ type Template[P, A any] struct {
 	id       schema.EntryID
 	role     programartifact.RuleRole
 	lane     Lane
-	semantic func(vocabulary.Bundle) engine.SemanticKey
+	semantic func(vocabulary.Bundle) identity.SemanticKey
 
 	declare     func(Declaration[P]) (Cell, bool)
 	register    func(*engine.SchemaBinding, Cell) (engine.RuleSlotCapability, bool)
@@ -322,9 +331,29 @@ func (template *Template[P, A]) Principal() programartifact.RuleOutputKind {
 }
 
 // Semantic resolves this rule's canonical identity in one vocabulary bundle.
-func (template *Template[P, A]) Semantic(bundle vocabulary.Bundle) engine.SemanticKey {
+func (template *Template[P, A]) Semantic(bundle vocabulary.Bundle) identity.SemanticKey {
 	if template == nil || template.semantic == nil {
-		return engine.SemanticKey{}
+		return identity.SemanticKey{}
+	}
+	return template.semantic(bundle)
+}
+
+// semanticIdentity resolves this rule's identity in the canonical vocabulary.
+// It is the one evaluation both the content fold and this surface's admission
+// laws read, so the identity a catalog is digested under and the identity it is
+// sealed under cannot differ.
+//
+// It is total: a rule that declares no selector, and one whose selector names
+// nothing in the canonical vocabulary, both resolve to the absent identity. The
+// root's LawEntryAdmissible and this surface's LawSemanticIdentity state those
+// cases, so the content stream stays writable for every row the root hands it.
+func (template *Template[P, A]) semanticIdentity() identity.SemanticKey {
+	if template == nil || template.semantic == nil {
+		return identity.SemanticKey{}
+	}
+	bundle, canonical := vocabulary.New()
+	if !canonical {
+		return identity.SemanticKey{}
 	}
 	return template.semantic(bundle)
 }
@@ -344,6 +373,41 @@ func (template *Template[P, A]) EntryAvailable() bool {
 		return false
 	}
 	return template.Principal() != programartifact.RuleOutputInvalid
+}
+
+// EntryContent writes this rule's declarative half: the canonical identity it
+// is bound under, the sealed artifact row role it maps to, and the admission
+// lane it enters on. Every derived projection of a rule is indexed by that role,
+// and the lane decides which admission path an occurrence takes, so both are
+// content.
+//
+// The semantic identity is content. The selector is a hook, but what it selects
+// is a role of the closed vocabulary, and the engine slot this rule binds is
+// resolved under that role, so two catalogs whose rules select different roles
+// declare different rules. The identity is written as its canonical bytes - the
+// digest and the interpretation version - rather than as the role's spelling, so
+// no authored text reaches the stream.
+//
+// The typed hooks are not content. A hook is a function value: it has no
+// canonical bytes, and the shape of the hook set a rule declares is a property
+// of those values rather than declared data, so neither is written. The
+// principal a rule writes is not written either, because it is read from the
+// artifact format for the role above rather than declared beside it. What the
+// hooks are declared against is covered: the role names the output lane, and the
+// surface's own admission laws bind the hook set to the lane.
+func (template *Template[P, A]) EntryContent(content *framing.Writer) error {
+	semantic := template.semanticIdentity()
+	digest := semantic.Digest()
+	if err := content.Bytes(digest[:]); err != nil {
+		return err
+	}
+	if err := content.Uint(semantic.Version()); err != nil {
+		return err
+	}
+	if err := content.Uint(uint64(template.role)); err != nil {
+		return err
+	}
+	return content.Uint(uint64(template.lane))
 }
 
 func (template *Template[P, A]) HasPair() bool { return template.pair != nil }
@@ -427,12 +491,8 @@ func (contribution surface[P, A]) Entries() []schema.Entry {
 // unmapped, misordered, or duplicated role is a loud construction error rather
 // than a silent default arm at solve time.
 func (contribution surface[P, A]) Seal(view schema.View, _ schema.Sealed) schema.SealFailure {
-	bundle, bundleOK := vocabulary.New()
-	if !bundleOK {
-		return schema.SurfaceLawFailure(schema.SurfaceKindRule, schema.EntryID{}, LawVocabulary, schema.DispositionMalformed)
-	}
 	roles := make(map[programartifact.RuleRole]*Template[P, A], view.Count())
-	semantics := make(map[engine.SemanticKey]schema.EntryID, view.Count())
+	semantics := make(map[identity.SemanticKey]schema.EntryID, view.Count())
 	for position := 0; position < view.Count(); position++ {
 		entry, entryOK := view.At(position)
 		template, templateOK := entry.(*Template[P, A])
@@ -445,11 +505,10 @@ func (contribution surface[P, A]) Seal(view schema.View, _ schema.Sealed) schema
 		if int(template.role) != position+1 {
 			return schema.SurfaceLawFailure(schema.SurfaceKindRule, template.id, LawRoleOrdinal, schema.DispositionMalformed)
 		}
-		if prior, duplicate := roles[template.role]; duplicate {
-			return schema.SurfaceLawFailure(schema.SurfaceKindRule, prior.id, LawRoleUnique, schema.DispositionDuplicate)
-		}
+		// Pinning the role to the position also makes the role unique: two rows
+		// that carry one role cannot both sit at that role's position.
 		roles[template.role] = template
-		semantic := template.Semantic(bundle)
+		semantic := template.semanticIdentity()
 		if !semantic.Available() {
 			return schema.SurfaceLawFailure(schema.SurfaceKindRule, template.id, LawSemanticIdentity, schema.DispositionMalformed)
 		}

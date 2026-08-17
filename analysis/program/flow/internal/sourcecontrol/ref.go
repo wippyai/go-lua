@@ -15,7 +15,7 @@ type NodeRef struct {
 	node   uint32
 }
 
-// PhaseRef is the opaque path receipt used by synthetic causal routes. Unlike
+// PhaseRef is the opaque path handle used by synthetic causal routes. Unlike
 // NodeRef it can name a parent-issued Outcome phase, which is not a CSR node.
 // It contains no coordinate or authored term.
 type PhaseRef struct {

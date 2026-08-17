@@ -1,9 +1,9 @@
 package target
 
 import (
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
 
@@ -12,11 +12,11 @@ func TestCallbackResultsRemapWithOutcomeAndCallbackCanonicalization(t *testing.T
 		return OperationSpec{
 			Bindings:   []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"callback-result"}}},
 			ValuesVars: 5,
-			Input:      ValuesSpec{Fixed: []typ.Type{typ.Any, typ.Any}, Tail: ValuesVariable, Var: 0},
+			Input:      ValuesSpec{Fixed: []schematype.Type{testAny, testAny}, Tail: ValuesVariable, Var: 0},
 			Callbacks:  callbacks,
 			Outcomes: []OutcomeSpec{{
 				Kind:            flowkind.OutcomeNormal,
-				Values:          ValuesSpec{Fixed: []typ.Type{typ.Any, typ.Any}, Tail: ValuesClosed},
+				Values:          ValuesSpec{Fixed: []schematype.Type{testAny, testAny}, Tail: ValuesClosed},
 				CallbackResults: results,
 			}},
 			Effects: RowSpec{Tail: RowClosed},
@@ -72,9 +72,9 @@ func TestCallbackResultsRejectInvalidAndDualAuthority(t *testing.T) {
 	base := OperationSpec{
 		Bindings:   []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"invalid-callback-result"}}},
 		ValuesVars: 5,
-		Input:      ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesVariable, Var: 0},
+		Input:      ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesVariable, Var: 0},
 		Callbacks:  []CallbackSpec{{Function: InputSource{Kind: InputSourceValueFormal}, Admission: OrdinaryCallable, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: CallbackRetainedOptionalOnce, Effects: RowSpec{Tail: RowClosed}}},
-		Outcomes:   []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed}}},
+		Outcomes:   []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}}},
 		Effects:    RowSpec{Tail: RowClosed},
 	}
 	for _, test := range []struct {
@@ -90,7 +90,7 @@ func TestCallbackResultsRejectInvalidAndDualAuthority(t *testing.T) {
 			operation := base
 			operation.Outcomes = append([]OutcomeSpec(nil), base.Outcomes...)
 			operation.Outcomes[0].CallbackResults = test.results
-			if _, err := Seal(&Spec{Operations: []OperationSpec{operation}}); err == nil {
+			if _, err := testSeal(&Spec{Operations: []OperationSpec{operation}}); err == nil {
 				t.Fatal("invalid callback result accepted")
 			}
 		})
@@ -101,7 +101,7 @@ func TestCallbackResultsRejectInvalidAndDualAuthority(t *testing.T) {
 	overlap.Outcomes[0].CallbackResults = []CallbackResultSpec{{Result: 0, Callback: 1}}
 	overlap.Outcomes[0].Produced = []ProducedSpec{{Result: 0, Operation: 2}}
 	producedOnly := OperationSpec{Input: ValuesSpec{Tail: ValuesClosed}, Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesClosed}}}, Effects: RowSpec{Tail: RowClosed}}
-	if _, err := Seal(&Spec{Operations: []OperationSpec{overlap, producedOnly}}); err == nil {
+	if _, err := testSeal(&Spec{Operations: []OperationSpec{overlap, producedOnly}}); err == nil {
 		t.Fatal("callback result/produced overlap accepted")
 	}
 }
@@ -111,7 +111,7 @@ func TestCallbacksRequireValueFormalInputSource(t *testing.T) {
 		return OperationSpec{
 			Bindings:   []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"callback-input-source"}}},
 			ValuesVars: 5,
-			Input:      ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesVariable, Var: 0},
+			Input:      ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesVariable, Var: 0},
 			Callbacks:  callbacks,
 			Outcomes:   []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesClosed}}},
 			Effects:    RowSpec{Tail: RowClosed},
@@ -133,7 +133,7 @@ func TestCallbacksRequireValueFormalInputSource(t *testing.T) {
 		{Kind: InputSourceValuesVar, Ordinal: 0},
 		{Kind: InputSourceAllInputs},
 	} {
-		if _, err := Seal(&Spec{Operations: []OperationSpec{operation([]CallbackSpec{{
+		if _, err := testSeal(&Spec{Operations: []OperationSpec{operation([]CallbackSpec{{
 			Function: source, Admission: OrdinaryCallable, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: CallbackRetainedOptionalOnce, Effects: RowSpec{Tail: RowClosed},
 		}})}}); err == nil {
 			t.Fatalf("callback accepted non-scalar source %#v", source)

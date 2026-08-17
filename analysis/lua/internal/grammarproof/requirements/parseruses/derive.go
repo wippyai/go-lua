@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof"
+	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/astcodec"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/grammar"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/parserproducts"
 )
@@ -820,7 +820,7 @@ func buildUseSlots(fields []parserproducts.FieldState, carriers map[string]parse
 type fieldStateCoordinate struct {
 	Form  string
 	Field string
-	State grammarproof.FieldState
+	State astcodec.FieldState
 }
 
 func carrierIndex(rows []parserproducts.Carrier) (map[string]parserproducts.Carrier, error) {

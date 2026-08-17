@@ -1,9 +1,9 @@
 package target
 
 import (
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
 
@@ -75,7 +75,7 @@ func TestProtocolCallbackHoldersRejectUnsealedAuthority(t *testing.T) {
 			spec.Protocols[0].CallbackHolders = append(spec.Protocols[0].CallbackHolders, spec.Protocols[0].CallbackHolders[0])
 		}},
 		{"unbound operation", func(spec *Spec) {
-			spec.Operations = append(spec.Operations, OperationSpec{Input: ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed}, Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed}}}, Effects: RowSpec{Tail: RowClosed}})
+			spec.Operations = append(spec.Operations, OperationSpec{Input: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}, Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}}}, Effects: RowSpec{Tail: RowClosed}})
 			spec.Protocols[0].CallbackHolders[0].Operation = 2
 		}},
 	}
@@ -83,7 +83,7 @@ func TestProtocolCallbackHoldersRejectUnsealedAuthority(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			spec := protocolCallbackHolderSpec(InputSource{Kind: InputSourceValueFormal})
 			test.edit(&spec)
-			if contract, err := Seal(&spec); err == nil || contract != nil {
+			if contract, err := testSeal(&spec); err == nil || contract != nil {
 				t.Fatal("invalid callback-holder authority was published")
 			}
 		})
@@ -95,8 +95,8 @@ func protocolCallbackHolderSpec(input InputSource) Spec {
 	return Spec{Operations: []OperationSpec{{
 		Bindings:   []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"callback-holder"}}},
 		ValuesVars: 1,
-		Input:      ValuesSpec{Fixed: []typ.Type{typ.Any, typ.Any}, Tail: ValuesVariable, Var: 0},
-		Outcomes:   []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: ValuesClosed}}},
+		Input:      ValuesSpec{Fixed: []schematype.Type{testAny, testAny}, Tail: ValuesVariable, Var: 0},
+		Outcomes:   []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}}},
 		Callbacks: []CallbackSpec{{
 			Function:  InputSource{Kind: InputSourceValueFormal, Ordinal: 1},
 			Admission: OrdinaryCallable,

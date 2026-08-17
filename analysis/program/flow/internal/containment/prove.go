@@ -104,6 +104,12 @@ func Prove(
 	if err := sealStaticStructuralRoles(result, staticView, moduleView); err != nil {
 		return nil, nil, err
 	}
+	if err := sealEmittedStructuralRoles(result, emitted.edges); err != nil {
+		return nil, nil, err
+	}
+	if err := sealEmittedStructuralRoles(result, emitted.fallback); err != nil {
+		return nil, nil, err
+	}
 	scopeProof, err := sealStaticScopeProof(preimage, staticView, view, staticID, moduleID, resolver, counts)
 	if err != nil {
 		return nil, nil, err

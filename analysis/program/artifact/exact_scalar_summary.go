@@ -2,9 +2,9 @@ package artifact
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	luaarithmetic "github.com/wippyai/go-lua/analysis/lua/semantics/arithmetic"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/program/scalar"
 )
 
 // ExactScalarSummaryRole is the closed arithmetic-use position authenticated
@@ -281,7 +281,7 @@ func (compiler *compiler) deriveExactScalarSummariesFailure() CompileFailure {
 					continue
 				}
 				literal, literalOK := operand.exact()
-				result, resultOK := luaarithmetic.ExactUnaryNegLiteral(literal)
+				result, resultOK := scalar.ExactUnaryNegLiteral(literal)
 				if !literalOK || !resultOK {
 					if join(equation.output, unknown) {
 						changed = true
@@ -304,7 +304,7 @@ func (compiler *compiler) deriveExactScalarSummariesFailure() CompileFailure {
 					}
 					continue
 				}
-				result, resultOK := luaarithmetic.ExactArithmeticLiteral(leftLiteral, rightLiteral, equation.op)
+				result, resultOK := scalar.ExactArithmeticLiteral(leftLiteral, rightLiteral, equation.op)
 				if !resultOK {
 					if join(equation.output, unknown) {
 						changed = true

@@ -290,9 +290,9 @@ func (compiler *compiler) copyDiagnosticObservationsFailure() CompileFailure {
 	}
 	compiler.diagnosticObservations = compiler.diagnosticObservations[:0]
 	compiler.diagnosticObservationByID = make(map[identity.ContentID]int)
-	routes := compiler.input.StructuralRoutes()
-	for index := 0; index < routes.Count(); index++ {
-		route, routeOK := routes.At(index)
+	routes := compiler.input.Flow().Causal().Successors()
+	for index := 0; index < routes.TotalCount(); index++ {
+		route, routeOK := routes.FinalAt(index)
 		if !routeOK {
 			return compileFailure(CompileStageRoutes, CompileRowRoute, index, -1, CompileReasonRouteUnavailable)
 		}
@@ -312,12 +312,26 @@ func (compiler *compiler) copyDiagnosticObservationsFailure() CompileFailure {
 // admitDiagnosticBranchFailure copies one eligible Branch route. A guarded
 // route from another decision family, or a Branch whose arm rewrite is not
 // scope-preserving, intentionally emits no diagnostic row.
-func (compiler *compiler) admitDiagnosticBranchFailure(route program.StructuralRoute, rowIndex int) CompileFailure {
-	guard, guardOK := route.Guard()
+func (compiler *compiler) admitDiagnosticBranchFailure(route flow.FinalRoute, rowIndex int) CompileFailure {
+	if !route.Available() {
+		return CompileFailure{}
+	}
+	if _, fromOK := route.From(); !fromOK {
+		return CompileFailure{}
+	}
+	if _, toOK := route.To(); !toOK {
+		return CompileFailure{}
+	}
+	guard, guardOK := route.GuardProof()
 	if !guardOK {
 		return CompileFailure{}
 	}
-	decisionTerm, termOK := route.DecisionTerm()
+	identityValue, identityOK := route.Identity()
+	if !identityOK {
+		return compileFailure(CompileStageRoutes, CompileRowRoute, rowIndex, -1, CompileReasonRouteGuard)
+	}
+	decisionTerm := identityValue.Decision()
+	termOK := decisionTerm != 0
 	if !termOK || keyspace.TermFamily(decisionTerm) != keyspace.FamilyBranch {
 		return CompileFailure{}
 	}
@@ -366,7 +380,7 @@ func (compiler *compiler) admitDiagnosticBranchFailure(route program.StructuralR
 // diagnosticBranchScopeRewriteSafe is the artifact builder's copy of the
 // source-rewrite eligibility law. It consumes only canonical Flow/Static
 // rows; no Source or authored term is retained after row construction.
-func diagnosticBranchScopeRewriteSafe(input program.TransformerInput, whenTrue, whenFalse keyspace.Term) bool {
+func diagnosticBranchScopeRewriteSafe(input *program.Program, whenTrue, whenFalse keyspace.Term) bool {
 	if !input.Available() || keyspace.TermFamily(whenTrue) != keyspace.FamilyBody || keyspace.TermOrdinal(whenTrue) == 0 ||
 		keyspace.TermFamily(whenFalse) != keyspace.FamilyBody || keyspace.TermOrdinal(whenFalse) == 0 || whenTrue == whenFalse {
 		return false
@@ -404,7 +418,11 @@ func diagnosticBranchScopeRewriteSafe(input program.TransformerInput, whenTrue, 
 			return false
 		}
 	}
-	static := input.Static().Declarations()
+	programOwner := input
+	if programOwner == nil {
+		return false
+	}
+	static := programOwner.Static().Declarations()
 	aliases := static.Aliases()
 	for index := 0; index < aliases.Count(); index++ {
 		term, termOK := aliases.At(index)
@@ -492,19 +510,18 @@ func (compiler *compiler) copyUnresolvedValueObservationsFailure() CompileFailur
 		term, termOK := reads.ImplicitAt(index)
 		owner, sourceTerm, implicit, relationOK := reads.Get(term)
 		ordinal := keyspace.TermOrdinal(term)
-		read, readOK := compiler.input.StorageReadAt(int(ordinal - 1))
-		cell, cellOK := read.Cell()
+		read, readOK := compiler.storageReadAt(int(ordinal - 1))
 		kind, body, key, cellRelationOK := compiler.input.Flow().Authored().Storage().Cells().Get(sourceTerm)
 		literal, literalOK := compiler.input.Source().Keys().Exact(key)
 		location, locationOK := compiler.input.Source().Identity().Span(term)
 		if !termOK || !relationOK || !implicit || owner == 0 || ordinal == 0 || !readOK ||
-			!compiler.input.OwnsStorageReadOccurrence(read) || !cellOK || !compiler.input.OwnsCell(cell) ||
+			!read.id.Available() || !read.cell.Available() ||
 			!cellRelationOK || kind != flow.CellGlobal || body != 0 || key == 0 ||
 			!literalOK || literal.Kind != keyspace.LiteralString || literal.String == "" ||
 			!locationOK || !validDiagnosticSpan(location) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceStorageRead)
 		}
-		payload := diagnosticUnresolvedValueReferenceRow{read: read.ContextID(), cell: cell.ContextID(), name: literal.String}
+		payload := diagnosticUnresolvedValueReferenceRow{read: read.id, cell: read.cell, name: literal.String}
 		row := DiagnosticObservationRow{
 			id:   diagnosticObservationID(compiler.input.ContentID(), DiagnosticObservationValueReferenceUnresolved, location, diagnosticBranchConditionRow{}, diagnosticUnresolvedTypeReferenceRow{}, payload),
 			kind: DiagnosticObservationValueReferenceUnresolved, location: location, value: payload,

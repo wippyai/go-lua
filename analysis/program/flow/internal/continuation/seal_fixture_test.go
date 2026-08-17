@@ -192,29 +192,28 @@ func openContinuationFixture(t *testing.T, spec continuationSpec) *continuationF
 		closeContinuationFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("sourcecontrol.Seal: %v", err)
 	}
-	cellRoleIssuance, cellRoleOK := issuance.IssueCellRoles(sourceView)
-	cellRoles, cellRolesOK := cellRoleIssuance.Consume(sourceView)
-	if !cellRoleOK || !cellRolesOK {
+	cellRoles := sourceView.CellRoles()
+	if !cellRoles.Matches(sourceView) {
 		closeContinuationFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
-		t.Fatal("source.CellRoleCatalog: unavailable")
+		t.Fatal("source.CellRoles: unavailable")
 	}
 	certificate, certificateErr := semanticpath.Seal(issuance, cellRoles, sourceView, flowView, bodies, bindingResult, forest, outcomes, flowView.Cold().ContentID(), staticID, moduleID)
 	if certificateErr != nil {
 		closeContinuationFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("semanticpath.Seal: %v", certificateErr)
 	}
-	vertexReceipt, receiptOK := certificate.IssueVertexCatalogReceipt()
-	vertexLease, vertexErr := controlResult.InstallVertexCatalogLease(bodies, vertexReceipt)
-	if !receiptOK || vertexErr != nil || vertexLease == nil {
+	vertexPaths, pathsOK := certificate.VertexCatalog(sourceView.Identity().ContentID(), flowView.Cold().ContentID(), staticID, moduleID)
+	vertexLease, vertexErr := controlResult.InstallVertexCatalogLease(bodies, vertexPaths)
+	if !pathsOK || vertexErr != nil || vertexLease == nil {
 		closeContinuationFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
-		t.Fatal("sourcecontrol.InstallVertexCatalog: no exact receipt")
+		t.Fatal("sourcecontrol.InstallVertexCatalog: no exact path view")
 	}
 	defer controlResult.ReleaseVertexCatalog(vertexLease)
-	outcomePhasePaths, outcomePhasePathsOK := certificate.IssueOutcomePhaseReceipt()
-	outcomePhases, outcomeErr := controlResult.IssueOutcomePhases(sourceView, flowView, bodies, outcomes, outcomePhasePaths)
-	if !outcomePhasePathsOK || outcomeErr != nil || outcomePhases == nil {
+	outcomePaths, outcomePathsOK := certificate.OutcomePhases(sourceView.Identity().ContentID(), flowView.Cold().ContentID(), staticID, moduleID)
+	outcomePhases, outcomeErr := controlResult.BuildOutcomePhases(sourceView, flowView, bodies, outcomes, outcomePaths)
+	if !outcomePathsOK || outcomeErr != nil || outcomePhases == nil {
 		closeContinuationFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
-		t.Fatal("sourcecontrol.IssueOutcomePhases: unavailable")
+		t.Fatal("sourcecontrol.BuildOutcomePhases: unavailable")
 	}
 	executableResult, err := executable.Seal(sourceView, flowView, forest, controlResult, staticID, moduleID)
 	if err != nil {
@@ -226,12 +225,12 @@ func openContinuationFixture(t *testing.T, spec continuationSpec) *continuationF
 		closeContinuationFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("runtimeentry.Seal: %v", err)
 	}
-	causalReceipt, receiptOK := certificate.IssueCausalReceipt()
-	if !receiptOK {
+	causalPaths, pathsOK := certificate.Causal(sourceView.Identity().ContentID(), flowView.Cold().ContentID(), staticID, moduleID)
+	if !pathsOK {
 		closeContinuationFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
-		t.Fatal("semanticpath.IssueCausalReceipt: receipt unavailable")
+		t.Fatal("semanticpath.Causal: view unavailable")
 	}
-	preparation, err := causal.PrepareRoutePlanWithStructuralPaths(sourceView, flowView, bodies, forest, outcomes, controlResult, ports, executableResult, entries, causalReceipt, outcomePhases, staticID, moduleID)
+	preparation, err := causal.PrepareRoutePlanWithStructuralPaths(sourceView, flowView, bodies, forest, outcomes, controlResult, ports, executableResult, entries, causalPaths, outcomePhases, staticID, moduleID)
 	if err != nil {
 		closeContinuationFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("causal.PrepareRoutePlan: %v", err)

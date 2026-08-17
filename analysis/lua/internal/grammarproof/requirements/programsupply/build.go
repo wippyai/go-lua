@@ -13,8 +13,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/programlaw"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/staticlaw"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/relations"
 	"github.com/wippyai/go-lua/analysis/program/semanticsource"
-	"github.com/wippyai/go-lua/analysis/schema/relations"
 )
 
 const (
@@ -58,7 +58,7 @@ func Current() (Evidence, error) {
 // Validate rejects every stale, missing, extra, reordered, mistagged,
 // wrong-terminal, and wrong-polarity row against the live canonical schema.
 func (e Evidence) Validate(schema *relations.Schema) error {
-	if schema == nil || e.SchemaDigest != fmt.Sprintf("%x", schema.Digest()) {
+	if schema == nil || e.SchemaDigest != schema.Digest().String() {
 		return fmt.Errorf("Program supply: stale relation schema")
 	}
 	want, err := expected(schema)
@@ -300,7 +300,7 @@ func expected(schema *relations.Schema) (Evidence, error) {
 	}
 
 	evidence := Evidence{
-		SchemaDigest: fmt.Sprintf("%x", schema.Digest()),
+		SchemaDigest: schema.Digest().String(),
 		ProgramLaws:  programRows,
 		StaticLaws:   staticRows,
 		BinderLaws:   binderRows,

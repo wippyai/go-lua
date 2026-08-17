@@ -180,18 +180,18 @@ func (r *Result) ResolveContextID(id identity.ContentID) (Site, bool) {
 	return r.resolveSite(id)
 }
 
-// captureOutcomePhasePaths seals Outcome-to-phase receipts before
-// recurrence Claim. The later Site/WTO phases consume this map and never
+// captureOutcomePhasePaths seals Outcome-to-phase paths before recurrence.
+// The later Site/WTO phases consume this map and never
 // reopen SourceControl or Outcome to reconstruct an attachment.
 func (r *Result) captureOutcomePhasePaths(control *sourcecontrol.Result, outcomes *outcome.Result) error {
 	if r == nil || control == nil || outcomes == nil || !sourcecontrol.Matches(control, r.sourceID, r.flowID, r.staticID, r.moduleID) || !outcome.Matches(outcomes, r.sourceID, r.flowID, r.staticID, r.moduleID) {
-		return errors.New("program/flow/causal: terminal outcome receipt owners disagree")
+		return errors.New("program/flow/causal: terminal outcome row owners disagree")
 	}
 	paths := make(map[keyspace.Term]identity.ContentID)
 	for index := 0; index < outcomes.Count(); index++ {
 		term, ok := outcomes.At(index)
 		if !ok {
-			return errors.New("program/flow/causal: outcome row disappeared while issuing tail receipts")
+			return errors.New("program/flow/causal: outcome row disappeared while building tail paths")
 		}
 		owner, outcomeKind, _, ok := outcomes.Get(term)
 		if !ok {
@@ -237,7 +237,7 @@ func (r *Result) buildSites(sourceView source.View, control *sourcecontrol.Resul
 	}
 	terms := make([]keyspace.Term, 0, len(r.index.refs)*2)
 	if r.outcomePhasePaths == nil {
-		return errors.New("program/flow/causal: terminal Outcome receipts were not captured")
+		return errors.New("program/flow/causal: terminal Outcome paths were not captured")
 	}
 	for _, routeRef := range r.index.refs {
 		route, ok := r.successorForRef(routeRef)

@@ -10,13 +10,14 @@ import (
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // RawGetSchemaFragment is the callback-free RawGet Rule shape. Selector
 // callbacks and payload/topology catalogs remain Binding-owned.
 type RawGetSchemaFragment struct {
-	semantic   engine.SemanticKey
-	evidence   engine.SemanticKey
+	semantic   identity.SemanticKey
+	evidence   identity.SemanticKey
 	slot       *engine.RuleSlot[valuedomain.Value, Access]
 	inputs     [4]engine.SchemaInput
 	receiver   engine.SchemaReadSlot[valuedomain.Value]
@@ -30,8 +31,8 @@ type RawGetSchemaFragment struct {
 }
 
 // DeclareRawGetSchema records RawGet's exact four-input selector DAG.
-func DeclareRawGetSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evidence engine.SemanticKey, values *valueowner.SchemaFragment, calls *callowner.SchemaFragment, heap *heapowner.SchemaFragment, packs *packowner.SchemaFragment) (*RawGetSchemaFragment, bool) {
-	if builder == nil || values == nil || calls == nil || heap == nil || packs == nil || !engine.DistinctKeys(semantic, operandFamily, evidence) {
+func DeclareRawGetSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evidence identity.SemanticKey, values *valueowner.SchemaFragment, calls *callowner.SchemaFragment, heap *heapowner.SchemaFragment, packs *packowner.SchemaFragment) (*RawGetSchemaFragment, bool) {
+	if builder == nil || values == nil || calls == nil || heap == nil || packs == nil || !identity.DistinctKeys(semantic, operandFamily, evidence) {
 		return nil, false
 	}
 	slot, ok := engine.NewRuleSlot[valuedomain.Value, Access](builder, engine.SchemaRuleSpec[valuedomain.Value]{
@@ -97,8 +98,8 @@ func DeclareRawGetSchema(builder *engine.SchemaBuilder, semantic, operandFamily,
 // selected read, not a reconstructed topology relation.
 type RawSetSchemaFragment struct {
 	slot       *engine.RuleSlot[heapdomain.Value, Access]
-	semantic   engine.SemanticKey
-	evidence   engine.SemanticKey
+	semantic   identity.SemanticKey
+	evidence   identity.SemanticKey
 	valueRef   engine.FactorRef[valuedomain.Value]
 	heapRef    engine.FactorRef[heapdomain.Value]
 	packRef    engine.FactorRef[packdomain.Value]
@@ -121,8 +122,8 @@ func (fragment *RawSetSchemaFragment) RuleSlot() *engine.RuleSlot[heapdomain.Val
 
 // DeclareRawSetSchema records RawSet's exact three-input selector DAG and
 // routed Heap write.
-func DeclareRawSetSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evidence engine.SemanticKey, values *valueowner.SchemaFragment, heap *heapowner.SchemaFragment, packs *packowner.SchemaFragment) (*RawSetSchemaFragment, bool) {
-	if builder == nil || values == nil || heap == nil || packs == nil || !engine.DistinctKeys(semantic, operandFamily, evidence) {
+func DeclareRawSetSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evidence identity.SemanticKey, values *valueowner.SchemaFragment, heap *heapowner.SchemaFragment, packs *packowner.SchemaFragment) (*RawSetSchemaFragment, bool) {
+	if builder == nil || values == nil || heap == nil || packs == nil || !identity.DistinctKeys(semantic, operandFamily, evidence) {
 		return nil, false
 	}
 	slot, ok := engine.NewRuleSlot[heapdomain.Value, Access](builder, engine.SchemaRuleSpec[heapdomain.Value]{

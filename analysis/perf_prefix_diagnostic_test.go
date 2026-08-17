@@ -20,7 +20,7 @@ func analyzeEdgeMatrixPrefix(t *testing.T, cases int) {
 		project: project,
 		linked:  corpusHarnessSourceLink(t, corpusHarnessContract(t), "main.lua", source[:end]),
 	}
-	_, class, err := corpusHarnessExecuteLink(t, run, corpusHarnessReceiptMode())
+	_, class, err := corpusHarnessExecuteLink(t, run, corpusHarnessDiagnosticMode())
 	t.Logf("Analyze prefix%d: compile=%s solve=%s total=%s", cases, run.cost.compile, run.cost.solve, run.cost.total())
 	if err != nil {
 		t.Fatalf("Analyze prefix%d %s: %v", cases, class, err)

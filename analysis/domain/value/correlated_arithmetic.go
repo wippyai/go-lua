@@ -2,15 +2,16 @@ package value
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	arithmetic "github.com/wippyai/go-lua/analysis/lua/semantics/arithmetic"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/program/scalar"
 )
 
 // ApplyArithmetic evaluates only two singleton exact numeric alternatives.
-// Lua semantics is the sole concrete arithmetic authority. Value translates
-// its result into an already-sealed atom; it never mints hot alternatives.
+// Program scalar semantics is the sole concrete arithmetic authority. Value
+// translates its result into an already-sealed atom; it never mints hot
+// alternatives.
 func (schema *Schema) ApplyArithmetic(left, right Value, op flowkind.BinaryOp) (Value, bool) {
 	if schema == nil || !schema.owns(left) || !schema.owns(right) || !binaryArithmeticOperator(op) {
 		return Value{}, false
@@ -24,7 +25,7 @@ func (schema *Schema) ApplyArithmetic(left, right Value, op flowkind.BinaryOp) (
 		(rightLiteral.Kind != keyspace.LiteralInteger && rightLiteral.Kind != keyspace.LiteralFloat) {
 		return schema.Bottom(), true
 	}
-	result, resultOK := arithmetic.ExactArithmeticLiteral(leftLiteral, rightLiteral, op)
+	result, resultOK := scalar.ExactArithmeticLiteral(leftLiteral, rightLiteral, op)
 	if !resultOK {
 		return schema.Bottom(), true
 	}

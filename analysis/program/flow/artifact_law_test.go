@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/internal/framing"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
 func TestFlowArtifactSectionTopLevelPayloadAndDerivedExclusion(t *testing.T) {
@@ -41,7 +41,7 @@ func TestFlowArtifactSectionTopLevelPayloadAndDerivedExclusion(t *testing.T) {
 	changed.executable = nil
 	changed.directFunction = nil
 	changed.candidates = nil
-	changed.directBinding = nil
+	changed.accessGeometry = nil
 	changed.programStructure.causal = nil
 	changed.continuation = nil
 	if got := encodeTopLevelArtifactSection(t, &changed); !bytes.Equal(got, base) {

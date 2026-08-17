@@ -348,7 +348,7 @@ func TestSchemaSlotsStructuralCapabilitiesBind(t *testing.T) {
 	if _, ok := DeclareSchemaActivationRule(familyBuilder, SchemaStructuralRuleSpec{Semantic: coldKey(945_008), Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(945_009)}, Activation: family}); !ok {
 		t.Fatal("activation rule")
 	}
-	if rows := familyBuilder.candidate.Rules; len(rows) != 1 || rows[0].OperandFamily != unitOperandFamily.compositionKey() {
+	if rows := familyBuilder.candidate.Rules; len(rows) != 1 || rows[0].OperandFamily != compositionKeyOf(unitOperandFamily) {
 		t.Fatal("activation rule did not retain the engine unit operand family")
 	}
 	activationQuery, ok := DeclareQuerySlot[bool](familyBuilder, SchemaQuerySpec{Semantic: coldKey(945_010), Freezer: coldKey(945_011)})

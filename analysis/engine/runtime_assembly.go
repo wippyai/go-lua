@@ -651,7 +651,7 @@ func assembleRuntimeOwned(receiptState *schemaBindingState, receiptAuthority *sc
 		if factorKnown && factor != nil {
 			slot, slotOK = factor.runtimeSlot()
 		}
-		if !edgeOK || !edge.Key().Available() || !sourceIndexed || !targetIndexed || !factorKnown || factor == nil || factor.semantic().compositionKey() != edge.Factor() || !slotOK || slot < 0 || int(slot) >= runtime.Count() {
+		if !edgeOK || !edge.Key().Available() || !sourceIndexed || !targetIndexed || !factorKnown || factor == nil || compositionKeyOf(factor.semantic()) != edge.Factor() || !slotOK || slot < 0 || int(slot) >= runtime.Count() {
 			return nil, false
 		}
 		plan, planOK := plans.plan(edge.Input().Reindex())
@@ -691,7 +691,7 @@ func assembleRuntimeOwned(receiptState *schemaBindingState, receiptAuthority *sc
 	}
 	factorByKey := make(map[composition.Key]runtimeFactor, len(factors))
 	for key, factor := range factors {
-		if !key.Available() || factor == nil || factor.semantic().compositionKey() != key {
+		if !key.Available() || factor == nil || compositionKeyOf(factor.semantic()) != key {
 			return nil, false
 		}
 		factorByKey[key] = factor
@@ -841,7 +841,7 @@ func assembleRuntimeOwned(receiptState *schemaBindingState, receiptAuthority *sc
 			// identity once below, after all authored occurrence targets have been
 			// collected.
 			if routeFactor := row.routeScope(); routeFactor != nil {
-				if routeFactor.semantic().compositionKey() != factor {
+				if compositionKeyOf(routeFactor.semantic()) != factor {
 					return nil, false
 				}
 				if footprint[footprintIndex].routeFactor != nil && footprint[footprintIndex].routeFactor != routeFactor {
@@ -1268,7 +1268,7 @@ func bindRuntimeRegionsWithEdges(graph *equation.Graph, active []bool, runtime *
 				targets = append(targets, occurrence.targets...)
 				narrowTargets = append(narrowTargets, occurrence.narrowTargets...)
 				if occurrence.route {
-					if occurrence.routeFactor == nil || occurrence.routeFactor.semantic().compositionKey() != occurrence.key {
+					if occurrence.routeFactor == nil || compositionKeyOf(occurrence.routeFactor.semantic()) != occurrence.key {
 						return nil, nil, false
 					}
 					if route.factor != nil && route.factor != occurrence.routeFactor {
@@ -1299,7 +1299,7 @@ func bindRuntimeRegionsWithEdges(graph *equation.Graph, active []bool, runtime *
 			if !route.route {
 				continue
 			}
-			if route.factor == nil || route.factor.semantic().compositionKey() != factor {
+			if route.factor == nil || compositionKeyOf(route.factor.semantic()) != factor {
 				return nil, nil, false
 			}
 			if !route.factor.hasRouteUniverse() {

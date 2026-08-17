@@ -15,15 +15,14 @@ func (compiler *compiler) copyBoundaryRowsFailure() CompileFailure {
 		if !body.Executable() {
 			continue
 		}
-		if function, functionOK := body.TransformerFunction(); functionOK {
-			functionID := function.ContextID()
-			if !functionID.Available() {
+		if function, functionOK := body.Function(); functionOK {
+			functionID, functionIDOK := compiler.input.FunctionID(function)
+			if !functionIDOK || !functionID.Available() {
 				return compileFailure(CompileStageOccurrences, CompileRowBody, bodyIndex, -1, CompileReasonBodyUnavailable)
 			}
 			for captureIndex := 0; captureIndex < function.CaptureCount(); captureIndex++ {
-				capture, captureOK := function.CaptureAt(captureIndex)
-				id := capture.ContextID()
-				if !captureOK || !compiler.input.OwnsCapture(capture) || !id.Available() || uint64(captureIndex) > uint64(^uint32(0)) {
+				id, _, _, _, _, captureOK := compiler.input.FunctionCaptureAt(function, captureIndex)
+				if !captureOK || !id.Available() || uint64(captureIndex) > uint64(^uint32(0)) {
 					return compileFailure(CompileStageOccurrences, CompileRowBody, bodyIndex, captureIndex, CompileReasonOccurrenceUnavailable)
 				}
 				rows = append(rows, BoundaryRow{kind: BoundaryCapture, id: id, owner: functionID, position: uint32(captureIndex), eligible: true})
@@ -37,26 +36,20 @@ func (compiler *compiler) copyBoundaryRowsFailure() CompileFailure {
 			rows = append(rows, BoundaryRow{kind: BoundaryReturn, id: id, owner: body.ContextID(), eligible: true})
 		}
 	}
-	for assignmentIndex := 0; assignmentIndex < compiler.input.StorageAssignmentCount(); assignmentIndex++ {
-		assignment, assignmentOK := compiler.input.StorageAssignmentAt(assignmentIndex)
-		if !assignmentOK || !compiler.input.OwnsStorageAssignment(assignment) {
+	assigns := compiler.input.Flow().Authored().Storage().Assigns()
+	for assignmentIndex := 0; assignmentIndex < assigns.Count(); assignmentIndex++ {
+		assignment, assignmentOK := compiler.storageAssignmentAt(assignmentIndex)
+		if !assignmentOK || !assignment.id.Available() || !assignment.context.Available() {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, assignmentIndex, -1, CompileReasonOccurrenceUnavailable)
 		}
-		for position := 0; position < assignment.TransferCount(); position++ {
-			write, writeOK := assignment.TransferAt(position)
-			if !writeOK {
-				// Assignment width covers both storage Cells and index Lenses,
-				// and may also exceed a source Values row's fixed prefix. Only
-				// an owner-issued Cell transfer belongs to BoundaryStore. Lens
-				// writes are emitted once by copyIndexAccess as RawSet rows.
-				continue
+		for _, write := range assignment.transfers {
+			if !write.id.Available() || !write.cell.Available() || !write.predecessor.Available() || !write.route.Available() {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, assignmentIndex, write.position, CompileReasonOccurrenceUnavailable)
 			}
-			id := write.ContextID()
-			body, bodyOK := write.Body()
-			if !compiler.input.OwnsStorageWriteOccurrence(write) || !bodyOK || !id.Available() {
-				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, assignmentIndex, position, CompileReasonOccurrenceUnavailable)
-			}
-			rows = append(rows, BoundaryRow{kind: BoundaryStore, id: id, owner: body.ContextID(), eligible: write.Eligible()})
+			// Assignment scratch rows are built from Flow/Source while the
+			// Program proof is live; only the body context and scalar write ID
+			// cross into the generic boundary column.
+			rows = append(rows, BoundaryRow{kind: BoundaryStore, id: write.id, owner: assignment.context, eligible: write.eligible})
 		}
 	}
 	radixBoundaryRows(rows)

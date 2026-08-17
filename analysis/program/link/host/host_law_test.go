@@ -3,6 +3,7 @@ package host
 import (
 	"testing"
 
+	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
@@ -14,7 +15,7 @@ import (
 func hostFixture(t testing.TB) (*linkproject.Component, *linkboundary.Component, *linkmodule.Component) {
 	t.Helper()
 	closed := target.OperationSpec{Input: target.ValuesSpec{Tail: target.ValuesClosed}, Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}}, Effects: target.RowSpec{Tail: target.RowClosed}}
-	contract, err := target.Seal(&target.Spec{Operations: []target.OperationSpec{
+	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []target.OperationSpec{
 		{Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"require"}}}, Input: closed.Input, Outcomes: closed.Outcomes, Effects: closed.Effects},
 		{Bindings: []target.BindingSpec{{Namespace: target.BindingProvider, Owner: []string{"law"}, Member: []string{"endpoint"}}}, Input: closed.Input, Outcomes: closed.Outcomes, Effects: closed.Effects},
 	}, InitialRoots: []target.InitialRootSpec{{Identity: "GlobalEnvRoot", Shape: target.BootShapeSpec{Aggregate: target.BootAggregateTable, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}}}}})

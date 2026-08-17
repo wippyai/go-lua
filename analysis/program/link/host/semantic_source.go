@@ -8,31 +8,27 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/semanticsource"
 )
 
-// SemanticSourceView is a detached Host-owned typed Count/At receipt. It
-// stores only row digests; the Host selector, bootstrap, and endpoint rows do
-// not cross the child boundary.
-type SemanticSourceView = semanticsource.DigestView
-
-// SemanticSourceCursor walks one exact Host-owned digest interval.
-type SemanticSourceCursor = semanticsource.DigestCursor
-
-type SemanticSourceViews struct {
+// SourceViews is Host's sealed source-column set. It retains only detached
+// row identities; host selectors and endpoint tables remain private.
+type SourceViews struct {
 	owner                                        identity.ContentID
-	host, exposure, boot, member, endpointTarget SemanticSourceView
+	host, exposure, boot, member, endpointTarget semanticsource.DigestView
 }
 
-func (views SemanticSourceViews) valid() bool {
+func (views SourceViews) valid() bool {
 	return semanticsource.FencedDigestViews(views.owner, views.host, views.exposure, views.boot, views.member, views.endpointTarget)
 }
-func (views SemanticSourceViews) OwnerID() identity.ContentID        { return views.owner }
-func (views SemanticSourceViews) Host() SemanticSourceView           { return views.host }
-func (views SemanticSourceViews) Exposure() SemanticSourceView       { return views.exposure }
-func (views SemanticSourceViews) Boot() SemanticSourceView           { return views.boot }
-func (views SemanticSourceViews) Member() SemanticSourceView         { return views.member }
-func (views SemanticSourceViews) EndpointTarget() SemanticSourceView { return views.endpointTarget }
-func (views SemanticSourceViews) viewFor(token semanticsource.Token) (SemanticSourceView, bool) {
+func (views SourceViews) Valid() bool                               { return views.owner.Available() && views.valid() }
+func (views SourceViews) OwnerID() identity.ContentID               { return views.owner }
+func (views SourceViews) Host() semanticsource.DigestView           { return views.host }
+func (views SourceViews) Exposure() semanticsource.DigestView       { return views.exposure }
+func (views SourceViews) Boot() semanticsource.DigestView           { return views.boot }
+func (views SourceViews) Member() semanticsource.DigestView         { return views.member }
+func (views SourceViews) EndpointTarget() semanticsource.DigestView { return views.endpointTarget }
+
+func (views SourceViews) viewFor(token semanticsource.Token) (semanticsource.DigestView, bool) {
 	if token.Origin() != semanticsource.OriginLinkHost {
-		return SemanticSourceView{}, false
+		return semanticsource.DigestView{}, false
 	}
 	switch token.Facet() {
 	case 0:
@@ -46,80 +42,44 @@ func (views SemanticSourceViews) viewFor(token semanticsource.Token) (SemanticSo
 	case semanticsource.FacetLinkHostEndpointTarget:
 		return views.endpointTarget, true
 	default:
-		return SemanticSourceView{}, false
+		return semanticsource.DigestView{}, false
 	}
 }
 
-type SemanticSourceReceipt struct {
-	owner identity.ContentID
-	views SemanticSourceViews
-}
-
-func (receipt SemanticSourceReceipt) Valid() bool {
-	return receipt.owner.Available() && receipt.views.valid() && receipt.views.owner == receipt.owner
-}
-func (receipt SemanticSourceReceipt) OwnerID() identity.ContentID { return receipt.owner }
-func (receipt SemanticSourceReceipt) Views() (SemanticSourceViews, bool) {
-	if !receipt.Valid() {
-		return SemanticSourceViews{}, false
-	}
-	return receipt.views, true
-}
-
-// Publications projects this owner through the injected sealed ProgramSchema.
-// Host contributes only detached row cardinalities; relation membership and
-// order remain owned by the schema.
-func (receipt SemanticSourceReceipt) Publications(schema semanticsource.ProgramSchema) []semanticsource.Publication {
-	if !receipt.Valid() {
-		return nil
-	}
-	views, ok := receipt.Views()
-	if !ok {
+func (views SourceViews) Publications(schema semanticsource.ProgramSchema) []semanticsource.Publication {
+	if !views.Valid() {
 		return nil
 	}
 	return semanticsource.OriginPublications(schema, func(token semanticsource.Token) (int, bool) {
-		view, found := views.viewFor(token)
+		row, found := views.viewFor(token)
 		if !found {
 			return 0, false
 		}
-		return view.Count(), true
+		return row.Count(), true
 	}, semanticsource.OriginLinkHost)
 }
-func (c *Component) SemanticSourceReceipt() (SemanticSourceReceipt, bool) {
-	if !live(c) || !c.authority.semanticReceipt.Valid() || c.authority.semanticReceipt.OwnerID() != c.authority.content {
-		return SemanticSourceReceipt{}, false
+
+func (c *Component) SourceViews() (SourceViews, bool) {
+	if !live(c) || !c.authority.sourceViews.Valid() || c.authority.sourceViews.OwnerID() != c.authority.content {
+		return SourceViews{}, false
 	}
-	return c.authority.semanticReceipt, true
+	return c.authority.sourceViews, true
 }
-func (c *Component) SemanticSourceViews() (SemanticSourceViews, bool) {
-	receipt, ok := c.SemanticSourceReceipt()
-	if !ok {
-		return SemanticSourceViews{}, false
+func (v Cold) SourceViews() (SourceViews, bool) {
+	if v.fence == nil || !v.fence.sealed || !v.content.Available() || !v.sourceViews.Valid() || v.sourceViews.OwnerID() != v.content {
+		return SourceViews{}, false
 	}
-	return receipt.Views()
-}
-func (v Cold) SemanticSourceReceipt() (SemanticSourceReceipt, bool) {
-	if v.fence == nil || !v.fence.sealed || !v.content.Available() || !v.semanticReceipt.Valid() || v.semanticReceipt.OwnerID() != v.content {
-		return SemanticSourceReceipt{}, false
-	}
-	return v.semanticReceipt, true
-}
-func (v Cold) SemanticSourceViews() (SemanticSourceViews, bool) {
-	receipt, ok := v.SemanticSourceReceipt()
-	if !ok {
-		return SemanticSourceViews{}, false
-	}
-	return receipt.Views()
+	return v.sourceViews, true
 }
 
-func hostReceiptRows(owner identity.ContentID, token semanticsource.Token, count int, at func(int) bool) (SemanticSourceView, bool) {
+func sourceRows(owner identity.ContentID, token semanticsource.Token, count int, at func(int) bool) (semanticsource.DigestView, bool) {
 	if !owner.Available() || count < 0 || at == nil {
-		return SemanticSourceView{}, false
+		return semanticsource.DigestView{}, false
 	}
 	digests := make([]identity.ContentID, 0, count)
 	for index := 0; index < count; index++ {
 		if !at(index) {
-			return SemanticSourceView{}, false
+			return semanticsource.DigestView{}, false
 		}
 		h := sha256.New()
 		_, _ = h.Write([]byte("wippy.link/host/semantic-source-row/v1"))
@@ -134,7 +94,7 @@ func hostReceiptRows(owner identity.ContentID, token semanticsource.Token, count
 		var id identity.ContentID
 		copy(id[:], h.Sum(nil))
 		if !id.Available() {
-			return SemanticSourceView{}, false
+			return semanticsource.DigestView{}, false
 		}
 		digests = append(digests, id)
 	}
@@ -147,34 +107,34 @@ func hostToken(facet semanticsource.Facet) (semanticsource.Token, bool) {
 	}
 	return d.Token(), true
 }
-func (c *Component) buildSemanticSourceReceipt() (SemanticSourceReceipt, bool) {
+func (c *Component) buildSourceViews() (SourceViews, bool) {
 	if !live(c) || !c.authority.content.Available() || c.authority.boundary == nil {
-		return SemanticSourceReceipt{}, false
+		return SourceViews{}, false
 	}
 	owner := c.authority.content
-	views := SemanticSourceViews{owner: owner}
+	views := SourceViews{owner: owner}
 	token, ok := hostToken(0)
 	if !ok {
-		return SemanticSourceReceipt{}, false
+		return SourceViews{}, false
 	}
 	endpointCount := c.authority.boundary.Endpoints().Count()
-	views.host, ok = hostReceiptRows(owner, token, endpointCount, func(i int) bool { _, good := c.authority.boundary.Endpoints().At(i); return good })
+	views.host, ok = sourceRows(owner, token, endpointCount, func(i int) bool { _, good := c.authority.boundary.Endpoints().At(i); return good })
 	if !ok {
-		return SemanticSourceReceipt{}, false
+		return SourceViews{}, false
 	}
 	token, ok = hostToken(semanticsource.FacetLinkHostExposure)
 	if !ok {
-		return SemanticSourceReceipt{}, false
+		return SourceViews{}, false
 	}
-	views.exposure, ok = hostReceiptRows(owner, token, c.Exposures().Count(), func(i int) bool { _, _, _, _, _, good := c.Exposures().At(i); return good })
+	views.exposure, ok = sourceRows(owner, token, c.Exposures().Count(), func(i int) bool { _, _, _, _, _, good := c.Exposures().At(i); return good })
 	if !ok {
-		return SemanticSourceReceipt{}, false
+		return SourceViews{}, false
 	}
 	token, ok = hostToken(semanticsource.FacetLinkHostBoot)
 	if !ok {
-		return SemanticSourceReceipt{}, false
+		return SourceViews{}, false
 	}
-	views.boot, ok = hostReceiptRows(owner, token, c.Globals().Count(), func(i int) bool {
+	views.boot, ok = sourceRows(owner, token, c.Globals().Count(), func(i int) bool {
 		row, good := c.Globals().At(i)
 		if !good {
 			return false
@@ -183,24 +143,23 @@ func (c *Component) buildSemanticSourceReceipt() (SemanticSourceReceipt, bool) {
 		return mapped
 	})
 	if !ok {
-		return SemanticSourceReceipt{}, false
+		return SourceViews{}, false
 	}
 	token, ok = hostToken(semanticsource.FacetLinkHostMember)
 	if !ok {
-		return SemanticSourceReceipt{}, false
+		return SourceViews{}, false
 	}
-	views.member, ok = hostReceiptRows(owner, token, c.Members().Count(), func(i int) bool { _, _, _, _, _, _, _, good := c.Members().At(i); return good })
+	views.member, ok = sourceRows(owner, token, c.Members().Count(), func(i int) bool { _, _, _, _, _, _, _, good := c.Members().At(i); return good })
 	if !ok {
-		return SemanticSourceReceipt{}, false
+		return SourceViews{}, false
 	}
 	token, ok = hostToken(semanticsource.FacetLinkHostEndpointTarget)
 	if !ok {
-		return SemanticSourceReceipt{}, false
+		return SourceViews{}, false
 	}
-	views.endpointTarget, ok = hostReceiptRows(owner, token, endpointCount, func(i int) bool { _, good := c.authority.boundary.Endpoints().At(i); return good })
+	views.endpointTarget, ok = sourceRows(owner, token, endpointCount, func(i int) bool { _, good := c.authority.boundary.Endpoints().At(i); return good })
 	if !ok {
-		return SemanticSourceReceipt{}, false
+		return SourceViews{}, false
 	}
-	receipt := SemanticSourceReceipt{owner: owner, views: views}
-	return receipt, receipt.Valid()
+	return views, views.Valid()
 }

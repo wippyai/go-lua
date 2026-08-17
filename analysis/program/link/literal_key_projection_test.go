@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/analysis/lua/semantics/exactkey"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/analysis/program/scalar"
 	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
@@ -114,15 +114,15 @@ func mustLiteralKey(t *testing.T, link *Link, literal keyspace.LiteralValue) lin
 }
 
 func literalKeyFor(keys linkproject.Keys, literal keyspace.LiteralValue) (linkproject.Key, bool) {
-	want, ok := exactkey.Normalize(literal)
+	want, ok := scalar.Normalize(literal)
 	if !ok {
 		return linkproject.Key{}, false
 	}
 	for index := 0; index < keys.Count(); index++ {
 		key, keyOK := keys.At(index)
 		value, valueOK := keys.Exact(key)
-		got, normalized := exactkey.Normalize(value)
-		order, ordered := exactkey.Compare(got, want)
+		got, normalized := scalar.Normalize(value)
+		order, ordered := scalar.Compare(got, want)
 		if keyOK && valueOK && normalized && ordered && order == 0 {
 			return key, true
 		}

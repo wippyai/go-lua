@@ -41,7 +41,7 @@ func (view View) ValueSourcePath(term keyspace.Term) (identity.ContentID, bool) 
 }
 
 // SemanticTermPath forwards one already-sealed semantic-path certificate row.
-// It is a narrow owner-fenced join for Program receipts; Flow does not expose
+// It is a narrow owner-fenced join for Program certificate rows; Flow does not expose
 // the certificate plane or create a second term index.
 func (view View) SemanticTermPath(term keyspace.Term) (identity.ContentID, bool) {
 	if !view.available() || view.component.semanticPaths == nil {

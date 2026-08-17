@@ -30,10 +30,11 @@ type ContractsInput struct {
 type contractsStore struct {
 	functions []functionContractRow
 	calls     []poolRange
-	// callReceipts are sealed per-call template identities. They are a
-	// derived O(1) authentication surface; authored terms remain in terms.
-	callReceipts []identity.ContentID
-	terms        []keyspace.Term
+	// callTypeArgumentIDs are immutable per-call type-argument column
+	// identities. Authored terms remain in terms; this is only their stable
+	// content identity.
+	callTypeArgumentIDs []identity.ContentID
+	terms               []keyspace.Term
 }
 
 type functionContractRow struct {

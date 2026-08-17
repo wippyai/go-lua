@@ -236,8 +236,8 @@ func (a *Authority) RuntimeInputWithFailure(encoded []byte) (RuntimeInput, Runti
 // graph after SealRuntime.
 func (a *Authority) RuntimeInputForType(value typ.Type) (RuntimeInput, bool) {
 	// A binder-owned formal inside a Generic/Function is structurally closed.
-	// ContainsTypeParam cannot distinguish it from a free formal and used to
-	// reject valid generic declarations before Runtime could seal them.
+	// ContainsTypeParam cannot distinguish it from a free formal, so closure is
+	// decided by IsGraphClosed and a valid generic declaration seals.
 	if a == nil || !a.LinkID().Available() || value == nil || !typ.IsGraphClosed(value) || typ.ValidateStaticGenericRecurrence(value) != nil {
 		return RuntimeInput{}, false
 	}

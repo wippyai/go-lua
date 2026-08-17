@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/schema/grammar"
+	"github.com/wippyai/go-lua/analysis/domain/composite"
 )
 
 // TestCanonicalCorpusSemanticAcceptance is the one complete fixture semantic
@@ -249,7 +249,7 @@ func corpusSemanticNativeValidityMatches(event, established, revoked string, val
 // manifest diagnostic_rules can disable or refine that default. A requested
 // code without a current collector is an explicit unsupported contract.
 func corpusSemanticAcceptancePolicy(expectation *corpusDiagnosticProjectExpectations) (DiagnosticPolicy, []string) {
-	table, tableOK := grammar.Diagnostics()
+	table, tableOK := composite.Diagnostics()
 	if !tableOK {
 		return DiagnosticPolicy{}, []string{"sealed diagnostic declaration table unavailable"}
 	}

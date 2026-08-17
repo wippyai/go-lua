@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/wippyai/go-lua/analysis/schema/relations"
+	"github.com/wippyai/go-lua/analysis/program/relations"
 )
 
 // Build derives every Program-owned output from the canonical relation schema.
@@ -49,7 +49,7 @@ func derive(schema *relations.Schema) (Evidence, error) {
 		rows = append(rows, Row{Output: output, Owner: relation.Owner})
 	}
 	sort.Slice(rows, func(left, right int) bool { return rows[left].Output < rows[right].Output })
-	evidence := Evidence{SchemaDigest: fmt.Sprintf("%x", schema.Digest()), Rows: rows}
+	evidence := Evidence{SchemaDigest: schema.Digest().String(), Rows: rows}
 	evidence.Digest = digest(evidence)
 	if err := evidence.Validate(schema); err != nil {
 		return Evidence{}, err
@@ -65,7 +65,7 @@ func (e Evidence) Validate(schema *relations.Schema) error {
 	if err != nil {
 		return err
 	}
-	if e.SchemaDigest != fmt.Sprintf("%x", schema.Digest()) || e.Digest != digest(e) {
+	if e.SchemaDigest != schema.Digest().String() || e.Digest != digest(e) {
 		return fmt.Errorf("Program output owners: stale or invalid evidence digest")
 	}
 	seen := make(map[string]bool, len(e.Rows))

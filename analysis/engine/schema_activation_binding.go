@@ -43,13 +43,6 @@ func (cell *schemaActivationFamilyBindingCell) schemaBindingSchema() *Schema {
 	return cell.schema
 }
 
-func (cell *schemaActivationFamilyBindingCell) activationOrdinal() uint64 {
-	if cell == nil {
-		return 0
-	}
-	return cell.ordinal
-}
-
 func (cell *schemaActivationFamilyBindingCell) activationComplete(schema *Schema, ordinal uint64) bool {
 	return cell != nil && cell.schema == schema && cell.ordinal == ordinal && schema != nil && ordinal < schema.activationCount()
 }

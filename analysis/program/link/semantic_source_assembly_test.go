@@ -6,8 +6,8 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/program"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/analysis/program/relations"
 	"github.com/wippyai/go-lua/analysis/program/semanticsource"
-	"github.com/wippyai/go-lua/analysis/schema/relations"
 )
 
 func TestSourcePublicationsSealCompleteProject(t *testing.T) {
@@ -33,16 +33,16 @@ func TestSourcePublicationsSealCompleteProject(t *testing.T) {
 		}
 		addSemanticSourceFragment(t, want, programSemanticSourcePublications(t, p), true)
 	}
-	targetReceipt, ok := contract.SemanticSourceReceipt()
+	targetViews, ok := contract.SourceViews()
 	if !ok {
-		t.Fatal("target receipt")
+		t.Fatal("target source rows")
 	}
-	targetRows := targetReceipt.Publications(schema)
+	targetRows := targetViews.Publications(schema)
 	if len(targetRows) == 0 {
-		t.Fatal("target receipt publications")
+		t.Fatal("target source rows publications")
 	}
 	addSemanticSourceFragment(t, want, targetRows, false)
-	linkRows, ok := sealed.sourcePublications(schema)
+	linkRows, ok := sealed.childSourcePublications(schema)
 	if !ok {
 		t.Fatal("link fragment")
 	}
@@ -91,13 +91,9 @@ func TestSourcePublicationsCountDuplicateProgramMounts(t *testing.T) {
 func TestSourcePublicationsRetainZeroRowsAndReplay(t *testing.T) {
 	schema := semanticSourceSchema(t)
 	sealed := linked(t, contract(t), linkproject.Module{Name: "main", Program: source(t, ``)})
-	receipt, ok := sealed.SemanticSourceReceipt()
-	if !ok || receipt.OwnerID() != sealed.ContentID() {
-		t.Fatalf("Link aggregate receipt = %x/%t, want owner %x/true", receipt.OwnerID(), ok, sealed.ContentID())
-	}
-	detached, ok := receipt.Publications()
-	if !ok || detached.Count() != schema.Count() || detached.SchemaDigest() != schema.SchemaDigest() {
-		t.Fatalf("detached Link receipt = %d/%t, want exact schema denominator %d", detached.Count(), ok, schema.Count())
+	detached, err := sealed.SourcePublications()
+	if err != nil || detached.Count() != schema.Count() || detached.SchemaDigest() != schema.SchemaDigest() {
+		t.Fatalf("detached Link source rows = %d/%t, want exact schema denominator %d", detached.Count(), err == nil, schema.Count())
 	}
 	first, err := sealed.SourcePublications()
 	if err != nil {
@@ -139,9 +135,9 @@ func TestSourcePublicationsRejectsNilAndStaleAggregate(t *testing.T) {
 	}
 	sealed := linked(t, contract(t), linkproject.Module{Name: "main", Program: source(t, `return 1`)})
 	stale := *sealed
-	stale.semanticReceipt = SemanticSourceReceipt{}
+	stale.sourcePublications = semanticsource.Publications{}
 	if _, err := stale.SourcePublications(); !errors.Is(err, errSemanticSourceAssemblyUnavailable) {
-		t.Fatalf("stale Link receipt = %v, want unavailable", err)
+		t.Fatalf("stale Link source rows = %v, want unavailable", err)
 	}
 	detached, err := sealed.SourcePublications()
 	if err != nil {
@@ -157,7 +153,7 @@ func TestSourcePublicationsRejectsNilAndStaleAggregate(t *testing.T) {
 		t.Fatalf("replayed source catalog: %v", err)
 	}
 	if _, ok := replayed.At(0); !ok {
-		t.Fatal("detached mutation invalidated cached Link receipt")
+		t.Fatal("detached mutation invalidated cached Link source rows")
 	}
 }
 
@@ -170,13 +166,13 @@ func TestSemanticSourceAssemblyRejectsForeignIncompleteAndOverflowFragments(t *t
 	}
 
 	contract := contract(t)
-	targetReceipt, ok := contract.SemanticSourceReceipt()
+	targetViews, ok := contract.SourceViews()
 	if !ok {
-		t.Fatal("target receipt")
+		t.Fatal("target source rows")
 	}
-	targetRows := targetReceipt.Publications(semanticSourceSchema(t))
+	targetRows := targetViews.Publications(semanticSourceSchema(t))
 	if len(targetRows) == 0 {
-		t.Fatal("target receipt publications")
+		t.Fatal("target source rows publications")
 	}
 	if err := assembly.acceptProgram(targetRows); !errors.Is(err, errSemanticSourceAssemblyFragment) {
 		t.Fatalf("foreign Target fragment as Program = %v, want fragment rejection", err)

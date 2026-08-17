@@ -4,8 +4,8 @@ import (
 	"errors"
 	"math"
 
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/internal/framing"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
 )
 
@@ -94,10 +94,10 @@ func (finalizer Finalizer) View() View {
 	return View{state: finalizer.state}
 }
 
-// Commit consumes the claimed finalizer exactly once. The receipt is checked
+// Commit consumes the claimed finalizer exactly once. The input is checked
 // against this draft's authored denominators before publication. Both a
-// valid and an invalid receipt are terminal: construction views and copied
-// finalizers expire before the result is returned, and no receipt data is
+// valid and an invalid input are terminal: construction views and copied
+// finalizers expire before the result is returned, and no input data is
 // retained in Component, ContentID, or Cold.
 func (finalizer Finalizer) Commit(input CommitInput) (*Component, error) {
 	if finalizer.state == nil {
@@ -111,7 +111,7 @@ func (finalizer Finalizer) Commit(input CommitInput) (*Component, error) {
 	}
 	component := state.component
 	// Close the lifecycle before validating caller input. This makes a
-	// rejected receipt terminal as well as a successful one, and expires every
+	// rejected input terminal as well as a successful one, and expires every
 	// copied construction view at the same state transition.
 	state.component = nil
 	state.localContainment = nil
@@ -129,13 +129,13 @@ func validateCommitInput(component *Component, input CommitInput) error {
 		return errors.New("program/static: missing authored component")
 	}
 	if !validCommitTerms(input.TypeOf, keyspace.FamilyTypeOf, len(component.operators.typeOf)) {
-		return errors.New("program/static: invalid TypeOf receipt")
+		return errors.New("program/static: invalid TypeOf input")
 	}
 	if !validCommitTerms(input.Annotations, keyspace.FamilyAnnotation, len(component.operands.annotations)) {
-		return errors.New("program/static: invalid Annotation receipt")
+		return errors.New("program/static: invalid Annotation input")
 	}
 	if !validCommitTerms(input.Publications, keyspace.FamilyTypePublication, len(component.publications)) {
-		return errors.New("program/static: invalid Publication receipt")
+		return errors.New("program/static: invalid Publication input")
 	}
 	return nil
 }

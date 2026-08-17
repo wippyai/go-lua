@@ -3,6 +3,7 @@ package host
 import (
 	"testing"
 
+	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/flow"
@@ -22,6 +23,7 @@ func globalInverseFixture(t testing.TB) (*linkproject.Component, *linkboundary.C
 		Effects:  target.RowSpec{Tail: target.RowClosed},
 	}
 	contract, err := target.Seal(&target.Spec{
+		Semantics: domaincontract.NewSemantics(),
 		Operations: []target.OperationSpec{{
 			Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"require"}}},
 			Input:    closed.Input, Outcomes: closed.Outcomes, Effects: closed.Effects,

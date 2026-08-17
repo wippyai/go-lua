@@ -7,15 +7,28 @@ import (
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
 	indexdomain "github.com/wippyai/go-lua/analysis/domain/heap/index"
 	"github.com/wippyai/go-lua/analysis/domain/materialization"
+	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
-	"github.com/wippyai/go-lua/analysis/domain/type/typ"
+	"github.com/wippyai/go-lua/analysis/lua/lower"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 )
+
+func portableAnyTypes(count int) []schematype.Type {
+	values := make([]schematype.Type, count)
+	for index := range values {
+		value, ok := schematype.NewPrimitive(schematype.PrimitiveAny)
+		if !ok {
+			panic("portable any type")
+		}
+		values[index] = value
+	}
+	return values
+}
 
 func TestTopologyStaticRoutesPreserveExactTopAndHeapExtremes(t *testing.T) {
 	heap, values, calls, _, rootKey, candidate, mounts := staticTopologyFixture(t)
@@ -166,7 +179,7 @@ func staticTopologyFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Schema
 	if err != nil {
 		t.Fatal(err)
 	}
-	contract, err := target.Seal(&target.Spec{Operations: []target.OperationSpec{{
+	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []target.OperationSpec{{
 		Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"require"}}},
 		Input:    target.ValuesSpec{Tail: target.ValuesClosed},
 		Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}},
@@ -222,10 +235,10 @@ func freshTopologyFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Schema,
 	binding := func(name string) target.BindingSpec {
 		return target.BindingSpec{Namespace: target.BindingBuiltin, Member: []string{name}}
 	}
-	contract, err := target.Seal(&target.Spec{InitialRoots: []target.InitialRootSpec{{Identity: "GlobalEnvRoot", Shape: target.BootShapeSpec{Aggregate: target.BootAggregateTable, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}}}}, Operations: []target.OperationSpec{
+	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), InitialRoots: []target.InitialRootSpec{{Identity: "GlobalEnvRoot", Shape: target.BootShapeSpec{Aggregate: target.BootAggregateTable, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}}}}, Operations: []target.OperationSpec{
 		{Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"require"}}}, Input: target.ValuesSpec{Tail: target.ValuesClosed}, Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}}, Effects: target.RowSpec{Tail: target.RowClosed}},
-		{Bindings: []target.BindingSpec{binding("fresh")}, Input: target.ValuesSpec{Tail: target.ValuesClosed}, Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: target.ValuesClosed}, FreshResults: []target.FreshResultSpec{{Result: 0, Kind: target.FreshTable}}}}, Effects: target.RowSpec{Tail: target.RowClosed}},
-		{Bindings: []target.BindingSpec{binding("other")}, Input: target.ValuesSpec{Tail: target.ValuesClosed}, Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Fixed: []typ.Type{typ.Any}, Tail: target.ValuesClosed}, FreshResults: []target.FreshResultSpec{{Result: 0, Kind: target.FreshFunction}}}}, Effects: target.RowSpec{Tail: target.RowClosed}},
+		{Bindings: []target.BindingSpec{binding("fresh")}, Input: target.ValuesSpec{Tail: target.ValuesClosed}, Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Fixed: portableAnyTypes(1), Tail: target.ValuesClosed}, FreshResults: []target.FreshResultSpec{{Result: 0, Kind: target.FreshTable}}}}, Effects: target.RowSpec{Tail: target.RowClosed}},
+		{Bindings: []target.BindingSpec{binding("other")}, Input: target.ValuesSpec{Tail: target.ValuesClosed}, Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Fixed: portableAnyTypes(1), Tail: target.ValuesClosed}, FreshResults: []target.FreshResultSpec{{Result: 0, Kind: target.FreshFunction}}}}, Effects: target.RowSpec{Tail: target.RowClosed}},
 	}, InitialEntries: []target.InitialEntrySpec{{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "_G"}, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: target.InitialMutable}, {Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "fresh"}, Value: target.InitialValueSpec{Kind: target.InitialValueOperation, Operation: binding("fresh")}, Mutability: target.InitialMutable}, {Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "__link_absent"}, Value: target.InitialValueSpec{Kind: target.InitialValueAbsent}, Mutability: target.InitialMutable}}, InitialBindings: []target.InitialBindingSpec{{Name: "_G", Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "_G"}}, {Name: "fresh", Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "fresh"}}}})
 	if err != nil {
 		t.Fatal(err)

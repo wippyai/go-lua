@@ -215,7 +215,10 @@ type Breaks struct{ view authored.Breaks }
 
 func (view Breaks) Count() int                                   { return view.view.Count() }
 func (view Breaks) At(index int) (keyspace.Term, bool)           { return view.view.At(index) }
-func (view Breaks) Get(term keyspace.Term) (keyspace.Term, bool) { return view.view.Get(term) }
+func (view Breaks) Get(term keyspace.Term) (keyspace.Term, bool) { return view.view.Target(term) }
+func (view Breaks) Owner(term keyspace.Term) (keyspace.Term, bool) {
+	return view.view.Get(term)
+}
 
 type Labels struct{ view authored.Labels }
 
