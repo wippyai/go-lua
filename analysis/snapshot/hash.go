@@ -145,7 +145,13 @@ func hashKey[K comparable](plan *keyPlan, key K) uint64 {
 		case keyBytes:
 			digest.Write(unsafe.Slice((*byte)(unsafe.Add(base, step.offset)), step.size))
 		case keyString:
-			digest.WriteString(*(*string)(unsafe.Add(base, step.offset)))
+			// A variable-length field writes its length before its bytes, so two
+			// keys whose strings concatenate identically still hash apart: the
+			// boundary between fields is part of the hashed content.
+			value := *(*string)(unsafe.Add(base, step.offset))
+			binary.LittleEndian.PutUint64(scratch[:8], uint64(len(value)))
+			digest.Write(scratch[:8])
+			digest.WriteString(value)
 		case keyFloat32:
 			value := *(*float32)(unsafe.Add(base, step.offset))
 			if value == 0 {
