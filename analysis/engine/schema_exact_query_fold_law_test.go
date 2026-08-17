@@ -10,8 +10,8 @@ import (
 
 // TestSchemaExactQueryReceiptFoldPreservesCanonicalMultiplicity exercises the
 // receipt cell directly: exact read shape admits a typed fold, whose ordered
-// observations include absent rows and multiple concrete regions. The real
-// Effect fold uses the same cell contract with its algebra-owned accumulator.
+// observations include absent rows and multiple concrete regions. A domain's
+// own fold uses the same cell contract with its algebra-owned accumulator.
 func TestSchemaExactQueryReceiptFoldPreservesCanonicalMultiplicity(t *testing.T) {
 	_, factor, query := exactQuerySchemaFixture(t)
 	spec := HotExactQuerySpec[uint64, uint64]{

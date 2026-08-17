@@ -60,6 +60,14 @@ func TestCallableEnvelopeRoundTripsEveryApplicationShape(t *testing.T) {
 				Build()},
 		},
 		{
+			name: "open result row with terminal suffix",
+			sig: signature.Function{
+				Type:         typ.Func().Param("format", typ.String).Build(),
+				ResultTail:   typ.Any,
+				ResultSuffix: []typ.Type{typ.Integer},
+			},
+		},
+		{
 			name: "nested callable parameter and map union",
 			sig: signature.Function{Type: typ.Func().
 				Param("s", typ.String).
@@ -156,7 +164,7 @@ func TestCallableEnvelopePreservesParameterPresentation(t *testing.T) {
 // is a published format: a field added, renamed or reordered is a different
 // payload, and this is where that shows.
 func TestCallableEnvelopeWireIsPinned(t *testing.T) {
-	const pinned = "982b4c3468f6da6bd01ed74e5aa35544b132f09d7c8a50729d9f601ac7dad03f"
+	const pinned = "0e5aae4c40b8657b4d059b7ccd63ce9e9d8e2b49d853d049a5d9f6abcf12130d"
 	sig := signature.Function{Type: typ.Func().
 		Param("s", typ.String).
 		Param("i", typ.Integer).

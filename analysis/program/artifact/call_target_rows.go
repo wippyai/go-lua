@@ -47,3 +47,23 @@ func (row CallTargetRow) CallFormalID() identity.ContentID {
 	}
 	return row.formal
 }
+
+// CallTargetCount is the exact closure-allocation denominator captured while
+// the Program proof was live. It is separate from BodyCount because only
+// executable function bodies are Call targets.
+func (artifact *Artifact) CallTargetCount() int {
+	if !artifact.Available() {
+		return 0
+	}
+	return len(artifact.callTargets)
+}
+
+// CallTargetAt returns one immutable allocation-to-body target proof. It
+// exposes IDs only; no Program, transformer coordinate, or allocation handle
+// can escape the artifact boundary.
+func (artifact *Artifact) CallTargetAt(index int) (CallTargetRow, bool) {
+	if !artifact.Available() || index < 0 || index >= len(artifact.callTargets) {
+		return CallTargetRow{}, false
+	}
+	return artifact.callTargets[index], true
+}

@@ -1,14 +1,16 @@
 {
   "measured": "2026-08-17",
-  "note": "Provenance: full census after the occurrences-window repair of 2026-08-17 (Flow Finish contract consumption fixed at three sites: FieldName lens Finish routing, FamilyRead span over-admission, occurrenceSpanID parallel copy consolidated onto Program.Span; plus the Mu-witness-only same-point rule replacing the commit-route disjunction). Measured 683 complete / 150 incomplete / 78 unsupported / 0 invalid over 4m27.7s analysis wall, against the prior floor of 680/153/78 minted after the 2026-08-16 landings (class-A, class-B static authority, role-17, binder frames, static-law fixpoint rewrite). The sample lane is the stride-6 projection of the same corpus, measured 112/27/13/0 in the repair lane's run. The full lane is authoritative only on a full-corpus run; the next full bounded run revalidates both numbers.",
+  "note": "Provenance: full census after the occurrences-window repair of 2026-08-17 (Flow Finish contract consumption fixed at three sites: FieldName lens Finish routing, FamilyRead span over-admission, occurrenceSpanID parallel copy consolidated onto Program.Span; plus the Mu-witness-only same-point rule replacing the commit-route disjunction). Measured 683 complete / 150 incomplete / 78 unsupported / 0 invalid over 4m27.7s analysis wall, against the prior floor of 680/153/78 minted after the 2026-08-16 landings (class-A, class-B static authority, role-17, binder frames, static-law fixpoint rewrite). The sample lane is the stride-6 projection of the same corpus, measured 112/27/13/0 in the repair lane's run. The full lane is authoritative only on a full-corpus run; the next full bounded run revalidates both numbers. Wall provenance (2026-08-17, this tree, AMD Ryzen 9 7950X3D, 32 logical CPUs, GOMAXPROCS 32, 32 harness workers, WSL2 Linux 6.18): analysis_wall_seconds is the sum of per-fixture seal+compile+solve, so it scales with worker contention and is not elapsed time - the full lane's 911 fixtures elapse in 21-29s of wall clock. Three consecutive bounded full-lane runs at 683/150/78/0 measured 484.5s, 324.5s and 324.2s; the recorded 484.5s is the first-run figure, which is the conservative one, and the 1.49x spread between it and the warm steady state is the run-to-run noise this gate must tolerate. The sample lane, run standalone over its stride-6 152 fixtures, measured 42.5s on a run meeting its 112/27/13/0 mark and 53.7-56.7s on runs of the same corpus that reached only 110/29/13/0; the recorded 56.7s is the highest of those, chosen so the sample ceiling carries the cold-file-cache headroom the full lane's 1.49x spread exposes and which the sample lane cannot measure directly once the corpus is cached. A later mint from a cold qualifying run lowers it. analysis_wall_ceiling 1.15 multiplies each recorded wall, giving 557.2s full and 65.2s sample: the gate is a macro gate for order-of-magnitude pathologies of the 34m-to-4m28s class, not a percentage-noise detector, and re-minting on other hardware replaces both walls and the note together.",
   "corpus_projects": 911,
+  "analysis_wall_ceiling": 1.15,
   "full": {
     "measured": true,
     "projects": 911,
     "complete_min": 683,
     "incomplete_max": 150,
     "unsupported_max": 78,
-    "invalid_max": 0
+    "invalid_max": 0,
+    "analysis_wall_seconds": 484.5
   },
   "sample": {
     "measured": true,
@@ -17,6 +19,7 @@
     "complete_min": 112,
     "incomplete_max": 27,
     "unsupported_max": 13,
-    "invalid_max": 0
+    "invalid_max": 0,
+    "analysis_wall_seconds": 56.7
   }
 }

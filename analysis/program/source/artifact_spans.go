@@ -1,8 +1,8 @@
 package source
 
 import (
-	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 func readSourceSpans(reader *framing.Reader, name string) ([keyspace.FamilyCount]uint32, []FamilySpans, error) {

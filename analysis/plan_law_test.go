@@ -7,11 +7,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/wippyai/go-lua/domain/composite"
-	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
-	profile "github.com/wippyai/go-lua/analysis/targetprofile"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
@@ -19,11 +16,14 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/domain/composite"
+	heapdomain "github.com/wippyai/go-lua/domain/heap"
+	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
 func planLawLink(t testing.TB) *link.Link {
 	t.Helper()
-	contract, err := profile.Contract()
+	contract, err := testfixture.StandardLibraryTarget()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func planLawProgram(t testing.TB, text string) *program.Program {
 
 func planLawMountedLink(t testing.TB, modules []linkproject.Module) *link.Link {
 	t.Helper()
-	contract, err := profile.Contract()
+	contract, err := testfixture.StandardLibraryTarget()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -401,7 +401,7 @@ func TestCompiledPlanZeroRowOutcomeDoesNotMaskLiteralReturn(t *testing.T) {
 // is singular; its derivation dispositions are the exact guarded partition
 // and every row must pass the same source/destination/value proof.
 func TestCompiledPlanAcceptsGuardPartitionedStorageTransfer(t *testing.T) {
-	contract, err := profile.Contract()
+	contract, err := testfixture.StandardLibraryTarget()
 	if err != nil {
 		t.Fatal(err)
 	}

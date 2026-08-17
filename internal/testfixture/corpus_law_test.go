@@ -7,7 +7,6 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/targetprofile"
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/link"
@@ -81,7 +80,7 @@ func TestSealCorpusProjectResolvesImportsThroughModuleKeys(t *testing.T) {
 		files = append(files, name)
 	}
 	sort.Strings(files)
-	contract, err := profile.Contract()
+	contract, err := StandardLibraryTarget()
 	if err != nil {
 		t.Fatalf("seal canonical target profile: %v", err)
 	}

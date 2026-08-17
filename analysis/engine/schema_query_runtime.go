@@ -9,8 +9,8 @@ import (
 )
 
 // receiptQueryRuntime is the common solver query implementation for both
-// catalog families. The only difference between Value summary and Effect
-// exact is the sealed Factor surface carried by the typed implementation.
+// catalog families. The only difference between the summary family and the
+// exact one is the sealed Factor surface carried by the typed implementation.
 type receiptQueryFactor[V any] interface {
 	runtimeFactor
 	receiptMatches(*schemaBindingState, *schemaBindingAuthority, uint64, composition.Key) bool

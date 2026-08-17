@@ -11,7 +11,7 @@ func staticNodeID(owner identity.ContentID, ref programstatic.StaticTypeRef) (id
 	if !owner.Available() || ref.Term() == 0 {
 		return identity.ContentID{}, false
 	}
-	return program.StaticTypeReferenceID(owner, ref)
+	return programstatic.TypeReferenceID(owner, ref)
 }
 
 func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
@@ -55,7 +55,7 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 			return compileFailure(CompileStageAuthority, CompileRowAuthority, expressionIndex, -1, CompileReasonProgramUnavailable)
 		}
 		nodeID, nodeOK := staticNodeID(owner, ref)
-		expressionID, expressionOK := program.StaticExpressionID(owner, ref)
+		expressionID, expressionOK := programstatic.ExpressionID(owner, ref)
 		if !nodeOK || !expressionOK {
 			return compileFailure(CompileStageAuthority, CompileRowAuthority, expressionIndex, -1, CompileReasonProgramUnavailable)
 		}
@@ -70,7 +70,7 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 				frontierID, cursor, frontierOK := ownerProgram.StaticFrontier(sourceTerm)
 				expressionRef, expressionOK := view.StaticTypes().Ref(sourceTerm)
 				sourceID, sourceOK := staticNodeID(owner, expressionRef)
-				operandID, operandOK := program.StaticOccurrenceID(owner, 1, operandTerm)
+				operandID, operandOK := programstatic.OccurrenceID(owner, 1, operandTerm)
 				operandKind, literal, semanticOperandID, operandReference, operandSubject, operandBody, dispositionOK := operandRow(operandTerm)
 				if semanticOperandID.Available() {
 					operandID = semanticOperandID
@@ -78,7 +78,7 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 				if !expressionOK || !sourceOK || !operandOK || !frontierOK || !dispositionOK {
 					return compileFailure(CompileStageAuthority, CompileRowAuthority, inputIndex, -1, CompileReasonProgramUnavailable)
 				}
-				rowID, rowIDOK := program.StaticInputID(owner, 2, sourceTerm, uint32(inputIndex))
+				rowID, rowIDOK := programstatic.InputID(owner, 2, sourceTerm, uint32(inputIndex))
 				if !rowIDOK {
 					return compileFailure(CompileStageAuthority, CompileRowAuthority, inputIndex, -1, CompileReasonProgramUnavailable)
 				}
@@ -117,18 +117,18 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 		if !targetRefOK || !targetIDOK || !frontierOK {
 			return compileFailure(CompileStageAuthority, CompileRowAuthority, annotationIndex, -1, CompileReasonProgramUnavailable)
 		}
-		annotationSourceID, annotationSourceOK := program.StaticOccurrenceID(owner, 5, sourceTerm)
+		annotationSourceID, annotationSourceOK := programstatic.OccurrenceID(owner, 5, sourceTerm)
 		if !annotationSourceOK {
 			return compileFailure(CompileStageAuthority, CompileRowAuthority, annotationIndex, -1, CompileReasonProgramUnavailable)
 		}
 		for valueIndex := 0; valueIndex < count; valueIndex++ {
 			operandTerm, operandOK := ownerProgram.Flow().Authored().Values().Member(valuesTerm, valueIndex)
-			operandID, operandIDOK := program.StaticOccurrenceID(owner, 3, operandTerm)
+			operandID, operandIDOK := programstatic.OccurrenceID(owner, 3, operandTerm)
 			operandKind, literal, semanticOperandID, operandReference, operandSubject, operandBody, dispositionOK := operandRow(operandTerm)
 			if semanticOperandID.Available() {
 				operandID = semanticOperandID
 			}
-			rowID, rowIDOK := program.StaticInputID(owner, 5, sourceTerm, uint32(valueIndex))
+			rowID, rowIDOK := programstatic.InputID(owner, 5, sourceTerm, uint32(valueIndex))
 			if !operandOK || !operandIDOK || !rowIDOK || !dispositionOK {
 				return compileFailure(CompileStageAuthority, CompileRowAuthority, annotationIndex, valueIndex, CompileReasonProgramUnavailable)
 			}
@@ -169,8 +169,11 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 			row.kind, row.literal = StaticNodePrimitive, uint8(primitive)
 		} else if literal, key, bits, found := view.Types().Literals().Get(term); found {
 			row.kind, row.literal, row.key, row.bits = StaticNodeLiteral, uint8(literal), key, bits
-			row.exact, _ = ownerProgram.StaticKeyLiteral(key)
-			row.name, _ = ownerProgram.StaticKeyText(key)
+			row.exact, _ = ownerProgram.Source().Keys().Exact(key)
+			nameLiteral, nameOK := ownerProgram.Source().Keys().Exact(key)
+			if nameOK && nameLiteral.Kind == keyspace.LiteralString {
+				row.name = nameLiteral.String
+			}
 		} else if child, found := view.Types().Optionals().Get(term); found {
 			row.kind = StaticNodeOptional
 			ok = appendChild(child)
@@ -206,7 +209,11 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 				fieldKey, fieldType, optional, fieldShapeOK := view.Types().Fields().Get(field)
 				if fieldShapeOK {
 					row.keys = append(row.keys, fieldKey)
-					text, _ := ownerProgram.StaticKeyText(fieldKey)
+					textLiteral, textOK := ownerProgram.Source().Keys().Exact(fieldKey)
+					text := ""
+					if textOK && textLiteral.Kind == keyspace.LiteralString {
+						text = textLiteral.String
+					}
 					row.texts = append(row.texts, text)
 					row.optional = append(row.optional, optional)
 					row.fieldKeys = append(row.fieldKeys, fieldKey)
@@ -247,7 +254,10 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 		} else if _, target, nameKey, _, found := view.Declarations().Aliases().Get(term); found {
 			row.kind = StaticNodeAlias
 			row.key = nameKey
-			row.name, _ = ownerProgram.StaticKeyText(nameKey)
+			nameLiteral, nameOK := ownerProgram.Source().Keys().Exact(nameKey)
+			if nameOK && nameLiteral.Kind == keyspace.LiteralString {
+				row.name = nameLiteral.String
+			}
 			ok = appendChild(target)
 			if count, countOK := view.Declarations().Aliases().ParamCount(term); countOK {
 				row.segments = append(row.segments, uint32(count))
@@ -266,9 +276,12 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 		} else if declOwner, nameKey, constraint, found := view.Declarations().TypeParams().Get(term); found {
 			row.kind = StaticNodeTypeParam
 			row.key = nameKey
-			row.name, _ = ownerProgram.StaticKeyText(nameKey)
+			nameLiteral, nameOK := ownerProgram.Source().Keys().Exact(nameKey)
+			if nameOK && nameLiteral.Kind == keyspace.LiteralString {
+				row.name = nameLiteral.String
+			}
 			if declOwner != 0 {
-				row.declaration, ok = program.StaticScopeID(ownerIDForRow, declOwner)
+				row.declaration, ok = programstatic.ScopeID(ownerIDForRow, declOwner)
 			}
 			if constraint != 0 && ok {
 				ok = appendChild(constraint)
@@ -276,9 +289,12 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 		} else if interfaceOwner, nameKey, _, found := view.Declarations().Interfaces().Get(term); found {
 			row.kind = StaticNodeInterface
 			row.key = nameKey
-			row.name, _ = ownerProgram.StaticKeyText(nameKey)
+			nameLiteral, nameOK := ownerProgram.Source().Keys().Exact(nameKey)
+			if nameOK && nameLiteral.Kind == keyspace.LiteralString {
+				row.name = nameLiteral.String
+			}
 			if interfaceOwner != 0 {
-				row.declaration, ok = program.StaticScopeID(ownerIDForRow, interfaceOwner)
+				row.declaration, ok = programstatic.ScopeID(ownerIDForRow, interfaceOwner)
 			}
 			if count, shapeOK := view.Declarations().Interfaces().ExtendCount(term); shapeOK {
 				row.segments = append(row.segments, uint32(count))
@@ -313,7 +329,11 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 						memberKey, memberType, memberOptional = fieldKey, fieldType, optional
 					}
 					row.keys = append(row.keys, memberKey)
-					memberText, _ := ownerProgram.StaticKeyText(memberKey)
+					memberLiteral, memberOK := ownerProgram.Source().Keys().Exact(memberKey)
+					memberText := ""
+					if memberOK && memberLiteral.Kind == keyspace.LiteralString {
+						memberText = memberLiteral.String
+					}
 					row.texts = append(row.texts, memberText)
 					row.optional = append(row.optional, memberOptional)
 					row.fieldKeys = append(row.fieldKeys, memberKey)
@@ -332,7 +352,7 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 			row.kind = StaticNodeTypeFunction
 			row.flag = variadic != 0
 			row.returnsKnown = returnsKnown
-			row.scope, ok = program.StaticScopeID(owner, scope)
+			row.scope, ok = programstatic.ScopeID(owner, scope)
 			if variadic != 0 {
 				variadicID, idOK := childID(variadic)
 				ok = idOK
@@ -365,7 +385,11 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 						break
 					}
 					row.keys = append(row.keys, parameter.Name)
-					parameterText, _ := ownerProgram.StaticKeyText(parameter.Name)
+					parameterLiteral, parameterOK := ownerProgram.Source().Keys().Exact(parameter.Name)
+					parameterText := ""
+					if parameterOK && parameterLiteral.Kind == keyspace.LiteralString {
+						parameterText = parameterLiteral.String
+					}
 					row.texts = append(row.texts, parameterText)
 					parameterID, idOK := childID(parameter.Type)
 					ok = idOK
@@ -391,7 +415,7 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 			}
 		} else if _, operand, found := view.Operators().TypeOfs().Get(term); found {
 			row.kind = StaticNodeTypeOf
-			row.operand, ok = program.StaticOccurrenceID(owner, 1, operand)
+			row.operand, ok = programstatic.OccurrenceID(owner, 1, operand)
 		} else if child, found := view.Operators().KeyOfs().Get(term); found {
 			row.kind = StaticNodeKeyOf
 			ok = appendChild(child)
@@ -404,7 +428,10 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 		} else if nameKey, coordinate, bound, param, narrow, found := view.Signatures().Assertions().Get(term); found {
 			row.kind = StaticNodeAssertion
 			row.key = nameKey
-			row.name, _ = ownerProgram.StaticKeyText(nameKey)
+			nameLiteral, nameOK := ownerProgram.Source().Keys().Exact(nameKey)
+			if nameOK && nameLiteral.Kind == keyspace.LiteralString {
+				row.name = nameLiteral.String
+			}
 			row.flag = bound
 			row.assertParam = param
 			if narrow != 0 {

@@ -16,8 +16,8 @@ func TestStructuralWitnessCapabilityResolvesDisjointClaim(t *testing.T) {
 	witness, ok := NewLinkBootstrapWitnessByCapability(
 		bootstrapTransportLawID(9, 42),
 		LinkBootstrapPoint{PointID: bootstrapTransportLawID(9, 43), Known: true, Initial: true},
-		owner.value, []identity.ContentID{value},
-		owner.heap, []identity.ContentID{heap},
+		LinkBootstrapCatalog{Capability: owner.value, Occurrences: []identity.ContentID{value}},
+		LinkBootstrapCatalog{Capability: owner.heap, Occurrences: []identity.ContentID{heap}},
 	)
 	if !ok || !witness.Available() {
 		t.Fatal("disjoint capability witness")
@@ -69,8 +69,8 @@ func TestStructuralWitnessCapabilityRejectsCrossSlotAdmission(t *testing.T) {
 	witness, ok := NewLinkBootstrapWitnessByCapability(
 		bootstrapTransportLawID(9, 61),
 		LinkBootstrapPoint{PointID: bootstrapTransportLawID(9, 62), Known: true, Initial: true},
-		owner.value, []identity.ContentID{shared},
-		owner.heap, []identity.ContentID{shared},
+		LinkBootstrapCatalog{Capability: owner.value, Occurrences: []identity.ContentID{shared}},
+		LinkBootstrapCatalog{Capability: owner.heap, Occurrences: []identity.ContentID{shared}},
 	)
 	if ok || witness.Available() {
 		t.Fatal("cross-slot occurrence admitted")

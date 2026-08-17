@@ -294,3 +294,81 @@ func (row CallRow) TypeArgumentCount() int {
 	}
 	return int(row.typeArgumentEnd - row.typeArgumentStart)
 }
+
+// CallCount and CallAt expose the complete immutable authored-call
+// denominator. Rows are retained in the same authored order as Flow.Calls;
+// no executable-only compaction is performed at this boundary.
+func (artifact *Artifact) CallCount() int {
+	if !artifact.Available() {
+		return 0
+	}
+	return len(artifact.calls)
+}
+func (artifact *Artifact) CallAt(index int) (CallRow, bool) {
+	if !artifact.Available() || index < 0 || index >= len(artifact.calls) {
+		return CallRow{}, false
+	}
+	return artifact.calls[index], artifact.calls[index].Available()
+}
+func (artifact *Artifact) CallOperandCount() int {
+	if !artifact.Available() {
+		return 0
+	}
+	return len(artifact.callOperands)
+}
+func (artifact *Artifact) CallOperandAt(index int) (CallOperandRow, bool) {
+	if !artifact.Available() || index < 0 || index >= len(artifact.callOperands) {
+		return CallOperandRow{}, false
+	}
+	return artifact.callOperands[index], artifact.callOperands[index].Available()
+}
+func (artifact *Artifact) CallArgumentCount() int {
+	if !artifact.Available() {
+		return 0
+	}
+	return len(artifact.callArguments)
+}
+func (artifact *Artifact) CallArgumentAt(index int) (CallArgumentRow, bool) {
+	if !artifact.Available() || index < 0 || index >= len(artifact.callArguments) {
+		return CallArgumentRow{}, false
+	}
+	return artifact.callArguments[index], artifact.callArguments[index].Available()
+}
+func (artifact *Artifact) CallTypeArgumentCount() int {
+	if !artifact.Available() {
+		return 0
+	}
+	return len(artifact.callTypeArguments)
+}
+func (artifact *Artifact) CallTypeArgumentAt(index int) (CallTypeArgumentRow, bool) {
+	if !artifact.Available() || index < 0 || index >= len(artifact.callTypeArguments) {
+		return CallTypeArgumentRow{}, false
+	}
+	return artifact.callTypeArguments[index], artifact.callTypeArguments[index].Available()
+}
+
+// CallOperandFor, CallArgumentFor, and CallTypeArgumentFor resolve one
+// position in a Call's closed ordered child columns. They validate the row's
+// private ranges before returning a child, so callers cannot splice a child
+// from another call or mount.
+func (artifact *Artifact) CallOperandFor(callIndex, childIndex int) (CallOperandRow, bool) {
+	call, ok := artifact.CallAt(callIndex)
+	if !ok || childIndex < 0 || childIndex >= call.OperandCount() {
+		return CallOperandRow{}, false
+	}
+	return artifact.CallOperandAt(int(call.operandStart) + childIndex)
+}
+func (artifact *Artifact) CallArgumentFor(callIndex, childIndex int) (CallArgumentRow, bool) {
+	call, ok := artifact.CallAt(callIndex)
+	if !ok || childIndex < 0 || childIndex >= call.ArgumentCount() {
+		return CallArgumentRow{}, false
+	}
+	return artifact.CallArgumentAt(int(call.argumentStart) + childIndex)
+}
+func (artifact *Artifact) CallTypeArgumentFor(callIndex, childIndex int) (CallTypeArgumentRow, bool) {
+	call, ok := artifact.CallAt(callIndex)
+	if !ok || childIndex < 0 || childIndex >= call.TypeArgumentCount() {
+		return CallTypeArgumentRow{}, false
+	}
+	return artifact.CallTypeArgumentAt(int(call.typeArgumentStart) + childIndex)
+}

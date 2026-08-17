@@ -23,22 +23,22 @@ func stringDeclaration() declaration {
 		normalize.Optional(stringCapture), normalize.Optional(stringCapture),
 		normalize.Optional(stringCapture), normalize.Optional(stringCapture),
 	).Build()
-	return declaration{signatures: map[string]signature.Function{
-		"byte": authored(typ.Func().
+	return declaration{aliases: map[string]string{"gfind": "string.gmatch"}, signatures: map[string]signature.Function{
+		"byte": withResultTail(authored(typ.Func().
 			Param("s", typ.String).OptParam("i", typ.Integer).OptParam("j", typ.Integer).
-			Returns(normalize.Optional(typ.Number)).Build(), ownership.BorrowAll{}),
+			Build(), ownership.BorrowAll{}), typ.Integer),
 		"char": authored(typ.Func().Variadic(typ.Integer).Returns(typ.String).Build()),
 		"dump": authored(typ.Func().
 			Param("function", typ.Any).Returns(typ.Never).Build()),
-		"find": authored(typ.Func().
+		"find": withResultTail(authored(typ.Func().
 			Param("s", typ.String).Param("pattern", typ.String).
 			OptParam("init", typ.Integer).OptParam("plain", typ.Boolean).
-			Returns(normalize.Optional(typ.Number), normalize.Optional(typ.Number)).Build(),
-			ownership.BorrowAll{}),
+			Returns(normalize.Optional(typ.Integer), normalize.Optional(typ.Integer)).Build(),
+			ownership.BorrowAll{}), typ.Any),
 		"format": authored(typ.Func().
 			Param("format", typ.String).Variadic(typ.Any).Returns(typ.String).Build(),
 			ownership.BorrowAll{}),
-		"gfind": openAuthored("stdlib.string.gfind.iterator", typ.Func().
+		"gfind": openAuthored("stdlib.string.gmatch.iterator", typ.Func().
 			Param("s", typ.String).Param("pattern", typ.String).
 			Returns(iterator, typ.Any).Build(), ownership.BorrowAll{}),
 		"gmatch": openAuthored("stdlib.string.gmatch.iterator", typ.Func().
@@ -52,9 +52,9 @@ func stringDeclaration() declaration {
 			ownership.BorrowAll{}),
 		"lower": authored(typ.Func().Param("s", typ.String).Returns(typ.String).Build(),
 			ownership.BorrowAll{}),
-		"match": authored(typ.Func().
+		"match": withResultTail(authored(typ.Func().
 			Param("s", typ.String).Param("pattern", typ.String).OptParam("init", typ.Integer).
-			Returns(normalize.Optional(stringCapture)).Build(), ownership.BorrowAll{}),
+			Build(), ownership.BorrowAll{}), typ.Any),
 		"pack": authored(typ.Func().
 			Param("fmt", typ.String).Variadic(typ.Any).Returns(typ.String).Build(),
 			ownership.BorrowAll{}),
@@ -68,9 +68,9 @@ func stringDeclaration() declaration {
 		"sub": authored(typ.Func().
 			Param("s", typ.String).Param("i", typ.Integer).OptParam("j", typ.Integer).
 			Returns(typ.String).Build(), ownership.BorrowAll{}),
-		"unpack": authored(typ.Func().
+		"unpack": withResults(authored(typ.Func().
 			Param("fmt", typ.String).Param("s", typ.String).OptParam("pos", typ.Integer).
-			Returns(typ.Any).Build(), ownership.BorrowAll{}),
+			Build(), ownership.BorrowAll{}), typ.Any, typ.Integer),
 		"upper": authored(typ.Func().Param("s", typ.String).Returns(typ.String).Build(),
 			ownership.BorrowAll{}),
 	}, values: map[string]typ.Type{

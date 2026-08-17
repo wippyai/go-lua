@@ -47,3 +47,17 @@ type DiagnosticObservationRow struct {
 	unresolved diagnosticUnresolvedTypeReferenceRow
 	value      diagnosticUnresolvedValueReferenceRow
 }
+
+func (artifact *Artifact) DiagnosticObservationCount() int {
+	if !artifact.Available() {
+		return 0
+	}
+	return len(artifact.diagnosticObservations)
+}
+
+func (artifact *Artifact) DiagnosticObservationAt(index int) (DiagnosticObservationRow, bool) {
+	if !artifact.Available() || index < 0 || index >= len(artifact.diagnosticObservations) {
+		return DiagnosticObservationRow{}, false
+	}
+	return artifact.diagnosticObservations[index], true
+}

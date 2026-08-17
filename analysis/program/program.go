@@ -7,12 +7,12 @@ import (
 	"fmt"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/program/flow"
 	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 // Program is the immutable root of one published canonical owner quartet.
@@ -25,6 +25,26 @@ type Program struct {
 	module *imports.Component
 	id     identity.ContentID
 	counts denominator.CountRows
+}
+
+// Available reports whether all four immutable Program owners and their
+// provenance fence are sealed. Program itself is the construction input;
+// there is no second transport or proof object around it.
+func (program *Program) Available() bool {
+	if program == nil || program.source == nil || program.flow == nil || program.static == nil || program.module == nil ||
+		!program.id.Available() {
+		return false
+	}
+	sourceID := program.source.Cold().ContentID()
+	flowID := program.flow.ContentID()
+	staticID := program.static.Cold().ContentID()
+	moduleID := program.module.Cold().ContentID()
+	if !sourceID.Available() || !flowID.Available() || !staticID.Available() || !moduleID.Available() {
+		return false
+	}
+	provenance := program.flow.View().Provenance()
+	return provenance.Source == sourceID && provenance.Flow == flowID &&
+		provenance.Static == staticID && provenance.Module == moduleID
 }
 
 var (

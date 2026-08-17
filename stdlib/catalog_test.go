@@ -73,24 +73,3 @@ func TestBindRequiresExactCoverageAndPreservesCatalogueOrder(t *testing.T) {
 		t.Fatal("Bind admitted a foreign provider")
 	}
 }
-
-func TestBindManifestsRejectsNilProviders(t *testing.T) {
-	providers := make(map[ID]ManifestProvider[string])
-	for _, library := range Libraries() {
-		id := library.ID()
-		providers[id] = func() string { return string(id) }
-	}
-	providers[Debug] = nil
-	if _, err := BindManifests(providers); err == nil {
-		t.Fatal("BindManifests admitted a nil provider")
-	}
-
-	providers[Debug] = func() string { return DebugName }
-	bound, err := BindManifests(providers)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := bound[0].Manifest(); got != PackageName {
-		t.Fatalf("first manifest = %q, want %q", got, PackageName)
-	}
-}

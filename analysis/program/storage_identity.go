@@ -6,15 +6,15 @@ package program
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/program/flow"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 // StorageCellIDAt returns the former storage Cell ContextID in authored Cell
 // order. The Cell term remains available from Flow.Storage.Cells().At.
 func (program *Program) StorageCellIDAt(index int) (identity.ContentID, bool) {
-	if !program.scalarIdentityAvailable() || index < 0 {
+	if !program.Available() || index < 0 {
 		return identity.ContentID{}, false
 	}
 	term, ok := program.Flow().Authored().Storage().Cells().At(index)
@@ -31,7 +31,7 @@ func (program *Program) StorageCellIDAt(index int) (identity.ContentID, bool) {
 // authored Read term). Dead or malformed rows remain in the denominator and
 // fail closed rather than being compacted into a new one.
 func (program *Program) StorageReadIDAt(index int) (readID, spanID identity.ContentID, term keyspace.Term, ok bool) {
-	if !program.scalarIdentityAvailable() || index < 0 {
+	if !program.Available() || index < 0 {
 		return identity.ContentID{}, identity.ContentID{}, 0, false
 	}
 	view := program.Flow()
@@ -69,7 +69,7 @@ func (program *Program) StorageReadIDAt(index int) (readID, spanID identity.Cont
 // Flow contributes the Body and evaluation geometry; the bind row itself is
 // never retained by Program.
 func (program *Program) StorageBindIDAt(index int) (identity.ContentID, bool) {
-	if !program.scalarIdentityAvailable() || index < 0 {
+	if !program.Available() || index < 0 {
 		return identity.ContentID{}, false
 	}
 	view := program.Flow()
@@ -132,7 +132,7 @@ func (program *Program) StorageBindTransferIDAt(index, position int) (identity.C
 // executable authored assignment. Its identity is structural (Body path,
 // assignment path, and destination width), not a transport row index.
 func (program *Program) StorageAssignmentIDAt(index int) (identity.ContentID, bool) {
-	if !program.scalarIdentityAvailable() || index < 0 {
+	if !program.Available() || index < 0 {
 		return identity.ContentID{}, false
 	}
 	view := program.Flow()
@@ -162,7 +162,7 @@ func (program *Program) StorageAssignmentIDAt(index int) (identity.ContentID, bo
 // route identity used by Artifact's scalar row, without exposing any causal
 // proof object.
 func (program *Program) AssignmentPredecessorID(write keyspace.Term) (id, route identity.ContentID, ok bool) {
-	if !program.scalarIdentityAvailable() || write == 0 {
+	if !program.Available() || write == 0 {
 		return identity.ContentID{}, identity.ContentID{}, false
 	}
 	view := program.Flow()

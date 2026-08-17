@@ -6,7 +6,7 @@ import (
 	typetable "github.com/wippyai/go-lua/domain/type/table"
 	"github.com/wippyai/go-lua/domain/type/typ"
 	"github.com/wippyai/go-lua/compiler/parse"
-	typemanifest "github.com/wippyai/go-lua/types/io"
+	typemanifest "github.com/wippyai/go-lua/manifest/wire"
 )
 
 func TestCompileWithOptions_StringCastAndLib(t *testing.T) {

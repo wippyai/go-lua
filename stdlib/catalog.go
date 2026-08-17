@@ -139,30 +139,3 @@ func Bind[T any](values map[ID]T) ([]Binding[T], error) {
 	}
 	return bound, nil
 }
-
-// ManifestProvider returns the manifest representation M for one library. It is
-// generic so the exact-coverage binder remains useful to runtime adapters
-// without selecting another manifest representation.
-type ManifestProvider[M any] func() M
-
-// ManifestBinding is an ordered library-to-manifest-provider association.
-type ManifestBinding[M any] struct {
-	Library  Library
-	Manifest ManifestProvider[M]
-}
-
-// BindManifests validates exact catalogue coverage and rejects nil providers.
-func BindManifests[M any](providers map[ID]ManifestProvider[M]) ([]ManifestBinding[M], error) {
-	bound, err := Bind(providers)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]ManifestBinding[M], 0, len(bound))
-	for _, item := range bound {
-		if item.Value == nil {
-			return nil, fmt.Errorf("stdlib: nil manifest provider for %q", item.Library.ID())
-		}
-		out = append(out, ManifestBinding[M]{Library: item.Library, Manifest: item.Value})
-	}
-	return out, nil
-}

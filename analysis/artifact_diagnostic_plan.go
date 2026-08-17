@@ -2,7 +2,7 @@ package analysis
 
 import (
 	"github.com/wippyai/go-lua/domain/composite"
-	valuedomain "github.com/wippyai/go-lua/domain/value"
+	publication "github.com/wippyai/go-lua/domain/composite/publication"
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
@@ -11,8 +11,8 @@ import (
 )
 
 type artifactDiagnosticObservationReceipt struct {
-	point       artifactResultPoint
-	observation engine.ReceiptObservation[valuedomain.ValueSummaryObservation]
+	point      artifactResultPoint
+	attachment publication.BranchValueObservationAttachment
 }
 
 func validMountedDiagnosticSpan(span programsource.Span) bool {
@@ -468,7 +468,7 @@ func attachBranchValueObservations(compilation *engine.ReceiptCompilation, graph
 		return nil, engine.ReceiptObservationAttachFailureArguments, false
 	}
 	rows := make([]artifactDiagnosticObservationReceipt, 0)
-	seen := make(map[artifactResultPoint]struct{})
+	seen := make(map[artifactResultPoint]publication.BranchValueObservationAttachment)
 	for _, observation := range receipt.branchObservations {
 		if observation.kind != programartifact.DiagnosticObservationBranchCondition || !observation.mount.Available() || len(observation.points) == 0 || len(observation.producers) == 0 {
 			return nil, engine.ReceiptObservationAttachFailureArguments, false
@@ -480,23 +480,25 @@ func attachBranchValueObservations(compilation *engine.ReceiptCompilation, graph
 				return nil, engine.ReceiptObservationAttachFailureArguments, false
 			}
 			role, roleOK := mountedCapability(binding, producer.role)
-			member, memberOK := graph.MountedRuleMember(role, observation.mount, producer.point, producer.occurrence)
-			if !roleOK || !memberOK {
+			if !roleOK {
 				return nil, engine.ReceiptObservationAttachFailurePoint, false
 			}
-			if _, duplicate := seen[executionKey]; duplicate {
+			if attached, duplicate := seen[executionKey]; duplicate {
+				// Two branch subjects may share one evidence point. The later
+				// producer names its own member there, so the attachment already
+				// bound to that point reauthenticates those coordinates instead
+				// of adopting them unchecked.
+				if !attached.MemberAdmitted(graph, role, producer.occurrence) {
+					return nil, engine.ReceiptObservationAttachFailurePoint, false
+				}
 				continue
 			}
-			id, idOK := identity.DeriveContentID("analysis/branch-value-observation/v1", executionKey.mount[:], executionKey.point[:], []byte("value-summary"))
-			if !idOK {
-				return nil, engine.ReceiptObservationAttachFailureArguments, false
-			}
-			observation, failure := engine.AttachRuleSummaryObservationWithFailure[valuedomain.Value, valuedomain.ValueSummaryObservation](compilation, binding.ValueQuery(), id, member)
-			if failure != engine.ReceiptObservationAttachFailureNone || !observation.Available() {
+			attachment, failure, attached := publication.AttachBranchValueObservation(compilation, binding.ValueQuery(), graph, role, executionKey.mount, producer.point, producer.occurrence)
+			if !attached {
 				return nil, failure, false
 			}
-			seen[executionKey] = struct{}{}
-			rows = append(rows, artifactDiagnosticObservationReceipt{point: anchorKey, observation: observation})
+			seen[executionKey] = attachment
+			rows = append(rows, artifactDiagnosticObservationReceipt{point: anchorKey, attachment: attachment})
 		}
 	}
 	return rows, engine.ReceiptObservationAttachFailureNone, true

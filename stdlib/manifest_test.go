@@ -7,21 +7,21 @@ import (
 	"github.com/wippyai/go-lua/domain/effect/mutation"
 	"github.com/wippyai/go-lua/domain/effect/ownership"
 	"github.com/wippyai/go-lua/domain/type/typ"
-	modulemanifest "github.com/wippyai/go-lua/types/io"
+	modulemanifest "github.com/wippyai/go-lua/manifest/wire"
 )
 
-func TestManifestProvidersHaveExactCatalogueCoverageAndFreshResults(t *testing.T) {
-	providers := ManifestProviders()
+func TestProvidersHaveExactCatalogueCoverageAndFreshResults(t *testing.T) {
+	providers := Providers()
 	if len(providers) != len(catalogue) {
 		t.Fatalf("manifest providers = %d, catalogue = %d", len(providers), len(catalogue))
 	}
 	for index, provider := range providers {
 		library := catalogue[index]
-		if provider.Library.ID() != library.ID() || provider.Manifest == nil {
+		if provider.Identity != string(library.ID()) || provider.Declaration == nil {
 			t.Fatalf("provider %d does not match catalogue entry %q", index, library.ID())
 		}
-		first := provider.Manifest()
-		second := provider.Manifest()
+		first := provider.Declaration()
+		second := provider.Declaration()
 		if first == second {
 			t.Fatalf("%q provider returned shared mutable manifest", library.ID())
 		}
@@ -29,9 +29,20 @@ func TestManifestProvidersHaveExactCatalogueCoverageAndFreshResults(t *testing.T
 			t.Fatalf("%q manifest identity = %q@%q", library.ID(), first.Path, first.Version)
 		}
 	}
+	sealed, err := Catalogue()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sealed.ProviderIdentities()) != len(catalogue) {
+		t.Fatalf("sealed providers = %d, catalogue = %d", len(sealed.ProviderIdentities()), len(catalogue))
+	}
 }
 
 func TestHighRiskSignaturesTrackNativeABIAndEffects(t *testing.T) {
+	catalogue, err := Catalogue()
+	if err != nil {
+		t.Fatal(err)
+	}
 	tests := []struct {
 		name       string
 		params     int
@@ -39,7 +50,7 @@ func TestHighRiskSignaturesTrackNativeABIAndEffects(t *testing.T) {
 		variadic   bool
 		openEffect bool
 	}{
-		{name: "rawset", params: 3},
+		{name: "rawset", params: 3, returns: 1},
 		{name: "xpcall", params: 2, returns: 2, openEffect: true},
 		{name: "package.loadlib", params: 2, returns: 1},
 		{name: "table.create", params: 2, returns: 1, openEffect: true},
@@ -55,11 +66,12 @@ func TestHighRiskSignaturesTrackNativeABIAndEffects(t *testing.T) {
 		{name: "errors.call_stack", params: 1, returns: 1, openEffect: true},
 	}
 	for _, test := range tests {
-		sig, ok := Signature(test.name)
+		function, ok := catalogue.Function(test.name)
 		if !ok {
 			t.Errorf("missing signature %q", test.name)
 			continue
 		}
+		sig := function.Signature()
 		if len(sig.Type.Params) != test.params || len(sig.Type.Returns) != test.returns ||
 			(sig.Type.Variadic != nil) != test.variadic || sig.Effect.IsOpen() != test.openEffect {
 			t.Errorf("%s ABI/effect = params:%d returns:%d variadic:%t open:%t",
@@ -68,7 +80,8 @@ func TestHighRiskSignaturesTrackNativeABIAndEffects(t *testing.T) {
 		}
 	}
 
-	insert, _ := Signature("table.insert")
+	insertFunction, _ := catalogue.Function("table.insert")
+	insert := insertFunction.Signature()
 	wantLabels := map[string]bool{"mutator": false, "length": false, "store": false}
 	for _, label := range insert.Effect.Labels {
 		switch label.(type) {
@@ -157,7 +170,11 @@ func TestNestedErrorMethodsAreTypedButNotDirectModuleExports(t *testing.T) {
 }
 
 func TestInitialGlobalsAreProjectedFromMountShape(t *testing.T) {
-	names := InitialGlobalNames()
+	sealed, err := Catalogue()
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := sealed.InitialGlobals()
 	want := make(map[string]bool)
 	for _, library := range catalogue {
 		decl := library.declaration()

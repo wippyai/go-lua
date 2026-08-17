@@ -5,10 +5,10 @@ import (
 	"reflect"
 	"testing"
 
-	profile "github.com/wippyai/go-lua/analysis/targetprofile"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
 // Keep the first corpus fixture that exercises an unconditional branch in a
@@ -181,7 +181,7 @@ func TestCorpusUnresolvedValueReferenceStaticDiagnosticLaw(t *testing.T) {
 // name. A configured global must therefore remain in the reusable artifact
 // while disappearing from the mount-qualified diagnostic receipt.
 func TestConfiguredGlobalSuppressesProgramUnresolvedValueCandidateAtLinkLaw(t *testing.T) {
-	contract, err := profile.Contract()
+	contract, err := testfixture.StandardLibraryTarget()
 	if err != nil {
 		t.Fatal(err)
 	}

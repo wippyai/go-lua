@@ -3,17 +3,17 @@ package activation_test
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/targetprofile"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	calldomain "github.com/wippyai/go-lua/domain/call"
 	activation "github.com/wippyai/go-lua/domain/call/activation"
 	"github.com/wippyai/go-lua/domain/composite"
+	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
 func TestTargetBatchCatalogRejectsBodyFromAnotherArtifact(t *testing.T) {
-	contract, err := profile.Contract()
+	contract, err := testfixture.StandardLibraryTarget()
 	if err != nil {
 		t.Fatal(err)
 	}

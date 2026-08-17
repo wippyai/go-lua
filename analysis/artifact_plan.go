@@ -507,7 +507,9 @@ func linkBootstrapWitness(state *compiledState, binding *composite.ProgramBindin
 	if !valueCapabilityOK || !heapCapabilityOK {
 		return nil, nil, engine.LinkBootstrapWitness{}, false
 	}
-	witness, witnessOK := engine.NewLinkBootstrapWitnessByCapability(state.sourceID, engine.LinkBootstrapPoint{PointID: pointID, Known: true, Initial: true}, valueCapability, valueIDs, heapCapability, heapIDs)
+	witness, witnessOK := engine.NewLinkBootstrapWitnessByCapability(state.sourceID, engine.LinkBootstrapPoint{PointID: pointID, Known: true, Initial: true},
+		engine.LinkBootstrapCatalog{Capability: valueCapability, Occurrences: valueIDs},
+		engine.LinkBootstrapCatalog{Capability: heapCapability, Occurrences: heapIDs})
 	return valueIDs, heapIDs, witness, witnessOK
 }
 

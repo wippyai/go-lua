@@ -12,7 +12,7 @@ import (
 	"strings"
 
 	"github.com/wippyai/go-lua/domain/type/typ"
-	moduleio "github.com/wippyai/go-lua/types/io"
+	moduleio "github.com/wippyai/go-lua/manifest/wire"
 	"github.com/wippyai/go-lua/types/signature"
 )
 
@@ -31,6 +31,7 @@ const (
 type Provider struct {
 	Identity    string
 	Mount       Mount
+	Immutable   bool
 	Declaration func() *moduleio.Manifest
 }
 
@@ -38,24 +39,71 @@ type Provider struct {
 type Catalogue struct {
 	providers      []provider
 	byPath         map[string]int
-	signatures     map[string]signature.Function
+	functions      []Function
+	byFunctionPath map[string]int
 	initialGlobals []string
 }
 
-type provider struct {
-	identity string
-	mount    Mount
-	manifest *moduleio.Manifest
+// Function is one provider-owned callable with its Lua-visible bindings kept
+// separate from its canonical diagnostic path.
+type Function struct {
+	providerID    string
+	bindings      []Binding
+	canonicalPath string
+	signature     signature.Function
 }
+
+func (f Function) ProviderIdentity() string { return f.providerID }
+func (f Function) CanonicalPath() string    { return f.canonicalPath }
+func (f Function) Signature() signature.Function {
+	return f.signature.Clone()
+}
+
+// Binding is one Lua-visible spelling of a callable identity.
+type Binding struct {
+	mount      Mount
+	modulePath string
+	member     []string
+}
+
+func (b Binding) Mount() Mount       { return b.mount }
+func (b Binding) ModulePath() string { return b.modulePath }
+func (b Binding) Member() []string   { return append([]string(nil), b.member...) }
+
+func (f Function) Bindings() []Binding {
+	out := make([]Binding, len(f.bindings))
+	for index := range f.bindings {
+		out[index] = f.bindings[index].clone()
+	}
+	return out
+}
+
+type provider struct {
+	identity  string
+	mount     Mount
+	immutable bool
+	manifest  *moduleio.Manifest
+}
+
+// Module is one mounted module table declared by a provider.
+type Module struct {
+	providerID string
+	path       string
+	immutable  bool
+}
+
+func (m Module) ProviderIdentity() string { return m.providerID }
+func (m Module) Path() string             { return m.path }
+func (m Module) Immutable() bool          { return m.immutable }
 
 // Seal validates, ownership-isolates, and indexes providers. Duplicate
 // identities and duplicate manifest paths are rejected; ordering is retained
 // only for deterministic enumeration, never for override semantics.
 func Seal(input ...Provider) (*Catalogue, error) {
 	catalogue := &Catalogue{
-		providers:  make([]provider, 0, len(input)),
-		byPath:     make(map[string]int, len(input)),
-		signatures: make(map[string]signature.Function),
+		providers:      make([]provider, 0, len(input)),
+		byPath:         make(map[string]int, len(input)),
+		byFunctionPath: make(map[string]int),
 	}
 	identities := make(map[string]struct{}, len(input))
 	globals := make(map[string]struct{})
@@ -83,26 +131,42 @@ func Seal(input ...Provider) (*Catalogue, error) {
 		}
 		catalogue.byPath[owned.Path] = len(catalogue.providers)
 		catalogue.providers = append(catalogue.providers, provider{
-			identity: item.Identity,
-			mount:    item.Mount,
-			manifest: owned,
+			identity:  item.Identity,
+			mount:     item.Mount,
+			immutable: item.Immutable,
+			manifest:  owned,
 		})
 
 		for local, function := range owned.FunctionSignatures {
-			name := qualify(owned.Path, local)
-			if _, exists := catalogue.signatures[name]; exists {
+			if _, alias := owned.FunctionAliases[local]; alias {
+				continue
+			}
+			name := local
+			if item.Mount != MountGlobals {
+				name = qualify(owned.Path, local)
+			}
+			if _, exists := catalogue.byFunctionPath[name]; exists {
 				return nil, fmt.Errorf("manifest: duplicate function path %q", name)
 			}
-			catalogue.signatures[name] = owned.ScopeSignature(function)
+			catalogue.byFunctionPath[name] = len(catalogue.functions)
+			catalogue.functions = append(catalogue.functions, Function{
+				providerID:    item.Identity,
+				bindings:      []Binding{{mount: item.Mount, modulePath: owned.Path, member: strings.Split(local, ".")}},
+				canonicalPath: name,
+				signature:     owned.ScopeSignature(function),
+			})
 		}
 
+		// Explicit ambient globals are valid for every mount. A provider can
+		// install a module table and host functions side by side (Wippy's
+		// restricted package provider installs both package and require).
+		for _, name := range owned.Globals {
+			if name != "" {
+				globals[name] = struct{}{}
+			}
+		}
 		switch item.Mount {
 		case MountGlobals:
-			for _, name := range owned.Globals {
-				if name != "" {
-					globals[name] = struct{}{}
-				}
-			}
 		case MountModule:
 			if owned.Path == "" {
 				return nil, fmt.Errorf("manifest: module provider %q has an empty path", item.Identity)
@@ -113,11 +177,48 @@ func Seal(input ...Provider) (*Catalogue, error) {
 			return nil, fmt.Errorf("manifest: provider %q has invalid mount %d", item.Identity, item.Mount)
 		}
 	}
+	for _, item := range catalogue.providers {
+		for local, target := range item.manifest.FunctionAliases {
+			aliasPath := local
+			if item.mount != MountGlobals {
+				aliasPath = qualify(item.manifest.Path, local)
+			}
+			if _, exists := catalogue.byFunctionPath[aliasPath]; exists {
+				return nil, fmt.Errorf("manifest: function alias %q collides with a declaration", aliasPath)
+			}
+			targetIndex, exists := catalogue.byFunctionPath[target]
+			if !exists {
+				return nil, fmt.Errorf("manifest: function alias %q targets unknown %q", aliasPath, target)
+			}
+			aliasSignature, exists := item.manifest.FunctionSignatures[local]
+			if !exists || !aliasSignature.Equals(catalogue.functions[targetIndex].signature) {
+				return nil, fmt.Errorf("manifest: function alias %q signature differs from %q", aliasPath, target)
+			}
+			catalogue.functions[targetIndex].bindings = append(catalogue.functions[targetIndex].bindings, Binding{
+				mount: item.mount, modulePath: item.manifest.Path, member: strings.Split(local, "."),
+			})
+			catalogue.byFunctionPath[aliasPath] = targetIndex
+		}
+	}
 	for name := range globals {
 		catalogue.initialGlobals = append(catalogue.initialGlobals, name)
 	}
 	sort.Strings(catalogue.initialGlobals)
 	return catalogue, nil
+}
+
+// Modules returns mounted module tables in provider declaration order.
+func (c *Catalogue) Modules() []Module {
+	if c == nil {
+		return nil
+	}
+	out := make([]Module, 0, len(c.providers))
+	for _, item := range c.providers {
+		if item.mount == MountModule {
+			out = append(out, Module{providerID: item.identity, path: item.manifest.Path, immutable: item.immutable})
+		}
+	}
+	return out
 }
 
 func clone(input *moduleio.Manifest) (*moduleio.Manifest, error) {
@@ -158,30 +259,43 @@ func (c *Catalogue) InitialGlobals() []string {
 	return append([]string(nil), c.initialGlobals...)
 }
 
-// Signature returns an ownership-isolated function declaration by canonical
+// Function returns an ownership-isolated declaration by canonical diagnostic
 // path, such as "assert", "table.insert", or "errors.Error.kind".
-func (c *Catalogue) Signature(path string) (signature.Function, bool) {
+func (c *Catalogue) Function(path string) (Function, bool) {
 	if c == nil || path == "" {
-		return signature.Function{}, false
+		return Function{}, false
 	}
-	function, ok := c.signatures[path]
+	index, ok := c.byFunctionPath[path]
 	if !ok {
-		return signature.Function{}, false
+		return Function{}, false
 	}
-	return function.Clone(), true
+	return c.functions[index].clone(), true
 }
 
-// SignatureNames returns every canonical callable path in lexical order.
-func (c *Catalogue) SignatureNames() []string {
+// Functions returns every mounted declaration in canonical-path order.
+func (c *Catalogue) Functions() []Function {
 	if c == nil {
 		return nil
 	}
-	out := make([]string, 0, len(c.signatures))
-	for name := range c.signatures {
-		out = append(out, name)
+	out := make([]Function, len(c.functions))
+	for index := range c.functions {
+		out[index] = c.functions[index].clone()
 	}
-	sort.Strings(out)
+	sort.Slice(out, func(left, right int) bool {
+		return out[left].canonicalPath < out[right].canonicalPath
+	})
 	return out
+}
+
+func (f Function) clone() Function {
+	f.bindings = f.Bindings()
+	f.signature = f.signature.Clone()
+	return f
+}
+
+func (b Binding) clone() Binding {
+	b.member = append([]string(nil), b.member...)
+	return b
 }
 
 // Type returns one named type from an exact manifest path.

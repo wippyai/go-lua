@@ -27,15 +27,17 @@ import (
 // content projection: an envelope is round-trippable and keeps parameter
 // presentation, where the content projection erases it, so the two cannot share
 // a version decision.
-const CallableEnvelopeSchema = "go-lua.callable.envelope/v1"
+const CallableEnvelopeSchema = "go-lua.callable.envelope/v2"
 
 // callableEnvelopeWire is the envelope document. The schema is written inside
 // the payload so a reader that holds only the bytes rejects a projection it was
 // not written for instead of reading it as one it was.
 type callableEnvelopeWire struct {
-	Schema string         `json:"schema"`
-	Type   *TypeWire      `json:"type,omitempty"`
-	Effect *effectRowWire `json:"effect,omitempty"`
+	Schema       string         `json:"schema"`
+	Type         *TypeWire      `json:"type,omitempty"`
+	ResultTail   *TypeWire      `json:"resultTail,omitempty"`
+	ResultSuffix []*TypeWire    `json:"resultSuffix,omitempty"`
+	Effect       *effectRowWire `json:"effect,omitempty"`
 }
 
 // EncodeCallableSignature writes one callable's application envelope. The
@@ -48,9 +50,11 @@ func EncodeCallableSignature(sig signature.Function) ([]byte, error) {
 		return nil, fmt.Errorf("signature/wire: encode callable envelope: %w", err)
 	}
 	data, err := json.Marshal(callableEnvelopeWire{
-		Schema: CallableEnvelopeSchema,
-		Type:   encoded.Type,
-		Effect: encoded.Effect,
+		Schema:       CallableEnvelopeSchema,
+		Type:         encoded.Type,
+		ResultTail:   encoded.ResultTail,
+		ResultSuffix: encoded.ResultSuffix,
+		Effect:       encoded.Effect,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("signature/wire: encode callable envelope: %w", err)
@@ -87,7 +91,7 @@ func DecodeCallableSignature(data []byte) (sig signature.Function, err error) {
 		return signature.Function{}, fmt.Errorf(
 			"signature/wire: callable envelope schema %q, want %q", envelope.Schema, CallableEnvelopeSchema)
 	}
-	decoded, err := DecodeFunctionSignature(FunctionSignatureWire{Type: envelope.Type, Effect: envelope.Effect})
+	decoded, err := DecodeFunctionSignature(FunctionSignatureWire{Type: envelope.Type, ResultTail: envelope.ResultTail, ResultSuffix: envelope.ResultSuffix, Effect: envelope.Effect})
 	if err != nil {
 		return signature.Function{}, fmt.Errorf("signature/wire: decode callable envelope: %w", err)
 	}

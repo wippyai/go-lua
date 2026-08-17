@@ -128,3 +128,18 @@ func (row BodyRow) RootAt(index int) (RootRow, bool) {
 	root := row.roots[index]
 	return root, root.Available()
 }
+
+// BodyCount returns Source's exact immutable Body denominator.
+func (artifact *Artifact) BodyCount() int {
+	if !artifact.Available() {
+		return 0
+	}
+	return len(artifact.bodies)
+}
+
+func (artifact *Artifact) BodyAt(index int) (BodyRow, bool) {
+	if !artifact.Available() || index < 0 || index >= len(artifact.bodies) {
+		return BodyRow{}, false
+	}
+	return artifact.bodies[index], true
+}

@@ -13,9 +13,9 @@ func utf8Declaration() declaration {
 	return declaration{
 		signatures: map[string]signature.Function{
 			"char": authored(typ.Func().Variadic(typ.Integer).Returns(typ.String).Build()),
-			"codepoint": authored(typ.Func().
+			"codepoint": withResultTail(authored(typ.Func().
 				Param("s", typ.String).OptParam("i", typ.Integer).OptParam("j", typ.Integer).
-				Returns(typ.Integer).Build(), ownership.BorrowAll{}),
+				Build(), ownership.BorrowAll{}), typ.Integer),
 			"codes": authored(typ.Func().
 				Param("s", typ.String).Returns(typ.Any, typ.String, typ.Integer).Build(),
 				ownership.BorrowAll{},

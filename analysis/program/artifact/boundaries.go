@@ -49,3 +49,18 @@ func (row BoundaryRow) Position() (int, bool) {
 	return int(row.position), row.Available() && row.kind == BoundaryCapture
 }
 func (row BoundaryRow) Eligible() bool { return row.Available() && row.eligible }
+
+// BoundaryCount and BoundaryAt expose the exact Program boundary rows copied
+// during compilation. Link consumers substitute their own mounted authority.
+func (artifact *Artifact) BoundaryCount() int {
+	if !artifact.Available() {
+		return 0
+	}
+	return len(artifact.boundaries)
+}
+func (artifact *Artifact) BoundaryAt(index int) (BoundaryRow, bool) {
+	if !artifact.Available() || index < 0 || index >= len(artifact.boundaries) {
+		return BoundaryRow{}, false
+	}
+	return artifact.boundaries[index], true
+}

@@ -6,7 +6,7 @@ import (
 	"github.com/wippyai/go-lua/domain/type/annotation"
 	typetable "github.com/wippyai/go-lua/domain/type/table"
 	"github.com/wippyai/go-lua/domain/type/typ"
-	typemanifest "github.com/wippyai/go-lua/types/io"
+	typemanifest "github.com/wippyai/go-lua/manifest/wire"
 )
 
 func TestTypeInfoInjection_TypeIs(t *testing.T) {

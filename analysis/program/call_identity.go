@@ -2,9 +2,9 @@ package program
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/program/flow"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 // CallIDAt returns the canonical scalar identity of one authored Program
@@ -140,7 +140,7 @@ func (program *Program) CallTypeArgumentsIDAt(index int) (identity.ContentID, bo
 
 // CallTypeArgumentIDAt returns the canonical scalar identity of one ordered
 // Static type argument. The type-reference payload is issued separately by
-// StaticTypeReferenceID; this identity remains the exact authored child role.
+// TypeReferenceID; this identity remains the exact authored child role.
 func (program *Program) CallTypeArgumentIDAt(index, argument int) (identity.ContentID, bool) {
 	call, _, _, _, _, ok := program.callIdentityRow(index)
 	if !ok || argument < 0 {

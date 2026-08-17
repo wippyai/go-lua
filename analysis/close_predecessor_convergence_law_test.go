@@ -6,10 +6,10 @@ import (
 
 	"github.com/wippyai/go-lua/analysis"
 	"github.com/wippyai/go-lua/analysis/engine"
-	profile "github.com/wippyai/go-lua/analysis/targetprofile"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
 // TestNumericLoopWithGuardedBodyConverges is the analysis-level statement of
@@ -29,7 +29,7 @@ func TestNumericLoopWithGuardedBodyConverges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	contract, err := profile.Contract()
+	contract, err := testfixture.StandardLibraryTarget()
 	if err != nil {
 		t.Fatal(err)
 	}

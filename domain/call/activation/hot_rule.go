@@ -49,14 +49,17 @@ func (rule *HotRule) Implementation() (*callowner.ActivationRuleImplementation, 
 	return rule.implementation, ok
 }
 
-// BindMountedTransport completes the one pre-seal activation bridge with the
-// exact five FactorRefs. It may run once only; the issuer itself is engine
-// owned and accepts no caller-provided point or factor-edge rows.
+// BindMountedTransport completes the one pre-seal activation bridge. This
+// package owns the call plane's transport roster: the value, call, heap and
+// pack lanes are imported into a mounted body and the effect lane is exported
+// back out of it. It may run once only; the issuer itself is engine owned and
+// accepts no caller-provided point or factor-edge rows.
 func BindMountedTransport[V, C, H, P, E any](rule *HotRule, value engine.FactorRef[V], calls engine.FactorRef[C], heap engine.FactorRef[H], pack engine.FactorRef[P], effect engine.FactorRef[E]) bool {
 	if rule == nil || rule.owner == nil || rule.implementation == nil || rule.transport != nil {
 		return false
 	}
-	issuer, ok := callowner.BindMountedActivationCandidateIssuer(rule.implementation, value, calls, heap, pack, effect)
+	imports := []engine.AnyFactorRef{value.Any(), calls.Any(), heap.Any(), pack.Any()}
+	issuer, ok := callowner.BindMountedActivationCandidateIssuer(rule.implementation, imports, effect.Any())
 	if !ok || issuer == nil {
 		return false
 	}

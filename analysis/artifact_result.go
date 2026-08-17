@@ -224,7 +224,7 @@ func collectGuardPolarityFindings(report *DiagnosticReport, receipt *artifactRes
 			report.collectionFailure = DiagnosticCollectionSubjectQueryAbsent
 			return true
 		}
-		observation, readable := engine.ReceiptObservationResult(selectedObservation.observation, solver, state)
+		observation, readable := selectedObservation.attachment.Observe(solver, state)
 		if !readable {
 			report.collectionFailure = DiagnosticCollectionQueryUnreadable
 			return true

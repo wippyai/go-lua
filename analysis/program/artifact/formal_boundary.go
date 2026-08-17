@@ -277,3 +277,34 @@ func (compiler *compiler) copyFunctionBoundariesFailure() CompileFailure {
 	compiler.functionBoundaries = rows
 	return CompileFailure{}
 }
+
+// FunctionBoundaryCount and FunctionBoundaryAt expose the sole neutral
+// callable-interface denominator. The rows are content-addressed Program
+// artifact data; Link supplies only mounted actual/callback substitutions.
+func (artifact *Artifact) FunctionBoundaryCount() int {
+	if !artifact.Available() {
+		return 0
+	}
+	return len(artifact.functionBoundaries)
+}
+func (artifact *Artifact) FunctionBoundaryAt(index int) (FunctionBoundaryRow, bool) {
+	if !artifact.Available() || index < 0 || index >= len(artifact.functionBoundaries) {
+		return FunctionBoundaryRow{}, false
+	}
+	return artifact.functionBoundaries[index], true
+}
+
+// FunctionBoundaryForBody resolves the sole callable boundary owned by a
+// Body. The inverse is sealed with the Artifact and keeps consumers from
+// rebuilding a body-to-function map beside the canonical column.
+func (artifact *Artifact) FunctionBoundaryForBody(bodyID identity.ContentID) (FunctionBoundaryRow, bool) {
+	if artifact == nil || !artifact.Available() || !bodyID.Available() || artifact.functionBoundaryByBody == nil {
+		return FunctionBoundaryRow{}, false
+	}
+	index, ok := artifact.functionBoundaryByBody[bodyID]
+	if !ok || uint64(index) >= uint64(len(artifact.functionBoundaries)) {
+		return FunctionBoundaryRow{}, false
+	}
+	row := artifact.functionBoundaries[index]
+	return row, row.Available() && row.BodyID() == bodyID
+}

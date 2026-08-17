@@ -28,3 +28,20 @@ func (row PointAttachmentRow) PointID() identity.ContentID {
 	}
 	return row.point
 }
+
+// PointAttachmentCount returns the exact immutable Site-to-LocalWTO point
+// column copied during artifact compilation.
+func (artifact *Artifact) PointAttachmentCount() int {
+	if !artifact.Available() {
+		return 0
+	}
+	return len(artifact.pointAttachments)
+}
+
+// PointAttachmentAt returns one ordered immutable point-attachment row.
+func (artifact *Artifact) PointAttachmentAt(index int) (PointAttachmentRow, bool) {
+	if !artifact.Available() || index < 0 || index >= len(artifact.pointAttachments) {
+		return PointAttachmentRow{}, false
+	}
+	return artifact.pointAttachments[index], true
+}

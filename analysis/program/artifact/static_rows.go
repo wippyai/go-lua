@@ -127,3 +127,83 @@ func (compiler *compiler) copyStaticRowsFailure() CompileFailure {
 	}
 	return CompileFailure{}
 }
+
+// StaticTypeArgumentCount and StaticTypeArgumentAt expose the closed
+// Program-owned type-argument formal plane to mounted Static authorities.
+func (artifact *Artifact) StaticTypeArgumentCount() int {
+	if !artifact.Available() {
+		return 0
+	}
+	return len(artifact.staticTypeArguments)
+}
+func (artifact *Artifact) StaticTypeArgumentAt(index int) (StaticTypeArgumentRow, bool) {
+	if !artifact.Available() || index < 0 || index >= len(artifact.staticTypeArguments) {
+		return StaticTypeArgumentRow{}, false
+	}
+	return artifact.staticTypeArguments[index], true
+}
+
+// StaticTypeValueCount and StaticTypeValueAt expose executable TypeValue
+// source rows without exporting the authored source coordinate.
+func (artifact *Artifact) StaticTypeValueCount() int {
+	if !artifact.Available() {
+		return 0
+	}
+	return len(artifact.staticTypeValues)
+}
+func (artifact *Artifact) StaticTypeValueAt(index int) (StaticTypeValueRow, bool) {
+	if !artifact.Available() || index < 0 || index >= len(artifact.staticTypeValues) {
+		return StaticTypeValueRow{}, false
+	}
+	return artifact.staticTypeValues[index], true
+}
+
+func (artifact *Artifact) StaticTypeNodeCount() int {
+	if !artifact.Available() {
+		return 0
+	}
+	return len(artifact.staticTypeNodes)
+}
+func (artifact *Artifact) StaticTypeNodeAt(index int) (StaticTypeNodeRow, bool) {
+	if !artifact.Available() || index < 0 || index >= len(artifact.staticTypeNodes) {
+		return StaticTypeNodeRow{}, false
+	}
+	return artifact.staticTypeNodes[index], true
+}
+func (artifact *Artifact) StaticExpressionCount() int {
+	if !artifact.Available() {
+		return 0
+	}
+	return len(artifact.staticExpressions)
+}
+func (artifact *Artifact) StaticExpressionAt(index int) (StaticExpressionRow, bool) {
+	if !artifact.Available() || index < 0 || index >= len(artifact.staticExpressions) {
+		return StaticExpressionRow{}, false
+	}
+	return artifact.staticExpressions[index], true
+}
+
+func (artifact *Artifact) StaticExpressionByID(id identity.ContentID) (StaticExpressionRow, bool) {
+	if artifact == nil || !id.Available() {
+		return StaticExpressionRow{}, false
+	}
+	for _, row := range artifact.staticExpressions {
+		if row.id == id {
+			return row, true
+		}
+	}
+	return StaticExpressionRow{}, false
+}
+
+func (artifact *Artifact) StaticInputCount() int {
+	if !artifact.Available() {
+		return 0
+	}
+	return len(artifact.staticInputs)
+}
+func (artifact *Artifact) StaticInputAt(index int) (StaticInputRow, bool) {
+	if !artifact.Available() || index < 0 || index >= len(artifact.staticInputs) {
+		return StaticInputRow{}, false
+	}
+	return artifact.staticInputs[index], true
+}

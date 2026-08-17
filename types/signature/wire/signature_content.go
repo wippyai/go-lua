@@ -14,13 +14,15 @@ import (
 // signature content identity. It is intentionally independent of the manifest
 // document schema: changing either projection requires an explicit version
 // decision instead of silently re-keying caches.
-const SignatureContentSchema = "go-lua.signature.content/v2"
+const SignatureContentSchema = "go-lua.signature.content/v3"
 
 type signatureContentWire struct {
-	Schema  string         `json:"schema"`
-	HasType bool           `json:"hasType"`
-	Type    *TypeWire      `json:"type,omitempty"`
-	Effect  *effectRowWire `json:"effect,omitempty"`
+	Schema       string         `json:"schema"`
+	HasType      bool           `json:"hasType"`
+	Type         *TypeWire      `json:"type,omitempty"`
+	ResultTail   *TypeWire      `json:"resultTail,omitempty"`
+	ResultSuffix []*TypeWire    `json:"resultSuffix,omitempty"`
+	Effect       *effectRowWire `json:"effect,omitempty"`
 }
 
 // CanonicalFunctionSignatureBytesContext returns the canonical, collision-safe
@@ -51,11 +53,33 @@ func CanonicalFunctionSignatureBytesContext(ctx context.Context, sig signature.F
 	if err != nil {
 		return nil, err
 	}
+	var encodedResultTail *TypeWire
+	if sig.ResultTail != nil {
+		if err := validateCanonicalSignatureTypeGraph(ctx, sig.ResultTail); err != nil {
+			return nil, err
+		}
+		encodedResultTail, err = encodeSemanticType(sig.ResultTail)
+		if err != nil {
+			return nil, err
+		}
+	}
+	encodedResultSuffix := make([]*TypeWire, len(sig.ResultSuffix))
+	for index, value := range sig.ResultSuffix {
+		if err := validateCanonicalSignatureTypeGraph(ctx, value); err != nil {
+			return nil, err
+		}
+		encodedResultSuffix[index], err = encodeSemanticType(value)
+		if err != nil {
+			return nil, err
+		}
+	}
 	return json.Marshal(signatureContentWire{
-		Schema:  SignatureContentSchema,
-		HasType: sig.Type != nil,
-		Type:    encodedType,
-		Effect:  encodedEffect,
+		Schema:       SignatureContentSchema,
+		HasType:      sig.Type != nil,
+		Type:         encodedType,
+		ResultTail:   encodedResultTail,
+		ResultSuffix: encodedResultSuffix,
+		Effect:       encodedEffect,
 	})
 }
 

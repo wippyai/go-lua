@@ -1,8 +1,8 @@
 package source
 
 import (
-	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 // preflightSourceLiterals validates every literal row from a Reader copy.

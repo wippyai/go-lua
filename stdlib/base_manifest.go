@@ -60,7 +60,8 @@ func baseDeclaration() declaration {
 				Param("table", typ.Any).Param("index", typ.Any).Returns(typ.Any).Build(),
 				ownership.BorrowAll{}),
 			"rawset": authored(typ.Func().
-				Param("table", typ.Any).Param("index", typ.Any).Param("value", typ.Any).Build(),
+				Param("table", typ.Any).Param("index", typ.Any).Param("value", typ.Any).
+				Returns(typ.Any).Build(),
 				ownership.Store{Param: effect.ParamRef{Index: 2}, Into: effect.ParamRef{Index: 0}}),
 			"select": authored(typ.Func().
 				Param("index", typ.Any).Variadic(typ.Any).Returns(typ.Any).Build()),

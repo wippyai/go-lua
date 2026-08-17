@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wippyai/go-lua/domain/composite"
-	profile "github.com/wippyai/go-lua/analysis/targetprofile"
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/link"
+	"github.com/wippyai/go-lua/domain/composite"
+	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
 func TestPlanCloseWaitsForActiveSolveLease(t *testing.T) {
@@ -54,7 +54,7 @@ func TestPlanCloseWaitsForActiveSolveLease(t *testing.T) {
 }
 
 func TestArtifactCacheSurvivesSequentialPlanClose(t *testing.T) {
-	contract, err := profile.Contract()
+	contract, err := testfixture.StandardLibraryTarget()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ return retained_cache_probe`, contract)
 }
 
 func TestArtifactCacheConcurrentCompileSharesOneImmutableEntry(t *testing.T) {
-	contract, err := profile.Contract()
+	contract, err := testfixture.StandardLibraryTarget()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ return concurrent_cache_probe`, contract)
 }
 
 func TestArtifactCacheChangedFullKeyDoesNotAlias(t *testing.T) {
-	contract, err := profile.Contract()
+	contract, err := testfixture.StandardLibraryTarget()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +200,7 @@ func TestArtifactCacheChangedFullKeyDoesNotAlias(t *testing.T) {
 }
 
 func TestArtifactTemplateReusesAcrossIndependentEqualProgramsAndLinks(t *testing.T) {
-	contract, err := profile.Contract()
+	contract, err := testfixture.StandardLibraryTarget()
 	if err != nil {
 		t.Fatal(err)
 	}

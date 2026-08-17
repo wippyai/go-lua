@@ -119,3 +119,53 @@ func (value ReturnValue) ID() identity.ContentID {
 	}
 	return value.id
 }
+
+// OutcomeCount returns the complete flattened Body Outcome denominator in
+// parent Body/per-Body order.
+func (artifact *Artifact) OutcomeCount() int {
+	if !artifact.Available() {
+		return 0
+	}
+	return len(artifact.outcomes)
+}
+
+func (artifact *Artifact) OutcomeAt(index int) (OutcomeRow, bool) {
+	if !artifact.Available() || index < 0 || index >= len(artifact.outcomes) {
+		return OutcomeRow{}, false
+	}
+	return artifact.outcomes[index], true
+}
+
+// BodyOutcomeAt indexes one Body's exact ordered Outcome range without
+// exposing the backing range or slice.
+func (artifact *Artifact) BodyOutcomeAt(bodyIndex, outcomeIndex int) (OutcomeRow, bool) {
+	if !artifact.Available() || bodyIndex < 0 || bodyIndex >= len(artifact.bodies) || outcomeIndex < 0 {
+		return OutcomeRow{}, false
+	}
+	body := artifact.bodies[bodyIndex]
+	if !body.Available() || uint64(outcomeIndex) >= uint64(body.outcomeEnd-body.outcomeStart) {
+		return OutcomeRow{}, false
+	}
+	index := uint64(body.outcomeStart) + uint64(outcomeIndex)
+	if index >= uint64(len(artifact.outcomes)) {
+		return OutcomeRow{}, false
+	}
+	return artifact.outcomes[index], true
+}
+
+// OutcomeReturnValueAt returns one ordered Values occurrence reference for a
+// Return Outcome without exposing the flat backing plane.
+func (artifact *Artifact) OutcomeReturnValueAt(outcomeIndex, valueIndex int) (ReturnValue, bool) {
+	if !artifact.Available() || outcomeIndex < 0 || outcomeIndex >= len(artifact.outcomes) || valueIndex < 0 {
+		return ReturnValue{}, false
+	}
+	outcome := artifact.outcomes[outcomeIndex]
+	if !outcome.Available() || uint64(valueIndex) >= uint64(outcome.returnEnd-outcome.returnStart) {
+		return ReturnValue{}, false
+	}
+	index := uint64(outcome.returnStart) + uint64(valueIndex)
+	if index >= uint64(len(artifact.returnValues)) {
+		return ReturnValue{}, false
+	}
+	return artifact.returnValues[index], true
+}

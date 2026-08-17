@@ -2,7 +2,7 @@ package lua
 
 import (
 	"github.com/wippyai/go-lua/domain/type/typ"
-	manifest "github.com/wippyai/go-lua/types/io"
+	manifest "github.com/wippyai/go-lua/manifest/wire"
 )
 
 type typeBinding struct {

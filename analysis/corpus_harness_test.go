@@ -13,17 +13,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wippyai/go-lua/domain/composite"
-	callsite "github.com/wippyai/go-lua/domain/effect/callsite"
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/internal/testfixture"
-	profile "github.com/wippyai/go-lua/analysis/targetprofile"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/domain/composite"
+	callsite "github.com/wippyai/go-lua/domain/effect/callsite"
+	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
 // The corpus harness is this package's single fixture spine. One enumeration
@@ -213,7 +212,7 @@ func corpusHarnessFixture(t *testing.T, name string) corpusHarnessProject {
 
 func corpusHarnessContract(t testing.TB) *target.Contract {
 	t.Helper()
-	contract, err := profile.Contract()
+	contract, err := testfixture.StandardLibraryTarget()
 	if err != nil {
 		t.Fatalf("seal canonical target profile: %v", err)
 	}

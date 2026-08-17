@@ -6,14 +6,14 @@ package program
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 // ValueSourceCount returns the authored denominator for one literal family or
 // FamilyTypeValue. TypeValue includes dead candidates by design.
 func (program *Program) ValueSourceCount(family keyspace.Family) int {
-	if !program.scalarIdentityAvailable() {
+	if !program.Available() {
 		return 0
 	}
 	literals := program.Source().Literals()
@@ -39,7 +39,7 @@ func (program *Program) ValueSourceCount(family keyspace.Family) int {
 // source term). It preserves the old ValueSourceOccurrence code: nil/bool/
 // integer/float/string use codes 1..5 and TypeValue uses code 6.
 func (program *Program) ValueSourceIDAt(family keyspace.Family, index int) (sourceID, spanID identity.ContentID, term keyspace.Term, ok bool) {
-	if !program.scalarIdentityAvailable() || index < 0 {
+	if !program.Available() || index < 0 {
 		return identity.ContentID{}, identity.ContentID{}, 0, false
 	}
 	var owner, target keyspace.Term
@@ -104,7 +104,7 @@ func (program *Program) valueSourceSpan(term keyspace.Term) (identity.ContentID,
 	if direct {
 		return spanID, true, spanID.Available()
 	}
-	if !program.scalarIdentityAvailable() {
+	if !program.Available() {
 		return identity.ContentID{}, false, false
 	}
 	root, rootOK := program.Source().Index().Root(term)

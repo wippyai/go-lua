@@ -493,6 +493,25 @@ func (implementation *SummaryQueryImplementation[V, R]) accumulator() (func() R,
 	return implementation.receipt.cell.begin, implementation.receipt.cell.accumulate, true
 }
 
+// frozenResult returns the result contract behind a valid receipt: the
+// identity this family's answers are frozen under, and the freeze, clone,
+// equality and fingerprint the owning domain declared for them. A materializer
+// writes the frozen form and checks it against that contract, so what reaches a
+// published column is what the domain says an answer is.
+func (implementation *SummaryQueryImplementation[V, R]) frozenResult() (FrozenResult[R], bool) {
+	if implementation == nil || !implementation.receipt.valid() {
+		return FrozenResult[R]{}, false
+	}
+	return implementation.receipt.cell.result, true
+}
+
+func (implementation *ExactQueryImplementation[V, R]) frozenResult() (FrozenResult[R], bool) {
+	if implementation == nil || !implementation.receipt.valid() {
+		return FrozenResult[R]{}, false
+	}
+	return implementation.receipt.cell.result, true
+}
+
 func (cell *schemaExactQueryBindingCell[V, R]) completeSealed(state *schemaBindingState) bool {
 	return cell != nil && state != nil && cell.state == state && state.phase == schemaBindingSealed && cell.schema == state.schema && cell.query != nil && cell.query.Schema() == state.schema && (cell.project != nil || cell.begin != nil && cell.accumulate != nil) && validFrozenResult(cell.result)
 }

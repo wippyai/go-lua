@@ -3,10 +3,10 @@ package analysis
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/analysis/identity"
-	profile "github.com/wippyai/go-lua/analysis/targetprofile"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/domain/composite"
+	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
 // TestDiagnosticBranchGeometryUsesExecutionPointAndBaseAnchor proves that
@@ -78,7 +78,7 @@ return 0`,
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			contract, err := profile.Contract()
+			contract, err := testfixture.StandardLibraryTarget()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -136,7 +136,7 @@ return 0`,
 // rule local to the geometry wrapper: missing transfer, partial transport,
 // and duplicate full destinations cannot be guessed into a branch receipt.
 func TestDiagnosticBranchGeometryRejectsUnprovenTransfer(t *testing.T) {
-	contract, err := profile.Contract()
+	contract, err := testfixture.StandardLibraryTarget()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ return 0`, contract)
 // optional Program branch family is omitted from the mounted projector rather
 // than making the entire CompileWithDiagnostics boundary unsupported.
 func TestDiagnosticBranchWithoutMountedProducerRemainsSupported(t *testing.T) {
-	contract, err := profile.Contract()
+	contract, err := testfixture.StandardLibraryTarget()
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5,10 +5,10 @@ import (
 	"testing"
 
 	analysis "github.com/wippyai/go-lua/analysis"
-	"github.com/wippyai/go-lua/analysis/targetprofile"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
 // Empty self-create is exercised through the mounted receipt assembly.  The
@@ -42,7 +42,7 @@ func emptySuccessorLink(t testing.TB, text string) *link.Link {
 	if err != nil {
 		t.Fatal(err)
 	}
-	contract, err := profile.Contract()
+	contract, err := testfixture.StandardLibraryTarget()
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,6 +1,7 @@
 package composite
 
 import (
+	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -247,5 +248,15 @@ func moduleRoot(t *testing.T) string {
 	if !ok {
 		t.Fatal("locate composite source")
 	}
-	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
+	root := filepath.Dir(file)
+	for {
+		if _, err := os.Stat(filepath.Join(root, "go.mod")); err == nil {
+			return root
+		}
+		parent := filepath.Dir(root)
+		if parent == root {
+			t.Fatal("module root: no go.mod above test file")
+		}
+		root = parent
+	}
 }

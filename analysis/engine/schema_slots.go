@@ -256,6 +256,17 @@ func (ref FactorRef[V]) validBuilder(builder *SchemaBuilder) bool {
 	return ok && builderOpen(builder) && draft.builder == builder
 }
 
+// Any erases the value type of a Factor reference so unlike Factors can be
+// ordered into one declared vector.
+func (ref FactorRef[V]) Any() AnyFactorRef { return AnyFactorRef{ref.slotHandle} }
+
+// AnyFactorRef is a positional Factor reference whose value type is erased.
+// It retains the issuing cell, so a caller can order references to unlike
+// Factors without gaining the ability to mint one.
+type AnyFactorRef struct {
+	slotHandle[keyDraft[factorRole]]
+}
+
 // FactorSlot is a typed Factor owner handle.  Before Seal it is a draft
 // reference; Seal rewrites it to exactly (Schema pointer, canonical ordinal).
 type FactorSlot[T any] struct {

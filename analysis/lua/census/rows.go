@@ -55,10 +55,14 @@ type Row struct {
 	State parsersource.FieldState
 	// Constructs is, for a product row, the form row the construction builds.
 	Constructs string
-	// Consumes is, for a use-slot row, the form row of the child type the slot
-	// accepts. Role is the role the parent gives that child.
-	Consumes string
-	Role     parsersource.UseRole
+	// Accepts is, for a use-slot row, the declared type of the child the slot
+	// carries, and AcceptsClass the class of material that type is. It is a
+	// declared type rather than a row key because an abstract child stands for
+	// every form of its class, and the census states forms, not classes. Role is
+	// the role the parent gives that child.
+	Accepts      string
+	AcceptsClass parsersource.ConstructorClass
+	Role         parsersource.UseRole
 	// FilledBy is, for a use-slot row, the product rows whose construction puts
 	// a value in this slot. An empty column is evidence in its own right: it
 	// names a slot the declarations admit and no action fills.
@@ -143,14 +147,15 @@ func uses(value Census) []Row {
 		fills := filled[key]
 		sort.Strings(fills)
 		result = append(result, Row{
-			Key:      key,
-			Kind:     RowUseSlot,
-			Owner:    CarrierRow(slot.Form, slot.Field),
-			Class:    slot.Class,
-			State:    slot.Cardinality,
-			Consumes: FormRow(slot.ChildType),
-			Role:     slot.Role,
-			FilledBy: dedupe(fills),
+			Key:          key,
+			Kind:         RowUseSlot,
+			Owner:        CarrierRow(slot.Form, slot.Field),
+			Class:        slot.Class,
+			State:        slot.Cardinality,
+			Accepts:      slot.ChildType,
+			AcceptsClass: slot.ChildClass,
+			Role:         slot.Role,
+			FilledBy:     dedupe(fills),
 		})
 	}
 	sort.Slice(result, func(left, right int) bool { return result[left].Key < result[right].Key })

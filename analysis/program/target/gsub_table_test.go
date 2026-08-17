@@ -3,13 +3,30 @@ package target_test
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/targetprofile"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/stdlib"
 )
 
+func standardCatalogueSpec(t *testing.T) target.Spec {
+	t.Helper()
+	catalogue, err := stdlib.Catalogue()
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := target.CompileCatalogue(catalogue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return spec
+}
+
 func TestGsubTableReplacementClosedDenominatorAndAliases(t *testing.T) {
-	contract, err := profile.Contract()
+	catalogue, err := stdlib.Catalogue()
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract, err := target.SealCatalogue(catalogue)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +76,7 @@ func TestGsubTableReplacementClosedDenominatorAndAliases(t *testing.T) {
 
 func TestGsubTableReplacementRejectsShortcutAndMalformedBranches(t *testing.T) {
 	mutate := func(change func(*target.OperationSpec)) error {
-		spec := profile.Spec()
+		spec := standardCatalogueSpec(t)
 		for index := range spec.Operations {
 			if len(spec.Operations[index].Bindings) != 0 && spec.Operations[index].Bindings[0].Namespace == target.BindingModule && len(spec.Operations[index].Bindings[0].Owner) == 1 && spec.Operations[index].Bindings[0].Owner[0] == "string" && len(spec.Operations[index].Bindings[0].Member) == 1 && spec.Operations[index].Bindings[0].Member[0] == "gsub" {
 				change(&spec.Operations[index])
@@ -84,8 +101,8 @@ func TestGsubTableReplacementRejectsShortcutAndMalformedBranches(t *testing.T) {
 }
 
 func TestGsubTableReplacementPermutationPreservesContent(t *testing.T) {
-	left := profile.Spec()
-	right := profile.Spec()
+	left := standardCatalogueSpec(t)
+	right := standardCatalogueSpec(t)
 	for index := range right.Operations {
 		op := &right.Operations[index]
 		if len(op.Bindings) == 0 || op.Bindings[0].Namespace != target.BindingModule || len(op.Bindings[0].Owner) != 1 || op.Bindings[0].Owner[0] != "string" || len(op.Bindings[0].Member) != 1 || op.Bindings[0].Member[0] != "gsub" {

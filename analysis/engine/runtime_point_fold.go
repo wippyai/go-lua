@@ -286,7 +286,7 @@ func (epoch *executorEpoch) addPointFoldFactorEdgeWithBoundary(edgeIndex int) (s
 	// Factor projection commutes with the point boundary: support and guard
 	// transport are shared by every plane, while typed reindex is factor-local.
 	// Project first so a one-Factor edge never reconstructs the unrelated
-	// Value/Call/Heap/Pack/Effect roots merely to discard them afterward.
+	// Factor roots merely to discard them afterward.
 	projected, ok := epoch.work.ProjectPointState(epoch.points[edge.source], edge.slot)
 	if !ok || !epoch.work.OwnsPointState(projected) {
 		return refused(SolveFailureFamilyRefresh, "acyclic-fold-factor-projection"), false

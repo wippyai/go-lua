@@ -11,10 +11,10 @@ import (
 )
 
 // TestReceiptCompilerThreadsExactAndSummaryReadThroughProductEvidencePatch
-// exercises the combined receipt lane used by a closed Heap rule.  The graph
-// member consumes two forms of the same sealed Factor: an exact predecessor
-// and a summary predecessor.  Both are issued once by the Schema binding and
-// then reach Product, evidence, and the ordinary carry/write patch.
+// exercises the combined receipt lane used by a closed heterogeneous rule.
+// The graph member consumes two forms of the same sealed Factor: an exact
+// predecessor and a summary predecessor.  Both are issued once by the Schema
+// binding and then reach Product, evidence, and the ordinary carry/write patch.
 func TestReceiptCompilerThreadsExactAndSummaryReadThroughProductEvidencePatch(t *testing.T) {
 	builder := NewSchema()
 	factor, factorOK := DeclareFactorSlot[uint64](builder, coldKey(948_001))

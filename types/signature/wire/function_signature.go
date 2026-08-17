@@ -1,5 +1,5 @@
-// Package wire is the module-boundary serialization of what
-// analysis/module/signature owns. It holds one projection of typ.Type, one
+// Package wire is the module-boundary serialization of public signatures. It
+// holds one projection of typ.Type, one
 // projection of an effect row, and the payload forms built from them: a named
 // function signature, a standalone callable envelope, an intrinsic marker, a
 // result refinement, and the canonical signature content bytes. Documents that
@@ -21,9 +21,11 @@ import (
 // writes only the payload, so the same projection serves a manifest entry and a
 // standalone callable envelope.
 type FunctionSignatureWire struct {
-	Name   string         `json:"name"`
-	Type   *TypeWire      `json:"type,omitempty"`
-	Effect *effectRowWire `json:"effect,omitempty"`
+	Name         string         `json:"name"`
+	Type         *TypeWire      `json:"type,omitempty"`
+	ResultTail   *TypeWire      `json:"resultTail,omitempty"`
+	ResultSuffix []*TypeWire    `json:"resultSuffix,omitempty"`
+	Effect       *effectRowWire `json:"effect,omitempty"`
 }
 
 func EncodeFunctionSignature(sig signature.Function) (FunctionSignatureWire, error) {
@@ -39,12 +41,28 @@ func EncodeFunctionSignature(sig signature.Function) (FunctionSignatureWire, err
 	if err != nil {
 		return FunctionSignatureWire{}, err
 	}
-	if encodedType == nil && encodedEffect == nil {
+	var encodedResultTail *TypeWire
+	if sig.ResultTail != nil {
+		encodedResultTail, err = EncodeType(sig.ResultTail)
+		if err != nil {
+			return FunctionSignatureWire{}, err
+		}
+	}
+	encodedResultSuffix := make([]*TypeWire, len(sig.ResultSuffix))
+	for index, value := range sig.ResultSuffix {
+		encodedResultSuffix[index], err = EncodeType(value)
+		if err != nil {
+			return FunctionSignatureWire{}, err
+		}
+	}
+	if encodedType == nil && encodedResultTail == nil && len(encodedResultSuffix) == 0 && encodedEffect == nil {
 		return FunctionSignatureWire{}, errors.New("missing function type or effects")
 	}
 	return FunctionSignatureWire{
-		Type:   encodedType,
-		Effect: encodedEffect,
+		Type:         encodedType,
+		ResultTail:   encodedResultTail,
+		ResultSuffix: encodedResultSuffix,
+		Effect:       encodedEffect,
 	}, nil
 }
 
@@ -65,8 +83,22 @@ func DecodeFunctionSignature(w FunctionSignatureWire) (signature.Function, error
 	if err != nil {
 		return signature.Function{}, err
 	}
-	if fn == nil && row.Pure() {
+	var resultTail typ.Type
+	if w.ResultTail != nil {
+		resultTail, err = DecodeType(w.ResultTail)
+		if err != nil {
+			return signature.Function{}, err
+		}
+	}
+	resultSuffix := make([]typ.Type, len(w.ResultSuffix))
+	for index, value := range w.ResultSuffix {
+		resultSuffix[index], err = DecodeType(value)
+		if err != nil {
+			return signature.Function{}, err
+		}
+	}
+	if fn == nil && resultTail == nil && len(resultSuffix) == 0 && row.Pure() {
 		return signature.Function{}, errors.New("missing function type or effects")
 	}
-	return signature.Function{Type: fn, Effect: row}, nil
+	return signature.Function{Type: fn, ResultTail: resultTail, ResultSuffix: resultSuffix, Effect: row}, nil
 }

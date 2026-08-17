@@ -8,12 +8,12 @@ import (
 	"reflect"
 	"sort"
 
-	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/astcodec"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/occurrence"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/recursion"
 	"github.com/wippyai/go-lua/analysis/lua/parsersource"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 // Build derives every parser construction coordinate from fresh cold syntax.
@@ -977,13 +977,13 @@ func buildProducts(schema parsersource.Schema, snapshot grammarproof.Snapshot, f
 		}
 	}
 	corpus := corpusSources(snapshot)
-	semanticSources := make(map[string]bool)
+	witnessSources := make(map[string]bool)
 	for _, row := range fieldRows {
 		if row.Disposition == DispositionSemanticWitness {
-			semanticSources[row.Source] = true
+			witnessSources[row.Source] = true
 		}
 	}
-	for source := range semanticSources {
+	for source := range witnessSources {
 		input, exists := corpus[source]
 		if !exists {
 			return nil, fmt.Errorf("parser products: missing semantic product source")

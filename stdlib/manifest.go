@@ -2,13 +2,12 @@ package stdlib
 
 import (
 	"sort"
-	"strings"
-	"sync"
 
 	"github.com/wippyai/go-lua/domain/effect"
 	typetable "github.com/wippyai/go-lua/domain/type/table"
 	"github.com/wippyai/go-lua/domain/type/typ"
-	manifest "github.com/wippyai/go-lua/types/io"
+	declarations "github.com/wippyai/go-lua/manifest"
+	moduleio "github.com/wippyai/go-lua/manifest/wire"
 	"github.com/wippyai/go-lua/types/signature"
 )
 
@@ -22,6 +21,7 @@ type declaration struct {
 	// methods are callable declarations below the direct module export level.
 	// Their keys are manifest-local paths such as "Error.kind".
 	methods   map[string]signature.Function
+	aliases   map[string]string
 	values    map[string]typ.Type
 	types     map[string]typ.Type
 	errorType typ.Type
@@ -31,7 +31,7 @@ type declaration struct {
 // Manifest returns a fresh declaration manifest for id. The manifest describes
 // values and callable behavior only. It does not mount the library, resolve a
 // dependency, authorize an import, or create an analysis scope.
-func Manifest(id ID) (*manifest.Manifest, bool) {
+func Manifest(id ID) (*moduleio.Manifest, bool) {
 	library, ok := Lookup(id)
 	if !ok || library.declaration == nil {
 		return nil, false
@@ -39,131 +39,38 @@ func Manifest(id ID) (*manifest.Manifest, bool) {
 	return buildManifest(library, library.declaration()), true
 }
 
-// ManifestByName returns a fresh manifest for the catalogue entry whose Lua
-// mount name is name. An empty name selects the base/global declaration.
-// Presence here is descriptive and must not be used as an admission decision.
-func ManifestByName(name string) (*manifest.Manifest, bool) {
+// Providers returns every native declaration in runtime catalogue order.
+// Runtime opener binding and declaration binding therefore share one exact
+// identity set without a second registry.
+func Providers() []declarations.Provider {
+	out := make([]declarations.Provider, 0, len(catalogue))
 	for _, library := range catalogue {
-		if library.Name() == name {
-			return Manifest(library.ID())
-		}
-	}
-	return nil, false
-}
-
-// ManifestProviders binds every declaration provider through the exact same
-// catalogue coverage law used by the native openers.
-func ManifestProviders() []ManifestBinding[*manifest.Manifest] {
-	providers := make(map[ID]ManifestProvider[*manifest.Manifest], len(catalogue))
-	for _, library := range catalogue {
-		id := library.ID()
-		providers[id] = func() *manifest.Manifest {
-			m, ok := Manifest(id)
-			if !ok {
-				panic("stdlib: missing manifest for " + string(id))
-			}
-			return m
-		}
-	}
-	bound, err := BindManifests(providers)
-	if err != nil {
-		panic(err)
-	}
-	return bound
-}
-
-// Signatures returns ownership-isolated local callable signatures for id.
-// Named libraries use member names ("abs"), while Base uses bare globals
-// ("assert").
-func Signatures(id ID) (map[string]signature.Function, bool) {
-	library, ok := Lookup(id)
-	if !ok || library.declaration == nil {
-		return nil, false
-	}
-	decl := library.declaration()
-	out := make(map[string]signature.Function, len(decl.signatures))
-	for name, sig := range decl.signatures {
-		out[name] = sig.Clone()
-	}
-	return out, true
-}
-
-var (
-	signatureIndexOnce sync.Once
-	signatureIndex     map[string]signature.Function
-)
-
-// Signature returns the provider-owned signature for a bare base global or a
-// dotted named-library member. Dependency aliases are deliberately not
-// interpreted here; the embedding runtime resolves an alias to a manifest
-// before asking analysis to read it.
-func Signature(name string) (signature.Function, bool) {
-	signatureIndexOnce.Do(buildSignatureIndex)
-	sig, ok := signatureIndex[name]
-	if !ok {
-		return signature.Function{}, false
-	}
-	return sig.Clone(), true
-}
-
-// SignatureNames returns every native stdlib callable path in sorted order.
-func SignatureNames() []string {
-	signatureIndexOnce.Do(buildSignatureIndex)
-	names := make([]string, 0, len(signatureIndex))
-	for name := range signatureIndex {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
-}
-
-// InitialGlobalNames returns the names installed by LState.OpenLibs. Base
-// exports are mounted directly; named libraries contribute only their module
-// root. Embedders that open a subset must project the selected catalogue IDs
-// themselves rather than treating this inventory as an admission policy.
-func InitialGlobalNames() []string {
-	names := make([]string, 0, len(catalogue)*4)
-	for _, library := range catalogue {
+		library := library
+		declared := library.declaration()
+		mount := declarations.MountModule
 		if library.Mount() == MountGlobals {
-			decl := library.declaration()
-			for name := range decl.signatures {
-				names = append(names, name)
-			}
-			for name := range decl.values {
-				names = append(names, name)
-			}
-			continue
+			mount = declarations.MountGlobals
 		}
-		names = append(names, library.Name())
+		out = append(out, declarations.Provider{
+			Identity:  string(library.ID()),
+			Mount:     mount,
+			Immutable: declared.readonly,
+			Declaration: func() *moduleio.Manifest {
+				return buildManifest(library, declared)
+			},
+		})
 	}
-	sort.Strings(names)
-	return names
+	return out
 }
 
-func buildSignatureIndex() {
-	index := make(map[string]signature.Function)
-	for _, library := range catalogue {
-		if library.declaration == nil {
-			continue
-		}
-		decl := library.declaration()
-		prefix := library.Name()
-		for name, sig := range decl.signatures {
-			qualified := name
-			if prefix != "" {
-				qualified = prefix + "." + name
-			}
-			index[qualified] = sig
-		}
-		for name, sig := range decl.methods {
-			index[strings.TrimSuffix(prefix+".", ".")+"."+name] = sig
-		}
-	}
-	signatureIndex = index
+// Catalogue seals the native provider declarations through the same exact
+// catalogue used by LState.OpenLibs.
+func Catalogue() (*declarations.Catalogue, error) {
+	return declarations.Seal(Providers()...)
 }
 
-func buildManifest(library Library, decl declaration) *manifest.Manifest {
-	m := manifest.New(library.Name())
+func buildManifest(library Library, decl declaration) *moduleio.Manifest {
+	m := moduleio.New(library.Name())
 	m.Version = ManifestVersion
 	m.ErrorType = decl.errorType
 
@@ -172,6 +79,9 @@ func buildManifest(library Library, decl declaration) *manifest.Manifest {
 	}
 	for name, value := range decl.methods {
 		m.DefineFunctionSignature(name, value.Clone())
+	}
+	for alias, target := range decl.aliases {
+		m.DefineFunctionAlias(alias, target)
 	}
 
 	names := make([]string, 0, len(decl.signatures)+len(decl.values))
@@ -214,4 +124,15 @@ func authored(fn *typ.Function, labels ...effect.Label) signature.Function {
 
 func openAuthored(tail string, fn *typ.Function, labels ...effect.Label) signature.Function {
 	return signature.Function{Type: fn, Effect: effect.Open(tail, labels...)}
+}
+
+func withResultTail(function signature.Function, tail typ.Type) signature.Function {
+	function.ResultTail = tail
+	return function
+}
+
+func withResults(function signature.Function, tail typ.Type, suffix ...typ.Type) signature.Function {
+	function.ResultTail = tail
+	function.ResultSuffix = append([]typ.Type(nil), suffix...)
+	return function
 }

@@ -1,9 +1,9 @@
 package source
 
 import (
-	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/scalar"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 // readSourceLiteralRef returns a zero-copy semantic view used only by

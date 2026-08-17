@@ -6,7 +6,7 @@ import (
 	"github.com/wippyai/go-lua/domain/effect"
 	"github.com/wippyai/go-lua/domain/type/typ"
 	"github.com/wippyai/go-lua/manifest"
-	moduleio "github.com/wippyai/go-lua/types/io"
+	moduleio "github.com/wippyai/go-lua/manifest/wire"
 	"github.com/wippyai/go-lua/types/signature"
 )
 
@@ -36,8 +36,13 @@ func TestCatalogueOwnsExactSignatureAndTypeLookup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := catalogue.Signature("module.read"); !ok {
+	function, ok := catalogue.Function("module.read")
+	if !ok {
 		t.Fatal("canonical signature missing")
+	}
+	bindings := function.Bindings()
+	if len(bindings) != 1 || bindings[0].Mount() != manifest.MountModule || bindings[0].ModulePath() != "module" || len(bindings[0].Member()) != 1 || bindings[0].Member()[0] != "read" {
+		t.Fatalf("mounted function coordinates = %#v", bindings)
 	}
 	if got, ok := catalogue.Type("module", "Value"); !ok || !typ.TypeEquals(got, typ.String) {
 		t.Fatalf("type lookup = %v, %v", got, ok)

@@ -12,7 +12,7 @@ import (
 )
 
 func tableDeclaration() declaration {
-	return declaration{signatures: map[string]signature.Function{
+	return declaration{aliases: map[string]string{"unpack": "unpack"}, signatures: map[string]signature.Function{
 		"concat": authored(typ.Func().
 			Param("list", typ.Any).OptParam("sep", typ.String).
 			OptParam("i", typ.Integer).OptParam("j", typ.Integer).

@@ -11,16 +11,20 @@ import (
 // calling that function. Effect rows intentionally live here instead of inside
 // typ.Function so core type identity remains effect-free.
 type Function struct {
-	Type   *typ.Function
-	Effect effect.Row
+	Type         *typ.Function
+	ResultTail   typ.Type
+	ResultSuffix []typ.Type
+	Effect       effect.Row
 }
 
 // Clone copies the signature carrier and the mutable slices owned by its row
 // and function type.
 func (f Function) Clone() Function {
 	return Function{
-		Type:   cloneFunctionType(f.Type),
-		Effect: f.Effect.Clone(),
+		Type:         cloneFunctionType(f.Type),
+		ResultTail:   f.ResultTail,
+		ResultSuffix: append([]typ.Type(nil), f.ResultSuffix...),
+		Effect:       f.Effect.Clone(),
 	}
 }
 
@@ -31,6 +35,17 @@ func (f Function) Equals(other Function) bool {
 	}
 	if f.Type != nil && !typ.TypeEquals(f.Type, other.Type) {
 		return false
+	}
+	if !typ.TypeEquals(f.ResultTail, other.ResultTail) {
+		return false
+	}
+	if len(f.ResultSuffix) != len(other.ResultSuffix) {
+		return false
+	}
+	for index := range f.ResultSuffix {
+		if !typ.TypeEquals(f.ResultSuffix[index], other.ResultSuffix[index]) {
+			return false
+		}
 	}
 	if !f.Effect.Equals(other.Effect) {
 		return false
@@ -44,7 +59,16 @@ func (f Function) String() string {
 		typeString = f.Type.String()
 	}
 	if f.Effect.Pure() {
-		return typeString
+		if f.ResultTail == nil && len(f.ResultSuffix) == 0 {
+			return typeString
+		}
+		return fmt.Sprintf("%s ...%s +%v", typeString, f.ResultTail, f.ResultSuffix)
+	}
+	if f.ResultTail != nil {
+		typeString = fmt.Sprintf("%s ...%s", typeString, f.ResultTail)
+	}
+	if len(f.ResultSuffix) != 0 {
+		typeString = fmt.Sprintf("%s +%v", typeString, f.ResultSuffix)
 	}
 	return fmt.Sprintf("%s ! %s", typeString, f.Effect.String())
 }

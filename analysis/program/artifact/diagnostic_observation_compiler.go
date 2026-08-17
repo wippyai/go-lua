@@ -191,7 +191,9 @@ func (compiler *compiler) copyUnresolvedTypeObservationsFailure() CompileFailure
 		path := make([]string, count)
 		for pathIndex := range path {
 			key, keyOK := references.SourceAt(term, pathIndex)
-			component, componentOK := compiler.input.StaticKeyText(key)
+			componentLiteral, componentOK := compiler.input.Source().Keys().Exact(key)
+			componentOK = componentOK && componentLiteral.Kind == keyspace.LiteralString
+			component := componentLiteral.String
 			if !keyOK || !componentOK || component == "" {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, pathIndex, CompileReasonOccurrenceUnavailable)
 			}
@@ -207,12 +209,12 @@ func (compiler *compiler) copyUnresolvedTypeObservationsFailure() CompileFailure
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 			}
 			var rootOK bool
-			root, rootOK = program.StaticScopeID(compiler.input.ContentID(), rootTerm)
+			root, rootOK = programstatic.ScopeID(compiler.input.ContentID(), rootTerm)
 			if !rootOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 			}
 		}
-		reference, referenceOK := program.StaticTypeReferenceID(compiler.input.ContentID(), ref)
+		reference, referenceOK := programstatic.TypeReferenceID(compiler.input.ContentID(), ref)
 		if !referenceOK {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}

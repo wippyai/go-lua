@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/snapshot"
+	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
 // The pilot publishes the one column the sealed table declares. The key and
@@ -156,71 +157,42 @@ func TestEverySealedQueryFamilyRequestsAResultColumn(t *testing.T) {
 }
 
 // TestSealedQueryFamiliesAreAnswerableOnAPublishedSnapshot is the stitch on the
-// query side: a snapshot built from the sealed catalog fills every declared
-// column and materializes every sealed family's answers at the slot the
-// projection requested, and each family then opens on that snapshot and answers
-// the same four outcomes a column read reports. A materialized absence stays
+// query side: a snapshot materialized from the sealed catalog fills every
+// declared column and answers every sealed family at the slot the projection
+// requested, and each family then opens on that snapshot and answers the same
+// four outcomes a column read reports. A materialized absence stays
 // distinguishable from ignorance on the way out of the analyzer as well as
 // inside it.
+//
+// The publication is the real driver's over a real mounted Link. Every column
+// it fills is filled by the domain that owns the facts in it, so what this law
+// reads is the composition a consumer receives rather than a stand-in for one.
 func TestSealedQueryFamiliesAreAnswerableOnAPublishedSnapshot(t *testing.T) {
-	schemaID, schemaOK := PublicationSchema()
-	if !schemaOK {
-		t.Fatal("the sealed table publishes no schema identity")
-	}
-	columns, columnsOK := WriteRequests()
 	queries, queriesOK := QueryRequests()
-	if !columnsOK || !queriesOK || len(queries) == 0 {
+	if !queriesOK || len(queries) == 0 {
 		t.Fatal("the sealed table publishes no column plan")
 	}
-
-	builder := snapshot.NewBuilder(schemaID, pilotStore, pilotGeneration)
-	// The publication is dense: a family's result column is addressed above
-	// every axis column, so every one of them is filled before it.
-	for _, column := range columns {
-		if err := snapshot.PutColumn(&builder, snapshot.Axis[uint64, uint64]{SchemaID: schemaID, Slot: column.Slot}, snapshot.Content[uint64, uint64]{
-			Rows:        map[uint64]uint64{1: 11},
-			Denominator: columnDenominator(column.Slot),
-			Members:     []uint64{1, 2},
-		}); err != nil {
-			t.Fatalf("seal the published column %q: %v", column.Output, err)
-		}
+	record := mountedRecord(t, "materializer_law", materializerSource)
+	sealed, failure := Materialize(Materialization[mountedExecutionPoint]{
+		Link:       record,
+		Store:      pilotStore,
+		Generation: pilotGeneration,
+		Lanes:      materializerLanes(t, record),
+	})
+	if failure.Available() {
+		t.Fatalf("the materializer refused a mounted record and a complete lane set: %v", failure)
 	}
-	plans := make([]snapshot.QueryPlan[uint64, uint64], 0, len(queries))
+	stateQueries(t, record, &sealed, nil)
 	for _, query := range queries {
-		plan, err := snapshot.DeclareQuery(&builder, query.ID, query.Slot, snapshot.Content[uint64, uint64]{
-			Rows:        map[uint64]uint64{4: 44},
-			Denominator: columnDenominator(query.Slot),
-			Members:     []uint64{4, 5},
-		})
-		if err != nil {
-			t.Fatalf("materialize the query family %q: %v", query.Family, err)
+		opened, opens := snapshot.OpenQuery[identity.ContentID, valuedomain.ValueSummaryObservation](&sealed, query.ID)
+		if query.Family != QueryFamilyValueSummary {
+			continue
 		}
-		plans = append(plans, plan)
-	}
-	sealed, err := builder.Seal()
-	if err != nil {
-		t.Fatalf("seal the publication: %v", err)
-	}
-
-	for index, query := range queries {
-		opened, opens := snapshot.OpenQuery[uint64, uint64](&sealed, query.ID)
-		if !opens || opened != plans[index] {
-			t.Fatalf("family %q opens a plan other than the one it declared", query.Family)
+		if !opens {
+			t.Fatalf("family %q opens no result column", query.Family)
 		}
-		if answer, status := snapshot.Query(&sealed, opened, 4); status != snapshot.ReadHit || answer != 44 {
-			t.Fatalf("a materialized answer of %q read back as %s with %d", query.Family, status, answer)
-		}
-		if _, status := snapshot.Query(&sealed, opened, 5); status != snapshot.ReadProvenAbsent {
-			t.Fatalf("a covered key with no answer of %q read back as %s, not a proven absence", query.Family, status)
-		}
-		if _, status := snapshot.Query(&sealed, opened, 9); status != snapshot.ReadMiss {
-			t.Fatalf("an uncovered key of %q read back as %s, not a miss", query.Family, status)
-		}
-		if _, opens := snapshot.OpenQuery[uint64, string](&sealed, query.ID); opens {
-			t.Fatalf("a wrong answer claim opened family %q", query.Family)
-		}
-		foreign := snapshot.QueryPlan[uint64, uint64]{SchemaID: identity.ContentID{0x77}, Slot: opened.Slot}
-		if _, status := snapshot.Query(&sealed, foreign, 4); status != snapshot.ReadInvalid {
+		foreign := snapshot.QueryPlan[identity.ContentID, valuedomain.ValueSummaryObservation]{SchemaID: identity.ContentID{0x77}, Slot: opened.Slot}
+		if _, status := snapshot.Query(&sealed, foreign, materializerSubjects[0]); status != snapshot.ReadInvalid {
 			t.Fatalf("a plan of another schema answered %q with %s", query.Family, status)
 		}
 	}

@@ -11,9 +11,16 @@ import (
 
 func TestNativeStdlibCallableInventoryMatchesProviderManifests(t *testing.T) {
 	for id, native := range nativeStdlibCallableInventory() {
-		declared, ok := stdlib.Signatures(id)
+		manifest, ok := stdlib.Manifest(id)
 		if !ok {
 			t.Fatalf("no declarations for %q", id)
+		}
+		export := manifest.Export.(*typ.Record)
+		declared := make(map[string]struct{})
+		for name := range manifest.FunctionSignatures {
+			if export.GetField(name) != nil {
+				declared[name] = struct{}{}
+			}
 		}
 		nativeNames := slices.Sorted(maps.Keys(native))
 		declaredNames := slices.Sorted(maps.Keys(declared))
@@ -39,7 +46,12 @@ func TestNativeStdlibNonCallableInventoryMatchesProviderManifests(t *testing.T) 
 	for _, library := range stdlib.Libraries() {
 		m, _ := stdlib.Manifest(library.ID())
 		export := m.Export.(*typ.Record)
-		callables, _ := stdlib.Signatures(library.ID())
+		callables := make(map[string]struct{})
+		for name := range m.FunctionSignatures {
+			if export.GetField(name) != nil {
+				callables[name] = struct{}{}
+			}
+		}
 		wantValues := values[library.ID()]
 		if len(export.Fields) != len(callables)+len(wantValues) {
 			t.Fatalf("%q direct fields = %d, want %d callables + %d values",

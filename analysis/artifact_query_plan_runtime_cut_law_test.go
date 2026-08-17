@@ -5,14 +5,14 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	profile "github.com/wippyai/go-lua/analysis/targetprofile"
+	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
 // An uncalled callable body is a reusable Program interior, not a Link-wide
 // result root. It must remain outside the ordinary runtime demand until a call
 // or explicit observation selects its formal boundary.
 func TestArtifactQueryPlanDoesNotDemandUncalledCallableInterior(t *testing.T) {
-	contract, err := profile.Contract()
+	contract, err := testfixture.StandardLibraryTarget()
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -23,6 +23,10 @@ type HotFactorSpec[K ~uint32 | ~uint64, V any] struct {
 }
 
 func factorRefOrdinal[V any](ref FactorRef[V], schema *Schema) (uint64, bool) {
+	return anyFactorRefOrdinal(ref.Any(), schema)
+}
+
+func anyFactorRefOrdinal(ref AnyFactorRef, schema *Schema) (uint64, bool) {
 	if schema == nil || ref.cell == nil || ref.cell.schema != schema || !schema.Available() {
 		return 0, false
 	}

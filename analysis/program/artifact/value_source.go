@@ -75,7 +75,7 @@ func (compiler *compiler) valueSourceAt(code uint64, index int) (valueSourceComp
 	if !bodyOK || !bodyPathOK || !bodyPath.Available() || !canonicalOK || canonicalTerm != term || !canonicalID.Available() || !canonicalSpanID.Available() {
 		return valueSourceCompileRow{}, false
 	}
-	finish, finishOK := input.EvaluationFinish(term)
+	finish, finishOK := input.FinishSite(term)
 	if !finishOK {
 		return valueSourceCompileRow{}, false
 	}
@@ -124,7 +124,7 @@ func (compiler *compiler) typeValueCompileRow(index int) (valueSourceCompileRow,
 		return valueSourceCompileRow{}, identity.ContentID{}, identity.ContentID{}, "", false
 	}
 	ref, refOK := compiler.input.Static().StaticTypes().Ref(row.target)
-	referenceID, referenceOK := program.StaticTypeReferenceID(compiler.input.ContentID(), ref)
+	referenceID, referenceOK := programstatic.TypeReferenceID(compiler.input.ContentID(), ref)
 	name, nameOK := staticTypeValueName(compiler.input, row.target)
 	rootID, rootOK := staticTypeValueRootID(compiler.input.ContentID(), row.body, name)
 	if !refOK || !referenceOK || !nameOK || !rootOK {

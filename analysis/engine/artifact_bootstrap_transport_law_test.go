@@ -228,7 +228,7 @@ func bootstrapTransportLawWitness(t testing.TB, owner bootstrapTransportLawOwner
 	witness, ok := NewLinkBootstrapWitnessByCapability(
 		bootstrapTransportLawID(salt, 20),
 		LinkBootstrapPoint{PointID: bootstrapTransportLawID(salt, 21), Known: true, Initial: true},
-		owner.value, nil, owner.heap, nil,
+		LinkBootstrapCatalog{Capability: owner.value}, LinkBootstrapCatalog{Capability: owner.heap},
 	)
 	if !ok || witness.transportCapabilityCount() != 2 || witness.OccurrenceCount() != 0 {
 		t.Fatal("empty-catalog bootstrap transport witness")
@@ -261,12 +261,12 @@ func TestLinkBootstrapTransportsOnlyValueAndHeapToMountedInitialPoints(t *testin
 	if !mountedOK {
 		t.Fatal("bootstrap transport mount")
 	}
-	substituted, substitutedOK := NewLinkBootstrapWitnessByCapability(bootstrapTransportLawID(1, 31), LinkBootstrapPoint{PointID: bootstrapTransportLawID(1, 32), Known: true, Initial: true}, owner.value, nil, owner.excluded, nil)
+	substituted, substitutedOK := NewLinkBootstrapWitnessByCapability(bootstrapTransportLawID(1, 31), LinkBootstrapPoint{PointID: bootstrapTransportLawID(1, 32), Known: true, Initial: true}, LinkBootstrapCatalog{Capability: owner.value}, LinkBootstrapCatalog{Capability: owner.excluded})
 	foreignAssembly, foreignFailure, foreignAssembled := BeginMountedArtifactReceiptAssemblyWithFailure(owner.binding, []MountedArtifactReceipt{mounted}, substituted)
 	if !substitutedOK || !substituted.Available() || foreignAssembled || foreignAssembly != nil || foreignFailure != ReceiptAssemblyFailureSnapshotBootstrap {
 		t.Fatal("same-binding third Link factor substituted for authorized Heap transport")
 	}
-	reversed, reversedOK := NewLinkBootstrapWitnessByCapability(bootstrapTransportLawID(1, 33), LinkBootstrapPoint{PointID: bootstrapTransportLawID(1, 34), Known: true, Initial: true}, owner.heap, nil, owner.value, nil)
+	reversed, reversedOK := NewLinkBootstrapWitnessByCapability(bootstrapTransportLawID(1, 33), LinkBootstrapPoint{PointID: bootstrapTransportLawID(1, 34), Known: true, Initial: true}, LinkBootstrapCatalog{Capability: owner.heap}, LinkBootstrapCatalog{Capability: owner.value})
 	reversedAssembly, reversedFailure, reversedAssembled := BeginMountedArtifactReceiptAssemblyWithFailure(owner.binding, []MountedArtifactReceipt{mounted}, reversed)
 	if !reversedOK || !reversed.Available() || reversedAssembled || reversedAssembly != nil || reversedFailure != ReceiptAssemblyFailureSnapshotBootstrap {
 		t.Fatal("authorized Link bootstrap transport order was not retained")
@@ -300,7 +300,7 @@ func TestLinkBootstrapTransportRejectsForeignCapabilityAtSnapshot(t *testing.T) 
 	foreignBinding, foreignValue, foreignHeap, _ := bindBootstrapTransportLawOwner(t, owner, true)
 	artifact := newBootstrapTransportLawArtifact(t, owner.schema, 2)
 	mounted, mountedOK := NewMountedArtifactReceipt(artifact.receipt, bootstrapTransportLawID(2, 30))
-	witness, witnessOK := NewLinkBootstrapWitnessByCapability(bootstrapTransportLawID(2, 31), LinkBootstrapPoint{PointID: bootstrapTransportLawID(2, 32), Known: true, Initial: true}, owner.value, nil, foreignHeap, nil)
+	witness, witnessOK := NewLinkBootstrapWitnessByCapability(bootstrapTransportLawID(2, 31), LinkBootstrapPoint{PointID: bootstrapTransportLawID(2, 32), Known: true, Initial: true}, LinkBootstrapCatalog{Capability: owner.value}, LinkBootstrapCatalog{Capability: foreignHeap})
 	assembly, failure, assembled := BeginMountedArtifactReceiptAssemblyWithFailure(owner.binding, []MountedArtifactReceipt{mounted}, witness)
 	if foreignBinding == nil || !foreignValue.Link() || !mountedOK || !witnessOK || assembled || assembly != nil || failure != ReceiptAssemblyFailureSnapshotBootstrap {
 		t.Fatal("foreign equal-schema bootstrap capability crossed owner fence")
@@ -381,7 +381,8 @@ func TestLinkBootstrapValueAndHeapProducersReachMountedInitialAfterReleaseAndRev
 	witness, witnessOK := NewLinkBootstrapWitnessByCapability(
 		bootstrapTransportLawID(8, 20),
 		LinkBootstrapPoint{PointID: bootstrapTransportLawID(8, 21), Known: true, Initial: true},
-		owner.value, []identity.ContentID{valueOccurrence}, owner.heap, []identity.ContentID{heapOccurrence},
+		LinkBootstrapCatalog{Capability: owner.value, Occurrences: []identity.ContentID{valueOccurrence}},
+		LinkBootstrapCatalog{Capability: owner.heap, Occurrences: []identity.ContentID{heapOccurrence}},
 	)
 	assembly, failure, assemblyOK := BeginMountedArtifactReceiptAssemblyWithFailure(owner.binding, []MountedArtifactReceipt{mounted}, witness)
 	if !mountedOK || !witnessOK || !assemblyOK || assembly == nil || failure != ReceiptAssemblyFailureNone {

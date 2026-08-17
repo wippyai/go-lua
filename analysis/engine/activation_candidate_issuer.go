@@ -9,7 +9,10 @@ func (issuer *MountedActivationCandidateIssuer) validFor(assembly *ReceiptAssemb
 	if issuer == nil || issuer.state == nil || assembly == nil || assembly.builder == nil || assembly.builder.inner == nil || occurrence.assembly != assembly || !occurrence.role.mounted() || !occurrence.role.activation || !issuer.rule.Available() || !issuer.family.Available() {
 		return false
 	}
-	for _, factor := range issuer.factors {
+	if len(issuer.imports) == 0 || !issuer.export.Available() {
+		return false
+	}
+	for _, factor := range issuer.imports {
 		if !factor.Available() {
 			return false
 		}
@@ -21,8 +24,9 @@ func (issuer *MountedActivationCandidateIssuer) validFor(assembly *ReceiptAssemb
 // AddMountedActivationCandidate is the only direct-candidate ingress. The
 // caller supplies an exact admitted activation occurrence plus its sealed
 // application/target tuple and mounted body identity; the engine resolves all
-// point memberships from its own artifact snapshot and emits the five fixed
-// transport roles. It never accepts PointRefs, factor IDs, or edge slices.
+// point memberships from its own artifact snapshot and emits the transport
+// roles its bound vector declares. It never accepts PointRefs, factor IDs, or
+// edge slices.
 func (issuer *MountedActivationCandidateIssuer) AddMountedActivationCandidate(assembly *ReceiptAssembly, occurrence RuleOccurrenceReceipt, application, target, endpoint identity.SemanticKey, mount, body identity.ContentID) bool {
 	if !issuer.validFor(assembly, occurrence) || !application.Available() || !target.Available() || !endpoint.Available() || target == endpoint || !mount.Available() || !body.Available() {
 		return false
@@ -66,7 +70,7 @@ func (issuer *MountedActivationCandidateIssuer) AddMountedActivationCandidate(as
 			exits = append(exits, exit)
 		}
 		var setOK bool
-		set, setOK = equation.NewDirectActivationTransportSet(issuer.state.schema.cold, inner.batch, entries, exits, issuer.factors[:4], issuer.factors[4])
+		set, setOK = equation.NewDirectActivationTransportSet(issuer.state.schema.cold, inner.batch, entries, exits, issuer.imports, issuer.export)
 		if !setOK {
 			inner.mu.Unlock()
 			return false

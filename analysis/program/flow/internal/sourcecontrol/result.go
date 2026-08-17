@@ -83,9 +83,12 @@ func Matches(r *Result, sourceID, flowID, staticID, moduleID identity.ContentID)
 
 // available is the query fence for the published structural proof. A Result
 // with plausible coordinates or graph rows but any unavailable owner identity
-// is not a usable source-control authority.
+// is not a usable source-control authority. The semantic vertex catalog is a
+// separate, temporary materialization lease: structural consumers (including
+// Executable) must be able to consume the sealed coordinate space before that
+// lease is installed, and Arc witnesses remain usable after it is released.
 func (r *Result) available() bool {
-	return r.ownerAvailable() && r.VertexCatalogAvailable()
+	return r.ownerAvailable()
 }
 
 // NodeCount reports the dense source-control coordinate denominator.

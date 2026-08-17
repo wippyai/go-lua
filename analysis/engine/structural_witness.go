@@ -53,14 +53,21 @@ func NewLinkBootstrapWitness(owner identity.ContentID, point LinkBootstrapPoint,
 	return LinkBootstrapWitness{owner: owner, point: point, occurrences: append([]identity.ContentID(nil), occurrences...), byCapability: make(map[RuleSlotCapability]map[identity.ContentID]struct{})}, true
 }
 
+// LinkBootstrapCatalog is one occurrence namespace admitted under one
+// parent-issued slot capability.
+type LinkBootstrapCatalog struct {
+	Capability  RuleSlotCapability
+	Occurrences []identity.ContentID
+}
+
 // NewLinkBootstrapWitnessByCapability seals Link-global occurrence namespaces
-// under parent-issued slot capabilities. A combined catalog is insufficient:
-// an occurrence admitted for one slot must not be claimable by another slot.
-func NewLinkBootstrapWitnessByCapability(owner identity.ContentID, point LinkBootstrapPoint, valueCapability RuleSlotCapability, valueOccurrences []identity.ContentID, heapCapability RuleSlotCapability, heapOccurrences []identity.ContentID) (LinkBootstrapWitness, bool) {
-	if !owner.Available() || !point.Known || !point.PointID.Available() {
-		return LinkBootstrapWitness{}, false
-	}
-	if !valueCapability.link() || !heapCapability.link() || valueCapability == heapCapability {
+// under parent-issued slot capabilities, retaining the caller's catalog order.
+// A combined catalog is insufficient: an occurrence admitted for one slot must
+// not be claimable by another slot, so each capability keeps a namespace of its
+// own and the namespaces stay disjoint. How many transport catalogs one Binding
+// authorizes is the registered transport pair's law, checked at assembly.
+func NewLinkBootstrapWitnessByCapability(owner identity.ContentID, point LinkBootstrapPoint, catalogs ...LinkBootstrapCatalog) (LinkBootstrapWitness, bool) {
+	if !owner.Available() || !point.Known || !point.PointID.Available() || len(catalogs) == 0 {
 		return LinkBootstrapWitness{}, false
 	}
 	for _, decision := range point.DecisionID {
@@ -68,38 +75,38 @@ func NewLinkBootstrapWitnessByCapability(owner identity.ContentID, point LinkBoo
 			return LinkBootstrapWitness{}, false
 		}
 	}
-	valueSet := make(map[identity.ContentID]struct{}, len(valueOccurrences))
-	heapSet := make(map[identity.ContentID]struct{}, len(heapOccurrences))
-	combined := make([]identity.ContentID, 0, len(valueOccurrences)+len(heapOccurrences))
-	for _, id := range valueOccurrences {
-		if !id.Available() {
-			return LinkBootstrapWitness{}, false
-		}
-		if _, duplicate := valueSet[id]; duplicate {
-			return LinkBootstrapWitness{}, false
-		}
-		valueSet[id] = struct{}{}
-		combined = append(combined, id)
+	total := 0
+	for _, catalog := range catalogs {
+		total += len(catalog.Occurrences)
 	}
-	for _, id := range heapOccurrences {
-		if !id.Available() {
+	byCapability := make(map[RuleSlotCapability]map[identity.ContentID]struct{}, len(catalogs))
+	capabilities := make([]RuleSlotCapability, 0, len(catalogs))
+	combined := make([]identity.ContentID, 0, total)
+	claimed := make(map[identity.ContentID]struct{}, total)
+	for _, catalog := range catalogs {
+		if !catalog.Capability.link() {
 			return LinkBootstrapWitness{}, false
 		}
-		if _, duplicate := heapSet[id]; duplicate {
+		if _, duplicate := byCapability[catalog.Capability]; duplicate {
 			return LinkBootstrapWitness{}, false
 		}
-		if _, crossRole := valueSet[id]; crossRole {
-			return LinkBootstrapWitness{}, false
+		namespace := make(map[identity.ContentID]struct{}, len(catalog.Occurrences))
+		for _, id := range catalog.Occurrences {
+			if !id.Available() {
+				return LinkBootstrapWitness{}, false
+			}
+			if _, claimedElsewhere := claimed[id]; claimedElsewhere {
+				return LinkBootstrapWitness{}, false
+			}
+			claimed[id] = struct{}{}
+			namespace[id] = struct{}{}
+			combined = append(combined, id)
 		}
-		heapSet[id] = struct{}{}
-		combined = append(combined, id)
+		byCapability[catalog.Capability] = namespace
+		capabilities = append(capabilities, catalog.Capability)
 	}
 	point.DecisionID = append([]identity.ContentID(nil), point.DecisionID...)
-	return LinkBootstrapWitness{
-		owner: owner, point: point, occurrences: combined,
-		byCapability:          map[RuleSlotCapability]map[identity.ContentID]struct{}{valueCapability: valueSet, heapCapability: heapSet},
-		transportCapabilities: []RuleSlotCapability{valueCapability, heapCapability},
-	}, true
+	return LinkBootstrapWitness{owner: owner, point: point, occurrences: combined, byCapability: byCapability, transportCapabilities: capabilities}, true
 }
 
 func (witness LinkBootstrapWitness) transportCapabilityCount() int {

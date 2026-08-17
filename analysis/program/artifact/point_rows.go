@@ -247,5 +247,75 @@ func (region Region) MemberAt(index int) (identity.ContentID, bool) {
 	return region.members[index], true
 }
 
+func (artifact *Artifact) PointCount() int {
+	if !artifact.Available() {
+		return 0
+	}
+	return len(artifact.points)
+}
+
+func (artifact *Artifact) EnvironmentEdgeCount() int {
+	if !artifact.Available() {
+		return 0
+	}
+	return len(artifact.environment)
+}
+
+func (artifact *Artifact) LocalTransferCount() int {
+	if !artifact.Available() {
+		return 0
+	}
+	return len(artifact.localTransfers)
+}
+
+func (artifact *Artifact) RegionCount() int {
+	if !artifact.Available() {
+		return 0
+	}
+	return len(artifact.regions)
+}
+
+func (artifact *Artifact) WTOEventCount() int {
+	if !artifact.Available() {
+		return 0
+	}
+	return len(artifact.events)
+}
+
+func (artifact *Artifact) PointAt(index int) (Point, bool) {
+	if !artifact.Available() || index < 0 || index >= len(artifact.points) {
+		return Point{}, false
+	}
+	return artifact.points[index], true
+}
+
+func (artifact *Artifact) EnvironmentEdgeAt(index int) (EnvironmentEdge, bool) {
+	if !artifact.Available() || index < 0 || index >= len(artifact.environment) {
+		return EnvironmentEdge{}, false
+	}
+	return artifact.environment[index], true
+}
+
+func (artifact *Artifact) LocalTransferAt(index int) (LocalTransfer, bool) {
+	if !artifact.Available() || index < 0 || index >= len(artifact.localTransfers) {
+		return LocalTransfer{}, false
+	}
+	return artifact.localTransfers[index], true
+}
+
+func (artifact *Artifact) RegionAt(index int) (Region, bool) {
+	if !artifact.Available() || index < 0 || index >= len(artifact.regions) {
+		return Region{}, false
+	}
+	return artifact.regions[index], true
+}
+
+func (artifact *Artifact) WTOEventAt(index int) (WTOEvent, bool) {
+	if !artifact.Available() || index < 0 || index >= len(artifact.events) {
+		return WTOEvent{}, false
+	}
+	return artifact.events[index], true
+}
+
 // Artifact is immutable after Compile succeeds. The sealed scalar is written
 // only after complete deep validation; all hot availability checks are O(1).

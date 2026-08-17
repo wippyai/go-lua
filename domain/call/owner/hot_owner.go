@@ -224,15 +224,16 @@ func BindExactActivationRule(owner *HotOwner, slot *engine.SchemaActivationRuleS
 	return &ActivationRuleImplementation{owner: owner, slot: slot}, runtimeRead, true
 }
 
-// BindMountedActivationCandidateIssuer binds the exact CallActivation slot
-// to the five typed factor capabilities needed by its receipt-native body
-// transport. The engine keeps the resulting issuer opaque; child packages
-// cannot submit point/factor edge rows themselves.
-func BindMountedActivationCandidateIssuer[V, C, H, P, E any](issuer *ActivationRuleImplementation, value engine.FactorRef[V], calls engine.FactorRef[C], heap engine.FactorRef[H], pack engine.FactorRef[P], effect engine.FactorRef[E]) (*engine.MountedActivationCandidateIssuer, bool) {
+// BindMountedActivationCandidateIssuer binds the exact CallActivation slot to
+// the factor transport vector its receipt-native body transport declares: the
+// lanes imported into a mounted body and the one lane exported back out. The
+// engine keeps the resulting issuer opaque; child packages cannot submit
+// point/factor edge rows themselves.
+func BindMountedActivationCandidateIssuer(issuer *ActivationRuleImplementation, imports []engine.AnyFactorRef, export engine.AnyFactorRef) (*engine.MountedActivationCandidateIssuer, bool) {
 	if issuer == nil || issuer.owner == nil || issuer.owner.binding == nil || issuer.slot == nil {
 		return nil, false
 	}
-	return engine.BindMountedActivationCandidateIssuer(issuer.owner.binding, issuer.slot, value, calls, heap, pack, effect)
+	return engine.BindMountedActivationCandidateIssuer(issuer.owner.binding, issuer.slot, imports, export)
 }
 
 // ResolveActivationRuleImplementation issues the engine receipt only after

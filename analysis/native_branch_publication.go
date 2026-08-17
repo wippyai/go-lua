@@ -37,7 +37,7 @@ func buildNativeBranchPublication(
 		if _, duplicate := observed[selectedObservation.point]; duplicate {
 			return nil, false
 		}
-		observation, readable := engine.ReceiptObservationResult(selectedObservation.observation, solver, state)
+		observation, readable := selectedObservation.attachment.Observe(solver, state)
 		if !readable || !validNativeValueSummary(observation, len(receipt.values)) {
 			return nil, false
 		}

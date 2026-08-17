@@ -189,15 +189,16 @@ func (w *originWalk) visitIdent(name string) {
 	w.kinds[UseOriginOpaque] = true
 }
 
+// visitBinding follows one binding of a local name. A call result is an origin
+// in itself; an element binding names the container the value was read out of
+// and an assertion names the expression it was asserted on, so both reach the
+// same origins as the expression they were bound from.
 func (w *originWalk) visitBinding(bound binding) {
-	switch bound.kind {
-	case bindingCallResult:
+	if bound.kind == bindingCallResult {
 		w.kinds[UseOriginHelper] = true
-	case bindingElement:
-		w.visit(bound.expr)
-	default:
-		w.visit(bound.expr)
+		return
 	}
+	w.visit(bound.expr)
 }
 
 func (w *originWalk) visitCall(call *goast.CallExpr) {

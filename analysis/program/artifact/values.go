@@ -236,3 +236,21 @@ func (compiler *compiler) valueRowForTerm(term keyspace.Term) (ValuesRow, bool) 
 	row := compiler.values[index]
 	return row, termOK && authoredTerm == term && row.Available()
 }
+
+// ValuesCount returns the exact immutable Program Values denominator copied
+// into this artifact.
+func (artifact *Artifact) ValuesCount() int {
+	if !artifact.Available() {
+		return 0
+	}
+	return len(artifact.values)
+}
+
+// ValuesAt returns one immutable Values row in authored denominator order.
+// It never exposes the backing slice.
+func (artifact *Artifact) ValuesAt(index int) (ValuesRow, bool) {
+	if !artifact.Available() || index < 0 || index >= len(artifact.values) {
+		return ValuesRow{}, false
+	}
+	return artifact.values[index], true
+}

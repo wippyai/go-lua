@@ -185,8 +185,7 @@ func architectureBatterySetRatchet(t *testing.T, law string, inventory map[strin
 // position. Its subpackages are ordinary cross-domain relations and stay in
 // scope.
 var architectureBatteryProgramDomainProduction = map[string]int{
-	"analysis/program/target":               6,
-	"analysis/library/lualib/targetprofile": 1,
+	"analysis/program/target": 6,
 }
 
 // architectureBatteryProgramDomainTest is the same freeze for test sources.
@@ -194,10 +193,9 @@ var architectureBatteryProgramDomainProduction = map[string]int{
 // decision: production code may be clean while its tests keep the coupling
 // alive and make the eventual production cut look larger than it is.
 var architectureBatteryProgramDomainTest = map[string]int{
-	"analysis/program/link":                 1,
-	"analysis/program/link/boundary":        2,
-	"analysis/program/target":               29,
-	"analysis/library/lualib/targetprofile": 1,
+	"analysis/program/link":          1,
+	"analysis/program/link/boundary": 2,
+	"analysis/program/target":        29,
 }
 
 // TestArchitectureProgramAndSchemaDomainCouplingOnlyShrinks is the L13 law with

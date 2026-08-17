@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 // scratchEntry is a stand-in row for a sibling surface. The declaration root
@@ -329,7 +329,7 @@ func TestCoverageMappingIsCarriedByTheDeclaredForms(t *testing.T) {
 		shape  string
 		form   Form
 	}{
-		// analysis/library/lualib/targetprofile/profile.go
+		// analysis/program/target/catalogue_laws.go
 		{"profile", "OperationSpec.Input / Outcomes ValuesSpec", FormCallableSignature},
 		{"profile", "OperationSpec.Callbacks", FormCallableSignature},
 		{"profile", "OperationSpec.Subedges", FormCallableSignature},
@@ -340,7 +340,7 @@ func TestCoverageMappingIsCarriedByTheDeclaredForms(t *testing.T) {
 		{"profile", "OutcomeSpec.Produced + CaptureSpec", FormResultProvenance},
 		{"profile", "OperationSpec.Suspensions", FormSuspension},
 		{"profile", "Rule-owned conditional result selection", FormRuleDelegation},
-		// analysis/library/lualib/targetprofile/boot.go
+		// analysis/program/target/catalogue_boot.go
 		{"boot", "InitialRootSpec", FormBootRoot},
 		{"boot", "InitialEntrySpec operation value", FormCallableSignature},
 		{"boot", "InitialEntrySpec constant/root value + mutability", FormExportValue},
@@ -348,7 +348,7 @@ func TestCoverageMappingIsCarriedByTheDeclaredForms(t *testing.T) {
 		{"boot", "InitialBindingSpec", FormEnvironmentSlot},
 		{"boot", "InitialMetatableAttachmentSpec", FormPrimitiveMetatable},
 		{"boot", "stringMetaRoot __index edge to stringRoot", FormMetatableEdge},
-		// analysis/module/signaturelookup/internal/stdlib/registry.go
+		// stdlib/*_manifest.go
 		{"stdlib", "signature.Function.Type", FormCallableSignature},
 		{"stdlib", "signature.Function.Effect labels", FormEffectLabel},
 		{"stdlib", "capability descriptor status gate", FormHostCapability},

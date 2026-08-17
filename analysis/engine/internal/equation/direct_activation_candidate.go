@@ -28,7 +28,7 @@ type directActivationTransportSetData struct {
 	entries []PointRef
 	exits   []PointRef
 	imports []composition.Key
-	effect  composition.Key
+	export  composition.Key
 	key     composition.Key
 }
 
@@ -46,8 +46,12 @@ type directActivationCandidateData struct {
 	key       composition.Key
 }
 
-func NewDirectActivationTransportSet(source *composition.Composition, base *Batch, entries, exits []PointRef, imports []composition.Key, effect composition.Key) (DirectActivationTransportSet, bool) {
-	if source == nil || base == nil || !base.Sealed() || len(entries) == 0 || len(exits) == 0 || len(imports) != 4 || !effect.Available() {
+// NewDirectActivationTransportSet seals one body-relative denominator over the
+// caller's declared transport vector. The import arity is the declaration's own
+// property: the set holds whatever distinct imported Factors the composition
+// knows, and refuses an empty vector or an export that repeats an import.
+func NewDirectActivationTransportSet(source *composition.Composition, base *Batch, entries, exits []PointRef, imports []composition.Key, export composition.Key) (DirectActivationTransportSet, bool) {
+	if source == nil || base == nil || !base.Sealed() || len(entries) == 0 || len(exits) == 0 || len(imports) == 0 || !export.Available() {
 		return DirectActivationTransportSet{}, false
 	}
 	entryRows, entryOK := canonicalDirectActivationRefs(entries)
@@ -56,11 +60,11 @@ func NewDirectActivationTransportSet(source *composition.Composition, base *Batc
 	if !entryOK || !exitOK || !importsOK {
 		return DirectActivationTransportSet{}, false
 	}
-	if _, known := source.FactorIndex(effect); !known {
+	if _, known := source.FactorIndex(export); !known {
 		return DirectActivationTransportSet{}, false
 	}
 	for _, factor := range importRows {
-		if factor == effect {
+		if factor == export {
 			return DirectActivationTransportSet{}, false
 		}
 	}
@@ -89,12 +93,12 @@ func NewDirectActivationTransportSet(source *composition.Composition, base *Batc
 				return false
 			}
 		}
-		return writeKey(writer, effect)
+		return writeKey(writer, export)
 	})
 	if !keyed {
 		return DirectActivationTransportSet{}, false
 	}
-	return DirectActivationTransportSet{data: &directActivationTransportSetData{source: source, base: base, entries: entryRows, exits: exitRows, imports: importRows, effect: effect, key: key}}, true
+	return DirectActivationTransportSet{data: &directActivationTransportSetData{source: source, base: base, entries: entryRows, exits: exitRows, imports: importRows, export: export, key: key}}, true
 }
 
 func canonicalDirectActivationRefs(values []PointRef) ([]PointRef, bool) {
@@ -123,7 +127,7 @@ func canonicalDirectActivationFactors(source *composition.Composition, values []
 }
 
 func (value DirectActivationTransportSet) Available() bool {
-	return value.data != nil && value.data.source != nil && value.data.base != nil && value.data.base.Sealed() && value.data.key.Available() && len(value.data.entries) != 0 && len(value.data.exits) != 0 && len(value.data.imports) == 4 && value.data.effect.Available()
+	return value.data != nil && value.data.source != nil && value.data.base != nil && value.data.base.Sealed() && value.data.key.Available() && len(value.data.entries) != 0 && len(value.data.exits) != 0 && len(value.data.imports) != 0 && value.data.export.Available()
 }
 func (value DirectActivationTransportSet) OwnedBy(source *composition.Composition, base *Batch) bool {
 	return value.Available() && value.data.source == source && value.data.base == base
@@ -201,5 +205,5 @@ func (value DirectActivationCandidate) TransportAt(index int) (DirectActivationT
 		factor := index % len(set.imports)
 		return DirectActivationTransport{Source: value.data.trigger, Target: set.entries[entry], Factor: set.imports[factor]}, true
 	}
-	return DirectActivationTransport{Source: set.exits[index-imports], Target: value.data.trigger, Factor: set.effect}, true
+	return DirectActivationTransport{Source: set.exits[index-imports], Target: value.data.trigger, Factor: set.export}, true
 }
