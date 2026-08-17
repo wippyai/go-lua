@@ -111,17 +111,34 @@ func (proof DirectAllocationMembershipProof) Membership() valuedomain.Allocation
 	return proof.membership
 }
 
+func (proof DirectAllocationMembershipProof) CorrelationID() (identity.ContentID, bool) {
+	return proof.correlation, proof.valid()
+}
+
+// DirectAllocationSubjectID reports the exact direct-identity receipt this
+// proof was issued against. It is the relation's one published link between a
+// solved membership cell and the Value/Pack coordinate join that named it.
+func (proof DirectAllocationMembershipProof) DirectAllocationSubjectID() (identity.ContentID, bool) {
+	return proof.direct, proof.valid()
+}
+
 // Prove reads the retained private Engine observation only after a completed
 // transition correlation reauthenticates the same occurrence, live binding,
 // and direct receipt. It rejects absent, Top, mixed, foreign, stale, or shaped
 // observation data by never accepting observation values from callers.
+//
+// This is also the relation's one cross-owner admission of the direct receipt:
+// MatchesRuntimeBinding reauthenticates the live Pack seal, the binding's own
+// semantic source, and the mounted requirement key behind the receipt's Heap
+// key, so no separate detached admission carrier stands between the direct
+// receipt and this proof.
 func (attachment DirectAllocationMembershipAttachment) Prove(
 	solver *engine.Solver,
 	state *engine.State,
 	transition callsite.PublicationTransitionProof,
 	correlation callsite.PublicationPlacementCorrelationCandidate,
 	subject packdomain.RuntimeAllocationContextBinding,
-	direct valuedomain.DirectAllocationSubject,
+	direct DirectAllocationSubject,
 ) (DirectAllocationMembershipProof, bool) {
 	if !attachment.valid() || !transition.MatchesCompletion(solver, state) || !correlation.Valid() || !subject.Valid() || !direct.Valid() || !direct.MatchesRuntimeBinding(subject) {
 		return DirectAllocationMembershipProof{}, false

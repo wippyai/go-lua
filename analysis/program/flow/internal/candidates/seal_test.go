@@ -436,6 +436,41 @@ func TestCandidateSealHonestFixture(t *testing.T) {
 	}
 }
 
+func TestCandidateSealKeepsFieldNameCallCalleeAsIndexGet(t *testing.T) {
+	spec := candidateIntegrationSpec()
+	spec.counts[keyspace.FamilyValues]++
+	spec.counts[keyspace.FamilyCall] = 1
+
+	call := candidateTerm(keyspace.FamilyCall, 1)
+	callee := candidateTerm(keyspace.FamilyRead, 1)
+	actuals := candidateTerm(keyspace.FamilyValues, 6)
+	// Replace the direct return-value occurrence with the Call occurrence;
+	// the callee remains a child of that Call, so this fixture exercises the
+	// ownership overlap without introducing a duplicate composite parent.
+	for index, term := range spec.flow.Values.Terms {
+		if term == callee {
+			spec.flow.Values.Terms[index] = call
+			break
+		}
+	}
+	end := spec.flow.Values.Rows[len(spec.flow.Values.Rows)-1].Fixed.End
+	spec.flow.Values.Rows = append(spec.flow.Values.Rows,
+		authored.Value{Owner: candidateTerm(keyspace.FamilyBody, 1), Fixed: authored.Range{Start: end, End: end}})
+	spec.flow.Calls = []authored.Call{{
+		Owner: candidateTerm(keyspace.FamilyBody, 1), Callee: callee, Actuals: actuals,
+	}}
+
+	fixture := openCandidateFixture(t, spec)
+	result, err := Seal(fixture.sourceView.Identity(), fixture.flowView, fixture.proof,
+		fixture.staticFinalize.View().ContentID(), fixture.moduleFinalize.View().ContentID())
+	if err != nil {
+		t.Fatalf("candidates.Seal: %v", err)
+	}
+	if !result.IndexGet().Contains(callee) {
+		t.Fatal("executable FieldName Read used as a Call callee was excluded from IndexGet")
+	}
+}
+
 func TestCandidateSealPermutationResealAndCapacity(t *testing.T) {
 	first := openCandidateFixture(t, candidateIntegrationSpec())
 	second := openCandidateFixture(t, candidateIntegrationSpec())

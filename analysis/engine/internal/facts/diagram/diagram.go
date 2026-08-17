@@ -223,6 +223,7 @@ func (diagram *Diagram[F, K, V]) BeginWithTerminals(values *terminal.Work[V]) *B
 }
 
 func (diagram *Diagram[F, K, V]) begin(values interface{ Valid(terminal.ID[V]) bool }) *Builder[F, K, V] {
+	DbgBegin.Add(1)
 	return &Builder[F, K, V]{
 		diagram: diagram, terminalAuthority: values, lease: &lease{}, open: true,
 		terminals: make(map[terminal.ID[V]]*node[V]),
@@ -252,6 +253,7 @@ func (diagram *Diagram[F, K, V]) Count(root Root[F, K, V]) (int, bool) {
 // This is intentionally a publication-boundary operation: candidate builders
 // have their own local terminal authority and must not use it for wake logic.
 func (diagram *Diagram[F, K, V]) Equal(left, right Root[F, K, V]) bool {
+	DbgEqual.Add(1)
 	if !diagram.Valid(left) || !diagram.Valid(right) {
 		return false
 	}
@@ -329,6 +331,8 @@ func (builder *Builder[F, K, V]) Valid(root Root[F, K, V]) bool {
 // resurrect under a new guard partition.  `when` is a full BDD, not a mask
 // approximation; `value` must be a terminal from this exact sealed arena.
 func (builder *Builder[F, K, V]) Set(root Root[F, K, V], factor F, key K, when support.Mask, value terminal.ID[V]) (Root[F, K, V], bool) {
+	DbgSet.Add(1)
+	dbgObserveKey(uint64(key))
 	if !builder.Valid(root) || !when.Valid() || when.Manager() != builder.diagram.guards || builder.terminalAuthority == nil || !builder.terminalAuthority.Valid(value) {
 		return Root[F, K, V]{}, false
 	}
@@ -362,6 +366,8 @@ func (builder *Builder[F, K, V]) Set(root Root[F, K, V], factor F, key K, when s
 // Delete strongly writes undefined under when.  The sparse column itself is
 // removed only when the resulting FDD is identically undefined.
 func (builder *Builder[F, K, V]) Delete(root Root[F, K, V], factor F, key K, when support.Mask) (Root[F, K, V], bool) {
+	DbgDelete.Add(1)
+	dbgObserveKey(uint64(key))
 	if !builder.Valid(root) || !when.Valid() || when.Manager() != builder.diagram.guards {
 		return Root[F, K, V]{}, false
 	}
@@ -397,6 +403,7 @@ func (builder *Builder[F, K, V]) Delete(root Root[F, K, V], factor F, key K, whe
 // Seal publishes root and drops every builder-local FDD cache.  Sealed roots
 // retain only their reachable immutable nodes.
 func (builder *Builder[F, K, V]) Seal(root Root[F, K, V]) (Root[F, K, V], bool) {
+	DbgSeal.Add(1)
 	if !builder.Valid(root) {
 		return Root[F, K, V]{}, false
 	}
@@ -422,6 +429,7 @@ func (builder *Builder[F, K, V]) Seal(root Root[F, K, V]) (Root[F, K, V], bool) 
 
 // Discard revokes candidate roots and releases all candidate caches.
 func (builder *Builder[F, K, V]) Discard() {
+	DbgDiscard.Add(1)
 	if builder == nil {
 		return
 	}
@@ -466,6 +474,8 @@ func (builder *Builder[F, K, V]) Constant(id terminal.ID[V]) (Value[V], bool) {
 // Builder.  A uniformly undefined FDD removes the physical column, preserving
 // sparse shape without treating undefined as an ordinary terminal value.
 func (builder *Builder[F, K, V]) Put(root Root[F, K, V], factor F, key K, value Value[V]) (Root[F, K, V], bool) {
+	DbgPut.Add(1)
+	dbgObserveKey(uint64(key))
 	if !builder.Valid(root) || !builder.validValue(value) {
 		return Root[F, K, V]{}, false
 	}
@@ -1338,6 +1348,7 @@ func (builder *Builder[F, K, V]) validTerminal(id terminal.ID[V]) bool {
 
 // ForEach streams sparse columns in schema order then ascending key order.
 func (diagram *Diagram[F, K, V]) ForEach(root Root[F, K, V], visit func(Fact[F, K, V]) bool) (completed, valid bool) {
+	DbgForEach.Add(1)
 	if !diagram.Valid(root) || visit == nil {
 		return false, false
 	}
@@ -1369,6 +1380,7 @@ func (builder *Builder[F, K, V]) terminal(value terminal.ID[V]) *node[V] {
 	if cached := builder.terminals[value]; cached != nil {
 		return cached
 	}
+	DbgTerminal.Add(1)
 	created := &node[V]{terminal: true, value: value}
 	builder.terminals[value] = created
 	return created
@@ -1383,6 +1395,7 @@ func (builder *Builder[F, K, V]) terminal(value terminal.ID[V]) *node[V] {
 // pages: this Builder retains its own terminal authority and never translates
 // an ID through a different Diagram or Arena.
 func (builder *Builder[F, K, V]) importNode(prior *node[V]) *node[V] {
+	DbgImport.Add(1)
 	if prior == nil {
 		return builder.terminal(terminal.ID[V]{})
 	}
@@ -1420,6 +1433,7 @@ func (builder *Builder[F, K, V]) decision(atom guard.Atom, low, high *node[V]) *
 	if cached := builder.decisions[key]; cached != nil {
 		return cached
 	}
+	DbgDecision.Add(1)
 	created := &node[V]{atom: atom, low: low, high: high}
 	builder.decisions[key] = created
 	return created
@@ -1429,6 +1443,7 @@ func (builder *Builder[F, K, V]) decision(atom guard.Atom, low, high *node[V]) *
 // and FDD.  Its cache is builder-local; it cannot become a persistent second
 // representation of facts.
 func (builder *Builder[F, K, V]) update(prior *node[V], when support.Mask, value terminal.ID[V]) *node[V] {
+	DbgUpdate.Add(1)
 	key := updateKey[V]{prior: prior, when: when, value: value}
 	if cached := builder.updates[key]; cached != nil {
 		return cached
@@ -1514,6 +1529,7 @@ func keyHeight[K scalar.Key, V any](node *keyNode[K, V]) int8 {
 }
 
 func makeFactor[F ~uint64, K scalar.Key, V any](factor F, rank uint32, keys *keyNode[K, V], left, right *factorNode[F, K, V]) *factorNode[F, K, V] {
+	DbgMakeFactor.Add(1)
 	height := factorHeight(left)
 	if factorHeight(right) > height {
 		height = factorHeight(right)
@@ -1521,6 +1537,7 @@ func makeFactor[F ~uint64, K scalar.Key, V any](factor F, rank uint32, keys *key
 	return &factorNode[F, K, V]{factor: factor, rank: rank, keys: keys, left: left, right: right, height: height + 1}
 }
 func makeKey[K scalar.Key, V any](key K, value *node[V], left, right *keyNode[K, V]) *keyNode[K, V] {
+	DbgMakeKey.Add(1)
 	height := keyHeight(left)
 	if keyHeight(right) > height {
 		height = keyHeight(right)
@@ -1554,6 +1571,7 @@ func rotateFactorRight[F ~uint64, K scalar.Key, V any](node *factorNode[F, K, V]
 	return makeFactor(left.factor, left.rank, left.keys, left.left, makeFactor(node.factor, node.rank, node.keys, left.right, node.right))
 }
 func balanceKey[K scalar.Key, V any](node *keyNode[K, V]) *keyNode[K, V] {
+	DbgBalanceKey.Add(1)
 	delta := int(keyHeight(node.left)) - int(keyHeight(node.right))
 	if delta > 1 {
 		left := node.left
@@ -1596,6 +1614,7 @@ func setFactor[F ~uint64, K scalar.Key, V any](node *factorNode[F, K, V], rank u
 	return makeFactor(node.factor, node.rank, keys, node.left, node.right), added
 }
 func setKey[K scalar.Key, V any](node *keyNode[K, V], key K, value *node[V]) (*keyNode[K, V], bool) {
+	DbgSetKeyNode.Add(1)
 	if node == nil {
 		return makeKey(key, value, nil, nil), true
 	}
@@ -1684,6 +1703,7 @@ func joinKeys[K scalar.Key, V any](left, right *keyNode[K, V]) *keyNode[K, V] {
 	return balanceKey(makeKey(min.key, min.value, left, rest))
 }
 func popKeyMin[K scalar.Key, V any](node *keyNode[K, V]) (*keyNode[K, V], *keyNode[K, V]) {
+	DbgPopKeyMin.Add(1)
 	if node.left == nil {
 		return node, node.right
 	}

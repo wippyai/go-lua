@@ -3,8 +3,6 @@ package sourcecontrol
 import (
 	"crypto/sha256"
 	"errors"
-	"fmt"
-	"runtime"
 	"sync"
 
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -170,12 +168,8 @@ func (r *Result) VertexCatalogAvailable() bool {
 	state := r.catalog
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	ok := state.phase == catalogInstalled && r.coordinates.nodeCount != 0 &&
+	return state.phase == catalogInstalled && r.coordinates.nodeCount != 0 &&
 		len(state.data.paths) == int(r.coordinates.nodeCount) && len(state.data.canonicalNodes) == int(r.coordinates.nodeCount)
-	if !ok {
-		fmt.Printf("DEBUG catalog state phase=%d owner=%v nodes=%d paths=%d canonical=%d\\n", state.phase, r.ownerAvailable(), r.coordinates.nodeCount, len(state.data.paths), len(state.data.canonicalNodes))
-	}
-	return ok
 }
 
 // VertexPathAt exposes only an already-issued semantic vertex path.  Dense
@@ -246,8 +240,6 @@ func (r *Result) CanonicalNodeAt(index int) (uint32, bool) {
 // witnesses remain available for the rest of the assembly, but no topology
 // or path lease can escape Flow publication.
 func (r *Result) ReleaseVertexCatalog(lease *VertexCatalogLease) bool {
-	stack := make([]byte, 4096)
-	fmt.Printf("DEBUG RELEASE called\\n%s\\n", stack[:runtime.Stack(stack, false)])
 	if r == nil || lease == nil || lease.owner != r || lease.state == nil || r.catalog != lease.state {
 		return false
 	}

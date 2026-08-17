@@ -5,6 +5,7 @@ import (
 	"reflect"
 
 	"github.com/wippyai/go-lua/domain/effect"
+	"github.com/wippyai/go-lua/domain/effect/capability"
 	"github.com/wippyai/go-lua/domain/type/projection"
 	"github.com/wippyai/go-lua/domain/type/typ"
 )
@@ -14,7 +15,14 @@ type Return struct {
 	Transform   ReturnType
 }
 
-func (Return) EffectLabel() {}
+// CapabilityID answers the capability of the transform the label carries: the
+// audited vocabulary distinguishes the seven return transforms, so the label's
+// classification is its transform's kind. A Return with an absent transform,
+// a typed nil pointer spelling included, carries no classifiable payload and
+// answers the empty string.
+func (r Return) CapabilityID() string {
+	return KindOfReturnType(r.Transform).CapabilityID()
+}
 func (r Return) String() string {
 	return fmt.Sprintf("ret[%d].type = %s", r.ReturnIndex, r.Transform)
 }
@@ -30,7 +38,7 @@ type ErrorReturn struct {
 	ErrorIndex int
 }
 
-func (ErrorReturn) EffectLabel() {}
+func (ErrorReturn) CapabilityID() string { return capability.ReturnsErrorReturn }
 func (e ErrorReturn) String() string {
 	return fmt.Sprintf("errret(val[%d], err[%d])", e.ValueIndex, e.ErrorIndex)
 }

@@ -9,6 +9,31 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
+// issueSyntheticComponents mirrors the recurrence component directory and
+// its already-issued semantic head paths. Synthetic tests must issue both
+// planes explicitly; a shaped Label/Loop term alone is not authority.
+func issueSyntheticComponents(r *Result, components ...keyspace.Term) {
+	r.components = append([]keyspace.Term(nil), components...)
+	r.componentIndex = make(map[keyspace.Term]uint32, len(components))
+	r.componentPaths = make([]identity.ContentID, len(components))
+	for index, component := range components {
+		r.componentIndex[component] = uint32(index)
+		path := identity.ContentID{}
+		path[0] = byte(component)
+		path[1] = byte(component >> 8)
+		path[31] = 1
+		r.componentPaths[index] = path
+	}
+}
+
+func issueSyntheticSites(r *Result, rows []siteRow) {
+	r.sites.rows = append([]siteRow(nil), rows...)
+	r.sites.byTerm = make(map[keyspace.Term]uint32, len(rows))
+	for index, row := range rows {
+		r.sites.byTerm[row.term] = uint32(index)
+	}
+}
+
 func syntheticResult() *Result {
 	var counts [keyspace.FamilyCount]uint32
 	counts[keyspace.FamilyBody] = 1
@@ -56,6 +81,7 @@ func rebuildSyntheticSuccessors(r *Result, edges []edgeRow, boundaries []boundar
 	}
 	sort.Slice(r.components, func(left, right int) bool { return r.components[left] < r.components[right] })
 	r.componentIndex = make(map[keyspace.Term]uint32, len(r.components))
+	r.componentPaths = make([]identity.ContentID, len(r.components))
 	for index, component := range r.components {
 		if !canonicalComponent(component, true) || uint64(index) > uint64(^uint32(0)) {
 			return fmt.Errorf("synthetic component %v is unavailable", component)
@@ -64,6 +90,11 @@ func rebuildSyntheticSuccessors(r *Result, edges []edgeRow, boundaries []boundar
 			return fmt.Errorf("synthetic component %v is duplicated", component)
 		}
 		r.componentIndex[component] = uint32(index)
+		path := identity.ContentID{}
+		path[0] = byte(component)
+		path[1] = byte(component >> 8)
+		path[31] = 1
+		r.componentPaths[index] = path
 	}
 	r.boundaries.callSlots = make([]uint32, r.index.familyCounts[keyspace.FamilyCall]+1)
 	edgeOwners := make([]keyspace.Term, len(edges))
@@ -93,7 +124,7 @@ func TestSemanticWTOSitesArePathOrderedPerVertexWithoutCrossVertexCollapse(t *te
 	call := keyspace.MakeTerm(keyspace.FamilyCall, 1)
 	pathBody := identity.ContentID{1}
 	pathCall := identity.ContentID{2}
-	r.sites.rows = []siteRow{{term: body, path: pathBody}, {term: call, path: pathCall}}
+	issueSyntheticSites(r, []siteRow{{term: body, path: pathBody}, {term: call, path: pathCall}})
 	// The same issued Site is a legitimate projection of two graph vertices;
 	// only the duplicate inside vertex zero is removed.
 	r.pendingNodeSites = [][]uint32{{1, 0, 1}, {1}}
@@ -322,7 +353,7 @@ func TestCompressedMuQueriesAndEmptyReset(t *testing.T) {
 		{Edge: Edge{From: body, To: selectTerm, Mu: loop}, component: loop, resetStart: 0, resetPast: 2},
 		{Edge: Edge{From: body, To: branch, Mu: loop}, component: loop, resetStart: 2, resetPast: 2},
 	}
-	r.components = []keyspace.Term{loop}
+	issueSyntheticComponents(r, loop)
 
 	view := r.Edges()
 	if count, ok := view.ResetCount(0); !ok || count != 2 {
@@ -376,11 +407,11 @@ func TestLocalSiteMembershipIsMultiValued(t *testing.T) {
 	}, nil); err != nil {
 		t.Fatal(err)
 	}
-	r.sites.rows = []siteRow{
+	issueSyntheticSites(r, []siteRow{
 		{term: body, context: hashSiteContext(r.sourceID, r.flowID, r.staticID, r.moduleID, body)},
 		{term: selectTerm, context: hashSiteContext(r.sourceID, r.flowID, r.staticID, r.moduleID, selectTerm)},
 		{term: branch, context: hashSiteContext(r.sourceID, r.flowID, r.staticID, r.moduleID, branch)},
-	}
+	})
 	if !r.buildLocal() {
 		t.Fatal("failed to build multi-region site inverse")
 	}
@@ -422,11 +453,11 @@ func TestLocalSiteInverseDeduplicatesInterleavedRegionRoutes(t *testing.T) {
 	}, nil); err != nil {
 		t.Fatal(err)
 	}
-	r.sites.rows = []siteRow{
+	issueSyntheticSites(r, []siteRow{
 		{term: body, context: hashSiteContext(r.sourceID, r.flowID, r.staticID, r.moduleID, body)},
 		{term: selectTerm, context: hashSiteContext(r.sourceID, r.flowID, r.staticID, r.moduleID, selectTerm)},
 		{term: branch, context: hashSiteContext(r.sourceID, r.flowID, r.staticID, r.moduleID, branch)},
-	}
+	})
 	if !r.buildLocal() {
 		t.Fatal("failed to build interleaved region inverse")
 	}
@@ -445,11 +476,11 @@ func TestLocalRejectsDuplicateSiteTerms(t *testing.T) {
 		t.Fatal(err)
 	}
 	context := hashSiteContext(r.sourceID, r.flowID, r.staticID, r.moduleID, body)
-	r.sites.rows = []siteRow{
+	issueSyntheticSites(r, []siteRow{
 		{term: body, context: context},
 		{term: body, context: context},
 		{term: selectTerm, context: hashSiteContext(r.sourceID, r.flowID, r.staticID, r.moduleID, selectTerm)},
-	}
+	})
 	if r.buildLocal() {
 		t.Fatal("Local accepted duplicate canonical Site terms")
 	}
@@ -643,13 +674,18 @@ func TestEquivalentResealAndResetPermutationPreserveIdentity(t *testing.T) {
 	permuted := func(order []keyspace.Term) RouteIdentity {
 		r := syntheticResult()
 		loop := keyspace.MakeTerm(keyspace.FamilyLoop, 1)
+		// This helper starts after the semantic reset-path publication cut.
+		// Supply the canonical set commitment directly so the fixture does not
+		// invent a structural-path certificate outside its owning package.
+		resetDigest := identity.ContentID{9}
 		r.reset.streams = append([]keyspace.Term(nil), order...)
 		r.reset.headRanges[keyspace.FamilyLoop] = make([]range32, 2)
 		r.reset.headRanges[keyspace.FamilyLoop][1] = range32{start: 0, end: uint32(len(order))}
-		r.edges.rows = []edgeRow{{Edge: Edge{From: body, To: outcome1, Mu: loop}, component: loop, resetStart: 0, resetPast: uint32(len(order))}}
+		r.edges.rows = []edgeRow{{Edge: Edge{From: body, To: outcome1, Mu: loop}, component: loop, resetStart: 0, resetPast: uint32(len(order)), resetDigest: resetDigest, resetCount: uint32(len(order))}}
 		if err := rebuildSyntheticSuccessors(r, r.edges.rows, nil); err != nil {
 			t.Fatal(err)
 		}
+		r.routesReady = true
 		if err := r.buildRouteIndex(); err != nil {
 			t.Fatal(err)
 		}

@@ -6,7 +6,6 @@ import (
 
 	"github.com/wippyai/go-lua/domain/effect"
 	"github.com/wippyai/go-lua/domain/effect/capability"
-	caplabel "github.com/wippyai/go-lua/domain/effect/capability/label"
 	"github.com/wippyai/go-lua/domain/effect/dispatch"
 	"github.com/wippyai/go-lua/domain/effect/iteration"
 	"github.com/wippyai/go-lua/domain/effect/lifecycle"
@@ -223,8 +222,12 @@ func decodeEffectLabel(w effectLabelWire) (effect.Label, error) {
 // label the catalog does not audit, states no spelling for, or bars from
 // manifests. It is the one carriage verdict both directions consult.
 func effectLabelWireRowFor(label effect.Label) (string, effectLabelWireRow, error) {
-	id, audited := caplabel.IDFor(label)
-	if !audited {
+	normalized := effect.NormalizeLabel(label)
+	if normalized == nil {
+		return "", effectLabelWireRow{}, fmt.Errorf("signature/wire: unaudited effect label %T", label)
+	}
+	id := normalized.CapabilityID()
+	if id == "" {
 		return "", effectLabelWireRow{}, fmt.Errorf("signature/wire: unaudited effect label %T", label)
 	}
 	desc, known := capability.Lookup(id)

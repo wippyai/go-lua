@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/domain/effect/mutation"
 	"github.com/wippyai/go-lua/domain/effect/ownership"
 	"github.com/wippyai/go-lua/domain/type/typ"
+	declarations "github.com/wippyai/go-lua/manifest"
 	modulemanifest "github.com/wippyai/go-lua/manifest/wire"
 )
 
@@ -29,7 +30,7 @@ func TestProvidersHaveExactCatalogueCoverageAndFreshResults(t *testing.T) {
 			t.Fatalf("%q manifest identity = %q@%q", library.ID(), first.Path, first.Version)
 		}
 	}
-	sealed, err := Catalogue()
+	sealed, err := declarations.Seal(Providers()...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,8 +39,17 @@ func TestProvidersHaveExactCatalogueCoverageAndFreshResults(t *testing.T) {
 	}
 }
 
+func manifestForTest(t *testing.T, id ID) *modulemanifest.Manifest {
+	t.Helper()
+	library, ok := Lookup(id)
+	if !ok {
+		t.Fatalf("missing library %q", id)
+	}
+	return buildManifest(library, library.declaration())
+}
+
 func TestHighRiskSignaturesTrackNativeABIAndEffects(t *testing.T) {
-	catalogue, err := Catalogue()
+	catalogue, err := declarations.Seal(Providers()...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,10 +112,7 @@ func TestHighRiskSignaturesTrackNativeABIAndEffects(t *testing.T) {
 
 func TestManifestsRoundTripAndDoNotDeclareRuntimeScope(t *testing.T) {
 	for _, library := range catalogue {
-		m, ok := Manifest(library.ID())
-		if !ok {
-			t.Fatalf("missing manifest for %q", library.ID())
-		}
+		m := manifestForTest(t, library.ID())
 		if err := m.Validate(); err != nil {
 			t.Fatalf("%q manifest validation: %v", library.ID(), err)
 		}
@@ -128,7 +135,7 @@ func TestManifestsRoundTripAndDoNotDeclareRuntimeScope(t *testing.T) {
 
 func TestEveryDirectCallableIsExportedWithAnAuditedEffectRow(t *testing.T) {
 	for _, library := range catalogue {
-		m, _ := Manifest(library.ID())
+		m := manifestForTest(t, library.ID())
 		export, ok := m.Export.(*typ.Record)
 		if !ok {
 			t.Fatalf("%q export is %T, want record", library.ID(), m.Export)
@@ -156,7 +163,7 @@ func TestEveryDirectCallableIsExportedWithAnAuditedEffectRow(t *testing.T) {
 }
 
 func TestNestedErrorMethodsAreTypedButNotDirectModuleExports(t *testing.T) {
-	m, _ := Manifest(Errors)
+	m := manifestForTest(t, Errors)
 	export := m.Export.(*typ.Record)
 	if export.GetField("Error.kind") != nil || export.GetField("Error") != nil {
 		t.Fatal("errors manifest fabricated a direct Error export")
@@ -170,7 +177,7 @@ func TestNestedErrorMethodsAreTypedButNotDirectModuleExports(t *testing.T) {
 }
 
 func TestInitialGlobalsAreProjectedFromMountShape(t *testing.T) {
-	sealed, err := Catalogue()
+	sealed, err := declarations.Seal(Providers()...)
 	if err != nil {
 		t.Fatal(err)
 	}

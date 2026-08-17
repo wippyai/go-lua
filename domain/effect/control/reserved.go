@@ -1,6 +1,9 @@
 package control
 
-import "github.com/wippyai/go-lua/domain/effect"
+import (
+	"github.com/wippyai/go-lua/domain/effect"
+	"github.com/wippyai/go-lua/domain/effect/capability"
+)
 
 var (
 	_ effect.Label = Throw{}
@@ -18,15 +21,15 @@ type (
 	IO struct{}
 )
 
-func (Throw) EffectLabel()   {}
-func (Throw) String() string { return "throw" }
+func (Throw) CapabilityID() string { return capability.ControlThrow }
+func (Throw) String() string       { return "throw" }
 func (Throw) Equals(other effect.Label) bool {
 	_, ok := effect.NormalizeLabel(other).(Throw)
 	return ok
 }
 
-func (IO) EffectLabel()   {}
-func (IO) String() string { return "io" }
+func (IO) CapabilityID() string { return capability.ControlIO }
+func (IO) String() string       { return "io" }
 func (IO) Equals(other effect.Label) bool {
 	_, ok := effect.NormalizeLabel(other).(IO)
 	return ok

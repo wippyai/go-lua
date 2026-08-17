@@ -8,7 +8,6 @@ import (
 	"github.com/wippyai/go-lua/domain/type/normalize"
 	typetable "github.com/wippyai/go-lua/domain/type/table"
 	"github.com/wippyai/go-lua/domain/type/typ"
-	"github.com/wippyai/go-lua/types/signature"
 )
 
 func debugDeclaration() declaration {
@@ -22,7 +21,7 @@ func debugDeclaration() declaration {
 		Field("lastlinedefined", typ.Number).
 		Field("func", typ.Any).
 		Build()
-	return declaration{signatures: map[string]signature.Function{
+	return declaration{signatures: map[string]declaredFunction{
 		"getinfo": openAuthored("stdlib.debug.getinfo.stack", typ.Func().
 			Param("function_or_level", typ.Any).OptParam("what", typ.String).
 			Returns(normalize.Optional(info)).Build(), ownership.BorrowAll{}),
@@ -34,7 +33,7 @@ func debugDeclaration() declaration {
 			ownership.BorrowAll{}),
 		"getupvalue": openAuthored("stdlib.debug.getupvalue.stack", typ.Func().
 			Param("function", typ.Any).Param("index", typ.Integer).
-			Returns(normalize.Optional(typ.String), normalize.Optional(typ.Any)).Build()),
+			Returns(normalize.Optional(typ.String), normalize.Optional(typ.Any)).Build()).operational(debugGetUpvalueOperationLaw()),
 		"setlocal": openAuthored("stdlib.debug.setlocal.stack", typ.Func().
 			Param("level", typ.Integer).Param("index", typ.Integer).Param("value", typ.Any).
 			Returns(normalize.Optional(typ.String)).Build(),
@@ -50,7 +49,7 @@ func debugDeclaration() declaration {
 	}}
 }
 
-func debugSetMetatableSignature() signature.Function {
+func debugSetMetatableSignature() declaredFunction {
 	subject := typ.NewTypeParam("T", nil)
 	return authored(typ.Func().TypeParamRef(subject).
 		Param("object", subject).Param("metatable", normalize.Optional(typ.Any)).

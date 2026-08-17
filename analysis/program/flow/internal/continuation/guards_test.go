@@ -283,6 +283,9 @@ func referenceContinuationGuards(t *testing.T, fixture *continuationFixture) map
 	support := make(map[keyspace.Term]map[keyspace.Term]struct{})
 	queued := make(map[keyspace.Term]bool)
 	queue := make([]keyspace.Term, 0)
+	// Mirror the production lexical Body-entry projection: a guarded route to
+	// a child Body reaches each candidate subject fronted by that Body.
+	bodySubjects := make(map[keyspace.Term][]keyspace.Term)
 	identity := fixture.sourceView.Identity()
 	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
 		for ordinal := uint32(1); ordinal <= uint32(identity.FamilyCount(family)); ordinal++ {
@@ -290,6 +293,14 @@ func referenceContinuationGuards(t *testing.T, fixture *continuationFixture) map
 			support[term] = make(map[keyspace.Term]struct{})
 			queued[term] = true
 			queue = append(queue, term)
+			if !subjectFrom(fixture.executable, fixture.candidates, term) {
+				continue
+			}
+			body, _, frontierOK := fixture.sourceView.Index().Frontier(term)
+			if !frontierOK {
+				t.Fatalf("reference subject %08x lacks Source Frontier", uint32(term))
+			}
+			bodySubjects[body] = append(bodySubjects[body], term)
 		}
 	}
 	successors := fixture.causal.Successors()
@@ -297,6 +308,22 @@ func referenceContinuationGuards(t *testing.T, fixture *continuationFixture) map
 		from := queue[cursor]
 		queued[from] = false
 		incoming := support[from]
+		if keyspace.TermFamily(from) == keyspace.FamilyBody {
+			for _, subject := range bodySubjects[from] {
+				to := support[subject]
+				changed := false
+				for term := range incoming {
+					if _, exists := to[term]; !exists {
+						to[term] = struct{}{}
+						changed = true
+					}
+				}
+				if changed && !queued[subject] {
+					queued[subject] = true
+					queue = append(queue, subject)
+				}
+			}
+		}
 		for index := 0; index < successors.Count(from); index++ {
 			successor, ok := successors.At(from, index)
 			if !ok {

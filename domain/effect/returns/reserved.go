@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/domain/constraint/expr"
 	"github.com/wippyai/go-lua/domain/effect"
+	"github.com/wippyai/go-lua/domain/effect/capability"
 )
 
 // ReturnLength is reserved return metadata. It is audited by capability
@@ -14,7 +15,7 @@ type ReturnLength struct {
 	Length      expr.Expr
 }
 
-func (ReturnLength) EffectLabel() {}
+func (ReturnLength) CapabilityID() string { return capability.ReturnsReturnLength }
 func (r ReturnLength) String() string {
 	return fmt.Sprintf("ret[%d].len = %s", r.ReturnIndex, r.Length)
 }
@@ -31,7 +32,7 @@ type CorrelatedReturn struct {
 	Indices []int
 }
 
-func (CorrelatedReturn) EffectLabel() {}
+func (CorrelatedReturn) CapabilityID() string { return capability.ReturnsCorrelatedReturn }
 func (c CorrelatedReturn) String() string {
 	return fmt.Sprintf("correlated_return(%v)", c.Indices)
 }

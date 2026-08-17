@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/wippyai/go-lua/domain/effect"
+	"github.com/wippyai/go-lua/domain/effect/capability"
 	"github.com/wippyai/go-lua/domain/typestate"
 )
 
@@ -20,7 +21,7 @@ type Acquire struct {
 	Obligation typestate.Obligation
 }
 
-func (Acquire) EffectLabel() {}
+func (Acquire) CapabilityID() string { return capability.LifecycleAcquire }
 func (a Acquire) String() string {
 	if final := obligationString(a.Obligation); final != "" {
 		return fmt.Sprintf("lifecycle.acquire(%s, %s:%s -> %s)", a.Target, a.Protocol, a.State, final)
@@ -44,7 +45,7 @@ type Transition struct {
 	To       typestate.State
 }
 
-func (Transition) EffectLabel() {}
+func (Transition) CapabilityID() string { return capability.LifecycleTransition }
 func (t Transition) String() string {
 	if t.From != "" {
 		return fmt.Sprintf("lifecycle.transition(%s, %s:%s -> %s)", t.Target, t.Protocol, t.From, t.To)
@@ -66,7 +67,7 @@ type Escape struct {
 	Protocol typestate.Protocol
 }
 
-func (Escape) EffectLabel() {}
+func (Escape) CapabilityID() string { return capability.LifecycleEscape }
 func (e Escape) String() string {
 	return fmt.Sprintf("lifecycle.escape(%s, %s)", e.Target, e.Protocol)
 }

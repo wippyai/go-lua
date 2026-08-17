@@ -690,8 +690,11 @@ func (r *Result) componentIssued(component keyspace.Term) bool {
 	if r == nil || !canonicalComponent(component, true) {
 		return false
 	}
-	_, ok := r.componentIndex[component]
-	return ok
+	index, ok := r.componentIndex[component]
+	if !ok || uint64(index) >= uint64(len(r.components)) {
+		return false
+	}
+	return r.components[index] == component
 }
 
 func (r *Result) boundaryResetCount(index uint32, arm BoundaryArmKind) (int, bool) {

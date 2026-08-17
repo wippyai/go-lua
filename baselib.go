@@ -12,7 +12,9 @@ var baseFuncs = map[string]LGoFunc{
 	"assert":       baseAssert,
 	"error":        baseError,
 	"getmetatable": baseGetMetatable,
+	"ipairs":       baseIpairs,
 	"next":         baseNext,
+	"pairs":        basePairs,
 	"pcall":        basePCall,
 	"print":        basePrint,
 	"rawequal":     baseRawEqual,
@@ -45,10 +47,6 @@ func OpenBase(L *LState) int {
 	for name, fn := range baseFuncs {
 		global.RawSetString(name, fn)
 	}
-
-	// ipairs and pairs push aux functions directly
-	global.RawSetString("ipairs", LGoFunc(baseIpairs))
-	global.RawSetString("pairs", LGoFunc(basePairs))
 
 	return 1
 }

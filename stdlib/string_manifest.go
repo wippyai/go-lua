@@ -6,7 +6,6 @@ import (
 	typetable "github.com/wippyai/go-lua/domain/type/table"
 	"github.com/wippyai/go-lua/domain/type/typ"
 	"github.com/wippyai/go-lua/domain/type/typeexpr"
-	"github.com/wippyai/go-lua/types/signature"
 )
 
 var stringCapture = typeexpr.Union(typ.String, typ.Number)
@@ -23,38 +22,38 @@ func stringDeclaration() declaration {
 		normalize.Optional(stringCapture), normalize.Optional(stringCapture),
 		normalize.Optional(stringCapture), normalize.Optional(stringCapture),
 	).Build()
-	return declaration{aliases: map[string]string{"gfind": "string.gmatch"}, signatures: map[string]signature.Function{
+	return declaration{aliases: map[string]string{"gfind": "string.gmatch"}, detached: stringDetachedFunctions(), signatures: map[string]declaredFunction{
 		"byte": withResultTail(authored(typ.Func().
 			Param("s", typ.String).OptParam("i", typ.Integer).OptParam("j", typ.Integer).
-			Build(), ownership.BorrowAll{}), typ.Integer),
-		"char": authored(typ.Func().Variadic(typ.Integer).Returns(typ.String).Build()),
+			Build(), ownership.BorrowAll{}), typ.Integer).operational(stringByteOperationLaw()),
+		"char": authored(typ.Func().Variadic(typ.Integer).Returns(typ.String).Build()).operational(stringCharOperationLaw()),
 		"dump": authored(typ.Func().
 			Param("function", typ.Any).Returns(typ.Never).Build()),
 		"find": withResultTail(authored(typ.Func().
 			Param("s", typ.String).Param("pattern", typ.String).
 			OptParam("init", typ.Integer).OptParam("plain", typ.Boolean).
 			Returns(normalize.Optional(typ.Integer), normalize.Optional(typ.Integer)).Build(),
-			ownership.BorrowAll{}), typ.Any),
+			ownership.BorrowAll{}), typ.Any).operational(stringFindOperationLaw()),
 		"format": authored(typ.Func().
 			Param("format", typ.String).Variadic(typ.Any).Returns(typ.String).Build(),
-			ownership.BorrowAll{}),
+			ownership.BorrowAll{}).operational(replacement(formatProfile())),
 		"gfind": openAuthored("stdlib.string.gmatch.iterator", typ.Func().
 			Param("s", typ.String).Param("pattern", typ.String).
 			Returns(iterator, typ.Any).Build(), ownership.BorrowAll{}),
 		"gmatch": openAuthored("stdlib.string.gmatch.iterator", typ.Func().
 			Param("s", typ.String).Param("pattern", typ.String).
-			Returns(iterator, typ.Any).Build(), ownership.BorrowAll{}),
+			Returns(iterator, typ.Any).Build(), ownership.BorrowAll{}).operational(stringGmatchOperationLaw()),
 		"gsub": openAuthored("stdlib.string.gsub.replacement", typ.Func().
 			Param("s", typ.String).Param("pattern", typ.String).
 			Param("repl", stringReplacement).OptParam("n", typ.Integer).
-			Returns(typ.String, typ.Number).Build(), ownership.BorrowAll{}),
+			Returns(typ.String, typ.Number).Build(), ownership.BorrowAll{}).operational(replacement(callbackGsubProfile())),
 		"len": authored(typ.Func().Param("s", typ.String).Returns(typ.Number).Build(),
 			ownership.BorrowAll{}),
 		"lower": authored(typ.Func().Param("s", typ.String).Returns(typ.String).Build(),
 			ownership.BorrowAll{}),
 		"match": withResultTail(authored(typ.Func().
 			Param("s", typ.String).Param("pattern", typ.String).OptParam("init", typ.Integer).
-			Build(), ownership.BorrowAll{}), typ.Any),
+			Build(), ownership.BorrowAll{}), typ.Any).operational(stringMatchOperationLaw()),
 		"pack": authored(typ.Func().
 			Param("fmt", typ.String).Variadic(typ.Any).Returns(typ.String).Build(),
 			ownership.BorrowAll{}),

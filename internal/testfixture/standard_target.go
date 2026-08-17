@@ -2,6 +2,7 @@ package testfixture
 
 import (
 	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/domain/composite/manifesttarget"
 	"github.com/wippyai/go-lua/domain/effect"
 	"github.com/wippyai/go-lua/domain/effect/dispatch"
 	"github.com/wippyai/go-lua/domain/type/typ"
@@ -11,8 +12,9 @@ import (
 	"github.com/wippyai/go-lua/types/signature"
 )
 
-// StandardLibraryTarget seals the native provider manifests through Target's
-// public catalogue entry point. It is test scaffolding, not a runtime registry.
+// StandardLibraryTarget seals the native provider manifests through the
+// domain-owned manifest target adapter. It is test scaffolding, not a runtime
+// registry.
 func StandardLibraryTarget() (*target.Contract, error) {
 	providers := stdlib.Providers()
 	providers = append(providers, manifest.Provider{
@@ -24,7 +26,7 @@ func StandardLibraryTarget() (*target.Contract, error) {
 	if err != nil {
 		return nil, err
 	}
-	return target.SealCatalogue(catalogue)
+	return manifesttarget.SealCatalogue(catalogue)
 }
 
 func wippyHostManifest() *manifestwire.Manifest {

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wippyai/go-lua/domain/effect"
 	"github.com/wippyai/go-lua/domain/effect/capability"
 	"github.com/wippyai/go-lua/domain/effect/control"
 	"github.com/wippyai/go-lua/domain/effect/dispatch"
@@ -117,69 +118,110 @@ func TestAllReturnsDeterministicCopy(t *testing.T) {
 	}
 }
 
-func TestAuditedConcreteSymbolsHaveOneDescriptor(t *testing.T) {
-	samples := []struct {
-		symbol any
-		id     string
-	}{
-		{returns.SameAs{}, capability.ReturnsReturnSameAs},
-		{returns.ElementOf{}, capability.ReturnsReturnElementOf},
-		{returns.OptionalElementOf{}, capability.ReturnsReturnOptionalElementOf},
-		{returns.CallbackReturn{}, capability.ReturnsReturnCallbackReturn},
-		{returns.ArrayOfCallbackReturn{}, capability.ReturnsReturnArrayOfCallbackReturn},
-		{returns.TypeProjection{}, capability.ReturnsReturnTypeProjection},
-		{returns.ConditionalType{}, capability.ReturnsReturnConditionalType},
-		{returns.ErrorReturn{}, capability.ReturnsErrorReturn},
-		{returns.ReturnLength{}, capability.ReturnsReturnLength},
-		{returns.CorrelatedReturn{}, capability.ReturnsCorrelatedReturn},
+// auditedLabels is the concrete effect vocabulary, one term per audited
+// capability. The seven return transforms are distinguished by the Return label
+// that carries them, which is how the vocabulary distinguishes them.
+func auditedLabels() []effect.Label {
+	return []effect.Label{
+		returns.Return{Transform: returns.SameAs{}},
+		returns.Return{Transform: returns.ElementOf{}},
+		returns.Return{Transform: returns.OptionalElementOf{}},
+		returns.Return{Transform: returns.CallbackReturn{}},
+		returns.Return{Transform: returns.ArrayOfCallbackReturn{}},
+		returns.Return{Transform: returns.TypeProjection{}},
+		returns.Return{Transform: returns.ConditionalType{}},
+		returns.ErrorReturn{},
+		returns.ReturnLength{},
+		returns.CorrelatedReturn{},
 
-		{postcondition.NormalReturnRefinement{}, capability.PostconditionNormalReturnRefinement},
+		postcondition.NormalReturnRefinement{},
 
-		{ownership.Borrow{}, capability.OwnershipBorrow},
-		{ownership.Retain{}, capability.OwnershipRetain},
-		{ownership.Store{}, capability.OwnershipStore},
-		{ownership.Send{}, capability.OwnershipSend},
-		{ownership.SendParam{}, capability.OwnershipSendParam},
-		{ownership.Export{}, capability.OwnershipExport},
-		{ownership.Opaque{}, capability.OwnershipOpaque},
-		{ownership.Freeze{}, capability.OwnershipFreeze},
-		{ownership.BorrowAll{}, capability.OwnershipBorrowAll},
+		ownership.Borrow{},
+		ownership.Retain{},
+		ownership.Store{},
+		ownership.Send{},
+		ownership.SendParam{},
+		ownership.Export{},
+		ownership.Opaque{},
+		ownership.Freeze{},
+		ownership.BorrowAll{},
 
-		{iteration.Iterator{}, capability.IterationIterator},
+		iteration.Iterator{},
 
-		{dispatch.ModuleLoad{}, capability.DispatchModuleLoad},
+		dispatch.ModuleLoad{},
 
-		{mutation.Mutate{}, capability.MutationMutate},
-		{mutation.LengthChange{}, capability.MutationLengthChange},
-		{mutation.TableMutator{}, capability.MutationTableMutator},
+		mutation.Mutate{},
+		mutation.LengthChange{},
+		mutation.TableMutator{},
 
-		{lifecycle.Acquire{}, capability.LifecycleAcquire},
-		{lifecycle.Transition{}, capability.LifecycleTransition},
-		{lifecycle.Escape{}, capability.LifecycleEscape},
+		lifecycle.Acquire{},
+		lifecycle.Transition{},
+		lifecycle.Escape{},
 
-		{control.Throw{}, capability.ControlThrow},
-		{control.IO{}, capability.ControlIO},
+		control.Throw{},
+		control.IO{},
+	}
+}
+
+// TestAuditedLabelsAndDescriptorsAreABijection states the pairing between the
+// Go vocabulary and the catalog: every label term classifies itself as exactly
+// one audited capability, no two terms claim the same one, and no descriptor is
+// left unclaimed. That a label term states an ID at all is the compiler's job,
+// since effect.Label requires the method; what this law adds is that the stated
+// IDs and the catalog are the same set.
+func TestAuditedLabelsAndDescriptorsAreABijection(t *testing.T) {
+	claimedBy := map[string]reflect.Type{}
+	for _, label := range auditedLabels() {
+		typ := reflect.TypeOf(label)
+		id := label.CapabilityID()
+		if id == "" {
+			t.Fatalf("%s states no capability", typ)
+		}
+		if _, known := capability.Lookup(id); !known {
+			t.Fatalf("%s states unaudited capability %s", typ, id)
+		}
+		if previous, ok := claimedBy[id]; ok {
+			t.Fatalf("%s is claimed by both %s and %s", id, previous, typ)
+		}
+		claimedBy[id] = typ
 	}
 
-	seenTypes := map[reflect.Type]string{}
-	seenIDs := map[string]reflect.Type{}
-	for _, sample := range samples {
-		typ := reflect.TypeOf(sample.symbol)
-		if previous, ok := seenTypes[typ]; ok {
-			t.Fatalf("%s and %s both classify %s", previous, sample.id, typ)
-		}
-		if previous, ok := seenIDs[sample.id]; ok {
-			t.Fatalf("%s is assigned to both %s and %s", sample.id, previous, typ)
-		}
-		if _, ok := capability.Lookup(sample.id); !ok {
-			t.Fatalf("%s has no descriptor for %s", typ, sample.id)
-		}
-		seenTypes[typ] = sample.id
-		seenIDs[sample.id] = typ
-	}
 	all := capability.All()
-	if len(seenIDs) != len(all) {
-		t.Fatalf("concrete audited symbols = %d, descriptors = %d", len(seenIDs), len(all))
+	for _, desc := range all {
+		if _, claimed := claimedBy[desc.ID]; !claimed {
+			t.Errorf("descriptor %s is reachable from no label term", desc.ID)
+		}
+	}
+	if len(claimedBy) != len(all) {
+		t.Fatalf("audited label terms = %d, descriptors = %d", len(claimedBy), len(all))
+	}
+}
+
+// TestPointerLabelsStateTheSameCapability states that the value and pointer
+// spellings of a label, and of the transform it carries, are the same audited
+// term once normalized.
+func TestPointerLabelsStateTheSameCapability(t *testing.T) {
+	for _, label := range auditedLabels() {
+		pointer := reflect.New(reflect.TypeOf(label))
+		pointer.Elem().Set(reflect.ValueOf(label))
+		normalized := effect.NormalizeLabel(pointer.Interface().(effect.Label))
+		if got, want := normalized.CapabilityID(), label.CapabilityID(); got != want {
+			t.Errorf("pointer %T states %q, value states %q", label, got, want)
+		}
+	}
+
+	pointerTransform := effect.NormalizeLabel(&returns.Return{Transform: &returns.ElementOf{}})
+	if got := pointerTransform.CapabilityID(); got != capability.ReturnsReturnElementOf {
+		t.Errorf("pointer return transform states %q, want %q", got, capability.ReturnsReturnElementOf)
+	}
+}
+
+// TestReturnWithoutTransformStatesNoCapability states the one label term that
+// carries no classifiable payload: a return whose transform is absent names no
+// capability, so a consumer refuses it instead of defaulting it to one.
+func TestReturnWithoutTransformStatesNoCapability(t *testing.T) {
+	if got := (returns.Return{}).CapabilityID(); got != "" {
+		t.Fatalf("return without transform states %q, want no capability", got)
 	}
 }
 

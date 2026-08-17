@@ -99,13 +99,6 @@ var catalogue = [...]Library{
 	library(Errors, ErrorsName, MountModule, errorsDeclaration),
 }
 
-// Libraries returns the complete catalogue in runtime open order.
-func Libraries() []Library {
-	out := make([]Library, len(catalogue))
-	copy(out, catalogue[:])
-	return out
-}
-
 // Lookup returns the catalogue entry with id.
 func Lookup(id ID) (Library, bool) {
 	for _, entry := range catalogue {

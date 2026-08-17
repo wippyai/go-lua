@@ -3,10 +3,10 @@ package programlaw
 import (
 	"fmt"
 
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/provenance"
 	"github.com/wippyai/go-lua/analysis/program"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/compiler/ast"
 )

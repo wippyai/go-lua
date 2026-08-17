@@ -93,7 +93,7 @@ func checkRendered(directory string, rendered map[string][]byte) error {
 		return fmt.Errorf("parser products: read generated directory: %w", err)
 	}
 	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), generatedPrefix) && strings.HasSuffix(entry.Name(), ".go") {
+		if strings.HasPrefix(entry.Name(), generatedPrefix) && strings.HasSuffix(entry.Name(), ".go") && !strings.HasSuffix(entry.Name(), "_test.go") {
 			if _, expected := rendered[entry.Name()]; !expected {
 				return fmt.Errorf("parser products: stale generated evidence %s", entry.Name())
 			}
@@ -121,7 +121,7 @@ func checkNoUnexpected(directory string, rendered map[string][]byte) error {
 	}
 	var stale []string
 	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), generatedPrefix) && strings.HasSuffix(entry.Name(), ".go") {
+		if strings.HasPrefix(entry.Name(), generatedPrefix) && strings.HasSuffix(entry.Name(), ".go") && !strings.HasSuffix(entry.Name(), "_test.go") {
 			if _, expected := rendered[entry.Name()]; !expected {
 				stale = append(stale, entry.Name())
 			}

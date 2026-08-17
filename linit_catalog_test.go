@@ -7,18 +7,18 @@ import (
 )
 
 func TestNativeLibraryOpenersFollowStdlibCatalogue(t *testing.T) {
-	catalogue := stdlib.Libraries()
-	if len(luaLibs) != len(catalogue) {
-		t.Fatalf("native openers = %d, catalogue = %d", len(luaLibs), len(catalogue))
+	providers := stdlib.Providers()
+	if len(luaLibs) != len(providers) {
+		t.Fatalf("native openers = %d, providers = %d", len(luaLibs), len(providers))
 	}
-	for index, library := range catalogue {
+	for index, provider := range providers {
 		native := luaLibs[index]
-		if native.libName != library.Name() {
-			t.Fatalf("native opener %d name = %q, catalogue = %q",
-				index, native.libName, library.Name())
+		if native.libName != provider.Declaration().Path {
+			t.Fatalf("native opener %d name = %q, provider = %q",
+				index, native.libName, provider.Declaration().Path)
 		}
 		if native.libFunc == nil {
-			t.Fatalf("native opener for %q is nil", library.ID())
+			t.Fatalf("native opener for %q is nil", provider.Identity)
 		}
 	}
 }
@@ -26,7 +26,7 @@ func TestNativeLibraryOpenersFollowStdlibCatalogue(t *testing.T) {
 func TestNativeLibraryOpenerBindingRejectsDrift(t *testing.T) {
 	if got := func() (panicked bool) {
 		defer func() { panicked = recover() != nil }()
-		bindStandardLibraryOpeners(map[stdlib.ID]LGoFunc{})
+		bindStandardLibraries(map[stdlib.ID]nativeLibrary{})
 		return false
 	}(); !got {
 		t.Fatal("incomplete native opener binding did not panic")

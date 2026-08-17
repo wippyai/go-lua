@@ -3,8 +3,14 @@ package effect
 import "reflect"
 
 // Label is one atomic function effect.
+//
+// CapabilityID answers the audited capability the label is classified as, using
+// the dotted ID the capability catalog authors. Every label states its own, so
+// the classification lives beside the type it classifies and no central switch
+// re-derives it from the Go type. The empty string means the label carries no
+// classifiable payload, which only a Return with an absent transform can be.
 type Label interface {
-	EffectLabel()
+	CapabilityID() string
 	String() string
 	Equals(other Label) bool
 }

@@ -216,26 +216,52 @@ func TestEffectReturnCodecSpellsEveryDeclaredKindOnce(t *testing.T) {
 	}
 }
 
+// typedNilReturnTransforms is one typed nil pointer per declared variant, keyed
+// by the variant it names. The keys derive the coverage of the refusal law from
+// the vocabulary catalog; the terms themselves classify as absent, so they carry
+// no kind the law could read back off them.
+func typedNilReturnTransforms(t *testing.T) []returns.ReturnType {
+	t.Helper()
+	byKind := map[returns.ReturnTypeKind]returns.ReturnType{
+		returns.ReturnTypeSameAs:                (*returns.SameAs)(nil),
+		returns.ReturnTypeElementOf:             (*returns.ElementOf)(nil),
+		returns.ReturnTypeOptionalElementOf:     (*returns.OptionalElementOf)(nil),
+		returns.ReturnTypeCallbackReturn:        (*returns.CallbackReturn)(nil),
+		returns.ReturnTypeArrayOfCallbackReturn: (*returns.ArrayOfCallbackReturn)(nil),
+		returns.ReturnTypeTypeProjection:        (*returns.TypeProjection)(nil),
+		returns.ReturnTypeConditionalType:       (*returns.ConditionalType)(nil),
+	}
+	absent := make([]returns.ReturnType, 0, returns.ReturnTypeKindCount)
+	for _, kind := range returns.ReturnTypeKinds() {
+		term, named := byKind[kind]
+		if !named {
+			t.Fatalf("declared return transform kind %d has no typed nil term at the boundary", kind)
+		}
+		absent = append(absent, term)
+	}
+	return absent
+}
+
 // TestEffectReturnCodecRejectsAbsentAndUnknown states the boundary's closing
 // half: an absent transform writes nothing, a transform spelled as a typed nil
 // pointer is refused rather than dereferenced, and a kind the vocabulary does
-// not declare is refused on read.
+// not declare is refused on read. The refusal rests on the vocabulary's own
+// classification of a typed nil as absent, so the boundary never reaches a
+// payload row for one.
 func TestEffectReturnCodecRejectsAbsentAndUnknown(t *testing.T) {
 	wire, err := encodeEffectReturn(nil)
 	if err != nil || wire != nil {
 		t.Fatalf("encodeEffectReturn(nil) = %v/%v, want nothing written", wire, err)
 	}
-	for _, absent := range []returns.ReturnType{
-		(*returns.ElementOf)(nil),
-		(*returns.OptionalElementOf)(nil),
-		(*returns.CallbackReturn)(nil),
-		(*returns.ArrayOfCallbackReturn)(nil),
-		(*returns.SameAs)(nil),
-		(*returns.TypeProjection)(nil),
-		(*returns.ConditionalType)(nil),
-	} {
+	for _, absent := range typedNilReturnTransforms(t) {
+		if got := returns.KindOfReturnType(absent); got.Valid() {
+			t.Fatalf("the vocabulary classifies the absent %T as kind %d, so the boundary would route it to a payload", absent, got)
+		}
 		if _, err := encodeEffectReturn(absent); err == nil {
 			t.Fatalf("codec wrote the absent %T transform", absent)
+		}
+		if _, err := encodeEffectLabel(returns.Return{ReturnIndex: 0, Transform: absent}); err == nil {
+			t.Fatalf("codec wrote the return label carrying the absent %T transform", absent)
 		}
 	}
 	if _, err := decodeEffectReturn(&effectReturnWire{Kind: "returns.unsealed"}); err == nil {

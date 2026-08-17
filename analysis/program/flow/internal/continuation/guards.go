@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/causal"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/executable"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/program/source"
 )
 
 const noGuardRank = ^uint32(0)
@@ -21,6 +22,7 @@ type guardSeal struct {
 	exec     *executable.Result
 	cand     *candidates.Result
 	causal   *causal.Result
+	source   source.View
 }
 
 type guardRoute struct {
@@ -32,7 +34,7 @@ type guardRoute struct {
 type guardRange struct{ start, past uint32 }
 
 func newGuardSeal(input inputProof) (*guardSeal, error) {
-	seal := &guardSeal{counts: input.counts, exec: input.exec, cand: input.cand, causal: input.causal}
+	seal := &guardSeal{counts: input.counts, exec: input.exec, cand: input.cand, causal: input.causal, source: input.source}
 	for _, family := range continuationSubjects {
 		if input.counts[family] == ^uint32(0) || uint64(input.counts[family])+1 > uint64(^uint(0)>>1) {
 			return nil, errors.New("program/flow/continuation: Guard subject denominator is too large")
@@ -75,6 +77,11 @@ func (seal *guardSeal) layout() error {
 func (seal *guardSeal) solve() error {
 	vertices := make([]keyspace.Term, seal.terms)
 	subject := make([]bool, seal.terms)
+	// Causal's guarded Body route is the lexical entry witness for every
+	// candidate subject fronted by that Body. Keep this reverse frontier only
+	// during solving so a decision entering a child Body reaches its subjects
+	// without retaining another graph projection in Result.
+	bodySubjects := make([][]uint32, seal.counts[keyspace.FamilyBody]+1)
 	for index := uint32(0); index < seal.terms; index++ {
 		term, ok := seal.termAt(index)
 		if !ok {
@@ -82,6 +89,14 @@ func (seal *guardSeal) solve() error {
 		}
 		vertices[index] = term
 		subject[index] = subjectFrom(seal.exec, seal.cand, term)
+		if !subject[index] {
+			continue
+		}
+		body, _, frontierOK := seal.source.Index().Frontier(term)
+		if !frontierOK || !keyspace.ValidTerm(body, keyspace.FamilyBody, int(seal.counts[keyspace.FamilyBody])) {
+			return errors.New("program/flow/continuation: Guard subject lacks Source Frontier")
+		}
+		bodySubjects[keyspace.TermOrdinal(body)] = append(bodySubjects[keyspace.TermOrdinal(body)], index)
 	}
 	successors := seal.causal.Successors()
 	// endpoint is construction scratch for the additional query denominator.
@@ -223,6 +238,18 @@ func (seal *guardSeal) solve() error {
 			from := queue[cursor]
 			if err := extendSubject(from, term); err != nil {
 				return err
+			}
+			if keyspace.TermFamily(vertices[from]) == keyspace.FamilyBody {
+				bodyOrdinal := keyspace.TermOrdinal(vertices[from])
+				if bodyOrdinal != 0 && uint64(bodyOrdinal) < uint64(len(bodySubjects)) {
+					for _, subjectIndex := range bodySubjects[bodyOrdinal] {
+						if marks[subjectIndex] == generation {
+							continue
+						}
+						marks[subjectIndex] = generation
+						queue = append(queue, subjectIndex)
+					}
+				}
 			}
 			for routeIndex := ranges[from].start; routeIndex < ranges[from].past; routeIndex++ {
 				route := routes[routeIndex]

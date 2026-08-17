@@ -7,17 +7,25 @@
 // so per the composite placement law the relation lives here, and this package
 // is the one writer of its result.
 //
-// The relation is held as three typed evidence paths. An attachment binds one
-// selected call effect member to a value summary root before solving, and
-// proves one solved subject cell into a membership classification. An
-// allocation context event rebuilds the two cross-owner admissions from live
-// typed capabilities, reruns that membership proof, and issues one detached
-// content-identified record of the proved transition: its subject binding and
-// runtime allocation context, the destination context a context-required
-// transition carries, and the target effect, escape, mutability, and lifetime
-// dispositions the transition declared. Both paths reauthenticate every input
-// they are handed, so a caller cannot supply a detached membership scalar,
-// context identity, heap key, or target consequence.
+// The relation is held as three typed evidence paths. The first issues the
+// direct allocation subject itself: one exact mounted pack semantic source and
+// one exact owned value allocation result must resolve to the same value
+// coordinate, which is the cross-domain join the member domains may not host.
+// Its detached seal commits that coordinate together with the heap key
+// identity, and its owner fences stay private.
+//
+// An attachment binds one selected call effect member to a value summary root
+// before solving, and proves one solved subject cell into a membership
+// classification. That proof is also where the direct receipt is readmitted
+// against the live pack and heap binding, so the relation carries no separate
+// admission carrier between the two. An allocation context event rebuilds the
+// correlation from live typed capabilities, reruns that membership proof, and
+// issues one detached content-identified record of the proved transition: its
+// subject binding and runtime allocation context, the destination context a
+// context-required transition carries, and the target effect, escape,
+// mutability, and lifetime dispositions the transition declared. Every path
+// reauthenticates the inputs it is handed, so a caller cannot supply a detached
+// membership scalar, context identity, heap key, or target consequence.
 //
 // The third path binds one mounted branch evidence point to the same Value
 // summary surface and reads it back after solving. It carries the same private

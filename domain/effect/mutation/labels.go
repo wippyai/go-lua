@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/domain/constraint/expr"
 	"github.com/wippyai/go-lua/domain/effect"
+	"github.com/wippyai/go-lua/domain/effect/capability"
 )
 
 // Mutate indicates that a function changes a parameter's type-level shape.
@@ -14,7 +15,7 @@ type Mutate struct {
 	LengthDelta expr.Expr
 }
 
-func (Mutate) EffectLabel() {}
+func (Mutate) CapabilityID() string { return capability.MutationMutate }
 func (m Mutate) String() string {
 	if m.LengthDelta != nil {
 		return fmt.Sprintf("mutate(%s, %s, delta=%s)", m.Target, m.Transform, m.LengthDelta)
@@ -35,7 +36,7 @@ type LengthChange struct {
 	Delta  int
 }
 
-func (LengthChange) EffectLabel() {}
+func (LengthChange) CapabilityID() string { return capability.MutationLengthChange }
 func (l LengthChange) String() string {
 	if l.Delta >= 0 {
 		return fmt.Sprintf("len(%s) += %d", l.Target, l.Delta)
@@ -54,7 +55,7 @@ type TableMutator struct {
 	Value  effect.ParamRef
 }
 
-func (TableMutator) EffectLabel() {}
+func (TableMutator) CapabilityID() string { return capability.MutationTableMutator }
 func (t TableMutator) String() string {
 	return fmt.Sprintf("table_mutator(%s, %s)", t.Target, t.Value)
 }

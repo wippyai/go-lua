@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/wippyai/go-lua/domain/effect"
+	"github.com/wippyai/go-lua/domain/effect/capability"
 	"github.com/wippyai/go-lua/internal/hash"
 )
 
@@ -144,7 +145,9 @@ type NormalReturnRefinement struct {
 	Refinement Refinement
 }
 
-func (NormalReturnRefinement) EffectLabel() {}
+func (NormalReturnRefinement) CapabilityID() string {
+	return capability.PostconditionNormalReturnRefinement
+}
 func (NormalReturnRefinement) Kind() string { return NormalReturnRefinementKind }
 func (n NormalReturnRefinement) String() string {
 	return fmt.Sprintf("normal_return_refine(%s, %s)", n.Target, refinementString(n.Refinement))
@@ -157,7 +160,7 @@ func (n NormalReturnRefinement) Equals(other effect.Label) bool {
 	return n.Target.Index == o.Target.Index && refinementEquals(n.Refinement, o.Refinement)
 }
 func (n NormalReturnRefinement) Hash() uint64 {
-	h := hash.FnvString("postcondition.NormalReturnRefinement")
+	h := hash.FnvString(capability.PostconditionNormalReturnRefinement)
 	h = hash.MixHash(h, hash.FnvString(fmt.Sprintf("target:%d", n.Target.Index)))
 	if n.Refinement != nil {
 		h = hash.MixHash(h, n.Refinement.Hash())

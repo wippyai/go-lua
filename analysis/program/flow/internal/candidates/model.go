@@ -4,9 +4,12 @@
 // Candidates are existing authored Terms only.  The projection has no
 // synthetic rows, generic candidate registry, branch/handler selection, or
 // persistence representation.  Executability is the sole reachability gate;
-// the authored operator/access relation supplies the candidate family. A
-// GenericLoop bucket contains executable authored GenericFor rows whose
-// header Values relation has at least one fixed member.
+// the authored operator/access relation supplies the candidate family. Every
+// executable Read over a LensExact or LensKey is an IndexGet candidate,
+// including a FieldName Read reused as a Call callee: Call ownership does not
+// change the Read's candidate family. A GenericLoop bucket contains
+// executable authored GenericFor rows whose header Values relation has at
+// least one fixed member.
 package candidates
 
 import (

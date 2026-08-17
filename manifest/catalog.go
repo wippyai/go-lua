@@ -52,6 +52,8 @@ type Function struct {
 	bindings      []Binding
 	canonicalPath string
 	signature     signature.Function
+	operation     moduleio.Operation
+	hasOperation  bool
 }
 
 // Value is one mounted, non-callable export. Its type is the declaration of
@@ -73,6 +75,15 @@ func (f Function) ProviderIdentity() string { return f.providerID }
 func (f Function) CanonicalPath() string    { return f.canonicalPath }
 func (f Function) Signature() signature.Function {
 	return f.signature.Clone()
+}
+
+// Operation returns the provider-owned behavioral law. False requests the
+// generic signature-derived operation and carries no provider specialization.
+func (f Function) Operation() (moduleio.Operation, bool) {
+	if !f.hasOperation {
+		return moduleio.Operation{}, false
+	}
+	return moduleio.CloneOperation(f.operation), true
 }
 
 // Binding is one Lua-visible spelling of a callable identity.
@@ -152,6 +163,13 @@ func Seal(input ...Provider) (*Catalogue, error) {
 			immutable: item.Immutable,
 			manifest:  owned,
 		})
+		for local := range owned.FunctionOperations {
+			_, direct := owned.FunctionSignatures[local]
+			_, detached := owned.DetachedFunctions[local]
+			if !direct && !detached {
+				return nil, fmt.Errorf("manifest: provider %q operation %q has no function signature", item.Identity, local)
+			}
+		}
 
 		for local, function := range owned.FunctionSignatures {
 			if _, alias := owned.FunctionAliases[local]; alias {
@@ -165,11 +183,29 @@ func Seal(input ...Provider) (*Catalogue, error) {
 				return nil, fmt.Errorf("manifest: duplicate function path %q", name)
 			}
 			catalogue.byFunctionPath[name] = len(catalogue.functions)
+			operation, specialized := owned.FunctionOperations[local]
 			catalogue.functions = append(catalogue.functions, Function{
 				providerID:    item.Identity,
 				bindings:      []Binding{{mount: item.Mount, modulePath: owned.Path, member: strings.Split(local, ".")}},
 				canonicalPath: name,
 				signature:     owned.ScopeSignature(function),
+				operation:     moduleio.CloneOperation(operation),
+				hasOperation:  specialized,
+			})
+		}
+		for local, function := range owned.DetachedFunctions {
+			name := qualify(owned.Path, local)
+			if _, exists := catalogue.byFunctionPath[name]; exists {
+				return nil, fmt.Errorf("manifest: duplicate detached function path %q", name)
+			}
+			operation, specialized := owned.FunctionOperations[local]
+			if !specialized {
+				return nil, fmt.Errorf("manifest: detached function %q has no operation", name)
+			}
+			catalogue.byFunctionPath[name] = len(catalogue.functions)
+			catalogue.functions = append(catalogue.functions, Function{
+				providerID: item.Identity, canonicalPath: name,
+				signature: owned.ScopeSignature(function), operation: moduleio.CloneOperation(operation), hasOperation: true,
 			})
 		}
 
@@ -242,7 +278,8 @@ func clone(input *moduleio.Manifest) (*moduleio.Manifest, error) {
 	if err != nil {
 		return nil, err
 	}
-	return moduleio.Decode(encoded)
+	owned, err := moduleio.Decode(encoded)
+	return owned, err
 }
 
 func qualify(path, local string) string {
@@ -354,6 +391,7 @@ func valueBindingKey(binding Binding) string {
 func (f Function) clone() Function {
 	f.bindings = f.Bindings()
 	f.signature = f.signature.Clone()
+	f.operation = moduleio.CloneOperation(f.operation)
 	return f
 }
 

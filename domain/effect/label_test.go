@@ -9,7 +9,7 @@ type testLabel struct {
 	id   int
 }
 
-func (l testLabel) EffectLabel() {}
+func (l testLabel) CapabilityID() string { return "test.Label" }
 func (l testLabel) String() string {
 	if l.name == "" {
 		return "test"

@@ -9,6 +9,13 @@ const (
 	errorMetatableName = "error"
 )
 
+var errorsFuncs = map[string]LGoFunc{
+	"new":        errorsNew,
+	"wrap":       errorsWrap,
+	"call_stack": errorsCallStack,
+	"is":         errorsIs,
+}
+
 // OpenErrors registers the errors module and error metatable.
 func OpenErrors(L *LState) int {
 	// Register error metatable
@@ -17,11 +24,9 @@ func OpenErrors(L *LState) int {
 	// Create errors module table
 	mod := L.CreateTable(0, 14)
 
-	// Add functions
-	mod.RawSetString("new", LGoFunc(errorsNew))
-	mod.RawSetString("wrap", LGoFunc(errorsWrap))
-	mod.RawSetString("call_stack", LGoFunc(errorsCallStack))
-	mod.RawSetString("is", LGoFunc(errorsIs))
+	for name, function := range errorsFuncs {
+		mod.RawSetString(name, function)
+	}
 
 	// Add kind constants (UPPERCASE convention)
 	mod.RawSetString("NOT_FOUND", LString(NotFound))

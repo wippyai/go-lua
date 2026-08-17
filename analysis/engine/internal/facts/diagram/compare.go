@@ -15,6 +15,7 @@ import (
 // truth is independent of the route that reached that suffix. Use the older
 // visitor when each structural occurrence must be observed.
 func (diagram *Diagram[F, K, V]) CompareSoleFactorUnder(left, right Root[F, K, V], within support.Mask, scratch *SoleScratch[K, V], relation func(terminal.ID[V], terminal.ID[V]) bool) bool {
+	DbgCompare.Add(1)
 	if diagram == nil || !diagram.Valid(left) || !diagram.Valid(right) || !within.Valid() || within.Manager() != diagram.guards || scratch == nil || relation == nil {
 		return false
 	}
@@ -38,6 +39,7 @@ func (diagram *Diagram[F, K, V]) CompareSoleFactorUnder(left, right Root[F, K, V
 // no guard candidate transaction or materialized intersections; all mutable
 // traversal storage belongs to the caller's reusable SoleScratch.
 func (diagram *Diagram[F, K, V]) CompareSoleFactorRegions(left, right Root[F, K, V], scratch *SoleScratch[K, V], regions func(K) (support.Mask, bool), relation func(terminal.ID[V], terminal.ID[V]) bool) bool {
+	DbgCompare.Add(1)
 	if diagram == nil || !diagram.Valid(left) || !diagram.Valid(right) || scratch == nil || regions == nil || relation == nil {
 		return false
 	}

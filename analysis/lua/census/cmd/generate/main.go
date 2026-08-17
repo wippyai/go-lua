@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -10,20 +11,28 @@ import (
 )
 
 func main() {
-	root := flag.String("root", ".", "module root")
-	out := flag.String("out", "", "generated census output")
-	check := flag.Bool("check", false, "require checked-in census to be current")
-	flag.Parse()
+	if err := run(os.Args[1:]); err != nil {
+		fail("%v", err)
+	}
+}
+
+func run(arguments []string) error {
+	flags := flag.NewFlagSet("parser-census", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	root := flags.String("root", ".", "module root")
+	out := flags.String("out", "", "generated census output")
+	check := flags.Bool("check", false, "require checked-in census to be current")
+	if err := flags.Parse(arguments); err != nil {
+		return err
+	}
 	if *out == "" {
-		fail("-out is required")
+		return fmt.Errorf("-out is required")
 	}
 	absoluteRoot, err := filepath.Abs(*root)
 	if err != nil {
-		fail("resolve root: %v", err)
+		return fmt.Errorf("resolve root: %w", err)
 	}
-	if err := census.Generate(absoluteRoot, *out, *check); err != nil {
-		fail("%v", err)
-	}
+	return census.Generate(absoluteRoot, *out, *check)
 }
 
 func fail(format string, arguments ...any) {

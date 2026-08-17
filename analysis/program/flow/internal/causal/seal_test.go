@@ -697,6 +697,67 @@ func TestSemanticMatrixAllLoopKindsPublishTypedRoutes(t *testing.T) {
 	}
 }
 
+// A Repeat condition is reached only from its child Body's normal tail.  A
+// child whose only root is Return still contributes the initial Loop -> Body
+// route and the closed structural witnesses, but it must not publish a
+// condition route from the unreachable hidden decision.
+func TestSemanticMatrixRepeatSkipsUnreachableChildTailCondition(t *testing.T) {
+	parent := causalTerm(keyspace.FamilyBody, 1)
+	child := causalTerm(keyspace.FamilyBody, 2)
+	bind := causalTerm(keyspace.FamilyBind, 1)
+	loop := causalTerm(keyspace.FamilyLoop, 1)
+	condition := causalTerm(keyspace.FamilyUnary, 1)
+	operand := causalTerm(keyspace.FamilyNil, 1)
+	bindValues := causalTerm(keyspace.FamilyValues, 1)
+	returnValues := causalTerm(keyspace.FamilyValues, 2)
+	returned := causalTerm(keyspace.FamilyReturn, 1)
+	f := openCausalFixture(t, causalSpec{
+		counts: causalCounts(
+			causalFamilyCount{keyspace.FamilyBody, 2},
+			causalFamilyCount{keyspace.FamilyBind, 1},
+			causalFamilyCount{keyspace.FamilyCell, 1},
+			causalFamilyCount{keyspace.FamilyLoop, 1},
+			causalFamilyCount{keyspace.FamilyUnary, 1},
+			causalFamilyCount{keyspace.FamilyNil, 1},
+			causalFamilyCount{keyspace.FamilyValues, 2},
+			causalFamilyCount{keyspace.FamilyReturn, 1},
+		),
+		rows:      [][]keyspace.Term{{bind, loop}, {returned}},
+		binds:     []source.BindCells{{Bind: bind, Cells: []keyspace.Term{causalTerm(keyspace.FamilyCell, 1)}}},
+		nilOwners: []keyspace.Term{child},
+		flow: authored.Input{
+			Values: authored.ValuesInput{Rows: []authored.Value{{Owner: parent}, {Owner: child}}},
+			Storage: authored.StorageInput{
+				Cells: []authored.Cell{{Kind: authored.CellLocal, Body: parent}},
+				Binds: []authored.Bind{{Owner: parent, Values: bindValues}},
+			},
+			Operators: authored.OperatorsInput{Unaries: []authored.Unary{{
+				Owner: child, Op: kind.UnaryNeg, Operand: operand,
+			}}},
+			Control: authored.ControlInput{
+				Loops:   []authored.Loop{{Owner: parent, Body: child, Kind: kind.LoopRepeat, Control: condition}},
+				Returns: []authored.Return{{Owner: child, Values: returnValues}},
+			},
+		},
+	})
+	initial := false
+	for index := 0; index < f.result.Successors().Count(loop); index++ {
+		successor, ok := f.result.Successors().At(loop, index)
+		if ok && !successor.IsBoundary() && successor.To == child && successor.Decision == 0 {
+			initial = true
+		}
+	}
+	if !initial {
+		t.Fatalf("terminal Repeat lost initial Loop -> Body route: %d successors", f.result.Successors().Count(loop))
+	}
+	for index := 0; index < f.result.Successors().Count(condition); index++ {
+		successor, ok := f.result.Successors().At(condition, index)
+		if ok && !successor.IsBoundary() && successor.Decision == loop {
+			t.Fatalf("terminal Repeat published unreachable condition route: %#v", successor)
+		}
+	}
+}
+
 // Numeric and generic-for headers are evaluated on activation ingress.  The
 // iteration route must return to the Loop anchor rather than Ports.Entry(loop)
 // (the first header operand), otherwise a one-shot header Call is re-entered on
@@ -1797,17 +1858,19 @@ func wideCallSpec(width int) causalSpec {
 // causal tests deliberately retain no construction authority and never
 // manufacture a Result, Edge, or CallBoundary row.
 type causalFixture struct {
-	sourceView source.View
-	flow       authored.View
-	bodies     *body.Result
-	forest     *containment.Result
-	outcomes   *outcome.Result
-	control    *sourcecontrol.Result
-	recurrence *recurrence.Result
-	ports      *evaluation.Ports
-	executable *executable.Result
-	entries    *runtimeentry.Result
-	result     *Result
+	sourceView    source.View
+	flow          authored.View
+	bodies        *body.Result
+	forest        *containment.Result
+	outcomes      *outcome.Result
+	outcomePhases *sourcecontrol.OutcomePhases
+	control       *sourcecontrol.Result
+	recurrence    *recurrence.Result
+	ports         *evaluation.Ports
+	executable    *executable.Result
+	entries       *runtimeentry.Result
+	result        *Result
+	graphLease    *sourcecontrol.VertexCatalogLease
 
 	// These path views are captured while the SourceControl VertexCatalog
 	// lease is live.  Semantic-matrix laws must not reopen it after release.
@@ -2027,8 +2090,6 @@ func openCausalFixture(t *testing.T, spec causalSpec) *causalFixture {
 		closeCausalFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatal("sourcecontrol.InstallVertexCatalog: no exact path view")
 	}
-	t.Logf("DEBUG catalog after install=%v", graph.VertexCatalogAvailable())
-	defer graph.ReleaseVertexCatalog(vertexLease)
 	capturedBodyEntryPath, capturedBodyTailPath, capturedVertexPath := identity.ContentID{}, identity.ContentID{}, identity.ContentID{}
 	if spec.captureBodyEntryPath != 0 {
 		var pathOK bool
@@ -2121,7 +2182,6 @@ func openCausalFixture(t *testing.T, spec causalSpec) *causalFixture {
 		closeCausalFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatal("semanticpath.Causal: view unavailable")
 	}
-	t.Logf("DEBUG catalog before prepare=%v", graph.VertexCatalogAvailable())
 	preparation, err := PrepareRoutePlanWithStructuralPaths(sourceView, flowView, bodies, forest, outcomes, graph, ports, execResult, entries, causalPaths, outcomePhases, staticID, moduleID)
 	if err != nil {
 		closeCausalFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
@@ -2148,12 +2208,15 @@ func openCausalFixture(t *testing.T, spec causalSpec) *causalFixture {
 	fixture := &causalFixture{
 		sourceView: sourceView, flow: flowView, bodies: bodies, forest: forest,
 		outcomes: outcomes, control: graph, recurrence: recur, ports: ports,
-		executable: execResult, entries: entries, result: result,
+		outcomePhases: outcomePhases,
+		executable:    execResult, entries: entries, result: result,
+		graphLease:            vertexLease,
 		capturedBodyEntryPath: capturedBodyEntryPath, capturedBodyTailPath: capturedBodyTailPath,
 		capturedVertexPath: capturedVertexPath, capturedArcs: capturedArcs,
 		staticFinalize: staticFinalize, flowFinalize: flowFinalize, moduleFinalize: moduleFinalize,
 	}
 	t.Cleanup(func() {
+		fixture.control.ReleaseVertexCatalog(fixture.graphLease)
 		closeCausalFinalizers(source.Finalizer{}, fixture.staticFinalize, fixture.flowFinalize, fixture.moduleFinalize)
 	})
 	return fixture

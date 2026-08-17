@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/wippyai/go-lua/domain/effect"
+	"github.com/wippyai/go-lua/domain/effect/capability"
 )
 
 var _ effect.Label = Iterator{}
@@ -68,7 +69,7 @@ func ActiveIterator(labels []effect.Label) (Iterator, bool) {
 	return Iterator{}, false
 }
 
-func (Iterator) EffectLabel() {}
+func (Iterator) CapabilityID() string { return capability.IterationIterator }
 func (i Iterator) String() string {
 	return fmt.Sprintf("iterator(%s, %s)", i.Source, i.Kind)
 }

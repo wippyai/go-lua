@@ -200,6 +200,18 @@ func (s *structureState) emitBodyEntry(bodyTerm keyspace.Term) error {
 			continue
 		}
 		to, toOK := s.causalTarget(root)
+		if keyspace.TermFamily(root) == keyspace.FamilyLoop {
+			_, body, loopKind, _, loopOK := s.flow.Control().Loops().Get(root)
+			if loopOK && loopKind == kind.LoopRepeat {
+				if tail, tailOK := s.graph.Tail(body); tailOK && !s.graph.Reachable(tail) {
+					// A terminal Repeat child has no reachable hidden decision.
+					// The initial root projection enters its child Body directly;
+					// the Loop's own initial route remains a separate structural
+					// witness emitted by emitLoop.
+					to, toOK = body, true
+				}
+			}
+		}
 		if !toOK {
 			return errors.New("program/flow/causal: Body entry root has no causal Entry")
 		}
@@ -543,6 +555,26 @@ func (s *structureState) emitLoop(owner keyspace.Term, cursor int, loop, _ keysp
 		}
 		if err := s.appendEdge(loop, body, owner, 0, false, initialArc); err != nil {
 			return err
+		}
+		// Repeat's condition is reached only through the child Body's normal
+		// tail.  A terminal child (for example, one whose last root is Return)
+		// still owns the typed Repeat witnesses, but its tail and hidden
+		// decision are unreachable.  Keep those witnesses as liveness-only
+		// rows and do not publish a route from the unreachable condition
+		// endpoint.  Emitting that route would hand recurrence a phase which
+		// is correctly absent from its reachable hierarchy.
+		childTail, childTailOK := s.graph.Tail(body)
+		if !childTailOK {
+			return errors.New("program/flow/causal: Repeat child tail is unavailable")
+		}
+		if !s.graph.Reachable(childTail) {
+			if _, livenessOK := s.markLivenessArc(loop, body, loop, false); !livenessOK {
+				return errors.New("program/flow/causal: unreachable Repeat decision Arc is unavailable")
+			}
+			if _, livenessOK := s.markLivenessArc(loop, exitRaw, loop, true); !livenessOK {
+				return errors.New("program/flow/causal: unreachable Repeat exit Arc is unavailable")
+			}
+			return nil
 		}
 		if keyspace.TermFamily(controlEndpoint) == keyspace.FamilyCall {
 			// Boundary emission supplies Call -> Loop after the Body normal Arc.

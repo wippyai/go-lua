@@ -6,13 +6,13 @@ import (
 	"strconv"
 	"strings"
 
-	valuedomain "github.com/wippyai/go-lua/domain/value"
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
+	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
 // buildNativeBranchPublication is the sole post-convergence owner for the
@@ -117,19 +117,19 @@ func appendNativeArithmeticRows(rows *[]nativePublicationRow, seen map[identity.
 	right, rightOK := nativeNumericRepresentation(summary.right)
 	result, resultOK := nativeNumericRepresentation(summary.result)
 	operator, operatorOK := nativeArithmeticOperator(summary.op)
-	overflow, overflowOK := nativeArithmeticOverflow(summary.op, summary.left, summary.right)
+	overflow, overflowOK := valuedomain.BinaryNumericOverflow(summary.op, summary.left, summary.right)
 	divisor, divisorOK := nativeArithmeticDivisor(summary.divisor)
 	if !summary.valid() || !leftOK || !rightOK || !resultOK || !operatorOK || !overflowOK || !divisorOK {
 		return false
 	}
-	representation := "representation=" + result + " left=" + left + " operator=" + operator + " overflow=" + overflow + " result_representation=" + result + " right=" + right
+	representation := "representation=" + result + " left=" + left + " operator=" + operator + " overflow=" + overflow.String() + " result_representation=" + result + " right=" + right
 	if summary.result != programartifact.NumericRepresentationNumber {
 		representation = "exact=true " + representation
 	}
 	if !appendNativeArithmeticRow(rows, seen, nativePublicationFamilyRepresentation, summary, representation) {
 		return false
 	}
-	operatorValue := "class=number dispatch=primitive left=" + left + " operator=" + operator + " overflow=" + overflow + " result=" + result + " right=" + right
+	operatorValue := "class=number dispatch=primitive left=" + left + " operator=" + operator + " overflow=" + overflow.String() + " result=" + result + " right=" + right
 	if divisor != "" {
 		operatorValue += " divisor=" + divisor
 	}
@@ -177,14 +177,11 @@ func appendNativeArithmeticRow(rows *[]nativePublicationRow, seen map[identity.C
 func appendNativeUnaryRows(rows *[]nativePublicationRow, seen map[identity.ContentID]struct{}, summary compiledNativeUnarySummary) bool {
 	operand, operandOK := nativeNumericRepresentation(summary.operand)
 	result, resultOK := nativeNumericRepresentation(summary.result)
-	if !summary.valid() || !operandOK || !resultOK {
+	overflow, overflowOK := valuedomain.UnaryNumericOverflow(summary.op, summary.operand)
+	if !summary.valid() || !operandOK || !resultOK || !overflowOK {
 		return false
 	}
-	overflow := "ieee754"
-	if summary.operand == programartifact.NumericRepresentationInteger {
-		overflow = "closed_integer"
-	}
-	value := "operator=unm overflow=" + overflow + " representation=" + result + " result_representation=" + result + " operand_representation=" + operand
+	value := "operator=unm overflow=" + overflow.String() + " representation=" + result + " result_representation=" + result + " operand_representation=" + operand
 	if summary.result != programartifact.NumericRepresentationNumber {
 		value = "exact=true " + value
 	}
@@ -216,6 +213,9 @@ func appendNativeUnaryRows(rows *[]nativePublicationRow, seen map[identity.Conte
 	return true
 }
 
+// nativeNumericRepresentation is this publication's single spelling of the
+// sealed representation vocabulary: the names exist nowhere else, so they are
+// rendered here rather than projected from a declared row.
 func nativeNumericRepresentation(representation programartifact.NumericRepresentation) (string, bool) {
 	switch representation {
 	case programartifact.NumericRepresentationInteger:
@@ -229,6 +229,9 @@ func nativeNumericRepresentation(representation programartifact.NumericRepresent
 	}
 }
 
+// nativeArithmeticOperator is this publication's single spelling of the sealed
+// arithmetic range of flowkind.BinaryOp; the operators carry no declared name
+// of their own, and every member outside that range fails closed.
 func nativeArithmeticOperator(op flowkind.BinaryOp) (string, bool) {
 	switch op {
 	case flowkind.BinaryAdd:
@@ -250,28 +253,9 @@ func nativeArithmeticOperator(op flowkind.BinaryOp) (string, bool) {
 	}
 }
 
-func nativeArithmeticOverflow(op flowkind.BinaryOp, left, right programartifact.NumericRepresentation) (string, bool) {
-	if !left.Valid() || !right.Valid() {
-		return "", false
-	}
-	switch op {
-	case flowkind.BinaryAdd, flowkind.BinarySub, flowkind.BinaryMul:
-		if left == programartifact.NumericRepresentationInteger && right == programartifact.NumericRepresentationInteger {
-			return "promote_integer_to_number", true
-		}
-		return "ieee754", true
-	case flowkind.BinaryIDiv, flowkind.BinaryMod:
-		if left == programartifact.NumericRepresentationInteger && right == programartifact.NumericRepresentationInteger {
-			return "closed_integer", true
-		}
-		return "ieee754", true
-	case flowkind.BinaryDiv, flowkind.BinaryPow:
-		return "ieee754", true
-	default:
-		return "", false
-	}
-}
-
+// nativeArithmeticDivisor is this publication's single spelling of the sealed
+// divisor-property vocabulary; the guard conclusions carry no declared name of
+// their own, and the absent property renders as no clause at all.
 func nativeArithmeticDivisor(property programartifact.ArithmeticDivisorProperty) (string, bool) {
 	switch property {
 	case programartifact.ArithmeticDivisorNone:
@@ -423,54 +407,16 @@ func nativePublicationSpanID(span programsource.Span) (identity.ContentID, bool)
 	return identity.DeriveContentID("analysis/native-publication/source-span/v1", []byte(span.File), coordinates[:])
 }
 
-func renderNativeExactScalar(scalar valuedomain.ExactScalar) (representation, value string, ok bool) {
-	switch scalar.Kind() {
-	case valuedomain.ExactScalarNil:
-		return "nil", "nil", true
-	case valuedomain.ExactScalarBoolean, valuedomain.ExactScalarLiteral:
-		literal, literalOK := scalar.Literal()
-		if !literalOK {
-			return "", "", false
-		}
-		switch literal.Kind {
-		case keyspace.LiteralBool:
-			return "boolean", strconv.FormatBool(literal.Bool), true
-		case keyspace.LiteralInteger:
-			return "integer", strconv.FormatInt(literal.Integer, 10), true
-		case keyspace.LiteralFloat:
-			float := math.Float64frombits(literal.FloatBits)
-			if math.IsNaN(float) || math.IsInf(float, 0) {
-				return "", "", false
-			}
-			rendered := strconv.FormatFloat(float, 'g', -1, 64)
-			if !strings.ContainsAny(rendered, ".eE") {
-				rendered += ".0"
-			}
-			return "float", rendered, true
-		case keyspace.LiteralString:
-			return "string", strconv.Quote(literal.String), true
-		default:
-			return "", "", false
-		}
-	default:
-		return "", "", false
-	}
-}
-
-func renderNativeScalarSummary(source compiledNativeScalarSource) (representation, value string, ok bool) {
-	if !source.valid() {
-		return "", "", false
-	}
-	if source.family == keyspace.FamilyNil {
-		return "nil", "nil", true
-	}
-	literal := source.literal
-	switch source.family {
-	case keyspace.FamilyBool:
+// renderNativeLiteral is the sole spelling of a published Lua scalar. Both the
+// exact-scalar path and the reusable-summary path consult it, so a constant
+// reads the same however it was proved.
+func renderNativeLiteral(literal keyspace.LiteralValue) (representation, value string, ok bool) {
+	switch literal.Kind {
+	case keyspace.LiteralBool:
 		return "boolean", strconv.FormatBool(literal.Bool), true
-	case keyspace.FamilyInteger:
+	case keyspace.LiteralInteger:
 		return "integer", strconv.FormatInt(literal.Integer, 10), true
-	case keyspace.FamilyFloat:
+	case keyspace.LiteralFloat:
 		float := math.Float64frombits(literal.FloatBits)
 		if math.IsNaN(float) || math.IsInf(float, 0) {
 			return "", "", false
@@ -480,9 +426,43 @@ func renderNativeScalarSummary(source compiledNativeScalarSource) (representatio
 			rendered += ".0"
 		}
 		return "float", rendered, true
-	case keyspace.FamilyString:
+	case keyspace.LiteralString:
 		return "string", strconv.Quote(literal.String), true
 	default:
 		return "", "", false
 	}
+}
+
+// renderNativeNil is Lua nil's rendering. It stands outside the literal table
+// because nil retains its own identity and has no keyspace literal to render.
+func renderNativeNil() (representation, value string, ok bool) {
+	return "nil", "nil", true
+}
+
+func renderNativeExactScalar(scalar valuedomain.ExactScalar) (representation, value string, ok bool) {
+	switch scalar.Kind() {
+	case valuedomain.ExactScalarNil:
+		return renderNativeNil()
+	case valuedomain.ExactScalarBoolean, valuedomain.ExactScalarLiteral:
+		literal, literalOK := scalar.Literal()
+		if !literalOK {
+			return "", "", false
+		}
+		return renderNativeLiteral(literal)
+	default:
+		return "", "", false
+	}
+}
+
+// renderNativeScalarSummary reads the summary's literal rather than its Term
+// family: a valid source already holds the two in agreement, so the family
+// needs no second rendering of its own.
+func renderNativeScalarSummary(source compiledNativeScalarSource) (representation, value string, ok bool) {
+	if !source.valid() {
+		return "", "", false
+	}
+	if source.family == keyspace.FamilyNil {
+		return renderNativeNil()
+	}
+	return renderNativeLiteral(source.literal)
 }

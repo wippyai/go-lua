@@ -10,6 +10,7 @@ import (
 // belongs to the caller's typed evaluator work so Domain remains immutable
 // semantic authority rather than retaining scheduler-owned mutable state.
 func (domain *Domain[F, K, V]) EqualUnder(left, right Plane[F, K, V], within support.Mask, scratch *diagram.SoleScratch[K, V]) bool {
+	DbgEqualUnder.Add(1)
 	if !domain.validPlane(left) || !domain.validPlane(right) || !domain.validSupport(within) {
 		return false
 	}
@@ -19,6 +20,7 @@ func (domain *Domain[F, K, V]) EqualUnder(left, right Plane[F, K, V], within sup
 // LessOrEqUnder proves typed pointwise order over one supplied support using
 // caller-owned typed traversal storage.
 func (domain *Domain[F, K, V]) LessOrEqUnder(left, right Plane[F, K, V], within support.Mask, scratch *diagram.SoleScratch[K, V]) bool {
+	DbgLessOrEqUnder.Add(1)
 	if !domain.validPlane(left) || !domain.validPlane(right) || !domain.validSupport(within) {
 		return false
 	}

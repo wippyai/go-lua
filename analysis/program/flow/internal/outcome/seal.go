@@ -74,7 +74,7 @@ func Seal(
 	if err != nil {
 		return nil, err
 	}
-	if err := appendGotoKeys(&keys, gotoRequests, bodies, bodyCount); err != nil {
+	if err := appendGotoKeys(&keys, gotoRequests, bodies, loops, bodyCount); err != nil {
 		return nil, err
 	}
 
@@ -346,9 +346,25 @@ func collectGotoRequests(gotos authored.Gotos, labels authored.Labels, shape *co
 	return requests, direct, nil
 }
 
-func appendGotoKeys(keys *[]outcomeKey, requests []pathRequest, bodies *body.Result, bodyCount int) error {
+func appendGotoKeys(keys *[]outcomeKey, requests []pathRequest, bodies *body.Result, loops authored.Loops, bodyCount int) error {
 	if len(requests) == 0 {
 		return nil
+	}
+	// A Goto normally stops at the target Body: that Body is the direct
+	// Label-resume boundary, so publishing an extra Outcome row there would
+	// turn a direct resume into a synthetic propagation step. A loop Body is
+	// different. Its enclosing loop route is an intermediate lexical boundary
+	// for an outward Goto from a nested Body, and therefore needs its typed
+	// Outcome row so the route can carry the jump through the loop Body before
+	// resuming at the Label.
+	loopBodies := make([]bool, bodyCount+1)
+	for index := 0; index < loops.Count(); index++ {
+		loop, ok := loops.At(index)
+		_, loopBody, _, _, rowOK := loops.Get(loop)
+		if !ok || !rowOK || !validBody(loopBody) || uint64(keyspace.TermOrdinal(loopBody)) > uint64(bodyCount) {
+			return errors.New("program/flow/outcome: Goto loop Body is unavailable")
+		}
+		loopBodies[keyspace.TermOrdinal(loopBody)] = true
 	}
 	seen := make([]keyspace.Term, bodyCount+1)
 	for start := 0; start < len(requests); {
@@ -358,9 +374,18 @@ func appendGotoKeys(keys *[]outcomeKey, requests []pathRequest, bodies *body.Res
 		}
 		for index := start; index < end; index++ {
 			current := requests[index].owner
-			for current != requests[index].targetBody {
+			targetBody := requests[index].targetBody
+			targetOrdinal := keyspace.TermOrdinal(targetBody)
+			if !validBody(targetBody) || uint64(targetOrdinal) > uint64(bodyCount) {
+				return errors.New("program/flow/outcome: Goto target Body is unavailable")
+			}
+			includeTargetBody := loopBodies[targetOrdinal]
+			for {
 				if !validBody(current) || uint64(keyspace.TermOrdinal(current)) > uint64(bodyCount) {
 					return errors.New("program/flow/outcome: Goto path leaves Body forest")
+				}
+				if current == targetBody && !includeTargetBody {
+					break
 				}
 				ordinal := keyspace.TermOrdinal(current)
 				if seen[ordinal] == requests[index].target {
@@ -368,6 +393,9 @@ func appendGotoKeys(keys *[]outcomeKey, requests []pathRequest, bodies *body.Res
 				}
 				seen[ordinal] = requests[index].target
 				*keys = append(*keys, outcomeKey{body: current, kind: kind.OutcomeGoto, target: requests[index].target})
+				if current == targetBody {
+					break
+				}
 				parent, parentOK := bodies.Parent(current)
 				if !parentOK || parent == 0 || !sameActivation(bodies, current, parent) {
 					return errors.New("program/flow/outcome: Goto target is not an enclosing Body")
@@ -453,10 +481,16 @@ func resolvePropagation(result *Result, keys []outcomeKey, bodies *body.Result, 
 			if !ok || !validTerm(targetBody, counts, keyspace.FamilyBody) {
 				return errors.New("program/flow/outcome: Goto target disappeared")
 			}
+			if currentBody == targetBody {
+				continue
+			}
 			if !parentOK || parent == 0 {
 				return errors.New("program/flow/outcome: incomplete Goto propagation")
 			}
 			if parent == targetBody {
+				if next, found := result.Find(parent, key.kind, key.target); found {
+					result.propagation[currentOrdinal] = next
+				}
 				continue
 			}
 			if !sameActivation(bodies, currentBody, parent) {

@@ -245,7 +245,7 @@ func traceInputManifest(root string, sources []source) (traceManifest, error) {
 		name, relative, destination string
 	}{
 		{"ast", "compiler/ast", "compiler/ast"},
-		{"source", "compiler/source", "compiler/source"},
+		{"location", "compiler/location", "compiler/location"},
 		{"numparse", "compiler/parse/numparse", "compiler/parse/numparse"},
 	} {
 		entries, err := os.ReadDir(filepath.Join(root, directory.relative))

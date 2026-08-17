@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	lualower "github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	staticowner "github.com/wippyai/go-lua/analysis/program/static"
 	"github.com/wippyai/go-lua/compiler/ast"

@@ -31,11 +31,18 @@ var strFuncs = map[string]LGoFunc{
 	"upper":    strUpper,
 }
 
+var strStatefulFuncs = map[string]func(*LState) LValue{
+	"gmatch": func(L *LState) LValue {
+		return L.NewClosure(strGmatch, L.NewFunction(strGmatchIter))
+	},
+}
+
 func OpenString(L *LState) int {
 	mod := L.RegisterGoModule(stdlib.StringName, strFuncs).(*LTable)
-	gmatch := L.NewClosure(strGmatch, L.NewFunction(strGmatchIter))
-	mod.RawSetString("gmatch", gmatch)
-	mod.RawSetString("gfind", gmatch)
+	for name, bind := range strStatefulFuncs {
+		mod.RawSetString(name, bind(L))
+	}
+	mountManifestAliases(L, stdlib.String)
 	mod.RawSetString("__index", mod)
 	L.G.builtinMts[int(LTString)] = mod
 	L.Push(mod)

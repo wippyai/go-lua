@@ -49,7 +49,7 @@ func TestRoutePlanDeclarationCannotBeSwappedBeforeBinding(t *testing.T) {
 	if first < 0 {
 		t.Skip("fixture has no distinct local final route declarations")
 	}
-	recur, binding, err := recurrence.SealWithPlan(f.sourceView, f.flow, f.bodies, f.forest, f.control, plan, nil, f.staticFinalize.View().ContentID(), f.moduleFinalize.View().ContentID())
+	recur, binding, err := recurrence.SealWithPlan(f.sourceView, f.flow, f.bodies, f.forest, f.control, plan, f.outcomePhases, f.staticFinalize.View().ContentID(), f.moduleFinalize.View().ContentID())
 	if err != nil {
 		t.Fatalf("recurrence.SealWithPlan: %v", err)
 	}

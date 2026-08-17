@@ -16,10 +16,10 @@ func TestLocalProjectionUsesOnlyIssuedCausalRows(t *testing.T) {
 		if err := rebuildSyntheticSuccessors(r, []edgeRow{{Edge: Edge{From: body, To: selectTerm}, component: loop}}, nil); err != nil {
 			t.Fatal(err)
 		}
-		r.sites.rows = []siteRow{
+		issueSyntheticSites(r, []siteRow{
 			{term: body, context: hashSiteContext(r.sourceID, r.flowID, r.staticID, r.moduleID, body)},
 			{term: selectTerm, context: hashSiteContext(r.sourceID, r.flowID, r.staticID, r.moduleID, selectTerm)},
-		}
+		})
 		if !r.buildLocal() {
 			t.Fatal("failed to project issued local component")
 		}

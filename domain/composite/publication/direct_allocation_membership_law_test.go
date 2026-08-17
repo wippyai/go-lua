@@ -5,6 +5,8 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/domain/effect/callsite"
+	packdomain "github.com/wippyai/go-lua/domain/pack"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
@@ -88,6 +90,12 @@ func TestDirectAllocationMembershipAttachmentObservationLaw(t *testing.T) {
 	}
 	if _, ok := AttachSelectedDirectAllocationMembership(nil, nil, nil, engine.RuleSlotCapability{}, attachment.mount, attachment.point, attachment.call, attachment.width); ok {
 		t.Fatal("attachment issued without a compilation, query, and graph")
+	}
+	// Prove is the relation's one cross-owner admission of a direct receipt, so
+	// zero transition, correlation, binding, and direct evidence must fabricate
+	// nothing even before an authenticated handle exists.
+	if _, proven := attachment.Prove(nil, nil, callsite.PublicationTransitionProof{}, callsite.PublicationPlacementCorrelationCandidate{}, packdomain.RuntimeAllocationContextBinding{}, DirectAllocationSubject{}); proven {
+		t.Fatal("missing transition, correlation, runtime, and direct evidence proved a membership")
 	}
 }
 

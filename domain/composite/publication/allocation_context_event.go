@@ -83,7 +83,6 @@ type AllocationContextEvent struct {
 
 	transition       identity.ContentID
 	correlation      identity.ContentID
-	directAdmission  identity.ContentID
 	direct           identity.ContentID
 	membershipProof  identity.ContentID
 	membershipAttach identity.ContentID
@@ -109,23 +108,23 @@ type AllocationContextEvent struct {
 	declaredLifetime target.PublicationLifetimeDisposition
 }
 
-// NewAllocationContextEvent is the only issuance path. It rebuilds the two
-// existing cross-owner admissions from live typed capabilities and reruns the
-// Phase3D observation proof. A caller therefore cannot provide a detached
-// membership scalar, context ID, Heap key, or target consequence.
+// NewAllocationContextEvent is the only issuance path. It rebuilds the
+// correlation from live typed capabilities and reruns the Phase3D observation
+// proof, which is where the direct receipt is readmitted against that live
+// binding. A caller therefore cannot provide a detached membership scalar,
+// context ID, Heap key, or target consequence.
 func NewAllocationContextEvent(
 	attachment DirectAllocationMembershipAttachment,
 	solver *engine.Solver,
 	state *engine.State,
 	transition callsite.PublicationTransitionProof,
 	correlation callsite.PublicationPlacementCorrelationCandidate,
-	directAdmission callsite.PublicationDirectAllocationSubject,
 	subject packdomain.RuntimeAllocationContextBinding,
-	direct valuedomain.DirectAllocationSubject,
+	direct DirectAllocationSubject,
 	destination packdomain.RuntimeDestinationContextBinding,
 	destinationPresent bool,
 ) (AllocationContextEvent, bool) {
-	if !transition.MatchesCompletion(solver, state) || !correlation.Valid() || !directAdmission.Valid() || !subject.Valid() || !direct.Valid() {
+	if !transition.MatchesCompletion(solver, state) || !correlation.Valid() || !subject.Valid() || !direct.Valid() {
 		return AllocationContextEvent{}, false
 	}
 
@@ -133,12 +132,6 @@ func NewAllocationContextEvent(
 	rebuiltCorrelationID, rebuiltCorrelationIDOK := rebuiltCorrelation.ContentID()
 	correlationID, correlationIDOK := correlation.ContentID()
 	if !correlationOK || !rebuiltCorrelationIDOK || !correlationIDOK || rebuiltCorrelationID != correlationID {
-		return AllocationContextEvent{}, false
-	}
-	rebuiltDirectAdmission, admissionOK := callsite.NewPublicationDirectAllocationSubject(rebuiltCorrelation, subject, direct)
-	rebuiltAdmissionID, rebuiltAdmissionIDOK := rebuiltDirectAdmission.ContentID()
-	directAdmissionID, directAdmissionIDOK := directAdmission.ContentID()
-	if !admissionOK || !rebuiltAdmissionIDOK || !directAdmissionIDOK || rebuiltAdmissionID != directAdmissionID {
 		return AllocationContextEvent{}, false
 	}
 
@@ -165,7 +158,7 @@ func NewAllocationContextEvent(
 	}
 
 	event := AllocationContextEvent{
-		transition: transitionID, correlation: rebuiltCorrelationID, directAdmission: rebuiltAdmissionID, direct: directID,
+		transition: transitionID, correlation: rebuiltCorrelationID, direct: directID,
 		membershipProof: membershipProof.id, membershipAttach: membershipProof.attachment,
 		mount: mount, call: call, descriptor: descriptorID, descriptorOccurrence: descriptorOccurrence,
 		subjectBinding: subject.ID(), requirement: requirement.ID(), mountedAllocation: mounted.ID(), allocationKey: requirement.KeyID(),
@@ -190,7 +183,7 @@ func NewAllocationContextEvent(
 }
 
 func (event AllocationContextEvent) semanticPayloadValid() bool {
-	if !event.transition.Available() || !event.correlation.Available() || !event.directAdmission.Available() || !event.direct.Available() ||
+	if !event.transition.Available() || !event.correlation.Available() || !event.direct.Available() ||
 		!event.membershipProof.Available() || !event.membershipAttach.Available() || !event.mount.Available() || !event.call.Available() ||
 		!event.descriptor.Available() || !event.descriptorOccurrence.Available() || !event.subjectBinding.Available() ||
 		!event.requirement.Available() || !event.mountedAllocation.Available() || !event.allocationKey.Available() ||
@@ -221,7 +214,7 @@ func allocationContextEventID(event AllocationContextEvent) (identity.ContentID,
 	}
 	return identity.DeriveContentID(
 		allocationContextEventDomain,
-		event.transition[:], event.correlation[:], event.directAdmission[:], event.direct[:], event.membershipProof[:], event.membershipAttach[:],
+		event.transition[:], event.correlation[:], event.direct[:], event.membershipProof[:], event.membershipAttach[:],
 		event.mount[:], event.call[:], event.descriptor[:], event.descriptorOccurrence[:],
 		event.subjectBinding[:], event.requirement[:], event.mountedAllocation[:], event.allocationKey[:],
 		[]byte{byte(event.membership)},

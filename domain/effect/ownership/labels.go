@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/wippyai/go-lua/domain/effect"
+	"github.com/wippyai/go-lua/domain/effect/capability"
 )
 
 var (
@@ -22,7 +23,7 @@ type Borrow struct {
 	Param effect.ParamRef
 }
 
-func (Borrow) EffectLabel() {}
+func (Borrow) CapabilityID() string { return capability.OwnershipBorrow }
 func (b Borrow) String() string {
 	return fmt.Sprintf("borrow(%s)", b.Param)
 }
@@ -37,7 +38,7 @@ type Retain struct {
 	Param effect.ParamRef
 }
 
-func (Retain) EffectLabel() {}
+func (Retain) CapabilityID() string { return capability.OwnershipRetain }
 func (r Retain) String() string {
 	return fmt.Sprintf("retain(%s)", r.Param)
 }
@@ -53,7 +54,7 @@ type Store struct {
 	Into  effect.ParamRef
 }
 
-func (Store) EffectLabel() {}
+func (Store) CapabilityID() string { return capability.OwnershipStore }
 func (s Store) String() string {
 	if s.Into.Index >= 0 {
 		return fmt.Sprintf("store(%s into %s)", s.Param, s.Into)
@@ -69,8 +70,8 @@ func (s Store) Equals(other effect.Label) bool {
 
 type BorrowAll struct{}
 
-func (BorrowAll) EffectLabel()   {}
-func (BorrowAll) String() string { return "borrow_all" }
+func (BorrowAll) CapabilityID() string { return capability.OwnershipBorrowAll }
+func (BorrowAll) String() string       { return "borrow_all" }
 func (BorrowAll) Equals(other effect.Label) bool {
 	_, ok := effect.NormalizeLabel(other).(BorrowAll)
 	return ok
@@ -80,7 +81,7 @@ type Send struct {
 	FromParam int
 }
 
-func (Send) EffectLabel() {}
+func (Send) CapabilityID() string { return capability.OwnershipSend }
 func (s Send) String() string {
 	return fmt.Sprintf("send(params[%d:])", s.FromParam)
 }
@@ -95,7 +96,7 @@ type SendParam struct {
 	Param effect.ParamRef
 }
 
-func (SendParam) EffectLabel() {}
+func (SendParam) CapabilityID() string { return capability.OwnershipSendParam }
 func (s SendParam) String() string {
 	return fmt.Sprintf("send(%s)", s.Param)
 }
@@ -110,7 +111,7 @@ type Export struct {
 	Param effect.ParamRef
 }
 
-func (Export) EffectLabel() {}
+func (Export) CapabilityID() string { return capability.OwnershipExport }
 func (e Export) String() string {
 	return fmt.Sprintf("export(%s)", e.Param)
 }
@@ -125,7 +126,7 @@ type Opaque struct {
 	Param effect.ParamRef
 }
 
-func (Opaque) EffectLabel() {}
+func (Opaque) CapabilityID() string { return capability.OwnershipOpaque }
 func (o Opaque) String() string {
 	return fmt.Sprintf("opaque(%s)", o.Param)
 }
@@ -140,7 +141,7 @@ type Freeze struct {
 	Param effect.ParamRef
 }
 
-func (Freeze) EffectLabel() {}
+func (Freeze) CapabilityID() string { return capability.OwnershipFreeze }
 func (f Freeze) String() string {
 	return fmt.Sprintf("freeze(%s)", f.Param)
 }

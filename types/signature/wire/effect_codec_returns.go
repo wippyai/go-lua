@@ -156,12 +156,9 @@ func encodeEffectReturn(ret returns.ReturnType) (*effectReturnWire, error) {
 	if ret == nil {
 		return nil, nil
 	}
-	// A transform handed to the boundary as a typed nil pointer carries a kind
-	// but no payload to write, so it is rejected here rather than read for
-	// fields it does not have.
-	if returns.IsNilReturnType(ret) {
-		return nil, fmt.Errorf("signature/wire: nil return effect transform %T", ret)
-	}
+	// A transform handed to the boundary as a typed nil pointer carries no
+	// transform, so the vocabulary classifies it outside the closed set and it is
+	// refused here rather than read for fields it does not have.
 	kind := returns.KindOfReturnType(ret)
 	if !kind.Valid() {
 		return nil, fmt.Errorf("signature/wire: unsupported return effect transform %T", ret)

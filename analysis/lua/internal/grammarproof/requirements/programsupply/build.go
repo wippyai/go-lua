@@ -8,13 +8,13 @@ import (
 	"reflect"
 	"sort"
 
-	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/binder"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/programlaw"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/staticlaw"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 const (

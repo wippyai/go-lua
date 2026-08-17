@@ -265,6 +265,49 @@ func TestSealSameBodyGotoResumesLabelWithoutOutcome(t *testing.T) {
 	}
 }
 
+func TestSealGotoThroughLoopBodyPublishesIntermediateOutcome(t *testing.T) {
+	counts := outcomeCounts(3, 0, 1, 0, 0, 1, 1, 0, 1, 0)
+	parent := outcomeTerm(keyspace.FamilyBody, 1)
+	loopBody := outcomeTerm(keyspace.FamilyBody, 2)
+	gotoBody := outcomeTerm(keyspace.FamilyBody, 3)
+	loop := outcomeTerm(keyspace.FamilyLoop, 1)
+	label := outcomeTerm(keyspace.FamilyLabel, 1)
+	jump := outcomeTerm(keyspace.FamilyGoto, 1)
+	condition := outcomeTerm(keyspace.FamilyNil, 1)
+	f := openOutcomeFixture(t, outcomeSpec{
+		counts: counts,
+		rows:   [][]keyspace.Term{{loop}, {label, gotoBody}, {jump}},
+		flow: authored.Input{
+			Counts: counts,
+			Control: authored.ControlInput{
+				Labels: []authored.Label{{Owner: loopBody}},
+				Gotos:  []authored.Goto{{Owner: gotoBody, Target: label}},
+				Loops:  []authored.Loop{{Owner: parent, Body: loopBody, Kind: kind.LoopWhile, Control: condition}},
+			},
+		},
+		nilOwners: []keyspace.Term{parent},
+	})
+	result := f.seal(t)
+
+	childGoto, ok := result.Find(gotoBody, kind.OutcomeGoto, label)
+	if !ok {
+		t.Fatal("nested Goto Outcome is missing")
+	}
+	loopGoto, ok := result.Find(loopBody, kind.OutcomeGoto, label)
+	if !ok {
+		t.Fatal("loop-Body Goto Outcome is missing")
+	}
+	if got, ok := result.GotoExit(jump); !ok || got != childGoto {
+		t.Fatalf("GotoExit = %v/%v; want nested Outcome %v/true", got, ok, childGoto)
+	}
+	if got, ok := result.Propagation(childGoto); !ok || got != loopGoto {
+		t.Fatalf("nested Goto propagation = %v/%v; want loop-Body Outcome %v/true", got, ok, loopGoto)
+	}
+	if got, ok := result.Propagation(loopGoto); ok || got != 0 {
+		t.Fatalf("loop-Body Goto propagation = %v/%v; want terminal 0/false", got, ok)
+	}
+}
+
 func TestResultQueriesFailClosed(t *testing.T) {
 	var result *Result
 	body := outcomeTerm(keyspace.FamilyBody, 1)

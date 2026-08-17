@@ -27,6 +27,12 @@ type Manifest struct {
 	Types              map[string]typ.Type
 	TypestateProtocols map[typestate.Protocol]typestate.Definition
 	FunctionSignatures map[string]signature.Function
+	// DetachedFunctions are provider-owned callables produced by exported
+	// operations but not mounted as module/global fields.
+	DetachedFunctions map[string]signature.Function
+	// FunctionOperations contains the provider-owned behavioral law for a
+	// callable. A missing entry requests the generic signature-derived law.
+	FunctionOperations map[string]Operation
 	// FunctionAliases maps a local callable name to the canonical callable path
 	// whose runtime identity it shares. Alias signatures remain present so the
 	// module type surface is self-contained; catalogue sealing verifies equality.
@@ -155,6 +161,8 @@ func New(path string) *Manifest {
 		Types:              make(map[string]typ.Type),
 		TypestateProtocols: make(map[typestate.Protocol]typestate.Definition),
 		FunctionSignatures: make(map[string]signature.Function),
+		DetachedFunctions:  make(map[string]signature.Function),
+		FunctionOperations: make(map[string]Operation),
 		FunctionAliases:    make(map[string]string),
 	}
 }
@@ -214,6 +222,31 @@ func (m *Manifest) DefineFunctionSignature(name string, sig signature.Function) 
 		m.FunctionSignatures = make(map[string]signature.Function)
 	}
 	m.FunctionSignatures[name] = sig
+}
+
+// DefineDetachedFunction records a callable that is reachable only through a
+// Produced relation. It never creates a runtime binding.
+func (m *Manifest) DefineDetachedFunction(name string, sig signature.Function, operation Operation) {
+	if m == nil || name == "" {
+		return
+	}
+	if m.DetachedFunctions == nil {
+		m.DetachedFunctions = make(map[string]signature.Function)
+	}
+	m.DetachedFunctions[name] = sig.Clone()
+	m.DefineFunctionOperation(name, operation)
+}
+
+// DefineFunctionOperation records the behavioral law beside its callable
+// signature. The operation is ownership-isolated on entry.
+func (m *Manifest) DefineFunctionOperation(name string, operation Operation) {
+	if m == nil || name == "" {
+		return
+	}
+	if m.FunctionOperations == nil {
+		m.FunctionOperations = make(map[string]Operation)
+	}
+	m.FunctionOperations[name] = CloneOperation(operation)
 }
 
 // DefineFunctionAlias records that alias and target are the same callable.
@@ -328,6 +361,33 @@ func encodeWire(m *Manifest) (*manifestWire, error) {
 			wm.FunctionSignatures = append(wm.FunctionSignatures, encoded)
 		}
 	}
+	if len(m.DetachedFunctions) > 0 {
+		names := make([]string, 0, len(m.DetachedFunctions))
+		for name := range m.DetachedFunctions {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		wm.DetachedFunctions = make([]wire.FunctionSignatureWire, 0, len(names))
+		for _, name := range names {
+			encoded, err := wire.EncodeFunctionSignature(m.DetachedFunctions[name])
+			if err != nil {
+				return nil, fmt.Errorf("manifest: encode detached function %q: %w", name, err)
+			}
+			encoded.Name = name
+			wm.DetachedFunctions = append(wm.DetachedFunctions, encoded)
+		}
+	}
+	if len(m.FunctionOperations) > 0 {
+		names := make([]string, 0, len(m.FunctionOperations))
+		for name := range m.FunctionOperations {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		wm.FunctionOperations = make([]namedOperationWire, 0, len(names))
+		for _, name := range names {
+			wm.FunctionOperations = append(wm.FunctionOperations, namedOperationWire{Name: name, Operation: CloneOperation(m.FunctionOperations[name])})
+		}
+	}
 
 	return &wm, nil
 }
@@ -434,6 +494,16 @@ func Decode(data []byte) (decoded *Manifest, err error) {
 		}
 		m.DefineFunctionSignature(named.Name, sig)
 	}
+	for _, named := range wm.DetachedFunctions {
+		sig, err := wire.DecodeFunctionSignature(named)
+		if err != nil {
+			return nil, fmt.Errorf("manifest: decode detached function %q: %w", named.Name, err)
+		}
+		m.DetachedFunctions[named.Name] = sig
+	}
+	for _, named := range wm.FunctionOperations {
+		m.DefineFunctionOperation(named.Name, named.Operation)
+	}
 	for _, alias := range wm.FunctionAliases {
 		m.DefineFunctionAlias(alias.Alias, alias.Target)
 	}
@@ -453,10 +523,17 @@ type manifestWire struct {
 	GlobalTypes                []namedTypeWire                 `json:"globalTypes,omitempty"`
 	TypestateProtocols         []typestateProtocolWire         `json:"typestateProtocols,omitempty"`
 	FunctionSignatures         []wire.FunctionSignatureWire    `json:"functionSignatures,omitempty"`
+	DetachedFunctions          []wire.FunctionSignatureWire    `json:"detachedFunctions,omitempty"`
+	FunctionOperations         []namedOperationWire            `json:"functionOperations,omitempty"`
 	FunctionAliases            []functionAliasWire             `json:"functionAliases,omitempty"`
 	Globals                    []string                        `json:"globals,omitempty"`
 	CallbackPhaseRegistrations []callbackPhaseRegistrationWire `json:"callbackPhaseRegistrations,omitempty"`
 	CallbackPhaseInvocations   []callbackPhaseInvocationWire   `json:"callbackPhaseInvocations,omitempty"`
+}
+
+type namedOperationWire struct {
+	Name      string    `json:"name"`
+	Operation Operation `json:"operation"`
 }
 
 type functionAliasWire struct {

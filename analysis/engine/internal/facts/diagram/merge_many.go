@@ -34,6 +34,8 @@ type SoleManyRegions[K scalar.Key] func(key K, output []support.Mask) bool
 // sampled independently of zipper exhaustion and once more before every
 // successful return.
 func (builder *Builder[F, K, V]) MergeSoleFactorMany(previous Root[F, K, V], inputs []Root[F, K, V], scratch *SoleScratch[K, V], regions *support.Work, combine SoleManyCombine[K, V], covers SoleManyRegions[K]) (Root[F, K, V], bool) {
+	DbgMergeMany.Add(1)
+	DbgMergeManyOperand.Add(int64(len(inputs)))
 	if builder == nil || !builder.open || builder.diagram == nil || len(inputs) == 0 || scratch == nil || regions == nil || !regions.Open() || combine == nil || covers == nil || !builder.diagram.Valid(previous) {
 		return Root[F, K, V]{}, false
 	}
@@ -212,6 +214,8 @@ func (builder *Builder[F, K, V]) seedSoleManyPredecessor(root *node[V], scratch 
 }
 
 func (builder *Builder[F, K, V]) mergeSoleManyColumn(key K, nodes []*node[V], supports []support.Mask, scratch *SoleScratch[K, V], regions *support.Work, combine SoleManyCombine[K, V], prior []terminal.ID[V]) (*node[V], bool) {
+	DbgMergeManyRows.Add(1)
+	DbgPatchRow.Add(1)
 	if len(nodes) == 0 || len(nodes) != len(supports) {
 		return nil, false
 	}

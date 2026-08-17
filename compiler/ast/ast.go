@@ -10,13 +10,13 @@
 //   - TypeExpr: type annotations for the optional type system
 package ast
 
-import "github.com/wippyai/go-lua/compiler/source"
+import "github.com/wippyai/go-lua/compiler/location"
 
 // Position identifies a source location.
-type Position = source.Position
+type Position = location.Position
 
 // Span defines a source range.
-type Span = source.Span
+type Span = location.Span
 
 // PositionHolder provides source location info for AST nodes.
 type PositionHolder interface {

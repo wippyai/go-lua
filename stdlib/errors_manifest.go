@@ -7,7 +7,6 @@ import (
 	typetable "github.com/wippyai/go-lua/domain/type/table"
 	"github.com/wippyai/go-lua/domain/type/typ"
 	"github.com/wippyai/go-lua/domain/type/typeexpr"
-	"github.com/wippyai/go-lua/types/signature"
 )
 
 func errorsDeclaration() declaration {
@@ -50,7 +49,7 @@ func errorsDeclaration() declaration {
 	)
 
 	return declaration{
-		signatures: map[string]signature.Function{
+		signatures: map[string]declaredFunction{
 			"call_stack": openAuthored("stdlib.errors.call_stack.allocate", typ.Func().
 				Param("err", typ.Any).Returns(normalize.Optional(stack)).Build(),
 				ownership.BorrowAll{}),
@@ -58,21 +57,21 @@ func errorsDeclaration() declaration {
 				Param("err", typ.Any).Param("kind", typ.String).
 				Returns(typ.Boolean).Build(), ownership.BorrowAll{}),
 			"new": openAuthored("stdlib.errors.new.allocate", typ.Func().
-				Param("message_or_options", newInput).Returns(errorType).Build()),
+				Param("message_or_options", newInput).Returns(errorType).Build()).operational(errorsNewOperationLaw()),
 			"wrap": openAuthored("stdlib.errors.wrap.allocate", typ.Func().
 				Param("parent", typeexpr.Union(typ.String, errorType)).
 				Param("context", typeexpr.Union(typ.String, errorType)).
 				Returns(errorType).Build(),
-				ownership.Retain{Param: effect.ParamRef{Index: 0}}),
+				ownership.Retain{Param: effect.ParamRef{Index: 0}}).operational(errorsWrapOperationLaw()),
 		},
-		methods: map[string]signature.Function{
+		methods: map[string]declaredFunction{
 			"Error.__concat": authored(typ.Func().
 				Param("self", errorType).Param("other", typ.Any).Returns(typ.String).Build(),
 				ownership.BorrowAll{}),
 			"Error.__tostring": authored(typ.Func().
 				Param("self", errorType).Returns(typ.String).Build(), ownership.BorrowAll{}),
 			"Error.details": openAuthored("stdlib.errors.details.allocate", detailMethod,
-				ownership.BorrowAll{}),
+				ownership.BorrowAll{}).operational(errorsDetailsOperationLaw()),
 			"Error.kind":      authored(kind, ownership.BorrowAll{}),
 			"Error.message":   authored(message, ownership.BorrowAll{}),
 			"Error.retryable": authored(retryable, ownership.BorrowAll{}),

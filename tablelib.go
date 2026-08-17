@@ -16,11 +16,11 @@ var tableFuncs = map[string]LGoFunc{
 	"create":   tableCreate,
 	"freeze":   tableMakeImmutable,
 	"isfrozen": tableIsImmutable,
-	"unpack":   baseUnpack,
 }
 
 func OpenTable(L *LState) int {
 	mod := L.RegisterGoModule(stdlib.TableName, tableFuncs).(*LTable)
+	mountManifestAliases(L, stdlib.Table)
 	L.Push(mod)
 	return 1
 }

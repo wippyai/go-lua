@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/domain/effect"
+	"github.com/wippyai/go-lua/domain/effect/capability"
 	"github.com/wippyai/go-lua/domain/effect/returns"
 )
 
@@ -13,14 +14,17 @@ func TestLabels(t *testing.T) {
 		label effect.Label
 		want  string
 		other effect.Label
+		id    string
 	}{
-		{"throw", Throw{}, "throw", Throw{}},
-		{"io", IO{}, "io", IO{}},
+		{"throw", Throw{}, "throw", Throw{}, capability.ControlThrow},
+		{"io", IO{}, "io", IO{}, capability.ControlIO},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.label.EffectLabel()
+			if got := tt.label.CapabilityID(); got != tt.id {
+				t.Errorf("CapabilityID() = %q, want %q", got, tt.id)
+			}
 
 			if got := tt.label.String(); got != tt.want {
 				t.Errorf("String() = %q, want %q", got, tt.want)

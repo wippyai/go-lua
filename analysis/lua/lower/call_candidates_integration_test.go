@@ -139,8 +139,10 @@ func TestFlowCandidatesClassifyAuthoredOperatorFamilies(t *testing.T) {
 	if binary.ArithmeticCount() != 7 || binary.BitwiseCount() != 5 || binary.ConcatCount() != 1 || binary.EqualityCount() != 2 || binary.OrderCount() != 4 {
 		t.Fatalf("Binary candidates = arithmetic %d bitwise %d concat %d equality %d order %d", binary.ArithmeticCount(), binary.BitwiseCount(), binary.ConcatCount(), binary.EqualityCount(), binary.OrderCount())
 	}
-	if access.GetCount() != 1 || access.SetCount() != 1 {
-		t.Fatalf("Access candidates get/set = %d/%d, want 1/1", access.GetCount(), access.SetCount())
+	// The authored method call reads its receiver's field before invoking it,
+	// so it contributes a second IndexGet alongside the explicit a[b] read.
+	if access.GetCount() != 2 || access.SetCount() != 1 {
+		t.Fatalf("Access candidates get/set = %d/%d, want 2/1 (explicit read plus method-callee read)", access.GetCount(), access.SetCount())
 	}
 	neg, _ := unary.NumericAt(0)
 	_, op, _, negOK := p.Flow().Authored().Operators().Unaries().Get(neg)

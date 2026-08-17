@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/parserproducts"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 const (

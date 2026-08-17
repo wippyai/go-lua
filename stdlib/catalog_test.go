@@ -3,7 +3,7 @@ package stdlib
 import "testing"
 
 func TestCatalogueIdentityNameAndMountLaws(t *testing.T) {
-	libraries := Libraries()
+	libraries := catalogue[:]
 	if len(libraries) == 0 {
 		t.Fatal("empty standard-library catalogue")
 	}
@@ -39,16 +39,11 @@ func TestCatalogueIdentityNameAndMountLaws(t *testing.T) {
 		}
 	}
 
-	copyOfCatalogue := Libraries()
-	copyOfCatalogue[0] = Library{}
-	if Libraries()[0].ID() != Package {
-		t.Fatal("Libraries returned aliased catalogue storage")
-	}
 }
 
 func TestBindRequiresExactCoverageAndPreservesCatalogueOrder(t *testing.T) {
 	values := make(map[ID]string)
-	for _, library := range Libraries() {
+	for _, library := range catalogue {
 		values[library.ID()] = "provider:" + string(library.ID())
 	}
 	bound, err := Bind(values)
@@ -56,7 +51,7 @@ func TestBindRequiresExactCoverageAndPreservesCatalogueOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	for index, item := range bound {
-		want := Libraries()[index]
+		want := catalogue[index]
 		if item.Library.ID() != want.ID() || item.Value != "provider:"+string(want.ID()) {
 			t.Fatalf("binding %d = (%q, %q), want %q", index,
 				item.Library.ID(), item.Value, want.ID())

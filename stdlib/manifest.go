@@ -17,10 +17,11 @@ import (
 const ManifestVersion = "go-lua-stdlib-v1"
 
 type declaration struct {
-	signatures map[string]signature.Function
+	signatures map[string]declaredFunction
+	detached   map[string]detachedFunction
 	// methods are callable declarations below the direct module export level.
 	// Their keys are manifest-local paths such as "Error.kind".
-	methods   map[string]signature.Function
+	methods   map[string]declaredFunction
 	aliases   map[string]string
 	values    map[string]typ.Type
 	types     map[string]typ.Type
@@ -28,15 +29,20 @@ type declaration struct {
 	readonly  bool
 }
 
-// Manifest returns a fresh declaration manifest for id. The manifest describes
-// values and callable behavior only. It does not mount the library, resolve a
-// dependency, authorize an import, or create an analysis scope.
-func Manifest(id ID) (*moduleio.Manifest, bool) {
-	library, ok := Lookup(id)
-	if !ok || library.declaration == nil {
-		return nil, false
-	}
-	return buildManifest(library, library.declaration()), true
+type declaredFunction struct {
+	signature.Function
+	operation *moduleio.Operation
+}
+
+func (function declaredFunction) operational(operation moduleio.Operation) declaredFunction {
+	owned := moduleio.CloneOperation(operation)
+	function.operation = &owned
+	return function
+}
+
+type detachedFunction struct {
+	signature signature.Function
+	operation moduleio.Operation
 }
 
 // Providers returns every native declaration in runtime catalogue order.
@@ -63,12 +69,6 @@ func Providers() []declarations.Provider {
 	return out
 }
 
-// Catalogue seals the native provider declarations through the same exact
-// catalogue used by LState.OpenLibs.
-func Catalogue() (*declarations.Catalogue, error) {
-	return declarations.Seal(Providers()...)
-}
-
 func buildManifest(library Library, decl declaration) *moduleio.Manifest {
 	m := moduleio.New(library.Name())
 	m.Version = ManifestVersion
@@ -78,7 +78,13 @@ func buildManifest(library Library, decl declaration) *moduleio.Manifest {
 		m.DefineType(name, value)
 	}
 	for name, value := range decl.methods {
-		m.DefineFunctionSignature(name, value.Clone())
+		m.DefineFunctionSignature(name, value.Function.Clone())
+		if value.operation != nil {
+			m.DefineFunctionOperation(name, *value.operation)
+		}
+	}
+	for name, value := range decl.detached {
+		m.DefineDetachedFunction(name, value.signature, value.operation)
 	}
 	for alias, target := range decl.aliases {
 		m.DefineFunctionAlias(alias, target)
@@ -101,7 +107,10 @@ func buildManifest(library Library, decl declaration) *moduleio.Manifest {
 		var valueType typ.Type
 		if callable {
 			valueType = value.Type
-			m.DefineFunctionSignature(name, value.Clone())
+			m.DefineFunctionSignature(name, value.Function.Clone())
+			if value.operation != nil {
+				m.DefineFunctionOperation(name, *value.operation)
+			}
 		} else {
 			valueType = decl.values[name]
 		}
@@ -118,20 +127,20 @@ func buildManifest(library Library, decl declaration) *moduleio.Manifest {
 	return m
 }
 
-func authored(fn *typ.Function, labels ...effect.Label) signature.Function {
-	return signature.Function{Type: fn, Effect: effect.Empty.With(labels...)}
+func authored(fn *typ.Function, labels ...effect.Label) declaredFunction {
+	return declaredFunction{Function: signature.Function{Type: fn, Effect: effect.Empty.With(labels...)}}
 }
 
-func openAuthored(tail string, fn *typ.Function, labels ...effect.Label) signature.Function {
-	return signature.Function{Type: fn, Effect: effect.Open(tail, labels...)}
+func openAuthored(tail string, fn *typ.Function, labels ...effect.Label) declaredFunction {
+	return declaredFunction{Function: signature.Function{Type: fn, Effect: effect.Open(tail, labels...)}}
 }
 
-func withResultTail(function signature.Function, tail typ.Type) signature.Function {
+func withResultTail(function declaredFunction, tail typ.Type) declaredFunction {
 	function.ResultTail = tail
 	return function
 }
 
-func withResults(function signature.Function, tail typ.Type, suffix ...typ.Type) signature.Function {
+func withResults(function declaredFunction, tail typ.Type, suffix ...typ.Type) declaredFunction {
 	function.ResultTail = tail
 	function.ResultSuffix = append([]typ.Type(nil), suffix...)
 	return function

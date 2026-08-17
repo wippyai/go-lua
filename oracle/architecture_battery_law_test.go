@@ -192,9 +192,7 @@ func architectureBatterySetRatchet(t *testing.T, law string, inventory map[strin
 // directory, so this scan names it and excludes it rather than reading its
 // position. Its subpackages are ordinary cross-domain relations and stay in
 // scope.
-var architectureBatteryProgramDomainProduction = map[string]int{
-	"analysis/program/target": 6,
-}
+var architectureBatteryProgramDomainProduction = map[string]int{}
 
 // architectureBatteryProgramDomainTest is the same freeze for test sources.
 // It is a separate inventory because a test-side dependency is a separate
@@ -203,7 +201,6 @@ var architectureBatteryProgramDomainProduction = map[string]int{
 var architectureBatteryProgramDomainTest = map[string]int{
 	"analysis/program/link":          1,
 	"analysis/program/link/boundary": 2,
-	"analysis/program/target":        29,
 }
 
 // TestArchitectureProgramAndSchemaDomainCouplingOnlyShrinks is the L13 law with

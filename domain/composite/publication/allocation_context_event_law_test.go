@@ -31,7 +31,6 @@ func sealedAllocationContextEvent(destination bool, subjectClass heapdomain.Runt
 	event := AllocationContextEvent{
 		transition:           publicationLawID("transition"),
 		correlation:          publicationLawID("correlation"),
-		directAdmission:      publicationLawID("direct-admission"),
 		direct:               publicationLawID("direct"),
 		membershipProof:      publicationLawID("membership-proof"),
 		membershipAttach:     publicationLawID("membership-attachment"),
@@ -75,11 +74,7 @@ func TestAllocationContextEventScalarSealLaw(t *testing.T) {
 		"id":          func(value AllocationContextEvent) AllocationContextEvent { value.id = foreign; return value },
 		"transition":  func(value AllocationContextEvent) AllocationContextEvent { value.transition = foreign; return value },
 		"correlation": func(value AllocationContextEvent) AllocationContextEvent { value.correlation = foreign; return value },
-		"direct-admission": func(value AllocationContextEvent) AllocationContextEvent {
-			value.directAdmission = foreign
-			return value
-		},
-		"direct": func(value AllocationContextEvent) AllocationContextEvent { value.direct = foreign; return value },
+		"direct":      func(value AllocationContextEvent) AllocationContextEvent { value.direct = foreign; return value },
 		"membership-proof": func(value AllocationContextEvent) AllocationContextEvent {
 			value.membershipProof = foreign
 			return value

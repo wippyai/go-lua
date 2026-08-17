@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -11,24 +12,32 @@ import (
 )
 
 func main() {
-	root := flag.String("root", ".", "module root")
-	out := flag.String("out", "", "generated evidence output")
-	check := flag.Bool("check", false, "require checked-in evidence to be current")
-	flag.Parse()
+	if err := run(os.Args[1:]); err != nil {
+		fail("%v", err)
+	}
+}
+
+func run(arguments []string) error {
+	flags := flag.NewFlagSet("parser-uses", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	root := flags.String("root", ".", "module root")
+	out := flags.String("out", "", "generated evidence output")
+	check := flags.Bool("check", false, "require checked-in evidence to be current")
+	if err := flags.Parse(arguments); err != nil {
+		return err
+	}
 	if *out == "" {
-		fail("-out is required")
+		return fmt.Errorf("-out is required")
 	}
 	absoluteRoot, err := filepath.Abs(*root)
 	if err != nil {
-		fail("resolve root: %v", err)
+		return fmt.Errorf("resolve root: %w", err)
 	}
 	products, err := parserproducts.Current(absoluteRoot)
 	if err != nil {
-		fail("sealed parser products: %v", err)
+		return fmt.Errorf("sealed parser products: %w", err)
 	}
-	if err := parseruses.Generate(products, *out, *check); err != nil {
-		fail("%v", err)
-	}
+	return parseruses.Generate(products, *out, *check)
 }
 
 func fail(format string, arguments ...any) {

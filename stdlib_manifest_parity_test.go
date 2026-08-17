@@ -1,91 +1,70 @@
 package lua
 
 import (
-	"maps"
-	"slices"
+	"sort"
 	"testing"
 
 	"github.com/wippyai/go-lua/domain/type/typ"
 	"github.com/wippyai/go-lua/stdlib"
 )
 
-func TestNativeStdlibCallableInventoryMatchesProviderManifests(t *testing.T) {
-	for id, native := range nativeStdlibCallableInventory() {
-		manifest, ok := stdlib.Manifest(id)
+// TestNativeStdlibExportsMatchProviderManifests observes the real tables built
+// by the runtime. It has no hand-maintained callable or value inventory: the
+// provider manifest is the expected surface and the opened table is the actual
+// surface.
+func TestNativeStdlibExportsMatchProviderManifests(t *testing.T) {
+	state := NewState(Options{SkipOpenLibs: true})
+	defer state.Close()
+	providers := stdlib.Providers()
+	if len(providers) != len(luaLibs) {
+		t.Fatalf("providers=%d runtime libraries=%d", len(providers), len(luaLibs))
+	}
+	for index, native := range luaLibs {
+		state.Push(native.libFunc)
+		state.Push(LString(native.libName))
+		state.Call(1, 0)
+
+		declaration := providers[index].Declaration()
+		export, ok := declaration.Export.(*typ.Record)
 		if !ok {
-			t.Fatalf("no declarations for %q", id)
+			t.Fatalf("%q export is %T, want record", providers[index].Identity, declaration.Export)
 		}
-		export := manifest.Export.(*typ.Record)
-		declared := make(map[string]struct{})
-		for name := range manifest.FunctionSignatures {
-			if export.GetField(name) != nil {
-				declared[name] = struct{}{}
+		table := state.Get(GlobalsIndex).(*LTable)
+		if native.libName != "" {
+			table, ok = state.GetGlobal(native.libName).(*LTable)
+			if !ok {
+				t.Fatalf("%q did not mount a module table", providers[index].Identity)
 			}
 		}
-		nativeNames := slices.Sorted(maps.Keys(native))
-		declaredNames := slices.Sorted(maps.Keys(declared))
-		if !slices.Equal(nativeNames, declaredNames) {
-			t.Fatalf("%q callable drift\nnative:   %v\ndeclared: %v", id, nativeNames, declaredNames)
-		}
-	}
-}
-
-func TestNativeStdlibNonCallableInventoryMatchesProviderManifests(t *testing.T) {
-	values := map[stdlib.ID][]string{
-		stdlib.Package: {"preload", "loaders", "loaded", "path", "cpath", "config"},
-		stdlib.Base:    {"_G", "_VERSION", "_GOPHER_LUA_VERSION"},
-		stdlib.String:  {"__index"},
-		stdlib.Math:    {"pi", "huge", "maxinteger", "mininteger"},
-		stdlib.UTF8:    {"charpattern"},
-		stdlib.Errors: {
-			"NOT_FOUND", "ALREADY_EXISTS", "INVALID", "PERMISSION_DENIED",
-			"UNAVAILABLE", "INTERNAL", "CANCELED", "CONFLICT", "TIMEOUT",
-			"RATE_LIMITED", "UNKNOWN",
-		},
-	}
-	for _, library := range stdlib.Libraries() {
-		m, _ := stdlib.Manifest(library.ID())
-		export := m.Export.(*typ.Record)
-		callables := make(map[string]struct{})
-		for name := range m.FunctionSignatures {
-			if export.GetField(name) != nil {
-				callables[name] = struct{}{}
+		for _, field := range export.Fields {
+			if table.RawGetString(field.Name) == LNil {
+				t.Errorf("%q runtime omitted declared export %q", providers[index].Identity, field.Name)
 			}
 		}
-		wantValues := values[library.ID()]
-		if len(export.Fields) != len(callables)+len(wantValues) {
-			t.Fatalf("%q direct fields = %d, want %d callables + %d values",
-				library.ID(), len(export.Fields), len(callables), len(wantValues))
+		if native.libName == "" {
+			continue // package was intentionally mounted before the global base provider
 		}
-		for _, name := range wantValues {
-			if export.GetField(name) == nil {
-				t.Errorf("%q manifest omitted native value %q", library.ID(), name)
+		actual := make([]string, 0, len(export.Fields))
+		table.ForEach(func(key, _ LValue) {
+			if name, ok := key.(LString); ok {
+				actual = append(actual, string(name))
+			}
+		})
+		expected := make([]string, 0, len(export.Fields))
+		for _, field := range export.Fields {
+			expected = append(expected, field.Name)
+		}
+		sort.Strings(actual)
+		sort.Strings(expected)
+		if len(actual) != len(expected) {
+			t.Errorf("%q runtime exports=%v manifest=%v", providers[index].Identity, actual, expected)
+			continue
+		}
+		for i := range actual {
+			if actual[i] != expected[i] {
+				t.Errorf("%q runtime exports=%v manifest=%v", providers[index].Identity, actual, expected)
+				break
 			}
 		}
-	}
-}
-
-func nativeStdlibCallableInventory() map[stdlib.ID]map[string]LGoFunc {
-	base := maps.Clone(baseFuncs)
-	base["ipairs"] = baseIpairs
-	base["pairs"] = basePairs
-
-	strings := maps.Clone(strFuncs)
-	strings["gmatch"] = strGmatch
-	strings["gfind"] = strGmatch
-
-	return map[stdlib.ID]map[string]LGoFunc{
-		stdlib.Package:   loFuncs,
-		stdlib.Base:      base,
-		stdlib.Table:     tableFuncs,
-		stdlib.String:    strings,
-		stdlib.Math:      mathFuncs,
-		stdlib.Debug:     debugFuncs,
-		stdlib.Coroutine: coFuncs,
-		stdlib.UTF8:      utf8Funcs,
-		stdlib.Errors: {
-			"new": errorsNew, "wrap": errorsWrap,
-			"call_stack": errorsCallStack, "is": errorsIs,
-		},
 	}
 }

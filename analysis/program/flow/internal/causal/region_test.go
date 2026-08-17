@@ -9,7 +9,7 @@ import (
 func TestLocalEnumeratesEmptyIssuedHeadInCanonicalOrder(t *testing.T) {
 	r := syntheticResult()
 	loop := keyspace.MakeTerm(keyspace.FamilyLoop, 1)
-	r.components = []keyspace.Term{loop}
+	issueSyntheticComponents(r, loop)
 	if !r.buildLocal() {
 		t.Fatal("failed to build empty issued region")
 	}

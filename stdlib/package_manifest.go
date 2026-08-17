@@ -4,12 +4,11 @@ import (
 	"github.com/wippyai/go-lua/domain/effect"
 	"github.com/wippyai/go-lua/domain/effect/mutation"
 	"github.com/wippyai/go-lua/domain/type/typ"
-	"github.com/wippyai/go-lua/types/signature"
 )
 
 func packageDeclaration() declaration {
 	return declaration{
-		signatures: map[string]signature.Function{
+		signatures: map[string]declaredFunction{
 			"loadlib": authored(typ.Func().
 				Param("libname", typ.String).Param("funcname", typ.String).
 				Returns(typ.Never).Build()),

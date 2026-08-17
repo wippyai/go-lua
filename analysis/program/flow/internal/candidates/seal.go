@@ -137,8 +137,7 @@ func Seal(
 		if family != keyspace.FamilyCell && !lensFamily(family) {
 			return nil, errors.New("program/flow/candidates: invalid Read source family")
 		}
-		candidate := lensFamily(family)
-		if proof.Executable(term) && candidate {
+		if proof.Executable(term) && lensFamily(family) {
 			result.classes.readClass[index] = accessIndexCandidate
 			result.buckets.indexGet = append(result.buckets.indexGet, term)
 		}
@@ -179,20 +178,6 @@ func Seal(
 	}
 
 	return result, nil
-}
-
-func isCallCallee(calls authored.Calls, read keyspace.Term) bool {
-	for index := 0; index < calls.Count(); index++ {
-		call, ok := calls.At(index)
-		if !ok {
-			continue
-		}
-		_, callee, _, _, ok := calls.Get(call)
-		if ok && callee == read {
-			return true
-		}
-	}
-	return false
 }
 
 func fixedHeader(values authored.Values, control keyspace.Term) bool {
