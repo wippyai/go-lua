@@ -31,7 +31,6 @@ func TestSolveDiagnosticOptionsAreClosedAndRejectedBeforeExecution(t *testing.T)
 	valid := []SolveDiagnosticOptions{
 		{},
 		{Flags: SolveDiagnosticAll, MaxRows: maxSolveDiagnosticMaxRows},
-		{Flags: SolveDiagnosticAll, MaxWork: 1},
 	}
 	for _, options := range valid {
 		if !options.Valid() {
@@ -43,7 +42,6 @@ func TestSolveDiagnosticOptionsAreClosedAndRejectedBeforeExecution(t *testing.T)
 		{Flags: SolveDiagnosticAll, MaxRows: -1},
 		{Flags: SolveDiagnosticAll, MaxRows: maxSolveDiagnosticMaxRows + 1},
 		{MaxRows: 1},
-		{MaxWork: 1},
 	}
 	for _, options := range invalid {
 		if options.Valid() {
@@ -51,8 +49,8 @@ func TestSolveDiagnosticOptionsAreClosedAndRejectedBeforeExecution(t *testing.T)
 		}
 	}
 	solver, _ := newDiagnosticsReceiptSolver(t, false)
-	state, status, diagnostics := solver.SolveWithDiagnostics(context.Background(), SolveDiagnosticOptions{MaxWork: 1})
-	if state != nil || status != SolveInvalid || diagnostics.Failure.Available() || diagnostics.Flags != 0 || diagnostics.Work != 0 {
+	state, status, diagnostics := solver.SolveWithDiagnostics(context.Background(), SolveDiagnosticOptions{MaxRows: 1})
+	if state != nil || status != SolveInvalid || diagnostics.Failure.Available() || diagnostics.Flags != 0 {
 		t.Fatalf("invalid options executed solver: state:%t status:%v diagnostics:%#v", state != nil, status, diagnostics)
 	}
 }
@@ -79,14 +77,14 @@ func TestSolveWithDiagnosticsCarriesSameIncompleteFailureCertificate(t *testing.
 	canceled, _ := newDiagnosticsReceiptSolver(t, false)
 	canceledContext, cancel := context.WithCancel(context.Background())
 	cancel()
-	canceledState, canceledStatus, canceledDiagnostics := canceled.SolveWithDiagnostics(canceledContext, SolveDiagnosticOptions{Flags: SolveDiagnosticAll, MaxRows: 8, MaxWork: 1})
-	if canceledState != nil || canceledStatus != SolveCanceled || canceledDiagnostics.Failure.Available() || canceledDiagnostics.WorkCutoff {
-		t.Fatalf("canceled failure certificate = state:%t status:%v available:%t cutoff:%t", canceledState != nil, canceledStatus, canceledDiagnostics.Failure.Available(), canceledDiagnostics.WorkCutoff)
+	canceledState, canceledStatus, canceledDiagnostics := canceled.SolveWithDiagnostics(canceledContext, SolveDiagnosticOptions{Flags: SolveDiagnosticAll, MaxRows: 8})
+	if canceledState != nil || canceledStatus != SolveCanceled || canceledDiagnostics.Failure.Available() {
+		t.Fatalf("canceled failure certificate = state:%t status:%v available:%t", canceledState != nil, canceledStatus, canceledDiagnostics.Failure.Available())
 	}
 }
 
 func sameSolveReport(left, right SolveReport) bool {
-	return left.Reason() == right.Reason() && left.Phase() == right.Phase() &&
+	return left.Reason() == right.Reason() && left.Failure() == right.Failure() &&
 		left.Point() == right.Point() && left.Group() == right.Group() &&
 		left.Member() == right.Member() && left.Rule() == right.Rule()
 }
@@ -185,14 +183,6 @@ func assertSolveDiagnosticCollectorSortAndDetach(t testing.TB) {
 	snapshotB := collector.snapshot()
 	if len(snapshotB.Rows) != 2 || snapshotB.Rows[0].Attempts != wantAttempts {
 		t.Fatalf("collector snapshot B retained caller mutation or lost attempt evidence: A=%#v B=%#v", snapshotA.Rows, snapshotB.Rows)
-	}
-}
-
-func TestSolveWithDiagnosticsWorkCutoffReturnsDetachedEvidence(t *testing.T) {
-	solver, _ := newDiagnosticsReceiptSolver(t, false)
-	state, status, report := solver.SolveWithDiagnostics(context.Background(), SolveDiagnosticOptions{Flags: SolveDiagnosticAll, MaxRows: 8, MaxWork: 1})
-	if status != SolveIncomplete || state != nil || report.Failure.Available() || !report.WorkCutoff || report.MaxWork != 1 || report.Work != 1 {
-		t.Fatalf("work cutoff = status:%v state:%t failure:%t cutoff:%t work:%d/%d", status, state != nil, report.Failure.Available(), report.WorkCutoff, report.Work, report.MaxWork)
 	}
 }
 

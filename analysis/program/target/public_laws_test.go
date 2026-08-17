@@ -2,9 +2,10 @@ package target
 
 import (
 	"fmt"
-	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"strings"
 	"testing"
+
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )

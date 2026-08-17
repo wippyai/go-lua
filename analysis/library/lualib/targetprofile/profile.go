@@ -85,16 +85,16 @@ func authoredSpec() (target.Spec, error) {
 	// callback, and produced-operation relations remain separate Target rows.
 	for _, fresh := range []struct {
 		operation string
-		kind      target.FreshKind
+		kind      schematype.FreshClass
 	}{
-		{"table.pack", target.FreshTable},
-		{"table.create", target.FreshTable},
-		{"coroutine.create", target.FreshThread},
-		{"coroutine.wrap", target.FreshFunction},
-		{"string.gmatch", target.FreshFunction},
-		{"errors.new", target.FreshError},
-		{"errors.wrap", target.FreshError},
-		{"errors.Error.details", target.FreshTable},
+		{"table.pack", schematype.FreshClassTable},
+		{"table.create", schematype.FreshClassTable},
+		{"coroutine.create", schematype.FreshClassThread},
+		{"coroutine.wrap", schematype.FreshClassFunction},
+		{"string.gmatch", schematype.FreshClassFunction},
+		{"errors.new", schematype.FreshClassError},
+		{"errors.wrap", schematype.FreshClassError},
+		{"errors.Error.details", schematype.FreshClassTable},
 	} {
 		if err := catalogue.freshResult(fresh.operation, fresh.kind); err != nil {
 			return target.Spec{}, err
@@ -231,7 +231,7 @@ func (catalogue *authoredCatalogue) resultAliasAt(operation string, outcome int,
 	return nil
 }
 
-func (catalogue *authoredCatalogue) freshResult(operation string, kind target.FreshKind) error {
+func (catalogue *authoredCatalogue) freshResult(operation string, kind schematype.FreshClass) error {
 	ref, err := catalogue.require(operation)
 	if err != nil {
 		return err
@@ -647,7 +647,7 @@ func fixedInputOrigin(index uint32) target.ArgumentOrigin {
 // terminal disposition.
 func ruleFamilyEdge(role uint32, family target.SubedgeFamily, arguments target.ValuesSpec, throwOutcome, cancelOutcome uint32, cancel target.ValuesSpec) target.SubedgeSpec {
 	return target.SubedgeSpec{
-		Role: role, Family: family, Admission: target.OrdinaryCallable, Arguments: arguments,
+		Role: role, Family: family, Admission: schematype.CallableAdmissionOrdinary, Arguments: arguments,
 		ArgumentOrigins:  ruleOrigins(len(arguments.Fixed)),
 		Outcomes:         terminals(anyValue(), anyValue(), anyValue(), anyValue(), cancel),
 		AdmissionFailure: admissionToOutcome(anyValue(), target.AdjustmentPreserve, target.PlacementFixed, throwOutcome),
@@ -664,7 +664,7 @@ func ruleFamilyEdge(role uint32, family target.SubedgeFamily, arguments target.V
 func ruleMetaCallEdge(role uint32, key keyspace.LiteralValue, arguments target.ValuesSpec, throwOutcome, cancelOutcome uint32, cancel target.ValuesSpec) target.SubedgeSpec {
 	return target.SubedgeSpec{
 		Role: role, Family: target.SubedgeFamilyCall,
-		Callee: target.SubedgeCalleeSpec{Kind: target.SubedgeCalleeMetaKey, MetaKey: key}, Admission: target.OrdinaryCallable,
+		Callee: target.SubedgeCalleeSpec{Kind: target.SubedgeCalleeMetaKey, MetaKey: key}, Admission: schematype.CallableAdmissionOrdinary,
 		Arguments: arguments, ArgumentOrigins: ruleOrigins(len(arguments.Fixed)),
 		Outcomes:         terminals(anyValue(), anyValue(), anyValue(), anyValue(), cancel),
 		AdmissionFailure: admissionToOutcome(anyValue(), target.AdjustmentPreserve, target.PlacementFixed, throwOutcome),
@@ -774,7 +774,7 @@ func pcallProfile(op target.OperationSpec) target.OperationSpec {
 	op.ValuesVars = 4
 	op.Input = values([]typ.Type{typ.Any}, true, 0)
 	op.Callbacks = []target.CallbackSpec{{
-		Function: target.InputSource{Kind: target.InputSourceValueFormal}, Admission: target.OrdinaryCallable,
+		Function: target.InputSource{Kind: target.InputSourceValueFormal}, Admission: schematype.CallableAdmissionOrdinary,
 		Arguments: callbackTail(0), Outcomes: terminals(callbackTail(1), callbackTail(1), anyValue(), callbackTail(2), callbackTail(3)),
 		Lifecycle: target.CallbackSyncRequiredOnce, Effects: target.RowSpec{Tail: target.RowClosed},
 	}}
@@ -804,8 +804,8 @@ func xpcallProfile(op target.OperationSpec) target.OperationSpec {
 	op.ValuesVars = 5
 	op.Input = values([]typ.Type{typ.Any, typ.Any}, true, 0)
 	op.Callbacks = []target.CallbackSpec{
-		{Function: target.InputSource{Kind: target.InputSourceValueFormal, Ordinal: 0}, Admission: target.OrdinaryCallable, Arguments: callbackTail(0), Outcomes: terminals(callbackTail(1), callbackTail(1), anyValue(), callbackTail(2), callbackTail(3)), Lifecycle: target.CallbackSyncRequiredOnce, Effects: target.RowSpec{Tail: target.RowClosed}},
-		{Function: target.InputSource{Kind: target.InputSourceValueFormal, Ordinal: 1}, Admission: target.DirectFunction, Arguments: anyValue(), Outcomes: terminals(callbackTail(4), callbackTail(4), anyValue(), anyValue(), callbackTail(3)), Lifecycle: target.CallbackSyncOptionalMany, Effects: target.RowSpec{Tail: target.RowClosed}},
+		{Function: target.InputSource{Kind: target.InputSourceValueFormal, Ordinal: 0}, Admission: schematype.CallableAdmissionOrdinary, Arguments: callbackTail(0), Outcomes: terminals(callbackTail(1), callbackTail(1), anyValue(), callbackTail(2), callbackTail(3)), Lifecycle: target.CallbackSyncRequiredOnce, Effects: target.RowSpec{Tail: target.RowClosed}},
+		{Function: target.InputSource{Kind: target.InputSourceValueFormal, Ordinal: 1}, Admission: schematype.CallableAdmissionDirectFunction, Arguments: anyValue(), Outcomes: terminals(callbackTail(4), callbackTail(4), anyValue(), anyValue(), callbackTail(3)), Lifecycle: target.CallbackSyncOptionalMany, Effects: target.RowSpec{Tail: target.RowClosed}},
 	}
 	op.Outcomes = []target.OutcomeSpec{
 		{Kind: flowkind.OutcomeNormal, Values: values([]typ.Type{typ.LiteralBool(true)}, true, 1)},
@@ -850,7 +850,7 @@ func printProfile() target.OperationSpec {
 	op.Subedges = []target.SubedgeSpec{{
 		Role: 1, Family: target.SubedgeFamilyCall,
 		Callee:    target.SubedgeCalleeSpec{Kind: target.SubedgeCalleeCapturedInitialRead, Read: target.CapturedInitialReadSpec{Root: globalEnvRoot, Key: literalKey("tostring")}},
-		Admission: target.OrdinaryCallable, Arguments: anyValue(), ArgumentOrigins: ruleOrigins(1),
+		Admission: schematype.CallableAdmissionOrdinary, Arguments: anyValue(), ArgumentOrigins: ruleOrigins(1),
 		Outcomes:         terminals(anyValue(), anyValue(), anyValue(), anyValue(), callbackTail(1)),
 		AdmissionFailure: admissionToOutcome(anyValue(), target.AdjustmentPreserve, target.PlacementFixed, 1),
 		Routes: []target.SubedgeRouteSpec{
@@ -898,7 +898,7 @@ func pairsProfile() target.OperationSpec {
 	op.Outcomes = []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: metaThree}, {Kind: flowkind.OutcomeNormal, Values: fallbackThree}, {Kind: flowkind.OutcomeThrow, Values: anyValue()}, {Kind: flowkind.OutcomeCancel, Values: callbackTail(0)}}
 	op.Subedges = []target.SubedgeSpec{{
 		Role: 1, Family: target.SubedgeFamilyCall, Callee: target.SubedgeCalleeSpec{Kind: target.SubedgeCalleeMetaKey, MetaKey: literalKey("__pairs")},
-		Admission: target.OrdinaryCallable, Arguments: anyValue(), ArgumentOrigins: []target.ArgumentOrigin{{Segment: target.ArgumentFixed, Kind: target.ArgumentSourceInput, Source: target.InputSource{Kind: target.InputSourceValueFormal}}},
+		Admission: schematype.CallableAdmissionOrdinary, Arguments: anyValue(), ArgumentOrigins: []target.ArgumentOrigin{{Segment: target.ArgumentFixed, Kind: target.ArgumentSourceInput, Source: target.InputSource{Kind: target.InputSourceValueFormal}}},
 		Outcomes:         terminals(anyValue(), anyValue(), anyValue(), anyValue(), callbackTail(0)),
 		AdmissionFailure: admissionToOutcome(anyValue(), target.AdjustmentPreserve, target.PlacementFixed, 2),
 		Routes: []target.SubedgeRouteSpec{
@@ -1003,7 +1003,7 @@ func tableSortProfile() target.OperationSpec {
 	op := module("table", "sort")
 	op.ValuesVars = 1
 	op.Input = closed(typ.Any, typ.Any)
-	op.Callbacks = []target.CallbackSpec{{Function: target.InputSource{Kind: target.InputSourceValueFormal, Ordinal: 1}, Admission: target.DirectFunction, Arguments: closed(typ.Any, typ.Any), Outcomes: terminals(callbackTail(0), callbackTail(0), anyValue(), anyValue(), callbackTail(0)), Lifecycle: target.CallbackSyncOptionalMany, Effects: target.RowSpec{Tail: target.RowClosed}}}
+	op.Callbacks = []target.CallbackSpec{{Function: target.InputSource{Kind: target.InputSourceValueFormal, Ordinal: 1}, Admission: schematype.CallableAdmissionDirectFunction, Arguments: closed(typ.Any, typ.Any), Outcomes: terminals(callbackTail(0), callbackTail(0), anyValue(), anyValue(), callbackTail(0)), Lifecycle: target.CallbackSyncOptionalMany, Effects: target.RowSpec{Tail: target.RowClosed}}}
 	op.Outcomes = []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: emptyValues()}, {Kind: flowkind.OutcomeThrow, Values: anyValue()}, {Kind: flowkind.OutcomeCancel, Values: callbackTail(0)}}
 	comparator := target.SubedgeSpec{Role: 3, Family: target.SubedgeFamilyCall, Callee: target.SubedgeCalleeSpec{Kind: target.SubedgeCalleeCallback, Callback: 1}, ArgumentOrigins: ruleOrigins(2), AdmissionFailure: admissionToOutcome(anyValue(), target.AdjustmentPreserve, target.PlacementFixed, 1), Routes: []target.SubedgeRouteSpec{
 		continueRoute(flowkind.OutcomeNormal, anyValue(), target.AdjustmentExact), continueRoute(flowkind.OutcomeReturn, anyValue(), target.AdjustmentExact), outcomeRoute(flowkind.OutcomeThrow, anyValue(), target.AdjustmentPreserve, target.PlacementFixed, 1), rejectRoute(1), outcomeRoute(flowkind.OutcomeCancel, callbackTail(0), target.AdjustmentPreserve, target.PlacementTail, 2),
@@ -1024,7 +1024,7 @@ func callbackGsubProfile() target.OperationSpec {
 	op := module("string", "gsub")
 	op.ValuesVars = 4
 	op.Input = values([]typ.Type{typ.String, typ.String, typ.Any}, true, 0)
-	op.Callbacks = []target.CallbackSpec{{Function: target.InputSource{Kind: target.InputSourceValueFormal, Ordinal: 2}, Admission: target.DirectFunction, Arguments: callbackTail(1), Outcomes: terminals(callbackTail(2), callbackTail(2), anyValue(), anyValue(), callbackTail(3)), Lifecycle: target.CallbackSyncOptionalMany, Effects: target.RowSpec{Tail: target.RowClosed}}}
+	op.Callbacks = []target.CallbackSpec{{Function: target.InputSource{Kind: target.InputSourceValueFormal, Ordinal: 2}, Admission: schematype.CallableAdmissionDirectFunction, Arguments: callbackTail(1), Outcomes: terminals(callbackTail(2), callbackTail(2), anyValue(), anyValue(), callbackTail(3)), Lifecycle: target.CallbackSyncOptionalMany, Effects: target.RowSpec{Tail: target.RowClosed}}}
 	op.Outcomes = []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: closed(typ.String, typ.Integer)}, {Kind: flowkind.OutcomeThrow, Values: anyValue()}, {Kind: flowkind.OutcomeCancel, Values: callbackTail(3)}}
 	function := target.SubedgeSpec{Role: 1, Family: target.SubedgeFamilyCall, Callee: target.SubedgeCalleeSpec{Kind: target.SubedgeCalleeCallback, Callback: 1}, ArgumentOrigins: ruleTailOrigin(), AdmissionFailure: admissionToOutcome(anyValue(), target.AdjustmentPreserve, target.PlacementFixed, 1), Routes: []target.SubedgeRouteSpec{
 		continueRoute(flowkind.OutcomeNormal, anyValue(), target.AdjustmentExact), continueRoute(flowkind.OutcomeReturn, anyValue(), target.AdjustmentExact), outcomeRoute(flowkind.OutcomeThrow, anyValue(), target.AdjustmentPreserve, target.PlacementFixed, 1), rejectRoute(1), outcomeRoute(flowkind.OutcomeCancel, callbackTail(3), target.AdjustmentPreserve, target.PlacementTail, 2),
@@ -1083,7 +1083,7 @@ func resumeRelation(source target.ResumeSource, carrier target.ValueFormal, argu
 func callbackCreate(op target.OperationSpec) target.OperationSpec {
 	op.ValuesVars = 5
 	op.Input = values([]typ.Type{typ.Any}, false, 0)
-	op.Callbacks = []target.CallbackSpec{{Function: target.InputSource{Kind: target.InputSourceValueFormal, Ordinal: 0}, Admission: target.DirectFunction, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: target.CallbackRetainedOptionalOnce, Effects: target.RowSpec{Tail: target.RowClosed}}}
+	op.Callbacks = []target.CallbackSpec{{Function: target.InputSource{Kind: target.InputSourceValueFormal, Ordinal: 0}, Admission: schematype.CallableAdmissionDirectFunction, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: target.CallbackRetainedOptionalOnce, Effects: target.RowSpec{Tail: target.RowClosed}}}
 	op.Outcomes = []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: values([]typ.Type{typ.Any}, false, 0), CallbackResults: []target.CallbackResultSpec{{Result: 0, Callback: 1}}}, {Kind: flowkind.OutcomeThrow, Values: values([]typ.Type{typ.Any}, false, 0)}}
 	op.Effects = target.RowSpec{Tail: target.RowClosed}
 	return op
@@ -1092,7 +1092,7 @@ func callbackCreate(op target.OperationSpec) target.OperationSpec {
 func callbackWrap(op target.OperationSpec) target.OperationSpec {
 	op.ValuesVars = 5
 	op.Input = values([]typ.Type{typ.Any}, false, 0)
-	op.Callbacks = []target.CallbackSpec{{Function: target.InputSource{Kind: target.InputSourceValueFormal, Ordinal: 0}, Admission: target.DirectFunction, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: target.CallbackRetainedOptionalOnce, Effects: target.RowSpec{Tail: target.RowClosed}}}
+	op.Callbacks = []target.CallbackSpec{{Function: target.InputSource{Kind: target.InputSourceValueFormal, Ordinal: 0}, Admission: schematype.CallableAdmissionDirectFunction, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: target.CallbackRetainedOptionalOnce, Effects: target.RowSpec{Tail: target.RowClosed}}}
 	op.Outcomes = []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: values([]typ.Type{typ.Any}, false, 0)}, {Kind: flowkind.OutcomeThrow, Values: values([]typ.Type{typ.Any}, false, 0)}}
 	op.Effects = target.RowSpec{Tail: target.RowClosed}
 	return op
@@ -1107,7 +1107,7 @@ func callbackSpawn() target.OperationSpec {
 	op.Input = values([]typ.Type{typ.Any}, true, 0)
 	op.Callbacks = []target.CallbackSpec{{
 		Function:  target.InputSource{Kind: target.InputSourceValueFormal, Ordinal: 0},
-		Admission: target.DirectFunction, Arguments: callbackTail(1), Outcomes: callbackOutcomes(2, 3, 4, 5, 6),
+		Admission: schematype.CallableAdmissionDirectFunction, Arguments: callbackTail(1), Outcomes: callbackOutcomes(2, 3, 4, 5, 6),
 		Lifecycle: target.CallbackRetainedRequiredOnce, Effects: target.RowSpec{Tail: target.RowClosed},
 	}}
 	op.Outcomes = []target.OutcomeSpec{

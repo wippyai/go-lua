@@ -80,23 +80,18 @@ func (operation *adversarialOperation) DeclaredUnit(unit Unit) bool {
 	return operation != nil && operation.prepared && operation.unit.Same(unit)
 }
 
-func (*adversarialOperation) DeclaredTarget(Target) bool                   { return false }
-func (*adversarialOperation) DeclaredSelector(Selector, SelectorKind) bool { return false }
-func (*adversarialOperation) TargetNotifications(Target) ([]Unit, bool)    { return nil, false }
-func (*adversarialOperation) PrepareWidening([]Target) (uint64, bool)      { return 0, false }
-func (*adversarialOperation) PrepareNarrowing([]Target) (uint64, bool)     { return 0, false }
-func (*adversarialOperation) DeclaredSelectorTargets(Selector) ([]Target, bool) {
-	return nil, false
-}
+func (*adversarialOperation) DeclaredTarget(Target) bool                { return false }
+func (*adversarialOperation) TargetNotifications(Target) ([]Unit, bool) { return nil, false }
+func (*adversarialOperation) PrepareWidening([]Target) (uint64, bool)   { return 0, false }
+func (*adversarialOperation) PrepareNarrowing([]Target) (uint64, bool)  { return 0, false }
 
 func (operation *adversarialOperation) ValidUnit(unit Unit) bool {
 	return operation != nil && operation.issuer.Live() && operation.unit.Same(unit)
 }
 
-func (*adversarialOperation) ValidTarget(Target) bool                   { return false }
-func (*adversarialOperation) ValidSelector(Selector, SelectorKind) bool { return false }
-func (*adversarialOperation) Supports(MergeKind) bool                   { return false }
-func (*adversarialOperation) NewWork() (SlotWork, bool)                 { return adversarialWork{}, true }
+func (*adversarialOperation) ValidTarget(Target) bool   { return false }
+func (*adversarialOperation) Supports(MergeKind) bool   { return false }
+func (*adversarialOperation) NewWork() (SlotWork, bool) { return adversarialWork{}, true }
 
 // adversarialWork exists only so carrier publication laws can create a Work
 // around a malicious-but-attached SlotOperation. Direct IssueChange tests do

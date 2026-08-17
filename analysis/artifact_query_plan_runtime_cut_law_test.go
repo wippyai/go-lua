@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/library/lualib/targetprofile"
+	profile "github.com/wippyai/go-lua/analysis/library/lualib/targetprofile"
 )
 
 // An uncalled callable body is a reusable Program interior, not a Link-wide

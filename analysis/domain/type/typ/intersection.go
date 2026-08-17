@@ -1,8 +1,8 @@
 package typ
 
 import (
-	"github.com/wippyai/go-lua/analysis/internal/hash"
 	"github.com/wippyai/go-lua/analysis/domain/type/kind"
+	"github.com/wippyai/go-lua/analysis/internal/hash"
 )
 
 // Intersection represents a type satisfying all member constraints: T1 & T2 & ...

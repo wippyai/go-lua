@@ -5,11 +5,10 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/engine"
+	profile "github.com/wippyai/go-lua/analysis/library/lualib/targetprofile"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/library/lualib/targetprofile"
 )
 
 // Keep the first corpus fixture that exercises an unconditional branch in a
@@ -63,7 +62,7 @@ func TestCorpusAlwaysFalseGuardDiagnosticLaw(t *testing.T) {
 		t.Run(test.project, func(t *testing.T) {
 			plan, baseline, baselineDiagnostics, _ := testCorpusDiagnosticLaw(t, test.project)
 			offResult, offReport, offStatus, offDiagnostics := plan.SolveWithReport(context.Background(), corpusHarnessSolveOptions(), DiagnosticPolicy{})
-			if offStatus != AnalyzeComplete || offResult == nil || offReport != nil || offResult.ContentID() != baseline.ContentID() || offDiagnostics.ObservationAttach != engine.ReceiptObservationAttachFailureNone || !reflect.DeepEqual(offDiagnostics.Engine, baselineDiagnostics.Engine) {
+			if offStatus != AnalyzeComplete || offResult == nil || offReport != nil || offResult.ContentID() != baseline.ContentID() || offDiagnostics.ObservationAttach.Available() || !reflect.DeepEqual(offDiagnostics.Engine, baselineDiagnostics.Engine) {
 				t.Fatalf("policy-off false guard changed inference = status=%v result=%t report=%t identity=%v/%v diagnostics=%+v", offStatus, offResult != nil, offReport != nil, offResult.ContentID(), baseline.ContentID(), offDiagnostics)
 			}
 			result, report, status, diagnostics := solveGuardPolarityReport(plan)

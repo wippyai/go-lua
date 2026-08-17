@@ -68,39 +68,39 @@ func materializeReceiptProjection[V, R any](work *carrier.Work, state carrier.St
 	return value, ok
 }
 
-func materializeReceiptProjectionWithFailure[V, R any](work *carrier.Work, state carrier.State, binding *schemaBindingState, authority *schemaBindingAuthority, factor receiptQueryFactor[V], unit carrier.Unit, project func(OrderedCells[V]) R, begin func() R, accum func(R, OrderedCells[V]) (R, bool), result FrozenResult[R]) (frozenValue, SolveFailurePhase, bool) {
+func materializeReceiptProjectionWithFailure[V, R any](work *carrier.Work, state carrier.State, binding *schemaBindingState, authority *schemaBindingAuthority, factor receiptQueryFactor[V], unit carrier.Unit, project func(OrderedCells[V]) R, begin func() R, accum func(R, OrderedCells[V]) (R, bool), result FrozenResult[R]) (frozenValue, solveBoundary, bool) {
 	if factor == nil || (project == nil && (begin == nil || accum == nil)) || !validFrozenResult(result) || work == nil || !work.Checkpoint() || binding == nil || authority == nil || binding.phase != schemaBindingSealed || binding.authority != authority {
-		return nil, SolveFailurePhaseObservationPreflight, false
+		return nil, refused(SolveFailureFamilyObservation, "preflight"), false
 	}
 	var value R
 	if begin != nil {
 		value = begin()
 	}
 	observations := 0
-	projectionFailure := SolveFailurePhaseNone
+	projectionFailure := boundaryNone
 	visit := func(observation factbinding.Observation[V], _ support.Mask) bool {
 		cells, ok := orderedCellsFromObservation(observation)
 		if !ok {
-			projectionFailure = SolveFailurePhaseObservationShape
+			projectionFailure = refused(SolveFailureFamilyObservation, "shape")
 			return false
 		}
 		observations++
 		if accum != nil {
 			next, ok := accum(value, cells)
 			if !ok {
-				projectionFailure = SolveFailurePhaseObservationProjection
+				projectionFailure = refused(SolveFailureFamilyObservation, "projection")
 				return false
 			}
 			value = next
 			if !work.Checkpoint() {
-				projectionFailure = SolveFailurePhaseObservationPreflight
+				projectionFailure = refused(SolveFailureFamilyObservation, "preflight")
 				return false
 			}
 			return true
 		}
 		value = project(cells)
 		if !work.Checkpoint() {
-			projectionFailure = SolveFailurePhaseObservationPreflight
+			projectionFailure = refused(SolveFailureFamilyObservation, "preflight")
 			return false
 		}
 		return true
@@ -113,36 +113,36 @@ func materializeReceiptProjectionWithFailure[V, R any](work *carrier.Work, state
 		valid = factor.stagedObserve(work, state, unit, state.Support(), visit)
 	}
 	if !valid || (accum == nil && observations > 1) || !work.Checkpoint() {
-		phase := SolveFailurePhaseObservationProjection
-		if projectionFailure != SolveFailurePhaseNone {
-			phase = projectionFailure
+		boundary := refused(SolveFailureFamilyObservation, "projection")
+		if projectionFailure != boundaryNone {
+			boundary = projectionFailure
 		} else if failure == stagedObservationFailureArguments {
-			phase = SolveFailurePhaseObservationPreflight
+			boundary = refused(SolveFailureFamilyObservation, "preflight")
 		} else if failure == stagedObservationFailureCheckpoint || failure == stagedObservationFailureSlot || failure == stagedObservationFailureWork {
-			phase = SolveFailurePhaseObservationWork
+			boundary = refused(SolveFailureFamilyObservation, "work")
 		} else if failure == stagedObservationFailureUnit {
-			phase = SolveFailurePhaseObservationUnit
+			boundary = refused(SolveFailureFamilyObservation, "unit")
 		} else if failure == stagedObservationFailureSupport {
-			phase = SolveFailurePhaseObservationSupport
+			boundary = refused(SolveFailureFamilyObservation, "support")
 		} else if failure == stagedObservationFailureRoot {
-			phase = SolveFailurePhaseObservationRoot
+			boundary = refused(SolveFailureFamilyObservation, "root")
 		} else if failure == stagedObservationFailureCarrier {
-			phase = SolveFailurePhaseObservationCarrier
+			boundary = refused(SolveFailureFamilyObservation, "carrier")
 		} else if failure == stagedObservationFailureDecode {
-			phase = SolveFailurePhaseObservationDecode
+			boundary = refused(SolveFailureFamilyObservation, "decode")
 		}
-		return nil, phase, false
+		return nil, boundary, false
 	}
 	if observations == 0 && begin == nil {
 		// A Project callback has no lawful empty-row contract. Empty
 		// observations must be represented by a typed Begin fold state.
-		return nil, SolveFailurePhaseObservationShape, false
+		return nil, refused(SolveFailureFamilyObservation, "shape"), false
 	}
 	frozen := result.Freeze(value)
 	if !work.Checkpoint() {
-		return nil, SolveFailurePhaseObservationFreeze, false
+		return nil, refused(SolveFailureFamilyObservation, "freeze"), false
 	}
-	return &typedFrozenValue[R]{value: frozen, freeze: result}, SolveFailurePhaseNone, true
+	return &typedFrozenValue[R]{value: frozen, freeze: result}, boundaryNone, true
 }
 
 func orderedCellsFromObservation[V any](observation factbinding.Observation[V]) (OrderedCells[V], bool) {

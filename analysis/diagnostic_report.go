@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
 // DiagnosticCode is the analyzer's published diagnostic identity. The
@@ -37,6 +38,21 @@ const (
 	FindingSeverityWarning = diagnostic.SeverityWarning
 	FindingSeverityHint    = diagnostic.SeverityHint
 )
+
+// findingSeveritySpelling is the declared name one severity renders under. The
+// severity vocabulary is declared on the structural surface, so a rendered
+// label is read from the declaration rather than from a switch kept here.
+func findingSeveritySpelling(severity FindingSeverity) (string, bool) {
+	vocabulary, vocabularyOK := composite.StructureVocabulary()
+	if !vocabularyOK || !severity.Available() {
+		return "", false
+	}
+	member, memberOK := vocabulary.At(structure.CategoryDiagnosticSeverity, severity.Ordinal())
+	if !memberOK {
+		return "", false
+	}
+	return member.Spelling(), true
+}
 
 // diagnosticDeclaration resolves one published code in the sealed declaration
 // table. It is the only per-code lookup in Analysis; nothing here restates the
@@ -583,7 +599,8 @@ func sourceLine(sourceText string, line uint32) (string, bool) {
 func (finding Finding) render(row diagnosticFinding, sourceLineText string, includeSource bool) string {
 	line, column := row.location.Start()
 	entry, entryOK := diagnosticDeclaration(row.code)
-	if !entryOK {
+	severity, severityOK := findingSeveritySpelling(row.severity)
+	if !entryOK || !severityOK {
 		return ""
 	}
 	var rendered strings.Builder
@@ -594,7 +611,7 @@ func (finding Finding) render(row diagnosticFinding, sourceLineText string, incl
 		}
 		switch section {
 		case diagnostic.SectionSummary:
-			fmt.Fprintf(&rendered, "%s[%s]: %s\n", row.severity.String(), row.code, renderDiagnosticLine(entry.Message(), row.data))
+			fmt.Fprintf(&rendered, "%s[%s]: %s\n", severity, row.code, renderDiagnosticLine(entry.Message(), row.data))
 		case diagnostic.SectionLocation:
 			fmt.Fprintf(&rendered, "--> %s:%d:%d\n", row.location.File(), line, column)
 		case diagnostic.SectionSource:

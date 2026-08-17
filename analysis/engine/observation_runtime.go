@@ -28,7 +28,7 @@ type runtimeObservation interface {
 	observationID() identity.ContentID
 	observationOwner() *receiptObservationOwner
 	observationPoint() equation.Point
-	materializeObservation(*carrier.Work, carrier.State) (*observationResult, SolveFailurePhase, bool)
+	materializeObservation(*carrier.Work, carrier.State) (*observationResult, solveBoundary, bool)
 }
 
 type observationResult struct {
@@ -73,9 +73,6 @@ type exactObservationWriteMember interface {
 	WriteCount() int
 	WriteAt(int) (equation.Surface, bool)
 	WriteRouteRead(int) (uint64, bool)
-	WriteCandidateCount(int) (int, bool)
-	WriteDependencyCount(int) (int, bool)
-	WriteRelationCount(int) (int, bool)
 }
 
 func exactObservationReadSurface(member exactObservationWriteMember, factor composition.Key) (equation.Surface, bool) {
@@ -84,10 +81,7 @@ func exactObservationReadSurface(member exactObservationWriteMember, factor comp
 	}
 	write, writeOK := member.WriteAt(0)
 	route, routeOK := member.WriteRouteRead(0)
-	candidates, candidatesOK := member.WriteCandidateCount(0)
-	dependencies, dependenciesOK := member.WriteDependencyCount(0)
-	relations, relationsOK := member.WriteRelationCount(0)
-	if !writeOK || !write.Available() || write.Factor != factor || write.Form != equation.SurfaceWriteExact || write.Mode != equation.TargetModeStrong || write.Local == 0 || write.Semantic.Available() || write.Normalizer.Available() || !routeOK || route != 0 || !candidatesOK || candidates != 0 || !dependenciesOK || dependencies != 0 || !relationsOK || relations != 0 {
+	if !writeOK || !write.Available() || write.Factor != factor || write.Form != equation.SurfaceWriteExact || write.Mode != equation.TargetModeStrong || write.Local == 0 || write.Semantic.Available() || write.Normalizer.Available() || !routeOK || route != 0 {
 		return equation.Surface{}, false
 	}
 	read := equation.Surface{Factor: write.Factor, Form: equation.SurfaceReadExact, Local: write.Local}
@@ -115,15 +109,15 @@ func (runtime *receiptExactObservationRuntime[V, R]) observationPoint() equation
 	return runtime.point
 }
 
-func (runtime *receiptExactObservationRuntime[V, R]) materializeObservation(work *carrier.Work, state carrier.State) (*observationResult, SolveFailurePhase, bool) {
+func (runtime *receiptExactObservationRuntime[V, R]) materializeObservation(work *carrier.Work, state carrier.State) (*observationResult, solveBoundary, bool) {
 	if runtime == nil || runtime.owner == nil || !runtime.id.Available() || !runtime.point.Available() || runtime.factor == nil {
-		return nil, SolveFailurePhaseObservationPreflight, false
+		return nil, refused(SolveFailureFamilyObservation, "preflight"), false
 	}
-	value, phase, ok := materializeReceiptProjectionWithFailure(work, state, runtime.owner.state, runtime.owner.authority, runtime.factor, runtime.unit, runtime.project, runtime.begin, runtime.accum, runtime.result)
+	value, boundary, ok := materializeReceiptProjectionWithFailure(work, state, runtime.owner.state, runtime.owner.authority, runtime.factor, runtime.unit, runtime.project, runtime.begin, runtime.accum, runtime.result)
 	if !ok || value == nil {
-		return nil, phase, false
+		return nil, boundary, false
 	}
-	return &observationResult{owner: runtime.owner, id: runtime.id, value: value}, SolveFailurePhaseNone, true
+	return &observationResult{owner: runtime.owner, id: runtime.id, value: value}, boundaryNone, true
 }
 
 func (runtime *receiptSummaryObservationRuntime[V, R]) observationID() identity.ContentID {
@@ -147,15 +141,15 @@ func (runtime *receiptSummaryObservationRuntime[V, R]) observationPoint() equati
 	return runtime.point
 }
 
-func (runtime *receiptSummaryObservationRuntime[V, R]) materializeObservation(work *carrier.Work, state carrier.State) (*observationResult, SolveFailurePhase, bool) {
+func (runtime *receiptSummaryObservationRuntime[V, R]) materializeObservation(work *carrier.Work, state carrier.State) (*observationResult, solveBoundary, bool) {
 	if runtime == nil || runtime.owner == nil || !runtime.id.Available() || !runtime.point.Available() || runtime.factor == nil {
-		return nil, SolveFailurePhaseObservationPreflight, false
+		return nil, refused(SolveFailureFamilyObservation, "preflight"), false
 	}
-	value, phase, ok := materializeReceiptProjectionWithFailure(work, state, runtime.owner.state, runtime.owner.authority, runtime.factor, runtime.unit, runtime.project, runtime.begin, runtime.accum, runtime.result)
+	value, boundary, ok := materializeReceiptProjectionWithFailure(work, state, runtime.owner.state, runtime.owner.authority, runtime.factor, runtime.unit, runtime.project, runtime.begin, runtime.accum, runtime.result)
 	if !ok || value == nil {
-		return nil, phase, false
+		return nil, boundary, false
 	}
-	return &observationResult{owner: runtime.owner, id: runtime.id, value: value}, SolveFailurePhaseNone, true
+	return &observationResult{owner: runtime.owner, id: runtime.id, value: value}, boundaryNone, true
 }
 
 // indexReceiptObservationPoints is constructed lazily only when optional

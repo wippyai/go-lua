@@ -1,10 +1,61 @@
 package composite
 
 import (
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
+
+// The declared identities every diagnostic row is named against: the
+// observation populations the rows are measured over, the publication families
+// the query boundary gates them by, and the severities they default to. They
+// are members of the structural vocabulary, so a row names them by reference
+// and the sealed table resolves them.
+const (
+	diagnosticObservationBranchCondition          = schema.Key("observation/branch-condition")
+	diagnosticObservationTypeReferenceUnresolved  = schema.Key("observation/type-reference-unresolved")
+	diagnosticObservationValueReferenceUnresolved = schema.Key("observation/value-reference-unresolved")
+
+	diagnosticFamilyAdvice = schema.Key("family/advice")
+	diagnosticFamilyType   = schema.Key("family/type")
+	diagnosticFamilyValue  = schema.Key("family/value")
+	diagnosticFamilyLint   = schema.Key("family/lint")
+)
+
+// diagnosticVocabulary is the diagnostic surface's contribution to the
+// structural vocabulary. The families a code is published under, the
+// observation populations a row is measured over, and the severities a row
+// defaults to are declared here, beside the rows that name them.
+//
+// The observation ordinals are authored: the artifact numbers the same
+// populations at load and folds that number into the identity of every
+// observation it issues, so the declaration names the positions its spelling is
+// pinned to. The severity ordinals are authored for the same reason - the
+// severity a policy carries is that position. Families are numbered by
+// declaration order: no foreign spelling numbers them, and a row resolves one
+// by key.
+func diagnosticVocabulary() []structure.Spec {
+	return []structure.Spec{
+		{Key: diagnosticObservationBranchCondition, Category: structure.CategoryDiagnosticObservation, Ordinal: 1, Spelling: "branch-condition", Accepted: true},
+		{Key: diagnosticObservationTypeReferenceUnresolved, Category: structure.CategoryDiagnosticObservation, Ordinal: 2, Spelling: "type-reference-unresolved", Accepted: true},
+		{Key: diagnosticObservationValueReferenceUnresolved, Category: structure.CategoryDiagnosticObservation, Ordinal: 3, Spelling: "value-reference-unresolved", Accepted: true},
+
+		{Key: diagnosticFamilyAdvice, Category: structure.CategoryDiagnosticFamily, Spelling: "advice", Accepted: true},
+		{Key: diagnosticFamilyType, Category: structure.CategoryDiagnosticFamily, Spelling: "type", Accepted: true},
+		{Key: diagnosticFamilyValue, Category: structure.CategoryDiagnosticFamily, Spelling: "value", Accepted: true},
+		{Key: diagnosticFamilyLint, Category: structure.CategoryDiagnosticFamily, Spelling: "lint", Accepted: true},
+
+		{Key: "severity/error", Category: structure.CategoryDiagnosticSeverity, Ordinal: diagnostic.SeverityError.Ordinal(), Spelling: "error", Accepted: true},
+		{Key: "severity/warning", Category: structure.CategoryDiagnosticSeverity, Ordinal: diagnostic.SeverityWarning.Ordinal(), Spelling: "warning", Accepted: true},
+		{Key: "severity/hint", Category: structure.CategoryDiagnosticSeverity, Ordinal: diagnostic.SeverityHint.Ordinal(), Spelling: "hint", Accepted: true},
+	}
+}
+
+// declaredMember names one member of the structural vocabulary from a
+// diagnostic row.
+func declaredMember(key schema.Key) diagnostic.Reference {
+	return diagnostic.Reference{Surface: schema.SurfaceKindStructure, Key: key}
+}
 
 // The published diagnostic codes. A code is the analyzer's stable external
 // identity for one finding family and is the authored key of its declaration
@@ -62,10 +113,10 @@ func diagnosticEvidence(anchor diagnostic.Anchor, detail diagnostic.Text) diagno
 func diagnosticSpecs() []diagnostic.Spec {
 	return []diagnostic.Spec{
 		{
-			Code: DiagnosticCodeAlwaysTrueGuard, Family: diagnostic.FamilyAdvice,
+			Code: DiagnosticCodeAlwaysTrueGuard, Family: declaredMember(diagnosticFamilyAdvice),
 			DefaultSeverity: diagnostic.SeverityHint,
 			Lane:            diagnostic.LaneBranch,
-			Observation:     programartifact.DiagnosticObservationBranchCondition,
+			Observation:     declaredMember(diagnosticObservationBranchCondition),
 			Fact:            diagnostic.Reference{Surface: schema.SurfaceKindAxis, Key: valueAxis},
 			Message:         "condition is proven always true",
 			Help:            "Remove the guard or move the guarded code out of the branch.",
@@ -74,10 +125,10 @@ func diagnosticSpecs() []diagnostic.Spec {
 			Render:          diagnosticRender,
 		},
 		{
-			Code: DiagnosticCodeAlwaysFalseGuard, Family: diagnostic.FamilyAdvice,
+			Code: DiagnosticCodeAlwaysFalseGuard, Family: declaredMember(diagnosticFamilyAdvice),
 			DefaultSeverity: diagnostic.SeverityHint,
 			Lane:            diagnostic.LaneBranch,
-			Observation:     programartifact.DiagnosticObservationBranchCondition,
+			Observation:     declaredMember(diagnosticObservationBranchCondition),
 			Fact:            diagnostic.Reference{Surface: schema.SurfaceKindAxis, Key: valueAxis},
 			Message:         "condition is proven always false",
 			Help:            "Remove the unreachable branch or invert the guard.",
@@ -86,7 +137,7 @@ func diagnosticSpecs() []diagnostic.Spec {
 			Render:          diagnosticRender,
 		},
 		{
-			Code: DiagnosticCodeRedundantClaim, Family: diagnostic.FamilyAdvice,
+			Code: DiagnosticCodeRedundantClaim, Family: declaredMember(diagnosticFamilyAdvice),
 			DefaultSeverity: diagnostic.SeverityHint,
 			Lane:            diagnostic.LaneDeclared,
 			Requirements:    diagnostic.RequiresSubject | diagnostic.RequiresTarget | diagnostic.RequiresClaimForm | diagnostic.RequiresProofLocation,
@@ -103,10 +154,10 @@ func diagnosticSpecs() []diagnostic.Spec {
 			Render: diagnosticRender,
 		},
 		{
-			Code: DiagnosticCodeUnresolvedTypeReference, Family: diagnostic.FamilyType,
+			Code: DiagnosticCodeUnresolvedTypeReference, Family: declaredMember(diagnosticFamilyType),
 			DefaultSeverity: diagnostic.SeverityError,
 			Lane:            diagnostic.LaneStatic,
-			Observation:     programartifact.DiagnosticObservationTypeReferenceUnresolved,
+			Observation:     declaredMember(diagnosticObservationTypeReferenceUnresolved),
 			Requirements:    diagnostic.RequiresSubject,
 			Message:         "unknown type {subject}",
 			Help:            "Declare the type in scope",
@@ -115,10 +166,10 @@ func diagnosticSpecs() []diagnostic.Spec {
 			Render:          diagnosticRender,
 		},
 		{
-			Code: DiagnosticCodeUnresolvedValueReference, Family: diagnostic.FamilyValue,
+			Code: DiagnosticCodeUnresolvedValueReference, Family: declaredMember(diagnosticFamilyValue),
 			DefaultSeverity: diagnostic.SeverityError,
 			Lane:            diagnostic.LaneStatic,
-			Observation:     programartifact.DiagnosticObservationValueReferenceUnresolved,
+			Observation:     declaredMember(diagnosticObservationValueReferenceUnresolved),
 			Requirements:    diagnostic.RequiresSubject,
 			Message:         "unknown value {subject}",
 			Help:            "Declare the value",
@@ -127,7 +178,7 @@ func diagnosticSpecs() []diagnostic.Spec {
 			Render:          diagnosticRender,
 		},
 		{
-			Code: DiagnosticCodeUnusedLocal, Family: diagnostic.FamilyLint,
+			Code: DiagnosticCodeUnusedLocal, Family: declaredMember(diagnosticFamilyLint),
 			DefaultSeverity: diagnostic.SeverityHint,
 			Lane:            diagnostic.LaneDeclared,
 			Requirements:    diagnostic.RequiresSubject,

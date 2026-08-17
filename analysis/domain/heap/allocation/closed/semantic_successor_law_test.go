@@ -5,10 +5,10 @@ import (
 	"testing"
 
 	analysis "github.com/wippyai/go-lua/analysis"
+	"github.com/wippyai/go-lua/analysis/library/lualib/targetprofile"
+	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/lua/lower"
-	"github.com/wippyai/go-lua/analysis/library/lualib/targetprofile"
 )
 
 // These cases enter the production mounted-artifact receipt assembly and the

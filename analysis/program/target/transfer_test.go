@@ -1,8 +1,9 @@
 package target
 
 import (
-	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
+
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )

@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/library"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
 
@@ -57,23 +58,48 @@ var contractPayloadFormats = map[library.Form]string{
 	library.FormHostCapability:     "host-capability",
 }
 
-// contractIdentity derives one declared identity in the analyzer's global
-// semantic domain, so a contract identity is replayable across processes and is
-// not minted from local state. An underivable role yields the empty identity,
-// which every law that reads it rejects.
-func contractIdentity(role string) identity.ContentID {
-	key, ok := vocabulary.Key(role)
-	if !ok {
-		return identity.ContentID{}
+// contractRoles is this table's contribution to the semantic role vocabulary:
+// the codec and law-set identities each contract kind is declared under, and
+// one payload identity per member form the algebra owes. They are declared
+// beside the rows that name them, so a form added to the algebra arrives with
+// the role its member is addressed by.
+func contractRoles() []structure.Spec {
+	roles := []string{
+		"contract-codec/library", "contract-codec/environment",
+		"contract-lawset/library", "contract-lawset/environment",
 	}
-	return identity.ContentID(key.Digest())
+	declared := make(map[string]bool, len(contractPayloadFormats))
+	for _, class := range [...]library.Class{library.ClassLibrary, library.ClassEnvironment} {
+		for _, form := range class.Required() {
+			format, named := contractPayloadFormats[form]
+			if !named || declared[format] {
+				continue
+			}
+			declared[format] = true
+			roles = append(roles, "contract-payload/"+format)
+		}
+	}
+	return vocabulary.RoleSpecs(roles...)
+}
+
+// contractIdentity resolves one declared identity in the analyzer's global
+// semantic domain, so a contract identity is replayable across processes and is
+// not minted from local state. A role this table never declared resolves
+// nothing, and the inventory that reads it is rejected rather than published
+// with an empty identity.
+func contractIdentity(roles vocabulary.Roles, role string) (identity.ContentID, bool) {
+	key, ok := roles.Key(vocabulary.RoleKey(role))
+	if !ok {
+		return identity.ContentID{}, false
+	}
+	return identity.ContentID(key.Digest()), true
 }
 
 // contractMembers declares one member per form the class owes, in the surface's
 // own required order. Completeness is not asserted here: the member-form law
 // states it over the sealed row, so a form added to the algebra and left
 // unnamed rejects the table rather than passing as a kind that cannot carry it.
-func contractMembers(class library.Class) []library.Member {
+func contractMembers(roles vocabulary.Roles, class library.Class) ([]library.Member, bool) {
 	forms := class.Required()
 	members := make([]library.Member, 0, len(forms))
 	for _, form := range forms {
@@ -82,9 +108,13 @@ func contractMembers(class library.Class) []library.Member {
 			members = append(members, library.Member{Form: form})
 			continue
 		}
-		members = append(members, library.Member{Form: form, Payload: contractIdentity("contract-payload/" + format)})
+		payload, ok := contractIdentity(roles, "contract-payload/"+format)
+		if !ok {
+			return nil, false
+		}
+		members = append(members, library.Member{Form: form, Payload: payload})
 	}
-	return members
+	return members, true
 }
 
 // librarySpecs is the authored analyzer contract kind inventory: the kind a
@@ -104,31 +134,43 @@ func contractMembers(class library.Class) []library.Member {
 // are checked under is owned by a surface that has not landed, so the reference
 // carries a form-valid identity and nothing that looks resolved; form-validating
 // an identity is not resolving it, and the declaration says which one it did.
-func librarySpecs() []library.Spec {
+func librarySpecs(roles vocabulary.Roles) ([]library.Spec, bool) {
+	libraryCodec, libraryCodecOK := contractIdentity(roles, "contract-codec/library")
+	libraryLaws, libraryLawsOK := contractIdentity(roles, "contract-lawset/library")
+	environmentCodec, environmentCodecOK := contractIdentity(roles, "contract-codec/environment")
+	environmentLaws, environmentLawsOK := contractIdentity(roles, "contract-lawset/environment")
+	libraryMembers, libraryMembersOK := contractMembers(roles, library.ClassLibrary)
+	environmentMembers, environmentMembersOK := contractMembers(roles, library.ClassEnvironment)
+	if !libraryCodecOK || !libraryLawsOK || !environmentCodecOK || !environmentLawsOK || !libraryMembersOK || !environmentMembersOK {
+		return nil, false
+	}
 	return []library.Spec{
 		{
 			Key:        LibraryContractKind,
 			Class:      library.ClassLibrary,
-			Codec:      library.Codec{Format: contractIdentity("contract-codec/library"), Version: contractCodecVersion},
-			Validation: library.LawSet{Resolution: library.ResolutionDeferred, Deferred: contractIdentity("contract-lawset/library")},
+			Codec:      library.Codec{Format: libraryCodec, Version: contractCodecVersion},
+			Validation: library.LawSet{Resolution: library.ResolutionDeferred, Deferred: libraryLaws},
 			Addressing: library.AddressingExportPath,
-			Members:    contractMembers(library.ClassLibrary),
+			Members:    libraryMembers,
 		},
 		{
 			Key:        EnvironmentContractKind,
 			Class:      library.ClassEnvironment,
-			Codec:      library.Codec{Format: contractIdentity("contract-codec/environment"), Version: contractCodecVersion},
-			Validation: library.LawSet{Resolution: library.ResolutionDeferred, Deferred: contractIdentity("contract-lawset/environment")},
+			Codec:      library.Codec{Format: environmentCodec, Version: contractCodecVersion},
+			Validation: library.LawSet{Resolution: library.ResolutionDeferred, Deferred: environmentLaws},
 			Addressing: library.AddressingExportPath,
-			Members:    contractMembers(library.ClassEnvironment),
+			Members:    environmentMembers,
 		},
-	}
+	}, true
 }
 
 // libraryKinds admits the authored inventory. A rejected row leaves the table
 // unavailable rather than half declared.
-func libraryKinds() ([]*library.Entry, bool) {
-	specs := librarySpecs()
+func libraryKinds(roles vocabulary.Roles) ([]*library.Entry, bool) {
+	specs, specsOK := librarySpecs(roles)
+	if !specsOK {
+		return nil, false
+	}
 	entries := make([]*library.Entry, 0, len(specs))
 	for _, spec := range specs {
 		entry, ok := library.New(spec)

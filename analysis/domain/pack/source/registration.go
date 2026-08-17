@@ -4,9 +4,9 @@ import (
 	packdomain "github.com/wippyai/go-lua/analysis/domain/pack"
 	packowner "github.com/wippyai/go-lua/analysis/domain/pack/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
 
@@ -30,12 +30,20 @@ type ruleAuthorities interface {
 // interfaces above.
 func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *SchemaFragment, *HotRule] {
 	return rule.Spec[P, A, *SchemaFragment, *HotRule]{
-		Key:      "pack-source",
-		Role:     programartifact.RuleRolePackSource,
+		Key:    "pack-source",
+		Writes: "pack",
+		Issues: []rule.Issuance{
+			{Occurrence: "occurrence/values", Form: "issuance/base", Input: "input/none", Stage: "stage/base"},
+			{Occurrence: "occurrence/call", Form: "issuance/base", Input: "input/none", Stage: "stage/base"},
+		},
 		Lane:     rule.LaneMounted,
-		Semantic: func(bundle vocabulary.Bundle) identity.SemanticKey { return bundle.PackSourceRule.Rule },
+		Semantic: "semantic/rule/pack/source",
+		Roles:    []schema.Key{"semantic/operand/pack/source", "semantic/evidence/pack/source"},
 		Declare: func(context rule.Declaration[P]) (*SchemaFragment, bool) {
-			semantics := context.Bundle.PackSourceRule
+			semantics, ok := context.Roles.Rule("pack/source")
+			if !ok {
+				return nil, false
+			}
 			return DeclareSchema(context.Builder, semantics.Rule, semantics.Operand, semantics.Evidence, context.Principals.PackPrincipal())
 		},
 		Register: func(context rule.Registration[*SchemaFragment]) (engine.RuleSlotCapability, bool) {
@@ -56,4 +64,12 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *SchemaFra
 			return ok
 		},
 	}
+}
+
+// StructureSpecs is this package's contribution to the analyzer's semantic
+// role vocabulary: the three roles its rule is identified by. A role is
+// declared where it is used, so the row and the reference that names it are one
+// package's statement.
+func StructureSpecs() []structure.Spec {
+	return vocabulary.RuleRoleSpecs("pack/source")
 }

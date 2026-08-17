@@ -10,19 +10,18 @@ import "github.com/wippyai/go-lua/analysis/identity"
 // Every plane is read by index. The row planes are never handed out as slices,
 // so a reader cannot append to or overwrite a sealed template.
 type ArtifactScalarTemplate struct {
-	artifact  identity.ContentID
-	program   identity.ContentID
-	schema    identity.ContentID
-	sealed    bool
-	roles     []ArtifactScalarRole
-	points    []ArtifactScalarPoint
-	edges     []ArtifactScalarEdge
-	local     []ArtifactScalarTransfer
-	regions   []ArtifactScalarRegion
-	events    []ArtifactScalarEvent
-	rules     []ArtifactScalarRule
-	bodies    []ArtifactScalarBody
-	functions []ArtifactScalarFunction
+	artifact identity.ContentID
+	program  identity.ContentID
+	schema   identity.ContentID
+	sealed   bool
+	roles    []ArtifactScalarRole
+	points   []ArtifactScalarPoint
+	edges    []ArtifactScalarEdge
+	local    []ArtifactScalarTransfer
+	regions  []ArtifactScalarRegion
+	events   []ArtifactScalarEvent
+	rules    []ArtifactScalarRule
+	bodies   []ArtifactScalarBody
 }
 
 func NewArtifactScalarTemplate(spec *ArtifactScalarSpec) (*ArtifactScalarTemplate, bool) {
@@ -30,7 +29,7 @@ func NewArtifactScalarTemplate(spec *ArtifactScalarSpec) (*ArtifactScalarTemplat
 		return nil, false
 	}
 	state := spec.state
-	template := &ArtifactScalarTemplate{artifact: state.ArtifactID, program: state.ProgramID, schema: state.SchemaID, sealed: true, roles: state.Roles, points: state.Points, edges: state.Edges, local: state.Transfers, regions: state.Regions, events: state.Events, rules: state.Rules, bodies: state.Bodies, functions: state.Functions}
+	template := &ArtifactScalarTemplate{artifact: state.ArtifactID, program: state.ProgramID, schema: state.SchemaID, sealed: true, roles: state.Roles, points: state.Points, edges: state.Edges, local: state.Transfers, regions: state.Regions, events: state.Events, rules: state.Rules, bodies: state.Bodies}
 	state.consumed = true
 	state.Roles = nil
 	state.Points = nil
@@ -40,7 +39,6 @@ func NewArtifactScalarTemplate(spec *ArtifactScalarSpec) (*ArtifactScalarTemplat
 	state.Events = nil
 	state.Rules = nil
 	state.Bodies = nil
-	state.Functions = nil
 	return template, true
 }
 
@@ -190,18 +188,4 @@ func (template *ArtifactScalarTemplate) BodyAt(index int) (ArtifactScalarBody, b
 		return ArtifactScalarBody{}, false
 	}
 	return template.bodies[index], true
-}
-
-func (template *ArtifactScalarTemplate) FunctionCount() int {
-	if !template.Available() {
-		return 0
-	}
-	return len(template.functions)
-}
-
-func (template *ArtifactScalarTemplate) FunctionAt(index int) (ArtifactScalarFunction, bool) {
-	if !template.Available() || index < 0 || index >= len(template.functions) {
-		return ArtifactScalarFunction{}, false
-	}
-	return template.functions[index], true
 }

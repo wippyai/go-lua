@@ -32,6 +32,28 @@ const (
 	ReceiptScheduleFailureStage
 )
 
+// scheduleStageOffense folds every offending stage placement of one scan into
+// a single report. The scanned rows live in unordered maps, so the reported
+// rank is the minimum over the whole offending set rather than whichever entry
+// a map walk reaches first.
+type scheduleStageOffense struct {
+	rank     uint32
+	offended bool
+}
+
+func (offense *scheduleStageOffense) observe(rank uint32) {
+	if !offense.offended || rank < offense.rank {
+		offense.rank, offense.offended = rank, true
+	}
+}
+
+func (offense scheduleStageOffense) result() (ReceiptScheduleFailure, uint32, bool) {
+	if !offense.offended {
+		return ReceiptScheduleFailureNone, 0, false
+	}
+	return ReceiptScheduleFailureStage, offense.rank, true
+}
+
 func validateMountedArtifactSchedule(artifactRows *artifactReceiptTopology, topology *equation.Topology, graph *equation.Graph) (ReceiptScheduleFailure, uint32, bool) {
 	expectedPoints := 0
 	if artifactRows != nil {
@@ -104,22 +126,35 @@ func validateMountedArtifactSchedule(artifactRows *artifactReceiptTopology, topo
 	// transports, so choosing an arbitrary LocalTransfer would make ownership
 	// depend on row order. All roles sharing a native stage must attest the same
 	// exact input.
-	stageBase := make(map[identity.ContentID]identity.ContentID)
-	stageKind := make(map[identity.ContentID]rows.ArtifactRuleStage)
+	// The reported rank is the minimum over every offending entry. Ranks are
+	// injective over mounted points, so entries that share a point report the
+	// identical rank and the minimum is a total choice over an unordered map.
+	offense := scheduleStageOffense{}
 	for _, placement := range artifactRows.callStages {
 		base, stage := placement.mountedInput, placement.mountedPoint
 		baseRank, baseOK := pointRank[base]
 		stageRank, stageOK := pointRank[stage]
 		if !placement.stage.NativeCall() || !baseOK || !stageOK || baseRank >= stageRank {
-			return ReceiptScheduleFailureStage, uint32(stageRank), false
+			offense.observe(uint32(stageRank))
 		}
+	}
+	if failure, rank, offended := offense.result(); offended {
+		return failure, rank, false
+	}
+	stageBase := make(map[identity.ContentID]identity.ContentID)
+	stageKind := make(map[identity.ContentID]rows.ArtifactRuleStage)
+	for _, placement := range artifactRows.callStages {
+		base, stage := placement.mountedInput, placement.mountedPoint
 		if prior, duplicate := stageBase[stage]; duplicate && prior != base {
-			return ReceiptScheduleFailureStage, uint32(stageRank), false
+			offense.observe(uint32(pointRank[stage]))
 		}
 		if prior, duplicate := stageKind[stage]; duplicate && prior != placement.stage {
-			return ReceiptScheduleFailureStage, uint32(stageRank), false
+			offense.observe(uint32(pointRank[stage]))
 		}
 		stageBase[stage], stageKind[stage] = base, placement.stage
+	}
+	if failure, rank, offended := offense.result(); offended {
+		return failure, rank, false
 	}
 	localStages := make(map[identity.ContentID]struct{})
 	for _, placement := range artifactRows.ruleSet {
@@ -127,16 +162,20 @@ func validateMountedArtifactSchedule(artifactRows *artifactReceiptTopology, topo
 		case rows.ArtifactRuleStageBase:
 		case rows.ArtifactRuleStageLocal:
 			if _, native := stageKind[placement.mountedPoint]; native {
-				return ReceiptScheduleFailureStage, uint32(pointRank[placement.mountedPoint]), false
+				offense.observe(uint32(pointRank[placement.mountedPoint]))
+				continue
 			}
 			localStages[placement.mountedPoint] = struct{}{}
 		case rows.ArtifactRuleStageCallDispatch, rows.ArtifactRuleStageCallSummary, rows.ArtifactRuleStageCallEffect:
 			if owner, native := stageKind[placement.mountedPoint]; !native || owner != placement.stage {
-				return ReceiptScheduleFailureStage, uint32(pointRank[placement.mountedPoint]), false
+				offense.observe(uint32(pointRank[placement.mountedPoint]))
 			}
 		default:
-			return ReceiptScheduleFailureStage, 0, false
+			offense.observe(0)
 		}
+	}
+	if failure, rank, offended := offense.result(); offended {
+		return failure, rank, false
 	}
 	localOwners := make(map[identity.ContentID]identity.ContentID, len(localStages))
 	for edgeIndex, edge := range artifactRows.edges {

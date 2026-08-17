@@ -121,12 +121,20 @@ func (witness LinkBootstrapWitness) capabilityFor(occurrence identity.ContentID)
 	if !witness.Available() || !occurrence.Available() {
 		return RuleSlotCapability{}, false
 	}
+	// Capability namespaces are disjoint: an occurrence admitted for one slot is
+	// never claimable by another. A cross-slot claim is a contract violation and
+	// is rejected here, never resolved by picking one of the claimants.
+	result, claimed := RuleSlotCapability{}, false
 	for capability, occurrences := range witness.byCapability {
-		if _, ok := occurrences[occurrence]; ok {
-			return capability, true
+		if _, ok := occurrences[occurrence]; !ok {
+			continue
 		}
+		if claimed {
+			return RuleSlotCapability{}, false
+		}
+		result, claimed = capability, true
 	}
-	return RuleSlotCapability{}, false
+	return result, claimed
 }
 
 func (witness LinkBootstrapWitness) OwnerID() identity.ContentID {

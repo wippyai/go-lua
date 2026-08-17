@@ -373,9 +373,6 @@ func reduceContainment(forest *containment.Result) (containmentProjection, error
 		if !ok {
 			return containmentProjection{}, errors.New("containment proof has an unavailable row")
 		}
-		if keyspace.TermFamily(term) == keyspace.FamilyBody {
-			continue
-		}
 		parent, hasParent := forest.Parent(term)
 		if !hasParent {
 			parent = 0

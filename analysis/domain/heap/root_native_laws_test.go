@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
-	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
 // TestHeapRuntimeKindUnionMapping keeps Target's closed fresh vocabulary at
@@ -13,15 +12,15 @@ import (
 func TestHeapRuntimeKindUnionMapping(t *testing.T) {
 	cases := []struct {
 		name string
-		kind target.FreshKind
+		kind schematype.FreshClass
 		want runtimekind.Kind
 	}{
-		{"table", target.FreshTable, runtimekind.Table},
-		{"function", target.FreshFunction, runtimekind.Function},
-		{"thread", target.FreshThread, runtimekind.Thread},
-		{"userdata", target.FreshUserdata, runtimekind.Userdata},
-		{"error", target.FreshError, runtimekind.Userdata},
-		{"reflection", target.FreshReflection, runtimekind.Userdata},
+		{"table", schematype.FreshClassTable, runtimekind.Table},
+		{"function", schematype.FreshClassFunction, runtimekind.Function},
+		{"thread", schematype.FreshClassThread, runtimekind.Thread},
+		{"userdata", schematype.FreshClassUserdata, runtimekind.Userdata},
+		{"error", schematype.FreshClassError, runtimekind.Userdata},
+		{"reflection", schematype.FreshClassReflection, runtimekind.Userdata},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -31,7 +30,7 @@ func TestHeapRuntimeKindUnionMapping(t *testing.T) {
 			}
 		})
 	}
-	if _, ok := freshRootKinds(target.FreshInvalid); ok {
+	if _, ok := freshRootKinds(schematype.FreshClassInvalid); ok {
 		t.Fatal("invalid FreshKind entered Heap runtime vocabulary")
 	}
 }
@@ -41,7 +40,7 @@ func TestHeapRuntimeKindUnionMapping(t *testing.T) {
 // the representation before any Value can be admitted or widened.
 func TestHeapRankAdmissionRejectsRepresentationOverflow(t *testing.T) {
 	cases := []struct {
-		name string
+		name  string
 		owner *schema
 	}{
 		{"present overflow", &schema{presentPotential: ^uint64(0), referenceCount: 0}},

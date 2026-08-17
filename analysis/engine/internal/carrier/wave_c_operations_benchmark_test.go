@@ -213,18 +213,15 @@ func (operation *waveCDeltaOperation) ValidRoot(root RootHandle) bool {
 func (operation *waveCDeltaOperation) DeclaredUnit(unit Unit) bool {
 	return operation != nil && operation.unit.Same(unit)
 }
-func (*waveCDeltaOperation) DeclaredTarget(Target) bool                        { return false }
-func (*waveCDeltaOperation) DeclaredSelector(Selector, SelectorKind) bool      { return false }
-func (*waveCDeltaOperation) TargetNotifications(Target) ([]Unit, bool)         { return nil, false }
-func (*waveCDeltaOperation) PrepareWidening([]Target) (uint64, bool)           { return 0, false }
-func (*waveCDeltaOperation) PrepareNarrowing([]Target) (uint64, bool)          { return 0, false }
-func (*waveCDeltaOperation) DeclaredSelectorTargets(Selector) ([]Target, bool) { return nil, false }
+func (*waveCDeltaOperation) DeclaredTarget(Target) bool                { return false }
+func (*waveCDeltaOperation) TargetNotifications(Target) ([]Unit, bool) { return nil, false }
+func (*waveCDeltaOperation) PrepareWidening([]Target) (uint64, bool)   { return 0, false }
+func (*waveCDeltaOperation) PrepareNarrowing([]Target) (uint64, bool)  { return 0, false }
 func (operation *waveCDeltaOperation) ValidUnit(unit Unit) bool {
 	return operation != nil && operation.unit.Same(unit)
 }
-func (*waveCDeltaOperation) ValidTarget(Target) bool                   { return false }
-func (*waveCDeltaOperation) ValidSelector(Selector, SelectorKind) bool { return false }
-func (*waveCDeltaOperation) Supports(MergeKind) bool                   { return true }
+func (*waveCDeltaOperation) ValidTarget(Target) bool { return false }
+func (*waveCDeltaOperation) Supports(MergeKind) bool { return true }
 func (operation *waveCDeltaOperation) NewWork() (SlotWork, bool) {
 	return waveCDeltaWork{issuer: operation.issuer}, true
 }

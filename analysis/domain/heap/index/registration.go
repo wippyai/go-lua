@@ -6,9 +6,9 @@ import (
 	packowner "github.com/wippyai/go-lua/analysis/domain/pack/owner"
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
 
@@ -38,12 +38,19 @@ type rawGetAuthorities interface {
 // interfaces above.
 func RawGetEntry[P rawGetPrincipals, A rawGetAuthorities]() rule.Spec[P, A, *RawGetSchemaFragment, *RawGetHotRule] {
 	return rule.Spec[P, A, *RawGetSchemaFragment, *RawGetHotRule]{
-		Key:      "raw-get",
-		Role:     programartifact.RuleRoleRawGet,
+		Key:    "raw-get",
+		Writes: "value",
+		Issues: []rule.Issuance{
+			{Occurrence: "occurrence/index-read", Form: "issuance/local", Input: "input/entry", Stage: "stage/local"},
+		},
 		Lane:     rule.LaneMounted,
-		Semantic: func(bundle vocabulary.Bundle) identity.SemanticKey { return bundle.RawGetRule.Rule },
+		Semantic: "semantic/rule/heap/index-get-raw",
+		Roles:    []schema.Key{"semantic/operand/heap/index-get-raw", "semantic/evidence/heap/index-get-raw"},
 		Declare: func(context rule.Declaration[P]) (*RawGetSchemaFragment, bool) {
-			semantics := context.Bundle.RawGetRule
+			semantics, ok := context.Roles.Rule("heap/index-get-raw")
+			if !ok {
+				return nil, false
+			}
 			return DeclareRawGetSchema(context.Builder, semantics.Rule, semantics.Operand, semantics.Evidence, context.Principals.ValuePrincipal(), context.Principals.CallPrincipal(), context.Principals.HeapPrincipal(), context.Principals.PackPrincipal())
 		},
 		Register: func(context rule.Registration[*RawGetSchemaFragment]) (engine.RuleSlotCapability, bool) {
@@ -84,12 +91,19 @@ type rawSetAuthorities interface {
 // RawSetEntry is this package's raw-set rule declaration.
 func RawSetEntry[P rawSetPrincipals, A rawSetAuthorities]() rule.Spec[P, A, *RawSetSchemaFragment, *RawSetHotRule] {
 	return rule.Spec[P, A, *RawSetSchemaFragment, *RawSetHotRule]{
-		Key:      "raw-set",
-		Role:     programartifact.RuleRoleRawSet,
+		Key:    "raw-set",
+		Writes: "heap",
+		Issues: []rule.Issuance{
+			{Occurrence: "occurrence/index-write", Form: "issuance/local-predecessor", Input: "input/predecessor", Stage: "stage/local"},
+		},
 		Lane:     rule.LaneMounted,
-		Semantic: func(bundle vocabulary.Bundle) identity.SemanticKey { return bundle.RawSetRule.Rule },
+		Semantic: "semantic/rule/heap/index-set-raw",
+		Roles:    []schema.Key{"semantic/operand/heap/index-set-raw", "semantic/evidence/heap/index-set-raw"},
 		Declare: func(context rule.Declaration[P]) (*RawSetSchemaFragment, bool) {
-			semantics := context.Bundle.RawSetRule
+			semantics, ok := context.Roles.Rule("heap/index-set-raw")
+			if !ok {
+				return nil, false
+			}
 			return DeclareRawSetSchema(context.Builder, semantics.Rule, semantics.Operand, semantics.Evidence, context.Principals.ValuePrincipal(), context.Principals.HeapPrincipal(), context.Principals.PackPrincipal())
 		},
 		Register: func(context rule.Registration[*RawSetSchemaFragment]) (engine.RuleSlotCapability, bool) {
@@ -107,4 +121,15 @@ func RawSetEntry[P rawSetPrincipals, A rawSetAuthorities]() rule.Spec[P, A, *Raw
 			return ok
 		},
 	}
+}
+
+// StructureSpecs is this package's contribution to the analyzer's semantic
+// role vocabulary: the three roles each of its two rules is identified by. A
+// role is declared where it is used, so the row and the reference that names it
+// are one package's statement.
+func StructureSpecs() []structure.Spec {
+	return append(
+		vocabulary.RuleRoleSpecs("heap/index-get-raw"),
+		vocabulary.RuleRoleSpecs("heap/index-set-raw")...,
+	)
 }

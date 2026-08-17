@@ -7,7 +7,7 @@ import (
 	effectfactor "github.com/wippyai/go-lua/analysis/domain/effect/factor"
 	"github.com/wippyai/go-lua/analysis/domain/pack"
 	staticdomain "github.com/wippyai/go-lua/analysis/domain/static"
-	"github.com/wippyai/go-lua/analysis/domain/type/authority"
+	typeauthority "github.com/wippyai/go-lua/analysis/domain/type/authority"
 	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
@@ -138,7 +138,7 @@ func effectFactorSpec(rowTail target.RowTail, callback bool) target.Spec {
 			{Kind: kind.OutcomeCancel, Values: empty},
 		}
 		owner.Callbacks = []target.CallbackSpec{{
-			Function: target.InputSource{Kind: target.InputSourceValueFormal}, Admission: target.OrdinaryCallable,
+			Function: target.InputSource{Kind: target.InputSourceValueFormal}, Admission: schematype.CallableAdmissionOrdinary,
 			Arguments: empty, Outcomes: terminals, Lifecycle: target.CallbackRetainedOptionalOnce,
 			Effects: target.RowSpec{Occurrences: []target.EffectSpec{args}, Tail: target.RowClosed},
 		}}
@@ -314,7 +314,7 @@ func publicationEffectFactorSpec(publicationKind target.PublicationEffectKind, c
 		empty := target.ValuesSpec{Tail: target.ValuesClosed}
 		terminals := []target.TerminalSpec{{Kind: kind.OutcomeNormal, Values: empty}, {Kind: kind.OutcomeReturn, Values: empty}, {Kind: kind.OutcomeThrow, Values: empty}, {Kind: kind.OutcomeYield, Values: empty}, {Kind: kind.OutcomeCancel, Values: empty}}
 		owner.Callbacks = []target.CallbackSpec{{
-			Function: target.InputSource{Kind: target.InputSourceValueFormal}, Admission: target.OrdinaryCallable,
+			Function: target.InputSource{Kind: target.InputSourceValueFormal}, Admission: schematype.CallableAdmissionOrdinary,
 			Arguments: empty, Outcomes: terminals, Lifecycle: target.CallbackRetainedOptionalOnce,
 			Effects: target.RowSpec{Occurrences: []target.EffectSpec{effect}, Tail: target.RowClosed},
 		}}

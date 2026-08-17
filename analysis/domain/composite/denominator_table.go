@@ -22,23 +22,30 @@ import (
 // cannot present one closed world under two names. The phase is publication:
 // an axis's coordinates are derived by the solver, so the set is total only
 // once the fixpoint that derives it has closed.
-func denominatorSpecs(axes []*axisTemplate, bundle vocabulary.Bundle) []denominator.Spec {
+func denominatorSpecs(axes []*axisTemplate, roles vocabulary.Roles) ([]denominator.Spec, bool) {
 	specs := make([]denominator.Spec, 0, len(axes))
 	for _, entry := range axes {
+		semantic, ok := roles.Key(entry.Semantic())
+		if !ok {
+			return nil, false
+		}
 		specs = append(specs, denominator.Spec{
 			Key:      schema.Key("coordinates/" + string(entry.Key())),
 			Owner:    denominator.Owner{Surface: schema.SurfaceKindAxis, Entry: entry.Key()},
-			Universe: identity.ContentID(entry.Semantic(bundle).Digest()),
+			Universe: identity.ContentID(semantic.Digest()),
 			Phase:    denominator.PhasePublication,
 		})
 	}
-	return specs
+	return specs, true
 }
 
 // denominatorEntries admits the authored inventory. A rejected row leaves the
 // table unavailable rather than half declared.
-func denominatorEntries(axes []*axisTemplate, bundle vocabulary.Bundle) ([]*denominator.Entry, bool) {
-	specs := denominatorSpecs(axes, bundle)
+func denominatorEntries(axes []*axisTemplate, roles vocabulary.Roles) ([]*denominator.Entry, bool) {
+	specs, specsOK := denominatorSpecs(axes, roles)
+	if !specsOK {
+		return nil, false
+	}
 	entries := make([]*denominator.Entry, 0, len(specs))
 	for _, spec := range specs {
 		entry, ok := denominator.New(spec)

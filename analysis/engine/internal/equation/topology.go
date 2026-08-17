@@ -134,12 +134,8 @@ type ruleBinding struct {
 }
 
 type ruleWrite struct {
-	surface      Surface
-	route        uint64
-	candidates   []uint64
-	targets      []Surface
-	dependencies []composition.Dependency
-	relations    []CandidateRelation
+	surface Surface
+	route   uint64
 }
 
 type builtGroup struct {
@@ -977,7 +973,7 @@ func deriveRuleBinding(row RuleInstance, schema composition.Rule) (ruleBinding, 
 		binding.reads[index] = read.Surface
 	}
 	for index, write := range row.Writes {
-		binding.writes[index] = ruleWrite{surface: write.Surface, route: write.Route, candidates: append([]uint64(nil), write.Candidates...), targets: append([]Surface(nil), write.TargetCandidates...), dependencies: append([]composition.Dependency(nil), schema.Writes[index].Dependencies...), relations: cloneCandidateRelations(write.Relations)}
+		binding.writes[index] = ruleWrite{surface: write.Surface, route: write.Route}
 	}
 	return binding, binding.valid(schema)
 }
@@ -992,8 +988,8 @@ func (binding ruleBinding) valid(schema composition.Rule) bool {
 		}
 	}
 	for index, write := range binding.writes {
-		resolved := ResolvedWrite{Index: uint64(index), Surface: write.surface, Route: write.route, Candidates: write.candidates, TargetCandidates: write.targets, Relations: write.relations}
-		if !matchesWriteSurface(write.surface, schema.Writes[index]) || !sameDependencies(write.dependencies, schema.Writes[index].Dependencies) || !validResolvedWriteSelection(resolved, schema.Writes[index], schema.Writes, index) {
+		resolved := ResolvedWrite{Index: uint64(index), Surface: write.surface, Route: write.route}
+		if !matchesWriteSurface(write.surface, schema.Writes[index]) || !validResolvedWriteRoute(resolved, schema.Writes[index]) {
 			return false
 		}
 	}
@@ -1001,11 +997,7 @@ func (binding ruleBinding) valid(schema composition.Rule) bool {
 }
 
 func (binding ruleBinding) clone() ruleBinding {
-	result := ruleBinding{reads: append([]Surface(nil), binding.reads...), writes: make([]ruleWrite, len(binding.writes))}
-	for index, write := range binding.writes {
-		result.writes[index] = ruleWrite{surface: write.surface, route: write.route, candidates: append([]uint64(nil), write.candidates...), targets: append([]Surface(nil), write.targets...), dependencies: append([]composition.Dependency(nil), write.dependencies...), relations: cloneCandidateRelations(write.relations)}
-	}
-	return result
+	return ruleBinding{reads: append([]Surface(nil), binding.reads...), writes: append([]ruleWrite(nil), binding.writes...)}
 }
 
 func cloneMembers(rows []RuleMember) []RuleMember {
@@ -1086,100 +1078,27 @@ func validateWrites(values []ResolvedWrite, schemas []composition.Write) bool {
 		return false
 	}
 	for index, value := range values {
-		if value.Index != uint64(index) || !matchesWriteSurface(value.Surface, schemas[index]) || !validResolvedWriteSelection(value, schemas[index], schemas, index) {
+		if value.Index != uint64(index) || !matchesWriteSurface(value.Surface, schemas[index]) || !validResolvedWriteRoute(value, schemas[index]) {
 			return false
 		}
 	}
 	return true
 }
 
-func validResolvedWriteSelection(value ResolvedWrite, schema composition.Write, writes []composition.Write, index int) bool {
+func validResolvedWriteRoute(value ResolvedWrite, schema composition.Write) bool {
 	switch schema.Kind {
 	case composition.WriteExact:
-		return value.Route == 0 && len(value.Candidates) == 0 && len(value.TargetCandidates) == 0 && len(value.Relations) == 0
-	case composition.WriteSelect:
-		if value.Route != 0 || !sameOrdinals(value.Candidates, schema.Candidates) || len(value.TargetCandidates) != len(value.Candidates) || !validTargetCandidates(value.TargetCandidates, schema.Factor) {
-			return false
-		}
-		targets := make([]uint64, 0, len(schema.Dependencies))
-		for _, dependency := range schema.Dependencies {
-			if dependency.Target {
-				targets = append(targets, dependency.Index)
-			}
-		}
-		if len(value.Relations) != len(targets) {
-			return false
-		}
-		for relationIndex, relation := range value.Relations {
-			if relation.Prior != targets[relationIndex] || relation.Prior >= uint64(index) || len(relation.Matches) != len(value.Candidates) {
-				return false
-			}
-			count, ok := writeCandidateCount(writes[relation.Prior])
-			if !ok {
-				return false
-			}
-			for _, matches := range relation.Matches {
-				if !validOrdinals(matches, count) {
-					return false
-				}
-			}
-		}
-		return true
+		return value.Route == 0
 	case composition.WriteRoute:
 		// Schema validation already proves Route is a one-based ReadSelect
 		// ordinal. It is not a write ordinal, so its range is unrelated to
 		// len(writes) and may validly exceed it.
-		return value.Route == schema.Route && value.Route != 0 && len(value.Candidates) == 0 && len(value.TargetCandidates) == 0 && len(value.Relations) == 0
+		return value.Route == schema.Route && value.Route != 0
 	default:
 		return false
 	}
 }
 
-// TargetCandidates are selector-position data, not a set. Repetition and a
-// non-monotone order are meaningful: candidate i is paired with cold read
-// ordinal Candidates[i]. Each target itself remains an exact strong/weak
-// capability owned by the output Factor.
-func validTargetCandidates(values []Surface, factor composition.Key) bool {
-	for _, value := range values {
-		if !value.Available() || value.Factor != factor || value.Form != SurfaceWriteExact ||
-			(value.Mode != TargetModeStrong && value.Mode != TargetModeWeak) || value.Semantic.Available() || value.Normalizer.Available() {
-			return false
-		}
-	}
-	return true
-}
-func writeCandidateCount(write composition.Write) (uint64, bool) {
-	switch write.Kind {
-	case composition.WriteExact:
-		return 1, true
-	case composition.WriteSelect:
-		if len(write.Candidates) == 0 {
-			return 0, false
-		}
-		return uint64(len(write.Candidates)), true
-	default:
-		return 0, false
-	}
-}
-func validOrdinals(values []uint64, limit uint64) bool {
-	for index, value := range values {
-		if value >= limit || index > 0 && values[index-1] >= value {
-			return false
-		}
-	}
-	return true
-}
-func sameOrdinals(left, right []uint64) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
-			return false
-		}
-	}
-	return true
-}
 func validateSupports(values []ResolvedSupport, schemas []composition.Support) bool {
 	if len(values) != len(schemas) {
 		return false
@@ -1224,8 +1143,6 @@ func matchesWriteSurface(surface Surface, schema composition.Write) bool {
 	switch schema.Kind {
 	case composition.WriteExact:
 		return surface.Form == SurfaceWriteExact && (surface.Mode == TargetModeStrong || surface.Mode == TargetModeWeak) && !surface.Semantic.Available() && !surface.Normalizer.Available()
-	case composition.WriteSelect:
-		return surface.Form == SurfaceWriteSelect && surface.Mode == TargetModeNone && surface.Semantic == schema.Semantic && !surface.Normalizer.Available()
 	case composition.WriteRoute:
 		return surface.Form == SurfaceWriteRoute && surface.Mode == TargetModeNone && !surface.Semantic.Available() && !surface.Normalizer.Available()
 	default:
@@ -1238,40 +1155,13 @@ func matchesSupportSurface(surface StructuralSurface, schema composition.Support
 func matchesPruneSurface(surface StructuralSurface, schema composition.Prune) bool {
 	return surface.Available() && surface.Semantic == schema.Semantic
 }
-func sameDependencies(left, right []composition.Dependency) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
-			return false
-		}
-	}
-	return true
-}
 func copyInstance(row RuleInstance) RuleInstance {
 	result := row
 	result.Reads = append([]ResolvedRead(nil), row.Reads...)
 	result.Carries = append([]ResolvedCarry(nil), row.Carries...)
 	result.Writes = append([]ResolvedWrite(nil), row.Writes...)
-	for index := range result.Writes {
-		result.Writes[index].Candidates = append([]uint64(nil), row.Writes[index].Candidates...)
-		result.Writes[index].TargetCandidates = append([]Surface(nil), row.Writes[index].TargetCandidates...)
-		result.Writes[index].Relations = cloneCandidateRelations(row.Writes[index].Relations)
-	}
 	result.Supports = append([]ResolvedSupport(nil), row.Supports...)
 	result.Prunes = append([]ResolvedPrune(nil), row.Prunes...)
-	return result
-}
-func cloneCandidateRelations(values []CandidateRelation) []CandidateRelation {
-	result := make([]CandidateRelation, len(values))
-	for index, relation := range values {
-		result[index].Prior = relation.Prior
-		result[index].Matches = make([][]uint64, len(relation.Matches))
-		for current, matches := range relation.Matches {
-			result[index].Matches[current] = append([]uint64(nil), matches...)
-		}
-	}
 	return result
 }
 func ruleSchema(source *composition.Composition, key composition.Key) (composition.Rule, bool) {
@@ -1691,53 +1581,6 @@ func (member RuleMember) WriteRouteRead(write int) (uint64, bool) {
 	}
 	return member.binding.writes[write].route, true
 }
-func (member RuleMember) WriteCandidateCount(write int) (int, bool) {
-	if write < 0 || write >= len(member.binding.writes) {
-		return 0, false
-	}
-	return len(member.binding.writes[write].candidates), true
-}
-func (member RuleMember) WriteCandidateAt(write, candidate int) (uint64, bool) {
-	if write < 0 || write >= len(member.binding.writes) || candidate < 0 || candidate >= len(member.binding.writes[write].candidates) {
-		return 0, false
-	}
-	return member.binding.writes[write].candidates[candidate], true
-}
-
-// WriteTargetCandidateAt returns the exact target paired positionally with a
-// selector's cold read candidate. Unlike weak coverage, this vector is not a
-// set: duplicates and authored order are preserved.
-func (member RuleMember) WriteTargetCandidateAt(write, candidate int) (Surface, bool) {
-	if write < 0 || write >= len(member.binding.writes) || candidate < 0 || candidate >= len(member.binding.writes[write].targets) {
-		return Surface{}, false
-	}
-	return member.binding.writes[write].targets[candidate], true
-}
-func (member RuleMember) WriteDependencyCount(write int) (int, bool) {
-	if write < 0 || write >= len(member.binding.writes) {
-		return 0, false
-	}
-	return len(member.binding.writes[write].dependencies), true
-}
-func (member RuleMember) WriteDependencyAt(write, dependency int) (composition.Dependency, bool) {
-	if write < 0 || write >= len(member.binding.writes) || dependency < 0 || dependency >= len(member.binding.writes[write].dependencies) {
-		return composition.Dependency{}, false
-	}
-	return member.binding.writes[write].dependencies[dependency], true
-}
-func (member RuleMember) WriteRelationCount(write int) (int, bool) {
-	if write < 0 || write >= len(member.binding.writes) {
-		return 0, false
-	}
-	return len(member.binding.writes[write].relations), true
-}
-func (member RuleMember) WriteRelationAt(write, relation int) (CandidateRelation, bool) {
-	if write < 0 || write >= len(member.binding.writes) || relation < 0 || relation >= len(member.binding.writes[write].relations) {
-		return CandidateRelation{}, false
-	}
-	return cloneCandidateRelations(member.binding.writes[write].relations[relation : relation+1])[0], true
-}
-
 func compareKey(left, right composition.Key) int {
 	for index := range left.ID {
 		if left.ID[index] < right.ID[index] {

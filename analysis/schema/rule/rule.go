@@ -20,30 +20,47 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/internal/framing"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
 
 // Surface law ordinals. They are numeric identities; rendering a verdict is
 // the caller's job, from the identity.
 const (
-	LawRoleOrdinal schema.LawID = schema.SurfaceLawFloor + iota
-	// The ordinal here is retired. Role uniqueness was subsumed by
-	// LawRoleOrdinal: the ordinal law pins every row's role to its declaration
-	// position, so two rows can no longer carry one role.
+	// The ordinal here is retired. A rule's role is its declaration position,
+	// so the position is a construction rather than a property a row could
+	// state differently from where it sits.
+	_ schema.LawID = schema.SurfaceLawFloor + iota
+	// The ordinal here is retired. Role uniqueness is the root's own law: one
+	// role is one row, and two rows carrying one identity is stated over the
+	// entry identity this surface derives.
 	_
 	LawSemanticIdentity
 	LawSemanticUnique
 	LawEntryShape
-	LawMountedRoleCovered
-	LawMountedRoleLane
-	// The ordinal here is retired. Whether the closed vocabulary is itself
-	// available is that package's own law, stated by vocabulary.Bundle.Available
-	// and pinned by its own tests. A vocabulary that is not the canonical one
-	// selects nothing, so this surface observes it as a rule with no canonical
-	// identity and states that under LawSemanticIdentity.
+	// LawIssuanceDeclared states that a rule admitted from a compiled artifact
+	// subscribes to at least one occurrence family. A mounted rule that
+	// subscribes to nothing would be admitted onto a lane no artifact row could
+	// ever reach it on.
+	LawIssuanceDeclared
+	// LawIssuanceLane states the converse: a rule that subscribes to an
+	// occurrence family enters on the lane those rows are materialized from.
+	LawIssuanceLane
+	// The ordinal here is retired. Whether the semantic role vocabulary is
+	// itself complete is the structural surface's own law, stated over the
+	// category the roles are declared in. A role this surface names and that
+	// vocabulary does not declare is an unresolved reference, which is stated
+	// under LawSemanticIdentity.
 	_
+	// LawWritesResolves states that the axis a rule writes is a declared axis.
+	// An axis is a writer principal, so a rule that names an undeclared
+	// coordinate space would be admitted to write facts no table holds.
+	LawWritesResolves
+	// LawIssuanceResolves states that every term of a declared subscription is a
+	// declared member of the vocabulary it names: the occurrence family, the
+	// placement form, the operand polarity, and the execution cut.
+	LawIssuanceResolves
 )
 
 // Lane is the closed admission lane of one rule. Mounted rules enter through a
@@ -66,9 +83,14 @@ func (lane Lane) Mounted() bool { return lane == LaneMounted || lane == LaneActi
 
 // Declaration is the cold context a rule's Declare hook receives. Principals
 // is the composition's own principal record.
+//
+// Roles resolves exactly the roles this rule declared: its own identity and
+// the further roles named on its Spec. A hook that reaches for a role the rule
+// never declared resolves nothing, so an identity a rule consumes is an
+// identity it is on record as consuming.
 type Declaration[P any] struct {
 	Builder    *engine.SchemaBuilder
-	Bundle     vocabulary.Bundle
+	Roles      vocabulary.Roles
 	Principals P
 }
 
@@ -84,7 +106,7 @@ type Registration[F any] struct {
 type Pairing[F any] struct {
 	Binding    *engine.SchemaBinding
 	Fragment   F
-	Capability func(programartifact.RuleRole) (engine.RuleSlotCapability, bool)
+	Capability func(schema.Key) (engine.RuleSlotCapability, bool)
 }
 
 // Binding is the hot binding context. Fragment is the cold fragment this
@@ -147,6 +169,33 @@ type LinkCatalog interface {
 	IDAt(index int) (identity.ContentID, bool)
 }
 
+// Issuance is one program-occurrence subscription: the occurrence family whose
+// compiled rows issue an occurrence of this rule, the placement form that
+// issuance takes, the operand polarity it reads, and the execution cut it is
+// placed at. Every term names a member of the structural vocabulary, so a
+// subscription is declared data and resolves against the sealed table.
+//
+// What a form does with the program's geometry stays with the compiler that
+// places it; what this record states is which rows issue this rule and in what
+// shape, which is the mapping that used to be a switch over a foreign role
+// catalog.
+type Issuance struct {
+	Occurrence schema.Key
+	Form       schema.Key
+	Input      schema.Key
+	Stage      schema.Key
+	// Code, when declared, narrows the subscription to occurrence rows carrying
+	// this payload code. It is the one payload predicate the placement needs and
+	// it is exact: a row whose code differs issues nothing.
+	Code    uint64
+	HasCode bool
+}
+
+func (issuance Issuance) Available() bool {
+	return issuance.Occurrence.Available() && issuance.Form.Available() &&
+		issuance.Input.Available() && issuance.Stage.Available()
+}
+
 // Spec is the authored declaration of one rule. P and A are the composition's
 // principal and authority records; F and H are this rule's own cold fragment
 // and hot rule. The owning domain keeps its transfer algebra and hot rule;
@@ -156,12 +205,31 @@ type Spec[P, A, F, H any] struct {
 	// has exactly one spelling in the analyzer. It derives the entry identity
 	// a verdict carries.
 	Key schema.Key
-	// Role is the sealed ProgramArtifact row role. The artifact format owns the
-	// ordinal; this record maps to it rather than restating the catalog.
-	Role programartifact.RuleRole
+	// The role is not a field. A rule's role is its declaration position in the
+	// catalog, so the row's identity and its slot are the declaration itself
+	// rather than an ordinal restated beside it.
 	Lane Lane
-	// Semantic selects the rule identity from the canonical vocabulary.
-	Semantic func(vocabulary.Bundle) identity.SemanticKey
+	// Writes is the axis this rule's occurrences write. It resolves against the
+	// sealed axis surface, so a rule cannot write a coordinate space that is not
+	// declared, and the lane it writes is named by the axis that owns it rather
+	// than by a projection of the role.
+	Writes schema.Key
+	// Issues are this rule's program-occurrence subscriptions, in the order the
+	// compiler places them. A rule materialized from a compiled artifact
+	// declares which rows issue it; a Link-owned rule declares none, because its
+	// occurrences are admitted through the Link table instead.
+	Issues []Issuance
+	// Semantic is this rule's canonical identity: the semantic role row it is
+	// declared under. The row's declared spelling derives the identity the
+	// engine registers this rule's slot with, so the declaration and the
+	// binding name one role.
+	Semantic schema.Key
+	// Roles are the further semantic roles this rule's Declare hook resolves:
+	// the operand and evidence forms its occurrences read and produce, and the
+	// transform form a normalized output is admitted under. They are content,
+	// so the identity set a rule is declared against is part of the table
+	// digest, and the hook reaches no identity this list omits.
+	Roles []schema.Key
 	// Declare records the rule's cold Schema shape and returns its fragment.
 	Declare func(Declaration[P]) (F, bool)
 	// Register performs the pre-seal owner handoff for the declared slot.
@@ -196,13 +264,15 @@ func (holder Cell) Available() bool { return holder.payload != nil }
 type Template[P, A any] struct {
 	key      schema.Key
 	id       schema.EntryID
-	role     programartifact.RuleRole
 	lane     Lane
-	semantic func(vocabulary.Bundle) identity.SemanticKey
+	writes   schema.Key
+	issues   []Issuance
+	semantic schema.Key
+	roles    []schema.Key
 
 	declare     func(Declaration[P]) (Cell, bool)
 	register    func(*engine.SchemaBinding, Cell) (engine.RuleSlotCapability, bool)
-	pair        func(*engine.SchemaBinding, Cell, func(programartifact.RuleRole) (engine.RuleSlotCapability, bool)) bool
+	pair        func(*engine.SchemaBinding, Cell, func(schema.Key) (engine.RuleSlotCapability, bool)) bool
 	bind        func(*engine.SchemaBinding, A, Cell) (Cell, bool)
 	finalize    func(A, Cell) bool
 	attach      func(Cell, *engine.ReceiptAssembly, identity.ContentID, identity.ContentID, identity.ContentID) bool
@@ -221,11 +291,22 @@ func New[P, A, F, H any](spec Spec[P, A, F, H]) (*Template[P, A], bool) {
 	template := &Template[P, A]{
 		key:      spec.Key,
 		id:       schema.NewEntryID(schema.SurfaceKindRule, spec.Key),
-		role:     spec.Role,
 		lane:     spec.Lane,
+		writes:   spec.Writes,
+		issues:   append([]Issuance(nil), spec.Issues...),
 		semantic: spec.Semantic,
+		roles:    append([]schema.Key(nil), spec.Roles...),
 	}
+	// The hook receives exactly the roles this rule declared. Narrowing here is
+	// what makes the declared role list the whole of what a hook can consume,
+	// so an identity reaching a Declare body is one the table has on record.
+	declared := template.declaredRoles()
 	template.declare = func(context Declaration[P]) (Cell, bool) {
+		roles, rolesOK := context.Roles.Restrict(declared...)
+		if !rolesOK {
+			return Cell{}, false
+		}
+		context.Roles = roles
 		fragment, ok := spec.Declare(context)
 		if !ok {
 			return Cell{}, false
@@ -240,7 +321,7 @@ func New[P, A, F, H any](spec Spec[P, A, F, H]) (*Template[P, A], bool) {
 		return spec.Register(Registration[F]{Binding: binding, Fragment: fragment})
 	}
 	if spec.Pair != nil {
-		template.pair = func(binding *engine.SchemaBinding, holder Cell, resolve func(programartifact.RuleRole) (engine.RuleSlotCapability, bool)) bool {
+		template.pair = func(binding *engine.SchemaBinding, holder Cell, resolve func(schema.Key) (engine.RuleSlotCapability, bool)) bool {
 			fragment, ok := holder.payload.(F)
 			return ok && spec.Pair(Pairing[F]{Binding: binding, Fragment: fragment, Capability: resolve})
 		}
@@ -303,7 +384,12 @@ func specAdmissible[P, A, F, H any](spec Spec[P, A, F, H]) bool {
 	if !spec.Key.Available() || !spec.Lane.Available() {
 		return false
 	}
-	if spec.Semantic == nil || spec.Declare == nil || spec.Register == nil || spec.Bind == nil {
+	for _, role := range spec.Roles {
+		if !role.Available() || role == spec.Semantic {
+			return false
+		}
+	}
+	if !spec.Semantic.Available() || spec.Declare == nil || spec.Register == nil || spec.Bind == nil {
 		return false
 	}
 	mounted, link := spec.Lane.Mounted(), spec.Lane == LaneLink
@@ -313,56 +399,85 @@ func specAdmissible[P, A, F, H any](spec Spec[P, A, F, H]) bool {
 	if link != (spec.LinkAttach != nil) || link != (spec.LinkMember != nil) || link != (spec.LinkCatalog != nil) {
 		return false
 	}
-	return programartifact.RuleOutputKindFor(spec.Role) != programartifact.RuleOutputInvalid
+	if !spec.Writes.Available() {
+		return false
+	}
+	for _, issuance := range spec.Issues {
+		if !issuance.Available() {
+			return false
+		}
+	}
+	return true
 }
 
 func (template *Template[P, A]) Key() schema.Key { return template.key }
 
 func (template *Template[P, A]) ID() schema.EntryID { return template.id }
 
-func (template *Template[P, A]) Role() programartifact.RuleRole { return template.role }
-
 func (template *Template[P, A]) Lane() Lane { return template.lane }
 
-// Principal is the factor lane this rule writes. It is read from the artifact
-// format rather than restated, so the two cannot drift.
-func (template *Template[P, A]) Principal() programartifact.RuleOutputKind {
-	return programartifact.RuleOutputKindFor(template.role)
+// Writes is the axis this rule's occurrences write, by the key that axis is
+// declared under.
+func (template *Template[P, A]) Writes() schema.Key { return template.writes }
+
+// IssuanceCount is the number of occurrence subscriptions this rule declares.
+func (template *Template[P, A]) IssuanceCount() int {
+	if template == nil {
+		return 0
+	}
+	return len(template.issues)
 }
 
-// Semantic resolves this rule's canonical identity in one vocabulary bundle.
-func (template *Template[P, A]) Semantic(bundle vocabulary.Bundle) identity.SemanticKey {
-	if template == nil || template.semantic == nil {
-		return identity.SemanticKey{}
+// IssuanceAt returns one declared subscription at its declaration position. The
+// position is the order the compiler places the issuances in.
+func (template *Template[P, A]) IssuanceAt(index int) (Issuance, bool) {
+	if template == nil || index < 0 || index >= len(template.issues) {
+		return Issuance{}, false
 	}
-	return template.semantic(bundle)
+	return template.issues[index], true
 }
 
-// semanticIdentity resolves this rule's identity in the canonical vocabulary.
-// It is the one evaluation both the content fold and this surface's admission
-// laws read, so the identity a catalog is digested under and the identity it is
-// sealed under cannot differ.
-//
-// It is total: a rule that declares no selector, and one whose selector names
-// nothing in the canonical vocabulary, both resolve to the absent identity. The
-// root's LawEntryAdmissible and this surface's LawSemanticIdentity state those
-// cases, so the content stream stays writable for every row the root hands it.
-func (template *Template[P, A]) semanticIdentity() identity.SemanticKey {
-	if template == nil || template.semantic == nil {
-		return identity.SemanticKey{}
+// Semantic is the semantic role row this rule is declared under. A consumer
+// resolves the identity through the sealed vocabulary rather than deriving it
+// from this key, so the declaration and the derivation stay one step apart.
+func (template *Template[P, A]) Semantic() schema.Key {
+	if template == nil {
+		return ""
 	}
-	bundle, canonical := vocabulary.New()
-	if !canonical {
-		return identity.SemanticKey{}
+	return template.semantic
+}
+
+// RoleCount is the number of further semantic roles this rule declared.
+func (template *Template[P, A]) RoleCount() int {
+	if template == nil {
+		return 0
 	}
-	return template.semantic(bundle)
+	return len(template.roles)
+}
+
+// RoleAt returns one further declared semantic role at its declaration
+// position.
+func (template *Template[P, A]) RoleAt(index int) (schema.Key, bool) {
+	if template == nil || index < 0 || index >= len(template.roles) {
+		return "", false
+	}
+	return template.roles[index], true
+}
+
+// declaredRoles is the whole role set this rule is declared against: its own
+// identity first, then the roles its hook resolves.
+func (template *Template[P, A]) declaredRoles() []schema.Key {
+	if template == nil {
+		return nil
+	}
+	return append([]schema.Key{template.semantic}, template.roles...)
 }
 
 func (template *Template[P, A]) EntryAvailable() bool {
 	if template == nil || !template.key.Available() || !template.id.Available() || !template.lane.Available() {
 		return false
 	}
-	if template.semantic == nil || template.declare == nil || template.register == nil || template.bind == nil {
+	if !template.semantic.Available() || template.declare == nil || template.register == nil || template.bind == nil {
 		return false
 	}
 	mounted, link := template.lane.Mounted(), template.lane == LaneLink
@@ -372,42 +487,76 @@ func (template *Template[P, A]) EntryAvailable() bool {
 	if link != (template.linkAttach != nil) || link != (template.linkMember != nil) || link != (template.linkCatalog != nil) {
 		return false
 	}
-	return template.Principal() != programartifact.RuleOutputInvalid
+	return template.writes.Available()
 }
 
-// EntryContent writes this rule's declarative half: the canonical identity it
-// is bound under, the sealed artifact row role it maps to, and the admission
-// lane it enters on. Every derived projection of a rule is indexed by that role,
-// and the lane decides which admission path an occurrence takes, so both are
-// content.
+// EntryContent writes this rule's declarative half: the semantic roles it is
+// declared against, the admission lane it enters on, the axis it writes, and the
+// occurrence subscriptions it declares, each in declaration order. The lane
+// decides which admission path an occurrence takes, the axis names the
+// coordinate space this rule's facts land in, and the subscriptions are the
+// mapping from compiled rows to issued occurrences, so all of them are content.
 //
-// The semantic identity is content. The selector is a hook, but what it selects
-// is a role of the closed vocabulary, and the engine slot this rule binds is
-// resolved under that role, so two catalogs whose rules select different roles
-// declare different rules. The identity is written as its canonical bytes - the
-// digest and the interpretation version - rather than as the role's spelling, so
-// no authored text reaches the stream.
+// The role is not written. A rule's role is its position in this very order, so
+// writing it would write one value twice.
+//
+// The declared roles are content: the role this rule is identified by, and the
+// further roles its hook resolves. The engine slot this rule binds is resolved
+// under the first and the hook consumes the rest, so two catalogs whose rules
+// name different roles declare different rules and are declared against
+// different identity sets. The rows are written by the key they are declared
+// under rather than by the identity that key resolves to, because the
+// resolution is the vocabulary surface's derivation from its own declared
+// spelling and is already folded there.
 //
 // The typed hooks are not content. A hook is a function value: it has no
 // canonical bytes, and the shape of the hook set a rule declares is a property
 // of those values rather than declared data, so neither is written. The
-// principal a rule writes is not written either, because it is read from the
-// artifact format for the role above rather than declared beside it. What the
-// hooks are declared against is covered: the role names the output lane, and the
-// surface's own admission laws bind the hook set to the lane.
+// What the hooks are declared against is covered: the axis names the coordinate
+// space they write, and the surface's own admission laws bind the hook set to
+// the lane.
 func (template *Template[P, A]) EntryContent(content *framing.Writer) error {
-	semantic := template.semanticIdentity()
-	digest := semantic.Digest()
-	if err := content.Bytes(digest[:]); err != nil {
+	if err := content.String(string(template.semantic)); err != nil {
 		return err
 	}
-	if err := content.Uint(semantic.Version()); err != nil {
+	if err := content.Count(uint64(len(template.roles))); err != nil {
 		return err
 	}
-	if err := content.Uint(uint64(template.role)); err != nil {
+	for _, role := range template.roles {
+		if err := content.String(string(role)); err != nil {
+			return err
+		}
+	}
+	if err := content.Uint(uint64(template.lane)); err != nil {
 		return err
 	}
-	return content.Uint(uint64(template.lane))
+	if err := content.String(string(template.writes)); err != nil {
+		return err
+	}
+	if err := content.Count(uint64(len(template.issues))); err != nil {
+		return err
+	}
+	for _, issuance := range template.issues {
+		if err := content.String(string(issuance.Occurrence)); err != nil {
+			return err
+		}
+		if err := content.String(string(issuance.Form)); err != nil {
+			return err
+		}
+		if err := content.String(string(issuance.Input)); err != nil {
+			return err
+		}
+		if err := content.String(string(issuance.Stage)); err != nil {
+			return err
+		}
+		if err := content.Bool(issuance.HasCode); err != nil {
+			return err
+		}
+		if err := content.Uint(issuance.Code); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (template *Template[P, A]) HasPair() bool { return template.pair != nil }
@@ -429,7 +578,7 @@ func (template *Template[P, A]) Register(binding *engine.SchemaBinding, fragment
 	return template.register(binding, fragment)
 }
 
-func (template *Template[P, A]) Pair(binding *engine.SchemaBinding, fragment Cell, resolve func(programartifact.RuleRole) (engine.RuleSlotCapability, bool)) bool {
+func (template *Template[P, A]) Pair(binding *engine.SchemaBinding, fragment Cell, resolve func(schema.Key) (engine.RuleSlotCapability, bool)) bool {
 	return template.pair != nil && binding != nil && fragment.Available() && resolve != nil && template.pair(binding, fragment, resolve)
 }
 
@@ -486,50 +635,81 @@ func (contribution surface[P, A]) Entries() []schema.Entry {
 	return entries
 }
 
-// Seal states the rule surface's own totality laws. The eighteen-arm switches
-// that previously assumed exhaustiveness are replaced by these checks, so an
-// unmapped, misordered, or duplicated role is a loud construction error rather
-// than a silent default arm at solve time.
-func (contribution surface[P, A]) Seal(view schema.View, _ schema.Sealed) schema.SealFailure {
-	roles := make(map[programartifact.RuleRole]*Template[P, A], view.Count())
-	semantics := make(map[identity.SemanticKey]schema.EntryID, view.Count())
+// Seal states the rule surface's own totality laws. A rule's role is its
+// position here, so what is left to state is that the row identifies itself,
+// that the axis it writes and the vocabulary members its subscriptions name are
+// declared, and that its subscriptions and its admission lane agree.
+//
+// The axis surface and the structural vocabulary seal below this one, so both
+// references resolve downward against the table this surface is being sealed
+// into rather than against a catalog restated here.
+func (contribution surface[P, A]) Seal(view schema.View, sealed schema.Sealed) schema.SealFailure {
+	semantics := make(map[schema.Key]schema.EntryID, view.Count())
 	for position := 0; position < view.Count(); position++ {
 		entry, entryOK := view.At(position)
 		template, templateOK := entry.(*Template[P, A])
 		if !entryOK || !templateOK {
 			return schema.SurfaceLawFailure(schema.SurfaceKindRule, schema.EntryID{}, LawEntryShape, schema.DispositionMalformed)
 		}
-		// The diagnostic ordinal is the artifact role ordinal. Pinning the
-		// declaration order to that ordinal is what lets every derived view
-		// project a rule without a second hand-maintained ordering.
-		if int(template.role) != position+1 {
-			return schema.SurfaceLawFailure(schema.SurfaceKindRule, template.id, LawRoleOrdinal, schema.DispositionMalformed)
+		// Every role a rule names is a declared member of the semantic role
+		// vocabulary. The vocabulary raises the two ways the name fails - one it
+		// does not declare, and one it declares in another category - and this
+		// surface raises them as its own verdict, because what the role means
+		// here is this declaration.
+		for _, role := range template.declaredRoles() {
+			if _, disposition := structure.Resolve(sealed, role, structure.CategorySemanticRole); disposition != schema.DispositionAccepted {
+				return schema.SurfaceLawFailure(schema.SurfaceKindRule, template.id, LawSemanticIdentity, disposition)
+			}
 		}
-		// Pinning the role to the position also makes the role unique: two rows
-		// that carry one role cannot both sit at that role's position.
-		roles[template.role] = template
-		semantic := template.semanticIdentity()
-		if !semantic.Available() {
-			return schema.SurfaceLawFailure(schema.SurfaceKindRule, template.id, LawSemanticIdentity, schema.DispositionMalformed)
-		}
-		if prior, duplicate := semantics[semantic]; duplicate {
+		// One role is one rule. Two rules declared under one role would be one
+		// engine slot two declarations bind, so the repeat is a verdict here
+		// rather than a slot whichever rule reaches it first wins.
+		if prior, duplicate := semantics[template.semantic]; duplicate {
 			return schema.SurfaceLawFailure(schema.SurfaceKindRule, prior, LawSemanticUnique, schema.DispositionDuplicate)
 		}
-		semantics[semantic] = template.id
+		semantics[template.semantic] = template.id
+		// An axis is a writer principal, so the lane a rule writes is a declared
+		// axis and nothing else names it.
+		if _, disposition := sealed.Resolve(schema.SurfaceKindAxis, template.writes); disposition != schema.DispositionAccepted {
+			return schema.SurfaceLawFailure(schema.SurfaceKindRule, template.id, LawWritesResolves, disposition)
+		}
+		// A rule admitted from a compiled artifact is reached by the rows it
+		// subscribes to. One that subscribes to nothing would sit on that lane
+		// unreachable, and one that subscribes from the Link lane would declare a
+		// path its own occurrences never take.
+		if template.lane.Mounted() != (len(template.issues) > 0) {
+			law := LawIssuanceDeclared
+			if !template.lane.Mounted() {
+				law = LawIssuanceLane
+			}
+			return schema.SurfaceLawFailure(schema.SurfaceKindRule, template.id, law, schema.DispositionIncomplete)
+		}
+		for _, issuance := range template.issues {
+			if failure := sealIssuance(template.id, issuance, sealed); failure.Available() {
+				return failure
+			}
+		}
 	}
-	// Every mounted artifact role must be declared exactly once. An artifact
-	// row whose role has no rule would otherwise be dropped without notice.
-	for index := 0; index < programartifact.MountedRuleRoleCount(); index++ {
-		role, roleOK := programartifact.MountedRuleRoleAt(index)
-		if !roleOK {
-			return schema.SurfaceLawFailure(schema.SurfaceKindRule, schema.EntryID{}, LawMountedRoleCovered, schema.DispositionMalformed)
-		}
-		template, declared := roles[role]
-		if !declared {
-			return schema.SurfaceLawFailure(schema.SurfaceKindRule, schema.EntryID{}, LawMountedRoleCovered, schema.DispositionIncomplete)
-		}
-		if !template.lane.Mounted() {
-			return schema.SurfaceLawFailure(schema.SurfaceKindRule, template.id, LawMountedRoleLane, schema.DispositionMalformed)
+	return schema.SealFailure{}
+}
+
+// sealIssuance resolves one subscription's four vocabulary references. Each
+// names a member of its own category, so a term that names another category is
+// a member of the wrong vocabulary rather than an unresolved one, and the
+// structural surface states that difference once for every surface above it.
+func sealIssuance(entry schema.EntryID, issuance Issuance, sealed schema.Sealed) schema.SealFailure {
+	references := [...]struct {
+		key      schema.Key
+		category structure.Category
+	}{
+		{issuance.Occurrence, structure.CategoryOccurrenceKind},
+		{issuance.Form, structure.CategoryIssuanceForm},
+		{issuance.Input, structure.CategoryIssuanceInput},
+		{issuance.Stage, structure.CategoryIssuanceStage},
+	}
+	for _, reference := range references {
+		if _, disposition := structure.Resolve(sealed, reference.key, reference.category); disposition != schema.DispositionAccepted {
+			return schema.SurfaceLawFailure(schema.SurfaceKindRule, entry, LawIssuanceResolves, disposition)
 		}
 	}
 	return schema.SealFailure{}

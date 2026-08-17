@@ -4,14 +4,9 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/internal/framing"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema"
-	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
-
-func packSemantic(bundle vocabulary.Bundle) identity.SemanticKey { return bundle.PackFactor }
 
 // scratchAuthority stands in for one domain's sealed Link authority. The
 // surface is blind to it, so a scratch authority proves the same laws a real
@@ -29,8 +24,8 @@ const (
 // mountedSpec is one axis declaration that seals its own Link authority. The
 // counter records every invocation so the table's iteration law is stated over
 // observed calls rather than over the record the calls produced.
-func mountedSpec(key schema.Key, principal programartifact.RuleOutputKind, semantic func(vocabulary.Bundle) identity.SemanticKey, order *[]schema.Key, admit bool) Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64] {
-	spec := scratchSpec(key, principal, semantic)
+func mountedSpec(key, semantic schema.Key, order *[]schema.Key, admit bool) Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64] {
+	spec := scratchSpec(key, semantic)
 	spec.Mount = NewMount(func(context Mounting[scratchInputs]) (*scratchAuthority, scratchRejection, bool) {
 		*order = append(*order, key)
 		if !admit || !context.Inputs.ready {
@@ -46,7 +41,7 @@ func mountedSpec(key schema.Key, principal programartifact.RuleOutputKind, seman
 // recovered at the type the owner sealed.
 func TestMountedAxisSealsItsOwnAuthority(t *testing.T) {
 	var order []schema.Key
-	template := mustTemplate(t, mountedSpec("value", programartifact.RuleOutputValue, valueSemantic, &order, true))
+	template := mustTemplate(t, mountedSpec("value", valueRole, &order, true))
 	if !template.MountDeclared() {
 		t.Fatalf("axis declaring a mount reports none")
 	}
@@ -67,7 +62,7 @@ func TestMountedAxisSealsItsOwnAuthority(t *testing.T) {
 // no authority of its own mounts empty rather than failing. Its authority is
 // supplied by another owner, and the phase must not read that as a rejection.
 func TestUndeclaredMountAdmitsEmpty(t *testing.T) {
-	template := mustTemplate(t, scratchSpec("value", programartifact.RuleOutputValue, valueSemantic))
+	template := mustTemplate(t, scratchSpec("value", valueRole))
 	if template.MountDeclared() {
 		t.Fatalf("axis declaring no mount reports one")
 	}
@@ -85,7 +80,7 @@ func TestUndeclaredMountAdmitsEmpty(t *testing.T) {
 // rejection the domain stated rather than a generic verdict.
 func TestRejectedMountCarriesDomainEvidence(t *testing.T) {
 	var order []schema.Key
-	template := mustTemplate(t, mountedSpec("value", programartifact.RuleOutputValue, valueSemantic, &order, false))
+	template := mustTemplate(t, mountedSpec("value", valueRole, &order, false))
 	authority, rejection, ok := template.Mount(scratchInputs{ready: true})
 	if ok || authority.Available() {
 		t.Fatalf("rejecting mount published an authority")
@@ -102,9 +97,9 @@ func TestRejectedMountCarriesDomainEvidence(t *testing.T) {
 func TestMountPhaseRunsEveryDeclaredMountOnceInCatalogOrder(t *testing.T) {
 	var order []schema.Key
 	templates := []*Template[scratchInputs]{
-		mustTemplate(t, mountedSpec("heap", programartifact.RuleOutputHeap, heapSemantic, &order, true)),
-		mustTemplate(t, scratchSpec("pack", programartifact.RuleOutputPack, packSemantic)),
-		mustTemplate(t, mountedSpec("value", programartifact.RuleOutputValue, valueSemantic, &order, true)),
+		mustTemplate(t, mountedSpec("heap", heapRole, &order, true)),
+		mustTemplate(t, scratchSpec("pack", packRole)),
+		mustTemplate(t, mountedSpec("value", valueRole, &order, true)),
 	}
 	if failure := sealTemplates(t, templates); failure.Available() {
 		t.Fatalf("complete mounted inventory rejected: %v", failure)
@@ -136,8 +131,8 @@ func TestMountPhaseRunsEveryDeclaredMountOnceInCatalogOrder(t *testing.T) {
 // where it was. Only a changed coordinate space may move it.
 func TestDeclaringAMountDoesNotMoveEntryContent(t *testing.T) {
 	var order []schema.Key
-	plain := mustTemplate(t, scratchSpec("value", programartifact.RuleOutputValue, valueSemantic))
-	mounting := mustTemplate(t, mountedSpec("value", programartifact.RuleOutputValue, valueSemantic, &order, true))
+	plain := mustTemplate(t, scratchSpec("value", valueRole))
+	mounting := mustTemplate(t, mountedSpec("value", valueRole, &order, true))
 	if !mounting.MountDeclared() || plain.MountDeclared() {
 		t.Fatalf("mount declaration fixture is not the pair the law is about")
 	}
@@ -150,8 +145,8 @@ func TestDeclaringAMountDoesNotMoveEntryContent(t *testing.T) {
 }
 
 // dependentSpec is one axis declaration that seals over a peer's authority.
-func dependentSpec(key schema.Key, principal programartifact.RuleOutputKind, semantic func(vocabulary.Bundle) identity.SemanticKey, dependencies ...schema.Key) Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64] {
-	spec := scratchSpec(key, principal, semantic)
+func dependentSpec(key, semantic schema.Key, dependencies ...schema.Key) Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64] {
+	spec := scratchSpec(key, semantic)
 	spec.Dependencies = dependencies
 	return spec
 }
@@ -161,9 +156,9 @@ func dependentSpec(key schema.Key, principal programartifact.RuleOutputKind, sem
 // edge to, whatever the catalog order was.
 func TestDependencyOrderPlacesEveryAxisAfterItsDependencies(t *testing.T) {
 	templates := []*Template[scratchInputs]{
-		mustTemplate(t, dependentSpec("value", programartifact.RuleOutputValue, valueSemantic, "heap")),
-		mustTemplate(t, dependentSpec("pack", programartifact.RuleOutputPack, packSemantic)),
-		mustTemplate(t, dependentSpec("heap", programartifact.RuleOutputHeap, heapSemantic)),
+		mustTemplate(t, dependentSpec("value", valueRole, "heap")),
+		mustTemplate(t, dependentSpec("pack", packRole)),
+		mustTemplate(t, dependentSpec("heap", heapRole)),
 	}
 	if failure := sealTemplates(t, templates); failure.Available() {
 		t.Fatalf("acyclic inventory rejected: %v", failure)
@@ -196,8 +191,8 @@ func TestDependencyOrderPlacesEveryAxisAfterItsDependencies(t *testing.T) {
 // an axis the cycle blocked.
 func TestDeclaredCycleIsRejectedAtSeal(t *testing.T) {
 	templates := []*Template[scratchInputs]{
-		mustTemplate(t, dependentSpec("value", programartifact.RuleOutputValue, valueSemantic, "heap")),
-		mustTemplate(t, dependentSpec("heap", programartifact.RuleOutputHeap, heapSemantic, "value")),
+		mustTemplate(t, dependentSpec("value", valueRole, "heap")),
+		mustTemplate(t, dependentSpec("heap", heapRole, "value")),
 	}
 	failure := sealTemplates(t, templates)
 	if !failure.Available() || failure.Law != LawDependencyAcyclic {

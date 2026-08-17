@@ -1,12 +1,11 @@
 package engine
 
 import (
-	"crypto/sha256"
-	"encoding/binary"
 	"sort"
 	"sync/atomic"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
+	"github.com/wippyai/go-lua/analysis/internal/canonical"
 )
 
 // Measure is a key-aware, well-founded transition witness for a Factor's
@@ -53,18 +52,42 @@ func (refs *ClosedRefs[K]) validIssuer() bool {
 	return refs != nil && refs.receipt.valid()
 }
 
+const (
+	summaryVectorDigestDomain         = "analysis/engine/summary-vector"
+	summaryVectorDigestVersion uint64 = 2
+)
+
 // SummaryVectorDigest is the immutable evidence digest for a canonical key
-// vector.
+// vector. Its preimage is framed under its own domain and records the key
+// width and the vector length ahead of the keys, so a vector of a different
+// key type, of a different length, or from another identity space can never
+// reach the same digest.
 func SummaryVectorDigest[K ~uint32 | ~uint64](keys []K) [32]byte {
-	var encoded [8]byte
-	hash := sha256.New()
-	for _, key := range keys {
-		binary.BigEndian.PutUint64(encoded[:], uint64(key))
-		_, _ = hash.Write(encoded[:])
+	digest, ok := framedDigest(summaryVectorDigestDomain, summaryVectorDigestVersion, func(writer *canonical.DigestWriter) bool {
+		if writer.Uint(summaryKeyWidth[K]()) != nil || writer.Count(uint64(len(keys))) != nil {
+			return false
+		}
+		for _, key := range keys {
+			if writer.Uint(uint64(key)) != nil {
+				return false
+			}
+		}
+		return true
+	})
+	if !ok {
+		return [32]byte{}
 	}
-	var digest [32]byte
-	copy(digest[:], hash.Sum(nil))
 	return digest
+}
+
+// summaryKeyWidth reports the bit width of the vector's key type. It reads the
+// width from the type itself, so no caller can present a narrow vector as a
+// wide one.
+func summaryKeyWidth[K ~uint32 | ~uint64]() uint64 {
+	if uint64(^K(0)) == uint64(^uint32(0)) {
+		return 32
+	}
+	return 64
 }
 
 // Append records one exact Ref from this vector's sole issuing Factor. It is
@@ -105,7 +128,11 @@ func (refs *ClosedRefs[K]) Close() bool {
 	for index, ref := range refs.refs {
 		keys[index] = uint64(ref.raw)
 	}
-	refs.digest = SummaryVectorDigest(keys)
+	digest := SummaryVectorDigest(keys)
+	if digest == ([32]byte{}) {
+		return false
+	}
+	refs.digest = digest
 	refs.closed = true
 	return true
 }

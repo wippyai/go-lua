@@ -67,7 +67,7 @@ func publicationTransitionSpec(callback, published, reverseEffects bool) target.
 		}
 		empty := target.ValuesSpec{Tail: target.ValuesClosed}
 		owner.Callbacks = []target.CallbackSpec{{
-			Function: target.InputSource{Kind: target.InputSourceValueFormal}, Admission: target.OrdinaryCallable, Arguments: empty,
+			Function: target.InputSource{Kind: target.InputSourceValueFormal}, Admission: schematype.CallableAdmissionOrdinary, Arguments: empty,
 			Outcomes:  []target.TerminalSpec{{Kind: kind.OutcomeNormal, Values: empty}, {Kind: kind.OutcomeReturn, Values: empty}, {Kind: kind.OutcomeThrow, Values: empty}, {Kind: kind.OutcomeYield, Values: empty}, {Kind: kind.OutcomeCancel, Values: empty}},
 			Lifecycle: target.CallbackRetainedOptionalOnce, Effects: target.RowSpec{Occurrences: []target.EffectSpec{callbackEffect}, Tail: target.RowClosed},
 		}}

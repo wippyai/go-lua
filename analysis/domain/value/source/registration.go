@@ -3,9 +3,9 @@ package source
 import (
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
 
@@ -28,12 +28,19 @@ type ruleAuthorities interface {
 // interfaces above.
 func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *SchemaFragment, *HotRule] {
 	return rule.Spec[P, A, *SchemaFragment, *HotRule]{
-		Key:      "value-source",
-		Role:     programartifact.RuleRoleValueSource,
+		Key:    "value-source",
+		Writes: "value",
+		Issues: []rule.Issuance{
+			{Occurrence: "occurrence/value-source", Form: "issuance/base", Input: "input/none", Stage: "stage/base"},
+		},
 		Lane:     rule.LaneMounted,
-		Semantic: func(bundle vocabulary.Bundle) identity.SemanticKey { return bundle.ValueSourceRule.Rule },
+		Semantic: "semantic/rule/value/source",
+		Roles:    []schema.Key{"semantic/operand/value/source", "semantic/evidence/value/source"},
 		Declare: func(context rule.Declaration[P]) (*SchemaFragment, bool) {
-			semantics := context.Bundle.ValueSourceRule
+			semantics, ok := context.Roles.Rule("value/source")
+			if !ok {
+				return nil, false
+			}
 			return DeclareSchema(context.Builder, semantics.Rule, semantics.Operand, semantics.Evidence, context.Principals.ValuePrincipal())
 		},
 		Register: func(context rule.Registration[*SchemaFragment]) (engine.RuleSlotCapability, bool) {
@@ -51,4 +58,12 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *SchemaFra
 			return ok
 		},
 	}
+}
+
+// StructureSpecs is this package's contribution to the analyzer's semantic
+// role vocabulary: the three roles its rule is identified by. A role is
+// declared where it is used, so the row and the reference that names it are one
+// package's statement.
+func StructureSpecs() []structure.Spec {
+	return vocabulary.RuleRoleSpecs("value/source")
 }

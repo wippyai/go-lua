@@ -66,33 +66,118 @@ func mustEntry(t *testing.T, spec Spec) *Entry {
 // canonicalVocabulary is the catalog this surface consolidates: the eight
 // structural arms, the three bracket events, the seven body outcomes, the eight
 // Lua runtime families, and the ten symbolic expression forms that the analyzer
-// today spells once per consumer.
+// today spells once per consumer, together with the three publication
+// vocabularies the diagnostic surface names members of and the four occurrence
+// geometry vocabularies the rule surface declares its subscriptions against.
 func canonicalVocabulary(t *testing.T) []*Entry {
 	t.Helper()
-	var entries []*Entry
-	add := func(category Category, names ...schema.Key) {
-		for index, name := range names {
-			entries = append(entries, mustEntry(t, Spec{Key: name, Category: category, Ordinal: uint16(index + 1), Accepted: true}))
+	return canonicalSpecs(t, canonicalContributions())
+}
+
+// member is one authored row of the fixture catalog: the key it is identified
+// by, the name it renders as, and its admission into the projection.
+type member struct {
+	key      schema.Key
+	spelling string
+	accepted bool
+}
+
+// canonicalContributions is the fixture catalog as the contributions it is
+// hosted from, one per category, in the order the surface numbers them.
+func canonicalContributions() [][]Spec {
+	arms := []member{
+		{"arm/local", "local", true}, {"arm/resume", "resume", true},
+		{"arm/select-true", "select-true", true}, {"arm/select-false", "select-false", true},
+		{"arm/tail", "tail", true}, {"arm/throw", "throw", true},
+		{"arm/yield", "yield", true}, {"arm/cancel", "cancel", true},
+	}
+	events := []member{
+		{"event/enter", "enter", true}, {"event/point", "point", true}, {"event/exit", "exit", true},
+	}
+	families := []member{
+		{"nil", "nil", true}, {"boolean", "boolean", true}, {"number", "number", true},
+		{"string", "string", true}, {"table", "table", true}, {"function", "function", true},
+		{"thread", "thread", true}, {"userdata", "userdata", true},
+	}
+	forms := []member{
+		{"constraint-form/var", "var", true}, {"constraint-form/const", "const", true},
+		{"constraint-form/binop", "binop", true}, {"constraint-form/len", "len", true},
+		{"constraint-form/param", "param", true}, {"constraint-form/ret", "ret", true},
+		{"constraint-form/param-len", "param-len", true}, {"constraint-form/ret-len", "ret-len", true},
+		{"constraint-form/min", "min", true}, {"constraint-form/max", "max", true},
+	}
+	populations := []member{
+		{"observation/branch-condition", "branch-condition", true},
+		{"observation/type-reference-unresolved", "type-reference-unresolved", true},
+		{"observation/value-reference-unresolved", "value-reference-unresolved", true},
+	}
+	publications := []member{
+		{"family/advice", "advice", true}, {"family/type", "type", true},
+		{"family/value", "value", true}, {"family/lint", "lint", true},
+	}
+	severities := []member{
+		{"severity/error", "error", true}, {"severity/warning", "warning", true},
+		{"severity/hint", "hint", true},
+	}
+	occurrences := []member{
+		{"occurrence/value-source", "value-source", true}, {"occurrence/call", "call", true},
+	}
+	issuanceForms := []member{
+		{"issuance/base", "base", true}, {"issuance/local", "local", true},
+	}
+	issuanceInputs := []member{
+		{"input/none", "none", true}, {"input/entry", "entry", true},
+	}
+	issuanceStages := []member{
+		{"stage/base", "base", true}, {"stage/local", "local", true},
+	}
+	semanticRoles := []member{
+		{"semantic/factor/probe", "factor/probe", true},
+		{"semantic/rule/probe/source", "rule/probe/source", true},
+	}
+	outcomes := []member{
+		{"outcome/normal", "normal", true}, {"outcome/return", "return", true},
+		{"outcome/throw", "throw", true}, {"outcome/break", "break", false},
+		{"outcome/goto", "goto", false}, {"outcome/yield", "yield", true},
+		{"outcome/cancel", "cancel", true},
+	}
+	authored := func(category Category, members []member) []Spec {
+		specs := make([]Spec, 0, len(members))
+		for index, declared := range members {
+			specs = append(specs, Spec{
+				Key:      declared.key,
+				Category: category,
+				Ordinal:  uint16(index + 1),
+				Spelling: declared.spelling,
+				Accepted: declared.accepted,
+			})
 		}
+		return specs
 	}
-	add(CategoryArm, "arm/local", "arm/resume", "arm/select-true", "arm/select-false",
-		"arm/tail", "arm/throw", "arm/yield", "arm/cancel")
-	add(CategoryEvent, "event/enter", "event/point", "event/exit")
-	add(CategoryRuntimeKind, "nil", "boolean", "number", "string",
-		"table", "function", "thread", "userdata")
-	add(CategoryConstraintForm, "constraint-form/var", "constraint-form/const",
-		"constraint-form/binop", "constraint-form/len", "constraint-form/param",
-		"constraint-form/ret", "constraint-form/param-len", "constraint-form/ret-len",
-		"constraint-form/min", "constraint-form/max")
-	outcomes := []struct {
-		key      schema.Key
-		accepted bool
-	}{
-		{"outcome/normal", true}, {"outcome/return", true}, {"outcome/throw", true},
-		{"outcome/break", false}, {"outcome/goto", false}, {"outcome/yield", true}, {"outcome/cancel", true},
+	return [][]Spec{
+		authored(CategoryArm, arms),
+		authored(CategoryEvent, events),
+		authored(CategoryRuntimeKind, families),
+		authored(CategoryConstraintForm, forms),
+		authored(CategoryOutcome, outcomes),
+		authored(CategoryDiagnosticObservation, populations),
+		authored(CategoryDiagnosticFamily, publications),
+		authored(CategoryDiagnosticSeverity, severities),
+		authored(CategoryOccurrenceKind, occurrences),
+		authored(CategoryIssuanceForm, issuanceForms),
+		authored(CategoryIssuanceInput, issuanceInputs),
+		authored(CategoryIssuanceStage, issuanceStages),
+		authored(CategorySemanticRole, semanticRoles),
 	}
-	for index, outcome := range outcomes {
-		entries = append(entries, mustEntry(t, Spec{Key: outcome.key, Category: CategoryOutcome, Ordinal: uint16(index + 1), Accepted: outcome.accepted}))
+}
+
+func canonicalSpecs(t *testing.T, contributions [][]Spec) []*Entry {
+	t.Helper()
+	var entries []*Entry
+	for _, contribution := range contributions {
+		for _, spec := range contribution {
+			entries = append(entries, mustEntry(t, spec))
+		}
 	}
 	return entries
 }
@@ -115,17 +200,24 @@ func TestStructureSurfaceSealsTheCanonicalVocabulary(t *testing.T) {
 		t.Fatal("sealed structural vocabulary did not project")
 	}
 	if table.Count(CategoryArm) != 8 || table.Count(CategoryEvent) != 3 || table.Count(CategoryOutcome) != 7 ||
-		table.Count(CategoryRuntimeKind) != 8 || table.Count(CategoryConstraintForm) != 10 {
-		t.Fatalf("projected sizes: arms=%d events=%d outcomes=%d families=%d forms=%d",
+		table.Count(CategoryRuntimeKind) != 8 || table.Count(CategoryConstraintForm) != 10 ||
+		table.Count(CategoryDiagnosticObservation) != 3 || table.Count(CategoryDiagnosticFamily) != 4 ||
+		table.Count(CategoryDiagnosticSeverity) != 3 {
+		t.Fatalf("projected sizes: arms=%d events=%d outcomes=%d families=%d forms=%d populations=%d publications=%d severities=%d",
 			table.Count(CategoryArm), table.Count(CategoryEvent), table.Count(CategoryOutcome),
-			table.Count(CategoryRuntimeKind), table.Count(CategoryConstraintForm))
+			table.Count(CategoryRuntimeKind), table.Count(CategoryConstraintForm),
+			table.Count(CategoryDiagnosticObservation), table.Count(CategoryDiagnosticFamily),
+			table.Count(CategoryDiagnosticSeverity))
 	}
 	for category, name := range map[Category]schema.Key{
-		CategoryArm:            "arm/local",
-		CategoryEvent:          "event/enter",
-		CategoryOutcome:        "outcome/normal",
-		CategoryRuntimeKind:    "nil",
-		CategoryConstraintForm: "constraint-form/var",
+		CategoryArm:                   "arm/local",
+		CategoryEvent:                 "event/enter",
+		CategoryOutcome:               "outcome/normal",
+		CategoryRuntimeKind:           "nil",
+		CategoryConstraintForm:        "constraint-form/var",
+		CategoryDiagnosticObservation: "observation/branch-condition",
+		CategoryDiagnosticFamily:      "family/advice",
+		CategoryDiagnosticSeverity:    "severity/error",
 	} {
 		entry, ok := table.At(category, 1)
 		if !ok || entry.Key() != name || entry.Category() != category || entry.Ordinal() != 1 {
@@ -268,6 +360,155 @@ func TestStructureCategoriesArePopulated(t *testing.T) {
 	}
 }
 
+// TestSpellingIsDeclared states the law a renderer rests on: a member carries
+// the name it renders as, so a consumer never has to derive one from the key or
+// keep a switch from ordinal to string of its own.
+func TestSpellingIsDeclared(t *testing.T) {
+	entries := canonicalVocabulary(t)
+	entries[0].spelling = ""
+	_, failure := sealEntries(t, entries)
+	if failure.Law != LawSpellingDeclared || failure.Disposition != schema.DispositionIncomplete {
+		t.Fatalf("member without a spelling sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+}
+
+// TestSpellingIsUniqueWithinItsCategory states that a rendered name identifies
+// one member of its vocabulary. Two members answering to one name would make
+// the rendered catalog smaller than the declared one.
+func TestSpellingIsUniqueWithinItsCategory(t *testing.T) {
+	entries := canonicalVocabulary(t)
+	entries[1].spelling = entries[0].spelling
+	_, failure := sealEntries(t, entries)
+	if failure.Law != LawSpellingUnique || failure.Disposition != schema.DispositionDuplicate {
+		t.Fatalf("repeated spelling sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	if failure.Entry != entries[0].ID() {
+		t.Fatalf("verdict named entry %x, not the prior claimant", failure.Entry)
+	}
+}
+
+// TestSpellingIsUniqueOnlyWithinItsCategory is the other half of that law: two
+// vocabularies are separate catalogs, so a name one of them uses is free in the
+// other. An arm and an outcome both spell "throw", and both are correct.
+func TestSpellingIsUniqueOnlyWithinItsCategory(t *testing.T) {
+	if _, failure := sealEntries(t, canonicalVocabulary(t)); failure.Available() {
+		t.Fatalf("a name shared across two vocabularies was rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+}
+
+// TestSpellingIsDeclaredContent states that the rendered name is part of what
+// the entry declares, so a renamed member is a different declaration and the
+// table digest says so.
+func TestSpellingIsDeclaredContent(t *testing.T) {
+	declared, failure := sealEntries(t, canonicalVocabulary(t))
+	if failure.Available() {
+		t.Fatalf("canonical structural vocabulary rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	renamed := canonicalVocabulary(t)
+	renamed[0].spelling = "renamed"
+	alternative, failure := sealEntries(t, renamed)
+	if failure.Available() {
+		t.Fatalf("renamed structural vocabulary rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	if declared.Digest() == alternative.Digest() {
+		t.Fatal("a member's declared spelling left the table digest unchanged")
+	}
+}
+
+// TestCollectNumbersOneCategoryAcrossContributors is the hosting law. A
+// category is not owned by one contributor: several may add rows to it, and
+// what makes the aggregate a catalog rather than a pile is that Collect numbers
+// it densely from one in aggregation order.
+func TestCollectNumbersOneCategoryAcrossContributors(t *testing.T) {
+	first := []Spec{
+		{Key: "probe/one", Category: CategoryArm, Spelling: "one", Accepted: true},
+		{Key: "probe/two", Category: CategoryArm, Spelling: "two", Accepted: true},
+	}
+	second := []Spec{
+		{Key: "probe/three", Category: CategoryArm, Spelling: "three", Accepted: true},
+	}
+	entries, ok := Collect(first, second)
+	if !ok || len(entries) != 3 {
+		t.Fatalf("two contributions to one category collected %d rows, ok=%t", len(entries), ok)
+	}
+	for index, entry := range entries {
+		if entry.Category() != CategoryArm || entry.Ordinal() != uint16(index+1) {
+			t.Fatalf("row %d of the aggregate is category %d ordinal %d", index, entry.Category(), entry.Ordinal())
+		}
+	}
+}
+
+// TestCollectHoldsAnAuthoredOrdinalToItsPosition states what authoring an
+// ordinal means. A contributor authors one to name the position a foreign
+// spelling is pinned to, so a value that is not the position the aggregation
+// places the row at is a contribution that disagrees with its own catalog.
+func TestCollectHoldsAnAuthoredOrdinalToItsPosition(t *testing.T) {
+	if entries, ok := Collect(canonicalContributions()...); !ok || len(entries) == 0 {
+		t.Fatalf("the canonical contributions did not collect: ok=%t rows=%d", ok, len(entries))
+	}
+	displaced := canonicalContributions()
+	displaced[0][1].Ordinal = 5
+	if entries, ok := Collect(displaced...); ok || entries != nil {
+		t.Fatal("a contribution authoring an ordinal off its position collected")
+	}
+}
+
+// TestCollectRejectsAnIncompleteContribution states that Collect admits rows
+// under the same construction laws a directly authored row is admitted under: a
+// contributed row without a spelling, a category, or a key is no row at all.
+func TestCollectRejectsAnIncompleteContribution(t *testing.T) {
+	for name, spec := range map[string]Spec{
+		"spelling": {Key: "probe/one", Category: CategoryArm, Accepted: true},
+		"key":      {Category: CategoryArm, Spelling: "one", Accepted: true},
+		"category": {Key: "probe/one", Spelling: "one", Accepted: true},
+	} {
+		if entries, ok := Collect([]Spec{spec}); ok || entries != nil {
+			t.Fatalf("a contribution without a %s collected", name)
+		}
+	}
+	if entries, ok := Collect(); ok || entries != nil {
+		t.Fatal("an empty aggregation collected an inventory")
+	}
+}
+
+// TestCollectedDuplicateSpellingIsRejectedAtSeal is the hosting law's other
+// edge: two contributors are free to number one category together, and they are
+// not free to give one rendered name to two of its members.
+func TestCollectedDuplicateSpellingIsRejectedAtSeal(t *testing.T) {
+	contributions := canonicalContributions()
+	contributions = append(contributions, []Spec{
+		{Key: "probe/duplicate", Category: CategoryArm, Spelling: "local", Accepted: true},
+	})
+	entries, ok := Collect(contributions...)
+	if !ok {
+		t.Fatal("a contribution repeating a declared spelling was rejected before seal, where the law is not stated")
+	}
+	_, failure := sealEntries(t, entries)
+	if failure.Law != LawSpellingUnique || failure.Disposition != schema.DispositionDuplicate {
+		t.Fatalf("repeated spelling across contributors sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+}
+
+// TestTwoContributorsCannotDeclareOneSemanticRole is the law that replaced the
+// closed semantic vocabulary's own distinctness check. Every identity the
+// analyzer binds under is a member of one category here, so the spelling law
+// over that category proves every role in the table distinct from every other -
+// across surfaces, which no surface's own law can reach, because the surfaces
+// are sealed one at a time.
+func TestTwoContributorsCannotDeclareOneSemanticRole(t *testing.T) {
+	contributions := append(canonicalContributions(), []Spec{
+		{Key: "semantic/probe/second-claimant", Category: CategorySemanticRole, Spelling: "factor/probe", Accepted: true},
+	})
+	entries, ok := Collect(contributions...)
+	if !ok {
+		t.Fatal("a contribution repeating a declared role was rejected before seal, where the law is not stated")
+	}
+	_, failure := sealEntries(t, entries)
+	if failure.Law != LawSpellingUnique || failure.Disposition != schema.DispositionDuplicate {
+		t.Fatalf("two contributors declaring one semantic role sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+}
+
 // TestOutcomeVocabularyDeclaresItsAcceptedMembers states the property the
 // ingress body projection reads: a body's exits are the points of its accepted
 // outcomes, and which outcomes those are is declared here rather than listed at
@@ -381,11 +622,12 @@ func TestTableDigestCoversDeclaredContent(t *testing.T) {
 // violates a law yields no entry at all.
 func TestNewRejectsIncompleteSpec(t *testing.T) {
 	cases := map[string]Spec{
-		"key":                {Category: CategoryArm, Ordinal: 1, Accepted: true},
-		"category":           {Key: "arm/local", Ordinal: 1, Accepted: true},
-		"catalog":            {Key: "arm/local", Category: categoryLimit, Ordinal: 1, Accepted: true},
-		"ordinal":            {Key: "arm/local", Category: CategoryArm, Accepted: true},
-		"declared admission": {Key: "arm/local", Category: CategoryArm, Ordinal: 1},
+		"key":                {Category: CategoryArm, Ordinal: 1, Spelling: "local", Accepted: true},
+		"category":           {Key: "arm/local", Ordinal: 1, Spelling: "local", Accepted: true},
+		"catalog":            {Key: "arm/local", Category: categoryLimit, Ordinal: 1, Spelling: "local", Accepted: true},
+		"ordinal":            {Key: "arm/local", Category: CategoryArm, Spelling: "local", Accepted: true},
+		"spelling":           {Key: "arm/local", Category: CategoryArm, Ordinal: 1, Accepted: true},
+		"declared admission": {Key: "arm/local", Category: CategoryArm, Ordinal: 1, Spelling: "local"},
 	}
 	for name, spec := range cases {
 		if entry, ok := New(spec); ok || entry != nil {

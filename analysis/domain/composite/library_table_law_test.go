@@ -6,6 +6,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/internal/framing"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/library"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
+	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
 
 // TestLibraryTableSeals states that the authored contract kind inventory is
@@ -39,7 +41,11 @@ func TestLibraryTableSeals(t *testing.T) {
 	if !tableOK {
 		t.Fatal("sealed library contract surface did not project")
 	}
-	specs := librarySpecs()
+	roles, rolesOK := SemanticRoles()
+	specs, specsOK := librarySpecs(roles)
+	if !rolesOK || !specsOK {
+		t.Fatal("declared contract identities did not resolve")
+	}
 	libraries := table.Class(library.ClassLibrary)
 	if len(libraries) != 1 || libraries[0].Key() != LibraryContractKind {
 		t.Fatalf("library class projects %d kinds, want the one authored library kind", len(libraries))
@@ -159,12 +165,16 @@ func sealLibraryKinds(t *testing.T, entries []*library.Entry) *schema.Schema {
 // derived projection, so a consumer derived from either cannot fall behind the
 // declaration.
 func TestDeclaredKindsReachTheDerivedViews(t *testing.T) {
-	kinds, kindsOK := libraryKinds()
+	roles, rolesOK := SemanticRoles()
+	if !rolesOK {
+		t.Fatal("semantic role vocabulary")
+	}
+	kinds, kindsOK := libraryKinds(roles)
 	if !kindsOK {
 		t.Fatal("authored contract kind inventory rejected at construction")
 	}
 	baseline := sealLibraryKinds(t, kinds)
-	drifted := sealLibraryKinds(t, append(kinds[:len(kinds):len(kinds)], mustLibraryKind(t, driftSpec())))
+	drifted := sealLibraryKinds(t, append(kinds[:len(kinds):len(kinds)], mustLibraryKind(t, driftSpec(t))))
 	if baseline.Digest() == drifted.Digest() {
 		t.Fatal("a declared contract kind left the table digest unchanged")
 	}
@@ -172,7 +182,7 @@ func TestDeclaredKindsReachTheDerivedViews(t *testing.T) {
 	if !viewOK {
 		t.Fatal("sealed table holds no library contract surface")
 	}
-	if _, declared := view.ByID(schema.NewEntryID(schema.SurfaceKindLibrary, driftSpec().Key)); !declared {
+	if _, declared := view.ByID(schema.NewEntryID(schema.SurfaceKindLibrary, driftSpec(t).Key)); !declared {
 		t.Fatal("the drifted contract kind is absent from the sealed view")
 	}
 	table, tableOK := library.NewTable(view)
@@ -184,16 +194,37 @@ func TestDeclaredKindsReachTheDerivedViews(t *testing.T) {
 	}
 }
 
+// driftRoles is the declared contract vocabulary extended with the two roles
+// the drift kind below is declared under. The extension is a contribution, so
+// the probe declares its own identities exactly as a domain would.
+func driftRoles(t *testing.T) vocabulary.Roles {
+	t.Helper()
+	entries, entriesOK := structure.Collect(contractRoles(), vocabulary.RoleSpecs("contract-codec/library-drift", "contract-lawset/library-drift"))
+	roles, rolesOK := vocabulary.NewRoles(entries)
+	if !entriesOK || !rolesOK {
+		t.Fatal("drift contract vocabulary did not resolve")
+	}
+	return roles
+}
+
 // driftSpec is one further library kind, declared only to state the drift law
 // over a table that holds it.
-func driftSpec() library.Spec {
+func driftSpec(t *testing.T) library.Spec {
+	t.Helper()
+	roles := driftRoles(t)
+	codec, codecOK := contractIdentity(roles, "contract-codec/library-drift")
+	laws, lawsOK := contractIdentity(roles, "contract-lawset/library-drift")
+	members, membersOK := contractMembers(roles, library.ClassLibrary)
+	if !codecOK || !lawsOK || !membersOK {
+		t.Fatal("drift contract kind did not resolve its declared identities")
+	}
 	return library.Spec{
 		Key:        "library-drift",
 		Class:      library.ClassLibrary,
-		Codec:      library.Codec{Format: contractIdentity("contract-codec/library-drift"), Version: contractCodecVersion},
-		Validation: library.LawSet{Resolution: library.ResolutionDeferred, Deferred: contractIdentity("contract-lawset/library-drift")},
+		Codec:      library.Codec{Format: codec, Version: contractCodecVersion},
+		Validation: library.LawSet{Resolution: library.ResolutionDeferred, Deferred: laws},
 		Addressing: library.AddressingExportPath,
-		Members:    contractMembers(library.ClassLibrary),
+		Members:    members,
 	}
 }
 

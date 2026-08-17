@@ -1,8 +1,9 @@
 package target
 
 import (
-	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
+
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
@@ -22,12 +23,12 @@ func protectedSubedgeOperation(name string, scalar, reverseCallbacks, reverseOut
 	}
 	callbacks := []CallbackSpec{
 		{
-			Function: InputSource{Kind: InputSourceValueFormal, Ordinal: 0}, Admission: OrdinaryCallable,
+			Function: InputSource{Kind: InputSourceValueFormal, Ordinal: 0}, Admission: schematype.CallableAdmissionOrdinary,
 			Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4),
 			Lifecycle: CallbackSyncRequiredOnce, Effects: RowSpec{Tail: RowClosed},
 		},
 		{
-			Function: InputSource{Kind: InputSourceValueFormal, Ordinal: 1}, Admission: OrdinaryCallable,
+			Function: InputSource{Kind: InputSourceValueFormal, Ordinal: 1}, Admission: schematype.CallableAdmissionOrdinary,
 			Arguments: handlerArguments, Outcomes: callbackOutcomes(5, 5, 6, 3, 4),
 			Lifecycle: CallbackSyncOptionalOnce, Effects: RowSpec{Tail: RowClosed},
 		},
@@ -305,7 +306,7 @@ func TestSubedgeRejectsInvalidAuthority(t *testing.T) {
 			extra.Role = 300
 			op.Subedges = append(op.Subedges, extra)
 		}},
-		{"callback duplicate admission", func(op *OperationSpec) { op.Subedges[0].Admission = OrdinaryCallable }},
+		{"callback duplicate admission", func(op *OperationSpec) { op.Subedges[0].Admission = schematype.CallableAdmissionOrdinary }},
 		{"tail placement changes variable", func(op *OperationSpec) { op.Callbacks[1].Arguments = callbackTail(5) }},
 		{"propagated yield changes payload", func(op *OperationSpec) { op.Subedges[0].Routes[3].Result = callbackTail(4) }},
 	} {
@@ -362,7 +363,7 @@ func xpcallHandlerSelfRecurrence(name string, lifecycle CallbackLifecycle, rever
 		if op.Callbacks[index].Function.Ordinal != 1 {
 			continue
 		}
-		op.Callbacks[index].Admission = DirectFunction
+		op.Callbacks[index].Admission = schematype.CallableAdmissionDirectFunction
 		op.Callbacks[index].Lifecycle = lifecycle
 		op.Callbacks[index].Outcomes[2].Values = ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}
 	}
@@ -384,7 +385,7 @@ func xpcallHandlerMultiEdgeRecurrence(name string, lifecycle CallbackLifecycle) 
 		if op.Callbacks[index].Function.Ordinal != 1 {
 			continue
 		}
-		op.Callbacks[index].Admission = DirectFunction
+		op.Callbacks[index].Admission = schematype.CallableAdmissionDirectFunction
 		op.Callbacks[index].Lifecycle = lifecycle
 		op.Callbacks[index].Outcomes[2].Values = ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}
 	}
@@ -397,7 +398,7 @@ func xpcallHandlerMultiEdgeRecurrence(name string, lifecycle CallbackLifecycle) 
 	op.Subedges = append(op.Subedges, SubedgeSpec{
 		Role:      300,
 		Family:    SubedgeFamilyLength,
-		Admission: OrdinaryCallable,
+		Admission: schematype.CallableAdmissionOrdinary,
 		Arguments: any,
 		Outcomes: []TerminalSpec{
 			{Kind: flowkind.OutcomeNormal, Values: empty},
@@ -426,7 +427,7 @@ func nullarySubedge(role uint32, successor SubedgeRef, ruleEntry bool) SubedgeSp
 	return SubedgeSpec{
 		Role: role, Family: SubedgeFamilyCall,
 		Callee:    SubedgeCalleeSpec{Kind: SubedgeCalleeMetaKey, MetaKey: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "__call"}},
-		Admission: OrdinaryCallable,
+		Admission: schematype.CallableAdmissionOrdinary,
 		RuleEntry: ruleEntry,
 		Arguments: empty,
 		Outcomes: []TerminalSpec{
@@ -467,7 +468,7 @@ func nullaryCallbackMuOperation(name string, lifecycle CallbackLifecycle) Operat
 		Input:    ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed},
 		Callbacks: []CallbackSpec{{
 			Function:  InputSource{Kind: InputSourceValueFormal},
-			Admission: OrdinaryCallable,
+			Admission: schematype.CallableAdmissionOrdinary,
 			Arguments: empty,
 			Outcomes: []TerminalSpec{
 				{Kind: flowkind.OutcomeNormal, Values: empty},
@@ -545,8 +546,8 @@ func TestSubedgeXPCALLHandlerSelfRecurrenceSealsIteratively(t *testing.T) {
 	contract := mustSeal(t, Spec{Operations: []OperationSpec{op}})
 	sealed, _ := contract.Lookup(BindingSpec{Namespace: BindingBuiltin, Member: []string{"xpcall-self"}})
 	handler := subedgeByRole(t, contract, sealed, 200)
-	if admission, ok := contract.SubedgeAdmission(handler); !ok || admission != DirectFunction {
-		t.Fatalf("xpcall handler admission = %d/%v, want DirectFunction", admission, ok)
+	if admission, ok := contract.SubedgeAdmission(handler); !ok || admission != schematype.CallableAdmissionDirectFunction {
+		t.Fatalf("xpcall handler admission = %d/%v, want schematype.CallableAdmissionDirectFunction", admission, ok)
 	}
 	callback, callbackOK := contract.SubedgeCallback(handler)
 	if lifecycle, ok := contract.CallbackLifecycle(callback); !callbackOK || !ok || lifecycle != CallbackSyncOptionalMany {

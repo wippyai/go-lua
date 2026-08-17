@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/wippyai/go-lua/analysis/internal/hash"
 	"github.com/wippyai/go-lua/analysis/domain/type/kind"
+	"github.com/wippyai/go-lua/analysis/internal/hash"
 )
 
 // DecodeCanonicalFormals reconstructs a scoped canonical graph using exactly

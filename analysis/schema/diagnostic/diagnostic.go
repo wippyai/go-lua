@@ -14,35 +14,35 @@
 // consumes facts the analyzer already produces is added by writing one row
 // here, and every derived lookup projects it without a second table.
 //
+// The identities a row is declared against are named, not enumerated. The
+// family it is gated by and the observation population it is measured over are
+// members of vocabularies the structural surface declares, and a row names them
+// by reference; the declaration whose facts decide it is a reference too. Seal
+// resolves each against the same table the row is sealed into, so a family the
+// analyzer has never published before is one more declared row rather than one
+// more member of a closed type here.
+//
 // Deferred resolutions. Three identities a row is eventually read under are
 // not yet spellable:
 //
 //   - the collection plan, which awaits the query surface. The branch lane's
 //     subjects arrive through the value-summary query today, unnamed here.
-//   - the denominator, which awaits the observation surface. The denominator
-//     surface is in the catalog and declares closed worlds, but it sits above
-//     this one and a denominator names the entry that owns it, so the
-//     resolution lands there rather than as a reference out of a row. The
-//     worlds declared today are the axes' coordinate populations; none
-//     quantifies over a diagnostic row's population, because the universe
-//     identity such a world needs is what the observation surface supplies.
-//     The population is declared today as the observation the row is measured
-//     over, in the artifact's own closed observation catalog.
-//   - the evidence projection, which awaits the same observation surface. It is
-//     declared today as the row's own evidence lines.
-//
-// Nothing here fakes those resolutions. The machinery that will perform them
-// exists and is exercised: Reference names an entry on another surface, and
-// Seal resolves it against the same table it is sealed into, so a reference to
-// a surface added later resolves the moment that surface is registered.
+//   - the denominator, which awaits an observation surface of its own. The
+//     denominator surface is in the catalog and declares closed worlds, but it
+//     sits above this one and a denominator names the entry that owns it, so the
+//     resolution lands there rather than as a reference out of a row. The worlds
+//     declared today are the axes' coordinate populations; none quantifies over
+//     a diagnostic row's population.
+//   - the evidence projection, which awaits the same surface. It is declared
+//     today as the row's own evidence lines.
 package diagnostic
 
 import (
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/internal/framing"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
 // Content record markers. They separate the presentation collections one row
@@ -65,6 +65,7 @@ const (
 	LawFactResolves
 	LawRenderComplete
 	LawSurfacePopulated
+	LawObservationDeclared
 )
 
 // Code is the stable published identity of one diagnostic. It is the only part
@@ -123,38 +124,12 @@ func codeSegment(segment string) bool {
 	return true
 }
 
-// Family is the closed publication family catalog. Publication is gated by
-// family at the query boundary, so every row names exactly one.
-type Family uint8
-
-const (
-	FamilyInvalid Family = iota
-	FamilyAdvice
-	FamilyType
-	FamilyValue
-	FamilyLint
-	familyLimit
-)
-
-func (family Family) Available() bool { return family > FamilyInvalid && family < familyLimit }
-
-func (family Family) String() string {
-	switch family {
-	case FamilyAdvice:
-		return "advice"
-	case FamilyType:
-		return "type"
-	case FamilyValue:
-		return "value"
-	case FamilyLint:
-		return "lint"
-	default:
-		return ""
-	}
-}
-
-// Severity is the closed severity a row defaults to. A policy may refine a
-// row's severity within this vocabulary; it can never invent one.
+// Severity is the severity a row defaults to. A policy may refine a row's
+// severity within this vocabulary; it can never invent one. The vocabulary
+// itself is declared on the structural surface under
+// structure.CategoryDiagnosticSeverity, and these ordinals are the positions of
+// its members, so a renderer reads the declared spelling rather than holding a
+// switch of its own.
 type Severity uint8
 
 const (
@@ -168,18 +143,9 @@ func (severity Severity) Available() bool {
 	return severity >= SeverityError && severity <= SeverityHint
 }
 
-func (severity Severity) String() string {
-	switch severity {
-	case SeverityError:
-		return "error"
-	case SeverityWarning:
-		return "warning"
-	case SeverityHint:
-		return "hint"
-	default:
-		return ""
-	}
-}
+// Ordinal is this severity's position in the declared severity vocabulary. A
+// renderer resolves the member at this ordinal and reads its spelling.
+func (severity Severity) Ordinal() uint16 { return uint16(severity) }
 
 // Tier is the publication tier a row belongs to. The error tier is the
 // analyzer's own verdict on a program; the advisory tier is advice a consumer
@@ -429,15 +395,21 @@ type LabelRow struct {
 // Spec is the authored declaration of one diagnostic. Every field is data.
 type Spec struct {
 	// Code is the row's published identity and its authored key.
-	Code   Code
-	Family Family
+	Code Code
+	// Family is the publication family this row is gated by: a member of the
+	// declared family vocabulary, named by reference. The family's declared
+	// spelling is the first segment of the published code, so publishing under a
+	// family the analyzer has never published before is declaring one more row on
+	// the structural surface rather than widening an enum here.
+	Family Reference
 	// DefaultSeverity is the severity a policy that enables this row without an
 	// override receives. The publication tier is derived from it.
 	DefaultSeverity Severity
 	Lane            Lane
-	// Observation is the population this row is measured over. A producing lane
+	// Observation is the population this row is measured over: a member of the
+	// declared observation vocabulary, named by reference. A producing lane
 	// declares exactly one; a declared lane declares none.
-	Observation programartifact.DiagnosticObservationKind
+	Observation Reference
 	// Fact names the declaration whose facts decide this row. A solver-observed
 	// row names one; a static row reads no fact and names none.
 	Fact Reference
@@ -454,10 +426,10 @@ type Spec struct {
 type Entry struct {
 	code            Code
 	id              schema.EntryID
-	family          Family
+	family          Reference
 	defaultSeverity Severity
 	lane            Lane
-	observation     programartifact.DiagnosticObservationKind
+	observation     Reference
 	fact            Reference
 	requirements    Requirement
 	message, help   Line
@@ -475,8 +447,9 @@ func New(spec Spec) (*Entry, bool) {
 		return nil, false
 	}
 	// A producing lane is measured over exactly one declared population, and a
-	// lane with no producer is measured over none.
-	if spec.Lane.Produces() != observationAvailable(spec.Observation) {
+	// lane with no producer is measured over none. Which population the name
+	// resolves to is stated at seal, against the vocabulary that declares it.
+	if spec.Observation.Declared() != spec.Observation.Available() || spec.Lane.Produces() != spec.Observation.Declared() {
 		return nil, false
 	}
 	// A solver-observed row is decided by facts, so it names the declaration
@@ -522,13 +495,6 @@ func New(spec Spec) (*Entry, bool) {
 	return entry, entry.EntryAvailable()
 }
 
-// observationAvailable admits one artifact observation kind. The artifact
-// format owns the catalog; this bound follows its declaration order, the same
-// way the role-indexed projections of the rule table do.
-func observationAvailable(kind programartifact.DiagnosticObservationKind) bool {
-	return kind > programartifact.DiagnosticObservationInvalid && kind <= programartifact.DiagnosticObservationValueReferenceUnresolved
-}
-
 // renderPlanAdmissible states that a row publishes a declared, ordered set of
 // sections and never repeats one.
 func renderPlanAdmissible(sections []Section) bool {
@@ -558,7 +524,10 @@ func (entry *Entry) Code() Code { return entry.code }
 
 func (entry *Entry) ID() schema.EntryID { return entry.id }
 
-func (entry *Entry) Family() Family { return entry.family }
+// Family is the declared publication family this row is gated by. A consumer
+// that renders or gates on the family resolves this reference in the sealed
+// structural vocabulary and reads the member's declared spelling.
+func (entry *Entry) Family() Reference { return entry.family }
 
 func (entry *Entry) DefaultSeverity() Severity { return entry.defaultSeverity }
 
@@ -582,10 +551,8 @@ func (entry *Entry) Lane() Lane { return entry.lane }
 // family nothing has collected, so admission refuses it.
 func (entry *Entry) Collectable() bool { return entry != nil && entry.lane.Produces() }
 
-// Observation is the population this row is measured over.
-func (entry *Entry) Observation() programartifact.DiagnosticObservationKind {
-	return entry.observation
-}
+// Observation is the declared population this row is measured over.
+func (entry *Entry) Observation() Reference { return entry.observation }
 
 // Fact is the declaration whose facts decide this row.
 func (entry *Entry) Fact() Reference { return entry.fact }
@@ -645,7 +612,7 @@ func (entry *Entry) Renders(section Section) bool {
 // for the same reason: the segments and the payload a line reads are derived
 // from that template.
 func (entry *Entry) EntryContent(content *framing.Writer) error {
-	if err := content.Uint(uint64(entry.family)); err != nil {
+	if err := referenceContent(content, entry.family); err != nil {
 		return err
 	}
 	if err := content.Uint(uint64(entry.defaultSeverity)); err != nil {
@@ -654,13 +621,10 @@ func (entry *Entry) EntryContent(content *framing.Writer) error {
 	if err := content.Uint(uint64(entry.lane)); err != nil {
 		return err
 	}
-	if err := content.Uint(uint64(entry.observation)); err != nil {
+	if err := referenceContent(content, entry.observation); err != nil {
 		return err
 	}
-	if err := content.Uint(uint64(entry.fact.Surface)); err != nil {
-		return err
-	}
-	if err := content.String(string(entry.fact.Key)); err != nil {
+	if err := referenceContent(content, entry.fact); err != nil {
 		return err
 	}
 	if err := content.Uint(uint64(entry.requirements)); err != nil {
@@ -673,6 +637,17 @@ func (entry *Entry) EntryContent(content *framing.Writer) error {
 		return err
 	}
 	return entry.presentationContent(content)
+}
+
+// referenceContent writes one named identity: the surface it is declared on
+// and the authored key it names there. What the reference resolves to is
+// derived from those two at seal, so the resolution is not written a second
+// time.
+func referenceContent(content *framing.Writer, reference Reference) error {
+	if err := content.Uint(uint64(reference.Surface)); err != nil {
+		return err
+	}
+	return content.String(string(reference.Key))
 }
 
 // presentationContent writes the row's evidence lines, source labels, and
@@ -768,7 +743,7 @@ func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.
 	if view.Count() == 0 {
 		return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, schema.EntryID{}, LawSurfacePopulated, schema.DispositionIncomplete)
 	}
-	observations := make(map[programartifact.DiagnosticObservationKind]schema.EntryID, view.Count())
+	observations := make(map[schema.Key]schema.EntryID, view.Count())
 	for position := 0; position < view.Count(); position++ {
 		row, rowOK := view.At(position)
 		entry, entryOK := row.(*Entry)
@@ -782,12 +757,8 @@ func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.
 		if !entry.code.Available() || entry.id != schema.NewEntryID(schema.SurfaceKindDiagnostic, schema.Key(entry.code)) {
 			return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawCodeIdentity, schema.DispositionMalformed)
 		}
-		// The published code carries its own family, so a consumer gating on
-		// the family it reads and the boundary gating on the declared family
-		// reach the same decision.
-		family, familyOK := entry.code.Family()
-		if !entry.family.Available() || !familyOK || family != entry.family.String() {
-			return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawFamilyDeclared, schema.DispositionMalformed)
+		if failure := sealFamily(entry, sealed); failure.Available() {
+			return failure
 		}
 		if !entry.defaultSeverity.Available() || entry.Tier() == TierInvalid {
 			return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawTierValid, schema.DispositionIncomplete)
@@ -803,11 +774,14 @@ func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.
 		if !reads.has(entry.requirements) {
 			return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawRequirementCovered, schema.DispositionMalformed)
 		}
+		if failure := sealObservation(entry, sealed); failure.Available() {
+			return failure
+		}
 		if entry.lane == LaneStatic {
-			if prior, duplicate := observations[entry.observation]; duplicate {
+			if prior, duplicate := observations[entry.observation.Key]; duplicate {
 				return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, prior, LawObservationUnique, schema.DispositionDuplicate)
 			}
-			observations[entry.observation] = entry.id
+			observations[entry.observation.Key] = entry.id
 		}
 		if failure := sealFact(entry, sealed); failure.Available() {
 			return failure
@@ -827,6 +801,45 @@ func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.
 	return schema.SealFailure{}
 }
 
+// sealFamily resolves one row's family reference and states the two halves of
+// the family law: the row names a member of the declared family vocabulary, and
+// that member's declared spelling is the first segment of the published code.
+// A consumer gating on the family it reads off a code and the boundary gating
+// on the declared family therefore reach the same decision, and a family the
+// analyzer has never published before is a row on the structural surface rather
+// than a member of an enum here.
+func sealFamily(entry *Entry, sealed schema.Sealed) schema.SealFailure {
+	if entry.family.Surface != schema.SurfaceKindStructure {
+		return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawFamilyDeclared, schema.DispositionMalformed)
+	}
+	member, disposition := structure.Resolve(sealed, entry.family.Key, structure.CategoryDiagnosticFamily)
+	if disposition != schema.DispositionAccepted {
+		return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawFamilyDeclared, disposition)
+	}
+	family, familyOK := entry.code.Family()
+	if !familyOK || family != member.Spelling() {
+		return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawFamilyDeclared, schema.DispositionMalformed)
+	}
+	return schema.SealFailure{}
+}
+
+// sealObservation resolves one row's observation reference. The population a
+// row is measured over is declared once, on the structural surface, so this is
+// the only bound on it: a producing row names a member of that vocabulary, and
+// a row with no producer names none.
+func sealObservation(entry *Entry, sealed schema.Sealed) schema.SealFailure {
+	if !entry.observation.Declared() {
+		return schema.SealFailure{}
+	}
+	if entry.observation.Surface != schema.SurfaceKindStructure {
+		return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawObservationDeclared, schema.DispositionMalformed)
+	}
+	if _, disposition := structure.Resolve(sealed, entry.observation.Key, structure.CategoryDiagnosticObservation); disposition != schema.DispositionAccepted {
+		return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawObservationDeclared, disposition)
+	}
+	return schema.SealFailure{}
+}
+
 // sealFact resolves one row's fact reference against the table it is sealed
 // into. A reference to a surface below this one must name an entry that is
 // actually there; a reference upward names a table that is not sealed yet, and
@@ -835,15 +848,8 @@ func sealFact(entry *Entry, sealed schema.Sealed) schema.SealFailure {
 	if !entry.fact.Declared() {
 		return schema.SealFailure{}
 	}
-	if !entry.fact.Available() {
-		return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawFactResolves, schema.DispositionMalformed)
-	}
-	producer, registered := sealed.Surface(entry.fact.Surface)
-	if !registered {
-		return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawFactResolves, schema.DispositionMalformed)
-	}
-	if _, resolved := producer.ByID(schema.NewEntryID(entry.fact.Surface, entry.fact.Key)); !resolved {
-		return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawFactResolves, schema.DispositionIncomplete)
+	if _, disposition := sealed.Resolve(entry.fact.Surface, entry.fact.Key); disposition != schema.DispositionAccepted {
+		return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawFactResolves, disposition)
 	}
 	return schema.SealFailure{}
 }
@@ -854,7 +860,7 @@ func sealFact(entry *Entry, sealed schema.Sealed) schema.SealFailure {
 type Table struct {
 	entries       []*Entry
 	byCode        map[Code]*Entry
-	byObservation map[programartifact.DiagnosticObservationKind]*Entry
+	byObservation map[schema.Key]*Entry
 }
 
 // NewTable projects one sealed diagnostic view. It is the only construction of
@@ -866,7 +872,7 @@ func NewTable(view schema.View) (Table, bool) {
 	table := Table{
 		entries:       make([]*Entry, 0, view.Count()),
 		byCode:        make(map[Code]*Entry, view.Count()),
-		byObservation: make(map[programartifact.DiagnosticObservationKind]*Entry, view.Count()),
+		byObservation: make(map[schema.Key]*Entry, view.Count()),
 	}
 	for position := 0; position < view.Count(); position++ {
 		row, rowOK := view.At(position)
@@ -877,7 +883,7 @@ func NewTable(view schema.View) (Table, bool) {
 		table.entries = append(table.entries, entry)
 		table.byCode[entry.code] = entry
 		if entry.lane == LaneStatic {
-			table.byObservation[entry.observation] = entry
+			table.byObservation[entry.observation.Key] = entry
 		}
 	}
 	return table, table.Available()
@@ -902,8 +908,11 @@ func (table Table) ForCode(code Code) (*Entry, bool) {
 }
 
 // ForStaticObservation resolves the row one artifact-issued observation
-// population feeds. The seal law makes that row unique.
-func (table Table) ForStaticObservation(kind programartifact.DiagnosticObservationKind) (*Entry, bool) {
-	entry, known := table.byObservation[kind]
+// population feeds, by the declared identity of that population. The seal law
+// makes that row unique. A consumer holding an artifact-compiled observation
+// ordinal resolves the declared member at that ordinal in the sealed structural
+// vocabulary and names it here.
+func (table Table) ForStaticObservation(population schema.Key) (*Entry, bool) {
+	entry, known := table.byObservation[population]
 	return entry, known
 }

@@ -265,10 +265,47 @@ func factorRefOrdinal[V any](ref FactorRef[V], schema *Schema) (uint64, bool) {
 	return ref.cell.ordinal, true
 }
 
-// BeginSelectedRouteRuleBinding starts one receipt-native route Rule transaction. The exact
+// BindSelectedRouteRule owns one route Rule binding transaction: it opens the
+// transaction, hands it to bind for read attachment, and terminalizes on
+// bind's answer. A rejected bind or a rejected commit aborts, so the shared
+// Binding always reaches its terminal state and no caller pairs commit with
+// abort by hand.
+func BindSelectedRouteRule[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot *RuleSlot[V, O], carry SchemaCarrySlot[V], write SchemaWriteSlot[V], output FactorRef[V], spec HotRuleSpec[V, O], carrySpec HotCarrySpec[V, O], bind func(*SelectedRouteRuleBindingTransaction[K, V, O]) bool) bool {
+	tx, opened := beginSelectedRouteRuleBinding[K](binding, slot, carry, write, output, spec, carrySpec)
+	return terminalizeSelectedRouteRuleBinding(tx, opened, bind)
+}
+
+// BindSelectedRule is BindSelectedRouteRule's non-routed sibling: the Rule's
+// output write is exact rather than routed.
+func BindSelectedRule[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot *RuleSlot[V, O], carry SchemaCarrySlot[V], write SchemaWriteSlot[V], output FactorRef[V], spec HotRuleSpec[V, O], carrySpec HotCarrySpec[V, O], bind func(*SelectedRouteRuleBindingTransaction[K, V, O]) bool) bool {
+	tx, opened := beginSelectedRuleBinding[K](binding, slot, carry, write, output, spec, carrySpec)
+	return terminalizeSelectedRouteRuleBinding(tx, opened, bind)
+}
+
+// BindSelectedExactRule is the carry-free sibling for Rules whose output write
+// is exact and whose cold geometry declares no carry.
+func BindSelectedExactRule[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot *RuleSlot[V, O], write SchemaWriteSlot[V], output FactorRef[V], spec HotRuleSpec[V, O], bind func(*SelectedRouteRuleBindingTransaction[K, V, O]) bool) bool {
+	tx, opened := beginSelectedExactRuleBinding[K](binding, slot, write, output, spec)
+	return terminalizeSelectedRouteRuleBinding(tx, opened, bind)
+}
+
+// terminalizeSelectedRouteRuleBinding is the sole commit-XOR-abort decision for
+// an opened Rule transaction.
+func terminalizeSelectedRouteRuleBinding[K ~uint32 | ~uint64, V, O any](tx *SelectedRouteRuleBindingTransaction[K, V, O], opened bool, bind func(*SelectedRouteRuleBindingTransaction[K, V, O]) bool) bool {
+	if !opened || tx == nil || bind == nil {
+		return false
+	}
+	if !bind(tx) || !commitSelectedRouteRuleBinding(tx) {
+		abortSelectedRouteRuleBinding(tx)
+		return false
+	}
+	return true
+}
+
+// beginSelectedRouteRuleBinding starts one receipt-native route Rule transaction. The exact
 // output, carry, and write slots are checked here; reads are attached through
 // AddRuleExactRead/AddRuleSelectedRead and committed once.
-func BeginSelectedRouteRuleBinding[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot *RuleSlot[V, O], carry SchemaCarrySlot[V], write SchemaWriteSlot[V], output FactorRef[V], spec HotRuleSpec[V, O], carrySpec HotCarrySpec[V, O]) (*SelectedRouteRuleBindingTransaction[K, V, O], bool) {
+func beginSelectedRouteRuleBinding[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot *RuleSlot[V, O], carry SchemaCarrySlot[V], write SchemaWriteSlot[V], output FactorRef[V], spec HotRuleSpec[V, O], carrySpec HotCarrySpec[V, O]) (*SelectedRouteRuleBindingTransaction[K, V, O], bool) {
 	state := bindingState(binding)
 	if state == nil {
 		return nil, false
@@ -287,7 +324,7 @@ func BeginSelectedRouteRuleBinding[K ~uint32 | ~uint64, V, O any](binding *Schem
 	shape, shapeOK := state.schema.ruleShapeAt(ruleOrdinal)
 	carryShape, carryOK := state.schema.ruleCarryShapeAt(ruleOrdinal, 0)
 	writeShape, writeOK := state.schema.ruleWriteShapeAt(ruleOrdinal, 0)
-	if !shapeOK || !carryOK || !writeOK || shape.OutputKind != composition.FactorOutput || shape.Inputs == 0 || shape.CarryCount != 1 || shape.WriteCount != 1 || carryShape.Input >= shape.Inputs || carryShape.Factor != shape.Output || (carryShape.Transform.Available() != (carrySpec.Apply != nil)) || writeShape.Factor != shape.Output || writeShape.Kind != composition.WriteRoute || writeShape.Route == 0 || writeShape.CandidateCount != 0 || writeShape.DependencyCount != 0 {
+	if !shapeOK || !carryOK || !writeOK || shape.OutputKind != composition.FactorOutput || shape.Inputs == 0 || shape.CarryCount != 1 || shape.WriteCount != 1 || carryShape.Input >= shape.Inputs || carryShape.Factor != shape.Output || (carryShape.Transform.Available() != (carrySpec.Apply != nil)) || writeShape.Factor != shape.Output || writeShape.Kind != composition.WriteRoute || writeShape.Route == 0 {
 		state.poisonLocked()
 		return nil, false
 	}
@@ -315,12 +352,12 @@ func BeginSelectedRouteRuleBinding[K ~uint32 | ~uint64, V, O any](binding *Schem
 	return &SelectedRouteRuleBindingTransaction[K, V, O]{shared: &selectedRouteTxnState[K, V, O]{state: state, cell: cell, output: outputCell, ordinal: ruleOrdinal, rule: slot, write: write, carry: &schemaRuleCarryBinding[K, V, O]{state: state, cell: cell, ordinal: ruleOrdinal, slot: carry, factor: outputCell, apply: carrySpec.Apply}, operand: spec.OperandContent, admission: spec.Admission, transfer: spec.Transfer, token: token}}, true
 }
 
-// BeginSelectedRuleBinding starts the non-routed selected-read transaction.
-// It is the sibling of BeginSelectedRouteRuleBinding for Rules whose output
+// beginSelectedRuleBinding starts the non-routed selected-read transaction.
+// It is the sibling of beginSelectedRouteRuleBinding for Rules whose output
 // write is exact.  Keeping the transaction type shared is intentional: the
 // sealed cell, heterogeneous read receipts, and atomic commit path are the
 // same; only the cold write geometry differs.
-func BeginSelectedRuleBinding[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot *RuleSlot[V, O], carry SchemaCarrySlot[V], write SchemaWriteSlot[V], output FactorRef[V], spec HotRuleSpec[V, O], carrySpec HotCarrySpec[V, O]) (*SelectedRouteRuleBindingTransaction[K, V, O], bool) {
+func beginSelectedRuleBinding[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot *RuleSlot[V, O], carry SchemaCarrySlot[V], write SchemaWriteSlot[V], output FactorRef[V], spec HotRuleSpec[V, O], carrySpec HotCarrySpec[V, O]) (*SelectedRouteRuleBindingTransaction[K, V, O], bool) {
 	state := bindingState(binding)
 	if state == nil {
 		return nil, false
@@ -339,7 +376,7 @@ func BeginSelectedRuleBinding[K ~uint32 | ~uint64, V, O any](binding *SchemaBind
 	shape, shapeOK := state.schema.ruleShapeAt(ruleOrdinal)
 	carryShape, carryOK := state.schema.ruleCarryShapeAt(ruleOrdinal, 0)
 	writeShape, writeOK := state.schema.ruleWriteShapeAt(ruleOrdinal, 0)
-	if !shapeOK || !carryOK || !writeOK || shape.OutputKind != composition.FactorOutput || shape.Inputs == 0 || shape.CarryCount != 1 || shape.WriteCount != 1 || carryShape.Input >= shape.Inputs || carryShape.Factor != shape.Output || (carryShape.Transform.Available() != (carrySpec.Apply != nil)) || writeShape.Factor != shape.Output || writeShape.Kind != composition.WriteExact || writeShape.Route != 0 || writeShape.CandidateCount != 0 || writeShape.DependencyCount != 0 {
+	if !shapeOK || !carryOK || !writeOK || shape.OutputKind != composition.FactorOutput || shape.Inputs == 0 || shape.CarryCount != 1 || shape.WriteCount != 1 || carryShape.Input >= shape.Inputs || carryShape.Factor != shape.Output || (carryShape.Transform.Available() != (carrySpec.Apply != nil)) || writeShape.Factor != shape.Output || writeShape.Kind != composition.WriteExact || writeShape.Route != 0 {
 		state.poisonLocked()
 		return nil, false
 	}
@@ -514,9 +551,10 @@ func AddSelectedRouteOperandRead[K ~uint32 | ~uint64, V, O any, RV any, Tag sele
 	return read, true
 }
 
-// CommitRuleBinding atomically publishes the one completed Rule cell after
-// every exact/selected receipt has arrived in canonical ordinal order.
-func CommitSelectedRouteRuleBinding[K ~uint32 | ~uint64, V, O any](tx *SelectedRouteRuleBindingTransaction[K, V, O]) bool {
+// commitSelectedRouteRuleBinding atomically publishes the one completed Rule
+// cell after every exact/selected receipt has arrived in canonical ordinal
+// order.
+func commitSelectedRouteRuleBinding[K ~uint32 | ~uint64, V, O any](tx *SelectedRouteRuleBindingTransaction[K, V, O]) bool {
 	if tx == nil || tx.shared == nil || tx.shared.state == nil {
 		return false
 	}
@@ -546,11 +584,11 @@ func CommitSelectedRouteRuleBinding[K ~uint32 | ~uint64, V, O any](tx *SelectedR
 	return true
 }
 
-// AbortSelectedRouteRuleBinding terminally poisons the shared Binding and
+// abortSelectedRouteRuleBinding terminally poisons the shared Binding and
 // releases the ordinal reservation. There is intentionally no reusable
 // rollback path: a failed hot transaction cannot be replaced by a second
 // closure while other cells may still hold its receipts.
-func AbortSelectedRouteRuleBinding[K ~uint32 | ~uint64, V, O any](tx *SelectedRouteRuleBindingTransaction[K, V, O]) bool {
+func abortSelectedRouteRuleBinding[K ~uint32 | ~uint64, V, O any](tx *SelectedRouteRuleBindingTransaction[K, V, O]) bool {
 	if tx == nil || tx.shared == nil || tx.shared.state == nil {
 		return false
 	}
@@ -599,7 +637,7 @@ func (binding *schemaSelectedRuleReadBinding[K, V, Tag]) bind(bound readBinding,
 	}
 	surface, surfaceOK := member.ReadAt(binding.read.index)
 	row, rowOK := binding.origin.state.schema.ruleReadShapeAt(binding.origin.ruleOrdinal, binding.origin.readOrdinal)
-	if !surfaceOK || !rowOK || row.Kind != composition.ReadSelect || row.Input != binding.origin.input || row.Factor != factorKey || surface.Factor != factorKey || surface.Form != equation.SurfaceReadSelect || surface.Semantic != factorKey || surface.Normalizer.Available() || surface.Mode != equation.TargetModeNone || surface.Local == 0 {
+	if !surfaceOK || !rowOK || row.Kind != composition.ReadSelect || row.Input != binding.origin.input || row.Factor != factorKey || surface.Factor != factorKey || surface.Form != equation.SurfaceReadSelect || surface.Semantic != factorKey || surface.Normalizer.Available() || surface.Mode != equation.TargetModeNone || !surface.LocalAvailable() {
 		return false
 	}
 	selector := &schemaSelectedReadSelector{fence: selectedRead.fence, read: binding.origin.readOrdinal}
@@ -755,7 +793,7 @@ func (binding *schemaOpaqueOperandSelectedRuleReadBinding[RV, O, Tag]) bind(boun
 	surface, surfaceOK := member.ReadAt(int(binding.origin.readOrdinal))
 	row, rowOK := binding.origin.state.schema.ruleReadShapeAt(binding.origin.ruleOrdinal, binding.origin.readOrdinal)
 	factorSemantic := binding.origin.state.schema.factorSemanticAt(binding.origin.factor)
-	if !surfaceOK || !rowOK || row.Kind != composition.ReadSelect || row.Input != binding.origin.input || row.Factor != factorSemantic || row.Semantic != factorSemantic || row.Normalizer.Available() || row.DependencyCount != binding.origin.dependencyCount || surface.Factor != factorSemantic || surface.Form != equation.SurfaceReadSelect || surface.Semantic != factorSemantic || surface.Mode != equation.TargetModeNone || surface.Local == 0 {
+	if !surfaceOK || !rowOK || row.Kind != composition.ReadSelect || row.Input != binding.origin.input || row.Factor != factorSemantic || row.Semantic != factorSemantic || row.Normalizer.Available() || row.DependencyCount != binding.origin.dependencyCount || surface.Factor != factorSemantic || surface.Form != equation.SurfaceReadSelect || surface.Semantic != factorSemantic || surface.Mode != equation.TargetModeNone || !surface.LocalAvailable() {
 		return false
 	}
 	selector := &schemaSelectedReadSelector{fence: selectedRead.fence, read: binding.origin.readOrdinal}
@@ -1128,7 +1166,7 @@ func (receipt factorRuntimeReceipt) validForms() bool {
 			return false
 		}
 		want := composition.Key{}
-		if summaryReadRowKind(shape.Kind) || shape.Kind == composition.FactorSelectorWrite {
+		if summaryReadRowKind(shape.Kind) {
 			want = shape.Semantic
 		}
 		if form.kind != schemaFormKind(shape.Kind) || form.semantic != want {
@@ -1152,8 +1190,6 @@ func schemaFormKind(kind composition.FactorFormKind) SchemaFormKind {
 		return SchemaFormReadSummary
 	case composition.FactorDistributiveSummaryRead:
 		return SchemaFormReadDistributiveSummary
-	case composition.FactorSelectorWrite:
-		return SchemaFormWriteSelector
 	default:
 		return SchemaFormInvalid
 	}
@@ -1197,18 +1233,6 @@ type SchemaSelectedReadReceipt struct {
 	issued          bool
 }
 
-// SchemaSelectWriteReceipt is opaque selector-write geometry evidence.
-type SchemaSelectWriteReceipt struct {
-	fence           schemaRuleReceiptFence
-	write           uint64
-	factor          uint64
-	form            uint64
-	semantic        composition.Key
-	candidateCount  uint64
-	dependencyCount uint64
-	issued          bool
-}
-
 // SchemaRouteWriteReceipt is opaque route-write geometry evidence. Route is
 // always tied to the one selected-read predecessor named by the Schema row.
 type SchemaRouteWriteReceipt struct {
@@ -1229,17 +1253,6 @@ func (receipt SchemaSelectedReadReceipt) Valid() bool {
 	return ruleOK && shapeOK && factorOK && receipt.read < rule.ReadCount && shape.Kind == composition.ReadSelect && shape.Semantic == shape.Factor && !shape.Normalizer.Available() && shape.DependencyCount != 0 && receipt.factor == factor && receipt.dependencyCount == shape.DependencyCount
 }
 
-func (receipt SchemaSelectWriteReceipt) Valid() bool {
-	if !receipt.issued || !receipt.fence.valid() {
-		return false
-	}
-	rule, ruleOK := receipt.fence.schema.ruleShapeAt(receipt.fence.rule)
-	shape, shapeOK := receipt.fence.schema.ruleWriteShapeAt(receipt.fence.rule, receipt.write)
-	factor, factorOK := receipt.fence.schema.factorOrdinalOf(shape.Factor)
-	form, formOK := receipt.fence.schema.factorFormShapeAt(receipt.factor, receipt.form)
-	return ruleOK && shapeOK && factorOK && formOK && receipt.write < rule.WriteCount && rule.WriteCount == 1 && shape.Kind == composition.WriteSelect && shape.CandidateCount != 0 && shape.DependencyCount != 0 && receipt.factor == factor && form.Kind == composition.FactorSelectorWrite && form.Semantic == receipt.semantic && shape.Semantic == receipt.semantic && receipt.candidateCount == shape.CandidateCount && receipt.dependencyCount == shape.DependencyCount
-}
-
 func (receipt SchemaRouteWriteReceipt) Valid() bool {
 	if !receipt.issued || !receipt.fence.valid() {
 		return false
@@ -1249,7 +1262,7 @@ func (receipt SchemaRouteWriteReceipt) Valid() bool {
 	read, readOK := receipt.fence.schema.ruleReadShapeAt(receipt.fence.rule, receipt.read)
 	factor, factorOK := receipt.fence.schema.factorOrdinalOf(shape.Factor)
 	readFactor, readFactorOK := receipt.fence.schema.factorOrdinalOf(read.Factor)
-	return ruleOK && shapeOK && readOK && factorOK && readFactorOK && receipt.write < rule.WriteCount && receipt.read < rule.ReadCount && rule.WriteCount == 1 && shape.Kind == composition.WriteRoute && shape.Route == receipt.read+1 && shape.CandidateCount == 0 && shape.DependencyCount == 0 && read.Kind == composition.ReadSelect && read.Semantic == read.Factor && !read.Normalizer.Available() && read.DependencyCount != 0 && receipt.factor == factor && factor == readFactor
+	return ruleOK && shapeOK && readOK && factorOK && readFactorOK && receipt.write < rule.WriteCount && receipt.read < rule.ReadCount && rule.WriteCount == 1 && shape.Kind == composition.WriteRoute && shape.Route == receipt.read+1 && read.Kind == composition.ReadSelect && read.Semantic == read.Factor && !read.Normalizer.Available() && read.DependencyCount != 0 && receipt.factor == factor && factor == readFactor
 }
 
 func issueSchemaSelectedReadReceiptFence(fence schemaRuleReceiptFence, ok bool, read uint64) (SchemaSelectedReadReceipt, bool) {
@@ -1267,30 +1280,13 @@ func issueSchemaSelectedReadReceiptFence(fence schemaRuleReceiptFence, ok bool, 
 	return SchemaSelectedReadReceipt{fence: fence, read: read, factor: factor, dependencyCount: shape.DependencyCount, issued: true}, true
 }
 
-func issueSchemaSelectWriteReceiptFence(fence schemaRuleReceiptFence, ok bool, write uint64) (SchemaSelectWriteReceipt, bool) {
-	if !ok {
-		return SchemaSelectWriteReceipt{}, false
-	}
-	shape, shapeOK := fence.schema.ruleWriteShapeAt(fence.rule, write)
-	ruleShape, ruleOK := fence.schema.ruleShapeAt(fence.rule)
-	if !shapeOK || !ruleOK || shape.Kind != composition.WriteSelect || shape.CandidateCount == 0 || shape.DependencyCount == 0 || ruleShape.WriteCount != 1 {
-		return SchemaSelectWriteReceipt{}, false
-	}
-	factor, factorOK := fence.schema.factorOrdinalOf(shape.Factor)
-	form, formOK := validSelectorForm(fence.schema, factor, shape.Semantic)
-	if !factorOK || !formOK || !validWriteCandidates(fence.schema, fence.rule, write, shape.CandidateCount, ruleShape.ReadCount) || !validWriteDependencies(fence.schema, fence.rule, write, shape.DependencyCount, ruleShape.ReadCount) {
-		return SchemaSelectWriteReceipt{}, false
-	}
-	return SchemaSelectWriteReceipt{fence: fence, write: write, factor: factor, form: form, semantic: shape.Semantic, candidateCount: shape.CandidateCount, dependencyCount: shape.DependencyCount, issued: true}, true
-}
-
 func issueSchemaRouteWriteReceiptFence(fence schemaRuleReceiptFence, ok bool, write uint64) (SchemaRouteWriteReceipt, bool) {
 	if !ok {
 		return SchemaRouteWriteReceipt{}, false
 	}
 	shape, shapeOK := fence.schema.ruleWriteShapeAt(fence.rule, write)
 	ruleShape, ruleOK := fence.schema.ruleShapeAt(fence.rule)
-	if !shapeOK || !ruleOK || shape.Kind != composition.WriteRoute || shape.Route == 0 || shape.CandidateCount != 0 || shape.DependencyCount != 0 || ruleShape.WriteCount != 1 || shape.Route > ruleShape.ReadCount {
+	if !shapeOK || !ruleOK || shape.Kind != composition.WriteRoute || shape.Route == 0 || ruleShape.WriteCount != 1 || shape.Route > ruleShape.ReadCount {
 		return SchemaRouteWriteReceipt{}, false
 	}
 	read := shape.Route - 1
@@ -1316,52 +1312,6 @@ func validReadDependencies(schema *Schema, rule, read, count uint64) bool {
 			return false
 		}
 		if shape.Kind == composition.ReadSelect && (shape.Semantic != shape.Factor || shape.Normalizer.Available() || shape.DependencyCount == 0 || !validReadDependencies(schema, rule, dependency, shape.DependencyCount)) {
-			return false
-		}
-	}
-	return true
-}
-
-func validSelectorForm(schema *Schema, factor uint64, semantic composition.Key) (uint64, bool) {
-	count, ok := schema.factorFormCount(factor)
-	if !ok || !semantic.Available() {
-		return 0, false
-	}
-	for index := 0; index < count; index++ {
-		shape, shapeOK := schema.factorFormShapeAt(factor, uint64(index))
-		if shapeOK && shape.Kind == composition.FactorSelectorWrite && shape.Semantic == semantic {
-			return uint64(index), true
-		}
-	}
-	return 0, false
-}
-
-func validWriteCandidates(schema *Schema, rule, write, count, reads uint64) bool {
-	var previous uint64
-	for index := uint64(0); index < count; index++ {
-		candidate, ok := schema.ruleWriteCandidateAt(rule, write, index)
-		if !ok || candidate >= reads || index > 0 && candidate <= previous {
-			return false
-		}
-		previous = candidate
-		shape, shapeOK := schema.ruleReadShapeAt(rule, candidate)
-		if !shapeOK || shape.Kind != composition.ReadExact {
-			return false
-		}
-	}
-	return true
-}
-
-func validWriteDependencies(schema *Schema, rule, write, count, reads uint64) bool {
-	var previous uint64
-	for index := uint64(0); index < count; index++ {
-		dependency, target, ok := schema.ruleWriteDependencyAt(rule, write, index)
-		if !ok || dependency >= reads || target || index > 0 && dependency <= previous {
-			return false
-		}
-		previous = dependency
-		shape, shapeOK := schema.ruleReadShapeAt(rule, dependency)
-		if !shapeOK || shape.Kind != composition.ReadExact {
 			return false
 		}
 	}
@@ -1555,12 +1505,13 @@ func (cell *schemaFactorFormCell[K, V]) schemaFactorFormComplete() bool {
 	switch cell.kind {
 	case SchemaFormReadExact, SchemaFormWriteExact:
 		return cell.ordinal == cell.factor.ordinal
-	case SchemaFormWriteSelector, SchemaFormReadSummary, SchemaFormReadDistributiveSummary:
+	case SchemaFormReadSummary, SchemaFormReadDistributiveSummary:
 		if cell.ordinal>>32 != cell.factor.ordinal {
 			return false
 		}
 		shape, ok := cell.schema.factorFormShapeAt(cell.factor.ordinal, uint64(uint32(cell.ordinal)))
-		return ok && shape.Kind == factorFormRowKind(cell.kind)
+		rowKind, optional := factorFormRowKind(cell.kind)
+		return ok && optional && shape.Kind == rowKind
 	default:
 		return false
 	}
@@ -1612,7 +1563,7 @@ func (cell *schemaRuleBindingCellImpl[K, V, O]) schemaRuleComplete() bool {
 		return false
 	}
 	write, writeOK := cell.schema.ruleWriteShapeAt(cell.ordinal, 0)
-	if !writeOK || write.Factor != shape.Output || write.CandidateCount != 0 || write.DependencyCount != 0 || write.Kind != composition.WriteExact && write.Kind != composition.WriteRoute {
+	if !writeOK || write.Factor != shape.Output || write.Kind != composition.WriteExact && write.Kind != composition.WriteRoute {
 		return false
 	}
 	if write.Kind == composition.WriteExact && write.Route != 0 || write.Kind == composition.WriteRoute && (write.Route == 0 || write.Route > shape.ReadCount) {
@@ -1872,7 +1823,7 @@ func BindRule[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot *RuleS
 		return false
 	}
 	writeShape, writeOK := state.schema.ruleWriteShapeAt(ruleOrdinal, 0)
-	if !writeOK || writeShape.Kind != composition.WriteExact || writeShape.Factor != shape.Output || writeShape.Route != 0 || writeShape.CandidateCount != 0 || writeShape.DependencyCount != 0 {
+	if !writeOK || writeShape.Kind != composition.WriteExact || writeShape.Factor != shape.Output || writeShape.Route != 0 {
 		state.poisonLocked()
 		return false
 	}
@@ -1928,7 +1879,7 @@ func BindRuleWithCarry[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, sl
 		return false
 	}
 	writeShape, writeOK := state.schema.ruleWriteShapeAt(ruleOrdinal, 0)
-	if !writeOK || writeShape.Kind != composition.WriteExact || writeShape.Factor != shape.Output || writeShape.Route != 0 || writeShape.CandidateCount != 0 || writeShape.DependencyCount != 0 {
+	if !writeOK || writeShape.Kind != composition.WriteExact || writeShape.Factor != shape.Output || writeShape.Route != 0 {
 		state.poisonLocked()
 		return false
 	}
@@ -1988,7 +1939,7 @@ func BindRuleWithExactReadAndCarry[OK ~uint32 | ~uint64, V, O any, RK ~uint32 | 
 	readShape, readOK := state.schema.ruleReadShapeAt(ruleOrdinal, 0)
 	carryShape, carryOK := state.schema.ruleCarryShapeAt(ruleOrdinal, 0)
 	writeShape, writeOK := state.schema.ruleWriteShapeAt(ruleOrdinal, 0)
-	if !shapeOK || !readOK || !carryOK || !writeOK || shape.OutputKind != composition.FactorOutput || shape.Inputs == 0 || shape.ReadCount != 1 || shape.CarryCount != 1 || shape.WriteCount != 1 || readShape.Kind != composition.ReadExact || readShape.Input >= shape.Inputs || readShape.DependencyCount != 0 || carryShape.Input >= shape.Inputs || carryShape.Factor != shape.Output || carryShape.Transform.Available() != (carrySpec.Apply != nil) || writeShape.Kind != composition.WriteExact || writeShape.Factor != shape.Output || writeShape.Route != 0 || writeShape.CandidateCount != 0 || writeShape.DependencyCount != 0 {
+	if !shapeOK || !readOK || !carryOK || !writeOK || shape.OutputKind != composition.FactorOutput || shape.Inputs == 0 || shape.ReadCount != 1 || shape.CarryCount != 1 || shape.WriteCount != 1 || readShape.Kind != composition.ReadExact || readShape.Input >= shape.Inputs || readShape.DependencyCount != 0 || carryShape.Input >= shape.Inputs || carryShape.Factor != shape.Output || carryShape.Transform.Available() != (carrySpec.Apply != nil) || writeShape.Kind != composition.WriteExact || writeShape.Factor != shape.Output || writeShape.Route != 0 {
 		state.poisonLocked()
 		return Read[OrderedCells[RV]]{}, false
 	}
@@ -2053,7 +2004,7 @@ func BindRuleWithExactAndSummaryReadAndCarry[OK ~uint32 | ~uint64, V, O any, EK 
 	summaryShape, summaryOK := state.schema.ruleReadShapeAt(ruleOrdinal, 1)
 	carryShape, carryOK := state.schema.ruleCarryShapeAt(ruleOrdinal, 0)
 	writeShape, writeOK := state.schema.ruleWriteShapeAt(ruleOrdinal, 0)
-	if !shapeOK || !exactOK || !summaryOK || !carryOK || !writeOK || shape.OutputKind != composition.FactorOutput || shape.Inputs == 0 || shape.ReadCount != 2 || shape.CarryCount != 1 || shape.WriteCount != 1 || exactShape.Kind != composition.ReadExact || exactShape.Input >= shape.Inputs || exactShape.DependencyCount != 0 || summaryShape.Kind != composition.ReadSummary || summaryShape.Input >= shape.Inputs || summaryShape.DependencyCount != 0 || carryShape.Input >= shape.Inputs || carryShape.Factor != shape.Output || carryShape.Transform.Available() != (carrySpec.Apply != nil) || writeShape.Kind != composition.WriteExact || writeShape.Factor != shape.Output || writeShape.Route != 0 || writeShape.CandidateCount != 0 || writeShape.DependencyCount != 0 {
+	if !shapeOK || !exactOK || !summaryOK || !carryOK || !writeOK || shape.OutputKind != composition.FactorOutput || shape.Inputs == 0 || shape.ReadCount != 2 || shape.CarryCount != 1 || shape.WriteCount != 1 || exactShape.Kind != composition.ReadExact || exactShape.Input >= shape.Inputs || exactShape.DependencyCount != 0 || summaryShape.Kind != composition.ReadSummary || summaryShape.Input >= shape.Inputs || summaryShape.DependencyCount != 0 || carryShape.Input >= shape.Inputs || carryShape.Factor != shape.Output || carryShape.Transform.Available() != (carrySpec.Apply != nil) || writeShape.Kind != composition.WriteExact || writeShape.Factor != shape.Output || writeShape.Route != 0 {
 		state.poisonLocked()
 		return Read[OrderedCells[EV]]{}, Read[S]{}, false
 	}
@@ -2131,7 +2082,7 @@ func BindRuleWithSelectedReadAndRouteWrite[OK ~uint32 | ~uint64, V, O any, RK ~u
 	}
 	shape, shapeOK := state.schema.ruleShapeAt(ruleOrdinal)
 	writeShape, writeOK := state.schema.ruleWriteShapeAt(ruleOrdinal, 0)
-	if !shapeOK || !writeOK || shape.OutputKind != composition.FactorOutput || shape.ReadCount != uint64(len(predecessors)+1) || shape.CarryCount != 0 || shape.WriteCount != 1 || writeShape.Kind != composition.WriteRoute || writeShape.Route != uint64(uint32(selectedPacked))+1 || writeShape.Factor != shape.Output || writeShape.CandidateCount != 0 || writeShape.DependencyCount != 0 {
+	if !shapeOK || !writeOK || shape.OutputKind != composition.FactorOutput || shape.ReadCount != uint64(len(predecessors)+1) || shape.CarryCount != 0 || shape.WriteCount != 1 || writeShape.Kind != composition.WriteRoute || writeShape.Route != uint64(uint32(selectedPacked))+1 || writeShape.Factor != shape.Output {
 		state.poisonLocked()
 		return Read[Selection[Tag, OrderedCells[RV]]]{}, false
 	}
@@ -2225,7 +2176,7 @@ func BindRuleWithSummaryRead[OK ~uint32 | ~uint64, V, O any, RK ~uint32 | ~uint6
 	shape, shapeOK := state.schema.ruleShapeAt(ruleOrdinal)
 	readShape, readShapeOK := state.schema.ruleReadShapeAt(ruleOrdinal, 0)
 	writeShape, writeShapeOK := state.schema.ruleWriteShapeAt(ruleOrdinal, 0)
-	if !shapeOK || shape.OutputKind != composition.FactorOutput || shape.Inputs == 0 || shape.ReadCount != 1 || shape.CarryCount != 0 || shape.WriteCount != 1 || !readShapeOK || readShape.Kind != composition.ReadSummary || readShape.Input >= shape.Inputs || readShape.DependencyCount != 0 || !writeShapeOK || writeShape.Kind != composition.WriteExact || writeShape.Factor != shape.Output || writeShape.Route != 0 || writeShape.CandidateCount != 0 || writeShape.DependencyCount != 0 {
+	if !shapeOK || shape.OutputKind != composition.FactorOutput || shape.Inputs == 0 || shape.ReadCount != 1 || shape.CarryCount != 0 || shape.WriteCount != 1 || !readShapeOK || readShape.Kind != composition.ReadSummary || readShape.Input >= shape.Inputs || readShape.DependencyCount != 0 || !writeShapeOK || writeShape.Kind != composition.WriteExact || writeShape.Factor != shape.Output || writeShape.Route != 0 {
 		state.poisonLocked()
 		return Read[S]{}, false
 	}

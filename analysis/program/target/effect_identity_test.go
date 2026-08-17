@@ -1,8 +1,9 @@
 package target
 
 import (
-	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
+
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
@@ -32,7 +33,7 @@ func effectIdentityCallbackOperation(name string, callbackEffects, operationEffe
 		RowFormals: 1,
 		Input:      ValuesSpec{Fixed: []schematype.Type{testAny, testString}, Tail: ValuesClosed},
 		Callbacks: []CallbackSpec{{
-			Function: InputSource{Kind: InputSourceValueFormal}, Admission: OrdinaryCallable,
+			Function: InputSource{Kind: InputSourceValueFormal}, Admission: schematype.CallableAdmissionOrdinary,
 			Arguments: empty, Outcomes: terminals, Lifecycle: CallbackRetainedOptionalOnce,
 			Effects: callbackEffects,
 		}},

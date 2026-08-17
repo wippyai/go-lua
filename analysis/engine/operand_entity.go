@@ -1,15 +1,33 @@
 package engine
 
-import "github.com/wippyai/go-lua/analysis/engine/internal/composition"
+import (
+	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
+	"github.com/wippyai/go-lua/analysis/internal/canonical"
+)
 
-const instanceOperandEntityVersion uint64 = 1
+const (
+	instanceOperandEntityVersion uint64 = 1
+	instanceOperandEntityDomain         = "analysis/engine/operand-entity"
+)
 
 // OperandEntity is the opaque equation-owned content identity used by the
 // receipt runtime when it validates a materialized rule member. It is not a
 // source-admission capability.
 type OperandEntity struct{ key composition.Key }
 
+// operandEntityForContent derives the operand entity identity from an issuer
+// content digest. The digest is a framed preimage under this domain rather
+// than the identity itself, so an operand entity occupies its own key space
+// and can never coincide with a Factor, Rule, or Query identity that happens
+// to carry the same bytes.
 func operandEntityForContent(digest [32]byte) (composition.Key, bool) {
-	entity := composition.Key{ID: composition.ID(digest), Version: instanceOperandEntityVersion}
-	return entity, digest != [32]byte{} && entity.Available()
+	if digest == [32]byte{} {
+		return composition.Key{}, false
+	}
+	var writer canonical.DigestWriter
+	if writer.Reset(instanceOperandEntityDomain, instanceOperandEntityVersion) != nil || writer.Bytes(digest[:]) != nil || writer.Finish() != nil {
+		return composition.Key{}, false
+	}
+	entity := composition.Key{ID: composition.ID(writer.Sum()), Version: instanceOperandEntityVersion}
+	return entity, entity.Available()
 }

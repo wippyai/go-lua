@@ -6,7 +6,7 @@ import (
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
 	packdomain "github.com/wippyai/go-lua/analysis/domain/pack"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 )
 
@@ -113,23 +113,27 @@ func MountLink(inputs LinkInputs) (LinkInputs, MountFailure) {
 func mountAxes(inputs LinkInputs) (axisCells, MountFailure) {
 	order, orderOK := axis.DependencyOrder(registry.axes)
 	if !orderOK {
-		return axisCells{}, MountFailure{Stage: MountStageTable}
+		return nil, MountFailure{Stage: MountStageTable}
 	}
-	var cells axisCells
+	cells := newAxisCells(registry.axes)
 	neutral := inputs.neutral()
 	for _, entry := range order {
+		slot, slotOK := axisSlotForKey(entry.Key())
+		if !slotOK {
+			return nil, MountFailure{Stage: MountStageTable}
+		}
 		scoped, failedAxis, scopedOK := neutral.install(dependencyCells(entry, cells))
 		if !scopedOK {
-			return axisCells{}, MountFailure{Stage: MountStageAdopt, Axis: failedAxis}
+			return nil, MountFailure{Stage: MountStageAdopt, Axis: failedAxis}
 		}
 		authority, rejection, ok := entry.Mount(scoped)
 		if !ok {
-			return axisCells{}, MountFailure{Stage: MountStageAxis, Axis: DiagnosticAxis(entry.Principal()), reason: rejection}
+			return nil, MountFailure{Stage: MountStageAxis, Axis: DiagnosticAxis(slot), reason: rejection}
 		}
 		if !entry.MountDeclared() {
 			continue
 		}
-		cells[entry.Principal()] = authority
+		cells[slot] = authority
 	}
 	return cells, MountFailure{}
 }
@@ -139,92 +143,118 @@ func mountAxes(inputs LinkInputs) (axisCells, MountFailure) {
 // is the authority on what an absent peer means, and it states that in its own
 // rejection evidence.
 func dependencyCells(entry *axisTemplate, sealed axisCells) axisCells {
-	var scoped axisCells
+	scoped := newAxisCells(registry.axes)
 	for index := 0; index < entry.DependencyCount(); index++ {
 		key, keyOK := entry.DependencyAt(index)
 		if !keyOK {
 			continue
 		}
-		for _, peer := range registry.axes {
-			if peer.Key() != key {
-				continue
-			}
-			scoped[peer.Principal()] = sealed[peer.Principal()]
+		slot, slotOK := axisSlotForKey(key)
+		if !slotOK || slot >= len(sealed) {
+			continue
 		}
+		scoped[slot] = sealed[slot]
 	}
 	return scoped
 }
 
-// axisAdopters is the Link input record's typed instantiation table: one
-// adopter per axis that seals its own authority, keyed by that axis's writer
-// principal. An adopter recovers the authority at the exact type its owner
-// sealed it as and writes it to the record's own field; it restates no part of
-// the mount itself.
+// axisAdopter recovers one sealed authority at the exact type its owner sealed
+// it as and writes it to the Link input record's own field. It restates no part
+// of the mount itself.
+type axisAdopter func(LinkInputs, axis.Cell) (LinkInputs, bool)
+
+// axisAdopterFor is the Link input record's typed instantiation table: one
+// adopter per axis that seals its own authority, named by that axis's declared
+// key.
 //
-// The table's keys are the mount phase's coverage law: an axis that declares a
-// mount and has no adopter here could never reach the binding transaction, and
-// an adopter for an axis that declares no mount would install an authority
-// nobody sealed. The surface's own law states both.
-var axisAdopters = map[programartifact.RuleOutputKind]func(LinkInputs, axis.Cell) (LinkInputs, bool){
-	programartifact.RuleOutputValue: func(inputs LinkInputs, cell axis.Cell) (LinkInputs, bool) {
-		schema, ok := axis.Payload[*valuedomain.Schema](cell)
-		if !ok || schema == nil {
-			return LinkInputs{}, false
+// The table's membership is the mount phase's coverage law: an axis that
+// declares a mount and has no adopter here could never reach the binding
+// transaction, and an adopter for an axis that declares no mount would install
+// an authority nobody sealed. The surface's own law states both. The mount path
+// itself reads the dense slot-indexed projection the seal builds from this
+// table, so no lookup on that path is a map.
+func axisAdopterFor(key schema.Key) (axisAdopter, bool) {
+	switch key {
+	case axisKeyValue:
+		return func(inputs LinkInputs, cell axis.Cell) (LinkInputs, bool) {
+			schema, ok := axis.Payload[*valuedomain.Schema](cell)
+			if !ok || schema == nil {
+				return LinkInputs{}, false
+			}
+			inputs.ValueSchema = schema
+			return inputs, true
+		}, true
+	case axisKeyHeap:
+		return func(inputs LinkInputs, cell axis.Cell) (LinkInputs, bool) {
+			schema, ok := axis.Payload[heapdomain.Schema](cell)
+			if !ok || !schema.Valid() {
+				return LinkInputs{}, false
+			}
+			inputs.HeapSchema = schema
+			return inputs, true
+		}, true
+	case axisKeyPack:
+		return func(inputs LinkInputs, cell axis.Cell) (LinkInputs, bool) {
+			schema, ok := axis.Payload[*packdomain.Schema](cell)
+			if !ok || schema == nil {
+				return LinkInputs{}, false
+			}
+			inputs.PackSchema = schema
+			return inputs, true
+		}, true
+	case axisKeyCall:
+		return func(inputs LinkInputs, cell axis.Cell) (LinkInputs, bool) {
+			algebra, ok := axis.Payload[*calldomain.Algebra](cell)
+			if !ok || algebra == nil || !algebra.Valid() {
+				return LinkInputs{}, false
+			}
+			inputs.CallAlgebra = algebra
+			return inputs, true
+		}, true
+	case axisKeyEffect:
+		return func(inputs LinkInputs, cell axis.Cell) (LinkInputs, bool) {
+			algebra, ok := axis.Payload[*effectfactor.Algebra](cell)
+			if !ok || algebra == nil || !algebra.Valid() {
+				return LinkInputs{}, false
+			}
+			inputs.EffectAlgebra = algebra
+			return inputs, true
+		}, true
+	default:
+		return nil, false
+	}
+}
+
+// axisAdopterTable projects the authored adopters onto the axis slots of one
+// inventory. Slot zero names no axis, so the row count is one more than the
+// inventory size and an axis with no adopter leaves its own row absent.
+func axisAdopterTable(entries []*axisTemplate) []axisAdopter {
+	adopters := make([]axisAdopter, len(entries)+1)
+	for position, entry := range entries {
+		adopter, declared := axisAdopterFor(entry.Key())
+		if !declared {
+			continue
 		}
-		inputs.ValueSchema = schema
-		return inputs, true
-	},
-	programartifact.RuleOutputHeap: func(inputs LinkInputs, cell axis.Cell) (LinkInputs, bool) {
-		schema, ok := axis.Payload[heapdomain.Schema](cell)
-		if !ok || !schema.Valid() {
-			return LinkInputs{}, false
-		}
-		inputs.HeapSchema = schema
-		return inputs, true
-	},
-	programartifact.RuleOutputPack: func(inputs LinkInputs, cell axis.Cell) (LinkInputs, bool) {
-		schema, ok := axis.Payload[*packdomain.Schema](cell)
-		if !ok || schema == nil {
-			return LinkInputs{}, false
-		}
-		inputs.PackSchema = schema
-		return inputs, true
-	},
-	programartifact.RuleOutputCall: func(inputs LinkInputs, cell axis.Cell) (LinkInputs, bool) {
-		algebra, ok := axis.Payload[*calldomain.Algebra](cell)
-		if !ok || algebra == nil || !algebra.Valid() {
-			return LinkInputs{}, false
-		}
-		inputs.CallAlgebra = algebra
-		return inputs, true
-	},
-	programartifact.RuleOutputEffect: func(inputs LinkInputs, cell axis.Cell) (LinkInputs, bool) {
-		algebra, ok := axis.Payload[*effectfactor.Algebra](cell)
-		if !ok || algebra == nil || !algebra.Valid() {
-			return LinkInputs{}, false
-		}
-		inputs.EffectAlgebra = algebra
-		return inputs, true
-	},
+		adopters[position+1] = adopter
+	}
+	return adopters
 }
 
 // install writes each supplied authority into the record through its own axis's
 // adopter, in the sealed table's catalog order. It names no domain, and it
 // installs nothing for an axis that supplied no cell.
 func (inputs LinkInputs) install(cells axisCells) (LinkInputs, DiagnosticAxis, bool) {
-	for _, entry := range registry.axes {
-		principal := entry.Principal()
-		cell := cells[principal]
+	for slot := 1; slot < len(cells); slot++ {
+		cell := cells[slot]
 		if !cell.Available() {
 			continue
 		}
-		adopter, declared := axisAdopters[principal]
-		if !declared {
-			return LinkInputs{}, DiagnosticAxis(principal), false
+		if slot >= len(registry.axisAdopters) || registry.axisAdopters[slot] == nil {
+			return LinkInputs{}, DiagnosticAxis(slot), false
 		}
-		adopted, ok := adopter(inputs, cell)
+		adopted, ok := registry.axisAdopters[slot](inputs, cell)
 		if !ok {
-			return LinkInputs{}, DiagnosticAxis(principal), false
+			return LinkInputs{}, DiagnosticAxis(slot), false
 		}
 		inputs = adopted
 	}
@@ -236,10 +266,13 @@ func (inputs LinkInputs) install(cells axisCells) (LinkInputs, DiagnosticAxis, b
 // owns its authority and sealed none leaves the record incomplete, and the
 // phase says so at that axis.
 func (inputs LinkInputs) adopt(cells axisCells) (LinkInputs, DiagnosticAxis, bool) {
-	for _, entry := range registry.axes {
-		principal := entry.Principal()
-		if _, declared := axisAdopters[principal]; declared && entry.MountDeclared() && !cells[principal].Available() {
-			return LinkInputs{}, DiagnosticAxis(principal), false
+	for position, entry := range registry.axes {
+		slot := position + 1
+		if slot >= len(registry.axisAdopters) || registry.axisAdopters[slot] == nil {
+			continue
+		}
+		if entry.MountDeclared() && (slot >= len(cells) || !cells[slot].Available()) {
+			return LinkInputs{}, DiagnosticAxis(slot), false
 		}
 	}
 	return inputs.install(cells)

@@ -6,22 +6,20 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
-	"github.com/wippyai/go-lua/analysis/schema/rule"
-	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
 
 const ABIVersion uint64 = programartifact.GrammarABIVersion
 
 type catalog struct {
 	schema *engine.Schema
-	// axisFragments holds each axis's opaque cold fragment at its writer
-	// principal. The table is the only authority that reads it, and it hands
-	// one fragment back only to the axis that produced it.
+	// axisFragments holds each axis's opaque cold fragment at its slot. The
+	// table is the only authority that reads it, and it hands one fragment
+	// back only to the axis that produced it.
 	axisFragments axisCells
-	// ruleFragments holds each rule's opaque cold fragment at its role. The
+	// ruleFragments holds each rule's opaque cold fragment at its slot. The
 	// table is the only authority that reads it, and it hands one fragment
 	// back only to the rule that produced it.
-	ruleFragments [ruleRoleLimit]rule.Cell
+	ruleFragments ruleCells
 	queries       QueryViews
 }
 
@@ -66,20 +64,22 @@ func Global() (Compilation, bool) {
 }
 
 func build() (Compilation, bool) {
-	v, ok := vocabulary.New()
-	if !ok {
-		return Compilation{}, false
-	}
 	// The declaration table seals before any schema slot exists, so a rule
 	// inventory that violates its own laws never reaches the schema builder.
 	if _, failure := Table(); failure.Available() {
+		return Compilation{}, false
+	}
+	// The sealed table resolved every declared role once; the passes below read
+	// that resolution rather than deriving identities of their own.
+	roles, ok := SemanticRoles()
+	if !ok {
 		return Compilation{}, false
 	}
 	builder := engine.NewSchema()
 	// Every axis's cold shape is recorded by one pass over the sealed table,
 	// before the rule pass: a rule declares against the principals the axis
 	// pass produces.
-	axisFragments, _, ok := declareAxes(builder, v)
+	axisFragments, _, ok := declareAxes(builder, roles)
 	if !ok {
 		return Compilation{}, false
 	}
@@ -89,11 +89,11 @@ func build() (Compilation, bool) {
 	}
 	// Every rule's cold shape is recorded by one pass over the sealed table,
 	// in the table's canonical order.
-	fragments, _, ok := declareRules(builder, v, owners)
+	fragments, _, ok := declareRules(builder, roles, owners)
 	if !ok {
 		return Compilation{}, false
 	}
-	queries, ok := declareQueries(builder, v, owners)
+	queries, ok := declareQueries(builder, roles, owners)
 	if !ok {
 		return Compilation{}, false
 	}

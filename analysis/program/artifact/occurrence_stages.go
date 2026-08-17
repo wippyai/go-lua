@@ -241,34 +241,19 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 		stageFor[base] = sequence
 	}
 
-	// The parent issues one commit route per write-shaped occurrence, recorded
-	// by recordOccurrencePredecessor while the Program proof is live. That set
-	// is the exact predecessor-boundary fact, so a commit route keeps its
-	// boundary regardless of the cyclic region it was issued inside.
-	commitRoutes := make(map[identity.ContentID]struct{}, len(compiler.occurrenceSpans))
-	for _, geometry := range compiler.occurrenceSpans {
-		if geometry.route.Available() {
-			commitRoutes[geometry.route] = struct{}{}
-		}
-	}
-
 	// Ordinary Local/Call stages replace their base's outgoing route source.
 	// There is no route-local continuation overlay here: an unproved control
 	// bridge must never be replayed through a shared base point.
 	originalCount := len(compiler.environment)
 	for index := 0; index < originalCount; index++ {
 		edge := &compiler.environment[index]
-		// A same-point route stays base -> base when it is proved not to be a
-		// downstream control successor: the parent recorded it as a write
-		// commit boundary, or it lies outside every cyclic region, where no
-		// route can be a back edge. Either way the rule reads the pre-write
-		// environment instead of its own Local output. A Mu/reset witness is a
-		// proved recurrence, so such a route keeps the staged source.
+		// A Mu or reset witness is the sole proof that a same-point route is a
+		// downstream control successor. Without one the route keeps its base
+		// source, so the rule reads the pre-write environment instead of its
+		// own Local output; staging the source would merge stage back into
+		// base and fabricate a recurrence the parent never issued.
 		if edge.from == edge.to && !edge.hasMu && !edge.hasReset {
-			_, commit := commitRoutes[edge.route]
-			if commit || !edge.component.Available() {
-				continue
-			}
+			continue
 		}
 		if exit := stageExit[edge.from]; exit.Available() {
 			edge.from = exit

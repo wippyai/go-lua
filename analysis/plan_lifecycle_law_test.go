@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/wippyai/go-lua/analysis/domain/composite"
-	"github.com/wippyai/go-lua/analysis/library/lualib/targetprofile"
+	profile "github.com/wippyai/go-lua/analysis/library/lualib/targetprofile"
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/link"
 )
@@ -231,8 +231,8 @@ return shared_template_probe(43)`
 	if leftMount.artifact == nil || leftMount.artifact != rightMount.artifact || leftMount.template == nil || leftMount.template != rightMount.template || leftMount.roles == nil || leftMount.roles != rightMount.roles {
 		t.Fatal("equal Programs in independent Links did not share one content-addressed template")
 	}
-	if leftMount.artifact.FunctionBoundaryCount() == 0 || leftMount.template.FunctionCount() != leftMount.artifact.FunctionBoundaryCount() {
-		t.Fatalf("shared template function interfaces = %d, artifact %d", leftMount.template.FunctionCount(), leftMount.artifact.FunctionBoundaryCount())
+	if leftMount.artifact.FunctionBoundaryCount() == 0 {
+		t.Fatalf("shared artifact function interfaces = %d", leftMount.artifact.FunctionBoundaryCount())
 	}
 	if left.state.graph != nil || right.state.graph != nil || left.state.queryPlan != nil || right.state.queryPlan != nil {
 		t.Fatal("Compile instantiated runtime topology before Solve ownership")
@@ -249,54 +249,44 @@ return shared_template_probe(43)`
 	if _, replayed := right.state.instantiateRuntimeTopology(); !replayed || right.state.graph != rightGraph {
 		t.Fatal("repeated Solve boundary rematerialized the right runtime topology")
 	}
-	if left.state.graph == nil || right.state.graph == nil || left.state.graph.MountedFunctionCount() != leftMount.template.FunctionCount() || right.state.graph.MountedFunctionCount() != rightMount.template.FunctionCount() {
-		t.Fatal("released graph did not retain the compact mounted function directory")
+	if left.state.graph == nil || right.state.graph == nil {
+		t.Fatal("Solve boundary did not retain the runtime topology")
 	}
-	mountedCaptures, mountedVarargs := 0, 0
-	for index := 0; index < left.state.graph.MountedFunctionCount(); index++ {
-		leftFunction, leftOK := left.state.graph.MountedFunctionAt(index)
-		rightFunction, rightOK := right.state.graph.MountedFunctionAt(index)
+	// The function declaration interface is owned by program/artifact. Both
+	// Links resolve it through the one shared content-addressed Artifact, so
+	// the interface outlives every Link-local release/replay.
+	if leftMount.artifact != rightMount.artifact || leftMount.artifact.FunctionBoundaryCount() != rightMount.artifact.FunctionBoundaryCount() {
+		t.Fatal("independent Links did not share one function declaration authority")
+	}
+	programCaptures, programVarargs := 0, 0
+	for index := 0; index < leftMount.artifact.FunctionBoundaryCount(); index++ {
 		reusable, reusableOK := leftMount.artifact.FunctionBoundaryAt(index)
-		if !leftOK || !rightOK || !reusableOK || leftFunction.ReusableID() != reusable.ID() || rightFunction.ReusableID() != reusable.ID() ||
-			leftFunction.BodyID() != reusable.BodyID() || leftFunction.EntryID() != reusable.EntryID() || leftFunction.FormalCount() != reusable.FormalCount() || leftFunction.OutcomeCount() != reusable.OutcomeCount() {
-			t.Fatalf("mounted function interface[%d] did not survive release/replay", index)
+		if !reusableOK || !reusable.Available() || !reusable.ID().Available() || !reusable.BodyID().Available() || !reusable.EntryID().Available() || reusable.OutcomeCount() == 0 {
+			t.Fatalf("function interface[%d] is incomplete", index)
 		}
-		for position := 0; position < leftFunction.FormalCount(); position++ {
-			leftPort, leftPortOK := leftFunction.FormalAt(position)
-			rightPort, rightPortOK := rightFunction.FormalAt(position)
-			programPort, programPortOK := reusable.FormalAt(position)
-			if !leftPortOK || !rightPortOK || !programPortOK || leftPort.ID() != programPort.ID() || rightPort.ID() != programPort.ID() ||
-				leftPort.CellID() != programPort.CellID() || leftPort.StorageCellID() != programPort.StorageCellID() {
-				t.Fatalf("mounted function formal[%d,%d] lost reusable identity", index, position)
+		for position := 0; position < reusable.FormalCount(); position++ {
+			port, portOK := reusable.FormalAt(position)
+			if !portOK || !port.ID().Available() || !port.CellID().Available() || !port.StorageCellID().Available() {
+				t.Fatalf("function formal[%d,%d] is incomplete", index, position)
 			}
 		}
-		leftVararg, leftVarargOK := leftFunction.Vararg()
-		rightVararg, rightVarargOK := rightFunction.Vararg()
-		programVararg, programVarargOK := reusable.Vararg()
-		if leftVarargOK != programVarargOK || rightVarargOK != programVarargOK || programVarargOK &&
-			(leftVararg.ID() != programVararg.ID() || rightVararg.ID() != programVararg.ID() || leftVararg.CellID() != programVararg.CellID()) {
-			t.Fatalf("mounted function vararg[%d] lost reusable identity", index)
-		}
-		if programVarargOK {
-			mountedVarargs++
-		}
-		if leftFunction.CaptureCount() != reusable.CaptureCount() || rightFunction.CaptureCount() != reusable.CaptureCount() {
-			t.Fatalf("mounted function capture count[%d] diverged", index)
-		}
-		for position := 0; position < leftFunction.CaptureCount(); position++ {
-			leftCapture, leftCaptureOK := leftFunction.CaptureAt(position)
-			rightCapture, rightCaptureOK := rightFunction.CaptureAt(position)
-			programCapture, programCaptureOK := reusable.CaptureAt(position)
-			if !leftCaptureOK || !rightCaptureOK || !programCaptureOK || leftCapture.ID() != programCapture.ID() || rightCapture.ID() != programCapture.ID() ||
-				leftCapture.InnerCellID() != programCapture.InnerCellID() || leftCapture.OuterCellID() != programCapture.OuterCellID() ||
-				leftCapture.InnerBodyID() != programCapture.InnerBodyID() || leftCapture.OuterBodyID() != programCapture.OuterBodyID() {
-				t.Fatalf("mounted function capture[%d,%d] lost reusable direction", index, position)
+		if vararg, varargOK := reusable.Vararg(); varargOK {
+			if !vararg.ID().Available() || !vararg.CellID().Available() {
+				t.Fatalf("function vararg[%d] is incomplete", index)
 			}
-			mountedCaptures++
+			programVarargs++
+		}
+		for position := 0; position < reusable.CaptureCount(); position++ {
+			capture, captureOK := reusable.CaptureAt(position)
+			if !captureOK || !capture.ID().Available() || capture.InnerCellID() == capture.OuterCellID() ||
+				!capture.InnerBodyID().Available() || !capture.OuterBodyID().Available() || capture.InnerBodyID() == capture.OuterBodyID() {
+				t.Fatalf("function capture[%d,%d] lost reusable direction", index, position)
+			}
+			programCaptures++
 		}
 	}
-	if mountedCaptures == 0 || mountedVarargs == 0 {
-		t.Fatalf("mounted interface fixture missed capture/vararg rows: %d/%d", mountedCaptures, mountedVarargs)
+	if programCaptures == 0 || programVarargs == 0 {
+		t.Fatalf("function interface fixture missed capture/vararg rows: %d/%d", programCaptures, programVarargs)
 	}
 	if left.state.binding == nil || right.state.binding == nil || left.state.binding == right.state.binding {
 		t.Fatal("independent Links aliased the Link-local binding")

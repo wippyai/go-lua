@@ -1,8 +1,9 @@
 package target
 
 import (
-	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
+
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
@@ -83,7 +84,7 @@ func admissionTailClassOperation(name string, class schematype.Type) OperationSp
 		Subedges: []SubedgeSpec{{
 			Role:      1,
 			Family:    SubedgeFamilyLength,
-			Admission: OrdinaryCallable,
+			Admission: schematype.CallableAdmissionOrdinary,
 			Arguments: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed},
 			ArgumentOrigins: []ArgumentOrigin{{
 				Segment: ArgumentFixed, Kind: ArgumentSourceRule,

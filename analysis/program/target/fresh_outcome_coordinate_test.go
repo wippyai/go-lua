@@ -1,8 +1,9 @@
 package target
 
 import (
-	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
+
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
@@ -20,7 +21,7 @@ func TestFreshOutcomeOrderingRemapsSuspensionAndResumeCoordinates(t *testing.T) 
 			// The Fresh Table case is source ordinal zero but sorts after the
 			// otherwise-identical no-fresh case.
 			Outcomes: []OutcomeSpec{
-				{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}, FreshResults: []FreshResultSpec{{Result: 0, Kind: FreshTable}}},
+				{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}, FreshResults: []FreshResultSpec{{Result: 0, Kind: schematype.FreshClassTable}}},
 				{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}},
 				{Kind: flowkind.OutcomeYield, Values: ValuesSpec{Tail: ValuesClosed}},
 			},
@@ -32,7 +33,7 @@ func TestFreshOutcomeOrderingRemapsSuspensionAndResumeCoordinates(t *testing.T) 
 			ValuesVars: 1,
 			Input:      ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesVariable, Var: 0},
 			Outcomes: []OutcomeSpec{
-				{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}, FreshResults: []FreshResultSpec{{Result: 0, Kind: FreshThread}}},
+				{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}, FreshResults: []FreshResultSpec{{Result: 0, Kind: schematype.FreshClassThread}}},
 				{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}},
 			},
 			Resumes: []ResumeSpec{{Source: ResumeSourceValueFormal, Carrier: 0, Arguments: callbackTail(0), Outcomes: resumeMappings}},
@@ -43,13 +44,13 @@ func TestFreshOutcomeOrderingRemapsSuspensionAndResumeCoordinates(t *testing.T) 
 			ValuesVars: 7,
 			Input:      ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesVariable, Var: 0},
 			Callbacks: []CallbackSpec{{
-				Function: InputSource{Kind: InputSourceValueFormal}, Admission: OrdinaryCallable, Arguments: callbackTail(1),
+				Function: InputSource{Kind: InputSourceValueFormal}, Admission: schematype.CallableAdmissionOrdinary, Arguments: callbackTail(1),
 				Outcomes: callbackOutcomes(2, 3, 4, 5, 6), Lifecycle: CallbackRetainedRequiredOnce,
 				Effects: RowSpec{Tail: RowClosed},
 			}},
 			Outcomes: []OutcomeSpec{
 				{Kind: flowkind.OutcomeYield, Values: ValuesSpec{Tail: ValuesClosed}},
-				{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}, FreshResults: []FreshResultSpec{{Result: 0, Kind: FreshTable}}},
+				{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}, FreshResults: []FreshResultSpec{{Result: 0, Kind: schematype.FreshClassTable}}},
 				{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesClosed}},
 				{Kind: flowkind.OutcomeThrow, Values: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}},
 			},
@@ -70,8 +71,8 @@ func TestFreshOutcomeOrderingRemapsSuspensionAndResumeCoordinates(t *testing.T) 
 	if kind, _, found := contract.OutcomeAt(suspend, int(yield)); !found || kind != flowkind.OutcomeYield {
 		t.Fatalf("suspension yield = %d/%d/%v", yield, kind, found)
 	}
-	if _, kind, _, found := contract.FreshResultForResult(suspend, int(reentry), 0); !found || kind != FreshTable {
-		t.Fatalf("suspension reentry = %d lacks remapped FreshTable case", reentry)
+	if _, kind, _, found := contract.FreshResultForResult(suspend, int(reentry), 0); !found || kind != schematype.FreshClassTable {
+		t.Fatalf("suspension reentry = %d lacks remapped schematype.FreshClassTable case", reentry)
 	}
 
 	resume, _ := contract.Lookup(BindingSpec{Namespace: BindingBuiltin, Member: []string{"fresh-resume"}})
@@ -84,8 +85,8 @@ func TestFreshOutcomeOrderingRemapsSuspensionAndResumeCoordinates(t *testing.T) 
 		if !found {
 			t.Fatalf("resume mapping %d missing", index)
 		}
-		if _, kind, _, fresh := contract.FreshResultForResult(resume, int(outcome), 0); !fresh || kind != FreshThread {
-			t.Fatalf("resume mapping %d = outcome %d without remapped FreshThread case", index, outcome)
+		if _, kind, _, fresh := contract.FreshResultForResult(resume, int(outcome), 0); !fresh || kind != schematype.FreshClassThread {
+			t.Fatalf("resume mapping %d = outcome %d without remapped schematype.FreshClassThread case", index, outcome)
 		}
 	}
 

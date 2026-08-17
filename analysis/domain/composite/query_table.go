@@ -29,29 +29,39 @@ const (
 // summary composes because the summary fold is coordinatewise, and the effect
 // family declares no split at all, so its obligation is the exact read it is
 // answered by.
-func queryRegistrationSpecs(bundle vocabulary.Bundle) []query.RegistrationSpec {
+func queryRegistrationSpecs(roles vocabulary.Roles) ([]query.RegistrationSpec, bool) {
+	valueCodec, valueCodecOK := roles.Key("semantic/query-result/value-summary")
+	valueFold, valueFoldOK := roles.Key("semantic/factor/value/summary-coordinatewise")
+	effectCodec, effectCodecOK := roles.Key("semantic/query-result/effect-exact")
+	effectQuery, effectQueryOK := roles.Key("semantic/query/effect-exact")
+	if !valueCodecOK || !valueFoldOK || !effectCodecOK || !effectQueryOK {
+		return nil, false
+	}
 	return []query.RegistrationSpec{
 		{
 			Family:   QueryFamilyValueSummary,
-			Codec:    identity.ContentID(bundle.ValueCodec.Digest()),
+			Codec:    identity.ContentID(valueCodec.Digest()),
 			Fold:     query.FoldDistributive,
-			Contract: identity.ContentID(bundle.ValueSummaryFold.Digest()),
+			Contract: identity.ContentID(valueFold.Digest()),
 			Subjects: []schema.Key{valueAxis},
 		},
 		{
 			Family:   QueryFamilyEffectExact,
-			Codec:    identity.ContentID(bundle.EffectCodec.Digest()),
+			Codec:    identity.ContentID(effectCodec.Digest()),
 			Fold:     query.FoldGeneral,
-			Contract: identity.ContentID(bundle.EffectQuery.Digest()),
+			Contract: identity.ContentID(effectQuery.Digest()),
 			Subjects: []schema.Key{effectAxis},
 		},
-	}
+	}, true
 }
 
 // queryRegistrations admits the authored inventory. A rejected row leaves the
 // table unavailable rather than half declared.
-func queryRegistrations(bundle vocabulary.Bundle) ([]*query.Registration, bool) {
-	specs := queryRegistrationSpecs(bundle)
+func queryRegistrations(roles vocabulary.Roles) ([]*query.Registration, bool) {
+	specs, specsOK := queryRegistrationSpecs(roles)
+	if !specsOK {
+		return nil, false
+	}
 	registrations := make([]*query.Registration, 0, len(specs))
 	for _, spec := range specs {
 		registration, ok := query.NewRegistration(spec)

@@ -12,10 +12,11 @@ import (
 )
 
 // identityVersion changes whenever retained equation identity changes.  This
-// version replaces the former conflated point and rule-instance identity with the one
-// topology-owned sealed Batch of Site/Occurrence/Operand capabilities, and
-// makes every input retain its complete boundary transport law.
-const identityVersion = 16
+// version separates the two surface coordinate spaces: a surface preimage now
+// carries its space tag ahead of either a declared ordinal or a full-width
+// content identity, so a summary or anchored coordinate no longer reaches
+// identity through a truncated ordinal.
+const identityVersion = 17
 
 // RuleRef and PointRef name rows in one transient Builder input only. They
 // are intentionally not semantic identities and never survive compilation.
@@ -371,7 +372,6 @@ const (
 	SurfaceReadSummary
 	SurfaceReadSelect
 	SurfaceWriteExact
-	SurfaceWriteSelect
 	SurfaceWriteRoute
 )
 
@@ -391,24 +391,89 @@ const (
 	TargetModeWeak
 )
 
+// A surface coordinate lives in exactly one of two disjoint spaces. Local is
+// an ordinal space: a one-based coordinate declared by the owner of the
+// Factor or the Query projection. Content is a digest space: the full-width
+// content identity of a caller-supplied vector or of an occurrence-anchored
+// mount, for surfaces whose coordinate is not a single declared ordinal.
+// Exactly one of the two is populated, so an ordinal coordinate and a content
+// coordinate can never denote the same surface, and a content coordinate
+// keeps its full 256-bit collision resistance.
 type Surface struct {
 	Factor     composition.Key
 	Form       SurfaceForm
 	Local      uint64
+	Content    [32]byte
 	Semantic   composition.Key
 	Normalizer composition.Key
 	Mode       TargetMode
 }
 
+// surfaceLocalSpace tags which coordinate space a surface preimage carries.
+// The tag precedes the payload so an ordinal coordinate and a content
+// coordinate never share a preimage.
+type surfaceLocalSpace uint8
+
+const (
+	surfaceLocalOrdinal surfaceLocalSpace = 1
+	surfaceLocalContent surfaceLocalSpace = 2
+)
+
+var emptySurfaceContent [32]byte
+
+// LocalSpace reports which coordinate space the surface populates. A surface
+// that populates both or neither has no coordinate.
+func (surface Surface) LocalSpace() (surfaceLocalSpace, bool) {
+	ordinal := surface.Local != 0
+	content := surface.Content != emptySurfaceContent
+	switch {
+	case ordinal && !content:
+		return surfaceLocalOrdinal, true
+	case content && !ordinal:
+		return surfaceLocalContent, true
+	default:
+		return 0, false
+	}
+}
+
+// LocalAvailable reports whether the surface names a coordinate in exactly one
+// of the two spaces.
+func (surface Surface) LocalAvailable() bool {
+	_, ok := surface.LocalSpace()
+	return ok
+}
+
+// OrdinalLocal returns the one-based declared coordinate of an ordinal-space
+// surface.
+func (surface Surface) OrdinalLocal() (uint64, bool) {
+	if space, ok := surface.LocalSpace(); !ok || space != surfaceLocalOrdinal {
+		return 0, false
+	}
+	return surface.Local, true
+}
+
+// ContentLocal returns the full-width content identity of a content-space
+// surface.
+func (surface Surface) ContentLocal() ([32]byte, bool) {
+	if space, ok := surface.LocalSpace(); !ok || space != surfaceLocalContent {
+		return emptySurfaceContent, false
+	}
+	return surface.Content, true
+}
+
 func (surface Surface) Available() bool {
-	if !surface.Factor.Available() || surface.Local == 0 {
+	space, spaceOK := surface.LocalSpace()
+	if !surface.Factor.Available() || !spaceOK {
 		return false
 	}
 	switch surface.Form {
-	case SurfaceReadExact, SurfaceReadSummary, SurfaceReadSelect, SurfaceWriteSelect, SurfaceWriteRoute:
+	case SurfaceReadExact:
+		// A declared Factor coordinate is always ordinal.
+		return surface.Mode == TargetModeNone && space == surfaceLocalOrdinal
+	case SurfaceReadSummary, SurfaceReadSelect, SurfaceWriteRoute:
 		return surface.Mode == TargetModeNone
 	case SurfaceWriteExact:
-		return surface.Mode == TargetModeStrong || surface.Mode == TargetModeWeak
+		return (surface.Mode == TargetModeStrong || surface.Mode == TargetModeWeak) && space == surfaceLocalOrdinal
 	default:
 		return false
 	}
@@ -434,24 +499,12 @@ type ResolvedRead struct {
 // Factor and the index fixes its exact input source.
 type ResolvedCarry struct{ Index uint64 }
 
-// CandidateRelation seals one prior staged-write relation for a resolved
-// selector target. Matches is indexed by the current candidate ordinal; each
-// inner vector is the sorted unique set of matching prior candidate ordinals.
-// Read dependencies intentionally have no relation row.
-type CandidateRelation struct {
-	Prior   uint64
-	Matches [][]uint64
-}
-
 type ResolvedWrite struct {
 	Index   uint64
 	Surface Surface
 	// Route is the one-based ReadSelect ordinal consumed by a route write.
-	// It is zero for exact and static-selector writes.
-	Route            uint64
-	Candidates       []uint64
-	TargetCandidates []Surface
-	Relations        []CandidateRelation
+	// It is zero for an exact write.
+	Route uint64
 }
 type ResolvedSupport struct {
 	Index   uint64
@@ -575,17 +628,7 @@ func (receipt RuleSurfaceSourceReceipt) PruneAt(index uint64) (ResolvedPrune, bo
 }
 
 func cloneResolvedWrites(rows []ResolvedWrite) []ResolvedWrite {
-	result := make([]ResolvedWrite, len(rows))
-	for i, row := range rows {
-		result[i] = ResolvedWrite{Index: row.Index, Surface: row.Surface, Route: row.Route, Candidates: append([]uint64(nil), row.Candidates...), TargetCandidates: append([]Surface(nil), row.TargetCandidates...), Relations: make([]CandidateRelation, len(row.Relations))}
-		for j, relation := range row.Relations {
-			result[i].Relations[j] = CandidateRelation{Prior: relation.Prior, Matches: make([][]uint64, len(relation.Matches))}
-			for k, matches := range relation.Matches {
-				result[i].Relations[j].Matches[k] = append([]uint64(nil), matches...)
-			}
-		}
-	}
-	return result
+	return append([]ResolvedWrite(nil), rows...)
 }
 
 // ValidFor authenticates the complete resolved row against the exact sealed
@@ -916,8 +959,26 @@ func writeReindex(writer *canonical.DigestWriter, reindex Reindex) bool {
 }
 
 func writeSurface(writer *canonical.DigestWriter, surface Surface) bool {
-	return writer.Uint(uint64(surface.Form)) == nil && writeKey(writer, surface.Factor) && writer.Uint(surface.Local) == nil &&
+	return writer.Uint(uint64(surface.Form)) == nil && writeKey(writer, surface.Factor) && writeSurfaceLocal(writer, surface) &&
 		writeKey(writer, surface.Semantic) && writeKey(writer, surface.Normalizer) && writer.Uint(uint64(surface.Mode)) == nil
+}
+
+// writeSurfaceLocal frames the surface coordinate under its space tag. The
+// ordinal payload is a scalar and the content payload is a length-framed byte
+// string, so the two spaces occupy disjoint preimages.
+func writeSurfaceLocal(writer *canonical.DigestWriter, surface Surface) bool {
+	space, ok := surface.LocalSpace()
+	if !ok || writer.Uint(uint64(space)) != nil {
+		return false
+	}
+	switch space {
+	case surfaceLocalOrdinal:
+		return writer.Uint(surface.Local) == nil
+	case surfaceLocalContent:
+		return writer.Bytes(surface.Content[:]) == nil
+	default:
+		return false
+	}
 }
 
 func writeStructuralSurface(writer *canonical.DigestWriter, surface StructuralSurface) bool {
@@ -953,49 +1014,8 @@ func writeWrites(writer *canonical.DigestWriter, rows []ResolvedWrite) bool {
 		return false
 	}
 	for _, row := range rows {
-		if writer.Uint(row.Index) != nil || !writeSurface(writer, row.Surface) || writer.Uint(row.Route) != nil || !writeOrdinals(writer, row.Candidates) || !writeSurfaces(writer, row.TargetCandidates) || !writeCandidateRelations(writer, row.Relations) {
+		if writer.Uint(row.Index) != nil || !writeSurface(writer, row.Surface) || writer.Uint(row.Route) != nil {
 			return false
-		}
-	}
-	return true
-}
-
-func writeSurfaces(writer *canonical.DigestWriter, values []Surface) bool {
-	if writer.Count(uint64(len(values))) != nil {
-		return false
-	}
-	for _, value := range values {
-		if !writeSurface(writer, value) {
-			return false
-		}
-	}
-	return true
-}
-
-func writeOrdinals(writer *canonical.DigestWriter, values []uint64) bool {
-	if writer.Count(uint64(len(values))) != nil {
-		return false
-	}
-	for _, value := range values {
-		if writer.Uint(value) != nil {
-			return false
-		}
-	}
-	return true
-}
-
-func writeCandidateRelations(writer *canonical.DigestWriter, values []CandidateRelation) bool {
-	if writer.Count(uint64(len(values))) != nil {
-		return false
-	}
-	for _, relation := range values {
-		if writer.Uint(relation.Prior) != nil || writer.Count(uint64(len(relation.Matches))) != nil {
-			return false
-		}
-		for _, matches := range relation.Matches {
-			if !writeOrdinals(writer, matches) {
-				return false
-			}
 		}
 	}
 	return true

@@ -1,8 +1,9 @@
 package target
 
 import (
-	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
+
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
@@ -98,7 +99,7 @@ func rowBoundarySpec(callbackRowTail RowTail, mode CallbackReleaseMode) Spec {
 			Outcomes:   []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesClosed}}},
 			Effects:    RowSpec{Occurrences: []EffectSpec{{Target: 2, ValueArgs: []ValueFormal{0}, RowArgs: []RowVar{0}}}, Tail: RowVariable, Var: 0},
 			Callbacks: []CallbackSpec{{
-				Function: InputSource{Kind: InputSourceValueFormal}, Admission: OrdinaryCallable, Arguments: callbackTail(0),
+				Function: InputSource{Kind: InputSourceValueFormal}, Admission: schematype.CallableAdmissionOrdinary, Arguments: callbackTail(0),
 				Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: CallbackRetainedOptionalOnce,
 				Effects: RowSpec{Occurrences: []EffectSpec{{Target: 2, ValueArgs: []ValueFormal{0}, RowArgs: []RowVar{0}}}, Tail: callbackRowTail, Var: 0},
 				Release: &CallbackReleaseSpec{Operation: 2, Input: 0, Outcome: 0, Mode: mode, Zero: CallbackReleaseZeroSpec{Behavior: CallbackReleaseZeroIdempotent, Outcome: 0}},

@@ -1,8 +1,9 @@
 package target
 
 import (
-	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
+
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
@@ -24,15 +25,15 @@ func TestCallbackResultsRemapWithOutcomeAndCallbackCanonicalization(t *testing.T
 	}
 	first := mustSeal(t, Spec{Operations: []OperationSpec{makeOperation(
 		[]CallbackSpec{
-			{Function: InputSource{Kind: InputSourceValueFormal, Ordinal: 1}, Admission: OrdinaryCallable, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: CallbackRetainedOptionalOnce, Effects: RowSpec{Tail: RowClosed}},
-			{Function: InputSource{Kind: InputSourceValueFormal, Ordinal: 0}, Admission: OrdinaryCallable, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: CallbackRetainedOptionalOnce, Effects: RowSpec{Tail: RowClosed}},
+			{Function: InputSource{Kind: InputSourceValueFormal, Ordinal: 1}, Admission: schematype.CallableAdmissionOrdinary, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: CallbackRetainedOptionalOnce, Effects: RowSpec{Tail: RowClosed}},
+			{Function: InputSource{Kind: InputSourceValueFormal, Ordinal: 0}, Admission: schematype.CallableAdmissionOrdinary, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: CallbackRetainedOptionalOnce, Effects: RowSpec{Tail: RowClosed}},
 		},
 		[]CallbackResultSpec{{Result: 1, Callback: 1}, {Result: 0, Callback: 2}},
 	)}})
 	second := mustSeal(t, Spec{Operations: []OperationSpec{makeOperation(
 		[]CallbackSpec{
-			{Function: InputSource{Kind: InputSourceValueFormal, Ordinal: 0}, Admission: OrdinaryCallable, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: CallbackRetainedOptionalOnce, Effects: RowSpec{Tail: RowClosed}},
-			{Function: InputSource{Kind: InputSourceValueFormal, Ordinal: 1}, Admission: OrdinaryCallable, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: CallbackRetainedOptionalOnce, Effects: RowSpec{Tail: RowClosed}},
+			{Function: InputSource{Kind: InputSourceValueFormal, Ordinal: 0}, Admission: schematype.CallableAdmissionOrdinary, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: CallbackRetainedOptionalOnce, Effects: RowSpec{Tail: RowClosed}},
+			{Function: InputSource{Kind: InputSourceValueFormal, Ordinal: 1}, Admission: schematype.CallableAdmissionOrdinary, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: CallbackRetainedOptionalOnce, Effects: RowSpec{Tail: RowClosed}},
 		},
 		[]CallbackResultSpec{{Result: 0, Callback: 1}, {Result: 1, Callback: 2}},
 	)}})
@@ -73,7 +74,7 @@ func TestCallbackResultsRejectInvalidAndDualAuthority(t *testing.T) {
 		Bindings:   []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"invalid-callback-result"}}},
 		ValuesVars: 5,
 		Input:      ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesVariable, Var: 0},
-		Callbacks:  []CallbackSpec{{Function: InputSource{Kind: InputSourceValueFormal}, Admission: OrdinaryCallable, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: CallbackRetainedOptionalOnce, Effects: RowSpec{Tail: RowClosed}}},
+		Callbacks:  []CallbackSpec{{Function: InputSource{Kind: InputSourceValueFormal}, Admission: schematype.CallableAdmissionOrdinary, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: CallbackRetainedOptionalOnce, Effects: RowSpec{Tail: RowClosed}}},
 		Outcomes:   []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}}},
 		Effects:    RowSpec{Tail: RowClosed},
 	}
@@ -118,7 +119,7 @@ func TestCallbacksRequireValueFormalInputSource(t *testing.T) {
 		}
 	}
 	contract := mustSeal(t, Spec{Operations: []OperationSpec{operation([]CallbackSpec{{
-		Function: InputSource{Kind: InputSourceValueFormal, Ordinal: 0}, Admission: OrdinaryCallable, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: CallbackRetainedOptionalOnce, Effects: RowSpec{Tail: RowClosed},
+		Function: InputSource{Kind: InputSourceValueFormal, Ordinal: 0}, Admission: schematype.CallableAdmissionOrdinary, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: CallbackRetainedOptionalOnce, Effects: RowSpec{Tail: RowClosed},
 	}})}})
 	op, ok := contract.Lookup(BindingSpec{Namespace: BindingBuiltin, Member: []string{"callback-input-source"}})
 	if !ok || contract.CallbackCount(op) != 1 {
@@ -134,7 +135,7 @@ func TestCallbacksRequireValueFormalInputSource(t *testing.T) {
 		{Kind: InputSourceAllInputs},
 	} {
 		if _, err := testSeal(&Spec{Operations: []OperationSpec{operation([]CallbackSpec{{
-			Function: source, Admission: OrdinaryCallable, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: CallbackRetainedOptionalOnce, Effects: RowSpec{Tail: RowClosed},
+			Function: source, Admission: schematype.CallableAdmissionOrdinary, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: CallbackRetainedOptionalOnce, Effects: RowSpec{Tail: RowClosed},
 		}})}}); err == nil {
 			t.Fatalf("callback accepted non-scalar source %#v", source)
 		}

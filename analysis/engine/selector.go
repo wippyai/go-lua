@@ -6,25 +6,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 )
 
-type coldWriteSelector struct {
-	write      int
-	candidates []int
-	depends    []selectorDependency
-	decide     func(SelectorContext) bool
-}
-
-type selectorDependency struct {
-	kind  dependencyKind
-	index int
-}
-
-type dependencyKind uint8
-
-const (
-	readDependency dependencyKind = iota + 1
-	writeDependency
-)
-
 // SelectorContext is the synchronous, row-local capability passed only while
 // a sealed staged locator or write selector is running. It cannot construct a
 // carrier capability, recover a key/unit, or retain a route after the call.
@@ -33,18 +14,14 @@ type SelectorContext struct {
 	call  identity.Generation
 }
 
-// selectorFrame is one current Product-row selector invocation. Read and
-// write selectors are deliberately distinct schema kinds: only write
-// selectors own a positional candidate vector, while read selectors emit
-// sparse owner-issued exact routes through routes.
+// selectorFrame is one current Product-row selector invocation. A read
+// selector emits sparse owner-issued exact routes through routes.
 type selectorFrame struct {
 	execution *ruleExecution
 	epoch     identity.Generation
 	read      stagedReadSelector
-	write     *coldWriteSelector
 	product   *productSession
 	row       int
-	current   int
 
 	// requireCurrent distinguishes output selector execution, which consumes
 	// a public Product-row capability, from staged read materialization before
@@ -53,8 +30,6 @@ type selectorFrame struct {
 	routes         selectorRouteSink
 	active         atomic.Bool
 	call           generationCell
-
-	selected func(int, int) (bool, bool)
 }
 
 // stagedReadSelector is the minimal immutable read geometry consumed by the
@@ -68,9 +43,7 @@ type stagedReadSelector interface {
 }
 
 func (frame *selectorFrame) valid() bool {
-	return frame != nil && frame.execution != nil && frame.execution.active.holds(frame.epoch) &&
-		(frame.read != nil || frame.write != nil) &&
-		(frame.read == nil || frame.write == nil) && frame.active.Load()
+	return frame != nil && frame.execution != nil && frame.execution.active.holds(frame.epoch) && frame.read != nil && frame.active.Load()
 }
 
 func (frame *selectorFrame) rowLive() bool {
@@ -89,19 +62,11 @@ func (frame *selectorFrame) poison() {
 }
 
 func runReadSelector(frame *selectorFrame, locate func(SelectorContext) bool) bool {
-	if frame == nil || frame.read == nil || frame.write != nil {
+	if frame == nil || frame.read == nil {
 		frame.poison()
 		return false
 	}
 	return runSelector(frame, locate)
-}
-
-func runWriteSelector(frame *selectorFrame, decide func(SelectorContext) bool) bool {
-	if frame == nil || frame.write == nil || frame.read != nil {
-		frame.poison()
-		return false
-	}
-	return runSelector(frame, decide)
 }
 
 // runSelector is the sole callback entry. The atomic latch rejects copied
@@ -122,21 +87,10 @@ func runSelector(frame *selectorFrame, invoke func(SelectorContext) bool) bool {
 }
 
 func (frame *selectorFrame) declaresRead(index int) bool {
-	if frame == nil {
+	if frame == nil || frame.read == nil {
 		return false
 	}
-	if frame.read != nil {
-		return frame.read.selectorDeclaresRead(index)
-	}
-	if frame.write == nil {
-		return false
-	}
-	for _, dependency := range frame.write.depends {
-		if dependency.kind == readDependency && dependency.index == index {
-			return true
-		}
-	}
-	return false
+	return frame.read.selectorDeclaresRead(index)
 }
 
 // SelectorRead returns an already-completed declared predecessor observation
@@ -306,7 +260,7 @@ func SelectorSelectionAt[Tag selectionTag, S any](context SelectorContext, selec
 
 func validSelectorSelection[Tag selectionTag, S any](context SelectorContext, selection Selection[Tag, S]) bool {
 	frame := context.frame
-	if !context.valid() || frame == nil || !frame.rowLive() || frame.read == nil || frame.write != nil ||
+	if !context.valid() || frame == nil || !frame.rowLive() || frame.read == nil ||
 		selection.session != frame.product || selection.epoch != frame.execution.epoch || selection.read < 0 || selection.read >= len(frame.product.reads) || selection.selectionID == 0 ||
 		selection.selectorSession != frame.product || selection.selectorEpoch != frame.execution.epoch ||
 		selection.selectorRow != frame.row || selection.selectorCall != context.call ||

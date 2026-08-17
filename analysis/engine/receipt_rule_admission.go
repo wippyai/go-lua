@@ -1,11 +1,11 @@
 package engine
 
 import (
-	"crypto/sha256"
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/internal/canonical"
 )
 
 // RuleOccurrenceReceipt and RuleOperandReceipt are sealed source-batch
@@ -170,10 +170,15 @@ func BeginMountedActivationRuleAdmission(assembly *ReceiptAssembly, implementati
 	if !ok {
 		return nil, false
 	}
+	semantic, semanticOK := semanticKeyFromComposition(implementation.receipt.proof.semantic)
+	family, familyOK := semanticKeyFromComposition(implementation.receipt.proof.operandFamily)
+	if !semanticOK || !familyOK {
+		return nil, false
+	}
 	return &RuleSourceTransaction{
 		assembly:   assembly,
-		semantic:   semanticKeyFromComposition(implementation.receipt.proof.semantic),
-		family:     semanticKeyFromComposition(implementation.receipt.proof.operandFamily),
+		semantic:   semantic,
+		family:     family,
 		occurrence: occurrence,
 		operand:    operand,
 	}, true
@@ -305,7 +310,8 @@ func (transaction *RuleSourceTransaction) AnchoredSelectedReadSurfaceWithFailure
 	if receipt.fence.authority != transaction.assembly.builder.inner.authority || receipt.fence.schema != transaction.assembly.builder.inner.state.schema {
 		return RuleReadSurface{}, AnchoredSelectedReadFailureOwner
 	}
-	if semanticKeyFromComposition(receipt.fence.schema.ruleSemanticAt(receipt.fence.rule)) != transaction.semantic {
+	ruleSemantic, ruleSemanticOK := semanticKeyFromComposition(receipt.fence.schema.ruleSemanticAt(receipt.fence.rule))
+	if !ruleSemanticOK || ruleSemantic != transaction.semantic {
 		return RuleReadSurface{}, AnchoredSelectedReadFailureSemantic
 	}
 	if len(dependencies) != int(receipt.dependencyCount) {
@@ -318,17 +324,20 @@ func (transaction *RuleSourceTransaction) AnchoredSelectedReadSurfaceWithFailure
 	for index, dependency := range dependencies {
 		readIndex, ok := receipt.fence.schema.ruleReadDependencyAt(receipt.fence.rule, receipt.read, uint64(index))
 		shape, shapeOK := receipt.fence.schema.ruleReadShapeAt(receipt.fence.rule, readIndex)
-		if !ok || !shapeOK || dependency.authority != receipt.fence.authority || dependency.value.Mode != equation.TargetModeNone || dependency.value.Factor != shape.Factor || dependency.value.Local == 0 || !validSelectedDependencySurface(shape, dependency.value) {
+		if !ok || !shapeOK || dependency.authority != receipt.fence.authority || dependency.value.Mode != equation.TargetModeNone || dependency.value.Factor != shape.Factor || !dependency.value.LocalAvailable() || !validSelectedDependencySurface(shape, dependency.value) {
 			return RuleReadSurface{}, AnchoredSelectedReadFailureDependencySurface
 		}
 	}
-	local := anchoredSelectedLocal(transaction.occurrence.value, transaction.operand.value, receipt)
+	content, contentOK := anchoredSelectedContent(transaction.occurrence.value, transaction.operand.value, receipt)
+	if !contentOK {
+		return RuleReadSurface{}, AnchoredSelectedReadFailureReceipt
+	}
 	for _, existing := range transaction.reads {
-		if existing.value.Factor == factor && existing.value.Form == equation.SurfaceReadSelect && existing.value.Local == local {
+		if existing.value.Factor == factor && existing.value.Form == equation.SurfaceReadSelect && existing.value.Content == content {
 			return RuleReadSurface{}, AnchoredSelectedReadFailureDuplicate
 		}
 	}
-	surface := equation.Surface{Factor: factor, Form: equation.SurfaceReadSelect, Local: local, Semantic: factor}
+	surface := equation.Surface{Factor: factor, Form: equation.SurfaceReadSelect, Content: content, Semantic: factor}
 	anchor := mountedSelectedSurfaceAnchor{assembly: transaction.assembly, occurrence: transaction.occurrence.value, operand: transaction.operand.value, rule: receipt.fence.rule, index: receipt.read, form: equation.SurfaceReadSelect}
 	if !transaction.assembly.claimMountedSelectedSurface(surface, anchor) {
 		return RuleReadSurface{}, AnchoredSelectedReadFailureClaim
@@ -340,15 +349,22 @@ func (transaction *RuleSourceTransaction) AnchoredSelectedReadSurfaceWithFailure
 // exact Ref because runtime chooses zero-or-many selected targets. Its local
 // is tied to the admitted occurrence/operand and sealed route proof.
 func (transaction *RuleSourceTransaction) AnchoredRouteWriteSurface(receipt SchemaRouteWriteReceipt) (RuleWriteSurface, bool) {
-	if transaction == nil || transaction.assembly == nil || transaction.assembly.builder == nil || transaction.assembly.builder.inner == nil || transaction.operand.assembly != transaction.assembly || transaction.occurrence.assembly != transaction.assembly || !receipt.Valid() || receipt.fence.authority == nil || receipt.fence.authority != transaction.assembly.builder.inner.authority || receipt.fence.schema != transaction.assembly.builder.inner.state.schema || semanticKeyFromComposition(receipt.fence.schema.ruleSemanticAt(receipt.fence.rule)) != transaction.semantic {
+	if transaction == nil || transaction.assembly == nil || transaction.assembly.builder == nil || transaction.assembly.builder.inner == nil || transaction.operand.assembly != transaction.assembly || transaction.occurrence.assembly != transaction.assembly || !receipt.Valid() || receipt.fence.authority == nil || receipt.fence.authority != transaction.assembly.builder.inner.authority || receipt.fence.schema != transaction.assembly.builder.inner.state.schema {
+		return RuleWriteSurface{}, false
+	}
+	ruleSemantic, ruleSemanticOK := semanticKeyFromComposition(receipt.fence.schema.ruleSemanticAt(receipt.fence.rule))
+	if !ruleSemanticOK || ruleSemantic != transaction.semantic {
 		return RuleWriteSurface{}, false
 	}
 	factor := receipt.fence.schema.factorSemanticAt(receipt.factor)
 	if !factor.Available() {
 		return RuleWriteSurface{}, false
 	}
-	local := anchoredRouteLocal(transaction.occurrence.value, transaction.operand.value, receipt)
-	surface := equation.Surface{Factor: factor, Form: equation.SurfaceWriteRoute, Local: local}
+	content, contentOK := anchoredRouteContent(transaction.occurrence.value, transaction.operand.value, receipt)
+	if !contentOK {
+		return RuleWriteSurface{}, false
+	}
+	surface := equation.Surface{Factor: factor, Form: equation.SurfaceWriteRoute, Content: content}
 	anchor := mountedSelectedSurfaceAnchor{assembly: transaction.assembly, occurrence: transaction.occurrence.value, operand: transaction.operand.value, rule: receipt.fence.rule, index: receipt.write, form: equation.SurfaceWriteRoute}
 	if !transaction.assembly.claimMountedSurface(surface, anchor) {
 		return RuleWriteSurface{}, false
@@ -435,18 +451,69 @@ func (transaction *RuleSourceTransaction) ownsSurfaceAnchor(anchor *mountedSelec
 	return ok && anchor.rule == ordinal
 }
 
-// BeginMountedRuleAdmission combines typed operand canonicalization with the
+// AdmitMountedRule owns one mounted rule's source scope. It begins the
+// admission, hands the open transaction to admit for surface placement, and
+// queues capability's finalizer, which seals the transaction and hands the
+// sealed source to issue. The transaction stays inside this scope, so an
+// admitted rule always carries its finalizer.
+func AdmitMountedRule[K ~uint32 | ~uint64, V, O any](assembly *ReceiptAssembly, implementation *RuleImplementation[K, V, O], capability RuleSlotCapability, occurrence RuleOccurrenceReceipt, operand O, admit func(*RuleSourceTransaction) bool, issue func(RuleSurfaceSourceReceipt) bool) bool {
+	return admitRuleScope(assembly, implementation, occurrence, operand, admit, issue, nil, assembly.QueueMountedRuleFinalizer, capability)
+}
+
+// AdmitMountedRuleWithFailure is AdmitMountedRule's diagnostic form: seal
+// receives the closed seal phase that rejected the queued finalizer, so an
+// owner keeps its own failure vocabulary without holding the transaction.
+func AdmitMountedRuleWithFailure[K ~uint32 | ~uint64, V, O any](assembly *ReceiptAssembly, implementation *RuleImplementation[K, V, O], capability RuleSlotCapability, occurrence RuleOccurrenceReceipt, operand O, admit func(*RuleSourceTransaction) bool, issue func(RuleSurfaceSourceReceipt) bool, seal func(RuleSourceSealFailure)) bool {
+	return admitRuleScope(assembly, implementation, occurrence, operand, admit, issue, seal, assembly.QueueMountedRuleFinalizer, capability)
+}
+
+// AdmitLinkRule is the Link-cardinality sibling of AdmitMountedRule.
+func AdmitLinkRule[K ~uint32 | ~uint64, V, O any](assembly *ReceiptAssembly, implementation *RuleImplementation[K, V, O], capability RuleSlotCapability, occurrence RuleOccurrenceReceipt, operand O, admit func(*RuleSourceTransaction) bool, issue func(RuleSurfaceSourceReceipt) bool) bool {
+	return admitRuleScope(assembly, implementation, occurrence, operand, admit, issue, nil, assembly.QueueLinkRuleFinalizer, capability)
+}
+
+// admitRuleScope is the single admission scope shared by the mounted and link
+// entries. queue selects the cardinality-specific finalizer ingress.
+func admitRuleScope[K ~uint32 | ~uint64, V, O any](assembly *ReceiptAssembly, implementation *RuleImplementation[K, V, O], occurrence RuleOccurrenceReceipt, operand O, admit func(*RuleSourceTransaction) bool, issue func(RuleSurfaceSourceReceipt) bool, seal func(RuleSourceSealFailure), queue func(RuleSlotCapability, func() bool) bool, capability RuleSlotCapability) bool {
+	if assembly == nil || admit == nil || issue == nil {
+		return false
+	}
+	transaction, ok := beginMountedRuleAdmission(assembly, implementation, occurrence, operand)
+	if !ok {
+		return false
+	}
+	if !admit(transaction) {
+		return false
+	}
+	return queue(capability, func() bool {
+		source, failure := transaction.SealWithFailure()
+		if failure != RuleSourceSealFailureNone {
+			if seal != nil {
+				seal(failure)
+			}
+			return false
+		}
+		return issue(source)
+	})
+}
+
+// beginMountedRuleAdmission combines typed operand canonicalization with the
 // exact implementation's semantic/family proof, while leaving all surfaces
 // to the domain owner.
-func BeginMountedRuleAdmission[K ~uint32 | ~uint64, V, O any](assembly *ReceiptAssembly, implementation *RuleImplementation[K, V, O], occurrence RuleOccurrenceReceipt, operand O) (*RuleSourceTransaction, bool) {
+func beginMountedRuleAdmission[K ~uint32 | ~uint64, V, O any](assembly *ReceiptAssembly, implementation *RuleImplementation[K, V, O], occurrence RuleOccurrenceReceipt, operand O) (*RuleSourceTransaction, bool) {
 	operandReceipt, ok := BeginMountedRuleOccurrence(assembly, implementation, occurrence, operand)
 	if !ok || implementation == nil || implementation.receipt.proof == nil || !occurrenceRoleOwnsSchema(occurrence, implementation.receipt.proof.schema, implementation.receipt.proof.semantic) {
 		return nil, false
 	}
+	semantic, semanticOK := semanticKeyFromComposition(implementation.receipt.proof.semantic)
+	family, familyOK := semanticKeyFromComposition(implementation.receipt.proof.operandFamily)
+	if !semanticOK || !familyOK {
+		return nil, false
+	}
 	return &RuleSourceTransaction{
 		assembly:   assembly,
-		semantic:   semanticKeyFromComposition(implementation.receipt.proof.semantic),
-		family:     semanticKeyFromComposition(implementation.receipt.proof.operandFamily),
+		semantic:   semantic,
+		family:     family,
 		occurrence: occurrence,
 		operand:    operandReceipt,
 	}, true
@@ -480,11 +547,6 @@ func AddSelectedRead[K ~uint32 | ~uint64](transaction *RuleSourceTransaction, re
 	return ok && transaction != nil && transaction.AddRead(surface)
 }
 
-func AddAnchoredSelectedRead(transaction *RuleSourceTransaction, receipt SchemaSelectedReadReceipt, dependencies []RuleReadSurface) bool {
-	surface, failure := transaction.AnchoredSelectedReadSurfaceWithFailure(receipt, dependencies)
-	return failure == AnchoredSelectedReadFailureNone && transaction.AddRead(surface)
-}
-
 func (transaction *RuleSourceTransaction) AddCarry() bool {
 	if transaction == nil || transaction.sealed {
 		return false
@@ -506,16 +568,6 @@ func (transaction *RuleSourceTransaction) AddWrite(surface RuleWriteSurface) boo
 
 func AddExactWrite[K ~uint32 | ~uint64](transaction *RuleSourceTransaction, ref Ref[K]) bool {
 	surface, ok := ExactWriteSurface(ref)
-	return ok && transaction != nil && transaction.AddWrite(surface)
-}
-
-func AddSelectorWrite[K ~uint32 | ~uint64](transaction *RuleSourceTransaction, receipt SchemaSelectWriteReceipt, ref Ref[K], targets []Ref[K], relations []SelectorRelation) bool {
-	surface, ok := SelectorWriteSurface(receipt, ref, targets, relations)
-	return ok && transaction != nil && transaction.AddWrite(surface)
-}
-
-func AddRouteWrite[K ~uint32 | ~uint64](transaction *RuleSourceTransaction, receipt SchemaRouteWriteReceipt, ref Ref[K]) bool {
-	surface, ok := RouteWriteSurface(receipt, ref)
 	return ok && transaction != nil && transaction.AddWrite(surface)
 }
 
@@ -656,7 +708,7 @@ func (assembly *ReceiptAssembly) IssueRuleSourceWithSurfacesWithFailure(semantic
 		resolved := equation.ResolvedWrite{Index: uint64(index), Surface: writes[index].value}
 		switch write.Kind {
 		case composition.WriteExact:
-			if writes[index].route != nil || writes[index].selector != nil || writes[index].value.Form != equation.SurfaceWriteExact || writes[index].value.Mode != equation.TargetModeStrong {
+			if writes[index].route != nil || writes[index].value.Form != equation.SurfaceWriteExact || writes[index].value.Mode != equation.TargetModeStrong {
 				inner.mu.Unlock()
 				return RuleSurfaceSourceReceipt{}, RuleSourceIssueFailureWrite
 			}
@@ -667,31 +719,6 @@ func (assembly *ReceiptAssembly) IssueRuleSourceWithSurfacesWithFailure(semantic
 				return RuleSurfaceSourceReceipt{}, RuleSourceIssueFailureWrite
 			}
 			resolved.Route = route.read + 1
-		case composition.WriteSelect:
-			selector := writes[index].selector
-			if selector == nil || !selector.Valid() || selector.fence.authority != inner.authority || selector.fence.schema != inner.state.schema || selector.write != uint64(index) || writes[index].value.Form != equation.SurfaceWriteSelect || writes[index].value.Mode != equation.TargetModeStrong || len(writes[index].targets) != len(write.Candidates) {
-				inner.mu.Unlock()
-				return RuleSurfaceSourceReceipt{}, RuleSourceIssueFailureWrite
-			}
-			resolved.Candidates = append([]uint64(nil), write.Candidates...)
-			resolved.TargetCandidates = append([]equation.Surface(nil), writes[index].targets...)
-			targetDependencies := make([]uint64, 0, len(write.Dependencies))
-			for _, dependency := range write.Dependencies {
-				if dependency.Target {
-					targetDependencies = append(targetDependencies, dependency.Index)
-				}
-			}
-			if len(writes[index].relations) != len(targetDependencies) {
-				inner.mu.Unlock()
-				return RuleSurfaceSourceReceipt{}, RuleSourceIssueFailureWrite
-			}
-			for relationIndex, relation := range writes[index].relations {
-				if relation.Prior != targetDependencies[relationIndex] || len(relation.Matches) != len(write.Candidates) {
-					inner.mu.Unlock()
-					return RuleSurfaceSourceReceipt{}, RuleSourceIssueFailureWrite
-				}
-			}
-			resolved.Relations = append([]equation.CandidateRelation(nil), writes[index].relations...)
 		default:
 			inner.mu.Unlock()
 			return RuleSurfaceSourceReceipt{}, RuleSourceIssueFailureWrite
@@ -706,66 +733,68 @@ func (assembly *ReceiptAssembly) IssueRuleSourceWithSurfacesWithFailure(semantic
 	return RuleSurfaceSourceReceipt{value: source, assembly: assembly}, RuleSourceIssueFailureNone
 }
 
+const (
+	mountedRuleMemberDomain     = "analysis/engine/rule-member"
+	mountedRuleActivationDomain = "analysis/engine/activation-member"
+	mountedRuleInputDomain      = "analysis/engine/rule-input"
+	mountedRuleOccurrenceDomain = "analysis/engine/rule-occurrence"
+	linkRuleOccurrenceDomain    = "analysis/engine/link-rule-occurrence"
+	linkRuleMemberDomain        = "analysis/engine/link-rule-member"
+
+	ruleSourceIdentityVersion uint64 = 3
+)
+
 func mountedRuleMemberID(role RuleSlotCapability, mount, point, occurrence identity.ContentID) identity.ContentID {
 	if !role.mounted() || !mount.Available() || !point.Available() || !occurrence.Available() {
 		return identity.ContentID{}
 	}
-	encoded := []byte("analysis/engine/rule-member/v2")
-	encoded = appendRuleSlotCapability(encoded, role)
-	encoded = append(encoded, mount[:]...)
-	encoded = append(encoded, point[:]...)
-	encoded = append(encoded, occurrence[:]...)
-	return identity.ContentID(sha256.Sum256(encoded))
+	return framedContentID(mountedRuleMemberDomain, ruleSourceIdentityVersion, func(writer *canonical.DigestWriter) bool {
+		return writeRuleSlotCapability(writer, role) && writeContentIDs(writer, mount, point, occurrence)
+	})
 }
 
 func mountedRuleActivationID(role RuleSlotCapability, mount, point, occurrence identity.ContentID) identity.ContentID {
 	if !role.mounted() || !mount.Available() || !point.Available() || !occurrence.Available() {
 		return identity.ContentID{}
 	}
-	encoded := []byte("analysis/engine/activation-member/v2")
-	encoded = appendRuleSlotCapability(encoded, role)
-	encoded = append(encoded, mount[:]...)
-	encoded = append(encoded, point[:]...)
-	encoded = append(encoded, occurrence[:]...)
-	return identity.ContentID(sha256.Sum256(encoded))
+	return framedContentID(mountedRuleActivationDomain, ruleSourceIdentityVersion, func(writer *canonical.DigestWriter) bool {
+		return writeRuleSlotCapability(writer, role) && writeContentIDs(writer, mount, point, occurrence)
+	})
 }
 
 func mountedRuleInputKey(member, input identity.ContentID, slot uint64) (composition.Key, bool) {
 	if !member.Available() || !input.Available() {
 		return composition.Key{}, false
 	}
-	encoded := []byte("analysis/engine/rule-input/v1")
-	encoded = append(encoded, member[:]...)
-	encoded = append(encoded, input[:]...)
-	for shift := uint(56); ; shift -= 8 {
-		encoded = append(encoded, byte(slot>>shift))
-		if shift == 0 {
-			break
-		}
+	id := framedContentID(mountedRuleInputDomain, ruleSourceIdentityVersion, func(writer *canonical.DigestWriter) bool {
+		return writeContentIDs(writer, member, input) && writer.Uint(slot) == nil
+	})
+	if !id.Available() {
+		return composition.Key{}, false
 	}
-	return artifactReceiptKey(identity.ContentID(sha256.Sum256(encoded)), artifactOccurrenceSourceVersion)
+	return artifactReceiptKey(artifactOccurrenceSource, id)
 }
 
 func linkRuleOccurrenceKey(role RuleSlotCapability, occurrence identity.ContentID) (composition.Key, bool) {
 	if !role.link() || !occurrence.Available() {
 		return composition.Key{}, false
 	}
-	encoded := []byte("analysis/engine/link-rule-occurrence/v1")
-	encoded = appendRuleSlotCapability(encoded, role)
-	encoded = append(encoded, occurrence[:]...)
-	return artifactReceiptKey(identity.ContentID(sha256.Sum256(encoded)), artifactOccurrenceSourceVersion)
+	id := framedContentID(linkRuleOccurrenceDomain, ruleSourceIdentityVersion, func(writer *canonical.DigestWriter) bool {
+		return writeRuleSlotCapability(writer, role) && writeContentIDs(writer, occurrence)
+	})
+	if !id.Available() {
+		return composition.Key{}, false
+	}
+	return artifactReceiptKey(artifactOccurrenceSource, id)
 }
 
 func linkRuleMemberID(role RuleSlotCapability, owner, point, occurrence identity.ContentID) identity.ContentID {
 	if !role.link() || !owner.Available() || !point.Available() || !occurrence.Available() {
 		return identity.ContentID{}
 	}
-	encoded := []byte("analysis/engine/link-rule-member/v1")
-	encoded = appendRuleSlotCapability(encoded, role)
-	encoded = append(encoded, owner[:]...)
-	encoded = append(encoded, point[:]...)
-	encoded = append(encoded, occurrence[:]...)
-	return identity.ContentID(sha256.Sum256(encoded))
+	return framedContentID(linkRuleMemberDomain, ruleSourceIdentityVersion, func(writer *canonical.DigestWriter) bool {
+		return writeRuleSlotCapability(writer, role) && writeContentIDs(writer, owner, point, occurrence)
+	})
 }
 
 // mountedRuleOccurrenceKey keeps the Batch occurrence entity family-local.
@@ -775,28 +804,13 @@ func mountedRuleOccurrenceKey(role RuleSlotCapability, occurrence identity.Conte
 	if !role.mounted() || !occurrence.Available() {
 		return composition.Key{}, false
 	}
-	encoded := []byte("analysis/engine/rule-occurrence/v1")
-	encoded = appendRuleSlotCapability(encoded, role)
-	encoded = append(encoded, occurrence[:]...)
-	return artifactReceiptKey(identity.ContentID(sha256.Sum256(encoded)), artifactOccurrenceSourceVersion)
-}
-
-func appendRuleSlotCapability(encoded []byte, capability RuleSlotCapability) []byte {
-	encoded = append(encoded, byte(capability.kind), byte(boolByte(capability.activation)))
-	for shift := uint(56); ; shift -= 8 {
-		encoded = append(encoded, byte(capability.ordinal>>shift))
-		if shift == 0 {
-			break
-		}
+	id := framedContentID(mountedRuleOccurrenceDomain, ruleSourceIdentityVersion, func(writer *canonical.DigestWriter) bool {
+		return writeRuleSlotCapability(writer, role) && writeContentIDs(writer, occurrence)
+	})
+	if !id.Available() {
+		return composition.Key{}, false
 	}
-	return append(encoded, 0)
-}
-
-func boolByte(value bool) uint8 {
-	if value {
-		return 1
-	}
-	return 0
+	return artifactReceiptKey(artifactOccurrenceSource, id)
 }
 
 // Typed implementation adapters consume only the opaque source receipt.

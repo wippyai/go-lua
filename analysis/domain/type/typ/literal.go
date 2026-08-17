@@ -5,8 +5,8 @@ import (
 	"math"
 	"strconv"
 
-	"github.com/wippyai/go-lua/analysis/internal/hash"
 	"github.com/wippyai/go-lua/analysis/domain/type/kind"
+	"github.com/wippyai/go-lua/analysis/internal/hash"
 )
 
 // Literal represents a singleton type containing exactly one value.

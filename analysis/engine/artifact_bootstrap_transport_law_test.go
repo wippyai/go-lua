@@ -200,7 +200,7 @@ func newBootstrapTransportLawArtifactWithInitials(t testing.TB, schema *Schema, 
 	initialRow, initialOK := spec.AddPoint(rows.ArtifactScalarPoint{ID: initial, Initial: firstInitial})
 	_, noninitialOK := spec.AddPoint(rows.ArtifactScalarPoint{ID: noninitial, Initial: secondInitial})
 	region, regionOK := spec.AddRegion(rows.ArtifactScalarRegion{ID: regionID, Head: initial})
-	body, bodyOK := spec.AddBody(rows.ArtifactScalarBody{ID: bodyID, Context: bootstrapTransportLawID(salt, 7), SemanticEntry: bootstrapTransportLawID(salt, 8)})
+	body, bodyOK := spec.AddBody(rows.ArtifactScalarBody{ID: bodyID})
 	if initialRow != 0 || !initialOK || !noninitialOK || !regionOK || !bodyOK ||
 		!spec.AddRegionMember(region, initial) || !spec.AddRegionMember(region, noninitial) ||
 		!spec.AddEvent(rows.ArtifactScalarEvent{Kind: rows.ArtifactEventEnter, Region: regionID}) ||
@@ -396,19 +396,29 @@ func TestLinkBootstrapValueAndHeapProducersReachMountedInitialAfterReleaseAndRev
 	queueBootstrapTransportLawUnrelatedProducer(t, assembly, owner.excluded, unrelatedMemberID, owner.implementations[2])
 	activationID := bootstrapTransportLawID(8, 43)
 	activationRef := queueBootstrapTransportLawActivation(t, assembly, owner.excluded, activationID, owner.activationImplementation)
+	queryIDs := []identity.ContentID{bootstrapTransportLawID(8, 50), bootstrapTransportLawID(8, 51), bootstrapTransportLawID(8, 52)}
+	queried := 0
+	if !assembly.QueueMountedQueryBatch(func(batch *MountedQueryBatch) bool {
+		for index := range queryIDs {
+			if !AddMountedExactQuery(batch, owner.queryImplementations[index], queryIDs[index], mountID, artifact.initial) {
+				return false
+			}
+			queried++
+		}
+		return true
+	}) {
+		t.Fatal("bootstrap producer query batch")
+	}
 	if !assembly.SealSources() {
 		t.Fatalf("bootstrap producer source seal=%+v", assembly.sealFailure)
+	}
+	if queried != len(queryIDs) {
+		t.Fatalf("bootstrap producer mounted query %d", queried)
 	}
 	initialID := mountedArtifactID("analysis/engine/artifact-point/v1", mountID, artifact.artifact, artifact.initial)
 	application, target, endpoint := coldKey(947_992), coldKey(947_993), coldKey(947_994)
 	if !addBootstrapTransportLawActivationCandidate(t, assembly, owner, activationRef, initialID, application, target, endpoint) {
 		t.Fatal("bootstrap producer activation candidate")
-	}
-	queryIDs := []identity.ContentID{bootstrapTransportLawID(8, 50), bootstrapTransportLawID(8, 51), bootstrapTransportLawID(8, 52)}
-	for index := range queryIDs {
-		if !AddMountedExactQuery(assembly, owner.queryImplementations[index], queryIDs[index], mountID, artifact.initial) {
-			t.Fatalf("bootstrap producer mounted query %d", index)
-		}
 	}
 	topology, graph, committed := assembly.Commit()
 	if !committed || topology == nil || graph == nil {
@@ -606,7 +616,7 @@ func TestLinkBootstrapValueAndHeapProducersReachMountedInitialAfterReleaseAndRev
 	}
 	state, status, report := solver.SolveWithReport(context.Background())
 	if status != SolveComplete || state == nil {
-		t.Fatalf("bootstrap producer solve status=%v report=%t reason=%v phase=%v", status, report.Available(), report.Reason(), report.Phase())
+		t.Fatalf("bootstrap producer solve status=%v report=%t reason=%v phase=%v", status, report.Available(), report.Reason(), report.Failure())
 	}
 	if !initialRelation.Precedes(solver.relation) || solver.runtime == nil || solver.runtime.graph == nil || solver.runtime.graph == graph.graph || owner.activationRuns.Load() == 0 {
 		t.Fatalf("bootstrap producer runtime revision=%d runtime=%t distinct=%t activationRuns=%d", solver.relation.Generation(), solver.runtime != nil, solver.runtime != nil && solver.runtime.graph != graph.graph, owner.activationRuns.Load())

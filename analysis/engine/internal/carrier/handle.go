@@ -364,21 +364,6 @@ type Target struct {
 	mode   TargetMode
 }
 
-// SelectorKind identifies the staged target selector class.
-type SelectorKind uint8
-
-const (
-	TargetSelector SelectorKind = iota + 1
-)
-
-// Selector is a Factor-issued sealed selection capability.  Candidates and
-// their closure proof remain private to the typed Binding.
-type Selector struct {
-	issuer *issuer
-	kind   SelectorKind
-	id     uint64
-}
-
 // Issuer is held privately by one typed Binding. It is the only capability
 // that can mint or resolve handles for that Binding's current operation epoch.
 // The exposed type contains no semantic value and has no decoding API.
@@ -408,8 +393,8 @@ func issuerOwner(value *issuer, requirePublished bool) *slotOwner {
 func (issuer Issuer) Live() bool { return issuerOwner(issuer.value, true) != nil }
 
 // NewIssuer starts one private Binding epoch before its physical carrier slot
-// is known. Unit, Target, and Selector declarations may retain this identity
-// while an operation is assembled, but remain unusable until Attach binds it.
+// is known. Unit and Target declarations may retain this identity while an
+// operation is assembled, but remain unusable until Attach binds it.
 func NewIssuer() (Issuer, bool) { return Issuer{value: &issuer{}}, true }
 
 // Attach binds this declaration epoch to its one canonical physical slot.
@@ -659,14 +644,6 @@ func (issuer Issuer) IssueTarget(id uint64, mode TargetMode) (Target, bool) {
 	return Target{issuer: issuer.value, id: id, mode: mode}, true
 }
 
-// IssueSelector issues a Factor-owned staged target selector identity.
-func (issuer Issuer) IssueSelector(kind SelectorKind, id uint64) (Selector, bool) {
-	if issuer.value == nil || id == 0 || kind != TargetSelector {
-		return Selector{}, false
-	}
-	return Selector{issuer: issuer.value, kind: kind, id: id}, true
-}
-
 // Kind returns Unit's sealed exact/summary class.
 func (unit Unit) Kind() UnitKind { return unit.kind }
 
@@ -738,24 +715,6 @@ func (target Target) Less(other Target) bool {
 		return target.mode < other.mode
 	}
 	return target.id < other.id
-}
-
-// Kind returns Selector's sealed read/write selection class.
-func (selector Selector) Kind() SelectorKind { return selector.kind }
-
-// Slot returns Selector's canonical physical owner slot.  This is structural
-// routing metadata only; it reveals neither candidates nor typed values.
-func (selector Selector) Slot() (shape.Slot, bool) {
-	owner := issuerOwner(selector.issuer, true)
-	if owner == nil {
-		return 0, false
-	}
-	return owner.slot, true
-}
-
-// Same reports identical issued selector capability identity.
-func (selector Selector) Same(other Selector) bool {
-	return selector.issuer == other.issuer && selector.kind == other.kind && selector.id == other.id
 }
 
 // ResolveObservation proves issuer, work, and live-generation ownership and

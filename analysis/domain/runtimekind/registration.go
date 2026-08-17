@@ -14,10 +14,10 @@ import (
 // vocabulary the domain already carries rather than restating it: a family
 // added, removed, or reordered in Kind and not here is a rejected build.
 //
-// A row's key is the string type(v) yields for the family. That is the
-// family's one spelling in the analyzer, so a consumer that needs the name
-// reads it from the sealed table instead of keeping a second list of the eight
-// names beside it.
+// A row's key and its rendered spelling are both the string type(v) yields for
+// the family. That is the family's one spelling in the analyzer, so a consumer
+// that needs the name reads it from the sealed table instead of keeping a
+// second list of the eight names beside it.
 //
 // Every family is projected. type() yields any of them, so no member is held
 // back from the projection this vocabulary feeds.
@@ -39,6 +39,7 @@ func member(kind Kind, name schema.Key) structure.Spec {
 		Key:      name,
 		Category: structure.CategoryRuntimeKind,
 		Ordinal:  uint16(kind),
+		Spelling: string(name),
 		Accepted: true,
 	}
 }

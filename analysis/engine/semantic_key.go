@@ -19,8 +19,19 @@ func compositionKeyOf(key identity.SemanticKey) composition.Key {
 // semanticKeyFromComposition returns the same already-sealed canonical
 // identity in the public opaque wrapper. It does not derive a second digest or
 // admit caller content; runtime derivations use it only for a compiler-issued
-// Rule-instance identity.
-func semanticKeyFromComposition(key composition.Key) identity.SemanticKey {
-	semantic, _ := identity.NewSemanticKey([32]byte(key.ID), key.Version)
+// Rule-instance identity. An unnameable composition key is reported, never
+// returned as a zero key that a later equality fence would accept.
+func semanticKeyFromComposition(key composition.Key) (identity.SemanticKey, bool) {
+	return identity.NewSemanticKey([32]byte(key.ID), key.Version)
+}
+
+// reportedSemanticKey names one element of a failure report. An unnameable
+// element reports as the unavailable key: which element is absent is itself
+// part of the report, and a report carries no admission authority.
+func reportedSemanticKey(key composition.Key) identity.SemanticKey {
+	semantic, ok := semanticKeyFromComposition(key)
+	if !ok {
+		return identity.SemanticKey{}
+	}
 	return semantic
 }

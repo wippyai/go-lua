@@ -566,7 +566,8 @@ func corpusSemanticStructuredMatch(project *corpusDiagnosticProjectExpectations,
 }
 
 func corpusSemanticInlineMatch(project *corpusDiagnosticProjectExpectations, want corpusInlineDiagnosticExpectationRow, got corpusSemanticAcceptanceFinding) bool {
-	if !corpusDiagnosticProjectMatchesFile(project, want.File, got.file) || got.line != uint32(want.Line) || got.severity.String() != want.Severity {
+	spelling, spellingOK := findingSeveritySpelling(got.severity)
+	if !corpusDiagnosticProjectMatchesFile(project, want.File, got.file) || got.line != uint32(want.Line) || !spellingOK || spelling != want.Severity {
 		return false
 	}
 	return want.Contains == "" || strings.Contains(got.message, want.Contains)

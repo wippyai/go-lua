@@ -45,7 +45,7 @@ type memberResult struct {
 	hasSupport  bool
 	activations []equation.AcceptedMember
 	reads       []demand.Observation
-	phase       SolveFailurePhase
+	boundary    solveBoundary
 	valid       bool
 }
 
@@ -123,10 +123,10 @@ func (bound *boundRuleMember[V, O]) routeNarrow() bool {
 func (bound *boundRuleMember[V, O]) writesOutput() bool { return bound != nil && bound.outputWrite }
 func (bound *boundRuleMember[V, O]) execute(work *carrier.Work, base carrier.RuleContributionBase, inputs []carrier.State, within support.Mask) memberResult {
 	if bound == nil || bound.rule == nil {
-		return memberResult{phase: SolveFailurePhasePreflight}
+		return memberResult{boundary: refused(SolveFailureFamilyExecution, "preflight")}
 	}
-	patch, reads, wrote, ok, phase := bound.rule.execute(work, base, inputs, within)
-	return memberResult{patch: patch, wrote: wrote, reads: reads, phase: phase, valid: ok}
+	patch, reads, wrote, ok, boundary := bound.rule.execute(work, base, inputs, within)
+	return memberResult{patch: patch, wrote: wrote, reads: reads, boundary: boundary, valid: ok}
 }
 
 // bindSchemaRuleMember attaches the receipt-native zero-read Rule lane to the
@@ -140,9 +140,6 @@ type schemaRuleMemberGeometry interface {
 	ActivationMember() (equation.Member, bool)
 	WriteAt(int) (equation.Surface, bool)
 	WriteRouteRead(int) (uint64, bool)
-	WriteCandidateCount(int) (int, bool)
-	WriteDependencyCount(int) (int, bool)
-	WriteRelationCount(int) (int, bool)
 }
 
 func exactSchemaRuleMemberGeometry(proof *ruleRuntimeProof, member schemaRuleMemberGeometry) (equation.Surface, bool) {
@@ -154,10 +151,7 @@ func exactSchemaRuleMemberGeometry(proof *ruleRuntimeProof, member schemaRuleMem
 	}
 	surface, surfaceOK := member.WriteAt(0)
 	route, routeOK := member.WriteRouteRead(0)
-	candidates, candidatesOK := member.WriteCandidateCount(0)
-	dependencies, dependenciesOK := member.WriteDependencyCount(0)
-	relations, relationsOK := member.WriteRelationCount(0)
-	if !surfaceOK || surface.Factor != proof.output || surface.Form != equation.SurfaceWriteExact || surface.Mode != equation.TargetModeStrong || surface.Local == 0 || !routeOK || route != 0 || !candidatesOK || candidates != 0 || !dependenciesOK || dependencies != 0 || !relationsOK || relations != 0 {
+	if !surfaceOK || surface.Factor != proof.output || surface.Form != equation.SurfaceWriteExact || surface.Mode != equation.TargetModeStrong || surface.Local == 0 || !routeOK || route != 0 {
 		return equation.Surface{}, false
 	}
 	return surface, true
@@ -172,10 +166,7 @@ func routeSchemaRuleMemberGeometry(proof *ruleRuntimeProof, member schemaRuleMem
 	}
 	surface, surfaceOK := member.WriteAt(0)
 	route, routeOK := member.WriteRouteRead(0)
-	candidates, candidatesOK := member.WriteCandidateCount(0)
-	dependencies, dependenciesOK := member.WriteDependencyCount(0)
-	relations, relationsOK := member.WriteRelationCount(0)
-	if !surfaceOK || surface.Factor != proof.output || surface.Form != equation.SurfaceWriteRoute || surface.Mode != equation.TargetModeNone || surface.Local == 0 || !routeOK || route != proof.routeWrite.read+1 || !candidatesOK || candidates != 0 || !dependenciesOK || dependencies != 0 || !relationsOK || relations != 0 {
+	if !surfaceOK || surface.Factor != proof.output || surface.Form != equation.SurfaceWriteRoute || surface.Mode != equation.TargetModeNone || !surface.LocalAvailable() || !routeOK || route != proof.routeWrite.read+1 {
 		return equation.Surface{}, 0, false
 	}
 	return surface, route, true
@@ -220,12 +211,13 @@ func bindSchemaRuleMember[K ~uint32 | ~uint64, V, O any](implementation *RuleImp
 	if !contentOK || content == [32]byte{} || !member.Operand().Available() {
 		return nil, false
 	}
+	expected, expectedOK := operandEntityForContent(content)
 	entity := OperandEntity{key: member.Operand().Entity()}
-	if !entity.key.Available() || entity.key.Version != instanceOperandEntityVersion || [32]byte(entity.key.ID) != content {
+	if !expectedOK || entity.key != expected {
 		return nil, false
 	}
-	anchor := semanticKeyFromComposition(member.Key())
-	if !anchor.Available() {
+	anchor, anchorOK := semanticKeyFromComposition(member.Key())
+	if !anchorOK {
 		return nil, false
 	}
 	bound := &boundRule[V, O]{proof: proof, admission: hot.admission, anchor: anchor, operandContent: content, transfer: hot.transfer, operand: canonical}
@@ -260,10 +252,11 @@ func bindSchemaRuleMember[K ~uint32 | ~uint64, V, O any](implementation *RuleImp
 			if hot.carry.apply == nil {
 				return nil, false
 			}
-			bound.carrySemantic = semanticKeyFromComposition(carryShape.Transform)
-			if !bound.carrySemantic.Available() {
+			carrySemantic, carrySemanticOK := semanticKeyFromComposition(carryShape.Transform)
+			if !carrySemanticOK {
 				return nil, false
 			}
+			bound.carrySemantic = carrySemantic
 			bound.carryTargets = carryTargets
 			bound.carryApply = func(value V) (V, bool) {
 				return hot.carry.apply(operand, value)
@@ -331,7 +324,7 @@ func (bound *boundActivationMember) execute(work *carrier.Work, base carrier.Rul
 		return memberResult{}
 	}
 	selected, reads, ok, phase := bound.rule.execute(work, base, inputs, within)
-	return memberResult{activations: selected, reads: reads, phase: phase, valid: ok}
+	return memberResult{activations: selected, reads: reads, boundary: phase, valid: ok}
 }
 
 // bindActivationMemberReceipt attaches one graph-owned activation Member to a
@@ -362,8 +355,8 @@ func bindActivationMemberReceipt(member equation.RuleMember, implementation *Act
 	if uint64(len(compiled.reads)) != implementation.receipt.proof.reads {
 		return nil, false
 	}
-	anchor := semanticKeyFromComposition(member.Key())
-	if !anchor.Available() {
+	anchor, anchorOK := semanticKeyFromComposition(member.Key())
+	if !anchorOK {
 		return nil, false
 	}
 	compiled.anchor = anchor

@@ -17,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 )
 
 func TestTopologyReceiverCallDemandFencesExactStaticBottomAndForeign(t *testing.T) {
@@ -88,8 +89,8 @@ func TestTopologyReceiverCallDemandDeduplicatesFreshApplicationAndWarms(t *testi
 local first, second = fresh()
 return first, second
 `, []target.FreshResultSpec{
-		{Result: 0, Kind: target.FreshTable},
-		{Result: 1, Kind: target.FreshTable},
+		{Result: 0, Kind: schematype.FreshClassTable},
+		{Result: 1, Kind: schematype.FreshClassTable},
 	})
 	topology, sealed := indexdomain.Seal(heap, values, calls, mounts.packs)
 	if !sealed {
@@ -153,7 +154,7 @@ local first = fresh()
 local second = fresh()
 local ignored = localOnly()
 return first, second, ignored
-`, []target.FreshResultSpec{{Result: 0, Kind: target.FreshTable}})
+`, []target.FreshResultSpec{{Result: 0, Kind: schematype.FreshClassTable}})
 	topology, sealed := indexdomain.Seal(heap, values, calls, mounts.packs)
 	if !sealed {
 		t.Fatal("fresh-group topology did not seal")
@@ -209,7 +210,7 @@ local first = fresh()
 local second = fresh()
 local ignored = localOnly()
 return first, second, ignored
-`, []target.FreshResultSpec{{Result: 0, Kind: target.FreshTable}})
+`, []target.FreshResultSpec{{Result: 0, Kind: schematype.FreshClassTable}})
 	topology2, sealed2 := indexdomain.Seal(heap2, values2, calls2, mounts2.packs)
 	if !sealed2 {
 		t.Fatal("equivalent fresh-group topology did not seal")

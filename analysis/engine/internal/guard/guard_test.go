@@ -61,24 +61,13 @@ func TestWorkExactOperationsAndSeal(t *testing.T) {
 	if got := work.Exists(work.And(a, b), testB); !work.Equivalent(got, a) {
 		t.Fatalf("exists b. a and b = %#v, want a", got)
 	}
-	substituted := work.Substitute(guard, map[Atom]Guard{testA: work.Not(c)})
-	expectedSubstitution := work.Or(work.And(work.Not(c), work.Not(b)), c)
-	if !work.Equivalent(substituted, expectedSubstitution) {
-		t.Fatal("substitution did not preserve its Boolean law")
-	}
-	renamed, ok := work.Rename(work.And(a, work.Not(b)), map[Atom]Atom{testA: testB, testB: testA})
-	if !ok {
-		t.Fatal("rename rejected its own atoms")
-	}
-	if expected := work.And(b, work.Not(a)); !work.Equivalent(renamed, expected) {
-		t.Fatal("rename did not preserve its Boolean law")
-	}
+	contradiction := work.And(a, notA)
 	work.Seal()
-	if !manager.Valid(guard) || !manager.Valid(substituted) || !manager.Valid(renamed) {
+	if !manager.Valid(guard) || !manager.Valid(contradiction) {
 		t.Fatal("sealed guards are not readable")
 	}
-	if !manager.Conflict(a, notA) {
-		t.Fatal("sealed a and not a must conflict")
+	if !manager.Equivalent(contradiction, manager.False()) {
+		t.Fatal("sealed a and not a must be unsatisfiable")
 	}
 }
 
@@ -149,7 +138,7 @@ func TestWorkSealClearsPublishedCachesButKeepsPriorRootValid(t *testing.T) {
 	a := literal(t, work, testA)
 	root := work.And(a, work.Not(literal(t, work, testB)))
 	work.Seal()
-	if !manager.Valid(root) || len(work.unique) != 0 || len(work.not) != 0 || len(work.applyCache) != 0 || len(work.ite) != 0 || len(work.restrict) != 0 || len(work.exists) != 0 || len(work.hashes) != 0 {
+	if !manager.Valid(root) || len(work.unique) != 0 || len(work.not) != 0 || len(work.applyCache) != 0 || len(work.restrict) != 0 || len(work.exists) != 0 || len(work.hashes) != 0 {
 		t.Fatal("successful Seal retained published cache entries")
 	}
 	if !work.Begin() {
@@ -552,7 +541,7 @@ func TestDeepSealedReadAndConcurrentAccess(t *testing.T) {
 	if relation, ok := manager.Compare(deep, prefix); !ok || relation == 0 {
 		t.Fatalf("deep Compare = %d/%t", relation, ok)
 	}
-	if !manager.Entails(deep, prefix) || manager.Conflict(deep, prefix) {
+	if !manager.Entails(deep, prefix) {
 		t.Fatal("deep sealed read laws failed")
 	}
 
@@ -565,7 +554,7 @@ func TestDeepSealedReadAndConcurrentAccess(t *testing.T) {
 				if comparison, ok := manager.Compare(deep, prefix); !ok || comparison == 0 {
 					t.Error("concurrent Compare failed")
 				}
-				if !manager.Entails(deep, prefix) || manager.Conflict(deep, prefix) {
+				if !manager.Entails(deep, prefix) {
 					t.Error("concurrent sealed read failed")
 				}
 			}

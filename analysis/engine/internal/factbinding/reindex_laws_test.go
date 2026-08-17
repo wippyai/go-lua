@@ -339,9 +339,6 @@ func (operation *reindexRejectOperation) ValidRoot(root carrier.RootHandle) bool
 }
 func (*reindexRejectOperation) DeclaredUnit(carrier.Unit) bool     { return false }
 func (*reindexRejectOperation) DeclaredTarget(carrier.Target) bool { return false }
-func (*reindexRejectOperation) DeclaredSelector(carrier.Selector, carrier.SelectorKind) bool {
-	return false
-}
 func (*reindexRejectOperation) TargetNotifications(carrier.Target) ([]carrier.Unit, bool) {
 	return nil, false
 }
@@ -349,14 +346,8 @@ func (*reindexRejectOperation) PrepareWidening([]carrier.Target) (uint64, bool) 
 func (*reindexRejectOperation) PrepareNarrowing([]carrier.Target) (uint64, bool) {
 	return 0, false
 }
-func (*reindexRejectOperation) DeclaredSelectorTargets(carrier.Selector) ([]carrier.Target, bool) {
-	return nil, false
-}
-func (*reindexRejectOperation) ValidUnit(carrier.Unit) bool     { return false }
-func (*reindexRejectOperation) ValidTarget(carrier.Target) bool { return false }
-func (*reindexRejectOperation) ValidSelector(carrier.Selector, carrier.SelectorKind) bool {
-	return false
-}
+func (*reindexRejectOperation) ValidUnit(carrier.Unit) bool       { return false }
+func (*reindexRejectOperation) ValidTarget(carrier.Target) bool   { return false }
 func (*reindexRejectOperation) Supports(carrier.MergeKind) bool   { return false }
 func (*reindexRejectOperation) NewWork() (carrier.SlotWork, bool) { return reindexRejectWork{}, true }
 

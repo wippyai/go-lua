@@ -1,8 +1,9 @@
 package target
 
 import (
-	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
+
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
@@ -67,8 +68,8 @@ func TestContentIDSemanticFamilyDeltas(t *testing.T) {
 			left, right := deltaPlain("fresh"), deltaPlain("fresh")
 			left.Outcomes[0].Values.Fixed[0] = testBuiltinTableTop()
 			right.Outcomes[0].Values.Fixed[0] = testFunction()
-			left.Outcomes[0].FreshResults = []FreshResultSpec{{Result: 0, Kind: FreshTable}}
-			right.Outcomes[0].FreshResults = []FreshResultSpec{{Result: 0, Kind: FreshFunction}}
+			left.Outcomes[0].FreshResults = []FreshResultSpec{{Result: 0, Kind: schematype.FreshClassTable}}
+			right.Outcomes[0].FreshResults = []FreshResultSpec{{Result: 0, Kind: schematype.FreshClassFunction}}
 			return deltaSeal(t, Spec{Operations: []OperationSpec{left}}), deltaSeal(t, Spec{Operations: []OperationSpec{right}})
 		}},
 		{"Produced capture", func() (*Contract, *Contract) {
@@ -119,9 +120,9 @@ func deltaOpenValues(name string, tail ValuesTail, suffix schematype.Type) Opera
 }
 
 func deltaCallbackOperation(name string, function, callback uint32, result bool) OperationSpec {
-	callbacks := []CallbackSpec{{Function: InputSource{Kind: InputSourceValueFormal, Ordinal: function}, Admission: OrdinaryCallable, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: CallbackRetainedOptionalOnce, Effects: RowSpec{Tail: RowClosed}}}
+	callbacks := []CallbackSpec{{Function: InputSource{Kind: InputSourceValueFormal, Ordinal: function}, Admission: schematype.CallableAdmissionOrdinary, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: CallbackRetainedOptionalOnce, Effects: RowSpec{Tail: RowClosed}}}
 	if result {
-		callbacks = []CallbackSpec{{Function: InputSource{Kind: InputSourceValueFormal}, Admission: OrdinaryCallable, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: CallbackRetainedOptionalOnce, Effects: RowSpec{Tail: RowClosed}}, {Function: InputSource{Kind: InputSourceValueFormal, Ordinal: 1}, Admission: OrdinaryCallable, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: CallbackRetainedOptionalOnce, Effects: RowSpec{Tail: RowClosed}}}
+		callbacks = []CallbackSpec{{Function: InputSource{Kind: InputSourceValueFormal}, Admission: schematype.CallableAdmissionOrdinary, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: CallbackRetainedOptionalOnce, Effects: RowSpec{Tail: RowClosed}}, {Function: InputSource{Kind: InputSourceValueFormal, Ordinal: 1}, Admission: schematype.CallableAdmissionOrdinary, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: CallbackRetainedOptionalOnce, Effects: RowSpec{Tail: RowClosed}}}
 	}
 	outcome := OutcomeSpec{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testAny, testAny}, Tail: ValuesClosed}}
 	if result {

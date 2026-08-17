@@ -534,13 +534,18 @@ func (m *Manager) ComposeReindex(first, second Reindex) (Reindex, bool) {
 		entries[index] = reindexEntryRow{rank: firstEntry.rank, reindexEntry: reindexEntry{low: low, high: high, projection: projectionGeneral}}
 	}
 	work.Seal()
-	identity := first.Identity() && second.Identity() && first.Source().Same(second.Target())
-	if identity {
+	// Both derived proofs follow Seal exactly. Coordinate identity composes
+	// because the shared intermediate scope forces the outer rank vectors to
+	// agree coordinate by coordinate; full identity additionally needs the
+	// composite to return to its one issued source scope.
+	coordinateIdentity := first.CoordinateIdentity() && second.CoordinateIdentity()
+	identity := coordinateIdentity && first.Source().Same(second.Target())
+	if coordinateIdentity {
 		for index := range entries {
 			entries[index].identity = true
 		}
 	}
-	result := Reindex{value: &reindex{manager: m, source: first.Source(), target: second.Target(), entries: entries, identity: identity, sealed: true}}
+	result := Reindex{value: &reindex{manager: m, source: first.Source(), target: second.Target(), entries: entries, identity: identity, coordinateIdentity: coordinateIdentity, sealed: true}}
 	if !result.Valid() {
 		return Reindex{}, false
 	}

@@ -64,7 +64,7 @@ func bindReceiptSummaryQuery[V, R any](compilation *receiptFactorCompilation, im
 		return nil, false
 	}
 	surface := surfaces[0]
-	if !surface.Available() || surface.Factor != implementation.receipt.factor || surface.Form != equation.SurfaceReadSummary || !surface.Semantic.Available() || surface.Semantic != implementation.receipt.normalizer || surface.Normalizer != implementation.receipt.normalizer || surface.Local == 0 || surface.Mode != equation.TargetModeNone {
+	if !surface.Available() || surface.Factor != implementation.receipt.factor || surface.Form != equation.SurfaceReadSummary || !surface.Semantic.Available() || surface.Semantic != implementation.receipt.normalizer || surface.Normalizer != implementation.receipt.normalizer || surface.Mode != equation.TargetModeNone {
 		return nil, false
 	}
 	runtime, ok := compilation.byKey[implementation.receipt.factor]

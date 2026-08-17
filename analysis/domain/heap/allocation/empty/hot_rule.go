@@ -108,22 +108,21 @@ func (rule *HotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, m
 	if !occurrenceOK {
 		return engine.BindingRuleRowRef{}, false
 	}
-	transaction, transactionOK := engine.BeginMountedRuleAdmission(assembly, implementation, occurrence, operand)
-	if !transactionOK || !engine.AddExactRead(transaction, ref) || !transaction.AddCarry() || !engine.AddExactWrite(transaction, ref) {
-		return engine.BindingRuleRowRef{}, false
+	admit := func(transaction *engine.RuleSourceTransaction) bool {
+		return engine.AddExactRead(transaction, ref) && transaction.AddCarry() && engine.AddExactWrite(transaction, ref)
 	}
-	queued := assembly.QueueMountedRuleFinalizer(mountedCapability(rule.implementation), func() bool {
-		sourceReceipt, sourceOK := transaction.Seal()
+	issue := func(sourceReceipt engine.RuleSurfaceSourceReceipt) bool {
 		draft, draftOK := implementation.BeginReceiptRuleRow(sourceReceipt)
 		readPart, readPartOK := implementation.ReceiptReadPart(sourceReceipt, 0)
 		carryPart, carryPartOK := implementation.ReceiptCarryPart(sourceReceipt, 0)
 		writePart, writePartOK := implementation.ReceiptWritePart(sourceReceipt, 0)
-		if !sourceOK || !draftOK || !readPartOK || !carryPartOK || !writePartOK || !draft.AddRead(readPart) || !draft.AddCarry(carryPart) || !draft.AddWrite(writePart) {
+		if !draftOK || !readPartOK || !carryPartOK || !writePartOK || !draft.AddRead(readPart) || !draft.AddCarry(carryPart) || !draft.AddWrite(writePart) {
 			return false
 		}
 		_, added := assembly.AddRuleFromDraft(occurrence, draft)
 		return added
-	})
+	}
+	queued := engine.AdmitMountedRule(assembly, implementation, mountedCapability(rule.implementation), occurrence, operand, admit, issue)
 	return engine.BindingRuleRowRef{}, queued
 }
 

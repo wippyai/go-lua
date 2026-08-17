@@ -272,6 +272,51 @@ func TestSurfaceRegistersInCatalogOrder(t *testing.T) {
 	}
 }
 
+// resolvingSurface records, for its own kind, whether the structural
+// vocabulary was already in reach when this surface was sealed. It is the
+// observation the catalog-position law is stated over.
+type resolvingSurface struct {
+	scratchSurface
+	reached map[SurfaceKind]bool
+}
+
+func (contribution resolvingSurface) Seal(_ View, sealed Sealed) SealFailure {
+	view, ok := sealed.Surface(SurfaceKindStructure)
+	contribution.reached[contribution.kind] = ok && view.Available() && sealed.Registered(SurfaceKindStructure)
+	return SealFailure{}
+}
+
+// TestStructureResolvesFromEverySurfaceAboveIt is the catalog-position law for
+// the structural vocabulary. It hosts the closed identity vocabularies the rest
+// of the catalog names members of, and cross-surface resolution runs downward
+// only, so it holds the first ordinal: every other surface is sealed with it
+// already in reach, and it is sealed with nothing in reach at all.
+func TestStructureResolvesFromEverySurfaceAboveIt(t *testing.T) {
+	if SurfaceKindStructure != SurfaceKindInvalid+1 {
+		t.Fatalf("the structural vocabulary declares ordinal %d, not the catalog's first", SurfaceKindStructure)
+	}
+	reached := make(map[SurfaceKind]bool, surfaceKindLimit)
+	builder := NewBuilder()
+	for kind := SurfaceKindInvalid + 1; kind < surfaceKindLimit; kind++ {
+		builder.Register(resolvingSurface{scratchSurface: populated(kind), reached: reached})
+	}
+	sealed, failure := builder.Seal()
+	if failure.Available() || sealed == nil {
+		t.Fatalf("complete catalog rejected: contributor=%d law=%d disposition=%s", failure.Contributor, failure.Law, failure.Disposition)
+	}
+	for kind := SurfaceKindInvalid + 1; kind < surfaceKindLimit; kind++ {
+		if kind == SurfaceKindStructure {
+			if reached[kind] {
+				t.Fatal("the structural vocabulary resolved against itself while it was still being sealed")
+			}
+			continue
+		}
+		if !reached[kind] {
+			t.Fatalf("surface %d seals without the structural vocabulary in reach", kind)
+		}
+	}
+}
+
 // TestRowIsPresentIdentifiedAdmissibleAndWritable states the four laws every
 // entry of every surface is subject to, in the order the root indexes them. A
 // row must exist, derive an identity, answer that it is a usable declaration,

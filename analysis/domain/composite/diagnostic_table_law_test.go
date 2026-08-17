@@ -6,6 +6,7 @@ import (
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
 // publishedCodes is the analyzer's published diagnostic identity space, spelled
@@ -65,13 +66,13 @@ func TestDiagnosticTableDrivesEveryDerivedView(t *testing.T) {
 		if !orderedOK || !byCodeOK || ordered != byCode || ordered.Code() != spec.Code {
 			t.Fatalf("row %q is not reachable through every derived lookup", spec.Code)
 		}
-		if ordered.Family().String() == "" || ordered.Tier() == diagnostic.TierInvalid {
+		if !ordered.Family().Declared() || ordered.Tier() == diagnostic.TierInvalid {
 			t.Fatalf("row %q published no family or tier", spec.Code)
 		}
 		if spec.Lane != diagnostic.LaneStatic {
 			continue
 		}
-		byObservation, byObservationOK := table.ForStaticObservation(spec.Observation)
+		byObservation, byObservationOK := table.ForStaticObservation(spec.Observation.Key)
 		if !byObservationOK || byObservation != ordered {
 			t.Fatalf("row %q is not reachable by its static observation population", spec.Code)
 		}
@@ -83,21 +84,30 @@ func TestDiagnosticTableDrivesEveryDerivedView(t *testing.T) {
 // declared row, so a mounted row can never be silently dropped.
 func TestEveryStaticObservationPopulationIsClaimed(t *testing.T) {
 	table, tableOK := Diagnostics()
-	if !tableOK {
+	vocabulary, vocabularyOK := StructureVocabulary()
+	if !tableOK || !vocabularyOK {
 		t.Fatal("sealed diagnostic table unavailable")
 	}
 	for _, kind := range []programartifact.DiagnosticObservationKind{
 		programartifact.DiagnosticObservationTypeReferenceUnresolved,
 		programartifact.DiagnosticObservationValueReferenceUnresolved,
 	} {
-		entry, known := table.ForStaticObservation(kind)
+		population, populationOK := vocabulary.At(structure.CategoryDiagnosticObservation, uint16(kind))
+		if !populationOK {
+			t.Fatalf("artifact observation kind %d names no declared population", kind)
+		}
+		entry, known := table.ForStaticObservation(population.Key())
 		if !known || !entry.Collectable() {
-			t.Fatalf("static observation population %d is claimed by no collectable row", kind)
+			t.Fatalf("static observation population %q is claimed by no collectable row", population.Key())
 		}
 	}
 	// The branch population is collected on its own lane, so it is deliberately
 	// not resolvable as a static row.
-	if _, static := table.ForStaticObservation(programartifact.DiagnosticObservationBranchCondition); static {
+	branch, branchOK := vocabulary.At(structure.CategoryDiagnosticObservation, uint16(programartifact.DiagnosticObservationBranchCondition))
+	if !branchOK {
+		t.Fatal("artifact branch observation kind names no declared population")
+	}
+	if _, static := table.ForStaticObservation(branch.Key()); static {
 		t.Fatal("branch condition population resolved as a static row")
 	}
 }

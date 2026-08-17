@@ -1,15 +1,22 @@
 package engine
 
 import (
-	"crypto/sha256"
-	"github.com/wippyai/go-lua/analysis/engine/rows"
-
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
+	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/internal/canonical"
 )
 
 const (
+	linkBootstrapTransportDomain = "analysis/engine/link-bootstrap-factor-transfer"
+
+	// artifactContentIdentityVersion versions the mount-qualified content
+	// identities below. It is independent of the cold source-key versions: a
+	// content identity names artifact content, a source key names one cold
+	// namespace that content is admitted into.
+	artifactContentIdentityVersion uint64 = 1
+
 	artifactPointSourceVersion      uint64 = 1
 	artifactEdgeSourceVersion       uint64 = 2
 	artifactOccurrenceSourceVersion uint64 = 3
@@ -28,7 +35,6 @@ type artifactReceiptTopology struct {
 	mounted    map[artifactMountedPoint]equation.Site
 	mountedRef map[artifactMountedPoint]equation.PointRef
 	bodies     map[artifactMountedBody]artifactBodyTransport
-	functions  []artifactMountedFunction
 	ruleSet    map[artifactMountedRule]artifactRuleInput
 	callStages map[artifactMountedRuleOccurrence]artifactNativeCallStage
 	pointRef   map[identity.ContentID]equation.PointRef
@@ -71,16 +77,6 @@ type artifactMountedBody struct {
 type artifactBodyTransport struct {
 	entry []identity.ContentID
 	exits []identity.ContentID
-}
-
-type artifactMountedFunction struct {
-	id, mount, artifact, reusable        identity.ContentID
-	body, bodyContext, entry, callFormal identity.ContentID
-	formals                              []rows.ArtifactScalarFormalPort
-	vararg                               rows.ArtifactScalarVarargPort
-	hasVararg                            bool
-	captures                             []rows.ArtifactScalarCapturePort
-	outcomes                             []identity.ContentID
 }
 
 type artifactMountedRule struct {
@@ -400,212 +396,32 @@ func (region ArtifactWTORegionReceipt) row() (artifactWTORegionRow, bool) {
 }
 func (region ArtifactWTORegionReceipt) Available() bool { _, ok := region.row(); return ok }
 
-// MountedFunctionBoundaryReceipt is Runtime's compact mount-qualified view of
-// one reusable Program interface. It survives ReleaseArtifactReceipt and is
-// issued only by the exact graph receipt that owns the mounted topology.
-type MountedFunctionBoundaryReceipt struct {
-	graph *ReceiptGraph
-	index uint32
-	id    identity.ContentID
-}
-
-func (receipt MountedFunctionBoundaryReceipt) row() (artifactMountedFunction, bool) {
-	if receipt.graph == nil || !receipt.graph.valid() || receipt.graph.topology == nil || uint64(receipt.index) >= uint64(len(receipt.graph.topology.artifactFunctions)) {
-		return artifactMountedFunction{}, false
+// AssembleMountedArtifactReceipt owns the whole receipt assembly transaction.
+// It lowers the mounts, hands the open assembly to populate, and terminalizes
+// on populate's answer: true commits, false aborts. The assembly never escapes
+// this scope, so begin can no longer be paired with a hand-placed abort and
+// every rejected path releases the binding's one topology builder. Exactly one
+// failure is available on a rejection: lowering when the mounts did not lower,
+// commit when the populated assembly did not commit, and neither when populate
+// itself rejected under its own vocabulary.
+func AssembleMountedArtifactReceipt(binding *SchemaBinding, mounts []MountedArtifactReceipt, populate func(*ReceiptAssembly) bool, bootstrap ...LinkBootstrapWitness) (*BindingTopology, *ReceiptGraph, ReceiptAssemblyFailure, ReceiptCommitFailure, bool) {
+	if populate == nil {
+		return nil, nil, ReceiptAssemblyFailureInput, ReceiptCommitFailure{}, false
 	}
-	row := receipt.graph.topology.artifactFunctions[receipt.index]
-	return row, row.id == receipt.id && row.id.Available()
-}
-func (receipt MountedFunctionBoundaryReceipt) Available() bool { _, ok := receipt.row(); return ok }
-func (receipt MountedFunctionBoundaryReceipt) ReusableID() identity.ContentID {
-	row, ok := receipt.row()
-	if !ok {
-		return identity.ContentID{}
+	assembly, lowering, assembled := BeginMountedArtifactReceiptAssemblyWithFailure(binding, mounts, bootstrap...)
+	if !assembled {
+		return nil, nil, lowering, ReceiptCommitFailure{}, false
 	}
-	return row.reusable
-}
-func (receipt MountedFunctionBoundaryReceipt) BodyID() identity.ContentID {
-	row, ok := receipt.row()
-	if !ok {
-		return identity.ContentID{}
+	if !populate(assembly) {
+		assembly.Abort()
+		return nil, nil, ReceiptAssemblyFailureNone, ReceiptCommitFailure{}, false
 	}
-	return row.body
-}
-func (receipt MountedFunctionBoundaryReceipt) EntryID() identity.ContentID {
-	row, ok := receipt.row()
-	if !ok {
-		return identity.ContentID{}
+	topology, graph, committed := assembly.Commit()
+	if !committed || topology == nil || graph == nil {
+		failure, _ := assembly.CommitFailure()
+		return nil, nil, ReceiptAssemblyFailureNone, failure, false
 	}
-	return row.entry
-}
-func (receipt MountedFunctionBoundaryReceipt) FormalCount() int {
-	row, ok := receipt.row()
-	if !ok {
-		return 0
-	}
-	return len(row.formals)
-}
-func (receipt MountedFunctionBoundaryReceipt) FormalAt(index int) (MountedFunctionFormalPort, bool) {
-	row, ok := receipt.row()
-	if !ok || index < 0 || index >= len(row.formals) {
-		return MountedFunctionFormalPort{}, false
-	}
-	port := MountedFunctionFormalPort{function: receipt, index: uint32(index), id: row.formals[index].ID}
-	return port, port.Available()
-}
-func (receipt MountedFunctionBoundaryReceipt) Vararg() (MountedFunctionVarargPort, bool) {
-	row, ok := receipt.row()
-	if !ok || !row.hasVararg {
-		return MountedFunctionVarargPort{}, false
-	}
-	port := MountedFunctionVarargPort{function: receipt, id: row.vararg.ID, cell: row.vararg.Cell}
-	return port, port.Available()
-}
-func (receipt MountedFunctionBoundaryReceipt) CaptureCount() int {
-	row, ok := receipt.row()
-	if !ok {
-		return 0
-	}
-	return len(row.captures)
-}
-func (receipt MountedFunctionBoundaryReceipt) CaptureAt(index int) (MountedFunctionCapturePort, bool) {
-	row, ok := receipt.row()
-	if !ok || index < 0 || index >= len(row.captures) {
-		return MountedFunctionCapturePort{}, false
-	}
-	port := MountedFunctionCapturePort{function: receipt, index: uint32(index), id: row.captures[index].ID}
-	return port, port.Available()
-}
-func (receipt MountedFunctionBoundaryReceipt) OutcomeCount() int {
-	row, ok := receipt.row()
-	if !ok {
-		return 0
-	}
-	return len(row.outcomes)
-}
-
-type MountedFunctionFormalPort struct {
-	function MountedFunctionBoundaryReceipt
-	index    uint32
-	id       identity.ContentID
-}
-
-func (port MountedFunctionFormalPort) row() (rows.ArtifactScalarFormalPort, bool) {
-	function, ok := port.function.row()
-	if !ok || uint64(port.index) >= uint64(len(function.formals)) {
-		return rows.ArtifactScalarFormalPort{}, false
-	}
-	row := function.formals[port.index]
-	return row, row.ID == port.id && uint64(row.Position) == uint64(port.index)
-}
-func (port MountedFunctionFormalPort) Available() bool { _, ok := port.row(); return ok }
-func (port MountedFunctionFormalPort) ID() identity.ContentID {
-	row, ok := port.row()
-	if !ok {
-		return identity.ContentID{}
-	}
-	return row.ID
-}
-func (port MountedFunctionFormalPort) CellID() identity.ContentID {
-	row, ok := port.row()
-	if !ok {
-		return identity.ContentID{}
-	}
-	return row.Cell
-}
-func (port MountedFunctionFormalPort) StorageCellID() identity.ContentID {
-	row, ok := port.row()
-	if !ok {
-		return identity.ContentID{}
-	}
-	return row.Storage
-}
-
-type MountedFunctionVarargPort struct {
-	function MountedFunctionBoundaryReceipt
-	id, cell identity.ContentID
-}
-
-func (port MountedFunctionVarargPort) Available() bool {
-	row, ok := port.function.row()
-	return ok && row.hasVararg && row.vararg.ID == port.id && row.vararg.Cell == port.cell && port.id.Available() && port.cell.Available()
-}
-func (port MountedFunctionVarargPort) ID() identity.ContentID {
-	if !port.Available() {
-		return identity.ContentID{}
-	}
-	return port.id
-}
-func (port MountedFunctionVarargPort) CellID() identity.ContentID {
-	if !port.Available() {
-		return identity.ContentID{}
-	}
-	return port.cell
-}
-
-type MountedFunctionCapturePort struct {
-	function MountedFunctionBoundaryReceipt
-	index    uint32
-	id       identity.ContentID
-}
-
-func (port MountedFunctionCapturePort) row() (rows.ArtifactScalarCapturePort, bool) {
-	function, ok := port.function.row()
-	if !ok || uint64(port.index) >= uint64(len(function.captures)) {
-		return rows.ArtifactScalarCapturePort{}, false
-	}
-	row := function.captures[port.index]
-	return row, row.ID == port.id && uint64(row.Position) == uint64(port.index)
-}
-func (port MountedFunctionCapturePort) Available() bool { _, ok := port.row(); return ok }
-func (port MountedFunctionCapturePort) ID() identity.ContentID {
-	row, ok := port.row()
-	if !ok {
-		return identity.ContentID{}
-	}
-	return row.ID
-}
-func (port MountedFunctionCapturePort) InnerCellID() identity.ContentID {
-	row, ok := port.row()
-	if !ok {
-		return identity.ContentID{}
-	}
-	return row.Inner
-}
-func (port MountedFunctionCapturePort) OuterCellID() identity.ContentID {
-	row, ok := port.row()
-	if !ok {
-		return identity.ContentID{}
-	}
-	return row.Outer
-}
-func (port MountedFunctionCapturePort) InnerBodyID() identity.ContentID {
-	row, ok := port.row()
-	if !ok {
-		return identity.ContentID{}
-	}
-	return row.InnerBody
-}
-func (port MountedFunctionCapturePort) OuterBodyID() identity.ContentID {
-	row, ok := port.row()
-	if !ok {
-		return identity.ContentID{}
-	}
-	return row.OuterBody
-}
-func (receipt *ReceiptGraph) MountedFunctionCount() int {
-	if receipt == nil || !receipt.valid() {
-		return 0
-	}
-	return len(receipt.topology.artifactFunctions)
-}
-func (receipt *ReceiptGraph) MountedFunctionAt(index int) (MountedFunctionBoundaryReceipt, bool) {
-	if receipt == nil || !receipt.valid() || index < 0 || index >= len(receipt.topology.artifactFunctions) {
-		return MountedFunctionBoundaryReceipt{}, false
-	}
-	row := receipt.topology.artifactFunctions[index]
-	result := MountedFunctionBoundaryReceipt{graph: receipt, index: uint32(index), id: row.id}
-	return result, result.Available()
+	return topology, graph, ReceiptAssemblyFailureNone, ReceiptCommitFailure{}, true
 }
 
 // BeginMountedArtifactReceiptAssembly is the sole Link-cardinality-aware
@@ -644,6 +460,16 @@ const (
 	ReceiptAssemblyFailureSnapshotTopologyRule
 )
 
+// Failure projects one lowering boundary onto the engine's public failure
+// vocabulary. The ordinal enters the site preimage and never leaves this
+// package.
+func (failure ReceiptAssemblyFailure) Failure() SolveFailure {
+	if failure == ReceiptAssemblyFailureNone {
+		return SolveFailure{}
+	}
+	return receiptFailure(SolveFailureFamilyCompile, "receipt-assembly", uint64(failure))
+}
+
 // BeginMountedArtifactReceiptAssemblyWithFailure exposes only the first
 // closed assembly phase. It is the permanent diagnostic entrypoint used by
 // production; it never returns a partial snapshot or mutable row.
@@ -670,9 +496,31 @@ func BeginMountedArtifactReceiptAssemblyWithFailure(binding *SchemaBinding, moun
 	return assembly, ReceiptAssemblyFailureNone, true
 }
 
-func artifactReceiptKey(id identity.ContentID, version uint64) (composition.Key, bool) {
-	key := composition.Key{ID: composition.ID(id), Version: version}
-	return key, id.Available() && key.Available()
+// artifactSourceDomain pairs one cold source namespace with its semantic
+// version. Pairing them keeps a caller from separating two namespaces by the
+// version field alone.
+type artifactSourceDomain struct {
+	name    string
+	version uint64
+}
+
+var (
+	artifactPointSource      = artifactSourceDomain{name: "analysis/engine/artifact-point-source", version: artifactPointSourceVersion}
+	artifactEdgeSource       = artifactSourceDomain{name: "analysis/engine/artifact-edge-source", version: artifactEdgeSourceVersion}
+	artifactOccurrenceSource = artifactSourceDomain{name: "analysis/engine/artifact-occurrence-source", version: artifactOccurrenceSourceVersion}
+)
+
+// artifactReceiptKey derives one cold source key from an artifact content
+// identity. The namespace enters the preimage, so a point, an edge, and an
+// occurrence built from the same content identity name three keys with three
+// distinct digests rather than one digest under three version labels.
+func artifactReceiptKey(domain artifactSourceDomain, id identity.ContentID) (composition.Key, bool) {
+	if !id.Available() {
+		return composition.Key{}, false
+	}
+	return framedCompositionKey(domain.name, domain.version, func(writer *canonical.DigestWriter) bool {
+		return writer.Bytes(id[:]) == nil
+	})
 }
 
 func lowerArtifactReceipt(assembly *ReceiptAssembly, rows *artifactReceiptTopology) bool {
@@ -681,7 +529,7 @@ func lowerArtifactReceipt(assembly *ReceiptAssembly, rows *artifactReceiptTopolo
 	}
 	sites := make(map[identity.ContentID]equation.Site, len(rows.points))
 	for _, id := range rows.points {
-		source, sourceOK := artifactReceiptKey(id, artifactPointSourceVersion)
+		source, sourceOK := artifactReceiptKey(artifactPointSource, id)
 		metadata, metadataOK := rows.pointMeta[id]
 		if !metadataOK || !metadata.reusable.Available() {
 			return false
@@ -689,7 +537,7 @@ func lowerArtifactReceipt(assembly *ReceiptAssembly, rows *artifactReceiptTopolo
 		decisions := make([]equation.Decision, len(metadata.decisions))
 		for index, semanticID := range metadata.decisions {
 			decisionKey := mountedArtifactID("analysis/engine/artifact-decision/v1", metadata.mount, metadata.artifact, semanticID)
-			decision, decisionOK := equation.NewDecision(mustArtifactReceiptKey(decisionKey, artifactPointSourceVersion))
+			decision, decisionOK := equation.NewDecision(mustArtifactReceiptKey(artifactPointSource, decisionKey))
 			if !decisionOK {
 				return false
 			}
@@ -713,11 +561,11 @@ func lowerArtifactReceipt(assembly *ReceiptAssembly, rows *artifactReceiptTopolo
 	}
 	if rows.bootstrap != nil {
 		point := rows.bootstrap.point
-		source, sourceOK := artifactReceiptKey(point.PointID, artifactPointSourceVersion)
+		source, sourceOK := artifactReceiptKey(artifactPointSource, point.PointID)
 		decisions := make([]equation.Decision, len(point.DecisionID))
 		for index, semanticID := range point.DecisionID {
 			decisionKey := mountedArtifactID("analysis/engine/link-bootstrap-decision/v1", rows.bootstrap.owner, rows.bootstrap.owner, semanticID)
-			decision, decisionOK := equation.NewDecision(mustArtifactReceiptKey(decisionKey, artifactPointSourceVersion))
+			decision, decisionOK := equation.NewDecision(mustArtifactReceiptKey(artifactPointSource, decisionKey))
 			if !decisionOK {
 				return false
 			}
@@ -766,8 +614,14 @@ func lowerArtifactReceipt(assembly *ReceiptAssembly, rows *artifactReceiptTopolo
 	return true
 }
 
-func mustArtifactReceiptKey(id identity.ContentID, version uint64) composition.Key {
-	key, _ := artifactReceiptKey(id, version)
+// mustArtifactReceiptKey returns the unavailable key for an unnameable source
+// identity. Every consumer admits the key through a constructor that rejects
+// it, so the failure is carried rather than hidden.
+func mustArtifactReceiptKey(domain artifactSourceDomain, id identity.ContentID) composition.Key {
+	key, ok := artifactReceiptKey(domain, id)
+	if !ok {
+		return composition.Key{}
+	}
 	return key
 }
 
@@ -824,7 +678,7 @@ func (builder *bindingTopologyBuilder) lowerArtifactRows() (ReceiptArtifactRowFa
 		decisions := make(map[identity.ContentID]equation.Decision, len(metadata.decisions))
 		for _, semanticID := range metadata.decisions {
 			decisionKey := mountedArtifactID("analysis/engine/artifact-decision/v1", metadata.mount, metadata.artifact, semanticID)
-			decision, decisionOK := equation.NewDecision(mustArtifactReceiptKey(decisionKey, artifactPointSourceVersion))
+			decision, decisionOK := equation.NewDecision(mustArtifactReceiptKey(artifactPointSource, decisionKey))
 			if !decisionOK {
 				return ReceiptArtifactRowFailurePoint, uint32(pointIndex), false
 			}
@@ -847,7 +701,7 @@ func (builder *bindingTopologyBuilder) lowerArtifactRows() (ReceiptArtifactRowFa
 		from, fromOK := sites[edge.from]
 		to, toOK := sites[edge.to]
 		target, targetOK := refs[edge.to]
-		provenance, provenanceOK := artifactReceiptKey(edge.id, artifactEdgeSourceVersion)
+		provenance, provenanceOK := artifactReceiptKey(artifactEdgeSource, edge.id)
 		fromMetadata, fromMetadataOK := artifactRows.pointMeta[edge.from]
 		_, toMetadataOK := artifactRows.pointMeta[edge.to]
 		fromDecisions, fromDecisionsOK := pointDecisions[edge.from]
@@ -1096,32 +950,26 @@ func linkBootstrapTransportKey(owner identity.ContentID, target artifactPointMet
 	if !owner.Available() || !target.mount.Available() || !target.artifact.Available() || !target.reusable.Available() || !factor.Available() {
 		return composition.Key{}, false
 	}
-	encoded := []byte("analysis/engine/link-bootstrap-factor-transfer/v1")
-	encoded = append(encoded, owner[:]...)
-	encoded = append(encoded, target.mount[:]...)
-	encoded = append(encoded, target.artifact[:]...)
-	encoded = append(encoded, target.reusable[:]...)
-	encoded = append(encoded, factor.ID[:]...)
-	for shift := uint(56); ; shift -= 8 {
-		encoded = append(encoded, byte(factor.Version>>shift))
-		if shift == 0 {
-			break
-		}
+	id := framedContentID(linkBootstrapTransportDomain, artifactContentIdentityVersion, func(writer *canonical.DigestWriter) bool {
+		return writeContentIDs(writer, owner, target.mount, target.artifact, target.reusable) &&
+			writer.Bytes(factor.ID[:]) == nil && writer.Uint(factor.Version) == nil
+	})
+	if !id.Available() {
+		return composition.Key{}, false
 	}
-	return artifactReceiptKey(identity.ContentID(sha256.Sum256(encoded)), artifactEdgeSourceVersion)
+	return artifactReceiptKey(artifactEdgeSource, id)
 }
 
+// mountedArtifactID derives one mount-qualified artifact identity. Each part
+// is length-framed under the caller's domain, so two different mount/artifact
+// splits of the same bytes cannot reach the same identity.
 func mountedArtifactID(domain string, mount, artifact, id identity.ContentID) identity.ContentID {
 	if !mount.Available() || !artifact.Available() || !id.Available() {
 		return identity.ContentID{}
 	}
-	encoded := make([]byte, 0, len(domain)+1+len(mount)+len(artifact)+len(id))
-	encoded = append(encoded, domain...)
-	encoded = append(encoded, 0)
-	encoded = append(encoded, mount[:]...)
-	encoded = append(encoded, artifact[:]...)
-	encoded = append(encoded, id[:]...)
-	return identity.ContentID(sha256.Sum256(encoded))
+	return framedContentID(domain, artifactContentIdentityVersion, func(writer *canonical.DigestWriter) bool {
+		return writeContentIDs(writer, mount, artifact, id)
+	})
 }
 
 func linkBootstrapPointSemanticID(owner, point identity.ContentID) identity.ContentID {
@@ -1468,112 +1316,8 @@ func appendMountedArtifactReceipt(rows *artifactReceiptTopology, mount identity.
 		// mounted point inverse resolves them later.
 		rows.bodies[key] = artifactBodyTransport{entry: body.Entry, exits: body.Exits}
 	}
-	seenFunctionIDs := make(map[identity.ContentID]struct{}, len(rows.functions)+template.FunctionCount())
-	for _, prior := range rows.functions {
-		seenFunctionIDs[prior.id] = struct{}{}
-	}
-	for index := 0; index < template.FunctionCount(); index++ {
-		function, functionOK := template.FunctionAt(index)
-		if !functionOK {
-			return false
-		}
-		mounted := mountedArtifactID("analysis/engine/artifact-function-interface/v1", mount, artifactID, function.ID)
-		if !mounted.Available() {
-			return false
-		}
-		if _, duplicate := seenFunctionIDs[mounted]; duplicate {
-			return false
-		}
-		if _, bodyOK := rows.bodies[artifactMountedBody{mount: mount, body: function.Body}]; !bodyOK {
-			return false
-		}
-		row := artifactMountedFunction{
-			id: mounted, mount: mount, artifact: artifactID, reusable: function.ID,
-			body: function.Body, bodyContext: function.BodyContext, entry: function.Entry, callFormal: function.CallFormal,
-			formals: function.Formals, vararg: function.Vararg, hasVararg: function.HasVararg,
-			captures: function.Captures, outcomes: function.Outcomes,
-		}
-		if !validArtifactMountedFunction(row, rows.bodies) {
-			return false
-		}
-		rows.functions = append(rows.functions, row)
-		seenFunctionIDs[mounted] = struct{}{}
-	}
 	rows.mounts = append(rows.mounts, artifactMountReceipt{mount: mount, artifact: artifactID, program: template.ProgramID(), initial: initial})
 	return true
-}
-
-func validArtifactMountedFunction(row artifactMountedFunction, bodies map[artifactMountedBody]artifactBodyTransport) bool {
-	if !row.id.Available() || !row.mount.Available() || !row.artifact.Available() || !row.reusable.Available() ||
-		!row.body.Available() || !row.bodyContext.Available() || !row.entry.Available() || !row.callFormal.Available() ||
-		row.id != mountedArtifactID("analysis/engine/artifact-function-interface/v1", row.mount, row.artifact, row.reusable) ||
-		row.hasVararg != row.vararg.ID.Available() || row.hasVararg != row.vararg.Cell.Available() || len(row.outcomes) == 0 {
-		return false
-	}
-	if _, bodyOK := bodies[artifactMountedBody{mount: row.mount, body: row.body}]; !bodyOK {
-		return false
-	}
-	seenFormals := make(map[identity.ContentID]struct{}, len(row.formals))
-	for index, port := range row.formals {
-		if !port.ID.Available() || !port.Cell.Available() || !port.Storage.Available() || uint64(port.Position) != uint64(index) {
-			return false
-		}
-		if _, duplicate := seenFormals[port.ID]; duplicate {
-			return false
-		}
-		seenFormals[port.ID] = struct{}{}
-	}
-	seenCaptures := make(map[identity.ContentID]struct{}, len(row.captures))
-	for index, capture := range row.captures {
-		if !capture.ID.Available() || !capture.Inner.Available() || !capture.Outer.Available() || capture.Inner == capture.Outer ||
-			capture.InnerBody != row.body || capture.InnerBody == capture.OuterBody || uint64(capture.Position) != uint64(index) {
-			return false
-		}
-		if _, outerOK := bodies[artifactMountedBody{mount: row.mount, body: capture.OuterBody}]; !outerOK {
-			return false
-		}
-		if _, duplicate := seenCaptures[capture.ID]; duplicate {
-			return false
-		}
-		seenCaptures[capture.ID] = struct{}{}
-	}
-	seenOutcomes := make(map[identity.ContentID]struct{}, len(row.outcomes))
-	for _, outcome := range row.outcomes {
-		if !outcome.Available() {
-			return false
-		}
-		if _, duplicate := seenOutcomes[outcome]; duplicate {
-			return false
-		}
-		seenOutcomes[outcome] = struct{}{}
-	}
-	return true
-}
-
-// sealArtifactFunctionDirectory detaches only the mount-qualified formal
-// interfaces required after expanded artifact rows are released. Nested
-// slices are copied so the compact directory cannot alias a construction
-// snapshot even inside this package.
-func sealArtifactFunctionDirectory(artifactRows *artifactReceiptTopology) ([]artifactMountedFunction, bool) {
-	if artifactRows == nil || artifactRows.bodies == nil {
-		return nil, artifactRows == nil
-	}
-	result := make([]artifactMountedFunction, len(artifactRows.functions))
-	seen := make(map[identity.ContentID]struct{}, len(artifactRows.functions))
-	for index, row := range artifactRows.functions {
-		if !validArtifactMountedFunction(row, artifactRows.bodies) {
-			return nil, false
-		}
-		if _, duplicate := seen[row.id]; duplicate {
-			return nil, false
-		}
-		seen[row.id] = struct{}{}
-		row.formals = append([]rows.ArtifactScalarFormalPort(nil), row.formals...)
-		row.captures = append([]rows.ArtifactScalarCapturePort(nil), row.captures...)
-		row.outcomes = append([]identity.ContentID(nil), row.outcomes...)
-		result[index] = row
-	}
-	return result, true
 }
 
 // sealNativeCallStageDirectory retains only the compact native-stage inverse
@@ -1802,19 +1546,6 @@ func (rows *artifactReceiptTopology) validPayload(topology *BindingTopology) boo
 				return false
 			}
 		}
-	}
-	seenFunctionIDs := make(map[identity.ContentID]struct{}, len(rows.functions))
-	for _, function := range rows.functions {
-		if !validArtifactMountedFunction(function, rows.bodies) {
-			return false
-		}
-		if _, mountOK := mounts[function.mount]; !mountOK {
-			return false
-		}
-		if _, duplicate := seenFunctionIDs[function.id]; duplicate {
-			return false
-		}
-		seenFunctionIDs[function.id] = struct{}{}
 	}
 	if topology != nil {
 		expectedPoints := len(rows.points)

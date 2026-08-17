@@ -120,20 +120,15 @@ func (rule *HotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, m
 		return engine.BindingRuleRowRef{}, false
 	}
 	implementation, implementationOK := effectowner.ResolveRuleImplementationFor(rule.effects, rule.implementation)
-	transaction, ok := engine.BeginMountedRuleAdmission(assembly, implementation, occurrence, operand)
-	if !implementationOK || !ok {
-		return engine.BindingRuleRowRef{}, false
-	}
-	readRef, readOK := rule.calls.Ref(operand.key)
-	writeRef, writeOK := rule.effects.Ref(operand.root)
-	if !readOK || !writeOK || !engine.AddExactRead(transaction, readRef) || !engine.AddExactWrite(transaction, writeRef) {
-		return engine.BindingRuleRowRef{}, false
-	}
-	queued := assembly.QueueMountedRuleFinalizer(capability, func() bool {
-		sourceReceipt, sourceOK := transaction.Seal()
-		if !sourceOK {
+	admit := func(transaction *engine.RuleSourceTransaction) bool {
+		if !implementationOK {
 			return false
 		}
+		readRef, readOK := rule.calls.Ref(operand.key)
+		writeRef, writeOK := rule.effects.Ref(operand.root)
+		return readOK && writeOK && engine.AddExactRead(transaction, readRef) && engine.AddExactWrite(transaction, writeRef)
+	}
+	issue := func(sourceReceipt engine.RuleSurfaceSourceReceipt) bool {
 		draft, draftOK := implementation.BeginReceiptRuleRow(sourceReceipt)
 		readPart, readPartOK := implementation.ReceiptReadPart(sourceReceipt, 0)
 		writePart, writePartOK := implementation.ReceiptWritePart(sourceReceipt, 0)
@@ -142,7 +137,8 @@ func (rule *HotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, m
 		}
 		_, added := assembly.AddRuleFromDraft(occurrence, draft)
 		return added
-	})
+	}
+	queued := engine.AdmitMountedRule(assembly, implementation, capability, occurrence, operand, admit, issue)
 	return engine.BindingRuleRowRef{}, queued
 }
 
@@ -447,95 +443,102 @@ func (rule *BodyHotRule) AttachMountedOccurrenceWithFailure(assembly *engine.Rec
 	if !implementationOK {
 		return engine.BindingRuleRowRef{}, BodyReceiptAttachFailureImplementation
 	}
-	transaction, ok := engine.BeginMountedRuleAdmission(assembly, implementation, occurrence, operand)
-	if !ok {
-		return engine.BindingRuleRowRef{}, BodyReceiptAttachFailureTransaction
-	}
-	callRef, callOK := rule.calls.Ref(operand.key)
-	effectRef, effectOK := rule.effects.Ref(operand.root)
-	callSurface, callSurfaceOK := engine.ExactReadSurface(callRef)
-	// Body's first cold read is the exact Call predecessor; its dependent
-	// selected Effect summary is the second read declared by BodySchema.
-	selectedReceipt, selectedOK := implementation.SelectedReadReceipt(1)
-	if !callOK {
-		return engine.BindingRuleRowRef{}, BodyReceiptAttachFailureCallRef
-	}
-	if !effectOK {
-		return engine.BindingRuleRowRef{}, BodyReceiptAttachFailureEffectRef
-	}
-	if !callSurfaceOK {
-		return engine.BindingRuleRowRef{}, BodyReceiptAttachFailureCallSurface
-	}
-	if !selectedOK {
-		return engine.BindingRuleRowRef{}, BodyReceiptAttachFailureSelectedReceipt
-	}
-	if !engine.AddExactRead(transaction, callRef) {
-		return engine.BindingRuleRowRef{}, BodyReceiptAttachFailureExactRead
-	}
-	selectedSurface, selectedFailure := transaction.AnchoredSelectedReadSurfaceWithFailure(selectedReceipt, []engine.RuleReadSurface{callSurface})
-	if selectedFailure != engine.AnchoredSelectedReadFailureNone {
-		switch selectedFailure {
-		case engine.AnchoredSelectedReadFailureArguments:
-			return engine.BindingRuleRowRef{}, BodyReceiptAttachFailureSelectedArguments
-		case engine.AnchoredSelectedReadFailureReceipt:
-			return engine.BindingRuleRowRef{}, BodyReceiptAttachFailureSelectedAdmissionReceipt
-		case engine.AnchoredSelectedReadFailureOwner:
-			return engine.BindingRuleRowRef{}, BodyReceiptAttachFailureSelectedOwner
-		case engine.AnchoredSelectedReadFailureSemantic:
-			return engine.BindingRuleRowRef{}, BodyReceiptAttachFailureSelectedSemantic
-		case engine.AnchoredSelectedReadFailureDependencies:
-			return engine.BindingRuleRowRef{}, BodyReceiptAttachFailureSelectedDependencies
-		case engine.AnchoredSelectedReadFailureDependencySurface:
-			return engine.BindingRuleRowRef{}, BodyReceiptAttachFailureSelectedDependencySurface
-		case engine.AnchoredSelectedReadFailureFactor:
-			return engine.BindingRuleRowRef{}, BodyReceiptAttachFailureSelectedFactor
-		case engine.AnchoredSelectedReadFailureDuplicate:
-			return engine.BindingRuleRowRef{}, BodyReceiptAttachFailureSelectedDuplicate
-		case engine.AnchoredSelectedReadFailureClaim:
-			return engine.BindingRuleRowRef{}, BodyReceiptAttachFailureSelectedClaim
-		default:
-			return engine.BindingRuleRowRef{}, BodyReceiptAttachFailureSelectedArguments
+	admitFailure := BodyReceiptAttachFailureTransaction
+	admit := func(transaction *engine.RuleSourceTransaction) bool {
+		admitFailure = BodyReceiptAttachFailureNone
+		callRef, callOK := rule.calls.Ref(operand.key)
+		effectRef, effectOK := rule.effects.Ref(operand.root)
+		callSurface, callSurfaceOK := engine.ExactReadSurface(callRef)
+		// Body's first cold read is the exact Call predecessor; its dependent
+		// selected Effect summary is the second read declared by BodySchema.
+		selectedReceipt, selectedOK := implementation.SelectedReadReceipt(1)
+		if !callOK {
+			admitFailure = BodyReceiptAttachFailureCallRef
+			return false
 		}
-	}
-	if !transaction.AddRead(selectedSurface) {
-		return engine.BindingRuleRowRef{}, BodyReceiptAttachFailureSelectedArguments
-	}
-	if !engine.AddExactWrite(transaction, effectRef) {
-		return engine.BindingRuleRowRef{}, BodyReceiptAttachFailureExactWrite
-	}
-	queued := assembly.QueueMountedRuleFinalizer(capability, func() bool {
-		sourceReceipt, sourceFailure := transaction.SealWithFailure()
-		if sourceFailure != engine.RuleSourceSealFailureNone {
-			switch sourceFailure {
-			case engine.RuleSourceSealFailurePrecondition:
-				rule.recordFinalizationFailure(BodyReceiptFinalizationFailureSourcePrecondition)
-			case engine.RuleSourceSealFailureColdShape:
-				rule.recordFinalizationFailure(BodyReceiptFinalizationFailureSourceColdShape)
-			case engine.RuleSourceSealFailureIssueArguments:
-				rule.recordFinalizationFailure(BodyReceiptFinalizationFailureSourceIssueArguments)
-			case engine.RuleSourceSealFailureIssueTopology:
-				rule.recordFinalizationFailure(BodyReceiptFinalizationFailureSourceIssueTopology)
-			case engine.RuleSourceSealFailureIssueRule:
-				rule.recordFinalizationFailure(BodyReceiptFinalizationFailureSourceIssueRule)
-			case engine.RuleSourceSealFailureIssueShape:
-				rule.recordFinalizationFailure(BodyReceiptFinalizationFailureSourceIssueShape)
-			case engine.RuleSourceSealFailureIssueReadAuthority:
-				rule.recordFinalizationFailure(BodyReceiptFinalizationFailureSourceIssueReadAuthority)
-			case engine.RuleSourceSealFailureIssueReadSurface:
-				rule.recordFinalizationFailure(BodyReceiptFinalizationFailureSourceIssueReadSurface)
-			case engine.RuleSourceSealFailureIssueReadFactor:
-				rule.recordFinalizationFailure(BodyReceiptFinalizationFailureSourceIssueReadFactor)
-			case engine.RuleSourceSealFailureIssueReadAnchor:
-				rule.recordFinalizationFailure(BodyReceiptFinalizationFailureSourceIssueReadAnchor)
-			case engine.RuleSourceSealFailureIssueWrite:
-				rule.recordFinalizationFailure(BodyReceiptFinalizationFailureSourceIssueWrite)
-			case engine.RuleSourceSealFailureIssueBatch:
-				rule.recordFinalizationFailure(BodyReceiptFinalizationFailureSourceIssueBatch)
-			case engine.RuleSourceSealFailureSummary:
-				rule.recordFinalizationFailure(BodyReceiptFinalizationFailureSourceSummary)
+		if !effectOK {
+			admitFailure = BodyReceiptAttachFailureEffectRef
+			return false
+		}
+		if !callSurfaceOK {
+			admitFailure = BodyReceiptAttachFailureCallSurface
+			return false
+		}
+		if !selectedOK {
+			admitFailure = BodyReceiptAttachFailureSelectedReceipt
+			return false
+		}
+		if !engine.AddExactRead(transaction, callRef) {
+			admitFailure = BodyReceiptAttachFailureExactRead
+			return false
+		}
+		selectedSurface, selectedFailure := transaction.AnchoredSelectedReadSurfaceWithFailure(selectedReceipt, []engine.RuleReadSurface{callSurface})
+		if selectedFailure != engine.AnchoredSelectedReadFailureNone {
+			switch selectedFailure {
+			case engine.AnchoredSelectedReadFailureArguments:
+				admitFailure = BodyReceiptAttachFailureSelectedArguments
+			case engine.AnchoredSelectedReadFailureReceipt:
+				admitFailure = BodyReceiptAttachFailureSelectedAdmissionReceipt
+			case engine.AnchoredSelectedReadFailureOwner:
+				admitFailure = BodyReceiptAttachFailureSelectedOwner
+			case engine.AnchoredSelectedReadFailureSemantic:
+				admitFailure = BodyReceiptAttachFailureSelectedSemantic
+			case engine.AnchoredSelectedReadFailureDependencies:
+				admitFailure = BodyReceiptAttachFailureSelectedDependencies
+			case engine.AnchoredSelectedReadFailureDependencySurface:
+				admitFailure = BodyReceiptAttachFailureSelectedDependencySurface
+			case engine.AnchoredSelectedReadFailureFactor:
+				admitFailure = BodyReceiptAttachFailureSelectedFactor
+			case engine.AnchoredSelectedReadFailureDuplicate:
+				admitFailure = BodyReceiptAttachFailureSelectedDuplicate
+			case engine.AnchoredSelectedReadFailureClaim:
+				admitFailure = BodyReceiptAttachFailureSelectedClaim
+			default:
+				admitFailure = BodyReceiptAttachFailureSelectedArguments
 			}
 			return false
 		}
+		if !transaction.AddRead(selectedSurface) {
+			admitFailure = BodyReceiptAttachFailureSelectedArguments
+			return false
+		}
+		if !engine.AddExactWrite(transaction, effectRef) {
+			admitFailure = BodyReceiptAttachFailureExactWrite
+			return false
+		}
+		return true
+	}
+	seal := func(sourceFailure engine.RuleSourceSealFailure) {
+		switch sourceFailure {
+		case engine.RuleSourceSealFailurePrecondition:
+			rule.recordFinalizationFailure(BodyReceiptFinalizationFailureSourcePrecondition)
+		case engine.RuleSourceSealFailureColdShape:
+			rule.recordFinalizationFailure(BodyReceiptFinalizationFailureSourceColdShape)
+		case engine.RuleSourceSealFailureIssueArguments:
+			rule.recordFinalizationFailure(BodyReceiptFinalizationFailureSourceIssueArguments)
+		case engine.RuleSourceSealFailureIssueTopology:
+			rule.recordFinalizationFailure(BodyReceiptFinalizationFailureSourceIssueTopology)
+		case engine.RuleSourceSealFailureIssueRule:
+			rule.recordFinalizationFailure(BodyReceiptFinalizationFailureSourceIssueRule)
+		case engine.RuleSourceSealFailureIssueShape:
+			rule.recordFinalizationFailure(BodyReceiptFinalizationFailureSourceIssueShape)
+		case engine.RuleSourceSealFailureIssueReadAuthority:
+			rule.recordFinalizationFailure(BodyReceiptFinalizationFailureSourceIssueReadAuthority)
+		case engine.RuleSourceSealFailureIssueReadSurface:
+			rule.recordFinalizationFailure(BodyReceiptFinalizationFailureSourceIssueReadSurface)
+		case engine.RuleSourceSealFailureIssueReadFactor:
+			rule.recordFinalizationFailure(BodyReceiptFinalizationFailureSourceIssueReadFactor)
+		case engine.RuleSourceSealFailureIssueReadAnchor:
+			rule.recordFinalizationFailure(BodyReceiptFinalizationFailureSourceIssueReadAnchor)
+		case engine.RuleSourceSealFailureIssueWrite:
+			rule.recordFinalizationFailure(BodyReceiptFinalizationFailureSourceIssueWrite)
+		case engine.RuleSourceSealFailureIssueBatch:
+			rule.recordFinalizationFailure(BodyReceiptFinalizationFailureSourceIssueBatch)
+		case engine.RuleSourceSealFailureSummary:
+			rule.recordFinalizationFailure(BodyReceiptFinalizationFailureSourceSummary)
+		}
+	}
+	issue := func(sourceReceipt engine.RuleSurfaceSourceReceipt) bool {
 		draft, draftOK := implementation.BeginReceiptRuleRow(sourceReceipt)
 		firstRead, firstReadOK := implementation.ReceiptReadPart(sourceReceipt, 0)
 		secondRead, secondReadOK := implementation.ReceiptReadPart(sourceReceipt, 1)
@@ -565,7 +568,11 @@ func (rule *BodyHotRule) AttachMountedOccurrenceWithFailure(assembly *engine.Rec
 			rule.recordFinalizationFailure(BodyReceiptFinalizationFailureGraph)
 		}
 		return added
-	})
+	}
+	queued := engine.AdmitMountedRuleWithFailure(assembly, implementation, capability, occurrence, operand, admit, issue, seal)
+	if admitFailure != BodyReceiptAttachFailureNone {
+		return engine.BindingRuleRowRef{}, admitFailure
+	}
 	if !queued {
 		return engine.BindingRuleRowRef{}, BodyReceiptAttachFailureFinalizer
 	}

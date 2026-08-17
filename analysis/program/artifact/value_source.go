@@ -20,7 +20,7 @@ type valueSourceCompileRow struct {
 	code              uint64
 	term, target      keyspace.Term
 	body, bodyContext identity.ContentID
-	span              program.Span
+	spanID            identity.ContentID
 	finish            flow.Site
 	id                identity.ContentID
 	literalFamily     keyspace.Family
@@ -71,17 +71,16 @@ func (compiler *compiler) valueSourceAt(code uint64, index int) (valueSourceComp
 	}
 	body, bodyOK := input.Body(owner)
 	bodyPath, bodyPathOK := view.BodyPath(owner)
-	span, _, spanOK := valueSourceSpan(input, term)
 	canonicalID, canonicalSpanID, canonicalTerm, canonicalOK := input.ValueSourceIDAt(keyspace.TermFamily(term), index)
-	if !bodyOK || !bodyPathOK || !bodyPath.Available() || !spanOK || !canonicalOK || canonicalTerm != term || !canonicalID.Available() || !canonicalSpanID.Available() || span.ContextID() != canonicalSpanID {
+	if !bodyOK || !bodyPathOK || !bodyPath.Available() || !canonicalOK || canonicalTerm != term || !canonicalID.Available() || !canonicalSpanID.Available() {
 		return valueSourceCompileRow{}, false
 	}
-	finish, finishOK := span.Finish()
+	finish, finishOK := input.EvaluationFinish(term)
 	if !finishOK {
 		return valueSourceCompileRow{}, false
 	}
 	id := canonicalID
-	row := valueSourceCompileRow{code: code, term: term, target: target, body: bodyPath, bodyContext: body.ContextID(), span: span, finish: finish, id: id}
+	row := valueSourceCompileRow{code: code, term: term, target: target, body: bodyPath, bodyContext: body.ContextID(), spanID: canonicalSpanID, finish: finish, id: id}
 	if code < 6 {
 		family, literal, literalOK := sourceLiteral(input, term)
 		if !literalOK {
@@ -90,19 +89,6 @@ func (compiler *compiler) valueSourceAt(code uint64, index int) (valueSourceComp
 		row.literalFamily, row.literal, row.literalOK = family, literal, true
 	}
 	return row, id.Available() && row.body.Available() && row.bodyContext.Available()
-}
-
-func valueSourceSpan(input *program.Program, term keyspace.Term) (program.Span, bool, bool) {
-	span, direct := input.Span(term)
-	if direct {
-		return span, true, input.OwnsSpan(span)
-	}
-	root, rootOK := input.Source().Index().Root(term)
-	if !rootOK || root == 0 {
-		return program.Span{}, false, false
-	}
-	span, spanOK := input.Span(root)
-	return span, false, spanOK && input.OwnsSpan(span)
 }
 
 func sourceLiteral(input *program.Program, term keyspace.Term) (keyspace.Family, keyspace.LiteralValue, bool) {

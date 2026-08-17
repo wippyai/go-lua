@@ -1,10 +1,6 @@
 package composite
 
-import (
-	"testing"
-
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
-)
+import "testing"
 
 // TestMountPhaseRejectsAnAbsentArtifactView states the phase's admission: the
 // Link and its neutral artifact view are the mount phase's whole input, so a
@@ -32,23 +28,24 @@ func TestEveryDeclaredMountIsAdopted(t *testing.T) {
 	if registry.sealed == nil {
 		t.Fatalf("declaration table did not seal: %v", registry.failure)
 	}
-	declared := make(map[programartifact.RuleOutputKind]struct{})
-	for _, entry := range registry.axes {
-		if !entry.MountDeclared() {
-			continue
+	declared := 0
+	for position, entry := range registry.axes {
+		slot := position + 1
+		_, adopted := axisAdopterFor(entry.Key())
+		if entry.MountDeclared() {
+			declared++
+			if !adopted {
+				t.Fatalf("axis %q seals its own authority with no adopter in the Link input record", entry.Key())
+			}
+		} else if adopted {
+			t.Fatalf("axis %q is adopted but declares no mount", entry.Key())
 		}
-		declared[entry.Principal()] = struct{}{}
-		if _, adopted := axisAdopters[entry.Principal()]; !adopted {
-			t.Fatalf("axis %q seals its own authority with no adopter in the Link input record", entry.Key())
+		if adopted != (registry.axisAdopters[slot] != nil) {
+			t.Fatalf("axis %q is adopted at a slot the mount path does not hold", entry.Key())
 		}
 	}
-	if len(declared) == 0 {
+	if declared == 0 {
 		t.Fatalf("no axis seals its own authority; the mount phase is unreachable")
-	}
-	for principal := range axisAdopters {
-		if _, ok := declared[principal]; !ok {
-			t.Fatalf("principal %v is adopted but declares no mount", DiagnosticAxis(principal))
-		}
 	}
 }
 
@@ -61,12 +58,13 @@ func TestAdoptionRejectsADeclaredMountThatSealedNothing(t *testing.T) {
 	if registry.sealed == nil {
 		t.Fatalf("declaration table did not seal: %v", registry.failure)
 	}
-	var supplied axisCells
+	supplied := newAxisCells(registry.axes)
 	inputs, failedAxis, ok := LinkInputs{}.adopt(supplied)
 	if ok {
 		t.Fatalf("adoption admitted a phase in which every declared mount sealed nothing")
 	}
-	if _, declared := axisAdopters[programartifact.RuleOutputKind(failedAxis)]; !declared {
+	blamed, blamedOK := axisAtSlot(int(failedAxis))
+	if !blamedOK || !blamed.MountDeclared() {
 		t.Fatalf("adoption blamed axis %v, which declares no mount", failedAxis)
 	}
 	if inputs.ValueSchema != nil {

@@ -41,17 +41,24 @@ func (compilation Compilation) Queries() (QueryViews, bool) {
 // Query payloads are deliberately marker-free schema slots. Their typed hot
 // projectors belong to analysis binding, while these two cold query identities
 // remain part of this sole schema owner.
-func declareQueries(builder *engine.SchemaBuilder, v vocabulary.Bundle, owners principals) (QueryViews, bool) {
+func declareQueries(builder *engine.SchemaBuilder, roles vocabulary.Roles, owners principals) (QueryViews, bool) {
+	valueSemantic, valueSemanticOK := roles.Key("semantic/query/value-summary")
+	valueCodec, valueCodecOK := roles.Key("semantic/query-result/value-summary")
+	effectSemantic, effectSemanticOK := roles.Key("semantic/query/effect-exact")
+	effectCodec, effectCodecOK := roles.Key("semantic/query-result/effect-exact")
+	if !valueSemanticOK || !valueCodecOK || !effectSemanticOK || !effectCodecOK {
+		return QueryViews{}, false
+	}
 	valueRead := owners.value.FoldSummaryRead()
 	effectRead := owners.effect.ExactRead()
 	if valueRead.Schema() != nil || effectRead.Schema() != nil {
 		return QueryViews{}, false
 	}
-	valueQuery, ok := engine.NewQuerySlot[valuedomain.ValueSummaryObservation](builder, engine.SchemaQuerySpec{Semantic: v.ValueQuery, Freezer: v.ValueCodec})
+	valueQuery, ok := engine.NewQuerySlot[valuedomain.ValueSummaryObservation](builder, engine.SchemaQuerySpec{Semantic: valueSemantic, Freezer: valueCodec})
 	if !ok || !engine.SchemaQueryRead(valueQuery, valueRead) {
 		return QueryViews{}, false
 	}
-	effectQuery, ok := engine.NewQuerySlot[effectfactor.EffectObservation](builder, engine.SchemaQuerySpec{Semantic: v.EffectQuery, Freezer: v.EffectCodec})
+	effectQuery, ok := engine.NewQuerySlot[effectfactor.EffectObservation](builder, engine.SchemaQuerySpec{Semantic: effectSemantic, Freezer: effectCodec})
 	if !ok || !engine.SchemaQueryRead(effectQuery, effectRead) {
 		return QueryViews{}, false
 	}

@@ -161,18 +161,6 @@ func (schema *Schema) ruleWriteShapeAt(rule, write uint64) (coldcomposition.Rule
 	}
 	return schema.cold.RuleWriteShapeAt(rule, write)
 }
-func (schema *Schema) ruleWriteCandidateAt(rule, write, candidate uint64) (uint64, bool) {
-	if !schema.Available() {
-		return 0, false
-	}
-	return schema.cold.RuleWriteCandidateAt(rule, write, candidate)
-}
-func (schema *Schema) ruleWriteDependencyAt(rule, write, dependency uint64) (uint64, bool, bool) {
-	if !schema.Available() {
-		return 0, false, false
-	}
-	return schema.cold.RuleWriteDependencyAt(rule, write, dependency)
-}
 
 // Solver is the receipt-native runtime owner. Its compiler is initialized by
 // receipt compilation and never retains a cold declaration Composition.

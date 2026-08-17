@@ -27,7 +27,7 @@ func TestDiagnosticSurfaceRequiresRows(t *testing.T) {
 // The catalog composes that projection from the sealed view, so the law above is
 // what makes the projection total rather than a second check at composition.
 func TestDiagnosticTableProjectsEverySealedRow(t *testing.T) {
-	entries := []*Entry{mustEntry(t, scratchSpec("advice.always_true_guard", FamilyAdvice))}
+	entries := []*Entry{mustEntry(t, scratchSpec("advice.always_true_guard", scratchFamilyAdvice))}
 	sealed, failure := sealSurfaces(t, entries, []schema.Key{"value", "heap"})
 	if failure.Available() || sealed == nil {
 		t.Fatalf("populated diagnostic surface rejected: law=%d disposition=%s", failure.Law, failure.Disposition)

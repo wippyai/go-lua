@@ -1,7 +1,17 @@
-// Package vocabulary owns the closed, process-independent semantic
-// vocabulary used by the analysis engine.  It deliberately contains no
-// mounted-program, Link, or runtime identity: those belong to the program and
-// binding layers.
+// Package vocabulary owns the identity algebra of the analyzer's semantic
+// roles: the derivation that turns one declared role string into the global
+// identity the engine binds under, and the resolution a surface reaches that
+// identity through.
+//
+// The roles themselves are not authored here. A role is a row of the
+// structural vocabulary's semantic-role category, contributed by the domain
+// that owns it, so a domain adds a role by declaring one rather than by
+// widening a struct in this package. What stays here is what no domain can
+// own: the framing the identity is derived under, and the resolution every
+// surface performs against the sealed declaration.
+//
+// It deliberately contains no mounted-program, Link, or runtime identity:
+// those belong to the program and binding layers.
 package vocabulary
 
 import (
@@ -9,12 +19,25 @@ import (
 	"encoding/binary"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
 // SemanticFormat is the version of the global semantic vocabulary.  Changing
 // the role list, framing domain, or interpretation of a role requires bumping
 // this value.
 const SemanticFormat uint64 = 6
+
+// rolePrefix is the key namespace a semantic role row is declared under. A
+// row's spelling is the role, and its key is the role inside this namespace,
+// so a role names one row of one category and cannot collide with a member of
+// another structural vocabulary that happens to render the same way.
+const rolePrefix = "semantic/"
+
+// RoleKey is the structural row key one role string is declared under. A
+// surface names a role by this key and resolves the identity through the
+// sealed table, so no surface derives an identity from text of its own.
+func RoleKey(role string) schema.Key { return schema.Key(rolePrefix + role) }
 
 // RuleSemantics is the closed identity tuple for one rule: its rule identity,
 // operand form, and evidence form.
@@ -24,6 +47,10 @@ type RuleSemantics struct {
 	Evidence identity.SemanticKey
 }
 
+func (semantics RuleSemantics) Available() bool {
+	return semantics.Rule.Available() && semantics.Operand.Available() && semantics.Evidence.Available()
+}
+
 // TransformedRuleSemantics adds the transform form used by rules whose output
 // is normalized before admission.
 type TransformedRuleSemantics struct {
@@ -31,93 +58,124 @@ type TransformedRuleSemantics struct {
 	Transform identity.SemanticKey
 }
 
-// Bundle is the complete global cold vocabulary: factor identities, fixed
-// summary identities where applicable, rule identities, the call-activation
-// schema, and query families with their result codecs. The fields are
-// intentionally explicit so callers cannot silently invent an unregistered
-// factor or rule.
+func (semantics TransformedRuleSemantics) Available() bool {
+	return semantics.RuleSemantics.Available() && semantics.Transform.Available()
+}
+
+// RoleSpecs is one contributor's semantic role declaration: one row per role,
+// keyed inside the role namespace and spelled as the role itself. The ordinal
+// is left to the aggregation, because no foreign spelling numbers this
+// vocabulary: a member of it is only ever resolved by key.
+func RoleSpecs(roles ...string) []structure.Spec {
+	specs := make([]structure.Spec, 0, len(roles))
+	for _, role := range roles {
+		specs = append(specs, structure.Spec{
+			Key:      RoleKey(role),
+			Category: structure.CategorySemanticRole,
+			Spelling: role,
+			Accepted: true,
+		})
+	}
+	return specs
+}
+
+// RuleRoleSpecs declares the three roles one rule is identified by: the rule
+// itself, the operand form its occurrences read, and the evidence form they
+// produce. A rule that declares these three declares its whole identity tuple.
+func RuleRoleSpecs(role string) []structure.Spec {
+	return RoleSpecs("rule/"+role, "operand/"+role, "evidence/"+role)
+}
+
+// TransformedRuleRoleSpecs declares the four roles a rule whose output is
+// normalized before admission is identified by.
+func TransformedRuleRoleSpecs(role string) []structure.Spec {
+	return append(RuleRoleSpecs(role), RoleSpecs("transform/"+role)...)
+}
+
+// Roles is the resolved semantic role vocabulary: the declared rows of the
+// semantic-role category, each carrying the global identity its spelling
+// derives. A surface holds a role by its declared key and reaches the identity
+// here, so the identity a catalog is composed under and the identity a row is
+// sealed under are one derivation.
 //
-// The activation family and admission fields are part of the call-activation
-// law and remain stable across Links and Programs.
-type Bundle struct {
-	ValueFactor, ValueSummary, ValueSummaryFold, CallFactor, HeapFactor, PackFactor, EffectFactor identity.SemanticKey
-	ValueQuery, ValueCodec, EffectQuery, EffectCodec                                              identity.SemanticKey
-	CallActivation, CallActivationFamily, CallActivationAdmission                                 identity.SemanticKey
-
-	ValueSourceRule, PackSourceRule, HeapIngressRule, RawGetRule, RawSetRule, CallDispatchRule                               RuleSemantics
-	EffectSelectedRule, EffectOpaqueRule, EffectBodyRule, ValueBootstrapRule, HeapBootstrapRule                              RuleSemantics
-	ValueTransferRule, ValueBinaryArithmeticRule, ValueBinaryEqualityRule, ValueBinaryOrderRule, ValuePresenceRefinementRule RuleSemantics
-	ValueAllocationRule, HeapEmptyRule, HeapClosedRule                                                                       TransformedRuleSemantics
+// A Roles restricted to one entry's declared roles is what that entry's own
+// hooks receive, so a hook that reaches for a role its entry never declared
+// resolves nothing and the composition rejects it.
+type Roles struct {
+	keys map[schema.Key]identity.SemanticKey
 }
 
-// New returns the canonical global vocabulary and whether every closed role
-// is available and distinct.  Construction is pure and replayable.
-func New() (Bundle, bool) {
-	key := func(role string) identity.SemanticKey {
-		value, _ := Key(role)
-		return value
+// NewRoles resolves one admitted structural inventory into the semantic role
+// vocabulary. A row of the semantic-role category whose spelling derives no
+// identity leaves the vocabulary unresolved rather than short one role.
+func NewRoles(entries []*structure.Entry) (Roles, bool) {
+	keys := make(map[schema.Key]identity.SemanticKey, len(entries))
+	for _, entry := range entries {
+		if entry == nil {
+			return Roles{}, false
+		}
+		if entry.Category() != structure.CategorySemanticRole {
+			continue
+		}
+		semantic, ok := Key(entry.Spelling())
+		if !ok {
+			return Roles{}, false
+		}
+		if _, declared := keys[entry.Key()]; declared {
+			return Roles{}, false
+		}
+		keys[entry.Key()] = semantic
 	}
-	rule := func(role string) RuleSemantics {
-		return RuleSemantics{Rule: key("rule/" + role), Operand: key("operand/" + role), Evidence: key("evidence/" + role)}
-	}
-	transformed := func(role string) TransformedRuleSemantics {
-		return TransformedRuleSemantics{RuleSemantics: rule(role), Transform: key("transform/" + role)}
-	}
-	result := Bundle{
-		ValueFactor: key("factor/value"), ValueSummary: key("factor/value/summary-identity"), ValueSummaryFold: key("factor/value/summary-coordinatewise"),
-		CallFactor: key("factor/call"), HeapFactor: key("factor/heap"), PackFactor: key("factor/pack"),
-		EffectFactor: key("factor/effect"),
-		ValueQuery:   key("query/value-summary"), ValueCodec: key("query-result/value-summary"),
-		EffectQuery: key("query/effect-exact"), EffectCodec: key("query-result/effect-exact"),
-		CallActivation: key("activation/call-body"), CallActivationFamily: key("activation-family/call-body"), CallActivationAdmission: key("activation-admission/call-body"),
-		ValueSourceRule: rule("value/source"), PackSourceRule: rule("pack/source"), HeapIngressRule: rule("heap/allocation-ingress"),
-		ValueAllocationRule: transformed("value/allocation"), HeapEmptyRule: transformed("heap/allocation-empty"), HeapClosedRule: transformed("heap/allocation-closed"),
-		RawGetRule: rule("heap/index-get-raw"), RawSetRule: rule("heap/index-set-raw"), CallDispatchRule: rule("call/dispatch"),
-		EffectSelectedRule: rule("effect/callsite-selected"), EffectOpaqueRule: rule("effect/callsite-opaque"), EffectBodyRule: rule("effect/callsite-body"),
-		ValueBootstrapRule: rule("value/host-global-bootstrap"), HeapBootstrapRule: rule("heap/host-bootstrap"), ValueTransferRule: rule("value/storage-transfer"),
-		ValueBinaryArithmeticRule: rule("value/binary-arithmetic"), ValueBinaryEqualityRule: rule("value/binary-equality"), ValueBinaryOrderRule: rule("value/binary-order"), ValuePresenceRefinementRule: rule("value/presence-refinement"),
-	}
-	return result, result.Available()
+	return Roles{keys: keys}, len(keys) != 0
 }
 
-// Available reports whether every key in the closed vocabulary is usable and
-// no two roles share an identity.
-func (bundle Bundle) Available() bool {
-	keys := [...]identity.SemanticKey{
-		bundle.ValueFactor, bundle.ValueSummary, bundle.ValueSummaryFold, bundle.CallFactor, bundle.HeapFactor, bundle.PackFactor, bundle.EffectFactor,
-		bundle.ValueQuery, bundle.ValueCodec, bundle.EffectQuery, bundle.EffectCodec,
-		bundle.CallActivation, bundle.CallActivationFamily, bundle.CallActivationAdmission,
-		bundle.ValueSourceRule.Rule, bundle.ValueSourceRule.Operand, bundle.ValueSourceRule.Evidence,
-		bundle.PackSourceRule.Rule, bundle.PackSourceRule.Operand, bundle.PackSourceRule.Evidence,
-		bundle.HeapIngressRule.Rule, bundle.HeapIngressRule.Operand, bundle.HeapIngressRule.Evidence,
-		bundle.ValueAllocationRule.Rule, bundle.ValueAllocationRule.Operand, bundle.ValueAllocationRule.Evidence, bundle.ValueAllocationRule.Transform,
-		bundle.HeapClosedRule.Rule, bundle.HeapClosedRule.Operand, bundle.HeapClosedRule.Evidence, bundle.HeapClosedRule.Transform,
-		bundle.HeapEmptyRule.Rule, bundle.HeapEmptyRule.Operand, bundle.HeapEmptyRule.Evidence, bundle.HeapEmptyRule.Transform,
-		bundle.RawGetRule.Rule, bundle.RawGetRule.Operand, bundle.RawGetRule.Evidence,
-		bundle.RawSetRule.Rule, bundle.RawSetRule.Operand, bundle.RawSetRule.Evidence,
-		bundle.CallDispatchRule.Rule, bundle.CallDispatchRule.Operand, bundle.CallDispatchRule.Evidence,
-		bundle.EffectSelectedRule.Rule, bundle.EffectSelectedRule.Operand, bundle.EffectSelectedRule.Evidence,
-		bundle.EffectOpaqueRule.Rule, bundle.EffectOpaqueRule.Operand, bundle.EffectOpaqueRule.Evidence,
-		bundle.EffectBodyRule.Rule, bundle.EffectBodyRule.Operand, bundle.EffectBodyRule.Evidence,
-		bundle.ValueBootstrapRule.Rule, bundle.ValueBootstrapRule.Operand, bundle.ValueBootstrapRule.Evidence,
-		bundle.HeapBootstrapRule.Rule, bundle.HeapBootstrapRule.Operand, bundle.HeapBootstrapRule.Evidence,
-		bundle.ValueTransferRule.Rule, bundle.ValueTransferRule.Operand, bundle.ValueTransferRule.Evidence,
-		bundle.ValueBinaryArithmeticRule.Rule, bundle.ValueBinaryArithmeticRule.Operand, bundle.ValueBinaryArithmeticRule.Evidence,
-		bundle.ValueBinaryEqualityRule.Rule, bundle.ValueBinaryEqualityRule.Operand, bundle.ValueBinaryEqualityRule.Evidence,
-		bundle.ValueBinaryOrderRule.Rule, bundle.ValueBinaryOrderRule.Operand, bundle.ValueBinaryOrderRule.Evidence,
-		bundle.ValuePresenceRefinementRule.Rule, bundle.ValuePresenceRefinementRule.Operand, bundle.ValuePresenceRefinementRule.Evidence,
-	}
-	for index, key := range keys {
-		if !key.Available() {
-			return false
+// Available reports whether this vocabulary resolves anything.
+func (roles Roles) Available() bool { return len(roles.keys) != 0 }
+
+// Count is the number of roles this vocabulary resolves.
+func (roles Roles) Count() int { return len(roles.keys) }
+
+// Key resolves one declared role's global identity by the row key it is
+// declared under.
+func (roles Roles) Key(key schema.Key) (identity.SemanticKey, bool) {
+	semantic, ok := roles.keys[key]
+	return semantic, ok && semantic.Available()
+}
+
+// Restrict narrows this vocabulary to exactly the named roles. A name this
+// vocabulary does not resolve leaves the restriction unavailable, so an entry
+// declaring a role no domain contributed is rejected where it is declared
+// rather than where its hook reads.
+func (roles Roles) Restrict(keys ...schema.Key) (Roles, bool) {
+	narrowed := make(map[schema.Key]identity.SemanticKey, len(keys))
+	for _, key := range keys {
+		semantic, ok := roles.Key(key)
+		if !ok {
+			return Roles{}, false
 		}
-		for prior := 0; prior < index; prior++ {
-			if keys[prior].Digest() == key.Digest() && keys[prior].Version() == key.Version() {
-				return false
-			}
-		}
+		narrowed[key] = semantic
 	}
-	return true
+	return Roles{keys: narrowed}, len(narrowed) != 0
+}
+
+// Rule resolves the three roles one rule is identified by. The rule names the
+// role once and receives its whole identity tuple, so the three forms cannot
+// be resolved against three different roles.
+func (roles Roles) Rule(role string) (RuleSemantics, bool) {
+	rule, ruleOK := roles.Key(RoleKey("rule/" + role))
+	operand, operandOK := roles.Key(RoleKey("operand/" + role))
+	evidence, evidenceOK := roles.Key(RoleKey("evidence/" + role))
+	semantics := RuleSemantics{Rule: rule, Operand: operand, Evidence: evidence}
+	return semantics, ruleOK && operandOK && evidenceOK && semantics.Available()
+}
+
+// Transformed resolves the four roles a rule whose output is normalized before
+// admission is identified by.
+func (roles Roles) Transformed(role string) (TransformedRuleSemantics, bool) {
+	base, baseOK := roles.Rule(role)
+	transform, transformOK := roles.Key(RoleKey("transform/" + role))
+	semantics := TransformedRuleSemantics{RuleSemantics: base, Transform: transform}
+	return semantics, baseOK && transformOK && semantics.Available()
 }
 
 // Key derives one global semantic role.  The framing and domain are part of

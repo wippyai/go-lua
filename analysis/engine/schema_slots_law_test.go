@@ -249,12 +249,11 @@ func TestSchemaSlotsRouteAndSelectorPredecessorsAreExactAndCanonical(t *testing.
 	}
 }
 
-func TestSchemaSlotsRejectRouteAfterStaticWriteAndSelectorWithoutDependencies(t *testing.T) {
+func TestSchemaSlotsRejectRouteAfterStaticWrite(t *testing.T) {
 	builder := NewSchema()
 	factor, _ := DeclareFactorSlot[uint64](builder, coldKey(944_200))
 	read, _ := factor.ExactRead()
 	write, _ := factor.ExactWrite()
-	selector, _ := factor.SelectorWrite(coldKey(944_201))
 	rule, _ := DeclareRuleSlot[uint64, struct{}](builder, SchemaRuleSpec[uint64]{
 		Semantic: coldKey(944_202), OperandFamily: coldKey(944_203), Inputs: 1,
 		Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(944_204)}, Output: factor.Ref(),
@@ -267,12 +266,6 @@ func TestSchemaSlotsRejectRouteAfterStaticWriteAndSelectorWithoutDependencies(t 
 	}
 	if _, ok := SchemaRouteWrite(rule, write, selected); ok {
 		t.Fatal("routed write accepted a competing static write")
-	}
-	if _, ok := SchemaSelectWrite(rule, selector, []SchemaReadRef{base.Ref()}, nil); ok {
-		t.Fatal("selector write accepted no dependency evidence")
-	}
-	if _, ok := SchemaWrite(rule, selector); ok {
-		t.Fatal("direct selector write bypassed its evidence")
 	}
 }
 
@@ -361,5 +354,166 @@ func TestSchemaSlotsStructuralCapabilitiesBind(t *testing.T) {
 	}
 	if familySchema, ok := familyBuilder.Seal(); !ok || family.Schema() != familySchema {
 		t.Fatal("activation owner binding")
+	}
+}
+
+// TestSchemaSlotsPortIdentityIsItsIndex proves both Rule kinds issue ordered
+// predecessor ports through one implementation: a port redeclared at the same
+// index is the same port and never a second token, and two Rules never share
+// one port.
+func TestSchemaSlotsPortIdentityIsItsIndex(t *testing.T) {
+	builder := NewSchema()
+	factor, factorOK := DeclareFactorSlot[uint64](builder, coldKey(946_001))
+	if !factorOK {
+		t.Fatal("factor")
+	}
+	rule, ruleOK := DeclareRuleSlot[uint64, struct{}](builder, SchemaRuleSpec[uint64]{
+		Semantic: coldKey(946_002), OperandFamily: coldKey(946_003), Inputs: 2,
+		Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(946_004)}, Output: factor.Ref(),
+	})
+	if !ruleOK {
+		t.Fatal("rule")
+	}
+	first, firstOK := rule.Input(1)
+	again, againOK := rule.Input(1)
+	if !firstOK || !againOK || first.cell == nil || first.cell != again.cell {
+		t.Fatal("a redeclared factor-output port issued a second token")
+	}
+	if _, ok := rule.Input(2); ok {
+		t.Fatal("port beyond the declared arity")
+	}
+	family, familyOK := DeclareSchemaActivationFamily(builder, coldKey(946_005))
+	if !familyOK {
+		t.Fatal("activation family")
+	}
+	structural, structuralOK := DeclareSchemaActivationRule(builder, SchemaStructuralRuleSpec{
+		Semantic: coldKey(946_006), Inputs: 2,
+		Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(946_007)}, Activation: family,
+	})
+	if !structuralOK {
+		t.Fatal("activation rule")
+	}
+	structuralFirst, structuralFirstOK := structural.Input(1)
+	structuralAgain, structuralAgainOK := structural.Input(1)
+	if !structuralFirstOK || !structuralAgainOK || structuralFirst.cell == nil || structuralFirst.cell != structuralAgain.cell {
+		t.Fatal("a redeclared structural port issued a second token")
+	}
+	if structuralFirst.cell == first.cell {
+		t.Fatal("two Rules shared one predecessor port token")
+	}
+	if _, ok := structural.Input(2); ok {
+		t.Fatal("structural port beyond the declared arity")
+	}
+}
+
+// TestSchemaSlotsRefuseCrossRoleTokens proves the declaration role is the
+// authority for what a token addresses: a token issued for one role never
+// resolves as another role's declaration row, even where the two rows carry
+// the same declaration state.
+func TestSchemaSlotsRefuseCrossRoleTokens(t *testing.T) {
+	builder := NewSchema()
+	factor, factorOK := DeclareFactorSlot[uint64](builder, coldKey(946_101))
+	if !factorOK {
+		t.Fatal("factor")
+	}
+	read, readOK := factor.ExactRead()
+	write, writeOK := factor.ExactWrite()
+	if !readOK || !writeOK {
+		t.Fatal("forms")
+	}
+	family, familyOK := DeclareSchemaActivationFamily(builder, coldKey(946_102))
+	if !familyOK {
+		t.Fatal("activation family")
+	}
+	rule, ruleOK := DeclareRuleSlot[uint64, struct{}](builder, SchemaRuleSpec[uint64]{
+		Semantic: coldKey(946_103), OperandFamily: coldKey(946_104), Inputs: 1,
+		Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(946_105)}, Output: factor.Ref(),
+	})
+	if !ruleOK {
+		t.Fatal("rule")
+	}
+	input, inputOK := rule.Input(0)
+	if !inputOK {
+		t.Fatal("input")
+	}
+	if _, ok := SchemaRead(rule, read, input); !ok {
+		t.Fatal("base read")
+	}
+	written, writtenOK := SchemaWrite(rule, write)
+	if !writtenOK {
+		t.Fatal("write")
+	}
+	writeAsRead := SchemaReadRef{slotHandle[rowDraft[readRole]]{cell: written.cell}}
+	if _, ok := SchemaSelectedRead[uint64](rule, read, input, writeAsRead); ok {
+		t.Fatal("a write row was accepted as a read predecessor")
+	}
+	familyAsFactor := FactorRef[uint64]{slotHandle[keyDraft[factorRole]]{cell: family.cell}}
+	if _, ok := DeclareRuleSlot[uint64, struct{}](builder, SchemaRuleSpec[uint64]{
+		Semantic: coldKey(946_106), OperandFamily: coldKey(946_107), Inputs: 1,
+		Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(946_108)}, Output: familyAsFactor,
+	}); ok {
+		t.Fatal("an activation family was accepted as a Factor output")
+	}
+}
+
+// TestSchemaSlotsRefusedDeclarationsEmitNoRow proves each declaration emits its
+// cold row complete and final: a refused declaration leaves the candidate
+// exactly as it found it, and an accepted one carries its whole disposition on
+// the row it appended.
+func TestSchemaSlotsRefusedDeclarationsEmitNoRow(t *testing.T) {
+	builder := NewSchema()
+	factor, factorOK := DeclareFactorSlot[uint64](builder, coldKey(946_201))
+	if !factorOK {
+		t.Fatal("factor")
+	}
+	exactRead, exactReadOK := factor.ExactRead()
+	summaryRead, summaryReadOK := factor.SummaryRead(coldKey(946_202))
+	exactWrite, exactWriteOK := factor.ExactWrite()
+	if !exactReadOK || !summaryReadOK || !exactWriteOK {
+		t.Fatal("forms")
+	}
+	rule, ruleOK := DeclareRuleSlot[uint64, struct{}](builder, SchemaRuleSpec[uint64]{
+		Semantic: coldKey(946_204), OperandFamily: coldKey(946_205), Inputs: 1,
+		Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(946_206)}, Output: factor.Ref(),
+	})
+	if !ruleOK {
+		t.Fatal("rule")
+	}
+	input, inputOK := rule.Input(0)
+	if !inputOK {
+		t.Fatal("input")
+	}
+	base, baseOK := SchemaRead(rule, exactRead, input)
+	if !baseOK {
+		t.Fatal("base read")
+	}
+	reads, writes := len(builder.candidate.Rules[0].Reads), len(builder.candidate.Rules[0].Writes)
+	if _, ok := SchemaSelectedRead[uint64](rule, summaryRead, input, base.Ref()); ok {
+		t.Fatal("a summary form was accepted as a selected read")
+	}
+	if got := len(builder.candidate.Rules[0].Reads); got != reads {
+		t.Fatalf("refused selected read emitted %d read rows", got-reads)
+	}
+	selected, selectedOK := SchemaSelectedRead[uint64](rule, exactRead, input, base.Ref())
+	if !selectedOK {
+		t.Fatal("selected read")
+	}
+	row := builder.candidate.Rules[0].Reads[reads]
+	if row.Kind != coldcomposition.ReadSelect || row.Semantic != row.Factor || len(row.Dependencies) != 1 || row.Dependencies[0] != 0 {
+		t.Fatal("the selected read row was not emitted complete")
+	}
+	if _, ok := SchemaRouteWrite(rule, exactWrite, base); ok {
+		t.Fatal("a non-selected read was accepted as a route")
+	}
+	if got := len(builder.candidate.Rules[0].Writes); got != writes {
+		t.Fatalf("refused routed write emitted %d write rows", got-writes)
+	}
+	routed, routedOK := SchemaRouteWrite(rule, exactWrite, selected)
+	if !routedOK {
+		t.Fatal("routed write")
+	}
+	written := builder.candidate.Rules[0].Writes[writes]
+	if written.Kind != coldcomposition.WriteRoute || written.Route != uint64(reads+1) || routed.cell == nil {
+		t.Fatal("the routed write row was not emitted complete")
 	}
 }

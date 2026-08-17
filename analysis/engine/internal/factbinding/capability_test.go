@@ -14,7 +14,6 @@ type declaredCapabilities struct {
 	summary carrier.Unit
 	strong  carrier.Target
 	weak    carrier.Target
-	targets carrier.Selector
 }
 
 func TestDeclaredCapabilitiesAreTheOnlyBindingAuthority(t *testing.T) {
@@ -46,10 +45,6 @@ func TestDeclaredCapabilitiesAreTheOnlyBindingAuthority(t *testing.T) {
 			return false
 		}
 		declared.weak, ok = binding.DeclareWeak([]carrier.Unit{declared.summary})
-		if !ok {
-			return false
-		}
-		declared.targets, ok = binding.DeclareTargetSelector([]carrier.Target{declared.strong, declared.weak})
 		return ok
 	})
 	binding, ok := bindTest(config, manager)
@@ -73,10 +68,9 @@ func TestDeclaredCapabilitiesAreTheOnlyBindingAuthority(t *testing.T) {
 	_, summarySlot := declared.summary.Slot()
 	_, strongSlot := declared.strong.Slot()
 	_, weakSlot := declared.weak.Slot()
-	_, targetsSlot := declared.targets.Slot()
-	if exactSlot || summarySlot || strongSlot || weakSlot || targetsSlot ||
+	if exactSlot || summarySlot || strongSlot || weakSlot ||
 		binding.Begin(peerWork, peerState) != nil ||
-		binding.ValidUnit(declared.exact[0]) || binding.ValidTarget(declared.strong) || binding.ValidSelector(declared.targets, carrier.TargetSelector) {
+		binding.ValidUnit(declared.exact[0]) || binding.ValidTarget(declared.strong) {
 		t.Fatal("pre-bind capability was usable")
 	}
 	prepared, ok := carrier.PrepareComposition([]carrier.FactorOperation{binding})
@@ -84,13 +78,6 @@ func TestDeclaredCapabilitiesAreTheOnlyBindingAuthority(t *testing.T) {
 		t.Fatal("prepare composition")
 	}
 	slot := shape.Slot(0)
-	targetCandidates, ok := prepared.SelectorTargets(slot, declared.targets)
-	if !ok {
-		t.Fatal("prepared target selector surface")
-	}
-	if len(targetCandidates) != 2 || !targetCandidates[0].Same(declared.strong) || !targetCandidates[1].Same(declared.weak) {
-		t.Fatal("target selector candidate surface")
-	}
 	composition, ok := prepared.Attach()
 	if !ok {
 		t.Fatal("attach composition")
@@ -99,7 +86,7 @@ func TestDeclaredCapabilitiesAreTheOnlyBindingAuthority(t *testing.T) {
 	if !ok {
 		t.Fatal("state")
 	}
-	if !binding.ValidUnit(declared.exact[0]) || !binding.ValidUnit(declared.exact[1]) || !binding.ValidUnit(declared.summary) || !binding.ValidTarget(declared.strong) || !binding.ValidTarget(declared.weak) || !binding.ValidSelector(declared.targets, carrier.TargetSelector) {
+	if !binding.ValidUnit(declared.exact[0]) || !binding.ValidUnit(declared.exact[1]) || !binding.ValidUnit(declared.summary) || !binding.ValidTarget(declared.strong) || !binding.ValidTarget(declared.weak) {
 		t.Fatal("attached semantic capabilities were not active")
 	}
 	work := newWork(t, composition)
@@ -289,10 +276,6 @@ func TestDeclaredCapabilityValidationDoesNotAllocate(t *testing.T) {
 			return false
 		}
 		declared.strong, ok = binding.DeclareStrong(declared.exact[0])
-		if !ok {
-			return false
-		}
-		declared.targets, ok = binding.DeclareTargetSelector([]carrier.Target{declared.strong})
 		return ok
 	}), manager)
 	if !ok {
@@ -304,7 +287,6 @@ func TestDeclaredCapabilityValidationDoesNotAllocate(t *testing.T) {
 	if allocations := testing.AllocsPerRun(100, func() {
 		_ = binding.ValidUnit(declared.exact[0])
 		_ = binding.ValidTarget(declared.strong)
-		_ = binding.ValidSelector(declared.targets, carrier.TargetSelector)
 	}); allocations != 0 {
 		t.Fatalf("capability validation allocations/run = %g", allocations)
 	}

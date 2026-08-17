@@ -32,11 +32,17 @@ func (c *Collector) TableField(span source.Span, table, key, values keyspace.Ter
 	if fieldKind == kind.FieldExact {
 		candidate, present := c.exactCandidate(key)
 		if !present {
-			return rejectTermMutationf(c, "program/lower/collector: exact TableField key has no exact candidate")
-		}
-		candidatePresent = true
-		if !c.addExactCandidate(candidate) {
-			return 0
+			// nil is an authored exact-key spelling, but it has no storable
+			// Source key candidate.  Keep the FieldExact row so Flow and
+			// SourceControl can publish its canonical throw obligation.
+			if keyspace.TermFamily(key) != keyspace.FamilyNil {
+				return rejectTermMutationf(c, "program/lower/collector: exact TableField key has no exact candidate")
+			}
+		} else {
+			candidatePresent = true
+			if !c.addExactCandidate(candidate) {
+				return 0
+			}
 		}
 	}
 	term := c.mint(keyspace.FamilyTableField, span)

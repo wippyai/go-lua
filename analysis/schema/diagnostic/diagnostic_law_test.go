@@ -4,9 +4,76 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/internal/framing"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
+
+// The declared identities a scratch row is named against. The probe family is
+// declared and used by nothing else: a family the analyzer has never published
+// before is exactly one row of the structural vocabulary, and these laws state
+// that a code under it is spellable.
+const (
+	scratchFamilyAdvice = schema.Key("family/advice")
+	scratchFamilyType   = schema.Key("family/type")
+	scratchFamilyValue  = schema.Key("family/value")
+	scratchFamilyLint   = schema.Key("family/lint")
+	scratchFamilyProbe  = schema.Key("family/probe")
+
+	scratchObservationBranch = schema.Key("observation/branch-condition")
+	scratchObservationType   = schema.Key("observation/type-reference-unresolved")
+	scratchObservationValue  = schema.Key("observation/value-reference-unresolved")
+)
+
+// scratchVocabularySurface carries the declared vocabulary a diagnostic row
+// resolves its family and observation population against. It states no law of
+// its own: the structural surface's totality laws belong to the surface that
+// declares the catalog, and what these laws are about is what the diagnostic
+// surface does with a member of it.
+type scratchVocabularySurface struct{ entries []*structure.Entry }
+
+func (contribution scratchVocabularySurface) Kind() schema.SurfaceKind {
+	return schema.SurfaceKindStructure
+}
+
+func (contribution scratchVocabularySurface) Entries() []schema.Entry {
+	entries := make([]schema.Entry, len(contribution.entries))
+	for index, entry := range contribution.entries {
+		entries[index] = entry
+	}
+	return entries
+}
+
+func (contribution scratchVocabularySurface) Seal(schema.View, schema.Sealed) schema.SealFailure {
+	return schema.SealFailure{}
+}
+
+func scratchVocabulary(t *testing.T) schema.Surface {
+	t.Helper()
+	specs := []structure.Spec{
+		{Key: scratchObservationBranch, Category: structure.CategoryDiagnosticObservation, Ordinal: 1, Spelling: "branch-condition", Accepted: true},
+		{Key: scratchObservationType, Category: structure.CategoryDiagnosticObservation, Ordinal: 2, Spelling: "type-reference-unresolved", Accepted: true},
+		{Key: scratchObservationValue, Category: structure.CategoryDiagnosticObservation, Ordinal: 3, Spelling: "value-reference-unresolved", Accepted: true},
+		{Key: scratchFamilyAdvice, Category: structure.CategoryDiagnosticFamily, Ordinal: 1, Spelling: "advice", Accepted: true},
+		{Key: scratchFamilyType, Category: structure.CategoryDiagnosticFamily, Ordinal: 2, Spelling: "type", Accepted: true},
+		{Key: scratchFamilyValue, Category: structure.CategoryDiagnosticFamily, Ordinal: 3, Spelling: "value", Accepted: true},
+		{Key: scratchFamilyLint, Category: structure.CategoryDiagnosticFamily, Ordinal: 4, Spelling: "lint", Accepted: true},
+		{Key: scratchFamilyProbe, Category: structure.CategoryDiagnosticFamily, Ordinal: 5, Spelling: "probe", Accepted: true},
+	}
+	entries := make([]*structure.Entry, 0, len(specs))
+	for _, spec := range specs {
+		entry, ok := structure.New(spec)
+		if !ok {
+			t.Fatalf("scratch vocabulary member %q rejected by construction", spec.Key)
+		}
+		entries = append(entries, entry)
+	}
+	return scratchVocabularySurface{entries: entries}
+}
+
+// member names one declared vocabulary member from a scratch row.
+func member(key schema.Key) Reference {
+	return Reference{Surface: schema.SurfaceKindStructure, Key: key}
+}
 
 // scratchSiblingSurface stands in for one already-catalogued surface. The
 // declaration root requires every catalog member to be registered, so a
@@ -42,13 +109,13 @@ func (surface scratchSiblingSurface) Seal(schema.View, schema.Sealed) schema.Sea
 
 // scratchSpec is one complete diagnostic declaration. Each law test starts
 // from this record and damages exactly the field the law is about.
-func scratchSpec(code Code, family Family) Spec {
+func scratchSpec(code Code, family schema.Key) Spec {
 	return Spec{
 		Code:            code,
-		Family:          family,
+		Family:          member(family),
 		DefaultSeverity: SeverityHint,
 		Lane:            LaneBranch,
-		Observation:     programartifact.DiagnosticObservationBranchCondition,
+		Observation:     member(scratchObservationBranch),
 		Fact:            Reference{Surface: schema.SurfaceKindAxis, Key: "value"},
 		Requirements:    RequiresSubject,
 		Message:         "unknown value {subject}",
@@ -89,6 +156,8 @@ func sealContribution(t *testing.T, contribution schema.Surface, axes []schema.K
 		switch kind {
 		case schema.SurfaceKindDiagnostic:
 			builder.Register(contribution)
+		case schema.SurfaceKindStructure:
+			builder.Register(scratchVocabulary(t))
 		case schema.SurfaceKindAxis:
 			builder.Register(scratchSiblingSurface{kind: kind, keys: axes})
 		case schema.SurfaceKindRule:
@@ -110,8 +179,8 @@ func sealEntries(t *testing.T, entries []*Entry) schema.SealFailure {
 // declaration is admitted, indexed, and sealed with no verdict.
 func TestDiagnosticSurfaceSealsCompleteInventory(t *testing.T) {
 	entries := []*Entry{
-		mustEntry(t, scratchSpec("advice.always_true_guard", FamilyAdvice)),
-		mustEntry(t, scratchSpec("value.reference.unresolved", FamilyValue)),
+		mustEntry(t, scratchSpec("advice.always_true_guard", scratchFamilyAdvice)),
+		mustEntry(t, scratchSpec("value.reference.unresolved", scratchFamilyValue)),
 	}
 	if failure := sealEntries(t, entries); failure.Available() {
 		t.Fatalf("complete diagnostic inventory rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
@@ -153,7 +222,7 @@ func TestForeignRowIsRejected(t *testing.T) {
 // this surface's own derivation of its code, so a row cannot travel under
 // another surface's identity.
 func TestDiagnosticCodeIsThisSurfaceDerivation(t *testing.T) {
-	entry := mustEntry(t, scratchSpec("advice.always_true_guard", FamilyAdvice))
+	entry := mustEntry(t, scratchSpec("advice.always_true_guard", scratchFamilyAdvice))
 	entry.id = schema.NewEntryID(schema.SurfaceKindRule, schema.Key(entry.code))
 	failure := sealEntries(t, []*Entry{entry})
 	if failure.Law != LawCodeIdentity || failure.Disposition != schema.DispositionMalformed {
@@ -164,8 +233,8 @@ func TestDiagnosticCodeIsThisSurfaceDerivation(t *testing.T) {
 // TestDiagnosticCodeIsUnique states that two rows cannot publish one code. The
 // entry identity is derived from the code, so the root rejects the duplicate.
 func TestDiagnosticCodeIsUnique(t *testing.T) {
-	first := mustEntry(t, scratchSpec("advice.always_true_guard", FamilyAdvice))
-	second := mustEntry(t, scratchSpec("advice.always_true_guard", FamilyAdvice))
+	first := mustEntry(t, scratchSpec("advice.always_true_guard", scratchFamilyAdvice))
+	second := mustEntry(t, scratchSpec("advice.always_true_guard", scratchFamilyAdvice))
 	failure := sealEntries(t, []*Entry{first, second})
 	if failure.Law != schema.LawEntryUnique || failure.Disposition != schema.DispositionDuplicate {
 		t.Fatalf("duplicate diagnostic code sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
@@ -176,17 +245,86 @@ func TestDiagnosticCodeIsUnique(t *testing.T) {
 // published under and that the published code carries that same family, so
 // publication gating by family cannot disagree with the code a reader sees.
 func TestDiagnosticFamilyIsDeclared(t *testing.T) {
-	entry := mustEntry(t, scratchSpec("advice.always_true_guard", FamilyAdvice))
-	entry.family = FamilyLint
+	entry := mustEntry(t, scratchSpec("advice.always_true_guard", scratchFamilyAdvice))
+	entry.family = member(scratchFamilyLint)
 	failure := sealEntries(t, []*Entry{entry})
 	if failure.Law != LawFamilyDeclared || failure.Disposition != schema.DispositionMalformed {
 		t.Fatalf("code published outside its declared family sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
-	if _, ok := New(scratchSpec("advice.always_true_guard", FamilyInvalid)); ok {
+	if _, ok := New(scratchSpec("advice.always_true_guard", "")); ok {
 		t.Fatal("row without a declared family admitted")
 	}
-	if _, ok := New(scratchSpec("always_true_guard", FamilyAdvice)); ok {
+	if _, ok := New(scratchSpec("always_true_guard", scratchFamilyAdvice)); ok {
 		t.Fatal("code without a family segment admitted")
+	}
+}
+
+// TestDiagnosticFamilyIsDeclaredNotEnumerated is the addition law of the
+// family vocabulary: publishing under a family the analyzer has never published
+// before is declaring one row on the structural surface, and nothing else. The
+// probe family is declared and used by no analyzer row, so the code under it
+// exercises the whole path - admission, resolution, and the spelling law - on a
+// family no Go type names.
+func TestDiagnosticFamilyIsDeclaredNotEnumerated(t *testing.T) {
+	declared := mustEntry(t, scratchSpec("probe.example", scratchFamilyProbe))
+	if failure := sealEntries(t, []*Entry{declared}); failure.Available() {
+		t.Fatalf("code under a declared family rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	// A family no row declares resolves to nothing. The code is well formed and
+	// the reference is well formed; what is missing is the declaration, so the
+	// verdict is incomplete rather than malformed.
+	undeclared := mustEntry(t, scratchSpec("probe.example", scratchFamilyProbe))
+	undeclared.family = member("family/undeclared")
+	failure := sealEntries(t, []*Entry{undeclared})
+	if failure.Law != LawFamilyDeclared || failure.Disposition != schema.DispositionIncomplete {
+		t.Fatalf("code under an undeclared family sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+}
+
+// TestDiagnosticReferencesResolveDownward states what a named identity may be:
+// a member of the vocabulary the referring field is about, on the surface that
+// declares it. A name that resolves to a member of another vocabulary is the
+// wrong catalog, and a name that reaches a surface sealed at or above this one
+// reaches a table that does not exist yet; both are malformed rather than
+// resolutions a consumer would have to re-check.
+func TestDiagnosticReferencesResolveDownward(t *testing.T) {
+	crossed := mustEntry(t, scratchSpec("advice.always_true_guard", scratchFamilyAdvice))
+	crossed.family = member(scratchObservationBranch)
+	failure := sealEntries(t, []*Entry{crossed})
+	if failure.Law != LawFamilyDeclared || failure.Disposition != schema.DispositionMalformed {
+		t.Fatalf("family naming an observation population sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	crossed = mustEntry(t, scratchSpec("advice.always_true_guard", scratchFamilyAdvice))
+	crossed.observation = member(scratchFamilyAdvice)
+	failure = sealEntries(t, []*Entry{crossed})
+	if failure.Law != LawObservationDeclared || failure.Disposition != schema.DispositionMalformed {
+		t.Fatalf("observation naming a family sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	upward := mustEntry(t, scratchSpec("advice.always_true_guard", scratchFamilyAdvice))
+	upward.family = Reference{Surface: schema.SurfaceKindQuery, Key: scratchFamilyAdvice}
+	failure = sealEntries(t, []*Entry{upward})
+	if failure.Law != LawFamilyDeclared || failure.Disposition != schema.DispositionMalformed {
+		t.Fatalf("family named on another surface sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+}
+
+// TestDiagnosticObservationIsDeclaredOnce states that the population a row is
+// measured over is bounded by the declaration and by nothing else: a name the
+// observation vocabulary does not carry is unresolved here, so there is one
+// place a population is added and one place it is checked.
+func TestDiagnosticObservationIsDeclaredOnce(t *testing.T) {
+	entry := mustEntry(t, scratchSpec("advice.always_true_guard", scratchFamilyAdvice))
+	entry.observation = member("observation/undeclared")
+	failure := sealEntries(t, []*Entry{entry})
+	if failure.Law != LawObservationDeclared || failure.Disposition != schema.DispositionIncomplete {
+		t.Fatalf("row measured over an undeclared population sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	for _, population := range []schema.Key{scratchObservationBranch, scratchObservationType, scratchObservationValue} {
+		measured := mustEntry(t, scratchSpec("advice.always_true_guard", scratchFamilyAdvice))
+		measured.observation = member(population)
+		if failure := sealEntries(t, []*Entry{measured}); failure.Available() {
+			t.Fatalf("row measured over %q rejected: law=%d disposition=%s", population, failure.Law, failure.Disposition)
+		}
 	}
 }
 
@@ -194,16 +332,16 @@ func TestDiagnosticFamilyIsDeclared(t *testing.T) {
 // publication tier is derived from the declared default severity and is never
 // declared beside it, so the two cannot drift.
 func TestDiagnosticTierFollowsDefaultSeverity(t *testing.T) {
-	advisory := mustEntry(t, scratchSpec("advice.always_true_guard", FamilyAdvice))
+	advisory := mustEntry(t, scratchSpec("advice.always_true_guard", scratchFamilyAdvice))
 	if advisory.Tier() != TierAdvisory {
 		t.Fatalf("hint default severity published tier %d", advisory.Tier())
 	}
-	spec := scratchSpec("value.reference.unresolved", FamilyValue)
+	spec := scratchSpec("value.reference.unresolved", scratchFamilyValue)
 	spec.DefaultSeverity = SeverityError
 	if mustEntry(t, spec).Tier() != TierError {
 		t.Fatal("error default severity did not publish the error tier")
 	}
-	damaged := mustEntry(t, scratchSpec("advice.always_true_guard", FamilyAdvice))
+	damaged := mustEntry(t, scratchSpec("advice.always_true_guard", scratchFamilyAdvice))
 	damaged.defaultSeverity = SeverityInvalid
 	failure := sealEntries(t, []*Entry{damaged})
 	if failure.Law != LawTierValid || failure.Disposition != schema.DispositionIncomplete {
@@ -216,18 +354,18 @@ func TestDiagnosticTierFollowsDefaultSeverity(t *testing.T) {
 // vocabulary. A template is parsed once, here, and never at render time.
 func TestDiagnosticTemplatesParseAtSeal(t *testing.T) {
 	for _, damaged := range []Text{"", "unknown value {", "unknown value }", "unknown value {nobody}", "unknown value {subject"} {
-		spec := scratchSpec("advice.always_true_guard", FamilyAdvice)
+		spec := scratchSpec("advice.always_true_guard", scratchFamilyAdvice)
 		spec.Message = damaged
 		if _, ok := New(spec); ok {
 			t.Fatalf("template %q admitted", damaged)
 		}
-		spec = scratchSpec("advice.always_true_guard", FamilyAdvice)
+		spec = scratchSpec("advice.always_true_guard", scratchFamilyAdvice)
 		spec.Evidence[0].Detail = damaged
 		if _, ok := New(spec); ok {
 			t.Fatalf("evidence template %q admitted", damaged)
 		}
 	}
-	entry := mustEntry(t, scratchSpec("advice.always_true_guard", FamilyAdvice))
+	entry := mustEntry(t, scratchSpec("advice.always_true_guard", scratchFamilyAdvice))
 	message := entry.Message()
 	if message.Text() != "unknown value {subject}" {
 		t.Fatalf("parsed line lost its authored text: %q", message.Text())
@@ -246,13 +384,13 @@ func TestDiagnosticTemplatesParseAtSeal(t *testing.T) {
 // payload law: a template may not read a payload field the row does not
 // require, and a row may not require a payload field no template reads.
 func TestDiagnosticRequirementsCoverPlaceholders(t *testing.T) {
-	unread := mustEntry(t, scratchSpec("advice.always_true_guard", FamilyAdvice))
+	unread := mustEntry(t, scratchSpec("advice.always_true_guard", scratchFamilyAdvice))
 	unread.requirements = RequiresSubject | RequiresTarget
 	failure := sealEntries(t, []*Entry{unread})
 	if failure.Law != LawRequirementCovered || failure.Disposition != schema.DispositionMalformed {
 		t.Fatalf("unread requirement sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
-	unrequired := mustEntry(t, scratchSpec("advice.always_true_guard", FamilyAdvice))
+	unrequired := mustEntry(t, scratchSpec("advice.always_true_guard", scratchFamilyAdvice))
 	unrequired.requirements = RequiresInvalid
 	failure = sealEntries(t, []*Entry{unrequired})
 	if failure.Law != LawRequirementCovered || failure.Disposition != schema.DispositionIncomplete {
@@ -264,7 +402,7 @@ func TestDiagnosticRequirementsCoverPlaceholders(t *testing.T) {
 // evidence or a label at its proof site requires the proof location, so the
 // anchor a reader is shown is always one the payload carries.
 func TestDiagnosticProofAnchorRequiresProofLocation(t *testing.T) {
-	spec := scratchSpec("advice.redundant_claim", FamilyAdvice)
+	spec := scratchSpec("advice.redundant_claim", scratchFamilyAdvice)
 	spec.Evidence[0].Anchor = AnchorProof
 	entry := mustEntry(t, spec)
 	failure := sealEntries(t, []*Entry{entry})
@@ -281,18 +419,18 @@ func TestDiagnosticProofAnchorRequiresProofLocation(t *testing.T) {
 // subjects arrive on, and that the observation population it is measured over
 // is declared exactly when that lane consumes one.
 func TestDiagnosticLaneDeclaresItsSubjects(t *testing.T) {
-	spec := scratchSpec("advice.always_true_guard", FamilyAdvice)
-	spec.Observation = programartifact.DiagnosticObservationInvalid
+	spec := scratchSpec("advice.always_true_guard", scratchFamilyAdvice)
+	spec.Observation = Reference{}
 	if _, ok := New(spec); ok {
 		t.Fatal("producing lane without an observation population admitted")
 	}
-	spec = scratchSpec("lint.unused.local", FamilyLint)
+	spec = scratchSpec("lint.unused.local", scratchFamilyLint)
 	spec.Lane = LaneDeclared
 	spec.Fact = Reference{}
 	if _, ok := New(spec); ok {
 		t.Fatal("declared lane carrying an observation population admitted")
 	}
-	spec.Observation = programartifact.DiagnosticObservationInvalid
+	spec.Observation = Reference{}
 	entry := mustEntry(t, spec)
 	if entry.Collectable() {
 		t.Fatal("declared lane reported an installed producer")
@@ -306,10 +444,10 @@ func TestDiagnosticLaneDeclaresItsSubjects(t *testing.T) {
 // population feeds at most one code, so a static row can be dispatched from
 // the sealed table without a second hand-kept mapping.
 func TestDiagnosticStaticObservationIsUnique(t *testing.T) {
-	first := scratchSpec("type.reference.unresolved", FamilyType)
-	first.Lane, first.Observation, first.Fact = LaneStatic, programartifact.DiagnosticObservationTypeReferenceUnresolved, Reference{}
-	second := scratchSpec("value.reference.unresolved", FamilyValue)
-	second.Lane, second.Observation, second.Fact = LaneStatic, programartifact.DiagnosticObservationTypeReferenceUnresolved, Reference{}
+	first := scratchSpec("type.reference.unresolved", scratchFamilyType)
+	first.Lane, first.Observation, first.Fact = LaneStatic, member(scratchObservationType), Reference{}
+	second := scratchSpec("value.reference.unresolved", scratchFamilyValue)
+	second.Lane, second.Observation, second.Fact = LaneStatic, member(scratchObservationType), Reference{}
 	failure := sealEntries(t, []*Entry{mustEntry(t, first), mustEntry(t, second)})
 	if failure.Law != LawObservationUnique || failure.Disposition != schema.DispositionDuplicate {
 		t.Fatalf("shared static observation population sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
@@ -320,26 +458,26 @@ func TestDiagnosticStaticObservationIsUnique(t *testing.T) {
 // names the declaration its subjects are decided by resolves that name against
 // the same sealed table, and a solver-observed row must name one.
 func TestDiagnosticFactReferenceResolves(t *testing.T) {
-	absent := mustEntry(t, scratchSpec("advice.always_true_guard", FamilyAdvice))
+	absent := mustEntry(t, scratchSpec("advice.always_true_guard", scratchFamilyAdvice))
 	absent.fact = Reference{Surface: schema.SurfaceKindAxis, Key: "absent"}
 	failure := sealEntries(t, []*Entry{absent})
 	if failure.Law != LawFactResolves || failure.Disposition != schema.DispositionIncomplete {
 		t.Fatalf("unresolved fact reference sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
-	ruled := mustEntry(t, scratchSpec("advice.always_true_guard", FamilyAdvice))
+	ruled := mustEntry(t, scratchSpec("advice.always_true_guard", scratchFamilyAdvice))
 	ruled.fact = Reference{Surface: schema.SurfaceKindRule, Key: "value-source"}
 	if failure = sealEntries(t, []*Entry{ruled}); failure.Available() {
 		t.Fatalf("resolved rule reference rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
 	// A reference upward names a table that is not sealed yet; the catalog
 	// order is the dependency order, so it is malformed rather than deferred.
-	upward := mustEntry(t, scratchSpec("advice.always_true_guard", FamilyAdvice))
+	upward := mustEntry(t, scratchSpec("advice.always_true_guard", scratchFamilyAdvice))
 	upward.fact = Reference{Surface: schema.SurfaceKindDiagnostic, Key: "advice.always_true_guard"}
 	failure = sealEntries(t, []*Entry{upward})
 	if failure.Law != LawFactResolves || failure.Disposition != schema.DispositionMalformed {
 		t.Fatalf("upward fact reference sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
-	rootless := scratchSpec("advice.always_true_guard", FamilyAdvice)
+	rootless := scratchSpec("advice.always_true_guard", scratchFamilyAdvice)
 	rootless.Fact = Reference{}
 	if _, ok := New(rootless); ok {
 		t.Fatal("solver-observed row without a fact reference admitted")
@@ -349,7 +487,7 @@ func TestDiagnosticFactReferenceResolves(t *testing.T) {
 // TestDiagnosticRenderPlanIsComplete states that a row declares the sections
 // it publishes, in one order, without repeating a section.
 func TestDiagnosticRenderPlanIsComplete(t *testing.T) {
-	spec := scratchSpec("advice.always_true_guard", FamilyAdvice)
+	spec := scratchSpec("advice.always_true_guard", scratchFamilyAdvice)
 	spec.Render = nil
 	if _, ok := New(spec); ok {
 		t.Fatal("row without a render plan admitted")
@@ -364,7 +502,7 @@ func TestDiagnosticRenderPlanIsComplete(t *testing.T) {
 	}
 	// A row that publishes evidence must render it; declaring evidence no
 	// reader ever sees is an incomplete row, not a silent omission.
-	spec = scratchSpec("advice.always_true_guard", FamilyAdvice)
+	spec = scratchSpec("advice.always_true_guard", scratchFamilyAdvice)
 	spec.Render = []Section{SectionSummary, SectionLocation}
 	entry := mustEntry(t, spec)
 	failure := sealEntries(t, []*Entry{entry})
@@ -377,8 +515,20 @@ func TestDiagnosticRenderPlanIsComplete(t *testing.T) {
 // spec missing any required field yields no entry at all.
 func TestNewRejectsIncompleteSpec(t *testing.T) {
 	cases := map[string]func(*Spec){
-		"code":     func(spec *Spec) { spec.Code = "" },
-		"family":   func(spec *Spec) { spec.Family = FamilyInvalid },
+		"code":   func(spec *Spec) { spec.Code = "" },
+		"family": func(spec *Spec) { spec.Family = Reference{} },
+		"family-surface": func(spec *Spec) {
+			spec.Family = Reference{Key: scratchFamilyAdvice}
+		},
+		"family-key": func(spec *Spec) {
+			spec.Family = Reference{Surface: schema.SurfaceKindStructure}
+		},
+		"observation-surface": func(spec *Spec) {
+			spec.Observation = Reference{Key: scratchObservationBranch}
+		},
+		"observation-key": func(spec *Spec) {
+			spec.Observation = Reference{Surface: schema.SurfaceKindStructure}
+		},
 		"severity": func(spec *Spec) { spec.DefaultSeverity = SeverityInvalid },
 		"lane":     func(spec *Spec) { spec.Lane = LaneInvalid },
 		"message":  func(spec *Spec) { spec.Message = "" },
@@ -410,7 +560,7 @@ func TestNewRejectsIncompleteSpec(t *testing.T) {
 		},
 	}
 	for missing, damage := range cases {
-		spec := scratchSpec("advice.always_true_guard", FamilyAdvice)
+		spec := scratchSpec("advice.always_true_guard", scratchFamilyAdvice)
 		damage(&spec)
 		if entry, ok := New(spec); ok || entry != nil {
 			t.Fatalf("spec without %s admitted", missing)
@@ -422,10 +572,10 @@ func TestNewRejectsIncompleteSpec(t *testing.T) {
 // lookup is a projection of the one sealed view, so a row added to the surface
 // appears in all of them without a second table being edited.
 func TestDerivedTableProjectsEverySealedRow(t *testing.T) {
-	scratch := scratchSpec("lint.unused.upvalue", FamilyLint)
-	scratch.Lane, scratch.Observation, scratch.Fact = LaneStatic, programartifact.DiagnosticObservationValueReferenceUnresolved, Reference{}
+	scratch := scratchSpec("lint.unused.upvalue", scratchFamilyLint)
+	scratch.Lane, scratch.Observation, scratch.Fact = LaneStatic, member(scratchObservationValue), Reference{}
 	entries := []*Entry{
-		mustEntry(t, scratchSpec("advice.always_true_guard", FamilyAdvice)),
+		mustEntry(t, scratchSpec("advice.always_true_guard", scratchFamilyAdvice)),
 		mustEntry(t, scratch),
 	}
 	sealed, failure := sealSurfaces(t, entries, []schema.Key{"value"})
@@ -448,14 +598,14 @@ func TestDerivedTableProjectsEverySealedRow(t *testing.T) {
 	if !byCodeOK || byCode != position {
 		t.Fatal("code lookup did not see the added row")
 	}
-	byObservation, byObservationOK := table.ForStaticObservation(programartifact.DiagnosticObservationValueReferenceUnresolved)
+	byObservation, byObservationOK := table.ForStaticObservation(scratchObservationValue)
 	if !byObservationOK || byObservation != position {
 		t.Fatal("static observation lookup did not see the added row")
 	}
 	if _, unknown := table.ForCode("advice.absent"); unknown {
 		t.Fatal("code lookup answered for an undeclared row")
 	}
-	if _, unknown := table.ForStaticObservation(programartifact.DiagnosticObservationBranchCondition); unknown {
+	if _, unknown := table.ForStaticObservation(scratchObservationBranch); unknown {
 		t.Fatal("static observation lookup answered for a branch population")
 	}
 }
@@ -466,7 +616,7 @@ func TestDerivedTableProjectsEverySealedRow(t *testing.T) {
 // tier is read from its declared default severity, so moving the severity moves
 // the tier and the digest with it.
 func TestTableDigestCoversDeclaredContent(t *testing.T) {
-	advisory := mustEntry(t, scratchSpec("advice.always_true_guard", FamilyAdvice))
+	advisory := mustEntry(t, scratchSpec("advice.always_true_guard", scratchFamilyAdvice))
 	if advisory.Tier() != TierAdvisory {
 		t.Fatalf("scratch row publishes tier %d, want the advisory tier", advisory.Tier())
 	}
@@ -474,7 +624,7 @@ func TestTableDigestCoversDeclaredContent(t *testing.T) {
 	if failure.Available() {
 		t.Fatalf("advisory row rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
-	spec := scratchSpec("advice.always_true_guard", FamilyAdvice)
+	spec := scratchSpec("advice.always_true_guard", scratchFamilyAdvice)
 	spec.DefaultSeverity = SeverityError
 	errorTier := mustEntry(t, spec)
 	if errorTier.Tier() != TierError {

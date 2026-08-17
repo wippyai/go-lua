@@ -84,7 +84,11 @@ func (derivation RuleDerivation[V, O]) Rule() identity.SemanticKey {
 	if derivation.proof == nil || !derivation.proof.valid() {
 		return identity.SemanticKey{}
 	}
-	return semanticKeyFromComposition(derivation.proof.semantic)
+	semantic, ok := semanticKeyFromComposition(derivation.proof.semantic)
+	if !ok {
+		return identity.SemanticKey{}
+	}
+	return semantic
 }
 
 // Composition returns the sealed composition identity under which the
@@ -742,7 +746,6 @@ type ruleRuntimeProof struct {
 	carries          uint64
 	writes           uint64
 	selectedReads    []*SchemaSelectedReadReceipt
-	selectWrite      *SchemaSelectWriteReceipt
 	routeWrite       *SchemaRouteWriteReceipt
 }
 
@@ -754,7 +757,10 @@ func (proof *ruleRuntimeProof) selectedReadAt(read uint64) *SchemaSelectedReadRe
 }
 
 func coldRuleAdmission(value composition.Admission) (ruleAdmissionSchema, bool) {
-	identity := semanticKeyFromComposition(value.Identity)
+	identity, identityOK := semanticKeyFromComposition(value.Identity)
+	if !identityOK {
+		return ruleAdmissionSchema{}, false
+	}
 	result := ruleAdmissionSchema{identity: identity}
 	switch value.Kind {
 	case composition.AdmissionTrustedTheorem:
@@ -819,12 +825,6 @@ func newSchemaRuleRuntimeProof(state *schemaBindingState, authority *schemaBindi
 			return nil, false
 		}
 		switch writeShape.Kind {
-		case composition.WriteSelect:
-			receipt, receiptOK := issueSchemaSelectWriteReceiptFence(fence, fence.valid(), write)
-			if !receiptOK {
-				return nil, false
-			}
-			proof.selectWrite = &receipt
 		case composition.WriteRoute:
 			receipt, receiptOK := issueSchemaRouteWriteReceiptFence(fence, fence.valid(), write)
 			if !receiptOK {
@@ -878,10 +878,6 @@ func (proof *ruleRuntimeProof) valid() bool {
 			return false
 		}
 		switch shape.Kind {
-		case composition.WriteSelect:
-			if proof.selectWrite == nil || !proof.selectWrite.Valid() || proof.selectWrite.fence.state != proof.state || proof.selectWrite.fence.authority != proof.bindingAuthority || proof.selectWrite.fence.rule != proof.ordinal || proof.selectWrite.write != write {
-				return false
-			}
 		case composition.WriteRoute:
 			if proof.routeWrite == nil || !proof.routeWrite.Valid() || proof.routeWrite.fence.state != proof.state || proof.routeWrite.fence.authority != proof.bindingAuthority || proof.routeWrite.fence.rule != proof.ordinal || proof.routeWrite.write != write {
 				return false

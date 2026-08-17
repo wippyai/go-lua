@@ -1,8 +1,9 @@
 package analysis
 
 import (
-	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"testing"
+
+	"github.com/wippyai/go-lua/analysis/engine/rows"
 
 	"github.com/wippyai/go-lua/analysis/domain/composite"
 	callsite "github.com/wippyai/go-lua/analysis/domain/effect/callsite"

@@ -38,27 +38,28 @@ func (key Key) Available() bool { return key != "" }
 //
 // The catalog order is the bind phase order: a surface is registered, sealed,
 // and bound before every surface above it, so a surface that binds against
-// another's output is declared above its producer. Axes produce the coordinate
-// spaces rules write, so axes precede rules; diagnostics reference the rules
-// and axes their subjects come from, so diagnostics follow both. Composites
-// relate coordinate spaces and queries read them, so both follow axes; a
-// denominator quantifies over the entries of a surface sealed below it, so it
-// follows every surface it may name as an owner; and the structural vocabulary
-// names no other surface, so it constrains none of them. A library contract
-// kind resolves the validation law set its instances are checked under against
-// a surface sealed below it, so libraries seal last, after every surface a kind
-// may name.
+// another's output is declared above its producer. Identities are declared
+// before the entries that reference them, so the structural vocabulary seals
+// first: it names no other surface, and every surface above it may name a
+// member of it. Axes produce the coordinate spaces rules write, so axes precede
+// rules; diagnostics reference the rules and axes their subjects come from, so
+// diagnostics follow both. Composites relate coordinate spaces and queries read
+// them, so both follow axes; a denominator quantifies over the entries of a
+// surface sealed below it, so it follows every surface it may name as an owner.
+// A library contract kind resolves the validation law set its instances are
+// checked under against a surface sealed below it, so libraries seal last,
+// after every surface a kind may name.
 type SurfaceKind uint8
 
 const (
 	SurfaceKindInvalid SurfaceKind = iota
+	SurfaceKindStructure
 	SurfaceKindAxis
 	SurfaceKindRule
 	SurfaceKindDiagnostic
 	SurfaceKindComposite
 	SurfaceKindDenominator
 	SurfaceKindQuery
-	SurfaceKindStructure
 	SurfaceKindLibrary
 	surfaceKindLimit
 )
@@ -238,6 +239,32 @@ func (sealed Sealed) Surface(kind SurfaceKind) (View, bool) {
 		return View{}, false
 	}
 	return sealed.views[kind], true
+}
+
+// Resolve looks one declared reference up in the table it is being sealed
+// into: the surface the referenced entry is declared on, and its authored key
+// there. It is the one resolution every referencing surface performs, so the
+// dispositions a dangling reference carries are stated here rather than once
+// per surface.
+//
+// A reference to a surface that is not sealed below the referrer names a table
+// that does not exist yet, and the catalog order makes that malformed rather
+// than merely unresolved. A reference that names a sealed surface but no entry
+// on it is incomplete. The caller states the law the verdict is raised under,
+// because what a reference means is the referring surface's own declaration.
+func (sealed Sealed) Resolve(kind SurfaceKind, key Key) (Entry, Disposition) {
+	if !kind.Available() || !key.Available() {
+		return nil, DispositionMalformed
+	}
+	view, registered := sealed.Surface(kind)
+	if !registered {
+		return nil, DispositionMalformed
+	}
+	entry, resolved := view.ByID(NewEntryID(kind, key))
+	if !resolved {
+		return nil, DispositionIncomplete
+	}
+	return entry, DispositionAccepted
 }
 
 // View is the immutable sealed projection of one surface. Position is the

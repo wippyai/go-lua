@@ -263,13 +263,6 @@ func (implementation *RuleImplementation[K, V, O]) SelectedReadReceipt(index uin
 	return *selected, true
 }
 
-func (implementation *RuleImplementation[K, V, O]) SelectorWriteReceipt() (SchemaSelectWriteReceipt, bool) {
-	if implementation == nil || !implementation.receipt.valid() || implementation.receipt.proof == nil || implementation.receipt.proof.selectWrite == nil || !implementation.receipt.proof.selectWrite.Valid() {
-		return SchemaSelectWriteReceipt{}, false
-	}
-	return *implementation.receipt.proof.selectWrite, true
-}
-
 func (implementation *RuleImplementation[K, V, O]) RouteWriteReceipt() (SchemaRouteWriteReceipt, bool) {
 	if implementation == nil || !implementation.receipt.valid() || implementation.receipt.proof == nil || implementation.receipt.proof.routeWrite == nil || !implementation.receipt.proof.routeWrite.Valid() {
 		return SchemaRouteWriteReceipt{}, false

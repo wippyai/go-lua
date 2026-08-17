@@ -3,9 +3,9 @@ package typ
 import (
 	"strconv"
 
-	"github.com/wippyai/go-lua/analysis/internal/hash"
 	"github.com/wippyai/go-lua/analysis/domain/type/annotation"
 	"github.com/wippyai/go-lua/analysis/domain/type/kind"
+	"github.com/wippyai/go-lua/analysis/internal/hash"
 )
 
 const annotatedHashSalt = 0x9e3779b97f4a7c15

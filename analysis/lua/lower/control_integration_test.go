@@ -71,8 +71,15 @@ return finish()
 	for index := 0; index < calls.Count(); index++ {
 		call, _ := calls.At(index)
 		boundary, boundaryOK := boundaries.For(call)
-		if !boundaryOK || boundary.Call != call || boundary.Normal == 0 || boundary.Throw == 0 || boundary.Yield == 0 || boundary.Cancel == 0 {
+		if !boundaryOK || boundary.Call != call || boundary.Throw == 0 || boundary.Yield == 0 || boundary.Cancel == 0 {
 			t.Fatalf("Call boundary[%d] = %#v/%v", index, boundary, boundaryOK)
+		}
+		if index == calls.Count()-1 {
+			if boundary.Normal != 0 || boundary.TailReturn == 0 {
+				t.Fatalf("tail Call boundary[%d] = %#v", index, boundary)
+			}
+		} else if boundary.Normal == 0 || boundary.TailReturn != 0 {
+			t.Fatalf("ordinary Call boundary[%d] = %#v", index, boundary)
 		}
 		for edgeIndex := 0; edgeIndex < edges.Count(); edgeIndex++ {
 			edge, edgeOK := edges.At(edgeIndex)

@@ -7,9 +7,9 @@ import (
 	packowner "github.com/wippyai/go-lua/analysis/domain/pack/owner"
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
 
@@ -37,12 +37,22 @@ type ruleAuthorities interface {
 // interfaces above.
 func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *SchemaFragment, *HotRule] {
 	return rule.Spec[P, A, *SchemaFragment, *HotRule]{
-		Key:      "call-activation",
-		Role:     programartifact.RuleRoleCallActivation,
+		Key:    "call-activation",
+		Writes: "call",
+		Issues: []rule.Issuance{
+			{Occurrence: "occurrence/call-activation", Form: "issuance/call-stage", Input: "input/finish", Stage: "stage/call-summary"},
+		},
 		Lane:     rule.LaneActivation,
-		Semantic: func(bundle vocabulary.Bundle) identity.SemanticKey { return bundle.CallActivation },
+		Semantic: "semantic/activation/call-body",
+		Roles:    []schema.Key{"semantic/activation-family/call-body", "semantic/activation-admission/call-body"},
 		Declare: func(context rule.Declaration[P]) (*SchemaFragment, bool) {
-			return DeclareSchema(context.Builder, context.Bundle.CallActivation, context.Bundle.CallActivationFamily, context.Bundle.CallActivationAdmission, context.Principals.CallPrincipal())
+			activation, activationOK := context.Roles.Key("semantic/activation/call-body")
+			family, familyOK := context.Roles.Key("semantic/activation-family/call-body")
+			admission, admissionOK := context.Roles.Key("semantic/activation-admission/call-body")
+			if !activationOK || !familyOK || !admissionOK {
+				return nil, false
+			}
+			return DeclareSchema(context.Builder, activation, family, admission, context.Principals.CallPrincipal())
 		},
 		Register: func(context rule.Registration[*SchemaFragment]) (engine.RuleSlotCapability, bool) {
 			slot := context.Fragment.ActivationSlot()
@@ -73,4 +83,17 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *SchemaFra
 			return ok
 		},
 	}
+}
+
+// StructureSpecs is this package's contribution to the analyzer's semantic
+// role vocabulary: the call-body activation, the family its variants are
+// grouped under, and the admission its bodies enter by. A role is declared
+// where it is used, so the row and the reference that names it are one
+// package's statement.
+func StructureSpecs() []structure.Spec {
+	return vocabulary.RoleSpecs(
+		"activation/call-body",
+		"activation-family/call-body",
+		"activation-admission/call-body",
+	)
 }

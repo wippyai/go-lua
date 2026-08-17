@@ -128,17 +128,15 @@ func (rule *HotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, m
 	if !occurrenceOK {
 		return engine.BindingRuleRowRef{}, false
 	}
-	transaction, transactionOK := engine.BeginMountedRuleAdmission(assembly, implementation, occurrence, operand)
-	summaryRead, summaryReadOK := implementation.SummaryReadReceipt(1)
-	if !transactionOK || !summaryReadOK || !engine.AddExactRead(transaction, heapRef) ||
-		!valueowner.AddSummaryReceiptRead(rule.valueOwner, transaction, operand.SummaryReceipt(), summaryRead) ||
-		!transaction.AddCarry() || !engine.AddExactWrite(transaction, heapRef) {
-		return engine.BindingRuleRowRef{}, false
+	admit := func(transaction *engine.RuleSourceTransaction) bool {
+		summaryRead, summaryReadOK := implementation.SummaryReadReceipt(1)
+		return summaryReadOK && engine.AddExactRead(transaction, heapRef) &&
+			valueowner.AddSummaryReceiptRead(rule.valueOwner, transaction, operand.SummaryReceipt(), summaryRead) &&
+			transaction.AddCarry() && engine.AddExactWrite(transaction, heapRef)
 	}
-	queued := assembly.QueueMountedRuleFinalizer(mountedCapability(rule.implementation), func() bool {
-		sourceReceipt, sourceOK := transaction.Seal()
+	issue := func(sourceReceipt engine.RuleSurfaceSourceReceipt) bool {
 		draft, draftOK := implementation.BeginReceiptRuleRow(sourceReceipt)
-		if !sourceOK || !draftOK {
+		if !draftOK {
 			return false
 		}
 		for index := uint64(0); index < 2; index++ {
@@ -154,7 +152,8 @@ func (rule *HotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, m
 		}
 		_, added := assembly.AddRuleFromDraft(occurrence, draft)
 		return added
-	})
+	}
+	queued := engine.AdmitMountedRule(assembly, implementation, mountedCapability(rule.implementation), occurrence, operand, admit, issue)
 	return engine.BindingRuleRowRef{}, queued
 }
 

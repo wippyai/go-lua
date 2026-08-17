@@ -10,8 +10,8 @@ import (
 
 func init() {
 	Generated = Evidence{
-		ProductsDigest: "1019b7450075c85d59c86ec156eb2cdb72ae95816415d2a1025df0b81bcdbdcb",
-		Digest: "ed8218d39ab70acde4f901ba7ecd8288fd2630ad003e4adab371a9eb91b2c918",
+		ProductsDigest: "c0442dc9c58fb5e0e46d0476f88e2d2c332739614b80d7ee599789bf4beeeb30",
+		Digest: "d7d31960597d4d5bbedfabe6ab3abea4e0debdab3f269bd2d729a8f953098224",
 		UseSlots: []UseSlot{
 			{
 				ParentForm: "AnnotatedTypeExpr",

@@ -1,8 +1,9 @@
 package target
 
 import (
-	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
+
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
@@ -66,7 +67,7 @@ func TestProducedCallbackCaptureRemapsToSealedID(t *testing.T) {
 			Input:      ValuesSpec{Fixed: []schematype.Type{testString}, Tail: ValuesVariable, Var: 0},
 			Callbacks: []CallbackSpec{{
 				Function:  InputSource{Kind: InputSourceValueFormal, Ordinal: 0},
-				Admission: OrdinaryCallable, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: CallbackRetainedOptionalOnce,
+				Admission: schematype.CallableAdmissionOrdinary, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: CallbackRetainedOptionalOnce,
 				Effects: RowSpec{Tail: RowClosed},
 			}},
 			Outcomes: []OutcomeSpec{{

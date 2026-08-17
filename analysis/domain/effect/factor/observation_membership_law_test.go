@@ -7,7 +7,7 @@ import (
 	effectfactor "github.com/wippyai/go-lua/analysis/domain/effect/factor"
 	"github.com/wippyai/go-lua/analysis/domain/pack"
 	staticdomain "github.com/wippyai/go-lua/analysis/domain/static"
-	"github.com/wippyai/go-lua/analysis/domain/type/authority"
+	typeauthority "github.com/wippyai/go-lua/analysis/domain/type/authority"
 	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"

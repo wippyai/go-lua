@@ -3,9 +3,9 @@ package owner
 import (
 	"github.com/wippyai/go-lua/analysis/domain/call"
 	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
 
@@ -81,18 +81,21 @@ func mountCallAlgebra[A axisInputs](inputs A) (*call.Algebra, MountRejection, bo
 func AxisEntry[A axisInputs]() axis.Spec[A, *SchemaFragment, *HotOwner, call.Value] {
 	return axis.Spec[A, *SchemaFragment, *HotOwner, call.Value]{
 		Key:         "call",
-		Principal:   programartifact.RuleOutputCall,
 		Storage:     axis.StorageFactor,
 		Cardinality: axis.CardinalityDense,
 		Lifetime:    axis.LifetimeLink,
 		Mutability:  axis.MutabilitySolve,
 		Concurrency: axis.ConcurrencySingleWriter,
-		Semantic:    func(bundle vocabulary.Bundle) identity.SemanticKey { return bundle.CallFactor },
+		Semantic:    "semantic/factor/call",
 		Mount: axis.NewMount(func(context axis.Mounting[A]) (*call.Algebra, MountRejection, bool) {
 			return mountCallAlgebra[A](context.Inputs)
 		}),
 		Declare: func(context axis.Declaration) (*SchemaFragment, bool) {
-			return DeclareSchema(context.Builder, context.Bundle.CallFactor)
+			semantic, ok := context.Roles.Key("semantic/factor/call")
+			if !ok {
+				return nil, false
+			}
+			return DeclareSchema(context.Builder, semantic)
 		},
 		Bind: func(context axis.Binding[A, *SchemaFragment]) (*HotOwner, bool) {
 			return BindHot(context.Binding, context.Fragment, context.Inputs.CallInput())
@@ -105,4 +108,11 @@ func AxisEntry[A axisInputs]() axis.Spec[A, *SchemaFragment, *HotOwner, call.Val
 			return axis.Adopt(spec)
 		},
 	}
+}
+
+// StructureSpecs is this package's contribution to the analyzer's semantic
+// role vocabulary: the call factor's own identity. A role is declared where it is
+// used, so the row and the reference that names it are one package's statement.
+func StructureSpecs() []structure.Spec {
+	return vocabulary.RoleSpecs("factor/call")
 }

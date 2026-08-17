@@ -26,7 +26,7 @@ func TestReceiptQueryWarmStateAndCancellation(t *testing.T) {
 	fixture := newReceiptQueryMatrixFixture(t, 4, []int{0, 1, 2, 3}, []int{0, 1, 2, 3})
 	first, status, report := fixture.solver.SolveWithReport(context.Background())
 	if first == nil || status != SolveComplete {
-		t.Fatalf("first receipt solve = state:%v status:%v report={available:%t reason:%v phase:%v point:%v group:%v member:%v rule:%v}", first, status, report.Available(), report.Reason(), report.Phase(), report.Point(), report.Group(), report.Member(), report.Rule())
+		t.Fatalf("first receipt solve = state:%v status:%v report={available:%t reason:%v phase:%v point:%v group:%v member:%v rule:%v}", first, status, report.Available(), report.Reason(), report.Failure(), report.Point(), report.Group(), report.Member(), report.Rule())
 	}
 	for index, query := range fixture.queries {
 		value, readable := ReceiptQueryResult[uint64](query, fixture.solver, first)

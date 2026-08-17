@@ -4,9 +4,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/pack"
 	"github.com/wippyai/go-lua/analysis/domain/static"
 	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
 
@@ -90,18 +90,21 @@ func mountPackSchema[A axisInputs](inputs A) (*pack.Schema, MountRejection, bool
 func AxisEntry[A axisInputs]() axis.Spec[A, *SchemaFragment, *HotOwner, pack.Value] {
 	return axis.Spec[A, *SchemaFragment, *HotOwner, pack.Value]{
 		Key:         "pack",
-		Principal:   programartifact.RuleOutputPack,
 		Storage:     axis.StorageFactor,
 		Cardinality: axis.CardinalityDense,
 		Lifetime:    axis.LifetimeLink,
 		Mutability:  axis.MutabilitySolve,
 		Concurrency: axis.ConcurrencySingleWriter,
-		Semantic:    func(bundle vocabulary.Bundle) identity.SemanticKey { return bundle.PackFactor },
+		Semantic:    "semantic/factor/pack",
 		Mount: axis.NewMount(func(context axis.Mounting[A]) (*pack.Schema, MountRejection, bool) {
 			return mountPackSchema[A](context.Inputs)
 		}),
 		Declare: func(context axis.Declaration) (*SchemaFragment, bool) {
-			return DeclareSchema(context.Builder, context.Bundle.PackFactor)
+			semantic, ok := context.Roles.Key("semantic/factor/pack")
+			if !ok {
+				return nil, false
+			}
+			return DeclareSchema(context.Builder, semantic)
 		},
 		Bind: func(context axis.Binding[A, *SchemaFragment]) (*HotOwner, bool) {
 			return BindHot(context.Binding, context.Fragment, context.Inputs.PackInput())
@@ -114,4 +117,11 @@ func AxisEntry[A axisInputs]() axis.Spec[A, *SchemaFragment, *HotOwner, pack.Val
 			return axis.Adopt(spec)
 		},
 	}
+}
+
+// StructureSpecs is this package's contribution to the analyzer's semantic
+// role vocabulary: the pack factor's own identity. A role is declared where it is
+// used, so the row and the reference that names it are one package's statement.
+func StructureSpecs() []structure.Spec {
+	return vocabulary.RoleSpecs("factor/pack")
 }

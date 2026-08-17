@@ -108,7 +108,7 @@ func (fixture nativeCallStageLawFixture) scalarSpec(t testing.TB, rules []rows.A
 	if !spec.AddEvent(rows.ArtifactScalarEvent{Kind: rows.ArtifactEventExit, Region: regionID}) {
 		t.Fatal("native Call stage exit")
 	}
-	body, bodyOK := spec.AddBody(rows.ArtifactScalarBody{ID: bodyID, Context: artifactScalarLawID(0x7C), SemanticEntry: artifactScalarLawID(0x7D)})
+	body, bodyOK := spec.AddBody(rows.ArtifactScalarBody{ID: bodyID})
 	if !bodyOK || !spec.AddBodyEntry(body, fixture.base) || !spec.AddBodyExit(body, fixture.effect) {
 		t.Fatal("native Call stage body")
 	}

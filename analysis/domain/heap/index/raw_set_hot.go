@@ -82,38 +82,36 @@ func (rule *RawSetHotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssem
 	if !occurrenceOK {
 		return engine.BindingRuleRowRef{}, false
 	}
-	transaction, transactionOK := engine.BeginMountedRuleAdmission(assembly, implementation, occurrence, operand)
-	receiverRef, receiverOK := rule.values.Ref(operand.receiver)
-	if !transactionOK || !receiverOK {
-		return engine.BindingRuleRowRef{}, false
-	}
-	reads := make([]engine.RuleReadSurface, 0, 5)
-	receiver, readOK := engine.ExactReadSurface(receiverRef)
-	if !readOK || !transaction.AddRead(receiver) {
-		return engine.BindingRuleRowRef{}, false
-	}
-	reads = append(reads, receiver)
-	dependencies := [][]int{{0}, {0, 1}, {0, 1, 2}, {0, 1, 2, 3}}
-	for selectedIndex, dependencyIndexes := range dependencies {
-		receipt, receiptOK := implementation.SelectedReadReceipt(uint64(selectedIndex + 1))
-		selectedDependencies := make([]engine.RuleReadSurface, len(dependencyIndexes))
-		for index, dependencyIndex := range dependencyIndexes {
-			selectedDependencies[index] = reads[dependencyIndex]
+	admit := func(transaction *engine.RuleSourceTransaction) bool {
+		receiverRef, receiverOK := rule.values.Ref(operand.receiver)
+		if !receiverOK {
+			return false
 		}
-		selected, selectedOK := transaction.AnchoredSelectedReadSurface(receipt, selectedDependencies)
-		if !receiptOK || !selectedOK || !transaction.AddRead(selected) {
-			return engine.BindingRuleRowRef{}, false
+		reads := make([]engine.RuleReadSurface, 0, 5)
+		receiver, readOK := engine.ExactReadSurface(receiverRef)
+		if !readOK || !transaction.AddRead(receiver) {
+			return false
 		}
-		reads = append(reads, selected)
+		reads = append(reads, receiver)
+		dependencies := [][]int{{0}, {0, 1}, {0, 1, 2}, {0, 1, 2, 3}}
+		for selectedIndex, dependencyIndexes := range dependencies {
+			receipt, receiptOK := implementation.SelectedReadReceipt(uint64(selectedIndex + 1))
+			selectedDependencies := make([]engine.RuleReadSurface, len(dependencyIndexes))
+			for index, dependencyIndex := range dependencyIndexes {
+				selectedDependencies[index] = reads[dependencyIndex]
+			}
+			selected, selectedOK := transaction.AnchoredSelectedReadSurface(receipt, selectedDependencies)
+			if !receiptOK || !selectedOK || !transaction.AddRead(selected) {
+				return false
+			}
+			reads = append(reads, selected)
+		}
+		route, routeOK := implementation.RouteWriteReceipt()
+		return transaction.AddCarry() && routeOK && engine.AddAnchoredRouteWrite(transaction, route)
 	}
-	route, routeOK := implementation.RouteWriteReceipt()
-	if !transaction.AddCarry() || !routeOK || !engine.AddAnchoredRouteWrite(transaction, route) {
-		return engine.BindingRuleRowRef{}, false
-	}
-	queued := assembly.QueueMountedRuleFinalizer(mountedCapability(rule.implementation), func() bool {
-		source, sourceOK := transaction.Seal()
+	issue := func(source engine.RuleSurfaceSourceReceipt) bool {
 		draft, draftOK := implementation.BeginReceiptRuleRow(source)
-		if !sourceOK || !draftOK {
+		if !draftOK {
 			return false
 		}
 		for index := uint64(0); index < 5; index++ {
@@ -129,7 +127,8 @@ func (rule *RawSetHotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssem
 		}
 		_, added := assembly.AddRuleFromDraft(occurrence, draft)
 		return added
-	})
+	}
+	queued := engine.AdmitMountedRule(assembly, implementation, mountedCapability(rule.implementation), occurrence, operand, admit, issue)
 	return engine.BindingRuleRowRef{}, queued
 }
 
@@ -182,39 +181,32 @@ func BindRawSetHot(binding *engine.SchemaBinding, fragment *RawSetSchemaFragment
 	core.scratch.New = func() any { return &rawSetScratch{} }
 	core.scratch.Put(&rawSetScratch{})
 
-	tx, ok := heapowner.BeginSelectedRouteRuleBinding(heap, fragment.slot, fragment.carry, fragment.write, fragment.heapRef, engine.HotRuleSpec[heapdomain.Value, Access]{
+	var implementation *heapowner.RuleImplementation[Access]
+	bound := heapowner.BindSelectedRouteRule(heap, fragment.slot, fragment.carry, fragment.write, fragment.heapRef, engine.HotRuleSpec[heapdomain.Value, Access]{
 		OperandContent: core.operandContent,
 		Admission:      engine.AdmitRuleByDerivation(fragment.evidence, core.check(fragment.semantic)),
 		Transfer:       core.transfer,
-	}, engine.HotCarrySpec[heapdomain.Value, Access]{})
-	if !ok {
-		return nil, false
-	}
-	if core.receiver, ok = heapowner.AddExactRead(tx, fragment.receiver, fragment.valueRef); !ok {
-		_ = heapowner.AbortSelectedRouteRuleBinding(tx)
-		return nil, false
-	}
-	if core.key, ok = heapowner.AddOperandSelectedRead[Access, valuedomain.Value, uint64](tx, fragment.key, fragment.valueRef, core.locateKey); !ok {
-		_ = heapowner.AbortSelectedRouteRuleBinding(tx)
-		return nil, false
-	}
-	if core.heapRead, ok = heapowner.AddOperandSelectedRead[Access, heapdomain.Value, heapdomain.RawRouteTag](tx, fragment.heapRead, fragment.heapRef, core.locateHeap); !ok {
-		_ = heapowner.AbortSelectedRouteRuleBinding(tx)
-		return nil, false
-	}
-	if core.packRead, ok = heapowner.AddOperandSelectedRead[Access, pack.Value, heapdomain.RawPayloadTag](tx, fragment.packRead, fragment.packRef, core.locatePack); !ok {
-		_ = heapowner.AbortSelectedRouteRuleBinding(tx)
-		return nil, false
-	}
-	if core.source, ok = heapowner.AddOperandSelectedRead[Access, valuedomain.Value, rawSourceTag](tx, fragment.sourceRead, fragment.valueRef, core.locateSource); !ok {
-		_ = heapowner.AbortSelectedRouteRuleBinding(tx)
-		return nil, false
-	}
-	if !heapowner.CommitSelectedRouteRuleBinding(tx) {
-		return nil, false
-	}
-	implementation, ok := tx.Implementation()
-	if !ok || implementation == nil {
+	}, engine.HotCarrySpec[heapdomain.Value, Access]{}, func(tx *heapowner.SelectedRouteRuleBinding[Access]) bool {
+		var ok bool
+		if core.receiver, ok = heapowner.AddExactRead(tx, fragment.receiver, fragment.valueRef); !ok {
+			return false
+		}
+		if core.key, ok = heapowner.AddOperandSelectedRead[Access, valuedomain.Value, uint64](tx, fragment.key, fragment.valueRef, core.locateKey); !ok {
+			return false
+		}
+		if core.heapRead, ok = heapowner.AddOperandSelectedRead[Access, heapdomain.Value, heapdomain.RawRouteTag](tx, fragment.heapRead, fragment.heapRef, core.locateHeap); !ok {
+			return false
+		}
+		if core.packRead, ok = heapowner.AddOperandSelectedRead[Access, pack.Value, heapdomain.RawPayloadTag](tx, fragment.packRead, fragment.packRef, core.locatePack); !ok {
+			return false
+		}
+		if core.source, ok = heapowner.AddOperandSelectedRead[Access, valuedomain.Value, rawSourceTag](tx, fragment.sourceRead, fragment.valueRef, core.locateSource); !ok {
+			return false
+		}
+		implementation, ok = tx.Implementation()
+		return ok && implementation != nil
+	})
+	if !bound {
 		return nil, false
 	}
 	return &RawSetHotRule{implementation: implementation, core: core, values: values, heap: heap}, true

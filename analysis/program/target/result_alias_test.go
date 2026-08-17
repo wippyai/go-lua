@@ -1,8 +1,9 @@
 package target
 
 import (
-	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
+
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
@@ -52,7 +53,7 @@ func TestResultAliasCoexistsWithCallbackResult(t *testing.T) {
 		Bindings:   []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"callback-alias"}}},
 		ValuesVars: 5,
 		Input:      ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed},
-		Callbacks:  []CallbackSpec{{Function: InputSource{Kind: InputSourceValueFormal}, Admission: OrdinaryCallable, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: CallbackRetainedOptionalOnce, Effects: RowSpec{Tail: RowClosed}}},
+		Callbacks:  []CallbackSpec{{Function: InputSource{Kind: InputSourceValueFormal}, Admission: schematype.CallableAdmissionOrdinary, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: CallbackRetainedOptionalOnce, Effects: RowSpec{Tail: RowClosed}}},
 		Outcomes: []OutcomeSpec{{
 			Kind:            flowkind.OutcomeNormal,
 			Values:          ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed},

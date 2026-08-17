@@ -93,15 +93,16 @@ type SelectedRuleBinding[O any] struct {
 	issuer *RuleImplementation[O]
 }
 
-func BeginSelectedRuleBinding[O any](owner *HotOwner, slot *engine.RuleSlot[value.Value, O], carry engine.SchemaCarrySlot[value.Value], write engine.SchemaWriteSlot[value.Value], output engine.FactorRef[value.Value], spec engine.HotRuleSpec[value.Value, O], carrySpec engine.HotCarrySpec[value.Value, O]) (*SelectedRuleBinding[O], bool) {
-	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil || output != owner.fragment.Ref() {
-		return nil, false
+// BindSelectedRule owns Value's heterogeneous selected-read transaction. bind
+// attaches the reads and its answer terminalizes the transaction, so a
+// rejected assembly always reaches the shared Binding's terminal poison.
+func BindSelectedRule[O any](owner *HotOwner, slot *engine.RuleSlot[value.Value, O], carry engine.SchemaCarrySlot[value.Value], write engine.SchemaWriteSlot[value.Value], output engine.FactorRef[value.Value], spec engine.HotRuleSpec[value.Value, O], carrySpec engine.HotCarrySpec[value.Value, O], bind func(*SelectedRuleBinding[O]) bool) bool {
+	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil || output != owner.fragment.Ref() || bind == nil {
+		return false
 	}
-	tx, ok := engine.BeginSelectedRuleBinding[coordinate](owner.binding, slot, carry, write, output, spec, carrySpec)
-	if !ok || tx == nil {
-		return nil, false
-	}
-	return &SelectedRuleBinding[O]{owner: owner, tx: tx, issuer: &RuleImplementation[O]{owner: owner, slot: slot}}, true
+	return engine.BindSelectedRule[coordinate](owner.binding, slot, carry, write, output, spec, carrySpec, func(tx *engine.SelectedRouteRuleBindingTransaction[coordinate, value.Value, O]) bool {
+		return bind(&SelectedRuleBinding[O]{owner: owner, tx: tx, issuer: &RuleImplementation[O]{owner: owner, slot: slot}})
+	})
 }
 
 func (tx *SelectedRuleBinding[O]) Implementation() (*RuleImplementation[O], bool) {
@@ -134,14 +135,6 @@ func AddSelectedRuleOperandRead[O any, RV any, Tag interface {
 		return engine.Read[engine.Selection[Tag, engine.OrderedCells[RV]]]{}, false
 	}
 	return engine.AddSelectedRouteOperandRead[coordinate, value.Value, O, RV, Tag](tx.tx, slot, factor, locate)
-}
-
-func CommitSelectedRuleBinding[O any](tx *SelectedRuleBinding[O]) bool {
-	return tx != nil && tx.owner != nil && tx.tx != nil && engine.CommitSelectedRouteRuleBinding(tx.tx)
-}
-
-func AbortSelectedRuleBinding[O any](tx *SelectedRuleBinding[O]) bool {
-	return tx != nil && tx.owner != nil && tx.tx != nil && engine.AbortSelectedRouteRuleBinding(tx.tx)
 }
 
 // BindHot admits Value's concrete algebra into the exact SchemaBinding. It

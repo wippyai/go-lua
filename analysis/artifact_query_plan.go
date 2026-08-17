@@ -133,17 +133,17 @@ func newArtifactQueryPlan(mounts []mountedProgramArtifact) (*artifactQueryPlan, 
 	return plan, expected > 0 && len(plan.rows) == 2*expected
 }
 
-// AddRows emits query rows after source sealing and before graph commit.
-func (plan *artifactQueryPlan) AddRows(assembly *engine.ReceiptAssembly, binding *composite.ProgramBinding) bool {
-	if plan == nil || assembly == nil || binding == nil || binding.ValueQuery() == nil || binding.EffectQuery() == nil || len(plan.rows) == 0 {
+// AddRows emits query rows inside the assembly's query batch scope.
+func (plan *artifactQueryPlan) AddRows(batch *engine.MountedQueryBatch, binding *composite.ProgramBinding) bool {
+	if plan == nil || batch == nil || binding == nil || binding.ValueQuery() == nil || binding.EffectQuery() == nil || len(plan.rows) == 0 {
 		return false
 	}
 	for _, row := range plan.rows {
 		var ok bool
 		if row.role == artifactQueryValueSummary {
-			ok = engine.AddMountedSummaryQuery(assembly, binding.ValueQuery(), row.id, row.mount, row.point)
+			ok = engine.AddMountedSummaryQuery(batch, binding.ValueQuery(), row.id, row.mount, row.point)
 		} else if row.role == artifactQueryEffectExact {
-			ok = engine.AddMountedExactQuery(assembly, binding.EffectQuery(), row.id, row.mount, row.point)
+			ok = engine.AddMountedExactQuery(batch, binding.EffectQuery(), row.id, row.mount, row.point)
 		}
 		if !ok {
 			return false

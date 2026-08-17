@@ -64,10 +64,6 @@ func TestRuleTableCoversEveryArtifactRoleExactlyOnce(t *testing.T) {
 // a rule that reaches the table is wired everywhere and a name that is not in
 // the table is classified nowhere.
 func TestRuleTableDrivesEveryDerivedView(t *testing.T) {
-	bundle, bundleOK := vocabulary.New()
-	if !bundleOK {
-		t.Fatal("vocabulary")
-	}
 	links := make(map[programartifact.RuleRole]bool, len(LinkRoles()))
 	for _, role := range LinkRoles() {
 		links[role] = true
@@ -108,8 +104,8 @@ func TestRuleTableDrivesEveryDerivedView(t *testing.T) {
 		if string(entry.Key()) != diagnostic.String() {
 			t.Fatalf("role %d is spelled %q by the table and %q by its diagnostic", role, entry.Key(), diagnostic.String())
 		}
-		if entry.Principal() == programartifact.RuleOutputInvalid {
-			t.Fatalf("role %d writes no factor lane", role)
+		if _, declared := axisForKey(entry.Writes()); !declared {
+			t.Fatalf("role %d writes %q, which no axis declares", role, entry.Writes())
 		}
 		if links[role] != (entry.Lane() == rule.LaneLink) {
 			t.Fatalf("role %d lane membership disagrees with the link projection", role)
@@ -138,7 +134,6 @@ func TestRuleTableDrivesEveryDerivedView(t *testing.T) {
 	if DiagnosticRuleForRole(programartifact.RuleRoleInvalid) != DiagnosticRuleUnknown {
 		t.Fatal("the invalid role was classified")
 	}
-	_ = bundle
 }
 
 // TestCatalogDeclaresEveryTableRule is the cold-side drift law: the sealed
@@ -158,10 +153,10 @@ func TestCatalogDeclaresEveryTableRule(t *testing.T) {
 			t.Fatalf("role %d declared no cold fragment", role)
 		}
 	}
-	for role := 0; role < ruleRoleLimit; role++ {
-		_, known := templateForRole(programartifact.RuleRole(role))
-		if receipt.catalog.ruleFragments[role].Available() != known {
-			t.Fatalf("role %d has a fragment the table does not declare", role)
+	for slot := 0; slot < len(receipt.catalog.ruleFragments); slot++ {
+		_, known := templateAtSlot(slot)
+		if receipt.catalog.ruleFragments[slot].Available() != known {
+			t.Fatalf("slot %d has a fragment the table does not declare", slot)
 		}
 	}
 }

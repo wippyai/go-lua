@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
@@ -22,35 +21,30 @@ func TestAxisTableSeals(t *testing.T) {
 	if !viewOK || view.Count() != AxisCount() {
 		t.Fatalf("axis surface view = %d entries, table = %d", view.Count(), AxisCount())
 	}
-	if AxisCount() != axisPrincipalLimit-1 {
-		t.Fatalf("axis table declares %d axes, the artifact catalog has %d factor lanes", AxisCount(), axisPrincipalLimit-1)
-	}
 }
 
 // TestAxisTableDeclaresEveryWriterPrincipalOnce is the composition's coverage
-// law. Every factor lane a rule can write is one declared axis, so a rule's
-// principal always resolves to an axis and no lane has two owners.
+// law. An axis is a writer principal, so one principal is one declared axis:
+// the inventory's keys are distinct, and every slot the table hands out
+// resolves back to the axis declared at it.
 func TestAxisTableDeclaresEveryWriterPrincipalOnce(t *testing.T) {
-	seen := make(map[programartifact.RuleOutputKind]int, AxisCount())
+	seen := make(map[schema.Key]int, AxisCount())
 	for position := 0; position < AxisCount(); position++ {
-		principal, ok := AxisPrincipalAt(position)
-		if !ok || principal == programartifact.RuleOutputInvalid {
-			t.Fatalf("axis position %d has no writer principal", position)
+		key, ok := AxisKeyAt(position)
+		if !ok || key == "" {
+			t.Fatalf("axis position %d declares no key", position)
 		}
-		seen[principal]++
-		if seen[principal] != 1 {
-			t.Fatalf("writer principal %d declared %d times", principal, seen[principal])
+		seen[key]++
+		if seen[key] != 1 {
+			t.Fatalf("writer principal %q declared %d times", key, seen[key])
+		}
+		slot, slotOK := axisSlotForKey(key)
+		if !slotOK || slot != position+1 {
+			t.Fatalf("axis %q resolves to slot %d at position %d", key, slot, position)
 		}
 	}
-	for position := 0; position < RuleCount(); position++ {
-		role, roleOK := RuleRoleAt(position)
-		if !roleOK {
-			t.Fatalf("rule position %d has no role", position)
-		}
-		principal := programartifact.RuleOutputKindFor(role)
-		if seen[principal] != 1 {
-			t.Fatalf("rule role %d writes lane %d, which no axis declares", role, principal)
-		}
+	if len(seen) == 0 {
+		t.Fatal("the axis table declares no writer principal")
 	}
 }
 
@@ -68,28 +62,28 @@ func TestAxisTableDrivesEveryDerivedView(t *testing.T) {
 	if !viewOK {
 		t.Fatal("sealed table published no axis surface")
 	}
-	bundle, bundleOK := vocabulary.New()
-	if !bundleOK {
-		t.Fatal("vocabulary")
+	roles, rolesOK := SemanticRoles()
+	if !rolesOK {
+		t.Fatal("semantic role vocabulary")
 	}
 	semantics := make(map[identity.SemanticKey]bool, view.Count())
 	for position := 0; position < view.Count(); position++ {
 		entry, entryOK := view.At(position)
-		principal, principalOK := AxisPrincipalAt(position)
-		if !entryOK || !principalOK {
+		key, keyOK := AxisKeyAt(position)
+		if !entryOK || !keyOK || key != entry.Key() {
 			t.Fatalf("axis position %d is not derivable from the sealed table", position)
 		}
-		id, idOK := AxisEntryID(principal)
+		id, idOK := AxisEntryID(key)
 		if !idOK || id != schema.NewEntryID(schema.SurfaceKindAxis, entry.Key()) {
 			t.Fatalf("axis %q publishes an identity the sealed entry does not derive", entry.Key())
 		}
 		if _, known := view.ByID(id); !known {
 			t.Fatalf("axis %q is not resolvable by its own identity", entry.Key())
 		}
-		if DiagnosticAxisForPrincipal(principal).String() != string(entry.Key()) {
-			t.Fatalf("axis %q classifies as %q", entry.Key(), DiagnosticAxisForPrincipal(principal))
+		if DiagnosticAxisForKey(key).String() != string(entry.Key()) {
+			t.Fatalf("axis %q classifies as %q", entry.Key(), DiagnosticAxisForKey(key))
 		}
-		semantic, semanticOK := AxisSemantic(principal)
+		semantic, semanticOK := AxisSemantic(key)
 		if !semanticOK || !semantic.Available() {
 			t.Fatalf("axis %q publishes no canonical identity", entry.Key())
 		}
@@ -100,9 +94,9 @@ func TestAxisTableDrivesEveryDerivedView(t *testing.T) {
 		// Every declared axis is a Link-bound factor over a dense ordinal key
 		// space. A later inventory that is neither reads these fields rather
 		// than assuming this shape.
-		storage, storageOK := AxisStorage(principal)
-		cardinality, cardinalityOK := AxisCardinality(principal)
-		lifetime, lifetimeOK := AxisLifetime(principal)
+		storage, storageOK := AxisStorage(key)
+		cardinality, cardinalityOK := AxisCardinality(key)
+		lifetime, lifetimeOK := AxisLifetime(key)
 		if !storageOK || storage != axis.StorageFactor {
 			t.Fatalf("axis %q declares storage %d", entry.Key(), storage)
 		}
@@ -115,23 +109,24 @@ func TestAxisTableDrivesEveryDerivedView(t *testing.T) {
 	}
 	// The canonical identity of an axis is the vocabulary's factor identity;
 	// the table is not free to invent one.
-	for principal, expected := range map[programartifact.RuleOutputKind]identity.SemanticKey{
-		programartifact.RuleOutputValue:  bundle.ValueFactor,
-		programartifact.RuleOutputPack:   bundle.PackFactor,
-		programartifact.RuleOutputHeap:   bundle.HeapFactor,
-		programartifact.RuleOutputCall:   bundle.CallFactor,
-		programartifact.RuleOutputEffect: bundle.EffectFactor,
+	for key, role := range map[schema.Key]schema.Key{
+		axisKeyValue:  "semantic/factor/value",
+		axisKeyPack:   "semantic/factor/pack",
+		axisKeyHeap:   "semantic/factor/heap",
+		axisKeyCall:   "semantic/factor/call",
+		axisKeyEffect: "semantic/factor/effect",
 	} {
-		semantic, ok := AxisSemantic(principal)
-		if !ok || semantic != expected {
-			t.Fatalf("axis for lane %d publishes %x, the vocabulary declares %x", principal, semantic.Digest(), expected.Digest())
+		expected, expectedOK := roles.Key(role)
+		semantic, ok := AxisSemantic(key)
+		if !expectedOK || !ok || semantic != expected {
+			t.Fatalf("axis %q publishes %x, the vocabulary declares role %q", key, semantic.Digest(), role)
 		}
 	}
-	if _, ok := AxisSemantic(programartifact.RuleOutputInvalid); ok {
-		t.Fatal("an undeclared lane resolved to an axis")
+	if _, ok := AxisSemantic("no-such-axis"); ok {
+		t.Fatal("an undeclared key resolved to an axis")
 	}
-	if DiagnosticAxisForPrincipal(programartifact.RuleOutputInvalid) != DiagnosticAxisUnknown {
-		t.Fatal("an undeclared lane classified as a known axis")
+	if DiagnosticAxisForKey("no-such-axis") != DiagnosticAxisUnknown {
+		t.Fatal("an undeclared key classified as a known axis")
 	}
 }
 
@@ -153,11 +148,11 @@ func TestAxisSurfaceIsSealedBeforeTheRuleSurface(t *testing.T) {
 	// The cold pass is the same ordering: a rule's declaration receives the
 	// principals the axis pass produced, so an unbuilt axis table cannot yield
 	// a rule fragment.
-	fragments, _, declared := declareAxes(nil, vocabulary.Bundle{})
-	if declared || fragments.available() {
+	fragments, _, declared := declareAxes(nil, vocabulary.Roles{})
+	if declared || fragments.available(registry.axes) {
 		t.Fatal("axis pass declared without a schema builder")
 	}
-	if bound, _, ok := bindAxes(nil, fragments, LinkInputs{}); ok || bound.available() {
+	if bound, _, ok := bindAxes(nil, fragments, LinkInputs{}); ok || bound.available(registry.axes) {
 		t.Fatal("axis pass bound without a declared table")
 	}
 }

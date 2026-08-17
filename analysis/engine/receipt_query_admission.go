@@ -6,22 +6,40 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 )
 
+// MountedQueryBatch is the query admission scope. It is handed to a batch
+// queued through ReceiptAssembly.QueueMountedQueryBatch and lives only while
+// SealSources drains that batch, so a query row is always issued after source
+// admission ends and before the graph commits.
+type MountedQueryBatch struct {
+	assembly *ReceiptAssembly
+	draining bool
+}
+
+// openAssembly resolves the scope's assembly while the batch is draining. A
+// retained batch resolves to nothing.
+func (batch *MountedQueryBatch) openAssembly() (*ReceiptAssembly, bool) {
+	if batch == nil || !batch.draining || batch.assembly == nil {
+		return nil, false
+	}
+	return batch.assembly, true
+}
+
 // AddMountedSummaryQuery issues one summary query row anchored at a mounted
 // artifact point.  The point is addressed by the mount and reusable artifact
-// point ID; callers never receive equation references.  It must be called
-// after ReceiptAssembly.SealSources and before Commit.
-func AddMountedSummaryQuery[V, R any](assembly *ReceiptAssembly, implementation *SummaryQueryImplementation[V, R], id, mount, reusable identity.ContentID) bool {
-	return addMountedQuery[V, R](assembly, implementation, id, mount, reusable, composition.QueryFactorSummary)
+// point ID; callers never receive equation references.
+func AddMountedSummaryQuery[V, R any](batch *MountedQueryBatch, implementation *SummaryQueryImplementation[V, R], id, mount, reusable identity.ContentID) bool {
+	return addMountedQuery[V, R](batch, implementation, id, mount, reusable, composition.QueryFactorSummary)
 }
 
 // AddMountedExactQuery is the exact-query counterpart of
 // AddMountedSummaryQuery.
-func AddMountedExactQuery[V, R any](assembly *ReceiptAssembly, implementation *ExactQueryImplementation[V, R], id, mount, reusable identity.ContentID) bool {
-	return addMountedQuery[V, R](assembly, implementation, id, mount, reusable, composition.QueryFactorExact)
+func AddMountedExactQuery[V, R any](batch *MountedQueryBatch, implementation *ExactQueryImplementation[V, R], id, mount, reusable identity.ContentID) bool {
+	return addMountedQuery[V, R](batch, implementation, id, mount, reusable, composition.QueryFactorExact)
 }
 
-func addMountedQuery[V, R any](assembly *ReceiptAssembly, implementation bindingQueryReceipt, id, mount, reusable identity.ContentID, kind composition.QueryProjectionKind) bool {
-	if assembly == nil || assembly.builder == nil || implementation == nil || !id.Available() || !mount.Available() || !reusable.Available() {
+func addMountedQuery[V, R any](batch *MountedQueryBatch, implementation bindingQueryReceipt, id, mount, reusable identity.ContentID, kind composition.QueryProjectionKind) bool {
+	assembly, scoped := batch.openAssembly()
+	if !scoped || assembly.builder == nil || implementation == nil || !id.Available() || !mount.Available() || !reusable.Available() {
 		return false
 	}
 	state, authority, family, ordinal, ok := implementation.boundTopologyQueryReceipt()

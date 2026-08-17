@@ -1,8 +1,9 @@
 package target
 
 import (
-	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
+
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
@@ -13,7 +14,7 @@ func callbackOutcomeOperation(name string, outcomes []TerminalSpec) OperationSpe
 		ValuesVars: 6,
 		Input:      ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesVariable, Var: 0},
 		Callbacks: []CallbackSpec{{
-			Function: InputSource{Kind: InputSourceValueFormal}, Admission: OrdinaryCallable,
+			Function: InputSource{Kind: InputSourceValueFormal}, Admission: schematype.CallableAdmissionOrdinary,
 			Arguments: ValuesSpec{Tail: ValuesVariable, Var: 0},
 			Outcomes:  outcomes, Lifecycle: CallbackRetainedOptionalOnce,
 			Effects: RowSpec{Tail: RowClosed},

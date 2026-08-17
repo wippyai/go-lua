@@ -18,6 +18,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
 const artifactResultIdentityDomain = "analysis/artifact-result/mounted-row/v1"
@@ -303,12 +304,22 @@ func collectGuardPolarityFindings(report *DiagnosticReport, receipt *artifactRes
 // staticDiagnosticDeclaration resolves the declared row one artifact-issued
 // observation population feeds. The sealed table is the sole authority: a
 // population no row claims is a collector hole, not a row to skip.
+//
+// The artifact numbers the observation populations at load; the declaration
+// numbers the same members, and the pin law holds the two numberings equal, so
+// the compiled kind resolves the declared member at its ordinal and the row is
+// found by that member's identity.
 func staticDiagnosticDeclaration(kind programartifact.DiagnosticObservationKind) (*diagnostic.Entry, bool) {
 	table, tableOK := composite.Diagnostics()
-	if !tableOK {
+	vocabulary, vocabularyOK := composite.StructureVocabulary()
+	if !tableOK || !vocabularyOK {
 		return nil, false
 	}
-	return table.ForStaticObservation(kind)
+	population, populationOK := vocabulary.At(structure.CategoryDiagnosticObservation, uint16(kind))
+	if !populationOK {
+		return nil, false
+	}
+	return table.ForStaticObservation(population.Key())
 }
 
 // collectStaticDiagnosticFindings owns policy selection for static rows. It

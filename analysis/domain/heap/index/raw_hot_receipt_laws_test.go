@@ -198,10 +198,14 @@ func TestRawHotMountedPathSolve(t *testing.T) {
 	}
 	_, getOK := fixture.getRule.AttachMountedOccurrence(fixture.assembly, fixture.mountID, fixture.getPoint, fixture.getOccurrence)
 	_, setOK := fixture.setRule.AttachMountedOccurrence(fixture.assembly, fixture.mountID, fixture.setPoint, fixture.setOccurrence)
-	sourcesOK := getOK && setOK && fixture.assembly.SealSources()
-	valueQueryOK := sourcesOK && engine.AddMountedExactQuery(fixture.assembly, fixture.queryImplementation, fixture.queryID, fixture.mountID, fixture.getPoint)
-	heapQueryOK := valueQueryOK && engine.AddMountedExactQuery(fixture.assembly, fixture.heapQueryImplementationA, fixture.heapQueryIDA, fixture.mountID, fixture.setPoint)
-	if !getOK || !setOK || !sourcesOK || !valueQueryOK || !heapQueryOK {
+	valueQueryOK, heapQueryOK := false, false
+	queuedOK := getOK && setOK && fixture.assembly.QueueMountedQueryBatch(func(batch *engine.MountedQueryBatch) bool {
+		valueQueryOK = engine.AddMountedExactQuery(batch, fixture.queryImplementation, fixture.queryID, fixture.mountID, fixture.getPoint)
+		heapQueryOK = valueQueryOK && engine.AddMountedExactQuery(batch, fixture.heapQueryImplementationA, fixture.heapQueryIDA, fixture.mountID, fixture.setPoint)
+		return heapQueryOK
+	})
+	sourcesOK := queuedOK && fixture.assembly.SealSources()
+	if !getOK || !setOK || !queuedOK || !sourcesOK || !valueQueryOK || !heapQueryOK {
 		failure, failureOK := fixture.assembly.SealFailure()
 		sourceFailure, _ := failure.Source()
 		artifactFailure, _ := failure.ArtifactRow()
@@ -250,7 +254,7 @@ func TestRawHotMountedPathSolve(t *testing.T) {
 	}
 	state, status, report := solver.SolveWithReport(context.Background())
 	if status != engine.SolveComplete || state == nil {
-		t.Fatalf("raw solve status=%v state=%t reason=%v phase=%v point=%x group=%x member=%x rule=%x", status, state != nil, report.Reason(), report.Phase(), report.Point(), report.Group(), report.Member(), report.Rule())
+		t.Fatalf("raw solve status=%v state=%t reason=%v phase=%v point=%x group=%x member=%x rule=%x", status, state != nil, report.Reason(), report.Failure(), report.Point(), report.Group(), report.Member(), report.Rule())
 	}
 	observation, observationOK := engine.ReceiptQueryResult[rawHotQueryObservation](query, solver, state)
 	// RawSet targets a only. The subsequent read of b.source must retain the
@@ -267,41 +271,39 @@ func TestRawHotMountedPathSolve(t *testing.T) {
 func attachRawHotValueSeed(assembly *engine.ReceiptAssembly, owner *valueowner.HotOwner, mount identity.ContentID, seed rawHotValueSeed) bool {
 	implementation, implementationOK := valueowner.ResolveRuleImplementation(seed.Implementation)
 	occurrence, occurrenceOK := assembly.AdmitMountedRuleOccurrence(seed.Capability, mount, seed.Point, seed.Occurrence)
-	transaction, transactionOK := engine.BeginMountedRuleAdmission(assembly, implementation, occurrence, seed.Occurrence)
-	ref, refOK := owner.Ref(seed.Coordinate)
-	if !implementationOK || !occurrenceOK || !transactionOK || !refOK || !engine.AddExactWrite(transaction, ref) {
-		return false
+	admit := func(transaction *engine.RuleSourceTransaction) bool {
+		ref, refOK := owner.Ref(seed.Coordinate)
+		return implementationOK && occurrenceOK && refOK && engine.AddExactWrite(transaction, ref)
 	}
-	return assembly.QueueMountedRuleFinalizer(seed.Capability, func() bool {
-		source, sourceOK := transaction.Seal()
+	issue := func(source engine.RuleSurfaceSourceReceipt) bool {
 		draft, draftOK := implementation.BeginReceiptRuleRow(source)
 		write, writeOK := implementation.ReceiptWritePart(source, 0)
-		if !sourceOK || !draftOK || !writeOK || !draft.AddWrite(write) {
+		if !draftOK || !writeOK || !draft.AddWrite(write) {
 			return false
 		}
 		_, added := assembly.AddRuleFromDraft(occurrence, draft)
 		return added
-	})
+	}
+	return engine.AdmitMountedRule(assembly, implementation, seed.Capability, occurrence, seed.Occurrence, admit, issue)
 }
 
 func attachRawHotHeapSeed(assembly *engine.ReceiptAssembly, owner *heapowner.HotOwner, mount identity.ContentID, seed rawHotHeapSeed) bool {
 	implementation, implementationOK := heapowner.ResolveRuleImplementation(seed.Implementation)
 	occurrence, occurrenceOK := assembly.AdmitMountedRuleOccurrence(seed.Capability, mount, seed.Point, seed.Occurrence)
-	transaction, transactionOK := engine.BeginMountedRuleAdmission(assembly, implementation, occurrence, seed.Occurrence)
-	ref, refOK := owner.Ref(seed.Key)
-	if !implementationOK || !occurrenceOK || !transactionOK || !refOK || !engine.AddExactWrite(transaction, ref) {
-		return false
+	admit := func(transaction *engine.RuleSourceTransaction) bool {
+		ref, refOK := owner.Ref(seed.Key)
+		return implementationOK && occurrenceOK && refOK && engine.AddExactWrite(transaction, ref)
 	}
-	return assembly.QueueMountedRuleFinalizer(seed.Capability, func() bool {
-		source, sourceOK := transaction.Seal()
+	issue := func(source engine.RuleSurfaceSourceReceipt) bool {
 		draft, draftOK := implementation.BeginReceiptRuleRow(source)
 		write, writeOK := implementation.ReceiptWritePart(source, 0)
-		if !sourceOK || !draftOK || !writeOK || !draft.AddWrite(write) {
+		if !draftOK || !writeOK || !draft.AddWrite(write) {
 			return false
 		}
 		_, added := assembly.AddRuleFromDraft(occurrence, draft)
 		return added
-	})
+	}
+	return engine.AdmitMountedRule(assembly, implementation, seed.Capability, occurrence, seed.Occurrence, admit, issue)
 }
 
 func attachRawHotValueSeedMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, implementation *valueowner.RuleImplementation[identity.ContentID], mount identity.ContentID, seed rawHotValueSeed) (*engine.ReceiptMember, bool) {

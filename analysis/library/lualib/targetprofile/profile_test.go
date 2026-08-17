@@ -11,6 +11,7 @@ import (
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 )
 
 func TestCatalogueCoversItsClosedInventory(t *testing.T) {
@@ -118,15 +119,15 @@ func TestFreshProfileResultsArePreciseAndConjunctive(t *testing.T) {
 	}
 	for _, item := range []struct {
 		binding target.BindingSpec
-		kind    target.FreshKind
+		kind    schematype.FreshClass
 	}{
-		{moduleBinding("table", "pack"), target.FreshTable},
-		{moduleBinding("table", "create"), target.FreshTable},
-		{moduleBinding("coroutine", "create"), target.FreshThread},
-		{moduleBinding("coroutine", "wrap"), target.FreshFunction},
-		{moduleBinding("string", "gmatch"), target.FreshFunction},
-		{moduleBinding("errors", "new"), target.FreshError},
-		{moduleBinding("errors", "wrap"), target.FreshError},
+		{moduleBinding("table", "pack"), schematype.FreshClassTable},
+		{moduleBinding("table", "create"), schematype.FreshClassTable},
+		{moduleBinding("coroutine", "create"), schematype.FreshClassThread},
+		{moduleBinding("coroutine", "wrap"), schematype.FreshClassFunction},
+		{moduleBinding("string", "gmatch"), schematype.FreshClassFunction},
+		{moduleBinding("errors", "new"), schematype.FreshClassError},
+		{moduleBinding("errors", "wrap"), schematype.FreshClassError},
 	} {
 		op, ok := contract.Lookup(item.binding)
 		if !ok {
@@ -151,7 +152,7 @@ func TestFreshProfileResultsArePreciseAndConjunctive(t *testing.T) {
 		_, values, _ := contract.OutcomeAt(details, outcome)
 		_, kind, _, fresh := contract.FreshResultForResult(details, outcome, 0)
 		if hasFixedOutcomeForValues(contract, values, []typ.Type{typ.BuiltinTableTopMarker()}) {
-			tableFresh = fresh && kind == target.FreshTable
+			tableFresh = fresh && kind == schematype.FreshClassTable
 		}
 		if hasFixedOutcomeForValues(contract, values, []typ.Type{typ.Nil}) {
 			nilFresh = !fresh
@@ -597,7 +598,7 @@ func TestProtectedSubedgeMatrix(t *testing.T) {
 		t.Fatalf("xpcall subedge matrix = %v/%d", ok, contract.SubedgeCount(xpcall))
 	}
 	protected, handler := subedgeRole(t, contract, xpcall, 1), subedgeRole(t, contract, xpcall, 2)
-	if admission, ok := contract.SubedgeAdmission(handler); !ok || admission != target.DirectFunction {
+	if admission, ok := contract.SubedgeAdmission(handler); !ok || admission != schematype.CallableAdmissionDirectFunction {
 		t.Fatalf("xpcall handler admission = %d/%v", admission, ok)
 	}
 	if callback, ok := contract.SubedgeCallback(handler); !ok {

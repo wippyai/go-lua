@@ -127,19 +127,14 @@ func (rule *HotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, m
 		return engine.BindingRuleRowRef{}, false
 	}
 	implementation, implementationOK := packowner.ResolveRuleImplementation(rule.implementation)
-	transaction, ok := engine.BeginMountedRuleAdmission(assembly, implementation, occurrence, source)
-	if !implementationOK || !ok {
-		return engine.BindingRuleRowRef{}, false
-	}
-	ref, ok := rule.owner.Ref(root)
-	if !ok || !engine.AddExactWrite(transaction, ref) {
-		return engine.BindingRuleRowRef{}, false
-	}
-	queued := assembly.QueueMountedRuleFinalizer(capability, func() bool {
-		sourceReceipt, sourceOK := transaction.Seal()
-		if !sourceOK {
+	admit := func(transaction *engine.RuleSourceTransaction) bool {
+		if !implementationOK {
 			return false
 		}
+		ref, ok := rule.owner.Ref(root)
+		return ok && engine.AddExactWrite(transaction, ref)
+	}
+	issue := func(sourceReceipt engine.RuleSurfaceSourceReceipt) bool {
 		draft, draftOK := implementation.BeginReceiptRuleRow(sourceReceipt)
 		writePart, writePartOK := implementation.ReceiptWritePart(sourceReceipt, 0)
 		if !draftOK || !writePartOK || !draft.AddWrite(writePart) {
@@ -147,7 +142,8 @@ func (rule *HotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, m
 		}
 		_, added := assembly.AddRuleFromDraft(occurrence, draft)
 		return added
-	})
+	}
+	queued := engine.AdmitMountedRule(assembly, implementation, capability, occurrence, source, admit, issue)
 	return engine.BindingRuleRowRef{}, queued
 }
 

@@ -120,14 +120,6 @@ func (binding *Binding[K, V]) ValidTarget(target carrier.Target) bool {
 	return ok
 }
 
-func (binding *Binding[K, V]) ValidSelector(selector carrier.Selector, kind carrier.SelectorKind) bool {
-	if !binding.live() || selector.Kind() != kind {
-		return false
-	}
-	_, ok := binding.selectors[selector]
-	return ok
-}
-
 // DeclaredUnit is the cold declaration-table membership proof consumed
 // only by carrier.PreparedComposition.  It intentionally does not make the
 // capability active: issuer Slot remains unavailable until Attach.
@@ -252,30 +244,6 @@ func uniqueKeys[K scalar.Key](keys []K) []K {
 	}
 	clear(keys[write:])
 	return keys[:write]
-}
-
-// DeclaredSelector is the cold counterpart of ValidSelector.
-func (binding *Binding[K, V]) DeclaredSelector(selector carrier.Selector, kind carrier.SelectorKind) bool {
-	if binding == nil || !binding.prepared || selector.Kind() != kind {
-		return false
-	}
-	_, ok := binding.selectors[selector]
-	return ok
-}
-
-// DeclaredSelectorTargets returns the complete finite positional surface of
-// one cold target selector. Index is the selector's candidate ordinal, so
-// order and duplicate entries are preserved exactly. It is deliberately
-// limited to opaque target capabilities rather than keys or values.
-func (binding *Binding[K, V]) DeclaredSelectorTargets(selector carrier.Selector) ([]carrier.Target, bool) {
-	if binding == nil || !binding.prepared || selector.Kind() != carrier.TargetSelector {
-		return nil, false
-	}
-	descriptor, ok := binding.selectors[selector]
-	if !ok || len(descriptor.candidatesTargets) == 0 {
-		return nil, false
-	}
-	return append([]carrier.Target(nil), descriptor.candidatesTargets...), true
 }
 
 // Supports declares which recurrence operations this sealed Factor admitted.

@@ -67,18 +67,17 @@ type SelectedRouteRuleBinding[O any] struct {
 	issuer *RuleImplementation[O]
 }
 
-// BeginSelectedRouteRuleBinding starts Heap's exact route/carry transaction.
-// output must be the Ref issued by this owner; no caller-supplied Factor
-// ordinal or alternate output authority is accepted.
-func BeginSelectedRouteRuleBinding[O any](owner *HotOwner, slot *engine.RuleSlot[heap.Value, O], carry engine.SchemaCarrySlot[heap.Value], write engine.SchemaWriteSlot[heap.Value], output engine.FactorRef[heap.Value], spec engine.HotRuleSpec[heap.Value, O], carrySpec engine.HotCarrySpec[heap.Value, O]) (*SelectedRouteRuleBinding[O], bool) {
-	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil || output != owner.fragment.Ref() {
-		return nil, false
+// BindSelectedRouteRule owns Heap's exact route/carry transaction. output must
+// be the Ref issued by this owner; no caller-supplied Factor ordinal or
+// alternate output authority is accepted. bind attaches the reads and its
+// answer terminalizes the transaction.
+func BindSelectedRouteRule[O any](owner *HotOwner, slot *engine.RuleSlot[heap.Value, O], carry engine.SchemaCarrySlot[heap.Value], write engine.SchemaWriteSlot[heap.Value], output engine.FactorRef[heap.Value], spec engine.HotRuleSpec[heap.Value, O], carrySpec engine.HotCarrySpec[heap.Value, O], bind func(*SelectedRouteRuleBinding[O]) bool) bool {
+	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil || output != owner.fragment.Ref() || bind == nil {
+		return false
 	}
-	tx, ok := engine.BeginSelectedRouteRuleBinding[coordinate](owner.binding, slot, carry, write, output, spec, carrySpec)
-	if !ok || tx == nil {
-		return nil, false
-	}
-	return &SelectedRouteRuleBinding[O]{owner: owner, tx: tx, issuer: &RuleImplementation[O]{owner: owner, slot: slot}}, true
+	return engine.BindSelectedRouteRule[coordinate](owner.binding, slot, carry, write, output, spec, carrySpec, func(tx *engine.SelectedRouteRuleBindingTransaction[coordinate, heap.Value, O]) bool {
+		return bind(&SelectedRouteRuleBinding[O]{owner: owner, tx: tx, issuer: &RuleImplementation[O]{owner: owner, slot: slot}})
+	})
 }
 
 // Implementation returns the pending issuer for this transaction. Resolution
@@ -121,19 +120,6 @@ func AddOperandSelectedRead[O any, RV any, Tag interface {
 		return engine.Read[engine.Selection[Tag, engine.OrderedCells[RV]]]{}, false
 	}
 	return engine.AddSelectedRouteOperandRead[coordinate, heap.Value, O, RV, Tag](tx.tx, slot, factor, locate)
-}
-
-// Commit publishes the sole Rule cell after all exact and selected reads are
-// present and the cold carry/write geometry has been revalidated.
-func CommitSelectedRouteRuleBinding[O any](tx *SelectedRouteRuleBinding[O]) bool {
-	return tx != nil && tx.owner != nil && tx.tx != nil && engine.CommitSelectedRouteRuleBinding(tx.tx)
-}
-
-// AbortSelectedRouteRuleBinding terminally rejects the shared Binding after
-// an incomplete heterogeneous assembly; it never leaves a reusable pending
-// ordinal behind.
-func AbortSelectedRouteRuleBinding[O any](tx *SelectedRouteRuleBinding[O]) bool {
-	return tx != nil && tx.owner != nil && tx.tx != nil && engine.AbortSelectedRouteRuleBinding(tx.tx)
 }
 
 // BindHot attaches Heap's already-sealed algebra to its one exact cold Factor
@@ -244,14 +230,15 @@ func BindExactAndSummaryReadAndCarry[O, EV, SV, S any](owner *HotOwner, slot *en
 	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil {
 		return nil, engine.Read[engine.OrderedCells[EV]]{}, engine.Read[S]{}, false
 	}
-	tx, ok := engine.BeginSelectedRuleBinding[coordinate](owner.binding, slot, carry, write, owner.fragment.Ref(), spec, carrySpec)
-	if !ok || tx == nil {
-		return nil, engine.Read[engine.OrderedCells[EV]]{}, engine.Read[S]{}, false
-	}
-	exactRead, exactOK := engine.AddSelectedRouteExactRead(tx, exactSlot, exactFactor)
-	summaryRead, summaryOK := engine.AddSelectedRouteSummaryRead[coordinate, heap.Value, O, SV, S](tx, summarySlot, summaryFactor, summaryForm)
-	if !exactOK || !summaryOK || !engine.CommitSelectedRouteRuleBinding(tx) {
-		_ = engine.AbortSelectedRouteRuleBinding(tx)
+	var exactRead engine.Read[engine.OrderedCells[EV]]
+	var summaryRead engine.Read[S]
+	bound := engine.BindSelectedRule[coordinate](owner.binding, slot, carry, write, owner.fragment.Ref(), spec, carrySpec, func(tx *engine.SelectedRouteRuleBindingTransaction[coordinate, heap.Value, O]) bool {
+		var exactOK, summaryOK bool
+		exactRead, exactOK = engine.AddSelectedRouteExactRead(tx, exactSlot, exactFactor)
+		summaryRead, summaryOK = engine.AddSelectedRouteSummaryRead[coordinate, heap.Value, O, SV, S](tx, summarySlot, summaryFactor, summaryForm)
+		return exactOK && summaryOK
+	})
+	if !bound {
 		return nil, engine.Read[engine.OrderedCells[EV]]{}, engine.Read[S]{}, false
 	}
 	return &RuleImplementation[O]{owner: owner, slot: slot}, exactRead, summaryRead, true

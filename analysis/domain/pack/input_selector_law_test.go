@@ -6,7 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/composite"
 	packdomain "github.com/wippyai/go-lua/analysis/domain/pack"
 	staticdomain "github.com/wippyai/go-lua/analysis/domain/static"
-	"github.com/wippyai/go-lua/analysis/domain/type/authority"
+	typeauthority "github.com/wippyai/go-lua/analysis/domain/type/authority"
 	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"

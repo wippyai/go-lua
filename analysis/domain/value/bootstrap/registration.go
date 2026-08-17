@@ -4,9 +4,9 @@ import (
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
 
@@ -32,11 +32,15 @@ type ruleAuthorities interface {
 func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *SchemaFragment, *HotRule] {
 	return rule.Spec[P, A, *SchemaFragment, *HotRule]{
 		Key:      "value-bootstrap",
-		Role:     programartifact.RuleRoleValueBootstrap,
+		Writes:   "value",
 		Lane:     rule.LaneLink,
-		Semantic: func(bundle vocabulary.Bundle) identity.SemanticKey { return bundle.ValueBootstrapRule.Rule },
+		Semantic: "semantic/rule/value/host-global-bootstrap",
+		Roles:    []schema.Key{"semantic/operand/value/host-global-bootstrap", "semantic/evidence/value/host-global-bootstrap"},
 		Declare: func(context rule.Declaration[P]) (*SchemaFragment, bool) {
-			semantics := context.Bundle.ValueBootstrapRule
+			semantics, ok := context.Roles.Rule("value/host-global-bootstrap")
+			if !ok {
+				return nil, false
+			}
 			return DeclareSchema(context.Builder, semantics.Rule, semantics.Operand, semantics.Evidence, context.Principals.ValuePrincipal())
 		},
 		Register: func(context rule.Registration[*SchemaFragment]) (engine.RuleSlotCapability, bool) {
@@ -62,4 +66,12 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *SchemaFra
 			return catalog, catalog != nil
 		},
 	}
+}
+
+// StructureSpecs is this package's contribution to the analyzer's semantic
+// role vocabulary: the three roles its rule is identified by. A role is
+// declared where it is used, so the row and the reference that names it are one
+// package's statement.
+func StructureSpecs() []structure.Spec {
+	return vocabulary.RuleRoleSpecs("value/host-global-bootstrap")
 }

@@ -33,6 +33,8 @@ func Seal(
 	selects := operators.Selects()
 	reads := view.Storage().Reads()
 	writes := view.Storage().Writes()
+	calls := view.Calls()
+	exact := view.Access().Exact()
 	values := view.Values()
 	loops := view.Control().Loops()
 
@@ -137,7 +139,22 @@ func Seal(
 		if family != keyspace.FamilyCell && !lensFamily(family) {
 			return nil, errors.New("program/flow/candidates: invalid Read source family")
 		}
-		if proof.Executable(term) && lensFamily(family) {
+		candidate := lensFamily(family)
+		if candidate && family == keyspace.FamilyLensExact {
+			// A named selector Read that is itself a Call callee is the
+			// invocation observation, not an authored index-get candidate.
+			// Keep ordinary exact selectors in IndexGet (including exact
+			// reads which are not calls), while excluding only the call-owned
+			// FieldName lens. Dynamic key calls remain index candidates.
+			_, _, _, fieldKind, exactOK := exact.Get(sourceTerm)
+			if !exactOK {
+				return nil, errors.New("program/flow/candidates: exact Read source row is not live")
+			}
+			if fieldKind == kind.FieldName {
+				candidate = !isCallCallee(calls, term)
+			}
+		}
+		if proof.Executable(term) && candidate {
 			result.classes.readClass[index] = accessIndexCandidate
 			result.buckets.indexGet = append(result.buckets.indexGet, term)
 		}
@@ -178,6 +195,20 @@ func Seal(
 	}
 
 	return result, nil
+}
+
+func isCallCallee(calls authored.Calls, read keyspace.Term) bool {
+	for index := 0; index < calls.Count(); index++ {
+		call, ok := calls.At(index)
+		if !ok {
+			continue
+		}
+		_, callee, _, _, ok := calls.Get(call)
+		if ok && callee == read {
+			return true
+		}
+	}
+	return false
 }
 
 func fixedHeader(values authored.Values, control keyspace.Term) bool {

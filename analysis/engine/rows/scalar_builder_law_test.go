@@ -15,12 +15,12 @@ func TestArtifactScalarTemplateConsumesPrivateBuilderStorageExactlyOnce(t *testi
 	spec, copyOfHandle := artifactScalarLawSpec(t)
 	pointStorage := &spec.state.Points[0]
 	memberStorage := &spec.state.Regions[0].Members[0]
-	formalStorage := &spec.state.Functions[0].Formals[0]
+	entryStorage := &spec.state.Bodies[0].Entry[0]
 	template, templateOK := NewArtifactScalarTemplate(spec)
 	if !templateOK || template == nil {
 		t.Fatal("artifact scalar template")
 	}
-	if &template.points[0] != pointStorage || &template.regions[0].Members[0] != memberStorage || &template.functions[0].Formals[0] != formalStorage {
+	if &template.points[0] != pointStorage || &template.regions[0].Members[0] != memberStorage || &template.bodies[0].Entry[0] != entryStorage {
 		t.Fatal("artifact scalar template copied builder storage")
 	}
 	if _, ok := copyOfHandle.AddPoint(ArtifactScalarPoint{ID: artifactScalarLawID(7)}); ok || copyOfHandle.AddEvent(ArtifactScalarEvent{Kind: ArtifactEventPoint, Point: artifactScalarLawID(4)}) {
@@ -37,9 +37,7 @@ func artifactScalarLawSpec(t testing.TB) (*ArtifactScalarSpec, *ArtifactScalarSp
 	t.Helper()
 	artifactID, program, schema := artifactScalarLawID(1), artifactScalarLawID(2), artifactScalarLawID(3)
 	pointID, regionID, bodyID := artifactScalarLawID(4), artifactScalarLawID(5), artifactScalarLawID(6)
-	bodyContext, semanticEntry := artifactScalarLawID(8), artifactScalarLawID(9)
-	functionID, callFormal := artifactScalarLawID(10), artifactScalarLawID(11)
-	spec, ok := NewArtifactScalarSpec(artifactID, program, schema, ArtifactScalarCapacity{Points: 1, Regions: 1, Events: 3, Bodies: 1, Functions: 1})
+	spec, ok := NewArtifactScalarSpec(artifactID, program, schema, ArtifactScalarCapacity{Points: 1, Regions: 1, Events: 3, Bodies: 1})
 	if !ok || spec == nil {
 		t.Fatal("artifact scalar builder")
 	}
@@ -47,18 +45,13 @@ func artifactScalarLawSpec(t testing.TB) (*ArtifactScalarSpec, *ArtifactScalarSp
 	copyOfHandle := &handle
 	point, pointOK := spec.AddPoint(ArtifactScalarPoint{ID: pointID, Initial: true})
 	region, regionOK := copyOfHandle.AddRegion(ArtifactScalarRegion{ID: regionID, Head: pointID})
-	body, bodyOK := spec.AddBody(ArtifactScalarBody{ID: bodyID, Context: bodyContext, SemanticEntry: semanticEntry, Callable: true, Function: functionID, CallFormal: callFormal})
-	function, functionOK := spec.AddFunction(ArtifactScalarFunction{ID: functionID, Body: bodyID, BodyContext: bodyContext, Entry: semanticEntry, CallFormal: callFormal})
+	body, bodyOK := spec.AddBody(ArtifactScalarBody{ID: bodyID})
 	if !pointOK || point != 0 || !regionOK || region != 0 || !bodyOK || body != 0 ||
-		!functionOK || function != 0 ||
 		!spec.AddRegionMember(region, pointID) ||
 		!spec.AddEvent(ArtifactScalarEvent{Kind: ArtifactEventEnter, Region: regionID}) ||
 		!copyOfHandle.AddEvent(ArtifactScalarEvent{Kind: ArtifactEventPoint, Point: pointID}) ||
 		!spec.AddEvent(ArtifactScalarEvent{Kind: ArtifactEventExit, Region: regionID}) ||
-		!spec.AddBodyEntry(body, pointID) || !spec.AddBodyExit(body, pointID) ||
-		!spec.AddFunctionFormal(function, ArtifactScalarFormalPort{ID: artifactScalarLawID(12), Cell: artifactScalarLawID(13), Storage: artifactScalarLawID(14)}) ||
-		!spec.SetFunctionVararg(function, ArtifactScalarVarargPort{ID: artifactScalarLawID(15), Cell: artifactScalarLawID(16)}) ||
-		!spec.AddFunctionOutcome(function, artifactScalarLawID(17)) {
+		!spec.AddBodyEntry(body, pointID) || !spec.AddBodyExit(body, pointID) {
 		t.Fatal("artifact scalar rows")
 	}
 	return spec, copyOfHandle

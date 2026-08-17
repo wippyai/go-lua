@@ -22,7 +22,6 @@ type Work struct {
 	unique     map[nodeFingerprint][]Guard
 	not        map[Guard]Guard
 	applyCache map[applyKey]Guard
-	ite        map[iteKey]Guard
 	restrict   map[restrictKey]Guard
 	exists     map[existsKey]Guard
 	hashes     map[Guard]uint64
@@ -68,12 +67,6 @@ type applyKey struct {
 	operation operation
 	left      Guard
 	right     Guard
-}
-
-type iteKey struct {
-	condition Guard
-	then      Guard
-	otherwise Guard
 }
 
 type restrictKey struct {
@@ -239,14 +232,12 @@ func (w *Work) clearEpoch() {
 	clear(w.unique)
 	clear(w.not)
 	clear(w.applyCache)
-	clear(w.ite)
 	clear(w.restrict)
 	clear(w.exists)
 	clear(w.hashes)
 	w.unique = nil
 	w.not = nil
 	w.applyCache = nil
-	w.ite = nil
 	w.restrict = nil
 	w.exists = nil
 	w.hashes = nil
@@ -262,7 +253,6 @@ func (w *Work) clearPublishedCaches() {
 	clear(w.unique)
 	clear(w.not)
 	clear(w.applyCache)
-	clear(w.ite)
 	clear(w.restrict)
 	clear(w.exists)
 	clear(w.hashes)

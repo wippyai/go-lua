@@ -5,7 +5,6 @@ import (
 	allocationcatalog "github.com/wippyai/go-lua/analysis/domain/heap/allocation/catalog"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/analysis/engine"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 )
 
 // AnalyzeDiagnosticPhase is the coarse permanent production phase reached by
@@ -69,7 +68,6 @@ const (
 	AnalyzeDiagnosticReasonEngineIncomplete
 	AnalyzeDiagnosticReasonEngineCanceled
 	AnalyzeDiagnosticReasonEnginePanicked
-	AnalyzeDiagnosticReasonWorkCutoff
 	AnalyzeDiagnosticReasonObservation
 	AnalyzeDiagnosticReasonDetach
 )
@@ -88,8 +86,6 @@ func (reason AnalyzeDiagnosticReason) String() string {
 		return "engine-canceled"
 	case AnalyzeDiagnosticReasonEnginePanicked:
 		return "engine-panicked"
-	case AnalyzeDiagnosticReasonWorkCutoff:
-		return "work-cutoff"
 	case AnalyzeDiagnosticReasonObservation:
 		return "observation"
 	case AnalyzeDiagnosticReasonDetach:
@@ -167,11 +163,16 @@ const (
 	ProgramBindingFailureSemantics
 	ProgramBindingFailureTypes
 	ProgramBindingFailureStatic
-	ProgramBindingFailureValueSchema
-	ProgramBindingFailureHeapSchema
-	ProgramBindingFailurePackSchema
-	ProgramBindingFailureCallAlgebra
-	ProgramBindingFailureEffectAlgebra
+	// ProgramBindingFailureAxisAuthority is the one axis-authority verdict: an
+	// axis's own mount did not seal its Link authority. Which axis is the
+	// declaration table's to name, so the rejecting axis travels beside this
+	// verdict in AnalyzeDiagnostics.Axis rather than as one verdict member per
+	// coordinate space.
+	ProgramBindingFailureAxisAuthority
+	// ProgramBindingFailureRuntimeContexts is the runtime allocation context
+	// owner's own rejection: it joins the already-sealed factor pair and is a
+	// stage of the binding transaction rather than an axis authority.
+	ProgramBindingFailureRuntimeContexts
 	ProgramBindingFailureHeapIndex
 	ProgramBindingFailureTarget
 	ProgramBindingFailureTargetCatalog
@@ -192,7 +193,7 @@ const (
 
 var programBindingFailureNames = [...]string{
 	"none", "input", "semantics", "types", "static",
-	"value-schema", "heap-schema", "pack-schema", "call-algebra", "effect-algebra", "heap-index",
+	"axis-authority", "runtime-contexts", "heap-index",
 	"target", "target-catalog", "table", "receipt", "binding", "principal",
 	"allocation-catalog", "query-catalog", "seal", "allocations",
 	"value-query-receipt", "effect-query-receipt",
@@ -241,38 +242,25 @@ func programBindingFailure(failure composite.BindFailure) ProgramBindingFailure 
 	case composite.BindStageEffectQueryReceipt:
 		return ProgramBindingFailureEffectQueryReceipt
 	case composite.BindStageRuntimeContexts:
-		// The runtime allocation context owner joins the already-sealed
-		// Pack/Heap pair, so its only rejection is an unmatched pack schema.
-		return ProgramBindingFailurePackSchema
+		return ProgramBindingFailureRuntimeContexts
 	default:
 		return ProgramBindingFailureNone
 	}
 }
 
 // programMountFailure projects the mount phase's closed verdict into the
-// analyzer's own boundary. The rejecting axis is the factor whose authority
-// failed to seal, so the verdict names that factor's schema boundary.
+// analyzer's own boundary. An axis phase rejected one axis's own authority, and
+// which axis it was is the declaration table's identity rather than a
+// coordinate space this boundary re-enumerates, so the verdict is one and the
+// axis travels with it.
 func programMountFailure(failure composite.MountFailure) ProgramBindingFailure {
 	if !failure.Available() {
 		return ProgramBindingFailureNone
 	}
-	if failure.Stage != composite.MountStageAxis {
+	if failure.Stage != composite.MountStageAxis || failure.Axis == composite.DiagnosticAxisUnknown {
 		return ProgramBindingFailureInput
 	}
-	switch programartifact.RuleOutputKind(failure.Axis) {
-	case programartifact.RuleOutputValue:
-		return ProgramBindingFailureValueSchema
-	case programartifact.RuleOutputHeap:
-		return ProgramBindingFailureHeapSchema
-	case programartifact.RuleOutputPack:
-		return ProgramBindingFailurePackSchema
-	case programartifact.RuleOutputCall:
-		return ProgramBindingFailureCallAlgebra
-	case programartifact.RuleOutputEffect:
-		return ProgramBindingFailureEffectAlgebra
-	default:
-		return ProgramBindingFailureInput
-	}
+	return ProgramBindingFailureAxisAuthority
 }
 
 // AnalyzeDiagnosticRule is the closed analyzer-owned classification of the
@@ -285,33 +273,44 @@ type AnalyzeDiagnosticRule = composite.DiagnosticRule
 
 const AnalyzeDiagnosticRuleUnknown = composite.DiagnosticRuleUnknown
 
+// AnalyzeDiagnosticAxis is the closed analyzer-owned classification of one
+// axis. It is the sealed axis table's own classification: the inventory, the
+// slots, and the names all come from that one table, so an axis added there is
+// classified without a second list. Unknown includes empty, foreign, and
+// generic lifecycle failures without a bound analyzer axis.
+type AnalyzeDiagnosticAxis = composite.DiagnosticAxis
+
+const AnalyzeDiagnosticAxisUnknown = composite.DiagnosticAxisUnknown
+
 // AnalyzeDiagnostics is the detached analysis-level envelope for one Plan
 // solve. Engine contains optional bounded runtime evidence; Phase and Reason
 // remain available without event allocation.
 type AnalyzeDiagnostics struct {
-	Phase                     AnalyzeDiagnosticPhase
-	Reason                    AnalyzeDiagnosticReason
-	ItemIssuance              AnalyzeDiagnosticItemIssuanceFailure
-	Rule                      AnalyzeDiagnosticRule
-	ReceiptStage              AnalyzeDiagnosticReceiptStage
-	Binding                   ProgramBindingFailure
-	ValueSeal                 valuedomain.SealFailure
-	AllocationCatalog         allocationcatalog.SealFailure
-	ReceiptArtifactRow        engine.ReceiptArtifactRowFailure
-	ReceiptOrdinal            uint32
-	ReceiptSourceSeal         engine.ReceiptSourceSealFailure
-	ReceiptRuleSourceSeal     engine.RuleSourceSealFailure
-	ReceiptRuleFinalizer      engine.RuleFinalizerFailure
-	ReceiptCommit             engine.ReceiptCommitFailurePhase
-	ReceiptCommitPrecondition engine.ReceiptCommitPrecondition
-	ReceiptCommitSemanticRows engine.ReceiptCommitSemanticRowsFailure
-	ReceiptTopology           engine.ReceiptTopologyFailure
-	ReceiptSchedule           engine.ReceiptScheduleFailure
-	ReceiptScheduleOrdinal    uint32
-	ReceiptCommitPublish      engine.ReceiptCommitPublishFailure
-	ReceiptLowering           engine.ReceiptAssemblyFailure
-	ObservationAttach         engine.ReceiptObservationAttachFailure
-	Engine                    engine.SolveDiagnostics
+	Phase        AnalyzeDiagnosticPhase
+	Reason       AnalyzeDiagnosticReason
+	ItemIssuance AnalyzeDiagnosticItemIssuanceFailure
+	Rule         AnalyzeDiagnosticRule
+	// Axis names the coordinate space a per-axis verdict is about. It is the
+	// identity half of ProgramBindingFailureAxisAuthority.
+	Axis              AnalyzeDiagnosticAxis
+	ReceiptStage      AnalyzeDiagnosticReceiptStage
+	Binding           ProgramBindingFailure
+	ValueSeal         valuedomain.SealFailure
+	AllocationCatalog allocationcatalog.SealFailure
+	// ReceiptSeal, ReceiptLowering, ReceiptCommit, and ObservationAttach each
+	// carry one engine boundary as its lifecycle family, universal
+	// disposition, and opaque site identity. The engine's internal boundary
+	// tables stay inside the engine; two boundaries are distinguished here by
+	// their site digests. ObservationAttach spans the whole ordered runtime
+	// attach path: a compile-family value names the attach phase that
+	// rejected, an observation-family value the branch observation itself.
+	ReceiptSeal            engine.SolveFailure
+	ReceiptOrdinal         uint32
+	ReceiptLowering        engine.SolveFailure
+	ReceiptCommit          engine.SolveFailure
+	ReceiptScheduleOrdinal uint32
+	ObservationAttach      engine.SolveFailure
+	Engine                 engine.SolveDiagnostics
 }
 
 func (diagnostics *AnalyzeDiagnostics) enter(phase AnalyzeDiagnosticPhase) {

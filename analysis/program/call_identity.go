@@ -235,23 +235,21 @@ func (program *Program) callSpanID(term keyspace.Term) (identity.ContentID, bool
 	return program.occurrenceSpanID(term)
 }
 
+// occurrenceSpanID is the evaluation span identity of one authored occurrence.
+// Span is the single owner of that geometry: it resolves the authored Finish
+// continuation to its first causal Site and collapses a fused entry onto that
+// Site. Reading the port planes here instead would be a second span authority
+// and would reject every occurrence whose continuation passes through a term
+// that holds no causal vertex.
 func (program *Program) occurrenceSpanID(term keyspace.Term) (identity.ContentID, bool) {
 	if program == nil || term == 0 || keyspace.TermFamily(term) == keyspace.FamilyInvalid || keyspace.TermOrdinal(term) == 0 {
 		return identity.ContentID{}, false
 	}
-	ports, sites := program.Flow().Ports(), program.Flow().Causal().Sites()
-	entryTerm, entryOK := ports.Entry(term)
-	finishTerm, finishOK := ports.Finish(term)
-	entry, entrySiteOK := sites.ForTerm(entryTerm)
-	finish, finishSiteOK := sites.ForTerm(finishTerm)
-	if !entryOK || !finishOK || !entrySiteOK || !finishSiteOK || !entry.Available() || !finish.Available() {
+	span, spanOK := program.Span(term)
+	if !spanOK {
 		return identity.ContentID{}, false
 	}
-	entryID, finishID := entry.ContextID(), finish.ContextID()
-	spanID := programRoleID("program/transformer/span", program.ContentID(), func(writer *framing.Writer) bool {
-		return writer.Uint(uint64(keyspace.TermFamily(term))) == nil && writer.Uint(uint64(keyspace.TermOrdinal(term))) == nil &&
-			writer.Bytes(entryID[:]) == nil && writer.Bytes(finishID[:]) == nil
-	})
+	spanID := span.ContextID()
 	return spanID, spanID.Available()
 }
 

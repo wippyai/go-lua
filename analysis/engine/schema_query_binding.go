@@ -89,7 +89,7 @@ func validBindingQueryInstance(schema *Schema, ordinal uint64, query equation.Qu
 		return false
 	}
 	surface := query.Surfaces[0]
-	if !surface.Available() || surface.Factor != projection.Factor || surface.Local == 0 || surface.Mode != equation.TargetModeNone {
+	if !surface.Available() || surface.Factor != projection.Factor || surface.Mode != equation.TargetModeNone {
 		return false
 	}
 	switch projection.Kind {

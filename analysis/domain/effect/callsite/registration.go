@@ -4,9 +4,9 @@ import (
 	callowner "github.com/wippyai/go-lua/analysis/domain/call/owner"
 	effectowner "github.com/wippyai/go-lua/analysis/domain/effect/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
 
@@ -30,12 +30,19 @@ type ruleAuthorities interface {
 // interfaces above.
 func SelectedEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *SelectedSchemaFragment, *HotRule] {
 	return rule.Spec[P, A, *SelectedSchemaFragment, *HotRule]{
-		Key:      "effect-selected",
-		Role:     programartifact.RuleRoleEffectSelected,
+		Key:    "effect-selected",
+		Writes: "effect",
+		Issues: []rule.Issuance{
+			{Occurrence: "occurrence/call", Form: "issuance/call-stage", Input: "input/finish", Stage: "stage/call-effect"},
+		},
 		Lane:     rule.LaneMounted,
-		Semantic: func(bundle vocabulary.Bundle) identity.SemanticKey { return bundle.EffectSelectedRule.Rule },
+		Semantic: "semantic/rule/effect/callsite-selected",
+		Roles:    []schema.Key{"semantic/operand/effect/callsite-selected", "semantic/evidence/effect/callsite-selected"},
 		Declare: func(context rule.Declaration[P]) (*SelectedSchemaFragment, bool) {
-			semantics := context.Bundle.EffectSelectedRule
+			semantics, ok := context.Roles.Rule("effect/callsite-selected")
+			if !ok {
+				return nil, false
+			}
 			return DeclareSelectedSchema(context.Builder, semantics.Rule, semantics.Operand, semantics.Evidence, context.Principals.CallPrincipal(), context.Principals.EffectPrincipal())
 		},
 		Register: func(context rule.Registration[*SelectedSchemaFragment]) (engine.RuleSlotCapability, bool) {
@@ -61,12 +68,19 @@ func SelectedEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *Selec
 // OpaqueEntry is this package's effect-opaque rule declaration.
 func OpaqueEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *OpaqueSchemaFragment, *HotRule] {
 	return rule.Spec[P, A, *OpaqueSchemaFragment, *HotRule]{
-		Key:      "effect-opaque",
-		Role:     programartifact.RuleRoleEffectOpaque,
+		Key:    "effect-opaque",
+		Writes: "effect",
+		Issues: []rule.Issuance{
+			{Occurrence: "occurrence/call", Form: "issuance/call-stage", Input: "input/finish", Stage: "stage/call-effect"},
+		},
 		Lane:     rule.LaneMounted,
-		Semantic: func(bundle vocabulary.Bundle) identity.SemanticKey { return bundle.EffectOpaqueRule.Rule },
+		Semantic: "semantic/rule/effect/callsite-opaque",
+		Roles:    []schema.Key{"semantic/operand/effect/callsite-opaque", "semantic/evidence/effect/callsite-opaque"},
 		Declare: func(context rule.Declaration[P]) (*OpaqueSchemaFragment, bool) {
-			semantics := context.Bundle.EffectOpaqueRule
+			semantics, ok := context.Roles.Rule("effect/callsite-opaque")
+			if !ok {
+				return nil, false
+			}
 			return DeclareOpaqueSchema(context.Builder, semantics.Rule, semantics.Operand, semantics.Evidence, context.Principals.CallPrincipal(), context.Principals.EffectPrincipal())
 		},
 		Register: func(context rule.Registration[*OpaqueSchemaFragment]) (engine.RuleSlotCapability, bool) {
@@ -92,12 +106,19 @@ func OpaqueEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *OpaqueS
 // BodyEntry is this package's effect-body rule declaration.
 func BodyEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *BodySchemaFragment, *BodyHotRule] {
 	return rule.Spec[P, A, *BodySchemaFragment, *BodyHotRule]{
-		Key:      "effect-body",
-		Role:     programartifact.RuleRoleEffectBody,
+		Key:    "effect-body",
+		Writes: "effect",
+		Issues: []rule.Issuance{
+			{Occurrence: "occurrence/call", Form: "issuance/call-stage", Input: "input/finish", Stage: "stage/call-effect"},
+		},
 		Lane:     rule.LaneMounted,
-		Semantic: func(bundle vocabulary.Bundle) identity.SemanticKey { return bundle.EffectBodyRule.Rule },
+		Semantic: "semantic/rule/effect/callsite-body",
+		Roles:    []schema.Key{"semantic/operand/effect/callsite-body", "semantic/evidence/effect/callsite-body"},
 		Declare: func(context rule.Declaration[P]) (*BodySchemaFragment, bool) {
-			semantics := context.Bundle.EffectBodyRule
+			semantics, ok := context.Roles.Rule("effect/callsite-body")
+			if !ok {
+				return nil, false
+			}
 			return DeclareBodySchema(context.Builder, semantics.Rule, semantics.Operand, semantics.Evidence, context.Principals.CallPrincipal(), context.Principals.EffectPrincipal())
 		},
 		Register: func(context rule.Registration[*BodySchemaFragment]) (engine.RuleSlotCapability, bool) {
@@ -118,4 +139,14 @@ func BodyEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *BodySchem
 			return ok
 		},
 	}
+}
+
+// StructureSpecs is this package's contribution to the analyzer's semantic
+// role vocabulary: the three roles each of its three rules is identified by. A
+// role is declared where it is used, so the row and the reference that names it
+// are one package's statement.
+func StructureSpecs() []structure.Spec {
+	specs := vocabulary.RuleRoleSpecs("effect/callsite-selected")
+	specs = append(specs, vocabulary.RuleRoleSpecs("effect/callsite-opaque")...)
+	return append(specs, vocabulary.RuleRoleSpecs("effect/callsite-body")...)
 }

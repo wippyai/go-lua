@@ -3,9 +3,9 @@ package refinement
 import (
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
 
@@ -28,12 +28,19 @@ type ruleAuthorities interface {
 // the need interfaces above.
 func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *SchemaFragment, *HotRule] {
 	return rule.Spec[P, A, *SchemaFragment, *HotRule]{
-		Key:      "value-presence-refinement",
-		Role:     programartifact.RuleRoleValuePresenceRefinement,
+		Key:    "value-presence-refinement",
+		Writes: "value",
+		Issues: []rule.Issuance{
+			{Occurrence: "occurrence/binary-presence-refinement", Form: "issuance/local-predecessor", Input: "input/predecessor", Stage: "stage/local"},
+		},
 		Lane:     rule.LaneMounted,
-		Semantic: func(bundle vocabulary.Bundle) identity.SemanticKey { return bundle.ValuePresenceRefinementRule.Rule },
+		Semantic: "semantic/rule/value/presence-refinement",
+		Roles:    []schema.Key{"semantic/operand/value/presence-refinement", "semantic/evidence/value/presence-refinement"},
 		Declare: func(context rule.Declaration[P]) (*SchemaFragment, bool) {
-			semantics := context.Bundle.ValuePresenceRefinementRule
+			semantics, ok := context.Roles.Rule("value/presence-refinement")
+			if !ok {
+				return nil, false
+			}
 			return DeclareSchema(context.Builder, semantics.Rule, semantics.Operand, semantics.Evidence, context.Principals.ValuePrincipal())
 		},
 		Register: func(context rule.Registration[*SchemaFragment]) (engine.RuleSlotCapability, bool) {
@@ -51,4 +58,12 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *SchemaFra
 			return ok
 		},
 	}
+}
+
+// StructureSpecs is this package's contribution to the analyzer's semantic
+// role vocabulary: the three roles its rule is identified by. A role is
+// declared where it is used, so the row and the reference that names it are one
+// package's statement.
+func StructureSpecs() []structure.Spec {
+	return vocabulary.RuleRoleSpecs("value/presence-refinement")
 }

@@ -5,7 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/composite"
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/library/lualib/targetprofile"
+	profile "github.com/wippyai/go-lua/analysis/library/lualib/targetprofile"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 )
 
@@ -34,6 +34,23 @@ return 0`,
 			role: programartifact.RuleRoleValueBinaryArithmetic,
 			source: `local cap = 3
 if cap + 2 then
+    return 1
+end
+return 0`,
+		},
+		{
+			// The arithmetic sits in the initializer instead of the condition.
+			// A branch producer is the condition's own evidence, never a
+			// transitive dataflow closure over the values that reached it, so
+			// this shape mounts the storage transfer of cap and no arithmetic
+			// producer at all: the addition commits before the branch and is
+			// the assignment's evidence, not the branch's. The row is kept
+			// because the transfer chain it exercises starts from a local whose
+			// value was computed rather than authored.
+			name: "binary-arithmetic-initializer",
+			role: programartifact.RuleRoleValueStorageTransfer,
+			source: `local cap = 3 + 2
+if cap then
     return 1
 end
 return 0`,

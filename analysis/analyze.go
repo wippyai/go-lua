@@ -176,6 +176,9 @@ func CompileWithDiagnostics(source *link.Link) (*Plan, CompileStatus, AnalyzeDia
 	// projection's job; a verdict from another axis carries no value evidence
 	// and leaves the field absent.
 	diagnostics.ValueSeal, _ = composite.MountRejection[valuedomain.SealFailure](mountFailure)
+	// The axis-authority verdict names one rejection; which axis raised it is
+	// the sealed table's identity and travels here beside it.
+	diagnostics.Axis = mountFailure.Axis
 	diagnostics.AllocationCatalog = allocationFailure
 	diagnostics.ReceiptStage = AnalyzeDiagnosticReceiptStageBinding
 	if bindingFailure != ProgramBindingFailureNone || binding == nil || binding.SchemaBinding() == nil || !binding.SchemaBinding().Sealed() {
@@ -278,11 +281,7 @@ func (plan *Plan) solveWithPolicy(ctx context.Context, options engine.SolveDiagn
 		diagnostics.fail(AnalyzeDiagnosticReasonEnginePanicked)
 		return nil, nil, AnalyzeIncomplete, diagnostics
 	case engine.SolveIncomplete:
-		if engineDiagnostics.WorkCutoff {
-			diagnostics.fail(AnalyzeDiagnosticReasonWorkCutoff)
-		} else {
-			diagnostics.fail(AnalyzeDiagnosticReasonEngineIncomplete)
-		}
+		diagnostics.fail(AnalyzeDiagnosticReasonEngineIncomplete)
 		return nil, nil, AnalyzeIncomplete, diagnostics
 	case engine.SolveInvalid:
 		diagnostics.fail(AnalyzeDiagnosticReasonEngineIncomplete)
@@ -318,9 +317,9 @@ func (state *compiledState) ordinaryRuntimeSolver() (*engine.Solver, []artifactD
 	}
 	state.ordinaryOnce.Do(func() {
 		var queryPlan *artifactQueryPlan
-		var failure engine.ReceiptObservationAttachFailure
+		var failure engine.SolveFailure
 		state.ordinary, queryPlan, state.ordinaryObservations, failure, state.ordinaryOK = state.buildRuntimeSolver(nil)
-		state.ordinaryOK = state.ordinaryOK && queryPlan == state.queryPlan && failure == engine.ReceiptObservationAttachFailureNone
+		state.ordinaryOK = state.ordinaryOK && queryPlan == state.queryPlan && !failure.Available()
 		if !state.ordinaryOK {
 			state.ordinary = nil
 			state.ordinaryObservations = nil
@@ -329,33 +328,50 @@ func (state *compiledState) ordinaryRuntimeSolver() (*engine.Solver, []artifactD
 	return state.ordinary, state.ordinaryObservations, state.ordinaryOK
 }
 
+// Runtime attach phases run in this order against one receipt compilation.
+// The ordinal names the phase inside the engine's compile-family site
+// identity, so an incomplete runtime binding reports which phase rejected.
+const (
+	runtimeAttachPhaseWitness uint64 = iota + 1
+	runtimeAttachPhaseBootstrapMembers
+	runtimeAttachPhaseArtifactRuleMembers
+	runtimeAttachPhaseQueryMembers
+)
+
 // buildRuntimeSolver is the sole runtime binding path. Ordinary solves retain
 // its result through ordinaryRuntimeSolver; diagnostic-policy solves invoke it
 // afresh because their observation inventory is explicitly flag-controlled.
-func (state *compiledState) buildRuntimeSolver(policy *DiagnosticPolicy) (*engine.Solver, *artifactQueryPlan, []artifactDiagnosticObservationReceipt, engine.ReceiptObservationAttachFailure, bool) {
+func (state *compiledState) buildRuntimeSolver(policy *DiagnosticPolicy) (*engine.Solver, *artifactQueryPlan, []artifactDiagnosticObservationReceipt, engine.SolveFailure, bool) {
 	if state == nil || state.binding == nil || state.binding.SchemaBinding() == nil || state.graph == nil || state.queryPlan == nil || state.artifacts == nil || state.resultReceipt == nil {
-		return nil, nil, nil, engine.ReceiptObservationAttachFailureNone, false
+		return nil, nil, nil, engine.SolveFailure{}, false
 	}
 	binding, graph, queryPlan := state.binding, state.graph, state.queryPlan
 	compilation, compiled := engine.BeginReceiptTopologyCompilation(binding.SchemaBinding(), graph)
 	if !compiled || compilation == nil {
-		return nil, nil, nil, engine.ReceiptObservationAttachFailureNone, false
+		return nil, nil, nil, engine.SolveFailure{}, false
 	}
 	valueIDs, heapIDs, _, witnessOK := linkBootstrapWitness(state, binding)
-	compiled = witnessOK && attachLinkBootstrapMembers(binding, compilation, graph, valueIDs, heapIDs) && attachArtifactRuleMembers(binding, compilation, graph, state.artifacts.mounts) && queryPlan.Attach(compilation, graph, binding)
-	var observations []artifactDiagnosticObservationReceipt
-	var observationFailure engine.ReceiptObservationAttachFailure
-	if compiled {
-		observations, observationFailure, compiled = attachBranchValueObservations(compilation, graph, binding, state.resultReceipt)
+	if !witnessOK {
+		return nil, nil, nil, engine.ReceiptCompilationAttachFailure(runtimeAttachPhaseWitness), false
 	}
-	if !compiled {
-		return nil, nil, nil, observationFailure, false
+	if !attachLinkBootstrapMembers(binding, compilation, graph, valueIDs, heapIDs) {
+		return nil, nil, nil, engine.ReceiptCompilationAttachFailure(runtimeAttachPhaseBootstrapMembers), false
+	}
+	if !attachArtifactRuleMembers(binding, compilation, graph, state.artifacts.mounts) {
+		return nil, nil, nil, engine.ReceiptCompilationAttachFailure(runtimeAttachPhaseArtifactRuleMembers), false
+	}
+	if !queryPlan.Attach(compilation, graph, binding) {
+		return nil, nil, nil, engine.ReceiptCompilationAttachFailure(runtimeAttachPhaseQueryMembers), false
+	}
+	observations, observationFailure, observed := attachBranchValueObservations(compilation, graph, binding, state.resultReceipt)
+	if !observed {
+		return nil, nil, nil, observationFailure.Failure(), false
 	}
 	solver, solved := compilation.Solver()
 	if !solved || solver == nil {
-		return nil, nil, nil, observationFailure, false
+		return nil, nil, nil, observationFailure.Failure(), false
 	}
-	return solver, queryPlan, observations, observationFailure, true
+	return solver, queryPlan, observations, observationFailure.Failure(), true
 }
 
 // SourceID is the content fence of the Link compiled into this plan.

@@ -2,12 +2,12 @@ package engine
 
 import "github.com/wippyai/go-lua/analysis/engine/internal/composition"
 
-// BeginSelectedExactRuleBinding starts the no-carry heterogeneous selected
+// beginSelectedExactRuleBinding starts the no-carry heterogeneous selected
 // read transaction for one exact-write Rule. It shares the one-shot read and
 // commit authority with the routed/carry transaction, but requires the cold
 // Rule to prove CarryCount=0. There is no optional-carry mode: the two shapes
 // have disjoint constructors and validation laws.
-func BeginSelectedExactRuleBinding[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot *RuleSlot[V, O], write SchemaWriteSlot[V], output FactorRef[V], spec HotRuleSpec[V, O]) (*SelectedRouteRuleBindingTransaction[K, V, O], bool) {
+func beginSelectedExactRuleBinding[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot *RuleSlot[V, O], write SchemaWriteSlot[V], output FactorRef[V], spec HotRuleSpec[V, O]) (*SelectedRouteRuleBindingTransaction[K, V, O], bool) {
 	state := bindingState(binding)
 	if state == nil {
 		return nil, false
@@ -25,7 +25,7 @@ func BeginSelectedExactRuleBinding[K ~uint32 | ~uint64, V, O any](binding *Schem
 	}
 	shape, shapeOK := state.schema.ruleShapeAt(ruleOrdinal)
 	writeShape, writeOK := state.schema.ruleWriteShapeAt(ruleOrdinal, 0)
-	if !shapeOK || !writeOK || shape.OutputKind != composition.FactorOutput || shape.Inputs == 0 || shape.CarryCount != 0 || shape.WriteCount != 1 || writeShape.Factor != shape.Output || writeShape.Kind != composition.WriteExact || writeShape.Route != 0 || writeShape.CandidateCount != 0 || writeShape.DependencyCount != 0 {
+	if !shapeOK || !writeOK || shape.OutputKind != composition.FactorOutput || shape.Inputs == 0 || shape.CarryCount != 0 || shape.WriteCount != 1 || writeShape.Factor != shape.Output || writeShape.Kind != composition.WriteExact || writeShape.Route != 0 {
 		state.poisonLocked()
 		return nil, false
 	}

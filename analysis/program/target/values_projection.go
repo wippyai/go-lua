@@ -33,7 +33,12 @@ func (d *operationDraft) validateExactProjection(source, result valuesDraft) err
 	}
 	for index, destination := range result.types {
 		if index < len(source.types) {
-			assignable, relationErr := d.typeAssignable(source.types[index], destination)
+			sourceType, sourceOK := d.declarations[source.types[index]]
+			destinationType, destinationOK := d.declarations[destination]
+			if !sourceOK || !destinationOK {
+				return fmt.Errorf("exact adjustment fixed source type relation: type declaration is not admitted")
+			}
+			assignable, relationErr := d.semantics.Assignable(sourceType, destinationType, d.formalConstraints)
 			if relationErr != nil {
 				return fmt.Errorf("exact adjustment fixed source type relation: %w", relationErr)
 			}
@@ -49,7 +54,11 @@ func (d *operationDraft) validateExactProjection(source, result valuesDraft) err
 			if !ok {
 				return errors.New("exact adjustment nil primitive unavailable")
 			}
-			accepted, relationErr := d.typeAccepts(nilType, destination)
+			destinationType, destinationOK := d.declarations[destination]
+			if !destinationOK {
+				return fmt.Errorf("exact adjustment nil fill type relation: type declaration is not admitted")
+			}
+			accepted, relationErr := d.semantics.Assignable(nilType, destinationType, d.formalConstraints)
 			if relationErr != nil {
 				return fmt.Errorf("exact adjustment nil fill type relation: %w", relationErr)
 			}
@@ -57,7 +66,12 @@ func (d *operationDraft) validateExactProjection(source, result valuesDraft) err
 				return errors.New("exact adjustment nil fill is type-incompatible")
 			}
 		case ValuesVariable:
-			assignable, relationErr := d.typeAssignable(source.tailType, destination)
+			sourceType, sourceOK := d.declarations[source.tailType]
+			destinationType, destinationOK := d.declarations[destination]
+			if !sourceOK || !destinationOK {
+				return fmt.Errorf("exact adjustment tail source type relation: type declaration is not admitted")
+			}
+			assignable, relationErr := d.semantics.Assignable(sourceType, destinationType, d.formalConstraints)
 			if relationErr != nil {
 				return fmt.Errorf("exact adjustment tail source type relation: %w", relationErr)
 			}
@@ -65,7 +79,12 @@ func (d *operationDraft) validateExactProjection(source, result valuesDraft) err
 				return errors.New("exact adjustment tail source has unavailable type")
 			}
 			for suffix := 0; suffix <= position && suffix < len(source.suffix); suffix++ {
-				assignable, relationErr := d.typeAssignable(source.suffix[suffix], destination)
+				sourceType, sourceOK := d.declarations[source.suffix[suffix]]
+				destinationType, destinationOK := d.declarations[destination]
+				if !sourceOK || !destinationOK {
+					return fmt.Errorf("exact adjustment suffix type relation: type declaration is not admitted")
+				}
+				assignable, relationErr := d.semantics.Assignable(sourceType, destinationType, d.formalConstraints)
 				if relationErr != nil {
 					return fmt.Errorf("exact adjustment suffix type relation: %w", relationErr)
 				}
@@ -78,7 +97,11 @@ func (d *operationDraft) validateExactProjection(source, result valuesDraft) err
 				if !ok {
 					return errors.New("exact adjustment nil primitive unavailable")
 				}
-				accepted, relationErr := d.typeAccepts(nilType, destination)
+				destinationType, destinationOK := d.declarations[destination]
+				if !destinationOK {
+					return fmt.Errorf("exact adjustment tail nil fill type relation: type declaration is not admitted")
+				}
+				accepted, relationErr := d.semantics.Assignable(nilType, destinationType, d.formalConstraints)
 				if relationErr != nil {
 					return fmt.Errorf("exact adjustment tail nil fill type relation: %w", relationErr)
 				}
@@ -91,7 +114,11 @@ func (d *operationDraft) validateExactProjection(source, result valuesDraft) err
 			if !ok {
 				return errors.New("exact adjustment any primitive unavailable")
 			}
-			accepted, relationErr := d.typeAccepts(anyType, destination)
+			destinationType, destinationOK := d.declarations[destination]
+			if !destinationOK {
+				return fmt.Errorf("exact adjustment unknown source type relation: type declaration is not admitted")
+			}
+			accepted, relationErr := d.semantics.Assignable(anyType, destinationType, d.formalConstraints)
 			if relationErr != nil {
 				return fmt.Errorf("exact adjustment unknown source type relation: %w", relationErr)
 			}
@@ -99,7 +126,12 @@ func (d *operationDraft) validateExactProjection(source, result valuesDraft) err
 				return errors.New("exact adjustment unknown source is type-incompatible")
 			}
 			for suffix := 0; suffix <= position && suffix < len(source.suffix); suffix++ {
-				assignable, relationErr := d.typeAssignable(source.suffix[suffix], destination)
+				sourceType, sourceOK := d.declarations[source.suffix[suffix]]
+				destinationType, destinationOK := d.declarations[destination]
+				if !sourceOK || !destinationOK {
+					return fmt.Errorf("exact adjustment unknown suffix type relation: type declaration is not admitted")
+				}
+				assignable, relationErr := d.semantics.Assignable(sourceType, destinationType, d.formalConstraints)
 				if relationErr != nil {
 					return fmt.Errorf("exact adjustment unknown suffix type relation: %w", relationErr)
 				}
@@ -112,7 +144,11 @@ func (d *operationDraft) validateExactProjection(source, result valuesDraft) err
 				if !ok {
 					return errors.New("exact adjustment nil primitive unavailable")
 				}
-				accepted, relationErr := d.typeAccepts(nilType, destination)
+				destinationType, destinationOK := d.declarations[destination]
+				if !destinationOK {
+					return fmt.Errorf("exact adjustment unknown nil fill type relation: type declaration is not admitted")
+				}
+				accepted, relationErr := d.semantics.Assignable(nilType, destinationType, d.formalConstraints)
 				if relationErr != nil {
 					return fmt.Errorf("exact adjustment unknown nil fill type relation: %w", relationErr)
 				}

@@ -3,9 +3,9 @@ package owner
 import (
 	"github.com/wippyai/go-lua/analysis/domain/heap"
 	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
 
@@ -29,9 +29,11 @@ type axisInputs interface {
 func mountHeapSchema[A axisInputs](inputs A) (heap.Schema, heap.SealFailure, bool) {
 	source := inputs.LinkSource()
 	count := inputs.MountedArtifactCount()
-	if source == nil || count == 0 {
+	if count == 0 {
 		return heap.Schema{}, heap.SealFailureSource, false
 	}
+	// The artifact view is read first so a row this domain cannot place is
+	// reported as the mount it is, and an absent Link stays the source verdict.
 	mounts := make([]heap.ArtifactMount, 0, count)
 	seen := make(map[identity.ContentID]struct{}, count)
 	for index := 0; index < count; index++ {
@@ -49,6 +51,9 @@ func mountHeapSchema[A axisInputs](inputs A) (heap.Schema, heap.SealFailure, boo
 		seen[mount.Module()] = struct{}{}
 		mounts = append(mounts, mount)
 	}
+	if source == nil {
+		return heap.Schema{}, heap.SealFailureSource, false
+	}
 	schema, failure := heap.SealWithArtifacts(source, mounts)
 	if failure != heap.SealFailureNone {
 		return heap.Schema{}, failure, false
@@ -61,18 +66,21 @@ func mountHeapSchema[A axisInputs](inputs A) (heap.Schema, heap.SealFailure, boo
 func AxisEntry[A axisInputs]() axis.Spec[A, *SchemaFragment, *HotOwner, heap.Value] {
 	return axis.Spec[A, *SchemaFragment, *HotOwner, heap.Value]{
 		Key:         "heap",
-		Principal:   programartifact.RuleOutputHeap,
 		Storage:     axis.StorageFactor,
 		Cardinality: axis.CardinalityDense,
 		Lifetime:    axis.LifetimeLink,
 		Mutability:  axis.MutabilitySolve,
 		Concurrency: axis.ConcurrencySingleWriter,
-		Semantic:    func(bundle vocabulary.Bundle) identity.SemanticKey { return bundle.HeapFactor },
+		Semantic:    "semantic/factor/heap",
 		Mount: axis.NewMount(func(context axis.Mounting[A]) (heap.Schema, heap.SealFailure, bool) {
 			return mountHeapSchema[A](context.Inputs)
 		}),
 		Declare: func(context axis.Declaration) (*SchemaFragment, bool) {
-			return DeclareSchema(context.Builder, context.Bundle.HeapFactor)
+			semantic, ok := context.Roles.Key("semantic/factor/heap")
+			if !ok {
+				return nil, false
+			}
+			return DeclareSchema(context.Builder, semantic)
 		},
 		Bind: func(context axis.Binding[A, *SchemaFragment]) (*HotOwner, bool) {
 			return BindHot(context.Binding, context.Fragment, context.Inputs.HeapInput())
@@ -85,4 +93,11 @@ func AxisEntry[A axisInputs]() axis.Spec[A, *SchemaFragment, *HotOwner, heap.Val
 			return axis.Adopt(spec)
 		},
 	}
+}
+
+// StructureSpecs is this package's contribution to the analyzer's semantic
+// role vocabulary: the heap factor's own identity. A role is declared where it is
+// used, so the row and the reference that names it are one package's statement.
+func StructureSpecs() []structure.Spec {
+	return vocabulary.RoleSpecs("factor/heap")
 }

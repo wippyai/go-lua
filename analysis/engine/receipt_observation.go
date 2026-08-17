@@ -36,6 +36,16 @@ const (
 	ReceiptObservationAttachFailureDuplicate
 )
 
+// Failure projects one observation attach boundary onto the engine's public
+// failure vocabulary. The ordinal enters the site preimage and never leaves
+// this package.
+func (failure ReceiptObservationAttachFailure) Failure() SolveFailure {
+	if failure == ReceiptObservationAttachFailureNone {
+		return SolveFailure{}
+	}
+	return receiptFailure(SolveFailureFamilyObservation, "receipt-observation-attach", uint64(failure))
+}
+
 func (observation ReceiptObservation[R]) Available() bool {
 	return observation.owner != nil && observation.id.Available() && observation.ordinal != ^uint64(0)
 }

@@ -9,26 +9,46 @@ import (
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
 
-// axisPrincipalLimit bounds the principal-indexed projections below. Every
-// axis declares exactly one writer principal and no two share it, so the
-// artifact's factor lane catalog is the exact size of this index.
-const axisPrincipalLimit = int(programartifact.RuleOutputEffect) + 1
-
 type axisTemplate = axis.Template[LinkInputs]
 
-// axisCells is one pass's per-axis payload, indexed by writer principal. The
-// cold pass fills it with fragments and the hot pass with bound axes.
-type axisCells [axisPrincipalLimit]axis.Cell
+// The axis keys the composition addresses its own inventory by. Each is the key
+// the owning domain declared its axis under, so a pass that needs one axis's
+// payload names it exactly as its owner spells it rather than by a factor lane
+// ordinal declared somewhere else.
+const (
+	axisKeyValue  schema.Key = "value"
+	axisKeyPack   schema.Key = "pack"
+	axisKeyHeap   schema.Key = "heap"
+	axisKeyCall   schema.Key = "call"
+	axisKeyEffect schema.Key = "effect"
+)
 
-func (cells axisCells) available() bool {
-	for principal := programartifact.RuleOutputInvalid + 1; int(principal) < axisPrincipalLimit; principal++ {
-		if !cells[principal].Available() {
+// axisCells is one pass's per-axis payload, indexed by axis slot: the axis's
+// dense declaration position, numbered from one. An axis is a writer principal,
+// so the slot is the principal slot and nothing here indexes by a foreign
+// factor-lane enum. The cold pass fills it with fragments and the hot pass with
+// bound axes.
+type axisCells []axis.Cell
+
+// newAxisCells opens one pass's payload over an inventory. Slot zero is the
+// absent axis, so the row count is one more than the inventory size.
+func newAxisCells(entries []*axisTemplate) axisCells { return make(axisCells, len(entries)+1) }
+
+// available states the pass's coverage over the inventory it ran on: every
+// bound axis carries its cell. An engine-published axis instantiates no factor
+// binding, so the pass produces no cell for it and its absence is the declared
+// storage rather than an incomplete pass.
+func (cells axisCells) available(entries []*axisTemplate) bool {
+	if len(cells) != len(entries)+1 {
+		return false
+	}
+	for position, entry := range entries {
+		if entry.Storage().Bound() && !cells[position+1].Available() {
 			return false
 		}
 	}
@@ -37,13 +57,25 @@ func (cells axisCells) available() bool {
 
 // axisPayload recovers one axis's cell at its declared type. It is the single
 // typed recovery the composition performs; no pass reads a cell it did not
-// index by the axis's own principal.
-func axisPayload[T any](cells axisCells, principal programartifact.RuleOutputKind) (T, bool) {
+// index by the axis's own slot.
+func axisPayload[T any](cells axisCells, slot int) (T, bool) {
 	var absent T
-	if int(principal) <= 0 || int(principal) >= axisPrincipalLimit {
+	if slot <= 0 || slot >= len(cells) {
 		return absent, false
 	}
-	return axis.Payload[T](cells[principal])
+	return axis.Payload[T](cells[slot])
+}
+
+// axisPayloadForKey recovers one axis's cell by the key its owner declared it
+// under. The composition addresses its own axes by their declared identity, so
+// no lane vocabulary outside this table names them.
+func axisPayloadForKey[T any](cells axisCells, key schema.Key) (T, bool) {
+	slot, ok := axisSlotForKey(key)
+	if !ok {
+		var absent T
+		return absent, false
+	}
+	return axisPayload[T](cells, slot)
 }
 
 // axisTemplates is the authored analyzer axis inventory. Each row instantiates
@@ -76,35 +108,63 @@ func axisTemplates() ([]*axisTemplate, bool) {
 }
 
 // DiagnosticAxis is the closed analyzer-owned classification of one axis. It
-// is the axis's writer principal ordinal. Unknown covers empty, foreign, and
-// generic lifecycle failures without a bound analyzer axis.
+// is the axis's slot: its dense declaration position, numbered from one.
+// Unknown covers empty, foreign, and generic lifecycle failures without a bound
+// analyzer axis.
 type DiagnosticAxis uint8
 
 const DiagnosticAxisUnknown DiagnosticAxis = 0
 
-// DiagnosticAxisForPrincipal projects one artifact factor lane into the closed
-// analyzer axis classification.
-func DiagnosticAxisForPrincipal(principal programartifact.RuleOutputKind) DiagnosticAxis {
-	if _, ok := axisForPrincipal(principal); ok {
-		return DiagnosticAxis(principal)
+// DiagnosticAxisForKey classifies one axis by the key its owner declared it
+// under.
+func DiagnosticAxisForKey(key schema.Key) DiagnosticAxis {
+	slot, ok := axisSlotForKey(key)
+	if !ok {
+		return DiagnosticAxisUnknown
 	}
-	return DiagnosticAxisUnknown
+	return DiagnosticAxis(slot)
 }
 
 func (diagnostic DiagnosticAxis) String() string {
-	if entry, ok := axisForPrincipal(programartifact.RuleOutputKind(diagnostic)); ok {
+	if entry, ok := axisAtSlot(int(diagnostic)); ok {
 		return string(entry.Key())
 	}
 	return "unknown"
 }
 
-func axisForPrincipal(principal programartifact.RuleOutputKind) (*axisTemplate, bool) {
+// axisAtSlot resolves one axis by its slot. The slot is the declaration
+// position numbered from one, so slot zero names no axis.
+func axisAtSlot(slot int) (*axisTemplate, bool) {
 	sealRegistry()
-	if registry.sealed == nil || int(principal) <= 0 || int(principal) >= axisPrincipalLimit {
+	if registry.sealed == nil || slot <= 0 || slot > len(registry.axes) {
 		return nil, false
 	}
-	entry := registry.axisByPrincipal[principal]
+	entry := registry.axes[slot-1]
 	return entry, entry != nil
+}
+
+// axisSlotForKey resolves one axis's slot from its declared key. It is the one
+// place the composition turns an authored axis identity into the dense index
+// every per-axis projection is held at.
+func axisSlotForKey(key schema.Key) (int, bool) {
+	sealRegistry()
+	if registry.sealed == nil {
+		return 0, false
+	}
+	for position, entry := range registry.axes {
+		if entry.Key() == key {
+			return position + 1, true
+		}
+	}
+	return 0, false
+}
+
+func axisForKey(key schema.Key) (*axisTemplate, bool) {
+	slot, ok := axisSlotForKey(key)
+	if !ok {
+		return nil, false
+	}
+	return axisAtSlot(slot)
 }
 
 // AxisCount is the size of the sealed axis inventory.
@@ -113,20 +173,19 @@ func AxisCount() int {
 	return len(registry.axes)
 }
 
-// AxisPrincipalAt returns the writer principal of one axis at its table
-// position. The position is a traversal convenience; the principal is the
-// identity.
-func AxisPrincipalAt(position int) (programartifact.RuleOutputKind, bool) {
+// AxisKeyAt returns the declared key of one axis at its table position. The
+// position is the axis's slot less one; the key is the identity.
+func AxisKeyAt(position int) (schema.Key, bool) {
 	sealRegistry()
 	if position < 0 || position >= len(registry.axes) {
-		return programartifact.RuleOutputInvalid, false
+		return "", false
 	}
-	return registry.axes[position].Principal(), true
+	return registry.axes[position].Key(), true
 }
 
 // AxisEntryID returns one axis's stable table identity.
-func AxisEntryID(principal programartifact.RuleOutputKind) (schema.EntryID, bool) {
-	entry, ok := axisForPrincipal(principal)
+func AxisEntryID(key schema.Key) (schema.EntryID, bool) {
+	entry, ok := axisForKey(key)
 	if !ok {
 		return schema.EntryID{}, false
 	}
@@ -134,20 +193,19 @@ func AxisEntryID(principal programartifact.RuleOutputKind) (schema.EntryID, bool
 }
 
 // AxisSemantic returns one axis's canonical Engine identity.
-func AxisSemantic(principal programartifact.RuleOutputKind) (identity.SemanticKey, bool) {
-	entry, ok := axisForPrincipal(principal)
+func AxisSemantic(key schema.Key) (identity.SemanticKey, bool) {
+	entry, ok := axisForKey(key)
 	if !ok {
 		return identity.SemanticKey{}, false
 	}
-	semantic := entry.Semantic(registry.bundle)
-	return semantic, semantic.Available()
+	return registry.roles.Key(entry.Semantic())
 }
 
 // AxisMountDeclared reports whether one axis seals its own Link authority from
 // the mounted artifacts. A derived inventory reads this to tell an axis whose
 // authority is composed for it from one that composes its own.
-func AxisMountDeclared(principal programartifact.RuleOutputKind) (bool, bool) {
-	entry, ok := axisForPrincipal(principal)
+func AxisMountDeclared(key schema.Key) (bool, bool) {
+	entry, ok := axisForKey(key)
 	if !ok {
 		return false, false
 	}
@@ -155,8 +213,8 @@ func AxisMountDeclared(principal programartifact.RuleOutputKind) (bool, bool) {
 }
 
 // AxisStorage returns where one axis's facts live.
-func AxisStorage(principal programartifact.RuleOutputKind) (axis.Storage, bool) {
-	entry, ok := axisForPrincipal(principal)
+func AxisStorage(key schema.Key) (axis.Storage, bool) {
+	entry, ok := axisForKey(key)
 	if !ok {
 		return axis.StorageInvalid, false
 	}
@@ -166,8 +224,8 @@ func AxisStorage(principal programartifact.RuleOutputKind) (axis.Storage, bool) 
 // AxisCardinality returns the shape of one axis's key space. A later inventory
 // that materializes its own coordinates reads this rather than assuming a
 // dense ordinal range.
-func AxisCardinality(principal programartifact.RuleOutputKind) (axis.Cardinality, bool) {
-	entry, ok := axisForPrincipal(principal)
+func AxisCardinality(key schema.Key) (axis.Cardinality, bool) {
+	entry, ok := axisForKey(key)
 	if !ok {
 		return axis.CardinalityInvalid, false
 	}
@@ -175,8 +233,8 @@ func AxisCardinality(principal programartifact.RuleOutputKind) (axis.Cardinality
 }
 
 // AxisLifetime returns the scope one axis's facts are valid for.
-func AxisLifetime(principal programartifact.RuleOutputKind) (axis.Lifetime, bool) {
-	entry, ok := axisForPrincipal(principal)
+func AxisLifetime(key schema.Key) (axis.Lifetime, bool) {
+	entry, ok := axisForKey(key)
 	if !ok {
 		return axis.LifetimeInvalid, false
 	}
@@ -187,21 +245,35 @@ func AxisLifetime(principal programartifact.RuleOutputKind) (axis.Lifetime, bool
 // cell at its principal. It is the only place a factor's Schema shape is
 // recorded, and it runs before the rule pass because a rule declares against
 // the principals produced here.
-func declareAxes(builder *engine.SchemaBuilder, bundle vocabulary.Bundle) (axisCells, DiagnosticAxis, bool) {
-	var fragments axisCells
+func declareAxes(builder *engine.SchemaBuilder, roles vocabulary.Roles) (axisCells, DiagnosticAxis, bool) {
 	sealRegistry()
-	if registry.sealed == nil || builder == nil {
+	if registry.sealed == nil {
+		return nil, DiagnosticAxisUnknown, false
+	}
+	return declareAxisInventory(registry.axes, builder, roles)
+}
+
+// declareAxisInventory is the cold pass over one axis inventory. A bound axis
+// records its Schema shape and returns its fragment; an engine-published axis
+// instantiates no factor binding, so the pass passes over it and the column its
+// own publisher fills reaches the record without a cold half here.
+func declareAxisInventory(entries []*axisTemplate, builder *engine.SchemaBuilder, roles vocabulary.Roles) (axisCells, DiagnosticAxis, bool) {
+	fragments := newAxisCells(entries)
+	if builder == nil {
 		return fragments, DiagnosticAxisUnknown, false
 	}
-	context := axis.Declaration{Builder: builder, Bundle: bundle}
-	for _, entry := range registry.axes {
+	context := axis.Declaration{Builder: builder, Roles: roles}
+	for position, entry := range entries {
+		if !entry.Storage().Bound() {
+			continue
+		}
 		fragment, ok := entry.Declare(context)
 		if !ok {
-			return fragments, DiagnosticAxis(entry.Principal()), false
+			return fragments, DiagnosticAxis(position + 1), false
 		}
-		fragments[entry.Principal()] = fragment
+		fragments[position+1] = fragment
 	}
-	if !fragments.available() {
+	if !fragments.available(entries) {
 		return fragments, DiagnosticAxisUnknown, false
 	}
 	return fragments, DiagnosticAxisUnknown, true
@@ -212,20 +284,34 @@ func declareAxes(builder *engine.SchemaBuilder, bundle vocabulary.Bundle) (axisC
 // first pass of the binding transaction, so every later pass binds against a
 // declared axis rather than a hand-ordered owner sequence.
 func bindAxes(binding *engine.SchemaBinding, fragments axisCells, inputs LinkInputs) (axisCells, DiagnosticAxis, bool) {
-	var bound axisCells
 	sealRegistry()
-	if registry.sealed == nil || binding == nil || !fragments.available() {
+	if registry.sealed == nil {
+		return nil, DiagnosticAxisUnknown, false
+	}
+	return bindAxisInventory(registry.axes, binding, fragments, inputs)
+}
+
+// bindAxisInventory is the hot pass over one axis inventory. It binds exactly
+// the axes the cold pass declared a fragment for: an engine-published axis has
+// no factor binding to instantiate and no algebra to publish, so the pass
+// passes over it here as well.
+func bindAxisInventory(entries []*axisTemplate, binding *engine.SchemaBinding, fragments axisCells, inputs LinkInputs) (axisCells, DiagnosticAxis, bool) {
+	bound := newAxisCells(entries)
+	if binding == nil || !fragments.available(entries) {
 		return bound, DiagnosticAxisUnknown, false
 	}
-	for _, entry := range registry.axes {
-		principal := entry.Principal()
-		hot, ok := entry.Bind(binding, inputs, fragments[principal])
-		if !ok {
-			return bound, DiagnosticAxis(principal), false
+	for position, entry := range entries {
+		if !entry.Storage().Bound() {
+			continue
 		}
-		bound[principal] = hot
+		slot := position + 1
+		hot, ok := entry.Bind(binding, inputs, fragments[slot])
+		if !ok {
+			return bound, DiagnosticAxis(slot), false
+		}
+		bound[slot] = hot
 	}
-	if !bound.available() {
+	if !bound.available(entries) {
 		return bound, DiagnosticAxisUnknown, false
 	}
 	return bound, DiagnosticAxisUnknown, true
@@ -234,11 +320,11 @@ func bindAxes(binding *engine.SchemaBinding, fragments axisCells, inputs LinkInp
 // coldPrincipals projects the declared axis fragments into the rule surface's
 // principal record.
 func (cells axisCells) coldPrincipals() (principals, bool) {
-	value, valueOK := axisPayload[*valueowner.SchemaFragment](cells, programartifact.RuleOutputValue)
-	call, callOK := axisPayload[*callowner.SchemaFragment](cells, programartifact.RuleOutputCall)
-	heap, heapOK := axisPayload[*heapowner.SchemaFragment](cells, programartifact.RuleOutputHeap)
-	pack, packOK := axisPayload[*packowner.SchemaFragment](cells, programartifact.RuleOutputPack)
-	effect, effectOK := axisPayload[*effectowner.SchemaFragment](cells, programartifact.RuleOutputEffect)
+	value, valueOK := axisPayloadForKey[*valueowner.SchemaFragment](cells, axisKeyValue)
+	call, callOK := axisPayloadForKey[*callowner.SchemaFragment](cells, axisKeyCall)
+	heap, heapOK := axisPayloadForKey[*heapowner.SchemaFragment](cells, axisKeyHeap)
+	pack, packOK := axisPayloadForKey[*packowner.SchemaFragment](cells, axisKeyPack)
+	effect, effectOK := axisPayloadForKey[*effectowner.SchemaFragment](cells, axisKeyEffect)
 	if !valueOK || !callOK || !heapOK || !packOK || !effectOK {
 		return principals{}, false
 	}
@@ -250,11 +336,11 @@ func (cells axisCells) coldPrincipals() (principals, bool) {
 // record. The Link inputs and the allocation catalog are the caller's; the
 // factor authorities are the table's.
 func (cells axisCells) hotPrincipals(inputs LinkInputs, allocations *allocationcatalog.Catalog) (authorities, bool) {
-	value, valueOK := axisPayload[*valueowner.HotOwner](cells, programartifact.RuleOutputValue)
-	call, callOK := axisPayload[*callowner.HotOwner](cells, programartifact.RuleOutputCall)
-	heap, heapOK := axisPayload[*heapowner.HotOwner](cells, programartifact.RuleOutputHeap)
-	pack, packOK := axisPayload[*packowner.HotOwner](cells, programartifact.RuleOutputPack)
-	effect, effectOK := axisPayload[*effectowner.HotOwner](cells, programartifact.RuleOutputEffect)
+	value, valueOK := axisPayloadForKey[*valueowner.HotOwner](cells, axisKeyValue)
+	call, callOK := axisPayloadForKey[*callowner.HotOwner](cells, axisKeyCall)
+	heap, heapOK := axisPayloadForKey[*heapowner.HotOwner](cells, axisKeyHeap)
+	pack, packOK := axisPayloadForKey[*packowner.HotOwner](cells, axisKeyPack)
+	effect, effectOK := axisPayloadForKey[*effectowner.HotOwner](cells, axisKeyEffect)
 	if !valueOK || !callOK || !heapOK || !packOK || !effectOK {
 		return authorities{}, false
 	}

@@ -222,19 +222,19 @@ func (compiled *compiledActivationRule) dynamicReads() []demand.DynamicRead {
 	return result
 }
 
-func (compiled *compiledActivationRule) execute(work *carrier.Work, base carrier.RuleContributionBase, inputs []carrier.State, within support.Mask) (selected []equation.AcceptedMember, reads []demand.Observation, accepted bool, phase SolveFailurePhase) {
+func (compiled *compiledActivationRule) execute(work *carrier.Work, base carrier.RuleContributionBase, inputs []carrier.State, within support.Mask) (selected []equation.AcceptedMember, reads []demand.Observation, accepted bool, boundary solveBoundary) {
 	if !compiled.executableInstance() {
-		return nil, nil, false, SolveFailurePhaseActivationInstance
+		return nil, nil, false, refused(SolveFailureFamilyExecution, "activation-instance")
 	}
 	if work == nil || !work.OwnsRuleContributionStates(base, inputs) {
-		return nil, nil, false, SolveFailurePhaseActivationContribution
+		return nil, nil, false, refused(SolveFailureFamilyExecution, "activation-contribution")
 	}
 	if uint64(len(compiled.reads)) != compiled.declaredReadCount() {
-		return nil, nil, false, SolveFailurePhaseActivationReads
+		return nil, nil, false, refused(SolveFailureFamilyExecution, "activation-reads")
 	}
 	epoch, issued := compiled.nextEpoch.issue()
 	if !issued {
-		return nil, nil, false, SolveFailurePhaseActivationEpoch
+		return nil, nil, false, refused(SolveFailureFamilyExecution, "activation-epoch")
 	}
 	frame := &ruleExecution{owner: compiled, work: work, base: base, inputs: append([]carrier.State(nil), inputs...), epoch: epoch}
 	frame.active.open(epoch)
@@ -247,12 +247,12 @@ func (compiled *compiledActivationRule) execute(work *carrier.Work, base carrier
 		frame.active.revoke(epoch)
 		execution.active.revoke(epoch)
 		if recover() != nil {
-			selected, reads, accepted, phase = nil, nil, false, SolveFailurePhasePreflight
+			selected, reads, accepted, boundary = nil, nil, false, refused(SolveFailureFamilyExecution, "preflight")
 		}
 	}()
 	product, okay := newProductSession(frame, compiled.reads, work, inputs, within)
 	if !okay || product == nil || !product.started.CompareAndSwap(false, true) {
-		return nil, nil, false, SolveFailurePhaseActivationProduct
+		return nil, nil, false, refused(SolveFailureFamilyExecution, "activation-product")
 	}
 	frame.product = product
 	var dispositions []RuleDisposition[ActivationResult]
@@ -262,17 +262,17 @@ func (compiled *compiledActivationRule) execute(work *carrier.Work, base carrier
 	selections := make([]activationSelection, 0)
 	for index := 0; index < product.rows.Count(); index++ {
 		if !product.requireCheckpoint() {
-			return nil, nil, false, SolveFailurePhaseCheckpoint
+			return nil, nil, false, stalled(SolveFailureFamilyExecution, "checkpoint")
 		}
 		region, rowOK := product.rows.At(index)
 		if !rowOK {
-			return nil, nil, false, SolveFailurePhasePreflight
+			return nil, nil, false, refused(SolveFailureFamilyExecution, "preflight")
 		}
 		execution.row, execution.region = index, region
 		execution.selected = execution.selected[:0]
 		execution.locators = execution.locators[:0]
 		if !compiled.run(execution) || !product.requireCheckpoint() || frame.failed.Load() {
-			return nil, nil, false, SolveFailurePhaseTransfer
+			return nil, nil, false, refused(SolveFailureFamilyExecution, "transfer")
 		}
 		// Keep every row selection until the complete Product is known. A
 		// Member selected on P and Q must be unioned as one support premise
@@ -281,40 +281,40 @@ func (compiled *compiledActivationRule) execute(work *carrier.Work, base carrier
 		if compiled.requiresDerivation() {
 			locators, canonicalLocators := canonicalActivationLocators(execution.locators)
 			if !canonicalLocators {
-				return nil, nil, false, SolveFailurePhaseDerivation
+				return nil, nil, false, refused(SolveFailureFamilyExecution, "derivation")
 			}
 			dispositions = append(dispositions, RuleDisposition[ActivationResult]{kind: RuleDispositionStaged, value: ActivationResult{selections: locators}, guard: RuleGuard{mask: region}, row: ruleResultRow{index: index}, ordinal: index})
 		}
 	}
 	reads = product.observations()
 	if !product.requireCheckpoint() {
-		return nil, nil, false, SolveFailurePhaseCheckpoint
+		return nil, nil, false, stalled(SolveFailureFamilyExecution, "checkpoint")
 	}
 	var canonical bool
 	selections, canonical = canonicalActivationSelections(selections, product.requireCheckpoint)
 	if !canonical {
-		return nil, nil, false, SolveFailurePhaseDerivation
+		return nil, nil, false, refused(SolveFailureFamilyExecution, "derivation")
 	}
 	derivation, ticket, valid := compiled.derivation(frame, reads, dispositions)
 	if !valid {
-		return nil, nil, false, SolveFailurePhaseDerivation
+		return nil, nil, false, refused(SolveFailureFamilyExecution, "derivation")
 	}
 	defer ticket.invalidate()
 	evidence, admitted := compiled.admission.admit(derivation, ticket.proof)
 	if !product.requireCheckpoint() {
-		return nil, nil, false, SolveFailurePhaseCheckpoint
+		return nil, nil, false, stalled(SolveFailureFamilyExecution, "checkpoint")
 	}
 	if !admitted {
-		return nil, nil, false, SolveFailurePhaseAdmission
+		return nil, nil, false, refused(SolveFailureFamilyExecution, "admission")
 	}
 	selected, valid = compiled.admitSelections(selections, product)
 	if !valid {
-		return nil, nil, false, SolveFailurePhaseAdmission
+		return nil, nil, false, refused(SolveFailureFamilyExecution, "admission")
 	}
 	if !evidence.consume() {
-		return nil, nil, false, SolveFailurePhasePublication
+		return nil, nil, false, refused(SolveFailureFamilyExecution, "publication")
 	}
-	return selected, reads, true, SolveFailurePhaseNone
+	return selected, reads, true, boundaryNone
 }
 
 func canonicalActivationSelections(values []activationSelection, checkpoint func() bool) ([]activationSelection, bool) {
@@ -421,7 +421,8 @@ func (compiled *compiledActivationRule) admitSelections(values []activationSelec
 
 // activationPremise transposes one exact support BDD into the equation's
 // canonical decision DAG. The walk is iterative and linear in the reachable
-// BDD: graph DecisionAt fixes the only atom-to-decision interpretation, and
+// BDD: the guard Manager's Rank is the only decision-order authority, graph
+// DecisionAt fixes the only atom-to-decision interpretation, and
 // NewExprDAG seals the already postordered reduced DAG without quadratic
 // repeated Expr imports.
 func activationPremise(graph *equation.Graph, region support.Mask, checkpoint func() bool) (equation.Expr, bool) {
@@ -468,12 +469,12 @@ func activationPremise(graph *equation.Graph, region support.Mask, checkpoint fu
 		}
 		low, lowOK := values[view.Low]
 		high, highOK := values[view.High]
-		if view.Atom == 0 {
+		rank, rankOK := manager.Rank(view.Atom)
+		if !rankOK {
 			return equation.Expr{}, false
 		}
-		atom, atomOK := manager.AtomAt(uint64(view.Atom - 1))
-		decision, decisionOK := graph.DecisionAt(int(view.Atom - 1))
-		if !lowOK || !highOK || !atomOK || atom != view.Atom || !decisionOK || !decision.Available() {
+		decision, decisionOK := graph.DecisionAt(int(rank))
+		if !lowOK || !highOK || !decisionOK || !decision.Available() {
 			return equation.Expr{}, false
 		}
 		rows = append(rows, equation.ExprNode{Decision: decision, Low: low, High: high})
@@ -561,7 +562,11 @@ func compileActivationRuleReceipt(implementation *ActivationRuleImplementation, 
 	if !projected {
 		return nil, false
 	}
-	compiled := &compiledActivationRule{proof: proof, schema: proof.schema, receipt: implementation, admission: implementation.receipt.cell.impl.admission, topology: topology, trigger: trigger, application: semanticKeyFromComposition(application), graph: graph}
+	applicationSemantic, applicationSemanticOK := semanticKeyFromComposition(application)
+	if !applicationSemanticOK {
+		return nil, false
+	}
+	compiled := &compiledActivationRule{proof: proof, schema: proof.schema, receipt: implementation, admission: implementation.receipt.cell.impl.admission, topology: topology, trigger: trigger, application: applicationSemantic, graph: graph}
 	compiled.run = retainActivationRunReceipt(compiled, implementation.receipt.cell.impl.run)
 	return compiled, true
 }

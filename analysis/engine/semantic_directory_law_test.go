@@ -187,6 +187,20 @@ func TestSemanticDirectoryResolvesAtMostOneLocatorPerContentID(t *testing.T) {
 	}
 }
 
+// semanticDirectoryCost reads the I3 construction cost directly off the sealed
+// directory. Construction claims one entry per installed row and validates one
+// query-order slot per query, so the installed row planes are the construction
+// operation count; the reserved slots are the row planes themselves.
+func semanticDirectoryCost(directory *semanticDirectory) (operations, capacity int) {
+	if directory == nil {
+		return 0, 0
+	}
+	operations = len(directory.entries) + len(directory.queryOrder)
+	capacity = len(directory.entries) + len(directory.points) + len(directory.members) +
+		len(directory.activations) + len(directory.queries) + len(directory.queryOrder)
+	return operations, capacity
+}
+
 // TestSemanticDirectoryEntriesAreBoundedByAdmittedRootBindings is I3 law (a):
 // entries never exceed R, the root bindings the sealed topology admits.
 func TestSemanticDirectoryEntriesAreBoundedByAdmittedRootBindings(t *testing.T) {
@@ -197,8 +211,8 @@ func TestSemanticDirectoryEntriesAreBoundedByAdmittedRootBindings(t *testing.T) 
 		if roots != 3*count {
 			t.Fatalf("%d admitted root bindings for %d declared rows, want %d", roots, count, 3*count)
 		}
-		if len(directory.entries) != directory.metrics.entries || len(directory.entries) > roots {
-			t.Fatalf("directory holds %d entries (counter %d) for %d root bindings", len(directory.entries), directory.metrics.entries, roots)
+		if len(directory.entries) > roots {
+			t.Fatalf("directory holds %d entries for %d root bindings", len(directory.entries), roots)
 		}
 		for index := 0; index < count; index++ {
 			_, pointOK := directory.point(semanticDirectoryScaleID(semanticDirectoryPointRole, index))
@@ -218,18 +232,19 @@ func TestSemanticDirectoryConstructionIsLinearInAdmittedRootBindings(t *testing.
 	small := newSemanticDirectoryScaleFixture(t, 16)
 	large := newSemanticDirectoryScaleFixture(t, 64)
 	for _, fixture := range []semanticDirectoryScaleFixture{small, large} {
-		metrics := fixture.topology.directory.metrics
-		if ceiling := semanticDirectoryConstructionBase + semanticDirectoryOperationsPerRoot*fixture.roots; metrics.operations > ceiling {
-			t.Fatalf("construction ran %d operations for %d root bindings, want at most %d", metrics.operations, fixture.roots, ceiling)
+		operations, capacity := semanticDirectoryCost(fixture.topology.directory)
+		if ceiling := semanticDirectoryConstructionBase + semanticDirectoryOperationsPerRoot*fixture.roots; operations > ceiling {
+			t.Fatalf("construction ran %d operations for %d root bindings, want at most %d", operations, fixture.roots, ceiling)
 		}
-		if ceiling := semanticDirectoryConstructionBase + semanticDirectoryCapacityPerRoot*fixture.roots; metrics.capacity > ceiling {
-			t.Fatalf("construction reserved %d slots for %d root bindings, want at most %d", metrics.capacity, fixture.roots, ceiling)
+		if ceiling := semanticDirectoryConstructionBase + semanticDirectoryCapacityPerRoot*fixture.roots; capacity > ceiling {
+			t.Fatalf("construction reserved %d slots for %d root bindings, want at most %d", capacity, fixture.roots, ceiling)
 		}
 	}
 	growth := large.roots / small.roots
-	smallMetrics, largeMetrics := small.topology.directory.metrics, large.topology.directory.metrics
-	if largeMetrics.operations > growth*smallMetrics.operations || largeMetrics.capacity > growth*smallMetrics.capacity {
-		t.Fatalf("%dx root bindings cost %dx operations and %dx capacity", growth, largeMetrics.operations/smallMetrics.operations, largeMetrics.capacity/smallMetrics.capacity)
+	smallOperations, smallCapacity := semanticDirectoryCost(small.topology.directory)
+	largeOperations, largeCapacity := semanticDirectoryCost(large.topology.directory)
+	if largeOperations > growth*smallOperations || largeCapacity > growth*smallCapacity {
+		t.Fatalf("%dx root bindings cost %dx operations and %dx capacity", growth, largeOperations/smallOperations, largeCapacity/smallCapacity)
 	}
 }
 
@@ -240,7 +255,7 @@ func TestSemanticDirectoryGenerationUpdateReplacesRootBindings(t *testing.T) {
 	const generations = 32
 	fixture := newSemanticDirectoryScaleFixture(t, 16)
 	directory := fixture.topology.directory
-	before := directory.metrics
+	beforeOperations, beforeCapacity := semanticDirectoryCost(directory)
 	entries := len(directory.entries)
 	relation, relationOK := fixture.topology.topology.InitialRelation()
 	if !relationOK {
@@ -263,7 +278,8 @@ func TestSemanticDirectoryGenerationUpdateReplacesRootBindings(t *testing.T) {
 		retained = append(retained, graph)
 		relation = next
 	}
-	if fixture.topology.directory != directory || len(directory.entries) != entries || directory.metrics != before {
+	operations, capacity := semanticDirectoryCost(directory)
+	if fixture.topology.directory != directory || len(directory.entries) != entries || operations != beforeOperations || capacity != beforeCapacity {
 		t.Fatalf("%d retained generations grew the directory from %d to %d entries", len(retained), entries, len(directory.entries))
 	}
 }

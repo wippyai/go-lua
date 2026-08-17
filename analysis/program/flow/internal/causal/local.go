@@ -25,6 +25,9 @@ func (s *evalState) addSequence(from, to, owner keyspace.Term) error {
 		// evaluation routes into a Call are still local Edges.
 		return nil
 	}
+	if fromEndpoint == toEndpoint {
+		return nil
+	}
 	return s.appendEdge(fromEndpoint, toEndpoint, owner, 0, false, -1)
 }
 
@@ -97,6 +100,9 @@ func (s *evalState) addTableRoute(from, field, owner keyspace.Term, entry bool) 
 	if keyspace.TermFamily(fromEndpoint) == keyspace.FamilyCall {
 		return nil
 	}
+	if fromEndpoint == toEndpoint {
+		return nil
+	}
 	return s.appendEdge(fromEndpoint, toEndpoint, owner, 0, false, -1)
 }
 
@@ -117,6 +123,9 @@ func (s *evalState) addFinish(from, to, owner keyspace.Term) error {
 	if keyspace.TermFamily(fromEndpoint) == keyspace.FamilyCall {
 		return nil
 	}
+	if fromEndpoint == toEndpoint {
+		return nil
+	}
 	return s.appendEdge(fromEndpoint, toEndpoint, owner, 0, false, -1)
 }
 
@@ -132,6 +141,9 @@ func (s *evalState) addGuard(from, to, owner, decision keyspace.Term, truth bool
 	if keyspace.TermFamily(fromEndpoint) == keyspace.FamilyCall {
 		return nil
 	}
+	if fromEndpoint == toEndpoint {
+		return nil
+	}
 	return s.appendEdge(fromEndpoint, toEndpoint, owner, decision, truth, arcIndex)
 }
 
@@ -145,6 +157,9 @@ func (s *evalState) addGuardFinish(from, to, owner, decision keyspace.Term, trut
 		return nil
 	}
 	if keyspace.TermFamily(fromEndpoint) == keyspace.FamilyCall {
+		return nil
+	}
+	if fromEndpoint == toEndpoint {
 		return nil
 	}
 	return s.appendEdge(fromEndpoint, toEndpoint, owner, decision, truth, arcIndex)

@@ -12,12 +12,11 @@ import (
 )
 
 type schemaRuleMemberGeometryFixture struct {
-	rule, family                    composition.Key
-	reads, writes                   int
-	dynamic                         bool
-	surface                         equation.Surface
-	route                           uint64
-	candidates, dependencies, links int
+	rule, family  composition.Key
+	reads, writes int
+	dynamic       bool
+	surface       equation.Surface
+	route         uint64
 }
 
 func (row schemaRuleMemberGeometryFixture) Rule() composition.Key          { return row.rule }
@@ -32,15 +31,6 @@ func (row schemaRuleMemberGeometryFixture) WriteAt(index int) (equation.Surface,
 }
 func (row schemaRuleMemberGeometryFixture) WriteRouteRead(index int) (uint64, bool) {
 	return row.route, index == 0
-}
-func (row schemaRuleMemberGeometryFixture) WriteCandidateCount(index int) (int, bool) {
-	return row.candidates, index == 0
-}
-func (row schemaRuleMemberGeometryFixture) WriteDependencyCount(index int) (int, bool) {
-	return row.dependencies, index == 0
-}
-func (row schemaRuleMemberGeometryFixture) WriteRelationCount(index int) (int, bool) {
-	return row.links, index == 0
 }
 
 func zeroWriteRuleSchema(t testing.TB, inputs uint64) (*Schema, *FactorSlot[uint64], *RuleSlot[uint64, struct{}], SchemaWriteSlot[uint64]) {
@@ -288,9 +278,6 @@ func TestSchemaRuleReceiptMemberGeometryIsExactAndStatic(t *testing.T) {
 		{"foreign-family", func(row *schemaRuleMemberGeometryFixture) { row.family = compositionKeyOf(coldKey(947_099)) }},
 		{"dynamic", func(row *schemaRuleMemberGeometryFixture) { row.dynamic = true }},
 		{"hidden-route", func(row *schemaRuleMemberGeometryFixture) { row.route = 1 }},
-		{"selector-candidate", func(row *schemaRuleMemberGeometryFixture) { row.candidates = 1 }},
-		{"dependency", func(row *schemaRuleMemberGeometryFixture) { row.dependencies = 1 }},
-		{"relation", func(row *schemaRuleMemberGeometryFixture) { row.links = 1 }},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -402,7 +389,7 @@ func TestReceiptCompilerExecutesRuleThroughOneProofAndRejectsForeignBinding(t *t
 	}
 	result := row.execute(work, base, nil, whole)
 	contribution, finished := work.FinishRuleContribution(base, []carrier.Patch{result.patch})
-	if !slotOK || !planOK || !workOK || !wholeOK || !baseOK || !result.valid || !result.wrote || result.phase != SolveFailurePhaseNone || !finished || !contribution.Valid() || transfers != 1 {
+	if !slotOK || !planOK || !workOK || !wholeOK || !baseOK || !result.valid || !result.wrote || result.boundary != boundaryNone || !finished || !contribution.Valid() || transfers != 1 {
 		t.Fatal("receipt Rule transfer/evidence/publication")
 	}
 
@@ -574,7 +561,7 @@ func TestReceiptCompilerThreadsExactReadAndCarryThroughProductEvidenceAndPatch(t
 	readerResult := readerRow.execute(work, readerBase, []carrier.State{sourcePoint.State()}, whole)
 	readerContribution, readerFinished := work.FinishRuleContribution(readerBase, []carrier.Patch{readerResult.patch})
 	if !workOK || !wholeOK || !sourceSlotOK || !sourcePlanOK || !sourceBaseOK || !sourceResult.valid || !sourceResult.wrote || !sourceFinished || !sourceContribution.Valid() || !sourcePointOK || !sourcePoint.Valid() || !readerSlotOK || !readerPlanOK || !readerBaseOK || !readerResult.valid || !readerResult.wrote || !readerFinished || !readerContribution.Valid() || readerImplementation.receipt.proof.carries != 1 || transfers != 1 || checks != 1 {
-		t.Fatalf("exact-read/carry Product/evidence/patch work=%t whole=%t source-slot=%t source-plan=%t source-base=%t source-valid=%t source-wrote=%t source-finished=%t source-contribution=%t source-point=%t/%t reader-slot=%t reader-plan=%t reader-base=%t reader-valid=%t reader-wrote=%t reader-finished=%t reader-contribution=%t carries=%d transfers=%d checks=%d phase=%v", workOK, wholeOK, sourceSlotOK, sourcePlanOK, sourceBaseOK, sourceResult.valid, sourceResult.wrote, sourceFinished, sourceContribution.Valid(), sourcePointOK, sourcePoint.Valid(), readerSlotOK, readerPlanOK, readerBaseOK, readerResult.valid, readerResult.wrote, readerFinished, readerContribution.Valid(), readerImplementation.receipt.proof.carries, transfers, checks, readerResult.phase)
+		t.Fatalf("exact-read/carry Product/evidence/patch work=%t whole=%t source-slot=%t source-plan=%t source-base=%t source-valid=%t source-wrote=%t source-finished=%t source-contribution=%t source-point=%t/%t reader-slot=%t reader-plan=%t reader-base=%t reader-valid=%t reader-wrote=%t reader-finished=%t reader-contribution=%t carries=%d transfers=%d checks=%d boundary=%v", workOK, wholeOK, sourceSlotOK, sourcePlanOK, sourceBaseOK, sourceResult.valid, sourceResult.wrote, sourceFinished, sourceContribution.Valid(), sourcePointOK, sourcePoint.Valid(), readerSlotOK, readerPlanOK, readerBaseOK, readerResult.valid, readerResult.wrote, readerFinished, readerContribution.Valid(), readerImplementation.receipt.proof.carries, transfers, checks, readerResult.boundary)
 	}
 	if _, duplicate := bindReceiptRuleMember(compilation, readerImplementation, readerMember, readerOperand); duplicate {
 		t.Fatal("receipt compiler admitted a duplicate exact-read/carry member")
@@ -756,12 +743,11 @@ func runSummaryReadThroughProductAndEvidence(t testing.TB, summaryWidth int) {
 			}
 		}
 	}
-	probeCompileReceiptFactors(t, binding, graph)
 	compilation, compiled := compileReceiptFactors(binding, graph)
 	sourceRow, sourceRowOK := bindReceiptRuleMember(compilation, sourceImplementation, sourceMember, sourceOperand)
 	readerRow, readerRowOK := bindReceiptRuleMember(compilation, readerImplementation, readerMember, readerOperand)
 	if !compiled || !sourceRowOK || !readerRowOK {
-		t.Fatalf("summary receipt Rule members: compiled=%v source=%v reader=%v sourceMember=%v readerMember=%v", compiled, sourceRowOK, readerRowOK, sourceMember.Key().Available(), readerMember.Key().Available())
+		t.Fatal("summary receipt Rule members")
 	}
 	sourceSlot, sourceSlotOK := sourceRow.outputSlot()
 	readerSlot, readerSlotOK := readerRow.outputSlot()

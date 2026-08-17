@@ -221,8 +221,7 @@ func validArtifactScalarSpec(spec *ArtifactScalarSpec) bool {
 
 	bodies := make(map[identity.ContentID]struct{}, len(state.Bodies))
 	for _, body := range state.Bodies {
-		if !body.ID.Available() || !body.Context.Available() || !body.SemanticEntry.Available() || len(body.Entry) == 0 || len(body.Exits) == 0 ||
-			body.Callable != body.Function.Available() || body.Callable != body.CallFormal.Available() {
+		if !body.ID.Available() || len(body.Entry) == 0 || len(body.Exits) == 0 {
 			return false
 		}
 		if _, duplicate := bodies[body.ID]; duplicate {
@@ -249,82 +248,6 @@ func validArtifactScalarSpec(spec *ArtifactScalarSpec) bool {
 			}
 			seenExit[point] = struct{}{}
 		}
-	}
-	seenFunctions := make(map[identity.ContentID]struct{}, len(state.Functions))
-	seenFunctionBodies := make(map[identity.ContentID]struct{}, len(state.Functions))
-	for _, function := range state.Functions {
-		if !function.ID.Available() || !function.Body.Available() || !function.BodyContext.Available() || !function.Entry.Available() || !function.CallFormal.Available() ||
-			function.HasVararg != function.Vararg.ID.Available() || function.HasVararg != function.Vararg.Cell.Available() || len(function.Outcomes) == 0 {
-			return false
-		}
-		bodyFound := false
-		for _, body := range state.Bodies {
-			if body.ID == function.Body {
-				bodyFound = body.Callable && body.Context == function.BodyContext && body.SemanticEntry == function.Entry && body.Function == function.ID && body.CallFormal == function.CallFormal
-				break
-			}
-		}
-		if !bodyFound {
-			return false
-		}
-		if _, duplicate := seenFunctions[function.ID]; duplicate {
-			return false
-		}
-		if _, duplicate := seenFunctionBodies[function.Body]; duplicate {
-			return false
-		}
-		seenFunctions[function.ID], seenFunctionBodies[function.Body] = struct{}{}, struct{}{}
-		seenFormals := make(map[identity.ContentID]struct{}, len(function.Formals))
-		seenCells := make(map[identity.ContentID]struct{}, len(function.Formals))
-		seenStorage := make(map[identity.ContentID]struct{}, len(function.Formals))
-		for index, port := range function.Formals {
-			if !port.ID.Available() || !port.Cell.Available() || !port.Storage.Available() || uint64(port.Position) != uint64(index) {
-				return false
-			}
-			if _, duplicate := seenFormals[port.ID]; duplicate {
-				return false
-			}
-			if _, duplicate := seenCells[port.Cell]; duplicate {
-				return false
-			}
-			if _, duplicate := seenStorage[port.Storage]; duplicate {
-				return false
-			}
-			seenFormals[port.ID], seenCells[port.Cell], seenStorage[port.Storage] = struct{}{}, struct{}{}, struct{}{}
-		}
-		seenCaptures := make(map[identity.ContentID]struct{}, len(function.Captures))
-		for index, capture := range function.Captures {
-			if !capture.ID.Available() || !capture.Inner.Available() || !capture.Outer.Available() || capture.Inner == capture.Outer ||
-				capture.InnerBody != function.Body || capture.InnerBody == capture.OuterBody || uint64(capture.Position) != uint64(index) {
-				return false
-			}
-			if _, outerOK := bodies[capture.OuterBody]; !outerOK {
-				return false
-			}
-			if _, duplicate := seenCaptures[capture.ID]; duplicate {
-				return false
-			}
-			seenCaptures[capture.ID] = struct{}{}
-		}
-		seenOutcomes := make(map[identity.ContentID]struct{}, len(function.Outcomes))
-		for _, outcome := range function.Outcomes {
-			if !outcome.Available() {
-				return false
-			}
-			if _, duplicate := seenOutcomes[outcome]; duplicate {
-				return false
-			}
-			seenOutcomes[outcome] = struct{}{}
-		}
-	}
-	callableCount := 0
-	for _, body := range state.Bodies {
-		if body.Callable {
-			callableCount++
-		}
-	}
-	if callableCount != len(state.Functions) {
-		return false
 	}
 	return true
 }

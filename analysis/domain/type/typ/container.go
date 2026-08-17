@@ -1,8 +1,8 @@
 package typ
 
 import (
-	"github.com/wippyai/go-lua/analysis/internal/hash"
 	"github.com/wippyai/go-lua/analysis/domain/type/kind"
+	"github.com/wippyai/go-lua/analysis/internal/hash"
 )
 
 // Array represents a homogeneous sequence type: T[].

@@ -12,26 +12,39 @@
 // # Declaration-table registration
 //
 // This domain declares no row on any surface of the analyzer declaration
-// table. The statement is per surface, because a surface with nothing to
-// declare is a surface this domain says nothing about rather than one it has
-// not reached yet:
+// table, and the reason is uniform: it owns nothing any of them declares. Every
+// surface can spell whatever a domain owns - a coordinate space, a rule, a
+// semantic role, a publication family, a published code - so a "none" below is
+// always an absence of subject matter and never a surface that has no room for
+// it. The statement is per surface, because a surface with nothing to declare is
+// a surface this domain says nothing about rather than one it has not reached
+// yet:
 //
 //   - Axis: none. An axis is a coordinate space the solver writes during a
 //     fixpoint and a Link instantiates a carrier for. The retained vocabulary
 //     is module-boundary data with no coordinate and no carrier.
 //   - Rule: none. A rule writes an axis; this domain owns none to write.
 //   - Diagnostic: none. The typestate codes the fixture corpus expects have no
-//     producer in this tree, and the surface cannot spell them: a row's family
-//     must equal the first segment of its code, and the family catalog has no
-//     typestate member.
+//     producer in this tree. The surface can spell them: a publication family is
+//     a declared row of the structural vocabulary, so a code published under a
+//     family the analyzer has never published before is one more row a domain
+//     declares rather than a member of a catalog it would have to widen. What is
+//     missing is the finding, not the spelling, and a row with no producer
+//     publishes nothing.
 //   - Composite: none. A composite relates declared axes.
 //   - Denominator: none. A denominator names the surface entry whose universe
 //     it quantifies over, and this domain owns no entry to be named.
 //   - Query: none. A query family reads declared axes and publishes a result
 //     codec; this domain publishes no solver-visible result.
-//   - Structure: none. The structural vocabulary declares the analyzer's own
-//     closed arm, event, and outcome catalogs. A protocol's states are authored
-//     per module, so they are not a process-global catalog with dense ordinals.
+//   - Structure: none. The structural vocabulary hosts every closed
+//     process-global catalog of the analyzer: the arms, events, and outcomes,
+//     the compiled occurrence families and the issuance forms that subscribe to
+//     them, the publication families and observation populations, and the
+//     semantic roles every other surface binds under. A domain contributes a row
+//     here by owning something one of those categories names, and this domain
+//     owns no coordinate space, no rule, and no published finding, so it names no
+//     role and declares no member. A protocol's states are authored per module,
+//     so they are not a process-global catalog with dense ordinals either.
 //   - Library: none. A library contract kind addresses exported values. An FSM
 //     definition attaches to no exported value, and contract instances are not
 //     this surface's to hold in any case.

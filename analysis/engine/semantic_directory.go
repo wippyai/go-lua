@@ -14,16 +14,6 @@ type semanticDirectoryEntry struct {
 	slot uint32
 }
 
-// semanticDirectoryMetrics are the construction counters the I3 cost laws are
-// measured against. They record what one sealed construction installed and
-// reserved; they are never updated after seal, so a retained generation adds
-// nothing to them.
-type semanticDirectoryMetrics struct {
-	entries    int
-	operations int
-	capacity   int
-}
-
 // semanticDirectory is the sealed ContentID directory of one BindingTopology.
 // It is produced by exactly one constructor, is immutable after seal, and is
 // shared unchanged by every graph revision of its topology: a revision
@@ -39,7 +29,6 @@ type semanticDirectory struct {
 	queries     []equation.QueryRowLocator
 	activations []equation.ActivationMemberRowLocator
 	queryOrder  []identity.ContentID
-	metrics     semanticDirectoryMetrics
 }
 
 // sealSemanticDirectory is the sole constructor. Row spans come from the
@@ -68,7 +57,6 @@ func sealSemanticDirectory(topology *equation.Topology, state *schemaBindingStat
 		activations: make([]equation.ActivationMemberRowLocator, activationRows),
 		queryOrder:  make([]identity.ContentID, queryRows),
 	}
-	result.metrics.capacity = total + pointRows + memberRows + activationRows + 2*queryRows
 	for id, ref := range rows.points {
 		locator, ok := topology.PointRow(ref)
 		slot := int(uint64(ref)) - 1
@@ -102,7 +90,6 @@ func sealSemanticDirectory(topology *equation.Topology, state *schemaBindingStat
 		result.activations[slot] = locator
 	}
 	for _, id := range result.queryOrder {
-		result.metrics.operations++
 		if !id.Available() {
 			return nil, false
 		}
@@ -113,7 +100,6 @@ func sealSemanticDirectory(topology *equation.Topology, state *schemaBindingStat
 // claim installs the single entry a ContentID owns. A ContentID already
 // carrying an entry is rejected, so no identity reaches two role locators.
 func (directory *semanticDirectory) claim(id identity.ContentID, kind bindingSemanticRowKind, slot int) bool {
-	directory.metrics.operations++
 	if !id.Available() || slot < 0 || slot > int(^uint32(0)) {
 		return false
 	}
@@ -121,7 +107,6 @@ func (directory *semanticDirectory) claim(id identity.ContentID, kind bindingSem
 		return false
 	}
 	directory.entries[id] = semanticDirectoryEntry{kind: kind, slot: uint32(slot)}
-	directory.metrics.entries++
 	return true
 }
 

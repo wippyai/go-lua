@@ -77,7 +77,7 @@ func TestProgramBindingUsesCanonicalCapabilityDirectory(t *testing.T) {
 	hasVocabulary := false
 	bindingRuleSlotCalls := 0
 	ast.Inspect(registryFile, func(node ast.Node) bool {
-		if field, ok := node.(*ast.Field); ok && len(field.Names) == 1 && field.Names[0].Name == "bundle" {
+		if field, ok := node.(*ast.Field); ok && len(field.Names) == 1 && field.Names[0].Name == "roles" {
 			hasVocabulary = true
 		}
 		call, ok := node.(*ast.CallExpr)
@@ -90,7 +90,7 @@ func TestProgramBindingUsesCanonicalCapabilityDirectory(t *testing.T) {
 		return true
 	})
 	if !hasVocabulary {
-		t.Error("the rule registry does not retain the canonical vocabulary.Bundle")
+		t.Error("the rule registry does not retain the resolved semantic role vocabulary")
 	}
 	if bindingRuleSlotCalls == 0 {
 		t.Error("the rule registry never resolves capabilities through engine.BindingRuleSlot")

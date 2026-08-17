@@ -3,61 +3,221 @@ package composite
 import (
 	"sync"
 
+	callactivation "github.com/wippyai/go-lua/analysis/domain/call/activation"
+	calldispatch "github.com/wippyai/go-lua/analysis/domain/call/dispatch"
+	callowner "github.com/wippyai/go-lua/analysis/domain/call/owner"
 	"github.com/wippyai/go-lua/analysis/domain/constraint"
+	callsite "github.com/wippyai/go-lua/analysis/domain/effect/callsite"
+	effectowner "github.com/wippyai/go-lua/analysis/domain/effect/owner"
+	heapclosed "github.com/wippyai/go-lua/analysis/domain/heap/allocation/closed"
+	heapempty "github.com/wippyai/go-lua/analysis/domain/heap/allocation/empty"
+	heapingress "github.com/wippyai/go-lua/analysis/domain/heap/allocation/ingress"
+	heapbootstrap "github.com/wippyai/go-lua/analysis/domain/heap/bootstrap"
+	heapindex "github.com/wippyai/go-lua/analysis/domain/heap/index"
+	heapowner "github.com/wippyai/go-lua/analysis/domain/heap/owner"
+	packowner "github.com/wippyai/go-lua/analysis/domain/pack/owner"
+	packsource "github.com/wippyai/go-lua/analysis/domain/pack/source"
 	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
+	valueallocation "github.com/wippyai/go-lua/analysis/domain/value/allocation"
+	valuearithmetic "github.com/wippyai/go-lua/analysis/domain/value/arithmetic"
+	valuebootstrap "github.com/wippyai/go-lua/analysis/domain/value/bootstrap"
+	valueequality "github.com/wippyai/go-lua/analysis/domain/value/equality"
+	valueorder "github.com/wippyai/go-lua/analysis/domain/value/order"
+	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
+	valuerefinement "github.com/wippyai/go-lua/analysis/domain/value/refinement"
+	valuesource "github.com/wippyai/go-lua/analysis/domain/value/source"
+	valuetransfer "github.com/wippyai/go-lua/analysis/domain/value/transfer"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
-// structureSpecs is the authored analyzer structural vocabulary: the eight
-// structural arms, the three bracket events, the seven body outcomes, the eight
-// Lua runtime families, and the ten symbolic expression forms.
+// analyzerVocabulary is the analyzer's own contribution to the structural
+// vocabulary: the eight structural arms, the three bracket events, and the
+// seven body outcomes.
 //
-// Declaring them here makes this table the one place a member is added, and
-// the surface's density law is what lets a consumer's projection switch on the
-// declared ordinals exhaustively. Position in each list is the member's
-// ordinal, numbered from one, so the declaration order is the catalog, and the
-// ordinals are the artifact's serialized ABI ordinals, which this declaration
-// adopts.
+// Position in each list is the member's ordinal, numbered from one, so the
+// declaration order is the catalog, and the artifact and ingress spellings are
+// pinned to these positions by law. Those foreign ordinals are compiled at load
+// rather than serialized, so what the pin holds is the agreement between the
+// spellings; the ordinals are authored here so a reader sees the position the
+// pin names.
+//
+// Each member declares the name it renders as. A consumer that needs the name
+// reads the declaration instead of taking the key apart or keeping a switch of
+// its own.
 //
 // Arms and events are projected whole. Outcomes carry the accepted property
 // the body-exit projection reads: Break and Goto conclude a body inside its own
 // function, so they contribute no transfer exit.
-func structureSpecs() []structure.Spec {
+func analyzerVocabulary() []structure.Spec {
 	var specs []structure.Spec
-	declare := func(category structure.Category, members ...schema.Key) {
-		for index, member := range members {
-			specs = append(specs, structure.Spec{Key: member, Category: category, Ordinal: uint16(index + 1), Accepted: true})
+	type member struct {
+		key      schema.Key
+		spelling string
+		accepted bool
+	}
+	declare := func(category structure.Category, members ...member) {
+		for index, declared := range members {
+			specs = append(specs, structure.Spec{
+				Key:      declared.key,
+				Category: category,
+				Ordinal:  uint16(index + 1),
+				Spelling: declared.spelling,
+				Accepted: declared.accepted,
+			})
 		}
 	}
 	declare(structure.CategoryArm,
-		"arm/local", "arm/resume", "arm/select-true", "arm/select-false",
-		"arm/tail", "arm/throw", "arm/yield", "arm/cancel")
+		member{"arm/local", "local", true},
+		member{"arm/resume", "resume", true},
+		member{"arm/select-true", "select-true", true},
+		member{"arm/select-false", "select-false", true},
+		member{"arm/tail", "tail", true},
+		member{"arm/throw", "throw", true},
+		member{"arm/yield", "yield", true},
+		member{"arm/cancel", "cancel", true})
 	declare(structure.CategoryEvent,
-		"event/enter", "event/point", "event/exit")
-	outcomes := []struct {
-		key      schema.Key
-		accepted bool
-	}{
-		{"outcome/normal", true},
-		{"outcome/return", true},
-		{"outcome/throw", true},
-		{"outcome/break", false},
-		{"outcome/goto", false},
-		{"outcome/yield", true},
-		{"outcome/cancel", true},
+		member{"event/enter", "enter", true},
+		member{"event/point", "point", true},
+		member{"event/exit", "exit", true})
+	declare(structure.CategoryOutcome,
+		member{"outcome/normal", "normal", true},
+		member{"outcome/return", "return", true},
+		member{"outcome/throw", "throw", true},
+		member{"outcome/break", "break", false},
+		member{"outcome/goto", "goto", false},
+		member{"outcome/yield", "yield", true},
+		member{"outcome/cancel", "cancel", true})
+	return specs
+}
+
+// occurrenceVocabulary is the analyzer's contribution of the compiled
+// occurrence geometry: the occurrence families a program artifact carries, the
+// placement forms a subscription takes, the operand polarities an issued
+// occurrence reads, and the execution cuts it is placed at.
+//
+// A rule declares which occurrence families issue it, in which form, so this is
+// the vocabulary those declarations resolve against. Position in each list is
+// the member's ordinal, and the artifact's own spellings are pinned to these
+// positions by law.
+func occurrenceVocabulary() []structure.Spec {
+	var specs []structure.Spec
+	declare := func(category structure.Category, spellings ...string) {
+		for index, spelling := range spellings {
+			specs = append(specs, structure.Spec{
+				Key:      schema.Key(occurrenceCategoryPrefix(category) + spelling),
+				Category: category,
+				Ordinal:  uint16(index + 1),
+				Spelling: spelling,
+				Accepted: true,
+			})
+		}
 	}
-	for index, outcome := range outcomes {
-		specs = append(specs, structure.Spec{Key: outcome.key, Category: structure.CategoryOutcome, Ordinal: uint16(index + 1), Accepted: outcome.accepted})
+	declare(structure.CategoryOccurrenceKind,
+		"point-attachment", "values", "values-member", "values-tail", "value-source",
+		"storage-read", "storage-bind", "storage-bind-transfer", "storage-assignment", "storage-write",
+		"index-read", "index-write", "allocation", "allocation-field", "call",
+		"call-activation", "call-boundary", "call-arm", "call-argument", "call-type-argument",
+		"body", "outcome", "return-value", "unary", "select",
+		"value-claim", "binary-arithmetic", "binary-equality", "binary-order",
+		"binary-presence-refinement", "return-boundary")
+	declare(structure.CategoryIssuanceForm,
+		"base", "local", "computation", "local-predecessor", "call-stage")
+	declare(structure.CategoryIssuanceInput,
+		"none", "finish", "entry", "predecessor")
+	declare(structure.CategoryIssuanceStage,
+		"base", "local", "call-dispatch", "call-summary", "call-effect")
+	return specs
+}
+
+// occurrenceCategoryPrefix is the authored key namespace of one occurrence
+// vocabulary. A member's key is its category's namespace and its spelling, so a
+// declaration reads as the one name it is, and two vocabularies that share a
+// spelling still name two members.
+func occurrenceCategoryPrefix(category structure.Category) string {
+	switch category {
+	case structure.CategoryOccurrenceKind:
+		return "occurrence/"
+	case structure.CategoryIssuanceForm:
+		return "issuance/"
+	case structure.CategoryIssuanceInput:
+		return "input/"
+	case structure.CategoryIssuanceStage:
+		return "stage/"
+	default:
+		return ""
 	}
-	// The runtime family vocabulary is declared by the domain that owns the
-	// families, because its ordinals are that domain's own Kind constants. This
-	// table states membership and order alone.
-	specs = append(specs, runtimekind.StructureSpecs()...)
-	// The expression form vocabulary is declared by the domain that owns the
-	// grammar, because its ordinals are that grammar's own closed enumeration.
-	// This table states membership and order alone.
-	specs = append(specs, constraint.StructureSpecs()...)
+}
+
+// semanticRoleVocabulary is the analyzer's semantic role catalog, aggregated
+// from the domains that own the roles. Each axis owner contributes its factor's
+// identity and the forms its schema is declared with, each rule owner the three
+// or four forms its rules are identified by, and this table the contract
+// identities its own library inventory is declared under.
+//
+// The order is the declaration order of the axis and rule tables, so a reader
+// following one table reads the same sequence in the other. Position carries no
+// identity here: a member of this vocabulary is only ever resolved by key, and
+// the identity it resolves to is derived from its declared spelling.
+func semanticRoleVocabulary() []structure.Spec {
+	contributions := [][]structure.Spec{
+		valueowner.StructureSpecs(),
+		packowner.StructureSpecs(),
+		heapowner.StructureSpecs(),
+		callowner.StructureSpecs(),
+		effectowner.StructureSpecs(),
+		valuesource.StructureSpecs(),
+		packsource.StructureSpecs(),
+		heapingress.StructureSpecs(),
+		valueallocation.StructureSpecs(),
+		heapempty.StructureSpecs(),
+		heapclosed.StructureSpecs(),
+		heapindex.StructureSpecs(),
+		calldispatch.StructureSpecs(),
+		callsite.StructureSpecs(),
+		callactivation.StructureSpecs(),
+		valuebootstrap.StructureSpecs(),
+		heapbootstrap.StructureSpecs(),
+		valuetransfer.StructureSpecs(),
+		valuearithmetic.StructureSpecs(),
+		valueequality.StructureSpecs(),
+		valueorder.StructureSpecs(),
+		valuerefinement.StructureSpecs(),
+		contractRoles(),
+	}
+	var specs []structure.Spec
+	for _, contribution := range contributions {
+		specs = append(specs, contribution...)
+	}
+	return specs
+}
+
+// structureContributions is the ordered set of contributions the structural
+// vocabulary is hosted from. A category is hosted rather than owned: the
+// runtime family vocabulary is declared by the domain that owns the families,
+// the expression form vocabulary by the domain that owns the grammar, the
+// publication vocabularies beside the diagnostic rows that name them, and a
+// category a later domain adds rows to arrives as one more contribution here.
+// This table states membership and order alone, and the surface numbers the
+// aggregate.
+func structureContributions() [][]structure.Spec {
+	return [][]structure.Spec{
+		analyzerVocabulary(),
+		occurrenceVocabulary(),
+		runtimekind.StructureSpecs(),
+		constraint.StructureSpecs(),
+		diagnosticVocabulary(),
+		semanticRoleVocabulary(),
+	}
+}
+
+// structureSpecs is the flattened authored inventory, in the order the surface
+// numbers it.
+func structureSpecs() []structure.Spec {
+	var specs []structure.Spec
+	for _, contribution := range structureContributions() {
+		specs = append(specs, contribution...)
+	}
 	return specs
 }
 
@@ -88,17 +248,10 @@ func StructureVocabulary() (structure.Table, bool) {
 	return structuralVocabulary.table, structuralVocabulary.ok
 }
 
-// structureEntries admits the authored inventory. A rejected row leaves the
-// table unavailable rather than half declared.
+// structureEntries admits the contributed inventory. The surface numbers each
+// category across the contributions, so a row a contributor authors out of
+// position, and a row it authors incompletely, leave the table unavailable
+// rather than half declared.
 func structureEntries() ([]*structure.Entry, bool) {
-	specs := structureSpecs()
-	entries := make([]*structure.Entry, 0, len(specs))
-	for _, spec := range specs {
-		entry, ok := structure.New(spec)
-		if !ok {
-			return nil, false
-		}
-		entries = append(entries, entry)
-	}
-	return entries, true
+	return structure.Collect(structureContributions()...)
 }

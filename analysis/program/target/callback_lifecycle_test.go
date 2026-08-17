@@ -1,8 +1,9 @@
 package target
 
 import (
-	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
+
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
@@ -15,7 +16,7 @@ func callbackLifecycleOperation(name string, lifecycles ...CallbackLifecycle) Op
 		input[index] = testAny
 		callbacks[index] = CallbackSpec{
 			Function:  InputSource{Kind: InputSourceValueFormal, Ordinal: uint32(index)},
-			Admission: OrdinaryCallable,
+			Admission: schematype.CallableAdmissionOrdinary,
 			Arguments: ValuesSpec{Tail: ValuesVariable, Var: 0},
 			Outcomes:  callbackOutcomes(1, 1, 2, 3, 4),
 			Lifecycle: lifecycle,

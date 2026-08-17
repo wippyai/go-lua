@@ -19,107 +19,113 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
-	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
 
-// beginReceiptAssembly enters the sole receipt-native production seam. It
-// returns the open assembly, exact Link-local binding, and query plan so
-// publication can finish without reopening owners or rescanning mounted rows.
+// assembleReceiptGraph enters the sole receipt-native production seam. It
+// returns the committed graph and the query plan so publication can finish
+// without reopening owners or rescanning mounted rows.
 type receiptAssemblyDiagnostic struct {
 	stage      AnalyzeDiagnosticReceiptStage
 	rule       AnalyzeDiagnosticRule
-	artifact   engine.ReceiptArtifactRowFailure
+	seal       engine.ReceiptSealFailure
 	ordinal    uint32
-	source     engine.ReceiptSourceSealFailure
-	ruleSource engine.RuleSourceSealFailure
-	finalizer  engine.RuleFinalizerFailure
 	lowering   engine.ReceiptAssemblyFailure
 	binding    ProgramBindingFailure
 	allocation allocationcatalog.SealFailure
 	commit     engine.ReceiptCommitFailure
 }
 
-func (state *compiledState) beginReceiptAssembly() (*engine.ReceiptAssembly, *composite.ProgramBinding, *artifactQueryPlan, receiptAssemblyDiagnostic, bool) {
+func (state *compiledState) assembleReceiptGraph() (*engine.ReceiptGraph, *artifactQueryPlan, receiptAssemblyDiagnostic, bool) {
 	if state == nil || state.artifacts == nil || !state.receipt.Available() || state.binding == nil || state.binding.SchemaBinding() == nil || !state.binding.SchemaBinding().Sealed() {
-		return nil, nil, nil, receiptAssemblyDiagnostic{}, false
+		return nil, nil, receiptAssemblyDiagnostic{}, false
 	}
 	binding := state.binding
 	valueIDs, heapIDs, witness, witnessOK := linkBootstrapWitness(state, binding)
 	if !witnessOK {
-		return nil, nil, nil, receiptAssemblyDiagnostic{stage: AnalyzeDiagnosticReceiptStageBinding}, false
+		return nil, nil, receiptAssemblyDiagnostic{stage: AnalyzeDiagnosticReceiptStageBinding}, false
 	}
 	mounts := make([]engine.MountedArtifactReceipt, 0, len(state.artifacts.mounts))
 	receipts := make(map[identity.ContentID]*engine.ArtifactScalarReceipt, len(state.artifacts.mounts))
 	for _, mount := range state.artifacts.mounts {
 		if !mount.valid() {
-			return nil, nil, nil, receiptAssemblyDiagnostic{stage: AnalyzeDiagnosticReceiptStageMount}, false
+			return nil, nil, receiptAssemblyDiagnostic{stage: AnalyzeDiagnosticReceiptStageMount}, false
 		}
 		artifactID := mount.artifact.ID()
 		receipt, receiptOK := receipts[artifactID]
 		if !receiptOK {
 			receipt, receiptOK = newEngineArtifactScalarReceipt(mount.template, mount.roles, binding)
 			if !receiptOK {
-				return nil, nil, nil, receiptAssemblyDiagnostic{stage: AnalyzeDiagnosticReceiptStageMount}, false
+				return nil, nil, receiptAssemblyDiagnostic{stage: AnalyzeDiagnosticReceiptStageMount}, false
 			}
 			receipts[artifactID] = receipt
 		}
 		mounted, mountedOK := engine.NewMountedArtifactReceipt(receipt, mount.moduleKey)
 		if !mountedOK {
-			return nil, nil, nil, receiptAssemblyDiagnostic{stage: AnalyzeDiagnosticReceiptStageMount}, false
+			return nil, nil, receiptAssemblyDiagnostic{stage: AnalyzeDiagnosticReceiptStageMount}, false
 		}
 		mounts = append(mounts, mounted)
 	}
-	assembly, loweringFailure, assembled := engine.BeginMountedArtifactReceiptAssemblyWithFailure(binding.SchemaBinding(), mounts, witness)
-	if !assembled {
-		return nil, nil, nil, receiptAssemblyDiagnostic{stage: AnalyzeDiagnosticReceiptStageLowering, lowering: loweringFailure}, false
-	}
-	queryPlan, queryOK := newArtifactQueryPlan(state.artifacts.mounts)
-	if !queryOK {
-		assembly.Abort()
-		return nil, nil, nil, receiptAssemblyDiagnostic{stage: AnalyzeDiagnosticReceiptStageQueryPlan}, false
-	}
-	if !attachLinkBootstrapRules(binding, assembly, valueIDs, heapIDs) {
-		assembly.Abort()
-		return nil, nil, nil, receiptAssemblyDiagnostic{stage: AnalyzeDiagnosticReceiptStageBootstrapRules}, false
-	}
-	artifactRule, artifactRulesOK := attachArtifactRules(binding, assembly, state.artifacts.mounts)
-	if !artifactRulesOK {
-		assembly.Abort()
-		return nil, nil, nil, receiptAssemblyDiagnostic{stage: AnalyzeDiagnosticReceiptStageArtifactRules, rule: artifactRule}, false
-	}
-	if !assembly.SealSources() {
-		failedRule := AnalyzeDiagnosticRuleUnknown
-		failedStage := AnalyzeDiagnosticReceiptStageSourceSeal
-		var failedArtifact engine.ReceiptArtifactRowFailure
-		var failedOrdinal uint32
-		var failedSource engine.ReceiptSourceSealFailure
-		var failedRuleSource engine.RuleSourceSealFailure
-		var failedFinalizer engine.RuleFinalizerFailure
-		if failure, failureOK := assembly.SealFailure(); failureOK {
-			if failure.Phase() == engine.ReceiptSealFailureArtifactRows {
-				failedStage = AnalyzeDiagnosticReceiptStageArtifactRows
-				failedArtifact, _ = failure.ArtifactRow()
-				failedOrdinal = failure.Ordinal()
-			} else if source, sourceOK := failure.Source(); sourceOK {
-				failedSource = source
-			} else if role, roleOK := failure.MountedCapability(); roleOK {
-				failedRule = diagnosticRuleForMountedRole(binding, role)
-				failedRuleSource, _ = failure.RuleSource()
-				failedFinalizer, _ = failure.Finalizer()
-			} else if role, roleOK := failure.LinkCapability(); roleOK {
-				failedRule = diagnosticRuleForLinkRole(binding, role)
-				failedRuleSource, _ = failure.RuleSource()
-				failedFinalizer, _ = failure.Finalizer()
-			}
+	var queryPlan *artifactQueryPlan
+	var populated receiptAssemblyDiagnostic
+	_, graph, lowering, commit, committed := engine.AssembleMountedArtifactReceipt(binding.SchemaBinding(), mounts, func(assembly *engine.ReceiptAssembly) bool {
+		plan, queryOK := newArtifactQueryPlan(state.artifacts.mounts)
+		if !queryOK {
+			populated = receiptAssemblyDiagnostic{stage: AnalyzeDiagnosticReceiptStageQueryPlan}
+			return false
 		}
-		assembly.Abort()
-		return nil, nil, nil, receiptAssemblyDiagnostic{stage: failedStage, rule: failedRule, artifact: failedArtifact, ordinal: failedOrdinal, source: failedSource, ruleSource: failedRuleSource, finalizer: failedFinalizer}, false
+		if !attachLinkBootstrapRules(binding, assembly, valueIDs, heapIDs) {
+			populated = receiptAssemblyDiagnostic{stage: AnalyzeDiagnosticReceiptStageBootstrapRules}
+			return false
+		}
+		artifactRule, artifactRulesOK := attachArtifactRules(binding, assembly, state.artifacts.mounts)
+		if !artifactRulesOK {
+			populated = receiptAssemblyDiagnostic{stage: AnalyzeDiagnosticReceiptStageArtifactRules, rule: artifactRule}
+			return false
+		}
+		queryRowsRejected := false
+		if !assembly.QueueMountedQueryBatch(func(batch *engine.MountedQueryBatch) bool {
+			queryRowsRejected = !plan.AddRows(batch, binding)
+			return !queryRowsRejected
+		}) {
+			populated = receiptAssemblyDiagnostic{stage: AnalyzeDiagnosticReceiptStageQueryRows}
+			return false
+		}
+		if !assembly.SealSources() {
+			if queryRowsRejected {
+				populated = receiptAssemblyDiagnostic{stage: AnalyzeDiagnosticReceiptStageQueryRows}
+				return false
+			}
+			failedRule := AnalyzeDiagnosticRuleUnknown
+			failedStage := AnalyzeDiagnosticReceiptStageSourceSeal
+			var failedSeal engine.ReceiptSealFailure
+			var failedOrdinal uint32
+			if failure, failureOK := assembly.SealFailure(); failureOK {
+				failedSeal = failure
+				if failure.Phase() == engine.ReceiptSealFailureArtifactRows {
+					failedStage = AnalyzeDiagnosticReceiptStageArtifactRows
+					failedOrdinal = failure.Ordinal()
+				} else if role, roleOK := failure.MountedCapability(); roleOK {
+					failedRule = diagnosticRuleForMountedRole(binding, role)
+				} else if role, roleOK := failure.LinkCapability(); roleOK {
+					failedRule = diagnosticRuleForLinkRole(binding, role)
+				}
+			}
+			populated = receiptAssemblyDiagnostic{stage: failedStage, rule: failedRule, seal: failedSeal, ordinal: failedOrdinal}
+			return false
+		}
+		queryPlan = plan
+		return true
+	}, witness)
+	if !committed {
+		if lowering != engine.ReceiptAssemblyFailureNone {
+			return nil, nil, receiptAssemblyDiagnostic{stage: AnalyzeDiagnosticReceiptStageLowering, lowering: lowering}, false
+		}
+		if populated.stage != AnalyzeDiagnosticReceiptStageNone {
+			return nil, nil, populated, false
+		}
+		return nil, nil, receiptAssemblyDiagnostic{stage: AnalyzeDiagnosticReceiptStageCommit, commit: commit}, false
 	}
-	if !queryPlan.AddRows(assembly, binding) {
-		assembly.Abort()
-		return nil, nil, nil, receiptAssemblyDiagnostic{stage: AnalyzeDiagnosticReceiptStageQueryRows}, false
-	}
-	return assembly, binding, queryPlan, receiptAssemblyDiagnostic{stage: AnalyzeDiagnosticReceiptStageLowering}, true
+	return graph, queryPlan, receiptAssemblyDiagnostic{stage: AnalyzeDiagnosticReceiptStageCommit}, true
 }
 
 type artifactScalarRoleBinding struct {
@@ -189,7 +195,7 @@ func newEngineArtifactScalarTemplate(artifact *programartifact.Artifact) (*rows.
 		usedRoles[programartifact.RuleRole(row.Tag())] = struct{}{}
 	}
 	spec, specOK := rows.NewArtifactScalarSpec(snapshot.ArtifactID(), snapshot.ProgramID(), snapshot.SchemaID(), rows.ArtifactScalarCapacity{
-		Roles: len(usedRoles), Points: snapshot.PointCount(), Edges: snapshot.StructuralEdgeCount(), Transfers: snapshot.LocalTransferCount(), Regions: snapshot.RegionCount(), Events: snapshot.EventCount(), Rules: snapshot.RulePlacementCount(), Bodies: snapshot.BodyTransportCount(), Functions: snapshot.FunctionBoundaryCount(),
+		Roles: len(usedRoles), Points: snapshot.PointCount(), Edges: snapshot.StructuralEdgeCount(), Transfers: snapshot.LocalTransferCount(), Regions: snapshot.RegionCount(), Events: snapshot.EventCount(), Rules: snapshot.RulePlacementCount(), Bodies: snapshot.BodyTransportCount(),
 	})
 	if !specOK {
 		return nil, nil, false
@@ -311,10 +317,7 @@ func newEngineArtifactScalarTemplate(artifact *programartifact.Artifact) (*rows.
 		if !ok {
 			return nil, nil, false
 		}
-		body, bodyOK := spec.AddBody(rows.ArtifactScalarBody{
-			ID: row.BodyID(), Context: row.ContextID(), SemanticEntry: row.SemanticEntryID(),
-			Callable: row.Callable(), Function: row.FunctionID(), CallFormal: row.CallFormalID(),
-		})
+		body, bodyOK := spec.AddBody(rows.ArtifactScalarBody{ID: row.BodyID()})
 		if !bodyOK {
 			return nil, nil, false
 		}
@@ -327,46 +330,6 @@ func newEngineArtifactScalarTemplate(artifact *programartifact.Artifact) (*rows.
 		for inner := 0; inner < row.ExitCount(); inner++ {
 			point, pointOK := row.ExitAt(inner)
 			if !pointOK || !spec.AddBodyExit(body, point) {
-				return nil, nil, false
-			}
-		}
-	}
-	for index := 0; index < snapshot.FunctionBoundaryCount(); index++ {
-		row, ok := snapshot.FunctionBoundaryAt(index)
-		if !ok {
-			return nil, nil, false
-		}
-		function, functionOK := spec.AddFunction(rows.ArtifactScalarFunction{
-			ID: row.ID(), Body: row.BodyID(), BodyContext: row.BodyContextID(), Entry: row.EntryID(), CallFormal: row.CallFormalID(),
-		})
-		if !functionOK {
-			return nil, nil, false
-		}
-		for inner := 0; inner < row.FormalCount(); inner++ {
-			port, portOK := row.FormalAt(inner)
-			position, positionOK := port.Position()
-			if !portOK || !positionOK || position != inner || !spec.AddFunctionFormal(function, rows.ArtifactScalarFormalPort{ID: port.ID(), Cell: port.CellID(), Storage: port.StorageCellID(), Position: uint32(position)}) {
-				return nil, nil, false
-			}
-		}
-		if port, hasVararg := row.Vararg(); hasVararg {
-			if !spec.SetFunctionVararg(function, rows.ArtifactScalarVarargPort{ID: port.ID(), Cell: port.CellID()}) {
-				return nil, nil, false
-			}
-		}
-		for inner := 0; inner < row.CaptureCount(); inner++ {
-			capture, captureOK := row.CaptureAt(inner)
-			position, positionOK := capture.Position()
-			if !captureOK || !positionOK || position != inner || !spec.AddFunctionCapture(function, rows.ArtifactScalarCapturePort{
-				ID: capture.ID(), Inner: capture.InnerCellID(), Outer: capture.OuterCellID(),
-				InnerBody: capture.InnerBodyID(), OuterBody: capture.OuterBodyID(), Position: uint32(position),
-			}) {
-				return nil, nil, false
-			}
-		}
-		for inner := 0; inner < row.OutcomeCount(); inner++ {
-			outcome, outcomeOK := row.OutcomeAt(inner)
-			if !outcomeOK || !spec.AddFunctionOutcome(function, outcome) {
 				return nil, nil, false
 			}
 		}
@@ -490,14 +453,9 @@ func (state *compiledState) buildRuntimeTopologyWithDiagnostic() (receiptAssembl
 	if state == nil || state.graph != nil {
 		return receiptAssemblyDiagnostic{stage: AnalyzeDiagnosticReceiptStageCommit}, state != nil && state.graph != nil
 	}
-	assembly, binding, queryPlan, diagnostic, ok := state.beginReceiptAssembly()
-	if !ok || assembly == nil || binding == nil {
+	graph, queryPlan, diagnostic, ok := state.assembleReceiptGraph()
+	if !ok || graph == nil {
 		return diagnostic, false
-	}
-	topology, graph, committed := assembly.Commit()
-	if !committed || topology == nil || graph == nil {
-		commit, _ := assembly.CommitFailure()
-		return receiptAssemblyDiagnostic{stage: AnalyzeDiagnosticReceiptStageCommit, commit: commit}, false
 	}
 	state.graph = graph
 	state.queryPlan = queryPlan
@@ -522,23 +480,15 @@ func applyReceiptAssemblyDiagnostic(diagnostics *AnalyzeDiagnostics, receipt rec
 	}
 	diagnostics.ReceiptStage = receipt.stage
 	diagnostics.Rule = receipt.rule
-	diagnostics.ReceiptArtifactRow = receipt.artifact
+	diagnostics.ReceiptSeal = receipt.seal.Failure()
 	diagnostics.ReceiptOrdinal = receipt.ordinal
-	diagnostics.ReceiptSourceSeal = receipt.source
-	diagnostics.ReceiptRuleSourceSeal = receipt.ruleSource
-	diagnostics.ReceiptRuleFinalizer = receipt.finalizer
-	diagnostics.ReceiptLowering = receipt.lowering
+	diagnostics.ReceiptLowering = receipt.lowering.Failure()
 	diagnostics.Binding = receipt.binding
 	if receipt.allocation != 0 {
 		diagnostics.AllocationCatalog = receipt.allocation
 	}
-	diagnostics.ReceiptCommit = receipt.commit.Phase()
-	diagnostics.ReceiptCommitPrecondition, _ = receipt.commit.Precondition()
-	diagnostics.ReceiptCommitSemanticRows, _ = receipt.commit.SemanticRows()
-	diagnostics.ReceiptTopology, _ = receipt.commit.Topology()
-	diagnostics.ReceiptSchedule, _ = receipt.commit.Schedule()
+	diagnostics.ReceiptCommit = receipt.commit.Failure()
 	diagnostics.ReceiptScheduleOrdinal, _ = receipt.commit.ScheduleOrdinal()
-	diagnostics.ReceiptCommitPublish, _ = receipt.commit.Publish()
 }
 
 func linkBootstrapWitness(state *compiledState, binding *composite.ProgramBinding) ([]identity.ContentID, []identity.ContentID, engine.LinkBootstrapWitness, bool) {
@@ -577,8 +527,13 @@ func (state *compiledState) newProgramBinding(source *link.Link) (*composite.Pro
 	if !projectAuthenticatesMounts(source, state.artifacts.mounts) {
 		return nil, ProgramBindingFailureInput, composite.MountFailure{}, allocationcatalog.SealFailureNone
 	}
-	semantics, ok := vocabulary.New()
-	if !ok || !semantics.Available() {
+	// The sealed declaration table resolved every declared role once. The query
+	// codecs below are read from that resolution rather than derived here, so a
+	// published result carries the identity the schema was composed under.
+	roles, rolesOK := composite.SemanticRoles()
+	valueCodec, valueCodecOK := roles.Key("semantic/query-result/value-summary")
+	effectCodec, effectCodecOK := roles.Key("semantic/query-result/effect-exact")
+	if !rolesOK || !valueCodecOK || !effectCodecOK {
 		return nil, ProgramBindingFailureSemantics, composite.MountFailure{}, allocationcatalog.SealFailureNone
 	}
 	artifactTypes := make([]*programartifact.Artifact, 0, len(state.artifacts.byProgram))
@@ -666,8 +621,8 @@ func (state *compiledState) newProgramBinding(source *link.Link) (*composite.Pro
 	inputs.Topology = topology
 	inputs.ActivationCatalog = catalog
 	binding, failure := composite.BindProgram(state.receipt, inputs, composite.ProgramQuerySpecs{
-		Value:  valueSummaryQueryHotSpec(inputs.ValueSchema, semantics.ValueCodec),
-		Effect: effectExactQueryHotSpec(inputs.EffectAlgebra, semantics.EffectCodec),
+		Value:  valueSummaryQueryHotSpec(inputs.ValueSchema, valueCodec),
+		Effect: effectExactQueryHotSpec(inputs.EffectAlgebra, effectCodec),
 	})
 	if failure.Available() {
 		return nil, programBindingFailure(failure), composite.MountFailure{}, failure.Allocation

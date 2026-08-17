@@ -22,7 +22,9 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 		return nil, false
 	}
 	var leftRead, rightRead engine.Read[engine.OrderedCells[value.Value]]
-	tx, ok := valueowner.BeginSelectedRuleBinding(owner, fragment.slot, fragment.carry, fragment.write, owner.FactorRef(), engine.HotRuleSpec[value.Value, value.BinaryEquality]{
+	var left, right engine.Read[engine.OrderedCells[value.Value]]
+	var implementation *valueowner.RuleImplementation[value.BinaryEquality]
+	bound := valueowner.BindSelectedRule(owner, fragment.slot, fragment.carry, fragment.write, owner.FactorRef(), engine.HotRuleSpec[value.Value, value.BinaryEquality]{
 		OperandContent: func(row value.BinaryEquality) (value.BinaryEquality, [32]byte, bool) {
 			return hotContent(owner.Schema(), row)
 		},
@@ -51,15 +53,14 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 				return resultOK && engine.StageValue(access, row, result)
 			})
 		},
-	}, engine.HotCarrySpec[value.Value, value.BinaryEquality]{})
-	if !ok || tx == nil {
-		return nil, false
-	}
-	left, leftOK := valueowner.AddSelectedRuleExactRead(tx, fragment.left, owner.FactorRef())
-	right, rightOK := valueowner.AddSelectedRuleExactRead(tx, fragment.right, owner.FactorRef())
-	implementation, implementationOK := tx.Implementation()
-	if !leftOK || !rightOK || !implementationOK || !valueowner.CommitSelectedRuleBinding(tx) {
-		valueowner.AbortSelectedRuleBinding(tx)
+	}, engine.HotCarrySpec[value.Value, value.BinaryEquality]{}, func(tx *valueowner.SelectedRuleBinding[value.BinaryEquality]) bool {
+		var leftOK, rightOK, implementationOK bool
+		left, leftOK = valueowner.AddSelectedRuleExactRead(tx, fragment.left, owner.FactorRef())
+		right, rightOK = valueowner.AddSelectedRuleExactRead(tx, fragment.right, owner.FactorRef())
+		implementation, implementationOK = tx.Implementation()
+		return leftOK && rightOK && implementationOK
+	})
+	if !bound {
 		return nil, false
 	}
 	leftRead, rightRead = left, right
@@ -89,24 +90,23 @@ func (rule *HotRule) AttachMountedRule(assembly *engine.ReceiptAssembly, mountID
 	if !operandOK || !implementationOK || !occurrenceOK || !endpointsOK || !leftOK || !rightOK || !resultOK {
 		return engine.BindingRuleRowRef{}, false
 	}
-	transaction, transactionOK := engine.BeginMountedRuleAdmission(assembly, implementation, occurrence, operand)
-	if !transactionOK || !engine.AddExactRead(transaction, leftRef) || !engine.AddExactRead(transaction, rightRef) || !transaction.AddCarry() || !engine.AddExactWrite(transaction, resultRef) {
-		return engine.BindingRuleRowRef{}, false
+	admit := func(transaction *engine.RuleSourceTransaction) bool {
+		return engine.AddExactRead(transaction, leftRef) && engine.AddExactRead(transaction, rightRef) && transaction.AddCarry() && engine.AddExactWrite(transaction, resultRef)
 	}
-	queued := assembly.QueueMountedRuleFinalizer(capability, func() bool {
-		source, sourceOK := transaction.Seal()
+	issue := func(source engine.RuleSurfaceSourceReceipt) bool {
 		draft, draftOK := implementation.BeginReceiptRuleRow(source)
 		leftPart, leftPartOK := implementation.ReceiptReadPart(source, 0)
 		rightPart, rightPartOK := implementation.ReceiptReadPart(source, 1)
 		carryPart, carryPartOK := implementation.ReceiptCarryPart(source, 0)
 		writePart, writePartOK := implementation.ReceiptWritePart(source, 0)
-		if !sourceOK || !draftOK || !leftPartOK || !rightPartOK || !carryPartOK || !writePartOK ||
+		if !draftOK || !leftPartOK || !rightPartOK || !carryPartOK || !writePartOK ||
 			!draft.AddRead(leftPart) || !draft.AddRead(rightPart) || !draft.AddCarry(carryPart) || !draft.AddWrite(writePart) {
 			return false
 		}
 		_, added := assembly.AddRuleFromDraft(occurrence, draft)
 		return added
-	})
+	}
+	queued := engine.AdmitMountedRule(assembly, implementation, capability, occurrence, operand, admit, issue)
 	return engine.BindingRuleRowRef{}, queued
 }
 

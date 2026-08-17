@@ -1,9 +1,10 @@
 package target
 
 import (
-	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"strings"
 	"testing"
+
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
@@ -70,7 +71,7 @@ func TestProducedTypeValueCaptureRequiresExactFreshFunctionResult(t *testing.T) 
 		{
 			name: "wrong kind",
 			mutate: func(spec *Spec) {
-				spec.Operations[0].Outcomes[0].FreshResults[0].Kind = FreshTable
+				spec.Operations[0].Outcomes[0].FreshResults[0].Kind = schematype.FreshClassTable
 			},
 			want: "want FreshFunction",
 		},
@@ -121,7 +122,7 @@ func TestProducedTypeValueFreshFunctionCanonicalRoundTrip(t *testing.T) {
 			{Result: 0, Operation: 2, Captures: []CaptureSpec{{Kind: CaptureTypeValueFormal, Ordinal: 0}}},
 			{Result: 1, Operation: 3, Captures: []CaptureSpec{{Kind: CaptureTypeValueFormal, Ordinal: 1}}},
 		}
-		fresh := []FreshResultSpec{{Result: 0, Kind: FreshFunction}, {Result: 1, Kind: FreshFunction}}
+		fresh := []FreshResultSpec{{Result: 0, Kind: schematype.FreshClassFunction}, {Result: 1, Kind: schematype.FreshClassFunction}}
 		if reverse {
 			produced[0], produced[1] = produced[1], produced[0]
 			fresh[0], fresh[1] = fresh[1], fresh[0]
@@ -153,7 +154,7 @@ func TestProducedTypeValueFreshFunctionCanonicalRoundTrip(t *testing.T) {
 			_, produced, producedOK := contract.ProducedForResult(op, 0, result)
 			formal, captureOK := contract.ProducedTypeValueCapture(op, 0, produced)
 			ordinal, kind, fresh, freshOK := contract.FreshResultForResult(op, 0, result)
-			if !producedOK || !captureOK || uint32(formal) != result || !freshOK || kind != FreshFunction || fresh != int(ordinal) {
+			if !producedOK || !captureOK || uint32(formal) != result || !freshOK || kind != schematype.FreshClassFunction || fresh != int(ordinal) {
 				t.Fatalf("result %d round trip = produced:%d/%v capture:%d/%v fresh:%d/%d/%d/%v", result, produced, producedOK, formal, captureOK, ordinal, kind, fresh, freshOK)
 			}
 		}
@@ -170,7 +171,7 @@ func TestProducedTypeValueCaptureWideSealAndQueryStayDirect(t *testing.T) {
 	for index := range input {
 		input[index], output[index] = testAny, testAny
 		produced[index] = ProducedSpec{Result: uint32(index), Operation: SpecRef(index + 2), Captures: []CaptureSpec{{Kind: CaptureTypeValueFormal, Ordinal: uint32(index)}}}
-		fresh[index] = FreshResultSpec{Result: uint32(index), Kind: FreshFunction}
+		fresh[index] = FreshResultSpec{Result: uint32(index), Kind: schematype.FreshClassFunction}
 		operations[index+1] = OperationSpec{Input: ValuesSpec{Tail: ValuesClosed}, Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesClosed}}}, Effects: RowSpec{Tail: RowClosed}}
 	}
 	operations[0] = OperationSpec{Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"wide"}}}, Input: ValuesSpec{Fixed: input, Tail: ValuesClosed}, Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: output, Tail: ValuesClosed}, Produced: produced, FreshResults: fresh}}, Effects: RowSpec{Tail: RowClosed}}
@@ -198,7 +199,7 @@ func typeValueCaptureSpec(kind CaptureKind, ordinal uint32) Spec {
 			Outcomes: []OutcomeSpec{{
 				Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed},
 				Produced:     []ProducedSpec{{Result: 0, Operation: 2, Captures: []CaptureSpec{{Kind: kind, Ordinal: ordinal}}}},
-				FreshResults: []FreshResultSpec{{Result: 0, Kind: FreshFunction}},
+				FreshResults: []FreshResultSpec{{Result: 0, Kind: schematype.FreshClassFunction}},
 			}},
 			Effects: RowSpec{Tail: RowClosed},
 		},

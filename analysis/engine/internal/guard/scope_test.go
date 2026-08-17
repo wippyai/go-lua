@@ -68,8 +68,8 @@ func TestCompactReindexRowsRemainTotalAndFenceSource(t *testing.T) {
 
 func TestCoordinateIdentityDistinguishesPayloadFromIssuedScope(t *testing.T) {
 	manager := newTestManager(t)
-	source := manager.SealScopeMust([]Atom{testA, testC})
-	target := manager.SealScopeMust([]Atom{testA, testC})
+	source := sealTestScope(t, manager, []Atom{testA, testC})
+	target := sealTestScope(t, manager, []Atom{testA, testC})
 	if source.Same(target) {
 		t.Fatal("separately issued scopes aliased")
 	}
@@ -91,7 +91,7 @@ func TestCoordinateIdentityDistinguishesPayloadFromIssuedScope(t *testing.T) {
 
 func TestScopeAndReindexHotReadsDoNotAllocate(t *testing.T) {
 	manager := newTestManager(t)
-	scope := manager.SealScopeMust([]Atom{testA})
+	scope := sealTestScope(t, manager, []Atom{testA})
 	root := sealedGuard(t, manager, func(work *Work) Guard { return literal(t, work, testA) })
 	builder, ok := manager.NewReindex(scope, manager.AllScope())
 	if !ok || !builder.Identity(testA) {
@@ -140,10 +140,13 @@ func TestSealedScopeAndReindexValidationIsCardinalityIndependentAndAllocationFre
 	}
 }
 
-func (m *Manager) SealScopeMust(atoms []Atom) Scope {
-	scope, ok := m.SealScope(atoms)
+// sealTestScope seals one scope for a fixture and fails the test rather than
+// widening the production Manager with a panicking helper.
+func sealTestScope(t *testing.T, manager *Manager, atoms []Atom) Scope {
+	t.Helper()
+	scope, ok := manager.SealScope(atoms)
 	if !ok {
-		panic("invalid test scope")
+		t.Fatal("test scope seal")
 	}
 	return scope
 }

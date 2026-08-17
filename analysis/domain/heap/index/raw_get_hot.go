@@ -72,38 +72,36 @@ func (rule *RawGetHotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssem
 	if !occurrenceOK {
 		return engine.BindingRuleRowRef{}, false
 	}
-	transaction, transactionOK := engine.BeginMountedRuleAdmission(assembly, implementation, occurrence, operand)
-	receiverRef, receiverOK := rule.values.Ref(operand.receiver)
-	resultRef, resultOK := rule.values.Ref(operand.result)
-	if !transactionOK || !receiverOK || !resultOK {
-		return engine.BindingRuleRowRef{}, false
-	}
-	reads := make([]engine.RuleReadSurface, 0, 6)
-	receiver, readOK := engine.ExactReadSurface(receiverRef)
-	if !readOK || !transaction.AddRead(receiver) {
-		return engine.BindingRuleRowRef{}, false
-	}
-	reads = append(reads, receiver)
-	dependencies := [][]int{{0}, {0, 1}, {0, 1, 2}, {1, 3}, {1, 3, 4}}
-	for selectedIndex, dependencyIndexes := range dependencies {
-		receipt, receiptOK := implementation.SelectedReadReceipt(uint64(selectedIndex + 1))
-		selectedDependencies := make([]engine.RuleReadSurface, len(dependencyIndexes))
-		for index, dependencyIndex := range dependencyIndexes {
-			selectedDependencies[index] = reads[dependencyIndex]
+	admit := func(transaction *engine.RuleSourceTransaction) bool {
+		receiverRef, receiverOK := rule.values.Ref(operand.receiver)
+		resultRef, resultOK := rule.values.Ref(operand.result)
+		if !receiverOK || !resultOK {
+			return false
 		}
-		selected, selectedOK := transaction.AnchoredSelectedReadSurface(receipt, selectedDependencies)
-		if !receiptOK || !selectedOK || !transaction.AddRead(selected) {
-			return engine.BindingRuleRowRef{}, false
+		reads := make([]engine.RuleReadSurface, 0, 6)
+		receiver, readOK := engine.ExactReadSurface(receiverRef)
+		if !readOK || !transaction.AddRead(receiver) {
+			return false
 		}
-		reads = append(reads, selected)
+		reads = append(reads, receiver)
+		dependencies := [][]int{{0}, {0, 1}, {0, 1, 2}, {1, 3}, {1, 3, 4}}
+		for selectedIndex, dependencyIndexes := range dependencies {
+			receipt, receiptOK := implementation.SelectedReadReceipt(uint64(selectedIndex + 1))
+			selectedDependencies := make([]engine.RuleReadSurface, len(dependencyIndexes))
+			for index, dependencyIndex := range dependencyIndexes {
+				selectedDependencies[index] = reads[dependencyIndex]
+			}
+			selected, selectedOK := transaction.AnchoredSelectedReadSurface(receipt, selectedDependencies)
+			if !receiptOK || !selectedOK || !transaction.AddRead(selected) {
+				return false
+			}
+			reads = append(reads, selected)
+		}
+		return transaction.AddCarry() && engine.AddExactWrite(transaction, resultRef)
 	}
-	if !transaction.AddCarry() || !engine.AddExactWrite(transaction, resultRef) {
-		return engine.BindingRuleRowRef{}, false
-	}
-	queued := assembly.QueueMountedRuleFinalizer(mountedCapability(rule.implementation), func() bool {
-		source, sourceOK := transaction.Seal()
+	issue := func(source engine.RuleSurfaceSourceReceipt) bool {
 		draft, draftOK := implementation.BeginReceiptRuleRow(source)
-		if !sourceOK || !draftOK {
+		if !draftOK {
 			return false
 		}
 		for index := uint64(0); index < 6; index++ {
@@ -119,7 +117,8 @@ func (rule *RawGetHotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssem
 		}
 		_, added := assembly.AddRuleFromDraft(occurrence, draft)
 		return added
-	})
+	}
+	queued := engine.AdmitMountedRule(assembly, implementation, mountedCapability(rule.implementation), occurrence, operand, admit, issue)
 	return engine.BindingRuleRowRef{}, queued
 }
 
@@ -218,39 +217,31 @@ func BindRawGetHot(binding *engine.SchemaBinding, fragment *RawGetSchemaFragment
 		return &rawGetScratch{payload: make([]uint64, bitWords(len(topology.catalog.payloads)-1)), source: make([]uint64, bitWords(len(topology.catalog.sources)))}
 	}
 	core.scratch.Put(core.scratch.New())
-	tx, ok := valueowner.BeginSelectedRuleBinding(values, fragment.slot, fragment.carry, fragment.write, values.FactorRef(), engine.HotRuleSpec[valuedomain.Value, Access]{OperandContent: core.operandContent, Admission: engine.AdmitRuleByDerivation(fragment.evidence, core.check(fragment.semantic)), Transfer: core.transfer}, engine.HotCarrySpec[valuedomain.Value, Access]{})
-	if !ok {
-		return nil, false
-	}
-	if core.receiver, ok = valueowner.AddSelectedRuleExactRead(tx, fragment.receiver, values.FactorRef()); !ok {
-		_ = valueowner.AbortSelectedRuleBinding(tx)
-		return nil, false
-	}
-	if core.key, ok = valueowner.AddSelectedRuleOperandRead[Access, valuedomain.Value, uint64](tx, fragment.key, values.FactorRef(), core.locateKey); !ok {
-		_ = valueowner.AbortSelectedRuleBinding(tx)
-		return nil, false
-	}
-	if core.call, ok = valueowner.AddSelectedRuleOperandRead[Access, calldomain.Value, uint64](tx, fragment.call, calls.FactorRef(), core.locateCall); !ok {
-		_ = valueowner.AbortSelectedRuleBinding(tx)
-		return nil, false
-	}
-	if core.heapRead, ok = valueowner.AddSelectedRuleOperandRead[Access, heapdomain.Value, heapdomain.RawRouteTag](tx, fragment.heapRead, heap.FactorRef(), core.locateHeap); !ok {
-		_ = valueowner.AbortSelectedRuleBinding(tx)
-		return nil, false
-	}
-	if core.packRead, ok = valueowner.AddSelectedRuleOperandRead[Access, pack.Value, heapdomain.RawPayloadTag](tx, fragment.packRead, packs.FactorRef(), core.locatePack); !ok {
-		_ = valueowner.AbortSelectedRuleBinding(tx)
-		return nil, false
-	}
-	if core.sourceRead, ok = valueowner.AddSelectedRuleOperandRead[Access, valuedomain.Value, rawSourceTag](tx, fragment.sourceRead, values.FactorRef(), core.locateSource); !ok {
-		_ = valueowner.AbortSelectedRuleBinding(tx)
-		return nil, false
-	}
-	if !valueowner.CommitSelectedRuleBinding(tx) {
-		return nil, false
-	}
-	implementation, ok := tx.Implementation()
-	if !ok {
+	var implementation *valueowner.RuleImplementation[Access]
+	bound := valueowner.BindSelectedRule(values, fragment.slot, fragment.carry, fragment.write, values.FactorRef(), engine.HotRuleSpec[valuedomain.Value, Access]{OperandContent: core.operandContent, Admission: engine.AdmitRuleByDerivation(fragment.evidence, core.check(fragment.semantic)), Transfer: core.transfer}, engine.HotCarrySpec[valuedomain.Value, Access]{}, func(tx *valueowner.SelectedRuleBinding[Access]) bool {
+		var ok bool
+		if core.receiver, ok = valueowner.AddSelectedRuleExactRead(tx, fragment.receiver, values.FactorRef()); !ok {
+			return false
+		}
+		if core.key, ok = valueowner.AddSelectedRuleOperandRead[Access, valuedomain.Value, uint64](tx, fragment.key, values.FactorRef(), core.locateKey); !ok {
+			return false
+		}
+		if core.call, ok = valueowner.AddSelectedRuleOperandRead[Access, calldomain.Value, uint64](tx, fragment.call, calls.FactorRef(), core.locateCall); !ok {
+			return false
+		}
+		if core.heapRead, ok = valueowner.AddSelectedRuleOperandRead[Access, heapdomain.Value, heapdomain.RawRouteTag](tx, fragment.heapRead, heap.FactorRef(), core.locateHeap); !ok {
+			return false
+		}
+		if core.packRead, ok = valueowner.AddSelectedRuleOperandRead[Access, pack.Value, heapdomain.RawPayloadTag](tx, fragment.packRead, packs.FactorRef(), core.locatePack); !ok {
+			return false
+		}
+		if core.sourceRead, ok = valueowner.AddSelectedRuleOperandRead[Access, valuedomain.Value, rawSourceTag](tx, fragment.sourceRead, values.FactorRef(), core.locateSource); !ok {
+			return false
+		}
+		implementation, ok = tx.Implementation()
+		return ok
+	})
+	if !bound {
 		return nil, false
 	}
 	return &RawGetHotRule{implementation: implementation, core: core, values: values}, true

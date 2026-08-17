@@ -15,8 +15,8 @@ func TestSolveWithReportReceiptCertificateSurvivesSubsequentSolve(t *testing.T) 
 	if state != nil || status != SolveIncomplete || !report.Available() {
 		t.Fatalf("initial receipt report = state:%v status:%v available:%v", state, status, report.Available())
 	}
-	reason, phase, point, group, member, rule := report.Reason(), report.Phase(), report.Point(), report.Group(), report.Member(), report.Rule()
-	if reason == SolveFailureReasonNone || phase == SolveFailurePhaseNone || !point.Available() || !group.Available() || !member.Available() || !rule.Available() {
+	reason, failure, point, group, member, rule := report.Reason(), report.Failure(), report.Point(), report.Group(), report.Member(), report.Rule()
+	if reason == SolveFailureReasonNone || !failure.Available() || !failure.Site.Available() || !point.Available() || !group.Available() || !member.Available() || !rule.Available() {
 		t.Fatalf("initial receipt report lost failure coordinates: %#v", report)
 	}
 
@@ -24,7 +24,7 @@ func TestSolveWithReportReceiptCertificateSurvivesSubsequentSolve(t *testing.T) 
 	if laterState != nil || laterStatus != SolveIncomplete {
 		t.Fatalf("subsequent receipt solve = state:%v status:%v", laterState, laterStatus)
 	}
-	if report.Reason() != reason || report.Phase() != phase || report.Point() != point || report.Group() != group || report.Member() != member || report.Rule() != rule || !report.Available() {
+	if report.Reason() != reason || report.Failure() != failure || report.Point() != point || report.Group() != group || report.Member() != member || report.Rule() != rule || !report.Available() {
 		t.Fatal("receipt failure certificate changed after subsequent solve")
 	}
 }

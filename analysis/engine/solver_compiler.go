@@ -33,7 +33,6 @@ type BindingTopology struct {
 	directory         *semanticDirectory
 	artifact          *artifactReceiptTopology
 	nativeCallStages  map[artifactMountedRuleOccurrence]artifactNativeCallStage
-	artifactFunctions []artifactMountedFunction
 	artifactBacked    bool
 	bootstrapOwner    identity.ContentID
 	bootstrapPoint    identity.ContentID
@@ -107,6 +106,8 @@ type ReceiptAssembly struct {
 	selectedSurfaceAnchor map[equation.Surface]mountedSelectedSurfaceAnchor
 	queuedRuleMu          sync.Mutex
 	queuedRuleFinalizers  []queuedRuleFinalizer
+	queuedQueryMu         sync.Mutex
+	queuedQueryBatches    []func(*MountedQueryBatch) bool
 	ruleSourceFailureMu   sync.Mutex
 	ruleSourceFailure     RuleSourceSealFailure
 	finalizerFailureMu    sync.Mutex
@@ -201,6 +202,18 @@ func (failure ReceiptCommitFailure) Publish() (ReceiptCommitPublishFailure, bool
 	return failure.publish, failure.phase == ReceiptCommitFailurePublish && failure.publish != ReceiptCommitPublishFailureNone
 }
 
+// Failure projects the whole commit boundary onto the engine's public failure
+// vocabulary. The phase and every subfailure enter the site preimage, so a
+// caller separates two commit boundaries without reading either enum.
+func (failure ReceiptCommitFailure) Failure() SolveFailure {
+	if failure.phase == ReceiptCommitFailureNone {
+		return SolveFailure{}
+	}
+	return receiptFailure(SolveFailureFamilyCompile, "receipt-commit",
+		uint64(failure.phase), uint64(failure.precondition), uint64(failure.semanticRows),
+		uint64(failure.topology), uint64(failure.schedule), uint64(failure.publish))
+}
+
 type queuedRuleFinalizer struct {
 	mounted RuleSlotCapability
 	link    RuleSlotCapability
@@ -240,6 +253,7 @@ const (
 	ReceiptSealFailureSources
 	ReceiptSealFailureArtifactRows
 	ReceiptSealFailureRuleFinalizer
+	ReceiptSealFailureQueryBatch
 )
 
 // ReceiptSourceSealFailure is the generic equation Batch predicate that
@@ -303,6 +317,18 @@ func (failure ReceiptSealFailure) LinkCapability() (RuleSlotCapability, bool) {
 }
 func (failure ReceiptSealFailure) ArtifactRow() (ReceiptArtifactRowFailure, bool) {
 	return failure.artifact, failure.phase == ReceiptSealFailureArtifactRows && failure.artifact != ReceiptArtifactRowFailureNone
+}
+
+// Failure projects the whole seal boundary onto the engine's public failure
+// vocabulary. Every scalar coordinate enters the site preimage, so the digest
+// separates two seal boundaries that differ in any one of them.
+func (failure ReceiptSealFailure) Failure() SolveFailure {
+	if failure.phase == ReceiptSealFailureNone {
+		return SolveFailure{}
+	}
+	return receiptFailure(SolveFailureFamilyCompile, "receipt-seal",
+		uint64(failure.phase), uint64(failure.ordinal), uint64(failure.source),
+		uint64(failure.rule), uint64(failure.finalizer), uint64(failure.artifact))
 }
 
 type mountedSelectedSurfaceAnchor struct {
@@ -406,6 +432,43 @@ func (assembly *ReceiptAssembly) drainRuleFinalizers() bool {
 	return true
 }
 
+// QueueMountedQueryBatch retains one query batch until the source Batch
+// seals. SealSources hands the batch scope back at exactly the point where
+// query rows are admissible, so a caller never orders query admission against
+// source sealing by hand.
+func (assembly *ReceiptAssembly) QueueMountedQueryBatch(emit func(*MountedQueryBatch) bool) bool {
+	if assembly == nil || assembly.builder == nil || emit == nil {
+		return false
+	}
+	inner, ok := assembly.builder.lockSourcesOpen()
+	if !ok {
+		return false
+	}
+	inner.mu.Unlock()
+	assembly.queuedQueryMu.Lock()
+	defer assembly.queuedQueryMu.Unlock()
+	assembly.queuedQueryBatches = append(assembly.queuedQueryBatches, emit)
+	return true
+}
+
+// drainQueryBatches runs every queued batch inside a scope that expires with
+// the call. It returns the ordinal of the batch that rejected.
+func (assembly *ReceiptAssembly) drainQueryBatches() (uint32, bool) {
+	assembly.queuedQueryMu.Lock()
+	batches := assembly.queuedQueryBatches
+	assembly.queuedQueryBatches = nil
+	assembly.queuedQueryMu.Unlock()
+	for index, emit := range batches {
+		batch := &MountedQueryBatch{assembly: assembly, draining: true}
+		admitted := emit != nil && emit(batch)
+		batch.draining = false
+		if !admitted {
+			return uint32(index), false
+		}
+	}
+	return 0, true
+}
+
 func (assembly *ReceiptAssembly) recordRuleSourceSealFailure(failure RuleSourceSealFailure) {
 	if assembly == nil {
 		return
@@ -460,6 +523,11 @@ func (assembly *ReceiptAssembly) SealSources() bool {
 		return false
 	}
 	if !assembly.drainRuleFinalizers() {
+		assembly.builder.abort()
+		return false
+	}
+	if ordinal, drained := assembly.drainQueryBatches(); !drained {
+		assembly.sealFailure = ReceiptSealFailure{phase: ReceiptSealFailureQueryBatch, ordinal: ordinal}
 		assembly.builder.abort()
 		return false
 	}
@@ -886,14 +954,12 @@ func validBindingReadSurface(shape composition.RuleReadShape, surface equation.S
 }
 
 func validBindingWriteSurface(shape composition.RuleWriteShape, write equation.ResolvedWrite) bool {
-	if !write.Surface.Available() || write.Surface.Factor != shape.Factor || write.Route != shape.Route || uint64(len(write.Candidates)) != shape.CandidateCount || uint64(len(write.Relations)) != shape.DependencyCount {
+	if !write.Surface.Available() || write.Surface.Factor != shape.Factor || write.Route != shape.Route {
 		return false
 	}
 	switch shape.Kind {
 	case composition.WriteExact:
 		return write.Surface.Form == equation.SurfaceWriteExact
-	case composition.WriteSelect:
-		return write.Surface.Form == equation.SurfaceWriteSelect
 	case composition.WriteRoute:
 		return write.Surface.Form == equation.SurfaceWriteRoute
 	default:
@@ -948,13 +1014,13 @@ func (receipt *BindingTopology) valid() bool {
 	ownerAvailable, pointAvailable, semanticAvailable := receipt.bootstrapOwner.Available(), receipt.bootstrapPoint.Available(), receipt.bootstrapSemantic.Available()
 	if receipt.artifactBacked {
 		semantic := linkBootstrapPointSemanticID(receipt.bootstrapOwner, receipt.bootstrapPoint)
-		if !ownerAvailable || !pointAvailable || !semanticAvailable || semantic != receipt.bootstrapSemantic || receipt.artifactFunctions == nil {
+		if !ownerAvailable || !pointAvailable || !semanticAvailable || semantic != receipt.bootstrapSemantic {
 			return false
 		}
 		if _, found := receipt.directory.point(receipt.bootstrapSemantic); !found {
 			return false
 		}
-	} else if receipt.artifact != nil || receipt.artifactFunctions != nil || ownerAvailable || pointAvailable || semanticAvailable {
+	} else if receipt.artifact != nil || ownerAvailable || pointAvailable || semanticAvailable {
 		return false
 	}
 	if receipt.artifact != nil && (receipt.artifact.bootstrap == nil || receipt.bootstrapOwner != receipt.artifact.bootstrap.owner || receipt.bootstrapPoint != receipt.artifact.bootstrap.point.PointID || receipt.bootstrapSemantic != receipt.artifact.bootstrap.semantic) {
@@ -1363,25 +1429,9 @@ func cloneBindingRuleRow(row equation.RuleInstance) equation.RuleInstance {
 	row.Reads = append([]equation.ResolvedRead(nil), row.Reads...)
 	row.Carries = append([]equation.ResolvedCarry(nil), row.Carries...)
 	row.Writes = append([]equation.ResolvedWrite(nil), row.Writes...)
-	for index := range row.Writes {
-		row.Writes[index].Candidates = append([]uint64(nil), row.Writes[index].Candidates...)
-		row.Writes[index].TargetCandidates = append([]equation.Surface(nil), row.Writes[index].TargetCandidates...)
-		row.Writes[index].Relations = cloneBindingCandidateRelations(row.Writes[index].Relations)
-	}
 	row.Supports = append([]equation.ResolvedSupport(nil), row.Supports...)
 	row.Prunes = append([]equation.ResolvedPrune(nil), row.Prunes...)
 	return row
-}
-
-func cloneBindingCandidateRelations(rows []equation.CandidateRelation) []equation.CandidateRelation {
-	result := make([]equation.CandidateRelation, len(rows))
-	for index, row := range rows {
-		result[index] = equation.CandidateRelation{Prior: row.Prior, Matches: make([][]uint64, len(row.Matches))}
-		for current, matches := range row.Matches {
-			result[index].Matches[current] = append([]uint64(nil), matches...)
-		}
-	}
-	return result
 }
 
 func (builder *bindingTopologyBuilder) issueQueryRow(receipt bindingQueryReceipt, query equation.QueryInstance) (bindingQueryRowReceipt, bool) {
@@ -1838,13 +1888,7 @@ func (builder *bindingTopologyBuilder) commit(deferredQueries bool) (*BindingTop
 		inner.mu.Unlock()
 		return nil, nil, ReceiptCommitFailure{phase: ReceiptCommitFailureDirectory}, false
 	}
-	artifactFunctions, functionsOK := sealArtifactFunctionDirectory(artifact)
-	if !functionsOK {
-		inner.failLocked()
-		inner.mu.Unlock()
-		return nil, nil, ReceiptCommitFailure{phase: ReceiptCommitFailureDirectory}, false
-	}
-	receipt := &BindingTopology{topology: topology, state: state, authority: authority, factors: factors, plan: inner, directory: directory, artifact: artifact, nativeCallStages: nativeCallStages, artifactFunctions: artifactFunctions, artifactBacked: artifact != nil}
+	receipt := &BindingTopology{topology: topology, state: state, authority: authority, factors: factors, plan: inner, directory: directory, artifact: artifact, nativeCallStages: nativeCallStages, artifactBacked: artifact != nil}
 	receipt.self = receipt
 	inner.topology, inner.receipt, inner.phase = topology, receipt, bindingTopologyBuilderCommitted
 	inner.semantic = nil
@@ -2069,7 +2113,7 @@ func (receipt *ActivationReceiptGraph) MountedRuleMember(role RuleSlotCapability
 // solverCompiler is the private activation-revision lowering seam. Receipt
 // compilations rebuild graph-owned runtime state without a cold Composition.
 type solverCompiler interface {
-	compile(equation.Relation) (*solverRuntime, SolveFailurePhase, bool)
+	compile(equation.Relation) (*solverRuntime, solveBoundary, bool)
 }
 
 func validAcceptedActivations(topology *equation.Topology, accepted []equation.AcceptedMember) bool {
@@ -2122,41 +2166,41 @@ type receiptSolverCompiler struct {
 	observationBuilders []receiptObservationBuilder
 }
 
-func (compiler receiptSolverCompiler) compile(relation equation.Relation) (*solverRuntime, SolveFailurePhase, bool) {
+func (compiler receiptSolverCompiler) compile(relation equation.Relation) (*solverRuntime, solveBoundary, bool) {
 	if compiler.state == nil || compiler.topology == nil || !relation.OwnedBy(compiler.topology) {
-		return nil, SolveFailurePhaseCompileValidation, false
+		return nil, refused(SolveFailureFamilyCompile, "validation"), false
 	}
 	graph, ok := compiler.topology.Graph(relation)
 	if !ok || graph == nil {
-		return nil, SolveFailurePhaseCompileValidation, false
+		return nil, refused(SolveFailureFamilyCompile, "validation"), false
 	}
 	binding := &SchemaBinding{state: compiler.state}
 	compiled, ok := compileReceiptFactors(binding, graph)
 	if !ok || compiled == nil {
-		return nil, SolveFailurePhaseCompileComposition, false
+		return nil, refused(SolveFailureFamilyCompile, "composition"), false
 	}
 	rows := make([]runtimeMember, 0, len(compiler.memberBuilders))
 	for _, build := range compiler.memberBuilders {
 		if build == nil {
-			return nil, SolveFailurePhaseCompileMemberBinding, false
+			return nil, refused(SolveFailureFamilyCompile, "member-binding"), false
 		}
 		row, built := build(compiled)
 		if !built || row == nil {
-			return nil, SolveFailurePhaseCompileMemberBinding, false
+			return nil, refused(SolveFailureFamilyCompile, "member-binding"), false
 		}
 		rows = append(rows, row)
 	}
 	queryByKey := make(map[composition.Key]runtimeQuery, len(compiler.queryBuilders))
 	for _, build := range compiler.queryBuilders {
 		if build == nil {
-			return nil, SolveFailurePhaseCompileQueryBinding, false
+			return nil, refused(SolveFailureFamilyCompile, "query-binding"), false
 		}
 		row, built := build(compiled)
 		if !built || row == nil {
-			return nil, SolveFailurePhaseCompileQueryBinding, false
+			return nil, refused(SolveFailureFamilyCompile, "query-binding"), false
 		}
 		if _, duplicate := queryByKey[row.query().Key()]; duplicate {
-			return nil, SolveFailurePhaseCompileQueryBinding, false
+			return nil, refused(SolveFailureFamilyCompile, "query-binding"), false
 		}
 		queryByKey[row.query().Key()] = row
 	}
@@ -2165,34 +2209,34 @@ func (compiler receiptSolverCompiler) compile(relation equation.Relation) (*solv
 		identity, indexed := graph.QueryAt(index)
 		row, present := queryByKey[identity.Key()]
 		if !indexed || !present || row == nil || row.query().Key() != identity.Key() {
-			return nil, SolveFailurePhaseCompileQueryBinding, false
+			return nil, refused(SolveFailureFamilyCompile, "query-binding"), false
 		}
 		queries[index] = row
 	}
 	observations := make([]runtimeObservation, 0, len(compiler.observationBuilders))
 	for _, build := range compiler.observationBuilders {
 		if build == nil {
-			return nil, SolveFailurePhaseCompileRuntimeAssembly, false
+			return nil, refused(SolveFailureFamilyCompile, "runtime-assembly"), false
 		}
 		row, built := build(compiled)
 		if !built || row == nil {
-			return nil, SolveFailurePhaseCompileRuntimeAssembly, false
+			return nil, refused(SolveFailureFamilyCompile, "runtime-assembly"), false
 		}
 		observations = append(observations, row)
 	}
 	runtime, ok := assembleReceiptRuntime(compiled.runtime.state, compiled.runtime.authority, graph, compiled.carrier, compiled.byKey, rows, queries, observations)
 	if !ok || runtime == nil {
-		return nil, SolveFailurePhaseCompileRuntimeAssembly, false
+		return nil, refused(SolveFailureFamilyCompile, "runtime-assembly"), false
 	}
 	runtime.factors = append([]runtimeFactor(nil), compiled.ordered...)
 	runtime.topology = compiler.topology
 	for _, factor := range compiled.ordered {
 		if factor == nil {
-			return nil, SolveFailurePhaseCompileComposition, false
+			return nil, refused(SolveFailureFamilyCompile, "composition"), false
 		}
 		factor.releaseColdBindings()
 	}
-	return runtime, SolveFailurePhaseNone, true
+	return runtime, boundaryNone, true
 }
 
 // ReceiptCompilation is the opaque receipt-native Rule attachment transaction.

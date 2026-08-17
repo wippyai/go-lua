@@ -84,7 +84,7 @@ func anchorRejectFindingsOutside(t *testing.T, clause string, findings []anchorF
 		if finding.line == line {
 			continue
 		}
-		t.Errorf("anchor clause %s: clean code at %s:%d:%d emitted %s %s: %s", clause, finding.file, finding.line, finding.column, finding.severity, finding.code, finding.message)
+		t.Errorf("anchor clause %s: clean code at %s:%d:%d emitted severity %d %s: %s", clause, finding.file, finding.line, finding.column, finding.severity, finding.code, finding.message)
 	}
 }
 
@@ -202,7 +202,7 @@ func anchorReportSummary(findings []anchorFinding) string {
 	}
 	rows := make([]string, 0, len(findings))
 	for _, finding := range findings {
-		rows = append(rows, fmt.Sprintf("%s %s at %s:%d:%d", finding.severity, finding.code, finding.file, finding.line, finding.column))
+		rows = append(rows, fmt.Sprintf("severity %d %s at %s:%d:%d", finding.severity, finding.code, finding.file, finding.line, finding.column))
 	}
 	return strings.Join(rows, "; ")
 }

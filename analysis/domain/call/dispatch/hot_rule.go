@@ -314,20 +314,15 @@ func (rule *HotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, m
 		return engine.BindingRuleRowRef{}, false
 	}
 	implementation, implementationOK := callowner.ResolveHeterogeneousRuleImplementation(rule.implementation)
-	transaction, ok := engine.BeginMountedRuleAdmission(assembly, implementation, occurrence, receipt)
-	if !implementationOK || !ok {
-		return engine.BindingRuleRowRef{}, false
-	}
-	readRef, readOK := rule.values.Ref(receipt.coordinate)
-	writeRef, writeOK := rule.calls.Ref(receipt.key)
-	if !readOK || !writeOK || !engine.AddExactRead(transaction, readRef) || !engine.AddExactWrite(transaction, writeRef) {
-		return engine.BindingRuleRowRef{}, false
-	}
-	queued := assembly.QueueMountedRuleFinalizer(capability, func() bool {
-		sourceReceipt, sourceOK := transaction.Seal()
-		if !sourceOK {
+	admit := func(transaction *engine.RuleSourceTransaction) bool {
+		if !implementationOK {
 			return false
 		}
+		readRef, readOK := rule.values.Ref(receipt.coordinate)
+		writeRef, writeOK := rule.calls.Ref(receipt.key)
+		return readOK && writeOK && engine.AddExactRead(transaction, readRef) && engine.AddExactWrite(transaction, writeRef)
+	}
+	issue := func(sourceReceipt engine.RuleSurfaceSourceReceipt) bool {
 		draft, draftOK := implementation.BeginReceiptRuleRow(sourceReceipt)
 		readPart, readPartOK := implementation.ReceiptReadPart(sourceReceipt, 0)
 		writePart, writePartOK := implementation.ReceiptWritePart(sourceReceipt, 0)
@@ -336,7 +331,8 @@ func (rule *HotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, m
 		}
 		_, added := assembly.AddRuleFromDraft(occurrence, draft)
 		return added
-	})
+	}
+	queued := engine.AdmitMountedRule(assembly, implementation, capability, occurrence, receipt, admit, issue)
 	return engine.BindingRuleRowRef{}, queued
 }
 

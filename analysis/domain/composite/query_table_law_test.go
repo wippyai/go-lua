@@ -6,7 +6,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/query"
-	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
 
 // publishedQueryFamilies is the analyzer's published query identity space,
@@ -22,9 +21,10 @@ func publishedQueryFamilies() []schema.Key {
 // sealed by the one declaration root, and that every family reads a coordinate
 // space the same table declares.
 func TestQueryTableSeals(t *testing.T) {
-	bundle, bundleOK := vocabulary.New()
-	if !bundleOK {
-		t.Fatal("closed semantic vocabulary unavailable")
+	roles, rolesOK := SemanticRoles()
+	specs, specsOK := queryRegistrationSpecs(roles)
+	if !rolesOK || !specsOK {
+		t.Fatal("declared query identities did not resolve")
 	}
 	sealed, failure := Table()
 	if failure.Available() || sealed == nil {
@@ -44,7 +44,7 @@ func TestQueryTableSeals(t *testing.T) {
 			t.Fatalf("published family %q is declared by no sealed row", family)
 		}
 	}
-	for position, spec := range queryRegistrationSpecs(bundle) {
+	for position, spec := range specs {
 		row, rowOK := view.At(position)
 		registration, registrationOK := row.(*query.Registration)
 		if !rowOK || !registrationOK || registration.Key() != spec.Family {
@@ -67,17 +67,23 @@ func TestQueryTableSeals(t *testing.T) {
 // schema opens its query slot with, so the declaration and the slot cannot
 // name two contracts.
 func TestQueryCodecsAreTheSchemaFreezerIdentities(t *testing.T) {
-	bundle, bundleOK := vocabulary.New()
-	if !bundleOK {
-		t.Fatal("closed semantic vocabulary unavailable")
+	roles, rolesOK := SemanticRoles()
+	specs, specsOK := queryRegistrationSpecs(roles)
+	if !rolesOK || !specsOK {
+		t.Fatal("declared query identities did not resolve")
 	}
 	declared := make(map[schema.Key]identity.ContentID)
-	for _, spec := range queryRegistrationSpecs(bundle) {
+	for _, spec := range specs {
 		declared[spec.Family] = spec.Codec
 	}
+	valueCodec, valueCodecOK := roles.Key("semantic/query-result/value-summary")
+	effectCodec, effectCodecOK := roles.Key("semantic/query-result/effect-exact")
+	if !valueCodecOK || !effectCodecOK {
+		t.Fatal("declared query codec roles did not resolve")
+	}
 	for family, codec := range map[schema.Key]identity.ContentID{
-		QueryFamilyValueSummary: identity.ContentID(bundle.ValueCodec.Digest()),
-		QueryFamilyEffectExact:  identity.ContentID(bundle.EffectCodec.Digest()),
+		QueryFamilyValueSummary: identity.ContentID(valueCodec.Digest()),
+		QueryFamilyEffectExact:  identity.ContentID(effectCodec.Digest()),
 	} {
 		if declared[family] != codec {
 			t.Fatalf("family %q is declared under a codec the schema does not freeze its results with", family)

@@ -7,9 +7,20 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/internal/framing"
 	"github.com/wippyai/go-lua/analysis/lattice"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
+)
+
+// The semantic roles the scratch axes are declared under. An axis names a role
+// by the key it is declared under and the surface resolves it against the
+// structural vocabulary sealed below, so the scratch table declares the rows
+// these keys name.
+const (
+	valueRole  schema.Key = "semantic/factor/value"
+	heapRole   schema.Key = "semantic/factor/heap"
+	packRole   schema.Key = "semantic/factor/pack"
+	absentRole schema.Key = "semantic/factor/absent"
 )
 
 // scratchInputs is a stand-in for a composition's Link input record. The
@@ -41,6 +52,32 @@ func (surface scratchRuleSurface) Entries() []schema.Entry {
 }
 
 func (surface scratchRuleSurface) Seal(schema.View, schema.Sealed) schema.SealFailure {
+	return schema.SealFailure{}
+}
+
+// scratchStructureSurface stands in for the structural vocabulary. It carries
+// real semantic role rows, because an axis names its identity by reference and
+// the axis surface resolves that reference against this view; the vocabulary's
+// own totality laws are its package's and are not restated here.
+type scratchStructureSurface struct{}
+
+func (surface scratchStructureSurface) Kind() schema.SurfaceKind {
+	return schema.SurfaceKindStructure
+}
+
+func (surface scratchStructureSurface) Entries() []schema.Entry {
+	rows, ok := structure.Collect(vocabulary.RoleSpecs("factor/value", "factor/heap", "factor/pack"))
+	if !ok {
+		return nil
+	}
+	entries := make([]schema.Entry, len(rows))
+	for index, row := range rows {
+		entries[index] = row
+	}
+	return entries
+}
+
+func (surface scratchStructureSurface) Seal(schema.View, schema.Sealed) schema.SealFailure {
 	return schema.SealFailure{}
 }
 
@@ -78,10 +115,9 @@ func scratchAlgebra() Algebra[uint64] {
 
 // scratchSpec is one complete axis declaration. Each law test starts from this
 // record and removes exactly the field the law is about.
-func scratchSpec(key schema.Key, principal programartifact.RuleOutputKind, semantic func(vocabulary.Bundle) identity.SemanticKey) Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64] {
+func scratchSpec(key, semantic schema.Key) Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64] {
 	return Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]{
 		Key:         key,
-		Principal:   principal,
 		Storage:     StorageFactor,
 		Cardinality: CardinalityDense,
 		Lifetime:    LifetimeLink,
@@ -89,7 +125,8 @@ func scratchSpec(key schema.Key, principal programartifact.RuleOutputKind, seman
 		Concurrency: ConcurrencySingleWriter,
 		Semantic:    semantic,
 		Declare: func(context Declaration) (*scratchFragment, bool) {
-			return &scratchFragment{semantic: semantic(context.Bundle)}, true
+			resolved, ok := context.Roles.Key(semantic)
+			return &scratchFragment{semantic: resolved}, ok
 		},
 		Bind: func(context Binding[scratchInputs, *scratchFragment]) (*scratchAxis, bool) {
 			return &scratchAxis{fragment: context.Fragment}, context.Inputs.ready
@@ -97,10 +134,6 @@ func scratchSpec(key schema.Key, principal programartifact.RuleOutputKind, seman
 		Algebra: func(bound *scratchAxis) (Algebra[uint64], bool) { return scratchAlgebra(), true },
 	}
 }
-
-func valueSemantic(bundle vocabulary.Bundle) identity.SemanticKey { return bundle.ValueFactor }
-
-func heapSemantic(bundle vocabulary.Bundle) identity.SemanticKey { return bundle.HeapFactor }
 
 // sealTemplates seals one axis inventory into a complete declaration table.
 // The catalog is walked rather than listed, so the surfaces the declaration
@@ -117,11 +150,14 @@ func sealTable(t *testing.T, templates []*Template[scratchInputs]) (*schema.Sche
 	t.Helper()
 	builder := schema.NewBuilder()
 	for kind := schema.SurfaceKind(1); kind.Available(); kind++ {
-		if kind == schema.SurfaceKindAxis {
+		switch kind {
+		case schema.SurfaceKindAxis:
 			builder.Register(NewSurface(templates))
-			continue
+		case schema.SurfaceKindStructure:
+			builder.Register(scratchStructureSurface{})
+		default:
+			builder.Register(scratchRuleSurface{kind: kind})
 		}
-		builder.Register(scratchRuleSurface{kind: kind})
 	}
 	return builder.Seal()
 }
@@ -139,8 +175,8 @@ func mustTemplate(t *testing.T, spec Spec[scratchInputs, *scratchFragment, *scra
 // declaration is admitted, indexed, and sealed with no verdict.
 func TestAxisSurfaceSealsCompleteInventory(t *testing.T) {
 	templates := []*Template[scratchInputs]{
-		mustTemplate(t, scratchSpec("value", programartifact.RuleOutputValue, valueSemantic)),
-		mustTemplate(t, scratchSpec("heap", programartifact.RuleOutputHeap, heapSemantic)),
+		mustTemplate(t, scratchSpec("value", valueRole)),
+		mustTemplate(t, scratchSpec("heap", heapRole)),
 	}
 	if failure := sealTemplates(t, templates); failure.Available() {
 		t.Fatalf("complete axis inventory rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
@@ -192,7 +228,7 @@ func TestAxisSurfaceRejectsAForeignRow(t *testing.T) {
 // surface's own derivation of its key. An entry identity minted for another
 // surface names another entry, so it may not travel here.
 func TestAxisIdentityIsThisSurfaceDerivation(t *testing.T) {
-	template := mustTemplate(t, scratchSpec("value", programartifact.RuleOutputValue, valueSemantic))
+	template := mustTemplate(t, scratchSpec("value", valueRole))
 	template.id = schema.NewEntryID(schema.SurfaceKindRule, template.key)
 	failure := sealTemplates(t, []*Template[scratchInputs]{template})
 	if failure.Law != LawAxisIdentity || failure.Disposition != schema.DispositionMalformed {
@@ -204,8 +240,8 @@ func TestAxisIdentityIsThisSurfaceDerivation(t *testing.T) {
 // identity. The entry identity is derived from the key, so the declaration
 // root rejects the duplicate before any axis law is reached.
 func TestAxisKeyIsUnique(t *testing.T) {
-	first := mustTemplate(t, scratchSpec("value", programartifact.RuleOutputValue, valueSemantic))
-	second := mustTemplate(t, scratchSpec("value", programartifact.RuleOutputHeap, heapSemantic))
+	first := mustTemplate(t, scratchSpec("value", valueRole))
+	second := mustTemplate(t, scratchSpec("value", heapRole))
 	failure := sealTemplates(t, []*Template[scratchInputs]{first, second})
 	if failure.Law != schema.LawEntryUnique || failure.Disposition != schema.DispositionDuplicate {
 		t.Fatalf("duplicate axis key sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
@@ -215,39 +251,11 @@ func TestAxisKeyIsUnique(t *testing.T) {
 // TestAxisSemanticIsDeclared states that an axis resolves to one canonical
 // engine identity in the vocabulary it is sealed against.
 func TestAxisSemanticIsDeclared(t *testing.T) {
-	template := mustTemplate(t, scratchSpec("value", programartifact.RuleOutputValue, valueSemantic))
-	template.semantic = func(vocabulary.Bundle) identity.SemanticKey { return identity.SemanticKey{} }
+	template := mustTemplate(t, scratchSpec("value", valueRole))
+	template.semantic = absentRole
 	failure := sealTemplates(t, []*Template[scratchInputs]{template})
-	if failure.Law != LawSemanticIdentity || failure.Disposition != schema.DispositionMalformed {
+	if failure.Law != LawSemanticIdentity || failure.Disposition != schema.DispositionIncomplete {
 		t.Fatalf("axis without a canonical identity sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
-	}
-}
-
-// TestAxisWriterPrincipalIsDeclared is the I1 down-payment: an axis names the
-// principal that writes it.
-func TestAxisWriterPrincipalIsDeclared(t *testing.T) {
-	template := mustTemplate(t, scratchSpec("value", programartifact.RuleOutputValue, valueSemantic))
-	template.principal = programartifact.RuleOutputInvalid
-	failure := sealTemplates(t, []*Template[scratchInputs]{template})
-	if failure.Law != LawPrincipalDeclared || failure.Disposition != schema.DispositionIncomplete {
-		t.Fatalf("undeclared writer principal sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
-	}
-	if failure.Contributor != schema.SurfaceKindAxis {
-		t.Fatalf("verdict contributor = %d", failure.Contributor)
-	}
-}
-
-// TestAxisWriterPrincipalIsUnique is the other half of I1: one principal
-// writes exactly one axis, so a fact cannot have two owners.
-func TestAxisWriterPrincipalIsUnique(t *testing.T) {
-	first := mustTemplate(t, scratchSpec("value", programartifact.RuleOutputValue, valueSemantic))
-	second := mustTemplate(t, scratchSpec("heap", programartifact.RuleOutputValue, heapSemantic))
-	failure := sealTemplates(t, []*Template[scratchInputs]{first, second})
-	if failure.Law != LawPrincipalUnique || failure.Disposition != schema.DispositionDuplicate {
-		t.Fatalf("shared writer principal sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
-	}
-	if failure.Entry != first.ID() {
-		t.Fatalf("verdict named entry %x, not the prior claimant", failure.Entry)
 	}
 }
 
@@ -256,10 +264,10 @@ func TestAxisWriterPrincipalIsUnique(t *testing.T) {
 // the table says so at seal rather than at bind.
 func TestAxisRequiredFieldsAreComplete(t *testing.T) {
 	for _, missing := range []string{"semantic", "declare", "bind"} {
-		template := mustTemplate(t, scratchSpec("value", programartifact.RuleOutputValue, valueSemantic))
+		template := mustTemplate(t, scratchSpec("value", valueRole))
 		switch missing {
 		case "semantic":
-			template.semantic = nil
+			template.semantic = ""
 		case "declare":
 			template.declare = nil
 		case "bind":
@@ -276,7 +284,7 @@ func TestAxisRequiredFieldsAreComplete(t *testing.T) {
 // completeness: an axis identity alone is not a declaration.
 func TestAxisMetadataIsComplete(t *testing.T) {
 	for _, missing := range []string{"storage", "cardinality", "lifetime", "mutability", "concurrency"} {
-		template := mustTemplate(t, scratchSpec("value", programartifact.RuleOutputValue, valueSemantic))
+		template := mustTemplate(t, scratchSpec("value", valueRole))
 		switch missing {
 		case "storage":
 			template.storage = StorageInvalid
@@ -299,17 +307,17 @@ func TestAxisMetadataIsComplete(t *testing.T) {
 // TestAxisDependencyEdgesResolve states that a declared dependency names an
 // axis in this table.
 func TestAxisDependencyEdgesResolve(t *testing.T) {
-	spec := scratchSpec("value", programartifact.RuleOutputValue, valueSemantic)
+	spec := scratchSpec("value", valueRole)
 	spec.Dependencies = []schema.Key{"absent"}
 	template := mustTemplate(t, spec)
 	failure := sealTemplates(t, []*Template[scratchInputs]{template})
 	if failure.Law != LawDependencyResolves || failure.Disposition != schema.DispositionIncomplete {
 		t.Fatalf("unresolved dependency sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
-	resolved := scratchSpec("heap", programartifact.RuleOutputHeap, heapSemantic)
+	resolved := scratchSpec("heap", heapRole)
 	resolved.Dependencies = []schema.Key{"value"}
 	if failure = sealTemplates(t, []*Template[scratchInputs]{
-		mustTemplate(t, scratchSpec("value", programartifact.RuleOutputValue, valueSemantic)),
+		mustTemplate(t, scratchSpec("value", valueRole)),
 		mustTemplate(t, resolved),
 	}); failure.Available() {
 		t.Fatalf("resolved dependency rejected: law=%d", failure.Law)
@@ -319,8 +327,8 @@ func TestAxisDependencyEdgesResolve(t *testing.T) {
 // TestAxisSemanticIsUnique states that two axes cannot claim one canonical
 // engine identity.
 func TestAxisSemanticIsUnique(t *testing.T) {
-	first := mustTemplate(t, scratchSpec("value", programartifact.RuleOutputValue, valueSemantic))
-	second := mustTemplate(t, scratchSpec("heap", programartifact.RuleOutputHeap, valueSemantic))
+	first := mustTemplate(t, scratchSpec("value", valueRole))
+	second := mustTemplate(t, scratchSpec("heap", valueRole))
 	failure := sealTemplates(t, []*Template[scratchInputs]{first, second})
 	if failure.Law != LawSemanticUnique || failure.Disposition != schema.DispositionDuplicate {
 		t.Fatalf("shared axis semantic sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
@@ -334,7 +342,7 @@ func TestAxesBindBeforeRules(t *testing.T) {
 	builder := schema.NewBuilder()
 	builder.Register(scratchRuleSurface{kind: schema.SurfaceKindRule})
 	builder.Register(NewSurface([]*Template[scratchInputs]{
-		mustTemplate(t, scratchSpec("value", programartifact.RuleOutputValue, valueSemantic)),
+		mustTemplate(t, scratchSpec("value", valueRole)),
 	}))
 	_, failure := builder.Seal()
 	if failure.Law != schema.LawSurfacePhase || failure.Disposition != schema.DispositionMalformed {
@@ -346,10 +354,7 @@ func TestAxesBindBeforeRules(t *testing.T) {
 // spec missing any required field yields no template at all.
 func TestNewRejectsIncompleteSpec(t *testing.T) {
 	cases := map[string]func(*Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]){
-		"key": func(spec *Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]) { spec.Key = "" },
-		"principal": func(spec *Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]) {
-			spec.Principal = programartifact.RuleOutputInvalid
-		},
+		"key":     func(spec *Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]) { spec.Key = "" },
 		"storage": func(spec *Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]) { spec.Storage = StorageInvalid },
 		"cardinality": func(spec *Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]) {
 			spec.Cardinality = CardinalityInvalid
@@ -363,7 +368,7 @@ func TestNewRejectsIncompleteSpec(t *testing.T) {
 		"concurrency": func(spec *Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]) {
 			spec.Concurrency = ConcurrencyInvalid
 		},
-		"semantic": func(spec *Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]) { spec.Semantic = nil },
+		"semantic": func(spec *Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]) { spec.Semantic = "" },
 		"declare":  func(spec *Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]) { spec.Declare = nil },
 		"bind":     func(spec *Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]) { spec.Bind = nil },
 		"algebra":  func(spec *Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]) { spec.Algebra = nil },
@@ -372,7 +377,7 @@ func TestNewRejectsIncompleteSpec(t *testing.T) {
 		},
 	}
 	for missing, damage := range cases {
-		spec := scratchSpec("value", programartifact.RuleOutputValue, valueSemantic)
+		spec := scratchSpec("value", valueRole)
 		damage(&spec)
 		if template, ok := New(spec); ok || template != nil {
 			t.Fatalf("spec without %s admitted", missing)
@@ -384,21 +389,26 @@ func TestNewRejectsIncompleteSpec(t *testing.T) {
 // the algebra of that binding are one step: a bound axis without a complete
 // algebra is not published.
 func TestBoundAxisPublishesItsAlgebra(t *testing.T) {
-	bundle, bundleOK := vocabulary.New()
-	if !bundleOK {
-		t.Fatal("vocabulary")
+	rows, rowsOK := structure.Collect(vocabulary.RoleSpecs("factor/value", "factor/heap", "factor/pack"))
+	roles, rolesOK := vocabulary.NewRoles(rows)
+	if !rowsOK || !rolesOK {
+		t.Fatal("scratch semantic role vocabulary")
 	}
-	spec := scratchSpec("value", programartifact.RuleOutputValue, valueSemantic)
+	valueFactor, valueFactorOK := roles.Key(valueRole)
+	if !valueFactorOK {
+		t.Fatal("scratch value role did not resolve")
+	}
+	spec := scratchSpec("value", valueRole)
 	template := mustTemplate(t, spec)
 	builder := engine.NewSchema()
-	fragment, declared := template.Declare(Declaration{Builder: builder, Bundle: bundle})
+	fragment, declared := template.Declare(Declaration{Builder: builder, Roles: roles})
 	if !declared || !fragment.Available() {
 		t.Fatal("scratch axis did not declare")
 	}
 	// The bind thunk needs one open engine binding to carry; the scratch axis
 	// declares no engine slot of its own, so the schema below is the smallest
 	// sealable one.
-	if _, slotOK := engine.NewFactorSlot[uint64](builder, bundle.ValueFactor); !slotOK {
+	if _, slotOK := engine.NewFactorSlot[uint64](builder, valueFactor); !slotOK {
 		t.Fatal("scratch factor slot")
 	}
 	sealed, sealedOK := builder.Seal()
@@ -423,7 +433,7 @@ func TestBoundAxisPublishesItsAlgebra(t *testing.T) {
 	if _, rejected := template.Bind(binding, scratchInputs{}, fragment); rejected {
 		t.Fatal("axis published a cell for a rejected binding")
 	}
-	incomplete := scratchSpec("heap", programartifact.RuleOutputHeap, heapSemantic)
+	incomplete := scratchSpec("heap", heapRole)
 	incomplete.Algebra = func(*scratchAxis) (Algebra[uint64], bool) { return Algebra[uint64]{}, true }
 	if _, published := mustTemplate(t, incomplete).Bind(binding, scratchInputs{ready: true}, fragment); published {
 		t.Fatal("axis published an incomplete algebra")
@@ -474,12 +484,12 @@ func TestAdoptProjectsOneEngineAlgebra(t *testing.T) {
 // so moving it moves the digest.
 func TestTableDigestCoversDeclaredContent(t *testing.T) {
 	declared, failure := sealTable(t, []*Template[scratchInputs]{
-		mustTemplate(t, scratchSpec("value", programartifact.RuleOutputValue, valueSemantic)),
+		mustTemplate(t, scratchSpec("value", valueRole)),
 	})
 	if failure.Available() {
 		t.Fatalf("scratch axis inventory rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
-	spec := scratchSpec("value", programartifact.RuleOutputValue, valueSemantic)
+	spec := scratchSpec("value", valueRole)
 	spec.Storage = StorageStatic
 	shifted, failure := sealTable(t, []*Template[scratchInputs]{mustTemplate(t, spec)})
 	if failure.Available() {
@@ -498,13 +508,13 @@ func TestTableDigestCoversDeclaredContent(t *testing.T) {
 // nothing else.
 func TestTableDigestCoversSemanticIdentity(t *testing.T) {
 	declared, failure := sealTable(t, []*Template[scratchInputs]{
-		mustTemplate(t, scratchSpec("value", programartifact.RuleOutputValue, valueSemantic)),
+		mustTemplate(t, scratchSpec("value", valueRole)),
 	})
 	if failure.Available() {
 		t.Fatalf("scratch axis inventory rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
 	shifted, failure := sealTable(t, []*Template[scratchInputs]{
-		mustTemplate(t, scratchSpec("value", programartifact.RuleOutputValue, heapSemantic)),
+		mustTemplate(t, scratchSpec("value", heapRole)),
 	})
 	if failure.Available() {
 		t.Fatalf("axis with a shifted semantic role rejected: law=%d disposition=%s", failure.Law, failure.Disposition)

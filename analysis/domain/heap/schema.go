@@ -17,6 +17,7 @@ import (
 	linkhost "github.com/wippyai/go-lua/analysis/program/link/host"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 )
 
 const schemaFormat uint64 = 0x686561702d7639 // "heap-v9"
@@ -1698,17 +1699,17 @@ func (owner *schema) rootRuntimeKinds(root uint32) (runtimekind.Set, bool) {
 	}
 }
 
-func freshRootKinds(kind target.FreshKind) (runtimekind.Set, bool) {
+func freshRootKinds(kind schematype.FreshClass) (runtimekind.Set, bool) {
 	switch kind {
-	case target.FreshTable:
+	case schematype.FreshClassTable:
 		return runtimekind.Bit(runtimekind.Table), true
-	case target.FreshFunction:
+	case schematype.FreshClassFunction:
 		return runtimekind.Bit(runtimekind.Function), true
-	case target.FreshThread:
+	case schematype.FreshClassThread:
 		return runtimekind.Bit(runtimekind.Thread), true
-	case target.FreshUserdata:
+	case schematype.FreshClassUserdata:
 		return runtimekind.Bit(runtimekind.Userdata), true
-	case target.FreshError, target.FreshReflection:
+	case schematype.FreshClassError, schematype.FreshClassReflection:
 		// Error and reflection are fresh reference roots with no finer Heap
 		// shape vocabulary. Preserve their production identity as the
 		// conservative Userdata runtime family rather than dropping the root.

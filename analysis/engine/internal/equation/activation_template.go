@@ -264,7 +264,7 @@ func activationPrototypeInstance(row RuleInstance) bool {
 	}
 	for index, write := range row.Writes {
 		if write.Index != uint64(index) || write.Surface.Form != SurfaceWriteExact || (write.Surface.Mode != TargetModeStrong && write.Surface.Mode != TargetModeWeak) || write.Surface.Semantic.Available() || write.Surface.Normalizer.Available() ||
-			write.Route != 0 || len(write.Candidates) != 0 || len(write.TargetCandidates) != 0 || len(write.Relations) != 0 {
+			write.Route != 0 {
 			return false
 		}
 	}
@@ -657,8 +657,14 @@ func normalizeTemplateFormal(value Template) (result Template, resultBatch *Batc
 		pointRefs[point.Site] = ref
 		pointSites[ref] = point.Site
 	}
-	for _, port := range ports {
-		if _, present := pointRefs[port.Site()]; present {
+	// Boundary point ordinals follow the declared role vector. The ports map is
+	// a lookup index into that vector and carries no order authority.
+	for _, role := range result.Roles {
+		port, present := ports[role.Role]
+		if !present {
+			return Template{}, nil, nil, false
+		}
+		if _, issued := pointRefs[port.Site()]; issued {
 			continue
 		}
 		ref, admitted := formal.AdmitPoint(port.Site())

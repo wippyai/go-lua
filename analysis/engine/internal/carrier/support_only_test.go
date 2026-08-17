@@ -50,18 +50,13 @@ func (operation *carryOnlyOperation) InitialRootReady() bool {
 	return operation != nil && operation.prepared
 }
 
-func (*carryOnlyOperation) DeclaredUnit(Unit) bool                       { return false }
-func (*carryOnlyOperation) DeclaredTarget(Target) bool                   { return false }
-func (*carryOnlyOperation) DeclaredSelector(Selector, SelectorKind) bool { return false }
-func (*carryOnlyOperation) TargetNotifications(Target) ([]Unit, bool)    { return nil, false }
-func (*carryOnlyOperation) PrepareWidening([]Target) (uint64, bool)      { return 0, false }
-func (*carryOnlyOperation) PrepareNarrowing([]Target) (uint64, bool)     { return 0, false }
-func (*carryOnlyOperation) DeclaredSelectorTargets(Selector) ([]Target, bool) {
-	return nil, false
-}
+func (*carryOnlyOperation) DeclaredUnit(Unit) bool                    { return false }
+func (*carryOnlyOperation) DeclaredTarget(Target) bool                { return false }
+func (*carryOnlyOperation) TargetNotifications(Target) ([]Unit, bool) { return nil, false }
+func (*carryOnlyOperation) PrepareWidening([]Target) (uint64, bool)   { return 0, false }
+func (*carryOnlyOperation) PrepareNarrowing([]Target) (uint64, bool)  { return 0, false }
 func (*carryOnlyOperation) ValidUnit(Unit) bool                       { return false }
 func (*carryOnlyOperation) ValidTarget(Target) bool                   { return false }
-func (*carryOnlyOperation) ValidSelector(Selector, SelectorKind) bool { return false }
 func (operation *carryOnlyOperation) Supports(kind MergeKind) bool {
 	return kind == Join || kind == Widen
 }

@@ -1,8 +1,8 @@
 package typ
 
 import (
-	"github.com/wippyai/go-lua/analysis/internal/hash"
 	"github.com/wippyai/go-lua/analysis/domain/type/kind"
+	"github.com/wippyai/go-lua/analysis/internal/hash"
 )
 
 // The recursive hash is a structural value, but its evaluation is a finite

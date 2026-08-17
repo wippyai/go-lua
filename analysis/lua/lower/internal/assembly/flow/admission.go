@@ -300,7 +300,7 @@ func (r *Rows) AdmitTableField(counts [keyspace.FamilyCount]uint32, term, table,
 	if r == nil || !countedFamily(counts, table, keyspace.FamilyTable) || !flowrole.FieldSourceFamily(counts, key, fieldKind) || !countedFamily(counts, values, keyspace.FamilyValues) || fieldKind < flowkind.FieldList || fieldKind > flowkind.FieldKey || !denseTerm(term, keyspace.FamilyTableField, len(r.tables.fields)+1) {
 		return reject("invalid TableField admission")
 	}
-	if fieldKind == flowkind.FieldExact && !candidatePresent {
+	if fieldKind == flowkind.FieldExact && !candidatePresent && keyspace.TermFamily(key) != keyspace.FamilyNil {
 		return reject("exact TableField key has no exact candidate")
 	}
 	r.AppendTableField(programflow.Field{Table: table, Key: key, Values: values, Kind: fieldKind})

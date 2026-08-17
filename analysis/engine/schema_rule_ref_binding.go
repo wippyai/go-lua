@@ -25,7 +25,7 @@ func BindRuleWithOpaqueExactRead[OK ~uint32 | ~uint64, V, O, RV any](binding *Sc
 	shape, shapeOK := state.schema.ruleShapeAt(ruleOrdinal)
 	readShape, readOK := state.schema.ruleReadShapeAt(ruleOrdinal, 0)
 	writeShape, writeOK := state.schema.ruleWriteShapeAt(ruleOrdinal, 0)
-	if !shapeOK || shape.OutputKind != composition.FactorOutput || shape.Inputs == 0 || shape.ReadCount != 1 || shape.CarryCount != 0 || shape.WriteCount != 1 || !readOK || readShape.Kind != composition.ReadExact || readShape.Input >= shape.Inputs || readShape.DependencyCount != 0 || !writeOK || writeShape.Kind != composition.WriteExact || writeShape.Factor != shape.Output || writeShape.Route != 0 || writeShape.CandidateCount != 0 || writeShape.DependencyCount != 0 {
+	if !shapeOK || shape.OutputKind != composition.FactorOutput || shape.Inputs == 0 || shape.ReadCount != 1 || shape.CarryCount != 0 || shape.WriteCount != 1 || !readOK || readShape.Kind != composition.ReadExact || readShape.Input >= shape.Inputs || readShape.DependencyCount != 0 || !writeOK || writeShape.Kind != composition.WriteExact || writeShape.Factor != shape.Output || writeShape.Route != 0 {
 		state.poisonLocked()
 		return Read[OrderedCells[RV]]{}, false
 	}

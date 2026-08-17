@@ -3,9 +3,9 @@ package arithmetic
 import (
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
 
@@ -28,12 +28,19 @@ type ruleAuthorities interface {
 // need interfaces above.
 func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *SchemaFragment, *HotRule] {
 	return rule.Spec[P, A, *SchemaFragment, *HotRule]{
-		Key:      "value-binary-arithmetic",
-		Role:     programartifact.RuleRoleValueBinaryArithmetic,
+		Key:    "value-binary-arithmetic",
+		Writes: "value",
+		Issues: []rule.Issuance{
+			{Occurrence: "occurrence/binary-arithmetic", Form: "issuance/computation", Input: "input/finish", Stage: "stage/local"},
+		},
 		Lane:     rule.LaneMounted,
-		Semantic: func(bundle vocabulary.Bundle) identity.SemanticKey { return bundle.ValueBinaryArithmeticRule.Rule },
+		Semantic: "semantic/rule/value/binary-arithmetic",
+		Roles:    []schema.Key{"semantic/operand/value/binary-arithmetic", "semantic/evidence/value/binary-arithmetic"},
 		Declare: func(context rule.Declaration[P]) (*SchemaFragment, bool) {
-			semantics := context.Bundle.ValueBinaryArithmeticRule
+			semantics, ok := context.Roles.Rule("value/binary-arithmetic")
+			if !ok {
+				return nil, false
+			}
 			return DeclareSchema(context.Builder, semantics.Rule, semantics.Operand, semantics.Evidence, context.Principals.ValuePrincipal())
 		},
 		Register: func(context rule.Registration[*SchemaFragment]) (engine.RuleSlotCapability, bool) {
@@ -51,4 +58,12 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *SchemaFra
 			return ok
 		},
 	}
+}
+
+// StructureSpecs is this package's contribution to the analyzer's semantic
+// role vocabulary: the three roles its rule is identified by. A role is
+// declared where it is used, so the row and the reference that names it are one
+// package's statement.
+func StructureSpecs() []structure.Spec {
+	return vocabulary.RuleRoleSpecs("value/binary-arithmetic")
 }

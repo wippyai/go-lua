@@ -104,20 +104,19 @@ func (rule *HotRule) AttachLinkOccurrence(assembly *engine.ReceiptAssembly, occu
 	if !occurrenceOK {
 		return engine.BindingRuleRowRef{}, false
 	}
-	transaction, transactionOK := engine.BeginMountedRuleAdmission(assembly, implementation, occurrence, binding)
-	if !transactionOK || !engine.AddExactWrite(transaction, write) {
-		return engine.BindingRuleRowRef{}, false
+	admit := func(transaction *engine.RuleSourceTransaction) bool {
+		return engine.AddExactWrite(transaction, write)
 	}
-	queued := assembly.QueueLinkRuleFinalizer(capability, func() bool {
-		source, sourceOK := transaction.Seal()
+	issue := func(source engine.RuleSurfaceSourceReceipt) bool {
 		draft, draftOK := implementation.BeginReceiptRuleRow(source)
 		writePart, writePartOK := implementation.ReceiptWritePart(source, 0)
-		if !sourceOK || !draftOK || !writePartOK || !draft.AddWrite(writePart) {
+		if !draftOK || !writePartOK || !draft.AddWrite(writePart) {
 			return false
 		}
 		_, added := assembly.AddRuleFromDraft(occurrence, draft)
 		return added
-	})
+	}
+	queued := engine.AdmitLinkRule(assembly, implementation, capability, occurrence, binding, admit, issue)
 	return engine.BindingRuleRowRef{}, queued
 }
 

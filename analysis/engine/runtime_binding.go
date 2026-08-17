@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
@@ -18,13 +19,6 @@ type readFormKind uint8
 const (
 	exactReadForm readFormKind = iota + 1
 	summaryReadForm
-)
-
-type writeFormKind uint8
-
-const (
-	exactWriteForm writeFormKind = iota + 1
-	selectorWriteForm
 )
 
 type boundUnit struct {
@@ -61,8 +55,6 @@ type boundFactor[K ~uint32 | ~uint64, V any] struct {
 	routeTargets     []carrier.Target
 	routeTransform   factbinding.TransformClosure[K, V]
 	routeTransformOK bool
-	writeSelectors   map[equation.Surface]carrier.Selector
-	writeCandidates  map[equation.Surface][]carrier.Target
 	carryTargets     map[composition.Key][]carrier.Target
 	carryRouteScope  map[composition.Key]bool
 }
@@ -75,8 +67,6 @@ type runtimeFactor interface {
 	supports(carrier.MergeKind) bool
 	readUnit(equation.Surface) (carrier.Unit, bool)
 	writeTarget(equation.Surface) (carrier.Target, bool)
-	writeSelector(equation.Surface) (carrier.Selector, bool)
-	writeSelectorCandidates(equation.Surface) ([]carrier.Target, bool)
 	hasRouteUniverse() bool
 	routeUniverse() []carrier.Target
 	carryRouteScopeFor(equation.RuleMember) bool
@@ -91,7 +81,7 @@ type runtimeFactor interface {
 type graphFactorUses struct {
 	reads        []graphReadUse
 	writes       []graphWriteUse
-	targets      []equation.Surface // exact targets named by selector write vectors
+	targets      []equation.Surface // exact targets named by carry closures
 	queries      []equation.Surface
 	carryTargets map[composition.Key]graphCarryClosure // exact predecessor slice for one carrying member
 }
@@ -106,7 +96,6 @@ type graphWriteUse struct {
 	rule    *schemaRuleRef
 	index   int
 	surface equation.Surface
-	targets []equation.Surface // positional selector target candidates only
 }
 
 // schemaRuleRef is a no-copy cold Rule proof. It names one canonical Schema
@@ -367,17 +356,6 @@ func buildGraphCarryClosures(schema *Schema, graph *equation.Graph, rules map[co
 						return nil, false
 					}
 					node.route = true
-				case composition.WriteSelect:
-					if write.CandidateCount == 0 {
-						return nil, false
-					}
-					for candidateIndex := uint64(0); candidateIndex < write.CandidateCount; candidateIndex++ {
-						target, targetOK := member.WriteTargetCandidateAt(int(writeIndex), int(candidateIndex))
-						if !targetOK {
-							return nil, false
-						}
-						node.direct = append(node.direct, target)
-					}
 				default:
 					return nil, false
 				}
@@ -685,26 +663,8 @@ func buildGraphBindingCatalog(schema *Schema, graph *equation.Graph) (*graphBind
 					return nil, false
 				}
 				use := graphWriteUse{rule: rule, index: writeIndex, surface: surface}
-				writeShape, writeOK := rule.write(uint64(writeIndex))
-				if !writeOK {
+				if _, writeOK := rule.write(uint64(writeIndex)); !writeOK {
 					return nil, false
-				}
-				count := 0
-				if writeShape.Kind == composition.WriteSelect {
-					if writeShape.CandidateCount == 0 {
-						return nil, false
-					}
-					count = int(writeShape.CandidateCount)
-					use.targets = make([]equation.Surface, count)
-				}
-				for targetIndex := 0; targetIndex < count; targetIndex++ {
-					target, ok := member.WriteTargetCandidateAt(writeIndex, targetIndex)
-					if !ok || !target.Available() || !appendGraphTarget(catalog, target) {
-						return nil, false
-					}
-					if len(use.targets) != 0 {
-						use.targets[targetIndex] = target
-					}
 				}
 				if !appendGraphWrite(catalog, surface, use) {
 					return nil, false
@@ -874,7 +834,6 @@ type factorGraphCatalog[K ~uint32 | ~uint64] struct {
 	weakWrites     []surfaceVectorRow
 	dynamicRead    bool
 	routeWrite     bool
-	writeSelectors []surfaceVectorRow
 	carryTargets   []carryTargetRow
 }
 
@@ -910,12 +869,10 @@ func bindFactorFromGraph[K ~uint32 | ~uint64, V any](implementation *FactorImple
 	}
 	uses, taken := runtime.takeFactorUses(descriptor.semantic)
 	if !taken {
-		println("ZZPROBE takeFactorUses false")
 		return nil, false
 	}
 	catalog, catalogOK := collectFactorGraphCatalog[K, V](descriptor, runtime.graph, uses)
 	if !catalogOK {
-		println("ZZPROBE catalog false")
 		return nil, false
 	}
 	bound := &boundFactor[K, V]{
@@ -923,8 +880,6 @@ func bindFactorFromGraph[K ~uint32 | ~uint64, V any](implementation *FactorImple
 		receipt:         receipt,
 		reads:           make(map[equation.Surface]boundUnit, len(catalog.exactReads)+len(catalog.summaryAliases)),
 		writes:          make(map[equation.Surface]boundTarget, len(catalog.strongWrites)+len(catalog.weakWrites)),
-		writeSelectors:  make(map[equation.Surface]carrier.Selector, len(catalog.writeSelectors)),
-		writeCandidates: make(map[equation.Surface][]carrier.Target, len(catalog.writeSelectors)),
 		carryTargets:    make(map[composition.Key][]carrier.Target, len(catalog.carryTargets)),
 		carryRouteScope: make(map[composition.Key]bool, len(catalog.carryTargets)),
 	}
@@ -1037,10 +992,9 @@ func bindFactorFromGraph[K ~uint32 | ~uint64, V any](implementation *FactorImple
 			}
 			bound.writes[surface] = boundTarget{target: target, mode: carrier.StrongTarget, local: surface.Local}
 		}
-		return declareWeakTargets(binding, bound, catalog.weakWrites) &&
-			declareWriteSelectors(binding, bound, catalog.writeSelectors)
+		return declareWeakTargets(binding, bound, catalog.weakWrites)
 	})
-	if !ok || binding == nil || len(bound.reads) != len(catalog.exactReads)+len(catalog.summaryAliases) || len(bound.writes) != len(catalog.strongWrites)+len(catalog.weakWrites) || len(bound.writeSelectors) != len(catalog.writeSelectors) || len(bound.writeCandidates) != len(catalog.writeSelectors) || catalog.dynamicRead && len(bound.dynamicUnits) != int(implementation.algebra.KeyEnd()) || catalog.routeWrite && len(bound.routeTargets) != int(implementation.algebra.KeyEnd()) {
+	if !ok || binding == nil || len(bound.reads) != len(catalog.exactReads)+len(catalog.summaryAliases) || len(bound.writes) != len(catalog.strongWrites)+len(catalog.weakWrites) || catalog.dynamicRead && len(bound.dynamicUnits) != int(implementation.algebra.KeyEnd()) || catalog.routeWrite && len(bound.routeTargets) != int(implementation.algebra.KeyEnd()) {
 		return nil, false
 	}
 	for _, row := range catalog.carryTargets {
@@ -1125,7 +1079,6 @@ func collectFactorGraphCatalog[K ~uint32 | ~uint64, V any](descriptor factorRunt
 	aliases := make(map[equation.Surface]summaryUnitKey)
 	strong := make(map[equation.Surface]struct{})
 	weak := make(map[equation.Surface][]equation.Surface)
-	writeSelectors := make(map[equation.Surface][]equation.Surface)
 	dynamicRead := false
 	routeWrite := false
 
@@ -1246,7 +1199,7 @@ func collectFactorGraphCatalog[K ~uint32 | ~uint64, V any](descriptor factorRunt
 			// chosen row-locally by the staged locator; no target Unit or
 			// candidate vector is present in the graph catalog.
 			if readShape.Kind != composition.ReadSelect || readShape.DependencyCount == 0 ||
-				use.surface.Mode != equation.TargetModeNone || use.surface.Semantic != key || use.surface.Normalizer.Available() || use.surface.Local == 0 {
+				use.surface.Mode != equation.TargetModeNone || use.surface.Semantic != key || use.surface.Normalizer.Available() || !use.surface.LocalAvailable() {
 				return factorGraphCatalog[K]{}, false
 			}
 			dynamicRead = true
@@ -1263,27 +1216,14 @@ func collectFactorGraphCatalog[K ~uint32 | ~uint64, V any](descriptor factorRunt
 		}
 		switch writeShape.Kind {
 		case composition.WriteExact:
-			if writeShape.Route != 0 || len(use.targets) != 0 || !collectTarget(use.surface) {
+			if writeShape.Route != 0 || !collectTarget(use.surface) {
 				return factorGraphCatalog[K]{}, false
 			}
 		case composition.WriteRoute:
-			if writeShape.Route == 0 || use.surface.Form != equation.SurfaceWriteRoute || use.surface.Mode != equation.TargetModeNone || use.surface.Semantic.Available() || use.surface.Normalizer.Available() || len(use.targets) != 0 {
+			if writeShape.Route == 0 || use.surface.Form != equation.SurfaceWriteRoute || use.surface.Mode != equation.TargetModeNone || use.surface.Semantic.Available() || use.surface.Normalizer.Available() {
 				return factorGraphCatalog[K]{}, false
 			}
 			routeWrite = true
-		case composition.WriteSelect:
-			if !matchesFactorWriteShape(descriptor.schema, descriptor.ordinal, use.surface, selectorWriteForm) || use.surface.Mode != equation.TargetModeNone || len(use.targets) == 0 {
-				return factorGraphCatalog[K]{}, false
-			}
-			for _, target := range use.targets {
-				if !collectTarget(target) {
-					return factorGraphCatalog[K]{}, false
-				}
-			}
-			if prior, exists := writeSelectors[use.surface]; exists && !sameSurfaceVector(prior, use.targets) {
-				return factorGraphCatalog[K]{}, false
-			}
-			writeSelectors[use.surface] = append([]equation.Surface(nil), use.targets...)
 		default:
 			return factorGraphCatalog[K]{}, false
 		}
@@ -1334,7 +1274,6 @@ func collectFactorGraphCatalog[K ~uint32 | ~uint64, V any](descriptor factorRunt
 		return lessRuntimeSurface(result.strongWrites[left], result.strongWrites[right])
 	})
 	result.weakWrites = sortedSurfaceVectors(weak)
-	result.writeSelectors = sortedSurfaceVectors(writeSelectors)
 	for member, closure := range uses.carryTargets {
 		result.carryTargets = append(result.carryTargets, carryTargetRow{member: member, targets: append([]equation.Surface(nil), closure.targets...), route: closure.route})
 	}
@@ -1390,6 +1329,9 @@ func lessRuntimeSurface(left, right equation.Surface) bool {
 	if left.Local != right.Local {
 		return left.Local < right.Local
 	}
+	if comparison := bytes.Compare(left.Content[:], right.Content[:]); comparison != 0 {
+		return comparison < 0
+	}
 	if left.Mode != right.Mode {
 		return left.Mode < right.Mode
 	}
@@ -1417,29 +1359,6 @@ func compareRuntimeKey(left, right composition.Key) int {
 	return 0
 }
 
-func matchesFactorWriteShape(schema *Schema, ordinal uint64, surface equation.Surface, kind writeFormKind) bool {
-	if schema == nil || !schema.Available() || ordinal >= schema.factorCount() || !surface.Available() || surface.Factor != schema.factorSemanticAt(ordinal) {
-		return false
-	}
-	if kind == exactWriteForm {
-		return surface.Form == equation.SurfaceWriteExact && !surface.Semantic.Available() && !surface.Normalizer.Available()
-	}
-	if kind != selectorWriteForm || surface.Form != equation.SurfaceWriteSelect || !surface.Semantic.Available() || surface.Normalizer.Available() {
-		return false
-	}
-	count, ok := schema.factorFormCount(ordinal)
-	if !ok {
-		return false
-	}
-	for index := 0; index < count; index++ {
-		form, formOK := schema.factorFormShapeAt(ordinal, uint64(index))
-		if formOK && form.Kind == composition.FactorSelectorWrite && form.Semantic == surface.Semantic {
-			return true
-		}
-	}
-	return false
-}
-
 func sameSummaryKeys[K ~uint32 | ~uint64](left, right []K) bool {
 	if len(left) != len(right) {
 		return false
@@ -1454,10 +1373,6 @@ func sameSummaryKeys[K ~uint32 | ~uint64](left, right []K) bool {
 
 func unitLess(left, right boundUnit) bool {
 	return left.kind < right.kind || left.kind == right.kind && left.local < right.local
-}
-
-func targetLess(left, right boundTarget) bool {
-	return left.mode < right.mode || left.mode == right.mode && left.local < right.local
 }
 
 type resolvedWeakTarget struct {
@@ -1533,77 +1448,15 @@ func sameUnitVector(left, right []boundUnit) bool {
 	return !lessUnitVector(left, right) && !lessUnitVector(right, left)
 }
 
-type resolvedWriteSelector struct {
-	surface    equation.Surface
-	candidates []boundTarget
-}
-
-func declareWriteSelectors[K ~uint32 | ~uint64, V any](binding *factbinding.Binding[K, V], bound *boundFactor[K, V], plans []surfaceVectorRow) bool {
-	resolved := make([]resolvedWriteSelector, len(plans))
-	for index, plan := range plans {
-		candidates := make([]boundTarget, len(plan.candidates))
-		for candidateIndex, surface := range plan.candidates {
-			target, ok := bound.writes[surface]
-			if !ok {
-				return false
-			}
-			candidates[candidateIndex] = target
-		}
-		resolved[index] = resolvedWriteSelector{surface: plan.surface, candidates: candidates}
-	}
-	sort.Slice(resolved, func(left, right int) bool {
-		if lessTargetVector(resolved[left].candidates, resolved[right].candidates) {
-			return true
-		}
-		if lessTargetVector(resolved[right].candidates, resolved[left].candidates) {
-			return false
-		}
-		return lessRuntimeSurface(resolved[left].surface, resolved[right].surface)
-	})
-	for index, selector := range resolved {
-		if index > 0 && sameTargetVector(resolved[index-1].candidates, selector.candidates) {
-			bound.writeSelectors[selector.surface] = bound.writeSelectors[resolved[index-1].surface]
-			bound.writeCandidates[selector.surface] = append([]carrier.Target(nil), bound.writeCandidates[resolved[index-1].surface]...)
-			continue
-		}
-		if index > 0 && !lessTargetVector(resolved[index-1].candidates, selector.candidates) {
-			return false
-		}
-		targets := make([]carrier.Target, len(selector.candidates))
-		for candidateIndex, candidate := range selector.candidates {
-			targets[candidateIndex] = candidate.target
-		}
-		issued, ok := binding.DeclareTargetSelector(targets)
-		if !ok {
-			return false
-		}
-		bound.writeSelectors[selector.surface] = issued
-		bound.writeCandidates[selector.surface] = append([]carrier.Target(nil), targets...)
-	}
-	return true
-}
-
-func lessTargetVector(left, right []boundTarget) bool {
-	for index := 0; index < len(left) && index < len(right); index++ {
-		if targetLess(left[index], right[index]) {
-			return true
-		}
-		if targetLess(right[index], left[index]) {
-			return false
-		}
-	}
-	return len(left) < len(right)
-}
-
-func sameTargetVector(left, right []boundTarget) bool {
-	return !lessTargetVector(left, right) && !lessTargetVector(right, left)
-}
-
 func (bound *boundFactor[K, V]) semantic() identity.SemanticKey {
 	if bound == nil || bound.implementation == nil || !bound.implementation.descriptor.valid() {
 		return identity.SemanticKey{}
 	}
-	return semanticKeyFromComposition(bound.implementation.descriptor.semantic)
+	semantic, ok := semanticKeyFromComposition(bound.implementation.descriptor.semantic)
+	if !ok {
+		return identity.SemanticKey{}
+	}
+	return semantic
 }
 
 func (bound *boundFactor[K, V]) operation() carrier.FactorOperation {
@@ -1883,22 +1736,6 @@ func (bound *boundFactor[K, V]) writeTarget(surface equation.Surface) (carrier.T
 	return target.target, ok
 }
 
-func (bound *boundFactor[K, V]) writeSelector(surface equation.Surface) (carrier.Selector, bool) {
-	if bound == nil {
-		return carrier.Selector{}, false
-	}
-	selector, ok := bound.writeSelectors[surface]
-	return selector, ok
-}
-
-func (bound *boundFactor[K, V]) writeSelectorCandidates(surface equation.Surface) ([]carrier.Target, bool) {
-	if bound == nil {
-		return nil, false
-	}
-	candidates, ok := bound.writeCandidates[surface]
-	return candidates, ok && len(candidates) != 0
-}
-
 // releaseColdBindings is called only after the sole compiler has attached all
 // members and queries. Those runtime objects retain concrete Units, Targets,
 // and Selectors; keeping surface maps or target vectors past that cut would
@@ -1909,8 +1746,6 @@ func (bound *boundFactor[K, V]) releaseColdBindings() {
 	}
 	bound.reads = nil
 	bound.writes = nil
-	bound.writeSelectors = nil
-	bound.writeCandidates = nil
 }
 
 // prepareRuntimeComposition establishes the one carrier composition for this

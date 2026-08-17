@@ -72,7 +72,7 @@ func (role ArtifactScalarRole) Available() bool { return role.semantic.Available
 // will fill. It is allocation shape only; final admission still validates
 // every row and relation.
 type ArtifactScalarCapacity struct {
-	Roles, Points, Edges, Transfers, Regions, Events, Rules, Bodies, Functions int
+	Roles, Points, Edges, Transfers, Regions, Events, Rules, Bodies int
 }
 
 type ArtifactScalarPoint struct {
@@ -114,34 +114,10 @@ type ArtifactScalarRule struct {
 	Route            identity.ContentID
 }
 
+// ArtifactScalarBody is the engine-neutral body transport. It carries only the
+// entry/exit point transport the engine consumes; the function declaration
+// interface stays with program/artifact.
 type ArtifactScalarBody struct {
-	ID, Context, SemanticEntry identity.ContentID
-	Function, CallFormal       identity.ContentID
-	Callable                   bool
-	Entry, Exits               []identity.ContentID
-}
-
-type ArtifactScalarFormalPort struct {
-	ID, Cell, Storage identity.ContentID
-	Position          uint32
-}
-
-type ArtifactScalarVarargPort struct{ ID, Cell identity.ContentID }
-
-type ArtifactScalarCapturePort struct {
-	ID, Inner, Outer     identity.ContentID
-	InnerBody, OuterBody identity.ContentID
-	Position             uint32
-}
-
-// ArtifactScalarFunction is the engine-neutral Program interface. Its nested
-// rows are appended through the single-use builder; callers cannot retain a
-// mutable slice that aliases the sealed cached template.
-type ArtifactScalarFunction struct {
-	ID, Body, BodyContext, Entry, CallFormal identity.ContentID
-	Formals                                  []ArtifactScalarFormalPort
-	Vararg                                   ArtifactScalarVarargPort
-	HasVararg                                bool
-	Captures                                 []ArtifactScalarCapturePort
-	Outcomes                                 []identity.ContentID
+	ID           identity.ContentID
+	Entry, Exits []identity.ContentID
 }

@@ -196,24 +196,24 @@ type executorEpoch struct {
 	activations       []equation.AcceptedMember
 }
 
-func (epoch *executorEpoch) recordFailure(reason SolveFailureReason, phase SolveFailurePhase, point, group, member, rule composition.Key) {
+func (epoch *executorEpoch) recordFailure(reason SolveFailureReason, boundary solveBoundary, point, group, member, rule composition.Key) {
 	if epoch == nil || epoch.report == nil {
 		return
 	}
-	epoch.report.record(reason, phase, semanticKeyFromComposition(point), semanticKeyFromComposition(group), semanticKeyFromComposition(member), semanticKeyFromComposition(rule))
+	epoch.report.record(reason, boundary, reportedSemanticKey(point), reportedSemanticKey(group), reportedSemanticKey(member), reportedSemanticKey(rule))
 }
 
 func (epoch *executorEpoch) recordPointFailure(reason SolveFailureReason, point equation.Point) {
 	if epoch == nil || !point.Available() {
 		return
 	}
-	epoch.recordFailure(reason, SolveFailurePhaseNone, point.Key(), composition.Key{}, composition.Key{}, composition.Key{})
+	epoch.recordFailure(reason, boundaryNone, point.Key(), composition.Key{}, composition.Key{}, composition.Key{})
 }
 
 // recordRefreshPointFailure is the point-level fallback for refreshPoint.
 // Member/group failures record their more specific certificate first, so this
 // deliberately relies on SolveReport's first-wins record boundary.
-func (epoch *executorEpoch) recordRefreshPointFailure(phase SolveFailurePhase, point equation.Point) {
+func (epoch *executorEpoch) recordRefreshPointFailure(boundary solveBoundary, point equation.Point) {
 	if epoch == nil {
 		return
 	}
@@ -221,25 +221,25 @@ func (epoch *executorEpoch) recordRefreshPointFailure(phase SolveFailurePhase, p
 	if point.Available() {
 		pointKey = point.Key()
 	}
-	epoch.recordFailure(SolveFailureReasonExecution, phase, pointKey, composition.Key{}, composition.Key{}, composition.Key{})
+	epoch.recordFailure(SolveFailureReasonExecution, boundary, pointKey, composition.Key{}, composition.Key{}, composition.Key{})
 }
 
 // recordRunFailure records a closed executor-loop boundary with no invented
 // Point/Group coordinate. Cancellation and diagnostic cutoff are terminal
 // statuses, not execution failures, and are intentionally handled by run's
 // callers without reaching this helper.
-func (epoch *executorEpoch) recordRunFailure(phase SolveFailurePhase) {
+func (epoch *executorEpoch) recordRunFailure(boundary solveBoundary) {
 	if epoch == nil || epoch.canceled() {
 		return
 	}
-	epoch.recordFailure(SolveFailureReasonExecution, phase, composition.Key{}, composition.Key{}, composition.Key{}, composition.Key{})
+	epoch.recordFailure(SolveFailureReasonExecution, boundary, composition.Key{}, composition.Key{}, composition.Key{}, composition.Key{})
 }
 
 func (epoch *executorEpoch) recordGroupFailure(reason SolveFailureReason, point equation.Point, group equation.GroupNode) {
 	if epoch == nil {
 		return
 	}
-	epoch.recordFailure(reason, SolveFailurePhaseNone, func() composition.Key {
+	epoch.recordFailure(reason, boundaryNone, func() composition.Key {
 		if point.Available() {
 			return point.Key()
 		}
@@ -256,13 +256,13 @@ func (epoch *executorEpoch) recordGroupFailure(reason SolveFailureReason, point 
 // order boundary. Program-artifact groups are singleton, so their Rule role
 // remains classifiable by AnalyzeDiagnostics; multi-member groups retain only
 // their Group identity rather than inventing one culprit.
-func (epoch *executorEpoch) recordCandidateOrderFailure(phase SolveFailurePhase, point equation.Point, group equation.GroupNode) {
+func (epoch *executorEpoch) recordCandidateOrderFailure(boundary solveBoundary, point equation.Point, group equation.GroupNode) {
 	if epoch == nil {
 		return
 	}
 	if group.MemberCount() == 1 {
 		if member, ok := group.MemberAt(0); ok {
-			epoch.recordMemberFailure(SolveFailureReasonExecution, phase, point, group, member)
+			epoch.recordMemberFailure(SolveFailureReasonExecution, boundary, point, group, member)
 			return
 		}
 	}
@@ -273,10 +273,10 @@ func (epoch *executorEpoch) recordCandidateOrderFailure(phase SolveFailurePhase,
 	if epoch.runtime != nil && epoch.runtime.graph != nil && epoch.runtime.graph.OwnsGroup(group) {
 		groupKey = group.Key()
 	}
-	epoch.recordFailure(SolveFailureReasonExecution, phase, pointKey, groupKey, composition.Key{}, composition.Key{})
+	epoch.recordFailure(SolveFailureReasonExecution, boundary, pointKey, groupKey, composition.Key{}, composition.Key{})
 }
 
-func (epoch *executorEpoch) recordMemberFailure(reason SolveFailureReason, phase SolveFailurePhase, point equation.Point, group equation.GroupNode, member equation.RuleMember) {
+func (epoch *executorEpoch) recordMemberFailure(reason SolveFailureReason, boundary solveBoundary, point equation.Point, group equation.GroupNode, member equation.RuleMember) {
 	if epoch == nil {
 		return
 	}
@@ -291,7 +291,7 @@ func (epoch *executorEpoch) recordMemberFailure(reason SolveFailureReason, phase
 	if point.Available() {
 		pointKey = point.Key()
 	}
-	epoch.recordFailure(reason, phase, pointKey, groupKey, memberKey, ruleKey)
+	epoch.recordFailure(reason, boundary, pointKey, groupKey, memberKey, ruleKey)
 }
 
 func newRuntimeEpoch(runtime *solverRuntime, relation equation.Relation, ctx context.Context) (*executorEpoch, bool) {
@@ -559,20 +559,6 @@ func (epoch *executorEpoch) canceled() bool {
 // ordinary carrier work and nested rule/query frames.
 func (epoch *executorEpoch) checkpoint() bool {
 	return epoch != nil && !epoch.canceled()
-}
-
-// diagnosticCheckpoint is installed only for flagged diagnostic solves after
-// epoch construction succeeds. Ordinary carrier and diagram probes retain the
-// cancellation-only checkpoint above.
-func (epoch *executorEpoch) diagnosticCheckpoint() bool {
-	if epoch == nil || epoch.canceled() {
-		return false
-	}
-	if epoch.diagnostics == nil || epoch.diagnostics.checkpoint() {
-		return true
-	}
-	epoch.terminal.CompareAndSwap(epochRunning, epochIncomplete)
-	return false
 }
 
 // observeActivations appends detached evidence to this immutable graph
@@ -1481,7 +1467,7 @@ func (epoch *executorEpoch) evaluate(producer runtimeProducer, cache *producerEp
 		}
 		result := member.execute(epoch.work, base, cache.inputStates, within)
 		if !result.valid {
-			epoch.recordMemberFailure(SolveFailureReasonExecution, result.phase, producer.group.Output(), producer.group, member.member())
+			epoch.recordMemberFailure(SolveFailureReasonExecution, result.boundary, producer.group.Output(), producer.group, member.member())
 			return carrier.RuleContribution{}, nil, false
 		}
 		reads = append(reads, result.reads...)
@@ -1599,13 +1585,13 @@ func (epoch *executorEpoch) addPointFoldEnvironmentEdge(edgeIndex int) bool {
 // addPointFoldFactorEdgeWithBoundary preserves the existing projection,
 // transport, and one transaction admission while returning only the failed
 // boundary for the owning refresh diagnostic.
-func (epoch *executorEpoch) addPointFoldFactorEdgeWithBoundary(edgeIndex int) (pointFoldBoundary, bool) {
+func (epoch *executorEpoch) addPointFoldFactorEdgeWithBoundary(edgeIndex int) (solveBoundary, bool) {
 	if epoch == nil || epoch.runtime == nil || epoch.work == nil || edgeIndex < 0 || edgeIndex >= len(epoch.runtime.factorEdges) {
-		return pointFoldBoundaryFactorValidation, false
+		return refused(SolveFailureFamilyRefresh, "acyclic-fold-factor-validation"), false
 	}
 	edge := epoch.runtime.factorEdges[edgeIndex]
 	if edge.source < 0 || edge.source >= len(epoch.points) || edge.target < 0 || edge.target >= len(epoch.points) || !edge.input.valid() {
-		return pointFoldBoundaryFactorValidation, false
+		return refused(SolveFailureFamilyRefresh, "acyclic-fold-factor-validation"), false
 	}
 	// Factor projection commutes with the point boundary: support and guard
 	// transport are shared by every plane, while typed reindex is factor-local.
@@ -1613,16 +1599,16 @@ func (epoch *executorEpoch) addPointFoldFactorEdgeWithBoundary(edgeIndex int) (p
 	// Value/Call/Heap/Pack/Effect roots merely to discard them afterward.
 	projected, ok := epoch.work.ProjectPointState(epoch.points[edge.source], edge.slot)
 	if !ok || !epoch.work.OwnsPointState(projected) {
-		return pointFoldBoundaryFactorProjection, false
+		return refused(SolveFailureFamilyRefresh, "acyclic-fold-factor-projection"), false
 	}
 	transported, transportBoundary, ok := epoch.work.TransportPointStateWithBoundary(projected, edge.input.pre, edge.input.plan, edge.input.post)
 	if !ok || !epoch.work.OwnsPointState(transported) {
-		return pointFoldBoundaryFromTransport(transportBoundary), false
+		return refused(SolveFailureFamilyRefresh, "acyclic-fold-factor-transport").withTransport(transportBoundary), false
 	}
 	if !epoch.work.AddPointFoldEnvironment(transported) {
-		return pointFoldBoundaryFactorAdmission, false
+		return refused(SolveFailureFamilyRefresh, "acyclic-fold-factor-admission"), false
 	}
-	return pointFoldBoundaryNone, !epoch.canceled()
+	return boundaryNone, !epoch.canceled()
 }
 
 func (epoch *executorEpoch) addPointFoldGroup(group int) bool {
@@ -1709,123 +1695,15 @@ func (epoch *executorEpoch) foldPoint(reference carrier.PointState, base carrier
 // reached the existing canonical terms fold. Refresh diagnostics use that
 // scalar to distinguish an invalid foldPoint boundary from a failure inside
 // foldPointTerms; it creates no additional fold authority or data path.
-func (epoch *executorEpoch) foldPointWithBoundary(reference carrier.PointState, base carrier.PointRHS, point equation.Point) (carrier.PointRHS, pointFoldBoundary, bool) {
+func (epoch *executorEpoch) foldPointWithBoundary(reference carrier.PointState, base carrier.PointRHS, point equation.Point) (carrier.PointRHS, solveBoundary, bool) {
 	if epoch == nil || epoch.runtime == nil || !point.Available() || !epoch.work.OwnsPointState(reference) || !epoch.work.OwnsPointRHS(base) {
-		return carrier.PointRHS{}, pointFoldBoundaryNone, false
+		return carrier.PointRHS{}, refused(SolveFailureFamilyRefresh, "acyclic-fold-point"), false
 	}
 	pointIndex, indexed := epoch.runtime.graph.PointIndex(point)
 	if !indexed || pointIndex < 0 || pointIndex >= len(epoch.runtime.environmentIncoming) || pointIndex >= len(epoch.runtime.factorIncoming) {
-		return carrier.PointRHS{}, pointFoldBoundaryNone, false
+		return carrier.PointRHS{}, refused(SolveFailureFamilyRefresh, "acyclic-fold-point"), false
 	}
 	return epoch.foldPointTermsWithBoundary(reference, base, epoch.runtime.environmentIncoming[pointIndex], epoch.runtime.factorIncoming[pointIndex], nil, point)
-}
-
-// pointFoldBoundary is private diagnostic provenance for the one existing
-// canonical Point-RHS transaction. It is not a second fold representation.
-type pointFoldBoundary uint8
-
-const (
-	pointFoldBoundaryNone pointFoldBoundary = iota
-	pointFoldBoundaryBegin
-	pointFoldBoundaryEnvironment
-	pointFoldBoundaryFactorValidation
-	pointFoldBoundaryFactorProjection
-	pointFoldBoundaryFactorTransportPreflight
-	pointFoldBoundaryFactorTransportCoordinatePreSupport
-	pointFoldBoundaryFactorTransportCoordinateReindexSupport
-	pointFoldBoundaryFactorTransportCoordinatePostSupport
-	pointFoldBoundaryFactorTransportCoordinateCoverage
-	pointFoldBoundaryFactorTransportCoordinateAdmission
-	pointFoldBoundaryFactorTransportGeneralPreFilter
-	pointFoldBoundaryFactorTransportGeneralReindexSupport
-	pointFoldBoundaryFactorTransportGeneralReindexTypedSlots
-	pointFoldBoundaryFactorTransportGeneralReindexCommit
-	pointFoldBoundaryFactorTransportGeneralPostFilter
-	pointFoldBoundaryFactorTransportGeneralCoverage
-	pointFoldBoundaryFactorTransportGeneralAdmission
-	pointFoldBoundaryFactorAdmission
-	pointFoldBoundaryProducer
-	pointFoldBoundaryFinish
-)
-
-func pointFoldBoundaryFromTransport(boundary carrier.PointTransportBoundary) pointFoldBoundary {
-	switch boundary {
-	case carrier.PointTransportBoundaryPreflight:
-		return pointFoldBoundaryFactorTransportPreflight
-	case carrier.PointTransportBoundaryCoordinatePreSupport:
-		return pointFoldBoundaryFactorTransportCoordinatePreSupport
-	case carrier.PointTransportBoundaryCoordinateReindexSupport:
-		return pointFoldBoundaryFactorTransportCoordinateReindexSupport
-	case carrier.PointTransportBoundaryCoordinatePostSupport:
-		return pointFoldBoundaryFactorTransportCoordinatePostSupport
-	case carrier.PointTransportBoundaryCoordinateCoverage:
-		return pointFoldBoundaryFactorTransportCoordinateCoverage
-	case carrier.PointTransportBoundaryCoordinateAdmission:
-		return pointFoldBoundaryFactorTransportCoordinateAdmission
-	case carrier.PointTransportBoundaryGeneralPreFilter:
-		return pointFoldBoundaryFactorTransportGeneralPreFilter
-	case carrier.PointTransportBoundaryGeneralReindexSupport:
-		return pointFoldBoundaryFactorTransportGeneralReindexSupport
-	case carrier.PointTransportBoundaryGeneralReindexTypedSlots:
-		return pointFoldBoundaryFactorTransportGeneralReindexTypedSlots
-	case carrier.PointTransportBoundaryGeneralReindexCommit:
-		return pointFoldBoundaryFactorTransportGeneralReindexCommit
-	case carrier.PointTransportBoundaryGeneralPostFilter:
-		return pointFoldBoundaryFactorTransportGeneralPostFilter
-	case carrier.PointTransportBoundaryGeneralCoverage:
-		return pointFoldBoundaryFactorTransportGeneralCoverage
-	case carrier.PointTransportBoundaryGeneralAdmission:
-		return pointFoldBoundaryFactorTransportGeneralAdmission
-	default:
-		return pointFoldBoundaryFactorTransportPreflight
-	}
-}
-
-func refreshAcyclicFoldPhase(boundary pointFoldBoundary) SolveFailurePhase {
-	switch boundary {
-	case pointFoldBoundaryBegin:
-		return SolveFailurePhaseRefreshAcyclicFoldBegin
-	case pointFoldBoundaryEnvironment:
-		return SolveFailurePhaseRefreshAcyclicFoldEnvironment
-	case pointFoldBoundaryFactorValidation:
-		return SolveFailurePhaseRefreshAcyclicFoldFactorValidation
-	case pointFoldBoundaryFactorProjection:
-		return SolveFailurePhaseRefreshAcyclicFoldFactorProjection
-	case pointFoldBoundaryFactorTransportPreflight:
-		return SolveFailurePhaseRefreshAcyclicFoldFactorTransportPreflight
-	case pointFoldBoundaryFactorTransportCoordinatePreSupport:
-		return SolveFailurePhaseRefreshAcyclicFoldFactorTransportCoordinatePreSupport
-	case pointFoldBoundaryFactorTransportCoordinateReindexSupport:
-		return SolveFailurePhaseRefreshAcyclicFoldFactorTransportCoordinateReindexSupport
-	case pointFoldBoundaryFactorTransportCoordinatePostSupport:
-		return SolveFailurePhaseRefreshAcyclicFoldFactorTransportCoordinatePostSupport
-	case pointFoldBoundaryFactorTransportCoordinateCoverage:
-		return SolveFailurePhaseRefreshAcyclicFoldFactorTransportCoordinateCoverage
-	case pointFoldBoundaryFactorTransportCoordinateAdmission:
-		return SolveFailurePhaseRefreshAcyclicFoldFactorTransportCoordinateAdmission
-	case pointFoldBoundaryFactorTransportGeneralPreFilter:
-		return SolveFailurePhaseRefreshAcyclicFoldFactorTransportGeneralPreFilter
-	case pointFoldBoundaryFactorTransportGeneralReindexSupport:
-		return SolveFailurePhaseRefreshAcyclicFoldFactorTransportGeneralReindexSupport
-	case pointFoldBoundaryFactorTransportGeneralReindexTypedSlots:
-		return SolveFailurePhaseRefreshAcyclicFoldFactorTransportGeneralReindexTypedSlots
-	case pointFoldBoundaryFactorTransportGeneralReindexCommit:
-		return SolveFailurePhaseRefreshAcyclicFoldFactorTransportGeneralReindexCommit
-	case pointFoldBoundaryFactorTransportGeneralPostFilter:
-		return SolveFailurePhaseRefreshAcyclicFoldFactorTransportGeneralPostFilter
-	case pointFoldBoundaryFactorTransportGeneralCoverage:
-		return SolveFailurePhaseRefreshAcyclicFoldFactorTransportGeneralCoverage
-	case pointFoldBoundaryFactorTransportGeneralAdmission:
-		return SolveFailurePhaseRefreshAcyclicFoldFactorTransportGeneralAdmission
-	case pointFoldBoundaryFactorAdmission:
-		return SolveFailurePhaseRefreshAcyclicFoldFactorAdmission
-	case pointFoldBoundaryProducer:
-		return SolveFailurePhaseRefreshAcyclicFoldProducer
-	case pointFoldBoundaryFinish:
-		return SolveFailurePhaseRefreshAcyclicFoldFinish
-	default:
-		return SolveFailurePhaseRefreshAcyclicFoldPoint
-	}
 }
 
 func (epoch *executorEpoch) foldPointTerms(reference carrier.PointState, base carrier.PointRHS, environments, factors, groups []int, producerPoint equation.Point) (result carrier.PointRHS, ok bool) {
@@ -1837,22 +1715,22 @@ func (epoch *executorEpoch) foldPointTerms(reference carrier.PointState, base ca
 // foldPointTerms while returning only its first failed transaction boundary.
 // The marker is consumed immediately by refresh diagnostics and retains no
 // Point, carrier state, or fold rows.
-func (epoch *executorEpoch) foldPointTermsWithBoundary(reference carrier.PointState, base carrier.PointRHS, environments, factors, groups []int, producerPoint equation.Point) (result carrier.PointRHS, boundary pointFoldBoundary, ok bool) {
+func (epoch *executorEpoch) foldPointTermsWithBoundary(reference carrier.PointState, base carrier.PointRHS, environments, factors, groups []int, producerPoint equation.Point) (result carrier.PointRHS, boundary solveBoundary, ok bool) {
 	if epoch != nil && epoch.diagnostics != nil {
 		epoch.diagnostics.recordFold()
 	}
 	if epoch == nil || epoch.runtime == nil || epoch.work == nil || !epoch.work.OwnsPointState(reference) || !epoch.work.OwnsPointRHS(base) {
-		return carrier.PointRHS{}, pointFoldBoundaryBegin, false
+		return carrier.PointRHS{}, refused(SolveFailureFamilyRefresh, "acyclic-fold-begin"), false
 	}
 	producerCount := len(groups)
 	if producerPoint.Available() {
 		producerCount = epoch.runtime.graph.ProducerCount(producerPoint)
 	}
 	if len(environments) == 0 && len(factors) == 0 && producerCount == 0 {
-		return base, pointFoldBoundaryNone, true
+		return base, boundaryNone, true
 	}
 	if !epoch.work.BeginPointRHSFold(reference, base) {
-		return carrier.PointRHS{}, pointFoldBoundaryBegin, false
+		return carrier.PointRHS{}, refused(SolveFailureFamilyRefresh, "acyclic-fold-begin"), false
 	}
 	active := true
 	defer func() {
@@ -1860,7 +1738,7 @@ func (epoch *executorEpoch) foldPointTermsWithBoundary(reference carrier.PointSt
 			_ = epoch.work.AbortPointRHSFold()
 		}
 	}()
-	boundary = pointFoldBoundaryEnvironment
+	boundary = refused(SolveFailureFamilyRefresh, "acyclic-fold-environment")
 	for _, edge := range environments {
 		if !epoch.addPointFoldEnvironmentEdge(edge) {
 			return carrier.PointRHS{}, boundary, false
@@ -1873,7 +1751,7 @@ func (epoch *executorEpoch) foldPointTermsWithBoundary(reference carrier.PointSt
 			return carrier.PointRHS{}, boundary, false
 		}
 	}
-	boundary = pointFoldBoundaryProducer
+	boundary = refused(SolveFailureFamilyRefresh, "acyclic-fold-producer")
 	if producerPoint.Available() {
 		for index := 0; index < epoch.runtime.graph.ProducerCount(producerPoint); index++ {
 			group, present := epoch.runtime.graph.ProducerAt(producerPoint, index)
@@ -1889,7 +1767,7 @@ func (epoch *executorEpoch) foldPointTermsWithBoundary(reference carrier.PointSt
 			}
 		}
 	}
-	boundary = pointFoldBoundaryFinish
+	boundary = refused(SolveFailureFamilyRefresh, "acyclic-fold-finish")
 	result, ok = epoch.work.FinishPointRHSFold()
 	active = false
 	return result, boundary, ok && !epoch.canceled()
@@ -2473,10 +2351,10 @@ func (epoch *executorEpoch) publishAcyclicExact(point int, current, next carrier
 // publication. A region is admitted only for its head; nonheads exact-replace
 // their complete RHS even while enclosed by the same WTO region.
 func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regionIndex int) (changed, ok bool) {
-	refreshPhase := SolveFailurePhaseRefreshValidation
+	refreshBoundary := refused(SolveFailureFamilyRefresh, "validation")
 	defer func() {
 		if !ok {
-			epoch.recordRefreshPointFailure(refreshPhase, point)
+			epoch.recordRefreshPointFailure(refreshBoundary, point)
 		}
 	}()
 	if epoch == nil || epoch.canceled() || !point.Available() || pointIndex < 0 || pointIndex >= len(epoch.points) || pointIndex >= len(epoch.runtime.activePoints) || !epoch.runtime.activePoints[pointIndex] {
@@ -2502,7 +2380,7 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 	if !appendedOK {
 		return false, false
 	}
-	refreshPhase = SolveFailurePhaseRefreshCandidate
+	refreshBoundary = refused(SolveFailureFamilyRefresh, "candidate")
 	for index := 0; index < epoch.runtime.graph.ProducerCount(point); index++ {
 		group, groupOK := epoch.runtime.graph.ProducerAt(point, index)
 		groupIndex, indexed := epoch.runtime.graph.GroupIndex(group)
@@ -2525,7 +2403,7 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 		// both lifted order and raw compact-row additivity in one traversal; on
 		// failure, run the ordinary order check once solely to distinguish a
 		// lawful raw-alias replacement (canonical fold) from a broken Rule law.
-		refreshPhase = SolveFailurePhaseRefreshCandidateOrder
+		refreshBoundary = refused(SolveFailureFamilyRefresh, "candidate-order")
 		thisCandidateChanged := !state.hasValue
 		candidateAppendable := true
 		candidateOrdered := true
@@ -2556,20 +2434,20 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 			// forever. A genuinely changed external interface still begins a fresh
 			// episode below.
 			if (!state.hasCandidateTokens || sameCandidateTokens(state.candidateTokens, state.scratchTokens)) && !environmentChanged {
-				refreshPhase = SolveFailurePhaseRefreshCandidateOrderStableInputs
-				epoch.recordCandidateOrderFailure(refreshPhase, point, producer.group)
+				refreshBoundary = refused(SolveFailureFamilyRefresh, "candidate-order-stable-inputs")
+				epoch.recordCandidateOrderFailure(refreshBoundary, point, producer.group)
 				return false, false
 			}
 			region := epoch.runtime.pointRegion[pointIndex]
 			if region == schedule.NoRegion || !epoch.activeRegion(region) {
-				refreshPhase = SolveFailurePhaseRefreshCandidateOrderRegion
-				epoch.recordCandidateOrderFailure(refreshPhase, point, producer.group)
+				refreshBoundary = refused(SolveFailureFamilyRefresh, "candidate-order-region")
+				epoch.recordCandidateOrderFailure(refreshBoundary, point, producer.group)
 				return false, false
 			}
 			phase := epoch.regions[region].phase
 			if phase != phaseAscent && phase != phaseNarrow {
-				refreshPhase = SolveFailurePhaseRefreshCandidateOrderRegion
-				epoch.recordCandidateOrderFailure(refreshPhase, point, producer.group)
+				refreshBoundary = refused(SolveFailureFamilyRefresh, "candidate-order-region")
+				epoch.recordCandidateOrderFailure(refreshBoundary, point, producer.group)
 				return false, false
 			}
 			if epoch.regionInterfacesChanged(region) {
@@ -2579,8 +2457,8 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 				return false, true
 			}
 			if phase != phaseNarrow {
-				refreshPhase = SolveFailurePhaseRefreshCandidateOrderRegion
-				epoch.recordCandidateOrderFailure(refreshPhase, point, producer.group)
+				refreshBoundary = refused(SolveFailureFamilyRefresh, "candidate-order-region")
+				epoch.recordCandidateOrderFailure(refreshBoundary, point, producer.group)
 				return false, false
 			}
 			// An unchanged narrow interface proves only where the wake came
@@ -2588,12 +2466,12 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 			// descent. Admit exactly next <= old; every other local result
 			// fails closed instead of being published as an exact candidate.
 			if !epoch.work.LessOrEqRuleContribution(next, state.candidate) {
-				refreshPhase = SolveFailurePhaseRefreshCandidateOrderDescent
-				epoch.recordCandidateOrderFailure(refreshPhase, point, producer.group)
+				refreshBoundary = refused(SolveFailureFamilyRefresh, "candidate-order-descent")
+				epoch.recordCandidateOrderFailure(refreshBoundary, point, producer.group)
 				return false, false
 			}
 		}
-		refreshPhase = SolveFailurePhaseRefreshDemandCommit
+		refreshBoundary = refused(SolveFailureFamilyRefresh, "demand-commit")
 		if epoch.canceled() || !epoch.demand.Replace(groupIndex, reads) {
 			return false, false
 		}
@@ -2639,38 +2517,38 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 			return false, false
 		}
 		anyCandidateChanged = anyCandidateChanged || changed
-		refreshPhase = SolveFailurePhaseRefreshCandidate
+		refreshBoundary = refused(SolveFailureFamilyRefresh, "candidate")
 	}
 	if regionIndex == schedule.NoRegion && !anyCandidateChanged && !structuralChanged {
-		refreshPhase = SolveFailurePhaseRefreshAcyclicPublication
+		refreshBoundary = refused(SolveFailureFamilyRefresh, "acyclic-publication")
 		return false, epoch.settlePostfix(pointIndex)
 	}
 	if regionIndex == schedule.NoRegion {
 		rhs := appended
 		order := publicationAscending
 		if structuralChanged || candidateRequiresCanonicalFold {
-			refreshPhase = SolveFailurePhaseRefreshAcyclicStructuralInputs
+			refreshBoundary = stalled(SolveFailureFamilyRefresh, "acyclic-structural-inputs")
 			ascending, valid := epoch.structuralInputsAscending(pointIndex)
 			if !valid {
 				return false, false
 			}
-			refreshPhase = SolveFailurePhaseRefreshAcyclicPointBase
+			refreshBoundary = refused(SolveFailureFamilyRefresh, "acyclic-point-base")
 			base, ok := epoch.pointBase(point, pointIndex)
 			if !ok {
 				return false, false
 			}
-			refreshPhase = SolveFailurePhaseRefreshAcyclicFoldPoint
-			foldBoundary := pointFoldBoundaryNone
+			refreshBoundary = refused(SolveFailureFamilyRefresh, "acyclic-fold-point")
+			foldBoundary := boundaryNone
 			rhs, foldBoundary, ok = epoch.foldPointWithBoundary(current, base, point)
 			if !ok {
-				refreshPhase = refreshAcyclicFoldPhase(foldBoundary)
+				refreshBoundary = foldBoundary
 				return false, false
 			}
 			if !ascending && !epoch.work.LessOrEqPointStateRHS(current, rhs) {
 				order = publicationMayDescend
 			}
 		}
-		refreshPhase = SolveFailurePhaseRefreshAcyclicPublication
+		refreshBoundary = refused(SolveFailureFamilyRefresh, "acyclic-publication")
 		selfDescent := epoch.structural.pointDescent[pointIndex]
 		published, ok := epoch.work.PublishPointRHS(rhs)
 		if !ok || epoch.canceled() {
@@ -2686,7 +2564,7 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 		epoch.structuralDirty[pointIndex] = false
 		return changed, true
 	}
-	refreshPhase = SolveFailurePhaseRefreshRegionInterface
+	refreshBoundary = refused(SolveFailureFamilyRefresh, "region-interface")
 	if !epoch.activeRegion(regionIndex) || epoch.runtime.regions[regionIndex].head != pointIndex {
 		return false, false
 	}
@@ -2731,7 +2609,7 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 	var ingress, exact, selected carrier.PointRHS
 	var exactOK bool
 	structuralFolded := false
-	refreshPhase = SolveFailurePhaseRefreshRegionRHS
+	refreshBoundary = refused(SolveFailureFamilyRefresh, "region-rhs")
 	if phase == phaseAscent && episode.hasExact {
 		// A changed Region must rebuild its complete E+B carrier in canonical
 		// input order. Reusing episode.exact and appending changed back Groups
@@ -2762,7 +2640,7 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 	if !exactOK || epoch.canceled() {
 		return false, false
 	}
-	refreshPhase = SolveFailurePhaseRefreshRegionOrder
+	refreshBoundary = refused(SolveFailureFamilyRefresh, "region-order")
 	if phase == phaseAscent && episode.hasExact && !episode.interfaceRefreshPending && !epoch.work.LessOrEqPointRHSPoint(ingress, current) {
 		// New Init/external meaning begins a fresh episode before an inherited
 		// widening step can observe a stale current head.
@@ -2809,7 +2687,7 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 			return false, true
 		}
 	}
-	refreshPhase = SolveFailurePhaseRefreshRegionMerge
+	refreshBoundary = refused(SolveFailureFamilyRefresh, "region-merge")
 	var published carrier.PointState
 	var changes carrier.ChangeSet
 	var publishedOK bool
@@ -2823,7 +2701,7 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 	if !publishedOK || epoch.canceled() {
 		return false, false
 	}
-	refreshPhase = SolveFailurePhaseRefreshRegionPublication
+	refreshBoundary = refused(SolveFailureFamilyRefresh, "region-publication")
 	if !episode.nextExactRevision() {
 		return false, false
 	}
@@ -3186,11 +3064,11 @@ func (epoch *executorEpoch) run() bool {
 				return false
 			}
 			if !ok {
-				epoch.recordRunFailure(SolveFailurePhaseRunVisitInvalid)
+				epoch.recordRunFailure(refused(SolveFailureFamilySchedule, "visit"))
 				return false
 			}
 			if !visited {
-				epoch.recordRunFailure(SolveFailurePhaseRunVisitNoProgress)
+				epoch.recordRunFailure(stalled(SolveFailureFamilySchedule, "visit-no-progress"))
 				return false
 			}
 		}
@@ -3199,12 +3077,12 @@ func (epoch *executorEpoch) run() bool {
 			return false
 		}
 		if !ok {
-			epoch.recordRunFailure(SolveFailurePhaseRunPostfixInvalid)
+			epoch.recordRunFailure(refused(SolveFailureFamilySchedule, "postfix"))
 			return false
 		}
 		if !postfixed {
 			if !epoch.queue.pending() {
-				epoch.recordRunFailure(SolveFailurePhaseRunPostfixStalled)
+				epoch.recordRunFailure(stalled(SolveFailureFamilySchedule, "postfix-stalled"))
 				return false
 			}
 			continue
@@ -3214,11 +3092,11 @@ func (epoch *executorEpoch) run() bool {
 		}
 		advanced, advancedOK := epoch.advanceNarrow()
 		if !advancedOK {
-			epoch.recordRunFailure(SolveFailurePhaseRunNarrowInvalid)
+			epoch.recordRunFailure(refused(SolveFailureFamilySchedule, "narrow"))
 			return false
 		}
 		if !advanced {
-			epoch.recordRunFailure(SolveFailurePhaseRunNarrowNoProgress)
+			epoch.recordRunFailure(stalled(SolveFailureFamilySchedule, "narrow-no-progress"))
 			return false
 		}
 	}
@@ -3284,9 +3162,6 @@ func (solver *Solver) SolveWithDiagnostics(ctx context.Context, options SolveDia
 	collector := newSolveDiagnosticState(options)
 	var failure SolveReport
 	state, status = solver.solve(ctx, &failure, collector)
-	if status == SolveCanceled && collector != nil {
-		collector.clearCutoff()
-	}
 	if collector != nil {
 		diagnostics = collector.snapshot()
 	}
@@ -3317,15 +3192,9 @@ func (solver *Solver) solve(ctx context.Context, report *SolveReport, diagnostic
 		if report == nil {
 			return
 		}
-		if diagnostics != nil && diagnostics.cutoff {
-			// Work cutoff is an intentional diagnostic stop, not a semantic
-			// execution defect; it must not publish a false failure witness.
-			*report = SolveReport{}
-			return
-		}
 		if status == SolveIncomplete {
 			if !report.Available() {
-				report.record(SolveFailureReasonExecution, SolveFailurePhaseNone, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
+				report.record(SolveFailureReasonExecution, boundaryNone, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
 			}
 			return
 		}
@@ -3354,21 +3223,13 @@ runtimeRevisions:
 				return nil, SolveCanceled
 			}
 			if report != nil {
-				report.record(SolveFailureReasonEpoch, SolveFailurePhaseNone, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
+				report.record(SolveFailureReasonEpoch, boundaryNone, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
 			}
 			return nil, SolveIncomplete
 		}
 		epoch.report = report
 		epoch.diagnostics = diagnostics
 		epoch.diagnosticRevision = solver.relation.Generation()
-		if diagnostics != nil && !epoch.work.SetCheckpoint(epoch.diagnosticCheckpoint) {
-			epoch.incomplete()
-			epoch.discard()
-			if ctx.Err() != nil {
-				return nil, SolveCanceled
-			}
-			return nil, SolveIncomplete
-		}
 		if diagnostics != nil {
 			diagnostics.epochStarted(epoch, solver.relation.Generation())
 		}
@@ -3380,11 +3241,8 @@ runtimeRevisions:
 				if ctx.Err() != nil {
 					return nil, SolveCanceled
 				}
-				if diagnostics != nil && diagnostics.cutoff {
-					return nil, SolveIncomplete
-				}
 				if report != nil {
-					report.record(SolveFailureReasonExecution, SolveFailurePhaseNone, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
+					report.record(SolveFailureReasonExecution, boundaryNone, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
 				}
 				return nil, SolveIncomplete
 			}
@@ -3396,7 +3254,7 @@ runtimeRevisions:
 				epoch.incomplete()
 				epoch.discard()
 				if report != nil {
-					report.record(SolveFailureReasonActivationMerge, SolveFailurePhaseNone, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
+					report.record(SolveFailureReasonActivationMerge, boundaryNone, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
 				}
 				return nil, SolveIncomplete
 			}
@@ -3405,7 +3263,7 @@ runtimeRevisions:
 				epoch.incomplete()
 				epoch.discard()
 				if report != nil {
-					report.record(SolveFailureReasonActivationMerge, SolveFailurePhaseNone, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
+					report.record(SolveFailureReasonActivationMerge, boundaryNone, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
 				}
 				return nil, SolveIncomplete
 			}
@@ -3421,7 +3279,7 @@ runtimeRevisions:
 				epoch.incomplete()
 				epoch.discard()
 				if report != nil {
-					report.record(SolveFailureReasonActivationMerge, SolveFailurePhaseNone, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
+					report.record(SolveFailureReasonActivationMerge, boundaryNone, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
 				}
 				return nil, SolveIncomplete
 			}
@@ -3463,7 +3321,7 @@ runtimeRevisions:
 			}
 			if !publishedOK {
 				if report != nil {
-					report.record(SolveFailureReasonActivationRevisionOverflow, SolveFailurePhaseNone, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
+					report.record(SolveFailureReasonActivationRevisionOverflow, boundaryNone, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
 				}
 				return nil, SolveIncomplete
 			}
@@ -3480,7 +3338,7 @@ runtimeRevisions:
 			runtime.completed = nil
 			if runtime.retained != nil && !runtime.retained.Close() {
 				if report != nil {
-					report.record(SolveFailureReasonActivationRetainedClose, SolveFailurePhaseNone, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
+					report.record(SolveFailureReasonActivationRetainedClose, boundaryNone, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
 				}
 				return nil, SolveIncomplete
 			}
@@ -3522,7 +3380,7 @@ runtimeRevisions:
 			if !indexed || pointIndex < 0 || pointIndex >= len(epoch.points) {
 				epoch.incomplete()
 				epoch.discard()
-				reportFailureQuery(report, SolveFailureReasonQuery, semanticKeyFromComposition(point.Key()))
+				reportFailureQuery(report, SolveFailureReasonQuery, reportedSemanticKey(point.Key()))
 				return nil, SolveIncomplete
 			}
 			result, ok := query.materialize(epoch.work, epoch.points[pointIndex].State())
@@ -3534,7 +3392,7 @@ runtimeRevisions:
 				}
 				epoch.incomplete()
 				epoch.discard()
-				reportFailureQuery(report, SolveFailureReasonQuery, semanticKeyFromComposition(point.Key()))
+				reportFailureQuery(report, SolveFailureReasonQuery, reportedSemanticKey(point.Key()))
 				return nil, SolveIncomplete
 			}
 			if epoch.canceled() {
@@ -3545,7 +3403,7 @@ runtimeRevisions:
 			if result == nil || result.owner != owner || result.key != query.query().Key() {
 				epoch.incomplete()
 				epoch.discard()
-				reportFailureQuery(report, SolveFailureReasonQuery, semanticKeyFromComposition(point.Key()))
+				reportFailureQuery(report, SolveFailureReasonQuery, reportedSemanticKey(point.Key()))
 				return nil, SolveIncomplete
 			}
 			results[index] = result
@@ -3576,7 +3434,7 @@ runtimeRevisions:
 			if owner == nil || !owner.valid(runtime) || !id.Available() || !indexed || pointIndex < 0 || pointIndex >= len(epoch.points) {
 				epoch.incomplete()
 				epoch.discard()
-				reportFailureQuery(report, SolveFailureReasonQuery, semanticKeyFromComposition(point.Key()))
+				reportFailureQuery(report, SolveFailureReasonQuery, reportedSemanticKey(point.Key()))
 				return nil, SolveIncomplete
 			}
 			result, observationPhase, ok := observation.materializeObservation(epoch.work, epoch.points[pointIndex].State())
@@ -3589,7 +3447,7 @@ runtimeRevisions:
 				epoch.incomplete()
 				epoch.discard()
 				if report != nil {
-					report.record(SolveFailureReasonQuery, observationPhase, semanticKeyFromComposition(point.Key()), identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
+					report.record(SolveFailureReasonQuery, observationPhase, reportedSemanticKey(point.Key()), identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
 				}
 				return nil, SolveIncomplete
 			}

@@ -204,25 +204,23 @@ type Binding[K scalar.Key, V any] struct {
 	// targetReverse is the immutable Target-incidence read index used by hot
 	// sparse root operations. It never stores Guard regions or authorship:
 	// SlotCoverage remains the sole dynamic presence authority.
-	targetReverse       map[K][]int
-	widenScopes         []widenScope[K]
-	narrowScopes        []widenScope[K]
-	selectors           map[carrier.Selector]declaredSelector
-	declaring           bool
-	sealed              bool
-	prepared            bool
-	bound               bool
-	scopeFrozen         bool
-	phase               declarationPhase
-	lastExact           K
-	hasExact            bool
-	lastSummary         []K
-	lastDistributive    bool
-	lastStrong          unitOrder
-	lastWeak            []unitOrder
-	summaries           uint64
-	targetCount         uint64
-	targetSelectorCount uint64
+	targetReverse    map[K][]int
+	widenScopes      []widenScope[K]
+	narrowScopes     []widenScope[K]
+	declaring        bool
+	sealed           bool
+	prepared         bool
+	bound            bool
+	scopeFrozen      bool
+	phase            declarationPhase
+	lastExact        K
+	hasExact         bool
+	lastSummary      []K
+	lastDistributive bool
+	lastStrong       unitOrder
+	lastWeak         []unitOrder
+	summaries        uint64
+	targetCount      uint64
 }
 
 type declarationPhase uint8
@@ -232,7 +230,6 @@ const (
 	declareSummary
 	declareStrong
 	declareWeak
-	declareTargetSelector
 )
 
 // Canonical unit order is a tuple, never `KeyEnd + id`: maximal KeyEnd values
@@ -273,10 +270,6 @@ type canonicalKeyCursor[K scalar.Key] struct {
 	next int
 }
 
-type declaredSelector struct {
-	candidatesTargets []carrier.Target
-}
-
 // plane retains the exact typed identities for one binding. One diagram with
 // one private factor column is intentional: the carrier SlotOwner supplies
 // heterogeneous position while the FDD supplies this operation's key/guard/
@@ -309,7 +302,6 @@ func Bind[K scalar.Key, V any](algebra *Algebra[K, V], guards *guard.Manager, de
 		issuer:    issuer,
 		units:     make(map[carrier.Unit]declaredUnit[K]),
 		targets:   make(map[carrier.Target]declaredTarget[K]),
-		selectors: make(map[carrier.Selector]declaredSelector),
 		declaring: true,
 	}
 	if declare != nil && !declare(binding) {
@@ -514,50 +506,12 @@ func siftCanonicalKeyCursor[K scalar.Key](heap []canonicalKeyCursor[K], parent i
 	}
 }
 
-// DeclareTargetSelector freezes a finite positional
-// output surfaces. Candidate ordinal is the caller's cold semantic identity:
-// it is the index in this vector, not Target declaration order.
-// Consequently vectors retain their exact order and multiplicity. They
-// intentionally do not execute selection; the later Product/Rule cut is the
-// one place observations may be evaluated.
-func (binding *Binding[K, V]) DeclareTargetSelector(candidates []carrier.Target) (carrier.Selector, bool) {
-	if binding == nil || !binding.declaring || binding.phase > declareTargetSelector || !binding.selectorTargets(candidates) {
-		return carrier.Selector{}, false
-	}
-	binding.phase = declareTargetSelector
-	id, ok := nextOrdinal(binding.targetSelectorCount)
-	if !ok {
-		return carrier.Selector{}, false
-	}
-	binding.targetSelectorCount = id
-	selector, ok := binding.issuer.IssueSelector(carrier.TargetSelector, id)
-	if !ok {
-		return carrier.Selector{}, false
-	}
-	binding.selectors[selector] = declaredSelector{candidatesTargets: append([]carrier.Target(nil), candidates...)}
-	return selector, true
-}
-
 func (binding *Binding[K, V]) unit(unit carrier.Unit) (declaredUnit[K], bool) {
 	if binding == nil || !binding.declaring {
 		return declaredUnit[K]{}, false
 	}
 	entry, ok := binding.units[unit]
 	return entry, ok
-}
-
-// selectorTargets validates authority only. Map membership ties every
-// positional entry to this exact Binding epoch and Factor.
-func (binding *Binding[K, V]) selectorTargets(targets []carrier.Target) bool {
-	if binding == nil || !binding.declaring || len(targets) == 0 {
-		return false
-	}
-	for _, target := range targets {
-		if _, ok := binding.targets[target]; !ok {
-			return false
-		}
-	}
-	return true
 }
 
 func (binding *Binding[K, V]) unitOrders(units []carrier.Unit) ([]unitOrder, bool) {

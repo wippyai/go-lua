@@ -7,7 +7,7 @@ import (
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
 	packdomain "github.com/wippyai/go-lua/analysis/domain/pack"
 	staticdomain "github.com/wippyai/go-lua/analysis/domain/static"
-	"github.com/wippyai/go-lua/analysis/domain/type/authority"
+	typeauthority "github.com/wippyai/go-lua/analysis/domain/type/authority"
 	domaincontract "github.com/wippyai/go-lua/analysis/domain/type/typecontract"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/analysis/identity"

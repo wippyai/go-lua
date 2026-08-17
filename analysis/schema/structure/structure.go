@@ -1,7 +1,7 @@
 // Package structure owns the structural vocabulary surface of the analyzer
-// declaration table: the one place the arm, event, outcome, runtime family, and
-// constraint form catalogs are declared, and the surface laws the declaration
-// root seals them under.
+// declaration table: the one place the arm, event, outcome, runtime family,
+// constraint form, and diagnostic publication catalogs are declared, and the
+// surface laws the declaration root seals them under.
 //
 // Three of these catalogs are today spelled three times over. The arm catalog is
 // programartifact.RouteKind and ingress.StructuralArm, related by a private
@@ -20,16 +20,40 @@
 // and decodes.
 //
 // This surface is the single declaration those spellings become projections
-// of. A row is a category, a name, and the row's dense ordinal inside its
-// category. That is all a closed catalog is: the ordinal is what a consumer
-// switches on, the density law is what makes an exhaustive switch exhaustive,
-// and the per-category population law is what makes the vocabulary total.
+// of. A row is a category, a name, a rendered spelling, and the row's dense
+// ordinal inside its category. That is all a closed catalog is: the ordinal is
+// what a consumer switches on, the spelling is what a consumer renders, the
+// density law is what makes an exhaustive switch exhaustive, and the
+// per-category population law is what makes the vocabulary total.
 //
 // The ingress boundary reads this table: its arm, event, and outcome
 // projections are lookups of the declared ordinals. The artifact, engine, and
 // solver-schedule spellings stay constants of their own packages, pinned to
-// these ordinals by law, because the artifact ordinals are serialized ABI this
-// declaration adopts rather than restates.
+// these ordinals by law. Those artifact ordinals are compiled from the Program
+// at load and reach no byte stream of their own - the serialized authorities
+// are the program's source, flow, static, and imports sections - so which side
+// numbers a member is an architectural choice rather than a wire commitment.
+// What the pin laws hold is the agreement between the spellings, and that
+// agreement is what every projection here depends on.
+//
+// The diagnostic publication catalogs - the observation populations a row is
+// measured over, the families publication is gated by, and the severities a row
+// defaults to - are declared here for the same reason, and their members are
+// named by reference from the diagnostic surface rather than re-bounded there.
+// A family is therefore added by declaring a row, which is what makes a
+// diagnostic under a family the analyzer has never published before spellable.
+//
+// The semantic role catalog is declared here for a different reason. Its
+// members are not a spelling anything else restates; they are the identities
+// every surface binds under, and each was a field of one closed struct no
+// domain could extend. Declared here, a domain contributes its own roles, and
+// the spelling law over the one category proves every role in the analyzer
+// distinct from every other - across surfaces, which no surface's own law can
+// reach.
+//
+// A category is hosted, not owned: several contributors may add rows to one
+// category, and Collect is what numbers the aggregate densely so the hosting
+// costs the consumer nothing.
 //
 // Nothing registers itself: declarations are values, handed to the table at
 // composition.
@@ -51,6 +75,8 @@ const (
 	LawOrdinalDense
 	LawCategoryPopulated
 	LawAcceptedDeclared
+	LawSpellingDeclared
+	LawSpellingUnique
 )
 
 // Category is the closed catalog of structural vocabularies this surface
@@ -79,6 +105,47 @@ const (
 	// codec's own wire spelling, and this vocabulary is what that spelling is
 	// pinned to.
 	CategoryConstraintForm
+	// CategoryDiagnosticObservation is the vocabulary of reusable semantic
+	// observation populations an artifact issues and a diagnostic row is
+	// measured over. Its ordinals are the artifact's own observation numbering,
+	// which is folded into the identity of every issued observation, so a
+	// consumer holding an artifact-compiled kind resolves the declared member at
+	// that ordinal.
+	CategoryDiagnosticObservation
+	// CategoryDiagnosticFamily is the vocabulary of publication families: the
+	// gates a consumer enables findings by at the query boundary. A published
+	// code's first segment is the declared spelling of the family it names, so
+	// adding a family is adding a row here.
+	CategoryDiagnosticFamily
+	// CategoryDiagnosticSeverity is the vocabulary of severities a diagnostic
+	// row defaults to and a policy refines within. Its ordinals are the severity
+	// enum's own numbering, and its spellings are what a rendered finding is
+	// labelled with.
+	CategoryDiagnosticSeverity
+	// CategoryOccurrenceKind is the vocabulary of compiled occurrence families:
+	// the row classifications a program artifact carries and a rule subscribes
+	// to. Its ordinals are the artifact's own occurrence numbering.
+	CategoryOccurrenceKind
+	// CategoryIssuanceForm is the vocabulary of placement forms one occurrence
+	// subscription takes: how an occurrence of a subscribing rule is placed on
+	// the program's geometry. The form is the whole of what a placement pass
+	// dispatches on, so a rule declares one rather than being named by it.
+	CategoryIssuanceForm
+	// CategoryIssuanceInput is the vocabulary of operand polarities an issued
+	// occurrence reads. Its ordinals are the artifact's own input numbering.
+	CategoryIssuanceInput
+	// CategoryIssuanceStage is the vocabulary of execution cuts an issued
+	// occurrence is placed at. Its ordinals are the artifact's own stage
+	// numbering.
+	CategoryIssuanceStage
+	// CategorySemanticRole is the vocabulary of global semantic roles: the
+	// identities the engine binds factors, rules, queries, activations, and
+	// contract payloads under. Its members are named by reference from every
+	// surface that carries an identity, so the spelling law over this one
+	// category is what proves no two of them name one role - a distinctness
+	// no per-surface law could state, because the surfaces are sealed apart.
+	// It is resolved by key alone: no foreign spelling numbers it.
+	CategorySemanticRole
 	categoryLimit
 )
 
@@ -99,6 +166,12 @@ type Spec struct {
 	// and unique within the category: a gap would make an exhaustive switch
 	// unprovable, and a repeat would make two members one.
 	Ordinal uint16
+	// Spelling is the member's rendered name. A consumer that renders this
+	// vocabulary reads it here instead of holding a switch from ordinal to
+	// string, and a consumer that compares a member against authored text
+	// compares against this declaration rather than deriving a name from the
+	// key by taking it apart.
+	Spelling string
 	// Accepted is the member's admission into the projection its vocabulary
 	// feeds. An outcome that concludes a body inside its own function contributes
 	// no transfer exit, so the outcome vocabulary declares which of its members a
@@ -114,13 +187,14 @@ type Entry struct {
 	id       schema.EntryID
 	category Category
 	ordinal  uint16
+	spelling string
 	accepted bool
 }
 
 // New admits one authored declaration. A rejected spec returns false rather
 // than a partially usable entry.
 func New(spec Spec) (*Entry, bool) {
-	if !spec.Key.Available() || !spec.Category.Available() || spec.Ordinal == 0 || (spec.Category != CategoryOutcome && !spec.Accepted) {
+	if !spec.Key.Available() || !spec.Category.Available() || spec.Ordinal == 0 || spec.Spelling == "" || (spec.Category != CategoryOutcome && !spec.Accepted) {
 		return nil, false
 	}
 	entry := &Entry{
@@ -128,9 +202,77 @@ func New(spec Spec) (*Entry, bool) {
 		id:       schema.NewEntryID(schema.SurfaceKindStructure, spec.Key),
 		category: spec.Category,
 		ordinal:  spec.Ordinal,
+		spelling: spec.Spelling,
 		accepted: spec.Accepted,
 	}
 	return entry, entry.EntryAvailable() && entry.declarationComplete()
+}
+
+// Collect aggregates the contributed declarations of this surface into one
+// admitted inventory, numbering each category by its aggregation position.
+//
+// A category is hosted rather than owned: the arm catalog arrives from the
+// analyzer's own list, the runtime families from the domain that owns them, the
+// expression forms from the grammar that owns those, and a category a later
+// domain adds rows to arrives the same way. Numbering the aggregate here is
+// what keeps the ordinals dense across contributors, which is the property an
+// exhaustive consumer switch rests on.
+//
+// A contributor that authors an ordinal is naming the position a foreign
+// spelling is pinned to, so the authored value must be the position the
+// aggregation places the row at; a contributor that leaves it zero is declaring
+// a category no foreign spelling numbers, and the position is the ordinal.
+// Either way the result is dense from one, and a contribution that disagrees
+// with its own position is rejected here rather than sealed into a catalog with
+// a hole in it.
+func Collect(contributions ...[]Spec) ([]*Entry, bool) {
+	var counts [categoryLimit]uint16
+	var entries []*Entry
+	for _, contribution := range contributions {
+		for _, spec := range contribution {
+			if !spec.Category.Available() {
+				return nil, false
+			}
+			counts[spec.Category]++
+			position := counts[spec.Category]
+			if spec.Ordinal == 0 {
+				spec.Ordinal = position
+			} else if spec.Ordinal != position {
+				return nil, false
+			}
+			entry, ok := New(spec)
+			if !ok {
+				return nil, false
+			}
+			entries = append(entries, entry)
+		}
+	}
+	return entries, len(entries) > 0
+}
+
+// Resolve resolves one reference into the structural vocabulary against the
+// table it is being sealed into, and states the category the referring surface
+// expects the member to belong to.
+//
+// Every surface above this one names members of this vocabulary the same way,
+// so the resolution and the two ways it fails are stated here once: a name this
+// vocabulary does not declare is incomplete, and a name it declares in another
+// category is a member of the wrong vocabulary and so malformed. The referring
+// surface raises the verdict under its own law, because what the member means
+// is that surface's declaration.
+func Resolve(sealed schema.Sealed, key schema.Key, category Category) (*Entry, schema.Disposition) {
+	if !category.Available() {
+		return nil, schema.DispositionMalformed
+	}
+	row, disposition := sealed.Resolve(schema.SurfaceKindStructure, key)
+	if disposition != schema.DispositionAccepted {
+		return nil, disposition
+	}
+	entry, ok := row.(*Entry)
+	if !ok || entry == nil || entry.category != category {
+		return nil, schema.DispositionMalformed
+	}
+	return entry, schema.DispositionAccepted
 }
 
 func (entry *Entry) Key() schema.Key { return entry.key }
@@ -140,6 +282,15 @@ func (entry *Entry) ID() schema.EntryID { return entry.id }
 func (entry *Entry) Category() Category { return entry.category }
 
 func (entry *Entry) Ordinal() uint16 { return entry.ordinal }
+
+// Spelling is the member's declared rendered name. A consumer renders this
+// instead of switching from the ordinal to a string of its own.
+func (entry *Entry) Spelling() string {
+	if entry == nil {
+		return ""
+	}
+	return entry.spelling
+}
 
 // Accepted is the member's declared admission into the projection its
 // vocabulary feeds. A consumer reads it instead of keeping its own list of the
@@ -154,10 +305,10 @@ func (entry *Entry) EntryAvailable() bool {
 }
 
 // EntryContent writes this member's declared data: the vocabulary it belongs
-// to, its dense ordinal inside that vocabulary, and its declared admission into
-// the projection the vocabulary feeds. A consumer projects a member from these
-// three, so a member that changes any of them is a different declaration and
-// the table digest says so.
+// to, its dense ordinal inside that vocabulary, its declared admission into the
+// projection the vocabulary feeds, and the name it renders as. A consumer
+// projects a member from these four, so a member that changes any of them is a
+// different declaration and the table digest says so.
 func (entry *Entry) EntryContent(content *framing.Writer) error {
 	if err := content.Uint(uint64(entry.category)); err != nil {
 		return err
@@ -165,11 +316,14 @@ func (entry *Entry) EntryContent(content *framing.Writer) error {
 	if err := content.Uint(uint64(entry.ordinal)); err != nil {
 		return err
 	}
-	return content.Bool(entry.accepted)
+	if err := content.Bool(entry.accepted); err != nil {
+		return err
+	}
+	return content.String(entry.spelling)
 }
 
 func (entry *Entry) declarationComplete() bool {
-	return entry.category.Available() && entry.ordinal != 0 && (entry.category == CategoryOutcome || entry.accepted)
+	return entry.category.Available() && entry.ordinal != 0 && entry.spelling != "" && (entry.category == CategoryOutcome || entry.accepted)
 }
 
 // Table is the immutable projection a consumer reads the sealed vocabulary
@@ -253,6 +407,7 @@ func (contribution surface) Seal(view schema.View, _ schema.Sealed) schema.SealF
 	var counts [categoryLimit]int
 	var accepted [categoryLimit]int
 	var claimed [categoryLimit]map[uint16]schema.EntryID
+	var spelled [categoryLimit]map[string]schema.EntryID
 	for position := 0; position < view.Count(); position++ {
 		row, rowOK := view.At(position)
 		entry, entryOK := row.(*Entry)
@@ -272,6 +427,13 @@ func (contribution surface) Seal(view schema.View, _ schema.Sealed) schema.SealF
 		if entry.ordinal == 0 {
 			return failure(entry.id, LawOrdinalDeclared, schema.DispositionIncomplete)
 		}
+		// A consumer that renders a member reads the declared spelling, and a
+		// consumer that compares a member against authored text compares against
+		// it. An undeclared spelling would send both back to a switch of their
+		// own, so it is a verdict here rather than an empty string there.
+		if entry.spelling == "" {
+			return failure(entry.id, LawSpellingDeclared, schema.DispositionIncomplete)
+		}
 		// Only the outcome vocabulary distinguishes the members its consumers
 		// project: an arm and an event are projected whole. A rejected member of
 		// those vocabularies is a malformed declaration rather than a smaller
@@ -290,6 +452,17 @@ func (contribution surface) Seal(view schema.View, _ schema.Sealed) schema.SealF
 			return failure(prior, LawOrdinalUnique, schema.DispositionDuplicate)
 		}
 		claimed[entry.category][entry.ordinal] = entry.id
+		if spelled[entry.category] == nil {
+			spelled[entry.category] = make(map[string]schema.EntryID, view.Count())
+		}
+		// A spelling names one member of its vocabulary. Two members rendering
+		// the same name would make the rendered catalog smaller than the declared
+		// one, so a repeat is a verdict here rather than an ambiguity a renderer
+		// resolves by position.
+		if prior, duplicate := spelled[entry.category][entry.spelling]; duplicate {
+			return failure(prior, LawSpellingUnique, schema.DispositionDuplicate)
+		}
+		spelled[entry.category][entry.spelling] = entry.id
 		counts[entry.category]++
 	}
 	// A vocabulary is total only if its ordinals are dense from one. A gap

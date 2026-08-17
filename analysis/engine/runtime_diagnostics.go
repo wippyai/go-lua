@@ -25,12 +25,6 @@ const (
 type SolveDiagnosticOptions struct {
 	Flags   SolveDiagnosticFlags
 	MaxRows int
-	// MaxWork is an opt-in diagnostic checkpoint budget. It begins only after
-	// epoch construction has completed, then stops the diagnostic solve with
-	// SolveIncomplete once existing deep liveness probes consume the budget.
-	// It is not a semantic solver limit; ordinary Solve and MaxWork zero are
-	// unchanged.
-	MaxWork uint64
 }
 
 // Valid accepts only the closed diagnostic vocabulary and explicit bounded
@@ -38,7 +32,7 @@ type SolveDiagnosticOptions struct {
 // callers never get silently clamped or reinterpreted diagnostics.
 func (options SolveDiagnosticOptions) Valid() bool {
 	return options.Flags&^SolveDiagnosticAll == 0 && options.MaxRows >= 0 && options.MaxRows <= maxSolveDiagnosticMaxRows &&
-		(options.Flags != 0 || options.MaxRows == 0 && options.MaxWork == 0)
+		(options.Flags != 0 || options.MaxRows == 0)
 }
 
 // SolveDiagnosticKind identifies the kind of event represented by a row.
@@ -76,18 +70,19 @@ const (
 	SolveDiagnosticRestartExactNotBelowCurrent
 )
 
-// SolveDiagnosticDirection is the semantic order observed between the
+// solveDiagnosticDirection is the semantic order observed between the
 // remembered source and its current value at a restart trigger. RawOnly is a
-// representation change with equal lifted meaning.
-type SolveDiagnosticDirection uint8
+// representation change with equal lifted meaning. It classifies the private
+// per-bucket counters and reaches no caller.
+type solveDiagnosticDirection uint8
 
 const (
-	SolveDiagnosticDirectionUnknown SolveDiagnosticDirection = iota
-	SolveDiagnosticDirectionOldLessEqNew
-	SolveDiagnosticDirectionNewLessEqOld
-	SolveDiagnosticDirectionEqual
-	SolveDiagnosticDirectionRawOnly
-	SolveDiagnosticDirectionIncomparable
+	solveDiagnosticDirectionUnknown solveDiagnosticDirection = iota
+	solveDiagnosticDirectionOldLessEqNew
+	solveDiagnosticDirectionNewLessEqOld
+	solveDiagnosticDirectionEqual
+	solveDiagnosticDirectionRawOnly
+	solveDiagnosticDirectionIncomparable
 )
 
 // SolveDiagnosticRegionPhase identifies the recurrence phase in which a
@@ -100,9 +95,10 @@ const (
 )
 
 // SolveDiagnosticRow is one bounded aggregate restart bucket. Rows are keyed
-// by the activation-relation stamp, call site, reason, region, and head; all
-// counters are sums of events in that bucket. It deliberately retains no
-// runtime or carrier value.
+// by the activation-relation stamp, call site, reason, region, and head, and
+// they publish the attempt count for that bucket. The remaining per-bucket
+// sums are the collector's own accumulation detail and stay unexported. It
+// deliberately retains no runtime or carrier value.
 type SolveDiagnosticRow struct {
 	Revision identity.Generation
 	Kind     SolveDiagnosticKind
@@ -113,45 +109,45 @@ type SolveDiagnosticRow struct {
 	Head     int
 
 	Attempts  uint64
-	Completed uint64
+	completed uint64
 
-	SubtreePoints  uint64
-	ResetPoints    uint64
-	ResetProducers uint64
+	subtreePoints  uint64
+	resetPoints    uint64
+	resetProducers uint64
 
-	FaceIngressChanged                uint64
-	ExternalProducerIngressChanged    uint64
-	BackProducerIngressChanged        uint64
-	ExternalEnvironmentIngressChanged uint64
-	BackEnvironmentIngressChanged     uint64
-	ExternalFactorIngressChanged      uint64
-	BackFactorIngressChanged          uint64
+	faceIngressChanged                uint64
+	externalProducerIngressChanged    uint64
+	backProducerIngressChanged        uint64
+	externalEnvironmentIngressChanged uint64
+	backEnvironmentIngressChanged     uint64
+	externalFactorIngressChanged      uint64
+	backFactorIngressChanged          uint64
 
-	ExternalOrderFailures uint64
-	BackOrderFailures     uint64
+	externalOrderFailures uint64
+	backOrderFailures     uint64
 
-	RepresentationResets     uint64
-	RepresentationOnlyResets uint64
-	SemanticResets           uint64
-	SemanticSupportResets    uint64
-	SemanticValueResets      uint64
+	representationResets     uint64
+	representationOnlyResets uint64
+	semanticResets           uint64
+	semanticSupportResets    uint64
+	semanticValueResets      uint64
 
-	DirectionOldLessEqNew uint64
-	DirectionNewLessEqOld uint64
-	DirectionEqual        uint64
-	DirectionRawOnly      uint64
-	DirectionIncomparable uint64
-	DirectionUnknown      uint64
+	directionOldLessEqNew uint64
+	directionNewLessEqOld uint64
+	directionEqual        uint64
+	directionRawOnly      uint64
+	directionIncomparable uint64
+	directionUnknown      uint64
 
-	InterfaceRefreshes           uint64
-	InterfaceRefreshCompleted    uint64
-	InterfaceRefreshFallbacks    uint64
-	InterfaceRefreshChangedFaces uint64
-	InterfaceRefreshOldLessEqNew uint64
-	InterfaceRefreshNewLessEqOld uint64
-	InterfaceRefreshEqual        uint64
-	InterfaceRefreshIncomparable uint64
-	InterfaceRefreshUnknown      uint64
+	interfaceRefreshes           uint64
+	interfaceRefreshCompleted    uint64
+	interfaceRefreshFallbacks    uint64
+	interfaceRefreshChangedFaces uint64
+	interfaceRefreshOldLessEqNew uint64
+	interfaceRefreshNewLessEqOld uint64
+	interfaceRefreshEqual        uint64
+	interfaceRefreshIncomparable uint64
+	interfaceRefreshUnknown      uint64
 }
 
 // SolveDiagnostics is a detached snapshot of one solve's bounded runtime
@@ -160,15 +156,9 @@ type SolveDiagnosticRow struct {
 type SolveDiagnostics struct {
 	Flags SolveDiagnosticFlags
 	// Failure is the existing detached first-incomplete certificate issued by
-	// this same solver invocation. It is zero for complete, canceled,
-	// panicked, and intentional WorkCutoff calls.
+	// this same solver invocation. It is zero for complete, canceled, and
+	// panicked calls.
 	Failure SolveReport
-	// Work is the number of consumed deep evaluator liveness probes, not an
-	// outer iteration or event count. WorkCutoff distinguishes an intentional
-	// bounded diagnostic stop from a semantic incomplete solve.
-	Work       uint64
-	MaxWork    uint64
-	WorkCutoff bool
 
 	Epochs           uint64
 	Revisions        uint64
@@ -215,9 +205,6 @@ const (
 type solveDiagnosticState struct {
 	flags   SolveDiagnosticFlags
 	maxRows int
-	maxWork uint64
-	work    uint64
-	cutoff  bool
 
 	epochs           uint64
 	revisions        uint64
@@ -268,6 +255,77 @@ type solveDiagnosticRowKey struct {
 	head     int
 }
 
+// solveDiagnosticRowKeyLess is the sole canonical diagnostic row order. It
+// governs the snapshot projection and cap eviction alike, so a bounded report
+// holds the canonically first rows of the run rather than the first rows the
+// executor happened to reach.
+func solveDiagnosticRowKeyLess(left, right solveDiagnosticRowKey) bool {
+	if left.revision != right.revision {
+		return left.revision < right.revision
+	}
+	if left.kind != right.kind {
+		return left.kind < right.kind
+	}
+	if left.callSite != right.callSite {
+		return left.callSite < right.callSite
+	}
+	if left.reason != right.reason {
+		return left.reason < right.reason
+	}
+	if left.phase != right.phase {
+		return left.phase < right.phase
+	}
+	if left.region != right.region {
+		return left.region < right.region
+	}
+	return left.head < right.head
+}
+
+func solveDiagnosticRowKeyOf(row SolveDiagnosticRow) solveDiagnosticRowKey {
+	return solveDiagnosticRowKey{
+		revision: row.Revision, kind: row.Kind, callSite: row.CallSite,
+		reason: row.Reason, phase: row.Phase, region: row.Region, head: row.Head,
+	}
+}
+
+// admitRow returns the retained storage index for key. Once the row cap is
+// reached the canonically last retained row is the only eviction candidate, so
+// the retained set is a function of the row multiset alone.
+func (diagnostics *solveDiagnosticState) admitRow(key solveDiagnosticRowKey) (int, bool) {
+	if index, exists := diagnostics.rowAt[key]; exists {
+		return index, true
+	}
+	row := SolveDiagnosticRow{
+		Revision: key.revision, Kind: key.kind, CallSite: key.callSite,
+		Reason: key.reason, Phase: key.phase, Region: key.region, Head: key.head,
+	}
+	if len(diagnostics.rows) < diagnostics.maxRows {
+		index := len(diagnostics.rows)
+		diagnostics.rowAt[key] = index
+		diagnostics.rows = append(diagnostics.rows, row)
+		return index, true
+	}
+	diagnostics.droppedRows++
+	index, evicted, found := diagnostics.canonicalLastRow()
+	if !found || !solveDiagnosticRowKeyLess(key, evicted) {
+		return -1, false
+	}
+	delete(diagnostics.rowAt, evicted)
+	diagnostics.rowAt[key] = index
+	diagnostics.rows[index] = row
+	return index, true
+}
+
+func (diagnostics *solveDiagnosticState) canonicalLastRow() (int, solveDiagnosticRowKey, bool) {
+	last, lastKey, found := 0, solveDiagnosticRowKey{}, false
+	for key, index := range diagnostics.rowAt {
+		if !found || solveDiagnosticRowKeyLess(lastKey, key) {
+			last, lastKey, found = index, key, true
+		}
+	}
+	return last, lastKey, found
+}
+
 type solveDiagnosticInputKind uint8
 
 const (
@@ -284,6 +342,45 @@ type solveDiagnosticInputKey struct {
 	region int
 	kind   solveDiagnosticInputKind
 	index  int
+}
+
+// solveDiagnosticInputKeyLess is the canonical restart-input snapshot order.
+// It selects the eviction candidate under the snapshot cap, so the retained
+// snapshot set does not depend on executor arrival order.
+func solveDiagnosticInputKeyLess(left, right solveDiagnosticInputKey) bool {
+	if left.region != right.region {
+		return left.region < right.region
+	}
+	if left.kind != right.kind {
+		return left.kind < right.kind
+	}
+	return left.index < right.index
+}
+
+// admitSnapshot returns the retained entry for key. Once the snapshot cap is
+// reached the canonically last retained key is the only eviction candidate.
+func (diagnostics *solveDiagnosticState) admitSnapshot(key solveDiagnosticInputKey) (solveDiagnosticInput, bool) {
+	previous, exists := diagnostics.snapshots[key]
+	if exists || len(diagnostics.snapshots) < diagnostics.maxSnapshots {
+		return previous, true
+	}
+	diagnostics.droppedSnapshots++
+	evicted, found := diagnostics.canonicalLastSnapshot()
+	if !found || !solveDiagnosticInputKeyLess(key, evicted) {
+		return solveDiagnosticInput{}, false
+	}
+	delete(diagnostics.snapshots, evicted)
+	return solveDiagnosticInput{}, true
+}
+
+func (diagnostics *solveDiagnosticState) canonicalLastSnapshot() (solveDiagnosticInputKey, bool) {
+	last, found := solveDiagnosticInputKey{}, false
+	for key := range diagnostics.snapshots {
+		if !found || solveDiagnosticInputKeyLess(last, key) {
+			last, found = key, true
+		}
+	}
+	return last, found
 }
 
 type solveDiagnosticInput struct {
@@ -350,32 +447,10 @@ func newSolveDiagnosticState(options SolveDiagnosticOptions) *solveDiagnosticSta
 	return &solveDiagnosticState{
 		flags:        flags,
 		maxRows:      maxRows,
-		maxWork:      options.MaxWork,
 		rows:         make([]SolveDiagnosticRow, 0, maxRows),
 		rowAt:        make(map[solveDiagnosticRowKey]int, maxRows),
 		snapshots:    make(map[solveDiagnosticInputKey]solveDiagnosticInput, maxSnapshots),
 		maxSnapshots: maxSnapshots,
-	}
-}
-
-// checkpoint is installed at the evaluator's existing liveness seam. The
-// disabled path never creates this state; the enabled unlimited path is one
-// predictable zero comparison. It does not alter any completed semantics.
-func (diagnostics *solveDiagnosticState) checkpoint() bool {
-	if diagnostics == nil || diagnostics.maxWork == 0 {
-		return true
-	}
-	if diagnostics.work >= diagnostics.maxWork {
-		diagnostics.cutoff = true
-		return false
-	}
-	diagnostics.work++
-	return true
-}
-
-func (diagnostics *solveDiagnosticState) clearCutoff() {
-	if diagnostics != nil {
-		diagnostics.cutoff = false
 	}
 }
 
@@ -445,32 +520,10 @@ func (diagnostics *solveDiagnosticState) snapshot() SolveDiagnostics {
 	}
 	rows := append([]SolveDiagnosticRow(nil), diagnostics.rows...)
 	sort.Slice(rows, func(left, right int) bool {
-		a, b := rows[left], rows[right]
-		if a.Revision != b.Revision {
-			return a.Revision < b.Revision
-		}
-		if a.Kind != b.Kind {
-			return a.Kind < b.Kind
-		}
-		if a.CallSite != b.CallSite {
-			return a.CallSite < b.CallSite
-		}
-		if a.Reason != b.Reason {
-			return a.Reason < b.Reason
-		}
-		if a.Phase != b.Phase {
-			return a.Phase < b.Phase
-		}
-		if a.Region != b.Region {
-			return a.Region < b.Region
-		}
-		return a.Head < b.Head
+		return solveDiagnosticRowKeyLess(solveDiagnosticRowKeyOf(rows[left]), solveDiagnosticRowKeyOf(rows[right]))
 	})
 	return SolveDiagnostics{
 		Flags:                        diagnostics.flags,
-		Work:                         diagnostics.work,
-		MaxWork:                      diagnostics.maxWork,
-		WorkCutoff:                   diagnostics.cutoff,
 		Epochs:                       diagnostics.epochs,
 		Revisions:                    diagnostics.revisions,
 		EpochPasses:                  diagnostics.epochPasses,
@@ -592,15 +645,9 @@ func (diagnostics *solveDiagnosticState) interfaceRefreshRow(epoch *executorEpoc
 	} else if state.phase == phaseNarrow {
 		key.phase = SolveDiagnosticRegionNarrow
 	}
-	index, exists := diagnostics.rowAt[key]
-	if !exists {
-		if len(diagnostics.rows) >= diagnostics.maxRows {
-			diagnostics.droppedRows++
-			return nil
-		}
-		index = len(diagnostics.rows)
-		diagnostics.rowAt[key] = index
-		diagnostics.rows = append(diagnostics.rows, SolveDiagnosticRow{Revision: key.revision, Kind: key.kind, CallSite: key.callSite, Reason: key.reason, Phase: key.phase, Region: key.region, Head: key.head})
+	index, retained := diagnostics.admitRow(key)
+	if !retained {
+		return nil
 	}
 	return &diagnostics.rows[index]
 }
@@ -615,31 +662,31 @@ func (diagnostics *solveDiagnosticState) recordInterfaceRefreshBegin(epoch *exec
 	if row == nil {
 		return
 	}
-	row.InterfaceRefreshes++
-	row.InterfaceRefreshChangedFaces += changedFaces
+	row.interfaceRefreshes++
+	row.interfaceRefreshChangedFaces += changedFaces
 }
 
-func interfaceRefreshDirection(work *carrier.Work, old, current carrier.PointRHS) SolveDiagnosticDirection {
+func interfaceRefreshDirection(work *carrier.Work, old, current carrier.PointRHS) solveDiagnosticDirection {
 	if work == nil || !work.OwnsPointRHS(old) || !work.OwnsPointRHS(current) {
-		return SolveDiagnosticDirectionUnknown
+		return solveDiagnosticDirectionUnknown
 	}
 	if work.EqualPointRHS(old, current) {
 		// PointRHS deliberately exposes only lifted semantic order. Raw-only
 		// representation is source-publication telemetry, not an exact-RHS
 		// direction and must not acquire a second carrier predicate here.
-		return SolveDiagnosticDirectionEqual
+		return solveDiagnosticDirectionEqual
 	}
 	oldLess := work.LessOrEqPointRHS(old, current)
 	newLess := work.LessOrEqPointRHS(current, old)
 	switch {
 	case oldLess && !newLess:
-		return SolveDiagnosticDirectionOldLessEqNew
+		return solveDiagnosticDirectionOldLessEqNew
 	case newLess && !oldLess:
-		return SolveDiagnosticDirectionNewLessEqOld
+		return solveDiagnosticDirectionNewLessEqOld
 	case oldLess && newLess:
-		return SolveDiagnosticDirectionEqual
+		return solveDiagnosticDirectionEqual
 	default:
-		return SolveDiagnosticDirectionIncomparable
+		return solveDiagnosticDirectionIncomparable
 	}
 }
 
@@ -659,13 +706,13 @@ func (diagnostics *solveDiagnosticState) recordInterfaceRefreshOutcome(epoch *ex
 	}
 	direction := interfaceRefreshDirection(work, old, current)
 	switch direction {
-	case SolveDiagnosticDirectionOldLessEqNew:
+	case solveDiagnosticDirectionOldLessEqNew:
 		diagnostics.interfaceRefreshOldLessEqNew++
-	case SolveDiagnosticDirectionNewLessEqOld:
+	case solveDiagnosticDirectionNewLessEqOld:
 		diagnostics.interfaceRefreshNewLessEqOld++
-	case SolveDiagnosticDirectionEqual:
+	case solveDiagnosticDirectionEqual:
 		diagnostics.interfaceRefreshEqual++
-	case SolveDiagnosticDirectionIncomparable:
+	case solveDiagnosticDirectionIncomparable:
 		diagnostics.interfaceRefreshIncomparable++
 	default:
 		diagnostics.interfaceRefreshUnknown++
@@ -675,22 +722,22 @@ func (diagnostics *solveDiagnosticState) recordInterfaceRefreshOutcome(epoch *ex
 		return
 	}
 	if completed {
-		row.InterfaceRefreshCompleted++
+		row.interfaceRefreshCompleted++
 	}
 	if fallback {
-		row.InterfaceRefreshFallbacks++
+		row.interfaceRefreshFallbacks++
 	}
 	switch direction {
-	case SolveDiagnosticDirectionOldLessEqNew:
-		row.InterfaceRefreshOldLessEqNew++
-	case SolveDiagnosticDirectionNewLessEqOld:
-		row.InterfaceRefreshNewLessEqOld++
-	case SolveDiagnosticDirectionEqual:
-		row.InterfaceRefreshEqual++
-	case SolveDiagnosticDirectionIncomparable:
-		row.InterfaceRefreshIncomparable++
+	case solveDiagnosticDirectionOldLessEqNew:
+		row.interfaceRefreshOldLessEqNew++
+	case solveDiagnosticDirectionNewLessEqOld:
+		row.interfaceRefreshNewLessEqOld++
+	case solveDiagnosticDirectionEqual:
+		row.interfaceRefreshEqual++
+	case solveDiagnosticDirectionIncomparable:
+		row.interfaceRefreshIncomparable++
 	default:
-		row.InterfaceRefreshUnknown++
+		row.interfaceRefreshUnknown++
 	}
 }
 
@@ -698,9 +745,8 @@ func (diagnostics *solveDiagnosticState) rememberPoint(key solveDiagnosticInputK
 	if diagnostics == nil || !diagnostics.restartEnabled() {
 		return
 	}
-	previous, exists := diagnostics.snapshots[key]
-	if !exists && len(diagnostics.snapshots) >= diagnostics.maxSnapshots {
-		diagnostics.droppedSnapshots++
+	previous, retained := diagnostics.admitSnapshot(key)
+	if !retained {
 		return
 	}
 	previous.point = point
@@ -712,9 +758,8 @@ func (diagnostics *solveDiagnosticState) rememberRule(key solveDiagnosticInputKe
 	if diagnostics == nil || !diagnostics.restartEnabled() {
 		return
 	}
-	previous, exists := diagnostics.snapshots[key]
-	if !exists && len(diagnostics.snapshots) >= diagnostics.maxSnapshots {
-		diagnostics.droppedSnapshots++
+	previous, retained := diagnostics.admitSnapshot(key)
+	if !retained {
 		return
 	}
 	previous.rule = rule
@@ -818,7 +863,7 @@ func (diagnostics *solveDiagnosticState) captureRestartMismatches(epoch *executo
 	}
 	if len(bound.faces) != len(state.interfaces) {
 		sample.faceIngressChanged++
-		diagnostics.addDirection(SolveDiagnosticDirectionUnknown, sample)
+		diagnostics.addDirection(solveDiagnosticDirectionUnknown, sample)
 	}
 	for index, point := range bound.faces {
 		if index >= len(state.interfaces) || state.interfaces[index] != version(point) {
@@ -828,7 +873,7 @@ func (diagnostics *solveDiagnosticState) captureRestartMismatches(epoch *executo
 	}
 	if len(bound.external) != len(state.ingress) {
 		sample.externalProducerIngressChanged++
-		diagnostics.addDirection(SolveDiagnosticDirectionUnknown, sample)
+		diagnostics.addDirection(solveDiagnosticDirectionUnknown, sample)
 	}
 	for index, group := range bound.external {
 		current := uint64(0)
@@ -842,7 +887,7 @@ func (diagnostics *solveDiagnosticState) captureRestartMismatches(epoch *executo
 	}
 	if len(bound.back) != len(state.backIngress) {
 		sample.backProducerIngressChanged++
-		diagnostics.addDirection(SolveDiagnosticDirectionUnknown, sample)
+		diagnostics.addDirection(solveDiagnosticDirectionUnknown, sample)
 	}
 	for index, group := range bound.back {
 		current := uint64(0)
@@ -856,7 +901,7 @@ func (diagnostics *solveDiagnosticState) captureRestartMismatches(epoch *executo
 	}
 	if len(bound.environmentExternal) != len(state.environmentIngress) {
 		sample.externalEnvironmentIngressChanged++
-		diagnostics.addDirection(SolveDiagnosticDirectionUnknown, sample)
+		diagnostics.addDirection(solveDiagnosticDirectionUnknown, sample)
 	}
 	for index, edge := range bound.environmentExternal {
 		current := epoch.environmentVersion(edge)
@@ -866,7 +911,7 @@ func (diagnostics *solveDiagnosticState) captureRestartMismatches(epoch *executo
 	}
 	if len(bound.environmentBack) != len(state.environmentBackIngress) {
 		sample.backEnvironmentIngressChanged++
-		diagnostics.addDirection(SolveDiagnosticDirectionUnknown, sample)
+		diagnostics.addDirection(solveDiagnosticDirectionUnknown, sample)
 	}
 	for index, edge := range bound.environmentBack {
 		current := epoch.environmentVersion(edge)
@@ -877,7 +922,7 @@ func (diagnostics *solveDiagnosticState) captureRestartMismatches(epoch *executo
 	}
 	if len(bound.factorExternal) != len(state.factorIngress) {
 		sample.externalFactorIngressChanged++
-		diagnostics.addDirection(SolveDiagnosticDirectionUnknown, sample)
+		diagnostics.addDirection(solveDiagnosticDirectionUnknown, sample)
 	}
 	for index, edge := range bound.factorExternal {
 		current := epoch.factorEdgeVersion(edge)
@@ -887,7 +932,7 @@ func (diagnostics *solveDiagnosticState) captureRestartMismatches(epoch *executo
 	}
 	if len(bound.factorBack) != len(state.factorBackIngress) {
 		sample.backFactorIngressChanged++
-		diagnostics.addDirection(SolveDiagnosticDirectionUnknown, sample)
+		diagnostics.addDirection(solveDiagnosticDirectionUnknown, sample)
 	}
 	for index, edge := range bound.factorBack {
 		current := epoch.factorEdgeVersion(edge)
@@ -900,12 +945,12 @@ func (diagnostics *solveDiagnosticState) captureRestartMismatches(epoch *executo
 
 func (diagnostics *solveDiagnosticState) classifyPoint(epoch *executorEpoch, key solveDiagnosticInputKey, point int, sample *solveDiagnosticRestartSample) {
 	if point < 0 || point >= len(epoch.points) {
-		diagnostics.addDirection(SolveDiagnosticDirectionUnknown, sample)
+		diagnostics.addDirection(solveDiagnosticDirectionUnknown, sample)
 		return
 	}
 	old, ok := diagnostics.snapshots[key]
 	if !ok || !old.pointOK || !epoch.work.OwnsPointState(old.point) || !epoch.work.OwnsPointState(epoch.points[point]) {
-		diagnostics.addDirection(SolveDiagnosticDirectionUnknown, sample)
+		diagnostics.addDirection(solveDiagnosticDirectionUnknown, sample)
 		return
 	}
 	diagnostics.addPointDirection(epoch.work, old.point, epoch.points[point], sample)
@@ -913,7 +958,7 @@ func (diagnostics *solveDiagnosticState) classifyPoint(epoch *executorEpoch, key
 
 func (diagnostics *solveDiagnosticState) classifyRule(epoch *executorEpoch, key solveDiagnosticInputKey, group, pendingGroup int, pending carrier.RuleContribution, sample *solveDiagnosticRestartSample) {
 	if group < 0 || group >= len(epoch.producers) {
-		diagnostics.addDirection(SolveDiagnosticDirectionUnknown, sample)
+		diagnostics.addDirection(solveDiagnosticDirectionUnknown, sample)
 		return
 	}
 	old, ok := diagnostics.snapshots[key]
@@ -923,7 +968,7 @@ func (diagnostics *solveDiagnosticState) classifyRule(epoch *executorEpoch, key 
 		current.hasValue = true
 	}
 	if !ok || !old.ruleOK || !current.hasValue || !epoch.work.OwnsRuleContribution(old.rule) || !epoch.work.OwnsRuleContribution(current.candidate) {
-		diagnostics.addDirection(SolveDiagnosticDirectionUnknown, sample)
+		diagnostics.addDirection(solveDiagnosticDirectionUnknown, sample)
 		return
 	}
 	diagnostics.addRuleDirection(epoch.work, old.rule, current.candidate, sample)
@@ -931,7 +976,7 @@ func (diagnostics *solveDiagnosticState) classifyRule(epoch *executorEpoch, key 
 
 func (diagnostics *solveDiagnosticState) classifyEnvironment(epoch *executorEpoch, key solveDiagnosticInputKey, edge int, sample *solveDiagnosticRestartSample) {
 	if edge < 0 || edge >= len(epoch.runtime.environments) {
-		diagnostics.addDirection(SolveDiagnosticDirectionUnknown, sample)
+		diagnostics.addDirection(solveDiagnosticDirectionUnknown, sample)
 		return
 	}
 	diagnostics.classifyPoint(epoch, key, epoch.runtime.environments[edge].source, sample)
@@ -939,7 +984,7 @@ func (diagnostics *solveDiagnosticState) classifyEnvironment(epoch *executorEpoc
 
 func (diagnostics *solveDiagnosticState) classifyFactor(epoch *executorEpoch, key solveDiagnosticInputKey, edge int, sample *solveDiagnosticRestartSample) {
 	if edge < 0 || edge >= len(epoch.runtime.factorEdges) {
-		diagnostics.addDirection(SolveDiagnosticDirectionUnknown, sample)
+		diagnostics.addDirection(solveDiagnosticDirectionUnknown, sample)
 		return
 	}
 	diagnostics.classifyPoint(epoch, key, epoch.runtime.factorEdges[edge].source, sample)
@@ -948,38 +993,38 @@ func (diagnostics *solveDiagnosticState) classifyFactor(epoch *executorEpoch, ke
 func (diagnostics *solveDiagnosticState) addPointDirection(work *carrier.Work, old, current carrier.PointState, sample *solveDiagnosticRestartSample) {
 	if work.EqualPointState(old, current) {
 		if work.ExactSamePointRepresentation(old, current) {
-			diagnostics.addDirection(SolveDiagnosticDirectionEqual, sample)
+			diagnostics.addDirection(solveDiagnosticDirectionEqual, sample)
 		} else {
-			diagnostics.addDirection(SolveDiagnosticDirectionRawOnly, sample)
+			diagnostics.addDirection(solveDiagnosticDirectionRawOnly, sample)
 		}
 		return
 	}
 	oldRHS, oldOK := work.PointRHSFromPointState(old)
 	newRHS, newOK := work.PointRHSFromPointState(current)
 	if !oldOK || !newOK {
-		diagnostics.addDirection(SolveDiagnosticDirectionUnknown, sample)
+		diagnostics.addDirection(solveDiagnosticDirectionUnknown, sample)
 		return
 	}
 	oldLess := work.LessOrEqPointRHS(oldRHS, newRHS)
 	newLess := work.LessOrEqPointRHS(newRHS, oldRHS)
 	switch {
 	case oldLess && !newLess:
-		diagnostics.addDirection(SolveDiagnosticDirectionOldLessEqNew, sample)
+		diagnostics.addDirection(solveDiagnosticDirectionOldLessEqNew, sample)
 	case newLess && !oldLess:
-		diagnostics.addDirection(SolveDiagnosticDirectionNewLessEqOld, sample)
+		diagnostics.addDirection(solveDiagnosticDirectionNewLessEqOld, sample)
 	case oldLess && newLess:
-		diagnostics.addDirection(SolveDiagnosticDirectionEqual, sample)
+		diagnostics.addDirection(solveDiagnosticDirectionEqual, sample)
 	default:
-		diagnostics.addDirection(SolveDiagnosticDirectionIncomparable, sample)
+		diagnostics.addDirection(solveDiagnosticDirectionIncomparable, sample)
 	}
 }
 
 func (diagnostics *solveDiagnosticState) addRuleDirection(work *carrier.Work, old, current carrier.RuleContribution, sample *solveDiagnosticRestartSample) {
 	if work.EqualRuleContribution(old, current) {
 		if work.ExactSameRuleContributionRepresentation(old, current) {
-			diagnostics.addDirection(SolveDiagnosticDirectionEqual, sample)
+			diagnostics.addDirection(solveDiagnosticDirectionEqual, sample)
 		} else {
-			diagnostics.addDirection(SolveDiagnosticDirectionRawOnly, sample)
+			diagnostics.addDirection(solveDiagnosticDirectionRawOnly, sample)
 		}
 		return
 	}
@@ -987,30 +1032,30 @@ func (diagnostics *solveDiagnosticState) addRuleDirection(work *carrier.Work, ol
 	newLess := work.LessOrEqRuleContribution(current, old)
 	switch {
 	case oldLess && !newLess:
-		diagnostics.addDirection(SolveDiagnosticDirectionOldLessEqNew, sample)
+		diagnostics.addDirection(solveDiagnosticDirectionOldLessEqNew, sample)
 	case newLess && !oldLess:
-		diagnostics.addDirection(SolveDiagnosticDirectionNewLessEqOld, sample)
+		diagnostics.addDirection(solveDiagnosticDirectionNewLessEqOld, sample)
 	case oldLess && newLess:
-		diagnostics.addDirection(SolveDiagnosticDirectionEqual, sample)
+		diagnostics.addDirection(solveDiagnosticDirectionEqual, sample)
 	default:
-		diagnostics.addDirection(SolveDiagnosticDirectionIncomparable, sample)
+		diagnostics.addDirection(solveDiagnosticDirectionIncomparable, sample)
 	}
 }
 
-func (diagnostics *solveDiagnosticState) addDirection(direction SolveDiagnosticDirection, sample *solveDiagnosticRestartSample) {
+func (diagnostics *solveDiagnosticState) addDirection(direction solveDiagnosticDirection, sample *solveDiagnosticRestartSample) {
 	if sample == nil {
 		return
 	}
 	switch direction {
-	case SolveDiagnosticDirectionOldLessEqNew:
+	case solveDiagnosticDirectionOldLessEqNew:
 		sample.directionOldLessEqNew++
-	case SolveDiagnosticDirectionNewLessEqOld:
+	case solveDiagnosticDirectionNewLessEqOld:
 		sample.directionNewLessEqOld++
-	case SolveDiagnosticDirectionEqual:
+	case solveDiagnosticDirectionEqual:
 		sample.directionEqual++
-	case SolveDiagnosticDirectionRawOnly:
+	case solveDiagnosticDirectionRawOnly:
 		sample.directionRawOnly++
-	case SolveDiagnosticDirectionIncomparable:
+	case solveDiagnosticDirectionIncomparable:
 		sample.directionIncomparable++
 	default:
 		sample.directionUnknown++
@@ -1024,49 +1069,34 @@ func (diagnostics *solveDiagnosticState) finishRestart(sample solveDiagnosticRes
 	if completed {
 		sample.completed = 1
 	}
-	key := sample.key
-	index, exists := diagnostics.rowAt[key]
-	if !exists {
-		if len(diagnostics.rows) >= diagnostics.maxRows {
-			diagnostics.droppedRows++
-			return
-		}
-		index = len(diagnostics.rows)
-		diagnostics.rowAt[key] = index
-		diagnostics.rows = append(diagnostics.rows, SolveDiagnosticRow{
-			Revision: key.revision,
-			Kind:     key.kind,
-			CallSite: key.callSite,
-			Reason:   key.reason,
-			Phase:    key.phase,
-			Region:   key.region,
-			Head:     key.head,
-		})
+	index, retained := diagnostics.admitRow(sample.key)
+	if !retained {
+		return
 	}
 	row := &diagnostics.rows[index]
 	row.Attempts += sample.attempts
-	row.Completed += sample.completed
-	row.SubtreePoints += sample.subtreePoints
-	row.ResetPoints += sample.resetPoints
-	row.ResetProducers += sample.resetProducers
-	row.FaceIngressChanged += sample.faceIngressChanged
-	row.ExternalProducerIngressChanged += sample.externalProducerIngressChanged
-	row.BackProducerIngressChanged += sample.backProducerIngressChanged
-	row.ExternalEnvironmentIngressChanged += sample.externalEnvironmentIngressChanged
-	row.BackEnvironmentIngressChanged += sample.backEnvironmentIngressChanged
-	row.ExternalFactorIngressChanged += sample.externalFactorIngressChanged
-	row.BackFactorIngressChanged += sample.backFactorIngressChanged
-	row.ExternalOrderFailures += sample.externalOrderFailures
-	row.BackOrderFailures += sample.backOrderFailures
-	row.RepresentationResets += sample.representationResets
-	row.RepresentationOnlyResets += sample.representationOnlyResets
-	row.SemanticResets += sample.semanticResets
-	row.SemanticSupportResets += sample.semanticSupportResets
-	row.SemanticValueResets += sample.semanticValueResets
-	row.DirectionOldLessEqNew += sample.directionOldLessEqNew
-	row.DirectionNewLessEqOld += sample.directionNewLessEqOld
-	row.DirectionEqual += sample.directionEqual
-	row.DirectionRawOnly += sample.directionRawOnly
-	row.DirectionIncomparable += sample.directionIncomparable
-	row.DirectionUnknown += sample.directionUnknown
+	row.completed += sample.completed
+	row.subtreePoints += sample.subtreePoints
+	row.resetPoints += sample.resetPoints
+	row.resetProducers += sample.resetProducers
+	row.faceIngressChanged += sample.faceIngressChanged
+	row.externalProducerIngressChanged += sample.externalProducerIngressChanged
+	row.backProducerIngressChanged += sample.backProducerIngressChanged
+	row.externalEnvironmentIngressChanged += sample.externalEnvironmentIngressChanged
+	row.backEnvironmentIngressChanged += sample.backEnvironmentIngressChanged
+	row.externalFactorIngressChanged += sample.externalFactorIngressChanged
+	row.backFactorIngressChanged += sample.backFactorIngressChanged
+	row.externalOrderFailures += sample.externalOrderFailures
+	row.backOrderFailures += sample.backOrderFailures
+	row.representationResets += sample.representationResets
+	row.representationOnlyResets += sample.representationOnlyResets
+	row.semanticResets += sample.semanticResets
+	row.semanticSupportResets += sample.semanticSupportResets
+	row.semanticValueResets += sample.semanticValueResets
+	row.directionOldLessEqNew += sample.directionOldLessEqNew
+	row.directionNewLessEqOld += sample.directionNewLessEqOld
+	row.directionEqual += sample.directionEqual
+	row.directionRawOnly += sample.directionRawOnly
+	row.directionIncomparable += sample.directionIncomparable
+	row.directionUnknown += sample.directionUnknown
 }

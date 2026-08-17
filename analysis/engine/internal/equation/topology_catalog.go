@@ -1,6 +1,7 @@
 package equation
 
 import (
+	"bytes"
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
@@ -263,11 +264,6 @@ func validateTopologyCatalogUsage(topology TopologySpec, catalog topologyCatalog
 			if !markSurface(write.Surface) {
 				return false
 			}
-			for _, target := range write.TargetCandidates {
-				if !markSurface(target) {
-					return false
-				}
-			}
 		}
 	}
 	for _, query := range topology.Queries {
@@ -311,6 +307,9 @@ func compareSurface(left, right Surface) int {
 	if left.Local > right.Local {
 		return 1
 	}
+	if comparison := bytes.Compare(left.Content[:], right.Content[:]); comparison != 0 {
+		return comparison
+	}
 	if comparison := compareKey(left.Semantic, right.Semantic); comparison != 0 {
 		return comparison
 	}
@@ -341,13 +340,8 @@ func writeRuleCatalog(writer *canonical.DigestWriter, row RuleInstance, catalog 
 		return false
 	}
 	for _, write := range row.Writes {
-		if !writeSurfaceCatalog(writer, write.Surface, catalog) || writer.Count(uint64(len(write.TargetCandidates))) != nil {
+		if !writeSurfaceCatalog(writer, write.Surface, catalog) {
 			return false
-		}
-		for _, target := range write.TargetCandidates {
-			if !writeSurfaceCatalog(writer, target, catalog) {
-				return false
-			}
 		}
 	}
 	return true

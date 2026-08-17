@@ -18,7 +18,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/internal/testfixture"
-	"github.com/wippyai/go-lua/analysis/library/lualib/targetprofile"
+	profile "github.com/wippyai/go-lua/analysis/library/lualib/targetprofile"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/link"
@@ -707,12 +707,11 @@ func corpusHarnessStatusName(status AnalyzeStatus) string {
 // one fixture lane readable and the rest opaque.
 func corpusHarnessEngineFailure(diagnostics AnalyzeDiagnostics) string {
 	failure := diagnostics.Engine.Failure
-	return fmt.Sprintf("phase=%s reason=%s rule=%s work=%d/%d cutoff=%t epochs=%d passes=%d evaluates=%d fails=%d folds=%d restarts=%d activations=%d failure={available:%t reason:%d phase:%s point:%v group:%v member:%v rule:%v}",
+	return fmt.Sprintf("phase=%s reason=%s rule=%s epochs=%d passes=%d evaluates=%d fails=%d folds=%d restarts=%d activations=%d failure={available:%t reason:%d boundary:%s point:%v group:%v member:%v rule:%v}",
 		diagnostics.Phase, diagnostics.Reason, diagnostics.Rule,
-		diagnostics.Engine.Work, diagnostics.Engine.MaxWork, diagnostics.Engine.WorkCutoff,
 		diagnostics.Engine.Epochs, diagnostics.Engine.EpochPasses, diagnostics.Engine.Evaluates, diagnostics.Engine.EvaluateFailures,
 		diagnostics.Engine.Folds, diagnostics.Engine.Restarts, diagnostics.Engine.Activations,
-		failure.Available(), failure.Reason(), failure.Phase(), failure.Point(), failure.Group(), failure.Member(), failure.Rule())
+		failure.Available(), failure.Reason(), failure.Failure(), failure.Point(), failure.Group(), failure.Member(), failure.Rule())
 }
 
 // corpusHarnessBindingFailure names the first closed construction boundary a

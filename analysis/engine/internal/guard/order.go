@@ -76,15 +76,6 @@ func (m *Manager) compareImmediate(left, right Guard) (int, bool) {
 	return 0, false
 }
 
-// Conflict reports whether two sealed guards cannot both hold. It traverses
-// their product read-only and constructs neither pages nor cache entries.
-func (m *Manager) Conflict(left, right Guard) bool {
-	if !m.validSealed(left) || !m.validSealed(right) {
-		return false
-	}
-	return !m.satisfiable(left, right, false)
-}
-
 // Entails reports whether every valuation satisfying premise satisfies
 // conclusion, without allocating a candidate BDD.
 func (m *Manager) Entails(premise, conclusion Guard) bool {

@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/composite"
 	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
 )
 
@@ -33,7 +34,8 @@ func TestDiagnosticPolicyIsSeparateFromInferenceResultIdentity(t *testing.T) {
 	}
 	on := DiagnosticPolicy{Enabled: []DiagnosticCode{DiagnosticCodeAlwaysTrueGuard}, Severity: map[DiagnosticCode]FindingSeverity{DiagnosticCodeAlwaysTrueGuard: FindingSeverityHint}}
 	severity, enabled := on.enabled(DiagnosticCodeAlwaysTrueGuard)
-	if !enabled || severity != FindingSeverityHint || DiagnosticCodeAlwaysTrueGuard.String() != "advice.always_true_guard" || severity.String() != "hint" {
+	spelling, spellingOK := findingSeveritySpelling(severity)
+	if !enabled || severity != FindingSeverityHint || DiagnosticCodeAlwaysTrueGuard.String() != "advice.always_true_guard" || !spellingOK || spelling != "hint" {
 		t.Fatal("explicit policy did not enable the declared diagnostic")
 	}
 	report := &DiagnosticReport{source: result.SourceID(), result: result.ContentID(), sealed: true}
@@ -91,7 +93,7 @@ func TestDiagnosticDeclarationTableIsPolicyAndDispatchAuthority(t *testing.T) {
 	if !tableOK {
 		t.Fatal("sealed diagnostic table unavailable")
 	}
-	staticKinds := make(map[programartifact.DiagnosticObservationKind]struct{}, table.Count())
+	staticPopulations := make(map[schema.Key]struct{}, table.Count())
 	for position := 0; position < table.Count(); position++ {
 		entry, entryOK := table.At(position)
 		if !entryOK || entry.Code() == DiagnosticCodeInvalid {
@@ -102,25 +104,40 @@ func TestDiagnosticDeclarationTableIsPolicyAndDispatchAuthority(t *testing.T) {
 			t.Fatalf("policy admission drifted from the declared lane for %q", entry.Code().String())
 		}
 		if !entry.Collectable() {
-			if entry.Observation() != programartifact.DiagnosticObservationInvalid {
+			if entry.Observation().Declared() {
 				t.Fatalf("row %q without a producer declares an observation population", entry.Code().String())
 			}
 			continue
 		}
-		if entry.Observation() == programartifact.DiagnosticObservationInvalid {
+		if !entry.Observation().Declared() {
 			t.Fatalf("producing row %q declares no observation population", entry.Code().String())
 		}
 		if entry.Lane() != diagnostic.LaneStatic {
 			continue
 		}
-		if _, duplicate := staticKinds[entry.Observation()]; duplicate {
-			t.Fatalf("duplicate static observation population %d", entry.Observation())
+		if _, duplicate := staticPopulations[entry.Observation().Key]; duplicate {
+			t.Fatalf("duplicate static observation population %q", entry.Observation().Key)
 		}
-		staticKinds[entry.Observation()] = struct{}{}
-		dispatched, dispatchedOK := staticDiagnosticDeclaration(entry.Observation())
-		if !dispatchedOK || dispatched != entry {
-			t.Fatalf("static dispatch lost row %q", entry.Code().String())
+		staticPopulations[entry.Observation().Key] = struct{}{}
+	}
+	// The artifact numbers the same populations the declaration does, so every
+	// compiled observation kind dispatches to the row that declares it. This is
+	// the adoption seam the pin law holds open: a collector holding an ordinal
+	// reaches a declared row without a mapping of its own.
+	for _, kind := range []programartifact.DiagnosticObservationKind{
+		programartifact.DiagnosticObservationTypeReferenceUnresolved,
+		programartifact.DiagnosticObservationValueReferenceUnresolved,
+	} {
+		dispatched, dispatchedOK := staticDiagnosticDeclaration(kind)
+		if !dispatchedOK {
+			t.Fatalf("static observation kind %d dispatches to no declared row", kind)
 		}
+		if _, declared := staticPopulations[dispatched.Observation().Key]; !declared {
+			t.Fatalf("static observation kind %d dispatched to row %q, which declares no static population", kind, dispatched.Code().String())
+		}
+	}
+	if _, dispatched := staticDiagnosticDeclaration(programartifact.DiagnosticObservationBranchCondition); dispatched {
+		t.Fatal("a branch population dispatched to a static row")
 	}
 }
 
@@ -224,7 +241,7 @@ func TestDiagnosticTemplateRegistryClosedReportLaw(t *testing.T) {
 				t.Fatalf("declared default severity for %q lost", test.code.String())
 			}
 			if finding.Code() != test.code || finding.Severity() != test.severity || finding.Message() != test.message || finding.Help() != test.help {
-				t.Fatalf("closed template contract lost: code=%q severity=%q message=%q help=%q", finding.Code().String(), finding.Severity().String(), finding.Message(), finding.Help())
+				t.Fatalf("closed template contract lost: code=%q severity=%d message=%q help=%q", finding.Code().String(), finding.Severity(), finding.Message(), finding.Help())
 			}
 			if finding.EvidenceCount() != len(test.evidence) || finding.LabelCount() != len(test.labels) {
 				t.Fatalf("template row counts = evidence %d labels %d, want %d/%d", finding.EvidenceCount(), finding.LabelCount(), len(test.evidence), len(test.labels))

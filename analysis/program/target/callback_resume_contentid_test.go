@@ -1,8 +1,9 @@
 package target
 
 import (
-	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
+
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
@@ -18,7 +19,7 @@ func callbackResumeContentOperation(name string, callbackFormal, resumeCarrier V
 		},
 		Callbacks: []CallbackSpec{{
 			Function:  InputSource{Kind: InputSourceValueFormal, Ordinal: uint32(callbackFormal)},
-			Admission: OrdinaryCallable,
+			Admission: schematype.CallableAdmissionOrdinary,
 			Arguments: callbackTail(1),
 			Outcomes:  callbackOutcomes(1, 1, 2, 3, 4),
 			Lifecycle: CallbackRetainedOptionalOnce,

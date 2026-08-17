@@ -9,12 +9,9 @@ import (
 )
 
 type exactObservationWriteFixture struct {
-	count        int
-	surface      equation.Surface
-	route        uint64
-	candidates   int
-	dependencies int
-	relations    int
+	count   int
+	surface equation.Surface
+	route   uint64
 }
 
 func hotExactObservationFactorSpec() HotFactorSpec[uint64, uint64] {
@@ -32,15 +29,6 @@ func (fixture exactObservationWriteFixture) WriteAt(index int) (equation.Surface
 func (fixture exactObservationWriteFixture) WriteRouteRead(index int) (uint64, bool) {
 	return fixture.route, index == 0
 }
-func (fixture exactObservationWriteFixture) WriteCandidateCount(index int) (int, bool) {
-	return fixture.candidates, index == 0
-}
-func (fixture exactObservationWriteFixture) WriteDependencyCount(index int) (int, bool) {
-	return fixture.dependencies, index == 0
-}
-func (fixture exactObservationWriteFixture) WriteRelationCount(index int) (int, bool) {
-	return fixture.relations, index == 0
-}
 
 func TestExactObservationDerivesCommittedExactWriteCoordinate(t *testing.T) {
 	factor := compositionKeyOf(coldKey(948_010))
@@ -53,7 +41,7 @@ func TestExactObservationDerivesCommittedExactWriteCoordinate(t *testing.T) {
 	for name, fixture := range map[string]exactObservationWriteFixture{
 		"same-point other member factor": {count: 1, surface: equation.Surface{Factor: other, Form: equation.SurfaceWriteExact, Local: 7, Mode: equation.TargetModeStrong}},
 		"multiple writes":                {count: 2, surface: write},
-		"non-exact write":                {count: 1, surface: equation.Surface{Factor: factor, Form: equation.SurfaceWriteSelect, Local: 7}},
+		"non-exact write":                {count: 1, surface: equation.Surface{Factor: factor, Form: equation.SurfaceWriteRoute, Local: 7}},
 		"weak exact write":               {count: 1, surface: equation.Surface{Factor: factor, Form: equation.SurfaceWriteExact, Local: 7, Mode: equation.TargetModeWeak}},
 		"zero coordinate":                {count: 1, surface: equation.Surface{Factor: factor, Form: equation.SurfaceWriteExact, Mode: equation.TargetModeStrong}},
 	} {
@@ -97,7 +85,7 @@ func TestRuleExactObservationReadsCommittedMemberAndRejectsForeignState(t *testi
 	}
 	state, status, report := solver.SolveWithReport(context.Background())
 	if status != SolveComplete || state == nil {
-		t.Fatalf("exact observation solve = status:%v state:%t report:%t reason:%v phase:%v point:%v group:%v member:%v rule:%v", status, state != nil, report.Available(), report.Reason(), report.Phase(), report.Point(), report.Group(), report.Member(), report.Rule())
+		t.Fatalf("exact observation solve = status:%v state:%t report:%t reason:%v phase:%v point:%v group:%v member:%v rule:%v", status, state != nil, report.Available(), report.Reason(), report.Failure(), report.Point(), report.Group(), report.Member(), report.Rule())
 	}
 	value, readable := ReceiptObservationResult[uint64](observation, solver, state)
 	if !readable || value != 1 {

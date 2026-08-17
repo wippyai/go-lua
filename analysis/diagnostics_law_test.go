@@ -12,7 +12,7 @@ func TestPlanDiagnosticsRejectInvalidOptionsAtSetup(t *testing.T) {
 	if status != CompileComplete || plan == nil {
 		t.Fatal("diagnostic Plan fixture")
 	}
-	result, analyzeStatus, diagnostics := plan.SolveWithDiagnostics(context.Background(), engine.SolveDiagnosticOptions{MaxWork: 1})
+	result, analyzeStatus, diagnostics := plan.SolveWithDiagnostics(context.Background(), engine.SolveDiagnosticOptions{MaxRows: 1})
 	if result != nil || analyzeStatus != AnalyzeInvalid || diagnostics.Phase != AnalyzeDiagnosticPhaseSetup || diagnostics.Reason != AnalyzeDiagnosticReasonInvalidOptions {
 		t.Fatalf("invalid diagnostic options = result:%t status:%v phase:%v reason:%v", result != nil, analyzeStatus, diagnostics.Phase, diagnostics.Reason)
 	}

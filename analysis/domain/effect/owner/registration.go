@@ -4,10 +4,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/factor"
 	"github.com/wippyai/go-lua/analysis/domain/pack"
 	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
 
@@ -100,7 +100,6 @@ func mountEffectAlgebra[A axisInputs](inputs A) (*factor.Algebra, MountRejection
 func AxisEntry[A axisInputs]() axis.Spec[A, *SchemaFragment, *HotOwner, factor.Value] {
 	return axis.Spec[A, *SchemaFragment, *HotOwner, factor.Value]{
 		Key:         "effect",
-		Principal:   programartifact.RuleOutputEffect,
 		Storage:     axis.StorageFactor,
 		Cardinality: axis.CardinalityDense,
 		Lifetime:    axis.LifetimeLink,
@@ -110,12 +109,16 @@ func AxisEntry[A axisInputs]() axis.Spec[A, *SchemaFragment, *HotOwner, factor.V
 		// is this axis's declared dependency and its authority is present
 		// before this mount opens.
 		Dependencies: []schema.Key{"pack"},
-		Semantic:     func(bundle vocabulary.Bundle) identity.SemanticKey { return bundle.EffectFactor },
+		Semantic:     "semantic/factor/effect",
 		Mount: axis.NewMount(func(context axis.Mounting[A]) (*factor.Algebra, MountRejection, bool) {
 			return mountEffectAlgebra[A](context.Inputs)
 		}),
 		Declare: func(context axis.Declaration) (*SchemaFragment, bool) {
-			return DeclareSchema(context.Builder, context.Bundle.EffectFactor)
+			semantic, ok := context.Roles.Key("semantic/factor/effect")
+			if !ok {
+				return nil, false
+			}
+			return DeclareSchema(context.Builder, semantic)
 		},
 		Bind: func(context axis.Binding[A, *SchemaFragment]) (*HotOwner, bool) {
 			return BindHot(context.Binding, context.Fragment, context.Inputs.EffectInput())
@@ -128,4 +131,16 @@ func AxisEntry[A axisInputs]() axis.Spec[A, *SchemaFragment, *HotOwner, factor.V
 			return axis.Adopt(spec)
 		},
 	}
+}
+
+// StructureSpecs is this package's contribution to the analyzer's semantic
+// role vocabulary: the effect factor's own identity and the query family its
+// facts are published through. A role is declared where it is used, so the row
+// and the reference that names it are one package's statement.
+func StructureSpecs() []structure.Spec {
+	return vocabulary.RoleSpecs(
+		"factor/effect",
+		"query/effect-exact",
+		"query-result/effect-exact",
+	)
 }

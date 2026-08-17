@@ -183,18 +183,17 @@ func BindExactReadRule[O, RV any](owner *HotOwner, slot *engine.RuleSlot[factor.
 	return &RuleImplementation[O]{owner: owner, slot: slot}, read, true
 }
 
-// BeginSelectedRuleBinding starts Effect's exact-write/no-carry heterogeneous
-// selected transaction. Carry-bearing Rules have a disjoint engine
-// constructor and cannot enter this owner API.
-func BeginSelectedRuleBinding[O any](owner *HotOwner, slot *engine.RuleSlot[factor.Value, O], write engine.SchemaWriteSlot[factor.Value], spec engine.HotRuleSpec[factor.Value, O]) (*SelectedRuleBinding[O], bool) {
-	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil {
-		return nil, false
+// BindSelectedRule owns Effect's exact-write/no-carry heterogeneous selected
+// transaction. Carry-bearing Rules have a disjoint engine constructor and
+// cannot enter this owner API. bind attaches the reads and its answer
+// terminalizes the transaction.
+func BindSelectedRule[O any](owner *HotOwner, slot *engine.RuleSlot[factor.Value, O], write engine.SchemaWriteSlot[factor.Value], spec engine.HotRuleSpec[factor.Value, O], bind func(*SelectedRuleBinding[O]) bool) bool {
+	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil || bind == nil {
+		return false
 	}
-	tx, ok := engine.BeginSelectedExactRuleBinding[coordinate](owner.binding, slot, write, owner.fragment.Ref(), spec)
-	if !ok || tx == nil {
-		return nil, false
-	}
-	return &SelectedRuleBinding[O]{owner: owner, tx: tx, issuer: &RuleImplementation[O]{owner: owner, slot: slot}}, true
+	return engine.BindSelectedExactRule[coordinate](owner.binding, slot, write, owner.fragment.Ref(), spec, func(tx *engine.SelectedRouteRuleBindingTransaction[coordinate, factor.Value, O]) bool {
+		return bind(&SelectedRuleBinding[O]{owner: owner, tx: tx, issuer: &RuleImplementation[O]{owner: owner, slot: slot}})
+	})
 }
 
 func (tx *SelectedRuleBinding[O]) Implementation() (*RuleImplementation[O], bool) {
@@ -222,14 +221,6 @@ func AddOperandSelectedRead[O, RV any, Tag interface {
 		return engine.Read[engine.Selection[Tag, engine.OrderedCells[RV]]]{}, false
 	}
 	return engine.AddSelectedRouteOperandRead[coordinate, factor.Value, O, RV, Tag](tx.tx, slot, source, locate)
-}
-
-func CommitSelectedRuleBinding[O any](tx *SelectedRuleBinding[O]) bool {
-	return tx != nil && tx.owner != nil && tx.tx != nil && engine.CommitSelectedRouteRuleBinding(tx.tx)
-}
-
-func AbortSelectedRuleBinding[O any](tx *SelectedRuleBinding[O]) bool {
-	return tx != nil && tx.owner != nil && tx.tx != nil && engine.AbortSelectedRouteRuleBinding(tx.tx)
 }
 
 // ResolveRuleImplementation issues the engine receipt only after the exact

@@ -1,8 +1,9 @@
 package target
 
 import (
-	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
+
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
@@ -14,17 +15,17 @@ func TestFreshResultsSealDenselyAndAllowConjunctiveRelations(t *testing.T) {
 		ValuesVars: 1,
 		Input:      ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed},
 		Callbacks: []CallbackSpec{{
-			Function: InputSource{Kind: InputSourceValueFormal}, Admission: OrdinaryCallable, Arguments: callbackTail(0),
+			Function: InputSource{Kind: InputSourceValueFormal}, Admission: schematype.CallableAdmissionOrdinary, Arguments: callbackTail(0),
 			Outcomes: callbackOutcomes(0, 0, 0, 0, 0), Lifecycle: CallbackRetainedOptionalOnce,
 			Effects: RowSpec{Tail: RowClosed},
 		}},
 		Outcomes: []OutcomeSpec{
 			{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testAny, testAny}, Tail: ValuesClosed},
-				FreshResults: []FreshResultSpec{{Result: 1, Kind: FreshFunction}, {Result: 0, Kind: FreshTable}},
+				FreshResults: []FreshResultSpec{{Result: 1, Kind: schematype.FreshClassFunction}, {Result: 0, Kind: schematype.FreshClassTable}},
 				Produced:     []ProducedSpec{{Result: 0, Operation: 2}},
 			},
 			{Kind: flowkind.OutcomeThrow, Values: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed},
-				FreshResults:    []FreshResultSpec{{Result: 0, Kind: FreshError}},
+				FreshResults:    []FreshResultSpec{{Result: 0, Kind: schematype.FreshClassError}},
 				CallbackResults: []CallbackResultSpec{{Result: 0, Callback: 1}},
 			},
 		},
@@ -37,14 +38,14 @@ func TestFreshResultsSealDenselyAndAllowConjunctiveRelations(t *testing.T) {
 	for index, want := range []struct {
 		result  uint32
 		ordinal uint32
-		kind    FreshKind
-	}{{0, 0, FreshTable}, {1, 1, FreshFunction}} {
+		kind    schematype.FreshClass
+	}{{0, 0, schematype.FreshClassTable}, {1, 1, schematype.FreshClassFunction}} {
 		result, ordinal, kind, found := contract.FreshResultAt(op, 0, index)
 		if !found || result != want.result || ordinal != want.ordinal || kind != want.kind {
 			t.Fatalf("FreshResultAt(%d) = %d/%d/%d/%v, want %d/%d/%d/true", index, result, ordinal, kind, found, want.result, want.ordinal, want.kind)
 		}
 	}
-	if ordinal, kind, index, found := contract.FreshResultForResult(op, 0, 1); !found || ordinal != 1 || kind != FreshFunction || index != 1 {
+	if ordinal, kind, index, found := contract.FreshResultForResult(op, 0, 1); !found || ordinal != 1 || kind != schematype.FreshClassFunction || index != 1 {
 		t.Fatalf("FreshResultForResult = %d/%d/%d/%v, want 1/function/1/true", ordinal, kind, index, found)
 	}
 	if _, _, _, found := contract.FreshResultAt(op, 0, 2); found {
@@ -62,7 +63,7 @@ func TestFreshResultsSealDenselyAndAllowConjunctiveRelations(t *testing.T) {
 func TestFreshResultsRejectAliasesDuplicatesAndInvalidKinds(t *testing.T) {
 	base := OperationSpec{
 		Input:    ValuesSpec{Tail: ValuesClosed},
-		Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testAny, testAny}, Tail: ValuesClosed}, FreshResults: []FreshResultSpec{{Result: 0, Kind: FreshTable}}}},
+		Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testAny, testAny}, Tail: ValuesClosed}, FreshResults: []FreshResultSpec{{Result: 0, Kind: schematype.FreshClassTable}}}},
 		Effects:  RowSpec{Tail: RowClosed},
 	}
 	for _, test := range []struct {
@@ -70,10 +71,10 @@ func TestFreshResultsRejectAliasesDuplicatesAndInvalidKinds(t *testing.T) {
 		edit func(*OperationSpec)
 	}{
 		{"duplicate fixed result", func(op *OperationSpec) {
-			op.Outcomes[0].FreshResults = append(op.Outcomes[0].FreshResults, FreshResultSpec{Result: 0, Kind: FreshFunction})
+			op.Outcomes[0].FreshResults = append(op.Outcomes[0].FreshResults, FreshResultSpec{Result: 0, Kind: schematype.FreshClassFunction})
 		}},
 		{"outside fixed prefix", func(op *OperationSpec) { op.Outcomes[0].FreshResults[0].Result = 2 }},
-		{"invalid kind", func(op *OperationSpec) { op.Outcomes[0].FreshResults[0].Kind = FreshInvalid }},
+		{"invalid kind", func(op *OperationSpec) { op.Outcomes[0].FreshResults[0].Kind = schematype.FreshClassInvalid }},
 		{"result alias overlap", func(op *OperationSpec) {
 			op.Outcomes[0].ResultAliases = []ResultAliasSpec{{Result: 0, Source: InputSource{Kind: InputSourceValueFormal}}}
 			op.Input.Fixed = []schematype.Type{testAny}
@@ -93,7 +94,7 @@ func TestFreshResultsRejectAliasesDuplicatesAndInvalidKinds(t *testing.T) {
 }
 
 func TestFreshResultDistinguishesSameShapeCasesAndProducedAnchors(t *testing.T) {
-	caseResult := func(kind FreshKind, child SpecRef) OutcomeSpec {
+	caseResult := func(kind schematype.FreshClass, child SpecRef) OutcomeSpec {
 		return OutcomeSpec{
 			Kind:         flowkind.OutcomeNormal,
 			Values:       ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed},
@@ -110,8 +111,8 @@ func TestFreshResultDistinguishesSameShapeCasesAndProducedAnchors(t *testing.T) 
 			Input:    ValuesSpec{Tail: ValuesClosed}, Outcomes: outcomes, Effects: RowSpec{Tail: RowClosed},
 		}, child(), child()}}
 	}
-	left := mustSeal(t, makeSpec([]OutcomeSpec{caseResult(FreshTable, 2), caseResult(FreshFunction, 3)}))
-	right := mustSeal(t, makeSpec([]OutcomeSpec{caseResult(FreshFunction, 3), caseResult(FreshTable, 2)}))
+	left := mustSeal(t, makeSpec([]OutcomeSpec{caseResult(schematype.FreshClassTable, 2), caseResult(schematype.FreshClassFunction, 3)}))
+	right := mustSeal(t, makeSpec([]OutcomeSpec{caseResult(schematype.FreshClassFunction, 3), caseResult(schematype.FreshClassTable, 2)}))
 	assertPublicContractEqual(t, left, right)
 	if left.ContentID() != right.ContentID() {
 		t.Fatal("FreshResult outcome permutation changed ContentID")

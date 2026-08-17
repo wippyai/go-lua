@@ -35,7 +35,10 @@ func (view Activation) For(body keyspace.Term) (keyspace.Term, bool) {
 	return activation, true
 }
 
-// Containment retains only non-Body parent edges and static classification.
+// Containment retains every canonical term, including Body roots, together
+// with its parent edge and static classification. Body rows are needed by
+// consumers that distinguish a statically owned function body from an
+// executable body; omitting them would erase that owner-level judgment.
 type Containment struct{ projection *containmentProjection }
 
 func (view Containment) Count() int {

@@ -4,9 +4,10 @@ import (
 	allocationcatalog "github.com/wippyai/go-lua/analysis/domain/heap/allocation/catalog"
 	heapowner "github.com/wippyai/go-lua/analysis/domain/heap/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
 
@@ -30,12 +31,19 @@ type ruleAuthorities interface {
 // interfaces above.
 func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *SchemaFragment, *HotRule] {
 	return rule.Spec[P, A, *SchemaFragment, *HotRule]{
-		Key:      "heap-empty",
-		Role:     programartifact.RuleRoleHeapEmpty,
+		Key:    "heap-empty",
+		Writes: "heap",
+		Issues: []rule.Issuance{
+			{Occurrence: "occurrence/allocation", Form: "issuance/local", Input: "input/finish", Stage: "stage/local", Code: uint64(flow.AllocationFormEmpty), HasCode: true},
+		},
 		Lane:     rule.LaneMounted,
-		Semantic: func(bundle vocabulary.Bundle) identity.SemanticKey { return bundle.HeapEmptyRule.Rule },
+		Semantic: "semantic/rule/heap/allocation-empty",
+		Roles:    []schema.Key{"semantic/operand/heap/allocation-empty", "semantic/evidence/heap/allocation-empty", "semantic/transform/heap/allocation-empty"},
 		Declare: func(context rule.Declaration[P]) (*SchemaFragment, bool) {
-			semantics := context.Bundle.HeapEmptyRule
+			semantics, ok := context.Roles.Transformed("heap/allocation-empty")
+			if !ok {
+				return nil, false
+			}
 			return DeclareSchema(context.Builder, semantics.Rule, semantics.Operand, semantics.Transform, semantics.Evidence, context.Principals.HeapPrincipal())
 		},
 		Register: func(context rule.Registration[*SchemaFragment]) (engine.RuleSlotCapability, bool) {
@@ -53,4 +61,13 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *SchemaFra
 			return ok
 		},
 	}
+}
+
+// StructureSpecs is this package's contribution to the analyzer's semantic
+// role vocabulary: the four roles its rule is identified by, the transform
+// form included because its output is normalized before admission. A role is
+// declared where it is used, so the row and the reference that names it are one
+// package's statement.
+func StructureSpecs() []structure.Spec {
+	return vocabulary.TransformedRuleRoleSpecs("heap/allocation-empty")
 }

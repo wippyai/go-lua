@@ -122,33 +122,29 @@ func BindBodyHot(binding *engine.SchemaBinding, fragment *BodySchemaFragment, ca
 
 	var runtimeCall engine.Read[engine.OrderedCells[calldomain.Value]]
 	var runtimeSummary engine.Read[engine.Selection[uint64, engine.OrderedCells[effectfactor.Value]]]
-	tx, ok := effectowner.BeginSelectedRuleBinding(effects, fragment.core.slot, fragment.core.write, engine.HotRuleSpec[effectfactor.Value, hotBodyOperand]{
+	var implementation *effectowner.RuleImplementation[hotBodyOperand]
+	bound := effectowner.BindSelectedRule(effects, fragment.core.slot, fragment.core.write, engine.HotRuleSpec[effectfactor.Value, hotBodyOperand]{
 		OperandContent: hot.operandContent,
 		Admission:      engine.AdmitRuleByDerivation(fragment.core.evidence, hot.check),
 		Transfer: func(access engine.Access[effectfactor.Value, hotBodyOperand]) bool {
 			return hot.transfer(access, runtimeCall, runtimeSummary)
 		},
+	}, func(tx *effectowner.SelectedRuleBinding[hotBodyOperand]) bool {
+		callRead, callOK := effectowner.AddExactRead(tx, fragment.core.callRead, calls.FactorRef())
+		if !callOK {
+			return false
+		}
+		summary, summaryOK := effectowner.AddOperandSelectedRead[hotBodyOperand, effectfactor.Value, uint64](tx, fragment.effectRead, effects.FactorRef(), hot.locate)
+		if !summaryOK {
+			return false
+		}
+		hot.callRead, hot.summary = callRead, summary
+		runtimeCall, runtimeSummary = callRead, summary
+		var implementationOK bool
+		implementation, implementationOK = tx.Implementation()
+		return implementationOK && implementation != nil
 	})
-	if !ok {
-		return nil, false
-	}
-	callRead, ok := effectowner.AddExactRead(tx, fragment.core.callRead, calls.FactorRef())
-	if !ok {
-		_ = effectowner.AbortSelectedRuleBinding(tx)
-		return nil, false
-	}
-	summary, ok := effectowner.AddOperandSelectedRead[hotBodyOperand, effectfactor.Value, uint64](tx, fragment.effectRead, effects.FactorRef(), hot.locate)
-	if !ok {
-		_ = effectowner.AbortSelectedRuleBinding(tx)
-		return nil, false
-	}
-	hot.callRead, hot.summary = callRead, summary
-	runtimeCall, runtimeSummary = callRead, summary
-	if !effectowner.CommitSelectedRuleBinding(tx) {
-		return nil, false
-	}
-	implementation, ok := tx.Implementation()
-	if !ok || implementation == nil {
+	if !bound {
 		return nil, false
 	}
 	hot.implementation = implementation

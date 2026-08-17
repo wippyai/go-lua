@@ -30,8 +30,8 @@ import (
 	valuerefinement "github.com/wippyai/go-lua/analysis/domain/value/refinement"
 	valuesource "github.com/wippyai/go-lua/analysis/domain/value/source"
 	valuetransfer "github.com/wippyai/go-lua/analysis/domain/value/transfer"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/link"
+	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
 )
@@ -65,18 +65,20 @@ func (set principals) PackPrincipal() *packowner.SchemaFragment { return set.pac
 
 func (set principals) EffectPrincipal() *effectowner.SchemaFragment { return set.effect }
 
-// has reports whether the factor lane a rule writes has a declared owner.
-func (set principals) has(kind programartifact.RuleOutputKind) bool {
-	switch kind {
-	case programartifact.RuleOutputValue:
+// writes reports whether the axis a rule writes has a declared cold owner. The
+// axis is named by the key its own domain declared it under, so this record
+// answers for exactly the principals it carries and for no other spelling.
+func (set principals) writes(key schema.Key) bool {
+	switch key {
+	case axisKeyValue:
 		return set.value != nil
-	case programartifact.RuleOutputCall:
+	case axisKeyCall:
 		return set.call != nil
-	case programartifact.RuleOutputHeap:
+	case axisKeyHeap:
 		return set.heap != nil
-	case programartifact.RuleOutputPack:
+	case axisKeyPack:
 		return set.pack != nil
-	case programartifact.RuleOutputEffect:
+	case axisKeyEffect:
 		return set.effect != nil
 	default:
 		return false
@@ -107,17 +109,19 @@ func (set authorities) available() bool {
 		set.topology != nil && set.allocations != nil && set.activation != nil
 }
 
-func (set authorities) has(kind programartifact.RuleOutputKind) bool {
-	switch kind {
-	case programartifact.RuleOutputValue:
+// writes is the sealed half of the same question: whether the axis a rule
+// writes has a bound authority in this record.
+func (set authorities) writes(key schema.Key) bool {
+	switch key {
+	case axisKeyValue:
 		return set.value != nil
-	case programartifact.RuleOutputCall:
+	case axisKeyCall:
 		return set.call != nil
-	case programartifact.RuleOutputHeap:
+	case axisKeyHeap:
 		return set.heap != nil
-	case programartifact.RuleOutputPack:
+	case axisKeyPack:
 		return set.pack != nil
-	case programartifact.RuleOutputEffect:
+	case axisKeyEffect:
 		return set.effect != nil
 	default:
 		return false

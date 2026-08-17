@@ -8,7 +8,7 @@ import (
 )
 
 // TestCarrierMatrixCarryOnlyProductArity checks the carrier-owned half of the
-// generic matrix. Read observation, selector evaluation, and typed write
+// generic matrix. Read observation and typed write
 // targets are deliberately exercised by their own package contracts: carrier
 // only owns the complete predecessor vector and the atomic contribution cut.
 func TestCarrierMatrixCarryOnlyProductArity(t *testing.T) {

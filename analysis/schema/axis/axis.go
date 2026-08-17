@@ -5,11 +5,22 @@
 //
 // An axis is one coordinate space the solver holds facts over. Naming the
 // space is not enough to register it: an entry also carries the algebra that
-// space is ordered by, the storage it lives in, the principal that writes it,
-// the cardinality of its key space, its dependency edges, and its lifetime,
-// mutability, and concurrency discipline. The engine binds the executable
-// algebra; this surface is where the axis is declared, sealed, and derived
-// from.
+// space is ordered by, the storage it lives in, the cardinality of its key
+// space, its dependency edges, its lifetime, mutability, and concurrency
+// discipline, and the columns it publishes for a consumer to read. The engine
+// binds the executable algebra; this surface is where the axis is declared,
+// sealed, and derived from.
+//
+// An axis is a writer principal. The entry identity is the principal identity
+// and the declaration position is the principal slot, so a lane that writes
+// facts is admitted by declaring an axis rather than by adding a member to a
+// foreign enum this surface would then have to name.
+//
+// This surface owns the analyzer's one storage vocabulary. The published value
+// a consumer holds names storage by address alone -- a sealing schema identity
+// and a dense column slot -- so where facts live, how their key space is
+// shaped, and the discipline they are written under are declared here once and
+// projected there, never spelled twice.
 //
 // The surface is blind to every domain. The Link authority record an axis
 // binds against is a type parameter supplied by the composition, and an axis's
@@ -29,6 +40,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lattice"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
 
@@ -37,8 +49,14 @@ import (
 const (
 	LawEntryShape schema.LawID = schema.SurfaceLawFloor + iota
 	LawAxisIdentity
-	LawPrincipalDeclared
-	LawPrincipalUnique
+	// The ordinal here is retired. An axis is a writer principal, so the
+	// principal is declared by declaring the axis and there is no second field
+	// to state as present.
+	_
+	// The ordinal here is retired. One axis is one principal by construction,
+	// and two rows carrying one identity is the root's own law, stated by
+	// schema.LawEntryUnique over the entry identity this surface derives.
+	_
 	LawFieldComplete
 	LawMetadataComplete
 	LawDependencyResolves
@@ -48,30 +66,59 @@ const (
 	// declaration catalog order is the bind phase order, and the root rejects
 	// out-of-order registration under schema.LawSurfacePhase.
 	_
-	// The ordinal here is retired. Whether the closed vocabulary is itself
-	// available is that package's own law, stated by vocabulary.Bundle.Available
-	// and pinned by its own tests. A vocabulary that is not the canonical one
-	// selects nothing, so this surface observes it as an axis with no canonical
-	// identity and states that under LawSemanticIdentity.
+	// The ordinal here is retired. Whether the semantic role vocabulary is
+	// itself complete is the structural surface's own law, stated over the
+	// category the roles are declared in. A role this surface names and that
+	// vocabulary does not declare is an unresolved reference, which is stated
+	// under LawSemanticIdentity.
 	_
 	// LawDependencyAcyclic states that the declared edges admit an order. A
 	// cycle names no first axis, so a phase that walks the edges could not
 	// begin; the table is rejected at seal rather than at the walk.
 	LawDependencyAcyclic
+	// LawOutputDeclared states that a declared output names both the column it
+	// publishes and the principal admitted to write it.
+	LawOutputDeclared
+	// LawOutputUnique states that one published column has one writer. Two
+	// declarations of one output name would leave a consumer reading a column
+	// without knowing whose rows it holds.
+	LawOutputUnique
+	// LawOutputWriterResolves states that an output's writer is a declared
+	// axis, so a column cannot be admitted for a principal this table does not
+	// know.
+	LawOutputWriterResolves
 )
 
-// Storage is the closed catalog of places an axis's facts live. A factor axis
-// is a Link-bound engine factor cell; a static axis is an inventory carried by
-// the compiled program and never written during solve.
+// Storage is the closed catalog of places an axis's facts live. It is the
+// analyzer's one storage vocabulary: the published value names storage by
+// address alone, so every classification of where facts live and under what
+// discipline is declared here and consumed there.
 type Storage uint8
 
 const (
 	StorageInvalid Storage = iota
+	// StorageFactor is a Link-bound engine factor cell, written by the rules of
+	// the lane this axis is the principal of.
 	StorageFactor
+	// StorageStatic is an inventory carried by the compiled program and never
+	// written during solve.
 	StorageStatic
+	// StorageEngine is a column the engine publishes itself. No factor cell
+	// holds it and no rule writes it, so the axis declares a coordinate space
+	// and a writer principal and carries no hot half at all: execution
+	// reachability is one, published by the epoch pass that derives it.
+	StorageEngine
 )
 
 func (storage Storage) Available() bool {
+	return storage >= StorageFactor && storage <= StorageEngine
+}
+
+// Bound reports whether an axis of this storage instantiates a factor binding.
+// A bound axis declares a cold fragment, a hot binding, and the algebra of that
+// binding; an engine-published axis declares none of the three, because the
+// pass that fills its column is not a factor lane.
+func (storage Storage) Bound() bool {
 	return storage == StorageFactor || storage == StorageStatic
 }
 
@@ -238,10 +285,15 @@ func carrierKey[K ~uint32 | ~uint64](key, keyEnd uint64) (K, bool) {
 
 // Declaration is the cold context an axis's Declare hook receives. An axis is
 // the producer of a factor principal, so it declares against the schema
-// builder and the canonical vocabulary alone.
+// builder and the semantic roles it declared alone.
+//
+// Roles resolves exactly the roles this axis declared: its own identity and
+// the additional roles named on its Spec. A hook that reaches for a role the
+// axis never declared resolves nothing, so an identity an axis consumes is an
+// identity it is on record as consuming.
 type Declaration struct {
 	Builder *engine.SchemaBuilder
-	Bundle  vocabulary.Bundle
+	Roles   vocabulary.Roles
 }
 
 // MountedArtifact is one Link mount's neutral view: the immutable compiled
@@ -311,10 +363,9 @@ type Spec[A, F, H, V any] struct {
 	// has exactly one spelling in the analyzer. It derives the entry identity
 	// a verdict carries.
 	Key schema.Key
-	// Principal is the writer principal of this axis: the factor lane whose
-	// rules write it. It is read from the artifact format rather than restated,
-	// and it is unique per axis.
-	Principal   programartifact.RuleOutputKind
+	// The writer principal is not a field. An axis is the principal that writes
+	// it, so the entry identity this key derives is the principal identity and
+	// the declaration position is the principal slot.
 	Storage     Storage
 	Cardinality Cardinality
 	Lifetime    Lifetime
@@ -324,13 +375,29 @@ type Spec[A, F, H, V any] struct {
 	// authored keys. An edge must resolve to a declared axis and may not be a
 	// self-edge.
 	Dependencies []schema.Key
-	// Semantic selects the axis identity from the canonical vocabulary.
-	Semantic func(vocabulary.Bundle) identity.SemanticKey
+	// Frame is this axis's published half: the columns its facts are read out
+	// of and the principal admitted to write each of them.
+	Frame Frame
+	// Semantic is this axis's canonical identity: the semantic role row it is
+	// declared under. The row's declared spelling derives the identity the
+	// engine binds this axis's factor with, so the coordinate space and the
+	// identity it is bound under are one declaration.
+	Semantic schema.Key
+	// Roles are the further semantic roles this axis's Declare hook resolves.
+	// They are content, so the identity set an axis is declared against is part
+	// of the table digest, and the hook reaches no identity this list omits.
+	Roles []schema.Key
 	// Mount seals this axis's own Link authority from the neutral mounted
 	// artifact view. It is optional: an axis that declares no mount has its
 	// authority supplied to the composition by some other owner.
 	Mount MountEntry[A]
 	// Declare records the axis's cold Schema shape and returns its fragment.
+	//
+	// Declare, Bind, and Algebra are the axis's hot half, and the declared
+	// storage settles whether it exists: a bound axis declares all three, and
+	// an engine-published axis declares none of them. An axis that declares
+	// some of the three states two different things about who fills its column
+	// and is rejected rather than read as either.
 	Declare func(Declaration) (F, bool)
 	// Bind instantiates the axis's typed factor binding and returns the hot
 	// axis. It is the one place the carrier coordinate is instantiated.
@@ -373,9 +440,8 @@ func AlgebraOf[V any](cell Cell) (Algebra[V], bool) {
 // and fact carrier but still typed in the composition's Link input record. It
 // is immutable once built.
 type Template[A any] struct {
-	key       schema.Key
-	id        schema.EntryID
-	principal programartifact.RuleOutputKind
+	key schema.Key
+	id  schema.EntryID
 
 	storage      Storage
 	cardinality  Cardinality
@@ -383,8 +449,10 @@ type Template[A any] struct {
 	mutability   Mutability
 	concurrency  Concurrency
 	dependencies []schema.Key
+	outputs      []Output
 
-	semantic func(vocabulary.Bundle) identity.SemanticKey
+	semantic schema.Key
+	roles    []schema.Key
 	mount    MountEntry[A]
 	declare  func(Declaration) (Cell, bool)
 	bind     func(*engine.SchemaBinding, A, Cell) (Cell, bool)
@@ -399,17 +467,33 @@ func New[A, F, H, V any](spec Spec[A, F, H, V]) (*Template[A], bool) {
 	template := &Template[A]{
 		key:          spec.Key,
 		id:           schema.NewEntryID(schema.SurfaceKindAxis, spec.Key),
-		principal:    spec.Principal,
 		storage:      spec.Storage,
 		cardinality:  spec.Cardinality,
 		lifetime:     spec.Lifetime,
 		mutability:   spec.Mutability,
 		concurrency:  spec.Concurrency,
 		dependencies: append([]schema.Key(nil), spec.Dependencies...),
+		outputs:      append([]Output(nil), spec.Frame.Outputs...),
 		semantic:     spec.Semantic,
+		roles:        append([]schema.Key(nil), spec.Roles...),
 		mount:        spec.Mount,
 	}
+	// An engine-published axis has no hot half to instantiate: the pass that
+	// fills its column is not a factor lane, so there is no fragment to record
+	// and no binding to publish an algebra of.
+	if !spec.Storage.Bound() {
+		return template, template.EntryAvailable() && template.metadataComplete() && template.fieldsComplete()
+	}
+	// The hook receives exactly the roles this axis declared. Narrowing here is
+	// what makes the declared role list the whole of what a hook can consume,
+	// so an identity reaching a Declare body is one the table has on record.
+	declared := template.declaredRoles()
 	template.declare = func(context Declaration) (Cell, bool) {
+		roles, rolesOK := context.Roles.Restrict(declared...)
+		if !rolesOK {
+			return Cell{}, false
+		}
+		context.Roles = roles
 		fragment, ok := spec.Declare(context)
 		if !ok {
 			return Cell{}, false
@@ -438,18 +522,33 @@ func New[A, F, H, V any](spec Spec[A, F, H, V]) (*Template[A], bool) {
 }
 
 func specAdmissible[A, F, H, V any](spec Spec[A, F, H, V]) bool {
-	if !spec.Key.Available() || spec.Principal == programartifact.RuleOutputInvalid {
+	if !spec.Key.Available() {
 		return false
 	}
 	if !spec.Storage.Available() || !spec.Cardinality.Available() || !spec.Lifetime.Available() ||
 		!spec.Mutability.Available() || !spec.Concurrency.Available() {
 		return false
 	}
-	if spec.Semantic == nil || spec.Declare == nil || spec.Bind == nil || spec.Algebra == nil {
+	if !spec.Semantic.Available() {
+		return false
+	}
+	for _, role := range spec.Roles {
+		if !role.Available() || role == spec.Semantic {
+			return false
+		}
+	}
+	declared := spec.Declare != nil && spec.Bind != nil && spec.Algebra != nil
+	absent := spec.Declare == nil && spec.Bind == nil && spec.Algebra == nil
+	if spec.Storage.Bound() != declared || (!spec.Storage.Bound() && !absent) {
 		return false
 	}
 	for _, dependency := range spec.Dependencies {
 		if !dependency.Available() || dependency == spec.Key {
+			return false
+		}
+	}
+	for _, output := range spec.Frame.Outputs {
+		if !output.Available() {
 			return false
 		}
 	}
@@ -459,9 +558,6 @@ func specAdmissible[A, F, H, V any](spec Spec[A, F, H, V]) bool {
 func (template *Template[A]) Key() schema.Key { return template.key }
 
 func (template *Template[A]) ID() schema.EntryID { return template.id }
-
-// Principal is the factor lane whose rules write this axis.
-func (template *Template[A]) Principal() programartifact.RuleOutputKind { return template.principal }
 
 func (template *Template[A]) Storage() Storage { return template.storage }
 
@@ -475,6 +571,33 @@ func (template *Template[A]) Concurrency() Concurrency { return template.concurr
 
 func (template *Template[A]) DependencyCount() int { return len(template.dependencies) }
 
+// OutputCount is the number of published columns this axis declares.
+func (template *Template[A]) OutputCount() int {
+	if template == nil {
+		return 0
+	}
+	return len(template.outputs)
+}
+
+// OutputAt returns one declared output at its declaration position. The
+// position is the order the composition assigns column slots in.
+func (template *Template[A]) OutputAt(index int) (Output, bool) {
+	if template == nil || index < 0 || index >= len(template.outputs) {
+		return Output{}, false
+	}
+	return template.outputs[index], true
+}
+
+// Coverage is what a published column of this axis concludes about a key it
+// holds no row for. It is derived from the declared cardinality, so a publisher
+// reads it here rather than deciding the question again.
+func (template *Template[A]) Coverage() Coverage {
+	if template == nil {
+		return CoverageInvalid
+	}
+	return CoverageFor(template.cardinality)
+}
+
 func (template *Template[A]) DependencyAt(index int) (schema.Key, bool) {
 	if index < 0 || index >= len(template.dependencies) {
 		return "", false
@@ -482,32 +605,40 @@ func (template *Template[A]) DependencyAt(index int) (schema.Key, bool) {
 	return template.dependencies[index], true
 }
 
-// Semantic resolves this axis's canonical identity in one vocabulary bundle.
-func (template *Template[A]) Semantic(bundle vocabulary.Bundle) identity.SemanticKey {
-	if template == nil || template.semantic == nil {
-		return identity.SemanticKey{}
+// Semantic is the semantic role row this axis is declared under. A consumer
+// resolves the identity through the sealed vocabulary rather than deriving it
+// from this key, so the declaration and the derivation stay one step apart.
+func (template *Template[A]) Semantic() schema.Key {
+	if template == nil {
+		return ""
 	}
-	return template.semantic(bundle)
+	return template.semantic
 }
 
-// semanticIdentity resolves this axis's identity in the canonical vocabulary.
-// It is the one evaluation both the content fold and this surface's admission
-// laws read, so the identity a catalog is digested under and the identity it is
-// sealed under cannot differ.
-//
-// It is total: an axis that declares no selector, and one whose selector names
-// nothing in the canonical vocabulary, both resolve to the absent identity. The
-// surface's own LawFieldComplete and LawSemanticIdentity state those cases, so
-// the content stream stays writable for every row the root hands it.
-func (template *Template[A]) semanticIdentity() identity.SemanticKey {
-	if template == nil || template.semantic == nil {
-		return identity.SemanticKey{}
+// RoleCount is the number of further semantic roles this axis declared.
+func (template *Template[A]) RoleCount() int {
+	if template == nil {
+		return 0
 	}
-	bundle, canonical := vocabulary.New()
-	if !canonical {
-		return identity.SemanticKey{}
+	return len(template.roles)
+}
+
+// RoleAt returns one further declared semantic role at its declaration
+// position.
+func (template *Template[A]) RoleAt(index int) (schema.Key, bool) {
+	if template == nil || index < 0 || index >= len(template.roles) {
+		return "", false
 	}
-	return template.semantic(bundle)
+	return template.roles[index], true
+}
+
+// declaredRoles is the whole role set this axis is declared against: its own
+// identity first, then the roles its hook resolves.
+func (template *Template[A]) declaredRoles() []schema.Key {
+	if template == nil {
+		return nil
+	}
+	return append([]schema.Key{template.semantic}, template.roles...)
 }
 
 // EntryAvailable is the root's admissibility question: does this row identify
@@ -518,19 +649,32 @@ func (template *Template[A]) EntryAvailable() bool {
 	return template != nil && template.key.Available() && template.id.Available()
 }
 
-// EntryContent writes this axis's declarative half: the canonical identity it
-// is bound under, the principal that writes it, the storage its facts live in,
-// the shape of its key space, and its lifetime, mutability, and concurrency
-// disciplines, followed by its dependency edges in declaration order. A derived
-// inventory reads a coordinate space from exactly these, so an axis that changes
-// one of them is a different space and the table digest says so.
+// EntryContent writes this axis's declarative half: the semantic roles it is
+// declared against, the storage its facts live in, the shape of its key space,
+// and its lifetime, mutability, and concurrency disciplines, followed by its
+// dependency edges and then its published outputs, each in declaration order. A
+// derived inventory reads a coordinate space from exactly these, so an axis that
+// changes one of them is a different space and the table digest says so.
 //
-// The semantic identity is content. The selector is a hook, but what it selects
-// is a role of the closed vocabulary, and the engine binds this axis's factor
-// under that role, so two catalogs whose axes select different roles declare
-// different coordinate spaces. The identity is written as its canonical bytes -
-// the digest and the interpretation version - rather than as the role's
-// spelling, so no authored text reaches the stream.
+// The writer principal is not written. The axis is the principal, so the entry
+// identity the root already folds is that principal's identity, and writing it
+// again here would write one value twice.
+//
+// The frame is content: which columns an axis publishes and which principal is
+// admitted to write each of them is what a consumer addresses and what a write
+// capability is minted against, so a catalog that publishes a different column
+// set, or admits a different writer for one column, is a different catalog. The
+// column slot a publication assigns is not written, because it is the output's
+// position in this very order.
+//
+// The declared roles are content: the role this axis is identified by, and the
+// further roles its hook resolves. The engine binds this axis's factor under
+// the first and the hook consumes the rest, so two catalogs whose axes name
+// different roles declare different coordinate spaces and are declared against
+// different identity sets. The rows are written by the key they are declared
+// under rather than by the identity that key resolves to, because the
+// resolution is the vocabulary surface's derivation from its own declared
+// spelling and is already folded there.
 //
 // The typed hooks are not content. A hook is a function value with no canonical
 // bytes, and the algebra one publishes is produced at bind against a live
@@ -540,16 +684,16 @@ func (template *Template[A]) EntryAvailable() bool {
 // stated by the identity and metadata above. What the hooks are declared
 // against is covered by those and by the surface's own admission laws.
 func (template *Template[A]) EntryContent(content *framing.Writer) error {
-	semantic := template.semanticIdentity()
-	digest := semantic.Digest()
-	if err := content.Bytes(digest[:]); err != nil {
+	if err := content.String(string(template.semantic)); err != nil {
 		return err
 	}
-	if err := content.Uint(semantic.Version()); err != nil {
+	if err := content.Count(uint64(len(template.roles))); err != nil {
 		return err
 	}
-	if err := content.Uint(uint64(template.principal)); err != nil {
-		return err
+	for _, role := range template.roles {
+		if err := content.String(string(role)); err != nil {
+			return err
+		}
 	}
 	if err := content.Uint(uint64(template.storage)); err != nil {
 		return err
@@ -574,6 +718,17 @@ func (template *Template[A]) EntryContent(content *framing.Writer) error {
 			return err
 		}
 	}
+	if err := content.Count(uint64(len(template.outputs))); err != nil {
+		return err
+	}
+	for _, output := range template.outputs {
+		if err := content.String(string(output.Key)); err != nil {
+			return err
+		}
+		if err := content.String(string(output.Writer)); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -582,8 +737,19 @@ func (template *Template[A]) metadataComplete() bool {
 		template.lifetime.Available() && template.mutability.Available() && template.concurrency.Available()
 }
 
+// fieldsComplete states the hook set the declared storage requires. A bound
+// axis instantiates a factor binding and declares the whole cold and hot half;
+// an engine-published axis declares none of it, because the pass that fills its
+// column is not a factor lane and there is nothing here to instantiate.
 func (template *Template[A]) fieldsComplete() bool {
-	return template.semantic != nil && template.declare != nil && template.bind != nil
+	if !template.semantic.Available() {
+		return false
+	}
+	bound := template.declare != nil && template.bind != nil
+	if template.storage.Bound() {
+		return bound
+	}
+	return template.declare == nil && template.bind == nil
 }
 
 // MountDeclared reports whether this axis seals its own Link authority.
@@ -609,7 +775,10 @@ func (template *Template[A]) Mount(inputs A) (Cell, Cell, bool) {
 	return authority, Cell{}, true
 }
 
-// Declare records this axis's cold shape.
+// Declare records this axis's cold shape. An engine-published axis has none,
+// so it rejects the call rather than returning an empty fragment a later pass
+// would read as a declared one: a caller walks the bound axes, which is what
+// the declared storage tells it.
 func (template *Template[A]) Declare(context Declaration) (Cell, bool) {
 	if template == nil || template.declare == nil || context.Builder == nil {
 		return Cell{}, false
@@ -645,12 +814,12 @@ func (contribution surface[A]) Entries() []schema.Entry {
 	return entries
 }
 
-// Seal states the axis surface's own laws over the indexed view. Axes are the
-// first surface in the catalog, so no sealed sibling is reachable here.
-func (contribution surface[A]) Seal(view schema.View, _ schema.Sealed) schema.SealFailure {
+// Seal states the axis surface's own laws over the indexed view. The
+// structural vocabulary is sealed below this surface, so the semantic roles an
+// axis names are resolved against it here.
+func (contribution surface[A]) Seal(view schema.View, sealed schema.Sealed) schema.SealFailure {
 	keys := make(map[schema.Key]schema.EntryID, view.Count())
-	principals := make(map[programartifact.RuleOutputKind]schema.EntryID, view.Count())
-	semantics := make(map[identity.SemanticKey]schema.EntryID, view.Count())
+	semantics := make(map[schema.Key]schema.EntryID, view.Count())
 	templates := make([]*Template[A], 0, view.Count())
 	for position := 0; position < view.Count(); position++ {
 		entry, entryOK := view.At(position)
@@ -667,27 +836,55 @@ func (contribution surface[A]) Seal(view schema.View, _ schema.Sealed) schema.Se
 			return schema.SurfaceLawFailure(schema.SurfaceKindAxis, template.id, LawAxisIdentity, schema.DispositionMalformed)
 		}
 		keys[template.key] = template.id
-		if template.principal == programartifact.RuleOutputInvalid {
-			return schema.SurfaceLawFailure(schema.SurfaceKindAxis, template.id, LawPrincipalDeclared, schema.DispositionIncomplete)
-		}
-		if prior, duplicate := principals[template.principal]; duplicate {
-			return schema.SurfaceLawFailure(schema.SurfaceKindAxis, prior, LawPrincipalUnique, schema.DispositionDuplicate)
-		}
-		principals[template.principal] = template.id
 		if !template.metadataComplete() {
 			return schema.SurfaceLawFailure(schema.SurfaceKindAxis, template.id, LawMetadataComplete, schema.DispositionIncomplete)
 		}
 		if !template.fieldsComplete() {
 			return schema.SurfaceLawFailure(schema.SurfaceKindAxis, template.id, LawFieldComplete, schema.DispositionIncomplete)
 		}
-		semantic := template.semanticIdentity()
-		if !semantic.Available() {
-			return schema.SurfaceLawFailure(schema.SurfaceKindAxis, template.id, LawSemanticIdentity, schema.DispositionMalformed)
+		// Every role an axis names is a declared member of the semantic role
+		// vocabulary. The vocabulary raises the two ways the name fails - one it
+		// does not declare, and one it declares in another category - and this
+		// surface raises them as its own verdict, because what the role means
+		// here is this declaration.
+		for _, role := range template.declaredRoles() {
+			if _, disposition := structure.Resolve(sealed, role, structure.CategorySemanticRole); disposition != schema.DispositionAccepted {
+				return schema.SurfaceLawFailure(schema.SurfaceKindAxis, template.id, LawSemanticIdentity, disposition)
+			}
 		}
-		if prior, duplicate := semantics[semantic]; duplicate {
+		// One role is one axis. Two axes declared under one role would be one
+		// coordinate space the engine binds twice, so the repeat is a verdict
+		// here rather than a binding whichever axis reaches it first wins.
+		if prior, duplicate := semantics[template.semantic]; duplicate {
 			return schema.SurfaceLawFailure(schema.SurfaceKindAxis, prior, LawSemanticUnique, schema.DispositionDuplicate)
 		}
-		semantics[semantic] = template.id
+		semantics[template.semantic] = template.id
+	}
+	// One published column has one writer. The pair a publication is admitted
+	// under is exactly the pair sealed here, so a second declaration of one
+	// output name is rejected at the table rather than resolved by whichever
+	// writer reaches the column first.
+	outputs := make(map[schema.Key]schema.EntryID, len(templates))
+	for _, template := range templates {
+		for _, output := range template.outputs {
+			if !output.Available() {
+				return schema.SurfaceLawFailure(schema.SurfaceKindAxis, template.id, LawOutputDeclared, schema.DispositionIncomplete)
+			}
+			if prior, duplicate := outputs[output.Key]; duplicate {
+				return schema.SurfaceLawFailure(schema.SurfaceKindAxis, prior, LawOutputUnique, schema.DispositionDuplicate)
+			}
+			outputs[output.Key] = template.id
+		}
+	}
+	// A writer is a declared axis, because an axis is a writer principal. A
+	// column admitted for a principal this table does not declare would be a
+	// capability over a writer no seal ever states a law about.
+	for _, template := range templates {
+		for _, output := range template.outputs {
+			if _, declared := keys[output.Writer]; !declared {
+				return schema.SurfaceLawFailure(schema.SurfaceKindAxis, template.id, LawOutputWriterResolves, schema.DispositionIncomplete)
+			}
+		}
 	}
 	// Dependency edges resolve against the sealed inventory, so an axis cannot
 	// declare an edge to an axis that is not in this table.

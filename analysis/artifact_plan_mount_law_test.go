@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/composite"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/schema"
 )
 
 // The Link construction root composes; it does not seal a factor's authority.
@@ -17,12 +17,12 @@ import (
 
 // mountingDomainPackages pairs each factor with the package the root would have
 // to name to build that factor's mount rows and open its seal by hand.
-var mountingDomainPackages = map[programartifact.RuleOutputKind]string{
-	programartifact.RuleOutputValue:  "github.com/wippyai/go-lua/analysis/domain/value",
-	programartifact.RuleOutputHeap:   "github.com/wippyai/go-lua/analysis/domain/heap",
-	programartifact.RuleOutputPack:   "github.com/wippyai/go-lua/analysis/domain/pack",
-	programartifact.RuleOutputCall:   "github.com/wippyai/go-lua/analysis/domain/call",
-	programartifact.RuleOutputEffect: "github.com/wippyai/go-lua/analysis/domain/effect/factor",
+var mountingDomainPackages = map[schema.Key]string{
+	"value":  "github.com/wippyai/go-lua/analysis/domain/value",
+	"heap":   "github.com/wippyai/go-lua/analysis/domain/heap",
+	"pack":   "github.com/wippyai/go-lua/analysis/domain/pack",
+	"call":   "github.com/wippyai/go-lua/analysis/domain/call",
+	"effect": "github.com/wippyai/go-lua/analysis/domain/effect/factor",
 }
 
 const artifactPlanSourcePath = "analysis/artifact_plan.go"
@@ -45,10 +45,10 @@ func TestArtifactPlanNamesNoSelfMountingDomain(t *testing.T) {
 		t.Fatalf("%s was not walked; the law has nothing to state", artifactPlanSourcePath)
 	}
 	mounting := 0
-	for principal, path := range mountingDomainPackages {
-		declared, known := composite.AxisMountDeclared(principal)
+	for key, path := range mountingDomainPackages {
+		declared, known := composite.AxisMountDeclared(key)
 		if !known {
-			t.Fatalf("principal %v is not a declared axis", principal)
+			t.Fatalf("%q is not a declared axis", key)
 		}
 		if !declared {
 			continue

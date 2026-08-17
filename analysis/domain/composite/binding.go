@@ -5,7 +5,6 @@ import (
 	allocationcatalog "github.com/wippyai/go-lua/analysis/domain/heap/allocation/catalog"
 	valueowner "github.com/wippyai/go-lua/analysis/domain/value/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 )
 
 // BindStage names the phase of the one binding transaction that rejected. A
@@ -119,7 +118,7 @@ func bind(compilation Compilation, inputs LinkInputs, bindPrincipals func(value 
 	if !inputs.available() || bindPrincipals == nil {
 		return catalogBinding{}, BindFailure{Stage: BindStageInput}
 	}
-	if !compilation.Available() || !compilation.catalog.axisFragments.available() {
+	if !compilation.Available() || !compilation.catalog.axisFragments.available(registry.axes) {
 		return catalogBinding{}, BindFailure{Stage: BindStageCompilation}
 	}
 	binding := engine.NewSchemaBinding(compilation.Schema())
@@ -133,8 +132,8 @@ func bind(compilation Compilation, inputs LinkInputs, bindPrincipals func(value 
 	if !axesOK {
 		return catalogBinding{}, BindFailure{Stage: BindStagePrincipal, Axis: failedAxis}
 	}
-	value, valueOK := axisPayload[*valueowner.HotOwner](axes, programartifact.RuleOutputValue)
-	effect, effectOK := axisPayload[*effectowner.HotOwner](axes, programartifact.RuleOutputEffect)
+	value, valueOK := axisPayloadForKey[*valueowner.HotOwner](axes, axisKeyValue)
+	effect, effectOK := axisPayloadForKey[*effectowner.HotOwner](axes, axisKeyEffect)
 	if !valueOK || !effectOK {
 		return catalogBinding{}, BindFailure{Stage: BindStagePrincipal}
 	}

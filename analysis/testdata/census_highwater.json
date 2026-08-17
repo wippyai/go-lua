@@ -1,12 +1,12 @@
 {
-  "measured": "2026-08-16",
-  "note": "Provenance: full bounded census on the settled tree after the four landings of 2026-08-16 (class-A commit-route disjunction, class-B static authority cycle fixes, role-17 branch-condition admission, canonical binder frames) and the static admission law rewrite (exponential scope-chain visitation replaced by a linear free-formal fixpoint, seq 2140). Measured 680 complete / 153 incomplete / 78 unsupported / 0 invalid over 8m2.3s of analysis wall across 32 workers, against the prior floor of 584/143/184. Complete rose by 96 and unsupported fell by 106; incomplete rose from 143 to 153 because the distribution moved out of unsupported through incomplete into complete, so the incomplete ceiling is recorded where it was measured. The sample lane is the stride-6 projection of the same walk. The full lane is authoritative only on a full-corpus run; the next full bounded run revalidates both numbers.",
+  "measured": "2026-08-17",
+  "note": "Provenance: full census after the occurrences-window repair of 2026-08-17 (Flow Finish contract consumption fixed at three sites: FieldName lens Finish routing, FamilyRead span over-admission, occurrenceSpanID parallel copy consolidated onto Program.Span; plus the Mu-witness-only same-point rule replacing the commit-route disjunction). Measured 683 complete / 150 incomplete / 78 unsupported / 0 invalid over 4m27.7s analysis wall, against the prior floor of 680/153/78 minted after the 2026-08-16 landings (class-A, class-B static authority, role-17, binder frames, static-law fixpoint rewrite). The sample lane is the stride-6 projection of the same corpus, measured 112/27/13/0 in the repair lane's run. The full lane is authoritative only on a full-corpus run; the next full bounded run revalidates both numbers.",
   "corpus_projects": 911,
   "full": {
     "measured": true,
     "projects": 911,
-    "complete_min": 680,
-    "incomplete_max": 153,
+    "complete_min": 683,
+    "incomplete_max": 150,
     "unsupported_max": 78,
     "invalid_max": 0
   },
@@ -14,8 +14,8 @@
     "measured": true,
     "stride": 6,
     "projects": 152,
-    "complete_min": 111,
-    "incomplete_max": 28,
+    "complete_min": 112,
+    "incomplete_max": 27,
     "unsupported_max": 13,
     "invalid_max": 0
   }

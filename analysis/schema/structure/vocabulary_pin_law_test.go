@@ -8,6 +8,7 @@ import (
 
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
@@ -19,8 +20,11 @@ import (
 // declaration is a rejected build rather than a silent mistranslation.
 //
 // A verdict names the drifted spelling, because that is the only thing a
-// reader has to change: the sealed table is the authority, and the artifact
-// ordinals it adopts are serialized ABI.
+// reader has to change: the sealed table is the authority. The artifact
+// ordinals are compiled from the Program at load and reach no byte stream of
+// their own, so what these laws hold is the agreement between the spellings
+// rather than a wire commitment - and agreement is what every projection
+// across the boundary rests on.
 
 func sealedVocabulary(t *testing.T) structure.Table {
 	t.Helper()
@@ -52,6 +56,20 @@ func pinned(t *testing.T, table structure.Table, category structure.Category, or
 	}
 }
 
+// spelled states that one sealed member renders under the name its consumers
+// are written against. A spelling is declared data, so a renamed member is a
+// rejected build rather than a silently relabelled catalog.
+func spelled(t *testing.T, table structure.Table, category structure.Category, ordinal uint16, spelling string) {
+	t.Helper()
+	entry, ok := table.At(category, ordinal)
+	if !ok {
+		t.Fatalf("ordinal %d names no member of the sealed vocabulary", ordinal)
+	}
+	if entry.Spelling() != spelling {
+		t.Fatalf("sealed member %q renders as %q, not %q", entry.Key(), entry.Spelling(), spelling)
+	}
+}
+
 // counted states that a spelling's last member is the vocabulary's last
 // ordinal, so a member added to one spelling alone cannot hide above the
 // declared catalog.
@@ -63,8 +81,8 @@ func counted(t *testing.T, table structure.Table, category structure.Category, l
 }
 
 // TestArtifactVocabularyIsTheSealedTable pins the artifact-owned spellings.
-// These ordinals are serialized ABI, so the declaration adopts them and this
-// law is the proof it still does.
+// The artifact compiles these ordinals at load, so this law is what keeps its
+// numbering and the declaration's the same numbering.
 func TestArtifactVocabularyIsTheSealedTable(t *testing.T) {
 	table := sealedVocabulary(t)
 	for _, member := range []struct {
@@ -189,4 +207,84 @@ func TestEngineArtifactVocabularyIsTheSealedTable(t *testing.T) {
 		pinned(t, table, structure.CategoryEvent, uint16(member.ordinal), member.key, member.spelling)
 	}
 	counted(t, table, structure.CategoryEvent, uint16(rows.ArtifactEventExit), "rows.ArtifactEventExit")
+}
+
+// TestDiagnosticVocabularyIsTheSealedTable pins the publication vocabularies.
+// The artifact numbers the observation populations at load and folds that
+// number into the identity of every observation it issues, so the declaration
+// and the artifact must number the same members the same way for a compiled
+// observation to resolve the row it feeds. The severity ordinals are the
+// positions a policy carries, and their spellings are what a rendered finding
+// is labelled with, so both are pinned here rather than restated at the
+// renderer.
+func TestDiagnosticVocabularyIsTheSealedTable(t *testing.T) {
+	table := sealedVocabulary(t)
+	for _, member := range []struct {
+		key      schema.Key
+		spelling string
+		ordinal  programartifact.DiagnosticObservationKind
+		foreign  string
+	}{
+		{"observation/branch-condition", "branch-condition", programartifact.DiagnosticObservationBranchCondition, "programartifact.DiagnosticObservationBranchCondition"},
+		{"observation/type-reference-unresolved", "type-reference-unresolved", programartifact.DiagnosticObservationTypeReferenceUnresolved, "programartifact.DiagnosticObservationTypeReferenceUnresolved"},
+		{"observation/value-reference-unresolved", "value-reference-unresolved", programartifact.DiagnosticObservationValueReferenceUnresolved, "programartifact.DiagnosticObservationValueReferenceUnresolved"},
+	} {
+		pinned(t, table, structure.CategoryDiagnosticObservation, uint16(member.ordinal), member.key, member.foreign)
+		spelled(t, table, structure.CategoryDiagnosticObservation, uint16(member.ordinal), member.spelling)
+	}
+	counted(t, table, structure.CategoryDiagnosticObservation, uint16(programartifact.DiagnosticObservationValueReferenceUnresolved), "programartifact.DiagnosticObservationValueReferenceUnresolved")
+
+	for _, member := range []struct {
+		key      schema.Key
+		spelling string
+		ordinal  diagnostic.Severity
+		foreign  string
+	}{
+		{"severity/error", "error", diagnostic.SeverityError, "diagnostic.SeverityError"},
+		{"severity/warning", "warning", diagnostic.SeverityWarning, "diagnostic.SeverityWarning"},
+		{"severity/hint", "hint", diagnostic.SeverityHint, "diagnostic.SeverityHint"},
+	} {
+		pinned(t, table, structure.CategoryDiagnosticSeverity, member.ordinal.Ordinal(), member.key, member.foreign)
+		spelled(t, table, structure.CategoryDiagnosticSeverity, member.ordinal.Ordinal(), member.spelling)
+	}
+	counted(t, table, structure.CategoryDiagnosticSeverity, diagnostic.SeverityHint.Ordinal(), "diagnostic.SeverityHint")
+}
+
+// TestDiagnosticFamiliesAreResolvedByName states the other half: the family
+// vocabulary is numbered by declaration order and no foreign spelling numbers
+// it, so what a consumer holds is the member's name. Every published code's
+// first segment is the declared spelling of the family its row names, which is
+// what makes publishing under a new family one more declared row.
+func TestDiagnosticFamiliesAreResolvedByName(t *testing.T) {
+	table := sealedVocabulary(t)
+	diagnostics, diagnosticsOK := composite.Diagnostics()
+	if !diagnosticsOK {
+		t.Fatal("sealed diagnostic table unavailable")
+	}
+	families := make(map[schema.Key]string, table.Count(structure.CategoryDiagnosticFamily))
+	for ordinal := uint16(1); ordinal <= uint16(table.Count(structure.CategoryDiagnosticFamily)); ordinal++ {
+		entry, ok := table.At(structure.CategoryDiagnosticFamily, ordinal)
+		if !ok || entry.Spelling() == "" {
+			t.Fatalf("family ordinal %d names no declared member", ordinal)
+		}
+		families[entry.Key()] = entry.Spelling()
+	}
+	for position := 0; position < diagnostics.Count(); position++ {
+		row, rowOK := diagnostics.At(position)
+		if !rowOK {
+			t.Fatalf("diagnostic row %d is unavailable", position)
+		}
+		reference := row.Family()
+		if reference.Surface != schema.SurfaceKindStructure {
+			t.Fatalf("published code %q names its family on surface %d", row.Code(), reference.Surface)
+		}
+		spelling, declared := families[reference.Key]
+		if !declared {
+			t.Fatalf("published code %q names the undeclared family %q", row.Code(), reference.Key)
+		}
+		family, familyOK := row.Code().Family()
+		if !familyOK || family != spelling {
+			t.Fatalf("published code %q reads as family %q, but its row declares %q", row.Code(), family, spelling)
+		}
+	}
 }

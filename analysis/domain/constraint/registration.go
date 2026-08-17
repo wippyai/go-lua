@@ -80,10 +80,11 @@ import (
 // or reordered in the grammar moves this declaration with it rather than
 // leaving a second list behind to drift.
 //
-// A row's key is the form's name on this surface. It is not the codec's wire
-// spelling: the wire strings are the manifest's own boundary vocabulary, pinned
-// to these rows by law, because a wire spelling is a serialization commitment
-// the codec owns and this declaration adopts nothing of.
+// A row's key is the form's name on this surface, and its spelling is the name
+// the form renders as. Neither is the codec's wire spelling: the wire strings
+// are the manifest's own boundary vocabulary, pinned to these rows by law,
+// because a wire spelling is a serialization commitment the codec owns and this
+// declaration adopts nothing of.
 //
 // Every form is projected. The grammar builds terms of any of them, so no
 // member is held back from the projection this vocabulary feeds.
@@ -91,10 +92,12 @@ func StructureSpecs() []structure.Spec {
 	forms := expr.Forms()
 	specs := make([]structure.Spec, 0, len(forms))
 	for _, form := range forms {
+		key, spelling := formNaming(form)
 		specs = append(specs, structure.Spec{
-			Key:      FormKey(form),
+			Key:      key,
 			Category: structure.CategoryConstraintForm,
 			Ordinal:  uint16(form),
+			Spelling: spelling,
 			Accepted: true,
 		})
 	}
@@ -106,29 +109,43 @@ func StructureSpecs() []structure.Spec {
 // the declaration it would produce is rejected at construction rather than
 // sealed under an empty identity.
 func FormKey(form expr.Form) schema.Key {
+	key, _ := formNaming(form)
+	return key
+}
+
+// FormSpelling is one grammar form's rendered name on the structural
+// vocabulary surface.
+func FormSpelling(form expr.Form) string {
+	_, spelling := formNaming(form)
+	return spelling
+}
+
+// formNaming answers a form's surface key and its rendered spelling from one
+// statement, so the two cannot name different sets of forms.
+func formNaming(form expr.Form) (schema.Key, string) {
 	switch form {
 	case expr.FormVar:
-		return "constraint-form/var"
+		return "constraint-form/var", "var"
 	case expr.FormConst:
-		return "constraint-form/const"
+		return "constraint-form/const", "const"
 	case expr.FormBinOp:
-		return "constraint-form/binop"
+		return "constraint-form/binop", "binop"
 	case expr.FormLen:
-		return "constraint-form/len"
+		return "constraint-form/len", "len"
 	case expr.FormParam:
-		return "constraint-form/param"
+		return "constraint-form/param", "param"
 	case expr.FormRet:
-		return "constraint-form/ret"
+		return "constraint-form/ret", "ret"
 	case expr.FormParamLen:
-		return "constraint-form/param-len"
+		return "constraint-form/param-len", "param-len"
 	case expr.FormRetLen:
-		return "constraint-form/ret-len"
+		return "constraint-form/ret-len", "ret-len"
 	case expr.FormMin:
-		return "constraint-form/min"
+		return "constraint-form/min", "min"
 	case expr.FormMax:
-		return "constraint-form/max"
+		return "constraint-form/max", "max"
 	default:
-		return ""
+		return "", ""
 	}
 }
 

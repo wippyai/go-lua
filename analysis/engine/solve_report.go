@@ -1,6 +1,13 @@
 package engine
 
-import "github.com/wippyai/go-lua/analysis/identity"
+import (
+	"encoding/hex"
+
+	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/internal/canonical"
+	"github.com/wippyai/go-lua/analysis/schema"
+)
 
 // SolveFailureReason identifies the first engine lifecycle boundary that made
 // a solve incomplete.  It is deliberately a closed enum: callers receive no
@@ -24,292 +31,146 @@ const (
 	SolveFailureReasonPublication
 )
 
-// SolveFailurePhase identifies the engine lifecycle phase that made a solve
-// incomplete. It covers both cold/runtime compilation and bound RuleMember
-// execution. It carries no typed/domain diagnostic; the zero value is used
-// when no more specific phase was reached.
-type SolveFailurePhase uint8
+// SolveFailureFamily names the engine lifecycle stage a solve stopped in. It
+// is the whole rendered classification a caller receives; the exact internal
+// boundary reached inside that stage travels beside it as an opaque identity,
+// so the engine refines its own boundaries without moving public vocabulary.
+type SolveFailureFamily uint8
 
 const (
-	SolveFailurePhaseNone SolveFailurePhase = iota
-	// The sealed cold input or accepted activation graph was invalid.
-	SolveFailurePhaseCompileValidation
-	// The accepted graph could not produce an operand revision.
-	SolveFailurePhaseCompileOperandRevision
-	// Factor binding or runtime composition preparation failed.
-	SolveFailurePhaseCompileComposition
-	// A graph member could not bind to its sealed rule schema.
-	SolveFailurePhaseCompileMemberBinding
-	// A graph query could not bind to its sealed query schema.
-	SolveFailurePhaseCompileQueryBinding
-	// The bound rows could not be assembled into the runtime.
-	SolveFailurePhaseCompileRuntimeAssembly
-	SolveFailurePhasePreflight
-	SolveFailurePhaseTransfer
-	SolveFailurePhaseCheckpoint
-	SolveFailurePhaseDerivation
-	SolveFailurePhaseAdmission
-	SolveFailurePhasePublication
-	// Activation-specific preflight boundaries retain the exact failed
-	// invariant without exposing the compiled callback or Product rows.
-	SolveFailurePhaseActivationInstance
-	SolveFailurePhaseActivationContribution
-	SolveFailurePhaseActivationReads
-	SolveFailurePhaseActivationEpoch
-	SolveFailurePhaseActivationProduct
-	// RefreshPoint could not validate its Point/runtime ownership boundary.
-	SolveFailurePhaseRefreshValidation
-	// RefreshPoint could not evaluate or authenticate a producer candidate.
-	SolveFailurePhaseRefreshCandidate
-	// A producer candidate failed the local monotonic/order boundary.
-	SolveFailurePhaseRefreshCandidateOrder
-	// RefreshPoint could not replace demand or commit a candidate generation.
-	SolveFailurePhaseRefreshDemandCommit
-	// The acyclic structural-input ascent certificate was unavailable.
-	SolveFailurePhaseRefreshAcyclicStructuralInputs
-	// An acyclic Point could not acquire its canonical Init/base RHS.
-	SolveFailurePhaseRefreshAcyclicPointBase
-	// An acyclic Point could not validate the foldPoint boundary.
-	SolveFailurePhaseRefreshAcyclicFoldPoint
-	// foldPointTerms could not begin its canonical RHS transaction.
-	SolveFailurePhaseRefreshAcyclicFoldBegin
-	// foldPointTerms could not transport an environment input.
-	SolveFailurePhaseRefreshAcyclicFoldEnvironment
-	// A Factor fold edge had an invalid descriptor, bounds, or input plan.
-	SolveFailurePhaseRefreshAcyclicFoldFactorValidation
-	// A Factor fold edge could not project its source PointState.
-	SolveFailurePhaseRefreshAcyclicFoldFactorProjection
-	// A Factor point transport failed its owner/scope preflight.
-	SolveFailurePhaseRefreshAcyclicFoldFactorTransportPreflight
-	// A coordinate-identical Factor transport failed its pre-support filter.
-	SolveFailurePhaseRefreshAcyclicFoldFactorTransportCoordinatePreSupport
-	// A coordinate-identical Factor transport failed support reindexing.
-	SolveFailurePhaseRefreshAcyclicFoldFactorTransportCoordinateReindexSupport
-	// A coordinate-identical Factor transport failed its post-support filter.
-	SolveFailurePhaseRefreshAcyclicFoldFactorTransportCoordinatePostSupport
-	// A coordinate-identical Factor transport failed coverage transport.
-	SolveFailurePhaseRefreshAcyclicFoldFactorTransportCoordinateCoverage
-	// A coordinate-identical Factor transport could not admit its output.
-	SolveFailurePhaseRefreshAcyclicFoldFactorTransportCoordinateAdmission
-	// A general Factor transport failed its pre-state filter.
-	SolveFailurePhaseRefreshAcyclicFoldFactorTransportGeneralPreFilter
-	// A general Factor transport failed State-reindex support preparation.
-	SolveFailurePhaseRefreshAcyclicFoldFactorTransportGeneralReindexSupport
-	// A general Factor transport failed its typed all-slot reindex transaction.
-	SolveFailurePhaseRefreshAcyclicFoldFactorTransportGeneralReindexTypedSlots
-	// A general Factor transport failed State-reindex commit.
-	SolveFailurePhaseRefreshAcyclicFoldFactorTransportGeneralReindexCommit
-	// A general Factor transport failed its post-state filter.
-	SolveFailurePhaseRefreshAcyclicFoldFactorTransportGeneralPostFilter
-	// A general Factor transport failed coverage transport.
-	SolveFailurePhaseRefreshAcyclicFoldFactorTransportGeneralCoverage
-	// A general Factor transport could not admit its output.
-	SolveFailurePhaseRefreshAcyclicFoldFactorTransportGeneralAdmission
-	// A Factor fold edge could not admit its transported PointState to the fold.
-	SolveFailurePhaseRefreshAcyclicFoldFactorAdmission
-	// foldPointTerms could not add a producer contribution.
-	SolveFailurePhaseRefreshAcyclicFoldProducer
-	// foldPointTerms could not finish its canonical RHS transaction.
-	SolveFailurePhaseRefreshAcyclicFoldFinish
-	// An acyclic Point could not publish its folded RHS.
-	SolveFailurePhaseRefreshAcyclicPublication
-	// A recurrent Point could not validate or refresh its Region interface.
-	SolveFailurePhaseRefreshRegionInterface
-	// A recurrent Point could not construct its canonical Region RHS.
-	SolveFailurePhaseRefreshRegionRHS
-	// A recurrent Point failed its exact/current Region order boundary.
-	SolveFailurePhaseRefreshRegionOrder
-	// A recurrent Point could not merge exact/current Region state.
-	SolveFailurePhaseRefreshRegionMerge
-	// A recurrent Point could not publish its merged Region state.
-	SolveFailurePhaseRefreshRegionPublication
-	// The executor's WTO event traversal reported an invalid boundary.
-	SolveFailurePhaseRunVisitInvalid
-	// The executor retained queued work but visited no executable Point.
-	SolveFailurePhaseRunVisitNoProgress
-	// The demanded postfix discharge reported an invalid boundary.
-	SolveFailurePhaseRunPostfixInvalid
-	// Postfix remained unproved without scheduling further Point work.
-	SolveFailurePhaseRunPostfixStalled
-	// The ascent-to-narrow transition reported an invalid Region boundary.
-	SolveFailurePhaseRunNarrowInvalid
-	// The ascent-to-narrow transition made no Region progress.
-	SolveFailurePhaseRunNarrowNoProgress
-	// A changed producer candidate had identical read/environment generations.
-	SolveFailurePhaseRefreshCandidateOrderStableInputs
-	// A nonascending producer candidate had no live recurrent descent context.
-	SolveFailurePhaseRefreshCandidateOrderRegion
-	// A recurrent narrow candidate was incomparable with its prior value.
-	SolveFailurePhaseRefreshCandidateOrderDescent
-	// Optional read-only observation failed before entering the Factor read.
-	SolveFailurePhaseObservationPreflight
-	// Optional read-only observation could not open its Factor work generation.
-	SolveFailurePhaseObservationWork
-	// Optional read-only observation retained no live Factor unit.
-	SolveFailurePhaseObservationUnit
-	// Optional read-only observation retained no valid support region.
-	SolveFailurePhaseObservationSupport
-	// Optional read-only observation could not resolve the settled Factor root.
-	SolveFailurePhaseObservationRoot
-	// Optional read-only observation could not traverse the settled Factor state.
-	SolveFailurePhaseObservationCarrier
-	// Optional read-only observation could not decode a settled Factor row.
-	SolveFailurePhaseObservationDecode
-	// Optional read-only observation could not fold a decoded Factor row.
-	SolveFailurePhaseObservationProjection
-	// Optional read-only observation violated its declared row shape.
-	SolveFailurePhaseObservationShape
-	// Optional read-only observation could not freeze at the terminal checkpoint.
-	SolveFailurePhaseObservationFreeze
+	SolveFailureFamilyNone SolveFailureFamily = iota
+	// Cold seal, binding, and runtime assembly of the accepted graph.
+	SolveFailureFamilyCompile
+	// Bound member and activation execution of one compiled rule.
+	SolveFailureFamilyExecution
+	// Point refresh: candidate order, acyclic fold, and Region transition.
+	SolveFailureFamilyRefresh
+	// Executor traversal, postfix discharge, and narrow scheduling.
+	SolveFailureFamilySchedule
+	// Optional read-only observation of a settled Factor.
+	SolveFailureFamilyObservation
 )
 
-// String returns a stable compact diagnostic spelling for a closed failure
-// phase. Unknown values are intentionally not normalized into a known phase.
-func (phase SolveFailurePhase) String() string {
-	switch phase {
-	case SolveFailurePhaseNone:
-		return "none"
-	case SolveFailurePhaseCompileValidation:
-		return "compile-validation"
-	case SolveFailurePhaseCompileOperandRevision:
-		return "compile-operand-revision"
-	case SolveFailurePhaseCompileComposition:
-		return "compile-composition"
-	case SolveFailurePhaseCompileMemberBinding:
-		return "compile-member-binding"
-	case SolveFailurePhaseCompileQueryBinding:
-		return "compile-query-binding"
-	case SolveFailurePhaseCompileRuntimeAssembly:
-		return "compile-runtime-assembly"
-	case SolveFailurePhasePreflight:
-		return "preflight"
-	case SolveFailurePhaseTransfer:
-		return "transfer"
-	case SolveFailurePhaseCheckpoint:
-		return "checkpoint"
-	case SolveFailurePhaseDerivation:
-		return "derivation"
-	case SolveFailurePhaseAdmission:
-		return "admission"
-	case SolveFailurePhasePublication:
-		return "publication"
-	case SolveFailurePhaseActivationInstance:
-		return "activation-instance"
-	case SolveFailurePhaseActivationContribution:
-		return "activation-contribution"
-	case SolveFailurePhaseActivationReads:
-		return "activation-reads"
-	case SolveFailurePhaseActivationEpoch:
-		return "activation-epoch"
-	case SolveFailurePhaseActivationProduct:
-		return "activation-product"
-	case SolveFailurePhaseRefreshValidation:
-		return "refresh-validation"
-	case SolveFailurePhaseRefreshCandidate:
-		return "refresh-candidate"
-	case SolveFailurePhaseRefreshCandidateOrder:
-		return "refresh-candidate-order"
-	case SolveFailurePhaseRefreshDemandCommit:
-		return "refresh-demand-commit"
-	case SolveFailurePhaseRefreshAcyclicStructuralInputs:
-		return "refresh-acyclic-structural-inputs"
-	case SolveFailurePhaseRefreshAcyclicPointBase:
-		return "refresh-acyclic-point-base"
-	case SolveFailurePhaseRefreshAcyclicFoldPoint:
-		return "refresh-acyclic-fold-point"
-	case SolveFailurePhaseRefreshAcyclicFoldBegin:
-		return "refresh-acyclic-fold-begin"
-	case SolveFailurePhaseRefreshAcyclicFoldEnvironment:
-		return "refresh-acyclic-fold-environment"
-	case SolveFailurePhaseRefreshAcyclicFoldFactorValidation:
-		return "refresh-acyclic-fold-factor-validation"
-	case SolveFailurePhaseRefreshAcyclicFoldFactorProjection:
-		return "refresh-acyclic-fold-factor-projection"
-	case SolveFailurePhaseRefreshAcyclicFoldFactorTransportPreflight:
-		return "refresh-acyclic-fold-factor-transport-preflight"
-	case SolveFailurePhaseRefreshAcyclicFoldFactorTransportCoordinatePreSupport:
-		return "refresh-acyclic-fold-factor-transport-coordinate-pre-support"
-	case SolveFailurePhaseRefreshAcyclicFoldFactorTransportCoordinateReindexSupport:
-		return "refresh-acyclic-fold-factor-transport-coordinate-reindex-support"
-	case SolveFailurePhaseRefreshAcyclicFoldFactorTransportCoordinatePostSupport:
-		return "refresh-acyclic-fold-factor-transport-coordinate-post-support"
-	case SolveFailurePhaseRefreshAcyclicFoldFactorTransportCoordinateCoverage:
-		return "refresh-acyclic-fold-factor-transport-coordinate-coverage"
-	case SolveFailurePhaseRefreshAcyclicFoldFactorTransportCoordinateAdmission:
-		return "refresh-acyclic-fold-factor-transport-coordinate-admission"
-	case SolveFailurePhaseRefreshAcyclicFoldFactorTransportGeneralPreFilter:
-		return "refresh-acyclic-fold-factor-transport-general-pre-filter"
-	case SolveFailurePhaseRefreshAcyclicFoldFactorTransportGeneralReindexSupport:
-		return "refresh-acyclic-fold-factor-transport-general-reindex-support"
-	case SolveFailurePhaseRefreshAcyclicFoldFactorTransportGeneralReindexTypedSlots:
-		return "refresh-acyclic-fold-factor-transport-general-reindex-typed-slots"
-	case SolveFailurePhaseRefreshAcyclicFoldFactorTransportGeneralReindexCommit:
-		return "refresh-acyclic-fold-factor-transport-general-reindex-commit"
-	case SolveFailurePhaseRefreshAcyclicFoldFactorTransportGeneralPostFilter:
-		return "refresh-acyclic-fold-factor-transport-general-post-filter"
-	case SolveFailurePhaseRefreshAcyclicFoldFactorTransportGeneralCoverage:
-		return "refresh-acyclic-fold-factor-transport-general-coverage"
-	case SolveFailurePhaseRefreshAcyclicFoldFactorTransportGeneralAdmission:
-		return "refresh-acyclic-fold-factor-transport-general-admission"
-	case SolveFailurePhaseRefreshAcyclicFoldFactorAdmission:
-		return "refresh-acyclic-fold-factor-admission"
-	case SolveFailurePhaseRefreshAcyclicFoldProducer:
-		return "refresh-acyclic-fold-producer"
-	case SolveFailurePhaseRefreshAcyclicFoldFinish:
-		return "refresh-acyclic-fold-finish"
-	case SolveFailurePhaseRefreshAcyclicPublication:
-		return "refresh-acyclic-publication"
-	case SolveFailurePhaseRefreshRegionInterface:
-		return "refresh-region-interface"
-	case SolveFailurePhaseRefreshRegionRHS:
-		return "refresh-region-rhs"
-	case SolveFailurePhaseRefreshRegionOrder:
-		return "refresh-region-order"
-	case SolveFailurePhaseRefreshRegionMerge:
-		return "refresh-region-merge"
-	case SolveFailurePhaseRefreshRegionPublication:
-		return "refresh-region-publication"
-	case SolveFailurePhaseRunVisitInvalid:
-		return "run-visit-invalid"
-	case SolveFailurePhaseRunVisitNoProgress:
-		return "run-visit-no-progress"
-	case SolveFailurePhaseRunPostfixInvalid:
-		return "run-postfix-invalid"
-	case SolveFailurePhaseRunPostfixStalled:
-		return "run-postfix-stalled"
-	case SolveFailurePhaseRunNarrowInvalid:
-		return "run-narrow-invalid"
-	case SolveFailurePhaseRunNarrowNoProgress:
-		return "run-narrow-no-progress"
-	case SolveFailurePhaseRefreshCandidateOrderStableInputs:
-		return "refresh-candidate-order-stable-inputs"
-	case SolveFailurePhaseRefreshCandidateOrderRegion:
-		return "refresh-candidate-order-region"
-	case SolveFailurePhaseRefreshCandidateOrderDescent:
-		return "refresh-candidate-order-descent"
-	case SolveFailurePhaseObservationPreflight:
-		return "observation-preflight"
-	case SolveFailurePhaseObservationWork:
-		return "observation-work"
-	case SolveFailurePhaseObservationUnit:
-		return "observation-unit"
-	case SolveFailurePhaseObservationSupport:
-		return "observation-support"
-	case SolveFailurePhaseObservationRoot:
-		return "observation-root"
-	case SolveFailurePhaseObservationCarrier:
-		return "observation-carrier"
-	case SolveFailurePhaseObservationDecode:
-		return "observation-decode"
-	case SolveFailurePhaseObservationProjection:
-		return "observation-projection"
-	case SolveFailurePhaseObservationShape:
-		return "observation-shape"
-	case SolveFailurePhaseObservationFreeze:
-		return "observation-freeze"
+func (family SolveFailureFamily) String() string {
+	switch family {
+	case SolveFailureFamilyCompile:
+		return "compile"
+	case SolveFailureFamilyExecution:
+		return "execution"
+	case SolveFailureFamilyRefresh:
+		return "refresh"
+	case SolveFailureFamilySchedule:
+		return "schedule"
+	case SolveFailureFamilyObservation:
+		return "observation"
 	default:
-		return "unknown"
+		return "none"
 	}
+}
+
+// SolveFailure is the engine's whole public failure vocabulary: the lifecycle
+// family a caller can act on, the universal schema disposition, and the
+// opaque identity of the exact internal boundary. Site is a framed digest, so
+// the executor keeps full internal precision without any internal name
+// crossing the API.
+type SolveFailure struct {
+	Family      SolveFailureFamily
+	Disposition schema.Disposition
+	Site        identity.ContentID
+}
+
+// Available reports whether this value classifies a failure.
+func (failure SolveFailure) Available() bool { return failure.Family != SolveFailureFamilyNone }
+
+// String renders the family, the disposition, and the leading bytes of the
+// site digest. The prefix separates boundaries within a family without naming
+// any of them.
+func (failure SolveFailure) String() string {
+	if !failure.Available() {
+		return "none"
+	}
+	return failure.Family.String() + "/" + failure.Disposition.String() + "@" + hex.EncodeToString(failure.Site[:4])
+}
+
+// solveBoundary is the engine-internal failure coordinate. The site name and
+// the raising authority's own sub-ordinal stay inside this package; a caller
+// receives their framed digest and nothing else.
+type solveBoundary struct {
+	family      SolveFailureFamily
+	disposition schema.Disposition
+	site        string
+	transport   carrier.PointTransportBoundary
+}
+
+// boundaryNone is the coordinate of a boundary that was not reached.
+var boundaryNone = solveBoundary{}
+
+// refused names one internal boundary whose fence rejected its input.
+func refused(family SolveFailureFamily, site string) solveBoundary {
+	return solveBoundary{family: family, disposition: schema.DispositionMalformed, site: site}
+}
+
+// stalled names one internal boundary that found no defect yet could not
+// finish or make progress.
+func stalled(family SolveFailureFamily, site string) solveBoundary {
+	return solveBoundary{family: family, disposition: schema.DispositionIncomplete, site: site}
+}
+
+// withTransport carries carrier's own transport sub-boundary into the site
+// identity, so the exact failed substage survives without a second engine
+// enum restating carrier's vocabulary.
+func (boundary solveBoundary) withTransport(transport carrier.PointTransportBoundary) solveBoundary {
+	boundary.transport = transport
+	return boundary
+}
+
+func (boundary solveBoundary) available() bool { return boundary.family != SolveFailureFamilyNone }
+
+const (
+	solveFailureSiteDomain  = "engine/solve-failure-site"
+	solveFailureSiteVersion = 1
+)
+
+// failure projects the internal coordinate onto the public vocabulary. The
+// family, the site name, and the transport sub-ordinal all enter the framed
+// preimage, so two boundaries never share an identity.
+func (boundary solveBoundary) failure() SolveFailure {
+	if !boundary.available() {
+		return SolveFailure{}
+	}
+	site := framedContentID(solveFailureSiteDomain, solveFailureSiteVersion, func(writer *canonical.DigestWriter) bool {
+		return writer.Uint(uint64(boundary.family)) == nil &&
+			writer.Bytes([]byte(boundary.site)) == nil &&
+			writer.Uint(uint64(boundary.transport)) == nil
+	})
+	return SolveFailure{Family: boundary.family, Disposition: boundary.disposition, Site: site}
+}
+
+// receiptFailure mints one receipt-side boundary onto the same public
+// vocabulary. The authority names the engine table an ordinal belongs to and
+// the ordinals are that table's own; both stay inside this package, so a
+// caller distinguishes two boundaries by their digests alone.
+func receiptFailure(family SolveFailureFamily, authority string, ordinals ...uint64) SolveFailure {
+	site := framedContentID(solveFailureSiteDomain, solveFailureSiteVersion, func(writer *canonical.DigestWriter) bool {
+		if writer.Uint(uint64(family)) != nil || writer.Bytes([]byte(authority)) != nil || writer.Count(uint64(len(ordinals))) != nil {
+			return false
+		}
+		for _, ordinal := range ordinals {
+			if writer.Uint(ordinal) != nil {
+				return false
+			}
+		}
+		return true
+	})
+	return SolveFailure{Family: family, Disposition: schema.DispositionMalformed, Site: site}
+}
+
+// ReceiptCompilationAttachFailure mints the compile-family boundary for one
+// ordered runtime attach phase of a receipt compilation. The phase ordinal is
+// the caller's own attach order and enters the site preimage, so two phases
+// never share an identity while the public vocabulary stays the family.
+func ReceiptCompilationAttachFailure(phase uint64) SolveFailure {
+	return receiptFailure(SolveFailureFamilyCompile, "receipt-compilation-attach", phase)
 }
 
 // SolveReport is a detached first-failure certificate for one incomplete
@@ -318,12 +179,12 @@ func (phase SolveFailurePhase) String() string {
 // reported; all fields are private so the report cannot be forged or retain a
 // Solver, State, callback, domain value, or mutable slice.
 type SolveReport struct {
-	reason SolveFailureReason
-	phase  SolveFailurePhase
-	point  identity.SemanticKey
-	group  identity.SemanticKey
-	member identity.SemanticKey
-	rule   identity.SemanticKey
+	reason  SolveFailureReason
+	failure SolveFailure
+	point   identity.SemanticKey
+	group   identity.SemanticKey
+	member  identity.SemanticKey
+	rule    identity.SemanticKey
 }
 
 // Available reports whether this report is a certificate for SolveIncomplete.
@@ -332,9 +193,10 @@ func (report SolveReport) Available() bool { return report.reason != SolveFailur
 // Reason returns the first lifecycle boundary recorded by the solver.
 func (report SolveReport) Reason() SolveFailureReason { return report.reason }
 
-// Phase returns the engine lifecycle phase that failed. It is None when the
-// report identifies a boundary without a more specific phase.
-func (report SolveReport) Phase() SolveFailurePhase { return report.phase }
+// Failure returns the lifecycle family, disposition, and opaque site identity
+// of the boundary that failed. It is the zero value when the report identifies
+// a lifecycle reason without reaching a more specific boundary.
+func (report SolveReport) Failure() SolveFailure { return report.failure }
 
 // Point returns the failed Point semantic identity when the boundary had one.
 func (report SolveReport) Point() identity.SemanticKey { return report.point }
@@ -350,12 +212,12 @@ func (report SolveReport) Member() identity.SemanticKey { return report.member }
 // one.
 func (report SolveReport) Rule() identity.SemanticKey { return report.rule }
 
-func (report *SolveReport) record(reason SolveFailureReason, phase SolveFailurePhase, point, group, member, rule identity.SemanticKey) {
+func (report *SolveReport) record(reason SolveFailureReason, boundary solveBoundary, point, group, member, rule identity.SemanticKey) {
 	if report == nil || report.Available() || reason == SolveFailureReasonNone {
 		return
 	}
 	report.reason = reason
-	report.phase = phase
+	report.failure = boundary.failure()
 	report.point = point
 	report.group = group
 	report.member = member
@@ -364,6 +226,6 @@ func (report *SolveReport) record(reason SolveFailureReason, phase SolveFailureP
 
 func reportFailureQuery(report *SolveReport, reason SolveFailureReason, point identity.SemanticKey) {
 	if report != nil {
-		report.record(reason, SolveFailurePhaseNone, point, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
+		report.record(reason, boundaryNone, point, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
 	}
 }

@@ -42,7 +42,6 @@ type WriteKind uint8
 
 const (
 	WriteExact WriteKind = iota + 1
-	WriteSelect
 	// WriteRoute consumes one preceding ReadSelect.  The concrete exact
 	// target comes only from that selected route at execution; it has neither
 	// a static candidate vector nor a second target language.
@@ -108,25 +107,14 @@ type Carry struct {
 	Transform Key
 }
 
-// Write retains the output Factor, write form, selector-law shape, and the
-// ordered prior-read candidate vector for a staged target. Concrete targets
-// and their local identities belong to equation instances, but the candidate
-// read ordinals are cold semantic identity: E must pair them positionally to
-// the presealed target surface.
+// Write retains the output Factor and write form. Concrete targets and their
+// local identities belong to equation instances.
 type Write struct {
-	Kind     WriteKind
-	Factor   Key
-	Semantic Key
+	Kind   WriteKind
+	Factor Key
 	// Route is the one-based ordinal of the preceding ReadSelect consumed by
 	// WriteRoute.  It is zero for every other write kind.
-	Route        uint64
-	Candidates   []uint64
-	Dependencies []Dependency
-}
-
-type Dependency struct {
-	Target bool
-	Index  uint64
+	Route uint64
 }
 
 // Support and Prune retain only their Composition/Solver structural-law
@@ -167,7 +155,6 @@ type FactorFormKind uint8
 
 const (
 	FactorSummaryRead FactorFormKind = iota + 1
-	FactorSelectorWrite
 	// FactorDistributiveSummaryRead is a summary read whose reader folds each
 	// declared coordinate independently. The fold belongs to the form because
 	// it decides how the carrier partitions the declared vector; it is never a
@@ -219,12 +206,9 @@ type RuleCarryShape struct {
 }
 
 type RuleWriteShape struct {
-	Kind            WriteKind
-	Factor          Key
-	Semantic        Key
-	Route           uint64
-	CandidateCount  uint64
-	DependencyCount uint64
+	Kind   WriteKind
+	Factor Key
+	Route  uint64
 }
 
 // QueryShape is the scalar, immutable header of one sealed Query family.
@@ -466,22 +450,7 @@ func (c *Composition) RuleWriteShapeAt(rule, write uint64) (RuleWriteShape, bool
 		return RuleWriteShape{}, false
 	}
 	row := c.rules[rule].Writes[write]
-	return RuleWriteShape{Kind: row.Kind, Factor: row.Factor, Semantic: row.Semantic, Route: row.Route, CandidateCount: uint64(len(row.Candidates)), DependencyCount: uint64(len(row.Dependencies))}, true
-}
-
-func (c *Composition) RuleWriteCandidateAt(rule, write, candidate uint64) (uint64, bool) {
-	if c == nil || rule >= uint64(len(c.rules)) || write >= uint64(len(c.rules[rule].Writes)) || candidate >= uint64(len(c.rules[rule].Writes[write].Candidates)) {
-		return 0, false
-	}
-	return c.rules[rule].Writes[write].Candidates[candidate], true
-}
-
-func (c *Composition) RuleWriteDependencyAt(rule, write, dependency uint64) (index uint64, target bool, ok bool) {
-	if c == nil || rule >= uint64(len(c.rules)) || write >= uint64(len(c.rules[rule].Writes)) || dependency >= uint64(len(c.rules[rule].Writes[write].Dependencies)) {
-		return 0, false, false
-	}
-	value := c.rules[rule].Writes[write].Dependencies[dependency]
-	return value.Index, value.Target, true
+	return RuleWriteShape{Kind: row.Kind, Factor: row.Factor, Route: row.Route}, true
 }
 
 func (c *Composition) QueryShapeAt(index uint64) (QueryShape, bool) {
@@ -896,8 +865,8 @@ func validCarries(carries []Carry, inputs uint64, output Key, factors map[Key]ui
 }
 func validWrites(writes []Write, output Key, reads []Read, factors map[Key]uint64, forms map[Key]map[Key]FactorFormKind) bool {
 	routeCount := 0
-	for i, write := range writes {
-		if write.Kind < WriteExact || write.Kind > WriteRoute || write.Factor != output || !validWriteDependencies(write.Dependencies, uint64(len(reads)), uint64(i)) {
+	for _, write := range writes {
+		if write.Kind < WriteExact || write.Kind > WriteRoute || write.Factor != output {
 			return false
 		}
 		if _, ok := factors[write.Factor]; !ok {
@@ -905,16 +874,12 @@ func validWrites(writes []Write, output Key, reads []Read, factors map[Key]uint6
 		}
 		switch write.Kind {
 		case WriteExact:
-			if write.Semantic.Available() || write.Route != 0 || len(write.Candidates) != 0 || len(write.Dependencies) != 0 {
-				return false
-			}
-		case WriteSelect:
-			if !write.Semantic.Available() || write.Route != 0 || !hasFactorForm(forms, write.Factor, write.Semantic, FactorSelectorWrite) || len(write.Candidates) == 0 || !validDependencies(write.Candidates, uint64(len(reads))) || len(write.Dependencies) == 0 {
+			if write.Route != 0 {
 				return false
 			}
 		case WriteRoute:
 			routeCount++
-			if routeCount != 1 || write.Semantic.Available() || write.Route == 0 || write.Route > uint64(len(reads)) || len(write.Candidates) != 0 || len(write.Dependencies) != 0 {
+			if routeCount != 1 || write.Route == 0 || write.Route > uint64(len(reads)) {
 				return false
 			}
 			read := reads[write.Route-1]
@@ -994,18 +959,6 @@ func validDependencies(values []uint64, limit uint64) bool {
 	}
 	return true
 }
-func validWriteDependencies(values []Dependency, reads, targets uint64) bool {
-	for i, value := range values {
-		if value.Target && value.Index >= targets || !value.Target && value.Index >= reads {
-			return false
-		}
-		if i > 0 && (values[i-1].Target && !value.Target || values[i-1].Target == value.Target && values[i-1].Index >= value.Index) {
-			return false
-		}
-	}
-	return true
-}
-
 func compositionID(factors []Factor, completion Completion, activations []ActivationFamily, rules []Rule, queries []QueryFamily) (ID, bool) {
 	hash := sha256.New()
 	var writer canonical.Writer
@@ -1019,17 +972,6 @@ func compositionID(factors []Factor, completion Completion, activations []Activa
 		}
 		for _, value := range values {
 			if writer.Uint(value) != nil {
-				return false
-			}
-		}
-		return true
-	}
-	writeDeps := func(values []Dependency) bool {
-		if writer.Count(uint64(len(values))) != nil {
-			return false
-		}
-		for _, value := range values {
-			if writer.Bool(value.Target) != nil || writer.Uint(value.Index) != nil {
 				return false
 			}
 		}
@@ -1086,7 +1028,7 @@ func compositionID(factors []Factor, completion Completion, activations []Activa
 			return ID{}, false
 		}
 		for _, write := range rule.Writes {
-			if writer.Uint(uint64(write.Kind)) != nil || !key(write.Factor) || !key(write.Semantic) || writer.Uint(write.Route) != nil || !deps(write.Candidates) || !writeDeps(write.Dependencies) {
+			if writer.Uint(uint64(write.Kind)) != nil || !key(write.Factor) || writer.Uint(write.Route) != nil {
 				return ID{}, false
 			}
 		}
@@ -1156,10 +1098,6 @@ func copyRule(rule Rule) Rule {
 	}
 	result.Carries = append([]Carry(nil), rule.Carries...)
 	result.Writes = append([]Write(nil), rule.Writes...)
-	for index := range result.Writes {
-		result.Writes[index].Candidates = append([]uint64(nil), rule.Writes[index].Candidates...)
-		result.Writes[index].Dependencies = append([]Dependency(nil), rule.Writes[index].Dependencies...)
-	}
 	result.Supports = append([]Support(nil), rule.Supports...)
 	result.Prunes = append([]Prune(nil), rule.Prunes...)
 	result.Activations = copyActivationRanges(rule.Activations)

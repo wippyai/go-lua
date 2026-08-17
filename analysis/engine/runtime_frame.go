@@ -356,7 +356,7 @@ func (runtime *stagedReadRuntime[V, S, Tag]) refine(session *productSession, ind
 	}
 	selected := &typedStagedSelectionSession[V, S, Tag]{
 		values: make([][]stagedSelectionValue[Tag, S], 0, len(session.values)),
-		frame:  selectorFrame{execution: session.execution, epoch: session.execution.epoch, read: runtime.selector, product: session, row: -1, current: -1},
+		frame:  selectorFrame{execution: session.execution, epoch: session.execution.epoch, read: runtime.selector, product: session, row: -1},
 	}
 	refinement := session.rows.BeginRefineWithCheckpoint(session.checkpoint)
 	if refinement == nil {
@@ -375,7 +375,7 @@ func (runtime *stagedReadRuntime[V, S, Tag]) refine(session *productSession, ind
 		}
 		sink := stagedRouteSink[V, Tag]{target: runtime.target, routes: selected.routeScratch[:0]}
 		frame := &selected.frame
-		frame.row, frame.current, frame.routes = source, -1, &sink
+		frame.row, frame.routes = source, &sink
 		located := runReadSelector(frame, runtime.locate)
 		frame.routes = nil
 		selected.routeScratch = sink.routes
@@ -963,7 +963,7 @@ func (runtime *outputRuntime) routeRead() (uint64, bool) {
 		if write.routeRead == 0 {
 			continue
 		}
-		if found != 0 || write.selector != nil || write.direct != (carrier.Target{}) {
+		if found != 0 || write.direct != (carrier.Target{}) {
 			return 0, false
 		}
 		found = write.routeRead
@@ -974,14 +974,9 @@ func (runtime *outputRuntime) routeRead() (uint64, bool) {
 type outputWriteRuntime struct {
 	// routeRead is the one-based staged read ordinal consumed by a route batch.
 	// Zero is the ordinary direct/static target form.
-	routeRead  uint64
-	direct     carrier.Target
-	directID   ruleTargetProof
-	selector   *coldWriteSelector
-	candidates []int
-	targets    []carrier.Target
-	targetIDs  []ruleTargetProof
-	relations  map[int][][]int
+	routeRead uint64
+	direct    carrier.Target
+	directID  ruleTargetProof
 }
 
 type resolvedRuleTarget struct {
@@ -993,70 +988,15 @@ func (runtime *outputRuntime) targets(execution *ruleExecution, row int) ([]reso
 	if runtime == nil || execution == nil || execution.product == nil || !execution.product.requireCheckpoint() || row != execution.product.current || row < 0 || row >= len(execution.product.values) || len(runtime.writes) == 0 {
 		return nil, false
 	}
-	selected := make([][]bool, len(runtime.writes))
 	result := make([]resolvedRuleTarget, 0, len(runtime.writes))
-	for writeIndex, write := range runtime.writes {
+	for _, write := range runtime.writes {
 		if !execution.product.requireCheckpoint() {
 			return nil, false
 		}
-		if write.routeRead != 0 {
+		if write.routeRead != 0 || write.direct == (carrier.Target{}) || !write.directID.validOrigin() {
 			return nil, false
 		}
-		if write.selector == nil {
-			if write.direct == (carrier.Target{}) {
-				return nil, false
-			}
-			selected[writeIndex] = []bool{true}
-			if !write.directID.validOrigin() {
-				return nil, false
-			}
-			result = append(result, resolvedRuleTarget{target: write.direct, proof: write.directID})
-			continue
-		}
-		if len(write.candidates) == 0 || len(write.candidates) != len(write.targets) || len(write.candidates) != len(write.targetIDs) || len(write.candidates) != len(write.selector.candidates) {
-			return nil, false
-		}
-		bits := make([]bool, len(write.candidates))
-		frame := &selectorFrame{execution: execution, epoch: execution.epoch, write: write.selector, product: execution.product, row: row, current: -1, requireCurrent: true}
-		frame.selected = func(prior, current int) (bool, bool) {
-			if prior < 0 || prior >= writeIndex || current < 0 || current >= len(bits) || prior >= len(selected) || len(selected[prior]) == 0 {
-				return false, false
-			}
-			matches, ok := write.relations[prior]
-			if !ok || current >= len(matches) {
-				return false, false
-			}
-			for _, ordinal := range matches[current] {
-				if !execution.product.requireCheckpoint() {
-					return false, false
-				}
-				if ordinal < 0 || ordinal >= len(selected[prior]) {
-					return false, false
-				}
-				if selected[prior][ordinal] {
-					return true, true
-				}
-			}
-			return false, true
-		}
-		for ordinal := range write.candidates {
-			if !execution.product.requireCheckpoint() {
-				return nil, false
-			}
-			frame.current = ordinal
-			choose := runWriteSelector(frame, write.selector.decide)
-			if execution.failed.Load() {
-				return nil, false
-			}
-			if choose {
-				bits[ordinal] = true
-				if !write.targetIDs[ordinal].validOrigin() {
-					return nil, false
-				}
-				result = append(result, resolvedRuleTarget{target: write.targets[ordinal], proof: write.targetIDs[ordinal]})
-			}
-		}
-		selected[writeIndex] = bits
+		result = append(result, resolvedRuleTarget{target: write.direct, proof: write.directID})
 	}
 	return result, true
 }
@@ -1637,13 +1577,13 @@ func (bound *boundRule[V, O]) appendReadRuntime(read readRuntime) bool {
 	return true
 }
 
-func (bound *boundRule[V, O]) execute(work *carrier.Work, base carrier.RuleContributionBase, inputs []carrier.State, within support.Mask) (carrier.Patch, []demand.Observation, bool, bool, SolveFailurePhase) {
+func (bound *boundRule[V, O]) execute(work *carrier.Work, base carrier.RuleContributionBase, inputs []carrier.State, within support.Mask) (carrier.Patch, []demand.Observation, bool, bool, solveBoundary) {
 	if bound == nil || bound.transfer == nil || work == nil || !work.OwnsRuleContributionStates(base, inputs) {
-		return carrier.Patch{}, nil, false, false, SolveFailurePhasePreflight
+		return carrier.Patch{}, nil, false, false, refused(SolveFailureFamilyExecution, "preflight")
 	}
 	epoch, issued := bound.nextEpoch.issue()
 	if !issued {
-		return carrier.Patch{}, nil, false, false, SolveFailurePhasePreflight
+		return carrier.Patch{}, nil, false, false, refused(SolveFailureFamilyExecution, "preflight")
 	}
 	execution := &ruleExecution{owner: bound, work: work, base: base, inputs: append([]carrier.State(nil), inputs...), epoch: epoch}
 	execution.active.open(epoch)
@@ -1658,29 +1598,29 @@ func (bound *boundRule[V, O]) execute(work *carrier.Work, base carrier.RuleContr
 	}()
 	product, ok := newProductSession(execution, bound.reads, work, inputs, within)
 	if !ok {
-		return carrier.Patch{}, nil, false, false, SolveFailurePhasePreflight
+		return carrier.Patch{}, nil, false, false, refused(SolveFailureFamilyExecution, "preflight")
 	}
 	execution.product = product
 	if !bound.carryOnly {
 		execution.output = bound.output.begin(execution)
 		if execution.output == nil {
-			return carrier.Patch{}, nil, false, false, SolveFailurePhasePreflight
+			return carrier.Patch{}, nil, false, false, refused(SolveFailureFamilyExecution, "preflight")
 		}
 	}
 	access := Access[V, O]{execution: execution, owner: bound, epoch: epoch, output: bound.output}
 	transferred := bound.transfer(access)
 	if !product.checkpoint() {
-		return carrier.Patch{}, nil, false, false, SolveFailurePhaseCheckpoint
+		return carrier.Patch{}, nil, false, false, stalled(SolveFailureFamilyExecution, "checkpoint")
 	}
 	if !transferred || execution.failed.Load() {
-		return carrier.Patch{}, nil, false, false, SolveFailurePhaseTransfer
+		return carrier.Patch{}, nil, false, false, refused(SolveFailureFamilyExecution, "transfer")
 	}
 	reads := product.observations()
 	if !product.requireCheckpoint() {
-		return carrier.Patch{}, nil, false, false, SolveFailurePhaseCheckpoint
+		return carrier.Patch{}, nil, false, false, stalled(SolveFailureFamilyExecution, "checkpoint")
 	}
 	if !product.started.Load() || !bound.carryOnly && !execution.output.complete() {
-		return carrier.Patch{}, nil, false, false, SolveFailurePhaseCheckpoint
+		return carrier.Patch{}, nil, false, false, stalled(SolveFailureFamilyExecution, "checkpoint")
 	}
 	// An empty support intersection has no Product row and therefore no
 	// semantic derivation or conclusion to admit.  It is a successful
@@ -1689,46 +1629,46 @@ func (bound *boundRule[V, O]) execute(work *carrier.Work, base carrier.RuleContr
 	// no row/disposition coverage.  Nonempty Products continue through the
 	// ordinary derivation/admission cut below.
 	if product.rows.Count() == 0 {
-		return carrier.Patch{}, reads, false, true, SolveFailurePhaseNone
+		return carrier.Patch{}, reads, false, true, boundaryNone
 	}
 	derivation, ticket, derivationOK := bound.derivation(execution, reads)
 	if !derivationOK {
 		if !product.checkpoint() {
-			return carrier.Patch{}, nil, false, false, SolveFailurePhaseCheckpoint
+			return carrier.Patch{}, nil, false, false, stalled(SolveFailureFamilyExecution, "checkpoint")
 		}
-		return carrier.Patch{}, nil, false, false, SolveFailurePhaseDerivation
+		return carrier.Patch{}, nil, false, false, refused(SolveFailureFamilyExecution, "derivation")
 	}
 	defer ticket.invalidate()
 	evidence, admitted := bound.admission.admit(derivation, bound.proof)
 	if !execution.product.requireCheckpoint() {
-		return carrier.Patch{}, nil, false, false, SolveFailurePhaseCheckpoint
+		return carrier.Patch{}, nil, false, false, stalled(SolveFailureFamilyExecution, "checkpoint")
 	}
 	if !admitted {
-		return carrier.Patch{}, nil, false, false, SolveFailurePhaseAdmission
+		return carrier.Patch{}, nil, false, false, refused(SolveFailureFamilyExecution, "admission")
 	}
 	if bound.carryOnly {
 		if !evidence.consume() {
-			return carrier.Patch{}, nil, false, false, SolveFailurePhasePublication
+			return carrier.Patch{}, nil, false, false, refused(SolveFailureFamilyExecution, "publication")
 		}
-		return carrier.Patch{}, reads, false, true, SolveFailurePhaseNone
+		return carrier.Patch{}, reads, false, true, boundaryNone
 	}
 	if !execution.output.hasStaged() {
 		// An explicit all-omitted Product is a valid empty successor, not a
 		// sparse Default write. It therefore consumes its admission evidence
 		// but publishes no Factor patch and cannot prune structural support.
 		if !evidence.consume() {
-			return carrier.Patch{}, nil, false, false, SolveFailurePhasePublication
+			return carrier.Patch{}, nil, false, false, refused(SolveFailureFamilyExecution, "publication")
 		}
 		execution.output.discard()
 		execution.output = nil
-		return carrier.Patch{}, reads, false, true, SolveFailurePhaseNone
+		return carrier.Patch{}, reads, false, true, boundaryNone
 	}
 	patch, ok := execution.output.accept(&evidence)
 	execution.output = nil
 	if !ok {
-		return patch, reads, true, false, SolveFailurePhasePublication
+		return patch, reads, true, false, refused(SolveFailureFamilyExecution, "publication")
 	}
-	return patch, reads, true, true, SolveFailurePhaseNone
+	return patch, reads, true, true, boundaryNone
 }
 
 func (bound *boundRule[V, O]) derivation(execution *ruleExecution, reads []demand.Observation) (RuleDerivation[V, O], *ruleAdmissionTicket, bool) {

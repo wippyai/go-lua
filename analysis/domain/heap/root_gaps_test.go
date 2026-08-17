@@ -178,7 +178,7 @@ func compactDynamicSlotAndPayload(t testing.TB, schema Schema) (Slot, Payload) {
 	return dynamic, payload
 }
 
-func compactFreshOperation(name string, kind target.FreshKind) target.OperationSpec {
+func compactFreshOperation(name string, kind schematype.FreshClass) target.OperationSpec {
 	return target.OperationSpec{
 		Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{name}}},
 		Input:    target.ValuesSpec{Fixed: []schematype.Type{portableAnyType()}, Tail: target.ValuesClosed},
@@ -254,15 +254,15 @@ func compactFreshRoot(t testing.TB, schema Schema) Key {
 func TestHeapArtifactFreshKindRuntimeMaskMatrix(t *testing.T) {
 	cases := []struct {
 		name string
-		kind target.FreshKind
+		kind schematype.FreshClass
 		want runtimekind.Set
 	}{
-		{"table", target.FreshTable, runtimekind.Bit(runtimekind.Table)},
-		{"function", target.FreshFunction, runtimekind.Bit(runtimekind.Function)},
-		{"thread", target.FreshThread, runtimekind.Bit(runtimekind.Thread)},
-		{"userdata", target.FreshUserdata, runtimekind.Bit(runtimekind.Userdata)},
-		{"error", target.FreshError, runtimekind.Bit(runtimekind.Userdata)},
-		{"reflection", target.FreshReflection, runtimekind.Bit(runtimekind.Userdata)},
+		{"table", schematype.FreshClassTable, runtimekind.Bit(runtimekind.Table)},
+		{"function", schematype.FreshClassFunction, runtimekind.Bit(runtimekind.Function)},
+		{"thread", schematype.FreshClassThread, runtimekind.Bit(runtimekind.Thread)},
+		{"userdata", schematype.FreshClassUserdata, runtimekind.Bit(runtimekind.Userdata)},
+		{"error", schematype.FreshClassError, runtimekind.Bit(runtimekind.Userdata)},
+		{"reflection", schematype.FreshClassReflection, runtimekind.Bit(runtimekind.Userdata)},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -276,7 +276,7 @@ func TestHeapArtifactFreshKindRuntimeMaskMatrix(t *testing.T) {
 		})
 	}
 
-	union := compactFreshSpec(compactFreshOperation("left", target.FreshTable), compactFreshOperation("right", target.FreshFunction))
+	union := compactFreshSpec(compactFreshOperation("left", schematype.FreshClassTable), compactFreshOperation("right", schematype.FreshClassFunction))
 	_, unionSchema, _ := compactHeapFixture(t, "compact_fresh_union", `return selected(1)`, union)
 	root := compactFreshRoot(t, unionSchema)
 	reference, referenceOK := unionSchema.Reference(root, materialization.Recent)

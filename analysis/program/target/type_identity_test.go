@@ -1,8 +1,9 @@
 package target
 
 import (
-	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
+
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
@@ -21,7 +22,7 @@ func identityOperation(name string, input, output interface{}) OperationSpec {
 	}
 }
 
-func freshOperation(name string, output interface{}, fresh FreshKind) OperationSpec {
+func freshOperation(name string, output interface{}, fresh schematype.FreshClass) OperationSpec {
 	declarations, formals := testOperationTypes(output)
 	return OperationSpec{
 		Bindings:    []BindingSpec{{Namespace: BindingBuiltin, Member: []string{name}}},
@@ -52,7 +53,7 @@ func producedOperation(name string, output interface{}) Spec {
 	}}
 }
 
-func callbackResultOperation(name string, callbackType, output interface{}, admission Admission) OperationSpec {
+func callbackResultOperation(name string, callbackType, output interface{}, admission schematype.CallableAdmission) OperationSpec {
 	declarations, formals := testOperationTypes(callbackType, output)
 	return OperationSpec{
 		Bindings:    []BindingSpec{{Namespace: BindingBuiltin, Member: []string{name}}},
@@ -84,11 +85,11 @@ func TestIdentityAnnotationsRejectConcreteContradictions(t *testing.T) {
 		spec Spec
 	}{
 		{"alias-string-number", Spec{Operations: []OperationSpec{identityOperation("alias-string-number", testString, testNumber)}}},
-		{"fresh-table-string", Spec{Operations: []OperationSpec{freshOperation("fresh-table-string", testString, FreshTable)}}},
-		{"fresh-function-string", Spec{Operations: []OperationSpec{freshOperation("fresh-function-string", testString, FreshFunction)}}},
-		{"fresh-thread-string", Spec{Operations: []OperationSpec{freshOperation("fresh-thread-string", testString, FreshThread)}}},
+		{"fresh-table-string", Spec{Operations: []OperationSpec{freshOperation("fresh-table-string", testString, schematype.FreshClassTable)}}},
+		{"fresh-function-string", Spec{Operations: []OperationSpec{freshOperation("fresh-function-string", testString, schematype.FreshClassFunction)}}},
+		{"fresh-thread-string", Spec{Operations: []OperationSpec{freshOperation("fresh-thread-string", testString, schematype.FreshClassThread)}}},
 		{"produced-string", producedOperation("produced-string", testString)},
-		{"callback-string", Spec{Operations: []OperationSpec{callbackResultOperation("callback-string", testString, testString, OrdinaryCallable)}}},
+		{"callback-string", Spec{Operations: []OperationSpec{callbackResultOperation("callback-string", testString, testString, schematype.CallableAdmissionOrdinary)}}},
 	} {
 		t.Run(item.name, func(t *testing.T) {
 			if _, err := testSeal(&item.spec); err == nil {
@@ -105,17 +106,17 @@ func TestIdentityAnnotationsKeepProvenAndGradualCases(t *testing.T) {
 	if _, err := testSeal(&Spec{Operations: []OperationSpec{identityOperation("alias-any-string", testAny, testString)}}); err != nil {
 		t.Fatalf("Any alias to string rejected: %v", err)
 	}
-	if _, err := testSeal(&Spec{Operations: []OperationSpec{freshOperation("fresh-table-marker", testBuiltinTableTop(), FreshTable)}}); err != nil {
+	if _, err := testSeal(&Spec{Operations: []OperationSpec{freshOperation("fresh-table-marker", testBuiltinTableTop(), schematype.FreshClassTable)}}); err != nil {
 		t.Fatalf("table marker freshness rejected: %v", err)
 	}
-	if _, err := testSeal(&Spec{Operations: []OperationSpec{freshOperation("fresh-table-record", testRawRecord(testRawRecordParts{}), FreshTable)}}); err != nil {
+	if _, err := testSeal(&Spec{Operations: []OperationSpec{freshOperation("fresh-table-record", testRawRecord(testRawRecordParts{}), schematype.FreshClassTable)}}); err != nil {
 		t.Fatalf("record freshness rejected: %v", err)
 	}
 	function := testRawFunction()
-	if _, err := testSeal(&Spec{Operations: []OperationSpec{freshOperation("fresh-function", function, FreshFunction)}}); err != nil {
+	if _, err := testSeal(&Spec{Operations: []OperationSpec{freshOperation("fresh-function", function, schematype.FreshClassFunction)}}); err != nil {
 		t.Fatalf("function freshness rejected: %v", err)
 	}
-	if _, err := testSeal(&Spec{Operations: []OperationSpec{freshOperation("fresh-thread-any", testAny, FreshThread)}}); err != nil {
+	if _, err := testSeal(&Spec{Operations: []OperationSpec{freshOperation("fresh-thread-any", testAny, schematype.FreshClassThread)}}); err != nil {
 		t.Fatalf("gradual thread freshness rejected: %v", err)
 	}
 	producedFunction := producedOperation("produced-function", function)
@@ -126,13 +127,13 @@ func TestIdentityAnnotationsKeepProvenAndGradualCases(t *testing.T) {
 	if _, err := testSeal(&producedAny); err != nil {
 		t.Fatalf("produced Any rejected: %v", err)
 	}
-	if _, err := testSeal(&Spec{Operations: []OperationSpec{callbackResultOperation("callback-function", function, function, DirectFunction)}}); err != nil {
+	if _, err := testSeal(&Spec{Operations: []OperationSpec{callbackResultOperation("callback-function", function, function, schematype.CallableAdmissionDirectFunction)}}); err != nil {
 		t.Fatalf("direct callback function rejected: %v", err)
 	}
 
 	callMeta := testRawRecord(testRawRecordParts{StaticMembers: []testRawStaticMember{{Kind: testRawStaticMemberStringIndex, Name: "__call", Type: function}}})
 	ordinaryCallable := testRawRecord(testRawRecordParts{Metatable: callMeta})
-	if _, err := testSeal(&Spec{Operations: []OperationSpec{callbackResultOperation("callback-ordinary-callable", ordinaryCallable, ordinaryCallable, OrdinaryCallable)}}); err != nil {
+	if _, err := testSeal(&Spec{Operations: []OperationSpec{callbackResultOperation("callback-ordinary-callable", ordinaryCallable, ordinaryCallable, schematype.CallableAdmissionOrdinary)}}); err != nil {
 		t.Fatalf("ordinary callable callback result rejected: %v", err)
 	}
 	producedCallableRecord := producedOperation("produced-callable-record", ordinaryCallable)
@@ -175,14 +176,14 @@ func TestIdentityAnnotationsUnfoldRecursiveAndInstantiatedSemanticHeads(t *testi
 		name string
 		spec Spec
 	}{
-		{"recursive-record-fresh-table", Spec{Operations: []OperationSpec{freshOperation("recursive-record-fresh-table", recursiveRecord, FreshTable)}}},
-		{"instantiated-record-fresh-table", Spec{Operations: []OperationSpec{freshOperation("instantiated-record-fresh-table", instantiatedRecord, FreshTable)}}},
-		{"recursive-function-fresh-function", Spec{Operations: []OperationSpec{freshOperation("recursive-function-fresh-function", recursiveFunction, FreshFunction)}}},
-		{"instantiated-function-fresh-function", Spec{Operations: []OperationSpec{freshOperation("instantiated-function-fresh-function", instantiatedFunction, FreshFunction)}}},
+		{"recursive-record-fresh-table", Spec{Operations: []OperationSpec{freshOperation("recursive-record-fresh-table", recursiveRecord, schematype.FreshClassTable)}}},
+		{"instantiated-record-fresh-table", Spec{Operations: []OperationSpec{freshOperation("instantiated-record-fresh-table", instantiatedRecord, schematype.FreshClassTable)}}},
+		{"recursive-function-fresh-function", Spec{Operations: []OperationSpec{freshOperation("recursive-function-fresh-function", recursiveFunction, schematype.FreshClassFunction)}}},
+		{"instantiated-function-fresh-function", Spec{Operations: []OperationSpec{freshOperation("instantiated-function-fresh-function", instantiatedFunction, schematype.FreshClassFunction)}}},
 		{"recursive-function-produced", producedOperation("recursive-function-produced", recursiveFunction)},
 		{"instantiated-function-produced", producedOperation("instantiated-function-produced", instantiatedFunction)},
-		{"recursive-function-direct-callback", Spec{Operations: []OperationSpec{callbackResultOperation("recursive-function-direct-callback", recursiveFunction, recursiveFunction, DirectFunction)}}},
-		{"instantiated-function-direct-callback", Spec{Operations: []OperationSpec{callbackResultOperation("instantiated-function-direct-callback", instantiatedFunction, instantiatedFunction, DirectFunction)}}},
+		{"recursive-function-direct-callback", Spec{Operations: []OperationSpec{callbackResultOperation("recursive-function-direct-callback", recursiveFunction, recursiveFunction, schematype.CallableAdmissionDirectFunction)}}},
+		{"instantiated-function-direct-callback", Spec{Operations: []OperationSpec{callbackResultOperation("instantiated-function-direct-callback", instantiatedFunction, instantiatedFunction, schematype.CallableAdmissionDirectFunction)}}},
 	} {
 		t.Run(item.name, func(t *testing.T) {
 			if _, err := testSeal(&item.spec); err != nil {
@@ -195,16 +196,16 @@ func TestIdentityAnnotationsUnfoldRecursiveAndInstantiatedSemanticHeads(t *testi
 		name string
 		spec Spec
 	}{
-		{"recursive-string-fresh-table", Spec{Operations: []OperationSpec{freshOperation("recursive-string-fresh-table", recursiveString, FreshTable)}}},
-		{"instantiated-string-fresh-table", Spec{Operations: []OperationSpec{freshOperation("instantiated-string-fresh-table", instantiatedString, FreshTable)}}},
+		{"recursive-string-fresh-table", Spec{Operations: []OperationSpec{freshOperation("recursive-string-fresh-table", recursiveString, schematype.FreshClassTable)}}},
+		{"instantiated-string-fresh-table", Spec{Operations: []OperationSpec{freshOperation("instantiated-string-fresh-table", instantiatedString, schematype.FreshClassTable)}}},
 		{"recursive-string-produced", producedOperation("recursive-string-produced", recursiveString)},
 		{"instantiated-string-produced", producedOperation("instantiated-string-produced", instantiatedString)},
-		{"recursive-string-direct-callback", Spec{Operations: []OperationSpec{callbackResultOperation("recursive-string-direct-callback", recursiveString, recursiveString, DirectFunction)}}},
-		{"instantiated-string-direct-callback", Spec{Operations: []OperationSpec{callbackResultOperation("instantiated-string-direct-callback", instantiatedString, instantiatedString, DirectFunction)}}},
-		{"recursive-string-fresh-thread", Spec{Operations: []OperationSpec{freshOperation("recursive-string-fresh-thread", recursiveString, FreshThread)}}},
-		{"instantiated-string-fresh-thread", Spec{Operations: []OperationSpec{freshOperation("instantiated-string-fresh-thread", instantiatedString, FreshThread)}}},
-		{"recursive-record-fresh-thread", Spec{Operations: []OperationSpec{freshOperation("recursive-record-fresh-thread", recursiveRecord, FreshThread)}}},
-		{"instantiated-record-fresh-thread", Spec{Operations: []OperationSpec{freshOperation("instantiated-record-fresh-thread", instantiatedRecord, FreshThread)}}},
+		{"recursive-string-direct-callback", Spec{Operations: []OperationSpec{callbackResultOperation("recursive-string-direct-callback", recursiveString, recursiveString, schematype.CallableAdmissionDirectFunction)}}},
+		{"instantiated-string-direct-callback", Spec{Operations: []OperationSpec{callbackResultOperation("instantiated-string-direct-callback", instantiatedString, instantiatedString, schematype.CallableAdmissionDirectFunction)}}},
+		{"recursive-string-fresh-thread", Spec{Operations: []OperationSpec{freshOperation("recursive-string-fresh-thread", recursiveString, schematype.FreshClassThread)}}},
+		{"instantiated-string-fresh-thread", Spec{Operations: []OperationSpec{freshOperation("instantiated-string-fresh-thread", instantiatedString, schematype.FreshClassThread)}}},
+		{"recursive-record-fresh-thread", Spec{Operations: []OperationSpec{freshOperation("recursive-record-fresh-thread", recursiveRecord, schematype.FreshClassThread)}}},
+		{"instantiated-record-fresh-thread", Spec{Operations: []OperationSpec{freshOperation("instantiated-record-fresh-thread", instantiatedRecord, schematype.FreshClassThread)}}},
 	} {
 		t.Run(item.name, func(t *testing.T) {
 			if _, err := testSeal(&item.spec); err == nil {
@@ -228,10 +229,10 @@ func TestIdentityAnnotationsRecursiveCyclesRequireAProductiveHead(t *testing.T) 
 		spec Spec
 		want bool
 	}{
-		{"self-fresh-table", Spec{Operations: []OperationSpec{freshOperation("self-fresh-table", self, FreshTable)}}, false},
-		{"mutual-fresh-table", Spec{Operations: []OperationSpec{freshOperation("mutual-fresh-table", left, FreshTable)}}, false},
-		{"self-fresh-thread-opaque", Spec{Operations: []OperationSpec{freshOperation("self-fresh-thread-opaque", self, FreshThread)}}, true},
-		{"mutual-table-fresh-table", Spec{Operations: []OperationSpec{freshOperation("mutual-table-fresh-table", mutualTable, FreshTable)}}, true},
+		{"self-fresh-table", Spec{Operations: []OperationSpec{freshOperation("self-fresh-table", self, schematype.FreshClassTable)}}, false},
+		{"mutual-fresh-table", Spec{Operations: []OperationSpec{freshOperation("mutual-fresh-table", left, schematype.FreshClassTable)}}, false},
+		{"self-fresh-thread-opaque", Spec{Operations: []OperationSpec{freshOperation("self-fresh-thread-opaque", self, schematype.FreshClassThread)}}, true},
+		{"mutual-table-fresh-table", Spec{Operations: []OperationSpec{freshOperation("mutual-table-fresh-table", mutualTable, schematype.FreshClassTable)}}, true},
 	} {
 		t.Run(item.name, func(t *testing.T) {
 			_, err := testSeal(&item.spec)
@@ -258,9 +259,9 @@ func TestIdentityAnnotationsDeepSemanticWrappersDoNotUseTheHostStack(t *testing.
 		name string
 		spec Spec
 	}{
-		{"fresh-table", Spec{Operations: []OperationSpec{freshOperation("deep-fresh-table", deepRecord, FreshTable)}}},
+		{"fresh-table", Spec{Operations: []OperationSpec{freshOperation("deep-fresh-table", deepRecord, schematype.FreshClassTable)}}},
 		{"produced", producedOperation("deep-produced", deepFunction)},
-		{"direct-callback", Spec{Operations: []OperationSpec{callbackResultOperation("deep-direct-callback", deepFunction, deepFunction, DirectFunction)}}},
+		{"direct-callback", Spec{Operations: []OperationSpec{callbackResultOperation("deep-direct-callback", deepFunction, deepFunction, schematype.CallableAdmissionDirectFunction)}}},
 	} {
 		t.Run(item.name, func(t *testing.T) {
 			if _, err := testSeal(&item.spec); err != nil {
@@ -280,11 +281,11 @@ func TestIdentityAnnotationsFormalBoundsAreOnlyNegativeEvidence(t *testing.T) {
 		spec Spec
 		want bool
 	}{
-		{"string-bound-fresh-thread", Spec{Operations: []OperationSpec{withTypeFormal(freshOperation("string-bound-fresh-thread", stringFormal, FreshThread), stringFormal)}}, false},
-		{"function-bound-fresh-thread", Spec{Operations: []OperationSpec{withTypeFormal(freshOperation("function-bound-fresh-thread", functionFormal, FreshThread), functionFormal)}}, false},
-		{"unconstrained-fresh-thread", Spec{Operations: []OperationSpec{withTypeFormal(freshOperation("unconstrained-fresh-thread", unconstrained, FreshThread), unconstrained)}}, true},
-		{"function-bound-fresh-function", Spec{Operations: []OperationSpec{withTypeFormal(freshOperation("function-bound-fresh-function", functionFormal, FreshFunction), functionFormal)}}, false},
-		{"function-bound-direct-callback", Spec{Operations: []OperationSpec{withTypeFormal(callbackResultOperation("function-bound-direct-callback", functionFormal, functionFormal, DirectFunction), functionFormal)}}, false},
+		{"string-bound-fresh-thread", Spec{Operations: []OperationSpec{withTypeFormal(freshOperation("string-bound-fresh-thread", stringFormal, schematype.FreshClassThread), stringFormal)}}, false},
+		{"function-bound-fresh-thread", Spec{Operations: []OperationSpec{withTypeFormal(freshOperation("function-bound-fresh-thread", functionFormal, schematype.FreshClassThread), functionFormal)}}, false},
+		{"unconstrained-fresh-thread", Spec{Operations: []OperationSpec{withTypeFormal(freshOperation("unconstrained-fresh-thread", unconstrained, schematype.FreshClassThread), unconstrained)}}, true},
+		{"function-bound-fresh-function", Spec{Operations: []OperationSpec{withTypeFormal(freshOperation("function-bound-fresh-function", functionFormal, schematype.FreshClassFunction), functionFormal)}}, false},
+		{"function-bound-direct-callback", Spec{Operations: []OperationSpec{withTypeFormal(callbackResultOperation("function-bound-direct-callback", functionFormal, functionFormal, schematype.CallableAdmissionDirectFunction), functionFormal)}}, false},
 	} {
 		t.Run(item.name, func(t *testing.T) {
 			_, err := testSeal(&item.spec)
@@ -299,13 +300,13 @@ func TestIdentityAnnotationsMetaIsReflectionOnly(t *testing.T) {
 	meta := testMeta(testString)
 	for _, item := range []struct {
 		name  string
-		fresh FreshKind
+		fresh schematype.FreshClass
 		want  bool
 	}{
-		{"reflection", FreshReflection, true},
-		{"thread", FreshThread, false},
-		{"userdata", FreshUserdata, false},
-		{"error", FreshError, false},
+		{"reflection", schematype.FreshClassReflection, true},
+		{"thread", schematype.FreshClassThread, false},
+		{"userdata", schematype.FreshClassUserdata, false},
+		{"error", schematype.FreshClassError, false},
 	} {
 		t.Run(item.name, func(t *testing.T) {
 			_, err := testSeal(&Spec{Operations: []OperationSpec{freshOperation("meta-"+item.name, meta, item.fresh)}})

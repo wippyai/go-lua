@@ -4,9 +4,9 @@ import (
 	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
 	heapowner "github.com/wippyai/go-lua/analysis/domain/heap/owner"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
 
@@ -32,22 +32,26 @@ type ruleAuthorities interface {
 func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *SchemaFragment, *HotRule] {
 	return rule.Spec[P, A, *SchemaFragment, *HotRule]{
 		Key:      "heap-bootstrap",
-		Role:     programartifact.RuleRoleHeapBootstrap,
+		Writes:   "heap",
 		Lane:     rule.LaneLink,
-		Semantic: func(bundle vocabulary.Bundle) identity.SemanticKey { return bundle.HeapBootstrapRule.Rule },
+		Semantic: "semantic/rule/heap/host-bootstrap",
+		Roles:    []schema.Key{"semantic/operand/heap/host-bootstrap", "semantic/evidence/heap/host-bootstrap"},
 		Declare: func(context rule.Declaration[P]) (*SchemaFragment, bool) {
-			semantics := context.Bundle.HeapBootstrapRule
+			semantics, ok := context.Roles.Rule("heap/host-bootstrap")
+			if !ok {
+				return nil, false
+			}
 			return DeclareSchema(context.Builder, semantics.Rule, semantics.Operand, semantics.Evidence, context.Principals.HeapPrincipal())
 		},
 		Register: func(context rule.Registration[*SchemaFragment]) (engine.RuleSlotCapability, bool) {
 			return rule.RegisterLinkSlot(context.Binding, context.Fragment.RuleSlot())
 		},
 		// The bootstrap plane is one transported pair. The join runs in the
-		// pairing pass and resolves its partner by role identity, so neither
-		// side depends on the other's position in the table.
+		// pairing pass and resolves its partner by the key that rule is declared
+		// under, so neither side depends on the other's position in the table.
 		Pair: func(context rule.Pairing[*SchemaFragment]) bool {
-			value, valueOK := context.Capability(programartifact.RuleRoleValueBootstrap)
-			heap, heapOK := context.Capability(programartifact.RuleRoleHeapBootstrap)
+			value, valueOK := context.Capability("value-bootstrap")
+			heap, heapOK := context.Capability("heap-bootstrap")
 			return valueOK && heapOK && engine.RegisterLinkBootstrapTransportPair(context.Binding, value, heap)
 		},
 		Bind: func(context rule.Binding[A, *SchemaFragment]) (*HotRule, bool) {
@@ -70,4 +74,12 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *SchemaFra
 			return catalog, catalog != nil
 		},
 	}
+}
+
+// StructureSpecs is this package's contribution to the analyzer's semantic
+// role vocabulary: the three roles its rule is identified by. A role is
+// declared where it is used, so the row and the reference that names it are one
+// package's statement.
+func StructureSpecs() []structure.Spec {
+	return vocabulary.RuleRoleSpecs("heap/host-bootstrap")
 }

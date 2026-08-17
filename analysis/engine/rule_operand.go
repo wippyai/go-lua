@@ -1,6 +1,9 @@
 package engine
 
-import "github.com/wippyai/go-lua/analysis/identity"
+import (
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/internal/canonical"
+)
 
 // ruleUnit is the private synthetic operand used by engine laws whose Rule has
 // no domain payload. Its digest still names the exact source entity: even a
@@ -13,12 +16,25 @@ func ruleUnitContent(value ruleUnit) (ruleUnit, [32]byte, bool) {
 	return value, value.content, value.content != [32]byte{}
 }
 
-var unitOperandFamily = mustRuleOperandFamily()
+const (
+	unitOperandFamilyDomain         = "analysis/engine/rule-unit-operand-family"
+	unitOperandFamilyVersion uint64 = 1
+)
 
-func mustRuleOperandFamily() identity.SemanticKey {
-	key, ok := identity.NewSemanticKey([32]byte{0x72, 0x75, 0x6c, 0x65, 0x2d, 0x75, 0x6e, 0x69, 0x74, 0x2d, 0x6f, 0x70, 0x65, 0x72, 0x61, 0x6e, 0x64}, 1)
+// unitOperandFamily is the derived family identity of ruleUnit. It is minted
+// from a framed domain preimage rather than spelled out as content bytes, so
+// it shares no digest space with any hand-written key. A rejected derivation
+// yields an unavailable key, which every admission fence refuses.
+var unitOperandFamily = ruleUnitOperandFamily()
+
+func ruleUnitOperandFamily() identity.SemanticKey {
+	var writer canonical.DigestWriter
+	if writer.Reset(unitOperandFamilyDomain, unitOperandFamilyVersion) != nil || writer.Finish() != nil {
+		return identity.SemanticKey{}
+	}
+	key, ok := identity.NewSemanticKey(writer.Sum(), unitOperandFamilyVersion)
 	if !ok {
-		panic("engine unit operand family")
+		return identity.SemanticKey{}
 	}
 	return key
 }

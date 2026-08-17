@@ -45,7 +45,6 @@ type SlotOperation interface {
 	// capability live; PreparedComposition uses it before the final cut.
 	DeclaredUnit(Unit) bool
 	DeclaredTarget(Target) bool
-	DeclaredSelector(Selector, SelectorKind) bool
 	// TargetNotifications is cold structural evidence for the exact set of
 	// declared observations a write through Target may invalidate. Target
 	// itself remains the opaque authored write scope; this query deliberately
@@ -58,11 +57,9 @@ type SlotOperation interface {
 	// boundary.
 	PrepareWidening([]Target) (uint64, bool)
 	PrepareNarrowing([]Target) (uint64, bool)
-	DeclaredSelectorTargets(Selector) ([]Target, bool)
 	// Valid* is the corresponding live authority after Attach.
 	ValidUnit(Unit) bool
 	ValidTarget(Target) bool
-	ValidSelector(Selector, SelectorKind) bool
 	Supports(MergeKind) bool
 	NewWork() (SlotWork, bool)
 }
@@ -463,37 +460,6 @@ func (prepared *PreparedComposition) TargetNotifications(slot shape.Slot, target
 		return nil, false
 	}
 	return value.operations[int(slot)].TargetNotifications(target)
-}
-
-// OwnsSelectorAt proves a cold selector belongs to the prepared operation at
-// the caller-declared provisional canonical slot.  A selector cannot expose
-// Slot before Attach, so the schema supplies that routing position directly.
-func (prepared *PreparedComposition) OwnsSelectorAt(slot shape.Slot, selector Selector, kind SelectorKind) bool {
-	if prepared == nil || prepared.value == nil {
-		return false
-	}
-	value := prepared.value
-	value.attach.Lock()
-	defer value.attach.Unlock()
-	if value.composition.Load() != nil || value.layout.published.Load() || value.shape == nil || !value.shape.ValidSlot(slot) || !value.operations[int(slot)].DeclaredSelector(selector, kind) {
-		return false
-	}
-	return selector.issuer != nil && selector.issuer.slot.Load() == nil && selector.kind == kind && selector.id != 0
-}
-
-// SelectorTargets returns the complete finite candidate surface of one cold
-// target selector owned by slot.
-func (prepared *PreparedComposition) SelectorTargets(slot shape.Slot, selector Selector) ([]Target, bool) {
-	if prepared == nil || prepared.value == nil {
-		return nil, false
-	}
-	value := prepared.value
-	value.attach.Lock()
-	defer value.attach.Unlock()
-	if value.composition.Load() != nil || value.layout.published.Load() || value.shape == nil || !value.shape.ValidSlot(slot) || !value.operations[int(slot)].DeclaredSelector(selector, TargetSelector) || selector.issuer == nil || selector.issuer.slot.Load() != nil || selector.kind != TargetSelector || selector.id == 0 {
-		return nil, false
-	}
-	return value.operations[int(slot)].DeclaredSelectorTargets(selector)
 }
 
 // Count returns the number of dynamically composed operations.
