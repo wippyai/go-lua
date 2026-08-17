@@ -33,7 +33,7 @@ func (artifact *Artifact) validUnsealedFailure() CompileFailure {
 }
 
 func (artifact *Artifact) validateSealFoundation(state *sealValidationState) CompileFailure {
-	if artifact == nil || !artifact.key.Available() || !artifact.id.Available() || !artifact.counts.Available() || artifact.sealed.Available() {
+	if artifact == nil || state == nil || !artifact.key.Available() || !artifact.id.Available() || !artifact.counts.Available() || artifact.sealed.Available() {
 		return compileFailure(CompileStageSeal, CompileRowAuthority, -1, -1, CompileReasonArtifactIdentity)
 	}
 	if !sortedPoints(artifact.points) {

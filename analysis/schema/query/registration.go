@@ -134,11 +134,11 @@ type Binding[F any] struct {
 	Subjects Subjects
 }
 
-// Receipt is the sealed context one family's Receipt hook receives. It runs
+// Sealed is the sealed context one family's Recover hook receives. It runs
 // after the binding seals, which is when an implementation may be recovered
 // from a slot at all, so the receipt pass is separate from the bind pass rather
 // than folded into it.
-type Receipt[F any] struct {
+type Sealed[F any] struct {
 	Binding  *engine.SchemaBinding
 	Fragment F
 }
@@ -170,7 +170,7 @@ type Spec[F, R any] struct {
 	// Declare opens this family's query slot and records the read its fold runs
 	// over, returning the family's cold fragment.
 	//
-	// Declare, Bind, and Receipt are the family's contributor and are declared
+	// Declare, Bind, and Recover are the family's contributor and are declared
 	// together: a family that opens a slot nothing folds, or folds into a
 	// receipt nothing reads, states two different things about how it is
 	// answered.
@@ -178,9 +178,9 @@ type Spec[F, R any] struct {
 	// Bind installs this family's fold and result contract on the bound
 	// principal its subject axis produced.
 	Bind func(Binding[F]) bool
-	// Receipt recovers the sealed implementation this family's answers are
+	// Recover recovers the sealed implementation this family's answers are
 	// materialized and read through.
-	Receipt func(Receipt[F]) (R, bool)
+	Recover func(Sealed[F]) (R, bool)
 }
 
 // Cell is the opaque per-family payload the table carries between passes. It is
@@ -225,7 +225,7 @@ func New[F, R any](spec Spec[F, R], roles vocabulary.Roles) (*Registration, bool
 	if !spec.Family.Available() || !spec.Fold.Available() || len(spec.Subjects) == 0 {
 		return nil, false
 	}
-	if spec.Declare == nil || spec.Bind == nil || spec.Receipt == nil {
+	if spec.Declare == nil || spec.Bind == nil || spec.Recover == nil {
 		return nil, false
 	}
 	semantic, semanticOK := roles.Key(spec.Semantic)
@@ -284,7 +284,7 @@ func New[F, R any](spec Spec[F, R], roles vocabulary.Roles) (*Registration, bool
 		if !fragmentOK {
 			return Cell{}, false
 		}
-		implementation, recovered := spec.Receipt(Receipt[F]{Binding: binding, Fragment: fragment})
+		implementation, recovered := spec.Recover(Sealed[F]{Binding: binding, Fragment: fragment})
 		if !recovered {
 			return Cell{}, false
 		}
@@ -309,8 +309,8 @@ func (registration *Registration) Bind(binding *engine.SchemaBinding, fragment C
 	return registration.bind(binding, fragment, subjects)
 }
 
-// Receipt recovers this family's sealed implementation from the bound schema.
-func (registration *Registration) Receipt(binding *engine.SchemaBinding, fragment Cell) (Cell, bool) {
+// Recover recovers this family's sealed implementation from the bound schema.
+func (registration *Registration) Recover(binding *engine.SchemaBinding, fragment Cell) (Cell, bool) {
 	if registration == nil || registration.receipt == nil || binding == nil || !fragment.Available() {
 		return Cell{}, false
 	}

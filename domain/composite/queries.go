@@ -140,7 +140,7 @@ func queryReceipts(binding *engine.SchemaBinding, fragments queryCells) (queryCe
 	}
 	cells := newQueryCells(registry.queries)
 	for position, entry := range registry.queries {
-		receipt, ok := entry.Receipt(binding, fragments[position])
+		receipt, ok := entry.Recover(binding, fragments[position])
 		if !ok {
 			return cells, false
 		}

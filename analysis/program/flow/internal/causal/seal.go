@@ -61,9 +61,11 @@ func prepareRoutePlan(
 	if err != nil {
 		return nil, err
 	}
+	fmt.Printf("DEBUG prepare catalog after new=%v\\n", control.VertexCatalogAvailable())
 	if paths == nil || !state.pub.result.installStructuralPaths(paths) {
 		return nil, errors.New("program/flow/causal: parent structural path view is malformed")
 	}
+	fmt.Printf("DEBUG prepare catalog after install paths=%v\\n", control.VertexCatalogAvailable())
 	if err := state.pub.result.captureOutcomePhasePaths(control, outcomes); err != nil {
 		return nil, err
 	}

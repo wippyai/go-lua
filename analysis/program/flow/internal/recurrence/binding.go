@@ -3,6 +3,7 @@ package recurrence
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -247,10 +248,12 @@ func bindPlan(result *Result, plan *routeplan.Plan, graph *sourcecontrol.Result,
 			return nil, errors.New("program/flow/recurrence: route endpoint phase path is unavailable")
 		}
 		if _, present := hierarchyPaths[fromPath]; !present {
-			return nil, errors.New("program/flow/recurrence: route source phase is outside hierarchy")
+			fromNode, fromCSR := graph.ResolveCSRPhaseNode(fromPhase)
+			toNode, toCSR := graph.ResolveCSRPhaseNode(toPhase)
+			return nil, fmt.Errorf("program/flow/recurrence: route source phase is outside hierarchy ordinal=%d from=%08x to=%08x from-phase=%s to-phase=%s hierarchy=%d paths=%s from-node=%d/%v reachable=%v succ=%d to-node=%d/%v reachable=%v succ=%d", ordinal, uint32(route.From), uint32(route.To), fromPath, toPath, len(hierarchy.events), debugHierarchyPaths(hierarchy.events), fromNode, fromCSR, graph.Reachable(fromNode), graph.SuccessorCount(fromNode), toNode, toCSR, graph.Reachable(toNode), graph.SuccessorCount(toNode))
 		}
 		if _, present := hierarchyPaths[toPath]; !present {
-			return nil, errors.New("program/flow/recurrence: route target phase is outside hierarchy")
+			return nil, fmt.Errorf("program/flow/recurrence: route target phase is outside hierarchy ordinal=%d from=%08x to=%08x from-phase=%s to-phase=%s hierarchy=%d", ordinal, uint32(route.From), uint32(route.To), fromPath, toPath, len(hierarchy.events))
 		}
 		carrier, carrierOK := origin.RecurrenceCarrier()
 		if !carrierOK {
@@ -342,6 +345,17 @@ func bindPlan(result *Result, plan *routeplan.Plan, graph *sourcecontrol.Result,
 		return nil, errors.New("program/flow/recurrence: hierarchy certificate is empty")
 	}
 	return &Binding{result: result, plan: plan, components: components, hierarchy: hierarchy, claimed: make([]bool, len(rows)), rows: rows}, nil
+}
+
+func debugHierarchyPaths(events []HierarchyEvent) string {
+	var builder strings.Builder
+	for index, event := range events {
+		if index != 0 {
+			builder.WriteByte(',')
+		}
+		fmt.Fprintf(&builder, "%d:%d:%s", index, event.Kind, event.path)
+	}
+	return builder.String()
 }
 
 type componentEntry struct {

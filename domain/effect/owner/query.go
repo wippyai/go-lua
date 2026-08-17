@@ -81,7 +81,7 @@ func QueryEntry() query.Spec[*ExactQueryFragment, *ExactQueryImplementation] {
 			}
 			return BindExactQuery(owner, context.Fragment.slot, exactQuerySpec(owner.Algebra(), context.Fragment.freezer))
 		},
-		Receipt: func(context query.Receipt[*ExactQueryFragment]) (*ExactQueryImplementation, bool) {
+		Recover: func(context query.Sealed[*ExactQueryFragment]) (*ExactQueryImplementation, bool) {
 			if !context.Fragment.Available() {
 				return nil, false
 			}

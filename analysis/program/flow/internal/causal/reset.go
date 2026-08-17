@@ -97,6 +97,7 @@ func originAvailable(origin routeplan.Origin) bool {
 }
 
 func (s *resetState) localOrigin(from, to, owner keyspace.Term, arcIndex int) (routeplan.Origin, error) {
+	fmt.Printf("DEBUG localOrigin before from=%v to=%v catalog=%v\\n", from, to, s.graph.VertexCatalogAvailable())
 	fromPhase, fromPhaseOK := s.graph.ResolveRouteEndpoint(s.source, s.outs, from, true)
 	toPhase, toPhaseOK := s.graph.ResolveRouteEndpoint(s.source, s.outs, to, false)
 	if !fromPhaseOK || !toPhaseOK {
@@ -166,6 +167,7 @@ func (s *resetState) localOrigin(from, to, owner keyspace.Term, arcIndex int) (r
 			return routeplan.Origin{}, err
 		}
 		origin, issued := routeplan.OutcomeSubdivision(s.graph, segment)
+		fmt.Printf("DEBUG localOrigin after OutcomeSubdivision from=%v to=%v issued=%v catalog=%v\\n", from, to, issued, s.graph.VertexCatalogAvailable())
 		if !issued {
 			return routeplan.Origin{}, errors.New("program/flow/causal: Outcome route subdivision is unavailable")
 		}

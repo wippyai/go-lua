@@ -3,6 +3,9 @@ package artifact
 import "github.com/wippyai/go-lua/analysis/identity"
 
 func (artifact *Artifact) validateSealFreeze(state *sealValidationState) CompileFailure {
+	if artifact == nil || state == nil {
+		return compileFailure(CompileStageSeal, CompileRowAuthority, -1, -1, CompileReasonArtifactIdentity)
+	}
 	state.valuesRows = make(map[identity.ContentID]struct{}, len(artifact.values))
 	for _, row := range artifact.values {
 		if !row.Available() {

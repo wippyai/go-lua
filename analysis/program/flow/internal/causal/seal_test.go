@@ -2027,6 +2027,7 @@ func openCausalFixture(t *testing.T, spec causalSpec) *causalFixture {
 		closeCausalFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatal("sourcecontrol.InstallVertexCatalog: no exact path view")
 	}
+	t.Logf("DEBUG catalog after install=%v", graph.VertexCatalogAvailable())
 	defer graph.ReleaseVertexCatalog(vertexLease)
 	capturedBodyEntryPath, capturedBodyTailPath, capturedVertexPath := identity.ContentID{}, identity.ContentID{}, identity.ContentID{}
 	if spec.captureBodyEntryPath != 0 {
@@ -2120,6 +2121,7 @@ func openCausalFixture(t *testing.T, spec causalSpec) *causalFixture {
 		closeCausalFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatal("semanticpath.Causal: view unavailable")
 	}
+	t.Logf("DEBUG catalog before prepare=%v", graph.VertexCatalogAvailable())
 	preparation, err := PrepareRoutePlanWithStructuralPaths(sourceView, flowView, bodies, forest, outcomes, graph, ports, execResult, entries, causalPaths, outcomePhases, staticID, moduleID)
 	if err != nil {
 		closeCausalFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)

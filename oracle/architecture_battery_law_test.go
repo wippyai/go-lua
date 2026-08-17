@@ -339,6 +339,10 @@ var architectureBatteryEnumerationPattern = regexp.MustCompile(`(Rows?|Tuple|Pro
 // vocabulary today and tightens to a signature judgment at the cut, when the
 // result component owns the projection surface.
 var architectureBatteryEngineEnumeration = map[string]struct{}{
+	// PublishRow/WithdrawRow are the W1 write-capability verbs ratified at the
+	// Snapshot.Query design (one gated write door per column); recorded, not grown.
+	"analysis/engine:PublishRow":  {},
+	"analysis/engine:WithdrawRow": {},
 	"analysis/engine/internal/carrier/product:NewRows":                 {},
 	"analysis/engine/internal/carrier/product:Rows":                    {},
 	"analysis/engine/internal/carrier/product:SourceRows":              {},
@@ -390,14 +394,6 @@ func TestArchitectureEngineEnumerationVocabularyOnlyShrinks(t *testing.T) {
 // direct measure of how far the boundary consolidation has come.
 var architectureBatteryReceiptVocabulary = map[string]struct{}{
 	"analysis:AnalyzeDiagnosticReceiptStage":                                  {},
-	"analysis/domain/effect/callsite:BodyReceiptAttachFailure":                {},
-	"analysis/domain/effect/callsite:BodyReceiptFinalizationFailure":          {},
-	"analysis/domain/effect/callsite:BodyReceiptIssuer":                       {},
-	"analysis/domain/effect/callsite:ReceiptIssuer":                           {},
-	"analysis/domain/heap:AllocationReceipt":                                  {},
-	"analysis/domain/heap:IndexAccessReceipt":                                 {},
-	"analysis/domain/heap:MountedAllocationReceipt":                           {},
-	"analysis/domain/value/owner:SummaryReceipt":                              {},
 	"analysis/engine:ActivationReceiptCompilation":                            {},
 	"analysis/engine:ActivationReceiptGraph":                                  {},
 	"analysis/engine:ActivationReceiptMember":                                 {},
@@ -446,23 +442,7 @@ var architectureBatteryReceiptVocabulary = map[string]struct{}{
 	"analysis/engine:SchemaSelectedReadReceipt":                               {},
 	"analysis/engine:SchemaSummaryReadReceipt":                                {},
 	"analysis/engine:SummarySurfaceReceipt":                                   {},
-	"analysis/engine:WeakSurfaceReceipt":                                      {},
 	"analysis/engine/internal/equation:RuleSurfaceSourceReceipt":              {},
-	"analysis/program/flow/internal/routeplan:EndpointPhaseReceipt":           {},
-	"analysis/program/flow/internal/semanticpath:CausalReceipt":               {},
-	"analysis/program/flow/internal/semanticpath:OutcomePhaseReceipt":         {},
-	"analysis/program/flow/internal/semanticpath:VertexCatalogReceipt":        {},
-	"analysis/program/flow/internal/sourcecontrol:CallTailReturnReceipt":      {},
-	"analysis/program/flow/internal/sourcecontrol:OutcomePhaseReceipt":        {},
-	"analysis/program/flow/internal/sourcecontrol:OutcomeResumeAnchorReceipt": {},
-	"analysis/program/flow/internal/sourcecontrol:RouteSegmentReceipt":        {},
-	"analysis/program/flow/internal/sourcecontrol:SegmentSubdivisionReceipt":  {},
-	"analysis/program/link:SemanticSourceReceipt":                             {},
-	"analysis/program/link/boundary:SemanticSourceReceipt":                    {},
-	"analysis/program/link/host:SemanticSourceReceipt":                        {},
-	"analysis/program/link/module:SemanticSourceReceipt":                      {},
-	"analysis/program/link/project:SemanticSourceReceipt":                     {},
-	"analysis/program/target:SemanticSourceReceipt":                           {},
 }
 
 // TestArchitectureReceiptVocabularyOnlyShrinks is the receipt tripwire. It

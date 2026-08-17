@@ -6,6 +6,9 @@ import (
 )
 
 func (artifact *Artifact) validateSealRows(state *sealValidationState) CompileFailure {
+	if artifact == nil || state == nil {
+		return compileFailure(CompileStageSeal, CompileRowAuthority, -1, -1, CompileReasonArtifactIdentity)
+	}
 	returnCursor := uint32(0)
 	for index, row := range artifact.outcomes {
 		if !row.Available() {

@@ -44,8 +44,16 @@ func openAccessGeometryFixture(t *testing.T) *accessGeometryFixture {
 }
 
 func openAccessGeometryFixtureNamed(t *testing.T, name string) *accessGeometryFixture {
+	return openAccessGeometryFixtureWithStaticTypeOfs(t, name, []static.TypeOf{{
+		Scope:   accessTerm(keyspace.FamilyCell, 1),
+		Operand: accessTerm(keyspace.FamilyRead, 2),
+	}})
+}
+
+func openAccessGeometryFixtureWithStaticTypeOfs(t *testing.T, name string, typeOfs []static.TypeOf) *accessGeometryFixture {
 	t.Helper()
 	counts := accessGeometryCounts()
+	counts[keyspace.FamilyTypeOf] = uint32(len(typeOfs))
 	body := accessTerm(keyspace.FamilyBody, 1)
 	input := accessFlowInput(body)
 	input.Counts = counts
@@ -61,10 +69,7 @@ func openAccessGeometryFixtureNamed(t *testing.T, name string) *accessGeometryFi
 	preimage := sourceFinal.Preimage()
 
 	staticInput := static.Input{Counts: counts}
-	staticInput.Operators.TypeOf = []static.TypeOf{{
-		Scope:   accessTerm(keyspace.FamilyCell, 1),
-		Operand: accessTerm(keyspace.FamilyRead, 2),
-	}}
+	staticInput.Operators.TypeOf = typeOfs
 	staticDraft, err := static.Build(staticInput)
 	if err != nil {
 		_ = sourceFinal.Abort()
@@ -577,7 +582,13 @@ func TestAccessGeometrySealRejectsUnavailableForeignAndMalformedOwners(t *testin
 	if _, err := Seal(fixture.sourceView, fixture.flowView, nil, fixture.bodies, fixture.bindings, fixture.staticView, fixture.moduleView); err == nil {
 		t.Fatal("Seal accepted a nil candidate provenance fence")
 	}
-	foreign := openAccessGeometryFixtureNamed(t, "foreign-access-geometry.lua")
+	foreign := openAccessGeometryFixtureWithStaticTypeOfs(t, "foreign-access-geometry.lua", []static.TypeOf{
+		{Scope: accessTerm(keyspace.FamilyCell, 1), Operand: accessTerm(keyspace.FamilyRead, 2)},
+		{Scope: accessTerm(keyspace.FamilyCell, 1), Operand: accessTerm(keyspace.FamilyRead, 2)},
+	})
+	if foreign.staticView.ContentID() == fixture.staticView.ContentID() {
+		t.Fatal("foreign fixture did not produce a distinct Static identity")
+	}
 	if _, err := Seal(fixture.sourceView, fixture.flowView, foreign.candidates, fixture.bodies, fixture.bindings, fixture.staticView, fixture.moduleView); err == nil {
 		t.Fatal("Seal accepted a candidate Result from a foreign Source/Flow")
 	}

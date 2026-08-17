@@ -83,7 +83,7 @@ func QueryEntry() query.Spec[*SummaryQueryFragment, *SummaryQueryImplementation]
 			}
 			return BindSummaryQuery(owner, context.Fragment.slot, context.Fragment.read, summaryQuerySpec(owner.Schema(), context.Fragment.freezer))
 		},
-		Receipt: func(context query.Receipt[*SummaryQueryFragment]) (*SummaryQueryImplementation, bool) {
+		Recover: func(context query.Sealed[*SummaryQueryFragment]) (*SummaryQueryImplementation, bool) {
 			if !context.Fragment.Available() {
 				return nil, false
 			}
