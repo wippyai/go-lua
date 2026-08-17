@@ -3,6 +3,7 @@ package composite
 import (
 	"sync"
 
+	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
@@ -180,12 +181,12 @@ func PublicationCoverage(output schema.Key) (axis.Coverage, bool) {
 // sealed table admits, and mints at most one per column, so the one-writer law
 // this table states at seal is the same law the engine holds a publisher to at
 // runtime.
-type WriteRequest struct {
-	Schema identity.ContentID
-	Output schema.Key
-	Writer schema.Key
-	Slot   uint32
-}
+//
+// The record is the engine's own admission shape rather than a copy of it. What
+// this table requests and what the engine admits is one statement, so the two
+// ends of the one-writer law cannot drift into two shapes that agree by
+// convention.
+type WriteRequest = engine.ColumnAdmission
 
 // WriteRequests returns the issuance request for every column the sealed table
 // publishes, in slot order. The set is total: every declared output is

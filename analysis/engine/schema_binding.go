@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
+	"github.com/wippyai/go-lua/analysis/schema"
 )
 
 type schemaBindingPhase uint8
@@ -47,6 +48,12 @@ type schemaBindingState struct {
 	// by copied transaction handles and prevents two closures racing to publish
 	// different implementations for one cold Rule cell.
 	pendingRules map[uint64]*schemaRuleBindingToken
+	// columns is the published columns this binding's publication is admitted
+	// to write, by the column's authored key, and columnSlots is the same set
+	// by the dense slot each occupies. Both are stated once, while the binding
+	// is open, and are what a write capability is minted against afterwards.
+	columns     map[schema.Key]*admittedColumn
+	columnSlots map[uint32]schema.Key
 }
 
 type schemaBindingCell interface{ schemaBindingSchema() *Schema }
@@ -119,6 +126,8 @@ func (state *schemaBindingState) poisonLocked() {
 	state.rules = nil
 	state.queries = nil
 	state.activation = nil
+	state.columns = nil
+	state.columnSlots = nil
 	state.authority = nil
 }
 
@@ -175,6 +184,13 @@ func (binding *SchemaBinding) Seal() bool {
 		}
 	}
 	if state.linkBootstrapTransportPair && !completeLinkBootstrapTransportPairLocked(state) {
+		state.poisonLocked()
+		return false
+	}
+	// The published columns this binding admits a writer for are stated at the
+	// seal, so the pairs a capability may be minted for afterwards are exactly
+	// the pairs the table declared and no publisher extends the set.
+	if !completeAdmittedColumnsLocked(state) {
 		state.poisonLocked()
 		return false
 	}

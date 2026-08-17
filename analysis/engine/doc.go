@@ -99,6 +99,16 @@
 //	runtime_observation.go the solver-side observation runtime
 //	runtime_provenance.go  the exact observation identities of one live product
 //
+// # Publication plane
+//
+// The one write door into a published snapshot column, and the drivers that
+// pass through it. A column is filled by the capability the engine minted for
+// the writer its sealed table admitted, and the published value carries none.
+//
+//	publication_column.go       admitted (column, writer) pairs, the minted capability, the write verbs
+//	publication_materializer.go the family-erased driver that folds a family and writes its result column
+//	snapshot_materialize.go     one completed solve published as immutable snapshot columns
+//
 // # State and results plane
 //
 //	state.go one completed immutable Solver result
