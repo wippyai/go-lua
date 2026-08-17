@@ -87,24 +87,6 @@ func TestArtifactVocabularyIsTheSealedTable(t *testing.T) {
 	table := sealedVocabulary(t)
 	for _, member := range []struct {
 		key      schema.Key
-		ordinal  programartifact.RouteKind
-		spelling string
-	}{
-		{"arm/local", programartifact.RouteLocal, "programartifact.RouteLocal"},
-		{"arm/resume", programartifact.RouteResume, "programartifact.RouteResume"},
-		{"arm/select-true", programartifact.RouteSelectTrue, "programartifact.RouteSelectTrue"},
-		{"arm/select-false", programartifact.RouteSelectFalse, "programartifact.RouteSelectFalse"},
-		{"arm/tail", programartifact.RouteTail, "programartifact.RouteTail"},
-		{"arm/throw", programartifact.RouteThrow, "programartifact.RouteThrow"},
-		{"arm/yield", programartifact.RouteYield, "programartifact.RouteYield"},
-		{"arm/cancel", programartifact.RouteCancel, "programartifact.RouteCancel"},
-	} {
-		pinned(t, table, structure.CategoryArm, uint16(member.ordinal), member.key, member.spelling)
-	}
-	counted(t, table, structure.CategoryArm, uint16(programartifact.RouteCancel), "programartifact.RouteCancel")
-
-	for _, member := range []struct {
-		key      schema.Key
 		ordinal  programartifact.WTOEventKind
 		spelling string
 	}{
@@ -243,31 +225,11 @@ func TestEngineArtifactVocabularyIsTheSealedTable(t *testing.T) {
 	counted(t, table, structure.CategoryIssuanceStage, uint16(rows.ArtifactRuleStageCallEffect), "rows.ArtifactRuleStageCallEffect")
 }
 
-// TestDiagnosticVocabularyIsTheSealedTable pins the publication vocabularies.
-// The artifact numbers the observation populations at load and folds that
-// number into the identity of every observation it issues, so the declaration
-// and the artifact must number the same members the same way for a compiled
-// observation to resolve the row it feeds. The severity ordinals are the
-// positions a policy carries, and their spellings are what a rendered finding
-// is labelled with, so both are pinned here rather than restated at the
-// renderer.
-func TestDiagnosticVocabularyIsTheSealedTable(t *testing.T) {
+// TestDiagnosticSeverityVocabularyIsTheSealedTable pins the policy severity
+// projection. Diagnostic observation identities are canonical structure
+// declarations and therefore need no cross-package pin law.
+func TestDiagnosticSeverityVocabularyIsTheSealedTable(t *testing.T) {
 	table := sealedVocabulary(t)
-	for _, member := range []struct {
-		key      schema.Key
-		spelling string
-		ordinal  programartifact.DiagnosticObservationKind
-		foreign  string
-	}{
-		{"observation/branch-condition", "branch-condition", programartifact.DiagnosticObservationBranchCondition, "programartifact.DiagnosticObservationBranchCondition"},
-		{"observation/type-reference-unresolved", "type-reference-unresolved", programartifact.DiagnosticObservationTypeReferenceUnresolved, "programartifact.DiagnosticObservationTypeReferenceUnresolved"},
-		{"observation/value-reference-unresolved", "value-reference-unresolved", programartifact.DiagnosticObservationValueReferenceUnresolved, "programartifact.DiagnosticObservationValueReferenceUnresolved"},
-	} {
-		pinned(t, table, structure.CategoryDiagnosticObservation, uint16(member.ordinal), member.key, member.foreign)
-		spelled(t, table, structure.CategoryDiagnosticObservation, uint16(member.ordinal), member.spelling)
-	}
-	counted(t, table, structure.CategoryDiagnosticObservation, uint16(programartifact.DiagnosticObservationValueReferenceUnresolved), "programartifact.DiagnosticObservationValueReferenceUnresolved")
-
 	for _, member := range []struct {
 		key      schema.Key
 		spelling string

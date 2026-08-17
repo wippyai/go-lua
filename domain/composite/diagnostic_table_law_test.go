@@ -3,10 +3,10 @@ package composite
 import (
 	"testing"
 
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
+	typedomain "github.com/wippyai/go-lua/domain/type"
 )
 
 // publishedCodes is the analyzer's published diagnostic identity space, spelled
@@ -14,6 +14,10 @@ import (
 // independent statement of what the sealed surface owes: a row declared under
 // no published code, or a published code no row declares, is a disagreement
 // between the inventory and the identities the analyzer exports.
+//
+// The last is spelled by the domain that declares it. A domain-declared row
+// owns its code the way it owns its row, so the composition names the domain's
+// constant rather than restating the string beside it.
 func publishedCodes() []diagnostic.Code {
 	return []diagnostic.Code{
 		DiagnosticCodeAlwaysTrueGuard,
@@ -22,6 +26,7 @@ func publishedCodes() []diagnostic.Code {
 		DiagnosticCodeUnresolvedTypeReference,
 		DiagnosticCodeUnresolvedValueReference,
 		DiagnosticCodeUnusedLocal,
+		typedomain.Code,
 	}
 }
 
@@ -79,20 +84,20 @@ func TestDiagnosticTableDrivesEveryDerivedView(t *testing.T) {
 	}
 }
 
-// TestEveryStaticObservationPopulationIsClaimed states that each artifact
-// observation kind an analyzer collector can meet is claimed by exactly one
-// declared row, so a mounted row can never be silently dropped.
+// TestEveryStaticObservationPopulationIsClaimed states that each canonical
+// static observation population an analyzer collector can meet is claimed by
+// exactly one declared row, so a mounted row can never be silently dropped.
 func TestEveryStaticObservationPopulationIsClaimed(t *testing.T) {
 	table, tableOK := Diagnostics()
 	vocabulary, vocabularyOK := StructureVocabulary()
 	if !tableOK || !vocabularyOK {
 		t.Fatal("sealed diagnostic table unavailable")
 	}
-	for _, kind := range []programartifact.DiagnosticObservationKind{
-		programartifact.DiagnosticObservationTypeReferenceUnresolved,
-		programartifact.DiagnosticObservationValueReferenceUnresolved,
+	for _, kind := range []structure.DiagnosticObservationKind{
+		structure.DiagnosticObservationTypeReferenceUnresolved,
+		structure.DiagnosticObservationValueReferenceUnresolved,
 	} {
-		population, populationOK := vocabulary.At(structure.CategoryDiagnosticObservation, uint16(kind))
+		population, populationOK := structure.DiagnosticObservationEntry(vocabulary, kind)
 		if !populationOK {
 			t.Fatalf("artifact observation kind %d names no declared population", kind)
 		}
@@ -101,14 +106,19 @@ func TestEveryStaticObservationPopulationIsClaimed(t *testing.T) {
 			t.Fatalf("static observation population %q is claimed by no collectable row", population.Key())
 		}
 	}
-	// The branch population is collected on its own lane, so it is deliberately
-	// not resolvable as a static row.
-	branch, branchOK := vocabulary.At(structure.CategoryDiagnosticObservation, uint16(programartifact.DiagnosticObservationBranchCondition))
-	if !branchOK {
-		t.Fatal("artifact branch observation kind names no declared population")
-	}
-	if _, static := table.ForStaticObservation(branch.Key()); static {
-		t.Fatal("branch condition population resolved as a static row")
+	// The branch populations are collected on their own lane, so they are
+	// deliberately not resolvable as static rows.
+	for _, kind := range []structure.DiagnosticObservationKind{
+		structure.DiagnosticObservationBranchCondition,
+		structure.DiagnosticObservationTypeConformance,
+	} {
+		branch, branchOK := structure.DiagnosticObservationEntry(vocabulary, kind)
+		if !branchOK {
+			t.Fatalf("artifact observation kind %d names no declared population", kind)
+		}
+		if _, static := table.ForStaticObservation(branch.Key()); static {
+			t.Fatalf("branch population %q resolved as a static row", branch.Key())
+		}
 	}
 }
 

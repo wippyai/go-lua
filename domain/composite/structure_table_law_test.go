@@ -26,7 +26,7 @@ func TestStructureTableSeals(t *testing.T) {
 	}
 	// The sizes are the vocabularies the analyzer consolidates here: the eight
 	// structural arms, the three bracket events, the seven body outcomes, the
-	// eight Lua runtime families, the ten symbolic expression forms, the three
+	// eight Lua runtime families, the ten symbolic expression forms, the four
 	// diagnostic observation populations, the four publication families, the
 	// three severities, the thirty-one compiled occurrence families, the five
 	// placement forms, the four operand polarities, the five execution cuts, and
@@ -40,7 +40,7 @@ func TestStructureTableSeals(t *testing.T) {
 		structure.CategoryOutcome:               7,
 		structure.CategoryRuntimeKind:           8,
 		structure.CategoryConstraintForm:        10,
-		structure.CategoryDiagnosticObservation: 3,
+		structure.CategoryDiagnosticObservation: 4,
 		structure.CategoryDiagnosticFamily:      4,
 		structure.CategoryDiagnosticSeverity:    3,
 		structure.CategoryOccurrenceKind:        31,

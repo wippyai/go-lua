@@ -13,6 +13,11 @@ const (
 	DiagnosticObservationBranchCondition
 	DiagnosticObservationTypeReferenceUnresolved
 	DiagnosticObservationValueReferenceUnresolved
+	// DiagnosticObservationTypeConformance is the population of assignments
+	// whose assigned value is measured against the type its target declares.
+	// It is appended last: the ordinals below it are identities artifacts
+	// already carry.
+	DiagnosticObservationTypeConformance
 )
 
 type diagnosticObservationDefinition struct {
@@ -29,12 +34,13 @@ var diagnosticObservationDefinitions = [...]diagnosticObservationDefinition{
 	{DiagnosticObservationBranchCondition, "observation/branch-condition", "branch-condition"},
 	{DiagnosticObservationTypeReferenceUnresolved, "observation/type-reference-unresolved", "type-reference-unresolved"},
 	{DiagnosticObservationValueReferenceUnresolved, "observation/value-reference-unresolved", "value-reference-unresolved"},
+	{DiagnosticObservationTypeConformance, "observation/type-conformance", "type-conformance"},
 }
 
 // Available reports whether kind belongs to the canonical observation
 // vocabulary.
 func (kind DiagnosticObservationKind) Available() bool {
-	return kind >= DiagnosticObservationBranchCondition && kind <= DiagnosticObservationValueReferenceUnresolved
+	return kind >= DiagnosticObservationBranchCondition && kind <= DiagnosticObservationTypeConformance
 }
 
 // Ordinal returns the dense structural-vocabulary ordinal carried by kind.

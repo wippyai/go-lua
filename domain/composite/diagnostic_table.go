@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
+	typedomain "github.com/wippyai/go-lua/domain/type"
 )
 
 // The declared identities every diagnostic row is named against: the
@@ -39,7 +40,7 @@ func diagnosticVocabulary() []structure.Spec {
 		structure.Spec{Key: "severity/error", Category: structure.CategoryDiagnosticSeverity, Ordinal: diagnostic.SeverityError.Ordinal(), Spelling: "error", Accepted: true},
 		structure.Spec{Key: "severity/warning", Category: structure.CategoryDiagnosticSeverity, Ordinal: diagnostic.SeverityWarning.Ordinal(), Spelling: "warning", Accepted: true},
 		structure.Spec{Key: "severity/hint", Category: structure.CategoryDiagnosticSeverity, Ordinal: diagnostic.SeverityHint.Ordinal(), Spelling: "hint", Accepted: true},
-	...)
+	)
 	return specs
 }
 
@@ -102,7 +103,17 @@ func diagnosticEvidence(anchor diagnostic.Anchor, detail diagnostic.Text) diagno
 // A row is data end to end. Adding a diagnostic over facts the analyzer
 // already produces is one entry here; nothing else in the analyzer holds a
 // per-code table to keep in step.
+//
+// A row a domain declares for itself is contributed rather than authored: the
+// domain that owns the judgment owns the row, and this table states its
+// membership and its position. The identities such a row names resolve in the
+// same sealed table as every other row's, so a contributed row is admitted on
+// exactly the terms the authored ones are.
 func diagnosticSpecs() []diagnostic.Spec {
+	return append(analyzerDiagnosticSpecs(), typedomain.DiagnosticSpec())
+}
+
+func analyzerDiagnosticSpecs() []diagnostic.Spec {
 	return []diagnostic.Spec{
 		{
 			Code: DiagnosticCodeAlwaysTrueGuard, Family: declaredMember(diagnosticFamilyAdvice),

@@ -110,6 +110,7 @@ func canonicalContributions() [][]Spec {
 		{"observation/branch-condition", "branch-condition", true},
 		{"observation/type-reference-unresolved", "type-reference-unresolved", true},
 		{"observation/value-reference-unresolved", "value-reference-unresolved", true},
+		{"observation/type-conformance", "type-conformance", true},
 	}
 	publications := []member{
 		{"family/advice", "advice", true}, {"family/type", "type", true},
@@ -201,7 +202,7 @@ func TestStructureSurfaceSealsTheCanonicalVocabulary(t *testing.T) {
 	}
 	if table.Count(CategoryArm) != 8 || table.Count(CategoryEvent) != 3 || table.Count(CategoryOutcome) != 7 ||
 		table.Count(CategoryRuntimeKind) != 8 || table.Count(CategoryConstraintForm) != 10 ||
-		table.Count(CategoryDiagnosticObservation) != 3 || table.Count(CategoryDiagnosticFamily) != 4 ||
+		table.Count(CategoryDiagnosticObservation) != 4 || table.Count(CategoryDiagnosticFamily) != 4 ||
 		table.Count(CategoryDiagnosticSeverity) != 3 {
 		t.Fatalf("projected sizes: arms=%d events=%d outcomes=%d families=%d forms=%d populations=%d publications=%d severities=%d",
 			table.Count(CategoryArm), table.Count(CategoryEvent), table.Count(CategoryOutcome),

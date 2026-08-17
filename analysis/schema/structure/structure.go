@@ -3,14 +3,16 @@
 // constraint form, and diagnostic publication catalogs are declared, and the
 // surface laws the declaration root seals them under.
 //
-// Three of these catalogs are today spelled three times over. The arm catalog is
-// programartifact.RouteKind and ingress.StructuralArm, related by a private
-// mapping function; the event catalog is programartifact.WTOEventKind,
+// Three of these catalogs are projected across package boundaries. The arm
+// catalog has one semantic owner in Flow's BoundaryArmKind; ingress and engine
+// expose scalar projections of that owner. The event catalog is
+// programartifact.WTOEventKind,
 // ingress.EventKind, and the solver schedule's own EventKind; the outcome
 // catalog is programartifact.OutcomeKind, of which ingress accepts a subset.
-// Each triplet has to agree for the analyzer to be correct, and nothing checks
-// that they do: a member added to one spelling and not another is a silent
-// hole, and a member reordered in one is a silent mistranslation.
+// Event and outcome projections have to agree for the analyzer to be correct,
+// while every arm projection must preserve Flow's ordinal. A member added to
+// one spelling and not another is a silent hole, and a member reordered in one
+// is a silent mistranslation.
 //
 // The runtime family catalog is spelled twice: the runtimekind domain owns the
 // families as ordinals, and the standard library owns the same eight members
@@ -58,8 +60,8 @@
 package structure
 
 import (
-	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 // Surface law ordinals. They are numeric identities; rendering a verdict is

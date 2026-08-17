@@ -29,9 +29,12 @@
 //
 // # Registration
 //
-// The domain declares no row on any surface of the analyzer declaration table
-// today. The reason differs per surface, and where the reason is a missing
-// decision rather than a missing subject the decision is named:
+// The domain declares one row: the diagnostic that publishes an assignment
+// whose value does not conform to the type its target declares. It is declared
+// at the foot of this file, from this package alone, and every other surface of
+// the analyzer declaration table carries no row of this domain's. The reason
+// differs per surface, and where the reason is a missing decision rather than a
+// missing subject the decision is named:
 //
 //   - Axis. An axis is a coordinate space the solver writes during a fixpoint
 //     and a Link instantiates a carrier for. The domain writes no coordinate.
@@ -51,10 +54,18 @@
 //     at a mount point. Nothing here is bound at a mount or evaluated at a point;
 //     every judgment the domain makes is a query over an immutable graph.
 //   - Diagnostic. A diagnostic row publishes a code from facts the analyzer
-//     already produces. The domain's refusals - an unresolvable member, a
-//     non-callable receiver, an interface mismatch, a runtime input that would
-//     not decode - are answered to the caller as a status beside the result, and
-//     the caller decides what to publish. The domain issues no code.
+//     already produces, and this domain publishes one: an assignment whose
+//     value may carry a runtime family the type its target declares does not
+//     admit. The judgment behind it is the conformance package's, which is set
+//     containment over the closed runtime vocabulary and nothing else, and the
+//     row names every identity it rests on by reference - the publication family
+//     the query boundary gates it by, the observation population it is measured
+//     over, and the coordinate space whose facts decide it - so the row is data
+//     and the declarations it names stay owned where they are declared.
+//     The domain's other refusals - an unresolvable member, a non-callable
+//     receiver, an interface mismatch, a runtime input that would not decode -
+//     are answered to the caller as a status beside the result, and the caller
+//     decides what to publish. They publish no code.
 //   - Composite. A composite is a relation over declared coordinate spaces, and
 //     every axis it names must resolve. The domain names none.
 //   - Denominator. A denominator names the surface entry whose universe it
@@ -156,7 +167,88 @@
 //
 // The domain sits at the base of the domain layer. It imports no peer domain,
 // and the peer domains that reason about types - the static inventory, the pack
-// classification, the heap key algebra - import it. The law beside this file
-// states both directions, so a registration added here is added by a domain that
-// is still below the composition that would seal it.
+// classification, the heap key algebra - import it. The one domain package it
+// reads is the closed runtime family vocabulary, which is scalar vocabulary and
+// set algebra with no dependency on any domain at all and therefore sits below
+// this one rather than beside it; the law beside this file states that position
+// rather than assuming it. The law states both directions, so a registration
+// added here is added by a domain that is still below the composition that
+// would seal it.
 package typedomain
+
+import (
+	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
+)
+
+// The identities this domain's row is declared against. The code is the
+// domain's own; the other three are declared elsewhere and named here by their
+// authored key, so the row resolves them at seal rather than restating what
+// they mean.
+const (
+	// Code is the finding this domain publishes: an assignment whose value may
+	// carry a runtime family the declared type of its target does not admit.
+	Code diagnostic.Code = "type.assign.declared_type"
+	// FamilyKey is the publication family the query boundary gates the code by.
+	// It is declared beside the diagnostic inventory, and its declared spelling
+	// is the first segment of the code.
+	FamilyKey schema.Key = "family/type"
+	// ObservationKey is the population the row is measured over: the assignments
+	// whose value is compared against the type their target declares. It is a
+	// member of the canonical observation vocabulary, whose ordinals artifacts
+	// carry, so it is declared there rather than here.
+	ObservationKey schema.Key = "observation/type-conformance"
+	// FactKey is the coordinate space whose facts decide the row. The families a
+	// value may carry are the value axis's own judgment, and the row reads them
+	// rather than producing them.
+	FactKey schema.Key = "value"
+)
+
+// diagnosticRender is the section order the row publishes. The summary names
+// the finding, the location and source place it, the evidence states what was
+// proven, and the help states the two ways out.
+var diagnosticRender = []diagnostic.Section{
+	diagnostic.SectionSummary,
+	diagnostic.SectionLocation,
+	diagnostic.SectionSource,
+	diagnostic.SectionEvidence,
+	diagnostic.SectionHelp,
+}
+
+// DiagnosticSpec is this domain's declared row. It is pure data: the code it
+// publishes under, the family it is gated by, the severity it defaults to, the
+// lane its subjects arrive on, the population it is measured over, the
+// declaration whose facts decide it, the payload a producer owes it, and the
+// presentation it renders from.
+//
+// The lane is the solver-observed one. The verdict is decided from the families
+// a value may carry, which the value axis proves during the solve, so the row
+// names that axis as the declaration its facts come from and is collected after
+// the fixpoint rather than issued by the compiler.
+//
+// The payload is the subject the assignment names and the declared type it is
+// measured against. Both are read by the presentation and neither is read
+// anywhere else, which is the whole of what the surface's requirement law
+// holds the row to.
+func DiagnosticSpec() diagnostic.Spec {
+	return diagnostic.Spec{
+		Code:            Code,
+		Family:          diagnostic.Reference{Surface: schema.SurfaceKindStructure, Key: FamilyKey},
+		DefaultSeverity: diagnostic.SeverityError,
+		Lane:            diagnostic.LaneBranch,
+		Observation:     diagnostic.Reference{Surface: schema.SurfaceKindStructure, Key: ObservationKey},
+		Fact:            diagnostic.Reference{Surface: schema.SurfaceKindAxis, Key: FactKey},
+		Requirements:    diagnostic.RequiresSubject | diagnostic.RequiresTarget,
+		Message:         "{subject} does not conform to its declared type {target}",
+		Help:            "Assign a value of the declared type, or widen the declaration to admit the value.",
+		Evidence: []diagnostic.Evidence{{
+			Anchor: diagnostic.AnchorPrimary,
+			Kind:   "abstract fact",
+			Trust:  "proven",
+			Reason: "unspecified",
+			Detail: "the value assigned to {subject} may carry a runtime type outside {target}",
+		}},
+		Labels: []diagnostic.Label{{Anchor: diagnostic.AnchorPrimary, Text: "declared {target}"}},
+		Render: diagnosticRender,
+	}
+}
