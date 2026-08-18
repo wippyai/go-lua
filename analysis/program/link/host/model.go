@@ -12,6 +12,7 @@ import (
 	linkmodule "github.com/wippyai/go-lua/analysis/program/link/module"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 )
 
@@ -68,8 +69,8 @@ type ProviderCapabilitySeedSpec struct {
 	Capability      string
 	Source          ProviderCapabilitySource
 	InitialRoot     string
-	Binding         target.BindingSpec
-	Formal          target.ValueFormal
+	Binding         vocabulary.BindingSpec
+	Formal          vocabulary.ValueFormal
 	Outcome, Result uint32
 	Module          string
 	Access          keyspace.Term
@@ -148,9 +149,9 @@ type selectorRow struct {
 type capabilitySeedRow struct {
 	capability      uint32
 	source          ProviderCapabilitySource
-	root            target.InitialRoot
-	operation       target.Operation
-	formal          target.ValueFormal
+	root            vocabulary.InitialRoot
+	operation       vocabulary.Operation
+	formal          vocabulary.ValueFormal
 	outcome, result uint32
 	value           linkboundary.Value
 }
@@ -159,8 +160,8 @@ type globalBindingRow struct {
 	boot     uint32
 	cell     keyspace.Term
 	key      keyspace.Key
-	class    target.InitialBindingClass
-	value    target.InitialValue
+	class    vocabulary.InitialBindingClass
+	value    vocabulary.InitialValue
 }
 
 // globalLookupKey is the owner-local inverse key for one canonical Program
@@ -176,7 +177,7 @@ type globalLookupKey struct {
 	cell  keyspace.Term
 }
 type bootAttachmentRow struct {
-	base target.InitialValueKind
+	base vocabulary.InitialValueKind
 	boot uint32
 }
 type edgeRange struct{ start, end uint32 }

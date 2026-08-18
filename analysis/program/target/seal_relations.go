@@ -3,18 +3,18 @@ package target
 import (
 	"errors"
 	"fmt"
-	"sort"
-
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
+	"sort"
 )
 
-func freezeBindings(input []BindingSpec) ([]BindingSpec, error) {
-	if _, err := checkedStoredLength("operation binding table", len(input)); err != nil {
+func freezeBindings(input []vocabulary.BindingSpec) ([]vocabulary.BindingSpec, error) {
+	if _, err := vocabulary.CheckedStoredLength("operation binding table", len(input)); err != nil {
 		return nil, err
 	}
-	out := make([]BindingSpec, len(input))
+	out := make([]vocabulary.BindingSpec, len(input))
 	for index, binding := range input {
-		if !validBinding(binding) {
+		if !vocabulary.ValidBinding(binding) {
 			return nil, fmt.Errorf("target: invalid binding %d", index)
 		}
 		out[index] = cloneBinding(binding)
@@ -28,13 +28,13 @@ func freezeBindings(input []BindingSpec) ([]BindingSpec, error) {
 	return out, nil
 }
 
-func (d operationDraft) freezeCallbacks(input []CallbackSpec) ([]callbackDraft, error) {
-	if _, err := checkedStoredLength("callback table", len(input)); err != nil {
+func (d operationDraft) freezeCallbacks(input []vocabulary.CallbackSpec) ([]callbackDraft, error) {
+	if _, err := vocabulary.CheckedStoredLength("callback table", len(input)); err != nil {
 		return nil, err
 	}
 	out := make([]callbackDraft, len(input))
 	for index, callback := range input {
-		if callback.Function.Kind != InputSourceValueFormal || uint64(callback.Function.Ordinal) >= uint64(d.valueFormalCount()) {
+		if callback.Function.Kind != vocabulary.InputSourceValueFormal || uint64(callback.Function.Ordinal) >= uint64(d.valueFormalCount()) {
 			return nil, fmt.Errorf("target: callback %d has invalid function source", index)
 		}
 		if !callback.Admission.Available() {
@@ -62,10 +62,10 @@ func (d operationDraft) freezeCallbacks(input []CallbackSpec) ([]callbackDraft, 
 			if !validCallbackReleaseMode(callback.Release.Mode) {
 				return nil, fmt.Errorf("target: callback %d release has invalid mode", index)
 			}
-			if !validCallbackReleaseZeroBehavior(callback.Release.Zero.Behavior) {
+			if !vocabulary.ValidCallbackReleaseZeroBehavior(callback.Release.Zero.Behavior) {
 				return nil, fmt.Errorf("target: callback %d release has invalid zero behavior", index)
 			}
-			if callback.Release.Zero.Behavior == CallbackReleaseZeroSuppress && callback.Release.Zero.Outcome != 0 {
+			if callback.Release.Zero.Behavior == vocabulary.CallbackReleaseZeroSuppress && callback.Release.Zero.Outcome != 0 {
 				return nil, fmt.Errorf("target: callback %d suppressed zero release has an outcome", index)
 			}
 			release = &callbackReleaseDraft{
@@ -83,7 +83,7 @@ func (d operationDraft) freezeCallbacks(input []CallbackSpec) ([]callbackDraft, 
 		var outcomes [5]valuesDraft
 		seen := [5]bool{}
 		for outcomeIndex, outcome := range callback.Outcomes {
-			kind, ok := crossActivationOutcomeIndex(outcome.Kind)
+			kind, ok := vocabulary.CrossActivationOutcomeIndex(outcome.Kind)
 			if !ok {
 				return nil, fmt.Errorf("target: callback %d outcome %d has invalid activation kind", index, outcomeIndex)
 			}
@@ -112,8 +112,8 @@ func (d operationDraft) freezeCallbacks(input []CallbackSpec) ([]callbackDraft, 
 	return out, nil
 }
 
-func (d operationDraft) freezeProduced(input []ProducedSpec, outcome valuesDraft) ([]producedDraft, error) {
-	if _, err := checkedStoredLength("produced operation table", len(input)); err != nil {
+func (d operationDraft) freezeProduced(input []vocabulary.ProducedSpec, outcome valuesDraft) ([]producedDraft, error) {
+	if _, err := vocabulary.CheckedStoredLength("produced operation table", len(input)); err != nil {
 		return nil, err
 	}
 	out := make([]producedDraft, len(input))
@@ -135,18 +135,18 @@ func (d operationDraft) freezeProduced(input []ProducedSpec, outcome valuesDraft
 		if !callable {
 			return nil, fmt.Errorf("produced operation %d result is not a direct function", index)
 		}
-		if _, err := checkedStoredLength("produced capture table", len(produced.Captures)); err != nil {
+		if _, err := vocabulary.CheckedStoredLength("produced capture table", len(produced.Captures)); err != nil {
 			return nil, err
 		}
-		captures := append([]CaptureSpec(nil), produced.Captures...)
+		captures := append([]vocabulary.CaptureSpec(nil), produced.Captures...)
 		typeValueCaptures := 0
 		for captureIndex, capture := range captures {
 			switch capture.Kind {
-			case CaptureValueFormal:
+			case vocabulary.CaptureValueFormal:
 				if uint64(capture.Ordinal) >= uint64(d.valueFormalCount()) {
 					return nil, fmt.Errorf("produced operation %d capture %d ValueFormal outside scope", index, captureIndex)
 				}
-			case CaptureTypeValueFormal:
+			case vocabulary.CaptureTypeValueFormal:
 				if uint64(capture.Ordinal) >= uint64(d.valueFormalCount()) {
 					return nil, fmt.Errorf("produced operation %d capture %d TypeValueFormal outside scope", index, captureIndex)
 				}
@@ -154,11 +154,11 @@ func (d operationDraft) freezeProduced(input []ProducedSpec, outcome valuesDraft
 				if typeValueCaptures > 1 {
 					return nil, fmt.Errorf("produced operation %d has more than one TypeValueFormal capture", index)
 				}
-			case CaptureValuesVar:
+			case vocabulary.CaptureValuesVar:
 				if uint64(capture.Ordinal) >= uint64(d.valuesVars) {
 					return nil, fmt.Errorf("produced operation %d capture %d ValuesVar outside scope", index, captureIndex)
 				}
-			case CaptureCallback:
+			case vocabulary.CaptureCallback:
 				if capture.Ordinal == 0 || uint64(capture.Ordinal) > uint64(len(d.callbacks)) {
 					return nil, fmt.Errorf("produced operation %d capture %d callback outside scope", index, captureIndex)
 				}
@@ -188,7 +188,7 @@ func validateProducedTypeValueFreshResults(produced []producedDraft, fresh []fre
 	for producedIndex, row := range produced {
 		typeValue := false
 		for _, capture := range row.captures {
-			if capture.Kind == CaptureTypeValueFormal {
+			if capture.Kind == vocabulary.CaptureTypeValueFormal {
 				typeValue = true
 				break
 			}
@@ -209,7 +209,7 @@ func validateProducedTypeValueFreshResults(produced []producedDraft, fresh []fre
 	return nil
 }
 
-func (d *operationDraft) freezeEffects(input RowSpec) error {
+func (d *operationDraft) freezeEffects(input vocabulary.RowSpec) error {
 	row, err := d.freezeRow(input, "ordinary")
 	if err != nil {
 		return err
@@ -218,11 +218,11 @@ func (d *operationDraft) freezeEffects(input RowSpec) error {
 	return nil
 }
 
-func (d operationDraft) freezeRow(input RowSpec, owner string) (rowDraft, error) {
-	if input.Tail != RowClosed && input.Tail != RowVariable {
+func (d operationDraft) freezeRow(input vocabulary.RowSpec, owner string) (rowDraft, error) {
+	if input.Tail != vocabulary.RowClosed && input.Tail != vocabulary.RowVariable {
 		return rowDraft{}, fmt.Errorf("target: %s row has invalid tail", owner)
 	}
-	if input.Tail == RowVariable {
+	if input.Tail == vocabulary.RowVariable {
 		if uint64(input.Var) >= uint64(d.rowFormals) {
 			return rowDraft{}, errors.New("target: row variable outside operation scope")
 		}
@@ -230,7 +230,7 @@ func (d operationDraft) freezeRow(input RowSpec, owner string) (rowDraft, error)
 		return rowDraft{}, errors.New("target: closed row carries variable")
 	}
 	out := rowDraft{tail: input.Tail, variable: input.Var}
-	if _, err := checkedStoredLength("effect table", len(input.Occurrences)); err != nil {
+	if _, err := vocabulary.CheckedStoredLength("effect table", len(input.Occurrences)); err != nil {
 		return rowDraft{}, err
 	}
 	if len(input.Occurrences) == 0 {
@@ -244,28 +244,24 @@ func (d operationDraft) freezeRow(input RowSpec, owner string) (rowDraft, error)
 		}
 		draft := effectDraft{targetSource: item.Target}
 		if item.Publication != nil {
-			publication, publicationErr := freezePublicationEffect(*item.Publication)
-			if publicationErr != nil {
-				return rowDraft{}, fmt.Errorf("target: %s effect %d publication: %w", owner, index, publicationErr)
-			}
-			draft.publication, draft.hasPublication = publication, true
+			draft.publication, draft.hasPublication = *item.Publication, true
 		}
-		if _, err := checkedStoredLength("effect value argument pool", len(item.ValueArgs)); err != nil {
+		if _, err := vocabulary.CheckedStoredLength("effect value argument pool", len(item.ValueArgs)); err != nil {
 			return rowDraft{}, err
 		}
-		if _, err := checkedStoredLength("effect type argument pool", len(item.TypeArgs)); err != nil {
+		if _, err := vocabulary.CheckedStoredLength("effect type argument pool", len(item.TypeArgs)); err != nil {
 			return rowDraft{}, err
 		}
-		if _, err := checkedStoredLength("effect Values argument pool", len(item.ValuesArgs)); err != nil {
+		if _, err := vocabulary.CheckedStoredLength("effect Values argument pool", len(item.ValuesArgs)); err != nil {
 			return rowDraft{}, err
 		}
-		if _, err := checkedStoredLength("effect row argument pool", len(item.RowArgs)); err != nil {
+		if _, err := vocabulary.CheckedStoredLength("effect row argument pool", len(item.RowArgs)); err != nil {
 			return rowDraft{}, err
 		}
-		draft.values = append([]ValueFormal(nil), item.ValueArgs...)
-		draft.types = append([]TypeFormal(nil), item.TypeArgs...)
-		draft.valuesVar = append([]ValuesVar(nil), item.ValuesArgs...)
-		draft.rows = append([]RowVar(nil), item.RowArgs...)
+		draft.values = append([]vocabulary.ValueFormal(nil), item.ValueArgs...)
+		draft.types = append([]vocabulary.TypeFormal(nil), item.TypeArgs...)
+		draft.valuesVar = append([]vocabulary.ValuesVar(nil), item.ValuesArgs...)
+		draft.rows = append([]vocabulary.RowVar(nil), item.RowArgs...)
 		for _, value := range draft.values {
 			if uint64(value) >= valueCount {
 				return rowDraft{}, fmt.Errorf("target: effect %d has value argument outside scope", index)
@@ -291,47 +287,9 @@ func (d operationDraft) freezeRow(input RowSpec, owner string) (rowDraft, error)
 	return out, nil
 }
 
-func freezePublicationEffect(input PublicationEffectSpec) (PublicationEffectDescriptor, error) {
-	descriptor := PublicationEffectDescriptor{
-		kind: input.Kind, subject: input.Subject, destination: input.Destination,
-		context: input.Context, escape: input.Escape, mutability: input.Mutability, lifetime: input.Lifetime,
-	}
-	if descriptor.destination != PublicationDestinationNone && descriptor.destination != PublicationDestinationValueFormal {
-		return PublicationEffectDescriptor{}, errors.New("invalid destination role")
-	}
-	if descriptor.destination == PublicationDestinationNone && descriptor.context != 0 {
-		return PublicationEffectDescriptor{}, errors.New("destination-free publication carries context formal")
-	}
-	if !descriptor.validConsequences() {
-		return PublicationEffectDescriptor{}, errors.New("kind and typed consequences disagree")
-	}
-	return descriptor, nil
-}
-
-func (d PublicationEffectDescriptor) validConsequences() bool {
-	switch d.kind {
-	case PublicationEffectSendTransfer:
-		return d.destination == PublicationDestinationValueFormal &&
-			d.escape == PublicationEscapeSendTransfer &&
-			(d.mutability == PublicationMutabilityPreserve || d.mutability == PublicationMutabilityCopyOnWrite) &&
-			d.lifetime == PublicationLifetimePreserve
-	case PublicationEffectReturnEscape:
-		return d.destination == PublicationDestinationNone && d.escape == PublicationEscapeReturn &&
-			d.mutability == PublicationMutabilityPreserve && d.lifetime == PublicationLifetimePreserve
-	case PublicationEffectCallbackEscape:
-		return d.destination == PublicationDestinationNone && d.escape == PublicationEscapeCallback &&
-			d.mutability == PublicationMutabilityPreserve && d.lifetime == PublicationLifetimePreserve
-	case PublicationEffectFreezeSeal:
-		return d.destination == PublicationDestinationNone && d.escape == PublicationEscapeNone &&
-			d.mutability == PublicationMutabilitySeal && d.lifetime == PublicationLifetimePreserve
-	case PublicationEffectWriteMutation:
-		return d.destination == PublicationDestinationNone && d.escape == PublicationEscapeNone &&
-			(d.mutability == PublicationMutabilityWrite || d.mutability == PublicationMutabilityCopyOnWrite) &&
-			d.lifetime == PublicationLifetimePreserve
-	case PublicationEffectCloseRelease:
-		return d.destination == PublicationDestinationNone && d.escape == PublicationEscapeNone &&
-			d.mutability == PublicationMutabilityPreserve && d.lifetime == PublicationLifetimeRelease
-	default:
-		return false
+func cloneBinding(input vocabulary.BindingSpec) vocabulary.BindingSpec {
+	return vocabulary.BindingSpec{
+		Namespace: input.Namespace,
+		Owner:     append([]string(nil), input.Owner...), Member: append([]string(nil), input.Member...),
 	}
 }

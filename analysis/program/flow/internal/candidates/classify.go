@@ -24,25 +24,15 @@ func classifyUnary(op kind.UnaryOp) (uint8, error) {
 	}
 }
 
-// classifyBinary is the sole Binary candidate disposition. The switch lists
-// all current operators explicitly so a future enum value cannot fall into a
-// bucket by accident.
+// classifyBinary is the sole Binary candidate disposition. Arithmetic
+// membership comes from the closed Flow kind vocabulary; the remaining
+// families stay explicit so a future enum value cannot fall into a bucket by
+// accident.
 func classifyBinary(op kind.BinaryOp) (uint8, error) {
+	if kind.IsBinaryArithmetic(op) {
+		return binaryArithmeticCandidate, nil
+	}
 	switch op {
-	case kind.BinaryAdd:
-		return binaryArithmeticCandidate, nil
-	case kind.BinarySub:
-		return binaryArithmeticCandidate, nil
-	case kind.BinaryMul:
-		return binaryArithmeticCandidate, nil
-	case kind.BinaryDiv:
-		return binaryArithmeticCandidate, nil
-	case kind.BinaryIDiv:
-		return binaryArithmeticCandidate, nil
-	case kind.BinaryMod:
-		return binaryArithmeticCandidate, nil
-	case kind.BinaryPow:
-		return binaryArithmeticCandidate, nil
 	case kind.BinaryConcat:
 		return binaryConcatCandidate, nil
 	case kind.BinaryBitAnd:

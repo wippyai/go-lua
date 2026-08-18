@@ -34,6 +34,9 @@ func (compiler *compiler) copyDiagnosticObservationsFailure() CompileFailure {
 	if failure := compiler.copyUnresolvedValueObservationsFailure(); failure.Available() {
 		return failure
 	}
+	if failure := compiler.copyTypeConformanceObservationsFailure(); failure.Available() {
+		return failure
+	}
 	return CompileFailure{}
 }
 
@@ -96,7 +99,7 @@ func (compiler *compiler) admitDiagnosticBranchFailure(route flow.FinalRoute, ro
 	}
 	branch := diagnosticBranchConditionRow{decision: decisionPath, value: span.ContextID(), points: points}
 	row := DiagnosticObservationRow{
-		id:   diagnosticObservationID(compiler.input.ContentID(), structure.DiagnosticObservationBranchCondition, location, branch, diagnosticUnresolvedTypeReferenceRow{}, diagnosticUnresolvedValueReferenceRow{}),
+		id:   diagnosticObservationID(compiler.input.ContentID(), structure.DiagnosticObservationBranchCondition, location, branch, diagnosticUnresolvedTypeReferenceRow{}, diagnosticUnresolvedValueReferenceRow{}, diagnosticTypeConformanceRow{}),
 		kind: structure.DiagnosticObservationBranchCondition, location: location, branch: branch,
 	}
 	if !row.Available() || !compiler.admitDiagnosticObservationRow(row) {
@@ -221,7 +224,7 @@ func (compiler *compiler) copyUnresolvedTypeObservationsFailure() CompileFailure
 		}
 		payload := diagnosticUnresolvedTypeReferenceRow{reference: reference, root: root, path: path}
 		row := DiagnosticObservationRow{
-			id:   diagnosticObservationID(compiler.input.ContentID(), structure.DiagnosticObservationTypeReferenceUnresolved, location, diagnosticBranchConditionRow{}, payload, diagnosticUnresolvedValueReferenceRow{}),
+			id:   diagnosticObservationID(compiler.input.ContentID(), structure.DiagnosticObservationTypeReferenceUnresolved, location, diagnosticBranchConditionRow{}, payload, diagnosticUnresolvedValueReferenceRow{}, diagnosticTypeConformanceRow{}),
 			kind: structure.DiagnosticObservationTypeReferenceUnresolved, location: location, unresolved: payload,
 		}
 		if !row.Available() || !compiler.admitDiagnosticObservationRow(row) {
@@ -253,7 +256,7 @@ func (compiler *compiler) copyUnresolvedValueObservationsFailure() CompileFailur
 		}
 		payload := diagnosticUnresolvedValueReferenceRow{read: read.id, cell: read.cell, name: literal.String}
 		row := DiagnosticObservationRow{
-			id:   diagnosticObservationID(compiler.input.ContentID(), structure.DiagnosticObservationValueReferenceUnresolved, location, diagnosticBranchConditionRow{}, diagnosticUnresolvedTypeReferenceRow{}, payload),
+			id:   diagnosticObservationID(compiler.input.ContentID(), structure.DiagnosticObservationValueReferenceUnresolved, location, diagnosticBranchConditionRow{}, diagnosticUnresolvedTypeReferenceRow{}, payload, diagnosticTypeConformanceRow{}),
 			kind: structure.DiagnosticObservationValueReferenceUnresolved, location: location, value: payload,
 		}
 		if !row.Available() || !compiler.admitDiagnosticObservationRow(row) {
@@ -261,6 +264,132 @@ func (compiler *compiler) copyUnresolvedValueObservationsFailure() CompileFailur
 		}
 	}
 	return CompileFailure{}
+}
+
+// copyTypeConformanceObservationsFailure issues one TypeConformance row per
+// selected direct-call argument whose formal declares a static type. Selection
+// is the sealed DirectFunctions join already stored on CallRow: uncalled
+// interiors do not emit. Method, tail, generic, and vararg calls stay silent.
+func (compiler *compiler) copyTypeConformanceObservationsFailure() CompileFailure {
+	if compiler == nil || !compiler.input.Available() {
+		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceCall)
+	}
+	selected, selectedOK := compiler.selectedDirectCalleeBodies()
+	if !selectedOK {
+		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceCall)
+	}
+	boundaries := make(map[identity.ContentID]FunctionBoundaryRow, len(compiler.functionBoundaries))
+	for _, row := range compiler.functionBoundaries {
+		if !row.Available() || !row.BodyID().Available() {
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceCall)
+		}
+		if _, duplicate := boundaries[row.BodyID()]; duplicate {
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceCall)
+		}
+		boundaries[row.BodyID()] = row
+	}
+	flowView := compiler.input.Flow()
+	calls := flowView.Authored().Calls()
+	values := flowView.Authored().Values()
+	for index := 0; index < calls.Count(); index++ {
+		call, callOK := compiler.callConstruction(index)
+		if !callOK || !call.targetBody.Available() {
+			continue
+		}
+		if _, ownerSelected := selected[call.bodyPath]; !ownerSelected {
+			continue
+		}
+		if call.form != flow.CallFormPlain || call.tail.Available() || len(call.typeArguments) != 0 {
+			continue
+		}
+		boundary, boundaryOK := boundaries[call.targetBody]
+		if !boundaryOK || !boundary.Available() {
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceCall)
+		}
+		if _, hasVararg := boundary.Vararg(); hasVararg || boundary.FormalCount() != len(call.arguments) {
+			continue
+		}
+		term, termOK := calls.At(index)
+		_, _, _, actualsTerm, actualsOK := calls.Get(term)
+		if !termOK || !actualsOK {
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceCall)
+		}
+		points := compiler.pointIDs(call.finish)
+		if len(points) == 0 {
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceCall)
+		}
+		for argumentIndex, argument := range call.arguments {
+			formal, formalOK := boundary.FormalAt(argumentIndex)
+			declared, declaredOK := formal.DeclaredStaticTypeID()
+			if !formalOK || !declaredOK {
+				continue
+			}
+			memberTerm, memberOK := values.Member(actualsTerm, argumentIndex)
+			location, locationOK := compiler.input.Source().Identity().Span(memberTerm)
+			if !memberOK || !locationOK || !validDiagnosticSpan(location) || !argument.span.Available() {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, argumentIndex, CompileReasonOccurrenceCall)
+			}
+			payload := diagnosticTypeConformanceRow{
+				site:     diagnosticTypeConformanceSiteCallArgument,
+				call:     call.id,
+				argument: argument.id,
+				declared: declared,
+				span:     argument.span,
+				position: uint32(argumentIndex),
+				points:   append([]identity.ContentID(nil), points...),
+			}
+			row := DiagnosticObservationRow{
+				id:   diagnosticObservationID(compiler.input.ContentID(), structure.DiagnosticObservationTypeConformance, location, diagnosticBranchConditionRow{}, diagnosticUnresolvedTypeReferenceRow{}, diagnosticUnresolvedValueReferenceRow{}, payload),
+				kind: structure.DiagnosticObservationTypeConformance, location: location, conformance: payload,
+			}
+			if !row.Available() || !compiler.admitDiagnosticObservationRow(row) {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, argumentIndex, CompileReasonOccurrenceCall)
+			}
+		}
+	}
+	return CompileFailure{}
+}
+
+func (compiler *compiler) selectedDirectCalleeBodies() (map[identity.ContentID]struct{}, bool) {
+	if compiler == nil {
+		return nil, false
+	}
+	selected := make(map[identity.ContentID]struct{})
+	callable := make(map[identity.ContentID]struct{})
+	for _, body := range compiler.bodies {
+		if !body.Available() {
+			return nil, false
+		}
+		if body.Callable() {
+			callable[body.ID()] = struct{}{}
+			continue
+		}
+		selected[body.ID()] = struct{}{}
+	}
+	if len(selected) == 0 {
+		return nil, false
+	}
+	for changed := true; changed; {
+		changed = false
+		for _, call := range compiler.calls {
+			target, targetOK := call.DirectTargetBody()
+			if !targetOK {
+				continue
+			}
+			if _, ownerSelected := selected[call.BodyID()]; !ownerSelected {
+				continue
+			}
+			if _, already := selected[target]; already {
+				continue
+			}
+			if _, isCallable := callable[target]; !isCallable {
+				return nil, false
+			}
+			selected[target] = struct{}{}
+			changed = true
+		}
+	}
+	return selected, true
 }
 
 func (compiler *compiler) admitDiagnosticObservationRow(row DiagnosticObservationRow) bool {

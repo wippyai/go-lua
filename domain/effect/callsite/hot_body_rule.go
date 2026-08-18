@@ -129,8 +129,14 @@ func BindBodyHot(binding *engine.SchemaBinding, fragment *BodySchemaFragment, ca
 		Transfer: func(access engine.Access[effectfactor.Value, hotBodyOperand]) bool {
 			return hot.transfer(access, runtimeCall, runtimeSummary)
 		},
+	}, func(operand hotBodyOperand) (uint64, bool) {
+		index, ok := effects.Algebra().RootIndex(operand.root)
+		return uint64(index), ok && index >= 0
 	}, func(tx *effectowner.SelectedRuleBinding[hotBodyOperand]) bool {
-		callRead, callOK := effectowner.AddExactRead(tx, fragment.core.callRead, calls.FactorRef())
+		callRead, callOK := effectowner.AddExactRead(tx, fragment.core.callRead, calls.FactorRef(), func(operand hotBodyOperand) (uint64, bool) {
+			index, ok := calls.Algebra().KeyIndex(operand.key)
+			return uint64(index), ok && index >= 0
+		})
 		if !callOK {
 			return false
 		}
@@ -148,7 +154,18 @@ func BindBodyHot(binding *engine.SchemaBinding, fragment *BodySchemaFragment, ca
 		return nil, false
 	}
 	hot.implementation = implementation
+	if !implementation.InstallOperandResolver(hot.resolveOperand) {
+		return nil, false
+	}
 	return hot, true
+}
+
+func (rule *BodyHotRule) resolveOperand(coords engine.OperandCoords) (hotBodyOperand, bool) {
+	issuer, ok := rule.ForMount(coords.Mount)
+	if !ok {
+		return hotBodyOperand{}, false
+	}
+	return issuer.ReceiptForOccurrence(coords.Occurrence)
 }
 
 // Receipt consumes one exact mounted caller proof after the shared binding
@@ -423,24 +440,6 @@ func (rule *BodyHotRule) Implementation() (*effectowner.RuleImplementation[hotBo
 	return rule.implementation, ok
 }
 
-func (rule *BodyHotRule) BeginReceiptCompilation(graph *engine.ReceiptGraph) (*engine.ReceiptCompilation, bool) {
-	if rule == nil {
-		return nil, false
-	}
-	implementation, ok := effectowner.ResolveRuleImplementationFor(rule.effects, rule.implementation)
-	if !ok {
-		return nil, false
-	}
-	return engine.BeginReceiptCompilation(implementation, graph)
-}
-
-func (rule *BodyHotRule) AttachReceiptMember(compilation *engine.ReceiptCompilation, member engine.ReceiptRuleMember, value hotBodyOperand) (*engine.ReceiptMember, bool) {
-	if rule == nil || !rule.accepts(value) {
-		return nil, false
-	}
-	implementation, ok := effectowner.ResolveRuleImplementationFor(rule.effects, rule.implementation)
-	if !ok {
-		return nil, false
-	}
-	return engine.AttachReceiptRuleMember(compilation, implementation, member, value)
+func (rule *BodyHotRule) ProgramAttach() (engine.RuleProgramAttach, bool) {
+	return effectowner.ResolveRuleImplementationFor(rule.effects, rule.implementation)
 }

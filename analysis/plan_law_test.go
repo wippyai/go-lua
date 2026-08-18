@@ -132,14 +132,12 @@ func planLawArtifactScheduleRow(linked *link.Link, ordinal uint32) string {
 				detail = append(detail, fmt.Sprintf("env[%d]=%x->%x", edgeIndex, candidate.From(), candidate.To()))
 			}
 		}
-		for role := programartifact.RuleRoleValueSource; role <= programartifact.RuleRoleValuePresenceRefinement; role++ {
-			for ruleIndex := 0; ruleIndex < artifact.RuleOccurrenceCount(role); ruleIndex++ {
-				rule, ruleOK := artifact.RuleOccurrenceAt(role, ruleIndex)
-				point, pointOK := rule.PointAt(0)
-				input, inputOK := rule.InputPoint()
-				if ruleOK && pointOK && (point == base || point == stage || inputOK && (input == base || input == stage)) {
-					detail = append(detail, fmt.Sprintf("rule[%d:%d]=%x->%x", role, ruleIndex, input, point))
-				}
+		for ruleIndex := 0; ruleIndex < artifact.RulePlacementCount(); ruleIndex++ {
+			rule, ruleOK := artifact.RulePlacementAt(ruleIndex)
+			point, pointOK := rule.PointAt(0)
+			input, inputOK := rule.InputPoint()
+			if ruleOK && pointOK && (point == base || point == stage || inputOK && (input == base || input == stage)) {
+				detail = append(detail, fmt.Sprintf("rule[%s:%d]=%x->%x", rule.Key(), ruleIndex, input, point))
 			}
 		}
 		return fmt.Sprintf("mount=%d local=%d ok=%t from=%x rank=%d to=%x rank=%d full=%t adjacent={%s}", mountIndex, localIndex, edgeOK, edge.From(), ranks[edge.From()], edge.To(), ranks[edge.To()], edge.FullEnvironment(), strings.Join(detail, ","))
@@ -265,15 +263,10 @@ func planLawRuleGeometryFailure(plan *Plan) string {
 				return fmt.Sprintf("mount=%d event=%d available=%v", mountIndex, index, eventOK && event.Available())
 			}
 		}
-		for role := programartifact.RuleRoleValueSource; role <= programartifact.RuleRoleValuePresenceRefinement; role++ {
-			if !mount.artifact.RuleRoleSupported(role) {
-				continue
-			}
-			for index := 0; index < mount.artifact.RuleOccurrenceCount(role); index++ {
-				row, ok := mount.artifact.RuleOccurrenceAt(role, index)
-				if !ok || row.PointCount() == 0 {
-					return fmt.Sprintf("mount=%d role=%d row=%d available=%v points=%d", mountIndex, role, index, ok, row.PointCount())
-				}
+		for index := 0; index < mount.artifact.RulePlacementCount(); index++ {
+			row, ok := mount.artifact.RulePlacementAt(index)
+			if !ok || row.PointCount() == 0 || !row.Key().Available() {
+				return fmt.Sprintf("mount=%d placement=%d available=%v points=%d key=%q", mountIndex, index, ok, row.PointCount(), row.Key())
 			}
 		}
 	}
@@ -470,8 +463,8 @@ func planLawStorageTransferPlacementFailure(plan *Plan) string {
 			}
 			wantKinds[kind] = true
 			matches := 0
-			for ruleIndex := 0; ruleIndex < artifact.RuleOccurrenceCount(programartifact.RuleRoleValueStorageTransfer); ruleIndex++ {
-				rule, ruleOK := artifact.RuleOccurrenceAt(programartifact.RuleRoleValueStorageTransfer, ruleIndex)
+			for ruleIndex := 0; ruleIndex < artifact.RulePlacementCountForKey("value-transfer"); ruleIndex++ {
+				rule, ruleOK := artifact.RulePlacementForKeyAt("value-transfer", ruleIndex)
 				if !ruleOK || rule.ID() != occurrence.ID() {
 					continue
 				}
@@ -608,6 +601,21 @@ func TestCompiledPlanCancellationDoesNotPoisonReuse(t *testing.T) {
 	}
 	if plan.state.ordinary != ordinary {
 		t.Fatal("reuse after cancellation rebuilt the ordinary solver")
+	}
+}
+
+func TestDeadlockDataflowNodeCompilesProgramArtifact(t *testing.T) {
+	linked := fixtureLink(t, "regression/deadlock-dataflow-node")
+	if got := planLawArtifactFailure(linked); got != "program artifacts compile succeeded" {
+		t.Fatal(got)
+	}
+	receipt, ok := composite.Global()
+	if !ok {
+		t.Fatal("schema-unavailable")
+	}
+	artifacts, artifactsOK := compileProgramArtifacts(linked, receipt)
+	if !artifactsOK || artifacts == nil || len(artifacts.mounts) == 0 {
+		t.Fatal("program artifacts and scalar template")
 	}
 }
 

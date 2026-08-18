@@ -2,7 +2,6 @@ package artifact
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/flow"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
@@ -94,8 +93,8 @@ func (row HeapFieldRow) NormalizedKey() (keyspace.Key, bool) {
 // geometry. It is neutral source data consumed by Heap at Link binding time.
 type HeapAllocationRow struct {
 	id       identity.ContentID
-	role     flow.AllocationRole
-	form     flow.AllocationForm
+	role     AllocationRole
+	form     AllocationForm
 	rootSpan identity.ContentID
 	fields   []HeapFieldRow
 }
@@ -118,16 +117,16 @@ func (row HeapAllocationRow) ID() identity.ContentID {
 	return row.id
 }
 
-func (row HeapAllocationRow) Role() flow.AllocationRole {
+func (row HeapAllocationRow) Role() AllocationRole {
 	if !row.Available() {
-		return flow.AllocationInvalid
+		return AllocationInvalid
 	}
 	return row.role
 }
 
-func (row HeapAllocationRow) Form() flow.AllocationForm {
+func (row HeapAllocationRow) Form() AllocationForm {
 	if !row.Available() {
-		return flow.AllocationFormInvalid
+		return AllocationFormInvalid
 	}
 	return row.form
 }

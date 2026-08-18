@@ -1,113 +1,9 @@
 package artifact
 
-import "github.com/wippyai/go-lua/analysis/identity"
-
-// RuleRole is the closed global schema role catalog. A false Supported result
-// is deliberate: the artifact never invents a relation for a role that the
-// current Program proof surface cannot state exactly.
-type RuleRole uint8
-
-const (
-	RuleRoleInvalid RuleRole = iota
-	RuleRoleValueSource
-	RuleRolePackSource
-	RuleRoleHeapIngress
-	RuleRoleValueAllocation
-	RuleRoleHeapEmpty
-	RuleRoleHeapClosed
-	RuleRoleRawGet
-	RuleRoleRawSet
-	RuleRoleCallDispatch
-	RuleRoleEffectSelected
-	RuleRoleEffectOpaque
-	RuleRoleEffectBody
-	RuleRoleCallActivation
-	RuleRoleValueBootstrap
-	RuleRoleHeapBootstrap
-	RuleRoleValueStorageTransfer
-	RuleRoleValueBinaryArithmetic
-	RuleRoleValueBinaryEquality
-	RuleRoleValueBinaryOrder
-	RuleRoleValuePresenceRefinement
+import (
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema"
 )
-
-// mountedRuleRoles is the one ordered ProgramArtifact vocabulary for rules
-// materialized from reusable mounted artifacts. Link-owned bootstrap rules
-// are deliberately excluded: they are admitted through the explicit Link
-// table at the analysis binding boundary.
-var mountedRuleRoles = [...]RuleRole{
-	RuleRoleValueSource,
-	RuleRolePackSource,
-	RuleRoleHeapIngress,
-	RuleRoleValueAllocation,
-	RuleRoleHeapEmpty,
-	RuleRoleHeapClosed,
-	RuleRoleRawGet,
-	RuleRoleRawSet,
-	RuleRoleCallDispatch,
-	RuleRoleEffectSelected,
-	RuleRoleEffectOpaque,
-	RuleRoleEffectBody,
-	RuleRoleCallActivation,
-	RuleRoleValueStorageTransfer,
-	RuleRoleValueBinaryArithmetic,
-	RuleRoleValueBinaryEquality,
-	RuleRoleValueBinaryOrder,
-	RuleRoleValuePresenceRefinement,
-}
-
-// MountedRuleRoleCount reports the closed mounted-rule vocabulary size.
-func MountedRuleRoleCount() int { return len(mountedRuleRoles) }
-
-// MountedRuleRoleAt returns the ProgramArtifact-owned mounted role at its
-// stable ordinal. The ordinal is the canonical attachment/ingress order.
-func MountedRuleRoleAt(index int) (RuleRole, bool) {
-	if index < 0 || index >= len(mountedRuleRoles) {
-		return RuleRoleInvalid, false
-	}
-	return mountedRuleRoles[index], true
-}
-
-func (role RuleRole) valid() bool {
-	return role >= RuleRoleValueSource && role <= RuleRoleValuePresenceRefinement
-}
-
-// RuleOutputKind is the domain-neutral Factor lane written by one sealed rule
-// placement. It is derived only from the closed RuleRole catalog, so consumers
-// can select producer occurrences without importing domain implementations or
-// guessing from point/stage geometry.
-type RuleOutputKind uint8
-
-const (
-	RuleOutputInvalid RuleOutputKind = iota
-	RuleOutputValue
-	RuleOutputPack
-	RuleOutputHeap
-	RuleOutputCall
-	RuleOutputEffect
-)
-
-// RuleOutputKindFor is the artifact format's own role-to-factor projection.
-// The analyzer's rule table reads its principal from here rather than
-// restating the mapping, so a role can name exactly one owning factor.
-func RuleOutputKindFor(role RuleRole) RuleOutputKind { return ruleOutputKind(role) }
-
-func ruleOutputKind(role RuleRole) RuleOutputKind {
-	switch role {
-	case RuleRoleValueSource, RuleRoleValueAllocation, RuleRoleRawGet, RuleRoleValueBootstrap, RuleRoleValueStorageTransfer, RuleRoleValueBinaryArithmetic, RuleRoleValueBinaryEquality, RuleRoleValueBinaryOrder, RuleRoleValuePresenceRefinement:
-		return RuleOutputValue
-	case RuleRolePackSource:
-		return RuleOutputPack
-	case RuleRoleHeapIngress, RuleRoleHeapEmpty, RuleRoleHeapClosed, RuleRoleRawSet, RuleRoleHeapBootstrap:
-		return RuleOutputHeap
-	case RuleRoleCallDispatch, RuleRoleCallActivation:
-		return RuleOutputCall
-	case RuleRoleEffectSelected, RuleRoleEffectOpaque, RuleRoleEffectBody:
-		return RuleOutputEffect
-	default:
-		return RuleOutputInvalid
-	}
-}
 
 // RuleStage is the closed reusable execution cut owned by the Program
 // artifact. Base is the parent point. Local is the
@@ -145,7 +41,7 @@ const (
 func (kind RuleInputKind) valid() bool { return kind >= RuleInputNone && kind <= RuleInputPredecessor }
 
 type RuleOccurrence struct {
-	role       RuleRole
+	key        schema.Key
 	occurrence uint32
 	point      identity.ContentID
 	input      identity.ContentID
@@ -155,7 +51,7 @@ type RuleOccurrence struct {
 }
 
 func (row RuleOccurrence) Available() bool {
-	if !row.role.valid() || !row.point.Available() || !row.stage.valid() || !row.inputKind.valid() {
+	if !row.key.Available() || !row.point.Available() || !row.stage.valid() || !row.inputKind.valid() {
 		return false
 	}
 	if (row.inputKind == RuleInputNone) == row.input.Available() {
@@ -166,15 +62,16 @@ func (row RuleOccurrence) Available() bool {
 	}
 	return !row.route.Available()
 }
-func (row RuleOccurrence) Role() RuleRole {
+
+func (row RuleOccurrence) Key() schema.Key {
 	if !row.Available() {
-		return RuleRoleInvalid
+		return ""
 	}
-	return row.role
+	return row.key
 }
 
-// RuleOccurrenceRow is the immutable role-specific placement joined to its
-// exact semantic occurrence. Only stable semantic IDs and point IDs escape.
+// RuleOccurrenceRow is the immutable placement joined to its exact semantic
+// occurrence. Only stable semantic IDs and point IDs escape.
 type RuleOccurrenceRow struct {
 	placement RuleOccurrence
 	row       OccurrenceRow
@@ -183,59 +80,35 @@ type RuleOccurrenceRow struct {
 func (row RuleOccurrenceRow) Available() bool {
 	return row.placement.Available() && row.row.Available()
 }
-func (row RuleOccurrenceRow) Role() RuleRole { return row.placement.Role() }
-func (row RuleOccurrenceRow) OutputKind() RuleOutputKind {
+func (row RuleOccurrenceRow) Key() schema.Key { return row.placement.Key() }
+func (row RuleOccurrenceRow) OccurrenceKind() OccurrenceKind {
 	if !row.Available() {
-		return RuleOutputInvalid
+		return OccurrenceInvalid
 	}
-	return ruleOutputKind(row.placement.Role())
+	return row.row.Kind()
 }
 
 // OutputSemanticID returns the exact Program-issued semantic value written by
 // a placement when that relation is already retained by its occurrence row.
 // It never equates the occurrence identity with its output: storage writes
 // and index reads name their destination explicitly in the sealed operand
-// vector. Roles whose output belongs to another owner return false.
+// vector. Placements whose occurrence family does not write a value return false.
 func (row RuleOccurrenceRow) OutputSemanticID() (identity.ContentID, bool) {
-	if !row.Available() || row.OutputKind() != RuleOutputValue {
+	if !row.Available() {
 		return identity.ContentID{}, false
 	}
-	switch row.Role() {
-	case RuleRoleValueSource:
+	switch row.OccurrenceKind() {
+	case OccurrenceValueSource:
 		return row.row.ID(), true
-	case RuleRoleValueStorageTransfer:
-		switch row.row.Kind() {
-		case OccurrenceStorageRead:
-			return row.row.ID(), true
-		case OccurrenceStorageBindTransfer, OccurrenceStorageWrite:
-			return row.row.InputAt(2)
-		default:
-			return identity.ContentID{}, false
-		}
-	case RuleRoleRawGet:
-		if row.row.Kind() != OccurrenceIndexRead {
-			return identity.ContentID{}, false
-		}
+	case OccurrenceStorageRead:
+		return row.row.ID(), true
+	case OccurrenceStorageBindTransfer, OccurrenceStorageWrite:
 		return row.row.InputAt(2)
-	case RuleRoleValueBinaryEquality:
-		if row.row.Kind() != OccurrenceBinaryEquality {
-			return identity.ContentID{}, false
-		}
+	case OccurrenceIndexRead:
+		return row.row.InputAt(2)
+	case OccurrenceBinaryEquality, OccurrenceBinaryArithmetic, OccurrenceBinaryOrder:
 		return row.row.ID(), true
-	case RuleRoleValueBinaryArithmetic:
-		if row.row.Kind() != OccurrenceBinaryArithmetic {
-			return identity.ContentID{}, false
-		}
-		return row.row.ID(), true
-	case RuleRoleValueBinaryOrder:
-		if row.row.Kind() != OccurrenceBinaryOrder {
-			return identity.ContentID{}, false
-		}
-		return row.row.ID(), true
-	case RuleRoleValuePresenceRefinement:
-		if row.row.Kind() != OccurrenceBinaryPresenceRefinement {
-			return identity.ContentID{}, false
-		}
+	case OccurrenceBinaryPresenceRefinement:
 		_, target, _, _, _, ok := row.row.BinaryPresenceRefinement()
 		return target, ok
 	default:
@@ -339,35 +212,63 @@ func (artifact *Artifact) TransferOccurrenceForID(id identity.ContentID) (Occurr
 	}
 	return artifact.OccurrenceForID(OccurrenceStorageWrite, id)
 }
-func (artifact *Artifact) RuleRoleSupported(role RuleRole) bool {
-	return artifact.Available() && ruleRoleSupported(role)
+func (artifact *Artifact) placementAt(index int) (RuleOccurrenceRow, bool) {
+	if artifact == nil || index < 0 || index >= len(artifact.ruleOccurrences) {
+		return RuleOccurrenceRow{}, false
+	}
+	placement := artifact.ruleOccurrences[index]
+	if int(placement.occurrence) >= len(artifact.occurrences) {
+		return RuleOccurrenceRow{}, false
+	}
+	row := RuleOccurrenceRow{placement: placement, row: artifact.occurrences[placement.occurrence]}
+	return row, row.Available()
 }
 
-// ruleRoleSupported is the closed format capability used while sealing an
-// Artifact. It deliberately has no Artifact availability dependency: the
-// public projection above adds that lifecycle fence after seal succeeds.
-func ruleRoleSupported(role RuleRole) bool {
-	for _, candidate := range mountedRuleRoles {
-		if role == candidate {
-			return true
-		}
-	}
-	return false
-}
-func (artifact *Artifact) RuleOccurrenceCount(role RuleRole) int {
-	if !artifact.Available() || !artifact.RuleRoleSupported(role) {
+// RulePlacementCount is the number of issued placements in issuance order.
+func (artifact *Artifact) RulePlacementCount() int {
+	if !artifact.Available() {
 		return 0
 	}
-	return len(artifact.ruleOccurrences[role])
+	return len(artifact.ruleOccurrences)
 }
-func (artifact *Artifact) RuleOccurrenceAt(role RuleRole, index int) (RuleOccurrenceRow, bool) {
-	if !artifact.Available() || !artifact.RuleRoleSupported(role) || index < 0 {
+
+// RulePlacementAt returns one issued placement in issuance order.
+func (artifact *Artifact) RulePlacementAt(index int) (RuleOccurrenceRow, bool) {
+	if !artifact.Available() {
 		return RuleOccurrenceRow{}, false
 	}
-	rows := artifact.ruleOccurrences[role]
-	if index >= len(rows) || int(rows[index].occurrence) >= len(artifact.occurrences) {
+	return artifact.placementAt(index)
+}
+
+// RulePlacementCountForKey is the number of issued placements declared under key.
+func (artifact *Artifact) RulePlacementCountForKey(key schema.Key) int {
+	if !artifact.Available() || !key.Available() {
+		return 0
+	}
+	count := 0
+	for index := 0; index < artifact.RulePlacementCount(); index++ {
+		row, ok := artifact.RulePlacementAt(index)
+		if ok && row.Key() == key {
+			count++
+		}
+	}
+	return count
+}
+
+// RulePlacementForKeyAt returns one issued placement declared under key.
+func (artifact *Artifact) RulePlacementForKeyAt(key schema.Key, index int) (RuleOccurrenceRow, bool) {
+	if !artifact.Available() || !key.Available() || index < 0 {
 		return RuleOccurrenceRow{}, false
 	}
-	row := RuleOccurrenceRow{placement: rows[index], row: artifact.occurrences[rows[index].occurrence]}
-	return row, row.Available()
+	for placement := 0; placement < artifact.RulePlacementCount(); placement++ {
+		row, ok := artifact.RulePlacementAt(placement)
+		if !ok || row.Key() != key {
+			continue
+		}
+		if index == 0 {
+			return row, true
+		}
+		index--
+	}
+	return RuleOccurrenceRow{}, false
 }

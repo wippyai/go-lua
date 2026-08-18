@@ -35,9 +35,11 @@ type ruleHotImplementation[K ~uint32 | ~uint64, V, O any] struct {
 	output         *schemaFactorBindingCell[K, V]
 	carry          *schemaRuleCarryBinding[K, V, O]
 	reads          []schemaRuleReadBinding
-	operandContent func(O) (O, [32]byte, bool)
-	admission      RuleAdmission[V, O]
-	transfer       func(Access[V, O]) bool
+	operandContent  func(O) (O, [32]byte, bool)
+	operandResolver func(OperandCoords) (O, bool)
+	admission       RuleAdmission[V, O]
+	transfer        func(Access[V, O]) bool
+	projectWrite    func(O) (uint64, bool)
 }
 
 // schemaRuleCarryBinding is the typed cell for the one supported carry lane.
@@ -112,6 +114,8 @@ func (origin *schemaRuleReadOrigin) matches(proof *ruleRuntimeProof, ordinal uin
 type schemaRuleReadBinding interface {
 	complete(*schemaBindingState, schemaRuleBindingCell, uint64) bool
 	bind(readBinding, equation.RuleMember, map[composition.Key]runtimeFactor) bool
+	projectLocal(any) (uint64, bool)
+	exactAdmitFactor() schemaFactorBinding
 }
 
 // SelectedRouteRuleBindingTransaction is the shared-state hot route Rule
@@ -130,20 +134,21 @@ type schemaRuleBindingToken struct{ marker byte }
 // transaction handles are intentionally copyable views of this shared state;
 // no copied handle can diverge its read list, reservation, or terminal state.
 type selectedRouteTxnState[K ~uint32 | ~uint64, V, O any] struct {
-	state     *schemaBindingState
-	cell      *schemaRuleBindingCellImpl[K, V, O]
-	output    *schemaFactorBindingCell[K, V]
-	ordinal   uint64
-	rule      *RuleSlot[V, O]
-	write     SchemaWriteSlot[V]
-	carry     *schemaRuleCarryBinding[K, V, O]
-	reads     []schemaRuleReadBinding
-	operand   func(O) (O, [32]byte, bool)
-	admission RuleAdmission[V, O]
-	transfer  func(Access[V, O]) bool
-	token     *schemaRuleBindingToken
-	committed bool
-	aborted   bool
+	state        *schemaBindingState
+	cell         *schemaRuleBindingCellImpl[K, V, O]
+	output       *schemaFactorBindingCell[K, V]
+	ordinal      uint64
+	rule         *RuleSlot[V, O]
+	write        SchemaWriteSlot[V]
+	carry        *schemaRuleCarryBinding[K, V, O]
+	reads        []schemaRuleReadBinding
+	operand      func(O) (O, [32]byte, bool)
+	admission    RuleAdmission[V, O]
+	transfer     func(Access[V, O]) bool
+	projectWrite func(O) (uint64, bool)
+	token        *schemaRuleBindingToken
+	committed    bool
+	aborted      bool
 }
 
 // BindSelectedRouteRule owns one route Rule binding transaction: it opens the
@@ -151,22 +156,22 @@ type selectedRouteTxnState[K ~uint32 | ~uint64, V, O any] struct {
 // bind's answer. A rejected bind or a rejected commit aborts, so the shared
 // Binding always reaches its terminal state and no caller pairs commit with
 // abort by hand.
-func BindSelectedRouteRule[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot *RuleSlot[V, O], carry SchemaCarrySlot[V], write SchemaWriteSlot[V], output FactorRef[V], spec HotRuleSpec[V, O], carrySpec HotCarrySpec[V, O], bind func(*SelectedRouteRuleBindingTransaction[K, V, O]) bool) bool {
-	tx, opened := beginSelectedRouteRuleBinding[K](binding, slot, carry, write, output, spec, carrySpec)
+func BindSelectedRouteRule[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot *RuleSlot[V, O], carry SchemaCarrySlot[V], write SchemaWriteSlot[V], output FactorRef[V], spec HotRuleSpec[V, O], carrySpec HotCarrySpec[V, O], projectWrite func(O) (uint64, bool), bind func(*SelectedRouteRuleBindingTransaction[K, V, O]) bool) bool {
+	tx, opened := beginSelectedRouteRuleBinding[K](binding, slot, carry, write, output, spec, carrySpec, projectWrite)
 	return terminalizeSelectedRouteRuleBinding(tx, opened, bind)
 }
 
 // BindSelectedRule is BindSelectedRouteRule's non-routed sibling: the Rule's
 // output write is exact rather than routed.
-func BindSelectedRule[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot *RuleSlot[V, O], carry SchemaCarrySlot[V], write SchemaWriteSlot[V], output FactorRef[V], spec HotRuleSpec[V, O], carrySpec HotCarrySpec[V, O], bind func(*SelectedRouteRuleBindingTransaction[K, V, O]) bool) bool {
-	tx, opened := beginSelectedRuleBinding[K](binding, slot, carry, write, output, spec, carrySpec)
+func BindSelectedRule[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot *RuleSlot[V, O], carry SchemaCarrySlot[V], write SchemaWriteSlot[V], output FactorRef[V], spec HotRuleSpec[V, O], carrySpec HotCarrySpec[V, O], projectWrite func(O) (uint64, bool), bind func(*SelectedRouteRuleBindingTransaction[K, V, O]) bool) bool {
+	tx, opened := beginSelectedRuleBinding[K](binding, slot, carry, write, output, spec, carrySpec, projectWrite)
 	return terminalizeSelectedRouteRuleBinding(tx, opened, bind)
 }
 
 // BindSelectedExactRule is the carry-free sibling for Rules whose output write
 // is exact and whose cold geometry declares no carry.
-func BindSelectedExactRule[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot *RuleSlot[V, O], write SchemaWriteSlot[V], output FactorRef[V], spec HotRuleSpec[V, O], bind func(*SelectedRouteRuleBindingTransaction[K, V, O]) bool) bool {
-	tx, opened := beginSelectedExactRuleBinding[K](binding, slot, write, output, spec)
+func BindSelectedExactRule[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot *RuleSlot[V, O], write SchemaWriteSlot[V], output FactorRef[V], spec HotRuleSpec[V, O], projectWrite func(O) (uint64, bool), bind func(*SelectedRouteRuleBindingTransaction[K, V, O]) bool) bool {
+	tx, opened := beginSelectedExactRuleBinding[K](binding, slot, write, output, spec, projectWrite)
 	return terminalizeSelectedRouteRuleBinding(tx, opened, bind)
 }
 
@@ -186,7 +191,7 @@ func terminalizeSelectedRouteRuleBinding[K ~uint32 | ~uint64, V, O any](tx *Sele
 // beginSelectedRouteRuleBinding starts one receipt-native route Rule transaction. The exact
 // output, carry, and write slots are checked here; reads are attached through
 // AddRuleExactRead/AddRuleSelectedRead and committed once.
-func beginSelectedRouteRuleBinding[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot *RuleSlot[V, O], carry SchemaCarrySlot[V], write SchemaWriteSlot[V], output FactorRef[V], spec HotRuleSpec[V, O], carrySpec HotCarrySpec[V, O]) (*SelectedRouteRuleBindingTransaction[K, V, O], bool) {
+func beginSelectedRouteRuleBinding[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot *RuleSlot[V, O], carry SchemaCarrySlot[V], write SchemaWriteSlot[V], output FactorRef[V], spec HotRuleSpec[V, O], carrySpec HotCarrySpec[V, O], projectWrite func(O) (uint64, bool)) (*SelectedRouteRuleBindingTransaction[K, V, O], bool) {
 	state := bindingState(binding)
 	if state == nil {
 		return nil, false
@@ -230,7 +235,7 @@ func beginSelectedRouteRuleBinding[K ~uint32 | ~uint64, V, O any](binding *Schem
 		state.pendingRules = make(map[uint64]*schemaRuleBindingToken)
 	}
 	state.pendingRules[ruleOrdinal] = token
-	return &SelectedRouteRuleBindingTransaction[K, V, O]{shared: &selectedRouteTxnState[K, V, O]{state: state, cell: cell, output: outputCell, ordinal: ruleOrdinal, rule: slot, write: write, carry: &schemaRuleCarryBinding[K, V, O]{state: state, cell: cell, ordinal: ruleOrdinal, slot: carry, factor: outputCell, apply: carrySpec.Apply}, operand: spec.OperandContent, admission: spec.Admission, transfer: spec.Transfer, token: token}}, true
+	return &SelectedRouteRuleBindingTransaction[K, V, O]{shared: &selectedRouteTxnState[K, V, O]{state: state, cell: cell, output: outputCell, ordinal: ruleOrdinal, rule: slot, write: write, carry: &schemaRuleCarryBinding[K, V, O]{state: state, cell: cell, ordinal: ruleOrdinal, slot: carry, factor: outputCell, apply: carrySpec.Apply}, operand: spec.OperandContent, admission: spec.Admission, transfer: spec.Transfer, projectWrite: projectWrite, token: token}}, true
 }
 
 // beginSelectedRuleBinding starts the non-routed selected-read transaction.
@@ -238,7 +243,7 @@ func beginSelectedRouteRuleBinding[K ~uint32 | ~uint64, V, O any](binding *Schem
 // write is exact.  Keeping the transaction type shared is intentional: the
 // sealed cell, heterogeneous read receipts, and atomic commit path are the
 // same; only the cold write geometry differs.
-func beginSelectedRuleBinding[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot *RuleSlot[V, O], carry SchemaCarrySlot[V], write SchemaWriteSlot[V], output FactorRef[V], spec HotRuleSpec[V, O], carrySpec HotCarrySpec[V, O]) (*SelectedRouteRuleBindingTransaction[K, V, O], bool) {
+func beginSelectedRuleBinding[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot *RuleSlot[V, O], carry SchemaCarrySlot[V], write SchemaWriteSlot[V], output FactorRef[V], spec HotRuleSpec[V, O], carrySpec HotCarrySpec[V, O], projectWrite func(O) (uint64, bool)) (*SelectedRouteRuleBindingTransaction[K, V, O], bool) {
 	state := bindingState(binding)
 	if state == nil {
 		return nil, false
@@ -282,10 +287,10 @@ func beginSelectedRuleBinding[K ~uint32 | ~uint64, V, O any](binding *SchemaBind
 		state.pendingRules = make(map[uint64]*schemaRuleBindingToken)
 	}
 	state.pendingRules[ruleOrdinal] = token
-	return &SelectedRouteRuleBindingTransaction[K, V, O]{shared: &selectedRouteTxnState[K, V, O]{state: state, cell: cell, output: outputCell, ordinal: ruleOrdinal, rule: slot, write: write, carry: &schemaRuleCarryBinding[K, V, O]{state: state, cell: cell, ordinal: ruleOrdinal, slot: carry, factor: outputCell, apply: carrySpec.Apply}, operand: spec.OperandContent, admission: spec.Admission, transfer: spec.Transfer, token: token}}, true
+	return &SelectedRouteRuleBindingTransaction[K, V, O]{shared: &selectedRouteTxnState[K, V, O]{state: state, cell: cell, output: outputCell, ordinal: ruleOrdinal, rule: slot, write: write, carry: &schemaRuleCarryBinding[K, V, O]{state: state, cell: cell, ordinal: ruleOrdinal, slot: carry, factor: outputCell, apply: carrySpec.Apply}, operand: spec.OperandContent, admission: spec.Admission, transfer: spec.Transfer, projectWrite: projectWrite, token: token}}, true
 }
 
-func AddSelectedRouteExactRead[K ~uint32 | ~uint64, V, O any, RV any](tx *SelectedRouteRuleBindingTransaction[K, V, O], slot SchemaReadSlot[RV], factor FactorRef[RV]) (Read[OrderedCells[RV]], bool) {
+func AddSelectedRouteExactRead[K ~uint32 | ~uint64, V, O any, RV any](tx *SelectedRouteRuleBindingTransaction[K, V, O], slot SchemaReadSlot[RV], factor FactorRef[RV], project func(O) (uint64, bool)) (Read[OrderedCells[RV]], bool) {
 	if tx == nil || tx.shared == nil || tx.shared.state == nil {
 		return Read[OrderedCells[RV]]{}, false
 	}
@@ -314,7 +319,10 @@ func AddSelectedRouteExactRead[K ~uint32 | ~uint64, V, O any, RV any](tx *Select
 	if !factorCell.schemaFactorReadComplete(shared.state, origin) {
 		return Read[OrderedCells[RV]]{}, false
 	}
-	shared.reads = append(shared.reads, &schemaOpaqueExactRuleReadBinding[RV]{origin: origin, factor: factorCell, read: read})
+	shared.reads = append(shared.reads, &schemaOpaqueExactRuleReadBinding[RV]{
+		origin: origin, factor: factorCell, read: read,
+		projector: projectExactLocal(project),
+	})
 	return read, true
 }
 
@@ -322,7 +330,7 @@ func AddSelectedRouteExactRead[K ~uint32 | ~uint64, V, O any, RV any](tx *Select
 // the source Factor's coordinate type inside its exact owner cell. The shared
 // Rule transaction retains only a typed value/summary receipt and cannot
 // guess or expose the sibling Factor's K instantiation.
-func AddSelectedRouteSummaryRead[K ~uint32 | ~uint64, V, O, RV, S any](tx *SelectedRouteRuleBindingTransaction[K, V, O], slot SchemaReadSlot[RV], factor FactorRef[RV], form SchemaReadForm[RV]) (Read[S], bool) {
+func AddSelectedRouteSummaryRead[K ~uint32 | ~uint64, V, O, RV, S any](tx *SelectedRouteRuleBindingTransaction[K, V, O], slot SchemaReadSlot[RV], factor FactorRef[RV], form SchemaReadForm[RV], admit any) (Read[S], bool) {
 	if tx == nil || tx.shared == nil || tx.shared.state == nil {
 		return Read[S]{}, false
 	}
@@ -358,7 +366,7 @@ func AddSelectedRouteSummaryRead[K ~uint32 | ~uint64, V, O, RV, S any](tx *Selec
 	if !formOK || !formCell.schemaSummaryRuleReadComplete(shared.state, origin) {
 		return Read[S]{}, false
 	}
-	shared.reads = append(shared.reads, &schemaOpaqueSummaryRuleReadBinding[RV, S]{origin: origin, form: formCell, read: read})
+	shared.reads = append(shared.reads, &schemaOpaqueSummaryRuleReadBinding[RV, S]{origin: origin, form: formCell, read: read, admit: admit})
 	return read, true
 }
 
@@ -452,7 +460,7 @@ func commitSelectedRouteRuleBinding[K ~uint32 | ~uint64, V, O any](tx *SelectedR
 		shared.state.poisonLocked()
 		return false
 	}
-	shared.cell.impl = &ruleHotImplementation[K, V, O]{state: shared.state, rule: shared.rule, write: shared.write, output: shared.output, carry: shared.carry, reads: shared.reads, operandContent: shared.operand, admission: shared.admission, transfer: shared.transfer}
+	shared.cell.impl = &ruleHotImplementation[K, V, O]{state: shared.state, rule: shared.rule, write: shared.write, output: shared.output, carry: shared.carry, reads: shared.reads, operandContent: shared.operand, admission: shared.admission, transfer: shared.transfer, projectWrite: shared.projectWrite}
 	if !shared.cell.schemaRuleComplete() {
 		delete(shared.state.pendingRules, shared.ordinal)
 		shared.aborted = true
@@ -488,7 +496,7 @@ func abortSelectedRouteRuleBinding[K ~uint32 | ~uint64, V, O any](tx *SelectedRo
 // BindRuleWithOpaqueExactRead binds an exact-read Rule while retaining the
 // predecessor Factor behind its owner-issued ref. The output owner chooses K;
 // the predecessor coordinate is deliberately never guessed at this boundary.
-func BindRuleWithOpaqueExactRead[OK ~uint32 | ~uint64, V, O, RV any](binding *SchemaBinding, slot *RuleSlot[V, O], readSlot SchemaReadSlot[RV], readFactor FactorRef[RV], write SchemaWriteSlot[V], output FactorRef[V], spec HotRuleSpec[V, O]) (Read[OrderedCells[RV]], bool) {
+func BindRuleWithOpaqueExactRead[OK ~uint32 | ~uint64, V, O, RV any](binding *SchemaBinding, slot *RuleSlot[V, O], readSlot SchemaReadSlot[RV], readFactor FactorRef[RV], write SchemaWriteSlot[V], output FactorRef[V], spec HotRuleSpec[V, O], projectRead func(O) (uint64, bool), projectWrite func(O) (uint64, bool)) (Read[OrderedCells[RV]], bool) {
 	state := bindingState(binding)
 	if state == nil {
 		return Read[OrderedCells[RV]]{}, false
@@ -532,8 +540,8 @@ func BindRuleWithOpaqueExactRead[OK ~uint32 | ~uint64, V, O, RV any](binding *Sc
 	cell := &schemaRuleBindingCellImpl[OK, V, O]{state: state, schema: state.schema, ordinal: ruleOrdinal}
 	origin := &schemaRuleReadOrigin{state: state, cell: cell, ruleOrdinal: ruleOrdinal, readOrdinal: 0, input: readShape.Input, factor: readFactorOrdinal, kind: composition.ReadExact}
 	read := Read[OrderedCells[RV]]{origin: origin, index: 0, resolve: resolveTypedRead[RV, OrderedCells[RV]]}
-	readBinding := &schemaOpaqueExactRuleReadBinding[RV]{origin: origin, factor: readCell, read: read}
-	cell.impl = &ruleHotImplementation[OK, V, O]{state: state, rule: slot, write: write, output: outputCell, reads: []schemaRuleReadBinding{readBinding}, operandContent: spec.OperandContent, admission: spec.Admission, transfer: spec.Transfer}
+	readBinding := &schemaOpaqueExactRuleReadBinding[RV]{origin: origin, factor: readCell, read: read, projector: projectExactLocal(projectRead)}
+	cell.impl = &ruleHotImplementation[OK, V, O]{state: state, rule: slot, write: write, output: outputCell, reads: []schemaRuleReadBinding{readBinding}, operandContent: spec.OperandContent, admission: spec.Admission, transfer: spec.Transfer, projectWrite: projectWrite}
 	if !cell.schemaRuleComplete() {
 		state.poisonLocked()
 		return Read[OrderedCells[RV]]{}, false
@@ -547,7 +555,7 @@ func BindRuleWithOpaqueExactRead[OK ~uint32 | ~uint64, V, O, RV any](binding *Sc
 // commit authority with the routed/carry transaction, but requires the cold
 // Rule to prove CarryCount=0. There is no optional-carry mode: the two shapes
 // have disjoint constructors and validation laws.
-func beginSelectedExactRuleBinding[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot *RuleSlot[V, O], write SchemaWriteSlot[V], output FactorRef[V], spec HotRuleSpec[V, O]) (*SelectedRouteRuleBindingTransaction[K, V, O], bool) {
+func beginSelectedExactRuleBinding[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot *RuleSlot[V, O], write SchemaWriteSlot[V], output FactorRef[V], spec HotRuleSpec[V, O], projectWrite func(O) (uint64, bool)) (*SelectedRouteRuleBindingTransaction[K, V, O], bool) {
 	state := bindingState(binding)
 	if state == nil {
 		return nil, false
@@ -592,6 +600,6 @@ func beginSelectedExactRuleBinding[K ~uint32 | ~uint64, V, O any](binding *Schem
 	state.pendingRules[ruleOrdinal] = token
 	return &SelectedRouteRuleBindingTransaction[K, V, O]{shared: &selectedRouteTxnState[K, V, O]{
 		state: state, cell: cell, output: outputCell, ordinal: ruleOrdinal, rule: slot, write: write,
-		operand: spec.OperandContent, admission: spec.Admission, transfer: spec.Transfer, token: token,
+		operand: spec.OperandContent, admission: spec.Admission, transfer: spec.Transfer, projectWrite: projectWrite, token: token,
 	}}, true
 }

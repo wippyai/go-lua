@@ -1,6 +1,7 @@
 package heap_test
 
 import (
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -262,16 +263,16 @@ func compactObjectRaw(t testing.TB, schema Schema, key Key, object Object, selec
 func compactBootSpec() *target.Spec {
 	return &target.Spec{
 		Semantics: domaincontract.NewSemantics(),
-		InitialRoots: []target.InitialRootSpec{{
+		InitialRoots: []vocabulary.InitialRootSpec{{
 			Identity: "GlobalEnvRoot",
-			Shape: target.BootShapeSpec{
-				Aggregate: target.BootAggregateTable,
-				Value:     target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"},
+			Shape: vocabulary.BootShapeSpec{
+				Aggregate: vocabulary.BootAggregateTable,
+				Value:     vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "GlobalEnvRoot"},
 			},
 		}},
-		InitialEntries: []target.InitialEntrySpec{
-			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "_G"}, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: target.InitialMutable},
-			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "absent"}, Value: target.InitialValueSpec{Kind: target.InitialValueAbsent}, Mutability: target.InitialMutable},
+		InitialEntries: []vocabulary.InitialEntrySpec{
+			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "_G"}, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: vocabulary.InitialMutable},
+			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "absent"}, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueAbsent}, Mutability: vocabulary.InitialMutable},
 		},
 	}
 }

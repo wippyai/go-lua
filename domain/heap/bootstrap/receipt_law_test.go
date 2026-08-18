@@ -2,6 +2,7 @@ package bootstrap_test
 
 import (
 	"crypto/sha256"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine"
@@ -165,14 +166,14 @@ func bootstrapFixture(t testing.TB) (heapdomain.Schema, bootstrapFixtureMounts) 
 	}
 	contract, err := target.Seal(&target.Spec{
 		Semantics: domaincontract.NewSemantics(),
-		InitialRoots: []target.InitialRootSpec{
-			{Identity: "GlobalEnvRoot", Shape: target.BootShapeSpec{Aggregate: target.BootAggregateTable, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}}},
-			{Identity: "StringMetatableRoot", Shape: target.BootShapeSpec{Aggregate: target.BootAggregateMetatable, Immutable: true, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "StringMetatableRoot"}}},
+		InitialRoots: []vocabulary.InitialRootSpec{
+			{Identity: "GlobalEnvRoot", Shape: vocabulary.BootShapeSpec{Aggregate: vocabulary.BootAggregateTable, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "GlobalEnvRoot"}}},
+			{Identity: "StringMetatableRoot", Shape: vocabulary.BootShapeSpec{Aggregate: vocabulary.BootAggregateMetatable, Immutable: true, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "StringMetatableRoot"}}},
 		},
-		InitialEntries: []target.InitialEntrySpec{
-			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "_G"}, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: target.InitialMutable},
-			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "missing"}, Value: target.InitialValueSpec{Kind: target.InitialValueAbsent}, Mutability: target.InitialMutable},
-			{Root: "StringMetatableRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "__index"}, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "StringMetatableRoot"}, Mutability: target.InitialMutable},
+		InitialEntries: []vocabulary.InitialEntrySpec{
+			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "_G"}, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: vocabulary.InitialMutable},
+			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "missing"}, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueAbsent}, Mutability: vocabulary.InitialMutable},
+			{Root: "StringMetatableRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "__index"}, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "StringMetatableRoot"}, Mutability: vocabulary.InitialMutable},
 		},
 	})
 	if err != nil {

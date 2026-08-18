@@ -6,6 +6,7 @@ package pack
 
 import (
 	"crypto/sha256"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
@@ -373,7 +374,7 @@ func sealInputSelectors(state *schema, contract *target.Contract) bool {
 	if !opaqueOK {
 		return false
 	}
-	add := func(operation target.Operation, source target.InputSource, selector InputSelector) bool {
+	add := func(operation vocabulary.Operation, source vocabulary.InputSource, selector InputSelector) bool {
 		key := inputSelectorKey{operation: operation, source: source}
 		if _, duplicate := state.inputSelectors[key]; duplicate || !selector.valid() || selector.schema != state {
 			return false
@@ -395,7 +396,7 @@ func sealInputSelectors(state *schema, contract *target.Contract) bool {
 			offset, offsetOK := offsetForUint64(state.owner, uint64(formal))
 			table, tableOK := tableIndexForOffset(offset)
 			selector := InputSelector{schema: state, kind: inputSelectionScalar, table: table, start: formal, sealed: true}
-			if !offsetOK || !tableOK || !add(operation, target.InputSource{Kind: target.InputSourceValueFormal, Ordinal: uint32(formal)}, selector) {
+			if !offsetOK || !tableOK || !add(operation, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: uint32(formal)}, selector) {
 				return false
 			}
 		}
@@ -403,15 +404,15 @@ func sealInputSelectors(state *schema, contract *target.Contract) bool {
 		if !tailOK {
 			return false
 		}
-		if tail == target.ValuesVariable {
+		if tail == vocabulary.ValuesVariable {
 			selector := InputSelector{schema: state, kind: inputSelectionTail, start: fixed, sealed: true}
-			if !add(operation, target.InputSource{Kind: target.InputSourceValuesVar, Ordinal: uint32(variable)}, selector) {
+			if !add(operation, vocabulary.InputSource{Kind: vocabulary.InputSourceValuesVar, Ordinal: uint32(variable)}, selector) {
 				return false
 			}
 		}
 		if operation == opaque {
 			selector := InputSelector{schema: state, kind: inputSelectionWhole, start: 0, sealed: true}
-			if !add(operation, target.InputSource{Kind: target.InputSourceAllInputs}, selector) {
+			if !add(operation, vocabulary.InputSource{Kind: vocabulary.InputSourceAllInputs}, selector) {
 				return false
 			}
 		}
@@ -686,7 +687,7 @@ func sealMountedArtifactCalls(schema *Schema, authority *static.Authority, mount
 			return false
 		}
 		out := callRow{root: root, mountedID: row.ID(), occurrenceID: row.ID(), valuesID: row.ValuesID(), typesID: row.TypeArgumentsID(), form: row.Form(), moduleKey: mount.module, formalID: row.FormalID(), typeFormal: typeFormal, port: port}
-		if row.Form() == 2 {
+		if row.Form() == programartifact.CallFormMethod {
 			receiverID, receiverOK := row.ReceiverID()
 			endpoint, endpointOK := state.semanticEndpoints[artifactValuesKey{mount.module, receiverID}]
 			if !receiverOK || !endpointOK {

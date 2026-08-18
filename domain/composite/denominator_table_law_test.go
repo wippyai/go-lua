@@ -32,8 +32,14 @@ func TestDenominatorTableCoversEveryAxis(t *testing.T) {
 	owned := 0
 	for position := 0; position < view.Count(); position++ {
 		row, rowOK := view.At(position)
+		if !rowOK {
+			t.Fatalf("denominator row %d is missing", position)
+		}
+		if _, relation := row.(*denominator.RelationEntry); relation {
+			continue
+		}
 		entry, entryOK := row.(*denominator.Entry)
-		if !rowOK || !entryOK {
+		if !entryOK {
 			t.Fatalf("denominator row %d is not a denominator entry", position)
 		}
 		if prior, duplicate := universes[entry.Universe()]; duplicate {

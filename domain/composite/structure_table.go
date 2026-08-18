@@ -128,7 +128,12 @@ func occurrenceVocabulary() []structure.Spec {
 	declare(structure.CategoryIssuanceInput,
 		"none", "finish", "entry", "predecessor")
 	declare(structure.CategoryIssuanceStage,
-		"base", "local", "call-dispatch", "call-summary", "call-effect")
+		"base", "local")
+	specs = append(specs,
+		structure.Spec{Key: "stage/call-dispatch", Category: structure.CategoryIssuanceStage, Ordinal: 3, Spelling: "call-dispatch", Accepted: true, Native: true},
+		structure.Spec{Key: "stage/call-summary", Category: structure.CategoryIssuanceStage, Ordinal: 4, Spelling: "call-summary", Accepted: true, Native: true, Predecessor: "stage/call-dispatch"},
+		structure.Spec{Key: "stage/call-effect", Category: structure.CategoryIssuanceStage, Ordinal: 5, Spelling: "call-effect", Accepted: true, Native: true, Predecessor: "stage/call-summary"},
+	)
 	return specs
 }
 
@@ -212,6 +217,8 @@ func structureContributions() [][]structure.Spec {
 		constraint.StructureSpecs(),
 		diagnosticVocabulary(),
 		semanticRoleVocabulary(),
+		observationRoleVocabulary(),
+		queryRoleVocabulary(),
 	}
 }
 

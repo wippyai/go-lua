@@ -10,9 +10,8 @@ package heap
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
-	"github.com/wippyai/go-lua/analysis/program/flow"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/domain/materialization"
 	"github.com/wippyai/go-lua/domain/runtimekind"
 )
@@ -75,7 +74,7 @@ type AllocationReceipt struct {
 	programID    identity.ContentID
 	allocationID identity.ContentID
 	kind         AllocationKind
-	form         flow.AllocationForm
+	form         AllocationForm
 	artifact     *programartifact.Artifact
 }
 
@@ -92,16 +91,16 @@ func (receipt AllocationReceipt) Kind() AllocationKind {
 	}
 	return receipt.kind
 }
-func (receipt AllocationReceipt) Form() flow.AllocationForm {
+func (receipt AllocationReceipt) Form() AllocationForm {
 	if !receipt.Available() {
-		return flow.AllocationFormInvalid
+		return AllocationFormInvalid
 	}
 	return receipt.form
 }
 
 // AllocationReceipt issues an opaque owner receipt for an artifact allocation
 // occurrence. The artifact occurrence catalog is the sole Program fact plane.
-func (mount ArtifactMount) AllocationReceipt(id identity.ContentID, kind AllocationKind, form flow.AllocationForm) (AllocationReceipt, bool) {
+func (mount ArtifactMount) AllocationReceipt(id identity.ContentID, kind AllocationKind, form AllocationForm) (AllocationReceipt, bool) {
 	if !mount.Available() || !id.Available() || !kind.Valid() || !form.Valid() {
 		return AllocationReceipt{}, false
 	}
@@ -407,7 +406,7 @@ func (payload Payload) Source() (identity.ContentID, identity.ContentID, int, bo
 // InitialValue returns the sealed Target bootstrap source for a boot payload.
 // Program Values payloads return false; their source remains available through
 // Source. Neither projection is a recurrent runtime value.
-func (payload Payload) InitialValue() (target.InitialValue, bool) {
+func (payload Payload) InitialValue() (vocabulary.InitialValue, bool) {
 	if !payload.valid() {
 		return 0, false
 	}
@@ -555,13 +554,13 @@ func (route MetatableRoute) valid() bool {
 
 // PrimitiveBase returns the Target primitive family of an immutable bootstrap
 // route.
-func (route MetatableRoute) PrimitiveBase() (target.InitialValueKind, bool) {
+func (route MetatableRoute) PrimitiveBase() (vocabulary.InitialValueKind, bool) {
 	if !route.valid() {
-		return target.InitialValueInvalid, false
+		return vocabulary.InitialValueInvalid, false
 	}
 	row := route.owner.metatableRoutes[route.id-1]
-	if row.primitive == target.InitialValueInvalid {
-		return target.InitialValueInvalid, false
+	if row.primitive == vocabulary.InitialValueInvalid {
+		return vocabulary.InitialValueInvalid, false
 	}
 	return row.primitive, true
 }

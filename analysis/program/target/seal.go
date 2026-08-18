@@ -3,6 +3,7 @@ package target
 import (
 	"errors"
 	"fmt"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"sort"
 
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
@@ -22,7 +23,7 @@ func Seal(spec *Spec) (*Contract, error) {
 		return nil, fmt.Errorf("target: %w", err)
 	}
 
-	operationCount, err := checkedStoredTotal("operation table", len(spec.Operations), 1)
+	operationCount, err := vocabulary.CheckedStoredTotal("operation table", len(spec.Operations), 1)
 	if err != nil {
 		return nil, err
 	}
@@ -49,13 +50,13 @@ func Seal(spec *Spec) (*Contract, error) {
 		}
 	}
 
-	sourceOperation := make([]Operation, len(drafts))
+	sourceOperation := make([]vocabulary.Operation, len(drafts))
 	for index := range drafts {
 		handle, handleErr := checkedStoredHandle("operation handle", index)
 		if handleErr != nil {
 			return nil, handleErr
 		}
-		sourceOperation[drafts[index].source] = Operation(handle)
+		sourceOperation[drafts[index].source] = vocabulary.Operation(handle)
 	}
 	for index := range drafts {
 		if err := drafts[index].resolveEffects(drafts, sourceOperation); err != nil {
@@ -107,7 +108,7 @@ func Seal(spec *Spec) (*Contract, error) {
 		if handleErr != nil {
 			return nil, handleErr
 		}
-		op := Operation(handle)
+		op := vocabulary.Operation(handle)
 		if err := contract.appendOperation(op, &drafts[index], exactKeyHandles); err != nil {
 			return nil, err
 		}

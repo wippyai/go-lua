@@ -18,10 +18,13 @@ type QualifiedTypeAlias struct {
 // an assignment. Index identifies its original LHS/RHS pair; unrelated or
 // unmatched pairs in the same assignment remain ordinary runtime syntax.
 // Source is the exact authored RHS path and Alias is the exact declaration or
-// qualified path published by that pair. The value-root identity and member
-// suffix are transient binder inputs, not a second public projection.
+// qualified path published by that pair. Root is the binder-issued identity
+// of Source's value root. It is zero for a one-component source and nonzero
+// for a qualified source; lower must consume it rather than re-inspect the
+// RHS AST.
 type StaticTypePublication struct {
 	Index  uint32
+	Root   Symbol
 	Source []string
 	Alias  QualifiedTypeAlias
 }
@@ -51,6 +54,24 @@ func (r *Result) StaticTypePublications(stmt *ast.AssignStmt) []StaticTypePublic
 	return cloneStaticTypePublications(r.staticTypePublications[stmt])
 }
 
+// Valid reports whether publication contains one complete binder-owned
+// source reference. A qualified source must carry its value-root identity;
+// a bare source must not carry one.
+func (p StaticTypePublication) Valid() bool {
+	if len(p.Source) == 0 || !p.Alias.valid() {
+		return false
+	}
+	for _, part := range p.Source {
+		if part == "" {
+			return false
+		}
+	}
+	if len(p.Source) == 1 {
+		return p.Root == 0
+	}
+	return p.Root != 0
+}
+
 func (a QualifiedTypeAlias) valid() bool {
 	return a.Decl.ID != 0 || len(a.Path) != 0
 }
@@ -68,6 +89,7 @@ func cloneStaticTypePublications(publications []StaticTypePublication) []StaticT
 	for i, publication := range publications {
 		out[i] = StaticTypePublication{
 			Index:  publication.Index,
+			Root:   publication.Root,
 			Source: append([]string(nil), publication.Source...),
 			Alias:  publication.Alias.copy(),
 		}
@@ -98,8 +120,8 @@ func (b *binder) recordStaticTypePublications(stmt *ast.AssignStmt) {
 		if !ok {
 			continue
 		}
-		rootID, bound := b.result.SymbolOf(root)
-		if !bound || rootID == 0 {
+		targetRootID, bound := b.result.SymbolOf(root)
+		if !bound || targetRootID == 0 {
 			continue
 		}
 		alias, sourcePath, ok := b.bindStaticPublicationSource(candidate)
@@ -111,10 +133,11 @@ func (b *binder) recordStaticTypePublications(stmt *ast.AssignStmt) {
 		}
 		publications = append(publications, StaticTypePublication{
 			Index:  uint32(i),
+			Root:   candidate.root,
 			Source: sourcePath,
 			Alias:  alias.copy(),
 		})
-		b.projectQualifiedTypeAlias(rootID, suffix, alias)
+		b.projectQualifiedTypeAlias(targetRootID, suffix, alias)
 	}
 	if len(publications) == 0 {
 		return
@@ -127,6 +150,7 @@ func (b *binder) recordStaticTypePublications(stmt *ast.AssignStmt) {
 
 type staticPublicationSourceCandidate struct {
 	alias  QualifiedTypeAlias
+	root   Symbol
 	source []string
 }
 
@@ -155,8 +179,13 @@ func (b *binder) staticPublicationSourceCandidate(expr ast.Expr) (staticPublicat
 	if !found || !alias.valid() {
 		return staticPublicationSourceCandidate{}, false
 	}
+	rootID, bound := b.result.SymbolOf(root)
+	if !bound || rootID == 0 {
+		return staticPublicationSourceCandidate{}, false
+	}
 	return staticPublicationSourceCandidate{
 		alias:  alias.copy(),
+		root:   rootID,
 		source: []string{root.Value, suffix[0]},
 	}, true
 }

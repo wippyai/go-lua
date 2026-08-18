@@ -117,7 +117,7 @@ func build(files paths, writeHistory bool) (artifact, error) {
 	}
 
 	history, err := os.ReadFile(files.history)
-	if err != nil && !(writeHistory && errors.Is(err, os.ErrNotExist)) {
+	if err != nil && (!writeHistory || !errors.Is(err, os.ErrNotExist)) {
 		return artifact{}, err
 	}
 	var baseline map[historyKey]historyEntry

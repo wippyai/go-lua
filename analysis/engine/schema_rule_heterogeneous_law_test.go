@@ -54,7 +54,7 @@ func TestReceiptCompilerThreadsExactAndSummaryReadThroughProductEvidencePatch(t 
 			return Product(access, func(row Row) bool { return StageValue(access, row, uint64(7)) })
 		},
 	}
-	if !BindRule[uint64, uint64, ruleUnit](binding, source, sourceWrite, factor, sourceHot) {
+	if !BindRule[uint64, uint64, ruleUnit](binding, source, sourceWrite, factor, sourceHot, testRuleProjector[ruleUnit]) {
 		t.Fatal("exact-summary source receipt")
 	}
 	var exactRuntime Read[OrderedCells[uint64]]
@@ -85,7 +85,7 @@ func TestReceiptCompilerThreadsExactAndSummaryReadThroughProductEvidencePatch(t 
 	}
 	var bindExact Read[OrderedCells[uint64]]
 	var bindSummary Read[OrderedCells[uint64]]
-	bindExact, bindSummary, bindOK := BindRuleWithExactAndSummaryReadAndCarry[uint64, uint64, ruleUnit, uint64, uint64, uint64, uint64, OrderedCells[uint64]](binding, reader, readerExact, factor, readerSummary, factor, summaryForm, readerCarry, readerWrite, factor, readerHot, HotCarrySpec[uint64, ruleUnit]{})
+	bindExact, bindSummary, bindOK := BindRuleWithExactAndSummaryReadAndCarry[uint64, uint64, ruleUnit, uint64, uint64, uint64, uint64, OrderedCells[uint64]](binding, reader, readerExact, factor, readerSummary, factor, summaryForm, readerCarry, readerWrite, factor, readerHot, HotCarrySpec[uint64, ruleUnit]{}, func(ruleUnit) (uint64, bool) { return 1, true }, func(ruleUnit) (uint64, bool) { return 2, true })
 	exactRuntime, summaryRuntime = bindExact, bindSummary
 	if !bindOK || !binding.Seal() {
 		t.Fatal("exact-summary reader receipt")
@@ -158,9 +158,9 @@ func TestReceiptCompilerThreadsExactAndSummaryReadThroughProductEvidencePatch(t 
 			}
 		}
 	}
-	compilation, compiled := compileReceiptFactors(binding, graph)
-	sourceRow, sourceRowOK := bindReceiptRuleMember(compilation, sourceImplementation, sourceMember, sourceOperand)
-	readerRow, readerRowOK := bindReceiptRuleMember(compilation, readerImplementation, readerMember, readerOperand)
+	compilation, compiled := beginProgramConstruction(binding, graph)
+	sourceRow, sourceRowOK := attachProgramRuleMember(compilation, sourceImplementation, sourceMember, sourceOperand)
+	readerRow, readerRowOK := attachProgramRuleMember(compilation, readerImplementation, readerMember, readerOperand)
 	sourceSlot, sourceSlotOK := sourceRow.outputSlot()
 	readerSlot, readerSlotOK := readerRow.outputSlot()
 	sourcePlan, sourcePlanOK := compilation.carrier.SealContribution(0, []shape.Slot{sourceSlot}, nil, false)
@@ -184,8 +184,8 @@ func TestReceiptCompilerThreadsExactAndSummaryReadThroughProductEvidencePatch(t 
 	foreign := NewSchemaBinding(schema)
 	foreignFactorOK := BindFactor(foreign, factor, hotUintFactorSpec())
 	foreignSummaryOK := BindIdentitySummaryReadForFactor[uint64, uint64](foreign, factor, summaryForm)
-	foreignSourceOK := BindRule[uint64, uint64, ruleUnit](foreign, source, sourceWrite, factor, sourceHot)
-	_, _, foreignReaderOK := BindRuleWithExactAndSummaryReadAndCarry[uint64, uint64, ruleUnit, uint64, uint64, uint64, uint64, OrderedCells[uint64]](foreign, reader, readerExact, factor, readerSummary, factor, summaryForm, readerCarry, readerWrite, factor, readerHot, HotCarrySpec[uint64, ruleUnit]{})
+	foreignSourceOK := BindRule[uint64, uint64, ruleUnit](foreign, source, sourceWrite, factor, sourceHot, testRuleProjector[ruleUnit])
+	_, _, foreignReaderOK := BindRuleWithExactAndSummaryReadAndCarry[uint64, uint64, ruleUnit, uint64, uint64, uint64, uint64, OrderedCells[uint64]](foreign, reader, readerExact, factor, readerSummary, factor, summaryForm, readerCarry, readerWrite, factor, readerHot, HotCarrySpec[uint64, ruleUnit]{}, func(ruleUnit) (uint64, bool) { return 1, true }, func(ruleUnit) (uint64, bool) { return 2, true })
 	if !foreignFactorOK || !foreignSummaryOK || !foreignSourceOK || !foreignReaderOK || !foreign.Seal() {
 		t.Fatal("foreign exact-summary binding")
 	}
@@ -193,10 +193,10 @@ func TestReceiptCompilerThreadsExactAndSummaryReadThroughProductEvidencePatch(t 
 	if !foreignReaderOK || foreignReader == nil {
 		t.Fatal("foreign exact-summary implementation")
 	}
-	if _, accepted := bindReceiptRuleMember(compilation, foreignReader, readerMember, readerOperand); accepted {
+	if _, accepted := attachProgramRuleMember(compilation, foreignReader, readerMember, readerOperand); accepted {
 		t.Fatal("equal-Schema foreign exact-summary member crossed authority")
 	}
-	if _, duplicate := bindReceiptRuleMember(compilation, readerImplementation, readerMember, readerOperand); duplicate {
+	if _, duplicate := attachProgramRuleMember(compilation, readerImplementation, readerMember, readerOperand); duplicate {
 		t.Fatal("duplicate exact-summary member admitted")
 	}
 }

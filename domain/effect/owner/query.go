@@ -50,9 +50,11 @@ func QueryEntry() query.Spec[*ExactQueryFragment, *ExactQueryImplementation] {
 		// An exact read admits no split at all, so the obligation the fold rests
 		// on is the exact read the family is answered by and the contract it
 		// names is its own query identity.
-		Fold:     query.FoldGeneral,
-		Contract: "semantic/query/effect-exact",
-		Subjects: []schema.Key{"effect"},
+		Fold:       query.FoldGeneral,
+		Contract:   "semantic/query/effect-exact",
+		Subjects:   []schema.Key{"effect"},
+		Population: query.PopulationSelectedPoint,
+		Projection: query.ProjectionExact,
 		Declare: func(context query.Declaration) (*ExactQueryFragment, bool) {
 			cell, cellOK := context.Subjects.At("effect")
 			declared, declaredOK := axis.Payload[*SchemaFragment](cell)

@@ -93,17 +93,17 @@ type runtimeRegionEdgeResolver struct {
 	runtime     bool
 }
 
-func bindRuntimeRegions(graph *equation.Graph, active []bool, runtime *carrier.Composition, producers []runtimeProducer) ([]runtimeRegion, [][]int, bool) {
+func bindRuntimeRegions(graph *equation.Graph, active []bool, runtime *carrier.Composition, producers []runtimeProducer, plans runtimeReindexes) ([]runtimeRegion, [][]int, bool) {
 	if graph == nil {
 		return nil, nil, false
 	}
-	return bindRuntimeRegionsWithEdges(graph, active, runtime, producers, runtimeRegionEdgeResolver{
+	return bindRuntimeRegionsWithEdges(graph, active, runtime, producers, plans, runtimeRegionEdgeResolver{
 		environment: graph.EnvironmentEdgeIndex,
 		factor:      graph.FactorEdgeIndex,
 	})
 }
 
-func bindRuntimeRegionsWithEdges(graph *equation.Graph, active []bool, runtime *carrier.Composition, producers []runtimeProducer, edges runtimeRegionEdgeResolver) ([]runtimeRegion, [][]int, bool) {
+func bindRuntimeRegionsWithEdges(graph *equation.Graph, active []bool, runtime *carrier.Composition, producers []runtimeProducer, plans runtimeReindexes, edges runtimeRegionEdgeResolver) ([]runtimeRegion, [][]int, bool) {
 	if graph == nil || runtime == nil || len(active) != graph.RegionCount() || len(producers) != graph.GroupCount() {
 		return nil, nil, false
 	}
@@ -352,7 +352,11 @@ func bindRuntimeRegionsWithEdges(graph *equation.Graph, active []bool, runtime *
 		if !widenOK || !narrowOK {
 			return nil, nil, false
 		}
-		bound.widen, bound.narrow = widen, narrow
+		discharge, dischargeOK := sealRegionDischarge(graph, region, head, runtime, plans, edges.runtime)
+		if !dischargeOK {
+			return nil, nil, false
+		}
+		bound.widen, bound.narrow, bound.discharge = widen, narrow, discharge
 		regions[regionIndex] = bound
 	}
 	// Parent is immutable graph topology.  The children row is only a compact
@@ -478,6 +482,20 @@ func runtimeContainsTarget(targets []carrier.Target, want carrier.Target) bool {
 		}
 	}
 	return false
+}
+
+// unionRuntimeTargets returns base extended by every element of extra it does
+// not already carry. base is never mutated: the binder folds member-owned
+// immutable slices, so a union has to own its result.
+func unionRuntimeTargets(base, extra []carrier.Target) []carrier.Target {
+	if len(extra) == 0 {
+		return base
+	}
+	result := append([]carrier.Target(nil), base...)
+	for _, target := range extra {
+		result = appendUniqueTarget(result, target)
+	}
+	return result
 }
 
 func compactRuntimeTargets(targets []carrier.Target) []carrier.Target {

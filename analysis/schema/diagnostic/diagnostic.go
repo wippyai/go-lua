@@ -22,11 +22,9 @@
 // analyzer has never published before is one more declared row rather than one
 // more member of a closed type here.
 //
-// Deferred resolutions. Three identities a row is eventually read under are
+// Deferred resolutions. Two identities a row is eventually read under are
 // not yet spellable:
 //
-//   - the collection plan, which awaits the query surface. The branch lane's
-//     subjects arrive through the value-summary query today, unnamed here.
 //   - the denominator, which awaits an observation surface of its own. The
 //     denominator surface is in the catalog and declares closed worlds, but it
 //     sits above this one and a denominator names the entry that owns it, so the
@@ -35,14 +33,19 @@
 //     a diagnostic row's population.
 //   - the evidence projection, which awaits the same surface. It is declared
 //     today as the row's own evidence lines.
+//
+// The collection plan is named on the row as a reference to the query or
+// observation family that supplies its subjects. That family seals above this
+// surface, so Seal checks the reference's shape and a post-seal directory
+// joins it to the issued inventory.
 package diagnostic
 
 import (
 	"strings"
 
-	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 // Content record markers. They separate the presentation collections one row
@@ -66,6 +69,8 @@ const (
 	LawRenderComplete
 	LawSurfacePopulated
 	LawObservationDeclared
+	LawCollectionDeclared
+	LawSiteUnique
 )
 
 // Code is the stable published identity of one diagnostic. It is the only part
@@ -179,6 +184,23 @@ const (
 )
 
 func (lane Lane) Available() bool { return lane > LaneInvalid && lane < laneLimit }
+
+// Site is the discriminator that chooses one code among LaneBranch rows
+// that share an observation population. A polarity pair over one population
+// declares none; a shared type-conformance population declares one site
+// per code.
+type Site uint8
+
+const (
+	SiteNone Site = iota
+	SiteAssignment
+	SiteCallArgument
+	siteLimit
+)
+
+func (site Site) Available() bool { return site > SiteNone && site < siteLimit }
+
+func (site Site) Declared() bool { return site != SiteNone }
 
 // Produces reports whether the lane has an installed producer. Only a lane
 // that consumes an observation population produces findings.
@@ -410,6 +432,14 @@ type Spec struct {
 	// declared observation vocabulary, named by reference. A producing lane
 	// declares exactly one; a declared lane declares none.
 	Observation Reference
+	// Collection is the query or observation family that supplies this row's
+	// subjects. A solver-observed row names one; other lanes name none. The
+	// named family seals above this surface, so Seal checks the reference
+	// shape and a post-seal directory joins the issued inventory.
+	Collection Reference
+	// Site chooses this row among LaneBranch codes that share Observation.
+	// A polarity pair over one population declares none.
+	Site Site
 	// Fact names the declaration whose facts decide this row. A solver-observed
 	// row names one; a static row reads no fact and names none.
 	Fact Reference
@@ -430,6 +460,8 @@ type Entry struct {
 	defaultSeverity Severity
 	lane            Lane
 	observation     Reference
+	collection      Reference
+	site            Site
 	fact            Reference
 	requirements    Requirement
 	message, help   Line
@@ -457,6 +489,15 @@ func New(spec Spec) (*Entry, bool) {
 	if spec.Fact.Declared() != spec.Fact.Available() || (spec.Lane == LaneBranch) != spec.Fact.Declared() {
 		return nil, false
 	}
+	if spec.Collection.Declared() != spec.Collection.Available() || (spec.Lane == LaneBranch) != spec.Collection.Declared() {
+		return nil, false
+	}
+	if spec.Lane == LaneBranch && spec.Collection.Surface != schema.SurfaceKindQuery && spec.Collection.Surface != schema.SurfaceKindObservation {
+		return nil, false
+	}
+	if spec.Site.Declared() != spec.Site.Available() || spec.Site.Declared() && spec.Lane != LaneBranch {
+		return nil, false
+	}
 	message, messageOK := newLine(spec.Message)
 	help, helpOK := newLine(spec.Help)
 	if !messageOK || !helpOK {
@@ -469,6 +510,8 @@ func New(spec Spec) (*Entry, bool) {
 		defaultSeverity: spec.DefaultSeverity,
 		lane:            spec.Lane,
 		observation:     spec.Observation,
+		collection:      spec.Collection,
+		site:            spec.Site,
 		fact:            spec.Fact,
 		requirements:    spec.Requirements,
 		message:         message,
@@ -554,6 +597,13 @@ func (entry *Entry) Collectable() bool { return entry != nil && entry.lane.Produ
 // Observation is the declared population this row is measured over.
 func (entry *Entry) Observation() Reference { return entry.observation }
 
+// Collection is the query or observation family that supplies this row's
+// subjects.
+func (entry *Entry) Collection() Reference { return entry.collection }
+
+// Site chooses this row among LaneBranch codes that share Observation.
+func (entry *Entry) Site() Site { return entry.site }
+
 // Fact is the declaration whose facts decide this row.
 func (entry *Entry) Fact() Reference { return entry.fact }
 
@@ -622,6 +672,12 @@ func (entry *Entry) EntryContent(content *framing.Writer) error {
 		return err
 	}
 	if err := referenceContent(content, entry.observation); err != nil {
+		return err
+	}
+	if err := referenceContent(content, entry.collection); err != nil {
+		return err
+	}
+	if err := content.Uint(uint64(entry.site)); err != nil {
 		return err
 	}
 	if err := referenceContent(content, entry.fact); err != nil {
@@ -744,6 +800,8 @@ func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.
 		return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, schema.EntryID{}, LawSurfacePopulated, schema.DispositionIncomplete)
 	}
 	observations := make(map[schema.Key]schema.EntryID, view.Count())
+	branchSited := make(map[schema.Key]map[Site]schema.EntryID, view.Count())
+	branchUnsited := make(map[schema.Key]schema.EntryID, view.Count())
 	for position := 0; position < view.Count(); position++ {
 		row, rowOK := view.At(position)
 		entry, entryOK := row.(*Entry)
@@ -775,6 +833,12 @@ func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.
 			return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawRequirementCovered, schema.DispositionMalformed)
 		}
 		if failure := sealObservation(entry, sealed); failure.Available() {
+			return failure
+		}
+		if failure := sealCollection(entry); failure.Available() {
+			return failure
+		}
+		if failure := sealBranchSite(entry, branchSited, branchUnsited); failure.Available() {
 			return failure
 		}
 		if entry.lane == LaneStatic {
@@ -840,6 +904,60 @@ func sealObservation(entry *Entry, sealed schema.Sealed) schema.SealFailure {
 	return schema.SealFailure{}
 }
 
+// sealBranchSite states that LaneBranch rows sharing an observation
+// population are either a polarity pair (no site) or a sited family
+// whose (population, site) pairs are unique. Mixing a sited row with an
+// unsited sibling on the same population is malformed.
+func sealBranchSite(entry *Entry, sited map[schema.Key]map[Site]schema.EntryID, unsited map[schema.Key]schema.EntryID) schema.SealFailure {
+	if entry.lane != LaneBranch || !entry.observation.Declared() {
+		if entry.site.Declared() {
+			return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawSiteUnique, schema.DispositionMalformed)
+		}
+		return schema.SealFailure{}
+	}
+	population := entry.observation.Key
+	if entry.site.Declared() {
+		if prior, shared := unsited[population]; shared {
+			return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, prior, LawSiteUnique, schema.DispositionMalformed)
+		}
+		bySite := sited[population]
+		if bySite == nil {
+			bySite = make(map[Site]schema.EntryID)
+			sited[population] = bySite
+		}
+		if prior, duplicate := bySite[entry.site]; duplicate {
+			return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, prior, LawSiteUnique, schema.DispositionDuplicate)
+		}
+		bySite[entry.site] = entry.id
+		return schema.SealFailure{}
+	}
+	if _, shared := sited[population]; shared {
+		return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawSiteUnique, schema.DispositionMalformed)
+	}
+	if _, seen := unsited[population]; !seen {
+		unsited[population] = entry.id
+	}
+	return schema.SealFailure{}
+}
+
+// sealCollection states the collection-plan shape. A solver-observed row names
+// a query or observation family; other lanes name none. The named family
+// seals above this surface, so the join to the issued inventory is the
+// post-seal directory rather than a downward Resolve.
+func sealCollection(entry *Entry) schema.SealFailure {
+	if (entry.lane == LaneBranch) != entry.collection.Declared() {
+		return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawCollectionDeclared, schema.DispositionIncomplete)
+	}
+	if !entry.collection.Declared() {
+		return schema.SealFailure{}
+	}
+	if !entry.collection.Available() ||
+		(entry.collection.Surface != schema.SurfaceKindQuery && entry.collection.Surface != schema.SurfaceKindObservation) {
+		return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawCollectionDeclared, schema.DispositionMalformed)
+	}
+	return schema.SealFailure{}
+}
+
 // sealFact resolves one row's fact reference against the table it is sealed
 // into. A reference to a surface below this one must name an entry that is
 // actually there; a reference upward names a table that is not sealed yet, and
@@ -857,10 +975,16 @@ func sealFact(entry *Entry, sealed schema.Sealed) schema.SealFailure {
 // Table is the derived read model of the sealed diagnostic surface. Every
 // lookup a consumer performs is a projection of the same sealed rows, so a row
 // added to the surface appears in all of them at once.
+type branchObservationKey struct {
+	population schema.Key
+	site       Site
+}
+
 type Table struct {
 	entries       []*Entry
 	byCode        map[Code]*Entry
 	byObservation map[schema.Key]*Entry
+	byBranch      map[branchObservationKey]*Entry
 }
 
 // NewTable projects one sealed diagnostic view. It is the only construction of
@@ -873,6 +997,7 @@ func NewTable(view schema.View) (Table, bool) {
 		entries:       make([]*Entry, 0, view.Count()),
 		byCode:        make(map[Code]*Entry, view.Count()),
 		byObservation: make(map[schema.Key]*Entry, view.Count()),
+		byBranch:      make(map[branchObservationKey]*Entry, view.Count()),
 	}
 	for position := 0; position < view.Count(); position++ {
 		row, rowOK := view.At(position)
@@ -884,6 +1009,9 @@ func NewTable(view schema.View) (Table, bool) {
 		table.byCode[entry.code] = entry
 		if entry.lane == LaneStatic {
 			table.byObservation[entry.observation.Key] = entry
+		}
+		if entry.lane == LaneBranch && entry.site.Available() {
+			table.byBranch[branchObservationKey{population: entry.observation.Key, site: entry.site}] = entry
 		}
 	}
 	return table, table.Available()
@@ -914,5 +1042,15 @@ func (table Table) ForCode(code Code) (*Entry, bool) {
 // vocabulary and names it here.
 func (table Table) ForStaticObservation(population schema.Key) (*Entry, bool) {
 	entry, known := table.byObservation[population]
+	return entry, known
+}
+
+// ForBranchObservation resolves the LaneBranch row one sited observation
+// instance feeds. Polarity pairs omit Site and are not in this index.
+func (table Table) ForBranchObservation(population schema.Key, site Site) (*Entry, bool) {
+	if !population.Available() || !site.Available() {
+		return nil, false
+	}
+	entry, known := table.byBranch[branchObservationKey{population: population, site: site}]
 	return entry, known
 }

@@ -51,6 +51,30 @@ func zeroWriteRuleSchema(t testing.TB, inputs uint64) (*Schema, *FactorSlot[uint
 	return schema, factor, rule, write
 }
 
+func TestSchemaBindingStoresPerSlotWriteProjector(t *testing.T) {
+	schema, factor, rule, write := zeroWriteRuleSchema(t, 0)
+	binding := NewSchemaBinding(schema)
+	if !BindFactor(binding, factor, hotUintFactorSpec()) {
+		t.Fatal("factor bind")
+	}
+	spec := HotRuleSpec[uint64, struct{}]{
+		OperandContent: func(value struct{}) (struct{}, [32]byte, bool) { return value, [32]byte{2}, true },
+		Admission:      AdmitRuleByTrustedTheorem[uint64, struct{}](coldKey(947_004)),
+		Transfer:       func(Access[uint64, struct{}]) bool { return true },
+	}
+	if !BindRule[uint64, uint64, struct{}](binding, rule, write, factor, spec, func(struct{}) (uint64, bool) { return 7, true }) || !binding.Seal() {
+		t.Fatal("rule bind")
+	}
+	implementation, ok := RuleImplementationAt[uint64, uint64, struct{}](binding, rule)
+	if !ok || implementation == nil || implementation.receipt.cell == nil || implementation.receipt.cell.impl == nil {
+		t.Fatal("implementation")
+	}
+	local, projected := implementation.receipt.cell.impl.projectWrite(struct{}{})
+	if !projected || local != 7 {
+		t.Fatalf("write projector: local=%d ok=%v", local, projected)
+	}
+}
+
 func TestSchemaBindingReceiptRuleZeroInputExactWrite(t *testing.T) {
 	schema, factor, rule, write := zeroWriteRuleSchema(t, 0)
 	binding := NewSchemaBinding(schema)
@@ -62,7 +86,7 @@ func TestSchemaBindingReceiptRuleZeroInputExactWrite(t *testing.T) {
 		Admission:      AdmitRuleByTrustedTheorem[uint64, struct{}](coldKey(947_004)),
 		Transfer:       func(Access[uint64, struct{}]) bool { return true },
 	}
-	if !BindRule[uint64, uint64, struct{}](binding, rule, write, factor, spec) || !binding.Seal() {
+	if !BindRule[uint64, uint64, struct{}](binding, rule, write, factor, spec, testRuleProjector[struct{}]) || !binding.Seal() {
 		t.Fatal("receipt rule bind")
 	}
 	implementation, ok := RuleImplementationAt[uint64, uint64, struct{}](binding, rule)
@@ -87,7 +111,7 @@ func TestSchemaBindingRuleCapabilityKeepsOneAuthorityAcrossSeal(t *testing.T) {
 		Admission:      AdmitRuleByTrustedTheorem[uint64, struct{}](coldKey(947_004)),
 		Transfer:       func(Access[uint64, struct{}]) bool { return true },
 	}
-	if !BindRule[uint64, uint64, struct{}](binding, rule, write, factor, spec) {
+	if !BindRule[uint64, uint64, struct{}](binding, rule, write, factor, spec, testRuleProjector[struct{}]) {
 		t.Fatal("rule bind")
 	}
 	capability, issued := IssueMountedRuleCapability(binding, rule)
@@ -145,8 +169,8 @@ func TestSchemaBindingCheckerActivationDerivationCarriesExactProofLaw(t *testing
 	carrierBinding, carrierImplementation := sealedSchemaRuleImplementation(t, carrierSchema, factor, rule, write)
 	operand := struct{}{}
 	graph, member := receiptRuleGraph(t, carrierSchema, carrierImplementation.receipt.proof, [32]byte{3})
-	compilation, compilationOK := compileReceiptFactors(carrierBinding, graph)
-	boundRow, boundOK := bindReceiptRuleMember(compilation, carrierImplementation, member, operand)
+	compilation, compilationOK := beginProgramConstruction(carrierBinding, graph)
+	boundRow, boundOK := attachProgramRuleMember(compilation, carrierImplementation, member, operand)
 	if !compilationOK || compilation == nil || !boundOK || boundRow == nil {
 		t.Fatal("checker activation live Work binding")
 	}
@@ -202,7 +226,7 @@ func TestSchemaBindingReceiptRuleRejectsUnsupportedShape(t *testing.T) {
 		Admission:      AdmitRuleByTrustedTheorem[uint64, struct{}](coldKey(947_004)),
 		Transfer:       func(Access[uint64, struct{}]) bool { return true },
 	}
-	if BindRule[uint64, uint64, struct{}](binding, rule, write, factor, spec) || !binding.Poisoned() {
+	if BindRule[uint64, uint64, struct{}](binding, rule, write, factor, spec, testRuleProjector[struct{}]) || !binding.Poisoned() {
 		t.Fatal("unsupported input shape admitted")
 	}
 }
@@ -218,7 +242,7 @@ func TestSchemaBindingReceiptRuleRejectsMismatchedColdAdmission(t *testing.T) {
 		Admission:      AdmitRuleByTrustedTheorem[uint64, struct{}](coldKey(947_099)),
 		Transfer:       func(Access[uint64, struct{}]) bool { return true },
 	}
-	if BindRule[uint64, uint64, struct{}](binding, rule, write, factor, spec) || !binding.Poisoned() {
+	if BindRule[uint64, uint64, struct{}](binding, rule, write, factor, spec, testRuleProjector[struct{}]) || !binding.Poisoned() {
 		t.Fatal("hot admission different from cold Schema was admitted")
 	}
 }
@@ -231,7 +255,7 @@ func sealedSchemaRuleImplementation(t testing.TB, schema *Schema, factor *Factor
 		Admission:      AdmitRuleByTrustedTheorem[uint64, struct{}](coldKey(947_004)),
 		Transfer:       func(Access[uint64, struct{}]) bool { return true },
 	}
-	if !BindFactor(binding, factor, hotUintFactorSpec()) || !BindRule[uint64, uint64, struct{}](binding, rule, write, factor, spec) || !binding.Seal() {
+	if !BindFactor(binding, factor, hotUintFactorSpec()) || !BindRule[uint64, uint64, struct{}](binding, rule, write, factor, spec, testRuleProjector[struct{}]) || !binding.Seal() {
 		t.Fatal("sealed receipt Rule")
 	}
 	implementation, ok := RuleImplementationAt[uint64, uint64, struct{}](binding, rule)
@@ -345,7 +369,7 @@ func TestReceiptCompilerExecutesRuleThroughOneProofAndRejectsForeignBinding(t *t
 		},
 	}
 	binding := NewSchemaBinding(schema)
-	if !BindFactor(binding, factor, hotUintFactorSpec()) || !BindRule[uint64, uint64, ruleUnit](binding, rule, write, factor, hot) || !binding.Seal() {
+	if !BindFactor(binding, factor, hotUintFactorSpec()) || !BindRule[uint64, uint64, ruleUnit](binding, rule, write, factor, hot, testRuleProjector[ruleUnit]) || !binding.Seal() {
 		t.Fatal("receipt compiler Rule binding")
 	}
 	implementation, implementationOK := RuleImplementationAt[uint64, uint64, ruleUnit](binding, rule)
@@ -353,8 +377,8 @@ func TestReceiptCompilerExecutesRuleThroughOneProofAndRejectsForeignBinding(t *t
 		t.Fatal("receipt compiler Rule implementation")
 	}
 	graph, member := receiptRuleGraph(t, schema, implementation.receipt.proof, operand.content)
-	compilation, compiled := compileReceiptFactors(binding, graph)
-	row, rowOK := bindReceiptRuleMember(compilation, implementation, member, operand)
+	compilation, compiled := beginProgramConstruction(binding, graph)
+	row, rowOK := attachProgramRuleMember(compilation, implementation, member, operand)
 	if !compiled || compilation == nil || !rowOK || row == nil || len(compilation.members) != 1 {
 		t.Fatal("receipt compiler Rule member")
 	}
@@ -394,17 +418,17 @@ func TestReceiptCompilerExecutesRuleThroughOneProofAndRejectsForeignBinding(t *t
 	}
 
 	foreign := NewSchemaBinding(schema)
-	if !BindFactor(foreign, factor, hotUintFactorSpec()) || !BindRule[uint64, uint64, ruleUnit](foreign, rule, write, factor, hot) || !foreign.Seal() {
+	if !BindFactor(foreign, factor, hotUintFactorSpec()) || !BindRule[uint64, uint64, ruleUnit](foreign, rule, write, factor, hot, testRuleProjector[ruleUnit]) || !foreign.Seal() {
 		t.Fatal("foreign receipt Rule binding")
 	}
 	foreignImplementation, foreignOK := RuleImplementationAt[uint64, uint64, ruleUnit](foreign, rule)
 	if !foreignOK || foreignImplementation == nil {
 		t.Fatal("foreign receipt Rule implementation")
 	}
-	if _, accepted := bindReceiptRuleMember(compilation, foreignImplementation, member, operand); accepted {
+	if _, accepted := attachProgramRuleMember(compilation, foreignImplementation, member, operand); accepted {
 		t.Fatal("equal-Schema foreign Rule implementation entered receipt compiler")
 	}
-	if _, duplicate := bindReceiptRuleMember(compilation, implementation, member, operand); duplicate {
+	if _, duplicate := attachProgramRuleMember(compilation, implementation, member, operand); duplicate {
 		t.Fatal("receipt compiler admitted a legacy-style duplicate member path")
 	}
 }
@@ -445,7 +469,7 @@ func TestReceiptCompilerThreadsExactReadAndCarryThroughProductEvidenceAndPatch(t
 			return Product(access, func(row Row) bool { return StageValue(access, row, uint64(7)) })
 		},
 	}
-	if !BindRule[uint64, uint64, ruleUnit](binding, source, sourceWrite, factor, sourceHot) {
+	if !BindRule[uint64, uint64, ruleUnit](binding, source, sourceWrite, factor, sourceHot, func(ruleUnit) (uint64, bool) { return 1, true }) {
 		t.Fatal("exact-read source bind")
 	}
 	var runtimeRead Read[OrderedCells[uint64]]
@@ -473,7 +497,7 @@ func TestReceiptCompilerThreadsExactReadAndCarryThroughProductEvidenceAndPatch(t
 		},
 	}
 	var readBound bool
-	runtimeRead, readBound = BindRuleWithExactReadAndCarry[uint64, uint64, ruleUnit, uint64, uint64](binding, reader, readerRead, factor, readerCarry, readerWrite, factor, readerHot, HotCarrySpec[uint64, ruleUnit]{})
+	runtimeRead, readBound = BindRuleWithExactReadAndCarry[uint64, uint64, ruleUnit, uint64, uint64](binding, reader, readerRead, factor, readerCarry, readerWrite, factor, readerHot, HotCarrySpec[uint64, ruleUnit]{}, func(ruleUnit) (uint64, bool) { return 1, true }, func(ruleUnit) (uint64, bool) { return 2, true })
 	if !readBound || !binding.Seal() {
 		t.Fatal("exact-read/carry receipt Rule")
 	}
@@ -541,9 +565,9 @@ func TestReceiptCompilerThreadsExactReadAndCarryThroughProductEvidenceAndPatch(t
 			}
 		}
 	}
-	compilation, compiled := compileReceiptFactors(binding, graph)
-	sourceRow, sourceRowOK := bindReceiptRuleMember(compilation, sourceImplementation, sourceMember, sourceOperand)
-	readerRow, readerRowOK := bindReceiptRuleMember(compilation, readerImplementation, readerMember, readerOperand)
+	compilation, compiled := beginProgramConstruction(binding, graph)
+	sourceRow, sourceRowOK := attachProgramRuleMember(compilation, sourceImplementation, sourceMember, sourceOperand)
+	readerRow, readerRowOK := attachProgramRuleMember(compilation, readerImplementation, readerMember, readerOperand)
 	if !compiled || !sourceRowOK || !readerRowOK {
 		t.Fatal("exact-read compiled members")
 	}
@@ -563,13 +587,13 @@ func TestReceiptCompilerThreadsExactReadAndCarryThroughProductEvidenceAndPatch(t
 	if !workOK || !wholeOK || !sourceSlotOK || !sourcePlanOK || !sourceBaseOK || !sourceResult.valid || !sourceResult.wrote || !sourceFinished || !sourceContribution.Valid() || !sourcePointOK || !sourcePoint.Valid() || !readerSlotOK || !readerPlanOK || !readerBaseOK || !readerResult.valid || !readerResult.wrote || !readerFinished || !readerContribution.Valid() || readerImplementation.receipt.proof.carries != 1 || transfers != 1 || checks != 1 {
 		t.Fatalf("exact-read/carry Product/evidence/patch work=%t whole=%t source-slot=%t source-plan=%t source-base=%t source-valid=%t source-wrote=%t source-finished=%t source-contribution=%t source-point=%t/%t reader-slot=%t reader-plan=%t reader-base=%t reader-valid=%t reader-wrote=%t reader-finished=%t reader-contribution=%t carries=%d transfers=%d checks=%d boundary=%v", workOK, wholeOK, sourceSlotOK, sourcePlanOK, sourceBaseOK, sourceResult.valid, sourceResult.wrote, sourceFinished, sourceContribution.Valid(), sourcePointOK, sourcePoint.Valid(), readerSlotOK, readerPlanOK, readerBaseOK, readerResult.valid, readerResult.wrote, readerFinished, readerContribution.Valid(), readerImplementation.receipt.proof.carries, transfers, checks, readerResult.boundary)
 	}
-	if _, duplicate := bindReceiptRuleMember(compilation, readerImplementation, readerMember, readerOperand); duplicate {
+	if _, duplicate := attachProgramRuleMember(compilation, readerImplementation, readerMember, readerOperand); duplicate {
 		t.Fatal("receipt compiler admitted a duplicate exact-read/carry member")
 	}
 	foreign := NewSchemaBinding(schema)
 	foreignFactorOK := BindFactor(foreign, factor, hotUintFactorSpec())
-	foreignSourceOK := BindRule[uint64, uint64, ruleUnit](foreign, source, sourceWrite, factor, sourceHot)
-	_, foreignReadOK := BindRuleWithExactReadAndCarry[uint64, uint64, ruleUnit, uint64, uint64](foreign, reader, readerRead, factor, readerCarry, readerWrite, factor, readerHot, HotCarrySpec[uint64, ruleUnit]{})
+	foreignSourceOK := BindRule[uint64, uint64, ruleUnit](foreign, source, sourceWrite, factor, sourceHot, func(ruleUnit) (uint64, bool) { return 1, true })
+	_, foreignReadOK := BindRuleWithExactReadAndCarry[uint64, uint64, ruleUnit, uint64, uint64](foreign, reader, readerRead, factor, readerCarry, readerWrite, factor, readerHot, HotCarrySpec[uint64, ruleUnit]{}, func(ruleUnit) (uint64, bool) { return 1, true }, func(ruleUnit) (uint64, bool) { return 2, true })
 	if !foreignFactorOK || !foreignSourceOK || !foreignReadOK || !foreign.Seal() {
 		t.Fatal("foreign exact-read/carry binding")
 	}
@@ -577,7 +601,7 @@ func TestReceiptCompilerThreadsExactReadAndCarryThroughProductEvidenceAndPatch(t
 	if !foreignReaderOK || foreignReader == nil {
 		t.Fatal("foreign exact-read/carry implementation")
 	}
-	if _, accepted := bindReceiptRuleMember(compilation, foreignReader, readerMember, readerOperand); accepted {
+	if _, accepted := attachProgramRuleMember(compilation, foreignReader, readerMember, readerOperand); accepted {
 		t.Fatal("equal-Schema foreign exact-read/carry entered receipt compiler")
 	}
 }
@@ -617,8 +641,12 @@ func runSummaryReadThroughProductAndEvidence(t testing.TB, summaryWidth int) {
 		return equalOrderedCellRecords(left.record, right.record, func(uint64, uint64) bool { return true })
 	}
 	fingerprint := func(value OrderedCells[uint64]) uint64 { return uint64(len(value.record.cells)) }
+	// The Factor's dense key universe must contain both coordinate spaces the
+	// topology below declares: the summary read's raw keys [0, summaryWidth)
+	// and the two one-based exact-write Locals 1 and 2.
+	const declaredExactLocals = 2
 	wideSpec := hotUintFactorSpec()
-	wideSpec.KeyEnd = uint64(summaryWidth)
+	wideSpec.KeyEnd = uint64(max(summaryWidth, declaredExactLocals))
 	if !BindFactor(binding, factor, wideSpec) || !BindSummaryReadForFactor[uint64, uint64, OrderedCells[uint64]](binding, factor, summaryForm, identity, equal, fingerprint) {
 		t.Fatal("summary Factor receipt")
 	}
@@ -631,7 +659,7 @@ func runSummaryReadThroughProductAndEvidence(t testing.TB, summaryWidth int) {
 			return Product(access, func(row Row) bool { return StageValue(access, row, uint64(7)) })
 		},
 	}
-	if !BindRule[uint64, uint64, ruleUnit](binding, source, sourceWrite, factor, sourceHot) {
+	if !BindRule[uint64, uint64, ruleUnit](binding, source, sourceWrite, factor, sourceHot, func(ruleUnit) (uint64, bool) { return 1, true }) {
 		t.Fatal("summary source receipt")
 	}
 	var runtimeRead Read[OrderedCells[uint64]]
@@ -669,7 +697,7 @@ func runSummaryReadThroughProductAndEvidence(t testing.TB, summaryWidth int) {
 	// The first binding is intentionally created with an unavailable foreign
 	// refs receipt. The runtime must reject it before publication; a second
 	// hostile check below uses the exact closed refs from this Binding.
-	runtimeRead, readBound = BindRuleWithSummaryRead[uint64, uint64, ruleUnit, uint64, uint64, OrderedCells[uint64]](binding, reader, readerRead, factor, summaryForm, readerWrite, factor, readerHot)
+	runtimeRead, readBound = BindRuleWithSummaryRead[uint64, uint64, ruleUnit, uint64, uint64, OrderedCells[uint64]](binding, reader, readerRead, factor, summaryForm, readerWrite, factor, readerHot, func(ruleUnit) (uint64, bool) { return 2, true })
 	if !readBound || !binding.Seal() {
 		t.Fatal("summary reader receipt")
 	}
@@ -743,9 +771,9 @@ func runSummaryReadThroughProductAndEvidence(t testing.TB, summaryWidth int) {
 			}
 		}
 	}
-	compilation, compiled := compileReceiptFactors(binding, graph)
-	sourceRow, sourceRowOK := bindReceiptRuleMember(compilation, sourceImplementation, sourceMember, sourceOperand)
-	readerRow, readerRowOK := bindReceiptRuleMember(compilation, readerImplementation, readerMember, readerOperand)
+	compilation, compiled := beginProgramConstruction(binding, graph)
+	sourceRow, sourceRowOK := attachProgramRuleMember(compilation, sourceImplementation, sourceMember, sourceOperand)
+	readerRow, readerRowOK := attachProgramRuleMember(compilation, readerImplementation, readerMember, readerOperand)
 	if !compiled || !sourceRowOK || !readerRowOK {
 		t.Fatal("summary receipt Rule members")
 	}
@@ -812,7 +840,7 @@ func TestReceiptCompilerThreadsOneExactCarryThroughProductAndEvidence(t *testing
 			return Product(access, func(row Row) bool { return StageValue(access, row, uint64(9)) })
 		},
 	}
-	if !BindFactor(binding, factor, hotUintFactorSpec()) || !BindRule[uint64, uint64, ruleUnit](binding, source, sourceWrite, factor, sourceHot) || !BindRuleWithCarry[uint64, uint64, ruleUnit](binding, carryRule, carrySlot, carryWrite, factor, carryHot, HotCarrySpec[uint64, ruleUnit]{}) || !binding.Seal() {
+	if !BindFactor(binding, factor, hotUintFactorSpec()) || !BindRule[uint64, uint64, ruleUnit](binding, source, sourceWrite, factor, sourceHot, func(ruleUnit) (uint64, bool) { return 1, true }) || !BindRuleWithCarry[uint64, uint64, ruleUnit](binding, carryRule, carrySlot, carryWrite, factor, carryHot, HotCarrySpec[uint64, ruleUnit]{}, func(ruleUnit) (uint64, bool) { return 2, true }) || !binding.Seal() {
 		t.Fatal("carry receipt binding")
 	}
 	sourceImplementation, sourceImplementationOK := RuleImplementationAt[uint64, uint64, ruleUnit](binding, source)
@@ -870,9 +898,9 @@ func TestReceiptCompilerThreadsOneExactCarryThroughProductAndEvidence(t *testing
 			}
 		}
 	}
-	compilation, compiled := compileReceiptFactors(binding, graph)
-	sourceRow, sourceRowOK := bindReceiptRuleMember(compilation, sourceImplementation, sourceMember, sourceOperand)
-	carryRow, carryRowOK := bindReceiptRuleMember(compilation, carryImplementation, carryMember, carryOperand)
+	compilation, compiled := beginProgramConstruction(binding, graph)
+	sourceRow, sourceRowOK := attachProgramRuleMember(compilation, sourceImplementation, sourceMember, sourceOperand)
+	carryRow, carryRowOK := attachProgramRuleMember(compilation, carryImplementation, carryMember, carryOperand)
 	sourceSlot, sourceSlotOK := sourceRow.outputSlot()
 	carrySlotShape, carrySlotShapeOK := carryRow.outputSlot()
 	sourcePlan, sourcePlanOK := compilation.carrier.SealContribution(0, []shape.Slot{sourceSlot}, nil, false)
@@ -891,14 +919,14 @@ func TestReceiptCompilerThreadsOneExactCarryThroughProductAndEvidence(t *testing
 	}
 
 	foreign := NewSchemaBinding(schema)
-	if !BindFactor(foreign, factor, hotUintFactorSpec()) || !BindRule[uint64, uint64, ruleUnit](foreign, source, sourceWrite, factor, sourceHot) || !BindRuleWithCarry[uint64, uint64, ruleUnit](foreign, carryRule, carrySlot, carryWrite, factor, carryHot, HotCarrySpec[uint64, ruleUnit]{}) || !foreign.Seal() {
+	if !BindFactor(foreign, factor, hotUintFactorSpec()) || !BindRule[uint64, uint64, ruleUnit](foreign, source, sourceWrite, factor, sourceHot, func(ruleUnit) (uint64, bool) { return 1, true }) || !BindRuleWithCarry[uint64, uint64, ruleUnit](foreign, carryRule, carrySlot, carryWrite, factor, carryHot, HotCarrySpec[uint64, ruleUnit]{}, func(ruleUnit) (uint64, bool) { return 2, true }) || !foreign.Seal() {
 		t.Fatal("foreign carry binding")
 	}
 	foreignCarry, foreignCarryOK := RuleImplementationAt[uint64, uint64, ruleUnit](foreign, carryRule)
 	if !foreignCarryOK || foreignCarry == nil {
 		t.Fatal("foreign carry implementation")
 	}
-	if _, accepted := bindReceiptRuleMember(compilation, foreignCarry, carryMember, carryOperand); accepted {
+	if _, accepted := attachProgramRuleMember(compilation, foreignCarry, carryMember, carryOperand); accepted {
 		t.Fatal("equal-Schema foreign carry entered receipt compiler")
 	}
 }
@@ -940,7 +968,7 @@ func TestReceiptCompilerThreadsSelectedReadRouteThroughProductAndEvidence(t *tes
 			return Product(access, func(row Row) bool { return StageValue(access, row, uint64(1)) })
 		},
 	}
-	if !BindFactor(binding, factor, hotUintFactorSpec()) || !BindRule[uint64, uint64, ruleUnit](binding, source, sourceWrite, factor, sourceHot) {
+	if !BindFactor(binding, factor, hotUintFactorSpec()) || !BindRule[uint64, uint64, ruleUnit](binding, source, sourceWrite, factor, sourceHot, func(ruleUnit) (uint64, bool) { return 1, true }) {
 		t.Fatal("selected-route source bind")
 	}
 	var routeRef Ref[uint64]
@@ -972,7 +1000,7 @@ func TestReceiptCompilerThreadsSelectedReadRouteThroughProductAndEvidence(t *tes
 	routeRead, routeBound = BindRuleWithSelectedReadAndRouteWrite[uint64, uint64, ruleUnit, uint64, uint64, uint64](binding, route, []SchemaReadSlot[OrderedCells[uint64]]{predecessor}, []*FactorSlot[uint64]{factor}, selected, factor, routeWrite, factor, func(context SelectorContext, predecessorRead Read[OrderedCells[uint64]]) bool {
 		cells, readable := SelectorRead(context, predecessorRead)
 		return readable && cells.Count() == 1 && SelectRoute(context, routeRef, uint64(1))
-	}, routeHot(&routeRef))
+	}, routeHot(&routeRef), nil)
 	if !routeBound || !binding.Seal() {
 		t.Fatal("selected-route binding")
 	}
@@ -1045,9 +1073,9 @@ func TestReceiptCompilerThreadsSelectedReadRouteThroughProductAndEvidence(t *tes
 			}
 		}
 	}
-	compilation, compiled := compileReceiptFactors(binding, graph)
-	sourceRow, sourceRowOK := bindReceiptRuleMember(compilation, sourceImplementation, sourceMember, sourceOperand)
-	routeRow, routeRowOK := bindReceiptRuleMember(compilation, routeImplementation, routeMember, routeOperand)
+	compilation, compiled := beginProgramConstruction(binding, graph)
+	sourceRow, sourceRowOK := attachProgramRuleMember(compilation, sourceImplementation, sourceMember, sourceOperand)
+	routeRow, routeRowOK := attachProgramRuleMember(compilation, routeImplementation, routeMember, routeOperand)
 	if !compiled || compilation == nil || !sourceRowOK || sourceRow == nil || !routeRowOK || routeRow == nil {
 		t.Fatalf("selected-route receipt member compile=%t source=%t/%t route=%t/%t", compiled, sourceRowOK, sourceRow != nil, routeRowOK, routeRow != nil)
 	}
@@ -1074,10 +1102,10 @@ func TestReceiptCompilerThreadsSelectedReadRouteThroughProductAndEvidence(t *tes
 		cells, readable := SelectorRead(context, predecessorRead)
 		return readable && cells.Count() == 1 && SelectRoute(context, foreignRef, uint64(1))
 	}
-	if !BindFactor(foreign, factor, hotUintFactorSpec()) || !BindRule[uint64, uint64, ruleUnit](foreign, source, sourceWrite, factor, sourceHot) {
+	if !BindFactor(foreign, factor, hotUintFactorSpec()) || !BindRule[uint64, uint64, ruleUnit](foreign, source, sourceWrite, factor, sourceHot, func(ruleUnit) (uint64, bool) { return 1, true }) {
 		t.Fatal("foreign selected-route source")
 	}
-	if _, bound := BindRuleWithSelectedReadAndRouteWrite[uint64, uint64, ruleUnit, uint64, uint64, uint64](foreign, route, []SchemaReadSlot[OrderedCells[uint64]]{predecessor}, []*FactorSlot[uint64]{factor}, selected, factor, routeWrite, factor, foreignRouteRead, routeHot(&foreignRef)); !bound || !foreign.Seal() {
+	if _, bound := BindRuleWithSelectedReadAndRouteWrite[uint64, uint64, ruleUnit, uint64, uint64, uint64](foreign, route, []SchemaReadSlot[OrderedCells[uint64]]{predecessor}, []*FactorSlot[uint64]{factor}, selected, factor, routeWrite, factor, foreignRouteRead, routeHot(&foreignRef), nil); !bound || !foreign.Seal() {
 		t.Fatal("foreign selected-route bind")
 	}
 	foreignFactor, foreignFactorOK := FactorImplementationAt[uint64, uint64](foreign, factor)
@@ -1086,7 +1114,7 @@ func TestReceiptCompilerThreadsSelectedReadRouteThroughProductAndEvidence(t *tes
 	if !foreignFactorOK || !foreignImplementationOK {
 		t.Fatal("foreign selected-route implementation")
 	}
-	if _, accepted := bindReceiptRuleMember(compilation, foreignImplementation, routeMember, routeOperand); accepted {
+	if _, accepted := attachProgramRuleMember(compilation, foreignImplementation, routeMember, routeOperand); accepted {
 		t.Fatal("foreign selected-route entered receipt compiler")
 	}
 }

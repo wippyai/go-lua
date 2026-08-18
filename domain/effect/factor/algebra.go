@@ -7,6 +7,7 @@ package factor
 
 import (
 	"crypto/sha256"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"math"
 	"sort"
 
@@ -73,7 +74,7 @@ type Algebra struct {
 	capacity             uint64
 	unknownID            identity.ContentID
 	content              identity.ContentID
-	applicationOps       map[identity.ContentID]map[target.Operation]int
+	applicationOps       map[identity.ContentID]map[vocabulary.Operation]int
 	applicationCount     uint64
 	callRows             map[identity.ContentID]callRow
 	mountedCalls         []mountedCallRow
@@ -142,24 +143,6 @@ type mountedCallRef struct {
 	contextID identity.ContentID
 }
 
-// New seals the Factor's small owner-local vocabulary.  It stores no Target
-// effect table and no Application×Operation matrix; such coordinates remain
-// validated projections at atom issue time.
-func New(source *link.Link, packs *pack.Schema, contract *target.Contract) (*Algebra, bool) {
-	if source == nil || packs == nil || contract == nil || source.Boundary() == nil || source.Project() == nil {
-		return nil, false
-	}
-	owner := source.OwnerCapability()
-	if !owner.Available() || !packs.LinkOwner().Matches(owner) {
-		return nil, false
-	}
-	linked, ok := source.Boundary().Target()
-	if !ok || linked != contract {
-		return nil, false
-	}
-	return NewWithMountedArtifacts(source, packs, contract, nil)
-}
-
 // NewWithMountedArtifacts constructs Effect from exact mounted artifacts.
 // It is artifact-native: no Program census or caller-supplied Body proof
 // bundle is accepted.
@@ -175,7 +158,7 @@ func NewWithMountedArtifacts(source *link.Link, packs *pack.Schema, contract *ta
 	if !ok || linked != contract {
 		return nil, false
 	}
-	a := &Algebra{linkOwner: owner, packs: packs, contract: contract, rootContextIndex: make(map[rootContextRef]uint32), rootBodyIndex: make(map[rootBodyRef]uint32), rootMountedBodyIndex: make(map[rootMountedBodyRef]uint32), applicationOps: make(map[identity.ContentID]map[target.Operation]int), callRows: make(map[identity.ContentID]callRow), mountedCallIndex: make(map[mountedCallRef]uint32)}
+	a := &Algebra{linkOwner: owner, packs: packs, contract: contract, rootContextIndex: make(map[rootContextRef]uint32), rootBodyIndex: make(map[rootBodyRef]uint32), rootMountedBodyIndex: make(map[rootMountedBodyRef]uint32), applicationOps: make(map[identity.ContentID]map[vocabulary.Operation]int), callRows: make(map[identity.ContentID]callRow), mountedCallIndex: make(map[mountedCallRef]uint32)}
 	project := source.Project()
 	if project == nil {
 		return nil, false
@@ -217,7 +200,7 @@ func (a *Algebra) captureApplicationOps(project *linkproject.Component, boundary
 		if !ok || !idOK || !id.Available() {
 			return false
 		}
-		rows := make(map[target.Operation]int)
+		rows := make(map[vocabulary.Operation]int)
 		for j := 0; j < a.contract.OperationCount(); j++ {
 			op, opOK := a.contract.OperationAt(j)
 			if !opOK {
@@ -259,7 +242,7 @@ func (a *Algebra) captureApplicationOps(project *linkproject.Component, boundary
 	return true
 }
 
-func (a *Algebra) applicationOperation(applicationID identity.ContentID, operation target.Operation) (int, bool) {
+func (a *Algebra) applicationOperation(applicationID identity.ContentID, operation vocabulary.Operation) (int, bool) {
 	if a == nil || !applicationID.Available() || operation == 0 {
 		return 0, false
 	}
@@ -379,24 +362,24 @@ func (a *Algebra) OpaqueCallUnknown(root Root, calls *call.Algebra, applicationI
 
 // OpenOperationUnknown requires an exact selected operation with its explicit
 // unknown-open effect row. Row variables remain unsupported and fail closed.
-func (a *Algebra) OpenOperationUnknown(root Root, applicationID identity.ContentID, owner target.Operation) (Atom, bool) {
+func (a *Algebra) OpenOperationUnknown(root Root, applicationID identity.ContentID, owner vocabulary.Operation) (Atom, bool) {
 	if !a.ownsRoot(root) || !a.selectedCall(root, applicationID, owner) {
 		return Atom{}, false
 	}
 	tail, _, ok := a.contract.EffectTail(owner)
-	if !ok || tail != target.RowUnknownOpen {
+	if !ok || tail != vocabulary.RowUnknownOpen {
 		return Atom{}, false
 	}
 	return Atom{owner: a, root: root.slot, id: a.unknownID}, true
 }
 
-func (a *Algebra) OpenCallbackUnknown(root Root, applicationID identity.ContentID, owner target.Operation, callback target.CallbackID) (Atom, bool) {
+func (a *Algebra) OpenCallbackUnknown(root Root, applicationID identity.ContentID, owner vocabulary.Operation, callback vocabulary.CallbackID) (Atom, bool) {
 	if !a.ownsRoot(root) || !a.selectedCall(root, applicationID, owner) {
 		return Atom{}, false
 	}
 	callbackOwner, ownerOK := a.contract.CallbackOwner(callback)
 	tail, _, tailOK := a.contract.CallbackEffectTail(callback)
-	if !ownerOK || callbackOwner != owner || !tailOK || tail != target.RowUnknownOpen {
+	if !ownerOK || callbackOwner != owner || !tailOK || tail != vocabulary.RowUnknownOpen {
 		return Atom{}, false
 	}
 	return Atom{owner: a, root: root.slot, id: a.unknownID}, true
@@ -404,7 +387,7 @@ func (a *Algebra) OpenCallbackUnknown(root Root, applicationID identity.ContentI
 
 // CallEffectAtom validates one selected ordinary-call effect. Row variables and
 // row arguments fail closed; explicit closed/open rows retain known atoms.
-func (a *Algebra) CallEffectAtom(root Root, applicationID identity.ContentID, owner target.Operation, effect int) (Atom, bool) {
+func (a *Algebra) CallEffectAtom(root Root, applicationID identity.ContentID, owner vocabulary.Operation, effect int) (Atom, bool) {
 	mounted, mountedOK := a.mountedCallForApplication(applicationID)
 	if !mountedOK || !a.selectedMountedCall(root, mounted, owner) {
 		return Atom{}, false
@@ -419,7 +402,7 @@ func (a *Algebra) CallEffectAtom(root Root, applicationID identity.ContentID, ow
 
 // CallbackEffectAtom validates and issues one callback-owned selected-call
 // atom. Callback occurrence provenance does not enter atom identity.
-func (a *Algebra) CallbackEffectAtom(root Root, applicationID identity.ContentID, owner target.Operation, callback target.CallbackID, effect int) (Atom, bool) {
+func (a *Algebra) CallbackEffectAtom(root Root, applicationID identity.ContentID, owner vocabulary.Operation, callback vocabulary.CallbackID, effect int) (Atom, bool) {
 	mounted, mountedOK := a.mountedCallForApplication(applicationID)
 	if !mountedOK || !a.selectedMountedCall(root, mounted, owner) {
 		return Atom{}, false
@@ -436,12 +419,12 @@ func (a *Algebra) CallbackEffectAtom(root Root, applicationID identity.ContentID
 // one operation already selected by a Rule-owned Call target. It keeps no
 // selection state: every invocation revalidates the canonical witnesses.
 // Unsupported authored rows fail closed so a caller cannot silently omit them.
-func (a *Algebra) SelectedCallEffects(root Root, applicationID identity.ContentID, operation target.Operation) (Value, bool) {
+func (a *Algebra) SelectedCallEffects(root Root, applicationID identity.ContentID, operation vocabulary.Operation) (Value, bool) {
 	if !a.ownsRoot(root) || !a.selectedCall(root, applicationID, operation) {
 		return Value{}, false
 	}
 	tail, _, ok := a.contract.EffectTail(operation)
-	if !ok || (tail != target.RowClosed && tail != target.RowUnknownOpen) {
+	if !ok || (tail != vocabulary.RowClosed && tail != vocabulary.RowUnknownOpen) {
 		return Value{}, false
 	}
 	atomCount := a.contract.EffectCount(operation)
@@ -452,7 +435,7 @@ func (a *Algebra) SelectedCallEffects(root Root, applicationID identity.ContentI
 			return Value{}, false
 		}
 		callbackTail, _, ok := a.contract.CallbackEffectTail(callback)
-		if !ok || (callbackTail != target.RowClosed && callbackTail != target.RowUnknownOpen) {
+		if !ok || (callbackTail != vocabulary.RowClosed && callbackTail != vocabulary.RowUnknownOpen) {
 			return Value{}, false
 		}
 		var added bool
@@ -488,17 +471,17 @@ func (a *Algebra) SelectedCallEffects(root Root, applicationID identity.ContentI
 // SelectedCallOpaque reduces only explicit unknown-open Target rows for one
 // Rule-selected operation. Fully closed rows contribute Bottom; RowVariable
 // is unsupported and therefore rejects the whole selected operation.
-func (a *Algebra) SelectedCallOpaque(root Root, applicationID identity.ContentID, operation target.Operation) (Value, bool) {
+func (a *Algebra) SelectedCallOpaque(root Root, applicationID identity.ContentID, operation vocabulary.Operation) (Value, bool) {
 	if !a.ownsRoot(root) || !a.selectedCall(root, applicationID, operation) {
 		return Value{}, false
 	}
 	tail, _, ok := a.contract.EffectTail(operation)
-	if !ok || tail == target.RowVariable {
+	if !ok || tail == vocabulary.RowVariable {
 		return Value{}, false
 	}
 	var unknown Atom
 	known := false
-	if tail == target.RowUnknownOpen {
+	if tail == vocabulary.RowUnknownOpen {
 		atom, ok := a.OpenOperationUnknown(root, applicationID, operation)
 		if !ok {
 			return Value{}, false
@@ -511,10 +494,10 @@ func (a *Algebra) SelectedCallOpaque(root Root, applicationID identity.ContentID
 			return Value{}, false
 		}
 		callbackTail, _, ok := a.contract.CallbackEffectTail(callback)
-		if !ok || callbackTail == target.RowVariable {
+		if !ok || callbackTail == vocabulary.RowVariable {
 			return Value{}, false
 		}
-		if callbackTail == target.RowUnknownOpen {
+		if callbackTail == vocabulary.RowUnknownOpen {
 			if !known {
 				atom, ok := a.OpenCallbackUnknown(root, applicationID, operation, callback)
 				if !ok {
@@ -893,7 +876,7 @@ func (a *Algebra) sealCapacity() bool {
 	return true
 }
 
-func (a *Algebra) selectedCall(root Root, applicationID identity.ContentID, owner target.Operation) bool {
+func (a *Algebra) selectedCall(root Root, applicationID identity.ContentID, owner vocabulary.Operation) bool {
 	if _, available := a.applicationOperation(applicationID, owner); !available {
 		return false
 	}
@@ -925,25 +908,25 @@ func (a *Algebra) callInRootID(root Root, applicationID identity.ContentID) bool
 // by the target's own ValuesVar ordinals, so that position is the target's
 // input var; every other position substitutes an outcome-scoped var, which
 // names no input and therefore selects nothing out of the caller's Pack.
-func (a *Algebra) inputTailArgument(operation target.Operation) (int, bool) {
+func (a *Algebra) inputTailArgument(operation vocabulary.Operation) (int, bool) {
 	input, inputOK := a.contract.Input(operation)
 	if !inputOK {
 		return 0, false
 	}
 	tail, variable, tailOK := a.contract.ValuesTail(input)
-	if !tailOK || tail != target.ValuesVariable {
+	if !tailOK || tail != vocabulary.ValuesVariable {
 		return 0, false
 	}
 	return int(variable), true
 }
 
-func (a *Algebra) validateOrdinaryInputs(owner target.Operation, effect int) bool {
+func (a *Algebra) validateOrdinaryInputs(owner vocabulary.Operation, effect int) bool {
 	for i := 0; i < a.contract.EffectValueArgumentCount(owner, effect); i++ {
 		formal, ok := a.contract.EffectValueArgumentAt(owner, effect, i)
 		if !ok {
 			return false
 		}
-		if _, ok = a.packs.InputSelector(owner, target.InputSource{Kind: target.InputSourceValueFormal, Ordinal: uint32(formal)}); !ok {
+		if _, ok = a.packs.InputSelector(owner, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: uint32(formal)}); !ok {
 			return false
 		}
 	}
@@ -960,20 +943,20 @@ func (a *Algebra) validateOrdinaryInputs(owner target.Operation, effect int) boo
 		if !tailed || i != tailArgument {
 			continue
 		}
-		if _, ok = a.packs.InputSelector(owner, target.InputSource{Kind: target.InputSourceValuesVar, Ordinal: uint32(formal)}); !ok {
+		if _, ok = a.packs.InputSelector(owner, vocabulary.InputSource{Kind: vocabulary.InputSourceValuesVar, Ordinal: uint32(formal)}); !ok {
 			return false
 		}
 	}
 	return true
 }
 
-func (a *Algebra) validateCallbackInputs(owner target.Operation, callback target.CallbackID, effect int) bool {
+func (a *Algebra) validateCallbackInputs(owner vocabulary.Operation, callback vocabulary.CallbackID, effect int) bool {
 	for i := 0; i < a.contract.CallbackEffectValueArgumentCount(callback, effect); i++ {
 		formal, ok := a.contract.CallbackEffectValueArgumentAt(callback, effect, i)
 		if !ok {
 			return false
 		}
-		if _, ok = a.packs.InputSelector(owner, target.InputSource{Kind: target.InputSourceValueFormal, Ordinal: uint32(formal)}); !ok {
+		if _, ok = a.packs.InputSelector(owner, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: uint32(formal)}); !ok {
 			return false
 		}
 	}
@@ -990,7 +973,7 @@ func (a *Algebra) validateCallbackInputs(owner target.Operation, callback target
 		if !tailed || i != tailArgument {
 			continue
 		}
-		if _, ok = a.packs.InputSelector(owner, target.InputSource{Kind: target.InputSourceValuesVar, Ordinal: uint32(formal)}); !ok {
+		if _, ok = a.packs.InputSelector(owner, vocabulary.InputSource{Kind: vocabulary.InputSourceValuesVar, Ordinal: uint32(formal)}); !ok {
 			return false
 		}
 	}

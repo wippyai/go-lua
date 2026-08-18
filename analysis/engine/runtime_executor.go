@@ -275,9 +275,9 @@ func (solver *Solver) publishCompleted(epoch *executorEpoch, runtime *solverRunt
 	return true
 }
 
-// Solve executes runtime revisions iteratively. A structural-only acyclic
-// activation can extend a settled total-demand epoch in place; every other
-// activation still takes the canonical compiler path from Init.
+// Solve executes runtime revisions iteratively. Materialized activations
+// advance only the relation stamp; direct transports extend the runtime's
+// structural overlay without rebuilding the sealed program.
 func (solver *Solver) Solve(ctx context.Context) (state *State, status SolveStatus) {
 	return solver.solve(ctx, nil, nil)
 }
@@ -348,7 +348,6 @@ func (solver *Solver) solve(ctx context.Context, report *SolveReport, diagnostic
 	}
 	solver.mu.Lock()
 	defer solver.mu.Unlock()
-runtimeRevisions:
 	for {
 		runtime := solver.runtime
 		if runtime == nil {
@@ -373,6 +372,17 @@ runtimeRevisions:
 		if diagnostics != nil {
 			diagnostics.epochStarted(epoch, solver.relation.Generation())
 		}
+		generation := solver.completion.Next()
+		publication, opened := beginSolvedPublication(solver, epoch, generation)
+		if !opened {
+			epoch.incomplete()
+			epoch.discard()
+			if report != nil {
+				report.record(SolveFailureReasonEpoch, boundaryNone, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
+			}
+			return nil, SolveIncomplete
+		}
+		epoch.storePub = publication
 		current = epoch
 		for {
 			if !epoch.run() {
@@ -428,10 +438,23 @@ runtimeRevisions:
 			// it. Both installation paths below consume that one publication and
 			// neither re-derives its identity. A saturated stamp fails closed.
 			published, publishedOK := runtime.topology.Publish(solver.relation, accepted)
-			// The live path is deliberately narrower than activation validity: it
-			// must prove total demand, no recurrence, structural-only FactorEdges,
-			// and an acyclic combined dependency relation. A false result is not a
-			// weakened solve; it selects the unchanged cold compiler below.
+			// A materialized activation changes only the accepted relation: all of
+			// its structural rows already belong to the sealed runtime. Publish the
+			// new stamp without manufacturing an empty program rebuild.
+			if publishedOK {
+				selected, selectedOK := runtime.topology.SelectedStructuralFactorEdges(runtime.graph, delta)
+				if selectedOK && len(selected) == 0 {
+					solver.relation = published
+					epoch.diagnosticRevision = published.Generation()
+					if diagnostics != nil {
+						diagnostics.observeRevision(published.Generation())
+						diagnostics.resetRevisionEvidence()
+					}
+					continue
+				}
+			}
+			// Direct transport must pass the overlay's exact structural fences. A
+			// false result fails closed below; there is no second compiler authority.
 			if publishedOK {
 				overlay, preparedOverlay := runtime.prepareSelectedFactorOverlay(delta, published)
 				installedOverlay := preparedOverlay && overlay != nil && epoch.installSelectedFactorOverlay(overlay)
@@ -465,51 +488,30 @@ runtimeRevisions:
 				}
 				return nil, SolveIncomplete
 			}
-			rebuilt, phase, built := solver.compiler.compile(published)
-			if !built || rebuilt == nil {
-				if report != nil {
-					report.record(SolveFailureReasonActivationCompile, phase, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
-				}
-				return nil, SolveIncomplete
+			// Immutable program tables have no recompile path. A legal activation
+			// revision must be representable as a prepared structural overlay; an
+			// unsupported shape fails closed at this exact boundary.
+			if report != nil {
+				report.record(SolveFailureReasonActivationCompile, boundaryNone, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
 			}
-			if ctx.Err() != nil {
-				return nil, SolveCanceled
-			}
-			runtime.completed = nil
-			if runtime.retained != nil && !runtime.retained.Close() {
-				if report != nil {
-					report.record(SolveFailureReasonActivationRetainedClose, boundaryNone, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
-				}
-				return nil, SolveIncomplete
-			}
-			runtime.retained = nil
-			solver.relation = published
-			solver.runtime = rebuilt
-
-			if diagnostics != nil {
-				diagnostics.observeRevision(published.Generation())
-				diagnostics.resetRevisionEvidence()
-			}
-			if ctx.Err() != nil {
-				return nil, SolveCanceled
-			}
-			continue runtimeRevisions
+			return nil, SolveIncomplete
 		}
-		results := make([]*queryResult, len(runtime.queries))
-		for index, query := range runtime.queries {
+		publication = epoch.storePub
+		if publication == nil || !publication.generation.Available() {
+			epoch.incomplete()
+			epoch.discard()
+			reportFailureQuery(report, SolveFailureReasonPublication, identity.SemanticKey{})
+			return nil, SolveIncomplete
+		}
+		nextCompletion := publication.generation
+		for _, query := range runtime.queries {
 			if epoch.canceled() {
 				epoch.incomplete()
 				epoch.discard()
 				return nil, SolveCanceled
 			}
 			owner := query.queryOwner()
-			if owner == nil || !owner.validQueryOwner(runtime, query.query()) || !query.query().Key().Available() || index < 0 || index >= len(results) {
-				epoch.incomplete()
-				epoch.discard()
-				reportFailureQuery(report, SolveFailureReasonQuery, identity.SemanticKey{})
-				return nil, SolveIncomplete
-			}
-			if results[index] != nil {
+			if owner == nil || !owner.validQueryOwner(runtime, query.query()) || !query.query().Key().Available() {
 				epoch.incomplete()
 				epoch.discard()
 				reportFailureQuery(report, SolveFailureReasonQuery, identity.SemanticKey{})
@@ -523,7 +525,14 @@ runtimeRevisions:
 				reportFailureQuery(report, SolveFailureReasonQuery, reportedSemanticKey(point.Key()))
 				return nil, SolveIncomplete
 			}
-			result, ok := query.materialize(epoch.work, epoch.points[pointIndex].State())
+			held, heldOK := publication.readPoint(epoch, pointIndex)
+			if !heldOK {
+				epoch.incomplete()
+				epoch.discard()
+				reportFailureQuery(report, SolveFailureReasonQuery, reportedSemanticKey(point.Key()))
+				return nil, SolveIncomplete
+			}
+			result, ok := query.materialize(epoch.work, held.State())
 			if !ok {
 				if epoch.canceled() {
 					epoch.incomplete()
@@ -540,30 +549,21 @@ runtimeRevisions:
 				epoch.discard()
 				return nil, SolveCanceled
 			}
-			if result == nil || result.owner != owner || result.key != query.query().Key() {
+			key, keyed := query.PublicationKey()
+			if result == nil || result.owner != owner || result.key != query.query().Key() || !keyed || !publication.writeQuery(key, result.value) {
 				epoch.incomplete()
 				epoch.discard()
 				reportFailureQuery(report, SolveFailureReasonQuery, reportedSemanticKey(point.Key()))
 				return nil, SolveIncomplete
 			}
-			results[index] = result
 		}
-		for _, result := range results {
-			if result == nil {
-				epoch.incomplete()
-				epoch.discard()
-				reportFailureQuery(report, SolveFailureReasonQuery, identity.SemanticKey{})
-				return nil, SolveIncomplete
-			}
-		}
-		observationResults := make([]*observationResult, len(runtime.observations))
-		for index, observation := range runtime.observations {
+		for _, observation := range runtime.observations {
 			if epoch.canceled() {
 				epoch.incomplete()
 				epoch.discard()
 				return nil, SolveCanceled
 			}
-			if observation == nil || index < 0 || index >= len(observationResults) {
+			if observation == nil {
 				epoch.incomplete()
 				epoch.discard()
 				reportFailureQuery(report, SolveFailureReasonQuery, identity.SemanticKey{})
@@ -577,8 +577,15 @@ runtimeRevisions:
 				reportFailureQuery(report, SolveFailureReasonQuery, reportedSemanticKey(point.Key()))
 				return nil, SolveIncomplete
 			}
-			result, observationPhase, ok := observation.materializeObservation(epoch.work, epoch.points[pointIndex].State())
-			if !ok || result == nil || result.owner != owner || result.id != id || result.value == nil {
+			held, heldOK := publication.readPoint(epoch, pointIndex)
+			if !heldOK {
+				epoch.incomplete()
+				epoch.discard()
+				reportFailureQuery(report, SolveFailureReasonQuery, reportedSemanticKey(point.Key()))
+				return nil, SolveIncomplete
+			}
+			result, observationPhase, ok := observation.materializeObservation(epoch.work, held.State())
+			if !ok || result == nil || result.owner != owner || result.id != id || result.value == nil || !publication.writeObservation(id, result.value) {
 				if epoch.canceled() {
 					epoch.incomplete()
 					epoch.discard()
@@ -591,29 +598,20 @@ runtimeRevisions:
 				}
 				return nil, SolveIncomplete
 			}
-			observationResults[index] = result
-		}
-		for _, result := range observationResults {
-			if result == nil {
-				epoch.incomplete()
-				epoch.discard()
-				reportFailureQuery(report, SolveFailureReasonQuery, identity.SemanticKey{})
-				return nil, SolveIncomplete
-			}
 		}
 		if epoch.canceled() {
 			epoch.incomplete()
 			epoch.discard()
 			return nil, SolveCanceled
 		}
-		nextCompletion := solver.completion.Next()
-		if !nextCompletion.Available() {
+		solved, committed := publication.commit(solver)
+		if !committed {
 			epoch.incomplete()
 			epoch.discard()
 			reportFailureQuery(report, SolveFailureReasonPublication, identity.SemanticKey{})
 			return nil, SolveIncomplete
 		}
-		state = &State{completion: &completionAuthority{store: solver.store, serial: nextCompletion, relation: solver.relation.Generation()}, results: results, observations: observationResults}
+		state = &State{completion: &completionAuthority{store: solver.store, serial: nextCompletion, relation: solver.relation.Generation()}, solved: solved}
 		// Retain and eviction are preparation, not publication.  They must
 		// finish while cancellation can still win the epoch terminal race.
 		retained, retainedOK := epoch.work.Retain()

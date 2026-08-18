@@ -135,6 +135,10 @@ func (work *Work) LessOrEqRuleContribution(left, right RuleContribution) bool {
 	return work.admittedRuleContribution(left) && work.admittedRuleContribution(right) && work.lessOrEqContributionSurface(left.value.state, left.value.coverage, right.value.state, right.value.coverage)
 }
 
+func (work *Work) AscentOrderedRuleContribution(left, right RuleContribution) bool {
+	return work.admittedRuleContribution(left) && work.admittedRuleContribution(right) && work.ascentOrderedContributionSurface(left.value.state, left.value.coverage, right.value.state, right.value.coverage)
+}
+
 // CanAppendAscendingRuleContribution proves the additional representation
 // invariant required by a sparse append. Lifted order alone is extensional in
 // Target-to-key presence, so it permits replacing one alias Target row with
@@ -299,6 +303,21 @@ func (work *Work) PointRHSFromPointState(point PointState) (PointRHS, bool) {
 	}
 	rhs := PointRHS{point: point, roleSeal: work.contributionSeal}
 	return rhs, work.admittedPointRHS(rhs)
+}
+
+// TransportPointRHS applies one sealed coordinate relation to a semantic RHS.
+// It is the same total point transport an environment edge performs, offered
+// on the accumulator role so a recurrence right-hand side can cross a
+// coordinate boundary without a caller unwrapping its point.
+func (work *Work) TransportPointRHS(rhs PointRHS, pre support.Mask, omega ReindexPlan, post support.Mask) (PointRHS, bool) {
+	if !work.admittedPointRHS(rhs) {
+		return PointRHS{}, false
+	}
+	point, ok := work.TransportPointState(rhs.point, pre, omega, post)
+	if !ok {
+		return PointRHS{}, false
+	}
+	return work.PointRHSFromPointState(point)
 }
 
 // closedInitialPoint is the only zero-copy identity-adoption proof.  Empty

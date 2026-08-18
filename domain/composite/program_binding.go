@@ -3,6 +3,8 @@ package composite
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/query"
 	effectowner "github.com/wippyai/go-lua/domain/effect/owner"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	allocationcatalog "github.com/wippyai/go-lua/domain/heap/allocation/catalog"
@@ -74,15 +76,31 @@ func (bound *ProgramBinding) ValueSchema() *valuedomain.Schema {
 	return bound.value.Schema()
 }
 
+// Query recovers the sealed implementation cell of one issued family. The
+// cell stays opaque here; the caller recovers it at the type the family's
+// own contributor declared.
+func (bound *ProgramBinding) Query(family schema.Key) (query.Cell, bool) {
+	if bound == nil || !family.Available() {
+		return query.Cell{}, false
+	}
+	position, ok := queryPositionForFamily(family)
+	if !ok || position < 0 || position >= len(bound.queries) {
+		return query.Cell{}, false
+	}
+	cell := bound.queries[position]
+	return cell, cell.Available()
+}
+
 // ValueQuery is the receipt-native implementation of the value-summary family.
 // It recovers the family's own cell at the type its contributor declared, so
 // the accessor names the family and never a fold of its own.
 func (bound *ProgramBinding) ValueQuery() *valueowner.SummaryQueryImplementation {
-	if bound == nil {
+	cell, ok := bound.Query(QueryFamilyValueSummary)
+	if !ok {
 		return nil
 	}
-	implementation, ok := queryPayloadForFamily[*valueowner.SummaryQueryImplementation](bound.queries, QueryFamilyValueSummary)
-	if !ok {
+	implementation, recovered := query.Payload[*valueowner.SummaryQueryImplementation](cell)
+	if !recovered {
 		return nil
 	}
 	return implementation
@@ -90,11 +108,12 @@ func (bound *ProgramBinding) ValueQuery() *valueowner.SummaryQueryImplementation
 
 // EffectQuery is the receipt-native implementation of the effect-exact family.
 func (bound *ProgramBinding) EffectQuery() *effectowner.ExactQueryImplementation {
-	if bound == nil {
+	cell, ok := bound.Query(QueryFamilyEffectExact)
+	if !ok {
 		return nil
 	}
-	implementation, ok := queryPayloadForFamily[*effectowner.ExactQueryImplementation](bound.queries, QueryFamilyEffectExact)
-	if !ok {
+	implementation, recovered := query.Payload[*effectowner.ExactQueryImplementation](cell)
+	if !recovered {
 		return nil
 	}
 	return implementation

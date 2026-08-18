@@ -95,7 +95,7 @@ func TestFlowModuleRequestFollowsCallValuesToSourceString(t *testing.T) {
 	callee := c.ImplicitRead(span, body, requireCell)
 	request := c.String(span, body, "dep")
 	values := c.Values(span, body, []keyspace.Term{request}, 0)
-	call := c.DeclareCall(span, body, callee, 0, values)
+	call := c.DeclareCall(span, body, callee, 0, values, "")
 	callArgsOK := c.SetCallTypeArgs(call, nil)
 	importTerm := c.Import(0, span, call)
 	if body == 0 || requireCell == 0 || callee == 0 || request == 0 || values == 0 || call == 0 || !callArgsOK || importTerm == 0 || !c.SetBody(body, call) || !c.SetEntry(body) {
@@ -304,7 +304,7 @@ func TestCollectorFlowRolesPreserveRowOwnership(t *testing.T) {
 	c := assembly.New(name, 0, bind.GlobalCensus{})
 	owner := c.Body(span)
 	child := c.Body(span)
-	local := c.Cell(span, child)
+	local := c.Cell(span, child, "")
 	value := c.Bool(span, owner, true)
 	values := c.Values(span, owner, []keyspace.Term{value}, 0)
 	if owner == 0 || child == 0 || local == 0 || values == 0 {
@@ -325,7 +325,7 @@ func TestCollectorFlowRolesPreserveRowOwnership(t *testing.T) {
 	functionCollector := assembly.New(name, 0, bind.GlobalCensus{})
 	functionOwner := functionCollector.Body(span)
 	functionBody := functionCollector.Body(span)
-	functionVararg := functionCollector.Cell(span, functionBody)
+	functionVararg := functionCollector.Cell(span, functionBody, "")
 	function := functionCollector.DeclareFunction(span, functionOwner)
 	if function == 0 || functionCollector.FillFunction(function, functionOwner, nil, functionVararg, nil) {
 		t.Fatal("foreign-body Function Vararg was accepted")

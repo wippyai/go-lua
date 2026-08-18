@@ -32,6 +32,7 @@ func SelectedEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *Selec
 	return rule.Spec[P, A, *SelectedSchemaFragment, *HotRule]{
 		Key:    "effect-selected",
 		Writes: "effect",
+		Owner:  "effect",
 		Issues: []rule.Issuance{
 			{Occurrence: "occurrence/call", Form: "issuance/call-stage", Input: "input/finish", Stage: "stage/call-effect"},
 		},
@@ -54,14 +55,6 @@ func SelectedEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *Selec
 		Finalize: func(context rule.Finalization[A, *HotRule]) bool {
 			return context.Rule.SealOccurrenceReceipts()
 		},
-		Attach: func(context rule.Attach[*HotRule]) bool {
-			_, ok := context.Rule.AttachMountedOccurrence(context.Assembly, context.Mount, context.Point, context.Occurrence)
-			return ok
-		},
-		Member: func(context rule.Member[*HotRule]) bool {
-			_, ok := context.Rule.AttachMountedReceiptMember(context.Compilation, context.Graph, context.Mount, context.Point, context.Occurrence)
-			return ok
-		},
 	}
 }
 
@@ -70,6 +63,7 @@ func OpaqueEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *OpaqueS
 	return rule.Spec[P, A, *OpaqueSchemaFragment, *HotRule]{
 		Key:    "effect-opaque",
 		Writes: "effect",
+		Owner:  "effect",
 		Issues: []rule.Issuance{
 			{Occurrence: "occurrence/call", Form: "issuance/call-stage", Input: "input/finish", Stage: "stage/call-effect"},
 		},
@@ -92,14 +86,6 @@ func OpaqueEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *OpaqueS
 		Finalize: func(context rule.Finalization[A, *HotRule]) bool {
 			return context.Rule.SealOccurrenceReceipts()
 		},
-		Attach: func(context rule.Attach[*HotRule]) bool {
-			_, ok := context.Rule.AttachMountedOccurrence(context.Assembly, context.Mount, context.Point, context.Occurrence)
-			return ok
-		},
-		Member: func(context rule.Member[*HotRule]) bool {
-			_, ok := context.Rule.AttachMountedReceiptMember(context.Compilation, context.Graph, context.Mount, context.Point, context.Occurrence)
-			return ok
-		},
 	}
 }
 
@@ -108,6 +94,7 @@ func BodyEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *BodySchem
 	return rule.Spec[P, A, *BodySchemaFragment, *BodyHotRule]{
 		Key:    "effect-body",
 		Writes: "effect",
+		Owner:  "effect",
 		Issues: []rule.Issuance{
 			{Occurrence: "occurrence/call", Form: "issuance/call-stage", Input: "input/finish", Stage: "stage/call-effect"},
 		},
@@ -129,14 +116,6 @@ func BodyEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *BodySchem
 		},
 		Finalize: func(context rule.Finalization[A, *BodyHotRule]) bool {
 			return context.Rule.SealOccurrenceReceipts()
-		},
-		Attach: func(context rule.Attach[*BodyHotRule]) bool {
-			_, ok := context.Rule.AttachMountedOccurrence(context.Assembly, context.Mount, context.Point, context.Occurrence)
-			return ok
-		},
-		Member: func(context rule.Member[*BodyHotRule]) bool {
-			_, ok := context.Rule.AttachMountedReceiptMember(context.Compilation, context.Graph, context.Mount, context.Point, context.Occurrence)
-			return ok
 		},
 	}
 }

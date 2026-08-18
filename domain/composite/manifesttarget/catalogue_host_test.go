@@ -1,9 +1,9 @@
 package manifesttarget_test
 
 import (
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/program/target"
 	"github.com/wippyai/go-lua/domain/composite/manifesttarget"
 	"github.com/wippyai/go-lua/domain/effect"
 	"github.com/wippyai/go-lua/domain/effect/dispatch"
@@ -37,7 +37,7 @@ func TestHostGlobalManifestFlowsDirectlyIntoTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding := target.BindingSpec{Namespace: target.BindingBuiltin, Member: []string{"require"}}
+	binding := vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"require"}}
 	if _, ok := contract.Lookup(binding); !ok {
 		t.Fatal("host require manifest did not become a target operation")
 	}

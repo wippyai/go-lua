@@ -37,7 +37,7 @@ type Artifact struct {
 	heapAllocations        []HeapAllocationRow
 	heapIndexes            []HeapIndexRow
 	occurrenceByID         map[occurrenceLookup]uint32
-	ruleOccurrences        map[RuleRole][]RuleOccurrence
+	ruleOccurrences        []RuleOccurrence
 	diagnosticObservations []DiagnosticObservationRow
 	staticTypeArguments    []StaticTypeArgumentRow
 	staticTypeValues       []StaticTypeValueRow

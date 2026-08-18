@@ -2,6 +2,7 @@ package static
 
 import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 func (decoder *staticArtifactDecoder) types(output *TypesInput) error {
@@ -255,4 +256,120 @@ func (decoder *staticArtifactDecoder) intersections() ([]Intersection, error) {
 		}
 	}
 	return rows, nil
+}
+
+// writeTypesContent owns the exact authored scalar order of the Types
+// vertical. Pool ranges are storage layout and are intentionally re-expanded
+// into their semantic sequences here.
+func writeTypesContent(writer *framing.Writer, store typeStore) error {
+	if err := writer.Count(uint64(len(store.primitive))); err != nil {
+		return err
+	}
+	for _, row := range store.primitive {
+		if err := writer.Uint(uint64(row.Kind)); err != nil {
+			return err
+		}
+	}
+	if err := writer.Count(uint64(len(store.literal))); err != nil {
+		return err
+	}
+	for _, row := range store.literal {
+		if err := writer.Uint(uint64(row.Kind)); err != nil {
+			return err
+		}
+		if err := writer.Uint(uint64(row.Exact)); err != nil {
+			return err
+		}
+		if err := writer.Uint(row.FloatBits); err != nil {
+			return err
+		}
+	}
+	if err := writer.Count(uint64(len(store.optional))); err != nil {
+		return err
+	}
+	for _, row := range store.optional {
+		if err := writer.Uint(uint64(row.Inner)); err != nil {
+			return err
+		}
+	}
+	if err := writeTypeTermRangesContent(writer, store.union, store.terms); err != nil {
+		return err
+	}
+	if err := writeTypeTermRangesContent(writer, store.intersection, store.terms); err != nil {
+		return err
+	}
+	if err := writer.Count(uint64(len(store.generic))); err != nil {
+		return err
+	}
+	for _, row := range store.generic {
+		if err := writer.Uint(uint64(row.base)); err != nil {
+			return err
+		}
+		if err := writeTypeTermsContent(writer, store.terms[row.args.Start:row.args.End]); err != nil {
+			return err
+		}
+	}
+	if err := writer.Count(uint64(len(store.array))); err != nil {
+		return err
+	}
+	for _, row := range store.array {
+		if err := writer.Uint(uint64(row.Element)); err != nil {
+			return err
+		}
+		if err := writer.Bool(row.ReadOnly); err != nil {
+			return err
+		}
+	}
+	if err := writer.Count(uint64(len(store.mapType))); err != nil {
+		return err
+	}
+	for _, row := range store.mapType {
+		if err := writer.Uint(uint64(row.Key)); err != nil {
+			return err
+		}
+		if err := writer.Uint(uint64(row.Value)); err != nil {
+			return err
+		}
+		if err := writer.Bool(row.ReadOnly); err != nil {
+			return err
+		}
+	}
+	if err := writer.Count(uint64(len(store.record))); err != nil {
+		return err
+	}
+	for _, row := range store.record {
+		if err := writer.Bool(row.readOnly); err != nil {
+			return err
+		}
+		if err := writeTypeTermsContent(writer, store.fields[row.fields.Start:row.fields.End]); err != nil {
+			return err
+		}
+	}
+	if err := writer.Count(uint64(len(store.field))); err != nil {
+		return err
+	}
+	for _, row := range store.field {
+		if err := writer.Uint(uint64(row.Key)); err != nil {
+			return err
+		}
+		if err := writer.Uint(uint64(row.Type)); err != nil {
+			return err
+		}
+		if err := writer.Bool(row.Optional); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeTypeTermRangesContent(writer *framing.Writer, rows []poolRange, terms []keyspace.Term) error {
+	if err := writer.Count(uint64(len(rows))); err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if err := writeTypeTermsContent(writer, terms[row.Start:row.End]); err != nil {
+			return err
+		}
+	}
+	return nil
 }

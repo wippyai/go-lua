@@ -1,4 +1,4 @@
-package link
+package link_test
 
 import (
 	"bytes"
@@ -6,6 +6,10 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+
+	"github.com/wippyai/go-lua/analysis/program/link"
+	linkartifact "github.com/wippyai/go-lua/analysis/program/link/artifact"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program"
@@ -31,11 +35,11 @@ func TestArtifactReplaysDetachedHostReferencesAndRejectsUnknownID(t *testing.T) 
 	if !ok {
 		t.Fatal("sealed Host replay contract unavailable")
 	}
-	data, err := EncodeArtifact(linked)
+	data, err := linkartifact.Encode(linked)
 	if err != nil {
 		t.Fatal(err)
 	}
-	replayed, err := DecodeArtifact(data, sealed, artifactProgramPool(program))
+	replayed, err := linkartifact.Decode(data, sealed, artifactProgramPool(program))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,10 +66,10 @@ func TestArtifactReplaysDetachedHostReferencesAndRejectsUnknownID(t *testing.T) 
 		t.Fatal("fixture has no Host detached reference")
 	}
 	corrupt := artifactReplaceContentID(t, data, targetID)
-	if got, err := DecodeArtifact(corrupt, sealed, artifactProgramPool(program)); got != nil || !errors.Is(err, ErrArtifactCanonical) {
+	if got, err := linkartifact.Decode(corrupt, sealed, artifactProgramPool(program)); got != nil || !errors.Is(err, linkartifact.ErrCanonical) {
 		t.Fatalf("unknown Host detached ID = %v/%v", got, err)
 	}
-	if got, err := DecodeArtifact(artifactReplaceFirstCount(t, data), sealed, artifactProgramPool(program)); got != nil || !errors.Is(err, ErrArtifactCanonical) {
+	if got, err := linkartifact.Decode(artifactReplaceFirstCount(t, data), sealed, artifactProgramPool(program)); got != nil || !errors.Is(err, linkartifact.ErrCanonical) {
 		t.Fatalf("malformed artifact count = %v/%v", got, err)
 	}
 }
@@ -120,13 +124,13 @@ func artifactReplaceFirstCount(t *testing.T, data []byte) []byte {
 	return nil
 }
 
-func artifactAssertProjectionRoundTrip(t *testing.T, l *Link, sealed *target.Contract, programs ...*program.Program) *Link {
+func artifactAssertProjectionRoundTrip(t *testing.T, l *link.Link, sealed *target.Contract, programs ...*program.Program) *link.Link {
 	t.Helper()
-	data, err := EncodeArtifact(l)
+	data, err := linkartifact.Encode(l)
 	if err != nil {
 		t.Fatal(err)
 	}
-	replayed, err := DecodeArtifact(data, sealed, artifactProgramPool(programs...))
+	replayed, err := linkartifact.Decode(data, sealed, artifactProgramPool(programs...))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,30 +141,30 @@ func artifactAssertProjectionRoundTrip(t *testing.T, l *Link, sealed *target.Con
 }
 
 func TestArtifactRoundTripAndTamperRejection(t *testing.T) {
-	binding := target.BindingSpec{Namespace: target.BindingProvider, Owner: []string{"actor"}, Member: []string{"send"}}
+	binding := vocabulary.BindingSpec{Namespace: vocabulary.BindingProvider, Owner: []string{"actor"}, Member: []string{"send"}}
 	sealed := contract(t, binding)
 	p := source(t, ``)
-	l, err := Seal(&Spec{Target: sealed, Modules: []linkproject.Module{{Name: "main", Program: p}}, EndpointRequests: []linkboundary.EndpointRequest{{Identity: "actor.send", Binding: binding}}})
+	l, err := link.Seal(&link.Spec{Target: sealed, Modules: []linkproject.Module{{Name: "main", Program: p}}, EndpointRequests: []linkboundary.EndpointRequest{{Identity: "actor.send", Binding: binding}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if replayed := artifactAssertProjectionRoundTrip(t, l, sealed, p); replayed.Boundary().Endpoints().Count() != 1 {
 		t.Fatalf("replayed endpoint count = %d, want 1", replayed.Boundary().Endpoints().Count())
 	}
-	data, err := EncodeArtifact(l)
+	data, err := linkartifact.Encode(l)
 	if err != nil {
 		t.Fatal(err)
 	}
-	wrong := contract(t, target.BindingSpec{Namespace: target.BindingProvider, Owner: []string{"actor"}, Member: []string{"other"}})
-	if got, err := DecodeArtifact(data, wrong, artifactProgramPool(p)); got != nil || !errors.Is(err, ErrArtifactTarget) {
+	wrong := contract(t, vocabulary.BindingSpec{Namespace: vocabulary.BindingProvider, Owner: []string{"actor"}, Member: []string{"other"}})
+	if got, err := linkartifact.Decode(data, wrong, artifactProgramPool(p)); got != nil || !errors.Is(err, linkartifact.ErrTarget) {
 		t.Fatalf("wrong target = %v/%v", got, err)
 	}
 	tampered := append([]byte(nil), data...)
 	tampered[len(tampered)-1] ^= 1
-	if got, err := DecodeArtifact(tampered, sealed, artifactProgramPool(p)); got != nil || err == nil {
+	if got, err := linkartifact.Decode(tampered, sealed, artifactProgramPool(p)); got != nil || err == nil {
 		t.Fatalf("tampered artifact = %v/%v", got, err)
 	}
-	if got, err := DecodeArtifact(append(data, 0), sealed, artifactProgramPool(p)); got != nil || !errors.Is(err, ErrArtifactCanonical) {
+	if got, err := linkartifact.Decode(append(data, 0), sealed, artifactProgramPool(p)); got != nil || !errors.Is(err, linkartifact.ErrCanonical) {
 		t.Fatalf("noncanonical artifact = %v/%v", got, err)
 	}
 }
@@ -192,11 +196,11 @@ func TestArtifactReplayPreservesProjectCallIdentity(t *testing.T) {
 	if !originalIDOK {
 		t.Fatal("original Project Application identity unavailable")
 	}
-	data, err := EncodeArtifact(linked)
+	data, err := linkartifact.Encode(linked)
 	if err != nil {
 		t.Fatal(err)
 	}
-	replayed, err := DecodeArtifact(data, sealed, artifactProgramPool(p))
+	replayed, err := linkartifact.Decode(data, sealed, artifactProgramPool(p))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +222,7 @@ func TestArtifactReplayPreservesProjectCallIdentity(t *testing.T) {
 	}
 }
 
-func callApplicationForTerm(t testing.TB, linked *Link, term keyspace.Term) (linkproject.Application, bool) {
+func callApplicationForTerm(t testing.TB, linked *link.Link, term keyspace.Term) (linkproject.Application, bool) {
 	t.Helper()
 	applications := linked.Project().Applications()
 	calls := applications.Calls()

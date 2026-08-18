@@ -290,7 +290,7 @@ func TestFrozenCorpusDiagnosticExpectationInventory(t *testing.T) {
 	}
 	inventory := catalog.inventory
 
-	if inventory.projects != 911 || inventory.luaFiles != 1176 || inventory.manifests != 531 || inventory.annotatedFiles != 185 {
+	if inventory.projects != 912 || inventory.luaFiles != 1178 || inventory.manifests != 531 || inventory.annotatedFiles != 185 {
 		t.Fatalf("fixture denominator changed: projects=%d lua=%d manifests=%d annotated=%d", inventory.projects, inventory.luaFiles, inventory.manifests, inventory.annotatedFiles)
 	}
 	if inventory.inlineErrors != 710 || inventory.inlineWarnings != 4 {
@@ -384,7 +384,7 @@ func TestFrozenCorpusDiagnosticExpectationInventory(t *testing.T) {
 			t.Fatalf("structured diagnostic anchor is ambiguous: project=%q code=%q file=%q line=%d severity=%q rows=%d", key.project, key.code, key.file, key.line, key.severity, len(refs))
 		}
 	}
-	if len(catalog.projects) != 911 || indexedInline != 714 || len(catalog.structuredByCode) != 34 || indexedStructured != 133 || len(catalog.structuredByLocation) != 133 || indexedStructuredLocations != 133 {
+	if len(catalog.projects) != 912 || indexedInline != 714 || len(catalog.structuredByCode) != 34 || indexedStructured != 133 || len(catalog.structuredByLocation) != 133 || indexedStructuredLocations != 133 {
 		t.Fatalf("scalable diagnostic indexes changed: projects=%d inline=%d codes=%d structured=%d structured-anchors=%d/%d", len(catalog.projects), indexedInline, len(catalog.structuredByCode), indexedStructured, len(catalog.structuredByLocation), indexedStructuredLocations)
 	}
 }

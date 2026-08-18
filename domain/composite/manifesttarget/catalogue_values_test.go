@@ -1,6 +1,7 @@
 package manifesttarget_test
 
 import (
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
@@ -36,11 +37,11 @@ func TestNewProviderValuesMountWithoutTargetRegistration(t *testing.T) {
 
 	root := initialRootByIdentity(t, contract, "ModuleRoot:custom.constants")
 	answer, mutability, ok := contract.InitialEntry(root, exactStringKey(t, contract, "answer"))
-	if value, valueOK := contract.InitialValueInteger(answer); !ok || !valueOK || value != 42 || mutability != target.InitialFrozen {
+	if value, valueOK := contract.InitialValueInteger(answer); !ok || !valueOK || value != 42 || mutability != vocabulary.InitialFrozen {
 		t.Fatalf("custom.answer = value:%d mutability:%d present:%t typed:%t", value, mutability, ok, valueOK)
 	}
 	state, mutability, ok := contract.InitialEntry(root, exactStringKey(t, contract, "state"))
-	if kind, kindOK := contract.InitialValueKind(state); !ok || !kindOK || kind != target.InitialValueAbsent || mutability != target.InitialFrozen {
+	if kind, kindOK := contract.InitialValueKind(state); !ok || !kindOK || kind != vocabulary.InitialValueAbsent || mutability != vocabulary.InitialFrozen {
 		t.Fatalf("custom.state = kind:%d mutability:%d present:%t typed:%t", kind, mutability, ok, kindOK)
 	}
 }
@@ -88,12 +89,12 @@ func TestStringModuleIndexIsItsExactRuntimeSelfAlias(t *testing.T) {
 	stringRoot := initialRootByIdentity(t, contract, "ModuleRoot:string")
 	value, mutability, ok := contract.InitialEntry(stringRoot, exactStringKey(t, contract, "__index"))
 	alias, aliasOK := contract.InitialValueRoot(value)
-	if !ok || !aliasOK || alias != stringRoot || mutability != target.InitialMutable {
+	if !ok || !aliasOK || alias != stringRoot || mutability != vocabulary.InitialMutable {
 		t.Fatalf("string.__index = value:%d alias:%d mutability:%d present:%t typed:%t", value, alias, mutability, ok, aliasOK)
 	}
 }
 
-func initialRootByIdentity(t *testing.T, contract *target.Contract, identity string) target.InitialRoot {
+func initialRootByIdentity(t *testing.T, contract *target.Contract, identity string) vocabulary.InitialRoot {
 	t.Helper()
 	for index := 0; index < contract.InitialRootCount(); index++ {
 		root, ok := contract.InitialRootAt(index)
@@ -106,7 +107,7 @@ func initialRootByIdentity(t *testing.T, contract *target.Contract, identity str
 	return 0
 }
 
-func exactStringKey(t *testing.T, contract *target.Contract, value string) target.ExactKey {
+func exactStringKey(t *testing.T, contract *target.Contract, value string) vocabulary.ExactKey {
 	t.Helper()
 	for index := 0; index < contract.ExactKeyCount(); index++ {
 		key, ok := contract.ExactKeyAt(index)

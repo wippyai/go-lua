@@ -299,7 +299,17 @@ func (binding *Binding[K, V]) NewWork() (carrier.SlotWork, bool) {
 		supportWork.Close()
 		return nil, false
 	}
-	return &bindingWork[K, V]{binding: binding, roots: roots, supportWork: supportWork, entailsWork: entailsWork, observations: observations}, true
+	// One-key reads refine their region in a transaction of their own, opened
+	// and sealed inside a single read.  That is a third lifecycle, so it gets a
+	// third shell: supportWork stays open across a fold and entailsWork is
+	// never sealed, and a read may borrow neither.
+	readWork := support.New(binding.plane.domain.Guards())
+	if readWork == nil {
+		supportWork.Close()
+		entailsWork.Close()
+		return nil, false
+	}
+	return &bindingWork[K, V]{binding: binding, roots: roots, supportWork: supportWork, entailsWork: entailsWork, readWork: readWork, observations: observations}, true
 }
 
 // bindingWork is private typed evaluator state for exactly one Binding.
@@ -316,6 +326,10 @@ type bindingWork[K scalar.Key, V any] struct {
 	// seal that shell, while publication comparisons need an open Work for the
 	// entire evaluator epoch.
 	entailsWork *support.Work
+	// readWork is the shell lent to one-key plane reads. A read publishes its
+	// refinement cells in a transaction of its own, so it can share neither the
+	// fold-long construction shell nor the never-sealed comparison shell.
+	readWork *support.Work
 	// roots and epoch are paired exactly once by carrier.Work opening.  The
 	// former retains this Work's dynamic typed planes; the latter is the only
 	// opaque handle provenance accepted for those planes.
@@ -419,6 +433,10 @@ func (work *bindingWork[K, V]) CloseRootEpoch() {
 	if work.entailsWork != nil {
 		work.entailsWork.Close()
 		work.entailsWork = nil
+	}
+	if work.readWork != nil {
+		work.readWork.Close()
+		work.readWork = nil
 	}
 	work.clearObservationScratch()
 	work.binding = nil
@@ -887,6 +905,35 @@ func (work *bindingWork[K, V]) LessOrEqContributionUnder(left, right carrier.Roo
 		return false, false
 	}
 	return work.binding.plane.domain.LessOrEqContribution(first, second, func(key K) (support.Mask, bool) {
+		return contributionRegion(work.coverageLeft, key)
+	}, &work.scratch), true
+}
+
+func (work *bindingWork[K, V]) AscentOrderedContributionUnder(left, right carrier.RootHandle, leftSupport, rightSupport support.Mask, leftCoverage, rightCoverage carrier.SlotCoverage) (bool, bool) {
+	if !work.live() || work.binding == nil || !leftSupport.Valid() || !rightSupport.Valid() || leftSupport.Manager() != work.binding.plane.domain.Guards() || rightSupport.Manager() != work.binding.plane.domain.Guards() || !work.entailsSupport(leftSupport, rightSupport) {
+		return false, false
+	}
+	first, ok := work.resolve(left)
+	if !ok {
+		return false, false
+	}
+	second, ok := work.resolve(right)
+	if !ok {
+		return false, false
+	}
+	defer func() {
+		clear(work.coverageLeft)
+		clear(work.coverageRight)
+	}()
+	work.coverageLeft, ok = work.contributionCoverage(leftCoverage, leftSupport, work.coverageLeft)
+	if !ok {
+		return false, false
+	}
+	work.coverageRight, ok = work.contributionCoverage(rightCoverage, rightSupport, work.coverageRight)
+	if !ok || !coverageMapContains(work.entailsWork, work.poll, work.coverageLeft, work.coverageRight) {
+		return false, false
+	}
+	return work.binding.plane.domain.AscentOrderedContribution(first, second, func(key K) (support.Mask, bool) {
 		return contributionRegion(work.coverageLeft, key)
 	}, &work.scratch), true
 }
@@ -1745,9 +1792,13 @@ func (work *bindingWork[K, V]) observeSummary(input semantic.Plane[planeFactor, 
 // partitionKey is the only read of a declared typed key. semantic.PartitionKey
 // returns its exact terminal/presence pieces in one traversal, avoiding the
 // old PartitionValue followed by SummaryUnder retraversal.
+//
+// It lends readWork for the refinement. This read runs once per declared key of
+// every observed fold, which is the engine's densest Boolean call site, so the
+// shell is owned here rather than minted inside the read.
 func (work *bindingWork[K, V]) partitionKey(input semantic.Plane[planeFactor, K, V], key K, within support.Mask) bool {
 	work.pieces = work.pieces[:0]
-	return work.binding.plane.domain.PartitionKey(input, key, within, func(value V, present bool, region support.Mask) bool {
+	return work.binding.plane.domain.PartitionKey(input, key, within, work.readWork, func(value V, present bool, region support.Mask) bool {
 		entry := ObservationEntry[V]{value: value, present: present}
 		work.pieces = append(work.pieces, observationPiece[V]{entry: entry, fingerprint: work.entryFingerprint(entry), region: region})
 		return true

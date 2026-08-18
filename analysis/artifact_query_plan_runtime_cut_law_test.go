@@ -89,3 +89,39 @@ return 42`, contract)
 		t.Fatalf("root-only solve = %v/%v", solveStatus, result)
 	}
 }
+
+// A sealed control-fault chunk is still a Program root. Query planning must
+// admit it so later diagnostic collection can name the fault instead of
+// failing construction.
+func TestArtifactQueryPlanAdmitsControlFaultChunk(t *testing.T) {
+	for _, name := range []string{"functions/break-outside-loop", "functions/goto-backward"} {
+		t.Run(name, func(t *testing.T) {
+			plan, status := Compile(fixtureLink(t, name))
+			if status != CompileComplete || plan == nil || plan.state == nil || len(plan.state.artifacts.mounts) == 0 {
+				t.Fatalf("compile = %v/%v", status, plan)
+			}
+			defer plan.Close()
+			queryPlan, queryOK := newArtifactQueryPlan(plan.state.artifacts.mounts)
+			if !queryOK || queryPlan == nil || len(queryPlan.rows) == 0 {
+				rowCount := 0
+				if queryPlan != nil {
+					rowCount = len(queryPlan.rows)
+				}
+				t.Fatalf("control-fault chunk has no query plan: ok=%t rows=%d", queryOK, rowCount)
+			}
+		})
+	}
+}
+
+// A declared query with no folded row is proven absent on the sealed column.
+// Detach must project that absence rather than fail construction.
+func TestAnalyzeCompletesDeclaredProvenAbsence(t *testing.T) {
+	for _, name := range []string{"core/control-for-loop", "core/query-zero-row"} {
+		t.Run(name, func(t *testing.T) {
+			result, status := Analyze(context.Background(), fixtureLink(t, name))
+			if status != AnalyzeComplete || result == nil {
+				t.Fatalf("Analyze %s = %v result=%t", name, status, result != nil)
+			}
+		})
+	}
+}

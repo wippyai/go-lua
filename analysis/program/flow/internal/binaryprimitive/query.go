@@ -149,10 +149,10 @@ const (
 )
 
 func binaryCategoryFor(op kind.BinaryOp) binaryCategory {
-	switch op {
-	case kind.BinaryAdd, kind.BinarySub, kind.BinaryMul, kind.BinaryDiv,
-		kind.BinaryIDiv, kind.BinaryMod, kind.BinaryPow:
+	if kind.IsBinaryArithmetic(op) {
 		return kindBinaryArithmetic
+	}
+	switch op {
 	case kind.BinaryBitAnd, kind.BinaryBitOr, kind.BinaryBitXor,
 		kind.BinaryShiftLeft, kind.BinaryShiftRight:
 		return kindBinaryBitwise

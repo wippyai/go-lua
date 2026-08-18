@@ -205,10 +205,7 @@ func lessCarryEntry(left, right carryEntry) bool {
 
 func (plan *Plan) buildCSR() bool {
 	carries := make([]carryEntry, 0)
-	for groupIndex, selected := range plan.selected {
-		if !selected {
-			continue
-		}
+	for groupIndex := range plan.families {
 		family := plan.families[groupIndex]
 		for _, carry := range family.Carries {
 			carries = append(carries, carryEntry{point: family.Inputs[carry.Input], slot: carry.Slot, group: groupIndex})
@@ -238,8 +235,43 @@ func (plan *Plan) buildCSR() bool {
 	return true
 }
 
-// Seal selects dense Point roots and proves every selected producer, and no
-// other Group, has an attached Family.
+// selectedForPoints derives the dense Group activation mask for one already
+// sealed graph view. It never mutates Plan, which lets a later epoch widen its
+// selection while the immutable carry/read CSR remains shared.
+func (plan *Plan) selectedForPoints(points []int) ([]bool, bool) {
+	if plan == nil || plan.graph == nil || len(points) == 0 {
+		return nil, false
+	}
+	expected := make([]bool, len(plan.families))
+	seenPoints := make([]bool, plan.graph.PointCount())
+	for _, pointIndex := range points {
+		if pointIndex < 0 || pointIndex >= len(seenPoints) {
+			return nil, false
+		}
+		if seenPoints[pointIndex] {
+			continue
+		}
+		seenPoints[pointIndex] = true
+		point, ok := plan.graph.PointAt(schedule.Node(pointIndex))
+		if !ok || !plan.graph.OwnsPoint(point) {
+			return nil, false
+		}
+		for index := 0; index < plan.graph.ProducerCount(point); index++ {
+			group, ok := plan.graph.ProducerAt(point, index)
+			groupIndex, indexed := plan.graph.GroupIndex(group)
+			if !ok || !indexed || groupIndex < 0 || groupIndex >= len(expected) || !plan.declared[groupIndex] {
+				return nil, false
+			}
+			expected[groupIndex] = true
+		}
+	}
+	return expected, true
+}
+
+// Seal selects dense Point roots and proves every selected producer has an
+// attached Family. All declared families are indexed once here; the initial
+// selected mask only controls the first Epoch and is never used to rebuild
+// the immutable carry/read indexes.
 func (plan *Plan) Seal(points []int) bool {
 	if plan == nil || len(points) == 0 {
 		return false
@@ -249,28 +281,12 @@ func (plan *Plan) Seal(points []int) bool {
 	if plan.sealed {
 		return false
 	}
-	expected := make([]bool, len(plan.families))
-	seenPoints := make([]bool, plan.graph.PointCount())
-	for _, pointIndex := range points {
-		if pointIndex < 0 || pointIndex >= len(seenPoints) || seenPoints[pointIndex] {
-			continue
-		}
-		seenPoints[pointIndex] = true
-		point, ok := plan.graph.PointAt(schedule.Node(pointIndex))
-		if !ok || !plan.graph.OwnsPoint(point) {
-			return false
-		}
-		for index := 0; index < plan.graph.ProducerCount(point); index++ {
-			group, ok := plan.graph.ProducerAt(point, index)
-			groupIndex, indexed := plan.graph.GroupIndex(group)
-			if !ok || !indexed || groupIndex < 0 || groupIndex >= len(expected) {
-				return false
-			}
-			expected[groupIndex] = true
-		}
+	expected, ok := plan.selectedForPoints(points)
+	if !ok {
+		return false
 	}
 	for index := range expected {
-		if expected[index] != plan.declared[index] {
+		if !plan.declared[index] {
 			return false
 		}
 	}
@@ -334,10 +350,7 @@ func (plan *Plan) buildReadIndex() bool {
 	plan.readGroups = make([]readGroup, len(plan.families))
 	plan.sourceAt = make(map[unitKey]int)
 	edges := make(map[edgeKey]struct{})
-	for group, selected := range plan.selected {
-		if !selected {
-			continue
-		}
+	for group := range plan.families {
 		family := plan.families[group]
 		index := readGroup{members: make(map[Observation]int, len(family.InitialReads)), initial: make([]int, 0, len(family.InitialReads))}
 		for _, observation := range family.InitialReads {
@@ -444,8 +457,12 @@ type groupReads struct {
 // section. Stable warmed routes neither rebuild the immutable static relation
 // nor allocate; rejected replacements never write a live backing slice.
 type Epoch struct {
-	mu         sync.RWMutex
-	plan       *Plan
+	mu   sync.RWMutex
+	plan *Plan
+	// selected is epoch-local activation over the Plan's immutable indexes.
+	// A widened revision opens a new Epoch with a larger mask without mutating
+	// the sealed Plan or rebuilding its CSR.
+	selected   []bool
 	groups     []groupReads
 	edgeCounts []uint64
 	edgeBits   []uint64
@@ -462,6 +479,8 @@ type Epoch struct {
 	// locator must not create a cold candidate×root relation.
 	dynamicByGroup  [][]Observation
 	dynamicBySource map[unitKey][]int
+	groupOwned      []bool
+	dynamicShared   bool
 	live            bool
 }
 
@@ -474,8 +493,134 @@ func Open(plan *Plan) (*Epoch, bool) {
 	if !plan.sealed || len(plan.readGroups) != len(plan.families) {
 		return nil, false
 	}
+	return openSelected(plan, append([]bool(nil), plan.selected...))
+}
+
+// OpenSelected opens an Epoch over the same sealed Plan indexes with a
+// widened Point-root selection. The caller supplies graph-dense Point
+// indexes; all producer families must already have been declared before the
+// one-time Seal.
+func OpenSelected(plan *Plan, points []int) (*Epoch, bool) {
+	if plan == nil {
+		return nil, false
+	}
+	plan.mu.RLock()
+	defer plan.mu.RUnlock()
+	if !plan.sealed || len(plan.readGroups) != len(plan.families) {
+		return nil, false
+	}
+	selected, ok := plan.selectedForPoints(points)
+	if !ok {
+		return nil, false
+	}
+	return openSelected(plan, selected)
+}
+
+// Widen opens a new epoch over the same sealed Plan indexes while preserving
+// the current exact relation. Only newly selected Group static rows are
+// admitted at this cut; existing dynamic routes remain shared until the new
+// epoch first writes them through Replace's copy-on-write boundary.
+func (epoch *Epoch) Widen(points []int) (*Epoch, bool) {
+	if epoch == nil {
+		return nil, false
+	}
+	epoch.mu.Lock()
+	defer epoch.mu.Unlock()
+	if !epoch.live || epoch.plan == nil || len(epoch.selected) != len(epoch.plan.families) {
+		return nil, false
+	}
+	epoch.plan.mu.RLock()
+	selected, ok := epoch.plan.selectedForPoints(points)
+	epoch.plan.mu.RUnlock()
+	if !ok || len(selected) != len(epoch.selected) {
+		return nil, false
+	}
+	for group, active := range epoch.selected {
+		if active && !selected[group] {
+			return nil, false
+		}
+	}
+	next := &Epoch{
+		plan:            epoch.plan,
+		selected:        append([]bool(nil), selected...),
+		groups:          append([]groupReads(nil), epoch.groups...),
+		edgeCounts:      append([]uint64(nil), epoch.edgeCounts...),
+		edgeBits:        append([]uint64(nil), epoch.edgeBits...),
+		wakeSeen:        make([]uint64, len(epoch.wakeSeen)),
+		wakes:           make([]Wake, 0, epoch.plan.maxWakes),
+		coverageWakes:   make([]Wake, 0, epoch.plan.maxWakes),
+		dynamicByGroup:  append([][]Observation(nil), epoch.dynamicByGroup...),
+		dynamicBySource: epoch.dynamicBySource,
+		groupOwned:      make([]bool, len(epoch.groups)),
+		dynamicShared:   true,
+		live:            true,
+	}
+	for group, active := range selected {
+		if !active {
+			continue
+		}
+		if epoch.selected[group] {
+			continue
+		}
+		index := epoch.plan.readGroups[group]
+		state := &next.groups[group]
+		state.static = true
+		state.staticSeen = make([]uint64, len(index.initial))
+		for _, contribution := range index.staticEdges {
+			if contribution.edge < 0 || contribution.edge >= len(next.edgeCounts) || contribution.count == 0 || next.edgeCounts[contribution.edge] > ^uint64(0)-contribution.count {
+				return nil, false
+			}
+			next.edgeCounts[contribution.edge] += contribution.count
+		}
+		next.groupOwned[group] = true
+	}
+	for edge, count := range next.edgeCounts {
+		if count != 0 {
+			next.edgeBits[edge>>6] |= uint64(1) << uint(edge&63)
+		} else {
+			next.edgeBits[edge>>6] &^= uint64(1) << uint(edge&63)
+		}
+	}
+	return next, true
+}
+
+func (epoch *Epoch) prepareGroupWrite(group int) bool {
+	if epoch == nil || group < 0 || group >= len(epoch.groups) {
+		return false
+	}
+	if !epoch.dynamicShared || group >= len(epoch.groupOwned) || epoch.groupOwned[group] {
+		return true
+	}
+	state := &epoch.groups[group]
+	state.staticSeen = append([]uint64(nil), state.staticSeen...)
+	state.dynamicScratch = nil
+	state.oldKeyScratch = nil
+	state.newKeyScratch = nil
+	state.routeScratch = nil
+	epoch.groupOwned[group] = true
+	return true
+}
+
+func (epoch *Epoch) prepareDynamicMapWrite() bool {
+	if epoch == nil || !epoch.dynamicShared {
+		return epoch != nil
+	}
+	next := make(map[unitKey][]int, len(epoch.dynamicBySource))
+	for key, groups := range epoch.dynamicBySource {
+		next[key] = groups
+	}
+	epoch.dynamicBySource = next
+	epoch.dynamicShared = false
+	return true
+}
+
+func openSelected(plan *Plan, selected []bool) (*Epoch, bool) {
+	if plan == nil || len(selected) != len(plan.families) {
+		return nil, false
+	}
 	epoch := &Epoch{
 		plan:            plan,
+		selected:        append([]bool(nil), selected...),
 		groups:          make([]groupReads, len(plan.families)),
 		edgeCounts:      make([]uint64, len(plan.edges)),
 		edgeBits:        make([]uint64, (len(plan.edges)+63)/64),
@@ -484,11 +629,15 @@ func Open(plan *Plan) (*Epoch, bool) {
 		coverageWakes:   make([]Wake, 0, plan.maxWakes),
 		dynamicByGroup:  make([][]Observation, len(plan.families)),
 		dynamicBySource: make(map[unitKey][]int),
+		groupOwned:      make([]bool, len(plan.families)),
 		live:            true,
 	}
-	for group, selected := range plan.selected {
+	for group, selected := range selected {
 		if !selected {
 			continue
+		}
+		if group < 0 || group >= len(plan.families) {
+			return nil, false
 		}
 		index := plan.readGroups[group]
 		state := &epoch.groups[group]
@@ -838,7 +987,10 @@ func (epoch *Epoch) Replace(group int, reads []Observation) bool {
 	}
 	epoch.mu.Lock()
 	defer epoch.mu.Unlock()
-	if !epoch.live || epoch.plan == nil || group >= len(epoch.groups) || group >= len(epoch.plan.readGroups) || group >= len(epoch.dynamicByGroup) || !epoch.plan.selected[group] {
+	if !epoch.live || epoch.plan == nil || group >= len(epoch.groups) || group >= len(epoch.plan.readGroups) || group >= len(epoch.dynamicByGroup) || group >= len(epoch.selected) || !epoch.selected[group] {
+		return false
+	}
+	if !epoch.prepareGroupWrite(group) {
 		return false
 	}
 	index := epoch.plan.readGroups[group]
@@ -885,6 +1037,9 @@ func (epoch *Epoch) Replace(group int, reads []Observation) bool {
 	// free rather than reallocating the same staging capacity every call.
 	state.dynamicScratch = nextDynamic[:0]
 	dynamicChanged := !sameCanonicalObservations(oldDynamic, nextDynamic)
+	if dynamicChanged && !epoch.prepareDynamicMapWrite() {
+		return false
+	}
 	if !dynamicChanged && state.static == nextStatic {
 		// The common warmed path: static membership is immutable and every
 		// discovered exact route is unchanged. Validation above used only
@@ -1112,10 +1267,10 @@ func (epoch *Epoch) RoutePoint(pointIndex int, set carrier.ChangeSet) ([]Wake, b
 		for index := 0; index < epoch.plan.graph.ConsumerCount(point); index++ {
 			group, ok := epoch.plan.graph.ConsumerAt(point, index)
 			groupIndex, indexed := epoch.plan.graph.GroupIndex(group)
-			if !ok || !indexed || groupIndex < 0 || groupIndex >= len(epoch.plan.selected) {
+			if !ok || !indexed || groupIndex < 0 || groupIndex >= len(epoch.selected) {
 				return false
 			}
-			if epoch.plan.selected[groupIndex] {
+			if epoch.selected[groupIndex] {
 				if !appendWake(Wake{Group: groupIndex, Reason: reason, Region: region}) {
 					return false
 				}
@@ -1145,6 +1300,9 @@ func (epoch *Epoch) RoutePoint(pointIndex int, set carrier.ChangeSet) ([]Wake, b
 		}
 		if bucket, found := epoch.plan.findCarry(pointIndex, row.Slot()); found {
 			for _, group := range epoch.plan.carryGroups[bucket.begin:bucket.end] {
+				if group < 0 || group >= len(epoch.selected) || !epoch.selected[group] {
+					continue
+				}
 				if !appendWake(Wake{Group: group, Reason: ChangedFactor, Slot: row.Slot(), Region: row.Region()}) {
 					return nil, false
 				}
@@ -1188,6 +1346,9 @@ func (epoch *Epoch) RouteCoverage(pointIndex int, set carrier.CoverageChangeSet)
 			if group < 0 || group >= len(epoch.wakeSeen) {
 				return nil, false
 			}
+			if group >= len(epoch.selected) || !epoch.selected[group] {
+				continue
+			}
 			if epoch.wakeSeen[group] == marker {
 				continue
 			}
@@ -1208,10 +1369,10 @@ func (epoch *Epoch) Discard() bool {
 	if !epoch.live {
 		return true
 	}
-	for index := range epoch.dynamicByGroup {
-		clear(epoch.dynamicByGroup[index])
-		epoch.dynamicByGroup[index] = nil
-	}
+	// Widened epochs may share immutable live-route slices until their first
+	// copy-on-write Replace. Drop only this epoch's outer authority; clearing a
+	// shared backing slice would corrupt the successor being installed.
+	epoch.dynamicByGroup = nil
 	epoch.dynamicBySource = nil
 	clear(epoch.wakes)
 	epoch.wakes = nil

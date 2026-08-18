@@ -3,6 +3,7 @@ package factor
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/target"
@@ -87,8 +88,8 @@ type PublicationAtomBinding struct {
 	mounted                    MountedCall
 	binding                    AtomBinding
 	role                       publicationAtomBindingRole
-	operation                  target.Operation
-	callback                   target.CallbackID
+	operation                  vocabulary.Operation
+	callback                   vocabulary.CallbackID
 	effect                     uint32
 	descriptor                 target.PublicationEffectDescriptor
 	descriptorID, occurrenceID identity.ContentID
@@ -127,7 +128,7 @@ func (binding PublicationAtomBinding) valid() bool {
 	}
 	var expected target.PublicationEffectDescriptor
 	var descriptorID, occurrenceID identity.ContentID
-	var selectorFormal target.ValueFormal
+	var selectorFormal vocabulary.ValueFormal
 	switch binding.role {
 	case publicationAtomBindingOrdinary:
 		if binding.callback != 0 || binding.binding.formal.role != formalAtomOrdinary || uint64(binding.effect) >= uint64(binding.owner.contract.EffectCount(binding.operation)) {
@@ -186,22 +187,22 @@ func (binding PublicationAtomBinding) valid() bool {
 	if binding.descriptor != expected || binding.descriptorID != descriptorID || binding.occurrenceID != occurrenceID {
 		return false
 	}
-	expectedSubject, subjectOK := binding.owner.packs.InputSelector(binding.operation, target.InputSource{Kind: target.InputSourceValueFormal, Ordinal: uint32(selectorFormal)})
+	expectedSubject, subjectOK := binding.owner.packs.InputSelector(binding.operation, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: uint32(selectorFormal)})
 	if !subjectOK || binding.subject != expectedSubject {
 		return false
 	}
 	switch expected.DestinationRole() {
-	case target.PublicationDestinationNone:
+	case vocabulary.PublicationDestinationNone:
 		return !binding.hasContext && binding.context == (pack.InputSelector{})
-	case target.PublicationDestinationValueFormal:
-		var contextFormal target.ValueFormal
+	case vocabulary.PublicationDestinationValueFormal:
+		var contextFormal vocabulary.ValueFormal
 		var contextOK bool
 		if binding.role == publicationAtomBindingOrdinary {
 			contextFormal, contextOK = binding.owner.contract.EffectValueArgumentAt(binding.operation, int(binding.effect), int(expected.Context()))
 		} else {
 			contextFormal, contextOK = binding.owner.contract.CallbackEffectValueArgumentAt(binding.callback, int(binding.effect), int(expected.Context()))
 		}
-		expectedContext, selectorOK := binding.owner.packs.InputSelector(binding.operation, target.InputSource{Kind: target.InputSourceValueFormal, Ordinal: uint32(contextFormal)})
+		expectedContext, selectorOK := binding.owner.packs.InputSelector(binding.operation, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: uint32(contextFormal)})
 		return binding.hasContext && contextOK && selectorOK && binding.owner.packs.OwnsInputSelector(binding.context) && binding.context == expectedContext
 	default:
 		return false
@@ -238,27 +239,27 @@ func (binding PublicationAtomBinding) DescriptorID() (identity.ContentID, bool) 
 func (binding PublicationAtomBinding) OccurrenceID() (identity.ContentID, bool) {
 	return binding.occurrenceID, binding.valid()
 }
-func (binding PublicationAtomBinding) Kind() target.PublicationEffectKind {
+func (binding PublicationAtomBinding) Kind() vocabulary.PublicationEffectKind {
 	if !binding.valid() {
-		return target.PublicationEffectInvalid
+		return vocabulary.PublicationEffectInvalid
 	}
 	return binding.descriptor.Kind()
 }
-func (binding PublicationAtomBinding) Escape() target.PublicationEscapeDisposition {
+func (binding PublicationAtomBinding) Escape() vocabulary.PublicationEscapeDisposition {
 	if !binding.valid() {
-		return target.PublicationEscapeInvalid
+		return vocabulary.PublicationEscapeInvalid
 	}
 	return binding.descriptor.Escape()
 }
-func (binding PublicationAtomBinding) Mutability() target.PublicationMutabilityDisposition {
+func (binding PublicationAtomBinding) Mutability() vocabulary.PublicationMutabilityDisposition {
 	if !binding.valid() {
-		return target.PublicationMutabilityInvalid
+		return vocabulary.PublicationMutabilityInvalid
 	}
 	return binding.descriptor.Mutability()
 }
-func (binding PublicationAtomBinding) Lifetime() target.PublicationLifetimeDisposition {
+func (binding PublicationAtomBinding) Lifetime() vocabulary.PublicationLifetimeDisposition {
 	if !binding.valid() {
-		return target.PublicationLifetimeInvalid
+		return vocabulary.PublicationLifetimeInvalid
 	}
 	return binding.descriptor.Lifetime()
 }
@@ -307,13 +308,13 @@ func (binding AtomBinding) Atom() (Atom, bool) {
 
 // FormalCallEffectAtom derives one reusable ordinary effect template from the
 // exact Project/Program mounted-call proofs and a Target descriptor.
-func (a *Algebra) FormalCallEffectAtom(mounted MountedCall, owner target.Operation, effect int) (FormalAtom, bool) {
+func (a *Algebra) FormalCallEffectAtom(mounted MountedCall, owner vocabulary.Operation, effect int) (FormalAtom, bool) {
 	callRoot, typeArguments, applicationID, ok := a.formalCallRoot(mounted, owner)
 	if !ok {
 		return FormalAtom{}, false
 	}
 	tail, _, tailOK := a.contract.EffectTail(owner)
-	if !tailOK || (tail != target.RowClosed && tail != target.RowUnknownOpen) || effect < 0 || effect >= a.contract.EffectCount(owner) || a.contract.EffectRowArgumentCount(owner, effect) != 0 {
+	if !tailOK || (tail != vocabulary.RowClosed && tail != vocabulary.RowUnknownOpen) || effect < 0 || effect >= a.contract.EffectCount(owner) || a.contract.EffectRowArgumentCount(owner, effect) != 0 {
 		return FormalAtom{}, false
 	}
 	targetOperation, targetOK := a.contract.EffectTarget(owner, effect)
@@ -331,14 +332,14 @@ func (a *Algebra) FormalCallEffectAtom(mounted MountedCall, owner target.Operati
 
 // FormalCallbackEffectAtom derives one reusable callback effect template from
 // the same exact mounted-call proofs.
-func (a *Algebra) FormalCallbackEffectAtom(mounted MountedCall, owner target.Operation, callback target.CallbackID, effect int) (FormalAtom, bool) {
+func (a *Algebra) FormalCallbackEffectAtom(mounted MountedCall, owner vocabulary.Operation, callback vocabulary.CallbackID, effect int) (FormalAtom, bool) {
 	callRoot, typeArguments, applicationID, ok := a.formalCallRoot(mounted, owner)
 	if !ok || effect < 0 || effect >= a.contract.CallbackEffectCount(callback) {
 		return FormalAtom{}, false
 	}
 	callbackOwner, ownerOK := a.contract.CallbackOwner(callback)
 	tail, _, tailOK := a.contract.CallbackEffectTail(callback)
-	if !ownerOK || callbackOwner != owner || !tailOK || (tail != target.RowClosed && tail != target.RowUnknownOpen) || a.contract.CallbackEffectRowArgumentCount(callback, effect) != 0 {
+	if !ownerOK || callbackOwner != owner || !tailOK || (tail != vocabulary.RowClosed && tail != vocabulary.RowUnknownOpen) || a.contract.CallbackEffectRowArgumentCount(callback, effect) != 0 {
 		return FormalAtom{}, false
 	}
 	targetOperation, targetOK := a.contract.CallbackEffectTarget(callback, effect)
@@ -356,7 +357,7 @@ func (a *Algebra) FormalCallbackEffectAtom(mounted MountedCall, owner target.Ope
 
 // BindFormalCallEffectAtom beta-freshens an ordinary formal template into one
 // exact mounted Effect root without allocating a new vocabulary coordinate.
-func (a *Algebra) BindFormalCallEffectAtom(root Root, mounted MountedCall, owner target.Operation, effect int, formal FormalAtom) (AtomBinding, bool) {
+func (a *Algebra) BindFormalCallEffectAtom(root Root, mounted MountedCall, owner vocabulary.Operation, effect int, formal FormalAtom) (AtomBinding, bool) {
 	expected, ok := a.FormalCallEffectAtom(mounted, owner, effect)
 	if !ok || formal.role != formalAtomOrdinary {
 		return AtomBinding{}, false
@@ -365,7 +366,7 @@ func (a *Algebra) BindFormalCallEffectAtom(root Root, mounted MountedCall, owner
 }
 
 // BindFormalCallbackEffectAtom is the callback-typed beta binding.
-func (a *Algebra) BindFormalCallbackEffectAtom(root Root, mounted MountedCall, owner target.Operation, callback target.CallbackID, effect int, formal FormalAtom) (AtomBinding, bool) {
+func (a *Algebra) BindFormalCallbackEffectAtom(root Root, mounted MountedCall, owner vocabulary.Operation, callback vocabulary.CallbackID, effect int, formal FormalAtom) (AtomBinding, bool) {
 	expected, ok := a.FormalCallbackEffectAtom(mounted, owner, callback, effect)
 	if !ok || formal.role != formalAtomCallback {
 		return AtomBinding{}, false
@@ -376,7 +377,7 @@ func (a *Algebra) BindFormalCallbackEffectAtom(root Root, mounted MountedCall, o
 // PublicationCallEffectBinding joins one already-issued ordinary AtomBinding
 // to an explicitly authored Target publication descriptor. Effects without a
 // publication descriptor remain ordinary AtomBindings and return absent.
-func (a *Algebra) PublicationCallEffectBinding(root Root, mounted MountedCall, owner target.Operation, effect int, atomBinding AtomBinding) (PublicationAtomBinding, bool) {
+func (a *Algebra) PublicationCallEffectBinding(root Root, mounted MountedCall, owner vocabulary.Operation, effect int, atomBinding AtomBinding) (PublicationAtomBinding, bool) {
 	formal, formalOK := a.FormalCallEffectAtom(mounted, owner, effect)
 	expectedBinding, bindingOK := a.bindFormalAtom(root, mounted, formal, formal)
 	descriptor, descriptorOK := a.contract.PublicationEffectDescriptor(owner, effect)
@@ -386,14 +387,14 @@ func (a *Algebra) PublicationCallEffectBinding(root Root, mounted MountedCall, o
 		return PublicationAtomBinding{}, false
 	}
 	subjectFormal, subjectOK := a.contract.EffectValueArgumentAt(owner, effect, int(descriptor.Subject()))
-	subject, selectorOK := a.packs.InputSelector(owner, target.InputSource{Kind: target.InputSourceValueFormal, Ordinal: uint32(subjectFormal)})
+	subject, selectorOK := a.packs.InputSelector(owner, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: uint32(subjectFormal)})
 	if !subjectOK || !selectorOK {
 		return PublicationAtomBinding{}, false
 	}
 	binding := PublicationAtomBinding{owner: a, mounted: mounted, binding: atomBinding, role: publicationAtomBindingOrdinary, operation: owner, effect: uint32(effect), descriptor: descriptor, descriptorID: descriptorID, occurrenceID: occurrenceID, subject: subject, sealed: true}
-	if descriptor.DestinationRole() == target.PublicationDestinationValueFormal {
+	if descriptor.DestinationRole() == vocabulary.PublicationDestinationValueFormal {
 		contextFormal, contextOK := a.contract.EffectValueArgumentAt(owner, effect, int(descriptor.Context()))
-		context, contextSelectorOK := a.packs.InputSelector(owner, target.InputSource{Kind: target.InputSourceValueFormal, Ordinal: uint32(contextFormal)})
+		context, contextSelectorOK := a.packs.InputSelector(owner, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: uint32(contextFormal)})
 		if !contextOK || !contextSelectorOK {
 			return PublicationAtomBinding{}, false
 		}
@@ -405,7 +406,7 @@ func (a *Algebra) PublicationCallEffectBinding(root Root, mounted MountedCall, o
 // PublicationCallbackEffectBinding is the callback-typed counterpart of
 // PublicationCallEffectBinding. Callback provenance remains explicit even
 // when its ordinary atom quotient is content-equal to another effect row.
-func (a *Algebra) PublicationCallbackEffectBinding(root Root, mounted MountedCall, owner target.Operation, callback target.CallbackID, effect int, atomBinding AtomBinding) (PublicationAtomBinding, bool) {
+func (a *Algebra) PublicationCallbackEffectBinding(root Root, mounted MountedCall, owner vocabulary.Operation, callback vocabulary.CallbackID, effect int, atomBinding AtomBinding) (PublicationAtomBinding, bool) {
 	formal, formalOK := a.FormalCallbackEffectAtom(mounted, owner, callback, effect)
 	expectedBinding, bindingOK := a.bindFormalAtom(root, mounted, formal, formal)
 	descriptor, descriptorOK := a.contract.CallbackPublicationEffectDescriptor(callback, effect)
@@ -415,14 +416,14 @@ func (a *Algebra) PublicationCallbackEffectBinding(root Root, mounted MountedCal
 		return PublicationAtomBinding{}, false
 	}
 	subjectFormal, subjectOK := a.contract.CallbackEffectValueArgumentAt(callback, effect, int(descriptor.Subject()))
-	subject, selectorOK := a.packs.InputSelector(owner, target.InputSource{Kind: target.InputSourceValueFormal, Ordinal: uint32(subjectFormal)})
+	subject, selectorOK := a.packs.InputSelector(owner, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: uint32(subjectFormal)})
 	if !subjectOK || !selectorOK {
 		return PublicationAtomBinding{}, false
 	}
 	binding := PublicationAtomBinding{owner: a, mounted: mounted, binding: atomBinding, role: publicationAtomBindingCallback, operation: owner, callback: callback, effect: uint32(effect), descriptor: descriptor, descriptorID: descriptorID, occurrenceID: occurrenceID, subject: subject, sealed: true}
-	if descriptor.DestinationRole() == target.PublicationDestinationValueFormal {
+	if descriptor.DestinationRole() == vocabulary.PublicationDestinationValueFormal {
 		contextFormal, contextOK := a.contract.CallbackEffectValueArgumentAt(callback, effect, int(descriptor.Context()))
-		context, contextSelectorOK := a.packs.InputSelector(owner, target.InputSource{Kind: target.InputSourceValueFormal, Ordinal: uint32(contextFormal)})
+		context, contextSelectorOK := a.packs.InputSelector(owner, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: uint32(contextFormal)})
 		if !contextOK || !contextSelectorOK {
 			return PublicationAtomBinding{}, false
 		}
@@ -434,7 +435,7 @@ func (a *Algebra) PublicationCallbackEffectBinding(root Root, mounted MountedCal
 // SelectedCallPublicationAtomBindings mints publication receipts alongside
 // the existing selected ordinary/callback AtomBindings. It omits generic
 // non-publication effects rather than assigning them inferred memory meaning.
-func (a *Algebra) SelectedCallPublicationAtomBindings(root Root, mounted MountedCall, owner target.Operation) ([]PublicationAtomBinding, bool) {
+func (a *Algebra) SelectedCallPublicationAtomBindings(root Root, mounted MountedCall, owner vocabulary.Operation) ([]PublicationAtomBinding, bool) {
 	bindings, ok := a.SelectedCallEffectBindings(root, mounted, owner)
 	if !ok {
 		return nil, false
@@ -480,12 +481,12 @@ func (a *Algebra) SelectedCallPublicationAtomBindings(root Root, mounted Mounted
 // vector for one exact mounted selected operation. It is a cold constructor:
 // hot Rules retain the returned AtomBindings and project their atoms in O(1)
 // without reopening Boundary, Target, Pack, or Program.
-func (a *Algebra) SelectedCallEffectBindings(root Root, mounted MountedCall, owner target.Operation) ([]AtomBinding, bool) {
+func (a *Algebra) SelectedCallEffectBindings(root Root, mounted MountedCall, owner vocabulary.Operation) ([]AtomBinding, bool) {
 	if !a.ownsRoot(root) {
 		return nil, false
 	}
 	tail, _, tailOK := a.contract.EffectTail(owner)
-	if !tailOK || (tail != target.RowClosed && tail != target.RowUnknownOpen) {
+	if !tailOK || (tail != vocabulary.RowClosed && tail != vocabulary.RowUnknownOpen) {
 		return nil, false
 	}
 	count := a.contract.EffectCount(owner)
@@ -496,7 +497,7 @@ func (a *Algebra) SelectedCallEffectBindings(root Root, mounted MountedCall, own
 			return nil, false
 		}
 		callbackTail, _, callbackTailOK := a.contract.CallbackEffectTail(callback)
-		if !callbackTailOK || (callbackTail != target.RowClosed && callbackTail != target.RowUnknownOpen) {
+		if !callbackTailOK || (callbackTail != vocabulary.RowClosed && callbackTail != vocabulary.RowUnknownOpen) {
 			return nil, false
 		}
 		var added bool
@@ -548,7 +549,7 @@ func (a *Algebra) bindFormalAtom(root Root, mounted MountedCall, formal, expecte
 	return binding, binding.valid()
 }
 
-func (a *Algebra) formalCallRoot(mounted MountedCall, owner target.Operation) (pack.FormalCallRoot, pack.FormalCallTypeArguments, identity.ContentID, bool) {
+func (a *Algebra) formalCallRoot(mounted MountedCall, owner vocabulary.Operation) (pack.FormalCallRoot, pack.FormalCallTypeArguments, identity.ContentID, bool) {
 	application, module, occurrence, ok := a.MountedCallIdentity(mounted)
 	root, rootOK := a.RootForMountedCall(mounted)
 	if !ok || !a.Valid() || !rootOK || !a.callInRootID(root, application) {
@@ -562,9 +563,9 @@ func (a *Algebra) formalCallRoot(mounted MountedCall, owner target.Operation) (p
 	return formal, types, application, formalOK && typesOK
 }
 
-func (a *Algebra) ordinaryTypeFormalDescriptor(applicationID identity.ContentID, arguments pack.FormalCallTypeArguments, owner target.Operation, effect int) (identity.ContentID, bool) {
+func (a *Algebra) ordinaryTypeFormalDescriptor(applicationID identity.ContentID, arguments pack.FormalCallTypeArguments, owner vocabulary.Operation, effect int) (identity.ContentID, bool) {
 	count := a.contract.EffectTypeArgumentCount(owner, effect)
-	positions := make([]target.TypeFormal, count)
+	positions := make([]vocabulary.TypeFormal, count)
 	for index := range positions {
 		formal, ok := a.contract.EffectTypeArgumentAt(owner, effect, index)
 		if !ok {
@@ -575,9 +576,9 @@ func (a *Algebra) ordinaryTypeFormalDescriptor(applicationID identity.ContentID,
 	return a.selectedTypeFormalDescriptor(applicationID, arguments, owner, positions)
 }
 
-func (a *Algebra) callbackTypeFormalDescriptor(applicationID identity.ContentID, arguments pack.FormalCallTypeArguments, owner target.Operation, callback target.CallbackID, effect int) (identity.ContentID, bool) {
+func (a *Algebra) callbackTypeFormalDescriptor(applicationID identity.ContentID, arguments pack.FormalCallTypeArguments, owner vocabulary.Operation, callback vocabulary.CallbackID, effect int) (identity.ContentID, bool) {
 	count := a.contract.CallbackEffectTypeArgumentCount(callback, effect)
-	positions := make([]target.TypeFormal, count)
+	positions := make([]vocabulary.TypeFormal, count)
 	for index := range positions {
 		formal, ok := a.contract.CallbackEffectTypeArgumentAt(callback, effect, index)
 		if !ok {
@@ -592,7 +593,7 @@ func (a *Algebra) callbackTypeFormalDescriptor(applicationID identity.ContentID,
 // call/Target-ABI admission proof. Reusable bytes contain Pack's ordered
 // canonical semantic type descriptor plus Target formal positions; Boundary's
 // Program/Static-fenced correspondence ID and raw Terms never enter them.
-func (a *Algebra) selectedTypeFormalDescriptor(applicationID identity.ContentID, formalArguments pack.FormalCallTypeArguments, owner target.Operation, positions []target.TypeFormal) (identity.ContentID, bool) {
+func (a *Algebra) selectedTypeFormalDescriptor(applicationID identity.ContentID, formalArguments pack.FormalCallTypeArguments, owner vocabulary.Operation, positions []vocabulary.TypeFormal) (identity.ContentID, bool) {
 	if len(positions) == 0 {
 		return identity.ContentID{}, true
 	}

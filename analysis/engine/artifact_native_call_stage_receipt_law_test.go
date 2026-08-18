@@ -50,7 +50,7 @@ func newNativeCallStageLawOwner(t testing.TB) nativeCallStageLawFixture {
 	}
 	foreignSpec := spec
 	foreignSpec.Admission = AdmitRuleByTrustedTheorem[uint64, struct{}](coldKey(947_107))
-	if !BindFactor(binding, factor, hotUintFactorSpec()) || !BindRule[uint64, uint64, struct{}](binding, rule, write, factor, spec) || !BindRule[uint64, uint64, struct{}](binding, foreignRule, foreignWrite, factor, foreignSpec) {
+	if !BindFactor(binding, factor, hotUintFactorSpec()) || !BindRule[uint64, uint64, struct{}](binding, rule, write, factor, spec, testRuleProjector[struct{}]) || !BindRule[uint64, uint64, struct{}](binding, foreignRule, foreignWrite, factor, foreignSpec, testRuleProjector[struct{}]) {
 		t.Fatal("native Call stage binding")
 	}
 	capability, capabilityOK := IssueMountedRuleCapability(binding, rule)
@@ -76,7 +76,11 @@ func (fixture nativeCallStageLawFixture) scalarSpec(t testing.TB, rules []rows.A
 	regionID, bodyID := artifactScalarLawID(0x7A), artifactScalarLawID(0x7B)
 	points := []rows.ArtifactScalarPoint{{ID: fixture.base, Initial: true}, {ID: fixture.dispatch}, {ID: fixture.summary}, {ID: fixture.effect}}
 	spec, ok := rows.NewArtifactScalarSpec(artifactID, program, schema, rows.ArtifactScalarCapacity{Roles: 1, Points: len(points), Regions: 1, Events: len(order) + 2, Rules: len(rules), Bodies: 1})
-	if !ok {
+	if !ok || !spec.InstallStageLaws([]rows.ArtifactStageLaw{
+		{Stage: rows.ArtifactRuleStageCallDispatch, Native: true},
+		{Stage: rows.ArtifactRuleStageCallSummary, Native: true, Predecessor: rows.ArtifactRuleStageCallDispatch},
+		{Stage: rows.ArtifactRuleStageCallEffect, Native: true, Predecessor: rows.ArtifactRuleStageCallSummary},
+	}) {
 		t.Fatal("native Call stage scalar spec")
 	}
 	role, roleOK := spec.DeclareRole(artifactScalarLawID(0x6F))

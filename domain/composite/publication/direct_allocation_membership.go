@@ -3,6 +3,7 @@ package publication
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/snapshot"
 	"github.com/wippyai/go-lua/domain/effect/callsite"
 	packdomain "github.com/wippyai/go-lua/domain/pack"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
@@ -42,7 +43,7 @@ func (attachment DirectAllocationMembershipAttachment) ContentID() (identity.Con
 }
 
 // AttachSelectedDirectAllocationMembership attaches one Value summary root to
-// the exact selected CallEffect member already admitted by this receipt graph.
+// the exact selected CallEffect member already admitted by this construction.
 // It intentionally precedes solving and has no transition, placement, or
 // allocation input: one call occurrence shares this private observation across
 // any later completed publication candidates.
@@ -52,25 +53,20 @@ func (attachment DirectAllocationMembershipAttachment) ContentID() (identity.Con
 // exists. A coordinate triple that is not an admitted member of the named role
 // therefore has no attachment.
 func AttachSelectedDirectAllocationMembership(
-	compilation *engine.ReceiptCompilation,
+	compilation *engine.ProgramConstruction,
 	query *engine.SummaryQueryImplementation[valuedomain.Value, valuedomain.ValueSummaryObservation],
-	graph *engine.ReceiptGraph,
 	role engine.RuleSlotCapability,
 	mount, point, call identity.ContentID,
 	width uint32,
 ) (DirectAllocationMembershipAttachment, bool) {
-	if compilation == nil || query == nil || graph == nil {
+	if compilation == nil || query == nil {
 		return DirectAllocationMembershipAttachment{}, false
 	}
 	id, idOK := directAllocationMembershipAttachmentID(mount, point, call, width)
 	if !idOK {
 		return DirectAllocationMembershipAttachment{}, false
 	}
-	member, memberOK := graph.MountedRuleMember(role, mount, point, call)
-	if !memberOK {
-		return DirectAllocationMembershipAttachment{}, false
-	}
-	observation, failure := engine.AttachRuleSummaryObservationWithFailure[valuedomain.Value, valuedomain.ValueSummaryObservation](compilation, query, id, member)
+	observation, failure := engine.AttachMountedSummaryObservationWithFailure[valuedomain.Value, valuedomain.ValueSummaryObservation](compilation, query, id, role, mount, point, call)
 	if failure != engine.ReceiptObservationAttachFailureNone || !observation.Available() {
 		return DirectAllocationMembershipAttachment{}, false
 	}
@@ -122,10 +118,10 @@ func (proof DirectAllocationMembershipProof) DirectAllocationSubjectID() (identi
 	return proof.direct, proof.valid()
 }
 
-// Prove reads the retained private Engine observation only after a completed
-// transition correlation reauthenticates the same occurrence, live binding,
-// and direct receipt. It rejects absent, Top, mixed, foreign, stale, or shaped
-// observation data by never accepting observation values from callers.
+// Prove reads the completed Snapshot only after a completed transition
+// correlation reauthenticates the same occurrence, live binding, and direct
+// receipt. It rejects absent, Top, mixed, foreign, stale, or shaped observation
+// data by never accepting observation values from callers.
 //
 // This is also the relation's one cross-owner admission of the direct receipt:
 // MatchesRuntimeBinding reauthenticates the live Pack seal, the binding's own
@@ -159,7 +155,20 @@ func (attachment DirectAllocationMembershipAttachment) Prove(
 		subject.ID() != subjectID || mount != attachment.mount || call != attachment.call || subjectMount != mount || subjectCall != call {
 		return DirectAllocationMembershipProof{}, false
 	}
-	observation, readable := engine.ReceiptObservationResult[valuedomain.ValueSummaryObservation](attachment.observation, solver, state)
+	sealed, publishedOK := solver.PublishedSnapshot(state)
+	if !publishedOK {
+		return DirectAllocationMembershipProof{}, false
+	}
+	published := sealed.Snapshot()
+	plan, opened := snapshot.OpenQuery[identity.ContentID, engine.Answer](&published, sealed.ObservationFamily())
+	if !opened {
+		return DirectAllocationMembershipProof{}, false
+	}
+	answer, status := snapshot.Query(&published, plan, attachment.id)
+	if status != snapshot.ReadHit || !answer.Available() {
+		return DirectAllocationMembershipProof{}, false
+	}
+	observation, readable := engine.AnswerValue[valuedomain.ValueSummaryObservation](answer)
 	if !readable || !observation.Valid || observation.Rows != 1 || len(observation.Values) != int(attachment.width) || len(observation.Present) != int(attachment.width) {
 		return DirectAllocationMembershipProof{}, false
 	}

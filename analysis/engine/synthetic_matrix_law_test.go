@@ -21,7 +21,11 @@ func TestReceiptQueriesRemainBoundToDeclaredRows(t *testing.T) {
 				t.Fatalf("baseline receipt solve = state:%v status:%v", state, status)
 			}
 			for queryIndex, query := range fixture.queries {
-				value, readable := ReceiptQueryResult[uint64](query, fixture.solver, state)
+				key, keyed := query.PublicationKey()
+				if !keyed {
+					t.Fatalf("baseline query[%d] has no snapshot key", queryIndex)
+				}
+				value, readable := testSnapshotQueryValue[uint64](fixture.solver, state, key)
 				if !readable || value != baseline.expected[queryIndex] {
 					t.Fatalf("baseline query[%d] = %d/%v, want %d/true", queryIndex, value, readable, baseline.expected[queryIndex])
 				}
@@ -39,7 +43,11 @@ func TestReceiptQueriesRemainBoundToDeclaredRows(t *testing.T) {
 			t.Fatalf("permutation %v solve = state:%v status:%v", permutation, state, status)
 		}
 		for queryIndex, query := range fixture.queries {
-			value, readable := ReceiptQueryResult[uint64](query, fixture.solver, state)
+			key, keyed := query.PublicationKey()
+			if !keyed {
+				t.Fatalf("permutation %v query[%d] has no snapshot key", permutation, queryIndex)
+			}
+			value, readable := testSnapshotQueryValue[uint64](fixture.solver, state, key)
 			if !readable || value != baseline.expected[queryIndex] {
 				t.Fatalf("permutation %v query[%d] = %d/%v, want %d/true", permutation, queryIndex, value, readable, baseline.expected[queryIndex])
 			}
@@ -67,7 +75,11 @@ func TestReceiptQueryMatrixScaleInvariance(t *testing.T) {
 				t.Fatalf("count %d order %d changed schema/topology identity", count, index)
 			}
 			for queryIndex, query := range fixture.queries {
-				value, readable := ReceiptQueryResult[uint64](query, fixture.solver, state)
+				key, keyed := query.PublicationKey()
+				if !keyed {
+					t.Fatalf("count %d order %d query[%d] has no snapshot key", count, index, queryIndex)
+				}
+				value, readable := testSnapshotQueryValue[uint64](fixture.solver, state, key)
 				if !readable || value != baseline.expected[queryIndex] {
 					t.Fatalf("count %d order %d query[%d] = %d/%v, want %d/true", count, index, queryIndex, value, readable, baseline.expected[queryIndex])
 				}

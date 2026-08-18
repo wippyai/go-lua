@@ -2,7 +2,7 @@ package factor
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/domain/call"
 )
 
@@ -60,7 +60,7 @@ func (a *Algebra) RootForMountedCall(mounted MountedCall) (Root, bool) {
 	return root, ok && a.callInRootID(root, row.applicationID)
 }
 
-func (a *Algebra) selectedMountedCall(root Root, mounted MountedCall, operation target.Operation) bool {
+func (a *Algebra) selectedMountedCall(root Root, mounted MountedCall, operation vocabulary.Operation) bool {
 	row, ok := a.mountedCallRow(mounted)
 	if !ok || !a.callInRootID(root, row.applicationID) {
 		return false
@@ -76,25 +76,25 @@ func (a *Algebra) selectedMountedCall(root Root, mounted MountedCall, operation 
 	return ok
 }
 
-func (a *Algebra) SelectedMountedCallOpaque(root Root, mounted MountedCall, operation target.Operation) (Value, bool) {
+func (a *Algebra) SelectedMountedCallOpaque(root Root, mounted MountedCall, operation vocabulary.Operation) (Value, bool) {
 	if !a.selectedMountedCall(root, mounted, operation) {
 		return Value{}, false
 	}
 	tail, _, ok := a.contract.EffectTail(operation)
-	if !ok || tail == target.RowVariable {
+	if !ok || tail == vocabulary.RowVariable {
 		return Value{}, false
 	}
-	known := tail == target.RowUnknownOpen
+	known := tail == vocabulary.RowUnknownOpen
 	for index := 0; index < a.contract.CallbackCount(operation); index++ {
 		callback, ok := a.contract.CallbackAt(operation, index)
 		if !ok {
 			return Value{}, false
 		}
 		tail, _, ok := a.contract.CallbackEffectTail(callback)
-		if !ok || tail == target.RowVariable {
+		if !ok || tail == vocabulary.RowVariable {
 			return Value{}, false
 		}
-		known = known || tail == target.RowUnknownOpen
+		known = known || tail == vocabulary.RowUnknownOpen
 	}
 	if !known {
 		return a.Bottom(), true

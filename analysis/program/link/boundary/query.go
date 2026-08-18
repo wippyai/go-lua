@@ -5,12 +5,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 )
 
 // RequireOperation returns the one exact Target operation bound to the
 // builtin require ingress. The false case means this Target has no scoped
 // require authority; zero is never an admitted operation.
-func (c *Component) RequireOperation() (target.Operation, bool) {
+func (c *Component) RequireOperation() (vocabulary.Operation, bool) {
 	if c == nil || c.authority == nil || c.authority.require == 0 {
 		return 0, false
 	}
@@ -45,7 +46,7 @@ func (c *Component) Target() (*target.Contract, bool) {
 // InitialEntry index.  Foreign equivalent reseals, same-ordinal handles,
 // source-only keys, non-operation values, missing rows, and ambiguous inverse
 // rows all fail closed.
-func (c *Component) InitialOperation(project *linkproject.Component, contract *target.Contract, root target.InitialRoot, key linkproject.Key) (target.Operation, bool) {
+func (c *Component) InitialOperation(project *linkproject.Component, contract *target.Contract, root vocabulary.InitialRoot, key linkproject.Key) (vocabulary.Operation, bool) {
 	if c == nil || c.authority == nil || c.authority.component != c || project == nil || project != c.authority.project || contract == nil || contract != c.authority.target || root == 0 {
 		return 0, false
 	}
@@ -129,7 +130,7 @@ func (c *Component) EndpointRequests() EndpointRequests {
 // ApplicationOperationAvailable is the factorized LinkBoundary membership
 // predicate. It validates both exact authorities and then classifies only the
 // existing Project Application subsequences; it stores no product relation.
-func (c *Component) ApplicationOperationAvailable(contract *target.Contract, application linkproject.Application, operation target.Operation) bool {
+func (c *Component) ApplicationOperationAvailable(contract *target.Contract, application linkproject.Application, operation vocabulary.Operation) bool {
 	if c == nil || c.authority == nil || c.authority.project == nil || contract == nil || contract != c.authority.target || operation == 0 || uint64(operation) > uint64(contract.OperationCount()) {
 		return false
 	}

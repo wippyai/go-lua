@@ -2,32 +2,9 @@ package artifact
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/internal/canonical"
 )
-
-func routeKind(kind flow.BoundaryArmKind) (RouteKind, bool) {
-	switch kind {
-	case flow.BoundaryLocal:
-		return RouteLocal, true
-	case flow.BoundaryResume:
-		return RouteResume, true
-	case flow.BoundarySelectTrue:
-		return RouteSelectTrue, true
-	case flow.BoundarySelectFalse:
-		return RouteSelectFalse, true
-	case flow.BoundaryTail:
-		return RouteTail, true
-	case flow.BoundaryThrow:
-		return RouteThrow, true
-	case flow.BoundaryYield:
-		return RouteYield, true
-	case flow.BoundaryCancel:
-		return RouteCancel, true
-	default:
-		return RouteInvalid, false
-	}
-}
 
 type field struct {
 	bytes []byte
@@ -42,6 +19,7 @@ const (
 )
 
 func bytesField(value identity.ContentID) field { return field{bytes: value[:], kind: fieldBytes} }
+func keyField(value schema.Key) field           { return field{bytes: []byte(value), kind: fieldBytes} }
 func uintField(value uint64) field              { return field{uint: value, kind: fieldUint} }
 func boolField(value bool) field {
 	if value {

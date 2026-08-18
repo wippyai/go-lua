@@ -3,6 +3,7 @@ package host
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -12,7 +13,6 @@ import (
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
 	linkmodule "github.com/wippyai/go-lua/analysis/program/link/module"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
 // Each view is a non-embedded capability.  The Component itself only issues
@@ -140,7 +140,7 @@ func (v CapabilitySeeds) Source(x ProviderCapabilitySeed) (ProviderCapabilitySou
 	r := c.authority.seeds[x.ordinal-1]
 	return r.source, seedActive(c, r)
 }
-func (v CapabilitySeeds) InitialRoot(x ProviderCapabilitySeed) (target.InitialRoot, bool) {
+func (v CapabilitySeeds) InitialRoot(x ProviderCapabilitySeed) (vocabulary.InitialRoot, bool) {
 	c := v.component
 	if !validSeed(c, x) {
 		return 0, false
@@ -148,7 +148,7 @@ func (v CapabilitySeeds) InitialRoot(x ProviderCapabilitySeed) (target.InitialRo
 	r := c.authority.seeds[x.ordinal-1]
 	return r.root, r.source == ProviderCapabilitySourceInitialRoot && seedActive(c, r)
 }
-func (v CapabilitySeeds) ABIInput(x ProviderCapabilitySeed) (target.Operation, target.ValueFormal, bool) {
+func (v CapabilitySeeds) ABIInput(x ProviderCapabilitySeed) (vocabulary.Operation, vocabulary.ValueFormal, bool) {
 	c := v.component
 	if !validSeed(c, x) {
 		return 0, 0, false
@@ -156,7 +156,7 @@ func (v CapabilitySeeds) ABIInput(x ProviderCapabilitySeed) (target.Operation, t
 	r := c.authority.seeds[x.ordinal-1]
 	return r.operation, r.formal, r.source == ProviderCapabilitySourceABIInput && seedActive(c, r)
 }
-func (v CapabilitySeeds) Result(x ProviderCapabilitySeed) (target.Operation, uint32, uint32, bool) {
+func (v CapabilitySeeds) Result(x ProviderCapabilitySeed) (vocabulary.Operation, uint32, uint32, bool) {
 	c := v.component
 	if !validSeed(c, x) {
 		return 0, 0, 0, false
@@ -358,7 +358,7 @@ func (v BootRoots) ID(x BootRoot) (identity.ContentID, bool) {
 	binary.BigEndian.PutUint64(payload[40:48], uint64(x.ordinal))
 	return sha256.Sum256(payload[:]), true
 }
-func (v BootRoots) Mapping(x BootRoot) (linkmodule.Actor, target.InitialRoot, bool) {
+func (v BootRoots) Mapping(x BootRoot) (linkmodule.Actor, vocabulary.InitialRoot, bool) {
 	c := v.component
 	if !validBoot(c, x) {
 		return linkmodule.Actor{}, 0, false
@@ -368,9 +368,9 @@ func (v BootRoots) Mapping(x BootRoot) (linkmodule.Actor, target.InitialRoot, bo
 		return linkmodule.Actor{}, 0, false
 	}
 	actor, ok := c.authority.module.Actors().At(int(x.ordinal-1) / n)
-	return actor, target.InitialRoot((int(x.ordinal-1) % n) + 1), ok
+	return actor, vocabulary.InitialRoot((int(x.ordinal-1) % n) + 1), ok
 }
-func (v BootRoots) For(actor linkmodule.Actor, root target.InitialRoot) (BootRoot, bool) {
+func (v BootRoots) For(actor linkmodule.Actor, root vocabulary.InitialRoot) (BootRoot, bool) {
 	c := v.component
 	if !live(c) {
 		return BootRoot{}, false
@@ -391,21 +391,21 @@ func (v Attachments) At(i int) (BootMetatableAttachment, bool) {
 	}
 	return BootMetatableAttachment{c, uint32(i + 1)}, true
 }
-func (v Attachments) Mapping(x BootMetatableAttachment) (target.InitialValueKind, BootRoot, bool) {
+func (v Attachments) Mapping(x BootMetatableAttachment) (vocabulary.InitialValueKind, BootRoot, bool) {
 	c := v.component
 	if !validAttachment(c, x) {
-		return target.InitialValueInvalid, BootRoot{}, false
+		return vocabulary.InitialValueInvalid, BootRoot{}, false
 	}
 	r := c.authority.attachments[x.ordinal-1]
 	boot := BootRoot{c, r.boot}
 	_, root, ok := v.component.BootRoots().Mapping(boot)
 	if !ok {
-		return target.InitialValueInvalid, BootRoot{}, false
+		return vocabulary.InitialValueInvalid, BootRoot{}, false
 	}
 	shape, ok := c.authority.target.InitialRootBootShape(root)
 	aggregate, aok := c.authority.target.BootShapeAggregate(shape)
-	if !ok || !aok || aggregate != target.BootAggregateMetatable {
-		return target.InitialValueInvalid, BootRoot{}, false
+	if !ok || !aok || aggregate != vocabulary.BootAggregateMetatable {
+		return vocabulary.InitialValueInvalid, BootRoot{}, false
 	}
 	return r.base, boot, true
 }
@@ -439,10 +439,10 @@ func (v Globals) ID(x GlobalBinding) (identity.ContentID, bool) {
 	binary.BigEndian.PutUint64(p[40:48], uint64(x.ordinal))
 	return sha256.Sum256(p[:]), true
 }
-func (v Globals) Mapping(x GlobalBinding) (linkmodule.AnalysisRoot, BootRoot, keyspace.Term, keyspace.Key, target.InitialBindingClass, target.InitialValue, bool) {
+func (v Globals) Mapping(x GlobalBinding) (linkmodule.AnalysisRoot, BootRoot, keyspace.Term, keyspace.Key, vocabulary.InitialBindingClass, vocabulary.InitialValue, bool) {
 	c := v.component
 	if !validGlobalHandle(c, x) {
-		return linkmodule.AnalysisRoot{}, BootRoot{}, 0, 0, target.InitialBindingInvalid, 0, false
+		return linkmodule.AnalysisRoot{}, BootRoot{}, 0, 0, vocabulary.InitialBindingInvalid, 0, false
 	}
 	r := c.authority.globals[x.ordinal-1]
 	return r.analysis, BootRoot{c, r.boot}, r.cell, r.key, r.class, r.value, true

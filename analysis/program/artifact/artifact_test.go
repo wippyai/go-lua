@@ -12,7 +12,7 @@ import (
 	artifact "github.com/wippyai/go-lua/analysis/program/artifact"
 )
 
-const frozenArtifactFixtureCount = 1176
+const frozenArtifactFixtureCount = 1178
 
 // TestArtifactFrozenCorpusRoundTrip proves persistence against the complete
 // frozen parser-valid source denominator. It checks source semantics, not Go

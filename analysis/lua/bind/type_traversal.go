@@ -174,10 +174,14 @@ func (b *binder) finishFunctionEntry(fn *ast.FunctionExpr, method bool, mode exp
 		varargType = fn.ParList.VarargType
 	}
 	if method && (len(names) == 0 || names[0] != "self") {
+		position := ast.Position{}
+		if origin, ok := b.result.functionOrigins[fn]; ok {
+			position = origin.MethodPosition
+		}
 		id := b.newSymbol("self", SymbolParam)
 		b.define("self", id)
 		slots = append(slots, ParamSlot{
-			Symbol: id, Name: "self", SourceIndex: -1, ImplicitSelf: true,
+			Symbol: id, Name: "self", Position: position, SourceIndex: -1, ImplicitSelf: true,
 		})
 	}
 	for i, name := range names {

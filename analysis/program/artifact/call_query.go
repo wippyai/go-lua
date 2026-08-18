@@ -30,6 +30,7 @@ type callConstruction struct {
 	arguments     []callArgumentConstruction
 	typeArguments []callTypeArgumentConstruction
 	tail          identity.ContentID
+	targetBody    identity.ContentID
 	form          flow.CallForm
 	executable    bool
 	boundary      callBoundaryConstruction
@@ -172,6 +173,15 @@ func (compiler *compiler) callConstruction(index int) (callConstruction, bool) {
 	result := callConstruction{term: term, owner: owner, id: callID, bodyPath: bodyPath, span: spanID,
 		formal: formalID, values: valuesSemanticID, valuesRoot: valuesRoot, types: typesID, callee: callee, receiver: receiver, actuals: actuals,
 		arguments: arguments, typeArguments: typeArguments, tail: tail, form: form, executable: flowView.Executable().Contains(term), entry: entry, finish: finish}
+	if function, functionOK := flowView.DirectFunctions().Call(term); functionOK {
+		targetBoundary, targetOK := boundaries.For(function)
+		targetBody, targetBodyOK := targetBoundary.Body()
+		targetPath, targetPathOK := flowView.BodyPath(targetBody)
+		if !targetOK || !targetBodyOK || !targetPathOK || !targetPath.Available() {
+			return callConstruction{}, false
+		}
+		result.targetBody = targetPath
+	}
 	result.boundary = compiler.callBoundary(term, spanID)
 	if result.executable && !result.boundary.id.Available() {
 		return callConstruction{}, false

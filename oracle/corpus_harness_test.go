@@ -38,10 +38,10 @@ import (
 // killed shard is a failed shard, never a passed one.
 
 const (
-	corpusHarnessProjectCount = 911
+	corpusHarnessProjectCount = 912
 	corpusHarnessLuaFileCount = testfixture.FrozenLuaFileCount
 	// Keep corpus concurrency independent of both fixture count and unusually
-	// large host CPU counts. Thirty-two is the measured 911-corpus lane; the
+	// large host CPU counts. Thirty-two is the measured 912-corpus lane; the
 	// repository's bounded runner remains the hard RSS/time authority.
 	corpusHarnessMaxWorkers = 32
 )

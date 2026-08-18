@@ -2,9 +2,9 @@ package static
 
 import (
 	"errors"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/target"
 	"github.com/wippyai/go-lua/domain/type/authority"
 	"github.com/wippyai/go-lua/domain/type/typ"
 )
@@ -14,15 +14,15 @@ import (
 // Static only admits that projection and records the exact contextual result.
 type evaluationMachine struct {
 	authority *Authority
-	operation target.Operation
+	operation vocabulary.Operation
 	err       error
 }
 
-func newEvaluationMachine(authority *Authority, operation target.Operation) *evaluationMachine {
+func newEvaluationMachine(authority *Authority, operation vocabulary.Operation) *evaluationMachine {
 	return &evaluationMachine{authority: authority, operation: operation}
 }
 
-func (a *Authority) evaluate(ref typeauthority.StaticTypeRef, namespace identity.ContentID, environment Environment, operation target.Operation) (Value, error) {
+func (a *Authority) evaluate(ref typeauthority.StaticTypeRef, namespace identity.ContentID, environment Environment, operation vocabulary.Operation) (Value, error) {
 	if a == nil || a.types == nil || !ref.Valid() || !namespace.Available() {
 		return Value{}, errors.New("static: foreign evaluation coordinate")
 	}

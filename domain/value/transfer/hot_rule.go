@@ -55,12 +55,28 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 				return engine.StageValue(access, row, fact)
 			})
 		},
-	}, engine.HotCarrySpec[value.Value, value.StorageTransfer]{})
+	}, engine.HotCarrySpec[value.Value, value.StorageTransfer]{}, func(transfer value.StorageTransfer) (uint64, bool) {
+		from, _, ok := hotStorageTransferEndpoints(owner.Schema(), transfer)
+		index, indexOK := owner.Schema().CoordinateIndex(from)
+		return uint64(index), ok && indexOK
+	}, func(transfer value.StorageTransfer) (uint64, bool) {
+		_, to, ok := hotStorageTransferEndpoints(owner.Schema(), transfer)
+		index, indexOK := owner.Schema().CoordinateIndex(to)
+		return uint64(index), ok && indexOK
+	})
 	if !ok || implementation == nil {
 		return nil, false
 	}
 	runtimeRead = read
-	return &HotRule{implementation: implementation, read: read, owner: owner}, true
+	rule := &HotRule{implementation: implementation, read: read, owner: owner}
+	if !implementation.InstallOperandResolver(rule.resolveOperand) {
+		return nil, false
+	}
+	return rule, true
+}
+
+func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (value.StorageTransfer, bool) {
+	return rule.ReceiptForOccurrence(coords.Mount, coords.Occurrence)
 }
 
 // ReceiptForOccurrence returns the exact preissued Value storage-transfer
@@ -72,80 +88,6 @@ func (rule *HotRule) ReceiptForOccurrence(mount, id identity.ContentID) (value.S
 	}
 	transfer, ok := rule.owner.Schema().StorageTransferForArtifactOccurrence(mount, id)
 	return transfer, ok && rule.owner.Schema().OwnsStorageTransfer(transfer)
-}
-
-// AttachMountedRule admits one complete ValueStorageTransfer row before
-// topology commit. Read/carry/write surfaces use only exact Value-owner Refs.
-func (rule *HotRule) AttachMountedRule(assembly *engine.ReceiptAssembly, mountID, pointID, occurrenceID identity.ContentID) (engine.BindingRuleRowRef, bool) {
-	if rule == nil || rule.owner == nil || assembly == nil {
-		return engine.BindingRuleRowRef{}, false
-	}
-	transfer, transferOK := rule.ReceiptForOccurrence(mountID, occurrenceID)
-	implementation, implementationOK := valueowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
-	capability := mountedCapability(rule.implementation)
-	occurrence, occurrenceOK := assembly.AdmitMountedRuleOccurrence(capability, mountID, pointID, occurrenceID)
-	from, to, endpointsOK := hotStorageTransferEndpoints(rule.owner.Schema(), transfer)
-	fromRef, fromOK := rule.owner.Ref(from)
-	toRef, toOK := rule.owner.Ref(to)
-	if !transferOK || !implementationOK || !occurrenceOK || !endpointsOK || !fromOK || !toOK {
-		return engine.BindingRuleRowRef{}, false
-	}
-	admit := func(transaction *engine.RuleSourceTransaction) bool {
-		return engine.AddExactRead(transaction, fromRef) && transaction.AddCarry() && engine.AddExactWrite(transaction, toRef)
-	}
-	issue := func(source engine.RuleSurfaceSourceReceipt) bool {
-		draft, draftOK := implementation.BeginReceiptRuleRow(source)
-		readPart, readPartOK := implementation.ReceiptReadPart(source, 0)
-		carryPart, carryPartOK := implementation.ReceiptCarryPart(source, 0)
-		writePart, writePartOK := implementation.ReceiptWritePart(source, 0)
-		if !draftOK || !readPartOK || !carryPartOK || !writePartOK || !draft.AddRead(readPart) || !draft.AddCarry(carryPart) || !draft.AddWrite(writePart) {
-			return false
-		}
-		_, added := assembly.AddRuleFromDraft(occurrence, draft)
-		return added
-	}
-	queued := engine.AdmitMountedRule(assembly, implementation, capability, occurrence, transfer, admit, issue)
-	return engine.BindingRuleRowRef{}, queued
-}
-
-// BeginReceiptCompilation starts the opaque graph attachment transaction for
-// this exact Value/storage-transfer issuer.
-func (rule *HotRule) BeginReceiptCompilation(graph *engine.ReceiptGraph) (*engine.ReceiptCompilation, bool) {
-	if rule == nil || rule.owner == nil {
-		return nil, false
-	}
-	implementation, ok := valueowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
-	if !ok {
-		return nil, false
-	}
-	return engine.BeginReceiptCompilation(implementation, graph)
-}
-
-// AttachReceiptMember attaches one graph-owned transfer member with the
-// exact owner-fenced transfer operand.
-func (rule *HotRule) AttachReceiptMember(compilation *engine.ReceiptCompilation, member engine.ReceiptRuleMember, transfer value.StorageTransfer) (*engine.ReceiptMember, bool) {
-	if rule == nil || rule.owner == nil || rule.owner.Schema() == nil || !rule.owner.Schema().OwnsStorageTransfer(transfer) {
-		return nil, false
-	}
-	implementation, ok := valueowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
-	if !ok {
-		return nil, false
-	}
-	return engine.AttachReceiptRuleMember(compilation, implementation, member, transfer)
-}
-
-// AttachMountedReceiptMember resolves the graph-owned mounted member and the
-// exact transfer operand internally, then delegates to AttachReceiptMember.
-func (rule *HotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, pointID, occurrenceID identity.ContentID) (*engine.ReceiptMember, bool) {
-	if rule == nil || graph == nil {
-		return nil, false
-	}
-	member, memberOK := graph.MountedRuleMember(mountedCapability(rule.implementation), mountID, pointID, occurrenceID)
-	transfer, transferOK := rule.ReceiptForOccurrence(mountID, occurrenceID)
-	if !memberOK || !transferOK {
-		return nil, false
-	}
-	return rule.AttachReceiptMember(compilation, member, transfer)
 }
 
 func mountedCapability(issuer interface {
@@ -162,6 +104,10 @@ func (rule *HotRule) Implementation() (*valueowner.RuleImplementation[value.Stor
 	}
 	_, ok := valueowner.ResolveRuleImplementation(rule.implementation)
 	return rule.implementation, ok
+}
+
+func (rule *HotRule) ProgramAttach() (engine.RuleProgramAttach, bool) {
+	return valueowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
 }
 
 func hotStorageTransferContent(schema *value.Schema, transfer value.StorageTransfer) (value.StorageTransfer, [32]byte, bool) {

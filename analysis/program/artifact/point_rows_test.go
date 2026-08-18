@@ -1,21 +1,72 @@
 package artifact
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/schema"
 )
 
-func TestPointRowsKeepRouteAndTransferVocabulariesSeparate(t *testing.T) {
-	if !RouteLocal.Valid() || !RouteCancel.Valid() || RouteInvalid.Valid() {
-		t.Fatal("route vocabulary validity is not closed")
+func TestPointRowsUseFlowBoundaryArmsAndKeepTransferSeparate(t *testing.T) {
+	if flow.BoundaryLocal != 1 || flow.BoundaryCancel != 8 {
+		t.Fatalf("Flow boundary arm ordinals changed: local=%d cancel=%d", flow.BoundaryLocal, flow.BoundaryCancel)
+	}
+	edge := EnvironmentEdge{
+		id: valuesLawID(3), from: valuesLawID(4), to: valuesLawID(5), route: valuesLawID(6),
+		arm: flow.BoundaryLocal,
+	}
+	for arm := flow.BoundaryLocal; arm <= flow.BoundaryCancel; arm++ {
+		edge.arm = arm
+		if !edge.Available() || edge.Arm() != arm {
+			t.Fatalf("Flow boundary arm %d is not accepted by EnvironmentEdge", arm)
+		}
+	}
+	for _, arm := range []flow.BoundaryArmKind{flow.BoundaryLocal - 1, flow.BoundaryCancel + 1} {
+		edge.arm = arm
+		if edge.Available() {
+			t.Fatalf("out-of-range Flow boundary arm %d was accepted", arm)
+		}
 	}
 	point := Point{id: valuesLawID(1), decisions: []identity.ContentID{valuesLawID(2)}, initial: true}
 	if !point.Available() || point.DecisionCount() != 1 {
 		t.Fatal("valid point row unavailable")
 	}
 	transfer := LocalTransfer{id: valuesLawID(3), from: valuesLawID(4), to: valuesLawID(5), full: true}
-	if !transfer.Available() || !transfer.FullEnvironment() || transfer.FactorRoleCount() != 0 {
+	if !transfer.Available() || !transfer.FullEnvironment() || transfer.WritesCount() != 0 {
 		t.Fatal("full local transfer row unavailable")
+	}
+}
+
+func TestLocalTransferWritesAreStrictlyAscendingAndSetIdenticalEmissionsShareAnID(t *testing.T) {
+	from, to := valuesLawID(4), valuesLawID(5)
+	left, leftOK := orderedWrites([]schema.Key{"value-source", "pack-source", "heap-ingress", "call-dispatch"})
+	right, rightOK := orderedWrites([]schema.Key{"call-dispatch", "heap-ingress", "pack-source", "value-source"})
+	if !leftOK || !rightOK || len(left) != 4 || !slices.Equal(left, right) {
+		t.Fatalf("ordered writes drifted: left=%v right=%v", left, right)
+	}
+	if _, ok := orderedWrites([]schema.Key{"value-source", "value-source"}); ok {
+		t.Fatal("duplicate write key was accepted")
+	}
+	fields := func(writes []schema.Key) []field {
+		out := []field{bytesField(from), bytesField(to), boolField(false), uintField(uint64(len(writes)))}
+		for _, write := range writes {
+			out = append(out, keyField(write))
+		}
+		return out
+	}
+	leftID := digest("analysis/program-artifact/call-base-dispatch-transfer", artifactFormat, fields(left)...)
+	rightID := digest("analysis/program-artifact/call-base-dispatch-transfer", artifactFormat, fields(right)...)
+	if !leftID.Available() || leftID != rightID {
+		t.Fatal("set-identical write emissions produced different transfer identities")
+	}
+	unsorted := LocalTransfer{id: leftID, from: from, to: to, writes: []schema.Key{"value-source", "pack-source"}}
+	if unsorted.Available() {
+		t.Fatal("descending write keys were accepted")
+	}
+	sorted := LocalTransfer{id: leftID, from: from, to: to, writes: left}
+	if !sorted.Available() || sorted.WritesCount() != 4 {
+		t.Fatal("ascending write keys were rejected")
 	}
 }

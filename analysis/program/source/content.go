@@ -8,10 +8,9 @@ import (
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
-// Version 3 changes Key rows from repeated LiteralValue payloads to the
-// canonical dense exact-Key ordinal. The ordinal is already Source-owned and
-// the exact atom denominator is emitted immediately before all Key rows.
-const contentVersion = 3
+// Version 4 adds Source-owned authored debug spellings after the canonical
+// Key/fault rows. Cell spellings are dense; named Call spellings are sparse.
+const contentVersion = 4
 
 // authoredContentID hashes only Source's owned authored rows. Position/root
 // indexes are Seal projections and deliberately contribute no second identity.
@@ -55,10 +54,31 @@ func writeAuthoredPayload(w *framing.Writer, a *authority) error {
 		return err
 	}
 	if !contentSpans(w, &a.identity) || !contentLiterals(w, &a.literals) ||
-		!contentOrder(w, a) || !contentKeyFault(w, a) {
+		!contentOrder(w, a) || !contentKeyFault(w, a) || !contentSpellings(w, &a.spellings) {
 		return framing.ErrMalformed
 	}
 	return nil
+}
+
+func contentSpellings(w *framing.Writer, store *spellingStore) bool {
+	if w == nil || store == nil || w.Record(sourceArtifactRecordSpellings) != nil ||
+		w.Count(uint64(len(store.cells))) != nil {
+		return false
+	}
+	for index, name := range store.cells {
+		if w.Uint(uint64(keyspace.MakeTerm(keyspace.FamilyCell, uint32(index+1)))) != nil || w.String(name) != nil {
+			return false
+		}
+	}
+	if w.Count(uint64(len(store.calls))) != nil {
+		return false
+	}
+	for _, row := range store.calls {
+		if row.Call == 0 || row.Name == "" || w.Uint(uint64(row.Call)) != nil || w.String(row.Name) != nil {
+			return false
+		}
+	}
+	return true
 }
 
 // authoredTermCount excludes the derived Outcome family from the stored

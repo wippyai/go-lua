@@ -2,6 +2,7 @@ package static
 
 import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 func (decoder *staticArtifactDecoder) publications(output *PublicationsInput) error {
@@ -35,6 +36,27 @@ func (decoder *staticArtifactDecoder) publications(output *PublicationsInput) er
 		}
 		if !decoder.probing {
 			output.Type[index] = Publication{Assign: assign, Pair: pair, Target: target}
+		}
+	}
+	return nil
+}
+
+// writePublicationsContent owns the exact authored Assign-pair-to-TypeRef
+// relation. Duplicate-detection state and any future export projection are
+// deliberately absent.
+func writePublicationsContent(writer *framing.Writer, rows []publicationRow) error {
+	if err := writer.Count(uint64(len(rows))); err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if err := writer.Uint(uint64(row.assign)); err != nil {
+			return err
+		}
+		if err := writer.Uint(uint64(row.pair)); err != nil {
+			return err
+		}
+		if err := writer.Uint(uint64(row.target)); err != nil {
+			return err
 		}
 	}
 	return nil

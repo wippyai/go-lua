@@ -44,11 +44,28 @@ func BindHot(fragment *SchemaFragment, owner *packowner.HotOwner, schema *packdo
 			})
 			return completed && rows == 1
 		},
+	}, func(source packdomain.Source) (uint64, bool) {
+		root, _, ok := sealedResult(schema, source)
+		index, indexOK := schema.RootOrder(root)
+		return uint64(index), ok && indexOK && index >= 0
 	})
 	if !ok || implementation == nil {
 		return nil, false
 	}
-	return &HotRule{implementation: implementation, owner: owner, schema: schema}, true
+	rule := &HotRule{implementation: implementation, owner: owner, schema: schema}
+	if !implementation.InstallOperandResolver(rule.resolveOperand) {
+		return nil, false
+	}
+	return rule, true
+}
+
+func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (packdomain.Source, bool) {
+	issuer, ok := rule.ForMount(coords.Mount)
+	if !ok {
+		return packdomain.Source{}, false
+	}
+	source, _, ok := issuer.SourceForOccurrence(coords.Occurrence)
+	return source, ok
 }
 
 // Implementation returns the typed pending issuer. It resolves to an exact
@@ -58,6 +75,10 @@ func (rule *HotRule) Implementation() (*packowner.RuleImplementation[packdomain.
 		return nil, false
 	}
 	return rule.implementation, true
+}
+
+func (rule *HotRule) ProgramAttach() (engine.RuleProgramAttach, bool) {
+	return packowner.ResolveRuleImplementation(rule.implementation)
 }
 
 func hotSourceChecker(owner *packowner.HotOwner, schema *packdomain.Schema, ruleSemantic identity.SemanticKey) engine.RuleDerivationChecker[packdomain.Value, packdomain.Source] {

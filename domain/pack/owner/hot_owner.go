@@ -41,8 +41,19 @@ func (owner *HotOwner) FactorRef() engine.FactorRef[pack.Value] {
 // RuleImplementation is a Pack-owned pending receipt issuer. It retains the
 // exact child Rule slot without exposing Pack's private Factor coordinate.
 type RuleImplementation[O any] struct {
-	owner *HotOwner
-	slot  *engine.RuleSlot[pack.Value, O]
+	owner    *HotOwner
+	slot     *engine.RuleSlot[pack.Value, O]
+	resolver func(engine.OperandCoords) (O, bool)
+}
+
+// InstallOperandResolver records the one owner-supplied operand resolver
+// this rule will publish onto its sealed cell.
+func (issuer *RuleImplementation[O]) InstallOperandResolver(resolve func(engine.OperandCoords) (O, bool)) bool {
+	if issuer == nil || resolve == nil || issuer.resolver != nil {
+		return false
+	}
+	issuer.resolver = resolve
+	return true
 }
 
 func (issuer *RuleImplementation[O]) MountedCapability() (engine.RuleSlotCapability, bool) {
@@ -55,11 +66,11 @@ func (issuer *RuleImplementation[O]) MountedCapability() (engine.RuleSlotCapabil
 // BindExactWriteRule binds one Pack-output Rule through this owner's exact
 // Factor slot. Child packages provide only their typed operand callbacks and
 // transfer; they cannot choose another output Factor or coordinate universe.
-func BindExactWriteRule[O any](owner *HotOwner, slot *engine.RuleSlot[pack.Value, O], write engine.SchemaWriteSlot[pack.Value], spec engine.HotRuleSpec[pack.Value, O]) (*RuleImplementation[O], bool) {
+func BindExactWriteRule[O any](owner *HotOwner, slot *engine.RuleSlot[pack.Value, O], write engine.SchemaWriteSlot[pack.Value], spec engine.HotRuleSpec[pack.Value, O], projectWrite func(O) (uint64, bool)) (*RuleImplementation[O], bool) {
 	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil {
 		return nil, false
 	}
-	if !engine.BindRule[coordinate](owner.binding, slot, write, owner.fragment.slot, spec) {
+	if !engine.BindRule[coordinate](owner.binding, slot, write, owner.fragment.slot, spec, projectWrite) {
 		return nil, false
 	}
 	return &RuleImplementation[O]{owner: owner, slot: slot}, true
@@ -68,10 +79,20 @@ func BindExactWriteRule[O any](owner *HotOwner, slot *engine.RuleSlot[pack.Value
 // ResolveRuleImplementation issues the exact shared receipt only after the
 // SchemaBinding seals. The private coordinate remains package-owned.
 func ResolveRuleImplementation[O any](issuer *RuleImplementation[O]) (*engine.RuleImplementation[coordinate, pack.Value, O], bool) {
-	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
+	if issuer == nil || issuer.owner == nil || issuer.slot == nil || issuer.resolver == nil {
 		return nil, false
 	}
-	return engine.RuleImplementationAt[coordinate, pack.Value, O](issuer.owner.binding, issuer.slot)
+	implementation, ok := engine.RuleImplementationAt[coordinate, pack.Value, O](issuer.owner.binding, issuer.slot)
+	if !ok {
+		return nil, false
+	}
+	if implementation.HasOperandResolver() {
+		return implementation, true
+	}
+	if !implementation.InstallOperandResolver(issuer.resolver) {
+		return nil, false
+	}
+	return implementation, true
 }
 
 // BindExactQuery binds a typed exact Pack query to this owner's Factor slot.

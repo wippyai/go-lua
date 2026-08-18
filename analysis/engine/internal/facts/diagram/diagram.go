@@ -1207,7 +1207,16 @@ func (diagram *Diagram[F, K, V]) Partition(root Root[F, K, V], region support.Ma
 // is deliberately reported: semantic callers distinguish sparse absence from
 // an ordinary stored Default. It walks this one value once and never exposes
 // the FDD topology.
-func (diagram *Diagram[F, K, V]) PartitionValueTerminals(value Value[V], region support.Mask, visit func(terminal.ID[V], support.Mask) bool) (completed, valid bool) {
+//
+// A branched value refines region by Boolean construction, so the read needs
+// one support transaction. That transaction is a cost of the read rather than
+// of the Diagram, so scratch lends the caller's shell for it: a caller reading
+// one key at a time owns a reusable shell and hands it in, while a caller
+// without one passes nil and the read owns a private shell for this traversal.
+// The lent shell must hold no candidate the caller intends to keep - each read
+// opens, publishes or discards exactly one transaction inside it, so node
+// identity and the seal cut are the same either way.
+func (diagram *Diagram[F, K, V]) PartitionValueTerminals(value Value[V], region support.Mask, scratch *support.Work, visit func(terminal.ID[V], support.Mask) bool) (completed, valid bool) {
 	if diagram == nil || value.owner != diagram.owner || value.node == nil || !region.Valid() || region.Manager() != diagram.guards || visit == nil {
 		return false, false
 	}
@@ -1268,8 +1277,12 @@ func (diagram *Diagram[F, K, V]) PartitionValueTerminals(value Value[V], region 
 			}
 		}
 		if work == nil {
-			work = support.New(diagram.guards)
-			if work == nil || !work.Valid(frame.region) {
+			work = diagram.beginRefinement(scratch)
+			if work == nil {
+				return false, false
+			}
+			if !work.Valid(frame.region) {
+				work.Discard()
 				return false, false
 			}
 		}
@@ -1306,6 +1319,20 @@ func (diagram *Diagram[F, K, V]) PartitionValueTerminals(value Value[V], region 
 		}
 	}
 	return true, true
+}
+
+// beginRefinement opens the one support transaction a branched partition
+// needs. A lent shell is reserved for that transaction and reopened in place,
+// so consecutive reads share its Boolean scratch without sharing a candidate.
+// Without a lent shell the read owns a private one for this traversal alone.
+func (diagram *Diagram[F, K, V]) beginRefinement(scratch *support.Work) *support.Work {
+	if scratch == nil {
+		return support.New(diagram.guards)
+	}
+	if !scratch.OwnsManager(diagram.guards) || !scratch.BeginTransaction(nil) {
+		return nil
+	}
+	return scratch
 }
 
 func (diagram *Diagram[F, K, V]) partitionValue(work *support.Work, value *node[V], cell support.Mask, output *[]support.Mask) bool {
@@ -1560,7 +1587,10 @@ func balanceFactor[F ~uint64, K scalar.Key, V any](node *factorNode[F, K, V]) *f
 		}
 		return rotateFactorLeft(makeFactor(node.factor, node.rank, node.keys, node.left, right))
 	}
-	return makeFactor(node.factor, node.rank, node.keys, node.left, node.right)
+	// A balanced node is already the node its caller wants published: every
+	// caller constructs it from the children it intends. Rebuilding it would
+	// allocate a second node with identical fields and height.
+	return node
 }
 func rotateFactorLeft[F ~uint64, K scalar.Key, V any](node *factorNode[F, K, V]) *factorNode[F, K, V] {
 	right := node.right
@@ -1587,7 +1617,10 @@ func balanceKey[K scalar.Key, V any](node *keyNode[K, V]) *keyNode[K, V] {
 		}
 		return rotateKeyLeft(makeKey(node.key, node.value, node.left, right))
 	}
-	return makeKey(node.key, node.value, node.left, node.right)
+	// A balanced node is already the node its caller wants published: every
+	// caller constructs it from the children it intends. Rebuilding it would
+	// allocate a second node with identical fields and height.
+	return node
 }
 func rotateKeyLeft[K scalar.Key, V any](node *keyNode[K, V]) *keyNode[K, V] {
 	right := node.right

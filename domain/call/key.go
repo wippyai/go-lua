@@ -3,7 +3,7 @@ package call
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 )
 
 // Key is one arm of Call's closed source sum: a Project base Application, a
@@ -18,7 +18,7 @@ func (key Key) Valid() bool { return key.owner != nil && key.owner.validKey(key)
 
 // Callback returns the exact Target operation/callback pair for a callback
 // arm. It never projects a callback Subedge or manufactures an Application.
-func (key Key) Callback() (target.Operation, target.CallbackID, bool) {
+func (key Key) Callback() (vocabulary.Operation, vocabulary.CallbackID, bool) {
 	if !key.Valid() || key.owner.keys[key.slot-1].kind != keyCallback {
 		return 0, 0, false
 	}
@@ -27,7 +27,7 @@ func (key Key) Callback() (target.Operation, target.CallbackID, bool) {
 }
 
 // Resume returns the exact Target operation/resume pair for a resume arm.
-func (key Key) Resume() (target.Operation, target.ResumeID, bool) {
+func (key Key) Resume() (vocabulary.Operation, vocabulary.ResumeID, bool) {
 	if !key.Valid() || key.owner.keys[key.slot-1].kind != keyResume {
 		return 0, 0, false
 	}

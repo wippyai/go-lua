@@ -67,9 +67,10 @@ func (set ExecutionRoots) At(index int) (ExecutionRoot, bool) {
 
 // Seeds is the execution-point population the roots demand: the points of
 // every semantic occurrence inside a root body, plus the entry points of a root
-// body that carries no occurrence at all. A root with nothing to observe still
-// needs one anchor, and it is the program-issued entry attachment of that root,
-// never an arbitrary point borrowed from a callable body.
+// body no occurrence of which contributes a placed point. A root with nothing
+// to observe still needs one anchor, and it is the program-issued entry
+// attachment of that root, never an arbitrary point borrowed from a callable
+// body.
 func (set ExecutionRoots) Seeds() ExecutionPoints {
 	if !set.Available() {
 		return ExecutionPoints{}
@@ -165,7 +166,20 @@ func rootBodyEntries(mount Mount) (map[identity.ContentID][]identity.ContentID, 
 // rootDemandedPoints resolves what one mount's roots demand. Occurrences owned
 // by a callable body are skipped: the runtime cut is that a callable interior is
 // reached through a call rather than by existing in a mounted program.
+//
+// A root body counts as occupied only once one of its occurrences contributes
+// an addressable point row. An occurrence that names a root body without
+// carrying such a point leaves the root with nothing to observe, so the entry
+// anchor below still owes it one seed.
 func rootDemandedPoints(mount Mount, entriesByBody map[identity.ContentID][]identity.ContentID) (map[identity.ContentID]struct{}, bool) {
+	placed := make(map[identity.ContentID]struct{}, mount.Artifact.PointCount())
+	for index := 0; index < mount.Artifact.PointCount(); index++ {
+		point, ok := mount.Artifact.PointAt(index)
+		if !ok || !point.Available() || !point.ID().Available() {
+			return nil, false
+		}
+		placed[point.ID()] = struct{}{}
+	}
 	demanded := make(map[identity.ContentID]struct{})
 	occupied := make(map[identity.ContentID]struct{}, len(entriesByBody))
 	for index := 0; index < mount.Artifact.OccurrenceCount(); index++ {
@@ -180,13 +194,16 @@ func rootDemandedPoints(mount Mount, entriesByBody map[identity.ContentID][]iden
 		if _, root := entriesByBody[body]; !root {
 			continue
 		}
-		occupied[body] = struct{}{}
 		for pointIndex := 0; pointIndex < occurrence.PointCount(); pointIndex++ {
 			point, pointOK := occurrence.PointAt(pointIndex)
 			if !pointOK || !point.Available() {
 				return nil, false
 			}
+			if _, present := placed[point]; !present {
+				continue
+			}
 			demanded[point] = struct{}{}
+			occupied[body] = struct{}{}
 		}
 	}
 	for body, entries := range entriesByBody {

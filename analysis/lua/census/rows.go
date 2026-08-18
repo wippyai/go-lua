@@ -3,7 +3,6 @@ package census
 import (
 	"fmt"
 	"sort"
-	"strconv"
 
 	"github.com/wippyai/go-lua/analysis/lua/parsersource"
 )
@@ -56,6 +55,15 @@ type Row struct {
 	State parsersource.FieldState
 	// Constructs is, for a product row, the form row the construction builds.
 	Constructs string
+	// Discriminants is, for a product row, the member rows the construction
+	// leaves in the carriers declared over a closed constant family. It is a
+	// column on the product row rather than a grain of its own because it says
+	// nothing the product row does not already address: it refines one
+	// coordinate of the same construction. Builds states that the construction
+	// assigns a carrier; this states which member of that carrier's family it
+	// assigned, which Builds and States together cannot express because every
+	// member but one is alike under zero-ness.
+	Discriminants []string
 	// Accepts is, for a use-slot row, the declared type of the child the slot
 	// carries, and AcceptsClass the class of material that type is. It is a
 	// declared type rather than a row key because an abstract child stands for
@@ -89,13 +97,6 @@ func CarrierRow(form, field string) string { return "carrier:" + form + "." + fi
 
 func FieldStateRow(form, field string, state parsersource.FieldState) string {
 	return "state:" + form + "." + field + "@" + state.String()
-}
-
-// ProductRow names one construction of one action. The owner and ordinal are
-// both needed: an action can build two values of the same form, and an ordinal
-// alone would not say which action built either.
-func ProductRow(owner string, ordinal int, constructor string) string {
-	return "product:" + owner + "#" + strconv.Itoa(ordinal) + ":" + constructor
 }
 
 // UseSlotRow names one typed parent slot. The carrier it refines is named by
@@ -232,30 +233,6 @@ func dedupe(rows []string) []string {
 			result = append(result, row)
 		}
 	}
-	return result
-}
-
-// products projects a census into the per-construction denominator. Builds
-// carries the carrier rows the construction assigns, so a join over this grain
-// reads a construction's own field vector rather than re-deriving it from the
-// form it names.
-func products(value Census) []Row {
-	result := make([]Row, 0, len(value.Products))
-	for _, product := range value.Products {
-		row := Row{
-			Key:        ProductRow(product.Owner, product.Ordinal, product.Constructor),
-			Kind:       RowProduct,
-			Constructs: FormRow(product.Constructor),
-		}
-		for _, field := range product.Fields {
-			if !field.Assigned {
-				continue
-			}
-			row.Builds = append(row.Builds, CarrierRow(product.Constructor, field.Field))
-		}
-		result = append(result, row)
-	}
-	sort.Slice(result, func(left, right int) bool { return result[left].Key < result[right].Key })
 	return result
 }
 

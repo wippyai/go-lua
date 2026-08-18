@@ -76,6 +76,14 @@ const (
 	BinaryGreaterEqual
 )
 
+// IsBinaryArithmetic reports whether op is one of the closed primitive
+// arithmetic operators. The arithmetic members occupy the first contiguous
+// segment of the BinaryOp vocabulary; all other members are distinct binary
+// operation families.
+func IsBinaryArithmetic(op BinaryOp) bool {
+	return op >= BinaryAdd && op <= BinaryPow
+}
+
 // SelectOp is Lua's short-circuit value-selection vocabulary.
 type SelectOp uint8
 

@@ -3,10 +3,10 @@ package host
 import (
 	"crypto/sha256"
 	"errors"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/flow"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
@@ -15,6 +15,7 @@ import (
 	linkmodule "github.com/wippyai/go-lua/analysis/program/link/module"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 var errUnavailable = errors.New("link/host: unavailable authority")
@@ -162,8 +163,8 @@ func (a *authority) replayCapability(identity string) (uint32, bool) {
 	return uint32(i + 1), true
 }
 
-func (a *authority) replayRootIndex() (map[string]target.InitialRoot, error) {
-	roots := make(map[string]target.InitialRoot, a.target.InitialRootCount())
+func (a *authority) replayRootIndex() (map[string]vocabulary.InitialRoot, error) {
+	roots := make(map[string]vocabulary.InitialRoot, a.target.InitialRootCount())
 	for i := 0; i < a.target.InitialRootCount(); i++ {
 		root, ok := a.target.InitialRootAt(i)
 		name, nok := a.target.InitialRootIdentity(root)
@@ -501,7 +502,7 @@ func compareSeedSpec(a, b ProviderCapabilitySeedSpec) int {
 	}
 	return 0
 }
-func compareBinding(a, b target.BindingSpec) int {
+func compareBinding(a, b vocabulary.BindingSpec) int {
 	if a.Namespace != b.Namespace {
 		if a.Namespace < b.Namespace {
 			return -1
@@ -631,8 +632,8 @@ func (a *authority) capabilityRows(index hostBuildIndex) error {
 	}
 	return nil
 }
-func providerBinding(b target.BindingSpec) bool {
-	return b.Namespace >= target.BindingBuiltin && b.Namespace <= target.BindingProvider && len(b.Member) != 0
+func providerBinding(b vocabulary.BindingSpec) bool {
+	return b.Namespace >= vocabulary.BindingBuiltin && b.Namespace <= vocabulary.BindingProvider && len(b.Member) != 0
 }
 func (a *authority) compareSeed(x, y capabilitySeedRow) int {
 	if x.capability != y.capability {
@@ -872,7 +873,7 @@ func (a *authority) bootRows() error {
 				if !ok {
 					return errUnavailable
 				}
-				class, value, initial = target.InitialBindingOrdinary, absent, global
+				class, value, initial = vocabulary.InitialBindingOrdinary, absent, global
 			}
 			if initial != global || !validGlobal(a.target, class, value, found) || found && !targetKeyName(a.target, bindingKey, lit.String) {
 				return errUnavailable
@@ -931,7 +932,7 @@ func (a *authority) bootRows() error {
 		}
 		for j := 0; j < attachments; j++ {
 			base, root, ok := a.target.InitialMetatableAttachmentAt(j)
-			if !ok || base != target.InitialValueString {
+			if !ok || base != vocabulary.InitialValueString {
 				return errUnavailable
 			}
 			boot, ok := a.bootFor(actor, root)
@@ -943,30 +944,30 @@ func (a *authority) bootRows() error {
 	}
 	return nil
 }
-func validGlobal(t *target.Contract, class target.InitialBindingClass, value target.InitialValue, found bool) bool {
+func validGlobal(t *target.Contract, class vocabulary.InitialBindingClass, value vocabulary.InitialValue, found bool) bool {
 	kind, ok := t.InitialValueKind(value)
 	if !ok {
 		return false
 	}
 	if !found {
-		return kind == target.InitialValueAbsent
+		return kind == vocabulary.InitialValueAbsent
 	}
 	switch class {
-	case target.InitialBindingAdmitted:
+	case vocabulary.InitialBindingAdmitted:
 		op, ok := t.InitialValueOperation(value)
-		return kind == target.InitialValueOperation && ok && op != 0
-	case target.InitialBindingDenied:
-		return kind == target.InitialValueDeniedOperation
-	case target.InitialBindingOrdinary:
-		return kind == target.InitialValueRoot || kind == target.InitialValueNil || kind == target.InitialValueBoolean || kind == target.InitialValueInteger || kind == target.InitialValueFloat || kind == target.InitialValueString || kind == target.InitialValueAbsent
+		return kind == vocabulary.InitialValueOperation && ok && op != 0
+	case vocabulary.InitialBindingDenied:
+		return kind == vocabulary.InitialValueDeniedOperation
+	case vocabulary.InitialBindingOrdinary:
+		return kind == vocabulary.InitialValueRoot || kind == vocabulary.InitialValueNil || kind == vocabulary.InitialValueBoolean || kind == vocabulary.InitialValueInteger || kind == vocabulary.InitialValueFloat || kind == vocabulary.InitialValueString || kind == vocabulary.InitialValueAbsent
 	}
 	return false
 }
-func targetKeyName(t *target.Contract, key target.ExactKey, name string) bool {
+func targetKeyName(t *target.Contract, key vocabulary.ExactKey, name string) bool {
 	v, ok := t.ExactKeyValue(key)
 	return ok && v.Kind == keyspace.LiteralString && v.String == name
 }
-func (a *authority) bootFor(actor linkmodule.Actor, root target.InitialRoot) (BootRoot, bool) {
+func (a *authority) bootFor(actor linkmodule.Actor, root vocabulary.InitialRoot) (BootRoot, bool) {
 	if root == 0 || int(root) > a.target.InitialRootCount() {
 		return BootRoot{}, false
 	}

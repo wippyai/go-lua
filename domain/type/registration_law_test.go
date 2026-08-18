@@ -77,6 +77,19 @@ func TestTypeDomainDiagnosticRowIsAdmissible(t *testing.T) {
 	}
 }
 
+func TestTypeDomainCallArgumentRowIsAdmissible(t *testing.T) {
+	entry, ok := diagnostic.New(DiagnosticCallArgumentSpec())
+	if !ok {
+		t.Fatal("the domain's call-argument diagnostic row was refused by the surface")
+	}
+	if entry.Code() != CallArgumentCode {
+		t.Fatalf("declared row publishes %q, not %q", entry.Code(), CallArgumentCode)
+	}
+	if entry.ID() != schema.NewEntryID(schema.SurfaceKindDiagnostic, schema.Key(CallArgumentCode)) {
+		t.Fatal("declared row derives a foreign entry identity")
+	}
+}
+
 // TestTypeDomainDiagnosticRowNamesForeignDeclarations states the half of the
 // row this domain cannot own: the family it publishes under, the population it
 // is measured over, and the declaration whose facts decide it are all declared

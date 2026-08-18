@@ -29,7 +29,7 @@
 //
 // # Registration
 //
-// The domain declares one row: the diagnostic that publishes an assignment
+// The domain declares two rows: assignment and direct-call argument conformance.
 // whose value does not conform to the type its target declares. It is declared
 // at the foot of this file, from this package alone, and every other surface of
 // the analyzer declaration table carries no row of this domain's. The reason
@@ -189,6 +189,8 @@ const (
 	// Code is the finding this domain publishes: an assignment whose value may
 	// carry a runtime family the declared type of its target does not admit.
 	Code diagnostic.Code = "type.assign.declared_type"
+	// CallArgumentCode is the same judgment at a direct-call actual.
+	CallArgumentCode diagnostic.Code = "type.call.direct.argument_type"
 	// FamilyKey is the publication family the query boundary gates the code by.
 	// It is declared beside the diagnostic inventory, and its declared spelling
 	// is the first segment of the code.
@@ -237,6 +239,8 @@ func DiagnosticSpec() diagnostic.Spec {
 		DefaultSeverity: diagnostic.SeverityError,
 		Lane:            diagnostic.LaneBranch,
 		Observation:     diagnostic.Reference{Surface: schema.SurfaceKindStructure, Key: ObservationKey},
+		Collection:      diagnostic.Reference{Surface: schema.SurfaceKindQuery, Key: "value-summary"},
+		Site:            diagnostic.SiteAssignment,
 		Fact:            diagnostic.Reference{Surface: schema.SurfaceKindAxis, Key: FactKey},
 		Requirements:    diagnostic.RequiresSubject | diagnostic.RequiresTarget,
 		Message:         "{subject} does not conform to its declared type {target}",
@@ -249,6 +253,34 @@ func DiagnosticSpec() diagnostic.Spec {
 			Detail: "the value assigned to {subject} may carry a runtime type outside {target}",
 		}},
 		Labels: []diagnostic.Label{{Anchor: diagnostic.AnchorPrimary, Text: "declared {target}"}},
+		Render: diagnosticRender,
+	}
+}
+
+// DiagnosticCallArgumentSpec is the call-argument row. It shares the
+// type-conformance observation population and the value-axis fact with the
+// assignment row; the site discriminator on the observation chooses the code.
+func DiagnosticCallArgumentSpec() diagnostic.Spec {
+	return diagnostic.Spec{
+		Code:            CallArgumentCode,
+		Family:          diagnostic.Reference{Surface: schema.SurfaceKindStructure, Key: FamilyKey},
+		DefaultSeverity: diagnostic.SeverityError,
+		Lane:            diagnostic.LaneBranch,
+		Observation:     diagnostic.Reference{Surface: schema.SurfaceKindStructure, Key: ObservationKey},
+		Collection:      diagnostic.Reference{Surface: schema.SurfaceKindQuery, Key: "value-summary"},
+		Site:            diagnostic.SiteCallArgument,
+		Fact:            diagnostic.Reference{Surface: schema.SurfaceKindAxis, Key: FactKey},
+		Requirements:    diagnostic.RequiresSubject | diagnostic.RequiresTarget,
+		Message:         "{subject} does not conform to parameter type {target}",
+		Help:            "Pass a value compatible with the parameter type, or change the callee signature.",
+		Evidence: []diagnostic.Evidence{{
+			Anchor: diagnostic.AnchorPrimary,
+			Kind:   "abstract fact",
+			Trust:  "proven",
+			Reason: "unspecified",
+			Detail: "the argument {subject} may carry a runtime type outside {target}",
+		}},
+		Labels: []diagnostic.Label{{Anchor: diagnostic.AnchorPrimary, Text: "argument value"}},
 		Render: diagnosticRender,
 	}
 }

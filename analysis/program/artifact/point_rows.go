@@ -1,6 +1,12 @@
 package artifact
 
-import "github.com/wippyai/go-lua/analysis/identity"
+import (
+	"sort"
+
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/schema"
+)
 
 // Point is an exact parent-issued LocalWTO phase vertex path. Its ordered
 // decision IDs and initial disposition are copied from canonical Flow point
@@ -27,23 +33,6 @@ func (point Point) DecisionAt(index int) (identity.ContentID, bool) {
 }
 func (point Point) Initial() (bool, bool) { return point.initial, point.Available() }
 
-// RouteKind is the artifact-owned closed route-arm vocabulary.
-type RouteKind uint8
-
-const (
-	RouteInvalid RouteKind = iota
-	RouteLocal
-	RouteResume
-	RouteSelectTrue
-	RouteSelectFalse
-	RouteTail
-	RouteThrow
-	RouteYield
-	RouteCancel
-)
-
-func (kind RouteKind) Valid() bool { return kind >= RouteLocal && kind <= RouteCancel }
-
 // EnvironmentEdge is a scalar copy of one exact canonical Flow final route.
 // Its ID is the stable route-occurrence identity. RouteID is the parent
 // final-route semantic ID and is not a second artifact identity.
@@ -58,7 +47,7 @@ type EnvironmentEdge struct {
 	reset     identity.ContentID
 	resets    []identity.ContentID
 	component identity.ContentID
-	arm       RouteKind
+	arm       flow.BoundaryArmKind
 	guarded   bool
 	truth     bool
 	hasReset  bool
@@ -69,15 +58,14 @@ type EnvironmentEdge struct {
 // LocalTransfer is a Program-artifact-owned acyclic stage transport. It is
 // distinct from EnvironmentEdge and therefore never owns a guard, recurrence
 // component, Mu, or reset witness. Full transports carry the complete
-// environment. Factor transports carry exactly the factors identified by a
-// canonical list of artifact-owned rule roles; consumers resolve those roles
-// only through their sealed schema directory.
+// environment. Factor transports name the sealed rule keys whose factors they
+// move.
 type LocalTransfer struct {
-	id    identity.ContentID
-	from  identity.ContentID
-	to    identity.ContentID
-	full  bool
-	roles []RuleRole
+	id     identity.ContentID
+	from   identity.ContentID
+	to     identity.ContentID
+	full   bool
+	writes []schema.Key
 }
 
 func (edge LocalTransfer) ID() identity.ContentID   { return edge.id }
@@ -85,35 +73,52 @@ func (edge LocalTransfer) From() identity.ContentID { return edge.from }
 func (edge LocalTransfer) To() identity.ContentID   { return edge.to }
 func (edge LocalTransfer) FullEnvironment() bool    { return edge.Available() && edge.full }
 
-func (edge LocalTransfer) FactorRoleCount() int {
+func (edge LocalTransfer) WritesCount() int {
 	if !edge.Available() || edge.full {
 		return 0
 	}
-	return len(edge.roles)
+	return len(edge.writes)
 }
-func (edge LocalTransfer) FactorRoleAt(index int) (RuleRole, bool) {
-	if !edge.Available() || edge.full || index < 0 || index >= len(edge.roles) {
-		return RuleRoleInvalid, false
+func (edge LocalTransfer) WritesAt(index int) (schema.Key, bool) {
+	if !edge.Available() || edge.full || index < 0 || index >= len(edge.writes) {
+		return "", false
 	}
-	return edge.roles[index], true
+	return edge.writes[index], true
 }
 func (edge LocalTransfer) Available() bool {
-	if !edge.id.Available() || !edge.from.Available() || !edge.to.Available() || edge.from == edge.to || edge.full == (len(edge.roles) != 0) {
+	if !edge.id.Available() || !edge.from.Available() || !edge.to.Available() || edge.from == edge.to || edge.full == (len(edge.writes) != 0) {
 		return false
 	}
-	for index, role := range edge.roles {
-		if !role.valid() || index != 0 && edge.roles[index-1] >= role {
+	for index, write := range edge.writes {
+		if !write.Available() || index != 0 && edge.writes[index-1] >= write {
 			return false
 		}
 	}
 	return true
 }
 
+// orderedWrites is the closed emission order of one factor transport: unique
+// available keys, strictly ascending. The transfer identity hashes this
+// sequence, so two emissions of the same set produce one ID.
+func orderedWrites(writes []schema.Key) ([]schema.Key, bool) {
+	if len(writes) == 0 {
+		return nil, true
+	}
+	ordered := append([]schema.Key(nil), writes...)
+	sort.Slice(ordered, func(left, right int) bool { return ordered[left] < ordered[right] })
+	for index, write := range ordered {
+		if !write.Available() || index != 0 && ordered[index-1] >= write {
+			return nil, false
+		}
+	}
+	return ordered, true
+}
+
 func (edge EnvironmentEdge) ID() identity.ContentID      { return edge.id }
 func (edge EnvironmentEdge) From() identity.ContentID    { return edge.from }
 func (edge EnvironmentEdge) To() identity.ContentID      { return edge.to }
 func (edge EnvironmentEdge) RouteID() identity.ContentID { return edge.route }
-func (edge EnvironmentEdge) Arm() RouteKind              { return edge.arm }
+func (edge EnvironmentEdge) Arm() flow.BoundaryArmKind   { return edge.arm }
 
 // DecisionID is the parent-issued decision Site identity for a guarded
 // route. It is distinct from GuardID: GuardID authenticates the guard proof,
@@ -172,7 +177,7 @@ func (edge EnvironmentEdge) MuPathID() (identity.ContentID, bool) {
 }
 
 func (edge EnvironmentEdge) Available() bool {
-	if !edge.id.Available() || !edge.from.Available() || !edge.to.Available() || !edge.route.Available() || !edge.arm.Valid() {
+	if !edge.id.Available() || !edge.from.Available() || !edge.to.Available() || !edge.route.Available() || edge.arm < flow.BoundaryLocal || edge.arm > flow.BoundaryCancel {
 		return false
 	}
 	if edge.guarded {

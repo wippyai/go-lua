@@ -45,41 +45,41 @@ func (view Functions) Get(term keyspace.Term) (returnsKnown bool, ok bool) {
 func (view Functions) TypeParamCount(term keyspace.Term) (int, bool) {
 	component := view.componentOf()
 	row, ok := functionContractAt(component, term)
-	return int(row.typeParams.End - row.typeParams.Start), ok
+	return row.typeParams.len(), ok
 }
 func (view Functions) TypeParamAt(term keyspace.Term, index int) (keyspace.Term, bool) {
 	component := view.componentOf()
 	row, ok := functionContractAt(component, term)
-	if !ok || index < 0 || uint32(index) >= row.typeParams.End-row.typeParams.Start {
+	if !ok {
 		return 0, false
 	}
-	return component.contracts.terms[row.typeParams.Start+uint32(index)], true
+	return poolAt(component.contracts.terms, row.typeParams, index)
 }
 func (view Functions) ReturnCount(term keyspace.Term) (int, bool) {
 	component := view.componentOf()
 	row, ok := functionContractAt(component, term)
-	return int(row.returns.End - row.returns.Start), ok
+	return row.returns.len(), ok
 }
 func (view Functions) ReturnAt(term keyspace.Term, index int) (keyspace.Term, bool) {
 	component := view.componentOf()
 	row, ok := functionContractAt(component, term)
-	if !ok || index < 0 || uint32(index) >= row.returns.End-row.returns.Start {
+	if !ok {
 		return 0, false
 	}
-	return component.contracts.terms[row.returns.Start+uint32(index)], true
+	return poolAt(component.contracts.terms, row.returns, index)
 }
 func (view Calls) TypeArgumentCount(term keyspace.Term) (int, bool) {
 	component := view.componentOf()
 	row, ok := callContractAt(component, term)
-	return int(row.End - row.Start), ok
+	return row.len(), ok
 }
 func (view Calls) TypeArgumentAt(term keyspace.Term, index int) (keyspace.Term, bool) {
 	component := view.componentOf()
 	row, ok := callContractAt(component, term)
-	if !ok || index < 0 || uint32(index) >= row.End-row.Start {
+	if !ok {
 		return 0, false
 	}
-	return component.contracts.terms[row.Start+uint32(index)], true
+	return poolAt(component.contracts.terms, row, index)
 }
 
 // TypeArgumentID is the immutable O(1) identity of one authored call

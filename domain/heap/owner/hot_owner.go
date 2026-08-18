@@ -39,8 +39,19 @@ func (owner *HotOwner) LinkID() identity.ContentID {
 // the typed Rule slot private to the Heap Factor owner so child rules cannot
 // restate Heap's output factor or its private dense coordinate type.
 type RuleImplementation[O any] struct {
-	owner *HotOwner
-	slot  *engine.RuleSlot[heap.Value, O]
+	owner    *HotOwner
+	slot     *engine.RuleSlot[heap.Value, O]
+	resolver func(engine.OperandCoords) (O, bool)
+}
+
+// InstallOperandResolver records the one owner-supplied operand resolver
+// this rule will publish onto its sealed cell.
+func (issuer *RuleImplementation[O]) InstallOperandResolver(resolve func(engine.OperandCoords) (O, bool)) bool {
+	if issuer == nil || resolve == nil || issuer.resolver != nil {
+		return false
+	}
+	issuer.resolver = resolve
+	return true
 }
 
 func (issuer *RuleImplementation[O]) MountedCapability() (engine.RuleSlotCapability, bool) {
@@ -71,11 +82,11 @@ type SelectedRouteRuleBinding[O any] struct {
 // be the Ref issued by this owner; no caller-supplied Factor ordinal or
 // alternate output authority is accepted. bind attaches the reads and its
 // answer terminalizes the transaction.
-func BindSelectedRouteRule[O any](owner *HotOwner, slot *engine.RuleSlot[heap.Value, O], carry engine.SchemaCarrySlot[heap.Value], write engine.SchemaWriteSlot[heap.Value], output engine.FactorRef[heap.Value], spec engine.HotRuleSpec[heap.Value, O], carrySpec engine.HotCarrySpec[heap.Value, O], bind func(*SelectedRouteRuleBinding[O]) bool) bool {
+func BindSelectedRouteRule[O any](owner *HotOwner, slot *engine.RuleSlot[heap.Value, O], carry engine.SchemaCarrySlot[heap.Value], write engine.SchemaWriteSlot[heap.Value], output engine.FactorRef[heap.Value], spec engine.HotRuleSpec[heap.Value, O], carrySpec engine.HotCarrySpec[heap.Value, O], projectWrite func(O) (uint64, bool), bind func(*SelectedRouteRuleBinding[O]) bool) bool {
 	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil || output != owner.fragment.Ref() || bind == nil {
 		return false
 	}
-	return engine.BindSelectedRouteRule[coordinate](owner.binding, slot, carry, write, output, spec, carrySpec, func(tx *engine.SelectedRouteRuleBindingTransaction[coordinate, heap.Value, O]) bool {
+	return engine.BindSelectedRouteRule[coordinate](owner.binding, slot, carry, write, output, spec, carrySpec, projectWrite, func(tx *engine.SelectedRouteRuleBindingTransaction[coordinate, heap.Value, O]) bool {
 		return bind(&SelectedRouteRuleBinding[O]{owner: owner, tx: tx, issuer: &RuleImplementation[O]{owner: owner, slot: slot}})
 	})
 }
@@ -92,11 +103,11 @@ func (tx *SelectedRouteRuleBinding[O]) Implementation() (*RuleImplementation[O],
 // AddExactRead appends one exact predecessor in canonical cold read order.
 // The engine resolves the heterogeneous FactorRef through its sealed cell;
 // no sibling owner coordinate is named here.
-func AddExactRead[O any, RV any](tx *SelectedRouteRuleBinding[O], slot engine.SchemaReadSlot[RV], factor engine.FactorRef[RV]) (engine.Read[engine.OrderedCells[RV]], bool) {
+func AddExactRead[O any, RV any](tx *SelectedRouteRuleBinding[O], slot engine.SchemaReadSlot[RV], factor engine.FactorRef[RV], project func(O) (uint64, bool)) (engine.Read[engine.OrderedCells[RV]], bool) {
 	if tx == nil || tx.owner == nil || tx.tx == nil {
 		return engine.Read[engine.OrderedCells[RV]]{}, false
 	}
-	return engine.AddSelectedRouteExactRead(tx.tx, slot, factor)
+	return engine.AddSelectedRouteExactRead(tx.tx, slot, factor, project)
 }
 
 // AddSelectedRead appends one selected predecessor in canonical cold read
@@ -198,11 +209,11 @@ func (owner *HotOwner) FactorRef() engine.FactorRef[heap.Value] {
 // BindExactWriteRule binds a typed Heap-output rule through this exact owner's
 // private Factor slot. Child packages supply only their cold Rule/write proofs
 // and behavior; they cannot choose another output Factor or coordinate type.
-func BindExactWriteRule[O any](owner *HotOwner, slot *engine.RuleSlot[heap.Value, O], write engine.SchemaWriteSlot[heap.Value], spec engine.HotRuleSpec[heap.Value, O]) (*RuleImplementation[O], bool) {
+func BindExactWriteRule[O any](owner *HotOwner, slot *engine.RuleSlot[heap.Value, O], write engine.SchemaWriteSlot[heap.Value], spec engine.HotRuleSpec[heap.Value, O], projectWrite func(O) (uint64, bool)) (*RuleImplementation[O], bool) {
 	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil {
 		return nil, false
 	}
-	if !engine.BindRule[coordinate](owner.binding, slot, write, owner.fragment.slot, spec) {
+	if !engine.BindRule[coordinate](owner.binding, slot, write, owner.fragment.slot, spec, projectWrite) {
 		return nil, false
 	}
 	return &RuleImplementation[O]{owner: owner, slot: slot}, true
@@ -212,11 +223,11 @@ func BindExactWriteRule[O any](owner *HotOwner, slot *engine.RuleSlot[heap.Value
 // output lane. The child receives the typed read receipt needed by its
 // transfer and evidence checks, but never Heap's dense coordinate or Factor
 // slot.
-func BindExactReadAndCarryRule[O any](owner *HotOwner, slot *engine.RuleSlot[heap.Value, O], read engine.SchemaReadSlot[heap.Value], carry engine.SchemaCarrySlot[heap.Value], write engine.SchemaWriteSlot[heap.Value], spec engine.HotRuleSpec[heap.Value, O], carrySpec engine.HotCarrySpec[heap.Value, O]) (*RuleImplementation[O], engine.Read[engine.OrderedCells[heap.Value]], bool) {
+func BindExactReadAndCarryRule[O any](owner *HotOwner, slot *engine.RuleSlot[heap.Value, O], read engine.SchemaReadSlot[heap.Value], carry engine.SchemaCarrySlot[heap.Value], write engine.SchemaWriteSlot[heap.Value], spec engine.HotRuleSpec[heap.Value, O], carrySpec engine.HotCarrySpec[heap.Value, O], projectRead func(O) (uint64, bool), projectWrite func(O) (uint64, bool)) (*RuleImplementation[O], engine.Read[engine.OrderedCells[heap.Value]], bool) {
 	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil {
 		return nil, engine.Read[engine.OrderedCells[heap.Value]]{}, false
 	}
-	runtimeRead, ok := engine.BindRuleWithExactReadAndCarry[coordinate, heap.Value, O, coordinate, heap.Value](owner.binding, slot, read, owner.fragment.slot, carry, write, owner.fragment.slot, spec, carrySpec)
+	runtimeRead, ok := engine.BindRuleWithExactReadAndCarry[coordinate, heap.Value, O, coordinate, heap.Value](owner.binding, slot, read, owner.fragment.slot, carry, write, owner.fragment.slot, spec, carrySpec, projectRead, projectWrite)
 	if !ok {
 		return nil, engine.Read[engine.OrderedCells[heap.Value]]{}, false
 	}
@@ -226,16 +237,16 @@ func BindExactReadAndCarryRule[O any](owner *HotOwner, slot *engine.RuleSlot[hea
 // BindExactAndSummaryReadAndCarry binds the one heterogeneous Heap/Value
 // receipt lane needed by closed allocation. FactorRefs keep both owner
 // coordinate types private while the engine owns the shared binding cell.
-func BindExactAndSummaryReadAndCarry[O, EV, SV, S any](owner *HotOwner, slot *engine.RuleSlot[heap.Value, O], exactSlot engine.SchemaReadSlot[EV], exactFactor engine.FactorRef[EV], summarySlot engine.SchemaReadSlot[SV], summaryFactor engine.FactorRef[SV], summaryForm engine.SchemaReadForm[SV], carry engine.SchemaCarrySlot[heap.Value], write engine.SchemaWriteSlot[heap.Value], spec engine.HotRuleSpec[heap.Value, O], carrySpec engine.HotCarrySpec[heap.Value, O]) (*RuleImplementation[O], engine.Read[engine.OrderedCells[EV]], engine.Read[S], bool) {
+func BindExactAndSummaryReadAndCarry[O, EV, SV, S any](owner *HotOwner, slot *engine.RuleSlot[heap.Value, O], exactSlot engine.SchemaReadSlot[EV], exactFactor engine.FactorRef[EV], summarySlot engine.SchemaReadSlot[SV], summaryFactor engine.FactorRef[SV], summaryForm engine.SchemaReadForm[SV], carry engine.SchemaCarrySlot[heap.Value], write engine.SchemaWriteSlot[heap.Value], spec engine.HotRuleSpec[heap.Value, O], carrySpec engine.HotCarrySpec[heap.Value, O], projectRead func(O) (uint64, bool), projectWrite func(O) (uint64, bool), admitSummary any) (*RuleImplementation[O], engine.Read[engine.OrderedCells[EV]], engine.Read[S], bool) {
 	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil {
 		return nil, engine.Read[engine.OrderedCells[EV]]{}, engine.Read[S]{}, false
 	}
 	var exactRead engine.Read[engine.OrderedCells[EV]]
 	var summaryRead engine.Read[S]
-	bound := engine.BindSelectedRule[coordinate](owner.binding, slot, carry, write, owner.fragment.Ref(), spec, carrySpec, func(tx *engine.SelectedRouteRuleBindingTransaction[coordinate, heap.Value, O]) bool {
+	bound := engine.BindSelectedRule[coordinate](owner.binding, slot, carry, write, owner.fragment.Ref(), spec, carrySpec, projectWrite, func(tx *engine.SelectedRouteRuleBindingTransaction[coordinate, heap.Value, O]) bool {
 		var exactOK, summaryOK bool
-		exactRead, exactOK = engine.AddSelectedRouteExactRead(tx, exactSlot, exactFactor)
-		summaryRead, summaryOK = engine.AddSelectedRouteSummaryRead[coordinate, heap.Value, O, SV, S](tx, summarySlot, summaryFactor, summaryForm)
+		exactRead, exactOK = engine.AddSelectedRouteExactRead(tx, exactSlot, exactFactor, projectRead)
+		summaryRead, summaryOK = engine.AddSelectedRouteSummaryRead[coordinate, heap.Value, O, SV, S](tx, summarySlot, summaryFactor, summaryForm, admitSummary)
 		return exactOK && summaryOK
 	})
 	if !bound {
@@ -256,10 +267,20 @@ func BindExactQuery[R any](owner *HotOwner, query *engine.QuerySlot[R], spec eng
 // ResolveRuleImplementation issues the engine receipt only after the shared
 // binding seals. Heap's coordinate remains private to this owner package.
 func ResolveRuleImplementation[O any](issuer *RuleImplementation[O]) (*engine.RuleImplementation[coordinate, heap.Value, O], bool) {
-	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
+	if issuer == nil || issuer.owner == nil || issuer.slot == nil || issuer.resolver == nil {
 		return nil, false
 	}
-	return engine.RuleImplementationAt[coordinate, heap.Value, O](issuer.owner.binding, issuer.slot)
+	implementation, ok := engine.RuleImplementationAt[coordinate, heap.Value, O](issuer.owner.binding, issuer.slot)
+	if !ok {
+		return nil, false
+	}
+	if implementation.HasOperandResolver() {
+		return implementation, true
+	}
+	if !implementation.InstallOperandResolver(issuer.resolver) {
+		return nil, false
+	}
+	return implementation, true
 }
 
 // ResolveRuleImplementationFor rejects a receipt issued by another equal

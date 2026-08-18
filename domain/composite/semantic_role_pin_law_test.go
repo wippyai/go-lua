@@ -106,6 +106,15 @@ func pinnedSemanticRoles() []struct {
 		{"transform/heap/allocation-closed", "44673b10251ac80327461319eed21fb7ab2c01a00dfb488c53459f8649888d9a"},
 		{"axis/execution-reachability", "d31d901aa14d3abfc6eb87d1ffd0cc75cf908cff5d353cf7290912ce55658132"},
 		{"axis/denominator-count", "61d6e0d98ed9eaf888181252ec8d1fb420b8220ffa43560d04c82e63c714136f"},
+		{"observation/geometry/branch-evidence", "6aa49595430d89c52a75b3ba8f52f7baa4f1c4941f6e36bb1c98c37b0fdea9aa"},
+		{"observation/geometry/direct-allocation-membership", "873b96992208ec62b1da3f0d0afb3cb6bbb0f503832073c1f8ba24bbc2ada5c9"},
+		{"observation/geometry/publication-transition", "13580e632fb511b461177b7f960655162fe05facabfe38d2339535859aa6fe31"},
+		{"observation/anchor/evidence-point", "c03d14b69355beb65d341216ebb3f7de97d8b566834662b9c784adb6a204d021"},
+		{"observation/anchor/selected-call-effect", "65714bf207578ced06c4fb35128aee9b9c6a1365d319408165c9a3d41142d564"},
+		{"observation/anchor/publication-effect", "403d1947e03ab466e0ae75c73409c5091a8d75930025ee55332c58be1fa0ccb5"},
+		{"query/population/selected-point", "4892261e374acc37ddebb86182f5244f581db1b050cb4e89af8ab61a3e80f7eb"},
+		{"query/projection/summary", "75ae2d0ed941049230cf6975a58529eba88cb0779c4a18556147452a8c3b00f2"},
+		{"query/projection/exact", "48a68958bf20dc222d49ce6a7fa54282d4781675545bfec8521fb033af421109"},
 	}
 }
 

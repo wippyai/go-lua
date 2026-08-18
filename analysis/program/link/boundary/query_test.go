@@ -1,6 +1,7 @@
 package boundary
 
 import (
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
@@ -70,7 +71,7 @@ func TestInitialOperationIsBoundaryOwnedLocalAndAllocationFree(t *testing.T) {
 	if _, ok := component.InitialOperation(project, contract, root, linkproject.Key{}); ok {
 		t.Fatal("zero Project key was admitted")
 	}
-	if _, ok := component.InitialOperation(project, contract, target.InitialRoot(0), projectKey); ok {
+	if _, ok := component.InitialOperation(project, contract, vocabulary.InitialRoot(0), projectKey); ok {
 		t.Fatal("zero initial root was admitted")
 	}
 }
@@ -90,25 +91,25 @@ func boundaryInitialOperationProject(t testing.TB, p *program.Program, contract 
 
 func boundaryInitialOperationTarget(t testing.TB, root string) *target.Contract {
 	t.Helper()
-	emit := target.BindingSpec{Namespace: target.BindingBuiltin, Member: []string{"emit"}}
+	emit := vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"emit"}}
 	contract, err := target.Seal(&target.Spec{
 		Semantics: domaincontract.NewSemantics(),
-		Operations: []target.OperationSpec{{
-			Bindings: []target.BindingSpec{emit},
-			Input:    target.ValuesSpec{Tail: target.ValuesClosed},
-			Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}},
-			Effects:  target.RowSpec{Tail: target.RowClosed},
+		Operations: []vocabulary.OperationSpec{{
+			Bindings: []vocabulary.BindingSpec{emit},
+			Input:    vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed},
+			Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}},
+			Effects:  vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 		}},
-		InitialRoots: []target.InitialRootSpec{{
+		InitialRoots: []vocabulary.InitialRootSpec{{
 			Identity: root,
-			Shape:    target.BootShapeSpec{Aggregate: target.BootAggregateTable, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: root}},
+			Shape:    vocabulary.BootShapeSpec{Aggregate: vocabulary.BootAggregateTable, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: root}},
 		}},
-		InitialEntries: []target.InitialEntrySpec{
-			{Root: root, Key: boundaryInitialOperationLiteral("_G"), Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: root}, Mutability: target.InitialMutable},
-			{Root: root, Key: boundaryInitialOperationLiteral("emit"), Value: target.InitialValueSpec{Kind: target.InitialValueOperation, Operation: emit}, Mutability: target.InitialMutable},
-			{Root: root, Key: boundaryInitialOperationLiteral("__link_absent"), Value: target.InitialValueSpec{Kind: target.InitialValueAbsent}, Mutability: target.InitialMutable},
+		InitialEntries: []vocabulary.InitialEntrySpec{
+			{Root: root, Key: boundaryInitialOperationLiteral("_G"), Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: root}, Mutability: vocabulary.InitialMutable},
+			{Root: root, Key: boundaryInitialOperationLiteral("emit"), Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueOperation, Operation: emit}, Mutability: vocabulary.InitialMutable},
+			{Root: root, Key: boundaryInitialOperationLiteral("__link_absent"), Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueAbsent}, Mutability: vocabulary.InitialMutable},
 		},
-		InitialBindings: []target.InitialBindingSpec{{Name: "_G", Root: root, Key: boundaryInitialOperationLiteral("_G")}},
+		InitialBindings: []vocabulary.InitialBindingSpec{{Name: "_G", Root: root, Key: boundaryInitialOperationLiteral("_G")}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -133,7 +134,7 @@ func boundaryInitialOperationProgramKey(t testing.TB, p *program.Program, want s
 	return 0
 }
 
-func boundaryInitialOperationTargetKey(t testing.TB, contract *target.Contract, want string) target.ExactKey {
+func boundaryInitialOperationTargetKey(t testing.TB, contract *target.Contract, want string) vocabulary.ExactKey {
 	t.Helper()
 	for index := 0; index < contract.ExactKeyCount(); index++ {
 		key, keyOK := contract.ExactKeyAt(index)

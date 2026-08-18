@@ -162,7 +162,7 @@ func TestStaticDeclarationAndAssertionKeepSeparateCoordinates(t *testing.T) {
 func TestStaticPublicationDuplicateIsDelegatedToStaticBuild(t *testing.T) {
 	c, body := staticFixture("static-publication.lua")
 	span := programsource.Span{File: "static-publication.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 2}
-	cell := c.Cell(span, body)
+	cell := c.Cell(span, body, "")
 	value := c.Bool(span, body, true)
 	values := c.Values(span, body, []keyspace.Term{value}, 0)
 	assign := c.Assign(span, body, []keyspace.Term{cell}, []programsource.Span{span}, values)
@@ -204,7 +204,7 @@ func TestCollectorStaticRolesRejectWrongFamiliesAndKeepTypeOfOperandOpen(t *test
 		body := c.Body(span)
 		primitive := c.Primitive(span, programstatic.PrimitiveString)
 		stringTerm := c.String(span, body, "operand")
-		cell := c.Cell(span, body)
+	cell := c.Cell(span, body, "")
 		return c, body, primitive, stringTerm, cell
 	}
 	c, _, _, stringTerm, _ := setup()
@@ -233,7 +233,7 @@ func TestCollectorStaticRolesRejectWrongFamiliesAndKeepTypeOfOperandOpen(t *test
 	}
 	reserved := assembly.New(name, 1, bind.GlobalCensus{})
 	reservedBody := reserved.Body(span)
-	reservedCell := reserved.Cell(span, reservedBody)
+	reservedCell := reserved.Cell(span, reservedBody, "")
 	if got := reserved.TypeOf(span, reservedCell, keyspace.MakeTerm(keyspace.FamilyImport, 1)); got != 0 {
 		t.Fatalf("TypeOf accepted reserved Import operand %v", got)
 	}

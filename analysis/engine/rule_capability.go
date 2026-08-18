@@ -11,7 +11,8 @@ import (
 // RuleSlotCapability is the parent-issued identity of one rule slot.  The
 // engine deliberately has no domain-role vocabulary: a capability is tied to
 // the exact SchemaBinding authority and slot ordinal that issued it.  The
-// artifact/analysis owner maps its domain role to this opaque capability.
+// artifact/analysis owner binds a sealed declaration Key to this opaque
+// capability.
 type RuleSlotCapability struct {
 	state      *schemaBindingState
 	authority  *schemaBindingAuthority

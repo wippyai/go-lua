@@ -5,7 +5,6 @@ import (
 	"math"
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
 )
@@ -120,113 +119,6 @@ func appendInterfaceMembers(pool *[]interfaceMemberRow, input []InterfaceMember)
 		})
 	}
 	return poolRange{Start: uint32(start), End: uint32(len(*pool))}, true
-}
-
-// writeDeclarationsContent owns Static declaration records. The pools are
-// expanded in source relation order so storage offsets and inverse indexes do
-// not participate in authored identity.
-func writeDeclarationsContent(writer *framing.Writer, store declarationStore) error {
-	if err := writer.Count(uint64(len(store.aliases))); err != nil {
-		return err
-	}
-	for _, row := range store.aliases {
-		if err := writer.Uint(uint64(row.owner)); err != nil {
-			return err
-		}
-		if err := writer.Uint(uint64(row.target)); err != nil {
-			return err
-		}
-		if err := writer.Uint(uint64(row.name)); err != nil {
-			return err
-		}
-		if err := writeCoordinateContent(writer, row.coordinate); err != nil {
-			return err
-		}
-		if err := writeTypeTermsContent(writer, store.aliasParams[row.params.Start:row.params.End]); err != nil {
-			return err
-		}
-	}
-	if err := writer.Count(uint64(len(store.params))); err != nil {
-		return err
-	}
-	for _, row := range store.params {
-		if err := writer.Uint(uint64(row.Owner)); err != nil {
-			return err
-		}
-		if err := writer.Uint(uint64(row.Name)); err != nil {
-			return err
-		}
-		if err := writer.Uint(uint64(row.Constraint)); err != nil {
-			return err
-		}
-	}
-	if err := writer.Count(uint64(len(store.interfaces))); err != nil {
-		return err
-	}
-	for _, row := range store.interfaces {
-		if err := writer.Uint(uint64(row.owner)); err != nil {
-			return err
-		}
-		if err := writer.Uint(uint64(row.name)); err != nil {
-			return err
-		}
-		if err := writeCoordinateContent(writer, row.coordinate); err != nil {
-			return err
-		}
-		if err := writeTypeTermsContent(writer, store.interfaceRefs[row.extends.Start:row.extends.End]); err != nil {
-			return err
-		}
-		members := store.members[row.members.Start:row.members.End]
-		if err := writer.Count(uint64(len(members))); err != nil {
-			return err
-		}
-		for _, member := range members {
-			if err := writer.Uint(uint64(member.kind)); err != nil {
-				return err
-			}
-			if err := writer.Uint(uint64(member.field)); err != nil {
-				return err
-			}
-			if err := writer.Uint(uint64(member.name)); err != nil {
-				return err
-			}
-			if err := writeCoordinateContent(writer, member.coordinate); err != nil {
-				return err
-			}
-			if err := writer.Uint(uint64(member.signature)); err != nil {
-				return err
-			}
-		}
-	}
-	if err := writer.Count(uint64(len(store.declaredTypes))); err != nil {
-		return err
-	}
-	for _, row := range store.declaredTypes {
-		if err := writer.Uint(uint64(row.cell)); err != nil {
-			return err
-		}
-		if err := writer.Uint(uint64(row.target)); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// writeCoordinateContent encodes the four exact authored Coordinate fields.
-// It is owned by the declaration vertical because declarations introduce the
-// shared Static spelling-coordinate representation used by signatures.
-func writeCoordinateContent(writer *framing.Writer, coordinate source.Coordinate) error {
-	startLine, startColumn, endLine, endColumn := coordinate.Parts()
-	if err := writer.Uint(uint64(startLine)); err != nil {
-		return err
-	}
-	if err := writer.Uint(uint64(startColumn)); err != nil {
-		return err
-	}
-	if err := writer.Uint(uint64(endLine)); err != nil {
-		return err
-	}
-	return writer.Uint(uint64(endColumn))
 }
 
 // emitDeclarationsContainment owns authored declaration syntax. Lexical Cell

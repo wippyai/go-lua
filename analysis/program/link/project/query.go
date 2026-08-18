@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 )
 
 // viewLive keeps construction views tied to the shared Draft lifecycle while
@@ -235,7 +236,7 @@ func (v Keys) ForMounted(module identity.ContentID, key keyspace.Key) (Key, bool
 	}
 	return Key{}, false
 }
-func (v Keys) ForTarget(contract *target.Contract, key target.ExactKey) (Key, bool) {
+func (v Keys) ForTarget(contract *target.Contract, key vocabulary.ExactKey) (Key, bool) {
 	if !v.live() || contract == nil || contract != v.authority.target || key == 0 || uint64(key) > uint64(len(v.authority.targetKeys)) {
 		return Key{}, false
 	}
@@ -248,7 +249,7 @@ func (v Keys) ForTarget(contract *target.Contract, key target.ExactKey) (Key, bo
 // literal reconstruction, or second identity is involved.  Project keys
 // authored only by Program/source data have no Target counterpart and fail
 // closed.
-func (v Keys) TargetFor(contract *target.Contract, key Key) (target.ExactKey, bool) {
+func (v Keys) TargetFor(contract *target.Contract, key Key) (vocabulary.ExactKey, bool) {
 	if !v.live() || contract == nil || contract != v.authority.target {
 		return 0, false
 	}
@@ -263,7 +264,7 @@ func (v Keys) TargetFor(contract *target.Contract, key Key) (target.ExactKey, bo
 	return targetKey, true
 }
 
-func (v Keys) ForInitial(contract *target.Contract, value target.InitialValue) (Key, bool) {
+func (v Keys) ForInitial(contract *target.Contract, value vocabulary.InitialValue) (Key, bool) {
 	if !v.live() || contract == nil || contract != v.authority.target || value == 0 {
 		return Key{}, false
 	}

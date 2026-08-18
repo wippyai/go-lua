@@ -4,11 +4,14 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
 const module = "github.com/wippyai/go-lua"
@@ -107,15 +110,25 @@ func TestProbeIsNamedByNoAnalyzerProduction(t *testing.T) {
 	if !ok {
 		t.Fatal("probe source location unavailable")
 	}
-	// The analyzer tree is three directories above this source.
-	root := filepath.Dir(filepath.Dir(filepath.Dir(current)))
-	self := module + "/analysis/domain/probe"
-	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+	root, err := testfixture.RepositoryRoot(filepath.Dir(current))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "analysis")); statErr != nil {
+		t.Fatalf("probe production-import walk does not cover analysis/: %v", statErr)
+	}
+	self := module + "/domain/probe"
+	visited := 0
+	err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		if entry.IsDir() || filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
 			return nil
+		}
+		rel, relErr := filepath.Rel(root, path)
+		if relErr == nil && strings.HasPrefix(filepath.ToSlash(rel), "analysis/") {
+			visited++
 		}
 		parsed, parseErr := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly)
 		if parseErr != nil {
@@ -134,5 +147,8 @@ func TestProbeIsNamedByNoAnalyzerProduction(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("walk analyzer sources: %v", err)
+	}
+	if visited == 0 {
+		t.Fatal("probe production-import walk visited no analysis/ sources")
 	}
 }

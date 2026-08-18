@@ -101,13 +101,12 @@
 //
 // # Publication plane
 //
-// The one write door into a published snapshot column, and the drivers that
-// pass through it. A column is filled by the capability the engine minted for
-// the writer its sealed table admitted, and the published value carries none.
+// The one write door into a published snapshot column. A column is filled by
+// the capability the engine minted for the writer its sealed table admitted,
+// and the published value carries none.
 //
-//	publication_column.go       admitted (column, writer) pairs, the minted capability, the write verbs
-//	publication_materializer.go the family-erased driver that folds a family and writes its result column
-//	snapshot_materialize.go     one completed solve published as immutable snapshot columns
+//	publication_column.go   admitted (column, writer) pairs, the minted capability, the write verbs
+//	snapshot_materialize.go one completed solve published as immutable snapshot columns
 //
 // # State and results plane
 //
@@ -120,19 +119,20 @@
 // It belongs to no plane because it declares nothing about any plane's
 // machinery. Advisory tiers are config-gated, never removed.
 //
-//	solve_report.go the failure reason, the solve boundary and the solve report
+//	solve_report.go the failure reason, the solve boundary, the program
+//	                construction stages and the solve report
 //
 // # Condemned compile plane
 //
-// Every file below is deleted whole at the receipt flash cut, and state_receipt.go
-// is replaced by Snapshot.Query. deletion_manifest_law_test.go is the law: it
-// holds the shrink-only manifest and pins each surviving reference into it.
+// Every file below is deleted whole at the receipt flash cut. Solved results
+// are read from Snapshot.Query by family and stable row identity.
+// deletion_manifest_law_test.go is the law: it holds the shrink-only manifest
+// and pins each surviving reference into it.
 //
 //	activation_candidate_issuer.go   receipt_query_admission.go   solver_compiler.go
 //	artifact_receipt.go              receipt_rule_admission.go    structural_schedule_certificate.go
-//	receipt_observation.go           receipt_solver.go            structural_witness.go
-//	schema_query_receipt.go          schema_surface_receipt.go    semantic_directory.go
-//	state_receipt.go (replacement, not deletion)
+//	receipt_observation.go           schema_surface_receipt.go     structural_witness.go
+//	semantic_directory.go
 //
 // # Subpackages
 //

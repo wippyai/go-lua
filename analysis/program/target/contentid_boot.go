@@ -2,9 +2,10 @@ package target
 
 import (
 	"errors"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
-	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 func encodeBoot(w *framing.Writer, c *Contract) error {
@@ -25,7 +26,7 @@ func encodeBoot(w *framing.Writer, c *Contract) error {
 		if !ok {
 			return errors.New("target: malformed initial root shape")
 		}
-		shapeRoot, ok := c.BootShapeRoot(shape)
+		shapeRoot, ok := c.bootShapeRoot(shape)
 		if !ok || shapeRoot != root {
 			return errors.New("target: malformed boot shape root")
 		}
@@ -141,7 +142,7 @@ func encodeBoot(w *framing.Writer, c *Contract) error {
 	return nil
 }
 
-func encodeExactKey(w *framing.Writer, c *Contract, key ExactKey) error {
+func encodeExactKey(w *framing.Writer, c *Contract, key vocabulary.ExactKey) error {
 	value, ok := c.ExactKeyValue(key)
 	if !ok {
 		return errors.New("target: malformed exact key")
@@ -166,7 +167,7 @@ func encodeExactKey(w *framing.Writer, c *Contract, key ExactKey) error {
 	}
 }
 
-func encodeInitialValue(w *framing.Writer, c *Contract, value InitialValue) error {
+func encodeInitialValue(w *framing.Writer, c *Contract, value vocabulary.InitialValue) error {
 	kind, ok := c.InitialValueKind(value)
 	if !ok {
 		return errors.New("target: malformed initial value")
@@ -178,45 +179,45 @@ func encodeInitialValue(w *framing.Writer, c *Contract, value InitialValue) erro
 		return err
 	}
 	switch kind {
-	case InitialValueNil, InitialValueAbsent:
+	case vocabulary.InitialValueNil, vocabulary.InitialValueAbsent:
 		return nil
-	case InitialValueBoolean:
+	case vocabulary.InitialValueBoolean:
 		item, ok := c.InitialValueBoolean(value)
 		if !ok {
 			return errors.New("target: malformed initial boolean")
 		}
 		return w.Bool(item)
-	case InitialValueInteger:
+	case vocabulary.InitialValueInteger:
 		item, ok := c.InitialValueInteger(value)
 		if !ok {
 			return errors.New("target: malformed initial integer")
 		}
 		return w.Uint(uint64(item))
-	case InitialValueFloat:
+	case vocabulary.InitialValueFloat:
 		item, ok := c.InitialValueFloatBits(value)
 		if !ok {
 			return errors.New("target: malformed initial float")
 		}
 		return w.Uint(item)
-	case InitialValueString:
+	case vocabulary.InitialValueString:
 		item, ok := c.InitialValueString(value)
 		if !ok {
 			return errors.New("target: malformed initial string")
 		}
 		return w.String(item)
-	case InitialValueRoot:
+	case vocabulary.InitialValueRoot:
 		item, ok := c.InitialValueRoot(value)
 		if !ok {
 			return errors.New("target: malformed initial root value")
 		}
 		return w.Uint(uint64(item))
-	case InitialValueOperation:
+	case vocabulary.InitialValueOperation:
 		item, ok := c.InitialValueOperation(value)
 		if !ok {
 			return errors.New("target: malformed initial operation value")
 		}
 		return w.Uint(uint64(item))
-	case InitialValueDeniedOperation:
+	case vocabulary.InitialValueDeniedOperation:
 		namespace, ok := c.InitialValueDeniedNamespace(value)
 		if !ok {
 			return errors.New("target: malformed denied initial operation")
@@ -229,7 +230,7 @@ func encodeInitialValue(w *framing.Writer, c *Contract, value InitialValue) erro
 			return err
 		}
 		for index := 0; index < owner; index++ {
-			part, ok := c.InitialValueDeniedOwnerKeyAt(value, index)
+			part, ok := c.initialValueDeniedOwnerKeyAt(value, index)
 			if !ok {
 				return errors.New("target: malformed denied initial owner")
 			}
@@ -242,7 +243,7 @@ func encodeInitialValue(w *framing.Writer, c *Contract, value InitialValue) erro
 			return err
 		}
 		for index := 0; index < member; index++ {
-			part, ok := c.InitialValueDeniedMemberKeyAt(value, index)
+			part, ok := c.initialValueDeniedMemberKeyAt(value, index)
 			if !ok {
 				return errors.New("target: malformed denied initial member")
 			}

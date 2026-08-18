@@ -1,6 +1,7 @@
 package boundary
 
 import (
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"reflect"
 	"testing"
 
@@ -156,7 +157,7 @@ func TestBoundarySeedsAndEndpointsAreFencedAndCanonical(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider := target.BindingSpec{Namespace: target.BindingProvider, Owner: []string{"host", "pkg"}, Member: []string{"service", "f"}}
+	provider := vocabulary.BindingSpec{Namespace: vocabulary.BindingProvider, Owner: []string{"host", "pkg"}, Member: []string{"service", "f"}}
 	input := Input{Project: project, Target: contract, EndpointRequests: []EndpointRequest{{Identity: "second", Binding: provider}, {Identity: "first", Binding: provider}}}
 	draft, err := Build(input)
 	if err != nil {
@@ -208,7 +209,7 @@ func TestBoundarySeedsAndEndpointsAreFencedAndCanonical(t *testing.T) {
 	if firstID != firstSeedID {
 		t.Fatal("Endpoint ID and its nominal Seed ID diverged")
 	}
-	provider = target.BindingSpec{Namespace: target.BindingProvider, Owner: []string{"host", "pkg"}, Member: []string{"service", "f"}}
+	provider = vocabulary.BindingSpec{Namespace: vocabulary.BindingProvider, Owner: []string{"host", "pkg"}, Member: []string{"service", "f"}}
 	providerOp, ok := contract.Lookup(provider)
 	if !ok {
 		t.Fatal("provider operation unavailable")
@@ -320,10 +321,10 @@ func TestBoundarySeedsAndEndpointsAreFencedAndCanonical(t *testing.T) {
 	if _, err := Build(Input{Project: project, Target: contract, EndpointRequests: []EndpointRequest{{Identity: "dup", Binding: provider}, {Identity: "dup", Binding: provider}}}); err == nil {
 		t.Fatal("duplicate endpoint identity admitted")
 	}
-	if _, err := Build(Input{Project: project, Target: contract, EndpointRequests: []EndpointRequest{{Identity: "bad", Binding: target.BindingSpec{Namespace: target.BindingBuiltin, Member: []string{"op"}}}}}); err == nil {
+	if _, err := Build(Input{Project: project, Target: contract, EndpointRequests: []EndpointRequest{{Identity: "bad", Binding: vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"op"}}}}}); err == nil {
 		t.Fatal("non-provider endpoint admitted")
 	}
-	if _, err := Build(Input{Project: project, Target: contract, EndpointRequests: []EndpointRequest{{Identity: "unknown", Binding: target.BindingSpec{Namespace: target.BindingProvider, Owner: []string{"host"}, Member: []string{"missing"}}}}}); err == nil {
+	if _, err := Build(Input{Project: project, Target: contract, EndpointRequests: []EndpointRequest{{Identity: "unknown", Binding: vocabulary.BindingSpec{Namespace: vocabulary.BindingProvider, Owner: []string{"host"}, Member: []string{"missing"}}}}}); err == nil {
 		t.Fatal("unknown provider endpoint admitted")
 	}
 	permutedDraft, err := Build(Input{Project: project, Target: contract, EndpointRequests: []EndpointRequest{{Identity: "first", Binding: provider}, {Identity: "second", Binding: provider}}})
@@ -438,7 +439,7 @@ func TestBoundarySeedIDsIgnoreUnrelatedMountDelta(t *testing.T) {
 		return component
 	}
 	one, two := buildBoundary(oneProject), buildBoundary(twoProject)
-	provider := target.BindingSpec{Namespace: target.BindingProvider, Owner: []string{"host", "pkg"}, Member: []string{"service", "f"}}
+	provider := vocabulary.BindingSpec{Namespace: vocabulary.BindingProvider, Owner: []string{"host", "pkg"}, Member: []string{"service", "f"}}
 	op, ok := contract.Lookup(provider)
 	if !ok {
 		t.Fatal("provider operation unavailable")
@@ -535,12 +536,12 @@ func TestBoundaryDeniedBootstrapSegmentFirstLastAndMissing(t *testing.T) {
 	if !ok {
 		t.Fatal("last denied unavailable")
 	}
-	for _, value := range []target.InitialValue{first, last} {
+	for _, value := range []vocabulary.InitialValue{first, last} {
 		if _, disposition, ok := component.Seeds().BootstrapCallable(value); !ok || disposition != CallableDeniedTarget {
 			t.Fatalf("denied segment lookup %d = %v/%t", value, disposition, ok)
 		}
 	}
-	if _, disposition, ok := component.Seeds().BootstrapCallable(target.InitialValue(^uint32(0))); ok || disposition != CallableInvalid {
+	if _, disposition, ok := component.Seeds().BootstrapCallable(vocabulary.InitialValue(^uint32(0))); ok || disposition != CallableInvalid {
 		t.Fatal("missing denied segment value admitted")
 	}
 }
@@ -574,7 +575,7 @@ func TestBoundaryModuleRelationProjection(t *testing.T) {
 		t.Fatal("nil component exposed Module relation")
 	}
 	program := boundaryProgram(t)
-	provider := target.BindingSpec{Namespace: target.BindingProvider, Owner: []string{"host", "pkg"}, Member: []string{"service", "f"}}
+	provider := vocabulary.BindingSpec{Namespace: vocabulary.BindingProvider, Owner: []string{"host", "pkg"}, Member: []string{"service", "f"}}
 	build := func(contract *target.Contract, modules []linkproject.Module, endpoints []EndpointRequest) *Component {
 		projectDraft, err := linkproject.Build(linkproject.Input{Modules: modules, Target: contract})
 		if err != nil {
@@ -712,7 +713,7 @@ func TestBoundaryValueAndEndpointRelationProjectionIsolation(t *testing.T) {
 		t.Fatal("unfinalized component exposed Endpoint relation")
 	}
 	mainProgram := boundaryProgram(t)
-	provider := target.BindingSpec{Namespace: target.BindingProvider, Owner: []string{"host", "pkg"}, Member: []string{"service", "f"}}
+	provider := vocabulary.BindingSpec{Namespace: vocabulary.BindingProvider, Owner: []string{"host", "pkg"}, Member: []string{"service", "f"}}
 	build := func(contract *target.Contract, source *program.Program, endpoints []EndpointRequest) *Component {
 		projectDraft, err := linkproject.Build(linkproject.Input{Modules: []linkproject.Module{{Name: "main", Program: source}}, Target: contract})
 		if err != nil {
@@ -771,7 +772,7 @@ func TestBoundaryValueAndEndpointRelationProjectionIsolation(t *testing.T) {
 func TestBoundaryPortableValueAndEndpointFindID(t *testing.T) {
 	contract := boundaryEndpointTarget(t)
 	mainProgram := boundaryProgram(t)
-	provider := target.BindingSpec{Namespace: target.BindingProvider, Owner: []string{"host", "pkg"}, Member: []string{"service", "f"}}
+	provider := vocabulary.BindingSpec{Namespace: vocabulary.BindingProvider, Owner: []string{"host", "pkg"}, Member: []string{"service", "f"}}
 	build := func(source *program.Program, endpoints []EndpointRequest) *Component {
 		projectDraft, err := linkproject.Build(linkproject.Input{Modules: []linkproject.Module{{Name: "main", Program: source}}, Target: contract})
 		if err != nil {
@@ -879,7 +880,7 @@ func TestBoundaryPortableValueAndEndpointFindID(t *testing.T) {
 
 func TestBoundaryPortableSeedAndEndpointIdentitiesIgnoreUnrelatedTargetDelta(t *testing.T) {
 	program := boundaryProgram(t)
-	provider := target.BindingSpec{Namespace: target.BindingProvider, Owner: []string{"host", "pkg"}, Member: []string{"service", "f"}}
+	provider := vocabulary.BindingSpec{Namespace: vocabulary.BindingProvider, Owner: []string{"host", "pkg"}, Member: []string{"service", "f"}}
 	build := func(contract *target.Contract) *Component {
 		projectDraft, err := linkproject.Build(linkproject.Input{Modules: []linkproject.Module{{Name: "main", Program: program}}, Target: contract})
 		if err != nil {
@@ -901,8 +902,8 @@ func TestBoundaryPortableSeedAndEndpointIdentitiesIgnoreUnrelatedTargetDelta(t *
 	}
 	baseContract, unrelatedContract := boundaryEndpointTarget(t), boundaryEndpointTargetVariant(t, true, true, false, false)
 	base, unrelated := build(baseContract), build(unrelatedContract)
-	operation := func(contract *target.Contract) target.Operation {
-		op, ok := contract.Lookup(target.BindingSpec{Namespace: target.BindingBuiltin, Member: []string{"op"}})
+	operation := func(contract *target.Contract) vocabulary.Operation {
+		op, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"op"}})
 		if !ok {
 			t.Fatal("operation unavailable")
 		}
@@ -936,7 +937,7 @@ func TestBoundaryPortableSeedAndEndpointIdentitiesIgnoreUnrelatedTargetDelta(t *
 	if baseLoaderID != unrelatedLoaderID {
 		t.Fatal("unrelated Target delta churned loader ID")
 	}
-	denied := func(contract *target.Contract) target.InitialValue {
+	denied := func(contract *target.Contract) vocabulary.InitialValue {
 		_, value, _, _, ok := contract.InitialBinding("load")
 		if !ok {
 			t.Fatal("denied unavailable")
@@ -1046,14 +1047,14 @@ func TestBoundaryCardinalityFormulaRejectsOverflowAndBadPartition(t *testing.T) 
 }
 
 func TestBoundaryRejectsOwnerPrefixedAndConflictingRequire(t *testing.T) {
-	if accepted, err := classifyRequireBinding(target.BindingBuiltin, 1, 1, "require"); err == nil || accepted {
+	if accepted, err := classifyRequireBinding(vocabulary.BindingBuiltin, 1, 1, "require"); err == nil || accepted {
 		t.Fatalf("owner-bearing builtin require classification = %t/%v, want rejection", accepted, err)
 	}
 
 	program := boundaryProgram(t)
 	conflictTarget := boundaryTargetWithRequireBindings(t,
-		[]target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"require"}}},
-		[]target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"require", "nested"}}},
+		[]vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"require"}}},
+		[]vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"require", "nested"}}},
 	)
 	conflictDraft, err := linkproject.Build(linkproject.Input{Modules: []linkproject.Module{{Name: "main", Program: program}}, Target: conflictTarget})
 	if err != nil {
@@ -1088,29 +1089,29 @@ func boundaryProgram(t testing.TB) *program.Program {
 
 func boundaryTarget(t testing.TB, extraRequireBinding bool) *target.Contract {
 	t.Helper()
-	require := target.OperationSpec{
-		Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"require"}}},
-		Input:    target.ValuesSpec{Tail: target.ValuesClosed},
-		Outcomes: []target.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}},
-		Effects:  target.RowSpec{Tail: target.RowClosed},
+	require := vocabulary.OperationSpec{
+		Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"require"}}},
+		Input:    vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed},
+		Outcomes: []vocabulary.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}},
+		Effects:  vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 	}
 	if extraRequireBinding {
-		require.Bindings = append(require.Bindings, target.BindingSpec{Namespace: target.BindingBuiltin, Member: []string{"other"}})
+		require.Bindings = append(require.Bindings, vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"other"}})
 	}
 	spec := target.Spec{
 		Semantics: domaincontract.NewSemantics(),
-		Operations: []target.OperationSpec{
-			{Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"op"}}}, Input: target.ValuesSpec{Fixed: neutralTypes(t, typ.Any), Tail: target.ValuesClosed}, Outcomes: []target.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}}, Effects: target.RowSpec{Tail: target.RowClosed}},
+		Operations: []vocabulary.OperationSpec{
+			{Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"op"}}}, Input: vocabulary.ValuesSpec{Fixed: neutralTypes(t, typ.Any), Tail: vocabulary.ValuesClosed}, Outcomes: []vocabulary.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}}, Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed}},
 			require,
 		},
-		InitialRoots: []target.InitialRootSpec{{Identity: "GlobalEnvRoot", Shape: target.BootShapeSpec{Aggregate: target.BootAggregateTable, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}}}},
-		InitialEntries: []target.InitialEntrySpec{
-			{Root: "GlobalEnvRoot", Key: boundaryStringKey("_G"), Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: target.InitialMutable},
-			{Root: "GlobalEnvRoot", Key: boundaryStringKey("__link_absent"), Value: target.InitialValueSpec{Kind: target.InitialValueAbsent}, Mutability: target.InitialMutable},
-			{Root: "GlobalEnvRoot", Key: boundaryStringKey("op"), Value: target.InitialValueSpec{Kind: target.InitialValueOperation, Operation: target.BindingSpec{Namespace: target.BindingBuiltin, Member: []string{"op"}}}, Mutability: target.InitialMutable},
-			{Root: "GlobalEnvRoot", Key: boundaryStringKey("require"), Value: target.InitialValueSpec{Kind: target.InitialValueOperation, Operation: target.BindingSpec{Namespace: target.BindingBuiltin, Member: []string{"require"}}}, Mutability: target.InitialMutable},
+		InitialRoots: []vocabulary.InitialRootSpec{{Identity: "GlobalEnvRoot", Shape: vocabulary.BootShapeSpec{Aggregate: vocabulary.BootAggregateTable, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "GlobalEnvRoot"}}}},
+		InitialEntries: []vocabulary.InitialEntrySpec{
+			{Root: "GlobalEnvRoot", Key: boundaryStringKey("_G"), Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: vocabulary.InitialMutable},
+			{Root: "GlobalEnvRoot", Key: boundaryStringKey("__link_absent"), Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueAbsent}, Mutability: vocabulary.InitialMutable},
+			{Root: "GlobalEnvRoot", Key: boundaryStringKey("op"), Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueOperation, Operation: vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"op"}}}, Mutability: vocabulary.InitialMutable},
+			{Root: "GlobalEnvRoot", Key: boundaryStringKey("require"), Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueOperation, Operation: vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"require"}}}, Mutability: vocabulary.InitialMutable},
 		},
-		InitialBindings: []target.InitialBindingSpec{
+		InitialBindings: []vocabulary.InitialBindingSpec{
 			{Name: "_G", Root: "GlobalEnvRoot", Key: boundaryStringKey("_G")},
 			{Name: "__link_absent", Root: "GlobalEnvRoot", Key: boundaryStringKey("__link_absent")},
 			{Name: "op", Root: "GlobalEnvRoot", Key: boundaryStringKey("op")},
@@ -1134,31 +1135,31 @@ func boundaryEndpointTargetWithSecondDenied(t testing.TB, secondDenied bool) *ta
 
 func boundaryEndpointTargetVariant(t testing.TB, secondDenied, unrelated, changeOperation, changeDenied bool) *target.Contract {
 	t.Helper()
-	spec := target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []target.OperationSpec{
-		{Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"op"}}}, Input: target.ValuesSpec{Tail: target.ValuesClosed}, Outcomes: []target.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}}, Effects: target.RowSpec{Tail: target.RowClosed}},
-		{Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"require"}}}, Input: target.ValuesSpec{Tail: target.ValuesClosed}, Outcomes: []target.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}}, Effects: target.RowSpec{Tail: target.RowClosed}},
-		{Bindings: []target.BindingSpec{{Namespace: target.BindingProvider, Owner: []string{"host", "pkg"}, Member: []string{"service", "f"}}}, Input: target.ValuesSpec{Tail: target.ValuesClosed}, Outcomes: []target.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}}, Effects: target.RowSpec{Tail: target.RowClosed}},
-	}, InitialRoots: []target.InitialRootSpec{{Identity: "GlobalEnvRoot", Shape: target.BootShapeSpec{Aggregate: target.BootAggregateTable, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}}}}, InitialEntries: []target.InitialEntrySpec{
-		{Root: "GlobalEnvRoot", Key: boundaryStringKey("_G"), Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: target.InitialMutable},
-		{Root: "GlobalEnvRoot", Key: boundaryStringKey("__link_absent"), Value: target.InitialValueSpec{Kind: target.InitialValueAbsent}, Mutability: target.InitialMutable},
-		{Root: "GlobalEnvRoot", Key: boundaryStringKey("op"), Value: target.InitialValueSpec{Kind: target.InitialValueOperation, Operation: target.BindingSpec{Namespace: target.BindingBuiltin, Member: []string{"op"}}}, Mutability: target.InitialMutable},
-		{Root: "GlobalEnvRoot", Key: boundaryStringKey("require"), Value: target.InitialValueSpec{Kind: target.InitialValueOperation, Operation: target.BindingSpec{Namespace: target.BindingBuiltin, Member: []string{"require"}}}, Mutability: target.InitialMutable},
-		{Root: "GlobalEnvRoot", Key: boundaryStringKey("load"), Value: target.InitialValueSpec{Kind: target.InitialValueDeniedOperation, Operation: target.BindingSpec{Namespace: target.BindingBuiltin, Member: []string{"load"}}}, Mutability: target.InitialMutable},
-		{Root: "GlobalEnvRoot", Key: boundaryStringKey("load2"), Value: target.InitialValueSpec{Kind: target.InitialValueDeniedOperation, Operation: target.BindingSpec{Namespace: target.BindingBuiltin, Member: []string{"load2"}}}, Mutability: target.InitialMutable},
-	}, InitialBindings: []target.InitialBindingSpec{{Name: "_G", Root: "GlobalEnvRoot", Key: boundaryStringKey("_G")}, {Name: "__link_absent", Root: "GlobalEnvRoot", Key: boundaryStringKey("__link_absent")}, {Name: "op", Root: "GlobalEnvRoot", Key: boundaryStringKey("op")}, {Name: "require", Root: "GlobalEnvRoot", Key: boundaryStringKey("require")}, {Name: "load", Root: "GlobalEnvRoot", Key: boundaryStringKey("load")}, {Name: "load2", Root: "GlobalEnvRoot", Key: boundaryStringKey("load2")}}}
+	spec := target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{
+		{Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"op"}}}, Input: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}, Outcomes: []vocabulary.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}}, Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed}},
+		{Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"require"}}}, Input: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}, Outcomes: []vocabulary.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}}, Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed}},
+		{Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingProvider, Owner: []string{"host", "pkg"}, Member: []string{"service", "f"}}}, Input: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}, Outcomes: []vocabulary.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}}, Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed}},
+	}, InitialRoots: []vocabulary.InitialRootSpec{{Identity: "GlobalEnvRoot", Shape: vocabulary.BootShapeSpec{Aggregate: vocabulary.BootAggregateTable, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "GlobalEnvRoot"}}}}, InitialEntries: []vocabulary.InitialEntrySpec{
+		{Root: "GlobalEnvRoot", Key: boundaryStringKey("_G"), Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: vocabulary.InitialMutable},
+		{Root: "GlobalEnvRoot", Key: boundaryStringKey("__link_absent"), Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueAbsent}, Mutability: vocabulary.InitialMutable},
+		{Root: "GlobalEnvRoot", Key: boundaryStringKey("op"), Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueOperation, Operation: vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"op"}}}, Mutability: vocabulary.InitialMutable},
+		{Root: "GlobalEnvRoot", Key: boundaryStringKey("require"), Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueOperation, Operation: vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"require"}}}, Mutability: vocabulary.InitialMutable},
+		{Root: "GlobalEnvRoot", Key: boundaryStringKey("load"), Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueDeniedOperation, Operation: vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"load"}}}, Mutability: vocabulary.InitialMutable},
+		{Root: "GlobalEnvRoot", Key: boundaryStringKey("load2"), Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueDeniedOperation, Operation: vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"load2"}}}, Mutability: vocabulary.InitialMutable},
+	}, InitialBindings: []vocabulary.InitialBindingSpec{{Name: "_G", Root: "GlobalEnvRoot", Key: boundaryStringKey("_G")}, {Name: "__link_absent", Root: "GlobalEnvRoot", Key: boundaryStringKey("__link_absent")}, {Name: "op", Root: "GlobalEnvRoot", Key: boundaryStringKey("op")}, {Name: "require", Root: "GlobalEnvRoot", Key: boundaryStringKey("require")}, {Name: "load", Root: "GlobalEnvRoot", Key: boundaryStringKey("load")}, {Name: "load2", Root: "GlobalEnvRoot", Key: boundaryStringKey("load2")}}}
 	if !secondDenied {
 		spec.InitialEntries = spec.InitialEntries[:len(spec.InitialEntries)-1]
 		spec.InitialBindings = spec.InitialBindings[:len(spec.InitialBindings)-1]
 	}
 	if changeOperation {
-		spec.Operations[0].Input = target.ValuesSpec{Fixed: neutralTypes(t, typ.Any), Tail: target.ValuesClosed}
+		spec.Operations[0].Input = vocabulary.ValuesSpec{Fixed: neutralTypes(t, typ.Any), Tail: vocabulary.ValuesClosed}
 	}
 	if changeDenied {
-		spec.InitialEntries[4].Value.Operation = target.BindingSpec{Namespace: target.BindingBuiltin, Member: []string{"load_changed"}}
+		spec.InitialEntries[4].Value.Operation = vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"load_changed"}}
 	}
 	if unrelated {
-		spec.Operations = append(spec.Operations, target.OperationSpec{Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"unrelated"}}}, Input: target.ValuesSpec{Tail: target.ValuesClosed}, Outcomes: []target.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}}, Effects: target.RowSpec{Tail: target.RowClosed}})
-		spec.InitialEntries = append(spec.InitialEntries, target.InitialEntrySpec{Root: "GlobalEnvRoot", Key: boundaryStringKey("unrelated_boot"), Value: target.InitialValueSpec{Kind: target.InitialValueString, String: "unrelated"}, Mutability: target.InitialMutable})
+		spec.Operations = append(spec.Operations, vocabulary.OperationSpec{Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"unrelated"}}}, Input: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}, Outcomes: []vocabulary.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}}, Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed}})
+		spec.InitialEntries = append(spec.InitialEntries, vocabulary.InitialEntrySpec{Root: "GlobalEnvRoot", Key: boundaryStringKey("unrelated_boot"), Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueString, String: "unrelated"}, Mutability: vocabulary.InitialMutable})
 	}
 	contract, err := target.Seal(&spec)
 	if err != nil {
@@ -1167,28 +1168,28 @@ func boundaryEndpointTargetVariant(t testing.TB, secondDenied, unrelated, change
 	return contract
 }
 
-func boundaryTargetWithRequireBindings(t testing.TB, requireBindings ...[]target.BindingSpec) *target.Contract {
+func boundaryTargetWithRequireBindings(t testing.TB, requireBindings ...[]vocabulary.BindingSpec) *target.Contract {
 	t.Helper()
-	operations := []target.OperationSpec{
-		{Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"op"}}}, Input: target.ValuesSpec{Fixed: neutralTypes(t, typ.Any), Tail: target.ValuesClosed}, Outcomes: []target.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}}, Effects: target.RowSpec{Tail: target.RowClosed}},
+	operations := []vocabulary.OperationSpec{
+		{Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"op"}}}, Input: vocabulary.ValuesSpec{Fixed: neutralTypes(t, typ.Any), Tail: vocabulary.ValuesClosed}, Outcomes: []vocabulary.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}}, Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed}},
 	}
 	for _, bindings := range requireBindings {
-		operations = append(operations, target.OperationSpec{
+		operations = append(operations, vocabulary.OperationSpec{
 			Bindings: bindings,
-			Input:    target.ValuesSpec{Tail: target.ValuesClosed},
-			Outcomes: []target.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}},
-			Effects:  target.RowSpec{Tail: target.RowClosed},
+			Input:    vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed},
+			Outcomes: []vocabulary.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}},
+			Effects:  vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 		})
 	}
 	spec := target.Spec{
 		Semantics:    domaincontract.NewSemantics(),
 		Operations:   operations,
-		InitialRoots: []target.InitialRootSpec{{Identity: "GlobalEnvRoot", Shape: target.BootShapeSpec{Aggregate: target.BootAggregateTable, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}}}},
-		InitialEntries: []target.InitialEntrySpec{
-			{Root: "GlobalEnvRoot", Key: boundaryStringKey("_G"), Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: target.InitialMutable},
-			{Root: "GlobalEnvRoot", Key: boundaryStringKey("__link_absent"), Value: target.InitialValueSpec{Kind: target.InitialValueAbsent}, Mutability: target.InitialMutable},
+		InitialRoots: []vocabulary.InitialRootSpec{{Identity: "GlobalEnvRoot", Shape: vocabulary.BootShapeSpec{Aggregate: vocabulary.BootAggregateTable, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "GlobalEnvRoot"}}}},
+		InitialEntries: []vocabulary.InitialEntrySpec{
+			{Root: "GlobalEnvRoot", Key: boundaryStringKey("_G"), Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: vocabulary.InitialMutable},
+			{Root: "GlobalEnvRoot", Key: boundaryStringKey("__link_absent"), Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueAbsent}, Mutability: vocabulary.InitialMutable},
 		},
-		InitialBindings: []target.InitialBindingSpec{
+		InitialBindings: []vocabulary.InitialBindingSpec{
 			{Name: "_G", Root: "GlobalEnvRoot", Key: boundaryStringKey("_G")},
 			{Name: "__link_absent", Root: "GlobalEnvRoot", Key: boundaryStringKey("__link_absent")},
 		},

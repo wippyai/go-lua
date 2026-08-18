@@ -19,6 +19,25 @@ import (
 // rather than editing a column it was not admitted to.
 var ErrUnauthorizedColumnWrite = errors.New("engine: column write without a minted capability")
 
+// NewColumnBinding opens a publication binding that admits columns and
+// nothing else. Seal succeeds only after AdmitColumns states a nonempty set.
+func NewColumnBinding() *SchemaBinding {
+	return &SchemaBinding{state: &schemaBindingState{
+		phase: schemaBindingOpen, authority: &schemaBindingAuthority{},
+	}}
+}
+
+func sealColumnBindingLocked(state *schemaBindingState) bool {
+	if state == nil || len(state.factors) != 0 || len(state.rules) != 0 || len(state.queries) != 0 || len(state.activation) != 0 || len(state.columns) == 0 || !completeAdmittedColumnsLocked(state) {
+		if state != nil {
+			state.poisonLocked()
+		}
+		return false
+	}
+	state.phase = schemaBindingSealed
+	return true
+}
+
 // ColumnAdmission is one published column the sealed declaration table admits
 // a writer for: the schema that sealed the pair, the column, the principal the
 // table named as its writer, and the dense slot the column occupies.

@@ -12,6 +12,8 @@ import (
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
+	"github.com/wippyai/go-lua/analysis/snapshot"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
@@ -20,13 +22,14 @@ import (
 // branch geometry and Engine-authenticated Value observations. Manifest rows
 // and diagnostic policy never enter this producer.
 func buildNativeBranchPublication(
-	receipt *artifactResultReceipt,
-	selected []artifactDiagnosticObservationReceipt,
+	geometry resultGeometry,
+	mounts []mountedProgramArtifact,
+	selected []artifactDiagnosticObservationPublication,
 	schema *valuedomain.Schema,
-	solver *engine.Solver,
-	state *engine.State,
+	published *snapshot.Snapshot,
+	observationPlan snapshot.QueryPlan[identity.ContentID, engine.Answer],
 ) (*nativePublicationReceipt, bool) {
-	if !receipt.valid() || schema == nil || solver == nil || state == nil {
+	if !geometry.valid() || schema == nil || published == nil || !published.Published() || !observationPlan.Available() {
 		return nil, false
 	}
 	observed := make(map[artifactResultPoint]valuedomain.ValueSummaryObservation, len(selected))
@@ -37,32 +40,21 @@ func buildNativeBranchPublication(
 		if _, duplicate := observed[selectedObservation.point]; duplicate {
 			return nil, false
 		}
-		observation, readable := selectedObservation.attachment.Observe(solver, state)
-		if !readable || !validNativeValueSummary(observation, len(receipt.values)) {
+		observationID := selectedObservation.key
+		observation, readable := publishedObservation[valuedomain.ValueSummaryObservation](published, observationPlan, observationID)
+		if !observationID.Available() || !readable || !validNativeValueSummary(observation, len(geometry.values)) {
 			return nil, false
 		}
 		observed[selectedObservation.point] = observation
 	}
 	rows := make([]nativePublicationRow, 0)
 	byID := make(map[identity.ContentID]struct{})
-	for _, source := range receipt.nativeScalars {
-		if !appendNativeStaticScalarRows(&rows, byID, source) {
-			return nil, false
-		}
-	}
-	for _, summary := range receipt.nativeArithmetics {
-		if !appendNativeArithmeticRows(&rows, byID, summary) {
-			return nil, false
-		}
-	}
-	for _, summary := range receipt.nativeUnaries {
-		if !appendNativeUnaryRows(&rows, byID, summary) {
-			return nil, false
-		}
+	if !appendNativeArtifactSummaryRows(&rows, byID, mounts) {
+		return nil, false
 	}
 	expected := make(map[artifactResultPoint]struct{})
-	for _, subject := range receipt.branchObservations {
-		if subject.kind != programartifact.DiagnosticObservationBranchCondition || !subject.available() || int(subject.valueIndex) >= len(receipt.values) {
+	for _, subject := range geometry.branchObservations {
+		if subject.kind != structure.DiagnosticObservationBranchCondition || !subject.available() || int(subject.valueIndex) >= len(geometry.values) {
 			return nil, false
 		}
 		truth := valuedomain.TruthNone
@@ -71,7 +63,7 @@ func buildNativeBranchPublication(
 		for _, point := range subject.points {
 			key := artifactResultPoint{mount: subject.mount, point: point}
 			expected[key] = struct{}{}
-			body, bodyOK := nativePublicationBodyAt(receipt, key)
+			body, bodyOK := nativePublicationBodyAt(geometry, key)
 			if !bodyOK || subjectBody.Available() && subjectBody != body {
 				return nil, false
 			}
@@ -92,7 +84,7 @@ func buildNativeBranchPublication(
 			// A branch observation authenticates the condition coordinate. Other
 			// cells share its point snapshot but are not native-publication uses;
 			// publishing them globally leaks path-local literals across merges.
-			if !appendNativeScalarRows(&rows, byID, schema, observation.Values[condition], receipt.values[condition], subject, subjectBody, point) {
+			if !appendNativeScalarRows(&rows, byID, schema, observation.Values[condition], geometry.values[condition], subject, subjectBody, point) {
 				return nil, false
 			}
 			pointTruth := schema.Truthiness(observation.Values[condition])
@@ -269,15 +261,15 @@ func nativeArithmeticDivisor(property programartifact.ArithmeticDivisorProperty)
 	}
 }
 
-func nativePublicationBodyAt(receipt *artifactResultReceipt, point artifactResultPoint) (identity.ContentID, bool) {
-	if receipt == nil {
+func nativePublicationBodyAt(geometry resultGeometry, point artifactResultPoint) (identity.ContentID, bool) {
+	if !geometry.valid() {
 		return identity.ContentID{}, false
 	}
-	indexes := receipt.pointBodies[point]
-	if len(indexes) != 1 || indexes[0] < 0 || indexes[0] >= len(receipt.bodies) {
+	indexes := geometry.pointBodies[point]
+	if len(indexes) != 1 || indexes[0] < 0 || indexes[0] >= len(geometry.bodies) {
 		return identity.ContentID{}, false
 	}
-	body := receipt.bodies[indexes[0]].key.body
+	body := geometry.bodies[indexes[0]].key.body
 	return body, body.Available()
 }
 

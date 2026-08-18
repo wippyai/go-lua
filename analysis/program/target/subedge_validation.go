@@ -3,6 +3,7 @@ package target
 import (
 	"errors"
 	"fmt"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/scalar"
@@ -13,7 +14,7 @@ func validateSubedgeEntries(edges []subedgeDraft, callbacks []callbackDraft) err
 	inbound := make([][]*subedgeRouteDraft, len(edges))
 	for index := range edges {
 		edge := &edges[index]
-		if edge.callee == SubedgeCalleeCallback {
+		if edge.callee == vocabulary.SubedgeCalleeCallback {
 			if uint64(edge.callbackRank) >= uint64(len(callbackEdges)) {
 				return errors.New("target: malformed callback rank")
 			}
@@ -26,7 +27,7 @@ func validateSubedgeEntries(edges []subedgeDraft, callbacks []callbackDraft) err
 	}
 	for index := range edges {
 		edge := &edges[index]
-		if edge.callee == SubedgeCalleeCallback && callbackEdges[edge.callbackRank] != 1 {
+		if edge.callee == vocabulary.SubedgeCalleeCallback && callbackEdges[edge.callbackRank] != 1 {
 			return errors.New("target: callback has multiple direct subedges")
 		}
 		if len(edge.argumentOrigins) != 0 {
@@ -76,7 +77,7 @@ func validateSubedgeRecurrence(edges []subedgeDraft, callbacks []callbackDraft) 
 	outgoing := make([][]int, len(edges))
 	incoming := make([][]int, len(edges))
 	addRoute := func(from int, route subedgeRouteDraft) error {
-		if route.route != RouteSubedge && (route.route != RouteRejectYield || route.subedge == 0) {
+		if route.route != vocabulary.RouteSubedge && (route.route != vocabulary.RouteRejectYield || route.subedge == 0) {
 			return nil
 		}
 		if uint64(route.subedgeRank) >= uint64(len(edges)) {
@@ -178,7 +179,7 @@ func validateSubedgeRecurrence(edges []subedgeDraft, callbacks []callbackDraft) 
 		}
 		for _, index := range component {
 			edge := edges[index]
-			if edge.callee != SubedgeCalleeCallback || uint64(edge.callbackRank) >= uint64(len(callbacks)) {
+			if edge.callee != vocabulary.SubedgeCalleeCallback || uint64(edge.callbackRank) >= uint64(len(callbacks)) {
 				continue
 			}
 			if onceCallbackLifecycle(callbacks[edge.callbackRank].lifecycle) {
@@ -199,7 +200,7 @@ func subedgeSelfReenters(index int, outgoing [][]int) bool {
 }
 
 func collectInboundSubedgeRoute(inbound [][]*subedgeRouteDraft, route *subedgeRouteDraft) {
-	if route.route != RouteSubedge && (route.route != RouteRejectYield || route.subedge == 0) {
+	if route.route != vocabulary.RouteSubedge && (route.route != vocabulary.RouteRejectYield || route.subedge == 0) {
 		return
 	}
 	if uint64(route.subedgeRank) >= uint64(len(inbound)) {
@@ -210,7 +211,7 @@ func collectInboundSubedgeRoute(inbound [][]*subedgeRouteDraft, route *subedgeRo
 
 func argumentSegmentCount(values valuesDraft) int {
 	count := len(values.types) + len(values.suffix)
-	if values.tail == ValuesVariable {
+	if values.tail == vocabulary.ValuesVariable {
 		count++
 	}
 	return count
@@ -218,19 +219,15 @@ func argumentSegmentCount(values valuesDraft) int {
 
 func routeCompletelyFeedsArguments(route subedgeRouteDraft, destination valuesDraft) bool {
 	switch route.placement {
-	case PlacementFixed:
-		return route.offset == 0 && route.result.tail == ValuesClosed && destination.tail == ValuesClosed &&
+	case vocabulary.PlacementFixed:
+		return route.offset == 0 && route.result.tail == vocabulary.ValuesClosed && destination.tail == vocabulary.ValuesClosed &&
 			len(route.result.types) == len(destination.types) && len(route.result.suffix) == 0 && len(destination.suffix) == 0
-	case PlacementTail:
-		return route.adjustment == AdjustmentPreserve && pureValuesTail(route.result) && pureValuesTail(destination) &&
+	case vocabulary.PlacementTail:
+		return route.adjustment == vocabulary.AdjustmentPreserve && pureValuesTail(route.result) && pureValuesTail(destination) &&
 			route.result.varID == destination.varID
 	default:
 		return false
 	}
-}
-
-func validSubedgeFamily(family SubedgeFamily) bool {
-	return family >= SubedgeFamilyCall && family <= SubedgeFamilyLess
 }
 
 func zeroLiteral(value keyspace.LiteralValue) bool { return value == (keyspace.LiteralValue{}) }
@@ -243,16 +240,16 @@ func normalizeRequiredExactKey(value keyspace.LiteralValue) (keyspace.LiteralVal
 	return normalized, nil
 }
 
-func emptyCapturedInitialRead(read CapturedInitialReadSpec) bool {
+func emptyCapturedInitialRead(read vocabulary.CapturedInitialReadSpec) bool {
 	return read.Root == "" && zeroLiteral(read.Key)
 }
 
-func emptySubedgeCallee(callee SubedgeCalleeSpec) bool {
-	return callee.Kind == SubedgeCalleeInvalid && callee.Callback == 0 &&
+func emptySubedgeCallee(callee vocabulary.SubedgeCalleeSpec) bool {
+	return callee.Kind == vocabulary.SubedgeCalleeInvalid && callee.Callback == 0 &&
 		emptyCapturedInitialRead(callee.Read) && zeroLiteral(callee.MetaKey)
 }
 
-func emptyValuesSpec(values ValuesSpec) bool {
+func emptyValuesSpec(values vocabulary.ValuesSpec) bool {
 	return len(values.Fixed) == 0 && values.Tail == 0 && values.Var == 0 && !values.TailType.Available() && len(values.Suffix) == 0
 }
 

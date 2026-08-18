@@ -37,6 +37,39 @@ module.require("member")
 	}
 }
 
+func TestDirectGlobalCallsPublishDetachedArgumentEvidence(t *testing.T) {
+	_, result := parseBindSource(t, `
+require("runtime")
+require()
+require("first", "second")
+local request = "dynamic"
+require(request)
+require("")
+`)
+
+	calls := result.DirectGlobalCalls()
+	if got, want := len(calls), 5; got != want {
+		t.Fatalf("DirectGlobalCalls length = %d, want %d", got, want)
+	}
+	want := []struct {
+		count  int
+		value  string
+		hasVal bool
+	}{
+		{count: 1, value: "runtime", hasVal: true},
+		{count: 0},
+		{count: 2},
+		{count: 1},
+		{count: 1, hasVal: true},
+	}
+	for index, expected := range want {
+		call := calls[index]
+		if call.ArgumentCount != expected.count || call.AuthoredString != expected.value || call.HasAuthoredString != expected.hasVal {
+			t.Fatalf("call[%d] argument evidence = count %d/string %q/%v, want %d/%q/%v", index, call.ArgumentCount, call.AuthoredString, call.HasAuthoredString, expected.count, expected.value, expected.hasVal)
+		}
+	}
+}
+
 func TestGlobalCensusIncludesValueAndStaticRootsButExcludesTypeOnlyBase(t *testing.T) {
 	stmts, err := parse.ParseString(`
 local value = ordinary

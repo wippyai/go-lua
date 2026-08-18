@@ -1,6 +1,7 @@
 package project
 
 import (
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"testing"
 
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
@@ -84,10 +85,10 @@ func TestTargetKeyInverseIsLocalExactAndAllocationFree(t *testing.T) {
 	if op, ok := contract.InitialOperation(root, nonOperationKey); ok || op != 0 {
 		t.Fatalf("root initial was admitted as operation: %d/%v", op, ok)
 	}
-	if op, ok := contract.InitialOperation(root, target.ExactKey(0)); ok || op != 0 {
+	if op, ok := contract.InitialOperation(root, vocabulary.ExactKey(0)); ok || op != 0 {
 		t.Fatalf("zero Target key was admitted: %d/%v", op, ok)
 	}
-	if op, ok := contract.InitialOperation(target.InitialRoot(0), emitTargetKey); ok || op != 0 {
+	if op, ok := contract.InitialOperation(vocabulary.InitialRoot(0), emitTargetKey); ok || op != 0 {
 		t.Fatalf("zero Target root was admitted: %d/%v", op, ok)
 	}
 }
@@ -104,25 +105,25 @@ func (c *Component) MountsMustAt(index int) Shard {
 
 func projectOperationTarget(t testing.TB, root string) *target.Contract {
 	t.Helper()
-	emit := target.BindingSpec{Namespace: target.BindingBuiltin, Member: []string{"emit"}}
+	emit := vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"emit"}}
 	contract, err := target.Seal(&target.Spec{
 		Semantics: domaincontract.NewSemantics(),
-		Operations: []target.OperationSpec{{
-			Bindings: []target.BindingSpec{emit},
-			Input:    target.ValuesSpec{Tail: target.ValuesClosed},
-			Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}},
-			Effects:  target.RowSpec{Tail: target.RowClosed},
+		Operations: []vocabulary.OperationSpec{{
+			Bindings: []vocabulary.BindingSpec{emit},
+			Input:    vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed},
+			Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}},
+			Effects:  vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 		}},
-		InitialRoots: []target.InitialRootSpec{{
+		InitialRoots: []vocabulary.InitialRootSpec{{
 			Identity: root,
-			Shape:    target.BootShapeSpec{Aggregate: target.BootAggregateTable, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: root}},
+			Shape:    vocabulary.BootShapeSpec{Aggregate: vocabulary.BootAggregateTable, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: root}},
 		}},
-		InitialEntries: []target.InitialEntrySpec{
-			{Root: root, Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "_G"}, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: root}, Mutability: target.InitialMutable},
-			{Root: root, Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "emit"}, Value: target.InitialValueSpec{Kind: target.InitialValueOperation, Operation: emit}, Mutability: target.InitialMutable},
-			{Root: root, Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "__link_absent"}, Value: target.InitialValueSpec{Kind: target.InitialValueAbsent}, Mutability: target.InitialMutable},
+		InitialEntries: []vocabulary.InitialEntrySpec{
+			{Root: root, Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "_G"}, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: root}, Mutability: vocabulary.InitialMutable},
+			{Root: root, Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "emit"}, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueOperation, Operation: emit}, Mutability: vocabulary.InitialMutable},
+			{Root: root, Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "__link_absent"}, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueAbsent}, Mutability: vocabulary.InitialMutable},
 		},
-		InitialBindings: []target.InitialBindingSpec{{Name: "_G", Root: root, Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "_G"}}},
+		InitialBindings: []vocabulary.InitialBindingSpec{{Name: "_G", Root: root, Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "_G"}}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -130,7 +131,7 @@ func projectOperationTarget(t testing.TB, root string) *target.Contract {
 	return contract
 }
 
-func targetExactStringKey(t testing.TB, contract *target.Contract, want string) target.ExactKey {
+func targetExactStringKey(t testing.TB, contract *target.Contract, want string) vocabulary.ExactKey {
 	t.Helper()
 	for index := 0; index < contract.ExactKeyCount(); index++ {
 		key, keyOK := contract.ExactKeyAt(index)

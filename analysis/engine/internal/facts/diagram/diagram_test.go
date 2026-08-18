@@ -168,7 +168,7 @@ func TestPartitionValueTerminalsTraversesDeepPublicDecisionChainIteratively(t *t
 		t.Fatal("deep value unavailable")
 	}
 	storedLeaves, absentLeaves := 0, 0
-	completed, valid := diagram.PartitionValueTerminals(value, whole, func(id terminal.ID[uint8], _ support.Mask) bool {
+	completed, valid := diagram.PartitionValueTerminals(value, whole, nil, func(id terminal.ID[uint8], _ support.Mask) bool {
 		if id == stored {
 			storedLeaves++
 		} else if id == (terminal.ID[uint8]{}) {
@@ -566,5 +566,121 @@ func TestPersistentNoOpsPreserveMeaningWithoutPublishingCandidate(t *testing.T) 
 	published, ok := builder.Seal(transformNoop)
 	if !ok || !fixture.diagram.Valid(published) || !fixture.diagram.Equal(published, base) {
 		t.Fatal("no-op sequence did not publish the original fact relation")
+	}
+}
+
+// balanceKey and balanceFactor are rebalancing operators, not copiers. Every
+// caller hands them a node it has just constructed from the children it wants,
+// so an already-balanced node is republished as it stands. Copying it would
+// allocate a second identical node on the persistent tree's hottest write path,
+// and the AVL rotations below still publish the new roots they compute.
+func TestBalanceRepublishesTheBalancedNodeItReceives(t *testing.T) {
+	left := makeKey[testKey, uint8](1, nil, nil, nil)
+	right := makeKey[testKey, uint8](3, nil, nil, nil)
+	balanced := makeKey[testKey, uint8](2, nil, left, right)
+	if got := balanceKey(balanced); got != balanced {
+		t.Fatal("balanceKey copied a key node it had no rotation to perform")
+	}
+	if got := balanceKey(left); got != left {
+		t.Fatal("balanceKey copied a leaf key node")
+	}
+	heavy := makeKey[testKey, uint8](2, nil, makeKey[testKey, uint8](1, nil, makeKey[testKey, uint8](0, nil, nil, nil), nil), nil)
+	rotated := balanceKey(heavy)
+	if rotated == heavy || rotated.key != 1 || keyHeight(rotated) != 2 || rotated.left == nil || rotated.right == nil {
+		t.Fatalf("left-heavy balanceKey = key %d height %d, want the rotated root", rotated.key, keyHeight(rotated))
+	}
+
+	firstFactor := makeFactor[testFactor, testKey, uint8](factorFirst, 0, nil, nil, nil)
+	secondFactor := makeFactor[testFactor, testKey, uint8](factorSecond, 2, nil, nil, nil)
+	balancedFactor := makeFactor[testFactor, testKey, uint8](factorFirst, 1, nil, firstFactor, secondFactor)
+	if got := balanceFactor(balancedFactor); got != balancedFactor {
+		t.Fatal("balanceFactor copied a factor node it had no rotation to perform")
+	}
+	heavyFactor := makeFactor[testFactor, testKey, uint8](factorFirst, 2, nil,
+		makeFactor[testFactor, testKey, uint8](factorFirst, 1, nil, makeFactor[testFactor, testKey, uint8](factorFirst, 0, nil, nil, nil), nil), nil)
+	rotatedFactor := balanceFactor(heavyFactor)
+	if rotatedFactor == heavyFactor || rotatedFactor.rank != 1 || factorHeight(rotatedFactor) != 2 {
+		t.Fatalf("left-heavy balanceFactor = rank %d height %d, want the rotated root", rotatedFactor.rank, factorHeight(rotatedFactor))
+	}
+}
+
+// PartitionValueTerminals refines a region by one FDD value, and that
+// refinement is Boolean construction: it needs a support transaction. The
+// transaction is a cost of the read, not of the value, so the caller lends the
+// shell. The engine's one-key read runs millions of times against the same
+// Diagram and must not mint a private shell per read.
+//
+// Lending changes no identity. Each borrow opens a fresh candidate whose Seal
+// publishes exactly the cells that one read constructed, so a lent read reports
+// the same partition as an unlent one and every lent read is repeatable.
+func TestPartitionValueTerminalsRefinesThroughALentSupportShell(t *testing.T) {
+	fixture := newDiagramFixture(t)
+	builder := fixture.diagram.Begin()
+	root, ok := builder.Set(fixture.diagram.Empty(), factorFirst, 1, fixture.trueAtOne, fixture.values[0])
+	if !ok {
+		t.Fatal("first branch write")
+	}
+	root, ok = builder.Set(root, factorFirst, 1, fixture.trueAtTwo, fixture.values[1])
+	if !ok {
+		t.Fatal("second branch write")
+	}
+	root, ok = builder.Seal(root)
+	if !ok {
+		t.Fatal("branched root seal")
+	}
+	value, present, valid := fixture.diagram.Get(root, factorFirst, 1)
+	if !valid || !present {
+		t.Fatal("branched value unavailable")
+	}
+	whole, ok := support.True(fixture.manager)
+	if !ok {
+		t.Fatal("whole support")
+	}
+
+	type cell struct {
+		id     terminal.ID[uint8]
+		region support.Mask
+	}
+	read := func(scratch *support.Work) []cell {
+		var cells []cell
+		completed, valid := fixture.diagram.PartitionValueTerminals(value, whole, scratch, func(id terminal.ID[uint8], region support.Mask) bool {
+			cells = append(cells, cell{id: id, region: region})
+			return true
+		})
+		if !completed || !valid {
+			t.Fatalf("partition = completed:%t valid:%t", completed, valid)
+		}
+		return cells
+	}
+
+	unlent := read(nil)
+	if len(unlent) < 2 {
+		t.Fatalf("branched partition emitted %d cells, want a refined partition", len(unlent))
+	}
+	lent := support.New(fixture.manager)
+	if lent == nil {
+		t.Fatal("lent shell")
+	}
+	// A lent shell serves consecutive reads: the second borrow reopens it after
+	// the first read's Seal, and publishes the same partition again.
+	for pass := 0; pass < 3; pass++ {
+		borrowed := read(lent)
+		if len(borrowed) != len(unlent) {
+			t.Fatalf("pass %d emitted %d cells, the unlent read emitted %d", pass, len(borrowed), len(unlent))
+		}
+		for index, got := range borrowed {
+			want := unlent[index]
+			if got.id != want.id || !got.region.Valid() || !got.region.Entails(want.region) || !want.region.Entails(got.region) {
+				t.Fatalf("pass %d cell %d = %v, want the unlent cell %v", pass, index, got.id, want.id)
+			}
+		}
+	}
+
+	// The lent shell is the read's whole Boolean cost: with it, a warm read
+	// constructs no transaction of its own.
+	unlentAllocations := testing.AllocsPerRun(20, func() { read(nil) })
+	lentAllocations := testing.AllocsPerRun(20, func() { read(lent) })
+	if lentAllocations >= unlentAllocations {
+		t.Fatalf("lent read allocated %.0f times, unlent read allocated %.0f", lentAllocations, unlentAllocations)
 	}
 }

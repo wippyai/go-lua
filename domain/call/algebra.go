@@ -3,6 +3,7 @@ package call
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
@@ -25,9 +26,9 @@ const (
 type keyRow struct {
 	kind          keyKind
 	applicationID identity.ContentID
-	operation     target.Operation
-	callback      target.CallbackID
-	resume        target.ResumeID
+	operation     vocabulary.Operation
+	callback      vocabulary.CallbackID
+	resume        vocabulary.ResumeID
 	id            identity.ContentID
 }
 
@@ -43,7 +44,7 @@ type Algebra struct {
 	mountedCalls               []mountedCallRow
 	mountedCallIndex           map[identity.ContentID]uint32
 	mountedCallOccurrenceIndex map[mountedCallOccurrenceRef]uint32
-	requireOperation           target.Operation
+	requireOperation           vocabulary.Operation
 	linkOwner                  link.OwnerCapability
 	content                    identity.ContentID
 	keys                       []keyRow
@@ -80,13 +81,6 @@ type mountedCallOccurrenceRef struct {
 type mountedArtifactCallIndex struct {
 	artifact *programartifact.Artifact
 	byID     map[identity.ContentID]int
-}
-
-// New builds the boundary-only Call family. Production callers that need
-// executable body targets must use NewWithMountedArtifacts; New never scans
-// mounted Programs or construction views.
-func New(source *link.Link) (*Algebra, bool) {
-	return NewWithMountedArtifacts(source, nil)
 }
 
 // NewWithMountedArtifacts builds Call from Link-owned boundary/key facts plus
@@ -265,7 +259,7 @@ func (algebra *Algebra) MountedCallCount() int {
 
 // RequireOperation returns the detached Target operation classified as the
 // scoped loader during cold Link sealing.
-func (algebra *Algebra) RequireOperation() (target.Operation, bool) {
+func (algebra *Algebra) RequireOperation() (vocabulary.Operation, bool) {
 	if !algebra.Valid() || algebra.requireOperation == 0 {
 		return 0, false
 	}
@@ -446,7 +440,7 @@ func (algebra *Algebra) KeyForApplicationID(id identity.ContentID) (Key, bool) {
 // KeyForCallback looks up one exact Target callback correspondence. The
 // issuing Contract pointer is an authority fence: equal numeric handles from
 // an equivalent Contract cannot be spliced into this Link.
-func (algebra *Algebra) KeyForCallback(issuing *target.Contract, operation target.Operation, callback target.CallbackID) (Key, bool) {
+func (algebra *Algebra) KeyForCallback(issuing *target.Contract, operation vocabulary.Operation, callback vocabulary.CallbackID) (Key, bool) {
 	if !algebra.Valid() {
 		return Key{}, false
 	}
@@ -464,7 +458,7 @@ func (algebra *Algebra) KeyForCallback(issuing *target.Contract, operation targe
 // KeyForResume looks up one exact Target resumption correspondence. The
 // issuing Contract pointer is an authority fence for the raw operation and
 // resume handles.
-func (algebra *Algebra) KeyForResume(issuing *target.Contract, operation target.Operation, resume target.ResumeID) (Key, bool) {
+func (algebra *Algebra) KeyForResume(issuing *target.Contract, operation vocabulary.Operation, resume vocabulary.ResumeID) (Key, bool) {
 	if !algebra.Valid() {
 		return Key{}, false
 	}

@@ -261,6 +261,7 @@ func (b *binder) enterFuncDef(stmt *ast.FuncDefStmt, mode exprBindMode) {
 	if method {
 		details.kind = FunctionOriginMethod
 		details.method = stmt.Name.Method
+		details.methodPosition = stmt.Name.MethodPosition
 		if name := receiverTypeName(stmt.Name.Receiver); name != "" {
 			if decl, ok := b.lookupType(name); ok {
 				details.receiverType = decl

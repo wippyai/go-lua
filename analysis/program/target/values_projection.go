@@ -3,6 +3,7 @@ package target
 import (
 	"errors"
 	"fmt"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 )
@@ -13,14 +14,14 @@ import (
 // contributes its class, every reachable suffix position, and nil after that
 // suffix is exhausted. It validates candidates independently instead of
 // allocating a synthetic union or a second Values carrier.
-func (d *operationDraft) validateProjectedResult(source, result valuesDraft, adjustment Adjustment) error {
+func (d *operationDraft) validateProjectedResult(source, result valuesDraft, adjustment vocabulary.Adjustment) error {
 	switch adjustment {
-	case AdjustmentPreserve:
+	case vocabulary.AdjustmentPreserve:
 		if compareValues(source, result) != 0 {
 			return errors.New("preserve adjustment changes Values")
 		}
 		return nil
-	case AdjustmentExact:
+	case vocabulary.AdjustmentExact:
 		return d.validateExactProjection(source, result)
 	default:
 		return errors.New("invalid adjustment")
@@ -28,7 +29,7 @@ func (d *operationDraft) validateProjectedResult(source, result valuesDraft, adj
 }
 
 func (d *operationDraft) validateExactProjection(source, result valuesDraft) error {
-	if result.tail != ValuesClosed {
+	if result.tail != vocabulary.ValuesClosed {
 		return errors.New("exact adjustment result is not closed")
 	}
 	for index, destination := range result.types {
@@ -49,7 +50,7 @@ func (d *operationDraft) validateExactProjection(source, result valuesDraft) err
 		}
 		position := index - len(source.types)
 		switch source.tail {
-		case ValuesClosed:
+		case vocabulary.ValuesClosed:
 			nilType, ok := schematype.NewPrimitive(schematype.PrimitiveNil)
 			if !ok {
 				return errors.New("exact adjustment nil primitive unavailable")
@@ -65,7 +66,7 @@ func (d *operationDraft) validateExactProjection(source, result valuesDraft) err
 			if !accepted {
 				return errors.New("exact adjustment nil fill is type-incompatible")
 			}
-		case ValuesVariable:
+		case vocabulary.ValuesVariable:
 			sourceType, sourceOK := d.declarations[source.tailType]
 			destinationType, destinationOK := d.declarations[destination]
 			if !sourceOK || !destinationOK {
@@ -109,7 +110,7 @@ func (d *operationDraft) validateExactProjection(source, result valuesDraft) err
 					return errors.New("exact adjustment tail nil fill is type-incompatible")
 				}
 			}
-		case ValuesUnknown:
+		case vocabulary.ValuesUnknown:
 			anyType, ok := schematype.NewPrimitive(schematype.PrimitiveAny)
 			if !ok {
 				return errors.New("exact adjustment any primitive unavailable")

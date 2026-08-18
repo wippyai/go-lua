@@ -4,13 +4,14 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 )
 
 type operationRow struct {
 	bindings        indexRange
-	input           Values
+	input           vocabulary.Values
 	outcomes        indexRange
 	valuesTypes     indexRange
 	callbacks       indexRange
@@ -25,12 +26,12 @@ type operationRow struct {
 	typeFormals     indexRange
 	valuesVars      uint32
 	rowFormals      uint32
-	effectTail      RowTail
-	effectVar       RowVar
+	effectTail      vocabulary.RowTail
+	effectVar       vocabulary.RowVar
 }
 
 type bindingRange struct {
-	namespace  BindingNamespace
+	namespace  vocabulary.BindingNamespace
 	owner      indexRange
 	member     indexRange
 	ownerKeys  indexRange
@@ -39,62 +40,62 @@ type bindingRange struct {
 
 type initialRootRow struct {
 	identity string
-	shape    BootShape
+	shape    vocabulary.BootShape
 }
 
 type bootShapeRow struct {
-	root      InitialRoot
-	aggregate BootAggregate
+	root      vocabulary.InitialRoot
+	aggregate vocabulary.BootAggregate
 	immutable bool
-	value     InitialValue
+	value     vocabulary.InitialValue
 }
 
 type initialValueRow struct {
-	kind      InitialValueKind
+	kind      vocabulary.InitialValueKind
 	boolean   bool
 	integer   int64
 	floatBits uint64
 	string    string
-	root      InitialRoot
-	operation Operation
+	root      vocabulary.InitialRoot
+	operation vocabulary.Operation
 	binding   uint32
 }
 
 type initialEntryRow struct {
-	root       InitialRoot
-	key        ExactKey
-	value      InitialValue
-	mutability InitialMutability
+	root       vocabulary.InitialRoot
+	key        vocabulary.ExactKey
+	value      vocabulary.InitialValue
+	mutability vocabulary.InitialMutability
 }
 
 type initialBindingRow struct {
 	name string
-	root InitialRoot
-	key  ExactKey
+	root vocabulary.InitialRoot
+	key  vocabulary.ExactKey
 }
 
 type initialMetatableAttachmentRow struct {
-	base      InitialValueKind
-	metatable InitialRoot
+	base      vocabulary.InitialValueKind
+	metatable vocabulary.InitialRoot
 }
 
 type valuesRow struct {
-	owner  Operation
+	owner  vocabulary.Operation
 	types  indexRange
-	tail   ValuesTail
-	varID  ValuesVar
+	tail   vocabulary.ValuesTail
+	varID  vocabulary.ValuesVar
 	suffix indexRange
 }
 
 type typeRow struct {
-	owner       Operation
+	owner       vocabulary.Operation
 	declaration schematype.Type
 	bytes       []byte
 }
 
 type outcomeRow struct {
 	kind            flowkind.OutcomeKind
-	values          Values
+	values          vocabulary.Values
 	produced        indexRange
 	fresh           indexRange
 	callbackResults indexRange
@@ -109,54 +110,54 @@ type freshResultRow struct {
 
 type callbackResultRow struct {
 	result   uint32
-	callback CallbackID
+	callback vocabulary.CallbackID
 }
 
 type resultAliasRow struct {
 	result uint32
-	source InputSource
+	source vocabulary.InputSource
 }
 
 type suspensionRow struct {
 	yield        uint32
 	reentry      uint32
-	source       ReentrySource
-	multiplicity ReentryMultiplicity
+	source       vocabulary.ReentrySource
+	multiplicity vocabulary.ReentryMultiplicity
 }
 
 type spawnRow struct {
-	owner        Operation
-	function     InputSource
-	child        CallbackID
+	owner        vocabulary.Operation
+	function     vocabulary.InputSource
+	child        vocabulary.CallbackID
 	yield        uint32
 	parentResume uint32
-	childEntry   Values
-	resumeValues Values
-	alternatives [2]SpawnSiblingAlternative
+	childEntry   vocabulary.Values
+	resumeValues vocabulary.Values
+	alternatives [2]vocabulary.SpawnSiblingAlternative
 }
 
 type resumeRow struct {
-	owner     Operation
-	source    ResumeSource
-	carrier   ValueFormal
-	arguments Values
+	owner     vocabulary.Operation
+	source    vocabulary.ResumeSource
+	carrier   vocabulary.ValueFormal
+	arguments vocabulary.Values
 	outcomes  [5]uint32
 }
 
 type transferRow struct {
-	owner        Operation
-	endpoint     TransferEndpoint
-	payload      InputSource
-	alias        InputSource
-	identity     TransferIdentity
-	capabilities TransferCapabilities
+	owner        vocabulary.Operation
+	endpoint     vocabulary.TransferEndpoint
+	payload      vocabulary.InputSource
+	alias        vocabulary.InputSource
+	identity     vocabulary.TransferIdentity
+	capabilities vocabulary.TransferCapabilities
 	outcomes     indexRange
 }
 
 type subedgeRelationRow struct {
-	operand       ValueFormal
+	operand       vocabulary.ValueFormal
 	selector      uint32
-	subedge       SubedgeID
+	subedge       vocabulary.SubedgeID
 	resultOutcome uint32
 	result        uint32
 	effects       indexRange
@@ -176,110 +177,121 @@ type stateRow struct {
 }
 
 type acquisitionRow struct {
-	operation Operation
+	operation vocabulary.Operation
 	outcome   uint32
 	result    uint32
-	state     State
+	state     vocabulary.State
 }
 
 type transitionRow struct {
-	operation Operation
-	input     InputSource
-	from      State
+	operation vocabulary.Operation
+	input     vocabulary.InputSource
+	from      vocabulary.State
 	outcomes  indexRange
 }
 
 type transitionOutcomeRow struct {
 	outcome uint32
-	to      State
+	to      vocabulary.State
 }
 
 type escapeRow struct {
-	operation Operation
-	input     InputSource
+	operation vocabulary.Operation
+	input     vocabulary.InputSource
 }
 
 type protocolCallbackHolderRow struct {
-	operation Operation
-	input     InputSource
-	callback  CallbackID
+	operation vocabulary.Operation
+	input     vocabulary.InputSource
+	callback  vocabulary.CallbackID
 }
 
 type callbackRow struct {
-	owner      Operation
-	function   InputSource
+	owner      vocabulary.Operation
+	function   vocabulary.InputSource
 	admission  schematype.CallableAdmission
-	arguments  Values
-	outcomes   [5]Values
-	lifecycle  CallbackLifecycle
-	subedge    SubedgeID
+	arguments  vocabulary.Values
+	outcomes   [5]vocabulary.Values
+	lifecycle  vocabulary.CallbackLifecycle
+	subedge    vocabulary.SubedgeID
 	effects    indexRange
-	effectTail RowTail
-	effectVar  RowVar
+	effectTail vocabulary.RowTail
+	effectVar  vocabulary.RowVar
 	release    uint32
 }
 
 type subedgeRow struct {
-	owner            Operation
+	owner            vocabulary.Operation
 	role             uint32
-	family           SubedgeFamily
-	callee           SubedgeCalleeKind
-	callback         CallbackID
-	readRoot         InitialRoot
-	readKey          ExactKey
-	metaKey          ExactKey
+	family           vocabulary.SubedgeFamily
+	callee           vocabulary.SubedgeCalleeKind
+	callback         vocabulary.CallbackID
+	readRoot         vocabulary.InitialRoot
+	readKey          vocabulary.ExactKey
+	metaKey          vocabulary.ExactKey
 	admission        schematype.CallableAdmission
-	arguments        Values
+	arguments        vocabulary.Values
 	ruleEntry        bool
 	argumentOrigins  indexRange
-	outcomes         [5]Values
-	admissionFailure Values
+	outcomes         [5]vocabulary.Values
+	admissionFailure vocabulary.Values
 	admissionRoute   subedgeRouteRow
 	routes           [5]subedgeRouteRow
 }
 
 type subedgeArgumentOriginRow struct {
-	segment ArgumentSegment
+	segment vocabulary.ArgumentSegment
 	index   uint32
-	kind    ArgumentSource
-	source  InputSource
+	kind    vocabulary.ArgumentSource
+	source  vocabulary.InputSource
 }
 
 type subedgeRouteRow struct {
-	route       SubedgeRoute
-	adjustment  Adjustment
-	result      Values
-	placement   Placement
+	route       vocabulary.SubedgeRoute
+	adjustment  vocabulary.Adjustment
+	result      vocabulary.Values
+	placement   vocabulary.Placement
 	offset      uint32
 	outcome     uint32
-	subedge     SubedgeID
-	destination Values
+	subedge     vocabulary.SubedgeID
+	destination vocabulary.Values
 }
 
 type callbackReleaseRow struct {
-	callback     CallbackID
-	operation    Operation
-	input        ValueFormal
+	callback     vocabulary.CallbackID
+	operation    vocabulary.Operation
+	input        vocabulary.ValueFormal
 	outcome      uint32
-	mode         CallbackReleaseMode
-	zeroBehavior CallbackReleaseZeroBehavior
+	mode         vocabulary.CallbackReleaseMode
+	zeroBehavior vocabulary.CallbackReleaseZeroBehavior
 	zeroOutcome  uint32
 }
 
 type producedRow struct {
 	result           uint32
-	target           Operation
+	target           vocabulary.Operation
 	captures         indexRange
 	typeValueCapture uint32 // relative capture index; noTypeValueCapture when absent
 }
 
 type captureRow struct {
-	kind    CaptureKind
+	kind    vocabulary.CaptureKind
 	ordinal uint32
 }
 
+// effectOwner discriminates the owner of one row in the flat effect table. The
+// table is indexed by both operationRow.effects and callbackRow.effects, so the
+// owner is what tells the two populations apart without walking either index.
+type effectOwner uint8
+
+const (
+	effectOwnerOperation effectOwner = iota + 1
+	effectOwnerCallback
+)
+
 type effectRow struct {
-	target         Operation
+	owner          effectOwner
+	target         vocabulary.Operation
 	values         indexRange
 	types          indexRange
 	valuesVar      indexRange
@@ -290,9 +302,11 @@ type effectRow struct {
 
 type indexRange struct{ start, end uint32 }
 
+func (r indexRange) len() int { return int(r.end - r.start) }
+
 type bindingIndexRow struct {
 	binding   uint32
-	operation Operation
+	operation vocabulary.Operation
 }
 
 // Contract is immutable after Seal. Every slice is private and every public
@@ -301,15 +315,15 @@ type Contract struct {
 	operations             []operationRow
 	types                  []typeRow
 	values                 []valuesRow
-	valueTypes             []Type
+	valueTypes             []vocabulary.Type
 	outcomes               []outcomeRow
 	effects                []effectRow
-	effectVals             []ValueFormal
-	effectType             []TypeFormal
-	effectVars             []ValuesVar
-	valuesVarTypes         []Type
-	effectRows             []RowVar
-	formals                []Type
+	effectVals             []vocabulary.ValueFormal
+	effectType             []vocabulary.TypeFormal
+	effectVars             []vocabulary.ValuesVar
+	valuesVarTypes         []vocabulary.Type
+	effectRows             []vocabulary.RowVar
+	formals                []vocabulary.Type
 	bindings               []bindingRange
 	callbacks              []callbackRow
 	subedges               []subedgeRow
@@ -322,7 +336,7 @@ type Contract struct {
 	transfers              []transferRow
 	subedgeRelations       []subedgeRelationRow
 	subedgeRelationEffects []uint32
-	transferOutcomes       []TransferPossibility
+	transferOutcomes       []vocabulary.TransferPossibility
 	callbackReleases       []callbackReleaseRow
 	protocols              []protocolRow
 	states                 []stateRow
@@ -335,7 +349,7 @@ type Contract struct {
 	fresh                  []freshResultRow
 	captures               []captureRow
 	segments               []string
-	bindingKeys            []ExactKey
+	bindingKeys            []vocabulary.ExactKey
 	lookup                 []bindingIndexRow
 	initialRoots           []initialRootRow
 	exactKeys              []keyspace.LiteralValue
@@ -345,15 +359,26 @@ type Contract struct {
 	initialEntries         []initialEntryRow
 	initialBindings        []initialBindingRow
 	initialMetatables      []initialMetatableAttachmentRow
-	globalEnvRoot          InitialRoot
-	initialAbsent          InitialValue
+	globalEnvRoot          vocabulary.InitialRoot
+	initialAbsent          vocabulary.InitialValue
 	counts                 denominator.CountRows
-	// semantic identity columns are sealed with the contract.  They are not a
-	// second graph authority: each row is a cached canonical descriptor owned
-	// by Target and indexed only by the existing dense Target tables.
+	// identityColumns carries the identity plane's own columns. The layout is
+	// declared with the rest of the model; the values are written and read only
+	// by the identity altitude.
+	identityColumns
+	boundCount uint32
+	opaque     vocabulary.Operation
+	sealed     bool
+}
+
+// identityColumns are the content identities the identity altitude computes
+// over the published read surface and seals with the contract. They are not a
+// second graph authority: each row is a cached canonical descriptor indexed
+// only by the existing dense Target tables.
+type identityColumns struct {
 	operationAnchors []identity.ContentID
-	// Effect identity columns are likewise only projections of the existing
-	// operation/callback/effect tables.  Effect descriptors intentionally have
+	// Effect identity columns are projections of the existing
+	// operation/callback/effect tables. Effect descriptors intentionally have
 	// no inverse index: duplicate authored occurrences are distinct evidence,
 	// while their descriptor identity is the shared semantic quotient.
 	effectOperationIDs      []identity.ContentID
@@ -379,20 +404,17 @@ type Contract struct {
 	outcomeResultIndex      []outcomeResultIDRow
 	initialValueContentIDs  []identity.ContentID
 	bootRelationID          identity.ContentID
-	boundCount              uint32
-	opaque                  Operation
-	sealed                  bool
 }
 
 type inputFormalIDRow struct {
 	id     identity.ContentID
-	op     Operation
-	formal ValueFormal
+	op     vocabulary.Operation
+	formal vocabulary.ValueFormal
 }
 
 type outcomeResultIDRow struct {
 	id      identity.ContentID
-	op      Operation
+	op      vocabulary.Operation
 	outcome uint32
 	result  uint32
 }
@@ -403,12 +425,12 @@ type outcomeResultIDRow struct {
 // retain no authoring ordinal or secondary lookup map.
 type callbackContentIDRow struct {
 	id       identity.ContentID
-	op       Operation
-	callback CallbackID
+	op       vocabulary.Operation
+	callback vocabulary.CallbackID
 }
 
 type resumeContentIDRow struct {
 	id     identity.ContentID
-	op     Operation
-	resume ResumeID
+	op     vocabulary.Operation
+	resume vocabulary.ResumeID
 }

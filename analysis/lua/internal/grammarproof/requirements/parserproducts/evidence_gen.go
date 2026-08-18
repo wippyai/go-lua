@@ -4,11 +4,11 @@ package parserproducts
 
 func init() {
 	Generated = Evidence{
-		GrammarDigest:      "505fe1f917db84431d0040d5536337692f4de6418b3650c69a874e832d687448",
+		GrammarDigest:      "c3083c81ba3f275a125f8489df2bf3e73eecab8cb05274dda3a27b5e5bd19d63",
 		ParserSourceDigest: "2040e60e0c4b729743658b0ca0dd70aeee17eafa1a4187a012e247f418163367",
 		SchemaDigest:       "7b7e4cf3bd735684904b527f81d5dd6e4decd6e21e1416d17ac5b4b63c59d9ea",
-		IngressDigest:      "08c26cf4d5f800f6574e872a56e525c62a8817e3b413729e6a60e4b9ad532758",
-		Digest:             "987098349e8b45847d3d3c82328e9debe153563c35d21fd8abee86add9de0637",
+		IngressDigest:      "0e8aad264b35e631bc5d2f7d416b327a3a4fb2b9d0bd1d30ec3f846ca70dbbec",
+		Digest:             "8d6f42c91dfc32495549bd6bc19df929ee6ba666f91fced802c3b5ee7e66b9ec",
 		Fields:             generatedFields(),
 		Products:           generatedProducts(),
 		ProductLaws:        generatedProductLaws(),

@@ -2,11 +2,12 @@ package target
 
 import (
 	"errors"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
-func encodeValues(w *framing.Writer, c *Contract, values Values) error {
+func encodeValues(w *framing.Writer, c *Contract, values vocabulary.Values) error {
 	if err := w.Record(recordValues); err != nil {
 		return err
 	}
@@ -49,7 +50,7 @@ func encodeValues(w *framing.Writer, c *Contract, values Values) error {
 	return nil
 }
 
-func encodeType(w *framing.Writer, c *Contract, value Type) error {
+func encodeType(w *framing.Writer, c *Contract, value vocabulary.Type) error {
 	if value == 0 || uint64(value) > uint64(len(c.types)) {
 		return errors.New("target: malformed frozen type")
 	}
@@ -74,7 +75,7 @@ func encodeType(w *framing.Writer, c *Contract, value Type) error {
 	return w.Bytes(declaration.Bytes())
 }
 
-func encodeOutcome(w *framing.Writer, c *Contract, op Operation, outcome int) error {
+func encodeOutcome(w *framing.Writer, c *Contract, op vocabulary.Operation, outcome int) error {
 	if err := w.Record(recordOutcome); err != nil {
 		return err
 	}
@@ -89,12 +90,12 @@ func encodeOutcome(w *framing.Writer, c *Contract, op Operation, outcome int) er
 		return err
 	}
 
-	produced := c.ProducedCount(op, outcome)
+	produced := c.producedCount(op, outcome)
 	if err := w.Count(uint64(produced)); err != nil {
 		return err
 	}
 	for index := 0; index < produced; index++ {
-		result, target, found := c.ProducedAt(op, outcome, index)
+		result, target, found := c.producedAt(op, outcome, index)
 		if !found {
 			return errors.New("target: malformed produced operation")
 		}
@@ -107,12 +108,12 @@ func encodeOutcome(w *framing.Writer, c *Contract, op Operation, outcome int) er
 		if err := w.Uint(uint64(target)); err != nil {
 			return err
 		}
-		captures := c.ProducedCaptureCount(op, outcome, index)
+		captures := c.producedCaptureCount(op, outcome, index)
 		if err := w.Count(uint64(captures)); err != nil {
 			return err
 		}
 		for capture := 0; capture < captures; capture++ {
-			kind, ordinal, found := c.ProducedCaptureAt(op, outcome, index, capture)
+			kind, ordinal, found := c.producedCaptureAt(op, outcome, index, capture)
 			if !found {
 				return errors.New("target: malformed produced capture")
 			}
@@ -125,12 +126,12 @@ func encodeOutcome(w *framing.Writer, c *Contract, op Operation, outcome int) er
 		}
 	}
 
-	callbackResults := c.CallbackResultCount(op, outcome)
+	callbackResults := c.callbackResultCount(op, outcome)
 	if err := w.Count(uint64(callbackResults)); err != nil {
 		return err
 	}
 	for index := 0; index < callbackResults; index++ {
-		result, callback, found := c.CallbackResultAt(op, outcome, index)
+		result, callback, found := c.callbackResultAt(op, outcome, index)
 		if !found {
 			return errors.New("target: malformed callback result")
 		}
@@ -144,12 +145,12 @@ func encodeOutcome(w *framing.Writer, c *Contract, op Operation, outcome int) er
 			return err
 		}
 	}
-	aliases := c.ResultAliasCount(op, outcome)
+	aliases := c.resultAliasCount(op, outcome)
 	if err := w.Count(uint64(aliases)); err != nil {
 		return err
 	}
 	for index := 0; index < aliases; index++ {
-		result, kind, ordinal, found := c.ResultAliasAt(op, outcome, index)
+		result, kind, ordinal, found := c.resultAliasAt(op, outcome, index)
 		if !found {
 			return errors.New("target: malformed result alias")
 		}
@@ -188,7 +189,7 @@ func encodeOutcome(w *framing.Writer, c *Contract, op Operation, outcome int) er
 	return nil
 }
 
-func encodeEffect(w *framing.Writer, c *Contract, op Operation, effect int) error {
+func encodeEffect(w *framing.Writer, c *Contract, op vocabulary.Operation, effect int) error {
 	row, ok := c.effect(op, effect)
 	if !ok {
 		return errors.New("target: malformed effect")

@@ -3,6 +3,7 @@ package heap
 import (
 	"testing"
 
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"github.com/wippyai/go-lua/domain/runtimekind"
 )
 

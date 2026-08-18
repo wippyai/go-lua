@@ -156,7 +156,12 @@ func (compiler *compiler) copyAllocationRowsFailure() CompileFailure {
 		}
 		seenTemplates[template] = struct{}{}
 		row := allocationCompileRow{allocation: allocation, term: term, occurrence: occurrence, role: role, form: form, template: template, root: root, entry: entry, finish: finish, fields: fields}
-		heapRow := HeapAllocationRow{id: template, role: role, form: form, rootSpan: root.ContextID(), fields: make([]HeapFieldRow, 0, len(fields))}
+		receiptRole, roleOK := receiptAllocationRole(role)
+		receiptForm, formOK := receiptAllocationForm(form)
+		if !roleOK || !formOK {
+			return setFailure(rowIndex, -1)
+		}
+		heapRow := HeapAllocationRow{id: template, role: receiptRole, form: receiptForm, rootSpan: root.ContextID(), fields: make([]HeapFieldRow, 0, len(fields))}
 		for fieldIndex, field := range fields {
 			valueSpan, valueSpanOK := field.valuesRow.RootSpanID()
 			heapField := HeapFieldRow{id: field.id, kind: field.kind, fieldSpan: field.fieldSpan.ContextID(), valuesSpan: valueSpan, valuesID: field.valuesRow.ID(), width: field.width, finalOpen: field.finalOpen, sharesFirstValueCell: field.shares, normalized: field.normalized, normalizedOK: field.normalizedOK}

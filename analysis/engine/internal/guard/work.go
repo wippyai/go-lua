@@ -190,11 +190,28 @@ func (w *Work) newPage() *page {
 	if w.owned == nil {
 		w.owned = make(map[*page]struct{})
 	}
-	p := &page{nodes: make([]node, 0, pageNodeCapacity), lease: &pageLease{}}
+	p := &page{nodes: make([]node, 0, w.nextPageCapacity()), lease: &pageLease{}}
 	w.pages = append(w.pages, p)
 	w.owned[p] = struct{}{}
 	w.current = p
 	return p
+}
+
+// nextPageCapacity sizes the page this transaction is about to open. Pages are
+// opened only when the previous one is full, so the geometry is driven by what
+// the transaction has already constructed: a two-node candidate keeps its one
+// small page, while a transaction that fills pages reaches the slab bound after
+// a bounded ramp and stays there. Ownership and the seal protocol are unchanged
+// - a page is private to its transaction and seals as a unit.
+func (w *Work) nextPageCapacity() int {
+	if len(w.pages) == 0 {
+		return firstPageNodeCapacity
+	}
+	capacity := cap(w.pages[len(w.pages)-1].nodes) * pageGrowthFactor
+	if capacity > pageNodeCapacity {
+		return pageNodeCapacity
+	}
+	return capacity
 }
 
 // resetTransaction clears references private to the current candidate.

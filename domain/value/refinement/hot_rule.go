@@ -49,12 +49,28 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 				return resultOK && engine.StageValue(access, row, result)
 			})
 		},
-	}, engine.HotCarrySpec[value.Value, value.PresenceRefinement]{})
+	}, engine.HotCarrySpec[value.Value, value.PresenceRefinement]{}, func(refinement value.PresenceRefinement) (uint64, bool) {
+		target, _, ok := hotTarget(owner.Schema(), refinement)
+		index, indexOK := owner.Schema().CoordinateIndex(target)
+		return uint64(index), ok && indexOK
+	}, func(refinement value.PresenceRefinement) (uint64, bool) {
+		target, _, ok := hotTarget(owner.Schema(), refinement)
+		index, indexOK := owner.Schema().CoordinateIndex(target)
+		return uint64(index), ok && indexOK
+	})
 	if !ok || implementation == nil {
 		return nil, false
 	}
 	runtimeRead = read
-	return &HotRule{implementation: implementation, read: read, owner: owner}, true
+	rule := &HotRule{implementation: implementation, read: read, owner: owner}
+	if !implementation.InstallOperandResolver(rule.resolveOperand) {
+		return nil, false
+	}
+	return rule, true
+}
+
+func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (value.PresenceRefinement, bool) {
+	return rule.ReceiptForOccurrence(coords.Mount, coords.Occurrence)
 }
 
 func (rule *HotRule) ReceiptForOccurrence(mount, id identity.ContentID) (value.PresenceRefinement, bool) {
@@ -65,68 +81,16 @@ func (rule *HotRule) ReceiptForOccurrence(mount, id identity.ContentID) (value.P
 	return row, ok && rule.owner.Schema().OwnsPresenceRefinement(row)
 }
 
-func (rule *HotRule) AttachMountedRule(assembly *engine.ReceiptAssembly, mountID, pointID, occurrenceID identity.ContentID) (engine.BindingRuleRowRef, bool) {
-	if rule == nil || rule.owner == nil || assembly == nil {
-		return engine.BindingRuleRowRef{}, false
-	}
-	operand, operandOK := rule.ReceiptForOccurrence(mountID, occurrenceID)
-	implementation, implementationOK := valueowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
-	capability := mountedCapability(rule.implementation)
-	occurrence, occurrenceOK := assembly.AdmitMountedRuleOccurrence(capability, mountID, pointID, occurrenceID)
-	target, _, targetOK := hotTarget(rule.owner.Schema(), operand)
-	targetRef, refOK := rule.owner.Ref(target)
-	if !operandOK || !implementationOK || !occurrenceOK || !targetOK || !refOK {
-		return engine.BindingRuleRowRef{}, false
-	}
-	admit := func(transaction *engine.RuleSourceTransaction) bool {
-		return engine.AddExactRead(transaction, targetRef) && transaction.AddCarry() && engine.AddExactWrite(transaction, targetRef)
-	}
-	issue := func(source engine.RuleSurfaceSourceReceipt) bool {
-		draft, draftOK := implementation.BeginReceiptRuleRow(source)
-		readPart, readOK := implementation.ReceiptReadPart(source, 0)
-		carryPart, carryOK := implementation.ReceiptCarryPart(source, 0)
-		writePart, writeOK := implementation.ReceiptWritePart(source, 0)
-		if !draftOK || !readOK || !carryOK || !writeOK ||
-			!draft.AddRead(readPart) || !draft.AddCarry(carryPart) || !draft.AddWrite(writePart) {
-			return false
-		}
-		_, added := assembly.AddRuleFromDraft(occurrence, draft)
-		return added
-	}
-	queued := engine.AdmitMountedRule(assembly, implementation, capability, occurrence, operand, admit, issue)
-	return engine.BindingRuleRowRef{}, queued
-}
-
-func (rule *HotRule) BeginReceiptCompilation(graph *engine.ReceiptGraph) (*engine.ReceiptCompilation, bool) {
-	if rule == nil || rule.owner == nil {
-		return nil, false
-	}
-	implementation, ok := valueowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
-	if !ok {
-		return nil, false
-	}
-	return engine.BeginReceiptCompilation(implementation, graph)
-}
-
-func (rule *HotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, pointID, occurrenceID identity.ContentID) (*engine.ReceiptMember, bool) {
-	if rule == nil || graph == nil {
-		return nil, false
-	}
-	member, memberOK := graph.MountedRuleMember(mountedCapability(rule.implementation), mountID, pointID, occurrenceID)
-	operand, operandOK := rule.ReceiptForOccurrence(mountID, occurrenceID)
-	implementation, implementationOK := valueowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
-	if !memberOK || !operandOK || !implementationOK {
-		return nil, false
-	}
-	return engine.AttachReceiptRuleMember(compilation, implementation, member, operand)
-}
-
 func (rule *HotRule) Implementation() (*valueowner.RuleImplementation[value.PresenceRefinement], bool) {
 	if rule == nil || rule.implementation == nil {
 		return nil, false
 	}
 	_, ok := valueowner.ResolveRuleImplementation(rule.implementation)
 	return rule.implementation, ok
+}
+
+func (rule *HotRule) ProgramAttach() (engine.RuleProgramAttach, bool) {
+	return valueowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
 }
 
 func mountedCapability(issuer interface {

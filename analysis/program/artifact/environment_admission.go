@@ -90,14 +90,13 @@ func (compiler *compiler) admitEnvironmentFailure(route flow.FinalRoute, rowInde
 	_, toSiteOK := route.To()
 	routeID, routeOK := route.ID()
 	arm, armOK := route.Arm()
-	kind, kindOK := routeKind(arm)
 	if !fromOK || !toOK || !fromSiteOK || !toSiteOK || !compiler.containsPoint(from) || !compiler.containsPoint(to) {
 		return compileFailure(CompileStageRoutes, CompileRowRoute, rowIndex, -1, CompileReasonRouteEndpoints)
 	}
 	if !routeOK {
 		return compileFailure(CompileStageRoutes, CompileRowRoute, rowIndex, -1, CompileReasonRouteIdentity)
 	}
-	if !armOK || !kindOK {
+	if !armOK || arm < flow.BoundaryLocal || arm > flow.BoundaryCancel {
 		return compileFailure(CompileStageRoutes, CompileRowRoute, rowIndex, -1, CompileReasonRouteArm)
 	}
 	occurrenceID := environmentRouteOccurrenceID(compiler.input.ContentID(), routeID, arm)
@@ -185,7 +184,7 @@ func (compiler *compiler) admitEnvironmentFailure(route flow.FinalRoute, rowInde
 	row := EnvironmentEdge{
 		id: occurrenceID, from: from.PathID(), to: to.PathID(), route: routeID,
 		guard: guardID, decision: decisionID, condition: conditionID, guarded: guarded, truth: truth, component: component,
-		mu: mu, hasMu: hasMu, reset: resetDigest, resets: resets, hasReset: hasReset, arm: kind,
+		mu: mu, hasMu: hasMu, reset: resetDigest, resets: resets, hasReset: hasReset, arm: arm,
 	}
 	if !row.Available() {
 		return compileFailure(CompileStageRoutes, CompileRowEnvironment, rowIndex, -1, CompileReasonEnvironmentUnavailable)

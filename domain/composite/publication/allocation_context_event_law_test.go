@@ -2,10 +2,10 @@ package publication
 
 import (
 	"crypto/sha256"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/target"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
@@ -44,10 +44,10 @@ func sealedAllocationContextEvent(destination bool, subjectClass heapdomain.Runt
 		allocationKey:        publicationLawID("allocation-key"),
 		membership:           valuedomain.MembershipRecent,
 		subjectContext:       sealedAllocationRuntimeContext("subject", subjectClass),
-		kind:                 target.PublicationEffectSendTransfer,
-		escape:               target.PublicationEscapeSendTransfer,
-		mutability:           target.PublicationMutabilityCopyOnWrite,
-		declaredLifetime:     target.PublicationLifetimePreserve,
+		kind:                 vocabulary.PublicationEffectSendTransfer,
+		escape:               vocabulary.PublicationEscapeSendTransfer,
+		mutability:           vocabulary.PublicationMutabilityCopyOnWrite,
+		declaredLifetime:     vocabulary.PublicationLifetimePreserve,
 	}
 	if destination {
 		event.destinationBinding = publicationLawID("destination-binding")
@@ -137,19 +137,19 @@ func TestAllocationContextEventScalarSealLaw(t *testing.T) {
 			return value
 		},
 		"kind": func(value AllocationContextEvent) AllocationContextEvent {
-			value.kind = target.PublicationEffectReturnEscape
+			value.kind = vocabulary.PublicationEffectReturnEscape
 			return value
 		},
 		"escape": func(value AllocationContextEvent) AllocationContextEvent {
-			value.escape = target.PublicationEscapeReturn
+			value.escape = vocabulary.PublicationEscapeReturn
 			return value
 		},
 		"mutability": func(value AllocationContextEvent) AllocationContextEvent {
-			value.mutability = target.PublicationMutabilityPreserve
+			value.mutability = vocabulary.PublicationMutabilityPreserve
 			return value
 		},
 		"declared-lifetime": func(value AllocationContextEvent) AllocationContextEvent {
-			value.declaredLifetime = target.PublicationLifetimeRelease
+			value.declaredLifetime = vocabulary.PublicationLifetimeRelease
 			return value
 		},
 	}
@@ -260,19 +260,19 @@ func TestAllocationContextEventTargetVocabularyLaw(t *testing.T) {
 	event := sealedAllocationContextEvent(true, heapdomain.RuntimeAllocationContextProcess)
 	beyond := []func(AllocationContextEvent) AllocationContextEvent{
 		func(value AllocationContextEvent) AllocationContextEvent {
-			value.kind = target.PublicationEffectCloseRelease + 1
+			value.kind = vocabulary.PublicationEffectCloseRelease + 1
 			return value
 		},
 		func(value AllocationContextEvent) AllocationContextEvent {
-			value.escape = target.PublicationEscapeCallback + 1
+			value.escape = vocabulary.PublicationEscapeCallback + 1
 			return value
 		},
 		func(value AllocationContextEvent) AllocationContextEvent {
-			value.mutability = target.PublicationMutabilityCopyOnWrite + 1
+			value.mutability = vocabulary.PublicationMutabilityCopyOnWrite + 1
 			return value
 		},
 		func(value AllocationContextEvent) AllocationContextEvent {
-			value.declaredLifetime = target.PublicationLifetimeRelease + 1
+			value.declaredLifetime = vocabulary.PublicationLifetimeRelease + 1
 			return value
 		},
 	}
@@ -283,7 +283,7 @@ func TestAllocationContextEventTargetVocabularyLaw(t *testing.T) {
 			t.Fatalf("out-of-range target vocabulary sealed index=%d", index)
 		}
 	}
-	if !targetVocabularyValid(target.PublicationEffectCloseRelease, target.PublicationEscapeNone, target.PublicationMutabilityPreserve, target.PublicationLifetimeRelease) {
+	if !targetVocabularyValid(vocabulary.PublicationEffectCloseRelease, vocabulary.PublicationEscapeNone, vocabulary.PublicationMutabilityPreserve, vocabulary.PublicationLifetimeRelease) {
 		t.Fatal("declared target vocabulary rejected")
 	}
 }

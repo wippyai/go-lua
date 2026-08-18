@@ -166,13 +166,34 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, values *va
 				return resultOK && engine.StageValue(access, row, result)
 			})
 		},
+	}, func(receipt dispatchReceipt) (uint64, bool) {
+		index, ok := values.Schema().CoordinateIndex(receipt.coordinate)
+		return uint64(index), ok
+	}, func(receipt dispatchReceipt) (uint64, bool) {
+		index, ok := calls.Algebra().KeyIndex(receipt.key)
+		return uint64(index), ok && index >= 0
 	})
 	if !ok {
 		return nil, false
 	}
 	hot.read = runtimeRead
 	hot.implementation = implementation
+	if !implementation.InstallOperandResolver(hot.resolveOperand) {
+		return nil, false
+	}
 	return hot, true
+}
+
+func (rule *HotRule) ProgramAttach() (engine.RuleProgramAttach, bool) {
+	return callowner.ResolveHeterogeneousRuleImplementation(rule.implementation)
+}
+
+func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (dispatchReceipt, bool) {
+	issuer, ok := rule.ForMount(coords.Mount)
+	if !ok {
+		return dispatchReceipt{}, false
+	}
+	return issuer.ReceiptForOccurrence(coords.Occurrence)
 }
 
 // sealReceiptCatalog issues every ordinary-call application witness once for
@@ -289,80 +310,6 @@ func (issuer MountedIssuer) ApplicationIDForOccurrence(id identity.ContentID) (i
 		return identity.ContentID{}, false
 	}
 	return receipt.key.ApplicationID()
-}
-
-// AttachMountedOccurrence admits one artifact Call dispatch row using the
-// preissued mounted receipt and exact Value/Call owner surfaces.
-func (rule *HotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, mountID, reusablePointID, occurrenceID identity.ContentID) (engine.BindingRuleRowRef, bool) {
-	if rule == nil || rule.implementation == nil || rule.values == nil || rule.calls == nil || assembly == nil {
-		return engine.BindingRuleRowRef{}, false
-	}
-	issuer, ok := rule.ForMount(mountID)
-	if !ok {
-		return engine.BindingRuleRowRef{}, false
-	}
-	receipt, ok := issuer.ReceiptForOccurrence(occurrenceID)
-	if !ok {
-		return engine.BindingRuleRowRef{}, false
-	}
-	capability, capabilityOK := rule.implementation.MountedCapability()
-	if !capabilityOK {
-		return engine.BindingRuleRowRef{}, false
-	}
-	occurrence, ok := assembly.AdmitMountedRuleOccurrence(capability, mountID, reusablePointID, occurrenceID)
-	if !ok {
-		return engine.BindingRuleRowRef{}, false
-	}
-	implementation, implementationOK := callowner.ResolveHeterogeneousRuleImplementation(rule.implementation)
-	admit := func(transaction *engine.RuleSourceTransaction) bool {
-		if !implementationOK {
-			return false
-		}
-		readRef, readOK := rule.values.Ref(receipt.coordinate)
-		writeRef, writeOK := rule.calls.Ref(receipt.key)
-		return readOK && writeOK && engine.AddExactRead(transaction, readRef) && engine.AddExactWrite(transaction, writeRef)
-	}
-	issue := func(sourceReceipt engine.RuleSurfaceSourceReceipt) bool {
-		draft, draftOK := implementation.BeginReceiptRuleRow(sourceReceipt)
-		readPart, readPartOK := implementation.ReceiptReadPart(sourceReceipt, 0)
-		writePart, writePartOK := implementation.ReceiptWritePart(sourceReceipt, 0)
-		if !draftOK || !readPartOK || !writePartOK || !draft.AddRead(readPart) || !draft.AddWrite(writePart) {
-			return false
-		}
-		_, added := assembly.AddRuleFromDraft(occurrence, draft)
-		return added
-	}
-	queued := engine.AdmitMountedRule(assembly, implementation, capability, occurrence, receipt, admit, issue)
-	return engine.BindingRuleRowRef{}, queued
-}
-
-// AttachMountedReceiptMember resolves and attaches one exact post-commit
-// dispatch member from the mounted graph directory.
-func (rule *HotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, reusablePointID, occurrenceID identity.ContentID) (*engine.ReceiptMember, bool) {
-	if rule == nil || compilation == nil || graph == nil || rule.implementation == nil {
-		return nil, false
-	}
-	capability, capabilityOK := rule.implementation.MountedCapability()
-	if !capabilityOK {
-		return nil, false
-	}
-	member, ok := graph.MountedRuleMember(capability, mountID, reusablePointID, occurrenceID)
-	if !ok {
-		return nil, false
-	}
-	issuer, ok := rule.ForMount(mountID)
-	if !ok {
-		return nil, false
-	}
-	operand, ok := issuer.ReceiptForOccurrence(occurrenceID)
-	if !ok {
-		return nil, false
-	}
-	implementation, ok := callowner.ResolveHeterogeneousRuleImplementation(rule.implementation)
-	if !ok {
-		return nil, false
-	}
-	return engine.AttachReceiptRuleMember(compilation, implementation, member, operand)
 }
 
 func (rule *HotRule) acceptsReceipt(receipt dispatchReceipt) bool {

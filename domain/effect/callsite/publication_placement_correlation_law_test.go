@@ -2,10 +2,10 @@ package callsite
 
 import (
 	"crypto/sha256"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/target"
 	"github.com/wippyai/go-lua/domain/pack"
 )
 
@@ -27,10 +27,10 @@ func TestPublicationPlacementCorrelationCandidateDetachedSealLaw(t *testing.T) {
 		subject:     publicationCorrelationLawID("subject-binding"),
 		destination: publicationCorrelationLawID("destination-binding"),
 		hasContext:  true,
-		kind:        target.PublicationEffectSendTransfer,
-		escape:      target.PublicationEscapeSendTransfer,
-		mutability:  target.PublicationMutabilityCopyOnWrite,
-		lifetime:    target.PublicationLifetimePreserve,
+		kind:        vocabulary.PublicationEffectSendTransfer,
+		escape:      vocabulary.PublicationEscapeSendTransfer,
+		mutability:  vocabulary.PublicationMutabilityCopyOnWrite,
+		lifetime:    vocabulary.PublicationLifetimePreserve,
 		sealed:      true,
 	}
 	candidate.id = publicationPlacementCorrelationID(candidate.proof, candidate.descriptor, candidate.occurrence, candidate.mount, candidate.call, candidate.subject, candidate.destination, candidate.hasContext, candidate.kind, candidate.escape, candidate.mutability, candidate.lifetime)
@@ -51,7 +51,7 @@ func TestPublicationPlacementCorrelationCandidateDetachedSealLaw(t *testing.T) {
 		t.Fatal("spliced destination binding survived scalar seal")
 	}
 	splicedConsequence := candidate
-	splicedConsequence.mutability = target.PublicationMutabilitySeal
+	splicedConsequence.mutability = vocabulary.PublicationMutabilitySeal
 	if splicedConsequence.Valid() {
 		t.Fatal("spliced typed consequence survived scalar seal")
 	}
@@ -75,10 +75,10 @@ func TestPublicationPlacementCorrelationSealedIdentityIsTheDerivedIdentityLaw(t 
 		call:       publicationCorrelationLawID("call"),
 		subject:    publicationCorrelationLawID("subject-binding"),
 		hasContext: false,
-		kind:       target.PublicationEffectSendTransfer,
-		escape:     target.PublicationEscapeSendTransfer,
-		mutability: target.PublicationMutabilityCopyOnWrite,
-		lifetime:   target.PublicationLifetimePreserve,
+		kind:       vocabulary.PublicationEffectSendTransfer,
+		escape:     vocabulary.PublicationEscapeSendTransfer,
+		mutability: vocabulary.PublicationMutabilityCopyOnWrite,
+		lifetime:   vocabulary.PublicationLifetimePreserve,
 	}
 	candidate.id = candidate.derivedID()
 	candidate.sealed = true
@@ -106,8 +106,8 @@ func TestPublicationPlacementCorrelationSealedIdentityIsTheDerivedIdentityLaw(t 
 			t.Fatalf("sealed row withheld its %s identity", projection.name)
 		}
 	}
-	if candidate.Kind() != target.PublicationEffectSendTransfer || candidate.Escape() != target.PublicationEscapeSendTransfer ||
-		candidate.Mutability() != target.PublicationMutabilityCopyOnWrite || candidate.Lifetime() != target.PublicationLifetimePreserve {
+	if candidate.Kind() != vocabulary.PublicationEffectSendTransfer || candidate.Escape() != vocabulary.PublicationEscapeSendTransfer ||
+		candidate.Mutability() != vocabulary.PublicationMutabilityCopyOnWrite || candidate.Lifetime() != vocabulary.PublicationLifetimePreserve {
 		t.Fatal("sealed row withheld a typed consequence it carries")
 	}
 	if destination, ok := candidate.DestinationBindingID(); ok || destination.Available() {
@@ -127,10 +127,10 @@ func TestPublicationPlacementCorrelationUnsealedRowReadsNothingLaw(t *testing.T)
 		mount:      publicationCorrelationLawID("mount"),
 		call:       publicationCorrelationLawID("call"),
 		subject:    publicationCorrelationLawID("subject-binding"),
-		kind:       target.PublicationEffectSendTransfer,
-		escape:     target.PublicationEscapeSendTransfer,
-		mutability: target.PublicationMutabilityCopyOnWrite,
-		lifetime:   target.PublicationLifetimePreserve,
+		kind:       vocabulary.PublicationEffectSendTransfer,
+		escape:     vocabulary.PublicationEscapeSendTransfer,
+		mutability: vocabulary.PublicationMutabilityCopyOnWrite,
+		lifetime:   vocabulary.PublicationLifetimePreserve,
 	}
 	unsealed.id = unsealed.derivedID()
 	if !unsealed.id.Available() || unsealed.id != unsealed.derivedID() {
@@ -148,8 +148,8 @@ func TestPublicationPlacementCorrelationUnsealedRowReadsNothingLaw(t *testing.T)
 	if mount, call, ok := unsealed.CallProvenance(); ok || mount.Available() || call.Available() {
 		t.Fatal("unissued row published its call provenance")
 	}
-	if unsealed.Kind() != target.PublicationEffectInvalid || unsealed.Escape() != target.PublicationEscapeInvalid ||
-		unsealed.Mutability() != target.PublicationMutabilityInvalid || unsealed.Lifetime() != target.PublicationLifetimeInvalid {
+	if unsealed.Kind() != vocabulary.PublicationEffectInvalid || unsealed.Escape() != vocabulary.PublicationEscapeInvalid ||
+		unsealed.Mutability() != vocabulary.PublicationMutabilityInvalid || unsealed.Lifetime() != vocabulary.PublicationLifetimeInvalid {
 		t.Fatal("unissued row published a typed consequence")
 	}
 

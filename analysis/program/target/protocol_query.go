@@ -1,27 +1,31 @@
 package target
 
-func (c *Contract) ProtocolCount() int {
+import (
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+)
+
+func (c *Contract) protocolCount() int {
 	if c == nil {
 		return 0
 	}
 	return len(c.protocols)
 }
 
-func (c *Contract) ProtocolAt(index int) (Protocol, bool) {
+func (c *Contract) protocolAt(index int) (vocabulary.Protocol, bool) {
 	if c == nil || index < 0 || index >= len(c.protocols) {
 		return 0, false
 	}
-	return Protocol(index + 1), true
+	return vocabulary.Protocol(index + 1), true
 }
 
-func (c *Contract) protocol(value Protocol) (protocolRow, bool) {
+func (c *Contract) protocol(value vocabulary.Protocol) (protocolRow, bool) {
 	if c == nil || value == 0 || uint64(value) > uint64(len(c.protocols)) {
 		return protocolRow{}, false
 	}
 	return c.protocols[uint32(value)-1], true
 }
 
-func (c *Contract) ProtocolAcquisitionCount(protocol Protocol) int {
+func (c *Contract) protocolAcquisitionCount(protocol vocabulary.Protocol) int {
 	row, ok := c.protocol(protocol)
 	if !ok {
 		return 0
@@ -29,7 +33,7 @@ func (c *Contract) ProtocolAcquisitionCount(protocol Protocol) int {
 	return row.acquisitions.len()
 }
 
-func (c *Contract) ProtocolAcquisitionAt(protocol Protocol, index int) (Operation, uint32, uint32, State, bool) {
+func (c *Contract) protocolAcquisitionAt(protocol vocabulary.Protocol, index int) (vocabulary.Operation, uint32, uint32, vocabulary.State, bool) {
 	row, ok := c.protocol(protocol)
 	if !ok || index < 0 || index >= row.acquisitions.len() {
 		return 0, 0, 0, 0, false
@@ -38,7 +42,7 @@ func (c *Contract) ProtocolAcquisitionAt(protocol Protocol, index int) (Operatio
 	return value.operation, value.outcome, value.result, value.state, true
 }
 
-func (c *Contract) StateCount(protocol Protocol) int {
+func (c *Contract) stateCount(protocol vocabulary.Protocol) int {
 	row, ok := c.protocol(protocol)
 	if !ok {
 		return 0
@@ -46,15 +50,15 @@ func (c *Contract) StateCount(protocol Protocol) int {
 	return row.states.len()
 }
 
-func (c *Contract) StateAt(protocol Protocol, index int) (State, bool) {
+func (c *Contract) stateAt(protocol vocabulary.Protocol, index int) (vocabulary.State, bool) {
 	row, ok := c.protocol(protocol)
 	if !ok || index < 0 || index >= row.states.len() {
 		return 0, false
 	}
-	return State(index + 1), true
+	return vocabulary.State(index + 1), true
 }
 
-func (c *Contract) state(protocol Protocol, state State) (stateRow, bool) {
+func (c *Contract) state(protocol vocabulary.Protocol, state vocabulary.State) (stateRow, bool) {
 	row, ok := c.protocol(protocol)
 	if !ok || state == 0 || uint64(state) > uint64(row.states.len()) {
 		return stateRow{}, false
@@ -62,7 +66,7 @@ func (c *Contract) state(protocol Protocol, state State) (stateRow, bool) {
 	return c.states[row.states.start+uint32(state)-1], true
 }
 
-func (c *Contract) StateName(protocol Protocol, state State) (string, bool) {
+func (c *Contract) stateName(protocol vocabulary.Protocol, state vocabulary.State) (string, bool) {
 	row, ok := c.state(protocol, state)
 	if !ok {
 		return "", false
@@ -70,7 +74,7 @@ func (c *Contract) StateName(protocol Protocol, state State) (string, bool) {
 	return row.name, true
 }
 
-func (c *Contract) StateFinal(protocol Protocol, state State) (bool, bool) {
+func (c *Contract) stateFinal(protocol vocabulary.Protocol, state vocabulary.State) (bool, bool) {
 	row, ok := c.state(protocol, state)
 	if !ok {
 		return false, false
@@ -78,7 +82,7 @@ func (c *Contract) StateFinal(protocol Protocol, state State) (bool, bool) {
 	return row.final, true
 }
 
-func (c *Contract) TransitionCount(protocol Protocol) int {
+func (c *Contract) transitionCount(protocol vocabulary.Protocol) int {
 	row, ok := c.protocol(protocol)
 	if !ok {
 		return 0
@@ -86,7 +90,7 @@ func (c *Contract) TransitionCount(protocol Protocol) int {
 	return row.transitions.len()
 }
 
-func (c *Contract) transition(protocol Protocol, index int) (transitionRow, bool) {
+func (c *Contract) transition(protocol vocabulary.Protocol, index int) (transitionRow, bool) {
 	row, ok := c.protocol(protocol)
 	if !ok || index < 0 || index >= row.transitions.len() {
 		return transitionRow{}, false
@@ -94,7 +98,7 @@ func (c *Contract) transition(protocol Protocol, index int) (transitionRow, bool
 	return c.transitions[row.transitions.start+uint32(index)], true
 }
 
-func (c *Contract) TransitionAt(protocol Protocol, index int) (Operation, InputSourceKind, uint32, State, bool) {
+func (c *Contract) transitionAt(protocol vocabulary.Protocol, index int) (vocabulary.Operation, vocabulary.InputSourceKind, uint32, vocabulary.State, bool) {
 	row, ok := c.transition(protocol, index)
 	if !ok {
 		return 0, 0, 0, 0, false
@@ -102,7 +106,7 @@ func (c *Contract) TransitionAt(protocol Protocol, index int) (Operation, InputS
 	return row.operation, row.input.Kind, row.input.Ordinal, row.from, true
 }
 
-func (c *Contract) TransitionOutcomeCount(protocol Protocol, transition int) int {
+func (c *Contract) transitionOutcomeCount(protocol vocabulary.Protocol, transition int) int {
 	row, ok := c.transition(protocol, transition)
 	if !ok {
 		return 0
@@ -110,7 +114,7 @@ func (c *Contract) TransitionOutcomeCount(protocol Protocol, transition int) int
 	return row.outcomes.len()
 }
 
-func (c *Contract) TransitionOutcomeAt(protocol Protocol, transition, index int) (uint32, State, bool) {
+func (c *Contract) transitionOutcomeAt(protocol vocabulary.Protocol, transition, index int) (uint32, vocabulary.State, bool) {
 	row, ok := c.transition(protocol, transition)
 	if !ok || index < 0 || index >= row.outcomes.len() {
 		return 0, 0, false
@@ -119,30 +123,35 @@ func (c *Contract) TransitionOutcomeAt(protocol Protocol, transition, index int)
 	return value.outcome, value.to, true
 }
 
-func (c *Contract) EscapeCount(protocol Protocol) int {
+// derivedProtocolEscapes is the number of escapes the reader derives for every
+// protocol: the opaque operation escaping on all inputs. It is derived rather
+// than stored, so no escape row backs it.
+const derivedProtocolEscapes = 1
+
+func (c *Contract) escapeCount(protocol vocabulary.Protocol) int {
 	row, ok := c.protocol(protocol)
 	if !ok {
 		return 0
 	}
-	return row.escapes.len() + 1
+	return row.escapes.len() + derivedProtocolEscapes
 }
 
-func (c *Contract) EscapeAt(protocol Protocol, index int) (Operation, InputSourceKind, uint32, bool) {
+func (c *Contract) escapeAt(protocol vocabulary.Protocol, index int) (vocabulary.Operation, vocabulary.InputSourceKind, uint32, bool) {
 	row, ok := c.protocol(protocol)
-	if !ok || index < 0 || index >= row.escapes.len()+1 {
+	if !ok || index < 0 || index >= row.escapes.len()+derivedProtocolEscapes {
 		return 0, 0, 0, false
 	}
 	if index == row.escapes.len() {
-		return c.opaque, InputSourceAllInputs, 0, true
+		return c.opaque, vocabulary.InputSourceAllInputs, 0, true
 	}
 	value := c.escapes[row.escapes.start+uint32(index)]
 	return value.operation, value.input.Kind, value.input.Ordinal, true
 }
 
-// ProtocolCallbackHolderCount reports the complete authored retained-callback
+// protocolCallbackHolderCount reports the complete authored retained-callback
 // holder relation for one protocol. Unlike Escape, it has no opaque fallback:
 // opaque behavior cannot fabricate a resource/callback correspondence.
-func (c *Contract) ProtocolCallbackHolderCount(protocol Protocol) int {
+func (c *Contract) protocolCallbackHolderCount(protocol vocabulary.Protocol) int {
 	row, ok := c.protocol(protocol)
 	if !ok {
 		return 0
@@ -150,16 +159,16 @@ func (c *Contract) ProtocolCallbackHolderCount(protocol Protocol) int {
 	return row.callbackHolders.len()
 }
 
-// ProtocolCallbackHolderAt returns one exact
+// protocolCallbackHolderAt returns one exact
 // Protocol × Operation × InputSource × CallbackID declaration.
-func (c *Contract) ProtocolCallbackHolderAt(protocol Protocol, index int) (Operation, InputSource, CallbackID, bool) {
+func (c *Contract) protocolCallbackHolderAt(protocol vocabulary.Protocol, index int) (vocabulary.Operation, vocabulary.InputSource, vocabulary.CallbackID, bool) {
 	row, ok := c.protocol(protocol)
 	if !ok || index < 0 || index >= row.callbackHolders.len() {
-		return 0, InputSource{}, 0, false
+		return 0, vocabulary.InputSource{}, 0, false
 	}
 	holder := c.callbackHolders[row.callbackHolders.start+uint32(index)]
 	if holder.operation == 0 || holder.callback == 0 {
-		return 0, InputSource{}, 0, false
+		return 0, vocabulary.InputSource{}, 0, false
 	}
 	return holder.operation, holder.input, holder.callback, true
 }

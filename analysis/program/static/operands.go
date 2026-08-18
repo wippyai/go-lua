@@ -5,7 +5,6 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/internal/framing"
 	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
 )
 
@@ -81,61 +80,6 @@ func validAnnotation(counts [keyspace.FamilyCount]uint32, row Annotation) bool {
 		row.Name != 0 && hasFamily(counts, row.Values, keyspace.FamilyValues)
 }
 
-func annotationTargetPresent(component *Component, target keyspace.Term) bool {
-	if component == nil || keyspace.TermOrdinal(target) == 0 {
-		return false
-	}
-	ordinal := keyspace.TermOrdinal(target)
-	if keyspace.TermFamily(target) == keyspace.FamilyTypeField {
-		return uint64(ordinal) <= uint64(len(component.types.field))
-	}
-	if !staticNodeFamily(keyspace.TermFamily(target)) {
-		return false
-	}
-	return uint64(ordinal) <= uint64(staticNodeCount(component, keyspace.TermFamily(target)))
-}
-
-// staticNodeCount maps the closed static-node vocabulary to its owning store.
-// It is an immutable query boundary, not a generic node representation.
-func staticNodeCount(component *Component, family keyspace.Family) int {
-	switch family {
-	case keyspace.FamilyTypePrimitive:
-		return len(component.types.primitive)
-	case keyspace.FamilyTypeLiteral:
-		return len(component.types.literal)
-	case keyspace.FamilyTypeOptional:
-		return len(component.types.optional)
-	case keyspace.FamilyTypeUnion:
-		return len(component.types.union)
-	case keyspace.FamilyTypeIntersection:
-		return len(component.types.intersection)
-	case keyspace.FamilyTypeRef:
-		return len(component.references.rows)
-	case keyspace.FamilyTypeGeneric:
-		return len(component.types.generic)
-	case keyspace.FamilyTypeArray:
-		return len(component.types.array)
-	case keyspace.FamilyTypeMap:
-		return len(component.types.mapType)
-	case keyspace.FamilyTypeRecord:
-		return len(component.types.record)
-	case keyspace.FamilyTypeFunction:
-		return len(component.signatures.functions)
-	case keyspace.FamilyTypeAsserts:
-		return len(component.signatures.assertions)
-	case keyspace.FamilyTypeOf:
-		return len(component.operators.typeOf)
-	case keyspace.FamilyTypeKeyOf:
-		return len(component.operators.keyOf)
-	case keyspace.FamilyTypeIndexAccess:
-		return len(component.operators.indexAccess)
-	case keyspace.FamilyTypeConditional:
-		return len(component.operators.conditional)
-	default:
-		return 0
-	}
-}
-
 type annotationIndexRow struct {
 	target keyspace.Term
 	term   keyspace.Term
@@ -191,47 +135,4 @@ func emitOperandsContainment(component *Component, check *containment) bool {
 		}
 	}
 	return true
-}
-
-// writeOperandsContent owns the sparse ClaimTarget relation and the two
-// dense sidecars. CSR rows and dense claim lookup are derived indexes, so are
-// intentionally excluded.
-func writeOperandsContent(writer *framing.Writer, store operandsStore) error {
-	if err := writer.Count(uint64(len(store.claims))); err != nil {
-		return err
-	}
-	for _, row := range store.claims {
-		if err := writer.Uint(uint64(row.claim)); err != nil {
-			return err
-		}
-		if err := writer.Uint(uint64(row.target)); err != nil {
-			return err
-		}
-	}
-	if err := writer.Count(uint64(len(store.typeValues))); err != nil {
-		return err
-	}
-	for _, target := range store.typeValues {
-		if err := writer.Uint(uint64(target)); err != nil {
-			return err
-		}
-	}
-	if err := writer.Count(uint64(len(store.annotations))); err != nil {
-		return err
-	}
-	for _, row := range store.annotations {
-		if err := writer.Uint(uint64(row.Scope)); err != nil {
-			return err
-		}
-		if err := writer.Uint(uint64(row.Target)); err != nil {
-			return err
-		}
-		if err := writer.Uint(uint64(row.Name)); err != nil {
-			return err
-		}
-		if err := writer.Uint(uint64(row.Values)); err != nil {
-			return err
-		}
-	}
-	return nil
 }

@@ -1,13 +1,15 @@
-package link
+package link_test
 
 import (
 	"fmt"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/program/link"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
 	linkhost "github.com/wippyai/go-lua/analysis/program/link/host"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
 // This is a semantic scale law, not a timing benchmark. A selector in every
@@ -15,7 +17,7 @@ import (
 // sparse-many-shard construction without making a machine-speed assertion.
 func TestHostSelectorScalePreservesEveryShardRelation(t *testing.T) {
 	const shardCount = 513
-	binding := target.BindingSpec{Namespace: target.BindingProvider, Owner: []string{"host"}, Member: []string{"invoke"}}
+	binding := vocabulary.BindingSpec{Namespace: vocabulary.BindingProvider, Owner: []string{"host"}, Member: []string{"invoke"}}
 	contract := contract(t, binding)
 	p := source(t, `host()`)
 	access := hostGlobalRead(t, p, "host")
@@ -26,7 +28,7 @@ func TestHostSelectorScalePreservesEveryShardRelation(t *testing.T) {
 		modules = append(modules, linkproject.Module{Name: name, Program: p})
 		exposures = append(exposures, linkhost.HostExposureSpec{Module: name, Access: access, Endpoint: "host.invoke", Dispatch: linkhost.HostDispatchLookup})
 	}
-	link, err := Seal(&Spec{
+	sealed, err := link.Seal(&link.Spec{
 		Target:           contract,
 		Modules:          modules,
 		EndpointRequests: []linkboundary.EndpointRequest{{Identity: "host.invoke", Binding: binding}},
@@ -39,23 +41,23 @@ func TestHostSelectorScalePreservesEveryShardRelation(t *testing.T) {
 	if !ok {
 		t.Fatal("missing fixture provider operation")
 	}
-	if link.Project().Mounts().Count() != shardCount {
-		t.Fatalf("shards = %d, want %d", link.Project().Mounts().Count(), shardCount)
+	if sealed.Project().Mounts().Count() != shardCount {
+		t.Fatalf("shards = %d, want %d", sealed.Project().Mounts().Count(), shardCount)
 	}
 	seenOutputs := make(map[linkboundary.Value]struct{}, shardCount)
 	for index := 0; index < shardCount; index++ {
-		shard, ok := link.Project().Mounts().At(index)
-		if !ok || link.Host().Exposures().EndpointCount(shard, access) != 1 {
+		shard, ok := sealed.Project().Mounts().At(index)
+		if !ok || sealed.Host().Exposures().EndpointCount(shard, access) != 1 {
 			t.Fatalf("shard %d lost its exact host exposure", index)
 		}
-		endpoint, ok := link.Host().Exposures().EndpointAt(shard, access, 0)
+		endpoint, ok := sealed.Host().Exposures().EndpointAt(shard, access, 0)
 		if !ok {
 			t.Fatalf("shard %d has no host endpoint", index)
 		}
-		if got, ok := link.Boundary().Endpoints().Operation(endpoint); !ok || got != operation {
+		if got, ok := sealed.Boundary().Endpoints().Operation(endpoint); !ok || got != operation {
 			t.Fatalf("shard %d endpoint target = %v/%t, want %v", index, got, ok, operation)
 		}
-		output, selected, dispatch, ok := link.Host().Exposures().SelectorAt(shard, access, 0)
+		output, selected, dispatch, ok := sealed.Host().Exposures().SelectorAt(shard, access, 0)
 		if !ok || selected != endpoint || dispatch != linkhost.HostDispatchLookup {
 			t.Fatalf("shard %d selector lost exact output/endpoint/dispatch", index)
 		}
@@ -63,14 +65,14 @@ func TestHostSelectorScalePreservesEveryShardRelation(t *testing.T) {
 			t.Fatalf("shard %d reused another shard's same-ordinal access Value", index)
 		}
 		seenOutputs[output] = struct{}{}
-		owner, origin, ok := link.Boundary().Values().Origin(output)
+		owner, origin, ok := sealed.Boundary().Values().Origin(output)
 		if !ok || owner != shard || origin != access {
 			t.Fatalf("shard %d output origin = %v/%d/%t, want %v/%d", index, owner, origin, ok, shard, access)
 		}
 	}
 	if allocations := testing.AllocsPerRun(1000, func() {
-		shard, _ := link.Project().Mounts().At(shardCount - 1)
-		_, _ = link.Host().Exposures().EndpointAt(shard, access, 0)
+		shard, _ := sealed.Project().Mounts().At(shardCount - 1)
+		_, _ = sealed.Host().Exposures().EndpointAt(shard, access, 0)
 	}); allocations != 0 {
 		t.Fatalf("sealed scale selector query allocates %v", allocations)
 	}
@@ -81,12 +83,12 @@ func TestHostSelectorScalePreservesEveryShardRelation(t *testing.T) {
 // endpoint tie-breaker. This keeps the selector's key coordinate fenced to
 // the exact finalized Project published before Host construction.
 func TestHostSelectorNormalizationUsesExactProjectKeys(t *testing.T) {
-	binding := target.BindingSpec{Namespace: target.BindingProvider, Owner: []string{"actor"}, Member: []string{"send"}}
+	binding := vocabulary.BindingSpec{Namespace: vocabulary.BindingProvider, Owner: []string{"actor"}, Member: []string{"send"}}
 	contract := contract(t, binding)
 	p := source(t, `actor.send(1)`)
 	actor := hostGlobalRead(t, p, "actor")
 	member := artifactMemberRead(t, p)
-	linked, err := Seal(&Spec{Target: contract, Modules: []linkproject.Module{{Name: "main", Program: p}}, EndpointRequests: []linkboundary.EndpointRequest{{Identity: "actor.send.a", Binding: binding}, {Identity: "actor.send.b", Binding: binding}}, Host: linkhost.Spec{
+	linked, err := link.Seal(&link.Spec{Target: contract, Modules: []linkproject.Module{{Name: "main", Program: p}}, EndpointRequests: []linkboundary.EndpointRequest{{Identity: "actor.send.a", Binding: binding}, {Identity: "actor.send.b", Binding: binding}}, Host: linkhost.Spec{
 		ProviderCapabilities:    []linkhost.ProviderCapabilitySpec{{Identity: "actor"}},
 		ProviderCapabilitySeeds: []linkhost.ProviderCapabilitySeedSpec{{Capability: "actor", Source: linkhost.ProviderCapabilitySourceExposure, Module: "main", Access: actor}},
 		Members: []linkhost.HostMemberSpec{

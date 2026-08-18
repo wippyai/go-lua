@@ -4,12 +4,13 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"errors"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/internal/framing"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 const seedRelationVersion = 1
@@ -132,14 +133,14 @@ func sealEndpointIDs(a *authority, table *seedTable) error {
 
 type endpointDraft struct {
 	identity string
-	op       target.Operation
-	binding  target.BindingSpec
+	op       vocabulary.Operation
+	binding  vocabulary.BindingSpec
 }
 
 func canonicalEndpointRequests(contract *target.Contract, requests []EndpointRequest) ([]endpointDraft, error) {
 	result := make([]endpointDraft, len(requests))
 	for index, request := range requests {
-		if request.Identity == "" || request.Binding.Namespace != target.BindingProvider {
+		if request.Identity == "" || request.Binding.Namespace != vocabulary.BindingProvider {
 			return nil, errors.New("link/boundary: endpoint needs a provider binding")
 		}
 		op, ok := contract.Lookup(request.Binding)
@@ -157,21 +158,21 @@ func canonicalEndpointRequests(contract *target.Contract, requests []EndpointReq
 	return result, nil
 }
 
-func cloneBinding(binding target.BindingSpec) target.BindingSpec {
-	return target.BindingSpec{Namespace: binding.Namespace, Owner: append([]string(nil), binding.Owner...), Member: append([]string(nil), binding.Member...)}
+func cloneBinding(binding vocabulary.BindingSpec) vocabulary.BindingSpec {
+	return vocabulary.BindingSpec{Namespace: binding.Namespace, Owner: append([]string(nil), binding.Owner...), Member: append([]string(nil), binding.Member...)}
 }
 
-func bootstrapDeniedInitialValues(contract *target.Contract) ([]target.InitialValue, error) {
+func bootstrapDeniedInitialValues(contract *target.Contract) ([]vocabulary.InitialValue, error) {
 	if contract == nil {
 		return nil, errors.New("link/boundary: unavailable bootstrap callable authority")
 	}
-	seen := make(map[target.InitialValue]struct{})
-	add := func(value target.InitialValue) error {
+	seen := make(map[vocabulary.InitialValue]struct{})
+	add := func(value vocabulary.InitialValue) error {
 		kind, ok := contract.InitialValueKind(value)
 		if !ok {
 			return errors.New("link/boundary: malformed Target initial value")
 		}
-		if kind == target.InitialValueDeniedOperation {
+		if kind == vocabulary.InitialValueDeniedOperation {
 			seen[value] = struct{}{}
 		}
 		return nil
@@ -205,7 +206,7 @@ func bootstrapDeniedInitialValues(contract *target.Contract) ([]target.InitialVa
 			return nil, err
 		}
 	}
-	result := make([]target.InitialValue, 0, len(seen))
+	result := make([]vocabulary.InitialValue, 0, len(seen))
 	for value := range seen {
 		result = append(result, value)
 	}
@@ -213,7 +214,7 @@ func bootstrapDeniedInitialValues(contract *target.Contract) ([]target.InitialVa
 	return result, nil
 }
 
-func seedRelationID(a *authority, denied []target.InitialValue) (id identity.ContentID) {
+func seedRelationID(a *authority, denied []vocabulary.InitialValue) (id identity.ContentID) {
 	if a == nil || a.target == nil || !a.target.ContentID().Available() {
 		return id
 	}
@@ -284,8 +285,8 @@ func endpointRelationID(contract *target.Contract, endpoints []endpointDraft) (i
 	return id
 }
 
-func writeBinding(writer *framing.Writer, binding target.BindingSpec) error {
-	if writer == nil || binding.Namespace != target.BindingProvider || writer.Uint(uint64(binding.Namespace)) != nil || writer.Count(uint64(len(binding.Owner))) != nil {
+func writeBinding(writer *framing.Writer, binding vocabulary.BindingSpec) error {
+	if writer == nil || binding.Namespace != vocabulary.BindingProvider || writer.Uint(uint64(binding.Namespace)) != nil || writer.Count(uint64(len(binding.Owner))) != nil {
 		return errors.New("invalid endpoint binding")
 	}
 	for _, segment := range binding.Owner {
@@ -304,7 +305,7 @@ func writeBinding(writer *framing.Writer, binding target.BindingSpec) error {
 	return nil
 }
 
-func endpointLocalID(contract *target.Contract, op target.Operation, request endpointRequestRow) (id identity.ContentID, ok bool) {
+func endpointLocalID(contract *target.Contract, op vocabulary.Operation, request endpointRequestRow) (id identity.ContentID, ok bool) {
 	if contract == nil || op == 0 || request.identity == "" {
 		return id, false
 	}
@@ -334,7 +335,7 @@ func seededID(domain string, relation identity.ContentID, ordinal uint32) (id id
 	return id, len(sum) == len(id)
 }
 
-func operationSeedID(contract *target.Contract, op target.Operation) (identity.ContentID, bool) {
+func operationSeedID(contract *target.Contract, op vocabulary.Operation) (identity.ContentID, bool) {
 	if contract == nil || op == 0 {
 		return identity.ContentID{}, false
 	}
@@ -345,7 +346,7 @@ func operationSeedID(contract *target.Contract, op target.Operation) (identity.C
 	return seededID("program/link/boundary/seed-operation", opID, 0)
 }
 
-func loaderSeedID(a *authority, mount uint32, op target.Operation) (id identity.ContentID, ok bool) {
+func loaderSeedID(a *authority, mount uint32, op vocabulary.Operation) (id identity.ContentID, ok bool) {
 	if a == nil || a.target == nil || a.project == nil || mount == 0 || op == 0 {
 		return id, false
 	}
@@ -372,12 +373,12 @@ func loaderSeedID(a *authority, mount uint32, op target.Operation) (id identity.
 	return id, len(sum) == len(id)
 }
 
-func deniedSeedID(contract *target.Contract, value target.InitialValue) (identity.ContentID, bool) {
+func deniedSeedID(contract *target.Contract, value vocabulary.InitialValue) (identity.ContentID, bool) {
 	if contract == nil || value == 0 {
 		return identity.ContentID{}, false
 	}
 	kind, ok := contract.InitialValueKind(value)
-	if !ok || kind != target.InitialValueDeniedOperation {
+	if !ok || kind != vocabulary.InitialValueDeniedOperation {
 		return identity.ContentID{}, false
 	}
 	namespace, ok := contract.InitialValueDeniedNamespace(value)
@@ -431,7 +432,7 @@ func (s Seeds) At(index int) (Seed, bool) {
 	}
 	return Seed{component: s.component, ordinal: uint32(index)}, true
 }
-func (s Seeds) ForOperation(op target.Operation) (Seed, bool) {
+func (s Seeds) ForOperation(op vocabulary.Operation) (Seed, bool) {
 	if !s.live() || op == 0 || uint64(op) > uint64(len(s.component.authority.seedTable.operation)) {
 		return Seed{}, false
 	}
@@ -455,7 +456,7 @@ func (s Seeds) ScopedLoader(shard linkproject.Shard) (Seed, bool) {
 	}
 	return Seed{component: s.component, ordinal: ordinal - 1}, true
 }
-func (s Seeds) Operation(seed Seed) (target.Operation, bool) {
+func (s Seeds) Operation(seed Seed) (vocabulary.Operation, bool) {
 	if !s.valid(seed) {
 		return 0, false
 	}
@@ -472,7 +473,7 @@ func (s Seeds) Loader(seed Seed) (linkproject.Shard, bool) {
 	}
 	return s.component.authority.project.Mounts().At(int(row.mount) - 1)
 }
-func (s Seeds) BootstrapCallable(value target.InitialValue) (Seed, CallableDisposition, bool) {
+func (s Seeds) BootstrapCallable(value vocabulary.InitialValue) (Seed, CallableDisposition, bool) {
 	if !s.live() || value == 0 {
 		return Seed{}, CallableInvalid, false
 	}
@@ -480,7 +481,7 @@ func (s Seeds) BootstrapCallable(value target.InitialValue) (Seed, CallableDispo
 	if !ok {
 		return Seed{}, CallableInvalid, false
 	}
-	if kind == target.InitialValueOperation {
+	if kind == vocabulary.InitialValueOperation {
 		op, ok := s.component.authority.target.InitialValueOperation(value)
 		if !ok {
 			return Seed{}, CallableInvalid, false
@@ -491,7 +492,7 @@ func (s Seeds) BootstrapCallable(value target.InitialValue) (Seed, CallableDispo
 		}
 		return seed, CallableAdmittedOperation, true
 	}
-	if kind != target.InitialValueDeniedOperation {
+	if kind != vocabulary.InitialValueDeniedOperation {
 		return Seed{}, CallableInvalid, false
 	}
 	table := s.component.authority.seedTable
@@ -505,7 +506,7 @@ func (s Seeds) BootstrapCallable(value target.InitialValue) (Seed, CallableDispo
 	}
 	return Seed{}, CallableInvalid, false
 }
-func (s Seeds) CallableDisposition(seed Seed) (CallableDisposition, target.Operation, target.InitialValue, bool) {
+func (s Seeds) CallableDisposition(seed Seed) (CallableDisposition, vocabulary.Operation, vocabulary.InitialValue, bool) {
 	if !s.valid(seed) {
 		return CallableInvalid, 0, 0, false
 	}
@@ -567,7 +568,7 @@ func (e Endpoints) At(index int) (Endpoint, bool) {
 	}
 	return Endpoint{component: e.component, ordinal: uint32(index)}, true
 }
-func (e Endpoints) Operation(endpoint Endpoint) (target.Operation, bool) {
+func (e Endpoints) Operation(endpoint Endpoint) (vocabulary.Operation, bool) {
 	if !e.valid(endpoint) {
 		return 0, false
 	}

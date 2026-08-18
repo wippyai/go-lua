@@ -46,6 +46,10 @@ func (key Key) Available() bool { return key != "" }
 // diagnostics follow both. Composites relate coordinate spaces and queries read
 // them, so both follow axes; a denominator quantifies over the entries of a
 // surface sealed below it, so it follows every surface it may name as an owner.
+// Observations consume query families, denominator relations, and structural
+// population/role identities, so they are the final surface: every identity
+// and producer an observation names has already been sealed when its rows are
+// admitted.
 type SurfaceKind uint8
 
 const (
@@ -57,6 +61,7 @@ const (
 	SurfaceKindComposite
 	SurfaceKindDenominator
 	SurfaceKindQuery
+	SurfaceKindObservation
 	surfaceKindLimit
 )
 

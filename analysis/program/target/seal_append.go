@@ -2,19 +2,19 @@ package target
 
 import (
 	"errors"
-	"sort"
-
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
+	"sort"
 )
 
-func (c *Contract) appendOperation(op Operation, draft *operationDraft, keys map[keyspace.LiteralValue]ExactKey) error {
+func (c *Contract) appendOperation(op vocabulary.Operation, draft *operationDraft, keys map[keyspace.LiteralValue]vocabulary.ExactKey) error {
 	expected, err := checkedStoredHandle("operation table", len(c.operations))
 	if err != nil {
 		return err
 	}
-	if op != Operation(expected) {
+	if op != vocabulary.Operation(expected) {
 		return errors.New("target: noncanonical operation handle")
 	}
 	typeHandle, err := c.appendTypes(op, draft.types, draft.declarations)
@@ -53,7 +53,7 @@ func (c *Contract) appendOperation(op Operation, draft *operationDraft, keys map
 	}
 	row.valuesTypes = valuesTypes
 
-	valuesHandle := make(map[string]Values)
+	valuesHandle := make(map[string]vocabulary.Values)
 	allValues := make(map[string]valuesDraft)
 	addValues := func(values valuesDraft) error {
 		key, keyErr := values.key()
@@ -70,7 +70,7 @@ func (c *Contract) appendOperation(op Operation, draft *operationDraft, keys map
 	if err := addValues(draft.input); err != nil {
 		return err
 	}
-	outcomeValues := make([]Values, 0, len(draft.outcomes))
+	outcomeValues := make([]vocabulary.Values, 0, len(draft.outcomes))
 	for _, outcome := range draft.outcomes {
 		if err := addValues(outcome.values); err != nil {
 			return err
@@ -171,7 +171,7 @@ func (c *Contract) appendOperation(op Operation, draft *operationDraft, keys map
 		return transferErr
 	}
 	row.transfers = transfers
-	effectRange, err := c.appendEffects(draft.effects)
+	effectRange, err := c.appendEffects(effectOwnerOperation, draft.effects)
 	if err != nil {
 		return err
 	}
@@ -190,7 +190,7 @@ func (c *Contract) appendOperation(op Operation, draft *operationDraft, keys map
 	return nil
 }
 
-func (c *Contract) appendTypes(owner Operation, input map[string][]byte, declarations map[string]schematype.Type) (map[string]Type, error) {
+func (c *Contract) appendTypes(owner vocabulary.Operation, input map[string][]byte, declarations map[string]schematype.Type) (map[string]vocabulary.Type, error) {
 	keys := make([]string, 0, len(input))
 	for key := range input {
 		keys = append(keys, key)
@@ -199,13 +199,13 @@ func (c *Contract) appendTypes(owner Operation, input map[string][]byte, declara
 	if _, err := checkedStoredRange("type table", len(c.types), len(keys)); err != nil {
 		return nil, err
 	}
-	handles := make(map[string]Type, len(keys))
+	handles := make(map[string]vocabulary.Type, len(keys))
 	for _, key := range keys {
 		declaration, declarationOK := declarations[key]
 		if !declarationOK || !declaration.Available() {
 			return nil, errors.New("target: missing neutral type declaration")
 		}
-		if _, err := checkedStoredLength("type bytes", len(input[key])); err != nil {
+		if _, err := vocabulary.CheckedStoredLength("type bytes", len(input[key])); err != nil {
 			return nil, err
 		}
 		handle, err := checkedStoredHandle("type table", len(c.types))
@@ -216,12 +216,12 @@ func (c *Contract) appendTypes(owner Operation, input map[string][]byte, declara
 			owner: owner, declaration: declaration,
 			bytes: append([]byte(nil), input[key]...),
 		})
-		handles[key] = Type(handle)
+		handles[key] = vocabulary.Type(handle)
 	}
 	return handles, nil
 }
 
-func (c *Contract) appendValues(owner Operation, input valuesDraft, handles map[string]Type) (Values, error) {
+func (c *Contract) appendValues(owner vocabulary.Operation, input valuesDraft, handles map[string]vocabulary.Type) (vocabulary.Values, error) {
 	handle, err := checkedStoredHandle("Values table", len(c.values))
 	if err != nil {
 		return 0, err
@@ -244,10 +244,10 @@ func (c *Contract) appendValues(owner Operation, input valuesDraft, handles map[
 		c.valueTypes = append(c.valueTypes, handles[key])
 	}
 	c.values = append(c.values, row)
-	return Values(handle), nil
+	return vocabulary.Values(handle), nil
 }
 
-func (c *Contract) appendBindings(input []BindingSpec, keys map[keyspace.LiteralValue]ExactKey) (indexRange, error) {
+func (c *Contract) appendBindings(input []vocabulary.BindingSpec, keys map[keyspace.LiteralValue]vocabulary.ExactKey) (indexRange, error) {
 	output, err := checkedStoredRange("binding table", len(c.bindings), len(input))
 	if err != nil {
 		return indexRange{}, err
@@ -262,7 +262,7 @@ func (c *Contract) appendBindings(input []BindingSpec, keys map[keyspace.Literal
 	return output, nil
 }
 
-func (c *Contract) appendBinding(input BindingSpec, keys map[keyspace.LiteralValue]ExactKey) (bindingRange, error) {
+func (c *Contract) appendBinding(input vocabulary.BindingSpec, keys map[keyspace.LiteralValue]vocabulary.ExactKey) (bindingRange, error) {
 	owner, err := checkedStoredRange("binding segment pool", len(c.segments), len(input.Owner))
 	if err != nil {
 		return bindingRange{}, err
@@ -300,47 +300,7 @@ func (c *Contract) appendBinding(input BindingSpec, keys map[keyspace.LiteralVal
 	return row, nil
 }
 
-func (c *Contract) appendCallbacks(owner Operation, input []callbackDraft, values map[string]Values) ([]CallbackID, indexRange, error) {
-	rangeOut, err := checkedStoredRange("callback table", len(c.callbacks), len(input))
-	if err != nil {
-		return nil, indexRange{}, err
-	}
-	ids := make([]CallbackID, len(input))
-	for index := range input {
-		callback := &input[index]
-		handle, handleErr := checkedStoredHandle("callback table", len(c.callbacks))
-		if handleErr != nil {
-			return nil, indexRange{}, handleErr
-		}
-		effects, effectErr := c.appendEffects(callback.effects.effects)
-		if effectErr != nil {
-			return nil, indexRange{}, effectErr
-		}
-		id := CallbackID(handle)
-		ids[callback.source] = id
-		callback.sealed = id
-		arguments, valuesErr := lookupDraftValues(values, callback.arguments)
-		if valuesErr != nil {
-			return nil, indexRange{}, valuesErr
-		}
-		var outcomes [5]Values
-		for terminal := range callback.outcomes {
-			value, terminalErr := lookupDraftValues(values, callback.outcomes[terminal])
-			if terminalErr != nil {
-				return nil, indexRange{}, terminalErr
-			}
-			outcomes[terminal] = value
-		}
-		c.callbacks = append(c.callbacks, callbackRow{
-			owner: owner, function: callback.function, admission: callback.admission,
-			arguments: arguments, outcomes: outcomes, lifecycle: callback.lifecycle,
-			effects: effects, effectTail: callback.effects.tail, effectVar: callback.effects.variable,
-		})
-	}
-	return ids, rangeOut, nil
-}
-
-func lookupDraftValues(values map[string]Values, draft valuesDraft) (Values, error) {
+func lookupDraftValues(values map[string]vocabulary.Values, draft valuesDraft) (vocabulary.Values, error) {
 	key, err := draft.key()
 	if err != nil {
 		return 0, err
@@ -352,252 +312,16 @@ func lookupDraftValues(values map[string]Values, draft valuesDraft) (Values, err
 	return handle, nil
 }
 
-func (c *Contract) appendSuspensions(input []suspensionDraft) (indexRange, error) {
-	rangeOut, err := checkedStoredRange("suspension table", len(c.suspensions), len(input))
-	if err != nil {
-		return indexRange{}, err
-	}
-	for _, suspension := range input {
-		c.suspensions = append(c.suspensions, suspensionRow(suspension))
-	}
-	return rangeOut, nil
-}
-
-func (c *Contract) appendSpawns(owner Operation, input []spawnDraft, callbacks []CallbackID, outcomes []Values) (indexRange, error) {
-	rangeOut, err := checkedStoredRange("spawn table", len(c.spawns), len(input))
-	if err != nil {
-		return indexRange{}, err
-	}
-	for _, spawn := range input {
-		if spawn.child == 0 || int(spawn.child) > len(callbacks) || int(spawn.childEntry) >= len(outcomes) || int(spawn.parentResume) >= len(outcomes) {
-			return indexRange{}, errors.New("target: unresolved spawn")
-		}
-		c.spawns = append(c.spawns, spawnRow{
-			owner: owner, function: spawn.function, child: callbacks[spawn.child-1],
-			yield: spawn.yield, parentResume: spawn.parentResume,
-			childEntry: outcomes[spawn.childEntry], resumeValues: outcomes[spawn.parentResume],
-			alternatives: spawn.alternatives,
-		})
-	}
-	return rangeOut, nil
-}
-
-func (c *Contract) appendResumes(owner Operation, input []resumeDraft, values map[string]Values) (indexRange, error) {
-	rangeOut, err := checkedStoredRange("resume table", len(c.resumes), len(input))
-	if err != nil {
-		return indexRange{}, err
-	}
-	for _, resume := range input {
-		arguments, valuesErr := lookupDraftValues(values, resume.arguments)
-		if valuesErr != nil {
-			return indexRange{}, valuesErr
-		}
-		c.resumes = append(c.resumes, resumeRow{owner: owner, source: resume.source, carrier: resume.carrier, arguments: arguments, outcomes: resume.outcomes})
-	}
-	return rangeOut, nil
-}
-
-func (c *Contract) appendTransfers(owner Operation, input []transferDraft) (indexRange, error) {
-	rangeOut, err := checkedStoredRange("transfer table", len(c.transfers), len(input))
-	if err != nil {
-		return indexRange{}, err
-	}
-	for _, transfer := range input {
-		outcomes, outcomeErr := appendStoredRange(
-			&c.transferOutcomes, transfer.outcomes, "transfer outcome table",
-		)
-		if outcomeErr != nil {
-			return indexRange{}, outcomeErr
-		}
-		c.transfers = append(c.transfers, transferRow{
-			owner: owner, endpoint: transfer.endpoint, payload: transfer.payload, alias: transfer.alias, identity: transfer.identity,
-			capabilities: transfer.capabilities, outcomes: outcomes,
-		})
-	}
-	return rangeOut, nil
-}
-
-func (c *Contract) appendEffects(input []effectDraft) (indexRange, error) {
-	rangeOut, err := checkedStoredRange("effect table", len(c.effects), len(input))
-	if err != nil {
-		return indexRange{}, err
-	}
-	valueArgs, err := totalEffectArguments(input, func(effect effectDraft) int { return len(effect.values) }, "effect value argument pool")
-	if err != nil {
-		return indexRange{}, err
-	}
-	typeArgs, err := totalEffectArguments(input, func(effect effectDraft) int { return len(effect.types) }, "effect type argument pool")
-	if err != nil {
-		return indexRange{}, err
-	}
-	valuesArgs, err := totalEffectArguments(input, func(effect effectDraft) int { return len(effect.valuesVar) }, "effect Values argument pool")
-	if err != nil {
-		return indexRange{}, err
-	}
-	rowArgs, err := totalEffectArguments(input, func(effect effectDraft) int { return len(effect.rows) }, "effect row argument pool")
-	if err != nil {
-		return indexRange{}, err
-	}
-	if _, err := checkedStoredRange("effect value argument pool", len(c.effectVals), valueArgs); err != nil {
-		return indexRange{}, err
-	}
-	if _, err := checkedStoredRange("effect type argument pool", len(c.effectType), typeArgs); err != nil {
-		return indexRange{}, err
-	}
-	if _, err := checkedStoredRange("effect Values argument pool", len(c.effectVars), valuesArgs); err != nil {
-		return indexRange{}, err
-	}
-	if _, err := checkedStoredRange("effect row argument pool", len(c.effectRows), rowArgs); err != nil {
-		return indexRange{}, err
-	}
-	for _, effect := range input {
-		row := effectRow{target: effect.target, publication: effect.publication, hasPublication: effect.hasPublication}
-		if row.values, err = appendStoredRange(&c.effectVals, effect.values, "effect value argument pool"); err != nil {
-			return indexRange{}, err
-		}
-		if row.types, err = appendStoredRange(&c.effectType, effect.types, "effect type argument pool"); err != nil {
-			return indexRange{}, err
-		}
-		if row.valuesVar, err = appendStoredRange(&c.effectVars, effect.valuesVar, "effect Values argument pool"); err != nil {
-			return indexRange{}, err
-		}
-		if row.rows, err = appendStoredRange(&c.effectRows, effect.rows, "effect row argument pool"); err != nil {
-			return indexRange{}, err
-		}
-		c.effects = append(c.effects, row)
-	}
-	return rangeOut, nil
-}
-
-func (c *Contract) appendCallbackReleases(drafts []operationDraft) error {
-	pending := make([][]callbackReleaseRow, len(c.operations))
-	for draftIndex := range drafts {
-		for callbackIndex := range drafts[draftIndex].callbacks {
-			callback := drafts[draftIndex].callbacks[callbackIndex]
-			if callback.release == nil {
-				continue
-			}
-			if callback.sealed == 0 || callback.release.operation == 0 ||
-				uint64(callback.release.operation) > uint64(len(pending)) {
-				return errors.New("target: unresolved callback release")
-			}
-			pending[uint32(callback.release.operation)-1] = append(
-				pending[uint32(callback.release.operation)-1],
-				callbackReleaseRow{
-					callback: callback.sealed, operation: callback.release.operation,
-					input: callback.release.input, outcome: callback.release.outcome,
-					mode: callback.release.mode, zeroBehavior: callback.release.zeroBehavior,
-					zeroOutcome: callback.release.zeroOutcome,
-				},
-			)
-		}
-	}
-	for operation := range pending {
-		releases := pending[operation]
-		if len(releases) == 0 {
-			continue
-		}
-		sort.Slice(releases, func(left, right int) bool {
-			return compareCallbackRelease(releases[left], releases[right]) < 0
-		})
-		for index := 1; index < len(releases); index++ {
-			if releases[index-1].callback == releases[index].callback {
-				return errors.New("target: callback has duplicate release")
-			}
-		}
-		rangeOut, err := checkedStoredRange("callback release table", len(c.callbackReleases), len(releases))
-		if err != nil {
-			return err
-		}
-		c.operations[operation].releases = rangeOut
-		for _, release := range releases {
-			handle, handleErr := checkedStoredHandle("callback release table", len(c.callbackReleases))
-			if handleErr != nil {
-				return handleErr
-			}
-			c.callbackReleases = append(c.callbackReleases, release)
-			c.callbacks[uint32(release.callback)-1].release = handle
-		}
-	}
-	return nil
-}
-
-func (c *Contract) appendProduced(input []producedDraft, callbacks []CallbackID) (indexRange, error) {
-	rangeOut, err := checkedStoredRange("produced operation table", len(c.produced), len(input))
-	if err != nil {
-		return indexRange{}, err
-	}
-	for _, produced := range input {
-		captures, captureErr := checkedStoredRange("produced capture table", len(c.captures), len(produced.captures))
-		if captureErr != nil {
-			return indexRange{}, captureErr
-		}
-		for _, capture := range produced.captures {
-			ordinal := capture.Ordinal
-			if capture.Kind == CaptureCallback {
-				ordinal = uint32(callbacks[capture.Ordinal-1])
-			}
-			c.captures = append(c.captures, captureRow{kind: capture.Kind, ordinal: ordinal})
-		}
-		typeValueCapture := noTypeValueCapture
-		for captureIndex, capture := range produced.captures {
-			if capture.Kind == CaptureTypeValueFormal {
-				typeValueCapture = uint32(captureIndex)
-				break
-			}
-		}
-		c.produced = append(c.produced, producedRow{
-			result: produced.result, target: produced.target, captures: captures, typeValueCapture: typeValueCapture,
-		})
-	}
-	return rangeOut, nil
-}
-
-func (c *Contract) appendFreshResults(input []freshResultDraft) (indexRange, error) {
-	rangeOut, err := checkedStoredRange("fresh result table", len(c.fresh), len(input))
-	if err != nil {
-		return indexRange{}, err
-	}
-	for _, fresh := range input {
-		c.fresh = append(c.fresh, freshResultRow(fresh))
-	}
-	return rangeOut, nil
-}
-
-func (c *Contract) appendCallbackResults(input []callbackResultDraft, callbacks []CallbackID) (indexRange, error) {
-	rangeOut, err := checkedStoredRange("callback result table", len(c.callbackResults), len(input))
-	if err != nil {
-		return indexRange{}, err
-	}
-	for _, result := range input {
-		c.callbackResults = append(c.callbackResults, callbackResultRow{
-			result: result.result, callback: callbacks[result.callback-1],
-		})
-	}
-	return rangeOut, nil
-}
-
-func (c *Contract) appendResultAliases(input []resultAliasDraft) (indexRange, error) {
-	rangeOut, err := checkedStoredRange("result alias table", len(c.resultAliases), len(input))
-	if err != nil {
-		return indexRange{}, err
-	}
-	for _, alias := range input {
-		c.resultAliases = append(c.resultAliases, resultAliasRow(alias))
-	}
-	return rangeOut, nil
-}
-
 func (c *Contract) appendOpaque() error {
 	opHandle, err := checkedStoredHandle("operation table", len(c.operations))
 	if err != nil {
 		return err
 	}
-	opaque := Operation(opHandle)
+	opaque := vocabulary.Operation(opHandle)
 	if _, err := checkedStoredRange("outcome table", len(c.outcomes), 4); err != nil {
 		return err
 	}
-	unknownDraft := valuesDraft{tail: ValuesUnknown}
+	unknownDraft := valuesDraft{tail: vocabulary.ValuesUnknown}
 	unknown, err := c.appendValues(opaque, unknownDraft, nil)
 	if err != nil {
 		return err
@@ -616,31 +340,31 @@ func (c *Contract) appendOpaque() error {
 		c.outcomes = append(c.outcomes, outcomeRow{kind: kind, values: unknown})
 	}
 	transfers, err := c.appendTransfers(opaque, []transferDraft{{
-		endpoint:     TransferEndpoint{Kind: TransferEndpointExternal},
-		payload:      InputSource{Kind: InputSourceAllInputs},
-		alias:        InputSource{Kind: InputSourceAllInputs},
-		identity:     TransferIdentityUnspecified,
-		capabilities: TransferCapabilitiesUnspecified,
-		outcomes: []TransferPossibility{
-			TransferMayDeliver | TransferMayReject,
-			TransferMayDeliver | TransferMayReject,
-			TransferMayDeliver | TransferMayReject,
-			TransferMayDeliver | TransferMayReject,
+		endpoint:     vocabulary.TransferEndpoint{Kind: vocabulary.TransferEndpointExternal},
+		payload:      vocabulary.InputSource{Kind: vocabulary.InputSourceAllInputs},
+		alias:        vocabulary.InputSource{Kind: vocabulary.InputSourceAllInputs},
+		identity:     vocabulary.TransferIdentityUnspecified,
+		capabilities: vocabulary.TransferCapabilitiesUnspecified,
+		outcomes: []vocabulary.TransferPossibility{
+			vocabulary.TransferMayDeliver | vocabulary.TransferMayReject,
+			vocabulary.TransferMayDeliver | vocabulary.TransferMayReject,
+			vocabulary.TransferMayDeliver | vocabulary.TransferMayReject,
+			vocabulary.TransferMayDeliver | vocabulary.TransferMayReject,
 		},
 	}})
 	if err != nil {
 		return err
 	}
 	_, callbacks, err := c.appendCallbacks(opaque, []callbackDraft{{
-		function:  InputSource{Kind: InputSourceAllInputs},
+		function:  vocabulary.InputSource{Kind: vocabulary.InputSourceAllInputs},
 		admission: schematype.CallableAdmissionOrdinary,
 		arguments: unknownDraft,
 		outcomes: [5]valuesDraft{
 			unknownDraft, unknownDraft, unknownDraft, unknownDraft, unknownDraft,
 		},
-		lifecycle: CallbackRetainedOptionalMany,
-		effects:   rowDraft{tail: RowUnknownOpen},
-	}}, map[string]Values{unknownKey: unknown})
+		lifecycle: vocabulary.CallbackRetainedOptionalMany,
+		effects:   rowDraft{tail: vocabulary.RowUnknownOpen},
+	}}, map[string]vocabulary.Values{unknownKey: unknown})
 	if err != nil {
 		return err
 	}
@@ -649,7 +373,7 @@ func (c *Contract) appendOpaque() error {
 		outcomes:   outcomes,
 		callbacks:  callbacks,
 		transfers:  transfers,
-		effectTail: RowUnknownOpen,
+		effectTail: vocabulary.RowUnknownOpen,
 	})
 	c.opaque = opaque
 	return nil
@@ -657,12 +381,12 @@ func (c *Contract) appendOpaque() error {
 
 func (c *Contract) buildLookup() error {
 	c.lookup = make([]bindingIndexRow, 0, len(c.bindings))
-	for index := 0; index < c.BoundOperationCount(); index++ {
+	for index := 0; index < c.boundOperationCount(); index++ {
 		handle, err := checkedStoredHandle("operation handle", index)
 		if err != nil {
 			return err
 		}
-		op := Operation(handle)
+		op := vocabulary.Operation(handle)
 		row := c.operations[index]
 		for binding := row.bindings.start; binding < row.bindings.end; binding++ {
 			c.lookup = append(c.lookup, bindingIndexRow{binding: binding, operation: op})
@@ -677,4 +401,35 @@ func (c *Contract) buildLookup() error {
 		}
 	}
 	return nil
+}
+
+func (c *Contract) appendProtocolTransitions(input []transitionDraft) (indexRange, error) {
+	rangeOut, err := checkedStoredRange("protocol transition table", len(c.transitions), len(input))
+	if err != nil {
+		return indexRange{}, err
+	}
+	for _, item := range input {
+		outcomes := make([]transitionOutcomeRow, len(item.outcomes))
+		for i, outcome := range item.outcomes {
+			outcomes[i] = transitionOutcomeRow{outcome: outcome.outcome, to: outcome.to}
+		}
+		rangeItems, appendErr := appendStoredRange(&c.transitionOutcomes, outcomes, "protocol transition outcome table")
+		if appendErr != nil {
+			return indexRange{}, appendErr
+		}
+		c.transitions = append(c.transitions, transitionRow{operation: item.operation, input: item.input, from: item.from, outcomes: rangeItems})
+	}
+	return rangeOut, nil
+}
+
+func (c *Contract) appendInitialValueBinding(input vocabulary.BindingSpec, keys map[keyspace.LiteralValue]vocabulary.ExactKey) (uint32, error) {
+	if _, err := checkedStoredRange("initial value binding table", len(c.initialValueBinds), 1); err != nil {
+		return 0, err
+	}
+	binding, err := c.appendBinding(input, keys)
+	if err != nil {
+		return 0, err
+	}
+	c.initialValueBinds = append(c.initialValueBinds, binding)
+	return uint32(len(c.initialValueBinds)), nil
 }

@@ -87,6 +87,22 @@ func Read[K comparable, V any](s *Snapshot, ax Axis[K, V], key K) (V, ReadStatus
 	return stored.read(key)
 }
 
+// ReadOverlay answers key on the current column the builder ax names. It is
+// the mutable-publication counterpart to Read: an inherited column and any
+// persistent edits already applied to it are visible immediately, while the
+// same schema, slot, and column-kind checks fail closed to ReadInvalid.
+//
+// The returned value is borrowed and transitively immutable. ReadOverlay
+// allocates nothing.
+func ReadOverlay[K comparable, V any](b *Builder, ax Axis[K, V], key K) (V, ReadStatus) {
+	stored, recovered := columnAtBuilder[K, V](b, ax.SchemaID, ax.Slot)
+	if !recovered {
+		var zero V
+		return zero, ReadInvalid
+	}
+	return stored.read(key)
+}
+
 // ReadAt answers key on the column locator addresses. It validates the
 // locator against this snapshot's store and generation before it validates
 // bounds and column kind, so an address issued against a superseded
@@ -132,5 +148,20 @@ func columnAt[K comparable, V any](s *Snapshot, schema identity.ContentID, slot 
 		return nil, false
 	}
 	stored, recovered := s.columns[slot].(*column[K, V])
+	return stored, recovered
+}
+
+// columnAtBuilder performs the builder-side validation and typed recovery for
+// ReadOverlay. A builder can be read before Seal, so unlike columnAt it does
+// not require store and generation identities that are only needed to publish
+// a Snapshot.
+func columnAtBuilder[K comparable, V any](b *Builder, schema identity.ContentID, slot uint32) (*column[K, V], bool) {
+	if b == nil || !b.schema.Available() || !schema.Available() || schema != b.schema {
+		return nil, false
+	}
+	if uint64(slot) >= uint64(len(b.columns)) || b.columns[slot] == nil {
+		return nil, false
+	}
+	stored, recovered := b.columns[slot].(*column[K, V])
 	return stored, recovered
 }

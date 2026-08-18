@@ -33,6 +33,7 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *SchemaFra
 	return rule.Spec[P, A, *SchemaFragment, *HotRule]{
 		Key:      "value-bootstrap",
 		Writes:   "value",
+		Owner:    "value",
 		Lane:     rule.LaneLink,
 		Semantic: "semantic/rule/value/host-global-bootstrap",
 		Roles:    []schema.Key{"semantic/operand/value/host-global-bootstrap", "semantic/evidence/value/host-global-bootstrap"},
@@ -52,14 +53,6 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *SchemaFra
 		Finalize: func(context rule.Finalization[A, *HotRule]) bool {
 			catalog := context.Rule.Catalog()
 			return catalog != nil && catalog.FencedTo(context.Authorities.ValueSchema())
-		},
-		LinkAttach: func(context rule.LinkAttach[*HotRule]) bool {
-			_, ok := context.Rule.AttachLinkOccurrence(context.Assembly, context.Occurrence)
-			return ok
-		},
-		LinkMember: func(context rule.LinkMember[*HotRule]) bool {
-			_, ok := context.Rule.AttachLinkReceiptMember(context.Compilation, context.Graph, context.Occurrence)
-			return ok
 		},
 		LinkCatalog: func(hot *HotRule) (rule.LinkCatalog, bool) {
 			catalog := hot.Catalog()

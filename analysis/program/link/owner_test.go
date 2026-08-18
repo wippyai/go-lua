@@ -1,22 +1,23 @@
-package link
+package link_test
 
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 )
 
 func TestOwnerCapabilityIsExactAndDetached(t *testing.T) {
 	contract := contract(t)
 	program := source(t, ``)
-	spec := func() *Spec {
-		return &Spec{Target: contract, Modules: []linkproject.Module{{Name: "main", Program: program}}}
+	spec := func() *link.Spec {
+		return &link.Spec{Target: contract, Modules: []linkproject.Module{{Name: "main", Program: program}}}
 	}
-	left, err := Seal(spec())
+	left, err := link.Seal(spec())
 	if err != nil {
 		t.Fatal(err)
 	}
-	right, err := Seal(spec())
+	right, err := link.Seal(spec())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +33,7 @@ func TestOwnerCapabilityIsExactAndDetached(t *testing.T) {
 	if first.Matches(second) || first.ContentID() != left.ContentID() {
 		t.Fatal("equal-content foreign capability crossed owner fence")
 	}
-	if (OwnerCapability{}).Available() {
+	if (link.OwnerCapability{}).Available() {
 		t.Fatal("zero capability is available")
 	}
 }

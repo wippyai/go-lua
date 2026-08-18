@@ -70,13 +70,13 @@ func newRuntimeBinding(schema *Schema, graph *equation.Graph) (*runtimeBinding, 
 	return &runtimeBinding{schema: schema, mode: runtimeBindingReceipt, graph: graph, guards: manager, catalog: catalog, validated: true}, true
 }
 
-// newReceiptRuntimeBinding is the pre-fenced constructor for the callback-free
-// Factor vertical.  It shares the same graph/catalog/runtime path as the
-// constructor publishes the exact sealed SchemaBinding state and
-// authority before any Factor implementation can be consumed.  A receipt can
-// therefore never claim ownership of an unpinned runtime or mix bindings.
-func newReceiptRuntimeBinding(binding *SchemaBinding, graph *equation.Graph) (*runtimeBinding, bool) {
-	state := bindingState(binding)
+// newSealedRuntimeBinding is the pre-fenced constructor for the callback-free
+// Factor vertical. It publishes the exact sealed binding state and authority
+// before any Factor implementation can be consumed, so a caller can never claim
+// ownership of an unpinned runtime or mix bindings. It takes the sealed state
+// itself, because that state is the retained input an activation revision
+// rebinds from.
+func newSealedRuntimeBinding(state *schemaBindingState, graph *equation.Graph) (*runtimeBinding, bool) {
 	if state == nil {
 		return nil, false
 	}

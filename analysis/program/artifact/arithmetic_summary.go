@@ -71,7 +71,7 @@ func (artifact *Artifact) ArithmeticSummaryAt(index int) (ArithmeticSummaryRow, 
 
 func (row ArithmeticSummaryRow) Available() bool {
 	return row.id.Available() && row.occurrence.Available() && row.body.Available() &&
-		binaryArithmeticOperator(row.op) && row.left.Valid() && row.right.Valid() && row.result.Valid() && row.divisor.validFor(row.op) &&
+		flowkind.IsBinaryArithmetic(row.op) && row.left.Valid() && row.right.Valid() && row.result.Valid() && row.divisor.validFor(row.op) &&
 		row.id == arithmeticSummaryID(row.occurrence, row.body, row.op, row.left, row.right, row.result, row.divisor)
 }
 
@@ -114,7 +114,7 @@ func (row ArithmeticSummaryRow) DivisorProperty() ArithmeticDivisorProperty {
 }
 
 func arithmeticSummaryID(occurrence, body identity.ContentID, op flowkind.BinaryOp, left, right, result NumericRepresentation, divisor ArithmeticDivisorProperty) identity.ContentID {
-	if !occurrence.Available() || !body.Available() || !binaryArithmeticOperator(op) || !left.Valid() || !right.Valid() || !result.Valid() || !divisor.validFor(op) {
+	if !occurrence.Available() || !body.Available() || !flowkind.IsBinaryArithmetic(op) || !left.Valid() || !right.Valid() || !result.Valid() || !divisor.validFor(op) {
 		return identity.ContentID{}
 	}
 	return digest("analysis/program-artifact/arithmetic-summary", artifactFormat,

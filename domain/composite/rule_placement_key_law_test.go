@@ -145,3 +145,46 @@ func TestEveryRulePlacementCarriesItsSealedTableKey(t *testing.T) {
 		t.Fatal("no displaced inventory member was caught, so the law detects nothing")
 	}
 }
+
+// TestRulePlacementAtWalksDeclarationKeyOrder states that issuance order is
+// the sealed table's mounted-key order: first-seen placement keys are a
+// subsequence of the mounted declarations, and a later key never precedes an
+// earlier table member.
+func TestRulePlacementAtWalksDeclarationKeyOrder(t *testing.T) {
+	keys := sealedRuleKeys(t)
+	var mounted []schema.Key
+	for _, key := range keys {
+		if MountedRuleKey(key) {
+			mounted = append(mounted, key)
+		}
+	}
+	if len(mounted) == 0 {
+		t.Fatal("the table declares no mounted key")
+	}
+	position := make(map[schema.Key]int, len(mounted))
+	for index, key := range mounted {
+		position[key] = index
+	}
+	seen := 0
+	for _, artifact := range placementKeyArtifacts(t) {
+		last := -1
+		for index := 0; index < artifact.RulePlacementCount(); index++ {
+			row, ok := artifact.RulePlacementAt(index)
+			if !ok {
+				t.Fatalf("placement %d unavailable", index)
+			}
+			at, known := position[row.Key()]
+			if !known {
+				t.Fatalf("placement %d carries %q, outside the mounted table order", index, row.Key())
+			}
+			if at < last {
+				t.Fatalf("placement %d carries %q after a later table key", index, row.Key())
+			}
+			last = at
+			seen++
+		}
+	}
+	if seen == 0 {
+		t.Fatal("the fixtures issued no placement")
+	}
+}

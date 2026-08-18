@@ -5,14 +5,17 @@ import (
 	"reflect"
 	"testing"
 
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
+	"github.com/wippyai/go-lua/analysis/snapshot"
 	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
 // Keep the first corpus fixture that exercises an unconditional branch in a
-// direct receipt diagnostic lane, so an assembly regression reports its
+// direct diagnostic lane, so an assembly regression reports its
 // closed phase rather than only the census' public incomplete status.
 func TestCorpusAlwaysTrueGuardDiagnosticLaw(t *testing.T) {
 	plan, baseline, _, _ := testCorpusDiagnosticLaw(t, "advice/always-true-guard")
@@ -91,15 +94,10 @@ func TestCorpusAlwaysTrueGuardOptionalValueFenceLaw(t *testing.T) {
 // infer either guard polarity or to change the completed inference result.
 func TestCorpusGuardPolarityMissingEvidenceSuppressesBothRulesLaw(t *testing.T) {
 	plan, baseline, _, _ := testCorpusDiagnosticLaw(t, "native/truthy-false-literal-is-falsy")
-	if plan == nil || plan.state == nil || plan.state.resultReceipt == nil {
-		t.Fatal("false guard fixture did not retain its detached result receipt")
+	if plan == nil || plan.state == nil {
+		t.Fatal("false guard fixture did not retain compiled state")
 	}
-	receipt := plan.state.resultReceipt
-	original := receipt.pointObservations
-	receipt.pointObservations = make(map[artifactResultPoint][]compiledObservation)
-	t.Cleanup(func() { receipt.pointObservations = original })
-
-	result, report, status, diagnostics := solveGuardPolarityReport(plan)
+	result, report, status, diagnostics := solveGuardPolarityReportWithMissingPublication(plan, baseline)
 	if status != AnalyzeComplete || result == nil || report == nil || result.ContentID() != baseline.ContentID() || report.CollectionFailure() != DiagnosticCollectionSubjectQueryAbsent || report.FindingCount() != 0 || diagnostics.Reason != AnalyzeDiagnosticReasonNone {
 		t.Fatalf("missing guard evidence escaped as a polarity: status=%v result=%t report=%t identity=%v/%v failure=%d findings=%d diagnostics=%+v", status, result != nil, report != nil, result.ContentID(), baseline.ContentID(), report.CollectionFailure(), report.FindingCount(), diagnostics)
 	}
@@ -179,7 +177,7 @@ func TestCorpusUnresolvedValueReferenceStaticDiagnosticLaw(t *testing.T) {
 // Program owns the target-independent binder fact that an authored global
 // read was implicit. Link alone knows whether its mounted Target supplies that
 // name. A configured global must therefore remain in the reusable artifact
-// while disappearing from the mount-qualified diagnostic receipt.
+// while disappearing from the mount-qualified diagnostic geometry.
 func TestConfiguredGlobalSuppressesProgramUnresolvedValueCandidateAtLinkLaw(t *testing.T) {
 	contract, err := testfixture.StandardLibraryTarget()
 	if err != nil {
@@ -190,7 +188,7 @@ func TestConfiguredGlobalSuppressesProgramUnresolvedValueCandidateAtLinkLaw(t *t
 	}
 	linked := mustLink(t, "return require", contract)
 	plan, status, diagnostics := CompileWithDiagnostics(linked)
-	if status != CompileComplete || plan == nil || plan.state == nil || plan.state.artifacts == nil || plan.state.resultReceipt == nil {
+	if status != CompileComplete || plan == nil || plan.state == nil || plan.state.artifacts == nil {
 		t.Fatalf("configured-global compile = %v/%t diagnostics=%+v", status, plan != nil, diagnostics)
 	}
 	defer plan.Close()
@@ -212,8 +210,8 @@ func TestConfiguredGlobalSuppressesProgramUnresolvedValueCandidateAtLinkLaw(t *t
 	if programCandidates != 1 {
 		t.Fatalf("configured-global Program candidates = %d, want 1", programCandidates)
 	}
-	for _, observation := range plan.state.resultReceipt.staticObservations {
-		if observation.kind == programartifact.DiagnosticObservationValueReferenceUnresolved {
+	for _, observation := range mustResultGeometry(t, plan.state).staticObservations {
+		if observation.kind == structure.DiagnosticObservationValueReferenceUnresolved {
 			t.Fatal("configured global escaped Link absence filtering")
 		}
 	}
@@ -295,6 +293,45 @@ func solveAlwaysTrueGuardReport(plan *Plan) (*Result, *DiagnosticReport, Analyze
 
 func solveGuardPolarityReport(plan *Plan) (*Result, *DiagnosticReport, AnalyzeStatus, AnalyzeDiagnostics) {
 	return plan.SolveWithReport(context.Background(), fixtureSolveOptions(), DiagnosticPolicy{Enabled: []DiagnosticCode{DiagnosticCodeAlwaysTrueGuard, DiagnosticCodeAlwaysFalseGuard}})
+}
+
+// solveGuardPolarityReportWithMissingPublication keeps inference and the
+// committed observation column intact, then withholds one owner-issued
+// publication before the collector reads it. The test therefore exercises the
+// publication boundary rather than mutating result geometry.
+func solveGuardPolarityReportWithMissingPublication(plan *Plan, baseline *Result) (*Result, *DiagnosticReport, AnalyzeStatus, AnalyzeDiagnostics) {
+	if plan == nil || plan.state == nil || baseline == nil {
+		return nil, nil, AnalyzeIncomplete, AnalyzeDiagnostics{Reason: AnalyzeDiagnosticReasonDetach}
+	}
+	state := plan.state
+	if _, topologyOK := state.instantiateRuntimeTopology(); !topologyOK {
+		return nil, nil, AnalyzeIncomplete, AnalyzeDiagnostics{Reason: AnalyzeDiagnosticReasonDetach}
+	}
+	solver, selected, compiled := state.ordinaryRuntimeSolver()
+	if !compiled || solver == nil || len(selected) == 0 {
+		return nil, nil, AnalyzeIncomplete, AnalyzeDiagnostics{Reason: AnalyzeDiagnosticReasonDetach}
+	}
+	stateResult, solveStatus, engineDiagnostics := solver.SolveWithDiagnostics(context.Background(), engine.SolveDiagnosticOptions{})
+	if solveStatus != engine.SolveComplete || stateResult == nil {
+		return nil, nil, AnalyzeIncomplete, AnalyzeDiagnostics{Phase: AnalyzeDiagnosticPhaseSolve, Reason: AnalyzeDiagnosticReasonEngineIncomplete, Engine: engineDiagnostics}
+	}
+	sealed, publishedOK := solver.PublishedSnapshot(stateResult)
+	published := sealed.Snapshot()
+	if !publishedOK || !published.Published() {
+		return nil, nil, AnalyzeIncomplete, AnalyzeDiagnostics{Reason: AnalyzeDiagnosticReasonDetach}
+	}
+	observationPlan, observationOK := snapshot.OpenQuery[identity.ContentID, engine.Answer](&published, sealed.ObservationFamily())
+	if !observationOK || !observationPlan.Available() || state.binding == nil {
+		return nil, nil, AnalyzeIncomplete, AnalyzeDiagnostics{Reason: AnalyzeDiagnosticReasonDetach}
+	}
+	selected = append([]artifactDiagnosticObservationPublication(nil), selected...)
+	selected = selected[:len(selected)-1]
+	report := &DiagnosticReport{source: baseline.SourceID(), result: baseline.ContentID(), findings: make([]diagnosticFinding, 0), sealed: true}
+	geometry, geometryOK := state.resultGeometry()
+	if !geometryOK || !collectGuardPolarityFindings(report, geometry, selected, state.binding.ValueSchema(), &published, observationPlan, FindingSeverityHint, FindingSeverityHint) {
+		return nil, nil, AnalyzeIncomplete, AnalyzeDiagnostics{Reason: AnalyzeDiagnosticReasonDetach}
+	}
+	return baseline, report, AnalyzeComplete, AnalyzeDiagnostics{}
 }
 
 func solveUnresolvedTypeReferenceReport(plan *Plan) (*Result, *DiagnosticReport, AnalyzeStatus, AnalyzeDiagnostics) {

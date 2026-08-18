@@ -161,7 +161,11 @@ func (b *Bodies) reserve(id bind.Symbol, span source.Span) (keyspace.Term, error
 	if _, exists := b.reservedIDs[id]; exists {
 		return 0, fmt.Errorf("lualower: duplicate reserved binder symbol")
 	}
-	cell := b.collector.Cell(span, b.Owner())
+	name := b.binding.Name(id)
+	if name == "" {
+		return 0, fmt.Errorf("lualower: binder Cell %d has no authored spelling", id)
+	}
+	cell := b.collector.Cell(span, b.Owner(), name)
 	if cell == 0 {
 		return 0, fmt.Errorf("lualower: could not reserve Cell")
 	}

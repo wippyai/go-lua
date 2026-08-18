@@ -10,11 +10,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/snapshot"
 )
 
-// The materializer laws drive the inert publication end to end. They build a
-// real solve through the shared engine fixtures, publish its completed results
-// as snapshot columns, and then prove the publication against the readers the
-// solve itself offers: the same values, the four read outcomes, one content
-// identity per published row set, and a change-set priced republication.
+// The publication laws drive one completed solve through Snapshot columns and
+// prove the sealed value against the readers the solve itself offers: the same
+// values, the four read outcomes, one content identity per published row set,
+// and a change-set priced successor generation.
 
 var (
 	sinkAnswer          Answer
@@ -35,22 +34,20 @@ var (
 func materializedQueryFixture(t testing.TB) (*Solver, ReceiptQuery, *State, SolvedSnapshot) {
 	t.Helper()
 	solver, query, state := newBorrowedQueryFixture(t)
-	materialized, failure := materializeCompletedState(solver, state)
-	if failure.Available() || !materialized.Available() {
-		t.Fatalf("materialize completed query state = %s", failure)
+	if !state.solved.Available() {
+		t.Fatal("completed query state published no snapshot")
 	}
-	return solver, query, state, materialized
+	return solver, query, state, state.solved
 }
 
 // materializedObservationFixture is the observation-lane counterpart.
 func materializedObservationFixture(t testing.TB) (*Solver, ReceiptObservation[[]uint64], *State, SolvedSnapshot) {
 	t.Helper()
 	solver, observation, state := newBorrowedObservationFixture(t)
-	materialized, failure := materializeCompletedState(solver, state)
-	if failure.Available() || !materialized.Available() {
-		t.Fatalf("materialize completed observation state = %s", failure)
+	if !state.solved.Available() {
+		t.Fatal("completed observation state published no snapshot")
 	}
-	return solver, observation, state, materialized
+	return solver, observation, state, state.solved
 }
 
 // openAnswerColumn opens the result column of one published family.
@@ -61,6 +58,156 @@ func openAnswerColumn(t testing.TB, published *snapshot.Snapshot, family identit
 		t.Fatalf("open result column %s", family)
 	}
 	return plan
+}
+
+// TestSolveSealsPublishedSnapshot is the Line B publication law: a completed
+// Solve seals its query column onto State. A later materialize is not required
+// for a consumer to Read the same borrowed answer.
+func TestSolveSealsPublishedSnapshot(t *testing.T) {
+	solver, query, state := newBorrowedQueryFixture(t)
+	sealed, sealedOK := solver.PublishedSnapshot(state)
+	published := sealed.Snapshot()
+	if !sealedOK || !published.Published() {
+		t.Fatal("completed solve did not seal a snapshot")
+	}
+	if published.Store() != solver.store || published.Generation() != state.completion.serial {
+		t.Fatalf("sealed anchors = (%d, %d), want (%d, %d)", published.Store(), published.Generation(), solver.store, state.completion.serial)
+	}
+	key, keyed := query.PublicationKey()
+	if !keyed {
+		t.Fatal("query has no publication key")
+	}
+	borrowed, readable := testSnapshotQueryValue[[]uint64](solver, state, key)
+	if !readable || len(borrowed) != 2 {
+		t.Fatalf("state reader = %#v/%t", borrowed, readable)
+	}
+	plan, opened := snapshot.OpenQuery[identity.ContentID, Answer](&published, sealed.QueryFamily())
+	if !opened {
+		t.Fatal("sealed query family does not open")
+	}
+	answer, status := snapshot.Query(&published, plan, key)
+	value, typed := AnswerValue[[]uint64](answer)
+	if status != snapshot.ReadHit || !typed || len(value) != len(borrowed) || &value[0] != &borrowed[0] {
+		t.Fatalf("snapshot answer = (%#v, %v, %t), want borrowed %#v", value, status, typed, borrowed)
+	}
+}
+
+func TestDeltaRequiresDeclaredKeysToBeInTheSealedUniverse(t *testing.T) {
+	solver, query, state := newBorrowedQueryFixture(t)
+	key, keyed := query.PublicationKey()
+	if !keyed {
+		t.Fatal("query has no publication key")
+	}
+	generation := solver.completion.Next()
+	if !canDeltaSolvedPublication(solver.lastSolved, state.solved.schema, solver.store, generation, []identity.ContentID{key}, nil, nil) {
+		t.Fatal("a sealed query key is not covered for a successor delta")
+	}
+	unknown := identity.ContentID{0xEE, 0x01}
+	if canDeltaSolvedPublication(solver.lastSolved, state.solved.schema, solver.store, generation, []identity.ContentID{key, unknown}, nil, nil) {
+		t.Fatal("a successor delta admitted a key the sealed universe does not cover")
+	}
+	if publicationCovers(state.solved.published, state.solved.queryPlan.Axis(), []identity.ContentID{unknown}) {
+		t.Fatal("an unknown query key reads as covered")
+	}
+}
+
+// TestRuntimeSealsOnePublicationPlanForEveryEpoch states the preseal cut:
+// assembly owns the column binding, write capabilities, result key universes,
+// and point denominator. A solve epoch borrows that plan; it does not admit
+// columns or reconstruct a denominator.
+func TestRuntimeSealsOnePublicationPlanForEveryEpoch(t *testing.T) {
+	solver, _, _ := newBorrowedQueryFixture(t)
+	if solver.runtime == nil || solver.runtime.publication == nil || !solver.runtime.publication.available() {
+		t.Fatal("assembled runtime published no sealed plan")
+	}
+	plan := solver.runtime.publication
+	if plan.binding == nil || !plan.binding.Sealed() || !plan.queryWrite.Available() || !plan.obsWrite.Available() || !plan.pointWrite.Available() {
+		t.Fatal("sealed plan lost its column writes")
+	}
+	if len(plan.queryKeys) == 0 || !plan.pointDenominator.Available() || len(plan.pointMembers) == 0 {
+		t.Fatal("sealed plan lost its key universes")
+	}
+	epoch, epochOK := newRuntimeEpoch(solver.runtime, solver.relation, context.Background())
+	if !epochOK {
+		t.Fatal("new epoch")
+	}
+	defer epoch.discard()
+	first, firstOK := beginSolvedPublication(solver, epoch, solver.completion.Next())
+	if !firstOK || first == nil || first.plan != plan {
+		t.Fatal("first begin reminted the publication plan")
+	}
+	if first.queryWrite != plan.queryWrite || first.obsWrite != plan.obsWrite || first.pointWrite != plan.pointWrite {
+		t.Fatal("first begin reminted column writes")
+	}
+	second, secondOK := beginSolvedPublication(solver, epoch, solver.completion.Next())
+	if !secondOK || second == nil || second.plan != plan || second.plan != first.plan {
+		t.Fatal("second begin reminted the publication plan")
+	}
+	if second.queryWrite != first.queryWrite || second.obsWrite != first.obsWrite || second.pointWrite != first.pointWrite {
+		t.Fatal("second begin reminted column writes")
+	}
+	if second.solved.schema != plan.schema || second.pointAxis != plan.pointAxis {
+		t.Fatal("a successor begin left the sealed identities")
+	}
+}
+
+func TestSolvedPublicationContentFollowsOverlay(t *testing.T) {
+	solver, query, state := newBorrowedQueryFixture(t)
+	sealed, sealedOK := solver.PublishedSnapshot(state)
+	published := sealed.Snapshot()
+	if !sealedOK {
+		t.Fatal("completed solve did not seal a snapshot")
+	}
+	key, keyed := query.PublicationKey()
+	if !keyed {
+		t.Fatal("query has no publication key")
+	}
+	answer, status := snapshot.Query(&published, state.solved.queryPlan, key)
+	if status != snapshot.ReadHit || !answer.Available() {
+		t.Fatal("sealed query is not a hit")
+	}
+	epoch, epochOK := newRuntimeEpoch(solver.runtime, solver.relation, context.Background())
+	if !epochOK {
+		t.Fatal("new epoch")
+	}
+	defer epoch.discard()
+	generation := solver.completion.Next()
+	publication, opened := beginSolvedPublication(solver, epoch, generation)
+	if !opened || publication == nil {
+		t.Fatal("begin solved publication")
+	}
+	if !publication.writeQuery(key, answer.value) {
+		t.Fatal("write query")
+	}
+	solved, committed := publication.commit(solver)
+	if !committed {
+		t.Fatal("commit")
+	}
+	next := solved.Snapshot()
+	got, gotStatus := snapshot.Query(&next, solved.queryPlan, key)
+	if gotStatus != snapshot.ReadHit || !got.Available() || !got.Equal(answer) {
+		t.Fatalf("sealed overlay answer = %v, want the written row", gotStatus)
+	}
+	obsKeys, obsDeclared := declaredObservationKeys(solver.runtime)
+	if !obsDeclared {
+		t.Fatal("declared observation keys")
+	}
+	obs, obsOK := publication.overlayRows(publication.solved.observationPlan, obsKeys)
+	if !obsOK {
+		t.Fatal("observation overlay")
+	}
+	want, minted := solvedContentIdentity(solvedResults{
+		schema:     solved.schema,
+		store:      publication.store,
+		generation: generation,
+		axes: []solvedAxis{
+			{lane: resultLaneQuery, rows: []solvedRow{{key: key, value: answer.value}}},
+			{lane: resultLaneObservation, rows: obs},
+		},
+	})
+	if !minted || solved.Content() != want {
+		t.Fatal("content identity followed the working slice, not the overlay")
+	}
 }
 
 // TestSnapshotMaterializePublishesEveryStateReader is the equivalence law: a
@@ -75,14 +222,18 @@ func TestSnapshotMaterializePublishesEveryStateReader(t *testing.T) {
 	if published.Store() != solver.store || published.Generation() != state.completion.serial {
 		t.Fatalf("publication anchors = (%d, %d), want (%d, %d)", published.Store(), published.Generation(), solver.store, state.completion.serial)
 	}
-	if published.Columns() != solvedAxisCount || published.Queries().Len() != solvedAxisCount {
-		t.Fatalf("published columns/queries = %d/%d, want %d", published.Columns(), published.Queries().Len(), solvedAxisCount)
+	if published.Columns() != solvedStoreColumns || published.Queries().Len() != solvedAxisCount {
+		t.Fatalf("published columns/queries = %d/%d, want %d/%d", published.Columns(), published.Queries().Len(), solvedStoreColumns, solvedAxisCount)
 	}
 	if len(solver.runtime.queries) == 0 {
 		t.Fatal("the query fixture declares no query row")
 	}
 
-	borrowed, readable := ReceiptQueryResult[[]uint64](query, solver, state)
+	key, keyed := query.PublicationKey()
+	if !keyed {
+		t.Fatal("query has no publication key")
+	}
+	borrowed, readable := testSnapshotQueryValue[[]uint64](solver, state, key)
 	if !readable || len(borrowed) != 2 {
 		t.Fatalf("state reader = %#v/%t", borrowed, readable)
 	}
@@ -111,7 +262,7 @@ func TestSnapshotMaterializePublishesEveryStateReader(t *testing.T) {
 	if len(observationSolver.runtime.observations) == 0 {
 		t.Fatal("the observation fixture declares no observation row")
 	}
-	observationBorrowed, observationReadable := ReceiptObservationResult[[]uint64](observation, observationSolver, observationState)
+	observationBorrowed, observationReadable := testSnapshotObservationValue[[]uint64](observationSolver, observationState, observation.id)
 	if !observationReadable || len(observationBorrowed) != 2 {
 		t.Fatalf("observation state reader = %#v/%t", observationBorrowed, observationReadable)
 	}
@@ -152,7 +303,7 @@ func TestSnapshotMaterializeAnswersFourOutcomes(t *testing.T) {
 		t.Fatalf("undeclared key = %v, want miss", status)
 	}
 
-	withdrawn, failure := materialized.republish(resultLaneQuery, key, nil, state.completion.serial.Next())
+	withdrawn, failure := editSealedAnswer(materialized, resultLaneQuery, key, nil, state.completion.serial.Next())
 	if failure.Available() {
 		t.Fatalf("withdraw published answer = %s", failure)
 	}
@@ -164,14 +315,11 @@ func TestSnapshotMaterializeAnswersFourOutcomes(t *testing.T) {
 		t.Fatalf("a derived publication reached the base row = %v, want hit", status)
 	}
 
-	// A declared row that carries no value is the same published absence. The
-	// input contract states it directly, so the outcome does not depend on a
-	// solve that leaves a row unanswered.
 	unanswered := syntheticSolvedResults(t, 4)
 	unanswered.axes[0].rows = append(unanswered.axes[0].rows, solvedRow{key: syntheticRowKey(4)})
-	partial, partialFailure := materializeSolvedResults(unanswered)
+	partial, partialFailure := sealSyntheticAnswers(unanswered)
 	if partialFailure.Available() {
-		t.Fatalf("materialize partially answered axis = %s", partialFailure)
+		t.Fatalf("seal partially answered axis = %s", partialFailure)
 	}
 	partialPublished := partial.Snapshot()
 	partialPlan := openAnswerColumn(t, &partialPublished, partial.QueryFamily())
@@ -195,6 +343,28 @@ func TestSnapshotMaterializeAnswersFourOutcomes(t *testing.T) {
 	}
 }
 
+func TestCoveredUnansweredSubjectReadsProvenAbsent(t *testing.T) {
+	unanswered := syntheticSolvedResults(t, 2)
+	unanswered.axes[0].rows = append(unanswered.axes[0].rows, solvedRow{key: syntheticRowKey(2)})
+	published, failure := sealSyntheticAnswers(unanswered)
+	if failure.Available() {
+		t.Fatalf("seal covered unanswered subject = %s", failure)
+	}
+	sealed := published.Snapshot()
+	plan := openAnswerColumn(t, &sealed, published.QueryFamily())
+	if _, status := snapshot.Query(&sealed, plan, syntheticRowKey(2)); status != snapshot.ReadProvenAbsent {
+		t.Fatalf("covered unanswered subject = %v, want proven-absent", status)
+	}
+	withdrawn, withdrawnFailure := editSealedAnswer(published, resultLaneQuery, syntheticRowKey(0), nil, syntheticNextStamp)
+	if withdrawnFailure.Available() {
+		t.Fatalf("withdraw covered subject = %s", withdrawnFailure)
+	}
+	withdrawnPlan := openAnswerColumn(t, &withdrawn, published.QueryFamily())
+	if _, status := snapshot.Query(&withdrawn, withdrawnPlan, syntheticRowKey(0)); status != snapshot.ReadProvenAbsent {
+		t.Fatalf("withdrawn covered subject = %v, want proven-absent", status)
+	}
+}
+
 // TestSnapshotMaterializeIsContentAddressed is the determinism law. One solve
 // materialized twice publishes the identical snapshot, and a second completion
 // of the same solve publishes the identical content under an advanced
@@ -202,9 +372,9 @@ func TestSnapshotMaterializeAnswersFourOutcomes(t *testing.T) {
 // alone.
 func TestSnapshotMaterializeIsContentAddressed(t *testing.T) {
 	solver, _, state, first := materializedQueryFixture(t)
-	second, failure := materializeCompletedState(solver, state)
-	if failure.Available() {
-		t.Fatalf("re-materialize completed state = %s", failure)
+	second := state.solved
+	if !second.Available() {
+		t.Fatal("completed state published no snapshot")
 	}
 	if first.Content() != second.Content() || first.schema != second.schema {
 		t.Fatalf("re-materialization content = %s, want %s", second.Content(), first.Content())
@@ -222,9 +392,9 @@ func TestSnapshotMaterializeIsContentAddressed(t *testing.T) {
 	if status != SolveComplete || nextState == nil {
 		t.Fatalf("second solve = status:%v state:%t", status, nextState != nil)
 	}
-	next, nextFailure := materializeCompletedState(solver, nextState)
-	if nextFailure.Available() {
-		t.Fatalf("materialize second completion = %s", nextFailure)
+	next := nextState.solved
+	if !next.Available() {
+		t.Fatal("second completion published no snapshot")
 	}
 	nextPublished := next.Snapshot()
 	if next.Content() != first.Content() {
@@ -237,9 +407,9 @@ func TestSnapshotMaterializeIsContentAddressed(t *testing.T) {
 
 	// A changed answer is a changed content identity.
 	changed := syntheticSolvedResults(t, 4)
-	base, baseFailure := materializeSolvedResults(changed)
+	base, baseFailure := sealSyntheticAnswers(changed)
 	changed.axes[0].rows[2].value = syntheticAnswerValue(4_099)
-	edited, editedFailure := materializeSolvedResults(changed)
+	edited, editedFailure := sealSyntheticAnswers(changed)
 	if baseFailure.Available() || editedFailure.Available() {
 		t.Fatalf("materialize synthetic rows = %s/%s", baseFailure, editedFailure)
 	}
@@ -274,6 +444,57 @@ func assertEqualAnswers(t *testing.T, solver *Solver, left, right *snapshot.Snap
 	}
 }
 
+// TestApplySolvedDeltaWritesTheNextGeneration is the production delta law.
+// A later completion with the same declared keys derives from the sealed
+// snapshot: the changed row updates, every other query row and the
+// observation column stay the answers the base published, and the generation
+// advances on the same store.
+func TestApplySolvedDeltaWritesTheNextGeneration(t *testing.T) {
+	baseInput := syntheticSolvedResults(t, 64)
+	base, failure := sealSyntheticAnswers(baseInput)
+	if failure.Available() {
+		t.Fatalf("seal base = %s", failure)
+	}
+	nextInput := syntheticSolvedResults(t, 64)
+	nextInput.generation = syntheticNextStamp
+	nextInput.axes[0].rows[7].value = syntheticAnswerValue(700)
+	next, nextFailure := applySyntheticDelta(base, nextInput)
+	if nextFailure.Available() || !next.Available() {
+		t.Fatalf("apply solved delta = %s", nextFailure)
+	}
+	if !syntheticDeltaCovers(base, nextInput) {
+		t.Fatal("a same-key successor was not a delta")
+	}
+	basePublished := base.Snapshot()
+	nextPublished := next.Snapshot()
+	if nextPublished.Store() != basePublished.Store() || !basePublished.Generation().Precedes(nextPublished.Generation()) {
+		t.Fatalf("delta anchors = (%d, %d) after (%d, %d)", nextPublished.Store(), nextPublished.Generation(), basePublished.Store(), basePublished.Generation())
+	}
+	basePlan := openAnswerColumn(t, &basePublished, base.QueryFamily())
+	nextPlan := openAnswerColumn(t, &nextPublished, next.QueryFamily())
+	for index := 0; index < 64; index++ {
+		key := syntheticRowKey(uint64(index))
+		baseAnswer, baseStatus := snapshot.Query(&basePublished, basePlan, key)
+		nextAnswer, nextStatus := snapshot.Query(&nextPublished, nextPlan, key)
+		if index == 7 {
+			if baseStatus != snapshot.ReadHit || nextStatus != snapshot.ReadHit || baseAnswer.Equal(nextAnswer) {
+				t.Fatalf("changed row = %v/%v, want two published answers", baseStatus, nextStatus)
+			}
+			continue
+		}
+		if baseStatus != nextStatus || !baseAnswer.Equal(nextAnswer) {
+			t.Fatalf("row %d = %v/%v across a delta", index, baseStatus, nextStatus)
+		}
+	}
+	observationPlan := openAnswerColumn(t, &nextPublished, next.ObservationFamily())
+	if _, status := snapshot.Query(&nextPublished, observationPlan, syntheticRowKey(1<<40)); status != snapshot.ReadHit {
+		t.Fatalf("inherited observation = %v, want hit", status)
+	}
+	if _, status := snapshot.Query(&basePublished, openAnswerColumn(t, &basePublished, base.QueryFamily()), syntheticRowKey(7)); status != snapshot.ReadHit {
+		t.Fatal("a delta edited the base snapshot")
+	}
+}
+
 // TestSnapshotMaterializeDeltaCostsItsChangeSet is the republication cost law.
 // A materialization that changes one answer pays for that answer's path and for
 // nothing else: the cost is measured on two column widths, and a column ten
@@ -302,12 +523,12 @@ func TestSnapshotMaterializeDeltaCostsItsChangeSet(t *testing.T) {
 	// Structural sharing is observable from outside the storage: every untouched
 	// row of the republication answers what the base answered, at the base's own
 	// borrowed value, and the base keeps answering what it published.
-	materialized, failure := materializeSolvedResults(syntheticSolvedResults(t, 64))
+	materialized, failure := sealSyntheticAnswers(syntheticSolvedResults(t, 64))
 	if failure.Available() {
-		t.Fatalf("materialize synthetic rows = %s", failure)
+		t.Fatalf("seal synthetic rows = %s", failure)
 	}
 	base := materialized.Snapshot()
-	republished, republishFailure := materialized.republish(resultLaneQuery, syntheticRowKey(7), syntheticAnswerValue(700), syntheticNextStamp)
+	republished, republishFailure := editSealedAnswer(materialized, resultLaneQuery, syntheticRowKey(7), syntheticAnswerValue(700), syntheticNextStamp)
 	if republishFailure.Available() {
 		t.Fatalf("republish one answer = %s", republishFailure)
 	}
@@ -339,13 +560,13 @@ func TestSnapshotMaterializeDeltaCostsItsChangeSet(t *testing.T) {
 // republicationCost measures one republication of a column holding rows rows.
 func republicationCost(t *testing.T, rows int) (float64, uint64) {
 	t.Helper()
-	materialized, failure := materializeSolvedResults(syntheticSolvedResults(t, rows))
+	materialized, failure := sealSyntheticAnswers(syntheticSolvedResults(t, rows))
 	if failure.Available() {
-		t.Fatalf("materialize %d synthetic rows = %s", rows, failure)
+		t.Fatalf("seal %d synthetic rows = %s", rows, failure)
 	}
 	value := syntheticAnswerValue(700)
 	republish := func() {
-		published, republishFailure := materialized.republish(resultLaneQuery, syntheticRowKey(7), value, syntheticNextStamp)
+		published, republishFailure := editSealedAnswer(materialized, resultLaneQuery, syntheticRowKey(7), value, syntheticNextStamp)
 		if republishFailure.Available() {
 			t.Fatalf("republish = %s", republishFailure)
 		}
@@ -365,7 +586,7 @@ func republicationCost(t *testing.T, rows int) (float64, uint64) {
 
 // TestSnapshotMaterializeReadAllocatesNothing is the read cost law. Opening a
 // published family, answering a key, and borrowing the typed value out of the
-// answer allocate nothing: the materializer publishes into the snapshot's own
+// answer allocate nothing: the solve publishes into the snapshot's own
 // storage and wraps its reads in no adapter. Detachment allocates, which is
 // exactly why it is a caller's explicit request.
 func TestSnapshotMaterializeReadAllocatesNothing(t *testing.T) {
@@ -400,19 +621,31 @@ func TestSnapshotMaterializeReadAllocatesNothing(t *testing.T) {
 	}
 }
 
-// TestSnapshotMaterializeRefusesClosed fixes the materializer's admission. It
-// publishes only a completed state its own solver owns, refuses an input that
-// names no publication or declares one axis twice, and speaks every refusal in
+// TestSnapshotMaterializeRefusesClosed fixes publication admission. A solver
+// owns only the state it published. A synthetic seal refuses an input that
+// names no publication or declares one axis twice, and every refusal speaks
 // the public failure vocabulary.
 func TestSnapshotMaterializeRefusesClosed(t *testing.T) {
 	solver, _, state, materialized := materializedQueryFixture(t)
 	foreignSolver, _, foreignState := newBorrowedQueryFixture(t)
 
+	if _, ok := solver.PublishedSnapshot(&State{}); ok {
+		t.Fatal("an unpublished state reported a snapshot")
+	}
+	if solver.ownsCompletedState(nil) {
+		t.Fatal("a nil state was owned")
+	}
+	if solver.ownsCompletedState(foreignState) {
+		t.Fatal("a foreign state was owned")
+	}
+	if foreignSolver.ownsCompletedState(state) {
+		t.Fatal("a foreign solver owned this state")
+	}
+	if !solver.ownsCompletedState(state) {
+		t.Fatal("the publishing solver does not own its state")
+	}
+
 	for name, refusal := range map[string]SolveFailure{
-		"no solver":       failureOf(t, nil, state),
-		"no state":        failureOf(t, solver, nil),
-		"foreign state":   failureOf(t, solver, foreignState),
-		"foreign solver":  failureOf(t, foreignSolver, state),
 		"no publication":  refusalOf(t, solvedResults{}),
 		"unnamed axis":    refusalOf(t, solvedResults{schema: syntheticRowSchema, store: syntheticRowStore, generation: syntheticFirstStamp, axes: []solvedAxis{{}}}),
 		"repeated axis":   refusalOf(t, repeatedAxisResults(t)),
@@ -420,36 +653,30 @@ func TestSnapshotMaterializeRefusesClosed(t *testing.T) {
 		"duplicate row":   refusalOf(t, duplicateRowResults(t)),
 	} {
 		if !refusal.Available() {
-			t.Fatalf("%s materialized a publication", name)
+			t.Fatalf("%s sealed a publication", name)
 		}
 		if refusal.Family != SolveFailureFamilyCompile || !refusal.Site.Available() || refusal.String() == "" {
 			t.Fatalf("%s refusal = %s, want a sited compile-family refusal", name, refusal)
 		}
 	}
 
-	if _, failure := materialized.republish(resultLaneNone, syntheticRowKey(1), syntheticAnswerValue(1), syntheticNextStamp); !failure.Available() {
+	if _, failure := editSealedAnswer(materialized, resultLaneNone, syntheticRowKey(1), syntheticAnswerValue(1), syntheticNextStamp); !failure.Available() {
 		t.Fatal("a republication of an unnamed lane published a snapshot")
 	}
-	if _, failure := materialized.republish(resultLaneQuery, identity.ContentID{}, syntheticAnswerValue(1), syntheticNextStamp); !failure.Available() {
+	if _, failure := editSealedAnswer(materialized, resultLaneQuery, identity.ContentID{}, syntheticAnswerValue(1), syntheticNextStamp); !failure.Available() {
 		t.Fatal("a republication of an unavailable key published a snapshot")
 	}
-	if _, failure := materialized.republish(resultLaneQuery, syntheticRowKey(1), syntheticAnswerValue(1), state.completion.serial); !failure.Available() {
+	if _, failure := editSealedAnswer(materialized, resultLaneQuery, syntheticRowKey(1), syntheticAnswerValue(1), state.completion.serial); !failure.Available() {
 		t.Fatal("a republication that does not advance the generation published a snapshot")
 	}
-	if _, failure := (SolvedSnapshot{}).republish(resultLaneQuery, syntheticRowKey(1), nil, syntheticNextStamp); !failure.Available() {
+	if _, failure := editSealedAnswer(SolvedSnapshot{}, resultLaneQuery, syntheticRowKey(1), nil, syntheticNextStamp); !failure.Available() {
 		t.Fatal("an unpublished materialization republished a snapshot")
 	}
 }
 
-func failureOf(t *testing.T, solver *Solver, state *State) SolveFailure {
-	t.Helper()
-	_, failure := materializeCompletedState(solver, state)
-	return failure
-}
-
 func refusalOf(t *testing.T, results solvedResults) SolveFailure {
 	t.Helper()
-	_, failure := materializeSolvedResults(results)
+	_, failure := sealSyntheticAnswers(results)
 	return failure
 }
 
@@ -474,7 +701,7 @@ func duplicateRowResults(t *testing.T) solvedResults {
 	return results
 }
 
-// syntheticSolvedResults states one materializer input directly: a query axis
+// syntheticSolvedResults states one column width no solve fixture declares: a query axis
 // of rows answered rows and a one-row observation axis. It exists so the cost
 // and outcome laws can state a column width no solve fixture declares.
 func syntheticSolvedResults(t testing.TB, rows int) solvedResults {
@@ -514,4 +741,182 @@ func syntheticAnswerValue(value uint64) solvedValue {
 		Equal:       func(left, right uint64) bool { return left == right },
 		Fingerprint: func(held uint64) uint64 { return held*0x9e3779b97f4a7c15 + 1 },
 	}}
+}
+
+func syntheticDeltaCovers(base SolvedSnapshot, projected solvedResults) bool {
+	if !base.Available() || !projected.schema.Available() || !projected.store.Available() || !projected.generation.Available() {
+		return false
+	}
+	if base.schema != projected.schema || base.published.Store() != projected.store || !base.published.Generation().Precedes(projected.generation) {
+		return false
+	}
+	if !base.queryPlan.Available() || !base.observationPlan.Available() {
+		return false
+	}
+	if len(projected.axes) != solvedAxisCount {
+		return false
+	}
+	for _, axis := range projected.axes {
+		plan := base.queryPlan
+		if axis.lane == resultLaneObservation {
+			plan = base.observationPlan
+		} else if axis.lane != resultLaneQuery {
+			return false
+		}
+		keys := make([]identity.ContentID, len(axis.rows))
+		for index, row := range axis.rows {
+			if !row.key.Available() {
+				return false
+			}
+			keys[index] = row.key
+		}
+		if !publicationCovers(base.published, plan.Axis(), keys) {
+			return false
+		}
+	}
+	return true
+}
+
+func applySyntheticDelta(base SolvedSnapshot, projected solvedResults) (SolvedSnapshot, SolveFailure) {
+	if !syntheticDeltaCovers(base, projected) {
+		return SolvedSnapshot{}, refused(SolveFailureFamilyCompile, solvedSiteDelta).failure()
+	}
+	queryWrite, obsWrite, _, mintedWrites := mintSolvedColumnWrites(base.schema, false)
+	if !mintedWrites {
+		return SolvedSnapshot{}, refused(SolveFailureFamilyCompile, solvedSiteDelta).failure()
+	}
+	delta := snapshot.NewDelta(base.published, projected.generation)
+	for _, axis := range projected.axes {
+		write := queryWrite
+		if axis.lane == resultLaneObservation {
+			write = obsWrite
+		}
+		for _, row := range axis.rows {
+			var err error
+			if row.value != nil {
+				err = PublishRow(write, &delta, row.key, Answer{value: row.value})
+			} else {
+				err = WithdrawRow(write, &delta, row.key)
+			}
+			if err != nil {
+				return SolvedSnapshot{}, refused(SolveFailureFamilyCompile, solvedSiteDelta).failure()
+			}
+		}
+	}
+	published, err := delta.Seal()
+	if err != nil {
+		return SolvedSnapshot{}, refused(SolveFailureFamilyCompile, solvedSiteSeal).failure()
+	}
+	content, minted := solvedContentIdentity(projected)
+	if !minted {
+		return SolvedSnapshot{}, refused(SolveFailureFamilyCompile, solvedSiteContent).failure()
+	}
+	next := base
+	next.published = published
+	next.content = content
+	return next, SolveFailure{}
+}
+
+func sealSyntheticAnswers(results solvedResults) (SolvedSnapshot, SolveFailure) {
+	if !results.schema.Available() || !results.store.Available() || !results.generation.Available() || len(results.axes) == 0 || len(results.axes) > solvedAxisCount {
+		return SolvedSnapshot{}, refused(SolveFailureFamilyCompile, solvedSitePublication).failure()
+	}
+	queryWrite, obsWrite, _, mintedWrites := mintSolvedColumnWrites(results.schema, false)
+	if !mintedWrites {
+		return SolvedSnapshot{}, refused(SolveFailureFamilyCompile, solvedSitePublication).failure()
+	}
+	materialized := SolvedSnapshot{schema: results.schema}
+	builder := snapshot.NewBuilder(results.schema, results.store, results.generation)
+	for _, axis := range results.axes {
+		if axis.lane == resultLaneNone || int(axis.lane) >= solvedLaneWidth || materialized.families[axis.lane].Available() {
+			return SolvedSnapshot{}, refused(SolveFailureFamilyCompile, solvedSiteAxis).failure()
+		}
+		family := solvedAxisIdentity(results.schema, axis.lane, solvedAxisFamily)
+		denominator := solvedAxisIdentity(results.schema, axis.lane, solvedAxisDenominator)
+		if !family.Available() || !denominator.Available() {
+			return SolvedSnapshot{}, refused(SolveFailureFamilyCompile, solvedSiteAxis).failure()
+		}
+		content := snapshot.Content[identity.ContentID, Answer]{
+			Rows:        make(map[identity.ContentID]Answer, len(axis.rows)),
+			Denominator: denominator,
+			Members:     make([]identity.ContentID, 0, len(axis.rows)),
+		}
+		declared := make(map[identity.ContentID]struct{}, len(axis.rows))
+		for _, row := range axis.rows {
+			if !row.key.Available() {
+				return SolvedSnapshot{}, refused(SolveFailureFamilyCompile, solvedSiteRow).failure()
+			}
+			if _, duplicate := declared[row.key]; duplicate {
+				return SolvedSnapshot{}, refused(SolveFailureFamilyCompile, solvedSiteRow).failure()
+			}
+			declared[row.key] = struct{}{}
+			content.Members = append(content.Members, row.key)
+			if row.value != nil {
+				content.Rows[row.key] = Answer{value: row.value}
+			}
+		}
+		write := queryWrite
+		if axis.lane == resultLaneObservation {
+			write = obsWrite
+		}
+		plan, err := PublishQueryColumn(write, &builder, family, content)
+		if err != nil || !plan.Available() {
+			return SolvedSnapshot{}, refused(SolveFailureFamilyCompile, solvedSiteDeclare).failure()
+		}
+		materialized.families[axis.lane] = family
+		switch axis.lane {
+		case resultLaneQuery:
+			materialized.queryPlan = plan
+		case resultLaneObservation:
+			materialized.observationPlan = plan
+		}
+	}
+	published, err := builder.Seal()
+	if err != nil {
+		return SolvedSnapshot{}, refused(SolveFailureFamilyCompile, solvedSiteSeal).failure()
+	}
+	content, minted := solvedContentIdentity(results)
+	if !minted {
+		return SolvedSnapshot{}, refused(SolveFailureFamilyCompile, solvedSiteContent).failure()
+	}
+	materialized.published = published
+	materialized.content = content
+	return materialized, SolveFailure{}
+}
+
+func editSealedAnswer(materialized SolvedSnapshot, lane resultLane, key identity.ContentID, value solvedValue, generation identity.Generation) (snapshot.Snapshot, SolveFailure) {
+	if !materialized.Available() || !key.Available() || !generation.Available() || !materialized.published.Generation().Precedes(generation) {
+		return snapshot.Snapshot{}, refused(SolveFailureFamilyCompile, solvedSiteDelta).failure()
+	}
+	plan, opened := snapshot.OpenQuery[identity.ContentID, Answer](&materialized.published, materialized.family(lane))
+	if !opened {
+		return snapshot.Snapshot{}, refused(SolveFailureFamilyCompile, solvedSiteDelta).failure()
+	}
+	queryWrite, obsWrite, _, mintedWrites := mintSolvedColumnWrites(materialized.schema, false)
+	if !mintedWrites {
+		return snapshot.Snapshot{}, refused(SolveFailureFamilyCompile, solvedSiteDelta).failure()
+	}
+	write := queryWrite
+	if lane == resultLaneObservation {
+		write = obsWrite
+	}
+	column, unlocked := write.column()
+	if !unlocked || column != plan.Axis() {
+		return snapshot.Snapshot{}, refused(SolveFailureFamilyCompile, solvedSiteDelta).failure()
+	}
+	delta := snapshot.NewDelta(materialized.published, generation)
+	var edited error
+	if value != nil {
+		edited = PublishRow(write, &delta, key, Answer{value: value})
+	} else {
+		edited = WithdrawRow(write, &delta, key)
+	}
+	if edited != nil {
+		return snapshot.Snapshot{}, refused(SolveFailureFamilyCompile, solvedSiteDelta).failure()
+	}
+	published, err := delta.Seal()
+	if err != nil {
+		return snapshot.Snapshot{}, refused(SolveFailureFamilyCompile, solvedSiteSeal).failure()
+	}
+	return published, SolveFailure{}
 }

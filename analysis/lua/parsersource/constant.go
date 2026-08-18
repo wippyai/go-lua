@@ -13,13 +13,73 @@ import (
 )
 
 // NamedConstant is one compiler/ast package-level constant together with the
-// judgement a construction proof needs from it: whether its value is the zero
-// value of its own type. A discriminant field assigned a constant is in its
-// zero state exactly when that constant is zero, so the constant's iota
-// position is evidence rather than a naming convention.
+// two judgements a construction proof needs from it: whether its value is the
+// zero value of its own type, and which named type it was declared with. A
+// discriminant field assigned a constant is in its zero state exactly when that
+// constant is zero, so the constant's iota position is evidence rather than a
+// naming convention. Type is empty for a constant declared without a named
+// type: an untyped constant belongs to no closed family, so it can refine
+// nothing beyond its own zero-ness.
 type NamedConstant struct {
 	Name string
 	Zero bool
+	Type string
+}
+
+// DiscriminantEnum is one closed compiler/ast constant family: a named type
+// together with every package-level constant declared with it. Zero is the
+// member holding that type's zero value, and it is empty when the family
+// declares none - a family that starts at iota+1 leaves the zero state
+// unnamed, and stating a member there would invent one.
+type DiscriminantEnum struct {
+	Type    string
+	Members []string
+	Zero    string
+}
+
+// DiscriminantEnums groups discovered constants into the closed families a
+// carrier's fidelity can be stated against.
+//
+// The admission rule is exactly this: a family is admitted when two or more
+// decidable constants are declared with the same named type. Two is the
+// threshold because a family of one discriminates nothing - a carrier that can
+// only ever hold one named value is already fully described by its zero-ness -
+// while a family of two or more is a closed choice a construction makes, and
+// which choice it made is not recoverable from zero-ness alone. A constant
+// declared without a named type joins no family, so the untyped constants a
+// parser action reads keep the two-state abstraction and nothing else.
+func DiscriminantEnums(constants []NamedConstant) []DiscriminantEnum {
+	members := make(map[string][]string)
+	zeros := make(map[string][]string)
+	var order []string
+	for _, constant := range constants {
+		if constant.Type == "" {
+			continue
+		}
+		if _, seen := members[constant.Type]; !seen {
+			order = append(order, constant.Type)
+		}
+		members[constant.Type] = append(members[constant.Type], constant.Name)
+		if constant.Zero {
+			zeros[constant.Type] = append(zeros[constant.Type], constant.Name)
+		}
+	}
+	sort.Strings(order)
+	result := make([]DiscriminantEnum, 0, len(order))
+	for _, name := range order {
+		if len(members[name]) < 2 {
+			continue
+		}
+		family := DiscriminantEnum{Type: name, Members: append([]string(nil), members[name]...)}
+		sort.Strings(family.Members)
+		// Two constants of one type can share the zero value, and then no single
+		// member names the state a construction leaves the carrier in.
+		if len(zeros[name]) == 1 {
+			family.Zero = zeros[name][0]
+		}
+		result = append(result, family)
+	}
+	return result
 }
 
 // DiscoverConstants derives every compiler/ast package-level constant whose
@@ -36,6 +96,7 @@ func DiscoverConstants(root string) ([]NamedConstant, error) {
 	}
 	type pending struct {
 		expressions []goast.Expr
+		typeName    string
 		iota        int
 	}
 	specifications := make(map[string]pending)
@@ -55,6 +116,10 @@ func DiscoverConstants(root string) ([]NamedConstant, error) {
 				continue
 			}
 			var inherited []goast.Expr
+			// A specification that repeats the previous one inherits its type
+			// along with its values, which is how a family declared over iota
+			// gives every member the type its first member states.
+			inheritedType := ""
 			for index, specification := range general.Specs {
 				valueSpec, ok := specification.(*goast.ValueSpec)
 				if !ok {
@@ -62,6 +127,7 @@ func DiscoverConstants(root string) ([]NamedConstant, error) {
 				}
 				if len(valueSpec.Values) != 0 {
 					inherited = valueSpec.Values
+					inheritedType = declaredTypeName(valueSpec.Type)
 				}
 				for position, name := range valueSpec.Names {
 					if name.Name == "_" {
@@ -73,7 +139,7 @@ func DiscoverConstants(root string) ([]NamedConstant, error) {
 					if position >= len(inherited) {
 						continue
 					}
-					specifications[name.Name] = pending{expressions: inherited, iota: index}
+					specifications[name.Name] = pending{expressions: inherited, typeName: inheritedType, iota: index}
 					order = append(order, name.Name)
 				}
 			}
@@ -122,10 +188,22 @@ func DiscoverConstants(root string) ([]NamedConstant, error) {
 		if !decided {
 			continue
 		}
-		result = append(result, NamedConstant{Name: name, Zero: zero})
+		result = append(result, NamedConstant{Name: name, Zero: zero, Type: specifications[name].typeName})
 	}
 	sort.Slice(result, func(left, right int) bool { return result[left].Name < result[right].Name })
 	return result, nil
+}
+
+// declaredTypeName reads the named type a constant specification states. Only a
+// package-local name is a family: a qualified type belongs to another package,
+// whose members this discovery never reads, so a carrier could not be shown to
+// be closed over them.
+func declaredTypeName(expression goast.Expr) string {
+	identifier, ok := expression.(*goast.Ident)
+	if !ok {
+		return ""
+	}
+	return identifier.Name
 }
 
 func constantText(expression goast.Expr) (string, bool) {

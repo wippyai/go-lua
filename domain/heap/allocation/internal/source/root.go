@@ -9,7 +9,6 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/flow"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/domain/heap"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
@@ -80,13 +79,13 @@ func classify(schema heap.Schema, root heap.Key, kind heap.AllocationKind) (Form
 	}
 }
 
-func formFromProgram(form flow.AllocationForm) (Form, bool) {
+func formFromProgram(form heap.AllocationForm) (Form, bool) {
 	switch form {
-	case flow.AllocationFormEmpty:
+	case heap.AllocationFormEmpty:
 		return FormEmpty, true
-	case flow.AllocationFormClosed:
+	case heap.AllocationFormClosed:
 		return FormClosed, true
-	case flow.AllocationFormFinalOpen:
+	case heap.AllocationFormFinalOpen:
 		return FormFinalOpen, true
 	default:
 		return FormInvalid, false

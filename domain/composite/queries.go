@@ -32,19 +32,6 @@ func (cells queryCells) available(entries []*query.Registration) bool {
 	return true
 }
 
-// queryPayloadForFamily recovers one family's cell at its declared type, by the
-// key its owning domain declared it under. The composition addresses its own
-// families by their declared identity, and the recovery is the only typed step:
-// the passes below carry every cell erased.
-func queryPayloadForFamily[T any](cells queryCells, family schema.Key) (T, bool) {
-	var absent T
-	position, ok := queryPositionForFamily(family)
-	if !ok || position >= len(cells) {
-		return absent, false
-	}
-	return query.Payload[T](cells[position])
-}
-
 // queryPositionForFamily resolves one family's dense declaration position in
 // the sealed inventory.
 func queryPositionForFamily(family schema.Key) (int, bool) {

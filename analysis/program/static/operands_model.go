@@ -1,6 +1,9 @@
 package static
 
-import "github.com/wippyai/go-lua/analysis/program/keyspace"
+import (
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
+)
 
 // ClaimTarget is the optional authored type operand of one Flow ValueClaim.
 // Its sparse denominator is the nonzero target relation, not ValueClaim
@@ -71,4 +74,11 @@ type TypeValueTargets struct {
 type Annotations struct {
 	component *Component
 	state     *draftState
+}
+
+// annotationTargetPresent binds the authored Annotation target role to the
+// sealed census column, so the query boundary admits exactly the targets Build
+// admitted rather than recounting a store to decide the same question.
+func annotationTargetPresent(component *Component, target keyspace.Term) bool {
+	return component != nil && staticrole.AnnotationTarget(component.census, target)
 }

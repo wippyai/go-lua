@@ -1,10 +1,10 @@
 package analysis
 
 import (
+	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/domain/composite"
 	allocationcatalog "github.com/wippyai/go-lua/domain/heap/allocation/catalog"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
-	"github.com/wippyai/go-lua/analysis/engine"
 )
 
 // AnalyzeDiagnosticPhase is the coarse permanent production phase reached by
@@ -95,9 +95,18 @@ func (reason AnalyzeDiagnosticReason) String() string {
 	}
 }
 
-// AnalyzeDiagnosticReceiptStage identifies the receipt-native boundary last
-// reached before a solve became incomplete. It is permanent scalar evidence;
-// no runtime rows or callbacks are retained.
+// AnalyzeDiagnosticReceiptStage identifies the boundary last reached before a
+// solve became incomplete. It is permanent scalar evidence; no runtime rows or
+// callbacks are retained. Ordinals are display-only: nothing persists, hashes,
+// or transports a member, so the set grows by appending.
+//
+// Two groups share the vocabulary. The content stages name what was being
+// constructed - the rows, the seal, the plan - and keep their meaning across
+// the construction path they are reached from. The construction stages name
+// the boundaries of the program constructor itself: the pass that takes a
+// committed topology plus the rows a bind produced and mints the sealed
+// program and its Solver. They are the analyzer's half of
+// engine.ProgramConstructionStage.
 type AnalyzeDiagnosticReceiptStage uint8
 
 const (
@@ -114,7 +123,80 @@ const (
 	AnalyzeDiagnosticReceiptStageArtifactRows
 	AnalyzeDiagnosticReceiptStageQueryPlan
 	AnalyzeDiagnosticReceiptStageBootstrapRules
+	// AnalyzeDiagnosticReceiptStageAdmission is the constructor's input fence:
+	// the construction handle, the committed topology, and the sealed directory
+	// that topology published. The mounted artifact schedule gate runs at the
+	// topology commit, so its verdict reaches the constructor here.
+	AnalyzeDiagnosticReceiptStageAdmission
+	// AnalyzeDiagnosticReceiptStageTopologySeal is the topology commit itself:
+	// the mounted artifact schedule gate, the graph, and the directory the
+	// admission fence re-checks.
+	AnalyzeDiagnosticReceiptStageTopologySeal
+	// AnalyzeDiagnosticReceiptStageQueryAddress is the published query address
+	// table: one canonical key per directory ordinal over the graph's queries.
+	AnalyzeDiagnosticReceiptStageQueryAddress
+	// AnalyzeDiagnosticReceiptStageObservationAddress is the published
+	// observation address table: one row per admitted attach identity.
+	AnalyzeDiagnosticReceiptStageObservationAddress
+	// AnalyzeDiagnosticReceiptStageFactorBind is the bound Factor table: the
+	// dense owner index and each bound Factor's runtime slot.
+	AnalyzeDiagnosticReceiptStageFactorBind
+	// AnalyzeDiagnosticReceiptStageMemberBind is the member bind: the per-Group
+	// fold of cold draft answers and the hot rows minted from those drafts.
+	AnalyzeDiagnosticReceiptStageMemberBind
+	// AnalyzeDiagnosticReceiptStageProgramSeal is the seal of the row-model
+	// program and the runtime assembled from it.
+	AnalyzeDiagnosticReceiptStageProgramSeal
+	// AnalyzeDiagnosticReceiptStageSolverMint is the Solver mint: the initial
+	// relation and the one store issuance its addresses are named in.
+	AnalyzeDiagnosticReceiptStageSolverMint
 )
+
+var analyzeDiagnosticReceiptStageNames = [...]string{
+	"none", "binding", "mount", "lowering", "commit", "runtime", "solve",
+	"artifact-rules", "source-seal", "query-rows", "artifact-rows",
+	"query-plan", "bootstrap-rules",
+	"admission", "topology-seal", "query-address", "observation-address",
+	"factor-bind", "member-bind", "program-seal", "solver-mint",
+}
+
+func (stage AnalyzeDiagnosticReceiptStage) String() string {
+	if int(stage) >= len(analyzeDiagnosticReceiptStageNames) {
+		return "invalid"
+	}
+	return analyzeDiagnosticReceiptStageNames[stage]
+}
+
+// analyzeDiagnosticConstructionStage projects the engine's program
+// construction boundary onto the analyzer's own stage vocabulary. A boundary
+// raised anywhere else in the compile family names no construction stage and
+// leaves the caller's stage as it stood.
+func analyzeDiagnosticConstructionStage(failure engine.SolveFailure) (AnalyzeDiagnosticReceiptStage, bool) {
+	stage, named := engine.ProgramConstructionStageOf(failure)
+	if !named {
+		return AnalyzeDiagnosticReceiptStageNone, false
+	}
+	switch stage {
+	case engine.ProgramConstructionStageAdmission:
+		return AnalyzeDiagnosticReceiptStageAdmission, true
+	case engine.ProgramConstructionStageTopologySeal:
+		return AnalyzeDiagnosticReceiptStageTopologySeal, true
+	case engine.ProgramConstructionStageQueryAddress:
+		return AnalyzeDiagnosticReceiptStageQueryAddress, true
+	case engine.ProgramConstructionStageObservationAddress:
+		return AnalyzeDiagnosticReceiptStageObservationAddress, true
+	case engine.ProgramConstructionStageFactorBind:
+		return AnalyzeDiagnosticReceiptStageFactorBind, true
+	case engine.ProgramConstructionStageMemberBind:
+		return AnalyzeDiagnosticReceiptStageMemberBind, true
+	case engine.ProgramConstructionStageProgramSeal:
+		return AnalyzeDiagnosticReceiptStageProgramSeal, true
+	case engine.ProgramConstructionStageSolverMint:
+		return AnalyzeDiagnosticReceiptStageSolverMint, true
+	default:
+		return AnalyzeDiagnosticReceiptStageNone, false
+	}
+}
 
 // AnalyzeDiagnosticItemIssuanceFailure identifies the exact immutable row
 // family that could not be issued before shared topology construction. It is
@@ -128,7 +210,7 @@ const (
 	AnalyzeDiagnosticItemIssuanceFailureArtifacts
 	AnalyzeDiagnosticItemIssuanceFailureValueCoordinates
 	AnalyzeDiagnosticItemIssuanceFailureDiagnosticObservations
-	AnalyzeDiagnosticItemIssuanceFailureResultReceipt
+	AnalyzeDiagnosticItemIssuanceFailureResultGeometry
 )
 
 func (failure AnalyzeDiagnosticItemIssuanceFailure) String() string {
@@ -141,8 +223,8 @@ func (failure AnalyzeDiagnosticItemIssuanceFailure) String() string {
 		return "value-coordinates"
 	case AnalyzeDiagnosticItemIssuanceFailureDiagnosticObservations:
 		return "diagnostic-observations"
-	case AnalyzeDiagnosticItemIssuanceFailureResultReceipt:
-		return "result-receipt"
+	case AnalyzeDiagnosticItemIssuanceFailureResultGeometry:
+		return "result-geometry"
 	default:
 		return "none"
 	}
@@ -325,6 +407,19 @@ type AnalyzeDiagnostics struct {
 func (diagnostics *AnalyzeDiagnostics) enter(phase AnalyzeDiagnosticPhase) {
 	if diagnostics != nil {
 		diagnostics.Phase = phase
+	}
+}
+
+// enterConstruction localizes one program construction refusal. The engine
+// names the boundary in the failure it returns, so the analyzer keeps a single
+// stage field rather than a second coordinate travelling beside it. A failure
+// from any other authority leaves the stage the caller already recorded.
+func (diagnostics *AnalyzeDiagnostics) enterConstruction(failure engine.SolveFailure) {
+	if diagnostics == nil {
+		return
+	}
+	if stage, named := analyzeDiagnosticConstructionStage(failure); named {
+		diagnostics.ReceiptStage = stage
 	}
 }
 

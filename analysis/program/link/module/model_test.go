@@ -1,6 +1,7 @@
 package module
 
 import (
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
@@ -13,9 +14,9 @@ import (
 
 func moduleFixture(t *testing.T) (*linkproject.Component, *linkboundary.Component, Spec) {
 	t.Helper()
-	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []target.OperationSpec{
-		{Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"require"}}}, Input: target.ValuesSpec{Tail: target.ValuesClosed}, Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}}, Effects: target.RowSpec{Tail: target.RowClosed}},
-		{Bindings: []target.BindingSpec{{Namespace: target.BindingProvider, Owner: []string{"host"}, Member: []string{"send"}}}, Input: target.ValuesSpec{Tail: target.ValuesClosed}, Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}}, Effects: target.RowSpec{Tail: target.RowClosed}},
+	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{
+		{Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"require"}}}, Input: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}, Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}}, Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed}},
+		{Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingProvider, Owner: []string{"host"}, Member: []string{"send"}}}, Input: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}, Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}}, Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed}},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -199,7 +200,7 @@ func TestModuleContentTracksOnlyModuleRelationAndSpec(t *testing.T) {
 	if !ok {
 		t.Fatal("missing fixture target")
 	}
-	endpointDraft, err := linkboundary.Build(linkboundary.Input{Project: project, Target: contract, EndpointRequests: []linkboundary.EndpointRequest{{Identity: "host.send", Binding: target.BindingSpec{Namespace: target.BindingProvider, Owner: []string{"host"}, Member: []string{"send"}}}}})
+	endpointDraft, err := linkboundary.Build(linkboundary.Input{Project: project, Target: contract, EndpointRequests: []linkboundary.EndpointRequest{{Identity: "host.send", Binding: vocabulary.BindingSpec{Namespace: vocabulary.BindingProvider, Owner: []string{"host"}, Member: []string{"send"}}}}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -48,6 +48,9 @@ func (c *Collector) reserveGlobalCells(census bind.GlobalCensus) error {
 		if !c.flow.SetCell(index, flow.Cell{Kind: flow.CellGlobal}) {
 			return fmt.Errorf("program/lower/collector: global Cell storage slot %d", index)
 		}
+		if !c.source.SetCellSpelling(keyspace.MakeTerm(keyspace.FamilyCell, cell.Ordinal()), cell.Name()) {
+			return fmt.Errorf("program/lower/collector: global Cell spelling slot %d", index)
+		}
 		if !c.addExact(keyspace.LiteralValue{Kind: keyspace.LiteralString, String: cell.Name()}) {
 			return fmt.Errorf("program/lower/collector: global %q exact seed rejected", cell.Name())
 		}

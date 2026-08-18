@@ -3,6 +3,7 @@ package target
 import (
 	"errors"
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
@@ -13,7 +14,7 @@ func (c *Contract) sealEffectIdentities() error {
 	}
 	c.effectOperationIDs = make([]identity.ContentID, len(c.operations))
 	for index := range c.operations {
-		op := Operation(index + 1)
+		op := vocabulary.Operation(index + 1)
 		anchor := c.operationAnchors[index]
 		if !anchor.Available() {
 			return errors.New("target: missing effect operation anchor")
@@ -36,7 +37,7 @@ func (c *Contract) sealEffectIdentities() error {
 	c.callbackEffectFamilies = make([]identity.ContentID, len(c.callbacks))
 
 	for index, row := range c.operations {
-		op := Operation(index + 1)
+		op := vocabulary.Operation(index + 1)
 		if err := c.sealEffectRow(op, 0, row.effects); err != nil {
 			return err
 		}
@@ -47,7 +48,7 @@ func (c *Contract) sealEffectIdentities() error {
 		c.operationEffectFamilies[index] = id
 	}
 	for index, row := range c.callbacks {
-		callback := CallbackID(index + 1)
+		callback := vocabulary.CallbackID(index + 1)
 		if err := c.sealEffectRow(row.owner, callback, row.effects); err != nil {
 			return err
 		}
@@ -63,7 +64,7 @@ func (c *Contract) sealEffectIdentities() error {
 // encodeEffectOperationABI writes exactly the operation-scoped ABI that an
 // effect substitution can observe.  Outcomes, callbacks, effects,
 // transfers, and every other operation relation are intentionally absent.
-func (c *Contract) encodeEffectOperationABI(w *framing.Writer, op Operation) error {
+func (c *Contract) encodeEffectOperationABI(w *framing.Writer, op vocabulary.Operation) error {
 	row, ok := c.operation(op)
 	if !ok {
 		return errors.New("target: malformed effect operation")
@@ -99,7 +100,7 @@ func (c *Contract) encodeEffectOperationABI(w *framing.Writer, op Operation) err
 	return w.Count(uint64(row.rowFormals))
 }
 
-func (c *Contract) sealEffectRow(owner Operation, callback CallbackID, effects indexRange) error {
+func (c *Contract) sealEffectRow(owner vocabulary.Operation, callback vocabulary.CallbackID, effects indexRange) error {
 	if owner == 0 || uint64(owner) > uint64(len(c.operations)) || !validIdentityRange(effects, len(c.effects)) {
 		return errors.New("target: malformed effect row range")
 	}
@@ -115,7 +116,7 @@ func (c *Contract) sealEffectRow(owner Operation, callback CallbackID, effects i
 		if err != nil {
 			return err
 		}
-		occurrence, err := c.effectOccurrenceID(owner, callback, uint32(local), descriptor)
+		occurrence, err := c.sealEffectOccurrenceID(owner, callback, uint32(local), descriptor)
 		if err != nil {
 			return err
 		}
@@ -125,7 +126,7 @@ func (c *Contract) sealEffectRow(owner Operation, callback CallbackID, effects i
 	return nil
 }
 
-func (c *Contract) effectDescriptorID(owner Operation, row effectRow) (identity.ContentID, error) {
+func (c *Contract) effectDescriptorID(owner vocabulary.Operation, row effectRow) (identity.ContentID, error) {
 	if owner == 0 || uint64(owner) > uint64(len(c.effectOperationIDs)) || row.target == 0 || uint64(row.target) > uint64(len(c.effectOperationIDs)) {
 		return identity.ContentID{}, errors.New("target: malformed effect descriptor owner")
 	}
@@ -199,7 +200,7 @@ func (c *Contract) encodeEffectArguments(w *framing.Writer, row effectRow) error
 	return nil
 }
 
-func (c *Contract) effectOccurrenceID(owner Operation, callback CallbackID, local uint32, descriptor identity.ContentID) (identity.ContentID, error) {
+func (c *Contract) sealEffectOccurrenceID(owner vocabulary.Operation, callback vocabulary.CallbackID, local uint32, descriptor identity.ContentID) (identity.ContentID, error) {
 	if owner == 0 || uint64(owner) > uint64(len(c.effectOperationIDs)) || !descriptor.Available() {
 		return identity.ContentID{}, errors.New("target: malformed effect occurrence")
 	}
@@ -238,7 +239,7 @@ func (c *Contract) effectOccurrenceID(owner Operation, callback CallbackID, loca
 	return id, err
 }
 
-func (c *Contract) effectFamilyID(kind uint64, owner Operation, callback CallbackID, tail RowTail, variable RowVar, effects indexRange) (identity.ContentID, error) {
+func (c *Contract) effectFamilyID(kind uint64, owner vocabulary.Operation, callback vocabulary.CallbackID, tail vocabulary.RowTail, variable vocabulary.RowVar, effects indexRange) (identity.ContentID, error) {
 	if owner == 0 || uint64(owner) > uint64(len(c.effectOperationIDs)) || !validIdentityRange(effects, len(c.effects)) {
 		return identity.ContentID{}, errors.New("target: malformed effect family")
 	}
@@ -284,7 +285,7 @@ func (c *Contract) effectFamilyID(kind uint64, owner Operation, callback Callbac
 	return id, err
 }
 
-func (c *Contract) EffectOperationID(op Operation) (identity.ContentID, bool) {
+func (c *Contract) EffectOperationID(op vocabulary.Operation) (identity.ContentID, bool) {
 	if c == nil || !c.sealed || op == 0 || int(op) > len(c.effectOperationIDs) {
 		return identity.ContentID{}, false
 	}
@@ -295,7 +296,7 @@ func (c *Contract) EffectOperationID(op Operation) (identity.ContentID, bool) {
 // operation effect occurrence.  Equal descriptors may intentionally occur at
 // several local positions; use EffectOccurrenceID when occurrence evidence is
 // required.
-func (c *Contract) EffectDescriptorID(op Operation, index int) (identity.ContentID, bool) {
+func (c *Contract) EffectDescriptorID(op vocabulary.Operation, index int) (identity.ContentID, bool) {
 	row, ok := c.operation(op)
 	if !ok || index < 0 || index >= row.effects.len() || !c.sealed {
 		return identity.ContentID{}, false
@@ -308,22 +309,11 @@ func (c *Contract) EffectDescriptorID(op Operation, index int) (identity.Content
 	return id, id.Available()
 }
 
-// PublicationEffectDescriptor returns the immutable Target-owned publication
-// semantics for one exact ordinary effect occurrence. Generic effects remain
-// absent unless their author explicitly supplied PublicationEffectSpec.
-func (c *Contract) PublicationEffectDescriptor(op Operation, index int) (PublicationEffectDescriptor, bool) {
-	row, ok := c.effect(op, index)
-	if !ok || !c.sealed || !c.validPublicationEffectRow(row) {
-		return PublicationEffectDescriptor{}, false
-	}
-	return row.publication, true
-}
-
 // PublicationEffectDescriptorID returns the existing canonical effect
 // descriptor identity only when that exact occurrence carries an explicit
 // publication descriptor. Reusing the effect descriptor ID prevents a second
 // parallel semantic identity for the same sealed occurrence.
-func (c *Contract) PublicationEffectDescriptorID(op Operation, index int) (identity.ContentID, bool) {
+func (c *Contract) PublicationEffectDescriptorID(op vocabulary.Operation, index int) (identity.ContentID, bool) {
 	if _, ok := c.PublicationEffectDescriptor(op, index); !ok {
 		return identity.ContentID{}, false
 	}
@@ -333,17 +323,17 @@ func (c *Contract) PublicationEffectDescriptorID(op Operation, index int) (ident
 // PublicationEffectOccurrenceID returns the existing canonical exact effect
 // occurrence identity only when that occurrence carries explicit publication
 // semantics.
-func (c *Contract) PublicationEffectOccurrenceID(op Operation, index int) (identity.ContentID, bool) {
+func (c *Contract) PublicationEffectOccurrenceID(op vocabulary.Operation, index int) (identity.ContentID, bool) {
 	if _, ok := c.PublicationEffectDescriptor(op, index); !ok {
 		return identity.ContentID{}, false
 	}
-	return c.EffectOccurrenceID(op, index)
+	return c.effectOccurrenceID(op, index)
 }
 
 // CallbackEffectDescriptorID returns the semantic quotient for one callback
 // effect occurrence.  It has no inverse because duplicate descriptors are a
 // deliberate quotient of distinct retained occurrences.
-func (c *Contract) CallbackEffectDescriptorID(callback CallbackID, index int) (identity.ContentID, bool) {
+func (c *Contract) CallbackEffectDescriptorID(callback vocabulary.CallbackID, index int) (identity.ContentID, bool) {
 	row, ok := c.callback(callback)
 	if !ok || index < 0 || index >= row.effects.len() || !c.sealed {
 		return identity.ContentID{}, false
@@ -356,24 +346,10 @@ func (c *Contract) CallbackEffectDescriptorID(callback CallbackID, index int) (i
 	return id, id.Available()
 }
 
-// CallbackPublicationEffectDescriptor returns the immutable Target-owned
-// publication semantics for one exact callback effect occurrence.
-func (c *Contract) CallbackPublicationEffectDescriptor(callback CallbackID, index int) (PublicationEffectDescriptor, bool) {
-	row, ok := c.callback(callback)
-	if !ok || !c.sealed || index < 0 || index >= row.effects.len() {
-		return PublicationEffectDescriptor{}, false
-	}
-	effect := c.effects[row.effects.start+uint32(index)]
-	if !c.validPublicationEffectRow(effect) {
-		return PublicationEffectDescriptor{}, false
-	}
-	return effect.publication, true
-}
-
 // CallbackPublicationEffectDescriptorID returns the canonical generic effect
 // descriptor identity for one callback occurrence with explicit publication
 // semantics.
-func (c *Contract) CallbackPublicationEffectDescriptorID(callback CallbackID, index int) (identity.ContentID, bool) {
+func (c *Contract) CallbackPublicationEffectDescriptorID(callback vocabulary.CallbackID, index int) (identity.ContentID, bool) {
 	if _, ok := c.CallbackPublicationEffectDescriptor(callback, index); !ok {
 		return identity.ContentID{}, false
 	}
@@ -382,16 +358,16 @@ func (c *Contract) CallbackPublicationEffectDescriptorID(callback CallbackID, in
 
 // CallbackPublicationEffectOccurrenceID returns the canonical exact callback
 // effect occurrence identity for an explicitly declared publication effect.
-func (c *Contract) CallbackPublicationEffectOccurrenceID(callback CallbackID, index int) (identity.ContentID, bool) {
+func (c *Contract) CallbackPublicationEffectOccurrenceID(callback vocabulary.CallbackID, index int) (identity.ContentID, bool) {
 	if _, ok := c.CallbackPublicationEffectDescriptor(callback, index); !ok {
 		return identity.ContentID{}, false
 	}
-	return c.CallbackEffectOccurrenceID(callback, index)
+	return c.callbackEffectOccurrenceID(callback, index)
 }
 
-// EffectOccurrenceID returns the exact ordinary effect occurrence identity,
+// effectOccurrenceID returns the exact ordinary effect occurrence identity,
 // including its canonical local row position.
-func (c *Contract) EffectOccurrenceID(op Operation, index int) (identity.ContentID, bool) {
+func (c *Contract) effectOccurrenceID(op vocabulary.Operation, index int) (identity.ContentID, bool) {
 	row, ok := c.operation(op)
 	if !ok || index < 0 || index >= row.effects.len() || !c.sealed {
 		return identity.ContentID{}, false
@@ -404,9 +380,9 @@ func (c *Contract) EffectOccurrenceID(op Operation, index int) (identity.Content
 	return id, id.Available()
 }
 
-// CallbackEffectOccurrenceID returns the exact callback effect occurrence
+// callbackEffectOccurrenceID returns the exact callback effect occurrence
 // identity, including callback correspondence and canonical local position.
-func (c *Contract) CallbackEffectOccurrenceID(callback CallbackID, index int) (identity.ContentID, bool) {
+func (c *Contract) callbackEffectOccurrenceID(callback vocabulary.CallbackID, index int) (identity.ContentID, bool) {
 	row, ok := c.callback(callback)
 	if !ok || index < 0 || index >= row.effects.len() || !c.sealed {
 		return identity.ContentID{}, false
@@ -419,10 +395,10 @@ func (c *Contract) CallbackEffectOccurrenceID(callback CallbackID, index int) (i
 	return id, id.Available()
 }
 
-// EffectRowFamilyID identifies an operation's complete effect row, including
+// effectRowFamilyID identifies an operation's complete effect row, including
 // its tail/variable schema and ordered occurrence identities.  Empty and
 // opaque rows therefore receive a real family identity too.
-func (c *Contract) EffectRowFamilyID(op Operation) (identity.ContentID, bool) {
+func (c *Contract) effectRowFamilyID(op vocabulary.Operation) (identity.ContentID, bool) {
 	if c == nil || !c.sealed || op == 0 || int(op) > len(c.operationEffectFamilies) {
 		return identity.ContentID{}, false
 	}
@@ -430,9 +406,9 @@ func (c *Contract) EffectRowFamilyID(op Operation) (identity.ContentID, bool) {
 	return id, id.Available()
 }
 
-// CallbackEffectRowFamilyID identifies a callback's complete expected effect
+// callbackEffectRowFamilyID identifies a callback's complete expected effect
 // row, including its tail/variable schema and ordered occurrence identities.
-func (c *Contract) CallbackEffectRowFamilyID(callback CallbackID) (identity.ContentID, bool) {
+func (c *Contract) callbackEffectRowFamilyID(callback vocabulary.CallbackID) (identity.ContentID, bool) {
 	if c == nil || !c.sealed || callback == 0 || int(callback) > len(c.callbackEffectFamilies) {
 		return identity.ContentID{}, false
 	}

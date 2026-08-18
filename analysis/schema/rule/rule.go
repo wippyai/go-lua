@@ -19,10 +19,10 @@ package rule
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 // Surface law ordinals. They are numeric identities; rendering a verdict is
@@ -61,6 +61,11 @@ const (
 	// declared member of the vocabulary it names: the occurrence family, the
 	// placement form, the operand polarity, and the execution cut.
 	LawIssuanceResolves
+	// LawOwnerResolves states that the axis that must supply this rule's
+	// operand resolver is a declared axis. The resolver itself stays on the
+	// bound cell; the table only names who must supply it and refuses a rule
+	// whose owner is not a writer principal.
+	LawOwnerResolves
 )
 
 // Lane is the closed admission lane of one rule. Mounted rules enter through a
@@ -125,39 +130,19 @@ type Finalization[A, H any] struct {
 	Authorities A
 }
 
-// Attach admits one artifact-authored occurrence while the assembly's sources
-// remain open.
-type Attach[H any] struct {
-	Rule       H
-	Assembly   *engine.ReceiptAssembly
-	Mount      identity.ContentID
-	Point      identity.ContentID
-	Occurrence identity.ContentID
-}
-
 // Member binds one already-admitted occurrence to a committed topology.
 type Member[H any] struct {
 	Rule        H
-	Compilation *engine.ReceiptCompilation
-	Graph       *engine.ReceiptGraph
+	Compilation *engine.ProgramConstruction
 	Mount       identity.ContentID
 	Point       identity.ContentID
 	Occurrence  identity.ContentID
 }
 
-// LinkAttach admits one Link-owned occurrence. A Link rule is never
-// materialized from an artifact row, so it carries no mount or point.
-type LinkAttach[H any] struct {
-	Rule       H
-	Assembly   *engine.ReceiptAssembly
-	Occurrence identity.ContentID
-}
-
 // LinkMember binds one admitted Link occurrence to a committed topology.
 type LinkMember[H any] struct {
 	Rule        H
-	Compilation *engine.ReceiptCompilation
-	Graph       *engine.ReceiptGraph
+	Compilation *engine.ProgramConstruction
 	Occurrence  identity.ContentID
 }
 
@@ -214,6 +199,12 @@ type Spec[P, A, F, H any] struct {
 	// declared, and the lane it writes is named by the axis that owns it rather
 	// than by a projection of the role.
 	Writes schema.Key
+	// Owner is the axis that must supply this rule's operand resolver. It is
+	// the join key from the declaration to the bound cell: construction later
+	// selects the resolver by this rule's identity, and the owner names who
+	// must have installed it. Owner and Writes may differ: a rule can write
+	// one coordinate space while its operand is resolved by another principal.
+	Owner schema.Key
 	// Issues are this rule's program-occurrence subscriptions, in the order the
 	// compiler places them. A rule materialized from a compiled artifact
 	// declares which rows issue it; a Link-owned rule declares none, because its
@@ -240,13 +231,11 @@ type Spec[P, A, F, H any] struct {
 	Bind func(Binding[A, F]) (H, bool)
 	// Finalize is the optional post-seal owner step.
 	Finalize func(Finalization[A, H]) bool
-	// Attach and Member are the mounted artifact lanes. Link rules declare
-	// neither; they declare the Link trio below instead.
-	Attach func(Attach[H]) bool
+	// Member is the activation construction bridge. Mounted operand rules and
+	// Link rules declare none.
 	Member func(Member[H]) bool
-	// LinkAttach, LinkMember, and LinkCatalog are the Link lane. Mounted rules
-	// declare none of them.
-	LinkAttach  func(LinkAttach[H]) bool
+	// LinkCatalog is the Link lane inventory. Mounted rules declare none.
+	// Construction binds Link members through the cell-owned program attach.
 	LinkMember  func(LinkMember[H]) bool
 	LinkCatalog func(H) (LinkCatalog, bool)
 }
@@ -266,6 +255,7 @@ type Template[P, A any] struct {
 	id       schema.EntryID
 	lane     Lane
 	writes   schema.Key
+	owner    schema.Key
 	issues   []Issuance
 	semantic schema.Key
 	roles    []schema.Key
@@ -275,10 +265,8 @@ type Template[P, A any] struct {
 	pair        func(*engine.SchemaBinding, Cell, func(schema.Key) (engine.RuleSlotCapability, bool)) bool
 	bind        func(*engine.SchemaBinding, A, Cell) (Cell, bool)
 	finalize    func(A, Cell) bool
-	attach      func(Cell, *engine.ReceiptAssembly, identity.ContentID, identity.ContentID, identity.ContentID) bool
-	member      func(Cell, *engine.ReceiptCompilation, *engine.ReceiptGraph, identity.ContentID, identity.ContentID, identity.ContentID) bool
-	linkAttach  func(Cell, *engine.ReceiptAssembly, identity.ContentID) bool
-	linkMember  func(Cell, *engine.ReceiptCompilation, *engine.ReceiptGraph, identity.ContentID) bool
+	member     func(Cell, *engine.ProgramConstruction, identity.ContentID, identity.ContentID, identity.ContentID) bool
+	linkMember func(Cell, *engine.ProgramConstruction, identity.ContentID) bool
 	linkCatalog func(Cell) (LinkCatalog, bool)
 }
 
@@ -293,6 +281,7 @@ func New[P, A, F, H any](spec Spec[P, A, F, H]) (*Template[P, A], bool) {
 		id:       schema.NewEntryID(schema.SurfaceKindRule, spec.Key),
 		lane:     spec.Lane,
 		writes:   spec.Writes,
+		owner:    spec.Owner,
 		issues:   append([]Issuance(nil), spec.Issues...),
 		semantic: spec.Semantic,
 		roles:    append([]schema.Key(nil), spec.Roles...),
@@ -343,28 +332,16 @@ func New[P, A, F, H any](spec Spec[P, A, F, H]) (*Template[P, A], bool) {
 			return ok && spec.Finalize(Finalization[A, H]{Rule: hot, Authorities: authorities})
 		}
 	}
-	if spec.Attach != nil {
-		template.attach = func(holder Cell, assembly *engine.ReceiptAssembly, mount, point, occurrence identity.ContentID) bool {
-			hot, ok := holder.payload.(H)
-			return ok && assembly != nil && spec.Attach(Attach[H]{Rule: hot, Assembly: assembly, Mount: mount, Point: point, Occurrence: occurrence})
-		}
-	}
 	if spec.Member != nil {
-		template.member = func(holder Cell, compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mount, point, occurrence identity.ContentID) bool {
+		template.member = func(holder Cell, compilation *engine.ProgramConstruction, mount, point, occurrence identity.ContentID) bool {
 			hot, ok := holder.payload.(H)
-			return ok && compilation != nil && graph != nil && spec.Member(Member[H]{Rule: hot, Compilation: compilation, Graph: graph, Mount: mount, Point: point, Occurrence: occurrence})
-		}
-	}
-	if spec.LinkAttach != nil {
-		template.linkAttach = func(holder Cell, assembly *engine.ReceiptAssembly, occurrence identity.ContentID) bool {
-			hot, ok := holder.payload.(H)
-			return ok && assembly != nil && spec.LinkAttach(LinkAttach[H]{Rule: hot, Assembly: assembly, Occurrence: occurrence})
+			return ok && compilation != nil && spec.Member(Member[H]{Rule: hot, Compilation: compilation, Mount: mount, Point: point, Occurrence: occurrence})
 		}
 	}
 	if spec.LinkMember != nil {
-		template.linkMember = func(holder Cell, compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, occurrence identity.ContentID) bool {
+		template.linkMember = func(holder Cell, compilation *engine.ProgramConstruction, occurrence identity.ContentID) bool {
 			hot, ok := holder.payload.(H)
-			return ok && compilation != nil && graph != nil && spec.LinkMember(LinkMember[H]{Rule: hot, Compilation: compilation, Graph: graph, Occurrence: occurrence})
+			return ok && compilation != nil && spec.LinkMember(LinkMember[H]{Rule: hot, Compilation: compilation, Occurrence: occurrence})
 		}
 	}
 	if spec.LinkCatalog != nil {
@@ -392,14 +369,22 @@ func specAdmissible[P, A, F, H any](spec Spec[P, A, F, H]) bool {
 	if !spec.Semantic.Available() || spec.Declare == nil || spec.Register == nil || spec.Bind == nil {
 		return false
 	}
-	mounted, link := spec.Lane.Mounted(), spec.Lane == LaneLink
-	if mounted != (spec.Attach != nil) || mounted != (spec.Member != nil) {
+	activation, link := spec.Lane == LaneActivation, spec.Lane == LaneLink
+	if activation {
+		if spec.Member == nil {
+			return false
+		}
+	} else if spec.Member != nil {
 		return false
 	}
-	if link != (spec.LinkAttach != nil) || link != (spec.LinkMember != nil) || link != (spec.LinkCatalog != nil) {
+	if link {
+		if spec.LinkCatalog == nil || spec.LinkMember != nil {
+			return false
+		}
+	} else if spec.LinkMember != nil || spec.LinkCatalog != nil {
 		return false
 	}
-	if !spec.Writes.Available() {
+	if !spec.Writes.Available() || !spec.Owner.Available() {
 		return false
 	}
 	for _, issuance := range spec.Issues {
@@ -419,6 +404,9 @@ func (template *Template[P, A]) Lane() Lane { return template.lane }
 // Writes is the axis this rule's occurrences write, by the key that axis is
 // declared under.
 func (template *Template[P, A]) Writes() schema.Key { return template.writes }
+
+// Owner is the axis that must supply this rule's operand resolver.
+func (template *Template[P, A]) Owner() schema.Key { return template.owner }
 
 // IssuanceCount is the number of occurrence subscriptions this rule declares.
 func (template *Template[P, A]) IssuanceCount() int {
@@ -480,22 +468,33 @@ func (template *Template[P, A]) EntryAvailable() bool {
 	if !template.semantic.Available() || template.declare == nil || template.register == nil || template.bind == nil {
 		return false
 	}
-	mounted, link := template.lane.Mounted(), template.lane == LaneLink
-	if mounted != (template.attach != nil) || mounted != (template.member != nil) {
+	activation, link := template.lane == LaneActivation, template.lane == LaneLink
+	if activation {
+		if template.member == nil {
+			return false
+		}
+	} else if template.member != nil {
 		return false
 	}
-	if link != (template.linkAttach != nil) || link != (template.linkMember != nil) || link != (template.linkCatalog != nil) {
+	if link {
+		if template.linkCatalog == nil || template.linkMember != nil {
+			return false
+		}
+	} else if template.linkMember != nil || template.linkCatalog != nil {
 		return false
 	}
-	return template.writes.Available()
+	return template.writes.Available() && template.owner.Available()
 }
 
 // EntryContent writes this rule's declarative half: the semantic roles it is
-// declared against, the admission lane it enters on, the axis it writes, and the
-// occurrence subscriptions it declares, each in declaration order. The lane
-// decides which admission path an occurrence takes, the axis names the
-// coordinate space this rule's facts land in, and the subscriptions are the
-// mapping from compiled rows to issued occurrences, so all of them are content.
+// declared against, the admission lane it enters on, the axis it writes, the
+// owner that must supply its operand resolver, and the occurrence
+// subscriptions it declares, each in declaration order. The lane decides
+// which admission path an occurrence takes, the write axis names the
+// coordinate space this rule's facts land in, the owner names the principal
+// that must install the resolver construction later selects by this rule's
+// key, and the subscriptions are the mapping from compiled rows to issued
+// occurrences, so all of them are content.
 //
 // The role is not written. A rule's role is its position in this very order, so
 // writing it would write one value twice.
@@ -531,6 +530,9 @@ func (template *Template[P, A]) EntryContent(content *framing.Writer) error {
 		return err
 	}
 	if err := content.String(string(template.writes)); err != nil {
+		return err
+	}
+	if err := content.String(string(template.owner)); err != nil {
 		return err
 	}
 	if err := content.Count(uint64(len(template.issues))); err != nil {
@@ -594,20 +596,12 @@ func (template *Template[P, A]) Finalize(authorities A, hot Cell) bool {
 	return template.finalize != nil && hot.Available() && template.finalize(authorities, hot)
 }
 
-func (template *Template[P, A]) Attach(hot Cell, assembly *engine.ReceiptAssembly, mount, point, occurrence identity.ContentID) bool {
-	return template.attach != nil && hot.Available() && template.attach(hot, assembly, mount, point, occurrence)
+func (template *Template[P, A]) Member(hot Cell, compilation *engine.ProgramConstruction, mount, point, occurrence identity.ContentID) bool {
+	return template.member != nil && hot.Available() && template.member(hot, compilation, mount, point, occurrence)
 }
 
-func (template *Template[P, A]) Member(hot Cell, compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mount, point, occurrence identity.ContentID) bool {
-	return template.member != nil && hot.Available() && template.member(hot, compilation, graph, mount, point, occurrence)
-}
-
-func (template *Template[P, A]) LinkAttach(hot Cell, assembly *engine.ReceiptAssembly, occurrence identity.ContentID) bool {
-	return template.linkAttach != nil && hot.Available() && template.linkAttach(hot, assembly, occurrence)
-}
-
-func (template *Template[P, A]) LinkMember(hot Cell, compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, occurrence identity.ContentID) bool {
-	return template.linkMember != nil && hot.Available() && template.linkMember(hot, compilation, graph, occurrence)
+func (template *Template[P, A]) LinkMember(hot Cell, compilation *engine.ProgramConstruction, occurrence identity.ContentID) bool {
+	return template.linkMember != nil && hot.Available() && template.linkMember(hot, compilation, occurrence)
 }
 
 func (template *Template[P, A]) LinkCatalog(hot Cell) (LinkCatalog, bool) {
@@ -672,6 +666,13 @@ func (contribution surface[P, A]) Seal(view schema.View, sealed schema.Sealed) s
 		// axis and nothing else names it.
 		if _, disposition := sealed.Resolve(schema.SurfaceKindAxis, template.writes); disposition != schema.DispositionAccepted {
 			return schema.SurfaceLawFailure(schema.SurfaceKindRule, template.id, LawWritesResolves, disposition)
+		}
+		// The owner is the writer principal that must install this rule's
+		// operand resolver. It is resolved against the same axis surface as
+		// Writes, so a rule cannot name an owner that is not a declared
+		// principal.
+		if _, disposition := sealed.Resolve(schema.SurfaceKindAxis, template.owner); disposition != schema.DispositionAccepted {
+			return schema.SurfaceLawFailure(schema.SurfaceKindRule, template.id, LawOwnerResolves, disposition)
 		}
 		// A rule admitted from a compiled artifact is reached by the rows it
 		// subscribes to. One that subscribes to nothing would sit on that lane

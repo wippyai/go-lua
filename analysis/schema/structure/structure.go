@@ -77,6 +77,7 @@ const (
 	LawAcceptedDeclared
 	LawSpellingDeclared
 	LawSpellingUnique
+	LawStagePredecessor
 )
 
 // Category is the closed catalog of structural vocabularies this surface
@@ -176,17 +177,25 @@ type Spec struct {
 	// consumer projects. An arm and an event are projected whole, so every member
 	// of those vocabularies is accepted.
 	Accepted bool
+	// Native is the issuance-stage native-call cut. Other categories leave it
+	// unset.
+	Native bool
+	// Predecessor is the issuance-stage that must already own the input point
+	// of a native cut. Other categories leave it unset.
+	Predecessor schema.Key
 }
 
 // Entry is one admitted structural vocabulary member. It is immutable once
 // built.
 type Entry struct {
-	key      schema.Key
-	id       schema.EntryID
-	category Category
-	ordinal  uint16
-	spelling string
-	accepted bool
+	key         schema.Key
+	id          schema.EntryID
+	category    Category
+	ordinal     uint16
+	spelling    string
+	accepted    bool
+	native      bool
+	predecessor schema.Key
 }
 
 // New admits one authored declaration. A rejected spec returns false rather
@@ -195,13 +204,21 @@ func New(spec Spec) (*Entry, bool) {
 	if !spec.Key.Available() || !spec.Category.Available() || spec.Ordinal == 0 || spec.Spelling == "" || (spec.Category != CategoryOutcome && !spec.Accepted) {
 		return nil, false
 	}
+	if spec.Category != CategoryIssuanceStage && (spec.Native || spec.Predecessor.Available()) {
+		return nil, false
+	}
+	if spec.Predecessor.Available() && spec.Predecessor == spec.Key {
+		return nil, false
+	}
 	entry := &Entry{
-		key:      spec.Key,
-		id:       schema.NewEntryID(schema.SurfaceKindStructure, spec.Key),
-		category: spec.Category,
-		ordinal:  spec.Ordinal,
-		spelling: spec.Spelling,
-		accepted: spec.Accepted,
+		key:         spec.Key,
+		id:          schema.NewEntryID(schema.SurfaceKindStructure, spec.Key),
+		category:    spec.Category,
+		ordinal:     spec.Ordinal,
+		spelling:    spec.Spelling,
+		accepted:    spec.Accepted,
+		native:      spec.Native,
+		predecessor: spec.Predecessor,
 	}
 	return entry, entry.EntryAvailable() && entry.declarationComplete()
 }
@@ -295,6 +312,15 @@ func (entry *Entry) Spelling() string {
 // members it projects.
 func (entry *Entry) Accepted() bool { return entry != nil && entry.accepted }
 
+func (entry *Entry) Native() bool { return entry != nil && entry.native }
+
+func (entry *Entry) Predecessor() schema.Key {
+	if entry == nil {
+		return ""
+	}
+	return entry.predecessor
+}
+
 // EntryAvailable is the root's admissibility question: does this row identify
 // one entry. Whether the vocabulary it belongs to is completely declared is
 // the surface's own law, stated by Seal.
@@ -317,7 +343,13 @@ func (entry *Entry) EntryContent(content *framing.Writer) error {
 	if err := content.Bool(entry.accepted); err != nil {
 		return err
 	}
-	return content.String(entry.spelling)
+	if err := content.String(entry.spelling); err != nil {
+		return err
+	}
+	if err := content.Bool(entry.native); err != nil {
+		return err
+	}
+	return content.String(string(entry.predecessor))
 }
 
 func (entry *Entry) declarationComplete() bool {
@@ -479,6 +511,23 @@ func (contribution surface) Seal(view schema.View, _ schema.Sealed) schema.SealF
 		// consumer reading the property would silently produce an empty result.
 		if accepted[category] == 0 {
 			return failure(schema.EntryID{}, LawAcceptedDeclared, schema.DispositionIncomplete)
+		}
+	}
+	stages := make(map[schema.Key]*Entry, counts[CategoryIssuanceStage])
+	for position := 0; position < view.Count(); position++ {
+		row, _ := view.At(position)
+		entry, _ := row.(*Entry)
+		if entry != nil && entry.category == CategoryIssuanceStage {
+			stages[entry.key] = entry
+		}
+	}
+	for _, entry := range stages {
+		if !entry.predecessor.Available() {
+			continue
+		}
+		predecessor, ok := stages[entry.predecessor]
+		if !ok || predecessor == nil || predecessor.key == entry.key {
+			return failure(entry.id, LawStagePredecessor, schema.DispositionMalformed)
 		}
 	}
 	return schema.SealFailure{}

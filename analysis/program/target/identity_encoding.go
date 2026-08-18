@@ -2,18 +2,19 @@ package target
 
 import (
 	"errors"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
-func encodeInput(w *framing.Writer, value InputSource) error {
+func encodeInput(w *framing.Writer, value vocabulary.InputSource) error {
 	if err := w.Uint(uint64(value.Kind)); err != nil {
 		return err
 	}
 	return w.Uint(uint64(value.Ordinal))
 }
 
-func (c *Contract) encodeBindings(w *framing.Writer, op Operation) error {
+func (c *Contract) encodeBindings(w *framing.Writer, op vocabulary.Operation) error {
 	count := c.BindingCount(op)
 	if err := w.Count(uint64(count)); err != nil {
 		return err
@@ -36,7 +37,7 @@ func (c *Contract) encodeBindings(w *framing.Writer, op Operation) error {
 	return nil
 }
 
-func (c *Contract) encodePortableOperation(w *framing.Writer, op Operation) error {
+func (c *Contract) encodePortableOperation(w *framing.Writer, op vocabulary.Operation) error {
 	row, ok := c.operation(op)
 	if !ok {
 		return errors.New("target: malformed operation")
@@ -76,7 +77,7 @@ func (c *Contract) encodePortableOperation(w *framing.Writer, op Operation) erro
 		return err
 	}
 	for i := row.callbacks.start; i < row.callbacks.end; i++ {
-		if err := c.encodePortableCallback(w, CallbackID(i+1)); err != nil {
+		if err := c.encodePortableCallback(w, vocabulary.CallbackID(i+1)); err != nil {
 			return err
 		}
 	}
@@ -96,11 +97,11 @@ func (c *Contract) encodePortableOperation(w *framing.Writer, op Operation) erro
 			return err
 		}
 	}
-	if err := w.Count(uint64(c.SuspensionCount(op))); err != nil {
+	if err := w.Count(uint64(c.suspensionCount(op))); err != nil {
 		return err
 	}
-	for i := 0; i < c.SuspensionCount(op); i++ {
-		y, r, s, m, ok := c.SuspensionAt(op, i)
+	for i := 0; i < c.suspensionCount(op); i++ {
+		y, r, s, m, ok := c.suspensionAt(op, i)
 		if !ok {
 			return errors.New("target: malformed suspension")
 		}
@@ -210,7 +211,7 @@ func (c *Contract) encodePortableOperation(w *framing.Writer, op Operation) erro
 	return nil
 }
 
-func (c *Contract) encodePortableCallback(w *framing.Writer, id CallbackID) error {
+func (c *Contract) encodePortableCallback(w *framing.Writer, id vocabulary.CallbackID) error {
 	row, ok := c.callback(id)
 	if !ok {
 		return errors.New("target: malformed callback")
@@ -271,7 +272,7 @@ func (c *Contract) encodePortableCallback(w *framing.Writer, id CallbackID) erro
 		return err
 	}
 	for _, outcome := range []uint32{r.outcome, r.zeroOutcome} {
-		if r.zeroBehavior == CallbackReleaseZeroSuppress && outcome == r.zeroOutcome {
+		if r.zeroBehavior == vocabulary.CallbackReleaseZeroSuppress && outcome == r.zeroOutcome {
 			if err := w.Bool(false); err != nil {
 				return err
 			}
@@ -297,14 +298,14 @@ func (c *Contract) encodePortableCallback(w *framing.Writer, id CallbackID) erro
 	return nil
 }
 
-func (c *Contract) encodePortableSubedge(w *framing.Writer, owner Operation, row subedgeRow) error {
+func (c *Contract) encodePortableSubedge(w *framing.Writer, owner vocabulary.Operation, row subedgeRow) error {
 	for _, v := range []uint64{uint64(row.role), uint64(row.family), uint64(row.callee), uint64(row.admission)} {
 		if err := w.Uint(v); err != nil {
 			return err
 		}
 	}
 	switch row.callee {
-	case SubedgeCalleeCallback:
+	case vocabulary.SubedgeCalleeCallback:
 		s, ok := c.callbackSelector(row.callback)
 		if !ok {
 			return errors.New("target: malformed subedge callback")
@@ -312,7 +313,7 @@ func (c *Contract) encodePortableSubedge(w *framing.Writer, owner Operation, row
 		if err := w.Bytes(s[:]); err != nil {
 			return err
 		}
-	case SubedgeCalleeCapturedInitialRead:
+	case vocabulary.SubedgeCalleeCapturedInitialRead:
 		if row.readRoot == 0 || int(row.readRoot) > len(c.initialRoots) {
 			return errors.New("target: malformed subedge root")
 		}
@@ -322,11 +323,11 @@ func (c *Contract) encodePortableSubedge(w *framing.Writer, owner Operation, row
 		if err := encodeExactKey(w, c, row.readKey); err != nil {
 			return err
 		}
-	case SubedgeCalleeMetaKey:
+	case vocabulary.SubedgeCalleeMetaKey:
 		if err := encodeExactKey(w, c, row.metaKey); err != nil {
 			return err
 		}
-	case SubedgeCalleeInvalid:
+	case vocabulary.SubedgeCalleeInvalid:
 	default:
 		return errors.New("target: malformed subedge callee")
 	}
@@ -369,7 +370,7 @@ func (c *Contract) encodePortableSubedge(w *framing.Writer, owner Operation, row
 	return nil
 }
 
-func (c *Contract) encodePortableRoute(w *framing.Writer, owner Operation, row subedgeRouteRow) error {
+func (c *Contract) encodePortableRoute(w *framing.Writer, owner vocabulary.Operation, row subedgeRouteRow) error {
 	for _, v := range []uint64{uint64(row.route), uint64(row.adjustment)} {
 		if err := w.Uint(v); err != nil {
 			return err
@@ -396,7 +397,7 @@ func (c *Contract) encodePortableRoute(w *framing.Writer, owner Operation, row s
 	}
 	return encodeOptionalValues(w, c, row.destination)
 }
-func encodeOptionalValues(w *framing.Writer, c *Contract, v Values) error {
+func encodeOptionalValues(w *framing.Writer, c *Contract, v vocabulary.Values) error {
 	if err := w.Bool(v != 0); err != nil {
 		return err
 	}
@@ -406,7 +407,7 @@ func encodeOptionalValues(w *framing.Writer, c *Contract, v Values) error {
 	return encodeValues(w, c, v)
 }
 
-func (c *Contract) encodePortableOutcome(w *framing.Writer, owner Operation, flat int) error {
+func (c *Contract) encodePortableOutcome(w *framing.Writer, owner vocabulary.Operation, flat int) error {
 	if flat < 0 || flat >= len(c.outcomes) {
 		return errors.New("target: malformed outcome")
 	}
@@ -440,8 +441,8 @@ func (c *Contract) encodePortableOutcome(w *framing.Writer, owner Operation, fla
 			if err := w.Uint(uint64(x.kind)); err != nil {
 				return err
 			}
-			if x.kind == CaptureCallback {
-				s, ok := c.callbackSelector(CallbackID(x.ordinal))
+			if x.kind == vocabulary.CaptureCallback {
+				s, ok := c.callbackSelector(vocabulary.CallbackID(x.ordinal))
 				if !ok {
 					return errors.New("target: malformed produced callback")
 				}

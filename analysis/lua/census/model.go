@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"reflect"
 
 	"github.com/wippyai/go-lua/analysis/lua/parsersource"
 )
@@ -151,11 +150,4 @@ func clone(c Census) Census {
 		}
 	}
 	return result
-}
-
-// Equal reports exact equality of two detached census values. It is kept for
-// generator tests and future seal-join callers; it does not compare a
-// self-reported digest in place of the rows.
-func Equal(left, right Census) bool {
-	return reflect.DeepEqual(left, right)
 }

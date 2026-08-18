@@ -14,6 +14,12 @@ import (
 
 func TestArtifactSectionRoundTripRebuildsAuthoredContent(t *testing.T) {
 	input, index := contentFixture()
+	input.CellSpellings = []CellSpelling{
+		{Cell: keyspace.MakeTerm(keyspace.FamilyCell, 1), Name: "bound"},
+		{Cell: keyspace.MakeTerm(keyspace.FamilyCell, 2)},
+		{Cell: keyspace.MakeTerm(keyspace.FamilyCell, 3), Name: "first"},
+		{Cell: keyspace.MakeTerm(keyspace.FamilyCell, 4), Name: "second"},
+	}
 	component := finalizeSource(t, input, index)
 
 	var data bytes.Buffer
@@ -50,6 +56,9 @@ func TestArtifactSectionRoundTripRebuildsAuthoredContent(t *testing.T) {
 	if got := len(decoded.Families); got != int(keyspace.FamilyCount-1) {
 		t.Fatalf("decoded family rows = %d, want %d", got, keyspace.FamilyCount-1)
 	}
+	if len(decoded.CellSpellings) != 4 || decoded.CellSpellings[0].Name != "bound" || decoded.CellSpellings[1].Name != "" || decoded.CellSpellings[3].Name != "second" {
+		t.Fatalf("decoded Cell spellings = %#v", decoded.CellSpellings)
+	}
 	for _, family := range decoded.Families {
 		if family.Family == keyspace.FamilyOutcome && len(family.Spans) != 0 {
 			t.Fatal("decoded authored section retained derived Outcome spans")
@@ -58,6 +67,31 @@ func TestArtifactSectionRoundTripRebuildsAuthoredContent(t *testing.T) {
 	rebuilt := draftContentID(t, decoded)
 	if rebuilt != component.Cold().ContentID() {
 		t.Fatalf("rebuild ContentID = %x, want %x", rebuilt, component.Cold().ContentID())
+	}
+}
+
+func TestArtifactSectionRoundTripsOptionalCallSpelling(t *testing.T) {
+	input, index := sourceFixture(1)
+	call := keyspace.MakeTerm(keyspace.FamilyCall, 1)
+	for at := range input.Families {
+		if input.Families[at].Family == keyspace.FamilyCall {
+			input.Families[at].Spans = []Span{{File: input.Name, StartLine: 2, StartCol: 1, EndLine: 2, EndCol: 4}}
+		}
+	}
+	input.Bodies[0].Terms = append(input.Bodies[0].Terms, call)
+	index.Bodies[0].Roots = append(index.Bodies[0].Roots, call)
+	appendCanonicalFixturePosition(&index, Position{Term: call, Root: call, Body: keyspace.MakeTerm(keyspace.FamilyBody, 1), Offset: 1, Cursor: 1, FrontierBody: keyspace.MakeTerm(keyspace.FamilyBody, 1), FrontierCursor: 1})
+	input.CallSpellings = []CallSpelling{{Call: call, Name: "require"}}
+	component := finalizeSource(t, input, index)
+	decoded, err := decodeSourceArtifactLaw(t, encodeSourceArtifactLaw(t, component, "source/call-spelling-law"), "source/call-spelling-law")
+	if err != nil {
+		t.Fatalf("ReadArtifactSection: %v", err)
+	}
+	if len(decoded.CallSpellings) != 1 || decoded.CallSpellings[0] != (CallSpelling{Call: call, Name: "require"}) {
+		t.Fatalf("decoded optional Call spelling = %#v", decoded.CallSpellings)
+	}
+	if got := draftContentID(t, decoded); got != component.Cold().ContentID() {
+		t.Fatalf("decoded optional Call spelling changed ContentID: %x != %x", got, component.Cold().ContentID())
 	}
 }
 
@@ -178,6 +212,31 @@ func TestArtifactSectionRejectsInvalidDenseExactKeyOrdinal(t *testing.T) {
 	}
 	if decoded.Name != "" || len(decoded.Families) != 0 || len(decoded.Keys) != 0 {
 		t.Fatalf("invalid dense exact Key decode returned partial Input: %#v", decoded)
+	}
+}
+
+func TestArtifactSectionRejectsDuplicateDenseCellSpelling(t *testing.T) {
+	input, index := contentFixture()
+	input.CellSpellings = []CellSpelling{
+		{Cell: keyspace.MakeTerm(keyspace.FamilyCell, 1), Name: "first"},
+		{Cell: keyspace.MakeTerm(keyspace.FamilyCell, 2), Name: "second"},
+		{Cell: keyspace.MakeTerm(keyspace.FamilyCell, 3), Name: "third"},
+		{Cell: keyspace.MakeTerm(keyspace.FamilyCell, 4), Name: "fourth"},
+	}
+	component := finalizeSource(t, input, index)
+	raw := encodeSourceArtifactLaw(t, component, "source/spelling-law")
+	offsets := sourceArtifactMutationOffsets(t, raw)
+	if len(offsets.cellSpellingTerms) < 2 {
+		t.Fatalf("Cell spelling term offsets = %#v", offsets.cellSpellingTerms)
+	}
+	mutated := append([]byte(nil), raw...)
+	overwriteArtifactUint(t, mutated, offsets.cellSpellingTerms[1], uint64(keyspace.MakeTerm(keyspace.FamilyCell, 1)))
+	decoded, err := decodeSourceArtifactLaw(t, mutated, "source/spelling-law")
+	if err == nil {
+		t.Fatalf("artifact decoder accepted duplicate dense Cell spelling: %#v", decoded)
+	}
+	if decoded.Name != "" || len(decoded.CellSpellings) != 0 {
+		t.Fatalf("malformed spelling decode returned partial Input: %#v", decoded)
 	}
 }
 
@@ -352,6 +411,7 @@ type artifactMutationOffsets struct {
 	exactKinds          []int
 	exactStrings        []int
 	keyExactOrdinals    []int
+	cellSpellingTerms   []int
 	bodyFirstRangeCount int
 	bodyFirstTerm       int
 	faultKind           int
@@ -465,13 +525,27 @@ func sourceArtifactMutationOffsets(t *testing.T, data []byte) artifactMutationOf
 					}
 					offsets.keyExactOrdinals = append(offsets.keyExactOrdinals, exact.payloadStart)
 				}
-				if faultCount > 0 {
+				for index := 0; index < faultCount; index++ {
 					takeArtifactEvent(t, data, &position) // owner
 					kind := takeArtifactEvent(t, data, &position)
 					if kind.tag != 5 {
 						t.Fatalf("fault kind tag = %d, want Uint", kind.tag)
 					}
-					offsets.faultKind = kind.payloadStart
+					if index == 0 {
+						offsets.faultKind = kind.payloadStart
+					}
+					takeArtifactEvent(t, data, &position) // label
+					takeArtifactEvent(t, data, &position) // blocker
+				}
+			case sourceArtifactRecordSpellings:
+				cellCount := artifactCountEvent(t, data, &position)
+				for range cellCount {
+					term := takeArtifactEvent(t, data, &position)
+					if term.tag != 5 {
+						t.Fatalf("Cell spelling term tag = %d, want Uint", term.tag)
+					}
+					offsets.cellSpellingTerms = append(offsets.cellSpellingTerms, term.payloadStart)
+					takeArtifactEvent(t, data, &position) // spelling
 				}
 				return offsets
 			}

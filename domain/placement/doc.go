@@ -25,8 +25,8 @@
 // blocked on the same missing thing rather than on a declaration that was
 // merely not written:
 //
-// An axis entry requires a writer principal, and a principal is a
-// programartifact.RuleOutputKind derived from the closed RuleRole catalog.
+// An axis entry requires a writer principal, and a principal is the
+// Spec.Writes key of the rule that owns the factor lane.
 // There is no placement rule role and therefore no placement factor lane in
 // the artifact, so an axis entry here would have to mint a serialized ABI
 // ordinal for a factor nothing writes. The lattice this package publishes is

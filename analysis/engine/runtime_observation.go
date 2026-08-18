@@ -178,3 +178,91 @@ func indexReceiptObservationPoints(graph *equation.Graph) (map[composition.Key]e
 	}
 	return result, len(result) != 0
 }
+
+// bindReceiptSummaryObservationRuntime binds one optional observation against a
+// sealed factor plane. It is the observation counterpart of the member and
+// query binds an activation revision replays.
+func bindReceiptSummaryObservationRuntime[V, R any](compilation *programPlane, implementation *SummaryQueryImplementation[V, R], id identity.ContentID, member equation.RuleMember, owner *receiptObservationOwner) (runtimeObservation, bool) {
+	if compilation == nil || !compilation.frozen || compilation.runtime == nil || compilation.runtime.mode != runtimeBindingReceipt || implementation == nil || owner == nil || !id.Available() || !compilation.runtime.graph.OwnsMember(member) {
+		return nil, false
+	}
+	state, authority, family, queryOrdinal, receiptOK := implementation.boundTopologyQueryReceipt()
+	if !receiptOK || state != compilation.runtime.state || authority != compilation.runtime.authority || !family.Available() || owner.state != state || owner.authority != authority || owner.schema != state.schema || owner.query != queryOrdinal {
+		return nil, false
+	}
+	projection, projectionOK := state.schema.queryProjectionShapeAt(queryOrdinal, 0)
+	if !projectionOK || projection.Kind != composition.QueryFactorSummary || !projection.Factor.Available() || !projection.Normalizer.Available() {
+		return nil, false
+	}
+	if compilation.observationPoints == nil {
+		var indexed bool
+		compilation.observationPoints, indexed = indexReceiptObservationPoints(compilation.runtime.graph)
+		if !indexed {
+			return nil, false
+		}
+	}
+	point, resolved := compilation.observationPoints[member.Key()]
+	if !resolved || !compilation.runtime.graph.OwnsPoint(point) {
+		return nil, false
+	}
+	surface := equation.Surface{Factor: projection.Factor, Form: equation.SurfaceReadSummary, Semantic: projection.Normalizer, Normalizer: projection.Normalizer, Local: 1}
+	if _, mappingOK := implementation.topologySummaryMapping(surface); !mappingOK {
+		return nil, false
+	}
+	factorRuntime, factorOK := compilation.byKey[projection.Factor]
+	factor, typed := factorRuntime.(receiptQueryFactor[V])
+	if !factorOK || !typed || factor == nil || !factor.receiptMatches(state, authority, implementation.receipt.factorOrdinal, projection.Factor) {
+		return nil, false
+	}
+	unit, unitOK := factor.readUnit(surface)
+	project, _ := implementation.projector()
+	begin, accum, hasAccumulator := implementation.accumulator()
+	if !unitOK || project == nil && !hasAccumulator || project != nil && hasAccumulator {
+		return nil, false
+	}
+	return &receiptSummaryObservationRuntime[V, R]{id: id, owner: owner, point: point, factor: factor, unit: unit, project: project, begin: begin, accum: accum, result: implementation.receipt.cell.result}, true
+}
+
+// bindReceiptExactObservationRuntime rebuilds an exact rule observation for a
+// later activation revision using the same committed member locator and
+// sealed query implementation. It admits no caller-supplied point or factor.
+func bindReceiptExactObservationRuntime[V, R any](compilation *programPlane, implementation *ExactQueryImplementation[V, R], id identity.ContentID, member equation.RuleMember, owner *receiptObservationOwner) (runtimeObservation, bool) {
+	if compilation == nil || !compilation.frozen || compilation.runtime == nil || compilation.runtime.mode != runtimeBindingReceipt || implementation == nil || owner == nil || !id.Available() || !compilation.runtime.graph.OwnsMember(member) {
+		return nil, false
+	}
+	state, authority, family, queryOrdinal, receiptOK := implementation.boundTopologyQueryReceipt()
+	if !receiptOK || state != compilation.runtime.state || authority != compilation.runtime.authority || !family.Available() || owner.state != state || owner.authority != authority || owner.schema != state.schema || owner.query != queryOrdinal {
+		return nil, false
+	}
+	projection, projectionOK := state.schema.queryProjectionShapeAt(queryOrdinal, 0)
+	if !projectionOK || projection.Kind != composition.QueryFactorExact || !projection.Factor.Available() || projection.Normalizer.Available() {
+		return nil, false
+	}
+	if compilation.observationPoints == nil {
+		var indexed bool
+		compilation.observationPoints, indexed = indexReceiptObservationPoints(compilation.runtime.graph)
+		if !indexed {
+			return nil, false
+		}
+	}
+	point, resolved := compilation.observationPoints[member.Key()]
+	if !resolved || !compilation.runtime.graph.OwnsPoint(point) {
+		return nil, false
+	}
+	surface, surfaceOK := exactObservationReadSurface(member, projection.Factor)
+	if !surfaceOK {
+		return nil, false
+	}
+	factorRuntime, factorOK := compilation.byKey[projection.Factor]
+	factor, typed := factorRuntime.(receiptQueryFactor[V])
+	if !factorOK || !typed || factor == nil || !factor.receiptMatches(state, authority, implementation.receipt.factorOrdinal, projection.Factor) {
+		return nil, false
+	}
+	unit, unitOK := factor.readUnit(surface)
+	project, _ := implementation.projector()
+	begin, accum, hasAccumulator := implementation.accumulator()
+	if !unitOK || project == nil && !hasAccumulator || project != nil && hasAccumulator {
+		return nil, false
+	}
+	return &receiptExactObservationRuntime[V, R]{id: id, owner: owner, point: point, factor: factor, unit: unit, project: project, begin: begin, accum: accum, result: implementation.receipt.cell.result}, true
+}

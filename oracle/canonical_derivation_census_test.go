@@ -8,7 +8,7 @@ import (
 )
 
 // TestCanonicalDerivationCensusIsShared is the corpus-scale statement of the
-// derive-once records. The corpus is 911 analyses over one shared standard
+// derive-once records. The corpus is 912 analyses over one shared standard
 // library, so the vocabulary of canonical forms and the closed subtype universe
 // they seal are overwhelmingly the same from fixture to fixture. This walk
 // measures that: it reports the distinct forms and universes the corpus

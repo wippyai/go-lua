@@ -52,9 +52,11 @@ func QueryEntry() query.Spec[*SummaryQueryFragment, *SummaryQueryImplementation]
 		// answered over disjoint fragments of its subject and joined. The
 		// contract that discharges that claim is the value schema's own
 		// coordinatewise summary role.
-		Fold:     query.FoldDistributive,
-		Contract: "semantic/factor/value/summary-coordinatewise",
-		Subjects: []schema.Key{"value"},
+		Fold:       query.FoldDistributive,
+		Contract:   "semantic/factor/value/summary-coordinatewise",
+		Subjects:   []schema.Key{"value"},
+		Population: query.PopulationSelectedPoint,
+		Projection: query.ProjectionSummary,
 		Declare: func(context query.Declaration) (*SummaryQueryFragment, bool) {
 			cell, cellOK := context.Subjects.At("value")
 			declared, declaredOK := axis.Payload[*SchemaFragment](cell)

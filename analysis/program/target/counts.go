@@ -2,6 +2,7 @@ package target
 
 import (
 	"errors"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
@@ -19,171 +20,93 @@ func (c *Contract) CountRows() denominator.CountRows {
 	return c.counts
 }
 
-// buildCountRows derives the Target-owned cardinalities directly from the
-// sealed Contract queries. The schema denominator owns the relation keys;
-// Target owns only the native measurements.
+// buildCountRows measures the sealed columns. Every relation of the target is a
+// dense table, so its cardinality is that table's length; the two effect
+// populations share one table and are told apart by the effect owner. Nothing
+// here re-derives a relation by walking the indexes into those tables.
 func (c *Contract) buildCountRows() (denominator.CountRows, error) {
-	if c == nil || len(c.operations) == 0 || c.opaque != Operation(len(c.operations)) {
+	if c == nil || len(c.operations) == 0 || c.opaque != vocabulary.Operation(len(c.operations)) {
 		return denominator.CountRows{}, errCountRows
 	}
 
 	ids := denominator.GeneratedTargetIDs()
 	counts := make(map[schema.EntryID]uint64, 37)
-	put := func(key schema.EntryID, value uint64) {
-		counts[key] = value
-	}
-	add := func(key schema.EntryID, value int) bool {
+	put := func(key schema.EntryID, value int) bool {
 		if value < 0 {
 			return false
 		}
-		current := counts[key]
-		addition := uint64(value)
-		if ^uint64(0)-current < addition {
-			return false
-		}
-		counts[key] = current + addition
+		counts[key] = uint64(value)
 		return true
 	}
 
-	put(ids.TargetContract, 1)
-	put(ids.TargetOperation, 0)
-	put(ids.TargetABI, 0)
-	put(ids.TargetSubedge, 0)
-	put(ids.TargetCallback, 0)
-	put(ids.TargetBinding, 0)
-	put(ids.TargetResume, 0)
-	put(ids.TargetSpawn, 0)
-	put(ids.TargetOpaque, 0)
-	put(ids.TargetOperationEffect, 0)
-	put(ids.TargetCallbackEffect, 0)
-	put(ids.TargetCallbackRelease, 0)
-	put(ids.TargetOutcome, 0)
-	put(ids.TargetTransfer, 0)
-	put(ids.TargetTransferOutcome, 0)
-	put(ids.TargetSuspension, 0)
-	put(ids.TargetResumeOutcome, 0)
-	put(ids.TargetSpawnSibling, 0)
-	put(ids.TargetSubedgeArgumentOrigin, 0)
-	put(ids.TargetCallbackResult, 0)
-	put(ids.TargetResultAlias, 0)
-	put(ids.TargetProduced, 0)
-	put(ids.TargetProducedCapture, 0)
-	put(ids.TargetFreshResult, 0)
-	put(ids.TargetPublicationEffect, 0)
-	put(ids.TargetProtocol, 0)
-	put(ids.TargetProtocolState, 0)
-	put(ids.TargetProtocolAcquisition, 0)
-	put(ids.TargetProtocolTransition, 0)
-	put(ids.TargetProtocolTransitionOutcome, 0)
-	put(ids.TargetProtocolEscape, 0)
-	put(ids.TargetProtocolCallbackHolder, 0)
-	put(ids.TargetBoot, uint64(c.InitialRootCount()))
-	put(ids.TargetBootEntry, uint64(c.InitialEntryCount()))
-	put(ids.TargetBootMetatableAttachment, uint64(c.InitialMetatableAttachmentCount()))
-	put(ids.TargetBootBinding, uint64(c.InitialBindingCount()))
-	put(ids.TargetSubedgeRelation, 0)
-
-	for index := 0; index < c.OperationCount(); index++ {
-		op, ok := c.OperationAt(index)
-		if !ok {
+	var operationEffects, callbackEffects, publicationEffects int
+	for _, effect := range c.effects {
+		switch effect.owner {
+		case effectOwnerOperation:
+			operationEffects++
+		case effectOwnerCallback:
+			callbackEffects++
+		default:
 			return denominator.CountRows{}, errCountRows
 		}
-		if !add(ids.TargetOperation, 1) || !add(ids.TargetABI, 1) {
-			return denominator.CountRows{}, errCountRows
-		}
-		if !add(ids.TargetOperationEffect, c.EffectCount(op)) ||
-			!add(ids.TargetSubedge, c.SubedgeCount(op)) ||
-			!add(ids.TargetBinding, c.BindingCount(op)) ||
-			!add(ids.TargetResume, c.ResumeCount(op)) ||
-			!add(ids.TargetSpawn, c.SpawnCount(op)) ||
-			!add(ids.TargetSuspension, c.SuspensionCount(op)) ||
-			!add(ids.TargetTransfer, c.TransferCount(op)) {
-			return denominator.CountRows{}, errCountRows
-		}
-		for effect := 0; effect < c.EffectCount(op); effect++ {
-			if _, found := c.PublicationEffectDescriptor(op, effect); found && !add(ids.TargetPublicationEffect, 1) {
-				return denominator.CountRows{}, errCountRows
-			}
-		}
-		for subedge := 0; subedge < c.SubedgeCount(op); subedge++ {
-			edge, found := c.SubedgeAt(op, subedge)
-			if !found || !add(ids.TargetSubedgeArgumentOrigin, c.ArgumentOriginCount(edge)) {
-				return denominator.CountRows{}, errCountRows
-			}
-		}
-		for transfer := 0; transfer < c.TransferCount(op); transfer++ {
-			if !add(ids.TargetTransferOutcome, c.TransferOutcomeCount(op, transfer)) {
-				return denominator.CountRows{}, errCountRows
-			}
-		}
-		for callbackIndex := 0; callbackIndex < c.CallbackCount(op); callbackIndex++ {
-			callback, found := c.CallbackAt(op, callbackIndex)
-			if !found {
-				return denominator.CountRows{}, errCountRows
-			}
-			if !add(ids.TargetCallback, 1) ||
-				!add(ids.TargetCallbackEffect, c.CallbackEffectCount(callback)) {
-				return denominator.CountRows{}, errCountRows
-			}
-			for effect := 0; effect < c.CallbackEffectCount(callback); effect++ {
-				if _, found := c.CallbackPublicationEffectDescriptor(callback, effect); found && !add(ids.TargetPublicationEffect, 1) {
-					return denominator.CountRows{}, errCountRows
-				}
-			}
-			if _, _, _, _, found := c.CallbackRelease(callback); found && !add(ids.TargetCallbackRelease, 1) {
-				return denominator.CountRows{}, errCountRows
-			}
-		}
-		for resumeIndex := 0; resumeIndex < c.ResumeCount(op); resumeIndex++ {
-			resume, found := c.ResumeIDAt(op, resumeIndex)
-			if !found || !add(ids.TargetResumeOutcome, c.ResumeOutcomeCount(resume)) {
-				return denominator.CountRows{}, errCountRows
-			}
-		}
-		for spawnIndex := 0; spawnIndex < c.SpawnCount(op); spawnIndex++ {
-			spawn, found := c.SpawnIDAt(op, spawnIndex)
-			if !found || !add(ids.TargetSpawnSibling, c.SpawnSiblingCount(spawn)) {
-				return denominator.CountRows{}, errCountRows
-			}
-		}
-		for outcome := 0; outcome < c.OutcomeCount(op); outcome++ {
-			if !add(ids.TargetOutcome, 1) ||
-				!add(ids.TargetCallbackResult, c.CallbackResultCount(op, outcome)) ||
-				!add(ids.TargetResultAlias, c.ResultAliasCount(op, outcome)) ||
-				!add(ids.TargetFreshResult, c.FreshResultCount(op, outcome)) ||
-				!add(ids.TargetProduced, c.ProducedCount(op, outcome)) {
-				return denominator.CountRows{}, errCountRows
-			}
-			for produced := 0; produced < c.ProducedCount(op, outcome); produced++ {
-				if !add(ids.TargetProducedCapture, c.ProducedCaptureCount(op, outcome, produced)) {
-					return denominator.CountRows{}, errCountRows
-				}
-			}
-		}
-		if _, _, _, _, _, found := c.OperationSubedgeRelation(op); found && !add(ids.TargetSubedgeRelation, 1) {
-			return denominator.CountRows{}, errCountRows
+		if c.validPublicationEffectRow(effect) {
+			publicationEffects++
 		}
 	}
-	put(ids.TargetOpaque, 1)
 
-	for index := 0; index < c.ProtocolCount(); index++ {
-		protocol, ok := c.ProtocolAt(index)
-		if !ok {
-			return denominator.CountRows{}, errCountRows
+	var callbackReleases int
+	for index := range c.callbacks {
+		if _, _, _, _, ok := c.callbackRelease(vocabulary.CallbackID(index + 1)); ok {
+			callbackReleases++
 		}
-		if !add(ids.TargetProtocol, 1) ||
-			!add(ids.TargetProtocolState, c.StateCount(protocol)) ||
-			!add(ids.TargetProtocolAcquisition, c.ProtocolAcquisitionCount(protocol)) ||
-			!add(ids.TargetProtocolEscape, c.EscapeCount(protocol)) ||
-			!add(ids.TargetProtocolCallbackHolder, c.ProtocolCallbackHolderCount(protocol)) {
-			return denominator.CountRows{}, errCountRows
+	}
+
+	var subedgeRelations int
+	for index := range c.operations {
+		if c.operations[index].subedgeRelation != 0 {
+			subedgeRelations++
 		}
-		for transition := 0; transition < c.TransitionCount(protocol); transition++ {
-			if !add(ids.TargetProtocolTransition, 1) ||
-				!add(ids.TargetProtocolTransitionOutcome, c.TransitionOutcomeCount(protocol, transition)) {
-				return denominator.CountRows{}, errCountRows
-			}
-		}
+	}
+
+	ok := put(ids.TargetContract, 1) &&
+		put(ids.TargetOpaque, 1) &&
+		put(ids.TargetOperation, len(c.operations)) &&
+		put(ids.TargetABI, len(c.operations)) &&
+		put(ids.TargetBinding, len(c.bindings)) &&
+		put(ids.TargetOutcome, len(c.outcomes)) &&
+		put(ids.TargetOperationEffect, operationEffects) &&
+		put(ids.TargetCallbackEffect, callbackEffects) &&
+		put(ids.TargetPublicationEffect, publicationEffects) &&
+		put(ids.TargetCallback, len(c.callbacks)) &&
+		put(ids.TargetCallbackRelease, callbackReleases) &&
+		put(ids.TargetCallbackResult, len(c.callbackResults)) &&
+		put(ids.TargetResultAlias, len(c.resultAliases)) &&
+		put(ids.TargetProduced, len(c.produced)) &&
+		put(ids.TargetProducedCapture, len(c.captures)) &&
+		put(ids.TargetFreshResult, len(c.fresh)) &&
+		put(ids.TargetSubedge, len(c.subedges)) &&
+		put(ids.TargetSubedgeArgumentOrigin, len(c.subedgeOrigins)) &&
+		put(ids.TargetSubedgeRelation, subedgeRelations) &&
+		put(ids.TargetSuspension, len(c.suspensions)+opaqueSuspensionCount) &&
+		put(ids.TargetSpawn, len(c.spawns)) &&
+		put(ids.TargetSpawnSibling, len(c.spawns)*spawnSiblingAlternatives) &&
+		put(ids.TargetResume, len(c.resumes)) &&
+		put(ids.TargetResumeOutcome, len(c.resumes)*crossActivationOutcomes) &&
+		put(ids.TargetTransfer, len(c.transfers)) &&
+		put(ids.TargetTransferOutcome, len(c.transferOutcomes)) &&
+		put(ids.TargetProtocol, len(c.protocols)) &&
+		put(ids.TargetProtocolState, len(c.states)) &&
+		put(ids.TargetProtocolAcquisition, len(c.acquisitions)) &&
+		put(ids.TargetProtocolTransition, len(c.transitions)) &&
+		put(ids.TargetProtocolTransitionOutcome, len(c.transitionOutcomes)) &&
+		put(ids.TargetProtocolEscape, len(c.escapes)+len(c.protocols)*derivedProtocolEscapes) &&
+		put(ids.TargetProtocolCallbackHolder, len(c.callbackHolders)) &&
+		put(ids.TargetBoot, len(c.initialRoots)) &&
+		put(ids.TargetBootEntry, len(c.initialEntries)) &&
+		put(ids.TargetBootMetatableAttachment, len(c.initialMetatables)) &&
+		put(ids.TargetBootBinding, len(c.initialBindings))
+	if !ok {
+		return denominator.CountRows{}, errCountRows
 	}
 
 	rows := make([]denominator.CountRow, 0, len(counts))

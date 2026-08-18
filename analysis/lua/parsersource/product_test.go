@@ -1,6 +1,7 @@
 package parsersource
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -130,4 +131,123 @@ func TestLexemeContractDecidesStringCarrierEmptiness(t *testing.T) {
 	if !reach["IdentExpr.Value"][FieldStateNonEmpty] {
 		t.Fatal("an identifier's value cannot be non-empty")
 	}
+}
+
+func TestDiscriminantFidelityNamesTheMemberEachConstructionAssigns(t *testing.T) {
+	root := moduleRoot(t)
+	analysis, err := DiscoverProducts(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	constants, err := DiscoverConstants(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	families := make(map[string]DiscriminantEnum)
+	memberFamily := make(map[string]string)
+	for _, family := range DiscriminantEnums(constants) {
+		families[family.Type] = family
+		for _, member := range family.Members {
+			memberFamily[member] = family.Type
+		}
+	}
+	schema, err := Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	declared := make(map[string]Field)
+	for _, constructor := range schema.Constructors {
+		for _, field := range constructor.Fields {
+			declared[constructor.Name+"."+field.Name] = field
+		}
+	}
+	named := 0
+	for _, product := range analysis.Products {
+		for _, coordinate := range product.Fields {
+			field, known := declared[product.Constructor+"."+coordinate.Field]
+			if !known {
+				continue
+			}
+			family, admitted := families[field.Type]
+			if coordinate.Member == "" {
+				if admitted && !coordinate.Assigned && family.Zero != "" {
+					t.Fatalf("%s#%d:%s.%s omits the coordinate and names no member, want %s", product.Owner, product.Ordinal, product.Constructor, coordinate.Field, family.Zero)
+				}
+				continue
+			}
+			named++
+			if !admitted || memberFamily[coordinate.Member] != family.Type {
+				t.Fatalf("%s#%d:%s.%s names member %s outside declared family %s", product.Owner, product.Ordinal, product.Constructor, coordinate.Field, coordinate.Member, family.Type)
+			}
+		}
+	}
+	if named == 0 {
+		t.Fatal("no construction names a family member")
+	}
+	syntax := keySyntaxMembers(analysis)
+	want := map[string]string{
+		"field#1#1:Field":           "AttrKeyDot",
+		"field#2#1:Field":           "AttrKeyIndex",
+		"field#3#1:Field":           "AttrKeyUnknown",
+		"var#2#1:AttrGetExpr":       "AttrKeyIndex",
+		"var#3#1:AttrGetExpr":       "AttrKeyDot",
+		"funcname1#2#2:AttrGetExpr": "AttrKeyDot",
+	}
+	for site, member := range want {
+		if syntax[site] != member {
+			t.Fatalf("%s assigns key syntax %q, want %q", site, syntax[site], member)
+		}
+	}
+	if syntax["field#1#1:Field"] == syntax["field#2#1:Field"] {
+		t.Fatal("named and bracket table-field constructions name the same member")
+	}
+}
+
+func TestDiscriminantFidelityDoesNotWidenTheStateSpace(t *testing.T) {
+	root := moduleRoot(t)
+	analysis, err := DiscoverProducts(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	constants, err := DiscoverConstants(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zeroMember := make(map[string]bool)
+	for _, family := range DiscriminantEnums(constants) {
+		if family.Zero != "" {
+			zeroMember[family.Zero] = true
+		}
+	}
+	agreed := 0
+	for _, product := range analysis.Products {
+		for _, coordinate := range product.Fields {
+			where := fmt.Sprintf("%s#%d:%s.%s", product.Owner, product.Ordinal, product.Constructor, coordinate.Field)
+			if len(coordinate.States) > 2 {
+				t.Fatalf("%s holds %d states", where, len(coordinate.States))
+			}
+			if coordinate.Member == "" {
+				continue
+			}
+			if len(coordinate.States) != 1 || (coordinate.States[0] == FieldStateZero) != zeroMember[coordinate.Member] {
+				t.Fatalf("%s names member %s and holds states %v", where, coordinate.Member, coordinate.States)
+			}
+			agreed++
+		}
+	}
+	if agreed == 0 {
+		t.Fatal("no coordinate names a member")
+	}
+}
+
+func keySyntaxMembers(analysis ProductAnalysis) map[string]string {
+	result := make(map[string]string)
+	for _, product := range analysis.Products {
+		for _, coordinate := range product.Fields {
+			if coordinate.Field == "KeySyntax" {
+				result[fmt.Sprintf("%s#%d:%s", product.Owner, product.Ordinal, product.Constructor)] = coordinate.Member
+			}
+		}
+	}
+	return result
 }

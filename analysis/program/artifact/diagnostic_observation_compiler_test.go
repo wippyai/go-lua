@@ -156,3 +156,37 @@ return total
 		t.Fatal("DiagnosticObservationAt accepted its denominator")
 	}
 }
+
+func TestSelectedDirectCallArgumentIssuesTypeConformance(t *testing.T) {
+	artifact := compileStaticReferenceLeafArtifact(t, "conformance-call.lua", `
+local function dormant(value: number)
+  return identity(value)
+end
+local function identity(value: number)
+  return value
+end
+return identity(1)
+`)
+	var rows int
+	for index := 0; index < artifact.DiagnosticObservationCount(); index++ {
+		row, rowOK := artifact.DiagnosticObservationAt(index)
+		if !rowOK {
+			t.Fatalf("DiagnosticObservationAt(%d)", index)
+		}
+		if row.Kind() != structure.DiagnosticObservationTypeConformance {
+			continue
+		}
+		rows++
+		payload, payloadOK := row.TypeConformance()
+		location, locationOK := row.Location()
+		position, positionOK := payload.Position()
+		if !payloadOK || !locationOK || !positionOK || position != 0 ||
+			!payload.CallID().Available() || !payload.ArgumentID().Available() ||
+			!payload.DeclaredStaticTypeID().Available() || location.File != "conformance-call.lua" {
+			t.Fatalf("selected call-argument observation is incomplete: payload=%v location=%+v", payloadOK, location)
+		}
+	}
+	if rows != 1 {
+		t.Fatalf("type-conformance rows = %d, want 1 (the selected identity(1) argument)", rows)
+	}
+}

@@ -3,6 +3,7 @@ package static
 import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 func (decoder *staticArtifactDecoder) references(output *ReferencesInput) error {
@@ -116,4 +117,42 @@ func (decoder *staticArtifactDecoder) keysWithMinimum(minimum int) ([]keyspace.K
 		}
 	}
 	return keys, nil
+}
+
+// writeReferencesContent owns authored spelling and binder disposition. The
+// range offsets are implementation-only; the encoded paths are exact.
+func writeReferencesContent(writer *framing.Writer, store referenceStore) error {
+	if err := writer.Count(uint64(len(store.rows))); err != nil {
+		return err
+	}
+	for _, row := range store.rows {
+		if err := writer.Uint(uint64(row.resolution)); err != nil {
+			return err
+		}
+		if err := writer.Uint(uint64(row.target)); err != nil {
+			return err
+		}
+		if err := writer.Uint(uint64(row.root)); err != nil {
+			return err
+		}
+		if err := writeReferenceKeysContent(writer, store.source[row.source.Start:row.source.End]); err != nil {
+			return err
+		}
+		if err := writeReferenceKeysContent(writer, store.canonical[row.canonical.Start:row.canonical.End]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeReferenceKeysContent(writer *framing.Writer, keys []keyspace.Key) error {
+	if err := writer.Count(uint64(len(keys))); err != nil {
+		return err
+	}
+	for _, key := range keys {
+		if err := writer.Uint(uint64(key)); err != nil {
+			return err
+		}
+	}
+	return nil
 }

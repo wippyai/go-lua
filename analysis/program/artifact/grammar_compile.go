@@ -13,7 +13,7 @@ const (
 	// every CompileKey, not an ambient package assumption.
 	GrammarABIVersion = uint64(5)
 
-	artifactFormat             = uint64(32)
+	artifactFormat             = uint64(33)
 	pointGeometryLawVersion    = uint64(1)
 	pointAttachmentLawVersion  = uint64(1)
 	compilerLawVersion         = uint64(2)
@@ -32,8 +32,8 @@ const (
 	occurrenceLawVersion = uint64(11)
 	// v3 records the closed DiagnosticObservation union, including detached
 	// unresolved-reference proof and exact branch payload masks.
-	diagnosticLawVersion = uint64(4)
-	callRowsLawVersion   = uint64(1)
+	diagnosticLawVersion = uint64(5)
+	callRowsLawVersion   = uint64(2)
 
 	compileKeyDomain      = "analysis/program-artifact/compile-key"
 	artifactIDDomain      = "analysis/program-artifact/artifact"
@@ -103,6 +103,7 @@ type CompileKey struct {
 	functionBoundaryLaw uint64
 	occurrenceLaw       uint64
 	diagnosticLaw       uint64
+	callRowsLaw         uint64
 	id                  identity.ContentID
 }
 
@@ -116,6 +117,7 @@ func NewCompileKey(input *program.Program, grammar GrammarIdentity) (CompileKey,
 		substituteLaw: substitutionLawVersion, summaryLaw: summaryLawVersion,
 		wtoLaw: wtoLawVersion, routeLaw: routeLawVersion, valuesLaw: valuesLawVersion,
 		bodyOutcomeLaw: bodyOutcomeLawVersion, functionBoundaryLaw: functionBoundaryLawVersion, occurrenceLaw: occurrenceLawVersion, diagnosticLaw: diagnosticLawVersion,
+		callRowsLaw: callRowsLawVersion,
 	}
 	key.id = digest(compileKeyDomain, artifactFormat, key.identityFields()...)
 	return key, key.Available()
@@ -127,6 +129,7 @@ func (key CompileKey) identityFields() []field {
 		uintField(key.grammar.ABIVersion()), uintField(key.format), uintField(key.compilerLaw),
 		uintField(key.operatorLaw), uintField(key.substituteLaw), uintField(key.summaryLaw),
 		uintField(key.wtoLaw), uintField(key.routeLaw), uintField(key.valuesLaw), uintField(key.bodyOutcomeLaw), uintField(key.functionBoundaryLaw), uintField(key.occurrenceLaw), uintField(key.diagnosticLaw),
+		uintField(key.callRowsLaw),
 	}
 }
 
@@ -136,7 +139,7 @@ func (key CompileKey) Available() bool {
 		key.substituteLaw == substitutionLawVersion && key.summaryLaw == summaryLawVersion &&
 		key.wtoLaw == wtoLawVersion && key.routeLaw == routeLawVersion && key.valuesLaw == valuesLawVersion &&
 		key.bodyOutcomeLaw == bodyOutcomeLawVersion && key.functionBoundaryLaw == functionBoundaryLawVersion && key.occurrenceLaw == occurrenceLawVersion &&
-		key.diagnosticLaw == diagnosticLawVersion && key.id.Available()
+		key.diagnosticLaw == diagnosticLawVersion && key.callRowsLaw == callRowsLawVersion && key.id.Available()
 }
 
 func (key CompileKey) ProgramID() identity.ContentID {
@@ -167,9 +170,10 @@ func (key CompileKey) ID() identity.ContentID {
 }
 
 // CompileDetailed is the exact diagnostic lane for the immutable Program
-// artifact compiler. The composition root supplies only the neutral cold
-// GrammarIdentity; no domain or schema authority crosses this package.
-func CompileDetailed(input *program.Program, grammar GrammarIdentity) (*Artifact, CompileFailure) {
+// artifact compiler. The composition root supplies the neutral cold
+// GrammarIdentity and the sealed issuance directory; no domain or schema
+// authority crosses this package.
+func CompileDetailed(input *program.Program, grammar GrammarIdentity, issuance IssuanceDirectory) (*Artifact, CompileFailure) {
 	if !input.Available() {
 		return nil, compileFailure(CompileStageAuthority, CompileRowAuthority, -1, -1, CompileReasonProgramUnavailable)
 	}
@@ -185,7 +189,7 @@ func CompileDetailed(input *program.Program, grammar GrammarIdentity) (*Artifact
 		return nil, compileFailure(CompileStageAuthority, CompileRowAuthority, -1, -1, CompileReasonProgramUnavailable)
 	}
 	transaction := compiler{
-		input: input, key: key, counts: counts, points: make(map[identity.ContentID]struct{}), pointGeometry: make(map[identity.ContentID]Point),
+		input: input, key: key, counts: counts, issuance: issuance, points: make(map[identity.ContentID]struct{}), pointGeometry: make(map[identity.ContentID]Point),
 		occurrenceSpans: make(map[occurrenceLookup]occurrenceSpanGeometry), routeOccurrences: make(map[identity.ContentID]identity.ContentID), localStages: make(map[identity.ContentID]identity.ContentID), computationStages: make(map[identity.ContentID][]computationStage), callStages: make(map[identity.ContentID]callStageSet),
 		pointIDsBySite:     make(map[identity.ContentID][]identity.ContentID),
 		environmentByRoute: make(map[identity.ContentID]EnvironmentEdge), environmentRouteDuplicates: make(map[identity.ContentID]struct{}),
@@ -263,7 +267,7 @@ func CompileDetailed(input *program.Program, grammar GrammarIdentity) (*Artifact
 
 // Compile compiles one sealed Program under the supplied cold grammar and
 // reports whether the immutable artifact was published.
-func Compile(input *program.Program, grammar GrammarIdentity) (*Artifact, bool) {
-	artifact, failure := CompileDetailed(input, grammar)
+func Compile(input *program.Program, grammar GrammarIdentity, issuance IssuanceDirectory) (*Artifact, bool) {
+	artifact, failure := CompileDetailed(input, grammar, issuance)
 	return artifact, artifact != nil && !failure.Available()
 }

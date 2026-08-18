@@ -83,7 +83,7 @@ var unaryNumericOverflows = [flowkind.UnaryNeg + 1]numericOverflowRow{
 // discipline over two known operand representations. Operators outside the
 // arithmetic range and unknown representations have no discipline.
 func BinaryNumericOverflow(op flowkind.BinaryOp, left, right programartifact.NumericRepresentation) (NumericOverflow, bool) {
-	if !BinaryArithmeticOperator(op) || !left.Valid() || !right.Valid() {
+	if !flowkind.IsBinaryArithmetic(op) || !left.Valid() || !right.Valid() {
 		return NumericOverflowInvalid, false
 	}
 	integer := left == programartifact.NumericRepresentationInteger && right == programartifact.NumericRepresentationInteger

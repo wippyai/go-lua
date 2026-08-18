@@ -48,7 +48,7 @@ func Encode(p *program.Program, contract *target.Contract, metadata Metadata) ([
 		return nil, encodeError(err)
 	}
 	// These are the only four payload authorities and their order is part of
-	// the v20 stream grammar.
+	// the v21 stream grammar.
 	if err := source.WriteArtifactSection(&writer, p.Source()); err != nil {
 		return nil, encodeError(err)
 	}
@@ -76,7 +76,7 @@ func Encode(p *program.Program, contract *target.Contract, metadata Metadata) ([
 	return data, nil
 }
 
-// Decode accepts only the v20 stream bound to contract and reconstructs a
+// Decode accepts only the v21 stream bound to contract and reconstructs a
 // fresh owner quartet through the ordinary Build/Finalizer/Assemble/Publish
 // path. No derived section is read or retained.
 func Decode(data []byte, contract *target.Contract, expectedDependencies []Dependency) (*program.Program, Metadata, error) {

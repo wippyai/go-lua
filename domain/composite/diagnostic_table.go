@@ -110,7 +110,7 @@ func diagnosticEvidence(anchor diagnostic.Anchor, detail diagnostic.Text) diagno
 // same sealed table as every other row's, so a contributed row is admitted on
 // exactly the terms the authored ones are.
 func diagnosticSpecs() []diagnostic.Spec {
-	return append(analyzerDiagnosticSpecs(), typedomain.DiagnosticSpec())
+	return append(analyzerDiagnosticSpecs(), typedomain.DiagnosticSpec(), typedomain.DiagnosticCallArgumentSpec())
 }
 
 func analyzerDiagnosticSpecs() []diagnostic.Spec {
@@ -120,6 +120,7 @@ func analyzerDiagnosticSpecs() []diagnostic.Spec {
 			DefaultSeverity: diagnostic.SeverityHint,
 			Lane:            diagnostic.LaneBranch,
 			Observation:     declaredMember(structure.DiagnosticObservationBranchCondition.Key()),
+			Collection:      diagnostic.Reference{Surface: schema.SurfaceKindObservation, Key: ObservationBranchValueSummary},
 			Fact:            diagnostic.Reference{Surface: schema.SurfaceKindAxis, Key: valueAxis},
 			Message:         "condition is proven always true",
 			Help:            "Remove the guard or move the guarded code out of the branch.",
@@ -132,6 +133,7 @@ func analyzerDiagnosticSpecs() []diagnostic.Spec {
 			DefaultSeverity: diagnostic.SeverityHint,
 			Lane:            diagnostic.LaneBranch,
 			Observation:     declaredMember(structure.DiagnosticObservationBranchCondition.Key()),
+			Collection:      diagnostic.Reference{Surface: schema.SurfaceKindObservation, Key: ObservationBranchValueSummary},
 			Fact:            diagnostic.Reference{Surface: schema.SurfaceKindAxis, Key: valueAxis},
 			Message:         "condition is proven always false",
 			Help:            "Remove the unreachable branch or invert the guard.",
@@ -217,4 +219,72 @@ func Diagnostics() (diagnostic.Table, bool) {
 		return diagnostic.Table{}, false
 	}
 	return registry.diagnostics, registry.diagnostics.Available()
+}
+
+// DiagnosticCollection is one LaneBranch row's post-seal collection handle:
+// the query or observation family the row named, and the issued producer,
+// projection, geometry, and anchor that family carries.
+type DiagnosticCollection struct {
+	Code       diagnostic.Code
+	Collection diagnostic.Reference
+	Population schema.Key
+	Site       diagnostic.Site
+	Producer   schema.Key
+	Projection schema.Key
+	Codec      schema.Key
+	Geometry   schema.Key
+	Anchor     schema.Key
+}
+
+// DiagnosticCollectionDirectory joins every sealed LaneBranch row to the
+// issued query or observation inventory it named as Collection.
+func DiagnosticCollectionDirectory() ([]DiagnosticCollection, bool) {
+	table, tableOK := Diagnostics()
+	if !tableOK {
+		return nil, false
+	}
+	observations := make(map[schema.Key]IssuedObservation)
+	for _, issued := range ObservationIssuance() {
+		observations[issued.Key] = issued
+	}
+	queries := make(map[schema.Key]IssuedQuery)
+	for _, issued := range QueryIssuance() {
+		queries[issued.Family] = issued
+	}
+	rows := make([]DiagnosticCollection, 0, table.Count())
+	for position := 0; position < table.Count(); position++ {
+		entry, entryOK := table.At(position)
+		if !entryOK || entry.Lane() != diagnostic.LaneBranch {
+			continue
+		}
+		collection := entry.Collection()
+		row := DiagnosticCollection{
+			Code:       entry.Code(),
+			Collection: collection,
+			Population: entry.Observation().Key,
+			Site:       entry.Site(),
+		}
+		switch collection.Surface {
+		case schema.SurfaceKindObservation:
+			issued, found := observations[collection.Key]
+			if !found || !issued.Producer.Available() || !issued.Codec.Available() {
+				return nil, false
+			}
+			row.Producer = issued.Producer
+			row.Codec = issued.Codec
+			row.Geometry = issued.Geometry
+			row.Anchor = issued.Anchor
+		case schema.SurfaceKindQuery:
+			issued, found := queries[collection.Key]
+			if !found || !issued.Family.Available() || !issued.Projection.Available() {
+				return nil, false
+			}
+			row.Producer = issued.Family
+			row.Projection = issued.Projection
+		default:
+			return nil, false
+		}
+		rows = append(rows, row)
+	}
+	return rows, len(rows) > 0
 }

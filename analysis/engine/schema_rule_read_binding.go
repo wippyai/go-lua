@@ -102,18 +102,28 @@ func (binding *schemaSelectedRuleReadBinding[K, V, Tag]) bind(bound readBinding,
 	return bound.appendReadRuntime(&stagedReadRuntime[V, OrderedCells[V], Tag]{input: int(binding.origin.input), selector: selector, target: target, locate: locate, normalize: normalize})
 }
 
+func (binding *schemaSelectedRuleReadBinding[K, V, Tag]) projectLocal(operand any) (uint64, bool) {
+	return 0, false
+}
+
+func (binding *schemaSelectedRuleReadBinding[K, V, Tag]) exactAdmitFactor() schemaFactorBinding {
+	return nil
+}
+
 type schemaExactRuleReadBinding[K ~uint32 | ~uint64, V any] struct {
-	origin *schemaRuleReadOrigin
-	factor *schemaFactorBindingCell[K, V]
-	read   Read[OrderedCells[V]]
+	origin    *schemaRuleReadOrigin
+	factor    *schemaFactorBindingCell[K, V]
+	read      Read[OrderedCells[V]]
+	projector func(any) (uint64, bool)
 }
 
 // These heterogeneous variants retain the typed Read while delegating all
 // carrier-coordinate work to the exact Factor cell issuer.
 type schemaOpaqueExactRuleReadBinding[V any] struct {
-	origin *schemaRuleReadOrigin
-	factor schemaFactorBinding
-	read   Read[OrderedCells[V]]
+	origin    *schemaRuleReadOrigin
+	factor    schemaFactorBinding
+	read      Read[OrderedCells[V]]
+	projector func(any) (uint64, bool)
 }
 
 type schemaOpaqueSelectedRuleReadBinding[V any, Tag selectionTag] struct {
@@ -127,6 +137,7 @@ type schemaOpaqueSummaryRuleReadBinding[V, S any] struct {
 	origin *schemaRuleReadOrigin
 	form   schemaOpaqueSummaryRuleReadForm[V, S]
 	read   Read[S]
+	admit  any
 }
 
 type schemaOpaqueOperandSelectedRuleReadBinding[RV, O any, Tag selectionTag] struct {
@@ -134,6 +145,20 @@ type schemaOpaqueOperandSelectedRuleReadBinding[RV, O any, Tag selectionTag] str
 	factor        schemaFactorBinding
 	read          Read[Selection[Tag, OrderedCells[RV]]]
 	locateOperand func(SelectorContext, O) bool
+}
+
+func (binding *schemaExactRuleReadBinding[K, V]) projectLocalValue(operand any) (uint64, bool) {
+	if binding == nil || binding.projector == nil {
+		return 0, false
+	}
+	return binding.projector(operand)
+}
+
+func (binding *schemaOpaqueExactRuleReadBinding[V]) projectLocalValue(operand any) (uint64, bool) {
+	if binding == nil || binding.projector == nil {
+		return 0, false
+	}
+	return binding.projector(operand)
 }
 
 func (binding *schemaOpaqueExactRuleReadBinding[V]) complete(state *schemaBindingState, cell schemaRuleBindingCell, ordinal uint64) bool {
@@ -152,6 +177,17 @@ func (binding *schemaOpaqueExactRuleReadBinding[V]) bind(bound readBinding, memb
 		return false
 	}
 	return binding.factor.schemaFactorBindExactRead(bound, member, factors, binding.origin)
+}
+
+func (binding *schemaOpaqueExactRuleReadBinding[V]) projectLocal(operand any) (uint64, bool) {
+	return binding.projectLocalValue(operand)
+}
+
+func (binding *schemaOpaqueExactRuleReadBinding[V]) exactAdmitFactor() schemaFactorBinding {
+	if binding == nil {
+		return nil
+	}
+	return binding.factor
 }
 
 func (binding *schemaOpaqueSummaryRuleReadBinding[V, S]) complete(state *schemaBindingState, cell schemaRuleBindingCell, ordinal uint64) bool {
@@ -173,6 +209,21 @@ func (binding *schemaOpaqueSummaryRuleReadBinding[V, S]) bind(bound readBinding,
 		return false
 	}
 	return binding.form.schemaSummaryRuleReadBind(bound, member, factors, binding.origin)
+}
+
+func (binding *schemaOpaqueSummaryRuleReadBinding[V, S]) projectLocal(operand any) (uint64, bool) {
+	return 0, false
+}
+
+func (binding *schemaOpaqueSummaryRuleReadBinding[V, S]) exactAdmitFactor() schemaFactorBinding {
+	return nil
+}
+
+func (binding *schemaOpaqueSummaryRuleReadBinding[V, S]) summarySurfaceAdmit() any {
+	if binding == nil {
+		return nil
+	}
+	return binding.admit
 }
 
 func (binding *schemaOpaqueSelectedRuleReadBinding[V, Tag]) complete(state *schemaBindingState, cell schemaRuleBindingCell, ordinal uint64) bool {
@@ -210,6 +261,14 @@ func (binding *schemaOpaqueSelectedRuleReadBinding[V, Tag]) bind(bound readBindi
 		return false
 	}
 	return bound.appendReadRuntime(&stagedReadRuntime[V, OrderedCells[V], Tag]{input: int(binding.origin.input), selector: selector, target: targetProvider.stagedFactorTarget(), locate: binding.locate, normalize: func(value OrderedCells[V]) OrderedCells[V] { return value }})
+}
+
+func (binding *schemaOpaqueSelectedRuleReadBinding[V, Tag]) projectLocal(operand any) (uint64, bool) {
+	return 0, false
+}
+
+func (binding *schemaOpaqueSelectedRuleReadBinding[V, Tag]) exactAdmitFactor() schemaFactorBinding {
+	return nil
 }
 
 func (binding *schemaOpaqueOperandSelectedRuleReadBinding[RV, O, Tag]) complete(state *schemaBindingState, cell schemaRuleBindingCell, ordinal uint64) bool {
@@ -256,6 +315,14 @@ func (binding *schemaOpaqueOperandSelectedRuleReadBinding[RV, O, Tag]) bind(boun
 	operand := operandOwner.ruleOperand()
 	locate := func(context SelectorContext) bool { return binding.locateOperand(context, operand) }
 	return bound.appendReadRuntime(&stagedReadRuntime[RV, OrderedCells[RV], Tag]{input: int(binding.origin.input), selector: selector, target: targetProvider.stagedFactorTarget(), locate: locate, normalize: func(value OrderedCells[RV]) OrderedCells[RV] { return value }})
+}
+
+func (binding *schemaOpaqueOperandSelectedRuleReadBinding[RV, O, Tag]) projectLocal(operand any) (uint64, bool) {
+	return 0, false
+}
+
+func (binding *schemaOpaqueOperandSelectedRuleReadBinding[RV, O, Tag]) exactAdmitFactor() schemaFactorBinding {
+	return nil
 }
 
 type schemaSummaryRuleReadBinding[K ~uint32 | ~uint64, V, S any] struct {
@@ -305,6 +372,14 @@ func (binding *schemaSummaryRuleReadBinding[K, V, S]) bind(bound readBinding, me
 	return bound.appendReadRuntime(&typedReadRuntime[K, V, S]{input: int(binding.origin.input), binding: factor.binding, unit: unit, summary: proofSummary, normalize: binding.form.normalize, equal: binding.form.equal, fingerprint: binding.form.fingerprint})
 }
 
+func (binding *schemaSummaryRuleReadBinding[K, V, S]) projectLocal(operand any) (uint64, bool) {
+	return 0, false
+}
+
+func (binding *schemaSummaryRuleReadBinding[K, V, S]) exactAdmitFactor() schemaFactorBinding {
+	return nil
+}
+
 func (binding *schemaExactRuleReadBinding[K, V]) complete(state *schemaBindingState, cell schemaRuleBindingCell, ordinal uint64) bool {
 	if binding == nil || binding.origin == nil || binding.factor == nil || state == nil || cell == nil || binding.origin.state != state || binding.origin.cell != cell || binding.origin.ruleOrdinal != ordinal || binding.read.origin != binding.origin || binding.read.index != int(binding.origin.readOrdinal) || binding.read.resolve == nil || binding.factor.impl == nil || binding.factor.impl.algebra == nil || binding.factor.impl.state != state || binding.factor.ordinal != binding.origin.factor {
 		return false
@@ -349,4 +424,15 @@ func (binding *schemaExactRuleReadBinding[K, V]) bind(bound readBinding, member 
 		return fingerprintOrderedCellRecord(value.record, binding.factor.impl.algebra.Fingerprint)
 	}
 	return bound.appendReadRuntime(&typedReadRuntime[K, V, OrderedCells[V]]{input: int(binding.origin.input), binding: factor.binding, unit: unit, proof: readProof, normalize: normalize, equal: equal, fingerprint: fingerprint})
+}
+
+func (binding *schemaExactRuleReadBinding[K, V]) exactAdmitFactor() schemaFactorBinding {
+	if binding == nil {
+		return nil
+	}
+	return binding.factor
+}
+
+func (binding *schemaExactRuleReadBinding[K, V]) projectLocal(operand any) (uint64, bool) {
+	return binding.projectLocalValue(operand)
 }

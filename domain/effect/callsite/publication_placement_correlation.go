@@ -2,9 +2,9 @@ package callsite
 
 import (
 	"crypto/sha256"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/target"
 	"github.com/wippyai/go-lua/domain/pack"
 )
 
@@ -30,10 +30,10 @@ type PublicationPlacementCorrelationCandidate struct {
 	subject     identity.ContentID
 	destination identity.ContentID
 	hasContext  bool
-	kind        target.PublicationEffectKind
-	escape      target.PublicationEscapeDisposition
-	mutability  target.PublicationMutabilityDisposition
-	lifetime    target.PublicationLifetimeDisposition
+	kind        vocabulary.PublicationEffectKind
+	escape      vocabulary.PublicationEscapeDisposition
+	mutability  vocabulary.PublicationMutabilityDisposition
+	lifetime    vocabulary.PublicationLifetimeDisposition
 	// sealed is stamped by the sole issuance path once the scalar derivation
 	// has been run over the retained fields. It is unreachable outside this
 	// package, so a hand-built or zero-valued row carries no seal and reads
@@ -41,7 +41,7 @@ type PublicationPlacementCorrelationCandidate struct {
 	sealed bool
 }
 
-func publicationPlacementCorrelationID(proof, descriptor, occurrence, mount, call, subject, destination identity.ContentID, hasContext bool, kind target.PublicationEffectKind, escape target.PublicationEscapeDisposition, mutability target.PublicationMutabilityDisposition, lifetime target.PublicationLifetimeDisposition) identity.ContentID {
+func publicationPlacementCorrelationID(proof, descriptor, occurrence, mount, call, subject, destination identity.ContentID, hasContext bool, kind vocabulary.PublicationEffectKind, escape vocabulary.PublicationEscapeDisposition, mutability vocabulary.PublicationMutabilityDisposition, lifetime vocabulary.PublicationLifetimeDisposition) identity.ContentID {
 	if !proof.Available() || !descriptor.Available() || !occurrence.Available() || !mount.Available() || !call.Available() || !subject.Available() ||
 		hasContext && !destination.Available() || !hasContext && destination.Available() || !publicationPlacementConsequencesValid(kind, escape, mutability, lifetime) {
 		return identity.ContentID{}
@@ -66,12 +66,12 @@ func publicationPlacementCorrelationID(proof, descriptor, occurrence, mount, cal
 // domains carried from the already-authenticated Target descriptor. It does
 // not restate Target's kind-to-consequence matrix: that remains Target's sole
 // semantic authority and was checked by PublicationTransitionProof.
-func publicationPlacementConsequencesValid(kind target.PublicationEffectKind, escape target.PublicationEscapeDisposition, mutability target.PublicationMutabilityDisposition, lifetime target.PublicationLifetimeDisposition) bool {
+func publicationPlacementConsequencesValid(kind vocabulary.PublicationEffectKind, escape vocabulary.PublicationEscapeDisposition, mutability vocabulary.PublicationMutabilityDisposition, lifetime vocabulary.PublicationLifetimeDisposition) bool {
 	// The fields are private and can enter only through the proven Target-owned
 	// transition. Do not duplicate Target's closed kind/consequence inventory
 	// here merely to validate a detached transport row.
-	return kind != target.PublicationEffectInvalid && escape != target.PublicationEscapeInvalid &&
-		mutability != target.PublicationMutabilityInvalid && lifetime != target.PublicationLifetimeInvalid
+	return kind != vocabulary.PublicationEffectInvalid && escape != vocabulary.PublicationEscapeInvalid &&
+		mutability != vocabulary.PublicationMutabilityInvalid && lifetime != vocabulary.PublicationLifetimeInvalid
 }
 
 // valid reads the seal stamped at issuance. The scalar derivation that
@@ -185,30 +185,30 @@ func (candidate PublicationPlacementCorrelationCandidate) DestinationBindingID()
 	return candidate.destination, candidate.valid() && candidate.hasContext
 }
 
-func (candidate PublicationPlacementCorrelationCandidate) Kind() target.PublicationEffectKind {
+func (candidate PublicationPlacementCorrelationCandidate) Kind() vocabulary.PublicationEffectKind {
 	if !candidate.valid() {
-		return target.PublicationEffectInvalid
+		return vocabulary.PublicationEffectInvalid
 	}
 	return candidate.kind
 }
 
-func (candidate PublicationPlacementCorrelationCandidate) Escape() target.PublicationEscapeDisposition {
+func (candidate PublicationPlacementCorrelationCandidate) Escape() vocabulary.PublicationEscapeDisposition {
 	if !candidate.valid() {
-		return target.PublicationEscapeInvalid
+		return vocabulary.PublicationEscapeInvalid
 	}
 	return candidate.escape
 }
 
-func (candidate PublicationPlacementCorrelationCandidate) Mutability() target.PublicationMutabilityDisposition {
+func (candidate PublicationPlacementCorrelationCandidate) Mutability() vocabulary.PublicationMutabilityDisposition {
 	if !candidate.valid() {
-		return target.PublicationMutabilityInvalid
+		return vocabulary.PublicationMutabilityInvalid
 	}
 	return candidate.mutability
 }
 
-func (candidate PublicationPlacementCorrelationCandidate) Lifetime() target.PublicationLifetimeDisposition {
+func (candidate PublicationPlacementCorrelationCandidate) Lifetime() vocabulary.PublicationLifetimeDisposition {
 	if !candidate.valid() {
-		return target.PublicationLifetimeInvalid
+		return vocabulary.PublicationLifetimeInvalid
 	}
 	return candidate.lifetime
 }

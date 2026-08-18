@@ -2,11 +2,11 @@ package empty
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/program/flow"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
+	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	allocationcatalog "github.com/wippyai/go-lua/domain/heap/allocation/catalog"
 	heapowner "github.com/wippyai/go-lua/domain/heap/owner"
 )
@@ -33,8 +33,9 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *SchemaFra
 	return rule.Spec[P, A, *SchemaFragment, *HotRule]{
 		Key:    "heap-empty",
 		Writes: "heap",
+		Owner:  "heap",
 		Issues: []rule.Issuance{
-			{Occurrence: "occurrence/allocation", Form: "issuance/local", Input: "input/finish", Stage: "stage/local", Code: uint64(flow.AllocationFormEmpty), HasCode: true},
+			{Occurrence: "occurrence/allocation", Form: "issuance/local", Input: "input/finish", Stage: "stage/local", Code: uint64(heapdomain.AllocationFormEmpty), HasCode: true},
 		},
 		Lane:     rule.LaneMounted,
 		Semantic: "semantic/rule/heap/allocation-empty",
@@ -52,14 +53,7 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *SchemaFra
 		Bind: func(context rule.Binding[A, *SchemaFragment]) (*HotRule, bool) {
 			return BindHot(context.Fragment, context.Authorities.HeapAuthority(), context.Authorities.Allocations())
 		},
-		Attach: func(context rule.Attach[*HotRule]) bool {
-			_, ok := context.Rule.AttachMountedOccurrence(context.Assembly, context.Mount, context.Point, context.Occurrence)
-			return ok
-		},
-		Member: func(context rule.Member[*HotRule]) bool {
-			_, ok := context.Rule.AttachMountedReceiptMember(context.Compilation, context.Graph, context.Mount, context.Point, context.Occurrence)
-			return ok
-		},
+
 	}
 }
 

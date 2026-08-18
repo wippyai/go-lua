@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"math"
 
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -40,7 +41,7 @@ type evaluationKey struct {
 	reference typeauthority.StaticTypeRef
 	resolver  identity.ContentID
 	env       identity.ContentID
-	operation target.Operation
+	operation vocabulary.Operation
 }
 
 type evaluationBase struct {
@@ -54,7 +55,7 @@ type coordinateKey struct {
 	reference   typeauthority.StaticTypeRef
 	namespace   identity.ContentID
 	environment identity.ContentID
-	operation   target.Operation
+	operation   vocabulary.Operation
 }
 
 type coordinateRow struct {

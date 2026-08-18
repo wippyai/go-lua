@@ -57,10 +57,22 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 				return engine.StageValue(access, row, result)
 			})
 		},
-	}, engine.HotCarrySpec[value.Value, value.BinaryOrder]{}, func(tx *valueowner.SelectedRuleBinding[value.BinaryOrder]) bool {
+	}, engine.HotCarrySpec[value.Value, value.BinaryOrder]{}, func(row value.BinaryOrder) (uint64, bool) {
+		result, _, _, _, ok := hotEndpoints(owner.Schema(), row)
+		index, indexOK := owner.Schema().CoordinateIndex(result)
+		return uint64(index), ok && indexOK
+	}, func(tx *valueowner.SelectedRuleBinding[value.BinaryOrder]) bool {
 		var leftOK, rightOK, implementationOK bool
-		left, leftOK = valueowner.AddSelectedRuleExactRead(tx, fragment.left, owner.FactorRef())
-		right, rightOK = valueowner.AddSelectedRuleExactRead(tx, fragment.right, owner.FactorRef())
+		left, leftOK = valueowner.AddSelectedRuleExactRead(tx, fragment.left, owner.FactorRef(), func(row value.BinaryOrder) (uint64, bool) {
+			_, leftCoord, _, _, ok := hotEndpoints(owner.Schema(), row)
+			index, indexOK := owner.Schema().CoordinateIndex(leftCoord)
+			return uint64(index), ok && indexOK
+		})
+		right, rightOK = valueowner.AddSelectedRuleExactRead(tx, fragment.right, owner.FactorRef(), func(row value.BinaryOrder) (uint64, bool) {
+			_, _, rightCoord, _, ok := hotEndpoints(owner.Schema(), row)
+			index, indexOK := owner.Schema().CoordinateIndex(rightCoord)
+			return uint64(index), ok && indexOK
+		})
 		implementation, implementationOK = tx.Implementation()
 		return leftOK && rightOK && implementationOK
 	})
@@ -68,7 +80,15 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 		return nil, false
 	}
 	leftRead, rightRead = left, right
-	return &HotRule{implementation: implementation, left: left, right: right, owner: owner}, true
+	rule := &HotRule{implementation: implementation, left: left, right: right, owner: owner}
+	if !implementation.InstallOperandResolver(rule.resolveOperand) {
+		return nil, false
+	}
+	return rule, true
+}
+
+func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (value.BinaryOrder, bool) {
+	return rule.ReceiptForOccurrence(coords.Mount, coords.Occurrence)
 }
 
 func (rule *HotRule) ReceiptForOccurrence(mount, id identity.ContentID) (value.BinaryOrder, bool) {
@@ -79,70 +99,16 @@ func (rule *HotRule) ReceiptForOccurrence(mount, id identity.ContentID) (value.B
 	return row, ok && rule.owner.Schema().OwnsBinaryOrder(row)
 }
 
-func (rule *HotRule) AttachMountedRule(assembly *engine.ReceiptAssembly, mountID, pointID, occurrenceID identity.ContentID) (engine.BindingRuleRowRef, bool) {
-	if rule == nil || rule.owner == nil || assembly == nil {
-		return engine.BindingRuleRowRef{}, false
-	}
-	operand, operandOK := rule.ReceiptForOccurrence(mountID, occurrenceID)
-	implementation, implementationOK := valueowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
-	capability := mountedCapability(rule.implementation)
-	occurrence, occurrenceOK := assembly.AdmitMountedRuleOccurrence(capability, mountID, pointID, occurrenceID)
-	result, left, right, _, endpointsOK := hotEndpoints(rule.owner.Schema(), operand)
-	leftRef, leftOK := rule.owner.Ref(left)
-	rightRef, rightOK := rule.owner.Ref(right)
-	resultRef, resultOK := rule.owner.Ref(result)
-	if !operandOK || !implementationOK || !occurrenceOK || !endpointsOK || !leftOK || !rightOK || !resultOK {
-		return engine.BindingRuleRowRef{}, false
-	}
-	admit := func(transaction *engine.RuleSourceTransaction) bool {
-		return engine.AddExactRead(transaction, leftRef) && engine.AddExactRead(transaction, rightRef) && transaction.AddCarry() && engine.AddExactWrite(transaction, resultRef)
-	}
-	issue := func(source engine.RuleSurfaceSourceReceipt) bool {
-		draft, draftOK := implementation.BeginReceiptRuleRow(source)
-		leftPart, leftPartOK := implementation.ReceiptReadPart(source, 0)
-		rightPart, rightPartOK := implementation.ReceiptReadPart(source, 1)
-		carryPart, carryPartOK := implementation.ReceiptCarryPart(source, 0)
-		writePart, writePartOK := implementation.ReceiptWritePart(source, 0)
-		if !draftOK || !leftPartOK || !rightPartOK || !carryPartOK || !writePartOK ||
-			!draft.AddRead(leftPart) || !draft.AddRead(rightPart) || !draft.AddCarry(carryPart) || !draft.AddWrite(writePart) {
-			return false
-		}
-		_, added := assembly.AddRuleFromDraft(occurrence, draft)
-		return added
-	}
-	queued := engine.AdmitMountedRule(assembly, implementation, capability, occurrence, operand, admit, issue)
-	return engine.BindingRuleRowRef{}, queued
-}
-
-func (rule *HotRule) AttachReceiptMember(compilation *engine.ReceiptCompilation, member engine.ReceiptRuleMember, operand value.BinaryOrder) (*engine.ReceiptMember, bool) {
-	if rule == nil || rule.owner == nil || rule.owner.Schema() == nil || !rule.owner.Schema().OwnsBinaryOrder(operand) {
-		return nil, false
-	}
-	implementation, ok := valueowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
-	if !ok {
-		return nil, false
-	}
-	return engine.AttachReceiptRuleMember(compilation, implementation, member, operand)
-}
-
-func (rule *HotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, pointID, occurrenceID identity.ContentID) (*engine.ReceiptMember, bool) {
-	if rule == nil || graph == nil {
-		return nil, false
-	}
-	member, memberOK := graph.MountedRuleMember(mountedCapability(rule.implementation), mountID, pointID, occurrenceID)
-	operand, operandOK := rule.ReceiptForOccurrence(mountID, occurrenceID)
-	if !memberOK || !operandOK {
-		return nil, false
-	}
-	return rule.AttachReceiptMember(compilation, member, operand)
-}
-
 func (rule *HotRule) Implementation() (*valueowner.RuleImplementation[value.BinaryOrder], bool) {
 	if rule == nil || rule.implementation == nil {
 		return nil, false
 	}
 	_, ok := valueowner.ResolveRuleImplementation(rule.implementation)
 	return rule.implementation, ok
+}
+
+func (rule *HotRule) ProgramAttach() (engine.RuleProgramAttach, bool) {
+	return valueowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
 }
 
 func mountedCapability(issuer interface {

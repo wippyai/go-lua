@@ -1,12 +1,12 @@
-// Package ingress lowers a sealed ProgramArtifact into engine template rows
-// exactly once per ContentID. Snapshot is a borrowed read-only view: after
-// Lower succeeds, its artifact pointer keeps the already sealed, immutable
-// ProgramArtifact alive for the duration of the same process.
+// Package ingress lowers a sealed ProgramArtifact into closed immutable
+// columns exactly once per ContentID. After Lower succeeds the snapshot
+// retains no owner pointer and cannot reopen artifact interiors.
 package ingress
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
@@ -43,41 +43,34 @@ const (
 	EventExit
 )
 
-// Snapshot is the smallest immutable ingress receipt. It retains the sealed
-// artifact pointer and the sealed structural vocabulary it projects rows
-// through; all row accessors borrow the artifact's immutable storage by index,
-// and the vocabulary is the declaration table's own immutable projection rather
-// than ingress-owned row storage. The artifact pointer also gives Go's GC the
-// lifetime proof needed for the borrowed rows, so no source Program or mutable
-// owner is retained.
+// Snapshot is the sealed ingress receipt: closed identity columns projected
+// once from a ProgramArtifact. Accessors read these columns; they never hold
+// or reopen the owner.
 type Snapshot struct {
-	artifact   *programartifact.Artifact
+	artifactID identity.ContentID
+	programID  identity.ContentID
+	schemaID   identity.ContentID
 	vocabulary structure.Table
+	points     []Point
+	edges      []StructuralEdge
+	transfers  []LocalTransfer
+	regions    []Region
+	events     []Event
+	placements []RulePlacement
+	bodies     []BodyTransport
+	boundaries []FunctionBoundary
 }
 
-// Available is intentionally only the borrow fence. Lower admitted the sealed
-// artifact and the structural vocabulary once, and ProgramArtifact seal had
-// already checked every row and cross-plane reference before publishing the
-// artifact, so an accessor reads borrowed storage behind this fence instead of
-// re-deriving either.
 func (snapshot *Snapshot) Available() bool {
-	return snapshot != nil && snapshot.artifact != nil && vocabularyAuthority(snapshot.vocabulary)
+	return snapshot != nil && snapshot.artifactID.Available() && snapshot.programID.Available() && snapshot.schemaID.Available() && vocabularyAuthority(snapshot.vocabulary)
 }
 
-// vocabularyAuthority is the second half of the fence: ingress projects arms,
-// events, and body outcomes, so a vocabulary missing any of those catalogs is
-// no authority for this boundary. Density and totality within a catalog are the
-// declaration surface's laws, already stated at seal.
 func vocabularyAuthority(vocabulary structure.Table) bool {
 	return vocabulary.Count(structure.CategoryArm) != 0 &&
 		vocabulary.Count(structure.CategoryEvent) != 0 &&
 		vocabulary.Count(structure.CategoryOutcome) != 0
 }
 
-// artifactAuthority is the construction fence: an artifact is an authority for
-// this boundary exactly when it carries its own seal proof. Its identity,
-// compile key, and point population are established by that seal and are not
-// re-derived here.
 func artifactAuthority(artifact *programartifact.Artifact) bool {
 	return artifact != nil && artifact.Available()
 }
@@ -86,366 +79,482 @@ func (snapshot *Snapshot) ArtifactID() identity.ContentID {
 	if !snapshot.Available() {
 		return identity.ContentID{}
 	}
-	return snapshot.artifact.ID()
+	return snapshot.artifactID
 }
 func (snapshot *Snapshot) ProgramID() identity.ContentID {
 	if !snapshot.Available() {
 		return identity.ContentID{}
 	}
-	return snapshot.artifact.CompileKey().ProgramID()
+	return snapshot.programID
 }
 func (snapshot *Snapshot) SchemaID() identity.ContentID {
 	if !snapshot.Available() {
 		return identity.ContentID{}
 	}
-	return snapshot.artifact.CompileKey().SchemaDigest()
+	return snapshot.schemaID
 }
 func (snapshot *Snapshot) PointCount() int {
 	if !snapshot.Available() {
 		return 0
 	}
-	return snapshot.artifact.PointCount()
+	return len(snapshot.points)
 }
 func (snapshot *Snapshot) PointAt(index int) (Point, bool) {
-	if !snapshot.Available() || index < 0 || index >= snapshot.artifact.PointCount() {
+	if !snapshot.Available() || index < 0 || index >= len(snapshot.points) {
 		return Point{}, false
 	}
-	row, ok := snapshot.artifact.PointAt(index)
-	return Point{Point: row}, ok
+	return snapshot.points[index], true
 }
 func (snapshot *Snapshot) StructuralEdgeCount() int {
 	if !snapshot.Available() {
 		return 0
 	}
-	return snapshot.artifact.EnvironmentEdgeCount()
+	return len(snapshot.edges)
 }
 func (snapshot *Snapshot) StructuralEdgeAt(index int) (StructuralEdge, bool) {
-	if !snapshot.Available() || index < 0 || index >= snapshot.artifact.EnvironmentEdgeCount() {
+	if !snapshot.Available() || index < 0 || index >= len(snapshot.edges) {
 		return StructuralEdge{}, false
 	}
-	row, ok := snapshot.artifact.EnvironmentEdgeAt(index)
-	return StructuralEdge{EnvironmentEdge: row, vocabulary: &snapshot.vocabulary}, ok
+	return snapshot.edges[index], true
 }
 func (snapshot *Snapshot) LocalTransferCount() int {
 	if !snapshot.Available() {
 		return 0
 	}
-	return snapshot.artifact.LocalTransferCount()
+	return len(snapshot.transfers)
 }
 func (snapshot *Snapshot) LocalTransferAt(index int) (LocalTransfer, bool) {
-	if !snapshot.Available() || index < 0 || index >= snapshot.artifact.LocalTransferCount() {
+	if !snapshot.Available() || index < 0 || index >= len(snapshot.transfers) {
 		return LocalTransfer{}, false
 	}
-	row, ok := snapshot.artifact.LocalTransferAt(index)
-	return LocalTransfer{LocalTransfer: row}, ok
+	return snapshot.transfers[index], true
 }
 func (snapshot *Snapshot) RegionCount() int {
 	if !snapshot.Available() {
 		return 0
 	}
-	return snapshot.artifact.RegionCount()
+	return len(snapshot.regions)
 }
 func (snapshot *Snapshot) RegionAt(index int) (Region, bool) {
-	if !snapshot.Available() || index < 0 || index >= snapshot.artifact.RegionCount() {
+	if !snapshot.Available() || index < 0 || index >= len(snapshot.regions) {
 		return Region{}, false
 	}
-	row, ok := snapshot.artifact.RegionAt(index)
-	return Region{Region: row}, ok
+	return snapshot.regions[index], true
 }
 func (snapshot *Snapshot) EventCount() int {
 	if !snapshot.Available() {
 		return 0
 	}
-	return snapshot.artifact.WTOEventCount()
+	return len(snapshot.events)
 }
 func (snapshot *Snapshot) EventAt(index int) (Event, bool) {
-	if !snapshot.Available() || index < 0 || index >= snapshot.artifact.WTOEventCount() {
+	if !snapshot.Available() || index < 0 || index >= len(snapshot.events) {
 		return Event{}, false
 	}
-	row, ok := snapshot.artifact.WTOEventAt(index)
-	return Event{WTOEvent: row, vocabulary: &snapshot.vocabulary}, ok
+	return snapshot.events[index], true
 }
-
 func (snapshot *Snapshot) RulePlacementCount() int {
 	if !snapshot.Available() {
 		return 0
 	}
-	count := 0
-	for index := 0; index < programartifact.MountedRuleRoleCount(); index++ {
-		role, ok := programartifact.MountedRuleRoleAt(index)
-		if !ok {
-			return 0
-		}
-		count += snapshot.artifact.RuleOccurrenceCount(role)
-	}
-	return count
+	return len(snapshot.placements)
 }
 func (snapshot *Snapshot) RulePlacementAt(index int) (RulePlacement, bool) {
-	if !snapshot.Available() || index < 0 {
+	if !snapshot.Available() || index < 0 || index >= len(snapshot.placements) {
 		return RulePlacement{}, false
 	}
-	for roleIndex := 0; roleIndex < programartifact.MountedRuleRoleCount(); roleIndex++ {
-		role, ok := programartifact.MountedRuleRoleAt(roleIndex)
-		if !ok {
-			return RulePlacement{}, false
-		}
-		count := snapshot.artifact.RuleOccurrenceCount(role)
-		if index < count {
-			row, ok := snapshot.artifact.RuleOccurrenceAt(role, index)
-			return RulePlacement{RuleOccurrenceRow: row}, ok
-		}
-		index -= count
-	}
-	return RulePlacement{}, false
+	return snapshot.placements[index], true
 }
 func (snapshot *Snapshot) BodyTransportCount() int {
 	if !snapshot.Available() {
 		return 0
 	}
-	return snapshot.artifact.BodyCount()
+	return len(snapshot.bodies)
 }
 func (snapshot *Snapshot) BodyTransportAt(index int) (BodyTransport, bool) {
-	if !snapshot.Available() || index < 0 || index >= snapshot.artifact.BodyCount() {
+	if !snapshot.Available() || index < 0 || index >= len(snapshot.bodies) {
 		return BodyTransport{}, false
 	}
-	row, ok := snapshot.artifact.BodyAt(index)
-	return BodyTransport{BodyRow: row, artifact: snapshot.artifact, vocabulary: &snapshot.vocabulary, bodyIndex: index}, ok
+	return snapshot.bodies[index], true
 }
 func (snapshot *Snapshot) FunctionBoundaryCount() int {
 	if !snapshot.Available() {
 		return 0
 	}
-	return snapshot.artifact.FunctionBoundaryCount()
+	return len(snapshot.boundaries)
 }
 func (snapshot *Snapshot) FunctionBoundaryAt(index int) (FunctionBoundary, bool) {
-	if !snapshot.Available() || index < 0 || index >= snapshot.artifact.FunctionBoundaryCount() {
+	if !snapshot.Available() || index < 0 || index >= len(snapshot.boundaries) {
 		return FunctionBoundary{}, false
 	}
-	row, ok := snapshot.artifact.FunctionBoundaryAt(index)
-	return FunctionBoundary{FunctionBoundaryRow: row}, ok
+	return snapshot.boundaries[index], true
 }
 
-// Point, StructuralEdge, LocalTransfer, Region, Event, and RulePlacement
-// embed immutable artifact rows by value. These are shallow descriptor copies
-// (their private variable-length storage remains owned by Artifact), not new
-// ingress-owned row storage.
-type Point struct{ programartifact.Point }
+type Point struct {
+	id        identity.ContentID
+	initial   bool
+	decisions []identity.ContentID
+}
 
-func (row Point) Initial() bool {
-	initial, ok := row.Point.Initial()
-	return ok && initial
+func (row Point) ID() identity.ContentID { return row.id }
+func (row Point) Initial() bool          { return row.initial && row.id.Available() }
+func (row Point) DecisionCount() int     { return len(row.decisions) }
+func (row Point) DecisionAt(index int) (identity.ContentID, bool) {
+	if index < 0 || index >= len(row.decisions) {
+		return identity.ContentID{}, false
+	}
+	return row.decisions[index], true
 }
 
 type StructuralEdge struct {
-	programartifact.EnvironmentEdge
-	vocabulary *structure.Table
+	id, from, to, route  identity.ContentID
+	guard, decision      identity.ContentID
+	component, mu, reset identity.ContentID
+	arm                  StructuralArm
+	guarded, truth       bool
+	hasReset             bool
+	resets               []identity.ContentID
 }
 
-// Arm resolves the artifact row's arm ordinal against the sealed arm
-// vocabulary. An ordinal outside the declared catalog names no member, so it
-// yields the invalid arm rather than a member this boundary invented.
-func (row StructuralEdge) Arm() StructuralArm {
-	if row.vocabulary == nil {
-		return StructuralArmInvalid
+func (row StructuralEdge) ID() identity.ContentID          { return row.id }
+func (row StructuralEdge) From() identity.ContentID        { return row.from }
+func (row StructuralEdge) To() identity.ContentID          { return row.to }
+func (row StructuralEdge) RouteID() identity.ContentID     { return row.route }
+func (row StructuralEdge) ComponentID() identity.ContentID { return row.component }
+func (row StructuralEdge) Arm() StructuralArm              { return row.arm }
+func (row StructuralEdge) GuardID() (identity.ContentID, bool) {
+	return row.guard, row.guarded && row.guard.Available()
+}
+func (row StructuralEdge) DecisionID() (identity.ContentID, bool) {
+	return row.decision, row.guarded && row.decision.Available()
+}
+func (row StructuralEdge) Truth() (bool, bool) {
+	return row.truth, row.guarded
+}
+func (row StructuralEdge) MuPathID() (identity.ContentID, bool) {
+	return row.mu, row.mu.Available()
+}
+func (row StructuralEdge) ResetDigest() (identity.ContentID, bool) {
+	return row.reset, row.hasReset && row.reset.Available()
+}
+func (row StructuralEdge) ResetCount() int { return len(row.resets) }
+func (row StructuralEdge) ResetAt(index int) (identity.ContentID, bool) {
+	if index < 0 || index >= len(row.resets) {
+		return identity.ContentID{}, false
 	}
-	member, ok := row.vocabulary.At(structure.CategoryArm, uint16(row.EnvironmentEdge.Arm()))
-	if !ok {
-		return StructuralArmInvalid
+	return row.resets[index], true
+}
+
+type LocalTransfer struct {
+	id, from, to identity.ContentID
+	full         bool
+	writes       []schema.Key
+}
+
+func (row LocalTransfer) ID() identity.ContentID   { return row.id }
+func (row LocalTransfer) From() identity.ContentID { return row.from }
+func (row LocalTransfer) To() identity.ContentID   { return row.to }
+func (row LocalTransfer) Full() bool               { return row.full }
+func (row LocalTransfer) WritesCount() int         { return len(row.writes) }
+func (row LocalTransfer) WritesAt(index int) (schema.Key, bool) {
+	if index < 0 || index >= len(row.writes) {
+		return "", false
 	}
-	return StructuralArm(member.Ordinal())
+	return row.writes[index], true
 }
 
-type LocalTransfer struct{ programartifact.LocalTransfer }
-
-func (row LocalTransfer) Full() bool { return row.LocalTransfer.FullEnvironment() }
-func (row LocalTransfer) TagCount() int {
-	return row.LocalTransfer.FactorRoleCount()
+type Region struct {
+	id, head, parent identity.ContentID
+	cyclic           bool
+	members          []identity.ContentID
 }
-func (row LocalTransfer) TagAt(index int) (uint8, bool) {
-	role, ok := row.LocalTransfer.FactorRoleAt(index)
-	if !ok {
-		return 0, false
+
+func (row Region) ID() identity.ContentID       { return row.id }
+func (row Region) Head() identity.ContentID     { return row.head }
+func (row Region) ParentID() identity.ContentID { return row.parent }
+func (row Region) Cyclic() bool                 { return row.cyclic }
+func (row Region) MemberCount() int             { return len(row.members) }
+func (row Region) MemberAt(index int) (identity.ContentID, bool) {
+	if index < 0 || index >= len(row.members) {
+		return identity.ContentID{}, false
 	}
-	return uint8(role), true
+	return row.members[index], true
 }
-
-type Region struct{ programartifact.Region }
 
 type Event struct {
-	programartifact.WTOEvent
-	vocabulary *structure.Table
+	kind   EventKind
+	region identity.ContentID
+	point  identity.ContentID
 }
 
-// Kind resolves the artifact row's bracket ordinal against the sealed event
-// vocabulary.
-func (row Event) Kind() EventKind {
-	if row.vocabulary == nil {
-		return EventInvalid
-	}
-	member, ok := row.vocabulary.At(structure.CategoryEvent, uint16(row.WTOEvent.Kind()))
-	if !ok {
-		return EventInvalid
-	}
-	return EventKind(member.Ordinal())
-}
+func (row Event) Kind() EventKind              { return row.kind }
+func (row Event) RegionID() identity.ContentID { return row.region }
+func (row Event) PointID() identity.ContentID  { return row.point }
 
-// RulePlacement is a role-specific projection over the artifact's canonical
-// occurrence catalog. It stores no copied placement or point list.
 type RulePlacement struct {
-	programartifact.RuleOccurrenceRow
+	key         schema.Key
+	stage       uint8
+	point       identity.ContentID
+	input       identity.ContentID
+	occurrence  identity.ContentID
+	predecessor identity.ContentID
 }
 
-// FunctionBoundary is a borrowed view over ProgramArtifact's neutral formal
-// interface. It adds no row storage and exposes no live Program/Flow owner.
-type FunctionBoundary struct {
-	programartifact.FunctionBoundaryRow
-}
-
-func (row RulePlacement) Tag() uint8 { return uint8(row.RuleOccurrenceRow.Role()) }
-func (row RulePlacement) Stage() uint8 {
-	return uint8(row.RuleOccurrenceRow.Stage())
-}
-func (row RulePlacement) PointID() identity.ContentID {
-	point, ok := row.RuleOccurrenceRow.PointAt(0)
-	if !ok {
-		return identity.ContentID{}
-	}
-	return point
-}
-func (row RulePlacement) InputPointID() identity.ContentID {
-	point, _ := row.RuleOccurrenceRow.InputPoint()
-	return point
-}
-func (row RulePlacement) OccurrenceID() identity.ContentID { return row.RuleOccurrenceRow.ID() }
+func (row RulePlacement) Key() schema.Key                  { return row.key }
+func (row RulePlacement) Stage() uint8                     { return row.stage }
+func (row RulePlacement) PointID() identity.ContentID      { return row.point }
+func (row RulePlacement) InputPointID() identity.ContentID { return row.input }
+func (row RulePlacement) OccurrenceID() identity.ContentID { return row.occurrence }
 func (row RulePlacement) PredecessorRouteID() identity.ContentID {
-	route, _ := row.RuleOccurrenceRow.PredecessorRouteID()
-	return route
+	return row.predecessor
 }
 
-// BodyTransport is a borrowed body view. Entry points come directly from the
-// Body row; exits are the ingress projection of accepted Outcome point sets
-// and are deduplicated on demand in their original artifact order. Which
-// outcomes are accepted is the sealed vocabulary's declared property, read row
-// by row.
 type BodyTransport struct {
-	programartifact.BodyRow
-	artifact   *programartifact.Artifact
-	vocabulary *structure.Table
-	bodyIndex  int
+	id, context, entry identity.ContentID
+	function, formal   identity.ContentID
+	callable           bool
+	entries            []identity.ContentID
+	exits              []identity.ContentID
 }
 
-// accepted resolves one artifact outcome ordinal against the sealed outcome
-// vocabulary and reads the member's declared admission into this projection.
-func (row BodyTransport) accepted(kind programartifact.OutcomeKind) bool {
-	if row.vocabulary == nil {
-		return false
+func (row BodyTransport) BodyID() identity.ContentID          { return row.id }
+func (row BodyTransport) ContextID() identity.ContentID       { return row.context }
+func (row BodyTransport) SemanticEntryID() identity.ContentID { return row.entry }
+func (row BodyTransport) Callable() bool                      { return row.callable }
+func (row BodyTransport) FunctionID() identity.ContentID      { return row.function }
+func (row BodyTransport) CallFormalID() identity.ContentID    { return row.formal }
+func (row BodyTransport) EntryCount() int                     { return len(row.entries) }
+func (row BodyTransport) EntryAt(index int) (identity.ContentID, bool) {
+	if index < 0 || index >= len(row.entries) {
+		return identity.ContentID{}, false
 	}
-	member, ok := row.vocabulary.At(structure.CategoryOutcome, uint16(kind))
+	return row.entries[index], true
+}
+func (row BodyTransport) ExitCount() int { return len(row.exits) }
+func (row BodyTransport) ExitAt(index int) (identity.ContentID, bool) {
+	if index < 0 || index >= len(row.exits) {
+		return identity.ContentID{}, false
+	}
+	return row.exits[index], true
+}
+
+type FunctionBoundary struct {
+	id, body, bodyContext, entry, formal identity.ContentID
+}
+
+func (row FunctionBoundary) ID() identity.ContentID            { return row.id }
+func (row FunctionBoundary) BodyID() identity.ContentID        { return row.body }
+func (row FunctionBoundary) BodyContextID() identity.ContentID { return row.bodyContext }
+func (row FunctionBoundary) EntryID() identity.ContentID       { return row.entry }
+func (row FunctionBoundary) CallFormalID() identity.ContentID  { return row.formal }
+
+func copyIDs(count int, at func(int) (identity.ContentID, bool)) ([]identity.ContentID, bool) {
+	if count < 0 {
+		return nil, false
+	}
+	if count == 0 {
+		return nil, true
+	}
+	ids := make([]identity.ContentID, count)
+	for index := 0; index < count; index++ {
+		id, ok := at(index)
+		if !ok || !id.Available() {
+			return nil, false
+		}
+		ids[index] = id
+	}
+	return ids, true
+}
+
+func projectArm(vocabulary structure.Table, ordinal uint16) (StructuralArm, bool) {
+	member, ok := vocabulary.At(structure.CategoryArm, ordinal)
+	if !ok {
+		return StructuralArmInvalid, false
+	}
+	arm := StructuralArm(member.Ordinal())
+	return arm, arm.Valid()
+}
+
+func projectEvent(vocabulary structure.Table, ordinal uint16) (EventKind, bool) {
+	member, ok := vocabulary.At(structure.CategoryEvent, ordinal)
+	if !ok {
+		return EventInvalid, false
+	}
+	kind := EventKind(member.Ordinal())
+	return kind, kind != EventInvalid
+}
+
+func acceptedOutcome(vocabulary structure.Table, kind programartifact.OutcomeKind) bool {
+	member, ok := vocabulary.At(structure.CategoryOutcome, uint16(kind))
 	return ok && member.Accepted()
 }
 
-func (row BodyTransport) BodyID() identity.ContentID          { return row.BodyRow.ID() }
-func (row BodyTransport) ContextID() identity.ContentID       { return row.BodyRow.ContextID() }
-func (row BodyTransport) SemanticEntryID() identity.ContentID { return row.BodyRow.EntryID() }
-func (row BodyTransport) Callable() bool                      { return row.BodyRow.Callable() }
-func (row BodyTransport) FunctionID() identity.ContentID {
-	id, _ := row.BodyRow.FunctionContextID()
-	return id
-}
-func (row BodyTransport) CallFormalID() identity.ContentID {
-	id, _ := row.BodyRow.CallFormalID()
-	return id
-}
-func (row BodyTransport) EntryCount() int { return row.BodyRow.EntryPointCount() }
-func (row BodyTransport) EntryAt(index int) (identity.ContentID, bool) {
-	return row.BodyRow.EntryPointAt(index)
-}
-func (row BodyTransport) ExitCount() int {
-	count, ok := row.exitCount()
-	if !ok {
-		return 0
-	}
-	return count
-}
-func (row BodyTransport) ExitAt(index int) (identity.ContentID, bool) {
-	if index < 0 || row.artifact == nil || !row.BodyRow.Available() {
-		return identity.ContentID{}, false
-	}
+func lowerBodyExits(artifact *programartifact.Artifact, vocabulary structure.Table, bodyIndex int, body programartifact.BodyRow) ([]identity.ContentID, bool) {
 	seen := make(map[identity.ContentID]struct{})
-	next := 0
-	for outcomeIndex := 0; outcomeIndex < row.BodyRow.OutcomeCount(); outcomeIndex++ {
-		outcome, ok := row.artifact.BodyOutcomeAt(row.bodyIndex, outcomeIndex)
+	var exits []identity.ContentID
+	for outcomeIndex := 0; outcomeIndex < body.OutcomeCount(); outcomeIndex++ {
+		outcome, ok := artifact.BodyOutcomeAt(bodyIndex, outcomeIndex)
 		if !ok {
-			return identity.ContentID{}, false
+			return nil, false
 		}
-		if !row.accepted(outcome.Kind()) {
+		if !acceptedOutcome(vocabulary, outcome.Kind()) {
 			continue
 		}
 		for pointIndex := 0; pointIndex < outcome.PointCount(); pointIndex++ {
 			point, ok := outcome.PointAt(pointIndex)
-			if !ok {
-				return identity.ContentID{}, false
+			if !ok || !point.Available() {
+				return nil, false
 			}
 			if _, duplicate := seen[point]; duplicate {
 				continue
 			}
 			seen[point] = struct{}{}
-			if next == index {
-				return point, true
-			}
-			next++
+			exits = append(exits, point)
 		}
 	}
-	return identity.ContentID{}, false
+	return exits, true
 }
 
-func (row BodyTransport) exitCount() (int, bool) {
-	if row.artifact == nil || !row.BodyRow.Available() {
-		return 0, false
-	}
-	seen := make(map[identity.ContentID]struct{})
-	count := 0
-	for outcomeIndex := 0; outcomeIndex < row.BodyRow.OutcomeCount(); outcomeIndex++ {
-		outcome, ok := row.artifact.BodyOutcomeAt(row.bodyIndex, outcomeIndex)
-		if !ok {
-			return 0, false
-		}
-		if !row.accepted(outcome.Kind()) {
-			continue
-		}
-		for pointIndex := 0; pointIndex < outcome.PointCount(); pointIndex++ {
-			point, ok := outcome.PointAt(pointIndex)
-			if !ok {
-				return 0, false
-			}
-			if _, duplicate := seen[point]; duplicate {
-				continue
-			}
-			seen[point] = struct{}{}
-			count++
-		}
-	}
-	return count, true
-}
-
-// Lower only admits an already sealed artifact, the sealed structural
-// vocabulary its rows are projected through, and the closed ingress role
-// catalog. All row/reference validation belongs to ProgramArtifact sealing;
-// this boundary adds no second owned representation of those rows. The
-// vocabulary is handed in by the composition rather than reached for here, so
-// the boundary reads one sealed declaration and never a catalog of its own.
+// Lower projects one sealed artifact through the sealed structural vocabulary
+// into closed columns. The returned snapshot retains no owner pointer.
 func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Snapshot, bool) {
 	if !artifactAuthority(artifact) || !vocabularyAuthority(vocabulary) {
 		return nil, false
 	}
-	for index := 0; index < programartifact.MountedRuleRoleCount(); index++ {
-		role, ok := programartifact.MountedRuleRoleAt(index)
+	snapshot := &Snapshot{
+		artifactID: artifact.ID(),
+		programID:  artifact.CompileKey().ProgramID(),
+		schemaID:   artifact.CompileKey().SchemaDigest(),
+		vocabulary: vocabulary,
+	}
+	snapshot.points = make([]Point, 0, artifact.PointCount())
+	for index := 0; index < artifact.PointCount(); index++ {
+		row, ok := artifact.PointAt(index)
+		if !ok || !row.ID().Available() {
+			return nil, false
+		}
+		initial, initialOK := row.Initial()
+		decisions, decisionsOK := copyIDs(row.DecisionCount(), row.DecisionAt)
+		if !initialOK || !decisionsOK {
+			return nil, false
+		}
+		snapshot.points = append(snapshot.points, Point{id: row.ID(), initial: initial, decisions: decisions})
+	}
+	snapshot.edges = make([]StructuralEdge, 0, artifact.EnvironmentEdgeCount())
+	for index := 0; index < artifact.EnvironmentEdgeCount(); index++ {
+		row, ok := artifact.EnvironmentEdgeAt(index)
 		if !ok {
 			return nil, false
 		}
-		if !artifact.RuleRoleSupported(role) {
+		arm, armOK := projectArm(vocabulary, uint16(row.Arm()))
+		if !armOK {
 			return nil, false
 		}
+		guard, guarded := row.GuardID()
+		decision, decisionOK := row.DecisionID()
+		truth, truthOK := row.Truth()
+		mu, hasMu := row.MuPathID()
+		reset, hasReset := row.ResetDigest()
+		if guarded != decisionOK || guarded != truthOK || hasMu != hasReset {
+			return nil, false
+		}
+		resets, resetsOK := copyIDs(row.ResetCount(), row.ResetAt)
+		if !resetsOK {
+			return nil, false
+		}
+		snapshot.edges = append(snapshot.edges, StructuralEdge{
+			id: row.ID(), from: row.From(), to: row.To(), route: row.RouteID(),
+			guard: guard, decision: decision, component: row.ComponentID(), mu: mu, reset: reset,
+			arm: arm, guarded: guarded, truth: truth, hasReset: hasReset, resets: resets,
+		})
 	}
-	return &Snapshot{artifact: artifact, vocabulary: vocabulary}, true
+	snapshot.transfers = make([]LocalTransfer, 0, artifact.LocalTransferCount())
+	for index := 0; index < artifact.LocalTransferCount(); index++ {
+		row, ok := artifact.LocalTransferAt(index)
+		if !ok {
+			return nil, false
+		}
+		writes := make([]schema.Key, 0, row.WritesCount())
+		for inner := 0; inner < row.WritesCount(); inner++ {
+			write, writeOK := row.WritesAt(inner)
+			if !writeOK || !write.Available() {
+				return nil, false
+			}
+			writes = append(writes, write)
+		}
+		snapshot.transfers = append(snapshot.transfers, LocalTransfer{
+			id: row.ID(), from: row.From(), to: row.To(), full: row.FullEnvironment(), writes: writes,
+		})
+	}
+	snapshot.regions = make([]Region, 0, artifact.RegionCount())
+	for index := 0; index < artifact.RegionCount(); index++ {
+		row, ok := artifact.RegionAt(index)
+		if !ok {
+			return nil, false
+		}
+		members, membersOK := copyIDs(row.MemberCount(), row.MemberAt)
+		if !membersOK {
+			return nil, false
+		}
+		snapshot.regions = append(snapshot.regions, Region{
+			id: row.ID(), head: row.Head(), parent: row.ParentID(), cyclic: row.Cyclic(), members: members,
+		})
+	}
+	snapshot.events = make([]Event, 0, artifact.WTOEventCount())
+	for index := 0; index < artifact.WTOEventCount(); index++ {
+		row, ok := artifact.WTOEventAt(index)
+		if !ok {
+			return nil, false
+		}
+		kind, kindOK := projectEvent(vocabulary, uint16(row.Kind()))
+		if !kindOK {
+			return nil, false
+		}
+		snapshot.events = append(snapshot.events, Event{kind: kind, region: row.RegionID(), point: row.PointID()})
+	}
+	snapshot.placements = make([]RulePlacement, 0, artifact.RulePlacementCount())
+	for index := 0; index < artifact.RulePlacementCount(); index++ {
+		row, ok := artifact.RulePlacementAt(index)
+		if !ok || !row.Key().Available() {
+			return nil, false
+		}
+		point, _ := row.PointAt(0)
+		input, _ := row.InputPoint()
+		route, _ := row.PredecessorRouteID()
+		snapshot.placements = append(snapshot.placements, RulePlacement{
+			key: row.Key(), stage: uint8(row.Stage()), point: point, input: input,
+			occurrence: row.ID(), predecessor: route,
+		})
+	}
+	snapshot.bodies = make([]BodyTransport, 0, artifact.BodyCount())
+	for index := 0; index < artifact.BodyCount(); index++ {
+		row, ok := artifact.BodyAt(index)
+		if !ok {
+			return nil, false
+		}
+		entries, entriesOK := copyIDs(row.EntryPointCount(), row.EntryPointAt)
+		exits, exitsOK := lowerBodyExits(artifact, vocabulary, index, row)
+		if !entriesOK || !exitsOK {
+			return nil, false
+		}
+		function, _ := row.FunctionContextID()
+		formal, _ := row.CallFormalID()
+		snapshot.bodies = append(snapshot.bodies, BodyTransport{
+			id: row.ID(), context: row.ContextID(), entry: row.EntryID(),
+			function: function, formal: formal, callable: row.Callable(),
+			entries: entries, exits: exits,
+		})
+	}
+	snapshot.boundaries = make([]FunctionBoundary, 0, artifact.FunctionBoundaryCount())
+	for index := 0; index < artifact.FunctionBoundaryCount(); index++ {
+		row, ok := artifact.FunctionBoundaryAt(index)
+		if !ok {
+			return nil, false
+		}
+		snapshot.boundaries = append(snapshot.boundaries, FunctionBoundary{
+			id: row.ID(), body: row.BodyID(), bodyContext: row.BodyContextID(),
+			entry: row.EntryID(), formal: row.CallFormalID(),
+		})
+	}
+	return snapshot, snapshot.Available()
 }

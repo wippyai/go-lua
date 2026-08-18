@@ -17,10 +17,11 @@ func Seal(spec *Spec) (*Link, error) {
 	return seal(spec, nil)
 }
 
-// sealReplay performs the same child construction as Seal but admits Host
-// only through its detached replay contract. It is intentionally private to
-// artifact decoding: callers cannot bypass authored Host admission.
-func sealReplay(spec *Spec, replay linkhost.ReplaySpec) (*Link, error) {
+// SealReplay performs the same child construction as Seal but admits Host
+// only through its detached replay contract. It is the sole constructor the
+// portable artifact codec uses to reopen a Link: authored Host input and a
+// replay contract are mutually exclusive, and mixing them fails closed.
+func SealReplay(spec *Spec, replay linkhost.ReplaySpec) (*Link, error) {
 	return seal(spec, &replay)
 }
 

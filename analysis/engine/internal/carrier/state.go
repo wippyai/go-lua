@@ -91,6 +91,10 @@ type SlotWork interface {
 	// RuleContribution.  Coverage is the sole presence authority: undefined
 	// under a row is Present(Default), and every cell outside it is Absent.
 	LessOrEqContributionUnder(left, right RootHandle, leftSupport, rightSupport support.Mask, leftCoverage, rightCoverage SlotCoverage) (bool, bool)
+	// AscentOrderedContributionUnder is the Kleene-progress boundary for one
+	// closed replacement. Inclusion is sufficient; a defined Widen that
+	// dominates both cells is also progress.
+	AscentOrderedContributionUnder(left, right RootHandle, leftSupport, rightSupport support.Mask, leftCoverage, rightCoverage SlotCoverage) (bool, bool)
 	// ContributionClosedUnder is the issuance-time proof that no physical
 	// non-Default root cell lies outside the compact authored surface or final
 	// outer support.  Carrier never calls it on hot admitted reads.

@@ -3,24 +3,24 @@ package analysis
 import (
 	"context"
 	"crypto/sha256"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"testing"
 
-	"github.com/wippyai/go-lua/domain/composite"
-	"github.com/wippyai/go-lua/domain/effect/callsite"
-	effectfactor "github.com/wippyai/go-lua/domain/effect/factor"
-	heapdomain "github.com/wippyai/go-lua/domain/heap"
-	packdomain "github.com/wippyai/go-lua/domain/pack"
-	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
+	"github.com/wippyai/go-lua/domain/composite"
+	"github.com/wippyai/go-lua/domain/effect/callsite"
+	effectfactor "github.com/wippyai/go-lua/domain/effect/factor"
+	heapdomain "github.com/wippyai/go-lua/domain/heap"
+	packdomain "github.com/wippyai/go-lua/domain/pack"
+	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
 )
 
 func portableAnyType() schematype.Type {
@@ -32,17 +32,17 @@ func portableAnyType() schematype.Type {
 }
 
 func publicationTransitionSpec(callback, published, reverseEffects bool) target.Spec {
-	sinkBinding := target.BindingSpec{Namespace: target.BindingBuiltin, Member: []string{"sink"}}
-	requireBinding := target.BindingSpec{Namespace: target.BindingBuiltin, Member: []string{"require"}}
-	publication := &target.PublicationEffectSpec{
-		Kind: target.PublicationEffectSendTransfer, Subject: 0, Destination: target.PublicationDestinationValueFormal, Context: 1,
-		Escape: target.PublicationEscapeSendTransfer, Mutability: target.PublicationMutabilityCopyOnWrite, Lifetime: target.PublicationLifetimePreserve,
+	sinkBinding := vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"sink"}}
+	requireBinding := vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"require"}}
+	publication := &vocabulary.PublicationEffectSpec{
+		Kind: vocabulary.PublicationEffectSendTransfer, Subject: 0, Destination: vocabulary.PublicationDestinationValueFormal, Context: 1,
+		Escape: vocabulary.PublicationEscapeSendTransfer, Mutability: vocabulary.PublicationMutabilityCopyOnWrite, Lifetime: vocabulary.PublicationLifetimePreserve,
 	}
-	effects := []target.EffectSpec{{Target: 2, ValueArgs: []target.ValueFormal{1, 0}}}
+	effects := []vocabulary.EffectSpec{{Target: 2, ValueArgs: []vocabulary.ValueFormal{1, 0}}}
 	if published {
-		returnEffect := target.EffectSpec{Target: 2, ValueArgs: []target.ValueFormal{1, 0}, Publication: &target.PublicationEffectSpec{
-			Kind: target.PublicationEffectReturnEscape, Subject: 0, Destination: target.PublicationDestinationNone,
-			Escape: target.PublicationEscapeReturn, Mutability: target.PublicationMutabilityPreserve, Lifetime: target.PublicationLifetimePreserve,
+		returnEffect := vocabulary.EffectSpec{Target: 2, ValueArgs: []vocabulary.ValueFormal{1, 0}, Publication: &vocabulary.PublicationEffectSpec{
+			Kind: vocabulary.PublicationEffectReturnEscape, Subject: 0, Destination: vocabulary.PublicationDestinationNone,
+			Escape: vocabulary.PublicationEscapeReturn, Mutability: vocabulary.PublicationMutabilityPreserve, Lifetime: vocabulary.PublicationLifetimePreserve,
 		}}
 		effects[0].Publication = publication
 		effects = append(effects, returnEffect)
@@ -50,46 +50,46 @@ func publicationTransitionSpec(callback, published, reverseEffects bool) target.
 	if reverseEffects {
 		effects[0], effects[1] = effects[1], effects[0]
 	}
-	owner := target.OperationSpec{
-		Bindings: []target.BindingSpec{sinkBinding},
-		Input:    target.ValuesSpec{Fixed: []schematype.Type{portableAnyType(), portableAnyType()}, Tail: target.ValuesClosed},
-		Outcomes: []target.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}},
-		Effects:  target.RowSpec{Occurrences: effects, Tail: target.RowClosed},
+	owner := vocabulary.OperationSpec{
+		Bindings: []vocabulary.BindingSpec{sinkBinding},
+		Input:    vocabulary.ValuesSpec{Fixed: []schematype.Type{portableAnyType(), portableAnyType()}, Tail: vocabulary.ValuesClosed},
+		Outcomes: []vocabulary.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}},
+		Effects:  vocabulary.RowSpec{Occurrences: effects, Tail: vocabulary.RowClosed},
 	}
 	if callback {
-		callbackEffect := target.EffectSpec{Target: 2, ValueArgs: []target.ValueFormal{1, 0}}
+		callbackEffect := vocabulary.EffectSpec{Target: 2, ValueArgs: []vocabulary.ValueFormal{1, 0}}
 		if published {
-			callbackEffect.Publication = &target.PublicationEffectSpec{
-				Kind: target.PublicationEffectCallbackEscape, Subject: 0, Destination: target.PublicationDestinationNone,
-				Escape: target.PublicationEscapeCallback, Mutability: target.PublicationMutabilityPreserve, Lifetime: target.PublicationLifetimePreserve,
+			callbackEffect.Publication = &vocabulary.PublicationEffectSpec{
+				Kind: vocabulary.PublicationEffectCallbackEscape, Subject: 0, Destination: vocabulary.PublicationDestinationNone,
+				Escape: vocabulary.PublicationEscapeCallback, Mutability: vocabulary.PublicationMutabilityPreserve, Lifetime: vocabulary.PublicationLifetimePreserve,
 			}
 		}
-		empty := target.ValuesSpec{Tail: target.ValuesClosed}
-		owner.Callbacks = []target.CallbackSpec{{
-			Function: target.InputSource{Kind: target.InputSourceValueFormal}, Admission: schematype.CallableAdmissionOrdinary, Arguments: empty,
-			Outcomes:  []target.TerminalSpec{{Kind: kind.OutcomeNormal, Values: empty}, {Kind: kind.OutcomeReturn, Values: empty}, {Kind: kind.OutcomeThrow, Values: empty}, {Kind: kind.OutcomeYield, Values: empty}, {Kind: kind.OutcomeCancel, Values: empty}},
-			Lifecycle: target.CallbackRetainedOptionalOnce, Effects: target.RowSpec{Occurrences: []target.EffectSpec{callbackEffect}, Tail: target.RowClosed},
+		empty := vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}
+		owner.Callbacks = []vocabulary.CallbackSpec{{
+			Function: vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal}, Admission: schematype.CallableAdmissionOrdinary, Arguments: empty,
+			Outcomes:  []vocabulary.TerminalSpec{{Kind: kind.OutcomeNormal, Values: empty}, {Kind: kind.OutcomeReturn, Values: empty}, {Kind: kind.OutcomeThrow, Values: empty}, {Kind: kind.OutcomeYield, Values: empty}, {Kind: kind.OutcomeCancel, Values: empty}},
+			Lifecycle: vocabulary.CallbackRetainedOptionalOnce, Effects: vocabulary.RowSpec{Occurrences: []vocabulary.EffectSpec{callbackEffect}, Tail: vocabulary.RowClosed},
 		}}
 	}
 	return target.Spec{
 		Semantics: domaincontract.NewSemantics(),
-		InitialRoots: []target.InitialRootSpec{{
+		InitialRoots: []vocabulary.InitialRootSpec{{
 			Identity: "GlobalEnvRoot",
-			Shape:    target.BootShapeSpec{Aggregate: target.BootAggregateTable, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}},
+			Shape:    vocabulary.BootShapeSpec{Aggregate: vocabulary.BootAggregateTable, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "GlobalEnvRoot"}},
 		}},
-		Operations: []target.OperationSpec{
+		Operations: []vocabulary.OperationSpec{
 			owner,
-			{Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"effect-target"}}}, Input: target.ValuesSpec{Fixed: []schematype.Type{portableAnyType(), portableAnyType()}, Tail: target.ValuesClosed}, Outcomes: []target.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}}, Effects: target.RowSpec{Tail: target.RowClosed}},
+			{Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"effect-target"}}}, Input: vocabulary.ValuesSpec{Fixed: []schematype.Type{portableAnyType(), portableAnyType()}, Tail: vocabulary.ValuesClosed}, Outcomes: []vocabulary.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}}, Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed}},
 			// Call algebra requires Boundary's scoped loader authority even
 			// though this normal-operation fixture never invokes require.
-			{Bindings: []target.BindingSpec{requireBinding}, Input: target.ValuesSpec{Tail: target.ValuesClosed}, Outcomes: []target.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}}, Effects: target.RowSpec{Tail: target.RowClosed}},
+			{Bindings: []vocabulary.BindingSpec{requireBinding}, Input: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}, Outcomes: []vocabulary.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}}, Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed}},
 		},
-		InitialEntries: []target.InitialEntrySpec{
-			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "_G"}, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: target.InitialMutable},
-			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "__link_absent"}, Value: target.InitialValueSpec{Kind: target.InitialValueAbsent}, Mutability: target.InitialMutable},
-			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "sink"}, Value: target.InitialValueSpec{Kind: target.InitialValueOperation, Operation: sinkBinding}, Mutability: target.InitialMutable},
+		InitialEntries: []vocabulary.InitialEntrySpec{
+			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "_G"}, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: vocabulary.InitialMutable},
+			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "__link_absent"}, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueAbsent}, Mutability: vocabulary.InitialMutable},
+			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "sink"}, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueOperation, Operation: sinkBinding}, Mutability: vocabulary.InitialMutable},
 		},
-		InitialBindings: []target.InitialBindingSpec{
+		InitialBindings: []vocabulary.InitialBindingSpec{
 			{Name: "_G", Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "_G"}},
 			{Name: "__link_absent", Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "__link_absent"}},
 			{Name: "sink", Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "sink"}},
@@ -140,10 +140,10 @@ func publicationTransitionPlanSource(t testing.TB, callback, published, reverseE
 func selectedCallEffectOccurrence(t testing.TB, plan *Plan) (identity.ContentID, identity.ContentID) {
 	t.Helper()
 	for _, mounted := range plan.state.artifacts.mounts {
-		if mounted.artifact == nil || mounted.artifact.RuleOccurrenceCount(programartifact.RuleRoleEffectSelected) == 0 {
+		if mounted.artifact == nil || mounted.artifact.RulePlacementCountForKey("effect-selected") == 0 {
 			continue
 		}
-		row, ok := mounted.artifact.RuleOccurrenceAt(programartifact.RuleRoleEffectSelected, 0)
+		row, ok := mounted.artifact.RulePlacementForKeyAt("effect-selected", 0)
 		if !ok || !row.ID().Available() {
 			t.Fatal("selected CallEffect occurrence")
 		}
@@ -156,11 +156,11 @@ func selectedCallEffectOccurrence(t testing.TB, plan *Plan) (identity.ContentID,
 func selectedCallEffectOccurrences(t testing.TB, plan *Plan) (identity.ContentID, identity.ContentID, identity.ContentID) {
 	t.Helper()
 	for _, mounted := range plan.state.artifacts.mounts {
-		if mounted.artifact == nil || mounted.artifact.RuleOccurrenceCount(programartifact.RuleRoleEffectSelected) < 2 {
+		if mounted.artifact == nil || mounted.artifact.RulePlacementCountForKey("effect-selected") < 2 {
 			continue
 		}
-		first, firstOK := mounted.artifact.RuleOccurrenceAt(programartifact.RuleRoleEffectSelected, 0)
-		second, secondOK := mounted.artifact.RuleOccurrenceAt(programartifact.RuleRoleEffectSelected, 1)
+		first, firstOK := mounted.artifact.RulePlacementForKeyAt("effect-selected", 0)
+		second, secondOK := mounted.artifact.RulePlacementForKeyAt("effect-selected", 1)
 		if !firstOK || !secondOK || !mounted.moduleKey.Available() || !first.ID().Available() || !second.ID().Available() || first.ID() == second.ID() {
 			t.Fatal("distinct selected CallEffect occurrences")
 		}
@@ -170,18 +170,18 @@ func selectedCallEffectOccurrences(t testing.TB, plan *Plan) (identity.ContentID
 	return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}
 }
 
-func publicationTransitionCompilation(t testing.TB, plan *Plan) (*engine.ReceiptCompilation, identity.ContentID, identity.ContentID) {
+func publicationTransitionCompilation(t testing.TB, plan *Plan) (*engine.ProgramConstruction, identity.ContentID, identity.ContentID) {
 	t.Helper()
 	mount, occurrence := selectedCallEffectOccurrence(t, plan)
 	return publicationTransitionCompilationFor(t, plan, mount, occurrence), mount, occurrence
 }
 
-func publicationTransitionCompilationFor(t testing.TB, plan *Plan, mount, occurrence identity.ContentID) *engine.ReceiptCompilation {
+func publicationTransitionCompilationFor(t testing.TB, plan *Plan, mount, occurrence identity.ContentID) *engine.ProgramConstruction {
 	t.Helper()
 	binding, graph := plan.state.binding, plan.state.graph
-	compilation, compiled := engine.BeginReceiptTopologyCompilation(binding.SchemaBinding(), graph)
-	valueIDs, heapIDs, _, witnessOK := linkBootstrapWitness(plan.state, binding)
-	if !compiled || !witnessOK || !attachLinkBootstrapMembers(binding, compilation, graph, valueIDs, heapIDs) || !attachArtifactRuleMembers(binding, compilation, graph, plan.state.artifacts.mounts) || !plan.state.queryPlan.Attach(compilation, graph, binding) {
+	compilation, compiled := engine.BeginProgramConstruction(binding.SchemaBinding(), graph)
+	_, _, _, witnessOK := linkBootstrapWitness(plan.state, binding)
+	if !compiled || !witnessOK || !attachLinkBootstrapMembers(binding, compilation) || !attachArtifactRuleMembers(binding, compilation, plan.state.artifacts.mounts) || !plan.state.queryPlan.Attach(compilation, graph, binding) {
 		t.Fatal("publication transition receipt compilation")
 	}
 	return compilation
@@ -236,20 +236,20 @@ func TestPublicationTransitionCandidateOwnerLaw(t *testing.T) {
 	foreignPlan := publicationTransitionPlan(t, true, true, true)
 	defer foreignPlan.Close()
 	foreignCompilation, foreignMount, foreignOccurrence := publicationTransitionCompilation(t, foreignPlan)
-	if _, accepted := selectedEffectRule(plan.state.binding).AttachMountedPublicationCandidates(compilation, plan.state.graph, foreignPlan.state.binding.EffectQuery(), mount, occurrence); accepted {
+	if _, accepted := selectedEffectRule(plan.state.binding).AttachMountedPublicationCandidates(compilation, foreignPlan.state.binding.EffectQuery(), mount, occurrence); accepted {
 		t.Fatal("foreign Effect query implementation entered candidate attachment")
 	}
-	if _, accepted := selectedEffectRule(plan.state.binding).AttachMountedPublicationCandidates(foreignCompilation, foreignPlan.state.graph, plan.state.binding.EffectQuery(), foreignMount, foreignOccurrence); accepted {
+	if _, accepted := selectedEffectRule(plan.state.binding).AttachMountedPublicationCandidates(foreignCompilation, plan.state.binding.EffectQuery(), foreignMount, foreignOccurrence); accepted {
 		t.Fatal("foreign graph entered selected CallEffect candidate attachment")
 	}
-	candidates, candidatesOK := selectedEffectRule(plan.state.binding).AttachMountedPublicationCandidates(compilation, plan.state.graph, plan.state.binding.EffectQuery(), mount, occurrence)
+	candidates, candidatesOK := selectedEffectRule(plan.state.binding).AttachMountedPublicationCandidates(compilation, plan.state.binding.EffectQuery(), mount, occurrence)
 	if !candidatesOK || !candidates.Available() || candidates.Count() != 3 {
 		t.Fatalf("selected publication candidate inventory=%d ok=%t", candidates.Count(), candidatesOK)
 	}
-	if _, duplicate := selectedEffectRule(plan.state.binding).AttachMountedPublicationCandidates(compilation, plan.state.graph, plan.state.binding.EffectQuery(), mount, occurrence); duplicate {
+	if _, duplicate := selectedEffectRule(plan.state.binding).AttachMountedPublicationCandidates(compilation, plan.state.binding.EffectQuery(), mount, occurrence); duplicate {
 		t.Fatal("candidate attachment issued more than one observation for one selected occurrence")
 	}
-	if _, opaqueOK := opaqueEffectRule(plan.state.binding).AttachMountedPublicationCandidates(compilation, plan.state.graph, plan.state.binding.EffectQuery(), mount, occurrence); opaqueOK {
+	if _, opaqueOK := opaqueEffectRule(plan.state.binding).AttachMountedPublicationCandidates(compilation, plan.state.binding.EffectQuery(), mount, occurrence); opaqueOK {
 		t.Fatal("opaque CallEffect route issued publication candidates")
 	}
 	first, firstOK := candidates.At(0)
@@ -262,7 +262,7 @@ func TestPublicationTransitionCandidateOwnerLaw(t *testing.T) {
 	if !firstOK || !secondOK || !first.Available() || !second.Available() || !firstIDOK || !secondIDOK || firstID == secondID || preSolveFailure != callsite.PublicationTransitionProofFailureInvalidSolverState || preSolve.Valid() || invalidCandidateFailure != callsite.PublicationTransitionProofFailureInvalidCandidate {
 		t.Fatal("candidate identity or pre-solve fence")
 	}
-	solver, solverOK := compilation.Solver()
+	solver, _, solverOK := compilation.Seal()
 	if !solverOK || solver == nil {
 		t.Fatal("publication transition solver")
 	}
@@ -285,14 +285,14 @@ func TestPublicationTransitionCandidateOwnerLaw(t *testing.T) {
 		switch proof.Role() {
 		case effectfactor.PublicationAtomBindingOrdinary:
 			switch proof.Kind() {
-			case target.PublicationEffectSendTransfer:
+			case vocabulary.PublicationEffectSendTransfer:
 				contextSelector, contextOK := proof.ContextSelector()
-				if proof.Escape() != target.PublicationEscapeSendTransfer || proof.Mutability() != target.PublicationMutabilityCopyOnWrite || !contextOK || contextSelector == subject {
+				if proof.Escape() != vocabulary.PublicationEscapeSendTransfer || proof.Mutability() != vocabulary.PublicationMutabilityCopyOnWrite || !contextOK || contextSelector == subject {
 					t.Fatal("send publication consequence or context provenance")
 				}
 				seenSend = true
-			case target.PublicationEffectReturnEscape:
-				if proof.Escape() != target.PublicationEscapeReturn {
+			case vocabulary.PublicationEffectReturnEscape:
+				if proof.Escape() != vocabulary.PublicationEscapeReturn {
 					t.Fatal("return publication consequence")
 				}
 				if _, contextOK := proof.ContextSelector(); contextOK {
@@ -303,7 +303,7 @@ func TestPublicationTransitionCandidateOwnerLaw(t *testing.T) {
 				t.Fatal("unexpected ordinary publication kind")
 			}
 		case effectfactor.PublicationAtomBindingCallback:
-			if proof.Kind() != target.PublicationEffectCallbackEscape || proof.Escape() != target.PublicationEscapeCallback {
+			if proof.Kind() != vocabulary.PublicationEffectCallbackEscape || proof.Escape() != vocabulary.PublicationEscapeCallback {
 				t.Fatal("callback publication consequence")
 			}
 			if _, contextOK := proof.ContextSelector(); contextOK {
@@ -320,8 +320,8 @@ func TestPublicationTransitionCandidateOwnerLaw(t *testing.T) {
 	if _, failure := first.ProveWithFailure(nil, state); failure != callsite.PublicationTransitionProofFailureInvalidSolverState {
 		t.Fatal("candidate proved through a foreign solver")
 	}
-	foreignCandidates, foreignCandidatesOK := selectedEffectRule(foreignPlan.state.binding).AttachMountedPublicationCandidates(foreignCompilation, foreignPlan.state.graph, foreignPlan.state.binding.EffectQuery(), foreignMount, foreignOccurrence)
-	foreignSolver, foreignSolverOK := foreignCompilation.Solver()
+	foreignCandidates, foreignCandidatesOK := selectedEffectRule(foreignPlan.state.binding).AttachMountedPublicationCandidates(foreignCompilation, foreignPlan.state.binding.EffectQuery(), foreignMount, foreignOccurrence)
+	foreignSolver, _, foreignSolverOK := foreignCompilation.Seal()
 	if !foreignCandidatesOK || !foreignCandidates.Available() || !foreignSolverOK || foreignSolver == nil {
 		t.Fatal("foreign candidate fixture")
 	}
@@ -358,8 +358,8 @@ func TestPublicationPlacementCorrelationPlanOwnerLaw(t *testing.T) {
 	plan := publicationTransitionPlan(t, true, true, false)
 	defer plan.Close()
 	compilation, mount, occurrence := publicationTransitionCompilation(t, plan)
-	candidates, candidatesOK := selectedEffectRule(plan.state.binding).AttachMountedPublicationCandidates(compilation, plan.state.graph, plan.state.binding.EffectQuery(), mount, occurrence)
-	solver, solverOK := compilation.Solver()
+	candidates, candidatesOK := selectedEffectRule(plan.state.binding).AttachMountedPublicationCandidates(compilation, plan.state.binding.EffectQuery(), mount, occurrence)
+	solver, _, solverOK := compilation.Seal()
 	if !candidatesOK || !candidates.Available() || candidates.Count() == 0 || !solverOK || solver == nil {
 		t.Fatal("publication placement candidate fixture")
 	}
@@ -432,7 +432,7 @@ func TestPublicationTransitionCandidatesOmitGenericEffects(t *testing.T) {
 	plan := publicationTransitionPlan(t, false, false, false)
 	defer plan.Close()
 	compilation, mount, occurrence := publicationTransitionCompilation(t, plan)
-	candidates, ok := selectedEffectRule(plan.state.binding).AttachMountedPublicationCandidates(compilation, plan.state.graph, plan.state.binding.EffectQuery(), mount, occurrence)
+	candidates, ok := selectedEffectRule(plan.state.binding).AttachMountedPublicationCandidates(compilation, plan.state.binding.EffectQuery(), mount, occurrence)
 	if !ok || !candidates.Available() || candidates.Count() != 0 {
 		t.Fatal("generic selected effect issued a publication candidate")
 	}

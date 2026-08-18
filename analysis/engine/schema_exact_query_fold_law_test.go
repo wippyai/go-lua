@@ -116,7 +116,7 @@ func TestSchemaExactQueryReceiptFoldMaterializesThroughRuntime(t *testing.T) {
 		},
 	}
 	binding := NewSchemaBinding(schema)
-	if binding == nil || !BindFactor(binding, factor, hotUintFactorSpec()) || !BindRule[uint64, uint64, ruleUnit](binding, rule, write, factor, receiptExactQueryRuleSpec()) || !BindExactQuery(binding, query, factor, spec) || !binding.Seal() {
+	if binding == nil || !BindFactor(binding, factor, hotUintFactorSpec()) || !BindRule[uint64, uint64, ruleUnit](binding, rule, write, factor, receiptExactQueryRuleSpec(), testRuleProjector[ruleUnit]) || !BindExactQuery(binding, query, factor, spec) || !binding.Seal() {
 		t.Fatal("runtime exact fold binding")
 	}
 	implementation, ok := ExactQueryImplementationAt[uint64, uint64](binding, query)
@@ -124,18 +124,18 @@ func TestSchemaExactQueryReceiptFoldMaterializesThroughRuntime(t *testing.T) {
 		t.Fatal("runtime exact fold receipt")
 	}
 	graph, identity := exactQueryReceiptGraph(t, schema, factor, query)
-	compilation, ok := compileReceiptFactors(binding, graph)
+	compilation, ok := beginProgramConstruction(binding, graph)
 	if !ok || compilation == nil {
 		t.Fatal("runtime exact fold compilation")
 	}
-	runtime, ok := bindReceiptExactQueryRuntime[uint64, uint64](compilation, implementation, identity)
+	runtime, ok := bindReceiptExactQueryRuntime[uint64, uint64](compilation.programPlane, implementation, identity)
 	if !ok || runtime == nil {
 		t.Fatal("runtime exact fold evidence")
 	}
 	group, groupOK := graph.HyperedgeAt(0)
 	member, memberOK := group.MemberAt(0)
 	operand := ruleUnitForSemantic(coldKey(948_033))
-	row, rowOK := bindReceiptRuleMember(compilation, mustRuleImplementation(t, binding, rule), member, operand)
+	row, rowOK := attachProgramRuleMember(compilation, mustRuleImplementation(t, binding, rule), member, operand)
 	slot, slotOK := row.outputSlot()
 	plan, planOK := compilation.carrier.SealContribution(0, []shape.Slot{slot}, nil, false)
 	work, workOK := compilation.carrier.NewWork()

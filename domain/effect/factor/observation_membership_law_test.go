@@ -1,6 +1,7 @@
 package factor_test
 
 import (
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
@@ -22,7 +23,7 @@ type effectMembershipFixture struct {
 	algebra *effectfactor.Algebra
 	root    effectfactor.Root
 	mounted effectfactor.MountedCall
-	owner   target.Operation
+	owner   vocabulary.Operation
 }
 
 func newEffectMembershipFixture(t testing.TB) effectMembershipFixture {
@@ -31,12 +32,12 @@ func newEffectMembershipFixture(t testing.TB) effectMembershipFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	args := target.EffectSpec{Target: 2}
-	foreignArgs := target.EffectSpec{Target: 3}
-	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []target.OperationSpec{
-		{Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"sink"}}}, Input: target.ValuesSpec{Fixed: []schematype.Type{portableAnyType()}, Tail: target.ValuesClosed}, Outcomes: []target.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}}, Effects: target.RowSpec{Occurrences: []target.EffectSpec{args, foreignArgs}, Tail: target.RowClosed}},
-		{Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"effect-target"}}}, Input: target.ValuesSpec{Tail: target.ValuesClosed}, Outcomes: []target.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}}, Effects: target.RowSpec{Tail: target.RowClosed}},
-		{Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"foreign-effect-target"}}}, Input: target.ValuesSpec{Tail: target.ValuesClosed}, Outcomes: []target.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}}, Effects: target.RowSpec{Tail: target.RowClosed}},
+	args := vocabulary.EffectSpec{Target: 2}
+	foreignArgs := vocabulary.EffectSpec{Target: 3}
+	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{
+		{Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"sink"}}}, Input: vocabulary.ValuesSpec{Fixed: []schematype.Type{portableAnyType()}, Tail: vocabulary.ValuesClosed}, Outcomes: []vocabulary.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}}, Effects: vocabulary.RowSpec{Occurrences: []vocabulary.EffectSpec{args, foreignArgs}, Tail: vocabulary.RowClosed}},
+		{Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"effect-target"}}}, Input: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}, Outcomes: []vocabulary.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}}, Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed}},
+		{Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"foreign-effect-target"}}}, Input: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}, Outcomes: []vocabulary.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}}, Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed}},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +73,7 @@ func newEffectMembershipFixture(t testing.TB) effectMembershipFixture {
 	packMount, packOK := pack.NewArtifactMount(artifact, module, programID)
 	packs, packsOK := pack.SealMountedArtifacts(linked, statics, []pack.ArtifactMount{packMount})
 	algebra, algebraOK := effectfactor.NewWithMountedArtifacts(linked, packs, contract, []effectfactor.MountedArtifact{{ModuleKey: module, Artifact: artifact}})
-	owner, ownerOK := contract.Lookup(target.BindingSpec{Namespace: target.BindingBuiltin, Member: []string{"sink"}})
+	owner, ownerOK := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"sink"}})
 	mounted, mountedOK := algebra.MountedCallAt(0)
 	root, rootOK := algebra.RootForMountedCall(mounted)
 	if !packOK || !packsOK || packs == nil || !algebraOK || algebra == nil || !ownerOK || !mountedOK || !rootOK {

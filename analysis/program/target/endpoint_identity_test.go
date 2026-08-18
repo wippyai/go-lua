@@ -1,6 +1,7 @@
 package target
 
 import (
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"testing"
 
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
@@ -9,50 +10,50 @@ import (
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 )
 
-func endpointIdentityOperation(name string) OperationSpec {
-	return OperationSpec{
-		Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{name}}},
-		Input:    ValuesSpec{Fixed: []schematype.Type{testString}, Tail: ValuesClosed},
-		Outcomes: []OutcomeSpec{
-			{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesClosed}},
-			{Kind: flowkind.OutcomeThrow, Values: ValuesSpec{Tail: ValuesClosed}},
+func endpointIdentityOperation(name string) vocabulary.OperationSpec {
+	return vocabulary.OperationSpec{
+		Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{name}}},
+		Input:    vocabulary.ValuesSpec{Fixed: []schematype.Type{testString}, Tail: vocabulary.ValuesClosed},
+		Outcomes: []vocabulary.OutcomeSpec{
+			{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}},
+			{Kind: flowkind.OutcomeThrow, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}},
 		},
-		Transfers: []TransferSpec{transfer(
-			TransferEndpoint{Kind: TransferEndpointInput},
-			InputSource{Kind: InputSourceValueFormal},
-			TransferIdentitySame,
-			TransferCapabilitiesPreserveAll,
-			[]TransferOutcomeSpec{
-				{Outcome: 0, Possibility: TransferMayDeliver},
-				{Outcome: 1, Possibility: TransferMayReject},
+		Transfers: []vocabulary.TransferSpec{transfer(
+			vocabulary.TransferEndpoint{Kind: vocabulary.TransferEndpointInput},
+			vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal},
+			vocabulary.TransferIdentitySame,
+			vocabulary.TransferCapabilitiesPreserveAll,
+			[]vocabulary.TransferOutcomeSpec{
+				{Outcome: 0, Possibility: vocabulary.TransferMayDeliver},
+				{Outcome: 1, Possibility: vocabulary.TransferMayReject},
 			},
 		)},
-		Effects: RowSpec{Tail: RowClosed},
+		Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 	}
 }
 
-func endpointIdentityTwoTransferOperation(name string) OperationSpec {
+func endpointIdentityTwoTransferOperation(name string) vocabulary.OperationSpec {
 	operation := endpointIdentityOperation(name)
 	operation.Transfers = append(operation.Transfers, transfer(
-		TransferEndpoint{Kind: TransferEndpointExternal},
-		InputSource{Kind: InputSourceValueFormal},
-		TransferIdentityDistinct,
-		TransferCapabilitiesLoseAll,
-		[]TransferOutcomeSpec{
-			{Outcome: 0, Possibility: TransferMayDeliver},
-			{Outcome: 1, Possibility: TransferMayReject},
+		vocabulary.TransferEndpoint{Kind: vocabulary.TransferEndpointExternal},
+		vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal},
+		vocabulary.TransferIdentityDistinct,
+		vocabulary.TransferCapabilitiesLoseAll,
+		[]vocabulary.TransferOutcomeSpec{
+			{Outcome: 0, Possibility: vocabulary.TransferMayDeliver},
+			{Outcome: 1, Possibility: vocabulary.TransferMayReject},
 		},
 	))
 	return operation
 }
 
-func endpointIdentityOperationAndTransfer(t testing.TB, c *Contract, name string) (Operation, TransferID) {
+func endpointIdentityOperationAndTransfer(t testing.TB, c *Contract, name string) (vocabulary.Operation, vocabulary.TransferID) {
 	t.Helper()
-	op, ok := c.Lookup(BindingSpec{Namespace: BindingBuiltin, Member: []string{name}})
+	op, ok := c.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{name}})
 	if !ok {
 		t.Fatalf("operation %q absent", name)
 	}
-	transfer, ok := c.TransferIDAt(op, 0)
+	transfer, ok := c.transferIDAt(op, 0)
 	if !ok {
 		t.Fatalf("transfer %q absent", name)
 	}
@@ -72,13 +73,13 @@ func endpointIdentitySnapshotFor(t testing.TB, c *Contract, name string) endpoin
 	if !ok {
 		t.Fatalf("%s operation identity unavailable", name)
 	}
-	transferID, ok := c.TransferContentID(op, transfer)
+	transferID, ok := c.transferContentID(op, transfer)
 	if !ok {
 		t.Fatalf("%s transfer identity unavailable", name)
 	}
 	var outcomes [2]identity.ContentID
 	for index := range outcomes {
-		id, _, ok := c.TransferOutcomeContentID(op, transfer, index)
+		id, _, ok := c.transferOutcomeContentID(op, transfer, index)
 		if !ok {
 			t.Fatalf("%s transfer outcome %d identity unavailable", name, index)
 		}
@@ -110,7 +111,7 @@ func assertEndpointIdentityChanged(t testing.TB, got, prior endpointIdentitySnap
 }
 
 func TestEndpointIdentityAuthenticatesOwnerAndDescriptor(t *testing.T) {
-	contract := mustSeal(t, Spec{Operations: []OperationSpec{
+	contract := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{
 		endpointIdentityOperation("alpha"),
 		endpointIdentityOperation("beta"),
 	}})
@@ -124,9 +125,9 @@ func TestEndpointIdentityAuthenticatesOwnerAndDescriptor(t *testing.T) {
 	if again, ok := contract.OperationContentID(alpha); !ok || again != alphaOperation {
 		t.Fatal("operation identity is not stable")
 	}
-	if outcome, ok := contract.OutcomeContentID(alpha, 0); !ok || !outcome.Available() {
+	if outcome, ok := contract.outcomeContentID(alpha, 0); !ok || !outcome.Available() {
 		t.Fatal("operation outcome identity unavailable")
-	} else if again, ok := contract.OutcomeContentID(alpha, 0); !ok || again != outcome {
+	} else if again, ok := contract.outcomeContentID(alpha, 0); !ok || again != outcome {
 		t.Fatal("operation outcome identity is not stable")
 	}
 	betaOperation, ok := contract.OperationContentID(beta)
@@ -134,49 +135,49 @@ func TestEndpointIdentityAuthenticatesOwnerAndDescriptor(t *testing.T) {
 		t.Fatal("same operation ordinal in a distinct operation did not change identity")
 	}
 
-	alphaID, ok := contract.TransferContentID(alpha, alphaTransfer)
+	alphaID, ok := contract.transferContentID(alpha, alphaTransfer)
 	if !ok || !alphaID.Available() {
 		t.Fatal("alpha transfer identity unavailable")
 	}
-	betaID, ok := contract.TransferContentID(beta, betaTransfer)
+	betaID, ok := contract.transferContentID(beta, betaTransfer)
 	if !ok || betaID == alphaID {
 		t.Fatal("same transfer ordinal under a distinct operation reused identity")
 	}
-	firstOutcome, disposition, ok := contract.TransferOutcomeContentID(alpha, alphaTransfer, 0)
-	if !ok || !firstOutcome.Available() || disposition != TransferMayDeliver {
+	firstOutcome, disposition, ok := contract.transferOutcomeContentID(alpha, alphaTransfer, 0)
+	if !ok || !firstOutcome.Available() || disposition != vocabulary.TransferMayDeliver {
 		t.Fatalf("first transfer outcome = %v/%v/%v", firstOutcome, disposition, ok)
 	}
-	secondOutcome, disposition, ok := contract.TransferOutcomeContentID(alpha, alphaTransfer, 1)
-	if !ok || !secondOutcome.Available() || disposition != TransferMayReject || secondOutcome == firstOutcome {
+	secondOutcome, disposition, ok := contract.transferOutcomeContentID(alpha, alphaTransfer, 1)
+	if !ok || !secondOutcome.Available() || disposition != vocabulary.TransferMayReject || secondOutcome == firstOutcome {
 		t.Fatalf("second transfer outcome = %v/%v/%v", secondOutcome, disposition, ok)
 	}
-	if betaOutcome, _, ok := contract.TransferOutcomeContentID(beta, betaTransfer, 0); !ok || betaOutcome == firstOutcome {
+	if betaOutcome, _, ok := contract.transferOutcomeContentID(beta, betaTransfer, 0); !ok || betaOutcome == firstOutcome {
 		t.Fatal("same outcome ordinal under a distinct operation reused identity")
 	}
 
-	if _, ok := contract.TransferContentID(beta, alphaTransfer); ok {
+	if _, ok := contract.transferContentID(beta, alphaTransfer); ok {
 		t.Fatal("transfer accepted a mismatched owner")
 	}
-	if _, _, ok := contract.TransferOutcomeContentID(beta, alphaTransfer, 0); ok {
+	if _, _, ok := contract.transferOutcomeContentID(beta, alphaTransfer, 0); ok {
 		t.Fatal("transfer outcome accepted a mismatched owner")
 	}
 	if _, ok := contract.OperationContentID(0); ok {
 		t.Fatal("zero operation accepted")
 	}
-	if _, ok := contract.TransferContentID(alpha, 0); ok {
+	if _, ok := contract.transferContentID(alpha, 0); ok {
 		t.Fatal("zero transfer accepted")
 	}
-	if _, _, ok := contract.TransferOutcomeContentID(alpha, alphaTransfer, 2); ok {
+	if _, _, ok := contract.transferOutcomeContentID(alpha, alphaTransfer, 2); ok {
 		t.Fatal("out-of-range transfer outcome accepted")
 	}
 }
 
 func TestEndpointIdentityIsPermutationAndReplayInvariant(t *testing.T) {
-	left := mustSeal(t, Spec{Operations: []OperationSpec{
+	left := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{
 		endpointIdentityOperation("beta"),
 		endpointIdentityOperation("alpha"),
 	}})
-	right := mustSeal(t, Spec{Operations: []OperationSpec{
+	right := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{
 		endpointIdentityOperation("alpha"),
 		endpointIdentityOperation("beta"),
 	}})
@@ -191,14 +192,14 @@ func TestEndpointIdentityIsPermutationAndReplayInvariant(t *testing.T) {
 		if !leftOK || !rightOK || leftOperationID != rightOperationID {
 			t.Fatalf("%s operation identity changed across replay", name)
 		}
-		leftTransferID, leftOK := left.TransferContentID(leftOperation, leftTransfer)
-		rightTransferID, rightOK := right.TransferContentID(rightOperation, rightTransfer)
+		leftTransferID, leftOK := left.transferContentID(leftOperation, leftTransfer)
+		rightTransferID, rightOK := right.transferContentID(rightOperation, rightTransfer)
 		if !leftOK || !rightOK || leftTransferID != rightTransferID {
 			t.Fatalf("%s transfer identity changed across replay", name)
 		}
 		for outcome := 0; outcome < 2; outcome++ {
-			leftOutcomeID, leftDisposition, leftOK := left.TransferOutcomeContentID(leftOperation, leftTransfer, outcome)
-			rightOutcomeID, rightDisposition, rightOK := right.TransferOutcomeContentID(rightOperation, rightTransfer, outcome)
+			leftOutcomeID, leftDisposition, leftOK := left.transferOutcomeContentID(leftOperation, leftTransfer, outcome)
+			rightOutcomeID, rightDisposition, rightOK := right.transferOutcomeContentID(rightOperation, rightTransfer, outcome)
 			if !leftOK || !rightOK || leftDisposition != rightDisposition || leftOutcomeID != rightOutcomeID {
 				t.Fatalf("%s outcome %d identity changed across replay", name, outcome)
 			}
@@ -207,10 +208,10 @@ func TestEndpointIdentityIsPermutationAndReplayInvariant(t *testing.T) {
 }
 
 func TestEndpointIdentityExcludesUnrelatedTargetRecords(t *testing.T) {
-	base := mustSeal(t, Spec{Operations: []OperationSpec{
+	base := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{
 		endpointIdentityOperation("alpha"),
 	}})
-	withUnrelatedOperation := mustSeal(t, Spec{Operations: []OperationSpec{
+	withUnrelatedOperation := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{
 		endpointIdentityOperation("alpha"),
 		endpointIdentityOperation("aardvark-unrelated"),
 	}})
@@ -222,9 +223,9 @@ func TestEndpointIdentityExcludesUnrelatedTargetRecords(t *testing.T) {
 		endpointIdentitySnapshotFor(t, base, "alpha"),
 	)
 
-	bootBase := completeBootSpec("Lua 5.3", InitialMutable)
+	bootBase := completeBootSpec("Lua 5.3", vocabulary.InitialMutable)
 	bootBase.Operations = append(bootBase.Operations, endpointIdentityOperation("alpha"))
-	bootChanged := completeBootSpec("Lua 5.4", InitialMutable)
+	bootChanged := completeBootSpec("Lua 5.4", vocabulary.InitialMutable)
 	bootChanged.Operations = append(bootChanged.Operations, endpointIdentityOperation("alpha"))
 	baseline := mustSeal(t, bootBase)
 	withUnrelatedBootValue := mustSeal(t, bootChanged)
@@ -238,64 +239,64 @@ func TestEndpointIdentityExcludesUnrelatedTargetRecords(t *testing.T) {
 }
 
 func TestEndpointIdentityTracksExactLocalSemanticMutations(t *testing.T) {
-	base := mustSeal(t, Spec{Operations: []OperationSpec{endpointIdentityOperation("alpha")}})
+	base := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{endpointIdentityOperation("alpha")}})
 	prior := endpointIdentitySnapshotFor(t, base, "alpha")
 
 	operationMutation := endpointIdentityOperation("alpha")
 	operationMutation.Input.Fixed[0] = testInteger
 	assertEndpointIdentityChanged(t,
-		endpointIdentitySnapshotFor(t, mustSeal(t, Spec{Operations: []OperationSpec{operationMutation}}), "alpha"),
+		endpointIdentitySnapshotFor(t, mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{operationMutation}}), "alpha"),
 		prior,
 	)
 
 	transferMutation := endpointIdentityOperation("alpha")
-	transferMutation.Transfers[0].Identity = TransferIdentityDistinct
+	transferMutation.Transfers[0].Identity = vocabulary.TransferIdentityDistinct
 	assertEndpointIdentityChanged(t,
-		endpointIdentitySnapshotFor(t, mustSeal(t, Spec{Operations: []OperationSpec{transferMutation}}), "alpha"),
+		endpointIdentitySnapshotFor(t, mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{transferMutation}}), "alpha"),
 		prior,
 	)
 
 	outcomeMutation := endpointIdentityOperation("alpha")
-	outcomeMutation.Transfers[0].Outcomes[0].Possibility = TransferMayReject
+	outcomeMutation.Transfers[0].Outcomes[0].Possibility = vocabulary.TransferMayReject
 	assertEndpointIdentityChanged(t,
-		endpointIdentitySnapshotFor(t, mustSeal(t, Spec{Operations: []OperationSpec{outcomeMutation}}), "alpha"),
+		endpointIdentitySnapshotFor(t, mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{outcomeMutation}}), "alpha"),
 		prior,
 	)
 }
 
 func TestEndpointIdentityKeepsDistinctSealedTransferDeclarations(t *testing.T) {
-	first := mustSeal(t, Spec{Operations: []OperationSpec{endpointIdentityTwoTransferOperation("two-transfers")}})
-	second := mustSeal(t, Spec{Operations: []OperationSpec{endpointIdentityTwoTransferOperation("two-transfers")}})
-	firstOperation, ok := first.Lookup(BindingSpec{Namespace: BindingBuiltin, Member: []string{"two-transfers"}})
-	if !ok || first.TransferCount(firstOperation) != 2 {
+	first := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{endpointIdentityTwoTransferOperation("two-transfers")}})
+	second := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{endpointIdentityTwoTransferOperation("two-transfers")}})
+	firstOperation, ok := first.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"two-transfers"}})
+	if !ok || first.transferCount(firstOperation) != 2 {
 		t.Fatal("first sealed transfer declarations unavailable")
 	}
-	secondOperation, ok := second.Lookup(BindingSpec{Namespace: BindingBuiltin, Member: []string{"two-transfers"}})
-	if !ok || second.TransferCount(secondOperation) != 2 {
+	secondOperation, ok := second.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"two-transfers"}})
+	if !ok || second.transferCount(secondOperation) != 2 {
 		t.Fatal("second sealed transfer declarations unavailable")
 	}
 	for index := 0; index < 2; index++ {
-		firstTransfer, ok := first.TransferIDAt(firstOperation, index)
+		firstTransfer, ok := first.transferIDAt(firstOperation, index)
 		if !ok {
 			t.Fatalf("first transfer %d unavailable", index)
 		}
-		secondTransfer, ok := second.TransferIDAt(secondOperation, index)
+		secondTransfer, ok := second.transferIDAt(secondOperation, index)
 		if !ok {
 			t.Fatalf("second transfer %d unavailable", index)
 		}
-		firstID, firstOK := first.TransferContentID(firstOperation, firstTransfer)
-		secondID, secondOK := second.TransferContentID(secondOperation, secondTransfer)
+		firstID, firstOK := first.transferContentID(firstOperation, firstTransfer)
+		secondID, secondOK := second.transferContentID(secondOperation, secondTransfer)
 		if !firstOK || !secondOK || firstID != secondID {
 			t.Fatalf("transfer %d identity changed across replay", index)
 		}
 		if index == 0 {
 			continue
 		}
-		priorTransfer, ok := first.TransferIDAt(firstOperation, index-1)
+		priorTransfer, ok := first.transferIDAt(firstOperation, index-1)
 		if !ok {
 			t.Fatalf("prior transfer %d unavailable", index-1)
 		}
-		priorID, ok := first.TransferContentID(firstOperation, priorTransfer)
+		priorID, ok := first.transferContentID(firstOperation, priorTransfer)
 		if !ok || priorID == firstID {
 			t.Fatal("distinct sealed transfer declarations reused identity")
 		}
@@ -303,11 +304,11 @@ func TestEndpointIdentityKeepsDistinctSealedTransferDeclarations(t *testing.T) {
 }
 
 func TestEndpointIdentityScopesCrossContractHandlesAndRejectsUnavailable(t *testing.T) {
-	local := mustSeal(t, Spec{Operations: []OperationSpec{
+	local := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{
 		endpointIdentityOperation("local-alpha"),
 		endpointIdentityOperation("local-beta"),
 	}})
-	foreign := mustSeal(t, Spec{Operations: []OperationSpec{
+	foreign := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{
 		endpointIdentityOperation("foreign-alpha"),
 		endpointIdentityOperation("foreign-beta"),
 		endpointIdentityOperation("foreign-gamma"),
@@ -319,35 +320,35 @@ func TestEndpointIdentityScopesCrossContractHandlesAndRejectsUnavailable(t *test
 	if localOperation != foreignEqualOperation || localTransfer != foreignEqualTransfer {
 		t.Fatal("law requires numerically coincident receiver-local handles")
 	}
-	localID, ok := local.TransferContentID(localOperation, localTransfer)
+	localID, ok := local.transferContentID(localOperation, localTransfer)
 	if !ok {
 		t.Fatal("local transfer identity unavailable")
 	}
-	foreignID, ok := foreign.TransferContentID(foreignEqualOperation, foreignEqualTransfer)
+	foreignID, ok := foreign.transferContentID(foreignEqualOperation, foreignEqualTransfer)
 	if !ok || foreignID == localID {
 		t.Fatal("numerically equal handles across contracts reused identity")
 	}
-	localOutcome, _, ok := local.TransferOutcomeContentID(localOperation, localTransfer, 0)
+	localOutcome, _, ok := local.transferOutcomeContentID(localOperation, localTransfer, 0)
 	if !ok {
 		t.Fatal("local outcome identity unavailable")
 	}
-	foreignOutcome, _, ok := foreign.TransferOutcomeContentID(foreignEqualOperation, foreignEqualTransfer, 0)
+	foreignOutcome, _, ok := foreign.transferOutcomeContentID(foreignEqualOperation, foreignEqualTransfer, 0)
 	if !ok || foreignOutcome == localOutcome {
 		t.Fatal("numerically equal outcome handles across contracts reused identity")
 	}
 	if _, ok := local.OperationContentID(foreignOperation); ok {
 		t.Fatal("unavailable foreign operation handle was accepted")
 	}
-	if _, ok := local.TransferContentID(foreignOperation, foreignTransfer); ok {
+	if _, ok := local.transferContentID(foreignOperation, foreignTransfer); ok {
 		t.Fatal("unavailable foreign transfer handle was accepted")
 	}
-	if _, _, ok := local.TransferOutcomeContentID(foreignOperation, foreignTransfer, 0); ok {
+	if _, _, ok := local.transferOutcomeContentID(foreignOperation, foreignTransfer, 0); ok {
 		t.Fatal("unavailable foreign transfer outcome handle was accepted")
 	}
-	if _, ok := local.OperationContentID(Operation(99)); ok {
+	if _, ok := local.OperationContentID(vocabulary.Operation(99)); ok {
 		t.Fatal("out-of-range operation accepted")
 	}
-	if _, ok := local.TransferContentID(Operation(1), TransferID(99)); ok {
+	if _, ok := local.transferContentID(vocabulary.Operation(1), vocabulary.TransferID(99)); ok {
 		t.Fatal("out-of-range transfer accepted")
 	}
 }
@@ -356,13 +357,13 @@ func TestEndpointIdentityScopesCrossContractHandlesAndRejectsUnavailable(t *test
 // bounded table projections; rebuilding a descriptor here would both allocate
 // and make every Boundary consumer pay the whole Target serialization tax.
 func TestEndpointIdentityQueriesAllocateNothing(t *testing.T) {
-	contract := mustSeal(t, Spec{Operations: []OperationSpec{endpointIdentityOperation("allocation")}})
+	contract := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{endpointIdentityOperation("allocation")}})
 	op, transfer := endpointIdentityOperationAndTransfer(t, contract, "allocation")
 	if allocations := testing.AllocsPerRun(1000, func() {
 		_, _ = contract.OperationContentID(op)
-		_, _ = contract.OutcomeContentID(op, 0)
-		_, _ = contract.TransferContentID(op, transfer)
-		_, _, _ = contract.TransferOutcomeContentID(op, transfer, 0)
+		_, _ = contract.outcomeContentID(op, 0)
+		_, _ = contract.transferContentID(op, transfer)
+		_, _, _ = contract.transferOutcomeContentID(op, transfer, 0)
 	}); allocations != 0 {
 		t.Fatalf("semantic identity queries allocated %v times", allocations)
 	}
@@ -374,32 +375,32 @@ func TestEndpointIdentityQueriesAllocateNothing(t *testing.T) {
 // equivalent Contract. The portable ContentID is the value for cross-contract
 // comparison; the Contract remains the handle owner.
 func TestEndpointIdentityDocumentsReceiverLocalScalarHandles(t *testing.T) {
-	left := mustSeal(t, Spec{Operations: []OperationSpec{endpointIdentityOperation("same")}})
-	right := mustSeal(t, Spec{Operations: []OperationSpec{endpointIdentityOperation("same")}})
+	left := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{endpointIdentityOperation("same")}})
+	right := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{endpointIdentityOperation("same")}})
 	leftOp, leftTransfer := endpointIdentityOperationAndTransfer(t, left, "same")
 	rightOp, rightTransfer := endpointIdentityOperationAndTransfer(t, right, "same")
 	if leftOp != rightOp || leftTransfer != rightTransfer {
 		t.Fatal("law requires coincident scalar coordinates")
 	}
-	leftOutcome, ok := left.OutcomeContentID(leftOp, 0)
+	leftOutcome, ok := left.outcomeContentID(leftOp, 0)
 	if !ok {
 		t.Fatal("left outcome unavailable")
 	}
-	if got, ok := left.OutcomeContentID(rightOp, 0); !ok || got != leftOutcome {
+	if got, ok := left.outcomeContentID(rightOp, 0); !ok || got != leftOutcome {
 		t.Fatal("receiver-local outcome coordinate was not interpreted locally")
 	}
-	leftID, ok := left.TransferContentID(leftOp, leftTransfer)
+	leftID, ok := left.transferContentID(leftOp, leftTransfer)
 	if !ok {
 		t.Fatal("left transfer unavailable")
 	}
-	if got, ok := left.TransferContentID(rightOp, rightTransfer); !ok || got != leftID {
+	if got, ok := left.transferContentID(rightOp, rightTransfer); !ok || got != leftID {
 		t.Fatal("receiver-local transfer coordinate was not interpreted locally")
 	}
-	leftTransferOutcome, _, ok := left.TransferOutcomeContentID(leftOp, leftTransfer, 0)
+	leftTransferOutcome, _, ok := left.transferOutcomeContentID(leftOp, leftTransfer, 0)
 	if !ok {
 		t.Fatal("left transfer outcome unavailable")
 	}
-	if got, _, ok := left.TransferOutcomeContentID(rightOp, rightTransfer, 0); !ok || got != leftTransferOutcome {
+	if got, _, ok := left.transferOutcomeContentID(rightOp, rightTransfer, 0); !ok || got != leftTransferOutcome {
 		t.Fatal("receiver-local transfer outcome coordinate was not interpreted locally")
 	}
 }
@@ -408,9 +409,9 @@ func TestEndpointIdentityDocumentsReceiverLocalScalarHandles(t *testing.T) {
 // operation at Seal.  They exercise the former global CallbackID, Operation,
 // and Values leaks without changing any declared relation of the subject.
 func TestEndpointIdentityIgnoresEarlierGlobalCallbackAndEffectCoordinates(t *testing.T) {
-	baselineSpec := callbackReleaseZeroSpec(CallbackReleaseZeroSpec{Behavior: CallbackReleaseZeroThrow, Outcome: 1})
+	baselineSpec := specWithCallbackReleaseZero(vocabulary.CallbackReleaseZeroSpec{Behavior: vocabulary.CallbackReleaseZeroThrow, Outcome: 1})
 	baseline := mustSeal(t, baselineSpec)
-	owner, ok := baseline.Lookup(BindingSpec{Namespace: BindingBuiltin, Member: []string{"release-zero-owner"}})
+	owner, ok := baseline.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"release-zero-owner"}})
 	if !ok {
 		t.Fatal("release owner absent")
 	}
@@ -419,10 +420,10 @@ func TestEndpointIdentityIgnoresEarlierGlobalCallbackAndEffectCoordinates(t *tes
 		t.Fatal("release owner ID unavailable")
 	}
 
-	withEarlier := callbackReleaseZeroSpec(CallbackReleaseZeroSpec{Behavior: CallbackReleaseZeroThrow, Outcome: 1})
+	withEarlier := specWithCallbackReleaseZero(vocabulary.CallbackReleaseZeroSpec{Behavior: vocabulary.CallbackReleaseZeroThrow, Outcome: 1})
 	withEarlier.Operations = append(withEarlier.Operations, endpointIdentityOperation("aardvark-earlier"))
 	afterContract := mustSeal(t, withEarlier)
-	owner, ok = afterContract.Lookup(BindingSpec{Namespace: BindingBuiltin, Member: []string{"release-zero-owner"}})
+	owner, ok = afterContract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"release-zero-owner"}})
 	if !ok {
 		t.Fatal("release owner absent after insertion")
 	}
@@ -431,8 +432,8 @@ func TestEndpointIdentityIgnoresEarlierGlobalCallbackAndEffectCoordinates(t *tes
 		t.Fatal("earlier unrelated operation renumbered callback/release identity")
 	}
 
-	spawnBase := mustSeal(t, Spec{Operations: []OperationSpec{spawnTestOperation("spawn-id")}})
-	spawnOp, ok := spawnBase.Lookup(BindingSpec{Namespace: BindingModule, Owner: []string{"coroutine"}, Member: []string{"spawn-id"}})
+	spawnBase := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{spawnTestOperation("spawn-id")}})
+	spawnOp, ok := spawnBase.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingModule, Owner: []string{"coroutine"}, Member: []string{"spawn-id"}})
 	if !ok {
 		t.Fatal("spawn operation absent")
 	}
@@ -440,9 +441,9 @@ func TestEndpointIdentityIgnoresEarlierGlobalCallbackAndEffectCoordinates(t *tes
 	if !ok {
 		t.Fatal("spawn ID unavailable")
 	}
-	spawnSpec := Spec{Operations: []OperationSpec{spawnTestOperation("spawn-id"), endpointIdentityOperation("aardvark-spawn")}}
+	spawnSpec := Spec{Operations: []vocabulary.OperationSpec{spawnTestOperation("spawn-id"), endpointIdentityOperation("aardvark-spawn")}}
 	spawnChanged := mustSeal(t, spawnSpec)
-	spawnOp, ok = spawnChanged.Lookup(BindingSpec{Namespace: BindingModule, Owner: []string{"coroutine"}, Member: []string{"spawn-id"}})
+	spawnOp, ok = spawnChanged.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingModule, Owner: []string{"coroutine"}, Member: []string{"spawn-id"}})
 	if !ok {
 		t.Fatal("spawn operation absent after insertion")
 	}
@@ -453,7 +454,7 @@ func TestEndpointIdentityIgnoresEarlierGlobalCallbackAndEffectCoordinates(t *tes
 
 func TestEndpointIdentityUsesSymbolicEffectAndProducedAnchors(t *testing.T) {
 	effectBase := mustSeal(t, deltaEffects(2))
-	effectOp, ok := effectBase.Lookup(BindingSpec{Namespace: BindingBuiltin, Member: []string{"effect-a"}})
+	effectOp, ok := effectBase.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"effect-a"}})
 	if !ok {
 		t.Fatal("effect source absent")
 	}
@@ -464,22 +465,22 @@ func TestEndpointIdentityUsesSymbolicEffectAndProducedAnchors(t *testing.T) {
 	effectWithEarlier := deltaEffects(2)
 	effectWithEarlier.Operations = append(effectWithEarlier.Operations, endpointIdentityOperation("aardvark-effect"))
 	effectChanged := mustSeal(t, effectWithEarlier)
-	effectOp, _ = effectChanged.Lookup(BindingSpec{Namespace: BindingBuiltin, Member: []string{"effect-a"}})
+	effectOp, _ = effectChanged.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"effect-a"}})
 	if got, ok := effectChanged.OperationContentID(effectOp); !ok || got != beforeEffect {
 		t.Fatal("earlier operation renumbered effect target identity")
 	}
 	effectMutation := mustSeal(t, deltaEffects(3))
-	effectOp, _ = effectMutation.Lookup(BindingSpec{Namespace: BindingBuiltin, Member: []string{"effect-a"}})
+	effectOp, _ = effectMutation.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"effect-a"}})
 	if got, ok := effectMutation.OperationContentID(effectOp); !ok || got == beforeEffect {
 		t.Fatal("effect target mutation did not change declaration identity")
 	}
 
 	producedBase := mustSeal(t, deltaProduced(0))
-	parent, ok := producedBase.Lookup(BindingSpec{Namespace: BindingBuiltin, Member: []string{"produced"}})
+	parent, ok := producedBase.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"produced"}})
 	if !ok {
 		t.Fatal("produced parent absent")
 	}
-	child, _, ok := producedBase.ProducedForResult(parent, 0, 0)
+	child, _, ok := producedBase.producedForResult(parent, 0, 0)
 	if !ok {
 		t.Fatal("produced child absent")
 	}
@@ -489,8 +490,8 @@ func TestEndpointIdentityUsesSymbolicEffectAndProducedAnchors(t *testing.T) {
 		t.Fatal("produced path did not mint distinct operation identities")
 	}
 	producedReplay := mustSeal(t, deltaProduced(0))
-	replayParent, _ := producedReplay.Lookup(BindingSpec{Namespace: BindingBuiltin, Member: []string{"produced"}})
-	replayChild, _, _ := producedReplay.ProducedForResult(replayParent, 0, 0)
+	replayParent, _ := producedReplay.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"produced"}})
+	replayChild, _, _ := producedReplay.producedForResult(replayParent, 0, 0)
 	if got, _ := producedReplay.OperationContentID(replayParent); got != parentID {
 		t.Fatal("produced parent replay changed identity")
 	}
@@ -498,60 +499,60 @@ func TestEndpointIdentityUsesSymbolicEffectAndProducedAnchors(t *testing.T) {
 		t.Fatal("produced child replay changed identity")
 	}
 	producedMutation := mustSeal(t, deltaProduced(1))
-	mutationParent, _ := producedMutation.Lookup(BindingSpec{Namespace: BindingBuiltin, Member: []string{"produced"}})
+	mutationParent, _ := producedMutation.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"produced"}})
 	if got, _ := producedMutation.OperationContentID(mutationParent); got == parentID {
 		t.Fatal("produced capture mutation did not change parent declaration identity")
 	}
 
-	callbackBaseSpec := Spec{Operations: []OperationSpec{deltaCallbackOperation("callback-result", 0, 1, true)}}
+	callbackBaseSpec := Spec{Operations: []vocabulary.OperationSpec{deltaCallbackOperation("callback-result", 0, 1, true)}}
 	callbackBase := mustSeal(t, callbackBaseSpec)
-	callbackOp, _ := callbackBase.Lookup(BindingSpec{Namespace: BindingBuiltin, Member: []string{"callback-result"}})
+	callbackOp, _ := callbackBase.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"callback-result"}})
 	callbackID, _ := callbackBase.OperationContentID(callbackOp)
-	callbackEarlier := Spec{Operations: []OperationSpec{deltaCallbackOperation("callback-result", 0, 1, true), endpointIdentityOperation("aardvark-callback-result")}}
+	callbackEarlier := Spec{Operations: []vocabulary.OperationSpec{deltaCallbackOperation("callback-result", 0, 1, true), endpointIdentityOperation("aardvark-callback-result")}}
 	callbackChanged := mustSeal(t, callbackEarlier)
-	callbackOp, _ = callbackChanged.Lookup(BindingSpec{Namespace: BindingBuiltin, Member: []string{"callback-result"}})
+	callbackOp, _ = callbackChanged.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"callback-result"}})
 	if got, ok := callbackChanged.OperationContentID(callbackOp); !ok || got != callbackID {
 		t.Fatal("earlier operation renumbered callback-result identity")
 	}
-	callbackMutation := mustSeal(t, Spec{Operations: []OperationSpec{deltaCallbackOperation("callback-result", 0, 2, true)}})
-	callbackOp, _ = callbackMutation.Lookup(BindingSpec{Namespace: BindingBuiltin, Member: []string{"callback-result"}})
+	callbackMutation := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{deltaCallbackOperation("callback-result", 0, 2, true)}})
+	callbackOp, _ = callbackMutation.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"callback-result"}})
 	if got, _ := callbackMutation.OperationContentID(callbackOp); got == callbackID {
 		t.Fatal("callback-result selector mutation did not change declaration identity")
 	}
 }
 
-func endpointIdentityCapturedRootOperation(name string) OperationSpec {
-	empty := ValuesSpec{Tail: ValuesClosed}
-	return OperationSpec{
-		Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{name}}},
+func endpointIdentityCapturedRootOperation(name string) vocabulary.OperationSpec {
+	empty := vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}
+	return vocabulary.OperationSpec{
+		Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{name}}},
 		Input:    empty,
-		Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: empty}},
-		Subedges: []SubedgeSpec{{
-			Role: 1, Family: SubedgeFamilyCall, Admission: schematype.CallableAdmissionOrdinary,
-			Callee:    SubedgeCalleeSpec{Kind: SubedgeCalleeCapturedInitialRead, Read: CapturedInitialReadSpec{Root: "GlobalEnvRoot", Key: bootLiteralKey("assert")}},
+		Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: empty}},
+		Subedges: []vocabulary.SubedgeSpec{{
+			Role: 1, Family: vocabulary.SubedgeFamilyCall, Admission: schematype.CallableAdmissionOrdinary,
+			Callee:    vocabulary.SubedgeCalleeSpec{Kind: vocabulary.SubedgeCalleeCapturedInitialRead, Read: vocabulary.CapturedInitialReadSpec{Root: "GlobalEnvRoot", Key: bootLiteralKey("assert")}},
 			Arguments: empty, RuleEntry: true,
-			Outcomes: []TerminalSpec{
+			Outcomes: []vocabulary.TerminalSpec{
 				{Kind: flowkind.OutcomeNormal, Values: empty}, {Kind: flowkind.OutcomeReturn, Values: empty}, {Kind: flowkind.OutcomeThrow, Values: empty},
 				{Kind: flowkind.OutcomeYield, Values: empty}, {Kind: flowkind.OutcomeCancel, Values: empty},
 			},
-			AdmissionFailure: AdmissionFailureSpec{Values: empty, Route: AdmissionRouteSpec{Route: RouteOutcome, Adjustment: AdjustmentPreserve, Result: empty, Placement: PlacementFixed, Outcome: 0}},
-			Routes: []SubedgeRouteSpec{
-				{Kind: flowkind.OutcomeNormal, Route: RouteOutcome, Adjustment: AdjustmentPreserve, Result: empty, Placement: PlacementFixed, Outcome: 0},
-				{Kind: flowkind.OutcomeReturn, Route: RouteOutcome, Adjustment: AdjustmentPreserve, Result: empty, Placement: PlacementFixed, Outcome: 0},
-				{Kind: flowkind.OutcomeThrow, Route: RouteOutcome, Adjustment: AdjustmentPreserve, Result: empty, Placement: PlacementFixed, Outcome: 0},
-				{Kind: flowkind.OutcomeYield, Route: RoutePropagateYield, Adjustment: AdjustmentPreserve, Result: empty},
-				{Kind: flowkind.OutcomeCancel, Route: RouteOutcome, Adjustment: AdjustmentPreserve, Result: empty, Placement: PlacementFixed, Outcome: 0},
+			AdmissionFailure: vocabulary.AdmissionFailureSpec{Values: empty, Route: vocabulary.AdmissionRouteSpec{Route: vocabulary.RouteOutcome, Adjustment: vocabulary.AdjustmentPreserve, Result: empty, Placement: vocabulary.PlacementFixed, Outcome: 0}},
+			Routes: []vocabulary.SubedgeRouteSpec{
+				{Kind: flowkind.OutcomeNormal, Route: vocabulary.RouteOutcome, Adjustment: vocabulary.AdjustmentPreserve, Result: empty, Placement: vocabulary.PlacementFixed, Outcome: 0},
+				{Kind: flowkind.OutcomeReturn, Route: vocabulary.RouteOutcome, Adjustment: vocabulary.AdjustmentPreserve, Result: empty, Placement: vocabulary.PlacementFixed, Outcome: 0},
+				{Kind: flowkind.OutcomeThrow, Route: vocabulary.RouteOutcome, Adjustment: vocabulary.AdjustmentPreserve, Result: empty, Placement: vocabulary.PlacementFixed, Outcome: 0},
+				{Kind: flowkind.OutcomeYield, Route: vocabulary.RoutePropagateYield, Adjustment: vocabulary.AdjustmentPreserve, Result: empty},
+				{Kind: flowkind.OutcomeCancel, Route: vocabulary.RouteOutcome, Adjustment: vocabulary.AdjustmentPreserve, Result: empty, Placement: vocabulary.PlacementFixed, Outcome: 0},
 			},
 		}},
-		Effects: RowSpec{Tail: RowClosed},
+		Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 	}
 }
 
 func TestEndpointIdentityCapturedRootUsesRootIdentityNotCoordinate(t *testing.T) {
-	baseSpec := completeBootSpec("Lua 5.3", InitialMutable)
+	baseSpec := completeBootSpec("Lua 5.3", vocabulary.InitialMutable)
 	baseSpec.Operations = append(baseSpec.Operations, endpointIdentityCapturedRootOperation("root-read"))
 	base := mustSeal(t, baseSpec)
-	op, ok := base.Lookup(BindingSpec{Namespace: BindingBuiltin, Member: []string{"root-read"}})
+	op, ok := base.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"root-read"}})
 	if !ok {
 		t.Fatal("captured-root operation absent")
 	}
@@ -559,83 +560,83 @@ func TestEndpointIdentityCapturedRootUsesRootIdentityNotCoordinate(t *testing.T)
 	if !ok {
 		t.Fatal("captured-root identity unavailable")
 	}
-	withEarlierRoot := completeBootSpec("Lua 5.3", InitialMutable)
-	withEarlierRoot.InitialRoots = append(withEarlierRoot.InitialRoots, InitialRootSpec{Identity: "AardvarkRoot", Shape: BootShapeSpec{Aggregate: BootAggregateTable, Value: InitialValueSpec{Kind: InitialValueRoot, Root: "AardvarkRoot"}}})
+	withEarlierRoot := completeBootSpec("Lua 5.3", vocabulary.InitialMutable)
+	withEarlierRoot.InitialRoots = append(withEarlierRoot.InitialRoots, vocabulary.InitialRootSpec{Identity: "AardvarkRoot", Shape: vocabulary.BootShapeSpec{Aggregate: vocabulary.BootAggregateTable, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "AardvarkRoot"}}})
 	withEarlierRoot.Operations = append(withEarlierRoot.Operations, endpointIdentityCapturedRootOperation("root-read"))
 	changed := mustSeal(t, withEarlierRoot)
-	op, _ = changed.Lookup(BindingSpec{Namespace: BindingBuiltin, Member: []string{"root-read"}})
+	op, _ = changed.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"root-read"}})
 	if got, ok := changed.OperationContentID(op); !ok || got != before {
 		t.Fatal("unrelated earlier root renumbered captured-root identity")
 	}
 }
 
 func TestEndpointIdentitySubedgeCallbackSelectorLocalityAndMutation(t *testing.T) {
-	base := mustSeal(t, Spec{Operations: []OperationSpec{callbackLifecycleOperation("subedge-callback", CallbackSyncOptionalOnce, CallbackSyncOptionalOnce)}})
-	op, _ := base.Lookup(BindingSpec{Namespace: BindingBuiltin, Member: []string{"subedge-callback"}})
+	base := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{callbackLifecycleOperation("subedge-callback", vocabulary.CallbackSyncOptionalOnce, vocabulary.CallbackSyncOptionalOnce)}})
+	op, _ := base.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"subedge-callback"}})
 	before, _ := base.OperationContentID(op)
-	withEarlier := mustSeal(t, Spec{Operations: []OperationSpec{callbackLifecycleOperation("subedge-callback", CallbackSyncOptionalOnce, CallbackSyncOptionalOnce), endpointIdentityOperation("aardvark-subedge")}})
-	op, _ = withEarlier.Lookup(BindingSpec{Namespace: BindingBuiltin, Member: []string{"subedge-callback"}})
+	withEarlier := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{callbackLifecycleOperation("subedge-callback", vocabulary.CallbackSyncOptionalOnce, vocabulary.CallbackSyncOptionalOnce), endpointIdentityOperation("aardvark-subedge")}})
+	op, _ = withEarlier.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"subedge-callback"}})
 	if got, ok := withEarlier.OperationContentID(op); !ok || got != before {
 		t.Fatal("earlier operation renumbered subedge callback selector")
 	}
-	mutated := callbackLifecycleOperation("subedge-callback", CallbackSyncOptionalOnce, CallbackSyncOptionalOnce)
+	mutated := callbackLifecycleOperation("subedge-callback", vocabulary.CallbackSyncOptionalOnce, vocabulary.CallbackSyncOptionalOnce)
 	mutated.Subedges[0].Callee.Callback = 2
 	mutated.Subedges[1].Callee.Callback = 1
-	mutation := mustSeal(t, Spec{Operations: []OperationSpec{mutated}})
-	op, _ = mutation.Lookup(BindingSpec{Namespace: BindingBuiltin, Member: []string{"subedge-callback"}})
+	mutation := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{mutated}})
+	op, _ = mutation.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"subedge-callback"}})
 	if got, _ := mutation.OperationContentID(op); got == before {
 		t.Fatal("subedge callback selector mutation did not change identity")
 	}
 }
 
-func endpointIdentityTransferDependencies(callback CallbackRef) Spec {
-	closed := ValuesSpec{Tail: ValuesClosed}
-	callbacks := []CallbackSpec{
-		{Function: InputSource{Kind: InputSourceValueFormal, Ordinal: 0}, Admission: schematype.CallableAdmissionOrdinary, Arguments: closed, Outcomes: []TerminalSpec{{Kind: flowkind.OutcomeNormal, Values: closed}, {Kind: flowkind.OutcomeReturn, Values: closed}, {Kind: flowkind.OutcomeThrow, Values: closed}, {Kind: flowkind.OutcomeYield, Values: closed}, {Kind: flowkind.OutcomeCancel, Values: closed}}, Lifecycle: CallbackRetainedOptionalOnce, Effects: RowSpec{Tail: RowClosed}},
-		{Function: InputSource{Kind: InputSourceValueFormal, Ordinal: 1}, Admission: schematype.CallableAdmissionOrdinary, Arguments: closed, Outcomes: []TerminalSpec{{Kind: flowkind.OutcomeNormal, Values: closed}, {Kind: flowkind.OutcomeReturn, Values: closed}, {Kind: flowkind.OutcomeThrow, Values: closed}, {Kind: flowkind.OutcomeYield, Values: closed}, {Kind: flowkind.OutcomeCancel, Values: closed}}, Lifecycle: CallbackRetainedOptionalOnce, Effects: RowSpec{Tail: RowClosed}},
+func endpointIdentityTransferDependencies(callback vocabulary.CallbackRef) Spec {
+	closed := vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}
+	callbacks := []vocabulary.CallbackSpec{
+		{Function: vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 0}, Admission: schematype.CallableAdmissionOrdinary, Arguments: closed, Outcomes: []vocabulary.TerminalSpec{{Kind: flowkind.OutcomeNormal, Values: closed}, {Kind: flowkind.OutcomeReturn, Values: closed}, {Kind: flowkind.OutcomeThrow, Values: closed}, {Kind: flowkind.OutcomeYield, Values: closed}, {Kind: flowkind.OutcomeCancel, Values: closed}}, Lifecycle: vocabulary.CallbackRetainedOptionalOnce, Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed}},
+		{Function: vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 1}, Admission: schematype.CallableAdmissionOrdinary, Arguments: closed, Outcomes: []vocabulary.TerminalSpec{{Kind: flowkind.OutcomeNormal, Values: closed}, {Kind: flowkind.OutcomeReturn, Values: closed}, {Kind: flowkind.OutcomeThrow, Values: closed}, {Kind: flowkind.OutcomeYield, Values: closed}, {Kind: flowkind.OutcomeCancel, Values: closed}}, Lifecycle: vocabulary.CallbackRetainedOptionalOnce, Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed}},
 	}
-	return Spec{Operations: []OperationSpec{
-		{Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"transfer-dependencies"}}}, Input: ValuesSpec{Fixed: []schematype.Type{testAny, testAny}, Tail: ValuesClosed}, Callbacks: callbacks, Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testAny, testAny}, Tail: ValuesClosed}, Produced: []ProducedSpec{{Result: 0, Operation: 2, Captures: []CaptureSpec{{Kind: CaptureCallback, Ordinal: 1}}}}, CallbackResults: []CallbackResultSpec{{Result: 1, Callback: callback}}}, {Kind: flowkind.OutcomeThrow, Values: closed}}, Transfers: []TransferSpec{transfer(TransferEndpoint{Kind: TransferEndpointExternal}, InputSource{Kind: InputSourceValueFormal}, TransferIdentitySame, TransferCapabilitiesPreserveAll, []TransferOutcomeSpec{{Outcome: 0, Possibility: TransferMayDeliver}, {Outcome: 1, Possibility: TransferMayReject}})}, Effects: RowSpec{Tail: RowClosed}},
-		{Input: closed, Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: closed}}, Effects: RowSpec{Tail: RowClosed}},
+	return Spec{Operations: []vocabulary.OperationSpec{
+		{Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"transfer-dependencies"}}}, Input: vocabulary.ValuesSpec{Fixed: []schematype.Type{testAny, testAny}, Tail: vocabulary.ValuesClosed}, Callbacks: callbacks, Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Fixed: []schematype.Type{testAny, testAny}, Tail: vocabulary.ValuesClosed}, Produced: []vocabulary.ProducedSpec{{Result: 0, Operation: 2, Captures: []vocabulary.CaptureSpec{{Kind: vocabulary.CaptureCallback, Ordinal: 1}}}}, CallbackResults: []vocabulary.CallbackResultSpec{{Result: 1, Callback: callback}}}, {Kind: flowkind.OutcomeThrow, Values: closed}}, Transfers: []vocabulary.TransferSpec{transfer(vocabulary.TransferEndpoint{Kind: vocabulary.TransferEndpointExternal}, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal}, vocabulary.TransferIdentitySame, vocabulary.TransferCapabilitiesPreserveAll, []vocabulary.TransferOutcomeSpec{{Outcome: 0, Possibility: vocabulary.TransferMayDeliver}, {Outcome: 1, Possibility: vocabulary.TransferMayReject}})}, Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed}},
+		{Input: closed, Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: closed}}, Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed}},
 	}}
 }
 
 func TestEndpointTransferOutcomeCommitsProducedAndCallbackResult(t *testing.T) {
 	base := mustSeal(t, endpointIdentityTransferDependencies(1))
 	op, transfer := endpointIdentityOperationAndTransfer(t, base, "transfer-dependencies")
-	before, _, ok := base.TransferOutcomeContentID(op, transfer, 0)
+	before, _, ok := base.transferOutcomeContentID(op, transfer, 0)
 	if !ok {
 		t.Fatal("dependent transfer outcome unavailable")
 	}
 	changed := mustSeal(t, endpointIdentityTransferDependencies(2))
 	op, transfer = endpointIdentityOperationAndTransfer(t, changed, "transfer-dependencies")
-	if got, _, ok := changed.TransferOutcomeContentID(op, transfer, 0); !ok || got == before {
+	if got, _, ok := changed.transferOutcomeContentID(op, transfer, 0); !ok || got == before {
 		t.Fatal("transfer outcome omitted produced/callback-result dependency")
 	}
 }
 
 func endpointIdentityEffectCycle(reverse bool) Spec {
 	a, b := endpointIdentityOperation("cycle-a"), endpointIdentityOperation("cycle-b")
-	a.Effects = RowSpec{Occurrences: []EffectSpec{{Target: 2, ValueArgs: []ValueFormal{0}}}, Tail: RowClosed}
-	b.Effects = RowSpec{Occurrences: []EffectSpec{{Target: 1, ValueArgs: []ValueFormal{0}}}, Tail: RowClosed}
+	a.Effects = vocabulary.RowSpec{Occurrences: []vocabulary.EffectSpec{{Target: 2, ValueArgs: []vocabulary.ValueFormal{0}}}, Tail: vocabulary.RowClosed}
+	b.Effects = vocabulary.RowSpec{Occurrences: []vocabulary.EffectSpec{{Target: 1, ValueArgs: []vocabulary.ValueFormal{0}}}, Tail: vocabulary.RowClosed}
 	if reverse {
 		a, b = b, a
 		a.Effects.Occurrences[0].Target, b.Effects.Occurrences[0].Target = 2, 1
 	}
-	return Spec{Operations: []OperationSpec{a, b}}
+	return Spec{Operations: []vocabulary.OperationSpec{a, b}}
 }
 
 func endpointIdentityReleaseCycle(reverse bool) Spec {
-	closed := ValuesSpec{Tail: ValuesClosed}
-	makeOp := func(name string, target SpecRef) OperationSpec {
-		return OperationSpec{Bindings: []BindingSpec{{Namespace: BindingBuiltin, Member: []string{name}}}, Input: ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: ValuesClosed}, Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: closed}, {Kind: flowkind.OutcomeThrow, Values: closed}}, Callbacks: []CallbackSpec{{Function: InputSource{Kind: InputSourceValueFormal}, Admission: schematype.CallableAdmissionOrdinary, Arguments: closed, Outcomes: []TerminalSpec{{Kind: flowkind.OutcomeNormal, Values: closed}, {Kind: flowkind.OutcomeReturn, Values: closed}, {Kind: flowkind.OutcomeThrow, Values: closed}, {Kind: flowkind.OutcomeYield, Values: closed}, {Kind: flowkind.OutcomeCancel, Values: closed}}, Lifecycle: CallbackRetainedOptionalOnce, Effects: RowSpec{Tail: RowClosed}, Release: &CallbackReleaseSpec{Operation: target, Input: 0, Outcome: 0, Mode: CallbackReleaseOne, Zero: CallbackReleaseZeroSpec{Behavior: CallbackReleaseZeroThrow, Outcome: 1}}}}, Effects: RowSpec{Tail: RowClosed}}
+	closed := vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}
+	makeOp := func(name string, target vocabulary.SpecRef) vocabulary.OperationSpec {
+		return vocabulary.OperationSpec{Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{name}}}, Input: vocabulary.ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: vocabulary.ValuesClosed}, Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: closed}, {Kind: flowkind.OutcomeThrow, Values: closed}}, Callbacks: []vocabulary.CallbackSpec{{Function: vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal}, Admission: schematype.CallableAdmissionOrdinary, Arguments: closed, Outcomes: []vocabulary.TerminalSpec{{Kind: flowkind.OutcomeNormal, Values: closed}, {Kind: flowkind.OutcomeReturn, Values: closed}, {Kind: flowkind.OutcomeThrow, Values: closed}, {Kind: flowkind.OutcomeYield, Values: closed}, {Kind: flowkind.OutcomeCancel, Values: closed}}, Lifecycle: vocabulary.CallbackRetainedOptionalOnce, Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed}, Release: &vocabulary.CallbackReleaseSpec{Operation: target, Input: 0, Outcome: 0, Mode: vocabulary.CallbackReleaseOne, Zero: vocabulary.CallbackReleaseZeroSpec{Behavior: vocabulary.CallbackReleaseZeroThrow, Outcome: 1}}}}, Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed}}
 	}
 	a, b := makeOp("release-cycle-a", 2), makeOp("release-cycle-b", 1)
 	if reverse {
 		a, b = b, a
 		a.Callbacks[0].Release.Operation, b.Callbacks[0].Release.Operation = 2, 1
 	}
-	return Spec{Operations: []OperationSpec{a, b}}
+	return Spec{Operations: []vocabulary.OperationSpec{a, b}}
 }
 
 func TestEndpointIdentityCyclesAreFiniteAndPermutationStable(t *testing.T) {
@@ -646,8 +647,8 @@ func TestEndpointIdentityCyclesAreFiniteAndPermutationStable(t *testing.T) {
 		t.Run(cycle.name, func(t *testing.T) {
 			left, right := mustSeal(t, cycle.build(false)), mustSeal(t, cycle.build(true))
 			for _, name := range []string{"cycle-a", "cycle-b", "release-cycle-a", "release-cycle-b"} {
-				leftOp, leftOK := left.Lookup(BindingSpec{Namespace: BindingBuiltin, Member: []string{name}})
-				rightOp, rightOK := right.Lookup(BindingSpec{Namespace: BindingBuiltin, Member: []string{name}})
+				leftOp, leftOK := left.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{name}})
+				rightOp, rightOK := right.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{name}})
 				if !leftOK && !rightOK {
 					continue
 				}

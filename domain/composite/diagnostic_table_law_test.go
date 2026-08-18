@@ -27,6 +27,7 @@ func publishedCodes() []diagnostic.Code {
 		DiagnosticCodeUnresolvedValueReference,
 		DiagnosticCodeUnusedLocal,
 		typedomain.Code,
+		typedomain.CallArgumentCode,
 	}
 }
 
@@ -149,6 +150,62 @@ func TestSolverObservedRowsResolveTheirFactDeclaration(t *testing.T) {
 		}
 		if _, resolved := producer.ByID(schema.NewEntryID(reference.Surface, reference.Key)); !resolved {
 			t.Fatalf("row %q references undeclared entry %q", entry.Code(), reference.Key)
+		}
+	}
+}
+
+// TestDiagnosticCollectionDirectoryIsTotalOverBranchRows states that every
+// solver-observed diagnostic names a collection family and that the post-seal
+// directory joins that family to the issued query or observation inventory.
+func TestDiagnosticCollectionDirectoryIsTotalOverBranchRows(t *testing.T) {
+	table, tableOK := Diagnostics()
+	directory, directoryOK := DiagnosticCollectionDirectory()
+	if !tableOK || !directoryOK {
+		t.Fatal("diagnostic collection directory unavailable")
+	}
+	want := 0
+	for position := 0; position < table.Count(); position++ {
+		entry, entryOK := table.At(position)
+		if entryOK && entry.Lane() == diagnostic.LaneBranch {
+			want++
+		}
+	}
+	if len(directory) != want || want == 0 {
+		t.Fatalf("directory holds %d rows for %d branch diagnostics", len(directory), want)
+	}
+	seen := make(map[diagnostic.Code]bool, len(directory))
+	for _, row := range directory {
+		if seen[row.Code] {
+			t.Fatalf("collection row %q issued twice", row.Code)
+		}
+		seen[row.Code] = true
+		if !row.Collection.Available() || !row.Producer.Available() {
+			t.Fatalf("collection row %q is incomplete", row.Code)
+		}
+		switch row.Collection.Surface {
+		case schema.SurfaceKindObservation:
+			if !row.Geometry.Available() || !row.Anchor.Available() || !row.Codec.Available() {
+				t.Fatalf("observation collection %q lost geometry, anchor, or codec", row.Code)
+			}
+		case schema.SurfaceKindQuery:
+			if !row.Projection.Available() {
+				t.Fatalf("query collection %q lost projection", row.Code)
+			}
+		default:
+			t.Fatalf("collection row %q names surface %d", row.Code, row.Collection.Surface)
+		}
+	}
+	assign, assignOK := table.ForBranchObservation(typedomain.ObservationKey, diagnostic.SiteAssignment)
+	call, callOK := table.ForBranchObservation(typedomain.ObservationKey, diagnostic.SiteCallArgument)
+	if !assignOK || !callOK || assign.Code() != typedomain.Code || call.Code() != typedomain.CallArgumentCode {
+		t.Fatal("branch observation index lost the type-conformance sites")
+	}
+	for _, row := range directory {
+		if row.Code == typedomain.Code && (row.Site != diagnostic.SiteAssignment || !row.Population.Available()) {
+			t.Fatal("assignment collection lost its site or population")
+		}
+		if row.Code == typedomain.CallArgumentCode && row.Site != diagnostic.SiteCallArgument {
+			t.Fatal("call-argument collection lost its site")
 		}
 	}
 }

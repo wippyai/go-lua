@@ -314,7 +314,8 @@ func (w *Writer) finishArguments(current step) error {
 		if err != nil {
 			return err
 		}
-		term := w.calls.DeclareCall(current.span, current.owner, current.callee, current.receiver, actuals)
+		name, _ := w.binding.CallSpelling(current.call)
+		term := w.calls.DeclareCall(current.span, current.owner, current.callee, current.receiver, actuals, name)
 		if term == 0 {
 			return fmt.Errorf("lualower: could not declare Call")
 		}

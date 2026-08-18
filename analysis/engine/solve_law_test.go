@@ -23,8 +23,13 @@ func TestSolveWithDiagnosticsDisabledParity(t *testing.T) {
 	if report.Flags != 0 || len(report.Rows) != 0 || report.DroppedRows != 0 || report.Failure.Available() {
 		t.Fatalf("disabled diagnostics retained data: %#v", report)
 	}
-	ordinaryValue, ordinaryReadable := ReceiptQueryResult[uint64](ordinaryReceipt, ordinary, ordinaryState)
-	diagnosticValue, diagnosticReadable := ReceiptQueryResult[uint64](diagnosticReceipt, diagnostic, diagnosticState)
+	ordinaryKey, ordinaryKeyed := ordinaryReceipt.PublicationKey()
+	diagnosticKey, diagnosticKeyed := diagnosticReceipt.PublicationKey()
+	if !ordinaryKeyed || !diagnosticKeyed {
+		t.Fatal("diagnostic parity query has no snapshot key")
+	}
+	ordinaryValue, ordinaryReadable := testSnapshotQueryValue[uint64](ordinary, ordinaryState, ordinaryKey)
+	diagnosticValue, diagnosticReadable := testSnapshotQueryValue[uint64](diagnostic, diagnosticState, diagnosticKey)
 	if ordinaryReadable != diagnosticReadable || ordinaryReadable && ordinaryValue != diagnosticValue {
 		t.Fatalf("disabled diagnostics changed query result: ordinary=%d/%t diagnostic=%d/%t", ordinaryValue, ordinaryReadable, diagnosticValue, diagnosticReadable)
 	}
@@ -125,10 +130,15 @@ func TestSolveWithDiagnosticsBoundedDetachedSortedAndIsolated(t *testing.T) {
 	if firstStatus != SolveComplete || secondStatus != SolveComplete || firstState == nil || secondState == nil {
 		t.Fatalf("receipt ownership solve failed: first=%v/%t second=%v/%t", firstStatus, firstState != nil, secondStatus, secondState != nil)
 	}
-	if _, readable := ReceiptQueryResult[uint64](firstReceipt, first, secondState); readable {
+	firstKey, firstKeyed := firstReceipt.PublicationKey()
+	secondKey, secondKeyed := secondReceipt.PublicationKey()
+	if !firstKeyed || !secondKeyed {
+		t.Fatal("receipt ownership query has no snapshot key")
+	}
+	if _, readable := testSnapshotQueryValue[uint64](first, secondState, firstKey); readable {
 		t.Fatal("first receipt read a foreign complete solver state")
 	}
-	if _, readable := ReceiptQueryResult[uint64](secondReceipt, second, firstState); readable {
+	if _, readable := testSnapshotQueryValue[uint64](second, firstState, secondKey); readable {
 		t.Fatal("second receipt read a foreign complete solver state")
 	}
 
@@ -241,7 +251,7 @@ func newDiagnosticsReceiptSolverOf[R any](t testing.TB, failTransfer bool, query
 		},
 	}
 	if binding == nil || !BindFactor(binding, factor, hotUintFactorSpec()) ||
-		!BindRule[uint64, uint64, ruleUnit](binding, rule, write, factor, ruleSpec) ||
+		!BindRule[uint64, uint64, ruleUnit](binding, rule, write, factor, ruleSpec, testRuleProjector[ruleUnit]) ||
 		!BindExactQuery(binding, query, factor, querySpec) || !binding.Seal() {
 		t.Fatal("diagnostics receipt binding")
 	}
@@ -309,23 +319,29 @@ func newDiagnosticsReceiptSolverOf[R any](t testing.TB, failTransfer bool, query
 		t.Fatal("diagnostics receipt commit")
 	}
 	queryReceipt, queryReceiptOK := graph.Query(receiptAssemblySemanticID(80))
-	compilation, compilationOK := BeginReceiptCompilation(implementation, graph)
+	compilation, compilationOK := BeginProgramConstruction(binding, graph)
 	if !queryReceiptOK || !compilationOK || compilation == nil {
 		t.Fatal("diagnostics receipt commit")
 	}
+	memberOperands := make(map[identity.ContentID]ruleUnit, len(ruleIDs))
 	for index, ruleID := range ruleIDs {
-		member, memberOK := graph.RuleMember(receiptAssemblySemanticID(ruleID))
-		if !memberOK {
+		memberOperands[receiptAssemblySemanticID(ruleID)] = operandValues[index]
+	}
+	if !installMemberOperandResolver(implementation, memberOperands) {
+		t.Fatal("diagnostics receipt resolver")
+	}
+	for _, ruleID := range ruleIDs {
+		if _, memberOK := graph.RuleMember(receiptAssemblySemanticID(ruleID)); !memberOK {
 			t.Fatal("diagnostics receipt member")
 		}
-		if _, attached := AttachReceiptRuleMember(compilation, implementation, member, operandValues[index]); !attached {
+		if attached := AttachRuleMember(compilation, implementation, receiptAssemblySemanticID(ruleID)); !attached {
 			t.Fatal("diagnostics receipt member attachment")
 		}
 	}
-	if !AttachReceiptExactQuery(compilation, queryImplementation, queryReceipt) {
+	if !AttachExactQuery(compilation, queryImplementation, receiptAssemblySemanticID(80)) {
 		t.Fatal("diagnostics receipt query attachment")
 	}
-	solver, solverOK := compilation.Solver()
+	solver, _, solverOK := compilation.Seal()
 	if !solverOK || solver == nil {
 		t.Fatal("diagnostics receipt solver")
 	}
@@ -413,8 +429,15 @@ func newDiagnosticsExternalInterfaceFixture(t testing.TB) diagnosticsExternalInt
 	firstSpec.Result.Semantic = coldKey(949_804)
 	secondSpec := hotExactQuerySpec()
 	secondSpec.Result.Semantic = coldKey(949_806)
-	if binding == nil || !BindFactor(binding, factor, hotUintFactorSpec()) ||
-		!BindRule[uint64, uint64, ruleUnit](binding, rule, write, factor, ruleSpec) ||
+	// Every loop site of this fixture carries a self environment input, so the
+	// sealed program owns WTO Regions and each Region's runtime scope is a Widen
+	// scope. A Factor widens only through a declared well-founded measure, and
+	// this fixture's values are ascending counters: their complement is the
+	// descending rank that witnesses the ascent terminates.
+	factorSpec := hotUintFactorSpec()
+	factorSpec.WidenRank = Measure[uint64, uint64]{Width: 1, At: func(_ uint64, value uint64, _ int) uint64 { return ^value }}
+	if binding == nil || !BindFactor(binding, factor, factorSpec) ||
+		!BindRule[uint64, uint64, ruleUnit](binding, rule, write, factor, ruleSpec, testRuleProjector[ruleUnit]) ||
 		!BindExactQuery(binding, firstQuery, factor, firstSpec) || !BindExactQuery(binding, secondQuery, factor, secondSpec) || !binding.Seal() {
 		t.Fatal("diagnostics external-interface binding")
 	}
@@ -500,9 +523,13 @@ func newDiagnosticsExternalInterfaceFixture(t testing.TB) diagnosticsExternalInt
 		assembly.builder.inner.spec.Groups[len(assembly.builder.inner.spec.Groups)-1].EnvironmentInput = groupSpec.EnvironmentInput
 		ruleIDs[index] = ruleID
 	}
+	// A query row receipt carries the row index the builder will assign it, so
+	// a receipt is added as the immediately-next row. Issuing both rows before
+	// adding either would give them the same ordinal and the second add is
+	// correctly refused.
 	firstRow, firstRowOK := assembly.builder.issueQueryRow(firstImplementation, equation.QueryInstance{Family: schema.querySemanticAt(0), Point: pointRefs[1].ref, Surfaces: []equation.Surface{{Factor: schema.factorSemanticAt(0), Form: equation.SurfaceReadExact, Local: 1}}})
-	secondRow, secondRowOK := assembly.builder.issueQueryRow(secondImplementation, equation.QueryInstance{Family: schema.querySemanticAt(1), Point: pointRefs[3].ref, Surfaces: []equation.Surface{{Factor: schema.factorSemanticAt(0), Form: equation.SurfaceReadExact, Local: 1}}})
 	_, firstSemanticOK := assembly.builder.addSemanticQuery(receiptAssemblySemanticID(110), firstRow)
+	secondRow, secondRowOK := assembly.builder.issueQueryRow(secondImplementation, equation.QueryInstance{Family: schema.querySemanticAt(1), Point: pointRefs[3].ref, Surfaces: []equation.Surface{{Factor: schema.factorSemanticAt(0), Form: equation.SurfaceReadExact, Local: 1}}})
 	_, secondSemanticOK := assembly.builder.addSemanticQuery(receiptAssemblySemanticID(111), secondRow)
 	if !firstRowOK || !secondRowOK || !firstSemanticOK || !secondSemanticOK {
 		t.Fatal("diagnostics external-interface query")
@@ -511,25 +538,31 @@ func newDiagnosticsExternalInterfaceFixture(t testing.TB) diagnosticsExternalInt
 	if !committed || graph == nil {
 		t.Fatal("diagnostics external-interface commit")
 	}
-	firstReceipt, firstReceiptOK := graph.Query(receiptAssemblySemanticID(110))
-	secondReceipt, secondReceiptOK := graph.Query(receiptAssemblySemanticID(111))
-	compilation, compilationOK := BeginReceiptCompilation(implementation, graph)
+	_, firstReceiptOK := graph.Query(receiptAssemblySemanticID(110))
+	_, secondReceiptOK := graph.Query(receiptAssemblySemanticID(111))
+	compilation, compilationOK := BeginProgramConstruction(binding, graph)
 	if !firstReceiptOK || !secondReceiptOK || !compilationOK || compilation == nil {
 		t.Fatal("diagnostics external-interface compilation")
 	}
+	memberOperands := make(map[identity.ContentID]ruleUnit, len(ruleIDs))
 	for index, ruleID := range ruleIDs {
-		member, memberOK := graph.RuleMember(receiptAssemblySemanticID(ruleID))
-		if !memberOK {
+		memberOperands[receiptAssemblySemanticID(ruleID)] = operandValues[index]
+	}
+	if !installMemberOperandResolver(implementation, memberOperands) {
+		t.Fatal("diagnostics external-interface resolver")
+	}
+	for _, ruleID := range ruleIDs {
+		if _, memberOK := graph.RuleMember(receiptAssemblySemanticID(ruleID)); !memberOK {
 			t.Fatal("diagnostics external-interface member")
 		}
-		if _, attached := AttachReceiptRuleMember(compilation, implementation, member, operandValues[index]); !attached {
+		if attached := AttachRuleMember(compilation, implementation, receiptAssemblySemanticID(ruleID)); !attached {
 			t.Fatal("diagnostics external-interface member attachment")
 		}
 	}
-	if !AttachReceiptExactQuery(compilation, firstImplementation, firstReceipt) || !AttachReceiptExactQuery(compilation, secondImplementation, secondReceipt) {
+	if !AttachExactQuery(compilation, firstImplementation, receiptAssemblySemanticID(110)) || !AttachExactQuery(compilation, secondImplementation, receiptAssemblySemanticID(111)) {
 		t.Fatal("diagnostics external-interface query attachment")
 	}
-	solver, solverOK := compilation.Solver()
+	solver, _, solverOK := compilation.Seal()
 	if !solverOK || solver == nil || solver.runtime == nil {
 		t.Fatal("diagnostics external-interface solver")
 	}
@@ -667,5 +700,54 @@ func TestSolveWithReportReceiptCertificateSurvivesSubsequentSolve(t *testing.T) 
 	}
 	if report.Reason() != reason || report.Failure() != failure || report.Point() != point || report.Group() != group || report.Member() != member || report.Rule() != rule || !report.Available() {
 		t.Fatal("receipt failure certificate changed after subsequent solve")
+	}
+}
+
+// TestProgramConstructionStagesAreSeparableByTheirSiteDigest is the
+// construction localization law. Every stage of the program constructor mints
+// one compile-family boundary whose site is unique to it, and the same site is
+// the only coordinate needed to recover the stage. A caller therefore localizes
+// a construction refusal without the engine publishing a second field.
+func TestProgramConstructionStagesAreSeparableByTheirSiteDigest(t *testing.T) {
+	seen := make(map[identity.ContentID]ProgramConstructionStage, programConstructionStageCount)
+	for stage := ProgramConstructionStageAdmission; stage < programConstructionStageCount; stage++ {
+		failure := ProgramConstructionFailure(stage)
+		if !failure.Available() || failure.Family != SolveFailureFamilyCompile || !failure.Site.Available() {
+			t.Fatalf("stage %d minted no compile-family boundary: %#v", stage, failure)
+		}
+		if previous, duplicate := seen[failure.Site]; duplicate {
+			t.Fatalf("stage %d shares its site digest with stage %d", stage, previous)
+		}
+		seen[failure.Site] = stage
+		recovered, named := ProgramConstructionStageOf(failure)
+		if !named || recovered != stage {
+			t.Fatalf("stage %d recovered as %d named:%v", stage, recovered, named)
+		}
+	}
+	if len(seen) != int(programConstructionStageCount)-1 {
+		t.Fatalf("declared %d stages, minted %d boundaries", int(programConstructionStageCount)-1, len(seen))
+	}
+}
+
+// TestProgramConstructionStageOfRefusesForeignBoundaries keeps the classifier
+// closed over the constructor. A boundary raised by any other authority names
+// no construction stage, so routing on it cannot mislocalize a refusal that
+// happened somewhere else.
+func TestProgramConstructionStageOfRefusesForeignBoundaries(t *testing.T) {
+	foreign := []SolveFailure{
+		{},
+		{Family: SolveFailureFamilyCompile},
+		ProgramConstructionFailure(ProgramConstructionStageNone),
+		ProgramConstructionFailure(programConstructionStageCount),
+		ReceiptCompilationAttachFailure(1),
+		refused(SolveFailureFamilyCompile, "validation").failure(),
+		refused(SolveFailureFamilyCompile, "runtime-assembly").failure(),
+		receiptFailure(SolveFailureFamilyCompile, "receipt-commit", 1),
+		receiptFailure(SolveFailureFamilyObservation, programConstructionAuthority, uint64(ProgramConstructionStageAdmission)),
+	}
+	for index, failure := range foreign {
+		if stage, named := ProgramConstructionStageOf(failure); named || stage != ProgramConstructionStageNone {
+			t.Fatalf("foreign boundary %d classified as construction stage %d", index, stage)
+		}
 	}
 }

@@ -59,6 +59,18 @@ func (stage ArtifactRuleStage) NativeCall() bool {
 	return stage >= ArtifactRuleStageCallDispatch && stage <= ArtifactRuleStageCallEffect
 }
 
+// ArtifactStageLaw is one declared execution-cut relation: whether the stage
+// is a native-call cut and which stage must already own its input point.
+type ArtifactStageLaw struct {
+	Stage       ArtifactRuleStage
+	Native      bool
+	Predecessor ArtifactRuleStage
+}
+
+func (law ArtifactStageLaw) Valid() bool {
+	return law.Stage.Valid() && (!law.Predecessor.Valid() || law.Predecessor != law.Stage)
+}
+
 // ArtifactScalarRole is one opaque Program-owned role in a reusable artifact
 // template. A mounting owner compares the role identity but never interprets it
 // as a domain producer tag.

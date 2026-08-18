@@ -13,6 +13,11 @@ import (
 // and which constructions or terminals the value came from so that a projection
 // through it stays exact. A value with an origin it cannot name is opaque, and
 // an opaque value admits both states rather than the convenient one.
+// members is the third piece of provenance and the finest: the compiler/ast
+// constants the expression can evaluate to. It refines nothing on its own -
+// zero-ness already decides the state - and it is what lets a carrier declared
+// over a closed constant family state which member a construction put there,
+// which zero-ness cannot express because every member but one is non-zero.
 type value struct {
 	zero      bool
 	nonZero   bool
@@ -20,7 +25,21 @@ type value struct {
 	sites     map[siteID]bool
 	types     map[string]bool
 	terminals map[string]bool
+	members   map[string]bool
 	elem      *value
+}
+
+// constantValue is one named compiler/ast constant read as a field value. It
+// keeps the state the constant leaves the field in and the constant's own
+// identity, so a carrier declared over a closed family can name the member and
+// every other carrier reads the same two states it always did.
+func constantValue(name string, zero bool) value {
+	result := nonZeroValue()
+	if zero {
+		result = zeroValue()
+	}
+	result.members = map[string]bool{name: true}
+	return result
 }
 
 func zeroValue() value    { return value{zero: true} }
@@ -37,6 +56,7 @@ func (v value) join(other value) value {
 	result.sites = joinSet(v.sites, other.sites)
 	result.types = joinNames(v.types, other.types)
 	result.terminals = joinNames(v.terminals, other.terminals)
+	result.members = joinNames(v.members, other.members)
 	switch {
 	case v.elem == nil:
 		result.elem = other.elem
@@ -65,6 +85,9 @@ func (v value) equal(other value) bool {
 		return false
 	}
 	if !sameSet(v.sites, other.sites) || !sameNames(v.types, other.types) || !sameNames(v.terminals, other.terminals) {
+		return false
+	}
+	if !sameNames(v.members, other.members) {
 		return false
 	}
 	switch {
@@ -421,10 +444,7 @@ func (b *productBuilder) eval(index int, expression goast.Expr) value {
 			if !known {
 				return topValue()
 			}
-			if zero {
-				return zeroValue()
-			}
-			return nonZeroValue()
+			return constantValue(current.Sel.Name, zero)
 		}
 		return b.project(b.eval(index, current.X), current.Sel.Name)
 	case *goast.UnaryExpr:
@@ -533,10 +553,7 @@ func (b *productBuilder) identValue(scope *actionScope, name string) value {
 		}
 	}
 	if zero, known := b.constants[name]; known {
-		if zero {
-			return zeroValue()
-		}
-		return nonZeroValue()
+		return constantValue(name, zero)
 	}
 	return topValue()
 }

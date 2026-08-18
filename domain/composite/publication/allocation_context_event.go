@@ -3,7 +3,7 @@ package publication
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	callsite "github.com/wippyai/go-lua/domain/effect/callsite"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	packdomain "github.com/wippyai/go-lua/domain/pack"
@@ -102,10 +102,10 @@ type AllocationContextEvent struct {
 	destinationContext AllocationRuntimeContext
 	hasDestination     bool
 
-	kind             target.PublicationEffectKind
-	escape           target.PublicationEscapeDisposition
-	mutability       target.PublicationMutabilityDisposition
-	declaredLifetime target.PublicationLifetimeDisposition
+	kind             vocabulary.PublicationEffectKind
+	escape           vocabulary.PublicationEscapeDisposition
+	mutability       vocabulary.PublicationMutabilityDisposition
+	declaredLifetime vocabulary.PublicationLifetimeDisposition
 }
 
 // NewAllocationContextEvent is the only issuance path. It rebuilds the
@@ -197,11 +197,11 @@ func (event AllocationContextEvent) semanticPayloadValid() bool {
 	return !event.destinationBinding.Available() && event.destinationContext == (AllocationRuntimeContext{})
 }
 
-func targetVocabularyValid(kind target.PublicationEffectKind, escape target.PublicationEscapeDisposition, mutability target.PublicationMutabilityDisposition, lifetime target.PublicationLifetimeDisposition) bool {
-	return kind >= target.PublicationEffectSendTransfer && kind <= target.PublicationEffectCloseRelease &&
-		escape >= target.PublicationEscapeNone && escape <= target.PublicationEscapeCallback &&
-		mutability >= target.PublicationMutabilityPreserve && mutability <= target.PublicationMutabilityCopyOnWrite &&
-		lifetime >= target.PublicationLifetimePreserve && lifetime <= target.PublicationLifetimeRelease
+func targetVocabularyValid(kind vocabulary.PublicationEffectKind, escape vocabulary.PublicationEscapeDisposition, mutability vocabulary.PublicationMutabilityDisposition, lifetime vocabulary.PublicationLifetimeDisposition) bool {
+	return kind >= vocabulary.PublicationEffectSendTransfer && kind <= vocabulary.PublicationEffectCloseRelease &&
+		escape >= vocabulary.PublicationEscapeNone && escape <= vocabulary.PublicationEscapeCallback &&
+		mutability >= vocabulary.PublicationMutabilityPreserve && mutability <= vocabulary.PublicationMutabilityCopyOnWrite &&
+		lifetime >= vocabulary.PublicationLifetimePreserve && lifetime <= vocabulary.PublicationLifetimeRelease
 }
 
 func allocationContextEventID(event AllocationContextEvent) (identity.ContentID, bool) {
@@ -246,19 +246,19 @@ func (event AllocationContextEvent) MountID() identity.ContentID { return event.
 
 func (event AllocationContextEvent) CallOccurrenceID() identity.ContentID { return event.call }
 
-func (event AllocationContextEvent) Kind() target.PublicationEffectKind { return event.kind }
+func (event AllocationContextEvent) Kind() vocabulary.PublicationEffectKind { return event.kind }
 
-func (event AllocationContextEvent) Escape() target.PublicationEscapeDisposition {
+func (event AllocationContextEvent) Escape() vocabulary.PublicationEscapeDisposition {
 	return event.escape
 }
 
-func (event AllocationContextEvent) Mutability() target.PublicationMutabilityDisposition {
+func (event AllocationContextEvent) Mutability() vocabulary.PublicationMutabilityDisposition {
 	return event.mutability
 }
 
 // DeclaredLifetime is the Target disposition the transition declared. Release
 // remains a declared transition and never a Residence Dead or LastUse claim.
-func (event AllocationContextEvent) DeclaredLifetime() target.PublicationLifetimeDisposition {
+func (event AllocationContextEvent) DeclaredLifetime() vocabulary.PublicationLifetimeDisposition {
 	return event.declaredLifetime
 }
 

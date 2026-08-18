@@ -1,6 +1,7 @@
 package value
 
 import (
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"math"
 
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -290,7 +291,7 @@ func (reference Reference) CallableID() (identity.ContentID, bool) {
 // the scoped require ingress. Unlike Callable, this reference carries no
 // global seed: Call resolves its shard-local loader from the bound
 // Application at dispatch time.
-func (reference Reference) ScopedLoader() (target.Operation, bool) {
+func (reference Reference) ScopedLoader() (vocabulary.Operation, bool) {
 	if !reference.valid() {
 		return 0, false
 	}
@@ -316,7 +317,7 @@ type referenceRow struct {
 	boot             identity.ContentID
 	endpoint         identity.ContentID
 	callable         identity.ContentID
-	operation        target.Operation
+	operation        vocabulary.Operation
 	value            identity.ContentID
 }
 
@@ -358,7 +359,7 @@ type literalSourceRow struct {
 
 type targetInitialKey struct {
 	root    identity.ContentID
-	initial target.InitialValue
+	initial vocabulary.InitialValue
 }
 
 // Schema is the sealed Value alternative universe for one Link.  It is
@@ -980,9 +981,9 @@ func (schema *valueBuilder) sealScopedLoader() bool {
 	if !contractOK || contract == nil {
 		return false
 	}
-	return schema.visitTargetInitialValues(func(initial target.InitialValue) bool {
+	return schema.visitTargetInitialValues(func(initial vocabulary.InitialValue) bool {
 		kind, kindOK := contract.InitialValueKind(initial)
-		if !kindOK || kind != target.InitialValueOperation {
+		if !kindOK || kind != vocabulary.InitialValueOperation {
 			return true
 		}
 		op, opOK := contract.InitialValueOperation(initial)
@@ -1076,7 +1077,7 @@ func (schema *valueBuilder) addBootReference(contract *target.Contract, root lin
 		return false
 	}
 	aggregate, ok := contract.BootShapeAggregate(shape)
-	if !ok || (aggregate != target.BootAggregateTable && aggregate != target.BootAggregateMetatable) {
+	if !ok || (aggregate != vocabulary.BootAggregateTable && aggregate != vocabulary.BootAggregateMetatable) {
 		return false
 	}
 	return schema.addReference(referenceRow{source: referenceSourceBoot, kind: ReferenceTable, boot: id}) != 0
@@ -1097,7 +1098,7 @@ func (schema *valueBuilder) addEndpointReference(endpoint linkboundary.Endpoint)
 }
 
 func (schema *valueBuilder) sealBootstrapCallables() bool {
-	add := func(value target.InitialValue) bool {
+	add := func(value vocabulary.InitialValue) bool {
 		seed, _, callable := schema.sealBoundary().Seeds().BootstrapCallable(value)
 		return !callable || schema.addCallableReference(seed)
 	}
@@ -1107,7 +1108,7 @@ func (schema *valueBuilder) sealBootstrapCallables() bool {
 // visitTargetInitialValues is the exact Target-reachable initial-value image.
 // It is used only while sealing Value's finite owner-local atom universe;
 // callers retain no Target value in recurrent State.
-func (schema *valueBuilder) visitTargetInitialValues(visit func(target.InitialValue) bool) bool {
+func (schema *valueBuilder) visitTargetInitialValues(visit func(vocabulary.InitialValue) bool) bool {
 	if schema == nil || schema.sealProject() == nil || visit == nil {
 		return false
 	}
@@ -1317,18 +1318,18 @@ func (schema *valueBuilder) sealTargetLiteralAtoms() bool {
 	if !ok || contract == nil {
 		return false
 	}
-	return schema.visitTargetInitialValues(func(value target.InitialValue) bool {
+	return schema.visitTargetInitialValues(func(value vocabulary.InitialValue) bool {
 		kind, ok := contract.InitialValueKind(value)
 		if !ok {
 			return false
 		}
 		runtime := runtimekind.Invalid
 		switch kind {
-		case target.InitialValueBoolean:
+		case vocabulary.InitialValueBoolean:
 			runtime = runtimekind.Boolean
-		case target.InitialValueInteger, target.InitialValueFloat:
+		case vocabulary.InitialValueInteger, vocabulary.InitialValueFloat:
 			runtime = runtimekind.Number
-		case target.InitialValueString:
+		case vocabulary.InitialValueString:
 			runtime = runtimekind.String
 		default:
 			return true
@@ -1594,7 +1595,7 @@ func (schema *valueBuilder) sealGlobalBootstrapResults(module *linkmodule.Compon
 		}
 		id, idOK := globals.ID(binding)
 		analysis, boot, cell, _, class, initial, mappingOK := globals.Mapping(binding)
-		if !idOK || !id.Available() || !mappingOK || class == target.InitialBindingInvalid || initial == 0 {
+		if !idOK || !id.Available() || !mappingOK || class == vocabulary.InitialBindingInvalid || initial == 0 {
 			continue
 		}
 		canonical, canonicalOK := globals.For(analysis, cell)
@@ -1617,7 +1618,7 @@ func (schema *valueBuilder) sealGlobalBootstrapResults(module *linkmodule.Compon
 			continue
 		}
 		var fact Value
-		absent := kind == target.InitialValueAbsent
+		absent := kind == vocabulary.InitialValueAbsent
 		if !absent {
 			var factOK bool
 			fact, factOK = schema.targetInitialCold(boot, initial)
@@ -2147,7 +2148,7 @@ func (schema *Schema) CallableID(seed identity.ContentID) (Atom, bool) {
 // ScopedLoader returns the nominal Function atom for Target's exact scoped
 // require operation. The loader's shard-specific Boundary seed is deliberately
 // resolved later by Call dispatch from the bound Application.
-func (schema *Schema) ScopedLoader(operation target.Operation) (Atom, bool) {
+func (schema *Schema) ScopedLoader(operation vocabulary.Operation) (Atom, bool) {
 	if schema == nil || operation == 0 || schema.scopedLoader == 0 || int(schema.scopedLoader) > len(schema.references) {
 		return Atom{}, false
 	}

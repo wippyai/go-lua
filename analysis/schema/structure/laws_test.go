@@ -225,6 +225,38 @@ func TestEngineArtifactVocabularyIsTheSealedTable(t *testing.T) {
 	counted(t, table, structure.CategoryIssuanceStage, uint16(rows.ArtifactRuleStageCallEffect), "rows.ArtifactRuleStageCallEffect")
 }
 
+// TestIssuanceStagePredecessorIsTheSealedTable pins the native-call
+// predecessor chain as declared structure data. Engine admission reads this
+// relation rather than naming CallDispatch, CallSummary, and CallEffect.
+func TestIssuanceStagePredecessorIsTheSealedTable(t *testing.T) {
+	table := sealedVocabulary(t)
+	stage := func(ordinal rows.ArtifactRuleStage) *structure.Entry {
+		t.Helper()
+		entry, ok := table.At(structure.CategoryIssuanceStage, uint16(ordinal))
+		if !ok {
+			t.Fatalf("issuance stage %d is not sealed", ordinal)
+		}
+		return entry
+	}
+	base, local := stage(rows.ArtifactRuleStageBase), stage(rows.ArtifactRuleStageLocal)
+	dispatch, summary, effect := stage(rows.ArtifactRuleStageCallDispatch), stage(rows.ArtifactRuleStageCallSummary), stage(rows.ArtifactRuleStageCallEffect)
+	if base.Native() || base.Predecessor().Available() {
+		t.Fatalf("stage/base native=%v predecessor=%q", base.Native(), base.Predecessor())
+	}
+	if local.Native() || local.Predecessor().Available() {
+		t.Fatalf("stage/local native=%v predecessor=%q", local.Native(), local.Predecessor())
+	}
+	if !dispatch.Native() || dispatch.Predecessor().Available() {
+		t.Fatalf("stage/call-dispatch native=%v predecessor=%q", dispatch.Native(), dispatch.Predecessor())
+	}
+	if !summary.Native() || summary.Predecessor() != dispatch.Key() {
+		t.Fatalf("stage/call-summary predecessor %q, want %q", summary.Predecessor(), dispatch.Key())
+	}
+	if !effect.Native() || effect.Predecessor() != summary.Key() {
+		t.Fatalf("stage/call-effect predecessor %q, want %q", effect.Predecessor(), summary.Key())
+	}
+}
+
 // TestDiagnosticSeverityVocabularyIsTheSealedTable pins the policy severity
 // projection. Diagnostic observation identities are canonical structure
 // declarations and therefore need no cross-package pin law.

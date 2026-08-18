@@ -104,6 +104,10 @@ func (work carryOnlyWork) LessOrEqContributionUnder(_, _ RootHandle, _, _ suppor
 	return true, true
 }
 
+func (work carryOnlyWork) AscentOrderedContributionUnder(_, _ RootHandle, _, _ support.Mask, _, _ SlotCoverage) (bool, bool) {
+	return true, true
+}
+
 func (work carryOnlyWork) ContributionClosedUnder(RootHandle, support.Mask, SlotCoverage) bool {
 	return true
 }

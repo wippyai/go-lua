@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
+	"github.com/wippyai/go-lua/analysis/schema"
 )
 
 func TestProgramArtifactCopyCallsRecordsExactSpan(t *testing.T) {
@@ -58,6 +59,19 @@ return identity(true)
 		if !row.Available() || row.ID() != callID || row.SpanID() != spanID {
 			t.Fatalf("call %d artifact row did not preserve authored identity and span", index)
 		}
+		direct, directOK := compiled.Flow().DirectFunctions().Call(callTerm)
+		target, targetOK := row.DirectTargetBody()
+		if directOK != targetOK {
+			t.Fatalf("call %d direct-target join = %v, row %v", index, directOK, targetOK)
+		}
+		if directOK {
+			boundary, boundaryOK := compiled.Flow().FunctionBoundaries().For(direct)
+			bodyTerm, bodyOK := boundary.Body()
+			bodyPath, pathOK := compiled.Flow().BodyPath(bodyTerm)
+			if !boundaryOK || !bodyOK || !pathOK || target != bodyPath {
+				t.Fatalf("call %d target body %x does not match DirectFunctions", index, target[:4])
+			}
+		}
 		if row.OperandCount() != 2 || row.ArgumentCount() != 1 || row.TypeArgumentCount() != 0 {
 			t.Fatalf("call %d child counts operands=%d arguments=%d types=%d, want 2/1/0", index, row.OperandCount(), row.ArgumentCount(), row.TypeArgumentCount())
 		}
@@ -96,17 +110,33 @@ func TestProgramArtifactCallStagesUseFinishAndExactDispatchTransport(t *testing.
 			{kind: WTOEventPoint, point: entry},
 			{kind: WTOEventPoint, point: finish},
 		},
+		issuance: IssuanceDirectory{
+			{Occurrence: OccurrenceCall, Form: IssuanceFormCallStage, Input: RuleInputFinish, Stage: RuleStageCallDispatch, Key: "call-dispatch"},
+			{Occurrence: OccurrenceCall, Form: IssuanceFormBase, Input: RuleInputNone, Stage: RuleStageBase, Key: "pack-source"},
+			{Occurrence: OccurrenceCall, Form: IssuanceFormCallStage, Input: RuleInputFinish, Stage: RuleStageCallEffect, Key: "effect-selected"},
+			{Occurrence: OccurrenceCall, Form: IssuanceFormCallStage, Input: RuleInputFinish, Stage: RuleStageCallEffect, Key: "effect-opaque"},
+			{Occurrence: OccurrenceCall, Form: IssuanceFormCallStage, Input: RuleInputFinish, Stage: RuleStageCallEffect, Key: "effect-body"},
+			{Occurrence: OccurrenceCallActivation, Form: IssuanceFormCallStage, Input: RuleInputFinish, Stage: RuleStageCallSummary, Key: "call-activation"},
+		},
 	}
 	if failure := transaction.deriveRuleOccurrencesFailure(); failure.Available() {
 		t.Fatalf("derive call rules: %+v", failure)
 	}
-	dispatches := transaction.ruleOccurrences[RuleRoleCallDispatch]
-	activations := transaction.ruleOccurrences[RuleRoleCallActivation]
-	effects := transaction.ruleOccurrences[RuleRoleEffectSelected]
-	if len(dispatches) != 1 || len(activations) != 1 || len(effects) != 1 {
-		t.Fatalf("distinct Entry/Finish role counts dispatch=%d activation=%d effect=%d, want Finish count 1", len(dispatches), len(activations), len(effects))
+	var dispatch, activation, effect RuleOccurrence
+	var dispatchCount, activationCount, effectCount int
+	for _, placement := range transaction.ruleOccurrences {
+		switch placement.key {
+		case "call-dispatch":
+			dispatch, dispatchCount = placement, dispatchCount+1
+		case "call-activation":
+			activation, activationCount = placement, activationCount+1
+		case "effect-selected":
+			effect, effectCount = placement, effectCount+1
+		}
 	}
-	dispatch, activation, effect := dispatches[0], activations[0], effects[0]
+	if dispatchCount != 1 || activationCount != 1 || effectCount != 1 {
+		t.Fatalf("distinct Entry/Finish key counts dispatch=%d activation=%d effect=%d, want Finish count 1", dispatchCount, activationCount, effectCount)
+	}
 	if dispatch.input != finish || dispatch.stage != RuleStageCallDispatch || dispatch.point == entry || dispatch.point == finish {
 		t.Fatal("dispatch is not exact Finish -> Dispatch")
 	}
@@ -120,15 +150,15 @@ func TestProgramArtifactCallStagesUseFinishAndExactDispatchTransport(t *testing.
 	if failure := transaction.installLocalStagesFailure(); failure.Available() {
 		t.Fatalf("install call stages: %+v", failure)
 	}
-	wantDispatchRoles := []RuleRole{RuleRoleValueSource, RuleRolePackSource, RuleRoleHeapIngress, RuleRoleCallDispatch}
+	wantDispatchWrites := []schema.Key{"call-dispatch", "heap-ingress", "pack-source", "value-source"}
 	found := false
 	for _, transfer := range transaction.localTransfers {
 		if transfer.from != finish || transfer.to != dispatch.point {
 			continue
 		}
 		found = true
-		if transfer.full || !slices.Equal(transfer.roles, wantDispatchRoles) || slices.Contains(transfer.roles, RuleRoleEffectSelected) {
-			t.Fatalf("Base -> Dispatch leaked full environment/Effect or wrong factors: full=%v roles=%v", transfer.full, transfer.roles)
+		if transfer.full || !slices.Equal(transfer.writes, wantDispatchWrites) || slices.Contains(transfer.writes, "effect-selected") {
+			t.Fatalf("Base -> Dispatch leaked full environment/Effect or wrong factors: full=%v writes=%v", transfer.full, transfer.writes)
 		}
 	}
 	if !found {

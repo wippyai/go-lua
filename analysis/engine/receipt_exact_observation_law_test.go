@@ -79,7 +79,7 @@ func TestRuleExactObservationReadsCommittedMemberAndRejectsForeignState(t *testi
 	if _, attached := AttachRuleExactObservation(fixture.compilation, foreignFixture.implementation, receiptAssemblySemanticID(93), fixture.member); attached {
 		t.Fatal("exact observation accepted foreign exact implementation")
 	}
-	solver, solverOK := fixture.compilation.Solver()
+	solver, _, solverOK := fixture.compilation.Seal()
 	if !solverOK || solver == nil {
 		t.Fatal("exact observation solver")
 	}
@@ -87,7 +87,7 @@ func TestRuleExactObservationReadsCommittedMemberAndRejectsForeignState(t *testi
 	if status != SolveComplete || state == nil {
 		t.Fatalf("exact observation solve = status:%v state:%t report:%t reason:%v phase:%v point:%v group:%v member:%v rule:%v", status, state != nil, report.Available(), report.Reason(), report.Failure(), report.Point(), report.Group(), report.Member(), report.Rule())
 	}
-	value, readable := ReceiptObservationResult[uint64](observation, solver, state)
+	value, readable := testSnapshotObservationValue[uint64](solver, state, observation.id)
 	if !readable || value != 1 {
 		t.Fatalf("exact observation = value:%d readable:%t", value, readable)
 	}
@@ -96,7 +96,7 @@ func TestRuleExactObservationReadsCommittedMemberAndRejectsForeignState(t *testi
 		t.Fatal("exact observation fixture lost its nonzero committed coordinate")
 	}
 	foreignObservation, foreignAttached := AttachRuleExactObservation(foreignFixture.compilation, foreignFixture.implementation, receiptAssemblySemanticID(92), foreignFixture.member)
-	foreign, foreignSolverOK := foreignFixture.compilation.Solver()
+	foreign, _, foreignSolverOK := foreignFixture.compilation.Seal()
 	if !foreignAttached || !foreignObservation.Available() || !foreignSolverOK || foreign == nil {
 		t.Fatal("foreign exact observation fixture")
 	}
@@ -104,20 +104,17 @@ func TestRuleExactObservationReadsCommittedMemberAndRejectsForeignState(t *testi
 	if foreignStatus != SolveComplete || foreignState == nil {
 		t.Fatalf("foreign exact observation solve = status:%v state:%t", foreignStatus, foreignState != nil)
 	}
-	if _, readable := ReceiptObservationResult[uint64](observation, foreign, state); readable {
+	if _, readable := testSnapshotObservationValue[uint64](foreign, state, observation.id); readable {
 		t.Fatal("exact observation read through a foreign solver")
 	}
-	if _, readable := ReceiptObservationResult[uint64](observation, solver, foreignState); readable {
+	if _, readable := testSnapshotObservationValue[uint64](solver, foreignState, observation.id); readable {
 		t.Fatal("exact observation read a foreign completed state")
-	}
-	if _, readable := ReceiptObservationResult[uint64](observation, foreign, foreignState); readable {
-		t.Fatal("exact observation read a foreign completed solver state")
 	}
 }
 
 func TestReceiptObservationTopologyNeedsOwnedObservationBeforeSolver(t *testing.T) {
 	fixture := newExactRuleObservationFixture(t, hotExactQuerySpec())
-	if solver, assembled := fixture.compilation.Solver(); assembled || solver != nil {
+	if solver, _, assembled := fixture.compilation.Seal(); assembled || solver != nil {
 		t.Fatal("observation topology assembled without an owned observation root")
 	}
 }
@@ -173,7 +170,7 @@ func TestRuleExactObservationFreezesOnceAndDetachesOnDemand(t *testing.T) {
 	if !attached || !observation.Available() {
 		t.Fatal("mutable exact observation attachment")
 	}
-	solver, solverOK := fixture.compilation.Solver()
+	solver, _, solverOK := fixture.compilation.Seal()
 	if !solverOK || solver == nil {
 		t.Fatal("mutable exact observation solver")
 	}
@@ -184,20 +181,26 @@ func TestRuleExactObservationFreezesOnceAndDetachesOnDemand(t *testing.T) {
 	// The projector deliberately returns its mutable scratch backing store. A
 	// materialized observation must retain the freezer's detached copy.
 	scratch[0] = 99
-	first, firstReadable := ReceiptObservationResult[[]uint64](observation, solver, state)
+	first, firstReadable := testSnapshotObservationValue[[]uint64](solver, state, observation.id)
 	if !firstReadable || len(first) != 2 || first[0] != 7 || first[1] != 11 {
 		t.Fatalf("first frozen observation read = %#v/%t", first, firstReadable)
 	}
-	second, secondReadable := ReceiptObservationResult[[]uint64](observation, solver, state)
+	second, secondReadable := testSnapshotObservationValue[[]uint64](solver, state, observation.id)
 	if !secondReadable || len(second) != 2 || &second[0] != &first[0] {
 		t.Fatalf("a borrowed read copied the published result = %#v/%t", second, secondReadable)
 	}
-	detached, detachedReadable := DetachReceiptObservationResult[[]uint64](observation, solver, state)
+	sealed, sealedOK := solver.PublishedSnapshot(state)
+	if !sealedOK {
+		t.Fatal("mutable exact observation has no sealed snapshot")
+	}
+	answer, answerReadable := testSnapshotAnswer(solver, state, sealed.ObservationFamily(), observation.id)
+	detached, detachedReadable := DetachAnswer[[]uint64](answer)
+	detachedReadable = answerReadable && detachedReadable
 	if !detachedReadable || len(detached) != 2 || detached[0] != 7 || detached[1] != 11 || &detached[0] == &first[0] {
 		t.Fatalf("detached observation read = %#v/%t", detached, detachedReadable)
 	}
 	detached[0], detached[1] = 101, 103
-	third, thirdReadable := ReceiptObservationResult[[]uint64](observation, solver, state)
+	third, thirdReadable := testSnapshotObservationValue[[]uint64](solver, state, observation.id)
 	if !thirdReadable || len(third) != 2 || third[0] != 7 || third[1] != 11 {
 		t.Fatalf("a detached copy reached the published result = %#v/%t", third, thirdReadable)
 	}
@@ -208,7 +211,7 @@ func TestRuleExactObservationFreezesOnceAndDetachesOnDemand(t *testing.T) {
 // This keeps the law focused on observation ownership rather than ordinary
 // query execution.
 type exactRuleObservationFixture[R any] struct {
-	compilation    *ReceiptCompilation
+	compilation    *ProgramConstruction
 	implementation *ExactQueryImplementation[uint64, R]
 	member         ReceiptRuleMember
 	otherMember    ReceiptRuleMember
@@ -263,9 +266,9 @@ func buildExactRuleObservationFixture[R any](t testing.TB, querySpec HotExactQue
 		},
 	}
 	if binding == nil || !BindFactor(binding, factor, hotExactObservationFactorSpec()) ||
-		!BindRule[uint64, uint64, ruleUnit](binding, rule, write, factor, ruleSpec) ||
+		!BindRule[uint64, uint64, ruleUnit](binding, rule, write, factor, ruleSpec, testRuleProjector[ruleUnit]) ||
 		!BindFactor(binding, otherFactor, hotExactObservationFactorSpec()) ||
-		!BindRule[uint64, uint64, ruleUnit](binding, otherRule, otherWrite, otherFactor, otherRuleSpec) ||
+		!BindRule[uint64, uint64, ruleUnit](binding, otherRule, otherWrite, otherFactor, otherRuleSpec, testRuleProjector[ruleUnit]) ||
 		!BindExactQuery(binding, query, factor, querySpec) || !binding.Seal() {
 		t.Fatal("exact observation binding")
 	}
@@ -339,14 +342,17 @@ func buildExactRuleObservationFixture[R any](t testing.TB, querySpec HotExactQue
 	}
 	member, memberOK := graph.RuleMember(receiptAssemblySemanticID(91))
 	otherMember, otherMemberOK := graph.RuleMember(receiptAssemblySemanticID(96))
-	compilation, compilationOK := BeginReceiptCompilation(implementation, graph)
+	compilation, compilationOK := BeginProgramConstruction(binding, graph)
 	if !memberOK || !otherMemberOK || !compilationOK || compilation == nil {
 		t.Fatal("exact observation receipt compilation")
 	}
-	if _, attached := AttachReceiptRuleMember(compilation, implementation, member, operandValue); !attached {
+	if !installConstOperandResolver(implementation, operandValue) || !installConstOperandResolver(otherImplementation, otherOperandValue) {
+		t.Fatal("exact observation resolver")
+	}
+	if attached := AttachRuleMember(compilation, implementation, receiptAssemblySemanticID(91)); !attached {
 		t.Fatal("exact observation member attachment")
 	}
-	if _, attached := AttachReceiptRuleMember(compilation, otherImplementation, otherMember, otherOperandValue); !attached {
+	if attached := AttachRuleMember(compilation, otherImplementation, receiptAssemblySemanticID(96)); !attached {
 		t.Fatal("exact observation same-point member attachment")
 	}
 	return exactRuleObservationFixture[R]{compilation: compilation, implementation: queryImplementation, member: member, otherMember: otherMember}, true

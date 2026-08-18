@@ -5,14 +5,18 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema"
 )
+
+const branchValueObservationLawProducer schema.Key = "value-summary"
 
 func sealedBranchValueObservationAttachment() BranchValueObservationAttachment {
 	attachment := BranchValueObservationAttachment{
 		mount: publicationLawID("branch-observation/mount"),
 		point: publicationLawID("branch-observation/point"),
 	}
-	attachment.id, _ = branchValueObservationAttachmentID(attachment.mount, attachment.point)
+	attachment.producer = branchValueObservationLawProducer
+	attachment.id, _ = branchValueObservationAttachmentID(attachment.mount, attachment.point, attachment.producer)
 	return attachment
 }
 
@@ -38,13 +42,17 @@ func TestBranchValueObservationAttachmentScalarSealLaw(t *testing.T) {
 			value.point = foreign
 			return value
 		},
+		"producer": func(value BranchValueObservationAttachment) BranchValueObservationAttachment {
+			value.producer = "effect-exact"
+			return value
+		},
 	}
 	for name, mutate := range mutations {
-		if want, ok := branchValueObservationAttachmentID(attachment.mount, attachment.point); !ok || want != attachment.id {
+		if want, ok := branchValueObservationAttachmentID(attachment.mount, attachment.point, attachment.producer); !ok || want != attachment.id {
 			t.Fatal("attachment identity derivation")
 		}
 		mutated := mutate(attachment)
-		if want, ok := branchValueObservationAttachmentID(mutated.mount, mutated.point); ok && want == mutated.id {
+		if want, ok := branchValueObservationAttachmentID(mutated.mount, mutated.point, mutated.producer); ok && want == mutated.id {
 			t.Fatalf("attachment scalar mutation kept its identity binding field=%s", name)
 		}
 		if mutated.Valid() {
@@ -72,7 +80,7 @@ func TestBranchValueObservationAttachmentObservationLaw(t *testing.T) {
 		t.Fatal("attachment read an observation without an authenticated handle")
 	}
 	if attachment.MemberAdmitted(nil, engine.RuleSlotCapability{}, publicationLawID("branch-observation/occurrence")) {
-		t.Fatal("attachment admitted a member without a graph")
+		t.Fatal("attachment admitted a member without a construction")
 	}
 }
 
@@ -81,9 +89,9 @@ func TestBranchValueObservationAttachmentObservationLaw(t *testing.T) {
 // graph that owns the member are all required before an identity is derived.
 func TestBranchValueObservationAttachmentIssuanceLaw(t *testing.T) {
 	mount, point, occurrence := publicationLawID("issuance/mount"), publicationLawID("issuance/point"), publicationLawID("issuance/occurrence")
-	attachment, failure, ok := AttachBranchValueObservation(nil, nil, nil, engine.RuleSlotCapability{}, mount, point, occurrence)
+	attachment, failure, ok := AttachBranchValueObservation(nil, nil, engine.RuleSlotCapability{}, branchValueObservationLawProducer, mount, point, occurrence)
 	if ok {
-		t.Fatal("attachment issued without a compilation, query, and graph")
+		t.Fatal("attachment issued without a compilation and query")
 	}
 	if failure != engine.ReceiptObservationAttachFailureArguments {
 		t.Fatalf("incomplete binding reported failure=%v", failure)
@@ -106,12 +114,12 @@ func TestBranchValueObservationAttachmentCoordinateLaw(t *testing.T) {
 		{mount, identity.ContentID{}},
 		{identity.ContentID{}, identity.ContentID{}},
 	} {
-		if _, ok := branchValueObservationAttachmentID(absent[0], absent[1]); ok {
+		if _, ok := branchValueObservationAttachmentID(absent[0], absent[1], branchValueObservationLawProducer); ok {
 			t.Fatalf("absent coordinate derived an attachment identity index=%d", index)
 		}
 	}
-	first, firstOK := branchValueObservationAttachmentID(mount, point)
-	swapped, swappedOK := branchValueObservationAttachmentID(point, mount)
+	first, firstOK := branchValueObservationAttachmentID(mount, point, branchValueObservationLawProducer)
+	swapped, swappedOK := branchValueObservationAttachmentID(point, mount, branchValueObservationLawProducer)
 	if !firstOK || !swappedOK || first == swapped {
 		t.Fatal("attachment identity ignored the coordinate positions")
 	}

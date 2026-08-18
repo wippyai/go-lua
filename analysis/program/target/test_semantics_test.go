@@ -2,11 +2,13 @@ package target
 
 import (
 	"context"
-
+	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"github.com/wippyai/go-lua/domain/type/annotation"
 	"github.com/wippyai/go-lua/domain/type/typ"
 	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
+	"testing"
 )
 
 // Raw domain values are confined to this file's adapters.  Laws may request a
@@ -127,7 +129,7 @@ func testMeta(value schematype.Type) schematype.Type {
 	return testEncode(typ.NewMeta(testRawOf(value)))
 }
 
-func testOperationTypes(values ...interface{}) ([]schematype.Type, []TypeFormalSpec) {
+func testOperationTypes(values ...interface{}) ([]schematype.Type, []vocabulary.TypeFormalSpec) {
 	var formal *typ.TypeParam
 	for _, value := range values {
 		if candidate, ok := value.(*typ.TypeParam); ok {
@@ -136,14 +138,14 @@ func testOperationTypes(values ...interface{}) ([]schematype.Type, []TypeFormalS
 		}
 	}
 	var scope []*typ.TypeParam
-	var declarations []TypeFormalSpec
+	var declarations []vocabulary.TypeFormalSpec
 	if formal != nil {
 		scope = []*typ.TypeParam{formal}
 		constraint := schematype.Type{}
 		if formal.Constraint != nil {
 			constraint = testEncode(formal.Constraint)
 		}
-		declarations = []TypeFormalSpec{{Constraint: constraint}}
+		declarations = []vocabulary.TypeFormalSpec{{Constraint: constraint}}
 	}
 	out := make([]schematype.Type, len(values))
 	for index, value := range values {
@@ -191,4 +193,61 @@ func testSeal(spec *Spec) (*Contract, error) {
 		spec.Semantics = domaincontract.NewSemantics()
 	}
 	return Seal(spec)
+}
+
+func builtin(name string, input interface{}, effects vocabulary.RowSpec) vocabulary.OperationSpec {
+	declaration := testDeclaration(input)
+	return vocabulary.OperationSpec{
+		Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{name}}},
+		Input:    vocabulary.ValuesSpec{Fixed: []schematype.Type{declaration}, Tail: vocabulary.ValuesClosed},
+		Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{
+			Fixed: []schematype.Type{declaration}, Tail: vocabulary.ValuesClosed,
+		}}},
+		Effects: effects,
+	}
+}
+
+func genericBuiltin(name string, formal *testRawTypeParam) vocabulary.OperationSpec {
+	declaration := testEncode(formal, formal)
+	constraint := schematype.Type{}
+	if formal.Constraint != nil {
+		constraint = testEncode(formal.Constraint)
+	}
+	return vocabulary.OperationSpec{
+		Bindings:    []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{name}}},
+		TypeFormals: []vocabulary.TypeFormalSpec{{Constraint: constraint}},
+		Input:       vocabulary.ValuesSpec{Fixed: []schematype.Type{declaration}, Tail: vocabulary.ValuesClosed},
+		Outcomes:    []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Fixed: []schematype.Type{declaration}, Tail: vocabulary.ValuesClosed}}},
+		Effects:     vocabulary.RowSpec{Tail: vocabulary.RowClosed},
+	}
+}
+
+func testDeclaration(value interface{}) schematype.Type {
+	switch value := value.(type) {
+	case schematype.Type:
+		return value
+	case testRawType:
+		return testEncodeOrUnavailable(value)
+	default:
+		panic("unsupported target test declaration")
+	}
+}
+
+func effect(target vocabulary.SpecRef, values []vocabulary.ValueFormal) vocabulary.RowSpec {
+	return vocabulary.RowSpec{Occurrences: []vocabulary.EffectSpec{{Target: target, ValueArgs: values}}, Tail: vocabulary.RowClosed}
+}
+
+func mustSeal(t *testing.T, spec Spec) *Contract {
+	t.Helper()
+	contract, err := testSeal(&spec)
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+	assertCensusMatchesReadSurface(t, contract)
+	return contract
+}
+
+func assertContractShapeEqual(t *testing.T, left, right *Contract) {
+	t.Helper()
+	assertPublicContractEqual(t, left, right)
 }

@@ -1,30 +1,32 @@
 package artifact
 
-import "github.com/wippyai/go-lua/analysis/identity"
+import (
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema"
+)
 
 type computationStage struct {
 	base       identity.ContentID
 	point      identity.ContentID
 	occurrence identity.ContentID
-	role       RuleRole
+	key        schema.Key
 	left       identity.ContentID
 	right      identity.ContentID
 }
 
 func (stage computationStage) available() bool {
 	return stage.base.Available() && stage.point.Available() && stage.point != stage.base && stage.occurrence.Available() &&
-		(stage.role == RuleRoleValueBinaryArithmetic || stage.role == RuleRoleValueBinaryEquality || stage.role == RuleRoleValueBinaryOrder) &&
-		stage.left.Available() && stage.right.Available()
+		stage.key.Available() && stage.left.Available() && stage.right.Available()
 }
 
-func (compiler *compiler) localComputationStage(base identity.ContentID, role RuleRole, occurrence, left, right identity.ContentID) (identity.ContentID, bool) {
+func (compiler *compiler) localComputationStage(base identity.ContentID, key schema.Key, occurrence, left, right identity.ContentID) (identity.ContentID, bool) {
 	if compiler == nil || compiler.computationStages == nil || !base.Available() || !occurrence.Available() ||
-		(role != RuleRoleValueBinaryArithmetic && role != RuleRoleValueBinaryEquality && role != RuleRoleValueBinaryOrder) || !left.Available() || !right.Available() {
+		!key.Available() || !left.Available() || !right.Available() {
 		return identity.ContentID{}, false
 	}
 	point := digest("analysis/program-artifact/local-computation-stage", artifactFormat,
-		bytesField(base), uintField(uint64(role)), bytesField(occurrence))
-	stage := computationStage{base: base, point: point, occurrence: occurrence, role: role, left: left, right: right}
+		bytesField(base), keyField(key), bytesField(occurrence))
+	stage := computationStage{base: base, point: point, occurrence: occurrence, key: key, left: left, right: right}
 	if !stage.available() {
 		return identity.ContentID{}, false
 	}
@@ -175,12 +177,16 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 	stageExit := make(map[identity.ContentID]identity.ContentID, len(bases))
 	computationInput := make(map[identity.ContentID]identity.ContentID)
 	callInput := make(map[identity.ContentID]identity.ContentID)
-	appendTransfer := func(domain string, from, to identity.ContentID, full bool, roles ...RuleRole) bool {
-		fields := []field{bytesField(from), bytesField(to), boolField(full), uintField(uint64(len(roles)))}
-		for _, role := range roles {
-			fields = append(fields, uintField(uint64(role)))
+	appendTransfer := func(domain string, from, to identity.ContentID, full bool, writes ...schema.Key) bool {
+		ordered, orderedOK := orderedWrites(writes)
+		if !orderedOK {
+			return false
 		}
-		edge := LocalTransfer{id: digest(domain, artifactFormat, fields...), from: from, to: to, full: full, roles: append([]RuleRole(nil), roles...)}
+		fields := []field{bytesField(from), bytesField(to), boolField(full), uintField(uint64(len(ordered)))}
+		for _, write := range ordered {
+			fields = append(fields, keyField(write))
+		}
+		edge := LocalTransfer{id: digest(domain, artifactFormat, fields...), from: from, to: to, full: full, writes: ordered}
 		if !edge.Available() {
 			return false
 		}
@@ -218,11 +224,11 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 		callBase := predecessor
 		if stages := compiler.callStages[base]; stages.available(base) {
 			sequence = append(sequence, stages.dispatch, stages.summary, stages.effect)
-			if !appendTransfer("analysis/program-artifact/call-base-dispatch-transfer", callBase, stages.dispatch, false, RuleRoleValueSource, RuleRolePackSource, RuleRoleHeapIngress, RuleRoleCallDispatch) ||
-				!appendTransfer("analysis/program-artifact/call-base-summary-transfer", callBase, stages.summary, false, RuleRoleEffectSelected) ||
-				!appendTransfer("analysis/program-artifact/call-dispatch-summary-transfer", stages.dispatch, stages.summary, false, RuleRoleCallDispatch) ||
+			if !appendTransfer("analysis/program-artifact/call-base-dispatch-transfer", callBase, stages.dispatch, false, "value-source", "pack-source", "heap-ingress", "call-dispatch") ||
+				!appendTransfer("analysis/program-artifact/call-base-summary-transfer", callBase, stages.summary, false, "effect-selected") ||
+				!appendTransfer("analysis/program-artifact/call-dispatch-summary-transfer", stages.dispatch, stages.summary, false, "call-dispatch") ||
 				!appendTransfer("analysis/program-artifact/call-base-effect-transfer", callBase, stages.effect, true) ||
-				!appendTransfer("analysis/program-artifact/call-dispatch-effect-transfer", stages.dispatch, stages.effect, false, RuleRoleCallDispatch) {
+				!appendTransfer("analysis/program-artifact/call-dispatch-effect-transfer", stages.dispatch, stages.effect, false, "call-dispatch") {
 				return compileFailure(CompileStageOccurrences, CompileRowEnvironment, index, -1, CompileReasonEnvironmentUnavailable)
 			}
 			callInput[stages.dispatch] = callBase
@@ -271,54 +277,51 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 			compiler.environmentByRoute[edge.route] = edge
 		}
 	}
-	for role, rows := range compiler.ruleOccurrences {
-		for index := range rows {
-			if rows[index].inputKind == RuleInputNone {
-				continue
-			}
-			if rows[index].inputKind == RuleInputPredecessor {
-				edge, found := compiler.environmentByRoute[rows[index].route]
-				if !found || !edge.from.Available() {
-					return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
-				}
-				rows[index].input = edge.from
-				continue
-			}
-			if input, computation := computationInput[rows[index].point]; computation {
-				if rows[index].inputKind != RuleInputFinish || !input.Available() || input == rows[index].point {
-					return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
-				}
-				rows[index].input = input
-				continue
-			}
-			if input, dispatch := callInput[rows[index].point]; dispatch {
-				if rows[index].stage != RuleStageCallDispatch || rows[index].inputKind != RuleInputFinish || !input.Available() || input == rows[index].point {
-					return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
-				}
-				rows[index].input = input
-				continue
-			}
-
-			// A synthetic stage is an execution splice for rule inputs as well as
-			// structural routes. A rule producing the base's Local stage must read
-			// the original base. Call Dispatch reads that Local result when one
-			// exists. Every other consumer of the staged base reads the terminal
-			// stage, so no Entry/Finish rule can bypass a prior strong write.
-			base := rows[index].input
-			exit := stageExit[base]
-			if !exit.Available() {
-				continue
-			}
-			local := compiler.localStages[base]
-			if local.Available() && rows[index].point == local {
-				continue
-			}
-			rows[index].input = exit
-			if !rows[index].Available() {
+	for index := range compiler.ruleOccurrences {
+		if compiler.ruleOccurrences[index].inputKind == RuleInputNone {
+			continue
+		}
+		if compiler.ruleOccurrences[index].inputKind == RuleInputPredecessor {
+			edge, found := compiler.environmentByRoute[compiler.ruleOccurrences[index].route]
+			if !found || !edge.from.Available() {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 			}
+			compiler.ruleOccurrences[index].input = edge.from
+			continue
 		}
-		compiler.ruleOccurrences[role] = rows
+		if input, computation := computationInput[compiler.ruleOccurrences[index].point]; computation {
+			if compiler.ruleOccurrences[index].inputKind != RuleInputFinish || !input.Available() || input == compiler.ruleOccurrences[index].point {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+			}
+			compiler.ruleOccurrences[index].input = input
+			continue
+		}
+		if input, dispatch := callInput[compiler.ruleOccurrences[index].point]; dispatch {
+			if compiler.ruleOccurrences[index].stage != RuleStageCallDispatch || compiler.ruleOccurrences[index].inputKind != RuleInputFinish || !input.Available() || input == compiler.ruleOccurrences[index].point {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+			}
+			compiler.ruleOccurrences[index].input = input
+			continue
+		}
+
+		// A synthetic stage is an execution splice for rule inputs as well as
+		// structural routes. A rule producing the base's Local stage must read
+		// the original base. Call Dispatch reads that Local result when one
+		// exists. Every other consumer of the staged base reads the terminal
+		// stage, so no Entry/Finish rule can bypass a prior strong write.
+		base := compiler.ruleOccurrences[index].input
+		exit := stageExit[base]
+		if !exit.Available() {
+			continue
+		}
+		local := compiler.localStages[base]
+		if local.Available() && compiler.ruleOccurrences[index].point == local {
+			continue
+		}
+		compiler.ruleOccurrences[index].input = exit
+		if !compiler.ruleOccurrences[index].Available() {
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+		}
 	}
 	stageCount := 0
 	for _, stages := range stageFor {

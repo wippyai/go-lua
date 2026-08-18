@@ -71,7 +71,7 @@ func TestProgramContentIDTracksSourceSemanticsAndCoordinates(t *testing.T) {
 // frozenFixtureLuaFiles is the complete parser-valid fixture denominator at
 // the canonical Program cut. Changing it is a target-contract change, not a
 // way to hide an unlowered source family.
-const frozenFixtureLuaFiles = 1176
+const frozenFixtureLuaFiles = 1178
 
 var sourcePositionSuffix = regexp.MustCompile(` at [0-9]+:[0-9]+$`)
 

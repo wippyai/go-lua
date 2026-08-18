@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/link/internal/radix"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 )
 
@@ -29,7 +30,7 @@ type Input struct {
 // consumers of this Boundary-owned admission relation.
 type EndpointRequest struct {
 	Identity string
-	Binding  target.BindingSpec
+	Binding  vocabulary.BindingSpec
 }
 
 // Draft is the linear construction capability for a Boundary component.
@@ -96,7 +97,7 @@ type authority struct {
 	component      *Component
 	project        *linkproject.Component
 	target         *target.Contract
-	require        target.Operation
+	require        vocabulary.Operation
 	valueTable     *valueTable
 	seedTable      *seedTable
 	moduleRelation identity.ContentID
@@ -163,20 +164,20 @@ type seedTable struct {
 
 type seedRow struct {
 	kind     seedKind
-	op       target.Operation
+	op       vocabulary.Operation
 	mount    uint32
-	denied   target.InitialValue
+	denied   vocabulary.InitialValue
 	endpoint uint32 // one-based endpoint row only for seedEndpoint
 }
 
 type endpointRow struct {
 	seed uint32 // seed row ordinal
-	op   target.Operation
+	op   vocabulary.Operation
 }
 
 type endpointRequestRow struct {
 	identity string
-	binding  target.BindingSpec
+	binding  vocabulary.BindingSpec
 }
 
 type endpointIDRow struct {

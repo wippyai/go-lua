@@ -109,7 +109,7 @@ func generatedFields() []FieldState {
 			ParserLaw: occurrence.ParserLaw(1), SemanticLaw: occurrence.SemanticLaw(0), IngressLaw: occurrence.IngressLaw(0)},
 		{Form: "ConditionalTypeExpr", Field: "Then", State: astcodec.FieldState(2), Context: occurrence.Context(3), Disposition: Disposition(1), Source: "grammar:static-forms",
 			ParserLaw: occurrence.ParserLaw(0), SemanticLaw: occurrence.SemanticLaw(0), IngressLaw: occurrence.IngressLaw(0)},
-		{Form: "DoBlockStmt", Field: "Stmts", State: astcodec.FieldState(3), Context: occurrence.Context(1), Disposition: Disposition(1), Source: "fixture:testdata/fixtures/native/evalnode-genuine-noop-preserved/main.lua",
+		{Form: "DoBlockStmt", Field: "Stmts", State: astcodec.FieldState(3), Context: occurrence.Context(1), Disposition: Disposition(1), Source: "fixture:testdata/fixtures/core/query-zero-row/main.lua",
 			ParserLaw: occurrence.ParserLaw(0), SemanticLaw: occurrence.SemanticLaw(0), IngressLaw: occurrence.IngressLaw(0)},
 		{Form: "DoBlockStmt", Field: "Stmts", State: astcodec.FieldState(4), Context: occurrence.Context(1), Disposition: Disposition(1), Source: "fixture:testdata/fixtures/core/control-do-block/main.lua",
 			ParserLaw: occurrence.ParserLaw(0), SemanticLaw: occurrence.SemanticLaw(0), IngressLaw: occurrence.IngressLaw(0)},

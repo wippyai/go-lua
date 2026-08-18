@@ -743,7 +743,7 @@ func TestCorpusDiagnosticManifestRunnerCensusPathLaw(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if catalog.inventory.projects != 911 || catalog.inventory.structuredFindings != 133 || catalog.inventory.inlineErrors+catalog.inventory.inlineWarnings != 714 {
+	if catalog.inventory.projects != 912 || catalog.inventory.structuredFindings != 133 || catalog.inventory.inlineErrors+catalog.inventory.inlineWarnings != 714 {
 		t.Fatalf("census = projects:%d structured:%d inline:%d", catalog.inventory.projects, catalog.inventory.structuredFindings, catalog.inventory.inlineErrors+catalog.inventory.inlineWarnings)
 	}
 	// Keep this path cheap: it must not compile or solve any unsupported family.

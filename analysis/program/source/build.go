@@ -19,6 +19,9 @@ func Build(input Input) (*Draft, error) {
 	if err := buildOrder(a, input); err != nil {
 		return nil, err
 	}
+	if err := buildSpellings(a, input); err != nil {
+		return nil, err
+	}
 	if err := buildKeyFault(a, input); err != nil {
 		return nil, err
 	}
@@ -30,6 +33,44 @@ func Build(input Input) (*Draft, error) {
 		return nil, errors.New("program/source: unavailable authored identity")
 	}
 	return &Draft{state: &draftState{authority: a}}, nil
+}
+
+func buildSpellings(a *authority, input Input) error {
+	if a == nil {
+		return errors.New("program/source: nil spelling authority")
+	}
+	cellCount := a.count(keyspace.FamilyCell)
+	// Generic Source fixtures that do not carry backend debug metadata use the
+	// canonical all-absent dense column. Lua lowering supplies the explicit
+	// rows when authored names are available.
+	if input.CellSpellings == nil {
+		a.spellings.cells = make([]string, cellCount)
+	} else {
+		if len(input.CellSpellings) != cellCount {
+			return errors.New("program/source: Cell spelling cardinality mismatch")
+		}
+		a.spellings.cells = make([]string, cellCount)
+		for index, row := range input.CellSpellings {
+			if !a.validFamilyTerm(row.Cell, keyspace.FamilyCell) || keyspace.TermOrdinal(row.Cell) != uint32(index+1) {
+				return errors.New("program/source: invalid Cell spelling owner or order")
+			}
+			a.spellings.cells[index] = row.Name
+		}
+	}
+	if len(input.CallSpellings) == 0 {
+		return nil
+	}
+	a.spellings.calls = make([]CallSpelling, len(input.CallSpellings))
+	var previous keyspace.Term
+	for index, row := range input.CallSpellings {
+		if !a.validFamilyTerm(row.Call, keyspace.FamilyCall) || row.Name == "" ||
+			index > 0 && (row.Call <= previous || keyspace.TermOrdinal(row.Call) == 0) {
+			return errors.New("program/source: invalid or duplicate Call spelling")
+		}
+		a.spellings.calls[index] = CallSpelling{Call: row.Call, Name: row.Name}
+		previous = row.Call
+	}
+	return nil
 }
 
 // validateFaultSourceOwnership closes the authored side of control-fault
@@ -239,496 +280,6 @@ func buildFormalOrder(a *authority, rows []FunctionFormals, cells []bool) error 
 		a.order.formalRanges[index] = r
 	}
 	return nil
-}
-
-// Finalizer claims the Draft's one-shot lifecycle and returns the only
-// capability allowed to install the root-sealed Source index. Claiming is a
-// separate operation from Commit so Flow can inspect authored Source views
-// while deriving cross-owner geometry without exposing a published Component.
-func (d *Draft) Finalizer() (Finalizer, error) {
-	if d == nil || d.state == nil {
-		return Finalizer{}, errors.New("program/source: invalid finalizer")
-	}
-	state := d.state
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	if state.phase != draftOpen || state.authority == nil {
-		return Finalizer{}, errors.New("program/source: finalizer already claimed")
-	}
-	state.phase = draftFinalizerClaimed
-	return Finalizer{state: state}, nil
-}
-
-// Preimage returns the one authored Source query bundle for this claimed
-// Finalizer. The bundle stores only the shared lifecycle fence; each typed
-// subview resolves the current owner from that same fence, so copied or
-// foreign capabilities cannot be combined into another Source owner.
-func (f Finalizer) Preimage() Preimage {
-	if f.authority() == nil {
-		return Preimage{}
-	}
-	return Preimage(f)
-}
-
-// Identity returns the authored identity view while the Preimage is live.
-func (p Preimage) Identity() Identity { return Identity{state: p.state} }
-
-// Order returns authored direct Body source order while the Preimage is live.
-func (p Preimage) Order() Order { return Order{state: p.state} }
-
-// Binds returns authored Bind cell order while the Preimage is live.
-func (p Preimage) Binds() BindOrder { return BindOrder{state: p.state} }
-
-// Formals returns authored Function formal order while the Preimage is live.
-func (p Preimage) Formals() FormalOrder { return FormalOrder{state: p.state} }
-
-// Keys returns Source's authored key and exact-atom authority while the
-// Preimage is live.
-func (p Preimage) Keys() Keys { return Keys{state: p.state} }
-
-// Faults returns authored control-fault provenance while the Preimage is live.
-func (p Preimage) Faults() Faults { return Faults{state: p.state} }
-
-// Literals returns authored literal rows while the Preimage is live.
-func (p Preimage) Literals() Literals { return Literals{state: p.state} }
-
-// Commit consumes this Finalizer exactly once. Both success and validation
-// failure are terminal: no later copy can retry with a different IndexInput.
-// The caller-owned batch is validated and compacted into Source's private
-// index; no batch or containment rows survive publication.
-func (f Finalizer) Commit(input IndexInput) (*Component, error) {
-	component, _, err := f.commit(input, false)
-	return component, err
-}
-
-// CommitWithSemanticPathIssuance is the sole parent issuance point for
-// Flow's structural semantic-path certificate. The token is returned only to
-// the exact Commit caller, cannot be reconstructed from Component.View, and
-// may be consumed once by semanticpath after all sibling proofs are present.
-func (f Finalizer) CommitWithSemanticPathIssuance(input IndexInput) (*Component, *SemanticPathIssuance, error) {
-	return f.commit(input, true)
-}
-
-func (f Finalizer) commit(input IndexInput, issueSemanticPath bool) (*Component, *SemanticPathIssuance, error) {
-	if f.state == nil {
-		return nil, nil, errors.New("program/source: invalid finalizer")
-	}
-	state := f.state
-	state.mu.Lock()
-	if state.phase != draftFinalizerClaimed || state.authority == nil {
-		state.mu.Unlock()
-		return nil, nil, errors.New("program/source: finalizer is terminal")
-	}
-	// Keep the original authored authority immutable for any query that
-	// already captured it before Commit acquired the fence. Seal projection
-	// installs the derived Outcome identity and sparse source index, so build that
-	// projection on a private shallow authority copy before publishing the
-	// terminal transition. The copied identity store owns its scalar/slice
-	// headers; all authored row slices are immutable and safely shared. The
-	// claimed state's original owner is invalidated below, and only this one
-	// candidate is published through Component. It carries the same authored
-	// ContentID; the private copy is not a second externally usable authority.
-	authority := *state.authority
-	if err := installIndex(&authority, input); err != nil {
-		state.phase = draftTerminal
-		state.authority = nil
-		state.mu.Unlock()
-		return nil, nil, err
-	}
-	cellRoles, err := buildCellRoleAuthority(&authority)
-	if err != nil {
-		state.phase = draftTerminal
-		state.authority = nil
-		state.mu.Unlock()
-		return nil, nil, err
-	}
-	authority.cellRoles = cellRoles
-	state.phase = draftTerminal
-	state.authority = nil
-	state.mu.Unlock()
-	component := &Component{authority: &authority}
-	if !issueSemanticPath {
-		return component, nil, nil
-	}
-	return component, &SemanticPathIssuance{state: &semanticPathIssuanceState{authority: &authority}}, nil
-}
-
-// ConsumeSemanticPathIssuance transfers the exact commit-only capability to
-// Flow's semantic-path leaf. A same-content or foreign View is rejected by
-// pointer authority, and every attempted consume is terminal.
-func (issuance *SemanticPathIssuance) ConsumeSemanticPathIssuance(view View) bool {
-	if issuance == nil || issuance.state == nil {
-		return false
-	}
-	state := issuance.state
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	if state.used {
-		return false
-	}
-	// Consumption is terminal before any caller-controlled View comparison.
-	// A foreign probe must not leave a live capability for an exact retry.
-	authority := state.authority
-	state.used = true
-	state.authority = nil
-	return authority != nil && view.authority == authority
-}
-
-// Abort consumes this Finalizer without publishing a Component. Abort is
-// terminal and idempotence is deliberately rejected so misuse cannot be
-// mistaken for a successful lifecycle transition.
-func (f Finalizer) Abort() error {
-	if f.state == nil {
-		return errors.New("program/source: invalid finalizer")
-	}
-	state := f.state
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	if state.phase != draftFinalizerClaimed || state.authority == nil {
-		return errors.New("program/source: finalizer is terminal")
-	}
-	state.phase = draftTerminal
-	state.authority = nil
-	return nil
-}
-
-// authority returns the uncommitted owner for one authored Finalizer view.
-// The owner rows are immutable after Build, so the lock only protects the
-// lifecycle check and capability claim; published Components use views with
-// no lifecycle state and do not pay this check.
-func (f Finalizer) authority() *authority {
-	if f.state == nil {
-		return nil
-	}
-	state := f.state
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	if state.phase != draftFinalizerClaimed {
-		return nil
-	}
-	return state.authority
-}
-
-func installIndex(a *authority, input IndexInput) error {
-	if a == nil || !input.SourceID.Available() || input.SourceID != a.content {
-		return errors.New("program/source: Index Source identity disagrees with authored authority")
-	}
-	if len(input.Bodies) != a.count(keyspace.FamilyBody) ||
-		!a.validFamilyTerm(input.Entry, keyspace.FamilyBody) {
-		return errors.New("program/source: incomplete Body index")
-	}
-	var next indexStore
-	next.rootRanges = make([]termRange, a.count(keyspace.FamilyBody))
-	next.parents = make([]keyspace.Term, a.count(keyspace.FamilyBody))
-	if err := installBodyRoots(a, &next, input.Bodies); err != nil {
-		return err
-	}
-	locations, err := buildDirectLocations(a, &next)
-	if err != nil {
-		return err
-	}
-	if err := validateBodyForest(a, &next, locations, input.Entry); err != nil {
-		return err
-	}
-	next.entry = input.Entry
-	if err := installOutcomeIdentity(a, input.OutcomeOrigins); err != nil {
-		return err
-	}
-	if err := installPositions(a, &next, locations, input); err != nil {
-		return err
-	}
-	a.index = next
-	return nil
-}
-
-// installOutcomeIdentity installs the sole derived Term family from Flow's
-// canonical ordered origin Bodies. Source does not know Outcome semantics or
-// mint an order: it validates the typed Body foreign keys, copies each owning
-// Body's authored coordinate, and assigns the dense Outcome ordinal implied by
-// the supplied order. The resulting count/spans participate in final identity
-// and position validation, but remain absent from authored ContentID.
-func installOutcomeIdentity(a *authority, origins []keyspace.Term) error {
-	if a == nil || a.identity.counts[keyspace.FamilyOutcome] != 0 ||
-		len(a.identity.spans[keyspace.FamilyOutcome]) != 0 {
-		return errors.New("program/source: Outcome identity was already installed")
-	}
-	if !keyspace.TermOrdinalFits(len(origins)) {
-		return errors.New("program/source: Outcome cardinality overflow")
-	}
-	spans := make([]storedSpan, len(origins))
-	for index, body := range origins {
-		if !a.validFamilyTerm(body, keyspace.FamilyBody) {
-			return errors.New("program/source: invalid Outcome origin Body")
-		}
-		spans[index] = a.identity.spans[keyspace.FamilyBody][keyspace.TermOrdinal(body)-1]
-	}
-	if uint64(a.identity.termCount)+uint64(len(spans)) > uint64(^uint32(0)) {
-		return errors.New("program/source: final Term cardinality overflow")
-	}
-	a.identity.counts[keyspace.FamilyOutcome] = uint32(len(spans))
-	a.identity.spans[keyspace.FamilyOutcome] = spans
-	a.identity.termCount += uint32(len(spans))
-	return nil
-}
-
-func installBodyRoots(a *authority, index *indexStore, rows []BodyRoots) error {
-	for ordinal, row := range rows {
-		if !a.validFamilyTerm(row.Body, keyspace.FamilyBody) || keyspace.TermOrdinal(row.Body) != uint32(ordinal+1) {
-			return errors.New("program/source: invalid indexed Body")
-		}
-		if (row.Parent != 0 && !a.validFamilyTerm(row.Parent, keyspace.FamilyBody)) || row.Parent == row.Body {
-			return errors.New("program/source: invalid Body parent")
-		}
-		start := len(index.rootTerms)
-		for _, root := range row.Roots {
-			if !a.validTerm(root) {
-				return errors.New("program/source: invalid statement root")
-			}
-			index.rootTerms = append(index.rootTerms, root)
-		}
-		r, ok := makeRange(start, len(row.Roots))
-		if !ok {
-			return errors.New("program/source: Body root range overflow")
-		}
-		index.rootRanges[ordinal] = r
-		index.parents[ordinal] = row.Parent
-	}
-	return nil
-}
-
-func installPositions(a *authority, index *indexStore, locations directLocations, input IndexInput) error {
-	// Positions is the exact batch for Flow's reachable containment closure.
-	// Identity/span cardinality is a separate denominator; direct Body source
-	// occurrences are mandatory, while Terms outside that closure have no
-	// source-position projection. Position.Term is the sole row identity, and
-	// the explicit family/ordinal order is part of this boundary.
-	// Allocate the retained batch exactly once. The input is already canonical
-	// by (Family, Ordinal), so each family can be carved from this backing array
-	// without per-family geometric growth or a sorting/counting pass.
-	entries := make([]positionEntry, len(input.Positions))
-	var directCounts [keyspace.FamilyCount]int
-	familyStart := 0
-	var installedFamily keyspace.Family
-	var previousFamily keyspace.Family
-	var previousOrdinal uint32
-	for position, row := range input.Positions {
-		if !a.validTerm(row.Term) || !a.validTerm(row.Root) || !a.validFamilyTerm(row.Body, keyspace.FamilyBody) ||
-			!a.validFamilyTerm(row.FrontierBody, keyspace.FamilyBody) ||
-			keyspace.TermFamily(row.Term) == keyspace.FamilyOutcome {
-			return errors.New("program/source: invalid source position")
-		}
-		family, termOrdinal := keyspace.TermFamily(row.Term), keyspace.TermOrdinal(row.Term)
-		if previousFamily != keyspace.FamilyInvalid &&
-			(family < previousFamily || family == previousFamily && termOrdinal <= previousOrdinal) {
-			return errors.New("program/source: noncanonical source position order")
-		}
-		if installedFamily != keyspace.FamilyInvalid && family != installedFamily {
-			index.positions[installedFamily] = positionIndex(entries[familyStart:position:position])
-			installedFamily = family
-			familyStart = position
-		} else if installedFamily == keyspace.FamilyInvalid {
-			installedFamily = family
-			familyStart = position
-		}
-		previousFamily, previousOrdinal = family, termOrdinal
-		location, ok := locations.lookup(row.Root)
-		if !ok {
-			return errors.New("program/source: source position root is not a direct source Term")
-		}
-		if location.body != row.Body || location.offset != row.Offset || location.cursor != row.Cursor {
-			return errors.New("program/source: inconsistent source position")
-		}
-		// A direct Body source occurrence is its own canonical source root. The
-		// root lookup above proves that row.Term is a direct source row whenever
-		// row.Term == row.Root. Counting those rows per family, then requiring
-		// the exact direct-row count below, preserves direct omission,
-		// substitution, and uniqueness without a second direct membership scan.
-		if row.Term == row.Root {
-			directCounts[family]++
-		}
-		if err := validateFrontier(index, row, location); err != nil {
-			return err
-		}
-		entries[position] = positionEntry{
-			ordinal: keyspace.TermOrdinal(row.Term),
-			slot: positionSlot{
-				root: row.Root, body: row.Body, offset: row.Offset, cursor: row.Cursor,
-				frontierBody: row.FrontierBody, frontierCursor: row.FrontierCursor,
-			},
-		}
-	}
-	if installedFamily != keyspace.FamilyInvalid {
-		index.positions[installedFamily] = positionIndex(entries[familyStart:len(entries):len(entries)])
-	}
-	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
-		if directCounts[family] != len(locations[family].rows) {
-			return errors.New("program/source: direct source Term lacks position")
-		}
-	}
-	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
-		for _, entry := range index.positions[family] {
-			slot := entry.slot
-			rootFamily, rootOrdinal := keyspace.TermFamily(slot.root), keyspace.TermOrdinal(slot.root)
-			if rootFamily == keyspace.FamilyInvalid {
-				return errors.New("program/source: root lacks direct source position")
-			}
-			root, ok := index.positions[rootFamily].lookup(rootOrdinal)
-			if !ok || root.root != slot.root || root.body != slot.body || root.offset != slot.offset || root.cursor != slot.cursor ||
-				root.frontierBody != slot.frontierBody || root.frontierCursor != slot.frontierCursor {
-				return errors.New("program/source: root position is not its direct source coordinate")
-			}
-		}
-	}
-	return nil
-}
-
-func validateFrontier(index *indexStore, row Position, location directLocation) error {
-	// Flow's position seal supplies Repeat's kind and the exact Loop-to-child
-	// selection. Source validates only the owner-local geometry represented by
-	// this row: a direct Loop root, a Body child of the containing Body, and the
-	// selected child's sealed root-tail cursor. It does not infer which of two
-	// same-owner Body children Flow selected.
-	if !row.Repeat {
-		// A non-direct row inherits all six position fields from its direct
-		// root. Defer its frontier check until the complete batch is installed;
-		// this is what permits a descendant of a Repeat root to inherit that
-		// root's adjusted frontier without opening a second frontier authority.
-		if row.Term != row.Root {
-			return nil
-		}
-		if row.FrontierBody != location.body || row.FrontierCursor != location.cursor {
-			return errors.New("program/source: invalid ordinary source frontier")
-		}
-		return nil
-	}
-	if keyspace.TermFamily(row.Root) != keyspace.FamilyLoop || row.FrontierBody == location.body ||
-		int(keyspace.TermOrdinal(row.FrontierBody)) > len(index.parents) ||
-		index.parents[keyspace.TermOrdinal(row.FrontierBody)-1] != location.body {
-		return errors.New("program/source: invalid Repeat source frontier")
-	}
-	r := index.rootRanges[keyspace.TermOrdinal(row.FrontierBody)-1]
-	if row.FrontierCursor != r.end-r.start {
-		return errors.New("program/source: invalid Repeat frontier cursor")
-	}
-	return nil
-}
-
-func validateBodyForest(a *authority, index *indexStore, locations directLocations, entry keyspace.Term) error {
-	if a == nil || index == nil || !a.validFamilyTerm(entry, keyspace.FamilyBody) {
-		return errors.New("program/source: invalid entry Body")
-	}
-	entryOrdinal := keyspace.TermOrdinal(entry) - 1
-	rootCount := 0
-	for ordinal, parent := range index.parents {
-		body := keyspace.MakeTerm(keyspace.FamilyBody, uint32(ordinal+1))
-		location, direct := locations.lookup(body)
-		if parent == 0 {
-			rootCount++
-			if body != entry {
-				return errors.New("program/source: non-entry root Body")
-			}
-			if direct {
-				return errors.New("program/source: Entry Body has direct source occurrence")
-			}
-			continue
-		}
-		// A lexical Body parent is supplied by Flow's sealed Body forest. A
-		// child Body may be represented only by a typed Function/Branch/Loop
-		// witness, so it need not also occur as a direct Source term. When a
-		// direct Body occurrence does exist, the sealed forest projection must
-		// agree with that Source-owned witness.
-		if direct && location.body != parent {
-			return errors.New("program/source: direct Body parent mismatch")
-		}
-	}
-	if rootCount != 1 || index.parents[entryOrdinal] != 0 {
-		return errors.New("program/source: invalid Body root")
-	}
-	state := make([]uint8, len(index.parents))
-	for start := range index.parents {
-		if state[start] != 0 {
-			continue
-		}
-		path := make([]uint32, 0, 4)
-		for current := uint32(start); ; {
-			if int(current) >= len(index.parents) {
-				return errors.New("program/source: invalid Body parent ordinal")
-			}
-			switch state[current] {
-			case 1:
-				return errors.New("program/source: cyclic Body parent")
-			case 2:
-				for _, visited := range path {
-					state[visited] = 2
-				}
-			default:
-				state[current] = 1
-				path = append(path, current)
-				parent := index.parents[current]
-				if parent == 0 {
-					if current != entryOrdinal {
-						return errors.New("program/source: Body forest does not reach entry")
-					}
-					for _, visited := range path {
-						state[visited] = 2
-					}
-					path = nil
-				}
-				if path == nil {
-					break
-				}
-				current = keyspace.TermOrdinal(parent) - 1
-				continue
-			}
-			break
-		}
-	}
-	return nil
-}
-
-// buildDirectLocations makes one temporary sparse validation index containing
-// exactly the direct Body source occurrences. Build's authored order pass has
-// already proved that those occurrences are valid and unique, so Commit need
-// not allocate a second membership plane for every identity ordinal. The rows
-// are discarded after position installation.
-func buildDirectLocations(a *authority, index *indexStore) (directLocations, error) {
-	var result directLocations
-	for _, sourceRange := range a.order.bodyRanges {
-		if !validRange(a.order.sourceTerms, sourceRange) {
-			return directLocations{}, errors.New("program/source: invalid Body source range")
-		}
-		for _, term := range a.order.sourceTerms[sourceRange.start:sourceRange.end] {
-			family := keyspace.TermFamily(term)
-			if !a.validDirectBodyTerm(term) || family == keyspace.FamilyInvalid {
-				return directLocations{}, errors.New("program/source: invalid direct source Term")
-			}
-		}
-	}
-	for bodyOrdinal, sourceRange := range a.order.bodyRanges {
-		rootRange := index.rootRanges[bodyOrdinal]
-		rootAt := uint32(0)
-		cursor := uint32(0)
-		for offset, term := range a.order.sourceTerms[sourceRange.start:sourceRange.end] {
-			family := keyspace.TermFamily(term)
-			location := directLocation{
-				term:   term,
-				body:   keyspace.MakeTerm(keyspace.FamilyBody, uint32(bodyOrdinal+1)),
-				offset: uint32(offset),
-				cursor: cursor,
-			}
-			if err := result[family].add(keyspace.TermOrdinal(term), location); err != nil {
-				return directLocations{}, err
-			}
-			if rootAt < rootRange.end-rootRange.start && index.rootTerms[rootRange.start+rootAt] == term {
-				rootAt++
-				cursor++
-			}
-		}
-		if rootAt != rootRange.end-rootRange.start {
-			return directLocations{}, errors.New("program/source: unordered or non-direct statement root")
-		}
-	}
-	return result, nil
 }
 
 func (a *authority) count(family keyspace.Family) int {

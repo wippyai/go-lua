@@ -49,6 +49,10 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 				return engine.StageValue(access, row, result.fact)
 			}) && rows == 1
 		},
+	}, func(binding identity.ContentID) (uint64, bool) {
+		result, resultOK := globalResultForSchema(schema, binding)
+		index, indexOK := schema.CoordinateIndex(result.coordinate)
+		return uint64(index), resultOK && indexOK
 	})
 	if !ok || implementation == nil {
 		return nil, false
@@ -57,7 +61,15 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 	if !catalogOK {
 		return nil, false
 	}
-	return &HotRule{implementation: implementation, catalog: catalog, owner: owner}, true
+	rule := &HotRule{implementation: implementation, catalog: catalog, owner: owner}
+	if !implementation.InstallOperandResolver(rule.resolveOperand) {
+		return nil, false
+	}
+	return rule, true
+}
+
+func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (identity.ContentID, bool) {
+	return rule.ReceiptForOccurrence(coords.Occurrence)
 }
 
 // Catalog returns Value/bootstrap's immutable Link-global operand directory.
@@ -85,89 +97,15 @@ func (rule *HotRule) ReceiptForOccurrence(id identity.ContentID) (identity.Conte
 	return rule.ReceiptForID(id)
 }
 
-// AttachLinkOccurrence lowers one Link-global ValueBootstrap row. The exact
-// bootstrap witness supplied to ReceiptAssembly owns the occurrence; this
-// package contributes only its matching preissued GlobalBinding and write Ref.
-func (rule *HotRule) AttachLinkOccurrence(assembly *engine.ReceiptAssembly, occurrenceID identity.ContentID) (engine.BindingRuleRowRef, bool) {
-	if rule == nil || rule.owner == nil || assembly == nil {
-		return engine.BindingRuleRowRef{}, false
-	}
-	binding, bindingOK := rule.ReceiptForOccurrence(occurrenceID)
-	implementation, implementationOK := valueowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
-	result, resultOK := globalResultForSchema(rule.owner.Schema(), binding)
-	write, writeOK := rule.owner.Ref(result.coordinate)
-	if !bindingOK || !implementationOK || !resultOK || !writeOK {
-		return engine.BindingRuleRowRef{}, false
-	}
-	capability := linkCapability(rule.implementation)
-	occurrence, occurrenceOK := assembly.AdmitLinkRuleOccurrence(capability, occurrenceID)
-	if !occurrenceOK {
-		return engine.BindingRuleRowRef{}, false
-	}
-	admit := func(transaction *engine.RuleSourceTransaction) bool {
-		return engine.AddExactWrite(transaction, write)
-	}
-	issue := func(source engine.RuleSurfaceSourceReceipt) bool {
-		draft, draftOK := implementation.BeginReceiptRuleRow(source)
-		writePart, writePartOK := implementation.ReceiptWritePart(source, 0)
-		if !draftOK || !writePartOK || !draft.AddWrite(writePart) {
-			return false
-		}
-		_, added := assembly.AddRuleFromDraft(occurrence, draft)
-		return added
-	}
-	queued := engine.AdmitLinkRule(assembly, implementation, capability, occurrence, binding, admit, issue)
-	return engine.BindingRuleRowRef{}, queued
-}
-
-// AttachLinkReceiptMember resolves the committed Link-global member and its
-// private GlobalBinding internally. ValueBootstrap is emitted once for the
-// whole Link and therefore has no mount or reusable-point argument.
-func (rule *HotRule) AttachLinkReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, occurrenceID identity.ContentID) (*engine.ReceiptMember, bool) {
-	if rule == nil || rule.owner == nil || graph == nil {
-		return nil, false
-	}
-	binding, bindingOK := rule.ReceiptForOccurrence(occurrenceID)
-	member, memberOK := graph.LinkRuleMember(linkCapability(rule.implementation), occurrenceID)
-	implementation, implementationOK := valueowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
-	if !bindingOK || !memberOK || !implementationOK {
-		return nil, false
-	}
-	return engine.AttachReceiptRuleMember(compilation, implementation, member, binding)
-}
-
-// BeginReceiptCompilation starts the opaque graph attachment transaction for
-// this exact Link-global ValueBootstrap issuer.
-func (rule *HotRule) BeginReceiptCompilation(graph *engine.ReceiptGraph) (*engine.ReceiptCompilation, bool) {
-	if rule == nil || rule.owner == nil {
-		return nil, false
-	}
-	implementation, ok := valueowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
-	if !ok {
-		return nil, false
-	}
-	return engine.BeginReceiptCompilation(implementation, graph)
-}
-
-// AttachReceiptMember attaches one graph-owned global bootstrap member with
-// the exact owner-fenced GlobalBinding operand.
-func (rule *HotRule) AttachReceiptMember(compilation *engine.ReceiptCompilation, member engine.ReceiptRuleMember, binding identity.ContentID) (*engine.ReceiptMember, bool) {
-	if rule == nil || rule.owner == nil {
-		return nil, false
-	}
-	implementation, ok := valueowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
-	if !ok {
-		return nil, false
-	}
-	return engine.AttachReceiptRuleMember(compilation, implementation, member, binding)
-}
-
-// Implementation returns the typed pending issuer until SchemaBinding seals.
 func (rule *HotRule) Implementation() (*valueowner.RuleImplementation[identity.ContentID], bool) {
 	if rule == nil || rule.implementation == nil {
 		return nil, false
 	}
 	return rule.implementation, true
+}
+
+func (rule *HotRule) ProgramAttach() (engine.RuleProgramAttach, bool) {
+	return valueowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
 }
 
 func hotBootstrapChecker(owner *valueowner.HotOwner, ruleSemantic identity.SemanticKey) engine.RuleDerivationChecker[value.Value, identity.ContentID] {

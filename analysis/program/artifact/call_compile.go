@@ -16,7 +16,11 @@ func (compiler *compiler) copyCallRowsFailure() CompileFailure {
 		if !ok {
 			continue
 		}
-		row := CallRow{id: call.id, body: call.bodyPath, span: call.span, formal: call.formal, values: call.values, valuesRoot: call.valuesRoot, types: call.types, form: call.form, tail: identity.ContentID{},
+		form, formOK := receiptCallForm(call.form)
+		if !formOK {
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceCall)
+		}
+		row := CallRow{id: call.id, body: call.bodyPath, span: call.span, formal: call.formal, values: call.values, valuesRoot: call.valuesRoot, types: call.types, form: form, target: call.targetBody, tail: identity.ContentID{},
 			operandStart: uint32(len(compiler.callOperands)), argumentStart: uint32(len(compiler.callArguments)), typeArgumentStart: uint32(len(compiler.callTypeArguments)), sealed: true}
 		if call.tail.Available() {
 			row.tail, row.hasTail = call.tail, true

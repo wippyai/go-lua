@@ -209,6 +209,57 @@ func WriteRequests() ([]WriteRequest, bool) {
 	return requests, true
 }
 
+// queryColumnAdmission is the issuance request for one sealed family's result
+// column. A result column is a column: it is admitted, minted and written
+// exactly as an axis column is, and the family is its own writer because the
+// family's declaration is the statement that answers it.
+//
+// It is the one definition of the pair, so the set a binding admits and the
+// pair a publisher mints against name one column rather than two spellings that
+// agree by convention.
+func queryColumnAdmission(request QueryRequest) WriteRequest {
+	return WriteRequest{
+		Schema: request.Schema,
+		Output: request.Family,
+		Writer: request.Family,
+		Slot:   request.Slot,
+	}
+}
+
+// PublicationAdmissions is the whole set of columns one publication is admitted
+// to write: every declared axis output, then every sealed family's result
+// column, in slot order.
+//
+// It is stated to the engine once, while the binding that publishes is still
+// open. The engine mints at most one capability per column afterwards, so the
+// set below is the open half of the one-writer law and the minted capability is
+// the closed half.
+func PublicationAdmissions() ([]WriteRequest, bool) {
+	columns, columnsOK := WriteRequests()
+	queries, queriesOK := QueryRequests()
+	if !columnsOK || !queriesOK || len(columns)+len(queries) != PublicationColumns() {
+		return nil, false
+	}
+	admissions := make([]WriteRequest, 0, len(columns)+len(queries))
+	admissions = append(admissions, columns...)
+	for _, request := range queries {
+		admissions = append(admissions, queryColumnAdmission(request))
+	}
+	return admissions, true
+}
+
+// admitPublicationColumns states the admitted set on one open binding. It runs
+// at the one lawful position: while the binding that publishes is open, before
+// it seals, and exactly once, which is what makes the admitted set the sealed
+// table's statement rather than a publisher's.
+func admitPublicationColumns(binding *engine.SchemaBinding) bool {
+	admissions, ok := PublicationAdmissions()
+	if !ok {
+		return false
+	}
+	return engine.AdmitColumns(binding, admissions)
+}
+
 // ProjectQuery mints the published identity one sealed query family is answered
 // under. It is the reading half of the query projection: a consumer holds the
 // family the declaration names, opens it on a snapshot under this identity, and

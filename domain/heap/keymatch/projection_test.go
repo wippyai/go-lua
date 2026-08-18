@@ -1,6 +1,7 @@
 package keymatch_test
 
 import (
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"reflect"
 	"testing"
 
@@ -317,11 +318,11 @@ func bootFixture(t testing.TB, module string) (heapdomain.Schema, *valuedomain.S
 	if err != nil {
 		t.Fatal(err)
 	}
-	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), InitialRoots: []target.InitialRootSpec{{
+	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), InitialRoots: []vocabulary.InitialRootSpec{{
 		Identity: "GlobalEnvRoot",
-		Shape: target.BootShapeSpec{
-			Aggregate: target.BootAggregateTable,
-			Value:     target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"},
+		Shape: vocabulary.BootShapeSpec{
+			Aggregate: vocabulary.BootAggregateTable,
+			Value:     vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "GlobalEnvRoot"},
 		},
 	}}})
 	if err != nil {

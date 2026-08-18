@@ -132,8 +132,9 @@ func (r *Result) GlobalCell(identity GlobalIdentity) (GlobalCell, bool) {
 }
 
 // DirectGlobalCalls returns the binder's complete source-order enumeration of
-// plain global function-call occurrences.  It is a detached slice; each
-// occurrence retains the parser-owned Call pointer and opaque global identity.
+// plain global function-call occurrences. It is a detached slice; each
+// occurrence retains only the parser-owned Call pointer as its occurrence key
+// and carries argument facts copied by the binder.
 func (r *Result) DirectGlobalCalls() []DirectGlobalCall {
 	if r == nil || len(r.directGlobalCalls) == 0 {
 		return nil
@@ -155,6 +156,17 @@ func (r *Result) Name(id Symbol) string {
 		return ""
 	}
 	return r.names[id]
+}
+
+// CallSpelling returns the binder-owned optional authored name for one parser
+// Call occurrence. Dynamic and indexed calls intentionally return false; the
+// lowerer must not recover a name by reopening Call syntax.
+func (r *Result) CallSpelling(call *ast.FuncCallExpr) (string, bool) {
+	if r == nil || call == nil {
+		return "", false
+	}
+	name, ok := r.callSpellings[call]
+	return name, ok && name != ""
 }
 
 // Kind returns the declaration kind for a symbol.

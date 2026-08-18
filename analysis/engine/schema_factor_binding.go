@@ -67,6 +67,8 @@ type schemaFactorBinding interface {
 	schemaFactorReadComplete(*schemaBindingState, *schemaRuleReadOrigin) bool
 	schemaFactorBindExactRead(readBinding, equation.RuleMember, map[composition.Key]runtimeFactor, *schemaRuleReadOrigin) bool
 	schemaFactorFormAt(uint64) schemaFactorFormBinding
+	schemaFactorAdmitExactRead(*schemaBindingState, *schemaBindingAuthority, *RuleSourceTransaction, uint64) bool
+	schemaFactorAdmitExactWrite(*schemaBindingState, *schemaBindingAuthority, *RuleSourceTransaction, uint64) bool
 }
 
 type FactorImplementation[K ~uint32 | ~uint64, V any] struct {
@@ -459,6 +461,24 @@ func (cell *schemaSummaryReadCell[K, V, S]) schemaSummaryRuleReadBind(bound read
 // Ref issues the callback-free Factor implementation's opaque exact-key
 // capability. The Ref carries the shared sealed authority pointer, never a
 // copied SchemaBinding handle or a public coordinate accessor.
+func (cell *schemaFactorBindingCell[K, V]) schemaFactorAdmitExactRead(state *schemaBindingState, authority *schemaBindingAuthority, transaction *RuleSourceTransaction, local uint64) bool {
+	implementation, ok := cell.sealedImplementation(state, authority)
+	if !ok {
+		return false
+	}
+	ref, refOK := implementation.Ref(K(local))
+	return refOK && AddExactRead(transaction, ref)
+}
+
+func (cell *schemaFactorBindingCell[K, V]) schemaFactorAdmitExactWrite(state *schemaBindingState, authority *schemaBindingAuthority, transaction *RuleSourceTransaction, local uint64) bool {
+	implementation, ok := cell.sealedImplementation(state, authority)
+	if !ok {
+		return false
+	}
+	ref, refOK := implementation.Ref(K(local))
+	return refOK && AddExactWrite(transaction, ref)
+}
+
 func (implementation *FactorImplementation[K, V]) Ref(key K) (Ref[K], bool) {
 	if implementation == nil || !implementation.receipt.valid() || uint64(key) >= implementation.receipt.keyEnd {
 		return Ref[K]{}, false

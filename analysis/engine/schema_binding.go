@@ -142,7 +142,14 @@ func (binding *SchemaBinding) Seal() bool {
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	if state.phase != schemaBindingOpen || state.schema == nil || state.authority == nil || len(state.activation) != int(state.schema.activationCount()) {
+	if state.phase != schemaBindingOpen || state.authority == nil {
+		state.poisonLocked()
+		return false
+	}
+	if state.schema == nil {
+		return sealColumnBindingLocked(state)
+	}
+	if len(state.activation) != int(state.schema.activationCount()) {
 		state.poisonLocked()
 		return false
 	}

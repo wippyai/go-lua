@@ -1,12 +1,12 @@
 package publication_test
 
 import (
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
-	"github.com/wippyai/go-lua/analysis/program/flow"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
@@ -40,18 +40,18 @@ type directAllocationSubjectFixture struct {
 	otherSource packdomain.SemanticSource
 }
 
-func directAllocationSubjectContract(t testing.TB) (*target.Contract, target.Operation) {
+func directAllocationSubjectContract(t testing.TB) (*target.Contract, vocabulary.Operation) {
 	t.Helper()
-	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []target.OperationSpec{{
-		Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"send"}}},
-		Input:    target.ValuesSpec{Fixed: []schematype.Type{portableAnyType(), portableAnyType()}, Tail: target.ValuesClosed},
-		Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}},
-		Effects:  target.RowSpec{Tail: target.RowClosed},
+	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{{
+		Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"send"}}},
+		Input:    vocabulary.ValuesSpec{Fixed: []schematype.Type{portableAnyType(), portableAnyType()}, Tail: vocabulary.ValuesClosed},
+		Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}},
+		Effects:  vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 	}}})
 	if err != nil || contract == nil {
 		t.Fatalf("seal direct allocation Target: %v", err)
 	}
-	operation, operationOK := contract.Lookup(target.BindingSpec{Namespace: target.BindingBuiltin, Member: []string{"send"}})
+	operation, operationOK := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"send"}})
 	if !operationOK {
 		t.Fatal("direct allocation operation")
 	}
@@ -110,15 +110,15 @@ func directAllocationSubjectFixtureFor(t testing.TB, label string) directAllocat
 	if !packsOK || packs == nil || heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone || values == nil {
 		t.Fatalf("seal direct allocation schemas pack=%t heap=%s value=%s", packsOK, heapFailure, valueFailure)
 	}
-	selector, selectorOK := packs.InputSelector(operation, target.InputSource{Kind: target.InputSourceValueFormal, Ordinal: 0})
-	otherSelector, otherSelectorOK := packs.InputSelector(operation, target.InputSource{Kind: target.InputSourceValueFormal, Ordinal: 1})
+	selector, selectorOK := packs.InputSelector(operation, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 0})
+	otherSelector, otherSelectorOK := packs.InputSelector(operation, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 1})
 	if !selectorOK || !otherSelectorOK {
 		t.Fatal("direct allocation fixed selectors")
 	}
 	var callID identity.ContentID
 	for index := 0; index < artifact.CallCount(); index++ {
 		call, callOK := artifact.CallAt(index)
-		if callOK && call.Form() == flow.CallFormMethod {
+		if callOK && call.Form() == programartifact.CallFormMethod {
 			callID = call.ID()
 			break
 		}

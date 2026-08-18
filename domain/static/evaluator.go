@@ -2,10 +2,10 @@ package static
 
 import (
 	"errors"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
-	"github.com/wippyai/go-lua/analysis/program/target"
 	"github.com/wippyai/go-lua/domain/type/authority"
 )
 
@@ -31,7 +31,7 @@ type ContainedOperand struct {
 	source         identity.ContentID
 	namespace      identity.ContentID
 	environment    identity.ContentID
-	operation      target.Operation
+	operation      vocabulary.Operation
 	law            identity.ContentID
 	dependency     identity.ContentID
 	site           identity.ContentID
@@ -57,7 +57,7 @@ func (o ContainedOperand) Source() (identity.ContentID, identity.ContentID, bool
 }
 func (o ContainedOperand) Namespace() identity.ContentID          { return o.namespace }
 func (o ContainedOperand) Environment() identity.ContentID        { return o.environment }
-func (o ContainedOperand) Operation() target.Operation            { return o.operation }
+func (o ContainedOperand) Operation() vocabulary.Operation        { return o.operation }
 func (o ContainedOperand) Law() identity.ContentID                { return o.law }
 func (o ContainedOperand) Dependency() identity.ContentID         { return o.dependency }
 func (o ContainedOperand) StaticSite() (identity.ContentID, bool) { return o.site, o.site.Available() }
@@ -123,7 +123,7 @@ func (a *Authority) sealMountedCoordinates() error {
 	return nil
 }
 
-func (a *Authority) addCoordinate(ref typeauthority.StaticTypeRef, namespace identity.ContentID, environment Environment, operation target.Operation) error {
+func (a *Authority) addCoordinate(ref typeauthority.StaticTypeRef, namespace identity.ContentID, environment Environment, operation vocabulary.Operation) error {
 	if !namespace.Available() {
 		return errors.New("static: invalid namespace")
 	}

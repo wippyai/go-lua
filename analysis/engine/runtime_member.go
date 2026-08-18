@@ -181,6 +181,34 @@ func routeSchemaRuleMemberGeometry(proof *ruleRuntimeProof, member schemaRuleMem
 	return surface, route, true
 }
 
+// bindProgramRuleMember binds one typed Rule implementation against a sealed
+// factor plane. It is the whole join between an implementation and a graph
+// member: the plane fixes the authority the implementation must have been
+// sealed under and the Factor its output names, and nothing else participates.
+// Attachment ledgers and duplicate rejection belong to the caller that keeps
+// them; a bind is the same operation whether it happens at construction or when
+// an activation revision replays it against a later graph.
+func bindProgramRuleMember[K ~uint32 | ~uint64, V, O any](plane *programPlane, implementation *RuleImplementation[K, V, O], member equation.RuleMember, operand O) (runtimeMember, bool) {
+	if plane == nil || !plane.frozen || plane.runtime == nil || plane.runtime.mode != runtimeBindingReceipt || plane.runtime.graph == nil || plane.carrier == nil || plane.byKey == nil {
+		return nil, false
+	}
+	if implementation == nil || !implementation.receipt.valid() || implementation.receipt.state != plane.runtime.state || implementation.receipt.authority != plane.runtime.authority {
+		return nil, false
+	}
+	if !plane.runtime.graph.OwnsMember(member) || !member.Key().Available() {
+		return nil, false
+	}
+	output, present := plane.byKey[implementation.receipt.proof.output]
+	if !present || output == nil {
+		return nil, false
+	}
+	row, ok := bindSchemaRuleMember(implementation, member, operand, output, plane.byKey)
+	if !ok || row == nil || row.member().Key() != member.Key() {
+		return nil, false
+	}
+	return row, true
+}
+
 func bindSchemaRuleMember[K ~uint32 | ~uint64, V, O any](implementation *RuleImplementation[K, V, O], member equation.RuleMember, operand O, output runtimeFactor, factors map[composition.Key]runtimeFactor) (*boundRuleMember[V, O], bool) {
 	if implementation == nil || !implementation.receipt.valid() || member.Key() == (composition.Key{}) || !member.Occurrence().Available() || output == nil || factors == nil {
 		return nil, false

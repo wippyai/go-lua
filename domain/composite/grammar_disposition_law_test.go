@@ -8,7 +8,6 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/lua/census"
 	"github.com/wippyai/go-lua/analysis/lua/parsersource"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 )
 
 // TestGrammarDispositionJoinSeals is the account itself: every row the parser
@@ -18,7 +17,7 @@ import (
 func TestGrammarDispositionJoinSeals(t *testing.T) {
 	value := grammarCensus(t)
 	if failure := JoinGrammarCensus(value); failure.Available() {
-		t.Fatalf("grammar disposition join rejected: row=%q reason=%s role=%d", failure.Row, failure.Reason, failure.Role)
+		t.Fatalf("grammar disposition join rejected: row=%q reason=%s key=%q", failure.Row, failure.Reason, failure.Key)
 	}
 	if len(value.Rows) != len(grammarDispositions) {
 		t.Fatalf("census states %d rows, the table declares %d dispositions", len(value.Rows), len(grammarDispositions))
@@ -146,19 +145,19 @@ func TestGrammarJoinRejectsUndeclaredRole(t *testing.T) {
 	// Every ordinal the artifact carries is declared by the table, so the one
 	// role a disposition can name and the table cannot resolve is the invalid
 	// ordinal. Naming it must be refused rather than read as an empty set.
-	absent := programartifact.RuleRoleInvalid
-	if _, declared := templateForRole(absent); declared {
-		t.Fatalf("role %d is declared; pick a role the table does not declare", absent)
+	absentSlot := 21
+	if _, declared := templateAtSlot(absentSlot); declared {
+		t.Fatalf("slot %d is declared; pick a slot the table does not declare", absentSlot)
 	}
 	edited[0].Disposition = grammarRuleOwned
 	edited[0].Reason = grammarReasonInvalid
-	edited[0].Roles = grammarRoles(1) << absent
+	edited[0].Roles = grammarRoles(1) << absentSlot
 	grammarDispositions = edited
 	t.Cleanup(func() { grammarDispositions = restore })
 
 	failure := JoinGrammarCensus(value)
-	if !failure.Available() || failure.Reason != GrammarJoinUndeclaredRole || failure.Role != absent {
-		t.Fatalf("undeclared role was accepted: row=%q reason=%s role=%d", failure.Row, failure.Reason, failure.Role)
+	if !failure.Available() || failure.Reason != GrammarJoinUndeclaredRole {
+		t.Fatalf("undeclared key was accepted: row=%q reason=%s key=%q", failure.Row, failure.Reason, failure.Key)
 	}
 }
 
@@ -178,21 +177,18 @@ func TestGrammarDispositionsReachEveryMountedRole(t *testing.T) {
 	if owned == 0 {
 		t.Fatal("no census row is owned by a rule")
 	}
-	for index := 0; index < programartifact.MountedRuleRoleCount(); index++ {
-		role, ok := programartifact.MountedRuleRoleAt(index)
+	for position := 0; position < RuleCount(); position++ {
+		key, ok := RuleKeyAt(position)
 		if !ok {
-			t.Fatalf("mounted role %d is absent from the artifact vocabulary", index)
+			t.Fatalf("table position %d publishes no key", position)
 		}
-		if !reached.has(role) {
-			t.Fatalf("mounted role %d is reached by no grammar row", role)
+		if MountedRuleKey(key) && !reached.has(key) {
+			t.Fatalf("mounted key %q is reached by no grammar row", key)
 		}
 	}
-	// The Link-owned bootstrap roles are admitted at the binding boundary and
-	// are constructed by no parser alternative, so a grammar row claiming one
-	// would be an invented provenance.
-	for _, role := range LinkRoles() {
-		if reached.has(role) {
-			t.Fatalf("link-owned role %d is claimed by a grammar row", role)
+	for _, key := range LinkKeys() {
+		if reached.has(key) {
+			t.Fatalf("link-owned key %q is claimed by a grammar row", key)
 		}
 	}
 }

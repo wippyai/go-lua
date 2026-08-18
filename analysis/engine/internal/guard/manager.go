@@ -43,7 +43,17 @@ type Manager struct {
 
 // pageNodeCapacity is physical storage granularity, not an analysis bound.
 // A Work spills to fresh pages indefinitely as needed.
-const pageNodeCapacity = 256
+//
+// A transaction's first page is firstPageNodeCapacity nodes and each further
+// page grows by pageGrowthFactor up to pageNodeCapacity. Page size describes
+// one transaction's storage, and transaction sizes span orders of magnitude:
+// the read path constructs one or two nodes per candidate while a construction
+// pass fills page after page. Growth serves both from one geometry.
+const (
+	pageNodeCapacity      = 256
+	firstPageNodeCapacity = 4
+	pageGrowthFactor      = 4
+)
 
 type page struct {
 	nodes  []node

@@ -6,7 +6,6 @@ package source
 // the callback sees only the typed receipt and never walks Program or Flow.
 
 import (
-	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	packdomain "github.com/wippyai/go-lua/domain/pack"
 	packowner "github.com/wippyai/go-lua/domain/pack/owner"
@@ -57,12 +56,9 @@ func (rule *HotRule) sealOccurrenceReceipts() bool {
 		}
 		rows.rows[id] = result
 	}
-	if len(occurrences) == 0 {
-		return false
-	}
 	rule.occurrences = occurrences
 	rule.receiptsSealed = true
-	return true
+	return len(occurrences) != 0 || rule.schema.SourceOccurrenceCount() == 0
 }
 
 // SealOccurrenceReceipts preissues all mounted Pack source receipts after the
@@ -101,74 +97,3 @@ func (issuer MountedIssuer) SourceForOccurrence(id identity.ContentID) (packdoma
 	return source, result, sourceOK
 }
 
-// AttachMountedOccurrence admits one artifact PackSource row and supplies its
-// exact Pack output surface. The caller chooses no factor ordinal: Root and
-// its Ref are issued by Pack's sealed owner.
-func (rule *HotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, mountID, reusablePointID, occurrenceID identity.ContentID) (engine.BindingRuleRowRef, bool) {
-	if rule == nil || rule.owner == nil || assembly == nil {
-		return engine.BindingRuleRowRef{}, false
-	}
-	issuer, ok := rule.ForMount(mountID)
-	if !ok {
-		return engine.BindingRuleRowRef{}, false
-	}
-	_, result, ok := issuer.SourceForOccurrence(occurrenceID)
-	if !ok {
-		return engine.BindingRuleRowRef{}, false
-	}
-	source, sourceOK := result.Source()
-	root, rootOK := result.Root()
-	if !sourceOK || !rootOK || !rule.schema.OwnsSourceResult(result) {
-		return engine.BindingRuleRowRef{}, false
-	}
-	capability := mountedCapability(rule.implementation)
-	occurrence, ok := assembly.AdmitMountedRuleOccurrence(capability, mountID, reusablePointID, occurrenceID)
-	if !ok {
-		return engine.BindingRuleRowRef{}, false
-	}
-	implementation, implementationOK := packowner.ResolveRuleImplementation(rule.implementation)
-	admit := func(transaction *engine.RuleSourceTransaction) bool {
-		if !implementationOK {
-			return false
-		}
-		ref, ok := rule.owner.Ref(root)
-		return ok && engine.AddExactWrite(transaction, ref)
-	}
-	issue := func(sourceReceipt engine.RuleSurfaceSourceReceipt) bool {
-		draft, draftOK := implementation.BeginReceiptRuleRow(sourceReceipt)
-		writePart, writePartOK := implementation.ReceiptWritePart(sourceReceipt, 0)
-		if !draftOK || !writePartOK || !draft.AddWrite(writePart) {
-			return false
-		}
-		_, added := assembly.AddRuleFromDraft(occurrence, draft)
-		return added
-	}
-	queued := engine.AdmitMountedRule(assembly, implementation, capability, occurrence, source, admit, issue)
-	return engine.BindingRuleRowRef{}, queued
-}
-
-// AttachMountedReceiptMember resolves and attaches the exact graph member
-// after receipt compilation has committed its graph. It is the post-commit
-// counterpart to AttachMountedOccurrence and retains no equation handle.
-func (rule *HotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, reusablePointID, occurrenceID identity.ContentID) (*engine.ReceiptMember, bool) {
-	if rule == nil || compilation == nil || graph == nil || rule.implementation == nil {
-		return nil, false
-	}
-	member, ok := graph.MountedRuleMember(mountedCapability(rule.implementation), mountID, reusablePointID, occurrenceID)
-	if !ok {
-		return nil, false
-	}
-	issuer, ok := rule.ForMount(mountID)
-	if !ok {
-		return nil, false
-	}
-	source, _, ok := issuer.SourceForOccurrence(occurrenceID)
-	if !ok {
-		return nil, false
-	}
-	implementation, ok := packowner.ResolveRuleImplementation(rule.implementation)
-	if !ok {
-		return nil, false
-	}
-	return engine.AttachReceiptRuleMember(compilation, implementation, member, source)
-}

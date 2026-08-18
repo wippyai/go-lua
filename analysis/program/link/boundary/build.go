@@ -3,10 +3,11 @@ package boundary
 import (
 	"crypto/sha256"
 	"errors"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 const contentVersion = 5
@@ -62,7 +63,7 @@ const moduleRelationVersion = 1
 // immutable Program-value relation plus the presence and ordinal of scoped
 // require authority. Endpoint and bootstrap geometry are intentionally not a
 // module dependency.
-func moduleRelationID(valueRelation identity.ContentID, contract *target.Contract, require target.Operation) (id identity.ContentID) {
+func moduleRelationID(valueRelation identity.ContentID, contract *target.Contract, require vocabulary.Operation) (id identity.ContentID) {
 	if !valueRelation.Available() {
 		return id
 	}
@@ -106,8 +107,8 @@ func (d *Draft) Finalize() (*Component, error) {
 	return component, nil
 }
 
-func scopedRequireOperation(contract *target.Contract) (target.Operation, error) {
-	var require target.Operation
+func scopedRequireOperation(contract *target.Contract) (vocabulary.Operation, error) {
+	var require vocabulary.Operation
 	for operationIndex := 0; operationIndex < contract.OperationCount(); operationIndex++ {
 		op, ok := contract.OperationAt(operationIndex)
 		if !ok || op == 0 {
@@ -118,7 +119,7 @@ func scopedRequireOperation(contract *target.Contract) (target.Operation, error)
 			if !ok {
 				return 0, errors.New("link/boundary: malformed Target binding")
 			}
-			if namespace != target.BindingBuiltin {
+			if namespace != vocabulary.BindingBuiltin {
 				continue
 			}
 			memberCount := contract.BindingMemberCountAt(op, bindingIndex)
@@ -151,8 +152,8 @@ func scopedRequireOperation(contract *target.Contract) (target.Operation, error)
 // classifyRequireBinding classifies the Target binding shape before any
 // owner shortcut. Target itself normally rejects builtin owners, but keeping
 // this check here makes Boundary fail closed if that ABI ever admits one.
-func classifyRequireBinding(namespace target.BindingNamespace, ownerCount, memberCount int, firstMember string) (bool, error) {
-	if namespace != target.BindingBuiltin {
+func classifyRequireBinding(namespace vocabulary.BindingNamespace, ownerCount, memberCount int, firstMember string) (bool, error) {
+	if namespace != vocabulary.BindingBuiltin {
 		return false, nil
 	}
 	if memberCount == 0 {

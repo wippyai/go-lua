@@ -4,6 +4,7 @@ import (
 	"fmt"
 	goast "go/ast"
 	"sort"
+	"strings"
 )
 
 // result reads the solved relation out as rows. Products are ordered by the
@@ -128,11 +129,13 @@ func (b *productBuilder) product(scope *actionScope, site *constructionSite, ord
 	}
 	for _, field := range site.fields {
 		_, assigned := site.elements[field.Name]
+		held := b.constructionValue(site, field.Name)
 		product.Fields = append(product.Fields, ProductField{
 			Ordinal:  field.Ordinal,
 			Field:    field.Name,
 			Assigned: assigned,
-			States:   statesOf(b.constructionValue(site, field.Name), field.Form),
+			Member:   b.memberOf(held, field),
+			States:   statesOf(held, field.Form),
 		})
 	}
 	return product
@@ -152,12 +155,14 @@ func (b *productBuilder) scopeMutations() []FieldMutation {
 			if !exists {
 				continue
 			}
+			written := b.eval(mutation.scope, mutation.value)
 			result = append(result, FieldMutation{
 				Owner:       scope.owner,
 				Scope:       scope.kind,
 				Constructor: name,
 				Field:       mutation.field,
-				States:      statesOf(b.eval(mutation.scope, mutation.value), field.Form),
+				Member:      b.memberOf(written, field),
+				States:      statesOf(written, field.Form),
 			})
 		}
 	}
@@ -196,6 +201,37 @@ func declaredField(declaration Declaration, name string) (Field, bool) {
 		}
 	}
 	return Field{}, false
+}
+
+// memberOf projects one abstract value onto the closed constant family a
+// carrier is declared over. It answers only where the answer is decided: the
+// carrier's type is an admitted family, and the value either names exactly one
+// member of that family or is the family's zero and nothing else. A value that
+// can be two members has made no choice, and a value that is zero but also
+// something else could be a member or could not, so both leave the column
+// empty rather than picking the likelier reading.
+func (b *productBuilder) memberOf(v value, field Field) string {
+	family, admitted := b.enums[strings.TrimPrefix(field.Type, "ast.")]
+	if !admitted {
+		return ""
+	}
+	named := ""
+	for name := range v.members {
+		if b.memberTypes[name] != family.Type {
+			continue
+		}
+		if named != "" {
+			return ""
+		}
+		named = name
+	}
+	if named != "" {
+		return named
+	}
+	if v.zero && !v.nonZero && !v.opaque {
+		return family.Zero
+	}
+	return ""
 }
 
 // statesOf projects one abstract value onto the state space of a declared

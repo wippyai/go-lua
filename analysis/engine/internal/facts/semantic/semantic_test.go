@@ -816,7 +816,7 @@ func TestPartitionKeyPreservesStoredAndAbsentTerminals(t *testing.T) {
 		region  support.Mask
 	}
 	pieces := make([]piece, 0, 2)
-	if !domain.PartitionKey(stored, 7, fixture.all, func(value uint8, present bool, region support.Mask) bool {
+	if !domain.PartitionKey(stored, 7, fixture.all, nil, func(value uint8, present bool, region support.Mask) bool {
 		pieces = append(pieces, piece{value: value, present: present, region: region})
 		return true
 	}) || len(pieces) != 1 || !pieces[0].present || pieces[0].value != 5 || !pieces[0].region.Equal(fixture.all) {
@@ -827,7 +827,7 @@ func TestPartitionKeyPreservesStoredAndAbsentTerminals(t *testing.T) {
 		t.Fatal("empty plane")
 	}
 	pieces = pieces[:0]
-	if !domain.PartitionKey(empty, 7, fixture.all, func(value uint8, present bool, region support.Mask) bool {
+	if !domain.PartitionKey(empty, 7, fixture.all, nil, func(value uint8, present bool, region support.Mask) bool {
 		pieces = append(pieces, piece{value: value, present: present, region: region})
 		return true
 	}) || len(pieces) != 1 || pieces[0].present || pieces[0].value != 5 || !pieces[0].region.Equal(fixture.all) {

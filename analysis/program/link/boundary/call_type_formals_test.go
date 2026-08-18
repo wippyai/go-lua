@@ -2,6 +2,7 @@ package boundary
 
 import (
 	"context"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
@@ -157,7 +158,7 @@ return generic::<integer, string>()`)
 
 	changedABIContract := typeFormalContractWithInput(t, []*typ.TypeParam{
 		typ.NewTypeParam("T", nil), typ.NewTypeParam("U", nil),
-	}, target.ValuesSpec{Fixed: neutralTypes(t, typ.Any), Tail: target.ValuesClosed})
+	}, vocabulary.ValuesSpec{Fixed: neutralTypes(t, typ.Any), Tail: vocabulary.ValuesClosed})
 	changedABI, changedABIProject := typeFormalBoundaryForContract(t, p, changedABIContract)
 	changedABIView, changedABIOK := changedABI.Calls().TypeFormalArguments(changedABIContract, typeFormalCall(t, changedABIProject, 0), typeFormalOperation(t, changedABIContract))
 	changedABIID, changedABIIDOK := changedABIView.CorrespondenceID()
@@ -192,17 +193,17 @@ func typeFormalProgram(t testing.TB, text string) *program.Program {
 }
 
 func typeFormalContract(t testing.TB, formals []*typ.TypeParam) *target.Contract {
-	return typeFormalContractWithInput(t, formals, target.ValuesSpec{Tail: target.ValuesClosed})
+	return typeFormalContractWithInput(t, formals, vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed})
 }
 
-func typeFormalContractWithInput(t testing.TB, formals []*typ.TypeParam, input target.ValuesSpec) *target.Contract {
+func typeFormalContractWithInput(t testing.TB, formals []*typ.TypeParam, input vocabulary.ValuesSpec) *target.Contract {
 	t.Helper()
-	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []target.OperationSpec{{
-		Bindings:    []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"op"}}},
+	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{{
+		Bindings:    []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"op"}}},
 		TypeFormals: neutralFormals(t, formals),
 		Input:       input,
-		Outcomes:    []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}},
-		Effects:     target.RowSpec{Tail: target.RowClosed},
+		Outcomes:    []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}},
+		Effects:     vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 	}}})
 	if err != nil {
 		t.Fatal(err)
@@ -210,12 +211,12 @@ func typeFormalContractWithInput(t testing.TB, formals []*typ.TypeParam, input t
 	return contract
 }
 
-func neutralFormals(t testing.TB, formals []*typ.TypeParam) []target.TypeFormalSpec {
+func neutralFormals(t testing.TB, formals []*typ.TypeParam) []vocabulary.TypeFormalSpec {
 	t.Helper()
 	if len(formals) == 0 {
 		return nil
 	}
-	out := make([]target.TypeFormalSpec, len(formals))
+	out := make([]vocabulary.TypeFormalSpec, len(formals))
 	for index, formal := range formals {
 		if formal == nil || formal.Constraint == nil {
 			continue
@@ -270,9 +271,9 @@ func typeFormalBoundaryForContract(t testing.TB, p *program.Program, contract *t
 	return component, project
 }
 
-func typeFormalOperation(t testing.TB, contract *target.Contract) target.Operation {
+func typeFormalOperation(t testing.TB, contract *target.Contract) vocabulary.Operation {
 	t.Helper()
-	operation, ok := contract.Lookup(target.BindingSpec{Namespace: target.BindingBuiltin, Member: []string{"op"}})
+	operation, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"op"}})
 	if !ok {
 		t.Fatal("operation unavailable")
 	}

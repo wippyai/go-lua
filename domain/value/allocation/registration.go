@@ -34,6 +34,7 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *SchemaFra
 	return rule.Spec[P, A, *SchemaFragment, *HotRule]{
 		Key:    "value-allocation",
 		Writes: "value",
+		Owner:  "value",
 		Issues: []rule.Issuance{
 			{Occurrence: "occurrence/allocation", Form: "issuance/local", Input: "input/entry", Stage: "stage/local"},
 		},
@@ -52,14 +53,6 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *SchemaFra
 		},
 		Bind: func(context rule.Binding[A, *SchemaFragment]) (*HotRule, bool) {
 			return BindHot(context.Fragment, context.Authorities.ValueAuthority(), context.Authorities.HeapSchema(), context.Authorities.Allocations())
-		},
-		Attach: func(context rule.Attach[*HotRule]) bool {
-			_, ok := context.Rule.AttachMountedRule(context.Assembly, context.Mount, context.Point, context.Occurrence)
-			return ok
-		},
-		Member: func(context rule.Member[*HotRule]) bool {
-			_, ok := context.Rule.AttachMountedReceiptMember(context.Compilation, context.Graph, context.Mount, context.Point, context.Occurrence)
-			return ok
 		},
 	}
 }

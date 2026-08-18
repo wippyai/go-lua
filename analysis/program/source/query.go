@@ -53,6 +53,9 @@ func (v View) Binds() BindOrder   { return BindOrder{authority: v.authority} }
 func (v View) Formals() FormalOrder {
 	return FormalOrder{authority: v.authority}
 }
+func (v View) Spellings() Spellings {
+	return Spellings{authority: v.authority}
+}
 func (v View) Index() Index       { return Index(v) }
 func (v View) Literals() Literals { return Literals{authority: v.authority} }
 func (v View) Keys() Keys         { return Keys{authority: v.authority} }
@@ -223,6 +226,34 @@ func (v FormalOrder) rangeFor(function keyspace.Term) (termRange, bool) {
 	}
 	r := a.order.formalRanges[keyspace.TermOrdinal(function)-1]
 	return r, validRange(a.order.formalTerms, r)
+}
+
+// CellName returns an authored debug spelling for one Cell. Empty dense
+// entries denote an unavailable/anonymous spelling and therefore return
+// false; the Cell identity and its coordinate remain available through the
+// independent Identity and Order views.
+func (v Spellings) CellName(cell keyspace.Term) (string, bool) {
+	a := liveAuthority(v.authority, v.state)
+	if a == nil || !a.validFamilyTerm(cell, keyspace.FamilyCell) {
+		return "", false
+	}
+	name := a.spellings.cells[keyspace.TermOrdinal(cell)-1]
+	return name, name != ""
+}
+
+// CallName returns an optional authored debug spelling for one statically
+// named Call. Dynamic or unknown calls have no row and return false.
+func (v Spellings) CallName(call keyspace.Term) (string, bool) {
+	a := liveAuthority(v.authority, v.state)
+	if a == nil || !a.validFamilyTerm(call, keyspace.FamilyCall) {
+		return "", false
+	}
+	rows := a.spellings.calls
+	at := sort.Search(len(rows), func(index int) bool { return rows[index].Call >= call })
+	if at == len(rows) || rows[at].Call != call {
+		return "", false
+	}
+	return rows[at].Name, true
 }
 
 func (v Index) Root(term keyspace.Term) (keyspace.Term, bool) {

@@ -83,7 +83,7 @@ func (compiler *compiler) copyComputations() CompileFailure {
 		rightID, rightOK := compiler.input.ValueSubjectID(operation.Right)
 		entry, entryOK := span.Entry()
 		finish, finishOK := span.Finish()
-		if !termOK || !primitiveOK || !sourceOK || source != term || !operationOK || !binaryArithmeticOperator(operation.Op) ||
+		if !termOK || !primitiveOK || !sourceOK || source != term || !operationOK || !flowkind.IsBinaryArithmetic(operation.Op) ||
 			!spanOK || !bodyOK || !compiler.input.OwnsSpan(span) || !compiler.input.OwnsBody(body) ||
 			!leftOK || !rightOK ||
 			!entryOK || !finishOK || !compiler.input.OwnsSite(entry) || !compiler.input.OwnsSite(finish) {

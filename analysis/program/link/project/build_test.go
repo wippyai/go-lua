@@ -1,6 +1,7 @@
 package project
 
 import (
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -502,7 +503,7 @@ func TestProjectHandlesFenceEquivalentResealsAndForeignRelations(t *testing.T) {
 		t.Fatal("foreign equivalent Program borrowed a mounted Program-key mapping")
 	}
 
-	var targetKey target.ExactKey
+	var targetKey vocabulary.ExactKey
 	for index := 0; index < contract.ExactKeyCount(); index++ {
 		candidate, candidateOK := contract.ExactKeyAt(index)
 		value, valueOK := contract.ExactKeyValue(candidate)
@@ -629,12 +630,12 @@ func projectTarget(t testing.TB, root string) *target.Contract {
 	t.Helper()
 	contract, err := target.Seal(&target.Spec{
 		Semantics:    domaincontract.NewSemantics(),
-		InitialRoots: []target.InitialRootSpec{{Identity: root, Shape: target.BootShapeSpec{Aggregate: target.BootAggregateTable, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: root}}}},
-		InitialEntries: []target.InitialEntrySpec{
-			{Root: root, Key: targetStringKey("_G"), Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: root}, Mutability: target.InitialMutable},
-			{Root: root, Key: targetStringKey("__link_absent"), Value: target.InitialValueSpec{Kind: target.InitialValueAbsent}, Mutability: target.InitialMutable},
+		InitialRoots: []vocabulary.InitialRootSpec{{Identity: root, Shape: vocabulary.BootShapeSpec{Aggregate: vocabulary.BootAggregateTable, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: root}}}},
+		InitialEntries: []vocabulary.InitialEntrySpec{
+			{Root: root, Key: targetStringKey("_G"), Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: root}, Mutability: vocabulary.InitialMutable},
+			{Root: root, Key: targetStringKey("__link_absent"), Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueAbsent}, Mutability: vocabulary.InitialMutable},
 		},
-		InitialBindings: []target.InitialBindingSpec{{Name: "_G", Root: root, Key: targetStringKey("_G")}, {Name: "__link_absent", Root: root, Key: targetStringKey("__link_absent")}},
+		InitialBindings: []vocabulary.InitialBindingSpec{{Name: "_G", Root: root, Key: targetStringKey("_G")}, {Name: "__link_absent", Root: root, Key: targetStringKey("__link_absent")}},
 	})
 	if err != nil {
 		t.Fatal(err)

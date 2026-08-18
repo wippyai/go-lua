@@ -8,6 +8,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 func TestRegionPostfixCertificateRejectsExactRecomputeWithUnchangedInputs(t *testing.T) {
@@ -60,7 +61,7 @@ func TestReceiptRuntimeInstantiatesOnlyDemandedProducerGroups(t *testing.T) {
 		},
 	}
 	if binding == nil || !BindFactor(binding, factor, hotUintFactorSpec()) ||
-		!BindRule[uint64, uint64, ruleUnit](binding, rule, write, factor, ruleSpec) ||
+		!BindRule[uint64, uint64, ruleUnit](binding, rule, write, factor, ruleSpec, testRuleProjector[ruleUnit]) ||
 		!BindExactQuery(binding, query, factor, hotExactQuerySpec()) || !binding.Seal() {
 		t.Fatal("demanded producer binding")
 	}
@@ -121,18 +122,24 @@ func TestReceiptRuntimeInstantiatesOnlyDemandedProducerGroups(t *testing.T) {
 	if !committed || graph == nil {
 		t.Fatal("demanded producer commit")
 	}
-	compilation, compilationOK := BeginReceiptCompilation(implementation, graph)
-	queryReceipt, queryReceiptOK := graph.Query(receiptAssemblySemanticID(190))
+	compilation, compilationOK := BeginProgramConstruction(binding, graph)
+	_, queryReceiptOK := graph.Query(receiptAssemblySemanticID(190))
 	if !compilationOK || !queryReceiptOK {
 		t.Fatal("demanded producer compilation")
 	}
 	groupIndexes := make([]int, len(operands))
+	memberOperands := make(map[identity.ContentID]ruleUnit, len(operands))
 	for index, operandValue := range operands {
-		member, memberOK := graph.RuleMember(receiptAssemblySemanticID(byte(180 + index)))
-		if !memberOK {
+		memberOperands[receiptAssemblySemanticID(byte(180+index))] = operandValue
+	}
+	if !installMemberOperandResolver(implementation, memberOperands) {
+		t.Fatal("demanded producer resolver")
+	}
+	for index := range operands {
+		if _, memberOK := graph.RuleMember(receiptAssemblySemanticID(byte(180 + index))); !memberOK {
 			t.Fatal("demanded producer member")
 		}
-		if _, attached := AttachReceiptRuleMember(compilation, implementation, member, operandValue); !attached {
+		if attached := AttachRuleMember(compilation, implementation, receiptAssemblySemanticID(byte(180+index))); !attached {
 			t.Fatal("demanded producer attachment")
 		}
 		point, pointOK := graph.lookupPoint(receiptAssemblySemanticID(byte(170 + index)))
@@ -143,17 +150,23 @@ func TestReceiptRuntimeInstantiatesOnlyDemandedProducerGroups(t *testing.T) {
 		}
 		groupIndexes[index] = groupIndex
 	}
-	if !AttachReceiptExactQuery(compilation, queryImplementation, queryReceipt) {
+	if !AttachExactQuery(compilation, queryImplementation, receiptAssemblySemanticID(190)) {
 		t.Fatal("demanded producer query attachment")
 	}
-	solver, solverOK := compilation.Solver()
+	solver, _, solverOK := compilation.Seal()
 	if !solverOK || solver == nil || solver.runtime == nil {
 		t.Fatal("demanded producer solver")
 	}
 	active := solver.runtime.producers[groupIndexes[0]]
 	inactive := solver.runtime.producers[groupIndexes[1]]
-	if len(active.members) != 1 || active.plan == (carrier.ContributionPlan{}) || len(inactive.members) != 0 || inactive.plan != (carrier.ContributionPlan{}) || !inactive.group.Key().Available() {
-		t.Fatal("runtime producer instantiation did not follow exact demand")
+	if active.span.count() != 1 || active.plan == (carrier.ContributionPlan{}) || inactive.span.count() != 1 || inactive.plan == (carrier.ContributionPlan{}) || !inactive.group.Key().Available() {
+		t.Fatal("runtime did not retain the sealed producer descriptors")
+	}
+	// The undemanded Group stays inactive for this solve even though its complete
+	// descriptor is already sealed for a later demand revision.
+	inactiveSpan, inactiveSpanOK := solver.runtime.program.groupSpanAt(groupIndexes[1])
+	if !inactiveSpanOK || inactiveSpan.count() != 1 {
+		t.Fatal("the sealed program dropped the undemanded Group's member row")
 	}
 	state, status := solver.Solve(context.Background())
 	if status != SolveComplete || state == nil || runs[operands[0]] == 0 || runs[operands[1]] != 0 {

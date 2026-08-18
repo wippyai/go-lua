@@ -144,12 +144,6 @@ func (view Interfaces) Count() int {
 	return len(component.declarations.interfaces)
 }
 
-func (view Primitives) At(index int) (keyspace.Term, bool) {
-	return at(keyspace.FamilyTypePrimitive, index, view.Count())
-}
-func (view Literals) At(index int) (keyspace.Term, bool) {
-	return at(keyspace.FamilyTypeLiteral, index, view.Count())
-}
 func (view Optionals) At(index int) (keyspace.Term, bool) {
 	return at(keyspace.FamilyTypeOptional, index, view.Count())
 }
@@ -232,28 +226,28 @@ func (view References) Get(term keyspace.Term) (TypeRefResolution, keyspace.Term
 func (view References) SourceCount(term keyspace.Term) (int, bool) {
 	component := view.componentOf()
 	row, ok := typeRefRowAt(component, term)
-	return int(row.source.End - row.source.Start), ok
+	return row.source.len(), ok
 }
 func (view References) SourceAt(term keyspace.Term, index int) (keyspace.Key, bool) {
 	component := view.componentOf()
 	row, ok := typeRefRowAt(component, term)
-	if !ok || index < 0 || uint32(index) >= row.source.End-row.source.Start {
+	if !ok {
 		return 0, false
 	}
-	return component.references.source[row.source.Start+uint32(index)], true
+	return poolAt(component.references.source, row.source, index)
 }
 func (view References) CanonicalCount(term keyspace.Term) (int, bool) {
 	component := view.componentOf()
 	row, ok := typeRefRowAt(component, term)
-	return int(row.canonical.End - row.canonical.Start), ok
+	return row.canonical.len(), ok
 }
 func (view References) CanonicalAt(term keyspace.Term, index int) (keyspace.Key, bool) {
 	component := view.componentOf()
 	row, ok := typeRefRowAt(component, term)
-	if !ok || index < 0 || uint32(index) >= row.canonical.End-row.canonical.Start {
+	if !ok {
 		return 0, false
 	}
-	return component.references.canonical[row.canonical.Start+uint32(index)], true
+	return poolAt(component.references.canonical, row.canonical, index)
 }
 
 func (view Aliases) Get(term keyspace.Term) (keyspace.Term, keyspace.Term, keyspace.Key, source.Coordinate, bool) {
@@ -264,15 +258,15 @@ func (view Aliases) Get(term keyspace.Term) (keyspace.Term, keyspace.Term, keysp
 func (view Aliases) ParamCount(term keyspace.Term) (int, bool) {
 	component := view.componentOf()
 	row, ok := aliasRowAt(component, term)
-	return int(row.params.End - row.params.Start), ok
+	return row.params.len(), ok
 }
 func (view Aliases) ParamAt(term keyspace.Term, index int) (keyspace.Term, bool) {
 	component := view.componentOf()
 	row, ok := aliasRowAt(component, term)
-	if !ok || index < 0 || uint32(index) >= row.params.End-row.params.Start {
+	if !ok {
 		return 0, false
 	}
-	return component.declarations.aliasParams[row.params.Start+uint32(index)], true
+	return poolAt(component.declarations.aliasParams, row.params, index)
 }
 
 func (view TypeParams) Get(term keyspace.Term) (keyspace.Term, keyspace.Key, keyspace.Term, bool) {
@@ -289,28 +283,31 @@ func (view Interfaces) Get(term keyspace.Term) (keyspace.Term, keyspace.Key, sou
 func (view Interfaces) ExtendCount(term keyspace.Term) (int, bool) {
 	component := view.componentOf()
 	row, ok := interfaceRowAt(component, term)
-	return int(row.extends.End - row.extends.Start), ok
+	return row.extends.len(), ok
 }
 func (view Interfaces) ExtendAt(term keyspace.Term, index int) (keyspace.Term, bool) {
 	component := view.componentOf()
 	row, ok := interfaceRowAt(component, term)
-	if !ok || index < 0 || uint32(index) >= row.extends.End-row.extends.Start {
+	if !ok {
 		return 0, false
 	}
-	return component.declarations.interfaceRefs[row.extends.Start+uint32(index)], true
+	return poolAt(component.declarations.interfaceRefs, row.extends, index)
 }
 func (view Interfaces) MemberCount(term keyspace.Term) (int, bool) {
 	component := view.componentOf()
 	row, ok := interfaceRowAt(component, term)
-	return int(row.members.End - row.members.Start), ok
+	return row.members.len(), ok
 }
 func (view Interfaces) MemberAt(term keyspace.Term, index int) (InterfaceMember, bool) {
 	component := view.componentOf()
 	row, ok := interfaceRowAt(component, term)
-	if !ok || index < 0 || uint32(index) >= row.members.End-row.members.Start {
+	if !ok {
 		return InterfaceMember{}, false
 	}
-	member := component.declarations.members[row.members.Start+uint32(index)]
+	member, found := poolAt(component.declarations.members, row.members, index)
+	if !found {
+		return InterfaceMember{}, false
+	}
 	return InterfaceMember{Kind: member.kind, Field: member.field, Name: member.name, NameCoordinate: member.coordinate, Signature: member.signature}, true
 }
 
@@ -320,7 +317,7 @@ func (view Unions) MemberCount(term keyspace.Term) (int, bool) {
 		return 0, false
 	}
 	row := component.types.union[keyspace.TermOrdinal(term)-1]
-	return int(row.End - row.Start), true
+	return row.len(), true
 }
 func (view Intersections) MemberCount(term keyspace.Term) (int, bool) {
 	component := view.componentOf()
@@ -328,7 +325,7 @@ func (view Intersections) MemberCount(term keyspace.Term) (int, bool) {
 		return 0, false
 	}
 	row := component.types.intersection[keyspace.TermOrdinal(term)-1]
-	return int(row.End - row.Start), true
+	return row.len(), true
 }
 func (view Unions) MemberAt(term keyspace.Term, index int) (keyspace.Term, bool) {
 	component := view.componentOf()
@@ -336,10 +333,7 @@ func (view Unions) MemberAt(term keyspace.Term, index int) (keyspace.Term, bool)
 		return 0, false
 	}
 	row := component.types.union[keyspace.TermOrdinal(term)-1]
-	if uint32(index) >= row.End-row.Start {
-		return 0, false
-	}
-	return component.types.terms[row.Start+uint32(index)], true
+	return poolAt(component.types.terms, row, index)
 }
 func (view Intersections) MemberAt(term keyspace.Term, index int) (keyspace.Term, bool) {
 	component := view.componentOf()
@@ -347,36 +341,33 @@ func (view Intersections) MemberAt(term keyspace.Term, index int) (keyspace.Term
 		return 0, false
 	}
 	row := component.types.intersection[keyspace.TermOrdinal(term)-1]
-	if uint32(index) >= row.End-row.Start {
-		return 0, false
-	}
-	return component.types.terms[row.Start+uint32(index)], true
+	return poolAt(component.types.terms, row, index)
 }
 func (view Generics) Get(term keyspace.Term) (keyspace.Term, int, bool) {
 	component := view.componentOf()
 	row, ok := genericRowAt(component, term)
-	return row.base, int(row.args.End - row.args.Start), ok
+	return row.base, row.args.len(), ok
 }
 func (view Generics) ArgAt(term keyspace.Term, index int) (keyspace.Term, bool) {
 	component := view.componentOf()
 	row, ok := genericRowAt(component, term)
-	if !ok || index < 0 || uint32(index) >= row.args.End-row.args.Start {
+	if !ok {
 		return 0, false
 	}
-	return component.types.terms[row.args.Start+uint32(index)], true
+	return poolAt(component.types.terms, row.args, index)
 }
 func (view Records) Get(term keyspace.Term) (bool, int, bool) {
 	component := view.componentOf()
 	row, ok := recordRowAt(component, term)
-	return row.readOnly, int(row.fields.End - row.fields.Start), ok
+	return row.readOnly, row.fields.len(), ok
 }
 func (view Records) FieldAt(term keyspace.Term, index int) (keyspace.Term, bool) {
 	component := view.componentOf()
 	row, ok := recordRowAt(component, term)
-	if !ok || index < 0 || uint32(index) >= row.fields.End-row.fields.Start {
+	if !ok {
 		return 0, false
 	}
-	return component.types.fields[row.fields.Start+uint32(index)], true
+	return poolAt(component.types.fields, row.fields, index)
 }
 
 func primitiveRow(component *Component, term keyspace.Term) (Primitive, bool) {

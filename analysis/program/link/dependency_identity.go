@@ -4,14 +4,15 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"errors"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/internal/framing"
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
 	linkmodule "github.com/wippyai/go-lua/analysis/program/link/module"
 	linkstatic "github.com/wippyai/go-lua/analysis/program/link/static"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 // dependencyKind and dependencyRow are construction-local digest witnesses.
@@ -29,7 +30,7 @@ const (
 type dependencyRow struct {
 	kind      dependencyKind
 	id        identity.ContentID
-	operation target.Operation
+	operation vocabulary.Operation
 }
 
 // deriveDependencyRows builds the exact sorted dependency witness used by the
@@ -46,7 +47,7 @@ func deriveDependencyRows(boundary *linkboundary.Component, static linkstatic.Co
 
 	endpoints := boundary.Endpoints()
 	rows := make([]dependencyRow, 0, endpoints.Count()+static.SchemaContentCount()+1)
-	seenProvider := make(map[target.Operation]struct{}, endpoints.Count())
+	seenProvider := make(map[vocabulary.Operation]struct{}, endpoints.Count())
 	for index := 0; index < endpoints.Count(); index++ {
 		endpoint, endpointOK := endpoints.At(index)
 		operation, operationOK := endpoints.Operation(endpoint)
@@ -103,7 +104,7 @@ func validDependencyRow(contract *target.Contract, row dependencyRow) bool {
 	}
 }
 
-func validTargetOperation(contract *target.Contract, operation target.Operation) bool {
+func validTargetOperation(contract *target.Contract, operation vocabulary.Operation) bool {
 	if contract == nil || operation == 0 {
 		return false
 	}
@@ -130,7 +131,7 @@ func compareDependencyRow(left, right dependencyRow) int {
 	return 0
 }
 
-func providerDependencyID(targetID identity.ContentID, operation target.Operation) (id identity.ContentID) {
+func providerDependencyID(targetID identity.ContentID, operation vocabulary.Operation) (id identity.ContentID) {
 	if !targetID.Available() || operation == 0 {
 		return identity.ContentID{}
 	}

@@ -91,18 +91,68 @@ func (issuer MountedIssuer) ApplicationForOccurrence(id identity.ContentID) (ide
 	return application, applicationOK && application.Available()
 }
 
-func (rule *HotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, mountID, reusablePointID, occurrenceID identity.ContentID) bool {
-	if rule == nil || rule.owner == nil || rule.implementation == nil || assembly == nil {
-		return false
+// MountedAdmit is the sealed activation admission request. The construction
+// plane holds the assembly; this owner supplies only declaration-owned rows.
+func (rule *HotRule) MountedAdmit(mountID, reusablePointID, occurrenceID identity.ContentID) (engine.MountedActivationAdmit, bool) {
+	if rule == nil || rule.owner == nil || rule.implementation == nil {
+		return engine.MountedActivationAdmit{}, false
 	}
 	issuer, ok := rule.ForMount(mountID)
 	key, application, operandOK := issuer.occurrenceOperands(occurrenceID)
 	if !ok || !operandOK || rule.catalog == nil || !rule.catalog.valid() {
+		return engine.MountedActivationAdmit{}, false
+	}
+	capability, capabilityOK := rule.implementation.MountedCapability()
+	implementation, implementationOK := callowner.ResolveActivationRuleImplementationFor(rule.owner, rule.implementation)
+	if !capabilityOK || !implementationOK {
+		return engine.MountedActivationAdmit{}, false
+	}
+	if len(rule.catalog.rows) == 0 {
+		return engine.MountedActivationAdmit{
+			Implementation: implementation,
+			Capability:     capability,
+			Mount:          mountID,
+			Point:          reusablePointID,
+			Occurrence:     occurrenceID,
+		}, true
+	}
+	if rule.transport == nil {
+		return engine.MountedActivationAdmit{}, false
+	}
+	ref, refOK := rule.owner.Ref(key)
+	if !refOK {
+		return engine.MountedActivationAdmit{}, false
+	}
+	candidates := make([]engine.MountedActivationCandidate, len(rule.catalog.rows))
+	for index, row := range rule.catalog.rows {
+		candidates[index] = engine.MountedActivationCandidate{
+			Target: row.target, Endpoint: row.endpoint, Mount: row.moduleKey, Body: row.bodyPath,
+		}
+	}
+	return engine.MountedActivationAdmit{
+		Implementation: implementation,
+		Transport:      rule.transport,
+		Capability:     capability,
+		Mount:          mountID,
+		Point:          reusablePointID,
+		Occurrence:     occurrenceID,
+		Application:    application,
+		PlaceRead:  engine.ExactReadPlacer(ref),
+		Candidates: candidates,
+	}, true
+}
+
+// AttachMountedReceiptMember resolves and attaches one exact activation
+// member from the committed activation graph.
+func (rule *HotRule) AttachMountedReceiptMember(compilation *engine.ProgramConstruction, mountID, reusablePointID, occurrenceID identity.ContentID) bool {
+	if rule == nil || compilation == nil || rule.implementation == nil || rule.catalog == nil || !rule.catalog.valid() {
 		return false
 	}
-	// The reusable Program row remains in the artifact, but a Link with no
-	// mounted Program-body targets has no activation candidate or runtime work
-	// to instantiate. Exact occurrence ownership was still checked above.
+	issuer, issuerOK := rule.ForMount(mountID)
+	_, _, operandOK := issuer.occurrenceKey(occurrenceID)
+	if !issuerOK || !operandOK {
+		return false
+	}
 	if len(rule.catalog.rows) == 0 {
 		return true
 	}
@@ -110,73 +160,9 @@ func (rule *HotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, m
 	if !capabilityOK {
 		return false
 	}
-	occurrence, ok := assembly.AdmitMountedRuleOccurrence(capability, mountID, reusablePointID, occurrenceID)
-	if !ok {
-		return false
-	}
 	implementation, ok := callowner.ResolveActivationRuleImplementationFor(rule.owner, rule.implementation)
 	if !ok {
 		return false
 	}
-	transaction, ok := engine.BeginMountedActivationRuleAdmission(assembly, implementation, occurrence, [32]byte(occurrenceID))
-	if !ok {
-		return false
-	}
-	ref, ok := rule.owner.Ref(key)
-	if !ok || !engine.AddExactRead(transaction, ref) {
-		return false
-	}
-	return assembly.QueueMountedRuleFinalizer(capability, func() bool {
-		source, sourceOK := transaction.Seal()
-		if !sourceOK {
-			return false
-		}
-		draft, draftOK := implementation.BeginReceiptRuleRow(source)
-		readPart, readPartOK := implementation.ReceiptReadPart(source, 0)
-		if !draftOK || !readPartOK || !draft.AddRead(readPart) {
-			return false
-		}
-		if !assembly.AddActivationRuleFromDraft(occurrence, draft) {
-			return false
-		}
-		if rule.transport == nil || rule.catalog == nil || !rule.catalog.valid() {
-			return false
-		}
-		for index := range rule.catalog.rows {
-			row := rule.catalog.rows[index]
-			if !rule.transport.AddMountedActivationCandidate(assembly, occurrence, application, row.target, row.endpoint, row.moduleKey, row.bodyPath) {
-				return false
-			}
-		}
-		return rule.transport.CompleteMountedActivationCandidates(assembly, occurrence, application, uint64(len(rule.catalog.rows)))
-	})
-}
-
-// AttachMountedReceiptMember resolves and attaches one exact activation
-// member from the committed activation graph.
-func (rule *HotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, reusablePointID, occurrenceID identity.ContentID) (*engine.AttachedActivationReceiptMember, bool) {
-	if rule == nil || compilation == nil || graph == nil || rule.implementation == nil || rule.catalog == nil || !rule.catalog.valid() {
-		return nil, false
-	}
-	issuer, issuerOK := rule.ForMount(mountID)
-	_, _, operandOK := issuer.occurrenceKey(occurrenceID)
-	if !issuerOK || !operandOK {
-		return nil, false
-	}
-	if len(rule.catalog.rows) == 0 {
-		return nil, true
-	}
-	capability, capabilityOK := rule.implementation.MountedCapability()
-	if !capabilityOK {
-		return nil, false
-	}
-	member, ok := graph.MountedActivationMember(capability, mountID, reusablePointID, occurrenceID)
-	if !ok {
-		return nil, false
-	}
-	implementation, ok := callowner.ResolveActivationRuleImplementationFor(rule.owner, rule.implementation)
-	if !ok {
-		return nil, false
-	}
-	return engine.AttachReceiptActivationMember(compilation, implementation, member)
+	return engine.AttachMountedActivationMember(compilation, implementation, capability, mountID, reusablePointID, occurrenceID)
 }

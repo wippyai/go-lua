@@ -1,6 +1,7 @@
 package host
 
 import (
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
@@ -14,11 +15,11 @@ import (
 
 func hostFixture(t testing.TB) (*linkproject.Component, *linkboundary.Component, *linkmodule.Component) {
 	t.Helper()
-	closed := target.OperationSpec{Input: target.ValuesSpec{Tail: target.ValuesClosed}, Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}}, Effects: target.RowSpec{Tail: target.RowClosed}}
-	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []target.OperationSpec{
-		{Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"require"}}}, Input: closed.Input, Outcomes: closed.Outcomes, Effects: closed.Effects},
-		{Bindings: []target.BindingSpec{{Namespace: target.BindingProvider, Owner: []string{"law"}, Member: []string{"endpoint"}}}, Input: closed.Input, Outcomes: closed.Outcomes, Effects: closed.Effects},
-	}, InitialRoots: []target.InitialRootSpec{{Identity: "GlobalEnvRoot", Shape: target.BootShapeSpec{Aggregate: target.BootAggregateTable, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}}}}})
+	closed := vocabulary.OperationSpec{Input: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}, Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}}, Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed}}
+	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{
+		{Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"require"}}}, Input: closed.Input, Outcomes: closed.Outcomes, Effects: closed.Effects},
+		{Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingProvider, Owner: []string{"law"}, Member: []string{"endpoint"}}}, Input: closed.Input, Outcomes: closed.Outcomes, Effects: closed.Effects},
+	}, InitialRoots: []vocabulary.InitialRootSpec{{Identity: "GlobalEnvRoot", Shape: vocabulary.BootShapeSpec{Aggregate: vocabulary.BootAggregateTable, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "GlobalEnvRoot"}}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +114,7 @@ func TestContentExcludesUnobservedEndpointAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	contract := mustTarget(boundary)
-	endpointDraft, err := linkboundary.Build(linkboundary.Input{Project: project, Target: contract, EndpointRequests: []linkboundary.EndpointRequest{{Identity: "unobserved", Binding: target.BindingSpec{Namespace: target.BindingProvider, Owner: []string{"law"}, Member: []string{"endpoint"}}}}})
+	endpointDraft, err := linkboundary.Build(linkboundary.Input{Project: project, Target: contract, EndpointRequests: []linkboundary.EndpointRequest{{Identity: "unobserved", Binding: vocabulary.BindingSpec{Namespace: vocabulary.BindingProvider, Owner: []string{"law"}, Member: []string{"endpoint"}}}}})
 	if err != nil {
 		t.Fatal(err)
 	}

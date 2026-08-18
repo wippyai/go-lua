@@ -28,7 +28,7 @@ import (
 // file, made by whoever measured the better run, which is what makes the number
 // evidence rather than a moving average.
 //
-// Two lanes apply one judgment. The full lane walks all 911 fixtures and is the
+// Two lanes apply one judgment. The full lane walks all 912 fixtures and is the
 // authoritative mark: only a full run can be compared against a full-corpus
 // count. The sample lane walks a deterministic stride of the same enumeration
 // against its own separately recorded mark, so a fast gate still ratchets

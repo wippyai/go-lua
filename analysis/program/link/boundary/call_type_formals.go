@@ -2,15 +2,16 @@ package boundary
 
 import (
 	"crypto/sha256"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"hash"
 	"sync"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 // TypeFormalArguments is an ephemeral, owner-fenced proof that one ordinary
@@ -50,7 +51,7 @@ var typeFormalIDHasher = typeFormalIDScratch{hash: sha256.New()}
 // existing Project Call application. It fails closed for non-Call applications,
 // unavailable Target operations, mismatched static arity, or every constrained
 // Target type formal.
-func (v Calls) TypeFormalArguments(contract *target.Contract, application linkproject.Application, operation target.Operation) (TypeFormalArguments, bool) {
+func (v Calls) TypeFormalArguments(contract *target.Contract, application linkproject.Application, operation vocabulary.Operation) (TypeFormalArguments, bool) {
 	if v.component == nil || v.component.authority == nil || contract == nil || contract != v.component.authority.target {
 		return TypeFormalArguments{}, false
 	}
@@ -71,7 +72,7 @@ func (v Calls) TypeFormalArguments(contract *target.Contract, application linkpr
 		return TypeFormalArguments{}, false
 	}
 	for index := 0; index < count; index++ {
-		if _, constrained := contract.TypeFormalConstraint(operation, target.TypeFormal(index)); constrained {
+		if _, constrained := contract.TypeFormalConstraint(operation, vocabulary.TypeFormal(index)); constrained {
 			return TypeFormalArguments{}, false
 		}
 	}

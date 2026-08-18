@@ -14,7 +14,7 @@ import (
 
 // TestCanonicalFrozenCorpusNativeCensus is a bounded diagnostic shard of the
 // same frozen-corpus contract. It is not a fixture exception: every selected
-// project still requires AnalyzeComplete, and the full 911-row law remains
+// project still requires AnalyzeComplete, and the full 912-row law remains
 // authoritative below. Keeping the shard named lets architectural failures
 // converge without repeatedly spending the full-corpus safety budget.
 func TestCanonicalFrozenCorpusNativeCensus(t *testing.T) {

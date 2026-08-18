@@ -5,7 +5,10 @@ package engine
 import (
 	"sort"
 
+	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
+	demandpkg "github.com/wippyai/go-lua/analysis/engine/internal/demand"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
+	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
 )
 
@@ -173,7 +176,7 @@ func subtractAcceptedActivations(topology *equation.Topology, values, known []eq
 	return result, true
 }
 
-// installSelectedFactorOverlay publishes one prepared acyclic selected-edge
+// installSelectedFactorOverlay publishes one prepared selected-edge
 // delta into a settled running epoch. Every recoverable allocation and bounds
 // check occurs
 // in prepareSelectedFactorEpoch; the commit below has no fallible semantic
@@ -187,6 +190,9 @@ func (epoch *executorEpoch) installSelectedFactorOverlay(overlay *preparedSelect
 		return false
 	}
 	runtime := epoch.runtime
+	if overlay.execution == nil || overlay.executionDemand == nil || overlay.demandEpoch == nil || len(overlay.activePoints) != len(runtime.activePoints) {
+		return false
+	}
 	if overlay.grownFactorEdges != nil {
 		runtime.factorEdges = overlay.grownFactorEdges
 	} else if len(overlay.additions) != 0 {
@@ -205,19 +211,35 @@ func (epoch *executorEpoch) installSelectedFactorOverlay(overlay *preparedSelect
 	for _, row := range overlay.outgoingRows {
 		runtime.overlay.factorOutgoing[row.point] = row.edges
 	}
-	if overlay.execution != nil && overlay.execution.RegionCount() != 0 {
-		runtime.execution = overlay.execution
-		runtime.executionDemand = overlay.executionDemand
-		runtime.regions = overlay.regions
-		runtime.regionChildren = overlay.regionChildren
-		runtime.pointRegion = overlay.pointRegion
-		runtime.activeRegions = overlay.activeRegions
-		epoch.regions = prepared.regions
-		epoch.candidatesPending = prepared.candidatesPending
-		epoch.nested = prepared.nested
-		epoch.frames = prepared.frames
-		epoch.regionScratch = prepared.regionScratch
+	// Demand, schedule, recurrence rows, and newly selected dense state are
+	// one prepared semantic view. Existing PointState/producer rows are left
+	// untouched; only the activation records below fill previously inactive
+	// indexes.
+	if epoch.demand != nil {
+		epoch.demand.Discard()
 	}
+	epoch.demand = overlay.demandEpoch
+	runtime.points = overlay.executionDemand
+	runtime.execution = overlay.execution
+	runtime.executionDemand = overlay.executionDemand
+	runtime.activePoints = overlay.activePoints
+	runtime.regions = overlay.regions
+	runtime.regionChildren = overlay.regionChildren
+	runtime.pointRegion = overlay.pointRegion
+	runtime.activeRegions = overlay.activeRegions
+	for _, activation := range prepared.pointActivations {
+		epoch.points[activation.index] = activation.state
+		epoch.structuralDirty[activation.index] = true
+		epoch.structural.inputs[activation.index] = structuralInputEpoch{}
+	}
+	for _, activation := range prepared.producerActivations {
+		epoch.producers[activation.index] = activation.state
+	}
+	epoch.regions = prepared.regions
+	epoch.candidatesPending = prepared.candidatesPending
+	epoch.nested = prepared.nested
+	epoch.frames = prepared.frames
+	epoch.regionScratch = prepared.regionScratch
 	if overlay.dependencyChanged {
 		runtime.overlay.dependencyEdges = overlay.dependencyEdges
 		runtime.overlay.dependencyAt = overlay.dependencyAt
@@ -249,9 +271,6 @@ func epochSelectedOverlayInstallEligible(epoch *executorEpoch, overlay *prepared
 	if epoch == nil || overlay == nil || epoch.runtime == nil || epoch.work == nil || epoch.demand == nil || epoch.terminal.Load() != epochRunning || epoch.canceled() || epoch.queue.pending() || !epoch.demand.Live() || !runtimeSelectedOverlayEligible(epoch.runtime) {
 		return false
 	}
-	if len(epoch.regions) != 0 || len(epoch.runtime.regions) != 0 || len(epoch.runtime.activeRegions) != 0 || len(epoch.nested) != 0 {
-		return false
-	}
 	return overlay.matches(epoch.runtime)
 }
 
@@ -269,52 +288,115 @@ func (overlay *preparedSelectedFactorOverlay) matches(runtime *solverRuntime) bo
 }
 
 type preparedSelectedFactorEpoch struct {
-	postfixPending    []int
-	wakePoints        []int
-	regions           []regionEpoch
-	candidatesPending []uint64
-	nested            []int
-	frames            []pointWTOFrame
-	regionScratch     []int
+	postfixPending      []int
+	wakePoints          []int
+	pointActivations    []preparedPointActivation
+	producerActivations []preparedProducerActivation
+	regions             []regionEpoch
+	candidatesPending   []uint64
+	nested              []int
+	frames              []pointWTOFrame
+	regionScratch       []int
+}
+
+type preparedPointActivation struct {
+	index int
+	state carrier.PointState
+}
+
+type preparedProducerActivation struct {
+	index int
+	state producerEpoch
 }
 
 func (epoch *executorEpoch) prepareSelectedFactorEpoch(overlay *preparedSelectedFactorOverlay) (preparedSelectedFactorEpoch, bool) {
-	if epoch == nil || overlay == nil || epoch.runtime == nil || len(epoch.structural.inputs) != len(epoch.points) || len(epoch.structuralDirty) != len(epoch.points) || len(epoch.postfixDirty) != len(epoch.points) || len(epoch.queue.ready) != len(epoch.points) || epoch.postfixHead != len(epoch.postfixPending) || epoch.queue.count != 0 {
+	if epoch == nil || overlay == nil || epoch.runtime == nil || epoch.work == nil || epoch.demand == nil || !epoch.demand.Live() || len(epoch.structural.inputs) != len(epoch.points) || len(epoch.structuralDirty) != len(epoch.points) || len(epoch.postfixDirty) != len(epoch.points) || len(epoch.queue.ready) != len(epoch.points) || epoch.postfixHead != len(epoch.postfixPending) || epoch.queue.count != 0 || len(overlay.activePoints) != len(epoch.points) || len(epoch.runtime.activePoints) != len(epoch.points) || len(overlay.selectedPoints) == 0 {
 		return preparedSelectedFactorEpoch{}, false
 	}
+	pointActivations := make([]preparedPointActivation, 0)
+	producerActivations := make([]preparedProducerActivation, 0)
+	newPointSet := make(map[int]struct{})
+	newProducers := make(map[int]struct{})
+	producerActivationAt := make(map[int]producerEpoch)
+	for pointIndex, active := range overlay.activePoints {
+		if !active {
+			if epoch.runtime.activePoints[pointIndex] {
+				return preparedSelectedFactorEpoch{}, false
+			}
+			continue
+		}
+		if epoch.runtime.activePoints[pointIndex] {
+			if !epoch.work.OwnsPointState(epoch.points[pointIndex]) {
+				return preparedSelectedFactorEpoch{}, false
+			}
+			continue
+		}
+		point, pointOK := epoch.runtime.graph.PointAt(schedule.Node(pointIndex))
+		state, stateOK := preparedRuntimePointState(epoch, pointIndex, point)
+		if !pointOK || !stateOK {
+			return preparedSelectedFactorEpoch{}, false
+		}
+		pointActivations = append(pointActivations, preparedPointActivation{index: pointIndex, state: state})
+		newPointSet[pointIndex] = struct{}{}
+		for producerIndex := 0; producerIndex < epoch.runtime.graph.ProducerCount(point); producerIndex++ {
+			group, groupOK := epoch.runtime.graph.ProducerAt(point, producerIndex)
+			groupIndex, indexed := epoch.runtime.graph.GroupIndex(group)
+			if !groupOK || !indexed || groupIndex < 0 || groupIndex >= len(epoch.producers) || group.Output() != point {
+				return preparedSelectedFactorEpoch{}, false
+			}
+			if epoch.producers[groupIndex].generation != 0 {
+				return preparedSelectedFactorEpoch{}, false
+			}
+			if _, duplicate := newProducers[groupIndex]; duplicate {
+				return preparedSelectedFactorEpoch{}, false
+			}
+			metadata := epoch.runtime.producers[groupIndex]
+			inputCount := metadata.group.InputCount()
+			cache := producerEpoch{generation: 1, candidateTokens: make([]uint64, inputCount), scratchTokens: make([]uint64, inputCount), inputs: make([]carrier.PointState, inputCount), inputStates: make([]carrier.State, inputCount), patches: make([]carrier.Patch, 0, metadata.span.count()), patchRows: make([]contributionPatch, 0, metadata.span.count()), reads: make([]demandpkg.Observation, 0, len(metadata.reads))}
+			producerActivations = append(producerActivations, preparedProducerActivation{index: groupIndex, state: cache})
+			producerActivationAt[groupIndex] = cache
+			newProducers[groupIndex] = struct{}{}
+		}
+	}
 	for _, target := range overlay.targets {
-		if target < 0 || target >= len(epoch.points) || target >= len(epoch.runtime.activePoints) || !epoch.runtime.activePoints[target] || epoch.structuralDirty[target] || epoch.postfixDirty[target] || epoch.queue.ready[target] {
+		if target < 0 || target >= len(epoch.points) || !overlay.activePoints[target] {
+			return preparedSelectedFactorEpoch{}, false
+		}
+		if epoch.runtime.activePoints[target] && (epoch.structuralDirty[target] || epoch.postfixDirty[target] || epoch.queue.ready[target]) {
 			return preparedSelectedFactorEpoch{}, false
 		}
 	}
 	for _, addition := range overlay.additions {
 		edge := addition.edge
-		if edge.index < overlay.previousEdgeCount || edge.index >= overlay.previousEdgeCount+len(overlay.additions) || edge.source < 0 || edge.source >= len(epoch.points) || edge.target < 0 || edge.target >= len(epoch.points) || epoch.runtime.activePoints[edge.target] && !epoch.work.OwnsPointState(epoch.points[edge.source]) {
+		_, sourcePrepared := newPointSet[edge.source]
+		if edge.index < overlay.previousEdgeCount || edge.index >= overlay.previousEdgeCount+len(overlay.additions) || edge.source < 0 || edge.source >= len(epoch.points) || edge.target < 0 || edge.target >= len(epoch.points) || !overlay.activePoints[edge.target] || !epoch.runtime.activePoints[edge.source] && !sourcePrepared || epoch.runtime.activePoints[edge.source] && !epoch.work.OwnsPointState(epoch.points[edge.source]) {
 			return preparedSelectedFactorEpoch{}, false
 		}
 	}
 	for _, replacement := range overlay.replacements {
-		if replacement.index < 0 || replacement.index >= overlay.previousEdgeCount || replacement.edge.index != replacement.index || replacement.edge.source < 0 || replacement.edge.source >= len(epoch.points) || replacement.edge.target < 0 || replacement.edge.target >= len(epoch.points) || epoch.runtime.activePoints[replacement.edge.target] && !epoch.work.OwnsPointState(epoch.points[replacement.edge.source]) {
+		_, sourcePrepared := newPointSet[replacement.edge.source]
+		if replacement.index < 0 || replacement.index >= overlay.previousEdgeCount || replacement.edge.index != replacement.index || replacement.edge.source < 0 || replacement.edge.source >= len(epoch.points) || replacement.edge.target < 0 || replacement.edge.target >= len(epoch.points) || !overlay.activePoints[replacement.edge.target] || !epoch.runtime.activePoints[replacement.edge.source] && !sourcePrepared || epoch.runtime.activePoints[replacement.edge.source] && !epoch.work.OwnsPointState(epoch.points[replacement.edge.source]) {
 			return preparedSelectedFactorEpoch{}, false
 		}
 	}
 	wakePoints := append([]int(nil), overlay.targets...)
-	if overlay.execution != nil && overlay.execution.RegionCount() != 0 {
-		if len(epoch.regions) != 0 || len(epoch.runtime.regions) != 0 || epoch.runtime.execution != nil || epoch.runtime.executionDemand != nil || overlay.executionDemand == nil || len(overlay.regions) != overlay.execution.RegionCount() || len(overlay.activeRegions) != len(overlay.regions) {
-			return preparedSelectedFactorEpoch{}, false
-		}
-		for index, region := range overlay.regions {
-			if !overlay.activeRegions[index] {
-				if region.active {
-					return preparedSelectedFactorEpoch{}, false
-				}
-				continue
-			}
-			if !region.active || region.head < 0 || region.head >= len(epoch.points) {
+	for pointIndex := range pointActivations {
+		wakePoints = append(wakePoints, pointActivations[pointIndex].index)
+	}
+	if overlay.execution == nil || overlay.executionDemand == nil || len(overlay.regions) != overlay.execution.RegionCount() || len(overlay.activeRegions) != len(overlay.regions) || len(overlay.pointRegion) != len(epoch.points) {
+		return preparedSelectedFactorEpoch{}, false
+	}
+	for index, region := range overlay.regions {
+		if !overlay.activeRegions[index] {
+			if region.active {
 				return preparedSelectedFactorEpoch{}, false
 			}
-			wakePoints = append(wakePoints, region.head)
+			continue
 		}
+		if !region.active || region.head < 0 || region.head >= len(epoch.points) || !overlay.activePoints[region.head] {
+			return preparedSelectedFactorEpoch{}, false
+		}
+		wakePoints = append(wakePoints, region.head)
 	}
 	sort.Ints(wakePoints)
 	unique := wakePoints[:0]
@@ -325,40 +407,63 @@ func (epoch *executorEpoch) prepareSelectedFactorEpoch(overlay *preparedSelected
 	}
 	wakePoints = unique
 	for _, point := range wakePoints {
-		if point < 0 || point >= len(epoch.points) || point >= len(epoch.runtime.activePoints) || !epoch.runtime.activePoints[point] || epoch.structuralDirty[point] || epoch.postfixDirty[point] || epoch.queue.ready[point] {
+		if point < 0 || point >= len(epoch.points) || point >= len(overlay.activePoints) || !overlay.activePoints[point] {
+			return preparedSelectedFactorEpoch{}, false
+		}
+		if epoch.runtime.activePoints[point] && (epoch.structuralDirty[point] || epoch.postfixDirty[point] || epoch.queue.ready[point]) {
 			return preparedSelectedFactorEpoch{}, false
 		}
 	}
-	result := preparedSelectedFactorEpoch{postfixPending: append([]int(nil), wakePoints...), wakePoints: wakePoints}
-	if overlay.execution != nil && overlay.execution.RegionCount() != 0 {
-		result.regions = make([]regionEpoch, len(overlay.regions))
-		result.candidatesPending = make([]uint64, len(overlay.regions))
-		// The overlay is committed by direct assignment below, rather than by
-		// enqueuePoint. Seed nested exactly as those already-ready Points would
-		// have done after the candidate WTO became live. In particular, a Point
-		// in a child region contributes to each enclosing parent's nested count;
-		// otherwise the first takePoint would underflow that parent.
-		var nestedOK bool
-		result.nested, nestedOK = preparedSelectedOverlayNested(wakePoints, overlay.pointRegion, overlay.regions, overlay.activeRegions)
-		if !nestedOK {
-			return preparedSelectedFactorEpoch{}, false
+	result := preparedSelectedFactorEpoch{postfixPending: append([]int(nil), wakePoints...), wakePoints: wakePoints, pointActivations: pointActivations, producerActivations: producerActivations, regions: make([]regionEpoch, len(overlay.regions)), candidatesPending: make([]uint64, len(overlay.regions)), frames: make([]pointWTOFrame, 0, len(overlay.regions)), regionScratch: make([]int, 0, len(overlay.regions))}
+	var nestedOK bool
+	result.nested, nestedOK = preparedSelectedOverlayNested(wakePoints, overlay.pointRegion, overlay.regions, overlay.activeRegions)
+	if !nestedOK {
+		return preparedSelectedFactorEpoch{}, false
+	}
+	for index, region := range overlay.regions {
+		episode := &result.regions[index]
+		if !overlay.activeRegions[index] {
+			continue
 		}
-		result.frames = make([]pointWTOFrame, 0, len(overlay.regions))
-		result.regionScratch = make([]int, 0, len(overlay.regions))
-		for index, region := range overlay.regions {
-			episode := &result.regions[index]
-			episode.phase = phaseAscent
-			episode.episode = 1
-			episode.invalid = true
-			episode.interfaces = make([]uint64, len(region.faces))
-			episode.ingress = make([]uint64, len(region.external))
-			episode.backIngress = make([]uint64, len(region.back))
-			episode.environmentIngress = make([]uint64, len(region.environmentExternal))
-			episode.environmentBackIngress = make([]uint64, len(region.environmentBack))
-			episode.factorIngress = make([]uint64, len(region.factorExternal))
-			episode.factorBackIngress = make([]uint64, len(region.factorBack))
-			episode.snapshot = make([]uint64, len(region.points))
+		episode.phase = phaseAscent
+		episode.episode = 1
+		episode.invalid = true
+		episode.interfaces = make([]uint64, len(region.faces))
+		episode.ingress = make([]uint64, len(region.external))
+		episode.backIngress = make([]uint64, len(region.back))
+		episode.environmentIngress = make([]uint64, len(region.environmentExternal))
+		episode.environmentBackIngress = make([]uint64, len(region.environmentBack))
+		episode.factorIngress = make([]uint64, len(region.factorExternal))
+		episode.factorBackIngress = make([]uint64, len(region.factorBack))
+		episode.snapshot = make([]uint64, len(region.points))
+		var pending uint64
+		for _, pointIndex := range region.points {
+			if pointIndex < 0 || pointIndex >= len(epoch.points) || !overlay.activePoints[pointIndex] {
+				return preparedSelectedFactorEpoch{}, false
+			}
+			point, pointOK := epoch.runtime.graph.PointAt(schedule.Node(pointIndex))
+			if !pointOK {
+				return preparedSelectedFactorEpoch{}, false
+			}
+			for producerIndex := 0; producerIndex < epoch.runtime.graph.ProducerCount(point); producerIndex++ {
+				group, groupOK := epoch.runtime.graph.ProducerAt(point, producerIndex)
+				groupIndex, indexed := epoch.runtime.graph.GroupIndex(group)
+				if !groupOK || !indexed || groupIndex < 0 || groupIndex >= len(epoch.producers) {
+					return preparedSelectedFactorEpoch{}, false
+				}
+				cache := epoch.producers[groupIndex]
+				if activation, activated := producerActivationAt[groupIndex]; activated {
+					cache = activation
+				}
+				if cache.generation != cache.applied {
+					if pending == ^uint64(0) {
+						return preparedSelectedFactorEpoch{}, false
+					}
+					pending++
+				}
+			}
 		}
+		result.candidatesPending[index] = pending
 	}
 	nextCount := overlay.previousEdgeCount + len(overlay.additions)
 	if nextCount < overlay.previousEdgeCount {
@@ -367,7 +472,42 @@ func (epoch *executorEpoch) prepareSelectedFactorEpoch(overlay *preparedSelected
 	if !validPreparedFactorCSRRows(overlay.incomingRows, len(epoch.points), nextCount) || !validPreparedFactorCSRRows(overlay.outgoingRows, len(epoch.points), nextCount) {
 		return preparedSelectedFactorEpoch{}, false
 	}
+	demandEpoch, demandOK := epoch.demand.Widen(overlay.selectedPoints)
+	if !demandOK {
+		return preparedSelectedFactorEpoch{}, false
+	}
+	overlay.demandEpoch = demandEpoch
 	return result, true
+}
+
+func preparedRuntimePointState(epoch *executorEpoch, pointIndex int, point equation.Point) (carrier.PointState, bool) {
+	if epoch == nil || epoch.runtime == nil || epoch.work == nil || !point.Available() || pointIndex < 0 || pointIndex >= len(epoch.runtime.pointScopes) || pointIndex >= len(epoch.runtime.pointInitials) || !epoch.runtime.pointScopes[pointIndex].Valid() {
+		return carrier.PointState{}, false
+	}
+	feasible, ok := support.FromGuard(epoch.runtime.carrier.Guards(), epoch.runtime.carrier.Guards().False())
+	if !ok {
+		return carrier.PointState{}, false
+	}
+	if point.HasInit() {
+		feasible = epoch.runtime.pointInitials[pointIndex]
+		if !feasible.Valid() {
+			return carrier.PointState{}, false
+		}
+	}
+	state, initialized := carrier.NewState(epoch.runtime.carrier, epoch.runtime.pointScopes[pointIndex], feasible)
+	if !initialized {
+		return carrier.PointState{}, false
+	}
+	empty, paired := epoch.work.EmptyContribution(state)
+	if !paired {
+		return carrier.PointState{}, false
+	}
+	rule, paired := epoch.work.AsRuleContribution(empty)
+	if !paired {
+		return carrier.PointState{}, false
+	}
+	pointState, paired := epoch.work.PointStateFromRuleContribution(rule)
+	return pointState, paired
 }
 
 // preparedSelectedOverlayNested derives the exact parent readiness counters

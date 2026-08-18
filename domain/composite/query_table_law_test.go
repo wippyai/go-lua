@@ -52,6 +52,12 @@ func TestQueryTableSeals(t *testing.T) {
 		if !rowOK || !registrationOK || registration.Key() != entry.Key() {
 			t.Fatalf("query row %d is not the authored family %q", position, entry.Key())
 		}
+		if registration.Population() != query.PopulationSelectedPoint {
+			t.Fatalf("family %q is asked at %q", entry.Key(), registration.Population())
+		}
+		if registration.Projection() != query.ProjectionSummary && registration.Projection() != query.ProjectionExact {
+			t.Fatalf("family %q declares projection %q", entry.Key(), registration.Projection())
+		}
 		for index := 0; index < registration.SubjectCount(); index++ {
 			subject, subjectOK := registration.SubjectAt(index)
 			if !subjectOK {
@@ -60,6 +66,34 @@ func TestQueryTableSeals(t *testing.T) {
 			if _, declared := axes.ByID(schema.NewEntryID(schema.SurfaceKindAxis, subject)); !declared {
 				t.Fatalf("family %q reads axis %q, which is not declared", entry.Key(), subject)
 			}
+		}
+	}
+}
+
+// TestQueryIssuanceIsTheSealedInventory states that construction walks the
+// same families the table sealed, under the population and projection those
+// families declared.
+func TestQueryIssuanceIsTheSealedInventory(t *testing.T) {
+	roles, rolesOK := SemanticRoles()
+	registrations, registrationsOK := queryRegistrations(roles)
+	if !rolesOK || !registrationsOK {
+		t.Fatal("declared query identities did not resolve")
+	}
+	issued := QueryIssuance()
+	if len(issued) != len(registrations) {
+		t.Fatalf("issuance holds %d families for %d sealed rows", len(issued), len(registrations))
+	}
+	for index, registration := range registrations {
+		family := issued[index]
+		if family.Family != registration.Key() ||
+			family.Authority != registration.Key() ||
+			family.Population != registration.Population() ||
+			family.Projection != registration.Projection() {
+			t.Fatalf("issuance row %d is not sealed family %q", index, registration.Key())
+		}
+		position, resolved := queryPositionForFamily(family.Authority)
+		if !resolved || registry.queries[position].Key() != family.Family {
+			t.Fatalf("authority %q does not resolve to sealed family %q", family.Authority, family.Family)
 		}
 	}
 }
@@ -138,5 +172,58 @@ func TestWithdrawingAContributorRefusesTheFamily(t *testing.T) {
 	effect.Declare = nil
 	if _, admitted := query.New(effect, roles); admitted {
 		t.Fatal("effect-exact was admitted without the contributor that declares its slot")
+	}
+}
+
+// TestObservationProducersAreIssuedQueryFamilies states that every observation
+// row names a sealed query family as its producer and carries population,
+// geometry, and anchor. Observation does not invent a family construction
+// does not issue.
+func TestObservationProducersAreIssuedQueryFamilies(t *testing.T) {
+	roles, rolesOK := SemanticRoles()
+	queries, queriesOK := queryRegistrations(roles)
+	specs, specsOK := observationSpecs(queries)
+	if !rolesOK || !queriesOK || !specsOK {
+		t.Fatal("observation inventory did not derive from the sealed query families")
+	}
+	issued := make(map[schema.Key]bool, len(QueryIssuance()))
+	for _, family := range QueryIssuance() {
+		issued[family.Family] = true
+	}
+	if len(specs) == 0 {
+		t.Fatal("no observation rows were derived")
+	}
+	for _, spec := range specs {
+		if spec.Producer.Surface != schema.SurfaceKindQuery || !issued[spec.Producer.Key] {
+			t.Fatalf("observation %q names producer %q, which QueryIssuance does not issue", spec.Key, spec.Producer.Key)
+		}
+		if !spec.Population.Available() || !spec.Geometry.Available() || !spec.Anchor.Available() {
+			t.Fatalf("observation %q is missing population, geometry, or anchor", spec.Key)
+		}
+	}
+}
+
+// TestObservationIssuanceIsTheSealedInventory states that construction walks
+// the same observation rows the table sealed, under the producer those rows
+// declared.
+func TestObservationIssuanceIsTheSealedInventory(t *testing.T) {
+	roles, rolesOK := SemanticRoles()
+	queries, queriesOK := queryRegistrations(roles)
+	entries, entriesOK := observationEntries(queries)
+	if !rolesOK || !queriesOK || !entriesOK {
+		t.Fatal("observation inventory did not derive from the sealed query families")
+	}
+	issued := ObservationIssuance()
+	if len(issued) != len(entries) {
+		t.Fatalf("issuance holds %d observations for %d sealed rows", len(issued), len(entries))
+	}
+	for index, entry := range entries {
+		row := issued[index]
+		if row.Key != entry.Key() || row.Producer != entry.Producer().Key {
+			t.Fatalf("issuance row %d is not sealed observation %q", index, entry.Key())
+		}
+		if !row.Population.Available() || !row.Geometry.Available() || !row.Anchor.Available() {
+			t.Fatalf("issuance row %d is missing population, geometry, or anchor", index)
+		}
 	}
 }

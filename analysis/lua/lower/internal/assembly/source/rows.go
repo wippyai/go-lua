@@ -18,20 +18,22 @@ import (
 // Every slice returned by a read method is a copy suitable for the immediate
 // synchronous Source.Build transaction.
 type Rows struct {
-	nilLiterals []programsource.NilLiteral
-	bools       []programsource.BoolLiteral
-	integers    []programsource.IntegerLiteral
-	floats      []programsource.FloatLiteral
-	strings     []programsource.StringLiteral
-	bodies      []programsource.BodySource
-	binds       []programsource.BindCells
-	functions   []programsource.FunctionFormals
-	keys        []programsource.KeyInput
-	faults      []programsource.ControlFault
-	exact       []keyspace.LiteralValue
-	entry       keyspace.Term
-	filled      []bool
-	imports     []bool
+	nilLiterals       []programsource.NilLiteral
+	bools             []programsource.BoolLiteral
+	integers          []programsource.IntegerLiteral
+	floats            []programsource.FloatLiteral
+	strings           []programsource.StringLiteral
+	bodies            []programsource.BodySource
+	binds             []programsource.BindCells
+	functions         []programsource.FunctionFormals
+	cellSpellingNames []string
+	callSpellings     []programsource.CallSpelling
+	keys              []programsource.KeyInput
+	faults            []programsource.ControlFault
+	exact             []keyspace.LiteralValue
+	entry             keyspace.Term
+	filled            []bool
+	imports           []bool
 }
 
 // New reserves the Source-side fill markers for the pre-censused Import
@@ -129,6 +131,37 @@ func (r *Rows) AddFunction(function keyspace.Term, formals []keyspace.Term) {
 	if r != nil {
 		r.functions = append(r.functions, programsource.FunctionFormals{Function: function, Formals: append([]keyspace.Term(nil), formals...)})
 	}
+}
+
+// SetCellSpelling records the authored name for one already-minted Cell. The
+// dense backing column is extended by ordinal so Source receives one stable
+// row per Cell without a second symbol table.
+func (r *Rows) SetCellSpelling(cell keyspace.Term, name string) bool {
+	if r == nil || keyspace.TermFamily(cell) != keyspace.FamilyCell || keyspace.TermOrdinal(cell) == 0 {
+		return false
+	}
+	ordinal := int(keyspace.TermOrdinal(cell))
+	if ordinal > int(keyspace.MaxTermOrdinal) {
+		return false
+	}
+	if len(r.cellSpellingNames) < ordinal {
+		r.cellSpellingNames = append(r.cellSpellingNames, make([]string, ordinal-len(r.cellSpellingNames))...)
+	}
+	r.cellSpellingNames[ordinal-1] = string([]byte(name))
+	return true
+}
+
+// AddCallSpelling appends one sparse authored Call-name row in canonical Call
+// order. Dynamic/indexed calls have no row and never enter this method.
+func (r *Rows) AddCallSpelling(call keyspace.Term, name string) bool {
+	if r == nil || keyspace.TermFamily(call) != keyspace.FamilyCall || keyspace.TermOrdinal(call) == 0 || name == "" {
+		return false
+	}
+	if n := len(r.callSpellings); n > 0 && r.callSpellings[n-1].Call >= call {
+		return false
+	}
+	r.callSpellings = append(r.callSpellings, programsource.CallSpelling{Call: call, Name: string([]byte(name))})
+	return true
 }
 
 func (r *Rows) AddKey(key programsource.KeyInput) {
@@ -305,9 +338,9 @@ func (r *Rows) ExactLiteral(term keyspace.Term) (keyspace.LiteralValue, bool) {
 	return keyspace.LiteralValue{}, false
 }
 
-func (r *Rows) cloneRows() (nilRows []programsource.NilLiteral, boolRows []programsource.BoolLiteral, integerRows []programsource.IntegerLiteral, floatRows []programsource.FloatLiteral, stringRows []programsource.StringLiteral, bodyRows []programsource.BodySource, bindRows []programsource.BindCells, functionRows []programsource.FunctionFormals, keyRows []programsource.KeyInput, faultRows []programsource.ControlFault, exactRows []keyspace.LiteralValue) {
+func (r *Rows) cloneRows() (nilRows []programsource.NilLiteral, boolRows []programsource.BoolLiteral, integerRows []programsource.IntegerLiteral, floatRows []programsource.FloatLiteral, stringRows []programsource.StringLiteral, bodyRows []programsource.BodySource, bindRows []programsource.BindCells, functionRows []programsource.FunctionFormals, cellSpellingRows []programsource.CellSpelling, callSpellingRows []programsource.CallSpelling, keyRows []programsource.KeyInput, faultRows []programsource.ControlFault, exactRows []keyspace.LiteralValue) {
 	if r == nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil
+		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil
 	}
 	return append([]programsource.NilLiteral(nil), r.nilLiterals...),
 		append([]programsource.BoolLiteral(nil), r.bools...),
@@ -315,9 +348,24 @@ func (r *Rows) cloneRows() (nilRows []programsource.NilLiteral, boolRows []progr
 		append([]programsource.FloatLiteral(nil), r.floats...),
 		append([]programsource.StringLiteral(nil), r.strings...),
 		cloneBodyRows(r.bodies), cloneBindRows(r.binds), cloneFunctionRows(r.functions),
+		cloneCellSpellingRows(r.cellSpellingNames), append([]programsource.CallSpelling(nil), r.callSpellings...),
 		append([]programsource.KeyInput(nil), r.keys...),
 		append([]programsource.ControlFault(nil), r.faults...),
 		append([]keyspace.LiteralValue(nil), r.exact...)
+}
+
+func cloneCellSpellingRows(names []string) []programsource.CellSpelling {
+	if len(names) == 0 {
+		return nil
+	}
+	rows := make([]programsource.CellSpelling, len(names))
+	for index, name := range names {
+		rows[index] = programsource.CellSpelling{
+			Cell: keyspace.MakeTerm(keyspace.FamilyCell, uint32(index+1)),
+			Name: string([]byte(name)),
+		}
+	}
+	return rows
 }
 
 func cloneBodyRows(rows []programsource.BodySource) []programsource.BodySource {
@@ -384,6 +432,16 @@ func (r *Rows) Materialize(name string, spans [keyspace.FamilyCount][]programsou
 			return programsource.Input{}, 0, fmt.Errorf("program/lower/collector: Source %s row count %d disagrees with census %d", pair.name, pair.got, counts[pair.family])
 		}
 	}
+	if len(r.cellSpellingNames) != 0 && len(r.cellSpellingNames) != int(counts[keyspace.FamilyCell]) {
+		return programsource.Input{}, 0, fmt.Errorf("program/lower/collector: Source Cell spelling rows %d disagree with census %d", len(r.cellSpellingNames), counts[keyspace.FamilyCell])
+	}
+	var previousCall keyspace.Term
+	for _, row := range r.callSpellings {
+		if keyspace.TermFamily(row.Call) != keyspace.FamilyCall || keyspace.TermOrdinal(row.Call) == 0 || keyspace.TermOrdinal(row.Call) > counts[keyspace.FamilyCall] || row.Name == "" || previousCall >= row.Call {
+			return programsource.Input{}, 0, errors.New("program/lower/collector: invalid Source Call spelling row")
+		}
+		previousCall = row.Call
+	}
 	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
 		if len(spans[family]) != int(counts[family]) {
 			return programsource.Input{}, 0, fmt.Errorf("program/lower/collector: Source %v span count %d disagrees with census %d", family, len(spans[family]), counts[family])
@@ -394,7 +452,7 @@ func (r *Rows) Materialize(name string, spans [keyspace.FamilyCount][]programsou
 			return programsource.Input{}, 0, errors.New("program/lower/collector: unfilled Body")
 		}
 	}
-	nilRows, boolRows, integerRows, floatRows, stringRows, bodyRows, bindRows, functionRows, keyRows, faultRows, exactRows := r.cloneRows()
+	nilRows, boolRows, integerRows, floatRows, stringRows, bodyRows, bindRows, functionRows, cellSpellingRows, callSpellingRows, keyRows, faultRows, exactRows := r.cloneRows()
 	families := make([]programsource.FamilySpans, int(keyspace.FamilyCount-1))
 	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
 		families[family-1] = programsource.FamilySpans{Family: family, Spans: append([]programsource.Span(nil), spans[family]...)}
@@ -403,6 +461,7 @@ func (r *Rows) Materialize(name string, spans [keyspace.FamilyCount][]programsou
 		Name: name, Families: families, Nil: nilRows, Bool: boolRows,
 		Integer: integerRows, Float: floatRows, String: stringRows,
 		Bodies: bodyRows, Binds: bindRows, Functions: functionRows,
+		CellSpellings: cellSpellingRows, CallSpellings: callSpellingRows,
 		Keys: keyRows, Faults: faultRows, ExactAtoms: exactRows,
 	}, r.entry, nil
 }

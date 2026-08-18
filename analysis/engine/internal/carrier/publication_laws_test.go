@@ -116,6 +116,9 @@ func (adversarialWork) OverlayPointRHSUnder(RootHandle, RootHandle, support.Mask
 func (adversarialWork) LessOrEqContributionUnder(RootHandle, RootHandle, support.Mask, support.Mask, SlotCoverage, SlotCoverage) (bool, bool) {
 	return false, false
 }
+func (adversarialWork) AscentOrderedContributionUnder(RootHandle, RootHandle, support.Mask, support.Mask, SlotCoverage, SlotCoverage) (bool, bool) {
+	return false, false
+}
 func (adversarialWork) ContributionClosedUnder(RootHandle, support.Mask, SlotCoverage) bool {
 	return true
 }

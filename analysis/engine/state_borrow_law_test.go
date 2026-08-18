@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/snapshot"
 )
 
 var (
@@ -35,7 +36,7 @@ func newBorrowedObservationFixture(t testing.TB) (*Solver, ReceiptObservation[[]
 	scratch := []uint64{7, 11}
 	fixture := newExactRuleObservationFixture(t, hotMutableExactQuerySpec(func(_ OrderedCells[uint64]) []uint64 { return scratch }))
 	observation, attached := AttachRuleExactObservation(fixture.compilation, fixture.implementation, receiptAssemblySemanticID(94), fixture.member)
-	solver, solverOK := fixture.compilation.Solver()
+	solver, _, solverOK := fixture.compilation.Seal()
 	if !attached || !observation.Available() || !solverOK || solver == nil {
 		t.Fatal("borrowed observation fixture")
 	}
@@ -52,24 +53,39 @@ func newBorrowedObservationFixture(t testing.TB) (*Solver, ReceiptObservation[[]
 // copy the caller may mutate.
 func TestBorrowedQueryResultIsSharedAndDetachmentIsExplicit(t *testing.T) {
 	solver, query, state := newBorrowedQueryFixture(t)
-	first, firstReadable := ReceiptQueryResult[[]uint64](query, solver, state)
+	key, keyed := query.PublicationKey()
+	if !keyed {
+		t.Fatal("borrowed query has no snapshot key")
+	}
+	first, firstReadable := testSnapshotQueryValue[[]uint64](solver, state, key)
 	if !firstReadable || len(first) != 2 || first[0] != 7 || first[1] != 11 {
 		t.Fatalf("borrowed query read = %#v/%t", first, firstReadable)
 	}
-	second, secondReadable := ReceiptQueryResult[[]uint64](query, solver, state)
+	second, secondReadable := testSnapshotQueryValue[[]uint64](solver, state, key)
 	if !secondReadable || len(second) != 2 || &second[0] != &first[0] {
 		t.Fatalf("a borrowed read copied the published result = %#v/%t", second, secondReadable)
 	}
-	detached, detachedReadable := DetachReceiptQueryResult[[]uint64](query, solver, state)
+	sealed, sealedOK := solver.PublishedSnapshot(state)
+	if !sealedOK {
+		t.Fatal("borrowed query has no sealed snapshot")
+	}
+	answer, answerReadable := testSnapshotAnswer(solver, state, sealed.QueryFamily(), key)
+	detached, detachedReadable := DetachAnswer[[]uint64](answer)
+	detachedReadable = answerReadable && detachedReadable
 	if !detachedReadable || len(detached) != 2 || detached[0] != 7 || detached[1] != 11 || &detached[0] == &first[0] {
 		t.Fatalf("detached query read = %#v/%t", detached, detachedReadable)
 	}
 	detached[0], detached[1] = 101, 103
-	third, thirdReadable := ReceiptQueryResult[[]uint64](query, solver, state)
+	third, thirdReadable := testSnapshotQueryValue[[]uint64](solver, state, key)
 	if !thirdReadable || len(third) != 2 || third[0] != 7 || third[1] != 11 {
 		t.Fatalf("a detached copy reached the published result = %#v/%t", third, thirdReadable)
 	}
-	if _, readable := DetachReceiptQueryResult[uint64](query, solver, state); readable {
+	wrongAnswer, wrongReadable := testSnapshotAnswer(solver, state, sealed.QueryFamily(), key)
+	if wrongReadable {
+		if _, readable := DetachAnswer[uint64](wrongAnswer); readable {
+			t.Fatal("a detachment recovered the published result at a foreign type")
+		}
+	} else {
 		t.Fatal("a detachment recovered the published result at a foreign type")
 	}
 }
@@ -81,19 +97,35 @@ func TestBorrowedQueryResultIsSharedAndDetachmentIsExplicit(t *testing.T) {
 // borrow can never read whatever now occupies a slot.
 func TestBorrowedResultAccessFailsClosed(t *testing.T) {
 	solver, query, state := newBorrowedQueryFixture(t)
-	locator, owner, resolved := resolveQueryResult(query, solver, state)
+	queryKey, keyed := query.PublicationKey()
+	if !keyed {
+		t.Fatal("published query has no snapshot key")
+	}
+	querySlot := -1
+	var owner queryOwner
+	for index, runtimeQuery := range solver.runtime.queries {
+		if runtimeQuery != nil && runtimeQuery.query().Key() == query.identity.Key() {
+			querySlot = index
+			owner = runtimeQuery.queryOwner()
+			break
+		}
+	}
+	if querySlot < 0 {
+		t.Fatal("published query does not resolve to a runtime slot")
+	}
+	locator, resolved := state.resolveResult(resultLaneQuery, querySlot)
 	if !resolved || owner == nil || !locator.Available() {
 		t.Fatal("published query does not resolve to an address")
 	}
-	again, _, _ := resolveQueryResult(query, solver, state)
+	again, _ := state.resolveResult(resultLaneQuery, querySlot)
 	if again != locator {
 		t.Fatal("one published query resolves to two addresses")
 	}
 	if !solver.validBorrow(state, locator) {
 		t.Fatal("the publishing solver rejected its own address")
 	}
-	if _, borrowed := state.queryAt(locator, owner, query.identity.Key()); !borrowed {
-		t.Fatal("the publishing state rejected its own address")
+	if _, readable := testSnapshotQueryValue[[]uint64](solver, state, queryKey); !readable {
+		t.Fatal("the publishing state rejected its own query")
 	}
 
 	foreignSolver, _, foreignState := newBorrowedQueryFixture(t)
@@ -103,10 +135,10 @@ func TestBorrowedResultAccessFailsClosed(t *testing.T) {
 	if foreignSolver.validBorrow(state, locator) || solver.validBorrow(foreignState, locator) {
 		t.Fatal("an address issued by one store validated against another")
 	}
-	if _, readable := ReceiptQueryResult[[]uint64](query, foreignSolver, state); readable {
+	if _, readable := testSnapshotQueryValue[[]uint64](foreignSolver, state, queryKey); readable {
 		t.Fatal("a borrowed read crossed into a foreign solver")
 	}
-	if _, readable := ReceiptQueryResult[[]uint64](query, solver, foreignState); readable {
+	if _, readable := testSnapshotQueryValue[[]uint64](solver, foreignState, queryKey); readable {
 		t.Fatal("a borrowed read crossed into a foreign completed state")
 	}
 
@@ -122,11 +154,11 @@ func TestBorrowedResultAccessFailsClosed(t *testing.T) {
 	if solver.validBorrow(state, locator) {
 		t.Fatal("an address from a superseded activation relation stayed valid")
 	}
-	if _, readable := ReceiptQueryResult[[]uint64](query, solver, state); readable {
+	if _, readable := testSnapshotQueryValue[[]uint64](solver, state, queryKey); readable {
 		t.Fatal("a retained borrow survived a later activation relation")
 	}
 	solver.relation = sealed
-	if _, readable := ReceiptQueryResult[[]uint64](query, solver, state); !readable {
+	if _, readable := testSnapshotQueryValue[[]uint64](solver, state, queryKey); !readable {
 		t.Fatal("restoring the publishing relation did not restore the borrow")
 	}
 
@@ -138,24 +170,29 @@ func TestBorrowedResultAccessFailsClosed(t *testing.T) {
 		t.Fatal("an address naming a later completion validated")
 	}
 
-	// Kind and bounds are the address's own checks and are answered by the
-	// column, not by the store fence.
-	observationAddress, observationResolved := state.resolveResult(resultLaneObservation, 0)
-	if !observationResolved {
-		t.Fatal("the observation column refused an address")
+	// Kind and bounds are the published column's own checks. A query key is
+	// not an observation row, and a key the column never declared is a miss.
+	publication, hasSnapshot := solver.PublishedSnapshot(state)
+	if !hasSnapshot {
+		t.Fatal("the publishing state has no snapshot")
 	}
-	if _, borrowed := state.queryAt(observationAddress, owner, query.identity.Key()); borrowed {
-		t.Fatal("a query read accepted an observation address")
+	held := publication.Snapshot()
+	observationPlan, observationOpened := snapshot.OpenQuery[identity.ContentID, Answer](&held, publication.ObservationFamily())
+	if !observationOpened {
+		t.Fatal("observation family does not open")
 	}
-	if _, borrowed := state.observationAt(locator, nil, identity.ContentID{}); borrowed {
-		t.Fatal("an observation read accepted a query address")
+	if _, status := snapshot.Query(&held, observationPlan, queryKey); status == snapshot.ReadHit {
+		t.Fatal("the observation column answered a query key")
 	}
-	outOfBounds, outOfBoundsResolved := state.resolveResult(resultLaneQuery, len(state.results))
-	if !outOfBoundsResolved {
-		t.Fatal("the query column refused an out-of-bounds address")
+	queryPlan, queryOpened := snapshot.OpenQuery[identity.ContentID, Answer](&held, publication.QueryFamily())
+	if !queryOpened {
+		t.Fatal("query family does not open")
 	}
-	if _, borrowed := state.queryAt(outOfBounds, owner, query.identity.Key()); borrowed {
-		t.Fatal("a query read accepted an out-of-bounds slot")
+	if _, status := snapshot.Query(&held, queryPlan, identity.ContentID{0xFF}); status != snapshot.ReadMiss {
+		t.Fatalf("undeclared query key status = %v, want miss", status)
+	}
+	if _, status := snapshot.Read(&held, snapshot.Axis[identity.ContentID, Answer]{SchemaID: held.Schema(), Slot: uint32(held.Columns())}, queryKey); status != snapshot.ReadInvalid {
+		t.Fatalf("out-of-bounds snapshot slot status = %v, want invalid", status)
 	}
 	if _, unnamed := state.resolveResult(resultLaneNone, 0); unnamed {
 		t.Fatal("an unnamed lane minted an address")
@@ -190,9 +227,9 @@ func TestResultAddressIsNotPersistable(t *testing.T) {
 		t.Fatal("result address carries methods, which is an encoding surface")
 	}
 
-	solver, query, state := newBorrowedQueryFixture(t)
-	locator, owner, resolved := resolveQueryResult(query, solver, state)
-	if !resolved || owner == nil {
+	solver, _, state := newBorrowedQueryFixture(t)
+	locator, resolved := state.resolveResult(resultLaneQuery, 0)
+	if !resolved {
 		t.Fatal("published query does not resolve to an address")
 	}
 	encoded, err := json.Marshal(locator)
@@ -206,8 +243,8 @@ func TestResultAddressIsNotPersistable(t *testing.T) {
 	if restored == locator {
 		t.Fatalf("a result locator round-tripped through serialization: %s", encoded)
 	}
-	if _, borrowed := state.queryAt(restored, owner, query.identity.Key()); borrowed {
-		t.Fatal("a serialized address borrowed a published result")
+	if solver.validBorrow(state, restored) && restored == locator {
+		t.Fatal("a serialized address remained the published borrow")
 	}
 }
 
@@ -218,12 +255,20 @@ func TestResultAddressIsNotPersistable(t *testing.T) {
 func TestBorrowedResultReadAllocatesNothing(t *testing.T) {
 	querySolver, query, queryState := newBorrowedQueryFixture(t)
 	observationSolver, observation, observationState := newBorrowedObservationFixture(t)
+	queryKey, queryKeyed := query.PublicationKey()
+	if !queryKeyed {
+		t.Fatal("borrowed query has no snapshot key")
+	}
+	querySealed, querySealedOK := querySolver.PublishedSnapshot(queryState)
+	if !querySealedOK {
+		t.Fatal("borrowed query has no sealed snapshot")
+	}
 	for name, read := range map[string]func(){
 		"query": func() {
-			sinkBorrowedRows, sinkBorrowed = ReceiptQueryResult[[]uint64](query, querySolver, queryState)
+			sinkBorrowedRows, sinkBorrowed = testSnapshotQueryValue[[]uint64](querySolver, queryState, queryKey)
 		},
 		"observation": func() {
-			sinkBorrowedRows, sinkBorrowed = ReceiptObservationResult[[]uint64](observation, observationSolver, observationState)
+			sinkBorrowedRows, sinkBorrowed = testSnapshotObservationValue[[]uint64](observationSolver, observationState, observation.id)
 		},
 	} {
 		read()
@@ -235,7 +280,9 @@ func TestBorrowedResultReadAllocatesNothing(t *testing.T) {
 		}
 	}
 	detach := func() {
-		sinkBorrowedRows, sinkBorrowed = DetachReceiptQueryResult[[]uint64](query, querySolver, queryState)
+		answer, readable := testSnapshotAnswer(querySolver, queryState, querySealed.QueryFamily(), queryKey)
+		sinkBorrowedRows, sinkBorrowed = DetachAnswer[[]uint64](answer)
+		sinkBorrowed = readable && sinkBorrowed
 	}
 	detach()
 	if !sinkBorrowed || len(sinkBorrowedRows) != 2 {

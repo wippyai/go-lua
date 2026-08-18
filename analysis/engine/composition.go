@@ -162,12 +162,12 @@ func (schema *Schema) ruleWriteShapeAt(rule, write uint64) (coldcomposition.Rule
 	return schema.cold.RuleWriteShapeAt(rule, write)
 }
 
-// Solver is the receipt-native runtime owner. Its compiler is initialized by
-// receipt compilation and never retains a cold declaration Composition.
+// Solver is the runtime owner of one sealed program. Activation revisions
+// publish structural overlays over that immutable program; they never rebuild
+// its factors, members, queries, observations, or carrier.
 type Solver struct {
-	mu       sync.Mutex
-	runtime  *solverRuntime
-	compiler solverCompiler
+	mu      sync.Mutex
+	runtime *solverRuntime
 	// store is this Solver's live store identity. It is issued once at
 	// compilation and never reused, so every address a completed State hands out
 	// names exactly this Solver and is meaningless in any other.
@@ -181,4 +181,7 @@ type Solver struct {
 	// different lifetime than relation: several completions may be published
 	// within one activation relation.
 	completion identity.Generation
+	// lastSolved is the last sealed generation this store published. A later
+	// completion derives a NewDelta from it instead of resealing every column.
+	lastSolved SolvedSnapshot
 }

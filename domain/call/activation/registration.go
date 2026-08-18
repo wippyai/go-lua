@@ -39,6 +39,7 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *SchemaFra
 	return rule.Spec[P, A, *SchemaFragment, *HotRule]{
 		Key:    "call-activation",
 		Writes: "call",
+		Owner:  "call",
 		Issues: []rule.Issuance{
 			{Occurrence: "occurrence/call-activation", Form: "issuance/call-stage", Input: "input/finish", Stage: "stage/call-summary"},
 		},
@@ -75,12 +76,8 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *SchemaFra
 		Finalize: func(context rule.Finalization[A, *HotRule]) bool {
 			return context.Rule.SealOccurrenceReceipts()
 		},
-		Attach: func(context rule.Attach[*HotRule]) bool {
-			return context.Rule.AttachMountedOccurrence(context.Assembly, context.Mount, context.Point, context.Occurrence)
-		},
 		Member: func(context rule.Member[*HotRule]) bool {
-			_, ok := context.Rule.AttachMountedReceiptMember(context.Compilation, context.Graph, context.Mount, context.Point, context.Occurrence)
-			return ok
+			return context.Rule.AttachMountedReceiptMember(context.Compilation, context.Mount, context.Point, context.Occurrence)
 		},
 	}
 }

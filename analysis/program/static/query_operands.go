@@ -95,8 +95,7 @@ func (view Annotations) ForCount(target keyspace.Term) (int, bool) {
 	if index < 0 {
 		return 0, true
 	}
-	range_ := component.operands.annotationRanges[index]
-	return int(range_.End - range_.Start), true
+	return component.operands.annotationRanges[index].len(), true
 }
 func (view Annotations) ForAt(target keyspace.Term, index int) (keyspace.Term, bool) {
 	component := view.componentOf()
@@ -107,11 +106,7 @@ func (view Annotations) ForAt(target keyspace.Term, index int) (keyspace.Term, b
 	if position < 0 {
 		return 0, false
 	}
-	range_ := component.operands.annotationRanges[position]
-	if uint32(index) >= range_.End-range_.Start {
-		return 0, false
-	}
-	return component.operands.annotationTerms[range_.Start+uint32(index)], true
+	return poolAt(component.operands.annotationTerms, component.operands.annotationRanges[position], index)
 }
 
 func annotationTargetIndex(targets []keyspace.Term, target keyspace.Term) int {

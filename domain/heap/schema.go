@@ -3,18 +3,17 @@ package heap
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
-	"github.com/wippyai/go-lua/analysis/program/flow"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
 	linkhost "github.com/wippyai/go-lua/analysis/program/link/host"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"github.com/wippyai/go-lua/domain/materialization"
 	"github.com/wippyai/go-lua/domain/runtimekind"
@@ -403,13 +402,53 @@ const (
 	AllocationClosure
 )
 
+// AllocationForm is the sealed constructor geometry of one Heap allocation
+// root. The ordinals are the occurrence Code the artifact compiler writes for
+// allocation rows.
+type AllocationForm uint8
+
+const (
+	AllocationFormInvalid AllocationForm = iota
+	AllocationFormEmpty
+	AllocationFormClosed
+	AllocationFormFinalOpen
+)
+
+func (form AllocationForm) Valid() bool {
+	return form >= AllocationFormEmpty && form <= AllocationFormFinalOpen
+}
+
+func sealedAllocationKind(role programartifact.AllocationRole) (AllocationKind, bool) {
+	switch role {
+	case programartifact.AllocationTable:
+		return AllocationTable, true
+	case programartifact.AllocationClosure:
+		return AllocationClosure, true
+	default:
+		return AllocationInvalid, false
+	}
+}
+
+func sealedAllocationForm(form programartifact.AllocationForm) (AllocationForm, bool) {
+	switch form {
+	case programartifact.AllocationFormEmpty:
+		return AllocationFormEmpty, true
+	case programartifact.AllocationFormClosed:
+		return AllocationFormClosed, true
+	case programartifact.AllocationFormFinalOpen:
+		return AllocationFormFinalOpen, true
+	default:
+		return AllocationFormInvalid, false
+	}
+}
+
 type allocationSource struct {
 	// module is the compact mounted-artifact identity.  A module key is
 	// deliberately mount-local: duplicate mounts of one Program therefore
 	// remain distinct without retaining the Link Project Shard authority.
 	module       identity.ContentID
 	kind         AllocationKind
-	form         flow.AllocationForm
+	form         AllocationForm
 	programID    identity.ContentID
 	allocationID identity.ContentID
 	artifactRow  uint32
@@ -480,23 +519,23 @@ type payloadRow struct {
 	module   identity.ContentID
 	valuesID identity.ContentID
 	index    uint32
-	initial  target.InitialValue
+	initial  vocabulary.InitialValue
 }
 
 type bootEntryRow struct {
 	raw        RawPresence
 	payload    uint32
-	initial    target.InitialValue
-	kind       target.InitialValueKind
+	initial    vocabulary.InitialValue
+	kind       vocabulary.InitialValueKind
 	valueChild uint32
-	mutability target.InitialMutability
+	mutability vocabulary.InitialMutability
 }
 
 // metatableRouteRow is the sealed bootstrap projection of an existing Link
 // primitive attachment. Mutable table attachment remains ordinary Heap state
 // and never mutates this cold ledger.
 type metatableRouteRow struct {
-	primitive target.InitialValueKind
+	primitive vocabulary.InitialValueKind
 	metatable uint32
 	role      materialization.Role
 }
@@ -770,16 +809,12 @@ func (owner *heapBuilder) addArtifactAllocations(mounts map[identity.ContentID]A
 			if !allocationOK || !rootOK || !rootIDOK || allocation.ID() == (identity.ContentID{}) || uint64(index) >= uint64(^uint32(0)) {
 				return false
 			}
-			kind := AllocationInvalid
-			switch allocation.Role() {
-			case flow.AllocationTable:
-				kind = AllocationTable
-			case flow.AllocationClosure:
-				kind = AllocationClosure
-			default:
+			kind, kindOK := sealedAllocationKind(allocation.Role())
+			form, formOK := sealedAllocationForm(allocation.Form())
+			if !kindOK || !formOK {
 				return false
 			}
-			owner.roots = append(owner.roots, rootRow{kind: RootAllocation, allocation: allocationSource{module: mount.module, kind: kind, form: allocation.Form(), programID: mount.programID, allocationID: allocation.ID(), artifactRow: uint32(index + 1), rootValueID: rootID}})
+			owner.roots = append(owner.roots, rootRow{kind: RootAllocation, allocation: allocationSource{module: mount.module, kind: kind, form: form, programID: mount.programID, allocationID: allocation.ID(), artifactRow: uint32(index + 1), rootValueID: rootID}})
 			rootIndex := uint32(len(owner.roots))
 			if kind != AllocationTable {
 				continue
@@ -1164,20 +1199,20 @@ func (owner *heapBuilder) addBootEntries() bool {
 	}
 	type entryRow struct {
 		literal    keyspace.LiteralValue
-		value      target.InitialValue
-		kind       target.InitialValueKind
-		mutability target.InitialMutability
+		value      vocabulary.InitialValue
+		kind       vocabulary.InitialValueKind
+		mutability vocabulary.InitialMutability
 	}
-	entries := make(map[target.InitialRoot][]entryRow)
+	entries := make(map[vocabulary.InitialRoot][]entryRow)
 	for index := 0; index < contract.InitialEntryCount(); index++ {
 		entryRoot, exact, initialValue, mutability, entryOK := contract.InitialEntryAt(index)
-		if !entryOK || initialValue == 0 || (mutability != target.InitialMutable && mutability != target.InitialFrozen) {
+		if !entryOK || initialValue == 0 || (mutability != vocabulary.InitialMutable && mutability != vocabulary.InitialFrozen) {
 			return false
 		}
 		kind, valid := contract.InitialValueKind(initialValue)
 		key, keyOK := owner.sealProject().Keys().ForTarget(contract, exact)
 		literal, literalOK := owner.sealProject().Keys().Exact(key)
-		if !valid || kind == target.InitialValueInvalid || !keyOK || !literalOK {
+		if !valid || kind == vocabulary.InitialValueInvalid || !keyOK || !literalOK {
 			return false
 		}
 		entries[entryRoot] = append(entries[entryRoot], entryRow{literal: literal, value: initialValue, kind: kind, mutability: mutability})
@@ -1214,7 +1249,7 @@ func (owner *heapBuilder) addBootEntries() bool {
 					return false
 				}
 				row.raw, row.payload, row.initial = RawPresent, payload, entry.value
-				if entry.kind == target.InitialValueRoot {
+				if entry.kind == vocabulary.InitialValueRoot {
 					initialRoot, rootValue := contract.InitialValueRoot(entry.value)
 					child, found := owner.sealHost().BootRoots().For(actor, initialRoot)
 					childIDRaw, childIDOK := owner.sealHost().BootRoots().ID(child)
@@ -1226,7 +1261,7 @@ func (owner *heapBuilder) addBootEntries() bool {
 				}
 			}
 			rootSlot := rootSlot{root: virtualRoot, slot: slot}
-			if owner.bootEntries[rootSlot].mutability != target.InitialMutabilityInvalid {
+			if owner.bootEntries[rootSlot].mutability != vocabulary.InitialMutabilityInvalid {
 				return false
 			}
 			owner.bootEntries[rootSlot] = row
@@ -1246,17 +1281,17 @@ func (owner *heapBuilder) addBootEntries() bool {
 // retains the Nil/Absent distinction for contract consumers, but neither is a
 // raw stored table value in Lua. An unclassified Target value cannot silently
 // become a Heap fact: sealing rejects it until its raw-storage law is named.
-func initialValueRawPresence(kind target.InitialValueKind) (RawPresence, bool) {
+func initialValueRawPresence(kind vocabulary.InitialValueKind) (RawPresence, bool) {
 	switch kind {
-	case target.InitialValueNil, target.InitialValueAbsent:
+	case vocabulary.InitialValueNil, vocabulary.InitialValueAbsent:
 		return RawAbsent, true
-	case target.InitialValueBoolean,
-		target.InitialValueInteger,
-		target.InitialValueFloat,
-		target.InitialValueString,
-		target.InitialValueRoot,
-		target.InitialValueOperation,
-		target.InitialValueDeniedOperation:
+	case vocabulary.InitialValueBoolean,
+		vocabulary.InitialValueInteger,
+		vocabulary.InitialValueFloat,
+		vocabulary.InitialValueString,
+		vocabulary.InitialValueRoot,
+		vocabulary.InitialValueOperation,
+		vocabulary.InitialValueDeniedOperation:
 		return RawPresent, true
 	default:
 		return RawInvalid, false
@@ -1280,7 +1315,7 @@ func (owner *heapBuilder) addBootMetatableRoutes() bool {
 		base, metatable, mapped := owner.sealHost().Attachments().Mapping(attachment)
 		metatableIDRaw, metatableIDOK := owner.sealHost().BootRoots().ID(metatable)
 		metatableID := owner.bootIndex[metatableIDRaw]
-		if !mapped || !metatableIDOK || base == target.InitialValueInvalid || metatableID == 0 || uint64(len(owner.metatableRoutes)) >= uint64(^uint32(0)) {
+		if !mapped || !metatableIDOK || base == vocabulary.InitialValueInvalid || metatableID == 0 || uint64(len(owner.metatableRoutes)) >= uint64(^uint32(0)) {
 			return false
 		}
 		owner.metatableRoutes = append(owner.metatableRoutes, metatableRouteRow{
@@ -1380,7 +1415,7 @@ func (owner *heapBuilder) addPayload(row payloadRow) uint32 {
 		if !ok || contract == nil {
 			return 0
 		}
-		if kind, valid := contract.InitialValueKind(row.initial); !valid || kind == target.InitialValueInvalid {
+		if kind, valid := contract.InitialValueKind(row.initial); !valid || kind == vocabulary.InitialValueInvalid {
 			return 0
 		}
 	default:
@@ -1540,7 +1575,8 @@ func (owner *heapBuilder) sealOccurrenceInverses() bool {
 			return false
 		}
 		allocation, allocationOK := mount.Artifact().HeapAllocationAt(int(row.allocation.artifactRow - 1))
-		if !allocationOK || allocation.ID() != row.allocation.allocationID || allocation.Form() != row.allocation.form {
+		sealed, sealedOK := sealedAllocationForm(allocation.Form())
+		if !allocationOK || allocation.ID() != row.allocation.allocationID || !sealedOK || sealed != row.allocation.form {
 			return false
 		}
 		occurrence := programAllocationOccurrence{module: row.allocation.module, allocationID: row.allocation.allocationID}
@@ -2002,13 +2038,13 @@ func (schema Schema) AllocationRootValueID(key Key) (identity.ContentID, bool) {
 // existing Program allocation root.  Consumers that only need the source
 // disposition must use this row projection rather than rescanning artifact
 // fields to classify the root again.
-func (schema Schema) AllocationFormForKey(key Key) (flow.AllocationForm, bool) {
+func (schema Schema) AllocationFormForKey(key Key) (AllocationForm, bool) {
 	if !schema.valid() || !schema.OwnsKey(key) || key.Kind() != RootAllocation {
-		return flow.AllocationFormInvalid, false
+		return AllocationFormInvalid, false
 	}
 	row, ok := schema.owner.rootAt(key.slot)
 	if !ok || row.kind != RootAllocation || !row.allocation.form.Valid() {
-		return flow.AllocationFormInvalid, false
+		return AllocationFormInvalid, false
 	}
 	return row.allocation.form, true
 }
@@ -2183,7 +2219,8 @@ func (schema Schema) ArtifactAllocationForKey(key Key) (programartifact.HeapAllo
 		return programartifact.HeapAllocationRow{}, false
 	}
 	allocation, allocationOK := artifact.HeapAllocationAt(int(root.allocation.artifactRow - 1))
-	if !allocationOK || allocation.ID() != receipt.allocationID || allocation.Form() != root.allocation.form || allocation.Role() == flow.AllocationInvalid {
+	sealed, sealedOK := sealedAllocationForm(allocation.Form())
+	if !allocationOK || allocation.ID() != receipt.allocationID || !sealedOK || sealed != root.allocation.form || !allocation.Role().Valid() {
 		return programartifact.HeapAllocationRow{}, false
 	}
 	return allocation, true
@@ -2487,12 +2524,12 @@ func (entry BootEntry) Projection() (RawPresence, Payload, bool) {
 
 // Mutability returns the immutable Target policy for this entry. It is not a
 // current Heap frozen-state conclusion.
-func (entry BootEntry) Mutability() (target.InitialMutability, bool) {
+func (entry BootEntry) Mutability() (vocabulary.InitialMutability, bool) {
 	if !entry.valid() {
-		return target.InitialMutabilityInvalid, false
+		return vocabulary.InitialMutabilityInvalid, false
 	}
 	row := entry.owner.bootEntries[rootSlot{root: entry.root, slot: entry.slot}]
-	return row.mutability, row.mutability == target.InitialMutable || row.mutability == target.InitialFrozen
+	return row.mutability, row.mutability == vocabulary.InitialMutable || row.mutability == vocabulary.InitialFrozen
 }
 
 // Reference makes one exact Link structural-root/role operand available to a
@@ -2541,18 +2578,18 @@ func (entry BootEntry) ValueContainment() (Containment, bool) {
 	}
 	schema := Schema{owner: entry.owner}
 	switch row.kind {
-	case target.InitialValueRoot:
+	case vocabulary.InitialValueRoot:
 		child, childOK := entry.ValueChild()
 		if !childOK {
 			return Containment{}, false
 		}
 		return schema.ContainmentExact(child)
-	case target.InitialValueOperation, target.InitialValueDeniedOperation:
+	case vocabulary.InitialValueOperation, vocabulary.InitialValueDeniedOperation:
 		if row.valueChild != 0 {
 			return Containment{}, false
 		}
 		return schema.ContainmentUnknown()
-	case target.InitialValueBoolean, target.InitialValueInteger, target.InitialValueFloat, target.InitialValueString:
+	case vocabulary.InitialValueBoolean, vocabulary.InitialValueInteger, vocabulary.InitialValueFloat, vocabulary.InitialValueString:
 		if row.valueChild != 0 {
 			return Containment{}, false
 		}

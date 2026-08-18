@@ -3,11 +3,11 @@ package call
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
-	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
 type targetKind uint8
@@ -84,7 +84,7 @@ type targetRow struct {
 	functionContext identity.ContentID
 	bodyContext     identity.ContentID
 	body            bodyReceipt
-	seedOperation   target.Operation
+	seedOperation   vocabulary.Operation
 	seedFormalID    identity.ContentID
 	seedKind        uint8
 }

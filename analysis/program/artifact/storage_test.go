@@ -55,8 +55,8 @@ return move
 		}
 		required[kind] = true
 		placements := 0
-		for ruleIndex := 0; ruleIndex < artifact.RuleOccurrenceCount(programartifact.RuleRoleValueStorageTransfer); ruleIndex++ {
-			rule, ruleOK := artifact.RuleOccurrenceAt(programartifact.RuleRoleValueStorageTransfer, ruleIndex)
+		for ruleIndex := 0; ruleIndex < artifact.RulePlacementCountForKey("value-transfer"); ruleIndex++ {
+			rule, ruleOK := artifact.RulePlacementForKeyAt("value-transfer", ruleIndex)
 			if !ruleOK || rule.ID() != occurrence.ID() {
 				continue
 			}

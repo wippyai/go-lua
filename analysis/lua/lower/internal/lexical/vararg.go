@@ -48,7 +48,7 @@ func (b *Bodies) Vararg(span source.Span) (keyspace.Term, error) {
 		if b.collector == nil || b.collector.Entry() != entry {
 			return 0, fmt.Errorf("lualower: chunk vararg requires the entry Body")
 		}
-		cell := b.collector.Cell(span, entry)
+		cell := b.collector.Cell(span, entry, "...")
 		if cell == 0 {
 			return 0, fmt.Errorf("lualower: could not create chunk vararg Cell")
 		}

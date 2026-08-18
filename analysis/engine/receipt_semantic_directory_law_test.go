@@ -131,7 +131,7 @@ func TestReceiptAssemblySemanticDirectoryDuplicateZeroAndForeignFailTerminally(t
 func TestReceiptAssemblySemanticQueryDirectoryUsesExactParentReceipt(t *testing.T) {
 	schema, factor, rule, write, query := receiptExactQuerySchemaFixture(t)
 	binding := NewSchemaBinding(schema)
-	if !BindFactor(binding, factor, hotUintFactorSpec()) || !BindRule[uint64, uint64, ruleUnit](binding, rule, write, factor, receiptExactQueryRuleSpec()) || !BindExactQuery(binding, query, factor, hotExactQuerySpec()) || !binding.Seal() {
+	if !BindFactor(binding, factor, hotUintFactorSpec()) || !BindRule[uint64, uint64, ruleUnit](binding, rule, write, factor, receiptExactQueryRuleSpec(), testRuleProjector[ruleUnit]) || !BindExactQuery(binding, query, factor, hotExactQuerySpec()) || !binding.Seal() {
 		t.Fatal("semantic Query binding")
 	}
 	ruleImplementation, ruleOK := RuleImplementationAt[uint64, uint64, ruleUnit](binding, rule)

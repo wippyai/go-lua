@@ -116,12 +116,12 @@ func encodeContract(w *framing.Writer, c *Contract) error {
 			return err
 		}
 	}
-	protocols := c.ProtocolCount()
+	protocols := c.protocolCount()
 	if err := w.Count(uint64(protocols)); err != nil {
 		return err
 	}
 	for index := 0; index < protocols; index++ {
-		protocol, ok := c.ProtocolAt(index)
+		protocol, ok := c.protocolAt(index)
 		if !ok {
 			return errors.New("target: malformed protocol table")
 		}

@@ -16,6 +16,7 @@ const (
 	sourceArtifactRecordLiterals
 	sourceArtifactRecordOrder
 	sourceArtifactRecordKeys
+	sourceArtifactRecordSpellings
 )
 
 // WriteArtifactSection writes only the Source-authored payload. The caller
@@ -105,6 +106,12 @@ func ReadArtifactSection(reader *framing.Reader) (Input, error) {
 	if err := preflightSourceKeys(&probe, counts, faultOwners); err != nil {
 		return Input{}, err
 	}
+	if err := sourceRecord(&probe, sourceArtifactRecordSpellings); err != nil {
+		return Input{}, err
+	}
+	if err := preflightSourceSpellings(&probe, counts); err != nil {
+		return Input{}, err
+	}
 
 	// The copied-reader proof above is complete. Only now may the real pass
 	// copy the filename and allocate the Input-owned authored collections.
@@ -139,6 +146,12 @@ func ReadArtifactSection(reader *framing.Reader) (Input, error) {
 		return Input{}, err
 	}
 	if err := readSourceKeys(reader, &input, counts, faultOwners); err != nil {
+		return Input{}, err
+	}
+	if err := sourceRecord(reader, sourceArtifactRecordSpellings); err != nil {
+		return Input{}, err
+	}
+	if err := readSourceSpellings(reader, &input, counts); err != nil {
 		return Input{}, err
 	}
 	return input, nil

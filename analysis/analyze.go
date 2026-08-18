@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/link"
+	"github.com/wippyai/go-lua/analysis/snapshot"
 	"github.com/wippyai/go-lua/domain/composite"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
@@ -49,7 +50,8 @@ type Plan struct {
 
 type compiledState struct {
 	artifacts            *compiledArtifactSet
-	resultReceipt        *artifactResultReceipt
+	coordinates          []compiledValueCoordinate
+	observations         []compiledObservation
 	receipt              composite.Compilation
 	binding              *composite.ProgramBinding
 	graph                *engine.ReceiptGraph
@@ -61,7 +63,7 @@ type compiledState struct {
 	runtimeDetail        receiptAssemblyDiagnostic
 	ordinaryOnce         sync.Once
 	ordinary             *engine.Solver
-	ordinaryObservations []artifactDiagnosticObservationReceipt
+	ordinaryObservations []artifactDiagnosticObservationPublication
 	ordinaryOK           bool
 	lifecycleMu          sync.Mutex
 	lifecycleCond        *sync.Cond
@@ -154,13 +156,12 @@ func CompileWithDiagnostics(source *link.Link) (*Plan, CompileStatus, AnalyzeDia
 		diagnostics.failCurrentPhase()
 		return nil, CompileUnsupported, diagnostics
 	}
-	resultReceipt, resultReceiptOK := compileArtifactResultReceipt(source.ContentID(), artifacts.mounts, values, diagnosticObservations)
-	if !resultReceiptOK {
-		diagnostics.ItemIssuance = AnalyzeDiagnosticItemIssuanceFailureResultReceipt
+	if _, resultOK := projectArtifactResult(source.ContentID(), artifacts.mounts, values, diagnosticObservations); !resultOK {
+		diagnostics.ItemIssuance = AnalyzeDiagnosticItemIssuanceFailureResultGeometry
 		diagnostics.failCurrentPhase()
 		return nil, CompileUnsupported, diagnostics
 	}
-	state := &compiledState{artifacts: artifacts, resultReceipt: resultReceipt, receipt: receipt, sourceID: source.ContentID()}
+	state := &compiledState{artifacts: artifacts, coordinates: values, observations: diagnosticObservations, receipt: receipt, sourceID: source.ContentID()}
 	state.lifecycleCond = sync.NewCond(&state.lifecycleMu)
 	diagnostics.enter(AnalyzeDiagnosticPhaseTopology)
 	if !state.admit() {
@@ -253,7 +254,7 @@ func (plan *Plan) solveWithPolicy(ctx context.Context, options engine.SolveDiagn
 	diagnostics.ReceiptStage = AnalyzeDiagnosticReceiptStageRuntime
 	var solver *engine.Solver
 	var queryPlan *artifactQueryPlan
-	var diagnosticObservations []artifactDiagnosticObservationReceipt
+	var diagnosticObservations []artifactDiagnosticObservationPublication
 	var compiled bool
 	if reuseOrdinary && policy == nil && options == (engine.SolveDiagnosticOptions{}) {
 		solver, diagnosticObservations, compiled = state.ordinaryRuntimeSolver()
@@ -262,6 +263,10 @@ func (plan *Plan) solveWithPolicy(ctx context.Context, options engine.SolveDiagn
 		solver, queryPlan, diagnosticObservations, diagnostics.ObservationAttach, compiled = state.buildRuntimeSolver(policy)
 	}
 	if !compiled || solver == nil || queryPlan == nil {
+		// Runtime binding ends at either the observation attach path or the
+		// program constructor. The constructor names its own boundary, so a
+		// construction refusal localizes past the generic runtime stage.
+		diagnostics.enterConstruction(diagnostics.ObservationAttach)
 		diagnostics.fail(AnalyzeDiagnosticReasonEngineIncomplete)
 		return nil, nil, AnalyzeIncomplete, diagnostics
 	}
@@ -297,7 +302,21 @@ func (plan *Plan) solveWithPolicy(ctx context.Context, options engine.SolveDiagn
 	}
 	diagnostics.enter(AnalyzeDiagnosticPhaseObservation)
 	diagnostics.enter(AnalyzeDiagnosticPhaseDetach)
-	projection, detached := detachArtifactResult(state.resultReceipt, binding.ValueSchema(), policy, queryPlan, diagnosticObservations, graph, solver, stateResult, artifactResultProjectionReceipts{})
+	queryPublications, queriesPublished := queryPlan.Publications(graph)
+	sealed, snapshotPublished := solver.PublishedSnapshot(stateResult)
+	published := sealed.Snapshot()
+	queryRead, queryOpened := snapshot.OpenQuery[identity.ContentID, engine.Answer](&published, sealed.QueryFamily())
+	observationRead, observationOpened := snapshot.OpenQuery[identity.ContentID, engine.Answer](&published, sealed.ObservationFamily())
+	if !queriesPublished || !snapshotPublished || !queryOpened || !observationOpened {
+		diagnostics.fail(AnalyzeDiagnosticReasonDetach)
+		return nil, nil, AnalyzeIncomplete, diagnostics
+	}
+	geometry, geometryOK := state.resultGeometry()
+	if !geometryOK {
+		diagnostics.fail(AnalyzeDiagnosticReasonDetach)
+		return nil, nil, AnalyzeIncomplete, diagnostics
+	}
+	projection, detached := detachArtifactResult(geometry, state.artifacts.mounts, binding.ValueSchema(), policy, queryPublications, diagnosticObservations, &published, queryRead, observationRead)
 	if !detached || projection == nil || projection.result == nil {
 		diagnostics.fail(AnalyzeDiagnosticReasonDetach)
 		return nil, nil, AnalyzeIncomplete, diagnostics
@@ -306,12 +325,12 @@ func (plan *Plan) solveWithPolicy(ctx context.Context, options engine.SolveDiagn
 	return projection.result, projection.report, AnalyzeComplete, diagnostics
 }
 
-// ordinaryRuntimeSolver owns the single receipt compilation used by ordinary
+// ordinaryRuntimeSolver owns the single program construction used by ordinary
 // Plan.Solve calls. Construction is independent of the caller context, so a
 // canceled first call cannot poison the immutable compiler or prevent a later
 // caller from completing it. Solver itself serializes execution and publishes
 // exactly one completed State per accepted runtime revision.
-func (state *compiledState) ordinaryRuntimeSolver() (*engine.Solver, []artifactDiagnosticObservationReceipt, bool) {
+func (state *compiledState) ordinaryRuntimeSolver() (*engine.Solver, []artifactDiagnosticObservationPublication, bool) {
 	if state == nil {
 		return nil, nil, false
 	}
@@ -328,7 +347,7 @@ func (state *compiledState) ordinaryRuntimeSolver() (*engine.Solver, []artifactD
 	return state.ordinary, state.ordinaryObservations, state.ordinaryOK
 }
 
-// Runtime attach phases run in this order against one receipt compilation.
+// Runtime attach phases run in this order against one program construction.
 // The ordinal names the phase inside the engine's compile-family site
 // identity, so an incomplete runtime binding reports which phase rejected.
 const (
@@ -341,34 +360,43 @@ const (
 // buildRuntimeSolver is the sole runtime binding path. Ordinary solves retain
 // its result through ordinaryRuntimeSolver; diagnostic-policy solves invoke it
 // afresh because their observation inventory is explicitly flag-controlled.
-func (state *compiledState) buildRuntimeSolver(policy *DiagnosticPolicy) (*engine.Solver, *artifactQueryPlan, []artifactDiagnosticObservationReceipt, engine.SolveFailure, bool) {
-	if state == nil || state.binding == nil || state.binding.SchemaBinding() == nil || state.graph == nil || state.queryPlan == nil || state.artifacts == nil || state.resultReceipt == nil {
+func (state *compiledState) buildRuntimeSolver(policy *DiagnosticPolicy) (*engine.Solver, *artifactQueryPlan, []artifactDiagnosticObservationPublication, engine.SolveFailure, bool) {
+	if state == nil || state.binding == nil || state.binding.SchemaBinding() == nil || state.graph == nil || state.queryPlan == nil || state.artifacts == nil {
+		return nil, nil, nil, engine.SolveFailure{}, false
+	}
+	geometry, geometryOK := state.resultGeometry()
+	if !geometryOK {
 		return nil, nil, nil, engine.SolveFailure{}, false
 	}
 	binding, graph, queryPlan := state.binding, state.graph, state.queryPlan
-	compilation, compiled := engine.BeginReceiptTopologyCompilation(binding.SchemaBinding(), graph)
+	compilation, compiled := engine.BeginProgramConstruction(binding.SchemaBinding(), graph)
 	if !compiled || compilation == nil {
 		return nil, nil, nil, engine.SolveFailure{}, false
 	}
-	valueIDs, heapIDs, _, witnessOK := linkBootstrapWitness(state, binding)
+	_, _, _, witnessOK := linkBootstrapWitness(state, binding)
 	if !witnessOK {
 		return nil, nil, nil, engine.ReceiptCompilationAttachFailure(runtimeAttachPhaseWitness), false
 	}
-	if !attachLinkBootstrapMembers(binding, compilation, graph, valueIDs, heapIDs) {
+	if !attachLinkBootstrapMembers(binding, compilation) {
 		return nil, nil, nil, engine.ReceiptCompilationAttachFailure(runtimeAttachPhaseBootstrapMembers), false
 	}
-	if !attachArtifactRuleMembers(binding, compilation, graph, state.artifacts.mounts) {
+	if !attachArtifactRuleMembers(binding, compilation, state.artifacts.mounts) {
 		return nil, nil, nil, engine.ReceiptCompilationAttachFailure(runtimeAttachPhaseArtifactRuleMembers), false
 	}
 	if !queryPlan.Attach(compilation, graph, binding) {
 		return nil, nil, nil, engine.ReceiptCompilationAttachFailure(runtimeAttachPhaseQueryMembers), false
 	}
-	observations, observationFailure, observed := attachBranchValueObservations(compilation, graph, binding, state.resultReceipt)
+	observations, observationFailure, observed := attachBranchValueObservations(compilation, graph, binding, geometry)
 	if !observed {
 		return nil, nil, nil, observationFailure.Failure(), false
 	}
-	solver, solved := compilation.Solver()
-	if !solved || solver == nil {
+	solver, constructionFailure, constructed := compilation.Seal()
+	if !constructed || solver == nil {
+		// The construction reports which stage refused. Only fall back to the
+		// observation boundary when it named none.
+		if constructionFailure.Available() {
+			return nil, nil, nil, constructionFailure, false
+		}
 		return nil, nil, nil, observationFailure.Failure(), false
 	}
 	return solver, queryPlan, observations, observationFailure.Failure(), true
@@ -425,7 +453,7 @@ func (plan *Plan) acquire() (*compiledState, bool) {
 	state := plan.state
 	state.lifecycleMu.Lock()
 	defer state.lifecycleMu.Unlock()
-	if state.closing || state.closed || !state.admitted || state.artifacts == nil || !state.resultReceipt.valid() || !state.receipt.Available() ||
+	if state.closing || state.closed || !state.admitted || state.artifacts == nil || !state.receipt.Available() ||
 		state.binding == nil || state.binding.SchemaBinding() == nil || !state.binding.SchemaBinding().Sealed() || !state.sourceID.Available() {
 		return nil, false
 	}
@@ -463,14 +491,22 @@ func (state *compiledState) release() {
 		state.queryPlan = nil
 		state.ordinary = nil
 		state.ordinaryObservations = nil
-		state.resultReceipt = nil
+		state.coordinates = nil
+		state.observations = nil
 		state.binding = nil
 		state.admitted = false
 	})
 }
 
+func (state *compiledState) resultGeometry() (resultGeometry, bool) {
+	if state == nil || state.artifacts == nil {
+		return resultGeometry{}, false
+	}
+	return projectArtifactResult(state.sourceID, state.artifacts.mounts, state.coordinates, state.observations)
+}
+
 func (state *compiledState) admit() bool {
-	if state == nil || state.artifacts == nil || !state.resultReceipt.valid() || !state.receipt.Available() || !state.sourceID.Available() {
+	if state == nil || state.artifacts == nil || !state.receipt.Available() || !state.sourceID.Available() {
 		return false
 	}
 	if len(state.artifacts.mounts) == 0 || len(state.artifacts.byProgram) == 0 {
@@ -481,7 +517,8 @@ func (state *compiledState) admit() bool {
 			return false
 		}
 	}
-	return true
+	geometry, geometryOK := state.resultGeometry()
+	return geometryOK && geometry.valid()
 }
 
 func Analyze(ctx context.Context, source *link.Link) (*Result, AnalyzeStatus) {

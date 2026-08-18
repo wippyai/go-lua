@@ -180,7 +180,7 @@ func TestReceiptCompilerBindsExactQueryEvidenceOnly(t *testing.T) {
 	binding := NewSchemaBinding(schema)
 	spec := hotExactQuerySpec()
 	spec.Project = func(_ OrderedCells[uint64]) uint64 { return 7 }
-	if binding == nil || !BindFactor(binding, factor, hotUintFactorSpec()) || !BindRule[uint64, uint64, ruleUnit](binding, rule, write, factor, receiptExactQueryRuleSpec()) || !BindExactQuery(binding, query, factor, spec) || !binding.Seal() {
+	if binding == nil || !BindFactor(binding, factor, hotUintFactorSpec()) || !BindRule[uint64, uint64, ruleUnit](binding, rule, write, factor, receiptExactQueryRuleSpec(), testRuleProjector[ruleUnit]) || !BindExactQuery(binding, query, factor, spec) || !binding.Seal() {
 		t.Fatal("exact query receipt setup")
 	}
 	implementation, implementationOK := ExactQueryImplementationAt[uint64, uint64](binding, query)
@@ -192,24 +192,24 @@ func TestReceiptCompilerBindsExactQueryEvidenceOnly(t *testing.T) {
 		t.Fatal("typed exact query projector result")
 	}
 	graph, identity := exactQueryReceiptGraph(t, schema, factor, query)
-	compilation, compiled := compileReceiptFactors(binding, graph)
-	runtime, joined := bindReceiptExactQuery[uint64, uint64](compilation, implementation, identity)
+	compilation, compiled := beginProgramConstruction(binding, graph)
+	runtime, joined := bindReceiptExactQuery[uint64, uint64](compilation.programPlane, implementation, identity)
 	if !compiled || compilation == nil || !joined || runtime == nil || runtime.query().Key() != identity.Key() || runtime.surface.Form != equation.SurfaceReadExact {
 		t.Fatal("exact query evidence join")
 	}
 
 	foreign := NewSchemaBinding(schema)
-	if foreign == nil || !BindFactor(foreign, factor, hotUintFactorSpec()) || !BindRule[uint64, uint64, ruleUnit](foreign, rule, write, factor, receiptExactQueryRuleSpec()) || !BindExactQuery(foreign, query, factor, spec) || !foreign.Seal() {
+	if foreign == nil || !BindFactor(foreign, factor, hotUintFactorSpec()) || !BindRule[uint64, uint64, ruleUnit](foreign, rule, write, factor, receiptExactQueryRuleSpec(), testRuleProjector[ruleUnit]) || !BindExactQuery(foreign, query, factor, spec) || !foreign.Seal() {
 		t.Fatal("foreign exact query binding")
 	}
 	foreignImplementation, foreignOK := ExactQueryImplementationAt[uint64, uint64](foreign, query)
 	if !foreignOK || foreignImplementation == nil {
 		t.Fatal("foreign exact query receipt")
 	}
-	if _, accepted := bindReceiptExactQuery[uint64, uint64](compilation, foreignImplementation, identity); accepted {
+	if _, accepted := bindReceiptExactQuery[uint64, uint64](compilation.programPlane, foreignImplementation, identity); accepted {
 		t.Fatal("equal-Schema foreign query receipt entered compiler")
 	}
-	if _, accepted := bindReceiptExactQuery[uint64, uint64](compilation, implementation, equation.Query{}); accepted {
+	if _, accepted := bindReceiptExactQuery[uint64, uint64](compilation.programPlane, implementation, equation.Query{}); accepted {
 		t.Fatal("foreign graph query entered compiler")
 	}
 
@@ -301,18 +301,18 @@ func TestReceiptCompilerRejectsWrongQueryFamilySurfaceAndFactor(t *testing.T) {
 	rightSpec.Result.Semantic = coldKey(948_045)
 	if binding == nil || !BindFactor(binding, left, hotUintFactorSpec()) || !BindFactor(binding, right, hotUintFactorSpec()) || !BindRule[uint64, uint64, ruleUnit](binding, producer, producerWrite, left, HotRuleSpec[uint64, ruleUnit]{OperandContent: ruleUnitContent, Admission: AdmitRuleByTrustedTheorem[uint64, ruleUnit](coldKey(948_048)), Transfer: func(access Access[uint64, ruleUnit]) bool {
 		return Product(access, func(row Row) bool { return StageValue(access, row, uint64(1)) })
-	}}) || !BindExactQuery(binding, leftQuery, left, leftSpec) || !BindExactQuery(binding, rightQuery, right, rightSpec) || !binding.Seal() {
+	}}, testRuleProjector[ruleUnit]) || !BindExactQuery(binding, leftQuery, left, leftSpec) || !BindExactQuery(binding, rightQuery, right, rightSpec) || !binding.Seal() {
 		t.Fatal("dual exact query binding")
 	}
 	leftImplementation, leftOK := ExactQueryImplementationAt[uint64, uint64](binding, leftQuery)
 	if !leftOK || leftImplementation == nil {
 		t.Fatal("left exact query receipt")
 	}
-	compilation, compiled := compileReceiptFactors(binding, graph)
+	compilation, compiled := beginProgramConstruction(binding, graph)
 	if !compiled || compilation == nil {
 		t.Fatal("dual exact query compilation")
 	}
-	if _, accepted := bindReceiptExactQuery[uint64, uint64](compilation, leftImplementation, rightIdentity); accepted {
+	if _, accepted := bindReceiptExactQuery[uint64, uint64](compilation.programPlane, leftImplementation, rightIdentity); accepted {
 		t.Fatal("wrong query family/factor entered receipt compiler")
 	}
 	wrongSurface := leftIdentity
@@ -322,10 +322,10 @@ func TestReceiptCompilerRejectsWrongQueryFamilySurfaceAndFactor(t *testing.T) {
 	if len(wrongSurface.Surfaces()) != 1 || wrongSurface.Surfaces()[0].Factor == rightIdentity.Surfaces()[0].Factor {
 		t.Fatal("dual query surfaces were not distinct")
 	}
-	if _, accepted := bindReceiptExactQuery[uint64, uint64](compilation, leftImplementation, equation.Query{}); accepted {
+	if _, accepted := bindReceiptExactQuery[uint64, uint64](compilation.programPlane, leftImplementation, equation.Query{}); accepted {
 		t.Fatal("foreign graph identity entered receipt compiler")
 	}
-	if _, accepted := bindReceiptExactQuery[uint64, uint64](compilation, leftImplementation, leftIdentity); !accepted {
+	if _, accepted := bindReceiptExactQuery[uint64, uint64](compilation.programPlane, leftImplementation, leftIdentity); !accepted {
 		t.Fatal("canonical exact query evidence rejected")
 	}
 }

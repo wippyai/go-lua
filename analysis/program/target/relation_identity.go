@@ -2,6 +2,7 @@ package target
 
 import (
 	"errors"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -15,17 +16,17 @@ func validIdentityRange(value indexRange, length int) bool {
 // sealHostIdentityRelations is deliberately after operation/outcome identity
 // finalization. Its indexes are sorted immutable value tables, while the
 // direct paths remain dense operation/outcome ranges.
-func (c *Contract) sealHostIdentityRelations(outcomeOwners []Operation, outcomeOrdinals []uint32) error {
+func (c *Contract) sealHostIdentityRelations(outcomeOwners []vocabulary.Operation, outcomeOrdinals []uint32) error {
 	c.inputFormalRanges = make([]indexRange, len(c.operations))
 	for operationIndex, row := range c.operations {
 		start, err := checkedStoredRange("semantic input formal table", len(c.inputFormalIDs), c.ValuesCount(row.input))
 		if err != nil {
 			return err
 		}
-		op := Operation(operationIndex + 1)
+		op := vocabulary.Operation(operationIndex + 1)
 		operationID := c.operationContentIDs[operationIndex]
 		for formal := 0; formal < c.ValuesCount(row.input); formal++ {
-			selector := ValueFormal(formal)
+			selector := vocabulary.ValueFormal(formal)
 			id, err := c.semanticID(semanticInputFormal, func(w *framing.Writer) error {
 				if err := w.Bytes(operationID[:]); err != nil {
 					return err
@@ -78,7 +79,7 @@ func (c *Contract) sealHostIdentityRelations(outcomeOwners []Operation, outcomeO
 	}
 	c.initialValueContentIDs = make([]identity.ContentID, len(c.initialValues))
 	for index := range c.initialValues {
-		value := InitialValue(index + 1)
+		value := vocabulary.InitialValue(index + 1)
 		id, err := c.semanticID(semanticInitialValue, func(w *framing.Writer) error { return c.encodeInitialValueContent(w, value) })
 		if err != nil {
 			return err
@@ -152,7 +153,7 @@ func sortResumeContentIDs(rows []resumeContentIDRow) error {
 // encodeInitialValueContent is a value relation, not an environment digest.
 // Operation values use their binding/path anchor, so unrelated operation body
 // edits do not churn boot cells that merely name the operation.
-func (c *Contract) encodeInitialValueContent(w *framing.Writer, value InitialValue) error {
+func (c *Contract) encodeInitialValueContent(w *framing.Writer, value vocabulary.InitialValue) error {
 	row, ok := c.initialValue(value)
 	if !ok {
 		return errors.New("target: malformed initial value")
@@ -161,28 +162,28 @@ func (c *Contract) encodeInitialValueContent(w *framing.Writer, value InitialVal
 		return err
 	}
 	switch row.kind {
-	case InitialValueNil, InitialValueAbsent:
+	case vocabulary.InitialValueNil, vocabulary.InitialValueAbsent:
 		return nil
-	case InitialValueBoolean:
+	case vocabulary.InitialValueBoolean:
 		return w.Bool(row.boolean)
-	case InitialValueInteger:
+	case vocabulary.InitialValueInteger:
 		return w.Uint(uint64(row.integer))
-	case InitialValueFloat:
+	case vocabulary.InitialValueFloat:
 		return w.Uint(row.floatBits)
-	case InitialValueString:
+	case vocabulary.InitialValueString:
 		return w.String(row.string)
-	case InitialValueRoot:
+	case vocabulary.InitialValueRoot:
 		if row.root == 0 || int(row.root) > len(c.initialRoots) {
 			return errors.New("target: malformed initial value root")
 		}
 		return w.String(c.initialRoots[row.root-1].identity)
-	case InitialValueOperation:
+	case vocabulary.InitialValueOperation:
 		anchor, ok := c.anchor(row.operation)
 		if !ok {
 			return errors.New("target: malformed initial value operation")
 		}
 		return w.Bytes(anchor[:])
-	case InitialValueDeniedOperation:
+	case vocabulary.InitialValueDeniedOperation:
 		binding, ok := c.initialValueBinding(value)
 		if !ok {
 			return errors.New("target: malformed denied initial value")
@@ -227,7 +228,7 @@ func (c *Contract) encodeBootRelation(w *framing.Writer) error {
 			return errors.New("target: malformed boot root shape")
 		}
 		shape := c.bootShapes[root.shape-1]
-		if shape.root != InitialRoot(index+1) {
+		if shape.root != vocabulary.InitialRoot(index+1) {
 			return errors.New("target: malformed boot root relation")
 		}
 		if err := w.Uint(uint64(shape.aggregate)); err != nil {
@@ -262,7 +263,7 @@ func (c *Contract) encodeBootRelation(w *framing.Writer) error {
 }
 
 // InputFormalID identifies one exact fixed input ABI slot.
-func (c *Contract) InputFormalID(op Operation, formal ValueFormal) (identity.ContentID, bool) {
+func (c *Contract) InputFormalID(op vocabulary.Operation, formal vocabulary.ValueFormal) (identity.ContentID, bool) {
 	if c == nil || !c.sealed || op == 0 || int(op) > len(c.inputFormalRanges) {
 		return identity.ContentID{}, false
 	}
@@ -274,7 +275,7 @@ func (c *Contract) InputFormalID(op Operation, formal ValueFormal) (identity.Con
 }
 
 // FindInputFormalID is the allocation-free O(log n) inverse over this Contract.
-func (c *Contract) FindInputFormalID(id identity.ContentID) (Operation, ValueFormal, bool) {
+func (c *Contract) FindInputFormalID(id identity.ContentID) (vocabulary.Operation, vocabulary.ValueFormal, bool) {
 	if c == nil || !c.sealed || !id.Available() {
 		return 0, 0, false
 	}
@@ -290,7 +291,7 @@ func (c *Contract) FindInputFormalID(id identity.ContentID) (Operation, ValueFor
 }
 
 // OutcomeResultID identifies one fixed result slot of an exact Outcome case.
-func (c *Contract) OutcomeResultID(op Operation, outcome, result int) (identity.ContentID, bool) {
+func (c *Contract) OutcomeResultID(op vocabulary.Operation, outcome, result int) (identity.ContentID, bool) {
 	if c == nil || !c.sealed {
 		return identity.ContentID{}, false
 	}
@@ -306,7 +307,7 @@ func (c *Contract) OutcomeResultID(op Operation, outcome, result int) (identity.
 }
 
 // FindOutcomeResultID is the allocation-free O(log n) inverse over this Contract.
-func (c *Contract) FindOutcomeResultID(id identity.ContentID) (Operation, int, int, bool) {
+func (c *Contract) FindOutcomeResultID(id identity.ContentID) (vocabulary.Operation, int, int, bool) {
 	if c == nil || !c.sealed || !id.Available() {
 		return 0, 0, 0, false
 	}
@@ -323,7 +324,7 @@ func (c *Contract) FindOutcomeResultID(id identity.ContentID) (Operation, int, i
 
 // InitialValueContentID is a portable identity for one exact sealed boot
 // value; it deliberately says nothing about which global row selected it.
-func (c *Contract) InitialValueContentID(value InitialValue) (identity.ContentID, bool) {
+func (c *Contract) InitialValueContentID(value vocabulary.InitialValue) (identity.ContentID, bool) {
 	if c == nil || !c.sealed || value == 0 || int(value) > len(c.initialValueContentIDs) {
 		return identity.ContentID{}, false
 	}

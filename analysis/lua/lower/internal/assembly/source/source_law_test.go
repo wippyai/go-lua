@@ -234,7 +234,7 @@ func TestModuleRequestExactAddsOnlyRawLiteralBeforeSourceFreeze(t *testing.T) {
 	callee := c.ImplicitRead(programsource.Span{File: name}, body, requireCell)
 	request := c.String(programsource.Span{File: name}, body, "pkg.core")
 	values := c.Values(programsource.Span{File: name}, body, []keyspace.Term{request}, 0)
-	call := c.DeclareCall(programsource.Span{File: name}, body, callee, 0, values)
+	call := c.DeclareCall(programsource.Span{File: name}, body, callee, 0, values, "")
 	if body == 0 || requireCell == 0 || callee == 0 || request == 0 || values == 0 || call == 0 || !c.SetCallTypeArgs(call, nil) {
 		t.Fatal("module request construction failed")
 	}
@@ -259,7 +259,7 @@ func TestReservedImportSpansAreCensusStableAndRequireFills(t *testing.T) {
 	body := c.Body(testSpan())
 	request := c.String(testSpan(), body, "pkg")
 	values := c.Values(testSpan(), body, []keyspace.Term{request}, 0)
-	call := c.DeclareCall(testSpan(), body, request, 0, values)
+	call := c.DeclareCall(testSpan(), body, request, 0, values, "")
 	if body == 0 || request == 0 || values == 0 || call == 0 || !c.SetCallTypeArgs(call, nil) {
 		t.Fatal("reserved Import setup failed")
 	}
@@ -288,7 +288,7 @@ func TestSourceFaultsEnforceClosedLabelAndBlockerShapes(t *testing.T) {
 		c := assembly.New("fault-shapes.lua", 0, bind.GlobalCensus{})
 		body := c.Body(testSpan())
 		label := c.Label(testSpan(), body)
-		blocker := c.Cell(testSpan(), body)
+		blocker := c.Cell(testSpan(), body, "")
 		return c, body, label, blocker
 	}
 	valid := []struct {

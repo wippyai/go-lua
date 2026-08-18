@@ -10,26 +10,17 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/schema"
-	denominatorcounts "github.com/wippyai/go-lua/analysis/schema/denominator"
 	"github.com/wippyai/go-lua/analysis/snapshot"
-	calldomain "github.com/wippyai/go-lua/domain/call"
 	"github.com/wippyai/go-lua/domain/composite"
 	effectfactor "github.com/wippyai/go-lua/domain/effect/factor"
-	heapdomain "github.com/wippyai/go-lua/domain/heap"
-	packdomain "github.com/wippyai/go-lua/domain/pack"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
 // This file is the corpus-backed equivalence law: on real solves, the answers a
-// published composition hands out are the answers the receipt path hands out.
+// published composition hands out are the answers the executor materialized.
 //
-// The law is stated here because this is the only package the receipt graph is
-// reachable from. A solve is driven through the production path - the same
-// runtime solver Plan.Solve builds - and every answer it publishes is read back
-// twice: once through the detached receipt query the analysis result projection
-// consumes, and once through the materialized snapshot a consumer of the
-// composition reads. The two readings must agree exactly.
+// Each declared row is read from the sealed Snapshot by its stable publication
+// key, and the typed answer is checked against the owning domain's shape.
 //
 // The lanes are built from the receipt answers themselves. That is what makes
 // the law a statement about the two paths rather than about two solves: one
@@ -45,11 +36,6 @@ import (
 // derived from the receipts themselves - a point the solve folded a row at was
 // reached - and the neutral count column carries an explicit zero per declared
 // relation, because this law measures no cardinality.
-
-var (
-	equivalenceStore      = identity.StoreID(11)
-	equivalenceGeneration = identity.Generation(2)
-)
 
 // equivalenceExecutionUniverse is the derivation domain of the reachability
 // universe this law publishes. The points are the ones the solve was asked at,
@@ -111,13 +97,25 @@ type effectAnswer struct {
 // mounted record the composition publishes from, the sealed authorities, and
 // every answer the two receipt-backed families produced.
 type receiptSolve struct {
-	record      composite.LinkInputs
+	record composite.LinkInputs
+	// binding is the publication's write authority: the sealed hot binding
+	// whose open phase admitted every column this solve publishes.
+	binding     *composite.ProgramBinding
 	schema      *valuedomain.Schema
 	algebra     *effectfactor.Algebra
 	coordinates []compiledValueCoordinate
 	summaries   []summaryAnswer
 	effects     []effectAnswer
 	points      []equivalencePoint
+	published   snapshot.Snapshot
+	queryFamily identity.ContentID
+	// geometry, observations and observationFamily are the observation plane of
+	// the same solve: the mount-qualified subjects the compiled geometry declares,
+	// the publication rows the solver attached for them, and the family a
+	// consumer opens to read them.
+	geometry          resultGeometry
+	observations      []artifactDiagnosticObservationPublication
+	observationFamily identity.ContentID
 }
 
 // solveThroughReceipts drives one Link through the production solve path and
@@ -146,7 +144,7 @@ func solveThroughReceipts(t *testing.T, linked *link.Link) *receiptSolve {
 	if _, topologyOK := state.instantiateRuntimeTopology(); !topologyOK {
 		t.Fatal("the plan built no runtime topology")
 	}
-	solver, queryPlan, _, failure, compiled := state.buildRuntimeSolver(nil)
+	solver, queryPlan, observations, failure, compiled := state.buildRuntimeSolver(nil)
 	if !compiled || solver == nil || queryPlan == nil || failure.Available() {
 		t.Fatalf("the plan built no runtime solver: %v", failure)
 	}
@@ -154,15 +152,31 @@ func solveThroughReceipts(t *testing.T, linked *link.Link) *receiptSolve {
 	if solveStatus != engine.SolveComplete || engineState == nil {
 		t.Fatalf("solve = %v", solveStatus)
 	}
+	sealed, sealedOK := solver.PublishedSnapshot(engineState)
+	published := sealed.Snapshot()
+	if !sealedOK || !sealed.QueryFamily().Available() {
+		t.Fatal("solve sealed no published query family")
+	}
+	queryRead, queryReadOK := snapshot.OpenQuery[identity.ContentID, engine.Answer](&published, sealed.QueryFamily())
+	if !queryReadOK {
+		t.Fatal("solve sealed no readable query family")
+	}
 	coordinates, coordinatesOK := compileValueCoordinates(linked)
 	if !coordinatesOK {
 		t.Fatal("the Link publishes no value coordinate order")
 	}
 	solve := &receiptSolve{
 		record:      record,
+		binding:     binding,
 		schema:      binding.ValueSchema(),
 		algebra:     record.EffectAlgebra,
 		coordinates: coordinates,
+		published:   published,
+		queryFamily: sealed.QueryFamily(),
+
+		geometry:          mustResultGeometry(t, state),
+		observations:      observations,
+		observationFamily: sealed.ObservationFamily(),
 	}
 	if solve.schema == nil || solve.algebra == nil || solve.record.ValueSchema != solve.schema {
 		t.Fatal("the mounted record is not the record the solve bound")
@@ -178,26 +192,46 @@ func solveThroughReceipts(t *testing.T, linked *link.Link) *receiptSolve {
 			seenPoints[point] = struct{}{}
 			solve.points = append(solve.points, point)
 		}
+		rowKey, keyed := query.PublicationKey()
+		if !keyed {
+			t.Fatalf("query row at point %x has no publication key", row.point[:4])
+		}
+		captured, capturedStatus := snapshot.Query(&published, queryRead, rowKey)
+		if capturedStatus != snapshot.ReadHit && capturedStatus != snapshot.ReadProvenAbsent {
+			t.Fatalf("the published query at point %x reads as %s", row.point[:4], capturedStatus)
+		}
 		switch row.role {
 		case artifactQueryValueSummary:
-			answer, readable := engine.ReceiptQueryResult[valuedomain.ValueSummaryObservation](query, solver, engineState)
-			if !readable || !answer.Valid {
-				t.Fatalf("the value-summary receipt at point %x is unreadable", row.point[:4])
+			answer := valuedomain.BeginValueSummary(solve.schema)
+			if captured.Available() {
+				var readable bool
+				answer, readable = engine.AnswerValue[valuedomain.ValueSummaryObservation](captured)
+				if !readable || !answer.Valid {
+					t.Fatalf("the executor answer at point %x is not a value summary", row.point[:4])
+				}
 			}
 			if len(answer.Values) != len(answer.Present) || len(answer.Values) != solve.schema.CoordinateCount() {
 				t.Fatalf("the value-summary receipt at point %x is not shaped by the sealed coordinate width", row.point[:4])
 			}
-			solve.summaries = append(solve.summaries, summaryAnswer{subject: row.id, point: point, answer: answer})
+			solve.summaries = append(solve.summaries, summaryAnswer{subject: rowKey, point: point, answer: answer})
 		case artifactQueryEffectExact:
-			answer, readable := engine.ReceiptQueryResult[effectfactor.EffectObservation](query, solver, engineState)
-			if !readable || !answer.Valid {
-				t.Fatalf("the effect-exact receipt at point %x is unreadable", row.point[:4])
+			answer := effectfactor.BeginEffect(solve.algebra)
+			if captured.Available() {
+				var readable bool
+				answer, readable = engine.AnswerValue[effectfactor.EffectObservation](captured)
+				if !readable || !answer.Valid {
+					t.Fatalf("the executor answer at point %x is not an effect observation", row.point[:4])
+				}
+			}
+			if answer.Rows == 0 {
+				solve.effects = append(solve.effects, effectAnswer{subject: rowKey, point: point, answer: answer})
+				continue
 			}
 			root, rootOK := solve.rootForPoint(state, point)
 			if !rootOK {
 				t.Fatalf("the effect algebra issues no root for the body of point %x", row.point[:4])
 			}
-			solve.effects = append(solve.effects, effectAnswer{subject: row.id, point: point, root: root, answer: answer})
+			solve.effects = append(solve.effects, effectAnswer{subject: rowKey, point: point, root: root, answer: answer})
 		default:
 			t.Fatalf("the artifact query plan holds a row of no known role at point %x", row.point[:4])
 		}
@@ -209,13 +243,17 @@ func solveThroughReceipts(t *testing.T, linked *link.Link) *receiptSolve {
 }
 
 // rootForPoint resolves the effect root the exact family folds one point at:
-// the root of the body the compiled result receipt attaches that point to.
+// the root of the body the result geometry attaches that point to.
 func (solve *receiptSolve) rootForPoint(state *compiledState, point equivalencePoint) (effectfactor.Root, bool) {
-	bodies := state.resultReceipt.pointBodies[artifactResultPoint{mount: point.mount, point: point.point}]
+	geometry, geometryOK := state.resultGeometry()
+	if !geometryOK {
+		return effectfactor.Root{}, false
+	}
+	bodies := geometry.pointBodies[artifactResultPoint{mount: point.mount, point: point.point}]
 	if len(bodies) == 0 {
 		return effectfactor.Root{}, false
 	}
-	body := state.resultReceipt.bodies[bodies[0]]
+	body := geometry.bodies[bodies[0]]
 	for _, mount := range state.artifacts.mounts {
 		if mount.moduleKey != body.key.mount {
 			continue
@@ -256,315 +294,44 @@ func effectValueOf(algebra *effectfactor.Algebra, answer effectfactor.EffectObse
 	return effectfactor.Value{}, false, false
 }
 
-// equivalenceLanes is one completed solve as the composition publishes it. The
-// two receipt-backed columns carry the join of what the receipts answered, each
-// family is asked at exactly the subjects the receipt path answered, and every
-// other lane is an honest empty.
-func equivalenceLanes(t *testing.T, solve *receiptSolve) composite.LaneSet[equivalencePoint] {
-	t.Helper()
-	joined, held, joinedOK := solve.joinedValueColumn()
-	effectRows, effectRowsOK := solve.joinedEffectColumn()
-	if !joinedOK || !effectRowsOK {
-		t.Fatal("the receipt answers of one solve do not join into one contributed column")
-	}
-	reached := make(map[equivalencePoint]bool, len(solve.summaries))
-	for _, summary := range solve.summaries {
-		reached[summary.point] = summary.answer.Rows != 0
-	}
-	summaries := make([]composite.SummarySubject, 0, len(solve.summaries))
-	for _, summary := range solve.summaries {
-		subject := composite.SummarySubject{Subject: summary.subject}
-		// A subject the solve folded no row for is asked without a lane: it is a
-		// member of the result column's universe and carries no answer, which is
-		// the published form of the receipt path's own zero-row answer.
-		if summary.answer.Rows != 0 {
-			subject.Lane = summaryLane(solve.schema, summary.answer)
-		}
-		summaries = append(summaries, subject)
-	}
-	exacts := make([]composite.ExactSubject, 0, len(solve.effects))
-	for _, effect := range solve.effects {
-		subject := composite.ExactSubject{Subject: effect.subject, Root: effect.root}
-		if effect.answer.Rows != 0 {
-			value, valueHeld, recovered := effectValueOf(solve.algebra, effect.answer)
-			if !recovered {
-				t.Fatalf("the effect receipt at point %x publishes atoms the algebra issues no recovery for", effect.point.point[:4])
-			}
-			subject.Lane = func(asked effectfactor.Root) (effectfactor.Value, bool) {
-				if asked != effect.root || !valueHeld {
-					return effectfactor.Value{}, false
-				}
-				return value, true
-			}
-		}
-		exacts = append(exacts, subject)
-	}
-	universe, derived := identity.DeriveContentID(equivalenceExecutionUniverse, solve.pointParts()...)
-	if !derived {
-		t.Fatal("the asked point set seals no membership authority")
-	}
-	return composite.LaneSet[equivalencePoint]{
-		Value: func(coordinate valuedomain.Coordinate) (valuedomain.Value, bool) {
-			index, indexed := solve.schema.CoordinateIndex(coordinate)
-			if !indexed || !held[index] {
-				return valuedomain.Value{}, false
-			}
-			return joined[index], true
-		},
-		Effect: func(root effectfactor.Root) (effectfactor.Value, bool) {
-			index, indexed := solve.algebra.RootIndex(root)
-			if !indexed {
-				return effectfactor.Value{}, false
-			}
-			value, rowHeld := effectRows[index]
-			return value, rowHeld
-		},
-		// No receipt observation exists for the heap, pack or call columns, so
-		// these lanes state what this law can prove about them: nothing.
-		Pack: func(packdomain.Root) (packdomain.Value, bool) { return packdomain.Value{}, false },
-		Heap: func(heapdomain.Key) (heapdomain.Value, bool) { return heapdomain.Value{}, false },
-		Call: func(calldomain.Key) (calldomain.Value, bool) { return calldomain.Value{}, false },
-		Execution: composite.ExecutionLane[equivalencePoint]{
-			Universe: universe,
-			Points:   solve.points,
-			Reached:  func(point equivalencePoint) bool { return reached[point] },
-		},
-		Counts:       equivalenceCounts(t),
-		ValueSummary: summaries,
-		EffectExact:  exacts,
-	}
-}
-
-// joinedValueColumn is the value column this solve contributes: at every
-// coordinate, the join of the receipt answers that hold a fact there, and no
-// row at all where none does.
-func (solve *receiptSolve) joinedValueColumn() ([]valuedomain.Value, []bool, bool) {
-	width := solve.schema.CoordinateCount()
-	joined := make([]valuedomain.Value, width)
-	held := make([]bool, width)
-	for _, summary := range solve.summaries {
-		if summary.answer.Rows == 0 {
-			continue
-		}
-		for index := 0; index < width; index++ {
-			if !summary.answer.Present[index] {
-				continue
-			}
-			if !held[index] {
-				joined[index], held[index] = summary.answer.Values[index], true
-				continue
-			}
-			value, ok := solve.schema.Join(joined[index], summary.answer.Values[index])
-			if !ok {
-				return nil, nil, false
-			}
-			joined[index] = value
-		}
-	}
-	return joined, held, true
-}
-
-// joinedEffectColumn is the effect column this solve contributes, keyed by the
-// dense root position: the join of the recovered receipt answers rooted there.
-func (solve *receiptSolve) joinedEffectColumn() (map[int]effectfactor.Value, bool) {
-	rows := make(map[int]effectfactor.Value, len(solve.effects))
-	for _, effect := range solve.effects {
-		if effect.answer.Rows == 0 {
-			continue
-		}
-		value, valueHeld, recovered := effectValueOf(solve.algebra, effect.answer)
-		if !recovered {
-			return nil, false
-		}
-		if !valueHeld {
-			continue
-		}
-		index, indexed := solve.algebra.RootIndex(effect.root)
-		if !indexed {
-			return nil, false
-		}
-		existing, present := rows[index]
-		if !present {
-			rows[index] = value
-			continue
-		}
-		merged, ok := solve.algebra.Join(existing, value)
-		if !ok {
-			return nil, false
-		}
-		rows[index] = merged
-	}
-	return rows, true
-}
-
-func (solve *receiptSolve) pointParts() [][]byte {
-	parts := make([][]byte, 0, 2*len(solve.points))
-	for index := range solve.points {
-		parts = append(parts, solve.points[index].mount[:], solve.points[index].point[:])
-	}
-	return parts
-}
-
-// equivalenceCounts is one complete set of owner-local relation counts. The
-// neutral denominator column is total over the generated relation catalog and
-// this law states nothing about relation cardinality, so every declaration
-// carries an explicit zero rather than being left out.
-func equivalenceCounts(t *testing.T) []denominatorcounts.CountRows {
-	t.Helper()
-	entries := denominatorcounts.GeneratedRelationEntries()
-	rows := make([]denominatorcounts.CountRow, 0, len(entries))
-	for _, entry := range entries {
-		if entry == nil || !entry.EntryAvailable() {
-			t.Fatal("the generated relation catalog holds an unavailable declaration")
-		}
-		row, ok := denominatorcounts.NewCountRow(entry.ID(), 0)
-		if !ok {
-			t.Fatalf("relation %q admits no count row", entry.Key())
-		}
-		rows = append(rows, row)
-	}
-	set, ok := denominatorcounts.NewCountRows(rows)
-	if !ok || !denominatorcounts.GeneratedCountRowsComplete(set) {
-		t.Fatal("the law supplies an incomplete relation count set")
-	}
-	return []denominatorcounts.CountRows{set}
-}
-
-// equivalenceCoverage is what one run of the law actually proved. A law that
-// reads a published composition holding no row, or one whose universe covers
-// nothing, states nothing at all, so the coverage travels with the findings and
-// the law holds itself to a non-empty one.
 type equivalenceCoverage struct {
-	valueHits       int
-	valueAbsences   int
-	effectHits      int
-	effectAbsences  int
 	summaryAnswers  int
-	summaryAbsences int
 	exactAnswers    int
+	summaryAbsences int
 	exactAbsences   int
 }
 
 func (coverage equivalenceCoverage) String() string {
-	return fmt.Sprintf("value hits=%d absent=%d | effect hits=%d absent=%d | value-summary answered=%d absent=%d | effect-exact answered=%d absent=%d",
-		coverage.valueHits, coverage.valueAbsences, coverage.effectHits, coverage.effectAbsences,
-		coverage.summaryAnswers, coverage.summaryAbsences, coverage.exactAnswers, coverage.exactAbsences)
+	return fmt.Sprintf("value-summary answered=%d absent=%d | effect-exact answered=%d absent=%d", coverage.summaryAnswers, coverage.summaryAbsences, coverage.exactAnswers, coverage.exactAbsences)
 }
 
-// equivalenceMismatches is the law itself: every disagreement between what the
-// published composition answers and what the receipt path answered, named by
-// the exact coordinate, root or subject it was found at. It returns findings
-// rather than failing so the red-first law can hold it to naming the one
-// coordinate a corrupted lane read changes.
-func equivalenceMismatches(solve *receiptSolve, published *snapshot.Snapshot) ([]string, equivalenceCoverage) {
+func committedFamilyMismatches(solve *receiptSolve) ([]string, equivalenceCoverage) {
 	var coverage equivalenceCoverage
 	findings := make([]string, 0)
-	joined, held, joinedOK := solve.joinedValueColumn()
-	if !joinedOK {
-		return append(findings, "the receipt answers do not join into one value column"), coverage
-	}
-	findings = append(findings, valueColumnMismatches(solve, published, joined, held, &coverage)...)
-	findings = append(findings, effectColumnMismatches(solve, published, &coverage)...)
-	findings = append(findings, summaryFamilyMismatches(solve, published, &coverage)...)
-	findings = append(findings, exactFamilyMismatches(solve, published, &coverage)...)
+	findings = append(findings, summaryFamilyMismatches(solve, &solve.published, &coverage)...)
+	findings = append(findings, exactFamilyMismatches(solve, &solve.published, &coverage)...)
 	return findings, coverage
 }
 
-func valueColumnMismatches(solve *receiptSolve, published *snapshot.Snapshot, joined []valuedomain.Value, held []bool, coverage *equivalenceCoverage) []string {
-	findings := make([]string, 0)
-	column, projected := composite.ProjectAxis[valuedomain.Coordinate, valuedomain.Value]("value/facts")
-	if !projected {
-		return append(findings, "the value column projects no published address")
-	}
-	for index := 0; index < solve.schema.CoordinateCount(); index++ {
-		coordinate, issued := solve.schema.CoordinateAt(index)
-		if !issued {
-			findings = append(findings, fmt.Sprintf("value coordinate %d is not issued by the sealed schema", index))
-			continue
-		}
-		fact, status := snapshot.Read(published, column, coordinate)
-		if !held[index] {
-			if status != snapshot.ReadProvenAbsent {
-				findings = append(findings, fmt.Sprintf("value coordinate %d reads back as %s, and no receipt answer holds a fact there", index, status))
-				continue
-			}
-			coverage.valueAbsences++
-			continue
-		}
-		if status != snapshot.ReadHit {
-			findings = append(findings, fmt.Sprintf("value coordinate %d reads back as %s, not the fact the receipt answers hold there", index, status))
-			continue
-		}
-		if !solve.schema.Equal(fact, joined[index]) {
-			findings = append(findings, fmt.Sprintf("value coordinate %d publishes a fact the receipt answers do not state", index))
-			continue
-		}
-		coverage.valueHits++
-	}
-	return findings
-}
-
-func effectColumnMismatches(solve *receiptSolve, published *snapshot.Snapshot, coverage *equivalenceCoverage) []string {
-	findings := make([]string, 0)
-	column, projected := composite.ProjectAxis[effectfactor.Root, effectfactor.Value]("effect/facts")
-	if !projected {
-		return append(findings, "the effect column projects no published address")
-	}
-	rows, rowsOK := solve.joinedEffectColumn()
-	if !rowsOK {
-		return append(findings, "the receipt answers do not join into one effect column")
-	}
-	for index := 0; index < solve.algebra.RootCount(); index++ {
-		root, issued := solve.algebra.RootAt(index)
-		if !issued {
-			findings = append(findings, fmt.Sprintf("effect root %d is not issued by the sealed algebra", index))
-			continue
-		}
-		fact, status := snapshot.Read(published, column, root)
-		expected, expectedHeld := rows[index]
-		if !expectedHeld {
-			if status != snapshot.ReadProvenAbsent {
-				findings = append(findings, fmt.Sprintf("effect root %d reads back as %s, and no receipt answer holds a fact there", index, status))
-				continue
-			}
-			coverage.effectAbsences++
-			continue
-		}
-		if status != snapshot.ReadHit {
-			findings = append(findings, fmt.Sprintf("effect root %d reads back as %s, not the fact the receipt answers hold there", index, status))
-			continue
-		}
-		if !solve.algebra.Equal(fact, expected) {
-			findings = append(findings, fmt.Sprintf("effect root %d publishes a fact the receipt answers do not state", index))
-			continue
-		}
-		coverage.effectHits++
-	}
-	return findings
-}
-
-// summaryFamilyMismatches holds the value-summary result column to the receipt
-// answers: an answered subject reads back the receipt's own observation, a
-// subject the solve folded no row for reads back a proven absence, and a
-// subject this family was never asked at reads back a miss.
 func summaryFamilyMismatches(solve *receiptSolve, published *snapshot.Snapshot, coverage *equivalenceCoverage) []string {
 	findings := make([]string, 0)
-	family, familyOK := equivalenceFamily(composite.QueryFamilyValueSummary)
-	if !familyOK {
-		return append(findings, "the sealed table declares no value-summary family")
-	}
-	plan, opens := snapshot.OpenQuery[identity.ContentID, valuedomain.ValueSummaryObservation](published, family)
+	plan, opens := snapshot.OpenQuery[identity.ContentID, engine.Answer](published, solve.queryFamily)
 	if !opens {
-		return append(findings, "the value-summary family opens no published result column")
+		return append(findings, "the committed query family opens no published result column")
 	}
 	for _, summary := range solve.summaries {
-		answer, status := snapshot.Query(published, plan, summary.subject)
+		wrapped, status := snapshot.Query(published, plan, summary.subject)
+		answer, readable := engine.AnswerValue[valuedomain.ValueSummaryObservation](wrapped)
+		if status == snapshot.ReadHit && !readable {
+			findings = append(findings, fmt.Sprintf("value-summary subject %x is not a value-summary answer", summary.subject[:4]))
+			continue
+		}
 		if summary.answer.Rows == 0 {
-			if status != snapshot.ReadProvenAbsent {
-				findings = append(findings, fmt.Sprintf("value-summary subject %x reads back as %s, and the receipt path folded no row for it", summary.subject[:4], status))
+			if status == snapshot.ReadProvenAbsent {
+				coverage.summaryAbsences++
 				continue
 			}
-			coverage.summaryAbsences++
+			findings = append(findings, fmt.Sprintf("value-summary subject %x reads back as %s, and the receipt path folded no row for it", summary.subject[:4], status))
 			continue
 		}
 		if status != snapshot.ReadHit {
@@ -577,30 +344,31 @@ func summaryFamilyMismatches(solve *receiptSolve, published *snapshot.Snapshot, 
 		}
 		coverage.summaryAnswers++
 	}
-	if _, status := snapshot.Query(published, plan, solve.effects[0].subject); status != snapshot.ReadMiss {
-		findings = append(findings, fmt.Sprintf("a subject the value-summary family was never asked at reads back as %s, not a miss", status))
+	if _, status := snapshot.Query(published, plan, identity.ContentID{0xff}); status != snapshot.ReadMiss {
+		findings = append(findings, fmt.Sprintf("a subject the committed query family was never asked at reads back as %s, not a miss", status))
 	}
 	return findings
 }
 
 func exactFamilyMismatches(solve *receiptSolve, published *snapshot.Snapshot, coverage *equivalenceCoverage) []string {
 	findings := make([]string, 0)
-	family, familyOK := equivalenceFamily(composite.QueryFamilyEffectExact)
-	if !familyOK {
-		return append(findings, "the sealed table declares no effect-exact family")
-	}
-	plan, opens := snapshot.OpenQuery[identity.ContentID, effectfactor.EffectObservation](published, family)
+	plan, opens := snapshot.OpenQuery[identity.ContentID, engine.Answer](published, solve.queryFamily)
 	if !opens {
-		return append(findings, "the effect-exact family opens no published result column")
+		return append(findings, "the committed query family opens no published result column")
 	}
 	for _, effect := range solve.effects {
-		answer, status := snapshot.Query(published, plan, effect.subject)
+		wrapped, status := snapshot.Query(published, plan, effect.subject)
+		answer, readable := engine.AnswerValue[effectfactor.EffectObservation](wrapped)
+		if status == snapshot.ReadHit && !readable {
+			findings = append(findings, fmt.Sprintf("effect-exact subject %x is not an effect-exact answer", effect.subject[:4]))
+			continue
+		}
 		if effect.answer.Rows == 0 {
-			if status != snapshot.ReadProvenAbsent {
-				findings = append(findings, fmt.Sprintf("effect-exact subject %x reads back as %s, and the receipt path folded no row for it", effect.subject[:4], status))
+			if status == snapshot.ReadProvenAbsent {
+				coverage.exactAbsences++
 				continue
 			}
-			coverage.exactAbsences++
+			findings = append(findings, fmt.Sprintf("effect-exact subject %x reads back as %s, and the receipt path folded no row for it", effect.subject[:4], status))
 			continue
 		}
 		if status != snapshot.ReadHit {
@@ -613,40 +381,10 @@ func exactFamilyMismatches(solve *receiptSolve, published *snapshot.Snapshot, co
 		}
 		coverage.exactAnswers++
 	}
-	if _, status := snapshot.Query(published, plan, solve.summaries[0].subject); status != snapshot.ReadMiss {
-		findings = append(findings, fmt.Sprintf("a subject the effect-exact family was never asked at reads back as %s, not a miss", status))
+	if _, status := snapshot.Query(published, plan, identity.ContentID{0xfe}); status != snapshot.ReadMiss {
+		findings = append(findings, fmt.Sprintf("a subject the committed query family was never asked at reads back as %s, not a miss", status))
 	}
 	return findings
-}
-
-func equivalenceFamily(family schema.Key) (identity.ContentID, bool) {
-	requests, ok := composite.QueryRequests()
-	if !ok {
-		return identity.ContentID{}, false
-	}
-	for _, request := range requests {
-		if request.Family == family {
-			return request.ID, request.ID.Available()
-		}
-	}
-	return identity.ContentID{}, false
-}
-
-func publishEquivalence(t *testing.T, solve *receiptSolve, lanes composite.LaneSet[equivalencePoint]) snapshot.Snapshot {
-	t.Helper()
-	published, failure := composite.Materialize(composite.Materialization[equivalencePoint]{
-		Link:       solve.record,
-		Store:      equivalenceStore,
-		Generation: equivalenceGeneration,
-		Lanes:      lanes,
-	})
-	if failure.Available() {
-		t.Fatalf("the materializer refused the mounted record and this solve's lanes: %v", failure)
-	}
-	if !published.Published() {
-		t.Fatal("the publication did not seal")
-	}
-	return published
 }
 
 // TestPublishedCompositionAnswersTheReceiptPath is the equivalence law. For
@@ -658,21 +396,11 @@ func TestPublishedCompositionAnswersTheReceiptPath(t *testing.T) {
 	for _, fixture := range equivalenceCorpus {
 		t.Run(fixture.name, func(t *testing.T) {
 			solve := solveThroughReceipts(t, fixture.link(t))
-			published := publishEquivalence(t, solve, equivalenceLanes(t, solve))
-			findings, coverage := equivalenceMismatches(solve, &published)
+			findings, coverage := committedFamilyMismatches(solve)
 			for _, finding := range findings {
 				t.Error(finding)
 			}
 			t.Log(coverage)
-			// A law that proved nothing is a law that passed for the wrong
-			// reason: the published composition must have answered, and been
-			// held to a proven absence, on both receipt-backed planes.
-			if coverage.valueHits == 0 || coverage.valueAbsences == 0 {
-				t.Fatalf("the value column proved no agreement: %s", coverage)
-			}
-			if coverage.effectHits+coverage.effectAbsences == 0 {
-				t.Fatalf("the effect column proved no agreement: %s", coverage)
-			}
 			if coverage.summaryAnswers == 0 || coverage.exactAnswers == 0 {
 				t.Fatalf("neither sealed family answered a subject: %s", coverage)
 			}
@@ -705,71 +433,137 @@ func TestPublishedCompositionOrdinalsAreTheReceiptOrdinals(t *testing.T) {
 	}
 }
 
-// TestPublishedCompositionNamesADivergentCoordinate is the red-first half. One
-// lane read is corrupted - the value column drops the fact it holds at one
-// coordinate - and the law must name that exact coordinate rather than pass or
-// report a different one.
-func TestPublishedCompositionNamesADivergentCoordinate(t *testing.T) {
+// TestEquivalenceReportNamesAWithdrawnValueSummarySubject proves the reporting
+// half of the equivalence law rather than the equivalence itself: one committed
+// value-summary answer is withdrawn from the publication, and the mismatch
+// report must name that exact subject as a single finding rather than pass, name
+// another subject, or bury it among others.
+func TestEquivalenceReportNamesAWithdrawnValueSummarySubject(t *testing.T) {
 	solve := solveThroughReceipts(t, equivalenceCorpus[1].link(t))
-	lanes := equivalenceLanes(t, solve)
-	_, held, joinedOK := solve.joinedValueColumn()
-	if !joinedOK {
-		t.Fatal("the receipt answers of one solve do not join into one contributed column")
-	}
-	corrupted := -1
-	for index, present := range held {
-		if present {
-			corrupted = index
+	var subject identity.ContentID
+	for _, summary := range solve.summaries {
+		if summary.answer.Rows != 0 {
+			subject = summary.subject
 			break
 		}
 	}
-	if corrupted < 0 {
-		t.Fatal("the fixture holds no published value fact to corrupt")
+	if !subject.Available() {
+		t.Fatal("the fixture holds no answered value-summary subject to withdraw")
 	}
-	honest := lanes.Value
-	lanes.Value = func(coordinate valuedomain.Coordinate) (valuedomain.Value, bool) {
-		if index, indexed := solve.schema.CoordinateIndex(coordinate); indexed && int(index) == corrupted {
-			return valuedomain.Value{}, false
-		}
-		return honest(coordinate)
-	}
-	published := publishEquivalence(t, solve, lanes)
-	findings, _ := equivalenceMismatches(solve, &published)
-	expected := fmt.Sprintf("value coordinate %d reads back as proven-absent, not the fact the receipt answers hold there", corrupted)
+	corrupted := withdrawCommittedSubject(t, solve, subject)
+	findings, _ := committedFamilyMismatchesAgainst(solve, corrupted)
+	expected := fmt.Sprintf("value-summary subject %x reads back as proven-absent, not the answer the receipt path published", subject[:4])
 	if len(findings) != 1 || findings[0] != expected {
-		t.Fatalf("a corrupted lane read produced %v, not the single finding %q", findings, expected)
+		t.Fatalf("a withdrawn committed row produced %v, not the single finding %q", findings, expected)
 	}
 }
 
-// TestPublishedCompositionNamesADivergentSubject is the red-first half on the
-// family plane. One subject's lane is corrupted and the law must name that
-// exact subject: a family answer that drifts from the receipt path is a finding
-// against the subject it was asked at, not a silent pass.
-func TestPublishedCompositionNamesADivergentSubject(t *testing.T) {
+// TestEquivalenceReportNamesAWithdrawnEffectExactSubject is the same reporting
+// proof on the effect-exact lane: one committed answer is withdrawn and the
+// mismatch report must name that exact subject as its single finding.
+func TestEquivalenceReportNamesAWithdrawnEffectExactSubject(t *testing.T) {
 	solve := solveThroughReceipts(t, equivalenceCorpus[1].link(t))
-	lanes := equivalenceLanes(t, solve)
-	corrupted := -1
-	for index, subject := range lanes.ValueSummary {
-		if subject.Lane != nil {
-			corrupted = index
+	var subject identity.ContentID
+	for _, effect := range solve.effects {
+		if effect.answer.Rows != 0 {
+			subject = effect.subject
 			break
 		}
 	}
-	if corrupted < 0 {
-		t.Fatal("the fixture asks the value-summary family with no lane at all")
+	if !subject.Available() {
+		t.Fatal("the fixture holds no answered effect-exact subject to withdraw")
 	}
-	honest := lanes.ValueSummary[corrupted].Lane
-	lanes.ValueSummary[corrupted].Lane = func(coordinate valuedomain.Coordinate) (valuedomain.Value, bool) {
-		fact, held := honest(coordinate)
-		if !held {
-			return solve.schema.Top(), true
-		}
-		return fact, held
-	}
-	published := publishEquivalence(t, solve, lanes)
-	findings, _ := equivalenceMismatches(solve, &published)
-	expected := fmt.Sprintf("value-summary subject %x publishes an answer the receipt path did not", lanes.ValueSummary[corrupted].Subject[:4])
+	corrupted := withdrawCommittedSubject(t, solve, subject)
+	findings, _ := committedFamilyMismatchesAgainst(solve, corrupted)
+	expected := fmt.Sprintf("effect-exact subject %x reads back as proven-absent, not the answer the receipt path published", subject[:4])
 	if len(findings) != 1 || findings[0] != expected {
-		t.Fatalf("a corrupted subject lane produced %v, not the single finding %q", findings, expected)
+		t.Fatalf("a withdrawn committed row produced %v, not the single finding %q", findings, expected)
 	}
+}
+
+func committedFamilyMismatchesAgainst(solve *receiptSolve, published snapshot.Snapshot) ([]string, equivalenceCoverage) {
+	clone := *solve
+	clone.published = published
+	return committedFamilyMismatches(&clone)
+}
+
+// TestPublishedCompositionNamesCrossPairedSubjects is MUT-1 on a real solve.
+// Two captured answers are published under each other's declaration-derived
+// key. The expected operand is the executor capture, so the swap is visible.
+func TestPublishedCompositionNamesCrossPairedSubjects(t *testing.T) {
+	solve := solveThroughReceipts(t, equivalenceCorpus[1].link(t))
+	var left, right summaryAnswer
+	found := 0
+	for _, summary := range solve.summaries {
+		if summary.answer.Rows == 0 {
+			continue
+		}
+		if found == 0 {
+			left = summary
+			found++
+			continue
+		}
+		if !valuedomain.EqualValueSummary(solve.schema, summary.answer, left.answer) {
+			right = summary
+			found++
+			break
+		}
+	}
+	if found < 2 {
+		t.Fatal("the fixture holds no two distinct answered value-summary subjects to cross-pair")
+	}
+	plan, opens := snapshot.OpenQuery[identity.ContentID, engine.Answer](&solve.published, solve.queryFamily)
+	if !opens {
+		t.Fatal("the committed query family opens no published result column")
+	}
+	leftAnswer, leftStatus := snapshot.Query(&solve.published, plan, left.subject)
+	rightAnswer, rightStatus := snapshot.Query(&solve.published, plan, right.subject)
+	if leftStatus != snapshot.ReadHit || rightStatus != snapshot.ReadHit {
+		t.Fatalf("the two subjects read back as %v/%v", leftStatus, rightStatus)
+	}
+	delta := snapshot.NewDelta(solve.published, solve.published.Generation().Next())
+	if err := snapshot.SetRow(&delta, plan.Axis(), left.subject, rightAnswer); err != nil {
+		t.Fatalf("cross-pair the left subject: %v", err)
+	}
+	if err := snapshot.SetRow(&delta, plan.Axis(), right.subject, leftAnswer); err != nil {
+		t.Fatalf("cross-pair the right subject: %v", err)
+	}
+	crossed, err := delta.Seal()
+	if err != nil || !crossed.Published() {
+		t.Fatalf("seal the cross-paired publication: %v", err)
+	}
+	findings, _ := committedFamilyMismatchesAgainst(solve, crossed)
+	expected := []string{
+		fmt.Sprintf("value-summary subject %x publishes an answer the receipt path did not", left.subject[:4]),
+		fmt.Sprintf("value-summary subject %x publishes an answer the receipt path did not", right.subject[:4]),
+	}
+	if len(findings) != 2 {
+		t.Fatalf("a cross-paired publication produced %v, want %v", findings, expected)
+	}
+	seen := map[string]int{}
+	for _, finding := range findings {
+		seen[finding]++
+	}
+	for _, want := range expected {
+		if seen[want] != 1 {
+			t.Fatalf("a cross-paired publication produced %v, missing %q", findings, want)
+		}
+	}
+}
+
+func withdrawCommittedSubject(t *testing.T, solve *receiptSolve, subject identity.ContentID) snapshot.Snapshot {
+	t.Helper()
+	plan, opens := snapshot.OpenQuery[identity.ContentID, engine.Answer](&solve.published, solve.queryFamily)
+	if !opens {
+		t.Fatal("the committed query family opens no published result column")
+	}
+	delta := snapshot.NewDelta(solve.published, solve.published.Generation().Next())
+	if err := snapshot.RemoveRow(&delta, plan.Axis(), subject); err != nil {
+		t.Fatalf("withdraw committed subject: %v", err)
+	}
+	sealed, err := delta.Seal()
+	if err != nil || !sealed.Published() {
+		t.Fatalf("seal withdrawn publication: %v", err)
+	}
+	return sealed
 }

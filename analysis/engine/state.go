@@ -1,9 +1,9 @@
 package engine
 
 import (
-	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
-	"github.com/wippyai/go-lua/analysis/identity"
 	"math"
+
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // State is one completed immutable Solver result.  It deliberately exposes
@@ -11,9 +11,8 @@ import (
 // must not become a continuation route. A State is valid only for the exact
 // Solver revision that published it.
 type State struct {
-	completion   *completionAuthority
-	results      []*queryResult
-	observations []*observationResult
+	completion *completionAuthority
+	solved     SolvedSnapshot
 }
 
 // completionAuthority is an unforgeable, immutable terminal token. store names
@@ -97,18 +96,6 @@ func (solver *Solver) validBorrow(state *State, locator resultLocator) bool {
 	return completion.store.Available() && completion.store == solver.store && atOrBefore(completion.serial, solver.completion) && completion.relation == solver.relation.Generation()
 }
 
-// queryAt recovers the query row locator addresses: lane kind first, then the
-// slot bound, then the owner and semantic key the published row must carry.
-// Every check fails closed, so a mismatched address can never borrow whatever
-// now occupies the slot.
-func (state *State) queryAt(locator resultLocator, owner queryOwner, key composition.Key) (*queryResult, bool) {
-	if state == nil || owner == nil || locator.Slot.lane != resultLaneQuery || uint64(locator.Slot.slot) >= uint64(len(state.results)) {
-		return nil, false
-	}
-	result := state.results[locator.Slot.slot]
-	return result, result != nil && result.owner == owner && result.key == key && result.value != nil
-}
-
 // typedResult recovers the typed frozen value from a published row. The value
 // is returned as it is stored, together with its freezer so an explicit
 // detachment can be served from the same borrow.
@@ -119,6 +106,20 @@ func typedResult[R any](value frozenValue) (R, FrozenResult[R], bool) {
 		return zero, FrozenResult[R]{}, false
 	}
 	return typed.value, typed.freeze, true
+}
+
+// PublishedSnapshot returns the immutable publication owned by solver for
+// state. The solver/state fence is checked once, before the sealed snapshot
+// and its family identities cross the package boundary; callers then read the
+// returned publication by stable family and row key.
+func (solver *Solver) PublishedSnapshot(state *State) (SolvedSnapshot, bool) {
+	if solver == nil || !solver.ownsCompletedState(state) {
+		return SolvedSnapshot{}, false
+	}
+	if !state.solved.Available() {
+		return SolvedSnapshot{}, false
+	}
+	return state.solved, true
 }
 
 func (solver *Solver) ownsCompletedState(state *State) bool {

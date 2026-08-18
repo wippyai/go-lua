@@ -5,9 +5,9 @@ import (
 	"errors"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 // compactContracts owns dense authored static sidecars for Flow Function and
@@ -35,6 +35,9 @@ func compactContracts(component *Component, counts [keyspace.FamilyCount]uint32,
 			typeParams: params, returnsKnown: row.ReturnsKnown, returns: returns,
 		})
 	}
+	// Calls compact after every function, so the terms appended below form one
+	// contiguous segment whose width is the sealed call type-argument total.
+	callTypeArgumentStart := uint32(len(store.terms))
 	for _, row := range input.Call {
 		for _, typeArgument := range row.TypeArguments {
 			if !staticrole.Node(counts, typeArgument) {
@@ -52,6 +55,7 @@ func compactContracts(component *Component, counts [keyspace.FamilyCount]uint32,
 		}
 		store.callTypeArgumentIDs = append(store.callTypeArgumentIDs, id)
 	}
+	store.callTypeArguments = uint32(len(store.terms)) - callTypeArgumentStart
 	return nil
 }
 
@@ -131,33 +135,4 @@ func emitContractsContainment(component *Component, check *containment) bool {
 		}
 	}
 	return true
-}
-
-// writeContractsContent owns the dense static sidecars for opaque Flow
-// Function and Call identities. It hashes semantic sequences, never their
-// shared-pool offsets.
-func writeContractsContent(writer *framing.Writer, store contractsStore) error {
-	if err := writer.Count(uint64(len(store.functions))); err != nil {
-		return err
-	}
-	for _, row := range store.functions {
-		if err := writeTypeTermsContent(writer, store.terms[row.typeParams.Start:row.typeParams.End]); err != nil {
-			return err
-		}
-		if err := writer.Bool(row.returnsKnown); err != nil {
-			return err
-		}
-		if err := writeTypeTermsContent(writer, store.terms[row.returns.Start:row.returns.End]); err != nil {
-			return err
-		}
-	}
-	if err := writer.Count(uint64(len(store.calls))); err != nil {
-		return err
-	}
-	for _, row := range store.calls {
-		if err := writeTypeTermsContent(writer, store.terms[row.Start:row.End]); err != nil {
-			return err
-		}
-	}
-	return nil
 }

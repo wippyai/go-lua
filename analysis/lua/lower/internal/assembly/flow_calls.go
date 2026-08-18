@@ -1,11 +1,13 @@
 package assembly
 
 import (
+	"errors"
+
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 )
 
-func (c *Collector) DeclareCall(span source.Span, owner, callee, receiver, actuals keyspace.Term) keyspace.Term {
+func (c *Collector) DeclareCall(span source.Span, owner, callee, receiver, actuals keyspace.Term, name string) keyspace.Term {
 	if !mutationReady(c) {
 		return 0
 	}
@@ -15,6 +17,10 @@ func (c *Collector) DeclareCall(span source.Span, owner, callee, receiver, actua
 	}
 	if err := c.flow.AdmitCall(c.counts, term, owner, callee, receiver, actuals); err != nil {
 		c.fail(err)
+		return 0
+	}
+	if name != "" && !c.source.AddCallSpelling(term, name) {
+		c.fail(errors.New("program/lower/collector: could not attach Call spelling"))
 		return 0
 	}
 	// Call declaration atomically coordinates its executable row with the one

@@ -152,7 +152,7 @@ func generatedProducts() []Product {
 			States: []astcodec.FieldState{
 				astcodec.FieldState(3),
 			},
-			Source: "fixture:testdata/fixtures/native/evalnode-genuine-noop-preserved/main.lua",
+			Source: "fixture:testdata/fixtures/core/query-zero-row/main.lua",
 		},
 		{
 			Form:    "DoBlockStmt",

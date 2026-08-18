@@ -32,6 +32,10 @@ func (rule *HotRule) Implementation() (*heapowner.RuleImplementation[source.Clos
 	return rule.implementation, ok
 }
 
+func (rule *HotRule) ProgramAttach() (engine.RuleProgramAttach, bool) {
+	return heapowner.ResolveRuleImplementationFor(rule.heapOwner, rule.implementation)
+}
+
 // BindHot binds the exact heterogeneous Heap/Value read surface, ordinary
 // carry, and exact Heap write through the two owner-issued FactorRefs.
 func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, heapOwner *heapowner.HotOwner, valueOwner *valueowner.HotOwner, catalog *allocationcatalog.Catalog) (*HotRule, bool) {
@@ -82,11 +86,31 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, heapOwner 
 				}
 				return heapSchema.Age(prior, operand.Key())
 			},
-		})
+		}, func(operand source.Closed) (uint64, bool) {
+			index, ok := heapSchema.KeyIndex(operand.Key())
+			return uint64(index), ok && index >= 0
+		}, func(operand source.Closed) (uint64, bool) {
+			index, ok := heapSchema.KeyIndex(operand.Key())
+			return uint64(index), ok && index >= 0
+		}, valueowner.SummarySurfaceAdmit(valueOwner, func(operand source.Closed) valueowner.SummaryReceipt {
+			return operand.SummaryReceipt()
+		}))
 	if !ok || implementation == nil {
 		return nil, false
 	}
-	return &HotRule{implementation: implementation, catalog: catalog, heapOwner: heapOwner, heap: heapSchema, values: values, valueOwner: valueOwner}, true
+	rule := &HotRule{implementation: implementation, catalog: catalog, heapOwner: heapOwner, heap: heapSchema, values: values, valueOwner: valueOwner}
+	if !implementation.InstallOperandResolver(rule.resolveOperand) {
+		return nil, false
+	}
+	return rule, true
+}
+
+func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (source.Closed, bool) {
+	issuer, ok := rule.ForMount(coords.Mount)
+	if !ok {
+		return source.Closed{}, false
+	}
+	return issuer.ReceiptForOccurrence(coords.Occurrence)
 }
 
 type MountedIssuer struct {
@@ -110,53 +134,6 @@ func (issuer MountedIssuer) ReceiptForOccurrence(id identity.ContentID) (source.
 	return closed, ok && closed.FencedTo(issuer.rule.heap, issuer.rule.values) && closed.SummaryReceipt().IssuedBy(issuer.rule.summaryOwner())
 }
 
-// AttachMountedOccurrence lowers one HeapClosed artifact row from the exact
-// allocation catalog receipt. Heap's exact predecessor/write and Value's
-// preissued summary vector remain sealed behind their respective owners.
-func (rule *HotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, mountID, reusablePointID, occurrenceID identity.ContentID) (engine.BindingRuleRowRef, bool) {
-	if rule == nil || rule.heapOwner == nil || rule.valueOwner == nil || assembly == nil {
-		return engine.BindingRuleRowRef{}, false
-	}
-	issuer, issuerOK := rule.ForMount(mountID)
-	operand, operandOK := issuer.ReceiptForOccurrence(occurrenceID)
-	implementation, implementationOK := heapowner.ResolveRuleImplementationFor(rule.heapOwner, rule.implementation)
-	heapRef, heapRefOK := rule.heapOwner.Ref(operand.Key())
-	if !issuerOK || !operandOK || !implementationOK || !heapRefOK {
-		return engine.BindingRuleRowRef{}, false
-	}
-	occurrence, occurrenceOK := assembly.AdmitMountedRuleOccurrence(mountedCapability(rule.implementation), mountID, reusablePointID, occurrenceID)
-	if !occurrenceOK {
-		return engine.BindingRuleRowRef{}, false
-	}
-	admit := func(transaction *engine.RuleSourceTransaction) bool {
-		summaryRead, summaryReadOK := implementation.SummaryReadReceipt(1)
-		return summaryReadOK && engine.AddExactRead(transaction, heapRef) &&
-			valueowner.AddSummaryReceiptRead(rule.valueOwner, transaction, operand.SummaryReceipt(), summaryRead) &&
-			transaction.AddCarry() && engine.AddExactWrite(transaction, heapRef)
-	}
-	issue := func(sourceReceipt engine.RuleSurfaceSourceReceipt) bool {
-		draft, draftOK := implementation.BeginReceiptRuleRow(sourceReceipt)
-		if !draftOK {
-			return false
-		}
-		for index := uint64(0); index < 2; index++ {
-			read, ok := implementation.ReceiptReadPart(sourceReceipt, index)
-			if !ok || !draft.AddRead(read) {
-				return false
-			}
-		}
-		carry, carryOK := implementation.ReceiptCarryPart(sourceReceipt, 0)
-		write, writeOK := implementation.ReceiptWritePart(sourceReceipt, 0)
-		if !carryOK || !writeOK || !draft.AddCarry(carry) || !draft.AddWrite(write) {
-			return false
-		}
-		_, added := assembly.AddRuleFromDraft(occurrence, draft)
-		return added
-	}
-	queued := engine.AdmitMountedRule(assembly, implementation, mountedCapability(rule.implementation), occurrence, operand, admit, issue)
-	return engine.BindingRuleRowRef{}, queued
-}
-
 func (rule *HotRule) summaryOwner() *valueowner.HotOwner {
 	if rule == nil || rule.catalog == nil {
 		return nil
@@ -165,23 +142,6 @@ func (rule *HotRule) summaryOwner() *valueowner.HotOwner {
 	// implementation callback retains it as well. This helper keeps the
 	// mounted issuance check explicit without exposing catalog internals.
 	return rule.valueOwner
-}
-
-// AttachMountedReceiptMember resolves the exact committed HeapClosed member
-// and its preissued heterogeneous operand internally.  The Value summary
-// vector and both private owner coordinates remain sealed in their packages.
-func (rule *HotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, reusablePointID, occurrenceID identity.ContentID) (*engine.ReceiptMember, bool) {
-	if rule == nil || rule.heapOwner == nil || graph == nil {
-		return nil, false
-	}
-	issuer, issuerOK := rule.ForMount(mountID)
-	operand, operandOK := issuer.ReceiptForOccurrence(occurrenceID)
-	member, memberOK := graph.MountedRuleMember(mountedCapability(rule.implementation), mountID, reusablePointID, occurrenceID)
-	implementation, implementationOK := heapowner.ResolveRuleImplementationFor(rule.heapOwner, rule.implementation)
-	if !issuerOK || !operandOK || !memberOK || !implementationOK {
-		return nil, false
-	}
-	return engine.AttachReceiptRuleMember(compilation, implementation, member, operand)
 }
 
 func hotClosedContent(heapSchema heapdomain.Schema, values *valuedomain.Schema, valueOwner *valueowner.HotOwner, candidate source.Closed) (source.Closed, [32]byte, bool) {

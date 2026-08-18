@@ -3,6 +3,7 @@ package composite
 import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/query"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 	effectowner "github.com/wippyai/go-lua/domain/effect/owner"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
@@ -46,4 +47,45 @@ func queryRegistrations(roles vocabulary.Roles) ([]*query.Registration, bool) {
 		return nil, false
 	}
 	return admitted, true
+}
+
+// queryRoleVocabulary is the Artifact population and projection catalog
+// query families resolve against. Construction reads these from the sealed
+// family rather than restating a family name.
+func queryRoleVocabulary() []structure.Spec {
+	return vocabulary.RoleSpecs(
+		"query/population/selected-point",
+		"query/projection/summary",
+		"query/projection/exact",
+	)
+}
+
+// IssuedQuery is one sealed family's construction handle: the authored
+// identity the row address is derived from, the Artifact population and
+// projection the family is attached through, and the authority
+// ProgramBinding.Query recovers the sealed implementation by.
+type IssuedQuery struct {
+	Family     schema.Key
+	Authority  schema.Key
+	Population schema.Key
+	Projection schema.Key
+}
+
+// QueryIssuance returns the sealed query inventory in catalog order.
+func QueryIssuance() []IssuedQuery {
+	sealRegistry()
+	issued := make([]IssuedQuery, 0, len(registry.queries))
+	for _, registration := range registry.queries {
+		if registration == nil {
+			continue
+		}
+		family := registration.Key()
+		issued = append(issued, IssuedQuery{
+			Family:     family,
+			Authority:  family,
+			Population: registration.Population(),
+			Projection: registration.Projection(),
+		})
+	}
+	return issued
 }

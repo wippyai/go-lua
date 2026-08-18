@@ -9,7 +9,10 @@ import (
 
 const (
 	artifactDomain  = "program/artifact"
-	artifactVersion = 20
+	// v21 adds the Source-owned authored debug-spelling record to the fixed
+	// quartet payload grammar. Older streams are intentionally rejected; the
+	// artifact codec has no compatibility representation.
+	artifactVersion = 21
 
 	// These limits are deliberately owned by this package. They bound both
 	// the encoded byte stream and the amount of reconstruction work admitted

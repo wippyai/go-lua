@@ -1,5 +1,3 @@
-// Package static owns Link's one detached namespace identity per concrete
-// Project mount. ProgramArtifact owns every Program-internal static fact.
 package static
 
 import (

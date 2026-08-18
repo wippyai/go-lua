@@ -7,7 +7,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/snapshot"
-	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
 // The pilot publishes the one column the sealed table declares. The key and
@@ -172,28 +171,17 @@ func TestSealedQueryFamiliesAreAnswerableOnAPublishedSnapshot(t *testing.T) {
 	if !queriesOK || len(queries) == 0 {
 		t.Fatal("the sealed table publishes no column plan")
 	}
-	record := mountedRecord(t, "materializer_law", materializerSource)
-	sealed, failure := Materialize(Materialization[mountedExecutionPoint]{
-		Link:       record,
-		Store:      pilotStore,
-		Generation: pilotGeneration,
-		Lanes:      materializerLanes(t, record),
-	})
-	if failure.Available() {
-		t.Fatalf("the materializer refused a mounted record and a complete lane set: %v", failure)
+	columns, columnsOK := WriteRequests()
+	if !columnsOK {
+		t.Fatal("the sealed table issues no write requests")
 	}
-	stateQueries(t, record, &sealed, nil)
 	for _, query := range queries {
-		opened, opens := snapshot.OpenQuery[identity.ContentID, valuedomain.ValueSummaryObservation](&sealed, query.ID)
-		if query.Family != QueryFamilyValueSummary {
-			continue
+		id, projects := ProjectQuery(query.Family)
+		if !projects || id != query.ID || !query.ID.Available() {
+			t.Fatalf("family %q projects identity %x, request %x", query.Family, id, query.ID)
 		}
-		if !opens {
-			t.Fatalf("family %q opens no result column", query.Family)
-		}
-		foreign := snapshot.QueryPlan[identity.ContentID, valuedomain.ValueSummaryObservation]{SchemaID: identity.ContentID{0x77}, Slot: opened.Slot}
-		if _, status := snapshot.Query(&sealed, foreign, materializerSubjects[0]); status != snapshot.ReadInvalid {
-			t.Fatalf("a plan of another schema answered %q with %s", query.Family, status)
+		if int(query.Slot) < len(columns) || int(query.Slot) >= PublicationColumns() {
+			t.Fatalf("family %q answers at slot %d outside the result-column range", query.Family, query.Slot)
 		}
 	}
 }

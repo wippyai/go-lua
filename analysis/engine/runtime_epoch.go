@@ -186,6 +186,7 @@ type executorEpoch struct {
 	terminal          atomic.Uint32
 	activationPending bool
 	activations       []equation.AcceptedMember
+	storePub          *solvedPublication
 }
 
 func (epoch *executorEpoch) recordFailure(reason SolveFailureReason, boundary solveBoundary, point, group, member, rule composition.Key) {
@@ -339,7 +340,13 @@ func newRuntimeEpoch(runtime *solverRuntime, relation equation.Relation, ctx con
 		}
 		work.Close()
 	}()
-	demandEpoch, ok = demand.Open(runtime.demand)
+	selectedPoints := make([]int, 0, len(runtime.activePoints))
+	for pointIndex, active := range runtime.activePoints {
+		if active {
+			selectedPoints = append(selectedPoints, pointIndex)
+		}
+	}
+	demandEpoch, ok = demand.OpenSelected(runtime.demand, selectedPoints)
 	if !ok {
 		return nil, false
 	}
@@ -394,10 +401,12 @@ func newRuntimeEpoch(runtime *solverRuntime, relation equation.Relation, ctx con
 		epoch.regions[index].factorBackIngress = make([]uint64, len(region.factorBack))
 		epoch.regions[index].snapshot = make([]uint64, len(region.points))
 	}
-	for index := 0; index < runtime.points.PointCount(); index++ {
-		point, pointOK := runtime.points.PointAt(index)
-		pointIndex, indexed := runtime.graph.PointIndex(point)
-		if !pointOK || !indexed || pointIndex < 0 || pointIndex >= len(epoch.points) || !runtime.activePoints[pointIndex] {
+	for pointIndex, active := range runtime.activePoints {
+		if !active {
+			continue
+		}
+		point, pointOK := runtime.graph.PointAt(schedule.Node(pointIndex))
+		if !pointOK || pointIndex < 0 || pointIndex >= len(epoch.points) {
 			return nil, false
 		}
 		if pointIndex >= len(runtime.pointScopes) || !runtime.pointScopes[pointIndex].Valid() {
@@ -439,7 +448,7 @@ func newRuntimeEpoch(runtime *solverRuntime, relation equation.Relation, ctx con
 			if epoch.producers[groupIndex].generation == 0 {
 				metadata := runtime.producers[groupIndex]
 				inputCount := metadata.group.InputCount()
-				epoch.producers[groupIndex] = producerEpoch{generation: 1, candidateTokens: make([]uint64, inputCount), scratchTokens: make([]uint64, inputCount), inputs: make([]carrier.PointState, inputCount), inputStates: make([]carrier.State, inputCount), patches: make([]carrier.Patch, 0, len(metadata.members)), patchRows: make([]contributionPatch, 0, len(metadata.members)), reads: make([]demand.Observation, 0, len(metadata.reads))}
+				epoch.producers[groupIndex] = producerEpoch{generation: 1, candidateTokens: make([]uint64, inputCount), scratchTokens: make([]uint64, inputCount), inputs: make([]carrier.PointState, inputCount), inputStates: make([]carrier.State, inputCount), patches: make([]carrier.Patch, 0, metadata.span.count()), patchRows: make([]contributionPatch, 0, metadata.span.count()), reads: make([]demand.Observation, 0, len(metadata.reads))}
 			}
 			if !epoch.enqueuePoint(pointIndex) {
 				return nil, false
@@ -535,6 +544,7 @@ func (epoch *executorEpoch) discard() {
 		epoch.work.Close()
 		epoch.work = nil
 	}
+	epoch.storePub = nil
 }
 
 func (epoch *executorEpoch) canceled() bool {

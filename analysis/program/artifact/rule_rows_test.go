@@ -9,61 +9,101 @@ import (
 	"github.com/wippyai/go-lua/domain/composite"
 )
 
-func TestMountedRuleRoleCatalogIsClosedOrderedAndOwnerScoped(t *testing.T) {
-	want := []programartifact.RuleRole{
-		programartifact.RuleRoleValueSource,
-		programartifact.RuleRolePackSource,
-		programartifact.RuleRoleHeapIngress,
-		programartifact.RuleRoleValueAllocation,
-		programartifact.RuleRoleHeapEmpty,
-		programartifact.RuleRoleHeapClosed,
-		programartifact.RuleRoleRawGet,
-		programartifact.RuleRoleRawSet,
-		programartifact.RuleRoleCallDispatch,
-		programartifact.RuleRoleEffectSelected,
-		programartifact.RuleRoleEffectOpaque,
-		programartifact.RuleRoleEffectBody,
-		programartifact.RuleRoleCallActivation,
-		programartifact.RuleRoleValueStorageTransfer,
-		programartifact.RuleRoleValueBinaryArithmetic,
-		programartifact.RuleRoleValueBinaryEquality,
-		programartifact.RuleRoleValueBinaryOrder,
-		programartifact.RuleRoleValuePresenceRefinement,
+func TestRulePlacementSurfaceEqualsIssuedSubscriptions(t *testing.T) {
+	published, err := lower.Lower(lower.Source{Name: "issuance.lua", Text: []byte(`
+local function run(limit: number)
+    local total = 0
+    local index = 1
+    while index < limit do
+        total = total + 1
+        index = index + 1
+    end
+    return total
+end
+`)})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := programartifact.MountedRuleRoleCount(); got != len(want) {
-		t.Fatalf("mounted role count = %d, want %d", got, len(want))
+	compilation, compilationOK := composite.Global()
+	if !compilationOK {
+		t.Fatal("Program artifact grammar unavailable")
 	}
-	seen := make(map[programartifact.RuleRole]struct{}, len(want))
-	for index, expected := range want {
-		role, ok := programartifact.MountedRuleRoleAt(index)
-		if !ok || role != expected {
-			t.Fatalf("mounted role %d = %d/%t, want %d", index, role, ok, expected)
-		}
-		if _, duplicate := seen[role]; duplicate {
-			t.Fatalf("mounted role %d repeated", role)
-		}
-		seen[role] = struct{}{}
+	artifact, failure := composite.CompileArtifactDetailed(published, compilation)
+	if failure.Available() || artifact == nil || !artifact.Available() {
+		t.Fatalf("compile: %s", failure.Error())
 	}
-	for _, index := range []int{-1, len(want), len(want) + 1} {
-		if _, ok := programartifact.MountedRuleRoleAt(index); ok {
-			t.Fatalf("MountedRuleRoleAt(%d) accepted an invalid ordinal", index)
+	if artifact.RulePlacementCount() == 0 {
+		t.Fatal("compiled program issued no rule placements")
+	}
+	seen := make(map[identity.ContentID]int)
+	for index := 0; index < artifact.RulePlacementCount(); index++ {
+		row, ok := artifact.RulePlacementAt(index)
+		if !ok || !row.Available() {
+			t.Fatalf("placement %d unavailable", index)
+		}
+		if !row.Key().Available() {
+			t.Fatalf("placement %d has no declaration key", index)
+		}
+		seen[row.ID()]++
+	}
+	if len(seen) == 0 {
+		t.Fatal("compiled program issued no rule placements")
+	}
+}
+
+func TestRulePlacementForKeySelectsTheIssuedDeclaration(t *testing.T) {
+	published, err := lower.Lower(lower.Source{Name: "issuance-key.lua", Text: []byte(`
+local function run(limit: number)
+    local total = 0
+    local index = 1
+    while index < limit do
+        total = total + 1
+        index = index + 1
+    end
+    return total
+end
+`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	compilation, compilationOK := composite.Global()
+	if !compilationOK {
+		t.Fatal("Program artifact grammar unavailable")
+	}
+	artifact, failure := composite.CompileArtifactDetailed(published, compilation)
+	if failure.Available() || artifact == nil || !artifact.Available() {
+		t.Fatalf("compile: %s", failure.Error())
+	}
+	if artifact.RulePlacementCountForKey("") != 0 {
+		t.Fatal("empty key selected placements")
+	}
+	if artifact.RulePlacementCountForKey("value-bootstrap") != 0 {
+		t.Fatal("link-lane key selected mounted placements")
+	}
+	counted := 0
+	for index := 0; index < artifact.RulePlacementCount(); index++ {
+		row, ok := artifact.RulePlacementAt(index)
+		if !ok {
+			t.Fatalf("placement %d unavailable", index)
+		}
+		counted++
+		matched := 0
+		for keyIndex := 0; keyIndex < artifact.RulePlacementCountForKey(row.Key()); keyIndex++ {
+			got, gotOK := artifact.RulePlacementForKeyAt(row.Key(), keyIndex)
+			if !gotOK || got.Key() != row.Key() {
+				t.Fatalf("key %q placement %d is not that declaration", row.Key(), keyIndex)
+			}
+			matched++
+		}
+		if matched == 0 {
+			t.Fatalf("key %q issued a placement the key index cannot see", row.Key())
 		}
 	}
-	for _, foreign := range []programartifact.RuleRole{
-		programartifact.RuleRoleInvalid,
-		programartifact.RuleRoleValueBootstrap,
-		programartifact.RuleRoleHeapBootstrap,
-		programartifact.RuleRole(255),
-	} {
-		if _, ok := seen[foreign]; ok {
-			t.Fatalf("foreign role %d entered mounted vocabulary", foreign)
-		}
+	if counted == 0 {
+		t.Fatal("compiled program issued no rule placements")
 	}
-	var unavailable *programartifact.Artifact
-	for _, role := range want {
-		if unavailable.RuleRoleSupported(role) {
-			t.Fatalf("unavailable artifact supported mounted role %d", role)
-		}
+	if _, ok := artifact.RulePlacementForKeyAt("value-binary-arithmetic", artifact.RulePlacementCountForKey("value-binary-arithmetic")); ok {
+		t.Fatal("key index accepted an out-of-range ordinal")
 	}
 }
 func TestProgramArtifactStagedRulesReadStrictlyEarlierPoints(t *testing.T) {
@@ -202,33 +242,28 @@ return run
 			}
 
 			staged := 0
-			for role := programartifact.RuleRoleInvalid; role <= programartifact.RuleRoleValuePresenceRefinement; role++ {
-				if !artifact.RuleRoleSupported(role) {
+			for ruleIndex := 0; ruleIndex < artifact.RulePlacementCount(); ruleIndex++ {
+				rule, ruleOK := artifact.RulePlacementAt(ruleIndex)
+				if !ruleOK {
+					t.Fatalf("placement %d unavailable", ruleIndex)
+				}
+				if rule.Stage() == programartifact.RuleStageBase {
 					continue
 				}
-				for ruleIndex := 0; ruleIndex < artifact.RuleOccurrenceCount(role); ruleIndex++ {
-					rule, ruleOK := artifact.RuleOccurrenceAt(role, ruleIndex)
-					if !ruleOK {
-						t.Fatalf("role=%d rule=%d unavailable", role, ruleIndex)
-					}
-					if rule.Stage() == programartifact.RuleStageBase {
-						continue
-					}
-					point, pointOK := rule.PointAt(0)
-					input, inputOK := rule.InputPoint()
-					if !pointOK || !inputOK {
-						t.Fatalf("role=%d rule=%d staged placement has no point pair", role, ruleIndex)
-					}
-					outputRank, outputRanked := rank[point]
-					inputRank, inputRanked := rank[input]
-					if !outputRanked || !inputRanked {
-						t.Fatalf("role=%d rule=%d point pair is not scheduled: input=%t output=%t", role, ruleIndex, inputRanked, outputRanked)
-					}
-					if input == point || inputRank >= outputRank {
-						t.Fatalf("role=%d rule=%d reads rank %d and writes rank %d", role, ruleIndex, inputRank, outputRank)
-					}
-					staged++
+				point, pointOK := rule.PointAt(0)
+				input, inputOK := rule.InputPoint()
+				if !pointOK || !inputOK {
+					t.Fatalf("placement %d staged placement has no point pair", ruleIndex)
 				}
+				outputRank, outputRanked := rank[point]
+				inputRank, inputRanked := rank[input]
+				if !outputRanked || !inputRanked {
+					t.Fatalf("placement %d point pair is not scheduled: input=%t output=%t", ruleIndex, inputRanked, outputRanked)
+				}
+				if input == point || inputRank >= outputRank {
+					t.Fatalf("placement %d reads rank %d and writes rank %d", ruleIndex, inputRank, outputRank)
+				}
+				staged++
 			}
 			if staged == 0 {
 				t.Fatalf("%s issued no staged rule placement", fixture.name)

@@ -43,97 +43,29 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 			})
 			return completed && rows == 1
 		},
+	}, func(seed value.SourceSeed) (uint64, bool) {
+		coordinate, _, ok := sourceResultForSchema(owner.Schema(), seed)
+		index, indexOK := owner.Schema().CoordinateIndex(coordinate)
+		return uint64(index), ok && indexOK
 	})
 	if !ok || implementation == nil {
 		return nil, false
 	}
-	return &HotRule{implementation: implementation, owner: owner}, true
-}
-
-// AttachMountedRule admits one complete ValueSource row before topology
-// commit. Every operand and output surface is issued by this exact Value
-// owner; AddRuleFromDraft seals the row atomically under the mounted witness.
-func (rule *HotRule) AttachMountedRule(assembly *engine.ReceiptAssembly, mountID, pointID, occurrenceID identity.ContentID) (engine.BindingRuleRowRef, bool) {
-	if rule == nil || rule.owner == nil || assembly == nil {
-		return engine.BindingRuleRowRef{}, false
-	}
-	issuer, mountOK := rule.ForMount(mountID)
-	seed, seedOK := issuer.ReceiptForOccurrence(occurrenceID)
-	implementation, implementationOK := valueowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
-	capability, capabilityOK := rule.implementation.MountedCapability()
-	if !capabilityOK {
-		return engine.BindingRuleRowRef{}, false
-	}
-	occurrence, occurrenceOK := assembly.AdmitMountedRuleOccurrence(capability, mountID, pointID, occurrenceID)
-	coordinate, _, resultOK := sourceResultForSchema(rule.owner.Schema(), seed)
-	ref, refOK := rule.owner.Ref(coordinate)
-	if !mountOK || !seedOK || !implementationOK || !occurrenceOK || !resultOK || !refOK {
-		return engine.BindingRuleRowRef{}, false
-	}
-	admit := func(transaction *engine.RuleSourceTransaction) bool {
-		return engine.AddExactWrite(transaction, ref)
-	}
-	issue := func(source engine.RuleSurfaceSourceReceipt) bool {
-		draft, draftOK := implementation.BeginReceiptRuleRow(source)
-		writePart, writePartOK := implementation.ReceiptWritePart(source, 0)
-		if !draftOK || !writePartOK || !draft.AddWrite(writePart) {
-			return false
-		}
-		_, added := assembly.AddRuleFromDraft(occurrence, draft)
-		return added
-	}
-	queued := engine.AdmitMountedRule(assembly, implementation, capability, occurrence, seed, admit, issue)
-	return engine.BindingRuleRowRef{}, queued
-}
-
-// BeginReceiptCompilation starts the opaque graph attachment transaction for
-// this exact Value/source issuer.
-func (rule *HotRule) BeginReceiptCompilation(graph *engine.ReceiptGraph) (*engine.ReceiptCompilation, bool) {
-	if rule == nil || rule.owner == nil {
+	rule := &HotRule{implementation: implementation, owner: owner}
+	if !implementation.InstallOperandResolver(rule.resolveOperand) {
 		return nil, false
 	}
-	implementation, ok := valueowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
+	return rule, true
+}
+
+func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (value.SourceSeed, bool) {
+	issuer, ok := rule.ForMount(coords.Mount)
 	if !ok {
-		return nil, false
+		return value.SourceSeed{}, false
 	}
-	return engine.BeginReceiptCompilation(implementation, graph)
+	return issuer.ReceiptForOccurrence(coords.Occurrence)
 }
 
-// AttachReceiptMember attaches one graph-owned source member using the exact
-// owner-fenced SourceSeed operand.
-func (rule *HotRule) AttachReceiptMember(compilation *engine.ReceiptCompilation, member engine.ReceiptRuleMember, seed value.SourceSeed) (*engine.ReceiptMember, bool) {
-	if rule == nil || rule.owner == nil {
-		return nil, false
-	}
-	implementation, ok := valueowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
-	if !ok {
-		return nil, false
-	}
-	return engine.AttachReceiptRuleMember(compilation, implementation, member, seed)
-}
-
-// AttachMountedReceiptMember resolves the graph-owned mounted member and the
-// exact preissued SourceSeed internally, then delegates to AttachReceiptMember.
-func (rule *HotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, pointID, occurrenceID identity.ContentID) (*engine.ReceiptMember, bool) {
-	if rule == nil || graph == nil {
-		return nil, false
-	}
-	capability, capabilityOK := rule.implementation.MountedCapability()
-	if !capabilityOK {
-		return nil, false
-	}
-	member, memberOK := graph.MountedRuleMember(capability, mountID, pointID, occurrenceID)
-	issuer, issuerOK := rule.ForMount(mountID)
-	seed, seedOK := issuer.ReceiptForOccurrence(occurrenceID)
-	if !memberOK || !issuerOK || !seedOK {
-		return nil, false
-	}
-	return rule.AttachReceiptMember(compilation, member, seed)
-}
-
-// MountedIssuer is Source's exact substitution authority for one concrete
-// Project mount.  Artifact occurrence IDs are intentionally only meaningful
-// beneath this issuer: equivalent Program mounts may reuse them.
 type MountedIssuer struct {
 	rule  *HotRule
 	mount value.SourceSeedMount
@@ -181,6 +113,10 @@ func (rule *HotRule) Implementation() (*valueowner.RuleImplementation[value.Sour
 		return nil, false
 	}
 	return rule.implementation, true
+}
+
+func (rule *HotRule) ProgramAttach() (engine.RuleProgramAttach, bool) {
+	return valueowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
 }
 
 func hotSourceChecker(owner *valueowner.HotOwner, ruleSemantic identity.SemanticKey) engine.RuleDerivationChecker[value.Value, value.SourceSeed] {

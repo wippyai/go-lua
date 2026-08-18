@@ -3,8 +3,8 @@ package structure
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 // scratchEntry is a stand-in row for a sibling surface. The declaration root
@@ -490,6 +490,24 @@ func TestCollectedDuplicateSpellingIsRejectedAtSeal(t *testing.T) {
 	}
 }
 
+// TestSealRejectsUnknownStagePredecessor states the predecessor law at the
+// public seal path: a stage may name only another issuance stage.
+func TestSealRejectsUnknownStagePredecessor(t *testing.T) {
+	var entries []*Entry
+	for _, contribution := range canonicalContributions() {
+		for _, spec := range contribution {
+			if spec.Category == CategoryIssuanceStage && spec.Key == "stage/local" {
+				spec.Predecessor = "stage/unknown"
+			}
+			entries = append(entries, mustEntry(t, spec))
+		}
+	}
+	_, failure := sealEntries(t, entries)
+	if failure.Law != LawStagePredecessor || failure.Disposition != schema.DispositionMalformed {
+		t.Fatalf("unknown stage predecessor sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+}
+
 // TestTwoContributorsCannotDeclareOneSemanticRole is the law that replaced the
 // closed semantic vocabulary's own distinctness check. Every identity the
 // analyzer binds under is a member of one category here, so the spelling law
@@ -623,12 +641,15 @@ func TestTableDigestCoversDeclaredContent(t *testing.T) {
 // violates a law yields no entry at all.
 func TestNewRejectsIncompleteSpec(t *testing.T) {
 	cases := map[string]Spec{
-		"key":                {Category: CategoryArm, Ordinal: 1, Spelling: "local", Accepted: true},
-		"category":           {Key: "arm/local", Ordinal: 1, Spelling: "local", Accepted: true},
-		"catalog":            {Key: "arm/local", Category: categoryLimit, Ordinal: 1, Spelling: "local", Accepted: true},
-		"ordinal":            {Key: "arm/local", Category: CategoryArm, Spelling: "local", Accepted: true},
-		"spelling":           {Key: "arm/local", Category: CategoryArm, Ordinal: 1, Accepted: true},
-		"declared admission": {Key: "arm/local", Category: CategoryArm, Ordinal: 1, Spelling: "local"},
+		"key":                      {Category: CategoryArm, Ordinal: 1, Spelling: "local", Accepted: true},
+		"category":                 {Key: "arm/local", Ordinal: 1, Spelling: "local", Accepted: true},
+		"catalog":                  {Key: "arm/local", Category: categoryLimit, Ordinal: 1, Spelling: "local", Accepted: true},
+		"ordinal":                  {Key: "arm/local", Category: CategoryArm, Spelling: "local", Accepted: true},
+		"spelling":                 {Key: "arm/local", Category: CategoryArm, Ordinal: 1, Accepted: true},
+		"declared admission":       {Key: "arm/local", Category: CategoryArm, Ordinal: 1, Spelling: "local"},
+		"off-category native":      {Key: "arm/local", Category: CategoryArm, Ordinal: 1, Spelling: "local", Accepted: true, Native: true},
+		"off-category predecessor": {Key: "arm/local", Category: CategoryArm, Ordinal: 1, Spelling: "local", Accepted: true, Predecessor: "stage/base"},
+		"self predecessor":         {Key: "stage/local", Category: CategoryIssuanceStage, Ordinal: 2, Spelling: "local", Accepted: true, Predecessor: "stage/local"},
 	}
 	for name, spec := range cases {
 		if entry, ok := New(spec); ok || entry != nil {

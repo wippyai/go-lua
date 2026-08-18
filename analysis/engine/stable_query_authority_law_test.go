@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 type receiptQueryMatrixFixture struct {
@@ -17,6 +18,19 @@ type receiptQueryMatrixFixture struct {
 	transferRuns *int
 	projectRuns  *int
 	freezeRuns   *int
+	// binding, graph and addressed are the construction inputs the sealed
+	// program was built from. They are retained so a construction-plane law can
+	// resolve the published query set the seal resolved against instead of
+	// reconstructing one.
+	binding              *SchemaBinding
+	graph                *ReceiptGraph
+	addressed            []composition.Key
+	queryImplementations []*ExactQueryImplementation[uint64, uint64]
+	// observations are the solve-local observation handles attached before the
+	// seal, in attach order, and observationIDs their identities in the same
+	// order. Both are empty unless the fixture was built observed.
+	observations   []ReceiptObservation[uint64]
+	observationIDs []identity.ContentID
 }
 
 // TestReceiptQueryWarmStateAndCancellation keeps both terminal lifecycle
@@ -28,8 +42,16 @@ func TestReceiptQueryWarmStateAndCancellation(t *testing.T) {
 	if first == nil || status != SolveComplete {
 		t.Fatalf("first receipt solve = state:%v status:%v report={available:%t reason:%v phase:%v point:%v group:%v member:%v rule:%v}", first, status, report.Available(), report.Reason(), report.Failure(), report.Point(), report.Group(), report.Member(), report.Rule())
 	}
+	firstKey, firstKeyed := fixture.queries[0].PublicationKey()
+	if !firstKeyed {
+		t.Fatal("receipt query has no snapshot key")
+	}
 	for index, query := range fixture.queries {
-		value, readable := ReceiptQueryResult[uint64](query, fixture.solver, first)
+		key, keyed := query.PublicationKey()
+		if !keyed {
+			t.Fatalf("query[%d] has no snapshot key", index)
+		}
+		value, readable := testSnapshotQueryValue[uint64](fixture.solver, first, key)
 		if !readable || value != fixture.expected[index] {
 			t.Fatalf("first query[%d] = %d/%v, want %d/true", index, value, readable, fixture.expected[index])
 		}
@@ -42,8 +64,12 @@ func TestReceiptQueryWarmStateAndCancellation(t *testing.T) {
 		t.Fatalf("warm receipt solve reran callbacks: state:%v status:%v transfers:%d/%d projects:%d/%d freezes:%d/%d", second, status, *fixture.transferRuns, runs, *fixture.projectRuns, projects, *fixture.freezeRuns, freezes)
 	}
 	for index, query := range fixture.queries {
-		oldValue, oldReadable := ReceiptQueryResult[uint64](query, fixture.solver, first)
-		newValue, newReadable := ReceiptQueryResult[uint64](query, fixture.solver, second)
+		key, keyed := query.PublicationKey()
+		if !keyed {
+			t.Fatalf("query[%d] has no snapshot key", index)
+		}
+		oldValue, oldReadable := testSnapshotQueryValue[uint64](fixture.solver, first, key)
+		newValue, newReadable := testSnapshotQueryValue[uint64](fixture.solver, second, key)
 		if !oldReadable || !newReadable || oldValue != fixture.expected[index] || newValue != oldValue {
 			t.Fatalf("warm query[%d] old=%d/%v new=%d/%v", index, oldValue, oldReadable, newValue, newReadable)
 		}
@@ -53,7 +79,7 @@ func TestReceiptQueryWarmStateAndCancellation(t *testing.T) {
 		if state == nil || warmStatus != SolveComplete {
 			panic("warm receipt solve")
 		}
-		if _, readable := ReceiptQueryResult[uint64](fixture.queries[0], fixture.solver, state); !readable {
+		if _, readable := testSnapshotQueryValue[uint64](fixture.solver, state, firstKey); !readable {
 			panic("warm receipt query")
 		}
 	})
@@ -68,12 +94,26 @@ func TestReceiptQueryWarmStateAndCancellation(t *testing.T) {
 	if state != nil || canceledStatus != SolveCanceled {
 		t.Fatalf("canceled receipt solve = state:%v status:%v", state, canceledStatus)
 	}
-	if _, readable := ReceiptQueryResult[uint64](canceled.queries[0], canceled.solver, state); readable {
+	if _, readable := testSnapshotQueryValue[uint64](canceled.solver, state, firstKey); readable {
 		t.Fatal("canceled receipt solve exposed a query result")
 	}
 }
 
 func newReceiptQueryMatrixFixture(t testing.TB, count int, order, declarationOrder []int) receiptQueryMatrixFixture {
+	t.Helper()
+	return buildReceiptQueryMatrixFixture(t, count, order, declarationOrder, false)
+}
+
+// newObservedReceiptQueryMatrixFixture builds the same matrix and additionally
+// attaches one exact observation per Rule member before the seal, so the
+// observation table of the sealed program carries one row per member in attach
+// order.
+func newObservedReceiptQueryMatrixFixture(t testing.TB, count int, order, declarationOrder []int) receiptQueryMatrixFixture {
+	t.Helper()
+	return buildReceiptQueryMatrixFixture(t, count, order, declarationOrder, true)
+}
+
+func buildReceiptQueryMatrixFixture(t testing.TB, count int, order, declarationOrder []int, observed bool) receiptQueryMatrixFixture {
 	t.Helper()
 	if !validReceiptQueryPermutation(count, order) || !validReceiptQueryPermutation(count, declarationOrder) {
 		t.Fatal("receipt query matrix order")
@@ -140,7 +180,7 @@ func newReceiptQueryMatrixFixture(t testing.TB, count int, order, declarationOrd
 				return Product(access, func(row Row) bool { return StageValue(access, row, value) })
 			},
 		}
-		if !BindRule[uint64, uint64, ruleUnit](binding, rules[index], writeSlots[index], factors[index], ruleSpec) {
+		if !BindRule[uint64, uint64, ruleUnit](binding, rules[index], writeSlots[index], factors[index], ruleSpec, testRuleProjector[ruleUnit]) {
 			t.Fatal("receipt query matrix Rule binding")
 		}
 	}
@@ -238,28 +278,53 @@ func newReceiptQueryMatrixFixture(t testing.TB, count int, order, declarationOrd
 	if !committed || topology == nil || graph == nil || topology.topology == nil {
 		t.Fatal("receipt query matrix graph commit")
 	}
-	compilation, compilationOK := BeginReceiptCompilation(ruleImplementations[0], graph)
+	compilation, compilationOK := BeginProgramConstruction(binding, graph)
 	if !compilationOK || compilation == nil {
 		t.Fatal("receipt query matrix compilation")
 	}
 	for index := 0; index < count; index++ {
-		member, memberOK := graph.RuleMember(receiptAssemblySemanticID(byte(60 + index)))
-		if !memberOK {
+		if _, memberOK := graph.RuleMember(receiptAssemblySemanticID(byte(60 + index))); !memberOK {
 			t.Fatal("receipt query matrix Rule member receipt")
 		}
-		if _, attached := AttachReceiptRuleMember(compilation, ruleImplementations[index], member, operandValues[index]); !attached {
+		if !installConstOperandResolver(ruleImplementations[index], operandValues[index]) {
+			t.Fatal("receipt query matrix resolver")
+		}
+		if attached := AttachRuleMember(compilation, ruleImplementations[index], receiptAssemblySemanticID(byte(60+index))); !attached {
 			t.Fatal("receipt query matrix Rule attachment")
 		}
 	}
 	queryReceipts := make([]ReceiptQuery, count)
 	for index := 0; index < count; index++ {
 		query, queryOK := graph.Query(receiptAssemblySemanticID(byte(110 + index)))
-		if !queryOK || !AttachReceiptExactQuery(compilation, queryImplementations[index], query) {
+		if !queryOK || !AttachExactQuery(compilation, queryImplementations[index], receiptAssemblySemanticID(byte(110+index))) {
 			t.Fatal("receipt query matrix Query attachment")
 		}
 		queryReceipts[index] = query
 	}
-	solver, solverOK := compilation.Solver()
+	var observations []ReceiptObservation[uint64]
+	var observationIDs []identity.ContentID
+	if observed {
+		observations = make([]ReceiptObservation[uint64], 0, count)
+		observationIDs = make([]identity.ContentID, 0, count)
+		for _, index := range order {
+			member, memberOK := graph.RuleMember(receiptAssemblySemanticID(byte(60 + index)))
+			if !memberOK {
+				t.Fatal("receipt query matrix observation member")
+			}
+			id := receiptAssemblySemanticID(byte(160 + index))
+			observation, failure := AttachRuleExactObservationWithFailure(compilation, queryImplementations[index], id, member)
+			if failure != ReceiptObservationAttachFailureNone || !observation.Available() {
+				t.Fatalf("receipt query matrix observation %d failure=%v", index, failure)
+			}
+			observations = append(observations, observation)
+			observationIDs = append(observationIDs, id)
+		}
+	}
+	addressed, addressedOK := graph.publishedQueryKeys()
+	if !addressedOK {
+		t.Fatal("receipt query matrix published query addresses")
+	}
+	solver, _, solverOK := compilation.Seal()
 	if !solverOK || solver == nil {
 		t.Fatal("receipt query matrix Solver")
 	}
@@ -267,7 +332,12 @@ func newReceiptQueryMatrixFixture(t testing.TB, count int, order, declarationOrd
 	for index := range expected {
 		expected[index] = uint64(index + 1)
 	}
-	return receiptQueryMatrixFixture{solver: solver, queries: queryReceipts, expected: expected, topologyKey: topology.topology.Key(), transferRuns: transferRuns, projectRuns: projectRuns, freezeRuns: freezeRuns, schemaID: schema.ID()}
+	return receiptQueryMatrixFixture{
+		solver: solver, queries: queryReceipts, expected: expected, topologyKey: topology.topology.Key(),
+		transferRuns: transferRuns, projectRuns: projectRuns, freezeRuns: freezeRuns, schemaID: schema.ID(),
+		binding: binding, graph: graph, addressed: addressed, queryImplementations: queryImplementations,
+		observations: observations, observationIDs: observationIDs,
+	}
 }
 
 func validReceiptQueryPermutation(count int, order []int) bool {

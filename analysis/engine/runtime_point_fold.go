@@ -93,7 +93,11 @@ func (epoch *executorEpoch) evaluate(producer runtimeProducer, cache *producerEp
 	if epoch != nil && epoch.diagnostics != nil && epoch.diagnostics.scheduleEnabled() {
 		defer func() { epoch.diagnostics.recordEvaluate(&ok) }()
 	}
-	if epoch == nil || epoch.work == nil || cache == nil || epoch.canceled() || len(producer.members) == 0 || !producer.outputScope.Valid() || !producer.premise.Valid() || producer.premise.Manager() != epoch.runtime.carrier.Guards() {
+	if epoch == nil || epoch.work == nil || cache == nil || epoch.canceled() || producer.span.count() == 0 || !producer.outputScope.Valid() || !producer.premise.Valid() || producer.premise.Manager() != epoch.runtime.carrier.Guards() {
+		return carrier.RuleContribution{}, nil, false
+	}
+	rows := epoch.runtime.program.memberRows(producer.span)
+	if len(rows) != producer.span.count() {
 		return carrier.RuleContribution{}, nil, false
 	}
 	inputs, ok := epoch.inputs(producer, cache.inputs)
@@ -151,13 +155,19 @@ func (epoch *executorEpoch) evaluate(producer runtimeProducer, cache *producerEp
 			_ = epoch.work.AbortRuleContribution(base, patches)
 		}
 	}()
-	for _, member := range producer.members {
+	for _, row := range rows {
 		if epoch.canceled() {
 			return carrier.RuleContribution{}, nil, false
 		}
-		result := member.execute(epoch.work, base, cache.inputStates, within)
+		result := row.exec(epoch.work, base, cache.inputStates, within)
 		if !result.valid {
-			epoch.recordMemberFailure(SolveFailureReasonExecution, result.boundary, producer.group.Output(), producer.group, member.member())
+			// The failing member's identity is recovered from the Group the
+			// producer already holds; the hot row carries only its position.
+			member, identified := memberRowIdentity(producer.group, row)
+			if !identified {
+				return carrier.RuleContribution{}, nil, false
+			}
+			epoch.recordMemberFailure(SolveFailureReasonExecution, result.boundary, producer.group.Output(), producer.group, member)
 			return carrier.RuleContribution{}, nil, false
 		}
 		reads = append(reads, result.reads...)
@@ -187,12 +197,11 @@ func (epoch *executorEpoch) evaluate(producer runtimeProducer, cache *producerEp
 			activations = append(activations, result.activations...)
 		}
 		if result.wrote {
-			slot, writes := member.outputSlot()
-			if !writes {
+			if !row.hasSlot {
 				return carrier.RuleContribution{}, nil, false
 			}
 			patches = append(patches, result.patch)
-			patchRows = append(patchRows, contributionPatch{slot: slot, patch: result.patch})
+			patchRows = append(patchRows, contributionPatch{slot: row.outputSlot, patch: result.patch})
 		}
 	}
 	if len(activations) != 0 {

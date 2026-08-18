@@ -16,9 +16,11 @@
 //     shapes come from the fixtures the engine laws already build; the widths
 //     and epoch drive are the only additions.
 //
-//   - BenchmarkRetainedHeapSlope measures retained bytes per member at N and 2N
-//     members of the same shape. It is the decisive gate: the row cut is
-//     justified by the marginal slope, not by the ns/op of a dispatch.
+//   - BenchmarkRetainedHeapSlope measures retained bytes at N and 2N members of
+//     the same shape over one fixed Factor population. It is the decisive gate:
+//     the row cut is justified by the marginal slope, not by the ns/op of a
+//     dispatch. It reports the slope, the itemized census of one member's
+//     cluster, and the factor table's flat absolute total.
 
 package engine
 
@@ -27,6 +29,8 @@ import (
 	"runtime"
 	"testing"
 	"unsafe"
+
+	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 )
 
 // benchWideResult is a result too large to travel in registers, so a
@@ -350,7 +354,11 @@ func BenchmarkSolveFixpoint(b *testing.B) {
 			if state == nil || status != SolveComplete {
 				b.Fatalf("wide member fan solve = state:%t status:%v", state != nil, status)
 			}
-			value, readable := ReceiptQueryResult[uint64](fixture.queries[0], fixture.solver, state)
+			key, keyed := fixture.queries[0].PublicationKey()
+			if !keyed {
+				b.Fatal("wide member fan query has no snapshot key")
+			}
+			value, readable := testSnapshotQueryValue[uint64](fixture.solver, state, key)
 			if !readable || value != fixture.expected[0] {
 				b.Fatalf("wide member fan query = %d/%t, want %d/true", value, readable, fixture.expected[0])
 			}
@@ -396,13 +404,23 @@ func BenchmarkSolveFixpoint(b *testing.B) {
 }
 
 const (
-	// benchRetainedHeapMembers is N. Its double stays inside the receipt-matrix
-	// fixture's semantic identity budget, so both populations are built by the
-	// same generator with the same per-member shape.
+	// benchDeclaredFactors is the declared Factor population of a program. Each
+	// domain owner declares exactly one Factor slot unconditionally, so the count
+	// is bounded by the owner set: a 4061-member program declares the same five
+	// slots a 15-member program declares. The factor table is flat and is
+	// reported as one absolute total, never as a per-member share.
+	benchDeclaredFactors = 5
+	// benchRetainedHeapMembers is N. Its double stays inside the fixture's
+	// semantic identity budget, so both populations are built by the same
+	// generator with the same per-member shape.
 	benchRetainedHeapMembers = 24
 	// benchRetainedHeapReplicas raises the retained population above the noise
 	// floor of a post-collection HeapAlloc reading.
 	benchRetainedHeapReplicas = 16
+	// benchTypedAccessClosures is the closure count newTypedOutputAccess installs
+	// per member. Each field is a separate heap funcval whose captured set has no
+	// struct width, so the census counts them and the marginal slope prices them.
+	benchTypedAccessClosures = 7
 )
 
 // BenchmarkRetainedHeapSlope feeds the decisive question of the row cut: what
@@ -416,17 +434,24 @@ const (
 // Measuring N and 2N of the same shape cancels that fixed part: the difference
 // is what the members themselves retain.
 //
-// A member here is one Factor/Rule/Query triple and the rows it produces,
-// because that is the unit the receipt-matrix fixture scales: doubling count
-// doubles the declared slots, the topology rows and the solved cells together.
-// The reported figure is therefore per triple, not per Rule row alone.
+// A member here is one Rule/Query pair over an already declared Factor, and the
+// rows it produces. The declared Factor population is held at
+// benchDeclaredFactors while the member count doubles, which is the ratio a
+// program has: a member joins an existing domain owner instead of declaring a
+// slot of its own.
+//
+// Three figures come out of one measurement and answer three different
+// questions. B/marginal-member is the decisive slope. B/member-cluster is the
+// itemized census of the objects one member's cluster is made of, so the row cut
+// names which objects it removes. B/factor-table is the flat program-wide total
+// of the factor table, which the slope must never carry.
 //
 // Run it with -benchtime=1x. Each iteration builds and retains two whole
 // populations, so repeating it measures the same slope at higher cost.
 func BenchmarkRetainedHeapSlope(b *testing.B) {
 	for index := 0; index < b.N; index++ {
-		single := benchRetainedSolvedPopulation(b, benchRetainedHeapMembers)
-		double := benchRetainedSolvedPopulation(b, 2*benchRetainedHeapMembers)
+		single, singleObjects := benchRetainedSolvedPopulation(b, benchRetainedHeapMembers)
+		double, doubleObjects := benchRetainedSolvedPopulation(b, 2*benchRetainedHeapMembers)
 		if single <= 0 || double <= 0 {
 			b.Fatalf("retained heap measurement is not positive: N=%d bytes 2N=%d bytes", single, double)
 		}
@@ -434,22 +459,74 @@ func BenchmarkRetainedHeapSlope(b *testing.B) {
 			b.Fatalf("doubling the members did not raise retained heap: N=%d bytes 2N=%d bytes", single, double)
 		}
 		members := float64(benchRetainedHeapReplicas * benchRetainedHeapMembers)
-		b.ReportMetric(float64(double-single)/members, "B/marginal-member")
-		b.ReportMetric(float64(single)/members, "B/member-at-N")
-		b.ReportMetric(float64(double)/(2*members), "B/member-at-2N")
+		marginal := float64(double-single) / members
+		census, items := benchMemberClusterCensus()
+		b.ReportMetric(marginal, "B/marginal-member")
+		b.ReportMetric(float64(census), "B/member-cluster")
+		b.ReportMetric(float64(benchFactorTableBytes()), "B/factor-table")
+		for _, item := range items {
+			b.Logf("member cluster: %-34s %d x %4d B = %5d B %s", item.name, item.count, item.width, item.count*item.width, item.note)
+		}
+		b.Logf("member cluster: %d B of statically sized objects against a %.0f B marginal member, plus one execution closure, one rebinding closure and %d typed access closures per member",
+			census, marginal, benchTypedAccessClosures)
+		b.Logf("member cluster: %.1f marginal live heap objects per member", float64(doubleObjects-singleObjects)/members)
 	}
 }
 
+// benchMemberClusterItem is one object of a member's retained cluster, at the
+// count one member holds and the width the type has.
+type benchMemberClusterItem struct {
+	name     string
+	count    uintptr
+	width    uintptr
+	retained bool
+	note     string
+}
+
+// benchMemberClusterCensus itemizes the statically sized objects one solved
+// member is made of and returns their per-member total. Closures are counted
+// rather than sized: a funcval's captured set has no struct width, so the total
+// is the floor the marginal slope is read against.
+//
+// The draft wrapper is itemized and excluded from the total: the sealed row mints
+// its execution closure over the bound rule, and the compilation releases the
+// drafts, so the wrapper is the object the row cut removes rather than an object
+// a solved member holds.
+func benchMemberClusterCensus() (uintptr, []benchMemberClusterItem) {
+	items := []benchMemberClusterItem{
+		{name: "boundRule", count: 1, width: unsafe.Sizeof(boundRule[uint64, ruleUnit]{}), retained: true, note: "held by the row's execution closure"},
+		{name: "outputRuntime", count: 1, width: unsafe.Sizeof(outputRuntime{}), retained: true, note: "one staged-target projection per member"},
+		{name: "outputWriteRuntime", count: 1, width: unsafe.Sizeof(outputWriteRuntime{}), retained: true, note: "the projection's one-element write vector"},
+		{name: "memberRow", count: 1, width: unsafe.Sizeof(memberRow{}), retained: true, note: "the member's row in the sealed program"},
+		{name: "boundRuleMember", count: 1, width: unsafe.Sizeof(boundRuleMember[uint64, ruleUnit]{}), note: "draft, released at seal"},
+	}
+	var total uintptr
+	for _, item := range items {
+		if !item.retained {
+			continue
+		}
+		total += item.count * item.width
+	}
+	return total, items
+}
+
+// benchFactorTableBytes is the sealed factor table's whole width: one record and
+// one typed owner reference per declared Factor. It is a program constant, so it
+// is reported absolutely.
+func benchFactorTableBytes() uintptr {
+	return benchDeclaredFactors * (unsafe.Sizeof(factorRecord{}) + unsafe.Sizeof(runtimeFactor(nil)))
+}
+
 // benchRetainedSolvedPopulation builds benchRetainedHeapReplicas solvers of
-// count members each, solves and retains every one of them with its published
-// State, and reports the heap those live objects hold after a collection.
-func benchRetainedSolvedPopulation(b *testing.B, count int) int64 {
+// count members each over benchDeclaredFactors Factors, solves and retains every
+// one of them with its published State, and reports the heap and the object
+// count those live objects hold after a collection.
+func benchRetainedSolvedPopulation(b *testing.B, count int) (int64, int64) {
 	b.Helper()
 	// The timer runs through construction on purpose. This benchmark reports its
 	// verdict through custom metrics, and an untimed body would report a
 	// near-zero ns/op that a time-based -benchtime would answer by raising b.N
 	// until it built the populations thousands of times over.
-	order := benchIdentityOrder(count)
 	solvers := make([]*Solver, 0, benchRetainedHeapReplicas)
 	states := make([]*State, 0, benchRetainedHeapReplicas)
 	queries := make([][]ReceiptQuery, 0, benchRetainedHeapReplicas)
@@ -458,10 +535,23 @@ func benchRetainedSolvedPopulation(b *testing.B, count int) int64 {
 	var before runtime.MemStats
 	runtime.ReadMemStats(&before)
 	for replica := 0; replica < benchRetainedHeapReplicas; replica++ {
-		fixture := newReceiptQueryMatrixFixture(b, count, order, order)
+		fixture := newBenchFixedFactorPopulation(b, count)
 		state, status := fixture.solver.Solve(context.Background())
 		if state == nil || status != SolveComplete {
 			b.Fatalf("retained population solve at %d members = state:%t status:%v", count, state != nil, status)
+		}
+		// Every member is read back. Members of one Factor separate by coordinate,
+		// so a population whose members collapsed onto one cell would answer a
+		// joined value here instead of its own.
+		for index, query := range fixture.queries {
+			key, keyed := query.PublicationKey()
+			if !keyed {
+				b.Fatalf("retained population query[%d] has no snapshot key", index)
+			}
+			value, readable := testSnapshotQueryValue[uint64](fixture.solver, state, key)
+			if !readable || value != fixture.expected[index] {
+				b.Fatalf("retained population query[%d] at %d members = %d/%t, want %d/true", index, count, value, readable, fixture.expected[index])
+			}
 		}
 		solvers = append(solvers, fixture.solver)
 		states = append(states, state)
@@ -477,5 +567,218 @@ func benchRetainedSolvedPopulation(b *testing.B, count int) int64 {
 	runtime.KeepAlive(solvers)
 	runtime.KeepAlive(states)
 	runtime.KeepAlive(queries)
-	return int64(after.HeapAlloc) - int64(before.HeapAlloc)
+	liveObjects := int64(after.Mallocs-after.Frees) - int64(before.Mallocs-before.Frees)
+	return int64(after.HeapAlloc) - int64(before.HeapAlloc), liveObjects
+}
+
+// benchFixedFactorPopulation is a solved population whose declared Factor count
+// is benchDeclaredFactors at every member count.
+type benchFixedFactorPopulation struct {
+	solver   *Solver
+	queries  []ReceiptQuery
+	expected []uint64
+}
+
+// newBenchFixedFactorPopulation builds members Rule/Query pairs over
+// benchDeclaredFactors Factor slots: member i writes and reads factor
+// i%benchDeclaredFactors at its own Point, so members of one Factor separate by
+// coordinate the way a program's members do.
+//
+// It is not newReceiptQueryMatrixFixture. That fixture declares one Factor per
+// member, which is the shape a permutation law needs and the one shape a
+// per-member slope cannot be read from: doubling its count doubles the declared
+// Factor population with it.
+func newBenchFixedFactorPopulation(b *testing.B, members int) benchFixedFactorPopulation {
+	b.Helper()
+	if members < benchDeclaredFactors || 1+3*members > 256 {
+		b.Fatalf("fixed factor population of %d members is outside the semantic identity budget", members)
+	}
+	builder := NewSchema()
+	factors := make([]*FactorSlot[uint64], benchDeclaredFactors)
+	reads := make([]SchemaReadForm[uint64], benchDeclaredFactors)
+	writes := make([]SchemaWriteForm[uint64], benchDeclaredFactors)
+	for owner := range factors {
+		factor, factorOK := DeclareFactorSlot[uint64](builder, coldKey(960_000+owner))
+		write, writeOK := factor.ExactWrite()
+		read, readOK := factor.ExactRead()
+		if !factorOK || !writeOK || !readOK {
+			b.Fatal("fixed factor population Factor declaration")
+		}
+		factors[owner], reads[owner], writes[owner] = factor, read, write
+	}
+	rules := make([]*RuleSlot[uint64, ruleUnit], members)
+	writeSlots := make([]SchemaWriteSlot[uint64], members)
+	queries := make([]*QuerySlot[uint64], members)
+	for index := 0; index < members; index++ {
+		owner := index % benchDeclaredFactors
+		rule, ruleOK := DeclareRuleSlot[uint64, ruleUnit](builder, SchemaRuleSpec[uint64]{
+			Semantic: coldKey(961_000 + index), OperandFamily: unitOperandFamily, Inputs: 0,
+			Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(962_000 + index)}, Output: factors[owner].Ref(),
+		})
+		writeOK := false
+		if ruleOK {
+			writeSlots[index], writeOK = SchemaWrite(rule, writes[owner])
+		}
+		if !ruleOK || !writeOK {
+			b.Fatal("fixed factor population Rule declaration")
+		}
+		rules[index] = rule
+	}
+	for index := 0; index < members; index++ {
+		query, queryOK := DeclareQuerySlot[uint64](builder, SchemaQuerySpec{Semantic: coldKey(963_000 + index), Freezer: coldKey(964_000 + index)})
+		if !queryOK || !SchemaQueryRead(query, reads[index%benchDeclaredFactors]) {
+			b.Fatal("fixed factor population Query declaration")
+		}
+		queries[index] = query
+	}
+	schema, schemaOK := builder.Seal()
+	if !schemaOK || schema == nil {
+		b.Fatal("fixed factor population schema seal")
+	}
+
+	binding := NewSchemaBinding(schema)
+	if binding == nil {
+		b.Fatal("fixed factor population binding")
+	}
+	for owner := range factors {
+		if !BindFactor(binding, factors[owner], hotUintFactorSpec()) {
+			b.Fatal("fixed factor population Factor binding")
+		}
+	}
+	for index := 0; index < members; index++ {
+		owner := index % benchDeclaredFactors
+		value := uint64(index + 1)
+		ruleSpec := HotRuleSpec[uint64, ruleUnit]{
+			OperandContent: ruleUnitContent,
+			Admission:      AdmitRuleByTrustedTheorem[uint64, ruleUnit](coldKey(962_000 + index)),
+			Transfer: func(access Access[uint64, ruleUnit]) bool {
+				return Product(access, func(row Row) bool { return StageValue(access, row, value) })
+			},
+		}
+		if !BindRule[uint64, uint64, ruleUnit](binding, rules[index], writeSlots[index], factors[owner], ruleSpec, testRuleProjector[ruleUnit]) {
+			b.Fatal("fixed factor population Rule binding")
+		}
+	}
+	for index := 0; index < members; index++ {
+		spec := hotExactQuerySpec()
+		spec.Result.Semantic = coldKey(964_000 + index)
+		spec.Project = func(cells OrderedCells[uint64]) uint64 {
+			value, present, valid := cells.At(0)
+			if !valid || !present {
+				return 0
+			}
+			return value
+		}
+		if !BindExactQuery(binding, queries[index], factors[index%benchDeclaredFactors], spec) {
+			b.Fatal("fixed factor population Query binding")
+		}
+	}
+	if !binding.Seal() {
+		b.Fatal("fixed factor population binding seal")
+	}
+
+	ruleImplementations := make([]*RuleImplementation[uint64, uint64, ruleUnit], members)
+	queryImplementations := make([]*ExactQueryImplementation[uint64, uint64], members)
+	for index := 0; index < members; index++ {
+		var ruleOK, queryOK bool
+		ruleImplementations[index], ruleOK = RuleImplementationAt[uint64, uint64, ruleUnit](binding, rules[index])
+		queryImplementations[index], queryOK = ExactQueryImplementationAt[uint64, uint64](binding, queries[index])
+		if !ruleOK || ruleImplementations[index] == nil || !queryOK || queryImplementations[index] == nil {
+			b.Fatal("fixed factor population implementation receipt")
+		}
+	}
+
+	assembly, assemblyOK := beginReceiptAssembly(binding)
+	if !assemblyOK || assembly == nil {
+		b.Fatal("fixed factor population assembly")
+	}
+	sites := make([]equation.Site, members)
+	occurrences := make([]equation.Occurrence, members)
+	operands := make([]equation.Operand, members)
+	operandValues := make([]ruleUnit, members)
+	for index := 0; index < members; index++ {
+		site, siteOK := assembly.builder.admitSite(compositionKeyOf(coldKey(965_000+index)), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent)
+		occurrence, occurrenceOK := assembly.builder.admitAt(site)
+		value := ruleUnitForSemantic(coldKey(966_000 + index))
+		entity, entityOK := operandEntityForContent(value.content)
+		operand, operandOK := assembly.builder.admitOperand(occurrence, entity)
+		if !siteOK || !occurrenceOK || !entityOK || !operandOK {
+			b.Fatal("fixed factor population source admission")
+		}
+		sites[index], occurrences[index], operands[index], operandValues[index] = site, occurrence, operand, value
+	}
+	if !assembly.SealSources() {
+		b.Fatal("fixed factor population source seal")
+	}
+	pointRefs := make([]bindingPointRowRef, members)
+	for index := 0; index < members; index++ {
+		point, pointOK := assembly.builder.issuePointRow(equation.PointSpec{Site: sites[index]})
+		pointRef, semanticOK := assembly.builder.addSemanticPoint(receiptAssemblySemanticID(byte(1+index)), point)
+		if !pointOK || !semanticOK {
+			b.Fatal("fixed factor population Point receipt")
+		}
+		pointRefs[index] = pointRef
+	}
+	for index := 0; index < members; index++ {
+		proof := ruleImplementations[index].receipt.proof
+		source, sourceOK := assembly.builder.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{Schema: proof.semantic, OperandFamily: proof.operandFamily, Occurrence: occurrences[index], Operand: operands[index], Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: proof.output, Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}}})
+		draft, draftOK := ruleImplementations[index].BeginBindingRuleRow(source)
+		part, partOK := ruleImplementations[index].WritePart(source, 0)
+		rowOK := sourceOK && draftOK && partOK && draft.AddWrite(part)
+		row, issued := assembly.builder.issueRuleRow(draft)
+		_, semanticOK := assembly.builder.addSemanticRule(receiptAssemblySemanticID(byte(1+members+index)), row)
+		if !rowOK || !issued || !semanticOK {
+			b.Fatal("fixed factor population Rule topology")
+		}
+	}
+	for index := 0; index < members; index++ {
+		queryOrdinal, queryOrdinalOK := queries[index].Ordinal()
+		factorOrdinal, factorOrdinalOK := factors[index%benchDeclaredFactors].Ordinal()
+		if !queryOrdinalOK || !factorOrdinalOK {
+			b.Fatal("fixed factor population ordinal mapping")
+		}
+		row, rowOK := assembly.builder.issueQueryRow(queryImplementations[index], equation.QueryInstance{Family: schema.querySemanticAt(queryOrdinal), Point: pointRefs[index].ref, Surfaces: []equation.Surface{{Factor: schema.factorSemanticAt(factorOrdinal), Form: equation.SurfaceReadExact, Local: 1}}})
+		if !rowOK {
+			b.Fatal("fixed factor population Query row")
+		}
+		if _, semanticOK := assembly.builder.addSemanticQuery(receiptAssemblySemanticID(byte(1+2*members+index)), row); !semanticOK {
+			b.Fatal("fixed factor population Query directory")
+		}
+	}
+	_, graph, committed := assembly.Commit()
+	if !committed || graph == nil {
+		b.Fatal("fixed factor population graph commit")
+	}
+	compilation, compilationOK := BeginProgramConstruction(binding, graph)
+	if !compilationOK || compilation == nil {
+		b.Fatal("fixed factor population compilation")
+	}
+	for index := 0; index < members; index++ {
+		if _, memberOK := graph.RuleMember(receiptAssemblySemanticID(byte(1 + members + index))); !memberOK {
+			b.Fatal("fixed factor population Rule member receipt")
+		}
+		if !installConstOperandResolver(ruleImplementations[index], operandValues[index]) {
+			b.Fatal("fixed factor population resolver")
+		}
+		if attached := AttachRuleMember(compilation, ruleImplementations[index], receiptAssemblySemanticID(byte(1+members+index))); !attached {
+			b.Fatal("fixed factor population Rule attachment")
+		}
+	}
+	queryReceipts := make([]ReceiptQuery, members)
+	for index := 0; index < members; index++ {
+		query, queryOK := graph.Query(receiptAssemblySemanticID(byte(1 + 2*members + index)))
+		if !queryOK || !AttachExactQuery(compilation, queryImplementations[index], receiptAssemblySemanticID(byte(1+2*members+index))) {
+			b.Fatal("fixed factor population Query attachment")
+		}
+		queryReceipts[index] = query
+	}
+	solver, _, solverOK := compilation.Seal()
+	if !solverOK || solver == nil {
+		b.Fatal("fixed factor population Solver")
+	}
+	expected := make([]uint64, members)
+	for index := range expected {
+		expected[index] = uint64(index + 1)
+	}
+	return benchFixedFactorPopulation{solver: solver, queries: queryReceipts, expected: expected}
 }

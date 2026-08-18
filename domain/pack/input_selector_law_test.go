@@ -1,12 +1,12 @@
 package pack_test
 
 import (
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
-	"github.com/wippyai/go-lua/analysis/program/flow"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
@@ -31,19 +31,19 @@ func portableAnyTypes(count int) []schematype.Type {
 	return values
 }
 
-func selectorLawContract(t testing.TB) (*target.Contract, target.Operation) {
+func selectorLawContract(t testing.TB) (*target.Contract, vocabulary.Operation) {
 	t.Helper()
-	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []target.OperationSpec{{
-		Bindings:   []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"send"}}},
+	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{{
+		Bindings:   []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"send"}}},
 		ValuesVars: 1,
-		Input:      target.ValuesSpec{Fixed: portableAnyTypes(2), Tail: target.ValuesVariable, Var: 0},
-		Outcomes:   []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}},
-		Effects:    target.RowSpec{Tail: target.RowClosed},
+		Input:      vocabulary.ValuesSpec{Fixed: portableAnyTypes(2), Tail: vocabulary.ValuesVariable, Var: 0},
+		Outcomes:   []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}},
+		Effects:    vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 	}}})
 	if err != nil || contract == nil {
 		t.Fatalf("seal selector Target: %v", err)
 	}
-	operation, ok := contract.Lookup(target.BindingSpec{Namespace: target.BindingBuiltin, Member: []string{"send"}})
+	operation, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"send"}})
 	if !ok {
 		t.Fatal("selector operation")
 	}
@@ -105,7 +105,7 @@ func selectorLawSchema(t testing.TB, contract *target.Contract, label string) se
 	}
 	for index := 0; index < artifact.CallCount(); index++ {
 		call, callOK := artifact.CallAt(index)
-		if !callOK || call.Form() != flow.CallFormMethod {
+		if !callOK || call.Form() != programartifact.CallFormMethod {
 			continue
 		}
 		receiver, receiverOK := call.ReceiverID()
@@ -125,11 +125,11 @@ func TestInputSelectorsSealTargetABIWithoutRetainingTarget(t *testing.T) {
 	first := selectorLawSchema(t, contract, "first")
 	second := selectorLawSchema(t, contract, "second")
 
-	receiver, receiverOK := first.schema.InputSelector(operation, target.InputSource{Kind: target.InputSourceValueFormal, Ordinal: 0})
-	argument, argumentOK := first.schema.InputSelector(operation, target.InputSource{Kind: target.InputSourceValueFormal, Ordinal: 1})
-	tail, tailOK := first.schema.InputSelector(operation, target.InputSource{Kind: target.InputSourceValuesVar, Ordinal: 0})
+	receiver, receiverOK := first.schema.InputSelector(operation, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 0})
+	argument, argumentOK := first.schema.InputSelector(operation, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 1})
+	tail, tailOK := first.schema.InputSelector(operation, vocabulary.InputSource{Kind: vocabulary.InputSourceValuesVar, Ordinal: 0})
 	opaqueOperation, opaqueOK := contract.Opaque()
-	whole, wholeOK := first.schema.InputSelector(opaqueOperation, target.InputSource{Kind: target.InputSourceAllInputs})
+	whole, wholeOK := first.schema.InputSelector(opaqueOperation, vocabulary.InputSource{Kind: vocabulary.InputSourceAllInputs})
 	if !receiverOK || !argumentOK || !tailOK || !opaqueOK || !wholeOK {
 		t.Fatal("sealed selector inventory")
 	}
@@ -150,23 +150,23 @@ func TestInputSelectorsSealTargetABIWithoutRetainingTarget(t *testing.T) {
 	if _, ok := first.schema.MountedInputSemanticSource(first.module, first.callID, whole); ok {
 		t.Fatal("whole selector fabricated structural semantic source")
 	}
-	if _, ok := first.schema.InputSelector(operation, target.InputSource{Kind: target.InputSourceValueFormal, Ordinal: 2}); ok {
+	if _, ok := first.schema.InputSelector(operation, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 2}); ok {
 		t.Fatal("out-of-range fixed formal selected")
 	}
-	if _, ok := first.schema.InputSelector(operation, target.InputSource{Kind: target.InputSourceValuesVar, Ordinal: 1}); ok {
+	if _, ok := first.schema.InputSelector(operation, vocabulary.InputSource{Kind: vocabulary.InputSourceValuesVar, Ordinal: 1}); ok {
 		t.Fatal("foreign Values variable selected")
 	}
-	if _, ok := first.schema.InputSelector(operation, target.InputSource{Kind: target.InputSourceAllInputs}); ok {
+	if _, ok := first.schema.InputSelector(operation, vocabulary.InputSource{Kind: vocabulary.InputSourceAllInputs}); ok {
 		t.Fatal("ordinary operation selected opaque AllInputs")
 	}
-	if _, ok := first.schema.InputSelector(opaqueOperation, target.InputSource{Kind: target.InputSourceAllInputs, Ordinal: 1}); ok {
+	if _, ok := first.schema.InputSelector(opaqueOperation, vocabulary.InputSource{Kind: vocabulary.InputSourceAllInputs, Ordinal: 1}); ok {
 		t.Fatal("malformed opaque selector selected")
 	}
-	if _, ok := first.schema.InputSelector(0, target.InputSource{Kind: target.InputSourceValueFormal}); ok {
+	if _, ok := first.schema.InputSelector(0, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal}); ok {
 		t.Fatal("zero operation selected")
 	}
 
-	resealed, resealedOK := second.schema.InputSelector(operation, target.InputSource{Kind: target.InputSourceValueFormal, Ordinal: 1})
+	resealed, resealedOK := second.schema.InputSelector(operation, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 1})
 	if !resealedOK || !second.schema.OwnsInputSelector(resealed) || first.schema.OwnsInputSelector(resealed) {
 		t.Fatal("selector reseal crossed Pack owner fence")
 	}

@@ -75,6 +75,7 @@ func (b *binder) visitExpr(expr ast.Expr, mode exprBindMode) {
 	case *ast.TableExpr:
 		b.push(bindStep{kind: stepTableFields, node: e, mode: mode})
 	case *ast.FuncCallExpr:
+		b.recordCallSpelling(e)
 		if value, ok := b.runtimeTypeCallBase(e); ok {
 			b.bindRuntimeTypeValue(value)
 			// The marked base is the only call component omitted from ordinary
@@ -123,6 +124,34 @@ func (b *binder) visitExpr(expr ast.Expr, mode exprBindMode) {
 	}
 }
 
+// recordCallSpelling owns the optional authored debug name for one Call. It
+// deliberately records only names whose syntax is unambiguous at the bind
+// boundary: identifiers, dot-selected string keys, and method selectors.
+// Indexed/dynamic calls have no authored spelling row.
+func (b *binder) recordCallSpelling(call *ast.FuncCallExpr) {
+	if b == nil || b.result == nil || call == nil {
+		return
+	}
+	name := call.Method
+	if name == "" && call.Receiver == nil {
+		switch callee := call.Func.(type) {
+		case *ast.IdentExpr:
+			if callee != nil {
+				name = callee.Value
+			}
+		case *ast.AttrGetExpr:
+			if callee != nil && callee.KeySyntax == ast.AttrKeyDot {
+				if key, ok := callee.Key.(*ast.StringExpr); ok && key != nil {
+					name = key.Value
+				}
+			}
+		}
+	}
+	if name != "" {
+		b.result.callSpellings[call] = name
+	}
+}
+
 // recordDirectGlobalCall runs immediately after a normal call's function
 // expression has been bound and before its receiver/arguments. It records
 // generic syntactic/binding evidence for both runtime and static-query calls;
@@ -139,9 +168,32 @@ func (b *binder) recordDirectGlobalCall(call *ast.FuncCallExpr) {
 	if !ok {
 		return
 	}
+	argumentCount, authoredString, hasAuthoredString := authoredArgumentEvidence(call)
 	b.result.directGlobalCalls = append(b.result.directGlobalCalls, DirectGlobalCall{
-		Call: call, Global: identity,
+		Call:              call,
+		Global:            identity,
+		ArgumentCount:     argumentCount,
+		AuthoredString:    authoredString,
+		HasAuthoredString: hasAuthoredString,
 	})
+}
+
+// authoredArgumentEvidence detaches the only argument facts needed by module
+// lowering from the parser-owned call. The binder already owns this syntax
+// traversal, so downstream layers never need to inspect Call.Args.
+func authoredArgumentEvidence(call *ast.FuncCallExpr) (int, string, bool) {
+	if call == nil {
+		return 0, "", false
+	}
+	argumentCount := len(call.Args)
+	if argumentCount != 1 {
+		return argumentCount, "", false
+	}
+	authored, ok := call.Args[0].(*ast.StringExpr)
+	if !ok || authored == nil {
+		return argumentCount, "", false
+	}
+	return argumentCount, authored.Value, true
 }
 
 func runtimeTypeMethodName(name string) bool {

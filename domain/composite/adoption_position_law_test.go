@@ -3,7 +3,6 @@ package composite
 import (
 	"testing"
 
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 )
@@ -33,38 +32,37 @@ type positionPin struct {
 // and the axis inventory's declaration positions.
 func axisPositionPins() []positionPin {
 	return []positionPin{
-		{int(programartifact.RuleOutputValue), axisKeyValue},
-		{int(programartifact.RuleOutputPack), axisKeyPack},
-		{int(programartifact.RuleOutputHeap), axisKeyHeap},
-		{int(programartifact.RuleOutputCall), axisKeyCall},
-		{int(programartifact.RuleOutputEffect), axisKeyEffect},
+		{1, axisKeyValue},
+		{2, axisKeyPack},
+		{3, axisKeyHeap},
+		{4, axisKeyCall},
+		{5, axisKeyEffect},
 	}
 }
 
-// rulePositionPins is the agreement between the artifact's rule role catalog
-// and the rule inventory's declaration positions.
+// rulePositionPins is the sealed rule inventory in declaration order.
 func rulePositionPins() []positionPin {
 	return []positionPin{
-		{int(programartifact.RuleRoleValueSource), "value-source"},
-		{int(programartifact.RuleRolePackSource), "pack-source"},
-		{int(programartifact.RuleRoleHeapIngress), "heap-ingress"},
-		{int(programartifact.RuleRoleValueAllocation), "value-allocation"},
-		{int(programartifact.RuleRoleHeapEmpty), "heap-empty"},
-		{int(programartifact.RuleRoleHeapClosed), "heap-closed"},
-		{int(programartifact.RuleRoleRawGet), "raw-get"},
-		{int(programartifact.RuleRoleRawSet), "raw-set"},
-		{int(programartifact.RuleRoleCallDispatch), "call-dispatch"},
-		{int(programartifact.RuleRoleEffectSelected), "effect-selected"},
-		{int(programartifact.RuleRoleEffectOpaque), "effect-opaque"},
-		{int(programartifact.RuleRoleEffectBody), "effect-body"},
-		{int(programartifact.RuleRoleCallActivation), "call-activation"},
-		{int(programartifact.RuleRoleValueBootstrap), "value-bootstrap"},
-		{int(programartifact.RuleRoleHeapBootstrap), "heap-bootstrap"},
-		{int(programartifact.RuleRoleValueStorageTransfer), "value-transfer"},
-		{int(programartifact.RuleRoleValueBinaryArithmetic), "value-binary-arithmetic"},
-		{int(programartifact.RuleRoleValueBinaryEquality), "value-binary-equality"},
-		{int(programartifact.RuleRoleValueBinaryOrder), "value-binary-order"},
-		{int(programartifact.RuleRoleValuePresenceRefinement), "value-presence-refinement"},
+		{1, "value-source"},
+		{2, "pack-source"},
+		{3, "heap-ingress"},
+		{4, "value-allocation"},
+		{5, "heap-empty"},
+		{6, "heap-closed"},
+		{7, "raw-get"},
+		{8, "raw-set"},
+		{9, "call-dispatch"},
+		{10, "effect-selected"},
+		{11, "effect-opaque"},
+		{12, "effect-body"},
+		{13, "call-activation"},
+		{14, "value-bootstrap"},
+		{15, "heap-bootstrap"},
+		{16, "value-transfer"},
+		{17, "value-binary-arithmetic"},
+		{18, "value-binary-equality"},
+		{19, "value-binary-order"},
+		{20, "value-presence-refinement"},
 	}
 }
 
@@ -183,17 +181,16 @@ func TestRuleDeclarationPositionAgreesWithTheArtifactRoleOrdinal(t *testing.T) {
 // projection the table does not hold.
 func TestArtifactAddressedRowsResolveThroughTheSealedTable(t *testing.T) {
 	for _, pin := range rulePositionPins() {
-		entry, declared := templateForRole(programartifact.RuleRole(pin.ordinal))
+		entry, declared := templateForKey(pin.key)
 		if !declared || entry.Key() != pin.key {
-			t.Fatalf("artifact role %d resolves to no declaration of %q", pin.ordinal, pin.key)
+			t.Fatalf("key %q resolves to no declaration", pin.key)
 		}
-		lane := programartifact.RuleOutputKindFor(programartifact.RuleRole(pin.ordinal))
-		axisEntry, axisDeclared := axisAtSlot(int(lane))
+		axisEntry, axisDeclared := axisForKey(entry.Writes())
 		if !axisDeclared {
-			t.Fatalf("rule %q writes artifact lane %d, which addresses no declared axis", pin.key, lane)
+			t.Fatalf("rule %q writes %q, which addresses no declared axis", pin.key, entry.Writes())
 		}
-		if DiagnosticAxisForKey(axisEntry.Key()) != DiagnosticAxis(lane) {
-			t.Fatalf("axis %q classifies away from the slot the artifact lane addresses", axisEntry.Key())
+		if DiagnosticAxisForKey(axisEntry.Key()) != DiagnosticAxisForKey(entry.Writes()) {
+			t.Fatalf("axis %q classifies away from Writes %q", axisEntry.Key(), entry.Writes())
 		}
 	}
 }

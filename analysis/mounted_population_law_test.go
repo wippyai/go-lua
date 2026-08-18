@@ -4,10 +4,11 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/internal/testfixture"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/program/link/mounted"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
+	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
 // mountedPopulationFixtures is the selected proof set for the Link-owned
@@ -302,7 +303,7 @@ func TestMountedObservationCensusCapturesTheCompiledObservationSites(t *testing.
 				if site.Kind != observation.kind || site.Location != observation.location {
 					t.Fatalf("census site %s = kind %v span %+v, observed kind %v span %+v", observation.local, site.Kind, site.Location, observation.kind, observation.location)
 				}
-				if observation.kind != programartifact.DiagnosticObservationBranchCondition {
+				if observation.kind != structure.DiagnosticObservationBranchCondition {
 					if site.ProducerCount() != 0 {
 						t.Fatalf("static census site %s carries %d producers", observation.local, site.ProducerCount())
 					}
@@ -322,7 +323,7 @@ func TestMountedObservationCensusCapturesTheCompiledObservationSites(t *testing.
 					if !producerOK {
 						t.Fatalf("census producer %d is not addressable", index)
 					}
-					key := compiledObservationProducer{role: producer.Role, occurrence: producer.Occurrence, point: producer.Point, anchor: producer.Anchor}
+					key := compiledObservationProducer{key: producer.Key, occurrence: producer.Occurrence, point: producer.Point, anchor: producer.Anchor}
 					if _, observed := geometry[key]; !observed {
 						t.Fatalf("census site %s carries unobserved producer geometry %+v", observation.local, key)
 					}

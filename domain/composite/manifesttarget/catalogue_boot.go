@@ -2,11 +2,11 @@ package manifesttarget
 
 import (
 	"fmt"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"math"
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	. "github.com/wippyai/go-lua/analysis/program/target"
 	"github.com/wippyai/go-lua/domain/type/typ"
 	"github.com/wippyai/go-lua/domain/type/unwrap"
 	"github.com/wippyai/go-lua/manifest"
@@ -14,10 +14,10 @@ import (
 )
 
 type bootLedgerData struct {
-	roots      []InitialRootSpec
-	entries    []InitialEntrySpec
-	bindings   []InitialBindingSpec
-	metatables []InitialMetatableAttachmentSpec
+	roots      []vocabulary.InitialRootSpec
+	entries    []vocabulary.InitialEntrySpec
+	bindings   []vocabulary.InitialBindingSpec
+	metatables []vocabulary.InitialMetatableAttachmentSpec
 }
 
 // bootLedger authors the complete initial environment as ordinary Target
@@ -25,12 +25,12 @@ type bootLedgerData struct {
 // just authored; this avoids a second hand-maintained operation identity list.
 func bootLedger(catalogue authoredCatalogue, declarations *manifest.Catalogue) (bootLedgerData, error) {
 	var ledger bootLedgerData
-	ledger.root(moduleio.GlobalEnvironmentRoot, BootAggregateTable, false)
+	ledger.root(moduleio.GlobalEnvironmentRoot, vocabulary.BootAggregateTable, false)
 	moduleRoots := make(map[string]string)
 	for _, module := range declarations.Modules() {
 		root := moduleio.ModuleRootIdentity(module.ProviderIdentity())
 		moduleRoots[module.Path()] = root
-		ledger.root(root, BootAggregateTable, module.Immutable())
+		ledger.root(root, vocabulary.BootAggregateTable, module.Immutable())
 	}
 	for _, environment := range declarations.InitialEnvironments() {
 		for _, root := range environment.Roots() {
@@ -48,22 +48,22 @@ func bootLedger(catalogue authoredCatalogue, declarations *manifest.Catalogue) (
 		ledger.global(module.Path(), rootValue(moduleRoots[module.Path()]))
 	}
 
-	if err := ledger.boundOperations(catalogue, moduleio.GlobalEnvironmentRoot, InitialMutable, BindingBuiltin, ""); err != nil {
+	if err := ledger.boundOperations(catalogue, moduleio.GlobalEnvironmentRoot, vocabulary.InitialMutable, vocabulary.BindingBuiltin, ""); err != nil {
 		return bootLedgerData{}, err
 	}
 	for _, operation := range catalogue.operations {
 		for _, binding := range operation.Bindings {
-			if binding.Namespace == BindingBuiltin && len(binding.Member) == 1 {
+			if binding.Namespace == vocabulary.BindingBuiltin && len(binding.Member) == 1 {
 				ledger.bindGlobal(binding.Member[0])
 			}
 		}
 	}
 	for _, module := range declarations.Modules() {
-		mutability := InitialMutable
+		mutability := vocabulary.InitialMutable
 		if module.Immutable() {
-			mutability = InitialFrozen
+			mutability = vocabulary.InitialFrozen
 		}
-		if err := ledger.boundOperations(catalogue, moduleRoots[module.Path()], mutability, BindingModule, module.Path()); err != nil {
+		if err := ledger.boundOperations(catalogue, moduleRoots[module.Path()], mutability, vocabulary.BindingModule, module.Path()); err != nil {
 			return bootLedgerData{}, err
 		}
 	}
@@ -89,7 +89,7 @@ func bootLedger(catalogue authoredCatalogue, declarations *manifest.Catalogue) (
 			return bootLedgerData{}, fmt.Errorf("target catalogue: initial value has non-direct binding %q", member)
 		}
 		root := moduleio.GlobalEnvironmentRoot
-		mutability := InitialMutable
+		mutability := vocabulary.InitialMutable
 		switch binding.Mount() {
 		case manifest.MountGlobals:
 		case manifest.MountModule:
@@ -99,7 +99,7 @@ func bootLedger(catalogue authoredCatalogue, declarations *manifest.Catalogue) (
 				return bootLedgerData{}, fmt.Errorf("target catalogue: initial value names unknown module %q", binding.ModulePath())
 			}
 			if value.Immutable() {
-				mutability = InitialFrozen
+				mutability = vocabulary.InitialFrozen
 			}
 		case manifest.MountDetached:
 			continue
@@ -141,7 +141,7 @@ func bootLedger(catalogue authoredCatalogue, declarations *manifest.Catalogue) (
 			}
 			switch attachment.Primitive {
 			case moduleio.InitialPrimitiveString:
-				ledger.metatables = append(ledger.metatables, InitialMetatableAttachmentSpec{Base: InitialValueString, Metatable: metatable})
+				ledger.metatables = append(ledger.metatables, vocabulary.InitialMetatableAttachmentSpec{Base: vocabulary.InitialValueString, Metatable: metatable})
 			default:
 				return bootLedgerData{}, fmt.Errorf("target catalogue: unsupported initial primitive %d", attachment.Primitive)
 			}
@@ -151,14 +151,14 @@ func bootLedger(catalogue authoredCatalogue, declarations *manifest.Catalogue) (
 	return ledger, nil
 }
 
-func initialValueFromType(value typ.Type) InitialValueSpec {
+func initialValueFromType(value typ.Type) vocabulary.InitialValueSpec {
 	literal, ok := unwrap.Annotated(value).(*typ.Literal)
 	if !ok {
 		return absentValue()
 	}
 	switch exact := literal.Value().(type) {
 	case bool:
-		return InitialValueSpec{Kind: InitialValueBoolean, Boolean: exact}
+		return vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueBoolean, Boolean: exact}
 	case int64:
 		return integerValue(exact)
 	case float64:
@@ -170,14 +170,14 @@ func initialValueFromType(value typ.Type) InitialValueSpec {
 	}
 }
 
-func initialAggregate(aggregate moduleio.InitialAggregate) (BootAggregate, error) {
+func initialAggregate(aggregate moduleio.InitialAggregate) (vocabulary.BootAggregate, error) {
 	switch aggregate {
 	case moduleio.InitialAggregateTable:
-		return BootAggregateTable, nil
+		return vocabulary.BootAggregateTable, nil
 	case moduleio.InitialAggregateMetatable:
-		return BootAggregateMetatable, nil
+		return vocabulary.BootAggregateMetatable, nil
 	default:
-		return BootAggregateInvalid, fmt.Errorf("target catalogue: unsupported initial aggregate %d", aggregate)
+		return vocabulary.BootAggregateInvalid, fmt.Errorf("target catalogue: unsupported initial aggregate %d", aggregate)
 	}
 }
 
@@ -195,60 +195,60 @@ func initialRoot(environment manifest.InitialEnvironment, reference moduleio.Ini
 	return reference.Identity, nil
 }
 
-func initialEntryValue(catalogue authoredCatalogue, environment manifest.InitialEnvironment, value moduleio.InitialValue, moduleRoots map[string]string) (InitialValueSpec, error) {
+func initialEntryValue(catalogue authoredCatalogue, environment manifest.InitialEnvironment, value moduleio.InitialValue, moduleRoots map[string]string) (vocabulary.InitialValueSpec, error) {
 	switch value.Kind {
 	case moduleio.InitialValueRoot:
 		root, err := initialRoot(environment, value.Root, moduleRoots)
 		if err != nil {
-			return InitialValueSpec{}, err
+			return vocabulary.InitialValueSpec{}, err
 		}
 		return rootValue(root), nil
 	case moduleio.InitialValueFunction:
 		member := strings.Split(value.Function, ".")
-		var binding BindingSpec
+		var binding vocabulary.BindingSpec
 		switch environment.Mount() {
 		case manifest.MountGlobals:
-			binding = BindingSpec{Namespace: BindingBuiltin, Member: member}
+			binding = vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: member}
 		case manifest.MountModule:
 			binding = moduleBindingSpec(environment.ModulePath(), member...)
 		default:
-			return InitialValueSpec{}, fmt.Errorf("target catalogue: provider %q cannot mount an initial function", environment.ProviderIdentity())
+			return vocabulary.InitialValueSpec{}, fmt.Errorf("target catalogue: provider %q cannot mount an initial function", environment.ProviderIdentity())
 		}
 		return operationValue(catalogue, binding)
 	default:
-		return InitialValueSpec{}, fmt.Errorf("target catalogue: unsupported initial value %d", value.Kind)
+		return vocabulary.InitialValueSpec{}, fmt.Errorf("target catalogue: unsupported initial value %d", value.Kind)
 	}
 }
 
-func initialMutability(mutability moduleio.InitialMutability) (InitialMutability, error) {
+func initialMutability(mutability moduleio.InitialMutability) (vocabulary.InitialMutability, error) {
 	switch mutability {
 	case moduleio.InitialMutable:
-		return InitialMutable, nil
+		return vocabulary.InitialMutable, nil
 	case moduleio.InitialFrozen:
-		return InitialFrozen, nil
+		return vocabulary.InitialFrozen, nil
 	default:
-		return InitialMutabilityInvalid, fmt.Errorf("target catalogue: unsupported initial mutability %d", mutability)
+		return vocabulary.InitialMutabilityInvalid, fmt.Errorf("target catalogue: unsupported initial mutability %d", mutability)
 	}
 }
 
-func (ledger *bootLedgerData) root(identity string, aggregate BootAggregate, immutable bool) {
-	ledger.roots = append(ledger.roots, InitialRootSpec{
+func (ledger *bootLedgerData) root(identity string, aggregate vocabulary.BootAggregate, immutable bool) {
+	ledger.roots = append(ledger.roots, vocabulary.InitialRootSpec{
 		Identity: identity,
-		Shape:    BootShapeSpec{Aggregate: aggregate, Immutable: immutable, Value: rootValue(identity)},
+		Shape:    vocabulary.BootShapeSpec{Aggregate: aggregate, Immutable: immutable, Value: rootValue(identity)},
 	})
 }
 
-func (ledger *bootLedgerData) entry(root, key string, value InitialValueSpec, mutability InitialMutability) {
-	ledger.entries = append(ledger.entries, InitialEntrySpec{Root: root, Key: exactKey(key), Value: value, Mutability: mutability})
+func (ledger *bootLedgerData) entry(root, key string, value vocabulary.InitialValueSpec, mutability vocabulary.InitialMutability) {
+	ledger.entries = append(ledger.entries, vocabulary.InitialEntrySpec{Root: root, Key: exactKey(key), Value: value, Mutability: mutability})
 }
 
-func (ledger *bootLedgerData) global(key string, value InitialValueSpec) {
-	ledger.entry(moduleio.GlobalEnvironmentRoot, key, value, InitialMutable)
+func (ledger *bootLedgerData) global(key string, value vocabulary.InitialValueSpec) {
+	ledger.entry(moduleio.GlobalEnvironmentRoot, key, value, vocabulary.InitialMutable)
 	ledger.bindGlobal(key)
 }
 
 func (ledger *bootLedgerData) bindGlobal(key string) {
-	ledger.bindings = append(ledger.bindings, InitialBindingSpec{Name: key, Root: moduleio.GlobalEnvironmentRoot, Key: exactKey(key)})
+	ledger.bindings = append(ledger.bindings, vocabulary.InitialBindingSpec{Name: key, Root: moduleio.GlobalEnvironmentRoot, Key: exactKey(key)})
 }
 
 func exactKey(text string) keyspace.LiteralValue {
@@ -258,16 +258,16 @@ func exactKey(text string) keyspace.LiteralValue {
 // boundOperations projects the already-sealed Target bindings into boot
 // entries. The provider manifest selected the ABI and operations selected the
 // admission policy; boot does not carry another function-name inventory.
-func (ledger *bootLedgerData) boundOperations(catalogue authoredCatalogue, root string, mutability InitialMutability, namespace BindingNamespace, owner string) error {
+func (ledger *bootLedgerData) boundOperations(catalogue authoredCatalogue, root string, mutability vocabulary.InitialMutability, namespace vocabulary.BindingNamespace, owner string) error {
 	for _, operation := range catalogue.operations {
 		for _, binding := range operation.Bindings {
 			if binding.Namespace != namespace || len(binding.Member) != 1 {
 				continue
 			}
-			if namespace == BindingModule && (len(binding.Owner) != 1 || binding.Owner[0] != owner) {
+			if namespace == vocabulary.BindingModule && (len(binding.Owner) != 1 || binding.Owner[0] != owner) {
 				continue
 			}
-			if namespace == BindingBuiltin && len(binding.Owner) != 0 {
+			if namespace == vocabulary.BindingBuiltin && len(binding.Owner) != 0 {
 				continue
 			}
 			if err := ledger.operation(catalogue, root, binding.Member[0], mutability, binding); err != nil {
@@ -278,7 +278,7 @@ func (ledger *bootLedgerData) boundOperations(catalogue authoredCatalogue, root 
 	return nil
 }
 
-func (ledger *bootLedgerData) operation(catalogue authoredCatalogue, root, key string, mutability InitialMutability, binding BindingSpec) error {
+func (ledger *bootLedgerData) operation(catalogue authoredCatalogue, root, key string, mutability vocabulary.InitialMutability, binding vocabulary.BindingSpec) error {
 	value, err := operationValue(catalogue, binding)
 	if err != nil {
 		return err
@@ -287,46 +287,46 @@ func (ledger *bootLedgerData) operation(catalogue authoredCatalogue, root, key s
 	return nil
 }
 
-func operationValue(catalogue authoredCatalogue, binding BindingSpec) (InitialValueSpec, error) {
+func operationValue(catalogue authoredCatalogue, binding vocabulary.BindingSpec) (vocabulary.InitialValueSpec, error) {
 	for _, operation := range catalogue.operations {
 		for _, candidate := range operation.Bindings {
 			if sameBinding(candidate, binding) {
-				return InitialValueSpec{Kind: InitialValueOperation, Operation: cloneCatalogueBinding(binding)}, nil
+				return vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueOperation, Operation: cloneCatalogueBinding(binding)}, nil
 			}
 		}
 	}
-	return InitialValueSpec{}, fmt.Errorf("target catalogue: initial ledger names unknown operation %#v", binding)
+	return vocabulary.InitialValueSpec{}, fmt.Errorf("target catalogue: initial ledger names unknown operation %#v", binding)
 }
 
-func rootValue(identity string) InitialValueSpec {
-	return InitialValueSpec{Kind: InitialValueRoot, Root: identity}
+func rootValue(identity string) vocabulary.InitialValueSpec {
+	return vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: identity}
 }
 
-func stringValue(value string) InitialValueSpec {
-	return InitialValueSpec{Kind: InitialValueString, String: value}
+func stringValue(value string) vocabulary.InitialValueSpec {
+	return vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueString, String: value}
 }
 
-func integerValue(value int64) InitialValueSpec {
-	return InitialValueSpec{Kind: InitialValueInteger, Integer: value}
+func integerValue(value int64) vocabulary.InitialValueSpec {
+	return vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueInteger, Integer: value}
 }
 
-func floatValue(bits uint64) InitialValueSpec {
-	return InitialValueSpec{Kind: InitialValueFloat, FloatBits: bits}
+func floatValue(bits uint64) vocabulary.InitialValueSpec {
+	return vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueFloat, FloatBits: bits}
 }
 
-func absentValue() InitialValueSpec {
-	return InitialValueSpec{Kind: InitialValueAbsent}
+func absentValue() vocabulary.InitialValueSpec {
+	return vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueAbsent}
 }
 
-func moduleBindingSpec(owner string, member ...string) BindingSpec {
-	return BindingSpec{Namespace: BindingModule, Owner: []string{owner}, Member: append([]string(nil), member...)}
+func moduleBindingSpec(owner string, member ...string) vocabulary.BindingSpec {
+	return vocabulary.BindingSpec{Namespace: vocabulary.BindingModule, Owner: []string{owner}, Member: append([]string(nil), member...)}
 }
 
-func cloneCatalogueBinding(binding BindingSpec) BindingSpec {
-	return BindingSpec{Namespace: binding.Namespace, Owner: append([]string(nil), binding.Owner...), Member: append([]string(nil), binding.Member...)}
+func cloneCatalogueBinding(binding vocabulary.BindingSpec) vocabulary.BindingSpec {
+	return vocabulary.BindingSpec{Namespace: binding.Namespace, Owner: append([]string(nil), binding.Owner...), Member: append([]string(nil), binding.Member...)}
 }
 
-func sameBinding(left, right BindingSpec) bool {
+func sameBinding(left, right vocabulary.BindingSpec) bool {
 	if left.Namespace != right.Namespace || len(left.Owner) != len(right.Owner) || len(left.Member) != len(right.Member) {
 		return false
 	}

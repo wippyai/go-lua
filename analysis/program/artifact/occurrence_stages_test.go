@@ -8,6 +8,7 @@ import (
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/domain/composite"
 )
 
@@ -58,7 +59,7 @@ return total
 	arithmetic, arithmeticOK := artifact.OccurrenceForID(programartifact.OccurrenceBinaryArithmetic, occurrenceID)
 	body, bodyOK := arithmetic.BodyID()
 	left, right, op, endpointsOK := arithmetic.BinaryArithmetic()
-	rule, ruleOK := ruleForOccurrence(artifact, programartifact.RuleRoleValueBinaryArithmetic, occurrenceID)
+	rule, ruleOK := ruleForOccurrence(artifact, "value-binary-arithmetic", occurrenceID)
 	point, pointOK := rule.PointAt(0)
 	input, inputOK := rule.InputPoint()
 	if !arithmeticOK || !bodyOK || !endpointsOK || !left.Available() || !right.Available() || op != flowkind.BinaryAdd ||
@@ -309,8 +310,8 @@ return guard
 		t.Fatal("order left operand did not retain its exact storage origin")
 	}
 
-	storageRule, storageOK := ruleForOccurrence(artifact, programartifact.RuleRoleValueStorageTransfer, storage.ID())
-	orderRule, orderRuleOK := ruleForOccurrence(artifact, programartifact.RuleRoleValueBinaryOrder, order.ID())
+	storageRule, storageOK := ruleForOccurrence(artifact, "value-transfer", storage.ID())
+	orderRule, orderRuleOK := ruleForOccurrence(artifact, "value-binary-order", order.ID())
 	storagePoint, storagePointOK := storageRule.PointAt(0)
 	storageInput, storageInputOK := storageRule.InputPoint()
 	orderPoint, orderPointOK := orderRule.PointAt(0)
@@ -395,8 +396,8 @@ return guard
 			}
 		}
 	}
-	orderRule, orderOK := ruleForOccurrence(artifact, programartifact.RuleRoleValueBinaryOrder, order.ID())
-	equalityRule, equalityOK := ruleForOccurrence(artifact, programartifact.RuleRoleValueBinaryEquality, equality.ID())
+	orderRule, orderOK := ruleForOccurrence(artifact, "value-binary-order", order.ID())
+	equalityRule, equalityOK := ruleForOccurrence(artifact, "value-binary-equality", equality.ID())
 	orderPoint, orderPointOK := orderRule.PointAt(0)
 	equalityPoint, equalityPointOK := equalityRule.PointAt(0)
 	equalityInput, equalityInputOK := equalityRule.InputPoint()
@@ -414,9 +415,9 @@ return guard
 	}
 }
 
-func ruleForOccurrence(artifact *programartifact.Artifact, role programartifact.RuleRole, occurrence identity.ContentID) (programartifact.RuleOccurrenceRow, bool) {
-	for index := 0; index < artifact.RuleOccurrenceCount(role); index++ {
-		row, ok := artifact.RuleOccurrenceAt(role, index)
+func ruleForOccurrence(artifact *programartifact.Artifact, key schema.Key, occurrence identity.ContentID) (programartifact.RuleOccurrenceRow, bool) {
+	for index := 0; index < artifact.RulePlacementCountForKey(key); index++ {
+		row, ok := artifact.RulePlacementForKeyAt(key, index)
 		if ok && row.ID() == occurrence {
 			return row, true
 		}

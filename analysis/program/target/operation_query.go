@@ -2,6 +2,7 @@ package target
 
 import (
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 )
 
 func (c *Contract) OperationCount() int {
@@ -13,45 +14,45 @@ func (c *Contract) OperationCount() int {
 
 // OperationAt returns one canonical operation by zero-based index. The opaque
 // operation is deterministic last and participates normally in all queries.
-func (c *Contract) OperationAt(index int) (Operation, bool) {
+func (c *Contract) OperationAt(index int) (vocabulary.Operation, bool) {
 	if c == nil || index < 0 || index >= c.OperationCount() {
 		return 0, false
 	}
-	return Operation(index + 1), true
+	return vocabulary.Operation(index + 1), true
 }
 
-// BoundOperationCount is the source/provider operation prefix. Produced-only
+// boundOperationCount is the source/provider operation prefix. Produced-only
 // operations and opaque have no source binding and are intentionally absent.
-func (c *Contract) BoundOperationCount() int {
+func (c *Contract) boundOperationCount() int {
 	if c == nil {
 		return 0
 	}
 	return int(c.boundCount)
 }
 
-func (c *Contract) BoundOperationAt(index int) (Operation, bool) {
-	if c == nil || index < 0 || index >= c.BoundOperationCount() {
+func (c *Contract) boundOperationAt(index int) (vocabulary.Operation, bool) {
+	if c == nil || index < 0 || index >= c.boundOperationCount() {
 		return 0, false
 	}
-	return Operation(index + 1), true
+	return vocabulary.Operation(index + 1), true
 }
 
 // Opaque returns the synthesized maximal opaque operation.
-func (c *Contract) Opaque() (Operation, bool) {
+func (c *Contract) Opaque() (vocabulary.Operation, bool) {
 	if c == nil || c.opaque == 0 {
 		return 0, false
 	}
 	return c.opaque, true
 }
 
-func (c *Contract) operation(op Operation) (operationRow, bool) {
+func (c *Contract) operation(op vocabulary.Operation) (operationRow, bool) {
 	if c == nil || op == 0 || uint64(op) > uint64(len(c.operations)) {
 		return operationRow{}, false
 	}
 	return c.operations[uint32(op)-1], true
 }
 
-func (c *Contract) Input(op Operation) (Values, bool) {
+func (c *Contract) Input(op vocabulary.Operation) (vocabulary.Values, bool) {
 	row, ok := c.operation(op)
 	if !ok {
 		return 0, false
@@ -59,7 +60,7 @@ func (c *Contract) Input(op Operation) (Values, bool) {
 	return row.input, true
 }
 
-func (c *Contract) TypeFormalCount(op Operation) int {
+func (c *Contract) TypeFormalCount(op vocabulary.Operation) int {
 	row, ok := c.operation(op)
 	if !ok {
 		return 0
@@ -69,7 +70,7 @@ func (c *Contract) TypeFormalCount(op Operation) int {
 
 // TypeFormalConstraint returns a frozen upper-bound constraint. found=false
 // means either an invalid coordinate or an unconstrained valid formal.
-func (c *Contract) TypeFormalConstraint(op Operation, formal TypeFormal) (Type, bool) {
+func (c *Contract) TypeFormalConstraint(op vocabulary.Operation, formal vocabulary.TypeFormal) (vocabulary.Type, bool) {
 	row, ok := c.operation(op)
 	if !ok || uint64(formal) >= uint64(row.typeFormals.len()) {
 		return 0, false
@@ -83,7 +84,7 @@ func (c *Contract) TypeFormalConstraint(op Operation, formal TypeFormal) (Type, 
 
 // ValueFormalCount is the number of fixed Input slots. It is the valid bound
 // for EffectSpec.ValueArgs.
-func (c *Contract) ValueFormalCount(op Operation) int {
+func (c *Contract) ValueFormalCount(op vocabulary.Operation) int {
 	row, ok := c.operation(op)
 	if !ok {
 		return 0
@@ -93,7 +94,7 @@ func (c *Contract) ValueFormalCount(op Operation) int {
 
 // ValuesVarCount is the operation-scoped open-Values variable arity. It is
 // independent from the derived ValueFormal coordinate space.
-func (c *Contract) ValuesVarCount(op Operation) int {
+func (c *Contract) ValuesVarCount(op vocabulary.Operation) int {
 	row, ok := c.operation(op)
 	if !ok {
 		return 0
@@ -103,7 +104,7 @@ func (c *Contract) ValuesVarCount(op Operation) int {
 
 // ValuesVarType returns the total sealed class for one operation-local open
 // Values port. Unconstrained ports use the ABI default neutral Any class.
-func (c *Contract) ValuesVarType(op Operation, variable ValuesVar) (Type, bool) {
+func (c *Contract) ValuesVarType(op vocabulary.Operation, variable vocabulary.ValuesVar) (vocabulary.Type, bool) {
 	row, ok := c.operation(op)
 	if !ok || uint64(variable) >= uint64(row.valuesVars) || row.valuesTypes.len() != int(row.valuesVars) {
 		return 0, false
@@ -111,7 +112,7 @@ func (c *Contract) ValuesVarType(op Operation, variable ValuesVar) (Type, bool) 
 	return c.valuesVarTypes[row.valuesTypes.start+uint32(variable)], true
 }
 
-func (c *Contract) RowFormalCount(op Operation) int {
+func (c *Contract) rowFormalCount(op vocabulary.Operation) int {
 	row, ok := c.operation(op)
 	if !ok {
 		return 0
@@ -119,7 +120,7 @@ func (c *Contract) RowFormalCount(op Operation) int {
 	return int(row.rowFormals)
 }
 
-func (c *Contract) ValuesCount(values Values) int {
+func (c *Contract) ValuesCount(values vocabulary.Values) int {
 	row, ok := c.valuesRow(values)
 	if !ok {
 		return 0
@@ -127,7 +128,7 @@ func (c *Contract) ValuesCount(values Values) int {
 	return row.types.len()
 }
 
-func (c *Contract) ValuesAt(values Values, index int) (Type, bool) {
+func (c *Contract) ValuesAt(values vocabulary.Values, index int) (vocabulary.Type, bool) {
 	row, ok := c.valuesRow(values)
 	if !ok || index < 0 || index >= row.types.len() {
 		return 0, false
@@ -136,7 +137,7 @@ func (c *Contract) ValuesAt(values Values, index int) (Type, bool) {
 }
 
 // ValuesSuffixCount is the number of fixed end-relative Values elements.
-func (c *Contract) ValuesSuffixCount(values Values) int {
+func (c *Contract) ValuesSuffixCount(values vocabulary.Values) int {
 	row, ok := c.valuesRow(values)
 	if !ok {
 		return 0
@@ -145,7 +146,7 @@ func (c *Contract) ValuesSuffixCount(values Values) int {
 }
 
 // ValuesSuffixAt returns one fixed end-relative Values element.
-func (c *Contract) ValuesSuffixAt(values Values, index int) (Type, bool) {
+func (c *Contract) ValuesSuffixAt(values vocabulary.Values, index int) (vocabulary.Type, bool) {
 	row, ok := c.valuesRow(values)
 	if !ok || index < 0 || index >= row.suffix.len() {
 		return 0, false
@@ -153,7 +154,7 @@ func (c *Contract) ValuesSuffixAt(values Values, index int) (Type, bool) {
 	return c.valueTypes[row.suffix.start+uint32(index)], true
 }
 
-func (c *Contract) ValuesTail(values Values) (ValuesTail, ValuesVar, bool) {
+func (c *Contract) ValuesTail(values vocabulary.Values) (vocabulary.ValuesTail, vocabulary.ValuesVar, bool) {
 	row, ok := c.valuesRow(values)
 	if !ok {
 		return 0, 0, false
@@ -164,22 +165,22 @@ func (c *Contract) ValuesTail(values Values) (ValuesTail, ValuesVar, bool) {
 // ValuesTailType returns the sealed class of one open ValuesVariable tail.
 // An omitted authored class is sealed as neutral Any. Closed and unknown tails do
 // not carry an authored class and return found=false.
-func (c *Contract) ValuesTailType(values Values) (Type, bool) {
+func (c *Contract) ValuesTailType(values vocabulary.Values) (vocabulary.Type, bool) {
 	row, ok := c.valuesRow(values)
-	if !ok || row.tail != ValuesVariable {
+	if !ok || row.tail != vocabulary.ValuesVariable {
 		return 0, false
 	}
 	return c.ValuesVarType(row.owner, row.varID)
 }
 
-func (c *Contract) valuesRow(values Values) (valuesRow, bool) {
+func (c *Contract) valuesRow(values vocabulary.Values) (valuesRow, bool) {
 	if c == nil || values == 0 || uint64(values) > uint64(len(c.values)) {
 		return valuesRow{}, false
 	}
 	return c.values[uint32(values)-1], true
 }
 
-func (c *Contract) OutcomeCount(op Operation) int {
+func (c *Contract) OutcomeCount(op vocabulary.Operation) int {
 	row, ok := c.operation(op)
 	if !ok {
 		return 0
@@ -190,7 +191,7 @@ func (c *Contract) OutcomeCount(op Operation) int {
 // OutcomeAt returns one canonical correlated outcome case. Multiple cases may
 // have the same kind; Values and FreshResult relations are the local case
 // discriminators, while Produced/callback/alias rows are conjunctive.
-func (c *Contract) OutcomeAt(op Operation, index int) (flowkind.OutcomeKind, Values, bool) {
+func (c *Contract) OutcomeAt(op vocabulary.Operation, index int) (flowkind.OutcomeKind, vocabulary.Values, bool) {
 	row, ok := c.operation(op)
 	if !ok || index < 0 || index >= row.outcomes.len() {
 		return 0, 0, false
@@ -199,9 +200,9 @@ func (c *Contract) OutcomeAt(op Operation, index int) (flowkind.OutcomeKind, Val
 	return outcome.kind, outcome.values, true
 }
 
-// TransferCount reports the finite endpoint/payload/alias relations owned by op.
+// transferCount reports the finite endpoint/payload/alias relations owned by op.
 // The opaque Operation derives one maximal external/AllInputs relation.
-func (c *Contract) TransferCount(op Operation) int {
+func (c *Contract) transferCount(op vocabulary.Operation) int {
 	row, ok := c.operation(op)
 	if !ok {
 		return 0
@@ -209,18 +210,18 @@ func (c *Contract) TransferCount(op Operation) int {
 	return row.transfers.len()
 }
 
-// TransferIDAt returns the opaque sealed identity of one exact operation-owned
+// transferIDAt returns the opaque sealed identity of one exact operation-owned
 // transfer declaration. The authored ordinal is consumed here and is never a
 // Link or domain identity.
-func (c *Contract) TransferIDAt(op Operation, index int) (TransferID, bool) {
+func (c *Contract) transferIDAt(op vocabulary.Operation, index int) (vocabulary.TransferID, bool) {
 	operation, ok := c.operation(op)
 	if !ok || index < 0 || index >= operation.transfers.len() {
 		return 0, false
 	}
-	return TransferID(operation.transfers.start + uint32(index) + 1), true
+	return vocabulary.TransferID(operation.transfers.start + uint32(index) + 1), true
 }
 
-func (c *Contract) transferID(id TransferID) (transferRow, bool) {
+func (c *Contract) transferID(id vocabulary.TransferID) (transferRow, bool) {
 	if c == nil || id == 0 || uint64(id) > uint64(len(c.transfers)) {
 		return transferRow{}, false
 	}
@@ -231,37 +232,27 @@ func (c *Contract) transferID(id TransferID) (transferRow, bool) {
 	return row, true
 }
 
-// TransferOwner returns the exact operation that owns one sealed transfer
+// transferOwner returns the exact operation that owns one sealed transfer
 // declaration. It is a structural Target projection, not a domain judgment.
-func (c *Contract) TransferOwner(id TransferID) (Operation, bool) {
+func (c *Contract) transferOwner(id vocabulary.TransferID) (vocabulary.Operation, bool) {
 	row, ok := c.transferID(id)
 	return row.owner, ok
 }
 
-// TransferDeclaration returns the complete authored data relation for one
+// transferDeclaration returns the complete authored data relation for one
 // sealed transfer identity. It makes no claim about reachable contents,
 // proven aliases, isolation, ownership, or a runtime transport strategy.
-func (c *Contract) TransferDeclaration(id TransferID) (endpoint TransferEndpoint, payload InputSource, alias InputSource, identity TransferIdentity, capabilities TransferCapabilities, ok bool) {
+func (c *Contract) transferDeclaration(id vocabulary.TransferID) (endpoint vocabulary.TransferEndpoint, payload vocabulary.InputSource, alias vocabulary.InputSource, identity vocabulary.TransferIdentity, capabilities vocabulary.TransferCapabilities, ok bool) {
 	row, ok := c.transferID(id)
 	if !ok {
-		return TransferEndpoint{}, InputSource{}, InputSource{}, TransferIdentityInvalid, TransferCapabilitiesInvalid, false
+		return vocabulary.TransferEndpoint{}, vocabulary.InputSource{}, vocabulary.InputSource{}, vocabulary.TransferIdentityInvalid, vocabulary.TransferCapabilitiesInvalid, false
 	}
 	return row.endpoint, row.payload, row.alias, row.identity, row.capabilities, true
 }
 
-// TransferDeclarationOutcomeCount reports the complete correlated outcome
-// classification supplied by one sealed transfer declaration.
-func (c *Contract) TransferDeclarationOutcomeCount(id TransferID) int {
-	row, ok := c.transferID(id)
-	if !ok {
-		return 0
-	}
-	return row.outcomes.len()
-}
-
-// TransferDeclarationOutcomeAt returns one canonical operation outcome
+// transferDeclarationOutcomeAt returns one canonical operation outcome
 // ordinal and its exact declared delivery/rejection possibilities.
-func (c *Contract) TransferDeclarationOutcomeAt(id TransferID, index int) (uint32, TransferPossibility, bool) {
+func (c *Contract) transferDeclarationOutcomeAt(id vocabulary.TransferID, index int) (uint32, vocabulary.TransferPossibility, bool) {
 	row, ok := c.transferID(id)
 	if !ok || index < 0 || index >= row.outcomes.len() {
 		return 0, 0, false
@@ -269,56 +260,56 @@ func (c *Contract) TransferDeclarationOutcomeAt(id TransferID, index int) (uint3
 	return uint32(index), c.transferOutcomes[row.outcomes.start+uint32(index)], true
 }
 
-// TransferEndpointAt returns one exact destination relation.
-func (c *Contract) TransferEndpointAt(op Operation, index int) (TransferEndpoint, bool) {
+// transferEndpointAt returns one exact destination relation.
+func (c *Contract) transferEndpointAt(op vocabulary.Operation, index int) (vocabulary.TransferEndpoint, bool) {
 	row, ok := c.transfer(op, index)
 	if !ok {
-		return TransferEndpoint{}, false
+		return vocabulary.TransferEndpoint{}, false
 	}
 	return row.endpoint, true
 }
 
-// TransferPayloadAt returns the exact operation-scoped payload coordinate.
-func (c *Contract) TransferPayloadAt(op Operation, index int) (InputSource, bool) {
+// transferPayloadAt returns the exact operation-scoped payload coordinate.
+func (c *Contract) transferPayloadAt(op vocabulary.Operation, index int) (vocabulary.InputSource, bool) {
 	row, ok := c.transfer(op, index)
 	if !ok {
-		return InputSource{}, false
+		return vocabulary.InputSource{}, false
 	}
 	return row.payload, true
 }
 
-// TransferAliasAt returns the exact operation-scoped alias anchor coordinate.
+// transferAliasAt returns the exact operation-scoped alias anchor coordinate.
 // It is a structural source selector; it asserts neither runtime aliasing nor
 // a sender-side isolation class.
-func (c *Contract) TransferAliasAt(op Operation, index int) (InputSource, bool) {
+func (c *Contract) transferAliasAt(op vocabulary.Operation, index int) (vocabulary.InputSource, bool) {
 	row, ok := c.transfer(op, index)
 	if !ok {
-		return InputSource{}, false
+		return vocabulary.InputSource{}, false
 	}
 	return row.alias, true
 }
 
-// TransferIdentityAt returns the exact payload identity relation.
-func (c *Contract) TransferIdentityAt(op Operation, index int) (TransferIdentity, bool) {
+// transferIdentityAt returns the exact payload identity relation.
+func (c *Contract) transferIdentityAt(op vocabulary.Operation, index int) (vocabulary.TransferIdentity, bool) {
 	row, ok := c.transfer(op, index)
 	if !ok {
-		return TransferIdentityInvalid, false
+		return vocabulary.TransferIdentityInvalid, false
 	}
 	return row.identity, true
 }
 
-// TransferCapabilitiesAt returns the complete capability preservation relation.
-func (c *Contract) TransferCapabilitiesAt(op Operation, index int) (TransferCapabilities, bool) {
+// transferCapabilitiesAt returns the complete capability preservation relation.
+func (c *Contract) transferCapabilitiesAt(op vocabulary.Operation, index int) (vocabulary.TransferCapabilities, bool) {
 	row, ok := c.transfer(op, index)
 	if !ok {
-		return TransferCapabilitiesInvalid, false
+		return vocabulary.TransferCapabilitiesInvalid, false
 	}
 	return row.capabilities, true
 }
 
-// TransferOutcomeCount is the owning Operation's exact correlated Outcome
+// transferOutcomeCount is the owning Operation's exact correlated Outcome
 // count. Every sealed Transfer classifies the complete set.
-func (c *Contract) TransferOutcomeCount(op Operation, transfer int) int {
+func (c *Contract) transferOutcomeCount(op vocabulary.Operation, transfer int) int {
 	row, ok := c.transfer(op, transfer)
 	if !ok {
 		return 0
@@ -326,9 +317,9 @@ func (c *Contract) TransferOutcomeCount(op Operation, transfer int) int {
 	return row.outcomes.len()
 }
 
-// TransferOutcomeAt returns a canonical Outcome ordinal and its exact
+// transferOutcomeAt returns a canonical Outcome ordinal and its exact
 // delivery/rejection possibilities.
-func (c *Contract) TransferOutcomeAt(op Operation, transfer, index int) (uint32, TransferPossibility, bool) {
+func (c *Contract) transferOutcomeAt(op vocabulary.Operation, transfer, index int) (uint32, vocabulary.TransferPossibility, bool) {
 	row, ok := c.transfer(op, transfer)
 	if !ok || index < 0 || index >= row.outcomes.len() {
 		return 0, 0, false
@@ -336,7 +327,7 @@ func (c *Contract) TransferOutcomeAt(op Operation, transfer, index int) (uint32,
 	return uint32(index), c.transferOutcomes[row.outcomes.start+uint32(index)], true
 }
 
-func (c *Contract) transfer(op Operation, index int) (transferRow, bool) {
+func (c *Contract) transfer(op vocabulary.Operation, index int) (transferRow, bool) {
 	operation, ok := c.operation(op)
 	if !ok || index < 0 || index >= operation.transfers.len() {
 		return transferRow{}, false
@@ -344,7 +335,7 @@ func (c *Contract) transfer(op Operation, index int) (transferRow, bool) {
 	return c.transfers[operation.transfers.start+uint32(index)], true
 }
 
-func (c *Contract) EffectCount(op Operation) int {
+func (c *Contract) EffectCount(op vocabulary.Operation) int {
 	row, ok := c.operation(op)
 	if !ok {
 		return 0
@@ -352,7 +343,7 @@ func (c *Contract) EffectCount(op Operation) int {
 	return row.effects.len()
 }
 
-func (c *Contract) EffectTarget(op Operation, index int) (Operation, bool) {
+func (c *Contract) EffectTarget(op vocabulary.Operation, index int) (vocabulary.Operation, bool) {
 	effect, ok := c.effect(op, index)
 	if !ok {
 		return 0, false
@@ -372,11 +363,11 @@ func (c *Contract) validPublicationEffectRow(effect effectRow) bool {
 	if !ok || uint64(effect.publication.subject) >= uint64(c.ValuesCount(target.input)) {
 		return false
 	}
-	return effect.publication.destination != PublicationDestinationValueFormal ||
+	return effect.publication.destination != vocabulary.PublicationDestinationValueFormal ||
 		uint64(effect.publication.context) < uint64(c.ValuesCount(target.input))
 }
 
-func (c *Contract) EffectValueArgumentCount(op Operation, index int) int {
+func (c *Contract) EffectValueArgumentCount(op vocabulary.Operation, index int) int {
 	effect, ok := c.effect(op, index)
 	if !ok {
 		return 0
@@ -384,7 +375,7 @@ func (c *Contract) EffectValueArgumentCount(op Operation, index int) int {
 	return effect.values.len()
 }
 
-func (c *Contract) EffectValueArgumentAt(op Operation, index, argument int) (ValueFormal, bool) {
+func (c *Contract) EffectValueArgumentAt(op vocabulary.Operation, index, argument int) (vocabulary.ValueFormal, bool) {
 	effect, ok := c.effect(op, index)
 	if !ok || argument < 0 || argument >= effect.values.len() {
 		return 0, false
@@ -392,7 +383,7 @@ func (c *Contract) EffectValueArgumentAt(op Operation, index, argument int) (Val
 	return c.effectVals[effect.values.start+uint32(argument)], true
 }
 
-func (c *Contract) EffectTypeArgumentCount(op Operation, index int) int {
+func (c *Contract) EffectTypeArgumentCount(op vocabulary.Operation, index int) int {
 	effect, ok := c.effect(op, index)
 	if !ok {
 		return 0
@@ -400,7 +391,7 @@ func (c *Contract) EffectTypeArgumentCount(op Operation, index int) int {
 	return effect.types.len()
 }
 
-func (c *Contract) EffectTypeArgumentAt(op Operation, index, argument int) (TypeFormal, bool) {
+func (c *Contract) EffectTypeArgumentAt(op vocabulary.Operation, index, argument int) (vocabulary.TypeFormal, bool) {
 	effect, ok := c.effect(op, index)
 	if !ok || argument < 0 || argument >= effect.types.len() {
 		return 0, false
@@ -408,7 +399,7 @@ func (c *Contract) EffectTypeArgumentAt(op Operation, index, argument int) (Type
 	return c.effectType[effect.types.start+uint32(argument)], true
 }
 
-func (c *Contract) EffectValuesArgumentCount(op Operation, index int) int {
+func (c *Contract) EffectValuesArgumentCount(op vocabulary.Operation, index int) int {
 	effect, ok := c.effect(op, index)
 	if !ok {
 		return 0
@@ -416,7 +407,7 @@ func (c *Contract) EffectValuesArgumentCount(op Operation, index int) int {
 	return effect.valuesVar.len()
 }
 
-func (c *Contract) EffectValuesArgumentAt(op Operation, index, argument int) (ValuesVar, bool) {
+func (c *Contract) EffectValuesArgumentAt(op vocabulary.Operation, index, argument int) (vocabulary.ValuesVar, bool) {
 	effect, ok := c.effect(op, index)
 	if !ok || argument < 0 || argument >= effect.valuesVar.len() {
 		return 0, false
@@ -424,7 +415,7 @@ func (c *Contract) EffectValuesArgumentAt(op Operation, index, argument int) (Va
 	return c.effectVars[effect.valuesVar.start+uint32(argument)], true
 }
 
-func (c *Contract) EffectRowArgumentCount(op Operation, index int) int {
+func (c *Contract) EffectRowArgumentCount(op vocabulary.Operation, index int) int {
 	effect, ok := c.effect(op, index)
 	if !ok {
 		return 0
@@ -432,7 +423,7 @@ func (c *Contract) EffectRowArgumentCount(op Operation, index int) int {
 	return effect.rows.len()
 }
 
-func (c *Contract) EffectRowArgumentAt(op Operation, index, argument int) (RowVar, bool) {
+func (c *Contract) effectRowArgumentAt(op vocabulary.Operation, index, argument int) (vocabulary.RowVar, bool) {
 	effect, ok := c.effect(op, index)
 	if !ok || argument < 0 || argument >= effect.rows.len() {
 		return 0, false
@@ -440,7 +431,7 @@ func (c *Contract) EffectRowArgumentAt(op Operation, index, argument int) (RowVa
 	return c.effectRows[effect.rows.start+uint32(argument)], true
 }
 
-func (c *Contract) EffectTail(op Operation) (RowTail, RowVar, bool) {
+func (c *Contract) EffectTail(op vocabulary.Operation) (vocabulary.RowTail, vocabulary.RowVar, bool) {
 	row, ok := c.operation(op)
 	if !ok {
 		return 0, 0, false
@@ -448,7 +439,7 @@ func (c *Contract) EffectTail(op Operation) (RowTail, RowVar, bool) {
 	return row.effectTail, row.effectVar, true
 }
 
-func (c *Contract) effect(op Operation, index int) (effectRow, bool) {
+func (c *Contract) effect(op vocabulary.Operation, index int) (effectRow, bool) {
 	row, ok := c.operation(op)
 	if !ok || index < 0 || index >= row.effects.len() {
 		return effectRow{}, false
@@ -456,7 +447,7 @@ func (c *Contract) effect(op Operation, index int) (effectRow, bool) {
 	return c.effects[row.effects.start+uint32(index)], true
 }
 
-func (c *Contract) BindingCount(op Operation) int {
+func (c *Contract) BindingCount(op vocabulary.Operation) int {
 	row, ok := c.operation(op)
 	if !ok {
 		return 0
@@ -464,7 +455,7 @@ func (c *Contract) BindingCount(op Operation) int {
 	return row.bindings.len()
 }
 
-func (c *Contract) bindingAt(op Operation, index int) (bindingRange, bool) {
+func (c *Contract) bindingAt(op vocabulary.Operation, index int) (bindingRange, bool) {
 	row, ok := c.operation(op)
 	if !ok || index < 0 || index >= row.bindings.len() {
 		return bindingRange{}, false
@@ -472,7 +463,7 @@ func (c *Contract) bindingAt(op Operation, index int) (bindingRange, bool) {
 	return c.bindings[row.bindings.start+uint32(index)], true
 }
 
-func (c *Contract) BindingNamespaceAt(op Operation, binding int) (BindingNamespace, bool) {
+func (c *Contract) BindingNamespaceAt(op vocabulary.Operation, binding int) (vocabulary.BindingNamespace, bool) {
 	row, ok := c.bindingAt(op, binding)
 	if !ok {
 		return 0, false
@@ -480,7 +471,7 @@ func (c *Contract) BindingNamespaceAt(op Operation, binding int) (BindingNamespa
 	return row.namespace, true
 }
 
-func (c *Contract) BindingOwnerCountAt(op Operation, binding int) int {
+func (c *Contract) BindingOwnerCountAt(op vocabulary.Operation, binding int) int {
 	row, ok := c.bindingAt(op, binding)
 	if !ok {
 		return 0
@@ -488,7 +479,7 @@ func (c *Contract) BindingOwnerCountAt(op Operation, binding int) int {
 	return row.owner.len()
 }
 
-func (c *Contract) BindingOwnerAt(op Operation, binding, index int) (string, bool) {
+func (c *Contract) bindingOwnerAt(op vocabulary.Operation, binding, index int) (string, bool) {
 	row, ok := c.bindingAt(op, binding)
 	if !ok || index < 0 || index >= row.owner.len() {
 		return "", false
@@ -496,10 +487,10 @@ func (c *Contract) BindingOwnerAt(op Operation, binding, index int) (string, boo
 	return c.segments[row.owner.start+uint32(index)], true
 }
 
-// BindingOwnerKeyAt returns the exact-key handle for the same binding owner
+// bindingOwnerKeyAt returns the exact-key handle for the same binding owner
 // segment. The string projection is cold spelling only; Link consumes this
 // handle and must not normalize the segment again.
-func (c *Contract) BindingOwnerKeyAt(op Operation, binding, index int) (ExactKey, bool) {
+func (c *Contract) bindingOwnerKeyAt(op vocabulary.Operation, binding, index int) (vocabulary.ExactKey, bool) {
 	row, ok := c.bindingAt(op, binding)
 	if !ok || index < 0 || index >= row.ownerKeys.len() {
 		return 0, false
@@ -507,7 +498,7 @@ func (c *Contract) BindingOwnerKeyAt(op Operation, binding, index int) (ExactKey
 	return c.bindingKeys[row.ownerKeys.start+uint32(index)], true
 }
 
-func (c *Contract) BindingMemberCountAt(op Operation, binding int) int {
+func (c *Contract) BindingMemberCountAt(op vocabulary.Operation, binding int) int {
 	row, ok := c.bindingAt(op, binding)
 	if !ok {
 		return 0
@@ -515,7 +506,7 @@ func (c *Contract) BindingMemberCountAt(op Operation, binding int) int {
 	return row.member.len()
 }
 
-func (c *Contract) BindingMemberAt(op Operation, binding, index int) (string, bool) {
+func (c *Contract) BindingMemberAt(op vocabulary.Operation, binding, index int) (string, bool) {
 	row, ok := c.bindingAt(op, binding)
 	if !ok || index < 0 || index >= row.member.len() {
 		return "", false
@@ -523,8 +514,8 @@ func (c *Contract) BindingMemberAt(op Operation, binding, index int) (string, bo
 	return c.segments[row.member.start+uint32(index)], true
 }
 
-// BindingMemberKeyAt is BindingOwnerKeyAt's member-segment counterpart.
-func (c *Contract) BindingMemberKeyAt(op Operation, binding, index int) (ExactKey, bool) {
+// bindingMemberKeyAt is BindingOwnerKeyAt's member-segment counterpart.
+func (c *Contract) bindingMemberKeyAt(op vocabulary.Operation, binding, index int) (vocabulary.ExactKey, bool) {
 	row, ok := c.bindingAt(op, binding)
 	if !ok || index < 0 || index >= row.memberKeys.len() {
 		return 0, false
@@ -535,8 +526,8 @@ func (c *Contract) BindingMemberKeyAt(op Operation, binding, index int) (ExactKe
 // Lookup finds an exact binding without joining, hashing, parser fallback, or
 // allocation. It binary-searches the sealed canonical segment index; returned
 // Operation is the same dense handle exposed by OperationAt.
-func (c *Contract) Lookup(binding BindingSpec) (Operation, bool) {
-	if c == nil || !validBinding(binding) {
+func (c *Contract) Lookup(binding vocabulary.BindingSpec) (vocabulary.Operation, bool) {
+	if c == nil || !vocabulary.ValidBinding(binding) {
 		return 0, false
 	}
 	left, right := 0, len(c.lookup)
@@ -558,4 +549,15 @@ func (c *Contract) Lookup(binding BindingSpec) (Operation, bool) {
 		return 0, false
 	}
 	return row.operation, true
+}
+
+// PublicationEffectDescriptor returns the immutable Target-owned publication
+// semantics for one exact ordinary effect occurrence. Generic effects remain
+// absent unless their author explicitly supplied PublicationEffectSpec.
+func (c *Contract) PublicationEffectDescriptor(op vocabulary.Operation, index int) (PublicationEffectDescriptor, bool) {
+	row, ok := c.effect(op, index)
+	if !ok || !c.sealed || !c.validPublicationEffectRow(row) {
+		return PublicationEffectDescriptor{}, false
+	}
+	return row.publication, true
 }

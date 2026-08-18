@@ -1,10 +1,10 @@
 package boundary
 
 import (
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"testing"
 
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
 func TestCallTargetFormalSeparatesOperationAndLoaderSeeds(t *testing.T) {
@@ -26,7 +26,7 @@ func TestCallTargetFormalSeparatesOperationAndLoaderSeeds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	operation, ok := contract.Lookup(target.BindingSpec{Namespace: target.BindingBuiltin, Member: []string{"op"}})
+	operation, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"op"}})
 	if !ok {
 		t.Fatal("operation unavailable")
 	}

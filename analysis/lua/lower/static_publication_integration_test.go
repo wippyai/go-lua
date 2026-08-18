@@ -157,6 +157,39 @@ func TestStaticTypePublicationDeepPathRetainsCompactPublication(t *testing.T) {
 	}
 }
 
+func TestStaticTypePublicationConsumesBinderSourceRootForLocalAndGlobal(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		source string
+	}{
+		{
+			name: "local",
+			source: `
+local Source = {}
+local Target = {}
+type User = number
+Source.User = User
+Target.User = Source.User
+`,
+		},
+		{
+			name: "global",
+			source: `
+type User = number
+M.User = User
+N.User = M.User
+`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			p := parseBindLower(t, test.source)
+			if got := p.Static().Publications().Count(); got != 2 {
+				t.Fatalf("TypePublicationCount = %d, want two chained publications", got)
+			}
+		})
+	}
+}
+
 func TestBracketAssignmentRemainsRuntimeOnly(t *testing.T) {
 	p := parseBindLower(t, `
 type Published = number

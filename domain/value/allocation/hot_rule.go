@@ -53,11 +53,26 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner, heap heapdoma
 			}
 			return allocation.result.Age(prior)
 		},
+	}, func(allocation operand) (uint64, bool) {
+		index, indexOK := schema.CoordinateIndex(allocation.coordinate)
+		return uint64(index), indexOK
 	})
 	if !ok || implementation == nil {
 		return nil, false
 	}
-	return &HotRule{implementation: implementation, catalog: catalog, owner: owner}, true
+	rule := &HotRule{implementation: implementation, catalog: catalog, owner: owner}
+	if !implementation.InstallOperandResolver(rule.resolveOperand) {
+		return nil, false
+	}
+	return rule, true
+}
+
+func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (operand, bool) {
+	issuer, ok := rule.ForMount(coords.Mount)
+	if !ok {
+		return operand{}, false
+	}
+	return issuer.ReceiptForOccurrence(coords.Occurrence)
 }
 
 // MountedIssuer is Value allocation's exact mount-scoped operand issuer.
@@ -86,79 +101,6 @@ func (issuer MountedIssuer) ReceiptForOccurrence(id identity.ContentID) (operand
 	return allocationOperandForSchema(issuer.rule.owner.Schema(), key)
 }
 
-// AttachMountedRule admits one complete ValueAllocation row before topology
-// commit using the exact allocation catalog operand and Value Ref geometry.
-func (rule *HotRule) AttachMountedRule(assembly *engine.ReceiptAssembly, mountID, pointID, occurrenceID identity.ContentID) (engine.BindingRuleRowRef, bool) {
-	if rule == nil || rule.owner == nil || assembly == nil {
-		return engine.BindingRuleRowRef{}, false
-	}
-	issuer, mountOK := rule.ForMount(mountID)
-	operand, operandOK := issuer.ReceiptForOccurrence(occurrenceID)
-	implementation, implementationOK := valueowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
-	capability := mountedCapability(rule.implementation)
-	occurrence, occurrenceOK := assembly.AdmitMountedRuleOccurrence(capability, mountID, pointID, occurrenceID)
-	ref, refOK := rule.owner.Ref(operand.coordinate)
-	if !mountOK || !operandOK || !implementationOK || !occurrenceOK || !refOK {
-		return engine.BindingRuleRowRef{}, false
-	}
-	admit := func(transaction *engine.RuleSourceTransaction) bool {
-		return transaction.AddCarry() && engine.AddExactWrite(transaction, ref)
-	}
-	issue := func(source engine.RuleSurfaceSourceReceipt) bool {
-		draft, draftOK := implementation.BeginReceiptRuleRow(source)
-		carryPart, carryPartOK := implementation.ReceiptCarryPart(source, 0)
-		writePart, writePartOK := implementation.ReceiptWritePart(source, 0)
-		if !draftOK || !carryPartOK || !writePartOK || !draft.AddCarry(carryPart) || !draft.AddWrite(writePart) {
-			return false
-		}
-		_, added := assembly.AddRuleFromDraft(occurrence, draft)
-		return added
-	}
-	queued := engine.AdmitMountedRule(assembly, implementation, capability, occurrence, operand, admit, issue)
-	return engine.BindingRuleRowRef{}, queued
-}
-
-// BeginReceiptCompilation starts the opaque graph attachment transaction for
-// this exact Value/allocation issuer.
-func (rule *HotRule) BeginReceiptCompilation(graph *engine.ReceiptGraph) (*engine.ReceiptCompilation, bool) {
-	if rule == nil || rule.owner == nil {
-		return nil, false
-	}
-	implementation, ok := valueowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
-	if !ok {
-		return nil, false
-	}
-	return engine.BeginReceiptCompilation(implementation, graph)
-}
-
-// AttachReceiptMember attaches one graph-owned allocation member with the
-// exact owner-fenced operand.
-func (rule *HotRule) AttachReceiptMember(compilation *engine.ReceiptCompilation, member engine.ReceiptRuleMember, operand operand) (*engine.ReceiptMember, bool) {
-	if rule == nil || rule.owner == nil || operand.result == nil {
-		return nil, false
-	}
-	implementation, ok := valueowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
-	if !ok {
-		return nil, false
-	}
-	return engine.AttachReceiptRuleMember(compilation, implementation, member, operand)
-}
-
-// AttachMountedReceiptMember resolves the graph-owned mounted member and the
-// exact allocation operand internally, then delegates to AttachReceiptMember.
-func (rule *HotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, pointID, occurrenceID identity.ContentID) (*engine.ReceiptMember, bool) {
-	if rule == nil || graph == nil {
-		return nil, false
-	}
-	member, memberOK := graph.MountedRuleMember(mountedCapability(rule.implementation), mountID, pointID, occurrenceID)
-	issuer, issuerOK := rule.ForMount(mountID)
-	operand, operandOK := issuer.ReceiptForOccurrence(occurrenceID)
-	if !memberOK || !issuerOK || !operandOK {
-		return nil, false
-	}
-	return rule.AttachReceiptMember(compilation, member, operand)
-}
-
 func mountedCapability(issuer interface {
 	MountedCapability() (engine.RuleSlotCapability, bool)
 }) engine.RuleSlotCapability {
@@ -173,6 +115,10 @@ func (rule *HotRule) Implementation() (*valueowner.RuleImplementation[operand], 
 		return nil, false
 	}
 	return rule.implementation, true
+}
+
+func (rule *HotRule) ProgramAttach() (engine.RuleProgramAttach, bool) {
+	return valueowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
 }
 
 func hotAllocationChecker(owner *valueowner.HotOwner, ruleSemantic, transformSemantic identity.SemanticKey) engine.RuleDerivationChecker[value.Value, operand] {

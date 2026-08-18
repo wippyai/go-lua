@@ -3,6 +3,7 @@ package static
 import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 func (decoder *staticArtifactDecoder) operands(output *OperandsInput) error {
@@ -92,6 +93,49 @@ func (decoder *staticArtifactDecoder) operands(output *OperandsInput) error {
 		}
 		if !decoder.probing {
 			output.Annotation[index] = Annotation{Scope: scope, Target: target, Name: name, Values: values}
+		}
+	}
+	return nil
+}
+
+// writeOperandsContent owns the sparse ClaimTarget relation and the two
+// dense sidecars. CSR rows and dense claim lookup are derived indexes, so are
+// intentionally excluded.
+func writeOperandsContent(writer *framing.Writer, store operandsStore) error {
+	if err := writer.Count(uint64(len(store.claims))); err != nil {
+		return err
+	}
+	for _, row := range store.claims {
+		if err := writer.Uint(uint64(row.claim)); err != nil {
+			return err
+		}
+		if err := writer.Uint(uint64(row.target)); err != nil {
+			return err
+		}
+	}
+	if err := writer.Count(uint64(len(store.typeValues))); err != nil {
+		return err
+	}
+	for _, target := range store.typeValues {
+		if err := writer.Uint(uint64(target)); err != nil {
+			return err
+		}
+	}
+	if err := writer.Count(uint64(len(store.annotations))); err != nil {
+		return err
+	}
+	for _, row := range store.annotations {
+		if err := writer.Uint(uint64(row.Scope)); err != nil {
+			return err
+		}
+		if err := writer.Uint(uint64(row.Target)); err != nil {
+			return err
+		}
+		if err := writer.Uint(uint64(row.Name)); err != nil {
+			return err
+		}
+		if err := writer.Uint(uint64(row.Values)); err != nil {
+			return err
 		}
 	}
 	return nil

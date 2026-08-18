@@ -27,6 +27,8 @@ func testTrustedTheorem[V any](version uint64) RuleAdmission[V, ruleUnit] {
 	return AdmitRuleByTrustedTheorem[V, ruleUnit](testSemanticKey(version))
 }
 
+func testRuleProjector[O any](_ O) (uint64, bool) { return 1, true }
+
 // coldKey produces deterministic, versioned semantic identities for engine
 // laws that exercise the callback-free Schema/receipt boundary.
 func coldKey[N ~int | ~int8 | ~int16 | ~int32 | ~int64 | ~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64](n N) identity.SemanticKey {

@@ -42,6 +42,10 @@ func BindHot(fragment *SchemaFragment, owner *heapowner.HotOwner) (*HotRule, boo
 			})
 			return complete && rows == 1
 		},
+	}, func(root Root) (uint64, bool) {
+		key, _, ok := resultForSchema(schema, root)
+		index, indexOK := schema.KeyIndex(key)
+		return uint64(index), ok && indexOK && index >= 0
 	})
 	if !ok || implementation == nil {
 		return nil, false
@@ -50,7 +54,19 @@ func BindHot(fragment *SchemaFragment, owner *heapowner.HotOwner) (*HotRule, boo
 	if !catalogOK {
 		return nil, false
 	}
-	return &HotRule{implementation: implementation, owner: owner, catalog: catalog}, true
+	rule := &HotRule{implementation: implementation, owner: owner, catalog: catalog}
+	if !implementation.InstallOperandResolver(rule.resolveOperand) {
+		return nil, false
+	}
+	return rule, true
+}
+
+func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (Root, bool) {
+	if rule == nil || rule.catalog == nil {
+		return Root{}, false
+	}
+	root, _, ok := rule.catalog.ReceiptForID(coords.Occurrence)
+	return root, ok
 }
 
 // Catalog returns Heap/bootstrap's immutable Link-global BootRoot directory.
@@ -61,63 +77,16 @@ func (rule *HotRule) Catalog() *Catalog {
 	return rule.catalog
 }
 
-// AttachLinkOccurrence lowers one Link-global HeapBootstrap row. The exact
-// bootstrap witness supplied to ReceiptAssembly owns the point/catalog; this
-// package contributes only its matching preissued Root and Heap write Ref.
-func (rule *HotRule) AttachLinkOccurrence(assembly *engine.ReceiptAssembly, occurrenceID identity.ContentID) (engine.BindingRuleRowRef, bool) {
-	if rule == nil || rule.owner == nil || rule.catalog == nil || assembly == nil {
-		return engine.BindingRuleRowRef{}, false
-	}
-	root, key, operandOK := rule.catalog.ReceiptForID(occurrenceID)
-	implementation, implementationOK := heapowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
-	write, writeOK := rule.owner.Ref(key)
-	if !operandOK || !implementationOK || !writeOK {
-		return engine.BindingRuleRowRef{}, false
-	}
-	capability := linkCapability(rule.implementation)
-	occurrence, occurrenceOK := assembly.AdmitLinkRuleOccurrence(capability, occurrenceID)
-	if !occurrenceOK {
-		return engine.BindingRuleRowRef{}, false
-	}
-	admit := func(transaction *engine.RuleSourceTransaction) bool {
-		return engine.AddExactWrite(transaction, write)
-	}
-	issue := func(source engine.RuleSurfaceSourceReceipt) bool {
-		draft, draftOK := implementation.BeginReceiptRuleRow(source)
-		writePart, writePartOK := implementation.ReceiptWritePart(source, 0)
-		if !draftOK || !writePartOK || !draft.AddWrite(writePart) {
-			return false
-		}
-		_, added := assembly.AddRuleFromDraft(occurrence, draft)
-		return added
-	}
-	queued := engine.AdmitLinkRule(assembly, implementation, capability, occurrence, root, admit, issue)
-	return engine.BindingRuleRowRef{}, queued
-}
-
-// AttachLinkReceiptMember resolves the committed Link-global member and its
-// private Root internally. It deliberately has no mount or reusable-point
-// argument: HeapBootstrap is emitted once for the whole Link.
-func (rule *HotRule) AttachLinkReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, occurrenceID identity.ContentID) (*engine.ReceiptMember, bool) {
-	if rule == nil || rule.owner == nil || rule.catalog == nil || graph == nil {
-		return nil, false
-	}
-	root, _, operandOK := rule.catalog.ReceiptForID(occurrenceID)
-	member, memberOK := graph.LinkRuleMember(linkCapability(rule.implementation), occurrenceID)
-	implementation, implementationOK := heapowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
-	if !operandOK || !memberOK || !implementationOK {
-		return nil, false
-	}
-	return engine.AttachReceiptRuleMember(compilation, implementation, member, root)
-}
-
-// Implementation resolves only after the shared binding seals.
 func (rule *HotRule) Implementation() (*heapowner.RuleImplementation[Root], bool) {
 	if rule == nil || rule.owner == nil || rule.implementation == nil {
 		return nil, false
 	}
 	_, ok := heapowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
 	return rule.implementation, ok
+}
+
+func (rule *HotRule) ProgramAttach() (engine.RuleProgramAttach, bool) {
+	return heapowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
 }
 
 func hotBootstrapChecker(owner *heapowner.HotOwner, semantic identity.SemanticKey) engine.RuleDerivationChecker[heapdomain.Value, Root] {

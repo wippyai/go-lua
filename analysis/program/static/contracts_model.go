@@ -30,6 +30,10 @@ type ContractsInput struct {
 type contractsStore struct {
 	functions []functionContractRow
 	calls     []poolRange
+	// callTypeArguments is the sealed width of the call type-argument column:
+	// the length of the terms segment the call ranges cover. Compaction assigns
+	// it once so the denominator is read rather than re-walked per call.
+	callTypeArguments uint32
 	// callTypeArgumentIDs are immutable per-call type-argument column
 	// identities. Authored terms remain in terms; this is only their stable
 	// content identity.

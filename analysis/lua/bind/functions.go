@@ -45,6 +45,10 @@ type FunctionOrigin struct {
 	Stmt       ast.Stmt
 	LocalIndex int
 	Method     string
+	// MethodPosition is the binder-owned selector coordinate for an implicit
+	// self slot. Lowering consumes this position through ParamSlot rather than
+	// reopening the parser's method declaration.
+	MethodPosition ast.Position
 }
 
 // FunctionOrigin returns the origin metadata for fn.
@@ -133,11 +137,12 @@ func cloneParamSlots(slots []ParamSlot) []ParamSlot {
 }
 
 type functionOriginDetails struct {
-	kind       FunctionOriginKind
-	static     bool
-	stmt       ast.Stmt
-	localIndex int
-	method     string
+	kind           FunctionOriginKind
+	static         bool
+	stmt           ast.Stmt
+	localIndex     int
+	method         string
+	methodPosition ast.Position
 
 	receiverType    TypeDecl
 	hasReceiverType bool
@@ -152,13 +157,14 @@ func (r *Result) registerFunction(fn, parent *ast.FunctionExpr, details function
 	}
 	r.functions = append(r.functions, fn)
 	r.functionOrigins[fn] = FunctionOrigin{
-		Func:       fn,
-		Parent:     parent,
-		Kind:       details.kind,
-		Static:     details.static,
-		Stmt:       details.stmt,
-		LocalIndex: details.localIndex,
-		Method:     details.method,
+		Func:           fn,
+		Parent:         parent,
+		Kind:           details.kind,
+		Static:         details.static,
+		Stmt:           details.stmt,
+		LocalIndex:     details.localIndex,
+		Method:         details.method,
+		MethodPosition: details.methodPosition,
 	}
 }
 

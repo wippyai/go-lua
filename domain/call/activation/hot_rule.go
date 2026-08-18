@@ -67,34 +67,6 @@ func BindMountedTransport[V, C, H, P, E any](rule *HotRule, value engine.FactorR
 	return true
 }
 
-// BeginReceiptCompilation starts the sole materialized activation attachment
-// transaction.  ReceiptGraph contains the exact graph+topology proof and is
-// the only topology capability this package accepts.
-func (rule *HotRule) BeginReceiptCompilation(graph *engine.ReceiptGraph) (*engine.ReceiptCompilation, bool) {
-	if rule == nil || rule.owner == nil || rule.implementation == nil {
-		return nil, false
-	}
-	implementation, ok := callowner.ResolveActivationRuleImplementationFor(rule.owner, rule.implementation)
-	if !ok {
-		return nil, false
-	}
-	return engine.BeginReceiptActivationCompilation(implementation, graph)
-}
-
-// AttachReceiptMember accepts only a member issued by the same opaque
-// activation receipt graph.  It never accepts a raw equation member or
-// reconstructs topology from a Call body.
-func (rule *HotRule) AttachReceiptMember(compilation *engine.ReceiptCompilation, member engine.ActivationReceiptMember) (*engine.AttachedActivationReceiptMember, bool) {
-	if rule == nil || rule.owner == nil || rule.implementation == nil {
-		return nil, false
-	}
-	implementation, ok := callowner.ResolveActivationRuleImplementationFor(rule.owner, rule.implementation)
-	if !ok {
-		return nil, false
-	}
-	return engine.AttachReceiptActivationMember(compilation, implementation, member)
-}
-
 func (rule *HotRule) run(activation engine.Activation) bool {
 	if rule == nil || rule.owner == nil || rule.owner.Algebra() == nil {
 		return false

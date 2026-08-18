@@ -98,13 +98,21 @@ func TestBuildContentRejectsUnknownAndOverflowRows(t *testing.T) {
 	}
 }
 
-func TestPublishUsesSnapshotColumn(t *testing.T) {
+// TestBuiltContentReadsBackAsAPublishedColumn holds the built content to what a
+// consumer reads out of the column it fills: the counted relation answers its
+// count and a relation the owners left uncounted answers an explicit zero, both
+// as hits, because the content is total over the generated catalog.
+func TestBuiltContentReadsBackAsAPublishedColumn(t *testing.T) {
 	schemaID := identity.ContentID{6, 7, 8}
 	store := identity.StoreID(1)
 	generation := identity.Generation(1)
 	builder := snapshot.NewBuilder(schemaID, store, generation)
 	axis := snapshot.Axis[schema.EntryID, uint64]{SchemaID: schemaID, Slot: 0}
-	if err := Publish(&builder, axis, schemaID, completeRelationCountRows(t, 9)); err != nil {
+	content, built := BuildContent(schemaID, completeRelationCountRows(t, 9))
+	if !built {
+		t.Fatal("the complete relation count set built no content")
+	}
+	if err := snapshot.PutColumn(&builder, axis, content); err != nil {
 		t.Fatalf("publish relation counts: %v", err)
 	}
 	sealed, err := builder.Seal()
@@ -123,12 +131,20 @@ func TestPublishUsesSnapshotColumn(t *testing.T) {
 	}
 }
 
-func TestPublishRejectsForeignSchemaAxis(t *testing.T) {
+// TestBuiltContentIsRefusedAtAForeignSchemaAxis holds the content to the
+// publication it is built for. The address a column is filled at carries the
+// schema that sealed it, so complete content offered at another schema's axis
+// fills nothing rather than filling the wrong publication.
+func TestBuiltContentIsRefusedAtAForeignSchemaAxis(t *testing.T) {
 	declared := identity.ContentID{9, 9, 9}
 	foreign := identity.ContentID{8, 8, 8}
 	builder := snapshot.NewBuilder(declared, identity.StoreID(2), identity.Generation(1))
 	axis := snapshot.Axis[schema.EntryID, uint64]{SchemaID: foreign, Slot: 0}
-	if err := Publish(&builder, axis, declared, completeRelationCountRows(t)); err == nil {
+	content, built := BuildContent(declared, completeRelationCountRows(t))
+	if !built {
+		t.Fatal("the complete relation count set built no content")
+	}
+	if err := snapshot.PutColumn(&builder, axis, content); err == nil {
 		t.Fatal("foreign schema axis was accepted")
 	}
 }

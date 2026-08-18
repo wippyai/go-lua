@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // frozenValue is one published, transitively immutable result value. It is
@@ -39,6 +40,7 @@ type queryResult struct {
 type runtimeQuery interface {
 	query() equation.Query
 	queryOwner() queryOwner
+	PublicationKey() (identity.ContentID, bool)
 	materialize(*carrier.Work, carrier.State) (*queryResult, bool)
 }
 

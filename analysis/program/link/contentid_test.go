@@ -1,8 +1,10 @@
-package link
+package link_test
 
 import (
 	"math"
 	"testing"
+
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/analysis/program"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
@@ -10,7 +12,6 @@ import (
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/scalar"
-	"github.com/wippyai/go-lua/analysis/program/target"
 )
 
 func TestLinkValuesAreCanonicalShardScopedAndComplete(t *testing.T) {
@@ -109,7 +110,7 @@ func TestLinkValueFamilyOrderIsThePublishedLaw(t *testing.T) {
 }
 
 func TestLinkKeyDeduplicatesExactLuaKeysAndTargetPaths(t *testing.T) {
-	c := contract(t, target.BindingSpec{Namespace: target.BindingModule, Owner: []string{"math"}, Member: []string{"abs"}})
+	c := contract(t, vocabulary.BindingSpec{Namespace: vocabulary.BindingModule, Owner: []string{"math"}, Member: []string{"abs"}})
 	left := source(t, `local x = { [1] = true, math = 1 }; return math.abs(x)`)
 	right := source(t, `local x = { [1] = false, math = 2 }; return math.abs(x)`)
 	l := linked(t, c, linkproject.Module{Name: "left", Program: left}, linkproject.Module{Name: "right", Program: right})
@@ -129,7 +130,7 @@ func TestLinkKeyDeduplicatesExactLuaKeysAndTargetPaths(t *testing.T) {
 	if !ok || first != second {
 		t.Fatalf("equal string keys=%v/%v", first, second)
 	}
-	var targetMath target.ExactKey
+	var targetMath vocabulary.ExactKey
 	for index := 0; index < c.ExactKeyCount(); index++ {
 		key, ok := c.ExactKeyAt(index)
 		if !ok {

@@ -4,11 +4,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wippyai/go-lua/domain/composite"
-	valuedomain "github.com/wippyai/go-lua/domain/value"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
+	"github.com/wippyai/go-lua/domain/composite"
+	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
 func TestGuardPolarityCollectorMixedTruthsProveNeitherLaw(t *testing.T) {
@@ -120,13 +120,12 @@ func TestDiagnosticDeclarationTableIsPolicyAndDispatchAuthority(t *testing.T) {
 		}
 		staticPopulations[entry.Observation().Key] = struct{}{}
 	}
-	// The artifact numbers the same populations the declaration does, so every
-	// compiled observation kind dispatches to the row that declares it. This is
-	// the adoption seam the pin law holds open: a collector holding an ordinal
-	// reaches a declared row without a mapping of its own.
-	for _, kind := range []programartifact.DiagnosticObservationKind{
-		programartifact.DiagnosticObservationTypeReferenceUnresolved,
-		programartifact.DiagnosticObservationValueReferenceUnresolved,
+	// Every canonical observation kind projects through the sealed structure
+	// table to the diagnostic row that declares its population. The collector
+	// therefore consumes one schema identity and holds no mapping of its own.
+	for _, kind := range []structure.DiagnosticObservationKind{
+		structure.DiagnosticObservationTypeReferenceUnresolved,
+		structure.DiagnosticObservationValueReferenceUnresolved,
 	} {
 		dispatched, dispatchedOK := staticDiagnosticDeclaration(kind)
 		if !dispatchedOK {
@@ -136,15 +135,15 @@ func TestDiagnosticDeclarationTableIsPolicyAndDispatchAuthority(t *testing.T) {
 			t.Fatalf("static observation kind %d dispatched to row %q, which declares no static population", kind, dispatched.Code().String())
 		}
 	}
-	if _, dispatched := staticDiagnosticDeclaration(programartifact.DiagnosticObservationBranchCondition); dispatched {
+	if _, dispatched := staticDiagnosticDeclaration(structure.DiagnosticObservationBranchCondition); dispatched {
 		t.Fatal("a branch population dispatched to a static row")
 	}
 }
 
 func TestDiagnosticStaticCollectorRejectsUnknownRowKind(t *testing.T) {
 	report := &DiagnosticReport{}
-	receipt := &artifactResultReceipt{staticObservations: []compiledObservation{{kind: programartifact.DiagnosticObservationKind(255)}}}
-	if collectStaticDiagnosticFindings(report, receipt, DiagnosticPolicy{}) {
+	geometry := resultGeometry{staticObservations: []compiledObservation{{kind: structure.DiagnosticObservationKind(255)}}}
+	if collectStaticDiagnosticFindings(report, geometry, DiagnosticPolicy{}) {
 		t.Fatal("unknown static observation kind was silently ignored")
 	}
 }

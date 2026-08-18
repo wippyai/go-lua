@@ -20,12 +20,8 @@ func (w *Writer) runFormal(current step, phases *continuation.Stack) error {
 		return fmt.Errorf("lualower: invalid binder symbol for function formal %q", slot.Name)
 	}
 	span := w.positionSpan(slot.Position)
-	if slot.ImplicitSelf {
-		position, err := w.methodPosition(current.fn)
-		if err != nil {
-			return err
-		}
-		span = w.positionSpan(position)
+	if span.File == "" || slot.ImplicitSelf && !slot.Position.Valid() {
+		return fmt.Errorf("lualower: missing binder position for function formal %q", slot.Name)
 	}
 	host, err := w.scopes.Declare(slot.Symbol, span)
 	if err != nil {

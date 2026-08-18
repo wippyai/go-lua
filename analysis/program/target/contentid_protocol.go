@@ -2,27 +2,28 @@ package target
 
 import (
 	"errors"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
-func encodeProtocol(w *framing.Writer, c *Contract, protocol Protocol) error {
+func encodeProtocol(w *framing.Writer, c *Contract, protocol vocabulary.Protocol) error {
 	if err := w.Record(recordProtocol); err != nil {
 		return err
 	}
 	if err := w.Uint(uint64(protocol)); err != nil {
 		return err
 	}
-	states := c.StateCount(protocol)
+	states := c.stateCount(protocol)
 	if err := w.Count(uint64(states)); err != nil {
 		return err
 	}
 	for index := 0; index < states; index++ {
-		state, ok := c.StateAt(protocol, index)
+		state, ok := c.stateAt(protocol, index)
 		if !ok {
 			return errors.New("target: malformed protocol state")
 		}
-		final, found := c.StateFinal(protocol, state)
+		final, found := c.stateFinal(protocol, state)
 		if !found {
 			return errors.New("target: malformed state finality")
 		}
@@ -33,12 +34,12 @@ func encodeProtocol(w *framing.Writer, c *Contract, protocol Protocol) error {
 			return err
 		}
 	}
-	acquisitions := c.ProtocolAcquisitionCount(protocol)
+	acquisitions := c.protocolAcquisitionCount(protocol)
 	if err := w.Count(uint64(acquisitions)); err != nil {
 		return err
 	}
 	for index := 0; index < acquisitions; index++ {
-		op, outcome, result, state, ok := c.ProtocolAcquisitionAt(protocol, index)
+		op, outcome, result, state, ok := c.protocolAcquisitionAt(protocol, index)
 		if !ok {
 			return errors.New("target: malformed acquisition")
 		}
@@ -58,12 +59,12 @@ func encodeProtocol(w *framing.Writer, c *Contract, protocol Protocol) error {
 			return err
 		}
 	}
-	transitions := c.TransitionCount(protocol)
+	transitions := c.transitionCount(protocol)
 	if err := w.Count(uint64(transitions)); err != nil {
 		return err
 	}
 	for index := 0; index < transitions; index++ {
-		op, kind, ordinal, from, ok := c.TransitionAt(protocol, index)
+		op, kind, ordinal, from, ok := c.transitionAt(protocol, index)
 		if !ok {
 			return errors.New("target: malformed transition")
 		}
@@ -79,12 +80,12 @@ func encodeProtocol(w *framing.Writer, c *Contract, protocol Protocol) error {
 		if err := w.Uint(uint64(from)); err != nil {
 			return err
 		}
-		outcomes := c.TransitionOutcomeCount(protocol, index)
+		outcomes := c.transitionOutcomeCount(protocol, index)
 		if err := w.Count(uint64(outcomes)); err != nil {
 			return err
 		}
 		for outcomeIndex := 0; outcomeIndex < outcomes; outcomeIndex++ {
-			outcome, to, found := c.TransitionOutcomeAt(protocol, index, outcomeIndex)
+			outcome, to, found := c.transitionOutcomeAt(protocol, index, outcomeIndex)
 			if !found {
 				return errors.New("target: malformed transition outcome")
 			}
@@ -99,12 +100,12 @@ func encodeProtocol(w *framing.Writer, c *Contract, protocol Protocol) error {
 			}
 		}
 	}
-	escapes := c.EscapeCount(protocol)
+	escapes := c.escapeCount(protocol)
 	if err := w.Count(uint64(escapes)); err != nil {
 		return err
 	}
 	for index := 0; index < escapes; index++ {
-		op, kind, ordinal, ok := c.EscapeAt(protocol, index)
+		op, kind, ordinal, ok := c.escapeAt(protocol, index)
 		if !ok {
 			return errors.New("target: malformed escape")
 		}
@@ -118,12 +119,12 @@ func encodeProtocol(w *framing.Writer, c *Contract, protocol Protocol) error {
 			return err
 		}
 	}
-	holders := c.ProtocolCallbackHolderCount(protocol)
+	holders := c.protocolCallbackHolderCount(protocol)
 	if err := w.Count(uint64(holders)); err != nil {
 		return err
 	}
 	for index := 0; index < holders; index++ {
-		op, input, callback, ok := c.ProtocolCallbackHolderAt(protocol, index)
+		op, input, callback, ok := c.protocolCallbackHolderAt(protocol, index)
 		if !ok {
 			return errors.New("target: malformed protocol callback holder")
 		}

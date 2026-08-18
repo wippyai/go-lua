@@ -4,6 +4,7 @@ import (
 	flowrole "github.com/wippyai/go-lua/analysis/program/flow/role"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 func (decoder *staticArtifactDecoder) operators(output *OperatorsInput) error {
@@ -107,6 +108,58 @@ func (decoder *staticArtifactDecoder) operators(output *OperatorsInput) error {
 		}
 		if !decoder.probing {
 			output.Conditional[index] = Conditional{Check: check, Extends: extends, Then: then, Else: elseTerm}
+		}
+	}
+	return nil
+}
+
+// writeOperatorsContent owns all four exact authored static operator rows.
+func writeOperatorsContent(writer *framing.Writer, store operatorsStore) error {
+	if err := writer.Count(uint64(len(store.typeOf))); err != nil {
+		return err
+	}
+	for _, row := range store.typeOf {
+		if err := writer.Uint(uint64(row.Scope)); err != nil {
+			return err
+		}
+		if err := writer.Uint(uint64(row.Operand)); err != nil {
+			return err
+		}
+	}
+	if err := writer.Count(uint64(len(store.keyOf))); err != nil {
+		return err
+	}
+	for _, row := range store.keyOf {
+		if err := writer.Uint(uint64(row.Inner)); err != nil {
+			return err
+		}
+	}
+	if err := writer.Count(uint64(len(store.indexAccess))); err != nil {
+		return err
+	}
+	for _, row := range store.indexAccess {
+		if err := writer.Uint(uint64(row.Object)); err != nil {
+			return err
+		}
+		if err := writer.Uint(uint64(row.Index)); err != nil {
+			return err
+		}
+	}
+	if err := writer.Count(uint64(len(store.conditional))); err != nil {
+		return err
+	}
+	for _, row := range store.conditional {
+		if err := writer.Uint(uint64(row.Check)); err != nil {
+			return err
+		}
+		if err := writer.Uint(uint64(row.Extends)); err != nil {
+			return err
+		}
+		if err := writer.Uint(uint64(row.Then)); err != nil {
+			return err
+		}
+		if err := writer.Uint(uint64(row.Else)); err != nil {
+			return err
 		}
 	}
 	return nil

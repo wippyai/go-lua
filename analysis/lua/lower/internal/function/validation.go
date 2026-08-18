@@ -30,8 +30,8 @@ func (w *Writer) validExprOrigin(fn *ast.FunctionExpr) error {
 }
 
 func (w *Writer) validMethodDef(stmt *ast.FuncDefStmt, origin bind.FunctionOrigin) error {
-	if stmt.Name.Method == "" || stmt.Name.Receiver == nil || stmt.Name.Func != nil || !functionTarget(stmt.Name.Receiver) || !stmt.Name.MethodPosition.Valid() ||
-		origin.Kind != bind.FunctionOriginMethod || origin.Method != stmt.Name.Method {
+	if stmt.Name.Method == "" || stmt.Name.Receiver == nil || stmt.Name.Func != nil || !functionTarget(stmt.Name.Receiver) ||
+		!stmt.Name.MethodPosition.Valid() || origin.Kind != bind.FunctionOriginMethod || origin.Method != stmt.Name.Method {
 		return fmt.Errorf("lualower: invalid method function definition")
 	}
 	return nil
@@ -56,16 +56,4 @@ func functionTarget(target ast.Expr) bool {
 		}
 	}
 	return false
-}
-
-func (w *Writer) methodPosition(fn *ast.FunctionExpr) (ast.Position, error) {
-	origin, ok := w.binding.FunctionOrigin(fn)
-	if !ok || origin.Kind != bind.FunctionOriginMethod || origin.Func != fn {
-		return ast.Position{}, fmt.Errorf("lualower: missing method Function origin")
-	}
-	stmt, ok := origin.Stmt.(*ast.FuncDefStmt)
-	if !ok || stmt == nil || stmt.Name == nil || stmt.Func != fn || stmt.Name.Method == "" || origin.Method != stmt.Name.Method || !stmt.Name.MethodPosition.Valid() {
-		return ast.Position{}, fmt.Errorf("lualower: invalid method Function origin")
-	}
-	return stmt.Name.MethodPosition, nil
 }

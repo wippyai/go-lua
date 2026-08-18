@@ -2,7 +2,7 @@ package static
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/domain/type/authority"
 )
 
@@ -67,7 +67,7 @@ type Symbolic struct {
 	source      identity.ContentID
 	namespace   identity.ContentID
 	environment identity.ContentID
-	operation   target.Operation
+	operation   vocabulary.Operation
 	law         identity.ContentID
 	dependency  identity.ContentID
 	reason      Reason
@@ -77,7 +77,7 @@ type Symbolic struct {
 func (s Symbolic) Reference() typeauthority.StaticTypeRef { return s.reference }
 func (s Symbolic) Namespace() identity.ContentID          { return s.namespace }
 func (s Symbolic) Environment() identity.ContentID        { return s.environment }
-func (s Symbolic) Operation() target.Operation            { return s.operation }
+func (s Symbolic) Operation() vocabulary.Operation        { return s.operation }
 func (s Symbolic) Law() identity.ContentID                { return s.law }
 func (s Symbolic) Dependency() identity.ContentID         { return s.dependency }
 func (s Symbolic) Reason() Reason                         { return s.reason }
@@ -182,7 +182,7 @@ func (v Value) InvalidEnvironment() (identity.ContentID, bool) {
 	return v.owner.results[v.index].symbolic.environment, true
 }
 
-func (v Value) InvalidOperation() (target.Operation, bool) {
+func (v Value) InvalidOperation() (vocabulary.Operation, bool) {
 	if !v.IsInvalid() {
 		return 0, false
 	}

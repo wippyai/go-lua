@@ -40,6 +40,7 @@ func RawGetEntry[P rawGetPrincipals, A rawGetAuthorities]() rule.Spec[P, A, *Raw
 	return rule.Spec[P, A, *RawGetSchemaFragment, *RawGetHotRule]{
 		Key:    "raw-get",
 		Writes: "value",
+		Owner:  "heap",
 		Issues: []rule.Issuance{
 			{Occurrence: "occurrence/index-read", Form: "issuance/local", Input: "input/entry", Stage: "stage/local"},
 		},
@@ -58,14 +59,6 @@ func RawGetEntry[P rawGetPrincipals, A rawGetAuthorities]() rule.Spec[P, A, *Raw
 		},
 		Bind: func(context rule.Binding[A, *RawGetSchemaFragment]) (*RawGetHotRule, bool) {
 			return BindRawGetHot(context.Binding, context.Fragment, context.Authorities.Topology(), context.Authorities.ValueAuthority(), context.Authorities.CallAuthority(), context.Authorities.HeapAuthority(), context.Authorities.PackAuthority())
-		},
-		Attach: func(context rule.Attach[*RawGetHotRule]) bool {
-			_, ok := context.Rule.AttachMountedOccurrence(context.Assembly, context.Mount, context.Point, context.Occurrence)
-			return ok
-		},
-		Member: func(context rule.Member[*RawGetHotRule]) bool {
-			_, ok := context.Rule.AttachMountedReceiptMember(context.Compilation, context.Graph, context.Mount, context.Point, context.Occurrence)
-			return ok
 		},
 	}
 }
@@ -93,6 +86,7 @@ func RawSetEntry[P rawSetPrincipals, A rawSetAuthorities]() rule.Spec[P, A, *Raw
 	return rule.Spec[P, A, *RawSetSchemaFragment, *RawSetHotRule]{
 		Key:    "raw-set",
 		Writes: "heap",
+		Owner:  "heap",
 		Issues: []rule.Issuance{
 			{Occurrence: "occurrence/index-write", Form: "issuance/local-predecessor", Input: "input/predecessor", Stage: "stage/local"},
 		},
@@ -111,14 +105,6 @@ func RawSetEntry[P rawSetPrincipals, A rawSetAuthorities]() rule.Spec[P, A, *Raw
 		},
 		Bind: func(context rule.Binding[A, *RawSetSchemaFragment]) (*RawSetHotRule, bool) {
 			return BindRawSetHot(context.Binding, context.Fragment, context.Authorities.Topology(), context.Authorities.ValueAuthority(), context.Authorities.HeapAuthority(), context.Authorities.PackAuthority())
-		},
-		Attach: func(context rule.Attach[*RawSetHotRule]) bool {
-			_, ok := context.Rule.AttachMountedOccurrence(context.Assembly, context.Mount, context.Point, context.Occurrence)
-			return ok
-		},
-		Member: func(context rule.Member[*RawSetHotRule]) bool {
-			_, ok := context.Rule.AttachMountedReceiptMember(context.Compilation, context.Graph, context.Mount, context.Point, context.Occurrence)
-			return ok
 		},
 	}
 }

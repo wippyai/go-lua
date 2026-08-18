@@ -3,14 +3,14 @@ package target
 import (
 	"errors"
 	"fmt"
-	"sort"
-
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	"sort"
 )
 
 func canonicalizeBindings(drafts []operationDraft) error {
 	type owner struct {
-		binding BindingSpec
+		binding vocabulary.BindingSpec
 		draft   int
 	}
 	all := make([]owner, 0)
@@ -154,7 +154,7 @@ func compareProducedEdge(left, right producedEdge) int {
 	return 0
 }
 
-func (d *operationDraft) resolveEffects(all []operationDraft, sourceOperation []Operation) error {
+func (d *operationDraft) resolveEffects(all []operationDraft, sourceOperation []vocabulary.Operation) error {
 	if err := d.resolveEffectList(d.effects, all, sourceOperation, "effect"); err != nil {
 		return err
 	}
@@ -166,7 +166,7 @@ func (d *operationDraft) resolveEffects(all []operationDraft, sourceOperation []
 	return nil
 }
 
-func (d *operationDraft) resolveEffectList(effects []effectDraft, all []operationDraft, sourceOperation []Operation, label string) error {
+func (d *operationDraft) resolveEffectList(effects []effectDraft, all []operationDraft, sourceOperation []vocabulary.Operation, label string) error {
 	for index := range effects {
 		targetRef := effects[index].targetSource
 		if targetRef == 0 || uint64(targetRef) > uint64(len(sourceOperation)) {
@@ -185,14 +185,14 @@ func (d *operationDraft) resolveEffectList(effects []effectDraft, all []operatio
 		}
 		effects[index].target = targetOp
 		if effects[index].hasPublication {
-			descriptor := effects[index].publication
-			if !descriptor.validConsequences() {
-				return fmt.Errorf("target: %s %d has invalid publication consequences", label, index)
+			descriptor, publicationErr := freezePublicationEffect(effects[index].publication)
+			if publicationErr != nil {
+				return fmt.Errorf("target: %s %d publication: %w", label, index, publicationErr)
 			}
 			if uint64(descriptor.subject) >= uint64(target.valueFormalCount()) {
 				return fmt.Errorf("target: %s %d publication subject outside effect target ABI", label, index)
 			}
-			if descriptor.destination == PublicationDestinationValueFormal && uint64(descriptor.context) >= uint64(target.valueFormalCount()) {
+			if descriptor.destination == vocabulary.PublicationDestinationValueFormal && uint64(descriptor.context) >= uint64(target.valueFormalCount()) {
 				return fmt.Errorf("target: %s %d publication destination outside effect target ABI", label, index)
 			}
 		}
@@ -201,7 +201,7 @@ func (d *operationDraft) resolveEffectList(effects []effectDraft, all []operatio
 	return nil
 }
 
-func (d *operationDraft) resolveCallbackReleases(all []operationDraft, sourceOperation []Operation) error {
+func (d *operationDraft) resolveCallbackReleases(all []operationDraft, sourceOperation []vocabulary.Operation) error {
 	for index := range d.callbacks {
 		release := d.callbacks[index].release
 		if release == nil {
@@ -227,20 +227,20 @@ func (d *operationDraft) resolveCallbackReleases(all []operationDraft, sourceOpe
 		}
 		release.operation, release.outcome = targetOp, canonical
 		switch release.zeroBehavior {
-		case CallbackReleaseZeroSuppress:
+		case vocabulary.CallbackReleaseZeroSuppress:
 			// No outcome coordinate is retained for a suppressed zero-holder
 			// release. The frozen form stores only the behavior tag.
 			release.zeroOutcome = 0
-		case CallbackReleaseZeroThrow, CallbackReleaseZeroIdempotent:
+		case vocabulary.CallbackReleaseZeroThrow, vocabulary.CallbackReleaseZeroIdempotent:
 			zeroOutcome, zeroFound := canonicalOutcomeForSource(target.outcomes, release.zeroOutcome)
 			if !zeroFound {
 				return fmt.Errorf("target: callback %d zero release outcome outside operation scope", index)
 			}
 			kind := target.outcomes[zeroOutcome].kind
-			if release.zeroBehavior == CallbackReleaseZeroThrow && kind != flowkind.OutcomeThrow {
+			if release.zeroBehavior == vocabulary.CallbackReleaseZeroThrow && kind != flowkind.OutcomeThrow {
 				return fmt.Errorf("target: callback %d zero release throw outcome is not Throw", index)
 			}
-			if release.zeroBehavior == CallbackReleaseZeroIdempotent && kind != flowkind.OutcomeNormal {
+			if release.zeroBehavior == vocabulary.CallbackReleaseZeroIdempotent && kind != flowkind.OutcomeNormal {
 				return fmt.Errorf("target: callback %d zero release idempotent outcome is not Normal", index)
 			}
 			release.zeroOutcome = zeroOutcome
@@ -260,7 +260,7 @@ func canonicalOutcomeForSource(outcomes []outcomeDraft, source uint32) (uint32, 
 	return 0, false
 }
 
-func (d *operationDraft) resolveProduced(sourceOperation []Operation) error {
+func (d *operationDraft) resolveProduced(sourceOperation []vocabulary.Operation) error {
 	for outcomeIndex := range d.outcomes {
 		for producedIndex := range d.outcomes[outcomeIndex].produced {
 			produced := &d.outcomes[outcomeIndex].produced[producedIndex]
@@ -323,7 +323,7 @@ func (d *operationDraft) resolveSpawns(canonical []uint32) error {
 		spawn.childEntry = canonical[spawn.childEntry]
 		matched := false
 		for _, suspension := range d.suspensions {
-			if suspension.yield == spawn.yield && suspension.reentry == spawn.parentResume && suspension.source == ReentryByProvider && suspension.multiplicity == ReentryOnce {
+			if suspension.yield == spawn.yield && suspension.reentry == spawn.parentResume && suspension.source == vocabulary.ReentryByProvider && suspension.multiplicity == vocabulary.ReentryOnce {
 				matched = true
 				break
 			}
@@ -335,7 +335,7 @@ func (d *operationDraft) resolveSpawns(canonical []uint32) error {
 	return nil
 }
 
-func validateProducedResumes(drafts []operationDraft, sourceOperation []Operation) error {
+func validateProducedResumes(drafts []operationDraft, sourceOperation []vocabulary.Operation) error {
 	callbackCapture := make([]bool, len(drafts)+1)
 	for producer := range drafts {
 		for outcome := range drafts[producer].outcomes {
@@ -344,7 +344,7 @@ func validateProducedResumes(drafts []operationDraft, sourceOperation []Operatio
 					return errors.New("target: produced resume has unresolved target")
 				}
 				for _, capture := range produced.captures {
-					if capture.Kind == CaptureCallback {
+					if capture.Kind == vocabulary.CaptureCallback {
 						callbackCapture[produced.target] = true
 						break
 					}
@@ -356,7 +356,7 @@ func validateProducedResumes(drafts []operationDraft, sourceOperation []Operatio
 		draft := &drafts[index]
 		needsProduced := false
 		for _, resume := range draft.resumes {
-			needsProduced = needsProduced || resume.source == ResumeSourceProduced
+			needsProduced = needsProduced || resume.source == vocabulary.ResumeSourceProduced
 		}
 		if !needsProduced {
 			continue
@@ -387,299 +387,4 @@ func validateSpawnAuthority(drafts []operationDraft) error {
 		return errors.New("target: duplicate spawn authority")
 	}
 	return nil
-}
-
-func compareSuspension(left, right suspensionDraft) int {
-	if order := compareSuspensionKey(left, right); order != 0 {
-		return order
-	}
-	if left.multiplicity < right.multiplicity {
-		return -1
-	}
-	if left.multiplicity > right.multiplicity {
-		return 1
-	}
-	return 0
-}
-
-func compareSuspensionKey(left, right suspensionDraft) int {
-	if left.yield != right.yield {
-		if left.yield < right.yield {
-			return -1
-		}
-		return 1
-	}
-	if left.reentry != right.reentry {
-		if left.reentry < right.reentry {
-			return -1
-		}
-		return 1
-	}
-	if left.source != right.source {
-		if left.source < right.source {
-			return -1
-		}
-		return 1
-	}
-	return 0
-}
-
-func compareResume(left, right resumeDraft) int {
-	if left.source != right.source {
-		if left.source < right.source {
-			return -1
-		}
-		return 1
-	}
-	if left.carrier < right.carrier {
-		return -1
-	}
-	if left.carrier > right.carrier {
-		return 1
-	}
-	if compared := compareValues(left.arguments, right.arguments); compared != 0 {
-		return compared
-	}
-	return 0
-}
-
-// crossActivationOutcomeIndex maps the only outcomes that can leave an
-// activation boundary to compact canonical row coordinates.
-func crossActivationOutcomeIndex(kind flowkind.OutcomeKind) (int, bool) {
-	switch kind {
-	case flowkind.OutcomeNormal:
-		return 0, true
-	case flowkind.OutcomeReturn:
-		return 1, true
-	case flowkind.OutcomeThrow:
-		return 2, true
-	case flowkind.OutcomeYield:
-		return 3, true
-	case flowkind.OutcomeCancel:
-		return 4, true
-	default:
-		return 0, false
-	}
-}
-
-func validAuthoredInputSource(source InputSource, valueFormals int, valuesVars uint32) bool {
-	switch source.Kind {
-	case InputSourceValueFormal:
-		return uint64(source.Ordinal) < uint64(valueFormals)
-	case InputSourceValuesVar:
-		return uint64(source.Ordinal) < uint64(valuesVars)
-	default:
-		return false
-	}
-}
-
-func compareInputSource(left, right InputSource) int {
-	if left.Kind < right.Kind {
-		return -1
-	}
-	if left.Kind > right.Kind {
-		return 1
-	}
-	if left.Ordinal < right.Ordinal {
-		return -1
-	}
-	if left.Ordinal > right.Ordinal {
-		return 1
-	}
-	return 0
-}
-
-func validTransferPossibility(possibility TransferPossibility) bool {
-	const valid = TransferMayDeliver | TransferMayReject
-	return possibility != 0 && possibility&^valid == 0
-}
-
-func validTransferEndpoint(endpoint TransferEndpoint, valueFormals int) bool {
-	switch endpoint.Kind {
-	case TransferEndpointInput:
-		return uint64(endpoint.Input) < uint64(valueFormals)
-	case TransferEndpointExternal:
-		return endpoint.Input == 0
-	default:
-		return false
-	}
-}
-
-func validTransferIdentity(identity TransferIdentity) bool {
-	return identity >= TransferIdentityUnspecified && identity <= TransferIdentityDistinct
-}
-
-func validTransferCapabilities(capabilities TransferCapabilities) bool {
-	return capabilities >= TransferCapabilitiesUnspecified && capabilities <= TransferCapabilitiesLoseAll
-}
-
-// validTransferInputSource admits only exact invocation inputs.  A ValuesVar
-// is a transfer source only when it is the operation input tail; result,
-// callback, and local Values variables have no caller-owned source Pack.
-// AllInputs is reserved for the synthesized opaque operation.
-func validTransferInputSource(source InputSource, d operationDraft) bool {
-	switch source.Kind {
-	case InputSourceValueFormal:
-		return uint64(source.Ordinal) < uint64(d.valueFormalCount())
-	case InputSourceValuesVar:
-		return d.input.tail == ValuesVariable && source.Ordinal == uint32(d.input.varID)
-	default:
-		return false
-	}
-}
-
-func compareTransfer(left, right transferDraft) int {
-	if compared := compareTransferIdentity(left, right); compared != 0 {
-		return compared
-	}
-	if left.identity < right.identity {
-		return -1
-	}
-	if left.identity > right.identity {
-		return 1
-	}
-	if left.capabilities < right.capabilities {
-		return -1
-	}
-	if left.capabilities > right.capabilities {
-		return 1
-	}
-	return 0
-}
-
-func compareTransferIdentity(left, right transferDraft) int {
-	if left.endpoint.Kind < right.endpoint.Kind {
-		return -1
-	}
-	if left.endpoint.Kind > right.endpoint.Kind {
-		return 1
-	}
-	if left.endpoint.Input < right.endpoint.Input {
-		return -1
-	}
-	if left.endpoint.Input > right.endpoint.Input {
-		return 1
-	}
-	if compared := compareInputSource(left.payload, right.payload); compared != 0 {
-		return compared
-	}
-	return compareInputSource(left.alias, right.alias)
-}
-
-func validCallbackLifecycle(lifecycle CallbackLifecycle) bool {
-	return lifecycle >= CallbackSyncOptionalOnce && lifecycle <= CallbackRetainedRequiredMany
-}
-
-func retainedCallbackLifecycle(lifecycle CallbackLifecycle) bool {
-	return lifecycle >= CallbackRetainedOptionalOnce && lifecycle <= CallbackRetainedRequiredMany
-}
-
-func onceCallbackLifecycle(lifecycle CallbackLifecycle) bool {
-	switch lifecycle {
-	case CallbackSyncOptionalOnce, CallbackSyncRequiredOnce,
-		CallbackRetainedOptionalOnce, CallbackRetainedRequiredOnce:
-		return true
-	default:
-		return false
-	}
-}
-
-func validCallbackReleaseMode(mode CallbackReleaseMode) bool {
-	return mode == CallbackReleaseOne || mode == CallbackReleaseAll
-}
-
-func validCallbackReleaseZeroBehavior(behavior CallbackReleaseZeroBehavior) bool {
-	switch behavior {
-	case CallbackReleaseZeroSuppress, CallbackReleaseZeroThrow, CallbackReleaseZeroIdempotent:
-		return true
-	default:
-		return false
-	}
-}
-
-func (d operationDraft) valueFormalCount() int {
-	return len(d.input.types)
-}
-
-func compareCallback(left, right callbackDraft) int {
-	if compared := compareCallbackIdentity(left, right); compared != 0 {
-		return compared
-	}
-	if left.admission < right.admission {
-		return -1
-	}
-	if left.admission > right.admission {
-		return 1
-	}
-	if left.lifecycle < right.lifecycle {
-		return -1
-	}
-	if left.lifecycle > right.lifecycle {
-		return 1
-	}
-	return 0
-}
-
-func compareCallbackIdentity(left, right callbackDraft) int {
-	if left.function.Kind < right.function.Kind {
-		return -1
-	}
-	if left.function.Kind > right.function.Kind {
-		return 1
-	}
-	if left.function.Ordinal < right.function.Ordinal {
-		return -1
-	}
-	if left.function.Ordinal > right.function.Ordinal {
-		return 1
-	}
-	if compared := compareValues(left.arguments, right.arguments); compared != 0 {
-		return compared
-	}
-	for index := range left.outcomes {
-		if compared := compareValues(left.outcomes[index], right.outcomes[index]); compared != 0 {
-			return compared
-		}
-	}
-	return 0
-}
-
-func compareCallbackRelease(left, right callbackReleaseRow) int {
-	if left.callback < right.callback {
-		return -1
-	}
-	if left.callback > right.callback {
-		return 1
-	}
-	if left.input < right.input {
-		return -1
-	}
-	if left.input > right.input {
-		return 1
-	}
-	if left.outcome < right.outcome {
-		return -1
-	}
-	if left.outcome > right.outcome {
-		return 1
-	}
-	if left.mode < right.mode {
-		return -1
-	}
-	if left.mode > right.mode {
-		return 1
-	}
-	if left.zeroBehavior < right.zeroBehavior {
-		return -1
-	}
-	if left.zeroBehavior > right.zeroBehavior {
-		return 1
-	}
-	if left.zeroOutcome < right.zeroOutcome {
-		return -1
-	}
-	if left.zeroOutcome > right.zeroOutcome {
-		return 1
-	}
-	return 0
 }

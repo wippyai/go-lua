@@ -34,8 +34,8 @@ return redundant
 		t.Fatalf("compile: %s", failure.Error())
 	}
 	count := 0
-	for index := 0; index < artifact.RuleOccurrenceCount(programartifact.RuleRoleValuePresenceRefinement); index++ {
-		rule, ruleOK := artifact.RuleOccurrenceAt(programartifact.RuleRoleValuePresenceRefinement, index)
+	for index := 0; index < artifact.RulePlacementCountForKey("value-presence-refinement"); index++ {
+		rule, ruleOK := artifact.RulePlacementForKeyAt("value-presence-refinement", index)
 		occurrence, occurrenceOK := artifact.OccurrenceForID(programartifact.OccurrenceBinaryPresenceRefinement, rule.ID())
 		_, _, _, route, _, occurrenceOK2 := occurrence.BinaryPresenceRefinement()
 		predecessor, predecessorOK := rule.PredecessorRouteID()

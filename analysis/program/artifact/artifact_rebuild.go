@@ -45,7 +45,8 @@ type compiler struct {
 	exactScalarStates          map[identity.ContentID]exactScalarState
 	arithmeticSummaries        []ArithmeticSummaryRow
 	unarySummaries             []UnarySummaryRow
-	ruleOccurrences            map[RuleRole][]RuleOccurrence
+	ruleOccurrences            []RuleOccurrence
+	issuance                   IssuanceDirectory
 	diagnosticObservations     []DiagnosticObservationRow
 	staticTypeArguments        []StaticTypeArgumentRow
 	staticTypeValues           []StaticTypeValueRow

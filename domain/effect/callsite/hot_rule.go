@@ -148,13 +148,30 @@ func bindHot(binding *engine.SchemaBinding, fragment *schemaFragment[hotOperand]
 				return engine.StageValue(access, row, result)
 			})
 		},
+	}, func(operand hotOperand) (uint64, bool) {
+		index, ok := calls.Algebra().KeyIndex(operand.key)
+		return uint64(index), ok && index >= 0
+	}, func(operand hotOperand) (uint64, bool) {
+		index, ok := effects.Algebra().RootIndex(operand.root)
+		return uint64(index), ok && index >= 0
 	})
 	if !ok || implementation == nil {
 		return nil, false
 	}
 	runtimeRead = read
 	hot.implementation, hot.read = implementation, read
+	if !implementation.InstallOperandResolver(hot.resolveOperand) {
+		return nil, false
+	}
 	return hot, true
+}
+
+func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (hotOperand, bool) {
+	issuer, ok := rule.ForMount(coords.Mount)
+	if !ok {
+		return hotOperand{}, false
+	}
+	return issuer.ReceiptForOccurrence(coords.Occurrence)
 }
 
 // Receipt consumes Project's exact mounted-call proof and issues all Target
@@ -332,21 +349,6 @@ func (rule *HotRule) Implementation() (*effectowner.RuleImplementation[hotOperan
 	return rule.implementation, ok
 }
 
-func (rule *HotRule) BeginReceiptCompilation(graph *engine.ReceiptGraph) (*engine.ReceiptCompilation, bool) {
-	implementation, ok := effectowner.ResolveRuleImplementationFor(rule.effects, rule.implementation)
-	if !ok {
-		return nil, false
-	}
-	return engine.BeginReceiptCompilation(implementation, graph)
-}
-
-func (rule *HotRule) AttachReceiptMember(compilation *engine.ReceiptCompilation, member engine.ReceiptRuleMember, value hotOperand) (*engine.ReceiptMember, bool) {
-	if rule == nil || !rule.accepts(value) {
-		return nil, false
-	}
-	implementation, ok := effectowner.ResolveRuleImplementationFor(rule.effects, rule.implementation)
-	if !ok {
-		return nil, false
-	}
-	return engine.AttachReceiptRuleMember(compilation, implementation, member, value)
+func (rule *HotRule) ProgramAttach() (engine.RuleProgramAttach, bool) {
+	return effectowner.ResolveRuleImplementationFor(rule.effects, rule.implementation)
 }

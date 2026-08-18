@@ -7,7 +7,6 @@ import (
 	"sync/atomic"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/flow"
 )
 
 // RuntimeAllocationContextClass is the closed physical owner family selected
@@ -350,7 +349,7 @@ type AllocationRequirement struct {
 	allocation identity.ContentID
 	localID    identity.ContentID
 	kind       AllocationKind
-	form       flow.AllocationForm
+	form       AllocationForm
 	id         identity.ContentID
 }
 
@@ -364,7 +363,7 @@ func (requirement AllocationRequirement) valid() bool {
 		requirement.program, requirement.allocation, requirement.localID, requirement.kind, requirement.form)
 }
 
-func allocationRequirementID(heapID, keyID, artifactID, mount, programID, allocation, localID identity.ContentID, kind AllocationKind, form flow.AllocationForm) identity.ContentID {
+func allocationRequirementID(heapID, keyID, artifactID, mount, programID, allocation, localID identity.ContentID, kind AllocationKind, form AllocationForm) identity.ContentID {
 	if !heapID.Available() || !keyID.Available() || !artifactID.Available() || !mount.Available() || !programID.Available() || !allocation.Available() || !localID.Available() || !kind.Valid() || !form.Valid() {
 		return identity.ContentID{}
 	}
@@ -462,9 +461,9 @@ func (requirement AllocationRequirement) Kind() AllocationKind {
 	}
 	return requirement.kind
 }
-func (requirement AllocationRequirement) Form() flow.AllocationForm {
+func (requirement AllocationRequirement) Form() AllocationForm {
 	if !requirement.valid() {
-		return flow.AllocationFormInvalid
+		return AllocationFormInvalid
 	}
 	return requirement.form
 }

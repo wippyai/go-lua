@@ -589,6 +589,76 @@ func TestWarmedConstructionCacheHitsAllocateNothing(t *testing.T) {
 	}
 }
 
+// A candidate page is storage granularity, not a reservation. The dominant
+// guard transaction constructs one or two nodes, so every transaction starts on
+// a small page and reaches the slab bound only by filling the pages before it.
+// Growth is invisible above this file: pages stay private to one transaction,
+// seal as a unit, and every node remains readable through its Guard.
+func TestCandidatePageCapacityGrowsGeometricallyWithItsTransaction(t *testing.T) {
+	manager := newTestManager(t)
+	work := manager.NewWork()
+	published := []Guard{literal(t, work, testA), literal(t, work, testB)}
+	if len(work.pages) != 1 || cap(work.pages[0].nodes) != firstPageNodeCapacity {
+		t.Fatalf("two-node transaction holds pages of capacity %v, want one page of %d",
+			pageCapacities(work), firstPageNodeCapacity)
+	}
+	work.Seal()
+	for index, guard := range published {
+		if !manager.Valid(guard) {
+			t.Fatalf("published guard %d is unreadable after a small page sealed", index)
+		}
+	}
+
+	// A wide transaction fills its pages, so its geometry ramps to the slab
+	// bound and stays there. Every page but the last is exactly full: a grown
+	// page is opened only once its predecessor has no room left.
+	atoms := ascending(400)
+	wide, err := New(atoms)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wideWork := wide.NewWork()
+	wideGuards := make([]Guard, len(atoms))
+	for index, atom := range atoms {
+		wideGuards[index] = literal(t, wideWork, atom)
+	}
+	capacities := pageCapacities(wideWork)
+	if len(capacities) < 4 {
+		t.Fatalf("%d-node transaction holds %d pages, want the geometric ramp", len(atoms), len(capacities))
+	}
+	if capacities[0] != firstPageNodeCapacity {
+		t.Fatalf("first page capacity = %d, want %d", capacities[0], firstPageNodeCapacity)
+	}
+	for index := 1; index < len(capacities); index++ {
+		want := capacities[index-1] * pageGrowthFactor
+		if want > pageNodeCapacity {
+			want = pageNodeCapacity
+		}
+		if capacities[index] != want {
+			t.Fatalf("page %d capacity = %d, want %d", index, capacities[index], want)
+		}
+	}
+	for index, page := range wideWork.pages[:len(wideWork.pages)-1] {
+		if len(page.nodes) != cap(page.nodes) {
+			t.Fatalf("page %d holds %d of %d nodes; a page grows only when its predecessor is full", index, len(page.nodes), cap(page.nodes))
+		}
+	}
+	wideWork.Seal()
+	for index, guard := range wideGuards {
+		if !wide.Valid(guard) || wide.rank(guard) == ^uint64(0) {
+			t.Fatalf("wide guard %d is unreadable across the page ramp", index)
+		}
+	}
+}
+
+func pageCapacities(work *Work) []int {
+	capacities := make([]int, len(work.pages))
+	for index, page := range work.pages {
+		capacities[index] = cap(page.nodes)
+	}
+	return capacities
+}
+
 func ascending(count int) []Atom {
 	order := make([]Atom, count)
 	for index := range order {

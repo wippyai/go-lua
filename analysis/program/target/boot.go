@@ -2,6 +2,7 @@ package target
 
 import (
 	"errors"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
@@ -15,48 +16,48 @@ type bootDraft struct {
 	entries    []initialEntryDraft
 	bindings   []initialBindingDraft
 	metatables []initialMetatableAttachmentDraft
-	globalRoot InitialRoot
+	globalRoot vocabulary.InitialRoot
 	absent     initialValueDraft
 	hasAbsent  bool
 }
 
 type bootRootDraft struct {
 	identity  string
-	aggregate BootAggregate
+	aggregate vocabulary.BootAggregate
 	immutable bool
 	value     initialValueDraft
 }
 
 type initialValueDraft struct {
-	kind      InitialValueKind
+	kind      vocabulary.InitialValueKind
 	boolean   bool
 	integer   int64
 	floatBits uint64
 	string    string
-	root      InitialRoot
-	operation Operation
-	binding   BindingSpec
+	root      vocabulary.InitialRoot
+	operation vocabulary.Operation
+	binding   vocabulary.BindingSpec
 }
 
 type initialEntryDraft struct {
-	root       InitialRoot
+	root       vocabulary.InitialRoot
 	key        keyspace.LiteralValue
 	value      initialValueDraft
-	mutability InitialMutability
+	mutability vocabulary.InitialMutability
 }
 
 type initialBindingDraft struct {
 	name string
-	root InitialRoot
+	root vocabulary.InitialRoot
 	key  keyspace.LiteralValue
 }
 
 type initialMetatableAttachmentDraft struct {
-	base      InitialValueKind
-	metatable InitialRoot
+	base      vocabulary.InitialValueKind
+	metatable vocabulary.InitialRoot
 }
 
-func freezeBoot(inputRoots []InitialRootSpec, inputEntries []InitialEntrySpec, inputBindings []InitialBindingSpec, inputMetatables []InitialMetatableAttachmentSpec, operations []operationDraft, sourceOperation []Operation) (bootDraft, error) {
+func freezeBoot(inputRoots []vocabulary.InitialRootSpec, inputEntries []vocabulary.InitialEntrySpec, inputBindings []vocabulary.InitialBindingSpec, inputMetatables []vocabulary.InitialMetatableAttachmentSpec, operations []operationDraft, sourceOperation []vocabulary.Operation) (bootDraft, error) {
 	if len(inputRoots) == 0 {
 		if len(inputEntries) != 0 || len(inputBindings) != 0 || len(inputMetatables) != 0 {
 			return bootDraft{}, errors.New("target: initial ledger has rows without roots")
@@ -64,9 +65,9 @@ func freezeBoot(inputRoots []InitialRootSpec, inputEntries []InitialEntrySpec, i
 		return bootDraft{}, nil
 	}
 	roots := make([]bootRootDraft, len(inputRoots))
-	rootIndex := make(map[string]InitialRoot, len(inputRoots))
+	rootIndex := make(map[string]vocabulary.InitialRoot, len(inputRoots))
 	for index, input := range inputRoots {
-		if input.Identity == "" || input.Shape.Aggregate == BootAggregateInvalid || !validBootAggregate(input.Shape.Aggregate) {
+		if input.Identity == "" || input.Shape.Aggregate == vocabulary.BootAggregateInvalid || !validBootAggregate(input.Shape.Aggregate) {
 			return bootDraft{}, errors.New("target: invalid initial root")
 		}
 		roots[index] = bootRootDraft{identity: input.Identity, aggregate: input.Shape.Aggregate, immutable: input.Shape.Immutable}
@@ -80,7 +81,7 @@ func freezeBoot(inputRoots []InitialRootSpec, inputEntries []InitialEntrySpec, i
 		if err != nil {
 			return bootDraft{}, err
 		}
-		rootIndex[roots[index].identity] = InitialRoot(handle)
+		rootIndex[roots[index].identity] = vocabulary.InitialRoot(handle)
 	}
 	for _, input := range inputRoots {
 		root := rootIndex[input.Identity]
@@ -89,7 +90,7 @@ func freezeBoot(inputRoots []InitialRootSpec, inputEntries []InitialEntrySpec, i
 		if err != nil {
 			return bootDraft{}, err
 		}
-		if value.kind != InitialValueRoot || value.root != root {
+		if value.kind != vocabulary.InitialValueRoot || value.root != root {
 			return bootDraft{}, errors.New("target: boot shape value must self-alias its initial root")
 		}
 		roots[position].value = value
@@ -123,7 +124,7 @@ func freezeBoot(inputRoots []InitialRootSpec, inputEntries []InitialEntrySpec, i
 			return bootDraft{}, errors.New("target: invalid initial binding")
 		}
 		entry, found := lookupInitialEntry(entries, root, key)
-		if !found || initialBindingClassForValue(entry.value.kind) == InitialBindingInvalid {
+		if !found || initialBindingClassForValue(entry.value.kind) == vocabulary.InitialBindingInvalid {
 			return bootDraft{}, errors.New("target: initial binding lacks matching ledger entry")
 		}
 		bindings[index] = initialBindingDraft{name: input.Name, root: root, key: key}
@@ -138,7 +139,7 @@ func freezeBoot(inputRoots []InitialRootSpec, inputEntries []InitialEntrySpec, i
 	metatables := make([]initialMetatableAttachmentDraft, len(inputMetatables))
 	for index, input := range inputMetatables {
 		metatable, ok := rootIndex[input.Metatable]
-		if !ok || input.Base != InitialValueString || roots[metatable-1].aggregate != BootAggregateMetatable {
+		if !ok || input.Base != vocabulary.InitialValueString || roots[metatable-1].aggregate != vocabulary.BootAggregateMetatable {
 			return bootDraft{}, errors.New("target: invalid initial metatable attachment")
 		}
 		metatables[index] = initialMetatableAttachmentDraft{base: input.Base, metatable: metatable}
@@ -167,16 +168,16 @@ func freezeBoot(inputRoots []InitialRootSpec, inputEntries []InitialEntrySpec, i
 	}
 	var absent initialValueDraft
 	for _, value := range unique {
-		if value.kind == InitialValueAbsent {
+		if value.kind == vocabulary.InitialValueAbsent {
 			absent = value
 			break
 		}
 	}
-	hasAbsent := absent.kind == InitialValueAbsent
-	var globalRoot InitialRoot
+	hasAbsent := absent.kind == vocabulary.InitialValueAbsent
+	var globalRoot vocabulary.InitialRoot
 	if len(bindings) != 0 {
 		globalRoot = bindings[0].root
-		if roots[uint32(globalRoot)-1].aggregate != BootAggregateTable {
+		if roots[uint32(globalRoot)-1].aggregate != vocabulary.BootAggregateTable {
 			return bootDraft{}, errors.New("target: global environment root is not a table")
 		}
 		if !hasAbsent {
@@ -188,7 +189,7 @@ func freezeBoot(inputRoots []InitialRootSpec, inputEntries []InitialEntrySpec, i
 				return bootDraft{}, errors.New("target: invalid global binding root or slot")
 			}
 			entry, ok := lookupInitialEntry(entries, binding.root, binding.key)
-			if !ok || entry.mutability != InitialMutable {
+			if !ok || entry.mutability != vocabulary.InitialMutable {
 				return bootDraft{}, errors.New("target: global binding must be initially mutable")
 			}
 		}
@@ -206,41 +207,41 @@ func freezeBoot(inputRoots []InitialRootSpec, inputEntries []InitialEntrySpec, i
 			return bootDraft{}, errors.New("target: global bindings require a _G self-alias binding")
 		}
 		entry, ok := lookupInitialEntry(entries, globalRoot, keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "_G"})
-		if !ok || entry.mutability != InitialMutable || entry.value.kind != InitialValueRoot || entry.value.root != globalRoot {
+		if !ok || entry.mutability != vocabulary.InitialMutable || entry.value.kind != vocabulary.InitialValueRoot || entry.value.root != globalRoot {
 			return bootDraft{}, errors.New("target: global bindings require a mutable _G self-alias")
 		}
 	}
 	return bootDraft{roots: roots, values: unique, entries: entries, bindings: bindings, metatables: metatables, globalRoot: globalRoot, absent: absent, hasAbsent: hasAbsent}, nil
 }
 
-func freezeInitialValue(input InitialValueSpec, roots map[string]InitialRoot, operations []operationDraft, sourceOperation []Operation) (initialValueDraft, error) {
+func freezeInitialValue(input vocabulary.InitialValueSpec, roots map[string]vocabulary.InitialRoot, operations []operationDraft, sourceOperation []vocabulary.Operation) (initialValueDraft, error) {
 	switch input.Kind {
-	case InitialValueNil:
+	case vocabulary.InitialValueNil:
 		if input.Boolean || input.Integer != 0 || input.FloatBits != 0 || input.String != "" || input.Root != "" || !emptyBinding(input.Operation) {
 			return initialValueDraft{}, errors.New("target: invalid nil initial value")
 		}
 		return initialValueDraft{kind: input.Kind}, nil
-	case InitialValueBoolean:
+	case vocabulary.InitialValueBoolean:
 		if input.Integer != 0 || input.FloatBits != 0 || input.String != "" || input.Root != "" || !emptyBinding(input.Operation) {
 			return initialValueDraft{}, errors.New("target: invalid boolean initial value")
 		}
 		return initialValueDraft{kind: input.Kind, boolean: input.Boolean}, nil
-	case InitialValueInteger:
+	case vocabulary.InitialValueInteger:
 		if input.Boolean || input.FloatBits != 0 || input.String != "" || input.Root != "" || !emptyBinding(input.Operation) {
 			return initialValueDraft{}, errors.New("target: invalid integer initial value")
 		}
 		return initialValueDraft{kind: input.Kind, integer: input.Integer}, nil
-	case InitialValueFloat:
+	case vocabulary.InitialValueFloat:
 		if input.Boolean || input.Integer != 0 || input.String != "" || input.Root != "" || !emptyBinding(input.Operation) {
 			return initialValueDraft{}, errors.New("target: invalid float initial value")
 		}
 		return initialValueDraft{kind: input.Kind, floatBits: input.FloatBits}, nil
-	case InitialValueString:
+	case vocabulary.InitialValueString:
 		if input.Boolean || input.Integer != 0 || input.FloatBits != 0 || input.Root != "" || !emptyBinding(input.Operation) {
 			return initialValueDraft{}, errors.New("target: invalid string initial value")
 		}
 		return initialValueDraft{kind: input.Kind, string: input.String}, nil
-	case InitialValueRoot:
+	case vocabulary.InitialValueRoot:
 		if input.Root == "" || input.Boolean || input.Integer != 0 || input.FloatBits != 0 || input.String != "" || !emptyBinding(input.Operation) {
 			return initialValueDraft{}, errors.New("target: invalid root initial value")
 		}
@@ -249,8 +250,8 @@ func freezeInitialValue(input InitialValueSpec, roots map[string]InitialRoot, op
 			return initialValueDraft{}, errors.New("target: foreign initial value root")
 		}
 		return initialValueDraft{kind: input.Kind, root: root}, nil
-	case InitialValueOperation:
-		if input.Boolean || input.Integer != 0 || input.FloatBits != 0 || input.String != "" || input.Root != "" || !validBinding(input.Operation) {
+	case vocabulary.InitialValueOperation:
+		if input.Boolean || input.Integer != 0 || input.FloatBits != 0 || input.String != "" || input.Root != "" || !vocabulary.ValidBinding(input.Operation) {
 			return initialValueDraft{}, errors.New("target: invalid operation initial value")
 		}
 		operation, ok := operationForBinding(operations, sourceOperation, input.Operation)
@@ -258,15 +259,15 @@ func freezeInitialValue(input InitialValueSpec, roots map[string]InitialRoot, op
 			return initialValueDraft{}, errors.New("target: foreign initial operation")
 		}
 		return initialValueDraft{kind: input.Kind, operation: operation}, nil
-	case InitialValueDeniedOperation:
-		if input.Boolean || input.Integer != 0 || input.FloatBits != 0 || input.String != "" || input.Root != "" || !validBinding(input.Operation) {
+	case vocabulary.InitialValueDeniedOperation:
+		if input.Boolean || input.Integer != 0 || input.FloatBits != 0 || input.String != "" || input.Root != "" || !vocabulary.ValidBinding(input.Operation) {
 			return initialValueDraft{}, errors.New("target: invalid denied initial operation")
 		}
 		if _, admitted := operationForBinding(operations, sourceOperation, input.Operation); admitted {
 			return initialValueDraft{}, errors.New("target: denied initial operation is admitted")
 		}
 		return initialValueDraft{kind: input.Kind, binding: cloneBinding(input.Operation)}, nil
-	case InitialValueAbsent:
+	case vocabulary.InitialValueAbsent:
 		if input.Boolean || input.Integer != 0 || input.FloatBits != 0 || input.String != "" || input.Root != "" || !emptyBinding(input.Operation) {
 			return initialValueDraft{}, errors.New("target: invalid absent initial value")
 		}
@@ -276,7 +277,7 @@ func freezeInitialValue(input InitialValueSpec, roots map[string]InitialRoot, op
 	}
 }
 
-func operationForBinding(operations []operationDraft, sourceOperation []Operation, binding BindingSpec) (Operation, bool) {
+func operationForBinding(operations []operationDraft, sourceOperation []vocabulary.Operation, binding vocabulary.BindingSpec) (vocabulary.Operation, bool) {
 	for index := range operations {
 		for _, candidate := range operations[index].bindings {
 			if compareBinding(candidate, binding) == 0 {
@@ -288,7 +289,7 @@ func operationForBinding(operations []operationDraft, sourceOperation []Operatio
 	return 0, false
 }
 
-func (c *Contract) appendBoot(input bootDraft, keys map[keyspace.LiteralValue]ExactKey) error {
+func (c *Contract) appendBoot(input bootDraft, keys map[keyspace.LiteralValue]vocabulary.ExactKey) error {
 	if len(input.roots) == 0 {
 		return nil
 	}
@@ -306,7 +307,7 @@ func (c *Contract) appendBoot(input bootDraft, keys map[keyspace.LiteralValue]Ex
 			return err
 		}
 		row := initialValueRow{kind: value.kind, boolean: value.boolean, integer: value.integer, floatBits: value.floatBits, string: value.string, root: value.root, operation: value.operation}
-		if value.kind == InitialValueDeniedOperation {
+		if value.kind == vocabulary.InitialValueDeniedOperation {
 			binding, bindErr := c.appendInitialValueBinding(value.binding, keys)
 			if bindErr != nil {
 				return bindErr
@@ -331,8 +332,8 @@ func (c *Contract) appendBoot(input bootDraft, keys map[keyspace.LiteralValue]Ex
 		if int(handle) != index+1 || int(shape) != index+1 {
 			return errors.New("target: noncanonical boot identity")
 		}
-		c.initialRoots = append(c.initialRoots, initialRootRow{identity: root.identity, shape: BootShape(shape)})
-		c.bootShapes = append(c.bootShapes, bootShapeRow{root: InitialRoot(handle), aggregate: root.aggregate, immutable: root.immutable, value: value})
+		c.initialRoots = append(c.initialRoots, initialRootRow{identity: root.identity, shape: vocabulary.BootShape(shape)})
+		c.bootShapes = append(c.bootShapes, bootShapeRow{root: vocabulary.InitialRoot(handle), aggregate: root.aggregate, immutable: root.immutable, value: value})
 	}
 	if _, err := checkedStoredRange("initial entry table", len(c.initialEntries), len(input.entries)); err != nil {
 		return err
@@ -355,7 +356,7 @@ func (c *Contract) appendBoot(input bootDraft, keys map[keyspace.LiteralValue]Ex
 		return err
 	}
 	for _, attachment := range input.metatables {
-		if attachment.base != InitialValueString || attachment.metatable == 0 || uint64(attachment.metatable) > uint64(len(c.initialRoots)) {
+		if attachment.base != vocabulary.InitialValueString || attachment.metatable == 0 || uint64(attachment.metatable) > uint64(len(c.initialRoots)) {
 			return errors.New("target: malformed initial metatable attachment")
 		}
 		c.initialMetatables = append(c.initialMetatables, initialMetatableAttachmentRow(attachment))
@@ -378,40 +379,15 @@ func (c *Contract) appendBoot(input bootDraft, keys map[keyspace.LiteralValue]Ex
 	return nil
 }
 
-func (c *Contract) appendInitialValueBinding(input BindingSpec, keys map[keyspace.LiteralValue]ExactKey) (uint32, error) {
-	if _, err := checkedStoredRange("initial value binding table", len(c.initialValueBinds), 1); err != nil {
-		return 0, err
-	}
-	binding, err := c.appendBinding(input, keys)
-	if err != nil {
-		return 0, err
-	}
-	c.initialValueBinds = append(c.initialValueBinds, binding)
-	return uint32(len(c.initialValueBinds)), nil
+func validBootAggregate(value vocabulary.BootAggregate) bool {
+	return value == vocabulary.BootAggregateTable || value == vocabulary.BootAggregateMetatable
 }
 
-func validBootAggregate(value BootAggregate) bool {
-	return value == BootAggregateTable || value == BootAggregateMetatable
+func validInitialMutability(value vocabulary.InitialMutability) bool {
+	return value == vocabulary.InitialMutable || value == vocabulary.InitialFrozen
 }
 
-func validInitialMutability(value InitialMutability) bool {
-	return value == InitialMutable || value == InitialFrozen
-}
-
-func initialBindingClassForValue(kind InitialValueKind) InitialBindingClass {
-	switch kind {
-	case InitialValueOperation:
-		return InitialBindingAdmitted
-	case InitialValueDeniedOperation:
-		return InitialBindingDenied
-	case InitialValueNil, InitialValueBoolean, InitialValueInteger, InitialValueFloat, InitialValueString, InitialValueRoot, InitialValueAbsent:
-		return InitialBindingOrdinary
-	default:
-		return InitialBindingInvalid
-	}
-}
-
-func emptyBinding(value BindingSpec) bool {
+func emptyBinding(value vocabulary.BindingSpec) bool {
 	return value.Namespace == 0 && len(value.Owner) == 0 && len(value.Member) == 0
 }
 
@@ -425,7 +401,7 @@ func compareInitialEntry(left, right initialEntryDraft) int {
 	return compareNormalizedKey(left.key, right.key)
 }
 
-func lookupInitialEntry(entries []initialEntryDraft, root InitialRoot, key keyspace.LiteralValue) (initialEntryDraft, bool) {
+func lookupInitialEntry(entries []initialEntryDraft, root vocabulary.InitialRoot, key keyspace.LiteralValue) (initialEntryDraft, bool) {
 	index := sort.Search(len(entries), func(index int) bool {
 		entry := entries[index]
 		return entry.root > root || (entry.root == root && compareNormalizedKey(entry.key, key) >= 0)
@@ -451,58 +427,58 @@ func compareInitialValue(left, right initialValueDraft) int {
 		return 1
 	}
 	switch left.kind {
-	case InitialValueBoolean:
+	case vocabulary.InitialValueBoolean:
 		if !left.boolean && right.boolean {
 			return -1
 		}
 		if left.boolean && !right.boolean {
 			return 1
 		}
-	case InitialValueInteger:
+	case vocabulary.InitialValueInteger:
 		if left.integer < right.integer {
 			return -1
 		}
 		if left.integer > right.integer {
 			return 1
 		}
-	case InitialValueFloat:
+	case vocabulary.InitialValueFloat:
 		if left.floatBits < right.floatBits {
 			return -1
 		}
 		if left.floatBits > right.floatBits {
 			return 1
 		}
-	case InitialValueString:
+	case vocabulary.InitialValueString:
 		if left.string < right.string {
 			return -1
 		}
 		if left.string > right.string {
 			return 1
 		}
-	case InitialValueRoot:
+	case vocabulary.InitialValueRoot:
 		if left.root < right.root {
 			return -1
 		}
 		if left.root > right.root {
 			return 1
 		}
-	case InitialValueOperation:
+	case vocabulary.InitialValueOperation:
 		if left.operation < right.operation {
 			return -1
 		}
 		if left.operation > right.operation {
 			return 1
 		}
-	case InitialValueDeniedOperation:
+	case vocabulary.InitialValueDeniedOperation:
 		return compareBinding(left.binding, right.binding)
 	}
 	return 0
 }
 
-func initialValueHandle(values []initialValueDraft, want initialValueDraft) (InitialValue, bool) {
+func initialValueHandle(values []initialValueDraft, want initialValueDraft) (vocabulary.InitialValue, bool) {
 	index := sort.Search(len(values), func(index int) bool { return compareInitialValue(values[index], want) >= 0 })
 	if index == len(values) || compareInitialValue(values[index], want) != 0 {
 		return 0, false
 	}
-	return InitialValue(index + 1), true
+	return vocabulary.InitialValue(index + 1), true
 }

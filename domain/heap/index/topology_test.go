@@ -1,6 +1,7 @@
 package index_test
 
 import (
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
@@ -179,11 +180,11 @@ func staticTopologyFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Schema
 	if err != nil {
 		t.Fatal(err)
 	}
-	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []target.OperationSpec{{
-		Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"require"}}},
-		Input:    target.ValuesSpec{Tail: target.ValuesClosed},
-		Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}},
-		Effects:  target.RowSpec{Tail: target.RowClosed},
+	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{{
+		Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"require"}}},
+		Input:    vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed},
+		Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}},
+		Effects:  vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 	}}})
 	if err != nil {
 		t.Fatal(err)
@@ -232,14 +233,14 @@ func freshTopologyFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Schema,
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding := func(name string) target.BindingSpec {
-		return target.BindingSpec{Namespace: target.BindingBuiltin, Member: []string{name}}
+	binding := func(name string) vocabulary.BindingSpec {
+		return vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{name}}
 	}
-	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), InitialRoots: []target.InitialRootSpec{{Identity: "GlobalEnvRoot", Shape: target.BootShapeSpec{Aggregate: target.BootAggregateTable, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}}}}, Operations: []target.OperationSpec{
-		{Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"require"}}}, Input: target.ValuesSpec{Tail: target.ValuesClosed}, Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}}, Effects: target.RowSpec{Tail: target.RowClosed}},
-		{Bindings: []target.BindingSpec{binding("fresh")}, Input: target.ValuesSpec{Tail: target.ValuesClosed}, Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Fixed: portableAnyTypes(1), Tail: target.ValuesClosed}, FreshResults: []target.FreshResultSpec{{Result: 0, Kind: schematype.FreshClassTable}}}}, Effects: target.RowSpec{Tail: target.RowClosed}},
-		{Bindings: []target.BindingSpec{binding("other")}, Input: target.ValuesSpec{Tail: target.ValuesClosed}, Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Fixed: portableAnyTypes(1), Tail: target.ValuesClosed}, FreshResults: []target.FreshResultSpec{{Result: 0, Kind: schematype.FreshClassFunction}}}}, Effects: target.RowSpec{Tail: target.RowClosed}},
-	}, InitialEntries: []target.InitialEntrySpec{{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "_G"}, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: target.InitialMutable}, {Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "fresh"}, Value: target.InitialValueSpec{Kind: target.InitialValueOperation, Operation: binding("fresh")}, Mutability: target.InitialMutable}, {Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "__link_absent"}, Value: target.InitialValueSpec{Kind: target.InitialValueAbsent}, Mutability: target.InitialMutable}}, InitialBindings: []target.InitialBindingSpec{{Name: "_G", Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "_G"}}, {Name: "fresh", Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "fresh"}}}})
+	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), InitialRoots: []vocabulary.InitialRootSpec{{Identity: "GlobalEnvRoot", Shape: vocabulary.BootShapeSpec{Aggregate: vocabulary.BootAggregateTable, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "GlobalEnvRoot"}}}}, Operations: []vocabulary.OperationSpec{
+		{Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"require"}}}, Input: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}, Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}}, Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed}},
+		{Bindings: []vocabulary.BindingSpec{binding("fresh")}, Input: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}, Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Fixed: portableAnyTypes(1), Tail: vocabulary.ValuesClosed}, FreshResults: []vocabulary.FreshResultSpec{{Result: 0, Kind: schematype.FreshClassTable}}}}, Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed}},
+		{Bindings: []vocabulary.BindingSpec{binding("other")}, Input: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}, Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Fixed: portableAnyTypes(1), Tail: vocabulary.ValuesClosed}, FreshResults: []vocabulary.FreshResultSpec{{Result: 0, Kind: schematype.FreshClassFunction}}}}, Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed}},
+	}, InitialEntries: []vocabulary.InitialEntrySpec{{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "_G"}, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: vocabulary.InitialMutable}, {Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "fresh"}, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueOperation, Operation: binding("fresh")}, Mutability: vocabulary.InitialMutable}, {Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "__link_absent"}, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueAbsent}, Mutability: vocabulary.InitialMutable}}, InitialBindings: []vocabulary.InitialBindingSpec{{Name: "_G", Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "_G"}}, {Name: "fresh", Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "fresh"}}}})
 	if err != nil {
 		t.Fatal(err)
 	}

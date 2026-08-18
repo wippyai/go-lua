@@ -5,24 +5,25 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
 // TestDiagnosticBranchGeometryUsesExecutionPointAndBaseAnchor proves that
 // local storage and equality rules attach at their Local execution point while
-// the receipt/collector continues to index the Program-issued base evidence.
+// the geometry/collector continues to index the Program-issued base evidence.
 // The two coordinates are related only by the sealed full-environment
 // LocalTransfer row; no lower layer reconstructs the relationship.
 func TestDiagnosticBranchGeometryUsesExecutionPointAndBaseAnchor(t *testing.T) {
 	cases := []struct {
 		name   string
 		source string
-		role   programartifact.RuleRole
+		key    schema.Key
 	}{
 		{
 			name: "storage-read",
-			role: programartifact.RuleRoleValueStorageTransfer,
+			key:  "value-transfer",
 			source: `local flag = true
 if flag then
     return 1
@@ -31,7 +32,7 @@ return 0`,
 		},
 		{
 			name: "binary-arithmetic",
-			role: programartifact.RuleRoleValueBinaryArithmetic,
+			key:  "value-binary-arithmetic",
 			source: `local cap = 3
 if cap + 2 then
     return 1
@@ -48,7 +49,7 @@ return 0`,
 			// because the transfer chain it exercises starts from a local whose
 			// value was computed rather than authored.
 			name: "binary-arithmetic-initializer",
-			role: programartifact.RuleRoleValueStorageTransfer,
+			key:  "value-transfer",
 			source: `local cap = 3 + 2
 if cap then
     return 1
@@ -57,7 +58,7 @@ return 0`,
 		},
 		{
 			name: "binary-equality",
-			role: programartifact.RuleRoleValueBinaryEquality,
+			key:  "value-binary-equality",
 			source: `local function check(value: string | number): boolean
     if type(value) == "string" then
         return true
@@ -68,7 +69,7 @@ return check("ok")`,
 		},
 		{
 			name: "binary-order",
-			role: programartifact.RuleRoleValueBinaryOrder,
+			key:  "value-binary-order",
 			source: `local cap = 3
 if cap > 5 then
     return 1
@@ -84,7 +85,7 @@ return 0`,
 			}
 			linked := mustLink(t, testCase.source, contract)
 			plan, status, diagnostics := CompileWithDiagnostics(linked)
-			if status != CompileComplete || plan == nil || plan.state == nil || plan.state.artifacts == nil || plan.state.resultReceipt == nil {
+			if status != CompileComplete || plan == nil || plan.state == nil || plan.state.artifacts == nil {
 				t.Fatalf("CompileWithDiagnostics = %v/%v diagnostics=%+v", status, plan, diagnostics)
 			}
 			defer plan.Close()
@@ -95,12 +96,12 @@ return 0`,
 				if !transfersOK {
 					t.Fatal("sealed LocalTransfer index unavailable")
 				}
-				for _, observation := range plan.state.resultReceipt.branchObservations {
+				for _, observation := range mustResultGeometry(t, plan.state).branchObservations {
 					if observation.mount != mount.moduleKey {
 						continue
 					}
 					for _, producer := range observation.producers {
-						if producer.role != testCase.role {
+						if producer.key != testCase.key {
 							continue
 						}
 						found = true
@@ -126,7 +127,7 @@ return 0`,
 				}
 			}
 			if !found {
-				t.Fatalf("no mounted branch producer for role %d", testCase.role)
+				t.Fatalf("no mounted branch producer for key %q", testCase.key)
 			}
 		})
 	}
@@ -134,7 +135,7 @@ return 0`,
 
 // TestDiagnosticBranchGeometryRejectsUnprovenTransfer keeps the fail-closed
 // rule local to the geometry wrapper: missing transfer, partial transport,
-// and duplicate full destinations cannot be guessed into a branch receipt.
+// and duplicate full destinations cannot be guessed into a branch geometry.
 func TestDiagnosticBranchGeometryRejectsUnprovenTransfer(t *testing.T) {
 	contract, err := testfixture.StandardLibraryTarget()
 	if err != nil {
@@ -198,11 +199,11 @@ func TestDiagnosticBranchWithoutMountedProducerRemainsSupported(t *testing.T) {
 end
 return negate(true)`, contract)
 	plan, status, diagnostics := CompileWithDiagnostics(linked)
-	if status != CompileComplete || plan == nil || plan.state == nil || plan.state.resultReceipt == nil {
+	if status != CompileComplete || plan == nil || plan.state == nil {
 		t.Fatalf("unsupported producer branch rejected plan: %v/%v diagnostics=%+v", status, plan, diagnostics)
 	}
 	defer plan.Close()
-	if len(plan.state.resultReceipt.branchObservations) != 0 {
-		t.Fatalf("unsupported producer branch escaped mounted receipt: %d rows", len(plan.state.resultReceipt.branchObservations))
+	if len(mustResultGeometry(t, plan.state).branchObservations) != 0 {
+		t.Fatalf("unsupported producer branch escaped mounted result: %d rows", len(mustResultGeometry(t, plan.state).branchObservations))
 	}
 }

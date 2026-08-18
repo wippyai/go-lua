@@ -38,117 +38,10 @@ func (rule *RawSetHotRule) Implementation() (*heapowner.RuleImplementation[Acces
 	return rule.implementation, ok
 }
 
-// BeginReceiptCompilation issues the owner-specific receipt compiler
-// capability after SchemaBinding seals. The graph remains engine-owned and
-// the returned compiler exposes only typed member attachment.
-func (rule *RawSetHotRule) BeginReceiptCompilation(graph *engine.ReceiptGraph) (*engine.ReceiptCompilation, bool) {
-	if rule == nil || rule.heap == nil || rule.implementation == nil {
-		return nil, false
-	}
-	implementation, ok := heapowner.ResolveRuleImplementationFor(rule.heap, rule.implementation)
-	if !ok {
-		return nil, false
-	}
-	return engine.BeginReceiptCompilation(implementation, graph)
+func (rule *RawSetHotRule) ProgramAttach() (engine.RuleProgramAttach, bool) {
+	return heapowner.ResolveRuleImplementationFor(rule.heap, rule.implementation)
 }
 
-// AttachReceiptMember consumes this RawSet's exact sealed Rule receipt and a
-// graph-owned member/operand. Engine performs all member, factor, and binding
-// authority checks; this wrapper does not retain graph or topology state.
-func (rule *RawSetHotRule) AttachReceiptMember(compilation *engine.ReceiptCompilation, member engine.ReceiptRuleMember, operand Access) (*engine.ReceiptMember, bool) {
-	if rule == nil || rule.heap == nil || rule.implementation == nil || rule.core == nil || !rule.core.owns(operand) {
-		return nil, false
-	}
-	implementation, ok := heapowner.ResolveRuleImplementationFor(rule.heap, rule.implementation)
-	if !ok {
-		return nil, false
-	}
-	return engine.AttachReceiptRuleMember(compilation, implementation, member, operand)
-}
-
-// AttachMountedOccurrence lowers one RawSet artifact row from its exact
-// mounted Access. All selector reads and the routed Heap write are anchored to
-// this occurrence/operand pair, so no arbitrary route candidate is retained.
-func (rule *RawSetHotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, mountID, reusablePointID, occurrenceID identity.ContentID) (engine.BindingRuleRowRef, bool) {
-	if rule == nil || rule.values == nil || rule.heap == nil || assembly == nil {
-		return engine.BindingRuleRowRef{}, false
-	}
-	operand, operandOK := rule.ReceiptForOccurrence(mountID, occurrenceID)
-	implementation, implementationOK := heapowner.ResolveRuleImplementationFor(rule.heap, rule.implementation)
-	if !operandOK || !implementationOK {
-		return engine.BindingRuleRowRef{}, false
-	}
-	occurrence, occurrenceOK := assembly.AdmitMountedRuleOccurrence(mountedCapability(rule.implementation), mountID, reusablePointID, occurrenceID)
-	if !occurrenceOK {
-		return engine.BindingRuleRowRef{}, false
-	}
-	admit := func(transaction *engine.RuleSourceTransaction) bool {
-		receiverRef, receiverOK := rule.values.Ref(operand.receiver)
-		if !receiverOK {
-			return false
-		}
-		reads := make([]engine.RuleReadSurface, 0, 5)
-		receiver, readOK := engine.ExactReadSurface(receiverRef)
-		if !readOK || !transaction.AddRead(receiver) {
-			return false
-		}
-		reads = append(reads, receiver)
-		dependencies := [][]int{{0}, {0, 1}, {0, 1, 2}, {0, 1, 2, 3}}
-		for selectedIndex, dependencyIndexes := range dependencies {
-			receipt, receiptOK := implementation.SelectedReadReceipt(uint64(selectedIndex + 1))
-			selectedDependencies := make([]engine.RuleReadSurface, len(dependencyIndexes))
-			for index, dependencyIndex := range dependencyIndexes {
-				selectedDependencies[index] = reads[dependencyIndex]
-			}
-			selected, selectedOK := transaction.AnchoredSelectedReadSurface(receipt, selectedDependencies)
-			if !receiptOK || !selectedOK || !transaction.AddRead(selected) {
-				return false
-			}
-			reads = append(reads, selected)
-		}
-		route, routeOK := implementation.RouteWriteReceipt()
-		return transaction.AddCarry() && routeOK && engine.AddAnchoredRouteWrite(transaction, route)
-	}
-	issue := func(source engine.RuleSurfaceSourceReceipt) bool {
-		draft, draftOK := implementation.BeginReceiptRuleRow(source)
-		if !draftOK {
-			return false
-		}
-		for index := uint64(0); index < 5; index++ {
-			part, ok := implementation.ReceiptReadPart(source, index)
-			if !ok || !draft.AddRead(part) {
-				return false
-			}
-		}
-		carry, carryOK := implementation.ReceiptCarryPart(source, 0)
-		write, writeOK := implementation.ReceiptWritePart(source, 0)
-		if !carryOK || !writeOK || !draft.AddCarry(carry) || !draft.AddWrite(write) {
-			return false
-		}
-		_, added := assembly.AddRuleFromDraft(occurrence, draft)
-		return added
-	}
-	queued := engine.AdmitMountedRule(assembly, implementation, mountedCapability(rule.implementation), occurrence, operand, admit, issue)
-	return engine.BindingRuleRowRef{}, queued
-}
-
-// AttachMountedReceiptMember resolves the graph member and private RawSet
-// Access internally before attaching the exact Heap-owned implementation.
-func (rule *RawSetHotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, reusablePointID, occurrenceID identity.ContentID) (*engine.ReceiptMember, bool) {
-	if rule == nil || graph == nil {
-		return nil, false
-	}
-	operand, operandOK := rule.ReceiptForOccurrence(mountID, occurrenceID)
-	member, memberOK := graph.MountedRuleMember(mountedCapability(rule.implementation), mountID, reusablePointID, occurrenceID)
-	if !operandOK || !memberOK {
-		return nil, false
-	}
-	return rule.AttachReceiptMember(compilation, member, operand)
-}
-
-// ReceiptForOccurrence resolves one exact mounted RawSet candidate directly
-// through Heap's mount-scoped inverse. The Access receipt remains owned by
-// this rule's operand issuer; no Topology occurrence directory is needed.
 func (rule *RawSetHotRule) ReceiptForOccurrence(module, occurrenceID identity.ContentID) (Access, bool) {
 	if rule == nil || rule.core == nil || rule.core.topology == nil {
 		return Access{}, false
@@ -186,9 +79,13 @@ func BindRawSetHot(binding *engine.SchemaBinding, fragment *RawSetSchemaFragment
 		OperandContent: core.operandContent,
 		Admission:      engine.AdmitRuleByDerivation(fragment.evidence, core.check(fragment.semantic)),
 		Transfer:       core.transfer,
-	}, engine.HotCarrySpec[heapdomain.Value, Access]{}, func(tx *heapowner.SelectedRouteRuleBinding[Access]) bool {
+	}, engine.HotCarrySpec[heapdomain.Value, Access]{}, nil, func(tx *heapowner.SelectedRouteRuleBinding[Access]) bool {
 		var ok bool
-		if core.receiver, ok = heapowner.AddExactRead(tx, fragment.receiver, fragment.valueRef); !ok {
+		if core.receiver, ok = heapowner.AddExactRead(tx, fragment.receiver, fragment.valueRef, func(access Access) (uint64, bool) {
+			receiver, receiverOK := access.Receiver()
+			index, indexOK := values.Schema().CoordinateIndex(receiver)
+			return uint64(index), receiverOK && indexOK
+		}); !ok {
 			return false
 		}
 		if core.key, ok = heapowner.AddOperandSelectedRead[Access, valuedomain.Value, uint64](tx, fragment.key, fragment.valueRef, core.locateKey); !ok {
@@ -209,7 +106,15 @@ func BindRawSetHot(binding *engine.SchemaBinding, fragment *RawSetSchemaFragment
 	if !bound {
 		return nil, false
 	}
-	return &RawSetHotRule{implementation: implementation, core: core, values: values, heap: heap}, true
+	rule := &RawSetHotRule{implementation: implementation, core: core, values: values, heap: heap}
+	if !implementation.InstallOperandResolver(rule.resolveOperand) {
+		return nil, false
+	}
+	return rule, true
+}
+
+func (rule *RawSetHotRule) resolveOperand(coords engine.OperandCoords) (Access, bool) {
+	return rule.ReceiptForOccurrence(coords.Mount, coords.Occurrence)
 }
 
 func hotRawSetRuntime(values *valueowner.HotOwner, heap *heapowner.HotOwner, packs *packowner.HotOwner) *rawSetRuntime {

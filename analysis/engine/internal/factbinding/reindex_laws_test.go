@@ -373,6 +373,9 @@ func (reindexRejectWork) OverlayPointRHSUnder(carrier.RootHandle, carrier.RootHa
 func (reindexRejectWork) LessOrEqContributionUnder(carrier.RootHandle, carrier.RootHandle, support.Mask, support.Mask, carrier.SlotCoverage, carrier.SlotCoverage) (bool, bool) {
 	return false, false
 }
+func (reindexRejectWork) AscentOrderedContributionUnder(carrier.RootHandle, carrier.RootHandle, support.Mask, support.Mask, carrier.SlotCoverage, carrier.SlotCoverage) (bool, bool) {
+	return false, false
+}
 func (reindexRejectWork) ContributionClosedUnder(carrier.RootHandle, support.Mask, carrier.SlotCoverage) bool {
 	return true
 }

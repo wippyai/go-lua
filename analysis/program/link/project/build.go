@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"math"
 	"sort"
 
@@ -78,11 +79,11 @@ func Build(input Input) (*Draft, error) {
 // Target-owned; this slice merely records the canonical Target handle at the
 // corresponding Project-key ordinal.  A duplicate mapping is ambiguous and
 // therefore rejects the Project seal instead of silently choosing a row.
-func invertTargetKeys(targetKeys []uint32, projectKeyCount int) ([]target.ExactKey, error) {
+func invertTargetKeys(targetKeys []uint32, projectKeyCount int) ([]vocabulary.ExactKey, error) {
 	if projectKeyCount < 0 || uint64(projectKeyCount) > maxHandle {
 		return nil, errors.New("link/project: invalid Project key inverse size")
 	}
-	inverse := make([]target.ExactKey, projectKeyCount)
+	inverse := make([]vocabulary.ExactKey, projectKeyCount)
 	for index, projectOrdinal := range targetKeys {
 		if uint64(index) >= maxHandle || uint64(projectOrdinal) >= uint64(projectKeyCount) {
 			return nil, errors.New("link/project: malformed Target exact-key inverse")
@@ -90,7 +91,7 @@ func invertTargetKeys(targetKeys []uint32, projectKeyCount int) ([]target.ExactK
 		if inverse[projectOrdinal] != 0 {
 			return nil, errors.New("link/project: ambiguous Target exact-key inverse")
 		}
-		inverse[projectOrdinal] = target.ExactKey(index + 1)
+		inverse[projectOrdinal] = vocabulary.ExactKey(index + 1)
 	}
 	return inverse, nil
 }
@@ -349,7 +350,7 @@ func canonicalMounts(input []Module) ([]mountRow, error) {
 	return mounts, nil
 }
 
-func buildKeys(mounts []mountRow, contract *target.Contract) ([]keyRow, []uint32, map[target.InitialValue]uint32, [][]uint32, error) {
+func buildKeys(mounts []mountRow, contract *target.Contract) ([]keyRow, []uint32, map[vocabulary.InitialValue]uint32, [][]uint32, error) {
 	unique := make(map[keyspace.LiteralValue]struct{})
 	addExact := func(value keyspace.LiteralValue) error {
 		normalized, ok := scalar.Normalize(value)
@@ -423,7 +424,7 @@ func buildKeys(mounts []mountRow, contract *target.Contract) ([]keyRow, []uint32
 		}
 		targetKeys[index] = mapped
 	}
-	initialKeys := make(map[target.InitialValue]uint32, len(initialLiterals))
+	initialKeys := make(map[vocabulary.InitialValue]uint32, len(initialLiterals))
 	for initial, value := range initialLiterals {
 		normalized, ok := scalar.Normalize(value)
 		mapped, found := lookup[normalized]
@@ -499,43 +500,43 @@ func addProgramLiterals(p *program.Program, add func(keyspace.LiteralValue) erro
 	return nil
 }
 
-func addInitialLiterals(contract *target.Contract, add func(keyspace.LiteralValue) error) (map[target.InitialValue]keyspace.LiteralValue, error) {
+func addInitialLiterals(contract *target.Contract, add func(keyspace.LiteralValue) error) (map[vocabulary.InitialValue]keyspace.LiteralValue, error) {
 	if contract == nil || add == nil {
 		return nil, errors.New("link/project: unavailable Target initial literal authority")
 	}
-	literals := make(map[target.InitialValue]keyspace.LiteralValue)
-	addValue := func(value target.InitialValue) error {
+	literals := make(map[vocabulary.InitialValue]keyspace.LiteralValue)
+	addValue := func(value vocabulary.InitialValue) error {
 		kind, ok := contract.InitialValueKind(value)
 		if !ok {
 			return errors.New("link/project: malformed Target initial value")
 		}
 		var literal keyspace.LiteralValue
 		switch kind {
-		case target.InitialValueBoolean:
+		case vocabulary.InitialValueBoolean:
 			item, ok := contract.InitialValueBoolean(value)
 			if !ok {
 				return errors.New("link/project: malformed Target initial boolean")
 			}
 			literal = keyspace.LiteralValue{Kind: keyspace.LiteralBool, Bool: item}
-		case target.InitialValueInteger:
+		case vocabulary.InitialValueInteger:
 			item, ok := contract.InitialValueInteger(value)
 			if !ok {
 				return errors.New("link/project: malformed Target initial integer")
 			}
 			literal = keyspace.LiteralValue{Kind: keyspace.LiteralInteger, Integer: item}
-		case target.InitialValueFloat:
+		case vocabulary.InitialValueFloat:
 			item, ok := contract.InitialValueFloatBits(value)
 			if !ok {
 				return errors.New("link/project: malformed Target initial float")
 			}
 			literal = keyspace.LiteralValue{Kind: keyspace.LiteralFloat, FloatBits: item}
-		case target.InitialValueString:
+		case vocabulary.InitialValueString:
 			item, ok := contract.InitialValueString(value)
 			if !ok {
 				return errors.New("link/project: malformed Target initial string")
 			}
 			literal = keyspace.LiteralValue{Kind: keyspace.LiteralString, String: item}
-		case target.InitialValueNil, target.InitialValueRoot, target.InitialValueOperation, target.InitialValueDeniedOperation, target.InitialValueAbsent:
+		case vocabulary.InitialValueNil, vocabulary.InitialValueRoot, vocabulary.InitialValueOperation, vocabulary.InitialValueDeniedOperation, vocabulary.InitialValueAbsent:
 			return nil
 		default:
 			return errors.New("link/project: malformed Target initial value kind")

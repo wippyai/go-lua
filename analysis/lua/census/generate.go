@@ -123,7 +123,7 @@ func writeProductFields(out *strings.Builder, rows []parsersource.ProductField) 
 	}
 	out.WriteString("[]parsersource.ProductField{\n")
 	for _, row := range rows {
-		fmt.Fprintf(out, "{Ordinal: %d, Field: %q, Assigned: %t, States: ", row.Ordinal, row.Field, row.Assigned)
+		fmt.Fprintf(out, "{Ordinal: %d, Field: %q, Assigned: %t, Member: %q, States: ", row.Ordinal, row.Field, row.Assigned, row.Member)
 		writeStates(out, row.States)
 		out.WriteString("},\n")
 	}
@@ -131,7 +131,7 @@ func writeProductFields(out *strings.Builder, rows []parsersource.ProductField) 
 }
 
 func writeMutation(out *strings.Builder, row parsersource.FieldMutation) {
-	fmt.Fprintf(out, "\t\t{Owner: %q, Scope: parsersource.ProductScope(%d), Constructor: %q, Field: %q, States: ", row.Owner, row.Scope, row.Constructor, row.Field)
+	fmt.Fprintf(out, "\t\t{Owner: %q, Scope: parsersource.ProductScope(%d), Constructor: %q, Field: %q, Member: %q, States: ", row.Owner, row.Scope, row.Constructor, row.Field, row.Member)
 	writeStates(out, row.States)
 	out.WriteString("},\n")
 }

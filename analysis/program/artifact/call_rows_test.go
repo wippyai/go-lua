@@ -23,9 +23,33 @@ return identity(1)
 	if !ok {
 		t.Fatal("valid grammar identity was rejected")
 	}
-	artifact, failure := programartifact.CompileDetailed(published, grammar)
+	artifact, failure := programartifact.CompileDetailed(published, grammar, nil)
 	if failure.Available() || artifact == nil || !artifact.Available() || artifact.CallCount() == 0 {
 		t.Fatalf("call fixture did not compile: %s", failure.Error())
+	}
+	publishedDirect := false
+	for callIndex := 0; callIndex < artifact.CallCount(); callIndex++ {
+		row, rowOK := artifact.CallAt(callIndex)
+		if !rowOK {
+			t.Fatalf("CallAt(%d) unavailable", callIndex)
+		}
+		if target, targetOK := row.DirectTargetBody(); targetOK {
+			found := false
+			for bodyIndex := 0; bodyIndex < artifact.BodyCount(); bodyIndex++ {
+				body, bodyOK := artifact.BodyAt(bodyIndex)
+				if bodyOK && body.Callable() && body.ID() == target {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("CallAt(%d) target %x is not a callable body", callIndex, target[:4])
+			}
+			publishedDirect = true
+		}
+	}
+	if !publishedDirect {
+		t.Fatal("direct identity(1) call published no target body")
 	}
 	for callIndex := 0; callIndex < artifact.CallCount(); callIndex++ {
 		row, rowOK := artifact.CallAt(callIndex)

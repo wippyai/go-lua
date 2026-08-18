@@ -1,14 +1,18 @@
 package query
 
 import (
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 // scratchEntry is a stand-in row for a sibling surface. The query
@@ -54,6 +58,9 @@ func scratchRoles(t *testing.T) vocabulary.Roles {
 	entries, entriesOK := structure.Collect(vocabulary.RoleSpecs(
 		"query/value-summary", "query-result/value-summary", "fold-contract/value-summary",
 		"query/effect-exact", "query-result/effect-exact", "fold-contract/effect-exact",
+		"query/population/selected-point",
+		"query/projection/summary",
+		"query/projection/exact",
 	))
 	if !entriesOK {
 		t.Fatal("scratch role inventory rejected by construction")
@@ -74,9 +81,9 @@ func scratchContributor[F, R any](spec *Spec[F, R]) {
 		return fragment, true
 	}
 	spec.Bind = func(Binding[F]) bool { return true }
-	spec.Receipt = func(Receipt[F]) (R, bool) {
-		var receipt R
-		return receipt, true
+	spec.Recover = func(Sealed[F]) (R, bool) {
+		var implementation R
+		return implementation, true
 	}
 }
 
@@ -110,6 +117,10 @@ func sealSurface(t *testing.T, contribution schema.Surface) (*schema.Schema, sch
 			builder.Register(contribution)
 		case schema.SurfaceKindAxis:
 			builder.Register(scratchSurface{kind: kind, keys: []schema.Key{"value", "effect"}})
+		case schema.SurfaceKindStructure:
+			builder.Register(scratchSurface{kind: kind, keys: []schema.Key{
+				PopulationSelectedPoint, ProjectionSummary, ProjectionExact,
+			}})
 		default:
 			builder.Register(scratchSurface{kind: kind})
 		}
@@ -131,40 +142,44 @@ func (foreignSurface) Seal(view schema.View, sealed schema.Sealed) schema.SealFa
 	return surface{}.Seal(view, sealed)
 }
 
-// scratchFragment and scratchReceipt are the cold and sealed payload types of
+// scratchFragment and scratchImplementation are the cold and sealed payload types of
 // the scratch families. They carry nothing: what these laws state is the
 // declaration, and the payloads only have to be recoverable at their own type.
 type scratchFragment struct{}
 
-type scratchReceipt struct{}
+type scratchImplementation struct{}
 
-func summarySpec(family schema.Key) Spec[scratchFragment, scratchReceipt] {
-	spec := Spec[scratchFragment, scratchReceipt]{
-		Family:   family,
-		Semantic: "semantic/query/value-summary",
-		Codec:    "semantic/query-result/value-summary",
-		Fold:     FoldDistributive,
-		Contract: "semantic/fold-contract/value-summary",
-		Subjects: []schema.Key{"value"},
+func summarySpec(family schema.Key) Spec[scratchFragment, scratchImplementation] {
+	spec := Spec[scratchFragment, scratchImplementation]{
+		Family:     family,
+		Semantic:   "semantic/query/value-summary",
+		Codec:      "semantic/query-result/value-summary",
+		Fold:       FoldDistributive,
+		Contract:   "semantic/fold-contract/value-summary",
+		Subjects:   []schema.Key{"value"},
+		Population: PopulationSelectedPoint,
+		Projection: ProjectionSummary,
 	}
 	scratchContributor(&spec)
 	return spec
 }
 
-func exactSpec(family schema.Key) Spec[scratchFragment, scratchReceipt] {
-	spec := Spec[scratchFragment, scratchReceipt]{
-		Family:   family,
-		Semantic: "semantic/query/effect-exact",
-		Codec:    "semantic/query-result/effect-exact",
-		Fold:     FoldGeneral,
-		Contract: "semantic/fold-contract/effect-exact",
-		Subjects: []schema.Key{"effect", "value"},
+func exactSpec(family schema.Key) Spec[scratchFragment, scratchImplementation] {
+	spec := Spec[scratchFragment, scratchImplementation]{
+		Family:     family,
+		Semantic:   "semantic/query/effect-exact",
+		Codec:      "semantic/query-result/effect-exact",
+		Fold:       FoldGeneral,
+		Contract:   "semantic/fold-contract/effect-exact",
+		Subjects:   []schema.Key{"effect", "value"},
+		Population: PopulationSelectedPoint,
+		Projection: ProjectionExact,
 	}
 	scratchContributor(&spec)
 	return spec
 }
 
-func mustRegistration(t *testing.T, spec Spec[scratchFragment, scratchReceipt]) *Registration {
+func mustRegistration(t *testing.T, spec Spec[scratchFragment, scratchImplementation]) *Registration {
 	t.Helper()
 	registration, ok := New(spec, scratchRoles(t))
 	if !ok || registration == nil {
@@ -187,6 +202,9 @@ func TestQuerySurfaceSealsCompleteInventory(t *testing.T) {
 	registration := registrations[1]
 	if registration.Fold() != FoldGeneral || registration.SubjectCount() != 2 {
 		t.Fatal("declared fold contract or subject membership lost")
+	}
+	if registration.Population() != PopulationSelectedPoint || registration.Projection() != ProjectionExact {
+		t.Fatal("declared population or projection lost")
 	}
 	if subject, ok := registration.SubjectAt(0); !ok || subject != "effect" {
 		t.Fatal("declared subject order lost")
@@ -352,7 +370,7 @@ func TestQueryForeignRowIsRejected(t *testing.T) {
 // that violates a law, names an identity the vocabulary does not resolve, or
 // withholds one hook of its contributor yields no registration at all.
 func TestNewRegistrationRejectsIncompleteSpec(t *testing.T) {
-	type damaged = Spec[scratchFragment, scratchReceipt]
+	type damaged = Spec[scratchFragment, scratchImplementation]
 	cases := map[string]func(*damaged){
 		"family":           func(spec *damaged) { spec.Family = "" },
 		"semantic":         func(spec *damaged) { spec.Semantic = "semantic/query/absent" },
@@ -365,7 +383,10 @@ func TestNewRegistrationRejectsIncompleteSpec(t *testing.T) {
 		"catalog ordinal":  func(spec *damaged) { spec.Fold = FoldGeneral + 1 },
 		"declare hook":     func(spec *damaged) { spec.Declare = nil },
 		"bind hook":        func(spec *damaged) { spec.Bind = nil },
-		"receipt hook":     func(spec *damaged) { spec.Receipt = nil },
+		"recover hook":     func(spec *damaged) { spec.Recover = nil },
+		"population":       func(spec *damaged) { spec.Population = "" },
+		"projection":       func(spec *damaged) { spec.Projection = "" },
+		"projection fold":  func(spec *damaged) { spec.Projection = ProjectionExact },
 	}
 	for name, damage := range cases {
 		spec := summarySpec("value-summary")
@@ -384,7 +405,7 @@ func TestQueryContributorIsDeclared(t *testing.T) {
 	for name, withdraw := range map[string]func(*Registration){
 		"declare": func(registration *Registration) { registration.declare = nil },
 		"bind":    func(registration *Registration) { registration.bind = nil },
-		"receipt": func(registration *Registration) { registration.receipt = nil },
+		"recover": func(registration *Registration) { registration.recover = nil },
 	} {
 		registration := mustRegistration(t, summarySpec("value-summary"))
 		withdraw(registration)
@@ -433,11 +454,72 @@ func TestTableDigestCoversDeclaredContent(t *testing.T) {
 	}
 	spec := summarySpec("value-summary")
 	spec.Fold = FoldGeneral
+	spec.Projection = ProjectionExact
 	shifted, failure := sealTable(t, []*Registration{mustRegistration(t, spec)})
 	if failure.Available() {
 		t.Fatalf("query family with a shifted fold class rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
 	if declared.Digest() == shifted.Digest() {
 		t.Fatal("a query family's declared fold class left the table digest unchanged")
+	}
+}
+
+// TestQueryPopulationAndProjectionAreDeclaredAndResolve states that a family
+// names the Artifact geometry it is asked at and the read shape construction
+// attaches it through, that both resolve against the structural vocabulary,
+// and that the projection agrees with the family's fold class.
+func TestQueryPopulationAndProjectionAreDeclaredAndResolve(t *testing.T) {
+	missingPopulation := mustRegistration(t, summarySpec("value-summary"))
+	missingPopulation.population = ""
+	failure := sealRegistrations(t, []*Registration{missingPopulation})
+	if failure.Law != LawPopulationDeclared || failure.Disposition != schema.DispositionIncomplete {
+		t.Fatalf("family without a population sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	absentPopulation := mustRegistration(t, summarySpec("value-summary"))
+	absentPopulation.population = "semantic/query/population/absent"
+	if failure = sealRegistrations(t, []*Registration{absentPopulation}); failure.Law != LawPopulationResolves ||
+		failure.Disposition != schema.DispositionIncomplete {
+		t.Fatalf("undeclared population sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	missingProjection := mustRegistration(t, summarySpec("value-summary"))
+	missingProjection.projection = ""
+	if failure = sealRegistrations(t, []*Registration{missingProjection}); failure.Law != LawProjectionDeclared ||
+		failure.Disposition != schema.DispositionIncomplete {
+		t.Fatalf("family without a projection sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	absentProjection := mustRegistration(t, summarySpec("value-summary"))
+	absentProjection.projection = "semantic/query/projection/absent"
+	if failure = sealRegistrations(t, []*Registration{absentProjection}); failure.Law != LawProjectionResolves ||
+		failure.Disposition != schema.DispositionIncomplete {
+		t.Fatalf("undeclared projection sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	mismatched := mustRegistration(t, summarySpec("value-summary"))
+	mismatched.projection = ProjectionExact
+	if failure = sealRegistrations(t, []*Registration{mismatched}); failure.Law != LawProjectionFold ||
+		failure.Disposition != schema.DispositionMalformed {
+		t.Fatalf("fold/projection mismatch sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+}
+
+// TestArtifactQueryPlanSourceDoesNotRestateFamilyNames is the construction
+// half of the population/projection law: the plan walks issued families and
+// must not restate domain family spellings.
+func TestArtifactQueryPlanSourceDoesNotRestateFamilyNames(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("query source location")
+	}
+	src, err := os.ReadFile(filepath.Join(filepath.Dir(thisFile), "..", "..", "artifact_query_plan.go"))
+	if err != nil {
+		t.Fatalf("read artifact_query_plan.go: %v", err)
+	}
+	text := string(src)
+	if !strings.Contains(text, "composite.QueryIssuance") {
+		t.Fatal("artifact_query_plan.go does not walk composite.QueryIssuance")
+	}
+	for _, literal := range []string{`"value-summary"`, `"effect-exact"`} {
+		if strings.Contains(text, literal) {
+			t.Fatalf("artifact_query_plan.go restates query family %s", literal)
+		}
 	}
 }

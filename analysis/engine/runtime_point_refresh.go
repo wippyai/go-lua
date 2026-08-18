@@ -27,6 +27,9 @@ func (epoch *executorEpoch) publish(point int, current, next carrier.PointState,
 		epoch.diagnostics.recordPublication(semanticChanged, changed)
 	}
 	epoch.points[point] = next
+	if epoch.storePub != nil && !epoch.storePub.writePoint(epoch, point, next) {
+		return false, false
+	}
 	var sourcePoint equation.Point
 	if changed {
 		epoch.versions[point]++
@@ -111,6 +114,9 @@ func (epoch *executorEpoch) publishAcyclicExact(point int, current, next carrier
 	// growth must see the newly recomputed latent representation, not the old
 	// PointState's hidden branch.
 	epoch.points[point] = next
+	if epoch.storePub != nil && !epoch.storePub.writePoint(epoch, point, next) {
+		return false, false
+	}
 	if !changed {
 		return semanticChanged, true
 	}
@@ -223,10 +229,11 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 			// incomparability is lawful only while an unchanged narrow episode is
 			// propagating its smaller exact head around an internal edge. During
 			// ascent, unchanged interfaces imply that every changed input belongs to
-			// the same ascending Kleene chain; a monotone Rule cannot then decrease.
-			// Fail that Rule law closed instead of restarting the identical episode
-			// forever. A genuinely changed external interface still begins a fresh
-			// episode below.
+			// the same ascending Kleene chain. Inclusion is sufficient; a defined
+			// Widen that dominates both cells is the same progress a recurrent
+			// head uses, so a replaced summand may change control family. Fail
+			// only a replacement that has no such upper bound. A genuinely
+			// changed external interface still begins a fresh episode below.
 			if (!state.hasCandidateTokens || sameCandidateTokens(state.candidateTokens, state.scratchTokens)) && !environmentChanged {
 				refreshBoundary = refused(SolveFailureFamilyRefresh, "candidate-order-stable-inputs")
 				epoch.recordCandidateOrderFailure(refreshBoundary, point, producer.group)
@@ -234,35 +241,39 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 			}
 			region := epoch.runtime.pointRegion[pointIndex]
 			if region == schedule.NoRegion || !epoch.activeRegion(region) {
-				refreshBoundary = refused(SolveFailureFamilyRefresh, "candidate-order-region")
-				epoch.recordCandidateOrderFailure(refreshBoundary, point, producer.group)
-				return false, false
-			}
-			phase := epoch.regions[region].phase
-			if phase != phaseAscent && phase != phaseNarrow {
-				refreshBoundary = refused(SolveFailureFamilyRefresh, "candidate-order-region")
-				epoch.recordCandidateOrderFailure(refreshBoundary, point, producer.group)
-				return false, false
-			}
-			if epoch.regionInterfacesChanged(region) {
-				if !epoch.restartRegion(region, SolveDiagnosticRestartCandidateInterface, SolveDiagnosticRestartCandidateNotOrdered, groupIndex, next) {
+				if !epoch.work.AscentOrderedRuleContribution(state.candidate, next) {
+					refreshBoundary = refused(SolveFailureFamilyRefresh, "candidate-order-region")
+					epoch.recordCandidateOrderFailure(refreshBoundary, point, producer.group)
 					return false, false
 				}
-				return false, true
-			}
-			if phase != phaseNarrow {
-				refreshBoundary = refused(SolveFailureFamilyRefresh, "candidate-order-region")
-				epoch.recordCandidateOrderFailure(refreshBoundary, point, producer.group)
-				return false, false
-			}
-			// An unchanged narrow interface proves only where the wake came
-			// from. It does not turn an incomparable Rule result into a
-			// descent. Admit exactly next <= old; every other local result
-			// fails closed instead of being published as an exact candidate.
-			if !epoch.work.LessOrEqRuleContribution(next, state.candidate) {
-				refreshBoundary = refused(SolveFailureFamilyRefresh, "candidate-order-descent")
-				epoch.recordCandidateOrderFailure(refreshBoundary, point, producer.group)
-				return false, false
+			} else {
+				phase := epoch.regions[region].phase
+				if phase != phaseAscent && phase != phaseNarrow {
+					refreshBoundary = refused(SolveFailureFamilyRefresh, "candidate-order-region")
+					epoch.recordCandidateOrderFailure(refreshBoundary, point, producer.group)
+					return false, false
+				}
+				if epoch.regionInterfacesChanged(region) {
+					if !epoch.restartRegion(region, SolveDiagnosticRestartCandidateInterface, SolveDiagnosticRestartCandidateNotOrdered, groupIndex, next) {
+						return false, false
+					}
+					return false, true
+				}
+				if phase != phaseNarrow {
+					if !epoch.work.AscentOrderedRuleContribution(state.candidate, next) {
+						refreshBoundary = refused(SolveFailureFamilyRefresh, "candidate-order-region")
+						epoch.recordCandidateOrderFailure(refreshBoundary, point, producer.group)
+						return false, false
+					}
+				} else if !epoch.work.LessOrEqRuleContribution(next, state.candidate) {
+					// An unchanged narrow interface proves only where the wake came
+					// from. It does not turn an incomparable Rule result into a
+					// descent. Admit exactly next <= old; every other local result
+					// fails closed instead of being published as an exact candidate.
+					refreshBoundary = refused(SolveFailureFamilyRefresh, "candidate-order-descent")
+					epoch.recordCandidateOrderFailure(refreshBoundary, point, producer.group)
+					return false, false
+				}
 			}
 		}
 		refreshBoundary = refused(SolveFailureFamilyRefresh, "demand-commit")
@@ -433,6 +444,28 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 	}
 	if !exactOK || epoch.canceled() {
 		return false, false
+	}
+	// Support-axis widening is the ascent's second recurrence operator. Value
+	// widening bounds how far a coordinate climbs; this bounds how finely the
+	// head partitions its guard support while it climbs, by discharging the
+	// coordinates the Region's own cycle introduces at its head. It applies to
+	// exactly the operands region.widen applies to, in exactly the phase that
+	// widens; the narrow descent below reads the exact relations unchanged.
+	if phase == phaseAscent {
+		refreshBoundary = refused(SolveFailureFamilyRefresh, "region-discharge")
+		if exact, exactOK = epoch.dischargeAscentRHS(region, exact); !exactOK {
+			return false, false
+		}
+		switch {
+		case refreshPending:
+			// A pending refresh already selected the exact RHS itself, so the one
+			// discharge above is the whole widening for both operands.
+			selected = exact
+		case episode.hasExact:
+			if selected, exactOK = epoch.dischargeAscentRHS(region, selected); !exactOK {
+				return false, false
+			}
+		}
 	}
 	refreshBoundary = refused(SolveFailureFamilyRefresh, "region-order")
 	if phase == phaseAscent && episode.hasExact && !episode.interfaceRefreshPending && !epoch.work.LessOrEqPointRHSPoint(ingress, current) {

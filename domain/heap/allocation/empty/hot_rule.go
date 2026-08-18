@@ -62,12 +62,30 @@ func BindHot(fragment *SchemaFragment, owner *heapowner.HotOwner, catalog *alloc
 		Apply: func(operand source.Root, predecessor heapdomain.Value) (heapdomain.Value, bool) {
 			return owner.Schema().Age(predecessor, operand.Key())
 		},
+	}, func(operand source.Root) (uint64, bool) {
+		index, ok := owner.Schema().KeyIndex(operand.Key())
+		return uint64(index), ok && index >= 0
+	}, func(operand source.Root) (uint64, bool) {
+		index, ok := owner.Schema().KeyIndex(operand.Key())
+		return uint64(index), ok && index >= 0
 	})
 	if !ok || implementation == nil {
 		return nil, false
 	}
 	runtimeRead = read
-	return &HotRule{implementation: implementation, owner: owner, read: read, catalog: catalog, schema: owner.Schema()}, true
+	rule := &HotRule{implementation: implementation, owner: owner, read: read, catalog: catalog, schema: owner.Schema()}
+	if !implementation.InstallOperandResolver(rule.resolveOperand) {
+		return nil, false
+	}
+	return rule, true
+}
+
+func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (source.Root, bool) {
+	issuer, ok := rule.ForMount(coords.Mount)
+	if !ok {
+		return source.Root{}, false
+	}
+	return issuer.ReceiptForOccurrence(coords.Occurrence)
 }
 
 type MountedIssuer struct {
@@ -91,58 +109,6 @@ func (issuer MountedIssuer) ReceiptForOccurrence(id identity.ContentID) (source.
 	return root, ok && root.Form() == source.FormEmpty && root.FencedTo(issuer.rule.catalogHeap())
 }
 
-// AttachMountedOccurrence seals HeapEmpty's exact read/carry/write incidence
-// beneath the same mounted allocation proof that issued its operand.
-func (rule *HotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, mountID, reusablePointID, occurrenceID identity.ContentID) (engine.BindingRuleRowRef, bool) {
-	if rule == nil || rule.owner == nil || rule.catalog == nil || assembly == nil {
-		return engine.BindingRuleRowRef{}, false
-	}
-	issuer, issuerOK := rule.ForMount(mountID)
-	operand, operandOK := issuer.ReceiptForOccurrence(occurrenceID)
-	implementation, implementationOK := heapowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
-	ref, refOK := rule.owner.Ref(operand.Key())
-	if !issuerOK || !operandOK || !implementationOK || !refOK {
-		return engine.BindingRuleRowRef{}, false
-	}
-	occurrence, occurrenceOK := assembly.AdmitMountedRuleOccurrence(mountedCapability(rule.implementation), mountID, reusablePointID, occurrenceID)
-	if !occurrenceOK {
-		return engine.BindingRuleRowRef{}, false
-	}
-	admit := func(transaction *engine.RuleSourceTransaction) bool {
-		return engine.AddExactRead(transaction, ref) && transaction.AddCarry() && engine.AddExactWrite(transaction, ref)
-	}
-	issue := func(sourceReceipt engine.RuleSurfaceSourceReceipt) bool {
-		draft, draftOK := implementation.BeginReceiptRuleRow(sourceReceipt)
-		readPart, readPartOK := implementation.ReceiptReadPart(sourceReceipt, 0)
-		carryPart, carryPartOK := implementation.ReceiptCarryPart(sourceReceipt, 0)
-		writePart, writePartOK := implementation.ReceiptWritePart(sourceReceipt, 0)
-		if !draftOK || !readPartOK || !carryPartOK || !writePartOK || !draft.AddRead(readPart) || !draft.AddCarry(carryPart) || !draft.AddWrite(writePart) {
-			return false
-		}
-		_, added := assembly.AddRuleFromDraft(occurrence, draft)
-		return added
-	}
-	queued := engine.AdmitMountedRule(assembly, implementation, mountedCapability(rule.implementation), occurrence, operand, admit, issue)
-	return engine.BindingRuleRowRef{}, queued
-}
-
-// AttachMountedReceiptMember resolves both the committed graph member and its
-// exact mounted allocation receipt internally.  No private Heap coordinate or
-// operand capability escapes to the central artifact compiler.
-func (rule *HotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, reusablePointID, occurrenceID identity.ContentID) (*engine.ReceiptMember, bool) {
-	if rule == nil || rule.owner == nil || graph == nil {
-		return nil, false
-	}
-	issuer, issuerOK := rule.ForMount(mountID)
-	operand, operandOK := issuer.ReceiptForOccurrence(occurrenceID)
-	member, memberOK := graph.MountedRuleMember(mountedCapability(rule.implementation), mountID, reusablePointID, occurrenceID)
-	implementation, implementationOK := heapowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
-	if !issuerOK || !operandOK || !memberOK || !implementationOK {
-		return nil, false
-	}
-	return engine.AttachReceiptRuleMember(compilation, implementation, member, operand)
-}
-
 func (rule *HotRule) catalogHeap() heapdomain.Schema {
 	if rule == nil || rule.catalog == nil {
 		return heapdomain.Schema{}
@@ -160,6 +126,10 @@ func (rule *HotRule) Implementation() (*heapowner.RuleImplementation[source.Root
 	}
 	_, ok := heapowner.ResolveRuleImplementation(rule.implementation)
 	return rule.implementation, ok
+}
+
+func (rule *HotRule) ProgramAttach() (engine.RuleProgramAttach, bool) {
+	return heapowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
 }
 
 func emptyContent(schema heapdomain.Schema, operand source.Root) (source.Root, [32]byte, bool) {

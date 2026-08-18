@@ -3,6 +3,7 @@ package target
 import (
 	"errors"
 	"fmt"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"sort"
 	"unicode/utf8"
 )
@@ -16,44 +17,44 @@ type protocolDraft struct {
 }
 
 type acquisitionDraft struct {
-	operationSource SpecRef
-	operation       Operation
+	operationSource vocabulary.SpecRef
+	operation       vocabulary.Operation
 	outcomeSource   uint32
 	outcome         uint32
 	result          uint32
-	state           State
+	state           vocabulary.State
 }
 
 type transitionDraft struct {
-	operationSource SpecRef
-	operation       Operation
-	input           InputSource
-	from            State
+	operationSource vocabulary.SpecRef
+	operation       vocabulary.Operation
+	input           vocabulary.InputSource
+	from            vocabulary.State
 	outcomes        []transitionOutcomeDraft
 }
 
 type transitionOutcomeDraft struct {
 	outcomeSource uint32
 	outcome       uint32
-	to            State
+	to            vocabulary.State
 }
 
 type escapeDraft struct {
-	operationSource SpecRef
-	operation       Operation
-	input           InputSource
+	operationSource vocabulary.SpecRef
+	operation       vocabulary.Operation
+	input           vocabulary.InputSource
 }
 
 type protocolCallbackHolderDraft struct {
-	operationSource SpecRef
-	operation       Operation
-	input           InputSource
-	callbackSource  CallbackRef
-	callback        CallbackID
+	operationSource vocabulary.SpecRef
+	operation       vocabulary.Operation
+	input           vocabulary.InputSource
+	callbackSource  vocabulary.CallbackRef
+	callback        vocabulary.CallbackID
 }
 
-func freezeProtocols(input []ProtocolSpec) ([]protocolDraft, error) {
-	if _, err := checkedStoredLength("protocol table", len(input)); err != nil {
+func freezeProtocols(input []vocabulary.ProtocolSpec) ([]protocolDraft, error) {
+	if _, err := vocabulary.CheckedStoredLength("protocol table", len(input)); err != nil {
 		return nil, err
 	}
 	out := make([]protocolDraft, len(input))
@@ -67,11 +68,11 @@ func freezeProtocols(input []ProtocolSpec) ([]protocolDraft, error) {
 	return out, nil
 }
 
-func freezeProtocol(input ProtocolSpec) (protocolDraft, error) {
+func freezeProtocol(input vocabulary.ProtocolSpec) (protocolDraft, error) {
 	if len(input.Acquisitions) == 0 {
 		return protocolDraft{}, errors.New("has no acquisitions")
 	}
-	if _, err := checkedStoredLength("protocol acquisition table", len(input.Acquisitions)); err != nil {
+	if _, err := vocabulary.CheckedStoredLength("protocol acquisition table", len(input.Acquisitions)); err != nil {
 		return protocolDraft{}, err
 	}
 	states, stateRefs, err := freezeProtocolStates(input.States)
@@ -90,7 +91,7 @@ func freezeProtocol(input ProtocolSpec) (protocolDraft, error) {
 			result: item.Result, state: state,
 		}
 	}
-	if _, err := checkedStoredLength("protocol transition table", len(input.Transitions)); err != nil {
+	if _, err := vocabulary.CheckedStoredLength("protocol transition table", len(input.Transitions)); err != nil {
 		return protocolDraft{}, err
 	}
 	draft.transitions = make([]transitionDraft, len(input.Transitions))
@@ -99,7 +100,7 @@ func freezeProtocol(input ProtocolSpec) (protocolDraft, error) {
 		if !ok || item.Operation == 0 || len(item.Outcomes) == 0 {
 			return protocolDraft{}, fmt.Errorf("transition %d outside scope", index)
 		}
-		if _, err := checkedStoredLength("protocol transition outcome table", len(item.Outcomes)); err != nil {
+		if _, err := vocabulary.CheckedStoredLength("protocol transition outcome table", len(item.Outcomes)); err != nil {
 			return protocolDraft{}, err
 		}
 		outcomes := make([]transitionOutcomeDraft, len(item.Outcomes))
@@ -112,7 +113,7 @@ func freezeProtocol(input ProtocolSpec) (protocolDraft, error) {
 		}
 		draft.transitions[index] = transitionDraft{operationSource: item.Operation, input: item.Input, from: from, outcomes: outcomes}
 	}
-	if _, err := checkedStoredLength("protocol escape table", len(input.Escapes)); err != nil {
+	if _, err := vocabulary.CheckedStoredLength("protocol escape table", len(input.Escapes)); err != nil {
 		return protocolDraft{}, err
 	}
 	draft.escapes = make([]escapeDraft, len(input.Escapes))
@@ -122,7 +123,7 @@ func freezeProtocol(input ProtocolSpec) (protocolDraft, error) {
 		}
 		draft.escapes[index] = escapeDraft{operationSource: item.Operation, input: item.Input}
 	}
-	if _, err := checkedStoredLength("protocol callback-holder table", len(input.CallbackHolders)); err != nil {
+	if _, err := vocabulary.CheckedStoredLength("protocol callback-holder table", len(input.CallbackHolders)); err != nil {
 		return protocolDraft{}, err
 	}
 	draft.callbackHolders = make([]protocolCallbackHolderDraft, len(input.CallbackHolders))
@@ -139,11 +140,11 @@ func freezeProtocol(input ProtocolSpec) (protocolDraft, error) {
 	return draft, nil
 }
 
-func freezeProtocolStates(input []StateSpec) ([]stateRow, []State, error) {
+func freezeProtocolStates(input []vocabulary.StateSpec) ([]stateRow, []vocabulary.State, error) {
 	if len(input) == 0 {
 		return nil, nil, errors.New("has no states")
 	}
-	if _, err := checkedStoredLength("protocol state table", len(input)); err != nil {
+	if _, err := vocabulary.CheckedStoredLength("protocol state table", len(input)); err != nil {
 		return nil, nil, err
 	}
 	type authoredState struct {
@@ -155,13 +156,13 @@ func freezeProtocolStates(input []StateSpec) ([]stateRow, []State, error) {
 		if state.Name == "" || !utf8.ValidString(state.Name) {
 			return nil, nil, fmt.Errorf("state %d has invalid name", index)
 		}
-		if _, err := checkedStoredLength("protocol state name bytes", len(state.Name)); err != nil {
+		if _, err := vocabulary.CheckedStoredLength("protocol state name bytes", len(state.Name)); err != nil {
 			return nil, nil, err
 		}
 		states[index] = authoredState{source: index, row: stateRow{name: state.Name, final: state.Final}}
 	}
 	sort.Slice(states, func(i, j int) bool { return states[i].row.name < states[j].row.name })
-	refs := make([]State, len(states))
+	refs := make([]vocabulary.State, len(states))
 	out := make([]stateRow, len(states))
 	for index, state := range states {
 		if index != 0 && state.row.name == states[index-1].row.name {
@@ -171,20 +172,20 @@ func freezeProtocolStates(input []StateSpec) ([]stateRow, []State, error) {
 		if err != nil {
 			return nil, nil, err
 		}
-		refs[state.source] = State(handle)
+		refs[state.source] = vocabulary.State(handle)
 		out[index] = state.row
 	}
 	return out, refs, nil
 }
 
-func resolveStateRef(refs []State, ref StateRef) (State, bool) {
+func resolveStateRef(refs []vocabulary.State, ref vocabulary.StateRef) (vocabulary.State, bool) {
 	if ref == 0 || uint64(ref) > uint64(len(refs)) {
 		return 0, false
 	}
 	return refs[uint32(ref)-1], true
 }
 
-func resolveProtocols(drafts []protocolDraft, operations []operationDraft, sourceOperation []Operation) error {
+func resolveProtocols(drafts []protocolDraft, operations []operationDraft, sourceOperation []vocabulary.Operation) error {
 	outcomeRemaps := make([][]uint32, len(operations))
 	for index := range operations {
 		outcomes := operations[index].outcomes
@@ -219,12 +220,12 @@ func resolveProtocols(drafts []protocolDraft, operations []operationDraft, sourc
 }
 
 type acquisitionKey struct {
-	operation       Operation
+	operation       vocabulary.Operation
 	outcome, result uint32
 }
 
-func (d *protocolDraft) resolve(operations []operationDraft, outcomeRemaps [][]uint32, sourceOperation []Operation) error {
-	resolveOperation := func(ref SpecRef) (Operation, *operationDraft, []uint32, error) {
+func (d *protocolDraft) resolve(operations []operationDraft, outcomeRemaps [][]uint32, sourceOperation []vocabulary.Operation) error {
+	resolveOperation := func(ref vocabulary.SpecRef) (vocabulary.Operation, *operationDraft, []uint32, error) {
 		if ref == 0 || uint64(ref) > uint64(len(sourceOperation)) {
 			return 0, nil, nil, errors.New("target: protocol references unknown operation")
 		}
@@ -363,17 +364,17 @@ func (d *protocolDraft) canonicalizeStates() error {
 	if len(d.states) == 0 {
 		return errors.New("target: protocol has no states")
 	}
-	assigned := make([]State, len(d.states)+1)
-	ordered := make([]State, 0, len(d.states))
-	queue := make([]State, 0, len(d.states))
-	assign := func(state State) error {
+	assigned := make([]vocabulary.State, len(d.states)+1)
+	ordered := make([]vocabulary.State, 0, len(d.states))
+	queue := make([]vocabulary.State, 0, len(d.states))
+	assign := func(state vocabulary.State) error {
 		if state == 0 || uint64(state) > uint64(len(d.states)) {
 			return errors.New("target: protocol state outside scope")
 		}
 		if assigned[state] != 0 {
 			return nil
 		}
-		assigned[state] = State(len(ordered) + 1)
+		assigned[state] = vocabulary.State(len(ordered) + 1)
 		ordered = append(ordered, state)
 		queue = append(queue, state)
 		return nil
@@ -385,10 +386,10 @@ func (d *protocolDraft) canonicalizeStates() error {
 		}
 	}
 	type edge struct {
-		operation Operation
-		input     InputSource
+		operation vocabulary.Operation
+		input     vocabulary.InputSource
 		outcome   uint32
-		to        State
+		to        vocabulary.State
 	}
 	outgoing := make([][]edge, len(d.states)+1)
 	for _, transition := range d.transitions {
@@ -595,23 +596,4 @@ func (c *Contract) appendProtocols(input []protocolDraft) error {
 		c.protocols = append(c.protocols, row)
 	}
 	return nil
-}
-
-func (c *Contract) appendProtocolTransitions(input []transitionDraft) (indexRange, error) {
-	rangeOut, err := checkedStoredRange("protocol transition table", len(c.transitions), len(input))
-	if err != nil {
-		return indexRange{}, err
-	}
-	for _, item := range input {
-		outcomes := make([]transitionOutcomeRow, len(item.outcomes))
-		for i, outcome := range item.outcomes {
-			outcomes[i] = transitionOutcomeRow{outcome: outcome.outcome, to: outcome.to}
-		}
-		rangeItems, appendErr := appendStoredRange(&c.transitionOutcomes, outcomes, "protocol transition outcome table")
-		if appendErr != nil {
-			return indexRange{}, appendErr
-		}
-		c.transitions = append(c.transitions, transitionRow{operation: item.operation, input: item.input, from: item.from, outcomes: rangeItems})
-	}
-	return rangeOut, nil
 }

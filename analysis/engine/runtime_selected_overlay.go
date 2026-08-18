@@ -4,8 +4,8 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
-	"github.com/wippyai/go-lua/analysis/engine/internal/carrier/shape"
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
+	demandpkg "github.com/wippyai/go-lua/analysis/engine/internal/demand"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -43,11 +43,13 @@ type preparedSelectedFactorOverlay struct {
 	latePlans  map[composition.Key]carrier.ReindexPlan
 	newOrigins map[runtimeFactorOrigin]int
 	targets    []int
-	// execution is non-nil only when this selected delta introduces the first
-	// feedback region over the same demanded Point set. Region rows are bound
-	// to the existing carrier; no typed root is migrated.
+	// execution and demand are the revised epoch-local views. Region rows are
+	// bound to the existing carrier; no typed root or sealed table is migrated.
 	execution       *schedule.Schedule
 	executionDemand *equation.Demand
+	demandEpoch     *demandpkg.Epoch
+	selectedPoints  []int
+	activePoints    []bool
 	// directCatalog is the complete installed selected-direct descriptor set
 	// after this frontier (indexed by runtime factor edge). It is retained only
 	// until the prepared overlay is committed, then published in overlay.directAt.
@@ -159,7 +161,7 @@ func (runtime *solverRuntime) prepareSelectedFactorOverlay(delta []equation.Acce
 		return nil, false
 	}
 	prepared.directEdges = directCatalogEdges(prepared.directCatalog)
-	if prepared.execution != nil && prepared.execution.RegionCount() != 0 && !prepared.bindFeedbackRuntime(runtime) {
+	if !prepared.bindFeedbackRuntime(runtime) {
 		return nil, false
 	}
 	return prepared, true
@@ -234,12 +236,9 @@ func (runtime *solverRuntime) prevalidateSelectedFactorEdges(selected []equation
 		}
 		source, sourceOK := runtime.graph.PointIndex(edge.Source())
 		target, targetOK := runtime.graph.PointIndex(edge.Target())
-		factor, factorOK := runtime.overlay.factorByKey[edge.Factor()]
-		slot, slotOK := shape.Slot(0), false
-		if factorOK && factor != nil {
-			slot, slotOK = factor.runtimeSlot()
-		}
-		if !sourceOK || !targetOK || !factorOK || factor == nil || compositionKeyOf(factor.semantic()) != edge.Factor() || !slotOK || slot < 0 || int(slot) >= runtime.carrier.Count() || source < 0 || target < 0 || source >= runtime.graph.PointCount() || target >= runtime.graph.PointCount() {
+		record, factorOK := runtime.program.factorRecordByKey(edge.Factor())
+		slot := record.slot
+		if !sourceOK || !targetOK || !factorOK || slot < 0 || int(slot) >= runtime.carrier.Count() || source < 0 || target < 0 || source >= runtime.graph.PointCount() || target >= runtime.graph.PointCount() {
 			return nil, nil, nil, false, nil, false
 		}
 		if _, duplicate := seen[edge.Key()]; duplicate {
@@ -276,7 +275,11 @@ func (runtime *solverRuntime) combinedSelectedDependencyEdges(selected []selecte
 		newEdges = append(newEdges, schedule.Edge{From: schedule.Node(descriptor.source), To: schedule.Node(descriptor.target)})
 	}
 	if len(newEdges) == 0 {
-		return runtime.overlay.dependencyEdges, nil, false, runtime.graph.Schedule(), true
+		execution := runtime.execution
+		if execution == nil {
+			execution = runtime.graph.Schedule()
+		}
+		return runtime.overlay.dependencyEdges, nil, false, execution, true
 	}
 	// A genuinely new endpoint pair needs a fresh combined acyclicity proof.
 	// Clone the cold membership cache only on that path; replacements and
@@ -309,14 +312,11 @@ func (runtime *solverRuntime) bindSelectedFactorEdge(descriptor selectedFactorDe
 		return boundSelectedFactorEdge{}, false
 	}
 	edge, input := descriptor.edge, descriptor.edge.Input()
-	factor, factorOK := runtime.overlay.factorByKey[edge.Factor()]
-	slot, slotOK := shape.Slot(0), false
-	if factorOK && factor != nil {
-		slot, slotOK = factor.runtimeSlot()
-	}
+	record, factorOK := runtime.program.factorRecordByKey(edge.Factor())
+	slot := record.slot
 	sourceScope, sourceScoped := runtime.overlay.reindexes.scope(input.Source().Scope())
 	targetScope, targetScoped := runtime.overlay.reindexes.scope(input.Target().Scope())
-	if !edge.Available() || !input.Available() || !factorOK || factor == nil || compositionKeyOf(factor.semantic()) != edge.Factor() || !slotOK || slot < 0 || int(slot) >= runtime.carrier.Count() || !sourceScoped || !targetScoped || !sourceScope.Same(runtime.pointScopes[descriptor.source]) || !targetScope.Same(runtime.pointScopes[descriptor.target]) {
+	if !edge.Available() || !input.Available() || !factorOK || slot < 0 || int(slot) >= runtime.carrier.Count() || !sourceScoped || !targetScoped || !sourceScope.Same(runtime.pointScopes[descriptor.source]) || !targetScope.Same(runtime.pointScopes[descriptor.target]) {
 		return boundSelectedFactorEdge{}, false
 	}
 	planKey := input.Reindex().Key()
@@ -365,11 +365,11 @@ func (prepared *preparedSelectedFactorOverlay) finalize(runtime *solverRuntime) 
 // typed carrier root remain owned by the live runtime; no accepted Graph is
 // reconstructed or used as a fake oracle.
 func (prepared *preparedSelectedFactorOverlay) bindFeedbackRuntime(runtime *solverRuntime) bool {
-	if prepared == nil || runtime == nil || runtime.graph == nil || runtime.carrier == nil || prepared.runtime != runtime || prepared.execution == nil || prepared.execution.RegionCount() == 0 || len(prepared.directEdges) != len(prepared.directCatalog) {
+	if prepared == nil || runtime == nil || runtime.graph == nil || runtime.carrier == nil || prepared.runtime != runtime || prepared.execution == nil || len(prepared.directEdges) != len(prepared.directCatalog) {
 		return false
 	}
 	oracle, ok := runtime.graph.ActivationGraphOverlay(prepared.execution, prepared.directEdges)
-	if !ok || oracle == nil || oracle.Schedule() == nil || oracle.RegionCount() == 0 || oracle.PointCount() != runtime.graph.PointCount() || oracle.GroupCount() != runtime.graph.GroupCount() || oracle.EnvironmentEdgeTotal() != runtime.graph.EnvironmentEdgeTotal() || oracle.FactorEdgeTotal() != prepared.previousEdgeCount+len(prepared.additions) {
+	if !ok || oracle == nil || oracle.Schedule() == nil || oracle.PointCount() != runtime.graph.PointCount() || oracle.GroupCount() != runtime.graph.GroupCount() || oracle.EnvironmentEdgeTotal() != runtime.graph.EnvironmentEdgeTotal() || oracle.FactorEdgeTotal() != runtime.graph.FactorEdgeTotal()+len(prepared.directEdges) {
 		return false
 	}
 	for index := 0; index < oracle.PointCount(); index++ {
@@ -385,18 +385,48 @@ func (prepared *preparedSelectedFactorOverlay) bindFeedbackRuntime(runtime *solv
 			return false
 		}
 	}
-	demanded, demandedOK := oracle.Demand()
+	// Keep all currently live points as exact roots and add every selected
+	// target. DemandWithPoints then follows the same immutable Group,
+	// environment, factor, and activation reverse relation on the overlay.
+	// This is the widening cut: newly reachable points/groups are selected
+	// without reconstructing a compiler or carrier composition.
+	roots := make([]equation.Point, 0, len(runtime.activePoints)+len(prepared.directEdges))
+	for index, active := range runtime.activePoints {
+		if !active {
+			continue
+		}
+		point, pointOK := oracle.PointAt(schedule.Node(index))
+		if !pointOK {
+			return false
+		}
+		roots = append(roots, point)
+	}
+	for _, selected := range prepared.directEdges {
+		if !selected.Available() || !oracle.OwnsPoint(selected.Target()) {
+			return false
+		}
+		roots = append(roots, selected.Target())
+	}
+	demanded, demandedOK := oracle.DemandWithPoints(roots)
 	activePoints, active, activeOK := runtimeDemandMembership(oracle, demanded)
 	if !demandedOK || demanded == nil || !activeOK || len(activePoints) != len(runtime.activePoints) || len(active) != oracle.RegionCount() {
 		return false
 	}
 	for index, live := range activePoints {
-		// Reordering live rows into a newly discovered WTO region is lawful.
-		// Awakening an uninitialized Point or producer family is not: that path
-		// retains the canonical cold demand/compiler transition.
-		if live != runtime.activePoints[index] {
+		// Accepted revisions are demand-widening. Existing points can never be
+		// dropped; newly live rows receive prepared epoch state below.
+		if runtime.activePoints[index] && !live {
 			return false
 		}
+	}
+	selectedPoints := make([]int, 0, demanded.PointCount())
+	for index := 0; index < demanded.PointCount(); index++ {
+		point, pointOK := demanded.PointAt(index)
+		pointIndex, indexed := oracle.PointIndex(point)
+		if !pointOK || !indexed {
+			return false
+		}
+		selectedPoints = append(selectedPoints, pointIndex)
 	}
 	factorAt := make(map[composition.Key]int, oracle.FactorEdgeTotal())
 	for index, edge := range runtime.factorEdges {
@@ -415,7 +445,7 @@ func (prepared *preparedSelectedFactorOverlay) bindFeedbackRuntime(runtime *solv
 		}
 		factorAt[addition.edge.key] = index
 	}
-	regions, children, bound := bindRuntimeRegionsWithEdges(oracle, active, runtime.carrier, runtime.producers, runtimeRegionEdgeResolver{
+	regions, children, bound := bindRuntimeRegionsWithEdges(oracle, active, runtime.carrier, runtime.producers, runtime.overlay.reindexes, runtimeRegionEdgeResolver{
 		runtime: true,
 		environment: func(edge equation.EnvironmentEdgeNode) (int, bool) {
 			index, indexed := oracle.EnvironmentEdgeIndex(edge)
@@ -439,15 +469,10 @@ func (prepared *preparedSelectedFactorOverlay) bindFeedbackRuntime(runtime *solv
 		}
 		pointRegion[index] = region
 	}
-	influenced := false
-	for _, selected := range active {
-		influenced = influenced || selected
-	}
-	if !influenced {
-		return false
-	}
 	prepared.execution = oracle.Schedule()
 	prepared.executionDemand = demanded
+	prepared.selectedPoints = selectedPoints
+	prepared.activePoints = activePoints
 	prepared.regions = regions
 	prepared.regionChildren = children
 	prepared.pointRegion = pointRegion
@@ -594,17 +619,13 @@ func (prepared *preparedSelectedFactorOverlay) collectTargets(active []bool) boo
 		if addition.edge.target < 0 || addition.edge.target >= len(active) {
 			return false
 		}
-		if active[addition.edge.target] {
-			seen[addition.edge.target] = struct{}{}
-		}
+		seen[addition.edge.target] = struct{}{}
 	}
 	for _, replacement := range prepared.replacements {
 		if replacement.edge.target < 0 || replacement.edge.target >= len(active) {
 			return false
 		}
-		if active[replacement.edge.target] {
-			seen[replacement.edge.target] = struct{}{}
-		}
+		seen[replacement.edge.target] = struct{}{}
 	}
 	prepared.targets = make([]int, 0, len(seen))
 	for target := range seen {
@@ -616,14 +637,13 @@ func (prepared *preparedSelectedFactorOverlay) collectTargets(active []bool) boo
 
 func runtimeSelectedOverlayEligible(runtime *solverRuntime) bool {
 	return runtime != nil && runtime.graph != nil && runtime.carrier != nil && runtime.points != nil && runtime.topology != nil &&
-		runtime.graph.RegionCount() == 0 && runtime.graph.Schedule() != nil && runtime.graph.Schedule().RegionCount() == 0 &&
+		runtime.graph.Schedule() != nil &&
 		runtimeSelectedOverlayRowsValid(runtime)
 }
 
 func runtimeSelectedOverlayRowsValid(runtime *solverRuntime) bool {
 	return runtimeSelectedOverlayShapeValid(runtime) &&
-		runtimeSelectedOverlayIndexCachesValid(runtime) &&
-		runtimeSelectedOverlayRecurrenceFree(runtime)
+		runtimeSelectedOverlayIndexCachesValid(runtime)
 }
 
 func runtimeSelectedOverlayShapeValid(runtime *solverRuntime) bool {
@@ -637,13 +657,12 @@ func runtimeSelectedOverlayIndexCachesValid(runtime *solverRuntime) bool {
 		return false
 	}
 	overlay := runtime.overlay
-	return overlay.factorByKey != nil && overlay.staticOrigins != nil && overlay.originAt != nil && overlay.directAt != nil &&
+	return runtime.program.valid() && overlay.staticOrigins != nil && overlay.originAt != nil && overlay.directAt != nil &&
 		overlay.dependencyAt != nil && overlay.reindexes.scopes != nil &&
 		overlay.reindexes.plans != nil && overlay.reindexes.decisions != nil &&
 		overlay.latePlans != nil && overlay.generation.Available()
 }
 
-func runtimeSelectedOverlayRecurrenceFree(runtime *solverRuntime) bool {
-	return runtime != nil && len(runtime.regions) == 0 &&
-		len(runtime.activeRegions) == 0 && len(runtime.regionChildren) == 0
+func validAcceptedActivations(topology *equation.Topology, accepted []equation.AcceptedMember) bool {
+	return topology != nil && topology.ValidAccepted(accepted)
 }

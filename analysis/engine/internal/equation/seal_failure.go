@@ -5,8 +5,8 @@ import (
 	"encoding/hex"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/internal/canonical"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/internal/canonical"
 )
 
 // SealFailureFamily names the equation authority that refused one seal. It is

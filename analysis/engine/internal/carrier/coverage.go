@@ -577,6 +577,26 @@ func (work *Work) lessOrEqContributionSurface(leftState State, leftCoverage cont
 	return true
 }
 
+func (work *Work) ascentOrderedContributionSurface(leftState State, leftCoverage contributionCoverage, rightState State, rightCoverage contributionCoverage) bool {
+	if !work.validContributionSurface(leftState, leftCoverage) || !work.validContributionSurface(rightState, rightCoverage) || !work.liveFor(leftState, rightState) || !leftState.support.Entails(rightState.support) {
+		return false
+	}
+	if sameState(leftState, rightState) && sameContributionCoverage(leftCoverage, rightCoverage) {
+		return true
+	}
+	for position, slot := range work.slots {
+		if !work.live() || slot == nil {
+			return false
+		}
+		physical := shape.Slot(position)
+		ordered, valid := slot.AscentOrderedContributionUnder(leftState.roots[position], rightState.roots[position], leftState.support, rightState.support, coverageRows(leftCoverage.slot(physical)), coverageRows(rightCoverage.slot(physical)))
+		if !valid || !ordered {
+			return false
+		}
+	}
+	return true
+}
+
 func (work *Work) equalContributionSurface(leftState State, leftCoverage contributionCoverage, rightState State, rightCoverage contributionCoverage) bool {
 	if work.validContributionSurface(leftState, leftCoverage) && work.validContributionSurface(rightState, rightCoverage) && work.liveFor(leftState, rightState) && sameState(leftState, rightState) && sameContributionCoverage(leftCoverage, rightCoverage) {
 		return true

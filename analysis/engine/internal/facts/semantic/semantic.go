@@ -228,6 +228,36 @@ func (domain *Domain[F, K, V]) LessOrEqContribution(left, right Plane[F, K, V], 
 	if left.root == right.root {
 		return true
 	}
+	return domain.compareContributionCells(left, right, regions, scratch, domain.ops.LessOrEq)
+}
+
+// AscentOrderedContribution proves Kleene progress for one closed contribution
+// replacement. Inclusion is sufficient. A defined Widen that dominates both
+// cells is also progress: it is the same cell relation a recurrent head uses
+// when it Widens, so a replaced summand may change control family without
+// being inclusion-ordered.
+func (domain *Domain[F, K, V]) AscentOrderedContribution(left, right Plane[F, K, V], regions ContributionRegions[K], scratch *diagram.SoleScratch[K, V]) bool {
+	if !domain.validPlane(left) || !domain.validPlane(right) || regions == nil || scratch == nil || domain.ops.Widen == nil {
+		return false
+	}
+	if left.root == right.root {
+		return true
+	}
+	return domain.compareContributionCells(left, right, regions, scratch, domain.ascentOrderedCell)
+}
+
+func (domain *Domain[F, K, V]) ascentOrderedCell(left, right V) bool {
+	if domain.ops.LessOrEq(left, right) {
+		return true
+	}
+	widened, ok := domain.ops.Widen(left, right)
+	return ok && domain.ops.LessOrEq(left, widened) && domain.ops.LessOrEq(right, widened)
+}
+
+func (domain *Domain[F, K, V]) compareContributionCells(left, right Plane[F, K, V], regions ContributionRegions[K], scratch *diagram.SoleScratch[K, V], ordered func(V, V) bool) bool {
+	if ordered == nil {
+		return false
+	}
 	return domain.diagram.CompareSoleFactorRegions(left.root, right.root, scratch, regions, func(first, second terminal.ID[V]) bool {
 		leftValue, leftOK := domain.ops.Default, true
 		if first != (terminal.ID[V]{}) {
@@ -237,7 +267,7 @@ func (domain *Domain[F, K, V]) LessOrEqContribution(left, right Plane[F, K, V], 
 		if second != (terminal.ID[V]{}) {
 			rightValue, rightOK = domain.terminals.Value(second)
 		}
-		return leftOK && rightOK && domain.ops.LessOrEq(leftValue, rightValue)
+		return leftOK && rightOK && ordered(leftValue, rightValue)
 	})
 }
 
@@ -297,7 +327,11 @@ func (domain *Domain[F, K, V]) SummaryUnder(input Plane[F, K, V], key K, region 
 // typed plane admits one, remains distinguishable through present=true. This
 // is the one-key read primitive for Binding observations: it walks the FDD
 // value once and never scans another key or the complete plane.
-func (domain *Domain[F, K, V]) PartitionKey(input Plane[F, K, V], key K, region support.Mask, visit func(value V, present bool, cell support.Mask) bool) bool {
+//
+// scratch lends the caller's support shell to the refinement this read
+// performs. It is the read's Boolean cost, and an evaluator reading one key at
+// a time owns exactly one such shell; a caller without one passes nil.
+func (domain *Domain[F, K, V]) PartitionKey(input Plane[F, K, V], key K, region support.Mask, scratch *support.Work, visit func(value V, present bool, cell support.Mask) bool) bool {
 	DbgPartitionKey.Add(1)
 	if domain == nil || domain.diagram == nil || !domain.validPlane(input) || !domain.validSupport(region) || visit == nil {
 		return false
@@ -316,7 +350,7 @@ func (domain *Domain[F, K, V]) PartitionKey(input Plane[F, K, V], key K, region 
 	if !present {
 		return visit(domain.ops.Default, false, region)
 	}
-	completed, partitioned := domain.diagram.PartitionValueTerminals(value, region, func(id terminal.ID[V], cell support.Mask) bool {
+	completed, partitioned := domain.diagram.PartitionValueTerminals(value, region, scratch, func(id terminal.ID[V], cell support.Mask) bool {
 		if id == (terminal.ID[V]{}) {
 			return visit(domain.ops.Default, false, cell)
 		}
@@ -345,7 +379,10 @@ func (domain *Domain[F, K, V]) ForEachNonDefault(input Plane[F, K, V], region su
 		return true
 	}
 	completed, traversed := domain.diagram.ForEach(input.root, func(fact diagram.Fact[F, K, V]) bool {
-		return domain.PartitionKey(input, fact.Key, region, func(value V, present bool, cell support.Mask) bool {
+		// This stream owns no Boolean shell of its own: it is a whole-plane
+		// traversal, not the one-key read an evaluator repeats, so each column's
+		// refinement pays for its own transaction.
+		return domain.PartitionKey(input, fact.Key, region, nil, func(value V, present bool, cell support.Mask) bool {
 			if !present || domain.ops.Equal(value, domain.ops.Default) {
 				return true
 			}
@@ -901,6 +938,11 @@ const (
 	binaryJoin binaryKind = iota
 	binaryWiden
 	binaryNarrow
+	// binaryPreserve carries an unselected Factor across a transition. Its
+	// operation is an equality gate, not a lattice combinator, so it owns a
+	// kind of its own: the join fast path would silently absorb the very
+	// mismatch the gate exists to refuse.
+	binaryPreserve
 )
 
 func (domain *Domain[F, K, V]) terminalsBinary(values *terminal.Work[V], operation Binary[V], kind binaryKind, key K) diagram.Combine[V] {
@@ -944,6 +986,7 @@ func (domain *Domain[F, K, V]) terminalsBinary(values *terminal.Work[V], operati
 		}
 		switch kind {
 		case binaryJoin:
+		case binaryPreserve:
 		case binaryWiden:
 			if !domain.ops.LessOrEq(leftValue, output) || !domain.ops.LessOrEq(rightValue, output) {
 				return terminal.ID[V]{}, false

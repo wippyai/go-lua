@@ -32,6 +32,7 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *SchemaFra
 	return rule.Spec[P, A, *SchemaFragment, *HotRule]{
 		Key:    "heap-ingress",
 		Writes: "heap",
+		Owner:  "heap",
 		Issues: []rule.Issuance{
 			{Occurrence: "occurrence/allocation", Form: "issuance/base", Input: "input/none", Stage: "stage/base"},
 		},
@@ -54,14 +55,7 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *SchemaFra
 		Finalize: func(context rule.Finalization[A, *HotRule]) bool {
 			return context.Rule.AttachCatalog(context.Authorities.Allocations())
 		},
-		Attach: func(context rule.Attach[*HotRule]) bool {
-			_, ok := context.Rule.AttachMountedOccurrence(context.Assembly, context.Mount, context.Point, context.Occurrence)
-			return ok
-		},
-		Member: func(context rule.Member[*HotRule]) bool {
-			_, ok := context.Rule.AttachMountedReceiptMember(context.Compilation, context.Graph, context.Mount, context.Point, context.Occurrence)
-			return ok
-		},
+
 	}
 }
 

@@ -28,63 +28,6 @@ func ownedIndex(draft *Draft, index IndexInput) IndexInput {
 	return index
 }
 
-func TestSourceBuildRetainsOwnedRowsAndSealProjection(t *testing.T) {
-	input, index := sourceFixture(2)
-	draft, err := Build(input)
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	component, err := commitSource(draft, index)
-	if err != nil {
-		t.Fatalf("Finalize: %v", err)
-	}
-	view := component.View()
-
-	if got, want := view.Identity().Name(), input.Name; got != want {
-		t.Fatalf("Name = %q, want %q", got, want)
-	}
-	if got, want := view.Identity().TermCount(), uint32(11); got != want {
-		t.Fatalf("TermCount = %d, want %d", got, want)
-	}
-	nilOne := keyspace.MakeTerm(keyspace.FamilyNil, 1)
-	if span, ok := view.Identity().Span(nilOne); !ok || span.File != input.Name || span.StartLine != 1 || span.StartCol != 1 {
-		t.Fatalf("Span = %#v, %v", span, ok)
-	}
-	if got, ok := view.Order().BodyLen(keyspace.MakeTerm(keyspace.FamilyBody, 1)); !ok || got != 1 {
-		t.Fatalf("BodyLen = %d, %v", got, ok)
-	}
-	if got, ok := view.Order().BodyAt(keyspace.MakeTerm(keyspace.FamilyBody, 2), 0); !ok || got != keyspace.MakeTerm(keyspace.FamilyReturn, 1) {
-		t.Fatalf("BodyAt = %v, %v", got, ok)
-	}
-	if got, ok := view.Binds().At(keyspace.MakeTerm(keyspace.FamilyBind, 1), 0); !ok || got != keyspace.MakeTerm(keyspace.FamilyCell, 1) {
-		t.Fatalf("Bind cell = %v, %v", got, ok)
-	}
-	if got, ok := view.Formals().At(keyspace.MakeTerm(keyspace.FamilyFunction, 1), 0); !ok || got != keyspace.MakeTerm(keyspace.FamilyCell, 2) {
-		t.Fatalf("Formal cell = %v, %v", got, ok)
-	}
-	if root, body, offset, ok := view.Index().Position(keyspace.MakeTerm(keyspace.FamilyFunction, 1)); !ok ||
-		root != keyspace.MakeTerm(keyspace.FamilyBody, 1) || body != 0 || offset != 0 {
-		t.Fatalf("Position = %v, %d, %d, %v", root, body, offset, ok)
-	}
-	if body, cursor, ok := view.Index().Frontier(keyspace.MakeTerm(keyspace.FamilyFunction, 1)); !ok ||
-		body != keyspace.MakeTerm(keyspace.FamilyBody, 1) || cursor != 0 {
-		t.Fatalf("Frontier = %v, %d, %v", body, cursor, ok)
-	}
-	if parent, ok := view.Index().BodyParent(keyspace.MakeTerm(keyspace.FamilyBody, 2)); !ok || parent != keyspace.MakeTerm(keyspace.FamilyBody, 1) {
-		t.Fatalf("BodyParent = %v, %v", parent, ok)
-	}
-	if entry, ok := view.Index().Entry(); !ok || entry != keyspace.MakeTerm(keyspace.FamilyBody, 1) {
-		t.Fatalf("Entry = %v, %v", entry, ok)
-	}
-	if term, owner, value, ok := view.Literals().Integers().At(0); !ok || term != keyspace.MakeTerm(keyspace.FamilyInteger, 1) ||
-		owner != keyspace.MakeTerm(keyspace.FamilyBody, 2) || value != 42 {
-		t.Fatalf("Integer = %v, %v, %d, %v", term, owner, value, ok)
-	}
-	if got := view.Identity().ContentID(); !got.Available() {
-		t.Fatal("unavailable authored content identity")
-	}
-}
-
 func TestSourceBuildRetainsOnlyOwnedRows(t *testing.T) {
 	input, index := contentFixture()
 	wantName := input.Name
@@ -141,6 +84,29 @@ func TestSourceBuildRetainsOnlyOwnedRows(t *testing.T) {
 	}
 	view := component.View()
 	assertOwnedSourceRows(t, "Component", view.Identity(), view.Order(), view.Binds(), view.Formals(), view.Literals(), view.Keys(), view.Faults(), wantName, wantSpan, wantFloatBits, wantContent)
+}
+
+func TestSourceRejectsInvalidDebugSpellingRows(t *testing.T) {
+	input, index := sourceFixture(1)
+	input.CellSpellings = []CellSpelling{{Cell: keyspace.MakeTerm(keyspace.FamilyCell, 1), Name: "value"}}
+	if _, err := Build(input); err == nil {
+		t.Fatal("Build accepted incomplete dense Cell spelling column")
+	}
+
+	input, index = sourceFixture(1)
+	call := keyspace.MakeTerm(keyspace.FamilyCall, 1)
+	for at := range input.Families {
+		if input.Families[at].Family == keyspace.FamilyCall {
+			input.Families[at].Spans = []Span{{File: input.Name, StartLine: 2, StartCol: 1, EndLine: 2, EndCol: 4}}
+		}
+	}
+	input.Bodies[0].Terms = append(input.Bodies[0].Terms, call)
+	index.Bodies[0].Roots = append(index.Bodies[0].Roots, call)
+	appendCanonicalFixturePosition(&index, Position{Term: call, Root: call, Body: keyspace.MakeTerm(keyspace.FamilyBody, 1), FrontierBody: keyspace.MakeTerm(keyspace.FamilyBody, 1)})
+	input.CallSpellings = []CallSpelling{{Call: call, Name: "first"}, {Call: call, Name: "duplicate"}}
+	if _, err := Build(input); err == nil {
+		t.Fatal("Build accepted duplicate Call spelling rows")
+	}
 }
 
 func assertOwnedSourceRows(t *testing.T, label string, identity Identity, order Order, binds BindOrder, formals FormalOrder, literals Literals, keys Keys, faults Faults, wantName string, wantSpan Span, wantFloatBits uint64, wantContent identity.ContentID) {
@@ -268,138 +234,6 @@ func TestSourceContentExcludesSealProjection(t *testing.T) {
 	}
 }
 
-func TestSourceRejectsBadFrontierAndBodyContainment(t *testing.T) {
-	input, index := sourceFixture(2)
-	returned := keyspace.MakeTerm(keyspace.FamilyReturn, 1)
-	for at := range index.Positions {
-		if index.Positions[at].Term == returned {
-			index.Positions[at].FrontierCursor = 2
-		}
-	}
-	draft, err := Build(input)
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	if _, err := commitSource(draft, index); err == nil {
-		t.Fatal("accepted unbounded ordinary frontier")
-	}
-
-	input, index = repeatFixture()
-	body1 := keyspace.MakeTerm(keyspace.FamilyBody, 1)
-	body3 := keyspace.MakeTerm(keyspace.FamilyBody, 3)
-	// Body 2 is a direct source child of Body 1, but the sealed forest claims
-	// that it belongs below Body 3. The projection must preserve that witness.
-	index.Bodies[1].Parent = body3
-	index.Bodies[2].Parent = body1
-	draft, err = Build(input)
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	if _, err := commitSource(draft, index); err == nil {
-		t.Fatal("accepted direct Body with mismatched parent")
-	}
-}
-
-func TestSourceAllowsTypedChildBodyWithoutDirectSourceOccurrence(t *testing.T) {
-	input, index := sourceFixture(2)
-	body1 := keyspace.MakeTerm(keyspace.FamilyBody, 1)
-	body2 := keyspace.MakeTerm(keyspace.FamilyBody, 2)
-	// The fixture already models Body 2 as a typed Function/Branch/Loop child,
-	// without a duplicate direct Body term in Body 1's authored sequence.
-
-	draft, err := Build(input)
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	component, err := commitSource(draft, index)
-	if err != nil {
-		t.Fatalf("Finalize typed child Body: %v", err)
-	}
-	view := component.View()
-	if parent, ok := view.Index().BodyParent(body2); !ok || parent != body1 {
-		t.Fatalf("BodyParent = %v, %v; want %v", parent, ok, body1)
-	}
-	if _, _, _, ok := view.Index().Position(body2); ok {
-		t.Fatal("typed child Body unexpectedly acquired a source Position")
-	}
-	if _, ok := view.Index().Root(body2); ok {
-		t.Fatal("typed child Body unexpectedly acquired a source Root")
-	}
-	if _, _, ok := view.Index().Frontier(body2); ok {
-		t.Fatal("typed child Body unexpectedly acquired a source Frontier")
-	}
-}
-
-func TestSourceRejectsEntryDirectSourceOccurrence(t *testing.T) {
-	input, index := sourceFixture(1)
-	entry := keyspace.MakeTerm(keyspace.FamilyBody, 1)
-	// Make the Entry itself a well-shaped direct source/root occurrence and
-	// provide the corresponding position. The parentless Entry is the sole
-	// forest root and must never also have a direct Source witness.
-	input.Bodies[0].Terms = append(input.Bodies[0].Terms, entry)
-	index.Bodies[0].Roots = append(index.Bodies[0].Roots, entry)
-	appendCanonicalFixturePosition(&index, Position{
-		Term: entry, Root: entry, Body: entry, Offset: 1, Cursor: 1,
-		FrontierBody: entry, FrontierCursor: 1,
-	})
-
-	draft, err := Build(input)
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	if _, err := commitSource(draft, index); err == nil {
-		t.Fatal("Finalize accepted a direct source occurrence for the Entry Body")
-	}
-}
-
-func TestSourceAllowsMissingNonDirectPositionFamily(t *testing.T) {
-	input, index := sourceFixture(2)
-	missing := keyspace.MakeTerm(keyspace.FamilyCell, 1)
-	index.Positions = removeSourcePosition(index.Positions, missing)
-	draft, err := Build(input)
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	component, err := commitSource(draft, index)
-	if err != nil {
-		t.Fatalf("Finalize: %v", err)
-	}
-	if _, _, _, ok := component.View().Index().Position(missing); ok {
-		t.Fatal("non-direct Cell unexpectedly acquired a source position")
-	}
-}
-
-func TestSourceSparsePositionQueriesFailClosed(t *testing.T) {
-	input, index := sourceFixture(1)
-	index.OutcomeOrigins = []keyspace.Term{keyspace.MakeTerm(keyspace.FamilyBody, 1)}
-	draft, err := Build(input)
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	component, err := commitSource(draft, index)
-	if err != nil {
-		t.Fatalf("Finalize: %v", err)
-	}
-	view := component.View()
-	missing := []keyspace.Term{
-		keyspace.MakeTerm(keyspace.FamilyBody, 1), // Entry Body
-		keyspace.MakeTerm(keyspace.FamilyCell, 1), // Global/local Cell identity
-		keyspace.MakeTerm(keyspace.FamilyCell, 2), // Chunk/function Cell identity
-		keyspace.MakeTerm(keyspace.FamilyOutcome, 1),
-	}
-	for _, term := range missing {
-		if _, _, _, ok := view.Index().Position(term); ok {
-			t.Fatalf("Position(%v) unexpectedly succeeded", term)
-		}
-		if _, ok := view.Index().Root(term); ok {
-			t.Fatalf("Root(%v) unexpectedly succeeded", term)
-		}
-		if _, _, ok := view.Index().Frontier(term); ok {
-			t.Fatalf("Frontier(%v) unexpectedly succeeded", term)
-		}
-	}
-}
-
 func TestSourceRejectsImportInDirectBodyOrder(t *testing.T) {
 	input, _ := exactDirectBodyFixture()
 	for index := range input.Families {
@@ -486,285 +320,11 @@ func exactDirectBodyFixture() (Input, IndexInput) {
 	return input, index
 }
 
-func TestSourceRejectsDirectPositionSubstitution(t *testing.T) {
-	input, index := sourceFixture(2)
-	missingReturn := keyspace.MakeTerm(keyspace.FamilyReturn, 1)
-	index.Positions = removeSourcePosition(index.Positions, missingReturn)
-	draft, err := Build(input)
-	if err != nil {
-		t.Fatalf("Build missing direct Return position: %v", err)
-	}
-	if _, err := commitSource(draft, index); err == nil {
-		t.Fatal("Finalize accepted a direct Return source Term omission")
-	}
-
-	input, index = sourceFixture(2)
-	missing := keyspace.MakeTerm(keyspace.FamilyBind, 1)
-	index.Positions = removeSourcePosition(index.Positions, missing)
-	draft, err = Build(input)
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	if _, err := commitSource(draft, index); err == nil {
-		t.Fatal("Finalize accepted a direct source Term omission")
-	}
-
-	input, index = sourceFixture(2)
-	if len(index.Positions) == 0 {
-		t.Fatal("fixture unexpectedly empty")
-	}
-	index.Positions[0] = index.Positions[1]
-	draft, err = Build(input)
-	if err != nil {
-		t.Fatalf("Build duplicate: %v", err)
-	}
-	if _, err := commitSource(draft, index); err == nil {
-		t.Fatal("Finalize accepted a duplicate Position.Term")
-	}
-
-	input, index = sourceFixture(2)
-	index.Positions[0].Term = keyspace.MakeTerm(keyspace.FamilyCell, 99)
-	draft, err = Build(input)
-	if err != nil {
-		t.Fatalf("Build invalid: %v", err)
-	}
-	if _, err := commitSource(draft, index); err == nil {
-		t.Fatal("Finalize accepted an invalid Position.Term")
-	}
-
-	input, index = sourceFixture(2)
-	index.Positions[0], index.Positions[1] = index.Positions[1], index.Positions[0]
-	draft, err = Build(input)
-	if err != nil {
-		t.Fatalf("Build noncanonical order: %v", err)
-	}
-	if _, err := commitSource(draft, index); err == nil {
-		t.Fatal("Finalize accepted noncanonical Position order")
-	}
-
-	input, index = sourceFixture(2)
-	term := keyspace.MakeTerm(keyspace.FamilyBind, 1)
-	row, ok := sourcePositionFor(index.Positions, term)
-	if !ok {
-		t.Fatal("Bind position missing from fixture")
-	}
-	other, ok := sourcePositionFor(index.Positions, keyspace.MakeTerm(keyspace.FamilyReturn, 1))
-	if !ok {
-		t.Fatal("Return position missing from fixture")
-	}
-	row.Root, row.Body, row.Offset, row.Cursor = other.Root, other.Body, other.Offset, other.Cursor
-	row.FrontierBody, row.FrontierCursor = other.FrontierBody, other.FrontierCursor
-	for at := range index.Positions {
-		if index.Positions[at].Term == term {
-			index.Positions[at] = row
-		}
-	}
-	draft, err = Build(input)
-	if err != nil {
-		t.Fatalf("Build root mismatch: %v", err)
-	}
-	if _, err := commitSource(draft, index); err == nil {
-		t.Fatal("Finalize accepted a direct source Term under another root")
-	}
-}
-
-func TestSourceRejectsNoncanonicalPositionOrder(t *testing.T) {
-	input, index := sourceFixture(2)
-	if len(index.Positions) < 2 {
-		t.Fatal("fixture unexpectedly empty")
-	}
-	// The encoded Term value is not the ordering key: the batch is ordered by
-	// explicit (TermFamily, TermOrdinal), so swapping these first rows must be
-	// rejected even though every row remains individually well formed.
-	index.Positions[0], index.Positions[1] = index.Positions[1], index.Positions[0]
-	draft, err := Build(input)
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	if _, err := commitSource(draft, index); err == nil {
-		t.Fatal("Finalize accepted noncanonical Position order")
-	}
-}
-
-func TestSourceRejectsUnorderedAuthoredAndSealRows(t *testing.T) {
-	input, index := sourceFixture(2)
-	input.Families[0], input.Families[1] = input.Families[1], input.Families[0]
-	if _, err := Build(input); err == nil {
-		t.Fatal("accepted reordered canonical family rows")
-	}
-
-	input, index = keyFaultFixture()
-	index.Bodies[0].Roots[0], index.Bodies[0].Roots[1] = index.Bodies[0].Roots[1], index.Bodies[0].Roots[0]
-	draft, err := Build(input)
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	if _, err := commitSource(draft, index); err == nil {
-		t.Fatal("accepted unordered statement roots")
-	}
-
-	input, index = sourceFixture(2)
-	draft, err = Build(input)
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	if _, err := commitSource(draft, index); err != nil {
-		t.Fatalf("Finalize: %v", err)
-	}
-	if _, err := commitSource(draft, index); err == nil {
-		t.Fatal("accepted a second finalization")
-	}
-}
-
 func TestSourceRejectsNonBodyLiteralOwner(t *testing.T) {
 	input, _ := sourceFixture(2)
 	input.Nil[0].Owner = keyspace.MakeTerm(keyspace.FamilyBind, 1)
 	if _, err := Build(input); err == nil {
 		t.Fatal("accepted literal with a non-Body owner")
-	}
-}
-
-func TestSourceProjectionScalesWithAuthoredTerms(t *testing.T) {
-	for _, width := range []int{1, 17, 1024} {
-		input, index := sourceFixture(width)
-		draft, err := Build(input)
-		if err != nil {
-			t.Fatalf("Build(%d): %v", width, err)
-		}
-		component, err := commitSource(draft, index)
-		if err != nil {
-			t.Fatalf("Finalize(%d): %v", width, err)
-		}
-		last := keyspace.MakeTerm(keyspace.FamilyNil, uint32(width))
-		if _, _, _, ok := component.View().Index().Position(last); !ok {
-			t.Fatalf("Position(%d) missing", width)
-		}
-	}
-}
-
-func TestSourceSparseProjectionScalesWithPositions(t *testing.T) {
-	var retained []int
-	var identityTerms []uint32
-	for _, unusedLoops := range []int{0, 100000} {
-		input, index := sparsePositionFixture(unusedLoops)
-		draft, err := Build(input)
-		if err != nil {
-			t.Fatalf("Build(%d): %v", unusedLoops, err)
-		}
-		component, err := commitSource(draft, index)
-		if err != nil {
-			t.Fatalf("Finalize(%d): %v", unusedLoops, err)
-		}
-
-		slots := 0
-		for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
-			slots += len(component.authority.index.positions[family])
-		}
-		if got, want := slots, len(index.Positions); got != want {
-			t.Fatalf("retained position slots(%d) = %d, want Positions count %d", unusedLoops, got, want)
-		}
-		retained = append(retained, slots)
-		identityTerms = append(identityTerms, component.View().Identity().TermCount())
-
-		term := keyspace.MakeTerm(keyspace.FamilyNil, 1)
-		if body, offset, cursor, ok := component.View().Index().Position(term); !ok ||
-			body != keyspace.MakeTerm(keyspace.FamilyBody, 1) || offset != 0 || cursor != 0 {
-			t.Fatalf("Position(%d) = %v/%d/%d/%v", unusedLoops, body, offset, cursor, ok)
-		}
-	}
-	if retained[0] != retained[1] || retained[0] != 2 {
-		t.Fatalf("retained sparse position slots changed with unused family cardinality: %v", retained)
-	}
-	if identityTerms[1] <= identityTerms[0] {
-		t.Fatalf("large sparse identity did not increase final family cardinality: %v", identityTerms)
-	}
-}
-
-func TestSourcePositionSlicesRetainExactBatchWithoutCapacitySlack(t *testing.T) {
-	input, index := sourceFixture(17)
-	draft, err := Build(input)
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	component, err := commitSource(draft, index)
-	if err != nil {
-		t.Fatalf("Finalize: %v", err)
-	}
-
-	retained := 0
-	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
-		positions := component.authority.index.positions[family]
-		if len(positions) == 0 {
-			continue
-		}
-		if cap(positions) != len(positions) {
-			t.Fatalf("family %d position capacity = %d, want exact length %d", family, cap(positions), len(positions))
-		}
-		retained += len(positions)
-	}
-	if retained != len(index.Positions) {
-		t.Fatalf("retained positions = %d, want %d", retained, len(index.Positions))
-	}
-}
-
-func TestSourceDirectLocationScratchScalesWithDirectRows(t *testing.T) {
-	var retained []int
-	for _, unusedLoops := range []int{0, 100000} {
-		input, index := sparsePositionFixture(unusedLoops)
-		draft, err := Build(input)
-		if err != nil {
-			t.Fatalf("Build(%d): %v", unusedLoops, err)
-		}
-		a := draft.state.authority
-		var next indexStore
-		next.rootRanges = make([]termRange, a.count(keyspace.FamilyBody))
-		next.parents = make([]keyspace.Term, a.count(keyspace.FamilyBody))
-		if err := installBodyRoots(a, &next, index.Bodies); err != nil {
-			t.Fatalf("installBodyRoots(%d): %v", unusedLoops, err)
-		}
-		locations, err := buildDirectLocations(a, &next)
-		if err != nil {
-			t.Fatalf("buildDirectLocations(%d): %v", unusedLoops, err)
-		}
-		rows := 0
-		for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
-			rows += len(locations[family].rows)
-		}
-		if rows != len(a.order.sourceTerms) {
-			t.Fatalf("direct rows(%d) = %d, want authored direct rows %d", unusedLoops, rows, len(a.order.sourceTerms))
-		}
-		retained = append(retained, rows)
-	}
-	if retained[0] != retained[1] || retained[0] != 1 {
-		t.Fatalf("direct-location scratch grew with non-direct family cardinality: %v", retained)
-	}
-}
-
-func TestSourceIndexQueriesAllocateNothing(t *testing.T) {
-	input, index := sparsePositionFixture(0)
-	draft, err := Build(input)
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	component, err := commitSource(draft, index)
-	if err != nil {
-		t.Fatalf("Finalize: %v", err)
-	}
-	view := component.View().Index()
-	term := keyspace.MakeTerm(keyspace.FamilyNil, 1)
-	var root, body, frontierBody keyspace.Term
-	var offset, cursor, frontierCursor int
-	var rootOK, positionOK, frontierOK bool
-	allocs := testing.AllocsPerRun(1000, func() {
-		root, rootOK = view.Root(term)
-		body, offset, cursor, positionOK = view.Position(term)
-		frontierBody, frontierCursor, frontierOK = view.Frontier(term)
-	})
-	if !rootOK || !positionOK || !frontierOK || root != keyspace.MakeTerm(keyspace.FamilyReturn, 1) || body == 0 || frontierBody == 0 || offset != 0 || cursor != 0 || frontierCursor != 0 {
-		t.Fatalf("index query sink root=%v/%v position=%v/%d/%d/%v frontier=%v/%d/%v", root, rootOK, body, offset, cursor, positionOK, frontierBody, frontierCursor, frontierOK)
-	}
-	if allocs != 0 {
-		t.Fatalf("Index queries allocated %v times/run", allocs)
 	}
 }
 

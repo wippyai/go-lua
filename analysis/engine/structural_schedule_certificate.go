@@ -158,15 +158,15 @@ func validateMountedArtifactSchedule(artifactRows *artifactReceiptTopology, topo
 	}
 	localStages := make(map[identity.ContentID]struct{})
 	for _, placement := range artifactRows.ruleSet {
-		switch placement.stage {
-		case rows.ArtifactRuleStageBase:
-		case rows.ArtifactRuleStageLocal:
+		switch {
+		case placement.stage == rows.ArtifactRuleStageBase:
+		case placement.stage == rows.ArtifactRuleStageLocal:
 			if _, native := stageKind[placement.mountedPoint]; native {
 				offense.observe(uint32(pointRank[placement.mountedPoint]))
 				continue
 			}
 			localStages[placement.mountedPoint] = struct{}{}
-		case rows.ArtifactRuleStageCallDispatch, rows.ArtifactRuleStageCallSummary, rows.ArtifactRuleStageCallEffect:
+		case placement.stage.NativeCall():
 			if owner, native := stageKind[placement.mountedPoint]; !native || owner != placement.stage {
 				offense.observe(uint32(pointRank[placement.mountedPoint]))
 			}

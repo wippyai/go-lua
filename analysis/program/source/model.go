@@ -74,6 +74,23 @@ type FunctionFormals struct {
 	Formals  []keyspace.Term
 }
 
+// CellSpelling is the authored debug name for one lexical Cell.  Cell rows
+// are dense and keyed by the existing FamilyCell term; an empty Name means
+// that the cell has no authored spelling (for example a compiler-created
+// temporary or an anonymous capture).
+type CellSpelling struct {
+	Cell keyspace.Term
+	Name string
+}
+
+// CallSpelling is an optional authored debug name for one Call.  Dynamic or
+// otherwise unnamed calls have no row.  Rows are stored in FamilyCall ordinal
+// order and never create a second call identity authority.
+type CallSpelling struct {
+	Call keyspace.Term
+	Name string
+}
+
 // Input is the authored Source boundary. Final Terms are allocated by root;
 // Source only validates dense family ownership and retains the supplied rows.
 type Input struct {
@@ -87,6 +104,13 @@ type Input struct {
 	Bodies    []BodySource
 	Binds     []BindCells
 	Functions []FunctionFormals
+	// CellSpellings is the dense authored debug-spelling column. A nil slice
+	// is accepted as the all-absent dense column for generic non-Lua fixtures;
+	// an explicit slice must contain exactly one row per Cell ordinal.
+	CellSpellings []CellSpelling
+	// CallSpellings is sparse: only statically named authored calls are
+	// supplied. Dynamic/unknown calls are represented by no row.
+	CallSpellings []CallSpelling
 	// ExactAtoms is the complete dense exact-key denominator for Program.
 	// Source normalizes and interns it once; all later components receive only
 	// Source-owned Key handles and cannot create a second atom authority.
@@ -182,6 +206,14 @@ type orderStore struct {
 	formalTerms  []keyspace.Term
 	formalRanges []termRange
 	formalOwners []keyspace.Term
+}
+
+type spellingStore struct {
+	// cells is always dense after Build, including zero-value entries for
+	// omitted generic-fixture metadata.
+	cells []string
+	// calls is sparse and remains in ascending FamilyCall ordinal order.
+	calls []CallSpelling
 }
 
 type positionSlot struct {
@@ -481,6 +513,7 @@ type authority struct {
 	identity  identityStore
 	literals  literalStore
 	order     orderStore
+	spellings spellingStore
 	keys      keyFaultStore
 	index     indexStore
 	cellRoles *cellRoleAuthority
@@ -558,6 +591,10 @@ type BindOrder struct {
 	state     *draftState
 }
 type FormalOrder struct {
+	authority *authority
+	state     *draftState
+}
+type Spellings struct {
 	authority *authority
 	state     *draftState
 }

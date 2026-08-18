@@ -3,10 +3,10 @@ package schedule_test
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
+	"github.com/wippyai/go-lua/domain/composite"
 )
 
 // The solver schedule spells the bracket-stream vocabulary a third time, under

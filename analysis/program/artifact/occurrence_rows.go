@@ -57,6 +57,12 @@ const (
 	OccurrenceReturnBoundary
 )
 
+// SpanResultOccurrence reports whether the family's result identity is the
+// operator's own program-owned span rather than a semantic occurrence.
+func SpanResultOccurrence(kind OccurrenceKind) bool {
+	return kind == OccurrenceBinaryArithmetic || kind == OccurrenceBinaryEquality || kind == OccurrenceBinaryOrder
+}
+
 func (kind OccurrenceKind) valid() bool {
 	return kind >= OccurrencePointAttachment && kind <= OccurrenceReturnBoundary
 }
@@ -125,7 +131,7 @@ func (row OccurrenceRow) Available() bool {
 	}
 	if row.kind == OccurrenceBinaryArithmetic {
 		op := flowkind.BinaryOp(row.code)
-		if !binaryArithmeticOperator(op) || len(row.inputs) != 2 {
+		if !flowkind.IsBinaryArithmetic(op) || len(row.inputs) != 2 {
 			return false
 		}
 	}
@@ -247,10 +253,6 @@ func (row OccurrenceRow) BinaryArithmetic() (left, right identity.ContentID, op 
 	return row.inputs[0], row.inputs[1], flowkind.BinaryOp(row.code), true
 }
 
-func binaryArithmeticOperator(op flowkind.BinaryOp) bool {
-	return op >= flowkind.BinaryAdd && op <= flowkind.BinaryPow
-}
-
 // BinaryOrder returns the authored ordered semantic operands and relational
 // operator of one retained primitive order computation.
 func (row OccurrenceRow) BinaryOrder() (left, right identity.ContentID, op flowkind.BinaryOp, ok bool) {
@@ -295,7 +297,3 @@ func (row OccurrenceRow) StorageRead() (cell, span identity.ContentID, ok bool) 
 	}
 	return row.inputs[0], row.inputs[1], true
 }
-
-// RuleRole is the closed global schema role catalog. A false Supported result
-// is deliberate: the artifact never invents a relation for a role that the
-// current Program proof surface cannot state exactly.

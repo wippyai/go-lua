@@ -1,18 +1,25 @@
 package engine
 
 import (
+	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 	"github.com/wippyai/go-lua/internal/canonical"
 )
 
-// The inert snapshot materializer: one completed solve published as immutable
-// snapshot columns. A materialization is a publication and never a computation.
-// It reads the solve's finished rows, seals one result column per declared
-// result axis, and registers each column answerable under its own family
-// identity, so a consumer reads a published answer through snapshot.OpenQuery
-// and snapshot.Query alone.
+const (
+	solvedQueryOutput       schema.Key = "engine/solved-query"
+	solvedObservationOutput schema.Key = "engine/solved-observation"
+	solvedPointOutput       schema.Key = "engine/solved-point-state"
+	solvedColumnWriter      schema.Key = "engine/solved-publisher"
+)
+
+// One completed solve published as immutable snapshot columns. A publication
+// is never a computation. beginSolvedPublication writes the declared axes,
+// and a consumer reads a published answer through snapshot.OpenQuery and
+// snapshot.Query alone.
 //
 // Every refusal here speaks the compile family of the public failure
 // vocabulary: sealing a publication is a cold seal, and the site digest carries
@@ -27,27 +34,23 @@ const (
 )
 
 const (
-	solvedSitePreflight      = "solved-snapshot/preflight"
-	solvedSiteCompletion     = "solved-snapshot/completion"
-	solvedSiteSchema         = "solved-snapshot/schema"
-	solvedSiteColumnWidth    = "solved-snapshot/column-width"
-	solvedSiteQueryRow       = "solved-snapshot/query-row"
-	solvedSiteObservationRow = "solved-snapshot/observation-row"
-	solvedSitePublication    = "solved-snapshot/publication"
-	solvedSiteAxis           = "solved-snapshot/axis"
-	solvedSiteRow            = "solved-snapshot/row"
-	solvedSiteDeclare        = "solved-snapshot/declare"
-	solvedSiteSeal           = "solved-snapshot/seal"
-	solvedSiteContent        = "solved-snapshot/content"
-	solvedSiteDelta          = "solved-snapshot/delta"
+	solvedSitePublication = "solved-snapshot/publication"
+	solvedSiteAxis        = "solved-snapshot/axis"
+	solvedSiteRow         = "solved-snapshot/row"
+	solvedSiteDeclare     = "solved-snapshot/declare"
+	solvedSiteSeal        = "solved-snapshot/seal"
+	solvedSiteContent     = "solved-snapshot/content"
+	solvedSiteDelta       = "solved-snapshot/delta"
 )
 
 // solvedLaneWidth is the width of the result lane vocabulary, which is what
 // indexes a materialization's per-lane family. solvedAxisCount is how many of
 // those lanes name an axis, which is how many column slots a publication fills.
 const (
-	solvedLaneWidth = int(resultLaneObservation) + 1
-	solvedAxisCount = solvedLaneWidth - 1
+	solvedLaneWidth    = int(resultLaneObservation) + 1
+	solvedAxisCount    = solvedLaneWidth - 1
+	solvedPointSlot    = uint32(solvedAxisCount)
+	solvedStoreColumns = solvedAxisCount + 1
 )
 
 // solvedAxisRole separates the two identities one result axis publishes: the
@@ -63,8 +66,8 @@ const (
 
 // solvedValue is the published result value one solve row carries. This alias
 // is the single declaration that names the engine's value model: every type and
-// function below names solvedValue, so a later value model reaches the
-// materializer through this line and through solvedResultsOf.
+// function below names solvedValue, so a later value model reaches
+// beginSolvedPublication through this line.
 type solvedValue = frozenValue
 
 // Answer is one published result row as a snapshot result column stores it. It
@@ -110,11 +113,9 @@ func DetachAnswer[R any](answer Answer) (R, bool) {
 	return freeze.Clone(value), true
 }
 
-// solvedResults is the whole input the materializer consumes: one completed
-// solve, described as the publication identities its snapshot is sealed under
-// and one ordered axis per declared result lane. Nothing below this value reads
-// a Solver, a State, a runtime, or a carrier, so a change to the engine's row
-// model reaches the materializer through solvedResultsOf and nowhere else.
+// solvedResults is the overlay dump commit folds into a content identity:
+// the publication identities a snapshot is sealed under and one ordered axis
+// per declared result lane.
 type solvedResults struct {
 	schema     identity.ContentID
 	store      identity.StoreID
@@ -123,6 +124,43 @@ type solvedResults struct {
 	// index i is sealed into column slot i, so the dense slot vector a snapshot
 	// publishes is the solve's own axis order.
 	axes []solvedAxis
+}
+
+// solvedPublicationPlan is the runtime-owned publication authority.  It is
+// sealed with the runtime that owns the graph: the column binding and its
+// write capabilities, the two result key universes, and the point-state
+// denominator/key index all belong to this one immutable plan.  A solve opens
+// a private builder against the plan; it never re-admits columns or
+// reconstructs a denominator authority.
+//
+// The point rows themselves are solve-local values and therefore cannot be
+// sealed here.  The point key universe, its dense key index, and the
+// denominator identity are structural and are sealed here once.
+type solvedPublicationPlan struct {
+	sealed bool
+	schema identity.ContentID
+
+	binding         *SchemaBinding
+	queryWrite      ColumnWrite[identity.ContentID, Answer]
+	obsWrite        ColumnWrite[identity.ContentID, Answer]
+	pointWrite      ColumnWrite[composition.Key, carrier.PointState]
+	queryKeys       []identity.ContentID
+	observationKeys []identity.ContentID
+
+	families         [solvedLaneWidth]identity.ContentID
+	denominators     [solvedLaneWidth]identity.ContentID
+	pointAxis        snapshot.Axis[composition.Key, carrier.PointState]
+	pointDenominator identity.ContentID
+	pointMembers     []composition.Key
+	pointKeys        []composition.Key
+	pointIndex       map[composition.Key]int
+}
+
+func (plan *solvedPublicationPlan) available() bool {
+	return plan != nil && plan.sealed && plan.schema.Available() && plan.binding != nil && plan.binding.Sealed() &&
+		plan.queryWrite.Available() && plan.obsWrite.Available() && plan.pointWrite.Available() &&
+		plan.pointAxis.Available() && plan.pointDenominator.Available() && len(plan.pointMembers) != 0 &&
+		len(plan.pointIndex) == len(plan.pointMembers) && len(plan.pointKeys) > 0
 }
 
 // solvedAxis is one declared result lane: every row the lane declares, in the
@@ -147,10 +185,13 @@ type solvedRow struct {
 // out the family identities a consumer needs to open a result column and hands
 // out no column, no row, and no engine runtime.
 type SolvedSnapshot struct {
-	published snapshot.Snapshot
-	schema    identity.ContentID
-	content   identity.ContentID
-	families  [solvedLaneWidth]identity.ContentID
+	published       snapshot.Snapshot
+	schema          identity.ContentID
+	content         identity.ContentID
+	families        [solvedLaneWidth]identity.ContentID
+	queryPlan       snapshot.QueryPlan[identity.ContentID, Answer]
+	observationPlan snapshot.QueryPlan[identity.ContentID, Answer]
+	pointAxis       snapshot.Axis[composition.Key, carrier.PointState]
 }
 
 // Available reports whether this value is a sealed materialization.
@@ -189,175 +230,308 @@ func (materialized SolvedSnapshot) family(lane resultLane) identity.ContentID {
 	return materialized.families[lane]
 }
 
-// materializeCompletedState publishes one completed solve as snapshot columns.
-// It is the whole seam: the projection of the engine's result shapes onto the
-// materializer's input, then the publication of that input.
-func materializeCompletedState(solver *Solver, state *State) (SolvedSnapshot, SolveFailure) {
-	results, failure := solvedResultsOf(solver, state)
-	if failure.Available() {
-		return SolvedSnapshot{}, failure
-	}
-	return materializeSolvedResults(results)
+// solvedPublication is one epoch's query/observation write onto a private
+// Snapshot transaction: NewBuilder on the first generation, NewDelta after.
+type solvedPublication struct {
+	plan       *solvedPublicationPlan
+	builder    snapshot.Builder
+	solved     SolvedSnapshot
+	store      identity.StoreID
+	generation identity.Generation
+	pointAxis  snapshot.Axis[composition.Key, carrier.PointState]
+	queryWrite ColumnWrite[identity.ContentID, Answer]
+	obsWrite   ColumnWrite[identity.ContentID, Answer]
+	pointWrite ColumnWrite[composition.Key, carrier.PointState]
 }
 
-// solvedResultsOf projects one completed State onto the materializer's input.
-// The query axis pairs the solver's declared query families with the State's
-// published query column, and the observation axis pairs the declared
-// observations with the observation column; a row the column does not answer
-// stays declared and unanswered.
-func solvedResultsOf(solver *Solver, state *State) (solvedResults, SolveFailure) {
-	if solver == nil || state == nil || state.completion == nil || solver.runtime == nil {
-		return solvedResults{}, refused(SolveFailureFamilyCompile, solvedSitePreflight).failure()
+// sealSolvedPublicationPlan builds the one publication authority attached to
+// a sealed runtime.  Every value in this plan is derived from immutable
+// runtime/schema rows; no epoch or solve-local state is consulted, so this is
+// the only place publication admissions, result universes, and point
+// denominator membership are constructed.
+func sealSolvedPublicationPlan(runtime *solverRuntime) (*solvedPublicationPlan, bool) {
+	if runtime == nil || runtime.graph == nil || len(runtime.activePoints) != runtime.graph.PointCount() {
+		return nil, false
 	}
-	if !solver.ownsCompletedState(state) {
-		return solvedResults{}, refused(SolveFailureFamilyCompile, solvedSiteCompletion).failure()
-	}
-	runtime := solver.runtime
 	schema := solvedSchemaIdentity(runtime)
 	if !schema.Available() {
-		return solvedResults{}, refused(SolveFailureFamilyCompile, solvedSiteSchema).failure()
+		return nil, false
 	}
-	if len(state.results) != len(runtime.queries) || len(state.observations) != len(runtime.observations) {
-		return solvedResults{}, refused(SolveFailureFamilyCompile, solvedSiteColumnWidth).failure()
+	queryKeys, queryOK := declaredQueryKeys(runtime)
+	observationKeys, observationOK := declaredObservationKeys(runtime)
+	pointMembers, pointKeys, pointIndex, pointDenominator, pointOK := sealPointUniverse(runtime, schema)
+	if !queryOK || !observationOK || !pointOK {
+		return nil, false
 	}
+	binding := NewColumnBinding()
+	if binding == nil || !AdmitColumns(binding, []ColumnAdmission{
+		{Schema: schema, Output: solvedQueryOutput, Writer: solvedColumnWriter, Slot: 0},
+		{Schema: schema, Output: solvedObservationOutput, Writer: solvedColumnWriter, Slot: 1},
+		{Schema: schema, Output: solvedPointOutput, Writer: solvedColumnWriter, Slot: solvedPointSlot},
+	}) || !binding.Seal() {
+		return nil, false
+	}
+	queryWrite, queryMinted := MintColumnWrite[identity.ContentID, Answer](binding, solvedQueryOutput, solvedColumnWriter)
+	observationWrite, observationMinted := MintColumnWrite[identity.ContentID, Answer](binding, solvedObservationOutput, solvedColumnWriter)
+	pointWrite, pointMinted := MintColumnWrite[composition.Key, carrier.PointState](binding, solvedPointOutput, solvedColumnWriter)
+	if !queryMinted || !observationMinted || !pointMinted {
+		return nil, false
+	}
+	plan := &solvedPublicationPlan{
+		sealed:           true,
+		schema:           schema,
+		binding:          binding,
+		queryWrite:       queryWrite,
+		obsWrite:         observationWrite,
+		pointWrite:       pointWrite,
+		queryKeys:        queryKeys,
+		observationKeys:  observationKeys,
+		pointAxis:        pointStateAxis(schema),
+		pointDenominator: pointDenominator,
+		pointMembers:     pointMembers,
+		pointKeys:        pointKeys,
+		pointIndex:       pointIndex,
+	}
+	plan.families[resultLaneQuery] = solvedAxisIdentity(schema, resultLaneQuery, solvedAxisFamily)
+	plan.families[resultLaneObservation] = solvedAxisIdentity(schema, resultLaneObservation, solvedAxisFamily)
+	plan.denominators[resultLaneQuery] = solvedAxisIdentity(schema, resultLaneQuery, solvedAxisDenominator)
+	plan.denominators[resultLaneObservation] = solvedAxisIdentity(schema, resultLaneObservation, solvedAxisDenominator)
+	if !plan.families[resultLaneQuery].Available() || !plan.families[resultLaneObservation].Available() || !plan.denominators[resultLaneQuery].Available() || !plan.denominators[resultLaneObservation].Available() || !plan.pointAxis.Available() || !plan.available() {
+		return nil, false
+	}
+	return plan, true
+}
 
-	queryRows := make([]solvedRow, 0, len(runtime.queries))
-	for index, declared := range runtime.queries {
+func mintSolvedColumnWrites(schema identity.ContentID, includePoint bool) (query ColumnWrite[identity.ContentID, Answer], observation ColumnWrite[identity.ContentID, Answer], point ColumnWrite[composition.Key, carrier.PointState], ok bool) {
+	admissions := []ColumnAdmission{
+		{Schema: schema, Output: solvedQueryOutput, Writer: solvedColumnWriter, Slot: 0},
+		{Schema: schema, Output: solvedObservationOutput, Writer: solvedColumnWriter, Slot: 1},
+	}
+	if includePoint {
+		admissions = append(admissions, ColumnAdmission{Schema: schema, Output: solvedPointOutput, Writer: solvedColumnWriter, Slot: solvedPointSlot})
+	}
+	binding := NewColumnBinding()
+	if !AdmitColumns(binding, admissions) || !binding.Seal() {
+		return ColumnWrite[identity.ContentID, Answer]{}, ColumnWrite[identity.ContentID, Answer]{}, ColumnWrite[composition.Key, carrier.PointState]{}, false
+	}
+	query, queryOK := MintColumnWrite[identity.ContentID, Answer](binding, solvedQueryOutput, solvedColumnWriter)
+	observation, observationOK := MintColumnWrite[identity.ContentID, Answer](binding, solvedObservationOutput, solvedColumnWriter)
+	if !queryOK || !observationOK {
+		return ColumnWrite[identity.ContentID, Answer]{}, ColumnWrite[identity.ContentID, Answer]{}, ColumnWrite[composition.Key, carrier.PointState]{}, false
+	}
+	if !includePoint {
+		return query, observation, ColumnWrite[composition.Key, carrier.PointState]{}, true
+	}
+	point, pointOK := MintColumnWrite[composition.Key, carrier.PointState](binding, solvedPointOutput, solvedColumnWriter)
+	return query, observation, point, pointOK
+}
+
+func beginSolvedPublication(solver *Solver, epoch *executorEpoch, generation identity.Generation) (*solvedPublication, bool) {
+	if solver == nil || solver.runtime == nil || epoch == nil || epoch.runtime != solver.runtime || !solver.store.Available() || !generation.Available() {
+		return nil, false
+	}
+	plan := solver.runtime.publication
+	if plan == nil || !plan.available() {
+		return nil, false
+	}
+	publication := &solvedPublication{
+		plan:       plan,
+		solved:     SolvedSnapshot{schema: plan.schema, families: plan.families, pointAxis: plan.pointAxis},
+		store:      solver.store,
+		generation: generation,
+		queryWrite: plan.queryWrite,
+		obsWrite:   plan.obsWrite,
+		pointWrite: plan.pointWrite,
+		pointAxis:  plan.pointAxis,
+	}
+	if canDeltaSolvedPublication(solver.lastSolved, plan.schema, solver.store, generation, plan.queryKeys, plan.observationKeys, plan.pointMembers) {
+		publication.builder = snapshot.NewDelta(solver.lastSolved.published, generation)
+		publication.solved.families = solver.lastSolved.families
+		publication.solved.queryPlan = solver.lastSolved.queryPlan
+		publication.solved.observationPlan = solver.lastSolved.observationPlan
+		publication.pointAxis = solver.lastSolved.pointAxis
+		publication.solved.pointAxis = solver.lastSolved.pointAxis
+		if !publication.solved.queryPlan.Available() || !publication.solved.observationPlan.Available() || !publication.pointAxis.Available() {
+			return nil, false
+		}
+		return publication, true
+	}
+	pointRows, pointOK := collectActivePointRows(plan, epoch)
+	if !pointOK {
+		return nil, false
+	}
+	publication.builder = snapshot.NewBuilder(plan.schema, solver.store, generation)
+	queryPlan, queryDeclared := declareSolvedFamily(plan, &publication.builder, resultLaneQuery)
+	obsPlan, obsDeclared := declareSolvedFamily(plan, &publication.builder, resultLaneObservation)
+	pointAxis, pointDeclared := declarePointColumnFromPlan(plan, &publication.builder, pointRows)
+	if !queryDeclared || !obsDeclared || !pointDeclared {
+		return nil, false
+	}
+	publication.solved.families = plan.families
+	publication.solved.queryPlan = queryPlan
+	publication.solved.observationPlan = obsPlan
+	publication.pointAxis = pointAxis
+	publication.solved.pointAxis = pointAxis
+	return publication, true
+}
+
+func declaredQueryKeys(runtime *solverRuntime) ([]identity.ContentID, bool) {
+	if runtime == nil {
+		return nil, false
+	}
+	keys := make([]identity.ContentID, 0, len(runtime.queries))
+	seen := make(map[identity.ContentID]struct{}, len(runtime.queries))
+	for _, declared := range runtime.queries {
 		if declared == nil {
-			return solvedResults{}, refused(SolveFailureFamilyCompile, solvedSiteQueryRow).failure()
+			return nil, false
 		}
-		semantic := declared.query().Key()
-		row := solvedRow{key: solvedRowKey(semantic)}
-		if !row.key.Available() {
-			return solvedResults{}, refused(SolveFailureFamilyCompile, solvedSiteQueryRow).failure()
+		key, keyed := declared.PublicationKey()
+		if !keyed {
+			return nil, false
 		}
-		if published := state.results[index]; published != nil {
-			if published.key != semantic || published.value == nil {
-				return solvedResults{}, refused(SolveFailureFamilyCompile, solvedSiteQueryRow).failure()
-			}
-			row.value = published.value
+		if _, duplicate := seen[key]; duplicate {
+			return nil, false
 		}
-		queryRows = append(queryRows, row)
+		seen[key] = struct{}{}
+		keys = append(keys, key)
 	}
+	return keys, true
+}
 
-	observationRows := make([]solvedRow, 0, len(runtime.observations))
-	for index, declared := range runtime.observations {
+func declaredObservationKeys(runtime *solverRuntime) ([]identity.ContentID, bool) {
+	if runtime == nil {
+		return nil, false
+	}
+	keys := make([]identity.ContentID, 0, len(runtime.observations))
+	seen := make(map[identity.ContentID]struct{}, len(runtime.observations))
+	for _, declared := range runtime.observations {
 		if declared == nil {
-			return solvedResults{}, refused(SolveFailureFamilyCompile, solvedSiteObservationRow).failure()
+			return nil, false
 		}
-		row := solvedRow{key: declared.observationID()}
-		if !row.key.Available() {
-			return solvedResults{}, refused(SolveFailureFamilyCompile, solvedSiteObservationRow).failure()
+		key := declared.observationID()
+		if !key.Available() {
+			return nil, false
 		}
-		if published := state.observations[index]; published != nil {
-			if published.id != row.key || published.value == nil {
-				return solvedResults{}, refused(SolveFailureFamilyCompile, solvedSiteObservationRow).failure()
-			}
-			row.value = published.value
+		if _, duplicate := seen[key]; duplicate {
+			return nil, false
 		}
-		observationRows = append(observationRows, row)
+		seen[key] = struct{}{}
+		keys = append(keys, key)
 	}
+	return keys, true
+}
 
-	return solvedResults{
-		schema:     schema,
-		store:      state.completion.store,
-		generation: state.completion.serial,
+func canDeltaSolvedPublication(base SolvedSnapshot, schema identity.ContentID, store identity.StoreID, generation identity.Generation, queryKeys, obsKeys []identity.ContentID, pointMembers []composition.Key) bool {
+	return base.Available() && base.schema == schema && base.published.Store() == store && base.published.Generation().Precedes(generation) && base.queryPlan.Available() && base.observationPlan.Available() && base.pointAxis.Available() && publicationCovers(base.published, base.queryPlan.Axis(), queryKeys) && publicationCovers(base.published, base.observationPlan.Axis(), obsKeys) && publicationCovers(base.published, base.pointAxis, pointMembers)
+}
+
+func publicationCovers[K comparable, V any](published snapshot.Snapshot, axis snapshot.Axis[K, V], keys []K) bool {
+	if !published.Published() || !axis.Available() {
+		return false
+	}
+	for _, key := range keys {
+		_, status := snapshot.Read(&published, axis, key)
+		if status != snapshot.ReadHit && status != snapshot.ReadProvenAbsent {
+			return false
+		}
+	}
+	return true
+}
+
+func declareSolvedFamily(plan *solvedPublicationPlan, builder *snapshot.Builder, lane resultLane) (snapshot.QueryPlan[identity.ContentID, Answer], bool) {
+	if plan == nil || builder == nil || lane == resultLaneNone || int(lane) >= solvedLaneWidth || !plan.families[lane].Available() || !plan.denominators[lane].Available() || !plan.available() {
+		return snapshot.QueryPlan[identity.ContentID, Answer]{}, false
+	}
+	write, members := plan.queryWrite, plan.queryKeys
+	if lane == resultLaneObservation {
+		write, members = plan.obsWrite, plan.observationKeys
+	}
+	queryPlan, err := PublishQueryColumn(write, builder, plan.families[lane], snapshot.Content[identity.ContentID, Answer]{
+		Denominator: plan.denominators[lane],
+		Members:     members,
+	})
+	return queryPlan, err == nil && queryPlan.Available()
+}
+
+func (publication *solvedPublication) writeQuery(key identity.ContentID, value solvedValue) bool {
+	return publication.write(publication.queryWrite, key, value)
+}
+
+func (publication *solvedPublication) writeObservation(key identity.ContentID, value solvedValue) bool {
+	return publication.write(publication.obsWrite, key, value)
+}
+
+func (publication *solvedPublication) write(write ColumnWrite[identity.ContentID, Answer], key identity.ContentID, value solvedValue) bool {
+	if publication == nil || !write.Available() || !key.Available() {
+		return false
+	}
+	var err error
+	if value != nil {
+		err = PublishRow(write, &publication.builder, key, Answer{value: value})
+	} else {
+		err = WithdrawRow(write, &publication.builder, key)
+	}
+	return err == nil
+}
+
+func (publication *solvedPublication) overlayRows(plan snapshot.QueryPlan[identity.ContentID, Answer], keys []identity.ContentID) ([]solvedRow, bool) {
+	if publication == nil || !plan.Available() {
+		return nil, false
+	}
+	out := make([]solvedRow, len(keys))
+	for index, key := range keys {
+		if !key.Available() {
+			return nil, false
+		}
+		out[index].key = key
+		answer, status := snapshot.ReadOverlay(&publication.builder, plan.Axis(), key)
+		switch status {
+		case snapshot.ReadHit:
+			if !answer.Available() {
+				return nil, false
+			}
+			out[index].value = answer.value
+		case snapshot.ReadProvenAbsent:
+		default:
+			return nil, false
+		}
+	}
+	return out, true
+}
+
+func (publication *solvedPublication) commit(solver *Solver) (SolvedSnapshot, bool) {
+	if publication == nil || publication.plan == nil || solver == nil {
+		return SolvedSnapshot{}, false
+	}
+	if solver.runtime == nil || solver.runtime.publication != publication.plan || !publication.plan.available() {
+		return SolvedSnapshot{}, false
+	}
+	queryRows, queryOK := publication.overlayRows(publication.solved.queryPlan, publication.plan.queryKeys)
+	obsRows, obsOK := publication.overlayRows(publication.solved.observationPlan, publication.plan.observationKeys)
+	if !queryOK || !obsOK {
+		return SolvedSnapshot{}, false
+	}
+	published, err := publication.builder.Seal()
+	if err != nil || !published.Published() {
+		return SolvedSnapshot{}, false
+	}
+	content, minted := solvedContentIdentity(solvedResults{
+		schema:     publication.solved.schema,
+		store:      publication.store,
+		generation: publication.generation,
 		axes: []solvedAxis{
 			{lane: resultLaneQuery, rows: queryRows},
-			{lane: resultLaneObservation, rows: observationRows},
+			{lane: resultLaneObservation, rows: obsRows},
 		},
-	}, SolveFailure{}
-}
-
-// materializeSolvedResults publishes results as snapshot columns: one result
-// column per declared axis, keyed by the canonical row identities, declared
-// answerable under the axis family. The declared keys of an axis are its
-// denominator, so a withdrawn or unanswered row reads as a proven absence and a
-// key the axis never declared reads as a miss.
-func materializeSolvedResults(results solvedResults) (SolvedSnapshot, SolveFailure) {
-	if !results.schema.Available() || !results.store.Available() || !results.generation.Available() || len(results.axes) == 0 || len(results.axes) > solvedAxisCount {
-		return SolvedSnapshot{}, refused(SolveFailureFamilyCompile, solvedSitePublication).failure()
-	}
-	materialized := SolvedSnapshot{schema: results.schema}
-	builder := snapshot.NewBuilder(results.schema, results.store, results.generation)
-	for slot, axis := range results.axes {
-		if axis.lane == resultLaneNone || int(axis.lane) >= solvedLaneWidth || materialized.families[axis.lane].Available() {
-			return SolvedSnapshot{}, refused(SolveFailureFamilyCompile, solvedSiteAxis).failure()
-		}
-		family := solvedAxisIdentity(results.schema, axis.lane, solvedAxisFamily)
-		denominator := solvedAxisIdentity(results.schema, axis.lane, solvedAxisDenominator)
-		if !family.Available() || !denominator.Available() {
-			return SolvedSnapshot{}, refused(SolveFailureFamilyCompile, solvedSiteAxis).failure()
-		}
-		content := snapshot.Content[identity.ContentID, Answer]{
-			Rows:        make(map[identity.ContentID]Answer, len(axis.rows)),
-			Denominator: denominator,
-			Members:     make([]identity.ContentID, 0, len(axis.rows)),
-		}
-		declared := make(map[identity.ContentID]struct{}, len(axis.rows))
-		for _, row := range axis.rows {
-			if !row.key.Available() {
-				return SolvedSnapshot{}, refused(SolveFailureFamilyCompile, solvedSiteRow).failure()
-			}
-			if _, duplicate := declared[row.key]; duplicate {
-				return SolvedSnapshot{}, refused(SolveFailureFamilyCompile, solvedSiteRow).failure()
-			}
-			declared[row.key] = struct{}{}
-			content.Members = append(content.Members, row.key)
-			if row.value != nil {
-				content.Rows[row.key] = Answer{value: row.value}
-			}
-		}
-		plan, err := snapshot.DeclareQuery(&builder, family, uint32(slot), content)
-		if err != nil || !plan.Available() {
-			return SolvedSnapshot{}, refused(SolveFailureFamilyCompile, solvedSiteDeclare).failure()
-		}
-		materialized.families[axis.lane] = family
-	}
-	published, err := builder.Seal()
-	if err != nil {
-		return SolvedSnapshot{}, refused(SolveFailureFamilyCompile, solvedSiteSeal).failure()
-	}
-	content, minted := solvedContentIdentity(results)
+	})
 	if !minted {
-		return SolvedSnapshot{}, refused(SolveFailureFamilyCompile, solvedSiteContent).failure()
+		return SolvedSnapshot{}, false
 	}
-	materialized.published = published
-	materialized.content = content
-	return materialized, SolveFailure{}
-}
-
-// republish publishes the snapshot that follows a materialization with one
-// answer changed on lane at generation. An available value publishes the
-// answer; an unavailable one withdraws it, which leaves the declared key proven
-// absent. The edit copies the changed key's path and shares every other node,
-// every other column, and the denominator with the publication it derives from.
-//
-// The axis it edits is the plan the snapshot itself published, so an edit
-// reaches only a column that was published as an answer.
-func (materialized SolvedSnapshot) republish(lane resultLane, key identity.ContentID, value solvedValue, generation identity.Generation) (snapshot.Snapshot, SolveFailure) {
-	if !materialized.Available() || !key.Available() || !generation.Available() {
-		return snapshot.Snapshot{}, refused(SolveFailureFamilyCompile, solvedSiteDelta).failure()
-	}
-	plan, opened := snapshot.OpenQuery[identity.ContentID, Answer](&materialized.published, materialized.family(lane))
-	if !opened {
-		return snapshot.Snapshot{}, refused(SolveFailureFamilyCompile, solvedSiteDelta).failure()
-	}
-	delta := snapshot.NewDelta(materialized.published, generation)
-	var edited error
-	if value != nil {
-		edited = snapshot.SetRow(&delta, plan.Axis(), key, Answer{value: value})
-	} else {
-		edited = snapshot.RemoveRow(&delta, plan.Axis(), key)
-	}
-	if edited != nil {
-		return snapshot.Snapshot{}, refused(SolveFailureFamilyCompile, solvedSiteDelta).failure()
-	}
-	published, err := delta.Seal()
-	if err != nil {
-		return snapshot.Snapshot{}, refused(SolveFailureFamilyCompile, solvedSiteSeal).failure()
-	}
-	return published, SolveFailure{}
+	publication.solved.published = published
+	publication.solved.content = content
+	publication.solved.pointAxis = publication.pointAxis
+	solver.lastSolved = publication.solved
+	return publication.solved, publication.solved.Available()
 }
 
 // solvedSchemaIdentity frames the sealing schema identity a published snapshot

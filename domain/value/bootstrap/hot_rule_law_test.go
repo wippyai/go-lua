@@ -2,6 +2,7 @@ package bootstrap_test
 
 import (
 	"encoding/binary"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine"
@@ -91,12 +92,12 @@ func bootstrapFixture(t testing.TB, name string) *bootstrapFixtureState {
 	}
 	contract, err := target.Seal(&target.Spec{
 		Semantics:    domaincontract.NewSemantics(),
-		InitialRoots: []target.InitialRootSpec{{Identity: "GlobalEnvRoot", Shape: target.BootShapeSpec{Aggregate: target.BootAggregateTable, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}}}},
-		InitialEntries: []target.InitialEntrySpec{
-			{Root: "GlobalEnvRoot", Key: bootstrapLiteral("_G"), Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: target.InitialMutable},
-			{Root: "GlobalEnvRoot", Key: bootstrapLiteral("__link_absent"), Value: target.InitialValueSpec{Kind: target.InitialValueAbsent}, Mutability: target.InitialMutable},
+		InitialRoots: []vocabulary.InitialRootSpec{{Identity: "GlobalEnvRoot", Shape: vocabulary.BootShapeSpec{Aggregate: vocabulary.BootAggregateTable, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "GlobalEnvRoot"}}}},
+		InitialEntries: []vocabulary.InitialEntrySpec{
+			{Root: "GlobalEnvRoot", Key: bootstrapLiteral("_G"), Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: vocabulary.InitialMutable},
+			{Root: "GlobalEnvRoot", Key: bootstrapLiteral("__link_absent"), Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueAbsent}, Mutability: vocabulary.InitialMutable},
 		},
-		InitialBindings: []target.InitialBindingSpec{
+		InitialBindings: []vocabulary.InitialBindingSpec{
 			{Name: "_G", Root: "GlobalEnvRoot", Key: bootstrapLiteral("_G")},
 			{Name: "__link_absent", Root: "GlobalEnvRoot", Key: bootstrapLiteral("__link_absent")},
 		},

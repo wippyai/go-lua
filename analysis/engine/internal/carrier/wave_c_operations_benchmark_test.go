@@ -256,6 +256,10 @@ func (work waveCDeltaWork) LessOrEqContributionUnder(_, _ RootHandle, _, _ suppo
 	return true, true
 }
 
+func (work waveCDeltaWork) AscentOrderedContributionUnder(_, _ RootHandle, _, _ support.Mask, _, _ SlotCoverage) (bool, bool) {
+	return true, true
+}
+
 func (work waveCDeltaWork) ContributionClosedUnder(RootHandle, support.Mask, SlotCoverage) bool {
 	return true
 }

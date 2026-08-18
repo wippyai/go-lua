@@ -1,10 +1,10 @@
 package heap
 
 import (
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/target"
 	"github.com/wippyai/go-lua/domain/materialization"
 	"github.com/wippyai/go-lua/domain/runtimekind"
 )
@@ -135,7 +135,7 @@ func (access RawAccess) PayloadTag(present Present) (RawPayloadTag, bool) {
 // one selected Present tuple and returns the exact Target initial source
 // together with its owning boot root. Program Values payloads deliberately
 // fail here and continue through PayloadTag/PayloadForRawTag.
-func (access RawAccess) InitialPayload(present Present) (identity.ContentID, target.InitialValue, bool) {
+func (access RawAccess) InitialPayload(present Present) (identity.ContentID, vocabulary.InitialValue, bool) {
 	if !access.valid() || access.top || !present.valid() || present.owner != access.owner || access.cell.PresentCount() != 1 {
 		return identity.ContentID{}, 0, false
 	}
@@ -469,7 +469,7 @@ func (schema Schema) initialFrozenBootSlot(key Key, atom keyAtom) bool {
 		return false
 	}
 	entry, found := schema.owner.bootEntries[rootSlot{root: key.slot, slot: slot}]
-	return found && entry.mutability == target.InitialFrozen
+	return found && entry.mutability == vocabulary.InitialFrozen
 }
 
 func (schema Schema) selectedPolicyAtoms(key Key, partition Partition, kinds runtimekind.Set) []keyAtom {
@@ -485,7 +485,7 @@ func (schema Schema) selectedPolicyAtoms(key Key, partition Partition, kinds run
 				continue
 			}
 			entry := schema.owner.bootEntries[pair]
-			if entry.mutability != target.InitialFrozen || int(pair.slot) > len(schema.owner.slots) {
+			if entry.mutability != vocabulary.InitialFrozen || int(pair.slot) > len(schema.owner.slots) {
 				continue
 			}
 			slot := schema.owner.slots[pair.slot-1]

@@ -104,6 +104,13 @@ func TestClosedSemanticSourceOrderNilDeletionAndCreateRecurrence(t *testing.T) {
 	if !freshOK || !firstOK || !secondOK || !worldOK || world.Kind() != heapdomain.WorldMany {
 		t.Fatal("Create recurrence did not age the previous recent world")
 	}
+	if heapdomain.LessOrEq(first, second) || heapdomain.LessOrEq(second, first) {
+		t.Fatal("Create recurrence must remain a distinct control family")
+	}
+	widened, widenedOK := heapdomain.Widen(first, second)
+	if !widenedOK || !heapdomain.LessOrEq(first, widened) || !heapdomain.LessOrEq(second, widened) {
+		t.Fatal("Create recurrence must have a defined widening upper bound")
+	}
 }
 
 func TestClosedSemanticInvalidDynamicKeyHasNoNormalSuccessor(t *testing.T) {

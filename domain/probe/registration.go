@@ -153,6 +153,7 @@ func RuleEntry[P, A any]() rule.Spec[P, A, *RuleFragment, *HotRule] {
 		Key:    RuleKey,
 		Lane:   rule.LaneMounted,
 		Writes: AxisKey,
+		Owner:  AxisKey,
 		Issues: []rule.Issuance{
 			{Occurrence: "occurrence/point-attachment", Form: "issuance/base", Input: "input/none", Stage: "stage/base"},
 		},
@@ -162,9 +163,7 @@ func RuleEntry[P, A any]() rule.Spec[P, A, *RuleFragment, *HotRule] {
 		Register: func(rule.Registration[*RuleFragment]) (engine.RuleSlotCapability, bool) {
 			return engine.RuleSlotCapability{}, false
 		},
-		Bind:   func(rule.Binding[A, *RuleFragment]) (*HotRule, bool) { return nil, false },
-		Attach: func(rule.Attach[*HotRule]) bool { return false },
-		Member: func(rule.Member[*HotRule]) bool { return false },
+		Bind: func(rule.Binding[A, *RuleFragment]) (*HotRule, bool) { return nil, false },
 	}
 }
 

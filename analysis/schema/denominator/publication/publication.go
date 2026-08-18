@@ -1,12 +1,14 @@
-// Package publication declares and materializes the neutral denominator
-// cardinality column. The column is an engine-published Snapshot value: its
-// key and value are schema identities and counts, so no domain type enters the
+// Package publication declares the neutral denominator cardinality column and
+// builds its content. The column is an engine-published Snapshot value: its key
+// and value are schema identities and counts, so no domain type enters the
 // engine or Snapshot.
+//
+// The content is built here and written elsewhere. A published column is filled
+// through the write capability the engine mints for it, so this package states
+// what the column holds and never reaches the storage that holds it.
 package publication
 
 import (
-	"errors"
-
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
@@ -108,19 +110,4 @@ func BuildContent(schemaID identity.ContentID, parts ...denominator.CountRows) (
 		Denominator: universe,
 		Members:     members,
 	}, true
-}
-
-// Publish builds and writes the complete neutral column through Snapshot's
-// one public publication primitive. No receipt or adapter is introduced: the
-// caller supplies the schema-projected axis, and PutColumn performs the
-// schema, slot, denominator, and immutable-column checks.
-func Publish(builder *snapshot.Builder, ax snapshot.Axis[schema.EntryID, uint64], schemaID identity.ContentID, parts ...denominator.CountRows) error {
-	if !schemaID.Available() || !ax.Available() || ax.SchemaID != schemaID {
-		return errors.New("denominator publication: schema axis mismatch")
-	}
-	content, ok := BuildContent(schemaID, parts...)
-	if !ok {
-		return errors.New("denominator publication: invalid relation counts")
-	}
-	return snapshot.PutColumn(builder, ax, content)
 }

@@ -52,17 +52,33 @@ func (payload diagnosticUnresolvedValueReferenceRow) empty() bool {
 	return !payload.read.Available() && !payload.cell.Available() && payload.name == ""
 }
 
+func (payload diagnosticTypeConformanceRow) available() bool {
+	if payload.site != diagnosticTypeConformanceSiteCallArgument || !payload.call.Available() ||
+		!payload.argument.Available() || !payload.declared.Available() || !payload.span.Available() ||
+		!validDiagnosticEvidencePoints(payload.points) {
+		return false
+	}
+	return true
+}
+
+func (payload diagnosticTypeConformanceRow) empty() bool {
+	return payload.site == 0 && !payload.call.Available() && !payload.argument.Available() &&
+		!payload.declared.Available() && !payload.span.Available() && payload.position == 0 && len(payload.points) == 0
+}
+
 func (row DiagnosticObservationRow) Available() bool {
 	if !row.id.Available() || !row.kind.Available() || !validDiagnosticSpan(row.location) {
 		return false
 	}
 	switch row.kind {
 	case structure.DiagnosticObservationBranchCondition:
-		return row.branch.available() && row.unresolved.empty() && row.value.empty()
+		return row.branch.available() && row.unresolved.empty() && row.value.empty() && row.conformance.empty()
 	case structure.DiagnosticObservationTypeReferenceUnresolved:
-		return row.unresolved.available() && row.branch.empty() && row.value.empty()
+		return row.unresolved.available() && row.branch.empty() && row.value.empty() && row.conformance.empty()
 	case structure.DiagnosticObservationValueReferenceUnresolved:
-		return row.value.available() && row.branch.empty() && row.unresolved.empty()
+		return row.value.available() && row.branch.empty() && row.unresolved.empty() && row.conformance.empty()
+	case structure.DiagnosticObservationTypeConformance:
+		return row.conformance.available() && row.branch.empty() && row.unresolved.empty() && row.value.empty()
 	default:
 		return false
 	}
@@ -113,12 +129,25 @@ func equalDiagnosticObservationRows(left, right DiagnosticObservationRow) bool {
 		return true
 	case structure.DiagnosticObservationValueReferenceUnresolved:
 		return left.value == right.value
+	case structure.DiagnosticObservationTypeConformance:
+		if left.conformance.site != right.conformance.site || left.conformance.call != right.conformance.call ||
+			left.conformance.argument != right.conformance.argument || left.conformance.declared != right.conformance.declared ||
+			left.conformance.span != right.conformance.span || left.conformance.position != right.conformance.position ||
+			len(left.conformance.points) != len(right.conformance.points) {
+			return false
+		}
+		for index := range left.conformance.points {
+			if left.conformance.points[index] != right.conformance.points[index] {
+				return false
+			}
+		}
+		return true
 	default:
 		return false
 	}
 }
 
-func diagnosticObservationID(owner identity.ContentID, kind structure.DiagnosticObservationKind, location programsource.Span, branch diagnosticBranchConditionRow, unresolved diagnosticUnresolvedTypeReferenceRow, value diagnosticUnresolvedValueReferenceRow) identity.ContentID {
+func diagnosticObservationID(owner identity.ContentID, kind structure.DiagnosticObservationKind, location programsource.Span, branch diagnosticBranchConditionRow, unresolved diagnosticUnresolvedTypeReferenceRow, value diagnosticUnresolvedValueReferenceRow, conformance diagnosticTypeConformanceRow) identity.ContentID {
 	if !owner.Available() || !kind.Available() || !validDiagnosticSpan(location) {
 		return identity.ContentID{}
 	}
@@ -148,6 +177,14 @@ func diagnosticObservationID(owner identity.ContentID, kind structure.Diagnostic
 		}
 	case structure.DiagnosticObservationValueReferenceUnresolved:
 		if !value.available() || writer.Bytes(value.read[:]) != nil || writer.Bytes(value.cell[:]) != nil || writer.String(value.name) != nil {
+			return identity.ContentID{}
+		}
+	case structure.DiagnosticObservationTypeConformance:
+		if !conformance.available() || writer.Uint(uint64(conformance.site)) != nil ||
+			writer.Bytes(conformance.call[:]) != nil || writer.Bytes(conformance.argument[:]) != nil ||
+			writer.Bytes(conformance.declared[:]) != nil || writer.Bytes(conformance.span[:]) != nil ||
+			writer.Uint(uint64(conformance.position)) != nil || writer.Count(uint64(len(conformance.points))) != nil ||
+			!writeDiagnosticEvidencePoints(&writer, conformance.points) {
 			return identity.ContentID{}
 		}
 	default:

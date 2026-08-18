@@ -112,7 +112,7 @@ func BindFactor[K ~uint32 | ~uint64, V any](binding *SchemaBinding, slot *Factor
 // The output argument is a FactorSlot because FactorImplementationAt is only
 // issued after the complete Binding seals; the slot resolves to that exact
 // typed Factor cell during Seal and runtime receipt construction.
-func BindRule[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot *RuleSlot[V, O], write SchemaWriteSlot[V], output *FactorSlot[V], spec HotRuleSpec[V, O]) bool {
+func BindRule[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot *RuleSlot[V, O], write SchemaWriteSlot[V], output *FactorSlot[V], spec HotRuleSpec[V, O], projectWrite func(O) (uint64, bool)) bool {
 	state := bindingState(binding)
 	if state == nil {
 		return false
@@ -154,7 +154,7 @@ func BindRule[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot *RuleS
 		return false
 	}
 	cell := &schemaRuleBindingCellImpl[K, V, O]{state: state, schema: state.schema, ordinal: ruleOrdinal}
-	cell.impl = &ruleHotImplementation[K, V, O]{state: state, rule: slot, write: write, output: outputCell, operandContent: spec.OperandContent, admission: spec.Admission, transfer: spec.Transfer}
+	cell.impl = &ruleHotImplementation[K, V, O]{state: state, rule: slot, write: write, output: outputCell, operandContent: spec.OperandContent, admission: spec.Admission, transfer: spec.Transfer, projectWrite: projectWrite}
 	if !cell.schemaRuleComplete() {
 		state.poisonLocked()
 		return false
@@ -167,7 +167,7 @@ func BindRule[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot *RuleS
 // carry token is the sole source of input, Factor, and transform identity;
 // HotCarrySpec supplies only the typed executable transform when the sealed
 // token declares one.
-func BindRuleWithCarry[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot *RuleSlot[V, O], carry SchemaCarrySlot[V], write SchemaWriteSlot[V], output *FactorSlot[V], spec HotRuleSpec[V, O], carrySpec HotCarrySpec[V, O]) bool {
+func BindRuleWithCarry[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot *RuleSlot[V, O], carry SchemaCarrySlot[V], write SchemaWriteSlot[V], output *FactorSlot[V], spec HotRuleSpec[V, O], carrySpec HotCarrySpec[V, O], projectWrite func(O) (uint64, bool)) bool {
 	state := bindingState(binding)
 	if state == nil {
 		return false
@@ -218,7 +218,7 @@ func BindRuleWithCarry[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, sl
 	cell.impl = &ruleHotImplementation[K, V, O]{
 		state: state, rule: slot, write: write, output: outputCell,
 		carry:          &schemaRuleCarryBinding[K, V, O]{state: state, cell: cell, ordinal: ruleOrdinal, slot: carry, factor: outputCell, apply: carrySpec.Apply},
-		operandContent: spec.OperandContent, admission: spec.Admission, transfer: spec.Transfer,
+		operandContent: spec.OperandContent, admission: spec.Admission, transfer: spec.Transfer, projectWrite: projectWrite,
 	}
 	if !cell.schemaRuleComplete() {
 		state.poisonLocked()
@@ -232,7 +232,7 @@ func BindRuleWithCarry[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, sl
 // write receipt lane. The sealed read and carry capabilities remain the sole
 // source of their input, Factor, and transform identities; this method adds no
 // parallel structural representation.
-func BindRuleWithExactReadAndCarry[OK ~uint32 | ~uint64, V, O any, RK ~uint32 | ~uint64, RV any](binding *SchemaBinding, slot *RuleSlot[V, O], readSlot SchemaReadSlot[RV], readFactor *FactorSlot[RV], carry SchemaCarrySlot[V], write SchemaWriteSlot[V], output *FactorSlot[V], spec HotRuleSpec[V, O], carrySpec HotCarrySpec[V, O]) (Read[OrderedCells[RV]], bool) {
+func BindRuleWithExactReadAndCarry[OK ~uint32 | ~uint64, V, O any, RK ~uint32 | ~uint64, RV any](binding *SchemaBinding, slot *RuleSlot[V, O], readSlot SchemaReadSlot[RV], readFactor *FactorSlot[RV], carry SchemaCarrySlot[V], write SchemaWriteSlot[V], output *FactorSlot[V], spec HotRuleSpec[V, O], carrySpec HotCarrySpec[V, O], projectRead func(O) (uint64, bool), projectWrite func(O) (uint64, bool)) (Read[OrderedCells[RV]], bool) {
 	state := bindingState(binding)
 	if state == nil {
 		return Read[OrderedCells[RV]]{}, false
@@ -279,12 +279,13 @@ func BindRuleWithExactReadAndCarry[OK ~uint32 | ~uint64, V, O any, RK ~uint32 | 
 	cell := &schemaRuleBindingCellImpl[OK, V, O]{state: state, schema: state.schema, ordinal: ruleOrdinal}
 	origin := &schemaRuleReadOrigin{state: state, cell: cell, ruleOrdinal: ruleOrdinal, readOrdinal: 0, input: readShape.Input, factor: readFactorOrdinal, kind: composition.ReadExact}
 	read := Read[OrderedCells[RV]]{origin: origin, index: 0, resolve: resolveTypedRead[RV, OrderedCells[RV]]}
-	readBinding := &schemaExactRuleReadBinding[RK, RV]{origin: origin, factor: readCell, read: read}
+	readBinding := &schemaExactRuleReadBinding[RK, RV]{origin: origin, factor: readCell, read: read, projector: projectExactLocal(projectRead)}
 	cell.impl = &ruleHotImplementation[OK, V, O]{
 		state: state, rule: slot, write: write, output: outputCell,
 		carry:          &schemaRuleCarryBinding[OK, V, O]{state: state, cell: cell, ordinal: ruleOrdinal, slot: carry, factor: outputCell, apply: carrySpec.Apply},
 		reads:          []schemaRuleReadBinding{readBinding},
 		operandContent: spec.OperandContent, admission: spec.Admission, transfer: spec.Transfer,
+		projectWrite: projectWrite,
 	}
 	if !cell.schemaRuleComplete() {
 		state.poisonLocked()
@@ -298,7 +299,7 @@ func BindRuleWithExactReadAndCarry[OK ~uint32 | ~uint64, V, O any, RK ~uint32 | 
 // read, one ordinary carry, and one exact write. The two read receipts remain
 // anchored to their declared Factor cells; no topology or callback snapshot is
 // copied into the runtime implementation.
-func BindRuleWithExactAndSummaryReadAndCarry[OK ~uint32 | ~uint64, V, O any, EK ~uint32 | ~uint64, EV any, SK ~uint32 | ~uint64, SV, S any](binding *SchemaBinding, slot *RuleSlot[V, O], exactSlot SchemaReadSlot[EV], exactFactor *FactorSlot[EV], summarySlot SchemaReadSlot[SV], summaryFactor *FactorSlot[SV], summaryForm SchemaReadForm[SV], carry SchemaCarrySlot[V], write SchemaWriteSlot[V], output *FactorSlot[V], spec HotRuleSpec[V, O], carrySpec HotCarrySpec[V, O]) (Read[OrderedCells[EV]], Read[S], bool) {
+func BindRuleWithExactAndSummaryReadAndCarry[OK ~uint32 | ~uint64, V, O any, EK ~uint32 | ~uint64, EV any, SK ~uint32 | ~uint64, SV, S any](binding *SchemaBinding, slot *RuleSlot[V, O], exactSlot SchemaReadSlot[EV], exactFactor *FactorSlot[EV], summarySlot SchemaReadSlot[SV], summaryFactor *FactorSlot[SV], summaryForm SchemaReadForm[SV], carry SchemaCarrySlot[V], write SchemaWriteSlot[V], output *FactorSlot[V], spec HotRuleSpec[V, O], carrySpec HotCarrySpec[V, O], projectRead func(O) (uint64, bool), projectWrite func(O) (uint64, bool)) (Read[OrderedCells[EV]], Read[S], bool) {
 	state := bindingState(binding)
 	if state == nil {
 		return Read[OrderedCells[EV]]{}, Read[S]{}, false
@@ -362,9 +363,9 @@ func BindRuleWithExactAndSummaryReadAndCarry[OK ~uint32 | ~uint64, V, O any, EK 
 	cell.impl = &ruleHotImplementation[OK, V, O]{state: state, rule: slot, write: write, output: outputCell,
 		carry: &schemaRuleCarryBinding[OK, V, O]{state: state, cell: cell, ordinal: ruleOrdinal, slot: carry, factor: outputCell, apply: carrySpec.Apply},
 		reads: []schemaRuleReadBinding{
-			&schemaExactRuleReadBinding[EK, EV]{origin: exactOrigin, factor: exactCell, read: exactRead},
+			&schemaExactRuleReadBinding[EK, EV]{origin: exactOrigin, factor: exactCell, read: exactRead, projector: projectExactLocal(projectRead)},
 			&schemaSummaryRuleReadBinding[SK, SV, S]{origin: readOrigin, factor: summaryCell, form: summary, read: read},
-		}, operandContent: spec.OperandContent, admission: spec.Admission, transfer: spec.Transfer}
+		}, operandContent: spec.OperandContent, admission: spec.Admission, transfer: spec.Transfer, projectWrite: projectWrite}
 	if !cell.schemaRuleComplete() {
 		state.poisonLocked()
 		return Read[OrderedCells[EV]]{}, Read[S]{}, false
@@ -378,7 +379,7 @@ func BindRuleWithExactAndSummaryReadAndCarry[OK ~uint32 | ~uint64, V, O any, EK 
 // the one route write consuming that Selection. Predecessor slots are passed
 // as opaque capabilities; their canonical ordinals and Factor cells are
 // rechecked against Schema and never copied into a cold Rule representation.
-func BindRuleWithSelectedReadAndRouteWrite[OK ~uint32 | ~uint64, V, O any, RK ~uint32 | ~uint64, RV any, Tag selectionTag](binding *SchemaBinding, slot *RuleSlot[V, O], predecessors []SchemaReadSlot[OrderedCells[RV]], predecessorFactors []*FactorSlot[RV], selected SchemaReadSlot[Selection[Tag, OrderedCells[RV]]], selectedFactor *FactorSlot[RV], write SchemaWriteSlot[V], output *FactorSlot[V], locate func(SelectorContext, Read[OrderedCells[RV]]) bool, spec HotRuleSpec[V, O]) (Read[Selection[Tag, OrderedCells[RV]]], bool) {
+func BindRuleWithSelectedReadAndRouteWrite[OK ~uint32 | ~uint64, V, O any, RK ~uint32 | ~uint64, RV any, Tag selectionTag](binding *SchemaBinding, slot *RuleSlot[V, O], predecessors []SchemaReadSlot[OrderedCells[RV]], predecessorFactors []*FactorSlot[RV], selected SchemaReadSlot[Selection[Tag, OrderedCells[RV]]], selectedFactor *FactorSlot[RV], write SchemaWriteSlot[V], output *FactorSlot[V], locate func(SelectorContext, Read[OrderedCells[RV]]) bool, spec HotRuleSpec[V, O], projectWrite func(O) (uint64, bool)) (Read[Selection[Tag, OrderedCells[RV]]], bool) {
 	state := bindingState(binding)
 	if state == nil {
 		return Read[Selection[Tag, OrderedCells[RV]]]{}, false
@@ -458,7 +459,7 @@ func BindRuleWithSelectedReadAndRouteWrite[OK ~uint32 | ~uint64, V, O any, RK ~u
 	reads = append(reads, &schemaSelectedRuleReadBinding[RK, RV, Tag]{origin: selectedOrigin, factor: selectedCell, read: selectedRead, locate: func(context SelectorContext) bool {
 		return locate(context, predecessorRead)
 	}})
-	cell.impl = &ruleHotImplementation[OK, V, O]{state: state, rule: slot, write: write, output: outputCell, reads: reads, operandContent: spec.OperandContent, admission: spec.Admission, transfer: spec.Transfer}
+	cell.impl = &ruleHotImplementation[OK, V, O]{state: state, rule: slot, write: write, output: outputCell, reads: reads, operandContent: spec.OperandContent, admission: spec.Admission, transfer: spec.Transfer, projectWrite: projectWrite}
 	if !cell.schemaRuleComplete() {
 		state.poisonLocked()
 		return Read[Selection[Tag, OrderedCells[RV]]]{}, false
@@ -471,7 +472,7 @@ func BindRuleWithSelectedReadAndRouteWrite[OK ~uint32 | ~uint64, V, O any, RK ~u
 // exact strong output write. The summary callbacks must already be installed
 // on the exact Factor form cell by BindSummaryReadForFactor; this API only
 // consumes that cell-issued receipt and never stores a second callback copy.
-func BindRuleWithSummaryRead[OK ~uint32 | ~uint64, V, O any, RK ~uint32 | ~uint64, RV, S any](binding *SchemaBinding, slot *RuleSlot[V, O], readSlot SchemaReadSlot[RV], readFactor *FactorSlot[RV], form SchemaReadForm[RV], write SchemaWriteSlot[V], output *FactorSlot[V], spec HotRuleSpec[V, O]) (Read[S], bool) {
+func BindRuleWithSummaryRead[OK ~uint32 | ~uint64, V, O any, RK ~uint32 | ~uint64, RV, S any](binding *SchemaBinding, slot *RuleSlot[V, O], readSlot SchemaReadSlot[RV], readFactor *FactorSlot[RV], form SchemaReadForm[RV], write SchemaWriteSlot[V], output *FactorSlot[V], spec HotRuleSpec[V, O], projectWrite func(O) (uint64, bool)) (Read[S], bool) {
 	state := bindingState(binding)
 	if state == nil {
 		return Read[S]{}, false
@@ -532,7 +533,7 @@ func BindRuleWithSummaryRead[OK ~uint32 | ~uint64, V, O any, RK ~uint32 | ~uint6
 	origin := &schemaRuleReadOrigin{state: state, cell: cell, ruleOrdinal: ruleOrdinal, readOrdinal: 0, input: readShape.Input, factor: readFactorOrdinal, kind: composition.ReadSummary, semantic: readShape.Semantic, formOrdinal: formOrdinal}
 	read := Read[S]{origin: origin, index: 0, resolve: resolveTypedRead[RV, S]}
 	readBinding := &schemaSummaryRuleReadBinding[RK, RV, S]{origin: origin, factor: readCell, form: summaryForm, read: read}
-	cell.impl = &ruleHotImplementation[OK, V, O]{state: state, rule: slot, write: write, output: outputCell, reads: []schemaRuleReadBinding{readBinding}, operandContent: spec.OperandContent, admission: spec.Admission, transfer: spec.Transfer}
+	cell.impl = &ruleHotImplementation[OK, V, O]{state: state, rule: slot, write: write, output: outputCell, reads: []schemaRuleReadBinding{readBinding}, operandContent: spec.OperandContent, admission: spec.Admission, transfer: spec.Transfer, projectWrite: projectWrite}
 	if !cell.schemaRuleComplete() {
 		state.poisonLocked()
 		return Read[S]{}, false

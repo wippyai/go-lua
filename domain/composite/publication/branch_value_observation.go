@@ -3,6 +3,8 @@ package publication
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/snapshot"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
@@ -17,17 +19,18 @@ type BranchValueObservationAttachment struct {
 	id          identity.ContentID
 	mount       identity.ContentID
 	point       identity.ContentID
+	producer    schema.Key
 }
 
-func branchValueObservationAttachmentID(mount, point identity.ContentID) (identity.ContentID, bool) {
-	if !mount.Available() || !point.Available() {
+func branchValueObservationAttachmentID(mount, point identity.ContentID, producer schema.Key) (identity.ContentID, bool) {
+	if !mount.Available() || !point.Available() || !producer.Available() {
 		return identity.ContentID{}, false
 	}
-	return identity.DeriveContentID("analysis/branch-value-observation/v1", mount[:], point[:], []byte("value-summary"))
+	return identity.DeriveContentID("analysis/branch-value-observation/v1", mount[:], point[:], []byte(producer))
 }
 
 func (attachment BranchValueObservationAttachment) valid() bool {
-	want, ok := branchValueObservationAttachmentID(attachment.mount, attachment.point)
+	want, ok := branchValueObservationAttachmentID(attachment.mount, attachment.point, attachment.producer)
 	return ok && attachment.id == want && attachment.observation.MatchesID(attachment.id)
 }
 
@@ -40,62 +43,67 @@ func (attachment BranchValueObservationAttachment) ContentID() (identity.Content
 // AttachBranchValueObservation attaches one Value summary root to the exact
 // mounted rule member that produces this evidence point. It precedes solving
 // and reads no solved state: the caller names the member by role capability and
-// authored coordinates, and the graph, not this relation, decides whether that
-// member exists.
+// authored coordinates, and the construction, not this relation, decides
+// whether that member exists.
 //
 // The failure is the Engine attach classification, so a caller that binds a
 // whole receipt of evidence points reports which coordinate rejected the
 // binding rather than a single opaque refusal.
 func AttachBranchValueObservation(
-	compilation *engine.ReceiptCompilation,
+	compilation *engine.ProgramConstruction,
 	query *engine.SummaryQueryImplementation[valuedomain.Value, valuedomain.ValueSummaryObservation],
-	graph *engine.ReceiptGraph,
 	role engine.RuleSlotCapability,
+	producer schema.Key,
 	mount, point, occurrence identity.ContentID,
 ) (BranchValueObservationAttachment, engine.ReceiptObservationAttachFailure, bool) {
-	if compilation == nil || query == nil || graph == nil {
+	if compilation == nil || query == nil {
 		return BranchValueObservationAttachment{}, engine.ReceiptObservationAttachFailureArguments, false
 	}
-	id, idOK := branchValueObservationAttachmentID(mount, point)
+	id, idOK := branchValueObservationAttachmentID(mount, point, producer)
 	if !idOK {
 		return BranchValueObservationAttachment{}, engine.ReceiptObservationAttachFailureArguments, false
 	}
-	member, memberOK := graph.MountedRuleMember(role, mount, point, occurrence)
-	if !memberOK {
-		return BranchValueObservationAttachment{}, engine.ReceiptObservationAttachFailurePoint, false
-	}
-	observation, failure := engine.AttachRuleSummaryObservationWithFailure[valuedomain.Value, valuedomain.ValueSummaryObservation](compilation, query, id, member)
+	observation, failure := engine.AttachMountedSummaryObservationWithFailure[valuedomain.Value, valuedomain.ValueSummaryObservation](compilation, query, id, role, mount, point, occurrence)
 	if failure != engine.ReceiptObservationAttachFailureNone || !observation.Available() {
 		return BranchValueObservationAttachment{}, failure, false
 	}
-	attachment := BranchValueObservationAttachment{observation: observation, id: id, mount: mount, point: point}
+	attachment := BranchValueObservationAttachment{observation: observation, id: id, mount: mount, point: point, producer: producer}
 	if !attachment.valid() {
 		return BranchValueObservationAttachment{}, engine.ReceiptObservationAttachFailureArguments, false
 	}
 	return attachment, engine.ReceiptObservationAttachFailureNone, true
 }
 
-// MemberAdmitted asks the graph whether the named role and occurrence still
-// resolve to an admitted member at this attachment's own evidence point. A
+// MemberAdmitted asks the construction whether the named role and occurrence
+// still resolve to an admitted member at this attachment's own evidence point. A
 // caller whose receipt names the same point from a second producer holds one
 // attachment for it and reauthenticates the additional coordinates here, so a
 // producer that names no admitted member is rejected rather than silently
 // folded into an attachment it never authorized.
-func (attachment BranchValueObservationAttachment) MemberAdmitted(graph *engine.ReceiptGraph, role engine.RuleSlotCapability, occurrence identity.ContentID) bool {
-	if graph == nil || !attachment.valid() {
-		return false
-	}
-	_, memberOK := graph.MountedRuleMember(role, attachment.mount, attachment.point, occurrence)
-	return memberOK
+func (attachment BranchValueObservationAttachment) MemberAdmitted(compilation *engine.ProgramConstruction, role engine.RuleSlotCapability, occurrence identity.ContentID) bool {
+	return compilation != nil && attachment.valid() && compilation.HasMountedRuleMember(role, attachment.mount, attachment.point, occurrence)
 }
 
-// Observe reads the retained private Engine observation for this evidence
-// point. It reports readability separately from the result's own validity, so a
-// caller distinguishes a handle this solver and state cannot read from a read
-// that returned an invalid summary.
+// Observe reads this evidence point from the completed Snapshot. It reports
+// readability separately from the result's own validity, so a caller
+// distinguishes a solver/state pair that cannot read the row from a read that
+// returned an invalid summary.
 func (attachment BranchValueObservationAttachment) Observe(solver *engine.Solver, state *engine.State) (valuedomain.ValueSummaryObservation, bool) {
 	if !attachment.valid() {
 		return valuedomain.ValueSummaryObservation{}, false
 	}
-	return engine.ReceiptObservationResult[valuedomain.ValueSummaryObservation](attachment.observation, solver, state)
+	sealed, publishedOK := solver.PublishedSnapshot(state)
+	if !publishedOK {
+		return valuedomain.ValueSummaryObservation{}, false
+	}
+	published := sealed.Snapshot()
+	plan, opened := snapshot.OpenQuery[identity.ContentID, engine.Answer](&published, sealed.ObservationFamily())
+	if !opened {
+		return valuedomain.ValueSummaryObservation{}, false
+	}
+	answer, status := snapshot.Query(&published, plan, attachment.id)
+	if status != snapshot.ReadHit || !answer.Available() {
+		return valuedomain.ValueSummaryObservation{}, false
+	}
+	return engine.AnswerValue[valuedomain.ValueSummaryObservation](answer)
 }

@@ -1,9 +1,11 @@
 package static
 
 import (
-	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
+	"github.com/wippyai/go-lua/internal/framing"
+
+	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
 )
 
 type staticArtifactDecoder struct {
@@ -231,7 +233,7 @@ func validDecodedTerm(term keyspace.Term, constraint staticArtifactTermConstrain
 	case staticArtifactAnyTerm:
 		return true
 	case staticArtifactStaticNodeTerm:
-		return staticNodeFamily(family)
+		return staticrole.NodeFamily(family)
 	case staticArtifactTypeRefTerm:
 		return family == keyspace.FamilyTypeRef
 	case staticArtifactTypeParamTerm:

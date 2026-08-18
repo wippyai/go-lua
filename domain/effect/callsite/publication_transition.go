@@ -4,13 +4,14 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"github.com/wippyai/go-lua/analysis/engine/rows"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/analysis/engine"
 	effectfactor "github.com/wippyai/go-lua/domain/effect/factor"
 	"github.com/wippyai/go-lua/domain/pack"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/snapshot"
 )
 
 const publicationObservationDomain = "wippy.analysis.effect.publication-observation.v1\x00"
@@ -74,13 +75,13 @@ type PublicationTransitionProof struct {
 // authored PublicationAtomBinding. One exact Effect observation is attached
 // for the whole occurrence, so multiple candidates never multiply solver
 // demand. Opaque and generic effect routes issue no candidate.
-func (rule *HotRule) AttachMountedPublicationCandidates(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, effectQuery *engine.ExactQueryImplementation[effectfactor.Value, effectfactor.EffectObservation], mount, occurrence identity.ContentID) (PublicationTransitionCandidates, bool) {
-	if rule == nil || rule.opaque || compilation == nil || graph == nil || effectQuery == nil || !mount.Available() || !occurrence.Available() {
+func (rule *HotRule) AttachMountedPublicationCandidates(compilation *engine.ProgramConstruction, effectQuery *engine.ExactQueryImplementation[effectfactor.Value, effectfactor.EffectObservation], mount, occurrence identity.ContentID) (PublicationTransitionCandidates, bool) {
+	if rule == nil || rule.opaque || compilation == nil || effectQuery == nil || !mount.Available() || !occurrence.Available() {
 		return PublicationTransitionCandidates{}, false
 	}
 	issuer, issuerOK := rule.ForMount(mount)
 	operand, operandOK := issuer.ReceiptForOccurrence(occurrence)
-	stage, stageOK := rule.MountedSelectedCallEffectStage(graph, mount, occurrence)
+	stage, stageOK := rule.MountedSelectedCallEffectStage(compilation, mount, occurrence)
 	member, memberOK := stage.RuleMember()
 	if !issuerOK || !operandOK || !stageOK || !stage.Available() || stage.Stage() != rows.ArtifactRuleStageCallEffect || stage.MountID() != mount || stage.OccurrenceID() != occurrence || !memberOK {
 		return PublicationTransitionCandidates{}, false
@@ -166,7 +167,8 @@ func (set *publicationTransitionSet) valid() bool {
 	if len(set.rows) == 0 {
 		return !set.observation.Available()
 	}
-	if !set.observation.Available() || set.rule.effects == nil || set.rule.effects.Algebra() == nil {
+	observationKey, observationKeyOK := set.observationKey()
+	if !set.observation.Available() || !observationKeyOK || !set.observation.MatchesID(observationKey) || set.rule.effects == nil || set.rule.effects.Algebra() == nil {
 		return false
 	}
 	if _, memberOK := set.stage.RuleMember(); !memberOK {
@@ -188,6 +190,13 @@ func (set *publicationTransitionSet) valid() bool {
 		previous = row.id
 	}
 	return true
+}
+
+func (set *publicationTransitionSet) observationKey() (identity.ContentID, bool) {
+	if set == nil || !set.mount.Available() || !set.occurrence.Available() {
+		return identity.ContentID{}, false
+	}
+	return publicationTransitionID(publicationObservationDomain, set.mount, set.occurrence)
 }
 
 func publicationTransitionMatches(set *publicationTransitionSet, publication effectfactor.PublicationAtomBinding) bool {
@@ -236,9 +245,10 @@ func (candidate PublicationTransitionCandidate) ContentID() (identity.ContentID,
 	return row.id, ok
 }
 
-// ProveWithFailure reads this candidate's exact, completed Effect
-// observation. It returns only a closed failure class; detached observation
-// rows, atom IDs, and private membership certificates never leave Callsite.
+// ProveWithFailure reads this candidate's exact, completed Effect observation
+// from the published Snapshot. It returns only a closed failure class;
+// detached observation rows, atom IDs, and private membership certificates
+// never leave Callsite.
 func (candidate PublicationTransitionCandidate) ProveWithFailure(solver *engine.Solver, state *engine.State) (PublicationTransitionProof, PublicationTransitionProofFailure) {
 	proof := PublicationTransitionProof{candidate: candidate, solver: solver, state: state}
 	return proof, candidate.proofFailure(solver, state)
@@ -258,7 +268,24 @@ func (candidate PublicationTransitionCandidate) proofFailure(solver *engine.Solv
 	if solver == nil || state == nil {
 		return PublicationTransitionProofFailureInvalidSolverState
 	}
-	observation, readable := engine.ReceiptObservationResult(candidate.set.observation, solver, state)
+	sealed, publishedOK := solver.PublishedSnapshot(state)
+	if !publishedOK {
+		return PublicationTransitionProofFailureUnreadableObservation
+	}
+	published := sealed.Snapshot()
+	plan, opened := snapshot.OpenQuery[identity.ContentID, engine.Answer](&published, sealed.ObservationFamily())
+	if !opened {
+		return PublicationTransitionProofFailureUnreadableObservation
+	}
+	observationKey, observationKeyOK := candidate.set.observationKey()
+	if !observationKeyOK {
+		return PublicationTransitionProofFailureUnreadableObservation
+	}
+	answer, status := snapshot.Query(&published, plan, observationKey)
+	if status != snapshot.ReadHit || !answer.Available() {
+		return PublicationTransitionProofFailureUnreadableObservation
+	}
+	observation, readable := engine.AnswerValue[effectfactor.EffectObservation](answer)
 	if !readable {
 		return PublicationTransitionProofFailureUnreadableObservation
 	}
@@ -345,34 +372,34 @@ func (proof PublicationTransitionProof) Role() effectfactor.PublicationAtomBindi
 	return row.publication.Role()
 }
 
-func (proof PublicationTransitionProof) Kind() target.PublicationEffectKind {
+func (proof PublicationTransitionProof) Kind() vocabulary.PublicationEffectKind {
 	row, ok := proof.row()
 	if !ok {
-		return target.PublicationEffectInvalid
+		return vocabulary.PublicationEffectInvalid
 	}
 	return row.publication.Kind()
 }
 
-func (proof PublicationTransitionProof) Escape() target.PublicationEscapeDisposition {
+func (proof PublicationTransitionProof) Escape() vocabulary.PublicationEscapeDisposition {
 	row, ok := proof.row()
 	if !ok {
-		return target.PublicationEscapeInvalid
+		return vocabulary.PublicationEscapeInvalid
 	}
 	return row.publication.Escape()
 }
 
-func (proof PublicationTransitionProof) Mutability() target.PublicationMutabilityDisposition {
+func (proof PublicationTransitionProof) Mutability() vocabulary.PublicationMutabilityDisposition {
 	row, ok := proof.row()
 	if !ok {
-		return target.PublicationMutabilityInvalid
+		return vocabulary.PublicationMutabilityInvalid
 	}
 	return row.publication.Mutability()
 }
 
-func (proof PublicationTransitionProof) Lifetime() target.PublicationLifetimeDisposition {
+func (proof PublicationTransitionProof) Lifetime() vocabulary.PublicationLifetimeDisposition {
 	row, ok := proof.row()
 	if !ok {
-		return target.PublicationLifetimeInvalid
+		return vocabulary.PublicationLifetimeInvalid
 	}
 	return row.publication.Lifetime()
 }

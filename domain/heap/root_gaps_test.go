@@ -1,6 +1,7 @@
 package heap_test
 
 import (
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"testing"
 
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
@@ -29,20 +30,20 @@ return record, child
 `
 
 func compactIndexSpec() *target.Spec {
-	return &target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []target.OperationSpec{{
-		Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"require"}}},
-		Input:    target.ValuesSpec{Tail: target.ValuesClosed},
-		Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}},
-		Effects:  target.RowSpec{Tail: target.RowClosed},
+	return &target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{{
+		Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"require"}}},
+		Input:    vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed},
+		Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}},
+		Effects:  vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 	}}}
 }
 
 func compactDynamicAgeSpec() *target.Spec {
 	spec := compactBootSpec()
 	spec.Operations = compactIndexSpec().Operations
-	spec.InitialEntries = append(spec.InitialEntries, target.InitialEntrySpec{
+	spec.InitialEntries = append(spec.InitialEntries, vocabulary.InitialEntrySpec{
 		Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "seed"},
-		Value: target.InitialValueSpec{Kind: target.InitialValueInteger, Integer: 1}, Mutability: target.InitialMutable,
+		Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueInteger, Integer: 1}, Mutability: vocabulary.InitialMutable,
 	})
 	return spec
 }
@@ -178,35 +179,35 @@ func compactDynamicSlotAndPayload(t testing.TB, schema Schema) (Slot, Payload) {
 	return dynamic, payload
 }
 
-func compactFreshOperation(name string, kind schematype.FreshClass) target.OperationSpec {
-	return target.OperationSpec{
-		Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{name}}},
-		Input:    target.ValuesSpec{Fixed: []schematype.Type{portableAnyType()}, Tail: target.ValuesClosed},
-		Outcomes: []target.OutcomeSpec{{
+func compactFreshOperation(name string, kind schematype.FreshClass) vocabulary.OperationSpec {
+	return vocabulary.OperationSpec{
+		Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{name}}},
+		Input:    vocabulary.ValuesSpec{Fixed: []schematype.Type{portableAnyType()}, Tail: vocabulary.ValuesClosed},
+		Outcomes: []vocabulary.OutcomeSpec{{
 			Kind:         flowkind.OutcomeNormal,
-			Values:       target.ValuesSpec{Fixed: []schematype.Type{portableAnyType()}, Tail: target.ValuesClosed},
-			FreshResults: []target.FreshResultSpec{{Result: 0, Kind: kind}},
+			Values:       vocabulary.ValuesSpec{Fixed: []schematype.Type{portableAnyType()}, Tail: vocabulary.ValuesClosed},
+			FreshResults: []vocabulary.FreshResultSpec{{Result: 0, Kind: kind}},
 		}},
-		Effects: target.RowSpec{Tail: target.RowClosed},
+		Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 	}
 }
 
-func compactFreshSpec(operations ...target.OperationSpec) *target.Spec {
+func compactFreshSpec(operations ...vocabulary.OperationSpec) *target.Spec {
 	spec := &target.Spec{
 		Semantics:  domaincontract.NewSemantics(),
 		Operations: operations,
-		InitialRoots: []target.InitialRootSpec{{
+		InitialRoots: []vocabulary.InitialRootSpec{{
 			Identity: "GlobalEnvRoot",
-			Shape: target.BootShapeSpec{
-				Aggregate: target.BootAggregateTable,
-				Value:     target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"},
+			Shape: vocabulary.BootShapeSpec{
+				Aggregate: vocabulary.BootAggregateTable,
+				Value:     vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "GlobalEnvRoot"},
 			},
 		}},
-		InitialEntries: []target.InitialEntrySpec{
-			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "_G"}, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: target.InitialMutable},
-			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "__heap_absent"}, Value: target.InitialValueSpec{Kind: target.InitialValueAbsent}, Mutability: target.InitialMutable},
+		InitialEntries: []vocabulary.InitialEntrySpec{
+			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "_G"}, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: vocabulary.InitialMutable},
+			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "__heap_absent"}, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueAbsent}, Mutability: vocabulary.InitialMutable},
 		},
-		InitialBindings: []target.InitialBindingSpec{
+		InitialBindings: []vocabulary.InitialBindingSpec{
 			{Name: "_G", Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "_G"}},
 			{Name: "__heap_absent", Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "__heap_absent"}},
 		},
@@ -221,11 +222,11 @@ func compactFreshSpec(operations ...target.OperationSpec) *target.Spec {
 		}
 		name := binding.Member[len(binding.Member)-1]
 		key := keyspace.LiteralValue{Kind: keyspace.LiteralString, String: name}
-		spec.InitialEntries = append(spec.InitialEntries, target.InitialEntrySpec{
+		spec.InitialEntries = append(spec.InitialEntries, vocabulary.InitialEntrySpec{
 			Root: "GlobalEnvRoot", Key: key,
-			Value: target.InitialValueSpec{Kind: target.InitialValueOperation, Operation: binding}, Mutability: target.InitialMutable,
+			Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueOperation, Operation: binding}, Mutability: vocabulary.InitialMutable,
 		})
-		spec.InitialBindings = append(spec.InitialBindings, target.InitialBindingSpec{Name: name, Root: "GlobalEnvRoot", Key: key})
+		spec.InitialBindings = append(spec.InitialBindings, vocabulary.InitialBindingSpec{Name: name, Root: "GlobalEnvRoot", Key: key})
 	}
 	return spec
 }

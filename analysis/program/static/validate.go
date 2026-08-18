@@ -95,11 +95,11 @@ func (check *containment) markDirectReturn(parent, child keyspace.Term) bool {
 // localForest collects typed containment rows from their owning verticals,
 // then validates the one combined concrete relation. No central collector
 // knows how a Type, declaration, signature, operator, or sidecar is shaped.
-func localForest(component *Component, counts [keyspace.FamilyCount]uint32) (*localContainmentProof, bool) {
+func localForest(component *Component) (*localContainmentProof, bool) {
 	if component == nil {
 		return nil, false
 	}
-	check := newContainment(counts, len(component.types.field))
+	check := newContainment(component.census, int(component.census[keyspace.FamilyTypeField]))
 	if !emitTypesContainment(component, &check) ||
 		!emitDeclarationsContainment(component, &check) ||
 		!emitSignaturesContainment(component, &check) ||
@@ -139,10 +139,7 @@ func (check *containment) valid() bool {
 		}
 	}
 	var color [keyspace.FamilyCount][]uint8
-	for _, family := range staticTypeFamilies {
-		if !staticNodeFamily(family) {
-			continue
-		}
+	for _, family := range staticNodeFamilies {
 		if count := len(check.parents[family]); count != 0 {
 			color[family] = make([]uint8, count)
 		}
@@ -163,7 +160,7 @@ func (check *containment) valid() bool {
 					return false
 				}
 				state = &fieldColor[ordinal-1]
-			case staticNodeFamily(family):
+			case staticrole.NodeFamily(family):
 				parents := color[family]
 				if ordinal == 0 || uint64(ordinal) > uint64(len(parents)) {
 					return false
@@ -196,10 +193,7 @@ func (check *containment) valid() bool {
 		}
 		return true
 	}
-	for _, family := range staticTypeFamilies {
-		if !staticNodeFamily(family) {
-			continue
-		}
+	for _, family := range staticNodeFamilies {
 		for ordinal := range check.parents[family] {
 			if color[family][ordinal] == 0 && !visit(keyspace.MakeTerm(family, uint32(ordinal+1))) {
 				return false
@@ -224,7 +218,7 @@ func (check *containment) parentOf(term keyspace.Term) keyspace.Term {
 		return check.fieldOwners[ordinal-1]
 	}
 	family, ordinal := keyspace.TermFamily(term), keyspace.TermOrdinal(term)
-	if !staticNodeFamily(family) || ordinal == 0 {
+	if !staticrole.NodeFamily(family) || ordinal == 0 {
 		return 0
 	}
 	parents := check.parents[family]

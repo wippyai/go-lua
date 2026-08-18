@@ -3,8 +3,8 @@ package analysis
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/domain/composite"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 )
 
 // TestProgramBindingDerivesEveryRuleFromTheTable is the hot-side drift law.
@@ -21,42 +21,40 @@ func TestProgramBindingDerivesEveryRuleFromTheTable(t *testing.T) {
 	if composite.RuleCount() == 0 {
 		t.Fatal("rule table published no rules")
 	}
-	links := make(map[programartifact.RuleRole]bool, len(composite.LinkRoles()))
-	for _, role := range composite.LinkRoles() {
-		links[role] = true
+	links := make(map[schema.Key]bool, len(composite.LinkKeys()))
+	for _, key := range composite.LinkKeys() {
+		links[key] = true
 	}
 	for position := 0; position < composite.RuleCount(); position++ {
-		role, roleOK := composite.RuleRoleAt(position)
-		if !roleOK {
-			t.Fatalf("table position %d has no role", position)
+		key, keyOK := composite.RuleKeyAt(position)
+		if !keyOK {
+			t.Fatalf("table position %d has no key", position)
 		}
-		capability, capabilityOK := binding.Rules().Capability(role)
+		capability, capabilityOK := binding.Rules().CapabilityByKey(key)
 		if !capabilityOK {
-			t.Fatalf("role %d bound no sealed capability", role)
+			t.Fatalf("key %q bound no sealed capability", key)
 		}
-		if capability.Link() != links[role] || capability.Mounted() == links[role] {
-			t.Fatalf("role %d bound the wrong lane: mounted=%t link=%t", role, capability.Mounted(), capability.Link())
+		if capability.Link() != links[key] || capability.Mounted() == links[key] {
+			t.Fatalf("key %q bound the wrong lane: mounted=%t link=%t", key, capability.Mounted(), capability.Link())
 		}
-		// The capability inverse is the same table: a bound capability
-		// classifies back to exactly the rule that owns it.
-		if got := binding.Rules().DiagnosticForCapability(capability); got != composite.DiagnosticRuleForRole(role) {
-			t.Fatalf("capability of role %d classified as %s", role, got)
+		if got := binding.Rules().DiagnosticForCapability(capability); got != composite.DiagnosticRuleForKey(key) {
+			t.Fatalf("capability of key %q classified as %s", key, got)
 		}
-		if links[role] {
-			if _, catalogOK := binding.Rules().LinkCatalog(role); !catalogOK {
-				t.Fatalf("link role %d published no occurrence catalog", role)
+		if links[key] {
+			if _, catalogOK := binding.Rules().LinkCatalogByKey(key); !catalogOK {
+				t.Fatalf("link key %q published no occurrence catalog", key)
 			}
 			continue
 		}
-		if _, catalogOK := binding.Rules().LinkCatalog(role); catalogOK {
-			t.Fatalf("mounted role %d published a link occurrence catalog", role)
+		if _, catalogOK := binding.Rules().LinkCatalogByKey(key); catalogOK {
+			t.Fatalf("mounted key %q published a link occurrence catalog", key)
 		}
 	}
-	if _, ok := binding.Rules().Capability(programartifact.RuleRoleInvalid); ok {
-		t.Fatal("the invalid role resolved a capability")
+	if _, ok := binding.Rules().CapabilityByKey(""); ok {
+		t.Fatal("the empty key resolved a capability")
 	}
-	if binding.Rules().Attach(programartifact.RuleRoleInvalid, nil, plan.state.sourceID, plan.state.sourceID, plan.state.sourceID) {
-		t.Fatal("the invalid role admitted an occurrence")
+	if attach, ok := binding.Rules().ProgramAttachByKey(""); ok || attach != nil {
+		t.Fatal("the empty key published a program attach")
 	}
 }
 
@@ -65,17 +63,17 @@ func TestProgramBindingDerivesEveryRuleFromTheTable(t *testing.T) {
 // parallel enum arm.
 func TestProgramBindingFailureNamesItsRuleFromTheTable(t *testing.T) {
 	for position := 0; position < composite.RuleCount(); position++ {
-		role, roleOK := composite.RuleRoleAt(position)
-		if !roleOK {
-			t.Fatalf("table position %d has no role", position)
+		key, keyOK := composite.RuleKeyAt(position)
+		if !keyOK {
+			t.Fatalf("table position %d has no key", position)
 		}
-		diagnostic := composite.DiagnosticRuleForRole(role)
+		diagnostic := composite.DiagnosticRuleForKey(key)
 		failure := programBindingFailureForRule(diagnostic)
 		if failure == ProgramBindingFailureNone {
-			t.Fatalf("role %d has no binding failure ordinal", role)
+			t.Fatalf("key %q has no binding failure ordinal", key)
 		}
 		if failure.String() != "rule/"+diagnostic.String() {
-			t.Fatalf("binding failure of role %d = %q, want the table name", role, failure.String())
+			t.Fatalf("binding failure of key %q = %q, want the table name", key, failure.String())
 		}
 	}
 	if ProgramBindingFailureNone.String() != "none" || ProgramBindingFailureInput.String() != "input" {

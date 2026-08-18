@@ -8,8 +8,9 @@ import (
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
-	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
 // BranchProducer is one execution producer of a branch observation and the
@@ -19,14 +20,14 @@ import (
 // producer executes at the base point, and are related by a chain of sealed
 // full-environment transfers otherwise.
 type BranchProducer struct {
-	Role       programartifact.RuleRole
+	Key        schema.Key
 	Occurrence identity.ContentID
 	Point      identity.ContentID
 	Anchor     identity.ContentID
 }
 
 func (producer BranchProducer) Available() bool {
-	return mountedRuleRole(producer.Role) && producer.Occurrence.Available() &&
+	return producer.Key.Available() && producer.Occurrence.Available() &&
 		producer.Point.Available() && producer.Anchor.Available()
 }
 
@@ -41,9 +42,9 @@ func compareBranchProducer(left, right BranchProducer) int {
 		return order
 	}
 	switch {
-	case left.Role < right.Role:
+	case left.Key < right.Key:
 		return -1
-	case left.Role > right.Role:
+	case left.Key > right.Key:
 		return 1
 	}
 	return 0
@@ -69,7 +70,7 @@ func (site ObservationSite) Available() bool {
 	switch site.Kind {
 	case structure.DiagnosticObservationBranchCondition:
 		return site.branchGeometryAvailable()
-	case structure.DiagnosticObservationTypeReferenceUnresolved, structure.DiagnosticObservationValueReferenceUnresolved:
+	case structure.DiagnosticObservationTypeReferenceUnresolved, structure.DiagnosticObservationValueReferenceUnresolved, structure.DiagnosticObservationTypeConformance:
 		return len(site.producers) == 0
 	default:
 		return false
@@ -241,6 +242,12 @@ func mountObservationSites(values linkboundary.Values, contract *target.Contract
 			if _, _, _, _, configured := contract.InitialBinding(name); configured {
 				continue
 			}
+		case structure.DiagnosticObservationTypeConformance:
+			conformance, conformanceOK := observation.TypeConformance()
+			if !conformanceOK || !conformance.CallID().Available() || !conformance.ArgumentID().Available() ||
+				!conformance.DeclaredStaticTypeID().Available() || !conformance.SpanID().Available() {
+				return nil, false
+			}
 		default:
 			return nil, false
 		}
@@ -301,57 +308,43 @@ func anchorBranchProducers(producers []BranchProducer, evidence []identity.Conte
 // rule through the semantic-occurrence relation.
 func mountedValueProducers(values linkboundary.Values, mount Mount) (map[identity.ContentID][]BranchProducer, bool) {
 	producers := make(map[identity.ContentID][]BranchProducer)
-	for roleIndex := 0; roleIndex < programartifact.MountedRuleRoleCount(); roleIndex++ {
-		role, roleOK := programartifact.MountedRuleRoleAt(roleIndex)
-		if !roleOK {
+	for ruleIndex := 0; ruleIndex < mount.Artifact.RulePlacementCount(); ruleIndex++ {
+		rule, ruleOK := mount.Artifact.RulePlacementAt(ruleIndex)
+		if !ruleOK || !rule.Available() {
 			return nil, false
 		}
-		for ruleIndex := 0; ruleIndex < mount.Artifact.RuleOccurrenceCount(role); ruleIndex++ {
-			rule, ruleOK := mount.Artifact.RuleOccurrenceAt(role, ruleIndex)
-			if !ruleOK || !rule.Available() {
-				return nil, false
+		if _, value := rule.OutputSemanticID(); !value {
+			continue
+		}
+		outputID, outputOK := rule.OutputSemanticID()
+		if !outputOK {
+			continue
+		}
+		value, valueOK := values.ForMountedSemantic(mount.ModuleKey, outputID)
+		if programartifact.SpanResultOccurrence(rule.OccurrenceKind()) {
+			value, valueOK = values.ForMountedSpan(mount.ModuleKey, outputID)
+		}
+		point, pointOK := rule.PointAt(0)
+		if !valueOK {
+			continue
+		}
+		valueID, valueIDOK := values.ID(value)
+		if !valueIDOK || !pointOK || !point.Available() || rule.PointCount() != 1 || !rule.Key().Available() {
+			return nil, false
+		}
+		candidate := BranchProducer{Key: rule.Key(), Occurrence: rule.ID(), Point: point}
+		duplicate := false
+		for _, prior := range producers[valueID] {
+			if prior.Key == candidate.Key && prior.Occurrence == candidate.Occurrence && prior.Point == candidate.Point {
+				duplicate = true
+				break
 			}
-			if rule.OutputKind() != programartifact.RuleOutputValue {
-				continue
-			}
-			outputID, outputOK := rule.OutputSemanticID()
-			if !outputOK {
-				continue
-			}
-			value, valueOK := values.ForMountedSemantic(mount.ModuleKey, outputID)
-			if spanResultRole(role) {
-				value, valueOK = values.ForMountedSpan(mount.ModuleKey, outputID)
-			}
-			point, pointOK := rule.PointAt(0)
-			if !valueOK {
-				continue
-			}
-			valueID, valueIDOK := values.ID(value)
-			if !valueIDOK || !pointOK || !point.Available() || rule.PointCount() != 1 {
-				return nil, false
-			}
-			candidate := BranchProducer{Role: role, Occurrence: rule.ID(), Point: point}
-			duplicate := false
-			for _, prior := range producers[valueID] {
-				if prior.Role == candidate.Role && prior.Occurrence == candidate.Occurrence && prior.Point == candidate.Point {
-					duplicate = true
-					break
-				}
-			}
-			if !duplicate {
-				producers[valueID] = append(producers[valueID], candidate)
-			}
+		}
+		if !duplicate {
+			producers[valueID] = append(producers[valueID], candidate)
 		}
 	}
 	return producers, true
-}
-
-// spanResultRole names the rule roles whose result identity is the operator's
-// own program-owned span rather than a semantic occurrence.
-func spanResultRole(role programartifact.RuleRole) bool {
-	return role == programartifact.RuleRoleValueBinaryArithmetic ||
-		role == programartifact.RuleRoleValueBinaryEquality ||
-		role == programartifact.RuleRoleValueBinaryOrder
 }
 
 // fullEnvironmentTransfers indexes the sealed full-environment transfers of one
@@ -409,19 +402,6 @@ func evidenceAnchor(evidence []identity.ContentID, execution identity.ContentID,
 		}
 	}
 	return identity.ContentID{}, false
-}
-
-func mountedRuleRole(role programartifact.RuleRole) bool {
-	for index := 0; index < programartifact.MountedRuleRoleCount(); index++ {
-		candidate, ok := programartifact.MountedRuleRoleAt(index)
-		if !ok {
-			return false
-		}
-		if candidate == role {
-			return true
-		}
-	}
-	return false
 }
 
 func validSiteSpan(span programsource.Span) bool {

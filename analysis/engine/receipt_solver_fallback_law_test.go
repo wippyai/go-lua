@@ -4,24 +4,84 @@ import (
 	"context"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
+	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
 	"github.com/wippyai/go-lua/analysis/identity"
 )
 
-func receiptSolverFallbackSemanticID(value byte) identity.ContentID {
+func selectedOverlaySemanticID(value byte) identity.ContentID {
 	var id identity.ContentID
 	id[0] = value
 	return id
 }
 
-// TestReceiptSolverFallbackRunsAcceptedActivationThroughWTORevision enters
-// Solver.solve with a real accepted activation. The initial graph contains a
-// self-loop Region, making the selected overlay ineligible and forcing the
-// receipt compiler to resolve all row locators against the distinct revision
-// graph before execution continues.
-func TestReceiptSolverFallbackRunsAcceptedActivationThroughWTORevision(t *testing.T) {
+// selectedOverlayFixture is one sealed, unsolved program whose first solve
+// takes a real activation revision: an accepted direct activation widens demand
+// into a body the initial demand closure does not reach. It is the fixture every
+// revision law is measured on, because it is the smallest construction whose
+// solve cannot complete without one.
+type selectedOverlayFixture struct {
+	solver            *Solver
+	binding           *SchemaBinding
+	graph             *ReceiptGraph
+	construction      *ProgramConstruction
+	observation       ReceiptObservation[uint64]
+	triggerID         identity.ContentID
+	bodyID            identity.ContentID
+	ordinaryTransfers *int
+}
+
+// TestSelectedOverlayWidensUndemandedWTO proves that an accepted direct
+// activation can widen demand into a previously inactive body. The trigger
+// and target are initially demanded by the observation; the activation's
+// transport selects the body, whose ordinary producer then executes through
+// the widened recurrence schedule without rebuilding the sealed runtime.
+func TestSelectedOverlayWidensUndemandedWTO(t *testing.T) {
+	fixture := newSelectedOverlayFixture(t)
+	solver, graph, observation := fixture.solver, fixture.graph, fixture.observation
+	baseGraph := solver.runtime.graph
+	baseProgram := solver.runtime.program
+	baseCarrier := solver.runtime.carrier
+	initialRelation := solver.relation
+	triggerReceipt, triggerReceiptOK := graph.lookupPoint(fixture.triggerID)
+	triggerIndex, triggerIndexOK := solver.runtime.graph.PointIndex(triggerReceipt.point)
+	bodyReceipt, bodyReceiptOK := graph.lookupPoint(fixture.bodyID)
+	bodyIndex, bodyIndexOK := solver.runtime.graph.PointIndex(bodyReceipt.point)
+	if !triggerReceiptOK || !triggerIndexOK || triggerIndex < 0 || triggerIndex >= len(solver.runtime.activePoints) || !solver.runtime.activePoints[triggerIndex] || !bodyReceiptOK || !bodyIndexOK || bodyIndex < 0 || bodyIndex >= len(solver.runtime.activePoints) || solver.runtime.activePoints[bodyIndex] {
+		t.Fatal("selected overlay did not start with an active trigger and undemanded body")
+	}
+	state, status, report := solver.SolveWithReport(context.Background())
+	if status != SolveComplete || state == nil {
+		for index := 0; index < solver.runtime.graph.PointCount(); index++ {
+			point, _ := solver.runtime.graph.PointAt(schedule.Node(index))
+			t.Logf("selected overlay point index=%d key=%v reportKey=%v active=%t", index, point.Key(), reportedSemanticKey(point.Key()), solver.runtime.activePoints[index])
+		}
+		t.Fatalf("selected overlay solve state=%t status=%v report=%t reason=%v failure=%v point=%v group=%v member=%v rule=%v", state != nil, status, report.Available(), report.Reason(), report.Failure(), report.Point(), report.Group(), report.Member(), report.Rule())
+	}
+	sealedRelation, sealedRelationOK := solver.runtime.topology.InitialRelation()
+	if !sealedRelationOK || !initialRelation.Precedes(solver.relation) || !sealedRelation.Precedes(solver.relation) || solver.runtime.graph != baseGraph || solver.runtime.program != baseProgram || solver.runtime.carrier != baseCarrier || solver.runtime.graph.RegionCount() == 0 || !solver.runtime.activePoints[triggerIndex] || !solver.runtime.activePoints[bodyIndex] {
+		t.Fatalf("selected overlay revision=%d advanced=%t graphSame=%t programSame=%t carrierSame=%t triggerActive=%t bodyActive=%t regions=%d", solver.relation.Generation(), initialRelation.Precedes(solver.relation), solver.runtime.graph == baseGraph, solver.runtime.program == baseProgram, solver.runtime.carrier == baseCarrier, triggerIndex < len(solver.runtime.activePoints) && solver.runtime.activePoints[triggerIndex], bodyIndex < len(solver.runtime.activePoints) && solver.runtime.activePoints[bodyIndex], solver.runtime.graph.RegionCount())
+	}
+	value, readable := testSnapshotObservationValue[uint64](solver, state, observation.id)
+	if !readable || value != 1 || *fixture.ordinaryTransfers == 0 {
+		t.Fatalf("selected overlay Snapshot value=%d readable=%t ordinaryTransfers=%d", value, readable, *fixture.ordinaryTransfers)
+	}
+	sealed, sealedOK := solver.PublishedSnapshot(state)
+	if !sealedOK {
+		t.Fatal("selected overlay has no sealed Snapshot")
+	}
+	bodyState, bodyReadable := readPointState(sealed.Snapshot(), bodyReceipt.point.Key())
+	if !bodyReadable || !bodyState.Valid() {
+		t.Fatalf("selected overlay body PointState readable=%t valid=%t", bodyReadable, bodyState.Valid())
+	}
+}
+
+func newSelectedOverlayFixture(t testing.TB) selectedOverlayFixture {
+	t.Helper()
 	builder := NewSchema()
 	factor, factorOK := DeclareFactorSlot[uint64](builder, coldKey(949_600))
+	transportFactor, transportFactorOK := DeclareFactorSlot[uint64](builder, coldKey(949_618))
 	write, writeOK := factor.ExactWrite()
 	read, readOK := factor.ExactRead()
 	query, queryOK := DeclareQuerySlot[uint64](builder, SchemaQuerySpec{Semantic: coldKey(949_601), Freezer: coldKey(949_602)})
@@ -32,14 +92,14 @@ func TestReceiptSolverFallbackRunsAcceptedActivationThroughWTORevision(t *testin
 	ordinaryWrite, ordinaryWriteOK := SchemaWrite(ordinarySlot, write)
 	family, familyOK := DeclareSchemaActivationFamily(builder, coldKey(949_603))
 	triggerSlot, triggerOK := DeclareSchemaActivationRule(builder, SchemaStructuralRuleSpec{Semantic: coldKey(949_604), Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(949_605)}, Activation: family})
-	if !factorOK || !writeOK || !readOK || !queryOK || !SchemaQueryRead(query, read) || !ordinaryOK || !ordinaryWriteOK || !familyOK || !triggerOK {
+	if !factorOK || !transportFactorOK || !writeOK || !readOK || !queryOK || !SchemaQueryRead(query, read) || !ordinaryOK || !ordinaryWriteOK || !familyOK || !triggerOK {
 		t.Fatal("receipt activation schema")
 	}
 	schema, schemaOK := builder.Seal()
 	if !schemaOK || schema == nil {
 		t.Fatal("receipt activation schema seal")
 	}
-	ordinaryTransfers := 0
+	ordinaryTransfers := new(int)
 	querySpec := hotExactQuerySpec()
 	querySpec.Project = func(cells OrderedCells[uint64]) uint64 {
 		value, present, valid := cells.At(0)
@@ -54,11 +114,11 @@ func TestReceiptSolverFallbackRunsAcceptedActivationThroughWTORevision(t *testin
 		OperandContent: ruleUnitContent,
 		Admission:      AdmitRuleByTrustedTheorem[uint64, ruleUnit](coldKey(949_615)),
 		Transfer: func(access Access[uint64, ruleUnit]) bool {
-			ordinaryTransfers++
+			*ordinaryTransfers++
 			return Product(access, func(row Row) bool { return StageValue(access, row, uint64(1)) })
 		},
 	}
-	if !BindFactor(binding, factor, hotExactObservationFactorSpec()) || !BindRule[uint64, uint64, ruleUnit](binding, ordinarySlot, ordinaryWrite, factor, ordinarySpec) || !BindExactQuery(binding, query, factor, querySpec) {
+	if !BindFactor(binding, factor, hotExactObservationFactorSpec()) || !BindFactor(binding, transportFactor, hotUintFactorSpec()) || !BindRule[uint64, uint64, ruleUnit](binding, ordinarySlot, ordinaryWrite, factor, ordinarySpec, testRuleProjector[ruleUnit]) || !BindExactQuery(binding, query, factor, querySpec) {
 		t.Fatal("receipt activation factor/query bind")
 	}
 	application := coldKey(949_606)
@@ -80,25 +140,31 @@ func TestReceiptSolverFallbackRunsAcceptedActivationThroughWTORevision(t *testin
 	scope := equation.EmptyScope()
 	triggerSite, triggerSiteOK := assembly.builder.admitSite(compositionKeyOf(coldKey(949_609)), scope, equation.TrueExpr(), equation.InitPresent)
 	targetSite, targetSiteOK := assembly.builder.admitSite(compositionKeyOf(coldKey(949_610)), scope, equation.TrueExpr(), equation.InitPresent)
+	bodySite, bodySiteOK := assembly.builder.admitSite(compositionKeyOf(coldKey(949_619)), scope, equation.TrueExpr(), equation.InitPresent)
 	occurrence, occurrenceOK := assembly.builder.admitAt(triggerSite)
 	entity, entityOK := operandEntityForContent([32]byte{62})
 	operand, operandOK := assembly.builder.admitOperand(occurrence, entity)
 	ordinaryOccurrence, ordinaryOccurrenceOK := assembly.builder.admitAt(targetSite)
+	bodyOccurrence, bodyOccurrenceOK := assembly.builder.admitAt(bodySite)
 	ordinaryOperandValue := ruleUnitForSemantic(coldKey(949_616))
 	ordinaryEntity, ordinaryEntityOK := operandEntityForContent(ordinaryOperandValue.content)
 	ordinaryOperand, ordinaryOperandOK := assembly.builder.admitOperand(ordinaryOccurrence, ordinaryEntity)
-	if !triggerSiteOK || !targetSiteOK || !occurrenceOK || !entityOK || !operandOK || !ordinaryOccurrenceOK || !ordinaryEntityOK || !ordinaryOperandOK || !assembly.SealSources() {
+	bodyEntity, bodyEntityOK := operandEntityForContent(ordinaryOperandValue.content)
+	bodyOperand, bodyOperandOK := assembly.builder.admitOperand(bodyOccurrence, bodyEntity)
+	if !triggerSiteOK || !targetSiteOK || !bodySiteOK || !occurrenceOK || !entityOK || !operandOK || !ordinaryOccurrenceOK || !bodyOccurrenceOK || !ordinaryEntityOK || !ordinaryOperandOK || !bodyEntityOK || !bodyOperandOK || !assembly.SealSources() {
 		t.Fatal("receipt activation source")
 	}
 	triggerPoint, triggerPointOK := assembly.builder.issuePointRow(equation.PointSpec{Site: triggerSite})
-	_, triggerPointSemanticOK := assembly.builder.addSemanticPoint(receiptSolverFallbackSemanticID(61), triggerPoint)
+	triggerPointRef, triggerPointSemanticOK := assembly.builder.addSemanticPoint(selectedOverlaySemanticID(61), triggerPoint)
 	targetPoint, targetPointOK := assembly.builder.issuePointRow(equation.PointSpec{Site: targetSite})
-	_, targetPointSemanticOK := assembly.builder.addSemanticPoint(receiptSolverFallbackSemanticID(62), targetPoint)
+	targetPointRef, targetPointSemanticOK := assembly.builder.addSemanticPoint(selectedOverlaySemanticID(62), targetPoint)
+	bodyPoint, bodyPointOK := assembly.builder.issuePointRow(equation.PointSpec{Site: bodySite})
+	bodyPointRef, bodyPointSemanticOK := assembly.builder.addSemanticPoint(selectedOverlaySemanticID(64), bodyPoint)
 	proof := activationImplementation.receipt.proof
 	source, sourceOK := assembly.builder.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{Schema: proof.semantic, OperandFamily: proof.operandFamily, Occurrence: occurrence, Operand: operand})
 	draft, draftOK := activationImplementation.BeginBindingRuleRow(source)
 	triggerRow, triggerRowOK := assembly.builder.issueRuleRow(draft)
-	triggerRowRef, triggerRowSemanticOK := assembly.builder.addSemanticRule(receiptSolverFallbackSemanticID(63), triggerRow)
+	triggerRowRef, triggerRowSemanticOK := assembly.builder.addSemanticRule(selectedOverlaySemanticID(63), triggerRow)
 	ordinaryProof := ordinaryImplementation.receipt.proof
 	ordinarySource, ordinarySourceOK := assembly.builder.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{
 		Schema: ordinaryProof.semantic, OperandFamily: ordinaryProof.operandFamily, Occurrence: ordinaryOccurrence, Operand: ordinaryOperand,
@@ -112,7 +178,21 @@ func TestReceiptSolverFallbackRunsAcceptedActivationThroughWTORevision(t *testin
 	if ordinaryDraftOK && ordinaryPartOK && ordinaryDraft.AddWrite(ordinaryPart) {
 		ordinaryRow, ordinaryRowOK = assembly.builder.issueRuleRow(ordinaryDraft)
 		if ordinaryRowOK {
-			ordinaryRowRef, ordinaryRowSemanticOK = assembly.builder.addSemanticRule(receiptSolverFallbackSemanticID(67), ordinaryRow)
+			ordinaryRowRef, ordinaryRowSemanticOK = assembly.builder.addSemanticRule(selectedOverlaySemanticID(67), ordinaryRow)
+		}
+	}
+	bodySource, bodySourceOK := assembly.builder.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{
+		Schema: ordinaryProof.semantic, OperandFamily: ordinaryProof.operandFamily, Occurrence: bodyOccurrence, Operand: bodyOperand,
+		Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: ordinaryProof.output, Form: equation.SurfaceWriteExact, Local: 7, Mode: equation.TargetModeStrong}}},
+	})
+	bodyDraft, bodyDraftOK := ordinaryImplementation.BeginBindingRuleRow(bodySource)
+	bodyPart, bodyPartOK := ordinaryImplementation.WritePart(bodySource, 0)
+	bodyRow, bodyRowOK := BindingRuleRowReceipt{}, false
+	bodyRowSemanticOK := false
+	if bodyDraftOK && bodyPartOK && bodyDraft.AddWrite(bodyPart) {
+		bodyRow, bodyRowOK = assembly.builder.issueRuleRow(bodyDraft)
+		if bodyRowOK {
+			_, bodyRowSemanticOK = assembly.builder.addSemanticRule(selectedOverlaySemanticID(68), bodyRow)
 		}
 	}
 	loop := equation.BoundaryInput(triggerSite, triggerSite, compositionKeyOf(coldKey(949_611)), equation.TrueExpr(), equation.IdentityReindex(scope), equation.TrueExpr())
@@ -137,32 +217,26 @@ func TestReceiptSolverFallbackRunsAcceptedActivationThroughWTORevision(t *testin
 		}
 		return matched == 1
 	}
-	if len(assembly.builder.inner.spec.Groups) != 2 || !loop.Available() || !triggerDependency.Available() ||
+	if len(assembly.builder.inner.spec.Groups) != 3 || !loop.Available() || !triggerDependency.Available() ||
 		!setGroupEnvironmentInput(triggerRowRef, loop) || !setGroupEnvironmentInput(ordinaryRowRef, triggerDependency) {
 		t.Fatal("receipt activation topology group")
 	}
-	if !triggerPointOK || !triggerPointSemanticOK || !targetPointOK || !targetPointSemanticOK || !sourceOK || !draftOK || !triggerRowOK || !triggerRowSemanticOK || !ordinarySourceOK || !ordinaryDraftOK || !ordinaryPartOK || !ordinaryRowOK || !ordinaryRowSemanticOK {
+	if !triggerPointOK || !triggerPointSemanticOK || !targetPointOK || !targetPointSemanticOK || !bodyPointOK || !bodyPointSemanticOK || !sourceOK || !draftOK || !triggerRowOK || !triggerRowSemanticOK || !ordinarySourceOK || !ordinaryDraftOK || !ordinaryPartOK || !ordinaryRowOK || !ordinaryRowSemanticOK || !bodySourceOK || !bodyDraftOK || !bodyPartOK || !bodyRowOK || !bodyRowSemanticOK {
 		t.Fatal("receipt activation topology rows")
 	}
-	formals := equation.NewBatch()
-	input, inputOK := formals.AdmitFormalPort(compositionKeyOf(coldKey(949_612)), equation.PortImport, nil)
-	output, outputOK := formals.AdmitFormalPort(compositionKeyOf(coldKey(949_613)), equation.PortExport, nil)
-	if !inputOK || !outputOK || !formals.Seal() {
-		t.Fatal("receipt activation formals")
-	}
-	templateBinding, templateBindingOK := equation.SealTemplateBinding(formals, assembly.builder.inner.batch, []equation.FormalPortActual{{Role: input, Site: triggerSite}, {Role: output, Site: targetSite}})
-	materialization, materializationOK := equation.MaterializeTemplateBoundary(schema.cold, templateBinding, []equation.Site{input.Site(), output.Site()}, nil)
 	shape, shapeOK := schema.cold.RuleShapeAt(proof.ordinal)
-	materialization, originOK := materialization.WithOrigin(equation.MaterializationOrigin{Family: shape.ActivationFamily, Application: compositionKeyOf(application), Target: compositionKeyOf(target), Endpoint: compositionKeyOf(endpoint), TriggerOrdinal: 0})
-	activationID := receiptSolverFallbackSemanticID(65)
-	materializationReceipt, materializationReceiptOK := assembly.builder.issueMaterialization(materialization)
-	if !templateBindingOK || !materializationOK || !shapeOK || !originOK || !assembly.builder.addSemanticActivation(activationID, triggerRowRef) || !materializationReceiptOK || !assembly.builder.addActivationCandidate(materializationReceipt) {
+	activationID := selectedOverlaySemanticID(65)
+	transportSet, transportSetOK := equation.NewDirectActivationTransportSet(schema.cold, assembly.builder.inner.batch,
+		[]equation.PointRef{targetPointRef.ref}, []equation.PointRef{bodyPointRef.ref},
+		[]composition.Key{compositionKeyOf(coldKey(949_618))}, compositionKeyOf(coldKey(949_600)))
+	origin := equation.MaterializationOrigin{Family: shape.ActivationFamily, Application: compositionKeyOf(application), Target: compositionKeyOf(target), Endpoint: compositionKeyOf(endpoint), TriggerOrdinal: 0}
+	candidate, candidateOK := equation.NewDirectActivationCandidate(schema.cold, assembly.builder.inner.batch, origin, triggerPointRef.ref, transportSet)
+	directReceipt, directReceiptOK := assembly.builder.issueDirectActivationCandidate(candidate)
+	if !shapeOK || !transportSetOK || !candidateOK || !assembly.builder.addSemanticActivation(activationID, triggerRowRef) || !directReceiptOK || !assembly.builder.addDirectActivationCandidate(directReceipt) {
 		t.Fatal("receipt activation candidate")
 	}
 	if _, topologyFailure, topologyOK := equation.SealObservationTopologyWithFailure(schema.cold, assembly.builder.inner.spec); !topologyOK {
-		spec := assembly.builder.inner.spec
-		shape, _ := schema.cold.RuleShapeAt(proof.ordinal)
-		t.Fatalf("receipt activation topology preflight failure=%v rules=%d groups=%d points=%d inputs=%d env=%t shapeInputs=%d", topologyFailure, len(spec.Rules), len(spec.Groups), len(spec.Points), len(spec.Groups[0].Inputs), spec.Groups[0].EnvironmentInput.Available(), shape.Inputs)
+		t.Fatalf("receipt activation topology preflight failure=%v", topologyFailure)
 	}
 	_, graph, committed := assembly.CommitObservationTopology()
 	if !committed || graph == nil {
@@ -170,8 +244,8 @@ func TestReceiptSolverFallbackRunsAcceptedActivationThroughWTORevision(t *testin
 		t.Fatalf("receipt activation commit committed=%t graph=%t failure=%v available=%t", committed, graph != nil, failure, available)
 	}
 	activationGraph, activationGraphOK := activationReceiptGraph(graph)
-	activationMember, activationMemberOK := activationGraph.lookupActivationMember(activationID)
-	ordinaryMember, ordinaryMemberOK := graph.RuleMember(receiptSolverFallbackSemanticID(67))
+	_, activationMemberOK := activationGraph.lookupActivationMember(activationID)
+	ordinaryMember, ordinaryMemberOK := graph.RuleMember(selectedOverlaySemanticID(67))
 	if !activationGraphOK || !activationMemberOK || !ordinaryMemberOK {
 		t.Fatal("receipt activation graph receipts")
 	}
@@ -179,40 +253,33 @@ func TestReceiptSolverFallbackRunsAcceptedActivationThroughWTORevision(t *testin
 	if !ordinarySurfaceOK || ordinarySurface.Factor != ordinaryProof.output || ordinarySurface.Form != equation.SurfaceWriteExact || ordinarySurface.Mode != equation.TargetModeStrong || ordinarySurface.Local != 7 {
 		t.Fatal("receipt activation committed ordinary write coordinate")
 	}
-	compilation, compilationOK := BeginReceiptActivationCompilation(activationImplementation, graph)
+	compilation, compilationOK := BeginProgramConstruction(binding, graph)
 	if !compilationOK || compilation == nil {
 		t.Fatal("receipt activation compilation")
 	}
-	if _, attached := AttachReceiptRuleMember(compilation, ordinaryImplementation, ordinaryMember, ordinaryOperandValue); !attached {
+	if !installConstOperandResolver(ordinaryImplementation, ordinaryOperandValue) {
+		t.Fatal("receipt ordinary resolver")
+	}
+	if !AttachRuleMember(compilation, ordinaryImplementation, selectedOverlaySemanticID(67)) {
 		t.Fatal("receipt ordinary attachment")
 	}
-	if _, attached := AttachReceiptActivationMember(compilation, activationImplementation, activationMember); !attached {
+	if !AttachRuleMember(compilation, ordinaryImplementation, selectedOverlaySemanticID(68)) {
+		t.Fatal("receipt body attachment")
+	}
+	if !AttachActivationMember(compilation, activationImplementation, activationID) {
 		t.Fatal("receipt activation attachment")
 	}
-	observation, observationFailure := AttachRuleExactObservationWithFailure(compilation, queryImplementation, receiptSolverFallbackSemanticID(66), ordinaryMember)
+	observation, observationFailure := AttachRuleExactObservationWithFailure(compilation, queryImplementation, selectedOverlaySemanticID(66), ordinaryMember)
 	if observationFailure != ReceiptObservationAttachFailureNone || !observation.Available() {
 		t.Fatalf("receipt activation exact observation failure=%v available=%t", observationFailure, observation.Available())
 	}
-	solver, solverOK := compilation.Solver()
-	if !solverOK || solver == nil || solver.compiler == nil {
-		t.Fatal("receipt activation solver compiler")
+	solver, _, solverOK := compilation.Seal()
+	if !solverOK || solver == nil || solver.runtime == nil || solver.runtime.program == nil || solver.runtime.carrier == nil {
+		t.Fatal("selected overlay solver")
 	}
-	state, status := solver.Solve(context.Background())
-	if status != SolveComplete || state == nil {
-		t.Fatalf("receipt activation solve state=%t status=%v", state != nil, status)
-	}
-	sealedRelation, sealedRelationOK := solver.runtime.topology.InitialRelation()
-	if !sealedRelationOK || !sealedRelation.Precedes(solver.relation) || solver.runtime == nil || solver.runtime.graph == graph.graph || solver.runtime.graph.RegionCount() == 0 {
-		t.Fatalf("receipt activation revision=%d runtime=%t distinct=%t regions=%d", solver.relation.Generation(), solver.runtime != nil, solver.runtime != nil && solver.runtime.graph != graph.graph, func() int {
-			if solver.runtime == nil || solver.runtime.graph == nil {
-				return 0
-			}
-			return solver.runtime.graph.RegionCount()
-		}())
-	}
-	value, readable := ReceiptObservationResult[uint64](observation, solver, state)
-	if !readable || value != 1 || ordinaryTransfers == 0 {
-		t.Fatalf("exact observation post-revision value=%d readable=%t ordinaryTransfers=%d", value, readable, ordinaryTransfers)
+	return selectedOverlayFixture{
+		solver: solver, binding: binding, graph: graph, construction: compilation, observation: observation,
+		triggerID: selectedOverlaySemanticID(61), bodyID: selectedOverlaySemanticID(64), ordinaryTransfers: ordinaryTransfers,
 	}
 }
 

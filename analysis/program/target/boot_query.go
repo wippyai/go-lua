@@ -1,6 +1,7 @@
 package target
 
 import (
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
@@ -17,7 +18,7 @@ func (c *Contract) InitialRootCount() int {
 // GlobalEnvRoot is the sole initially mutable table root shared by every
 // initial global binding. It is unavailable when the contract has no global
 // bindings.
-func (c *Contract) GlobalEnvRoot() (InitialRoot, bool) {
+func (c *Contract) GlobalEnvRoot() (vocabulary.InitialRoot, bool) {
 	if c == nil || c.globalEnvRoot == 0 {
 		return 0, false
 	}
@@ -27,50 +28,50 @@ func (c *Contract) GlobalEnvRoot() (InitialRoot, bool) {
 // InitialAbsent returns the unique canonical structural absent value. It is
 // the total initial value for arbitrary Program globals and is unavailable
 // only when the sealed ledger did not author an absent value.
-func (c *Contract) InitialAbsent() (InitialValue, bool) {
+func (c *Contract) InitialAbsent() (vocabulary.InitialValue, bool) {
 	if c == nil || c.initialAbsent == 0 {
 		return 0, false
 	}
 	return c.initialAbsent, true
 }
 
-func (c *Contract) InitialRootAt(index int) (InitialRoot, bool) {
+func (c *Contract) InitialRootAt(index int) (vocabulary.InitialRoot, bool) {
 	if c == nil || index < 0 || index >= len(c.initialRoots) {
 		return 0, false
 	}
-	return InitialRoot(index + 1), true
+	return vocabulary.InitialRoot(index + 1), true
 }
 
-func (c *Contract) initialRoot(root InitialRoot) (initialRootRow, bool) {
+func (c *Contract) initialRoot(root vocabulary.InitialRoot) (initialRootRow, bool) {
 	if c == nil || root == 0 || uint64(root) > uint64(len(c.initialRoots)) {
 		return initialRootRow{}, false
 	}
 	return c.initialRoots[uint32(root)-1], true
 }
 
-func (c *Contract) InitialRootIdentity(root InitialRoot) (string, bool) {
+func (c *Contract) InitialRootIdentity(root vocabulary.InitialRoot) (string, bool) {
 	row, ok := c.initialRoot(root)
 	return row.identity, ok
 }
 
-func (c *Contract) InitialRootBootShape(root InitialRoot) (BootShape, bool) {
+func (c *Contract) InitialRootBootShape(root vocabulary.InitialRoot) (vocabulary.BootShape, bool) {
 	row, ok := c.initialRoot(root)
 	return row.shape, ok
 }
 
-func (c *Contract) bootShape(shape BootShape) (bootShapeRow, bool) {
+func (c *Contract) bootShape(shape vocabulary.BootShape) (bootShapeRow, bool) {
 	if c == nil || shape == 0 || uint64(shape) > uint64(len(c.bootShapes)) {
 		return bootShapeRow{}, false
 	}
 	return c.bootShapes[uint32(shape)-1], true
 }
 
-func (c *Contract) BootShapeRoot(shape BootShape) (InitialRoot, bool) {
+func (c *Contract) bootShapeRoot(shape vocabulary.BootShape) (vocabulary.InitialRoot, bool) {
 	row, ok := c.bootShape(shape)
 	return row.root, ok
 }
 
-func (c *Contract) BootShapeAggregate(shape BootShape) (BootAggregate, bool) {
+func (c *Contract) BootShapeAggregate(shape vocabulary.BootShape) (vocabulary.BootAggregate, bool) {
 	row, ok := c.bootShape(shape)
 	return row.aggregate, ok
 }
@@ -78,56 +79,56 @@ func (c *Contract) BootShapeAggregate(shape BootShape) (BootAggregate, bool) {
 // BootShapeImmutable reports the exact initial whole-object header policy of
 // one boot aggregate.  It is not derived from, and has no bearing on the
 // independent InitialMutability policies of its individual entries.
-func (c *Contract) BootShapeImmutable(shape BootShape) (bool, bool) {
+func (c *Contract) BootShapeImmutable(shape vocabulary.BootShape) (bool, bool) {
 	row, ok := c.bootShape(shape)
 	return row.immutable, ok
 }
 
-func (c *Contract) BootShapeValue(shape BootShape) (InitialValue, bool) {
+func (c *Contract) BootShapeValue(shape vocabulary.BootShape) (vocabulary.InitialValue, bool) {
 	row, ok := c.bootShape(shape)
 	return row.value, ok
 }
 
-func (c *Contract) initialValue(value InitialValue) (initialValueRow, bool) {
+func (c *Contract) initialValue(value vocabulary.InitialValue) (initialValueRow, bool) {
 	if c == nil || value == 0 || uint64(value) > uint64(len(c.initialValues)) {
 		return initialValueRow{}, false
 	}
 	return c.initialValues[uint32(value)-1], true
 }
 
-func (c *Contract) InitialValueKind(value InitialValue) (InitialValueKind, bool) {
+func (c *Contract) InitialValueKind(value vocabulary.InitialValue) (vocabulary.InitialValueKind, bool) {
 	row, ok := c.initialValue(value)
 	return row.kind, ok
 }
 
-func (c *Contract) InitialValueBoolean(value InitialValue) (bool, bool) {
+func (c *Contract) InitialValueBoolean(value vocabulary.InitialValue) (bool, bool) {
 	row, ok := c.initialValue(value)
-	return row.boolean, ok && row.kind == InitialValueBoolean
+	return row.boolean, ok && row.kind == vocabulary.InitialValueBoolean
 }
 
-func (c *Contract) InitialValueInteger(value InitialValue) (int64, bool) {
+func (c *Contract) InitialValueInteger(value vocabulary.InitialValue) (int64, bool) {
 	row, ok := c.initialValue(value)
-	return row.integer, ok && row.kind == InitialValueInteger
+	return row.integer, ok && row.kind == vocabulary.InitialValueInteger
 }
 
-func (c *Contract) InitialValueFloatBits(value InitialValue) (uint64, bool) {
+func (c *Contract) InitialValueFloatBits(value vocabulary.InitialValue) (uint64, bool) {
 	row, ok := c.initialValue(value)
-	return row.floatBits, ok && row.kind == InitialValueFloat
+	return row.floatBits, ok && row.kind == vocabulary.InitialValueFloat
 }
 
-func (c *Contract) InitialValueString(value InitialValue) (string, bool) {
+func (c *Contract) InitialValueString(value vocabulary.InitialValue) (string, bool) {
 	row, ok := c.initialValue(value)
-	return row.string, ok && row.kind == InitialValueString
+	return row.string, ok && row.kind == vocabulary.InitialValueString
 }
 
-func (c *Contract) InitialValueRoot(value InitialValue) (InitialRoot, bool) {
+func (c *Contract) InitialValueRoot(value vocabulary.InitialValue) (vocabulary.InitialRoot, bool) {
 	row, ok := c.initialValue(value)
-	return row.root, ok && row.kind == InitialValueRoot
+	return row.root, ok && row.kind == vocabulary.InitialValueRoot
 }
 
-func (c *Contract) InitialValueOperation(value InitialValue) (Operation, bool) {
+func (c *Contract) InitialValueOperation(value vocabulary.InitialValue) (vocabulary.Operation, bool) {
 	row, ok := c.initialValue(value)
-	return row.operation, ok && row.kind == InitialValueOperation
+	return row.operation, ok && row.kind == vocabulary.InitialValueOperation
 }
 
 // InitialOperation resolves one exact boot root/key occurrence directly to
@@ -135,7 +136,7 @@ func (c *Contract) InitialValueOperation(value InitialValue) (Operation, bool) {
 // binary-search index; this reduction deliberately does not walk the exact
 // key or initial-entry tables and does not admit roots, literals, denied
 // bindings, or other initial-value kinds as operations.
-func (c *Contract) InitialOperation(root InitialRoot, key ExactKey) (Operation, bool) {
+func (c *Contract) InitialOperation(root vocabulary.InitialRoot, key vocabulary.ExactKey) (vocabulary.Operation, bool) {
 	value, _, ok := c.InitialEntry(root, key)
 	if !ok {
 		return 0, false
@@ -143,20 +144,20 @@ func (c *Contract) InitialOperation(root InitialRoot, key ExactKey) (Operation, 
 	return c.InitialValueOperation(value)
 }
 
-func (c *Contract) initialValueBinding(value InitialValue) (bindingRange, bool) {
+func (c *Contract) initialValueBinding(value vocabulary.InitialValue) (bindingRange, bool) {
 	row, ok := c.initialValue(value)
-	if !ok || row.kind != InitialValueDeniedOperation || row.binding == 0 || uint64(row.binding) > uint64(len(c.initialValueBinds)) {
+	if !ok || row.kind != vocabulary.InitialValueDeniedOperation || row.binding == 0 || uint64(row.binding) > uint64(len(c.initialValueBinds)) {
 		return bindingRange{}, false
 	}
 	return c.initialValueBinds[row.binding-1], true
 }
 
-func (c *Contract) InitialValueDeniedNamespace(value InitialValue) (BindingNamespace, bool) {
+func (c *Contract) InitialValueDeniedNamespace(value vocabulary.InitialValue) (vocabulary.BindingNamespace, bool) {
 	row, ok := c.initialValueBinding(value)
 	return row.namespace, ok
 }
 
-func (c *Contract) InitialValueDeniedOwnerCount(value InitialValue) int {
+func (c *Contract) InitialValueDeniedOwnerCount(value vocabulary.InitialValue) int {
 	row, ok := c.initialValueBinding(value)
 	if !ok {
 		return 0
@@ -164,7 +165,7 @@ func (c *Contract) InitialValueDeniedOwnerCount(value InitialValue) int {
 	return row.owner.len()
 }
 
-func (c *Contract) InitialValueDeniedOwnerAt(value InitialValue, index int) (string, bool) {
+func (c *Contract) InitialValueDeniedOwnerAt(value vocabulary.InitialValue, index int) (string, bool) {
 	row, ok := c.initialValueBinding(value)
 	if !ok || index < 0 || index >= row.owner.len() {
 		return "", false
@@ -172,9 +173,9 @@ func (c *Contract) InitialValueDeniedOwnerAt(value InitialValue, index int) (str
 	return c.segments[row.owner.start+uint32(index)], true
 }
 
-// InitialValueDeniedOwnerKeyAt returns the exact-key atom for a denied
+// initialValueDeniedOwnerKeyAt returns the exact-key atom for a denied
 // binding owner segment. The string projection is artifact spelling only.
-func (c *Contract) InitialValueDeniedOwnerKeyAt(value InitialValue, index int) (ExactKey, bool) {
+func (c *Contract) initialValueDeniedOwnerKeyAt(value vocabulary.InitialValue, index int) (vocabulary.ExactKey, bool) {
 	row, ok := c.initialValueBinding(value)
 	if !ok || index < 0 || index >= row.ownerKeys.len() {
 		return 0, false
@@ -182,7 +183,7 @@ func (c *Contract) InitialValueDeniedOwnerKeyAt(value InitialValue, index int) (
 	return c.bindingKeys[row.ownerKeys.start+uint32(index)], true
 }
 
-func (c *Contract) InitialValueDeniedMemberCount(value InitialValue) int {
+func (c *Contract) InitialValueDeniedMemberCount(value vocabulary.InitialValue) int {
 	row, ok := c.initialValueBinding(value)
 	if !ok {
 		return 0
@@ -190,7 +191,7 @@ func (c *Contract) InitialValueDeniedMemberCount(value InitialValue) int {
 	return row.member.len()
 }
 
-func (c *Contract) InitialValueDeniedMemberAt(value InitialValue, index int) (string, bool) {
+func (c *Contract) InitialValueDeniedMemberAt(value vocabulary.InitialValue, index int) (string, bool) {
 	row, ok := c.initialValueBinding(value)
 	if !ok || index < 0 || index >= row.member.len() {
 		return "", false
@@ -198,9 +199,9 @@ func (c *Contract) InitialValueDeniedMemberAt(value InitialValue, index int) (st
 	return c.segments[row.member.start+uint32(index)], true
 }
 
-// InitialValueDeniedMemberKeyAt returns the exact-key atom for a denied
+// initialValueDeniedMemberKeyAt returns the exact-key atom for a denied
 // binding member segment. The string projection is artifact spelling only.
-func (c *Contract) InitialValueDeniedMemberKeyAt(value InitialValue, index int) (ExactKey, bool) {
+func (c *Contract) initialValueDeniedMemberKeyAt(value vocabulary.InitialValue, index int) (vocabulary.ExactKey, bool) {
 	row, ok := c.initialValueBinding(value)
 	if !ok || index < 0 || index >= row.memberKeys.len() {
 		return 0, false
@@ -217,16 +218,16 @@ func (c *Contract) ExactKeyCount() int {
 	return len(c.exactKeys)
 }
 
-func (c *Contract) ExactKeyAt(index int) (ExactKey, bool) {
+func (c *Contract) ExactKeyAt(index int) (vocabulary.ExactKey, bool) {
 	if c == nil || index < 0 || index >= len(c.exactKeys) {
 		return 0, false
 	}
-	return ExactKey(index + 1), true
+	return vocabulary.ExactKey(index + 1), true
 }
 
 // ExactKeyValue returns the normalized typed Lua key payload for one sealed
 // Target handle. It is the only spelling/payload projection for hot key rows.
-func (c *Contract) ExactKeyValue(key ExactKey) (keyspace.LiteralValue, bool) {
+func (c *Contract) ExactKeyValue(key vocabulary.ExactKey) (keyspace.LiteralValue, bool) {
 	if c == nil || key == 0 || uint64(key) > uint64(len(c.exactKeys)) {
 		return keyspace.LiteralValue{}, false
 	}
@@ -240,7 +241,7 @@ func (c *Contract) InitialEntryCount() int {
 	return len(c.initialEntries)
 }
 
-func (c *Contract) InitialEntryAt(index int) (InitialRoot, ExactKey, InitialValue, InitialMutability, bool) {
+func (c *Contract) InitialEntryAt(index int) (vocabulary.InitialRoot, vocabulary.ExactKey, vocabulary.InitialValue, vocabulary.InitialMutability, bool) {
 	if c == nil || index < 0 || index >= len(c.initialEntries) {
 		return 0, 0, 0, 0, false
 	}
@@ -250,7 +251,7 @@ func (c *Contract) InitialEntryAt(index int) (InitialRoot, ExactKey, InitialValu
 
 // InitialEntry performs an allocation-free binary search over canonical
 // root/key rows.
-func (c *Contract) InitialEntry(root InitialRoot, key ExactKey) (InitialValue, InitialMutability, bool) {
+func (c *Contract) InitialEntry(root vocabulary.InitialRoot, key vocabulary.ExactKey) (vocabulary.InitialValue, vocabulary.InitialMutability, bool) {
 	if c == nil || root == 0 || key == 0 || uint64(key) > uint64(len(c.exactKeys)) {
 		return 0, 0, false
 	}
@@ -277,18 +278,18 @@ func (c *Contract) InitialMetatableAttachmentCount() int {
 // InitialMetatableAttachmentAt returns one canonical primitive-base to
 // metatable-root bootstrap relation. Base is an existing InitialValueKind and
 // metatable is an existing InitialRoot with BootAggregateMetatable shape.
-func (c *Contract) InitialMetatableAttachmentAt(index int) (base InitialValueKind, metatable InitialRoot, ok bool) {
+func (c *Contract) InitialMetatableAttachmentAt(index int) (base vocabulary.InitialValueKind, metatable vocabulary.InitialRoot, ok bool) {
 	if c == nil || index < 0 || index >= len(c.initialMetatables) {
-		return InitialValueInvalid, 0, false
+		return vocabulary.InitialValueInvalid, 0, false
 	}
 	row := c.initialMetatables[index]
-	if row.base != InitialValueString || row.metatable == 0 || uint64(row.metatable) > uint64(len(c.initialRoots)) {
-		return InitialValueInvalid, 0, false
+	if row.base != vocabulary.InitialValueString || row.metatable == 0 || uint64(row.metatable) > uint64(len(c.initialRoots)) {
+		return vocabulary.InitialValueInvalid, 0, false
 	}
 	shape, valid := c.InitialRootBootShape(row.metatable)
 	aggregate, aggregateOK := c.BootShapeAggregate(shape)
-	if !valid || !aggregateOK || aggregate != BootAggregateMetatable {
-		return InitialValueInvalid, 0, false
+	if !valid || !aggregateOK || aggregate != vocabulary.BootAggregateMetatable {
+		return vocabulary.InitialValueInvalid, 0, false
 	}
 	return row.base, row.metatable, true
 }
@@ -300,7 +301,7 @@ func (c *Contract) InitialBindingCount() int {
 	return len(c.initialBindings)
 }
 
-func (c *Contract) InitialBindingAt(index int) (string, InitialBindingClass, InitialValue, InitialRoot, ExactKey, bool) {
+func (c *Contract) InitialBindingAt(index int) (string, vocabulary.InitialBindingClass, vocabulary.InitialValue, vocabulary.InitialRoot, vocabulary.ExactKey, bool) {
 	if c == nil || index < 0 || index >= len(c.initialBindings) {
 		return "", 0, 0, 0, 0, false
 	}
@@ -318,7 +319,7 @@ func (c *Contract) InitialBindingAt(index int) (string, InitialBindingClass, Ini
 
 // InitialBinding returns the frozen three-way disposition together with the
 // exact initial value that determines it; Ordinary is therefore never vague.
-func (c *Contract) InitialBinding(name string) (InitialBindingClass, InitialValue, InitialRoot, ExactKey, bool) {
+func (c *Contract) InitialBinding(name string) (vocabulary.InitialBindingClass, vocabulary.InitialValue, vocabulary.InitialRoot, vocabulary.ExactKey, bool) {
 	if c == nil {
 		return 0, 0, 0, 0, false
 	}

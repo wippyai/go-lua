@@ -5,8 +5,8 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/internal/canonical"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/internal/canonical"
 )
 
 // SolveFailureReason identifies the first engine lifecycle boundary that made
@@ -171,6 +171,96 @@ func receiptFailure(family SolveFailureFamily, authority string, ordinals ...uin
 // never share an identity while the public vocabulary stays the family.
 func ReceiptCompilationAttachFailure(phase uint64) SolveFailure {
 	return receiptFailure(SolveFailureFamilyCompile, "receipt-compilation-attach", phase)
+}
+
+// ProgramConstructionStage names one refusal boundary of the program
+// constructor: the pass that takes a committed topology plus the rows a bind
+// produced and mints the sealed program and its Solver. The stages are the
+// boundaries that pass actually has, so a caller localizes a construction
+// refusal without the engine publishing the pass's own tables.
+type ProgramConstructionStage uint8
+
+const (
+	ProgramConstructionStageNone ProgramConstructionStage = iota
+	// ProgramConstructionStageAdmission is the constructor's own input fence:
+	// the construction handle, the committed topology it is bound against, and
+	// the sealed directory that topology published. The mounted artifact
+	// schedule gate runs at the topology's commit against artifact rows that are
+	// released before construction, so a schedule verdict reaches the
+	// constructor as a refused admission of the committed topology.
+	ProgramConstructionStageAdmission
+	// ProgramConstructionStageTopologySeal is the topology commit itself: the
+	// mounted artifact schedule gate, the graph materialization, and the
+	// directory publication that the admission fence later re-checks.
+	ProgramConstructionStageTopologySeal
+	// ProgramConstructionStageQueryAddress is the published query address table:
+	// one canonical key per directory ordinal, resolved against the graph's own
+	// queries so no ordinal publishes a foreign or duplicate query and no solved
+	// query lacks a column to answer on.
+	ProgramConstructionStageQueryAddress
+	// ProgramConstructionStageObservationAddress is the published observation
+	// address table: one row per admitted attach identity, so every issued
+	// attach ordinal addresses a sealed row rather than a position past its end.
+	ProgramConstructionStageObservationAddress
+	// ProgramConstructionStageFactorBind is the bound Factor table: the dense
+	// owner index and the runtime slot each bound Factor occupies.
+	ProgramConstructionStageFactorBind
+	// ProgramConstructionStageMemberBind is the member bind: the per-Group fold
+	// of the cold draft answers and the hot rows minted from those drafts.
+	ProgramConstructionStageMemberBind
+	// ProgramConstructionStageProgramSeal is the seal of the row-model program
+	// and the runtime assembled from it.
+	ProgramConstructionStageProgramSeal
+	// ProgramConstructionStageSolverMint is the Solver mint: the initial
+	// relation and the one store issuance this Solver's addresses are named in.
+	ProgramConstructionStageSolverMint
+	// programConstructionStageCount bounds the closed stage set. Nothing is
+	// declared past it.
+	programConstructionStageCount
+)
+
+// programConstructionAuthority is the engine table the construction stage
+// ordinals belong to. It stays inside this package; a caller separates two
+// stages by their site digests alone.
+const programConstructionAuthority = "program-construction"
+
+// ProgramConstructionFailure mints the compile-family boundary for one program
+// construction stage. The stage ordinal enters the site preimage, so two stages
+// never share an identity while the published vocabulary stays the family.
+func ProgramConstructionFailure(stage ProgramConstructionStage) SolveFailure {
+	if stage <= ProgramConstructionStageNone || stage >= programConstructionStageCount {
+		return SolveFailure{}
+	}
+	return receiptFailure(SolveFailureFamilyCompile, programConstructionAuthority, uint64(stage))
+}
+
+// programConstructionSites is every stage's site digest, minted once. The
+// digest is the only construction coordinate that leaves the engine, so
+// recovering the stage is a lookup on it rather than a second published field.
+// An unencodable preimage yields the unavailable identity, which no stage may
+// occupy: one such entry would make every unavailable site classify as it.
+var programConstructionSites = func() map[identity.ContentID]ProgramConstructionStage {
+	sites := make(map[identity.ContentID]ProgramConstructionStage, programConstructionStageCount)
+	for stage := ProgramConstructionStageAdmission; stage < programConstructionStageCount; stage++ {
+		site := ProgramConstructionFailure(stage).Site
+		if !site.Available() {
+			continue
+		}
+		sites[site] = stage
+	}
+	return sites
+}()
+
+// ProgramConstructionStageOf recovers the construction stage one failure names.
+// It reports false for every boundary raised outside the program constructor,
+// so a caller routes a construction refusal without classifying the rest of the
+// compile family.
+func ProgramConstructionStageOf(failure SolveFailure) (ProgramConstructionStage, bool) {
+	if failure.Family != SolveFailureFamilyCompile || !failure.Site.Available() {
+		return ProgramConstructionStageNone, false
+	}
+	stage, named := programConstructionSites[failure.Site]
+	return stage, named
 }
 
 // SolveReport is a detached first-failure certificate for one incomplete

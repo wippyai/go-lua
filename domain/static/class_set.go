@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
@@ -53,7 +54,7 @@ type ClassSet struct {
 	rows             []classRow // zero is AnyValue
 	byBytes          map[string]Class
 	byStatic         map[uint32]Class
-	byTarget         map[target.Type]Class
+	byTarget         map[vocabulary.Type]Class
 	nilable          []bool
 	runtimeKinds     []runtimekind.Set // sealed Class index -> may-runtime-kind mask.
 	runtimeAtomKinds []runtimekind.Set // sealed Runtime atom index -> may-runtime-kind mask.
@@ -88,7 +89,7 @@ type ClassSet struct {
 func sealClassSet(authority *Authority) (*ClassSet, *typeauthority.Runtime, error) {
 	set := &ClassSet{authority: authority, rows: []classRow{{kind: ClassAnyValue}},
 		byBytes: make(map[string]Class), byStatic: make(map[uint32]Class),
-		byTarget: make(map[target.Type]Class)}
+		byTarget: make(map[vocabulary.Type]Class)}
 	nilClass, err := set.addConcrete(typ.Nil)
 	if err != nil {
 		return nil, nil, err
@@ -135,7 +136,7 @@ func sealClassSet(authority *Authority) (*ClassSet, *typeauthority.Runtime, erro
 	if contract == nil || !contract.ContentID().Available() {
 		return nil, nil, errors.New("static: Link target unavailable")
 	}
-	seenOperations := make(map[target.Operation]struct{}, contract.OperationCount())
+	seenOperations := make(map[vocabulary.Operation]struct{}, contract.OperationCount())
 	for index := 0; index < contract.OperationCount(); index++ {
 		operation, valid := contract.OperationAt(index)
 		if !valid {
@@ -237,7 +238,7 @@ func (s *ClassSet) ClassForStatic(value Value) (Class, bool) {
 // ClassForTarget projects a Target-owned type handle. The Contract pointer is
 // part of the capability: the raw ordinal alone is not an owner identity and
 // must not admit an equal-numbered type from another sealed Target.
-func (s *ClassSet) ClassForTarget(contract *target.Contract, value target.Type) (Class, bool) {
+func (s *ClassSet) ClassForTarget(contract *target.Contract, value vocabulary.Type) (Class, bool) {
 	if s == nil || s.authority == nil || contract == nil || contract != s.authority.target {
 		return Class{}, false
 	}
@@ -420,7 +421,7 @@ func (s *ClassSet) addConcreteInput(value typ.Type, input typeauthority.RuntimeI
 	return class, nil
 }
 
-func (s *ClassSet) addTarget(contract *target.Contract, value target.Type) error {
+func (s *ClassSet) addTarget(contract *target.Contract, value vocabulary.Type) error {
 	if _, exists := s.byTarget[value]; exists {
 		return nil
 	}
@@ -457,7 +458,7 @@ func (s *ClassSet) addTarget(contract *target.Contract, value target.Type) error
 	return nil
 }
 
-func (s *ClassSet) addValues(contract *target.Contract, values target.Values) error {
+func (s *ClassSet) addValues(contract *target.Contract, values vocabulary.Values) error {
 	for index := 0; index < contract.ValuesCount(values); index++ {
 		value, ok := contract.ValuesAt(values, index)
 		if !ok {
@@ -482,7 +483,7 @@ func (s *ClassSet) addValues(contract *target.Contract, values target.Values) er
 	return nil
 }
 
-func (s *ClassSet) addOperation(contract *target.Contract, operation target.Operation) error {
+func (s *ClassSet) addOperation(contract *target.Contract, operation vocabulary.Operation) error {
 	input, ok := contract.Input(operation)
 	if !ok {
 		return errors.New("static: operation input unavailable")
@@ -491,14 +492,14 @@ func (s *ClassSet) addOperation(contract *target.Contract, operation target.Oper
 		return err
 	}
 	for index := 0; index < contract.TypeFormalCount(operation); index++ {
-		if value, ok := contract.TypeFormalConstraint(operation, target.TypeFormal(index)); ok {
+		if value, ok := contract.TypeFormalConstraint(operation, vocabulary.TypeFormal(index)); ok {
 			if err := s.addTarget(contract, value); err != nil {
 				return err
 			}
 		}
 	}
 	for index := 0; index < contract.ValuesVarCount(operation); index++ {
-		value, ok := contract.ValuesVarType(operation, target.ValuesVar(index))
+		value, ok := contract.ValuesVarType(operation, vocabulary.ValuesVar(index))
 		if !ok {
 			return errors.New("static: ValuesVar type unavailable")
 		}
@@ -577,7 +578,7 @@ func (s *ClassSet) addOperation(contract *target.Contract, operation target.Oper
 	return nil
 }
 
-func (s *ClassSet) contentID(runtime *typeauthority.Runtime, operations map[target.Operation]struct{}) (id identity.ContentID) {
+func (s *ClassSet) contentID(runtime *typeauthority.Runtime, operations map[vocabulary.Operation]struct{}) (id identity.ContentID) {
 	if runtime == nil || !runtime.ContentID().Available() {
 		return identity.ContentID{}
 	}

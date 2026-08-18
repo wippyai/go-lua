@@ -5,22 +5,19 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/composite"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
+	"github.com/wippyai/go-lua/analysis/schema/observation"
 	"github.com/wippyai/go-lua/analysis/schema/query"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
 
-// ruleRoleLimit bounds the artifact's own role catalog. The declaration table
-// numbers its rules by declaration position; this is the size of the ordinal
-// space an artifact-addressed row arrives under, and the two agree by law.
-const ruleRoleLimit = int(programartifact.RuleRoleValuePresenceRefinement) + 1
+// ruleTableLimit is one past the last declaration slot (slots are 1-based).
 
 // ruleCells is one pass's per-rule payload, indexed by role slot: the rule's
 // dense declaration position, numbered from one. Slot zero is the absent rule.
@@ -42,6 +39,9 @@ var registry struct {
 	// the contributor that answers it, which the declaration and binding passes
 	// drive.
 	queries []*query.Registration
+	// observations is the pure-data inventory of the query result populations
+	// consumed by the live publication producers.
+	observations observation.Table
 	// queryPositions is the admitted inventory indexed by authored family key,
 	// so a consumer addresses a family's cell by the identity its owning domain
 	// declared it under rather than by scanning the inventory.
@@ -55,6 +55,10 @@ var registry struct {
 	// identity a row is sealed under and the identity a consumer reads are one
 	// derivation.
 	roles vocabulary.Roles
+	// slotsByKey is the sealed rule inventory indexed by declaration key, so
+	// attach and classification address a rule by identity rather than by
+	// scanning the table.
+	slotsByKey map[schema.Key]int
 }
 
 func sealRegistry() {
@@ -105,6 +109,11 @@ func sealRegistry() {
 			registry.failure = schema.SealFailure{Contributor: schema.SurfaceKindQuery, Law: schema.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
 			return
 		}
+		observations, observationsOK := observationEntries(queries)
+		if !observationsOK {
+			registry.failure = schema.SealFailure{Contributor: schema.SurfaceKindObservation, Law: schema.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
+			return
+		}
 		// The registration order is the catalog order, which is the bind phase
 		// order: the structural vocabulary first, because it names no other
 		// surface and every surface above it may name a member of it, then axes
@@ -123,6 +132,7 @@ func sealRegistry() {
 		// vocabulary is allowed in this composition root.
 		builder.Register(denominator.NewSurface(denominators, denominator.GeneratedRelationEntries()))
 		builder.Register(query.NewSurface(queries))
+		builder.Register(observation.NewSurface(observations))
 		sealed, failure := builder.Seal()
 		if failure.Available() {
 			registry.failure = failure
@@ -138,24 +148,52 @@ func sealRegistry() {
 			return
 		}
 		registry.diagnostics = diagnosticTable
+		observationView, observationViewOK := sealed.Surface(schema.SurfaceKindObservation)
+		observationTable, observationTableOK := observation.NewTable(observationView)
+		if !observationViewOK || !observationTableOK {
+			registry.failure = schema.SealFailure{Contributor: schema.SurfaceKindObservation, Law: schema.LawSurfaceCatalog, Disposition: schema.DispositionMalformed}
+			return
+		}
+		registry.observations = observationTable
 		registry.axisAdopters = axisAdopterTable(axes)
 		positions := make(map[schema.Key]int, len(queries))
 		for position, registration := range queries {
 			positions[registration.Key()] = position
 		}
+		slots := make(map[schema.Key]int, len(templates))
+		for position, entry := range templates {
+			if entry == nil || !entry.Key().Available() {
+				registry.failure = schema.SealFailure{Contributor: schema.SurfaceKindRule, Law: schema.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
+				return
+			}
+			if _, duplicate := slots[entry.Key()]; duplicate {
+				registry.failure = schema.SealFailure{Contributor: schema.SurfaceKindRule, Law: schema.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
+				return
+			}
+			slots[entry.Key()] = position + 1
+		}
 		registry.templates, registry.axes = templates, axes
 		registry.queries, registry.queryPositions = queries, positions
+		registry.slotsByKey = slots
 		registry.roles, registry.sealed = roles, sealed
 	})
 }
 
 // Table returns the sealed declaration root and the law that rejected it. The
 // structure, axis, rule, diagnostic, composite, denominator, query, and
-// library surfaces are its members, sealed in catalog order; a later surface
-// registers alongside them without touching any.
+// observation surfaces are its members, sealed in catalog order; a later
+// surface registers alongside them without touching any.
 func Table() (*schema.Schema, schema.SealFailure) {
 	sealRegistry()
 	return registry.sealed, registry.failure
+}
+
+// Observations is the derived read model of the sealed observation surface.
+// Runtime producers use the declaration table's identities; they do not
+// register or retain rows here.
+func Observations() (observation.Table, bool) {
+	sealRegistry()
+	return registry.observations, registry.observations.Available()
 }
 
 // RuleCount is the size of the sealed rule inventory.
@@ -174,32 +212,9 @@ func RuleKeyAt(position int) (schema.Key, bool) {
 	return registry.templates[position].Key(), true
 }
 
-// RuleRoleAt returns the artifact role one rule at its table position is
-// addressed by. The position is the rule's role slot less one, and the artifact
-// ordinal at that slot is what the adoption agreement pins.
-func RuleRoleAt(position int) (programartifact.RuleRole, bool) {
-	sealRegistry()
-	if position < 0 || position >= len(registry.templates) {
-		return programartifact.RuleRoleInvalid, false
-	}
-	return artifactRoleForSlot(position + 1), true
-}
-
-// artifactRoleForSlot and templateForRole are the one interim adoption
-// boundary: a compiled artifact still numbers its rule roles itself, and a row
-// it addresses that way is resolved here to the declaration at the same
-// position. The agreement between the two numberings is stated as a law, member
-// by member, so the artifact's own catalog can be deleted against a proven map.
-func artifactRoleForSlot(slot int) programartifact.RuleRole {
-	if slot <= 0 || slot >= ruleRoleLimit {
-		return programartifact.RuleRoleInvalid
-	}
-	return programartifact.RuleRole(slot)
-}
-
 // RuleEntryID returns one rule's stable table identity.
-func RuleEntryID(role programartifact.RuleRole) (schema.EntryID, bool) {
-	entry, ok := templateForRole(role)
+func RuleEntryID(key schema.Key) (schema.EntryID, bool) {
+	entry, ok := templateForKey(key)
 	if !ok {
 		return schema.EntryID{}, false
 	}
@@ -207,29 +222,51 @@ func RuleEntryID(role programartifact.RuleRole) (schema.EntryID, bool) {
 }
 
 // RuleSemantic returns one rule's canonical Engine identity.
-func RuleSemantic(role programartifact.RuleRole) (identity.SemanticKey, bool) {
-	entry, ok := templateForRole(role)
+func RuleSemantic(key schema.Key) (identity.SemanticKey, bool) {
+	entry, ok := templateForKey(key)
 	if !ok {
 		return identity.SemanticKey{}, false
 	}
 	return registry.roles.Key(entry.Semantic())
 }
 
-// LinkRoles returns the Link-lane roles in table order. A plan admits exactly
-// these outside the mounted artifact lane.
-func LinkRoles() []programartifact.RuleRole {
-	sealRegistry()
-	var roles []programartifact.RuleRole
-	for position, entry := range registry.templates {
-		if entry.Lane() == rule.LaneLink {
-			roles = append(roles, artifactRoleForSlot(position+1))
-		}
+// RuleOwner returns the axis that must supply this rule's operand resolver.
+// Construction later selects that resolver by the rule's declaration key; the
+// owner is the join from the sealed declaration to the principal that installs
+// it.
+func RuleOwner(key schema.Key) (schema.Key, bool) {
+	entry, ok := templateForKey(key)
+	if !ok {
+		return "", false
 	}
-	return roles
+	owner := entry.Owner()
+	return owner, owner.Available()
 }
 
-func templateForRole(role programartifact.RuleRole) (*template, bool) {
-	return templateAtSlot(int(role))
+// LinkKeys returns the Link-lane declaration keys in table order.
+func LinkKeys() []schema.Key {
+	sealRegistry()
+	var keys []schema.Key
+	for _, entry := range registry.templates {
+		if entry != nil && entry.Lane() == rule.LaneLink {
+			keys = append(keys, entry.Key())
+		}
+	}
+	return keys
+}
+
+func templateForKey(key schema.Key) (*template, bool) {
+	slot, ok := ruleSlotForKey(key)
+	if !ok {
+		return nil, false
+	}
+	return templateAtSlot(slot)
+}
+
+// MountedRuleKey reports whether key names a mounted or activation rule.
+func MountedRuleKey(key schema.Key) bool {
+	entry, ok := templateForKey(key)
+	return ok && entry.Lane().Mounted()
 }
 
 // templateAtSlot resolves one rule by its slot. The slot is the declaration
@@ -247,15 +284,11 @@ func templateAtSlot(slot int) (*template, bool) {
 // rule reaches a peer by identity rather than by position.
 func ruleSlotForKey(key schema.Key) (int, bool) {
 	sealRegistry()
-	if registry.sealed == nil {
+	if registry.sealed == nil || !key.Available() || registry.slotsByKey == nil {
 		return 0, false
 	}
-	for position, entry := range registry.templates {
-		if entry.Key() == key {
-			return position + 1, true
-		}
-	}
-	return 0, false
+	slot, ok := registry.slotsByKey[key]
+	return slot, ok
 }
 
 // DiagnosticRule is the closed analyzer-owned classification of one rule. It
@@ -265,15 +298,6 @@ func ruleSlotForKey(key schema.Key) (int, bool) {
 type DiagnosticRule uint8
 
 const DiagnosticRuleUnknown DiagnosticRule = 0
-
-// DiagnosticRuleForRole projects one artifact role into the closed analyzer
-// rule classification.
-func DiagnosticRuleForRole(role programartifact.RuleRole) DiagnosticRule {
-	if _, ok := templateForRole(role); ok {
-		return DiagnosticRule(role)
-	}
-	return DiagnosticRuleUnknown
-}
 
 // DiagnosticRuleForKey classifies one rule by the key it is declared under.
 func DiagnosticRuleForKey(key schema.Key) DiagnosticRule {
@@ -318,7 +342,7 @@ func declareRules(builder *engine.SchemaBuilder, roles vocabulary.Roles, owners 
 	context := declaration{Builder: builder, Roles: roles, Principals: owners}
 	for position, entry := range registry.templates {
 		slot := position + 1
-		if !owners.writes(entry.Writes()) {
+		if !owners.writes(entry.Writes()) || !owners.writes(entry.Owner()) {
 			return fragments, DiagnosticRule(slot), false
 		}
 		fragment, ok := entry.Declare(context)
@@ -343,6 +367,7 @@ const (
 	RuleBindStageSeal
 	RuleBindStageCapability
 	RuleBindStageFinalize
+	RuleBindStageProgram
 )
 
 func (stage RuleBindStage) String() string {
@@ -363,6 +388,8 @@ func (stage RuleBindStage) String() string {
 		return "capability"
 	case RuleBindStageFinalize:
 		return "finalize"
+	case RuleBindStageProgram:
+		return "program"
 	default:
 		return "none"
 	}
@@ -373,12 +400,17 @@ func (stage RuleBindStage) String() string {
 // attachment and classification through the table, never through a domain
 // type.
 type RuleBinding struct {
-	binding *engine.SchemaBinding
-	hot     ruleCells
+	binding   *engine.SchemaBinding
+	hot       ruleCells
+	attachers map[schema.Key]engine.RuleProgramAttach
 }
 
-func (rules *RuleBinding) cell(role programartifact.RuleRole) (rule.Cell, bool) {
-	return rules.cellAtSlot(int(role))
+func (rules *RuleBinding) cellByKey(key schema.Key) (rule.Cell, bool) {
+	slot, ok := ruleSlotForKey(key)
+	if !ok {
+		return rule.Cell{}, false
+	}
+	return rules.cellAtSlot(slot)
 }
 
 func (rules *RuleBinding) cellAtSlot(slot int) (rule.Cell, bool) {
@@ -389,12 +421,13 @@ func (rules *RuleBinding) cellAtSlot(slot int) (rule.Cell, bool) {
 	return hot, hot.Available()
 }
 
-// Capability resolves one rule's exact sealed slot capability by role. The
-// sealed SchemaBinding directory is the sole authority: the rule's canonical
-// semantic identity is looked up there on demand, never cached into a second
-// per-role registry.
-func (rules *RuleBinding) Capability(role programartifact.RuleRole) (engine.RuleSlotCapability, bool) {
-	return rules.capabilityAtSlot(int(role))
+// CapabilityByKey resolves one rule's sealed slot capability by declaration key.
+func (rules *RuleBinding) CapabilityByKey(key schema.Key) (engine.RuleSlotCapability, bool) {
+	slot, ok := ruleSlotForKey(key)
+	if !ok {
+		return engine.RuleSlotCapability{}, false
+	}
+	return rules.capabilityAtSlot(slot)
 }
 
 // capabilityAtSlot resolves one rule's sealed slot capability by its slot.
@@ -428,53 +461,52 @@ func (rules *RuleBinding) DiagnosticForCapability(capability engine.RuleSlotCapa
 	return DiagnosticRuleUnknown
 }
 
-// Attach admits one artifact-authored occurrence for its role while the
-// assembly's sources remain open.
-func (rules *RuleBinding) Attach(role programartifact.RuleRole, assembly *engine.ReceiptAssembly, mount, point, occurrence identity.ContentID) bool {
-	entry, entryOK := templateForRole(role)
-	hot, hotOK := rules.cell(role)
-	return entryOK && hotOK && entry.Attach(hot, assembly, mount, point, occurrence)
-}
-
-// AttachMember binds one already-admitted occurrence to a committed topology.
-// The generic mounted graph row is claimed here for the lane that declares
-// one; the activation lane owns its own member bridge instead.
-func (rules *RuleBinding) AttachMember(role programartifact.RuleRole, compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mount, point, occurrence identity.ContentID) bool {
-	entry, entryOK := templateForRole(role)
-	hot, hotOK := rules.cell(role)
-	if !entryOK || !hotOK || graph == nil {
+// AttachMemberByKey binds one already-admitted occurrence to a committed
+// topology. The construction owns the graph row; activation keeps its own
+// member bridge.
+func (rules *RuleBinding) AttachMemberByKey(key schema.Key, compilation *engine.ProgramConstruction, mount, point, occurrence identity.ContentID) bool {
+	entry, entryOK := templateForKey(key)
+	if !entryOK || compilation == nil {
 		return false
 	}
-	capability, capabilityOK := rules.Capability(role)
+	capability, capabilityOK := rules.CapabilityByKey(key)
 	if !capabilityOK || !capability.Mounted() {
 		return false
 	}
-	if entry.Lane() == rule.LaneMounted {
-		if _, rowOK := graph.MountedRuleMember(capability, mount, point, occurrence); !rowOK {
-			return false
-		}
+	if entry.Lane() == rule.LaneActivation {
+		hot, hotOK := rules.cellByKey(key)
+		return hotOK && entry.Member(hot, compilation, mount, point, occurrence)
 	}
-	return entry.Member(hot, compilation, graph, mount, point, occurrence)
+	attach, attachOK := rules.programAttach(key)
+	return attachOK && attach.AttachMountedMember(compilation, capability, mount, point, occurrence)
 }
 
-// AttachLink admits one Link-owned occurrence for its role.
-func (rules *RuleBinding) AttachLink(role programartifact.RuleRole, assembly *engine.ReceiptAssembly, occurrence identity.ContentID) bool {
-	entry, entryOK := templateForRole(role)
-	hot, hotOK := rules.cell(role)
-	return entryOK && hotOK && entry.LinkAttach(hot, assembly, occurrence)
+// AttachLinkMemberByKey binds one admitted Link occurrence to a committed
+// topology.
+func (rules *RuleBinding) AttachLinkMemberByKey(key schema.Key, compilation *engine.ProgramConstruction, occurrence identity.ContentID) bool {
+	attach, attachOK := rules.programAttach(key)
+	capability, capabilityOK := rules.CapabilityByKey(key)
+	return attachOK && capabilityOK && capability.Link() && attach.AttachLinkMember(compilation, capability, occurrence)
 }
 
-// AttachLinkMember binds one admitted Link occurrence to a committed topology.
-func (rules *RuleBinding) AttachLinkMember(role programartifact.RuleRole, compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, occurrence identity.ContentID) bool {
-	entry, entryOK := templateForRole(role)
-	hot, hotOK := rules.cell(role)
-	return entryOK && hotOK && entry.LinkMember(hot, compilation, graph, occurrence)
+func (rules *RuleBinding) programAttach(key schema.Key) (engine.RuleProgramAttach, bool) {
+	if rules == nil || rules.attachers == nil || !key.Available() {
+		return nil, false
+	}
+	attach, ok := rules.attachers[key]
+	return attach, ok && attach != nil
 }
 
-// LinkCatalog returns one Link rule's occurrence inventory.
-func (rules *RuleBinding) LinkCatalog(role programartifact.RuleRole) (rule.LinkCatalog, bool) {
-	entry, entryOK := templateForRole(role)
-	hot, hotOK := rules.cell(role)
+// ProgramAttachByKey is the sealed construction join for one declared rule.
+// Mounted operand and Link rules publish exactly one attach; activation
+// publishes none.
+func (rules *RuleBinding) ProgramAttachByKey(key schema.Key) (engine.RuleProgramAttach, bool) {
+	return rules.programAttach(key)
+}
+
+func (rules *RuleBinding) LinkCatalogByKey(key schema.Key) (rule.LinkCatalog, bool) {
+	entry, entryOK := templateForKey(key)
+	hot, hotOK := rules.cellByKey(key)
 	if !entryOK || !hotOK {
 		return nil, false
 	}
@@ -495,10 +527,10 @@ func bindRules(binding *engine.SchemaBinding, fragments ruleCells, set authoriti
 	if registry.sealed == nil || binding == nil || !set.available() || seal == nil || len(fragments) != len(registry.templates)+1 {
 		return nil, DiagnosticRuleUnknown, RuleBindStagePrincipal
 	}
-	rules := &RuleBinding{binding: binding, hot: newRuleCells(registry.templates)}
+	rules := &RuleBinding{binding: binding, hot: newRuleCells(registry.templates), attachers: make(map[schema.Key]engine.RuleProgramAttach, len(registry.templates))}
 	for position, entry := range registry.templates {
 		slot := position + 1
-		if !set.writes(entry.Writes()) {
+		if !set.writes(entry.Writes()) || !set.writes(entry.Owner()) {
 			return nil, DiagnosticRule(slot), RuleBindStagePrincipal
 		}
 		if !fragments[slot].Available() {
@@ -567,15 +599,33 @@ func bindRules(binding *engine.SchemaBinding, fragments ruleCells, set authoriti
 			return nil, DiagnosticRule(slot), RuleBindStageFinalize
 		}
 	}
+	// Operand and Link rules publish one cell-owned program attach. Activation
+	// keeps its own member bridge. Missing or duplicate attachers leave the
+	// binding unusable rather than half constructed.
+	for position, entry := range registry.templates {
+		slot := position + 1
+		if entry.Lane() == rule.LaneActivation {
+			continue
+		}
+		source, sourceOK := rule.Payload[engine.RuleProgramSource](rules.hot[slot])
+		attach, attachOK := source.ProgramAttach()
+		if !sourceOK || !attachOK || attach == nil {
+			return nil, DiagnosticRule(slot), RuleBindStageProgram
+		}
+		if _, duplicate := rules.attachers[entry.Key()]; duplicate {
+			return nil, DiagnosticRule(slot), RuleBindStageProgram
+		}
+		rules.attachers[entry.Key()] = attach
+	}
 	return rules, DiagnosticRuleUnknown, RuleBindStageNone
 }
 
 // RuleHandle recovers one bound hot rule at its declared type. Production
 // wiring drives the table instead; this exists for the owning domain's own
 // laws, which must reach the implementation they are stating a law about.
-func RuleHandle[H any](rules *RuleBinding, role programartifact.RuleRole) (H, bool) {
+func RuleHandleByKey[H any](rules *RuleBinding, key schema.Key) (H, bool) {
 	var absent H
-	hot, ok := rules.cell(role)
+	hot, ok := rules.cellByKey(key)
 	if !ok {
 		return absent, false
 	}

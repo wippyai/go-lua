@@ -2,7 +2,6 @@ package artifact
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/flow"
 )
 
 // CallOperandKind is the closed role of one authored Call operand.  The
@@ -190,7 +189,8 @@ type CallRow struct {
 	argumentEnd uint32
 	typeArgumentStart,
 	typeArgumentEnd uint32
-	form        flow.CallForm
+	form        CallForm
+	target      identity.ContentID
 	hasReceiver bool
 	hasTail     bool
 	sealed      bool
@@ -199,8 +199,8 @@ type CallRow struct {
 func (row CallRow) Available() bool {
 	if !row.sealed || !row.id.Available() || !row.body.Available() || !row.span.Available() || !row.formal.Available() ||
 		!row.values.Available() || !row.valuesRoot.Available() || !row.types.Available() || !row.callee.Available() || !row.actuals.Available() ||
-		(row.form != flow.CallFormPlain && row.form != flow.CallFormMethod) || row.hasReceiver != row.receiver.Available() ||
-		(row.form == flow.CallFormMethod) != row.hasReceiver || row.hasTail != row.tail.Available() ||
+		!row.form.Valid() || row.hasReceiver != row.receiver.Available() ||
+		(row.form == CallFormMethod) != row.hasReceiver || row.hasTail != row.tail.Available() ||
 		row.argumentEnd < row.argumentStart || row.operandEnd < row.operandStart || row.typeArgumentEnd < row.typeArgumentStart {
 		return false
 	}
@@ -264,11 +264,17 @@ func (row CallRow) ActualsID() identity.ContentID {
 	}
 	return row.actuals
 }
-func (row CallRow) Form() flow.CallForm {
+func (row CallRow) Form() CallForm {
 	if !row.Available() {
-		return 0
+		return CallFormInvalid
 	}
 	return row.form
+}
+
+// DirectTargetBody is the callee Body when Flow sealed a DirectFunctions join
+// for this call. Indirect, method, and unresolved calls leave it absent.
+func (row CallRow) DirectTargetBody() (identity.ContentID, bool) {
+	return row.target, row.Available() && row.target.Available()
 }
 func (row CallRow) ReceiverID() (identity.ContentID, bool) {
 	return row.receiver, row.Available() && row.hasReceiver

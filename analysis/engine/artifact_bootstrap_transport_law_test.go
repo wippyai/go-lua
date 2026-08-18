@@ -128,7 +128,7 @@ func bindBootstrapTransportLawOwner(t testing.TB, owner bootstrapTransportLawOwn
 				return Product(access, func(row Row) bool { return StageValue(access, row, staged) })
 			},
 		}
-		if !BindFactor(binding, owner.factors[index], hotUintFactorSpec()) || !BindRule[uint64, uint64, struct{}](binding, owner.rules[index], owner.writes[index], owner.factors[index], spec) {
+		if !BindFactor(binding, owner.factors[index], hotUintFactorSpec()) || !BindRule[uint64, uint64, struct{}](binding, owner.rules[index], owner.writes[index], owner.factors[index], spec, testRuleProjector[struct{}]) {
 			t.Fatal("bootstrap transport binding rows")
 		}
 	}
@@ -563,55 +563,54 @@ func TestLinkBootstrapValueAndHeapProducersReachMountedInitialAfterReleaseAndRev
 	if !unrelatedRevisionMemberOK || unrelatedRevisionMember.member.Key() != unrelatedBaseMember.member.Key() || unrelatedRevisionMember.locator != unrelatedBaseMember.locator || !revisionActivationGraphOK || !revisionActivationOK || revisionActivation.member.Key() != baseActivation.member.Key() || revisionActivation.locator != baseActivation.locator {
 		t.Fatal("bootstrap producer revision ordinary/activation member locators")
 	}
-	baseCompilation, baseCompilationOK := BeginReceiptActivationCompilation(owner.activationImplementation, graph)
+	baseCompilation, baseCompilationOK := BeginProgramConstruction(owner.binding, graph)
 	if !baseCompilationOK || baseCompilation == nil {
 		t.Fatal("bootstrap producer base receipt compilation")
 	}
 	for index := range occurrences {
-		if _, attached := AttachReceiptRuleMember(baseCompilation, owner.implementations[index], siblingMembers[index], struct{}{}); attached {
-			t.Fatalf("bootstrap producer sibling member crossed base graph %d", index)
+		if !owner.implementations[index].HasOperandResolver() && !installConstOperandResolver(owner.implementations[index], struct{}{}) {
+			t.Fatalf("bootstrap producer base resolver %d", index)
 		}
-		if _, attached := AttachReceiptRuleMember(baseCompilation, owner.implementations[index], baseMembers[index], struct{}{}); !attached {
+		if attached := AttachLinkRuleMember(baseCompilation, owner.implementations[index], capabilities[index], occurrences[index]); !attached {
 			t.Fatalf("bootstrap producer base member attachment %d", index)
 		}
 	}
 	if !baseCompilation.Close() {
 		t.Fatal("bootstrap producer base compilation close")
 	}
-	compilation, compilationOK := BeginReceiptActivationCompilation(owner.activationImplementation, revisionGraph)
+	compilation, compilationOK := BeginProgramConstruction(owner.binding, revisionGraph)
 	if !compilationOK || compilation == nil {
 		t.Fatal("bootstrap producer receipt compilation")
 	}
 	for index := range occurrences {
-		member, memberOK := revisionGraph.LinkRuleMember(capabilities[index], occurrences[index])
-		if !memberOK {
+		if _, memberOK := revisionGraph.LinkRuleMember(capabilities[index], occurrences[index]); !memberOK {
 			t.Fatalf("bootstrap producer released member %d", index)
 		}
-		if _, attached := AttachReceiptRuleMember(compilation, owner.implementations[index], baseMembers[index], struct{}{}); attached {
-			t.Fatalf("bootstrap producer base member crossed revision graph %d", index)
+		if !owner.implementations[index].HasOperandResolver() && !installConstOperandResolver(owner.implementations[index], struct{}{}) {
+			t.Fatalf("bootstrap producer resolver %d", index)
 		}
-		if _, attached := AttachReceiptRuleMember(compilation, owner.implementations[index], siblingMembers[index], struct{}{}); attached {
-			t.Fatalf("bootstrap producer sibling member crossed revision graph %d", index)
-		}
-		if _, attached := AttachReceiptRuleMember(compilation, owner.implementations[index], member, struct{}{}); !attached {
+		if attached := AttachLinkRuleMember(compilation, owner.implementations[index], capabilities[index], occurrences[index]); !attached {
 			t.Fatalf("bootstrap producer member attachment %d", index)
 		}
 	}
-	if _, attached := AttachReceiptRuleMember(compilation, owner.implementations[2], unrelatedRevisionMember, struct{}{}); !attached {
+	if !owner.implementations[2].HasOperandResolver() && !installConstOperandResolver(owner.implementations[2], struct{}{}) {
+		t.Fatal("bootstrap producer unrelated resolver")
+	}
+	if attached := AttachRuleMember(compilation, owner.implementations[2], unrelatedMemberID); !attached {
 		t.Fatal("bootstrap producer unrelated member attachment")
 	}
-	if _, attached := AttachReceiptActivationMember(compilation, owner.activationImplementation, revisionActivation); !attached {
+	if attached := AttachActivationMember(compilation, owner.activationImplementation, activationID); !attached {
 		t.Fatal("bootstrap producer activation member attachment")
 	}
 	queries := make([]ReceiptQuery, len(queryIDs))
 	for index := range queryIDs {
 		query, queryOK := revisionGraph.Query(queryIDs[index])
-		if !queryOK || query.identity.Key() != baseQueries[index].identity.Key() || query.locator != baseQueries[index].locator || !AttachReceiptExactQuery(compilation, owner.queryImplementations[index], query) {
+		if !queryOK || query.identity.Key() != baseQueries[index].identity.Key() || query.locator != baseQueries[index].locator || !AttachExactQuery(compilation, owner.queryImplementations[index], queryIDs[index]) {
 			t.Fatalf("bootstrap producer released query %d", index)
 		}
 		queries[index] = query
 	}
-	solver, solverOK := compilation.Solver()
+	solver, _, solverOK := compilation.Seal()
 	if !solverOK || solver == nil {
 		t.Fatal("bootstrap producer solver")
 	}
@@ -629,7 +628,11 @@ func TestLinkBootstrapValueAndHeapProducersReachMountedInitialAfterReleaseAndRev
 	}
 	wantValues := []uint64{41, 73, ^uint64(0)}
 	for index, query := range queries {
-		value, readable := ReceiptQueryResult[uint64](query, solver, state)
+		key, keyed := query.PublicationKey()
+		if !keyed {
+			t.Fatalf("bootstrap producer query %d has no snapshot key", index)
+		}
+		value, readable := testSnapshotQueryValue[uint64](solver, state, key)
 		if !readable || value != wantValues[index] {
 			t.Fatalf("bootstrap producer result %d=%d/%t", index, value, readable)
 		}

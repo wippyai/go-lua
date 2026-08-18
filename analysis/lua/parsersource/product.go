@@ -29,10 +29,21 @@ const (
 // coordinate is not absent evidence, it is evidence that the field keeps its
 // declared zero state. States is the complete set of representation states the
 // coordinate can hold once the construction has run.
+//
+// Member is the discriminant refinement, and it is stated only where a closed
+// constant family makes it decidable: the carrier's declared type is an
+// admitted DiscriminantEnum and this construction leaves exactly one of that
+// family's members in it. Everywhere else it is empty and States is the whole
+// account, because a carrier with no closed family has no member to name and a
+// construction reaching a carrier through a computed value has not chosen one.
+// The column refines the vector, it does not widen the state space: two
+// constructions differing only in which member they assign are two rows here
+// and one row under States alone.
 type ProductField struct {
 	Ordinal  int
 	Field    string
 	Assigned bool
+	Member   string
 	States   []FieldState
 }
 
@@ -72,12 +83,15 @@ type ActionProduct struct {
 
 // FieldMutation is one field assignment an action performs on an already
 // constructed value. It is a separate row from a product coordinate because it
-// can move a field into a state no construction of that form ever names.
+// can move a field into a state no construction of that form ever names, and
+// for the same reason it carries its own Member: an edit can put a family
+// member in a discriminant no construction of that form ever writes.
 type FieldMutation struct {
 	Owner       string
 	Scope       ProductScope
 	Constructor string
 	Field       string
+	Member      string
 	States      []FieldState
 }
 
@@ -212,6 +226,13 @@ type productBuilder struct {
 	semantic     map[string]bool
 	vocabulary   GrammarVocabulary
 	constants    map[string]bool
+	// enums are the admitted closed constant families, keyed by the named type
+	// a carrier declares, and memberTypes the family each constant belongs to.
+	// A carrier is refined by a member only when both agree it is the same
+	// family, so a constant of one family assigned to a carrier of another
+	// refines nothing rather than being read as that carrier's choice.
+	enums        map[string]DiscriminantEnum
+	memberTypes  map[string]string
 	terminalText map[string]bool
 	nonZeroPos   bool
 	packages     map[string]bool
@@ -259,6 +280,8 @@ func newProductBuilder(root string) (*productBuilder, error) {
 		semantic:     make(map[string]bool, len(schema.Constructors)),
 		vocabulary:   vocabulary,
 		constants:    make(map[string]bool, len(constants)),
+		enums:        make(map[string]DiscriminantEnum),
+		memberTypes:  make(map[string]string, len(constants)),
 		terminalText: make(map[string]bool, len(contract.Terminals)),
 		nonZeroPos:   contract.NonZeroPositions,
 		packages:     packages,
@@ -291,6 +314,12 @@ func newProductBuilder(root string) (*productBuilder, error) {
 	}
 	for _, constant := range constants {
 		builder.constants[constant.Name] = constant.Zero
+	}
+	for _, family := range DiscriminantEnums(constants) {
+		builder.enums[family.Type] = family
+		for _, member := range family.Members {
+			builder.memberTypes[member] = family.Type
+		}
 	}
 	for _, terminal := range contract.Terminals {
 		builder.terminalText[terminal.Terminal] = terminal.NonEmptyText

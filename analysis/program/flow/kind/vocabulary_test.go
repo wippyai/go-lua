@@ -103,3 +103,31 @@ func TestCanonicalVocabularyZeroIsInvalid(t *testing.T) {
 		})
 	}
 }
+
+func TestBinaryArithmeticMembershipRejectsOtherBinaryFamilies(t *testing.T) {
+	for op := BinaryAdd; op <= BinaryPow; op++ {
+		if !IsBinaryArithmetic(op) {
+			t.Fatalf("arithmetic operator %d was rejected", op)
+		}
+	}
+	for _, op := range []BinaryOp{
+		0,
+		BinaryConcat,
+		BinaryBitAnd,
+		BinaryBitOr,
+		BinaryBitXor,
+		BinaryShiftLeft,
+		BinaryShiftRight,
+		BinaryEqual,
+		BinaryNotEqual,
+		BinaryLess,
+		BinaryLessEqual,
+		BinaryGreater,
+		BinaryGreaterEqual,
+		BinaryOp(255),
+	} {
+		if IsBinaryArithmetic(op) {
+			t.Fatalf("non-arithmetic operator %d was admitted", op)
+		}
+	}
+}

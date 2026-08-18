@@ -41,8 +41,12 @@ func (b *Bodies) declare(
 	if _, exists := b.active[id]; exists {
 		return 0, fmt.Errorf("lualower: duplicate active binder symbol")
 	}
+	name := b.binding.Name(id)
+	if name == "" {
+		return 0, fmt.Errorf("lualower: binder Cell %d has no authored spelling", id)
+	}
 	owner := b.Owner()
-	cell := b.collector.Cell(span, owner)
+	cell := b.collector.Cell(span, owner, name)
 	if cell == 0 {
 		return 0, fmt.Errorf("lualower: could not create Cell")
 	}
@@ -59,8 +63,12 @@ func (b *Bodies) Capture(
 	span source.Span,
 	outer keyspace.Term,
 ) (keyspace.Term, error) {
+	name := b.binding.Name(id)
+	if name == "" {
+		return 0, fmt.Errorf("lualower: captured binder Cell %d has no authored spelling", id)
+	}
 	owner := b.Owner()
-	inner := b.collector.Cell(span, owner)
+	inner := b.collector.Cell(span, owner, name)
 	if inner == 0 {
 		return 0, fmt.Errorf("lualower: could not create capture Cell")
 	}

@@ -1,18 +1,18 @@
 package value
 
 import (
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"math"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	linkhost "github.com/wippyai/go-lua/analysis/program/link/host"
-	"github.com/wippyai/go-lua/analysis/program/target"
 	"github.com/wippyai/go-lua/domain/runtimekind"
 )
 
 // TargetInitialID is the sealed projection for one Host boot-root identity
 // and Target initial value. The host alias resolution was completed during
 // sealing; no hot caller can reopen Host or Boundary to recover it.
-func (schema *Schema) TargetInitialID(root identity.ContentID, initial target.InitialValue) (Value, bool) {
+func (schema *Schema) TargetInitialID(root identity.ContentID, initial vocabulary.InitialValue) (Value, bool) {
 	if schema == nil || !root.Available() || initial == 0 {
 		return Value{}, false
 	}
@@ -30,7 +30,7 @@ func (schema *valueBuilder) sealTargetInitialResults() bool {
 		if !rootOK || !rootIDOK || !rootID.Available() {
 			return false
 		}
-		if !schema.visitTargetInitialValues(func(initial target.InitialValue) bool {
+		if !schema.visitTargetInitialValues(func(initial vocabulary.InitialValue) bool {
 			fact, ok := schema.targetInitialCold(root, initial)
 			if !ok {
 				// InitialValueAbsent has no Value fact and remains a precise
@@ -40,7 +40,7 @@ func (schema *valueBuilder) sealTargetInitialResults() bool {
 					return false
 				}
 				initialKind, initialKindOK := kind.InitialValueKind(initial)
-				return initialKindOK && initialKind == target.InitialValueAbsent
+				return initialKindOK && initialKind == vocabulary.InitialValueAbsent
 			}
 			key := targetInitialKey{root: rootID, initial: initial}
 			if prior, duplicate := schema.targetInitials[key]; duplicate {
@@ -64,7 +64,7 @@ func (schema *valueBuilder) sealTargetInitialResults() bool {
 // returns its compact runtime family atom, while roots and callables retain
 // their exact Link identities. A denied callable is therefore not widened to
 // opaque Function: its later typed Throw remains Call-owned and observable.
-func (schema *valueBuilder) targetInitialCold(root linkhost.BootRoot, initial target.InitialValue) (Value, bool) {
+func (schema *valueBuilder) targetInitialCold(root linkhost.BootRoot, initial vocabulary.InitialValue) (Value, bool) {
 	if schema == nil || schema.sealProject() == nil || initial == 0 {
 		return Value{}, false
 	}
@@ -79,11 +79,11 @@ func (schema *valueBuilder) targetInitialCold(root linkhost.BootRoot, initial ta
 	}
 	atom := Atom{}
 	switch kind {
-	case target.InitialValueAbsent:
+	case vocabulary.InitialValueAbsent:
 		return Value{}, false
-	case target.InitialValueNil:
+	case vocabulary.InitialValueNil:
 		atom = Atom{schema: schema.Schema, id: schema.atomByRow[atomRow{kind: atomNil}]}
-	case target.InitialValueBoolean:
+	case vocabulary.InitialValueBoolean:
 		value, ok := contract.InitialValueBoolean(initial)
 		if !ok {
 			return Value{}, false
@@ -97,10 +97,10 @@ func (schema *valueBuilder) targetInitialCold(root linkhost.BootRoot, initial ta
 			}
 			atom = Atom{schema: schema.Schema, id: schema.atomByRow[atomRow{kind: kind}]}
 		}
-	case target.InitialValueInteger, target.InitialValueFloat:
+	case vocabulary.InitialValueInteger, vocabulary.InitialValueFloat:
 		if keyed, exact := schema.targetInitialLiteralAtom(initial, runtimekind.Number, false); exact {
 			atom = keyed
-		} else if kind == target.InitialValueFloat {
+		} else if kind == vocabulary.InitialValueFloat {
 			bits, bitsOK := contract.InitialValueFloatBits(initial)
 			if !bitsOK {
 				return Value{}, false
@@ -113,13 +113,13 @@ func (schema *valueBuilder) targetInitialCold(root linkhost.BootRoot, initial ta
 		} else {
 			atom = Atom{schema: schema.Schema, id: schema.atomByRow[atomRow{kind: atomPrimitive, runtime: runtimekind.Number}]}
 		}
-	case target.InitialValueString:
+	case vocabulary.InitialValueString:
 		if keyed, exact := schema.targetInitialLiteralAtom(initial, runtimekind.String, false); exact {
 			atom = keyed
 		} else {
 			atom = Atom{schema: schema.Schema, id: schema.atomByRow[atomRow{kind: atomPrimitive, runtime: runtimekind.String}]}
 		}
-	case target.InitialValueRoot:
+	case vocabulary.InitialValueRoot:
 		targetRoot, ok := contract.InitialValueRoot(initial)
 		if !ok {
 			return Value{}, false
@@ -148,7 +148,7 @@ func (schema *valueBuilder) targetInitialCold(root linkhost.BootRoot, initial ta
 		if !ok {
 			return Value{}, false
 		}
-	case target.InitialValueOperation, target.InitialValueDeniedOperation:
+	case vocabulary.InitialValueOperation, vocabulary.InitialValueDeniedOperation:
 		seed, _, ok := schema.sealBoundary().Seeds().BootstrapCallable(initial)
 		if !ok {
 			require, hasRequire := schema.sealBoundary().RequireOperation()
@@ -179,7 +179,7 @@ func (schema *valueBuilder) targetInitialCold(root linkhost.BootRoot, initial ta
 // targetInitialLiteralAtom uses only Link's sealed Target-initial projection.
 // The bool-false bit is validated by the Target kind/value query that already
 // selected this branch; no key payload decoding or lookup occurs at runtime.
-func (schema *valueBuilder) targetInitialLiteralAtom(initial target.InitialValue, runtime runtimekind.Kind, falsy bool) (Atom, bool) {
+func (schema *valueBuilder) targetInitialLiteralAtom(initial vocabulary.InitialValue, runtime runtimekind.Kind, falsy bool) (Atom, bool) {
 	if schema == nil || schema.sealProject() == nil {
 		return Atom{}, false
 	}

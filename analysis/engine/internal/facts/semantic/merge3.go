@@ -384,7 +384,7 @@ func (domain *Domain[F, K, V]) PreserveUnder(left, right Plane[F, K, V], split s
 			return zero, false
 		}
 		return first, true
-	}, binaryJoin, report)
+	}, binaryPreserve, report)
 }
 
 // NarrowUnder is a subset transition. Only split.Right is reachable in the

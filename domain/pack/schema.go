@@ -3,10 +3,10 @@ package pack
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lattice"
-	"github.com/wippyai/go-lua/analysis/program/flow"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/link"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 )
 
 // Root and Values are Pack-private selectors over direct Program topology.
@@ -69,8 +69,8 @@ type valuesRow struct {
 }
 
 type inputSelectorKey struct {
-	operation target.Operation
-	source    target.InputSource
+	operation vocabulary.Operation
+	source    vocabulary.InputSource
 }
 
 type callRow struct {
@@ -80,7 +80,7 @@ type callRow struct {
 	valuesID     identity.ContentID
 	receiverID   identity.ContentID
 	typesID      identity.ContentID
-	form         flow.CallForm
+	form         programartifact.CallForm
 	moduleKey    identity.ContentID
 	formalID     identity.ContentID
 	typeFormal   FormalCallTypeArguments
@@ -805,7 +805,7 @@ func (outcome Outcome) Same(other Outcome) bool {
 }
 
 func (state *schema) validMountedCall(row callRow) bool {
-	return state != nil && row.moduleKey.Available() && row.mountedID.Available() && row.occurrenceID.Available() && row.valuesID.Available() && row.typesID.Available() && row.formalID.Available() && row.typeFormal.Available() && (row.form == flow.CallFormPlain || row.form == flow.CallFormMethod) && row.port.valid() && row.port.owner == state.owner
+	return state != nil && row.moduleKey.Available() && row.mountedID.Available() && row.occurrenceID.Available() && row.valuesID.Available() && row.typesID.Available() && row.formalID.Available() && row.typeFormal.Available() && row.form.Valid() && row.port.valid() && row.port.owner == state.owner
 }
 
 type inputSelectionKind uint8
@@ -849,7 +849,7 @@ func (selector InputSelector) valid() bool {
 // Target input source. Link already sealed every Call root before Pack
 // construction. Selection of an operation for an application remains
 // activation authority, not this lookup.
-func (schema *Schema) InputSelector(operation target.Operation, source target.InputSource) (InputSelector, bool) {
+func (schema *Schema) InputSelector(operation vocabulary.Operation, source vocabulary.InputSource) (InputSelector, bool) {
 	if schema == nil || schema.state == nil || operation == 0 {
 		return InputSelector{}, false
 	}

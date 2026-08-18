@@ -10,6 +10,7 @@ package target
 import (
 	"crypto/sha256"
 	"errors"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -68,14 +69,14 @@ func (c *Contract) semanticID(kind uint64, encode func(*framing.Writer) error) (
 	return id, nil
 }
 
-func (c *Contract) anchor(op Operation) (identity.ContentID, bool) {
+func (c *Contract) anchor(op vocabulary.Operation) (identity.ContentID, bool) {
 	if c == nil || op == 0 || int(op) > len(c.operationAnchors) {
 		return identity.ContentID{}, false
 	}
 	return c.operationAnchors[op-1], true
 }
 
-func (c *Contract) callbackSelector(id CallbackID) (identity.ContentID, bool) {
+func (c *Contract) callbackSelector(id vocabulary.CallbackID) (identity.ContentID, bool) {
 	if c == nil || id == 0 || int(id) > len(c.callbackSelectors) {
 		return identity.ContentID{}, false
 	}
@@ -86,7 +87,7 @@ func (c *Contract) callbackSelector(id CallbackID) (identity.ContentID, bool) {
 // owning operation. The operation and callback handles are receiver-local;
 // the explicit range fence prevents a numerically coincident callback from a
 // different operation from being accepted.
-func (c *Contract) CallbackContentID(op Operation, callback CallbackID) (identity.ContentID, bool) {
+func (c *Contract) CallbackContentID(op vocabulary.Operation, callback vocabulary.CallbackID) (identity.ContentID, bool) {
 	if c == nil || !c.sealed || op == 0 || int(op) > len(c.operations) || callback == 0 || int(callback) > len(c.callbacks) || int(callback) > len(c.callbackContentIDs) {
 		return identity.ContentID{}, false
 	}
@@ -102,9 +103,9 @@ func (c *Contract) CallbackContentID(op Operation, callback CallbackID) (identit
 	return id, true
 }
 
-// FindCallbackContentID is the allocation-free O(log n) inverse over the
+// findCallbackContentID is the allocation-free O(log n) inverse over the
 // immutable sorted callback-content column.
-func (c *Contract) FindCallbackContentID(id identity.ContentID) (Operation, CallbackID, bool) {
+func (c *Contract) findCallbackContentID(id identity.ContentID) (vocabulary.Operation, vocabulary.CallbackID, bool) {
 	if c == nil || !c.sealed || !id.Available() {
 		return 0, 0, false
 	}
@@ -126,7 +127,7 @@ func (c *Contract) FindCallbackContentID(id identity.ContentID) (Operation, Call
 // correspondence. Its canonical record is derived during Seal from the
 // operation anchor, source/carrier, argument Values, and all five sealed
 // outcome selectors.
-func (c *Contract) ResumeContentID(op Operation, resume ResumeID) (identity.ContentID, bool) {
+func (c *Contract) ResumeContentID(op vocabulary.Operation, resume vocabulary.ResumeID) (identity.ContentID, bool) {
 	if c == nil || !c.sealed || op == 0 || int(op) > len(c.operations) || resume == 0 || int(resume) > len(c.resumes) || int(resume) > len(c.resumeContentIDs) {
 		return identity.ContentID{}, false
 	}
@@ -142,9 +143,9 @@ func (c *Contract) ResumeContentID(op Operation, resume ResumeID) (identity.Cont
 	return id, true
 }
 
-// FindResumeContentID is the allocation-free O(log n) inverse over the
+// findResumeContentID is the allocation-free O(log n) inverse over the
 // immutable sorted resume-content column.
-func (c *Contract) FindResumeContentID(id identity.ContentID) (Operation, ResumeID, bool) {
+func (c *Contract) findResumeContentID(id identity.ContentID) (vocabulary.Operation, vocabulary.ResumeID, bool) {
 	if c == nil || !c.sealed || !id.Available() {
 		return 0, 0, false
 	}
@@ -162,7 +163,7 @@ func (c *Contract) FindResumeContentID(id identity.ContentID) (Operation, Resume
 	return row.op, row.resume, true
 }
 
-func (c *Contract) outcomeIndex(op Operation, index int) (int, bool) {
+func (c *Contract) outcomeIndex(op vocabulary.Operation, index int) (int, bool) {
 	row, ok := c.operation(op)
 	if !ok || index < 0 || index >= row.outcomes.len() {
 		return 0, false
@@ -177,7 +178,7 @@ func (c *Contract) sealSemanticIdentities() error {
 	c.operationAnchors = make([]identity.ContentID, len(c.operations))
 	c.callbackSelectors = make([]identity.ContentID, len(c.callbacks))
 	c.outcomeSelectors = make([]identity.ContentID, len(c.outcomes))
-	outcomeOwners := make([]Operation, len(c.outcomes))
+	outcomeOwners := make([]vocabulary.Operation, len(c.outcomes))
 	outcomeOrdinals := make([]uint32, len(c.outcomes))
 	c.operationContentIDs = make([]identity.ContentID, len(c.operations))
 	c.outcomeContentIDs = make([]identity.ContentID, len(c.outcomes))
@@ -191,7 +192,7 @@ func (c *Contract) sealSemanticIdentities() error {
 	// Dense outcome owner/ordinal columns are formed once in table order.  They
 	// make the remaining identity pass strictly linear in the sealed tables.
 	for operationIndex, operation := range c.operations {
-		owner := Operation(operationIndex + 1)
+		owner := vocabulary.Operation(operationIndex + 1)
 		for outcome := operation.outcomes.start; outcome < operation.outcomes.end; outcome++ {
 			outcomeOwners[outcome] = owner
 			outcomeOrdinals[outcome] = outcome - operation.outcomes.start
@@ -265,7 +266,7 @@ func (c *Contract) sealSemanticIdentities() error {
 		}
 	}
 	for i, row := range c.operations {
-		op := Operation(i + 1)
+		op := vocabulary.Operation(i + 1)
 		if op == c.opaque {
 			id, err := c.semanticID(semanticOpaqueAnchor, func(w *framing.Writer) error { return w.Uint(1) })
 			if err != nil {
@@ -353,7 +354,7 @@ func (c *Contract) sealSemanticIdentities() error {
 		if !ok {
 			return errors.New("target: malformed callback content owner")
 		}
-		selector, ok := c.callbackSelector(CallbackID(i + 1))
+		selector, ok := c.callbackSelector(vocabulary.CallbackID(i + 1))
 		if !ok {
 			return errors.New("target: missing callback selector")
 		}
@@ -371,7 +372,7 @@ func (c *Contract) sealSemanticIdentities() error {
 			return err
 		}
 		c.callbackContentIDs[i] = id
-		c.callbackContentIndex = append(c.callbackContentIndex, callbackContentIDRow{id: id, op: row.owner, callback: CallbackID(i + 1)})
+		c.callbackContentIndex = append(c.callbackContentIndex, callbackContentIDRow{id: id, op: row.owner, callback: vocabulary.CallbackID(i + 1)})
 	}
 	if err := c.sealEffectIdentities(); err != nil {
 		return err
@@ -415,11 +416,11 @@ func (c *Contract) sealSemanticIdentities() error {
 			return err
 		}
 		c.resumeContentIDs[i] = id
-		c.resumeContentIndex = append(c.resumeContentIndex, resumeContentIDRow{id: id, op: row.owner, resume: ResumeID(i + 1)})
+		c.resumeContentIndex = append(c.resumeContentIndex, resumeContentIDRow{id: id, op: row.owner, resume: vocabulary.ResumeID(i + 1)})
 	}
 
 	for i := range c.operations {
-		op := Operation(i + 1)
+		op := vocabulary.Operation(i + 1)
 		id, err := c.semanticID(semanticOperation, func(w *framing.Writer) error {
 			a := c.operationAnchors[i]
 			if err := w.Bytes(a[:]); err != nil {
@@ -446,7 +447,7 @@ func (c *Contract) sealSemanticIdentities() error {
 			if err := w.Bytes(selector[:]); err != nil {
 				return err
 			}
-			return c.encodePortableOutcome(w, Operation(owner), oi)
+			return c.encodePortableOutcome(w, vocabulary.Operation(owner), oi)
 		})
 		if err != nil {
 			return err
@@ -502,17 +503,17 @@ func (c *Contract) sealSemanticIdentities() error {
 // indistinguishable from this receiver's same coordinate, so callers must
 // retain the owning Contract rather than treating this query as an ownership
 // proof.
-func (c *Contract) OperationContentID(op Operation) (identity.ContentID, bool) {
+func (c *Contract) OperationContentID(op vocabulary.Operation) (identity.ContentID, bool) {
 	if c == nil || !c.sealed || op == 0 || int(op) > len(c.operationContentIDs) {
 		return identity.ContentID{}, false
 	}
 	return c.operationContentIDs[op-1], true
 }
 
-// OutcomeContentID is the selected operation's exact local outcome relation.
+// outcomeContentID is the selected operation's exact local outcome relation.
 // Both arguments are receiver-local scalar coordinates; see OperationContentID
 // for the deliberate foreign-handle limitation.
-func (c *Contract) OutcomeContentID(op Operation, index int) (identity.ContentID, bool) {
+func (c *Contract) outcomeContentID(op vocabulary.Operation, index int) (identity.ContentID, bool) {
 	if c == nil || !c.sealed {
 		return identity.ContentID{}, false
 	}
@@ -523,9 +524,9 @@ func (c *Contract) OutcomeContentID(op Operation, index int) (identity.ContentID
 	return c.outcomeContentIDs[i], true
 }
 
-// TransferContentID checks that two receiver-local handles agree on their
+// transferContentID checks that two receiver-local handles agree on their
 // owner. It cannot authenticate a numerically coincident foreign scalar.
-func (c *Contract) TransferContentID(owner Operation, transfer TransferID) (identity.ContentID, bool) {
+func (c *Contract) transferContentID(owner vocabulary.Operation, transfer vocabulary.TransferID) (identity.ContentID, bool) {
 	row, ok := c.transferID(transfer)
 	if !ok || row.owner != owner || !c.sealed {
 		return identity.ContentID{}, false
@@ -533,12 +534,12 @@ func (c *Contract) TransferContentID(owner Operation, transfer TransferID) (iden
 	return c.transferContentIDs[transfer-1], true
 }
 
-// TransferOutcomeContentID has the same receiver-local scalar limitation as
+// transferOutcomeContentID has the same receiver-local scalar limitation as
 // TransferContentID; the returned ContentID is portable, not the input handle.
-func (c *Contract) TransferOutcomeContentID(owner Operation, transfer TransferID, outcome int) (identity.ContentID, TransferPossibility, bool) {
+func (c *Contract) transferOutcomeContentID(owner vocabulary.Operation, transfer vocabulary.TransferID, outcome int) (identity.ContentID, vocabulary.TransferPossibility, bool) {
 	row, ok := c.transferID(transfer)
 	if !ok || row.owner != owner || outcome < 0 || outcome >= row.outcomes.len() || !c.sealed {
-		return identity.ContentID{}, TransferPossibility(0), false
+		return identity.ContentID{}, vocabulary.TransferPossibility(0), false
 	}
 	i := int(row.outcomes.start) + outcome
 	return c.transferOutcomeIDs[i], c.transferOutcomes[i], true

@@ -1,6 +1,7 @@
 package factor_test
 
 import (
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -35,7 +36,7 @@ type effectFactorFixture struct {
 	packMounts  []pack.ArtifactMount
 	factor      *effectfactor.Algebra
 	mounts      []effectfactor.MountedArtifact
-	owner       target.Operation
+	owner       vocabulary.Operation
 	application identity.ContentID
 	mountedCall effectfactor.MountedCall
 	root        effectfactor.Root
@@ -101,7 +102,7 @@ func newEffectFactorFixture(t testing.TB, spec target.Spec, source string) effec
 	if !ok || factor == nil {
 		t.Fatal("seal Effect mounts")
 	}
-	owner, ok := contract.Lookup(target.BindingSpec{Namespace: target.BindingBuiltin, Member: []string{"sink"}})
+	owner, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"sink"}})
 	if !ok {
 		t.Fatal("sink operation")
 	}
@@ -120,36 +121,36 @@ func newEffectFactorFixture(t testing.TB, spec target.Spec, source string) effec
 	return effectFactorFixture{contract: contract, linked: linked, statics: statics, packs: packs, packMounts: packMounts, factor: factor, mounts: effectMounts, owner: owner, application: application, mountedCall: mountedCall, root: root}
 }
 
-func effectFactorSpec(rowTail target.RowTail, callback bool) target.Spec {
+func effectFactorSpec(rowTail vocabulary.RowTail, callback bool) target.Spec {
 	// Input selectors are intentionally outside the post-cutover Pack surface;
 	// retain the descriptor/rule laws with a zero-argument effect occurrence.
-	args := target.EffectSpec{Target: 2}
-	owner := target.OperationSpec{
-		Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"sink"}}},
-		Input:    target.ValuesSpec{Fixed: []schematype.Type{portableAnyType()}, Tail: target.ValuesClosed},
-		Outcomes: []target.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}},
-		Effects:  target.RowSpec{Occurrences: []target.EffectSpec{args}, Tail: rowTail},
+	args := vocabulary.EffectSpec{Target: 2}
+	owner := vocabulary.OperationSpec{
+		Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"sink"}}},
+		Input:    vocabulary.ValuesSpec{Fixed: []schematype.Type{portableAnyType()}, Tail: vocabulary.ValuesClosed},
+		Outcomes: []vocabulary.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}},
+		Effects:  vocabulary.RowSpec{Occurrences: []vocabulary.EffectSpec{args}, Tail: rowTail},
 	}
 	if callback {
-		empty := target.ValuesSpec{Tail: target.ValuesClosed}
-		terminals := []target.TerminalSpec{
+		empty := vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}
+		terminals := []vocabulary.TerminalSpec{
 			{Kind: kind.OutcomeNormal, Values: empty}, {Kind: kind.OutcomeReturn, Values: empty},
 			{Kind: kind.OutcomeThrow, Values: empty}, {Kind: kind.OutcomeYield, Values: empty},
 			{Kind: kind.OutcomeCancel, Values: empty},
 		}
-		owner.Callbacks = []target.CallbackSpec{{
-			Function: target.InputSource{Kind: target.InputSourceValueFormal}, Admission: schematype.CallableAdmissionOrdinary,
-			Arguments: empty, Outcomes: terminals, Lifecycle: target.CallbackRetainedOptionalOnce,
-			Effects: target.RowSpec{Occurrences: []target.EffectSpec{args}, Tail: target.RowClosed},
+		owner.Callbacks = []vocabulary.CallbackSpec{{
+			Function: vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal}, Admission: schematype.CallableAdmissionOrdinary,
+			Arguments: empty, Outcomes: terminals, Lifecycle: vocabulary.CallbackRetainedOptionalOnce,
+			Effects: vocabulary.RowSpec{Occurrences: []vocabulary.EffectSpec{args}, Tail: vocabulary.RowClosed},
 		}}
 	}
-	targetOperation := target.OperationSpec{
-		Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"effect-target"}}},
-		Input:    target.ValuesSpec{Tail: target.ValuesClosed},
-		Outcomes: []target.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}},
-		Effects:  target.RowSpec{Tail: target.RowClosed},
+	targetOperation := vocabulary.OperationSpec{
+		Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"effect-target"}}},
+		Input:    vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed},
+		Outcomes: []vocabulary.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}},
+		Effects:  vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 	}
-	return target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []target.OperationSpec{owner, targetOperation}}
+	return target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{owner, targetOperation}}
 }
 
 func effectKnownAtom(t testing.TB, fixture effectFactorFixture) effectfactor.Atom {
@@ -171,7 +172,7 @@ func effectAtomID(t testing.TB, algebra *effectfactor.Algebra, atom effectfactor
 }
 
 func TestEffectFactorMountedOwnerAndRootLaws(t *testing.T) {
-	fixture := newEffectFactorFixture(t, effectFactorSpec(target.RowClosed, false), "local function sink(value) return value end\nsink(1)")
+	fixture := newEffectFactorFixture(t, effectFactorSpec(vocabulary.RowClosed, false), "local function sink(value) return value end\nsink(1)")
 	if !fixture.factor.Valid() || fixture.factor.LinkOwner() != fixture.linked.OwnerCapability() || fixture.factor.Pack().LinkOwner() != fixture.linked.OwnerCapability() {
 		t.Fatal("Effect/Pack did not retain the exact Link owner capability")
 	}
@@ -206,7 +207,7 @@ func TestEffectFactorMountedOwnerAndRootLaws(t *testing.T) {
 }
 
 func TestEffectFactorMountedAlgebraLaws(t *testing.T) {
-	fixture := newEffectFactorFixture(t, effectFactorSpec(target.RowClosed, false), "local function sink(value) return value end\nsink(1)")
+	fixture := newEffectFactorFixture(t, effectFactorSpec(vocabulary.RowClosed, false), "local function sink(value) return value end\nsink(1)")
 	known := effectKnownAtom(t, fixture)
 	knownValue, ok := fixture.factor.Singleton(known)
 	if !ok {
@@ -241,7 +242,7 @@ func TestEffectFactorMountedAlgebraLaws(t *testing.T) {
 }
 
 func TestEffectFactorMountedFormalAndOpenRowLaws(t *testing.T) {
-	closed := newEffectFactorFixture(t, effectFactorSpec(target.RowClosed, true), "local function sink(value) return value end\nsink(1)")
+	closed := newEffectFactorFixture(t, effectFactorSpec(vocabulary.RowClosed, true), "local function sink(value) return value end\nsink(1)")
 	formal, ok := closed.factor.FormalCallEffectAtom(closed.mountedCall, closed.owner, 0)
 	if !ok || !formal.Valid() {
 		t.Fatal("closed formal ordinary effect")
@@ -262,7 +263,7 @@ func TestEffectFactorMountedFormalAndOpenRowLaws(t *testing.T) {
 	if !ok || !callbackFormal.Valid() {
 		t.Fatal("callback formal effect")
 	}
-	open := newEffectFactorFixture(t, effectFactorSpec(target.RowClosed, false), "local function sink(value) return value end\nsink(1)")
+	open := newEffectFactorFixture(t, effectFactorSpec(vocabulary.RowClosed, false), "local function sink(value) return value end\nsink(1)")
 	opaque, ok := open.contract.Opaque()
 	if !ok {
 		t.Fatal("opaque operation")
@@ -280,55 +281,55 @@ func TestEffectFactorMountedFormalAndOpenRowLaws(t *testing.T) {
 	}
 }
 
-func publicationEffectFactorSpec(publicationKind target.PublicationEffectKind, callback bool) target.Spec {
-	publication := &target.PublicationEffectSpec{
-		Kind: publicationKind, Subject: 0, Destination: target.PublicationDestinationNone,
-		Escape: target.PublicationEscapeNone, Mutability: target.PublicationMutabilityPreserve, Lifetime: target.PublicationLifetimePreserve,
+func publicationEffectFactorSpec(publicationKind vocabulary.PublicationEffectKind, callback bool) target.Spec {
+	publication := &vocabulary.PublicationEffectSpec{
+		Kind: publicationKind, Subject: 0, Destination: vocabulary.PublicationDestinationNone,
+		Escape: vocabulary.PublicationEscapeNone, Mutability: vocabulary.PublicationMutabilityPreserve, Lifetime: vocabulary.PublicationLifetimePreserve,
 	}
 	switch publicationKind {
-	case target.PublicationEffectSendTransfer:
-		publication.Destination, publication.Context = target.PublicationDestinationValueFormal, 1
-		publication.Escape, publication.Mutability = target.PublicationEscapeSendTransfer, target.PublicationMutabilityCopyOnWrite
-	case target.PublicationEffectReturnEscape:
-		publication.Escape = target.PublicationEscapeReturn
-	case target.PublicationEffectCallbackEscape:
-		publication.Escape = target.PublicationEscapeCallback
-	case target.PublicationEffectFreezeSeal:
-		publication.Mutability = target.PublicationMutabilitySeal
-	case target.PublicationEffectWriteMutation:
-		publication.Mutability = target.PublicationMutabilityWrite
-	case target.PublicationEffectCloseRelease:
-		publication.Lifetime = target.PublicationLifetimeRelease
+	case vocabulary.PublicationEffectSendTransfer:
+		publication.Destination, publication.Context = vocabulary.PublicationDestinationValueFormal, 1
+		publication.Escape, publication.Mutability = vocabulary.PublicationEscapeSendTransfer, vocabulary.PublicationMutabilityCopyOnWrite
+	case vocabulary.PublicationEffectReturnEscape:
+		publication.Escape = vocabulary.PublicationEscapeReturn
+	case vocabulary.PublicationEffectCallbackEscape:
+		publication.Escape = vocabulary.PublicationEscapeCallback
+	case vocabulary.PublicationEffectFreezeSeal:
+		publication.Mutability = vocabulary.PublicationMutabilitySeal
+	case vocabulary.PublicationEffectWriteMutation:
+		publication.Mutability = vocabulary.PublicationMutabilityWrite
+	case vocabulary.PublicationEffectCloseRelease:
+		publication.Lifetime = vocabulary.PublicationLifetimeRelease
 	}
 	// Deliberately reverse the effect-target inputs. The publication descriptor
 	// selects target formals, so a valid binding must map through these ABI
 	// positions rather than treating descriptor ordinals as caller formals.
-	effect := target.EffectSpec{Target: 2, ValueArgs: []target.ValueFormal{1, 0}, Publication: publication}
-	owner := target.OperationSpec{
-		Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"sink"}}},
-		Input:    target.ValuesSpec{Fixed: []schematype.Type{portableAnyType(), portableAnyType()}, Tail: target.ValuesClosed},
-		Outcomes: []target.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}},
-		Effects:  target.RowSpec{Occurrences: []target.EffectSpec{effect, {Target: 2, ValueArgs: []target.ValueFormal{1, 0}}}, Tail: target.RowClosed},
+	effect := vocabulary.EffectSpec{Target: 2, ValueArgs: []vocabulary.ValueFormal{1, 0}, Publication: publication}
+	owner := vocabulary.OperationSpec{
+		Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"sink"}}},
+		Input:    vocabulary.ValuesSpec{Fixed: []schematype.Type{portableAnyType(), portableAnyType()}, Tail: vocabulary.ValuesClosed},
+		Outcomes: []vocabulary.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}},
+		Effects:  vocabulary.RowSpec{Occurrences: []vocabulary.EffectSpec{effect, {Target: 2, ValueArgs: []vocabulary.ValueFormal{1, 0}}}, Tail: vocabulary.RowClosed},
 	}
 	if callback {
-		empty := target.ValuesSpec{Tail: target.ValuesClosed}
-		terminals := []target.TerminalSpec{{Kind: kind.OutcomeNormal, Values: empty}, {Kind: kind.OutcomeReturn, Values: empty}, {Kind: kind.OutcomeThrow, Values: empty}, {Kind: kind.OutcomeYield, Values: empty}, {Kind: kind.OutcomeCancel, Values: empty}}
-		owner.Callbacks = []target.CallbackSpec{{
-			Function: target.InputSource{Kind: target.InputSourceValueFormal}, Admission: schematype.CallableAdmissionOrdinary,
-			Arguments: empty, Outcomes: terminals, Lifecycle: target.CallbackRetainedOptionalOnce,
-			Effects: target.RowSpec{Occurrences: []target.EffectSpec{effect}, Tail: target.RowClosed},
+		empty := vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}
+		terminals := []vocabulary.TerminalSpec{{Kind: kind.OutcomeNormal, Values: empty}, {Kind: kind.OutcomeReturn, Values: empty}, {Kind: kind.OutcomeThrow, Values: empty}, {Kind: kind.OutcomeYield, Values: empty}, {Kind: kind.OutcomeCancel, Values: empty}}
+		owner.Callbacks = []vocabulary.CallbackSpec{{
+			Function: vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal}, Admission: schematype.CallableAdmissionOrdinary,
+			Arguments: empty, Outcomes: terminals, Lifecycle: vocabulary.CallbackRetainedOptionalOnce,
+			Effects: vocabulary.RowSpec{Occurrences: []vocabulary.EffectSpec{effect}, Tail: vocabulary.RowClosed},
 		}}
 	}
-	targetOperation := target.OperationSpec{
-		Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"effect-target"}}},
-		Input:    target.ValuesSpec{Fixed: []schematype.Type{portableAnyType(), portableAnyType()}, Tail: target.ValuesClosed},
-		Outcomes: []target.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}},
-		Effects:  target.RowSpec{Tail: target.RowClosed},
+	targetOperation := vocabulary.OperationSpec{
+		Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"effect-target"}}},
+		Input:    vocabulary.ValuesSpec{Fixed: []schematype.Type{portableAnyType(), portableAnyType()}, Tail: vocabulary.ValuesClosed},
+		Outcomes: []vocabulary.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}},
+		Effects:  vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 	}
-	return target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []target.OperationSpec{owner, targetOperation}}
+	return target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{owner, targetOperation}}
 }
 
-func publicationEffectIndexes(t testing.TB, contract *target.Contract, owner target.Operation) (publication, generic int) {
+func publicationEffectIndexes(t testing.TB, contract *target.Contract, owner vocabulary.Operation) (publication, generic int) {
 	t.Helper()
 	publication, generic = -1, -1
 	for effect := 0; effect < contract.EffectCount(owner); effect++ {
@@ -350,7 +351,7 @@ func publicationEffectIndexes(t testing.TB, contract *target.Contract, owner tar
 	return publication, generic
 }
 
-func callbackPublicationEffectIndex(t testing.TB, contract *target.Contract, callback target.CallbackID) int {
+func callbackPublicationEffectIndex(t testing.TB, contract *target.Contract, callback vocabulary.CallbackID) int {
 	t.Helper()
 	publication := -1
 	for effect := 0; effect < contract.CallbackEffectCount(callback); effect++ {
@@ -368,12 +369,12 @@ func callbackPublicationEffectIndex(t testing.TB, contract *target.Contract, cal
 }
 
 func TestPublicationAtomBindingOwnerLaw(t *testing.T) {
-	ordinary := newEffectFactorFixture(t, publicationEffectFactorSpec(target.PublicationEffectSendTransfer, false), "local function sink(left, right) return left end\nsink(1, 2)")
+	ordinary := newEffectFactorFixture(t, publicationEffectFactorSpec(vocabulary.PublicationEffectSendTransfer, false), "local function sink(left, right) return left end\nsink(1, 2)")
 	publicationEffect, genericEffect := publicationEffectIndexes(t, ordinary.contract, ordinary.owner)
 	formal, formalOK := ordinary.factor.FormalCallEffectAtom(ordinary.mountedCall, ordinary.owner, publicationEffect)
 	atomBinding, bindingOK := ordinary.factor.BindFormalCallEffectAtom(ordinary.root, ordinary.mountedCall, ordinary.owner, publicationEffect, formal)
 	publication, publicationOK := ordinary.factor.PublicationCallEffectBinding(ordinary.root, ordinary.mountedCall, ordinary.owner, publicationEffect, atomBinding)
-	if !formalOK || !bindingOK || !publicationOK || !publication.Valid() || publication.Role() != effectfactor.PublicationAtomBindingOrdinary || publication.Kind() != target.PublicationEffectSendTransfer || publication.Escape() != target.PublicationEscapeSendTransfer || publication.Mutability() != target.PublicationMutabilityCopyOnWrite || publication.Lifetime() != target.PublicationLifetimePreserve {
+	if !formalOK || !bindingOK || !publicationOK || !publication.Valid() || publication.Role() != effectfactor.PublicationAtomBindingOrdinary || publication.Kind() != vocabulary.PublicationEffectSendTransfer || publication.Escape() != vocabulary.PublicationEscapeSendTransfer || publication.Mutability() != vocabulary.PublicationMutabilityCopyOnWrite || publication.Lifetime() != vocabulary.PublicationLifetimePreserve {
 		t.Fatal("ordinary publication binding")
 	}
 	descriptorID, descriptorOK := ordinary.contract.PublicationEffectDescriptorID(ordinary.owner, publicationEffect)
@@ -382,8 +383,8 @@ func TestPublicationAtomBindingOwnerLaw(t *testing.T) {
 	boundOccurrence, boundOccurrenceOK := publication.OccurrenceID()
 	subject, subjectOK := publication.SubjectSelector()
 	context, contextOK := publication.ContextSelector()
-	expectedSubject, expectedSubjectOK := ordinary.packs.InputSelector(ordinary.owner, target.InputSource{Kind: target.InputSourceValueFormal, Ordinal: 1})
-	expectedContext, expectedContextOK := ordinary.packs.InputSelector(ordinary.owner, target.InputSource{Kind: target.InputSourceValueFormal, Ordinal: 0})
+	expectedSubject, expectedSubjectOK := ordinary.packs.InputSelector(ordinary.owner, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 1})
+	expectedContext, expectedContextOK := ordinary.packs.InputSelector(ordinary.owner, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 0})
 	if !descriptorOK || !occurrenceOK || !boundDescriptorOK || !boundOccurrenceOK || descriptorID != boundDescriptor || occurrenceID != boundOccurrence || !subjectOK || !contextOK || !ordinary.packs.OwnsInputSelector(subject) || !ordinary.packs.OwnsInputSelector(context) || !expectedSubjectOK || !expectedContextOK || subject != expectedSubject || context != expectedContext {
 		t.Fatal("ordinary publication descriptor or Pack selectors")
 	}
@@ -402,7 +403,7 @@ func TestPublicationAtomBindingOwnerLaw(t *testing.T) {
 	if _, ok := ordinary.factor.PublicationCallEffectBinding(ordinary.root, ordinary.mountedCall, ordinary.owner, publicationEffect, genericBinding); ok {
 		t.Fatal("publication binding admitted mismatched atom")
 	}
-	foreignOperation, foreignOperationOK := ordinary.contract.Lookup(target.BindingSpec{Namespace: target.BindingBuiltin, Member: []string{"effect-target"}})
+	foreignOperation, foreignOperationOK := ordinary.contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"effect-target"}})
 	if !foreignOperationOK || foreignOperation == ordinary.owner {
 		t.Fatal("foreign target operation")
 	}
@@ -437,13 +438,13 @@ func TestPublicationAtomBindingOwnerLaw(t *testing.T) {
 		t.Fatal("publication binding admitted foreign Pack/Effect atom")
 	}
 
-	callbackFixture := newEffectFactorFixture(t, publicationEffectFactorSpec(target.PublicationEffectCallbackEscape, true), "local function sink(left, right) return left end\nsink(1, 2)")
+	callbackFixture := newEffectFactorFixture(t, publicationEffectFactorSpec(vocabulary.PublicationEffectCallbackEscape, true), "local function sink(left, right) return left end\nsink(1, 2)")
 	callback, callbackOK := callbackFixture.contract.CallbackAt(callbackFixture.owner, 0)
 	callbackEffect := callbackPublicationEffectIndex(t, callbackFixture.contract, callback)
 	callbackFormal, callbackFormalOK := callbackFixture.factor.FormalCallbackEffectAtom(callbackFixture.mountedCall, callbackFixture.owner, callback, callbackEffect)
 	callbackAtom, callbackAtomOK := callbackFixture.factor.BindFormalCallbackEffectAtom(callbackFixture.root, callbackFixture.mountedCall, callbackFixture.owner, callback, callbackEffect, callbackFormal)
 	callbackPublication, callbackPublicationOK := callbackFixture.factor.PublicationCallbackEffectBinding(callbackFixture.root, callbackFixture.mountedCall, callbackFixture.owner, callback, callbackEffect, callbackAtom)
-	if !callbackOK || !callbackFormalOK || !callbackAtomOK || !callbackPublicationOK || !callbackPublication.Valid() || callbackPublication.Role() != effectfactor.PublicationAtomBindingCallback || callbackPublication.Kind() != target.PublicationEffectCallbackEscape || callbackPublication.Escape() != target.PublicationEscapeCallback {
+	if !callbackOK || !callbackFormalOK || !callbackAtomOK || !callbackPublicationOK || !callbackPublication.Valid() || callbackPublication.Role() != effectfactor.PublicationAtomBindingCallback || callbackPublication.Kind() != vocabulary.PublicationEffectCallbackEscape || callbackPublication.Escape() != vocabulary.PublicationEscapeCallback {
 		t.Fatal("callback publication binding")
 	}
 	if _, contextOK := callbackPublication.ContextSelector(); contextOK {
@@ -454,7 +455,7 @@ func TestPublicationAtomBindingOwnerLaw(t *testing.T) {
 	boundCallbackDescriptor, boundCallbackDescriptorOK := callbackPublication.DescriptorID()
 	boundCallbackOccurrence, boundCallbackOccurrenceOK := callbackPublication.OccurrenceID()
 	callbackSubject, callbackSubjectOK := callbackPublication.SubjectSelector()
-	expectedCallbackSubject, expectedCallbackSubjectOK := callbackFixture.packs.InputSelector(callbackFixture.owner, target.InputSource{Kind: target.InputSourceValueFormal, Ordinal: 1})
+	expectedCallbackSubject, expectedCallbackSubjectOK := callbackFixture.packs.InputSelector(callbackFixture.owner, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 1})
 	if !callbackDescriptorOK || !callbackOccurrenceOK || !boundCallbackDescriptorOK || !boundCallbackOccurrenceOK || callbackDescriptor != boundCallbackDescriptor || callbackOccurrence != boundCallbackOccurrence || !callbackSubjectOK || !expectedCallbackSubjectOK || callbackSubject != expectedCallbackSubject {
 		t.Fatal("callback publication descriptor or mapped selector")
 	}

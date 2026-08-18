@@ -140,3 +140,32 @@ end
 		t.Fatalf("static roots recorded runtime implicit uses: %#v", result.implicitGlobalUses)
 	}
 }
+
+func TestStaticPublicationCarriesBinderIssuedSourceRoot(t *testing.T) {
+	stmts, err := parse.ParseString(`
+local Source = {}
+local Target = {}
+type User = number
+Source.User = User
+Target.User = Source.User
+`, "static_publication_root_evidence.lua")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := BindChunk(stmts)
+	bare := stmts[3].(*ast.AssignStmt)
+	qualified := stmts[4].(*ast.AssignStmt)
+	bareEntries := result.StaticTypePublications(bare)
+	qualifiedEntries := result.StaticTypePublications(qualified)
+	if len(bareEntries) != 1 || !bareEntries[0].Valid() || bareEntries[0].Root != 0 {
+		t.Fatalf("bare publication = %#v, want valid zero-root evidence", bareEntries)
+	}
+	if len(qualifiedEntries) != 1 || !qualifiedEntries[0].Valid() {
+		t.Fatalf("qualified publication = %#v, want valid evidence", qualifiedEntries)
+	}
+	rhs := qualified.Rhs[0].(*ast.AttrGetExpr).Object.(*ast.IdentExpr)
+	root, ok := result.SymbolOf(rhs)
+	if !ok || root == 0 || qualifiedEntries[0].Root != root {
+		t.Fatalf("qualified source root = %d/%v, publication root = %d; want binder identity", root, ok, qualifiedEntries[0].Root)
+	}
+}

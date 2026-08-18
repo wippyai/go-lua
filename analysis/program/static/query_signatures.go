@@ -47,42 +47,45 @@ func (view TypeFunctions) Get(term keyspace.Term) (keyspace.Term, keyspace.Term,
 func (view TypeFunctions) TypeParamCount(term keyspace.Term) (int, bool) {
 	component := view.componentOf()
 	row, ok := functionRowAt(component, term)
-	return int(row.typeParams.End - row.typeParams.Start), ok
+	return row.typeParams.len(), ok
 }
 func (view TypeFunctions) TypeParamAt(term keyspace.Term, index int) (keyspace.Term, bool) {
 	component := view.componentOf()
 	row, ok := functionRowAt(component, term)
-	if !ok || index < 0 || uint32(index) >= row.typeParams.End-row.typeParams.Start {
+	if !ok {
 		return 0, false
 	}
-	return component.signatures.params[row.typeParams.Start+uint32(index)], true
+	return poolAt(component.signatures.params, row.typeParams, index)
 }
 func (view TypeFunctions) ParameterCount(term keyspace.Term) (int, bool) {
 	component := view.componentOf()
 	row, ok := functionRowAt(component, term)
-	return int(row.parameters.End - row.parameters.Start), ok
+	return row.parameters.len(), ok
 }
 func (view TypeFunctions) ParameterAt(term keyspace.Term, index int) (Parameter, bool) {
 	component := view.componentOf()
 	row, ok := functionRowAt(component, term)
-	if !ok || index < 0 || uint32(index) >= row.parameters.End-row.parameters.Start {
+	if !ok {
 		return Parameter{}, false
 	}
-	param := component.signatures.fixed[row.parameters.Start+uint32(index)]
+	param, found := poolAt(component.signatures.fixed, row.parameters, index)
+	if !found {
+		return Parameter{}, false
+	}
 	return Parameter{Name: param.name, NameCoordinate: param.coordinate, Type: param.typ}, true
 }
 func (view TypeFunctions) ReturnCount(term keyspace.Term) (int, bool) {
 	component := view.componentOf()
 	row, ok := functionRowAt(component, term)
-	return int(row.returns.End - row.returns.Start), ok
+	return row.returns.len(), ok
 }
 func (view TypeFunctions) ReturnAt(term keyspace.Term, index int) (keyspace.Term, bool) {
 	component := view.componentOf()
 	row, ok := functionRowAt(component, term)
-	if !ok || index < 0 || uint32(index) >= row.returns.End-row.returns.Start {
+	if !ok {
 		return 0, false
 	}
-	return component.signatures.returns[row.returns.Start+uint32(index)], true
+	return poolAt(component.signatures.returns, row.returns, index)
 }
 
 func (view Assertions) Get(term keyspace.Term) (keyspace.Key, source.Coordinate, bool, uint32, keyspace.Term, bool) {

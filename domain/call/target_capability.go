@@ -2,7 +2,7 @@ package call
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 )
 
 // Target is an opaque, validated capability for one selector in one Call
@@ -213,7 +213,7 @@ func (body Body) BodyPath() (identity.ContentID, bool) {
 // Operation projects the exact sealed target operation of one known seed
 // alternative. Function-body targets and the opaque remainder of an open Call
 // value deliberately have no operation projection.
-func (capability Target) Operation() (target.Operation, bool) {
+func (capability Target) Operation() (vocabulary.Operation, bool) {
 	if !capability.Valid() {
 		return 0, false
 	}

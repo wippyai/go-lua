@@ -126,10 +126,18 @@ func TestReceiptCompilerBindsSummaryQueryGraphSurface(t *testing.T) {
 		t.Fatal("summary graph batch")
 	}
 	surface := equation.Surface{Factor: schema.factorSemanticAt(0), Form: equation.SurfaceReadSummary, Local: 1, Semantic: compositionKeyOf(coldKey(949_011)), Normalizer: compositionKeyOf(coldKey(949_011))}
+	// A summary query surface carries its raw key set with it, the way
+	// addMountedQuery registers the implementation's mapping before issuing
+	// the query row. The mapping spans the bound Factor's dense universe.
+	summaryKeys := make([]uint64, hotUintFactorSpec().KeyEnd)
+	for index := range summaryKeys {
+		summaryKeys[index] = uint64(index)
+	}
 	topology, topologyOK := equation.SealTopology(schema.cold, equation.TopologySpec{
 		Batch:  batch,
 		Rules:  []equation.RuleInstance{{Schema: schema.ruleSemanticAt(0), OperandFamily: compositionKeyOf(unitOperandFamily), Occurrence: occurrence, Operand: operand, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: schema.factorSemanticAt(0), Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}}}},
 		Points: []equation.PointSpec{{Site: site}}, Groups: []equation.Group{{Members: []equation.RuleRef{equation.RuleAt(0)}, Output: equation.PointAt(0)}}, Queries: []equation.QueryInstance{{Family: schema.querySemanticAt(0), Point: equation.PointAt(0), Surfaces: []equation.Surface{surface}}},
+		Summaries: []equation.SummaryMapping{{Surface: surface, Keys: summaryKeys}},
 	})
 	if !topologyOK || topology == nil {
 		t.Fatal("summary graph topology")
@@ -142,18 +150,25 @@ func TestReceiptCompilerBindsSummaryQueryGraphSurface(t *testing.T) {
 	if !identityOK {
 		t.Fatal("summary graph query identity")
 	}
+	// A hot receipt carries the identities its cold slot declared: the Rule's
+	// trusted-theorem identity and the Query's freezer semantic both belong to
+	// this schema, not to the fixture the shared spec helpers were shaped for.
+	ruleSpec := receiptExactQueryRuleSpec()
+	ruleSpec.Admission = AdmitRuleByTrustedTheorem[uint64, ruleUnit](coldKey(949_013))
+	querySpec := hotSummaryQuerySpec()
+	querySpec.Result.Semantic = coldKey(949_015)
 	binding := NewSchemaBinding(schema)
 	if binding == nil || !BindFactor(binding, factor, hotUintFactorSpec()) || !BindSummaryReadForFactor[uint64, uint64, OrderedCells[uint64]](binding, factor, form,
 		func(value OrderedCells[uint64]) OrderedCells[uint64] { return value },
 		func(left, right OrderedCells[uint64]) bool {
 			return equalOrderedCellRecords(left.record, right.record, func(left, right uint64) bool { return left == right })
 		},
-		func(value OrderedCells[uint64]) uint64 { return uint64(value.Count()) }) || !BindRule[uint64, uint64, ruleUnit](binding, rule, write, factor, receiptExactQueryRuleSpec()) || !BindSummaryQuery(binding, query, factor, form, hotSummaryQuerySpec()) || !binding.Seal() {
+		func(value OrderedCells[uint64]) uint64 { return uint64(value.Count()) }) || !BindRule[uint64, uint64, ruleUnit](binding, rule, write, factor, ruleSpec, testRuleProjector[ruleUnit]) || !BindSummaryQuery(binding, query, factor, form, querySpec) || !binding.Seal() {
 		t.Fatal("summary graph binding")
 	}
 	implementation, implementationOK := SummaryQueryImplementationAt[uint64, uint64](binding, query)
-	compilation, compiled := compileReceiptFactors(binding, graph)
-	runtime, joined := bindReceiptSummaryQuery[uint64, uint64](compilation, implementation, identity)
+	compilation, compiled := beginProgramConstruction(binding, graph)
+	runtime, joined := bindReceiptSummaryQuery[uint64, uint64](compilation.programPlane, implementation, identity)
 	if !implementationOK || !compiled || !joined || runtime == nil || runtime.query().Key() != identity.Key() || runtime.surface.Form != equation.SurfaceReadSummary || runtime.surface.Semantic != compositionKeyOf(coldKey(949_011)) {
 		t.Fatal("summary graph evidence join")
 	}

@@ -4,7 +4,6 @@ import (
 	"errors"
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
 )
@@ -187,69 +186,4 @@ func validBoundAssertions(component *Component, check *containment) bool {
 		}
 	}
 	return true
-}
-
-// writeSignaturesContent owns source-only static callable and assertion
-// syntax. It expands all local pools; their range offsets are not authored
-// semantics.
-func writeSignaturesContent(writer *framing.Writer, store signatureStore) error {
-	if err := writer.Count(uint64(len(store.functions))); err != nil {
-		return err
-	}
-	for _, row := range store.functions {
-		if err := writer.Uint(uint64(row.scope)); err != nil {
-			return err
-		}
-		if err := writeTypeTermsContent(writer, store.params[row.typeParams.Start:row.typeParams.End]); err != nil {
-			return err
-		}
-		parameters := store.fixed[row.parameters.Start:row.parameters.End]
-		if err := writer.Count(uint64(len(parameters))); err != nil {
-			return err
-		}
-		for _, parameter := range parameters {
-			if err := writer.Uint(uint64(parameter.name)); err != nil {
-				return err
-			}
-			if err := writeCoordinateContent(writer, parameter.coordinate); err != nil {
-				return err
-			}
-			if err := writer.Uint(uint64(parameter.typ)); err != nil {
-				return err
-			}
-		}
-		if err := writer.Uint(uint64(row.variadic)); err != nil {
-			return err
-		}
-		if err := writeCoordinateContent(writer, row.variadicCoord); err != nil {
-			return err
-		}
-		if err := writer.Bool(row.returnsKnown); err != nil {
-			return err
-		}
-		if err := writeTypeTermsContent(writer, store.returns[row.returns.Start:row.returns.End]); err != nil {
-			return err
-		}
-	}
-	if err := writer.Count(uint64(len(store.assertions))); err != nil {
-		return err
-	}
-	for _, row := range store.assertions {
-		if err := writer.Uint(uint64(row.Name)); err != nil {
-			return err
-		}
-		if err := writeCoordinateContent(writer, row.ParamCoordinate); err != nil {
-			return err
-		}
-		if err := writer.Bool(row.Bound); err != nil {
-			return err
-		}
-		if err := writer.Uint(uint64(row.Param)); err != nil {
-			return err
-		}
-		if err := writer.Uint(uint64(row.Narrow)); err != nil {
-			return err
-		}
-	}
-	return nil
 }

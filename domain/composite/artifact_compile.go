@@ -30,7 +30,11 @@ func NewArtifactCompileKey(input *program.Program, compilation Compilation) (pro
 // the composition root and retains its exact immutable failure projection.
 func CompileArtifactDetailed(input *program.Program, compilation Compilation) (*programartifact.Artifact, programartifact.CompileFailure) {
 	grammar, _ := ArtifactGrammar(compilation)
-	return programartifact.CompileDetailed(input, grammar)
+	issuance, issuanceOK := ArtifactIssuanceDirectory()
+	if !issuanceOK {
+		return programartifact.CompileDetailed(input, grammar, nil)
+	}
+	return programartifact.CompileDetailed(input, grammar, issuance)
 }
 
 // CompileArtifact compiles one Program under this sealed composition.

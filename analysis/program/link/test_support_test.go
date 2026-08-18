@@ -1,8 +1,11 @@
-package link
+package link_test
 
 import (
 	"context"
 	"testing"
+
+	"github.com/wippyai/go-lua/analysis/program/link"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program"
@@ -23,39 +26,39 @@ func targetStringKey(value string) keyspace.LiteralValue {
 	return keyspace.LiteralValue{Kind: keyspace.LiteralString, String: value}
 }
 
-func contract(t *testing.T, bindings ...target.BindingSpec) *target.Contract {
+func contract(t *testing.T, bindings ...vocabulary.BindingSpec) *target.Contract {
 	t.Helper()
 	hasRequire := false
 	for _, binding := range bindings {
-		if binding.Namespace == target.BindingBuiltin && len(binding.Owner) == 0 && len(binding.Member) == 1 && binding.Member[0] == "require" {
+		if binding.Namespace == vocabulary.BindingBuiltin && len(binding.Owner) == 0 && len(binding.Member) == 1 && binding.Member[0] == "require" {
 			hasRequire = true
 			break
 		}
 	}
 	if !hasRequire {
-		bindings = append(bindings, target.BindingSpec{Namespace: target.BindingBuiltin, Member: []string{"require"}})
+		bindings = append(bindings, vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"require"}})
 	}
-	operations := make([]target.OperationSpec, len(bindings))
+	operations := make([]vocabulary.OperationSpec, len(bindings))
 	for index, binding := range bindings {
-		operations[index] = target.OperationSpec{
-			Bindings: []target.BindingSpec{binding},
-			Input:    target.ValuesSpec{Tail: target.ValuesClosed},
-			Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}},
-			Effects:  target.RowSpec{Tail: target.RowClosed},
+		operations[index] = vocabulary.OperationSpec{
+			Bindings: []vocabulary.BindingSpec{binding},
+			Input:    vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed},
+			Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}},
+			Effects:  vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 		}
 	}
 	return testBootContract(t, operations)
 }
 
-func testBootRoots() []target.InitialRootSpec {
-	return []target.InitialRootSpec{{Identity: "GlobalEnvRoot", Shape: target.BootShapeSpec{Aggregate: target.BootAggregateTable, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}}}}
+func testBootRoots() []vocabulary.InitialRootSpec {
+	return []vocabulary.InitialRootSpec{{Identity: "GlobalEnvRoot", Shape: vocabulary.BootShapeSpec{Aggregate: vocabulary.BootAggregateTable, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "GlobalEnvRoot"}}}}
 }
 
-func testBootContract(t testing.TB, operations []target.OperationSpec, programs ...*program.Program) *target.Contract {
+func testBootContract(t testing.TB, operations []vocabulary.OperationSpec, programs ...*program.Program) *target.Contract {
 	return testBootContractWithProtocols(t, operations, nil, programs...)
 }
 
-func testBootContractWithProtocols(t testing.TB, operations []target.OperationSpec, protocols []target.ProtocolSpec, programs ...*program.Program) *target.Contract {
+func testBootContractWithProtocols(t testing.TB, operations []vocabulary.OperationSpec, protocols []vocabulary.ProtocolSpec, programs ...*program.Program) *target.Contract {
 	t.Helper()
 	globals := make(map[string]struct{})
 	for _, p := range programs {
@@ -80,17 +83,17 @@ func testBootContractWithProtocols(t testing.TB, operations []target.OperationSp
 			globals[name] = struct{}{}
 		}
 	}
-	admitted := make(map[string]target.BindingSpec)
+	admitted := make(map[string]vocabulary.BindingSpec)
 	structural := make(map[string]struct{})
 	for _, operation := range operations {
 		for _, binding := range operation.Bindings {
-			if binding.Namespace == target.BindingBuiltin && len(binding.Owner) == 0 && len(binding.Member) == 1 {
+			if binding.Namespace == vocabulary.BindingBuiltin && len(binding.Owner) == 0 && len(binding.Member) == 1 {
 				admitted[binding.Member[0]] = binding
 			}
-			if binding.Namespace == target.BindingBuiltin && len(binding.Owner) == 0 && len(binding.Member) != 0 {
+			if binding.Namespace == vocabulary.BindingBuiltin && len(binding.Owner) == 0 && len(binding.Member) != 0 {
 				structural[binding.Member[0]] = struct{}{}
 			}
-			if binding.Namespace == target.BindingModule && len(binding.Owner) != 0 {
+			if binding.Namespace == vocabulary.BindingModule && len(binding.Owner) != 0 {
 				structural[binding.Owner[0]] = struct{}{}
 			}
 		}
@@ -101,22 +104,22 @@ func testBootContractWithProtocols(t testing.TB, operations []target.OperationSp
 	for name := range structural {
 		globals[name] = struct{}{}
 	}
-	entries := []target.InitialEntrySpec{
-		{Root: "GlobalEnvRoot", Key: targetStringKey("_G"), Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: target.InitialMutable},
-		{Root: "GlobalEnvRoot", Key: targetStringKey("__link_absent"), Value: target.InitialValueSpec{Kind: target.InitialValueAbsent}, Mutability: target.InitialMutable},
+	entries := []vocabulary.InitialEntrySpec{
+		{Root: "GlobalEnvRoot", Key: targetStringKey("_G"), Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: vocabulary.InitialMutable},
+		{Root: "GlobalEnvRoot", Key: targetStringKey("__link_absent"), Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueAbsent}, Mutability: vocabulary.InitialMutable},
 	}
-	bindings := []target.InitialBindingSpec{{Name: "_G", Root: "GlobalEnvRoot", Key: targetStringKey("_G")}, {Name: "__link_absent", Root: "GlobalEnvRoot", Key: targetStringKey("__link_absent")}}
+	bindings := []vocabulary.InitialBindingSpec{{Name: "_G", Root: "GlobalEnvRoot", Key: targetStringKey("_G")}, {Name: "__link_absent", Root: "GlobalEnvRoot", Key: targetStringKey("__link_absent")}}
 	for name := range globals {
 		binding, admittedBinding := admitted[name]
 		if !admittedBinding {
 			if _, isStructural := structural[name]; isStructural {
-				entries = append(entries, target.InitialEntrySpec{Root: "GlobalEnvRoot", Key: targetStringKey(name), Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: target.InitialMutable})
-				bindings = append(bindings, target.InitialBindingSpec{Name: name, Root: "GlobalEnvRoot", Key: targetStringKey(name)})
+				entries = append(entries, vocabulary.InitialEntrySpec{Root: "GlobalEnvRoot", Key: targetStringKey(name), Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: vocabulary.InitialMutable})
+				bindings = append(bindings, vocabulary.InitialBindingSpec{Name: name, Root: "GlobalEnvRoot", Key: targetStringKey(name)})
 			}
 			continue
 		}
-		entries = append(entries, target.InitialEntrySpec{Root: "GlobalEnvRoot", Key: targetStringKey(name), Value: target.InitialValueSpec{Kind: target.InitialValueOperation, Operation: binding}, Mutability: target.InitialMutable})
-		bindings = append(bindings, target.InitialBindingSpec{Name: name, Root: "GlobalEnvRoot", Key: targetStringKey(name)})
+		entries = append(entries, vocabulary.InitialEntrySpec{Root: "GlobalEnvRoot", Key: targetStringKey(name), Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueOperation, Operation: binding}, Mutability: vocabulary.InitialMutable})
+		bindings = append(bindings, vocabulary.InitialBindingSpec{Name: name, Root: "GlobalEnvRoot", Key: targetStringKey(name)})
 	}
 	sealed, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), Operations: operations, Protocols: protocols, InitialRoots: testBootRoots(), InitialEntries: entries, InitialBindings: bindings})
 	if err != nil {
@@ -134,20 +137,20 @@ func source(t testing.TB, text string) *program.Program {
 	return p
 }
 
-func linked(t testing.TB, sealed *target.Contract, modules ...linkproject.Module) *Link {
+func linked(t testing.TB, sealed *target.Contract, modules ...linkproject.Module) *link.Link {
 	t.Helper()
-	l, err := Seal(&Spec{Target: sealed, Modules: modules})
+	l, err := link.Seal(&link.Spec{Target: sealed, Modules: modules})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return l
 }
 
-func onlyShard(t *testing.T, l *Link, p *program.Program) linkproject.Shard {
+func onlyShard(t *testing.T, l *link.Link, p *program.Program) linkproject.Shard {
 	return onlyShardFor(t, l, p)
 }
 
-func onlyShardFor(t testing.TB, l *Link, p *program.Program) linkproject.Shard {
+func onlyShardFor(t testing.TB, l *link.Link, p *program.Program) linkproject.Shard {
 	t.Helper()
 	shard, ok := shardForProgram(l, p)
 	if !ok {
@@ -156,7 +159,7 @@ func onlyShardFor(t testing.TB, l *Link, p *program.Program) linkproject.Shard {
 	return shard
 }
 
-func shardForProgram(l *Link, p *program.Program) (linkproject.Shard, bool) {
+func shardForProgram(l *link.Link, p *program.Program) (linkproject.Shard, bool) {
 	if l == nil || p == nil {
 		return linkproject.Shard{}, false
 	}
@@ -251,22 +254,22 @@ func artifactMemberRead(t testing.TB, p *program.Program) keyspace.Term {
 	return 0
 }
 
-func actorBootOperation(parts ...string) target.OperationSpec {
-	return target.OperationSpec{
-		Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: parts}},
-		Input:    target.ValuesSpec{Tail: target.ValuesClosed},
-		Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}},
-		Effects:  target.RowSpec{Tail: target.RowClosed},
+func actorBootOperation(parts ...string) vocabulary.OperationSpec {
+	return vocabulary.OperationSpec{
+		Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: parts}},
+		Input:    vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed},
+		Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}},
+		Effects:  vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 	}
 }
 
-func actorBootContract(t *testing.T, operations []target.OperationSpec, entries []target.InitialEntrySpec, bindings []target.InitialBindingSpec) *target.Contract {
+func actorBootContract(t *testing.T, operations []vocabulary.OperationSpec, entries []vocabulary.InitialEntrySpec, bindings []vocabulary.InitialBindingSpec) *target.Contract {
 	t.Helper()
-	entries = append([]target.InitialEntrySpec{
-		{Root: "GlobalEnvRoot", Key: targetStringKey("_G"), Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: target.InitialMutable},
-		{Root: "GlobalEnvRoot", Key: targetStringKey("__actor_boot_absent"), Value: target.InitialValueSpec{Kind: target.InitialValueAbsent}, Mutability: target.InitialMutable},
+	entries = append([]vocabulary.InitialEntrySpec{
+		{Root: "GlobalEnvRoot", Key: targetStringKey("_G"), Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: vocabulary.InitialMutable},
+		{Root: "GlobalEnvRoot", Key: targetStringKey("__actor_boot_absent"), Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueAbsent}, Mutability: vocabulary.InitialMutable},
 	}, entries...)
-	bindings = append([]target.InitialBindingSpec{{Name: "_G", Root: "GlobalEnvRoot", Key: targetStringKey("_G")}}, bindings...)
+	bindings = append([]vocabulary.InitialBindingSpec{{Name: "_G", Root: "GlobalEnvRoot", Key: targetStringKey("_G")}}, bindings...)
 	sealed, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), Operations: operations, InitialRoots: testBootRoots(), InitialEntries: entries, InitialBindings: bindings})
 	if err != nil {
 		t.Fatal(err)
@@ -274,15 +277,15 @@ func actorBootContract(t *testing.T, operations []target.OperationSpec, entries 
 	return sealed
 }
 
-func capabilityFixture(t *testing.T, permuted bool) (*Link, *target.Contract, *program.Program, target.Operation, keyspace.Term, keyspace.Term) {
+func capabilityFixture(t *testing.T, permuted bool) (*link.Link, *target.Contract, *program.Program, vocabulary.Operation, keyspace.Term, keyspace.Term) {
 	t.Helper()
 	p := source(t, `actor.send(1)`)
-	binding := target.BindingSpec{Namespace: target.BindingProvider, Owner: []string{"actor"}, Member: []string{"send"}}
-	sealed := testBootContract(t, []target.OperationSpec{{
-		Bindings: []target.BindingSpec{binding},
-		Input:    target.ValuesSpec{Fixed: portableTypes(t, []typ.Type{typ.Any}), Tail: target.ValuesClosed},
-		Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Fixed: portableTypes(t, []typ.Type{typ.Any}), Tail: target.ValuesClosed}}},
-		Effects:  target.RowSpec{Tail: target.RowClosed},
+	binding := vocabulary.BindingSpec{Namespace: vocabulary.BindingProvider, Owner: []string{"actor"}, Member: []string{"send"}}
+	sealed := testBootContract(t, []vocabulary.OperationSpec{{
+		Bindings: []vocabulary.BindingSpec{binding},
+		Input:    vocabulary.ValuesSpec{Fixed: portableTypes(t, []typ.Type{typ.Any}), Tail: vocabulary.ValuesClosed},
+		Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Fixed: portableTypes(t, []typ.Type{typ.Any}), Tail: vocabulary.ValuesClosed}}},
+		Effects:  vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 	}}, p)
 	op, ok := sealed.Lookup(binding)
 	if !ok {
@@ -290,7 +293,7 @@ func capabilityFixture(t *testing.T, permuted bool) (*Link, *target.Contract, *p
 	}
 	actor := hostGlobalRead(t, p, "actor")
 	member := artifactMemberRead(t, p)
-	spec := Spec{
+	spec := link.Spec{
 		Target:           sealed,
 		Modules:          []linkproject.Module{{Name: "main", Program: p}},
 		EndpointRequests: []linkboundary.EndpointRequest{{Identity: "actor.send", Binding: binding}},
@@ -309,7 +312,7 @@ func capabilityFixture(t *testing.T, permuted bool) (*Link, *target.Contract, *p
 		reverseCapabilities(spec.Host.ProviderCapabilities)
 		reverseCapabilitySeeds(spec.Host.ProviderCapabilitySeeds)
 	}
-	l, err := Seal(&spec)
+	l, err := link.Seal(&spec)
 	if err != nil {
 		t.Fatal(err)
 	}

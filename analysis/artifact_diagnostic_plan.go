@@ -1,18 +1,23 @@
 package analysis
 
 import (
-	"github.com/wippyai/go-lua/domain/composite"
-	publication "github.com/wippyai/go-lua/domain/composite/publication"
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
+	programstatic "github.com/wippyai/go-lua/analysis/program/static"
+	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
+	"github.com/wippyai/go-lua/domain/composite"
+	publication "github.com/wippyai/go-lua/domain/composite/publication"
+	"github.com/wippyai/go-lua/domain/runtimekind"
 )
 
-type artifactDiagnosticObservationReceipt struct {
-	point      artifactResultPoint
-	attachment publication.BranchValueObservationAttachment
+type artifactDiagnosticObservationPublication struct {
+	point artifactResultPoint
+	key   identity.ContentID
 }
 
 func validMountedDiagnosticSpan(span programsource.Span) bool {
@@ -121,17 +126,66 @@ func (payload compiledUnresolvedValueReference) empty() bool {
 // compiledObservation is the one mounted observation carrier. Its payload is
 // a strict tagged union: branch geometry is embedded only for branch rows and
 // static unresolved references only for static rows. The validity check below
-// enforces the exact mask before the row reaches the persistent result receipt.
+// enforces the exact mask before the row is projected into result geometry.
 type compiledObservation struct {
 	id       identity.ContentID
 	mount    identity.ContentID
 	artifact identity.ContentID
 	local    identity.ContentID
-	kind     programartifact.DiagnosticObservationKind
+	kind     structure.DiagnosticObservationKind
 	location programsource.Span
 	compiledBranchObservation
 	compiledUnresolvedTypeReference
 	compiledUnresolvedValueReference
+	compiledTypeConformance
+}
+
+type compiledTypeConformance struct {
+	site        diagnostic.Site
+	call        identity.ContentID
+	argument    identity.ContentID
+	declared    identity.ContentID
+	span        identity.ContentID
+	position    uint32
+	actual      uint32
+	declaredMay runtimekind.Set
+	target      string
+	evidence    []identity.ContentID
+}
+
+func compiledTypeConformanceSite(site uint8) diagnostic.Site {
+	switch site {
+	case 1:
+		return diagnostic.SiteCallArgument
+	case 2:
+		return diagnostic.SiteAssignment
+	default:
+		return diagnostic.SiteNone
+	}
+}
+
+func (payload compiledTypeConformance) available() bool {
+	if !payload.site.Available() || !payload.call.Available() || !payload.argument.Available() || !payload.declared.Available() ||
+		!payload.span.Available() || !payload.declaredMay.Valid() || len(payload.evidence) == 0 {
+		return false
+	}
+	seen := make(map[identity.ContentID]struct{}, len(payload.evidence))
+	for _, point := range payload.evidence {
+		if !point.Available() {
+			return false
+		}
+		if _, duplicate := seen[point]; duplicate {
+			return false
+		}
+		seen[point] = struct{}{}
+	}
+	return true
+}
+
+func (payload compiledTypeConformance) empty() bool {
+	return !payload.site.Declared() && !payload.call.Available() && !payload.argument.Available() && !payload.declared.Available() &&
+		!payload.span.Available() && payload.position == 0 && payload.actual == 0 &&
+		payload.declaredMay == 0 && payload.target == "" && len(payload.evidence) == 0
 }
 
 func (observation compiledObservation) available() bool {
@@ -140,26 +194,28 @@ func (observation compiledObservation) available() bool {
 		return false
 	}
 	switch observation.kind {
-	case programartifact.DiagnosticObservationBranchCondition:
-		return observation.compiledBranchObservation.available() && observation.compiledUnresolvedTypeReference.empty() && observation.compiledUnresolvedValueReference.empty()
-	case programartifact.DiagnosticObservationTypeReferenceUnresolved:
-		return observation.compiledUnresolvedTypeReference.available() && observation.compiledBranchObservation.empty() && observation.compiledUnresolvedValueReference.empty()
-	case programartifact.DiagnosticObservationValueReferenceUnresolved:
-		return observation.compiledUnresolvedValueReference.available() && observation.compiledBranchObservation.empty() && observation.compiledUnresolvedTypeReference.empty()
+	case structure.DiagnosticObservationBranchCondition:
+		return observation.compiledBranchObservation.available() && observation.compiledUnresolvedTypeReference.empty() && observation.compiledUnresolvedValueReference.empty() && observation.compiledTypeConformance.empty()
+	case structure.DiagnosticObservationTypeReferenceUnresolved:
+		return observation.compiledUnresolvedTypeReference.available() && observation.compiledBranchObservation.empty() && observation.compiledUnresolvedValueReference.empty() && observation.compiledTypeConformance.empty()
+	case structure.DiagnosticObservationValueReferenceUnresolved:
+		return observation.compiledUnresolvedValueReference.available() && observation.compiledBranchObservation.empty() && observation.compiledUnresolvedTypeReference.empty() && observation.compiledTypeConformance.empty()
+	case structure.DiagnosticObservationTypeConformance:
+		return observation.compiledTypeConformance.available() && observation.compiledBranchObservation.empty() && observation.compiledUnresolvedTypeReference.empty() && observation.compiledUnresolvedValueReference.empty()
 	default:
 		return false
 	}
 }
 
 type compiledObservationProducer struct {
-	role       programartifact.RuleRole
+	key        schema.Key
 	occurrence identity.ContentID
 	point      identity.ContentID
 	anchor     identity.ContentID
 }
 
 func (producer compiledObservationProducer) available() bool {
-	return mountedDiagnosticRuleRole(producer.role) &&
+	return producer.key.Available() &&
 		producer.occurrence.Available() && producer.point.Available() && producer.anchor.Available()
 }
 
@@ -240,19 +296,6 @@ func addDiagnosticFullLocalTransfer(transfers map[identity.ContentID]programarti
 	return true
 }
 
-func mountedDiagnosticRuleRole(role programartifact.RuleRole) bool {
-	for index := 0; index < programartifact.MountedRuleRoleCount(); index++ {
-		candidate, ok := programartifact.MountedRuleRoleAt(index)
-		if !ok {
-			return false
-		}
-		if candidate == role {
-			return true
-		}
-	}
-	return false
-}
-
 // compileDiagnosticObservations emits the one generic mounted observation
 // carrier. No family-specific row type crosses the artifact boundary.
 func compileDiagnosticObservations(source *link.Link, artifacts *compiledArtifactSet, coordinates []compiledValueCoordinate) ([]compiledObservation, bool) {
@@ -296,7 +339,7 @@ func compileDiagnosticObservations(source *link.Link, artifacts *compiledArtifac
 			if !observationOK {
 				return nil, false
 			}
-			if observation.Kind() == programartifact.DiagnosticObservationBranchCondition {
+			if observation.Kind() == structure.DiagnosticObservationBranchCondition {
 				hasBranchObservation = true
 				break
 			}
@@ -307,48 +350,42 @@ func compileDiagnosticObservations(source *link.Link, artifacts *compiledArtifac
 		if hasBranchObservation {
 			producersByValue = make(map[identity.ContentID][]compiledObservationProducer)
 		}
-		for roleIndex := 0; hasBranchObservation && roleIndex < programartifact.MountedRuleRoleCount(); roleIndex++ {
-			role, roleOK := programartifact.MountedRuleRoleAt(roleIndex)
-			if !roleOK {
+		for ruleIndex := 0; hasBranchObservation && ruleIndex < mount.artifact.RulePlacementCount(); ruleIndex++ {
+			rule, ruleOK := mount.artifact.RulePlacementAt(ruleIndex)
+			if !ruleOK || !rule.Available() {
 				return nil, false
 			}
-			for ruleIndex := 0; ruleIndex < mount.artifact.RuleOccurrenceCount(role); ruleIndex++ {
-				rule, ruleOK := mount.artifact.RuleOccurrenceAt(role, ruleIndex)
-				if !ruleOK || !rule.Available() {
-					return nil, false
+			if _, value := rule.OutputSemanticID(); !value {
+				continue
+			}
+			outputID, outputOK := rule.OutputSemanticID()
+			if !outputOK {
+				continue
+			}
+			value, valueOK := values.ForMountedSemantic(mount.moduleKey, outputID)
+			// Computation families write the operator's Program-owned Span identity.
+			// Boundary already seals the exact mounted span substitution.
+			if programartifact.SpanResultOccurrence(rule.OccurrenceKind()) {
+				value, valueOK = values.ForMountedSpan(mount.moduleKey, outputID)
+			}
+			point, pointOK := rule.PointAt(0)
+			if !valueOK {
+				continue
+			}
+			valueID, valueIDOK := values.ID(value)
+			if !valueIDOK || !pointOK || !point.Available() || rule.PointCount() != 1 || !rule.Key().Available() {
+				return nil, false
+			}
+			producers := producersByValue[valueID]
+			duplicate := false
+			for _, prior := range producers {
+				if prior.key == rule.Key() && prior.occurrence == rule.ID() && prior.point == point {
+					duplicate = true
+					break
 				}
-				if rule.OutputKind() != programartifact.RuleOutputValue {
-					continue
-				}
-				outputID, outputOK := rule.OutputSemanticID()
-				if !outputOK {
-					continue
-				}
-				value, valueOK := values.ForMountedSemantic(mount.moduleKey, outputID)
-				// Binary equality's result ID is its Program-owned Span identity.
-				// Boundary already seals the exact mounted span substitution.
-				if role == programartifact.RuleRoleValueBinaryArithmetic || role == programartifact.RuleRoleValueBinaryEquality || role == programartifact.RuleRoleValueBinaryOrder {
-					value, valueOK = values.ForMountedSpan(mount.moduleKey, outputID)
-				}
-				point, pointOK := rule.PointAt(0)
-				if !valueOK {
-					continue
-				}
-				valueID, valueIDOK := values.ID(value)
-				if !valueIDOK || !pointOK || !point.Available() || rule.PointCount() != 1 {
-					return nil, false
-				}
-				producers := producersByValue[valueID]
-				duplicate := false
-				for _, prior := range producers {
-					if prior.role == role && prior.occurrence == rule.ID() && prior.point == point {
-						duplicate = true
-						break
-					}
-				}
-				if !duplicate {
-					producersByValue[valueID] = append(producers, compiledObservationProducer{role: role, occurrence: rule.ID(), point: point})
-				}
+			}
+			if !duplicate {
+				producersByValue[valueID] = append(producers, compiledObservationProducer{key: rule.Key(), occurrence: rule.ID(), point: point})
 			}
 		}
 		for index := 0; index < mount.artifact.DiagnosticObservationCount(); index++ {
@@ -375,7 +412,7 @@ func compileDiagnosticObservations(source *link.Link, artifacts *compiledArtifac
 			}
 			row := compiledObservation{id: id, mount: mount.moduleKey, artifact: mount.artifact.ID(), local: localID, kind: observation.Kind(), location: location}
 			switch observation.Kind() {
-			case programartifact.DiagnosticObservationBranchCondition:
+			case structure.DiagnosticObservationBranchCondition:
 				branch, branchOK := observation.BranchCondition()
 				if !branchOK {
 					return nil, false
@@ -427,14 +464,14 @@ func compileDiagnosticObservations(source *link.Link, artifacts *compiledArtifac
 					return nil, false
 				}
 				row.compiledBranchObservation = compiledBranchObservation{points: points, producers: producers, valueIndex: valueIndex}
-			case programartifact.DiagnosticObservationTypeReferenceUnresolved:
+			case structure.DiagnosticObservationTypeReferenceUnresolved:
 				unresolved, unresolvedOK := observation.UnresolvedTypeReference()
 				path, pathOK := unresolved.Path()
 				if !unresolvedOK || !pathOK || !unresolved.StaticReferenceID().Available() {
 					return nil, false
 				}
 				row.compiledUnresolvedTypeReference = compiledUnresolvedTypeReference{reference: unresolved.StaticReferenceID(), root: unresolved.RootID(), path: path}
-			case programartifact.DiagnosticObservationValueReferenceUnresolved:
+			case structure.DiagnosticObservationValueReferenceUnresolved:
 				unresolved, unresolvedOK := observation.UnresolvedValueReference()
 				name, nameOK := unresolved.Name()
 				if !unresolvedOK || !nameOK || !unresolved.ReadID().Available() || !unresolved.CellID().Available() {
@@ -442,11 +479,40 @@ func compileDiagnosticObservations(source *link.Link, artifacts *compiledArtifac
 				}
 				// Program proves a binder-implicit global candidate; Link owns the
 				// final absence judgment. A configured initial binding suppresses
-				// the candidate before it enters the detached result receipt.
+				// the candidate before it enters result geometry.
 				if _, _, _, _, configured := contract.InitialBinding(name); configured {
 					continue
 				}
 				row.compiledUnresolvedValueReference = compiledUnresolvedValueReference{read: unresolved.ReadID(), cell: unresolved.CellID(), name: name}
+			case structure.DiagnosticObservationTypeConformance:
+				conformance, conformanceOK := observation.TypeConformance()
+				if !conformanceOK || !conformance.CallID().Available() || !conformance.ArgumentID().Available() ||
+					!conformance.DeclaredStaticTypeID().Available() || !conformance.SpanID().Available() {
+					return nil, false
+				}
+				position, positionOK := conformance.Position()
+				points, pointsOK := conformance.EvidencePoints()
+				memberID, spanID, argumentOK := mountedCallArgumentIdentities(mount.artifact, conformance.ArgumentID())
+				if !positionOK || !pointsOK || !argumentOK || spanID != conformance.SpanID() {
+					return nil, false
+				}
+				value, valueOK := values.ForMountedSemantic(mount.moduleKey, memberID)
+				if !valueOK {
+					value, valueOK = values.ForMountedSpan(mount.moduleKey, spanID)
+				}
+				valueID, valueIDOK := values.ID(value)
+				valueIndex, valueIndexOK := coordinateByID[valueKey{mount: mount.moduleKey, id: valueID}]
+				declaredMay, target, declaredOK := mountedDeclaredMay(mount.artifact, conformance.DeclaredStaticTypeID())
+				if !valueOK || !valueIDOK || !valueIndexOK || !declaredOK || uint64(valueIndex) >= uint64(len(coordinates)) {
+					return nil, false
+				}
+				row.compiledTypeConformance = compiledTypeConformance{
+					site: compiledTypeConformanceSite(conformance.Site()),
+					call: conformance.CallID(), argument: conformance.ArgumentID(),
+					declared: conformance.DeclaredStaticTypeID(), span: conformance.SpanID(), position: position,
+					actual: valueIndex, declaredMay: declaredMay, target: target,
+					evidence: append([]identity.ContentID(nil), points...),
+				}
 			default:
 				return nil, false
 			}
@@ -463,14 +529,18 @@ func compileDiagnosticObservations(source *link.Link, artifacts *compiledArtifac
 // by native publication and optional diagnostics. Static observations never
 // enter this function. Diagnostic flags control only report collectors; they
 // cannot create a second observation authority or alter native facts.
-func attachBranchValueObservations(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, binding *composite.ProgramBinding, receipt *artifactResultReceipt) ([]artifactDiagnosticObservationReceipt, engine.ReceiptObservationAttachFailure, bool) {
-	if compilation == nil || graph == nil || binding == nil || binding.ValueQuery() == nil || !receipt.valid() {
+func attachBranchValueObservations(compilation *engine.ProgramConstruction, graph *engine.ReceiptGraph, binding *composite.ProgramBinding, geometry resultGeometry) ([]artifactDiagnosticObservationPublication, engine.ReceiptObservationAttachFailure, bool) {
+	if compilation == nil || graph == nil || binding == nil || binding.ValueQuery() == nil || !geometry.valid() {
 		return nil, engine.ReceiptObservationAttachFailureArguments, false
 	}
-	rows := make([]artifactDiagnosticObservationReceipt, 0)
+	family, familyOK := composite.ObservationProducerForPopulationKind(structure.DiagnosticObservationBranchCondition.Key())
+	if !familyOK {
+		return nil, engine.ReceiptObservationAttachFailureArguments, false
+	}
+	rows := make([]artifactDiagnosticObservationPublication, 0)
 	seen := make(map[artifactResultPoint]publication.BranchValueObservationAttachment)
-	for _, observation := range receipt.branchObservations {
-		if observation.kind != programartifact.DiagnosticObservationBranchCondition || !observation.mount.Available() || len(observation.points) == 0 || len(observation.producers) == 0 {
+	for _, observation := range geometry.branchObservations {
+		if observation.kind != structure.DiagnosticObservationBranchCondition || !observation.mount.Available() || len(observation.points) == 0 || len(observation.producers) == 0 {
 			return nil, engine.ReceiptObservationAttachFailureArguments, false
 		}
 		for _, producer := range observation.producers {
@@ -479,7 +549,7 @@ func attachBranchValueObservations(compilation *engine.ReceiptCompilation, graph
 			if !executionKey.mount.Available() || !executionKey.point.Available() || !anchorKey.point.Available() {
 				return nil, engine.ReceiptObservationAttachFailureArguments, false
 			}
-			role, roleOK := mountedCapability(binding, producer.role)
+			role, roleOK := mountedCapability(binding, producer.key)
 			if !roleOK {
 				return nil, engine.ReceiptObservationAttachFailurePoint, false
 			}
@@ -488,18 +558,80 @@ func attachBranchValueObservations(compilation *engine.ReceiptCompilation, graph
 				// producer names its own member there, so the attachment already
 				// bound to that point reauthenticates those coordinates instead
 				// of adopting them unchecked.
-				if !attached.MemberAdmitted(graph, role, producer.occurrence) {
+				if !attached.MemberAdmitted(compilation, role, producer.occurrence) {
 					return nil, engine.ReceiptObservationAttachFailurePoint, false
 				}
 				continue
 			}
-			attachment, failure, attached := publication.AttachBranchValueObservation(compilation, binding.ValueQuery(), graph, role, executionKey.mount, producer.point, producer.occurrence)
+			attachment, failure, attached := publication.AttachBranchValueObservation(compilation, binding.ValueQuery(), role, family, executionKey.mount, producer.point, producer.occurrence)
 			if !attached {
 				return nil, failure, false
 			}
+			key, keyed := attachment.ContentID()
+			if !keyed {
+				return nil, engine.ReceiptObservationAttachFailurePoint, false
+			}
 			seen[executionKey] = attachment
-			rows = append(rows, artifactDiagnosticObservationReceipt{point: anchorKey, attachment: attachment})
+			rows = append(rows, artifactDiagnosticObservationPublication{point: anchorKey, key: key})
 		}
 	}
 	return rows, engine.ReceiptObservationAttachFailureNone, true
+}
+
+func mountedCallArgumentIdentities(artifact *programartifact.Artifact, argumentID identity.ContentID) (identity.ContentID, identity.ContentID, bool) {
+	if artifact == nil || !artifact.Available() || !argumentID.Available() {
+		return identity.ContentID{}, identity.ContentID{}, false
+	}
+	for index := 0; index < artifact.CallArgumentCount(); index++ {
+		row, rowOK := artifact.CallArgumentAt(index)
+		if !rowOK || row.ID() != argumentID {
+			continue
+		}
+		return row.MemberID(), row.SpanID(), row.MemberID().Available() && row.SpanID().Available()
+	}
+	return identity.ContentID{}, identity.ContentID{}, false
+}
+
+func mountedDeclaredMay(artifact *programartifact.Artifact, declared identity.ContentID) (runtimekind.Set, string, bool) {
+	if artifact == nil || !artifact.Available() || !declared.Available() {
+		return 0, "", false
+	}
+	for index := 0; index < artifact.StaticTypeNodeCount(); index++ {
+		node, nodeOK := artifact.StaticTypeNodeAt(index)
+		if !nodeOK || node.ID() != declared {
+			continue
+		}
+		if node.Kind() != programartifact.StaticNodePrimitive {
+			return runtimekind.All, "", true
+		}
+		return primitiveDeclaredMay(programstatic.PrimitiveKind(node.LiteralKind()))
+	}
+	return 0, "", false
+}
+
+func primitiveDeclaredMay(kind programstatic.PrimitiveKind) (runtimekind.Set, string, bool) {
+	switch kind {
+	case programstatic.PrimitiveNil:
+		return runtimekind.Bit(runtimekind.Nil), "nil", true
+	case programstatic.PrimitiveBoolean:
+		return runtimekind.Bit(runtimekind.Boolean), "boolean", true
+	case programstatic.PrimitiveNumber:
+		return runtimekind.Bit(runtimekind.Number), "number", true
+	case programstatic.PrimitiveInteger:
+		return runtimekind.Bit(runtimekind.Number), "integer", true
+	case programstatic.PrimitiveString:
+		return runtimekind.Bit(runtimekind.String), "string", true
+	case programstatic.PrimitiveFunction:
+		return runtimekind.Bit(runtimekind.Function), "function", true
+	case programstatic.PrimitiveAny:
+		return runtimekind.All, "any", true
+	case programstatic.PrimitiveUnknown:
+		return runtimekind.All, "unknown", true
+	case programstatic.PrimitiveNever:
+		return 0, "never", true
+	case programstatic.PrimitiveSelf:
+		return runtimekind.All, "self", true
+	default:
+		return 0, "", false
+	}
 }

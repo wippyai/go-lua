@@ -4,7 +4,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"sync"
 
-	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -1325,7 +1324,11 @@ func artifactPredecessorRuleInput(rows *artifactReceiptTopology, edge artifactEn
 		}
 		targetDecision, retained := targetDecisions[semanticID]
 		if !retained {
-			return equation.Input{}, false
+			// A back-edge or join target can have a smaller live decision set
+			// than its predecessor. Clearing a source decision that is not live
+			// at the target is the same as an explicit reset of absent information.
+			maps[index] = equation.Forget(decision)
+			continue
 		}
 		maps[index] = equation.Identity(decision)
 		if targetDecision != decision {
@@ -2039,6 +2042,27 @@ func (receipt *ReceiptGraph) MountedActivationMember(role RuleSlotCapability, mo
 	return graph.MountedRuleMember(role, mount, reusablePoint, occurrence)
 }
 
+// publishedQueryKeys is the sealed directory's query address table: one
+// canonical key per directory ordinal, resolved against this graph. Seal
+// reads this table rather than walking the directory itself.
+func (receipt *ReceiptGraph) publishedQueryKeys() ([]composition.Key, bool) {
+	if !receipt.valid() || receipt.topology == nil || receipt.topology.directory == nil || receipt.graph == nil {
+		return nil, false
+	}
+	directory := receipt.topology.directory
+	addressed := make([]composition.Key, 0, len(directory.queryOrder))
+	for ordinal, id := range directory.queryOrder {
+		entry, found := directory.resolve(id)
+		locator, located := directory.query(id)
+		resolved, resolvedOK := locator.Resolve(receipt.graph)
+		if !found || entry.kind != bindingSemanticQuery || int(entry.slot) != ordinal || !located || !resolvedOK {
+			return nil, false
+		}
+		addressed = append(addressed, resolved.Key())
+	}
+	return addressed, true
+}
+
 func (receipt *ReceiptGraph) lookupQuery(id identity.ContentID) (ReceiptQuery, bool) {
 	if !receipt.valid() {
 		return ReceiptQuery{}, false
@@ -2051,7 +2075,11 @@ func (receipt *ReceiptGraph) lookupQuery(id identity.ContentID) (ReceiptQuery, b
 	if !ok || !receipt.graph.OwnsQuery(query) {
 		return ReceiptQuery{}, false
 	}
-	return ReceiptQuery{graph: receipt, identity: query, locator: locator}, true
+	key := solvedRowKey(query.Key())
+	if !key.Available() {
+		return ReceiptQuery{}, false
+	}
+	return ReceiptQuery{graph: receipt, identity: query, locator: locator, key: key}, true
 }
 
 func activationReceiptGraph(receipt *ReceiptGraph) (*ActivationReceiptGraph, bool) {
@@ -2094,556 +2122,16 @@ func (receipt *ActivationReceiptGraph) MountedRuleMember(role RuleSlotCapability
 	return receipt.lookupActivationMember(mountedRuleActivationID(role, mount, reusablePoint, occurrence))
 }
 
-// solverCompiler is the private activation-revision lowering seam. Receipt
-// compilations rebuild graph-owned runtime state without a cold Composition.
-type solverCompiler interface {
-	compile(equation.Relation) (*solverRuntime, solveBoundary, bool)
-}
-
-func validAcceptedActivations(topology *equation.Topology, accepted []equation.AcceptedMember) bool {
-	if topology == nil {
-		return false
-	}
-	// Publish repeats this fail-closed validation at the authority boundary. The
-	// compiler keeps the same predicate here so an untrusted caller cannot get as
-	// far as carrier allocation with a foreign Member. It is membership only: no
-	// structural digest is derived for a set that is not being published.
-	return topology.ValidAccepted(accepted)
-}
-
-// receiptFactorCompilation is the private transaction state between Factor
-// binding and the future Rule/Query receipt compiler. It retains the pinned
-// runtime binding and its guards; callers cannot receive orphaned factors
-// after the owner is discarded.
-type receiptFactorCompilation struct {
-	mu                  sync.Mutex
-	runtime             *runtimeBinding
-	factors             []runtimeFactor
-	byKey               map[composition.Key]runtimeFactor
-	carrier             *carrier.Composition
-	ordered             []runtimeFactor
-	members             map[composition.Key]runtimeMember
-	queries             map[composition.Key]runtimeQuery
-	observations        []runtimeObservation
-	observationIDs      map[identity.ContentID]struct{}
-	observationPoints   map[composition.Key]equation.Point
-	memberBuilders      []receiptMemberBuilder
-	queryBuilders       []receiptQueryBuilder
-	observationBuilders []receiptObservationBuilder
-	frozen              bool
-	closed              bool
-}
-
-// The receipt transaction retains only typed, one-shot rebinding closures
-// until Solver is sealed.  They let a later accepted activation revision
-// rebuild its graph-owned runtime without retaining a cold Composition or
-// exposing erased callback state.
-type receiptMemberBuilder func(*receiptFactorCompilation) (runtimeMember, bool)
-type receiptQueryBuilder func(*receiptFactorCompilation) (runtimeQuery, bool)
-type receiptObservationBuilder func(*receiptFactorCompilation) (runtimeObservation, bool)
-
-type receiptSolverCompiler struct {
-	state               *schemaBindingState
-	topology            *equation.Topology
-	memberBuilders      []receiptMemberBuilder
-	queryBuilders       []receiptQueryBuilder
-	observationBuilders []receiptObservationBuilder
-}
-
-func (compiler receiptSolverCompiler) compile(relation equation.Relation) (*solverRuntime, solveBoundary, bool) {
-	if compiler.state == nil || compiler.topology == nil || !relation.OwnedBy(compiler.topology) {
-		return nil, refused(SolveFailureFamilyCompile, "validation"), false
-	}
-	graph, ok := compiler.topology.Graph(relation)
-	if !ok || graph == nil {
-		return nil, refused(SolveFailureFamilyCompile, "validation"), false
-	}
-	binding := &SchemaBinding{state: compiler.state}
-	compiled, ok := compileReceiptFactors(binding, graph)
-	if !ok || compiled == nil {
-		return nil, refused(SolveFailureFamilyCompile, "composition"), false
-	}
-	rows := make([]runtimeMember, 0, len(compiler.memberBuilders))
-	for _, build := range compiler.memberBuilders {
-		if build == nil {
-			return nil, refused(SolveFailureFamilyCompile, "member-binding"), false
-		}
-		row, built := build(compiled)
-		if !built || row == nil {
-			return nil, refused(SolveFailureFamilyCompile, "member-binding"), false
-		}
-		rows = append(rows, row)
-	}
-	queryByKey := make(map[composition.Key]runtimeQuery, len(compiler.queryBuilders))
-	for _, build := range compiler.queryBuilders {
-		if build == nil {
-			return nil, refused(SolveFailureFamilyCompile, "query-binding"), false
-		}
-		row, built := build(compiled)
-		if !built || row == nil {
-			return nil, refused(SolveFailureFamilyCompile, "query-binding"), false
-		}
-		if _, duplicate := queryByKey[row.query().Key()]; duplicate {
-			return nil, refused(SolveFailureFamilyCompile, "query-binding"), false
-		}
-		queryByKey[row.query().Key()] = row
-	}
-	queries := make([]runtimeQuery, graph.QueryCount())
-	for index := 0; index < graph.QueryCount(); index++ {
-		identity, indexed := graph.QueryAt(index)
-		row, present := queryByKey[identity.Key()]
-		if !indexed || !present || row == nil || row.query().Key() != identity.Key() {
-			return nil, refused(SolveFailureFamilyCompile, "query-binding"), false
-		}
-		queries[index] = row
-	}
-	observations := make([]runtimeObservation, 0, len(compiler.observationBuilders))
-	for _, build := range compiler.observationBuilders {
-		if build == nil {
-			return nil, refused(SolveFailureFamilyCompile, "runtime-assembly"), false
-		}
-		row, built := build(compiled)
-		if !built || row == nil {
-			return nil, refused(SolveFailureFamilyCompile, "runtime-assembly"), false
-		}
-		observations = append(observations, row)
-	}
-	runtime, ok := assembleReceiptRuntime(compiled.runtime.state, compiled.runtime.authority, graph, compiled.carrier, compiled.byKey, rows, queries, observations)
-	if !ok || runtime == nil {
-		return nil, refused(SolveFailureFamilyCompile, "runtime-assembly"), false
-	}
-	runtime.factors = append([]runtimeFactor(nil), compiled.ordered...)
-	runtime.topology = compiler.topology
-	for _, factor := range compiled.ordered {
-		if factor == nil {
-			return nil, refused(SolveFailureFamilyCompile, "composition"), false
-		}
-		factor.releaseColdBindings()
-	}
-	return runtime, boundaryNone, true
-}
-
-// ReceiptCompilation is the opaque receipt-native Rule attachment transaction.
-// It owns the sealed Factor carrier and graph catalog; callers can only add a
-// typed Rule implementation/member pair and cannot observe slots, callbacks,
-// graph mutation, or carrier coordinates.
-type ReceiptCompilation struct {
-	inner *receiptFactorCompilation
-	graph *ReceiptGraph
-}
-
-// ReceiptMember is an opaque graph-owned Rule member attached to a
-// ReceiptCompilation. Runtime execution remains engine-owned.
-type ReceiptMember struct {
-	inner runtimeMember
-}
-
 // ReceiptQuery is an opaque graph-owned Query identity used by the common
 // receipt-native solver transaction.
 type ReceiptQuery struct {
 	graph    *ReceiptGraph
 	identity equation.Query
 	locator  equation.QueryRowLocator
+	key      identity.ContentID
 }
 
-// ActivationReceiptCompilation is the closed receipt-native attachment
-// transaction for structural activation members.  It uses the same Factor
-// carrier and runtime member machinery as ReceiptCompilation, but can only
-// be started through an ActivationReceiptGraph's topology proof.
-type ActivationReceiptCompilation struct {
-	inner *receiptFactorCompilation
-	graph *ActivationReceiptGraph
-}
-
-// ActivationReceiptMember is an opaque successfully-attached activation
-// runtime member.  Its internals remain engine-owned.
-type AttachedActivationReceiptMember struct {
-	inner runtimeMember
-}
-
-// Close terminally seals this receipt attachment transaction. Copies of the
-// opaque handle share the same ledger and therefore cannot attach after close.
-func (compilation *ReceiptCompilation) Close() bool {
-	if compilation == nil || compilation.inner == nil {
-		return false
-	}
-	compilation.inner.mu.Lock()
-	defer compilation.inner.mu.Unlock()
-	if compilation.inner.closed {
-		return false
-	}
-	compilation.inner.closed = true
-	return true
-}
-
-// Close terminally closes an activation receipt transaction.
-func (compilation *ActivationReceiptCompilation) Close() bool {
-	if compilation == nil || compilation.inner == nil {
-		return false
-	}
-	compilation.inner.mu.Lock()
-	defer compilation.inner.mu.Unlock()
-	if compilation.inner.closed {
-		return false
-	}
-	compilation.inner.closed = true
-	return true
-}
-
-// Solver seals the receipt compilation and assembles its attached members
-// into the normal executable runtime. The returned Solver follows the same
-// Product/evidence/patch path; no receipt-only
-// execution shortcut exists. Query-bearing graphs require their typed query
-// receipt lane and are rejected until that lane is attached.
-func (compilation *ReceiptCompilation) Solver() (*Solver, bool) {
-	if compilation == nil || compilation.inner == nil || compilation.graph == nil {
-		return nil, false
-	}
-	inner := compilation.inner
-	inner.mu.Lock()
-	if inner.closed || inner.runtime == nil || inner.carrier == nil || inner.members == nil || inner.queries == nil || inner.observationIDs == nil || compilation.graph.graph == nil {
-		inner.mu.Unlock()
-		return nil, false
-	}
-	inner.closed = true
-	rows := make([]runtimeMember, 0, len(inner.members))
-	for _, row := range inner.members {
-		if row == nil {
-			inner.mu.Unlock()
-			return nil, false
-		}
-		rows = append(rows, row)
-	}
-	directory := compilation.graph.topology.directory
-	if !directory.ownedBy(compilation.graph.topology.topology, compilation.graph.state, compilation.graph.authority) {
-		inner.mu.Unlock()
-		return nil, false
-	}
-	queries := make([]runtimeQuery, compilation.graph.graph.QueryCount())
-	for index := 0; index < compilation.graph.graph.QueryCount(); index++ {
-		identity, ok := compilation.graph.graph.QueryAt(index)
-		if !ok || !identity.Key().Available() {
-			inner.mu.Unlock()
-			return nil, false
-		}
-		row, ok := inner.queries[identity.Key()]
-		if !ok || row == nil {
-			inner.mu.Unlock()
-			return nil, false
-		}
-		queries[index] = row
-	}
-	observations := append([]runtimeObservation(nil), inner.observations...)
-	for _, observation := range observations {
-		if observation == nil {
-			inner.mu.Unlock()
-			return nil, false
-		}
-	}
-	carrier := inner.carrier
-	graph := compilation.graph.graph
-	ordered := append([]runtimeFactor(nil), inner.ordered...)
-	byKey := inner.byKey
-	state, authority := inner.runtime.state, inner.runtime.authority
-	compiler := receiptSolverCompiler{
-		state: state, topology: compilation.graph.topology.topology,
-		memberBuilders:      append([]receiptMemberBuilder(nil), inner.memberBuilders...),
-		queryBuilders:       append([]receiptQueryBuilder(nil), inner.queryBuilders...),
-		observationBuilders: append([]receiptObservationBuilder(nil), inner.observationBuilders...),
-	}
-	inner.mu.Unlock()
-
-	runtime, ok := assembleReceiptRuntime(state, authority, graph, carrier, byKey, rows, queries, observations)
-	if !ok || runtime == nil {
-		return nil, false
-	}
-	runtime.factors = append([]runtimeFactor(nil), ordered...)
-	runtime.topology = compilation.graph.topology.topology
-	for _, factor := range ordered {
-		if factor == nil {
-			return nil, false
-		}
-		factor.releaseColdBindings()
-	}
-	inner.mu.Lock()
-	inner.runtime = nil
-	inner.factors = nil
-	inner.byKey = nil
-	inner.ordered = nil
-	inner.members = nil
-	inner.queries = nil
-	inner.observations = nil
-	inner.observationIDs = nil
-	inner.observationPoints = nil
-	inner.carrier = nil
-	inner.mu.Unlock()
-	relation, relationOK := runtime.topology.InitialRelation()
-	store, storeOK := solverStores.issue()
-	if !relationOK || !storeOK {
-		return nil, false
-	}
-	return &Solver{runtime: runtime, compiler: compiler, store: store, relation: relation}, true
-}
-
-// BeginReceiptCompilation starts a receipt compiler from one exact sealed Rule
-// receipt and graph. The Rule receipt supplies the SchemaBinding authority, so
-// an equal-but-foreign binding or an unsealed implementation cannot enter.
-func BeginReceiptCompilation[K ~uint32 | ~uint64, V, O any](implementation *RuleImplementation[K, V, O], graph *ReceiptGraph) (*ReceiptCompilation, bool) {
-	if implementation == nil || !implementation.receipt.valid() || !graph.valid() || implementation.receipt.state != graph.state || implementation.receipt.authority != graph.authority {
-		return nil, false
-	}
-	binding := &SchemaBinding{state: graph.state}
-	compiled, ok := compileReceiptFactors(binding, graph.graph)
-	if !ok || compiled == nil {
-		return nil, false
-	}
-	return &ReceiptCompilation{inner: compiled, graph: graph}, true
-}
-
-// BeginReceiptActivationCompilation opens the ordinary ReceiptCompilation
-// for a structural activation implementation. Activations and factor Rules
-// now share one graph, carrier, member catalog, and Solver terminal path.
-func BeginReceiptActivationCompilation(implementation *ActivationRuleImplementation, graph *ReceiptGraph) (*ReceiptCompilation, bool) {
-	if implementation == nil || !implementation.receipt.valid() || !graph.valid() || implementation.receipt.state != graph.state || implementation.receipt.authority != graph.authority {
-		return nil, false
-	}
-	binding := &SchemaBinding{state: graph.state}
-	compiled, ok := compileReceiptFactors(binding, graph.graph)
-	if !ok || compiled == nil {
-		return nil, false
-	}
-	return &ReceiptCompilation{inner: compiled, graph: graph}, true
-}
-
-// AttachRuleMember attaches one exact graph-owned member through the existing
-// typed receipt binder. The generic boundary preserves the Rule operand type;
-// no erased operand, Factor slot, callback, or raw Ref is accepted.
-func AttachReceiptRuleMember[K ~uint32 | ~uint64, V, O any](compilation *ReceiptCompilation, implementation *RuleImplementation[K, V, O], member ReceiptRuleMember, operand O) (*ReceiptMember, bool) {
-	if compilation == nil || compilation.inner == nil || compilation.graph == nil || member.graph != compilation.graph {
-		return nil, false
-	}
-	locator := member.locator
-	resolved, located := locator.Resolve(compilation.graph.graph)
-	if !located || resolved.Key() != member.member.Key() {
-		return nil, false
-	}
-	compilation.inner.mu.Lock()
-	row, ok := bindReceiptRuleMemberLocked(compilation.inner, implementation, member.member, operand)
-	if !ok || row == nil {
-		compilation.inner.mu.Unlock()
-		return nil, false
-	}
-	compilation.inner.memberBuilders = append(compilation.inner.memberBuilders, func(next *receiptFactorCompilation) (runtimeMember, bool) {
-		resolved, ok := locator.Resolve(next.runtime.graph)
-		if !ok {
-			return nil, false
-		}
-		return bindReceiptRuleMember(next, implementation, resolved, operand)
-	})
-	compilation.inner.mu.Unlock()
-	return &ReceiptMember{inner: row}, true
-}
-
-func attachReceiptQueryLocked(inner *receiptFactorCompilation, query ReceiptQuery, row runtimeQuery) bool {
-	if inner == nil {
-		return false
-	}
-	if inner.closed || inner.queries == nil || !query.identity.Key().Available() {
-		return false
-	}
-	if _, duplicate := inner.queries[query.identity.Key()]; duplicate {
-		return false
-	}
-	inner.queries[query.identity.Key()] = row
-	return true
-}
-
-func AttachReceiptExactQuery[V, R any](compilation *ReceiptCompilation, implementation *ExactQueryImplementation[V, R], query ReceiptQuery) bool {
-	if compilation == nil || compilation.inner == nil || compilation.graph == nil || query.graph != compilation.graph || implementation == nil {
-		return false
-	}
-	locator := query.locator
-	resolved, located := locator.Resolve(compilation.graph.graph)
-	if !located || resolved.Key() != query.identity.Key() {
-		return false
-	}
-	compilation.inner.mu.Lock()
-	row, ok := bindReceiptExactQueryRuntime[V, R](compilation.inner, implementation, query.identity)
-	if !ok || !attachReceiptQueryLocked(compilation.inner, query, row) {
-		compilation.inner.mu.Unlock()
-		return false
-	}
-	compilation.inner.queryBuilders = append(compilation.inner.queryBuilders, func(next *receiptFactorCompilation) (runtimeQuery, bool) {
-		identity, ok := locator.Resolve(next.runtime.graph)
-		if !ok {
-			return nil, false
-		}
-		return bindReceiptExactQueryRuntime[V, R](next, implementation, identity)
-	})
-	compilation.inner.mu.Unlock()
-	return true
-}
-
-func AttachReceiptSummaryQuery[V, R any](compilation *ReceiptCompilation, implementation *SummaryQueryImplementation[V, R], query ReceiptQuery) bool {
-	if compilation == nil || compilation.inner == nil || compilation.graph == nil || query.graph != compilation.graph || implementation == nil {
-		return false
-	}
-	locator := query.locator
-	resolved, located := locator.Resolve(compilation.graph.graph)
-	if !located || resolved.Key() != query.identity.Key() {
-		return false
-	}
-	compilation.inner.mu.Lock()
-	row, ok := bindReceiptSummaryQueryRuntime[V, R](compilation.inner, implementation, query.identity)
-	if !ok || !attachReceiptQueryLocked(compilation.inner, query, row) {
-		compilation.inner.mu.Unlock()
-		return false
-	}
-	compilation.inner.queryBuilders = append(compilation.inner.queryBuilders, func(next *receiptFactorCompilation) (runtimeQuery, bool) {
-		identity, ok := locator.Resolve(next.runtime.graph)
-		if !ok {
-			return nil, false
-		}
-		return bindReceiptSummaryQueryRuntime[V, R](next, implementation, identity)
-	})
-	compilation.inner.mu.Unlock()
-	return true
-}
-
-// AttachReceiptActivationMember attaches an activation into the ordinary
-// ReceiptCompilation. The activation graph must be the projection of that
-// compilation's exact ReceiptGraph; equal-but-foreign graphs are rejected.
-func AttachReceiptActivationMember(compilation *ReceiptCompilation, implementation *ActivationRuleImplementation, member ActivationReceiptMember) (*AttachedActivationReceiptMember, bool) {
-	if compilation == nil || compilation.inner == nil || compilation.graph == nil || member.graph == nil || member.graph.receipt != compilation.graph || !member.graph.valid() || implementation == nil || !implementation.receipt.valid() {
-		return nil, false
-	}
-	inner := compilation.inner
-	inner.mu.Lock()
-	defer inner.mu.Unlock()
-	if inner.closed || !inner.frozen || inner.runtime == nil || inner.runtime.mode != runtimeBindingReceipt || implementation.receipt.state != inner.runtime.state || implementation.receipt.authority != inner.runtime.authority || !compilation.graph.graph.OwnsMember(member.member) || !member.member.Key().Available() {
-		return nil, false
-	}
-	if _, duplicate := inner.members[member.member.Key()]; duplicate {
-		return nil, false
-	}
-	locator := member.locator
-	resolved, located := locator.Resolve(compilation.graph.graph)
-	if !located || resolved.Key() != member.member.Key() {
-		return nil, false
-	}
-	row, ok := bindActivationMemberReceipt(member.member, implementation, compilation.graph.topology.topology, member.member.Key(), compilation.graph.graph, inner.byKey)
-	if !ok || row == nil || row.member().Key() != member.member.Key() {
-		return nil, false
-	}
-	inner.members[member.member.Key()] = row
-	inner.memberBuilders = append(inner.memberBuilders, func(next *receiptFactorCompilation) (runtimeMember, bool) {
-		resolved, ok := locator.Resolve(next.runtime.graph)
-		if !ok {
-			return nil, false
-		}
-		return bindActivationMemberReceipt(resolved, implementation, compilation.graph.topology.topology, resolved.Key(), next.runtime.graph, next.byKey)
-	})
-	return &AttachedActivationReceiptMember{inner: row}, true
-}
-
-// compileReceiptFactors is the sealed Factor-only compiler entry. It uses the
-// same graph catalog and boundFactor/runtimeFactor path as the
-// compiler, but enumerates the private SchemaBinding cells by canonical
-// ordinal. It deliberately stops before Rule/Query lowering, whose callback
-// contracts remain receipt-owned.
-func compileReceiptFactors(binding *SchemaBinding, graph *equation.Graph) (*receiptFactorCompilation, bool) {
-	runtime, ok := newReceiptRuntimeBinding(binding, graph)
-	if !ok || runtime == nil {
-		return nil, false
-	}
-	factors, byKey, ok := bindReceiptFactors(binding, runtime)
-	if !ok || !runtime.freezeCatalog() {
-		return nil, false
-	}
-	prepared, ordered, ok := prepareRuntimeComposition(factors, runtime.guards)
-	if !ok || prepared == nil {
-		return nil, false
-	}
-	attached, ok := prepared.Attach()
-	if !ok || attached == nil {
-		return nil, false
-	}
-	for _, factor := range ordered {
-		preparer, preparable := factor.(interface{ prepareRouteTransformClosure() bool })
-		if !preparable || !preparer.prepareRouteTransformClosure() {
-			return nil, false
-		}
-	}
-	return &receiptFactorCompilation{
-		runtime: runtime, factors: factors, byKey: byKey, carrier: attached, ordered: ordered,
-		members: make(map[composition.Key]runtimeMember), queries: make(map[composition.Key]runtimeQuery),
-		observationIDs: make(map[identity.ContentID]struct{}), frozen: true,
-	}, true
-}
-
-// bindRuleMember consumes one cell-issued Rule implementation and one exact
-// graph member. Receipt compilation has no fallback: a migrated member
-// can enter this transaction only through the Binding authority that already
-// owns its output Factor implementation.
-func bindReceiptRuleMember[K ~uint32 | ~uint64, V, O any](compilation *receiptFactorCompilation, implementation *RuleImplementation[K, V, O], member equation.RuleMember, operand O) (runtimeMember, bool) {
-	if compilation == nil {
-		return nil, false
-	}
-	compilation.mu.Lock()
-	defer compilation.mu.Unlock()
-	return bindReceiptRuleMemberLocked(compilation, implementation, member, operand)
-}
-
-func bindReceiptRuleMemberLocked[K ~uint32 | ~uint64, V, O any](compilation *receiptFactorCompilation, implementation *RuleImplementation[K, V, O], member equation.RuleMember, operand O) (runtimeMember, bool) {
-	if compilation.closed || !compilation.frozen || compilation.runtime == nil || compilation.runtime.mode != runtimeBindingReceipt || compilation.runtime.graph == nil || compilation.carrier == nil || compilation.members == nil || implementation == nil || !implementation.receipt.valid() || implementation.receipt.state != compilation.runtime.state || implementation.receipt.authority != compilation.runtime.authority || !compilation.runtime.graph.OwnsMember(member) || !member.Key().Available() {
-		return nil, false
-	}
-	if _, duplicate := compilation.members[member.Key()]; duplicate {
-		return nil, false
-	}
-	output, present := compilation.byKey[implementation.receipt.proof.output]
-	if !present || output == nil {
-		return nil, false
-	}
-	row, ok := bindSchemaRuleMember(implementation, member, operand, output, compilation.byKey)
-	if !ok || row == nil || row.member().Key() != member.Key() {
-		return nil, false
-	}
-	compilation.members[member.Key()] = row
-	return row, true
-}
-
-func bindReceiptFactors(binding *SchemaBinding, runtime *runtimeBinding) ([]runtimeFactor, map[composition.Key]runtimeFactor, bool) {
-	state := bindingState(binding)
-	if state == nil || runtime == nil || runtime.mode != runtimeBindingReceipt || runtime.state != state || runtime.authority == nil || !runtime.valid() {
-		return nil, nil, false
-	}
-	state.mu.Lock()
-	if state.phase != schemaBindingSealed || state.authority != runtime.authority || state.schema != runtime.schema {
-		state.mu.Unlock()
-		return nil, nil, false
-	}
-	cells := append([]schemaFactorBinding(nil), state.factors...)
-	schema := state.schema
-	state.mu.Unlock()
-	if len(cells) != schemaFactorCount(schema) {
-		return nil, nil, false
-	}
-	factors := make([]runtimeFactor, len(cells))
-	byKey := make(map[composition.Key]runtimeFactor, len(cells))
-	for ordinal, cell := range cells {
-		if cell == nil || cell.schemaFactorOrdinal() != uint64(ordinal) || cell.schemaFactorSchema() != schema || !cell.schemaFactorComplete() {
-			return nil, nil, false
-		}
-		factor, bound := cell.schemaFactorRuntimeBinding(runtime)
-		key := schema.factorSemanticAt(uint64(ordinal))
-		if !bound || factor == nil || !key.Available() || compositionKeyOf(factor.semantic()) != key {
-			return nil, nil, false
-		}
-		if _, duplicate := byKey[key]; duplicate {
-			return nil, nil, false
-		}
-		factors[ordinal], byKey[key] = factor, factor
-	}
-	return factors, byKey, true
+// PublicationKey is the snapshot row identity this query is sealed under.
+func (query ReceiptQuery) PublicationKey() (identity.ContentID, bool) {
+	return query.key, query.key.Available()
 }

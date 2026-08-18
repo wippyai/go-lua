@@ -45,11 +45,26 @@ func BindHot(fragment *SchemaFragment, owner *heapowner.HotOwner) (*HotRule, boo
 			})
 			return complete && rows == 1
 		},
+	}, func(operand source.Root) (uint64, bool) {
+		index, ok := owner.Schema().KeyIndex(operand.Key())
+		return uint64(index), ok && index >= 0
 	})
 	if !ok || implementation == nil {
 		return nil, false
 	}
-	return &HotRule{implementation: implementation, owner: owner}, true
+	rule := &HotRule{implementation: implementation, owner: owner}
+	if !implementation.InstallOperandResolver(rule.resolveOperand) {
+		return nil, false
+	}
+	return rule, true
+}
+
+func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (source.Root, bool) {
+	issuer, ok := rule.ForMount(coords.Mount)
+	if !ok {
+		return source.Root{}, false
+	}
+	return issuer.ReceiptForOccurrence(coords.Occurrence)
 }
 
 // AttachCatalog attaches the exact Link-local allocation occurrence issuer to
@@ -87,65 +102,16 @@ func (issuer MountedIssuer) ReceiptForOccurrence(id identity.ContentID) (source.
 	return root, ok && root.FencedTo(issuer.rule.owner.Schema())
 }
 
-// AttachMountedOccurrence is the sole HeapIngress artifact attachment bridge.
-// The mounted catalog supplies the exact operand and Heap owner supplies the
-// write Ref; no factor ordinal or equation surface crosses this boundary.
-func (rule *HotRule) AttachMountedOccurrence(assembly *engine.ReceiptAssembly, mountID, reusablePointID, occurrenceID identity.ContentID) (engine.BindingRuleRowRef, bool) {
-	if rule == nil || rule.owner == nil || rule.catalog == nil || assembly == nil {
-		return engine.BindingRuleRowRef{}, false
-	}
-	issuer, issuerOK := rule.ForMount(mountID)
-	operand, operandOK := issuer.ReceiptForOccurrence(occurrenceID)
-	implementation, implementationOK := heapowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
-	write, writeOK := rule.owner.Ref(operand.Key())
-	if !issuerOK || !operandOK || !implementationOK || !writeOK {
-		return engine.BindingRuleRowRef{}, false
-	}
-	occurrence, occurrenceOK := assembly.AdmitMountedRuleOccurrence(mountedCapability(rule.implementation), mountID, reusablePointID, occurrenceID)
-	if !occurrenceOK {
-		return engine.BindingRuleRowRef{}, false
-	}
-	admit := func(transaction *engine.RuleSourceTransaction) bool {
-		return engine.AddExactWrite(transaction, write)
-	}
-	issue := func(sourceReceipt engine.RuleSurfaceSourceReceipt) bool {
-		draft, draftOK := implementation.BeginReceiptRuleRow(sourceReceipt)
-		writePart, writePartOK := implementation.ReceiptWritePart(sourceReceipt, 0)
-		if !draftOK || !writePartOK || !draft.AddWrite(writePart) {
-			return false
-		}
-		_, added := assembly.AddRuleFromDraft(occurrence, draft)
-		return added
-	}
-	queued := engine.AdmitMountedRule(assembly, implementation, mountedCapability(rule.implementation), occurrence, operand, admit, issue)
-	return engine.BindingRuleRowRef{}, queued
-}
-
-// AttachMountedReceiptMember resolves both the committed graph member and its
-// exact mounted Root internally.  The caller never receives the private Heap
-// coordinate or the allocation operand used by the runtime implementation.
-func (rule *HotRule) AttachMountedReceiptMember(compilation *engine.ReceiptCompilation, graph *engine.ReceiptGraph, mountID, reusablePointID, occurrenceID identity.ContentID) (*engine.ReceiptMember, bool) {
-	if rule == nil || rule.owner == nil || graph == nil {
-		return nil, false
-	}
-	issuer, issuerOK := rule.ForMount(mountID)
-	operand, operandOK := issuer.ReceiptForOccurrence(occurrenceID)
-	member, memberOK := graph.MountedRuleMember(mountedCapability(rule.implementation), mountID, reusablePointID, occurrenceID)
-	implementation, implementationOK := heapowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
-	if !issuerOK || !operandOK || !memberOK || !implementationOK {
-		return nil, false
-	}
-	return engine.AttachReceiptRuleMember(compilation, implementation, member, operand)
-}
-
-// Implementation returns Heap owner's opaque rule issuer only after the
-// shared binding seals. The engine receipt and Heap coordinate stay private.
 func (rule *HotRule) Implementation() (*heapowner.RuleImplementation[source.Root], bool) {
 	if rule == nil || rule.implementation == nil {
 		return nil, false
 	}
 	_, ok := heapowner.ResolveRuleImplementation(rule.implementation)
 	return rule.implementation, ok
+}
+
+func (rule *HotRule) ProgramAttach() (engine.RuleProgramAttach, bool) {
+	return heapowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
 }
 
 func ingressContent(schema heapdomain.Schema, operand source.Root) (source.Root, [32]byte, bool) {

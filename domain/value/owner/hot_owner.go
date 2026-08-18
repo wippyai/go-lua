@@ -22,8 +22,19 @@ type HotOwner struct {
 // caller's typed Rule slot without exposing Value's private engine coordinate
 // type or permitting the caller to restate the output Factor.
 type RuleImplementation[O any] struct {
-	owner *HotOwner
-	slot  *engine.RuleSlot[value.Value, O]
+	owner    *HotOwner
+	slot     *engine.RuleSlot[value.Value, O]
+	resolver func(engine.OperandCoords) (O, bool)
+}
+
+// InstallOperandResolver records the one owner-supplied operand resolver
+// this rule will publish onto its sealed cell.
+func (issuer *RuleImplementation[O]) InstallOperandResolver(resolve func(engine.OperandCoords) (O, bool)) bool {
+	if issuer == nil || resolve == nil || issuer.resolver != nil {
+		return false
+	}
+	issuer.resolver = resolve
+	return true
 }
 
 func (issuer *RuleImplementation[O]) MountedCapability() (engine.RuleSlotCapability, bool) {
@@ -96,11 +107,11 @@ type SelectedRuleBinding[O any] struct {
 // BindSelectedRule owns Value's heterogeneous selected-read transaction. bind
 // attaches the reads and its answer terminalizes the transaction, so a
 // rejected assembly always reaches the shared Binding's terminal poison.
-func BindSelectedRule[O any](owner *HotOwner, slot *engine.RuleSlot[value.Value, O], carry engine.SchemaCarrySlot[value.Value], write engine.SchemaWriteSlot[value.Value], output engine.FactorRef[value.Value], spec engine.HotRuleSpec[value.Value, O], carrySpec engine.HotCarrySpec[value.Value, O], bind func(*SelectedRuleBinding[O]) bool) bool {
+func BindSelectedRule[O any](owner *HotOwner, slot *engine.RuleSlot[value.Value, O], carry engine.SchemaCarrySlot[value.Value], write engine.SchemaWriteSlot[value.Value], output engine.FactorRef[value.Value], spec engine.HotRuleSpec[value.Value, O], carrySpec engine.HotCarrySpec[value.Value, O], projectWrite func(O) (uint64, bool), bind func(*SelectedRuleBinding[O]) bool) bool {
 	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil || output != owner.fragment.Ref() || bind == nil {
 		return false
 	}
-	return engine.BindSelectedRule[coordinate](owner.binding, slot, carry, write, output, spec, carrySpec, func(tx *engine.SelectedRouteRuleBindingTransaction[coordinate, value.Value, O]) bool {
+	return engine.BindSelectedRule[coordinate](owner.binding, slot, carry, write, output, spec, carrySpec, projectWrite, func(tx *engine.SelectedRouteRuleBindingTransaction[coordinate, value.Value, O]) bool {
 		return bind(&SelectedRuleBinding[O]{owner: owner, tx: tx, issuer: &RuleImplementation[O]{owner: owner, slot: slot}})
 	})
 }
@@ -112,11 +123,11 @@ func (tx *SelectedRuleBinding[O]) Implementation() (*RuleImplementation[O], bool
 	return tx.issuer, true
 }
 
-func AddSelectedRuleExactRead[O any, RV any](tx *SelectedRuleBinding[O], slot engine.SchemaReadSlot[RV], factor engine.FactorRef[RV]) (engine.Read[engine.OrderedCells[RV]], bool) {
+func AddSelectedRuleExactRead[O any, RV any](tx *SelectedRuleBinding[O], slot engine.SchemaReadSlot[RV], factor engine.FactorRef[RV], project func(O) (uint64, bool)) (engine.Read[engine.OrderedCells[RV]], bool) {
 	if tx == nil || tx.owner == nil || tx.tx == nil {
 		return engine.Read[engine.OrderedCells[RV]]{}, false
 	}
-	return engine.AddSelectedRouteExactRead(tx.tx, slot, factor)
+	return engine.AddSelectedRouteExactRead(tx.tx, slot, factor, project)
 }
 
 func AddSelectedRuleRead[O any, RV any, Tag interface {
@@ -221,11 +232,11 @@ func (owner *HotOwner) implementationAt() (*engine.FactorImplementation[coordina
 // Factor slot. The child package supplies its own typed Rule slot, write
 // slot, operand admission, and transfer implementation; it cannot supply a
 // different output Factor or recover Value's coordinate type.
-func BindExactWriteRule[O any](owner *HotOwner, slot *engine.RuleSlot[value.Value, O], write engine.SchemaWriteSlot[value.Value], spec engine.HotRuleSpec[value.Value, O]) (*RuleImplementation[O], bool) {
+func BindExactWriteRule[O any](owner *HotOwner, slot *engine.RuleSlot[value.Value, O], write engine.SchemaWriteSlot[value.Value], spec engine.HotRuleSpec[value.Value, O], projectWrite func(O) (uint64, bool)) (*RuleImplementation[O], bool) {
 	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil {
 		return nil, false
 	}
-	if !engine.BindRule[coordinate](owner.binding, slot, write, owner.fragment.slot, spec) {
+	if !engine.BindRule[coordinate](owner.binding, slot, write, owner.fragment.slot, spec, projectWrite) {
 		return nil, false
 	}
 	return &RuleImplementation[O]{owner: owner, slot: slot}, true
@@ -234,11 +245,11 @@ func BindExactWriteRule[O any](owner *HotOwner, slot *engine.RuleSlot[value.Valu
 // BindCarryRule binds one transformed-carry Rule through this owner's exact
 // Factor slot. The child supplies only its typed operand transform and
 // transfer; the SchemaCarrySlot remains the sole structural authority.
-func BindCarryRule[O any](owner *HotOwner, slot *engine.RuleSlot[value.Value, O], carry engine.SchemaCarrySlot[value.Value], write engine.SchemaWriteSlot[value.Value], spec engine.HotRuleSpec[value.Value, O], carrySpec engine.HotCarrySpec[value.Value, O]) (*RuleImplementation[O], bool) {
+func BindCarryRule[O any](owner *HotOwner, slot *engine.RuleSlot[value.Value, O], carry engine.SchemaCarrySlot[value.Value], write engine.SchemaWriteSlot[value.Value], spec engine.HotRuleSpec[value.Value, O], carrySpec engine.HotCarrySpec[value.Value, O], projectWrite func(O) (uint64, bool)) (*RuleImplementation[O], bool) {
 	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil {
 		return nil, false
 	}
-	if !engine.BindRuleWithCarry[coordinate](owner.binding, slot, carry, write, owner.fragment.slot, spec, carrySpec) {
+	if !engine.BindRuleWithCarry[coordinate](owner.binding, slot, carry, write, owner.fragment.slot, spec, carrySpec, projectWrite) {
 		return nil, false
 	}
 	return &RuleImplementation[O]{owner: owner, slot: slot}, true
@@ -248,11 +259,11 @@ func BindCarryRule[O any](owner *HotOwner, slot *engine.RuleSlot[value.Value, O]
 // write lane through the same sealed Factor authority. The child receives the
 // typed read capability required by its transfer and evidence checker, but it
 // cannot recover Value's private coordinate or Factor slot.
-func BindExactReadAndCarryRule[O any](owner *HotOwner, slot *engine.RuleSlot[value.Value, O], read engine.SchemaReadSlot[value.Value], carry engine.SchemaCarrySlot[value.Value], write engine.SchemaWriteSlot[value.Value], spec engine.HotRuleSpec[value.Value, O], carrySpec engine.HotCarrySpec[value.Value, O]) (*RuleImplementation[O], engine.Read[engine.OrderedCells[value.Value]], bool) {
+func BindExactReadAndCarryRule[O any](owner *HotOwner, slot *engine.RuleSlot[value.Value, O], read engine.SchemaReadSlot[value.Value], carry engine.SchemaCarrySlot[value.Value], write engine.SchemaWriteSlot[value.Value], spec engine.HotRuleSpec[value.Value, O], carrySpec engine.HotCarrySpec[value.Value, O], projectRead func(O) (uint64, bool), projectWrite func(O) (uint64, bool)) (*RuleImplementation[O], engine.Read[engine.OrderedCells[value.Value]], bool) {
 	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil {
 		return nil, engine.Read[engine.OrderedCells[value.Value]]{}, false
 	}
-	runtimeRead, ok := engine.BindRuleWithExactReadAndCarry[coordinate, value.Value, O, coordinate, value.Value](owner.binding, slot, read, owner.fragment.slot, carry, write, owner.fragment.slot, spec, carrySpec)
+	runtimeRead, ok := engine.BindRuleWithExactReadAndCarry[coordinate, value.Value, O, coordinate, value.Value](owner.binding, slot, read, owner.fragment.slot, carry, write, owner.fragment.slot, spec, carrySpec, projectRead, projectWrite)
 	if !ok {
 		return nil, engine.Read[engine.OrderedCells[value.Value]]{}, false
 	}
@@ -282,10 +293,20 @@ func BindSummaryQuery[R any](owner *HotOwner, query *engine.QuerySlot[R], form e
 // binding has sealed. The private coordinate remains inferred by callers and
 // cannot be named or manufactured by child domains.
 func ResolveRuleImplementation[O any](issuer *RuleImplementation[O]) (*engine.RuleImplementation[coordinate, value.Value, O], bool) {
-	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
+	if issuer == nil || issuer.owner == nil || issuer.slot == nil || issuer.resolver == nil {
 		return nil, false
 	}
-	return engine.RuleImplementationAt[coordinate, value.Value, O](issuer.owner.binding, issuer.slot)
+	implementation, ok := engine.RuleImplementationAt[coordinate, value.Value, O](issuer.owner.binding, issuer.slot)
+	if !ok {
+		return nil, false
+	}
+	if implementation.HasOperandResolver() {
+		return implementation, true
+	}
+	if !implementation.InstallOperandResolver(issuer.resolver) {
+		return nil, false
+	}
+	return implementation, true
 }
 
 // ResolveRuleImplementationFor is the explicit owner fence used by child
@@ -413,6 +434,19 @@ func MatchSummaryReceipt[V, O, S any](owner *HotOwner, receipt SummaryReceipt, d
 // validates the exact rule/read/factor semantic before receiving refs.
 func AddSummaryReceiptRead(owner *HotOwner, transaction *engine.RuleSourceTransaction, receipt SummaryReceipt, read engine.SchemaSummaryReadReceipt) bool {
 	return owner != nil && transaction != nil && receipt.IssuedBy(owner) && read.Valid() && engine.AddSummaryRead(transaction, read, receipt.refs)
+}
+
+// SummarySurfaceAdmit is the owner-supplied summary projector the sealed
+// cell invokes while placing one summary read. The returned function is
+// stored on the read binding and type-asserted at admit time.
+func SummarySurfaceAdmit[O any](owner *HotOwner, extract func(O) SummaryReceipt) any {
+	if owner == nil || extract == nil {
+		return nil
+	}
+	return func(transaction *engine.RuleSourceTransaction, read engine.SchemaSummaryReadReceipt, operand any) bool {
+		typed, ok := operand.(O)
+		return ok && AddSummaryReceiptRead(owner, transaction, extract(typed), read)
+	}
 }
 
 func (owner *HotOwner) admits(index coordinate, fact value.Value) bool {

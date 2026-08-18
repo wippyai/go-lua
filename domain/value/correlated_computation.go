@@ -53,7 +53,7 @@ func (schema *Schema) BinaryArithmetic(module, occurrence identity.ContentID) (B
 
 func (row BinaryArithmetic) valid() bool {
 	return row.schema != nil && row.key.module.Available() && row.key.occurrence.Available() &&
-		row.content.Available() && BinaryArithmeticOperator(row.op)
+		row.content.Available() && flowkind.IsBinaryArithmetic(row.op)
 }
 
 func (schema *Schema) OwnsBinaryArithmetic(row BinaryArithmetic) bool {
@@ -72,13 +72,6 @@ func (row BinaryArithmetic) Endpoints() (result, left, right Coordinate, op flow
 		return Coordinate{}, Coordinate{}, Coordinate{}, 0, false
 	}
 	return row.result, row.left, row.right, row.op, true
-}
-
-// BinaryArithmeticOperator is Value's sole spelling of the closed primitive
-// arithmetic operator range. Every consumer that gates an arithmetic relation
-// reads this predicate rather than restating the range bounds.
-func BinaryArithmeticOperator(op flowkind.BinaryOp) bool {
-	return op >= flowkind.BinaryAdd && op <= flowkind.BinaryPow
 }
 
 // BinaryOrder is Value's owner-fenced interpretation of one reusable Program
@@ -333,7 +326,7 @@ func (schema *valueBuilder) sealComputationRows() bool {
 				rc, rcOK := schema.coordinateForCold(result)
 				lc, lcOK := schema.coordinateForCold(left)
 				rr, rrOK := schema.coordinateForCold(right)
-				if !rowOK || !resultOK || !leftOK || !rightOK || !rcOK || !lcOK || !rrOK || !BinaryArithmeticOperator(op) {
+				if !rowOK || !resultOK || !leftOK || !rightOK || !rcOK || !lcOK || !rrOK || !flowkind.IsBinaryArithmetic(op) {
 					return false
 				}
 				content := computationContent(schema.linkID, "val-arithmetic!", module, row.ID(), row.Code())

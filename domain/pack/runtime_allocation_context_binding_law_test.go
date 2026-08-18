@@ -2,12 +2,12 @@ package pack_test
 
 import (
 	"crypto/sha256"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
-	"github.com/wippyai/go-lua/analysis/program/flow"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
@@ -27,10 +27,10 @@ type runtimeContextBindingFixture struct {
 	heap      heapdomain.Schema
 	module    identity.ContentID
 	callID    identity.ContentID
-	operation target.Operation
+	operation vocabulary.Operation
 }
 
-func runtimeContextBindingSchema(t testing.TB, contract *target.Contract, operation target.Operation, label string) runtimeContextBindingFixture {
+func runtimeContextBindingSchema(t testing.TB, contract *target.Contract, operation vocabulary.Operation, label string) runtimeContextBindingFixture {
 	t.Helper()
 	published, err := lower.Lower(lower.Source{Name: "runtime_context_binding_" + label + ".lua", Text: []byte("local receiver = {}\nreceiver:send(1, 2)\n")})
 	if err != nil {
@@ -76,7 +76,7 @@ func runtimeContextBindingSchema(t testing.TB, contract *target.Contract, operat
 	}
 	for index := 0; index < artifact.CallCount(); index++ {
 		call, callOK := artifact.CallAt(index)
-		if callOK && call.Form() == flow.CallFormMethod {
+		if callOK && call.Form() == programartifact.CallFormMethod {
 			return runtimeContextBindingFixture{pack: packSchema, heap: heapSchema, module: module, callID: call.ID(), operation: operation}
 		}
 	}
@@ -103,10 +103,10 @@ func (fixture runtimeContextBindingFixture) requirement(t testing.TB) heapdomain
 func TestRuntimeAllocationContextBindingFencesAndAvailability(t *testing.T) {
 	contract, operation := selectorLawContract(t)
 	fixture := runtimeContextBindingSchema(t, contract, operation, "primary")
-	fixed, fixedOK := fixture.pack.InputSelector(operation, target.InputSource{Kind: target.InputSourceValueFormal, Ordinal: 1})
-	tail, tailOK := fixture.pack.InputSelector(operation, target.InputSource{Kind: target.InputSourceValuesVar, Ordinal: 0})
+	fixed, fixedOK := fixture.pack.InputSelector(operation, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 1})
+	tail, tailOK := fixture.pack.InputSelector(operation, vocabulary.InputSource{Kind: vocabulary.InputSourceValuesVar, Ordinal: 0})
 	opaque, opaqueOK := contract.Opaque()
-	whole, wholeOK := fixture.pack.InputSelector(opaque, target.InputSource{Kind: target.InputSourceAllInputs})
+	whole, wholeOK := fixture.pack.InputSelector(opaque, vocabulary.InputSource{Kind: vocabulary.InputSourceAllInputs})
 	if !fixedOK || !tailOK || !opaqueOK || !wholeOK {
 		t.Fatal("binding selector inventory")
 	}
@@ -192,7 +192,7 @@ func TestRuntimeAllocationContextBindingFencesAndAvailability(t *testing.T) {
 		t.Fatal("foreign authority destination context accepted")
 	}
 	foreign := runtimeContextBindingSchema(t, contract, operation, "foreign")
-	foreignSelector, foreignSelectorOK := foreign.pack.InputSelector(operation, target.InputSource{Kind: target.InputSourceValueFormal, Ordinal: 1})
+	foreignSelector, foreignSelectorOK := foreign.pack.InputSelector(operation, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 1})
 	if !foreignSelectorOK {
 		t.Fatal("foreign selector")
 	}
@@ -256,8 +256,8 @@ func TestRuntimeAllocationContextBindingEqualContentSemanticID(t *testing.T) {
 	if left.heap.ContentID() != right.heap.ContentID() {
 		t.Fatal("equal heap content")
 	}
-	leftSelector, leftSelectorOK := left.pack.InputSelector(operation, target.InputSource{Kind: target.InputSourceValueFormal, Ordinal: 1})
-	rightSelector, rightSelectorOK := right.pack.InputSelector(operation, target.InputSource{Kind: target.InputSourceValueFormal, Ordinal: 1})
+	leftSelector, leftSelectorOK := left.pack.InputSelector(operation, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 1})
+	rightSelector, rightSelectorOK := right.pack.InputSelector(operation, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 1})
 	leftAuthority, leftAuthorityOK := left.heap.BeginRuntimeAllocationContexts(bindingLawID("equal-policy"))
 	rightAuthority, rightAuthorityOK := right.heap.BeginRuntimeAllocationContexts(bindingLawID("equal-policy"))
 	leftOwner, leftOwnerOK := leftAuthority.ActorOwner(bindingLawID("equal-actor"))

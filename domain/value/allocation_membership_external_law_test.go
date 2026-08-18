@@ -1,6 +1,7 @@
 package value_test
 
 import (
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
@@ -31,11 +32,11 @@ func allocationMembershipContract(t testing.TB) *target.Contract {
 	if !primitiveOK {
 		t.Fatal("allocation membership portable any type")
 	}
-	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []target.OperationSpec{{
-		Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"send"}}},
-		Input:    target.ValuesSpec{Fixed: []schematype.Type{value, value}, Tail: target.ValuesClosed},
-		Outcomes: []target.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}},
-		Effects:  target.RowSpec{Tail: target.RowClosed},
+	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{{
+		Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"send"}}},
+		Input:    vocabulary.ValuesSpec{Fixed: []schematype.Type{value, value}, Tail: vocabulary.ValuesClosed},
+		Outcomes: []vocabulary.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}},
+		Effects:  vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 	}}})
 	if err != nil || contract == nil {
 		t.Fatalf("seal allocation membership Target: %v", err)

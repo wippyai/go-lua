@@ -9,6 +9,7 @@ import (
 	schemacomposite "github.com/wippyai/go-lua/analysis/schema/composite"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
+	"github.com/wippyai/go-lua/analysis/schema/observation"
 	"github.com/wippyai/go-lua/analysis/schema/query"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
@@ -35,11 +36,11 @@ import (
 //     the artifact's own observation enum, so a population the artifact does not
 //     number was rejected at admission.
 //   - W3 axis: axis.go's admission rejected a spec whose Principal was not a
-//     member of programartifact.RuleOutputKind, so a writer principal outside
-//     that enum could not be declared.
-//   - W4 rule: rule.go's admission called RuleOutputKindFor(spec.Role) and its
-//     LawRoleOrdinal pinned the declaration position to the artifact's own role
-//     ordinal, so a rule beyond the artifact's twenty had no slot.
+//     closed factor-lane enum, so a writer principal outside that enum could
+//     not be declared.
+//   - W4 rule: rule.go's admission derived the writer lane from a Role catalog
+//     and LawRoleOrdinal pinned the declaration position to that catalog, so a
+//     rule beyond the artifact's twenty had no slot.
 //   - W5 roles: vocabulary.Bundle was a closed struct of named fields, so a role
 //     no field held could not be named by any surface.
 //   - W6 issuance: the artifact's emission program was a switch over its own role
@@ -124,7 +125,8 @@ func composeWalk(t *testing.T, spec diagnostic.Spec) (*schema.Schema, schema.Sea
 	composites, compositesOK := compositeEntries()
 	denominators, denominatorsOK := denominatorEntries(axes, roles)
 	queries, queriesOK := queryRegistrations(roles)
-	if !compositesOK || !denominatorsOK || !queriesOK {
+	observations, observationsOK := observationEntries(queries)
+	if !compositesOK || !denominatorsOK || !queriesOK || !observationsOK {
 		t.Fatal("a derived analyzer inventory rejected the extended axis and role sets")
 	}
 
@@ -134,8 +136,9 @@ func composeWalk(t *testing.T, spec diagnostic.Spec) (*schema.Schema, schema.Sea
 	builder.Register(rule.NewSurface(rules))
 	builder.Register(diagnostic.NewSurface(diagnostics))
 	builder.Register(schemacomposite.NewSurface(composites))
-	builder.Register(denominator.NewSurface(denominators))
+	builder.Register(denominator.NewSurface(denominators, denominator.GeneratedRelationEntries()))
 	builder.Register(query.NewSurface(queries))
+	builder.Register(observation.NewSurface(observations))
 	sealed, failure := builder.Seal()
 	return sealed, failure, inventory
 }

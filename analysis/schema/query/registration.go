@@ -17,8 +17,8 @@
 // A family also carries its contributor: the typed hooks that open its query
 // slot, install its fold against the bound principal, and recover the sealed
 // implementation its answers are read through. The contributor is erased in
-// the family's own cold fragment and receipt, so the declaration table carries
-// it without naming a domain, and the fold, freeze, and equality behaviour it
+// the family's own cold fragment and sealed implementation, so the declaration
+// table carries it without naming a domain, and the fold, freeze, and equality behaviour it
 // declares stays where the facts it folds are owned. A family declared without
 // one is refused rather than answered by some default.
 //
@@ -34,10 +34,10 @@ package query
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 // Surface law ordinals. They are numeric identities; rendering a verdict is
@@ -53,6 +53,20 @@ const (
 	LawSubjectUnique
 	LawSubjectResolves
 	LawContributorDeclared
+	LawPopulationDeclared
+	LawPopulationResolves
+	LawProjectionDeclared
+	LawProjectionResolves
+	LawProjectionFold
+)
+
+// Artifact population and projection roles a family declares. They are
+// semantic-role keys; construction enumerates families by these instead of
+// restating family names.
+const (
+	PopulationSelectedPoint schema.Key = "semantic/query/population/selected-point"
+	ProjectionSummary       schema.Key = "semantic/query/projection/summary"
+	ProjectionExact         schema.Key = "semantic/query/projection/exact"
 )
 
 // Fold is the closed catalog of ways a family's partial results compose.
@@ -136,7 +150,7 @@ type Binding[F any] struct {
 
 // Sealed is the sealed context one family's Recover hook receives. It runs
 // after the binding seals, which is when an implementation may be recovered
-// from a slot at all, so the receipt pass is separate from the bind pass rather
+// from a slot at all, so the recover pass is separate from the bind pass rather
 // than folded into it.
 type Sealed[F any] struct {
 	Binding  *engine.SchemaBinding
@@ -167,12 +181,16 @@ type Spec[F, R any] struct {
 	Contract schema.Key
 	// Subjects are the axes this family reads, by their authored keys.
 	Subjects []schema.Key
+	// Population is the Artifact geometry this family is asked at.
+	Population schema.Key
+	// Projection is the read shape construction uses to attach this family.
+	Projection schema.Key
 	// Declare opens this family's query slot and records the read its fold runs
 	// over, returning the family's cold fragment.
 	//
 	// Declare, Bind, and Recover are the family's contributor and are declared
 	// together: a family that opens a slot nothing folds, or folds into a
-	// receipt nothing reads, states two different things about how it is
+	// recovers an implementation nothing reads, states two different things about how it is
 	// answered.
 	Declare func(Declaration) (F, bool)
 	// Bind installs this family's fold and result contract on the bound
@@ -202,18 +220,20 @@ func Payload[T any](cell Cell) (T, bool) {
 // fragment and sealed implementation but carrying the typed contributor that
 // produces both. It is immutable once built.
 type Registration struct {
-	family   schema.Key
-	id       schema.EntryID
-	codec    identity.ContentID
-	fold     Fold
-	contract identity.ContentID
-	subjects []schema.Key
+	family     schema.Key
+	id         schema.EntryID
+	codec      identity.ContentID
+	fold       Fold
+	contract   identity.ContentID
+	subjects   []schema.Key
+	population schema.Key
+	projection schema.Key
 
 	semantic identity.SemanticKey
 	freezer  identity.SemanticKey
 	declare  func(*engine.SchemaBuilder, Subjects) (Cell, bool)
 	bind     func(*engine.SchemaBinding, Cell, Subjects) bool
-	receipt  func(*engine.SchemaBinding, Cell) (Cell, bool)
+	recover  func(*engine.SchemaBinding, Cell) (Cell, bool)
 }
 
 // New admits one authored declaration and instantiates its typed hooks. The
@@ -222,7 +242,8 @@ type Registration struct {
 // one contract. A rejected spec returns false rather than a partially usable
 // registration.
 func New[F, R any](spec Spec[F, R], roles vocabulary.Roles) (*Registration, bool) {
-	if !spec.Family.Available() || !spec.Fold.Available() || len(spec.Subjects) == 0 {
+	if !spec.Family.Available() || !spec.Fold.Available() || len(spec.Subjects) == 0 ||
+		!spec.Population.Available() || !spec.Projection.Available() {
 		return nil, false
 	}
 	if spec.Declare == nil || spec.Bind == nil || spec.Recover == nil {
@@ -231,7 +252,12 @@ func New[F, R any](spec Spec[F, R], roles vocabulary.Roles) (*Registration, bool
 	semantic, semanticOK := roles.Key(spec.Semantic)
 	codec, codecOK := roles.Key(spec.Codec)
 	contract, contractOK := roles.Key(spec.Contract)
-	if !semanticOK || !codecOK || !contractOK {
+	_, populationOK := roles.Key(spec.Population)
+	_, projectionOK := roles.Key(spec.Projection)
+	if !semanticOK || !codecOK || !contractOK || !populationOK || !projectionOK {
+		return nil, false
+	}
+	if !projectionAgrees(spec.Fold, spec.Projection) {
 		return nil, false
 	}
 	seen := make(map[schema.Key]bool, len(spec.Subjects))
@@ -242,14 +268,16 @@ func New[F, R any](spec Spec[F, R], roles vocabulary.Roles) (*Registration, bool
 		seen[subject] = true
 	}
 	registration := &Registration{
-		family:   spec.Family,
-		id:       schema.NewEntryID(schema.SurfaceKindQuery, spec.Family),
-		codec:    identity.ContentID(codec.Digest()),
-		fold:     spec.Fold,
-		contract: identity.ContentID(contract.Digest()),
-		subjects: append([]schema.Key(nil), spec.Subjects...),
-		semantic: semantic,
-		freezer:  codec,
+		family:     spec.Family,
+		id:         schema.NewEntryID(schema.SurfaceKindQuery, spec.Family),
+		codec:      identity.ContentID(codec.Digest()),
+		fold:       spec.Fold,
+		contract:   identity.ContentID(contract.Digest()),
+		subjects:   append([]schema.Key(nil), spec.Subjects...),
+		population: spec.Population,
+		projection: spec.Projection,
+		semantic:   semantic,
+		freezer:    codec,
 	}
 	// The hooks receive exactly the subject axes this family declared, and the
 	// identities it was admitted under. Narrowing here is what makes the
@@ -279,7 +307,7 @@ func New[F, R any](spec Spec[F, R], roles vocabulary.Roles) (*Registration, bool
 		}
 		return spec.Bind(Binding[F]{Binding: binding, Fragment: fragment, Subjects: narrowed})
 	}
-	registration.receipt = func(binding *engine.SchemaBinding, holder Cell) (Cell, bool) {
+	registration.recover = func(binding *engine.SchemaBinding, holder Cell) (Cell, bool) {
 		fragment, fragmentOK := holder.value.(F)
 		if !fragmentOK {
 			return Cell{}, false
@@ -311,17 +339,17 @@ func (registration *Registration) Bind(binding *engine.SchemaBinding, fragment C
 
 // Recover recovers this family's sealed implementation from the bound schema.
 func (registration *Registration) Recover(binding *engine.SchemaBinding, fragment Cell) (Cell, bool) {
-	if registration == nil || registration.receipt == nil || binding == nil || !fragment.Available() {
+	if registration == nil || registration.recover == nil || binding == nil || !fragment.Available() {
 		return Cell{}, false
 	}
-	return registration.receipt(binding, fragment)
+	return registration.recover(binding, fragment)
 }
 
 // ContributorDeclared reports whether this family carries the three hooks that
 // answer it.
 func (registration *Registration) ContributorDeclared() bool {
 	return registration != nil && registration.declare != nil &&
-		registration.bind != nil && registration.receipt != nil
+		registration.bind != nil && registration.recover != nil
 }
 
 func (registration *Registration) Key() schema.Key { return registration.family }
@@ -342,6 +370,10 @@ func (registration *Registration) SubjectAt(index int) (schema.Key, bool) {
 	}
 	return registration.subjects[index], true
 }
+
+func (registration *Registration) Population() schema.Key { return registration.population }
+
+func (registration *Registration) Projection() schema.Key { return registration.projection }
 
 // EntryAvailable is the root's admissibility question: does this row identify
 // one entry. Whether the family it identifies is completely declared is the
@@ -376,12 +408,27 @@ func (registration *Registration) EntryContent(content *framing.Writer) error {
 			return err
 		}
 	}
-	return nil
+	if err := content.String(string(registration.population)); err != nil {
+		return err
+	}
+	return content.String(string(registration.projection))
 }
 
 func (registration *Registration) declarationComplete() bool {
 	return registration.codec.Available() && registration.fold.Available() &&
-		registration.contract.Available() && len(registration.subjects) > 0
+		registration.contract.Available() && len(registration.subjects) > 0 &&
+		registration.population.Available() && registration.projection.Available()
+}
+
+func projectionAgrees(fold Fold, projection schema.Key) bool {
+	switch fold {
+	case FoldDistributive:
+		return projection == ProjectionSummary
+	case FoldGeneral:
+		return projection == ProjectionExact
+	default:
+		return false
+	}
 }
 
 // surface is the query contribution to the analyzer declaration root.
@@ -464,6 +511,21 @@ func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.
 		// than a family that seals and then answers from some fallback.
 		if !registration.ContributorDeclared() {
 			return failure(registration.id, LawContributorDeclared, schema.DispositionIncomplete)
+		}
+		if !registration.population.Available() {
+			return failure(registration.id, LawPopulationDeclared, schema.DispositionIncomplete)
+		}
+		if _, disposition := sealed.Resolve(schema.SurfaceKindStructure, registration.population); disposition != schema.DispositionAccepted {
+			return failure(registration.id, LawPopulationResolves, disposition)
+		}
+		if !registration.projection.Available() {
+			return failure(registration.id, LawProjectionDeclared, schema.DispositionIncomplete)
+		}
+		if _, disposition := sealed.Resolve(schema.SurfaceKindStructure, registration.projection); disposition != schema.DispositionAccepted {
+			return failure(registration.id, LawProjectionResolves, disposition)
+		}
+		if !projectionAgrees(registration.fold, registration.projection) {
+			return failure(registration.id, LawProjectionFold, schema.DispositionMalformed)
 		}
 	}
 	return schema.SealFailure{}

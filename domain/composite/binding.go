@@ -20,6 +20,7 @@ const (
 	BindStageAllocationCatalog
 	BindStageRule
 	BindStageQueries
+	BindStagePublication
 	BindStageSeal
 	BindStageAllocations
 	BindStageQueryReceipt
@@ -44,6 +45,8 @@ func (stage BindStage) String() string {
 		return "rule"
 	case BindStageQueries:
 		return "queries"
+	case BindStagePublication:
+		return "publication"
 	case BindStageSeal:
 		return "seal"
 	case BindStageAllocations:
@@ -155,16 +158,24 @@ func bind(compilation Compilation, inputs LinkInputs) (catalogBinding, BindFailu
 	// registered and paired, and before the shared binding becomes terminal.
 	// Each family binds against the axis payload its own subject declared, so
 	// no principal is published as an accessor to reach it.
-	queriesBound := false
+	// The publication pass runs beside the query pass, at the same lawful
+	// position: the columns this binding's publication may write are stated
+	// while the binding is open, so the write capability a publisher mints
+	// afterwards is minted against the sealed table's own statement.
+	queriesBound, columnsAdmitted := false, false
 	seal := func() bool {
 		queriesBound = bindQueries(binding, fragments, axes)
-		return queriesBound && binding.Seal()
+		columnsAdmitted = admitPublicationColumns(binding)
+		return queriesBound && columnsAdmitted && binding.Seal()
 	}
 	rules, failedRule, failedStage := bindRules(binding, compilation.catalog.ruleFragments, set, seal)
 	if failedStage != RuleBindStageNone {
 		if failedStage == RuleBindStageSeal {
 			if !queriesBound {
 				return catalogBinding{}, BindFailure{Stage: BindStageQueries}
+			}
+			if !columnsAdmitted {
+				return catalogBinding{}, BindFailure{Stage: BindStagePublication}
 			}
 			return catalogBinding{}, BindFailure{Stage: BindStageSeal}
 		}

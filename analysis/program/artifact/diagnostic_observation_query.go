@@ -118,3 +118,58 @@ func (row DiagnosticObservationRow) UnresolvedValueReference() (diagnosticUnreso
 	}
 	return row.value, true
 }
+
+func (row DiagnosticObservationRow) TypeConformance() (diagnosticTypeConformanceRow, bool) {
+	if !row.Available() || row.kind != structure.DiagnosticObservationTypeConformance {
+		return diagnosticTypeConformanceRow{}, false
+	}
+	payload := row.conformance
+	payload.points = append([]identity.ContentID(nil), row.conformance.points...)
+	return payload, true
+}
+
+func (payload diagnosticTypeConformanceRow) Site() uint8 {
+	if !payload.available() {
+		return 0
+	}
+	return payload.site
+}
+
+func (payload diagnosticTypeConformanceRow) CallID() identity.ContentID {
+	if !payload.available() {
+		return identity.ContentID{}
+	}
+	return payload.call
+}
+
+func (payload diagnosticTypeConformanceRow) ArgumentID() identity.ContentID {
+	if !payload.available() {
+		return identity.ContentID{}
+	}
+	return payload.argument
+}
+
+func (payload diagnosticTypeConformanceRow) DeclaredStaticTypeID() identity.ContentID {
+	if !payload.available() {
+		return identity.ContentID{}
+	}
+	return payload.declared
+}
+
+func (payload diagnosticTypeConformanceRow) SpanID() identity.ContentID {
+	if !payload.available() {
+		return identity.ContentID{}
+	}
+	return payload.span
+}
+
+func (payload diagnosticTypeConformanceRow) Position() (uint32, bool) {
+	return payload.position, payload.available()
+}
+
+func (payload diagnosticTypeConformanceRow) EvidencePoints() ([]identity.ContentID, bool) {
+	if !payload.available() {
+		return nil, false
+	}
+	return append([]identity.ContentID(nil), payload.points...), true
+}

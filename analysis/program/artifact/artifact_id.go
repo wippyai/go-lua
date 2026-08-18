@@ -44,6 +44,7 @@ func artifactID(artifact *Artifact) identity.ContentID {
 		fields = append(fields,
 			bytesField(row.id), bytesField(row.body), bytesField(row.span), bytesField(row.formal),
 			bytesField(row.values), bytesField(row.valuesRoot), bytesField(row.types), bytesField(row.callee), bytesField(row.actuals),
+			bytesField(row.target),
 			uintField(uint64(row.form)), boolField(row.hasReceiver), bytesField(row.receiver), boolField(row.hasTail), bytesField(row.tail),
 			uintField(uint64(row.OperandCount())), uintField(uint64(row.ArgumentCount())), uintField(uint64(row.TypeArgumentCount())),
 		)
@@ -174,6 +175,20 @@ func artifactID(artifact *Artifact) identity.ContentID {
 			}
 		case structure.DiagnosticObservationValueReferenceUnresolved:
 			fields = append(fields, bytesField(row.value.read), bytesField(row.value.cell), field{bytes: []byte(row.value.name), kind: fieldBytes})
+		case structure.DiagnosticObservationTypeConformance:
+			fields = append(fields,
+				uintField(uint64(row.conformance.site)), bytesField(row.conformance.call), bytesField(row.conformance.argument),
+				bytesField(row.conformance.declared), bytesField(row.conformance.span), uintField(uint64(row.conformance.position)),
+				uintField(uint64(len(row.conformance.points))),
+			)
+			for _, point := range row.conformance.points {
+				fields = append(fields, bytesField(point))
+			}
+		default:
+			// An observation kind this walk does not carry would contribute
+			// only its header, so two rows differing in payload would share
+			// one identity. The seal refuses instead.
+			return identity.ContentID{}
 		}
 	}
 	fields = append(fields, uintField(uint64(len(artifact.staticTypeArguments))))
@@ -289,24 +304,17 @@ func artifactID(artifact *Artifact) identity.ContentID {
 	}
 	fields = append(fields, uintField(uint64(len(artifact.localTransfers))))
 	for _, edge := range artifact.localTransfers {
-		fields = append(fields, bytesField(edge.id), bytesField(edge.from), bytesField(edge.to), boolField(edge.full), uintField(uint64(len(edge.roles))))
-		for _, role := range edge.roles {
-			fields = append(fields, uintField(uint64(role)))
+		fields = append(fields, bytesField(edge.id), bytesField(edge.from), bytesField(edge.to), boolField(edge.full), uintField(uint64(len(edge.writes))))
+		for _, write := range edge.writes {
+			fields = append(fields, keyField(write))
 		}
 	}
-	for roleIndex := 0; roleIndex < MountedRuleRoleCount(); roleIndex++ {
-		role, roleOK := MountedRuleRoleAt(roleIndex)
-		if !roleOK {
-			continue
-		}
-		rows := artifact.ruleOccurrences[role]
-		fields = append(fields, uintField(uint64(role)), uintField(uint64(len(rows))))
-		for _, row := range rows {
-			fields = append(fields,
-				uintField(uint64(row.occurrence)), bytesField(row.point), bytesField(row.input),
-				uintField(uint64(row.stage)), uintField(uint64(row.inputKind)), bytesField(row.route),
-			)
-		}
+	fields = append(fields, uintField(uint64(len(artifact.ruleOccurrences))))
+	for _, row := range artifact.ruleOccurrences {
+		fields = append(fields,
+			keyField(row.key), uintField(uint64(row.occurrence)), bytesField(row.point), bytesField(row.input),
+			uintField(uint64(row.stage)), uintField(uint64(row.inputKind)), bytesField(row.route),
+		)
 	}
 	fields = append(fields, uintField(uint64(len(artifact.regions))))
 	for _, region := range artifact.regions {

@@ -2,10 +2,10 @@ package manifesttarget
 
 import (
 	"fmt"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	. "github.com/wippyai/go-lua/analysis/program/target"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"github.com/wippyai/go-lua/domain/type/subst"
 	"github.com/wippyai/go-lua/domain/type/typ"
@@ -42,7 +42,7 @@ func operations(declarations *manifest.Catalogue) (authoredCatalogue, error) {
 	return catalogue, nil
 }
 
-func operationFromManifest(declaration manifest.Function) (OperationSpec, error) {
+func operationFromManifest(declaration manifest.Function) (vocabulary.OperationSpec, error) {
 	base := operationFromDeclaration(declaration)
 	law, ok := declaration.Operation()
 	if !ok {
@@ -51,15 +51,15 @@ func operationFromManifest(declaration manifest.Function) (OperationSpec, error)
 	if law.Replace {
 		converted, err := convertOperation(law)
 		if err != nil {
-			return OperationSpec{}, fmt.Errorf("target catalogue: %s: %w", declaration.CanonicalPath(), err)
+			return vocabulary.OperationSpec{}, fmt.Errorf("target catalogue: %s: %w", declaration.CanonicalPath(), err)
 		}
 		converted.Bindings = base.Bindings
 		base = converted
 	}
 	applyOperationAmendments(&base, law)
 	if value := law.SubedgeRelation; value != nil {
-		base.SubedgeRelation = &SubedgeRelationSpec{
-			Operand: ValueFormal(value.Operand), Selector: value.Selector, Subedge: SubedgeRef(value.Subedge),
+		base.SubedgeRelation = &vocabulary.SubedgeRelationSpec{
+			Operand: vocabulary.ValueFormal(value.Operand), Selector: value.Selector, Subedge: vocabulary.SubedgeRef(value.Subedge),
 			ResultOutcome: value.ResultOutcome, Result: value.Result,
 			EffectAliases: append([]uint32(nil), value.EffectAliases...),
 		}
@@ -67,11 +67,11 @@ func operationFromManifest(declaration manifest.Function) (OperationSpec, error)
 	return base, nil
 }
 
-func convertOperation(in moduleio.Operation) (OperationSpec, error) {
-	out := OperationSpec{
+func convertOperation(in moduleio.Operation) (vocabulary.OperationSpec, error) {
+	out := vocabulary.OperationSpec{
 		ValuesVars: in.ValuesVars,
 		Input:      convertValues(in.Input),
-		Effects:    RowSpec{Tail: RowTail(in.Effects.Tail)},
+		Effects:    vocabulary.RowSpec{Tail: vocabulary.RowTail(in.Effects.Tail)},
 	}
 	for _, value := range in.Outcomes {
 		out.Outcomes = append(out.Outcomes, convertOutcome(value))
@@ -83,33 +83,33 @@ func convertOperation(in moduleio.Operation) (OperationSpec, error) {
 		out.Subedges = append(out.Subedges, convertSubedge(value))
 	}
 	for _, value := range in.Suspensions {
-		out.Suspensions = append(out.Suspensions, SuspensionSpec{
+		out.Suspensions = append(out.Suspensions, vocabulary.SuspensionSpec{
 			Yield: value.Yield, Reentry: value.Reentry,
-			Source: ReentrySource(value.Source), Multiplicity: ReentryMultiplicity(value.Multiplicity),
+			Source: vocabulary.ReentrySource(value.Source), Multiplicity: vocabulary.ReentryMultiplicity(value.Multiplicity),
 		})
 	}
 	for _, value := range in.Spawns {
-		spawn := SpawnSpec{
-			Function: convertInputSource(value.Function), Child: CallbackRef(value.Child),
+		spawn := vocabulary.SpawnSpec{
+			Function: convertInputSource(value.Function), Child: vocabulary.CallbackRef(value.Child),
 			Yield: value.Yield, ParentResume: value.ParentResume, ChildEntry: value.ChildEntry,
 		}
 		for _, alternative := range value.Alternatives {
-			spawn.Alternatives = append(spawn.Alternatives, SpawnSiblingAlternative(alternative))
+			spawn.Alternatives = append(spawn.Alternatives, vocabulary.SpawnSiblingAlternative(alternative))
 		}
 		out.Spawns = append(out.Spawns, spawn)
 	}
 	for _, value := range in.Resumes {
-		resume := ResumeSpec{
-			Source: ResumeSource(value.Source), Carrier: ValueFormal(value.Carrier), Arguments: convertValues(value.Arguments),
+		resume := vocabulary.ResumeSpec{
+			Source: vocabulary.ResumeSource(value.Source), Carrier: vocabulary.ValueFormal(value.Carrier), Arguments: convertValues(value.Arguments),
 		}
 		for _, outcome := range value.Outcomes {
-			resume.Outcomes = append(resume.Outcomes, ResumeOutcomeSpec{Kind: flowkind.OutcomeKind(outcome.Kind), Outcome: outcome.Outcome})
+			resume.Outcomes = append(resume.Outcomes, vocabulary.ResumeOutcomeSpec{Kind: flowkind.OutcomeKind(outcome.Kind), Outcome: outcome.Outcome})
 		}
 		out.Resumes = append(out.Resumes, resume)
 	}
 	if value := in.SubedgeRelation; value != nil {
-		out.SubedgeRelation = &SubedgeRelationSpec{
-			Operand: ValueFormal(value.Operand), Selector: value.Selector, Subedge: SubedgeRef(value.Subedge),
+		out.SubedgeRelation = &vocabulary.SubedgeRelationSpec{
+			Operand: vocabulary.ValueFormal(value.Operand), Selector: value.Selector, Subedge: vocabulary.SubedgeRef(value.Subedge),
 			ResultOutcome: value.ResultOutcome, Result: value.Result,
 			EffectAliases: append([]uint32(nil), value.EffectAliases...),
 		}
@@ -117,83 +117,83 @@ func convertOperation(in moduleio.Operation) (OperationSpec, error) {
 	return out, nil
 }
 
-func convertValues(in moduleio.Values) ValuesSpec {
+func convertValues(in moduleio.Values) vocabulary.ValuesSpec {
 	var tailType schematype.Type
 	if in.TailType != nil {
 		tailType = portable(in.TailType)
 	}
-	return ValuesSpec{
-		Fixed: portableList(in.Fixed), Tail: ValuesTail(in.Tail), Var: ValuesVar(in.Var),
+	return vocabulary.ValuesSpec{
+		Fixed: portableList(in.Fixed), Tail: vocabulary.ValuesTail(in.Tail), Var: vocabulary.ValuesVar(in.Var),
 		TailType: tailType, Suffix: portableList(in.Suffix),
 	}
 }
 
-func convertOutcome(in moduleio.Outcome) OutcomeSpec {
-	out := OutcomeSpec{Kind: flowkind.OutcomeKind(in.Kind), Values: convertValues(in.Values)}
+func convertOutcome(in moduleio.Outcome) vocabulary.OutcomeSpec {
+	out := vocabulary.OutcomeSpec{Kind: flowkind.OutcomeKind(in.Kind), Values: convertValues(in.Values)}
 	for _, value := range in.FreshResults {
-		out.FreshResults = append(out.FreshResults, FreshResultSpec{Result: value.Result, Kind: schematype.FreshClass(value.Class)})
+		out.FreshResults = append(out.FreshResults, vocabulary.FreshResultSpec{Result: value.Result, Kind: schematype.FreshClass(value.Class)})
 	}
 	for _, value := range in.CallbackResults {
-		out.CallbackResults = append(out.CallbackResults, CallbackResultSpec{Result: value.Result, Callback: CallbackRef(value.Callback)})
+		out.CallbackResults = append(out.CallbackResults, vocabulary.CallbackResultSpec{Result: value.Result, Callback: vocabulary.CallbackRef(value.Callback)})
 	}
 	for _, value := range in.ResultAliases {
-		out.ResultAliases = append(out.ResultAliases, ResultAliasSpec{Result: value.Result, Source: convertInputSource(value.Source)})
+		out.ResultAliases = append(out.ResultAliases, vocabulary.ResultAliasSpec{Result: value.Result, Source: convertInputSource(value.Source)})
 	}
 	return out
 }
 
-func convertCallback(in moduleio.Callback) CallbackSpec {
-	out := CallbackSpec{
+func convertCallback(in moduleio.Callback) vocabulary.CallbackSpec {
+	out := vocabulary.CallbackSpec{
 		Function: convertInputSource(in.Function), Admission: schematype.CallableAdmission(in.Admission),
-		Arguments: convertValues(in.Arguments), Lifecycle: CallbackLifecycle(in.Lifecycle),
-		Effects: RowSpec{Tail: RowTail(in.Effects.Tail)},
+		Arguments: convertValues(in.Arguments), Lifecycle: vocabulary.CallbackLifecycle(in.Lifecycle),
+		Effects: vocabulary.RowSpec{Tail: vocabulary.RowTail(in.Effects.Tail)},
 	}
 	for _, value := range in.Outcomes {
-		out.Outcomes = append(out.Outcomes, TerminalSpec{Kind: flowkind.OutcomeKind(value.Kind), Values: convertValues(value.Values)})
+		out.Outcomes = append(out.Outcomes, vocabulary.TerminalSpec{Kind: flowkind.OutcomeKind(value.Kind), Values: convertValues(value.Values)})
 	}
 	return out
 }
 
-func convertSubedge(in moduleio.Subedge) SubedgeSpec {
-	out := SubedgeSpec{
-		Role: in.Role, Family: SubedgeFamily(in.Family), Admission: schematype.CallableAdmission(in.Admission),
+func convertSubedge(in moduleio.Subedge) vocabulary.SubedgeSpec {
+	out := vocabulary.SubedgeSpec{
+		Role: in.Role, Family: vocabulary.SubedgeFamily(in.Family), Admission: schematype.CallableAdmission(in.Admission),
 		Arguments: convertValues(in.Arguments), RuleEntry: in.RuleEntry,
-		Callee: SubedgeCalleeSpec{
-			Kind: SubedgeCalleeKind(in.Callee.Kind), Callback: CallbackRef(in.Callee.Callback),
-			Read:    CapturedInitialReadSpec{Root: in.Callee.Read.Root, Key: convertLiteral(in.Callee.Read.Key)},
+		Callee: vocabulary.SubedgeCalleeSpec{
+			Kind: vocabulary.SubedgeCalleeKind(in.Callee.Kind), Callback: vocabulary.CallbackRef(in.Callee.Callback),
+			Read:    vocabulary.CapturedInitialReadSpec{Root: in.Callee.Read.Root, Key: convertLiteral(in.Callee.Read.Key)},
 			MetaKey: convertLiteral(in.Callee.MetaKey),
 		},
 	}
 	for _, value := range in.ArgumentOrigins {
-		out.ArgumentOrigins = append(out.ArgumentOrigins, ArgumentOrigin{
-			Segment: ArgumentSegment(value.Segment), Index: value.Index,
-			Kind: ArgumentSource(value.Kind), Source: convertInputSource(value.Source),
+		out.ArgumentOrigins = append(out.ArgumentOrigins, vocabulary.ArgumentOrigin{
+			Segment: vocabulary.ArgumentSegment(value.Segment), Index: value.Index,
+			Kind: vocabulary.ArgumentSource(value.Kind), Source: convertInputSource(value.Source),
 		})
 	}
 	for _, value := range in.Outcomes {
-		out.Outcomes = append(out.Outcomes, TerminalSpec{Kind: flowkind.OutcomeKind(value.Kind), Values: convertValues(value.Values)})
+		out.Outcomes = append(out.Outcomes, vocabulary.TerminalSpec{Kind: flowkind.OutcomeKind(value.Kind), Values: convertValues(value.Values)})
 	}
-	out.AdmissionFailure = AdmissionFailureSpec{
+	out.AdmissionFailure = vocabulary.AdmissionFailureSpec{
 		Values: convertValues(in.AdmissionFailure.Values),
-		Route: AdmissionRouteSpec{
-			Route: SubedgeRoute(in.AdmissionFailure.Route.Route), Adjustment: Adjustment(in.AdmissionFailure.Route.Adjustment),
-			Result: convertValues(in.AdmissionFailure.Route.Result), Placement: Placement(in.AdmissionFailure.Route.Placement),
+		Route: vocabulary.AdmissionRouteSpec{
+			Route: vocabulary.SubedgeRoute(in.AdmissionFailure.Route.Route), Adjustment: vocabulary.Adjustment(in.AdmissionFailure.Route.Adjustment),
+			Result: convertValues(in.AdmissionFailure.Route.Result), Placement: vocabulary.Placement(in.AdmissionFailure.Route.Placement),
 			Offset: in.AdmissionFailure.Route.Offset, Outcome: in.AdmissionFailure.Route.Outcome,
-			Subedge: SubedgeRef(in.AdmissionFailure.Route.Subedge),
+			Subedge: vocabulary.SubedgeRef(in.AdmissionFailure.Route.Subedge),
 		},
 	}
 	for _, value := range in.Routes {
-		out.Routes = append(out.Routes, SubedgeRouteSpec{
-			Kind: flowkind.OutcomeKind(value.Kind), Route: SubedgeRoute(value.Route), Adjustment: Adjustment(value.Adjustment),
-			Result: convertValues(value.Result), Placement: Placement(value.Placement), Offset: value.Offset,
-			Outcome: value.Outcome, Subedge: SubedgeRef(value.Subedge),
+		out.Routes = append(out.Routes, vocabulary.SubedgeRouteSpec{
+			Kind: flowkind.OutcomeKind(value.Kind), Route: vocabulary.SubedgeRoute(value.Route), Adjustment: vocabulary.Adjustment(value.Adjustment),
+			Result: convertValues(value.Result), Placement: vocabulary.Placement(value.Placement), Offset: value.Offset,
+			Outcome: value.Outcome, Subedge: vocabulary.SubedgeRef(value.Subedge),
 		})
 	}
 	return out
 }
 
-func convertInputSource(in moduleio.InputSource) InputSource {
-	return InputSource{Kind: InputSourceKind(in.Kind), Ordinal: in.Ordinal}
+func convertInputSource(in moduleio.InputSource) vocabulary.InputSource {
+	return vocabulary.InputSource{Kind: vocabulary.InputSourceKind(in.Kind), Ordinal: in.Ordinal}
 }
 
 func convertLiteral(in moduleio.Literal) keyspace.LiteralValue {
@@ -203,14 +203,14 @@ func convertLiteral(in moduleio.Literal) keyspace.LiteralValue {
 	return keyspace.LiteralValue{}
 }
 
-func applyOperationAmendments(operation *OperationSpec, law moduleio.Operation) {
+func applyOperationAmendments(operation *vocabulary.OperationSpec, law moduleio.Operation) {
 	for _, values := range law.AppendNormal {
-		operation.Outcomes = append(operation.Outcomes, OutcomeSpec{Kind: flowkind.OutcomeNormal, Values: convertValues(values)})
+		operation.Outcomes = append(operation.Outcomes, vocabulary.OutcomeSpec{Kind: flowkind.OutcomeNormal, Values: convertValues(values)})
 	}
 	if law.ReplaceNormalSet {
 		operation.Outcomes = operation.Outcomes[:0]
 		for _, values := range law.ReplaceNormal {
-			operation.Outcomes = append(operation.Outcomes, OutcomeSpec{Kind: flowkind.OutcomeNormal, Values: convertValues(values)})
+			operation.Outcomes = append(operation.Outcomes, vocabulary.OutcomeSpec{Kind: flowkind.OutcomeNormal, Values: convertValues(values)})
 		}
 	}
 	if law.InputTailType != nil {
@@ -227,13 +227,13 @@ func applyOperationAmendments(operation *OperationSpec, law moduleio.Operation) 
 		}
 		outcome := &operation.Outcomes[amendment.Outcome]
 		for _, value := range amendment.FreshResults {
-			outcome.FreshResults = append(outcome.FreshResults, FreshResultSpec{Result: value.Result, Kind: schematype.FreshClass(value.Class)})
+			outcome.FreshResults = append(outcome.FreshResults, vocabulary.FreshResultSpec{Result: value.Result, Kind: schematype.FreshClass(value.Class)})
 		}
 		for _, value := range amendment.CallbackResults {
-			outcome.CallbackResults = append(outcome.CallbackResults, CallbackResultSpec{Result: value.Result, Callback: CallbackRef(value.Callback)})
+			outcome.CallbackResults = append(outcome.CallbackResults, vocabulary.CallbackResultSpec{Result: value.Result, Callback: vocabulary.CallbackRef(value.Callback)})
 		}
 		for _, value := range amendment.ResultAliases {
-			outcome.ResultAliases = append(outcome.ResultAliases, ResultAliasSpec{Result: value.Result, Source: convertInputSource(value.Source)})
+			outcome.ResultAliases = append(outcome.ResultAliases, vocabulary.ResultAliasSpec{Result: value.Result, Source: convertInputSource(value.Source)})
 		}
 	}
 }
@@ -253,9 +253,9 @@ func applyProducedRelations(catalogue *authoredCatalogue, producer string, law m
 			if err != nil {
 				return fmt.Errorf("target catalogue: %s produced relation: %w", producer, err)
 			}
-			produced := ProducedSpec{Result: declaration.Result, Operation: SpecRef(child)}
+			produced := vocabulary.ProducedSpec{Result: declaration.Result, Operation: vocabulary.SpecRef(child)}
 			for _, capture := range declaration.Captures {
-				produced.Captures = append(produced.Captures, CaptureSpec{Kind: CaptureKind(capture.Kind), Ordinal: capture.Ordinal})
+				produced.Captures = append(produced.Captures, vocabulary.CaptureSpec{Kind: vocabulary.CaptureKind(capture.Kind), Ordinal: capture.Ordinal})
 			}
 			operation.Outcomes[outcome].Produced = append(operation.Outcomes[outcome].Produced, produced)
 		}
@@ -274,8 +274,8 @@ func applyProducedRelations(catalogue *authoredCatalogue, producer string, law m
 	return nil
 }
 
-func operationFromDeclaration(declaration manifest.Function) OperationSpec {
-	binding := OperationSpec{Bindings: bindingsFromDeclaration(declaration)}
+func operationFromDeclaration(declaration manifest.Function) vocabulary.OperationSpec {
+	binding := vocabulary.OperationSpec{Bindings: bindingsFromDeclaration(declaration)}
 	function := declaration.Signature()
 	if function.Type == nil {
 		return normal(binding, nil, false, nil, false)
@@ -335,34 +335,34 @@ func operationFromDeclaration(declaration manifest.Function) OperationSpec {
 	return operation
 }
 
-func normal(op OperationSpec, in []typ.Type, openIn bool, out []typ.Type, openOut bool) OperationSpec {
+func normal(op vocabulary.OperationSpec, in []typ.Type, openIn bool, out []typ.Type, openOut bool) vocabulary.OperationSpec {
 	vars := uint32(0)
-	inVar, outVar := ValuesVar(0), ValuesVar(0)
+	inVar, outVar := vocabulary.ValuesVar(0), vocabulary.ValuesVar(0)
 	if openIn {
 		vars++
 	}
 	if openOut {
-		outVar = ValuesVar(vars)
+		outVar = vocabulary.ValuesVar(vars)
 		vars++
 	}
 	op.ValuesVars = vars
 	op.Input = values(in, openIn, inVar)
-	op.Outcomes = []OutcomeSpec{
+	op.Outcomes = []vocabulary.OutcomeSpec{
 		{Kind: flowkind.OutcomeNormal, Values: values(out, openOut, outVar)},
 		{Kind: flowkind.OutcomeThrow, Values: values([]typ.Type{typ.Any}, false, 0)},
 	}
-	op.Effects = RowSpec{Tail: RowClosed}
+	op.Effects = vocabulary.RowSpec{Tail: vocabulary.RowClosed}
 	return op
 }
 
-func bindingsFromDeclaration(declaration manifest.Function) []BindingSpec {
-	out := make([]BindingSpec, 0, len(declaration.Bindings()))
+func bindingsFromDeclaration(declaration manifest.Function) []vocabulary.BindingSpec {
+	out := make([]vocabulary.BindingSpec, 0, len(declaration.Bindings()))
 	for _, binding := range declaration.Bindings() {
 		switch binding.Mount() {
 		case manifest.MountGlobals:
-			out = append(out, BindingSpec{Namespace: BindingBuiltin, Member: binding.Member()})
+			out = append(out, vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: binding.Member()})
 		case manifest.MountModule:
-			out = append(out, BindingSpec{Namespace: BindingModule, Owner: []string{binding.ModulePath()}, Member: binding.Member()})
+			out = append(out, vocabulary.BindingSpec{Namespace: vocabulary.BindingModule, Owner: []string{binding.ModulePath()}, Member: binding.Member()})
 		case manifest.MountDetached:
 		}
 	}

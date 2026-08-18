@@ -3,8 +3,6 @@
 package engine
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier/shape"
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
@@ -19,10 +17,13 @@ import (
 // runtimeProducer is static Group metadata. Its candidate is explicitly
 // epoch-local in executorEpoch, so no Group becomes a persistent executor.
 type runtimeProducer struct {
-	index        int
-	group        equation.GroupNode
-	plan         carrier.ContributionPlan
-	members      []runtimeMember
+	index int
+	group equation.GroupNode
+	plan  carrier.ContributionPlan
+	// span addresses this Group's rows in the sealed program's member table. A
+	// producer holds no member of its own; the span is retained even when its
+	// output is outside the initial active mask.
+	span         memberSpan
 	inputs       []runtimeInput
 	environment  *runtimeInput
 	outputScope  carrier.Scope
@@ -78,6 +79,10 @@ type runtimeRegion struct {
 	factorBack          []int
 	widen               carrier.MergeScope
 	narrow              carrier.MergeScope
+	// discharge is the Region's support-axis widening: the same recurrence
+	// publication that widens values along region.widen coarsens the head's
+	// guard partition along this relation.
+	discharge regionDischarge
 }
 
 type solverRuntime struct {
@@ -88,12 +93,15 @@ type solverRuntime struct {
 	topology         *equation.Topology
 	carrier          *carrier.Composition
 	graph            *equation.Graph
+	// program is the sealed row model: the member rows the executor folds, the
+	// Factor records the overlay resolves, and the query and observation tables
+	// the result readers project.
+	program *runtimeProgram
 	// execution overrides the graph-owned demanded event stream only after a
 	// selected overlay introduces feedback over the same already-demanded Point
 	// set. It contains no semantic facts; the live carrier remains unchanged.
 	execution       *schedule.Schedule
 	executionDemand *equation.Demand
-	factors         []runtimeFactor // concrete bound operations; cold surface catalogs are released
 	points          *equation.Demand
 	producers       []runtimeProducer
 	environments    []runtimeEnvironment
@@ -117,6 +125,10 @@ type solverRuntime struct {
 	pointRegion    []int
 	activePoints   []bool
 	activeRegions  []bool
+	// publication is the sealed Snapshot authority for this runtime generation:
+	// its column writes, result key universes, and point denominator/index are
+	// all constructed once at assembly and borrowed by every solve epoch.
+	publication *solvedPublicationPlan
 
 	retained  *carrier.RetainedWork
 	completed *State
@@ -156,7 +168,6 @@ type runtimeFactorOrigin struct {
 // derived carrier binding cache over already-issued scopes and atoms, never a
 // second equation or carrier authoring surface.
 type runtimeStructuralOverlay struct {
-	factorByKey   map[composition.Key]runtimeFactor
 	staticOrigins map[runtimeFactorOrigin]struct{}
 	originAt      map[runtimeFactorOrigin]int
 	// directAt retains only the exact equation descriptors for installed
@@ -185,24 +196,22 @@ func (origin runtimeFactorOrigin) available() bool {
 	return origin.source >= 0 && origin.target >= 0 && origin.factor.Available() && origin.provenance.Available() && origin.reindex.Available() && origin.post.Available()
 }
 
-// assembleReceiptRuntime enters the common executable assembly with the
-// exact sealed SchemaBinding authority already pinned by receipt compilation.
-// It is deliberately disjoint from cold declaration capabilities.
-func assembleReceiptRuntime(state *schemaBindingState, authority *schemaBindingAuthority, graph *equation.Graph, runtime *carrier.Composition, factors map[composition.Key]runtimeFactor, rows []runtimeMember, queries []runtimeQuery, observations []runtimeObservation) (*solverRuntime, bool) {
-	return assembleRuntimeOwned(state, authority, graph, runtime, factors, rows, queries, observations)
-}
-
-func assembleRuntimeOwned(receiptState *schemaBindingState, receiptAuthority *schemaBindingAuthority, graph *equation.Graph, runtime *carrier.Composition, factors map[composition.Key]runtimeFactor, rows []runtimeMember, queries []runtimeQuery, observations []runtimeObservation) (*solverRuntime, bool) {
-	if receiptState == nil || receiptAuthority == nil || receiptState.phase != schemaBindingSealed || receiptState.authority != receiptAuthority || receiptState.schema == nil || !receiptState.schema.Available() || graph == nil || runtime == nil || runtime.Guards() == nil || factors == nil {
+// assembleRuntimeOwned lowers one sealed program into the executable runtime.
+// Every member answer it needs has already been taken by the binder: the folds
+// carry the Group aggregates, the program carries the rows, and no draft
+// reaches this pass.
+func assembleRuntimeOwned(receiptState *schemaBindingState, receiptAuthority *schemaBindingAuthority, graph *equation.Graph, runtime *carrier.Composition, program *runtimeProgram, folds []memberFold) (*solverRuntime, bool) {
+	if receiptState == nil || receiptAuthority == nil || receiptState.phase != schemaBindingSealed || receiptState.authority != receiptAuthority || receiptState.schema == nil || !receiptState.schema.Available() || graph == nil || runtime == nil || runtime.Guards() == nil || !program.valid() || len(folds) != graph.GroupCount() || program.groupCount() != graph.GroupCount() {
 		return nil, false
 	}
 	schema := receiptState.schema
 	if schema == nil || graph.CompositionID() != schema.coldID() {
 		return nil, false
 	}
-	observationPoints := make([]equation.Point, len(observations))
-	for index, observation := range observations {
-		if observation == nil {
+	observationPoints := make([]equation.Point, program.observationCount())
+	for index := range observationPoints {
+		observation, observed := program.observationAt(index)
+		if !observed || observation == nil {
 			return nil, false
 		}
 		point := observation.observationPoint()
@@ -218,31 +227,6 @@ func assembleRuntimeOwned(receiptState *schemaBindingState, receiptAuthority *sc
 	activePoints, activeRegions, activeOK := runtimeDemandMembership(graph, points)
 	if !activeOK {
 		return nil, false
-	}
-	// A graph Group becomes a hot runtime producer only when its exact output
-	// Point is in this solve's demand closure. The immutable graph keeps every
-	// reusable Program row for future observation/activation revisions, while
-	// disconnected interiors retain identity only and allocate no contribution
-	// plan, read set, or recurrence footprint in this runtime generation.
-	selectedGroups := make([]bool, graph.GroupCount())
-	for index := range selectedGroups {
-		group, groupOK := graph.HyperedgeAt(index)
-		outputIndex, outputOK := graph.PointIndex(group.Output())
-		if !groupOK || !outputOK || outputIndex < 0 || outputIndex >= len(activePoints) {
-			return nil, false
-		}
-		selectedGroups[index] = activePoints[outputIndex]
-	}
-	byMember := make(map[composition.Key]runtimeMember, len(rows))
-	for _, row := range rows {
-		if row == nil {
-			return nil, false
-		}
-		member := row.member()
-		if !member.Key().Available() || byMember[member.Key()] != nil {
-			return nil, false
-		}
-		byMember[member.Key()] = row
 	}
 	plans, ok := bindRuntimeReindexes(graph, runtime)
 	if !ok {
@@ -292,14 +276,11 @@ func assembleRuntimeOwned(receiptState *schemaBindingState, receiptAuthority *sc
 		edge, edgeOK := graph.FactorEdgeAtIndex(edgeIndex)
 		sourcePoint, sourceIndexed := graph.PointIndex(edge.Input().Point())
 		targetPoint, targetIndexed := graph.PointIndex(edge.Target())
-		factor, factorKnown := factors[edge.Factor()]
-		slot, slotOK := shape.Slot(0), false
-		if factorKnown && factor != nil {
-			slot, slotOK = factor.runtimeSlot()
-		}
-		if !edgeOK || !edge.Key().Available() || !sourceIndexed || !targetIndexed || !factorKnown || factor == nil || compositionKeyOf(factor.semantic()) != edge.Factor() || !slotOK || slot < 0 || int(slot) >= runtime.Count() {
+		record, factorKnown := program.factorRecordByKey(edge.Factor())
+		if !edgeOK || !edge.Key().Available() || !sourceIndexed || !targetIndexed || !factorKnown || record.slot < 0 || int(record.slot) >= runtime.Count() {
 			return nil, false
 		}
+		slot := record.slot
 		plan, planOK := plans.plan(edge.Input().Reindex())
 		sourceScope, sourceScoped := plans.scope(edge.Input().Source().Scope())
 		targetScope, targetScoped := plans.scope(edge.Input().Target().Scope())
@@ -335,34 +316,16 @@ func assembleRuntimeOwned(receiptState *schemaBindingState, receiptAuthority *sc
 		factorIncoming[edge.target] = append(factorIncoming[edge.target], edgeIndex)
 		factorOutgoing[edge.source] = append(factorOutgoing[edge.source], edgeIndex)
 	}
-	factorByKey := make(map[composition.Key]runtimeFactor, len(factors))
-	for key, factor := range factors {
-		if !key.Available() || factor == nil || compositionKeyOf(factor.semantic()) != key {
-			return nil, false
-		}
-		factorByKey[key] = factor
-	}
 	for index := 0; index < graph.GroupCount(); index++ {
 		group, groupOK := graph.HyperedgeAt(index)
 		groupIndex, indexed := graph.GroupIndex(group)
-		if !groupOK || !indexed || groupIndex != index || !graph.OwnsGroup(group) || !group.Key().Available() {
+		outputIndex, outputIndexed := graph.PointIndex(group.Output())
+		if !groupOK || !indexed || groupIndex != index || !graph.OwnsGroup(group) || !group.Key().Available() || !outputIndexed || outputIndex < 0 || outputIndex >= len(activePoints) {
 			return nil, false
 		}
-		if !selectedGroups[index] {
-			// Consume and authenticate every supplied member identity so callers
-			// cannot hide an extra or foreign row in an undemanded fragment. The
-			// typed hot member itself is deliberately not copied into the runtime
-			// producer.
-			for memberIndex := 0; memberIndex < group.MemberCount(); memberIndex++ {
-				member, memberOK := group.MemberAt(memberIndex)
-				row := byMember[member.Key()]
-				if !memberOK || !member.Key().Available() || row == nil || row.member().Key() != member.Key() || !row.member().Rule().Available() {
-					return nil, false
-				}
-				delete(byMember, member.Key())
-			}
-			producers[index] = runtimeProducer{index: index, group: group}
-			continue
+		span, spanOK := program.groupSpanAt(index)
+		if !spanOK || span.count() != group.MemberCount() {
+			return nil, false
 		}
 		outputScope, scoped := plans.scope(group.Output().Scope())
 		premise, premised := runtimeFormula(runtime, outputScope, group.Premise(), plans.decisions)
@@ -402,136 +365,14 @@ func assembleRuntimeOwned(receiptState *schemaBindingState, receiptAuthority *sc
 			}
 			environment = &bound
 		}
-		members := make([]runtimeMember, group.MemberCount())
-		writes, carries := make([]shape.Slot, 0, group.MemberCount()), make([]carrier.ContributionSource, 0)
-		initialReads, dynamicReads, demandCarries := make([]demand.Observation, 0), make([]demand.DynamicRead, 0), make([]demand.Carry, 0)
-		footprint := make([]recurrenceFootprint, 0, group.MemberCount())
-		// These sets are assembly-local deduplication scratch. The published
-		// recurrenceFootprint retains authored occurrence targets only; the
-		// Factor-owned O(R) route universe remains an owner identity until the
-		// active Region binds its one recurrence scope.
-		footprintIndexByFactor := make(map[composition.Key]int, group.MemberCount())
-		footprintTargets := make(map[composition.Key]map[carrier.Target]struct{}, group.MemberCount())
-		footprintNarrowTargets := make(map[composition.Key]map[carrier.Target]struct{}, group.MemberCount())
-		appendFootprintTarget := func(index int, target carrier.Target, narrow bool) bool {
-			if index < 0 || index >= len(footprint) || !footprint[index].key.Available() {
-				return false
-			}
-			key := footprint[index].key
-			seenByFactor := footprintTargets
-			if narrow {
-				seenByFactor = footprintNarrowTargets
-			}
-			seen := seenByFactor[key]
-			if seen == nil {
-				seen = make(map[carrier.Target]struct{})
-				seenByFactor[key] = seen
-			}
-			if _, duplicate := seen[target]; duplicate {
-				return true
-			}
-			seen[target] = struct{}{}
-			if narrow {
-				footprint[index].narrowTargets = append(footprint[index].narrowTargets, target)
-			} else {
-				footprint[index].targets = append(footprint[index].targets, target)
-			}
-			return true
-		}
-		supportPrune := false
-		for memberIndex := range members {
-			member, memberOK := group.MemberAt(memberIndex)
-			if !memberOK || !member.Key().Available() {
-				return nil, false
-			}
-			row := byMember[member.Key()]
-			if row == nil || row.member().Key() != member.Key() || !row.member().Rule().Available() {
-				return nil, false
-			}
-			// A Rule instance belongs to exactly one compiled Group. Consuming the
-			// lookup here proves that every supplied runtime member was attached
-			// without a later member×group verification sweep.
-			delete(byMember, member.Key())
-			members[memberIndex] = row
-			slot, hasSlot := row.outputSlot()
-			supportPrune = supportPrune || !hasSlot
-			initialReads = append(initialReads, row.initialReads()...)
-			dynamicReads = append(dynamicReads, row.dynamicReads()...)
-			if !hasSlot {
-				continue
-			}
-			factor, factorOK := row.factorKey()
-			if !factorOK {
-				return nil, false
-			}
-			memberCarries := row.carries()
-			occurrenceTargets := row.targets()
-			if len(memberCarries) != 0 {
-				occurrenceTargets = row.carryTargets()
-			}
-			narrowTargets := row.narrowTargets()
-			for _, target := range narrowTargets {
-				if !runtimeContainsTarget(occurrenceTargets, target) {
-					return nil, false
-				}
-			}
-			footprintIndex, present := footprintIndexByFactor[factor]
-			if !present {
-				footprint = append(footprint, recurrenceFootprint{key: factor})
-				footprintIndex = len(footprint) - 1
-				footprintIndexByFactor[factor] = footprintIndex
-			}
-			// A route scope is an owner identity, not a target vector. Retaining
-			// the Factor's O(R) universe in every route member made the static
-			// recurrence footprint grow as Group×R. The active Region expands the
-			// identity once below, after all authored occurrence targets have been
-			// collected.
-			if routeFactor := row.routeScope(); routeFactor != nil {
-				if compositionKeyOf(routeFactor.semantic()) != factor {
-					return nil, false
-				}
-				if footprint[footprintIndex].routeFactor != nil && footprint[footprintIndex].routeFactor != routeFactor {
-					return nil, false
-				}
-				footprint[footprintIndex].routeFactor = routeFactor
-				footprint[footprintIndex].route = true
-				footprint[footprintIndex].narrowRoute = footprint[footprintIndex].narrowRoute || row.routeNarrow()
-			}
-			for _, target := range occurrenceTargets {
-				if !appendFootprintTarget(footprintIndex, target, false) {
-					return nil, false
-				}
-			}
-			for _, target := range narrowTargets {
-				if !appendFootprintTarget(footprintIndex, target, true) {
-					return nil, false
-				}
-			}
-			if row.writesOutput() {
-				writes = append(writes, slot)
-			}
-			for _, input := range memberCarries {
-				if input < 0 || input >= len(inputTransports) {
-					return nil, false
-				}
-				carries = append(carries, carrier.ContributionSource{Slot: slot, Input: input})
-				demandCarries = append(demandCarries, demand.Carry{Input: uint64(input), Slot: slot})
-			}
-		}
-		plan, planOK := runtime.SealContribution(group.InputCount(), writes, carries, supportPrune, environment != nil)
+		fold := folds[index]
+		plan, planOK := runtime.SealContribution(group.InputCount(), fold.writes, fold.sources, fold.supportPrune, environment != nil)
 		if !planOK {
 			return nil, false
 		}
-		sort.Slice(members, func(left, right int) bool {
-			return lessRuntimeKey(members[left].member().Key(), members[right].member().Key())
-		})
-		sort.Slice(footprint, func(left, right int) bool { return lessRuntimeKey(footprint[left].key, footprint[right].key) })
-		producers[index] = runtimeProducer{index: index, group: group, plan: plan, members: members, inputs: inputTransports, environment: environment, outputScope: outputScope, premise: premise, reads: initialReads, dynamicReads: dynamicReads, carries: demandCarries, footprint: footprint}
+		producers[index] = runtimeProducer{index: index, group: group, plan: plan, span: span, inputs: inputTransports, environment: environment, outputScope: outputScope, premise: premise, reads: fold.initialReads, dynamicReads: fold.dynamicReads, carries: fold.carries, footprint: fold.footprint}
 	}
-	if len(byMember) != 0 {
-		return nil, false
-	}
-	regions, regionChildren, recurrenceOK := bindRuntimeRegions(graph, activeRegions, runtime, producers)
+	regions, regionChildren, recurrenceOK := bindRuntimeRegions(graph, activeRegions, runtime, producers, plans)
 	if !recurrenceOK {
 		return nil, false
 	}
@@ -567,18 +408,15 @@ func assembleRuntimeOwned(receiptState *schemaBindingState, receiptAuthority *sc
 		for producerIndex := 0; producerIndex < graph.ProducerCount(point); producerIndex++ {
 			producer, producerOK := graph.ProducerAt(point, producerIndex)
 			groupIndex, indexed := graph.GroupIndex(producer)
-			if !producerOK || !indexed || groupIndex < 0 || groupIndex >= len(selectedGroups) {
-				return nil, false
-			}
-			if !selectedGroups[groupIndex] {
+			if !producerOK || !indexed || groupIndex < 0 || groupIndex >= len(producers) {
 				return nil, false
 			}
 		}
 	}
-	for groupIndex, selectedGroup := range selectedGroups {
-		if !selectedGroup {
-			continue
-		}
+	// Declare every dense Group family. Seal still projects the initial active
+	// subset, but no later demand/activation revision needs to reconstruct the
+	// family metadata or rebind its carrier transports.
+	for groupIndex := range producers {
 		producer := producers[groupIndex]
 		inputs := make([]equation.Point, producer.group.InputCount())
 		inputIndexes := make([]int, len(inputs))
@@ -596,7 +434,7 @@ func assembleRuntimeOwned(receiptState *schemaBindingState, receiptAuthority *sc
 		}
 	}
 	sealedDemand := demandPlan.Seal(selected)
-	validQueries := validateRuntimeQueries(receiptState, receiptAuthority, graph, queries)
+	validQueries := validateRuntimeQueries(receiptState, receiptAuthority, graph, program)
 	if !sealedDemand || !validQueries {
 		return nil, false
 	}
@@ -604,12 +442,36 @@ func assembleRuntimeOwned(receiptState *schemaBindingState, receiptAuthority *sc
 	if !dependencyOK {
 		return nil, false
 	}
-	assembled := &solverRuntime{receiptState: receiptState, receiptAuthority: receiptAuthority, carrier: runtime, graph: graph, factors: nil, points: points, producers: producers, environments: environments, factorEdges: factorEdges, environmentIncoming: environmentIncoming, factorIncoming: factorIncoming, overlay: runtimeStructuralOverlay{factorByKey: factorByKey, staticOrigins: staticOrigins, originAt: make(map[runtimeFactorOrigin]int), directAt: make(map[int]equation.SelectedStructuralFactorEdge), factorOutgoing: factorOutgoing, dependencyEdges: dependencyEdges, dependencyAt: dependencyAt, reindexes: plans, latePlans: make(map[composition.Key]carrier.ReindexPlan), generation: 1}, demand: demandPlan, queries: append([]runtimeQuery(nil), queries...), observations: append([]runtimeObservation(nil), observations...), pointScopes: pointScopes, pointInitials: pointInitials, regions: regions, regionChildren: regionChildren, pointRegion: pointRegion, activePoints: activePoints, activeRegions: activeRegions}
+	// queries and observations stay beside the program while the typed result
+	// readers still project them directly; the program's tables are the same
+	// rows and become the sole readers when those projections are replaced.
+	queries := make([]runtimeQuery, program.queryCount())
+	for index := range queries {
+		row, present := program.queryAt(index)
+		if !present {
+			return nil, false
+		}
+		queries[index] = row
+	}
+	observations := make([]runtimeObservation, program.observationCount())
+	for index := range observations {
+		row, present := program.observationAt(index)
+		if !present {
+			return nil, false
+		}
+		observations[index] = row
+	}
+	assembled := &solverRuntime{receiptState: receiptState, receiptAuthority: receiptAuthority, carrier: runtime, graph: graph, program: program, points: points, producers: producers, environments: environments, factorEdges: factorEdges, environmentIncoming: environmentIncoming, factorIncoming: factorIncoming, overlay: runtimeStructuralOverlay{staticOrigins: staticOrigins, originAt: make(map[runtimeFactorOrigin]int), directAt: make(map[int]equation.SelectedStructuralFactorEdge), factorOutgoing: factorOutgoing, dependencyEdges: dependencyEdges, dependencyAt: dependencyAt, reindexes: plans, latePlans: make(map[composition.Key]carrier.ReindexPlan), generation: 1}, demand: demandPlan, queries: queries, observations: observations, pointScopes: pointScopes, pointInitials: pointInitials, regions: regions, regionChildren: regionChildren, pointRegion: pointRegion, activePoints: activePoints, activeRegions: activeRegions}
+	plan, sealed := sealSolvedPublicationPlan(assembled)
+	if !sealed {
+		return nil, false
+	}
+	assembled.publication = plan
 	return assembled, true
 }
 
-func validateRuntimeQueries(receiptState *schemaBindingState, receiptAuthority *schemaBindingAuthority, graph *equation.Graph, rows []runtimeQuery) bool {
-	if receiptState == nil || receiptAuthority == nil || receiptState.phase != schemaBindingSealed || receiptState.authority != receiptAuthority || receiptState.schema == nil || !receiptState.schema.Available() || graph == nil || len(rows) != graph.QueryCount() {
+func validateRuntimeQueries(receiptState *schemaBindingState, receiptAuthority *schemaBindingAuthority, graph *equation.Graph, program *runtimeProgram) bool {
+	if receiptState == nil || receiptAuthority == nil || receiptState.phase != schemaBindingSealed || receiptState.authority != receiptAuthority || receiptState.schema == nil || !receiptState.schema.Available() || graph == nil || !program.valid() || program.queryCount() != graph.QueryCount() {
 		return false
 	}
 	schema := receiptState.schema
@@ -617,9 +479,10 @@ func validateRuntimeQueries(receiptState *schemaBindingState, receiptAuthority *
 		return false
 	}
 	ownerRuntime := &solverRuntime{receiptState: receiptState, receiptAuthority: receiptAuthority, graph: graph}
-	for index, row := range rows {
+	for index := 0; index < program.queryCount(); index++ {
+		row, present := program.queryAt(index)
 		identity, identityOK := graph.QueryAt(index)
-		if !identityOK || row == nil || !graph.OwnsQuery(row.query()) || !row.query().Key().Available() || row.query().Key() != identity.Key() || row.query().Family() != identity.Family() {
+		if !present || !identityOK || row == nil || !graph.OwnsQuery(row.query()) || !row.query().Key().Available() || row.query().Key() != identity.Key() || row.query().Family() != identity.Family() {
 			return false
 		}
 		owner := row.queryOwner()

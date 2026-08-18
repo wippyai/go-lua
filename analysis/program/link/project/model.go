@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 )
 
@@ -55,8 +56,8 @@ type authority struct {
 	// derived quotient index, not another key identity: a zero row means that
 	// the Project key was authored only by Program/source data and is not a
 	// Target exact key.
-	targetKeyByProject       []target.ExactKey
-	initialKeys              map[target.InitialValue]uint32
+	targetKeyByProject       []vocabulary.ExactKey
+	initialKeys              map[vocabulary.InitialValue]uint32
 	programKeys              [][]uint32
 	applications             []applicationRow
 	baseApplications         []uint32

@@ -1,6 +1,7 @@
 package index_test
 
 import (
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"reflect"
 	"testing"
 
@@ -88,7 +89,7 @@ func TestTopologyReceiverCallDemandDeduplicatesFreshApplicationAndWarms(t *testi
 	heap, values, calls, _, mounts := callDemandTopologyFixture(t, "heap_index_two_fresh_results.lua", `
 local first, second = fresh()
 return first, second
-`, []target.FreshResultSpec{
+`, []vocabulary.FreshResultSpec{
 		{Result: 0, Kind: schematype.FreshClassTable},
 		{Result: 1, Kind: schematype.FreshClassTable},
 	})
@@ -154,7 +155,7 @@ local first = fresh()
 local second = fresh()
 local ignored = localOnly()
 return first, second, ignored
-`, []target.FreshResultSpec{{Result: 0, Kind: schematype.FreshClassTable}})
+`, []vocabulary.FreshResultSpec{{Result: 0, Kind: schematype.FreshClassTable}})
 	topology, sealed := indexdomain.Seal(heap, values, calls, mounts.packs)
 	if !sealed {
 		t.Fatal("fresh-group topology did not seal")
@@ -210,7 +211,7 @@ local first = fresh()
 local second = fresh()
 local ignored = localOnly()
 return first, second, ignored
-`, []target.FreshResultSpec{{Result: 0, Kind: schematype.FreshClassTable}})
+`, []vocabulary.FreshResultSpec{{Result: 0, Kind: schematype.FreshClassTable}})
 	topology2, sealed2 := indexdomain.Seal(heap2, values2, calls2, mounts2.packs)
 	if !sealed2 {
 		t.Fatal("equivalent fresh-group topology did not seal")
@@ -369,7 +370,7 @@ func freshRootsForApplication(t testing.TB, heap heapdomain.Schema, application 
 	return roots
 }
 
-func callDemandTopologyFixture(t testing.TB, name, text string, freshResults []target.FreshResultSpec) (heapdomain.Schema, *valuedomain.Schema, *calldomain.Algebra, *link.Link, indexFixtureMounts) {
+func callDemandTopologyFixture(t testing.TB, name, text string, freshResults []vocabulary.FreshResultSpec) (heapdomain.Schema, *valuedomain.Schema, *calldomain.Algebra, *link.Link, indexFixtureMounts) {
 	t.Helper()
 	p, err := lower.Lower(lower.Source{Name: name, Text: []byte(text)})
 	if err != nil {
@@ -382,31 +383,31 @@ func callDemandTopologyFixture(t testing.TB, name, text string, freshResults []t
 		}
 	}
 	outputs := portableAnyTypes(resultCount)
-	binding := target.BindingSpec{Namespace: target.BindingBuiltin, Member: []string{"fresh"}}
+	binding := vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"fresh"}}
 	contract, err := target.Seal(&target.Spec{
 		Semantics:    domaincontract.NewSemantics(),
-		InitialRoots: []target.InitialRootSpec{{Identity: "GlobalEnvRoot", Shape: target.BootShapeSpec{Aggregate: target.BootAggregateTable, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}}}},
-		Operations: []target.OperationSpec{{
-			Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"require"}}},
-			Input:    target.ValuesSpec{Tail: target.ValuesClosed},
-			Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}},
-			Effects:  target.RowSpec{Tail: target.RowClosed},
+		InitialRoots: []vocabulary.InitialRootSpec{{Identity: "GlobalEnvRoot", Shape: vocabulary.BootShapeSpec{Aggregate: vocabulary.BootAggregateTable, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "GlobalEnvRoot"}}}},
+		Operations: []vocabulary.OperationSpec{{
+			Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"require"}}},
+			Input:    vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed},
+			Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}},
+			Effects:  vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 		}, {
-			Bindings: []target.BindingSpec{binding},
-			Input:    target.ValuesSpec{Tail: target.ValuesClosed},
-			Outcomes: []target.OutcomeSpec{{
+			Bindings: []vocabulary.BindingSpec{binding},
+			Input:    vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed},
+			Outcomes: []vocabulary.OutcomeSpec{{
 				Kind:         flowkind.OutcomeNormal,
-				Values:       target.ValuesSpec{Fixed: outputs, Tail: target.ValuesClosed},
+				Values:       vocabulary.ValuesSpec{Fixed: outputs, Tail: vocabulary.ValuesClosed},
 				FreshResults: freshResults,
 			}},
-			Effects: target.RowSpec{Tail: target.RowClosed},
+			Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 		}},
-		InitialEntries: []target.InitialEntrySpec{
-			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "_G"}, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: target.InitialMutable},
-			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "fresh"}, Value: target.InitialValueSpec{Kind: target.InitialValueOperation, Operation: binding}, Mutability: target.InitialMutable},
-			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "__link_absent"}, Value: target.InitialValueSpec{Kind: target.InitialValueAbsent}, Mutability: target.InitialMutable},
+		InitialEntries: []vocabulary.InitialEntrySpec{
+			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "_G"}, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: vocabulary.InitialMutable},
+			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "fresh"}, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueOperation, Operation: binding}, Mutability: vocabulary.InitialMutable},
+			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "__link_absent"}, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueAbsent}, Mutability: vocabulary.InitialMutable},
 		},
-		InitialBindings: []target.InitialBindingSpec{
+		InitialBindings: []vocabulary.InitialBindingSpec{
 			{Name: "_G", Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "_G"}},
 			{Name: "fresh", Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "fresh"}},
 		},

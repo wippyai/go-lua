@@ -1,6 +1,7 @@
 package factor_test
 
 import (
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
@@ -22,35 +23,35 @@ import (
 // an operation whose declared vars include an outcome tail.
 func outcomeScopedValuesVarSpec(openInput bool) target.Spec {
 	any := portableAnyType()
-	closed := target.ValuesSpec{Tail: target.ValuesClosed}
+	closed := vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}
 	// Var 0 is the input tail when the input is open, otherwise the outcome
 	// tail; the second var is always an outcome tail.
-	input := target.ValuesSpec{Fixed: []schematype.Type{any}, Tail: target.ValuesClosed}
-	normal := target.ValuesSpec{Tail: target.ValuesVariable, Var: 0, TailType: any}
+	input := vocabulary.ValuesSpec{Fixed: []schematype.Type{any}, Tail: vocabulary.ValuesClosed}
+	normal := vocabulary.ValuesSpec{Tail: vocabulary.ValuesVariable, Var: 0, TailType: any}
 	vars := uint32(1)
 	if openInput {
-		input = target.ValuesSpec{Fixed: []schematype.Type{any}, Tail: target.ValuesVariable, Var: 0, TailType: any}
-		normal = target.ValuesSpec{Tail: target.ValuesVariable, Var: 1, TailType: any}
+		input = vocabulary.ValuesSpec{Fixed: []schematype.Type{any}, Tail: vocabulary.ValuesVariable, Var: 0, TailType: any}
+		normal = vocabulary.ValuesSpec{Tail: vocabulary.ValuesVariable, Var: 1, TailType: any}
 		vars = 2
 	}
-	self := target.EffectSpec{
+	self := vocabulary.EffectSpec{
 		Target:    1,
-		ValueArgs: []target.ValueFormal{0},
+		ValueArgs: []vocabulary.ValueFormal{0},
 	}
 	for index := uint32(0); index < vars; index++ {
-		self.ValuesArgs = append(self.ValuesArgs, target.ValuesVar(index))
+		self.ValuesArgs = append(self.ValuesArgs, vocabulary.ValuesVar(index))
 	}
-	owner := target.OperationSpec{
-		Bindings:   []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"sink"}}},
+	owner := vocabulary.OperationSpec{
+		Bindings:   []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"sink"}}},
 		ValuesVars: vars,
 		Input:      input,
-		Outcomes: []target.OutcomeSpec{
+		Outcomes: []vocabulary.OutcomeSpec{
 			{Kind: kind.OutcomeNormal, Values: normal},
 			{Kind: kind.OutcomeThrow, Values: closed},
 		},
-		Effects: target.RowSpec{Occurrences: []target.EffectSpec{self}, Tail: target.RowClosed},
+		Effects: vocabulary.RowSpec{Occurrences: []vocabulary.EffectSpec{self}, Tail: vocabulary.RowClosed},
 	}
-	return target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []target.OperationSpec{owner}}
+	return target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{owner}}
 }
 
 // TestSelfEffectBindsOverOutcomeScopedValuesVars proves that an operation

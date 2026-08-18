@@ -24,18 +24,37 @@ type diagnosticUnresolvedValueReferenceRow struct {
 	name string
 }
 
+const (
+	diagnosticTypeConformanceSiteCallArgument uint8 = 1
+	diagnosticTypeConformanceSiteAssignment   uint8 = 2
+)
+
+// diagnosticTypeConformanceRow is one call-argument site whose actual is
+// measured against the formal's declared type. Site is a discriminator so
+// assignment rows can share the observation kind later.
+type diagnosticTypeConformanceRow struct {
+	site     uint8
+	call     identity.ContentID
+	argument identity.ContentID
+	declared identity.ContentID
+	span     identity.ContentID
+	position uint32
+	points   []identity.ContentID
+}
+
 // DiagnosticObservationRow is one immutable tagged observation row. Its
 // typed payload union is exact: branch rows carry only branch geometry;
 // unresolved-type rows carry only the static reference proof and lexical
 // path. Lower layers therefore consume owner-issued facts instead of
 // reconstructing semantic families from optional scalar fields.
 type DiagnosticObservationRow struct {
-	id         identity.ContentID
-	kind       structure.DiagnosticObservationKind
-	location   programsource.Span
-	branch     diagnosticBranchConditionRow
-	unresolved diagnosticUnresolvedTypeReferenceRow
-	value      diagnosticUnresolvedValueReferenceRow
+	id          identity.ContentID
+	kind        structure.DiagnosticObservationKind
+	location    programsource.Span
+	branch      diagnosticBranchConditionRow
+	unresolved  diagnosticUnresolvedTypeReferenceRow
+	value       diagnosticUnresolvedValueReferenceRow
+	conformance diagnosticTypeConformanceRow
 }
 
 func (artifact *Artifact) DiagnosticObservationCount() int {

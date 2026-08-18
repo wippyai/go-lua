@@ -165,12 +165,21 @@ func validArtifactScalarSpec(spec *ArtifactScalarSpec) bool {
 				return false
 			}
 		}
+		law, lawOK := state.stageLaw(rule.Stage)
 		switch rule.Stage {
 		case ArtifactRuleStageBase:
 			if rule.Input.Available() || rule.Route.Available() {
 				return false
 			}
-		case ArtifactRuleStageLocal, ArtifactRuleStageCallDispatch, ArtifactRuleStageCallSummary, ArtifactRuleStageCallEffect:
+		case ArtifactRuleStageLocal:
+			// Local predecessor issuance may follow a WTO back-edge.
+			if !rule.Input.Available() || rule.Input == rule.Point {
+				return false
+			}
+		default:
+			if !lawOK || !law.Native || law.Stage != rule.Stage {
+				return false
+			}
 			inputRank, inputOK := pointRank[rule.Input]
 			outputRank, pointOK := pointRank[rule.Point]
 			if !rule.Input.Available() || rule.Input == rule.Point || !inputOK || !pointOK || inputRank >= outputRank {
@@ -182,7 +191,7 @@ func validArtifactScalarSpec(spec *ArtifactScalarSpec) bool {
 			}
 			stageGeometry[rule.Point] = geometry
 		}
-		if rule.Stage.NativeCall() {
+		if lawOK && law.Native {
 			key := artifactTemplateRuleOccurrence{role: rule.Role, id: rule.ID}
 			if _, duplicate := nativeOccurrences[key]; duplicate {
 				return false
@@ -200,21 +209,18 @@ func validArtifactScalarSpec(spec *ArtifactScalarSpec) bool {
 		}
 	}
 	for point, geometry := range stageGeometry {
-		switch geometry.stage {
-		case ArtifactRuleStageLocal:
-		case ArtifactRuleStageCallDispatch:
-			if owner, staged := stageGeometry[geometry.input]; staged && owner.stage.NativeCall() {
+		law, lawOK := state.stageLaw(geometry.stage)
+		if !lawOK || !law.Native {
+			return false
+		}
+		owner, staged := stageGeometry[geometry.input]
+		if law.Predecessor.Valid() {
+			if !staged || owner.stage != law.Predecessor || point == geometry.input {
 				return false
 			}
-		case ArtifactRuleStageCallSummary:
-			if owner, staged := stageGeometry[geometry.input]; !staged || owner.stage != ArtifactRuleStageCallDispatch || point == geometry.input {
-				return false
-			}
-		case ArtifactRuleStageCallEffect:
-			if owner, staged := stageGeometry[geometry.input]; !staged || owner.stage != ArtifactRuleStageCallSummary || point == geometry.input {
-				return false
-			}
-		default:
+			continue
+		}
+		if pred, predOK := state.stageLaw(owner.stage); predOK && pred.Native {
 			return false
 		}
 	}

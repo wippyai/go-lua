@@ -6,6 +6,7 @@ package manifesttarget
 import (
 	"context"
 	"fmt"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	. "github.com/wippyai/go-lua/analysis/program/target"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
@@ -55,11 +56,11 @@ type operationRef uint32
 // A zero operationRef is invalid, so an absent name can never accidentally
 // become SpecRef(1), the first valid authored operation.
 type authoredCatalogue struct {
-	operations []OperationSpec
+	operations []vocabulary.OperationSpec
 	names      map[string]operationRef
 }
 
-func (catalogue *authoredCatalogue) add(name string, operation OperationSpec) {
+func (catalogue *authoredCatalogue) add(name string, operation vocabulary.OperationSpec) {
 	if catalogue.names == nil {
 		catalogue.names = make(map[string]operationRef)
 	}
@@ -84,18 +85,18 @@ func (catalogue *authoredCatalogue) require(name string) (operationRef, error) {
 	return ref, nil
 }
 
-func (catalogue *authoredCatalogue) at(ref operationRef) *OperationSpec {
+func (catalogue *authoredCatalogue) at(ref operationRef) *vocabulary.OperationSpec {
 	return &catalogue.operations[uint32(ref)-1]
 }
 
-func values(fixed []typ.Type, open bool, variable ValuesVar) ValuesSpec {
-	tail := ValuesClosed
+func values(fixed []typ.Type, open bool, variable vocabulary.ValuesVar) vocabulary.ValuesSpec {
+	tail := vocabulary.ValuesClosed
 	var tailType schematype.Type
 	if open {
-		tail = ValuesVariable
+		tail = vocabulary.ValuesVariable
 		tailType = portable(typ.Any)
 	}
-	return ValuesSpec{Fixed: portableList(fixed), Tail: tail, Var: variable, TailType: tailType}
+	return vocabulary.ValuesSpec{Fixed: portableList(fixed), Tail: tail, Var: variable, TailType: tailType}
 }
 
 // portable is the only place this Lua catalogue crosses into Program's
@@ -153,19 +154,19 @@ func (catalogue *authoredCatalogue) selfEffects(declarations *manifest.Catalogue
 				continue
 			}
 		}
-		values := make([]ValueFormal, len(op.Input.Fixed))
+		values := make([]vocabulary.ValueFormal, len(op.Input.Fixed))
 		for i := range values {
-			values[i] = ValueFormal(i)
+			values[i] = vocabulary.ValueFormal(i)
 		}
-		vars := make([]ValuesVar, op.ValuesVars)
+		vars := make([]vocabulary.ValuesVar, op.ValuesVars)
 		for i := range vars {
-			vars[i] = ValuesVar(i)
+			vars[i] = vocabulary.ValuesVar(i)
 		}
-		op.Effects = RowSpec{Occurrences: []EffectSpec{{Target: SpecRef(ref), ValueArgs: values, ValuesArgs: vars}}, Tail: RowClosed}
+		op.Effects = vocabulary.RowSpec{Occurrences: []vocabulary.EffectSpec{{Target: vocabulary.SpecRef(ref), ValueArgs: values, ValuesArgs: vars}}, Tail: vocabulary.RowClosed}
 	}
 	return nil
 }
 
-func bindingKey(binding BindingSpec) string {
+func bindingKey(binding vocabulary.BindingSpec) string {
 	return fmt.Sprintf("%d/%q/%q", binding.Namespace, binding.Owner, binding.Member)
 }

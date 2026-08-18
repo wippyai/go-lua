@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/link"
+	linkartifact "github.com/wippyai/go-lua/analysis/program/link/artifact"
 	"github.com/wippyai/go-lua/analysis/program/target"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 	"github.com/wippyai/go-lua/internal/testfixture"
@@ -131,7 +132,7 @@ func checkFrozenFixtureLinkProject(contract *target.Contract, project testfixtur
 }
 
 func roundTripFixtureProject(linked *link.Link, contract *target.Contract) error {
-	encoded, err := link.EncodeArtifact(linked)
+	encoded, err := linkartifact.Encode(linked)
 	if err != nil {
 		return fmt.Errorf("encode Link artifact: %w", err)
 	}
@@ -145,14 +146,14 @@ func roundTripFixtureProject(linked *link.Link, contract *target.Contract) error
 		}
 		programs[mounted.ContentID()] = mounted
 	}
-	replayed, err := link.DecodeArtifact(encoded, contract, programs)
+	replayed, err := linkartifact.Decode(encoded, contract, programs)
 	if err != nil {
 		return fmt.Errorf("decode Link artifact: %w", err)
 	}
 	if replayed.ContentID() != linked.ContentID() {
 		return fmt.Errorf("Link artifact changed ContentID")
 	}
-	reencoded, err := link.EncodeArtifact(replayed)
+	reencoded, err := linkartifact.Encode(replayed)
 	if err != nil {
 		return fmt.Errorf("re-encode Link artifact: %w", err)
 	}

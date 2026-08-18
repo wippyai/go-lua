@@ -22,6 +22,7 @@ type artifactScalarSpecState struct {
 	Events     []ArtifactScalarEvent
 	Rules      []ArtifactScalarRule
 	Bodies     []ArtifactScalarBody
+	stageLaws  []ArtifactStageLaw
 	consumed   bool
 }
 
@@ -159,6 +160,41 @@ func (spec *ArtifactScalarSpec) AddEvent(row ArtifactScalarEvent) bool {
 	}
 	state.Events = append(state.Events, row)
 	return true
+}
+
+// InstallStageLaws records the sealed issuance-stage predecessor relation.
+// Native-call rows are admitted only against this table.
+func (spec *ArtifactScalarSpec) InstallStageLaws(laws []ArtifactStageLaw) bool {
+	state, ok := spec.writable()
+	if !ok || len(laws) == 0 || state.stageLaws != nil {
+		return false
+	}
+	installed := make([]ArtifactStageLaw, 0, len(laws))
+	seen := make(map[ArtifactRuleStage]struct{}, len(laws))
+	for _, law := range laws {
+		if !law.Valid() {
+			return false
+		}
+		if _, duplicate := seen[law.Stage]; duplicate {
+			return false
+		}
+		seen[law.Stage] = struct{}{}
+		installed = append(installed, law)
+	}
+	state.stageLaws = installed
+	return true
+}
+
+func (state *artifactScalarSpecState) stageLaw(stage ArtifactRuleStage) (ArtifactStageLaw, bool) {
+	if state == nil {
+		return ArtifactStageLaw{}, false
+	}
+	for _, law := range state.stageLaws {
+		if law.Stage == stage {
+			return law, true
+		}
+	}
+	return ArtifactStageLaw{}, false
 }
 
 func (spec *ArtifactScalarSpec) AddRule(row ArtifactScalarRule) bool {

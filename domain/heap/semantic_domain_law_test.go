@@ -1,6 +1,7 @@
 package heap_test
 
 import (
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -143,6 +144,24 @@ return record
 		if !valueOK || !heapdomain.Equal(agedValue, value) {
 			t.Fatal("Age changed a lattice endpoint")
 		}
+	}
+}
+
+func TestCreateSuccessorIsWidenProgressNotInclusion(t *testing.T) {
+	fixture := newSemanticHeapFixture(t, "heap_create_successor", `local t = { x = 1 }; return t`, target.Spec{Semantics: domaincontract.NewSemantics()})
+	key, _, _, _, _ := semanticExactField(t, fixture.schema)
+	zero, zeroOK := fixture.schema.EmptyObject(key)
+	object, objectOK := fixture.schema.Object(heapdomain.ShapeEligible, heapdomain.FrozenMutable, mustContainmentNone(t, fixture.schema))
+	created, createdOK := fixture.schema.Create(zero, key, object)
+	if !zeroOK || !objectOK || !createdOK {
+		t.Fatal("Create successor fixture")
+	}
+	if heapdomain.LessOrEq(zero, created) || heapdomain.LessOrEq(created, zero) {
+		t.Fatal("Create successor must remain a distinct control family")
+	}
+	widened, widenedOK := heapdomain.Widen(zero, created)
+	if !widenedOK || !heapdomain.LessOrEq(zero, widened) || !heapdomain.LessOrEq(created, widened) {
+		t.Fatal("Create successor must have a defined widening upper bound")
 	}
 }
 
@@ -670,21 +689,21 @@ func rawPresent() heapdomain.RawPresence { return heapdomain.RawPresent }
 func semanticBootSpec() target.Spec {
 	return target.Spec{
 		Semantics:    domaincontract.NewSemantics(),
-		InitialRoots: []target.InitialRootSpec{{Identity: "GlobalEnvRoot", Shape: target.BootShapeSpec{Aggregate: target.BootAggregateTable, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}}}},
-		InitialEntries: []target.InitialEntrySpec{
-			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "_G"}, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: target.InitialMutable},
-			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "frozen"}, Value: target.InitialValueSpec{Kind: target.InitialValueInteger, Integer: 1}, Mutability: target.InitialFrozen},
-			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "absent"}, Value: target.InitialValueSpec{Kind: target.InitialValueAbsent}, Mutability: target.InitialMutable},
+		InitialRoots: []vocabulary.InitialRootSpec{{Identity: "GlobalEnvRoot", Shape: vocabulary.BootShapeSpec{Aggregate: vocabulary.BootAggregateTable, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "GlobalEnvRoot"}}}},
+		InitialEntries: []vocabulary.InitialEntrySpec{
+			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "_G"}, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: vocabulary.InitialMutable},
+			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "frozen"}, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueInteger, Integer: 1}, Mutability: vocabulary.InitialFrozen},
+			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "absent"}, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueAbsent}, Mutability: vocabulary.InitialMutable},
 		},
 	}
 }
 
 func semanticIndexSpec() target.Spec {
-	return target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []target.OperationSpec{{
-		Bindings: []target.BindingSpec{{Namespace: target.BindingBuiltin, Member: []string{"require"}}},
-		Input:    target.ValuesSpec{Tail: target.ValuesClosed},
-		Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}},
-		Effects:  target.RowSpec{Tail: target.RowClosed},
+	return target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{{
+		Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"require"}}},
+		Input:    vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed},
+		Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}},
+		Effects:  vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 	}}}
 }
 
@@ -740,7 +759,7 @@ func semanticFrozenBootSelector(t testing.TB, schema heapdomain.Schema, key heap
 		entry, entryOK := schema.BootEntryAt(index)
 		entryKey, keyOK := entry.Key()
 		mutability, mutabilityOK := entry.Mutability()
-		if !entryOK || !keyOK || !mutabilityOK || entryKey != key || mutability != target.InitialFrozen {
+		if !entryOK || !keyOK || !mutabilityOK || entryKey != key || mutability != vocabulary.InitialFrozen {
 			continue
 		}
 		slot, slotOK := entry.Slot()

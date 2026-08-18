@@ -37,11 +37,7 @@ func BuildCensus(binding *bind.Result) (Census, error) {
 		if !occurrence.Global.Matches("require") {
 			continue
 		}
-		if len(occurrence.Call.Args) != 1 {
-			continue
-		}
-		request, authored := occurrence.Call.Args[0].(*ast.StringExpr)
-		if !authored || request == nil || request.Value == "" {
+		if occurrence.ArgumentCount != 1 || !occurrence.HasAuthoredString || occurrence.AuthoredString == "" {
 			continue
 		}
 		if _, duplicate := ordinal[occurrence.Call]; duplicate {

@@ -1,7 +1,7 @@
 package composite
 
 import (
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/schema"
 )
 
 // The grammar disposition table is the seal-time account of the Lua surface the
@@ -30,7 +30,7 @@ import (
 // would still close over the same row set while accounting for an action that
 // no longer exists. Pinning the census digest makes every parser or AST change
 // reach an author, and the pin is raised by whoever re-reads the affected rows.
-const grammarCensusAuthority = "08a4f1da1675db82c14e230afff2888ee643f2bb0225dcb6eac4093b35c61f77"
+const grammarCensusAuthority = "b64b62e921d0016d7f3473f92c92b43e0ddf9395a84e8d956493d97e221e696a"
 
 // GrammarRow is one parser census row key. The three prefixes are the three
 // grains the census publishes: "production:" for a parser.go.y alternative,
@@ -135,34 +135,34 @@ func (reason GrammarReason) String() string {
 	}
 }
 
-// grammarRoles is a set of rule roles held as a bit per role ordinal. The
-// artifact owns the ordinals; this is a set over them, never a second catalog.
+// grammarRoles is a set of declaration keys encoded as a bit per table slot.
 type grammarRoles uint32
 
 const (
 	roleNone            grammarRoles = 0
-	roleValueSource                  = grammarRoles(1) << programartifact.RuleRoleValueSource
-	rolePackSource                   = grammarRoles(1) << programartifact.RuleRolePackSource
-	roleHeapIngress                  = grammarRoles(1) << programartifact.RuleRoleHeapIngress
-	roleValueAllocation              = grammarRoles(1) << programartifact.RuleRoleValueAllocation
-	roleHeapEmpty                    = grammarRoles(1) << programartifact.RuleRoleHeapEmpty
-	roleHeapClosed                   = grammarRoles(1) << programartifact.RuleRoleHeapClosed
-	roleRawGet                       = grammarRoles(1) << programartifact.RuleRoleRawGet
-	roleRawSet                       = grammarRoles(1) << programartifact.RuleRoleRawSet
-	roleCallDispatch                 = grammarRoles(1) << programartifact.RuleRoleCallDispatch
-	roleEffectSelected               = grammarRoles(1) << programartifact.RuleRoleEffectSelected
-	roleEffectOpaque                 = grammarRoles(1) << programartifact.RuleRoleEffectOpaque
-	roleEffectBody                   = grammarRoles(1) << programartifact.RuleRoleEffectBody
-	roleCallActivation               = grammarRoles(1) << programartifact.RuleRoleCallActivation
-	roleStorageTransfer              = grammarRoles(1) << programartifact.RuleRoleValueStorageTransfer
-	roleArithmetic                   = grammarRoles(1) << programartifact.RuleRoleValueBinaryArithmetic
-	roleEquality                     = grammarRoles(1) << programartifact.RuleRoleValueBinaryEquality
-	roleOrder                        = grammarRoles(1) << programartifact.RuleRoleValueBinaryOrder
-	rolePresence                     = grammarRoles(1) << programartifact.RuleRoleValuePresenceRefinement
+	roleValueSource                  = grammarRoles(1) << 1
+	rolePackSource                   = grammarRoles(1) << 2
+	roleHeapIngress                  = grammarRoles(1) << 3
+	roleValueAllocation              = grammarRoles(1) << 4
+	roleHeapEmpty                    = grammarRoles(1) << 5
+	roleHeapClosed                   = grammarRoles(1) << 6
+	roleRawGet                       = grammarRoles(1) << 7
+	roleRawSet                       = grammarRoles(1) << 8
+	roleCallDispatch                 = grammarRoles(1) << 9
+	roleEffectSelected               = grammarRoles(1) << 10
+	roleEffectOpaque                 = grammarRoles(1) << 11
+	roleEffectBody                   = grammarRoles(1) << 12
+	roleCallActivation               = grammarRoles(1) << 13
+	roleStorageTransfer              = grammarRoles(1) << 16
+	roleArithmetic                   = grammarRoles(1) << 17
+	roleEquality                     = grammarRoles(1) << 18
+	roleOrder                        = grammarRoles(1) << 19
+	rolePresence                     = grammarRoles(1) << 20
 )
 
-func (roles grammarRoles) has(role programartifact.RuleRole) bool {
-	return roles&(grammarRoles(1)<<role) != 0
+func (roles grammarRoles) has(key schema.Key) bool {
+	slot, ok := ruleSlotForKey(key)
+	return ok && roles&(grammarRoles(1)<<slot) != 0
 }
 
 // grammarEntry is one authored disposition. Roles is populated only for a
@@ -707,12 +707,12 @@ func (reason GrammarJoinReason) String() string {
 }
 
 // GrammarJoinFailure is the one rejection the join reports. Row names the
-// census row or disposition at fault; Role is set only when the fault is about
-// a rule role rather than a row.
+// census row or disposition at fault; Key is set only when the fault is about
+// a rule declaration rather than a row.
 type GrammarJoinFailure struct {
 	Row    GrammarRow
 	Reason GrammarJoinReason
-	Role   programartifact.RuleRole
+	Key    schema.Key
 }
 
 func (failure GrammarJoinFailure) Available() bool { return failure.Reason != GrammarJoinSealed }
@@ -770,12 +770,16 @@ func checkGrammarEntry(entry grammarEntry) GrammarJoinFailure {
 	default:
 		return GrammarJoinFailure{Row: entry.Row, Reason: GrammarJoinMalformedEntry}
 	}
-	for role := programartifact.RuleRole(0); int(role) < ruleRoleLimit; role++ {
-		if !entry.Roles.has(role) {
+	for slot := 1; slot < 32; slot++ {
+		if entry.Roles&(grammarRoles(1)<<slot) == 0 {
 			continue
 		}
-		if _, declared := templateForRole(role); !declared {
-			return GrammarJoinFailure{Row: entry.Row, Reason: GrammarJoinUndeclaredRole, Role: role}
+		template, declared := templateAtSlot(slot)
+		if !declared {
+			return GrammarJoinFailure{Row: entry.Row, Reason: GrammarJoinUndeclaredRole}
+		}
+		if !template.Key().Available() {
+			return GrammarJoinFailure{Row: entry.Row, Reason: GrammarJoinUndeclaredRole}
 		}
 	}
 	return GrammarJoinFailure{}
@@ -846,13 +850,14 @@ func checkGrammarRoleReach(declared map[GrammarRow]grammarEntry) GrammarJoinFail
 	for _, entry := range declared {
 		reached |= entry.Roles
 	}
-	for index := 0; index < programartifact.MountedRuleRoleCount(); index++ {
-		role, ok := programartifact.MountedRuleRoleAt(index)
-		if !ok {
-			return GrammarJoinFailure{Reason: GrammarJoinRoleUnreached}
+	sealRegistry()
+	for _, template := range registry.templates {
+		if template == nil || !template.Lane().Mounted() {
+			continue
 		}
-		if !reached.has(role) {
-			return GrammarJoinFailure{Reason: GrammarJoinRoleUnreached, Role: role}
+		key := template.Key()
+		if !reached.has(key) {
+			return GrammarJoinFailure{Reason: GrammarJoinRoleUnreached, Key: key}
 		}
 	}
 	return GrammarJoinFailure{}

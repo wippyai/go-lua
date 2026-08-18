@@ -10,6 +10,7 @@ type Result struct {
 	implicitGlobalUses map[*ast.IdentExpr]struct{}
 	runtimeTypeValues  map[*ast.IdentExpr]RuntimeTypeValue
 	directGlobalCalls  []DirectGlobalCall
+	callSpellings      map[*ast.FuncCallExpr]string
 	globals            globalAuthority
 
 	nextSymbolID Symbol
@@ -57,14 +58,24 @@ type Result struct {
 // binding evidence: consumers select a named global through Global.Matches;
 // the binder itself has no module policy.
 type DirectGlobalCall struct {
+	// Call is retained only as the parser-owned occurrence key. Consumers must
+	// use the detached evidence below rather than reopening its syntax.
 	Call   *ast.FuncCallExpr
 	Global GlobalIdentity
+
+	// ArgumentCount is the authored call arity. HasAuthoredString is true only
+	// when the call has exactly one authored string literal; AuthoredString then
+	// carries that literal verbatim, including the empty string.
+	ArgumentCount     int
+	AuthoredString    string
+	HasAuthoredString bool
 }
 
 func newResult() *Result {
 	r := &Result{
 		identSymbols:             make(map[*ast.IdentExpr]Symbol),
 		implicitGlobalUses:       make(map[*ast.IdentExpr]struct{}),
+		callSpellings:            make(map[*ast.FuncCallExpr]string),
 		names:                    make(map[Symbol]string),
 		kinds:                    make(map[Symbol]SymbolKind),
 		functionOrigins:          make(map[*ast.FunctionExpr]FunctionOrigin),

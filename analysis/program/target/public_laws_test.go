@@ -2,6 +2,7 @@ package target
 
 import (
 	"fmt"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"strings"
 	"testing"
 
@@ -13,11 +14,11 @@ import (
 func TestAllPublicObservablesArePermutationAndAlphaInvariant(t *testing.T) {
 	leftFormal := testNewTypeParam("Element", testString)
 	rightFormal := testNewTypeParam("Item", testString)
-	left := mustSeal(t, Spec{Operations: []OperationSpec{
+	left := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{
 		genericAlpha(leftFormal, 2),
 		providerBeta(),
 	}})
-	right := mustSeal(t, Spec{Operations: []OperationSpec{
+	right := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{
 		providerBeta(),
 		genericAlpha(rightFormal, 1),
 	}})
@@ -25,18 +26,18 @@ func TestAllPublicObservablesArePermutationAndAlphaInvariant(t *testing.T) {
 }
 
 func TestPublicLawTargetHasNoCallFormPlane(t *testing.T) {
-	binding := BindingSpec{
-		Namespace: BindingProvider,
+	binding := vocabulary.BindingSpec{
+		Namespace: vocabulary.BindingProvider,
 		Owner:     []string{"network", "channel"},
 		Member:    []string{"case", "receive"},
 	}
-	contract := mustSeal(t, Spec{Operations: []OperationSpec{{
+	contract := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{{
 		// Program owns plain-versus-colon CallForm. A method-capable target
 		// operation is authored once; the colon receiver is Input.Fixed[0].
-		Bindings: []BindingSpec{binding},
-		Input:    ValuesSpec{Fixed: []schematype.Type{testString}, Tail: ValuesClosed},
-		Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesClosed}}},
-		Effects:  RowSpec{Tail: RowClosed},
+		Bindings: []vocabulary.BindingSpec{binding},
+		Input:    vocabulary.ValuesSpec{Fixed: []schematype.Type{testString}, Tail: vocabulary.ValuesClosed},
+		Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}},
+		Effects:  vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 	}}})
 	op, ok := contract.Lookup(binding)
 	if !ok {
@@ -49,8 +50,8 @@ func TestPublicLawTargetHasNoCallFormPlane(t *testing.T) {
 	if value, ok := contract.ValuesAt(input, 0); !ok || value == 0 {
 		t.Fatal("Input.Fixed[0] was not retained")
 	}
-	if _, ok := contract.Lookup(BindingSpec{
-		Namespace: BindingProvider,
+	if _, ok := contract.Lookup(vocabulary.BindingSpec{
+		Namespace: vocabulary.BindingProvider,
 		Owner:     []string{"network.channel"},
 		Member:    []string{"case", "receive"},
 	}); ok {
@@ -66,20 +67,20 @@ func TestPublicLawTargetHasNoCallFormPlane(t *testing.T) {
 }
 
 func TestBindingLookupKeepsAliasesPrefixesAndBytesExact(t *testing.T) {
-	aliasLeft := BindingSpec{Namespace: BindingBuiltin, Member: []string{"a"}}
-	aliasRight := BindingSpec{Namespace: BindingModule, Owner: []string{"table"}, Member: []string{"unpack"}}
-	prefix := BindingSpec{Namespace: BindingBuiltin, Member: []string{"a\x00z"}}
-	longer := BindingSpec{Namespace: BindingBuiltin, Member: []string{"aa"}}
-	segmented := BindingSpec{Namespace: BindingProvider, Owner: []string{"actor", "m\x00"}, Member: []string{"send", "x"}}
-	operation := func(bindings ...BindingSpec) OperationSpec {
-		return OperationSpec{
+	aliasLeft := vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"a"}}
+	aliasRight := vocabulary.BindingSpec{Namespace: vocabulary.BindingModule, Owner: []string{"table"}, Member: []string{"unpack"}}
+	prefix := vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"a\x00z"}}
+	longer := vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"aa"}}
+	segmented := vocabulary.BindingSpec{Namespace: vocabulary.BindingProvider, Owner: []string{"actor", "m\x00"}, Member: []string{"send", "x"}}
+	operation := func(bindings ...vocabulary.BindingSpec) vocabulary.OperationSpec {
+		return vocabulary.OperationSpec{
 			Bindings: bindings,
-			Input:    ValuesSpec{Tail: ValuesClosed},
-			Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Tail: ValuesClosed}}},
-			Effects:  RowSpec{Tail: RowClosed},
+			Input:    vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed},
+			Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}},
+			Effects:  vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 		}
 	}
-	contract := mustSeal(t, Spec{Operations: []OperationSpec{
+	contract := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{
 		operation(segmented), operation(longer), operation(aliasRight, prefix, aliasLeft),
 	}})
 	aliasA, ok := contract.Lookup(aliasLeft)
@@ -90,16 +91,16 @@ func TestBindingLookupKeepsAliasesPrefixesAndBytesExact(t *testing.T) {
 	if !ok || aliasA != aliasB {
 		t.Fatalf("aliases = %d/%d/%v", aliasA, aliasB, ok)
 	}
-	for _, binding := range []BindingSpec{prefix, longer, segmented} {
+	for _, binding := range []vocabulary.BindingSpec{prefix, longer, segmented} {
 		if _, ok := contract.Lookup(binding); !ok {
 			t.Fatalf("exact binding disappeared: %#v", binding)
 		}
 	}
-	for _, binding := range []BindingSpec{
-		{Namespace: BindingBuiltin, Member: []string{"a\x00"}},
-		{Namespace: BindingBuiltin, Member: []string{"a\x00zz"}},
-		{Namespace: BindingProvider, Owner: []string{"actor", "m"}, Member: []string{"send", "x"}},
-		{Namespace: BindingProvider, Owner: []string{"actor", "m\x00"}, Member: []string{"send"}},
+	for _, binding := range []vocabulary.BindingSpec{
+		{Namespace: vocabulary.BindingBuiltin, Member: []string{"a\x00"}},
+		{Namespace: vocabulary.BindingBuiltin, Member: []string{"a\x00zz"}},
+		{Namespace: vocabulary.BindingProvider, Owner: []string{"actor", "m"}, Member: []string{"send", "x"}},
+		{Namespace: vocabulary.BindingProvider, Owner: []string{"actor", "m\x00"}, Member: []string{"send"}},
 	} {
 		if _, ok := contract.Lookup(binding); ok {
 			t.Fatalf("prefix/byte-neighbor resolved: %#v", binding)
@@ -120,14 +121,14 @@ func TestOpaqueHasExactlyFourUnknownOutcomes(t *testing.T) {
 	if !ok {
 		t.Fatal("opaque operation missing")
 	}
-	if contract.BoundOperationCount() != 0 || contract.OperationCount() != 1 {
+	if contract.boundOperationCount() != 0 || contract.OperationCount() != 1 {
 		t.Fatal("opaque is not the sole row of an empty authored contract")
 	}
 	input, ok := contract.Input(opaque)
 	if !ok {
 		t.Fatal("opaque input missing")
 	}
-	if tail, variable, ok := contract.ValuesTail(input); !ok || tail != ValuesUnknown || variable != 0 {
+	if tail, variable, ok := contract.ValuesTail(input); !ok || tail != vocabulary.ValuesUnknown || variable != 0 {
 		t.Fatalf("opaque input tail = %d/%d/%v, want unknown/0/true", tail, variable, ok)
 	}
 	want := [...]flowkind.OutcomeKind{
@@ -144,48 +145,48 @@ func TestOpaqueHasExactlyFourUnknownOutcomes(t *testing.T) {
 		if !ok || gotKind != kind || values != input {
 			t.Fatalf("opaque outcome %d = %d/%d/%v, want %d/%d/true", index, gotKind, values, ok, kind, input)
 		}
-		if tail, variable, ok := contract.ValuesTail(values); !ok || tail != ValuesUnknown || variable != 0 {
+		if tail, variable, ok := contract.ValuesTail(values); !ok || tail != vocabulary.ValuesUnknown || variable != 0 {
 			t.Fatalf("opaque outcome %d values are not exactly unknown", index)
 		}
 	}
 	if count := contract.EffectCount(opaque); count != 0 {
 		t.Fatalf("opaque explicit effect count = %d, want 0", count)
 	}
-	if tail, variable, ok := contract.EffectTail(opaque); !ok || tail != RowUnknownOpen || variable != 0 {
+	if tail, variable, ok := contract.EffectTail(opaque); !ok || tail != vocabulary.RowUnknownOpen || variable != 0 {
 		t.Fatalf("opaque effect tail = %d/%d/%v, want unknown-open/0/true", tail, variable, ok)
 	}
 }
 
-func genericAlpha(formal *testRawTypeParam, beta SpecRef) OperationSpec {
+func genericAlpha(formal *testRawTypeParam, beta vocabulary.SpecRef) vocabulary.OperationSpec {
 	declarations, formals := testOperationTypes(formal)
-	return OperationSpec{
-		Bindings:    []BindingSpec{{Namespace: BindingBuiltin, Member: []string{"alpha"}}},
+	return vocabulary.OperationSpec{
+		Bindings:    []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"alpha"}}},
 		TypeFormals: formals,
 		ValuesVars:  1,
 		RowFormals:  1,
-		Input:       ValuesSpec{Fixed: []schematype.Type{declarations[0]}, Tail: ValuesVariable, Var: 0},
-		Outcomes: []OutcomeSpec{
-			{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{declarations[0]}, Tail: ValuesClosed}},
-			{Kind: flowkind.OutcomeThrow, Values: ValuesSpec{Fixed: []schematype.Type{testString}, Tail: ValuesVariable, Var: 0}},
+		Input:       vocabulary.ValuesSpec{Fixed: []schematype.Type{declarations[0]}, Tail: vocabulary.ValuesVariable, Var: 0},
+		Outcomes: []vocabulary.OutcomeSpec{
+			{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Fixed: []schematype.Type{declarations[0]}, Tail: vocabulary.ValuesClosed}},
+			{Kind: flowkind.OutcomeThrow, Values: vocabulary.ValuesSpec{Fixed: []schematype.Type{testString}, Tail: vocabulary.ValuesVariable, Var: 0}},
 		},
-		Effects: RowSpec{
-			Occurrences: []EffectSpec{{Target: beta, ValueArgs: []ValueFormal{0}}},
-			Tail:        RowVariable,
+		Effects: vocabulary.RowSpec{
+			Occurrences: []vocabulary.EffectSpec{{Target: beta, ValueArgs: []vocabulary.ValueFormal{0}}},
+			Tail:        vocabulary.RowVariable,
 			Var:         0,
 		},
 	}
 }
 
-func providerBeta() OperationSpec {
-	return OperationSpec{
-		Bindings: []BindingSpec{{
-			Namespace: BindingProvider,
+func providerBeta() vocabulary.OperationSpec {
+	return vocabulary.OperationSpec{
+		Bindings: []vocabulary.BindingSpec{{
+			Namespace: vocabulary.BindingProvider,
 			Owner:     []string{"network", "channel"},
 			Member:    []string{"case", "receive"},
 		}},
-		Input:    ValuesSpec{Fixed: []schematype.Type{testString}, Tail: ValuesClosed},
-		Outcomes: []OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: ValuesSpec{Fixed: []schematype.Type{testBoolean}, Tail: ValuesClosed}}},
-		Effects:  RowSpec{Tail: RowClosed},
+		Input:    vocabulary.ValuesSpec{Fixed: []schematype.Type{testString}, Tail: vocabulary.ValuesClosed},
+		Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Fixed: []schematype.Type{testBoolean}, Tail: vocabulary.ValuesClosed}}},
+		Effects:  vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 	}
 }
 
@@ -201,11 +202,11 @@ func assertPublicContractEqual(t *testing.T, left, right *Contract) {
 func publicContractSnapshot(t *testing.T, contract *Contract) string {
 	t.Helper()
 	var out strings.Builder
-	fmt.Fprintf(&out, "operations=%d,bound=%d;", contract.OperationCount(), contract.BoundOperationCount())
+	fmt.Fprintf(&out, "operations=%d,bound=%d;", contract.OperationCount(), contract.boundOperationCount())
 	opaque, opaqueOK := contract.Opaque()
 	fmt.Fprintf(&out, "opaque=%d/%v;", opaque, opaqueOK)
-	for index := 0; index < contract.BoundOperationCount(); index++ {
-		op, ok := contract.BoundOperationAt(index)
+	for index := 0; index < contract.boundOperationCount(); index++ {
+		op, ok := contract.boundOperationAt(index)
 		fmt.Fprintf(&out, "bound[%d]=%d/%v;", index, op, ok)
 	}
 	for index := 0; index < contract.OperationCount(); index++ {
@@ -214,8 +215,8 @@ func publicContractSnapshot(t *testing.T, contract *Contract) string {
 		writeOperationSnapshot(t, &out, contract, op)
 		out.WriteString("}")
 	}
-	for index := 0; index < contract.ProtocolCount(); index++ {
-		protocol, ok := contract.ProtocolAt(index)
+	for index := 0; index < contract.protocolCount(); index++ {
+		protocol, ok := contract.protocolAt(index)
 		fmt.Fprintf(&out, "protocol[%d]=%d/%v{", index, protocol, ok)
 		writeProtocolSnapshot(&out, contract, protocol)
 		out.WriteString("}")
@@ -223,96 +224,96 @@ func publicContractSnapshot(t *testing.T, contract *Contract) string {
 	return out.String()
 }
 
-func writeProtocolSnapshot(out *strings.Builder, contract *Contract, protocol Protocol) {
+func writeProtocolSnapshot(out *strings.Builder, contract *Contract, protocol vocabulary.Protocol) {
 	fmt.Fprintf(out, "acquisitions=%d,states=%d,transitions=%d,escapes=%d,callback-holders=%d;",
-		contract.ProtocolAcquisitionCount(protocol), contract.StateCount(protocol),
-		contract.TransitionCount(protocol), contract.EscapeCount(protocol), contract.ProtocolCallbackHolderCount(protocol))
-	for index := 0; index < contract.ProtocolAcquisitionCount(protocol); index++ {
-		op, outcome, result, state, ok := contract.ProtocolAcquisitionAt(protocol, index)
+		contract.protocolAcquisitionCount(protocol), contract.stateCount(protocol),
+		contract.transitionCount(protocol), contract.escapeCount(protocol), contract.protocolCallbackHolderCount(protocol))
+	for index := 0; index < contract.protocolAcquisitionCount(protocol); index++ {
+		op, outcome, result, state, ok := contract.protocolAcquisitionAt(protocol, index)
 		fmt.Fprintf(out, "acquisition[%d]=%d/%d/%d/%d/%v;", index, op, outcome, result, state, ok)
 	}
-	for index := 0; index < contract.StateCount(protocol); index++ {
-		state, ok := contract.StateAt(protocol, index)
-		name, nameOK := contract.StateName(protocol, state)
-		final, finalOK := contract.StateFinal(protocol, state)
+	for index := 0; index < contract.stateCount(protocol); index++ {
+		state, ok := contract.stateAt(protocol, index)
+		name, nameOK := contract.stateName(protocol, state)
+		final, finalOK := contract.stateFinal(protocol, state)
 		fmt.Fprintf(out, "state[%d]=%d/%q/%v/%v/%v;", index, state, name, final, ok, nameOK && finalOK)
 	}
-	for index := 0; index < contract.TransitionCount(protocol); index++ {
-		op, kind, source, from, ok := contract.TransitionAt(protocol, index)
+	for index := 0; index < contract.transitionCount(protocol); index++ {
+		op, kind, source, from, ok := contract.transitionAt(protocol, index)
 		fmt.Fprintf(out, "transition[%d]=%d/%d/%d/%d/%v;", index, op, kind, source, from, ok)
-		for outcomeIndex := 0; outcomeIndex < contract.TransitionOutcomeCount(protocol, index); outcomeIndex++ {
-			outcome, to, outcomeOK := contract.TransitionOutcomeAt(protocol, index, outcomeIndex)
+		for outcomeIndex := 0; outcomeIndex < contract.transitionOutcomeCount(protocol, index); outcomeIndex++ {
+			outcome, to, outcomeOK := contract.transitionOutcomeAt(protocol, index, outcomeIndex)
 			fmt.Fprintf(out, "transition-outcome[%d]=%d/%d/%v;", outcomeIndex, outcome, to, outcomeOK)
 		}
 	}
-	for index := 0; index < contract.EscapeCount(protocol); index++ {
-		op, kind, source, ok := contract.EscapeAt(protocol, index)
+	for index := 0; index < contract.escapeCount(protocol); index++ {
+		op, kind, source, ok := contract.escapeAt(protocol, index)
 		fmt.Fprintf(out, "escape[%d]=%d/%d/%d/%v;", index, op, kind, source, ok)
 	}
-	for index := 0; index < contract.ProtocolCallbackHolderCount(protocol); index++ {
-		op, input, callback, ok := contract.ProtocolCallbackHolderAt(protocol, index)
+	for index := 0; index < contract.protocolCallbackHolderCount(protocol); index++ {
+		op, input, callback, ok := contract.protocolCallbackHolderAt(protocol, index)
 		fmt.Fprintf(out, "callback-holder[%d]=%d/%d/%d/%d/%v;", index, op, input.Kind, input.Ordinal, callback, ok)
 	}
 }
 
-func writeOperationSnapshot(t *testing.T, out *strings.Builder, contract *Contract, op Operation) {
+func writeOperationSnapshot(t *testing.T, out *strings.Builder, contract *Contract, op vocabulary.Operation) {
 	t.Helper()
 	input, inputOK := contract.Input(op)
 	fmt.Fprintf(out, "input=%d/%v:%s;", input, inputOK, publicValuesSnapshot(t, contract, input, inputOK))
 	fmt.Fprintf(out, "type-formals=%d,value-formals=%d,values-vars=%d,row-formals=%d;",
-		contract.TypeFormalCount(op), contract.ValueFormalCount(op), contract.ValuesVarCount(op), contract.RowFormalCount(op))
+		contract.TypeFormalCount(op), contract.ValueFormalCount(op), contract.ValuesVarCount(op), contract.rowFormalCount(op))
 	for index := 0; index < contract.ValuesVarCount(op); index++ {
-		class, ok := contract.ValuesVarType(op, ValuesVar(index))
+		class, ok := contract.ValuesVarType(op, vocabulary.ValuesVar(index))
 		fmt.Fprintf(out, "values-var-type[%d]=%d/%v:%s;", index, class, ok, publicTypeDigest(t, contract, class, ok))
 	}
 	for index := 0; index < contract.TypeFormalCount(op); index++ {
-		constraint, ok := contract.TypeFormalConstraint(op, TypeFormal(index))
+		constraint, ok := contract.TypeFormalConstraint(op, vocabulary.TypeFormal(index))
 		fmt.Fprintf(out, "constraint[%d]=%d/%v:%s;", index, constraint, ok, publicTypeDigest(t, contract, constraint, ok))
 	}
 	for index := 0; index < contract.OutcomeCount(op); index++ {
 		kind, values, ok := contract.OutcomeAt(op, index)
 		fmt.Fprintf(out, "outcome[%d]=%d/%d/%v:%s;", index, kind, values, ok, publicValuesSnapshot(t, contract, values, ok))
-		for callbackIndex := 0; callbackIndex < contract.CallbackResultCount(op, index); callbackIndex++ {
-			result, callback, callbackOK := contract.CallbackResultAt(op, index, callbackIndex)
+		for callbackIndex := 0; callbackIndex < contract.callbackResultCount(op, index); callbackIndex++ {
+			result, callback, callbackOK := contract.callbackResultAt(op, index, callbackIndex)
 			fmt.Fprintf(out, "callback-result[%d]=%d/%d/%v;", callbackIndex, result, callback, callbackOK)
 		}
-		for aliasIndex := 0; aliasIndex < contract.ResultAliasCount(op, index); aliasIndex++ {
-			result, kind, source, aliasOK := contract.ResultAliasAt(op, index, aliasIndex)
+		for aliasIndex := 0; aliasIndex < contract.resultAliasCount(op, index); aliasIndex++ {
+			result, kind, source, aliasOK := contract.resultAliasAt(op, index, aliasIndex)
 			fmt.Fprintf(out, "result-alias[%d]=%d/%d/%d/%v;", aliasIndex, result, kind, source, aliasOK)
 		}
 		for freshIndex := 0; freshIndex < contract.FreshResultCount(op, index); freshIndex++ {
 			result, ordinal, kind, freshOK := contract.FreshResultAt(op, index, freshIndex)
 			fmt.Fprintf(out, "fresh-result[%d]=%d/%d/%d/%v;", freshIndex, result, ordinal, kind, freshOK)
 		}
-		for producedIndex := 0; producedIndex < contract.ProducedCount(op, index); producedIndex++ {
-			result, target, producedOK := contract.ProducedAt(op, index, producedIndex)
+		for producedIndex := 0; producedIndex < contract.producedCount(op, index); producedIndex++ {
+			result, target, producedOK := contract.producedAt(op, index, producedIndex)
 			fmt.Fprintf(out, "produced[%d]=%d/%d/%v;", producedIndex, result, target, producedOK)
-			for captureIndex := 0; captureIndex < contract.ProducedCaptureCount(op, index, producedIndex); captureIndex++ {
-				kind, source, captureOK := contract.ProducedCaptureAt(op, index, producedIndex, captureIndex)
+			for captureIndex := 0; captureIndex < contract.producedCaptureCount(op, index, producedIndex); captureIndex++ {
+				kind, source, captureOK := contract.producedCaptureAt(op, index, producedIndex, captureIndex)
 				fmt.Fprintf(out, "capture[%d]=%d/%d/%v;", captureIndex, kind, source, captureOK)
 			}
 		}
 	}
-	for transfer := 0; transfer < contract.TransferCount(op); transfer++ {
-		endpoint, endpointOK := contract.TransferEndpointAt(op, transfer)
-		payload, payloadOK := contract.TransferPayloadAt(op, transfer)
-		alias, aliasOK := contract.TransferAliasAt(op, transfer)
-		identity, identityOK := contract.TransferIdentityAt(op, transfer)
-		capabilities, capabilitiesOK := contract.TransferCapabilitiesAt(op, transfer)
+	for transfer := 0; transfer < contract.transferCount(op); transfer++ {
+		endpoint, endpointOK := contract.transferEndpointAt(op, transfer)
+		payload, payloadOK := contract.transferPayloadAt(op, transfer)
+		alias, aliasOK := contract.transferAliasAt(op, transfer)
+		identity, identityOK := contract.transferIdentityAt(op, transfer)
+		capabilities, capabilitiesOK := contract.transferCapabilitiesAt(op, transfer)
 		fmt.Fprintf(out, "transfer[%d]=endpoint:%d/%d/%v,payload:%d/%d/%v,alias:%d/%d/%v,identity:%d/%v,capabilities:%d/%v;", transfer, endpoint.Kind, endpoint.Input, endpointOK, payload.Kind, payload.Ordinal, payloadOK, alias.Kind, alias.Ordinal, aliasOK, identity, identityOK, capabilities, capabilitiesOK)
-		for outcome := 0; outcome < contract.TransferOutcomeCount(op, transfer); outcome++ {
-			ordinal, possibility, outcomeOK := contract.TransferOutcomeAt(op, transfer, outcome)
+		for outcome := 0; outcome < contract.transferOutcomeCount(op, transfer); outcome++ {
+			ordinal, possibility, outcomeOK := contract.transferOutcomeAt(op, transfer, outcome)
 			fmt.Fprintf(out, "transfer-outcome[%d]=%d/%d/%v;", outcome, ordinal, possibility, outcomeOK)
 		}
 	}
 	for index := 0; index < contract.CallbackCount(op); index++ {
 		callback, callbackOK := contract.CallbackAt(op, index)
 		owner, ownerOK := contract.CallbackOwner(callback)
-		function, functionOK := contract.CallbackFunction(callback)
+		function, functionOK := contract.callbackFunction(callback)
 		arguments, argumentsOK := contract.CallbackArguments(callback)
-		admission, admissionOK := contract.CallbackAdmission(callback)
+		admission, admissionOK := contract.callbackAdmission(callback)
 		lifecycle, lifecycleOK := contract.CallbackLifecycle(callback)
-		subedge, subedgeOK := contract.CallbackSubedge(callback)
+		subedge, subedgeOK := contract.callbackSubedge(callback)
 		fmt.Fprintf(out, "callback[%d]=%d/%v:owner=%d/%v,function=%d/%d/%v,args=%d/%v,admission=%d/%v,lifecycle=%d/%v;",
 			index, callback, callbackOK, owner, ownerOK, function.Kind, function.Ordinal, functionOK,
 			arguments, argumentsOK, admission, admissionOK, lifecycle, lifecycleOK)
@@ -331,14 +332,14 @@ func writeOperationSnapshot(t *testing.T, out *strings.Builder, contract *Contra
 			fmt.Fprintf(out, "callback-effect[%d]=target:%d/%v;", effect, target, targetOK)
 			writeCallbackEffectArguments(out, contract, callback, effect)
 		}
-		releaseOperation, releaseInput, releaseOutcome, releaseMode, releaseOK := contract.CallbackRelease(callback)
+		releaseOperation, releaseInput, releaseOutcome, releaseMode, releaseOK := contract.callbackRelease(callback)
 		fmt.Fprintf(out, "callback-release=%d/%d/%d/%d/%v;", releaseOperation, releaseInput, releaseOutcome, releaseMode, releaseOK)
-		zeroBehavior, zeroOutcome, zeroOK := contract.CallbackReleaseZero(callback)
+		zeroBehavior, zeroOutcome, zeroOK := contract.callbackReleaseZero(callback)
 		fmt.Fprintf(out, "callback-release-zero=%d/%d/%v;", zeroBehavior, zeroOutcome, zeroOK)
 	}
 	writeSubedgeSnapshot(out, contract, op)
-	for release := 0; release < contract.CallbackReleaseCount(op); release++ {
-		callback, input, outcome, mode, releaseOK := contract.CallbackReleaseAt(op, release)
+	for release := 0; release < contract.callbackReleaseCount(op); release++ {
+		callback, input, outcome, mode, releaseOK := contract.callbackReleaseAt(op, release)
 		fmt.Fprintf(out, "release[%d]=%d/%d/%d/%d/%v;", release, callback, input, outcome, mode, releaseOK)
 	}
 	for index := 0; index < contract.EffectCount(op); index++ {
@@ -346,16 +347,16 @@ func writeOperationSnapshot(t *testing.T, out *strings.Builder, contract *Contra
 		fmt.Fprintf(out, "effect[%d]=target:%d/%v;", index, target, targetOK)
 		writeEffectArguments(out, contract, op, index)
 	}
-	for index := 0; index < contract.SuspensionCount(op); index++ {
-		yield, reentry, source, multiplicity, ok := contract.SuspensionAt(op, index)
+	for index := 0; index < contract.suspensionCount(op); index++ {
+		yield, reentry, source, multiplicity, ok := contract.suspensionAt(op, index)
 		fmt.Fprintf(out, "suspension[%d]=%d/%d/%d/%d/%v;", index, yield, reentry, source, multiplicity, ok)
 	}
 	for index := 0; index < contract.ResumeCount(op); index++ {
 		resume, resumeOK := contract.ResumeIDAt(op, index)
 		owner, source, carrier, arguments, ok := contract.Resume(resume)
 		fmt.Fprintf(out, "resume[%d]=%d/%d/%d/%d/%v/%v;", index, owner, source, carrier, arguments, resumeOK, ok)
-		for outcome := 0; outcome < contract.ResumeOutcomeCount(resume); outcome++ {
-			kind, target, outcomeOK := contract.ResumeOutcomeAt(resume, outcome)
+		for outcome := 0; outcome < contract.resumeOutcomeCount(resume); outcome++ {
+			kind, target, outcomeOK := contract.resumeOutcomeAt(resume, outcome)
 			fmt.Fprintf(out, "resume-outcome[%d]=%d/%d/%v;", outcome, kind, target, outcomeOK)
 		}
 	}
@@ -364,45 +365,45 @@ func writeOperationSnapshot(t *testing.T, out *strings.Builder, contract *Contra
 	writeBindingSnapshot(out, contract, op)
 }
 
-func writeSubedgeSnapshot(out *strings.Builder, contract *Contract, op Operation) {
+func writeSubedgeSnapshot(out *strings.Builder, contract *Contract, op vocabulary.Operation) {
 	for index := 0; index < contract.SubedgeCount(op); index++ {
 		edge, edgeOK := contract.SubedgeAt(op, index)
-		owner, ownerOK := contract.SubedgeOwner(edge)
-		role, roleOK := contract.SubedgeRole(edge)
+		owner, ownerOK := contract.subedgeOwner(edge)
+		role, roleOK := contract.subedgeRole(edge)
 		family, familyOK := contract.SubedgeFamily(edge)
-		callee, calleeOK := contract.SubedgeCallee(edge)
-		admission, admissionOK := contract.SubedgeAdmission(edge)
+		callee, calleeOK := contract.subedgeCallee(edge)
+		admission, admissionOK := contract.subedgeAdmission(edge)
 		arguments, argumentsOK := contract.SubedgeArguments(edge)
-		ruleEntry, ruleEntryOK := contract.SubedgeRuleEntry(edge)
+		ruleEntry, ruleEntryOK := contract.subedgeRuleEntry(edge)
 		fmt.Fprintf(out, "subedge[%d]=%d/%v:owner=%d/%v,role=%d/%v,family=%d/%v,callee=%d/%v,admission=%d/%v,args=%d/%v,rule-entry=%t/%v;",
 			index, edge, edgeOK, owner, ownerOK, role, roleOK, family, familyOK, callee, calleeOK, admission, admissionOK, arguments, argumentsOK, ruleEntry, ruleEntryOK)
 		switch callee {
-		case SubedgeCalleeCallback:
-			callback, callbackOK := contract.SubedgeCallback(edge)
+		case vocabulary.SubedgeCalleeCallback:
+			callback, callbackOK := contract.subedgeCallback(edge)
 			fmt.Fprintf(out, "subedge-callback=%d/%v;", callback, callbackOK)
-		case SubedgeCalleeCapturedInitialRead:
-			root, key, readOK := contract.SubedgeCapturedInitialRead(edge)
+		case vocabulary.SubedgeCalleeCapturedInitialRead:
+			root, key, readOK := contract.subedgeCapturedInitialRead(edge)
 			fmt.Fprintf(out, "subedge-read=%d/%d/%v;", root, key, readOK)
-		case SubedgeCalleeMetaKey:
-			key, keyOK := contract.SubedgeMetaKey(edge)
+		case vocabulary.SubedgeCalleeMetaKey:
+			key, keyOK := contract.subedgeMetaKey(edge)
 			fmt.Fprintf(out, "subedge-meta=%d/%v;", key, keyOK)
 		}
 		failure, failureOK := contract.AdmissionFailure(edge)
-		admissionRoute, admissionAdjustment, admissionResult, admissionPlacement, admissionOffset, admissionOutcome, admissionSibling, admissionDestination, admissionRouteOK := contract.AdmissionRoute(edge)
+		admissionRoute, admissionAdjustment, admissionResult, admissionPlacement, admissionOffset, admissionOutcome, admissionSibling, admissionDestination, admissionRouteOK := contract.admissionRoute(edge)
 		fmt.Fprintf(out, "subedge-admission=%d/%v,route=%d/%d/%d/%d/%d/%d/%d/%d/%v;", failure, failureOK, admissionRoute, admissionAdjustment, admissionResult, admissionPlacement, admissionOffset, admissionOutcome, admissionSibling, admissionDestination, admissionRouteOK)
 		for _, kind := range []flowkind.OutcomeKind{
 			flowkind.OutcomeNormal, flowkind.OutcomeReturn, flowkind.OutcomeThrow,
 			flowkind.OutcomeYield, flowkind.OutcomeCancel,
 		} {
 			terminal, terminalOK := contract.SubedgeTerminal(edge, kind)
-			route, adjustment, result, placement, offset, outcome, sibling, destination, routeOK := contract.SubedgeRouteAt(edge, kind)
+			route, adjustment, result, placement, offset, outcome, sibling, destination, routeOK := contract.subedgeRouteAt(edge, kind)
 			fmt.Fprintf(out, "subedge-terminal[%d]=%d/%v,route=%d/%d/%d/%d/%d/%d/%d/%d/%v;",
 				kind, terminal, terminalOK, route, adjustment, result, placement, offset, outcome, sibling, destination, routeOK)
 		}
 	}
 }
 
-func writeEffectArguments(out *strings.Builder, contract *Contract, op Operation, effect int) {
+func writeEffectArguments(out *strings.Builder, contract *Contract, op vocabulary.Operation, effect int) {
 	fmt.Fprintf(out, "values(%d)=", contract.EffectValueArgumentCount(op, effect))
 	for index := 0; index < contract.EffectValueArgumentCount(op, effect); index++ {
 		value, ok := contract.EffectValueArgumentAt(op, effect, index)
@@ -420,12 +421,12 @@ func writeEffectArguments(out *strings.Builder, contract *Contract, op Operation
 	}
 	fmt.Fprintf(out, "rows(%d)=", contract.EffectRowArgumentCount(op, effect))
 	for index := 0; index < contract.EffectRowArgumentCount(op, effect); index++ {
-		value, ok := contract.EffectRowArgumentAt(op, effect, index)
+		value, ok := contract.effectRowArgumentAt(op, effect, index)
 		fmt.Fprintf(out, "%d/%v,", value, ok)
 	}
 }
 
-func writeCallbackEffectArguments(out *strings.Builder, contract *Contract, callback CallbackID, effect int) {
+func writeCallbackEffectArguments(out *strings.Builder, contract *Contract, callback vocabulary.CallbackID, effect int) {
 	fmt.Fprintf(out, "values(%d)=", contract.CallbackEffectValueArgumentCount(callback, effect))
 	for index := 0; index < contract.CallbackEffectValueArgumentCount(callback, effect); index++ {
 		value, ok := contract.CallbackEffectValueArgumentAt(callback, effect, index)
@@ -443,12 +444,12 @@ func writeCallbackEffectArguments(out *strings.Builder, contract *Contract, call
 	}
 	fmt.Fprintf(out, "rows(%d)=", contract.CallbackEffectRowArgumentCount(callback, effect))
 	for index := 0; index < contract.CallbackEffectRowArgumentCount(callback, effect); index++ {
-		value, ok := contract.CallbackEffectRowArgumentAt(callback, effect, index)
+		value, ok := contract.callbackEffectRowArgumentAt(callback, effect, index)
 		fmt.Fprintf(out, "%d/%v,", value, ok)
 	}
 }
 
-func writeBindingSnapshot(out *strings.Builder, contract *Contract, op Operation) {
+func writeBindingSnapshot(out *strings.Builder, contract *Contract, op vocabulary.Operation) {
 	fmt.Fprintf(out, "bindings=%d;", contract.BindingCount(op))
 	for bindingIndex := 0; bindingIndex < contract.BindingCount(op); bindingIndex++ {
 		namespace, namespaceOK := contract.BindingNamespaceAt(op, bindingIndex)
@@ -458,9 +459,9 @@ func writeBindingSnapshot(out *strings.Builder, contract *Contract, op Operation
 		if !namespaceOK {
 			continue
 		}
-		binding := BindingSpec{Namespace: namespace}
+		binding := vocabulary.BindingSpec{Namespace: namespace}
 		for index := 0; index < ownerCount; index++ {
-			part, ok := contract.BindingOwnerAt(op, bindingIndex, index)
+			part, ok := contract.bindingOwnerAt(op, bindingIndex, index)
 			fmt.Fprintf(out, "owner[%d]=%q/%v;", index, part, ok)
 			binding.Owner = append(binding.Owner, part)
 		}
@@ -474,7 +475,7 @@ func writeBindingSnapshot(out *strings.Builder, contract *Contract, op Operation
 	}
 }
 
-func publicValuesSnapshot(t *testing.T, contract *Contract, values Values, valuesOK bool) string {
+func publicValuesSnapshot(t *testing.T, contract *Contract, values vocabulary.Values, valuesOK bool) string {
 	t.Helper()
 	if !valuesOK {
 		return "invalid"
@@ -496,7 +497,7 @@ func publicValuesSnapshot(t *testing.T, contract *Contract, values Values, value
 	return out.String()
 }
 
-func publicTypeDigest(t *testing.T, contract *Contract, value Type, ok bool) string {
+func publicTypeDigest(t *testing.T, contract *Contract, value vocabulary.Type, ok bool) string {
 	t.Helper()
 	if !ok {
 		return "invalid"

@@ -16,6 +16,9 @@ func (w *Writer) PublishTypePublications(stmt *ast.AssignStmt, assign keyspace.T
 		return fmt.Errorf("lualower: invalid static type publication statement")
 	}
 	for _, publication := range w.binding.StaticTypePublications(stmt) {
+		if !publication.Valid() {
+			return fmt.Errorf("lualower: invalid static type publication evidence")
+		}
 		index := int(publication.Index)
 		if index < 0 || index >= len(stmt.Lhs) || index >= len(stmt.Rhs) {
 			return fmt.Errorf("lualower: invalid static type publication index %d", publication.Index)
@@ -23,9 +26,20 @@ func (w *Writer) PublishTypePublications(stmt *ast.AssignStmt, assign keyspace.T
 		if len(publication.Source) == 0 {
 			return fmt.Errorf("lualower: incomplete static type publication at index %d", index)
 		}
-		root, err := w.publicationRoot(stmt.Rhs[index], publication.Source)
-		if err != nil {
-			return fmt.Errorf("lualower: static type publication root %d: %w", index, err)
+		var root keyspace.Term
+		if len(publication.Source) > 1 {
+			if cell, visible := w.scopes.Resolve(publication.Root); visible {
+				root = cell
+			} else {
+				identity, global := w.binding.GlobalIdentityOf(publication.Root)
+				if !global || !identity.Matches(publication.Source[0]) {
+					return fmt.Errorf("lualower: static type publication root %d is not a visible global", index)
+				}
+				root = w.flow.Global(identity)
+			}
+			if root == 0 {
+				return fmt.Errorf("lualower: could not materialize static type publication root %d", index)
+			}
 		}
 		target, err := w.PublicationRef(w.span(stmt.Rhs[index]), publication.Source, root, publication.Alias)
 		if err != nil {
@@ -36,41 +50,4 @@ func (w *Writer) PublishTypePublications(stmt *ast.AssignStmt, assign keyspace.T
 		}
 	}
 	return nil
-}
-
-func (w *Writer) publicationRoot(expr ast.Expr, source []string) (keyspace.Term, error) {
-	if len(source) <= 1 {
-		return 0, nil
-	}
-	attr, ok := expr.(*ast.AttrGetExpr)
-	if !ok || attr == nil || attr.KeySyntax != ast.AttrKeyDot {
-		return 0, fmt.Errorf("invalid qualified publication source")
-	}
-	ident, ok := attr.Object.(*ast.IdentExpr)
-	if !ok || ident == nil || ident.Value != source[0] {
-		return 0, fmt.Errorf("invalid publication root")
-	}
-	return w.publicationCell(ident)
-}
-
-func (w *Writer) publicationCell(ident *ast.IdentExpr) (keyspace.Term, error) {
-	if ident == nil {
-		return 0, fmt.Errorf("invalid publication identifier")
-	}
-	id, ok := w.binding.SymbolOf(ident)
-	if !ok || id == 0 {
-		return 0, fmt.Errorf("binder has no symbol for publication identifier")
-	}
-	if cell, visible := w.scopes.Resolve(id); visible {
-		return cell, nil
-	}
-	identity, global := w.binding.GlobalIdentity(ident)
-	if !global || !identity.Matches(ident.Value) {
-		return 0, fmt.Errorf("publication root is not a visible global")
-	}
-	cell := w.flow.Global(identity)
-	if cell == 0 {
-		return 0, fmt.Errorf("could not select publication global")
-	}
-	return cell, nil
 }

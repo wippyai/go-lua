@@ -8,8 +8,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/source"
 )
 
-// Cell creates one local lexical Cell.
-func (c *Collector) Cell(span source.Span, body keyspace.Term) keyspace.Term {
+// Cell creates one local lexical Cell and atomically attaches its authored
+// spelling when supplied. The optional name is binder-owned metadata; no
+// lowerer may derive it from parser syntax.
+func (c *Collector) Cell(span source.Span, body keyspace.Term, name string) keyspace.Term {
 	if !mutationReady(c) {
 		return 0
 	}
@@ -19,6 +21,10 @@ func (c *Collector) Cell(span source.Span, body keyspace.Term) keyspace.Term {
 	}
 	if err := c.flow.AdmitCell(c.counts, term, body); err != nil {
 		c.fail(err)
+		return 0
+	}
+	if !c.source.SetCellSpelling(term, name) {
+		c.fail(errors.New("program/lower/collector: could not attach Cell spelling"))
 		return 0
 	}
 	return term

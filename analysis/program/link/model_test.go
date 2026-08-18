@@ -1,10 +1,13 @@
-package link
+package link_test
 
 import (
 	"math"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/wippyai/go-lua/analysis/program/link"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
@@ -27,10 +30,10 @@ func TestValueUniverseScalePreservesEveryIntegerOccurrence(t *testing.T) {
 		text.WriteString(strconv.Itoa(index))
 	}
 	p := source(t, text.String())
-	link := linked(t, contract(t), linkproject.Module{Name: "main", Program: p})
-	shard := onlyShard(t, link, p)
-	_, shardOK := link.Project().Mounts().Index(shard)
-	values := link.Boundary().Values()
+	sealed := linked(t, contract(t), linkproject.Module{Name: "main", Program: p})
+	shard := onlyShard(t, sealed, p)
+	_, shardOK := sealed.Project().Mounts().Index(shard)
+	values := sealed.Boundary().Values()
 	integers := p.Source().Literals().Integers()
 	if integers.Count() != literalCount {
 		t.Fatalf("fixture integer occurrences = %d, want %d", integers.Count(), literalCount)
@@ -148,9 +151,9 @@ return tab[falseKey], tab[integerKey], tab[floatKey], tab[stringKey], tab[zeroKe
 	}
 }
 
-func mustLiteralKey(t *testing.T, link *Link, literal keyspace.LiteralValue) linkproject.Key {
+func mustLiteralKey(t *testing.T, sealed *link.Link, literal keyspace.LiteralValue) linkproject.Key {
 	t.Helper()
-	key, ok := literalKeyFor(link.Project().Keys(), literal)
+	key, ok := literalKeyFor(sealed.Project().Keys(), literal)
 	if !ok {
 		t.Fatalf("literal %#v lacks Link key", literal)
 	}
@@ -177,17 +180,17 @@ func literalKeyFor(keys linkproject.Keys, literal keyspace.LiteralValue) (linkpr
 func literalProjectionContract(t *testing.T) *target.Contract {
 	t.Helper()
 	operation := actorBootOperation("callable")
-	return actorBootContract(t, []target.OperationSpec{operation}, []target.InitialEntrySpec{
-		{Root: "GlobalEnvRoot", Key: targetStringKey("primitive_false"), Value: target.InitialValueSpec{Kind: target.InitialValueBoolean, Boolean: false}, Mutability: target.InitialMutable},
-		{Root: "GlobalEnvRoot", Key: targetStringKey("primitive_integer"), Value: target.InitialValueSpec{Kind: target.InitialValueInteger, Integer: 1}, Mutability: target.InitialMutable},
-		{Root: "GlobalEnvRoot", Key: targetStringKey("primitive_float"), Value: target.InitialValueSpec{Kind: target.InitialValueFloat, FloatBits: math.Float64bits(1)}, Mutability: target.InitialMutable},
-		{Root: "GlobalEnvRoot", Key: targetStringKey("primitive_string"), Value: target.InitialValueSpec{Kind: target.InitialValueString, String: "value-only"}, Mutability: target.InitialMutable},
-		{Root: "GlobalEnvRoot", Key: targetStringKey("primitive_zero"), Value: target.InitialValueSpec{Kind: target.InitialValueFloat, FloatBits: math.Float64bits(math.Copysign(0, -1))}, Mutability: target.InitialMutable},
-		{Root: "GlobalEnvRoot", Key: targetStringKey("primitive_nan"), Value: target.InitialValueSpec{Kind: target.InitialValueFloat, FloatBits: math.Float64bits(math.NaN())}, Mutability: target.InitialMutable},
-		{Root: "GlobalEnvRoot", Key: targetStringKey("primitive_absent"), Value: target.InitialValueSpec{Kind: target.InitialValueAbsent}, Mutability: target.InitialMutable},
-		{Root: "GlobalEnvRoot", Key: targetStringKey("primitive_root"), Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: target.InitialMutable},
-		{Root: "GlobalEnvRoot", Key: targetStringKey("primitive_callable"), Value: target.InitialValueSpec{Kind: target.InitialValueOperation, Operation: target.BindingSpec{Namespace: target.BindingBuiltin, Member: []string{"callable"}}}, Mutability: target.InitialMutable},
-	}, []target.InitialBindingSpec{
+	return actorBootContract(t, []vocabulary.OperationSpec{operation}, []vocabulary.InitialEntrySpec{
+		{Root: "GlobalEnvRoot", Key: targetStringKey("primitive_false"), Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueBoolean, Boolean: false}, Mutability: vocabulary.InitialMutable},
+		{Root: "GlobalEnvRoot", Key: targetStringKey("primitive_integer"), Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueInteger, Integer: 1}, Mutability: vocabulary.InitialMutable},
+		{Root: "GlobalEnvRoot", Key: targetStringKey("primitive_float"), Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueFloat, FloatBits: math.Float64bits(1)}, Mutability: vocabulary.InitialMutable},
+		{Root: "GlobalEnvRoot", Key: targetStringKey("primitive_string"), Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueString, String: "value-only"}, Mutability: vocabulary.InitialMutable},
+		{Root: "GlobalEnvRoot", Key: targetStringKey("primitive_zero"), Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueFloat, FloatBits: math.Float64bits(math.Copysign(0, -1))}, Mutability: vocabulary.InitialMutable},
+		{Root: "GlobalEnvRoot", Key: targetStringKey("primitive_nan"), Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueFloat, FloatBits: math.Float64bits(math.NaN())}, Mutability: vocabulary.InitialMutable},
+		{Root: "GlobalEnvRoot", Key: targetStringKey("primitive_absent"), Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueAbsent}, Mutability: vocabulary.InitialMutable},
+		{Root: "GlobalEnvRoot", Key: targetStringKey("primitive_root"), Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: vocabulary.InitialMutable},
+		{Root: "GlobalEnvRoot", Key: targetStringKey("primitive_callable"), Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueOperation, Operation: vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"callable"}}}, Mutability: vocabulary.InitialMutable},
+	}, []vocabulary.InitialBindingSpec{
 		{Name: "primitive_false", Root: "GlobalEnvRoot", Key: targetStringKey("primitive_false")},
 		{Name: "primitive_integer", Root: "GlobalEnvRoot", Key: targetStringKey("primitive_integer")},
 		{Name: "primitive_float", Root: "GlobalEnvRoot", Key: targetStringKey("primitive_float")},

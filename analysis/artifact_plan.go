@@ -2,8 +2,10 @@ package analysis
 
 import (
 	"crypto/sha256"
-	"github.com/wippyai/go-lua/analysis/engine/rows"
+	"sort"
 	"sync"
+
+	"github.com/wippyai/go-lua/analysis/engine/rows"
 
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/domain/composite"
@@ -15,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/link"
+	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 )
@@ -38,7 +41,7 @@ func (state *compiledState) assembleReceiptGraph() (*engine.ReceiptGraph, *artif
 		return nil, nil, receiptAssemblyDiagnostic{}, false
 	}
 	binding := state.binding
-	valueIDs, heapIDs, witness, witnessOK := linkBootstrapWitness(state, binding)
+	_, _, witness, witnessOK := linkBootstrapWitness(state, binding)
 	if !witnessOK {
 		return nil, nil, receiptAssemblyDiagnostic{stage: AnalyzeDiagnosticReceiptStageBinding}, false
 	}
@@ -71,7 +74,7 @@ func (state *compiledState) assembleReceiptGraph() (*engine.ReceiptGraph, *artif
 			populated = receiptAssemblyDiagnostic{stage: AnalyzeDiagnosticReceiptStageQueryPlan}
 			return false
 		}
-		if !attachLinkBootstrapRules(binding, assembly, valueIDs, heapIDs) {
+		if !attachLinkBootstrapRules(binding, assembly) {
 			populated = receiptAssemblyDiagnostic{stage: AnalyzeDiagnosticReceiptStageBootstrapRules}
 			return false
 		}
@@ -127,18 +130,18 @@ func (state *compiledState) assembleReceiptGraph() (*engine.ReceiptGraph, *artif
 }
 
 type artifactScalarRoleBinding struct {
-	program programartifact.RuleRole
-	scalar  rows.ArtifactScalarRole
+	key    schema.Key
+	scalar rows.ArtifactScalarRole
 }
 
 // artifactScalarRoleDirectory is immutable Program-template metadata. It
 // contains no Link-local capability and is shared with the template cache.
 type artifactScalarRoleDirectory struct{ rows []artifactScalarRoleBinding }
 
-func (directory *artifactScalarRoleDirectory) role(programRole programartifact.RuleRole) (rows.ArtifactScalarRole, bool) {
-	if directory != nil {
+func (directory *artifactScalarRoleDirectory) role(key schema.Key) (rows.ArtifactScalarRole, bool) {
+	if directory != nil && key.Available() {
 		for _, row := range directory.rows {
-			if row.program == programRole {
+			if row.key == key {
 				return row.scalar, row.scalar.Available()
 			}
 		}
@@ -146,14 +149,14 @@ func (directory *artifactScalarRoleDirectory) role(programRole programartifact.R
 	return rows.ArtifactScalarRole{}, false
 }
 
-func artifactScalarRoleSemantic(artifact identity.ContentID, role programartifact.RuleRole) identity.ContentID {
-	if !artifact.Available() || role == programartifact.RuleRoleInvalid {
+func artifactScalarRoleSemantic(artifact identity.ContentID, key schema.Key) identity.ContentID {
+	if !artifact.Available() || !key.Available() {
 		return identity.ContentID{}
 	}
-	input := make([]byte, 0, len("analysis/artifact-scalar-role/v1")+len(artifact)+1)
+	input := make([]byte, 0, len("analysis/artifact-scalar-role/v1")+len(artifact)+len(key))
 	input = append(input, "analysis/artifact-scalar-role/v1"...)
 	input = append(input, artifact[:]...)
-	input = append(input, byte(role))
+	input = append(input, key...)
 	return identity.ContentID(sha256.Sum256(input))
 }
 
@@ -171,48 +174,49 @@ func newEngineArtifactScalarTemplate(artifact *programartifact.Artifact) (*rows.
 	if !lowered {
 		return nil, nil, false
 	}
-	usedRoles := make(map[programartifact.RuleRole]struct{})
+	usedKeys := make(map[schema.Key]struct{})
 	for index := 0; index < snapshot.LocalTransferCount(); index++ {
 		row, ok := snapshot.LocalTransferAt(index)
 		if !ok {
 			return nil, nil, false
 		}
-		for inner := 0; inner < row.TagCount(); inner++ {
-			tag, tagOK := row.TagAt(inner)
-			if !tagOK {
+		for inner := 0; inner < row.WritesCount(); inner++ {
+			write, writeOK := row.WritesAt(inner)
+			if !writeOK {
 				return nil, nil, false
 			}
-			usedRoles[programartifact.RuleRole(tag)] = struct{}{}
+			usedKeys[write] = struct{}{}
 		}
 	}
 	for index := 0; index < snapshot.RulePlacementCount(); index++ {
 		row, ok := snapshot.RulePlacementAt(index)
-		if !ok {
+		if !ok || !row.Key().Available() {
 			return nil, nil, false
 		}
-		usedRoles[programartifact.RuleRole(row.Tag())] = struct{}{}
+		usedKeys[row.Key()] = struct{}{}
 	}
 	spec, specOK := rows.NewArtifactScalarSpec(snapshot.ArtifactID(), snapshot.ProgramID(), snapshot.SchemaID(), rows.ArtifactScalarCapacity{
-		Roles: len(usedRoles), Points: snapshot.PointCount(), Edges: snapshot.StructuralEdgeCount(), Transfers: snapshot.LocalTransferCount(), Regions: snapshot.RegionCount(), Events: snapshot.EventCount(), Rules: snapshot.RulePlacementCount(), Bodies: snapshot.BodyTransportCount(),
+		Roles: len(usedKeys), Points: snapshot.PointCount(), Edges: snapshot.StructuralEdgeCount(), Transfers: snapshot.LocalTransferCount(), Regions: snapshot.RegionCount(), Events: snapshot.EventCount(), Rules: snapshot.RulePlacementCount(), Bodies: snapshot.BodyTransportCount(),
 	})
 	if !specOK {
 		return nil, nil, false
 	}
-	directory := &artifactScalarRoleDirectory{rows: make([]artifactScalarRoleBinding, 0, len(usedRoles))}
-	for index := 0; index < programartifact.MountedRuleRoleCount(); index++ {
-		role, roleOK := programartifact.MountedRuleRoleAt(index)
-		_, used := usedRoles[role]
-		if !roleOK {
-			return nil, nil, false
-		}
-		if !used {
-			continue
-		}
-		scalar, scalarOK := spec.DeclareRole(artifactScalarRoleSemantic(snapshot.ArtifactID(), role))
+	laws, lawsOK := composite.IssuanceStageLaws()
+	if !lawsOK || !spec.InstallStageLaws(laws) {
+		return nil, nil, false
+	}
+	directory := &artifactScalarRoleDirectory{rows: make([]artifactScalarRoleBinding, 0, len(usedKeys))}
+	ordered := make([]schema.Key, 0, len(usedKeys))
+	for key := range usedKeys {
+		ordered = append(ordered, key)
+	}
+	sort.Slice(ordered, func(left, right int) bool { return ordered[left] < ordered[right] })
+	for _, key := range ordered {
+		scalar, scalarOK := spec.DeclareRole(artifactScalarRoleSemantic(snapshot.ArtifactID(), key))
 		if !scalarOK {
 			return nil, nil, false
 		}
-		directory.rows = append(directory.rows, artifactScalarRoleBinding{program: role, scalar: scalar})
+		directory.rows = append(directory.rows, artifactScalarRoleBinding{key: key, scalar: scalar})
 	}
 	for index := 0; index < snapshot.PointCount(); index++ {
 		row, ok := snapshot.PointAt(index)
@@ -267,10 +271,10 @@ func newEngineArtifactScalarTemplate(artifact *programartifact.Artifact) (*rows.
 		if !transferOK {
 			return nil, nil, false
 		}
-		for inner := 0; inner < row.TagCount(); inner++ {
-			tag, tagOK := row.TagAt(inner)
-			role, roleOK := directory.role(programartifact.RuleRole(tag))
-			if !tagOK || !roleOK || !spec.AddTransferFactor(transfer, role) {
+		for inner := 0; inner < row.WritesCount(); inner++ {
+			write, writeOK := row.WritesAt(inner)
+			role, roleOK := directory.role(write)
+			if !writeOK || !roleOK || !spec.AddTransferFactor(transfer, role) {
 				return nil, nil, false
 			}
 		}
@@ -303,9 +307,8 @@ func newEngineArtifactScalarTemplate(artifact *programartifact.Artifact) (*rows.
 	}
 	for index := 0; index < snapshot.RulePlacementCount(); index++ {
 		row, ok := snapshot.RulePlacementAt(index)
-		role := programartifact.RuleRole(row.Tag())
-		scalarRole, scalarRoleOK := directory.role(role)
-		stage, stageOK := engineArtifactRuleStage(role, programartifact.RuleStage(row.Stage()))
+		scalarRole, scalarRoleOK := directory.role(row.Key())
+		stage, stageOK := engineArtifactRuleStage(programartifact.RuleStage(row.Stage()))
 		if !ok || !scalarRoleOK || !stageOK || !spec.AddRule(rows.ArtifactScalarRule{Role: scalarRole, Stage: stage, Point: row.PointID(), Input: row.InputPointID(), ID: row.OccurrenceID(), Route: row.PredecessorRouteID()}) {
 			return nil, nil, false
 		}
@@ -347,7 +350,7 @@ func newEngineArtifactScalarReceipt(template *rows.ArtifactScalarTemplate, roles
 		return nil, false
 	}
 	for _, row := range roles.rows {
-		capability, capabilityOK := mountedCapability(binding, row.program)
+		capability, capabilityOK := mountedCapability(binding, row.key)
 		if !capabilityOK || !substitution.BindRole(row.scalar, capability) {
 			return nil, false
 		}
@@ -355,31 +358,9 @@ func newEngineArtifactScalarReceipt(template *rows.ArtifactScalarTemplate, roles
 	return engine.NewArtifactScalarReceipt(substitution)
 }
 
-// engineArtifactRuleStage is the sole domain-role to engine-stage bridge.
-// ProgramArtifact owns this closed pairing; a scalar caller cannot retag an
-// Effect rule as a different native Call cut and ask engine to infer it from
-// transport geometry.
-func engineArtifactRuleStage(role programartifact.RuleRole, stage programartifact.RuleStage) (rows.ArtifactRuleStage, bool) {
-	want := programartifact.RuleStageInvalid
-	switch role {
-	case programartifact.RuleRoleValueSource, programartifact.RuleRolePackSource, programartifact.RuleRoleHeapIngress:
-		want = programartifact.RuleStageBase
-	case programartifact.RuleRoleValueAllocation, programartifact.RuleRoleHeapEmpty, programartifact.RuleRoleHeapClosed,
-		programartifact.RuleRoleRawGet, programartifact.RuleRoleRawSet, programartifact.RuleRoleValueStorageTransfer,
-		programartifact.RuleRoleValueBinaryArithmetic, programartifact.RuleRoleValueBinaryEquality, programartifact.RuleRoleValueBinaryOrder, programartifact.RuleRoleValuePresenceRefinement:
-		want = programartifact.RuleStageLocal
-	case programartifact.RuleRoleCallDispatch:
-		want = programartifact.RuleStageCallDispatch
-	case programartifact.RuleRoleCallActivation:
-		want = programartifact.RuleStageCallSummary
-	case programartifact.RuleRoleEffectSelected, programartifact.RuleRoleEffectOpaque, programartifact.RuleRoleEffectBody:
-		want = programartifact.RuleStageCallEffect
-	default:
-		return rows.ArtifactRuleStageInvalid, false
-	}
-	if stage != want {
-		return rows.ArtifactRuleStageInvalid, false
-	}
+// engineArtifactRuleStage is the sealed execution-cut bijection. The placement
+// already carries the issued stage; a scalar caller cannot retag it.
+func engineArtifactRuleStage(stage programartifact.RuleStage) (rows.ArtifactRuleStage, bool) {
 	switch stage {
 	case programartifact.RuleStageBase:
 		return rows.ArtifactRuleStageBase, true
@@ -493,24 +474,28 @@ func linkBootstrapWitness(state *compiledState, binding *composite.ProgramBindin
 	if state == nil || binding == nil || !state.sourceID.Available() {
 		return nil, nil, engine.LinkBootstrapWitness{}, false
 	}
-	valueIDs, valueIDsOK := linkOccurrenceIDs(binding, programartifact.RuleRoleValueBootstrap)
-	heapIDs, heapIDsOK := linkOccurrenceIDs(binding, programartifact.RuleRoleHeapBootstrap)
-	if !valueIDsOK || !heapIDsOK {
+	keys := composite.LinkKeys()
+	if len(keys) != 2 {
 		return nil, nil, engine.LinkBootstrapWitness{}, false
+	}
+	var catalogs [2]engine.LinkBootstrapCatalog
+	var idLists [2][]identity.ContentID
+	for index, key := range keys {
+		ids, idsOK := linkOccurrenceIDs(binding, key)
+		capability, capabilityOK := linkCapability(binding, key)
+		if !idsOK || !capabilityOK {
+			return nil, nil, engine.LinkBootstrapWitness{}, false
+		}
+		idLists[index] = ids
+		catalogs[index] = engine.LinkBootstrapCatalog{Capability: capability, Occurrences: ids}
 	}
 	pointID, pointOK := identity.DeriveContentID("analysis/link-bootstrap-point/v1", state.sourceID[:])
 	if !pointOK {
 		return nil, nil, engine.LinkBootstrapWitness{}, false
 	}
-	valueCapability, valueCapabilityOK := linkCapability(binding, programartifact.RuleRoleValueBootstrap)
-	heapCapability, heapCapabilityOK := linkCapability(binding, programartifact.RuleRoleHeapBootstrap)
-	if !valueCapabilityOK || !heapCapabilityOK {
-		return nil, nil, engine.LinkBootstrapWitness{}, false
-	}
 	witness, witnessOK := engine.NewLinkBootstrapWitnessByCapability(state.sourceID, engine.LinkBootstrapPoint{PointID: pointID, Known: true, Initial: true},
-		engine.LinkBootstrapCatalog{Capability: valueCapability, Occurrences: valueIDs},
-		engine.LinkBootstrapCatalog{Capability: heapCapability, Occurrences: heapIDs})
-	return valueIDs, heapIDs, witness, witnessOK
+		catalogs[0], catalogs[1])
+	return idLists[0], idLists[1], witness, witnessOK
 }
 
 // newProgramBinding constructs the Link-local typed owners required by the
@@ -661,11 +646,6 @@ type mountedProgramArtifact struct {
 	roles     *artifactScalarRoleDirectory
 	programID identity.ContentID
 	moduleKey identity.ContentID
-
-	// ruleMembers is populated once by attachArtifactRules and then read by
-	// every solve. It is deliberately private and immutable after compilation.
-	ruleMembers      []artifactRuleMemberRef
-	ruleMembersReady bool
 }
 
 // projectAuthenticatesMounts states that this published mount set is exactly

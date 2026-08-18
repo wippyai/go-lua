@@ -35,12 +35,17 @@ import (
 
 const architectureBatteryModule = "github.com/wippyai/go-lua"
 
+// architectureBatteryDomainModule is the live semantic-domain tree. Spine
+// sources that import it are reaching into a domain, except the composition
+// root which only seals the catalog.
+const architectureBatteryDomainModule = architectureBatteryModule + "/domain"
+
 // architectureBatteryCompositionRoot is the analyzer composition root: the one
 // package that composes the artifact columns with the domain registrations and
 // seals the catalog. It carries domain edges because composing them is its
 // role, so a spine source naming it is reaching for the sealed catalog, not for
 // a domain's semantics.
-const architectureBatteryCompositionRoot = architectureBatteryModule + "/analysis/domain/composite"
+const architectureBatteryCompositionRoot = architectureBatteryDomainModule + "/composite"
 
 // architectureBatteryRepositoryRoot locates the module root by walking up from
 // this source file to the directory holding go.mod, so the battery is
@@ -187,11 +192,9 @@ func architectureBatterySetRatchet(t *testing.T, law string, inventory map[strin
 // under analysis/program and analysis/schema that still reach into a semantic
 // domain. Program and schema are the neutral compilation spine: a domain is a
 // consumer of what they publish, never an input to how they publish it. The
-// composition root that knows both worlds is analysis/domain/composite; it
-// sits above the spine by role while sitting under analysis/domain by
-// directory, so this scan names it and excludes it rather than reading its
-// position. Its subpackages are ordinary cross-domain relations and stay in
-// scope.
+// composition root that knows both worlds is domain/composite; this scan
+// names it and excludes it rather than reading its position. Its subpackages
+// are ordinary cross-domain relations and stay in scope.
 var architectureBatteryProgramDomainProduction = map[string]int{}
 
 // architectureBatteryProgramDomainTest is the same freeze for test sources.
@@ -199,8 +202,13 @@ var architectureBatteryProgramDomainProduction = map[string]int{}
 // decision: production code may be clean while its tests keep the coupling
 // alive and make the eventual production cut look larger than it is.
 var architectureBatteryProgramDomainTest = map[string]int{
+	"analysis/program/artifact":      1,
 	"analysis/program/link":          1,
-	"analysis/program/link/boundary": 2,
+	"analysis/program/link/boundary": 3,
+	"analysis/program/link/host":     2,
+	"analysis/program/link/module":   1,
+	"analysis/program/link/project":  2,
+	"analysis/program/target":        2,
 }
 
 // TestArchitectureProgramAndSchemaDomainCouplingOnlyShrinks is the L13 law with
@@ -213,10 +221,10 @@ func TestArchitectureProgramAndSchemaDomainCouplingOnlyShrinks(t *testing.T) {
 		architectureBatteryWalk(t, root, func(source architectureBatterySource) {
 			coupled := false
 			for _, imported := range source.imports(t) {
-				if imported == architectureBatteryCompositionRoot {
+				if architectureBatteryDomainCompositionRoot(imported) {
 					continue
 				}
-				if strings.HasPrefix(imported, architectureBatteryModule+"/analysis/domain") {
+				if architectureBatteryDomainImport(imported) {
 					coupled = true
 					break
 				}
@@ -231,8 +239,28 @@ func TestArchitectureProgramAndSchemaDomainCouplingOnlyShrinks(t *testing.T) {
 			production[source.directory()]++
 		})
 	}
-	architectureBatteryRatchet(t, "program/schema production imports no analysis/domain", architectureBatteryProgramDomainProduction, production)
-	architectureBatteryRatchet(t, "program/schema test imports no analysis/domain", architectureBatteryProgramDomainTest, tests)
+	architectureBatteryRatchet(t, "program/schema production imports no domain", architectureBatteryProgramDomainProduction, production)
+	architectureBatteryRatchet(t, "program/schema test imports no domain", architectureBatteryProgramDomainTest, tests)
+}
+
+// TestArchitectureDomainCouplingNamesLivePackages keeps the L13 scan pointed
+// at packages that exist. The composition root and one ordinary domain are
+// enough: a renamed or relocated tree fails here instead of going silent.
+func TestArchitectureDomainCouplingNamesLivePackages(t *testing.T) {
+	repository := architectureBatteryRepositoryRoot(t)
+	for _, rel := range []string{"domain/composite", "domain/type", "domain/value"} {
+		if _, err := os.Stat(filepath.Join(repository, filepath.FromSlash(rel))); err != nil {
+			t.Fatalf("domain coupling scan names %s: %v", rel, err)
+		}
+	}
+}
+
+func architectureBatteryDomainCompositionRoot(imported string) bool {
+	return imported == architectureBatteryCompositionRoot || strings.HasPrefix(imported, architectureBatteryCompositionRoot+"/")
+}
+
+func architectureBatteryDomainImport(imported string) bool {
+	return imported == architectureBatteryDomainModule || strings.HasPrefix(imported, architectureBatteryDomainModule+"/")
 }
 
 // TestArchitectureIdentityDependsOnNothing is a closed law. Identity is the
@@ -391,7 +419,6 @@ func TestArchitectureEngineEnumerationVocabularyOnlyShrinks(t *testing.T) {
 // direct measure of how far the boundary consolidation has come.
 var architectureBatteryReceiptVocabulary = map[string]struct{}{
 	"analysis:AnalyzeDiagnosticReceiptStage":                                  {},
-	"analysis/engine:ActivationReceiptCompilation":                            {},
 	"analysis/engine:ActivationReceiptGraph":                                  {},
 	"analysis/engine:ActivationReceiptMember":                                 {},
 	"analysis/engine:ArtifactEnvironmentReceipt":                              {},
@@ -399,7 +426,6 @@ var architectureBatteryReceiptVocabulary = map[string]struct{}{
 	"analysis/engine:ArtifactScalarReceipt":                                   {},
 	"analysis/engine:ArtifactWTOEventReceipt":                                 {},
 	"analysis/engine:ArtifactWTORegionReceipt":                                {},
-	"analysis/engine:AttachedActivationReceiptMember":                         {},
 	"analysis/engine:BindingDirectActivationReceipt":                          {},
 	"analysis/engine:BindingEnvironmentEdgeReceipt":                           {},
 	"analysis/engine:BindingFactorEdgeReceipt":                                {},
@@ -420,7 +446,6 @@ var architectureBatteryReceiptVocabulary = map[string]struct{}{
 	"analysis/engine:ReceiptCommitPrecondition":                               {},
 	"analysis/engine:ReceiptCommitPublishFailure":                             {},
 	"analysis/engine:ReceiptCommitSemanticRowsFailure":                        {},
-	"analysis/engine:ReceiptCompilation":                                      {},
 	"analysis/engine:ReceiptGraph":                                            {},
 	"analysis/engine:ReceiptMember":                                           {},
 	"analysis/engine:ReceiptObservation":                                      {},

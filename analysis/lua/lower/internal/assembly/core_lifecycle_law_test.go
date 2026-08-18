@@ -117,7 +117,7 @@ func TestCollectorAdmissionGapMatrixTerminalizes(t *testing.T) {
 			build: func() (*Collector, func(*Collector)) {
 				c := New(name, 0, bind.GlobalCensus{})
 				owner := body(c)
-				cell := c.Cell(span, owner)
+				cell := c.Cell(span, owner, "")
 				function := c.DeclareFunction(span, owner)
 				return c, func(c *Collector) { c.FillFunction(function, owner, []keyspace.Term{cell, cell}, 0, nil) }
 			},
@@ -127,7 +127,7 @@ func TestCollectorAdmissionGapMatrixTerminalizes(t *testing.T) {
 			build: func() (*Collector, func(*Collector)) {
 				c := New(name, 0, bind.GlobalCensus{})
 				owner := body(c)
-				cell := c.Cell(span, owner)
+				cell := c.Cell(span, owner, "")
 				values := c.Values(span, owner, nil, 0)
 				return c, func(c *Collector) { c.Bind(span, owner, []keyspace.Term{cell, cell}, values) }
 			},
@@ -151,7 +151,7 @@ func TestCollectorAdmissionGapMatrixTerminalizes(t *testing.T) {
 			build: func() (*Collector, func(*Collector)) {
 				c := New(name, 0, bind.GlobalCensus{})
 				owner := body(c)
-				cell := c.Cell(span, owner)
+				cell := c.Cell(span, owner, "")
 				publicationAssign := assign(c, owner, cell)
 				ref := c.Unresolved(span, []string{"Missing"}, 0)
 				return c, func(c *Collector) { c.Type(span, publicationAssign, 0, ref) }
@@ -162,7 +162,7 @@ func TestCollectorAdmissionGapMatrixTerminalizes(t *testing.T) {
 			build: func() (*Collector, func(*Collector)) {
 				c := New(name, 0, bind.GlobalCensus{})
 				owner := body(c)
-				cell := c.Cell(span, owner)
+				cell := c.Cell(span, owner, "")
 				publicationAssign := assign(c, owner, cell)
 				primitive := c.Primitive(span, programstatic.PrimitiveString)
 				alias := c.Alias(span, span, owner, "A")
@@ -220,7 +220,7 @@ func TestGlobalCensusReservesPrefixAndSeedsSource(t *testing.T) {
 			t.Fatalf("census slot %d name = %q, want %q", index, cell.Name(), want)
 		}
 	}
-	local := c.Cell(span, body)
+	local := c.Cell(span, body, "")
 	if want := keyspace.MakeTerm(keyspace.FamilyCell, 3); local != want {
 		t.Fatalf("first local Cell = %v, want reserved-prefix successor %v", local, want)
 	}
@@ -460,7 +460,7 @@ func TestRepresentativeMutationRejectionIsTerminalAndRetainsFirstCause(t *testin
 			if cause == nil || !c.terminal {
 				t.Fatalf("rejection did not retain cause/terminal state: cause=%v terminal=%v", cause, c.terminal)
 			}
-			if sourceRoot.Body(span) != 0 || flowRoot.Cell(span, 0) != 0 || staticRoot.Primitive(span, 1) != 0 || moduleRoot.Import(0, span, 0) != 0 {
+			if sourceRoot.Body(span) != 0 || flowRoot.Cell(span, 0, "") != 0 || staticRoot.Primitive(span, 1) != 0 || moduleRoot.Import(0, span, 0) != 0 {
 				t.Fatal("captured writer root mutated a terminal Collector")
 			}
 			_ = sourceRoot.String(span, 0, "post-terminal")
@@ -508,7 +508,7 @@ func TestNilCollectorMutationsAreInert(t *testing.T) {
 	if got := c.Body(source.Span{}); got != 0 {
 		t.Fatalf("nil Source Body = %v, want zero", got)
 	}
-	if got := c.Cell(source.Span{}, 0); got != 0 {
+	if got := c.Cell(source.Span{}, 0, ""); got != 0 {
 		t.Fatalf("nil Flow Cell = %v, want zero", got)
 	}
 	if got := c.Optional(source.Span{}, 0); got != 0 {
@@ -558,7 +558,7 @@ func TestCopiedTermMutationsRejectAtAdmission(t *testing.T) {
 				body := newBody(c)
 				value := c.String(span, body, "callee")
 				values := c.Values(span, body, []keyspace.Term{value}, 0)
-				call := c.DeclareCall(span, body, value, 0, values)
+				call := c.DeclareCall(span, body, value, 0, values, "")
 				future := keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 1)
 				return c, func(c *Collector) { c.SetCallTypeArgs(call, []keyspace.Term{future}) }
 			},
@@ -577,7 +577,7 @@ func TestCopiedTermMutationsRejectAtAdmission(t *testing.T) {
 			build: func() (*Collector, func(*Collector)) {
 				c := New(name, 0, bind.GlobalCensus{})
 				owner, foreign := newBody(c), newBody(c)
-				cell := c.Cell(span, foreign)
+				cell := c.Cell(span, foreign, "")
 				function := c.DeclareFunction(span, owner)
 				return c, func(c *Collector) { c.FillFunction(function, owner, []keyspace.Term{cell}, 0, nil) }
 			},
@@ -589,7 +589,7 @@ func TestCopiedTermMutationsRejectAtAdmission(t *testing.T) {
 				owner, foreign := newBody(c), newBody(c)
 				value := c.Bool(span, owner, true)
 				values := c.Values(span, owner, []keyspace.Term{value}, 0)
-				cell := c.Cell(span, foreign)
+				cell := c.Cell(span, foreign, "")
 				return c, func(c *Collector) { c.Bind(span, owner, []keyspace.Term{cell}, values) }
 			},
 		},
@@ -676,7 +676,7 @@ func TestCollectorModuleObservationFillsReservedSlotsOutOfOrder(t *testing.T) {
 	makeCall := func(line uint32) keyspace.Term {
 		request := c.String(span(line), body, "pkg")
 		values := c.Values(span(line), body, []keyspace.Term{request}, 0)
-		return c.DeclareCall(span(line), body, request, 0, values)
+		return c.DeclareCall(span(line), body, request, 0, values, "")
 	}
 	call1, call2, call3 := makeCall(10), makeCall(20), makeCall(30)
 	if c.Import(2, span(30), call3) != keyspace.MakeTerm(keyspace.FamilyImport, 3) ||
@@ -696,7 +696,7 @@ func TestModuleRootRejectsEmptyStringRequestBeforeExactAdmission(t *testing.T) {
 	body := c.Body(span)
 	request := c.String(span, body, "")
 	values := c.Values(span, body, []keyspace.Term{request}, 0)
-	call := c.DeclareCall(span, body, request, 0, values)
+	call := c.DeclareCall(span, body, request, 0, values, "")
 	if body == 0 || request == 0 || values == 0 || call == 0 {
 		t.Fatal("empty request construction failed")
 	}
