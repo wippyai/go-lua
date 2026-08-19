@@ -4,11 +4,24 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/result"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/internal/testfixture"
 )
+
+func mustResultGeometry(t *testing.T, state *compiledState) result.Geometry {
+	t.Helper()
+	if state == nil {
+		t.Fatal("compiled state")
+	}
+	geometry, ok := state.resultGeometry()
+	if !ok {
+		t.Fatal("result geometry")
+	}
+	return geometry
+}
 
 // TestDiagnosticBranchGeometryUsesExecutionPointAndBaseAnchor proves that
 // local storage and equality rules attach at their Local execution point while
