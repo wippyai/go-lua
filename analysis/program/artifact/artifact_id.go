@@ -261,10 +261,6 @@ func artifactID(artifact *Artifact) identity.ContentID {
 			return identity.ContentID{}
 		}
 	}
-	sink.add(uintField(uint64(len(artifact.staticTypeArguments))))
-	for _, row := range artifact.staticTypeArguments {
-		sink.add(bytesField(row.id), bytesField(row.call), bytesField(row.types), bytesField(row.reference), uintField(uint64(row.index)))
-	}
 	sink.add(uintField(uint64(len(artifact.staticTypeValues))))
 	for _, row := range artifact.staticTypeValues {
 		sink.add(bytesField(row.id), bytesField(row.body), bytesField(row.reference), bytesField(row.root), field{bytes: []byte(row.name), kind: fieldBytes})

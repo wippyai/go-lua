@@ -123,7 +123,7 @@ func (compiler *compiler) callConstruction(index int) (callConstruction, bool) {
 	if !valuesOK || width != len(members) || !valuesRoot.Available() {
 		return callConstruction{}, false
 	}
-	valuesSemanticID, valuesSemanticOK := compiler.input.CallValuesIDAt(index)
+	valuesSemanticID, valuesSemanticOK := flowView.CallValuesID(term)
 	if !valuesSemanticOK || !valuesSemanticID.Available() {
 		return callConstruction{}, false
 	}
@@ -134,7 +134,7 @@ func (compiler *compiler) callConstruction(index int) (callConstruction, bool) {
 		memberTerm, memberOK := authoredValues.Member(actualsTerm, argumentIndex)
 		memberSpan, _, _, memberSpanOK := compiler.input.EvaluationSpan(memberTerm)
 		memberID := members[argumentIndex]
-		argumentID, argumentOK := compiler.input.CallArgumentIDAt(index, argumentIndex)
+		argumentID, argumentOK := flowView.CallArgumentID(term, argumentIndex)
 		if !memberOK || !memberSpanOK || !memberID.Available() || !argumentOK || !argumentID.Available() {
 			return callConstruction{}, false
 		}

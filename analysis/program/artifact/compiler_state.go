@@ -41,7 +41,6 @@ type compiler struct {
 	ruleOccurrences            []RuleOccurrence
 	issuance                   IssuanceDirectory
 	diagnosticObservations     []DiagnosticObservationRow
-	staticTypeArguments        []StaticTypeArgumentRow
 	staticTypeValues           []StaticTypeValueRow
 	staticTypeNodes            []StaticTypeNodeRow
 	staticExpressions          []StaticExpressionRow

@@ -163,16 +163,6 @@ func (artifact *Artifact) validateSealIndexes(state *sealValidationState) Compil
 			return compileFailure(CompileStageSeal, CompileRowValues, index, -1, CompileReasonValuesBody)
 		}
 	}
-	seenStaticArguments := make(map[identity.ContentID]struct{}, len(artifact.staticTypeArguments))
-	for index, row := range artifact.staticTypeArguments {
-		if !row.Available() {
-			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
-		}
-		if _, duplicate := seenStaticArguments[row.id]; duplicate {
-			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
-		}
-		seenStaticArguments[row.id] = struct{}{}
-	}
 	seenStaticValues := make(map[identity.ContentID]struct{}, len(artifact.staticTypeValues))
 	for index, row := range artifact.staticTypeValues {
 		if !row.Available() {

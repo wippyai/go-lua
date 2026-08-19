@@ -44,7 +44,6 @@ type Artifact struct {
 	occurrenceByID         map[occurrenceLookup]uint32
 	ruleOccurrences        []RuleOccurrence
 	diagnosticObservations []DiagnosticObservationRow
-	staticTypeArguments    []StaticTypeArgumentRow
 	staticTypeValues       []StaticTypeValueRow
 	staticTypeNodes        []StaticTypeNodeRow
 	staticExpressions      []StaticExpressionRow

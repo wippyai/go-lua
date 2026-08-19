@@ -2,51 +2,6 @@ package artifact
 
 import "github.com/wippyai/go-lua/analysis/identity"
 
-// StaticTypeArgumentRow is the closed Program row for one authored call
-// type argument.  The argument and target are owner-issued identities; no
-// authored Term or Program/Static capability crosses the artifact boundary.
-type StaticTypeArgumentRow struct {
-	id        identity.ContentID
-	call      identity.ContentID
-	types     identity.ContentID
-	reference identity.ContentID
-	index     uint32
-}
-
-func (row StaticTypeArgumentRow) Available() bool {
-	return row.id.Available() && row.call.Available() && row.types.Available() && row.reference.Available()
-}
-func (row StaticTypeArgumentRow) ID() identity.ContentID {
-	if !row.Available() {
-		return identity.ContentID{}
-	}
-	return row.id
-}
-func (row StaticTypeArgumentRow) CallID() identity.ContentID {
-	if !row.Available() {
-		return identity.ContentID{}
-	}
-	return row.call
-}
-func (row StaticTypeArgumentRow) ReferenceID() identity.ContentID {
-	if !row.Available() {
-		return identity.ContentID{}
-	}
-	return row.reference
-}
-func (row StaticTypeArgumentRow) TypesID() identity.ContentID {
-	if !row.Available() {
-		return identity.ContentID{}
-	}
-	return row.types
-}
-func (row StaticTypeArgumentRow) Index() uint32 {
-	if !row.Available() {
-		return 0
-	}
-	return row.index
-}
-
 // StaticTypeValueRow is the closed Program row for one executable
 // TypeValue source. Its BodyPath and occurrence identity are sufficient for
 // mounted substitution; Static decides the semantic class and runtime
@@ -97,18 +52,6 @@ func (compiler *compiler) copyStaticRowsFailure() CompileFailure {
 	if compiler == nil || !compiler.input.Available() {
 		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
 	}
-	// copyCallRowsFailure is the sole call source stage. Static's ordered
-	// type-argument references are already copied into the Artifact-owned
-	// CallTypeArgumentRow column there, so this stage only projects that direct
-	// column into StaticTypeArgumentRow without reopening Program wrappers.
-	compiler.staticTypeArguments = make([]StaticTypeArgumentRow, 0, len(compiler.callTypeArguments))
-	for index, argument := range compiler.callTypeArguments {
-		row := StaticTypeArgumentRow{id: argument.id, call: argument.call, types: argument.types, reference: argument.reference, index: argument.position}
-		if !argument.Available() || !row.Available() {
-			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
-		}
-		compiler.staticTypeArguments = append(compiler.staticTypeArguments, row)
-	}
 	compiler.staticTypeValues = make([]StaticTypeValueRow, 0)
 	typeValues := compiler.input.Flow().Authored().TypeValues()
 	for index := 0; index < typeValues.Count(); index++ {
@@ -126,21 +69,6 @@ func (compiler *compiler) copyStaticRowsFailure() CompileFailure {
 		compiler.staticTypeValues = append(compiler.staticTypeValues, row)
 	}
 	return CompileFailure{}
-}
-
-// StaticTypeArgumentCount and StaticTypeArgumentAt expose the closed
-// Program-owned type-argument formal plane to mounted Static authorities.
-func (artifact *Artifact) StaticTypeArgumentCount() int {
-	if !artifact.Available() {
-		return 0
-	}
-	return len(artifact.staticTypeArguments)
-}
-func (artifact *Artifact) StaticTypeArgumentAt(index int) (StaticTypeArgumentRow, bool) {
-	if !artifact.Available() || index < 0 || index >= len(artifact.staticTypeArguments) {
-		return StaticTypeArgumentRow{}, false
-	}
-	return artifact.staticTypeArguments[index], true
 }
 
 // StaticTypeValueCount and StaticTypeValueAt expose executable TypeValue

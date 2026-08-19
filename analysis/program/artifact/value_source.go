@@ -76,7 +76,7 @@ func (compiler *compiler) valueSourceAt(code uint64, index int) (valueSourceComp
 	if !bodyOK || !bodyPathOK || !bodyPath.Available() || !canonicalOK || canonicalTerm != term || !canonicalID.Available() || !canonicalSpanID.Available() {
 		return valueSourceCompileRow{}, false
 	}
-	finish, finishOK := input.FinishSite(term)
+	finish, finishOK := input.Flow().FinishSite(term)
 	if !finishOK {
 		return valueSourceCompileRow{}, false
 	}
