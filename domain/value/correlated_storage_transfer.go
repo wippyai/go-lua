@@ -3,8 +3,6 @@ package value
 import (
 	"crypto/sha256"
 	"encoding/binary"
-	"fmt"
-	"os"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
@@ -24,6 +22,15 @@ const (
 
 func (kind storageTransferKind) valid() bool {
 	return kind >= storageTransferRead && kind <= storageTransferWrite
+}
+
+// positional reports whether the family fans one authored statement out over a
+// value list, so the target's list position is part of the relation identity.
+// A read names one cell and takes no list position. A bind and an assignment
+// write each take the member of their statement's value list at their own
+// position, and Program issues one occurrence per position in both families.
+func (kind storageTransferKind) positional() bool {
+	return kind == storageTransferBind || kind == storageTransferWrite
 }
 
 func storageTransferKindForArtifact(kind programartifact.OccurrenceKind) (storageTransferKind, bool) {
@@ -128,7 +135,7 @@ func (ref StorageTransferRef) valid() bool {
 	if !ref.linkID.Available() || !ref.mount.Available() || !ref.occurrence.Available() || !ref.kind.valid() {
 		return false
 	}
-	return ref.kind == storageTransferBind || ref.position == 0
+	return ref.kind.positional() || ref.position == 0
 }
 
 func (transfer StorageTransfer) valid() bool {
@@ -208,11 +215,10 @@ func (schema *valueBuilder) sealStorageTransfersWithFailure() SealFailure {
 			if !rowOK || !kindOK {
 				continue
 			}
+			// StorageTransferRef is the single authority on which
+			// (kind, position) tuples name a relation; a non-positional
+			// family carrying a list position is refused there.
 			position := uint32(row.Code())
-			if kind != storageTransferBind && position != 0 {
-				fmt.Fprintf(os.Stderr, "ZZPROBE site=position kind=%d position=%d inputs=%d rowkind=%d\n", kind, position, row.InputCount(), row.Kind())
-				return SealFailureStorageTransferAddInput
-			}
 			var fromID, toID identity.ContentID
 			switch kind {
 			case storageTransferRead:
@@ -224,7 +230,6 @@ func (schema *valueBuilder) sealStorageTransfersWithFailure() SealFailure {
 				toID, _ = row.InputAt(2)
 			}
 			if failure := schema.addArtifactStorageTransfer(module, kind, row.ID(), position, fromID, toID); failure != SealFailureNone {
-					fmt.Fprintf(os.Stderr, "ZZPROBE site=add failure=%v kind=%d position=%d inputs=%d fromOK=%t toOK=%t\n", failure, kind, position, row.InputCount(), fromID.Available(), toID.Available())
 				return failure
 			}
 		}
