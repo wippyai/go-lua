@@ -24,7 +24,7 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 	var leftRead, rightRead engine.Read[engine.OrderedCells[value.Value]]
 	var left, right engine.Read[engine.OrderedCells[value.Value]]
 	var implementation *valueowner.RuleImplementation[value.BinaryEquality]
-	bound := valueowner.BindSelectedRule(owner, fragment.slot, fragment.carry, fragment.write, owner.FactorRef(), engine.HotRuleSpec[value.Value, value.BinaryEquality]{
+	implementation, bound := valueowner.BindSelectedRuleDirect(owner, fragment.slot, fragment.carry, fragment.write, owner.FactorRef(), engine.HotRuleSpec[value.Value, value.BinaryEquality]{
 		OperandContent: func(row value.BinaryEquality) (value.BinaryEquality, [32]byte, bool) {
 			return hotContent(owner.Schema(), row)
 		},
@@ -57,22 +57,22 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 		result, _, _, _, ok := hotEndpoints(owner.Schema(), row)
 		index, indexOK := owner.Schema().CoordinateIndex(result)
 		return uint64(index), ok && indexOK
-	}, func(tx *valueowner.SelectedRuleBinding[value.BinaryEquality]) bool {
-		var leftOK, rightOK, implementationOK bool
-		left, leftOK = valueowner.AddSelectedRuleExactRead(tx, fragment.left, owner.FactorRef(), func(row value.BinaryEquality) (uint64, bool) {
-			_, leftCoord, _, _, ok := hotEndpoints(owner.Schema(), row)
-			index, indexOK := owner.Schema().CoordinateIndex(leftCoord)
-			return uint64(index), ok && indexOK
-		})
-		right, rightOK = valueowner.AddSelectedRuleExactRead(tx, fragment.right, owner.FactorRef(), func(row value.BinaryEquality) (uint64, bool) {
-			_, _, rightCoord, _, ok := hotEndpoints(owner.Schema(), row)
-			index, indexOK := owner.Schema().CoordinateIndex(rightCoord)
-			return uint64(index), ok && indexOK
-		})
-		implementation, implementationOK = tx.Implementation()
-		return leftOK && rightOK && implementationOK
 	})
 	if !bound {
+		return nil, false
+	}
+	var leftOK, rightOK bool
+	left, leftOK = valueowner.AddSelectedRuleDirectExactRead(implementation, fragment.left, owner.FactorRef(), func(row value.BinaryEquality) (uint64, bool) {
+		_, leftCoord, _, _, ok := hotEndpoints(owner.Schema(), row)
+		index, indexOK := owner.Schema().CoordinateIndex(leftCoord)
+		return uint64(index), ok && indexOK
+	})
+	right, rightOK = valueowner.AddSelectedRuleDirectExactRead(implementation, fragment.right, owner.FactorRef(), func(row value.BinaryEquality) (uint64, bool) {
+		_, _, rightCoord, _, ok := hotEndpoints(owner.Schema(), row)
+		index, indexOK := owner.Schema().CoordinateIndex(rightCoord)
+		return uint64(index), ok && indexOK
+	})
+	if !leftOK || !rightOK {
 		return nil, false
 	}
 	leftRead, rightRead = left, right
