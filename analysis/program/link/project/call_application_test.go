@@ -32,7 +32,7 @@ dead()
 			dead = true
 			continue
 		}
-		callID, callOK := p.CallIDAt(index)
+		callID, callOK := callIdentityAt(p, index)
 		if !callOK {
 			t.Fatalf("executable Program Call identity %d unavailable", index)
 		}
@@ -162,7 +162,7 @@ func callIDForTerm(t testing.TB, p *program.Program, term keyspace.Term) identit
 	for index := 0; index < calls.Count(); index++ {
 		candidate, ok := calls.At(index)
 		if ok && candidate == term {
-			callID, callOK := p.CallIDAt(index)
+			callID, callOK := callIdentityAt(p, index)
 			if !callOK {
 				t.Fatal("Program Call identity unavailable")
 			}
@@ -179,7 +179,7 @@ func onlyExecutableCallID(t testing.TB, p *program.Program) identity.ContentID {
 	var result identity.ContentID
 	for index := 0; index < calls.Count(); index++ {
 		term, termOK := calls.At(index)
-		callID, callOK := p.CallIDAt(index)
+		callID, callOK := callIdentityAt(p, index)
 		if !termOK || !callOK || !p.Flow().Executable().Contains(term) {
 			continue
 		}

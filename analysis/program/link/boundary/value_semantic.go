@@ -114,18 +114,19 @@ func sealValueSemanticIDs(table *valueTable, p *program.Program, mount uint32) e
 	for index := 0; index < calls.Count(); index++ {
 		callTerm, callTermOK := calls.At(index)
 		_, calleeTerm, receiverTerm, actualsTerm, callRowOK := calls.Get(callTerm)
-		callID, callOK := p.CallIDAt(index)
+		identities, callOK := boundaryCallIdentitiesAt(p, index)
 		if !callOK {
 			// Calls without complete evaluation geometry do not produce an
 			// Artifact call row and therefore have no mounted semantic inverse.
 			continue
 		}
-		calleeID, calleeOK := p.CallCalleeIDAt(index)
-		actualsID, actualsOK := p.CallActualsIDAt(index)
+		callID := identities.Call
+		calleeID := identities.Callee
+		actualsID := identities.Actuals
 		valuesID, valuesOK := p.Flow().CallValuesID(callTerm)
-		if !callTermOK || !callRowOK || !calleeOK || !actualsOK || !valuesOK ||
+		if !callTermOK || !callRowOK || !calleeID.Available() || !actualsID.Available() || !valuesOK ||
 			!callID.Available() || !calleeID.Available() || !actualsID.Available() || !valuesID.Available() {
-			return fmt.Errorf("link/boundary: malformed semantic Call row=%d term=%d authored=%t relation=%t call=%t callee=%t actuals=%t values=%t", index, callTerm, callTermOK, callRowOK, callOK, calleeOK, actualsOK, valuesOK)
+			return fmt.Errorf("link/boundary: malformed semantic Call row=%d term=%d authored=%t relation=%t call=%t callee=%t actuals=%t values=%t", index, callTerm, callTermOK, callRowOK, callOK, calleeID.Available(), actualsID.Available(), valuesOK)
 		}
 		for _, row := range []struct {
 			id   identity.ContentID
@@ -136,8 +137,8 @@ func sealValueSemanticIDs(table *valueTable, p *program.Program, mount uint32) e
 			}
 		}
 		if receiverTerm != 0 {
-			receiverID, receiverOK := p.CallReceiverIDAt(index)
-			if !receiverOK {
+			receiverID := identities.Receiver
+			if !receiverID.Available() {
 				return errors.New("link/boundary: malformed semantic Call receiver")
 			}
 			if err := addTerm("Call receiver", receiverID, receiverTerm, true); err != nil {

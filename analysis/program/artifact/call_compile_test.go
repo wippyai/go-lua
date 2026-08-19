@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
+	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/schema"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 )
@@ -44,7 +45,7 @@ return identity(true)
 		t.Fatalf("artifact call rows = %d, want authored denominator %d", len(transaction.calls), callCount)
 	}
 	for index := 0; index < callCount; index++ {
-		callID, callOK := compiled.CallIDAt(index)
+		callID, callOK := testCallIdentityAt(compiled, index)
 		callTerm, callTermOK := compiled.Flow().Authored().Calls().At(index)
 		row := transaction.calls[index]
 		spanID, entryTerm, finishTerm, spanOK := compiled.EvaluationSpan(callTerm)
@@ -93,6 +94,36 @@ return identity(true)
 			t.Fatalf("call %d argument is not joined to its artifact call/value parent", index)
 		}
 	}
+}
+
+func testCallIdentityAt(input *program.Program, index int) (identity.ContentID, bool) {
+	if input == nil || index < 0 {
+		return identity.ContentID{}, false
+	}
+	flowView := input.Flow()
+	calls := flowView.Authored().Calls()
+	call, callOK := calls.At(index)
+	owner, callee, receiver, actuals, rowOK := calls.Get(call)
+	bodyBoundary, bodyOK := flowView.FunctionBoundaries().ForBody(owner)
+	spanID, _, _, spanOK := input.EvaluationSpan(call)
+	valuesID, valuesOK := flowView.ValuesOccurrenceID(actuals)
+	contracts := input.Static().Contracts().Calls()
+	typeCount, typeCountOK := contracts.TypeArgumentCount(call)
+	typeArguments, typeArgumentsOK := contracts.TypeArgumentID(call)
+	form := programschema.CallFormPlain
+	if receiver != 0 {
+		form = programschema.CallFormMethod
+	}
+	if !callOK || !rowOK || !bodyOK || !bodyBoundary.Available() || !spanOK || !spanID.Available() || !valuesOK ||
+		!valuesID.Available() || !typeCountOK || typeCount < 0 || !typeArgumentsOK || !typeArguments.Available() {
+		return identity.ContentID{}, false
+	}
+	identities, identitiesOK := programschema.CallIdentities(programschema.CallIdentityInput{
+		ProgramID: input.ContentID(), Call: call, Form: form, Body: bodyBoundary.ContextID(), Span: spanID,
+		Callee: callee, Receiver: receiver, Actuals: actuals, Values: valuesID,
+		TypeArgumentCount: typeCount, TypeArguments: typeArguments,
+	})
+	return identities.Call, identitiesOK && identities.Call.Available()
 }
 
 func TestProgramArtifactCallStagesUseFinishAndExactDispatchTransport(t *testing.T) {

@@ -131,7 +131,7 @@ func buildApplications(mounts []mountRow) ([]applicationRow, []uint32, []uint32,
 			if !executable.Contains(call) {
 				continue
 			}
-			callID, callOK := p.CallIDAt(at)
+			callID, callOK := callIdentityAt(p, at)
 			if !callOK || !callID.Available() {
 				return nil, nil, nil, nil, nil, errors.New("link/project: malformed executable Program Call occurrence proof")
 			}

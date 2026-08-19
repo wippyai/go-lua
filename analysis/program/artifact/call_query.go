@@ -106,17 +106,62 @@ func (compiler *compiler) callConstruction(index int) (callConstruction, bool) {
 	if !spanOK {
 		return callConstruction{}, false
 	}
+	programID := compiler.key.ProgramID()
+	// CompileDetailed always supplies the same root through CompileKey. The
+	// input fallback keeps this construction seam usable by its direct cold
+	// tests, which intentionally omit the surrounding compile-key wrapper.
+	if !programID.Available() {
+		programID = compiler.input.ContentID()
+	}
 	form := accessgeometry.CallFormPlain
 	if receiverTerm != 0 {
 		form = accessgeometry.CallFormMethod
 	}
-	callee, calleeOK := compiler.callOperand(index, term, calleeTerm, programschema.CallOperandCallee)
+	coldForm, coldFormOK := coldCallForm(form)
+	if !coldFormOK {
+		return callConstruction{}, false
+	}
+	contracts := compiler.input.Static().Contracts().Calls()
+	typeCount, typeCountOK := contracts.TypeArgumentCount(term)
+	typeSequenceID, typeSequenceOK := contracts.TypeArgumentID(term)
+	if !typeCountOK || typeCount < 0 || !typeSequenceOK || !typeSequenceID.Available() {
+		return callConstruction{}, false
+	}
+	typeTerms := make([]keyspace.Term, typeCount)
+	for typeIndex := range typeTerms {
+		typeTerms[typeIndex], typeCountOK = contracts.TypeArgumentAt(term, typeIndex)
+		if !typeCountOK {
+			return callConstruction{}, false
+		}
+	}
+	callPath, callPathOK := flowView.CallPath(term)
+	valuesWidth, valuesOpen, valuesShapeOK := flowView.ValuesShape(actualsTerm)
+	if !callPathOK || !callPath.Available() || !valuesShapeOK || valuesWidth < 0 || valuesWidth > int(^uint32(0)) {
+		return callConstruction{}, false
+	}
+	// ValuesOccurrenceID is the final root-call input and is read from Flow's
+	// canonical Values owner before the scalar result is admitted.
+	valuesSemanticID, valuesSemanticOK := flowView.ValuesOccurrenceID(actualsTerm)
+	if !valuesSemanticOK || !valuesSemanticID.Available() {
+		return callConstruction{}, false
+	}
+	identities, identitiesOK := programschema.CallIdentities(programschema.CallIdentityInput{
+		ProgramID: programID, Call: term, Form: coldForm, Body: bodyBoundary.ContextID(), Span: spanID,
+		Callee: calleeTerm, Receiver: receiverTerm, Actuals: actualsTerm, Values: valuesSemanticID,
+		TypeArgumentCount: typeCount, TypeArguments: typeSequenceID, BodyPath: bodyPath, CallPath: callPath,
+		ValuesWidth: valuesWidth, ValuesOpen: valuesOpen, TypeArgumentTerms: typeTerms, FormalGeometryKnown: true,
+	})
+	if !identitiesOK || !identities.Call.Available() || !identities.Formal.Available() ||
+		!identities.TypeArguments.Available() || len(identities.TypeArgumentAt) != typeCount {
+		return callConstruction{}, false
+	}
+	callee, calleeOK := compiler.callOperand(term, calleeTerm, programschema.CallOperandCallee, identities.Callee)
 	receiver := callOperandConstruction{}
 	receiverOK := true
 	if receiverTerm != 0 {
-		receiver, receiverOK = compiler.callOperand(index, term, receiverTerm, programschema.CallOperandReceiver)
+		receiver, receiverOK = compiler.callOperand(term, receiverTerm, programschema.CallOperandReceiver, identities.Receiver)
 	}
-	actuals, actualsOK := compiler.callOperand(index, term, actualsTerm, programschema.CallOperandActuals)
+	actuals, actualsOK := compiler.callOperand(term, actualsTerm, programschema.CallOperandActuals, identities.Actuals)
 	if !calleeOK || !receiverOK || !actualsOK {
 		return callConstruction{}, false
 	}
@@ -125,11 +170,6 @@ func (compiler *compiler) callConstruction(index int) (callConstruction, bool) {
 	if !valuesOK || width != len(members) || !valuesRoot.Available() {
 		return callConstruction{}, false
 	}
-	valuesSemanticID, valuesSemanticOK := flowView.CallValuesID(term)
-	if !valuesSemanticOK || !valuesSemanticID.Available() {
-		return callConstruction{}, false
-	}
-
 	arguments := make([]callArgumentConstruction, width)
 	authoredValues := flowView.Authored().Values()
 	for argumentIndex := 0; argumentIndex < width; argumentIndex++ {
@@ -143,35 +183,23 @@ func (compiler *compiler) callConstruction(index int) (callConstruction, bool) {
 		arguments[argumentIndex] = callArgumentConstruction{id: argumentID, member: memberID, span: memberSpan}
 	}
 
-	contracts := compiler.input.Static().Contracts().Calls()
-	typeCount, typeCountOK := contracts.TypeArgumentCount(term)
-	if !typeCountOK || typeCount < 0 {
-		return callConstruction{}, false
-	}
-	typesID, typesOK := compiler.input.CallTypeArgumentsIDAt(index)
-	if !typesOK || !typesID.Available() {
-		return callConstruction{}, false
-	}
+	typesID := identities.TypeArguments
 	typeArguments := make([]callTypeArgumentConstruction, typeCount)
 	staticTypes := compiler.input.Static().StaticTypes()
 	for typeIndex := 0; typeIndex < typeCount; typeIndex++ {
-		typeTerm, typeOK := contracts.TypeArgumentAt(term, typeIndex)
+		typeTerm := typeTerms[typeIndex]
+		typeOK := typeTerm != 0
 		ref, refOK := staticTypes.Ref(typeTerm)
-		referenceID, referenceOK := staticquery.TypeReferenceID(compiler.input.ContentID(), ref)
-		argumentID, argumentOK := compiler.input.CallTypeArgumentIDAt(index, typeIndex)
+		referenceID, referenceOK := staticquery.TypeReferenceID(programID, ref)
+		argumentID := identities.TypeArgumentAt[typeIndex]
+		argumentOK := argumentID.Available()
 		if !typeOK || !refOK || ref.Term() != typeTerm || !referenceOK || !referenceID.Available() || !argumentOK || !argumentID.Available() {
 			return callConstruction{}, false
 		}
 		typeArguments[typeIndex] = callTypeArgumentConstruction{id: argumentID, reference: referenceID, term: typeTerm}
 	}
-	formalID, formalOK := compiler.input.CallFormalIDAt(index)
-	if !formalOK || !formalID.Available() {
-		return callConstruction{}, false
-	}
-	callID, callOK := compiler.input.CallIDAt(index)
-	if !callOK || !callID.Available() {
-		return callConstruction{}, false
-	}
+	formalID := identities.Formal
+	callID := identities.Call
 	result := callConstruction{term: term, owner: owner, id: callID, bodyPath: bodyPath, span: spanID,
 		formal: formalID, values: valuesSemanticID, valuesRoot: valuesRoot, types: typesID, callee: callee, receiver: receiver, actuals: actuals,
 		arguments: arguments, typeArguments: typeArguments, tail: tail, form: form, executable: flowView.Executable().Contains(term), entry: entry, finish: finish}
@@ -191,20 +219,10 @@ func (compiler *compiler) callConstruction(index int) (callConstruction, bool) {
 	return result, true
 }
 
-func (compiler *compiler) callOperand(index int, call, term keyspace.Term, kind programschema.CallOperandKind) (callOperandConstruction, bool) {
+func (compiler *compiler) callOperand(call, term keyspace.Term, kind programschema.CallOperandKind, id identity.ContentID) (callOperandConstruction, bool) {
 	span, _, _, spanOK := compiler.input.EvaluationSpan(term)
-	id := identity.ContentID{}
-	var idOK bool
-	switch kind {
-	case programschema.CallOperandCallee:
-		id, idOK = compiler.input.CallCalleeIDAt(index)
-	case programschema.CallOperandReceiver:
-		id, idOK = compiler.input.CallReceiverIDAt(index)
-	case programschema.CallOperandActuals:
-		id, idOK = compiler.input.CallActualsIDAt(index)
-	}
 	operand := callOperandConstruction{id: id, span: span, kind: kind, term: term}
-	return operand, spanOK && idOK && id.Available() && kind.Valid()
+	return operand, spanOK && id.Available() && kind.Valid()
 }
 
 func (compiler *compiler) callSpan(term keyspace.Term) (causal.Site, causal.Site, identity.ContentID, bool) {

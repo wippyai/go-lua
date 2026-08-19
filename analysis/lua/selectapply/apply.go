@@ -34,8 +34,8 @@ type Application struct {
 	Facts  channelselect.CaseSet
 }
 
-// Apply specializes each channel.select call on program. The site is
-// Program.CallIDAt. Facts come from typecall.ApplyCall. A user select
+// Apply specializes each channel.select call on program. The site is the
+// schema-issued call identity. Facts come from typecall.ApplyCall. A user select
 // or a lookalike table member is not an accepted arm.
 func Apply(prog *program.Program) []Application {
 	if prog == nil {
@@ -49,7 +49,7 @@ func Apply(prog *program.Program) []Application {
 		if !callOK || !rowOK || !isChannelModuleSelect(prog, call, callee, receiver) {
 			continue
 		}
-		site, siteOK := prog.CallIDAt(index)
+		site, siteOK := callIdentityAt(prog, index)
 		if !siteOK || !site.Available() {
 			continue
 		}
