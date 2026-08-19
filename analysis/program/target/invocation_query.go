@@ -10,14 +10,14 @@ func (c *Contract) CallbackCount(op vocabulary.Operation) int {
 	if c == nil {
 		return 0
 	}
-	return c.operationCore.CallbackCount(op)
+	return c.Core.CallbackCount(op)
 }
 
 func (c *Contract) CallbackAt(op vocabulary.Operation, index int) (vocabulary.CallbackID, bool) {
 	if c == nil {
 		return 0, false
 	}
-	return c.operationCore.CallbackAt(op, index)
+	return c.Core.CallbackAt(op, index)
 }
 
 func (c *Contract) callback(id vocabulary.CallbackID) (callbackRow, bool) {
@@ -35,7 +35,7 @@ func (c *Contract) CallbackOwner(id vocabulary.CallbackID) (vocabulary.Operation
 	if c == nil {
 		return 0, false
 	}
-	return c.operationCore.CallbackOwner(id)
+	return c.Core.CallbackOwner(id)
 }
 
 // callbackFunction returns the exact input authority that supplies a callback
@@ -288,7 +288,7 @@ func (c *Contract) CallbackLifecycle(id vocabulary.CallbackID) (vocabulary.Callb
 	if c == nil {
 		return 0, false
 	}
-	return c.operationCore.CallbackLifecycle(id)
+	return c.Core.CallbackLifecycle(id)
 }
 
 // CallbackEffectCount returns the finite explicit occurrences in the

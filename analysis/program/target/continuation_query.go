@@ -430,8 +430,8 @@ func (c *Contract) producedTypeValueCapture(op vocabulary.Operation, outcome, pr
 // framing; domain consumers pass this value to their explicit
 // schema/typecontract semantic adapter.
 func (c *Contract) TypeDeclaration(typ vocabulary.Type) (schematype.Type, bool) {
-	if c == nil || typ == 0 || uint64(typ) > uint64(len(c.types)) {
+	if c == nil {
 		return schematype.Type{}, false
 	}
-	return c.types[uint32(typ)-1].declaration, true
+	return c.Core.TypeDeclaration(typ)
 }

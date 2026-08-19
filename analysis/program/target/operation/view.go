@@ -87,12 +87,12 @@ func (core Core) InputFormalCount(op vocabulary.Operation) int {
 	return int(row.input)
 }
 
-func (core Core) ValuesVarCount(op vocabulary.Operation) uint32 {
+func (core Core) ValuesVarCount(op vocabulary.Operation) int {
 	row, ok := core.operation(op)
 	if !ok {
 		return 0
 	}
-	return row.valuesVar
+	return int(row.valuesVar)
 }
 
 func (core Core) OutcomeCount(op vocabulary.Operation) int {

@@ -98,7 +98,10 @@ func (c *Contract) encodePortableOperation(w *framing.Writer, op vocabulary.Oper
 		return err
 	}
 	for i := 0; i < row.typeFormals.len(); i++ {
-		value := c.formals[row.typeFormals.start+uint32(i)]
+		value, valueOK := c.TypeFormalConstraint(op, vocabulary.TypeFormal(i))
+		if !valueOK {
+			value = 0
+		}
 		if err := w.Bool(value != 0); err != nil {
 			return err
 		}
@@ -113,7 +116,11 @@ func (c *Contract) encodePortableOperation(w *framing.Writer, op vocabulary.Oper
 		return err
 	}
 	for i := 0; i < valuesVars; i++ {
-		if err := encodeType(w, c, c.valuesVarTypes[row.valuesTypes.start+uint32(i)]); err != nil {
+		value, valueOK := c.ValuesVarType(op, vocabulary.ValuesVar(i))
+		if !valueOK {
+			return errors.New("target: malformed Values variable type")
+		}
+		if err := encodeType(w, c, value); err != nil {
 			return err
 		}
 	}
@@ -123,12 +130,12 @@ func (c *Contract) encodePortableOperation(w *framing.Writer, op vocabulary.Oper
 	if err := encodeValues(w, c, row.input); err != nil {
 		return err
 	}
-	callbackCount := c.operationCore.CallbackCount(op)
+	callbackCount := c.Core.CallbackCount(op)
 	if err := w.Count(uint64(callbackCount)); err != nil {
 		return err
 	}
 	for i := 0; i < callbackCount; i++ {
-		callback, callbackOK := c.operationCore.CallbackAt(op, i)
+		callback, callbackOK := c.Core.CallbackAt(op, i)
 		if !callbackOK {
 			return errors.New("target: malformed callback geometry")
 		}
@@ -295,7 +302,7 @@ func (c *Contract) encodePortableCallback(w *framing.Writer, id vocabulary.Callb
 			return err
 		}
 	}
-	lifecycle, lifecycleOK := c.operationCore.CallbackLifecycle(id)
+	lifecycle, lifecycleOK := c.Core.CallbackLifecycle(id)
 	if !lifecycleOK {
 		return errors.New("target: malformed callback lifecycle")
 	}

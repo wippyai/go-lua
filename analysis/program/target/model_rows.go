@@ -235,7 +235,7 @@ func (r indexRange) len() int { return int(r.end - r.start) }
 // hot query returns only scalar handles or values.
 type Contract struct {
 	bootvalue.Table
-	operationCore          operationvalue.Core
+	operationvalue.Core
 	operations             []operationRow
 	types                  []typeRow
 	values                 []valuesRow

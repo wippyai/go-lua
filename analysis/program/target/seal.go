@@ -104,7 +104,7 @@ func Seal(spec *Spec) (*Contract, error) {
 
 	// Contract is staging-only until the final return. Any failed append drops
 	// it whole, so Seal never exposes a partially converted representation.
-	contract := &Contract{Table: bootTable, exactKeys: exactKeys, operationCore: operationCore,
+	contract := &Contract{Table: bootTable, Core: operationCore, exactKeys: exactKeys,
 		operations: make([]operationRow, 0, operationCount), protocols: protocols}
 	for index := range drafts {
 		op, ok := operationCore.OperationAt(index)
@@ -133,6 +133,11 @@ func Seal(spec *Spec) (*Contract, error) {
 	if err := contract.appendOpaque(opaque); err != nil {
 		return nil, err
 	}
+	queryCore, queryErr := operationvalue.CompileQuery(contract.Core, operationQueryInput(contract))
+	if queryErr != nil {
+		return nil, queryErr
+	}
+	contract.Core = queryCore
 	if err := contract.sealSemanticIdentities(); err != nil {
 		return nil, err
 	}
@@ -144,6 +149,7 @@ func Seal(spec *Spec) (*Contract, error) {
 		return nil, countsErr
 	}
 	contract.counts = counts
+	contract.discardOperationQueryStaging()
 	return contract, nil
 }
 

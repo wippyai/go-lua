@@ -78,7 +78,7 @@ func (d *protocolDraft) resolve(operations operation.Core) error {
 		if err != nil {
 			return err
 		}
-		if !validAuthoredInputSource(row.input, operations.InputFormalCount(op), operations.ValuesVarCount(op)) {
+		if !validAuthoredInputSource(row.input, operations.InputFormalCount(op), uint32(operations.ValuesVarCount(op))) {
 			return fmt.Errorf("target: transition %d has source outside scope", index)
 		}
 		row.operation = op
@@ -108,7 +108,7 @@ func (d *protocolDraft) resolve(operations operation.Core) error {
 		if err != nil {
 			return err
 		}
-		if !validAuthoredInputSource(row.input, operations.InputFormalCount(op), operations.ValuesVarCount(op)) {
+		if !validAuthoredInputSource(row.input, operations.InputFormalCount(op), uint32(operations.ValuesVarCount(op))) {
 			return fmt.Errorf("target: escape %d has source outside scope", index)
 		}
 		row.operation = op
@@ -128,7 +128,7 @@ func (d *protocolDraft) resolve(operations operation.Core) error {
 		if operations.BindingCount(op) == 0 {
 			return fmt.Errorf("target: callback holder %d operation is not source-visible", index)
 		}
-		if !validAuthoredInputSource(row.input, operations.InputFormalCount(op), operations.ValuesVarCount(op)) {
+		if !validAuthoredInputSource(row.input, operations.InputFormalCount(op), uint32(operations.ValuesVarCount(op))) {
 			return fmt.Errorf("target: callback holder %d has source outside scope", index)
 		}
 		row.operation = op

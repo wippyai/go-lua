@@ -46,7 +46,7 @@ func (c *Contract) sealEffectIdentities() error {
 	}
 	for index, row := range c.callbacks {
 		callback := vocabulary.CallbackID(index + 1)
-		owner, ownerOK := c.operationCore.CallbackOwner(callback)
+		owner, ownerOK := c.Core.CallbackOwner(callback)
 		if !ownerOK {
 			return errors.New("target: malformed effect callback owner")
 		}
@@ -77,7 +77,10 @@ func (c *Contract) encodeEffectOperationABI(w *framing.Writer, op vocabulary.Ope
 		return err
 	}
 	for index := 0; index < row.typeFormals.len(); index++ {
-		value := c.formals[row.typeFormals.start+uint32(index)]
+		value, valueOK := c.TypeFormalConstraint(op, vocabulary.TypeFormal(index))
+		if !valueOK {
+			value = 0
+		}
 		if err := w.Bool(value != 0); err != nil {
 			return err
 		}
@@ -91,11 +94,15 @@ func (c *Contract) encodeEffectOperationABI(w *framing.Writer, op vocabulary.Ope
 	if err := w.Count(uint64(valuesVars)); err != nil {
 		return err
 	}
-	if row.valuesTypes.len() != valuesVars || !validIdentityRange(row.valuesTypes, len(c.valuesVarTypes)) {
+	if row.valuesTypes.len() != valuesVars {
 		return errors.New("target: malformed effect Values ABI")
 	}
-	for index := row.valuesTypes.start; index < row.valuesTypes.end; index++ {
-		if err := encodeType(w, c, c.valuesVarTypes[index]); err != nil {
+	for index := 0; index < valuesVars; index++ {
+		value, valueOK := c.ValuesVarType(op, vocabulary.ValuesVar(index))
+		if !valueOK {
+			return errors.New("target: malformed effect Values ABI")
+		}
+		if err := encodeType(w, c, value); err != nil {
 			return err
 		}
 	}
@@ -107,7 +114,7 @@ func (c *Contract) sealEffectRow(owner vocabulary.Operation, callback vocabulary
 		return errors.New("target: malformed effect row range")
 	}
 	if callback != 0 {
-		callbackOwner, ownerOK := c.operationCore.CallbackOwner(callback)
+		callbackOwner, ownerOK := c.Core.CallbackOwner(callback)
 		if uint64(callback) > uint64(len(c.callbacks)) || !ownerOK || callbackOwner != owner ||
 			uint64(callback) > uint64(len(c.callbackContentIDs)) || !c.callbackContentIDs[callback-1].Available() {
 			return errors.New("target: malformed effect callback")

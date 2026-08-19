@@ -145,4 +145,5 @@ type Core struct {
 	bindingKeyRows rows.Pool[bindingKeyRow]
 	bindingRanges  rows.Rows[bindingKeyRange]
 	lookup         rows.Rows[bindingIndexRow]
+	query          queryState
 }

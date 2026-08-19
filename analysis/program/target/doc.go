@@ -25,8 +25,12 @@
 //	target/exactkey    contract-wide canonical literal directory and handles
 //	target/boot       boot roots/shapes/values/entries/bindings/metatables,
 //	                   private rows, queries, identity encoding and counts
-//	target             operation and remaining verticals; composes protocol.Table,
-//	                   exactkey.Table, boot.Table, identity and complete Target ID
+//	target/operation operation geometry plus the immutable operation query plane
+//	                   (Values, outcomes, behavior, transfers, effects, and
+//	                   declarations); composes no Target Contract or callback
+//	target             remaining verticals; composes operation.Core,
+//	                   protocol.Table, exactkey.Table, boot.Table, identity and
+//	                   complete Target ID
 //
 // `protocol.Compile` consumes sealed operation geometry and owner-issued
 // callback coordinates. It accepts no Contract, operation draft, mutable
@@ -34,11 +38,11 @@
 // and no mutating public method. Target root publishes the Table directly; it
 // does not wrap or re-derive its rows.
 //
-// The same value-handoff rule governs the remaining operation cut. A folder move
-// that merely exports Contract columns or adds forwarding methods is not a
-// boundary: it preserves the monolith and weakens the seal. Operation columns
-// must first gain an equivalent immutable owner value, then their predecessor
-// rows and root walks are deleted in the same cut.
+// The operation query cut crosses the boundary as operation.QueryInput. Seal
+// drops the root construction columns after CompileQuery returns; downstream
+// operation queries therefore read the Core-owned immutable value rather than
+// a root walk or callback. The remaining relation columns are still root-owned
+// until they receive the same complete value handoff.
 //
 // # Why identity sits above read
 //

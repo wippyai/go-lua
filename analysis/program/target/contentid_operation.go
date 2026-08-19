@@ -66,7 +66,7 @@ func encodeOperation(w *framing.Writer, c *Contract, op vocabulary.Operation) er
 			return err
 		}
 	}
-	if err := w.Uint(uint64(c.rowFormalCount(op))); err != nil {
+	if err := w.Uint(uint64(c.RowFormalCount(op))); err != nil {
 		return err
 	}
 	input, ok := c.Input(op)
@@ -337,12 +337,12 @@ func encodeOperation(w *framing.Writer, c *Contract, op vocabulary.Operation) er
 		}
 	}
 
-	transfers := c.transferCount(op)
+	transfers := c.TransferCount(op)
 	if err := w.Count(uint64(transfers)); err != nil {
 		return err
 	}
 	for index := 0; index < transfers; index++ {
-		endpoint, found := c.transferEndpointAt(op, index)
+		endpoint, found := c.TransferEndpointAt(op, index)
 		if !found {
 			return errors.New("target: malformed transfer")
 		}
@@ -352,40 +352,40 @@ func encodeOperation(w *framing.Writer, c *Contract, op vocabulary.Operation) er
 		if err := encodeCoordinate(w, uint64(endpoint.Kind), uint64(endpoint.Input)); err != nil {
 			return err
 		}
-		payload, found := c.transferPayloadAt(op, index)
+		payload, found := c.TransferPayloadAt(op, index)
 		if !found {
 			return errors.New("target: malformed transfer payload")
 		}
 		if err := encodeCoordinate(w, uint64(payload.Kind), uint64(payload.Ordinal)); err != nil {
 			return err
 		}
-		alias, found := c.transferAliasAt(op, index)
+		alias, found := c.TransferAliasAt(op, index)
 		if !found {
 			return errors.New("target: malformed transfer alias")
 		}
 		if err := encodeCoordinate(w, uint64(alias.Kind), uint64(alias.Ordinal)); err != nil {
 			return err
 		}
-		identity, found := c.transferIdentityAt(op, index)
+		identity, found := c.TransferIdentityAt(op, index)
 		if !found {
 			return errors.New("target: malformed transfer identity")
 		}
 		if err := w.Uint(uint64(identity)); err != nil {
 			return err
 		}
-		capabilities, found := c.transferCapabilitiesAt(op, index)
+		capabilities, found := c.TransferCapabilitiesAt(op, index)
 		if !found {
 			return errors.New("target: malformed transfer capabilities")
 		}
 		if err := w.Uint(uint64(capabilities)); err != nil {
 			return err
 		}
-		count := c.transferOutcomeCount(op, index)
+		count := c.TransferOutcomeCount(op, index)
 		if err := w.Count(uint64(count)); err != nil {
 			return err
 		}
 		for item := 0; item < count; item++ {
-			outcome, possibility, found := c.transferOutcomeAt(op, index, item)
+			outcome, possibility, found := c.TransferOutcomeAt(op, index, item)
 			if !found {
 				return errors.New("target: malformed transfer outcome")
 			}

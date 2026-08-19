@@ -51,10 +51,10 @@ func encodeValues(w *framing.Writer, c *Contract, values vocabulary.Values) erro
 }
 
 func encodeType(w *framing.Writer, c *Contract, value vocabulary.Type) error {
-	if value == 0 || uint64(value) > uint64(len(c.types)) {
+	declaration, ok := c.TypeDeclaration(value)
+	if !ok {
 		return errors.New("target: malformed frozen type")
 	}
-	declaration := c.types[uint32(value)-1].declaration
 	if !declaration.Available() {
 		return errors.New("target: unavailable neutral type declaration")
 	}

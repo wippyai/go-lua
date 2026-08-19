@@ -328,7 +328,7 @@ func (c *Contract) appendOpaque(opaque vocabulary.Operation) error {
 	if err != nil {
 		return err
 	}
-	issuedOpaque := callbackIDForOpaque(c.operationCore, opaque)
+	issuedOpaque := callbackIDForOpaque(c.Core, opaque)
 	_, _, err = c.appendCallbacks(opaque, []callbackDraft{{
 		function:  vocabulary.InputSource{Kind: vocabulary.InputSourceAllInputs},
 		admission: schematype.CallableAdmissionOrdinary,
