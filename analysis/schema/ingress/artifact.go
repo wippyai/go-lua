@@ -9,6 +9,7 @@ import (
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
+	programstatic "github.com/wippyai/go-lua/analysis/program/static"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/cold"
 	schemadiag "github.com/wippyai/go-lua/analysis/schema/diagnostic"
@@ -990,15 +991,15 @@ func (row StaticInput) OperandReferenceID() identity.ContentID { return row.oper
 func (row StaticInput) OperandSubjectID() identity.ContentID   { return row.operandSubject }
 func (row StaticInput) OperandBodyPathID() identity.ContentID  { return row.operandBody }
 func (row StaticInput) Available() bool {
-	if !row.id.Available() || !row.owner.Available() || !row.expression.Available() || !row.source.Available() || !row.target.Available() || !row.operand.Available() || !row.frontier.Available() || row.kind == uint8(programartifact.StaticInputInvalid) || row.operandKind == uint8(programartifact.StaticInputOperandInvalid) {
+	if !row.id.Available() || !row.owner.Available() || !row.expression.Available() || !row.source.Available() || !row.target.Available() || !row.operand.Available() || !row.frontier.Available() || row.kind == uint8(programartifact.StaticInputInvalid) || row.operandKind == uint8(programstatic.StaticOperandInvalid) {
 		return false
 	}
-	switch programartifact.StaticInputOperandKind(row.operandKind) {
-	case programartifact.StaticInputOperandKnown:
+	switch programstatic.StaticOperandKind(row.operandKind) {
+	case programstatic.StaticOperandKnown:
 		return row.operandSubject == (identity.ContentID{}) && row.operandReference == (identity.ContentID{})
-	case programartifact.StaticInputOperandRuntimeSubject:
+	case programstatic.StaticOperandRuntimeSubject:
 		return row.operandSubject.Available() && row.operandBody.Available() && row.operandReference == (identity.ContentID{})
-	case programartifact.StaticInputOperandTypeValue:
+	case programstatic.StaticOperandTypeValue:
 		return row.operandReference.Available() && row.operandBody.Available() && row.operandSubject == (identity.ContentID{})
 	default:
 		return false
@@ -1690,9 +1691,9 @@ func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Sna
 			id: row.ID(), owner: row.Owner(), kind: uint8(row.Kind()), literal: row.LiteralKind(),
 		})
 	}
-	snapshot.staticTypeArguments = make([]StaticTypeArgument, 0, artifact.StaticTypeArgumentCount())
-	for index := 0; index < artifact.StaticTypeArgumentCount(); index++ {
-		row, ok := artifact.StaticTypeArgumentAt(index)
+	snapshot.staticTypeArguments = make([]StaticTypeArgument, 0, artifact.CallTypeArgumentCount())
+	for index := 0; index < artifact.CallTypeArgumentCount(); index++ {
+		row, ok := artifact.CallTypeArgumentAt(index)
 		if !ok || !row.Available() {
 			return nil, false
 		}

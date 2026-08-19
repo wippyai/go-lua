@@ -5,7 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	programstatic "github.com/wippyai/go-lua/analysis/program/static"
 	"github.com/wippyai/go-lua/domain/type/authority"
 )
 
@@ -144,6 +144,6 @@ func (a *Authority) addCoordinate(ref typeauthority.StaticTypeRef, namespace ide
 	return nil
 }
 
-// Keep the artifact enum referenced in this file's API documentation and
-// guard accidental reintroduction of a second operand vocabulary.
-var _ = programartifact.StaticInputOperandKnown
+// Keep the static operand enum referenced in this file's API documentation
+// and guard accidental reintroduction of a second operand vocabulary.
+var _ = programstatic.StaticOperandKnown

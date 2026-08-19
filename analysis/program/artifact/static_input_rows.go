@@ -3,6 +3,7 @@ package artifact
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	programstatic "github.com/wippyai/go-lua/analysis/program/static"
 )
 
 // StaticExpressionRow is the closed expression denominator for one mounted
@@ -24,18 +25,6 @@ const (
 	StaticInputAnnotation
 )
 
-// StaticInputOperandKind is the exact Program-issued operand disposition.
-// Invalid is reserved for an unavailable row; the compiler rejects malformed
-// authored operands instead of fabricating a fallback judgment.
-type StaticInputOperandKind uint8
-
-const (
-	StaticInputOperandInvalid StaticInputOperandKind = iota
-	StaticInputOperandKnown
-	StaticInputOperandRuntimeSubject
-	StaticInputOperandTypeValue
-)
-
 // StaticInputRow is the closed authored input denominator. The row uses the
 // existing Program-issued semantic IDs for its expression and operand.
 type StaticInputRow struct {
@@ -43,20 +32,20 @@ type StaticInputRow struct {
 	operandReference, operandSubject, operandBody            identity.ContentID
 	literal                                                  keyspace.LiteralValue
 	kind                                                     StaticInputKind
-	operandKind                                              StaticInputOperandKind
+	operandKind                                              programstatic.StaticOperandKind
 	cursor                                                   uint32
 }
 
 func (row StaticInputRow) Available() bool {
-	if !row.id.Available() || !row.owner.Available() || !row.expression.Available() || !row.source.Available() || !row.target.Available() || !row.operand.Available() || !row.frontier.Available() || row.kind == StaticInputInvalid || row.operandKind == StaticInputOperandInvalid {
+	if !row.id.Available() || !row.owner.Available() || !row.expression.Available() || !row.source.Available() || !row.target.Available() || !row.operand.Available() || !row.frontier.Available() || row.kind == StaticInputInvalid || row.operandKind == programstatic.StaticOperandInvalid {
 		return false
 	}
 	switch row.operandKind {
-	case StaticInputOperandKnown:
+	case programstatic.StaticOperandKnown:
 		return row.operandSubject == (identity.ContentID{}) && row.operandReference == (identity.ContentID{})
-	case StaticInputOperandRuntimeSubject:
+	case programstatic.StaticOperandRuntimeSubject:
 		return row.operandSubject.Available() && row.operandBody.Available() && row.operandReference == (identity.ContentID{})
-	case StaticInputOperandTypeValue:
+	case programstatic.StaticOperandTypeValue:
 		return row.operandReference.Available() && row.operandBody.Available() && row.operandSubject == (identity.ContentID{})
 	default:
 		return false
@@ -71,7 +60,7 @@ func (row StaticInputRow) TargetID() identity.ContentID           { return row.t
 func (row StaticInputRow) OperandID() identity.ContentID          { return row.operand }
 func (row StaticInputRow) FrontierID() identity.ContentID         { return row.frontier }
 func (row StaticInputRow) Cursor() uint32                         { return row.cursor }
-func (row StaticInputRow) OperandKind() StaticInputOperandKind    { return row.operandKind }
+func (row StaticInputRow) OperandKind() programstatic.StaticOperandKind { return row.operandKind }
 func (row StaticInputRow) OperandLiteral() keyspace.LiteralValue  { return row.literal }
 func (row StaticInputRow) OperandReferenceID() identity.ContentID { return row.operandReference }
 func (row StaticInputRow) OperandSubjectID() identity.ContentID   { return row.operandSubject }

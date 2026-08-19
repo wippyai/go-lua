@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	programstatic "github.com/wippyai/go-lua/analysis/program/static"
 	"github.com/wippyai/go-lua/analysis/program/target"
 	"github.com/wippyai/go-lua/domain/type/typ"
 )
@@ -46,7 +47,7 @@ func (a *Authority) sealMountedContainedOperands() error {
 			}
 			operand := ContainedOperand{owner: row.Owner(), source: row.OperandID(), namespace: mount.NamespaceID, law: a.lawID, dependency: row.Owner(), site: row.SourceID(), frontierBody: row.FrontierID(), frontierCursor: row.Cursor()}
 			switch row.OperandKind() {
-			case programartifact.StaticInputOperandKnown:
+			case programstatic.StaticOperandKnown:
 				literal := row.OperandLiteral()
 				var value typ.Type
 				switch literal.Kind {
@@ -68,7 +69,7 @@ func (a *Authority) sealMountedContainedOperands() error {
 					return err
 				}
 				operand.kind, operand.known = OperandKnown, closed
-			case programartifact.StaticInputOperandTypeValue:
+			case programstatic.StaticOperandTypeValue:
 				ref, refOK := a.types.FindByReferenceID(row.OperandReferenceID())
 				value, valueOK := a.types.Resolve(ref)
 				if !refOK || !valueOK {
@@ -79,7 +80,7 @@ func (a *Authority) sealMountedContainedOperands() error {
 					return err
 				}
 				operand.kind, operand.known = OperandKnown, closed
-			case programartifact.StaticInputOperandRuntimeSubject:
+			case programstatic.StaticOperandRuntimeSubject:
 				subject := RuntimeSubject{linkID: a.linkID, id: row.OperandSubjectID(), body: row.OperandBodyPathID()}
 				if !subject.Valid() {
 					return errors.New("static: mounted RuntimeSubject receipt unavailable")

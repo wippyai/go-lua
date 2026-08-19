@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	programstatic "github.com/wippyai/go-lua/analysis/program/static"
 	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 	"github.com/wippyai/go-lua/analysis/schema/cold"
 )
@@ -343,7 +344,7 @@ func (compiler *compiler) deriveArithmeticSummariesFailure() CompileFailure {
 	}
 
 	for _, input := range compiler.staticInputs {
-		if !input.Available() || input.Kind() != StaticInputAnnotation || input.OperandKind() != StaticInputOperandRuntimeSubject {
+		if !input.Available() || input.Kind() != StaticInputAnnotation || input.OperandKind() != programstatic.StaticOperandRuntimeSubject {
 			continue
 		}
 		mask, numericOK := typeMask(input.TargetID(), make(map[identity.ContentID]bool))

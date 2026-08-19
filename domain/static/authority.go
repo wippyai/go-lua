@@ -243,8 +243,8 @@ func SealMountedArtifacts(context MountContext, types *typeauthority.Authority, 
 		if !mount.NamespaceID.Available() {
 			return nil, nil, errors.New("static: unavailable mounted namespace")
 		}
-		for rowIndex := 0; rowIndex < mount.Artifact.StaticTypeArgumentCount(); rowIndex++ {
-			row, rowOK := mount.Artifact.StaticTypeArgumentAt(rowIndex)
+		for rowIndex := 0; rowIndex < mount.Artifact.CallTypeArgumentCount(); rowIndex++ {
+			row, rowOK := mount.Artifact.CallTypeArgumentAt(rowIndex)
 			if !rowOK || !row.Available() {
 				return nil, nil, errors.New("static: malformed mounted type-argument row")
 			}

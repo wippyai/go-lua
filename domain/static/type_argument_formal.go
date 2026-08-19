@@ -141,7 +141,7 @@ func (a *Authority) sealMountedTypeArgumentFormals() bool {
 		if mount.Artifact == nil || !mount.Artifact.Available() || !mount.ModuleID.Available() {
 			return false
 		}
-		grouped := make(map[identity.ContentID][]programartifact.StaticTypeArgumentRow)
+		grouped := make(map[identity.ContentID][]programartifact.CallTypeArgumentRow)
 		for callIndex := 0; callIndex < mount.Artifact.CallCount(); callIndex++ {
 			call, callOK := mount.Artifact.CallAt(callIndex)
 			typesID := call.TypeArgumentsID()
@@ -152,8 +152,8 @@ func (a *Authority) sealMountedTypeArgumentFormals() bool {
 				grouped[typesID] = nil
 			}
 		}
-		for index := 0; index < mount.Artifact.StaticTypeArgumentCount(); index++ {
-			row, rowOK := mount.Artifact.StaticTypeArgumentAt(index)
+		for index := 0; index < mount.Artifact.CallTypeArgumentCount(); index++ {
+			row, rowOK := mount.Artifact.CallTypeArgumentAt(index)
 			if !rowOK || !row.Available() {
 				return false
 			}

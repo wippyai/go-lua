@@ -2,7 +2,6 @@ package artifact
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	programstatic "github.com/wippyai/go-lua/analysis/program/static"
 	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
@@ -31,21 +30,21 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 	typeOfs := view.Operators().TypeOfs()
 	annotations := view.Operands().Annotations()
 	compiler.staticInputs = make([]StaticInputRow, 0, typeOfs.Count())
-	operandRow := func(term keyspace.Term) (StaticInputOperandKind, keyspace.LiteralValue, identity.ContentID, identity.ContentID, identity.ContentID, identity.ContentID, bool) {
+	operandRow := func(term keyspace.Term) (programstatic.StaticOperandKind, keyspace.LiteralValue, identity.ContentID, identity.ContentID, identity.ContentID, identity.ContentID, bool) {
 		operand, ok := ownerProgram.StaticOperandAt(term)
 		if !ok {
-			return StaticInputOperandInvalid, keyspace.LiteralValue{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
+			return programstatic.StaticOperandInvalid, keyspace.LiteralValue{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
 		}
-		var kind StaticInputOperandKind
+		var kind programstatic.StaticOperandKind
 		switch operand.Kind() {
-		case program.StaticOperandKnown:
-			kind = StaticInputOperandKnown
-		case program.StaticOperandRuntimeSubject:
-			kind = StaticInputOperandRuntimeSubject
-		case program.StaticOperandTypeValue:
-			kind = StaticInputOperandTypeValue
+		case programstatic.StaticOperandKnown:
+			kind = programstatic.StaticOperandKnown
+		case programstatic.StaticOperandRuntimeSubject:
+			kind = programstatic.StaticOperandRuntimeSubject
+		case programstatic.StaticOperandTypeValue:
+			kind = programstatic.StaticOperandTypeValue
 		default:
-			return StaticInputOperandInvalid, keyspace.LiteralValue{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
+			return programstatic.StaticOperandInvalid, keyspace.LiteralValue{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
 		}
 		return kind, operand.Literal(), operand.ID(), operand.ReferenceID(), operand.SubjectID(), operand.BodyPathID(), true
 	}
