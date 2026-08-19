@@ -37,19 +37,4 @@
 //	the stream        section order and record framing for the artifact
 //	                  payload, shared with the ContentID digest
 //
-// # Altitude law
-//
-// The shell itself still spans five altitudes in one package, ordered
-//
-//	core < read < codec < identity < build
-//
-// and references flow one way only. The compiler cannot enforce direction
-// inside a package, so TestAltitudeLawIsOneWay does. Altitude is read off the
-// file name:
-//
-//	core      doc.go, model.go, *_model.go, families.go, api.go
-//	read      query*.go, counts.go, lifecycle_view.go
-//	codec     artifact_section_*.go
-//	identity  content.go, identity.go
-//	build     every other file
 package static
