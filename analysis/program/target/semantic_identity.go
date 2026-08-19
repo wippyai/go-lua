@@ -113,11 +113,15 @@ func (c *Contract) findCallbackContentID(id identity.ContentID) (vocabulary.Oper
 		return 0, 0, false
 	}
 	row := c.callbackContentIndex[i]
-	got, ok := c.CallbackContentID(row.op, row.callback)
+	owner, ownerOK := c.operationCore.CallbackOwner(row.callback)
+	if !ownerOK {
+		return 0, 0, false
+	}
+	got, ok := c.CallbackContentID(owner, row.callback)
 	if !ok || got != id {
 		return 0, 0, false
 	}
-	return row.op, row.callback, true
+	return owner, row.callback, true
 }
 
 // ResumeContentID identifies one exact operation-owned resumption
@@ -153,11 +157,15 @@ func (c *Contract) findResumeContentID(id identity.ContentID) (vocabulary.Operat
 		return 0, 0, false
 	}
 	row := c.resumeContentIndex[i]
-	got, ok := c.ResumeContentID(row.op, row.resume)
+	if row.resume == 0 || int(row.resume) > len(c.resumes) {
+		return 0, 0, false
+	}
+	owner := c.resumes[row.resume-1].owner
+	got, ok := c.ResumeContentID(owner, row.resume)
 	if !ok || got != id {
 		return 0, 0, false
 	}
-	return row.op, row.resume, true
+	return owner, row.resume, true
 }
 
 func (c *Contract) outcomeIndex(op vocabulary.Operation, index int) (int, bool) {
@@ -293,7 +301,7 @@ func (c *Contract) sealSemanticIdentities() error {
 			return err
 		}
 		c.callbackContentIDs[i] = id
-		c.callbackContentIndex = append(c.callbackContentIndex, callbackContentIDRow{id: id, op: owner, callback: callbackID})
+		c.callbackContentIndex = append(c.callbackContentIndex, callbackContentIDRow{id: id, callback: callbackID})
 	}
 	if err := c.sealEffectIdentities(); err != nil {
 		return err
@@ -337,7 +345,7 @@ func (c *Contract) sealSemanticIdentities() error {
 			return err
 		}
 		c.resumeContentIDs[i] = id
-		c.resumeContentIndex = append(c.resumeContentIndex, resumeContentIDRow{id: id, op: row.owner, resume: vocabulary.ResumeID(i + 1)})
+		c.resumeContentIndex = append(c.resumeContentIndex, resumeContentIDRow{id: id, resume: vocabulary.ResumeID(i + 1)})
 	}
 
 	for i := range c.operations {

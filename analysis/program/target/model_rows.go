@@ -338,15 +338,14 @@ type outcomeResultIDRow struct {
 // callbackContentIDRow and resumeContentIDRow are the immutable sorted
 // reverse columns for the Target-owned portable relation identities. The
 // forward columns remain dense by their existing sealed handles; these rows
-// retain no authoring ordinal or secondary lookup map.
+// retain only the existing sealed relation handle. The callback owner is
+// issued by operation.Core, while a resume's owner is already on resumeRow.
 type callbackContentIDRow struct {
 	id       identity.ContentID
-	op       vocabulary.Operation
 	callback vocabulary.CallbackID
 }
 
 type resumeContentIDRow struct {
 	id     identity.ContentID
-	op     vocabulary.Operation
 	resume vocabulary.ResumeID
 }
