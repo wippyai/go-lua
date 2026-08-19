@@ -4,6 +4,8 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
+	"github.com/wippyai/go-lua/analysis/engine/internal/demand"
+	"github.com/wippyai/go-lua/analysis/engine/internal/facts/change"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/internal/canonical"
 )
@@ -203,8 +205,14 @@ type SolveDiagnostics struct {
 	RawPublications      uint64
 	RawOnlyPublications  uint64
 	VersionBumps         uint64
-	SemanticWakes        uint64
-	CoverageWakes        uint64
+
+	// Wakes counts the Groups a publication woke. One route accumulates every
+	// channel, so a Group reached by several channels is one wake carrying
+	// several reasons. WakesByReason attributes those reasons: position i
+	// counts the wakes carrying the reason at change position i, and the
+	// positions therefore sum to at least Wakes.
+	Wakes         uint64
+	WakesByReason [change.ReasonWidth]uint64
 
 	InterfaceRefreshes           uint64
 	InterfaceRefreshCompleted    uint64
@@ -247,8 +255,8 @@ type solveDiagnosticState struct {
 	rawPublications              uint64
 	rawOnlyPublications          uint64
 	versionBumps                 uint64
-	semanticWakes                uint64
-	coverageWakes                uint64
+	wakes                        uint64
+	wakesByReason                [change.ReasonWidth]uint64
 	interfaceRefreshes           uint64
 	interfaceRefreshCompleted    uint64
 	interfaceRefreshFallbacks    uint64
@@ -578,8 +586,8 @@ func (diagnostics *solveDiagnosticState) snapshot() SolveDiagnostics {
 		RawPublications:              diagnostics.rawPublications,
 		RawOnlyPublications:          diagnostics.rawOnlyPublications,
 		VersionBumps:                 diagnostics.versionBumps,
-		SemanticWakes:                diagnostics.semanticWakes,
-		CoverageWakes:                diagnostics.coverageWakes,
+		Wakes:                        diagnostics.wakes,
+		WakesByReason:                diagnostics.wakesByReason,
 		InterfaceRefreshes:           diagnostics.interfaceRefreshes,
 		InterfaceRefreshCompleted:    diagnostics.interfaceRefreshCompleted,
 		InterfaceRefreshFallbacks:    diagnostics.interfaceRefreshFallbacks,
@@ -658,15 +666,22 @@ func (diagnostics *solveDiagnosticState) recordVersionBump() {
 	}
 }
 
-func (diagnostics *solveDiagnosticState) recordWakes(semantic, coverage int) {
+// recordWakes counts one publication's routed Groups and attributes the
+// reasons they accumulated. The two channels were never disjoint, so a split
+// total counted a routing artefact rather than a fact about the solve; the
+// histogram reports the distinction the split was reaching for.
+func (diagnostics *solveDiagnosticState) recordWakes(wakes []demand.Wake) {
 	if diagnostics == nil || !diagnostics.publicationEnabled() {
 		return
 	}
-	if semantic > 0 {
-		diagnostics.semanticWakes += uint64(semantic)
-	}
-	if coverage > 0 {
-		diagnostics.coverageWakes += uint64(coverage)
+	diagnostics.wakes += uint64(len(wakes))
+	for _, wake := range wakes {
+		for position := 0; position < change.ReasonWidth; position++ {
+			reason, ok := change.ReasonAt(position)
+			if ok && wake.Reasons.Has(reason) {
+				diagnostics.wakesByReason[position]++
+			}
+		}
 	}
 }
 

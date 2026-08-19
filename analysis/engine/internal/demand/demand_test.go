@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/engine/internal/factbinding"
+	"github.com/wippyai/go-lua/analysis/engine/internal/facts/change"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 	"github.com/wippyai/go-lua/analysis/engine/internal/guard"
 	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
@@ -122,7 +123,9 @@ func wideRoutingGraph(t testing.TB, width int) *equation.Graph {
 }
 
 // wideRouteChangeSet publishes one semantic change for every declared Unit.
-func wideRouteChangeSet(t testing.TB, width int) (*carrier.Composition, []carrier.Unit, carrier.ChangeSet, carrier.ChangeSet, carrier.CoverageChangeSet) {
+// It also mints an owned coverage delta with no rows: routing fences coverage
+// provenance, so a semantic-only publication still names its issuer.
+func wideRouteChangeSet(t testing.TB, width int) (*carrier.Composition, []carrier.Unit, carrier.ChangeSet, carrier.ChangeSet, carrier.CoverageChangeSet, carrier.CoverageChangeSet) {
 	t.Helper()
 	manager, err := guard.New(nil)
 	if err != nil {
@@ -232,16 +235,21 @@ func wideRouteChangeSet(t testing.TB, width int) (*carrier.Composition, []carrie
 	if !ok {
 		t.Fatal("routing authored finish")
 	}
-	coverageChanges, ok := work.CoverageChangesPointStates(demandPointOf(t, work, emptyContribution), demandPointOf(t, work, authored))
+	unchanged := demandPointOf(t, work, emptyContribution)
+	noCoverage, ok := work.CoverageChangesPointStates(unchanged, unchanged)
+	if !ok || noCoverage.Count() != 0 {
+		t.Fatal("routing empty coverage changes")
+	}
+	coverageChanges, ok := work.CoverageChangesPointStates(unchanged, demandPointOf(t, work, authored))
 	if !ok || coverageChanges.Count() != 1 {
 		t.Fatal("routing coverage changes")
 	}
-	return runtime, units, changes, supportChanges, coverageChanges
+	return runtime, units, changes, supportChanges, coverageChanges, noCoverage
 }
 
-func wideRoutingEpoch(t testing.TB, width int) (*Epoch, int, carrier.ChangeSet, carrier.ChangeSet, carrier.CoverageChangeSet) {
+func wideRoutingEpoch(t testing.TB, width int) (*Epoch, int, carrier.ChangeSet, carrier.ChangeSet, carrier.CoverageChangeSet, carrier.CoverageChangeSet) {
 	t.Helper()
-	runtime, units, changes, supportChanges, coverageChanges := wideRouteChangeSet(t, width)
+	runtime, units, changes, supportChanges, coverageChanges, noCoverage := wideRouteChangeSet(t, width)
 	graph := wideRoutingGraph(t, width)
 	source := -1
 	for index := 0; index < graph.PointCount(); index++ {
@@ -275,12 +283,12 @@ func wideRoutingEpoch(t testing.TB, width int) (*Epoch, int, carrier.ChangeSet, 
 	if !ok {
 		t.Fatal("routing epoch")
 	}
-	return epoch, source, changes, supportChanges, coverageChanges
+	return epoch, source, changes, supportChanges, coverageChanges, noCoverage
 }
 
-func mixedStaticDynamicRoutingEpoch(t testing.TB) (*Epoch, int, carrier.ChangeSet) {
+func mixedStaticDynamicRoutingEpoch(t testing.TB) (*Epoch, int, carrier.ChangeSet, carrier.CoverageChangeSet) {
 	t.Helper()
-	runtime, units, changes, _, _ := wideRouteChangeSet(t, 2)
+	runtime, units, changes, _, _, noCoverage := wideRouteChangeSet(t, 2)
 	graph := wideRoutingGraph(t, 1)
 	source := -1
 	for index := 0; index < graph.PointCount(); index++ {
@@ -320,7 +328,7 @@ func mixedStaticDynamicRoutingEpoch(t testing.TB) (*Epoch, int, carrier.ChangeSe
 	if !epoch.Replace(0, []Observation{static, {Input: 0, Unit: units[1]}}) {
 		t.Fatal("mixed routing dynamic route")
 	}
-	return epoch, source, changes
+	return epoch, source, changes, noCoverage
 }
 
 // relationEpoch builds the sealed dynamic-read portion directly. Graph and
@@ -351,8 +359,8 @@ func relationEpoch(t testing.TB, runtime *carrier.Composition, families ...Famil
 }
 
 func hasWake(epoch *Epoch, point int, unit carrier.Unit, group int) bool {
-	for _, wake := range epoch.appendCurrentUnitWakes(nil, point, unit, support.Mask{}) {
-		if wake.Group == group && wake.Reason == ChangedUnit {
+	for _, woken := range epoch.appendCurrentUnitGroups(nil, point, unit) {
+		if woken == group {
 			return true
 		}
 	}
@@ -361,8 +369,8 @@ func hasWake(epoch *Epoch, point int, unit carrier.Unit, group int) bool {
 
 func hasDynamicWake(epoch *Epoch, point int, unit carrier.Unit, group int) bool {
 	found := false
-	if !epoch.visitDynamicUnitWakes(point, unit, support.Mask{}, func(wake Wake) bool {
-		if wake.Group == group && wake.Reason == ChangedUnit {
+	if !epoch.visitDynamicUnitGroups(point, unit, func(woken int) bool {
+		if woken == group {
 			found = true
 		}
 		return true
@@ -415,9 +423,9 @@ func TestInverseSubscriptionsRemainCanonicalAndDeduplicated(t *testing.T) {
 	if !epoch.Replace(1, nil) || !epoch.Replace(3, nil) {
 		t.Fatal("retract selected subscribers")
 	}
-	wakes := epoch.appendCurrentUnitWakes(nil, 7, first, support.Mask{})
-	if len(wakes) != 2 || wakes[0].Group != 0 || wakes[1].Group != 2 {
-		t.Fatalf("noncanonical exact inverse wakes: %#v", wakes)
+	groups := epoch.appendCurrentUnitGroups(nil, 7, first)
+	if len(groups) != 2 || groups[0] != 0 || groups[1] != 2 {
+		t.Fatalf("noncanonical exact inverse wakes: %#v", groups)
 	}
 }
 
@@ -581,16 +589,16 @@ func TestReplaceDeduplicatesAliasedInputReverseSubscriber(t *testing.T) {
 	if !epoch.Replace(0, []Observation{{Input: 0, Unit: second}, {Input: 1, Unit: second}}) {
 		t.Fatal("aliased-input replacement")
 	}
-	wakes := make([]Wake, 0, 1)
-	if !epoch.visitDynamicUnitWakes(5, second, support.Mask{}, func(wake Wake) bool {
-		wakes = append(wakes, wake)
+	groups := make([]int, 0, 1)
+	if !epoch.visitDynamicUnitGroups(5, second, func(group int) bool {
+		groups = append(groups, group)
 		return true
-	}) || len(wakes) != 1 || wakes[0].Group != 0 {
-		t.Fatalf("aliased dynamic read duplicated inverse subscriber: %#v", wakes)
+	}) || len(groups) != 1 || groups[0] != 0 {
+		t.Fatalf("aliased dynamic read duplicated inverse subscriber: %#v", groups)
 	}
 }
 
-func TestRoutePointTypedSliceHasNoStaleSubscriberAfterReplacement(t *testing.T) {
+func TestRouteTypedSliceHasNoStaleSubscriberAfterReplacement(t *testing.T) {
 	runtime, first, second := liveUnitFixture(t)
 	slot, ok := first.Slot()
 	if !ok {
@@ -605,8 +613,8 @@ func TestRoutePointTypedSliceHasNoStaleSubscriberAfterReplacement(t *testing.T) 
 	if !epoch.Replace(0, []Observation{static}) {
 		t.Fatal("remove dynamic route")
 	}
-	if wakes := epoch.appendCurrentUnitWakes(nil, 5, first, support.Mask{}); len(wakes) != 1 || wakes[0].Group != 0 {
-		t.Fatalf("required static reader did not wake after replacement: %#v", wakes)
+	if groups := epoch.appendCurrentUnitGroups(nil, 5, first); len(groups) != 1 || groups[0] != 0 {
+		t.Fatalf("required static reader did not wake after replacement: %#v", groups)
 	}
 	if hasDynamicWake(epoch, 5, second, 0) {
 		t.Fatal("stale dynamic reader woke after replacement")
@@ -720,19 +728,23 @@ func TestDynamicReplaceSwitchesAtoBAndReportsCanonicalActiveRoute(t *testing.T) 
 	}
 }
 
-func TestRoutePointCoalescesWideChangedUnitsToOneWakePerGroup(t *testing.T) {
+func TestRouteCoalescesWideChangedUnitsToOneWakePerGroup(t *testing.T) {
 	const width = 16
-	epoch, source, changes, supportChanges, _ := wideRoutingEpoch(t, width)
-	supportWakes, ok := epoch.RoutePoint(source, supportChanges)
+	epoch, source, changes, supportChanges, _, noCoverage := wideRoutingEpoch(t, width)
+	supportWakes, ok := epoch.Route(source, supportChanges, noCoverage)
 	if !ok || len(supportWakes) != width {
 		t.Fatalf("support route = ok:%t wakes:%d, want %d", ok, len(supportWakes), width)
 	}
 	for _, wake := range supportWakes {
-		if wake.Reason != SupportAdded {
-			t.Fatalf("support first witness = %#v", wake)
+		want := change.Set{Reasons: change.SupportAdded, Direction: change.Known | change.Ascends}
+		if wake.Reasons != want {
+			t.Fatalf("support evidence = %#v, want %#v", wake.Reasons, want)
+		}
+		if !wake.Reasons.Admits() {
+			t.Fatalf("a proven ascent is not admissible: %#v", wake)
 		}
 	}
-	wakes, ok := epoch.RoutePoint(source, changes)
+	wakes, ok := epoch.Route(source, changes, noCoverage)
 	if !ok || len(wakes) != width {
 		t.Fatalf("wide route = ok:%t wakes:%d, want %d", ok, len(wakes), width)
 	}
@@ -741,8 +753,14 @@ func TestRoutePointCoalescesWideChangedUnitsToOneWakePerGroup(t *testing.T) {
 		if wake.Group < 0 || wake.Group >= width || seen[wake.Group] {
 			t.Fatalf("duplicate or foreign wake: %#v", wake)
 		}
-		if wake.Reason != ChangedUnit {
-			t.Fatalf("first typed witness was not retained: %#v", wake)
+		// The fixture's Groups read the changed Units and carry the changed
+		// Factor Slot. Both witnesses survive; the route retains the later
+		// channel instead of stopping at the first.
+		if wake.Reasons != (change.Set{Reasons: change.ChangedUnit | change.ChangedFactor}) {
+			t.Fatalf("typed evidence = %#v", wake.Reasons)
+		}
+		if !wake.Reasons.Unknown() || wake.Reasons.Admits() {
+			t.Fatalf("an unclassified typed change was admitted: %#v", wake)
 		}
 		seen[wake.Group] = true
 	}
@@ -753,48 +771,69 @@ func TestRoutePointCoalescesWideChangedUnitsToOneWakePerGroup(t *testing.T) {
 	}
 }
 
-func TestRoutePointCoalescesStaticAndDynamicExactRoutes(t *testing.T) {
-	epoch, source, changes := mixedStaticDynamicRoutingEpoch(t)
-	wakes, ok := epoch.RoutePoint(source, changes)
+func TestRouteCoalescesStaticAndDynamicExactRoutes(t *testing.T) {
+	epoch, source, changes, noCoverage := mixedStaticDynamicRoutingEpoch(t)
+	wakes, ok := epoch.Route(source, changes, noCoverage)
 	if !ok || len(wakes) != 1 {
 		t.Fatalf("mixed route = ok:%t wakes:%#v", ok, wakes)
 	}
-	if wakes[0].Group != 0 || wakes[0].Reason != ChangedUnit {
+	if wakes[0].Group != 0 || wakes[0].Reasons != (change.Set{Reasons: change.ChangedUnit}) {
 		t.Fatalf("mixed route wake = %#v", wakes[0])
 	}
 }
 
-func TestRouteCoverageDoesNotOverwriteLiveRoutePointResult(t *testing.T) {
+// One route accumulates every channel that reached a Group. A Group woken by
+// both a typed change and an authorship change is one Wake carrying both
+// reasons, so no consumer has a second channel left to de-duplicate against.
+func TestRouteAccumulatesSemanticAndCoverageEvidenceIntoOneWakePerGroup(t *testing.T) {
 	const width = 4
-	epoch, source, changes, _, coverageChanges := wideRoutingEpoch(t, width)
-	pointWakes, ok := epoch.RoutePoint(source, changes)
-	if !ok || len(pointWakes) != width {
-		t.Fatalf("point route = ok:%t wakes:%d", ok, len(pointWakes))
+	epoch, source, changes, _, coverageChanges, noCoverage := wideRoutingEpoch(t, width)
+	semanticOnly, ok := epoch.Route(source, changes, noCoverage)
+	if !ok || len(semanticOnly) != width {
+		t.Fatalf("semantic route = ok:%t wakes:%d", ok, len(semanticOnly))
 	}
-	snapshot := append([]Wake(nil), pointWakes...)
-	coverageWakes, ok := epoch.RouteCoverage(source, coverageChanges)
-	if !ok || len(coverageWakes) != width {
-		t.Fatalf("coverage route = ok:%t wakes:%d", ok, len(coverageWakes))
+	positions := make([]int, 0, width)
+	for _, wake := range semanticOnly {
+		positions = append(positions, wake.Group)
 	}
-	for index := range snapshot {
-		before, after := snapshot[index], pointWakes[index]
-		if before.Group != after.Group || before.Reason != after.Reason || !before.Unit.Same(after.Unit) || before.Slot != after.Slot || !before.Region.Equal(after.Region) {
-			t.Fatalf("RoutePoint wake[%d] overwritten: before=%#v after=%#v", index, before, after)
+	wakes, ok := epoch.Route(source, changes, coverageChanges)
+	if !ok || len(wakes) != width {
+		t.Fatalf("accumulating route = ok:%t wakes:%d, want %d", ok, len(wakes), width)
+	}
+	slot, slotOK := wideRouteCarrySlot(t, epoch)
+	if !slotOK {
+		t.Fatal("routing carry slot")
+	}
+	for index, wake := range wakes {
+		if wake.Group != positions[index] {
+			t.Fatalf("wake[%d] group = %d, want the semantic first-mark position %d", index, wake.Group, positions[index])
 		}
-		if coverageWakes[index].Reason != AuthorshipChanged {
-			t.Fatalf("coverage wake[%d] = %#v", index, coverageWakes[index])
+		if !wake.Reasons.Has(change.ChangedUnit) || !wake.Reasons.Has(change.AuthorshipChanged) {
+			t.Fatalf("wake[%d] lost a channel: %#v", index, wake.Reasons)
+		}
+		if !wake.Slots.Test(int(slot)) || wake.Slots.Count() != 1 {
+			t.Fatalf("wake[%d] carried slots %d, want exactly the authored carry", index, wake.Slots.Count())
 		}
 	}
 }
 
-func BenchmarkRoutePointWideChanges(b *testing.B) {
+// wideRouteCarrySlot names the one Slot the wide routing fixture carries.
+func wideRouteCarrySlot(t testing.TB, epoch *Epoch) (shape.Slot, bool) {
+	t.Helper()
+	if len(epoch.plan.families) == 0 || len(epoch.plan.families[0].Carries) != 1 {
+		return 0, false
+	}
+	return epoch.plan.families[0].Carries[0].Slot, true
+}
+
+func BenchmarkRouteWideChanges(b *testing.B) {
 	for _, width := range []int{16, 64, 256} {
 		b.Run("width="+strconv.Itoa(width), func(b *testing.B) {
-			epoch, source, changes, _, _ := wideRoutingEpoch(b, width)
+			epoch, source, changes, _, _, noCoverage := wideRoutingEpoch(b, width)
 			b.ReportAllocs()
 			b.ResetTimer()
 			for index := 0; index < b.N; index++ {
-				wakes, ok := epoch.RoutePoint(source, changes)
+				wakes, ok := epoch.Route(source, changes, noCoverage)
 				if !ok || len(wakes) != width {
 					b.Fatal("wide route")
 				}

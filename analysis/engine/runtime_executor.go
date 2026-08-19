@@ -200,7 +200,7 @@ func (epoch *executorEpoch) run() bool {
 	for epoch != nil && epoch.checkpoint() {
 		for epoch.queue.pending() {
 			visited, ok := epoch.visitPoints()
-			if epoch.canceled() {
+			if epoch.canceledByContext() {
 				return false
 			}
 			if !ok {
@@ -213,7 +213,7 @@ func (epoch *executorEpoch) run() bool {
 			}
 		}
 		postfixed, ok := epoch.demandedPostfix()
-		if epoch.canceled() {
+		if epoch.canceledByContext() {
 			return false
 		}
 		if !ok {

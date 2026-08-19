@@ -183,6 +183,10 @@ type executorEpoch struct {
 	nested            []int
 	regionScratch     []int
 	terminal          atomic.Uint32
+	// failed is the publication fail-stop. A publication path that returns
+	// false after installing into points leaves that install half-landed, so
+	// the flag makes the epoch refuse every later read through canceled().
+	failed            bool
 	activationPending bool
 	activations       []equation.AcceptedMember
 	storePub          *solvedPublication
@@ -221,7 +225,7 @@ func (epoch *executorEpoch) recordRefreshPointFailure(boundary solveBoundary, po
 // statuses, not execution failures, and are intentionally handled by run's
 // callers without reaching this helper.
 func (epoch *executorEpoch) recordRunFailure(boundary solveBoundary) {
-	if epoch == nil || epoch.canceled() {
+	if epoch == nil || epoch.canceledByContext() {
 		return
 	}
 	epoch.recordFailure(SolveFailureReasonExecution, boundary, composition.Key{}, composition.Key{}, composition.Key{}, composition.Key{})
@@ -545,7 +549,24 @@ func (epoch *executorEpoch) discard() {
 	epoch.storePub = nil
 }
 
-func (epoch *executorEpoch) canceled() bool {
+// fail is the terminal cut of a publication path. It is called at every exit
+// that returns false after a point state has been installed, so a half-landed
+// multi-point commit can never be observed: canceled() gates every point
+// visit, region visit and carrier operation in the executor. The flag makes
+// the fail-stop structural rather than a convention the callers happen to
+// honour.
+func (epoch *executorEpoch) fail() bool {
+	if epoch != nil {
+		epoch.failed = true
+	}
+	return false
+}
+
+// canceledByContext is the withdrawal-only status probe. Terminal-status and
+// failure-recording sites ask this question: a fail-stopped epoch stopped
+// because it refused its own work, which is an execution failure and must
+// still be recorded as one.
+func (epoch *executorEpoch) canceledByContext() bool {
 	if epoch == nil || epoch.ctx == nil || epoch.terminal.Load() != epochRunning {
 		return true
 	}
@@ -556,8 +577,15 @@ func (epoch *executorEpoch) canceled() bool {
 	return true
 }
 
-// checkpoint is the cancellation-only evaluator liveness probe shared by
-// ordinary carrier work and nested rule/query frames.
+// canceled is the liveness probe every operation consults. It refuses a
+// withdrawn epoch and a fail-stopped one alike.
+func (epoch *executorEpoch) canceled() bool {
+	return epoch.canceledByContext() || epoch != nil && epoch.failed
+}
+
+// checkpoint is the evaluator liveness probe shared by ordinary carrier work
+// and nested rule/query frames. It refuses on withdrawal and on the
+// publication fail-stop alike, because neither leaves work worth continuing.
 func (epoch *executorEpoch) checkpoint() bool {
 	return epoch != nil && !epoch.canceled()
 }

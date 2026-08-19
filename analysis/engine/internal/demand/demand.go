@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier/shape"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
+	"github.com/wippyai/go-lua/analysis/engine/internal/facts/change"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
 )
@@ -466,13 +467,17 @@ type Epoch struct {
 	groups     []groupReads
 	edgeCounts []uint64
 	edgeBits   []uint64
-	wakeSeen   []uint64
-	wakeEpoch  uint64
-	wakes      []Wake
-	// Coverage routing has a distinct caller-visible result lifetime. Sharing
-	// wakes here would let RouteCoverage overwrite a still-live RoutePoint
-	// slice before the executor finishes cross-reason de-duplication.
-	coverageWakes []Wake
+	// wakeMarks is the routing accumulator over the dense Group plane. It
+	// carries the reason evidence; wakeRegions and wakeSlots are its payload
+	// planes, addressed by the same ordinal and live only while the mark is.
+	wakeMarks   change.Marks
+	wakeRegions []support.Mask
+	wakeSlots   []change.Slots
+	wakes       []Wake
+	// unionWork is the reusable symbolic shell that unions the regions of a
+	// Group woken more than once. It is opened on first need, so a solve whose
+	// Groups are each woken once never creates it.
+	unionWork *support.Work
 	// dynamicByGroup is the current canonical active route set for each
 	// Group. dynamicBySource is its sparse inverse keyed by the actual source
 	// Point and selected exact Unit. Neither exists in Plan because a staged
@@ -546,9 +551,9 @@ func (epoch *Epoch) Widen(points []int) (*Epoch, bool) {
 		groups:          append([]groupReads(nil), epoch.groups...),
 		edgeCounts:      append([]uint64(nil), epoch.edgeCounts...),
 		edgeBits:        append([]uint64(nil), epoch.edgeBits...),
-		wakeSeen:        make([]uint64, len(epoch.wakeSeen)),
+		wakeRegions:     make([]support.Mask, len(epoch.plan.families)),
+		wakeSlots:       make([]change.Slots, len(epoch.plan.families)),
 		wakes:           make([]Wake, 0, epoch.plan.maxWakes),
-		coverageWakes:   make([]Wake, 0, epoch.plan.maxWakes),
 		dynamicByGroup:  append([][]Observation(nil), epoch.dynamicByGroup...),
 		dynamicBySource: epoch.dynamicBySource,
 		groupOwned:      make([]bool, len(epoch.groups)),
@@ -624,9 +629,9 @@ func openSelected(plan *Plan, selected []bool) (*Epoch, bool) {
 		groups:          make([]groupReads, len(plan.families)),
 		edgeCounts:      make([]uint64, len(plan.edges)),
 		edgeBits:        make([]uint64, (len(plan.edges)+63)/64),
-		wakeSeen:        make([]uint64, len(plan.families)),
+		wakeRegions:     make([]support.Mask, len(plan.families)),
+		wakeSlots:       make([]change.Slots, len(plan.families)),
 		wakes:           make([]Wake, 0, plan.maxWakes),
-		coverageWakes:   make([]Wake, 0, plan.maxWakes),
 		dynamicByGroup:  make([][]Observation, len(plan.families)),
 		dynamicBySource: make(map[unitKey][]int),
 		groupOwned:      make([]bool, len(plan.families)),
@@ -666,24 +671,6 @@ func lessObservation(left, right Observation) bool {
 		return false
 	}
 	return left.Unit.Less(right.Unit)
-}
-
-// nextWakeEpoch starts one Point-publication-local Group set.  A Group needs
-// only one dirty notification for a published ChangeSet, even when several
-// exact Units, a Factor carry, and a support transition all justify it.
-// Stamps retain the first canonical witness without a per-publication map or
-// allocation.
-func (epoch *Epoch) nextWakeEpoch() uint64 {
-	if epoch.wakeEpoch == ^uint64(0) {
-		clear(epoch.wakeSeen)
-		epoch.wakeEpoch = 1
-		return epoch.wakeEpoch
-	}
-	epoch.wakeEpoch++
-	if epoch.wakeEpoch == 0 {
-		epoch.wakeEpoch = 1
-	}
-	return epoch.wakeEpoch
 }
 
 func (epoch *Epoch) setEdgeBit(edge int, active bool) {
@@ -1135,28 +1122,25 @@ func (epoch *Epoch) activeObservation(group, index int) (Observation, bool) {
 	return epoch.plan.readDecls[declaration].observation, true
 }
 
-type Reason uint8
-
-const (
-	ChangedUnit Reason = iota + 1
-	ChangedFactor
-	SupportAdded
-	SupportRemoved
-	AuthorshipChanged
-)
-
+// Wake is one Group's accumulated publication evidence. Reasons, Slots and
+// Region all accumulate across the contributions that woke the Group: a
+// publication that touches a Group through several channels reports one Wake
+// carrying every witness, never the first witness alone.
+//
+// Slots and Region borrow this Epoch's routing buffers and stay valid until
+// the next Route.
 type Wake struct {
-	Group  int
-	Reason Reason
-	Unit   carrier.Unit
-	Slot   shape.Slot
-	Region support.Mask
+	Group   int
+	Reasons change.Set
+	Slots   change.Slots
+	Region  support.Mask
 }
 
-// appendCurrentUnitWakes reads the epoch's exact active inverse bitset. The
+// visitCurrentUnitGroups reads the epoch's exact active inverse bitset. The
 // Plan source CSR gives canonical dense Group order; InitialReads are never
-// consulted after Open.
-func (epoch *Epoch) visitCurrentUnitWakes(point int, unit carrier.Unit, region support.Mask, visit func(Wake) bool) bool {
+// consulted after Open. It enumerates the Groups that read this Unit; the
+// evidence those Groups accumulate belongs to the router, not to the walk.
+func (epoch *Epoch) visitCurrentUnitGroups(point int, unit carrier.Unit, visit func(group int) bool) bool {
 	if epoch == nil || epoch.plan == nil || visit == nil {
 		return false
 	}
@@ -1180,7 +1164,7 @@ func (epoch *Epoch) visitCurrentUnitWakes(point int, unit carrier.Unit, region s
 		for active != 0 {
 			bit := bits.TrailingZeros64(active)
 			edge := word*64 + bit
-			if !visit(Wake{Group: epoch.plan.edges[edge].group, Reason: ChangedUnit, Unit: unit, Region: region}) {
+			if !visit(epoch.plan.edges[edge].group) {
 				return false
 			}
 			active &= active - 1
@@ -1189,19 +1173,19 @@ func (epoch *Epoch) visitCurrentUnitWakes(point int, unit carrier.Unit, region s
 	return true
 }
 
-func (epoch *Epoch) appendCurrentUnitWakes(result []Wake, point int, unit carrier.Unit, region support.Mask) []Wake {
-	_ = epoch.visitCurrentUnitWakes(point, unit, region, func(wake Wake) bool {
-		result = append(result, wake)
+func (epoch *Epoch) appendCurrentUnitGroups(result []int, point int, unit carrier.Unit) []int {
+	_ = epoch.visitCurrentUnitGroups(point, unit, func(group int) bool {
+		result = append(result, group)
 		return true
 	})
 	return result
 }
 
-// visitDynamicUnitWakes reaches only the current epoch-local sparse inverse
-// for a selected exact Unit. It deliberately carries the publication region
-// unchanged: route membership is exact, while guard qualification remains the
-// Product/solver's authority rather than a second demand approximation.
-func (epoch *Epoch) visitDynamicUnitWakes(point int, unit carrier.Unit, region support.Mask, visit func(Wake) bool) bool {
+// visitDynamicUnitGroups reaches only the current epoch-local sparse inverse
+// for a selected exact Unit. Route membership is exact, while guard
+// qualification remains the Product/solver's authority rather than a second
+// demand approximation, so the publication region reaches the Wake unchanged.
+func (epoch *Epoch) visitDynamicUnitGroups(point int, unit carrier.Unit, visit func(group int) bool) bool {
 	if epoch == nil || epoch.dynamicBySource == nil || visit == nil {
 		return false
 	}
@@ -1213,7 +1197,7 @@ func (epoch *Epoch) visitDynamicUnitWakes(point int, unit carrier.Unit, region s
 		return false
 	}
 	for _, group := range groups {
-		if !visit(Wake{Group: group, Reason: ChangedUnit, Unit: unit, Region: region}) {
+		if !visit(group) {
 			return false
 		}
 	}
@@ -1231,133 +1215,208 @@ func (plan *Plan) findCarry(point int, slot shape.Slot) (carryCSR, bool) {
 	return plan.carryRows[index], true
 }
 
-// RoutePoint uses Graph consumer CSR for structural changes and immutable
-// typed/carry CSR slices for value changes. Every Wake names a dense Group.
-func (epoch *Epoch) RoutePoint(pointIndex int, set carrier.ChangeSet) ([]Wake, bool) {
+// Route is the one publication routing issuance. Structural, typed and
+// coverage evidence enter the same accumulator over the dense Group plane, so
+// a Group reached through several channels yields exactly one Wake carrying
+// every reason, slot and region that justified it. There is no first-wins
+// drop and no consumer-side cross-channel de-duplication left to perform.
+//
+// Emission order is the accumulator's first-mark order over the fixed channel
+// sequence: added support, removed support, typed Unit reads, Factor carries,
+// then coverage authorship.
+func (epoch *Epoch) Route(pointIndex int, set carrier.ChangeSet, coverage carrier.CoverageChangeSet) ([]Wake, bool) {
 	if epoch == nil || pointIndex < 0 {
 		return nil, false
 	}
 	epoch.mu.Lock()
 	defer epoch.mu.Unlock()
-	if !epoch.live || epoch.plan == nil || epoch.plan.runtime == nil || pointIndex >= epoch.plan.graph.PointCount() || !epoch.plan.runtime.OwnsChangeSet(set) {
+	if !epoch.live || epoch.plan == nil || epoch.plan.runtime == nil || pointIndex >= epoch.plan.graph.PointCount() ||
+		!epoch.plan.runtime.OwnsChangeSet(set) || !epoch.plan.runtime.OwnsCoverageChangeSet(coverage) {
 		return nil, false
 	}
 	point, ok := epoch.plan.graph.PointAt(schedule.Node(pointIndex))
 	if !ok || !epoch.plan.graph.OwnsPoint(point) {
 		return nil, false
 	}
-	epoch.wakes = epoch.wakes[:0]
-	result := epoch.wakes
-	marker := epoch.nextWakeEpoch()
-	appendWake := func(wake Wake) bool {
-		if wake.Group < 0 || wake.Group >= len(epoch.wakeSeen) {
-			return false
-		}
-		if epoch.wakeSeen[wake.Group] == marker {
-			return true
-		}
-		epoch.wakeSeen[wake.Group] = marker
-		result = append(result, wake)
-		return true
-	}
-	appendConsumers := func(reason Reason, region support.Mask) bool {
-		if !region.Valid() || support.Empty(region) {
-			return true
-		}
-		for index := 0; index < epoch.plan.graph.ConsumerCount(point); index++ {
-			group, ok := epoch.plan.graph.ConsumerAt(point, index)
-			groupIndex, indexed := epoch.plan.graph.GroupIndex(group)
-			if !ok || !indexed || groupIndex < 0 || groupIndex >= len(epoch.selected) {
-				return false
-			}
-			if epoch.selected[groupIndex] {
-				if !appendWake(Wake{Group: groupIndex, Reason: reason, Region: region}) {
-					return false
-				}
-			}
-		}
-		return true
-	}
-	if !appendConsumers(SupportAdded, set.Added()) || !appendConsumers(SupportRemoved, set.Removed()) {
+	epoch.beginWakes()
+	// Support movement is the one channel whose direction the publisher
+	// already proved: an added region ascends, a removed region descends. The
+	// value channels below carry their reason without a direction claim, so
+	// accumulated evidence that mixes them is unclassified and Admits refuses
+	// to reuse it.
+	if !epoch.routeConsumers(point, change.Set{Reasons: change.SupportAdded, Direction: change.Known | change.Ascends}, set.Added()) ||
+		!epoch.routeConsumers(point, change.Set{Reasons: change.SupportRemoved, Direction: change.Known | change.Descends}, set.Removed()) {
 		return nil, false
 	}
+	if !epoch.routeUnits(pointIndex, set) || !epoch.routeFactors(pointIndex, set) || !epoch.routeCoverage(pointIndex, coverage) {
+		return nil, false
+	}
+	return epoch.emitWakes()
+}
+
+// beginWakes opens one publication-local accumulator epoch over the dense
+// Group plane. Reset is a stamp bump; the payload planes are sized once.
+func (epoch *Epoch) beginWakes() {
+	width := len(epoch.plan.families)
+	epoch.wakeMarks.Reset(width)
+	if len(epoch.wakeRegions) < width {
+		epoch.wakeRegions = append(epoch.wakeRegions, make([]support.Mask, width-len(epoch.wakeRegions))...)
+	}
+	if len(epoch.wakeSlots) < width {
+		epoch.wakeSlots = append(epoch.wakeSlots, make([]change.Slots, width-len(epoch.wakeSlots))...)
+	}
+}
+
+// markWake accumulates one contribution against a Group. The first mark owns
+// the payload planes; every later mark unions into them.
+func (epoch *Epoch) markWake(group int, evidence change.Set, region support.Mask) bool {
+	if group < 0 || group >= len(epoch.selected) {
+		return false
+	}
+	// The accumulator is opened over the same dense Group plane, so Mark is
+	// the one bound authority past this routing check.
+	ordinal := change.Ord(group)
+	first := !epoch.wakeMarks.Marked(ordinal)
+	if !epoch.wakeMarks.Mark(ordinal, evidence) {
+		return false
+	}
+	if first {
+		epoch.wakeRegions[group] = region
+		epoch.wakeSlots[group].Clear()
+		return true
+	}
+	merged, ok := epoch.unionRegion(epoch.wakeRegions[group], region)
+	if !ok {
+		return false
+	}
+	epoch.wakeRegions[group] = merged
+	return true
+}
+
+// markWakeSlot is markWake for the two channels that name a carried Slot.
+func (epoch *Epoch) markWakeSlot(group int, evidence change.Set, region support.Mask, slot shape.Slot) bool {
+	if !epoch.markWake(group, evidence, region) {
+		return false
+	}
+	return epoch.wakeSlots[group].Set(int(slot))
+}
+
+// unionRegion widens one Group's accumulated region. Equal regions cost
+// nothing, so a Group woken repeatedly over one region pays no symbolic work.
+func (epoch *Epoch) unionRegion(left, right support.Mask) (support.Mask, bool) {
+	if left == right {
+		return left, true
+	}
+	if epoch.unionWork == nil {
+		epoch.unionWork = support.New(epoch.plan.runtime.Guards())
+	}
+	return support.UnionWithWork(epoch.unionWork, nil, left, right)
+}
+
+// routeConsumers wakes the static Graph consumer row of a Point over one
+// support transition.
+func (epoch *Epoch) routeConsumers(point equation.Point, evidence change.Set, region support.Mask) bool {
+	if !region.Valid() || support.Empty(region) {
+		return true
+	}
+	for index := 0; index < epoch.plan.graph.ConsumerCount(point); index++ {
+		group, ok := epoch.plan.graph.ConsumerAt(point, index)
+		groupIndex, indexed := epoch.plan.graph.GroupIndex(group)
+		if !ok || !indexed || groupIndex < 0 || groupIndex >= len(epoch.selected) {
+			return false
+		}
+		if epoch.selected[groupIndex] && !epoch.markWake(groupIndex, evidence, region) {
+			return false
+		}
+	}
+	return true
+}
+
+// routeUnits wakes every static and dynamic exact reader of a changed Unit.
+func (epoch *Epoch) routeUnits(pointIndex int, set carrier.ChangeSet) bool {
+	evidence := change.Set{Reasons: change.ChangedUnit}
 	for index := 0; index < set.Count(); index++ {
 		row, ok := set.At(index)
 		if !ok || !row.Region().Valid() || support.Empty(row.Region()) {
-			return nil, false
+			return false
 		}
-		if !epoch.visitCurrentUnitWakes(pointIndex, row.Unit(), row.Region(), appendWake) {
-			return nil, false
-		}
-		if !epoch.visitDynamicUnitWakes(pointIndex, row.Unit(), row.Region(), appendWake) {
-			return nil, false
+		region := row.Region()
+		mark := func(group int) bool { return epoch.markWake(group, evidence, region) }
+		if !epoch.visitCurrentUnitGroups(pointIndex, row.Unit(), mark) || !epoch.visitDynamicUnitGroups(pointIndex, row.Unit(), mark) {
+			return false
 		}
 	}
+	return true
+}
+
+// routeFactors wakes the declared whole-Factor carries of a changed Slot.
+func (epoch *Epoch) routeFactors(pointIndex int, set carrier.ChangeSet) bool {
+	evidence := change.Set{Reasons: change.ChangedFactor}
 	for index := 0; index < set.FactorCount(); index++ {
 		row, ok := set.FactorAt(index)
 		if !ok || !epoch.plan.ownsSlot(row.Slot()) || !row.Region().Valid() || support.Empty(row.Region()) {
-			return nil, false
+			return false
 		}
-		if bucket, found := epoch.plan.findCarry(pointIndex, row.Slot()); found {
-			for _, group := range epoch.plan.carryGroups[bucket.begin:bucket.end] {
-				if group < 0 || group >= len(epoch.selected) || !epoch.selected[group] {
-					continue
-				}
-				if !appendWake(Wake{Group: group, Reason: ChangedFactor, Slot: row.Slot(), Region: row.Region()}) {
-					return nil, false
-				}
-			}
+		if !epoch.routeCarry(pointIndex, row.Slot(), evidence, row.Region()) {
+			return false
 		}
 	}
-	epoch.wakes = result
-	return result, true
+	return true
 }
 
-// RouteCoverage wakes only declared whole-Factor carries whose exact
-// authorship relation changed. It is deliberately separate from RoutePoint:
-// coverage-only changes are structural fold evidence and must not fabricate a
-// semantic FactorRegion or wake typed value reads.
-func (epoch *Epoch) RouteCoverage(pointIndex int, set carrier.CoverageChangeSet) ([]Wake, bool) {
-	if epoch == nil || pointIndex < 0 {
-		return nil, false
-	}
-	epoch.mu.Lock()
-	defer epoch.mu.Unlock()
-	if !epoch.live || epoch.plan == nil || epoch.plan.runtime == nil || pointIndex >= epoch.plan.graph.PointCount() || !epoch.plan.runtime.OwnsCoverageChangeSet(set) {
-		return nil, false
-	}
-	point, ok := epoch.plan.graph.PointAt(schedule.Node(pointIndex))
-	if !ok || !epoch.plan.graph.OwnsPoint(point) {
-		return nil, false
-	}
-	epoch.coverageWakes = epoch.coverageWakes[:0]
-	result := epoch.coverageWakes
-	marker := epoch.nextWakeEpoch()
+// routeCoverage wakes the declared whole-Factor carries whose exact authorship
+// relation changed. Coverage-only movement is structural fold evidence: it
+// names no semantic FactorRegion and wakes no typed value read, which is why
+// it enters the accumulator under its own reason rather than as a Factor
+// change.
+func (epoch *Epoch) routeCoverage(pointIndex int, set carrier.CoverageChangeSet) bool {
+	evidence := change.Set{Reasons: change.AuthorshipChanged}
 	for index := 0; index < set.Count(); index++ {
-		row, rowOK := set.At(index)
-		if !rowOK || !epoch.plan.ownsSlot(row.Slot()) || !row.Region().Valid() || support.Empty(row.Region()) {
-			return nil, false
+		row, ok := set.At(index)
+		if !ok || !epoch.plan.ownsSlot(row.Slot()) || !row.Region().Valid() || support.Empty(row.Region()) {
+			return false
 		}
-		bucket, found := epoch.plan.findCarry(pointIndex, row.Slot())
-		if !found {
+		if !epoch.routeCarry(pointIndex, row.Slot(), evidence, row.Region()) {
+			return false
+		}
+	}
+	return true
+}
+
+// routeCarry is the shared carry-CSR walk of the two Slot-named channels.
+func (epoch *Epoch) routeCarry(pointIndex int, slot shape.Slot, evidence change.Set, region support.Mask) bool {
+	bucket, found := epoch.plan.findCarry(pointIndex, slot)
+	if !found {
+		return true
+	}
+	for _, group := range epoch.plan.carryGroups[bucket.begin:bucket.end] {
+		if group < 0 || group >= len(epoch.selected) {
+			return false
+		}
+		if !epoch.selected[group] {
 			continue
 		}
-		for _, group := range epoch.plan.carryGroups[bucket.begin:bucket.end] {
-			if group < 0 || group >= len(epoch.wakeSeen) {
-				return nil, false
-			}
-			if group >= len(epoch.selected) || !epoch.selected[group] {
-				continue
-			}
-			if epoch.wakeSeen[group] == marker {
-				continue
-			}
-			epoch.wakeSeen[group] = marker
-			result = append(result, Wake{Group: group, Reason: AuthorshipChanged, Slot: row.Slot(), Region: row.Region()})
+		if !epoch.markWakeSlot(group, evidence, region, slot) {
+			return false
 		}
 	}
-	epoch.coverageWakes = result
-	return result, true
+	return true
+}
+
+// emitWakes reads the accumulator in first-mark order. The payload planes are
+// borrowed, so the result is valid until this Epoch's next Route.
+func (epoch *Epoch) emitWakes() ([]Wake, bool) {
+	epoch.wakes = epoch.wakes[:0]
+	for _, ordinal := range epoch.wakeMarks.Dirty() {
+		group := int(ordinal)
+		epoch.wakes = append(epoch.wakes, Wake{
+			Group:   group,
+			Reasons: epoch.wakeMarks.At(ordinal),
+			Slots:   epoch.wakeSlots[group],
+			Region:  epoch.wakeRegions[group],
+		})
+	}
+	return epoch.wakes, true
 }
 
 func (epoch *Epoch) Discard() bool {
@@ -1376,8 +1435,13 @@ func (epoch *Epoch) Discard() bool {
 	epoch.dynamicBySource = nil
 	clear(epoch.wakes)
 	epoch.wakes = nil
-	clear(epoch.coverageWakes)
-	epoch.coverageWakes = nil
+	clear(epoch.wakeRegions)
+	epoch.wakeRegions = nil
+	epoch.wakeSlots = nil
+	if epoch.unionWork != nil {
+		epoch.unionWork.Close()
+		epoch.unionWork = nil
+	}
 	epoch.live = false
 	return true
 }

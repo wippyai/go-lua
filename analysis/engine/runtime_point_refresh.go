@@ -28,62 +28,49 @@ func (epoch *executorEpoch) publish(point int, current, next carrier.PointState,
 	}
 	epoch.points[point] = next
 	if epoch.storePub != nil && !epoch.storePub.writePoint(epoch, point, next) {
-		return false, false
+		return false, epoch.fail()
 	}
 	var sourcePoint equation.Point
 	if changed {
 		epoch.versions[point]++
 		if epoch.versions[point] == 0 {
-			return false, false
+			return false, epoch.fail()
 		}
 		if epoch.diagnostics != nil {
 			epoch.diagnostics.recordVersionBump()
 		}
 		if order == publicationMayDescend && semanticChanged && !epoch.recordPointDescent(point) {
-			return false, false
+			return false, epoch.fail()
 		}
 		if !epoch.markPostfixDirty(point) || !epoch.invalidatePostfixAncestors(point) {
-			return false, false
+			return false, epoch.fail()
 		}
 		var sourceOK bool
 		sourcePoint, sourceOK = epoch.runtime.graph.PointAt(schedule.Node(point))
 		if !sourceOK {
-			return false, false
+			return false, epoch.fail()
 		}
 		if !epoch.markStructuralSuccessors(sourcePoint) {
-			return false, false
+			return false, epoch.fail()
 		}
 	}
-	wakes, ok := epoch.demand.RoutePoint(point, changes)
+	// Semantic and coverage evidence share one accumulator, so a Group reached
+	// through both channels arrives once. There is no cross-channel comparison
+	// left for the consumer to perform.
+	wakes, ok := epoch.demand.Route(point, changes, coverageChanges)
 	if !ok {
-		return false, false
+		return false, epoch.fail()
 	}
 	for _, wake := range wakes {
 		if !epoch.markDirty(wake.Group) {
-			return false, false
-		}
-	}
-	coverageWakes, ok := epoch.demand.RouteCoverage(point, coverageChanges)
-	if !ok {
-		return false, false
-	}
-	for _, wake := range coverageWakes {
-		duplicate := false
-		for _, semantic := range wakes {
-			if semantic.Group == wake.Group {
-				duplicate = true
-				break
-			}
-		}
-		if !duplicate && !epoch.markDirty(wake.Group) {
-			return false, false
+			return false, epoch.fail()
 		}
 	}
 	if epoch.diagnostics != nil {
-		epoch.diagnostics.recordWakes(len(wakes), len(coverageWakes))
+		epoch.diagnostics.recordWakes(wakes)
 	}
 	if changed && !epoch.markPublishedInputConsumers(sourcePoint) {
-		return false, false
+		return false, epoch.fail()
 	}
 	return changed, true
 }
@@ -115,34 +102,34 @@ func (epoch *executorEpoch) publishAcyclicExact(point int, current, next carrier
 	// PointState's hidden branch.
 	epoch.points[point] = next
 	if epoch.storePub != nil && !epoch.storePub.writePoint(epoch, point, next) {
-		return false, false
+		return false, epoch.fail()
 	}
 	if !changed {
 		return semanticChanged, true
 	}
 	epoch.versions[point]++
 	if epoch.versions[point] == 0 {
-		return false, false
+		return false, epoch.fail()
 	}
 	if epoch.diagnostics != nil {
 		epoch.diagnostics.recordVersionBump()
 	}
 	if order == publicationMayDescend && semanticChanged && !epoch.recordPointDescent(point) {
-		return false, false
+		return false, epoch.fail()
 	}
 	sourcePoint, sourceOK := epoch.runtime.graph.PointAt(schedule.Node(point))
 	if !sourceOK || !epoch.markStructuralSuccessors(sourcePoint) {
-		return false, false
+		return false, epoch.fail()
 	}
 	if !epoch.markPostfixDirty(point) || !epoch.invalidatePostfixAncestors(point) {
-		return false, false
+		return false, epoch.fail()
 	}
 	// Every exact or dynamic typed read of this Point belongs to one ordinary
 	// graph consumer. Waking the canonical consumer row subsumes unit/factor
 	// routing without inventing a parallel dependency graph. Clean-only wake is
 	// safe after typed/coverage routing has already scheduled any pending row.
 	if !epoch.markPublishedInputConsumers(sourcePoint) {
-		return false, false
+		return false, epoch.fail()
 	}
 	return true, true
 }

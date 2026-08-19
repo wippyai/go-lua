@@ -13,11 +13,11 @@ func analyzeCanonicalRealFixture(t *testing.T, name string) {
 	run := corpusHarnessFixtureRun(t, name, corpusHarnessDiagnosticMode())
 	engine := run.solveDiagnostics.Engine
 	t.Logf("canonical real fixture %s: seal=%s compile=%s solve=%s total=%s", name, run.cost.seal, run.cost.compile, run.cost.solve, run.cost.total())
-	t.Logf("canonical real fixture %s engine: epochs=%d revisions=%d passes=%d refreshes=%d evaluates=%d evalFails=%d folds=%d rhs=%d restarts=%d activations=%d maxQueue=%d maxEpisode=%d pubs=%d semanticPubs=%d rawPubs=%d rawOnly=%d bumps=%d semanticWakes=%d coverageWakes=%d ifaceRefresh=%d ifaceDone=%d ifaceFallback=%d leq=%d geq=%d eq=%d incomp=%d unknown=%d",
+	t.Logf("canonical real fixture %s engine: epochs=%d revisions=%d passes=%d refreshes=%d evaluates=%d evalFails=%d folds=%d rhs=%d restarts=%d activations=%d maxQueue=%d maxEpisode=%d pubs=%d semanticPubs=%d rawPubs=%d rawOnly=%d bumps=%d wakes=%d wakesByReason=%v ifaceRefresh=%d ifaceDone=%d ifaceFallback=%d leq=%d geq=%d eq=%d incomp=%d unknown=%d",
 		name, engine.Epochs, engine.Revisions, engine.EpochPasses, engine.Refreshes, engine.Evaluates, engine.EvaluateFailures,
 		engine.Folds, engine.RegionRHS, engine.Restarts, engine.Activations, engine.MaxQueue, engine.MaxEpisode,
 		engine.Publications, engine.SemanticPublications, engine.RawPublications, engine.RawOnlyPublications, engine.VersionBumps,
-		engine.SemanticWakes, engine.CoverageWakes, engine.InterfaceRefreshes, engine.InterfaceRefreshCompleted, engine.InterfaceRefreshFallbacks,
+		engine.Wakes, engine.WakesByReason, engine.InterfaceRefreshes, engine.InterfaceRefreshCompleted, engine.InterfaceRefreshFallbacks,
 		engine.InterfaceRefreshOldLessEqNew, engine.InterfaceRefreshNewLessEqOld, engine.InterfaceRefreshEqual,
 		engine.InterfaceRefreshIncomparable, engine.InterfaceRefreshUnknown)
 }
