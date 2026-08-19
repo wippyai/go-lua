@@ -159,7 +159,7 @@ func (s *Synthesizer) synthFunctionTypeWithCapturePoint(
 
 	// Build CFG once, shared between overlay inference and return inference.
 	var fnGraph *cfg.Graph
-	if fn.Stmts != nil && len(fn.Stmts) > 0 {
+	if len(fn.Stmts) > 0 {
 		fnGraph = s.getOrBuildFunctionGraph(fn)
 	}
 
