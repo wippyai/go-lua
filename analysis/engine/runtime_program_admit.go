@@ -127,14 +127,14 @@ func (implementation *RuleImplementation[K, V, O]) placeSurfaces(semantic identi
 				}
 				deps[dep] = reads[depIndex]
 			}
-			proof, proofOK := implementation.selectedRead(index)
-			surface, surfaceOK := anchoredSelectedReadSurface(state, authority, semantic, anchor, proof, deps, reads)
+			proofOK := implementation.selectedRead(index)
+			surface, surfaceOK := anchoredSelectedReadSurface(state, authority, semantic, anchor, implementation.binding.proof, index, deps, reads)
 			if !proofOK || !surfaceOK || !surface.value.Available() {
 				return nil, nil, 0, false
 			}
 			reads[index] = surface
 		case composition.ReadSummary:
-			proof, proofOK := implementation.summaryRead(index)
+			proofOK := implementation.summaryRead(index)
 			provider, providerOK := hot.reads[index].(interface{ summarySurfaceAdmit() any })
 			if !proofOK || !providerOK {
 				return nil, nil, 0, false
@@ -144,7 +144,7 @@ func (implementation *RuleImplementation[K, V, O]) placeSurfaces(semantic identi
 				return nil, nil, 0, false
 			}
 			refs, refsOK := project(operand)
-			surface, surfaceOK := readSummarySurface(proof, refs)
+			surface, surfaceOK := readSummarySurface(implementation.binding.proof, index, refs)
 			if !refsOK || !surfaceOK || !surface.value.Available() {
 				return nil, nil, 0, false
 			}
@@ -176,8 +176,8 @@ func (implementation *RuleImplementation[K, V, O]) placeSurfaces(semantic identi
 		writes[0] = surface
 		return reads, writes, carries, true
 	case composition.WriteRoute:
-		proof, proofOK := implementation.routeWrite()
-		surface, surfaceOK := anchoredRouteWriteSurface(state, authority, semantic, anchor, proof)
+		_, proofOK := implementation.routeWrite()
+		surface, surfaceOK := anchoredRouteWriteSurface(state, authority, semantic, anchor, implementation.binding.proof, 0)
 		if !proofOK || !surfaceOK || !surface.value.Available() {
 			return nil, nil, 0, false
 		}

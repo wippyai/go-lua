@@ -277,7 +277,7 @@ func BindRuleWithExactReadAndCarry[OK ~uint32 | ~uint64, V, O any, RK ~uint32 | 
 		return Read[OrderedCells[RV]]{}, false
 	}
 	cell := &schemaRuleBindingCellImpl[OK, V, O]{state: state, schema: state.schema, ordinal: ruleOrdinal}
-	origin := &schemaRuleReadOrigin{state: state, cell: cell, ruleOrdinal: ruleOrdinal, readOrdinal: 0, input: readShape.Input, factor: readFactorOrdinal, kind: composition.ReadExact}
+	origin := &schemaRuleReadOrigin{state: state, cell: cell, ruleOrdinal: ruleOrdinal, readOrdinal: 0}
 	read := Read[OrderedCells[RV]]{origin: origin, index: 0, resolve: resolveTypedRead[RV, OrderedCells[RV]]}
 	readBinding := &schemaExactRuleReadBinding[RK, RV]{origin: origin, factor: readCell, read: read, projector: projectExactLocal(projectRead)}
 	cell.impl = &ruleHotImplementation[OK, V, O]{

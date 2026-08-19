@@ -96,7 +96,7 @@ func summaryKeyWidth[K ~uint32 | ~uint64]() uint64 {
 // legal only before Close; duplicates are rejected before they can alter the
 // canonical summary set.
 func (refs *ClosedRefs[K]) Append(ref Ref[K]) bool {
-	if refs == nil || refs.closed || !refs.binding.valid() || !factorAddressMatches(refs.binding, ref.binding) || uint64(ref.raw) >= refs.binding.keyEnd {
+	if refs == nil || refs.closed || !refs.binding.valid() || !factorAddressMatches(refs.binding, ref.binding) || uint64(ref.raw) >= refs.binding.keyLimit() {
 		return false
 	}
 	for _, present := range refs.refs {
@@ -116,7 +116,7 @@ func (refs *ClosedRefs[K]) Close() bool {
 		return false
 	}
 	for _, ref := range refs.refs {
-		if !factorAddressMatches(refs.binding, ref.binding) || uint64(ref.raw) >= refs.binding.keyEnd {
+		if !factorAddressMatches(refs.binding, ref.binding) || uint64(ref.raw) >= refs.binding.keyLimit() {
 			return false
 		}
 	}

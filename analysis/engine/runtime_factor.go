@@ -126,24 +126,24 @@ func (bound *boundFactor[K, V]) readUnit(surface equation.Surface) (carrier.Unit
 // summaryReadAddress returns the sealed Factor row and its form address. The
 // caller already owns the declaration-time shape checks; runtime keeps the
 // row directly instead of minting a second summary proof object.
-func (bound *boundFactor[K, V]) summaryReadAddress(surface equation.Surface, formOrdinal uint64, semantic composition.Key) (factorRuntimeBinding, factorFormReceipt, []uint64, [32]byte, bool) {
+func (bound *boundFactor[K, V]) summaryReadAddress(surface equation.Surface, formOrdinal uint64, semantic composition.Key) (factorRuntimeBinding, uint64, []uint64, [32]byte, bool) {
 	if bound == nil || bound.implementation == nil || !bound.implementation.binding.valid() || !semantic.Available() {
-		return factorRuntimeBinding{}, factorFormReceipt{}, nil, [32]byte{}, false
+		return factorRuntimeBinding{}, 0, nil, [32]byte{}, false
 	}
 	binding := bound.implementation.binding
 	unit, found := bound.reads[surface]
-	if !found || unit.kind != carrier.SummaryUnit || len(unit.summaryKeys) == 0 || !matchesFactorReadShape(binding.schema, binding.ordinal, surface, summaryReadForm) || surface.Semantic != semantic || surface.Normalizer != semantic {
-		return factorRuntimeBinding{}, factorFormReceipt{}, nil, [32]byte{}, false
+	if !found || unit.kind != carrier.SummaryUnit || len(unit.summaryKeys) == 0 || !matchesFactorReadShape(binding.state.schema, binding.ordinal, surface, summaryReadForm) || surface.Semantic != semantic || surface.Normalizer != semantic {
+		return factorRuntimeBinding{}, 0, nil, [32]byte{}, false
 	}
-	formReceipt, formOK := binding.formAt(formOrdinal, SchemaFormReadSummary, semantic)
-	if !formOK {
-		return factorRuntimeBinding{}, factorFormReceipt{}, nil, [32]byte{}, false
+	formKind, formSemantic, formOK := binding.formAt(formOrdinal)
+	if !formOK || formKind != SchemaFormReadSummary || formSemantic != semantic {
+		return factorRuntimeBinding{}, 0, nil, [32]byte{}, false
 	}
 	digest := SummaryVectorDigest(unit.summaryKeys)
 	if digest == ([32]byte{}) {
-		return factorRuntimeBinding{}, factorFormReceipt{}, nil, [32]byte{}, false
+		return factorRuntimeBinding{}, 0, nil, [32]byte{}, false
 	}
-	return binding, formReceipt, unit.summaryKeys, digest, true
+	return binding, formOrdinal, unit.summaryKeys, digest, true
 }
 
 // stagedUnit resolves only a Factor-issued exact Ref through the predeclared

@@ -86,7 +86,7 @@ func (runtime *outputRuntime) targets(execution *ruleExecution, row int) ([]reso
 		if !execution.product.requireCheckpoint() {
 			return nil, false
 		}
-		if write.routeRead != 0 || write.direct == (carrier.Target{}) || !write.directBinding.valid() || write.directRaw >= write.directBinding.keyEnd || write.direct.Mode() != carrier.StrongTarget {
+		if write.routeRead != 0 || write.direct == (carrier.Target{}) || !write.directBinding.valid() || write.directRaw >= write.directBinding.keyLimit() || write.direct.Mode() != carrier.StrongTarget {
 			return nil, false
 		}
 		result = append(result, resolvedRuleTarget{target: write.direct, binding: write.directBinding, raw: write.directRaw})
@@ -404,7 +404,7 @@ func (output *typedOutput[K, V]) stageSelection(execution *ruleExecution, epoch 
 	for ordinal := 0; ordinal < batch.count; ordinal++ {
 		ref, value, available := batch.at(ordinal)
 		current, binding, raw, resolved := output.routeTarget(ref)
-		if !available || !resolved || current == (carrier.Target{}) || !binding.valid() || raw >= binding.keyEnd || current.Mode() != carrier.StrongTarget {
+		if !available || !resolved || current == (carrier.Target{}) || !binding.valid() || raw >= binding.keyLimit() || current.Mode() != carrier.StrongTarget {
 			return false
 		}
 		if pairs != nil {

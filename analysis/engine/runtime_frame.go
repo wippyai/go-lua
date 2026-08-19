@@ -26,7 +26,7 @@ type readRuntime interface {
 	observations() []demand.Observation
 	dynamicReads() []demand.DynamicRead
 	exactAddress() (factorRuntimeBinding, uint64, bool)
-	summaryAddress() (factorRuntimeBinding, factorFormReceipt, []uint64, [32]byte, bool)
+	summaryAddress() (factorRuntimeBinding, uint64, []uint64, [32]byte, bool)
 }
 
 type productRow = provenanceRow

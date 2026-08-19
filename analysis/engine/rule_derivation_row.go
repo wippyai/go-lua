@@ -97,8 +97,7 @@ func derivationSelectedRead[V any, O any, Tag selectionTag, S any](derivation Ru
 	if derivation.proof == nil || !derivation.proof.valid() || read.index < 0 || read.resolve == nil || !read.matchesRuleProof(derivation.proof) {
 		return false
 	}
-	selected := derivation.proof.selectedReadAt(uint64(read.index))
-	return selected != nil && selected.Valid() && selected.read == uint64(read.index)
+	return derivation.proof.selectedReadAt(uint64(read.index))
 }
 
 func derivationDispositionSelection[V any, O any, Tag selectionTag, S any](derivation RuleDerivation[V, O], disposition RuleDisposition[V], read Read[Selection[Tag, S]]) (Selection[Tag, S], int, bool) {
@@ -133,8 +132,10 @@ func DerivationDispositionRouteValue[V any, O any, Tag selectionTag, S any](deri
 		return tag, value, false
 	}
 	var routeRead uint64
-	if derivation.proof != nil && derivation.proof.routeWrite != nil && derivation.proof.routeWrite.Valid() {
-		routeRead = derivation.proof.routeWrite.read + 1
+	if derivation.proof != nil {
+		if read, ok := derivation.proof.routeWriteAt(0); ok {
+			routeRead = read + 1
+		}
 	}
 	if routeRead == 0 || int(routeRead-1) != read.index {
 		return tag, value, false
@@ -165,21 +166,22 @@ func DerivationDispositionRouteValue[V any, O any, Tag selectionTag, S any](deri
 // already-sealed dense local address. Runtime retains the Factor row and this
 // scalar directly; there is no read-proof wrapper to mint or reverify.
 func exactReadLocal(receipt factorRuntimeBinding, surface equation.Surface) (uint64, bool) {
-	if !receipt.valid() || surface.Factor != receipt.semantic || surface.Form != equation.SurfaceReadExact || surface.Mode != equation.TargetModeNone || surface.Semantic.Available() || surface.Normalizer.Available() || surface.Local == 0 || surface.Local > receipt.keyEnd {
+	if !receipt.valid() || surface.Factor != receipt.semanticKey() || surface.Form != equation.SurfaceReadExact || surface.Mode != equation.TargetModeNone || surface.Semantic.Available() || surface.Normalizer.Available() || surface.Local == 0 || surface.Local > receipt.keyLimit() {
 		return 0, false
 	}
 	return surface.Local - 1, true
 }
 
 func exactWriteLocal(receipt factorRuntimeBinding, surface equation.Surface) (uint64, bool) {
-	if !receipt.valid() || surface.Factor != receipt.semantic || surface.Form != equation.SurfaceWriteExact || surface.Mode != equation.TargetModeStrong || surface.Semantic.Available() || surface.Normalizer.Available() || surface.Local == 0 || surface.Local > receipt.keyEnd {
+	if !receipt.valid() || surface.Factor != receipt.semanticKey() || surface.Form != equation.SurfaceWriteExact || surface.Mode != equation.TargetModeStrong || surface.Semantic.Available() || surface.Normalizer.Available() || surface.Local == 0 || surface.Local > receipt.keyLimit() {
 		return 0, false
 	}
 	return surface.Local - 1, true
 }
 
-func summaryAddressMatchesRefs[K ~uint32 | ~uint64](receipt factorRuntimeBinding, form factorFormReceipt, keys []uint64, digest [32]byte, refs *ClosedRefs[K]) bool {
-	return receipt.valid() && refs != nil && refs.closed && refs.validIssuer() && factorAddressMatches(refs.binding, receipt) && form.kind == SchemaFormReadSummary && form.semantic != (composition.Key{}) && len(refs.refs) == len(keys) && refs.digest == digest
+func summaryAddressMatchesRefs[K ~uint32 | ~uint64](receipt factorRuntimeBinding, formOrdinal uint64, keys []uint64, digest [32]byte, refs *ClosedRefs[K]) bool {
+	kind, semantic, formOK := receipt.formAt(formOrdinal)
+	return formOK && refs != nil && refs.closed && refs.validIssuer() && factorAddressMatches(refs.binding, receipt) && kind == SchemaFormReadSummary && semantic.Available() && len(refs.refs) == len(keys) && refs.digest == digest
 }
 
 // DerivationReadMatchesRef proves that one checker-visible typed read was
@@ -222,7 +224,7 @@ func DerivationReadMatchesSummaryRefs[V, O, S any, K ~uint32 | ~uint64](derivati
 // sealed surface identity; neither the raw coordinate nor the equation
 // representation is exposed.
 func TargetMatchesRef[K ~uint32 | ~uint64](target RuleTarget, ref Ref[K]) bool {
-	if target.target == (carrier.Target{}) || !target.targetBinding.valid() || target.targetRaw >= target.targetBinding.keyEnd || target.target.Mode() != carrier.StrongTarget {
+	if target.target == (carrier.Target{}) || !target.targetBinding.valid() || target.targetRaw >= target.targetBinding.keyLimit() || target.target.Mode() != carrier.StrongTarget {
 		return false
 	}
 	return factorAddressMatches(ref.binding, target.targetBinding) && target.targetRaw == uint64(ref.raw)
@@ -233,9 +235,9 @@ type ruleAdmissionSchema struct {
 	identity identity.SemanticKey
 }
 
-// ruleRuntimeProof is the sole private runtime identity of one sealed receipt
-// Rule implementation. It names the SchemaBinding state, canonical ordinal,
-// semantic shape, and sealed read/write receipts used by admission.
+// ruleRuntimeProof is the sole private runtime identity of one sealed Rule
+// implementation. Read and write geometry is always re-read from Schema by
+// canonical ordinal; no second row inventory is retained here.
 type ruleRuntimeProof struct {
 	schema           *Schema
 	state            *schemaBindingState
@@ -250,15 +252,53 @@ type ruleRuntimeProof struct {
 	reads            uint64
 	carries          uint64
 	writes           uint64
-	selectedReads    []*schemaSelectedRead
-	routeWrite       *schemaRouteWrite
 }
 
-func (proof *ruleRuntimeProof) selectedReadAt(read uint64) *schemaSelectedRead {
-	if proof == nil || read >= uint64(len(proof.selectedReads)) {
-		return nil
+func (proof *ruleRuntimeProof) ownerValid() bool {
+	if proof == nil || proof.schema == nil || proof.state == nil || proof.bindingAuthority == nil || proof.state.phase != schemaBindingSealed || proof.state.authority != proof.bindingAuthority || proof.state.schema != proof.schema || proof.ordinal >= uint64(len(proof.state.rules)) {
+		return false
 	}
-	return proof.selectedReads[read]
+	cell, ok := proof.state.rules[proof.ordinal].(schemaRuleBindingCell)
+	return ok && cell != nil && cell.schemaBindingSchema() == proof.schema && cell.schemaRuleOrdinal() == proof.ordinal && cell.schemaRuleComplete()
+}
+
+func (proof *ruleRuntimeProof) selectedReadAt(read uint64) bool {
+	if !proof.ownerValid() {
+		return false
+	}
+	rule, ruleOK := proof.schema.ruleShapeAt(proof.ordinal)
+	shape, shapeOK := proof.schema.ruleReadShapeAt(proof.ordinal, read)
+	_, factorOK := proof.schema.factorOrdinalOf(shape.Factor)
+	return ruleOK && shapeOK && factorOK && read < rule.ReadCount && shape.Kind == composition.ReadSelect && shape.Semantic == shape.Factor && !shape.Normalizer.Available() && shape.DependencyCount != 0 && validReadDependencies(proof.schema, proof.ordinal, read, shape.DependencyCount)
+}
+
+func (proof *ruleRuntimeProof) summaryReadAt(read uint64) bool {
+	if !proof.ownerValid() {
+		return false
+	}
+	rule, ruleOK := proof.schema.ruleShapeAt(proof.ordinal)
+	shape, shapeOK := proof.schema.ruleReadShapeAt(proof.ordinal, read)
+	_, factorOK := proof.schema.factorOrdinalOf(shape.Factor)
+	return ruleOK && shapeOK && factorOK && read < rule.ReadCount && shape.Kind == composition.ReadSummary && shape.DependencyCount == 0 && shape.Semantic.Available() && shape.Semantic == shape.Normalizer
+}
+
+func (proof *ruleRuntimeProof) routeWriteAt(write uint64) (uint64, bool) {
+	if !proof.ownerValid() {
+		return 0, false
+	}
+	rule, ruleOK := proof.schema.ruleShapeAt(proof.ordinal)
+	shape, shapeOK := proof.schema.ruleWriteShapeAt(proof.ordinal, write)
+	if !ruleOK || !shapeOK || write >= rule.WriteCount || rule.WriteCount != 1 || shape.Kind != composition.WriteRoute || shape.Route == 0 || shape.Route > rule.ReadCount {
+		return 0, false
+	}
+	read := shape.Route - 1
+	readShape, readOK := proof.schema.ruleReadShapeAt(proof.ordinal, read)
+	factor, factorOK := proof.schema.factorOrdinalOf(shape.Factor)
+	readFactor, readFactorOK := proof.schema.factorOrdinalOf(readShape.Factor)
+	if !readOK || !factorOK || !readFactorOK || factor != readFactor || readShape.Kind != composition.ReadSelect || readShape.Semantic != readShape.Factor || readShape.Normalizer.Available() || readShape.DependencyCount == 0 || !validReadDependencies(proof.schema, proof.ordinal, read, readShape.DependencyCount) {
+		return 0, false
+	}
+	return read, true
 }
 
 // newSchemaRuleRuntimeProof issues the private proof from the exact shared
@@ -286,25 +326,17 @@ func newSchemaRuleRuntimeProof(state *schemaBindingState, authority *schemaBindi
 		output: shape.Output, inputs: shape.Inputs, reads: shape.ReadCount,
 		carries: shape.CarryCount, writes: shape.WriteCount,
 	}
-	if shape.ReadCount > uint64(^uint(0)>>1) {
-		return nil, false
-	}
-	proof.selectedReads = make([]*schemaSelectedRead, int(shape.ReadCount))
-	fence := schemaRuleReceiptFence{state: state, authority: authority, schema: state.schema, rule: ordinal}
-	if ordinal < uint64(len(state.rules)) {
-		fence.cell, _ = state.rules[ordinal].(schemaRuleBindingCell)
-	}
 	for read := uint64(0); read < shape.ReadCount; read++ {
 		readShape, readOK := state.schema.ruleReadShapeAt(ordinal, read)
 		if !readOK {
 			return nil, false
 		}
 		if readShape.Kind == composition.ReadSelect {
-			receipt, receiptOK := issueSchemaSelectedReadReceiptFence(fence, fence.valid(), read)
-			if !receiptOK {
+			if !proof.selectedReadAt(read) {
 				return nil, false
 			}
-			proof.selectedReads[read] = &receipt
+		} else if readShape.Kind == composition.ReadSummary && !proof.summaryReadAt(read) {
+			return nil, false
 		}
 	}
 	for write := uint64(0); write < shape.WriteCount; write++ {
@@ -314,11 +346,9 @@ func newSchemaRuleRuntimeProof(state *schemaBindingState, authority *schemaBindi
 		}
 		switch writeShape.Kind {
 		case composition.WriteRoute:
-			receipt, receiptOK := issueSchemaRouteWriteReceiptFence(fence, fence.valid(), write)
-			if !receiptOK {
+			if _, routeOK := proof.routeWriteAt(write); !routeOK {
 				return nil, false
 			}
-			proof.routeWrite = &receipt
 		}
 	}
 	if !proof.valid() {
@@ -343,20 +373,16 @@ func (proof *ruleRuntimeProof) valid() bool {
 	if !ok || cell == nil || cell.schemaBindingSchema() != proof.schema || cell.schemaRuleOrdinal() != proof.ordinal || !cell.schemaRuleComplete() || !cell.schemaRuleProofMatches(proof) {
 		return false
 	}
-	if uint64(len(proof.selectedReads)) != proof.reads {
-		return false
-	}
 	for read := uint64(0); read < proof.reads; read++ {
 		shape, shapeOK := proof.schema.ruleReadShapeAt(proof.ordinal, read)
 		if !shapeOK {
 			return false
 		}
 		if shape.Kind == composition.ReadSelect {
-			selectedRead := proof.selectedReadAt(read)
-			if selectedRead == nil || !selectedRead.Valid() || selectedRead.fence.state != proof.state || selectedRead.fence.authority != proof.bindingAuthority || selectedRead.fence.rule != proof.ordinal || selectedRead.read != read {
+			if !proof.selectedReadAt(read) {
 				return false
 			}
-		} else if proof.selectedReads[read] != nil {
+		} else if shape.Kind == composition.ReadSummary && !proof.summaryReadAt(read) {
 			return false
 		}
 	}
@@ -367,7 +393,7 @@ func (proof *ruleRuntimeProof) valid() bool {
 		}
 		switch shape.Kind {
 		case composition.WriteRoute:
-			if proof.routeWrite == nil || !proof.routeWrite.Valid() || proof.routeWrite.fence.state != proof.state || proof.routeWrite.fence.authority != proof.bindingAuthority || proof.routeWrite.fence.rule != proof.ordinal || proof.routeWrite.write != write {
+			if _, ok := proof.routeWriteAt(write); !ok {
 				return false
 			}
 		}

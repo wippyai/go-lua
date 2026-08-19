@@ -45,10 +45,10 @@ func TestProgramRuleThreadsExactAndSummaryReadThroughProductEvidencePatch(t *tes
 		t.Fatal("heterogeneous rule binding")
 	}
 	implementation, implementationOK := RuleImplementationAt[uint64, uint64, ruleUnit](binding, rule)
-	if !implementationOK || implementation == nil || exactRuntime.origin == nil || summaryRuntime.origin == nil || exactRuntime.origin.kind != composition.ReadExact || summaryRuntime.origin.kind != composition.ReadSummary {
+	if !implementationOK || implementation == nil || exactRuntime.origin == nil || summaryRuntime.origin == nil || exactRuntime.origin.readKind() != composition.ReadExact || summaryRuntime.origin.readKind() != composition.ReadSummary {
 		t.Fatal("heterogeneous rule lost one read authority")
 	}
-	if summaryRuntime.origin.semantic != compositionKeyOf(coldKey(960_002)) || implementation.binding.proof.carries != 1 {
+	if summaryRuntime.origin.semanticKey() != compositionKeyOf(coldKey(960_002)) || implementation.binding.proof.carries != 1 {
 		t.Fatal("heterogeneous rule summary or carry proof changed")
 	}
 }

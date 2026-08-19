@@ -462,8 +462,8 @@ func declareActivationCandidates(schema *Schema, issuance pendingRuleIssuance) (
 // appendDeclaredSummary folds one declared summary surface into the program's
 // summary plane. A surface declared twice must carry the same key vector.
 func appendDeclaredSummary(summaries []equation.SummaryMapping, mapping *ruleSummaryMapping, state *schemaBindingState, authority *schemaBindingAuthority) ([]equation.SummaryMapping, bool) {
-	if mapping == nil || mapping.binding == nil || len(mapping.keys) == 0 ||
-		!validateSummarySurface(mapping.binding, state, authority, mapping.surface) {
+	if mapping == nil || (mapping.binding == nil) == (mapping.proof == nil) || len(mapping.keys) == 0 ||
+		!validateSummarySurface(mapping, state, authority) {
 		return nil, false
 	}
 	for _, existing := range summaries {

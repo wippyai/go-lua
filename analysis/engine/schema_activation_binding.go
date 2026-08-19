@@ -178,7 +178,7 @@ func BindActivationRuleWithExactRead[RK ~uint32 | ~uint64, RV any](binding *Sche
 		return Read[OrderedCells[RV]]{}, false
 	}
 	cell := &schemaActivationRuleBindingCell{state: state, schema: state.schema, ordinal: ruleOrdinal}
-	origin := &schemaRuleReadOrigin{state: state, cell: cell, ruleOrdinal: ruleOrdinal, readOrdinal: 0, input: readShape.Input, factor: ruleFactorOrdinal, kind: composition.ReadExact}
+	origin := &schemaRuleReadOrigin{state: state, cell: cell, ruleOrdinal: ruleOrdinal, readOrdinal: 0}
 	read := Read[OrderedCells[RV]]{origin: origin, index: 0, resolve: resolveTypedRead[RV, OrderedCells[RV]]}
 	readBinding := &schemaExactRuleReadBinding[RK, RV]{origin: origin, factor: factorCell, read: read}
 	cell.impl = &activationHotImplementation{state: state, rule: slot, reads: []schemaRuleReadBinding{readBinding}, admission: spec.Admission, run: spec.Run}

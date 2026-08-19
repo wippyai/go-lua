@@ -271,87 +271,30 @@ func completeCapabilityDirectory(state *schemaBindingState) bool {
 
 // Layer-B sealed-authority accessors. Each reads only the sealed schema proof
 // held by the typed implementation; none of them touch source admission.
-func (implementation *RuleImplementation[K, V, O]) selectedRead(index uint64) (schemaSelectedRead, bool) {
+func (implementation *RuleImplementation[K, V, O]) selectedRead(index uint64) bool {
 	if implementation == nil || !implementation.binding.valid() || implementation.binding.proof == nil {
-		return schemaSelectedRead{}, false
-	}
-	selected := implementation.binding.proof.selectedReadAt(index)
-	returnValue := selected != nil && selected.Valid()
-	if !returnValue {
-		return schemaSelectedRead{}, false
-	}
-	return *selected, true
-}
-
-func (implementation *RuleImplementation[K, V, O]) routeWrite() (schemaRouteWrite, bool) {
-	if implementation == nil || !implementation.binding.valid() || implementation.binding.proof == nil || implementation.binding.proof.routeWrite == nil || !implementation.binding.proof.routeWrite.Valid() {
-		return schemaRouteWrite{}, false
-	}
-	return *implementation.binding.proof.routeWrite, true
-}
-
-func (implementation *ActivationRuleImplementation) selectedRead(index uint64) (schemaSelectedRead, bool) {
-	if implementation == nil || !implementation.binding.valid() || implementation.binding.proof == nil {
-		return schemaSelectedRead{}, false
-	}
-	selected := implementation.binding.proof.selectedReadAt(index)
-	if selected == nil || !selected.Valid() {
-		return schemaSelectedRead{}, false
-	}
-	return *selected, true
-}
-
-// schemaSummaryRead is the implementation-owned summary form proof.
-// It retains only the exact sealed Rule/Read fence and Schema normalizer key.
-type schemaSummaryRead struct {
-	fence    schemaRuleReceiptFence
-	read     uint64
-	factor   uint64
-	semantic composition.Key
-	issued   bool
-}
-
-// boundTopologySummarySurfaceReceipt exposes only the sealed Factor/form
-// fence needed by topology catalog admission. The raw ClosedRefs vector stays
-// private to the RuleReadSurface issued below.
-func (receipt schemaSummaryRead) boundTopologySummarySurface() (*schemaBindingState, *schemaBindingAuthority, composition.Key, composition.Key, bool) {
-	if !receipt.Valid() || receipt.fence.schema == nil {
-		return nil, nil, composition.Key{}, composition.Key{}, false
-	}
-	factor := receipt.fence.schema.factorSemanticAt(receipt.factor)
-	if !factor.Available() {
-		return nil, nil, composition.Key{}, composition.Key{}, false
-	}
-	return receipt.fence.state, receipt.fence.authority, factor, receipt.semantic, true
-}
-
-func (receipt schemaSummaryRead) Valid() bool {
-	if !receipt.issued || !receipt.fence.valid() {
 		return false
 	}
-	rule, ruleOK := receipt.fence.schema.ruleShapeAt(receipt.fence.rule)
-	shape, ok := receipt.fence.schema.ruleReadShapeAt(receipt.fence.rule, receipt.read)
-	factor, factorOK := receipt.fence.schema.factorOrdinalOf(shape.Factor)
-	return ruleOK && ok && factorOK && shape.Kind == composition.ReadSummary && shape.DependencyCount == 0 && receipt.read < rule.ReadCount && factor == receipt.factor && shape.Semantic.Available() && shape.Semantic == shape.Normalizer && shape.Semantic == receipt.semantic
+	return implementation.binding.proof.selectedReadAt(index)
 }
 
-func (implementation *RuleImplementation[K, V, O]) summaryRead(index uint64) (schemaSummaryRead, bool) {
+func (implementation *RuleImplementation[K, V, O]) routeWrite() (uint64, bool) {
 	if implementation == nil || !implementation.binding.valid() || implementation.binding.proof == nil {
-		return schemaSummaryRead{}, false
+		return 0, false
 	}
-	fence := schemaRuleReceiptFence{state: implementation.binding.proof.state, authority: implementation.binding.proof.bindingAuthority, schema: implementation.binding.proof.schema, rule: implementation.binding.proof.ordinal}
-	if fence.state == nil || fence.schema == nil || fence.rule >= uint64(len(fence.state.rules)) {
-		return schemaSummaryRead{}, false
+	return implementation.binding.proof.routeWriteAt(0)
+}
+
+func (implementation *ActivationRuleImplementation) selectedRead(index uint64) bool {
+	if implementation == nil || !implementation.binding.valid() || implementation.binding.proof == nil {
+		return false
 	}
-	fence.cell, _ = fence.state.rules[fence.rule].(schemaRuleBindingCell)
-	shape, ok := fence.schema.ruleReadShapeAt(fence.rule, index)
-	if !ok || shape.Kind != composition.ReadSummary || !fence.valid() {
-		return schemaSummaryRead{}, false
+	return implementation.binding.proof.selectedReadAt(index)
+}
+
+func (implementation *RuleImplementation[K, V, O]) summaryRead(index uint64) bool {
+	if implementation == nil || !implementation.binding.valid() || implementation.binding.proof == nil {
+		return false
 	}
-	factor, factorOK := fence.schema.factorOrdinalOf(shape.Factor)
-	if !factorOK {
-		return schemaSummaryRead{}, false
-	}
-	result := schemaSummaryRead{fence: fence, read: index, factor: factor, semantic: shape.Semantic, issued: true}
-	return result, result.Valid()
+	return implementation.binding.proof.summaryReadAt(index)
 }

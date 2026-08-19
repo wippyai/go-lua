@@ -138,7 +138,7 @@ func (bound *boundRuleMember[V, O]) execute(work *carrier.Work, base carrier.Rul
 	return memberResult{patch: patch, wrote: wrote, reads: reads, boundary: boundary, valid: ok}
 }
 
-// bindSchemaRuleMember attaches the receipt-native zero-read Rule lane to the
+// bindSchemaRuleMember attaches the sealed zero-read Rule lane to the
 // existing boundRule/Access executor. It intentionally has no declaration Rule or
 // declaration argument: the private ruleRuntimeProof is the sole identity.
 type schemaRuleMemberGeometry interface {
@@ -167,7 +167,8 @@ func exactSchemaRuleMemberGeometry(proof *ruleRuntimeProof, member schemaRuleMem
 }
 
 func routeSchemaRuleMemberGeometry(proof *ruleRuntimeProof, member schemaRuleMemberGeometry) (equation.Surface, uint64, bool) {
-	if proof == nil || !proof.valid() || proof.routeWrite == nil || !proof.routeWrite.Valid() || member == nil || member.Rule() != proof.semantic || member.OperandFamily() != proof.operandFamily || uint64(member.ReadCount()) != proof.reads || member.WriteCount() != 1 {
+	read, routed := proof.routeWriteAt(0)
+	if proof == nil || !proof.valid() || !routed || member == nil || member.Rule() != proof.semantic || member.OperandFamily() != proof.operandFamily || uint64(member.ReadCount()) != proof.reads || member.WriteCount() != 1 {
 		return equation.Surface{}, 0, false
 	}
 	if _, dynamic := member.ActivationMember(); dynamic {
@@ -175,7 +176,7 @@ func routeSchemaRuleMemberGeometry(proof *ruleRuntimeProof, member schemaRuleMem
 	}
 	surface, surfaceOK := member.WriteAt(0)
 	route, routeOK := member.WriteRouteRead(0)
-	if !surfaceOK || surface.Factor != proof.output || surface.Form != equation.SurfaceWriteRoute || surface.Mode != equation.TargetModeNone || !surface.LocalAvailable() || !routeOK || route != proof.routeWrite.read+1 {
+	if !surfaceOK || surface.Factor != proof.output || surface.Form != equation.SurfaceWriteRoute || surface.Mode != equation.TargetModeNone || !surface.LocalAvailable() || !routeOK || route != read+1 {
 		return equation.Surface{}, 0, false
 	}
 	return surface, route, true
@@ -213,9 +214,9 @@ func bindSchemaRuleMember[K ~uint32 | ~uint64, V, O any](implementation *RuleImp
 	if implementation == nil || !implementation.binding.valid() || member.Key() == (composition.Key{}) || !member.Occurrence().Available() || output == nil || factors == nil {
 		return nil, false
 	}
-	receipt := implementation.binding
-	proof := receipt.proof
-	hot := receipt.cell.impl
+	binding := implementation.binding
+	proof := binding.proof
+	hot := binding.cell.impl
 	if proof == nil || hot == nil {
 		return nil, false
 	}
@@ -224,7 +225,7 @@ func bindSchemaRuleMember[K ~uint32 | ~uint64, V, O any](implementation *RuleImp
 		return nil, false
 	}
 	boundOutput, outputOK := output.(*boundFactor[K, V])
-	if !outputOK || boundOutput == nil || boundOutput.implementation == nil || !boundOutput.implementation.binding.valid() || boundOutput.implementation.binding.state != receipt.state || boundOutput.implementation.binding.authority != receipt.authority || boundOutput.implementation.binding.schema != receipt.output.schema || boundOutput.implementation.binding.ordinal != receipt.output.ordinal || boundOutput.implementation.binding.semantic != receipt.output.semantic || boundOutput.implementation.binding.algebra != receipt.output.algebra || boundOutput.implementation.binding.semantic != shape.Output {
+	if !outputOK || boundOutput == nil || boundOutput.implementation == nil || !boundOutput.implementation.binding.valid() || !factorAddressMatches(boundOutput.implementation.binding, binding.output) || boundOutput.implementation.binding.semanticKey() != shape.Output {
 		return nil, false
 	}
 	surface, memberOK := exactSchemaRuleMemberGeometry(proof, member)
@@ -393,7 +394,7 @@ func (bound *boundActivationMember) execute(work *carrier.Work, base carrier.Rul
 }
 
 // bindActivationMember attaches one graph-owned activation Member to a
-// receipt-native activation implementation. The receipt compiler performs
+// sealed activation implementation. The Schema binding performs
 // the exact Schema/family/trigger checks; this adapter adds only the Member
 // anchor and returns the same runtime member consumed by the existing epoch
 // executor.

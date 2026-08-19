@@ -20,7 +20,7 @@ type typedReadRuntime[K ~uint32 | ~uint64, V, S any] struct {
 	exactRaw      uint64
 	exact         bool
 	summaryFactor factorRuntimeBinding
-	summaryForm   factorFormReceipt
+	summaryForm   uint64
 	summaryKeys   []uint64
 	summaryDigest [32]byte
 	summary       bool
@@ -55,7 +55,8 @@ type stagedTargetProvider[V any] interface {
 func (factor *boundFactor[K, V]) stagedFactorTarget() stagedFactor[V] { return factor }
 
 func (factor *boundFactor[K, V]) stagedFactorReceiptMatches(origin *schemaRuleReadOrigin) bool {
-	if factor == nil || factor.implementation == nil || origin == nil || !factor.implementation.binding.valid() || factor.implementation.binding.state != origin.state || factor.implementation.binding.schema != origin.state.schema || factor.implementation.binding.ordinal != origin.factor || factor.implementation.binding.semantic != origin.state.schema.factorSemanticAt(origin.factor) {
+	ordinal, ordinalOK := origin.factorOrdinal()
+	if factor == nil || factor.implementation == nil || !ordinalOK || !factor.implementation.binding.valid() || factor.implementation.binding.state != origin.state || factor.implementation.binding.ordinal != ordinal {
 		return false
 	}
 	return factor.implementation.binding.authority == origin.state.authority
@@ -159,8 +160,8 @@ func (*stagedReadRuntime[V, S, Tag]) exactAddress() (factorRuntimeBinding, uint6
 	return factorRuntimeBinding{}, 0, false
 }
 
-func (*stagedReadRuntime[V, S, Tag]) summaryAddress() (factorRuntimeBinding, factorFormReceipt, []uint64, [32]byte, bool) {
-	return factorRuntimeBinding{}, factorFormReceipt{}, nil, [32]byte{}, false
+func (*stagedReadRuntime[V, S, Tag]) summaryAddress() (factorRuntimeBinding, uint64, []uint64, [32]byte, bool) {
+	return factorRuntimeBinding{}, 0, nil, [32]byte{}, false
 }
 
 func (runtime *stagedReadRuntime[V, S, Tag]) refine(session *productSession, index int) bool {
@@ -428,9 +429,9 @@ func (runtime *typedReadRuntime[K, V, S]) exactAddress() (factorRuntimeBinding, 
 	return runtime.exactFactor, runtime.exactRaw, true
 }
 
-func (runtime *typedReadRuntime[K, V, S]) summaryAddress() (factorRuntimeBinding, factorFormReceipt, []uint64, [32]byte, bool) {
+func (runtime *typedReadRuntime[K, V, S]) summaryAddress() (factorRuntimeBinding, uint64, []uint64, [32]byte, bool) {
 	if runtime == nil || !runtime.summary {
-		return factorRuntimeBinding{}, factorFormReceipt{}, nil, [32]byte{}, false
+		return factorRuntimeBinding{}, 0, nil, [32]byte{}, false
 	}
 	return runtime.summaryFactor, runtime.summaryForm, runtime.summaryKeys, runtime.summaryDigest, true
 }

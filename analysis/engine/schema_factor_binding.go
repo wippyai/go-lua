@@ -167,7 +167,8 @@ func (cell *schemaFactorBindingCell[K, V]) schemaFactorRuntimeBinding(runtime *r
 }
 
 func (cell *schemaFactorBindingCell[K, V]) schemaFactorReadComplete(state *schemaBindingState, origin *schemaRuleReadOrigin) bool {
-	return cell != nil && state != nil && origin != nil && cell.schema == state.schema && cell.impl != nil && cell.impl.state == state && cell.impl.algebra != nil && cell.ordinal == origin.factor
+	ordinal, ok := origin.factorOrdinal()
+	return ok && cell != nil && state != nil && cell.schema == state.schema && cell.impl != nil && cell.impl.state == state && cell.impl.algebra != nil && cell.ordinal == ordinal
 }
 
 func (cell *schemaFactorBindingCell[K, V]) schemaFactorFormAt(index uint64) schemaFactorFormBinding {
@@ -189,15 +190,19 @@ func (cell *schemaFactorBindingCell[K, V]) schemaFactorBindExactRead(bound readB
 	if proof == nil || !origin.matches(proof, origin.readOrdinal) {
 		return false
 	}
-	factorKey := origin.state.schema.factorSemanticAt(origin.factor)
+	row, rowOK := origin.shape()
+	factorOrdinal, factorOrdinalOK := origin.factorOrdinal()
+	if !rowOK || !factorOrdinalOK {
+		return false
+	}
+	factorKey := row.Factor
 	runtime, present := factors[factorKey]
 	factor, typed := runtime.(*boundFactor[K, V])
-	if !present || !typed || factor == nil || factor.implementation == nil || !factor.implementation.binding.valid() || factor.implementation.binding.state != origin.state || factor.implementation.binding.authority != origin.state.authority || factor.implementation.binding.ordinal != origin.factor || factor.implementation.binding.algebra != cell.impl.algebra {
+	if !present || !typed || factor == nil || factor.implementation == nil || !factor.implementation.binding.valid() || factor.implementation.binding.state != origin.state || factor.implementation.binding.authority != origin.state.authority || factor.implementation.binding.ordinal != factorOrdinal || factor.implementation.binding.algebra != cell.impl.algebra {
 		return false
 	}
 	surface, surfaceOK := member.ReadAt(int(origin.readOrdinal))
-	row, rowOK := origin.state.schema.ruleReadShapeAt(origin.ruleOrdinal, origin.readOrdinal)
-	if !surfaceOK || !rowOK || row.Kind != composition.ReadExact || row.Input != origin.input || row.Factor != factorKey || row.DependencyCount != 0 || surface.Factor != factorKey || surface.Form != equation.SurfaceReadExact || surface.Mode != equation.TargetModeNone || surface.Local == 0 {
+	if !surfaceOK || row.Kind != composition.ReadExact || row.Factor != factorKey || row.DependencyCount != 0 || surface.Factor != factorKey || surface.Form != equation.SurfaceReadExact || surface.Mode != equation.TargetModeNone || surface.Local == 0 {
 		return false
 	}
 	unit, unitOK := factor.readUnit(surface)
@@ -212,29 +217,21 @@ func (cell *schemaFactorBindingCell[K, V]) schemaFactorBindExactRead(bound readB
 	fingerprint := func(value OrderedCells[V]) uint64 {
 		return fingerprintOrderedCellRecord(value.record, cell.impl.algebra.Fingerprint)
 	}
-	return bound.appendReadRuntime(&typedReadRuntime[K, V, OrderedCells[V]]{input: int(origin.input), binding: factor.binding, unit: unit, exactFactor: factor.implementation.binding, exactRaw: readLocal, exact: true, normalize: normalize, equal: equal, fingerprint: fingerprint})
+	return bound.appendReadRuntime(&typedReadRuntime[K, V, OrderedCells[V]]{input: int(row.Input), binding: factor.binding, unit: unit, exactFactor: factor.implementation.binding, exactRaw: readLocal, exact: true, normalize: normalize, equal: equal, fingerprint: fingerprint})
 }
 
 func (cell *schemaFactorBindingCell[K, V]) sealedImplementation(state *schemaBindingState, authority *schemaBindingAuthority) (*FactorImplementation[K, V], bool) {
 	if cell == nil || cell.impl == nil || state == nil || authority == nil || cell.impl.state != state || state.schema != cell.schema || state.authority != authority || state.phase != schemaBindingSealed || cell.ordinal >= uint64(len(state.factors)) || state.factors[cell.ordinal] != cell || cell.impl.algebra == nil {
 		return nil, false
 	}
-	forms := make([]factorFormReceipt, len(cell.forms))
-	for index := range forms {
-		shape, shapeOK := state.schema.factorFormShapeAt(cell.ordinal, uint64(index))
-		if !shapeOK {
-			return nil, false
-		}
-		forms[index] = factorFormReceipt{ordinal: uint64(index), kind: schemaFormKind(shape.Kind), semantic: shape.Semantic}
-	}
-	receipt := factorRuntimeBinding{state: state, authority: authority, schema: state.schema, ordinal: cell.ordinal, semantic: state.schema.factorSemanticAt(cell.ordinal), keyEnd: cell.impl.algebra.KeyEnd(), algebra: cell.impl.algebra, forms: forms, issued: true}
+	receipt := factorRuntimeBinding{state: state, authority: authority, ordinal: cell.ordinal, algebra: cell.impl.algebra}
 	if !receipt.validForms() {
 		return nil, false
 	}
 	result := *cell.impl
 	result.state = state
 	result.binding = receipt
-	result.descriptor = factorRuntimeDescriptor{schema: state.schema, state: state, ordinal: cell.ordinal, semantic: receipt.semantic, keyEnd: receipt.keyEnd, algebra: receipt.algebra}
+	result.descriptor = factorRuntimeDescriptor{schema: state.schema, state: state, ordinal: cell.ordinal, semantic: receipt.semanticKey(), keyEnd: receipt.keyLimit(), algebra: receipt.algebra}
 	return &result, true
 }
 
@@ -413,16 +410,16 @@ func (cell *schemaSummaryReadCell[K, V, S]) schemaFactorFormComplete() bool {
 }
 
 func (cell *schemaSummaryReadCell[K, V, S]) schemaSummaryRuleReadComplete(state *schemaBindingState, origin *schemaRuleReadOrigin) bool {
-	if cell == nil || state == nil || origin == nil || origin.state != state || origin.kind != composition.ReadSummary ||
+	shape, shapeOK := origin.shape()
+	factor, factorOK := origin.factorOrdinal()
+	if cell == nil || state == nil || origin == nil || origin.state != state || !shapeOK || !factorOK || shape.Kind != composition.ReadSummary ||
 		cell.factor == nil || cell.factor.impl == nil || cell.factor.impl.algebra == nil || cell.factor.impl.state != state ||
-		cell.factor.ordinal != origin.factor || cell.schema != state.schema || cell.form.cell == nil ||
+		cell.factor.ordinal != factor || cell.schema != state.schema || cell.form.cell == nil ||
 		cell.form.cell.schema != state.schema || !summaryReadFormKind(cell.form.cell.kind) || !cell.schemaFactorFormComplete() {
 		return false
 	}
-	shape, ok := state.schema.ruleReadShapeAt(origin.ruleOrdinal, origin.readOrdinal)
-	return ok && shape.Kind == composition.ReadSummary && shape.Input == origin.input &&
-		shape.Factor == state.schema.factorSemanticAt(origin.factor) && shape.Semantic == origin.semantic &&
-		shape.Normalizer == origin.semantic && shape.DependencyCount == 0
+	return shape.Factor == state.schema.factorSemanticAt(factor) && shape.Semantic.Available() &&
+		shape.Normalizer == shape.Semantic && shape.DependencyCount == 0
 }
 
 func (cell *schemaSummaryReadCell[K, V, S]) schemaSummaryRuleReadBind(bound readBinding, member equation.RuleMember, factors map[composition.Key]runtimeFactor, origin *schemaRuleReadOrigin) bool {
@@ -437,29 +434,32 @@ func (cell *schemaSummaryReadCell[K, V, S]) schemaSummaryRuleReadBind(bound read
 	if proof == nil || !origin.matches(proof, origin.readOrdinal) || !cell.schemaSummaryRuleReadComplete(origin.state, origin) {
 		return false
 	}
-	factorKey := origin.state.schema.factorSemanticAt(origin.factor)
+	row, rowOK := origin.shape()
+	factorOrdinal, factorOrdinalOK := origin.factorOrdinal()
+	if !rowOK || !factorOrdinalOK {
+		return false
+	}
+	factorKey := row.Factor
 	runtime, present := factors[factorKey]
 	factor, typed := runtime.(*boundFactor[K, V])
 	if !present || !typed || factor == nil || factor.implementation == nil || !factor.implementation.binding.valid() || factor.implementation.binding.state != origin.state ||
-		factor.implementation.binding.authority != origin.state.authority || factor.implementation.binding.ordinal != origin.factor ||
+		factor.implementation.binding.authority != origin.state.authority || factor.implementation.binding.ordinal != factorOrdinal ||
 		factor.implementation.binding.algebra != cell.factor.impl.algebra {
 		return false
 	}
 	surface, surfaceOK := member.ReadAt(int(origin.readOrdinal))
-	row, rowOK := origin.state.schema.ruleReadShapeAt(origin.ruleOrdinal, origin.readOrdinal)
-	if !surfaceOK || !rowOK || row.Kind != composition.ReadSummary || row.Input != origin.input ||
-		row.Factor != factorKey || row.Semantic != origin.semantic || row.Normalizer != origin.semantic || row.DependencyCount != 0 ||
-		surface.Factor != factorKey || surface.Form != equation.SurfaceReadSummary || surface.Semantic != origin.semantic ||
-		surface.Normalizer != origin.semantic || surface.Mode != equation.TargetModeNone {
+	if !surfaceOK || row.Kind != composition.ReadSummary || row.Factor != factorKey || row.Semantic != row.Normalizer || row.DependencyCount != 0 ||
+		surface.Factor != factorKey || surface.Form != equation.SurfaceReadSummary || surface.Semantic != row.Semantic ||
+		surface.Normalizer != row.Semantic || surface.Mode != equation.TargetModeNone {
 		return false
 	}
 	unit, unitOK := factor.readUnit(surface)
 	unitRow, rowPresent := factor.reads[surface]
-	summaryFactor, summaryForm, summaryKeys, summaryDigest, summaryOK := factor.summaryReadAddress(surface, uint64(uint32(cell.ordinal)), origin.semantic)
+	summaryFactor, summaryForm, summaryKeys, summaryDigest, summaryOK := factor.summaryReadAddress(surface, uint64(uint32(cell.ordinal)), row.Semantic)
 	if !unitOK || !rowPresent || unitRow.kind != carrier.SummaryUnit || !summaryOK {
 		return false
 	}
-	return bound.appendReadRuntime(&typedReadRuntime[K, V, S]{input: int(origin.input), binding: factor.binding, unit: unit, summaryFactor: summaryFactor, summaryForm: summaryForm, summaryKeys: summaryKeys, summaryDigest: summaryDigest, summary: true, normalize: cell.normalize, equal: cell.equal, fingerprint: cell.fingerprint})
+	return bound.appendReadRuntime(&typedReadRuntime[K, V, S]{input: int(row.Input), binding: factor.binding, unit: unit, summaryFactor: summaryFactor, summaryForm: summaryForm, summaryKeys: summaryKeys, summaryDigest: summaryDigest, summary: true, normalize: cell.normalize, equal: cell.equal, fingerprint: cell.fingerprint})
 }
 
 // Ref issues the callback-free Factor implementation's opaque exact-key
@@ -490,7 +490,7 @@ func (cell *schemaFactorBindingCell[K, V]) schemaFactorExactWrite(state *schemaB
 }
 
 func (implementation *FactorImplementation[K, V]) Ref(key K) (Ref[K], bool) {
-	if implementation == nil || !implementation.binding.valid() || uint64(key) >= implementation.binding.keyEnd {
+	if implementation == nil || !implementation.binding.valid() || uint64(key) >= implementation.binding.keyLimit() {
 		return Ref[K]{}, false
 	}
 	receipt := implementation.binding
@@ -505,5 +505,5 @@ func (implementation *FactorImplementation[K, V]) NewClosedRefs() *ClosedRefs[K]
 }
 
 func (implementation *FactorImplementation[K, V]) OwnsClosedRefs(refs *ClosedRefs[K]) bool {
-	return implementation != nil && refs != nil && refs.validIssuer() && implementation.binding.valid() && refs.binding.state == implementation.binding.state && refs.binding.authority == implementation.binding.authority && refs.binding.schema == implementation.binding.schema && refs.binding.ordinal == implementation.binding.ordinal
+	return implementation != nil && refs != nil && refs.validIssuer() && implementation.binding.valid() && factorAddressMatches(refs.binding, implementation.binding)
 }

@@ -14,8 +14,24 @@ type summarySurfaceBinding interface {
 	boundTopologySummarySurface() (*schemaBindingState, *schemaBindingAuthority, composition.Key, composition.Key, bool)
 }
 
-func validateSummarySurface(binding summarySurfaceBinding, state *schemaBindingState, authority *schemaBindingAuthority, surface equation.Surface) bool {
-	bindingState, bindingAuthority, factor, normalizer, ok := binding.boundTopologySummarySurface()
+func validateSummarySurface(mapping *ruleSummaryMapping, state *schemaBindingState, authority *schemaBindingAuthority) bool {
+	if mapping == nil {
+		return false
+	}
+	var bindingState *schemaBindingState
+	var bindingAuthority *schemaBindingAuthority
+	var factor, normalizer composition.Key
+	var ok bool
+	if mapping.proof != nil {
+		if !mapping.proof.summaryReadAt(mapping.read) {
+			return false
+		}
+		shape, shapeOK := mapping.proof.schema.ruleReadShapeAt(mapping.proof.ordinal, mapping.read)
+		bindingState, bindingAuthority, factor, normalizer, ok = mapping.proof.state, mapping.proof.bindingAuthority, shape.Factor, shape.Semantic, shapeOK
+	} else if mapping.binding != nil {
+		bindingState, bindingAuthority, factor, normalizer, ok = mapping.binding.boundTopologySummarySurface()
+	}
+	surface := mapping.surface
 	return ok && bindingState == state && bindingAuthority == authority && surface.Available() && surface.Factor == factor && surface.Form == equation.SurfaceReadSummary && surface.Semantic == normalizer && surface.Normalizer == normalizer && surface.Mode == equation.TargetModeNone
 }
 
@@ -35,6 +51,8 @@ type RuleReadSurface struct {
 
 type ruleSummaryMapping struct {
 	binding summarySurfaceBinding
+	proof   *ruleRuntimeProof
+	read    uint64
 	surface equation.Surface
 	keys    []uint64
 }
@@ -42,22 +60,23 @@ type ruleSummaryMapping struct {
 type RuleWriteSurface struct {
 	value     equation.Surface
 	authority *schemaBindingAuthority
-	route     *schemaRouteWrite
+	proof     *ruleRuntimeProof
+	write     uint64
 	anchored  bool
 }
 
 func ExactReadSurface[K ~uint32 | ~uint64](ref Ref[K]) (RuleReadSurface, bool) {
-	if !ref.binding.valid() || uint64(ref.raw) >= ref.binding.keyEnd {
+	if !ref.binding.valid() || uint64(ref.raw) >= ref.binding.keyLimit() {
 		return RuleReadSurface{}, false
 	}
-	return RuleReadSurface{value: equation.Surface{Factor: ref.binding.semantic, Form: equation.SurfaceReadExact, Local: uint64(ref.raw) + 1}, authority: ref.binding.authority}, true
+	return RuleReadSurface{value: equation.Surface{Factor: ref.binding.semanticKey(), Form: equation.SurfaceReadExact, Local: uint64(ref.raw) + 1}, authority: ref.binding.authority}, true
 }
 
 func ExactWriteSurface[K ~uint32 | ~uint64](ref Ref[K]) (RuleWriteSurface, bool) {
-	if !ref.binding.valid() || uint64(ref.raw) >= ref.binding.keyEnd {
+	if !ref.binding.valid() || uint64(ref.raw) >= ref.binding.keyLimit() {
 		return RuleWriteSurface{}, false
 	}
-	return RuleWriteSurface{value: equation.Surface{Factor: ref.binding.semantic, Form: equation.SurfaceWriteExact, Local: uint64(ref.raw) + 1, Mode: equation.TargetModeStrong}, authority: ref.binding.authority}, true
+	return RuleWriteSurface{value: equation.Surface{Factor: ref.binding.semanticKey(), Form: equation.SurfaceWriteExact, Local: uint64(ref.raw) + 1, Mode: equation.TargetModeStrong}, authority: ref.binding.authority}, true
 }
 
 // SummaryReadSurface consumes a sealed ClosedRefs vector and the exact
@@ -65,11 +84,15 @@ func ExactWriteSurface[K ~uint32 | ~uint64](ref Ref[K]) (RuleWriteSurface, bool)
 // from Schema, never supplied by the caller. The refs digest is the surface
 // coordinate at full width, so two distinct key vectors always name two
 // distinct summary surfaces.
-func SummaryReadSurface[K ~uint32 | ~uint64](receipt schemaSummaryRead, refs *ClosedRefs[K]) (RuleReadSurface, bool) {
-	if !receipt.Valid() || refs == nil || !refs.closed || !refs.binding.valid() || refs.binding.authority != receipt.fence.authority {
+func SummaryReadSurface[K ~uint32 | ~uint64](proof *ruleRuntimeProof, read uint64, refs *ClosedRefs[K]) (RuleReadSurface, bool) {
+	if proof == nil || !proof.summaryReadAt(read) || refs == nil || !refs.closed || !refs.binding.valid() || refs.binding.authority != proof.bindingAuthority {
 		return RuleReadSurface{}, false
 	}
-	surface := equation.Surface{Factor: refs.binding.semantic, Form: equation.SurfaceReadSummary, Content: refs.digest, Semantic: receipt.semantic, Normalizer: receipt.semantic}
+	shape, shapeOK := proof.schema.ruleReadShapeAt(proof.ordinal, read)
+	if !shapeOK || refs.binding.semanticKey() != shape.Factor {
+		return RuleReadSurface{}, false
+	}
+	surface := equation.Surface{Factor: refs.binding.semanticKey(), Form: equation.SurfaceReadSummary, Content: refs.digest, Semantic: shape.Semantic, Normalizer: shape.Semantic}
 	if !surface.Available() {
 		return RuleReadSurface{}, false
 	}
@@ -77,7 +100,8 @@ func SummaryReadSurface[K ~uint32 | ~uint64](receipt schemaSummaryRead, refs *Cl
 		value:     surface,
 		authority: refs.binding.authority,
 		summary: &ruleSummaryMapping{
-			binding: receipt,
+			proof:   proof,
+			read:    read,
 			surface: surface,
 			keys: func() []uint64 {
 				keys := make([]uint64, len(refs.refs))
@@ -93,22 +117,22 @@ func SummaryReadSurface[K ~uint32 | ~uint64](receipt schemaSummaryRead, refs *Cl
 // SelectedReadSurface consumes the sealed selected-read schema proof and one
 // exact output Ref. Dependencies are exact owner surfaces for the declared
 // predecessor reads; their order is checked against the sealed Schema.
-func SelectedReadSurface[K ~uint32 | ~uint64](receipt schemaSelectedRead, ref Ref[K], dependencies []RuleReadSurface) (RuleReadSurface, bool) {
-	if !receipt.Valid() || receipt.fence.authority == nil || ref.binding.authority != nil && ref.binding.authority != receipt.fence.authority || !ref.binding.valid() || uint64(ref.raw) >= ref.binding.keyEnd || len(dependencies) != int(receipt.dependencyCount) {
+func SelectedReadSurface[K ~uint32 | ~uint64](proof *ruleRuntimeProof, read uint64, ref Ref[K], dependencies []RuleReadSurface) (RuleReadSurface, bool) {
+	if proof == nil || !proof.selectedReadAt(read) || proof.bindingAuthority == nil || ref.binding.authority != nil && ref.binding.authority != proof.bindingAuthority || !ref.binding.valid() || uint64(ref.raw) >= ref.binding.keyLimit() {
 		return RuleReadSurface{}, false
 	}
-	factor := receipt.fence.schema.factorSemanticAt(receipt.factor)
-	if !factor.Available() || ref.binding.semantic != factor {
+	readShape, shapeOK := proof.schema.ruleReadShapeAt(proof.ordinal, read)
+	if !shapeOK || len(dependencies) != int(readShape.DependencyCount) || ref.binding.semanticKey() != readShape.Factor {
 		return RuleReadSurface{}, false
 	}
 	for index, dependency := range dependencies {
-		readIndex, ok := receipt.fence.schema.ruleReadDependencyAt(receipt.fence.rule, receipt.read, uint64(index))
-		shape, shapeOK := receipt.fence.schema.ruleReadShapeAt(receipt.fence.rule, readIndex)
-		if !ok || !shapeOK || dependency.authority != receipt.fence.authority || dependency.value.Mode != equation.TargetModeNone || dependency.value.Factor != shape.Factor || !dependency.value.LocalAvailable() || !validSelectedDependencySurface(shape, dependency.value) {
+		readIndex, ok := proof.schema.ruleReadDependencyAt(proof.ordinal, read, uint64(index))
+		shape, shapeOK := proof.schema.ruleReadShapeAt(proof.ordinal, readIndex)
+		if !ok || !shapeOK || dependency.authority != proof.bindingAuthority || dependency.value.Mode != equation.TargetModeNone || dependency.value.Factor != shape.Factor || !dependency.value.LocalAvailable() || !validSelectedDependencySurface(shape, dependency.value) {
 			return RuleReadSurface{}, false
 		}
 	}
-	return RuleReadSurface{value: equation.Surface{Factor: factor, Form: equation.SurfaceReadSelect, Local: uint64(ref.raw) + 1, Semantic: factor}, authority: ref.binding.authority}, true
+	return RuleReadSurface{value: equation.Surface{Factor: readShape.Factor, Form: equation.SurfaceReadSelect, Local: uint64(ref.raw) + 1, Semantic: readShape.Factor}, authority: ref.binding.authority}, true
 }
 
 func validSelectedDependencySurface(shape composition.RuleReadShape, surface equation.Surface) bool {
@@ -125,11 +149,11 @@ func validSelectedDependencySurface(shape composition.RuleReadShape, surface equ
 // anchoredSelectedContent mints the content coordinate of one mounted
 // selected read. The preimage is length-framed under its own domain, so no
 // pair of distinct anchors shares an encoding.
-func anchoredSelectedContent(occurrence equation.Occurrence, operand equation.Operand, receipt schemaSelectedRead) ([32]byte, bool) {
+func anchoredSelectedContent(occurrence equation.Occurrence, operand equation.Operand, proof *ruleRuntimeProof, read uint64) ([32]byte, bool) {
 	var writer canonical.DigestWriter
 	if writer.Reset(anchoredSelectedSurfaceDomain, anchoredSurfaceVersion) != nil ||
 		!writeAnchor(&writer, occurrence, operand) ||
-		writer.Uint(receipt.fence.rule) != nil || writer.Uint(receipt.read) != nil ||
+		writer.Uint(proof.ordinal) != nil || writer.Uint(read) != nil ||
 		writer.Finish() != nil {
 		return [32]byte{}, false
 	}
@@ -138,11 +162,11 @@ func anchoredSelectedContent(occurrence equation.Occurrence, operand equation.Op
 }
 
 // anchoredRouteContent is the route-write sibling of anchoredSelectedContent.
-func anchoredRouteContent(occurrence equation.Occurrence, operand equation.Operand, receipt schemaRouteWrite) ([32]byte, bool) {
+func anchoredRouteContent(occurrence equation.Occurrence, operand equation.Operand, proof *ruleRuntimeProof, write, read uint64) ([32]byte, bool) {
 	var writer canonical.DigestWriter
 	if writer.Reset(anchoredRouteSurfaceDomain, anchoredSurfaceVersion) != nil ||
 		!writeAnchor(&writer, occurrence, operand) ||
-		writer.Uint(receipt.fence.rule) != nil || writer.Uint(receipt.write) != nil || writer.Uint(receipt.read) != nil ||
+		writer.Uint(proof.ordinal) != nil || writer.Uint(write) != nil || writer.Uint(read) != nil ||
 		writer.Finish() != nil {
 		return [32]byte{}, false
 	}
@@ -163,13 +187,14 @@ func writeAnchor(writer *canonical.DigestWriter, occurrence equation.Occurrence,
 		writer.Bytes(operandKey.ID[:]) == nil && writer.Uint(operandKey.Version) == nil
 }
 
-func RouteWriteSurface[K ~uint32 | ~uint64](receipt schemaRouteWrite, ref Ref[K]) (RuleWriteSurface, bool) {
-	if !receipt.Valid() || receipt.fence.authority == nil || ref.binding.authority != nil && ref.binding.authority != receipt.fence.authority || !ref.binding.valid() || uint64(ref.raw) >= ref.binding.keyEnd {
+func RouteWriteSurface[K ~uint32 | ~uint64](proof *ruleRuntimeProof, write uint64, ref Ref[K]) (RuleWriteSurface, bool) {
+	_, routeOK := proof.routeWriteAt(write)
+	if !routeOK || proof.bindingAuthority == nil || ref.binding.authority != nil && ref.binding.authority != proof.bindingAuthority || !ref.binding.valid() || uint64(ref.raw) >= ref.binding.keyLimit() {
 		return RuleWriteSurface{}, false
 	}
-	factor := receipt.fence.schema.factorSemanticAt(receipt.factor)
-	if !factor.Available() || ref.binding.semantic != factor {
+	shape, shapeOK := proof.schema.ruleWriteShapeAt(proof.ordinal, write)
+	if !shapeOK || ref.binding.semanticKey() != shape.Factor {
 		return RuleWriteSurface{}, false
 	}
-	return RuleWriteSurface{value: equation.Surface{Factor: factor, Form: equation.SurfaceWriteRoute, Local: uint64(ref.raw) + 1}, authority: ref.binding.authority, route: &receipt}, true
+	return RuleWriteSurface{value: equation.Surface{Factor: shape.Factor, Form: equation.SurfaceWriteRoute, Local: uint64(ref.raw) + 1}, authority: ref.binding.authority, proof: proof, write: write}, true
 }

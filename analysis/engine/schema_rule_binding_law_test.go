@@ -1,11 +1,25 @@
 package engine
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 )
+
+func TestFactorRuntimeBindingKeepsOnlyCanonicalOwnerAddress(t *testing.T) {
+	typeOfBinding := reflect.TypeOf(factorRuntimeBinding{})
+	want := []string{"state", "authority", "ordinal", "algebra"}
+	if typeOfBinding.NumField() != len(want) {
+		t.Fatalf("factor runtime binding fields = %d, want %d", typeOfBinding.NumField(), len(want))
+	}
+	for index, name := range want {
+		if typeOfBinding.Field(index).Name != name {
+			t.Fatalf("factor runtime binding field[%d] = %q, want %q", index, typeOfBinding.Field(index).Name, name)
+		}
+	}
+}
 
 // schemaRuleMemberGeometryLaw is the small cold-row view consumed by the
 // current member binder.  It deliberately carries no declaration or binding
@@ -247,9 +261,9 @@ func TestSchemaRuleBindingReadCarryAndSelectedProductProof(t *testing.T) {
 		t.Fatal("selected Rule implementation")
 	}
 	proof := implementation.binding.proof
-	selectedProof, selectedProofOK := implementation.selectedRead(1)
-	routeProof, routeProofOK := implementation.routeWrite()
-	if !proof.valid() || proof.reads != 2 || proof.carries != 1 || !selectedProofOK || !selectedProof.Valid() || !routeProofOK || !routeProof.Valid() {
+	selectedProofOK := implementation.selectedRead(1)
+	routeRead, routeProofOK := implementation.routeWrite()
+	if !proof.valid() || proof.reads != 2 || proof.carries != 1 || !selectedProofOK || !routeProofOK || routeRead != 1 {
 		t.Fatal("read/carry/selected product proof was not sealed")
 	}
 }
@@ -409,7 +423,7 @@ func TestSchemaRuleBindingDirectRouteAndSelectedReadsComplete(t *testing.T) {
 	operandRead, operandOK := BindSelectedRuleDirectOperandRead[uint64, uint64, struct{}, uint64, uint64](binding, rule, operand, factor.Ref(), func(SelectorContext, struct{}) bool { return true })
 	staticRead, staticOK := BindSelectedRuleDirectSelectedRead[uint64, uint64, struct{}, uint64, uint64](binding, rule, static, factor.Ref(), func(SelectorContext) bool { return true })
 	exactRead, exactOK := BindSelectedRuleDirectExactRead[uint64, uint64, struct{}, uint64](binding, rule, exact, factor.Ref(), func(struct{}) (uint64, bool) { return 0, true })
-	if !operandOK || !staticOK || !exactOK || operandRead.index != 2 || staticRead.index != 1 || exactRead.index != 0 || operandRead.origin == nil || staticRead.origin == nil || exactRead.origin == nil || operandRead.origin.kind != composition.ReadSelect || staticRead.origin.kind != composition.ReadSelect || exactRead.origin.kind != composition.ReadExact || !binding.Seal() {
+	if !operandOK || !staticOK || !exactOK || operandRead.index != 2 || staticRead.index != 1 || exactRead.index != 0 || operandRead.origin == nil || staticRead.origin == nil || exactRead.origin == nil || operandRead.origin.readKind() != composition.ReadSelect || staticRead.origin.readKind() != composition.ReadSelect || exactRead.origin.readKind() != composition.ReadExact || !binding.Seal() {
 		t.Fatalf("direct route reads operand=%t/%d static=%t/%d exact=%t/%d sealed=%t", operandOK, operandRead.index, staticOK, staticRead.index, exactOK, exactRead.index, binding.Sealed())
 	}
 	implementation, ok := RuleImplementationAt[uint64, uint64, struct{}](binding, rule)
@@ -452,7 +466,7 @@ func TestSchemaRuleBindingDirectSummaryReadCompletes(t *testing.T) {
 		t.Fatal("direct summary Rule cell")
 	}
 	summaryRuntime, summaryBound := BindSelectedRuleDirectSummaryRead[uint64, uint64, struct{}, uint64, OrderedCells[uint64]](binding, rule, summarySlot, factor.Ref(), form, struct{ closed bool }{closed: true})
-	if !summaryBound || summaryRuntime.origin == nil || summaryRuntime.origin.kind != composition.ReadSummary || summaryRuntime.origin.readOrdinal != 0 || summaryRuntime.origin.formOrdinal != 0 || summaryRuntime.origin.semantic != compositionKeyOf(coldKey(base+1)) || !binding.Seal() {
+	if !summaryBound || summaryRuntime.origin == nil || summaryRuntime.origin.readKind() != composition.ReadSummary || summaryRuntime.origin.readOrdinal != 0 || summaryRuntime.origin.formOrdinal != 0 || summaryRuntime.origin.semanticKey() != compositionKeyOf(coldKey(base+1)) || !binding.Seal() {
 		t.Fatalf("direct summary read bound=%t sealed=%t poisoned=%t", summaryBound, binding.Sealed(), binding.Poisoned())
 	}
 	implementation, implementationOK := RuleImplementationAt[uint64, uint64, struct{}](binding, rule)
@@ -518,7 +532,7 @@ func TestProgramRuleThreadsExactReadAndCarryThroughProductEvidenceAndPatch(t *te
 		t.Fatalf("exact read/carry ProgramRule binding factor=%t read=%t write=%t rule=%t input=%t readSlot=%t carry=%t writeSlot=%t schema=%t bound=%t poisoned=%t", factorOK, readOK, writeOK, ruleOK, inputOK, readSlotOK, carryOK, writeSlotOK, schemaOK, bound, binding.Poisoned())
 	}
 	implementation, implementationOK := RuleImplementationAt[uint64, uint64, struct{}](binding, rule)
-	if !implementationOK || implementation == nil || readRuntime.origin == nil || readRuntime.origin.kind != composition.ReadExact || implementation.binding.proof.reads != 1 || implementation.binding.proof.carries != 1 {
+	if !implementationOK || implementation == nil || readRuntime.origin == nil || readRuntime.origin.readKind() != composition.ReadExact || implementation.binding.proof.reads != 1 || implementation.binding.proof.carries != 1 {
 		t.Fatal("exact read/carry proof thread")
 	}
 	installLawProgramRuleResolver(t, implementation)
@@ -561,6 +575,8 @@ func runProgramRuleSummaryThreadLaw(t testing.TB, base uint64, keyEnd uint64) {
 	binding := NewSchemaBinding(schema)
 	spec := hotUintFactorSpec()
 	spec.KeyEnd = keyEnd
+	var refs *ClosedRefs[uint64]
+	admit := func(any) (any, bool) { return refs, refs != nil }
 	if !factorOK || !formOK || !writeOK || !ruleOK || !inputOK || !readOK || !writeSlotOK || !schemaOK || !BindFactor(binding, factor, spec) || !BindSummaryReadForFactor[uint64, uint64, OrderedCells[uint64]](binding, factor, form,
 		func(value OrderedCells[uint64]) OrderedCells[uint64] { return value },
 		func(left, right OrderedCells[uint64]) bool {
@@ -574,13 +590,54 @@ func runProgramRuleSummaryThreadLaw(t testing.TB, base uint64, keyEnd uint64) {
 		Admission:      AdmitRuleByTrustedTheorem[uint64, struct{}](coldKey(base + 4)),
 		Transfer:       func(Access[uint64, struct{}]) bool { return true },
 	}, func(struct{}) (uint64, bool) { return 1, true })
-	readRuntime, readBound := BindSelectedRuleDirectSummaryRead[uint64, uint64, struct{}, uint64, OrderedCells[uint64]](binding, rule, read, factor.Ref(), form, nil)
-	if !bound || !readBound || !binding.Seal() || readRuntime.origin == nil || readRuntime.origin.kind != composition.ReadSummary {
+	readRuntime, readBound := BindSelectedRuleDirectSummaryRead[uint64, uint64, struct{}, uint64, OrderedCells[uint64]](binding, rule, read, factor.Ref(), form, admit)
+	if !bound || !readBound || !binding.Seal() || readRuntime.origin == nil || readRuntime.origin.readKind() != composition.ReadSummary {
 		t.Fatal("summary ProgramRule binding")
 	}
 	implementation, implementationOK := RuleImplementationAt[uint64, uint64, struct{}](binding, rule)
 	if !implementationOK || implementation == nil || implementation.binding.proof.reads != 1 || implementation.binding.proof.carries != 0 {
 		t.Fatal("summary ProgramRule proof thread")
+	}
+	factorImplementation, factorImplementationOK := FactorImplementationAt[uint64, uint64](binding, factor)
+	if !factorImplementationOK || factorImplementation == nil {
+		t.Fatal("summary Factor implementation")
+	}
+	refs = factorImplementation.NewClosedRefs()
+	ref, refOK := factorImplementation.Ref(0)
+	if refs == nil || !refOK || !refs.Append(ref) || !refs.Close() {
+		t.Fatal("summary closed refs")
+	}
+	receipt := factorImplementation.binding
+	shape, shapeOK := schema.factorFormShapeAt(receipt.ordinal, 0)
+	kind, semantic, formOK := receipt.formAt(0)
+	if !receipt.validForms() || !shapeOK || !formOK || kind != schemaFormKind(shape.Kind) || semantic != shape.Semantic {
+		t.Fatal("summary form address was not reread from canonical Schema")
+	}
+	if _, _, ok := receipt.formAt(1); ok {
+		t.Fatal("out-of-range summary form ordinal accepted")
+	}
+	stale := receipt
+	stale.ordinal++
+	if stale.valid() || stale.validForms() {
+		t.Fatal("stale Factor authority survived")
+	}
+	if _, _, ok := stale.formAt(0); ok {
+		t.Fatal("stale Factor authority resolved a form")
+	}
+	if !receipt.valid() {
+		t.Fatal("stale copy damaged canonical Factor authority")
+	}
+	installLawProgramRuleResolver(t, implementation)
+	program, programOK := SealProgramRule(implementation)
+	declared, declaredOK := program.declareRuleOperand(lawProgramRuleCoords())
+	surfaces, surfacesOK := program.declareRuleSurfaces(declared, lawProgramRuleAnchor(t))
+	mapped := declaredSummaryMappings(surfaces)
+	if !programOK || !declaredOK || !surfacesOK || len(mapped) != 1 || mapped[0].summary == nil || mapped[0].summary.proof != implementation.binding.proof || mapped[0].summary.binding != nil {
+		t.Fatal("summary ProgramRule mapping")
+	}
+	summaries, appended := appendDeclaredSummary(nil, mapped[0].summary, binding.state, binding.state.authority)
+	if !appended || len(summaries) != 1 || len(summaries[0].Keys) != 1 || summaries[0].Keys[0] != 0 {
+		t.Fatal("summary ProgramRule topology mapping")
 	}
 }
 

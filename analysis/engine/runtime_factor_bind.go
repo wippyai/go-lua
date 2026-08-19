@@ -63,7 +63,7 @@ func bindFactorFromGraph[K ~uint32 | ~uint64, V any](implementation *FactorImple
 	if !runtime.pinBinding(receipt) {
 		return nil, false
 	}
-	descriptor = factorRuntimeDescriptor{schema: receipt.schema, state: receipt.state, ordinal: receipt.ordinal, semantic: receipt.semantic, keyEnd: receipt.keyEnd, algebra: receipt.algebra}
+	descriptor = factorRuntimeDescriptor{schema: receipt.state.schema, state: receipt.state, ordinal: receipt.ordinal, semantic: receipt.semanticKey(), keyEnd: receipt.keyLimit(), algebra: receipt.algebra}
 	if runtime.graph.CompositionID() != descriptor.schema.coldID() {
 		return nil, false
 	}
@@ -221,7 +221,7 @@ func exactReadDescriptorSurface(descriptor factorRuntimeDescriptor, local uint64
 }
 
 func exactWriteReceiptSurface(receipt factorRuntimeBinding, local uint64) equation.Surface {
-	return equation.Surface{Factor: receipt.semantic, Form: equation.SurfaceWriteExact, Local: local, Mode: equation.TargetModeStrong}
+	return equation.Surface{Factor: receipt.semanticKey(), Form: equation.SurfaceWriteExact, Local: local, Mode: equation.TargetModeStrong}
 }
 
 func matchesFactorReadShape(schema *Schema, ordinal uint64, surface equation.Surface, kind readFormKind) bool {

@@ -95,7 +95,7 @@ func (binding *runtimeBinding) valid() bool {
 }
 
 func (binding *runtimeBinding) pinBinding(receipt factorRuntimeBinding) bool {
-	if binding == nil || !receipt.valid() || receipt.schema != binding.schema {
+	if binding == nil || !receipt.valid() || receipt.state.schema != binding.schema {
 		return false
 	}
 	return binding.state == receipt.state && binding.authority == receipt.authority
