@@ -11,6 +11,7 @@ package references
 import (
 	"github.com/wippyai/go-lua/analysis/program/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/schema/denominator"
 )
 
 // Resolution preserves the authored binder result independently from its
@@ -64,6 +65,32 @@ type Table struct {
 
 // Count is the sealed TypeRef denominator.
 func (table Table) Count() int { return table.ref.Count() }
+
+// CountsMatch reports the native TypeRef denominator against the enclosing
+// sealed family column.
+func (table Table) CountsMatch(counts [keyspace.FamilyCount]uint32) bool {
+	return table.Count() == int(counts[keyspace.FamilyTypeRef])
+}
+
+// CountRows publishes this typed owner's native TypeRef contribution. The
+// same sealed count feeds the aggregate Static row and the dedicated schema
+// TypeRef row.
+func (table Table) CountRows() (denominator.CountRows, bool) {
+	value := table.Count()
+	if !keyspace.TermOrdinalFits(value) {
+		return denominator.CountRows{}, false
+	}
+	ids := denominator.GeneratedProgramStaticIDs()
+	primary, ok := denominator.NewCountRow(ids.ProgramStatic, uint64(value))
+	if !ok {
+		return denominator.CountRows{}, false
+	}
+	typeRef, ok := denominator.NewCountRow(ids.ProgramStaticTypeRef, uint64(value))
+	if !ok {
+		return denominator.CountRows{}, false
+	}
+	return denominator.NewCountRows([]denominator.CountRow{primary, typeRef})
+}
 
 // Ref returns the authored reference one canonical term names. It is the read
 // a sibling vertical uses to admit a resolved target without reaching into

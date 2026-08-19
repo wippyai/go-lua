@@ -87,8 +87,10 @@ func (proof LocalContainment) Count() int {
 		return 0
 	}
 	total := 0
-	for _, family := range staticTypeFamilies {
-		total += len(local.parents[family])
+	for family := keyspace.FamilyTypeAlias; family <= keyspace.FamilyTypeConditional; family++ {
+		if staticTypeFamily(family) {
+			total += len(local.parents[family])
+		}
 	}
 	return total
 }
@@ -100,7 +102,10 @@ func (proof LocalContainment) At(index int) (keyspace.Term, bool) {
 		return 0, false
 	}
 	offset := uint64(index)
-	for _, family := range staticTypeFamilies {
+	for family := keyspace.FamilyTypeAlias; family <= keyspace.FamilyTypeConditional; family++ {
+		if !staticTypeFamily(family) {
+			continue
+		}
 		count := uint64(len(local.parents[family]))
 		if offset < count {
 			return keyspace.MakeTerm(family, uint32(offset+1)), true
@@ -111,10 +116,5 @@ func (proof LocalContainment) At(index int) (keyspace.Term, bool) {
 }
 
 func localStaticTypeFamily(family keyspace.Family) bool {
-	for _, candidate := range staticTypeFamilies {
-		if family == candidate {
-			return true
-		}
-	}
-	return false
+	return staticTypeFamily(family)
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/schema/denominator"
 )
 
 // FunctionContract is the authored static sidecar of one Flow Function.
@@ -69,6 +70,33 @@ func (table Table) Count(family keyspace.Family) int {
 	default:
 		return 0
 	}
+}
+
+// CountsMatch reports the native Flow-side static contract denominators
+// against the enclosing sealed family column.
+func (table Table) CountsMatch(counts [keyspace.FamilyCount]uint32) bool {
+	return table.Count(keyspace.FamilyFunction) == int(counts[keyspace.FamilyFunction]) &&
+		table.Count(keyspace.FamilyCall) == int(counts[keyspace.FamilyCall])
+}
+
+// CountRows publishes this typed owner's native contract and call-column
+// measures under the generated ProgramStatic denominator identities.
+func (table Table) CountRows() (denominator.CountRows, bool) {
+	functionCount := table.Count(keyspace.FamilyFunction)
+	callWidth := table.CallTypeArgumentWidth()
+	if !keyspace.TermOrdinalFits(functionCount) || !keyspace.TermOrdinalFits(callWidth) {
+		return denominator.CountRows{}, false
+	}
+	ids := denominator.GeneratedProgramStaticIDs()
+	function, ok := denominator.NewCountRow(ids.ProgramStaticFunctionContract, uint64(functionCount))
+	if !ok {
+		return denominator.CountRows{}, false
+	}
+	arguments, ok := denominator.NewCountRow(ids.ProgramStaticCallTypeArguments, uint64(callWidth))
+	if !ok {
+		return denominator.CountRows{}, false
+	}
+	return denominator.NewCountRows([]denominator.CountRow{function, arguments})
 }
 
 // CallTypeArgumentWidth is the sealed total width of the call type-argument

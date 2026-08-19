@@ -527,7 +527,10 @@ func TestStaticLocalContainmentCompositeEmitterRows(t *testing.T) {
 		return keyspace.MakeTerm(family, ordinal)
 	}
 	parents := make(map[keyspace.Term]keyspace.Term)
-	for _, family := range staticFamilyInventory[:staticTypeFamilyCount] {
+	for family := keyspace.FamilyTypeAlias; family <= keyspace.FamilyTypeConditional; family++ {
+		if !staticTypeFamily(family) {
+			continue
+		}
 		for ordinal := uint32(1); ordinal <= input.Counts[family]; ordinal++ {
 			parents[term(family, ordinal)] = 0
 		}
@@ -826,7 +829,10 @@ func TestAnnotationAnchorCoversEveryStaticTypeFamily(t *testing.T) {
 	anchor := func(term keyspace.Term) bool {
 		return staticrole.AnnotationTarget(census, term)
 	}
-	for _, family := range staticFamilyInventory[staticNodeFamilyOffset:staticTypeFamilyCount] {
+	for family := keyspace.FamilyTypePrimitive; family <= keyspace.FamilyTypeConditional; family++ {
+		if !staticrole.NodeFamily(family) {
+			continue
+		}
 		census[family] = 1
 		if !anchor(keyspace.MakeTerm(family, 1)) {
 			t.Fatalf("annotation anchor rejected static family %v", family)
@@ -835,7 +841,7 @@ func TestAnnotationAnchorCoversEveryStaticTypeFamily(t *testing.T) {
 			t.Fatalf("annotation anchor accepted %v past its census", family)
 		}
 	}
-	for _, family := range staticFamilyInventory[:staticNodeFamilyOffset] {
+	for family := keyspace.FamilyTypeAlias; family <= keyspace.FamilyTypeParam; family++ {
 		census[family] = 1
 		if anchor(keyspace.MakeTerm(family, 1)) {
 			t.Fatalf("annotation anchor accepted declaration root %v", family)

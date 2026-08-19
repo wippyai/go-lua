@@ -40,10 +40,13 @@ func newContainment(counts [keyspace.FamilyCount]uint32, fields int) containment
 		counts:      counts,
 		fieldOwners: make([]keyspace.Term, fields),
 	}
-	// StaticTypeFamilies is the one closed denominator used by Static's
-	// typed roots. Allocate by the already-validated family counts rather than
-	// growing a map keyed by whichever rows happen to emit an edge.
-	for _, family := range staticTypeFamilies {
+	// Allocate by the already-validated family counts rather than growing a
+	// map keyed by whichever rows happen to emit an edge. The keyspace walk is
+	// canonical; family ownership remains with the typed role predicates.
+	for family := keyspace.FamilyTypeAlias; family <= keyspace.FamilyTypeConditional; family++ {
+		if !staticTypeFamily(family) {
+			continue
+		}
 		if count := counts[family]; count != 0 {
 			check.parents[family] = make([]keyspace.Term, int(count))
 		}
@@ -154,7 +157,10 @@ func (check *containment) valid() bool {
 		}
 	}
 	var color [keyspace.FamilyCount][]uint8
-	for _, family := range staticNodeFamilies {
+	for family := keyspace.FamilyTypePrimitive; family <= keyspace.FamilyTypeConditional; family++ {
+		if !staticrole.NodeFamily(family) {
+			continue
+		}
 		if count := len(check.parents[family]); count != 0 {
 			color[family] = make([]uint8, count)
 		}
@@ -208,7 +214,10 @@ func (check *containment) valid() bool {
 		}
 		return true
 	}
-	for _, family := range staticNodeFamilies {
+	for family := keyspace.FamilyTypePrimitive; family <= keyspace.FamilyTypeConditional; family++ {
+		if !staticrole.NodeFamily(family) {
+			continue
+		}
 		for ordinal := range check.parents[family] {
 			if color[family][ordinal] == 0 && !visit(keyspace.MakeTerm(family, uint32(ordinal+1))) {
 				return false

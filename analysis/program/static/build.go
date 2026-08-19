@@ -32,34 +32,52 @@ func Build(input Input) (*Draft, error) {
 	if !validCounts(input.Counts) {
 		return nil, errors.New("program/static: inconsistent authored cardinality")
 	}
-	census, ok := staticCensus(input)
-	if !ok {
-		return nil, errors.New("program/static: inconsistent authored cardinality")
-	}
+	// Counts are the already-sealed family column supplied by the enclosing
+	// owner. Each typed child validates its own native rows below; Static does
+	// not maintain a second family inventory or re-census those rows here.
+	census := input.Counts
 
 	typeTable, err := statictypes.Build(input.Types, census)
 	if err != nil {
 		return nil, err
 	}
+	if !typeTable.CountsMatch(census) {
+		return nil, errors.New("program/static: type cardinality disagrees with sealed column")
+	}
 	referenceTable, err := staticrefs.Build(input.References, census)
 	if err != nil {
 		return nil, err
+	}
+	if !referenceTable.CountsMatch(census) {
+		return nil, errors.New("program/static: reference cardinality disagrees with sealed column")
 	}
 	declarationTable, err := staticdecl.Build(input.Declarations, census)
 	if err != nil {
 		return nil, err
 	}
+	if !declarationTable.CountsMatch(census) {
+		return nil, errors.New("program/static: declaration cardinality disagrees with sealed column")
+	}
 	signatureTable, err := staticsig.Build(input.Signatures, census)
 	if err != nil {
 		return nil, err
+	}
+	if !signatureTable.CountsMatch(census) {
+		return nil, errors.New("program/static: signature cardinality disagrees with sealed column")
 	}
 	contractTable, err := staticcontracts.Build(input.Contracts, census)
 	if err != nil {
 		return nil, err
 	}
+	if !contractTable.CountsMatch(census) {
+		return nil, errors.New("program/static: contract cardinality disagrees with sealed column")
+	}
 	operatorTable, err := staticoperators.Build(input.Operators, census)
 	if err != nil {
 		return nil, err
+	}
+	if !operatorTable.CountsMatch(census) {
+		return nil, errors.New("program/static: operator cardinality disagrees with sealed column")
 	}
 
 	// Publications admits only a reference disposition References published;
@@ -69,9 +87,15 @@ func Build(input Input) (*Draft, error) {
 	if err != nil {
 		return nil, err
 	}
+	if !publicationTable.CountsMatch(census) {
+		return nil, errors.New("program/static: publication cardinality disagrees with sealed column")
+	}
 	operandTable, err := staticoperands.Build(input.Operands, census, typeTable, referenceTable)
 	if err != nil {
 		return nil, err
+	}
+	if !operandTable.CountsMatch(census) {
+		return nil, errors.New("program/static: operand cardinality disagrees with sealed column")
 	}
 
 	component := &Component{
@@ -181,7 +205,7 @@ func validateCommitInput(component *Component, input CommitInput) error {
 }
 
 func validCommitTerms(terms []keyspace.Term, family keyspace.Family, count int) bool {
-	if !countEquals(uint32(count), len(terms)) {
+	if count < 0 || !keyspace.TermOrdinalFits(count) || count != len(terms) {
 		return false
 	}
 	for index, term := range terms {

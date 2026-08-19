@@ -3,8 +3,6 @@ package static
 import (
 	"testing"
 
-	staticoperands "github.com/wippyai/go-lua/analysis/program/static/operands"
-
 	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
@@ -21,34 +19,16 @@ func censusLawInputs(t *testing.T) map[string]Input {
 	}
 }
 
-// TestCensusColumnIsTheAuthoredRelationLength proves the sealed column is the
-// authored input length for every dense family and the owning component's
-// external denominator for every sparse one. This is the assignment Build
-// performs once; nothing downstream may recompute it.
+// TestCensusColumnIsTheSealedFamilyColumn proves Build retains the already
+// sealed family column. Native child owners validate their own row lengths;
+// Static does not reconstruct a second family inventory.
 func TestCensusColumnIsTheAuthoredRelationLength(t *testing.T) {
 	for name, input := range censusLawInputs(t) {
 		component := staticContentComponent(t, input)
-		for _, family := range staticFamilyInventory[:staticDenseFamilyCount] {
-			length, ok := staticFamilyInputCount(input, family)
-			if !ok {
-				t.Fatalf("%s: dense family %v has no authored relation", name, family)
-			}
-			if uint64(component.census[family]) != uint64(length) {
-				t.Fatalf("%s: census[%v] = %d, want authored relation length %d",
-					name, family, component.census[family], length)
-			}
-		}
-		for _, family := range staticFamilyInventory[staticDenseFamilyCount:] {
-			length, ok := staticFamilyInputCount(input, family)
-			if !ok {
-				t.Fatalf("%s: sparse family %v has no authored relation", name, family)
-			}
+		for family := keyspace.FamilyInvalid; family < keyspace.FamilyCount; family++ {
 			if component.census[family] != input.Counts[family] {
-				t.Fatalf("%s: sparse census[%v] = %d, want external denominator %d",
+				t.Fatalf("%s: census[%v] = %d, want sealed column %d",
 					name, family, component.census[family], input.Counts[family])
-			}
-			if uint64(length) > uint64(component.census[family]) {
-				t.Fatalf("%s: sparse %v has %d rows beyond census %d", name, family, length, component.census[family])
 			}
 		}
 	}
@@ -61,14 +41,19 @@ func TestStaticTypeForestReadsTheCensusColumn(t *testing.T) {
 	for name, input := range censusLawInputs(t) {
 		component := staticContentComponent(t, input)
 		want := 0
-		for _, family := range staticFamilyInventory[:staticTypeFamilyCount] {
-			want += int(component.census[family])
+		for family := keyspace.FamilyTypeAlias; family <= keyspace.FamilyTypeConditional; family++ {
+			if staticTypeFamily(family) {
+				want += int(component.census[family])
+			}
 		}
 		if got := component.StaticTypeTermCount(); got != want {
 			t.Fatalf("%s: StaticTypeTermCount = %d, want census forest sum %d", name, got, want)
 		}
 		index := 0
-		for _, family := range staticFamilyInventory[:staticTypeFamilyCount] {
+		for family := keyspace.FamilyTypeAlias; family <= keyspace.FamilyTypeConditional; family++ {
+			if !staticTypeFamily(family) {
+				continue
+			}
 			for ordinal := uint32(1); ordinal <= component.census[family]; ordinal++ {
 				term, ok := component.StaticTypeTermAt(index)
 				if !ok || term != keyspace.MakeTerm(family, ordinal) {
@@ -84,7 +69,10 @@ func TestStaticTypeForestReadsTheCensusColumn(t *testing.T) {
 		if _, ok := component.StaticTypeTermAt(want); ok {
 			t.Fatalf("%s: StaticTypeTermAt(%d) admitted a term past the sealed forest", name, want)
 		}
-		for _, family := range staticFamilyInventory[:staticTypeFamilyCount] {
+		for family := keyspace.FamilyTypeAlias; family <= keyspace.FamilyTypeConditional; family++ {
+			if !staticTypeFamily(family) {
+				continue
+			}
 			past := keyspace.MakeTerm(family, component.census[family]+1)
 			if component.StaticTypeTerm(past) {
 				t.Fatalf("%s: forest admitted %v ordinal %d past census %d",
@@ -210,107 +198,28 @@ func TestStaticCallTypeArgumentRowIsTheSealedColumnWidth(t *testing.T) {
 	}
 }
 
-// This law is deliberately about semantic coverage, never Go file layout.
-// The single inventory is partitioned into dense authored columns and sparse
-// cross-owner anchors; Build seals both through the one Component census.
-func TestStaticInputRelationDenominatorIsCompleteAndUnique(t *testing.T) {
-	if len(staticFamilyInventory) != 27 || staticDenseFamilyCount != 26 || staticTypeFamilyCount != 19 || staticNodeFamilyOffset != 3 {
-		t.Fatalf("static inventory segments = %d total / %d dense / %d forest / %d node offset, want 27 / 26 / 19 / 3",
-			len(staticFamilyInventory), staticDenseFamilyCount, staticTypeFamilyCount, staticNodeFamilyOffset)
-	}
-	var empty Input
-	seen := map[keyspace.Family]bool{}
-	for _, family := range staticFamilyInventory[:staticDenseFamilyCount] {
-		if seen[family] {
-			t.Fatalf("static relation denominator duplicates %v", family)
-		}
-		seen[family] = true
-		empty.Counts[family] = 1
-		if _, ok := staticCensus(empty); ok {
-			t.Fatalf("staticCensus accepted a nonzero dense %v without its typed input row", family)
-		}
-		empty.Counts[family] = 0
-	}
-	for _, family := range staticFamilyInventory[staticDenseFamilyCount:] {
-		if seen[family] {
-			t.Fatalf("static relation denominator overlaps dense family %v", family)
-		}
-		seen[family] = true
-		// A sparse relation may be absent under a nonzero external census.
-		empty.Counts[family] = 1
-		census, ok := staticCensus(empty)
-		if !ok {
-			t.Fatalf("staticCensus rejected an empty sparse %v relation under external count one", family)
-		}
-		if census[family] != 1 {
-			t.Fatalf("sparse %v census = %d, want the owning component's external count 1", family, census[family])
-		}
-		empty.Operands.Claim = []staticoperands.ClaimTarget{
-			{Claim: keyspace.MakeTerm(family, 1)},
-			{Claim: keyspace.MakeTerm(family, 2)},
-		}
-		if _, ok := staticCensus(empty); ok {
-			t.Fatalf("staticCensus accepted sparse %v rows beyond external count", family)
-		}
-		empty.Operands.Claim = nil
-		empty.Counts[family] = 0
-	}
-	if len(seen) != 27 {
-		t.Fatalf("Static relation inventory unique count = %d, want 27", len(seen))
-	}
-}
-
-// TestStaticNodeWindowMatchesRoleVocabulary proves the inventory's node window
-// and role.NodeFamily are the same closed vocabulary, so Static keeps one
-// authored static-type node authority rather than two that can drift.
+// TestStaticNodeWindowMatchesRoleVocabulary proves Static's type-family
+// predicate is exactly the role vocabulary, without maintaining another list.
 func TestStaticNodeWindowMatchesRoleVocabulary(t *testing.T) {
-	window := map[keyspace.Family]bool{}
-	for _, family := range staticFamilyInventory[staticNodeFamilyOffset:staticTypeFamilyCount] {
-		if !staticrole.NodeFamily(family) {
-			t.Fatalf("inventory node window admits %v, which role.NodeFamily rejects", family)
-		}
-		window[family] = true
-	}
 	for family := keyspace.Family(0); family < keyspace.FamilyCount; family++ {
-		if staticrole.NodeFamily(family) && !window[family] {
-			t.Fatalf("role.NodeFamily admits %v, which the inventory node window omits", family)
+		if staticrole.NodeFamily(family) != (staticTypeFamily(family) && !staticrole.TypeReferenceTargetFamily(family)) {
+			t.Fatalf("role.NodeFamily(%v) disagrees with Static type-family predicate", family)
 		}
 	}
-	if len(window) != staticTypeFamilyCount-staticNodeFamilyOffset {
-		t.Fatalf("node window size = %d, want %d", len(window), staticTypeFamilyCount-staticNodeFamilyOffset)
-	}
-	for _, family := range staticFamilyInventory[:staticNodeFamilyOffset] {
-		if staticrole.NodeFamily(family) {
-			t.Fatalf("declaration-owned type root %v must not be a static type occurrence", family)
-		}
-		if !staticrole.TypeReferenceTargetFamily(family) {
-			t.Fatalf("type root %v is not a declaration target family", family)
+	for family := keyspace.FamilyTypeAlias; family <= keyspace.FamilyTypeParam; family++ {
+		if !staticTypeFamily(family) || staticrole.NodeFamily(family) {
+			t.Fatalf("declaration root %v has the wrong Static type-family role", family)
 		}
 	}
 }
 
 func TestStaticTypeEnumerationIsCompleteAndOrdered(t *testing.T) {
 	component := staticContentComponent(t, staticTypeDenominatorInput(t))
-	wantFamilies := [...]keyspace.Family{
-		keyspace.FamilyTypeAlias,
-		keyspace.FamilyTypeInterface,
-		keyspace.FamilyTypeParam,
-		keyspace.FamilyTypePrimitive,
-		keyspace.FamilyTypeLiteral,
-		keyspace.FamilyTypeOptional,
-		keyspace.FamilyTypeUnion,
-		keyspace.FamilyTypeIntersection,
-		keyspace.FamilyTypeRef,
-		keyspace.FamilyTypeGeneric,
-		keyspace.FamilyTypeArray,
-		keyspace.FamilyTypeMap,
-		keyspace.FamilyTypeRecord,
-		keyspace.FamilyTypeFunction,
-		keyspace.FamilyTypeAsserts,
-		keyspace.FamilyTypeOf,
-		keyspace.FamilyTypeKeyOf,
-		keyspace.FamilyTypeIndexAccess,
-		keyspace.FamilyTypeConditional,
+	var wantFamilies []keyspace.Family
+	for family := keyspace.FamilyTypeAlias; family <= keyspace.FamilyTypeConditional; family++ {
+		if staticTypeFamily(family) {
+			wantFamilies = append(wantFamilies, family)
+		}
 	}
 	want := make([]keyspace.Term, 0, len(wantFamilies)+19)
 	for _, family := range wantFamilies {
@@ -378,26 +287,11 @@ func TestStaticTypesViewUsesPublishedForestOrder(t *testing.T) {
 	component := staticContentComponent(t, staticTypeDenominatorInput(t))
 	types := component.View().StaticTypes()
 
-	wantFamilies := [...]keyspace.Family{
-		keyspace.FamilyTypeAlias,
-		keyspace.FamilyTypeInterface,
-		keyspace.FamilyTypeParam,
-		keyspace.FamilyTypePrimitive,
-		keyspace.FamilyTypeLiteral,
-		keyspace.FamilyTypeOptional,
-		keyspace.FamilyTypeUnion,
-		keyspace.FamilyTypeIntersection,
-		keyspace.FamilyTypeRef,
-		keyspace.FamilyTypeGeneric,
-		keyspace.FamilyTypeArray,
-		keyspace.FamilyTypeMap,
-		keyspace.FamilyTypeRecord,
-		keyspace.FamilyTypeFunction,
-		keyspace.FamilyTypeAsserts,
-		keyspace.FamilyTypeOf,
-		keyspace.FamilyTypeKeyOf,
-		keyspace.FamilyTypeIndexAccess,
-		keyspace.FamilyTypeConditional,
+	var wantFamilies []keyspace.Family
+	for family := keyspace.FamilyTypeAlias; family <= keyspace.FamilyTypeConditional; family++ {
+		if staticTypeFamily(family) {
+			wantFamilies = append(wantFamilies, family)
+		}
 	}
 	want := make([]keyspace.Term, 0, component.StaticTypeTermCount())
 	for _, family := range wantFamilies {

@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
+	"github.com/wippyai/go-lua/analysis/schema/denominator"
 )
 
 // Build validates and seals authored operator rows. It retains no input
@@ -71,6 +72,38 @@ func (table Table) Count(family keyspace.Family) int {
 	default:
 		return 0
 	}
+}
+
+// CountsMatch reports the native operator denominators against the enclosing
+// sealed family column.
+func (table Table) CountsMatch(counts [keyspace.FamilyCount]uint32) bool {
+	return table.Count(keyspace.FamilyTypeOf) == int(counts[keyspace.FamilyTypeOf]) &&
+		table.Count(keyspace.FamilyTypeKeyOf) == int(counts[keyspace.FamilyTypeKeyOf]) &&
+		table.Count(keyspace.FamilyTypeIndexAccess) == int(counts[keyspace.FamilyTypeIndexAccess]) &&
+		table.Count(keyspace.FamilyTypeConditional) == int(counts[keyspace.FamilyTypeConditional])
+}
+
+// CountRows publishes this typed owner's native operator contribution and the
+// dedicated TypeOf measure under generated ProgramStatic identities.
+func (table Table) CountRows() (denominator.CountRows, bool) {
+	primaryValue := table.Count(keyspace.FamilyTypeOf) +
+		table.Count(keyspace.FamilyTypeKeyOf) +
+		table.Count(keyspace.FamilyTypeIndexAccess) +
+		table.Count(keyspace.FamilyTypeConditional)
+	typeOfValue := table.Count(keyspace.FamilyTypeOf)
+	if !keyspace.TermOrdinalFits(primaryValue) || !keyspace.TermOrdinalFits(typeOfValue) {
+		return denominator.CountRows{}, false
+	}
+	ids := denominator.GeneratedProgramStaticIDs()
+	primary, ok := denominator.NewCountRow(ids.ProgramStatic, uint64(primaryValue))
+	if !ok {
+		return denominator.CountRows{}, false
+	}
+	typeOf, ok := denominator.NewCountRow(ids.ProgramStaticTypeof, uint64(typeOfValue))
+	if !ok {
+		return denominator.CountRows{}, false
+	}
+	return denominator.NewCountRows([]denominator.CountRow{primary, typeOf})
 }
 
 // VisitContainment visits the static children owned by this table in

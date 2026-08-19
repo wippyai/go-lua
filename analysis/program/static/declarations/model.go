@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
+	"github.com/wippyai/go-lua/analysis/schema/denominator"
 )
 
 // TypeAlias is one authored named static type binding.
@@ -123,6 +124,36 @@ func (table Table) Count(family keyspace.Family) int {
 	default:
 		return 0
 	}
+}
+
+// CountsMatch reports the native declaration denominators against the
+// enclosing sealed family column.
+func (table Table) CountsMatch(counts [keyspace.FamilyCount]uint32) bool {
+	return table.Count(keyspace.FamilyTypeAlias) == int(counts[keyspace.FamilyTypeAlias]) &&
+		table.Count(keyspace.FamilyTypeParam) == int(counts[keyspace.FamilyTypeParam]) &&
+		table.Count(keyspace.FamilyTypeInterface) == int(counts[keyspace.FamilyTypeInterface]) &&
+		table.Count(keyspace.FamilyDeclaredType) == int(counts[keyspace.FamilyDeclaredType])
+}
+
+// CountRows publishes this typed owner's native declaration contributions to
+// the generated ProgramStatic denominator.
+func (table Table) CountRows() (denominator.CountRows, bool) {
+	primaryValue := table.Count(keyspace.FamilyTypeAlias) +
+		table.Count(keyspace.FamilyTypeInterface) +
+		table.Count(keyspace.FamilyTypeParam)
+	if !keyspace.TermOrdinalFits(primaryValue) || !keyspace.TermOrdinalFits(table.Count(keyspace.FamilyDeclaredType)) {
+		return denominator.CountRows{}, false
+	}
+	ids := denominator.GeneratedProgramStaticIDs()
+	primary, ok := denominator.NewCountRow(ids.ProgramStatic, uint64(primaryValue))
+	if !ok {
+		return denominator.CountRows{}, false
+	}
+	declared, ok := denominator.NewCountRow(ids.ProgramStaticCellDeclaredType, uint64(table.Count(keyspace.FamilyDeclaredType)))
+	if !ok {
+		return denominator.CountRows{}, false
+	}
+	return denominator.NewCountRows([]denominator.CountRow{primary, declared})
 }
 
 // TypeParamRow returns the authored type parameter one canonical term names.

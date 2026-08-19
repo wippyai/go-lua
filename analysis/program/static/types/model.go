@@ -11,6 +11,7 @@ package types
 import (
 	"github.com/wippyai/go-lua/analysis/program/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/schema/denominator"
 )
 
 // PrimitiveKind is the complete parser-authored primitive type vocabulary.
@@ -204,4 +205,50 @@ func (table Table) Count(family keyspace.Family) int {
 	default:
 		return 0
 	}
+}
+
+// CountsMatch reports whether this owner published exactly the dense native
+// rows assigned to it. Static supplies the already-sealed family column; the
+// typed owner, not the enclosing component, decides which of its rows
+// contribute to that column.
+func (table Table) CountsMatch(counts [keyspace.FamilyCount]uint32) bool {
+	return table.Count(keyspace.FamilyTypePrimitive) == int(counts[keyspace.FamilyTypePrimitive]) &&
+		table.Count(keyspace.FamilyTypeLiteral) == int(counts[keyspace.FamilyTypeLiteral]) &&
+		table.Count(keyspace.FamilyTypeOptional) == int(counts[keyspace.FamilyTypeOptional]) &&
+		table.Count(keyspace.FamilyTypeUnion) == int(counts[keyspace.FamilyTypeUnion]) &&
+		table.Count(keyspace.FamilyTypeIntersection) == int(counts[keyspace.FamilyTypeIntersection]) &&
+		table.Count(keyspace.FamilyTypeGeneric) == int(counts[keyspace.FamilyTypeGeneric]) &&
+		table.Count(keyspace.FamilyTypeArray) == int(counts[keyspace.FamilyTypeArray]) &&
+		table.Count(keyspace.FamilyTypeMap) == int(counts[keyspace.FamilyTypeMap]) &&
+		table.Count(keyspace.FamilyTypeRecord) == int(counts[keyspace.FamilyTypeRecord]) &&
+		table.Count(keyspace.FamilyTypeField) == int(counts[keyspace.FamilyTypeField])
+}
+
+// CountRows publishes this typed owner's contribution to the generated
+// ProgramStatic denominator. The primary row is intentionally partial: the
+// enclosing Static owner sums the native contributions from all typed child
+// owners under the one generated identity.
+func (table Table) CountRows() (denominator.CountRows, bool) {
+	value := table.Count(keyspace.FamilyTypePrimitive) +
+		table.Count(keyspace.FamilyTypeLiteral) +
+		table.Count(keyspace.FamilyTypeOptional) +
+		table.Count(keyspace.FamilyTypeUnion) +
+		table.Count(keyspace.FamilyTypeIntersection) +
+		table.Count(keyspace.FamilyTypeGeneric) +
+		table.Count(keyspace.FamilyTypeArray) +
+		table.Count(keyspace.FamilyTypeMap) +
+		table.Count(keyspace.FamilyTypeRecord)
+	return programStaticCountRows(value)
+}
+
+func programStaticCountRows(value int) (denominator.CountRows, bool) {
+	if !keyspace.TermOrdinalFits(value) {
+		return denominator.CountRows{}, false
+	}
+	id := denominator.GeneratedProgramStaticIDs().ProgramStatic
+	row, ok := denominator.NewCountRow(id, uint64(value))
+	if !ok {
+		return denominator.CountRows{}, false
+	}
+	return denominator.NewCountRows([]denominator.CountRow{row})
 }

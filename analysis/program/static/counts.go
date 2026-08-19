@@ -3,67 +3,42 @@ package static
 import (
 	"errors"
 
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 )
 
 var errStaticCounts = errors.New("program/static: invalid denominator counts")
 
-// CountRows projects Static's native denominator rows off the census column
-// Build sealed. Static measures only its own type, declaration, signature,
-// contract, operand, operator, and publication columns; Program performs no
-// Static re-census, and neither does this projection: every row reads a sealed
-// number rather than walking the rows again to recount it.
+// CountRows publishes Static's native measures under the generated schema
+// denominator identities. The schema owns row identity and order; each typed
+// child contributes its own sealed measure and Static only joins those values
+// to the generated owner column.
 //
-// The primary row is the authored static type forest, which is exactly the
-// census restricted to the inventory's forest window. The two rows that are
-// not census entries are the sparse ClaimTarget relation, whose denominator is
-// its nonzero rows rather than the owning ValueClaim census, and the call
-// type-argument column, whose sealed width contracts owns.
+// The primary row is the authored static type forest. ClaimTarget remains a
+// sparse child-owned relation, and the call type-argument row is the sealed
+// width of the contracts column rather than a row count.
 func CountRows(view View) (denominator.CountRows, error) {
 	component := view.componentOf()
 	if component == nil || !view.Available() {
 		return denominator.CountRows{}, errStaticCounts
 	}
-	ids := denominator.GeneratedProgramStaticIDs()
-	values := []struct {
-		id    schema.EntryID
-		value int
-	}{
-		{ids.ProgramStatic, component.StaticTypeTermCount()},
-		{ids.ProgramStaticFunctionContract, int(component.census[keyspace.FamilyFunction])},
-		{ids.ProgramStaticCallTypeArguments, component.contracts.CallTypeArgumentWidth()},
-		{ids.ProgramStaticCellDeclaredType, int(component.census[keyspace.FamilyDeclaredType])},
-		{ids.ProgramStaticClaimTarget, component.operands.ClaimCount()},
-		{ids.ProgramStaticTypeValueTarget, int(component.census[keyspace.FamilyTypeValue])},
-		{ids.ProgramStaticTypeof, int(component.census[keyspace.FamilyTypeOf])},
-		{ids.ProgramStaticAnnotation, int(component.census[keyspace.FamilyAnnotation])},
-		{ids.ProgramStaticPublication, int(component.census[keyspace.FamilyTypePublication])},
-		{ids.ProgramStaticTypeRef, int(component.census[keyspace.FamilyTypeRef])},
-	}
-	rows := make([]denominator.CountRow, 0, len(values))
-	for _, value := range values {
-		row, ok := staticCountRow(value.id, value.value)
-		if !ok {
-			return denominator.CountRows{}, errStaticCounts
-		}
-		rows = append(rows, row)
-	}
-	sealed, ok := denominator.NewCountRows(rows)
-	if !ok {
+	typeRows, typeOK := component.types.CountRows()
+	refRows, refOK := component.references.CountRows()
+	declarationRows, declarationOK := component.declarations.CountRows()
+	signatureRows, signatureOK := component.signatures.CountRows()
+	contractRows, contractOK := component.contracts.CountRows()
+	operatorRows, operatorOK := component.operators.CountRows()
+	operandRows, operandOK := component.operands.CountRows()
+	publicationRows, publicationOK := component.publications.CountRows()
+	if !typeOK || !refOK || !declarationOK || !signatureOK || !contractOK || !operatorOK || !operandOK || !publicationOK {
 		return denominator.CountRows{}, errStaticCounts
 	}
-	return sealed, nil
-}
-
-func staticCountRow(id schema.EntryID, value int) (denominator.CountRow, bool) {
-	if !staticCountFits(value) {
-		return denominator.CountRow{}, false
+	parts := []denominator.CountRows{
+		typeRows, refRows, declarationRows, signatureRows,
+		contractRows, operatorRows, operandRows, publicationRows,
 	}
-	return denominator.NewCountRow(id, uint64(value))
-}
-
-func staticCountFits(value int) bool {
-	return value >= 0 && uint64(value) <= uint64(keyspace.MaxTermOrdinal)
+	rows, ok := denominator.SumCountRows(parts...)
+	if !ok || !denominator.GeneratedCountRowsCompleteForOwners(rows, denominator.RelationOwnerProgramStatic) {
+		return denominator.CountRows{}, errStaticCounts
+	}
+	return rows, nil
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
+	"github.com/wippyai/go-lua/analysis/schema/denominator"
 )
 
 // Parameter is one authored fixed parameter of a TypeFunction. An absent
@@ -85,6 +86,27 @@ func (table Table) Count(family keyspace.Family) int {
 	default:
 		return 0
 	}
+}
+
+// CountsMatch reports the native signature denominators against the enclosing
+// sealed family column.
+func (table Table) CountsMatch(counts [keyspace.FamilyCount]uint32) bool {
+	return table.Count(keyspace.FamilyTypeFunction) == int(counts[keyspace.FamilyTypeFunction]) &&
+		table.Count(keyspace.FamilyTypeAsserts) == int(counts[keyspace.FamilyTypeAsserts])
+}
+
+// CountRows publishes this typed owner's native signature contribution to the
+// generated ProgramStatic denominator.
+func (table Table) CountRows() (denominator.CountRows, bool) {
+	value := table.Count(keyspace.FamilyTypeFunction) + table.Count(keyspace.FamilyTypeAsserts)
+	if !keyspace.TermOrdinalFits(value) {
+		return denominator.CountRows{}, false
+	}
+	row, ok := denominator.NewCountRow(denominator.GeneratedProgramStaticIDs().ProgramStatic, uint64(value))
+	if !ok {
+		return denominator.CountRows{}, false
+	}
+	return denominator.NewCountRows([]denominator.CountRow{row})
 }
 
 // Scope returns the authored static scope of one TypeFunction. It is the read

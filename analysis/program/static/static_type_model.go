@@ -3,6 +3,7 @@ package static
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
 )
 
 // ContentID returns the sealed authored Static identity. A zero Component or
@@ -22,13 +23,11 @@ func (component *Component) StaticTypeTerm(term keyspace.Term) bool {
 		return false
 	}
 	family := keyspace.TermFamily(term)
-	for _, candidate := range staticTypeFamilies {
-		if family == candidate {
-			ordinal := keyspace.TermOrdinal(term)
-			return ordinal != 0 && uint64(ordinal) <= uint64(component.census[family])
-		}
+	if !staticTypeFamily(family) {
+		return false
 	}
-	return false
+	ordinal := keyspace.TermOrdinal(term)
+	return ordinal != 0 && uint64(ordinal) <= uint64(component.census[family])
 }
 
 // StaticTypeTermCount returns the complete finite authored static-type
@@ -39,8 +38,10 @@ func (component *Component) StaticTypeTermCount() int {
 		return 0
 	}
 	total := 0
-	for _, family := range staticTypeFamilies {
-		total += int(component.census[family])
+	for family := keyspace.FamilyTypeAlias; family <= keyspace.FamilyTypeConditional; family++ {
+		if staticTypeFamily(family) {
+			total += int(component.census[family])
+		}
 	}
 	return total
 }
@@ -52,7 +53,10 @@ func (component *Component) StaticTypeTermAt(index int) (keyspace.Term, bool) {
 		return 0, false
 	}
 	offset := uint64(index)
-	for _, family := range staticTypeFamilies {
+	for family := keyspace.FamilyTypeAlias; family <= keyspace.FamilyTypeConditional; family++ {
+		if !staticTypeFamily(family) {
+			continue
+		}
 		count := uint64(component.census[family])
 		if offset < count {
 			return keyspace.MakeTerm(family, uint32(offset+1)), true
@@ -60,4 +64,13 @@ func (component *Component) StaticTypeTermAt(index int) (keyspace.Term, bool) {
 		offset -= count
 	}
 	return 0, false
+}
+
+// staticTypeFamily is the canonical typed-family vocabulary used by Static's
+// forest queries. Declaration roots come from the role owner that admits
+// declaration targets; expression families come from the role owner that
+// admits static type nodes. The numeric walk preserves the stable keyspace
+// order without another inventory or offset table.
+func staticTypeFamily(family keyspace.Family) bool {
+	return staticrole.TypeReferenceTargetFamily(family) || staticrole.NodeFamily(family)
 }

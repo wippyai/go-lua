@@ -12,6 +12,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/program/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/schema/denominator"
 )
 
 // ClaimTarget is the optional authored type operand of one Flow ValueClaim.
@@ -126,6 +127,40 @@ func (table Table) Count(family keyspace.Family) int {
 	default:
 		return 0
 	}
+}
+
+// CountsMatch reports the native operand denominators. ClaimTarget is sparse:
+// its authored rows must fit inside Flow's ValueClaim universe rather than
+// fill that universe.
+func (table Table) CountsMatch(counts [keyspace.FamilyCount]uint32) bool {
+	return table.Count(keyspace.FamilyTypeValue) == int(counts[keyspace.FamilyTypeValue]) &&
+		table.Count(keyspace.FamilyAnnotation) == int(counts[keyspace.FamilyAnnotation]) &&
+		table.ClaimCount() <= int(counts[keyspace.FamilyValueClaim])
+}
+
+// CountRows publishes this typed owner's native operand measures under the
+// generated ProgramStatic denominator identities.
+func (table Table) CountRows() (denominator.CountRows, bool) {
+	claimCount := table.ClaimCount()
+	typeValueCount := table.Count(keyspace.FamilyTypeValue)
+	annotationCount := table.Count(keyspace.FamilyAnnotation)
+	if !keyspace.TermOrdinalFits(claimCount) || !keyspace.TermOrdinalFits(typeValueCount) || !keyspace.TermOrdinalFits(annotationCount) {
+		return denominator.CountRows{}, false
+	}
+	ids := denominator.GeneratedProgramStaticIDs()
+	claim, ok := denominator.NewCountRow(ids.ProgramStaticClaimTarget, uint64(claimCount))
+	if !ok {
+		return denominator.CountRows{}, false
+	}
+	typeValue, ok := denominator.NewCountRow(ids.ProgramStaticTypeValueTarget, uint64(typeValueCount))
+	if !ok {
+		return denominator.CountRows{}, false
+	}
+	annotation, ok := denominator.NewCountRow(ids.ProgramStaticAnnotation, uint64(annotationCount))
+	if !ok {
+		return denominator.CountRows{}, false
+	}
+	return denominator.NewCountRows([]denominator.CountRow{claim, typeValue, annotation})
 }
 
 // VisitContainment retains Flow terms solely as opaque parents of the
