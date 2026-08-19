@@ -48,7 +48,6 @@ type Plan struct {
 type compiledState struct {
 	artifacts         *compiledArtifactSet
 	coordinates       []compiledValueCoordinate
-	receipt           composite.Compilation
 	binding           *composite.ProgramBinding
 	committed         committedProgramGraph
 	querySites        []composite.QuerySite
@@ -88,13 +87,13 @@ func CompileWithDiagnostics(source *link.Link) (*Plan, CompileStatus, anadiag.An
 		return nil, CompileInvalid, diagnostics
 	}
 	diagnostics.Enter(anadiag.AnalyzeDiagnosticPhaseItemIssuance)
-	receipt, receiptOK := composite.Global()
-	if !receiptOK || !receipt.Available() {
+	compilation, compilationOK := composite.Global()
+	if !compilationOK || !compilation.Available() {
 		diagnostics.ItemIssuance = anadiag.AnalyzeDiagnosticItemIssuanceFailureProgramSchema
 		diagnostics.FailCurrentPhase()
 		return nil, CompileUnsupported, diagnostics
 	}
-	artifacts, artifactsOK := compileProgramArtifacts(source, receipt)
+	artifacts, artifactsOK := compileProgramArtifacts(source, compilation)
 	if !artifactsOK {
 		diagnostics.ItemIssuance = anadiag.AnalyzeDiagnosticItemIssuanceFailureArtifacts
 		diagnostics.FailCurrentPhase()
@@ -106,7 +105,7 @@ func CompileWithDiagnostics(source *link.Link) (*Plan, CompileStatus, anadiag.An
 		diagnostics.FailCurrentPhase()
 		return nil, CompileUnsupported, diagnostics
 	}
-	state := &compiledState{artifacts: artifacts, coordinates: values, receipt: receipt, sourceID: source.ContentID()}
+	state := &compiledState{artifacts: artifacts, coordinates: values, sourceID: source.ContentID()}
 	if _, resultOK := state.resultGeometry(); !resultOK {
 		diagnostics.ItemIssuance = anadiag.AnalyzeDiagnosticItemIssuanceFailureResultGeometry
 		diagnostics.FailCurrentPhase()
@@ -120,7 +119,7 @@ func CompileWithDiagnostics(source *link.Link) (*Plan, CompileStatus, anadiag.An
 		return nil, CompileUnsupported, diagnostics
 	}
 	diagnostics.Enter(anadiag.AnalyzeDiagnosticPhaseAssemble)
-	_, binding, bindingFailure, mountFailure, bindFailure := state.newProgramBinding(source)
+	_, binding, bindingFailure, mountFailure, bindFailure := state.newProgramBinding(source, compilation)
 	diagnostics.Binding = bindingFailure
 	diagnostics.AllocationCatalog = bindFailure.Allocation
 	// The mount phase's verdict carries the rejecting domain's own evidence
@@ -202,9 +201,9 @@ func (plan *Plan) solveWithPolicy(ctx context.Context, options engine.SolveDiagn
 		diagnostics.Fail(anadiag.AnalyzeDiagnosticReasonEngineIncomplete)
 		return nil, nil, AnalyzeIncomplete, diagnostics
 	}
-	receiptDiagnostic, topologyOK := state.instantiateRuntimeTopology()
+	topologyDiagnostic, topologyOK := state.instantiateRuntimeTopology()
 	if !topologyOK {
-		applyAssembleDiagnostic(&diagnostics, receiptDiagnostic)
+		applyAssembleDiagnostic(&diagnostics, topologyDiagnostic)
 		diagnostics.FailCurrentPhase()
 		return nil, nil, AnalyzeIncomplete, diagnostics
 	}
@@ -375,7 +374,7 @@ func (plan *Plan) SourceID() identity.ContentID {
 	return state.sourceID
 }
 
-// Close releases this Plan's assembled topology and domain receipts. The
+// Close releases this Plan's assembled topology and domain bindings. The
 // compile-time snapshot, template, and owner-handoff bag remain in the
 // content-addressed cache: closing a Plan must not force a later equivalent
 // Link to recompile or Lower them. It is terminal; the finalizer is only a
@@ -408,7 +407,7 @@ func (plan *Plan) acquire() (*compiledState, bool) {
 	state := plan.state
 	state.lifecycleMu.Lock()
 	defer state.lifecycleMu.Unlock()
-	if state.closing || state.closed || !state.admitted || state.artifacts == nil || !state.receipt.Available() ||
+	if state.closing || state.closed || !state.admitted || state.artifacts == nil ||
 		state.binding == nil || state.binding.SchemaBinding() == nil || !state.binding.SchemaBinding().Sealed() || !state.sourceID.Available() {
 		return nil, false
 	}
@@ -488,7 +487,7 @@ func (state *compiledState) resultGeometry() (result.Geometry, bool) {
 }
 
 func (state *compiledState) admit() bool {
-	if state == nil || state.artifacts == nil || !state.receipt.Available() || !state.sourceID.Available() {
+	if state == nil || state.artifacts == nil || !state.sourceID.Available() {
 		return false
 	}
 	if len(state.artifacts.mounts) == 0 || len(state.artifacts.byProgram) == 0 {
@@ -539,7 +538,7 @@ type assembleDiagnostic struct {
 }
 
 func (state *compiledState) assembleCommittedProgram() (*engine.CommittedProgram, []composite.QuerySite, assembleDiagnostic, bool) {
-	if state == nil || state.artifacts == nil || !state.receipt.Available() || state.binding == nil || state.binding.SchemaBinding() == nil || !state.binding.SchemaBinding().Sealed() {
+	if state == nil || state.artifacts == nil || state.binding == nil || state.binding.SchemaBinding() == nil || !state.binding.SchemaBinding().Sealed() {
 		return nil, nil, assembleDiagnostic{}, false
 	}
 	binding := state.binding

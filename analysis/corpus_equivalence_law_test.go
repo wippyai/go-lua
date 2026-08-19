@@ -139,7 +139,11 @@ func solveThroughReceipts(t *testing.T, linked *link.Link) *receiptSolve {
 	// the mount itself, through the plan's own construction path, and installs
 	// the binding it produced before any runtime topology exists, so the record
 	// it publishes from and the authorities the solve runs on are one seal.
-	record, binding, bindingFailure, mountFailure, _ := state.newProgramBinding(linked)
+	compilation, compilationOK := composite.Global()
+	if !compilationOK || !compilation.Available() {
+		t.Fatal("global schema unavailable")
+	}
+	record, binding, bindingFailure, mountFailure, _ := state.newProgramBinding(linked, compilation)
 	if bindingFailure != anadiag.ProgramBindingFailureNone || mountFailure.Available() || binding == nil || binding.SchemaBinding() == nil {
 		t.Fatalf("the mount phase refused the Link: binding=%v mount=%v", bindingFailure, mountFailure)
 	}

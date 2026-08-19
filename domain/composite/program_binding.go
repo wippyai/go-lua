@@ -198,10 +198,11 @@ func (owner RuntimeAllocationContextOwner) Begin(policyID identity.ContentID) (*
 	return authority, issuer, true
 }
 
-// BindProgram binds the complete global schema in one SchemaBinding. The factor
-// principals, the allocation catalog, every rule, and every declared query
-// family are admitted by the grammar's own transaction; the caller supplies the
-// record the mount phase produced and receives the sealed hot binding.
+// BindProgram binds the complete global schema in one SchemaBinding. The
+// caller supplies the one immutable compilation handle obtained at the
+// composition root and the record the mount phase produced; the factor
+// principals, allocation catalog, rules, and query families are admitted by the
+// grammar's own transaction.
 func BindProgram(compilation Compilation, inputs LinkInputs) (*ProgramBinding, BindFailure) {
 	bound, failure := bind(compilation, inputs)
 	if failure.Available() {

@@ -92,8 +92,8 @@ func linkBootstrapWitness(state *compiledState, binding *composite.ProgramBindin
 // newProgramBinding constructs the Link-local typed owners required by
 // compile. Sealed ingress rows supply the identities those owners admit;
 // domain schemas are solve-local substitutions.
-func (state *compiledState) newProgramBinding(source *link.Link) (composite.LinkInputs, *composite.ProgramBinding, anadiag.ProgramBindingFailure, composite.MountFailure, composite.BindFailure) {
-	if state == nil || source == nil || state.artifacts == nil || len(state.artifacts.mounts) == 0 {
+func (state *compiledState) newProgramBinding(source *link.Link, compilation composite.Compilation) (composite.LinkInputs, *composite.ProgramBinding, anadiag.ProgramBindingFailure, composite.MountFailure, composite.BindFailure) {
+	if state == nil || source == nil || !compilation.Available() || state.artifacts == nil || len(state.artifacts.mounts) == 0 {
 		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureInput, composite.MountFailure{}, composite.BindFailure{}
 	}
 	// A Shard is a cold Project coordinate. It is reissued only while Link is
@@ -181,7 +181,7 @@ func (state *compiledState) newProgramBinding(source *link.Link) (composite.Link
 	if mountFailure.Available() {
 		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureFromMount(mountFailure), mountFailure, composite.BindFailure{}
 	}
-	binding, failure := composite.BindProgram(state.receipt, inputs)
+	binding, failure := composite.BindProgram(compilation, inputs)
 	if failure.Available() {
 		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureFromBind(failure), composite.MountFailure{}, failure
 	}
@@ -393,7 +393,6 @@ func (mount mountedProgramArtifact) valid() bool {
 }
 
 type compiledArtifactSet struct {
-	receipt   composite.Compilation
 	mounts    []mountedProgramArtifact
 	byProgram map[identity.ContentID]*programartifact.Artifact
 	sites     mounted.ObservationSites
@@ -438,10 +437,14 @@ type artifactCacheEntry struct {
 // were projected from. No payload retains Link authority.
 var globalArtifactCache = artifactCacheState{entries: make(map[artifactCacheKey]*artifactCacheEntry)}
 
-func cachedProgramArtifact(input *program.Program, receipt composite.Compilation) (*programartifact.Artifact, *ingress.Snapshot, *rows.ArtifactScalarTemplate, *scalarlower.RoleDirectory, bool) {
-	compileKey, keyOK := composite.NewArtifactCompileKey(input, receipt)
-	programID, schemaID := input.ContentID(), receipt.Digest()
-	if !keyOK || !compileKey.Available() || !input.Available() || !programID.Available() || !receipt.Available() || !schemaID.Available() {
+func cachedProgramArtifact(input *program.Program, compilation composite.Compilation) (*programartifact.Artifact, *ingress.Snapshot, *rows.ArtifactScalarTemplate, *scalarlower.RoleDirectory, bool) {
+	compileKey, keyOK := composite.NewArtifactCompileKey(input, compilation)
+	programID := input.ContentID()
+	if !keyOK || !compileKey.Available() || !input.Available() || !programID.Available() || !compilation.Available() {
+		return nil, nil, nil, nil, false
+	}
+	schemaID := compileKey.SchemaDigest()
+	if !schemaID.Available() {
 		return nil, nil, nil, nil, false
 	}
 	key := compileKey.ID()
@@ -452,7 +455,7 @@ func cachedProgramArtifact(input *program.Program, receipt composite.Compilation
 		globalArtifactCache.entries[key] = entry
 		globalArtifactCache.Unlock()
 
-		artifact, compiled := composite.CompileArtifact(input, receipt)
+		artifact, compiled := composite.CompileArtifact(input, compilation)
 		var snapshot *ingress.Snapshot
 		var template *rows.ArtifactScalarTemplate
 		var roles *scalarlower.RoleDirectory
@@ -491,15 +494,15 @@ func cachedProgramArtifact(input *program.Program, receipt composite.Compilation
 // compileProgramArtifacts compiles each distinct ProgramID once and records
 // every mounted occurrence's exact Link substitution. No Link/domain/runtime
 // authority enters the reusable artifact cache.
-func compileProgramArtifacts(source *link.Link, receipt composite.Compilation) (*compiledArtifactSet, bool) {
-	if source == nil || !source.ContentID().Available() || !receipt.Available() || source.Project() == nil {
+func compileProgramArtifacts(source *link.Link, compilation composite.Compilation) (*compiledArtifactSet, bool) {
+	if source == nil || !source.ContentID().Available() || !compilation.Available() || source.Project() == nil {
 		return nil, false
 	}
 	mounts := source.Project().Mounts()
 	if mounts.Count() == 0 {
 		return nil, false
 	}
-	result := &compiledArtifactSet{receipt: receipt, mounts: make([]mountedProgramArtifact, 0, mounts.Count()), byProgram: make(map[identity.ContentID]*programartifact.Artifact)}
+	result := &compiledArtifactSet{mounts: make([]mountedProgramArtifact, 0, mounts.Count()), byProgram: make(map[identity.ContentID]*programartifact.Artifact)}
 	type cachedProduct struct {
 		artifact *programartifact.Artifact
 		snapshot *ingress.Snapshot
@@ -522,13 +525,17 @@ func compileProgramArtifacts(source *link.Link, receipt composite.Compilation) (
 		product, compiled := products[programID]
 		artifact, snapshot, template, roles := product.artifact, product.snapshot, product.template, product.roles
 		if !compiled {
-			artifact, snapshot, template, roles, compiled = cachedProgramArtifact(input, receipt)
+			artifact, snapshot, template, roles, compiled = cachedProgramArtifact(input, compilation)
 			if !compiled {
 				return nil, false
 			}
 			products[programID] = cachedProduct{artifact: artifact, snapshot: snapshot, template: template, roles: roles}
 		}
-		if artifact == nil || !artifact.Available() || snapshot == nil || !snapshot.Available() || template == nil || !template.Available() || roles == nil || artifact.CompileKey().ProgramID() != programID || artifact.CompileKey().SchemaDigest() != receipt.Digest() || snapshot.ArtifactID() != artifact.ID() || snapshot.ProgramID() != programID || snapshot.SchemaID() != receipt.Digest() || template.ArtifactID() != artifact.ID() || template.ProgramID() != programID || template.SchemaID() != receipt.Digest() {
+		schemaID := identity.ContentID{}
+		if snapshot != nil {
+			schemaID = snapshot.SchemaID()
+		}
+		if artifact == nil || !artifact.Available() || snapshot == nil || !snapshot.Available() || template == nil || !template.Available() || roles == nil || !schemaID.Available() || artifact.CompileKey().ProgramID() != programID || artifact.CompileKey().SchemaDigest() != schemaID || snapshot.ArtifactID() != artifact.ID() || snapshot.ProgramID() != programID || template.ArtifactID() != artifact.ID() || template.ProgramID() != programID || template.SchemaID() != schemaID {
 			return nil, false
 		}
 		if _, held := result.byProgram[programID]; !held {
@@ -540,7 +547,7 @@ func compileProgramArtifacts(source *link.Link, receipt composite.Compilation) (
 		}
 		program := cold.Program{
 			Frozen: frozen, ModuleKey: moduleKey, ArtifactID: artifact.ID(),
-			ProgramID: programID, SchemaID: receipt.Digest(),
+			ProgramID: programID, SchemaID: schemaID,
 		}
 		if !program.Available() {
 			return nil, false
