@@ -71,8 +71,6 @@ type SoleScratch[K scalar.Key, V any] struct {
 	// by manyState, so reconstruction cannot widen the fused operand product.
 	manySeedStack []soleManySeedFrame[V]
 	manySeedState map[*node[V]]uint8
-	manyPriorIDs  []terminal.ID[V]
-	manyPriorSeen map[terminal.ID[V]]struct{}
 
 	// manyRootNodes and manyRoots are operation-local input views. The former
 	// is the diagram's borrowed key-root vector; the latter is a typed root
@@ -258,9 +256,6 @@ func (scratch *SoleScratch[K, V]) clearManySeed() {
 	clear(scratch.manySeedStack)
 	scratch.manySeedStack = scratch.manySeedStack[:0]
 	clear(scratch.manySeedState)
-	clear(scratch.manyPriorIDs)
-	scratch.manyPriorIDs = scratch.manyPriorIDs[:0]
-	clear(scratch.manyPriorSeen)
 }
 
 func resizeClear[T any](values []T, count int) []T {

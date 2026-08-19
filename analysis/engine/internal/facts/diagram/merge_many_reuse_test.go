@@ -28,7 +28,7 @@ func TestMergeSoleFactorManyPreservesSemanticValueAndSparsifiesUndefined(t *test
 	left := fixture.sealed(t, relationWrite{key: 1, when: on, value: 20})
 	right := fixture.sealed(t, relationWrite{key: 1, when: notOn, value: 20})
 
-	combine := func(_ relationKey, values []terminal.ID[uint8], present []bool, _ []terminal.ID[uint8]) (terminal.ID[uint8], bool) {
+	combine := func(_ relationKey, values []terminal.ID[uint8], present []bool) (terminal.ID[uint8], bool) {
 		for index := range values {
 			if present[index] {
 				return values[index], true
@@ -82,7 +82,7 @@ func TestMergeSoleFactorManyPreservesSemanticValueAndSparsifiesUndefined(t *test
 		if work == nil {
 			t.Fatal("work")
 		}
-		merged, valid := builder.MergeSoleFactorMany(reference, []Root[relationFactor, relationKey, uint8]{fixture.diagram.Empty(), fixture.diagram.Empty()}, NewSoleScratch[relationKey, uint8](), work, func(_ relationKey, _ []terminal.ID[uint8], present []bool, _ []terminal.ID[uint8]) (terminal.ID[uint8], bool) {
+		merged, valid := builder.MergeSoleFactorMany(reference, []Root[relationFactor, relationKey, uint8]{fixture.diagram.Empty(), fixture.diagram.Empty()}, NewSoleScratch[relationKey, uint8](), work, func(_ relationKey, _ []terminal.ID[uint8], present []bool) (terminal.ID[uint8], bool) {
 			if len(present) != 2 || present[0] == present[1] {
 				return terminal.ID[uint8]{}, false
 			}

@@ -2,7 +2,7 @@ package operation
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/internal/rows"
+	"github.com/wippyai/go-lua/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/target/exactkey"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 )

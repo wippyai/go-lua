@@ -4,7 +4,7 @@ import (
 	"errors"
 	"sort"
 
-	"github.com/wippyai/go-lua/analysis/program/internal/rows"
+	"github.com/wippyai/go-lua/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 )

@@ -1077,6 +1077,11 @@ func (domain *Domain[F, K, V]) equalTerminal(values *terminal.Work[V], left, rig
 	if domain == nil || values == nil {
 		return false
 	}
+	// Equal values share one published terminal identity, so an identical cell
+	// is proved without reading either payload.
+	if left == right {
+		return true
+	}
 	leftValue, leftOK := domain.ops.Default, true
 	if left != (terminal.ID[V]{}) {
 		leftValue, leftOK = values.Value(left)

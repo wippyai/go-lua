@@ -110,6 +110,19 @@ func TestJoinContributionsManyMatchesFixedBinaryOrderAndAdmitsOnlyFinalValue(t *
 	}
 }
 
+// sealedTerminals counts the whole sealed terminal universe of one owner. It
+// is the direct measure of admission: a fold that reuses an already interned
+// value leaves this population unchanged, whatever it costs to look the value
+// up.
+func sealedTerminals[V any](t testing.TB, values *terminal.Arena[V]) int {
+	t.Helper()
+	count := 0
+	if !values.Every(func(V) bool { count++; return true }) {
+		t.Fatal("sealed terminal audit failed")
+	}
+	return count
+}
+
 func TestJoinContributionsManyReusesPriorNovelAggregateWithoutReadmission(t *testing.T) {
 	manager, err := guard.New(nil)
 	if err != nil {
@@ -189,15 +202,22 @@ func TestJoinContributionsManyReusesPriorNovelAggregateWithoutReadmission(t *tes
 		output[0], output[1] = all, all
 		return true
 	}
+	population := sealedTerminals(t, values)
 	admissions = 0
 	first, valid := domain.JoinContributionsMany(empty, []Plane[semanticFactor, semanticKey, uint8]{left, right}, diagram.NewSoleScratch[semanticKey, uint8](), support.New(manager), covers)
 	if !valid || admissions != 1 {
 		t.Fatalf("first novel fold valid=%t admissions=%d", valid, admissions)
 	}
-	admissions = 0
+	if grown := sealedTerminals(t, values); grown != population+1 {
+		t.Fatalf("first novel fold sealed %d terminals, want exactly one aggregate", grown-population)
+	}
+	population = sealedTerminals(t, values)
 	second, valid := domain.JoinContributionsMany(first, []Plane[semanticFactor, semanticKey, uint8]{left, right}, diagram.NewSoleScratch[semanticKey, uint8](), support.New(manager), covers)
-	if !valid || admissions != 0 || second.Root() != first.Root() {
-		t.Fatalf("prior representative valid=%t admissions=%d roots=%t", valid, admissions, second.Root() == first.Root())
+	if !valid || second.Root() != first.Root() {
+		t.Fatalf("prior representative valid=%t roots=%t", valid, second.Root() == first.Root())
+	}
+	if grown := sealedTerminals(t, values); grown != population {
+		t.Fatalf("repeated fold readmitted %d terminals for an already interned aggregate", grown-population)
 	}
 }
 
@@ -282,13 +302,9 @@ func TestJoinContributionsManyReusesSemanticReferenceAcrossSiblingTerminals(t *t
 		t.Fatal("empty support")
 	}
 
-	terminalAdmissions := 0
 	values, ok := terminal.New(terminal.Config[uint8]{
-		Equal: func(left, right uint8) bool { return left == right },
-		Fingerprint: func(value uint8) uint64 {
-			terminalAdmissions++
-			return uint64(value)
-		},
+		Equal:       func(left, right uint8) bool { return left == right },
+		Fingerprint: func(value uint8) uint64 { return uint64(value) },
 	})
 	if !ok {
 		t.Fatal("terminal arena")
@@ -296,26 +312,40 @@ func TestJoinContributionsManyReusesSemanticReferenceAcrossSiblingTerminals(t *t
 	if _, ok := values.Admit(10); !ok || !values.Seal() {
 		t.Fatal("default terminal")
 	}
-	// Every Work starts from the same immutable base, so these equal values
-	// intentionally retain three different sibling terminal identities.
-	admitSibling := func() terminal.ID[uint8] {
+	// Candidate isolation keeps simultaneously open Works from observing each
+	// other, so these equal values intentionally acquire three different raw
+	// sibling identities that publication then canonicalizes onto one.
+	admitSiblings := func(count int) []terminal.ID[uint8] {
 		t.Helper()
-		work := values.Begin()
-		if work == nil {
-			t.Fatal("terminal work")
+		works := make([]*terminal.Work[uint8], count)
+		ids := make([]terminal.ID[uint8], count)
+		for index := range works {
+			works[index] = values.Begin()
+			if works[index] == nil {
+				t.Fatal("terminal work")
+			}
 		}
-		id, admitted := work.Admit(3)
-		if !admitted {
-			t.Fatal("sibling terminal")
+		for index, work := range works {
+			var admitted bool
+			ids[index], admitted = work.Admit(3)
+			if !admitted {
+				t.Fatal("sibling terminal")
+			}
 		}
-		if _, sealed := work.Seal(); !sealed {
-			t.Fatal("sibling terminal seal")
+		for _, work := range works {
+			if _, sealed := work.Seal(); !sealed {
+				t.Fatal("sibling terminal seal")
+			}
 		}
-		return id
+		return ids
 	}
-	referenceID, lowID, highID := admitSibling(), admitSibling(), admitSibling()
+	siblings := admitSiblings(3)
+	referenceID, lowID, highID := siblings[0], siblings[1], siblings[2]
 	if referenceID == lowID || referenceID == highID || lowID == highID {
-		t.Fatal("equal sibling terminals unexpectedly shared an identity")
+		t.Fatal("isolated candidate pages shared one terminal identity")
+	}
+	if values.Canonical(referenceID) != values.Canonical(lowID) || values.Canonical(referenceID) != values.Canonical(highID) {
+		t.Fatal("published equal sibling terminals kept separate canonical identities")
 	}
 
 	facts, ok := diagram.New(diagram.Config[semanticFactor, semanticKey, uint8]{
@@ -375,7 +405,7 @@ func TestJoinContributionsManyReusesSemanticReferenceAcrossSiblingTerminals(t *t
 		if regions == nil {
 			t.Fatal("regions")
 		}
-		terminalAdmissions = 0
+		population := sealedTerminals(t, values)
 		folded, valid := domain.JoinContributionsMany(reference, []Plane[semanticFactor, semanticKey, uint8]{low, high, noValue}, diagram.NewSoleScratch[semanticKey, uint8](), regions, func(key semanticKey, output []support.Mask) bool {
 			if key != 7 || len(output) != 3 {
 				return false
@@ -386,8 +416,8 @@ func TestJoinContributionsManyReusesSemanticReferenceAcrossSiblingTerminals(t *t
 		if !valid {
 			t.Fatal("many fold")
 		}
-		if terminalAdmissions != 0 {
-			t.Fatalf("exclusive carries admitted %d candidate terminals", terminalAdmissions)
+		if grown := sealedTerminals(t, values); grown != population {
+			t.Fatalf("exclusive carries admitted %d candidate terminals", grown-population)
 		}
 
 		binaryRegions := support.New(manager)
@@ -410,7 +440,7 @@ func TestJoinContributionsManyReusesSemanticReferenceAcrossSiblingTerminals(t *t
 		if regions == nil {
 			t.Fatal("regions")
 		}
-		terminalAdmissions = 0
+		population := sealedTerminals(t, values)
 		left, right := plane(all, lowID), plane(all, highID)
 		folded, valid := domain.JoinContributionsMany(reference, []Plane[semanticFactor, semanticKey, uint8]{left, right}, diagram.NewSoleScratch[semanticKey, uint8](), regions, func(key semanticKey, output []support.Mask) bool {
 			if key != 7 || len(output) != 2 {
@@ -425,8 +455,8 @@ func TestJoinContributionsManyReusesSemanticReferenceAcrossSiblingTerminals(t *t
 		if !domain.EqualAt(folded, func(guard.Atom) bool { return true }, left, func(guard.Atom) bool { return true }) {
 			t.Fatal("equal overlap changed the operand semantic value")
 		}
-		if terminalAdmissions != 0 {
-			t.Fatalf("reference-equivalent aggregate admitted %d candidate terminals", terminalAdmissions)
+		if grown := sealedTerminals(t, values); grown != population {
+			t.Fatalf("reference-equivalent aggregate admitted %d candidate terminals", grown-population)
 		}
 	})
 }

@@ -1,7 +1,7 @@
 package boot
 
 import (
-	sealedrows "github.com/wippyai/go-lua/analysis/program/internal/rows"
+	sealedrows "github.com/wippyai/go-lua/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 )
 

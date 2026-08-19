@@ -140,7 +140,7 @@ func TestMergeSoleManyPreviousComplexityIsIndependentOfPreviousLane(t *testing.T
 		if regions == nil {
 			t.Fatal("regions")
 		}
-		merged, valid := builder.MergeSoleFactorMany(previous, []Root[uint64, uint64, uint8]{left, right}, scratch, regions, func(_ uint64, values []terminal.ID[uint8], present []bool, _ []terminal.ID[uint8]) (terminal.ID[uint8], bool) {
+		merged, valid := builder.MergeSoleFactorMany(previous, []Root[uint64, uint64, uint8]{left, right}, scratch, regions, func(_ uint64, values []terminal.ID[uint8], present []bool) (terminal.ID[uint8], bool) {
 			for index, included := range present {
 				if included {
 					return values[index], true
@@ -226,18 +226,23 @@ func TestSeedSoleManyPredecessorReusesSharedCrossEdgeLaw(t *testing.T) {
 	if builder == nil {
 		t.Fatal("candidate builder")
 	}
-	ids, seeded := builder.seedSoleManyPredecessor(root, NewSoleScratch[uint64, uint8]())
-	if !seeded || len(ids) != 2 || builder.imports[root] != root || builder.decisions[decisionKey[uint8]{atom: 1, low: left, high: shared}] != root {
+	seeded := builder.seedSoleManyPredecessor(root, NewSoleScratch[uint64, uint8]())
+	if !seeded || builder.imports[root] != root || builder.decisions[decisionKey[uint8]{atom: 1, low: left, high: shared}] != root {
 		builder.Discard()
-		t.Fatalf("shared predecessor seed ids=%d seeded=%t root=%t", len(ids), seeded, builder.imports[root] == root)
+		t.Fatalf("shared predecessor seed seeded=%t root=%t", seeded, builder.imports[root] == root)
 	}
-	seen := map[terminal.ID[uint8]]bool{}
-	for _, id := range ids {
-		seen[id] = true
+	// Every reachable predecessor node is registered under its own identity,
+	// so a fold cell that resolves to one of these terminals republishes the
+	// predecessor node instead of allocating an equal duplicate.
+	for _, node := range []*node[uint8]{low, high, shared, left, root} {
+		if builder.imports[node] != node {
+			builder.Discard()
+			t.Fatal("shared predecessor omitted a reachable node")
+		}
 	}
-	if !seen[lowID] || !seen[highID] {
+	if builder.terminals[lowID] != low || builder.terminals[highID] != high {
 		builder.Discard()
-		t.Fatal("shared predecessor omitted terminal representative")
+		t.Fatal("shared predecessor omitted a terminal leaf registration")
 	}
 	builder.Discard()
 }

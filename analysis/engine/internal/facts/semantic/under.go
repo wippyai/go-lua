@@ -25,17 +25,24 @@ func (domain *Domain[F, K, V]) LessOrEqUnder(left, right Plane[F, K, V], within 
 	return domain.relateUnder(left, right, within, scratch, domain.ops.LessOrEq)
 }
 
-func (domain *Domain[F, K, V]) relateUnder(left, right Plane[F, K, V], within support.Mask, scratch *diagram.SoleScratch[K, V], relation func(V, V) bool) bool {
-	if relation == nil || scratch == nil {
+// relateUnder proves one reflexive typed relation cellwise. Reflexivity is a
+// precondition of both callers, and it is what licenses the two identity fast
+// paths below: one whole root, one terminal cell. Both are semantic-only and
+// deliberately above Diagram's generic callback API, which must still call an
+// arbitrary structural visitor.
+func (domain *Domain[F, K, V]) relateUnder(left, right Plane[F, K, V], within support.Mask, scratch *diagram.SoleScratch[K, V], reflexive func(V, V) bool) bool {
+	if reflexive == nil || scratch == nil {
 		return false
 	}
-	// Equality and pointwise order are reflexive. This semantic-only fast path
-	// is deliberately above Diagram's generic callback API: Diagram must still
-	// call an arbitrary structural visitor for identical roots.
 	if left.root == right.root {
 		return true
 	}
 	return domain.diagram.CompareSoleFactorUnder(left.root, right.root, within, scratch, func(first, second terminal.ID[V]) bool {
+		// Publication canonicalizes equal values onto one terminal identity, so
+		// an identical cell needs no value read and no typed relation call.
+		if first == second {
+			return true
+		}
 		leftValue, leftOK := domain.ops.Default, true
 		if first != (terminal.ID[V]{}) {
 			leftValue, leftOK = domain.terminals.Value(first)
@@ -44,6 +51,6 @@ func (domain *Domain[F, K, V]) relateUnder(left, right Plane[F, K, V], within su
 		if second != (terminal.ID[V]{}) {
 			rightValue, rightOK = domain.terminals.Value(second)
 		}
-		return leftOK && rightOK && relation(leftValue, rightValue)
+		return leftOK && rightOK && reflexive(leftValue, rightValue)
 	})
 }

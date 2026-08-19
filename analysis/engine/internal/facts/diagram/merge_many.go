@@ -9,11 +9,9 @@ import (
 
 // SoleManyCombine resolves one completed guarded cell across a fixed ordered
 // operand vector. present distinguishes Absent from Present(Default), whose
-// sparse terminal ID is also zero. prior contains only distinct nonzero
-// terminal identities seeded from the reconstruction predecessor for this
-// exact sparse key. It is a post-fold identity preference, never an operand
-// or presence lane. The slices are borrowed scratch and must not be retained.
-type SoleManyCombine[K scalar.Key, V any] func(key K, values []terminal.ID[V], present []bool, prior []terminal.ID[V]) (terminal.ID[V], bool)
+// sparse terminal ID is also zero. The slices are borrowed scratch and must
+// not be retained.
+type SoleManyCombine[K scalar.Key, V any] func(key K, values []terminal.ID[V], present []bool) (terminal.ID[V], bool)
 
 // SoleManyRegions fills one exact key-local authored/physical region per
 // operand. The output slice is pre-sized to the input root vector and is
@@ -28,11 +26,11 @@ type SoleManyRegions[K scalar.Key] func(key K, output []support.Mask) bool
 //
 // previous is a reconstruction predecessor: it contributes no terminal or
 // authored presence to the per-column fold. Its sparse keys join the outer
-// traversal so stale predecessor-only columns are deleted; its already-sealed
-// terminal identities are post-fold representation preferences only. Exact
-// no-ops and untouched AVL subtrees remain pointer-shared. Cancellation is
-// sampled independently of zipper exhaustion and once more before every
-// successful return.
+// traversal so stale predecessor-only columns are deleted, and its immutable
+// nodes are seeded into this Builder's unique tables so an unchanged cell
+// republishes the predecessor node. Exact no-ops and untouched AVL subtrees
+// remain pointer-shared. Cancellation is sampled independently of zipper
+// exhaustion and once more before every successful return.
 func (builder *Builder[F, K, V]) MergeSoleFactorMany(previous Root[F, K, V], inputs []Root[F, K, V], scratch *SoleScratch[K, V], regions *support.Work, combine SoleManyCombine[K, V], covers SoleManyRegions[K]) (Root[F, K, V], bool) {
 	if builder == nil || !builder.open || builder.diagram == nil || len(inputs) == 0 || scratch == nil || regions == nil || !regions.Open() || combine == nil || covers == nil || !builder.diagram.Valid(previous) {
 		return Root[F, K, V]{}, false
@@ -86,11 +84,10 @@ func (builder *Builder[F, K, V]) MergeSoleFactorMany(previous Root[F, K, V], inp
 		if len(columns) != len(inputs)+1 {
 			return Root[F, K, V]{}, false
 		}
-		prior, seeded := builder.seedSoleManyPredecessor(columns[0], scratch)
-		if !seeded {
+		if !builder.seedSoleManyPredecessor(columns[0], scratch) {
 			return Root[F, K, V]{}, false
 		}
-		value, ok := builder.mergeSoleManyColumn(key, columns[1:], scratch.manySupports, scratch, regions, combine, prior)
+		value, ok := builder.mergeSoleManyColumn(key, columns[1:], scratch.manySupports, scratch, regions, combine)
 		if !ok {
 			return Root[F, K, V]{}, false
 		}
@@ -131,33 +128,31 @@ func (builder *Builder[F, K, V]) MergeSoleFactorMany(previous Root[F, K, V], inp
 }
 
 // seedSoleManyPredecessor imports one immutable predecessor column into the
-// Builder's local terminal/decision tables and collects its distinct nonzero
-// terminal IDs. The iterative postorder walk is intentionally separate from
-// the fused tuple state: predecessor structure never affects state keys,
-// ranks, cofactors, or presence.
-func (builder *Builder[F, K, V]) seedSoleManyPredecessor(root *node[V], scratch *SoleScratch[K, V]) ([]terminal.ID[V], bool) {
+// Builder's local terminal/decision tables, so a fold cell that resolves to a
+// terminal the predecessor already carries republishes the predecessor node.
+// The iterative postorder walk is intentionally separate from the fused tuple
+// state: predecessor structure never affects state keys, ranks, cofactors, or
+// presence.
+func (builder *Builder[F, K, V]) seedSoleManyPredecessor(root *node[V], scratch *SoleScratch[K, V]) bool {
 	if builder == nil || !builder.open || scratch == nil || !scratch.live() {
-		return nil, false
+		return false
 	}
 	scratch.clearManySeed()
 	if scratch.manySeedState == nil {
 		scratch.manySeedState = make(map[*node[V]]uint8)
 	}
-	if scratch.manyPriorSeen == nil {
-		scratch.manyPriorSeen = make(map[terminal.ID[V]]struct{})
-	}
 	if root == nil {
-		return scratch.manyPriorIDs, true
+		return true
 	}
 	scratch.manySeedStack = append(scratch.manySeedStack, soleManySeedFrame[V]{node: root})
 	for len(scratch.manySeedStack) != 0 {
 		if !scratch.live() {
-			return nil, false
+			return false
 		}
 		index := len(scratch.manySeedStack) - 1
 		frame := &scratch.manySeedStack[index]
 		if frame.node == nil {
-			return nil, false
+			return false
 		}
 		switch frame.phase {
 		case 0:
@@ -165,21 +160,15 @@ func (builder *Builder[F, K, V]) seedSoleManyPredecessor(root *node[V], scratch 
 				scratch.manySeedStack = scratch.manySeedStack[:index]
 				continue
 			} else if state != 0 {
-				return nil, false
+				return false
 			}
 			scratch.manySeedState[frame.node] = 1
 			if frame.node.terminal {
 				if !builder.validTerminal(frame.node.value) {
-					return nil, false
+					return false
 				}
 				builder.terminals[frame.node.value] = frame.node
 				builder.imports[frame.node] = frame.node
-				if frame.node.value != (terminal.ID[V]{}) {
-					if _, found := scratch.manyPriorSeen[frame.node.value]; !found {
-						scratch.manyPriorSeen[frame.node.value] = struct{}{}
-						scratch.manyPriorIDs = append(scratch.manyPriorIDs, frame.node.value)
-					}
-				}
 				scratch.manySeedState[frame.node] = 2
 				scratch.manySeedStack = scratch.manySeedStack[:index]
 				continue
@@ -192,7 +181,7 @@ func (builder *Builder[F, K, V]) seedSoleManyPredecessor(root *node[V], scratch 
 			scratch.manySeedStack = append(scratch.manySeedStack, soleManySeedFrame[V]{node: frame.node.low})
 		case 1:
 			if _, lowOK := builder.imports[frame.node.low]; !lowOK {
-				return nil, false
+				return false
 			}
 			frame.phase = 2
 			scratch.manySeedStack = append(scratch.manySeedStack, soleManySeedFrame[V]{node: frame.node.high})
@@ -200,7 +189,7 @@ func (builder *Builder[F, K, V]) seedSoleManyPredecessor(root *node[V], scratch 
 			low, lowOK := builder.imports[frame.node.low]
 			high, highOK := builder.imports[frame.node.high]
 			if !lowOK || !highOK {
-				return nil, false
+				return false
 			}
 			if low == frame.node.low && high == frame.node.high {
 				builder.decisions[decisionKey[V]{atom: frame.node.atom, low: low, high: high}] = frame.node
@@ -211,13 +200,13 @@ func (builder *Builder[F, K, V]) seedSoleManyPredecessor(root *node[V], scratch 
 			scratch.manySeedState[frame.node] = 2
 			scratch.manySeedStack = scratch.manySeedStack[:index]
 		default:
-			return nil, false
+			return false
 		}
 	}
-	return scratch.manyPriorIDs, true
+	return true
 }
 
-func (builder *Builder[F, K, V]) mergeSoleManyColumn(key K, nodes []*node[V], supports []support.Mask, scratch *SoleScratch[K, V], regions *support.Work, combine SoleManyCombine[K, V], prior []terminal.ID[V]) (*node[V], bool) {
+func (builder *Builder[F, K, V]) mergeSoleManyColumn(key K, nodes []*node[V], supports []support.Mask, scratch *SoleScratch[K, V], regions *support.Work, combine SoleManyCombine[K, V]) (*node[V], bool) {
 	if len(nodes) == 0 || len(nodes) != len(supports) {
 		return nil, false
 	}
@@ -248,7 +237,7 @@ func (builder *Builder[F, K, V]) mergeSoleManyColumn(key K, nodes []*node[V], su
 		}
 		switch state.phase {
 		case 0:
-			complete, output, atom, low, high, valid := builder.analyzeSoleManyState(key, stateIndex, scratch, regions, combine, prior)
+			complete, output, atom, low, high, valid := builder.analyzeSoleManyState(key, stateIndex, scratch, regions, combine)
 			if !valid {
 				return nil, false
 			}
@@ -296,7 +285,7 @@ func (builder *Builder[F, K, V]) mergeSoleManyColumn(key K, nodes []*node[V], su
 	return result, result != nil && scratch.live()
 }
 
-func (builder *Builder[F, K, V]) analyzeSoleManyState(key K, stateIndex int, scratch *SoleScratch[K, V], regions *support.Work, combine SoleManyCombine[K, V], prior []terminal.ID[V]) (complete bool, output *node[V], atom guard.Atom, low, high int, ok bool) {
+func (builder *Builder[F, K, V]) analyzeSoleManyState(key K, stateIndex int, scratch *SoleScratch[K, V], regions *support.Work, combine SoleManyCombine[K, V]) (complete bool, output *node[V], atom guard.Atom, low, high int, ok bool) {
 	state := scratch.manyStates[stateIndex]
 	width := scratch.manyWidth
 	if width == 0 || state.offset < 0 || state.offset+width > len(scratch.manyTupleNodes) || state.offset+width > len(scratch.manyTupleSupport) {
@@ -377,7 +366,7 @@ func (builder *Builder[F, K, V]) analyzeSoleManyState(key K, stateIndex int, scr
 				}
 				scratch.manyIDs[index] = id
 			}
-			merged, accepted := combine(key, scratch.manyIDs, scratch.manyPresent, prior)
+			merged, accepted := combine(key, scratch.manyIDs, scratch.manyPresent)
 			if !accepted || !builder.validTerminal(merged) {
 				return false, nil, 0, 0, 0, false
 			}

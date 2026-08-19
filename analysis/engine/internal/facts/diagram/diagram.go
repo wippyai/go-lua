@@ -420,11 +420,14 @@ func (builder *Builder[F, K, V]) Seal(root Root[F, K, V]) (Root[F, K, V], bool) 
 	return Root[F, K, V]{diagram: builder.diagram, root: root.root, count: root.count, sealed: true}, true
 }
 
-// Discard revokes candidate roots and releases all candidate caches.
+// Discard revokes candidate roots and releases all candidate caches.  The
+// candidate terminal page is dropped with them: its values never reach the
+// arena's sealed intern generation.
 func (builder *Builder[F, K, V]) Discard() {
 	if builder == nil {
 		return
 	}
+	builder.terminalWork.Discard()
 	builder.open = false
 	builder.lease = nil
 	builder.terminals = nil
