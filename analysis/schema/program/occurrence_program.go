@@ -210,3 +210,30 @@ func (row Program) RuleOccurrenceForKeyAt(key string, ordinal int) (RuleOccurren
 	}
 	return RuleOccurrence{}, false
 }
+
+// OccurrenceOutputSemanticID publishes the output identity of one canonical
+// occurrence: the Program-issued semantic value the occurrence establishes.
+// The distinction is the owner's because only the owner holds both the closed
+// kind vocabulary and the sealed operand vector it is read against.
+//
+// A value-producing kind names its output by its own identity. A storage
+// transfer, a storage write and an index read name theirs in the operand
+// vector instead, because for those families the occurrence identity is the
+// operation, not the value it establishes. Every other kind establishes no
+// value and reports false; the vocabulary is closed, so an unrecognised kind
+// is not a producer.
+func (row Program) OccurrenceOutputSemanticID(index int) (identity.ContentID, bool) {
+	occurrence, ok := row.OccurrenceAt(index)
+	if !ok {
+		return identity.ContentID{}, false
+	}
+	switch occurrence.Kind() {
+	case OccurrenceValueSource, OccurrenceFormalEntry, OccurrenceStorageRead,
+		OccurrenceBinaryEquality, OccurrenceBinaryArithmetic, OccurrenceBinaryOrder:
+		return occurrence.ID(), true
+	case OccurrenceStorageBindTransfer, OccurrenceStorageWrite, OccurrenceIndexRead:
+		return row.OccurrenceInputID(index, occurrenceOutputOperand)
+	default:
+		return identity.ContentID{}, false
+	}
+}

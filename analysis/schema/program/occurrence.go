@@ -49,6 +49,12 @@ func (kind OccurrenceKind) Valid() bool {
 	return kind >= OccurrencePointAttachment && kind <= OccurrenceOperationPredicateRefinement
 }
 
+// occurrenceOutputOperand is the operand position at which a storage transfer,
+// a storage write and an index read name the value they establish. Those
+// families carry the operation under their own identity, so the output is read
+// from the sealed operand vector instead.
+const occurrenceOutputOperand = 2
+
 // SpanResultOccurrence reports whether the family's result identity is the
 // operator's own program-owned span rather than a semantic occurrence.
 func SpanResultOccurrence(kind OccurrenceKind) bool {
@@ -121,6 +127,9 @@ func (row Occurrence) Available() bool {
 	if row.kind == OccurrenceStorageRead && row.inputCount != 2 {
 		return false
 	}
+	if outputOperandOccurrence(row.kind) && row.inputCount <= occurrenceOutputOperand {
+		return false
+	}
 	if row.kind == OccurrencePointAttachment && (row.body.Available() || row.pointCount != 1 || row.inputCount != 1 || row.code != 0) {
 		return false
 	}
@@ -140,6 +149,12 @@ func (row Occurrence) Available() bool {
 		return false
 	}
 	return true
+}
+
+// outputOperandOccurrence reports whether the family names the value it
+// establishes in its operand vector rather than by its own identity.
+func outputOperandOccurrence(kind OccurrenceKind) bool {
+	return kind == OccurrenceStorageBindTransfer || kind == OccurrenceStorageWrite || kind == OccurrenceIndexRead
 }
 
 func (row Occurrence) ID() identity.ContentID {

@@ -421,9 +421,10 @@ func anchorBranchProducers(producers []BranchProducer, evidence []identity.Conte
 }
 
 // mountedValueProducers builds the mounted Value-to-producer inverse once per
-// artifact. Boundary owns both substitutions it reads: a rule whose result is
-// an operator span is rebound through the span relation, and every other value
-// rule through the semantic-occurrence relation.
+// artifact. Program owns which placements establish a value and under which
+// identity; Boundary owns both substitutions read against it: a rule whose
+// result is an operator span is rebound through the span relation, and every
+// other value rule through the semantic-occurrence relation.
 func mountedValueProducers(values linkboundary.Values, mount Mount) (map[identity.ContentID][]BranchProducer, bool) {
 	if mount.Snapshot == nil {
 		return nil, false
@@ -441,7 +442,10 @@ func mountedValueProducers(values linkboundary.Values, mount Mount) (map[identit
 		if !ruleOK || !ordinalOK || !occurrenceOK || !rule.Key().Available() || !occurrence.ID().Available() {
 			return nil, false
 		}
-		outputID := occurrence.ID()
+		outputID, produces := program.OccurrenceOutputSemanticID(int(ordinal))
+		if !produces {
+			continue
+		}
 		value, valueOK := values.ForMountedSemantic(mount.ModuleKey, outputID)
 		if programschema.SpanResultOccurrence(occurrence.Kind()) {
 			value, valueOK = values.ForMountedSpan(mount.ModuleKey, outputID)
