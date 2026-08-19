@@ -136,18 +136,28 @@ func (artifact *Artifact) validateSealIndexes(state *sealValidationState) Compil
 	}
 	seenCallAllocations := make(map[identity.ContentID]struct{}, targetCount)
 	seenCallBodies := make(map[identity.ContentID]struct{}, targetCount)
-	bodyByContext := make(map[identity.ContentID]BodyRow, len(artifact.bodies))
-	for _, body := range artifact.bodies {
-		if _, duplicate := bodyByContext[body.context]; duplicate {
+	bodyCount, bodiesPublished := coldCount(artifact, cold.BodyFamily())
+	if !bodiesPublished {
+		return compileFailure(CompileStageSeal, CompileRowBody, -1, -1, CompileReasonBodyUnavailable)
+	}
+	bodyByContext := make(map[identity.ContentID]cold.Body, bodyCount)
+	for bodyIndex := 0; bodyIndex < bodyCount; bodyIndex++ {
+		body, held := coldRow(artifact, cold.BodyFamily(), bodyIndex)
+		if !held {
+			return compileFailure(CompileStageSeal, CompileRowBody, bodyIndex, -1, CompileReasonBodyUnavailable)
+		}
+		if _, duplicate := bodyByContext[body.ContextID()]; duplicate {
 			return compileFailure(CompileStageSeal, CompileRowBody, -1, -1, CompileReasonBodyDuplicate)
 		}
-		bodyByContext[body.context] = body
+		bodyByContext[body.ContextID()] = body
 	}
 	for index := 0; index < targetCount; index++ {
 		target, held := cold.CallTargetFamily().At(&artifact.frozen, artifact.coldCatalog, index)
 		body, bodyOK := bodyByContext[target.Context]
+		function, functionOK := body.FunctionContextID()
+		formal, formalOK := body.CallFormalID()
 		if !held || !target.Available() || !bodyOK || !body.Callable() || body.ID() != target.Body ||
-			body.context != target.Context || body.function != target.Function || body.formal != target.Formal {
+			body.ContextID() != target.Context || !functionOK || function != target.Function || !formalOK || formal != target.Formal {
 			return compileFailure(CompileStageSeal, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
 		}
 		if _, duplicate := seenCallAllocations[target.Allocation]; duplicate {
@@ -158,7 +168,8 @@ func (artifact *Artifact) validateSealIndexes(state *sealValidationState) Compil
 		}
 		seenCallAllocations[target.Allocation], seenCallBodies[target.Context] = struct{}{}, struct{}{}
 	}
-	if state.outcomeCursor != uint32(len(artifact.outcomes)) {
+	outcomeCount, outcomesPublished := coldCount(artifact, cold.OutcomeFamily())
+	if !outcomesPublished || uint64(state.outcomeCursor) != uint64(outcomeCount) {
 		return compileFailure(CompileStageSeal, CompileRowBody, -1, -1, CompileReasonBodyRange)
 	}
 	valuesCount, valuesPublished := coldCount(artifact, cold.ValuesFamily())

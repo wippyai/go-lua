@@ -188,6 +188,120 @@ func (row Program) CallTypeArgumentAt(index int) (CallTypeArgument, bool) {
 	return CallTypeArgumentFamily().At(&row.Frozen, catalog, index)
 }
 
+// BodyCount is the sealed width of the program's lexical-body family.
+func (row Program) BodyCount() (int, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return 0, false
+	}
+	return BodyFamily().Count(&row.Frozen, catalog)
+}
+
+func (row Program) BodyAt(index int) (Body, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return Body{}, false
+	}
+	return BodyFamily().At(&row.Frozen, catalog, index)
+}
+
+func (row Program) BodyEntryFor(bodyIndex, childIndex int) (BodyEntry, bool) {
+	body, ok := row.BodyAt(bodyIndex)
+	if !ok || childIndex < 0 || childIndex >= body.EntryCount() {
+		return BodyEntry{}, false
+	}
+	offset, _, spanOK := body.EntrySpan()
+	if !spanOK {
+		return BodyEntry{}, false
+	}
+	catalog, derived := row.catalog()
+	if !derived {
+		return BodyEntry{}, false
+	}
+	child, held := BodyEntryFamily().At(&row.Frozen, catalog, int(offset)+childIndex)
+	return child, held && child.BodyID() == body.ID()
+}
+
+func (row Program) BodyRootFor(bodyIndex, childIndex int) (BodyRoot, bool) {
+	body, ok := row.BodyAt(bodyIndex)
+	if !ok || childIndex < 0 || childIndex >= body.RootCount() {
+		return BodyRoot{}, false
+	}
+	offset, _, spanOK := body.RootSpan()
+	if !spanOK {
+		return BodyRoot{}, false
+	}
+	catalog, derived := row.catalog()
+	if !derived {
+		return BodyRoot{}, false
+	}
+	child, held := BodyRootFamily().At(&row.Frozen, catalog, int(offset)+childIndex)
+	return child, held && child.BodyID() == body.ID()
+}
+
+func (row Program) OutcomeCount() (int, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return 0, false
+	}
+	return OutcomeFamily().Count(&row.Frozen, catalog)
+}
+
+func (row Program) OutcomeAt(index int) (Outcome, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return Outcome{}, false
+	}
+	return OutcomeFamily().At(&row.Frozen, catalog, index)
+}
+
+func (row Program) BodyOutcomeFor(bodyIndex, childIndex int) (Outcome, bool) {
+	body, ok := row.BodyAt(bodyIndex)
+	if !ok || childIndex < 0 || childIndex >= body.OutcomeCount() {
+		return Outcome{}, false
+	}
+	offset, _, spanOK := body.OutcomeSpan()
+	if !spanOK {
+		return Outcome{}, false
+	}
+	outcome, held := row.OutcomeAt(int(offset) + childIndex)
+	return outcome, held && outcome.BodyID() == body.ID()
+}
+
+func (row Program) OutcomeReturnValueFor(outcomeIndex, childIndex int) (OutcomeReturnValue, bool) {
+	outcome, ok := row.OutcomeAt(outcomeIndex)
+	if !ok || childIndex < 0 || childIndex >= outcome.ReturnValueCount() {
+		return OutcomeReturnValue{}, false
+	}
+	offset, _, spanOK := outcome.ReturnValueSpan()
+	if !spanOK {
+		return OutcomeReturnValue{}, false
+	}
+	catalog, derived := row.catalog()
+	if !derived {
+		return OutcomeReturnValue{}, false
+	}
+	child, held := OutcomeReturnValueFamily().At(&row.Frozen, catalog, int(offset)+childIndex)
+	return child, held && child.OutcomeID() == outcome.ID()
+}
+
+func (row Program) OutcomePointFor(outcomeIndex, childIndex int) (OutcomePoint, bool) {
+	outcome, ok := row.OutcomeAt(outcomeIndex)
+	if !ok || childIndex < 0 || childIndex >= outcome.PointCount() {
+		return OutcomePoint{}, false
+	}
+	offset, _, spanOK := outcome.PointSpan()
+	if !spanOK {
+		return OutcomePoint{}, false
+	}
+	catalog, derived := row.catalog()
+	if !derived {
+		return OutcomePoint{}, false
+	}
+	child, held := OutcomePointFamily().At(&row.Frozen, catalog, int(offset)+childIndex)
+	return child, held && child.OutcomeID() == outcome.ID()
+}
+
 // ExactScalarSummaryCount is the sealed width of this program's exact scalar
 // summary family.
 func (row Program) ExactScalarSummaryCount() (int, bool) {

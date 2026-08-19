@@ -261,9 +261,21 @@ return shared_template_probe(43)`
 		t.Fatal("independent Links did not share one function declaration authority")
 	}
 	programCaptures, programVarargs := 0, 0
+	bodyCount, bodiesPublished := leftMount.program.BodyCount()
+	if !bodiesPublished {
+		t.Fatal("shared cold Body family unavailable")
+	}
 	for index := 0; index < leftMount.snapshot.FunctionBoundaryCount(); index++ {
 		reusable, reusableOK := leftMount.snapshot.FunctionBoundaryAt(index)
-		if !reusableOK || !reusable.Available() || !reusable.ID().Available() || !reusable.BodyID().Available() || !reusable.EntryID().Available() || reusable.OutcomeCount() == 0 {
+		bodyOutcomes := 0
+		for bodyIndex := 0; bodyIndex < bodyCount; bodyIndex++ {
+			body, bodyOK := leftMount.program.BodyAt(bodyIndex)
+			if bodyOK && body.ID() == reusable.BodyID() {
+				bodyOutcomes = body.OutcomeCount()
+				break
+			}
+		}
+		if !reusableOK || !reusable.Available() || !reusable.ID().Available() || !reusable.BodyID().Available() || !reusable.EntryID().Available() || bodyOutcomes == 0 {
 			t.Fatalf("function interface[%d] is incomplete", index)
 		}
 		for position := 0; position < reusable.FormalCount(); position++ {

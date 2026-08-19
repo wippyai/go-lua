@@ -108,16 +108,20 @@ func (algebra *Algebra) buildTargets(mounts []MountedArtifact, boundary *linkbou
 			return false
 		}
 		seenMounts[mount.ModuleKey] = struct{}{}
-		bodies := make(map[identity.ContentID]ingress.BodyTransport, mount.Snapshot.BodyTransportCount())
-		for index := 0; index < mount.Snapshot.BodyTransportCount(); index++ {
-			body, ok := mount.Snapshot.BodyTransportAt(index)
-			if !ok || !body.BodyID().Available() || !body.ContextID().Available() {
+		bodyCount, bodiesPublished := mount.Program.BodyCount()
+		if !bodiesPublished {
+			return false
+		}
+		bodies := make(map[identity.ContentID]cold.Body, bodyCount)
+		for index := 0; index < bodyCount; index++ {
+			body, ok := mount.Program.BodyAt(index)
+			if !ok || !body.ID().Available() || !body.ContextID().Available() {
 				return false
 			}
-			if _, duplicate := bodies[body.BodyID()]; duplicate {
+			if _, duplicate := bodies[body.ID()]; duplicate {
 				return false
 			}
-			bodies[body.BodyID()] = body
+			bodies[body.ID()] = body
 		}
 		targetCount, targetsPublished := mount.CallTargetCount()
 		if !targetsPublished {
@@ -126,8 +130,9 @@ func (algebra *Algebra) buildTargets(mounts []MountedArtifact, boundary *linkbou
 		for index := 0; index < targetCount; index++ {
 			target, ok := mount.CallTargetAt(index)
 			body, bodyOK := bodies[target.Body]
-			function, formal := body.FunctionID(), body.CallFormalID()
-			if !ok || !target.Available() || !bodyOK || !body.Callable() || !function.Available() || !formal.Available() || target.Context != body.ContextID() || target.Function != function || target.Formal != formal {
+			function, functionOK := body.FunctionContextID()
+			formal, formalOK := body.CallFormalID()
+			if !ok || !target.Available() || !bodyOK || !body.Callable() || !functionOK || !formalOK || target.Context != body.ContextID() || target.Function != function || target.Formal != formal {
 				return false
 			}
 			receipts = append(receipts, bodyTargetReceipt{moduleKey: mount.ModuleKey, artifactID: mount.ArtifactID, programID: programID, allocationID: target.Allocation, bodyPath: target.Body, bodyContext: target.Context, functionContext: target.Function, formalID: target.Formal})

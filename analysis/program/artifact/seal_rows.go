@@ -10,58 +10,77 @@ func (artifact *Artifact) validateSealRows(state *sealValidationState) CompileFa
 	if artifact == nil || state == nil {
 		return compileFailure(CompileStageSeal, CompileRowAuthority, -1, -1, CompileReasonArtifactIdentity)
 	}
-	returnCursor := uint32(0)
-	for index, row := range artifact.outcomes {
-		if !row.Available() {
+	outcomeCount, outcomesPublished := coldCount(artifact, cold.OutcomeFamily())
+	returnValueCount, returnsPublished := coldCount(artifact, cold.OutcomeReturnValueFamily())
+	outcomePointCount, pointsPublished := coldCount(artifact, cold.OutcomePointFamily())
+	if !outcomesPublished || !returnsPublished || !pointsPublished {
+		return compileFailure(CompileStageSeal, CompileRowOutcome, -1, -1, CompileReasonOutcomeUnavailable)
+	}
+	returnCursor, pointCursor := uint32(0), uint32(0)
+	for index := 0; index < outcomeCount; index++ {
+		row, held := coldRow(artifact, cold.OutcomeFamily(), index)
+		returnOffset, returnWidth, returnSpanOK := row.ReturnValueSpan()
+		pointOffset, pointWidth, pointSpanOK := row.PointSpan()
+		if !held || !returnSpanOK || !pointSpanOK {
 			return compileFailure(CompileStageSeal, CompileRowOutcome, index, -1, CompileReasonOutcomeUnavailable)
 		}
-		if _, exists := state.bodyRows[row.body]; !exists {
+		if _, exists := state.bodyRows[row.BodyID()]; !exists {
 			return compileFailure(CompileStageSeal, CompileRowOutcome, index, -1, CompileReasonOutcomeBody)
 		}
-		if _, duplicate := state.outcomeRows[row.id]; duplicate {
+		if _, duplicate := state.outcomeRows[row.ID()]; duplicate {
 			return compileFailure(CompileStageSeal, CompileRowOutcome, index, -1, CompileReasonOutcomeDuplicate)
 		}
-		outcomePoints := make(map[identity.ContentID]struct{}, len(row.points))
-		for pointIndex, point := range row.points {
-			if !point.Available() {
-				return compileFailure(CompileStageSeal, CompileRowOutcome, index, pointIndex, CompileReasonOutcomeUnavailable)
+		if pointOffset != pointCursor || uint64(pointOffset)+uint64(pointWidth) > uint64(outcomePointCount) {
+			return compileFailure(CompileStageSeal, CompileRowOutcome, index, -1, CompileReasonOutcomeRange)
+		}
+		outcomePoints := make(map[identity.ContentID]struct{}, pointWidth)
+		for pointIndex := uint32(0); pointIndex < pointWidth; pointIndex++ {
+			child, childHeld := coldRow(artifact, cold.OutcomePointFamily(), int(pointOffset+pointIndex))
+			point := child.PointID()
+			if !childHeld || child.OutcomeID() != row.ID() {
+				return compileFailure(CompileStageSeal, CompileRowOutcome, index, int(pointIndex), CompileReasonOutcomeUnavailable)
 			}
 			if _, known := state.pointRows[point]; !known {
-				return compileFailure(CompileStageSeal, CompileRowOutcome, index, pointIndex, CompileReasonOutcomeUnavailable)
+				return compileFailure(CompileStageSeal, CompileRowOutcome, index, int(pointIndex), CompileReasonOutcomeUnavailable)
 			}
 			if _, duplicate := outcomePoints[point]; duplicate {
-				return compileFailure(CompileStageSeal, CompileRowOutcome, index, pointIndex, CompileReasonOutcomeUnavailable)
+				return compileFailure(CompileStageSeal, CompileRowOutcome, index, int(pointIndex), CompileReasonOutcomeUnavailable)
 			}
 			outcomePoints[point] = struct{}{}
 		}
-		if row.returnStart != returnCursor || uint64(row.returnEnd) > uint64(len(artifact.returnValues)) {
+		if returnOffset != returnCursor || uint64(returnOffset)+uint64(returnWidth) > uint64(returnValueCount) {
 			return compileFailure(CompileStageSeal, CompileRowOutcome, index, -1, CompileReasonOutcomeRange)
 		}
-		for valueIndex := row.returnStart; valueIndex < row.returnEnd; valueIndex++ {
-			value := artifact.returnValues[valueIndex]
-			if !value.Available() {
-				return compileFailure(CompileStageSeal, CompileRowReturnValue, index, int(valueIndex-row.returnStart), CompileReasonReturnValueUnavailable)
+		for valueIndex := uint32(0); valueIndex < returnWidth; valueIndex++ {
+			value, valueHeld := coldRow(artifact, cold.OutcomeReturnValueFamily(), int(returnOffset+valueIndex))
+			if !valueHeld || value.OutcomeID() != row.ID() {
+				return compileFailure(CompileStageSeal, CompileRowReturnValue, index, int(valueIndex), CompileReasonReturnValueUnavailable)
 			}
-			if _, exists := state.valueRows[value.id]; !exists {
-				return compileFailure(CompileStageSeal, CompileRowReturnValue, index, int(valueIndex-row.returnStart), CompileReasonReturnValueReference)
+			if _, exists := state.valueRows[value.ValuesID()]; !exists {
+				return compileFailure(CompileStageSeal, CompileRowReturnValue, index, int(valueIndex), CompileReasonReturnValueReference)
 			}
 		}
-		state.outcomeRows[row.id] = index
-		returnCursor = row.returnEnd
+		state.outcomeRows[row.ID()] = index
+		returnCursor += returnWidth
+		pointCursor += pointWidth
 	}
-	if returnCursor != uint32(len(artifact.returnValues)) {
+	if int(returnCursor) != returnValueCount || int(pointCursor) != outcomePointCount {
 		return compileFailure(CompileStageSeal, CompileRowReturnValue, -1, -1, CompileReasonOutcomeRange)
 	}
-	for index, row := range artifact.outcomes {
-		if !row.hasPropagation {
+	for index := 0; index < outcomeCount; index++ {
+		row, _ := coldRow(artifact, cold.OutcomeFamily(), index)
+		propagation, propagated := row.PropagationID()
+		if !propagated {
 			continue
 		}
-		nextIndex, exists := state.outcomeRows[row.propagation]
+		nextIndex, exists := state.outcomeRows[propagation]
 		if !exists || nextIndex == index {
 			return compileFailure(CompileStageSeal, CompileRowOutcome, index, -1, CompileReasonOutcomeReference)
 		}
-		next := artifact.outcomes[nextIndex]
-		if next.kind != row.kind || next.hasTarget != row.hasTarget || next.target != row.target {
+		next, nextHeld := coldRow(artifact, cold.OutcomeFamily(), nextIndex)
+		target, hasTarget := row.TargetID()
+		nextTarget, nextHasTarget := next.TargetID()
+		if !nextHeld || next.Kind() != row.Kind() || nextHasTarget != hasTarget || nextTarget != target {
 			return compileFailure(CompileStageSeal, CompileRowOutcome, index, -1, CompileReasonOutcomePropagation)
 		}
 	}

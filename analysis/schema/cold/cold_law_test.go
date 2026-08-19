@@ -185,6 +185,12 @@ func TestColdFamilySlotsAndNamesAreDistinct(t *testing.T) {
 		{RegionFamily().slot, RegionFamily().name},
 		{RegionMemberFamily().slot, RegionMemberFamily().name},
 		{WTOEventFamily().slot, WTOEventFamily().name},
+		{BodyFamily().slot, BodyFamily().name},
+		{BodyEntryFamily().slot, BodyEntryFamily().name},
+		{BodyRootFamily().slot, BodyRootFamily().name},
+		{OutcomeFamily().slot, OutcomeFamily().name},
+		{OutcomeReturnValueFamily().slot, OutcomeReturnValueFamily().name},
+		{OutcomePointFamily().slot, OutcomePointFamily().name},
 	}
 	slots := make(map[uint32]string, len(declared))
 	names := make(map[string]uint32, len(declared))
@@ -221,5 +227,8 @@ func TestColdPublicationSealsEveryDeclaredFamily(t *testing.T) {
 	}
 	if _, published := WTOEventFamily().Count(&frozen, catalog); !published {
 		t.Fatal("event family is not published")
+	}
+	if _, published := OutcomePointFamily().Count(&frozen, catalog); !published {
+		t.Fatal("outcome point family is not published")
 	}
 }

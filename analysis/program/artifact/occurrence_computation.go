@@ -1,17 +1,20 @@
 package artifact
 
+import "github.com/wippyai/go-lua/analysis/schema/cold"
+
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
-func (compiler *compiler) returnValueAt(outcome OutcomeRow, index int) (ReturnValue, bool) {
-	position := uint64(outcome.returnStart) + uint64(index)
-	if index < 0 || position >= uint64(len(compiler.returnValues)) {
-		return ReturnValue{}, false
+func (compiler *compiler) returnValueAt(outcome cold.Outcome, index int) (cold.OutcomeReturnValue, bool) {
+	offset, count, ok := outcome.ReturnValueSpan()
+	if !ok || index < 0 || uint64(index) >= uint64(count) || uint64(offset)+uint64(index) >= uint64(len(compiler.outcomeReturnValues)) {
+		return cold.OutcomeReturnValue{}, false
 	}
-	return compiler.returnValues[position], true
+	value := compiler.outcomeReturnValues[int(offset)+index]
+	return value, value.Available() && value.OutcomeID() == outcome.ID()
 }
 
 func (compiler *compiler) copyValueSources() CompileFailure {
@@ -66,10 +69,15 @@ func (compiler *compiler) copyFormalEntrySources() CompileFailure {
 			if body.ID() != boundary.BodyID() {
 				continue
 			}
-			for pointIndex := 0; pointIndex < body.EntryPointCount(); pointIndex++ {
-				point, pointOK := body.EntryPointAt(pointIndex)
-				if !pointOK {
-					return compileFailure(CompileStageOccurrences, CompileRowOccurrence, boundaryIndex, pointIndex, CompileReasonOccurrenceValueSourcePoints)
+			offset, count, spanOK := body.EntrySpan()
+			if !spanOK || uint64(offset)+uint64(count) > uint64(len(compiler.bodyEntries)) {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, boundaryIndex, -1, CompileReasonOccurrenceValueSourcePoints)
+			}
+			for pointIndex := uint32(0); pointIndex < count; pointIndex++ {
+				entry := compiler.bodyEntries[offset+pointIndex]
+				point := entry.PointID()
+				if !entry.Available() || entry.BodyID() != body.ID() || !point.Available() {
+					return compileFailure(CompileStageOccurrences, CompileRowOccurrence, boundaryIndex, int(pointIndex), CompileReasonOccurrenceValueSourcePoints)
 				}
 				points = append(points, point)
 			}

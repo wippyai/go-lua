@@ -62,11 +62,10 @@ type Snapshot struct {
 	vocabulary      structure.Table
 	transfers       []LocalTransfer
 	placements      []RulePlacement
-	bodies          []BodyTransport
+	bodyExits       [][]identity.ContentID
 	boundaries      []FunctionBoundary
 	occurrences     []Occurrence
 	observations    []DiagnosticObservation
-	outcomes        []Outcome
 	staticTypeNodes []StaticTypeNode
 	staticInputs    []StaticInput
 }
@@ -266,13 +265,22 @@ func (snapshot *Snapshot) BodyTransportCount() int {
 	if !snapshot.Available() {
 		return 0
 	}
-	return len(snapshot.bodies)
+	count, published := coldCount(snapshot.coldView(), cold.BodyFamily())
+	if !published || count != len(snapshot.bodyExits) {
+		return 0
+	}
+	return count
 }
 func (snapshot *Snapshot) BodyTransportAt(index int) (BodyTransport, bool) {
-	if !snapshot.Available() || index < 0 || index >= len(snapshot.bodies) {
+	if !snapshot.Available() || index < 0 || index >= len(snapshot.bodyExits) {
 		return BodyTransport{}, false
 	}
-	return snapshot.bodies[index], true
+	view := snapshot.coldView()
+	body, held := coldRow(view, cold.BodyFamily(), index)
+	if !held {
+		return BodyTransport{}, false
+	}
+	return BodyTransport{body: body, view: view, exits: snapshot.bodyExits[index]}, true
 }
 func (snapshot *Snapshot) FunctionBoundaryCount() int {
 	if !snapshot.Available() {
@@ -498,25 +506,6 @@ func (snapshot *Snapshot) ValuesAt(index int) (Values, bool) {
 	}
 	return Values{row: row, view: view}, true
 }
-func (snapshot *Snapshot) OutcomeCount() int {
-	if !snapshot.Available() {
-		return 0
-	}
-	return len(snapshot.outcomes)
-}
-func (snapshot *Snapshot) OutcomeAt(index int) (Outcome, bool) {
-	if !snapshot.Available() || index < 0 || index >= len(snapshot.outcomes) {
-		return Outcome{}, false
-	}
-	return snapshot.outcomes[index], true
-}
-func (snapshot *Snapshot) OutcomeReturnValueAt(outcomeIndex, valueIndex int) (ValuesMember, bool) {
-	row, ok := snapshot.OutcomeAt(outcomeIndex)
-	if !ok || valueIndex < 0 || valueIndex >= len(row.returns) {
-		return ValuesMember{}, false
-	}
-	return newValuesMember(row.returns[valueIndex])
-}
 func (snapshot *Snapshot) DiagnosticObservationCount() int {
 	if !snapshot.Available() {
 		return 0
@@ -599,10 +588,6 @@ func (snapshot *Snapshot) OccurrenceKindAt(kind uint8, index int) (Occurrence, b
 		seen++
 	}
 	return Occurrence{}, false
-}
-func (snapshot *Snapshot) BodyCount() int { return snapshot.BodyTransportCount() }
-func (snapshot *Snapshot) BodyAt(index int) (BodyTransport, bool) {
-	return snapshot.BodyTransportAt(index)
 }
 func (snapshot *Snapshot) FunctionBoundaryForBody(bodyID identity.ContentID) (FunctionBoundary, bool) {
 	if !snapshot.Available() || !bodyID.Available() {
@@ -776,49 +761,25 @@ func (row RulePlacement) OutputSemanticID() (identity.ContentID, bool) {
 func (row RulePlacement) SpanResult() bool { return row.spanResult }
 func (row RulePlacement) InputKind() uint8 { return row.inputKind }
 
-type BodyRoot struct {
-	id     identity.ContentID
-	family keyspace.Family
-}
-
-func (row BodyRoot) Available() bool {
-	return row.id.Available() && row.family != keyspace.FamilyInvalid
-}
-func (row BodyRoot) ID() identity.ContentID {
-	if !row.Available() {
-		return identity.ContentID{}
-	}
-	return row.id
-}
-func (row BodyRoot) Family() keyspace.Family {
-	if !row.Available() {
-		return keyspace.FamilyInvalid
-	}
-	return row.family
-}
-
+// BodyTransport is the ingress-specific engine template projection for one
+// body: its canonical entry memberships joined with the vocabulary-filtered
+// exit memberships computed during Lower. The Body row and entries are read
+// from the cold publication; only the derived exit set is retained here.
 type BodyTransport struct {
-	id, context, entry identity.ContentID
-	function, formal   identity.ContentID
-	callable           bool
-	entries            []identity.ContentID
-	exits              []identity.ContentID
-	roots              []BodyRoot
+	body  cold.Body
+	view  coldView
+	exits []identity.ContentID
 }
 
-func (row BodyTransport) ID() identity.ContentID              { return row.id }
-func (row BodyTransport) BodyID() identity.ContentID          { return row.id }
-func (row BodyTransport) ContextID() identity.ContentID       { return row.context }
-func (row BodyTransport) SemanticEntryID() identity.ContentID { return row.entry }
-func (row BodyTransport) Callable() bool                      { return row.callable }
-func (row BodyTransport) FunctionID() identity.ContentID      { return row.function }
-func (row BodyTransport) CallFormalID() identity.ContentID    { return row.formal }
-func (row BodyTransport) EntryCount() int                     { return len(row.entries) }
+func (row BodyTransport) BodyID() identity.ContentID { return row.body.ID() }
+func (row BodyTransport) EntryCount() int            { return row.body.EntryCount() }
 func (row BodyTransport) EntryAt(index int) (identity.ContentID, bool) {
-	if index < 0 || index >= len(row.entries) {
+	offset, count, ok := row.body.EntrySpan()
+	if !ok || index < 0 || uint64(index) >= uint64(count) {
 		return identity.ContentID{}, false
 	}
-	return row.entries[index], true
+	entry, held := coldRow(row.view, cold.BodyEntryFamily(), int(offset)+index)
+	return entry.PointID(), held && entry.BodyID() == row.body.ID()
 }
 func (row BodyTransport) ExitCount() int { return len(row.exits) }
 func (row BodyTransport) ExitAt(index int) (identity.ContentID, bool) {
@@ -826,13 +787,6 @@ func (row BodyTransport) ExitAt(index int) (identity.ContentID, bool) {
 		return identity.ContentID{}, false
 	}
 	return row.exits[index], true
-}
-func (row BodyTransport) RootCount() int { return len(row.roots) }
-func (row BodyTransport) RootAt(index int) (BodyRoot, bool) {
-	if index < 0 || index >= len(row.roots) {
-		return BodyRoot{}, false
-	}
-	return row.roots[index], row.roots[index].Available()
 }
 
 type FunctionFormal struct {
@@ -877,12 +831,11 @@ type FunctionBoundary struct {
 	vararg                               FunctionVararg
 	hasVararg                            bool
 	captures                             []FunctionCapture
-	outcomes                             []identity.ContentID
 }
 
 func (row FunctionBoundary) Available() bool {
 	if !row.id.Available() || !row.body.Available() || !row.bodyContext.Available() ||
-		!row.entry.Available() || !row.formal.Available() || row.hasVararg != row.vararg.Available() || len(row.outcomes) == 0 {
+		!row.entry.Available() || !row.formal.Available() || row.hasVararg != row.vararg.Available() {
 		return false
 	}
 	for _, port := range row.formals {
@@ -892,11 +845,6 @@ func (row FunctionBoundary) Available() bool {
 	}
 	for _, capture := range row.captures {
 		if !capture.Available() || capture.innerBody != row.body {
-			return false
-		}
-	}
-	for _, outcome := range row.outcomes {
-		if !outcome.Available() {
 			return false
 		}
 	}
@@ -1356,17 +1304,6 @@ func (row DiagnosticObservation) TypeConformance() (diagnosticConformance, bool)
 	return row.conform, true
 }
 
-type Outcome struct {
-	id, body identity.ContentID
-	kind     uint8
-	returns  []identity.ContentID
-}
-
-func (row Outcome) ID() identity.ContentID     { return row.id }
-func (row Outcome) BodyID() identity.ContentID { return row.body }
-func (row Outcome) Kind() uint8                { return row.kind }
-func (row Outcome) ReturnValueCount() int      { return len(row.returns) }
-
 func (row FunctionBoundary) ID() identity.ContentID            { return row.id }
 func (row FunctionBoundary) BodyID() identity.ContentID        { return row.body }
 func (row FunctionBoundary) BodyContextID() identity.ContentID { return row.bodyContext }
@@ -1388,13 +1325,6 @@ func (row FunctionBoundary) CaptureAt(index int) (FunctionCapture, bool) {
 		return FunctionCapture{}, false
 	}
 	return row.captures[index], true
-}
-func (row FunctionBoundary) OutcomeCount() int { return len(row.outcomes) }
-func (row FunctionBoundary) OutcomeAt(index int) (identity.ContentID, bool) {
-	if index < 0 || index >= len(row.outcomes) {
-		return identity.ContentID{}, false
-	}
-	return row.outcomes[index], true
 }
 
 func copyIDs(count int, at func(int) (identity.ContentID, bool)) ([]identity.ContentID, bool) {
@@ -1433,25 +1363,34 @@ func projectEvent(vocabulary structure.Table, ordinal uint16) (EventKind, bool) 
 	return kind, kind != EventInvalid
 }
 
-func acceptedOutcome(vocabulary structure.Table, kind programartifact.OutcomeKind) bool {
+func acceptedOutcome(vocabulary structure.Table, kind cold.OutcomeKind) bool {
 	member, ok := vocabulary.At(structure.CategoryOutcome, uint16(kind))
 	return ok && member.Accepted()
 }
 
-func lowerBodyExits(artifact *programartifact.Artifact, vocabulary structure.Table, bodyIndex int, body programartifact.BodyRow) ([]identity.ContentID, bool) {
+func lowerBodyExits(view coldView, vocabulary structure.Table, body cold.Body) ([]identity.ContentID, bool) {
 	seen := make(map[identity.ContentID]struct{})
 	var exits []identity.ContentID
-	for outcomeIndex := 0; outcomeIndex < body.OutcomeCount(); outcomeIndex++ {
-		outcome, ok := artifact.BodyOutcomeAt(bodyIndex, outcomeIndex)
-		if !ok {
+	outcomeOffset, outcomeCount, spanOK := body.OutcomeSpan()
+	if !spanOK {
+		return nil, false
+	}
+	for outcomeIndex := uint32(0); outcomeIndex < outcomeCount; outcomeIndex++ {
+		outcome, ok := coldRow(view, cold.OutcomeFamily(), int(outcomeOffset+outcomeIndex))
+		if !ok || outcome.BodyID() != body.ID() {
 			return nil, false
 		}
 		if !acceptedOutcome(vocabulary, outcome.Kind()) {
 			continue
 		}
-		for pointIndex := 0; pointIndex < outcome.PointCount(); pointIndex++ {
-			point, ok := outcome.PointAt(pointIndex)
-			if !ok || !point.Available() {
+		pointOffset, pointCount, pointsOK := outcome.PointSpan()
+		if !pointsOK {
+			return nil, false
+		}
+		for pointIndex := uint32(0); pointIndex < pointCount; pointIndex++ {
+			child, childOK := coldRow(view, cold.OutcomePointFamily(), int(pointOffset+pointIndex))
+			point := child.PointID()
+			if !childOK || child.OutcomeID() != outcome.ID() || !point.Available() {
 				return nil, false
 			}
 			if _, duplicate := seen[point]; duplicate {
@@ -1550,34 +1489,21 @@ func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Sna
 			inputKind:  uint8(row.InputKind()),
 		})
 	}
-	snapshot.bodies = make([]BodyTransport, 0, artifact.BodyCount())
-	bodyIndexByID := make(map[identity.ContentID]int, artifact.BodyCount())
-	for index := 0; index < artifact.BodyCount(); index++ {
-		row, ok := artifact.BodyAt(index)
+	bodyCount, bodiesPublished := coldCount(snapshot.coldView(), cold.BodyFamily())
+	if !bodiesPublished {
+		return nil, false
+	}
+	snapshot.bodyExits = make([][]identity.ContentID, 0, bodyCount)
+	for index := 0; index < bodyCount; index++ {
+		row, ok := coldRow(snapshot.coldView(), cold.BodyFamily(), index)
 		if !ok {
 			return nil, false
 		}
-		bodyIndexByID[row.ID()] = index
-		entries, entriesOK := copyIDs(row.EntryPointCount(), row.EntryPointAt)
-		exits, exitsOK := lowerBodyExits(artifact, vocabulary, index, row)
-		if !entriesOK || !exitsOK {
+		exits, exitsOK := lowerBodyExits(snapshot.coldView(), vocabulary, row)
+		if !exitsOK {
 			return nil, false
 		}
-		roots := make([]BodyRoot, 0, row.RootCount())
-		for rootIndex := 0; rootIndex < row.RootCount(); rootIndex++ {
-			root, rootOK := row.RootAt(rootIndex)
-			if !rootOK || !root.Available() {
-				return nil, false
-			}
-			roots = append(roots, BodyRoot{id: root.ID(), family: root.Family()})
-		}
-		function, _ := row.FunctionContextID()
-		formal, _ := row.CallFormalID()
-		snapshot.bodies = append(snapshot.bodies, BodyTransport{
-			id: row.ID(), context: row.ContextID(), entry: row.EntryID(),
-			function: function, formal: formal, callable: row.Callable(),
-			entries: entries, exits: exits, roots: roots,
-		})
+		snapshot.bodyExits = append(snapshot.bodyExits, exits)
 	}
 	snapshot.boundaries = make([]FunctionBoundary, 0, artifact.FunctionBoundaryCount())
 	for index := 0; index < artifact.FunctionBoundaryCount(); index++ {
@@ -1604,19 +1530,6 @@ func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Sna
 				innerBody: capture.InnerBodyID(), outerBody: capture.OuterBodyID(),
 			})
 		}
-		bodyIndex, bodyKnown := bodyIndexByID[row.BodyID()]
-		bodyRow, bodyOK := artifact.BodyAt(bodyIndex)
-		if !bodyKnown || !bodyOK {
-			return nil, false
-		}
-		outcomes := make([]identity.ContentID, 0, bodyRow.OutcomeCount())
-		for outcomeIndex := 0; outcomeIndex < bodyRow.OutcomeCount(); outcomeIndex++ {
-			outcome, outcomeOK := artifact.BodyOutcomeAt(bodyIndex, outcomeIndex)
-			if !outcomeOK || !outcome.Available() {
-				return nil, false
-			}
-			outcomes = append(outcomes, outcome.ID())
-		}
 		vararg, hasVararg := row.Vararg()
 		copiedVararg := FunctionVararg{}
 		if hasVararg {
@@ -1625,7 +1538,7 @@ func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Sna
 		snapshot.boundaries = append(snapshot.boundaries, FunctionBoundary{
 			id: row.ID(), body: row.BodyID(), bodyContext: row.BodyContextID(),
 			entry: row.EntryID(), formal: row.CallFormalID(), formals: ports,
-			vararg: copiedVararg, hasVararg: hasVararg, captures: captures, outcomes: outcomes,
+			vararg: copiedVararg, hasVararg: hasVararg, captures: captures,
 		})
 	}
 	// Every published call must name operand and argument spans the two child
@@ -1695,22 +1608,6 @@ func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Sna
 			operandBody: row.OperandBodyPathID(), literal: row.OperandLiteral(),
 			kind: uint8(row.Kind()), operandKind: uint8(row.OperandKind()), cursor: row.Cursor(),
 		})
-	}
-	snapshot.outcomes = make([]Outcome, 0, artifact.OutcomeCount())
-	for index := 0; index < artifact.OutcomeCount(); index++ {
-		row, ok := artifact.OutcomeAt(index)
-		if !ok {
-			return nil, false
-		}
-		returns := make([]identity.ContentID, 0, row.ReturnValueCount())
-		for valueIndex := 0; valueIndex < row.ReturnValueCount(); valueIndex++ {
-			value, valueOK := artifact.OutcomeReturnValueAt(index, valueIndex)
-			if !valueOK {
-				return nil, false
-			}
-			returns = append(returns, value.ID())
-		}
-		snapshot.outcomes = append(snapshot.outcomes, Outcome{id: row.ID(), body: row.BodyID(), kind: uint8(row.Kind()), returns: returns})
 	}
 	snapshot.observations = make([]DiagnosticObservation, 0, artifact.DiagnosticObservationCount())
 	for index := 0; index < artifact.DiagnosticObservationCount(); index++ {

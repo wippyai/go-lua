@@ -47,9 +47,15 @@ func TestProgramArtifactOwnsCanonicalFunctionBoundaryPorts(t *testing.T) {
 	if left.ID() != right.ID() || left.FunctionBoundaryCount() != right.FunctionBoundaryCount() || left.FunctionBoundaryCount() < 2 {
 		t.Fatalf("replayed function interfaces = id %v/%v count %d/%d", left.ID(), right.ID(), left.FunctionBoundaryCount(), right.FunctionBoundaryCount())
 	}
-	bodyRows := make(map[identity.ContentID]programartifact.BodyRow, left.BodyCount())
-	for index := 0; index < left.BodyCount(); index++ {
-		row, ok := left.BodyAt(index)
+	leftProgram, rightProgram := summaryProgram(t, left), summaryProgram(t, right)
+	bodyCount, bodiesPublished := leftProgram.BodyCount()
+	replayedBodyCount, replayedBodiesPublished := rightProgram.BodyCount()
+	if !bodiesPublished || !replayedBodiesPublished || bodyCount != replayedBodyCount {
+		t.Fatal("cold Body families unavailable")
+	}
+	bodyRows := make(map[identity.ContentID]cold.Body, bodyCount)
+	for index := 0; index < bodyCount; index++ {
+		row, ok := leftProgram.BodyAt(index)
 		if !ok {
 			t.Fatalf("BodyAt(%d)", index)
 		}
@@ -105,8 +111,8 @@ func TestProgramArtifactOwnsCanonicalFunctionBoundaryPorts(t *testing.T) {
 			captureRows++
 		}
 		bodyIndex := -1
-		for candidate := 0; candidate < left.BodyCount(); candidate++ {
-			row, _ := left.BodyAt(candidate)
+		for candidate := 0; candidate < bodyCount; candidate++ {
+			row, _ := leftProgram.BodyAt(candidate)
 			if row.ID() == body.ID() {
 				bodyIndex = candidate
 				break
@@ -116,8 +122,8 @@ func TestProgramArtifactOwnsCanonicalFunctionBoundaryPorts(t *testing.T) {
 			t.Fatalf("function boundary[%d] Body ordinal unavailable", index)
 		}
 		for position := 0; position < body.OutcomeCount(); position++ {
-			outcome, bodyOutcomeOK := left.BodyOutcomeAt(bodyIndex, position)
-			replayedOutcome, replayedOutcomeOK := right.BodyOutcomeAt(bodyIndex, position)
+			outcome, bodyOutcomeOK := leftProgram.BodyOutcomeFor(bodyIndex, position)
+			replayedOutcome, replayedOutcomeOK := rightProgram.BodyOutcomeFor(bodyIndex, position)
 			if !bodyOutcomeOK || !replayedOutcomeOK || outcome.ID() != replayedOutcome.ID() {
 				t.Fatalf("function boundary[%d] outcome[%d] lost Body order", index, position)
 			}

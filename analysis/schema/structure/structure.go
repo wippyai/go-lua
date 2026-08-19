@@ -8,7 +8,7 @@
 // expose scalar projections of that owner. The event catalog is
 // programartifact.WTOEventKind,
 // ingress.EventKind, and the solver schedule's own EventKind; the outcome
-// catalog is programartifact.OutcomeKind, of which ingress accepts a subset.
+// catalog is cold.OutcomeKind, of which ingress accepts a subset.
 // Event and outcome projections have to agree for the analyzer to be correct,
 // while every arm projection must preserve Flow's ordinal. A member added to
 // one spelling and not another is a silent hole, and a member reordered in one

@@ -69,8 +69,8 @@ func (compiler *compiler) sealArtifact() (*Artifact, CompileFailure) {
 	artifact := &Artifact{
 		frozen: frozen, coldCatalog: catalog,
 		key: compiler.key, counts: compiler.counts, localTransfers: compiler.localTransfers,
-		bodies: compiler.bodies, functionBoundaries: compiler.functionBoundaries, outcomes: compiler.outcomes, returnValues: compiler.returnValues,
-		occurrences: compiler.occurrences, occurrenceByID: occurrenceByID, occurrenceByKind: occurrenceByKind, functionBoundaryByBody: functionBoundaryByBody, ruleOccurrences: compiler.ruleOccurrences,
+		functionBoundaries: compiler.functionBoundaries,
+		occurrences:        compiler.occurrences, occurrenceByID: occurrenceByID, occurrenceByKind: occurrenceByKind, functionBoundaryByBody: functionBoundaryByBody, ruleOccurrences: compiler.ruleOccurrences,
 		diagnosticObservations: compiler.diagnosticObservations, staticTypeNodes: compiler.staticTypeNodes, staticInputs: compiler.staticInputs,
 	}
 	artifact.id = artifactID(artifact)
@@ -330,6 +330,12 @@ func freezeColdPublication(compiler *compiler, pointRows []Point) (snapshot.Froz
 		CallOperands:         compiler.callOperands,
 		CallArguments:        compiler.callArguments,
 		CallTypeArguments:    compiler.callTypeArguments,
+		Bodies:               compiler.bodies,
+		BodyEntries:          compiler.bodyEntries,
+		BodyRoots:            compiler.bodyRoots,
+		Outcomes:             compiler.outcomes,
+		OutcomeReturnValues:  compiler.outcomeReturnValues,
+		OutcomePoints:        compiler.outcomePoints,
 	}
 	frozen, sealed := publication.Seal(catalog, identity.StoreID(coldStores.Add(1)))
 	if !sealed {

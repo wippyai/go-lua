@@ -122,17 +122,38 @@ func artifactID(artifact *Artifact) identity.ContentID {
 			sink.add(bytesField(argument.ID()), bytesField(argument.CallID()), bytesField(argument.TypesID()), bytesField(argument.ReferenceID()), uintField(uint64(argument.Index())))
 		}
 	}
-	sink.add(uintField(uint64(len(artifact.bodies))))
-	for _, body := range artifact.bodies {
-		sink.add(bytesField(body.id), bytesField(body.context), bytesField(body.entry), boolField(body.callable), bytesField(body.function), bytesField(body.formal), uintField(uint64(len(body.entryPoints))))
-		for _, point := range body.entryPoints {
-			sink.add(bytesField(point))
+	bodyCount, bodiesPublished := coldCount(artifact, cold.BodyFamily())
+	if !bodiesPublished {
+		return identity.ContentID{}
+	}
+	sink.add(uintField(uint64(bodyCount)))
+	for index := 0; index < bodyCount; index++ {
+		body, held := coldRow(artifact, cold.BodyFamily(), index)
+		entryOffset, entryCount, entriesOK := body.EntrySpan()
+		rootOffset, rootCount, rootsOK := body.RootSpan()
+		outcomeOffset, outcomeCount, outcomesOK := body.OutcomeSpan()
+		function, _ := body.FunctionContextID()
+		formal, _ := body.CallFormalID()
+		if !held || !entriesOK || !rootsOK || !outcomesOK {
+			return identity.ContentID{}
 		}
-		sink.add(uintField(uint64(len(body.roots))))
-		for _, root := range body.roots {
-			sink.add(bytesField(root.id), uintField(uint64(root.family)))
+		sink.add(bytesField(body.ID()), bytesField(body.ContextID()), bytesField(body.EntryID()), boolField(body.Callable()), bytesField(function), bytesField(formal), uintField(uint64(entryCount)))
+		for position := uint32(0); position < entryCount; position++ {
+			point, childHeld := coldRow(artifact, cold.BodyEntryFamily(), int(entryOffset+position))
+			if !childHeld || point.BodyID() != body.ID() {
+				return identity.ContentID{}
+			}
+			sink.add(bytesField(point.PointID()))
 		}
-		sink.add(uintField(uint64(body.outcomeStart)), uintField(uint64(body.outcomeEnd)))
+		sink.add(uintField(uint64(rootCount)))
+		for position := uint32(0); position < rootCount; position++ {
+			root, childHeld := coldRow(artifact, cold.BodyRootFamily(), int(rootOffset+position))
+			if !childHeld || root.BodyID() != body.ID() {
+				return identity.ContentID{}
+			}
+			sink.add(bytesField(root.ID()), uintField(uint64(root.Family())))
+		}
+		sink.add(uintField(uint64(outcomeOffset)), uintField(uint64(outcomeOffset+outcomeCount)))
 	}
 	sink.add(uintField(functionBoundaryLawVersion), uintField(uint64(len(artifact.functionBoundaries))))
 	for _, boundary := range artifact.functionBoundaries {
@@ -164,21 +185,45 @@ func artifactID(artifact *Artifact) identity.ContentID {
 		}
 		sink.add(bytesField(target.Allocation), bytesField(target.Body), bytesField(target.Context), bytesField(target.Function), bytesField(target.Formal))
 	}
-	sink.add(uintField(uint64(len(artifact.outcomes))))
-	for _, outcome := range artifact.outcomes {
+	outcomeCount, outcomesPublished := coldCount(artifact, cold.OutcomeFamily())
+	if !outcomesPublished {
+		return identity.ContentID{}
+	}
+	sink.add(uintField(uint64(outcomeCount)))
+	for index := 0; index < outcomeCount; index++ {
+		outcome, held := coldRow(artifact, cold.OutcomeFamily(), index)
+		returnOffset, returnCount, returnsOK := outcome.ReturnValueSpan()
+		pointOffset, pointCount, pointsOK := outcome.PointSpan()
+		target, hasTarget := outcome.TargetID()
+		propagation, hasPropagation := outcome.PropagationID()
+		if !held || !returnsOK || !pointsOK {
+			return identity.ContentID{}
+		}
 		sink.add(
-			bytesField(outcome.id), bytesField(outcome.body), uintField(uint64(outcome.kind)),
-			boolField(outcome.hasTarget), bytesField(outcome.target),
-			boolField(outcome.hasPropagation), bytesField(outcome.propagation),
-			uintField(uint64(outcome.returnStart)), uintField(uint64(outcome.returnEnd)), uintField(uint64(len(outcome.points))),
+			bytesField(outcome.ID()), bytesField(outcome.BodyID()), uintField(uint64(outcome.Kind())),
+			boolField(hasTarget), bytesField(target),
+			boolField(hasPropagation), bytesField(propagation),
+			uintField(uint64(returnOffset)), uintField(uint64(returnOffset+returnCount)), uintField(uint64(pointCount)),
 		)
-		for _, point := range outcome.points {
-			sink.add(bytesField(point))
+		for position := uint32(0); position < pointCount; position++ {
+			point, childHeld := coldRow(artifact, cold.OutcomePointFamily(), int(pointOffset+position))
+			if !childHeld || point.OutcomeID() != outcome.ID() {
+				return identity.ContentID{}
+			}
+			sink.add(bytesField(point.PointID()))
 		}
 	}
-	sink.add(uintField(uint64(len(artifact.returnValues))))
-	for _, value := range artifact.returnValues {
-		sink.add(bytesField(value.id))
+	returnValueCount, returnsPublished := coldCount(artifact, cold.OutcomeReturnValueFamily())
+	if !returnsPublished {
+		return identity.ContentID{}
+	}
+	sink.add(uintField(uint64(returnValueCount)))
+	for index := 0; index < returnValueCount; index++ {
+		value, held := coldRow(artifact, cold.OutcomeReturnValueFamily(), index)
+		if !held {
+			return identity.ContentID{}
+		}
+		sink.add(bytesField(value.ValuesID()))
 	}
 	sink.add(uintField(uint64(len(artifact.occurrences))))
 	for _, row := range artifact.occurrences {

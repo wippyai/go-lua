@@ -28,10 +28,7 @@ type Artifact struct {
 	sealed                 identity.ContentID
 	counts                 denominator.CountRows
 	localTransfers         []LocalTransfer
-	bodies                 []BodyRow
 	functionBoundaries     []FunctionBoundaryRow
-	outcomes               []OutcomeRow
-	returnValues           []ReturnValue
 	occurrences            []OccurrenceRow
 	occurrenceByID         map[occurrenceLookup]uint32
 	ruleOccurrences        []RuleOccurrence

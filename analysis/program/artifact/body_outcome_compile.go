@@ -4,26 +4,27 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/schema/cold"
 )
 
-func outcomeKind(kind flowkind.OutcomeKind) (OutcomeKind, bool) {
+func outcomeKind(kind flowkind.OutcomeKind) (cold.OutcomeKind, bool) {
 	switch kind {
 	case flowkind.OutcomeNormal:
-		return OutcomeNormal, true
+		return cold.OutcomeNormal, true
 	case flowkind.OutcomeReturn:
-		return OutcomeReturn, true
+		return cold.OutcomeReturn, true
 	case flowkind.OutcomeThrow:
-		return OutcomeThrow, true
+		return cold.OutcomeThrow, true
 	case flowkind.OutcomeBreak:
-		return OutcomeBreak, true
+		return cold.OutcomeBreak, true
 	case flowkind.OutcomeGoto:
-		return OutcomeGoto, true
+		return cold.OutcomeGoto, true
 	case flowkind.OutcomeYield:
-		return OutcomeYield, true
+		return cold.OutcomeYield, true
 	case flowkind.OutcomeCancel:
-		return OutcomeCancel, true
+		return cold.OutcomeCancel, true
 	default:
-		return OutcomeInvalid, false
+		return cold.OutcomeInvalid, false
 	}
 }
 
@@ -41,9 +42,12 @@ func (compiler *compiler) copyBodiesAndOutcomesFailure() CompileFailure {
 		}
 		valueIDs[row.id] = struct{}{}
 	}
-	bodies := make([]BodyRow, bodyCount)
-	outcomes := make([]OutcomeRow, 0)
-	returnValues := make([]ReturnValue, 0)
+	bodies := make([]cold.Body, bodyCount)
+	bodyEntries := make([]cold.BodyEntry, 0, bodyCount)
+	bodyRoots := make([]cold.BodyRoot, 0, bodyCount)
+	outcomes := make([]cold.Outcome, 0)
+	returnValues := make([]cold.OutcomeReturnValue, 0)
+	outcomePoints := make([]cold.OutcomePoint, 0)
 	flowView := compiler.input.Flow()
 	boundaries := flowView.FunctionBoundaries()
 	bodyReturns := flowView.BodyReturns()
@@ -97,27 +101,41 @@ func (compiler *compiler) copyBodiesAndOutcomesFailure() CompileFailure {
 			}
 			callable = true
 		}
+		if !fitsUint32(len(bodyEntries)) || !fitsUint32(len(entryPoints)) {
+			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, -1, CompileReasonBodyRange)
+		}
+		entryOffset := uint32(len(bodyEntries))
+		for pointIndex, point := range entryPoints {
+			row, rowOK := cold.NewBodyEntry(bodyID, point)
+			if !rowOK {
+				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, pointIndex, CompileReasonBodyUnavailable)
+			}
+			bodyEntries = append(bodyEntries, row)
+		}
 		executableRoots := flowView.Executable()
 		rootCount, rootsOK := executableRoots.RootCount(bodyTerm)
 		if !rootsOK || !fitsUint32(rootCount) {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, -1, CompileReasonBodyRange)
 		}
-		roots := make([]RootRow, rootCount)
+		if !fitsUint32(len(bodyRoots)) {
+			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, -1, CompileReasonBodyRange)
+		}
+		rootOffset := uint32(len(bodyRoots))
 		seenRoots := make(map[identity.ContentID]struct{}, rootCount)
 		for rootIndex := 0; rootIndex < rootCount; rootIndex++ {
 			rootID, rootFamily, rootOK := executableRoots.RootAt(bodyTerm, rootIndex)
 			if !rootOK {
 				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, rootIndex, CompileReasonBodyUnavailable)
 			}
-			row := RootRow{id: rootID, family: rootFamily}
-			if !row.Available() {
+			row, rowOK := cold.NewBodyRoot(bodyID, rootID, uint8(rootFamily))
+			if !rowOK {
 				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, rootIndex, CompileReasonBodyUnavailable)
 			}
-			if _, duplicate := seenRoots[row.id]; duplicate {
+			if _, duplicate := seenRoots[row.ID()]; duplicate {
 				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, rootIndex, CompileReasonBodyDuplicate)
 			}
-			seenRoots[row.id] = struct{}{}
-			roots[rootIndex] = row
+			seenRoots[row.ID()] = struct{}{}
+			bodyRoots = append(bodyRoots, row)
 		}
 		seenBodies[bodyID] = struct{}{}
 		seenBodyContexts[context] = struct{}{}
@@ -172,7 +190,7 @@ func (compiler *compiler) copyBodiesAndOutcomesFailure() CompileFailure {
 			target := identity.ContentID{}
 			hasTarget := false
 			switch kind {
-			case OutcomeBreak:
+			case cold.OutcomeBreak:
 				if keyspace.TermFamily(exit.Target) != keyspace.FamilyLoop {
 					return compileFailure(CompileStageBodyOutcomes, CompileRowOutcome, bodyIndex, outcomeIndex, CompileReasonOutcomeTarget)
 				}
@@ -182,7 +200,7 @@ func (compiler *compiler) copyBodiesAndOutcomesFailure() CompileFailure {
 					return compileFailure(CompileStageBodyOutcomes, CompileRowOutcome, bodyIndex, outcomeIndex, CompileReasonOutcomeTarget)
 				}
 				hasTarget = true
-			case OutcomeGoto:
+			case cold.OutcomeGoto:
 				if keyspace.TermFamily(exit.Target) != keyspace.FamilyLabel {
 					return compileFailure(CompileStageBodyOutcomes, CompileRowOutcome, bodyIndex, outcomeIndex, CompileReasonOutcomeTarget)
 				}
@@ -221,12 +239,24 @@ func (compiler *compiler) copyBodiesAndOutcomesFailure() CompileFailure {
 				points = compiler.pointIDs(site)
 			}
 
+			if !fitsUint32(len(outcomePoints)) || !fitsUint32(len(points)) {
+				return compileFailure(CompileStageBodyOutcomes, CompileRowOutcome, bodyIndex, outcomeIndex, CompileReasonOutcomeRange)
+			}
+			pointOffset := uint32(len(outcomePoints))
+			for pointIndex, point := range points {
+				child, childOK := cold.NewOutcomePoint(outcomeID, point)
+				if !childOK {
+					return compileFailure(CompileStageBodyOutcomes, CompileRowOutcome, bodyIndex, pointIndex, CompileReasonOutcomeAttachment)
+				}
+				outcomePoints = append(outcomePoints, child)
+			}
+
 			if !fitsUint32(len(returnValues)) {
 				return compileFailure(CompileStageBodyOutcomes, CompileRowReturnValue, bodyIndex, outcomeIndex, CompileReasonOutcomeRange)
 			}
 			returnStart := uint32(len(returnValues))
 			if hasReturn && outcomeID == returnedID {
-				if matchedReturn || kind != OutcomeReturn {
+				if matchedReturn || kind != cold.OutcomeReturn {
 					return compileFailure(CompileStageBodyOutcomes, CompileRowOutcome, bodyIndex, outcomeIndex, CompileReasonOutcomeReturn)
 				}
 				matchedReturn = true
@@ -241,18 +271,23 @@ func (compiler *compiler) copyBodiesAndOutcomesFailure() CompileFailure {
 					if _, exists := valueIDs[valuesID]; !exists {
 						return compileFailure(CompileStageBodyOutcomes, CompileRowReturnValue, bodyIndex, returnIndex, CompileReasonReturnValueReference)
 					}
-					returnValues = append(returnValues, ReturnValue{id: valuesID})
+					child, childOK := cold.NewOutcomeReturnValue(outcomeID, valuesID)
+					if !childOK {
+						return compileFailure(CompileStageBodyOutcomes, CompileRowReturnValue, bodyIndex, returnIndex, CompileReasonReturnValueUnavailable)
+					}
+					returnValues = append(returnValues, child)
 				}
 			}
 			if !fitsUint32(len(returnValues)) {
 				return compileFailure(CompileStageBodyOutcomes, CompileRowReturnValue, bodyIndex, outcomeIndex, CompileReasonOutcomeRange)
 			}
-			row := OutcomeRow{
-				id: outcomeID, body: bodyID, target: target, propagation: propagationID, kind: kind,
-				hasTarget: hasTarget, hasPropagation: propagationID.Available(),
-				returnStart: returnStart, returnEnd: uint32(len(returnValues)), points: points, sealed: true,
-			}
-			if !row.Available() {
+			row, rowOK := cold.NewOutcome(
+				outcomeID, bodyID, target, propagationID, kind,
+				returnStart, uint32(len(returnValues))-returnStart,
+				pointOffset, uint32(len(outcomePoints))-pointOffset,
+				hasTarget, propagationID.Available(),
+			)
+			if !rowOK {
 				return compileFailure(CompileStageBodyOutcomes, CompileRowOutcome, bodyIndex, outcomeIndex, CompileReasonOutcomeShape)
 			}
 			seenOutcomes[outcomeID] = len(outcomes)
@@ -261,25 +296,36 @@ func (compiler *compiler) copyBodiesAndOutcomesFailure() CompileFailure {
 		if hasReturn != matchedReturn || !fitsUint32(len(outcomes)) {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowOutcome, bodyIndex, -1, CompileReasonOutcomeReturn)
 		}
-		bodies[bodyIndex] = BodyRow{id: bodyID, context: context, entry: entryID, function: functionID, formal: formalID, callable: callable, entryPoints: entryPoints, roots: roots, outcomeStart: start, outcomeEnd: uint32(len(outcomes)), sealed: true}
-		if !bodies[bodyIndex].Available() {
+		bodyRow, bodyRowOK := cold.NewBody(
+			bodyID, context, entryID, functionID, formalID,
+			entryOffset, uint32(len(bodyEntries))-entryOffset,
+			rootOffset, uint32(len(bodyRoots))-rootOffset,
+			start, uint32(len(outcomes))-start,
+			callable,
+		)
+		if !bodyRowOK {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, -1, CompileReasonBodyUnavailable)
 		}
+		bodies[bodyIndex] = bodyRow
 	}
 
 	for index, row := range outcomes {
-		if !row.hasPropagation {
+		propagation, propagated := row.PropagationID()
+		if !propagated {
 			continue
 		}
-		nextIndex, exists := seenOutcomes[row.propagation]
+		nextIndex, exists := seenOutcomes[propagation]
 		if !exists || nextIndex == index {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowOutcome, index, -1, CompileReasonOutcomeReference)
 		}
 		next := outcomes[nextIndex]
-		if next.kind != row.kind || next.hasTarget != row.hasTarget || next.target != row.target {
+		target, hasTarget := row.TargetID()
+		nextTarget, nextHasTarget := next.TargetID()
+		if next.Kind() != row.Kind() || nextHasTarget != hasTarget || nextTarget != target {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowOutcome, index, -1, CompileReasonOutcomePropagation)
 		}
 	}
-	compiler.bodies, compiler.outcomes, compiler.returnValues = bodies, outcomes, returnValues
+	compiler.bodies, compiler.bodyEntries, compiler.bodyRoots = bodies, bodyEntries, bodyRoots
+	compiler.outcomes, compiler.outcomeReturnValues, compiler.outcomePoints = outcomes, returnValues, outcomePoints
 	return CompileFailure{}
 }

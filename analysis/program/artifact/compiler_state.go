@@ -24,11 +24,14 @@ type compiler struct {
 	callArguments              []cold.CallArgument
 	callTypeArguments          []cold.CallTypeArgument
 	callsByID                  map[identity.ContentID]cold.Call
-	bodies                     []BodyRow
+	bodies                     []cold.Body
+	bodyEntries                []cold.BodyEntry
+	bodyRoots                  []cold.BodyRoot
 	functionBoundaries         []FunctionBoundaryRow
 	callTargets                []cold.CallTarget
-	outcomes                   []OutcomeRow
-	returnValues               []ReturnValue
+	outcomes                   []cold.Outcome
+	outcomeReturnValues        []cold.OutcomeReturnValue
+	outcomePoints              []cold.OutcomePoint
 	heapAllocations            []HeapAllocationRow
 	heapIndexes                []HeapIndexRow
 	allocationRows             []allocationCompileRow

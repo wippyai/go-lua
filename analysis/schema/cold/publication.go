@@ -37,6 +37,12 @@ type Publication struct {
 	Regions              []Region
 	RegionMembers        []RegionMember
 	WTOEvents            []WTOEvent
+	Bodies               []Body
+	BodyEntries          []BodyEntry
+	BodyRoots            []BodyRoot
+	Outcomes             []Outcome
+	OutcomeReturnValues  []OutcomeReturnValue
+	OutcomePoints        []OutcomePoint
 }
 
 // Seal publishes every family of this catalog into one frozen store. The
@@ -69,7 +75,13 @@ func (publication Publication) Seal(catalog identity.ContentID, store identity.S
 		StaticExpressionFamily().Put(&builder, publication.StaticExpressions, catalog) &&
 		RegionFamily().Put(&builder, publication.Regions, catalog) &&
 		RegionMemberFamily().Put(&builder, publication.RegionMembers, catalog) &&
-		WTOEventFamily().Put(&builder, publication.WTOEvents, catalog)
+		WTOEventFamily().Put(&builder, publication.WTOEvents, catalog) &&
+		BodyFamily().Put(&builder, publication.Bodies, catalog) &&
+		BodyEntryFamily().Put(&builder, publication.BodyEntries, catalog) &&
+		BodyRootFamily().Put(&builder, publication.BodyRoots, catalog) &&
+		OutcomeFamily().Put(&builder, publication.Outcomes, catalog) &&
+		OutcomeReturnValueFamily().Put(&builder, publication.OutcomeReturnValues, catalog) &&
+		OutcomePointFamily().Put(&builder, publication.OutcomePoints, catalog)
 	if !sealed {
 		return snapshot.Frozen{}, false
 	}

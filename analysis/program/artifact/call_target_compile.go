@@ -12,7 +12,7 @@ func (compiler *compiler) copyCallTargetsFailure() CompileFailure {
 	if compiler == nil || len(compiler.bodies) == 0 {
 		return compileFailure(CompileStageBodyOutcomes, CompileRowBody, -1, -1, CompileReasonBodyUnavailable)
 	}
-	bodyByContext := make(map[identity.ContentID]BodyRow, len(compiler.bodies))
+	bodyByContext := make(map[identity.ContentID]cold.Body, len(compiler.bodies))
 	for index, body := range compiler.bodies {
 		if !body.Available() || !body.ContextID().Available() {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)

@@ -35,8 +35,7 @@ func TestIngressPublicTypesDoNotEmbedProgramArtifact(t *testing.T) {
 		"HeapAllocation": true, "HeapField": true, "HeapIndex": true,
 		"Values": true, "ValuesMember": true, "ValuesTail": true, "StaticTypeValue": true, "StaticTypeNode": true,
 		"StaticTypeArgument": true,
-		"Occurrence":         true, "Outcome": true, "FunctionFormal": true,
-		"BodyRoot":              true,
+		"Occurrence":         true, "FunctionFormal": true,
 		"DiagnosticObservation": true,
 	}
 	for _, declaration := range file.Decls {

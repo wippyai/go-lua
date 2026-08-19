@@ -47,14 +47,19 @@ func SelectedQuerySites(mounts []axis.MountedArtifact) ([]QuerySite, bool) {
 		bodyEntries := make(map[identity.ContentID][]identity.ContentID)
 		callable := make(map[identity.ContentID]struct{})
 		rootBodies := make(map[identity.ContentID][]identity.ContentID)
-		for bodyIndex := 0; bodyIndex < snapshot.BodyTransportCount(); bodyIndex++ {
-			body, bodyOK := snapshot.BodyTransportAt(bodyIndex)
-			if !bodyOK || !body.BodyID().Available() {
+		bodyCount, bodiesPublished := mount.Program.BodyCount()
+		if !bodiesPublished {
+			return nil, false
+		}
+		for bodyIndex := 0; bodyIndex < bodyCount; bodyIndex++ {
+			body, bodyOK := mount.Program.BodyAt(bodyIndex)
+			if !bodyOK || !body.ID().Available() {
 				return nil, false
 			}
 			entries := make([]identity.ContentID, body.EntryCount())
 			for entryIndex := range entries {
-				entry, entryOK := body.EntryAt(entryIndex)
+				entryRow, entryOK := mount.Program.BodyEntryFor(bodyIndex, entryIndex)
+				entry := entryRow.PointID()
 				if !entryOK || !entry.Available() {
 					return nil, false
 				}
@@ -63,12 +68,12 @@ func SelectedQuerySites(mounts []axis.MountedArtifact) ([]QuerySite, bool) {
 			if len(entries) == 0 {
 				return nil, false
 			}
-			bodyEntries[body.BodyID()] = entries
+			bodyEntries[body.ID()] = entries
 			if body.Callable() {
-				callable[body.BodyID()] = struct{}{}
+				callable[body.ID()] = struct{}{}
 				continue
 			}
-			rootBodies[body.BodyID()] = entries
+			rootBodies[body.ID()] = entries
 		}
 		if len(rootBodies) == 0 {
 			return nil, false

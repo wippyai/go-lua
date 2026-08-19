@@ -290,8 +290,12 @@ func Project(
 		artifactID := mount.Snapshot.ArtifactID()
 		artifactIDs[mount.Program.ModuleKey] = artifactID
 		localBodies := make(map[identity.ContentID]int)
-		for bodyIndex := 0; bodyIndex < mount.Snapshot.BodyCount(); bodyIndex++ {
-			body, bodyOK := mount.Snapshot.BodyAt(bodyIndex)
+		bodyCount, bodiesPublished := mount.Program.BodyCount()
+		if !bodiesPublished {
+			return Geometry{}, false
+		}
+		for bodyIndex := 0; bodyIndex < bodyCount; bodyIndex++ {
+			body, bodyOK := mount.Program.BodyAt(bodyIndex)
 			if !bodyOK || !body.ID().Available() {
 				return Geometry{}, false
 			}
@@ -311,8 +315,9 @@ func Project(
 			roots := make([]resultRoot, body.RootCount())
 			seenRoots := make(map[identity.ContentID]struct{}, len(roots))
 			for rootIndex := range roots {
-				root, rootOK := body.RootAt(rootIndex)
-				if !rootOK || !root.Available() || root.Family() == keyspace.FamilyInvalid {
+				root, rootOK := mount.Program.BodyRootFor(bodyIndex, rootIndex)
+				family := keyspace.Family(root.Family())
+				if !rootOK || !root.Available() || family == keyspace.FamilyInvalid {
 					return Geometry{}, false
 				}
 				rootID, rootIDOK := mountedResultID("root", mount.Program.ModuleKey, artifactID, root.ID())
@@ -323,7 +328,7 @@ func Project(
 					return Geometry{}, false
 				}
 				seenRoots[rootID] = struct{}{}
-				roots[rootIndex] = resultRoot{id: rootID, family: root.Family()}
+				roots[rootIndex] = resultRoot{id: rootID, family: family}
 			}
 			geometry.bodies = append(geometry.bodies, GeometryBody{key: key, id: id, roots: roots})
 			if body.Callable() {
@@ -331,7 +336,8 @@ func Project(
 			}
 			entryBody := localBodies[body.ID()]
 			for entryIndex := 0; entryIndex < body.EntryCount(); entryIndex++ {
-				entry, entryOK := body.EntryAt(entryIndex)
+				entryRow, entryOK := mount.Program.BodyEntryFor(bodyIndex, entryIndex)
+				entry := entryRow.PointID()
 				if !entryOK || !entry.Available() {
 					continue
 				}

@@ -12,7 +12,7 @@ import (
 type sealValidationState struct {
 	pointRows                  map[identity.ContentID]struct{}
 	valueRows                  map[identity.ContentID]struct{}
-	bodyRows                   map[identity.ContentID]BodyRow
+	bodyRows                   map[identity.ContentID]cold.Body
 	outcomeRows                map[identity.ContentID]int
 	outcomeCursor              uint32
 	callableBodies             int
@@ -114,66 +114,84 @@ func (artifact *Artifact) validateSealFoundation(state *sealValidationState) Com
 			memberRows[member.ID()] = struct{}{}
 		}
 	}
-	state.bodyRows = make(map[identity.ContentID]BodyRow, len(artifact.bodies))
-	rootRows := make(map[identity.ContentID]struct{})
-	state.outcomeRows = make(map[identity.ContentID]int, len(artifact.outcomes))
-	if len(artifact.bodies) == 0 || !fitsUint32(len(artifact.bodies)) || !fitsUint32(len(artifact.outcomes)) || !fitsUint32(len(artifact.returnValues)) {
+	bodyCount, bodiesPublished := coldCount(artifact, cold.BodyFamily())
+	bodyEntryCount, bodyEntriesPublished := coldCount(artifact, cold.BodyEntryFamily())
+	bodyRootCount, bodyRootsPublished := coldCount(artifact, cold.BodyRootFamily())
+	outcomeCount, outcomesPublished := coldCount(artifact, cold.OutcomeFamily())
+	_, returnsPublished := coldCount(artifact, cold.OutcomeReturnValueFamily())
+	_, outcomePointsPublished := coldCount(artifact, cold.OutcomePointFamily())
+	if !bodiesPublished || !bodyEntriesPublished || !bodyRootsPublished || !outcomesPublished || !returnsPublished || !outcomePointsPublished || bodyCount == 0 {
 		return compileFailure(CompileStageSeal, CompileRowBody, -1, -1, CompileReasonBodyRange)
 	}
+	state.bodyRows = make(map[identity.ContentID]cold.Body, bodyCount)
+	rootRows := make(map[identity.ContentID]struct{})
+	state.outcomeRows = make(map[identity.ContentID]int, outcomeCount)
+	entryCursor, rootCursor := uint32(0), uint32(0)
 	state.outcomeCursor = uint32(0)
-	for bodyIndex, row := range artifact.bodies {
-		if !row.Available() || row.outcomeStart != state.outcomeCursor || uint64(row.outcomeEnd) > uint64(len(artifact.outcomes)) {
+	for bodyIndex := 0; bodyIndex < bodyCount; bodyIndex++ {
+		row, held := coldRow(artifact, cold.BodyFamily(), bodyIndex)
+		entryOffset, entryWidth, entriesOK := row.EntrySpan()
+		rootOffset, rootWidth, rootsOK := row.RootSpan()
+		outcomeOffset, outcomeWidth, bodyOutcomesOK := row.OutcomeSpan()
+		if !held || !entriesOK || !rootsOK || !bodyOutcomesOK || entryOffset != entryCursor || rootOffset != rootCursor || outcomeOffset != state.outcomeCursor ||
+			uint64(entryOffset)+uint64(entryWidth) > uint64(bodyEntryCount) || uint64(rootOffset)+uint64(rootWidth) > uint64(bodyRootCount) || uint64(outcomeOffset)+uint64(outcomeWidth) > uint64(outcomeCount) {
 			return compileFailure(CompileStageSeal, CompileRowBody, bodyIndex, -1, CompileReasonBodyRange)
 		}
-		if _, duplicate := state.bodyRows[row.id]; duplicate {
+		if _, duplicate := state.bodyRows[row.ID()]; duplicate {
 			return compileFailure(CompileStageSeal, CompileRowBody, bodyIndex, -1, CompileReasonBodyDuplicate)
 		}
-		state.bodyRows[row.id] = row
-		for rootIndex, root := range row.roots {
-			if !root.Available() {
-				return compileFailure(CompileStageSeal, CompileRowBody, bodyIndex, rootIndex, CompileReasonBodyUnavailable)
+		state.bodyRows[row.ID()] = row
+		for rootIndex := uint32(0); rootIndex < rootWidth; rootIndex++ {
+			root, childHeld := coldRow(artifact, cold.BodyRootFamily(), int(rootOffset+rootIndex))
+			if !childHeld || root.BodyID() != row.ID() {
+				return compileFailure(CompileStageSeal, CompileRowBody, bodyIndex, int(rootIndex), CompileReasonBodyUnavailable)
 			}
-			if _, duplicate := rootRows[root.id]; duplicate {
-				return compileFailure(CompileStageSeal, CompileRowBody, bodyIndex, rootIndex, CompileReasonBodyDuplicate)
+			if _, duplicate := rootRows[root.ID()]; duplicate {
+				return compileFailure(CompileStageSeal, CompileRowBody, bodyIndex, int(rootIndex), CompileReasonBodyDuplicate)
 			}
-			rootRows[root.id] = struct{}{}
+			rootRows[root.ID()] = struct{}{}
 		}
-		if len(row.entryPoints) == 0 {
-			return compileFailure(CompileStageSeal, CompileRowBody, bodyIndex, -1, CompileReasonBodyUnavailable)
-		}
-		entryRows := make(map[identity.ContentID]struct{}, len(row.entryPoints))
-		for pointIndex, point := range row.entryPoints {
-			if !point.Available() {
-				return compileFailure(CompileStageSeal, CompileRowBody, bodyIndex, pointIndex, CompileReasonBodyUnavailable)
+		entryRows := make(map[identity.ContentID]struct{}, entryWidth)
+		for pointIndex := uint32(0); pointIndex < entryWidth; pointIndex++ {
+			entry, childHeld := coldRow(artifact, cold.BodyEntryFamily(), int(entryOffset+pointIndex))
+			point := entry.PointID()
+			if !childHeld || entry.BodyID() != row.ID() {
+				return compileFailure(CompileStageSeal, CompileRowBody, bodyIndex, int(pointIndex), CompileReasonBodyUnavailable)
 			}
 			if _, known := state.pointRows[point]; !known {
-				return compileFailure(CompileStageSeal, CompileRowBody, bodyIndex, pointIndex, CompileReasonBodyUnavailable)
+				return compileFailure(CompileStageSeal, CompileRowBody, bodyIndex, int(pointIndex), CompileReasonBodyUnavailable)
 			}
 			if _, duplicate := entryRows[point]; duplicate {
-				return compileFailure(CompileStageSeal, CompileRowBody, bodyIndex, pointIndex, CompileReasonBodyUnavailable)
+				return compileFailure(CompileStageSeal, CompileRowBody, bodyIndex, int(pointIndex), CompileReasonBodyUnavailable)
 			}
 			entryRows[point] = struct{}{}
 		}
-		var mandatory [OutcomeCancel + 1]bool
-		for outcomeIndex := row.outcomeStart; outcomeIndex < row.outcomeEnd; outcomeIndex++ {
-			outcome := artifact.outcomes[outcomeIndex]
-			if outcome.body != row.id {
-				return compileFailure(CompileStageSeal, CompileRowOutcome, bodyIndex, int(outcomeIndex-row.outcomeStart), CompileReasonOutcomeBody)
+		var mandatory [cold.OutcomeCancel + 1]bool
+		for childIndex := uint32(0); childIndex < outcomeWidth; childIndex++ {
+			outcome, outcomeHeld := coldRow(artifact, cold.OutcomeFamily(), int(outcomeOffset+childIndex))
+			if !outcomeHeld || outcome.BodyID() != row.ID() {
+				return compileFailure(CompileStageSeal, CompileRowOutcome, bodyIndex, int(childIndex), CompileReasonOutcomeBody)
 			}
-			switch outcome.kind {
-			case OutcomeNormal, OutcomeThrow, OutcomeYield, OutcomeCancel:
-				mandatory[outcome.kind] = true
+			switch outcome.Kind() {
+			case cold.OutcomeNormal, cold.OutcomeThrow, cold.OutcomeYield, cold.OutcomeCancel:
+				mandatory[outcome.Kind()] = true
 			}
 		}
-		for _, kind := range [...]OutcomeKind{OutcomeNormal, OutcomeThrow, OutcomeYield, OutcomeCancel} {
+		for _, kind := range [...]cold.OutcomeKind{cold.OutcomeNormal, cold.OutcomeThrow, cold.OutcomeYield, cold.OutcomeCancel} {
 			if !mandatory[kind] {
 				return compileFailure(CompileStageSeal, CompileRowOutcome, bodyIndex, -1, CompileReasonOutcomeKind)
 			}
 		}
-		state.outcomeCursor = row.outcomeEnd
+		entryCursor += entryWidth
+		rootCursor += rootWidth
+		state.outcomeCursor += outcomeWidth
+	}
+	if int(entryCursor) != bodyEntryCount || int(rootCursor) != bodyRootCount || int(state.outcomeCursor) != outcomeCount {
+		return compileFailure(CompileStageSeal, CompileRowBody, -1, -1, CompileReasonBodyRange)
 	}
 	state.callableBodies = 0
-	for _, body := range artifact.bodies {
+	for bodyIndex := 0; bodyIndex < bodyCount; bodyIndex++ {
+		body, _ := coldRow(artifact, cold.BodyFamily(), bodyIndex)
 		if body.Callable() {
 			state.callableBodies++
 		}
@@ -182,8 +200,10 @@ func (artifact *Artifact) validateSealFoundation(state *sealValidationState) Com
 	seenFunctionBodies := make(map[identity.ContentID]struct{}, len(artifact.functionBoundaries))
 	for functionIndex, row := range artifact.functionBoundaries {
 		body, bodyOK := state.bodyRows[row.body]
-		if !row.Available() || !bodyOK || !body.Callable() || body.OutcomeCount() == 0 || body.context != row.bodyContext || body.entry != row.entry ||
-			body.function != row.id || body.formal != row.callFormal {
+		function, _ := body.FunctionContextID()
+		formal, _ := body.CallFormalID()
+		if !row.Available() || !bodyOK || !body.Callable() || body.OutcomeCount() == 0 || body.ContextID() != row.bodyContext || body.EntryID() != row.entry ||
+			function != row.id || formal != row.callFormal {
 			return compileFailure(CompileStageSeal, CompileRowBody, functionIndex, -1, CompileReasonBodyUnavailable)
 		}
 		if _, duplicate := seenFunctions[row.id]; duplicate {

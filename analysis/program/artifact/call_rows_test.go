@@ -42,7 +42,8 @@ return identity(1)
 		t.Fatal("call rows cold program")
 	}
 	callCount, callsOK := program.CallCount()
-	if !callsOK || callCount == 0 {
+	bodyCount, bodiesOK := program.BodyCount()
+	if !callsOK || callCount == 0 || !bodiesOK {
 		t.Fatal("call fixture published no call family")
 	}
 	publishedDirect := false
@@ -53,8 +54,8 @@ return identity(1)
 		}
 		if target, targetOK := row.DirectTargetBody(); targetOK {
 			found := false
-			for bodyIndex := 0; bodyIndex < artifact.BodyCount(); bodyIndex++ {
-				body, bodyOK := artifact.BodyAt(bodyIndex)
+			for bodyIndex := 0; bodyIndex < bodyCount; bodyIndex++ {
+				body, bodyOK := program.BodyAt(bodyIndex)
 				if bodyOK && body.Callable() && body.ID() == target {
 					found = true
 					break

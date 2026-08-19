@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/cold"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/analysis/schema/query"
 )
@@ -57,15 +58,19 @@ return 42`)
 	callable := make(map[identity.ContentID]struct{})
 	roots := make(map[identity.ContentID]struct{})
 	for _, mount := range record.Artifacts {
-		for index := 0; index < mount.Snapshot.BodyTransportCount(); index++ {
-			body, bodyOK := mount.Snapshot.BodyTransportAt(index)
+		bodyCount, bodiesPublished := mount.Program.BodyCount()
+		if !bodiesPublished {
+			t.Fatal("cold Body family")
+		}
+		for index := 0; index < bodyCount; index++ {
+			body, bodyOK := mount.Program.BodyAt(index)
 			if !bodyOK {
 				t.Fatal("sealed body")
 			}
 			if body.Callable() {
-				callable[body.BodyID()] = struct{}{}
+				callable[body.ID()] = struct{}{}
 			} else {
-				roots[body.BodyID()] = struct{}{}
+				roots[body.ID()] = struct{}{}
 			}
 		}
 	}
@@ -129,8 +134,8 @@ return use(1)`)
 	if !ok || len(sites) == 0 {
 		t.Fatal("selected query sites")
 	}
-	points := selectedCallableOccurrencePoints(t, record.Artifacts[0].Snapshot)
-	callee, sibling := selectedDirectCalleeAndSibling(t, record.Artifacts[0].Snapshot)
+	points := selectedCallableOccurrencePoints(t, record.Artifacts[0].Program, record.Artifacts[0].Snapshot)
+	callee, sibling := selectedDirectCalleeAndSibling(t, record.Artifacts[0].Program, record.Artifacts[0].Snapshot)
 	if !callee.Available() || !sibling.Available() {
 		t.Fatal("fixture lost the direct callee or its unused sibling")
 	}
@@ -198,15 +203,19 @@ func TestSelectedQuerySitesUseTheirOwnerAddressFormula(t *testing.T) {
 	}
 }
 
-func selectedCallableOccurrencePoints(t *testing.T, snapshot *ingress.Snapshot) map[identity.ContentID]map[identity.ContentID]struct{} {
+func selectedCallableOccurrencePoints(t *testing.T, program cold.Program, snapshot *ingress.Snapshot) map[identity.ContentID]map[identity.ContentID]struct{} {
 	t.Helper()
 	points := make(map[identity.ContentID]map[identity.ContentID]struct{})
-	for index := 0; index < snapshot.BodyTransportCount(); index++ {
-		body, ok := snapshot.BodyTransportAt(index)
+	bodyCount, bodiesPublished := program.BodyCount()
+	if !bodiesPublished {
+		t.Fatal("cold Body family")
+	}
+	for index := 0; index < bodyCount; index++ {
+		body, ok := program.BodyAt(index)
 		if !ok || !body.Callable() {
 			continue
 		}
-		points[body.BodyID()] = make(map[identity.ContentID]struct{})
+		points[body.ID()] = make(map[identity.ContentID]struct{})
 	}
 	for index := 0; index < snapshot.OccurrenceCount(); index++ {
 		occurrence, occurrenceOK := snapshot.OccurrenceAt(index)
@@ -229,19 +238,23 @@ func selectedCallableOccurrencePoints(t *testing.T, snapshot *ingress.Snapshot) 
 	return points
 }
 
-func selectedDirectCalleeAndSibling(t *testing.T, snapshot *ingress.Snapshot) (identity.ContentID, identity.ContentID) {
+func selectedDirectCalleeAndSibling(t *testing.T, program cold.Program, snapshot *ingress.Snapshot) (identity.ContentID, identity.ContentID) {
 	t.Helper()
 	rootBodies := make(map[identity.ContentID]struct{})
 	callable := make(map[identity.ContentID]struct{})
-	for index := 0; index < snapshot.BodyTransportCount(); index++ {
-		body, ok := snapshot.BodyTransportAt(index)
+	bodyCount, bodiesPublished := program.BodyCount()
+	if !bodiesPublished {
+		t.Fatal("cold Body family")
+	}
+	for index := 0; index < bodyCount; index++ {
+		body, ok := program.BodyAt(index)
 		if !ok {
 			t.Fatal("body row")
 		}
 		if body.Callable() {
-			callable[body.BodyID()] = struct{}{}
+			callable[body.ID()] = struct{}{}
 		} else {
-			rootBodies[body.BodyID()] = struct{}{}
+			rootBodies[body.ID()] = struct{}{}
 		}
 	}
 	var callee identity.ContentID

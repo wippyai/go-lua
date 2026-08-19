@@ -325,8 +325,9 @@ return 0`)
 	if report != nil {
 		findingCount, collectionFailure = report.FindingCount(), report.CollectionFailure()
 	}
-	wantBodies := 2 * artifacts.mounts[0].snapshot.BodyCount()
-	if baselineStatus != AnalyzeComplete || baseline == nil || solveStatus != AnalyzeComplete || result == nil || report == nil || result.ContentID() != baseline.ContentID() || result.BodyCount() != wantBodies || report.CollectionFailure() != anadiag.DiagnosticCollectionOK || report.FindingCount() != 2 {
+	mountedBodyCount, bodiesPublished := artifacts.mounts[0].program.BodyCount()
+	wantBodies := 2 * mountedBodyCount
+	if !bodiesPublished || baselineStatus != AnalyzeComplete || baseline == nil || solveStatus != AnalyzeComplete || result == nil || report == nil || result.ContentID() != baseline.ContentID() || result.BodyCount() != wantBodies || report.CollectionFailure() != anadiag.DiagnosticCollectionOK || report.FindingCount() != 2 {
 		t.Fatalf("duplicate diagnostic solve = baseline:%v/%t report:%v/%t bodies=%d findings=%d failure=%d baseline-diagnostics=%+v diagnostics=%+v", baselineStatus, baseline != nil, solveStatus, report != nil, bodyCount, findingCount, collectionFailure, baselineDiagnostics, solveDiagnostics)
 	}
 	ids, subjects := make(map[[32]byte]struct{}, 2), make(map[[32]byte]struct{}, 2)

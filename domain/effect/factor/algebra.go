@@ -773,12 +773,17 @@ func (a *Algebra) sealMountedArtifacts(mounts []MountedArtifact) (map[mountedCal
 		}
 		seenMounts[mount.ModuleKey] = struct{}{}
 		programID := mount.Snapshot.ProgramID()
-		for index := 0; index < mount.Snapshot.BodyTransportCount(); index++ {
-			body, ok := mount.Snapshot.BodyTransportAt(index)
-			if !ok || !body.BodyID().Available() || !body.ContextID().Available() {
+		program, programOK := mount.Snapshot.ColdProgram(mount.ModuleKey)
+		bodyCount, bodiesPublished := program.BodyCount()
+		if !programOK || !bodiesPublished {
+			return nil, false
+		}
+		for index := 0; index < bodyCount; index++ {
+			body, ok := program.BodyAt(index)
+			if !ok || !body.ID().Available() || !body.ContextID().Available() {
 				return nil, false
 			}
-			receipts = append(receipts, bodyRootReceipt{moduleKey: mount.ModuleKey, programID: programID, bodyID: body.BodyID(), contextID: body.ContextID()})
+			receipts = append(receipts, bodyRootReceipt{moduleKey: mount.ModuleKey, programID: programID, bodyID: body.ID(), contextID: body.ContextID()})
 		}
 		for index := 0; index < mount.Snapshot.CallCount(); index++ {
 			call, callOK := mount.Snapshot.CallAt(index)

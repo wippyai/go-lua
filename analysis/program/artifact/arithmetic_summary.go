@@ -192,10 +192,15 @@ func (compiler *compiler) arithmeticDivisorProperties() (map[identity.ContentID]
 		if !body.Available() {
 			return nil, compileFailure(CompileStageOccurrences, CompileRowOccurrence, bodyIndex, -1, CompileReasonOccurrenceUnavailable)
 		}
-		for pointIndex := 0; pointIndex < body.EntryPointCount(); pointIndex++ {
-			point, pointOK := body.EntryPointAt(pointIndex)
-			if !pointOK {
-				return nil, compileFailure(CompileStageOccurrences, CompileRowOccurrence, bodyIndex, pointIndex, CompileReasonOccurrenceAttachment)
+		offset, count, spanOK := body.EntrySpan()
+		if !spanOK || uint64(offset)+uint64(count) > uint64(len(compiler.bodyEntries)) {
+			return nil, compileFailure(CompileStageOccurrences, CompileRowOccurrence, bodyIndex, -1, CompileReasonOccurrenceAttachment)
+		}
+		for pointIndex := uint32(0); pointIndex < count; pointIndex++ {
+			entry := compiler.bodyEntries[offset+pointIndex]
+			point := entry.PointID()
+			if !entry.Available() || entry.BodyID() != body.ID() || !point.Available() {
+				return nil, compileFailure(CompileStageOccurrences, CompileRowOccurrence, bodyIndex, int(pointIndex), CompileReasonOccurrenceAttachment)
 			}
 			if prior, duplicate := bodyByEntry[point]; duplicate && prior != body.ID() {
 				ambiguousEntry[point] = struct{}{}
