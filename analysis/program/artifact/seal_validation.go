@@ -175,7 +175,7 @@ func (artifact *Artifact) validateSealFoundation(state *sealValidationState) Com
 	seenFunctionBodies := make(map[identity.ContentID]struct{}, len(artifact.functionBoundaries))
 	for functionIndex, row := range artifact.functionBoundaries {
 		body, bodyOK := state.bodyRows[row.body]
-		if !row.Available() || !bodyOK || !body.Callable() || body.context != row.bodyContext || body.entry != row.entry ||
+		if !row.Available() || !bodyOK || !body.Callable() || body.OutcomeCount() == 0 || body.context != row.bodyContext || body.entry != row.entry ||
 			body.function != row.id || body.formal != row.callFormal {
 			return compileFailure(CompileStageSeal, CompileRowBody, functionIndex, -1, CompileReasonBodyUnavailable)
 		}
@@ -216,15 +216,6 @@ func (artifact *Artifact) validateSealFoundation(state *sealValidationState) Com
 				return compileFailure(CompileStageSeal, CompileRowBody, functionIndex, captureIndex, CompileReasonBodyDuplicate)
 			}
 			seenCaptureIDs[capture.id] = struct{}{}
-		}
-		if len(row.outcomes) != body.OutcomeCount() {
-			return compileFailure(CompileStageSeal, CompileRowOutcome, functionIndex, -1, CompileReasonBodyRange)
-		}
-		for outcomeIndex, id := range row.outcomes {
-			artifactIndex := uint64(body.outcomeStart) + uint64(outcomeIndex)
-			if artifactIndex >= uint64(len(artifact.outcomes)) || artifact.outcomes[artifactIndex].id != id {
-				return compileFailure(CompileStageSeal, CompileRowOutcome, functionIndex, outcomeIndex, CompileReasonOutcomeReference)
-			}
 		}
 	}
 

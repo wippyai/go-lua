@@ -62,7 +62,7 @@ func TestProgramArtifactOwnsCanonicalFunctionBoundaryPorts(t *testing.T) {
 		if !gotOK || !replayedOK || got.ID() != replayed.ID() || got.BodyID() != replayed.BodyID() ||
 			got.BodyContextID() != replayed.BodyContextID() || got.EntryID() != replayed.EntryID() ||
 			got.CallFormalID() != replayed.CallFormalID() || got.FormalCount() != replayed.FormalCount() ||
-			got.CaptureCount() != replayed.CaptureCount() || got.OutcomeCount() != replayed.OutcomeCount() {
+			got.CaptureCount() != replayed.CaptureCount() {
 			t.Fatalf("function boundary replay[%d] diverged", index)
 		}
 		body, bodyOK := bodyRows[got.BodyID()]
@@ -104,9 +104,6 @@ func TestProgramArtifactOwnsCanonicalFunctionBoundaryPorts(t *testing.T) {
 			}
 			captureRows++
 		}
-		if got.OutcomeCount() != body.OutcomeCount() {
-			t.Fatalf("function boundary[%d] outcomes %d, body %d", index, got.OutcomeCount(), body.OutcomeCount())
-		}
 		bodyIndex := -1
 		for candidate := 0; candidate < left.BodyCount(); candidate++ {
 			row, _ := left.BodyAt(candidate)
@@ -118,11 +115,10 @@ func TestProgramArtifactOwnsCanonicalFunctionBoundaryPorts(t *testing.T) {
 		if bodyIndex < 0 {
 			t.Fatalf("function boundary[%d] Body ordinal unavailable", index)
 		}
-		for position := 0; position < got.OutcomeCount(); position++ {
-			outcomeID, outcomeOK := got.OutcomeAt(position)
-			replayedID, replayedOK := replayed.OutcomeAt(position)
+		for position := 0; position < body.OutcomeCount(); position++ {
 			outcome, bodyOutcomeOK := left.BodyOutcomeAt(bodyIndex, position)
-			if !outcomeOK || !replayedOK || !bodyOutcomeOK || outcomeID != replayedID || outcomeID != outcome.ID() {
+			replayedOutcome, replayedOutcomeOK := right.BodyOutcomeAt(bodyIndex, position)
+			if !bodyOutcomeOK || !replayedOutcomeOK || outcome.ID() != replayedOutcome.ID() {
 				t.Fatalf("function boundary[%d] outcome[%d] lost Body order", index, position)
 			}
 		}

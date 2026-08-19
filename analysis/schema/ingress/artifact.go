@@ -1477,11 +1477,13 @@ func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Sna
 		})
 	}
 	snapshot.bodies = make([]BodyTransport, 0, artifact.BodyCount())
+	bodyIndexByID := make(map[identity.ContentID]int, artifact.BodyCount())
 	for index := 0; index < artifact.BodyCount(); index++ {
 		row, ok := artifact.BodyAt(index)
 		if !ok {
 			return nil, false
 		}
+		bodyIndexByID[row.ID()] = index
 		entries, entriesOK := copyIDs(row.EntryPointCount(), row.EntryPointAt)
 		exits, exitsOK := lowerBodyExits(artifact, vocabulary, index, row)
 		if !entriesOK || !exitsOK {
@@ -1528,13 +1530,18 @@ func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Sna
 				innerBody: capture.InnerBodyID(), outerBody: capture.OuterBodyID(),
 			})
 		}
-		outcomes := make([]identity.ContentID, 0, row.OutcomeCount())
-		for outcomeIndex := 0; outcomeIndex < row.OutcomeCount(); outcomeIndex++ {
-			outcome, outcomeOK := row.OutcomeAt(outcomeIndex)
+		bodyIndex, bodyKnown := bodyIndexByID[row.BodyID()]
+		bodyRow, bodyOK := artifact.BodyAt(bodyIndex)
+		if !bodyKnown || !bodyOK {
+			return nil, false
+		}
+		outcomes := make([]identity.ContentID, 0, bodyRow.OutcomeCount())
+		for outcomeIndex := 0; outcomeIndex < bodyRow.OutcomeCount(); outcomeIndex++ {
+			outcome, outcomeOK := artifact.BodyOutcomeAt(bodyIndex, outcomeIndex)
 			if !outcomeOK || !outcome.Available() {
 				return nil, false
 			}
-			outcomes = append(outcomes, outcome)
+			outcomes = append(outcomes, outcome.ID())
 		}
 		vararg, hasVararg := row.Vararg()
 		copiedVararg := FunctionVararg{}

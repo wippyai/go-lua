@@ -117,13 +117,12 @@ type FunctionBoundaryRow struct {
 	vararg                                   FunctionVarargPort
 	hasVararg                                bool
 	captures                                 []FunctionCapturePort
-	outcomes                                 []identity.ContentID
 	sealed                                   bool
 }
 
 func (row FunctionBoundaryRow) Available() bool {
 	if !row.sealed || !row.id.Available() || !row.body.Available() || !row.bodyContext.Available() ||
-		!row.entry.Available() || !row.callFormal.Available() || row.hasVararg != row.vararg.Available() || len(row.outcomes) == 0 {
+		!row.entry.Available() || !row.callFormal.Available() || row.hasVararg != row.vararg.Available() {
 		return false
 	}
 	for index, port := range row.formals {
@@ -133,11 +132,6 @@ func (row FunctionBoundaryRow) Available() bool {
 	}
 	for index, port := range row.captures {
 		if !port.Available() || uint64(index) != uint64(port.position) || port.innerBody != row.body {
-			return false
-		}
-	}
-	for _, outcome := range row.outcomes {
-		if !outcome.Available() {
 			return false
 		}
 	}
@@ -200,18 +194,6 @@ func (row FunctionBoundaryRow) CaptureAt(index int) (FunctionCapturePort, bool) 
 	}
 	return row.captures[index], true
 }
-func (row FunctionBoundaryRow) OutcomeCount() int {
-	if !row.Available() {
-		return 0
-	}
-	return len(row.outcomes)
-}
-func (row FunctionBoundaryRow) OutcomeAt(index int) (identity.ContentID, bool) {
-	if !row.Available() || index < 0 || index >= len(row.outcomes) {
-		return identity.ContentID{}, false
-	}
-	return row.outcomes[index], true
-}
 func (compiler *compiler) copyFunctionBoundariesFailure() CompileFailure {
 	if compiler == nil || len(compiler.bodies) == 0 || len(compiler.outcomes) == 0 {
 		return compileFailure(CompileStageBodyOutcomes, CompileRowBody, -1, -1, CompileReasonBodyUnavailable)
@@ -230,7 +212,7 @@ func (compiler *compiler) copyFunctionBoundariesFailure() CompileFailure {
 		copiedBody := compiler.bodies[bodyIndex]
 		callFormal, callFormalOK := body.CallTarget()
 		callFormalID, callFormalIDOK := callFormal.ID()
-		if !functionOK || !copiedBody.Callable() || !callFormalOK || !callFormalIDOK {
+		if !functionOK || !copiedBody.Callable() || copiedBody.OutcomeCount() == 0 || !callFormalOK || !callFormalIDOK {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, -1, CompileReasonBodyUnavailable)
 		}
 		row := FunctionBoundaryRow{
@@ -262,12 +244,6 @@ func (compiler *compiler) copyFunctionBoundariesFailure() CompileFailure {
 				id: captureID, inner: innerID, outer: outerID,
 				innerBody: innerBodyID, outerBody: outerBodyID, position: uint32(position),
 			})
-		}
-		for outcomeIndex := copiedBody.outcomeStart; outcomeIndex < copiedBody.outcomeEnd; outcomeIndex++ {
-			if uint64(outcomeIndex) >= uint64(len(compiler.outcomes)) {
-				return compileFailure(CompileStageBodyOutcomes, CompileRowOutcome, bodyIndex, int(outcomeIndex-copiedBody.outcomeStart), CompileReasonOutcomeRange)
-			}
-			row.outcomes = append(row.outcomes, compiler.outcomes[outcomeIndex].ID())
 		}
 		if !row.Available() {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, -1, CompileReasonBodyUnavailable)

@@ -104,10 +104,6 @@ func artifactID(artifact *Artifact) identity.ContentID {
 				bytesField(capture.id), bytesField(capture.inner), bytesField(capture.outer), bytesField(capture.innerBody), bytesField(capture.outerBody), uintField(uint64(capture.position)),
 			)
 		}
-		sink.add(uintField(uint64(len(boundary.outcomes))))
-		for _, outcome := range boundary.outcomes {
-			sink.add(bytesField(outcome))
-		}
 	}
 	// The call-target family is read out of the sealed cold publication in its
 	// emitted order, which is the order the identity has always committed to.

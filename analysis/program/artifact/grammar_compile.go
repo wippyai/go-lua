@@ -18,16 +18,18 @@ const (
 	// Attachment relations are emitted directly into the generic occurrence
 	// catalog; v2 removes the former retained Site-to-WTO projection from the
 	// artifact identity preimage.
-	pointAttachmentLawVersion  = uint64(2)
-	compilerLawVersion         = uint64(2)
-	operatorLawVersion         = uint64(1)
-	substitutionLawVersion     = uint64(1)
-	summaryLawVersion          = uint64(1)
-	wtoLawVersion              = uint64(1)
-	routeLawVersion            = uint64(3)
-	valuesLawVersion           = uint64(1)
-	bodyOutcomeLawVersion      = uint64(4)
-	functionBoundaryLawVersion = uint64(2)
+	pointAttachmentLawVersion = uint64(2)
+	compilerLawVersion        = uint64(2)
+	operatorLawVersion        = uint64(1)
+	substitutionLawVersion    = uint64(1)
+	summaryLawVersion         = uint64(1)
+	wtoLawVersion             = uint64(1)
+	routeLawVersion           = uint64(3)
+	valuesLawVersion          = uint64(1)
+	bodyOutcomeLawVersion     = uint64(4)
+	// Function boundaries reference the canonical Body outcome range instead
+	// of retaining a second ordered outcome-ID slice.
+	functionBoundaryLawVersion = uint64(3)
 	// Heap allocation geometry now commits the parent-issued
 	// SharesFirstValueCell relation. Keep this generic occurrence law separate
 	// from Pack's row law: changing Heap rows must invalidate only the
