@@ -211,7 +211,7 @@ func (compiler *compiler) copyFunctionBoundariesFailure() CompileFailure {
 			continue
 		}
 		copiedBody := compiler.bodies[bodyIndex]
-		callFormal, callFormalOK := body.CallTarget()
+		callFormal, callFormalOK := flowView.CallBodyTarget(function)
 		callFormalID, callFormalIDOK := callFormal.ID()
 		if !functionOK || !copiedBody.Callable() || copiedBody.OutcomeCount() == 0 || !callFormalOK || !callFormalIDOK {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, -1, CompileReasonBodyUnavailable)

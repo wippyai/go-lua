@@ -86,7 +86,7 @@ func (compiler *compiler) copyBodiesAndOutcomesFailure() CompileFailure {
 		functionID, formalID := identity.ContentID{}, identity.ContentID{}
 		callable := false
 		if function, functionOK := body.Function(); functionOK {
-			formal, formalOK := body.CallTarget()
+			formal, formalOK := flowView.CallBodyTarget(function)
 			var functionIDOK bool
 			functionID, functionIDOK = compiler.input.FunctionID(function)
 			if formalOK {

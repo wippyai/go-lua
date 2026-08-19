@@ -33,7 +33,7 @@ func (compiler *compiler) copyCallTargetsFailure() CompileFailure {
 		bodyTerm, bodyTermOK := boundary.Body()
 		body, bodyOK := compiler.input.Body(bodyTerm)
 		function, functionOK := body.Function()
-		formal, formalOK := body.CallTarget()
+		formal, formalOK := flowView.CallBodyTarget(boundary)
 		allocationID, bodyID := allocation.template, body.PathID()
 		context := body.ContextID()
 		functionID, functionIDOK := compiler.input.FunctionID(function)
