@@ -3,6 +3,7 @@ package operation
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/internal/rows"
+	"github.com/wippyai/go-lua/analysis/program/target/exactkey"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 )
 
@@ -140,6 +141,7 @@ type anchorRow struct{ id identity.ContentID }
 type Core struct {
 	geometry       Geometry
 	anchors        rows.Rows[anchorRow]
+	keys           exactkey.Table
 	bindingKeys    rows.Pool[vocabulary.ExactKey]
 	bindingKeyRows rows.Pool[bindingKeyRow]
 	bindingRanges  rows.Rows[bindingKeyRange]

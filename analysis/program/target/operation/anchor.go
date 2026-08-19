@@ -204,8 +204,9 @@ func CompileAnchors(geometry Geometry, keys exactkey.Table) (Core, error) {
 	// carry either duplicate pool into the operation owner.
 	geometry.produced = rows.Pool[producedRow]{}
 	geometry.anchors = rows.Pool[byte]{}
+	geometry.segments = rows.Pool[string]{}
 	return Core{
-		geometry: geometry, anchors: rows.NewRows(anchors), bindingKeys: bindingKeys,
+		geometry: geometry, anchors: rows.NewRows(anchors), keys: keys, bindingKeys: bindingKeys,
 		bindingKeyRows: bindingKeyRows, bindingRanges: bindingRanges,
 	}, nil
 }

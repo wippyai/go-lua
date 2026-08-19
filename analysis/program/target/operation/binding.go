@@ -5,11 +5,13 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/program/internal/rows"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 )
 
 // BindingCount and BindingAt expose copied neutral binding values. The final
-// operation owner retains only rows and segment pools.
+// operation owner retains rows and exact-key handles; the construction-only
+// string pool is discarded after anchor/key projection.
 func (core Core) BindingCount(op vocabulary.Operation) int {
 	row, ok := core.operation(op)
 	if !ok {
@@ -50,15 +52,18 @@ func (core Core) BindingOwnerCountAt(op vocabulary.Operation, index int) int {
 	if !ok {
 		return 0
 	}
+	if core.keys.Count() != 0 {
+		projected, projectedOK := core.bindingKey(op, index)
+		if !projectedOK {
+			return 0
+		}
+		return projected.owner.Len()
+	}
 	return core.geometry.segments.Count(binding.owner)
 }
 
 func (core Core) BindingOwnerAt(op vocabulary.Operation, binding, index int) (string, bool) {
-	row, ok := core.binding(op, binding)
-	if !ok {
-		return "", false
-	}
-	return core.geometry.segments.At(row.owner, index)
+	return core.bindingSegmentAt(op, binding, index, true)
 }
 
 func (core Core) BindingMemberCountAt(op vocabulary.Operation, index int) int {
@@ -66,15 +71,52 @@ func (core Core) BindingMemberCountAt(op vocabulary.Operation, index int) int {
 	if !ok {
 		return 0
 	}
+	if core.keys.Count() != 0 {
+		projected, projectedOK := core.bindingKey(op, index)
+		if !projectedOK {
+			return 0
+		}
+		return projected.member.Len()
+	}
 	return core.geometry.segments.Count(binding.member)
 }
 
 func (core Core) BindingMemberAt(op vocabulary.Operation, binding, index int) (string, bool) {
+	return core.bindingSegmentAt(op, binding, index, false)
+}
+
+// bindingSegmentAt reads from the canonical exact-key projection once Core is
+// published. The zero-key fallback is used only by the temporary Core that
+// compiles the Geometry lookup before exact-key projection is available.
+func (core Core) bindingSegmentAt(op vocabulary.Operation, binding, index int, owner bool) (string, bool) {
 	row, ok := core.binding(op, binding)
 	if !ok {
 		return "", false
 	}
-	return core.geometry.segments.At(row.member, index)
+	if core.keys.Count() != 0 {
+		projected, projectedOK := core.bindingKey(op, binding)
+		if !projectedOK {
+			return "", false
+		}
+		span := projected.member
+		if owner {
+			span = projected.owner
+		}
+		key, keyOK := core.bindingKeys.At(span, index)
+		if !keyOK {
+			return "", false
+		}
+		value, valueOK := core.keys.Value(key)
+		if !valueOK || value.Kind != keyspace.LiteralString {
+			return "", false
+		}
+		return value.String, true
+	}
+	span := row.member
+	if owner {
+		span = row.owner
+	}
+	return core.geometry.segments.At(span, index)
 }
 
 // BindingOwnerKeyAt returns the exact-key handle projected for one owner
@@ -308,21 +350,21 @@ func (core Core) BindingAt(op vocabulary.Operation, index int) (vocabulary.Bindi
 	if !ok {
 		return vocabulary.BindingSpec{}, false
 	}
-	owner := make([]string, core.geometry.segments.Count(binding.owner))
-	for index := range owner {
-		value, valueOK := core.geometry.segments.At(binding.owner, index)
+	owner := make([]string, core.BindingOwnerCountAt(op, index))
+	for segment := range owner {
+		value, valueOK := core.BindingOwnerAt(op, index, segment)
 		if !valueOK {
 			return vocabulary.BindingSpec{}, false
 		}
-		owner[index] = value
+		owner[segment] = value
 	}
-	member := make([]string, core.geometry.segments.Count(binding.member))
-	for index := range member {
-		value, valueOK := core.geometry.segments.At(binding.member, index)
+	member := make([]string, core.BindingMemberCountAt(op, index))
+	for segment := range member {
+		value, valueOK := core.BindingMemberAt(op, index, segment)
 		if !valueOK {
 			return vocabulary.BindingSpec{}, false
 		}
-		member[index] = value
+		member[segment] = value
 	}
 	return vocabulary.BindingSpec{Namespace: binding.namespace, Owner: owner, Member: member}, true
 }
