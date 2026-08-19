@@ -1,9 +1,9 @@
 package pack_test
 
 import (
-	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	"crypto/sha256"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/schema/cold"
 	"github.com/wippyai/go-lua/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	packdomain "github.com/wippyai/go-lua/domain/pack"
@@ -75,9 +76,21 @@ func runtimeContextBindingSchema(t testing.TB, contract *target.Contract, operat
 	if !packOK || packSchema == nil || heapFailure != heapdomain.SealFailureNone || !heapSchema.Valid() {
 		t.Fatal("binding schemas")
 	}
-	for index := 0; index < artifact.CallCount(); index++ {
-		call, callOK := artifact.CallAt(index)
-		if callOK && call.Form() == programartifact.CallFormMethod {
+	frozen, catalog, coldPublished := artifact.ColdPublication()
+	coldProgram := cold.Program{
+		Frozen: frozen, ModuleKey: module, ArtifactID: artifact.ID(),
+		ProgramID: artifact.CompileKey().ProgramID(), SchemaID: artifact.CompileKey().SchemaDigest(),
+	}
+	if !coldPublished || !catalog.Available() || !coldProgram.Available() {
+		t.Fatal("binding cold program")
+	}
+	callCount, callsOK := coldProgram.CallCount()
+	if !callsOK {
+		t.Fatal("binding call family")
+	}
+	for index := 0; index < callCount; index++ {
+		call, callOK := coldProgram.CallAt(index)
+		if callOK && call.Form() == cold.CallFormMethod {
 			return runtimeContextBindingFixture{pack: packSchema, heap: heapSchema, module: module, callID: call.ID(), operation: operation}
 		}
 	}
@@ -106,7 +119,7 @@ func TestRuntimeAllocationContextBindingFencesAndAvailability(t *testing.T) {
 	fixture := runtimeContextBindingSchema(t, contract, operation, "primary")
 	fixed, fixedOK := fixture.pack.InputSelector(operation, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 1})
 	tail, tailOK := fixture.pack.InputSelector(operation, vocabulary.InputSource{Kind: vocabulary.InputSourceValuesVar, Ordinal: 0})
-	opaque, opaqueOK := contract.Opaque()
+	opaque, opaqueOK := contract.Operations.Opaque()
 	whole, wholeOK := fixture.pack.InputSelector(opaque, vocabulary.InputSource{Kind: vocabulary.InputSourceAllInputs})
 	if !fixedOK || !tailOK || !opaqueOK || !wholeOK {
 		t.Fatal("binding selector inventory")

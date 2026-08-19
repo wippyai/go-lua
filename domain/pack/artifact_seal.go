@@ -7,6 +7,7 @@ package pack
 import (
 	"crypto/sha256"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	"github.com/wippyai/go-lua/analysis/schema/cold"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
@@ -268,12 +269,12 @@ func SealMountedArtifacts(source *link.Link, authority *static.Authority, mounts
 		return nil, false
 	}
 	maximum := 0
-	for index := 0; index < contract.OperationCount(); index++ {
-		operation, operationOK := contract.OperationAt(index)
+	for index := 0; index < contract.Operations.OperationCount(); index++ {
+		operation, operationOK := contract.Operations.OperationAt(index)
 		if !operationOK {
 			return nil, false
 		}
-		if fixed := contract.ValueFormalCount(operation); fixed > maximum {
+		if fixed := contract.Operations.ValueFormalCount(operation); fixed > maximum {
 			maximum = fixed
 		}
 	}
@@ -371,7 +372,7 @@ func sealInputSelectors(state *schema, contract *target.Contract) bool {
 	if state == nil || state.owner == nil || contract == nil || !contract.ContentID().Available() || state.inputSelectors == nil {
 		return false
 	}
-	opaque, opaqueOK := contract.Opaque()
+	opaque, opaqueOK := contract.Operations.Opaque()
 	if !opaqueOK {
 		return false
 	}
@@ -383,14 +384,14 @@ func sealInputSelectors(state *schema, contract *target.Contract) bool {
 		state.inputSelectors[key] = selector
 		return true
 	}
-	for index := 0; index < contract.OperationCount(); index++ {
-		operation, operationOK := contract.OperationAt(index)
+	for index := 0; index < contract.Operations.OperationCount(); index++ {
+		operation, operationOK := contract.Operations.OperationAt(index)
 		if !operationOK {
 			return false
 		}
-		fixed := contract.ValueFormalCount(operation)
-		input, inputOK := contract.Input(operation)
-		if !inputOK || fixed != contract.ValuesCount(input) {
+		fixed := contract.Operations.ValueFormalCount(operation)
+		input, inputOK := contract.Operations.Input(operation)
+		if !inputOK || fixed != contract.Operations.ValuesCount(input) {
 			return false
 		}
 		for formal := 0; formal < fixed; formal++ {
@@ -401,7 +402,7 @@ func sealInputSelectors(state *schema, contract *target.Contract) bool {
 				return false
 			}
 		}
-		tail, variable, tailOK := contract.ValuesTail(input)
+		tail, variable, tailOK := contract.Operations.ValuesTail(input)
 		if !tailOK {
 			return false
 		}
@@ -575,8 +576,16 @@ func sealMountedArtifactBinds(schema *Schema, mount ArtifactMount) bool {
 // boundary columns. Pack retains only its runtime substitution state.
 func sealMountedArtifactBodies(schema *Schema, mount ArtifactMount) bool {
 	state, artifact := schema.state, mount.snapshot
-	for i := 0; i < artifact.BodyTransportCount(); i++ {
-		row, rowOK := artifact.BodyTransportAt(i)
+	program, programOK := artifact.ColdProgram(mount.module)
+	if !programOK {
+		return false
+	}
+	bodyCount, bodiesOK := program.BodyCount()
+	if !bodiesOK {
+		return false
+	}
+	for i := 0; i < bodyCount; i++ {
+		row, rowOK := program.BodyAt(i)
 		if !rowOK {
 			return false
 		}
@@ -616,8 +625,12 @@ func sealMountedArtifactBodies(schema *Schema, mount ArtifactMount) bool {
 	}
 	// Outcomes have no scalar targets.  Return Values are already values-root
 	// identities; retain only the root links needed by boundary rules.
-	for i := 0; i < artifact.OutcomeCount(); i++ {
-		row, rowOK := artifact.OutcomeAt(i)
+	outcomeCount, outcomesOK := program.OutcomeCount()
+	if !outcomesOK {
+		return false
+	}
+	for i := 0; i < outcomeCount; i++ {
+		row, rowOK := program.OutcomeAt(i)
 		if !rowOK {
 			return false
 		}
@@ -627,7 +640,7 @@ func sealMountedArtifactBodies(schema *Schema, mount ArtifactMount) bool {
 		}
 		// Pack owns only normal and return boundary roots. The artifact owns
 		// other terminal geometry; validate Body ownership but mint no Pack root.
-		if row.Kind() != uint8(programartifact.OutcomeNormal) && row.Kind() != uint8(programartifact.OutcomeReturn) {
+		if row.Kind() != cold.OutcomeNormal && row.Kind() != cold.OutcomeReturn {
 			continue
 		}
 		key := artifactOutcomeKey{mount.module, row.ID()}
@@ -644,14 +657,14 @@ func sealMountedArtifactBodies(schema *Schema, mount ArtifactMount) bool {
 		}
 		out := outcomeRow{root: root, bodyIndex: bodyIndex, moduleKey: mount.module, bodyID: row.BodyID(), outcomeID: row.ID(), port: port, sealed: true}
 		switch row.Kind() {
-		case uint8(programartifact.OutcomeNormal):
+		case cold.OutcomeNormal:
 			out.kind = 1
-		case uint8(programartifact.OutcomeReturn):
+		case cold.OutcomeReturn:
 			out.kind = 2
 		}
 		if out.kind == 2 {
 			for j := 0; j < row.ReturnValueCount(); j++ {
-				value, valueOK := artifact.OutcomeReturnValueAt(i, j)
+				value, valueOK := program.OutcomeReturnValueFor(i, j)
 				valuesIndex, valuesOK := state.artifactValues[artifactValuesKey{mount.module, value.ID()}]
 				if !valueOK || !valuesOK {
 					return false
@@ -668,8 +681,16 @@ func sealMountedArtifactBodies(schema *Schema, mount ArtifactMount) bool {
 
 func sealMountedArtifactCalls(schema *Schema, authority *static.Authority, mount ArtifactMount) bool {
 	state, artifact := schema.state, mount.snapshot
-	for i := 0; i < artifact.CallCount(); i++ {
-		row, rowOK := artifact.CallAt(i)
+	program, programOK := artifact.ColdProgram(mount.module)
+	if !programOK {
+		return false
+	}
+	callCount, callsOK := program.CallCount()
+	if !callsOK {
+		return false
+	}
+	for i := 0; i < callCount; i++ {
+		row, rowOK := program.CallAt(i)
 		if !rowOK {
 			return false
 		}
@@ -687,8 +708,8 @@ func sealMountedArtifactCalls(schema *Schema, authority *static.Authority, mount
 		if !rootOK {
 			return false
 		}
-		out := callRow{root: root, mountedID: row.ID(), occurrenceID: row.ID(), valuesID: row.ValuesID(), typesID: row.TypeArgumentsID(), form: programartifact.CallForm(row.Form()), moduleKey: mount.module, formalID: row.FormalID(), typeFormal: typeFormal, port: port}
-		if row.Form() == uint8(programartifact.CallFormMethod) {
+		out := callRow{root: root, mountedID: row.ID(), occurrenceID: row.ID(), valuesID: row.ValuesID(), typesID: row.TypeArgumentsID(), form: row.Form(), moduleKey: mount.module, formalID: row.FormalID(), typeFormal: typeFormal, port: port}
+		if row.Form() == cold.CallFormMethod {
 			receiverID, receiverOK := row.ReceiverID()
 			endpoint, endpointOK := state.semanticEndpoints[artifactValuesKey{mount.module, receiverID}]
 			if !receiverOK || !endpointOK {
@@ -698,7 +719,7 @@ func sealMountedArtifactCalls(schema *Schema, authority *static.Authority, mount
 			out.fixed = append(out.fixed, endpoint)
 		}
 		for j := 0; j < row.ArgumentCount(); j++ {
-			argument, argumentOK := artifact.CallArgumentFor(i, j)
+			argument, argumentOK := program.CallArgumentFor(i, j)
 			endpoint, endpointOK := state.semanticEndpoints[artifactValuesKey{mount.module, argument.ValueID()}]
 			if !argumentOK || !endpointOK {
 				return false
@@ -789,6 +810,10 @@ func sealMountedSemanticEndpoints(state *schema, mount ArtifactMount) bool {
 		return true
 	}
 	artifact := mount.snapshot
+	program, programOK := artifact.ColdProgram(mount.module)
+	if !programOK {
+		return false
+	}
 	for i := 0; i < artifact.ValuesCount(); i++ {
 		row, ok := artifact.ValuesAt(i)
 		if !ok {
@@ -828,8 +853,12 @@ func sealMountedSemanticEndpoints(state *schema, mount ArtifactMount) bool {
 			}
 		}
 	}
-	for i := 0; i < artifact.CallCount(); i++ {
-		row, ok := artifact.CallAt(i)
+	callCount, callsOK := program.CallCount()
+	if !callsOK {
+		return false
+	}
+	for i := 0; i < callCount; i++ {
+		row, ok := program.CallAt(i)
 		if !ok {
 			return false
 		}
@@ -837,7 +866,7 @@ func sealMountedSemanticEndpoints(state *schema, mount ArtifactMount) bool {
 			return false
 		}
 		for j := 0; j < row.ArgumentCount(); j++ {
-			argument, argumentOK := artifact.CallArgumentFor(i, j)
+			argument, argumentOK := program.CallArgumentFor(i, j)
 			if !argumentOK || !add(argument.ValueID()) {
 				return false
 			}

@@ -3,10 +3,10 @@ package pack
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lattice"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	"github.com/wippyai/go-lua/analysis/schema/cold"
 )
 
 // Root and Values are Pack-private selectors over direct Program topology.
@@ -80,7 +80,7 @@ type callRow struct {
 	valuesID     identity.ContentID
 	receiverID   identity.ContentID
 	typesID      identity.ContentID
-	form         programartifact.CallForm
+	form         cold.CallForm
 	moduleKey    identity.ContentID
 	formalID     identity.ContentID
 	typeFormal   FormalCallTypeArguments

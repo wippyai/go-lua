@@ -1,8 +1,8 @@
 package pack_test
 
 import (
-	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/schema/cold"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"github.com/wippyai/go-lua/domain/composite"
 	packdomain "github.com/wippyai/go-lua/domain/pack"
@@ -44,7 +45,7 @@ func selectorLawContract(t testing.TB) (*target.Contract, vocabulary.Operation) 
 	if err != nil || contract == nil {
 		t.Fatalf("seal selector Target: %v", err)
 	}
-	operation, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"send"}})
+	operation, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"send"}})
 	if !ok {
 		t.Fatal("selector operation")
 	}
@@ -104,13 +105,25 @@ func selectorLawSchema(t testing.TB, contract *target.Contract, label string) se
 	if !ok || schema == nil {
 		t.Fatal("seal selector Pack")
 	}
-	for index := 0; index < artifact.CallCount(); index++ {
-		call, callOK := artifact.CallAt(index)
-		if !callOK || call.Form() != programartifact.CallFormMethod {
+	frozen, catalog, coldPublished := artifact.ColdPublication()
+	coldProgram := cold.Program{
+		Frozen: frozen, ModuleKey: module, ArtifactID: artifact.ID(),
+		ProgramID: artifact.CompileKey().ProgramID(), SchemaID: artifact.CompileKey().SchemaDigest(),
+	}
+	if !coldPublished || !catalog.Available() || !coldProgram.Available() {
+		t.Fatal("selector cold program")
+	}
+	callCount, callsOK := coldProgram.CallCount()
+	if !callsOK {
+		t.Fatal("selector call family")
+	}
+	for index := 0; index < callCount; index++ {
+		call, callOK := coldProgram.CallAt(index)
+		if !callOK || call.Form() != cold.CallFormMethod {
 			continue
 		}
 		receiver, receiverOK := call.ReceiverID()
-		argumentRow, argumentOK := artifact.CallArgumentFor(index, 0)
+		argumentRow, argumentOK := coldProgram.CallArgumentFor(index, 0)
 		argument := argumentRow.ValueID()
 		if !receiverOK || !argumentOK {
 			t.Fatal("selector method operands")
@@ -129,7 +142,7 @@ func TestInputSelectorsSealTargetABIWithoutRetainingTarget(t *testing.T) {
 	receiver, receiverOK := first.schema.InputSelector(operation, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 0})
 	argument, argumentOK := first.schema.InputSelector(operation, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 1})
 	tail, tailOK := first.schema.InputSelector(operation, vocabulary.InputSource{Kind: vocabulary.InputSourceValuesVar, Ordinal: 0})
-	opaqueOperation, opaqueOK := contract.Opaque()
+	opaqueOperation, opaqueOK := contract.Operations.Opaque()
 	whole, wholeOK := first.schema.InputSelector(opaqueOperation, vocabulary.InputSource{Kind: vocabulary.InputSourceAllInputs})
 	if !receiverOK || !argumentOK || !tailOK || !opaqueOK || !wholeOK {
 		t.Fatal("sealed selector inventory")
