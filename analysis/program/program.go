@@ -29,22 +29,12 @@ type Program struct {
 
 // Available reports whether all four immutable Program owners and their
 // provenance fence are sealed. Program itself is the construction input;
-// there is no second transport or proof object around it.
+// there is no second transport or proof object around it. Publish validates
+// the four-owner provenance fence before program.id is assigned, so a sealed
+// id is proof the fence already holds.
 func (program *Program) Available() bool {
-	if program == nil || program.source == nil || program.flow == nil || program.static == nil || program.module == nil ||
-		!program.id.Available() {
-		return false
-	}
-	sourceID := program.source.Cold().ContentID()
-	flowID := program.flow.ContentID()
-	staticID := program.static.Cold().ContentID()
-	moduleID := program.module.Cold().ContentID()
-	if !sourceID.Available() || !flowID.Available() || !staticID.Available() || !moduleID.Available() {
-		return false
-	}
-	provenance := program.flow.View().Provenance()
-	return provenance.Source == sourceID && provenance.Flow == flowID &&
-		provenance.Static == staticID && provenance.Module == moduleID
+	return program != nil && program.source != nil && program.flow != nil && program.static != nil && program.module != nil &&
+		program.id.Available()
 }
 
 var (

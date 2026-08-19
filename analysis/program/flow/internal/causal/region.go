@@ -87,7 +87,8 @@ func regionID(path identity.ContentID) identity.ContentID {
 // final owner exactly once. It consumes existing successor refs and Site rows
 // in O(C+R+S); no endpoint graph or SCC membership is reconstructed.
 func (r *Result) buildLocal() bool {
-	if r == nil || !r.available() || r.local.regions != nil || r.components == nil {
+	if r == nil || !r.available() || r.local.regions != nil || r.components == nil ||
+		len(r.sites.byTerm) != len(r.sites.rows) {
 		return false
 	}
 	store := localStore{
@@ -96,9 +97,8 @@ func (r *Result) buildLocal() bool {
 		bySuccessor: make(map[successorRef]uint32),
 		bySite:      make([][]uint32, len(r.sites.rows)),
 	}
-	headIndex := make(map[keyspace.Term]uint32, len(r.components))
 	for index, head := range r.components {
-		if !canonicalComponent(head, true) || uint64(index) > uint64(^uint32(0)) || r.componentIndex[head] != uint32(index) {
+		if !canonicalComponent(head, true) || uint64(index) > uint64(^uint32(0)) {
 			return false
 		}
 		id := identity.ContentID{}
@@ -110,17 +110,6 @@ func (r *Result) buildLocal() bool {
 			store.byID[id] = uint32(index)
 		}
 		store.regions[index] = localRegion{head: head, id: id}
-		headIndex[head] = uint32(index)
-	}
-	siteByTerm := make(map[keyspace.Term]uint32, len(r.sites.rows))
-	for index, row := range r.sites.rows {
-		if uint64(index) > uint64(^uint32(0)) || row.context != hashSiteContext(r.sourceID, r.flowID, r.staticID, r.moduleID, row.term) {
-			return false
-		}
-		if _, duplicate := siteByTerm[row.term]; duplicate {
-			return false
-		}
-		siteByTerm[row.term] = uint32(index)
 	}
 	// First group existing successor refs by the exact issued head. The
 	// transient lookup is discarded below; it is not a retained SCC map.
@@ -132,7 +121,7 @@ func (r *Result) buildLocal() bool {
 		if component == 0 {
 			continue
 		}
-		regionIndex, found := headIndex[component]
+		regionIndex, found := r.componentIndex[component]
 		if !found || uint64(regionIndex) >= uint64(len(store.regions)) || regionIndex == ^uint32(0) {
 			return false
 		}
@@ -157,7 +146,7 @@ func (r *Result) buildLocal() bool {
 				return false
 			}
 			for _, term := range [...]keyspace.Term{from, to} {
-				site, exists := siteByTerm[term]
+				site, exists := r.sites.byTerm[term]
 				if !exists {
 					return false
 				}
