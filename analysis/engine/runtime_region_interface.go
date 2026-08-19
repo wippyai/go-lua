@@ -5,24 +5,109 @@ package engine
 import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
+	"github.com/wippyai/go-lua/analysis/engine/internal/facts/change"
 	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
 )
 
 // regionRHS keeps recurrence operands private until one exact carrier
 // transition publishes the head. E includes Init and external producers; B
 // starts at bottom and contains every back producer, including mixed Groups.
-func (epoch *executorEpoch) regionRHS(point equation.Point, pointIndex int, region runtimeRegion, current carrier.PointState) (carrier.PointRHS, carrier.ChangeSet, bool) {
+//
+// The row it admits is the delta the operand plane issues whenever the
+// retained accumulator legalizes reuse, and the complete E+B row otherwise.
+// Both admit their operands in the one sealed canonical order, so the fold
+// itself never learns which of the two it is running.
+func (epoch *executorEpoch) regionRHS(point equation.Point, pointIndex, regionIndex int, region runtimeRegion, current carrier.PointState) (carrier.PointRHS, carrier.ChangeSet, bool) {
 	if epoch != nil && epoch.diagnostics != nil {
 		epoch.diagnostics.recordRegionRHS()
 	}
-	if epoch == nil || !region.active || !epoch.work.OwnsPointState(current) {
+	if epoch == nil || !region.active || !epoch.work.OwnsPointState(current) || regionIndex < 0 || regionIndex >= len(epoch.regions) {
 		return carrier.PointRHS{}, carrier.ChangeSet{}, false
 	}
-	base, ok := epoch.pointBase(point, pointIndex)
+	episode := &epoch.regions[regionIndex]
+	base, sets, ok := epoch.regionOperandTerms(point, pointIndex, regionIndex, region, episode)
 	if !ok {
 		return carrier.PointRHS{}, carrier.ChangeSet{}, false
 	}
-	sets := pointFoldTermSets{
+	exact, changes, _, foldOK := epoch.foldPointTermSetsWithBoundary(current, base, sets, equation.Point{}) // R = base \sqcup E \sqcup B
+	if !foldOK || epoch.canceled() {
+		return carrier.PointRHS{}, carrier.ChangeSet{}, false
+	}
+	// The raw fold, before the support-axis discharge the head publication
+	// applies to it, is the accumulator the next delta folds onto. Only an
+	// ascent retains one: a narrow episode's row is a descent, and folding a
+	// later operand onto a retained descent would publish an upper bound where
+	// the narrow order laws demand the exact one.
+	episode.accumulator, episode.hasAccumulator = exact, episode.phase == phaseAscent
+	if !episode.hasAccumulator {
+		episode.accumulator = carrier.PointRHS{}
+	}
+	return exact, changes, true
+}
+
+// regionAccumulatorEvidenceAdmits is the evidence half of the accumulator
+// reuse predicate: a retained accumulator plus classified, non-descending
+// evidence for every ingress operand that moved since this episode last
+// remembered its interfaces. Admits is fail-closed, so an operand whose
+// producer classified no direction refuses reuse exactly as a descent does.
+func regionAccumulatorEvidenceAdmits(episode *regionEpoch) bool {
+	return episode != nil && episode.phase == phaseAscent && episode.hasAccumulator && episode.pending.Admits()
+}
+
+// regionOperandTerms chooses the operands one head refold must admit.
+//
+// Reuse is admitted by one predicate and nothing else: the accumulated
+// evidence of every ingress mark since this episode last remembered its
+// interfaces. Admits is fail-closed, so an operand whose producer classified
+// no direction, and any operand that descended, rebuilds the complete row
+// from Init. Under an admitted ascent the retained accumulator already
+// contains every unmoved operand, so folding the moved ones onto it is the
+// same value as folding all of them onto Init.
+func (epoch *executorEpoch) regionOperandTerms(point equation.Point, pointIndex, regionIndex int, region runtimeRegion, episode *regionEpoch) (carrier.PointRHS, pointFoldTermSets, bool) {
+	if regionAccumulatorEvidenceAdmits(episode) && epoch.work.OwnsPointRHS(episode.accumulator) {
+		rows := [6]struct {
+			kind    operandKind
+			members []int
+		}{
+			{operandExternalEnvironment, region.environmentExternal},
+			{operandExternalFactor, region.factorExternal},
+			{operandExternalProducer, region.external},
+			{operandBackEnvironment, region.environmentBack},
+			{operandBackFactor, region.factorBack},
+			{operandBackProducer, region.back},
+		}
+		var bounds [7]int
+		scratch, admitted := epoch.operandScratch[:0], true
+		for index, row := range rows {
+			bounds[index] = len(scratch)
+			scratch, admitted = epoch.changedRegionOperands(regionIndex, row.kind, row.members, episode.rememberAt, scratch)
+			if !admitted {
+				break
+			}
+		}
+		bounds[6] = len(scratch)
+		epoch.operandScratch = scratch
+		if admitted {
+			return episode.accumulator, pointFoldTermSets{
+				first: pointFoldTermSet{
+					environments: scratch[bounds[0]:bounds[1]],
+					factors:      scratch[bounds[1]:bounds[2]],
+					groups:       scratch[bounds[2]:bounds[3]],
+				},
+				second: pointFoldTermSet{
+					environments: scratch[bounds[3]:bounds[4]],
+					factors:      scratch[bounds[4]:bounds[5]],
+					groups:       scratch[bounds[5]:bounds[6]],
+				},
+				count: 2,
+			}, true
+		}
+	}
+	base, ok := epoch.pointBase(point, pointIndex)
+	if !ok {
+		return carrier.PointRHS{}, pointFoldTermSets{}, false
+	}
+	return base, pointFoldTermSets{
 		first: pointFoldTermSet{
 			environments: region.environmentExternal,
 			factors:      region.factorExternal,
@@ -34,12 +119,7 @@ func (epoch *executorEpoch) regionRHS(point equation.Point, pointIndex int, regi
 			groups:       region.back,
 		},
 		count: 2,
-	}
-	exact, changes, _, foldOK := epoch.foldPointTermSetsWithBoundary(current, base, sets, equation.Point{}) // R = base \sqcup E \sqcup B
-	if !foldOK || epoch.canceled() {
-		return carrier.PointRHS{}, carrier.ChangeSet{}, false
-	}
-	return exact, changes, true
+	}, true
 }
 
 // regionSelected is the ordinary ascent widening surface. It intentionally
@@ -57,41 +137,20 @@ func (epoch *executorEpoch) regionSelected(current carrier.PointState, region ru
 	return epoch.foldPointInputs(current, currentRHS, region.environmentBack, region.factorBack, region.back) // P = X \sqcup B
 }
 
-// regionExternalIngressChanged checks only the direct producer and structural
-// ingress versions that feed this Region head. Interior input versions are
-// owned by the producer candidate token snapshot; they are classified at the
-// candidate-order boundary instead of being copied into a Region face plane.
+// regionExternalIngressChanged reads the one stamp the operand plane keeps
+// for this Region's external ingress rows. Interior input changes are not its
+// question: they are classified at the candidate-order boundary from the same
+// plane, so no Region copies a face version to answer this.
 func (epoch *executorEpoch) regionExternalIngressChanged(region int) bool {
 	if epoch == nil || !epoch.activeRegion(region) || region >= len(epoch.regions) {
 		return true
 	}
-	bound, state := epoch.runtime.regions[region], epoch.regions[region]
-	if !state.hasExact {
+	state := epoch.regions[region]
+	if !state.hasExact || state.externalAt <= state.rememberAt {
 		return false
 	}
-	if len(bound.external) != len(state.ingress) || len(bound.environmentExternal) != len(state.environmentIngress) || len(bound.factorExternal) != len(state.factorIngress) {
-		_ = epoch.invalidateRegionPostfix(region)
-		return true
-	}
-	for index, group := range bound.external {
-		if group < 0 || group >= len(epoch.producers) || state.ingress[index] != epoch.producers[group].version {
-			_ = epoch.invalidateRegionPostfix(region)
-			return true
-		}
-	}
-	for index, edge := range bound.environmentExternal {
-		if edge < 0 || edge >= len(epoch.runtime.environments) || state.environmentIngress[index] != epoch.environmentVersion(edge) {
-			_ = epoch.invalidateRegionPostfix(region)
-			return true
-		}
-	}
-	for index, edge := range bound.factorExternal {
-		if edge < 0 || edge >= len(epoch.runtime.factorEdges) || state.factorIngress[index] != epoch.factorEdgeVersion(edge) {
-			_ = epoch.invalidateRegionPostfix(region)
-			return true
-		}
-	}
-	return false
+	_ = epoch.invalidateRegionPostfix(region)
+	return true
 }
 
 // beginRegionInterfaceRefresh opens the localized ascent barrier for one
@@ -136,99 +195,31 @@ func (epoch *executorEpoch) regionExactInputsChanged(region int) bool {
 	if !state.hasExact || epoch.regionExternalIngressChanged(region) {
 		return true
 	}
-	bound := epoch.runtime.regions[region]
-	if len(bound.back) != len(state.backIngress) || len(bound.environmentBack) != len(state.environmentBackIngress) || len(bound.factorBack) != len(state.factorBackIngress) {
-		_ = epoch.invalidateRegionPostfix(region)
-		return true
+	if state.backAt <= state.rememberAt {
+		return false
 	}
-	for index, group := range bound.back {
-		if group < 0 || group >= len(epoch.producers) || state.backIngress[index] != epoch.producers[group].version {
-			_ = epoch.invalidateRegionPostfix(region)
-			return true
-		}
-	}
-	for index, edge := range bound.environmentBack {
-		if edge < 0 || edge >= len(epoch.runtime.environments) || state.environmentBackIngress[index] != epoch.environmentVersion(edge) {
-			_ = epoch.invalidateRegionPostfix(region)
-			return true
-		}
-	}
-	for index, edge := range bound.factorBack {
-		if edge < 0 || edge >= len(epoch.runtime.factorEdges) || state.factorBackIngress[index] != epoch.factorEdgeVersion(edge) {
-			_ = epoch.invalidateRegionPostfix(region)
-			return true
-		}
-	}
-	return false
+	_ = epoch.invalidateRegionPostfix(region)
+	return true
 }
 
+// rememberRegionInterfaces closes this Region's interface epoch. It is one
+// clock advance and one evidence reset: the ordered producer, environment and
+// factor version vectors it used to copy carried nothing the operand plane
+// does not already stamp, and the two edge-version readers they fed are gone
+// with them.
 func (epoch *executorEpoch) rememberRegionInterfaces(region int) bool {
 	if epoch == nil || !epoch.activeRegion(region) || region >= len(epoch.regions) {
 		return false
 	}
-	bound, state := epoch.runtime.regions[region], &epoch.regions[region]
-	if len(bound.external) != len(state.ingress) || len(bound.back) != len(state.backIngress) || len(bound.environmentExternal) != len(state.environmentIngress) || len(bound.environmentBack) != len(state.environmentBackIngress) || len(bound.factorExternal) != len(state.factorIngress) || len(bound.factorBack) != len(state.factorBackIngress) {
-		return false
-	}
-	for index, group := range bound.external {
-		if group < 0 || group >= len(epoch.producers) {
-			return false
-		}
-		state.ingress[index] = epoch.producers[group].version
-	}
-	for index, group := range bound.back {
-		if group < 0 || group >= len(epoch.producers) {
-			return false
-		}
-		state.backIngress[index] = epoch.producers[group].version
-	}
-	for index, edge := range bound.environmentExternal {
-		if edge < 0 || edge >= len(epoch.runtime.environments) {
-			return false
-		}
-		state.environmentIngress[index] = epoch.environmentVersion(edge)
-	}
-	for index, edge := range bound.environmentBack {
-		if edge < 0 || edge >= len(epoch.runtime.environments) {
-			return false
-		}
-		state.environmentBackIngress[index] = epoch.environmentVersion(edge)
-	}
-	for index, edge := range bound.factorExternal {
-		if edge < 0 || edge >= len(epoch.runtime.factorEdges) {
-			return false
-		}
-		state.factorIngress[index] = epoch.factorEdgeVersion(edge)
-	}
-	for index, edge := range bound.factorBack {
-		if edge < 0 || edge >= len(epoch.runtime.factorEdges) {
-			return false
-		}
-		state.factorBackIngress[index] = epoch.factorEdgeVersion(edge)
-	}
+	state := &epoch.regions[region]
+	state.rememberAt = epoch.operands.advance()
+	state.pending = change.Classified()
 	if epoch.diagnostics != nil {
 		epoch.diagnostics.rememberRegionInterfaces(epoch, region)
 	}
 	return true
 }
 
-func (epoch *executorEpoch) environmentVersion(edge int) uint64 {
-	if epoch == nil || epoch.runtime == nil || edge < 0 || edge >= len(epoch.runtime.environments) {
-		return 0
-	}
-	return epoch.versions[epoch.runtime.environments[edge].source]
-}
-
-func (epoch *executorEpoch) factorEdgeVersion(edge int) uint64 {
-	if epoch == nil || epoch.runtime == nil || edge < 0 || edge >= len(epoch.runtime.factorEdges) {
-		return 0
-	}
-	return epoch.versions[epoch.runtime.factorEdges[edge].source]
-}
-
-// regionSubtree materializes one active recurrence subtree in executor scratch.
-// The child rows are an assembly-time cache of immutable Region.Parent
-// topology; they do not establish recurrence membership or semantic edges.
 func (epoch *executorEpoch) regionSubtree(root int) ([]int, bool) {
 	if epoch == nil || !epoch.activeRegion(root) || len(epoch.runtime.regionChildren) != len(epoch.runtime.regions) {
 		return nil, false
@@ -285,18 +276,17 @@ func (epoch *executorEpoch) restartRegion(region int, callSite solveDiagnosticRe
 		}
 		epoch.regions[index].exact = carrier.PointRHS{}
 		epoch.regions[index].hasExact = false
-		epoch.regions[index].exactInputsVersion = 0
-		epoch.regions[index].exactRevision = 0
-		epoch.regions[index].postfix = regionPostfixProof{}
+		epoch.regions[index].accumulator = carrier.PointRHS{}
+		epoch.regions[index].hasAccumulator = false
+		epoch.regions[index].postfixAt = 0
 		epoch.regions[index].invalid = true
 		epoch.regions[index].interfaceRefreshPending = false
-		clear(epoch.regions[index].ingress)
-		clear(epoch.regions[index].backIngress)
-		clear(epoch.regions[index].environmentIngress)
-		clear(epoch.regions[index].environmentBackIngress)
-		clear(epoch.regions[index].factorIngress)
-		clear(epoch.regions[index].factorBackIngress)
-		clear(epoch.regions[index].snapshot)
+		// A fresh episode retains no interface history. Opening a new remember
+		// epoch is that drop: every mark this Region has taken now lies at or
+		// below the stamp, and hasExact gates its readers until the first exact
+		// row of the new episode is rebuilt.
+		epoch.regions[index].rememberAt = epoch.operands.advance()
+		epoch.regions[index].pending = change.Classified()
 	}
 	// A fresh episode may not use an old local Point as a seed.  The Region's
 	// event-point interval includes every nested descendant exactly once, so
@@ -375,11 +365,7 @@ func (epoch *executorEpoch) restartRegion(region int, callSite solveDiagnosticRe
 			}
 			cache.candidate = carrier.RuleContribution{}
 			cache.hasValue = false
-			cache.hasCandidateTokens = false
-			cache.candidateEnvironmentToken = 0
-			cache.scratchEnvironmentToken = 0
-			clear(cache.candidateTokens)
-			clear(cache.scratchTokens)
+			cache.rememberAt = 0
 			cache.applied = 0
 			cache.patches = cache.patches[:0]
 			cache.patchRows = cache.patchRows[:0]
@@ -405,20 +391,15 @@ func (epoch *executorEpoch) regionCandidatesSettled(region int) bool {
 	return epoch.candidatesPending[region] == 0
 }
 
+// snapshotRegion opens one WTO pass over this Region's interior. The pass
+// asks a single question at its exit -- did any interior Point publish -- and
+// the operand plane already stamps that, so the pass keeps a clock position
+// instead of a copy of every interior version.
 func (epoch *executorEpoch) snapshotRegion(region int) bool {
 	if epoch == nil || !epoch.activeRegion(region) || region >= len(epoch.regions) {
 		return false
 	}
-	bound, state := epoch.runtime.regions[region], &epoch.regions[region]
-	if len(bound.points) != len(state.snapshot) {
-		return false
-	}
-	for index, point := range bound.points {
-		if point < 0 || point >= len(epoch.versions) {
-			return false
-		}
-		state.snapshot[index] = epoch.versions[point]
-	}
+	epoch.regions[region].enterAt = epoch.operands.advance()
 	return true
 }
 
@@ -426,16 +407,8 @@ func (epoch *executorEpoch) regionSnapshotChanged(region int) bool {
 	if epoch == nil || !epoch.activeRegion(region) || region >= len(epoch.regions) {
 		return true
 	}
-	bound, state := epoch.runtime.regions[region], epoch.regions[region]
-	if len(bound.points) != len(state.snapshot) {
-		return true
-	}
-	for index, point := range bound.points {
-		if point < 0 || point >= len(epoch.versions) || state.snapshot[index] != epoch.versions[point] {
-			return true
-		}
-	}
-	return false
+	state := epoch.regions[region]
+	return state.pointsAt > state.enterAt
 }
 
 // regionPostfixed validates one already-drained region before EventExit. It
@@ -461,7 +434,7 @@ func (epoch *executorEpoch) regionPostfixed(regionIndex int) (bool, bool) {
 		return false, epoch.enqueuePoint(region.head)
 	}
 	_, headOK := epoch.runtime.graph.PointAt(schedule.Node(region.head))
-	if region.head < 0 || region.head >= len(epoch.points) || region.head >= len(epoch.versions) {
+	if region.head < 0 || region.head >= len(epoch.points) {
 		return false, false
 	}
 	current := epoch.points[region.head]

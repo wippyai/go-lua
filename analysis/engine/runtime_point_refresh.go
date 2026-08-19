@@ -44,7 +44,8 @@ func (epoch *executorEpoch) publish(point int, current, next carrier.PointState,
 	if epoch.diagnostics != nil {
 		epoch.diagnostics.recordPublication(semanticChanged, changed)
 	}
-	if !epoch.installPoint(point, next, changes.Evidence().Union(coverageChanges.Evidence())) {
+	evidence := changes.Evidence().Union(coverageChanges.Evidence())
+	if !epoch.installPoint(point, next, evidence) {
 		return false, epoch.fail()
 	}
 	if epoch.storePub != nil && !epoch.storePub.writePoint(epoch, point, next) {
@@ -52,8 +53,10 @@ func (epoch *executorEpoch) publish(point int, current, next carrier.PointState,
 	}
 	var sourcePoint equation.Point
 	if changed {
-		epoch.versions[point]++
-		if epoch.versions[point] == 0 {
+		// The operand plane is the sole representation identity. Marking every
+		// operand this Point mints a value for is the whole publication record:
+		// no Region, producer or edge keeps a version beside it.
+		if !epoch.markSourceOperands(point, evidence) {
 			return false, epoch.fail()
 		}
 		if epoch.diagnostics != nil {
@@ -130,8 +133,18 @@ func (epoch *executorEpoch) publishAcyclicExact(point int, current, next carrier
 	if !changed {
 		return semanticChanged, true
 	}
-	epoch.versions[point]++
-	if epoch.versions[point] == 0 {
+	// A Region accumulator reads this value only through an ingress operand,
+	// and it needs both axes classified: the fold ChangeSet carries the state
+	// axis, so the authored-coverage direction is derived here and nowhere
+	// else. Every other acyclic publication keeps its single traversal.
+	if epoch.operands.classifiesCoverage(point) {
+		coverageChanges, coverageOK := epoch.work.CoverageWakeChangesPointStates(current, next)
+		if !coverageOK {
+			return false, epoch.fail()
+		}
+		evidence = evidence.Union(coverageChanges.Evidence())
+	}
+	if !epoch.markSourceOperands(point, evidence) {
 		return false, epoch.fail()
 	}
 	if epoch.diagnostics != nil {
@@ -194,7 +207,7 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 	// publication. Each overlay unions its own issued evidence into this
 	// accumulator; a branch that publishes no transition contributes an
 	// unclassified Set and the accumulation stays unclassified.
-	appendEvidence := change.Set{Direction: change.Known}
+	appendEvidence := change.Classified()
 	refreshBoundary = refused(SolveFailureFamilyRefresh, "candidate")
 	for index := 0; index < epoch.runtime.graph.ProducerCount(point); index++ {
 		group, groupOK := epoch.runtime.graph.ProducerAt(point, index)
@@ -208,7 +221,7 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 			continue
 		}
 		next, reads, ok := epoch.evaluate(producer, state)
-		if !ok || epoch.canceled() || !epoch.candidateTokens(producer, state.scratchTokens) {
+		if !ok || epoch.canceled() {
 			if !ok {
 				epoch.recordGroupFailure(SolveFailureReasonExecution, point, producer.group)
 			}
@@ -222,23 +235,41 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 		thisCandidateChanged := !state.hasValue
 		candidateAppendable := true
 		candidateOrdered := true
+		// candidateEvidence is this operand's classified transition. Only a
+		// carrier proof establishes a direction: the lifted order alone does
+		// not, because LessOrEq is satisfied by a contribution whose authored
+		// coverage shrank under equal support, and an accumulator that retains
+		// this operand's earlier rows would then keep coverage the successor
+		// dropped. The raw-additivity proof is exactly the missing premise, so
+		// an ascent is issued only when the carrier grants it.
+		candidateEvidence := change.Set{}
+		candidateAdditive := false
 		if state.hasValue {
 			thisCandidateChanged = !epoch.work.ExactSameRuleContributionRepresentation(state.candidate, next)
 			if regionIndex == schedule.NoRegion {
 				if thisCandidateChanged {
 					candidateAppendable = epoch.work.CanAppendAscendingRuleContribution(state.candidate, next)
 					candidateOrdered = candidateAppendable
+					candidateAdditive = candidateAppendable
 					if !candidateOrdered {
 						candidateOrdered = epoch.work.LessOrEqRuleContribution(state.candidate, next)
 					}
 				}
 			} else {
-				// Region RHS is always canonically rebuilt, so it needs only the
-				// ordinary monotonicity law, not a raw-row append certificate.
+				// A Region head publication needs only the ordinary
+				// monotonicity law. The recurrence accumulator needs more, so
+				// the raw-row append certificate is taken here as this
+				// operand's ascent evidence and nowhere else.
 				candidateOrdered = epoch.work.LessOrEqRuleContribution(state.candidate, next)
+				if thisCandidateChanged && candidateOrdered {
+					candidateAdditive = epoch.work.CanAppendAscendingRuleContribution(state.candidate, next)
+				}
 			}
 		}
-		environmentChanged := state.candidateEnvironmentToken != state.scratchEnvironmentToken
+		environmentChanged := producer.environment != nil && epoch.producerInputChanged(groupIndex, producer.group.InputCount(), state.rememberAt)
+		if state.hasValue && thisCandidateChanged && candidateOrdered && candidateAdditive {
+			candidateEvidence = change.Set{Reasons: change.ChangedUnit, Direction: change.Known | change.Ascends}
+		}
 		if state.hasValue && !candidateOrdered {
 			// A wake generation is not semantic evidence. A candidate decrease or
 			// incomparability is lawful only while an unchanged narrow episode is
@@ -249,7 +280,7 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 			// head uses, so a replaced summand may change control family. Fail
 			// only a replacement that has no such upper bound. A genuinely
 			// changed external interface still begins a fresh episode below.
-			if (!state.hasCandidateTokens || sameCandidateTokens(state.candidateTokens, state.scratchTokens)) && !environmentChanged {
+			if (state.rememberAt == 0 || !epoch.producerInputsChanged(groupIndex, producer.group.InputCount(), state.rememberAt)) && !environmentChanged {
 				refreshBoundary = refused(SolveFailureFamilyRefresh, "candidate-order-stable-inputs")
 				epoch.recordCandidateOrderFailure(refreshBoundary, point, producer.group)
 				return false, false
@@ -272,30 +303,25 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 				// changed source outside this immutable Region is an interface
 				// restart; internal changes remain subject to the phase order law.
 				candidateExternal := false
-				regionView, regionViewOK := epoch.runtime.graph.RegionAt(region)
-				candidateExternalOK := regionViewOK
-				if candidateExternalOK && state.hasCandidateTokens {
-					candidateExternalOK = len(state.candidateTokens) == producer.group.InputCount() && len(state.scratchTokens) == producer.group.InputCount()
-					if candidateExternalOK {
-						for inputIndex, previous := range state.candidateTokens {
-							current := state.scratchTokens[inputIndex]
-							if previous == current {
-								continue
-							}
-							input, inputOK := producer.group.InputAt(inputIndex)
-							if !inputOK {
-								candidateExternalOK = false
-								break
-							}
-							inside, contained := regionView.Contains(input.Point())
-							if !contained {
-								candidateExternalOK = false
-								break
-							}
-							if !inside {
-								candidateExternal = true
-								break
-							}
+				candidateExternalOK := true
+				if state.rememberAt != 0 {
+					for inputIndex := 0; inputIndex < producer.group.InputCount(); inputIndex++ {
+						if !epoch.producerInputChanged(groupIndex, inputIndex, state.rememberAt) {
+							continue
+						}
+						input, inputOK := producer.group.InputAt(inputIndex)
+						if !inputOK {
+							candidateExternalOK = false
+							break
+						}
+						inside, contained := epoch.regionContains(region, input.Point())
+						if !contained {
+							candidateExternalOK = false
+							break
+						}
+						if !inside {
+							candidateExternal = true
+							break
 						}
 					}
 				}
@@ -304,7 +330,7 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 					if !inputOK || producer.environment == nil {
 						candidateExternalOK = false
 					} else {
-						inside, contained := regionView.Contains(environment.Point())
+						inside, contained := epoch.regionContains(region, environment.Point())
 						candidateExternalOK = contained
 						candidateExternal = !inside && contained
 					}
@@ -332,6 +358,10 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 					refreshBoundary = refused(SolveFailureFamilyRefresh, "candidate-order-descent")
 					epoch.recordCandidateOrderFailure(refreshBoundary, point, producer.group)
 					return false, false
+				} else {
+					// next <= old is the only local result a narrow episode
+					// admits, so reaching here is a classified descent.
+					candidateEvidence = change.Set{Reasons: change.ChangedUnit, Direction: change.Known | change.Descends}
 				}
 			}
 		}
@@ -351,12 +381,12 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 			return false, false
 		}
 		state.candidate, state.hasValue, state.applied = next, true, state.generation
-		copy(state.candidateTokens, state.scratchTokens)
-		state.hasCandidateTokens = true
-		state.candidateEnvironmentToken = state.scratchEnvironmentToken
+		// The install closes this candidate's input epoch: every operand this
+		// evaluation read lies at or below the stamp, and every later mark on
+		// one of them is a changed input.
+		state.rememberAt = epoch.operands.advance()
 		if changed {
-			state.version++
-			if state.version == 0 {
+			if !epoch.markGroupOperands(groupIndex, candidateEvidence) {
 				return false, false
 			}
 			// A dirty structural row takes the complete canonical fold below,
@@ -484,12 +514,12 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 	structuralFolded := false
 	refreshBoundary = refused(SolveFailureFamilyRefresh, "region-rhs")
 	if phase == phaseAscent && episode.hasExact {
-		// A changed Region must rebuild its complete E+B carrier in canonical
-		// input order. Reusing episode.exact and appending changed back Groups
-		// loses the exact compact Target-row surface when another contributor
-		// expands it, so the acyclic ticket proof intentionally does not cross
-		// this recurrence boundary.
-		exact, exactChanges, exactOK = epoch.regionRHS(point, pointIndex, region, current)
+		// A changed Region rebuilds its E+B carrier in canonical input order.
+		// The operands it must admit are the ones the operand plane says moved,
+		// folded onto this episode's retained accumulator, whenever their
+		// accumulated evidence admits reuse; every other case rebuilds the
+		// complete row from Init. regionRHS owns that choice.
+		exact, exactChanges, exactOK = epoch.regionRHS(point, pointIndex, regionIndex, region, current)
 		structuralFolded = exactOK
 		if exactOK {
 			if refreshPending {
@@ -507,7 +537,7 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 		// every narrow step.
 		exact, selected, exactOK = episode.exact, episode.exact, true
 	} else {
-		exact, exactChanges, exactOK = epoch.regionRHS(point, pointIndex, region, current)
+		exact, exactChanges, exactOK = epoch.regionRHS(point, pointIndex, regionIndex, region, current)
 		structuralFolded = exactOK
 	}
 	if !exactOK || epoch.canceled() {
@@ -599,14 +629,8 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 		return false, false
 	}
 	refreshBoundary = refused(SolveFailureFamilyRefresh, "region-publication")
-	if !episode.nextExactRevision() {
+	if !episode.dropPostfixProof() {
 		return false, false
-	}
-	if !episode.hasExact || exactInputsChanged {
-		episode.exactInputsVersion++
-		if episode.exactInputsVersion == 0 {
-			return false, false
-		}
 	}
 	order := publicationAscending
 	if phase == phaseNarrow {

@@ -20,34 +20,20 @@ import (
 // producerEpoch is an epoch-local candidate cache in graph Group order. A
 // generation marks it dirty; the runnable identity is always its output Point.
 type producerEpoch struct {
-	generation                uint64
-	applied                   uint64
-	version                   uint64
-	candidate                 carrier.RuleContribution
-	hasValue                  bool
-	candidateTokens           []uint64
-	scratchTokens             []uint64
-	hasCandidateTokens        bool
-	candidateEnvironmentToken uint64
-	scratchEnvironmentToken   uint64
-	inputs                    []carrier.PointState
-	inputStates               []carrier.State
-	patches                   []carrier.Patch
-	patchRows                 []contributionPatch
-	reads                     []demand.Observation
-}
-
-// regionPostfixProof is the disposable relation certificate for one exact
-// recurrence episode.  It contains no carrier state: exact revision/input
-// evidence and head publication version are the immutable evidence that the
-// already checked exact<=current relation still describes this head.
-type regionPostfixProof struct {
-	valid         bool
-	episode       uint64
-	phase         solvePhase
-	exactInputs   uint64
-	exactRevision uint64
-	headVersion   uint64
+	generation uint64
+	applied    uint64
+	candidate  carrier.RuleContribution
+	hasValue   bool
+	// rememberAt stamps the operand clock at the candidate install this cache
+	// holds. Every input operand marked after that stamp is a changed input,
+	// so the cache retains no ordered input-version snapshot to diff against.
+	// Zero means no candidate has been installed yet.
+	rememberAt  uint64
+	inputs      []carrier.PointState
+	inputStates []carrier.State
+	patches     []carrier.Patch
+	patchRows   []contributionPatch
+	reads       []demand.Observation
 }
 
 // contributionPatch keeps carrier admission order separate from Rule callback
@@ -65,27 +51,37 @@ type regionEpoch struct {
 	// phase belongs to this exact recurrence episode.  Nested regions may
 	// restart independently: a child re-ascent must not turn an enclosing
 	// narrowed episode into an ascent episode with its narrowed head retained.
-	phase              solvePhase
-	episode            uint64
-	exact              carrier.PointRHS
-	hasExact           bool
-	exactInputsVersion uint64
-	exactRevision      uint64
-	postfix            regionPostfixProof
-	invalid            bool
+	phase    solvePhase
+	episode  uint64
+	exact    carrier.PointRHS
+	hasExact bool
+	// accumulator is this episode's retained raw E⊔B fold, taken before the
+	// support-axis discharge that turns it into exact. An ascent whose operand
+	// evidence admits reuse folds only the moved operands onto it instead of
+	// rebuilding the complete recurrence row.
+	accumulator    carrier.PointRHS
+	hasAccumulator bool
+	invalid        bool
 	// interfaceRefreshPending is an epoch-local barrier.  A stale boundary
 	// version first dirties its ordinary Group owners and waits for their
 	// candidate generations to settle; only then may the head refold and take
 	// a new version snapshot.  Keeping the old snapshot during that interval
 	// prevents a second head visit from re-dirtying the same Groups.
 	interfaceRefreshPending bool
-	ingress                 []uint64
-	backIngress             []uint64
-	environmentIngress      []uint64
-	environmentBackIngress  []uint64
-	factorIngress           []uint64
-	factorBackIngress       []uint64
-	snapshot                []uint64
+	// The remaining fields are stamps on the epoch's one operand clock. They
+	// replace the seven parallel version vectors this episode used to keep
+	// purely to diff: rememberAt closes the interface epoch, externalAt/backAt
+	// record the newest mark on this Region's ingress rows, pointsAt records
+	// the newest mark on its interior points, enterAt closes the WTO pass, and
+	// postfixAt closes the relation certificate. pending accumulates the
+	// classified evidence of every ingress mark since rememberAt.
+	rememberAt uint64
+	externalAt uint64
+	backAt     uint64
+	pointsAt   uint64
+	enterAt    uint64
+	postfixAt  uint64
+	pending    change.Set
 }
 
 type solvePhase uint8
@@ -165,9 +161,14 @@ type executorEpoch struct {
 	work               *carrier.Work
 	demand             *demand.Epoch
 	points             []carrier.PointState
-	versions           []uint64
 	producers          []producerEpoch
 	regions            []regionEpoch
+	// operands is the change layer over the sealed operand plane. It is the
+	// sole representation-identity authority in the epoch: no point, producer
+	// or region keeps a private version counter beside it.
+	operands operandEpoch
+	// operandScratch is the reusable delta row the recurrence fold consumes.
+	operandScratch []int
 	// candidatesPending is one dense counter per active Region. It counts the
 	// producer Groups in that Region's complete event-point interval (and thus
 	// in every nested descendant) whose latest wake generation has not yet
@@ -364,7 +365,6 @@ func newRuntimeEpoch(runtime *solverRuntime, relation equation.Relation, ctx con
 		work:              work,
 		demand:            demandEpoch,
 		points:            make([]carrier.PointState, runtime.graph.PointCount()),
-		versions:          make([]uint64, runtime.graph.PointCount()),
 		producers:         make([]producerEpoch, runtime.graph.GroupCount()),
 		regions:           make([]regionEpoch, len(runtime.regions)),
 		candidatesPending: make([]uint64, len(runtime.regions)),
@@ -384,6 +384,9 @@ func newRuntimeEpoch(runtime *solverRuntime, relation equation.Relation, ctx con
 	if !work.SetCheckpoint(epoch.checkpoint) {
 		return nil, false
 	}
+	if !epoch.operands.open(runtime.operands) {
+		return nil, false
+	}
 	for index, region := range runtime.regions {
 		if !runtime.activeRegions[index] {
 			if region.active {
@@ -396,13 +399,6 @@ func newRuntimeEpoch(runtime *solverRuntime, relation equation.Relation, ctx con
 		}
 		epoch.regions[index].phase = phaseAscent
 		epoch.regions[index].episode = 1
-		epoch.regions[index].ingress = make([]uint64, len(region.external))
-		epoch.regions[index].backIngress = make([]uint64, len(region.back))
-		epoch.regions[index].environmentIngress = make([]uint64, len(region.environmentExternal))
-		epoch.regions[index].environmentBackIngress = make([]uint64, len(region.environmentBack))
-		epoch.regions[index].factorIngress = make([]uint64, len(region.factorExternal))
-		epoch.regions[index].factorBackIngress = make([]uint64, len(region.factorBack))
-		epoch.regions[index].snapshot = make([]uint64, len(region.points))
 	}
 	for pointIndex, active := range runtime.activePoints {
 		if !active {
@@ -455,7 +451,7 @@ func newRuntimeEpoch(runtime *solverRuntime, relation equation.Relation, ctx con
 			if epoch.producers[groupIndex].generation == 0 {
 				metadata := runtime.producers[groupIndex]
 				inputCount := metadata.group.InputCount()
-				epoch.producers[groupIndex] = producerEpoch{generation: 1, candidateTokens: make([]uint64, inputCount), scratchTokens: make([]uint64, inputCount), inputs: make([]carrier.PointState, inputCount), inputStates: make([]carrier.State, inputCount), patches: make([]carrier.Patch, 0, metadata.span.count()), patchRows: make([]contributionPatch, 0, metadata.span.count()), reads: make([]demand.Observation, 0, len(metadata.reads))}
+				epoch.producers[groupIndex] = producerEpoch{generation: 1, inputs: make([]carrier.PointState, inputCount), inputStates: make([]carrier.State, inputCount), patches: make([]carrier.Patch, 0, metadata.span.count()), patchRows: make([]contributionPatch, 0, metadata.span.count()), reads: make([]demand.Observation, 0, len(metadata.reads))}
 			}
 			if !epoch.enqueuePoint(pointIndex) {
 				return nil, false
@@ -611,15 +607,13 @@ func (epoch *executorEpoch) complete() bool {
 	return epoch.terminal.CompareAndSwap(epochRunning, epochCompleted)
 }
 
-func (episode *regionEpoch) nextExactRevision() bool {
+// dropPostfixProof drops the relation certificate a recomputed exact RHS
+// invalidates. The certificate is one clock stamp, so there is no revision
+// counter left to advance beside it.
+func (episode *regionEpoch) dropPostfixProof() bool {
 	if episode == nil {
 		return false
 	}
-	if episode.exactRevision == ^uint64(0) {
-		episode.postfix = regionPostfixProof{}
-		return false
-	}
-	episode.postfix = regionPostfixProof{}
-	episode.exactRevision++
+	episode.postfixAt = 0
 	return true
 }

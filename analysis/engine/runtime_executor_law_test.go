@@ -8,22 +8,25 @@ import (
 func TestRegionPostfixCertificateRejectsExactRecomputeWithUnchangedInputs(t *testing.T) {
 	runtime := &solverRuntime{regions: []runtimeRegion{{active: true, head: 0}}, activeRegions: []bool{true}}
 	epoch := &executorEpoch{
-		runtime:  runtime,
-		versions: []uint64{7},
-		regions:  []regionEpoch{{phase: phaseAscent, episode: 1, hasExact: true, exactInputsVersion: 3, exactRevision: 1}},
+		runtime: runtime,
+		regions: []regionEpoch{{phase: phaseAscent, episode: 1, hasExact: true}},
 	}
+	epoch.operands.clock = 1
 	if !epoch.rememberRegionPostfix(0) || !epoch.regionPostfixProved(0) {
 		t.Fatal("initial postfix certificate was not admitted")
 	}
-	if !epoch.regions[0].nextExactRevision() || epoch.regions[0].exactRevision != 2 {
-		t.Fatal("exact revision did not advance")
+	if !epoch.regions[0].dropPostfixProof() {
+		t.Fatal("exact recomputation did not drop the certificate")
 	}
 	if epoch.regionPostfixProved(0) {
 		t.Fatal("stale postfix certificate survived exact recomputation")
 	}
-	epoch.regions[0].exactRevision = ^uint64(0)
-	if epoch.regions[0].nextExactRevision() || epoch.regionPostfixProved(0) {
-		t.Fatal("exact revision overflow retained a usable certificate")
+	if !epoch.rememberRegionPostfix(0) || !epoch.regionPostfixProved(0) {
+		t.Fatal("a fresh certificate was refused after the drop")
+	}
+	epoch.regions[0].backAt = epoch.operands.clock
+	if epoch.regionPostfixProved(0) {
+		t.Fatal("a back ingress mark taken after the certificate left it usable")
 	}
 }
 

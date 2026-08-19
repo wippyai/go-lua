@@ -57,7 +57,11 @@ func (epoch *executorEpoch) advanceNarrow() (advanced, ok bool) {
 				return false, false
 			}
 			episode.phase = phaseNarrow
-			episode.postfix = regionPostfixProof{}
+			episode.postfixAt = 0
+			// A narrow episode descends. Its retained ascent accumulator is no
+			// longer an under-approximation of the recurrence row, so it is
+			// dropped at the phase cut rather than guarded at every reader.
+			episode.accumulator, episode.hasAccumulator = carrier.PointRHS{}, false
 			if !epoch.markPostfixDirty(region.head) || !epoch.enqueuePoint(region.head) {
 				return false, false
 			}

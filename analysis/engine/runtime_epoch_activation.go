@@ -228,6 +228,18 @@ func (epoch *executorEpoch) installSelectedFactorOverlay(overlay *preparedSelect
 	runtime.regionChildren = overlay.regionChildren
 	runtime.pointRegion = overlay.pointRegion
 	runtime.activeRegions = overlay.activeRegions
+	// Region ordinals are per-frontier and private, so the operand transpose
+	// over them is too. It is re-derived from the rows just installed and
+	// published with them, before any reader can reach a row of one frontier
+	// through a transpose of another.
+	operands, planed := buildOperandPlane(runtime.graph, runtime.producers, runtime.environments, runtime.factorEdges, runtime.regions)
+	if !planed {
+		return false
+	}
+	runtime.operands = operands
+	if !epoch.operands.open(operands) {
+		return false
+	}
 	for _, activation := range prepared.pointActivations {
 		// An activation installs a point without publishing a
 		// predecessor-to-successor transition, so it issues no classification.
@@ -357,7 +369,7 @@ func (epoch *executorEpoch) prepareSelectedFactorEpoch(overlay *preparedSelected
 			}
 			metadata := epoch.runtime.producers[groupIndex]
 			inputCount := metadata.group.InputCount()
-			cache := producerEpoch{generation: 1, candidateTokens: make([]uint64, inputCount), scratchTokens: make([]uint64, inputCount), inputs: make([]carrier.PointState, inputCount), inputStates: make([]carrier.State, inputCount), patches: make([]carrier.Patch, 0, metadata.span.count()), patchRows: make([]contributionPatch, 0, metadata.span.count()), reads: make([]demandpkg.Observation, 0, len(metadata.reads))}
+			cache := producerEpoch{generation: 1, inputs: make([]carrier.PointState, inputCount), inputStates: make([]carrier.State, inputCount), patches: make([]carrier.Patch, 0, metadata.span.count()), patchRows: make([]contributionPatch, 0, metadata.span.count()), reads: make([]demandpkg.Observation, 0, len(metadata.reads))}
 			producerActivations = append(producerActivations, preparedProducerActivation{index: groupIndex, state: cache})
 			producerActivationAt[groupIndex] = cache
 			newProducers[groupIndex] = struct{}{}
@@ -433,13 +445,6 @@ func (epoch *executorEpoch) prepareSelectedFactorEpoch(overlay *preparedSelected
 		episode.phase = phaseAscent
 		episode.episode = 1
 		episode.invalid = true
-		episode.ingress = make([]uint64, len(region.external))
-		episode.backIngress = make([]uint64, len(region.back))
-		episode.environmentIngress = make([]uint64, len(region.environmentExternal))
-		episode.environmentBackIngress = make([]uint64, len(region.environmentBack))
-		episode.factorIngress = make([]uint64, len(region.factorExternal))
-		episode.factorBackIngress = make([]uint64, len(region.factorBack))
-		episode.snapshot = make([]uint64, len(region.points))
 		var pending uint64
 		for _, pointIndex := range region.points {
 			if pointIndex < 0 || pointIndex >= len(epoch.points) || !overlay.activePoints[pointIndex] {

@@ -928,75 +928,53 @@ func (diagnostics *solveDiagnosticState) beginRestart(epoch *executorEpoch, regi
 	return sample
 }
 
+// captureRestartMismatches reports which of this Region's ingress operands
+// moved since it last remembered its interfaces. That is the operand plane's
+// own question, asked over the same stamps the executor decides restarts
+// with, so the diagnostic reads the plane instead of rescanning every
+// external producer, environment edge and factor edge to diff a private
+// version vector against them.
 func (diagnostics *solveDiagnosticState) captureRestartMismatches(epoch *executorEpoch, region int, bound runtimeRegion, state regionEpoch, pendingGroup int, pending carrier.RuleContribution, sample *solveDiagnosticRestartSample) {
-	if len(bound.external) != len(state.ingress) {
-		sample.externalProducerIngressChanged++
-		diagnostics.addDirection(solveDiagnosticDirectionUnknown, sample)
+	rows := [6]struct {
+		kind     operandKind
+		members  []int
+		count    *uint64
+		input    solveDiagnosticInputKind
+		classify func(key solveDiagnosticInputKey, member int)
+	}{
+		{kind: operandExternalProducer, members: bound.external, count: &sample.externalProducerIngressChanged, input: solveDiagnosticInputExternalProducer, classify: func(key solveDiagnosticInputKey, member int) {
+			diagnostics.classifyRule(epoch, key, member, pendingGroup, pending, sample)
+		}},
+		{kind: operandBackProducer, members: bound.back, count: &sample.backProducerIngressChanged, input: solveDiagnosticInputBackProducer, classify: func(key solveDiagnosticInputKey, member int) {
+			diagnostics.classifyRule(epoch, key, member, pendingGroup, pending, sample)
+		}},
+		{kind: operandExternalEnvironment, members: bound.environmentExternal, count: &sample.externalEnvironmentIngressChanged},
+		{kind: operandBackEnvironment, members: bound.environmentBack, count: &sample.backEnvironmentIngressChanged, input: solveDiagnosticInputBackEnvironment, classify: func(key solveDiagnosticInputKey, member int) {
+			diagnostics.classifyEnvironment(epoch, key, member, sample)
+		}},
+		{kind: operandExternalFactor, members: bound.factorExternal, count: &sample.externalFactorIngressChanged},
+		{kind: operandBackFactor, members: bound.factorBack, count: &sample.backFactorIngressChanged, input: solveDiagnosticInputBackFactor, classify: func(key solveDiagnosticInputKey, member int) {
+			diagnostics.classifyFactor(epoch, key, member, sample)
+		}},
 	}
-	for index, group := range bound.external {
-		current := uint64(0)
-		if group >= 0 && group < len(epoch.producers) {
-			current = epoch.producers[group].version
+	for _, row := range rows {
+		begin, end, ok := epoch.operands.plane.regionWindow(region, row.kind)
+		if !ok || end-begin != len(row.members) {
+			// A row the plane does not describe cannot be diffed at all. It is
+			// reported once, in the same unknown direction the old width
+			// mismatch reported.
+			*row.count++
+			diagnostics.addDirection(solveDiagnosticDirectionUnknown, sample)
+			continue
 		}
-		if index >= len(state.ingress) || state.ingress[index] != current {
-			sample.externalProducerIngressChanged++
-			diagnostics.classifyRule(epoch, solveDiagnosticInputKey{region: region, kind: solveDiagnosticInputExternalProducer, index: index}, group, pendingGroup, pending, sample)
-		}
-	}
-	if len(bound.back) != len(state.backIngress) {
-		sample.backProducerIngressChanged++
-		diagnostics.addDirection(solveDiagnosticDirectionUnknown, sample)
-	}
-	for index, group := range bound.back {
-		current := uint64(0)
-		if group >= 0 && group < len(epoch.producers) {
-			current = epoch.producers[group].version
-		}
-		if index >= len(state.backIngress) || state.backIngress[index] != current {
-			sample.backProducerIngressChanged++
-			diagnostics.classifyRule(epoch, solveDiagnosticInputKey{region: region, kind: solveDiagnosticInputBackProducer, index: index}, group, pendingGroup, pending, sample)
-		}
-	}
-	if len(bound.environmentExternal) != len(state.environmentIngress) {
-		sample.externalEnvironmentIngressChanged++
-		diagnostics.addDirection(solveDiagnosticDirectionUnknown, sample)
-	}
-	for index, edge := range bound.environmentExternal {
-		current := epoch.environmentVersion(edge)
-		if index >= len(state.environmentIngress) || state.environmentIngress[index] != current {
-			sample.externalEnvironmentIngressChanged++
-		}
-	}
-	if len(bound.environmentBack) != len(state.environmentBackIngress) {
-		sample.backEnvironmentIngressChanged++
-		diagnostics.addDirection(solveDiagnosticDirectionUnknown, sample)
-	}
-	for index, edge := range bound.environmentBack {
-		current := epoch.environmentVersion(edge)
-		if index >= len(state.environmentBackIngress) || state.environmentBackIngress[index] != current {
-			sample.backEnvironmentIngressChanged++
-			diagnostics.classifyEnvironment(epoch, solveDiagnosticInputKey{region: region, kind: solveDiagnosticInputBackEnvironment, index: index}, edge, sample)
-		}
-	}
-	if len(bound.factorExternal) != len(state.factorIngress) {
-		sample.externalFactorIngressChanged++
-		diagnostics.addDirection(solveDiagnosticDirectionUnknown, sample)
-	}
-	for index, edge := range bound.factorExternal {
-		current := epoch.factorEdgeVersion(edge)
-		if index >= len(state.factorIngress) || state.factorIngress[index] != current {
-			sample.externalFactorIngressChanged++
-		}
-	}
-	if len(bound.factorBack) != len(state.factorBackIngress) {
-		sample.backFactorIngressChanged++
-		diagnostics.addDirection(solveDiagnosticDirectionUnknown, sample)
-	}
-	for index, edge := range bound.factorBack {
-		current := epoch.factorEdgeVersion(edge)
-		if index >= len(state.factorBackIngress) || state.factorBackIngress[index] != current {
-			sample.backFactorIngressChanged++
-			diagnostics.classifyFactor(epoch, solveDiagnosticInputKey{region: region, kind: solveDiagnosticInputBackFactor, index: index}, edge, sample)
+		for position, member := range row.members {
+			if !epoch.operands.changedSince(uint32(begin+position), state.rememberAt) {
+				continue
+			}
+			*row.count++
+			if row.classify != nil {
+				row.classify(solveDiagnosticInputKey{region: region, kind: row.input, index: position}, member)
+			}
 		}
 	}
 }

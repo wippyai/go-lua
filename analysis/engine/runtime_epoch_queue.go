@@ -147,31 +147,37 @@ func (epoch *executorEpoch) invalidateRegionPostfix(region int) bool {
 	if epoch == nil || !epoch.activeRegion(region) || region >= len(epoch.regions) {
 		return false
 	}
-	epoch.regions[region].postfix = regionPostfixProof{}
+	epoch.regions[region].postfixAt = 0
 	return true
 }
 
+// regionPostfixProved reads the one stamp that certifies the already checked
+// exact<=current relation. The certificate is a clock position rather than a
+// tuple of counters: every fact the tuple used to carry -- the episode, the
+// phase, the recomputed exact RHS, the ingress that justified it and the head
+// publication -- either marks an operand this Region owns or drops the stamp
+// outright, so a stamp that still dominates every mark on this Region's rows
+// is exactly the old conjunction.
 func (epoch *executorEpoch) regionPostfixProved(region int) bool {
 	if epoch == nil || !epoch.activeRegion(region) || region >= len(epoch.regions) {
 		return false
 	}
-	bound, episode := epoch.runtime.regions[region], &epoch.regions[region]
-	if !episode.hasExact || episode.episode == 0 || episode.exactInputsVersion == 0 || episode.exactRevision == 0 || bound.head < 0 || bound.head >= len(epoch.versions) {
+	episode := &epoch.regions[region]
+	if !episode.hasExact || episode.episode == 0 || episode.postfixAt == 0 {
 		return false
 	}
-	proof := episode.postfix
-	return proof.valid && proof.episode == episode.episode && proof.phase == episode.phase && proof.exactInputs == episode.exactInputsVersion && proof.exactRevision == episode.exactRevision && proof.headVersion == epoch.versions[bound.head]
+	return episode.externalAt <= episode.postfixAt && episode.backAt <= episode.postfixAt && episode.pointsAt <= episode.postfixAt
 }
 
 func (epoch *executorEpoch) rememberRegionPostfix(region int) bool {
 	if epoch == nil || !epoch.activeRegion(region) || region >= len(epoch.regions) {
 		return false
 	}
-	bound, episode := epoch.runtime.regions[region], &epoch.regions[region]
-	if !episode.hasExact || episode.episode == 0 || episode.exactInputsVersion == 0 || episode.exactRevision == 0 || bound.head < 0 || bound.head >= len(epoch.versions) {
+	episode := &epoch.regions[region]
+	if !episode.hasExact || episode.episode == 0 {
 		return false
 	}
-	episode.postfix = regionPostfixProof{valid: true, episode: episode.episode, phase: episode.phase, exactInputs: episode.exactInputsVersion, exactRevision: episode.exactRevision, headVersion: epoch.versions[bound.head]}
+	episode.postfixAt = epoch.operands.advance()
 	return true
 }
 

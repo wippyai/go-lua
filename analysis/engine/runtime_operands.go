@@ -1,0 +1,538 @@
+// runtime_operands.go seals the fused operand plane and its two source
+// transposes, and marks operands when a publication or a candidate mints a
+// new value for one.
+
+package engine
+
+import (
+	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
+	"github.com/wippyai/go-lua/analysis/engine/internal/facts/change"
+	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
+)
+
+// operandKind names the seven region rows the recurrence reads. They are the
+// rows the epoch used to shadow with seven parallel version vectors; the
+// vectors are gone and the rows are now positions in one fused plane.
+type operandKind uint8
+
+const (
+	operandExternalProducer operandKind = iota
+	operandBackProducer
+	operandExternalEnvironment
+	operandBackEnvironment
+	operandExternalFactor
+	operandBackFactor
+	operandRegionPoint
+	operandKindCount
+)
+
+// external reports whether this row feeds the Region's external ingress. The
+// remaining producer/environment/factor rows are back ingress; the point row
+// is the Region's own interior publication surface.
+func (kind operandKind) external() bool {
+	return kind == operandExternalProducer || kind == operandExternalEnvironment || kind == operandExternalFactor
+}
+
+func (kind operandKind) back() bool {
+	return kind == operandBackProducer || kind == operandBackEnvironment || kind == operandBackFactor
+}
+
+// operandTranspose is the inverse of the forward operand rows, stored as
+// parallel columns over one source plane: offsets is the CSR row directory,
+// operand carries the fused ordinal, and window carries the forward row that
+// owns it so a mark reaches its sole reader without a search. A negative
+// window names a Group input row, whose reader is the Group itself.
+type operandTranspose struct {
+	offsets []int32
+	operand []uint32
+	window  []int32
+}
+
+const operandGroupWindow int32 = -1
+
+// operandPlaneMax bounds the fused plane at the width its int32 window
+// directory and uint32 ordinals can address.
+const operandPlaneMax = int(^uint32(0) >> 1)
+
+// operandPlane is the one sealed plane over every value the recurrence and
+// the producer candidates read as an operand. Group input operands occupy the
+// low ordinals and keep their positions across an activation epoch; region
+// operands occupy the high ordinals and are re-derived whenever the region
+// rows are, because a selected FactorEdge changes their widths.
+//
+// Region and position are never stored per operand: both are recovered from
+// the half-open window this plane is built from.
+type operandPlane struct {
+	// groupBase[group] opens that Group's input window. The window is one
+	// wider than the input count: the last position is the designated
+	// environment input, which is absent for most Groups and is then never
+	// marked.
+	groupBase []int32
+	// windows[region*operandKindCount+kind] opens one region row; the row ends
+	// at the next entry. The directory is one flat row so a kind is an offset,
+	// never a second indirection.
+	windows []int32
+	byPoint operandTranspose
+	byGroup operandTranspose
+	// ingressSource marks the Points that source at least one Region ingress
+	// operand. Only those publications are read by a recurrence accumulator,
+	// so only those must classify their authored-coverage axis as well as
+	// their state axis.
+	ingressSource []bool
+	total         int
+	regions       int
+}
+
+// ingress reports whether this row is one a recurrence accumulator reads.
+func (kind operandKind) ingress() bool { return kind.external() || kind.back() }
+
+// buildOperandPlane counts once and scatters once over the already-sealed
+// region rows. It runs exactly where those rows are built, so a rebuilt
+// activation epoch pays one extra pass over rows it is rebuilding anyway.
+func buildOperandPlane(graph *equation.Graph, producers []runtimeProducer, environments []runtimeEnvironment, factorEdges []runtimeFactorEdge, regions []runtimeRegion) (*operandPlane, bool) {
+	if graph == nil || len(producers) != graph.GroupCount() {
+		return nil, false
+	}
+	points := graph.PointCount()
+	plane := &operandPlane{groupBase: make([]int32, len(producers)+1), windows: make([]int32, len(regions)*int(operandKindCount)+1), ingressSource: make([]bool, points), regions: len(regions)}
+	total := 0
+	for index, producer := range producers {
+		plane.groupBase[index] = int32(total)
+		width := producer.group.InputCount() + 1
+		if width <= 0 || total > operandPlaneMax-width {
+			return nil, false
+		}
+		total += width
+	}
+	plane.groupBase[len(producers)] = int32(total)
+	for index, region := range regions {
+		widths := [operandKindCount]int{len(region.external), len(region.back), len(region.environmentExternal), len(region.environmentBack), len(region.factorExternal), len(region.factorBack), len(region.points)}
+		for kind, width := range widths {
+			plane.windows[index*int(operandKindCount)+kind] = int32(total)
+			if width < 0 || total > operandPlaneMax-width {
+				return nil, false
+			}
+			total += width
+		}
+	}
+	plane.windows[len(regions)*int(operandKindCount)] = int32(total)
+	plane.total = total
+
+	pointCounts := make([]int32, points+1)
+	groupCounts := make([]int32, len(producers)+1)
+	// One count pass and one scatter pass share this visitor, so the two
+	// passes cannot disagree about which operand belongs to which source.
+	visit := func(record func(source int, byGroup bool, ordinal uint32, window int32) bool) bool {
+		for groupIndex, producer := range producers {
+			base := plane.groupBase[groupIndex]
+			for inputIndex := 0; inputIndex < producer.group.InputCount(); inputIndex++ {
+				input, inputOK := producer.group.InputAt(inputIndex)
+				if !inputOK {
+					return false
+				}
+				source, indexed := graph.PointIndex(input.Point())
+				if !indexed || source < 0 || source >= points {
+					return false
+				}
+				if !record(source, false, uint32(base)+uint32(inputIndex), operandGroupWindow) {
+					return false
+				}
+			}
+			if producer.environment == nil {
+				continue
+			}
+			input, inputOK := producer.group.EnvironmentInput()
+			if !inputOK {
+				return false
+			}
+			source, indexed := graph.PointIndex(input.Point())
+			if !indexed || source < 0 || source >= points {
+				return false
+			}
+			if !record(source, false, uint32(base)+uint32(producer.group.InputCount()), operandGroupWindow) {
+				return false
+			}
+		}
+		for regionIndex, region := range regions {
+			window := int32(regionIndex * int(operandKindCount))
+			for position, group := range region.external {
+				if group < 0 || group >= len(producers) {
+					return false
+				}
+				if !record(group, true, uint32(plane.windows[window+int32(operandExternalProducer)])+uint32(position), window+int32(operandExternalProducer)) {
+					return false
+				}
+			}
+			for position, group := range region.back {
+				if group < 0 || group >= len(producers) {
+					return false
+				}
+				if !record(group, true, uint32(plane.windows[window+int32(operandBackProducer)])+uint32(position), window+int32(operandBackProducer)) {
+					return false
+				}
+			}
+			environmentRows := [2]struct {
+				edges []int
+				kind  operandKind
+			}{{region.environmentExternal, operandExternalEnvironment}, {region.environmentBack, operandBackEnvironment}}
+			for _, row := range environmentRows {
+				for position, edge := range row.edges {
+					if edge < 0 || edge >= len(environments) {
+						return false
+					}
+					source := environments[edge].source
+					if source < 0 || source >= points {
+						return false
+					}
+					if !record(source, false, uint32(plane.windows[window+int32(row.kind)])+uint32(position), window+int32(row.kind)) {
+						return false
+					}
+				}
+			}
+			factorRows := [2]struct {
+				edges []int
+				kind  operandKind
+			}{{region.factorExternal, operandExternalFactor}, {region.factorBack, operandBackFactor}}
+			for _, row := range factorRows {
+				for position, edge := range row.edges {
+					if edge < 0 || edge >= len(factorEdges) {
+						return false
+					}
+					source := factorEdges[edge].source
+					if source < 0 || source >= points {
+						return false
+					}
+					if !record(source, false, uint32(plane.windows[window+int32(row.kind)])+uint32(position), window+int32(row.kind)) {
+						return false
+					}
+				}
+			}
+			for position, point := range region.points {
+				if point < 0 || point >= points {
+					return false
+				}
+				if !record(point, false, uint32(plane.windows[window+int32(operandRegionPoint)])+uint32(position), window+int32(operandRegionPoint)) {
+					return false
+				}
+			}
+		}
+		return true
+	}
+
+	if !visit(func(source int, byGroup bool, _ uint32, _ int32) bool {
+		if byGroup {
+			groupCounts[source+1]++
+			return true
+		}
+		pointCounts[source+1]++
+		return true
+	}) {
+		return nil, false
+	}
+	for index := 1; index < len(pointCounts); index++ {
+		pointCounts[index] += pointCounts[index-1]
+	}
+	for index := 1; index < len(groupCounts); index++ {
+		groupCounts[index] += groupCounts[index-1]
+	}
+	plane.byPoint = operandTranspose{offsets: pointCounts, operand: make([]uint32, pointCounts[points]), window: make([]int32, pointCounts[points])}
+	plane.byGroup = operandTranspose{offsets: groupCounts, operand: make([]uint32, groupCounts[len(producers)]), window: make([]int32, groupCounts[len(producers)])}
+	pointCursor := make([]int32, points)
+	groupCursor := make([]int32, len(producers))
+	if !visit(func(source int, byGroup bool, ordinal uint32, window int32) bool {
+		transpose, cursor := &plane.byPoint, pointCursor
+		if byGroup {
+			transpose, cursor = &plane.byGroup, groupCursor
+		}
+		at := transpose.offsets[source] + cursor[source]
+		if at < transpose.offsets[source] || int(at) >= len(transpose.operand) || at >= transpose.offsets[source+1] {
+			return false
+		}
+		transpose.operand[at] = ordinal
+		transpose.window[at] = window
+		if !byGroup && window >= 0 && operandKind(int(window)%int(operandKindCount)).ingress() {
+			plane.ingressSource[source] = true
+		}
+		cursor[source]++
+		return true
+	}) {
+		return nil, false
+	}
+	return plane, true
+}
+
+// sourceOperandOrdinals borrows the window of operands one published Point
+// mints a new value for. The slices are plane-owned and are never retained.
+func (plane *operandPlane) sourceOperandOrdinals(point int) ([]uint32, []int32, bool) {
+	if plane == nil || point < 0 || point+1 >= len(plane.byPoint.offsets) {
+		return nil, nil, false
+	}
+	begin, end := plane.byPoint.offsets[point], plane.byPoint.offsets[point+1]
+	if begin < 0 || end < begin || int(end) > len(plane.byPoint.operand) {
+		return nil, nil, false
+	}
+	return plane.byPoint.operand[begin:end], plane.byPoint.window[begin:end], true
+}
+
+// groupOperandOrdinals is the same borrowed window for a replaced Group
+// candidate, whose value no Point publication mints.
+func (plane *operandPlane) groupOperandOrdinals(group int) ([]uint32, []int32, bool) {
+	if plane == nil || group < 0 || group+1 >= len(plane.byGroup.offsets) {
+		return nil, nil, false
+	}
+	begin, end := plane.byGroup.offsets[group], plane.byGroup.offsets[group+1]
+	if begin < 0 || end < begin || int(end) > len(plane.byGroup.operand) {
+		return nil, nil, false
+	}
+	return plane.byGroup.operand[begin:end], plane.byGroup.window[begin:end], true
+}
+
+// groupOperandAt is the fused ordinal of one Group input operand. Position
+// equals the input index; the designated environment input occupies the
+// position immediately after the last ordinary input.
+func (plane *operandPlane) groupOperandAt(group, position int) (uint32, bool) {
+	if plane == nil || group < 0 || group+1 >= len(plane.groupBase) || position < 0 {
+		return 0, false
+	}
+	begin, end := int(plane.groupBase[group]), int(plane.groupBase[group+1])
+	if begin+position >= end {
+		return 0, false
+	}
+	return uint32(begin + position), true
+}
+
+// regionWindow opens one forward row. The half-open interval is the row's
+// complete membership; position is the offset inside it.
+func (plane *operandPlane) regionWindow(region int, kind operandKind) (int, int, bool) {
+	if plane == nil || region < 0 || region >= plane.regions || kind >= operandKindCount {
+		return 0, 0, false
+	}
+	at := region*int(operandKindCount) + int(kind)
+	begin, end := int(plane.windows[at]), int(plane.windows[at+1])
+	if begin < 0 || end < begin || end > plane.total {
+		return 0, 0, false
+	}
+	return begin, end, true
+}
+
+// operandRegion recovers the owning region, row and position of one fused
+// ordinal from the window directory. Nothing on the marking path calls it:
+// it exists for the restart diagnostic, which reports the row a stale operand
+// belongs to.
+func (plane *operandPlane) operandRegion(ordinal uint32) (int, operandKind, int, bool) {
+	if plane == nil || int(ordinal) >= plane.total || int(ordinal) < int(plane.groupBase[len(plane.groupBase)-1]) {
+		return 0, 0, 0, false
+	}
+	low, high := 0, len(plane.windows)-1
+	for low < high {
+		middle := (low + high + 1) / 2
+		if plane.windows[middle] <= int32(ordinal) {
+			low = middle
+		} else {
+			high = middle - 1
+		}
+	}
+	region, kind := low/int(operandKindCount), operandKind(low%int(operandKindCount))
+	if region >= plane.regions {
+		return 0, 0, 0, false
+	}
+	return region, kind, int(ordinal) - int(plane.windows[low]), true
+}
+
+// operandEpoch is the epoch-local change layer over the sealed plane. One
+// monotone clock stamps every mark; each reader keeps the clock value it last
+// read at, so one plane serves every Region and every Group without a shared
+// reset and without a per-reader mark set.
+type operandEpoch struct {
+	plane *operandPlane
+	tick  []uint64
+	clock uint64
+}
+
+// open installs a plane over this epoch. Group input ordinals keep their
+// positions across an activation rebuild, so their accumulated ticks survive;
+// the region suffix is re-derived and starts unmarked, which is exactly the
+// state its freshly opened region episodes read it in.
+func (state *operandEpoch) open(plane *operandPlane) bool {
+	if state == nil || plane == nil {
+		return false
+	}
+	if state.clock < 1 {
+		state.clock = 1
+	}
+	width := int(plane.groupBase[len(plane.groupBase)-1])
+	retained := state.plane != nil && width == int(state.plane.groupBase[len(state.plane.groupBase)-1]) && width <= len(state.tick) && width <= plane.total
+	ticks := make([]uint64, plane.total)
+	if retained {
+		copy(ticks, state.tick[:width])
+	} else {
+		// The Group input rows moved, so no reader's stamp can be compared
+		// against a tick in the new space. Stamping the whole prefix at the
+		// live clock makes every input read as changed, which is the only
+		// fail-closed answer: a zeroed prefix would read as unchanged.
+		for index := 0; index < width; index++ {
+			ticks[index] = state.clock
+		}
+	}
+	state.plane, state.tick = plane, ticks
+	return true
+}
+
+// advance closes one reader's epoch: the returned stamp is strictly below
+// every mark that follows it, and at or above every mark that preceded it.
+//
+// An exhausted clock hands back the floor stamp instead of its own position.
+// Every existing mark then reads as newer than the reader, which refuses
+// every reuse; handing back the exhausted position would read as older than
+// nothing and admit them all.
+func (state *operandEpoch) advance() uint64 {
+	if state == nil || state.clock == ^uint64(0) {
+		return 0
+	}
+	at := state.clock
+	state.clock++
+	return at
+}
+
+func (state *operandEpoch) changedSince(ordinal uint32, at uint64) bool {
+	return state != nil && int(ordinal) < len(state.tick) && state.tick[ordinal] > at
+}
+
+// markSourceOperands records that one published Point minted a new value for
+// every operand that reads it, and routes the classified evidence to the
+// Region that owns each operand.
+func (epoch *executorEpoch) markSourceOperands(point int, evidence change.Set) bool {
+	if epoch == nil || epoch.operands.plane == nil {
+		return false
+	}
+	ordinals, windows, ok := epoch.operands.plane.sourceOperandOrdinals(point)
+	if !ok {
+		return false
+	}
+	return epoch.markOperands(ordinals, windows, evidence)
+}
+
+// markGroupOperands records the same fact for a replaced producer candidate,
+// whose recurrence operand no Point publication mints.
+func (epoch *executorEpoch) markGroupOperands(group int, evidence change.Set) bool {
+	if epoch == nil || epoch.operands.plane == nil {
+		return false
+	}
+	ordinals, windows, ok := epoch.operands.plane.groupOperandOrdinals(group)
+	if !ok {
+		return false
+	}
+	return epoch.markOperands(ordinals, windows, evidence)
+}
+
+func (epoch *executorEpoch) markOperands(ordinals []uint32, windows []int32, evidence change.Set) bool {
+	if len(ordinals) != len(windows) {
+		return false
+	}
+	clock := epoch.operands.clock
+	for index, ordinal := range ordinals {
+		if int(ordinal) >= len(epoch.operands.tick) {
+			return false
+		}
+		epoch.operands.tick[ordinal] = clock
+		window := windows[index]
+		if window < 0 {
+			continue
+		}
+		region, kind := int(window)/int(operandKindCount), operandKind(int(window)%int(operandKindCount))
+		if region < 0 || region >= len(epoch.regions) {
+			return false
+		}
+		state := &epoch.regions[region]
+		switch {
+		case kind.external():
+			state.externalAt = clock
+			state.pending = state.pending.Union(evidence)
+		case kind.back():
+			state.backAt = clock
+			state.pending = state.pending.Union(evidence)
+		default:
+			state.pointsAt = clock
+		}
+	}
+	return true
+}
+
+// changedRegionOperands appends the positions of one region row whose operand
+// moved since at. It is the delta the recurrence fold consumes in place of
+// the complete row.
+func (epoch *executorEpoch) changedRegionOperands(region int, kind operandKind, row []int, at uint64, into []int) ([]int, bool) {
+	begin, end, ok := epoch.operands.plane.regionWindow(region, kind)
+	if !ok || end-begin != len(row) {
+		return into, false
+	}
+	for position := range row {
+		if epoch.operands.changedSince(uint32(begin+position), at) {
+			into = append(into, row[position])
+		}
+	}
+	return into, true
+}
+
+// producerInputChanged reports whether the Group input at position minted a
+// new value after the candidate cache stamped at closed its input epoch. It
+// replaces the ordered input-version snapshot each cache used to copy and
+// diff elementwise.
+func (epoch *executorEpoch) producerInputChanged(group, position int, at uint64) bool {
+	if epoch == nil {
+		return false
+	}
+	ordinal, ok := epoch.operands.plane.groupOperandAt(group, position)
+	return ok && epoch.operands.changedSince(ordinal, at)
+}
+
+// producerInputsChanged reports whether any ordinary input moved. The
+// designated environment input is a separate question, because the executor
+// classifies it against a different order law.
+func (epoch *executorEpoch) producerInputsChanged(group, inputs int, at uint64) bool {
+	for position := 0; position < inputs; position++ {
+		if epoch.producerInputChanged(group, position, at) {
+			return true
+		}
+	}
+	return false
+}
+
+// regionContains answers recurrence membership from the frontier-local region
+// rows instead of the base graph's private region table. Region ordinals are
+// per-frontier and unstable: runtime.regions and runtime.pointRegion are
+// installed atomically by the same activation overlay, so the ordinal asked
+// about and the ancestry walked always belong to one frontier, while the base
+// graph may not contain the ordinal at all.
+//
+// WTO intervals are laminar, so containment is exactly ancestor-or-self of the
+// Point's innermost region. The walk is bounded by the region count: a parent
+// chain that does not terminate inside it is corruption, and fails closed.
+func (epoch *executorEpoch) regionContains(region int, point equation.Point) (bool, bool) {
+	if epoch == nil || epoch.runtime == nil || epoch.runtime.graph == nil || region < 0 || region >= len(epoch.runtime.regions) {
+		return false, false
+	}
+	pointIndex, indexed := epoch.runtime.graph.PointIndex(point)
+	if !indexed || pointIndex < 0 || pointIndex >= len(epoch.runtime.pointRegion) {
+		return false, false
+	}
+	at := epoch.runtime.pointRegion[pointIndex]
+	for steps := 0; at != schedule.NoRegion; steps++ {
+		if at < 0 || at >= len(epoch.runtime.regions) || steps > len(epoch.runtime.regions) {
+			return false, false
+		}
+		if at == region {
+			return true, true
+		}
+		at = epoch.runtime.regions[at].parent
+	}
+	return false, true
+}
+
+// classifiesCoverage reports whether a publication of this Point is read by a
+// recurrence accumulator, and therefore owes the authored-coverage half of its
+// classification. Every other publication carries only the state-axis evidence
+// its own operation issued.
+func (state *operandEpoch) classifiesCoverage(point int) bool {
+	return state != nil && state.plane != nil && point >= 0 && point < len(state.plane.ingressSource) && state.plane.ingressSource[point]
+}

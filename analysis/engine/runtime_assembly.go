@@ -116,10 +116,14 @@ type solverRuntime struct {
 	// observations are optional solve-local read-only projections. They are
 	// attached after the reusable topology is committed, never participate in
 	// demand or rule execution, and are empty on the ordinary solve path.
-	observations   []runtimeObservation
-	pointScopes    []carrier.Scope
-	pointInitials  []support.Mask
-	regions        []runtimeRegion
+	observations  []runtimeObservation
+	pointScopes   []carrier.Scope
+	pointInitials []support.Mask
+	regions       []runtimeRegion
+	// operands is the sealed transpose of the recurrence and Group-input
+	// operand rows. It is re-derived wherever those rows are, and it is the
+	// sole authority for which reader a published value makes stale.
+	operands       *operandPlane
 	regionChildren [][]int // operational traversal cache derived from immutable Region.Parent
 	pointRegion    []int
 	activePoints   []bool
@@ -461,6 +465,11 @@ func assembleRuntimeOwned(receiptState *schemaBindingState, receiptAuthority *sc
 		observations[index] = row
 	}
 	assembled := &solverRuntime{bindingState: receiptState, bindingAuthority: receiptAuthority, carrier: runtime, graph: graph, program: program, points: points, producers: producers, environments: environments, factorEdges: factorEdges, environmentIncoming: environmentIncoming, factorIncoming: factorIncoming, overlay: runtimeStructuralOverlay{staticOrigins: staticOrigins, originAt: make(map[runtimeFactorOrigin]int), directAt: make(map[int]equation.SelectedStructuralFactorEdge), factorOutgoing: factorOutgoing, dependencyEdges: dependencyEdges, dependencyAt: dependencyAt, reindexes: plans, latePlans: make(map[composition.Key]carrier.ReindexPlan), generation: 1}, demand: demandPlan, queries: queries, observations: observations, pointScopes: pointScopes, pointInitials: pointInitials, regions: regions, regionChildren: regionChildren, pointRegion: pointRegion, activePoints: activePoints, activeRegions: activeRegions}
+	operands, planed := buildOperandPlane(graph, producers, environments, factorEdges, regions)
+	if !planed {
+		return nil, false
+	}
+	assembled.operands = operands
 	plan, sealed := sealSolvedPublicationPlan(assembled)
 	if !sealed {
 		return nil, false

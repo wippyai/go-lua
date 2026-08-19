@@ -11,13 +11,24 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 )
 
-// inputs snapshots and reindexes the full Group input vector once. Every
-// member below receives this exact vector and the Group output target Scope.
-func (epoch *executorEpoch) inputs(producer runtimeProducer, values []carrier.PointState) ([]carrier.PointState, bool) {
-	if epoch == nil || epoch.work == nil || len(producer.inputs) != producer.group.InputCount() || len(values) != producer.group.InputCount() {
+// inputs reindexes the Group input vector the members below receive, together
+// with the Group output target Scope.
+//
+// It transports only the inputs whose operand moved since this cache closed
+// its input epoch. A retained entry is the same transported header the last
+// admitted evaluation built from the same unmoved source, so re-transporting
+// it would rebuild an identical value; an entry the operand plane cannot
+// certify as unmoved, and every entry of a cache that has installed no
+// candidate, is transported again.
+func (epoch *executorEpoch) inputs(producer runtimeProducer, cache *producerEpoch) ([]carrier.PointState, bool) {
+	if epoch == nil || epoch.work == nil || cache == nil || len(producer.inputs) != producer.group.InputCount() || len(cache.inputs) != producer.group.InputCount() {
 		return nil, false
 	}
+	values := cache.inputs
 	for index := range values {
+		if cache.rememberAt != 0 && epoch.work.OwnsPointState(values[index]) && !epoch.producerInputChanged(producer.index, index, cache.rememberAt) {
+			continue
+		}
 		input, inputOK := producer.group.InputAt(index)
 		pointIndex, indexed := epoch.runtime.graph.PointIndex(input.Point())
 		if !inputOK || !indexed || pointIndex < 0 || pointIndex >= len(epoch.points) {
@@ -57,38 +68,6 @@ func (epoch *executorEpoch) environment(producer runtimeProducer) (carrier.Point
 	return transported, true
 }
 
-// candidateTokens is the complete ordered input-version snapshot that
-// justified one producer candidate.  A dirty generation is only a wakeup;
-// these graph-issued Point versions are the evidence that the semantic input
-// actually changed.  The caller supplies epoch-owned storage so evaluation
-// adds no per-refold allocation.
-func (epoch *executorEpoch) candidateTokens(producer runtimeProducer, tokens []uint64) bool {
-	if epoch == nil || epoch.runtime == nil || len(tokens) != producer.group.InputCount() {
-		return false
-	}
-	for index := range tokens {
-		input, inputOK := producer.group.InputAt(index)
-		point, indexed := epoch.runtime.graph.PointIndex(input.Point())
-		if !inputOK || !indexed || point < 0 || point >= len(epoch.versions) || point >= len(epoch.runtime.activePoints) || !epoch.runtime.activePoints[point] {
-			return false
-		}
-		tokens[index] = epoch.versions[point]
-	}
-	return true
-}
-
-func sameCandidateTokens(left, right []uint64) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
-			return false
-		}
-	}
-	return true
-}
-
 func (epoch *executorEpoch) evaluate(producer runtimeProducer, cache *producerEpoch) (result carrier.RuleContribution, reads []demand.Observation, ok bool) {
 	if epoch != nil && epoch.diagnostics != nil && epoch.diagnostics.scheduleEnabled() {
 		defer func() { epoch.diagnostics.recordEvaluate(&ok) }()
@@ -100,7 +79,7 @@ func (epoch *executorEpoch) evaluate(producer runtimeProducer, cache *producerEp
 	if len(rows) != producer.span.count() {
 		return carrier.RuleContribution{}, nil, false
 	}
-	inputs, ok := epoch.inputs(producer, cache.inputs)
+	inputs, ok := epoch.inputs(producer, cache)
 	if !ok {
 		return carrier.RuleContribution{}, nil, false
 	}
@@ -110,16 +89,6 @@ func (epoch *executorEpoch) evaluate(producer runtimeProducer, cache *producerEp
 		if !ok {
 			return carrier.RuleContribution{}, nil, false
 		}
-	}
-	if producer.environment != nil {
-		input, inputOK := producer.group.EnvironmentInput()
-		pointIndex, indexed := epoch.runtime.graph.PointIndex(input.Point())
-		if !inputOK || !indexed || pointIndex < 0 || pointIndex >= len(epoch.versions) {
-			return carrier.RuleContribution{}, nil, false
-		}
-		cache.scratchEnvironmentToken = epoch.versions[pointIndex]
-	} else {
-		cache.scratchEnvironmentToken = 0
 	}
 	if len(cache.inputStates) != len(inputs) {
 		return carrier.RuleContribution{}, nil, false

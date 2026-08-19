@@ -72,6 +72,14 @@ func (s Set) Empty() bool { return s.Reasons == 0 && s.Direction == 0 }
 // admitted.
 func (s Set) Admits() bool { return s.Direction&Known != 0 && s.Direction&Descends == 0 }
 
+// Classified is the evidence of an operation that moved nothing, and it is
+// the identity of Union: accumulating it changes neither axis. The zero Set
+// is deliberately NOT that identity -- it is an unclassified contributor, and
+// Union is conjunctive on Known precisely so that one poisons an
+// accumulation. An accumulator that has seen no contributor yet therefore
+// seeds from Classified, never from the zero value.
+func Classified() Set { return Set{Direction: Known} }
+
 // Unknown reports that no contributor classified this evidence.
 func (s Set) Unknown() bool { return s.Direction&Known == 0 }
 

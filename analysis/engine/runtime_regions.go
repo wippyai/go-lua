@@ -185,7 +185,8 @@ func bindRuntimeRegionsWithEdges(graph *equation.Graph, active []bool, runtime *
 		// TransportOnly edges are intentionally absent from the immutable WTO
 		// recurrence graph, but a self-transport targeting a region head still
 		// contributes to that head's runtime RHS. Keep it in the same back
-		// ingress/version surface as ordinary environment back edges.
+		// ingress row as ordinary environment back edges, so the operand plane
+		// transposes it with them.
 		for edgeIndex := 0; edgeIndex < graph.EnvironmentEdgeTotal(); edgeIndex++ {
 			edge, edgeOK := graph.EnvironmentEdgeAtIndex(edgeIndex)
 			if !edgeOK || !edge.TransportOnly() || edge.Target() != head {
