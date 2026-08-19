@@ -2,6 +2,7 @@ package artifact
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/cold"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
@@ -99,24 +100,31 @@ func (artifact *Artifact) validateSealFoundation(state *sealValidationState) Com
 		}
 		seenDiagnosticObservations[row.id] = struct{}{}
 	}
-	state.valueRows = make(map[identity.ContentID]struct{}, len(artifact.values))
-	for index, row := range artifact.values {
-		if !row.Available() {
+	valuesCount, valuesPublished := coldCount(artifact, cold.ValuesFamily())
+	if !valuesPublished {
+		return compileFailure(CompileStageSeal, CompileRowValues, -1, -1, CompileReasonValuesUnavailable)
+	}
+	state.valueRows = make(map[identity.ContentID]struct{}, valuesCount)
+	for index := 0; index < valuesCount; index++ {
+		row, held := coldRow(artifact, cold.ValuesFamily(), index)
+		offset, members, spanOK := row.MemberSpan()
+		if !held || !spanOK || !row.Available() {
 			return compileFailure(CompileStageSeal, CompileRowValues, index, -1, CompileReasonValuesUnavailable)
 		}
-		if _, duplicate := state.valueRows[row.id]; duplicate {
+		if _, duplicate := state.valueRows[row.ID()]; duplicate {
 			return compileFailure(CompileStageSeal, CompileRowValues, index, -1, CompileReasonValuesDuplicate)
 		}
-		state.valueRows[row.id] = struct{}{}
-		memberRows := make(map[identity.ContentID]struct{}, len(row.members))
-		for memberIndex, member := range row.members {
-			if !member.Available() {
-				return compileFailure(CompileStageSeal, CompileRowValues, index, memberIndex, CompileReasonValuesMember)
+		state.valueRows[row.ID()] = struct{}{}
+		memberRows := make(map[identity.ContentID]struct{}, members)
+		for position := uint32(0); position < members; position++ {
+			member, memberHeld := coldRow(artifact, cold.ValuesMemberFamily(), int(offset+position))
+			if !memberHeld || !member.Available() {
+				return compileFailure(CompileStageSeal, CompileRowValues, index, int(position), CompileReasonValuesMember)
 			}
-			if _, duplicate := memberRows[member.id]; duplicate {
-				return compileFailure(CompileStageSeal, CompileRowValues, index, memberIndex, CompileReasonValuesDuplicate)
+			if _, duplicate := memberRows[member.ID()]; duplicate {
+				return compileFailure(CompileStageSeal, CompileRowValues, index, int(position), CompileReasonValuesDuplicate)
 			}
-			memberRows[member.id] = struct{}{}
+			memberRows[member.ID()] = struct{}{}
 		}
 	}
 	state.bodyRows = make(map[identity.ContentID]BodyRow, len(artifact.bodies))

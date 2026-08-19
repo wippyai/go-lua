@@ -31,13 +31,30 @@ func artifactID(artifact *Artifact) identity.ContentID {
 	for _, row := range artifact.pointAttachments {
 		sink.add(bytesField(row.site), bytesField(row.point))
 	}
-	sink.add(uintField(uint64(len(artifact.values))))
-	for _, row := range artifact.values {
-		sink.add(bytesField(row.id), bytesField(row.body), uintField(uint64(len(row.members))))
-		for _, member := range row.members {
-			sink.add(bytesField(member.id))
+	// Values and its member plane are read out of the sealed cold publication.
+	// The member span preserves the emitted order, so the preimage is the same
+	// sequence the identity has always committed to.
+	valuesCount, valuesPublished := coldCount(artifact, cold.ValuesFamily())
+	if !valuesPublished {
+		return identity.ContentID{}
+	}
+	sink.add(uintField(uint64(valuesCount)))
+	for index := 0; index < valuesCount; index++ {
+		row, held := coldRow(artifact, cold.ValuesFamily(), index)
+		offset, members, spanOK := row.MemberSpan()
+		if !held || !spanOK {
+			return identity.ContentID{}
 		}
-		sink.add(boolField(row.tail.present), uintField(uint64(row.tail.kind)), bytesField(row.tail.id))
+		sink.add(bytesField(row.ID()), bytesField(row.BodyPathID()), uintField(uint64(members)))
+		for position := uint32(0); position < members; position++ {
+			member, memberHeld := coldRow(artifact, cold.ValuesMemberFamily(), int(offset+position))
+			if !memberHeld {
+				return identity.ContentID{}
+			}
+			sink.add(bytesField(member.ID()))
+		}
+		tail, present := row.Tail()
+		sink.add(boolField(present), uintField(uint64(tail.Kind())), bytesField(tail.ID()))
 	}
 	// Calls are an Artifact-owned source column. Keep
 	// every scalar and ordered child identity in the artifact seal so replay,
@@ -184,16 +201,41 @@ func artifactID(artifact *Artifact) identity.ContentID {
 		sink.add(bytesField(row.ID()), bytesField(row.OccurrenceID()), bytesField(row.BodyPathID()), bytesField(row.OutputPointID()), uintField(uint64(row.Operator())),
 			uintField(uint64(operand)), uintField(uint64(result)))
 	}
-	sink.add(uintField(uint64(len(artifact.heapAllocations))))
-	for _, allocation := range artifact.heapAllocations {
-		sink.add(bytesField(allocation.id), uintField(uint64(allocation.role)), uintField(uint64(allocation.form)), bytesField(allocation.rootSpan), uintField(uint64(len(allocation.fields))))
-		for _, field := range allocation.fields {
-			sink.add(bytesField(field.id), uintField(uint64(field.kind)), bytesField(field.fieldSpan), bytesField(field.selectorSpan), bytesField(field.valuesSpan), bytesField(field.valuesID), uintField(uint64(field.width)), boolField(field.finalOpen), boolField(field.sharesFirstValueCell), uintField(uint64(field.normalized)), boolField(field.normalizedOK))
+	allocationCount, allocationsPublished := coldCount(artifact, cold.HeapAllocationFamily())
+	if !allocationsPublished {
+		return identity.ContentID{}
+	}
+	sink.add(uintField(uint64(allocationCount)))
+	for index := 0; index < allocationCount; index++ {
+		allocation, held := coldRow(artifact, cold.HeapAllocationFamily(), index)
+		offset, fields, spanOK := allocation.FieldSpan()
+		if !held || !spanOK {
+			return identity.ContentID{}
+		}
+		sink.add(bytesField(allocation.ID()), uintField(uint64(allocation.Role())), uintField(uint64(allocation.Form())), bytesField(allocation.RootSpan()), uintField(uint64(fields)))
+		for position := uint32(0); position < fields; position++ {
+			field, fieldHeld := coldRow(artifact, cold.HeapFieldFamily(), int(offset+position))
+			valuesSpan, width, finalOpen, valuesOK := field.Values()
+			normalized, normalizedOK := field.NormalizedKey()
+			if !fieldHeld || !valuesOK {
+				return identity.ContentID{}
+			}
+			sink.add(bytesField(field.ID()), uintField(uint64(field.Kind())), bytesField(field.FieldSpan()), bytesField(field.SelectorSpan()), bytesField(valuesSpan), bytesField(field.ValuesID()), uintField(uint64(width)), boolField(finalOpen), boolField(field.SharesFirstValueCell()), uintField(normalized), boolField(normalizedOK))
 		}
 	}
-	sink.add(uintField(uint64(len(artifact.heapIndexes))))
-	for _, access := range artifact.heapIndexes {
-		sink.add(bytesField(access.id), boolField(access.read), bytesField(access.baseSpan), bytesField(access.resultSpan), bytesField(access.keySpan), uintField(uint64(access.lensKind)), uintField(uint64(access.exactKey)), bytesField(access.valuesSpan), bytesField(access.valuesID), uintField(uint64(access.position+1)))
+	indexCount, indexesPublished := coldCount(artifact, cold.HeapIndexFamily())
+	if !indexesPublished {
+		return identity.ContentID{}
+	}
+	sink.add(uintField(uint64(indexCount)))
+	for index := 0; index < indexCount; index++ {
+		access, held := coldRow(artifact, cold.HeapIndexFamily(), index)
+		if !held {
+			return identity.ContentID{}
+		}
+		exactKey, _ := access.ExactKey()
+		valuesSpan, _, _ := access.Values()
+		sink.add(bytesField(access.ID()), boolField(access.Read()), bytesField(access.BaseSpan()), bytesField(access.ResultSpan()), bytesField(access.DynamicKeySpan()), uintField(uint64(access.LensKind())), uintField(exactKey), bytesField(valuesSpan), bytesField(access.ValuesID()), uintField(uint64(access.Position()+1)))
 	}
 	sink.add(uintField(diagnosticLawVersion), uintField(uint64(len(artifact.diagnosticObservations))))
 	for _, row := range artifact.diagnosticObservations {

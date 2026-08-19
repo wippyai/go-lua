@@ -107,3 +107,23 @@ func (row HeapIndex) ValuesID() identity.ContentID {
 	}
 	return row.valuesID
 }
+
+// LensKind is the retained exact/dynamic key-shape ordinal. It is part of the
+// row's published geometry rather than a derived property, so a consumer that
+// authenticates the row reads it directly.
+func (row HeapIndex) LensKind() uint8 {
+	if !row.Available() {
+		return 0
+	}
+	return row.lensKind
+}
+
+// Position is the exact write position, and -1 for a read. The write span in
+// Values carries the same number; this accessor answers for both shapes so a
+// consumer never has to branch to learn one scalar.
+func (row HeapIndex) Position() int {
+	if !row.Available() {
+		return 0
+	}
+	return row.position
+}

@@ -1,8 +1,11 @@
 package artifact
 
 import (
+	"strings"
+
 	"github.com/wippyai/go-lua/analysis/identity"
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
+	schemadiag "github.com/wippyai/go-lua/analysis/schema/diagnostic"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
@@ -60,6 +63,13 @@ func (payload diagnosticUnresolvedTypeReferenceRow) Path() ([]string, bool) {
 		return nil, false
 	}
 	return append([]string(nil), payload.path...), true
+}
+
+func (payload diagnosticUnresolvedTypeReferenceRow) Name() (string, bool) {
+	if !payload.available() {
+		return "", false
+	}
+	return strings.Join(payload.path, "."), true
 }
 
 func (payload diagnosticUnresolvedValueReferenceRow) ReadID() identity.ContentID {
@@ -128,11 +138,18 @@ func (row DiagnosticObservationRow) TypeConformance() (diagnosticTypeConformance
 	return payload, true
 }
 
-func (payload diagnosticTypeConformanceRow) Site() uint8 {
+func (payload diagnosticTypeConformanceRow) Site() schemadiag.Site {
 	if !payload.available() {
-		return 0
+		return schemadiag.SiteNone
 	}
-	return payload.site
+	switch payload.site {
+	case diagnosticTypeConformanceSiteCallArgument:
+		return schemadiag.SiteCallArgument
+	case diagnosticTypeConformanceSiteAssignment:
+		return schemadiag.SiteAssignment
+	default:
+		return schemadiag.SiteNone
+	}
 }
 
 func (payload diagnosticTypeConformanceRow) CallID() identity.ContentID {

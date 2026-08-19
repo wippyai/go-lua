@@ -119,7 +119,7 @@ func (artifact *Artifact) validateSealIndexes(state *sealValidationState) Compil
 			}
 		}
 	}
-	targetCount, targetsPublished := cold.CallTargetCount(&artifact.frozen, artifact.coldCatalog)
+	targetCount, targetsPublished := cold.CallTargetFamily().Count(&artifact.frozen, artifact.coldCatalog)
 	if !targetsPublished {
 		return compileFailure(CompileStageSeal, CompileRowBody, -1, -1, CompileReasonBodyUnavailable)
 	}
@@ -133,7 +133,7 @@ func (artifact *Artifact) validateSealIndexes(state *sealValidationState) Compil
 		bodyByContext[body.context] = body
 	}
 	for index := 0; index < targetCount; index++ {
-		target, held := cold.CallTargetAt(&artifact.frozen, artifact.coldCatalog, index)
+		target, held := cold.CallTargetFamily().At(&artifact.frozen, artifact.coldCatalog, index)
 		body, bodyOK := bodyByContext[target.Context]
 		if !held || !target.Available() || !bodyOK || !body.Callable() || body.ID() != target.Body ||
 			body.context != target.Context || body.function != target.Function || body.formal != target.Formal {
@@ -160,8 +160,16 @@ func (artifact *Artifact) validateSealIndexes(state *sealValidationState) Compil
 	if state.outcomeCursor != uint32(len(artifact.outcomes)) {
 		return compileFailure(CompileStageSeal, CompileRowBody, -1, -1, CompileReasonBodyRange)
 	}
-	for index, row := range artifact.values {
-		if _, exists := state.bodyRows[row.body]; !exists {
+	valuesCount, valuesPublished := coldCount(artifact, cold.ValuesFamily())
+	if !valuesPublished {
+		return compileFailure(CompileStageSeal, CompileRowValues, -1, -1, CompileReasonValuesUnavailable)
+	}
+	for index := 0; index < valuesCount; index++ {
+		row, held := coldRow(artifact, cold.ValuesFamily(), index)
+		if !held {
+			return compileFailure(CompileStageSeal, CompileRowValues, index, -1, CompileReasonValuesUnavailable)
+		}
+		if _, exists := state.bodyRows[row.BodyPathID()]; !exists {
 			return compileFailure(CompileStageSeal, CompileRowValues, index, -1, CompileReasonValuesBody)
 		}
 	}

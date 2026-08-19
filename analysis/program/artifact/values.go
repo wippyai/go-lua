@@ -3,6 +3,7 @@ package artifact
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/schema/cold"
 )
 
 // ValuesTailKind is the artifact-owned closed classification of an open
@@ -238,20 +239,50 @@ func (compiler *compiler) valueRowForTerm(term keyspace.Term) (ValuesRow, bool) 
 	return row, termOK && authoredTerm == term && row.Available()
 }
 
-// ValuesCount returns the exact immutable Program Values denominator copied
-// into this artifact.
+// ValuesCount returns the exact immutable Program Values denominator sealed
+// into this artifact's cold publication.
 func (artifact *Artifact) ValuesCount() int {
 	if !artifact.Available() {
 		return 0
 	}
-	return len(artifact.values)
+	count, published := coldCount(artifact, cold.ValuesFamily())
+	if !published {
+		return 0
+	}
+	return count
 }
 
 // ValuesAt returns one immutable Values row in authored denominator order.
-// It never exposes the backing slice.
 func (artifact *Artifact) ValuesAt(index int) (ValuesRow, bool) {
-	if !artifact.Available() || index < 0 || index >= len(artifact.values) {
+	if !artifact.Available() {
 		return ValuesRow{}, false
 	}
-	return artifact.values[index], true
+	return artifact.valuesRowAt(index)
+}
+
+// valuesRowAt reads one Values row out of the sealed publication and rejoins
+// it with the member span it names. The members are a dense plane there, so
+// the row a caller receives is a value assembled at the read site and the
+// publication remains the only thing the artifact holds.
+func (artifact *Artifact) valuesRowAt(index int) (ValuesRow, bool) {
+	sealed, held := coldRow(artifact, cold.ValuesFamily(), index)
+	offset, count, spanOK := sealed.MemberSpan()
+	if !held || !spanOK {
+		return ValuesRow{}, false
+	}
+	members := make([]ValuesMember, 0, count)
+	for position := uint32(0); position < count; position++ {
+		member, memberHeld := coldRow(artifact, cold.ValuesMemberFamily(), int(offset+position))
+		if !memberHeld {
+			return ValuesRow{}, false
+		}
+		members = append(members, ValuesMember{id: member.ID()})
+	}
+	span, _ := sealed.RootSpanID()
+	tail := ValuesTail{}
+	if sealedTail, present := sealed.Tail(); present {
+		tail = ValuesTail{id: sealedTail.ID(), span: sealedTail.SpanID(), kind: ValuesTailKind(sealedTail.Kind()), present: true}
+	}
+	row := ValuesRow{id: sealed.ID(), body: sealed.BodyPathID(), span: span, members: members, tail: tail, sealed: true}
+	return row, row.Available()
 }

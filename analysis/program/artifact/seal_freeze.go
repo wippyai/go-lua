@@ -1,63 +1,86 @@
 package artifact
 
-import "github.com/wippyai/go-lua/analysis/identity"
+import (
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/cold"
+)
 
 func (artifact *Artifact) validateSealFreeze(state *sealValidationState) CompileFailure {
 	if artifact == nil || state == nil {
 		return compileFailure(CompileStageSeal, CompileRowAuthority, -1, -1, CompileReasonArtifactIdentity)
 	}
-	state.valuesRows = make(map[identity.ContentID]struct{}, len(artifact.values))
-	for _, row := range artifact.values {
+	valuesCount, valuesPublished := coldCount(artifact, cold.ValuesFamily())
+	if !valuesPublished {
+		return compileFailure(CompileStageSeal, CompileRowValues, -1, -1, CompileReasonValuesUnavailable)
+	}
+	state.valuesRows = make(map[identity.ContentID]struct{}, valuesCount)
+	for index := 0; index < valuesCount; index++ {
+		row, held := coldRow(artifact, cold.ValuesFamily(), index)
+		if !held {
+			return compileFailure(CompileStageSeal, CompileRowValues, index, -1, CompileReasonValuesUnavailable)
+		}
 		if !row.Available() {
 			return compileFailure(CompileStageSeal, CompileRowValues, -1, -1, CompileReasonValuesUnavailable)
 		}
 		state.valuesRows[row.ID()] = struct{}{}
 	}
-	seenHeapAllocations := make(map[identity.ContentID]struct{}, len(artifact.heapAllocations))
-	for index, allocation := range artifact.heapAllocations {
-		if !allocation.Available() {
+	allocationCount, allocationsPublished := coldCount(artifact, cold.HeapAllocationFamily())
+	if !allocationsPublished {
+		return compileFailure(CompileStageSeal, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceAllocation)
+	}
+	seenHeapAllocations := make(map[identity.ContentID]struct{}, allocationCount)
+	for index := 0; index < allocationCount; index++ {
+		allocation, held := coldRow(artifact, cold.HeapAllocationFamily(), index)
+		offset, fields, spanOK := allocation.FieldSpan()
+		if !held || !spanOK {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceAllocation)
 		}
-		if _, exists := state.occurrenceRows[OccurrenceAllocation][allocation.id]; !exists {
+		if _, exists := state.occurrenceRows[OccurrenceAllocation][allocation.ID()]; !exists {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceAllocation)
 		}
-		if _, duplicate := seenHeapAllocations[allocation.id]; duplicate {
+		if _, duplicate := seenHeapAllocations[allocation.ID()]; duplicate {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceAllocation)
 		}
-		seenHeapAllocations[allocation.id] = struct{}{}
-		for fieldIndex, field := range allocation.fields {
-			if !field.Available() {
-				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, fieldIndex, CompileReasonOccurrenceAllocation)
+		seenHeapAllocations[allocation.ID()] = struct{}{}
+		for position := uint32(0); position < fields; position++ {
+			field, fieldHeld := coldRow(artifact, cold.HeapFieldFamily(), int(offset+position))
+			if !fieldHeld {
+				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, int(position), CompileReasonOccurrenceAllocation)
 			}
-			if _, exists := state.occurrenceRows[OccurrenceAllocationField][field.id]; !exists {
-				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, fieldIndex, CompileReasonOccurrenceAllocation)
+			if _, exists := state.occurrenceRows[OccurrenceAllocationField][field.ID()]; !exists {
+				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, int(position), CompileReasonOccurrenceAllocation)
 			}
-			if _, exists := state.valuesRows[field.valuesID]; !exists {
-				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, fieldIndex, CompileReasonOccurrenceAllocation)
+			if _, exists := state.valuesRows[field.ValuesID()]; !exists {
+				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, int(position), CompileReasonOccurrenceAllocation)
 			}
 		}
 	}
-	seenHeapIndexes := make(map[identity.ContentID]struct{}, len(artifact.heapIndexes))
-	for index, access := range artifact.heapIndexes {
-		if !access.Available() {
+	indexCount, indexesPublished := coldCount(artifact, cold.HeapIndexFamily())
+	if !indexesPublished {
+		return compileFailure(CompileStageSeal, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceIndexShape)
+	}
+	seenHeapIndexes := make(map[identity.ContentID]struct{}, indexCount)
+	for index := 0; index < indexCount; index++ {
+		access, held := coldRow(artifact, cold.HeapIndexFamily(), index)
+		if !held {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceIndexShape)
 		}
 		kind := OccurrenceIndexWrite
-		if access.read {
+		if access.Read() {
 			kind = OccurrenceIndexRead
 		}
-		if _, exists := state.occurrenceRows[kind][access.id]; !exists {
+		if _, exists := state.occurrenceRows[kind][access.ID()]; !exists {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceIndexShape)
 		}
-		if _, duplicate := seenHeapIndexes[access.id]; duplicate {
+		if _, duplicate := seenHeapIndexes[access.ID()]; duplicate {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceIndexShape)
 		}
-		if !access.read {
-			if _, exists := state.valuesRows[access.valuesID]; !exists {
+		if !access.Read() {
+			if _, exists := state.valuesRows[access.ValuesID()]; !exists {
 				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceIndexShape)
 			}
 		}
-		seenHeapIndexes[access.id] = struct{}{}
+		seenHeapIndexes[access.ID()] = struct{}{}
 	}
 	if artifact.ruleOccurrences == nil {
 		return compileFailure(CompileStageSeal, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)

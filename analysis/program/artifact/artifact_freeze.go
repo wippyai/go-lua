@@ -69,10 +69,9 @@ func (compiler *compiler) sealArtifact() (*Artifact, CompileFailure) {
 	artifact := &Artifact{
 		frozen: frozen, coldCatalog: catalog,
 		key: compiler.key, counts: compiler.counts, pointAttachments: compiler.pointAttachments, points: points, environment: compiler.environment, localTransfers: compiler.localTransfers,
-		regions: compiler.regions, events: compiler.events, values: compiler.values, calls: compiler.calls, callOperands: compiler.callOperands, callArguments: compiler.callArguments, callTypeArguments: compiler.callTypeArguments,
+		regions: compiler.regions, events: compiler.events, calls: compiler.calls, callOperands: compiler.callOperands, callArguments: compiler.callArguments, callTypeArguments: compiler.callTypeArguments,
 		bodies: compiler.bodies, functionBoundaries: compiler.functionBoundaries, outcomes: compiler.outcomes, returnValues: compiler.returnValues,
-		boundaries:      compiler.boundaries,
-		heapAllocations: compiler.heapAllocations, heapIndexes: compiler.heapIndexes,
+		boundaries:  compiler.boundaries,
 		occurrences: compiler.occurrences, occurrenceByID: occurrenceByID, occurrenceByKind: occurrenceByKind, functionBoundaryByBody: functionBoundaryByBody, ruleOccurrences: compiler.ruleOccurrences,
 		diagnosticObservations: compiler.diagnosticObservations, staticTypeArguments: compiler.staticTypeArguments, staticTypeValues: compiler.staticTypeValues, staticTypeNodes: compiler.staticTypeNodes, staticExpressions: compiler.staticExpressions, staticInputs: compiler.staticInputs,
 	}
@@ -90,6 +89,85 @@ func (compiler *compiler) sealArtifact() (*Artifact, CompileFailure) {
 // address issued by one is not addressable in the other.
 var coldStores atomic.Uint64
 
+// coldHeapPlanes flattens the compiler's nested allocation rows into the two
+// dense planes the publication holds. Each allocation names its fields by the
+// half-open span it occupies in the field plane, so the canonical field order
+// the compiler emitted is the ordinal order of the plane and no allocation
+// retains a slice header.
+func coldHeapPlanes(rows []HeapAllocationRow) ([]cold.HeapAllocation, []cold.HeapField, bool) {
+	allocations := make([]cold.HeapAllocation, 0, len(rows))
+	fields := make([]cold.HeapField, 0, len(rows))
+	for _, row := range rows {
+		if !fitsUint32(len(fields)) || !fitsUint32(len(row.fields)) {
+			return nil, nil, false
+		}
+		offset := uint32(len(fields))
+		for _, field := range row.fields {
+			converted, ok := cold.NewHeapField(
+				field.id, uint8(field.kind), field.fieldSpan, field.selectorSpan, field.valuesSpan, field.valuesID,
+				field.width, field.finalOpen, field.sharesFirstValueCell, uint64(field.normalized), field.normalizedOK,
+			)
+			if !ok {
+				return nil, nil, false
+			}
+			fields = append(fields, converted)
+		}
+		allocation, ok := cold.NewHeapAllocation(row.id, uint8(row.role), uint8(row.form), row.rootSpan, offset, uint32(len(row.fields)))
+		if !ok {
+			return nil, nil, false
+		}
+		allocations = append(allocations, allocation)
+	}
+	return allocations, fields, true
+}
+
+// coldValuesPlanes flattens the compiler's nested Values rows the same way:
+// members become one dense plane and each row names the span it owns.
+func coldValuesPlanes(rows []ValuesRow) ([]cold.Values, []cold.ValuesMember, bool) {
+	values := make([]cold.Values, 0, len(rows))
+	members := make([]cold.ValuesMember, 0, len(rows))
+	for _, row := range rows {
+		if !row.Available() || !fitsUint32(len(members)) || !fitsUint32(len(row.members)) {
+			return nil, nil, false
+		}
+		offset := uint32(len(members))
+		for _, member := range row.members {
+			converted, ok := cold.NewValuesMember(member.id)
+			if !ok {
+				return nil, nil, false
+			}
+			members = append(members, converted)
+		}
+		tail, tailOK := cold.NewValuesTail(row.tail.id, row.tail.span, cold.ValuesTailKind(row.tail.kind), row.tail.present)
+		if !tailOK {
+			return nil, nil, false
+		}
+		converted, ok := cold.NewValues(row.id, row.body, row.span, offset, uint32(len(row.members)), tail)
+		if !ok {
+			return nil, nil, false
+		}
+		values = append(values, converted)
+	}
+	return values, members, true
+}
+
+// coldHeapIndexes copies the compiler's index-access rows one for one; the
+// row is already flat, so the conversion is a change of vocabulary only.
+func coldHeapIndexes(rows []HeapIndexRow) ([]cold.HeapIndex, bool) {
+	indexes := make([]cold.HeapIndex, 0, len(rows))
+	for _, row := range rows {
+		converted, ok := cold.NewHeapIndex(
+			row.id, row.read, row.baseSpan, row.resultSpan, row.keySpan,
+			row.lensKind, uint64(row.exactKey), row.valuesSpan, row.valuesID, row.position,
+		)
+		if !ok {
+			return nil, false
+		}
+		indexes = append(indexes, converted)
+	}
+	return indexes, true
+}
+
 // freezeColdPublication seals the families that have moved onto the shared
 // publication substrate. The compiler's own slices are transient build state
 // and are not carried into the artifact beside it: the sealed publication is
@@ -102,41 +180,23 @@ func freezeColdPublication(compiler *compiler) (snapshot.Frozen, identity.Conten
 	if !derived {
 		return snapshot.Frozen{}, identity.ContentID{}, false
 	}
-	store := identity.StoreID(coldStores.Add(1))
-	if !store.Available() {
+	allocations, allocationFields, heapOK := coldHeapPlanes(compiler.heapAllocations)
+	values, valuesMembers, valuesOK := coldValuesPlanes(compiler.values)
+	indexes, indexesOK := coldHeapIndexes(compiler.heapIndexes)
+	if !heapOK || !valuesOK || !indexesOK {
 		return snapshot.Frozen{}, identity.ContentID{}, false
 	}
-	content, sealed := cold.CallTargetFamily().Content(compiler.callTargets, catalog)
+	publication := cold.Publication{
+		CallTargets:     compiler.callTargets,
+		HeapAllocations: allocations, HeapFields: allocationFields,
+		Values: values, ValuesMembers: valuesMembers,
+		HeapIndexes:          indexes,
+		ExactScalarSummaries: compiler.exactScalarSummaries,
+		ArithmeticSummaries:  compiler.arithmeticSummaries,
+		UnarySummaries:       compiler.unarySummaries,
+	}
+	frozen, sealed := publication.Seal(catalog, identity.StoreID(coldStores.Add(1)))
 	if !sealed {
-		return snapshot.Frozen{}, identity.ContentID{}, false
-	}
-	exactScalarContent, exactScalarSealed := cold.ExactScalarSummaryFamily().Content(compiler.exactScalarSummaries, catalog)
-	if !exactScalarSealed {
-		return snapshot.Frozen{}, identity.ContentID{}, false
-	}
-	arithmeticContent, arithmeticSealed := cold.ArithmeticSummaryFamily().Content(compiler.arithmeticSummaries, catalog)
-	if !arithmeticSealed {
-		return snapshot.Frozen{}, identity.ContentID{}, false
-	}
-	unaryContent, unarySealed := cold.UnarySummaryFamily().Content(compiler.unarySummaries, catalog)
-	if !unarySealed {
-		return snapshot.Frozen{}, identity.ContentID{}, false
-	}
-	builder := snapshot.NewFrozen(catalog, store)
-	if err := snapshot.PutFrozenColumn(&builder, cold.CallTargetFamily().Axis(catalog), content); err != nil {
-		return snapshot.Frozen{}, identity.ContentID{}, false
-	}
-	if err := snapshot.PutFrozenColumn(&builder, cold.ExactScalarSummaryFamily().Axis(catalog), exactScalarContent); err != nil {
-		return snapshot.Frozen{}, identity.ContentID{}, false
-	}
-	if err := snapshot.PutFrozenColumn(&builder, cold.ArithmeticSummaryFamily().Axis(catalog), arithmeticContent); err != nil {
-		return snapshot.Frozen{}, identity.ContentID{}, false
-	}
-	if err := snapshot.PutFrozenColumn(&builder, cold.UnarySummaryFamily().Axis(catalog), unaryContent); err != nil {
-		return snapshot.Frozen{}, identity.ContentID{}, false
-	}
-	frozen, err := builder.Seal()
-	if err != nil {
 		return snapshot.Frozen{}, identity.ContentID{}, false
 	}
 	return frozen, catalog, true

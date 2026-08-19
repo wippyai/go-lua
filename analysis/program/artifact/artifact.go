@@ -2,6 +2,7 @@ package artifact
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/cold"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 )
@@ -32,7 +33,6 @@ type Artifact struct {
 	localTransfers         []LocalTransfer
 	regions                []Region
 	events                 []WTOEvent
-	values                 []ValuesRow
 	calls                  []CallRow
 	callOperands           []CallOperandRow
 	callArguments          []CallArgumentRow
@@ -43,8 +43,6 @@ type Artifact struct {
 	outcomes               []OutcomeRow
 	returnValues           []ReturnValue
 	occurrences            []OccurrenceRow
-	heapAllocations        []HeapAllocationRow
-	heapIndexes            []HeapIndexRow
 	occurrenceByID         map[occurrenceLookup]uint32
 	ruleOccurrences        []RuleOccurrence
 	diagnosticObservations []DiagnosticObservationRow
@@ -82,4 +80,23 @@ func (artifact *Artifact) CountRows() denominator.CountRows {
 		return denominator.CountRows{}
 	}
 	return artifact.counts
+}
+
+// coldCount and coldRow read one cold family out of this artifact's sealed
+// publication. They are the artifact-internal spelling of the family accessors
+// and deliberately do not gate on Available: the seal validation walks read
+// the publication while the artifact's own identity is still being derived.
+func coldCount[V cold.Row](artifact *Artifact, family cold.Family[V]) (int, bool) {
+	if artifact == nil {
+		return 0, false
+	}
+	return family.Count(&artifact.frozen, artifact.coldCatalog)
+}
+
+func coldRow[V cold.Row](artifact *Artifact, family cold.Family[V], index int) (V, bool) {
+	var absent V
+	if artifact == nil {
+		return absent, false
+	}
+	return family.At(&artifact.frozen, artifact.coldCatalog, index)
 }

@@ -52,7 +52,7 @@ func (artifact *Artifact) CallTargetCount() int {
 	if !artifact.Available() {
 		return 0
 	}
-	count, published := cold.CallTargetCount(&artifact.frozen, artifact.coldCatalog)
+	count, published := cold.CallTargetFamily().Count(&artifact.frozen, artifact.coldCatalog)
 	if !published {
 		return 0
 	}
@@ -66,7 +66,7 @@ func (artifact *Artifact) CallTargetAt(index int) (CallTargetRow, bool) {
 	if !artifact.Available() {
 		return CallTargetRow{}, false
 	}
-	row, held := cold.CallTargetAt(&artifact.frozen, artifact.coldCatalog, index)
+	row, held := cold.CallTargetFamily().At(&artifact.frozen, artifact.coldCatalog, index)
 	if !held {
 		return CallTargetRow{}, false
 	}
