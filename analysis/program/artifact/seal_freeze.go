@@ -5,6 +5,34 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/program"
 )
 
+// environmentEdgeForRoute reads the canonical Frozen EnvironmentEdge
+// column directly. Duplicate routes are rejected at the only consumer that
+// needs route identity, so seal validation retains no inverse route index.
+func (artifact *Artifact) environmentEdgeForRoute(route identity.ContentID) (programschema.EnvironmentEdge, bool, bool) {
+	if artifact == nil || !route.Available() {
+		return programschema.EnvironmentEdge{}, false, false
+	}
+	edgeCount, published := coldCount(artifact, programschema.EnvironmentEdgeFamily())
+	if !published {
+		return programschema.EnvironmentEdge{}, false, false
+	}
+	var found programschema.EnvironmentEdge
+	for index := 0; index < edgeCount; index++ {
+		edge, held := coldRow(artifact, programschema.EnvironmentEdgeFamily(), index)
+		if !held || !edge.Available() {
+			return programschema.EnvironmentEdge{}, false, false
+		}
+		if edge.RouteID() != route {
+			continue
+		}
+		if found.Available() {
+			return found, true, true
+		}
+		found = edge
+	}
+	return found, found.Available(), false
+}
+
 func (artifact *Artifact) validateSealFreeze(state *sealValidationState) CompileFailure {
 	if artifact == nil || state == nil {
 		return compileFailure(CompileStageSeal, CompileRowAuthority, -1, -1, CompileReasonArtifactIdentity)
@@ -108,11 +136,11 @@ func (artifact *Artifact) validateSealFreeze(state *sealValidationState) Compile
 			if !routeOK {
 				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, 2, CompileReasonOccurrenceUnavailable)
 			}
-			if _, duplicate := state.environmentRouteDuplicates[route]; duplicate {
+			edge, found, duplicate := artifact.environmentEdgeForRoute(route)
+			if duplicate {
 				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, 2, CompileReasonOccurrenceUnavailable)
 			}
-			edge, found := state.environmentByRoute[route]
-			if !found || edge.to != input {
+			if !found || edge.To() != input {
 				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, 2, CompileReasonOccurrenceUnavailable)
 			}
 		}

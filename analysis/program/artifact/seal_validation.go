@@ -9,16 +9,14 @@ import (
 // pass. Each index is constructed once and consumed by later validation
 // phases; no consumer rebuilds a parallel artifact view.
 type sealValidationState struct {
-	pointRows                  map[identity.ContentID]struct{}
-	valueRows                  map[identity.ContentID]struct{}
-	bodyRows                   map[identity.ContentID]programschema.Body
-	outcomeRows                map[identity.ContentID]int
-	outcomeCursor              uint32
-	callableBodies             int
-	environmentByRoute         map[identity.ContentID]EnvironmentEdge
-	environmentRouteDuplicates map[identity.ContentID]struct{}
-	occurrenceRows             map[programschema.OccurrenceKind]map[identity.ContentID]struct{}
-	valuesRows                 map[identity.ContentID]struct{}
+	pointRows      map[identity.ContentID]struct{}
+	valueRows      map[identity.ContentID]struct{}
+	bodyRows       map[identity.ContentID]programschema.Body
+	outcomeRows    map[identity.ContentID]int
+	outcomeCursor  uint32
+	callableBodies int
+	occurrenceRows map[programschema.OccurrenceKind]map[identity.ContentID]struct{}
+	valuesRows     map[identity.ContentID]struct{}
 }
 
 func (artifact *Artifact) validUnsealedFailure() CompileFailure {

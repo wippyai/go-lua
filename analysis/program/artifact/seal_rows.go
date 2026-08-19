@@ -89,17 +89,10 @@ func (artifact *Artifact) validateSealRows(state *sealValidationState) CompileFa
 	if !edgesPublished {
 		return compileFailure(CompileStageSeal, CompileRowEnvironment, -1, -1, CompileReasonEnvironmentUnavailable)
 	}
-	state.environmentByRoute = make(map[identity.ContentID]EnvironmentEdge, edgeCount)
-	state.environmentRouteDuplicates = make(map[identity.ContentID]struct{})
 	for index := 0; index < edgeCount; index++ {
 		row, held := artifact.environmentEdgeRowAt(index)
 		if !held {
 			return compileFailure(CompileStageSeal, CompileRowEnvironment, index, -1, CompileReasonEnvironmentUnavailable)
-		}
-		if _, exists := state.environmentByRoute[row.route]; exists {
-			state.environmentRouteDuplicates[row.route] = struct{}{}
-		} else {
-			state.environmentByRoute[row.route] = row
 		}
 		if _, exists := state.pointRows[row.from]; !exists {
 			return compileFailure(CompileStageSeal, CompileRowEnvironment, index, 0, CompileReasonEnvironmentEndpointUnknown)
