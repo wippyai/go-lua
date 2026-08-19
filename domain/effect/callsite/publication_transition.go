@@ -37,7 +37,7 @@ type publicationTransitionRow struct {
 
 // PublicationTransitionCandidate is one schema-authored potential
 // publication. It becomes a proof only by reading its exact, completed
-// CallEffect observation through Prove.
+// CallEffect observation through ProveWithFailure.
 type PublicationTransitionCandidate struct {
 	set   *publicationTransitionSet
 	index uint32
@@ -253,12 +253,6 @@ func (candidate PublicationTransitionCandidate) ContentID() (identity.ContentID,
 func (candidate PublicationTransitionCandidate) ProveWithFailure(solver *engine.Solver, state *engine.State) (PublicationTransitionProof, PublicationTransitionProofFailure) {
 	proof := PublicationTransitionProof{candidate: candidate, solver: solver, state: state}
 	return proof, candidate.proofFailure(solver, state)
-}
-
-// Prove is the boolean convenience form of ProveWithFailure.
-func (candidate PublicationTransitionCandidate) Prove(solver *engine.Solver, state *engine.State) (PublicationTransitionProof, bool) {
-	proof, failure := candidate.ProveWithFailure(solver, state)
-	return proof, failure == PublicationTransitionProofFailureNone
 }
 
 func (candidate PublicationTransitionCandidate) proofFailure(solver *engine.Solver, state *engine.State) PublicationTransitionProofFailure {
