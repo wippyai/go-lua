@@ -3,6 +3,7 @@ package composite
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/query"
@@ -163,11 +164,14 @@ func TestWithdrawingAContributorRefusesTheFamily(t *testing.T) {
 	if !rolesOK {
 		t.Fatal("declared query identities did not resolve")
 	}
-	if _, _, admitted := wireQuery(valueowner.QuerySpec(), roles, valueowner.DeclareQuery, nil, valueowner.RecoverQuery); admitted {
+	if _, _, admitted := wireQuery(valueowner.QuerySpec(), roles, valueowner.DeclareQuery, nil, valueowner.RecoverQuery, engine.NewSummaryQueryAdmission); admitted {
 		t.Fatal("value-summary was admitted without the contributor that folds it")
 	}
-	if _, _, admitted := wireQuery(effectowner.QuerySpec(), roles, nil, effectowner.BindQuery, effectowner.RecoverQuery); admitted {
+	if _, _, admitted := wireQuery(effectowner.QuerySpec(), roles, nil, effectowner.BindQuery, effectowner.RecoverQuery, engine.NewExactQueryAdmission); admitted {
 		t.Fatal("effect-exact was admitted without the contributor that declares its slot")
+	}
+	if _, _, admitted := wireQuery(valueowner.QuerySpec(), roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery, nil); admitted {
+		t.Fatal("value-summary was admitted without its owner admission callback")
 	}
 }
 

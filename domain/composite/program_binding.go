@@ -128,20 +128,22 @@ func (bound *ProgramBinding) EffectQuery() *effectowner.ExactQueryImplementation
 }
 
 // QueryAdmission seals one selected-point query row from the family's own
-// implementation. Construction walks sealed issuance for sites; this recovers
-// the cell by projection.
-func (bound *ProgramBinding) QueryAdmission(id, mount, point identity.ContentID, projection schema.Key) (engine.ProgramQueryAdmission, bool) {
+// implementation. Construction walks sealed issuance for sites; the sealed
+// family selects its owner's admission callback. Projection is descriptive
+// query geometry and is never used as a concrete implementation type tag.
+func (bound *ProgramBinding) QueryAdmission(id, mount, point identity.ContentID, family schema.Key) (engine.ProgramQueryAdmission, bool) {
 	if bound == nil {
 		return engine.ProgramQueryAdmission{}, false
 	}
-	switch projection {
-	case query.ProjectionSummary:
-		return engine.NewSummaryQueryAdmission(bound.ValueQuery(), id, mount, point)
-	case query.ProjectionExact:
-		return engine.NewExactQueryAdmission(bound.EffectQuery(), id, mount, point)
-	default:
+	position, ok := queryPositionForFamily(family)
+	if !ok || position < 0 || position >= len(registry.queryContributors) {
 		return engine.ProgramQueryAdmission{}, false
 	}
+	cell, ok := bound.Query(family)
+	if !ok {
+		return engine.ProgramQueryAdmission{}, false
+	}
+	return registry.queryContributors[position].admit(bound.binding, cell, id, mount, point)
 }
 
 // RuntimeContexts is the cold authority pair a runtime joins to open allocation

@@ -7,10 +7,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
-	"github.com/wippyai/go-lua/analysis/schema/query"
 )
 
-func TestQueryAdmissionRecoversSealedProjection(t *testing.T) {
+func TestQueryAdmissionDispatchesBySealedFamily(t *testing.T) {
 	record := mountedRecord(t, "query-admission", "local function identity(value) return value end; return identity(1)")
 	bound := materializerBinding(t, record)
 	if len(record.Artifacts) == 0 || !record.Artifacts[0].Available() {
@@ -25,23 +24,24 @@ func TestQueryAdmissionRecoversSealedProjection(t *testing.T) {
 	if !pointOK || !pointID.Available() {
 		t.Fatal("sealed point")
 	}
-	id, idOK := identity.DeriveContentID("analysis/artifact-query/v1", mount.ModuleKey[:], pointID[:], []byte(QueryFamilyValueSummary))
-	if !idOK {
-		t.Fatal("query identity")
+	summaryID, summaryIDOK := identity.DeriveContentID("analysis/artifact-query/v1", mount.ModuleKey[:], pointID[:], []byte(QueryFamilyValueSummary))
+	exactID, exactIDOK := identity.DeriveContentID("analysis/artifact-query/v1", mount.ModuleKey[:], pointID[:], []byte(QueryFamilyEffectExact))
+	if !summaryIDOK || !exactIDOK {
+		t.Fatal("query identities")
 	}
-	summary, summaryOK := bound.QueryAdmission(id, mount.ModuleKey, pointID, query.ProjectionSummary)
-	exact, exactOK := bound.QueryAdmission(id, mount.ModuleKey, pointID, query.ProjectionExact)
+	summary, summaryOK := bound.QueryAdmission(summaryID, mount.ModuleKey, pointID, QueryFamilyValueSummary)
+	exact, exactOK := bound.QueryAdmission(exactID, mount.ModuleKey, pointID, QueryFamilyEffectExact)
 	if !summaryOK || !exactOK {
 		t.Fatalf("query admission refused: summary=%v exact=%v", summaryOK, exactOK)
 	}
-	if summary.ID != id || summary.Mount != mount.ModuleKey || summary.Point != pointID {
+	if summary.ID != summaryID || summary.Mount != mount.ModuleKey || summary.Point != pointID {
 		t.Fatal("summary admission lost the sealed site")
 	}
-	if exact.ID != id || exact.Mount != mount.ModuleKey || exact.Point != pointID {
+	if exact.ID != exactID || exact.Mount != mount.ModuleKey || exact.Point != pointID {
 		t.Fatal("exact admission lost the sealed site")
 	}
-	if _, ok := bound.QueryAdmission(id, mount.ModuleKey, pointID, ""); ok {
-		t.Fatal("empty projection admitted")
+	if _, ok := bound.QueryAdmission(summaryID, mount.ModuleKey, pointID, ""); ok {
+		t.Fatal("empty family admitted")
 	}
 }
 

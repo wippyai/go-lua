@@ -209,7 +209,7 @@ func (bound *ProgramBinding) QueryAdmissions(sites []QuerySite) ([]engine.Progra
 	}
 	rows := make([]engine.ProgramQueryAdmission, 0, len(sites))
 	for _, site := range sites {
-		admitted, ok := bound.QueryAdmission(site.ID, site.Mount, site.Point, site.Projection)
+		admitted, ok := bound.QueryAdmission(site.ID, site.Mount, site.Point, site.Family)
 		if !ok {
 			return nil, false
 		}

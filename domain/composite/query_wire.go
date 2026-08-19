@@ -2,6 +2,7 @@ package composite
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema/query"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
@@ -13,10 +14,11 @@ type queryContributor struct {
 	declare func(*engine.SchemaBuilder, query.Subjects) (query.Cell, bool)
 	bind    func(*engine.SchemaBinding, query.Cell, query.Subjects) bool
 	recover func(*engine.SchemaBinding, query.Cell) (query.Cell, bool)
+	admit   func(*engine.SchemaBinding, query.Cell, identity.ContentID, identity.ContentID, identity.ContentID) (engine.ProgramQueryAdmission, bool)
 }
 
 func (contributor queryContributor) complete() bool {
-	return contributor.declare != nil && contributor.bind != nil && contributor.recover != nil
+	return contributor.declare != nil && contributor.bind != nil && contributor.recover != nil && contributor.admit != nil
 }
 
 func wireQuery[F, R any](
@@ -25,8 +27,9 @@ func wireQuery[F, R any](
 	declare func(*engine.SchemaBuilder, query.Declaration) (F, bool),
 	bind func(*engine.SchemaBinding, query.Binding[F]) bool,
 	recover func(*engine.SchemaBinding, query.Sealed[F]) (R, bool),
+	admit func(R, identity.ContentID, identity.ContentID, identity.ContentID) (engine.ProgramQueryAdmission, bool),
 ) (*query.Registration, queryContributor, bool) {
-	if declare == nil || bind == nil || recover == nil {
+	if declare == nil || bind == nil || recover == nil || admit == nil {
 		return nil, queryContributor{}, false
 	}
 	registration, ok := query.New(spec, roles)
@@ -63,6 +66,17 @@ func wireQuery[F, R any](
 				return query.Cell{}, false
 			}
 			return query.NewCell(implementation), true
+		},
+		admit: func(binding *engine.SchemaBinding, holder query.Cell, id, mount, point identity.ContentID) (engine.ProgramQueryAdmission, bool) {
+			fragment, ok := query.Payload[F](holder)
+			if !ok {
+				return engine.ProgramQueryAdmission{}, false
+			}
+			implementation, ok := recover(binding, query.Sealed[F]{Fragment: fragment})
+			if !ok {
+				return engine.ProgramQueryAdmission{}, false
+			}
+			return admit(implementation, id, mount, point)
 		},
 	}
 	return registration, contributor, contributor.complete()
