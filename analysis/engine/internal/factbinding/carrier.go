@@ -371,12 +371,85 @@ type bindingWork[K scalar.Key, V any] struct {
 	changeRows      []semantic.ContributionChange[K]
 	pointFoldPlanes []semantic.Plane[planeFactor, K, V]
 	pointFoldRows   []pointFoldCoverageRegion
+	pointFoldRuns   []pointFoldRun
+	pointFoldMerge  []pointFoldCoverageRegion
+	pointFoldHeap   []int32
 }
 
 type pointFoldCoverageRegion struct {
 	position int
 	operand  int
 	region   support.Mask
+}
+
+// pointFoldRun is one operand's coverage rows inside pointFoldRows. Every run
+// is ascending in descriptor position by admission: appendCoverage rejects a
+// repeated or descending position instead of discovering the order afterwards.
+type pointFoldRun struct {
+	next, end int
+}
+
+// mergePointFoldRuns turns the concatenated per-operand runs into the single
+// ascending row order the key lookup binary-searches. Runs are appended in
+// operand order and each is already ascending, so breaking ties by run index
+// reproduces the (position, operand) order exactly, in O(n log k) rather than
+// re-sorting the concatenation.
+func (work *bindingWork[K, V]) mergePointFoldRuns() {
+	runs := work.pointFoldRuns
+	if len(runs) < 2 {
+		return
+	}
+	heap := work.pointFoldHeap[:0]
+	for run := range runs {
+		if runs[run].next < runs[run].end {
+			heap = append(heap, int32(run))
+		}
+	}
+	rows := work.pointFoldRows
+	less := func(left, right int32) bool {
+		leftPosition, rightPosition := rows[runs[left].next].position, rows[runs[right].next].position
+		if leftPosition != rightPosition {
+			return leftPosition < rightPosition
+		}
+		return left < right
+	}
+	for index := len(heap)/2 - 1; index >= 0; index-- {
+		siftDownRuns(heap, index, less)
+	}
+	merged := work.pointFoldMerge[:0]
+	for len(heap) != 0 {
+		run := heap[0]
+		merged = append(merged, rows[runs[run].next])
+		runs[run].next++
+		if runs[run].next == runs[run].end {
+			last := len(heap) - 1
+			heap[0], heap = heap[last], heap[:last]
+		}
+		if len(heap) != 0 {
+			siftDownRuns(heap, 0, less)
+		}
+	}
+	work.pointFoldHeap = heap[:0]
+	clear(rows)
+	work.pointFoldRows, work.pointFoldMerge = merged, rows[:0]
+	work.pointFoldRuns = runs[:0]
+}
+
+func siftDownRuns(heap []int32, root int, less func(left, right int32) bool) {
+	for {
+		child := 2*root + 1
+		if child >= len(heap) {
+			return
+		}
+		if child+1 < len(heap) && less(heap[child+1], heap[child]) {
+			child++
+		}
+		if !less(heap[child], heap[root]) {
+			return
+		}
+		heap[root], heap[child] = heap[child], heap[root]
+		root = child
+	}
 }
 
 // BindRootEpoch is carrier's one evaluator-open lifecycle cut.  It registers
@@ -416,6 +489,10 @@ func (work *bindingWork[K, V]) CloseRootEpoch() {
 	work.pointFoldPlanes = nil
 	clear(work.pointFoldRows)
 	work.pointFoldRows = nil
+	clear(work.pointFoldMerge)
+	work.pointFoldMerge = nil
+	work.pointFoldRuns = nil
+	work.pointFoldHeap = nil
 	clear(work.coverageLeft)
 	work.coverageLeft = nil
 	clear(work.coverageRight)
@@ -576,7 +653,9 @@ func (work *bindingWork[K, V]) FoldPointRHSUnder(before, base carrier.RootHandle
 	}()
 	clear(work.pointFoldRows)
 	work.pointFoldRows = work.pointFoldRows[:0]
+	work.pointFoldRuns = work.pointFoldRuns[:0]
 	appendCoverage := func(operand int, coverage carrier.SlotCoverage, within support.Mask) bool {
+		start := len(work.pointFoldRows)
 		prior := -1
 		for rowIndex := 0; rowIndex < coverage.Count(); rowIndex++ {
 			row, present := coverage.At(rowIndex)
@@ -587,6 +666,7 @@ func (work *bindingWork[K, V]) FoldPointRHSUnder(before, base carrier.RootHandle
 			prior = descriptor.position
 			work.pointFoldRows = append(work.pointFoldRows, pointFoldCoverageRegion{position: descriptor.position, operand: operand, region: row.Region()})
 		}
+		work.pointFoldRuns = append(work.pointFoldRuns, pointFoldRun{next: start, end: len(work.pointFoldRows)})
 		return true
 	}
 	work.pointFoldPlanes[0] = basePlane
@@ -603,12 +683,7 @@ func (work *bindingWork[K, V]) FoldPointRHSUnder(before, base carrier.RootHandle
 			return carrier.ChangeHandle{}, false
 		}
 	}
-	sort.Slice(work.pointFoldRows, func(left, right int) bool {
-		if work.pointFoldRows[left].position != work.pointFoldRows[right].position {
-			return work.pointFoldRows[left].position < work.pointFoldRows[right].position
-		}
-		return work.pointFoldRows[left].operand < work.pointFoldRows[right].operand
-	})
+	work.mergePointFoldRuns()
 	falseRegion := delta.False()
 	if !falseRegion.Valid() {
 		return carrier.ChangeHandle{}, false
