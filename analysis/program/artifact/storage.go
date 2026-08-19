@@ -80,7 +80,7 @@ func (compiler *compiler) storageReadAt(index int) (storageReadCompileRow, bool)
 	if !bodyOK || !bodyPath.Available() || !spanOK || !entryOK || !finishOK || !bodyIdentityOK {
 		return storageReadCompileRow{}, false
 	}
-	cellID, _ := compiler.input.StorageCellID(source)
+	cellID, _ := artifactStorageCellID(compiler.key.ProgramID(), view, source)
 	readID, spanID, readTerm, readOK := compiler.input.StorageReadIDAt(index)
 	if !readOK || readTerm != term || !spanID.Available() {
 		return storageReadCompileRow{}, false
@@ -124,7 +124,7 @@ func (compiler *compiler) storageBindAt(index int) (storageBindCompileRow, bool)
 		if !cellOK {
 			return storageBindCompileRow{}, false
 		}
-		row.cells[position], _ = input.StorageCellID(cellTerm)
+		row.cells[position], _ = artifactStorageCellID(compiler.key.ProgramID(), view, cellTerm)
 		if !row.cells[position].Available() {
 			return storageBindCompileRow{}, false
 		}
@@ -203,7 +203,7 @@ func (compiler *compiler) storageAssignmentAt(index int) (storageAssignmentCompi
 		if !finishSpanOK || !writeFinishOK || !predecessorOK || !route.Available() {
 			return storageAssignmentCompileRow{}, false
 		}
-		cellID, _ := input.StorageCellID(target)
+		cellID, _ := artifactStorageCellID(compiler.key.ProgramID(), view, target)
 		_, _, _, _, exactOK := exact.Get(target)
 		_, _, _, dynamicOK := dynamic.Get(target)
 		writeID, writeOK := input.StorageWriteTransferIDAt(index, position)

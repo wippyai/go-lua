@@ -56,6 +56,7 @@ func (compiler *compiler) copyBodiesAndOutcomesFailure() CompileFailure {
 	seenBodies := make(map[identity.ContentID]struct{}, bodyCount)
 	seenBodyContexts := make(map[identity.ContentID]struct{}, bodyCount)
 	seenOutcomes := make(map[identity.ContentID]int)
+	programID := compiler.key.ProgramID()
 
 	for bodyIndex := 0; bodyIndex < bodyCount; bodyIndex++ {
 		body, ok := compiler.input.BodyAt(bodyIndex)
@@ -92,7 +93,7 @@ func (compiler *compiler) copyBodiesAndOutcomesFailure() CompileFailure {
 		if function, functionOK := body.Function(); functionOK {
 			formal, formalOK := flowView.CallBodyTarget(function)
 			var functionIDOK bool
-			functionID, functionIDOK = compiler.input.FunctionID(function)
+			functionID, functionIDOK = artifactFunctionID(programID, flowView, function)
 			if formalOK {
 				formalID, formalOK = formal.ID()
 			}

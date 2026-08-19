@@ -1,8 +1,21 @@
 package artifact
 
 import (
+	"crypto/sha256"
+
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/functionboundary"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 	"github.com/wippyai/go-lua/analysis/schema/program"
+	"github.com/wippyai/go-lua/internal/framing"
+)
+
+const (
+	callableCellFormal       = uint64(1)
+	callableCellCaptureInner = uint64(3)
+	callableCellCaptureOuter = uint64(4)
 )
 
 // copyFunctionBoundariesFailure emits the callable-interface families
@@ -13,13 +26,15 @@ func (compiler *compiler) copyFunctionBoundariesFailure() CompileFailure {
 		return compileFailure(CompileStageBodyOutcomes, CompileRowBody, -1, -1, CompileReasonBodyUnavailable)
 	}
 	flowView := compiler.input.Flow()
+	programID := compiler.key.ProgramID()
+	staticView := compiler.input.Static()
 	for bodyIndex := 0; bodyIndex < compiler.input.BodyCount(); bodyIndex++ {
 		body, bodyOK := compiler.input.BodyAt(bodyIndex)
 		if !bodyOK || !compiler.input.OwnsBody(body) || bodyIndex >= len(compiler.bodies) {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, -1, CompileReasonBodyUnavailable)
 		}
 		function, callable := body.Function()
-		functionID, functionOK := compiler.input.FunctionID(function)
+		functionID, functionOK := artifactFunctionID(programID, flowView, function)
 		if !callable {
 			continue
 		}
@@ -35,7 +50,7 @@ func (compiler *compiler) copyFunctionBoundariesFailure() CompileFailure {
 		}
 		formalOffset := uint32(len(compiler.functionFormals))
 		for position := 0; position < function.FormalCount(); position++ {
-			formalID, cellID, storageID, declared, formalOK := compiler.input.FunctionFormalAt(function, position)
+			formalID, cellID, storageID, declared, formalOK := artifactFunctionFormalAt(programID, flowView, staticView, function, position)
 			if !formalOK || uint64(position) > uint64(^uint32(0)) {
 				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, position, CompileReasonBodyUnavailable)
 			}
@@ -59,7 +74,7 @@ func (compiler *compiler) copyFunctionBoundariesFailure() CompileFailure {
 
 		captureOffset := uint32(len(compiler.functionCaptures))
 		for position := 0; position < function.CaptureCount(); position++ {
-			captureID, innerID, outerID, innerBodyID, outerBodyID, captureOK := compiler.input.FunctionCaptureAt(function, position)
+			captureID, innerID, outerID, innerBodyID, outerBodyID, captureOK := artifactFunctionCaptureAt(programID, flowView, function, position)
 			if !captureOK || uint64(position) > uint64(^uint32(0)) {
 				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, position, CompileReasonBodyUnavailable)
 			}
@@ -81,6 +96,158 @@ func (compiler *compiler) copyFunctionBoundariesFailure() CompileFailure {
 		compiler.functionBoundaries = append(compiler.functionBoundaries, boundary)
 	}
 	return CompileFailure{}
+}
+
+// artifactFunctionID is the construction-seam join for the callable scalar
+// identity. Flow owns the boundary, Body, and context; Artifact supplies the
+// already-published Program root fence explicitly. No Program wrapper or
+// boundary handle crosses the sealed Artifact.
+func artifactFunctionID(programID identity.ContentID, view flow.View, boundary functionboundary.Boundary) (identity.ContentID, bool) {
+	if !programID.Available() || !boundary.Available() {
+		return identity.ContentID{}, false
+	}
+	boundaries := view.FunctionBoundaries()
+	bodyTerm, bodyTermOK := boundary.Body()
+	body, bodyOK := boundaries.ForBody(bodyTerm)
+	context := boundary.ContextID()
+	if !boundaries.OwnsFunction(boundary) || !bodyTermOK || !bodyOK || !boundaries.OwnsBody(body) || !body.Available() || !context.Available() {
+		return identity.ContentID{}, false
+	}
+	id := artifactCallableRoleID("program/transformer/function", programID, func(writer *framing.Writer) bool {
+		return writer.Bytes(context[:]) == nil
+	})
+	return id, id.Available()
+}
+
+// artifactFunctionFormalAt joins one Flow formal with its lexical Cell,
+// storage Cell, and optional Static declaration. An absent declaration is a
+// valid unannotated formal and therefore does not invalidate the row.
+func artifactFunctionFormalAt(programID identity.ContentID, view flow.View, staticView staticquery.View, boundary functionboundary.Boundary, index int) (formalID, cellID, storageID, declaredTypeID identity.ContentID, ok bool) {
+	if !programID.Available() || index < 0 {
+		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
+	}
+	if _, functionOK := artifactFunctionID(programID, view, boundary); !functionOK {
+		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
+	}
+	term, termOK := boundary.FormalAt(index)
+	bodyTerm, bodyTermOK := boundary.Body()
+	boundaries := view.FunctionBoundaries()
+	body, bodyOK := boundaries.ForBody(bodyTerm)
+	pathID, pathOK := view.BodyPath(bodyTerm)
+	if !termOK || term == 0 || !bodyTermOK || !bodyOK || !boundaries.OwnsBody(body) || !pathOK || !pathID.Available() {
+		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
+	}
+	cellID = artifactCallableCellID(pathID, callableCellFormal, uint64(index))
+	formalID = artifactCallableSemanticID("program/transformer/formal", func(writer *framing.Writer) bool {
+		return writer.Bytes(pathID[:]) == nil && writer.Uint(uint64(index)) == nil && writer.Bytes(cellID[:]) == nil
+	})
+	storageID, storageOK := artifactStorageCellID(programID, view, term)
+	if !cellID.Available() || !formalID.Available() || !storageOK || !storageID.Available() {
+		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
+	}
+	declaredTypeID, _ = artifactDeclaredStaticTypeID(programID, staticView, term)
+	return formalID, cellID, storageID, declaredTypeID, true
+}
+
+// artifactStorageCellID is the explicit Artifact handoff for the shared
+// storage-role identity. The Cell relation remains Flow-owned; only the root
+// fence is supplied by the Artifact compiler.
+func artifactStorageCellID(programID identity.ContentID, view flow.View, term keyspace.Term) (identity.ContentID, bool) {
+	if !programID.Available() || term == 0 {
+		return identity.ContentID{}, false
+	}
+	if _, _, _, cellOK := view.Authored().Storage().Cells().Get(term); !cellOK {
+		return identity.ContentID{}, false
+	}
+	id := artifactCallableRoleID("program/transformer/storage-cell", programID, func(writer *framing.Writer) bool {
+		return writeCallableTerm(writer, term)
+	})
+	return id, id.Available()
+}
+
+// artifactFunctionCaptureAt joins one ordered Flow capture pair. Both Body
+// paths are already sealed by Flow; the scalar equations remain byte-for-byte
+// identical to the former Program projection.
+func artifactFunctionCaptureAt(programID identity.ContentID, view flow.View, boundary functionboundary.Boundary, index int) (id, innerID, outerID, innerBodyID, outerBodyID identity.ContentID, ok bool) {
+	if !programID.Available() || index < 0 {
+		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
+	}
+	if _, functionOK := artifactFunctionID(programID, view, boundary); !functionOK {
+		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
+	}
+	pair, pairOK := boundary.CaptureAt(index)
+	bodyTerm, bodyTermOK := boundary.Body()
+	boundaries := view.FunctionBoundaries()
+	body, bodyOK := boundaries.ForBody(bodyTerm)
+	innerBody, innerBodyOK := boundaries.ForBody(pair.InnerBody)
+	outerBody, outerBodyOK := boundaries.ForBody(pair.OuterBody)
+	if !pairOK || pair.Inner == 0 || pair.Outer == 0 || !bodyTermOK || !bodyOK || !innerBodyOK || !outerBodyOK ||
+		!boundaries.OwnsBody(body) || !boundaries.OwnsBody(innerBody) || !boundaries.OwnsBody(outerBody) || !innerBody.Equal(body) || outerBody.Equal(innerBody) {
+		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
+	}
+	innerBodyID, innerBodyOK = view.BodyPath(pair.InnerBody)
+	outerBodyID, outerBodyOK = view.BodyPath(pair.OuterBody)
+	if !innerBodyOK || !outerBodyOK || !innerBodyID.Available() || !outerBodyID.Available() {
+		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
+	}
+	innerID = artifactCallableCellID(innerBodyID, callableCellCaptureInner, uint64(index))
+	outerID = artifactCallableCellID(outerBodyID, callableCellCaptureOuter, uint64(index))
+	id = artifactCallableSemanticID("program/transformer/capture", func(writer *framing.Writer) bool {
+		return writer.Bytes(innerBodyID[:]) == nil && writer.Bytes(outerBodyID[:]) == nil &&
+			writer.Uint(uint64(index)) == nil && writer.Bytes(innerID[:]) == nil && writer.Bytes(outerID[:]) == nil
+	})
+	return id, innerID, outerID, innerBodyID, outerBodyID, id.Available() && innerID.Available() && outerID.Available()
+}
+
+func artifactCallableCellID(bodyPath identity.ContentID, role, index uint64) identity.ContentID {
+	return artifactCallableSemanticID("program/transformer/cell-semantic", func(writer *framing.Writer) bool {
+		return writer.Bytes(bodyPath[:]) == nil && writer.Uint(role) == nil && writer.Uint(index) == nil
+	})
+}
+
+func artifactDeclaredStaticTypeID(programID identity.ContentID, view staticquery.View, cell keyspace.Term) (identity.ContentID, bool) {
+	if !programID.Available() || !view.Available() || cell == 0 {
+		return identity.ContentID{}, false
+	}
+	declarations := view.Declarations().DeclaredTypes()
+	declaration, declarationOK := declarations.ForCell(cell)
+	declaredCell, target, rowOK := declarations.Get(declaration)
+	ref, refOK := view.StaticTypes().Ref(target)
+	id, idOK := staticquery.TypeReferenceID(programID, ref)
+	if !declarationOK || !rowOK || declaredCell != cell || !refOK || ref.Term() != target || !idOK {
+		return identity.ContentID{}, false
+	}
+	return id, true
+}
+
+func writeCallableTerm(writer *framing.Writer, term keyspace.Term) bool {
+	return writer != nil && keyspace.TermFamily(term) != keyspace.FamilyInvalid && keyspace.TermOrdinal(term) != 0 &&
+		writer.Uint(uint64(keyspace.TermFamily(term))) == nil && writer.Uint(uint64(keyspace.TermOrdinal(term))) == nil
+}
+
+func artifactCallableSemanticID(domain string, write func(*framing.Writer) bool) identity.ContentID {
+	hash := sha256.New()
+	var writer framing.Writer
+	if writer.Reset(hash, domain, 1) != nil || writer.Record(1) != nil || write == nil || !write(&writer) || writer.Finish() != nil {
+		return identity.ContentID{}
+	}
+	var id identity.ContentID
+	copy(id[:], hash.Sum(nil))
+	return id
+}
+
+func artifactCallableRoleID(domain string, owner identity.ContentID, write func(*framing.Writer) bool) identity.ContentID {
+	if !owner.Available() || write == nil {
+		return identity.ContentID{}
+	}
+	hash := sha256.New()
+	var writer framing.Writer
+	if writer.Reset(hash, domain, 1) != nil || writer.Record(1) != nil || writer.Bytes(owner[:]) != nil || !write(&writer) || writer.Finish() != nil {
+		return identity.ContentID{}
+	}
+	var id identity.ContentID
+	copy(id[:], hash.Sum(nil))
+	return id
 }
 
 // functionBoundaryIDs is used only by compiler-side summary and validation

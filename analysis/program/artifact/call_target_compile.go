@@ -23,6 +23,7 @@ func (compiler *compiler) copyCallTargetsFailure() CompileFailure {
 	seenAllocations := make(map[identity.ContentID]struct{})
 	seenBodies := make(map[identity.ContentID]struct{})
 	flowView := compiler.input.Flow()
+	programID := compiler.key.ProgramID()
 	boundaries := flowView.FunctionBoundaries()
 	for index, allocation := range compiler.allocationRows {
 		if allocation.role != AllocationClosure {
@@ -32,11 +33,11 @@ func (compiler *compiler) copyCallTargetsFailure() CompileFailure {
 		functionTerm, functionTermOK := boundary.Function()
 		bodyTerm, bodyTermOK := boundary.Body()
 		body, bodyOK := compiler.input.Body(bodyTerm)
-		function, functionOK := body.Function()
+		_, functionOK := body.Function()
 		formal, formalOK := flowView.CallBodyTarget(boundary)
 		allocationID, bodyID := allocation.template, body.PathID()
 		context := body.ContextID()
-		functionID, functionIDOK := compiler.input.FunctionID(function)
+		functionID, functionIDOK := artifactFunctionID(programID, flowView, boundary)
 		formalID, formalIDOK := formal.ID()
 		copied, copiedOK := bodyByContext[context]
 		owner, authoredBody, _, authoredOK := flowView.Authored().Functions().Get(allocation.term)
