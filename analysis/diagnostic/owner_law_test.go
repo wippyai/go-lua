@@ -57,7 +57,7 @@ func TestReportImplementationLivesInThisPackage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(attach), "func AttachBranchValues(") || !strings.Contains(string(attach), "func Publications(") {
+	if !strings.Contains(string(attach), "func BranchValueObservations(") || !strings.Contains(string(attach), "func Publications(") {
 		t.Fatal("observation attach and publication addressing are not in analysis/diagnostic")
 	}
 	for _, name := range []string{"diagnostic_report.go", "diagnostics.go"} {

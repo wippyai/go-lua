@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/rule"
 	callactivation "github.com/wippyai/go-lua/domain/call/activation"
 )
 
@@ -29,13 +30,16 @@ var requirementCorpus = []struct {
 }
 
 // TestSealedPlacementSetEqualsOwnerOperandSet is the declared-admissibility
-// law. A cold issuance placement and the owner's operand seal are one
-// denominator: every placement the artifact carries resolves an owner operand,
-// and no placement is left for the construction plane to discover and drop.
+// law at this package's altitude. A cold issuance placement and the sealed
+// rule table are one denominator: every placement the artifact carries names a
+// rule the table publishes a construction primitive for, and no placement is
+// left for the construction plane to discover and drop.
 //
-// A placement the owner refuses is a rule the artifact promised rows for and
-// no owner can execute, so the disagreement is a defect in the cold projection
-// rather than a case the admission walk may skip.
+// A placement no rule publishes a primitive for is a rule the artifact
+// promised rows for and no owner can execute, so the disagreement is a defect
+// in the cold projection rather than a case the admission walk may skip. The
+// activation plane is the one declared exception: it admits through its own
+// request and publishes no primitive.
 func TestSealedPlacementSetEqualsOwnerOperandSet(t *testing.T) {
 	for _, fixture := range requirementCorpus {
 		t.Run(fixture.name, func(t *testing.T) {
@@ -52,14 +56,12 @@ func TestSealedPlacementSetEqualsOwnerOperandSet(t *testing.T) {
 				if key == runtimeKind {
 					runtimeKindPlacements++
 				}
-				if _, activation := RuleHandleByKey[*callactivation.HotRule](rules, key); activation {
+				cell, cellOK := rules.cellByKey(key)
+				if _, activation := rule.Payload[*callactivation.HotRule](cell); cellOK && activation {
 					return true
 				}
-				attach, attachOK := rules.ProgramAttachByKey(key)
-				if !attachOK {
-					return false
-				}
-				if !attach.AdmitsMounted(mount, point, occurrence) {
+				program, programOK := rules.ProgramRuleByKey(key)
+				if !programOK || !program.Available() {
 					unsealed[key]++
 				}
 				return true
@@ -70,8 +72,8 @@ func TestSealedPlacementSetEqualsOwnerOperandSet(t *testing.T) {
 			if placements == 0 {
 				t.Fatal("fixture issued no sealed placements")
 			}
-			for rule, count := range unsealed {
-				t.Errorf("rule %q is placed %d times with no owner-sealed operand", rule, count)
+			for placed, count := range unsealed {
+				t.Errorf("rule %q is placed %d times and publishes no construction primitive", placed, count)
 			}
 			// Agreement is only worth stating over a projection that still
 			// places the shapes it should: a directory that placed nothing

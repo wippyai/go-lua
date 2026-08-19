@@ -125,7 +125,7 @@ func TestLinkAdmissionsWalkPublishedCatalogs(t *testing.T) {
 		t.Fatalf("link admissions=%d catalog rows=%d", len(admitted), expected)
 	}
 	for _, row := range admitted {
-		if !row.Capability.Link() || !row.Occurrence.Available() || row.Attach == nil {
+		if !row.Capability.Link() || !row.Occurrence.Available() || !row.Declaration.Available() {
 			t.Fatal("link admission row")
 		}
 		marked, known := seen[row.Occurrence]

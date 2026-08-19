@@ -85,11 +85,14 @@ func TestDirectAllocationMembershipAttachmentObservationLaw(t *testing.T) {
 	if _, ok := attachment.ContentID(); ok {
 		t.Fatal("attachment published an identity without an authenticated observation handle")
 	}
-	if attachment.observation.SealedAs(attachment.id) {
+	if attachment.observation.Available() || attachment.observation.ID == attachment.id {
 		t.Fatal("absent observation handle authenticated an attachment identity")
 	}
-	if _, ok := AttachSelectedDirectAllocationMembership(nil, nil, engine.RuleSlotCapability{}, attachment.mount, attachment.point, attachment.call, attachment.width); ok {
-		t.Fatal("attachment issued without a compilation, query, and graph")
+	if _, published := attachment.Observation(); published {
+		t.Fatal("attachment published a declared observation row without an authenticated handle")
+	}
+	if _, ok := DeclareSelectedDirectAllocationMembership(nil, nil, engine.RuleSlotCapability{}, attachment.mount, attachment.point, attachment.call, attachment.width); ok {
+		t.Fatal("attachment issued without a committed program and query")
 	}
 	// Prove is the relation's one cross-owner admission of a direct receipt, so
 	// zero transition, correlation, binding, and direct evidence must fabricate

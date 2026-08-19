@@ -67,15 +67,11 @@ type rawHotSeed struct {
 type rawHotValueSeed struct {
 	rawHotSeed
 	Implementation *valueowner.RuleImplementation[identity.ContentID]
-	Coordinate     valuedomain.Coordinate
-	Value          valuedomain.Value
 }
 
 type rawHotHeapSeed struct {
 	rawHotSeed
 	Implementation *heapowner.RuleImplementation[identity.ContentID]
-	Key            heapdomain.Key
-	Value          heapdomain.Value
 }
 
 func rawHotQuerySpec(values *valuedomain.Schema, expected valuedomain.Value) (engine.HotExactQuerySpec[valuedomain.Value, rawHotQueryObservation], bool) {
@@ -185,21 +181,11 @@ func TestRawHotMountedPathSolve(t *testing.T) {
 	if fixture.getRule == nil || fixture.setRule == nil {
 		t.Fatal("missing hot rules")
 	}
-	if fixture.assembly == nil || fixture.binding == nil || fixture.queryImplementation == nil {
+	if fixture.binding == nil || fixture.mount.Template == nil || fixture.queryImplementation == nil {
 		t.Fatal("missing assembly")
 	}
 	if fixture.heapQueryImplementationA == nil || len(fixture.valueSeeds) != 4 || len(fixture.heapSeeds) != 2 {
 		t.Fatal("missing owner-issued seeds")
-	}
-	for _, seed := range fixture.valueSeeds {
-		if !attachRawHotValueSeed(fixture.assembly, fixture.values, fixture.mountID, seed) {
-			t.Fatal("raw value seed")
-		}
-	}
-	for _, seed := range fixture.heapSeeds {
-		if !attachRawHotHeapSeed(fixture.assembly, fixture.heap, fixture.mountID, seed) {
-			t.Fatal("raw heap seed")
-		}
 	}
 	getImpl, getImplOK := fixture.getRule.Implementation()
 	setImpl, setImplOK := fixture.setRule.Implementation()
@@ -211,64 +197,64 @@ func TestRawHotMountedPathSolve(t *testing.T) {
 	if setImplOK {
 		setCap, setCapOK = setImpl.MountedCapability()
 	}
-	getAttach, getAttachOK := fixture.getRule.ProgramAttach()
-	setAttach, setAttachOK := fixture.setRule.ProgramAttach()
-	getOK := getImplOK && getCapOK && getAttachOK && getAttach.AdmitMounted(fixture.assembly, getCap, fixture.mountID, fixture.getPoint, fixture.getOccurrence)
-	setOK := setImplOK && setCapOK && setAttachOK && setAttach.AdmitMounted(fixture.assembly, setCap, fixture.mountID, fixture.setPoint, fixture.setOccurrence)
-	valueQueryOK, heapQueryOK := false, false
-	queuedOK := getOK && setOK && fixture.assembly.QueueMountedQueryBatch(func(batch *engine.MountedQueryBatch) bool {
-		valueQueryOK = engine.AddMountedExactQuery(batch, fixture.queryImplementation, fixture.queryID, fixture.mountID, fixture.getPoint)
-		heapQueryOK = valueQueryOK && engine.AddMountedExactQuery(batch, fixture.heapQueryImplementationA, fixture.heapQueryIDA, fixture.mountID, fixture.setPoint)
-		return heapQueryOK
-	})
-	sourcesOK := queuedOK && fixture.assembly.SealSources()
-	if !getOK || !setOK || !queuedOK || !sourcesOK || !valueQueryOK || !heapQueryOK {
-		failure, failureOK := fixture.assembly.SealFailure()
-		sourceFailure, _ := failure.Source()
-		artifactFailure, _ := failure.ArtifactRow()
-		ruleFailure, _ := failure.RuleSource()
-		finalizerFailure, _ := failure.Finalizer()
-		t.Fatalf("raw mounted rows get=%t set=%t sources=%t valueQuery=%t heapQuery=%t sealFailure=%t phase=%v ordinal=%d sourceFailure=%v artifactFailure=%v ruleFailure=%v finalizerFailure=%v", getOK, setOK, sourcesOK, valueQueryOK, heapQueryOK, failureOK, failure.Phase(), failure.Ordinal(), sourceFailure, artifactFailure, ruleFailure, finalizerFailure)
+	getDeclaration, getDeclarationOK := indexdomain.SealRawGetProgramRule(fixture.getRule)
+	setDeclaration, setDeclarationOK := indexdomain.SealRawSetProgramRule(fixture.setRule)
+	if !getImplOK || !setImplOK || !getCapOK || !setCapOK || !getDeclarationOK || !setDeclarationOK {
+		t.Fatalf("raw mounted declarations getImpl=%t setImpl=%t getCapability=%t setCapability=%t getRule=%t setRule=%t", getImplOK, setImplOK, getCapOK, setCapOK, getDeclarationOK, setDeclarationOK)
 	}
-	topology, issued, committed := fixture.assembly.Commit()
-	if !committed || topology == nil || issued == nil {
-		failure, failureOK := fixture.assembly.CommitFailure()
-		precondition, _ := failure.Precondition()
-		topologyFailure, _ := failure.Topology()
-		semantic, _ := failure.SemanticRows()
-		publish, _ := failure.Publish()
-		schedule, _ := failure.Schedule()
-		t.Fatalf("raw mounted commit failure=%t phase=%v precondition=%v topology=%v semantic=%v publish=%v schedule=%v", failureOK, failure.Phase(), precondition, topologyFailure, semantic, publish, schedule)
-	}
-	program := engine.CommittedProgramFrom(topology, issued)
-	compilation, compilationOK := engine.BeginProgramConstruction(fixture.binding, program)
-	if !compilationOK || compilation == nil {
-		t.Fatal("raw topology compilation")
-	}
-	if !getAttach.AttachMountedMember(compilation, getCap, fixture.mountID, fixture.getPoint, fixture.getOccurrence) {
-		t.Fatal("raw get member")
-	}
-	if !setAttach.AttachMountedMember(compilation, setCap, fixture.mountID, fixture.setPoint, fixture.setOccurrence) {
-		t.Fatal("raw set member")
-	}
+	mounted := make([]engine.MountedRuleAdmission, 0, len(fixture.valueSeeds)+len(fixture.heapSeeds)+2)
 	for _, seed := range fixture.valueSeeds {
-		if ok := attachRawHotValueSeedMember(compilation, seed.Implementation, fixture.mountID, seed); !ok {
-			t.Fatal("raw value seed member")
+		admission, admissionOK := rawHotValueSeedAdmission(fixture.mountID, seed)
+		if !admissionOK {
+			t.Fatal("raw value seed")
 		}
+		mounted = append(mounted, admission)
 	}
 	for _, seed := range fixture.heapSeeds {
-		if ok := attachRawHotHeapSeedMember(compilation, seed.Implementation, fixture.mountID, seed); !ok {
-			t.Fatal("raw heap seed member")
+		admission, admissionOK := rawHotHeapSeedAdmission(fixture.mountID, seed)
+		if !admissionOK {
+			t.Fatal("raw heap seed")
+		}
+		mounted = append(mounted, admission)
+	}
+	mounted = append(mounted,
+		engine.MountedRuleAdmission{Declaration: getDeclaration, Capability: getCap, Mount: fixture.mountID, Point: fixture.getPoint, Occurrence: fixture.getOccurrence},
+		engine.MountedRuleAdmission{Declaration: setDeclaration, Capability: setCap, Mount: fixture.mountID, Point: fixture.setPoint, Occurrence: fixture.setOccurrence},
+	)
+	valueQueryAdmission, valueQueryOK := engine.NewExactQueryAdmission(fixture.queryImplementation, fixture.queryID, fixture.mountID, fixture.getPoint)
+	heapQueryAdmission, heapQueryOK := engine.NewExactQueryAdmission(fixture.heapQueryImplementationA, fixture.heapQueryIDA, fixture.mountID, fixture.setPoint)
+	if !valueQueryOK || !heapQueryOK {
+		t.Fatalf("raw mounted query rows valueQuery=%t heapQuery=%t", valueQueryOK, heapQueryOK)
+	}
+	program, refusal, committed := engine.ConstructProgram(engine.ProgramDeclaration{
+		Binding:   fixture.binding,
+		Mounts:    []engine.MountedProgramArtifact{fixture.mount},
+		Bootstrap: fixture.bootstrap,
+		Admission: engine.MountedProgramAdmission{
+			Mounted: mounted,
+			Queries: []engine.ProgramQueryAdmission{valueQueryAdmission, heapQueryAdmission},
+		},
+	})
+	if !committed || program == nil {
+		ordinal, artifactRow := refusal.ArtifactRowOrdinal()
+		_, mountedRole := refusal.MountedRole()
+		t.Fatalf("raw mounted construct stage=%v lowered=%t lowering=%v seal=%v commit=%v schedule=%d artifactRow=%d/%t mountedRole=%t", refusal.Stage(), refusal.Lowered(), refusal.LoweringFailure(), refusal.Seal(), refusal.Commit(), refusal.ScheduleRow(), ordinal, artifactRow, mountedRole)
+	}
+	// Every occurrence the declaration admitted must be addressable as a
+	// published member of the committed program.
+	for _, row := range mounted {
+		if _, memberOK := program.MountedRuleMember(row.Capability, row.Mount, row.Point, row.Occurrence); !memberOK {
+			t.Fatalf("raw mounted member point=%x occurrence=%x", row.Point, row.Occurrence)
 		}
 	}
 	query, queryOK := program.Query(fixture.queryID)
 	heapQueryA, heapQueryAOK := program.Query(fixture.heapQueryIDA)
-	if !queryOK || !heapQueryAOK || !engine.AttachExactQuery(compilation, fixture.queryImplementation, fixture.queryID) || !engine.AttachExactQuery(compilation, fixture.heapQueryImplementationA, fixture.heapQueryIDA) {
+	if !queryOK || !heapQueryAOK {
 		t.Fatal("raw query member")
 	}
-	solver, _, solverOK := compilation.Seal()
+	solver, sealFailure, solverOK := program.Seal(nil)
 	if !solverOK || solver == nil {
-		t.Fatal("raw solver")
+		t.Fatalf("raw solver seal=%v", sealFailure)
 	}
 	state, status, report := solver.SolveWithReport(context.Background())
 	if status != engine.SolveComplete || state == nil {
@@ -311,40 +297,28 @@ func TestRawHotMountedPathSolve(t *testing.T) {
 	}
 }
 
-func attachRawHotValueSeed(assembly *engine.BindingTopologyBuilder, owner *valueowner.HotOwner, mount identity.ContentID, seed rawHotValueSeed) bool {
+func rawHotValueSeedAdmission(mount identity.ContentID, seed rawHotValueSeed) (engine.MountedRuleAdmission, bool) {
 	implementation, implementationOK := valueowner.ResolveRuleImplementation(seed.Implementation)
-	occurrence, occurrenceOK := assembly.AdmitMountedRuleOccurrence(seed.Capability, mount, seed.Point, seed.Occurrence)
-	admit := func(transaction *engine.RuleSourceTransaction) bool {
-		ref, refOK := owner.Ref(seed.Coordinate)
-		return implementationOK && occurrenceOK && refOK && engine.AddExactWrite(transaction, ref)
+	if !implementationOK {
+		return engine.MountedRuleAdmission{}, false
 	}
-	return engine.AdmitMountedRule(assembly, implementation, seed.Capability, occurrence, seed.Occurrence, admit)
+	declaration, declarationOK := engine.SealProgramRule(implementation)
+	if !declarationOK {
+		return engine.MountedRuleAdmission{}, false
+	}
+	return engine.MountedRuleAdmission{Declaration: declaration, Capability: seed.Capability, Mount: mount, Point: seed.Point, Occurrence: seed.Occurrence}, true
 }
 
-func attachRawHotHeapSeed(assembly *engine.BindingTopologyBuilder, owner *heapowner.HotOwner, mount identity.ContentID, seed rawHotHeapSeed) bool {
+func rawHotHeapSeedAdmission(mount identity.ContentID, seed rawHotHeapSeed) (engine.MountedRuleAdmission, bool) {
 	implementation, implementationOK := heapowner.ResolveRuleImplementation(seed.Implementation)
-	occurrence, occurrenceOK := assembly.AdmitMountedRuleOccurrence(seed.Capability, mount, seed.Point, seed.Occurrence)
-	admit := func(transaction *engine.RuleSourceTransaction) bool {
-		ref, refOK := owner.Ref(seed.Key)
-		return implementationOK && occurrenceOK && refOK && engine.AddExactWrite(transaction, ref)
+	if !implementationOK {
+		return engine.MountedRuleAdmission{}, false
 	}
-	return engine.AdmitMountedRule(assembly, implementation, seed.Capability, occurrence, seed.Occurrence, admit)
-}
-
-func attachRawHotValueSeedMember(compilation *engine.ProgramConstruction, implementation *valueowner.RuleImplementation[identity.ContentID], mount identity.ContentID, seed rawHotValueSeed) bool {
-	resolved, resolvedOK := valueowner.ResolveRuleImplementation(implementation)
-	if !resolvedOK {
-		return false
+	declaration, declarationOK := engine.SealProgramRule(implementation)
+	if !declarationOK {
+		return engine.MountedRuleAdmission{}, false
 	}
-	return engine.AttachMountedRuleMember(compilation, resolved, seed.Capability, mount, seed.Point, seed.Occurrence)
-}
-
-func attachRawHotHeapSeedMember(compilation *engine.ProgramConstruction, implementation *heapowner.RuleImplementation[identity.ContentID], mount identity.ContentID, seed rawHotHeapSeed) bool {
-	resolved, resolvedOK := heapowner.ResolveRuleImplementation(implementation)
-	if !resolvedOK {
-		return false
-	}
-	return engine.AttachMountedRuleMember(compilation, resolved, seed.Capability, mount, seed.Point, seed.Occurrence)
+	return engine.MountedRuleAdmission{Declaration: declaration, Capability: seed.Capability, Mount: mount, Point: seed.Point, Occurrence: seed.Occurrence}, true
 }
 
 type rawHotMountedPlan struct {
@@ -605,10 +579,9 @@ type rawHotFixture struct {
 	setOccurrence            identity.ContentID
 	getRule                  *indexdomain.RawGetHotRule
 	setRule                  *indexdomain.RawSetHotRule
-	assembly                 *engine.BindingTopologyBuilder
 	binding                  *engine.SchemaBinding
-	values                   *valueowner.HotOwner
-	heap                     *heapowner.HotOwner
+	mount                    engine.MountedProgramArtifact
+	bootstrap                engine.ProgramBootstrap
 	valueSeeds               []rawHotValueSeed
 	heapSeeds                []rawHotHeapSeed
 	queryID                  identity.ContentID
@@ -736,7 +709,11 @@ return b.source`)})
 	valueSeedBindOK := true
 	for index, seedRule := range valueSeedRules {
 		fact := plan.valueFacts[index]
-		local := uint64(index)
+		coordinateIndex, coordinateIndexOK := valueSchema.CoordinateIndex(plan.valueCoordinates[index])
+		if !coordinateIndexOK {
+			t.Fatal("raw value seed coordinate")
+		}
+		local := uint64(coordinateIndex)
 		occurrence := rawHotID(byte(61 + index))
 		implementation, implementationOK := valueowner.BindExactWriteRule(values, seedRule, valueSeedWrites[index], engine.HotRuleSpec[valuedomain.Value, identity.ContentID]{
 			OperandContent: func(value identity.ContentID) (identity.ContentID, [32]byte, bool) {
@@ -756,7 +733,11 @@ return b.source`)})
 	heapSeedBindOK := true
 	for index, seedRule := range heapSeedRules {
 		fact := plan.heapFacts[index]
-		local := uint64(index)
+		keyIndex, keyIndexOK := heapSchema.KeyIndex(plan.heapKeys[index])
+		if !keyIndexOK || keyIndex < 0 {
+			t.Fatal("raw heap seed key")
+		}
+		local := uint64(keyIndex)
 		occurrence := rawHotID(byte(70 + index))
 		implementation, implementationOK := heapowner.BindExactWriteRule(heap, seedRule, heapSeedWrites[index], engine.HotRuleSpec[heapdomain.Value, identity.ContentID]{
 			OperandContent: func(value identity.ContentID) (identity.ContentID, [32]byte, bool) {
@@ -803,22 +784,21 @@ return b.source`)})
 	valueSeeds := make([]rawHotValueSeed, len(plan.valueCoordinates))
 	seedPoint := rawHotID(60)
 	for index := range valueSeeds {
-		valueSeeds[index] = rawHotValueSeed{rawHotSeed: rawHotSeed{Capability: valueSeedCapabilities[index], Point: seedPoint, Occurrence: rawHotID(byte(61 + index))}, Implementation: valueSeedImplementations[index], Coordinate: plan.valueCoordinates[index], Value: plan.valueFacts[index]}
+		valueSeeds[index] = rawHotValueSeed{rawHotSeed: rawHotSeed{Capability: valueSeedCapabilities[index], Point: seedPoint, Occurrence: rawHotID(byte(61 + index))}, Implementation: valueSeedImplementations[index]}
 	}
 	heapSeeds := make([]rawHotHeapSeed, len(plan.heapKeys))
 	for index := range heapSeeds {
-		heapSeeds[index] = rawHotHeapSeed{rawHotSeed: rawHotSeed{Capability: heapSeedCapabilities[index], Point: seedPoint, Occurrence: rawHotID(byte(70 + index))}, Implementation: heapSeedImplementations[index], Key: plan.heapKeys[index], Value: plan.heapFacts[index]}
+		heapSeeds[index] = rawHotHeapSeed{rawHotSeed: rawHotSeed{Capability: heapSeedCapabilities[index], Point: seedPoint, Occurrence: rawHotID(byte(70 + index))}, Implementation: heapSeedImplementations[index]}
 	}
 	mount, mountOK := rawHotScalarMount(artifact, module, cold.ID().Digest(), getCapability, setCapability, plan.getPoint, plan.setPoint, plan.getID, plan.setID, seedPoint, rawHotSeedIDs(valueSeeds), rawHotSeedIDs(heapSeeds))
 	if !mountOK {
 		t.Fatal("raw scalar mount")
 	}
 	bootstrap, bootstrapOK := engine.NewProgramBootstrap(rawHotID(50), rawHotID(51))
-	assembly, refusal, assembled := engine.BeginMountedProgram(binding, []engine.MountedProgramArtifact{mount}, bootstrap)
-	if !bootstrapOK || !assembled || assembly == nil || refusal.Lowered() {
-		t.Fatalf("raw begin stage=%v lowered=%t", refusal.Stage(), refusal.Lowered())
+	if !bootstrapOK {
+		t.Fatal("raw bootstrap witness")
 	}
-	return rawHotFixture{mountID: module, getPoint: plan.getPoint, getOccurrence: plan.getID, setPoint: plan.setPoint, setOccurrence: plan.setID, getRule: getRule, setRule: setRule, assembly: assembly, binding: binding, values: values, heap: heap, valueSeeds: valueSeeds, heapSeeds: heapSeeds, queryID: rawHotID(18), queryImplementation: queryImplementation, heapQueryIDA: rawHotID(19), heapQueryImplementationA: heapQueryImplementationA}
+	return rawHotFixture{mountID: module, getPoint: plan.getPoint, getOccurrence: plan.getID, setPoint: plan.setPoint, setOccurrence: plan.setID, getRule: getRule, setRule: setRule, binding: binding, mount: mount, bootstrap: bootstrap, valueSeeds: valueSeeds, heapSeeds: heapSeeds, queryID: rawHotID(18), queryImplementation: queryImplementation, heapQueryIDA: rawHotID(19), heapQueryImplementationA: heapQueryImplementationA}
 }
 
 func rawHotSeedIDs[T interface{ rawHotSeedValue() rawHotSeed }](seeds []T) []rawHotSeed {

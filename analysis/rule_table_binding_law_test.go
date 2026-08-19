@@ -54,8 +54,8 @@ func TestProgramBindingDerivesEveryRuleFromTheTable(t *testing.T) {
 	if _, ok := binding.Rules().CapabilityByKey(""); ok {
 		t.Fatal("the empty key resolved a capability")
 	}
-	if attach, ok := binding.Rules().ProgramAttachByKey(""); ok || attach != nil {
-		t.Fatal("the empty key published a program attach")
+	if program, ok := binding.Rules().ProgramRuleByKey(""); ok || program.Available() {
+		t.Fatal("the empty key published a construction primitive")
 	}
 }
 

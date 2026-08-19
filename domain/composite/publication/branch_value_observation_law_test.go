@@ -73,27 +73,31 @@ func TestBranchValueObservationAttachmentObservationLaw(t *testing.T) {
 	if _, ok := attachment.ContentID(); ok {
 		t.Fatal("attachment published an identity without an authenticated observation handle")
 	}
-	if attachment.observation.SealedAs(attachment.id) {
+	if attachment.observation.Available() || attachment.observation.ID == attachment.id {
 		t.Fatal("absent observation handle authenticated an attachment identity")
+	}
+	if _, published := attachment.Observation(); published {
+		t.Fatal("attachment published a declared observation row without an authenticated handle")
 	}
 	if _, readable := attachment.Observe(nil, nil); readable {
 		t.Fatal("attachment read an observation without an authenticated handle")
 	}
-	if attachment.MemberAdmitted(nil, engine.RuleSlotCapability{}, publicationLawID("branch-observation/occurrence")) {
-		t.Fatal("attachment admitted a member without a construction")
+	if MemberPublished(nil, engine.RuleSlotCapability{}, attachment.mount, attachment.point, publicationLawID("branch-observation/occurrence")) {
+		t.Fatal("attachment admitted a member without a committed program")
 	}
 }
 
-// The constructor is the only issuer of this attachment, and it refuses every
-// incomplete binding: a compilation, a Value summary query, and the receipt
-// graph that owns the member are all required before an identity is derived.
+// The declaration is the only issuer of this attachment, and it refuses every
+// incomplete binding: a committed program, a Value summary query, and the
+// published member that owns the point are all required before an identity is
+// derived.
 func TestBranchValueObservationAttachmentIssuanceLaw(t *testing.T) {
 	mount, point, occurrence := publicationLawID("issuance/mount"), publicationLawID("issuance/point"), publicationLawID("issuance/occurrence")
-	attachment, failure, ok := AttachBranchValueObservation(nil, nil, engine.RuleSlotCapability{}, branchValueObservationLawProducer, mount, point, occurrence)
+	attachment, failure, ok := DeclareBranchValueObservation(nil, nil, engine.RuleSlotCapability{}, branchValueObservationLawProducer, mount, point, occurrence)
 	if ok {
-		t.Fatal("attachment issued without a compilation and query")
+		t.Fatal("attachment issued without a committed program and query")
 	}
-	if failure != engine.ObservationAttachArguments() {
+	if failure != engine.ObservationSealArguments() {
 		t.Fatalf("incomplete binding reported failure=%v", failure)
 	}
 	if attachment.Valid() {

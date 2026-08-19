@@ -28,7 +28,11 @@ func TestPublicAssembleStageDoesNotNameConstructionInteriors(t *testing.T) {
 
 func TestEnterConstructionRecordsOpaqueFailureWithoutRenamingTheStage(t *testing.T) {
 	diagnostics := AnalyzeDiagnostics{AssembleStage: AnalyzeDiagnosticAssembleStageRuntime}
-	for _, foreign := range []engine.SolveFailure{{}, engine.ProgramAttachFailure(1)} {
+	// A construction refusal is the only boundary that may occupy Construction.
+	// The foreign set is the unavailable failure, a boundary of another family,
+	// and a compile-family boundary of the seal authority whose ordinal names no
+	// declared stage.
+	for _, foreign := range []engine.SolveFailure{{}, engine.ObservationSealArguments(), engine.ProgramSealFailure(uint64(1) << 20)} {
 		diagnostics.EnterConstruction(foreign)
 		if diagnostics.AssembleStage != AnalyzeDiagnosticAssembleStageRuntime {
 			t.Fatalf("boundary %v moved the stage to %s", foreign, diagnostics.AssembleStage)
@@ -37,7 +41,7 @@ func TestEnterConstructionRecordsOpaqueFailureWithoutRenamingTheStage(t *testing
 			t.Fatalf("non-construction boundary occupied Construction: %v", diagnostics.Construction)
 		}
 	}
-	mint := engine.ProgramConstructionFailure(engine.ProgramConstructionStageSolverMint)
+	mint := engine.ProgramStageFailure(engine.ProgramSealStageSolverMint)
 	if !mint.Available() {
 		t.Fatal("solver mint construction failure")
 	}
@@ -56,7 +60,7 @@ func TestEnterConstructionRecordsOpaqueFailureWithoutRenamingTheStage(t *testing
 func TestConstructionRefusalsRemainDistinctBySite(t *testing.T) {
 	var first, second engine.SolveFailure
 	for ordinal := 1; ordinal < 256; ordinal++ {
-		failure := engine.ProgramConstructionFailure(engine.ProgramConstructionStage(ordinal))
+		failure := engine.ProgramStageFailure(engine.ProgramSealStage(ordinal))
 		if !failure.Available() {
 			continue
 		}

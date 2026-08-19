@@ -184,25 +184,45 @@ func selectedCallEffectOccurrences(t testing.TB, plan *Plan) (identity.ContentID
 	return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}
 }
 
-func publicationTransitionCompilation(t testing.TB, plan *Plan) (*engine.ProgramConstruction, identity.ContentID, identity.ContentID) {
+// publicationTransitionCommitted is the one committed program this plan
+// assembled. Members and query rows are carried by the committed declaration,
+// so a law states itself against that value rather than against a sequence of
+// attachments it drove itself.
+func publicationTransitionCommitted(t testing.TB, plan *Plan) (*engine.CommittedProgram, identity.ContentID, identity.ContentID) {
 	t.Helper()
 	mount, occurrence := selectedCallEffectOccurrence(t, plan)
-	return publicationTransitionCompilationFor(t, plan, mount, occurrence), mount, occurrence
+	return publicationTransitionCommittedProgram(t, plan), mount, occurrence
 }
 
-func publicationTransitionCompilationFor(t testing.TB, plan *Plan, mount, occurrence identity.ContentID) *engine.ProgramConstruction {
+func publicationTransitionCommittedProgram(t testing.TB, plan *Plan) *engine.CommittedProgram {
 	t.Helper()
-	binding := plan.state.binding
-	compilation, compiled := plan.state.beginRuntimeConstruction()
-	_, witnessOK := linkBootstrapWitness(plan.state, binding)
-	sealed, sealedOK := linkArtifactRows(plan.state.artifacts.mounts)
-	if !compiled || !witnessOK || !sealedOK || binding.Rules() == nil || !binding.Rules().AttachLinkMembers(compilation) || !binding.Rules().AttachMountedMembers(compilation, sealed) {
-		t.Fatal("publication transition receipt compilation")
+	if plan == nil || plan.state == nil || plan.state.binding == nil {
+		t.Fatal("publication transition plan")
 	}
-	if _, attached := binding.AttachQueries(compilation, plan.state.querySites); !attached {
-		t.Fatal("publication transition receipt compilation")
+	if diagnostic, instantiated := plan.state.instantiateRuntimeTopology(); !instantiated || plan.state.committed.program == nil || len(plan.state.querySites) == 0 {
+		t.Fatalf("publication transition committed program=%+v", diagnostic)
 	}
-	return compilation
+	return plan.state.committed.program
+}
+
+// publicationTransitionSeal mints the Solver of one committed program under
+// the observation inventory the publication candidates declared. Seal is
+// repeatable on a committed program, so each law states its own inventory
+// rather than sharing one open construction.
+//
+// MISSING ISSUANCE: callsite.PublicationTransitionCandidates declares an exact
+// Effect observation row (publication_transition.go, publicationTransitionSet.
+// observation) but publishes no accessor for it, so no caller can hand that row
+// to CommittedProgram.Seal. Until the candidates publish their declared row,
+// the proof half of every publication-transition law below is unstatable.
+func publicationTransitionSeal(t testing.TB, committed *engine.CommittedProgram, candidates callsite.PublicationTransitionCandidates, extra ...engine.ProgramObservationAdmission) (*engine.Solver, bool) {
+	t.Helper()
+	if committed == nil || !candidates.Available() {
+		t.Fatal("publication transition seal inputs")
+	}
+	t.Fatal("callsite.PublicationTransitionCandidates publishes no accessor for the observation row it declares, so it cannot be sealed into a Solver")
+	_ = extra
+	return nil, false
 }
 
 func publicationPlacementPolicyID(label string) identity.ContentID {
@@ -250,24 +270,37 @@ func publicationDifferentAllocationRequirement(t testing.TB, binding *composite.
 func TestPublicationTransitionCandidateOwnerLaw(t *testing.T) {
 	plan := publicationTransitionPlan(t, true, true, false)
 	defer plan.Close()
-	compilation, mount, occurrence := publicationTransitionCompilation(t, plan)
+	committed, mount, occurrence := publicationTransitionCommitted(t, plan)
 	foreignPlan := publicationTransitionPlan(t, true, true, true)
 	defer foreignPlan.Close()
-	foreignCompilation, foreignMount, foreignOccurrence := publicationTransitionCompilation(t, foreignPlan)
-	if _, accepted := selectedEffectRule(plan.state.binding).AttachMountedPublicationCandidates(compilation, foreignPlan.state.binding.EffectQuery(), mount, occurrence); accepted {
+	foreignCommitted, foreignMount, foreignOccurrence := publicationTransitionCommitted(t, foreignPlan)
+	if _, accepted := selectedEffectRule(t, plan.state.binding).MountedPublicationCandidates(committed, foreignPlan.state.binding.EffectQuery(), mount, occurrence); accepted {
 		t.Fatal("foreign Effect query implementation entered candidate attachment")
 	}
-	if _, accepted := selectedEffectRule(plan.state.binding).AttachMountedPublicationCandidates(foreignCompilation, plan.state.binding.EffectQuery(), foreignMount, foreignOccurrence); accepted {
+	if _, accepted := selectedEffectRule(t, plan.state.binding).MountedPublicationCandidates(foreignCommitted, plan.state.binding.EffectQuery(), foreignMount, foreignOccurrence); accepted {
 		t.Fatal("foreign graph entered selected CallEffect candidate attachment")
 	}
-	candidates, candidatesOK := selectedEffectRule(plan.state.binding).AttachMountedPublicationCandidates(compilation, plan.state.binding.EffectQuery(), mount, occurrence)
+	candidates, candidatesOK := selectedEffectRule(t, plan.state.binding).MountedPublicationCandidates(committed, plan.state.binding.EffectQuery(), mount, occurrence)
 	if !candidatesOK || !candidates.Available() || candidates.Count() != 3 {
 		t.Fatalf("selected publication candidate inventory=%d ok=%t", candidates.Count(), candidatesOK)
 	}
-	if _, duplicate := selectedEffectRule(plan.state.binding).AttachMountedPublicationCandidates(compilation, plan.state.binding.EffectQuery(), mount, occurrence); duplicate {
-		t.Fatal("candidate attachment issued more than one observation for one selected occurrence")
+	// Declaration is a value, not an act: one selected occurrence names one
+	// observation row, so a second declaration over the same coordinates states
+	// the same inventory rather than a second row the seal would have to merge.
+	again, againOK := selectedEffectRule(t, plan.state.binding).MountedPublicationCandidates(committed, plan.state.binding.EffectQuery(), mount, occurrence)
+	if !againOK || again.Count() != candidates.Count() {
+		t.Fatalf("second declaration over one selected occurrence stated inventory=%d ok=%t", again.Count(), againOK)
 	}
-	if _, opaqueOK := opaqueEffectRule(plan.state.binding).AttachMountedPublicationCandidates(compilation, plan.state.binding.EffectQuery(), mount, occurrence); opaqueOK {
+	for index := 0; index < candidates.Count(); index++ {
+		declared, declaredOK := candidates.At(index)
+		restated, restatedOK := again.At(index)
+		declaredID, declaredIDOK := declared.ContentID()
+		restatedID, restatedIDOK := restated.ContentID()
+		if !declaredOK || !restatedOK || !declaredIDOK || !restatedIDOK || declaredID != restatedID {
+			t.Fatalf("second declaration moved candidate identity index=%d", index)
+		}
+	}
+	if _, opaqueOK := opaqueEffectRule(t, plan.state.binding).MountedPublicationCandidates(committed, plan.state.binding.EffectQuery(), mount, occurrence); opaqueOK {
 		t.Fatal("opaque CallEffect route issued publication candidates")
 	}
 	first, firstOK := candidates.At(0)
@@ -280,7 +313,7 @@ func TestPublicationTransitionCandidateOwnerLaw(t *testing.T) {
 	if !firstOK || !secondOK || !first.Available() || !second.Available() || !firstIDOK || !secondIDOK || firstID == secondID || preSolveFailure != callsite.PublicationTransitionProofFailureInvalidSolverState || preSolve.Valid() || invalidCandidateFailure != callsite.PublicationTransitionProofFailureInvalidCandidate {
 		t.Fatal("candidate identity or pre-solve fence")
 	}
-	solver, _, solverOK := compilation.Seal()
+	solver, solverOK := publicationTransitionSeal(t, committed, candidates)
 	if !solverOK || solver == nil {
 		t.Fatal("publication transition solver")
 	}
@@ -338,8 +371,8 @@ func TestPublicationTransitionCandidateOwnerLaw(t *testing.T) {
 	if _, failure := first.ProveWithFailure(nil, state); failure != callsite.PublicationTransitionProofFailureInvalidSolverState {
 		t.Fatal("candidate proved through a foreign solver")
 	}
-	foreignCandidates, foreignCandidatesOK := selectedEffectRule(foreignPlan.state.binding).AttachMountedPublicationCandidates(foreignCompilation, foreignPlan.state.binding.EffectQuery(), foreignMount, foreignOccurrence)
-	foreignSolver, _, foreignSolverOK := foreignCompilation.Seal()
+	foreignCandidates, foreignCandidatesOK := selectedEffectRule(t, foreignPlan.state.binding).MountedPublicationCandidates(foreignCommitted, foreignPlan.state.binding.EffectQuery(), foreignMount, foreignOccurrence)
+	foreignSolver, foreignSolverOK := publicationTransitionSeal(t, foreignCommitted, foreignCandidates)
 	if !foreignCandidatesOK || !foreignCandidates.Available() || !foreignSolverOK || foreignSolver == nil {
 		t.Fatal("foreign candidate fixture")
 	}
@@ -375,9 +408,9 @@ func TestPublicationTransitionCandidateOwnerLaw(t *testing.T) {
 func TestPublicationPlacementCorrelationPlanOwnerLaw(t *testing.T) {
 	plan := publicationTransitionPlan(t, true, true, false)
 	defer plan.Close()
-	compilation, mount, occurrence := publicationTransitionCompilation(t, plan)
-	candidates, candidatesOK := selectedEffectRule(plan.state.binding).AttachMountedPublicationCandidates(compilation, plan.state.binding.EffectQuery(), mount, occurrence)
-	solver, _, solverOK := compilation.Seal()
+	committed, mount, occurrence := publicationTransitionCommitted(t, plan)
+	candidates, candidatesOK := selectedEffectRule(t, plan.state.binding).MountedPublicationCandidates(committed, plan.state.binding.EffectQuery(), mount, occurrence)
+	solver, solverOK := publicationTransitionSeal(t, committed, candidates)
 	if !candidatesOK || !candidates.Available() || candidates.Count() == 0 || !solverOK || solver == nil {
 		t.Fatal("publication placement candidate fixture")
 	}
@@ -449,8 +482,8 @@ func TestPublicationPlacementCorrelationPlanOwnerLaw(t *testing.T) {
 func TestPublicationTransitionCandidatesOmitGenericEffects(t *testing.T) {
 	plan := publicationTransitionPlan(t, false, false, false)
 	defer plan.Close()
-	compilation, mount, occurrence := publicationTransitionCompilation(t, plan)
-	candidates, ok := selectedEffectRule(plan.state.binding).AttachMountedPublicationCandidates(compilation, plan.state.binding.EffectQuery(), mount, occurrence)
+	committed, mount, occurrence := publicationTransitionCommitted(t, plan)
+	candidates, ok := selectedEffectRule(t, plan.state.binding).MountedPublicationCandidates(committed, plan.state.binding.EffectQuery(), mount, occurrence)
 	if !ok || !candidates.Available() || candidates.Count() != 0 {
 		t.Fatal("generic selected effect issued a publication candidate")
 	}

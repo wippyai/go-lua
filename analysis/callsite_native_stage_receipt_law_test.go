@@ -5,12 +5,15 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine/rows"
 
-	"github.com/wippyai/go-lua/domain/composite"
-	callsite "github.com/wippyai/go-lua/domain/effect/callsite"
-
 	"github.com/wippyai/go-lua/analysis/identity"
 )
 
+// The committed program publishes one native Call stage per selected CallEffect
+// occurrence, addressed by the owning role capability. The law fences that
+// issuance on three axes: the stage a selected occurrence resolves carries the
+// exact cold coordinates and a member; the opaque role, which is a distinct
+// capability over the same coordinates, resolves none; and a Call occurrence
+// the artifact never sealed resolves none.
 func TestCallsiteMountedSelectedCallEffectStageOwnerFenceLaw(t *testing.T) {
 	plan, _, compileDiagnostics := fixtureCompile(t, "advice/always-true-guard")
 	if plan.state == nil || plan.state.binding == nil || plan.state.artifacts == nil {
@@ -41,28 +44,25 @@ func TestCallsiteMountedSelectedCallEffectStageOwnerFenceLaw(t *testing.T) {
 		t.Fatal("fixture has no selected CallEffect occurrence")
 	}
 
-	selected, selectedOK := composite.RuleHandleByKey[*callsite.HotRule](plan.state.binding.Rules(), "effect-selected")
-	opaqueRule, opaqueRuleOK := composite.RuleHandleByKey[*callsite.HotRule](plan.state.binding.Rules(), "effect-opaque")
-	if !selectedOK || !opaqueRuleOK {
-		t.Fatal("rule table did not publish the callsite effect rules")
+	selected, selectedOK := mountedCapability(plan.state.binding, "effect-selected")
+	opaque, opaqueOK := mountedCapability(plan.state.binding, "effect-opaque")
+	if !selectedOK || !opaqueOK || selected == opaque {
+		t.Fatal("rule table did not publish two distinct callsite effect capabilities")
 	}
-	compilation, compiled := plan.state.beginRuntimeConstruction()
-	if !compiled || compilation == nil {
-		t.Fatal("callsite native-stage construction")
+	committed := plan.state.committed.program
+	stage, stageOK := committed.MountedNativeCallStage(selected, mount, occurrence)
+	if !stageOK || !stage.Available() || stage.Kind() != rows.ArtifactRuleStageIssued5 || stage.MountID() != mount || stage.OccurrenceID() != occurrence || stage.PointID() != point || !stage.HasMember() {
+		t.Fatal("selected callsite did not publish its exact cold CallEffect-stage row")
 	}
-	receipt, receiptOK := selected.MountedSelectedCallEffectStage(compilation, mount, occurrence)
-	if !receiptOK || !receipt.Available() || receipt.Kind() != rows.ArtifactRuleStageIssued5 || receipt.MountID() != mount || receipt.OccurrenceID() != occurrence || receipt.PointID() != point || !receipt.HasMember() {
-		t.Fatal("selected callsite did not issue its exact cold CallEffect-stage receipt")
-	}
-	if opaque, ok := opaqueRule.MountedSelectedCallEffectStage(compilation, mount, occurrence); ok || opaque.Available() {
-		t.Fatal("opaque callsite issued a selected CallEffect-stage receipt")
+	if opaqueStage, ok := committed.MountedNativeCallStage(opaque, mount, occurrence); ok || opaqueStage.Available() {
+		t.Fatal("opaque callsite published a selected CallEffect-stage row")
 	}
 	foreign := occurrence
 	foreign[0] ^= 0xFF
 	if foreign == occurrence {
 		foreign[1] ^= 0xFF
 	}
-	if candidate, ok := selected.MountedSelectedCallEffectStage(compilation, mount, foreign); ok || candidate.Available() {
-		t.Fatal("foreign Call occurrence entered selected callsite stage inverse")
+	if candidate, ok := committed.MountedNativeCallStage(selected, mount, foreign); ok || candidate.Available() {
+		t.Fatal("foreign Call occurrence entered the selected callsite stage directory")
 	}
 }

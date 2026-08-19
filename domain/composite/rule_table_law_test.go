@@ -326,11 +326,11 @@ func TestCatalogDeclaresEveryTableRule(t *testing.T) {
 	}
 }
 
-// TestRuleBindingPublishesOneProgramAttachPerOperandRule is the construction
+// TestRuleBindingPublishesOneProgramRulePerOperandRule is the construction
 // join: every mounted operand and Link rule publishes exactly one cell-owned
-// attach, and the activation lane publishes none.
-func TestRuleBindingPublishesOneProgramAttachPerOperandRule(t *testing.T) {
-	bound := materializerBinding(t, mountedRecord(t, "program-attach", materializerSource))
+// construction primitive, and the activation lane publishes none.
+func TestRuleBindingPublishesOneProgramRulePerOperandRule(t *testing.T) {
+	bound := materializerBinding(t, mountedRecord(t, "program-rule", materializerSource))
 	rules := bound.Rules()
 	if rules == nil {
 		t.Fatal("bound rules")
@@ -342,22 +342,22 @@ func TestRuleBindingPublishesOneProgramAttachPerOperandRule(t *testing.T) {
 		if !keyOK || !entryOK {
 			t.Fatalf("table position %d has no declaration", position)
 		}
-		attach, attachOK := rules.ProgramAttachByKey(key)
+		program, programOK := rules.ProgramRuleByKey(key)
 		if entry.Lane() == rule.LaneActivation {
-			if attachOK || attach != nil {
-				t.Fatalf("activation %q published a program attach", key)
+			if programOK || program.Available() {
+				t.Fatalf("activation %q published a construction primitive", key)
 			}
 			continue
 		}
-		if !attachOK || attach == nil {
-			t.Fatalf("key %q has no program attach", key)
+		if !programOK || !program.Available() {
+			t.Fatalf("key %q has no construction primitive", key)
 		}
 		published++
 	}
 	if published == 0 {
-		t.Fatal("no operand rule published a program attach")
+		t.Fatal("no operand rule published a construction primitive")
 	}
-	if attach, ok := rules.ProgramAttachByKey("no-such-rule"); ok || attach != nil {
-		t.Fatal("unknown key published a program attach")
+	if program, ok := rules.ProgramRuleByKey("no-such-rule"); ok || program.Available() {
+		t.Fatal("unknown key published a construction primitive")
 	}
 }
