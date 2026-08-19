@@ -124,39 +124,35 @@ func BindRawGetHot(binding *engine.SchemaBinding, fragment *RawGetSchemaFragment
 		return &rawGetScratch{payload: make([]uint64, bitWords(len(topology.catalog.payloads)-1)), source: make([]uint64, bitWords(len(topology.catalog.sources)))}
 	}
 	core.scratch.Put(core.scratch.New())
-	var implementation *valueowner.RuleImplementation[Access]
-	bound := valueowner.BindSelectedRule(values, fragment.slot, fragment.carry, fragment.write, values.FactorRef(), engine.HotRuleSpec[valuedomain.Value, Access]{OperandContent: core.operandContent, Admission: engine.AdmitRuleByDerivation(fragment.evidence, core.check(fragment.semantic)), Transfer: core.transfer}, engine.HotCarrySpec[valuedomain.Value, Access]{}, func(access Access) (uint64, bool) {
+	implementation, bound := valueowner.BindSelectedRuleDirect(values, fragment.slot, fragment.carry, fragment.write, values.FactorRef(), engine.HotRuleSpec[valuedomain.Value, Access]{OperandContent: core.operandContent, Admission: engine.AdmitRuleByDerivation(fragment.evidence, core.check(fragment.semantic)), Transfer: core.transfer}, engine.HotCarrySpec[valuedomain.Value, Access]{}, func(access Access) (uint64, bool) {
 		result, resultOK := access.Result()
 		index, indexOK := values.Schema().CoordinateIndex(result)
 		return uint64(index), resultOK && indexOK
-	}, func(tx *valueowner.SelectedRuleBinding[Access]) bool {
-		var ok bool
-		if core.receiver, ok = valueowner.AddSelectedRuleExactRead(tx, fragment.receiver, values.FactorRef(), func(access Access) (uint64, bool) {
-			receiver, receiverOK := access.Receiver()
-			index, indexOK := values.Schema().CoordinateIndex(receiver)
-			return uint64(index), receiverOK && indexOK
-		}); !ok {
-			return false
-		}
-		if core.key, ok = valueowner.AddSelectedRuleOperandRead[Access, valuedomain.Value, uint64](tx, fragment.key, values.FactorRef(), core.locateKey); !ok {
-			return false
-		}
-		if core.call, ok = valueowner.AddSelectedRuleOperandRead[Access, calldomain.Value, uint64](tx, fragment.call, calls.FactorRef(), core.locateCall); !ok {
-			return false
-		}
-		if core.heapRead, ok = valueowner.AddSelectedRuleOperandRead[Access, heapdomain.Value, heapdomain.RawRouteTag](tx, fragment.heapRead, heap.FactorRef(), core.locateHeap); !ok {
-			return false
-		}
-		if core.packRead, ok = valueowner.AddSelectedRuleOperandRead[Access, pack.Value, heapdomain.RawPayloadTag](tx, fragment.packRead, packs.FactorRef(), core.locatePack); !ok {
-			return false
-		}
-		if core.sourceRead, ok = valueowner.AddSelectedRuleOperandRead[Access, valuedomain.Value, rawSourceTag](tx, fragment.sourceRead, values.FactorRef(), core.locateSource); !ok {
-			return false
-		}
-		implementation, ok = tx.Implementation()
-		return ok
 	})
 	if !bound {
+		return nil, false
+	}
+	var ok bool
+	if core.receiver, ok = valueowner.AddSelectedRuleDirectExactRead(implementation, fragment.receiver, values.FactorRef(), func(access Access) (uint64, bool) {
+		receiver, receiverOK := access.Receiver()
+		index, indexOK := values.Schema().CoordinateIndex(receiver)
+		return uint64(index), receiverOK && indexOK
+	}); !ok {
+		return nil, false
+	}
+	if core.key, ok = valueowner.AddSelectedRuleDirectOperandRead[Access, valuedomain.Value, uint64](implementation, fragment.key, values.FactorRef(), core.locateKey); !ok {
+		return nil, false
+	}
+	if core.call, ok = valueowner.AddSelectedRuleDirectOperandRead[Access, calldomain.Value, uint64](implementation, fragment.call, calls.FactorRef(), core.locateCall); !ok {
+		return nil, false
+	}
+	if core.heapRead, ok = valueowner.AddSelectedRuleDirectOperandRead[Access, heapdomain.Value, heapdomain.RawRouteTag](implementation, fragment.heapRead, heap.FactorRef(), core.locateHeap); !ok {
+		return nil, false
+	}
+	if core.packRead, ok = valueowner.AddSelectedRuleDirectOperandRead[Access, pack.Value, heapdomain.RawPayloadTag](implementation, fragment.packRead, packs.FactorRef(), core.locatePack); !ok {
+		return nil, false
+	}
+	if core.sourceRead, ok = valueowner.AddSelectedRuleDirectOperandRead[Access, valuedomain.Value, rawSourceTag](implementation, fragment.sourceRead, values.FactorRef(), core.locateSource); !ok {
 		return nil, false
 	}
 	rule := &RawGetHotRule{implementation: implementation, core: core, values: values}

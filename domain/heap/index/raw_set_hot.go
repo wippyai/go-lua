@@ -11,9 +11,9 @@ import (
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 )
 
-// RawSetHotRule is the receipt-native RawSet issuer. The reducer remains the
-// one shared transfer/evidence plane; this wrapper only assembles exact
-// Schema read receipts and the Heap-owned route transaction.
+// RawSetHotRule is the direct RawSet issuer. The reducer remains the one
+// shared transfer/evidence plane; this type only retains owner-typed reads
+// and the sealed Heap rule implementation.
 type RawSetHotRule struct {
 	implementation *heapowner.RuleImplementation[Access]
 	core           *RawSetRule
@@ -28,8 +28,8 @@ func (rule *RawSetRule) operandContent(access Access) (Access, [32]byte, bool) {
 	return access, [32]byte(access.id), true
 }
 
-// Implementation returns the exact Heap-owned pending issuer; resolution is
-// fenced until the enclosing SchemaBinding seals.
+// Implementation returns the exact Heap-owned issuer after the enclosing
+// SchemaBinding seals.
 func (rule *RawSetHotRule) Implementation() (*heapowner.RuleImplementation[Access], bool) {
 	if rule == nil || rule.heap == nil || rule.implementation == nil {
 		return nil, false
@@ -71,8 +71,8 @@ func (rule *RawSetHotRule) ReceiptForOccurrence(module, occurrenceID identity.Co
 }
 
 // BindRawSetHot binds RawSet's r0..r4 read chain, Heap carry, and route write
-// through one owner-native transaction. No cold Owner, Composition Rule, or
-// copied Factor geometry is retained.
+// directly at their declared schema ordinals. No construction transaction,
+// cold Owner, Composition Rule, or copied Factor geometry is retained.
 func BindRawSetHot(binding *engine.SchemaBinding, fragment *RawSetSchemaFragment, topology *Topology, values *valueowner.HotOwner, heap *heapowner.HotOwner, packs *packowner.HotOwner) (*RawSetHotRule, bool) {
 	if binding == nil || fragment == nil || fragment.slot == nil || topology == nil || !topology.valid() || values == nil || !values.MatchesBinding(binding) || heap == nil || !heap.MatchesBinding(binding) || packs == nil || !packs.MatchesBinding(binding) || !packs.OwnsSchema(topology.packs) || fragment.semantic == (identity.SemanticKey{}) || fragment.evidence == (identity.SemanticKey{}) || values.Schema() != topology.values || heap.Schema() != topology.heap || !topology.packs.LinkOwner().Matches(values.Schema().LinkOwner()) {
 		return nil, false
@@ -82,36 +82,32 @@ func BindRawSetHot(binding *engine.SchemaBinding, fragment *RawSetSchemaFragment
 	core.scratch.New = func() any { return &rawSetScratch{} }
 	core.scratch.Put(&rawSetScratch{})
 
-	var implementation *heapowner.RuleImplementation[Access]
-	bound := heapowner.BindSelectedRouteRule(heap, fragment.slot, fragment.carry, fragment.write, fragment.heapRef, engine.HotRuleSpec[heapdomain.Value, Access]{
+	implementation, bound := heapowner.BindSelectedRouteRuleDirect(heap, fragment.slot, fragment.carry, fragment.write, fragment.heapRef, engine.HotRuleSpec[heapdomain.Value, Access]{
 		OperandContent: core.operandContent,
 		Admission:      engine.AdmitRuleByDerivation(fragment.evidence, core.check(fragment.semantic)),
 		Transfer:       core.transfer,
-	}, engine.HotCarrySpec[heapdomain.Value, Access]{}, nil, func(tx *heapowner.SelectedRouteRuleBinding[Access]) bool {
-		var ok bool
-		if core.receiver, ok = heapowner.AddExactRead(tx, fragment.receiver, fragment.valueRef, func(access Access) (uint64, bool) {
-			receiver, receiverOK := access.Receiver()
-			index, indexOK := values.Schema().CoordinateIndex(receiver)
-			return uint64(index), receiverOK && indexOK
-		}); !ok {
-			return false
-		}
-		if core.key, ok = heapowner.AddOperandSelectedRead[Access, valuedomain.Value, uint64](tx, fragment.key, fragment.valueRef, core.locateKey); !ok {
-			return false
-		}
-		if core.heapRead, ok = heapowner.AddOperandSelectedRead[Access, heapdomain.Value, heapdomain.RawRouteTag](tx, fragment.heapRead, fragment.heapRef, core.locateHeap); !ok {
-			return false
-		}
-		if core.packRead, ok = heapowner.AddOperandSelectedRead[Access, pack.Value, heapdomain.RawPayloadTag](tx, fragment.packRead, fragment.packRef, core.locatePack); !ok {
-			return false
-		}
-		if core.source, ok = heapowner.AddOperandSelectedRead[Access, valuedomain.Value, rawSourceTag](tx, fragment.sourceRead, fragment.valueRef, core.locateSource); !ok {
-			return false
-		}
-		implementation, ok = tx.Implementation()
-		return ok && implementation != nil
-	})
+	}, engine.HotCarrySpec[heapdomain.Value, Access]{}, nil)
 	if !bound {
+		return nil, false
+	}
+	var ok bool
+	if core.receiver, ok = heapowner.AddSelectedRouteRuleDirectExactRead(implementation, fragment.receiver, fragment.valueRef, func(access Access) (uint64, bool) {
+		receiver, receiverOK := access.Receiver()
+		index, indexOK := values.Schema().CoordinateIndex(receiver)
+		return uint64(index), receiverOK && indexOK
+	}); !ok {
+		return nil, false
+	}
+	if core.key, ok = heapowner.AddSelectedRouteRuleDirectOperandRead[Access, valuedomain.Value, uint64](implementation, fragment.key, fragment.valueRef, core.locateKey); !ok {
+		return nil, false
+	}
+	if core.heapRead, ok = heapowner.AddSelectedRouteRuleDirectOperandRead[Access, heapdomain.Value, heapdomain.RawRouteTag](implementation, fragment.heapRead, fragment.heapRef, core.locateHeap); !ok {
+		return nil, false
+	}
+	if core.packRead, ok = heapowner.AddSelectedRouteRuleDirectOperandRead[Access, pack.Value, heapdomain.RawPayloadTag](implementation, fragment.packRead, fragment.packRef, core.locatePack); !ok {
+		return nil, false
+	}
+	if core.source, ok = heapowner.AddSelectedRouteRuleDirectOperandRead[Access, valuedomain.Value, rawSourceTag](implementation, fragment.sourceRead, fragment.valueRef, core.locateSource); !ok {
 		return nil, false
 	}
 	rule := &RawSetHotRule{implementation: implementation, core: core, values: values, heap: heap}

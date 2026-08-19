@@ -95,27 +95,6 @@ func (receipt SummaryReceipt) MatchesCoordinates(schema *value.Schema, locations
 	return engine.SummaryVectorDigest(keys) == receipt.digest
 }
 
-// SelectedRuleBinding is Value's owner-native heterogeneous selected-read
-// transaction.  The output remains Value-owned while predecessor receipts
-// may come from sibling Factors.
-type SelectedRuleBinding[O any] struct {
-	owner  *HotOwner
-	tx     *engine.SelectedRouteRuleBindingTransaction[coordinate, value.Value, O]
-	issuer *RuleImplementation[O]
-}
-
-// BindSelectedRule owns Value's heterogeneous selected-read transaction. bind
-// attaches the reads and its answer terminalizes the transaction, so a
-// rejected assembly always reaches the shared Binding's terminal poison.
-func BindSelectedRule[O any](owner *HotOwner, slot *engine.RuleSlot[value.Value, O], carry engine.SchemaCarrySlot[value.Value], write engine.SchemaWriteSlot[value.Value], output engine.FactorRef[value.Value], spec engine.HotRuleSpec[value.Value, O], carrySpec engine.HotCarrySpec[value.Value, O], projectWrite func(O) (uint64, bool), bind func(*SelectedRuleBinding[O]) bool) bool {
-	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil || output != owner.fragment.Ref() || bind == nil {
-		return false
-	}
-	return engine.BindSelectedRule[coordinate](owner.binding, slot, carry, write, output, spec, carrySpec, projectWrite, func(tx *engine.SelectedRouteRuleBindingTransaction[coordinate, value.Value, O]) bool {
-		return bind(&SelectedRuleBinding[O]{owner: owner, tx: tx, issuer: &RuleImplementation[O]{owner: owner, slot: slot}})
-	})
-}
-
 // BindSelectedRuleDirect installs Value's exact-write selected Rule cell at
 // its declared ordinal. The returned issuer fills each cold read ordinal;
 // no transaction handle or pending token crosses the Value boundary.
@@ -129,20 +108,6 @@ func BindSelectedRuleDirect[O any](owner *HotOwner, slot *engine.RuleSlot[value.
 	return &RuleImplementation[O]{owner: owner, slot: slot}, true
 }
 
-func (tx *SelectedRuleBinding[O]) Implementation() (*RuleImplementation[O], bool) {
-	if tx == nil || tx.owner == nil || tx.issuer == nil {
-		return nil, false
-	}
-	return tx.issuer, true
-}
-
-func AddSelectedRuleExactRead[O any, RV any](tx *SelectedRuleBinding[O], slot engine.SchemaReadSlot[RV], factor engine.FactorRef[RV], project func(O) (uint64, bool)) (engine.Read[engine.OrderedCells[RV]], bool) {
-	if tx == nil || tx.owner == nil || tx.tx == nil {
-		return engine.Read[engine.OrderedCells[RV]]{}, false
-	}
-	return engine.AddSelectedRouteExactRead(tx.tx, slot, factor, project)
-}
-
 // AddSelectedRuleDirectExactRead fills the direct Rule's exact read at the
 // SchemaReadSlot's packed ordinal. The slot itself, rather than append order,
 // is the only read-position authority.
@@ -153,22 +118,28 @@ func AddSelectedRuleDirectExactRead[O any, RV any](issuer *RuleImplementation[O]
 	return engine.BindSelectedRuleDirectExactRead[coordinate](issuer.owner.binding, issuer.slot, slot, factor, project)
 }
 
-func AddSelectedRuleRead[O any, RV any, Tag interface {
+// AddSelectedRuleDirectRead installs a static-selector predecessor at the
+// read's declared cold ordinal. The direct Rule cell is already present; no
+// transaction or append-order state is involved.
+func AddSelectedRuleDirectRead[O any, RV any, Tag interface {
 	~uint8 | ~uint16 | ~uint32 | ~uint64
-}](tx *SelectedRuleBinding[O], slot engine.SchemaReadSlot[RV], factor engine.FactorRef[RV], locate func(engine.SelectorContext) bool) (engine.Read[engine.Selection[Tag, engine.OrderedCells[RV]]], bool) {
-	if tx == nil || tx.owner == nil || tx.tx == nil || locate == nil {
+}](issuer *RuleImplementation[O], slot engine.SchemaReadSlot[RV], factor engine.FactorRef[RV], locate func(engine.SelectorContext) bool) (engine.Read[engine.Selection[Tag, engine.OrderedCells[RV]]], bool) {
+	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
 		return engine.Read[engine.Selection[Tag, engine.OrderedCells[RV]]]{}, false
 	}
-	return engine.AddSelectedRouteRead[coordinate, value.Value, O, RV, Tag](tx.tx, slot, factor, locate)
+	return engine.BindSelectedRuleDirectSelectedRead[coordinate, value.Value, O, RV, Tag](issuer.owner.binding, issuer.slot, slot, factor, locate)
 }
 
-func AddSelectedRuleOperandRead[O any, RV any, Tag interface {
+// AddSelectedRuleDirectOperandRead installs an operand-dependent selector at
+// the read's declared cold ordinal. The operand is supplied only when the
+// sealed Rule executes; it is never captured in construction state.
+func AddSelectedRuleDirectOperandRead[O any, RV any, Tag interface {
 	~uint8 | ~uint16 | ~uint32 | ~uint64
-}](tx *SelectedRuleBinding[O], slot engine.SchemaReadSlot[RV], factor engine.FactorRef[RV], locate func(engine.SelectorContext, O) bool) (engine.Read[engine.Selection[Tag, engine.OrderedCells[RV]]], bool) {
-	if tx == nil || tx.owner == nil || tx.tx == nil || locate == nil {
+}](issuer *RuleImplementation[O], slot engine.SchemaReadSlot[RV], factor engine.FactorRef[RV], locate func(engine.SelectorContext, O) bool) (engine.Read[engine.Selection[Tag, engine.OrderedCells[RV]]], bool) {
+	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
 		return engine.Read[engine.Selection[Tag, engine.OrderedCells[RV]]]{}, false
 	}
-	return engine.AddSelectedRouteOperandRead[coordinate, value.Value, O, RV, Tag](tx.tx, slot, factor, locate)
+	return engine.BindSelectedRuleDirectOperandRead[coordinate, value.Value, O, RV, Tag](issuer.owner.binding, issuer.slot, slot, factor, locate)
 }
 
 // BindHot admits Value's concrete algebra into the exact SchemaBinding. It
