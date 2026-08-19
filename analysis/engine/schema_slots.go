@@ -42,7 +42,6 @@ type (
 type SchemaBuilder struct {
 	phase      schemaBuilderPhase
 	candidate  coldcomposition.Candidate
-	sealed     *Schema
 	factors    []*keyDraft[factorRole]
 	families   []*keyDraft[familyRole]
 	rules      []*schemaRuleDraft
@@ -1156,7 +1155,6 @@ func (builder *SchemaBuilder) Seal() (*Schema, bool) {
 		builder.poison()
 		return nil, false
 	}
-	builder.sealed = schema
 	builder.phase = schemaBuilderSealed
 	builder.releaseDrafts()
 	return schema, true
