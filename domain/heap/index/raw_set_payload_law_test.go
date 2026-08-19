@@ -8,7 +8,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/compiler"
+	"github.com/wippyai/go-lua/analysis/program/target/declaration"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	calldomain "github.com/wippyai/go-lua/domain/call"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
@@ -170,7 +171,7 @@ func rawSetPayloadFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Schema,
 	if err != nil {
 		t.Fatal(err)
 	}
-	contract, err := target.Seal(&target.Spec{
+	contract, err := compiler.Seal(&declaration.Spec{
 		Semantics:    domaincontract.NewSemantics(),
 		InitialRoots: []vocabulary.InitialRootSpec{{Identity: "GlobalEnvRoot", Shape: vocabulary.BootShapeSpec{Aggregate: vocabulary.BootAggregateTable, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "GlobalEnvRoot"}}}},
 		Operations: []vocabulary.OperationSpec{{

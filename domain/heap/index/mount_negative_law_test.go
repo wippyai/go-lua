@@ -1,14 +1,16 @@
 package index_test
 
 import (
-	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"testing"
+
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/compiler"
+	"github.com/wippyai/go-lua/analysis/program/target/declaration"
 	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
 )
 
@@ -52,7 +54,7 @@ func twoModuleRequireLink(t testing.TB) *link.Link {
 	if err != nil {
 		t.Fatal(err)
 	}
-	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{{
+	contract, err := compiler.Seal(&declaration.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{{
 		Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"require"}}},
 		Input:    vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed},
 		Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}},

@@ -1,15 +1,18 @@
 package value_test
 
 import (
+	"testing"
+
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/domain/composite/snapshottest"
-	"testing"
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/compiler"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
+	"github.com/wippyai/go-lua/analysis/program/target/declaration"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"github.com/wippyai/go-lua/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
@@ -27,13 +30,13 @@ type allocationMembershipFixture struct {
 	second *valuedomain.AllocationResult
 }
 
-func allocationMembershipContract(t testing.TB) *target.Contract {
+func allocationMembershipContract(t testing.TB) *contract.Contract {
 	t.Helper()
 	value, primitiveOK := schematype.NewPrimitive(schematype.PrimitiveAny)
 	if !primitiveOK {
 		t.Fatal("allocation membership portable any type")
 	}
-	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{{
+	contract, err := compiler.Seal(&declaration.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{{
 		Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"send"}}},
 		Input:    vocabulary.ValuesSpec{Fixed: []schematype.Type{value, value}, Tail: vocabulary.ValuesClosed},
 		Outcomes: []vocabulary.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}},

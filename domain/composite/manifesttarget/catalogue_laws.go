@@ -6,9 +6,12 @@ package manifesttarget
 import (
 	"context"
 	"fmt"
+
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
-	. "github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/compiler"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
+	"github.com/wippyai/go-lua/analysis/program/target/declaration"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"github.com/wippyai/go-lua/domain/type/typ"
 	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
@@ -17,30 +20,30 @@ import (
 
 // SealCatalogue is the sole manifest-to-analysis entry point. Providers own
 // declarations; target only validates and freezes their analysis projection.
-func SealCatalogue(declarations *manifest.Catalogue) (*Contract, error) {
+func SealCatalogue(declarations *manifest.Catalogue) (*contract.Contract, error) {
 	spec, err := compileCatalogue(declarations)
 	if err != nil {
 		return nil, err
 	}
-	return Seal(&spec)
+	return compiler.Seal(&spec)
 }
 
-// compileCatalogue returns the one-shot authored form used by Seal. It is
+// compileCatalogue returns the one-shot authored form used by compiler.Seal. It is
 // exposed for contract-law tests and tools that need to inspect the projection
 // before it becomes immutable.
-func compileCatalogue(declarations *manifest.Catalogue) (Spec, error) {
+func compileCatalogue(declarations *manifest.Catalogue) (declaration.Spec, error) {
 	catalogue, err := operations(declarations)
 	if err != nil {
-		return Spec{}, err
+		return declaration.Spec{}, err
 	}
 	if err := catalogue.selfEffects(declarations); err != nil {
-		return Spec{}, err
+		return declaration.Spec{}, err
 	}
 	boot, err := bootLedger(catalogue, declarations)
 	if err != nil {
-		return Spec{}, err
+		return declaration.Spec{}, err
 	}
-	return Spec{
+	return declaration.Spec{
 		Semantics:         domaincontract.NewSemantics(),
 		Operations:        catalogue.operations,
 		InitialRoots:      boot.roots,

@@ -11,7 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/link/internal/radix"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 )
@@ -21,7 +21,7 @@ import (
 // is built; equivalent reseals are intentionally not interchangeable.
 type Input struct {
 	Project          *linkproject.Component
-	Target           *target.Contract
+	Target           *contract.Contract
 	EndpointRequests []EndpointRequest
 }
 
@@ -96,7 +96,7 @@ const (
 type authority struct {
 	component      *Component
 	project        *linkproject.Component
-	target         *target.Contract
+	target         *contract.Contract
 	require        vocabulary.Operation
 	valueTable     *valueTable
 	seedTable      *seedTable

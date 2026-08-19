@@ -1,11 +1,12 @@
 package factor_test
 
 import (
-	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/declaration"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
 )
@@ -21,7 +22,7 @@ import (
 // at the input-tail position alone. The operations below are the shape the
 // standard library produces for pcall, pairs, and tostring: a self effect on
 // an operation whose declared vars include an outcome tail.
-func outcomeScopedValuesVarSpec(openInput bool) target.Spec {
+func outcomeScopedValuesVarSpec(openInput bool) declaration.Spec {
 	any := portableAnyType()
 	closed := vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}
 	// Var 0 is the input tail when the input is open, otherwise the outcome
@@ -51,7 +52,7 @@ func outcomeScopedValuesVarSpec(openInput bool) target.Spec {
 		},
 		Effects: vocabulary.RowSpec{Occurrences: []vocabulary.EffectSpec{self}, Tail: vocabulary.RowClosed},
 	}
-	return target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{owner}}
+	return declaration.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{owner}}
 }
 
 // TestSelfEffectBindsOverOutcomeScopedValuesVars proves that an operation

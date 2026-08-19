@@ -2,15 +2,17 @@ package allocation_test
 
 import (
 	"encoding/binary"
-	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	"testing"
+
+	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/compiler"
+	"github.com/wippyai/go-lua/analysis/program/target/declaration"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
@@ -127,7 +129,7 @@ func allocationFixture(t testing.TB, name string) *allocationFixtureState {
 	if err != nil {
 		t.Fatal(err)
 	}
-	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics()})
+	contract, err := compiler.Seal(&declaration.Spec{Semantics: domaincontract.NewSemantics()})
 	if err != nil {
 		t.Fatal(err)
 	}

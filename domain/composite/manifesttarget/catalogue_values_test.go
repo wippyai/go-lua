@@ -1,11 +1,12 @@
 package manifesttarget_test
 
 import (
-	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/domain/composite/manifesttarget"
 	typetable "github.com/wippyai/go-lua/domain/type/table"
 	"github.com/wippyai/go-lua/domain/type/typ"
@@ -94,7 +95,7 @@ func TestStringModuleIndexIsItsExactRuntimeSelfAlias(t *testing.T) {
 	}
 }
 
-func initialRootByIdentity(t *testing.T, contract *target.Contract, identity string) vocabulary.InitialRoot {
+func initialRootByIdentity(t *testing.T, contract *contract.Contract, identity string) vocabulary.InitialRoot {
 	t.Helper()
 	for index := 0; index < contract.InitialRootCount(); index++ {
 		root, ok := contract.InitialRootAt(index)
@@ -107,7 +108,7 @@ func initialRootByIdentity(t *testing.T, contract *target.Contract, identity str
 	return 0
 }
 
-func exactStringKey(t *testing.T, contract *target.Contract, value string) vocabulary.ExactKey {
+func exactStringKey(t *testing.T, contract *contract.Contract, value string) vocabulary.ExactKey {
 	t.Helper()
 	for index := 0; index < contract.ExactKeyCount(); index++ {
 		key, ok := contract.ExactKeyAt(index)

@@ -6,7 +6,9 @@ import (
 
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/compiler"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
+	"github.com/wippyai/go-lua/analysis/program/target/declaration"
 	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
 )
 
@@ -103,10 +105,10 @@ func (c *Component) MountsMustAt(index int) Shard {
 	return shard
 }
 
-func projectOperationTarget(t testing.TB, root string) *target.Contract {
+func projectOperationTarget(t testing.TB, root string) *contract.Contract {
 	t.Helper()
 	emit := vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"emit"}}
-	contract, err := target.Seal(&target.Spec{
+	contract, err := compiler.Seal(&declaration.Spec{
 		Semantics: domaincontract.NewSemantics(),
 		Operations: []vocabulary.OperationSpec{{
 			Bindings: []vocabulary.BindingSpec{emit},
@@ -131,7 +133,7 @@ func projectOperationTarget(t testing.TB, root string) *target.Contract {
 	return contract
 }
 
-func targetExactStringKey(t testing.TB, contract *target.Contract, want string) vocabulary.ExactKey {
+func targetExactStringKey(t testing.TB, contract *contract.Contract, want string) vocabulary.ExactKey {
 	t.Helper()
 	for index := 0; index < contract.ExactKeyCount(); index++ {
 		key, keyOK := contract.ExactKeyAt(index)

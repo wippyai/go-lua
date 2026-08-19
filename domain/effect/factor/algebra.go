@@ -7,16 +7,17 @@ package factor
 
 import (
 	"crypto/sha256"
-	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"math"
 	"sort"
+
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lattice"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/domain/call"
@@ -66,7 +67,7 @@ type rootRow struct {
 type Algebra struct {
 	linkOwner link.OwnerCapability
 	packs     *pack.Schema
-	contract  *target.Contract
+	contract  *contract.Contract
 
 	roots                []rootRow
 	rootContextIndex     map[rootContextRef]uint32
@@ -147,7 +148,7 @@ type mountedCallRef struct {
 // NewWithMountedArtifacts constructs Effect from exact mounted artifacts.
 // It is artifact-native: no Program census or caller-supplied Body proof
 // bundle is accepted.
-func NewWithMountedArtifacts(source *link.Link, packs *pack.Schema, contract *target.Contract, mounts []MountedArtifact) (*Algebra, bool) {
+func NewWithMountedArtifacts(source *link.Link, packs *pack.Schema, contract *contract.Contract, mounts []MountedArtifact) (*Algebra, bool) {
 	if source == nil || packs == nil || contract == nil || source.Boundary() == nil || source.Project() == nil {
 		return nil, false
 	}

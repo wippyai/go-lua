@@ -6,13 +6,14 @@ package pack
 
 import (
 	"crypto/sha256"
+
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/link"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/domain/static"
@@ -394,7 +395,7 @@ func SealMountedArtifacts(source *link.Link, authority *static.Authority, mounts
 // actual input tail; AllInputs is the synthesized opaque operation's sole
 // authority. Consequently a scalar selector never silently turns a tail-only
 // input into an exact fixed semantic source.
-func sealInputSelectors(state *schema, contract *target.Contract) bool {
+func sealInputSelectors(state *schema, contract *contract.Contract) bool {
 	if state == nil || state.owner == nil || contract == nil || !contract.ContentID().Available() || state.inputSelectors == nil {
 		return false
 	}

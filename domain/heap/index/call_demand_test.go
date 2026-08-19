@@ -1,9 +1,10 @@
 package index_test
 
 import (
-	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"reflect"
 	"testing"
+
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
@@ -11,7 +12,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/compiler"
+	"github.com/wippyai/go-lua/analysis/program/target/declaration"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	calldomain "github.com/wippyai/go-lua/domain/call"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
@@ -384,7 +386,7 @@ func callDemandTopologyFixture(t testing.TB, name, text string, freshResults []v
 	}
 	outputs := portableAnyTypes(resultCount)
 	binding := vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"fresh"}}
-	contract, err := target.Seal(&target.Spec{
+	contract, err := compiler.Seal(&declaration.Spec{
 		Semantics:    domaincontract.NewSemantics(),
 		InitialRoots: []vocabulary.InitialRootSpec{{Identity: "GlobalEnvRoot", Shape: vocabulary.BootShapeSpec{Aggregate: vocabulary.BootAggregateTable, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "GlobalEnvRoot"}}}},
 		Operations: []vocabulary.OperationSpec{{

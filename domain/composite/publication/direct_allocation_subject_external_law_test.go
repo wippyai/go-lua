@@ -1,9 +1,10 @@
 package publication_test
 
 import (
+	"testing"
+
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/domain/composite/snapshottest"
-	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
@@ -11,8 +12,10 @@ import (
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target"
-	"github.com/wippyai/go-lua/analysis/schema/program"
+	"github.com/wippyai/go-lua/analysis/program/target/compiler"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
+	"github.com/wippyai/go-lua/analysis/program/target/declaration"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"github.com/wippyai/go-lua/domain/composite"
 	publication "github.com/wippyai/go-lua/domain/composite/publication"
@@ -42,9 +45,9 @@ type directAllocationSubjectFixture struct {
 	otherSource packdomain.SemanticSource
 }
 
-func directAllocationSubjectContract(t testing.TB) (*target.Contract, vocabulary.Operation) {
+func directAllocationSubjectContract(t testing.TB) (*contract.Contract, vocabulary.Operation) {
 	t.Helper()
-	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{{
+	contract, err := compiler.Seal(&declaration.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{{
 		Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"send"}}},
 		Input:    vocabulary.ValuesSpec{Fixed: []schematype.Type{portableAnyType(), portableAnyType()}, Tail: vocabulary.ValuesClosed},
 		Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}},

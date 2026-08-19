@@ -12,14 +12,14 @@ import (
 	linkhost "github.com/wippyai/go-lua/analysis/program/link/host"
 	linkmodule "github.com/wippyai/go-lua/analysis/program/link/module"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
 const artifactModuleWireMin = 40
 
-func decode(data []byte, contract *target.Contract, programs map[identity.ContentID]*program.Program) (*link.Link, error) {
+func decode(data []byte, contract *contract.Contract, programs map[identity.ContentID]*program.Program) (*link.Link, error) {
 	measure, err := framing.Scan(data, artifactMaxBytes)
 	if err != nil {
 		return nil, err
@@ -67,7 +67,7 @@ type artifactDecoder struct {
 	endpointRequests []linkboundary.EndpointRequest
 }
 
-func (decoder *artifactDecoder) root(contract *target.Contract) ([]linkproject.Module, linkhost.ReplaySpec, linkmodule.Spec, identity.ContentID, error) {
+func (decoder *artifactDecoder) root(contract *contract.Contract) ([]linkproject.Module, linkhost.ReplaySpec, linkmodule.Spec, identity.ContentID, error) {
 	if err := decoder.record(artifactRecordRoot); err != nil {
 		return nil, linkhost.ReplaySpec{}, linkmodule.Spec{}, identity.ContentID{}, err
 	}

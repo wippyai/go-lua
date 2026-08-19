@@ -16,7 +16,7 @@ import (
 	linkmodule "github.com/wippyai/go-lua/analysis/program/link/module"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/scalar"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/domain/materialization"
@@ -1132,7 +1132,7 @@ func (schema *valueBuilder) addAllocationReference(key heap.Key) bool {
 	return true
 }
 
-func (schema *valueBuilder) addBootReference(contract *target.Contract, root linkhost.BootRoot) bool {
+func (schema *valueBuilder) addBootReference(contract *contract.Contract, root linkhost.BootRoot) bool {
 	id, idOK := schema.sealHost().BootRoots().ID(root)
 	if !idOK || !id.Available() {
 		return false

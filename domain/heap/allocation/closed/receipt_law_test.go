@@ -2,15 +2,17 @@ package closed_test
 
 import (
 	"crypto/sha256"
-	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	"testing"
+
+	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/compiler"
+	"github.com/wippyai/go-lua/analysis/program/target/declaration"
 	"github.com/wippyai/go-lua/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	allocationcatalog "github.com/wippyai/go-lua/domain/heap/allocation/catalog"
@@ -97,7 +99,7 @@ func closedReceiptFixture(t testing.TB, text string) (heapdomain.Schema, *valued
 	if err != nil {
 		t.Fatal(err)
 	}
-	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics()})
+	contract, err := compiler.Seal(&declaration.Spec{Semantics: domaincontract.NewSemantics()})
 	if err != nil {
 		t.Fatal(err)
 	}

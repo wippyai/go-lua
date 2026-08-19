@@ -16,7 +16,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	contractvalue "github.com/wippyai/go-lua/analysis/program/target/contract"
 )
 
 func artifactProgramPool(programs ...*program.Program) map[identity.ContentID]*program.Program {
@@ -124,7 +124,7 @@ func artifactReplaceFirstCount(t *testing.T, data []byte) []byte {
 	return nil
 }
 
-func artifactAssertProjectionRoundTrip(t *testing.T, l *link.Link, sealed *target.Contract, programs ...*program.Program) *link.Link {
+func artifactAssertProjectionRoundTrip(t *testing.T, l *link.Link, sealed *contractvalue.Contract, programs ...*program.Program) *link.Link {
 	t.Helper()
 	data, err := linkartifact.Encode(l)
 	if err != nil {

@@ -4,7 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 )
 
@@ -80,7 +80,7 @@ func (c *Component) Applications() Applications {
 // this Project was built. A ContentID match alone is deliberately insufficient
 // for hot scalar-coordinate validation: equivalent reseals have distinct
 // owner instances and must not exchange handles.
-func (c *Component) MatchesTarget(contract *target.Contract) bool {
+func (c *Component) MatchesTarget(contract *contract.Contract) bool {
 	return c != nil && c.authority != nil && contract != nil && c.authority.target == contract
 }
 
@@ -236,7 +236,7 @@ func (v Keys) ForMounted(module identity.ContentID, key keyspace.Key) (Key, bool
 	}
 	return Key{}, false
 }
-func (v Keys) ForTarget(contract *target.Contract, key vocabulary.ExactKey) (Key, bool) {
+func (v Keys) ForTarget(contract *contract.Contract, key vocabulary.ExactKey) (Key, bool) {
 	if !v.live() || contract == nil || contract != v.authority.target || key == 0 || uint64(key) > uint64(len(v.authority.targetKeys)) {
 		return Key{}, false
 	}
@@ -249,7 +249,7 @@ func (v Keys) ForTarget(contract *target.Contract, key vocabulary.ExactKey) (Key
 // literal reconstruction, or second identity is involved.  Project keys
 // authored only by Program/source data have no Target counterpart and fail
 // closed.
-func (v Keys) TargetFor(contract *target.Contract, key Key) (vocabulary.ExactKey, bool) {
+func (v Keys) TargetFor(contract *contract.Contract, key Key) (vocabulary.ExactKey, bool) {
 	if !v.live() || contract == nil || contract != v.authority.target {
 		return 0, false
 	}
@@ -264,7 +264,7 @@ func (v Keys) TargetFor(contract *target.Contract, key Key) (vocabulary.ExactKey
 	return targetKey, true
 }
 
-func (v Keys) ForInitial(contract *target.Contract, value vocabulary.InitialValue) (Key, bool) {
+func (v Keys) ForInitial(contract *contract.Contract, value vocabulary.InitialValue) (Key, bool) {
 	if !v.live() || contract == nil || contract != v.authority.target || value == 0 {
 		return Key{}, false
 	}

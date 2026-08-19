@@ -7,12 +7,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/domain/type/typ"
 )
 
-func (a *Authority) sealHotProjections(contract *target.Contract) error {
+func (a *Authority) sealHotProjections(contract *contract.Contract) error {
 	if a == nil || !a.linkID.Available() || contract == nil {
 		return errors.New("static: unavailable hot projection source")
 	}

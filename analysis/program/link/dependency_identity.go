@@ -11,7 +11,7 @@ import (
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
 	linkmodule "github.com/wippyai/go-lua/analysis/program/link/module"
 	linkstatic "github.com/wippyai/go-lua/analysis/program/link/static"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
@@ -90,7 +90,7 @@ func validDependencyKind(kind dependencyKind) bool {
 	return kind == dependencyProvider || kind == dependencySchema || kind == dependencyBindingWorld
 }
 
-func validDependencyRow(contract *target.Contract, row dependencyRow) bool {
+func validDependencyRow(contract *contract.Contract, row dependencyRow) bool {
 	if !validDependencyKind(row.kind) || !row.id.Available() {
 		return false
 	}
@@ -104,7 +104,7 @@ func validDependencyRow(contract *target.Contract, row dependencyRow) bool {
 	}
 }
 
-func validTargetOperation(contract *target.Contract, operation vocabulary.Operation) bool {
+func validTargetOperation(contract *contract.Contract, operation vocabulary.Operation) bool {
 	if contract == nil || operation == 0 {
 		return false
 	}

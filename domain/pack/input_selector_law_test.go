@@ -1,9 +1,10 @@
 package pack_test
 
 import (
+	"testing"
+
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/domain/composite/snapshottest"
-	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
@@ -11,8 +12,10 @@ import (
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target"
-	"github.com/wippyai/go-lua/analysis/schema/program"
+	"github.com/wippyai/go-lua/analysis/program/target/compiler"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
+	"github.com/wippyai/go-lua/analysis/program/target/declaration"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"github.com/wippyai/go-lua/domain/composite"
 	packdomain "github.com/wippyai/go-lua/domain/pack"
@@ -33,9 +36,9 @@ func portableAnyTypes(count int) []schematype.Type {
 	return values
 }
 
-func selectorLawContract(t testing.TB) (*target.Contract, vocabulary.Operation) {
+func selectorLawContract(t testing.TB) (*contract.Contract, vocabulary.Operation) {
 	t.Helper()
-	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{{
+	contract, err := compiler.Seal(&declaration.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{{
 		Bindings:   []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"send"}}},
 		ValuesVars: 1,
 		Input:      vocabulary.ValuesSpec{Fixed: portableAnyTypes(2), Tail: vocabulary.ValuesVariable, Var: 0},
@@ -60,7 +63,7 @@ type selectorLawFixture struct {
 	argument0 identity.ContentID
 }
 
-func selectorLawSchema(t testing.TB, contract *target.Contract, label string) selectorLawFixture {
+func selectorLawSchema(t testing.TB, contract *contract.Contract, label string) selectorLawFixture {
 	t.Helper()
 	published, err := lower.Lower(lower.Source{Name: "pack_selector_" + label + ".lua", Text: []byte("local receiver = {}\nreceiver:send(1, 2)\n")})
 	if err != nil {

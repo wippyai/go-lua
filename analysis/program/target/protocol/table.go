@@ -8,7 +8,7 @@ import (
 	sealedrows "github.com/wippyai/go-lua/internal/rows"
 )
 
-// Table is the sealed protocol value composed into target.Contract. Its row
+// Table is the sealed protocol value composed into contract.Contract. Its row
 // storage remains private to this owner and is sealed through the shared rows
 // substrate.
 type Table struct {

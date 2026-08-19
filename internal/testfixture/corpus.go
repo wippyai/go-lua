@@ -14,7 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkmodule "github.com/wippyai/go-lua/analysis/program/link/module"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
 )
 
 // FrozenLuaFileCount is the exact checked-in Lua fixture denominator. Corpus
@@ -188,7 +188,7 @@ func cloneCorpusProject(project CorpusProject) CorpusProject {
 // seals one module through the ordinary lowerer and Link admission surfaces and
 // derives no module-cache ingress. Sealing lives here, with the project seal, so
 // a fixture Link and a synthetic Link are built by one construction path.
-func SealSource(contract *target.Contract, name string, text []byte) (*link.Link, error) {
+func SealSource(contract *contract.Contract, name string, text []byte) (*link.Link, error) {
 	if contract == nil || !contract.ContentID().Available() || name == "" {
 		return nil, fmt.Errorf("testfixture: unavailable source name or canonical target profile")
 	}
@@ -202,7 +202,7 @@ func SealSource(contract *target.Contract, name string, text []byte) (*link.Link
 // SealCorpusProject is the sole fixture Project-to-Link constructor. It uses
 // the ordinary lowerer and Link admission surfaces and derives only the exact
 // actor/cache rows required by the project's sealed Program imports.
-func SealCorpusProject(contract *target.Contract, project CorpusProject) (*link.Link, error) {
+func SealCorpusProject(contract *contract.Contract, project CorpusProject) (*link.Link, error) {
 	if contract == nil || !contract.ContentID().Available() || project.relative == "" || project.directory == "" || len(project.files) == 0 {
 		return nil, fmt.Errorf("testfixture: unavailable corpus project or canonical target profile")
 	}

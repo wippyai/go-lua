@@ -1,16 +1,18 @@
 package heap_test
 
 import (
+	"testing"
+
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/domain/composite/snapshottest"
-	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	lualower "github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	proglink "github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/compiler"
+	"github.com/wippyai/go-lua/analysis/program/target/declaration"
 	"github.com/wippyai/go-lua/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/materialization"
@@ -66,16 +68,16 @@ var (
 // compactHeapFixture deliberately enters through the current artifact-native
 // seal seam.  It is intentionally small: the root laws below exercise the
 // published Heap carrier, not a legacy Link/Flow fixture helper.
-func compactHeapFixture(t testing.TB, name, source string, spec *target.Spec) (*proglink.Link, Schema, []ArtifactMount) {
+func compactHeapFixture(t testing.TB, name, source string, spec *declaration.Spec) (*proglink.Link, Schema, []ArtifactMount) {
 	t.Helper()
 	program, err := lualower.Lower(lualower.Source{Name: name + ".lua", Text: []byte(source)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if spec == nil {
-		spec = &target.Spec{Semantics: domaincontract.NewSemantics()}
+		spec = &declaration.Spec{Semantics: domaincontract.NewSemantics()}
 	}
-	contract, err := target.Seal(spec)
+	contract, err := compiler.Seal(spec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,8 +262,8 @@ func compactObjectRaw(t testing.TB, schema Schema, key Key, object Object, selec
 	return raw
 }
 
-func compactBootSpec() *target.Spec {
-	return &target.Spec{
+func compactBootSpec() *declaration.Spec {
+	return &declaration.Spec{
 		Semantics: domaincontract.NewSemantics(),
 		InitialRoots: []vocabulary.InitialRootSpec{{
 			Identity: "GlobalEnvRoot",

@@ -7,7 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 )
@@ -22,7 +22,7 @@ type Module struct {
 // Input is the complete Project build boundary.
 type Input struct {
 	Modules []Module
-	Target  *target.Contract
+	Target  *contract.Contract
 }
 
 type mountRow struct {
@@ -40,7 +40,7 @@ type authority struct {
 	// target is retained as the exact immutable Target authority.  A digest
 	// alone cannot fence same-ordinal Target coordinates from another
 	// contract, while Project's ForTarget/ForInitial mappings need that fence.
-	target    *target.Contract
+	target    *contract.Contract
 	contentID identity.ContentID
 	counts    denominator.CountRows
 	// mountContentID and applicationContentID are relation-local semantic

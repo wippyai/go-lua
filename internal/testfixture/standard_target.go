@@ -3,7 +3,7 @@ package testfixture
 import (
 	"sync"
 
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/domain/composite/manifesttarget"
 	"github.com/wippyai/go-lua/domain/effect"
 	"github.com/wippyai/go-lua/domain/effect/dispatch"
@@ -24,13 +24,13 @@ import (
 // provider set, so every caller asks the same question, and a sealed Contract
 // is immutable: sealing it again re-derives byte-identical rows, identities and
 // canonical bytes for each caller that would otherwise have shared the first.
-func StandardLibraryTarget() (*target.Contract, error) {
+func StandardLibraryTarget() (*contract.Contract, error) {
 	return standardLibraryTarget()
 }
 
 var standardLibraryTarget = sync.OnceValues(sealStandardLibraryTarget)
 
-func sealStandardLibraryTarget() (*target.Contract, error) {
+func sealStandardLibraryTarget() (*contract.Contract, error) {
 	providers := stdlib.Providers()
 	providers = append(providers, manifest.Provider{
 		Identity:    "testfixture.wippy.host",

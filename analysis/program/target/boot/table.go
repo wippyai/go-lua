@@ -76,7 +76,7 @@ type bindingRange struct {
 	memberKeys sealedrows.Span
 }
 
-// Table is the immutable boot/environment value composed into target.Contract.
+// Table is the immutable boot/environment value composed into contract.Contract.
 // All row storage and canonical identity columns belong to this owner.
 type Table struct {
 	roots       sealedrows.Rows[rootRow]

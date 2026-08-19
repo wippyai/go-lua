@@ -1,12 +1,13 @@
 package heap_test
 
 import (
-	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"testing"
+
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/declaration"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/materialization"
@@ -29,8 +30,8 @@ local record = { [key] = child }
 return record, child
 `
 
-func compactIndexSpec() *target.Spec {
-	return &target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{{
+func compactIndexSpec() *declaration.Spec {
+	return &declaration.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{{
 		Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"require"}}},
 		Input:    vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed},
 		Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}},
@@ -38,7 +39,7 @@ func compactIndexSpec() *target.Spec {
 	}}}
 }
 
-func compactDynamicAgeSpec() *target.Spec {
+func compactDynamicAgeSpec() *declaration.Spec {
 	spec := compactBootSpec()
 	spec.Operations = compactIndexSpec().Operations
 	spec.InitialEntries = append(spec.InitialEntries, vocabulary.InitialEntrySpec{
@@ -192,8 +193,8 @@ func compactFreshOperation(name string, kind schematype.FreshClass) vocabulary.O
 	}
 }
 
-func compactFreshSpec(operations ...vocabulary.OperationSpec) *target.Spec {
-	spec := &target.Spec{
+func compactFreshSpec(operations ...vocabulary.OperationSpec) *declaration.Spec {
+	spec := &declaration.Spec{
 		Semantics:  domaincontract.NewSemantics(),
 		Operations: operations,
 		InitialRoots: []vocabulary.InitialRootSpec{{

@@ -6,7 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
 )
 
 // TestCallsIssueOnlyExecutableProgramApplications exercises the exact mounted
@@ -237,7 +237,7 @@ func applicationForCallID(t testing.TB, component *Component, callID identity.Co
 	return Application{}, false
 }
 
-func finalizedProject(t testing.TB, target *target.Contract, modules []Module) *Component {
+func finalizedProject(t testing.TB, target *contract.Contract, modules []Module) *Component {
 	t.Helper()
 	draft, err := Build(Input{Modules: modules, Target: target})
 	if err != nil {

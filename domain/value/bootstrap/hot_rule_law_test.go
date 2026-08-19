@@ -2,9 +2,10 @@ package bootstrap_test
 
 import (
 	"encoding/binary"
+	"testing"
+
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/domain/composite/snapshottest"
-	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -12,7 +13,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/compiler"
+	"github.com/wippyai/go-lua/analysis/program/target/declaration"
 	"github.com/wippyai/go-lua/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
@@ -91,7 +93,7 @@ func bootstrapFixture(t testing.TB, name string) *bootstrapFixtureState {
 	if err != nil {
 		t.Fatal(err)
 	}
-	contract, err := target.Seal(&target.Spec{
+	contract, err := compiler.Seal(&declaration.Spec{
 		Semantics:    domaincontract.NewSemantics(),
 		InitialRoots: []vocabulary.InitialRootSpec{{Identity: "GlobalEnvRoot", Shape: vocabulary.BootShapeSpec{Aggregate: vocabulary.BootAggregateTable, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "GlobalEnvRoot"}}}},
 		InitialEntries: []vocabulary.InitialEntrySpec{

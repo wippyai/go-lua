@@ -12,7 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/scalar"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	contractvalue "github.com/wippyai/go-lua/analysis/program/target/contract"
 )
 
 // This semantic scale law exercises one large, single-shard value universe.
@@ -177,7 +177,7 @@ func literalKeyFor(keys linkproject.Keys, literal keyspace.LiteralValue) (linkpr
 	return linkproject.Key{}, false
 }
 
-func literalProjectionContract(t *testing.T) *target.Contract {
+func literalProjectionContract(t *testing.T) *contractvalue.Contract {
 	t.Helper()
 	operation := actorBootOperation("callable")
 	return actorBootContract(t, []vocabulary.OperationSpec{operation}, []vocabulary.InitialEntrySpec{

@@ -11,7 +11,7 @@ import (
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
 	linkmodule "github.com/wippyai/go-lua/analysis/program/link/module"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 )
@@ -187,7 +187,7 @@ type authority struct {
 	project            *linkproject.Component
 	boundary           *linkboundary.Component
 	module             *linkmodule.Component
-	target             *target.Contract // issued only by Boundary's exact-owner query.
+	target             *contract.Contract // issued only by Boundary's exact-owner query.
 	capabilities       []ProviderCapabilitySpec
 	seeds              []capabilitySeedRow
 	activeSeeds        []uint32 // compact active ordinals; query At is O(1)

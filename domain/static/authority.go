@@ -7,15 +7,16 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"math"
+
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lattice"
-	"github.com/wippyai/go-lua/analysis/program/target"
-	"github.com/wippyai/go-lua/analysis/schema/program"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/domain/runtimekind"
-	"github.com/wippyai/go-lua/domain/type/authority"
+	typeauthority "github.com/wippyai/go-lua/domain/type/authority"
 	"github.com/wippyai/go-lua/domain/type/subtype"
 	"github.com/wippyai/go-lua/domain/type/typ"
 )
@@ -72,7 +73,7 @@ type Authority struct {
 	linkID identity.ContentID
 	types  *typeauthority.Authority
 	id     identity.ContentID
-	target *target.Contract
+	target *contract.Contract
 	lawID  identity.ContentID
 
 	results          []resultRow // 0=bottom, 1=top, semantic values follow.
@@ -120,7 +121,7 @@ type mountedValueKey struct {
 // or Boundary authority.
 type MountContext struct {
 	LinkID   identity.ContentID
-	Target   *target.Contract
+	Target   *contract.Contract
 	ValueIDs []MountedValueID
 }
 

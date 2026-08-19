@@ -1,9 +1,10 @@
 package factor_test
 
 import (
+	"testing"
+
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/domain/composite/snapshottest"
-	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
@@ -11,7 +12,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/compiler"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
+	"github.com/wippyai/go-lua/analysis/program/target/declaration"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"github.com/wippyai/go-lua/domain/composite"
 	effectfactor "github.com/wippyai/go-lua/domain/effect/factor"
@@ -30,7 +33,7 @@ func portableAnyType() schematype.Type {
 }
 
 type effectFactorFixture struct {
-	contract    *target.Contract
+	contract    *contract.Contract
 	linked      *link.Link
 	statics     *staticdomain.Authority
 	packs       *pack.Schema
@@ -43,13 +46,13 @@ type effectFactorFixture struct {
 	root        effectfactor.Root
 }
 
-func newEffectFactorFixture(t testing.TB, spec target.Spec, source string) effectFactorFixture {
+func newEffectFactorFixture(t testing.TB, spec declaration.Spec, source string) effectFactorFixture {
 	t.Helper()
 	published, err := lower.Lower(lower.Source{Name: "effect_factor_law.lua", Text: []byte(source)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	contract, err := target.Seal(&spec)
+	contract, err := compiler.Seal(&spec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +125,7 @@ func newEffectFactorFixture(t testing.TB, spec target.Spec, source string) effec
 	return effectFactorFixture{contract: contract, linked: linked, statics: statics, packs: packs, packMounts: packMounts, factor: factor, mounts: effectMounts, owner: owner, application: application, mountedCall: mountedCall, root: root}
 }
 
-func effectFactorSpec(rowTail vocabulary.RowTail, callback bool) target.Spec {
+func effectFactorSpec(rowTail vocabulary.RowTail, callback bool) declaration.Spec {
 	// Input selectors are intentionally outside the post-cutover Pack surface;
 	// retain the descriptor/rule laws with a zero-argument effect occurrence.
 	args := vocabulary.EffectSpec{Target: 2}
@@ -151,7 +154,7 @@ func effectFactorSpec(rowTail vocabulary.RowTail, callback bool) target.Spec {
 		Outcomes: []vocabulary.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}},
 		Effects:  vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 	}
-	return target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{owner, targetOperation}}
+	return declaration.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{owner, targetOperation}}
 }
 
 func effectKnownAtom(t testing.TB, fixture effectFactorFixture) effectfactor.Atom {
@@ -282,7 +285,7 @@ func TestEffectFactorMountedFormalAndOpenRowLaws(t *testing.T) {
 	}
 }
 
-func publicationEffectFactorSpec(publicationKind vocabulary.PublicationEffectKind, callback bool) target.Spec {
+func publicationEffectFactorSpec(publicationKind vocabulary.PublicationEffectKind, callback bool) declaration.Spec {
 	publication := &vocabulary.PublicationEffectSpec{
 		Kind: publicationKind, Subject: 0, Destination: vocabulary.PublicationDestinationNone,
 		Escape: vocabulary.PublicationEscapeNone, Mutability: vocabulary.PublicationMutabilityPreserve, Lifetime: vocabulary.PublicationLifetimePreserve,
@@ -327,10 +330,10 @@ func publicationEffectFactorSpec(publicationKind vocabulary.PublicationEffectKin
 		Outcomes: []vocabulary.OutcomeSpec{{Kind: kind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}},
 		Effects:  vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 	}
-	return target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{owner, targetOperation}}
+	return declaration.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{owner, targetOperation}}
 }
 
-func publicationEffectIndexes(t testing.TB, contract *target.Contract, owner vocabulary.Operation) (publication, generic int) {
+func publicationEffectIndexes(t testing.TB, contract *contract.Contract, owner vocabulary.Operation) (publication, generic int) {
 	t.Helper()
 	publication, generic = -1, -1
 	for effect := 0; effect < contract.Operations.EffectCount(owner); effect++ {
@@ -352,7 +355,7 @@ func publicationEffectIndexes(t testing.TB, contract *target.Contract, owner voc
 	return publication, generic
 }
 
-func callbackPublicationEffectIndex(t testing.TB, contract *target.Contract, callback vocabulary.CallbackID) int {
+func callbackPublicationEffectIndex(t testing.TB, contract *contract.Contract, callback vocabulary.CallbackID) int {
 	t.Helper()
 	publication := -1
 	for effect := 0; effect < contract.Operations.CallbackEffectCount(callback); effect++ {

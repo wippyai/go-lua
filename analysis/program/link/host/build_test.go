@@ -9,14 +9,16 @@ import (
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
 	linkmodule "github.com/wippyai/go-lua/analysis/program/link/module"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/compiler"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
+	"github.com/wippyai/go-lua/analysis/program/target/declaration"
 	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
 )
 
 func hostFixture(t testing.TB) (*linkproject.Component, *linkboundary.Component, *linkmodule.Component) {
 	t.Helper()
 	closed := vocabulary.OperationSpec{Input: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}, Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}}, Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed}}
-	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{
+	contract, err := compiler.Seal(&declaration.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{
 		{Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"require"}}}, Input: closed.Input, Outcomes: closed.Outcomes, Effects: closed.Effects},
 		{Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingProvider, Owner: []string{"law"}, Member: []string{"endpoint"}}}, Input: closed.Input, Outcomes: closed.Outcomes, Effects: closed.Effects},
 	}, InitialRoots: []vocabulary.InitialRootSpec{{Identity: "GlobalEnvRoot", Shape: vocabulary.BootShapeSpec{Aggregate: vocabulary.BootAggregateTable, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "GlobalEnvRoot"}}}}})
@@ -95,7 +97,7 @@ func TestColdLifecycleAndExactPrerequisites(t *testing.T) {
 	}
 }
 
-func mustTarget(boundary *linkboundary.Component) *target.Contract {
+func mustTarget(boundary *linkboundary.Component) *contract.Contract {
 	contract, ok := boundary.Target()
 	if !ok {
 		panic("missing Boundary Target")

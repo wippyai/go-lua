@@ -6,7 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
@@ -63,7 +63,7 @@ const moduleRelationVersion = 1
 // immutable Program-value relation plus the presence and ordinal of scoped
 // require authority. Endpoint and bootstrap geometry are intentionally not a
 // module dependency.
-func moduleRelationID(valueRelation identity.ContentID, contract *target.Contract, require vocabulary.Operation) (id identity.ContentID) {
+func moduleRelationID(valueRelation identity.ContentID, contract *contract.Contract, require vocabulary.Operation) (id identity.ContentID) {
 	if !valueRelation.Available() {
 		return id
 	}
@@ -107,7 +107,7 @@ func (d *Draft) Finalize() (*Component, error) {
 	return component, nil
 }
 
-func scopedRequireOperation(contract *target.Contract) (vocabulary.Operation, error) {
+func scopedRequireOperation(contract *contract.Contract) (vocabulary.Operation, error) {
 	var require vocabulary.Operation
 	for operationIndex := 0; operationIndex < contract.Operations.OperationCount(); operationIndex++ {
 		op, ok := contract.Operations.OperationAt(operationIndex)

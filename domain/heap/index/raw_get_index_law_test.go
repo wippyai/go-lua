@@ -1,26 +1,28 @@
 package index_test
 
 import (
-	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
-	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target"
-	"github.com/wippyai/go-lua/analysis/schema/program"
+	"github.com/wippyai/go-lua/analysis/program/target/compiler"
+	"github.com/wippyai/go-lua/analysis/program/target/declaration"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	indexdomain "github.com/wippyai/go-lua/domain/heap/index"
 	packdomain "github.com/wippyai/go-lua/domain/pack"
 	staticdomain "github.com/wippyai/go-lua/domain/static"
-	"github.com/wippyai/go-lua/domain/type/authority"
+	typeauthority "github.com/wippyai/go-lua/domain/type/authority"
 	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
@@ -84,7 +86,7 @@ func rawSemanticSourceFrontierFixture(t testing.TB, count int) rawSemanticSource
 	if err != nil {
 		t.Fatal(err)
 	}
-	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{{
+	contract, err := compiler.Seal(&declaration.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{{
 		Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"require"}}},
 		Input:    vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed},
 		Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}},

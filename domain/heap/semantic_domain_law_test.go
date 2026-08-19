@@ -1,9 +1,10 @@
 package heap_test
 
 import (
+	"testing"
+
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/domain/composite/snapshottest"
-	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
@@ -11,7 +12,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/compiler"
+	"github.com/wippyai/go-lua/analysis/program/target/declaration"
 	"github.com/wippyai/go-lua/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/materialization"
@@ -27,7 +29,7 @@ func TestHeapReceiptAgeJoinWidenMuAndRankLaws(t *testing.T) {
 local child = { value = 1 }
 local record = { child = child, name = child }
 return record
-`, target.Spec{Semantics: domaincontract.NewSemantics()})
+`, declaration.Spec{Semantics: domaincontract.NewSemantics()})
 	key, _, _, _, _ := semanticExactField(t, fixture.schema)
 	keys := semanticAllocationKeys(t, fixture.schema)
 	if len(keys) < 2 {
@@ -149,7 +151,7 @@ return record
 }
 
 func TestCreateSuccessorIsWidenProgressNotInclusion(t *testing.T) {
-	fixture := newSemanticHeapFixture(t, "heap_create_successor", `local t = { x = 1 }; return t`, target.Spec{Semantics: domaincontract.NewSemantics()})
+	fixture := newSemanticHeapFixture(t, "heap_create_successor", `local t = { x = 1 }; return t`, declaration.Spec{Semantics: domaincontract.NewSemantics()})
 	key, _, _, _, _ := semanticExactField(t, fixture.schema)
 	zero, zeroOK := fixture.schema.EmptyObject(key)
 	object, objectOK := fixture.schema.Object(heapdomain.ShapeEligible, heapdomain.FrozenMutable, mustContainmentNone(t, fixture.schema))
@@ -167,8 +169,8 @@ func TestCreateSuccessorIsWidenProgressNotInclusion(t *testing.T) {
 }
 
 func TestHeapReceiptAlgebraRejectsForeignKeysAndContainments(t *testing.T) {
-	local := newSemanticHeapFixture(t, "heap_receipt_owner_local", `local t = { x = 1 }; return t`, target.Spec{Semantics: domaincontract.NewSemantics()})
-	foreign := newSemanticHeapFixture(t, "heap_receipt_owner_foreign", `local t = { x = 1 }; return t`, target.Spec{Semantics: domaincontract.NewSemantics()})
+	local := newSemanticHeapFixture(t, "heap_receipt_owner_local", `local t = { x = 1 }; return t`, declaration.Spec{Semantics: domaincontract.NewSemantics()})
+	foreign := newSemanticHeapFixture(t, "heap_receipt_owner_foreign", `local t = { x = 1 }; return t`, declaration.Spec{Semantics: domaincontract.NewSemantics()})
 	localKey, _, _, _, _ := semanticExactField(t, local.schema)
 	foreignKey, _, _, _, _ := semanticExactField(t, foreign.schema)
 	localEmpty, localEmptyOK := local.schema.EmptyObject(localKey)
@@ -457,7 +459,7 @@ return record.field
 		t.Fatalf("typed geometry reads=%d writes=%d", reads, writes)
 	}
 
-	foreign := newSemanticHeapFixture(t, "heap_receipt_raw_foreign", `local t = { x = 1 }; return t.field`, target.Spec{Semantics: domaincontract.NewSemantics()})
+	foreign := newSemanticHeapFixture(t, "heap_receipt_raw_foreign", `local t = { x = 1 }; return t.field`, declaration.Spec{Semantics: domaincontract.NewSemantics()})
 	foreignKey, _, foreignSlot, foreignPayload, foreignSelector := semanticExactField(t, foreign.schema)
 	foreignCell, foreignCellOK := foreign.schema.CellPresent(foreignSlot, foreignPayload, mustContainmentNone(t, foreign.schema), mustContainmentNone(t, foreign.schema))
 	foreignObject, foreignObjectOK := foreign.schema.BeginObject(heapdomain.ShapeEligible, heapdomain.FrozenMutable, mustContainmentNone(t, foreign.schema))
@@ -529,7 +531,7 @@ type semanticHeapFixtureRecord struct {
 	program identity.ContentID
 }
 
-func newSemanticHeapFixture(t testing.TB, name, text string, spec target.Spec) semanticHeapFixtureRecord {
+func newSemanticHeapFixture(t testing.TB, name, text string, spec declaration.Spec) semanticHeapFixtureRecord {
 	t.Helper()
 	if spec.Semantics == nil {
 		spec.Semantics = domaincontract.NewSemantics()
@@ -538,7 +540,7 @@ func newSemanticHeapFixture(t testing.TB, name, text string, spec target.Spec) s
 	if err != nil {
 		t.Fatal(err)
 	}
-	contract, err := target.Seal(&spec)
+	contract, err := compiler.Seal(&spec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -681,8 +683,8 @@ func rawMasks(t testing.TB, schema heapdomain.Schema, key heapdomain.Key, value 
 
 func rawPresent() heapdomain.RawPresence { return heapdomain.RawPresent }
 
-func semanticBootSpec() target.Spec {
-	return target.Spec{
+func semanticBootSpec() declaration.Spec {
+	return declaration.Spec{
 		Semantics:    domaincontract.NewSemantics(),
 		InitialRoots: []vocabulary.InitialRootSpec{{Identity: "GlobalEnvRoot", Shape: vocabulary.BootShapeSpec{Aggregate: vocabulary.BootAggregateTable, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "GlobalEnvRoot"}}}},
 		InitialEntries: []vocabulary.InitialEntrySpec{
@@ -693,8 +695,8 @@ func semanticBootSpec() target.Spec {
 	}
 }
 
-func semanticIndexSpec() target.Spec {
-	return target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{{
+func semanticIndexSpec() declaration.Spec {
+	return declaration.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{{
 		Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"require"}}},
 		Input:    vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed},
 		Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}},

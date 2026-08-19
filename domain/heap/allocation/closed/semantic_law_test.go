@@ -1,13 +1,15 @@
 package closed_test
 
 import (
-	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	"testing"
+
+	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/compiler"
+	"github.com/wippyai/go-lua/analysis/program/target/declaration"
 	"github.com/wippyai/go-lua/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/heap/allocation/internal/source"
@@ -166,7 +168,7 @@ func closedSemanticFixture(t testing.TB, text string) (heapdomain.Schema, *value
 	if err != nil {
 		t.Fatal(err)
 	}
-	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics()})
+	contract, err := compiler.Seal(&declaration.Spec{Semantics: domaincontract.NewSemantics()})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2,22 +2,23 @@ package pack_test
 
 import (
 	"crypto/sha256"
-	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
-	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	"testing"
+
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	"github.com/wippyai/go-lua/domain/composite/snapshottest"
+	typeauthority "github.com/wippyai/go-lua/domain/type/authority"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target"
-	"github.com/wippyai/go-lua/analysis/schema/program"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	packdomain "github.com/wippyai/go-lua/domain/pack"
 	staticdomain "github.com/wippyai/go-lua/domain/static"
-	"github.com/wippyai/go-lua/domain/type/authority"
 )
 
 func bindingLawID(text string) identity.ContentID {
@@ -32,7 +33,7 @@ type runtimeContextBindingFixture struct {
 	operation vocabulary.Operation
 }
 
-func runtimeContextBindingSchema(t testing.TB, contract *target.Contract, operation vocabulary.Operation, label string) runtimeContextBindingFixture {
+func runtimeContextBindingSchema(t testing.TB, contract *contract.Contract, operation vocabulary.Operation, label string) runtimeContextBindingFixture {
 	t.Helper()
 	published, err := lower.Lower(lower.Source{Name: "runtime_context_binding_" + label + ".lua", Text: []byte("local receiver = {}\nreceiver:send(1, 2)\n")})
 	if err != nil {

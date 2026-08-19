@@ -10,7 +10,9 @@ import (
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/compiler"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
+	"github.com/wippyai/go-lua/analysis/program/target/declaration"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"github.com/wippyai/go-lua/domain/type/typ"
 	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
@@ -192,13 +194,13 @@ func typeFormalProgram(t testing.TB, text string) *program.Program {
 	return p
 }
 
-func typeFormalContract(t testing.TB, formals []*typ.TypeParam) *target.Contract {
+func typeFormalContract(t testing.TB, formals []*typ.TypeParam) *contract.Contract {
 	return typeFormalContractWithInput(t, formals, vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed})
 }
 
-func typeFormalContractWithInput(t testing.TB, formals []*typ.TypeParam, input vocabulary.ValuesSpec) *target.Contract {
+func typeFormalContractWithInput(t testing.TB, formals []*typ.TypeParam, input vocabulary.ValuesSpec) *contract.Contract {
 	t.Helper()
-	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{{
+	contract, err := compiler.Seal(&declaration.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{{
 		Bindings:    []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"op"}}},
 		TypeFormals: neutralFormals(t, formals),
 		Input:       input,
@@ -243,14 +245,14 @@ func neutralTypes(t testing.TB, values ...typ.Type) []schematype.Type {
 	return out
 }
 
-func typeFormalBoundary(t testing.TB, p *program.Program, formals []*typ.TypeParam) (*Component, *target.Contract, *linkproject.Component) {
+func typeFormalBoundary(t testing.TB, p *program.Program, formals []*typ.TypeParam) (*Component, *contract.Contract, *linkproject.Component) {
 	t.Helper()
 	contract := typeFormalContract(t, formals)
 	component, project := typeFormalBoundaryForContract(t, p, contract)
 	return component, contract, project
 }
 
-func typeFormalBoundaryForContract(t testing.TB, p *program.Program, contract *target.Contract) (*Component, *linkproject.Component) {
+func typeFormalBoundaryForContract(t testing.TB, p *program.Program, contract *contract.Contract) (*Component, *linkproject.Component) {
 	t.Helper()
 	draft, err := linkproject.Build(linkproject.Input{Modules: []linkproject.Module{{Name: "main", Program: p}}, Target: contract})
 	if err != nil {
@@ -271,7 +273,7 @@ func typeFormalBoundaryForContract(t testing.TB, p *program.Program, contract *t
 	return component, project
 }
 
-func typeFormalOperation(t testing.TB, contract *target.Contract) vocabulary.Operation {
+func typeFormalOperation(t testing.TB, contract *contract.Contract) vocabulary.Operation {
 	t.Helper()
 	operation, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"op"}})
 	if !ok {

@@ -10,7 +10,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/program/link"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
@@ -43,7 +43,7 @@ func fixtureRepositoryRoot(t testing.TB) string {
 
 // fixtureContract seals the canonical target profile every fixture is analyzed
 // against.
-func fixtureContract(t testing.TB) *target.Contract {
+func fixtureContract(t testing.TB) *contract.Contract {
 	t.Helper()
 	contract, err := testfixture.StandardLibraryTarget()
 	if err != nil {
@@ -78,7 +78,7 @@ func fixtureLink(t testing.TB, name string) *link.Link {
 
 // fixtureSourceLink seals one raw Lua source as a single-module Link, for laws
 // whose input is a synthesized or truncated source text.
-func fixtureSourceLink(t testing.TB, contract *target.Contract, name string, text []byte) *link.Link {
+func fixtureSourceLink(t testing.TB, contract *contract.Contract, name string, text []byte) *link.Link {
 	t.Helper()
 	linked, err := testfixture.SealSource(contract, name, text)
 	if err != nil {

@@ -15,7 +15,7 @@ import (
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
 	linkmodule "github.com/wippyai/go-lua/analysis/program/link/module"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
@@ -942,7 +942,7 @@ func (a *authority) bootRows() error {
 	}
 	return nil
 }
-func validGlobal(t *target.Contract, class vocabulary.InitialBindingClass, value vocabulary.InitialValue, found bool) bool {
+func validGlobal(t *contract.Contract, class vocabulary.InitialBindingClass, value vocabulary.InitialValue, found bool) bool {
 	kind, ok := t.InitialValueKind(value)
 	if !ok {
 		return false
@@ -961,7 +961,7 @@ func validGlobal(t *target.Contract, class vocabulary.InitialBindingClass, value
 	}
 	return false
 }
-func targetKeyName(t *target.Contract, key vocabulary.ExactKey, name string) bool {
+func targetKeyName(t *contract.Contract, key vocabulary.ExactKey, name string) bool {
 	v, ok := t.ExactKeyValue(key)
 	return ok && v.Kind == keyspace.LiteralString && v.String == name
 }

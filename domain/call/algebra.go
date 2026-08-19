@@ -3,12 +3,13 @@ package call
 import (
 	"crypto/sha256"
 	"encoding/binary"
+
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 )
 
@@ -38,7 +39,7 @@ type keyRow struct {
 // Global target selectors are factorized once and are never crossed with the
 // closed source sum (there is no B×Operation/Port product).
 type Algebra struct {
-	contract                   *target.Contract
+	contract                   *contract.Contract
 	mountModules               []identity.ContentID
 	mountModuleIndex           map[identity.ContentID]uint32
 	mountedCalls               []mountedCallRow
@@ -440,7 +441,7 @@ func (algebra *Algebra) KeyForApplicationID(id identity.ContentID) (Key, bool) {
 // KeyForCallback looks up one exact Target callback correspondence. The
 // issuing Contract pointer is an authority fence: equal numeric handles from
 // an equivalent Contract cannot be spliced into this Link.
-func (algebra *Algebra) KeyForCallback(issuing *target.Contract, operation vocabulary.Operation, callback vocabulary.CallbackID) (Key, bool) {
+func (algebra *Algebra) KeyForCallback(issuing *contract.Contract, operation vocabulary.Operation, callback vocabulary.CallbackID) (Key, bool) {
 	if !algebra.Valid() {
 		return Key{}, false
 	}
@@ -458,7 +459,7 @@ func (algebra *Algebra) KeyForCallback(issuing *target.Contract, operation vocab
 // KeyForResume looks up one exact Target resumption correspondence. The
 // issuing Contract pointer is an authority fence for the raw operation and
 // resume handles.
-func (algebra *Algebra) KeyForResume(issuing *target.Contract, operation vocabulary.Operation, resume vocabulary.ResumeID) (Key, bool) {
+func (algebra *Algebra) KeyForResume(issuing *contract.Contract, operation vocabulary.Operation, resume vocabulary.ResumeID) (Key, bool) {
 	if !algebra.Valid() {
 		return Key{}, false
 	}

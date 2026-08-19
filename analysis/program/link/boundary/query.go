@@ -4,7 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 )
 
@@ -28,7 +28,7 @@ func (c *Component) MatchesProject(project *linkproject.Component) bool {
 // Target returns Boundary's exact sealed Target authority. It is available
 // only from the finalized component that retains it; callers cannot rebind an
 // equivalent contract by ContentID.
-func (c *Component) Target() (*target.Contract, bool) {
+func (c *Component) Target() (*contract.Contract, bool) {
 	if c == nil || c.authority == nil || c.authority.component != c || c.authority.target == nil {
 		return nil, false
 	}
@@ -46,7 +46,7 @@ func (c *Component) Target() (*target.Contract, bool) {
 // InitialEntry index.  Foreign equivalent reseals, same-ordinal handles,
 // source-only keys, non-operation values, missing rows, and ambiguous inverse
 // rows all fail closed.
-func (c *Component) InitialOperation(project *linkproject.Component, contract *target.Contract, root vocabulary.InitialRoot, key linkproject.Key) (vocabulary.Operation, bool) {
+func (c *Component) InitialOperation(project *linkproject.Component, contract *contract.Contract, root vocabulary.InitialRoot, key linkproject.Key) (vocabulary.Operation, bool) {
 	if c == nil || c.authority == nil || c.authority.component != c || project == nil || project != c.authority.project || contract == nil || contract != c.authority.target || root == 0 {
 		return 0, false
 	}
@@ -130,7 +130,7 @@ func (c *Component) EndpointRequests() EndpointRequests {
 // ApplicationOperationAvailable is the factorized LinkBoundary membership
 // predicate. It validates both exact authorities and then classifies only the
 // existing Project Application subsequences; it stores no product relation.
-func (c *Component) ApplicationOperationAvailable(contract *target.Contract, application linkproject.Application, operation vocabulary.Operation) bool {
+func (c *Component) ApplicationOperationAvailable(contract *contract.Contract, application linkproject.Application, operation vocabulary.Operation) bool {
 	if c == nil || c.authority == nil || c.authority.project == nil || contract == nil || contract != c.authority.target || operation == 0 || uint64(operation) > uint64(contract.Operations.OperationCount()) {
 		return false
 	}

@@ -12,7 +12,7 @@ import (
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
 	linkhost "github.com/wippyai/go-lua/analysis/program/link/host"
 	linkmodule "github.com/wippyai/go-lua/analysis/program/link/module"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
@@ -75,7 +75,7 @@ func Encode(sealed *link.Link) ([]byte, error) {
 // Decode resolves already-sealed Programs by ContentID and performs exactly
 // one ordinary Link Seal. Nothing is returned until the target, dependencies,
 // claimed Link identity, and canonical wire bytes all agree.
-func Decode(data []byte, contract *target.Contract, programs map[identity.ContentID]*program.Program) (*link.Link, error) {
+func Decode(data []byte, contract *contract.Contract, programs map[identity.ContentID]*program.Program) (*link.Link, error) {
 	if contract == nil || !contract.ContentID().Available() {
 		return nil, ErrTarget
 	}
@@ -237,7 +237,7 @@ type artifactBudget struct {
 	bytes uint64
 }
 
-func newBudget(contract *target.Contract) (artifactBudget, bool) {
+func newBudget(contract *contract.Contract) (artifactBudget, bool) {
 	var budget artifactBudget
 	if contract == nil {
 		return budget, false

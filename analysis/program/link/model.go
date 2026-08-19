@@ -10,13 +10,13 @@ import (
 	linkmodule "github.com/wippyai/go-lua/analysis/program/link/module"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	linkstatic "github.com/wippyai/go-lua/analysis/program/link/static"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
 )
 
 // Spec is consumed by Seal, including on failure.
 type Spec struct {
 	Modules []linkproject.Module
-	Target  *target.Contract
+	Target  *contract.Contract
 	// EndpointRequests are Boundary-owned provider admissions. Host consumes
 	// their issued Endpoint handles; it never mints a parallel endpoint family.
 	EndpointRequests []linkboundary.EndpointRequest

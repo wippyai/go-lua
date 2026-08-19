@@ -6,13 +6,14 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/domain/runtimekind"
-	"github.com/wippyai/go-lua/domain/type/authority"
+	typeauthority "github.com/wippyai/go-lua/domain/type/authority"
 	"github.com/wippyai/go-lua/domain/type/typ"
 	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
 )
@@ -238,7 +239,7 @@ func (s *ClassSet) ClassForStatic(value Value) (Class, bool) {
 // ClassForTarget projects a Target-owned type handle. The Contract pointer is
 // part of the capability: the raw ordinal alone is not an owner identity and
 // must not admit an equal-numbered type from another sealed Target.
-func (s *ClassSet) ClassForTarget(contract *target.Contract, value vocabulary.Type) (Class, bool) {
+func (s *ClassSet) ClassForTarget(contract *contract.Contract, value vocabulary.Type) (Class, bool) {
 	if s == nil || s.authority == nil || contract == nil || contract != s.authority.target {
 		return Class{}, false
 	}
@@ -421,7 +422,7 @@ func (s *ClassSet) addConcreteInput(value typ.Type, input typeauthority.RuntimeI
 	return class, nil
 }
 
-func (s *ClassSet) addTarget(contract *target.Contract, value vocabulary.Type) error {
+func (s *ClassSet) addTarget(contract *contract.Contract, value vocabulary.Type) error {
 	if _, exists := s.byTarget[value]; exists {
 		return nil
 	}
@@ -458,7 +459,7 @@ func (s *ClassSet) addTarget(contract *target.Contract, value vocabulary.Type) e
 	return nil
 }
 
-func (s *ClassSet) addValues(contract *target.Contract, values vocabulary.Values) error {
+func (s *ClassSet) addValues(contract *contract.Contract, values vocabulary.Values) error {
 	for index := 0; index < contract.Operations.ValuesCount(values); index++ {
 		value, ok := contract.Operations.ValuesAt(values, index)
 		if !ok {
@@ -483,7 +484,7 @@ func (s *ClassSet) addValues(contract *target.Contract, values vocabulary.Values
 	return nil
 }
 
-func (s *ClassSet) addOperation(contract *target.Contract, operation vocabulary.Operation) error {
+func (s *ClassSet) addOperation(contract *contract.Contract, operation vocabulary.Operation) error {
 	input, ok := contract.Operations.Input(operation)
 	if !ok {
 		return errors.New("static: operation input unavailable")

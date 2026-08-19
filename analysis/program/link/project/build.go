@@ -13,7 +13,7 @@ import (
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/scalar"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
 )
 
 const maxHandle = uint64(^uint32(0))
@@ -350,7 +350,7 @@ func canonicalMounts(input []Module) ([]mountRow, error) {
 	return mounts, nil
 }
 
-func buildKeys(mounts []mountRow, contract *target.Contract) ([]keyRow, []uint32, map[vocabulary.InitialValue]uint32, [][]uint32, error) {
+func buildKeys(mounts []mountRow, contract *contract.Contract) ([]keyRow, []uint32, map[vocabulary.InitialValue]uint32, [][]uint32, error) {
 	unique := make(map[keyspace.LiteralValue]struct{})
 	addExact := func(value keyspace.LiteralValue) error {
 		normalized, ok := scalar.Normalize(value)
@@ -500,7 +500,7 @@ func addProgramLiterals(p *program.Program, add func(keyspace.LiteralValue) erro
 	return nil
 }
 
-func addInitialLiterals(contract *target.Contract, add func(keyspace.LiteralValue) error) (map[vocabulary.InitialValue]keyspace.LiteralValue, error) {
+func addInitialLiterals(contract *contract.Contract, add func(keyspace.LiteralValue) error) (map[vocabulary.InitialValue]keyspace.LiteralValue, error) {
 	if contract == nil || add == nil {
 		return nil, errors.New("link/project: unavailable Target initial literal authority")
 	}

@@ -8,7 +8,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/compiler"
+	contractvalue "github.com/wippyai/go-lua/analysis/program/target/contract"
+	"github.com/wippyai/go-lua/analysis/program/target/declaration"
 	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
 )
 
@@ -150,7 +152,7 @@ func TestMountRelationIDIsStableDetachedAndOwnerFenced(t *testing.T) {
 	p := projectProgram(t, `local value = {needle = 1}; local function f() end; f(); return value.needle`)
 	modules := []Module{{Name: "main", Program: p}}
 	contract := projectTarget(t, "GlobalEnvRoot")
-	seal := func(targetContract *target.Contract, mounted []Module) *Component {
+	seal := func(targetContract *contractvalue.Contract, mounted []Module) *Component {
 		t.Helper()
 		draft, err := Build(Input{Modules: mounted, Target: targetContract})
 		if err != nil {
@@ -207,7 +209,7 @@ func TestModuleKeyIsOneDependencyLocalMountRow(t *testing.T) {
 	left := projectProgram(t, `local value = {left = 1}`)
 	right := projectProgram(t, `local value = {right = 2}`)
 	contract := projectTarget(t, "GlobalEnvRoot")
-	seal := func(targetContract *target.Contract, modules []Module) *Component {
+	seal := func(targetContract *contractvalue.Contract, modules []Module) *Component {
 		t.Helper()
 		draft, err := Build(Input{Modules: modules, Target: targetContract})
 		if err != nil {
@@ -681,9 +683,9 @@ func projectDraft(t testing.TB, modules []Module) *Draft {
 	return draft
 }
 
-func projectTarget(t testing.TB, root string) *target.Contract {
+func projectTarget(t testing.TB, root string) *contractvalue.Contract {
 	t.Helper()
-	contract, err := target.Seal(&target.Spec{
+	contract, err := compiler.Seal(&declaration.Spec{
 		Semantics:    domaincontract.NewSemantics(),
 		InitialRoots: []vocabulary.InitialRootSpec{{Identity: root, Shape: vocabulary.BootShapeSpec{Aggregate: vocabulary.BootAggregateTable, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: root}}}},
 		InitialEntries: []vocabulary.InitialEntrySpec{

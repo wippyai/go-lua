@@ -10,7 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
@@ -51,7 +51,7 @@ var typeFormalIDHasher = typeFormalIDScratch{hash: sha256.New()}
 // existing Project Call application. It fails closed for non-Call applications,
 // unavailable Target operations, mismatched static arity, or every constrained
 // Target type formal.
-func (v Calls) TypeFormalArguments(contract *target.Contract, application linkproject.Application, operation vocabulary.Operation) (TypeFormalArguments, bool) {
+func (v Calls) TypeFormalArguments(contract *contract.Contract, application linkproject.Application, operation vocabulary.Operation) (TypeFormalArguments, bool) {
 	if v.component == nil || v.component.authority == nil || contract == nil || contract != v.component.authority.target {
 		return TypeFormalArguments{}, false
 	}

@@ -9,7 +9,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
@@ -137,7 +137,7 @@ type endpointDraft struct {
 	binding  vocabulary.BindingSpec
 }
 
-func canonicalEndpointRequests(contract *target.Contract, requests []EndpointRequest) ([]endpointDraft, error) {
+func canonicalEndpointRequests(contract *contract.Contract, requests []EndpointRequest) ([]endpointDraft, error) {
 	result := make([]endpointDraft, len(requests))
 	for index, request := range requests {
 		if request.Identity == "" || request.Binding.Namespace != vocabulary.BindingProvider {
@@ -162,7 +162,7 @@ func cloneBinding(binding vocabulary.BindingSpec) vocabulary.BindingSpec {
 	return vocabulary.BindingSpec{Namespace: binding.Namespace, Owner: append([]string(nil), binding.Owner...), Member: append([]string(nil), binding.Member...)}
 }
 
-func bootstrapDeniedInitialValues(contract *target.Contract) ([]vocabulary.InitialValue, error) {
+func bootstrapDeniedInitialValues(contract *contract.Contract) ([]vocabulary.InitialValue, error) {
 	if contract == nil {
 		return nil, errors.New("link/boundary: unavailable bootstrap callable authority")
 	}
@@ -259,7 +259,7 @@ func seedRelationID(a *authority, denied []vocabulary.InitialValue) (id identity
 	return id
 }
 
-func endpointRelationID(contract *target.Contract, endpoints []endpointDraft) (id identity.ContentID) {
+func endpointRelationID(contract *contract.Contract, endpoints []endpointDraft) (id identity.ContentID) {
 	if contract == nil {
 		return id
 	}
@@ -305,7 +305,7 @@ func writeBinding(writer *framing.Writer, binding vocabulary.BindingSpec) error 
 	return nil
 }
 
-func endpointLocalID(contract *target.Contract, op vocabulary.Operation, request endpointRequestRow) (id identity.ContentID, ok bool) {
+func endpointLocalID(contract *contract.Contract, op vocabulary.Operation, request endpointRequestRow) (id identity.ContentID, ok bool) {
 	if contract == nil || op == 0 || request.identity == "" {
 		return id, false
 	}
@@ -335,7 +335,7 @@ func seededID(domain string, relation identity.ContentID, ordinal uint32) (id id
 	return id, len(sum) == len(id)
 }
 
-func operationSeedID(contract *target.Contract, op vocabulary.Operation) (identity.ContentID, bool) {
+func operationSeedID(contract *contract.Contract, op vocabulary.Operation) (identity.ContentID, bool) {
 	if contract == nil || op == 0 {
 		return identity.ContentID{}, false
 	}
@@ -373,7 +373,7 @@ func loaderSeedID(a *authority, mount uint32, op vocabulary.Operation) (id ident
 	return id, len(sum) == len(id)
 }
 
-func deniedSeedID(contract *target.Contract, value vocabulary.InitialValue) (identity.ContentID, bool) {
+func deniedSeedID(contract *contract.Contract, value vocabulary.InitialValue) (identity.ContentID, bool) {
 	if contract == nil || value == 0 {
 		return identity.ContentID{}, false
 	}

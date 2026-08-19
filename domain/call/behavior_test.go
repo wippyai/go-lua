@@ -8,7 +8,9 @@ import (
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/compiler"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
+	"github.com/wippyai/go-lua/analysis/program/target/declaration"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/analysis/schema"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
@@ -21,7 +23,7 @@ func TestTargetBehaviorProjection(t *testing.T) {
 		t.Fatal("any type declaration")
 	}
 	relation := schema.NewEntryID(schema.SurfaceKindStructure, "semantic/runtime-kind/result")
-	contract, err := target.Seal(&target.Spec{
+	contract, err := compiler.Seal(&declaration.Spec{
 		Semantics: domaincontract.NewSemantics(),
 		Operations: []vocabulary.OperationSpec{
 			{
@@ -101,7 +103,7 @@ func TestTargetBehaviorProjection(t *testing.T) {
 	}
 }
 
-func behaviorTestAlgebra(contract *target.Contract, owner link.OwnerCapability, operation, plain vocabulary.Operation) *Algebra {
+func behaviorTestAlgebra(contract *contract.Contract, owner link.OwnerCapability, operation, plain vocabulary.Operation) *Algebra {
 	firstKey := targetKey{kind: targetSeed, seedID: identity.ContentID{1}}
 	secondKey := targetKey{kind: targetSeed, seedID: identity.ContentID{2}}
 	return &Algebra{

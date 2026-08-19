@@ -18,7 +18,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/result"
 	"github.com/wippyai/go-lua/internal/testfixture"
 )
@@ -213,7 +213,7 @@ func corpusHarnessFixture(t *testing.T, name string) corpusHarnessProject {
 	return projects[index]
 }
 
-func corpusHarnessContract(t testing.TB) *target.Contract {
+func corpusHarnessContract(t testing.TB) *contract.Contract {
 	t.Helper()
 	contract, err := testfixture.StandardLibraryTarget()
 	if err != nil {

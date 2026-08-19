@@ -2,18 +2,19 @@ package oracle
 
 import (
 	"context"
-	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis"
+	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/compiler"
+	"github.com/wippyai/go-lua/analysis/program/target/declaration"
 	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
 	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
 func TestPlanDiagnosticsRejectInvalidOptionsAtSetup(t *testing.T) {
-	contract, err := target.Seal(&target.Spec{Semantics: domaincontract.NewSemantics()})
+	contract, err := compiler.Seal(&declaration.Spec{Semantics: domaincontract.NewSemantics()})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -7,7 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
@@ -195,7 +195,7 @@ func SealObservationSites(boundary *linkboundary.Component, mounts []Mount) (Obs
 	return ObservationSites{rows: rows, sealed: true}, true
 }
 
-func mountObservationSites(values linkboundary.Values, contract *target.Contract, mount Mount) ([]ObservationSite, bool) {
+func mountObservationSites(values linkboundary.Values, contract *contract.Contract, mount Mount) ([]ObservationSite, bool) {
 	var producersByValue map[identity.ContentID][]BranchProducer
 	var anchors map[identity.ContentID]identity.ContentID
 	rows := make([]ObservationSite, 0)

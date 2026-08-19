@@ -11,7 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkartifact "github.com/wippyai/go-lua/analysis/program/link/artifact"
-	"github.com/wippyai/go-lua/analysis/program/target"
+	contractvalue "github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 	"github.com/wippyai/go-lua/internal/testfixture"
 )
@@ -119,7 +119,7 @@ func TestFrozenFixtureCorpusLinks(t *testing.T) {
 	t.Fatal(report.String())
 }
 
-func checkFrozenFixtureLinkProject(contract *target.Contract, project testfixture.CorpusProject) error {
+func checkFrozenFixtureLinkProject(contract *contractvalue.Contract, project testfixture.CorpusProject) error {
 	linked, err := testfixture.SealCorpusProject(contract, project)
 	if err != nil {
 		return err
@@ -131,7 +131,7 @@ func checkFrozenFixtureLinkProject(contract *target.Contract, project testfixtur
 	return assertCompleteCountRows(rows)
 }
 
-func roundTripFixtureProject(linked *link.Link, contract *target.Contract) error {
+func roundTripFixtureProject(linked *link.Link, contract *contractvalue.Contract) error {
 	encoded, err := linkartifact.Encode(linked)
 	if err != nil {
 		return fmt.Errorf("encode Link artifact: %w", err)
