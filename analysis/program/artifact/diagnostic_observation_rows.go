@@ -29,13 +29,16 @@ const (
 	diagnosticTypeConformanceSiteAssignment   uint8 = 2
 )
 
-// diagnosticTypeConformanceRow is one call-argument site whose actual is
-// measured against the formal's declared type. Site is a discriminator so
-// assignment rows can share the observation kind later.
+// diagnosticTypeConformanceRow is one site whose measured value is checked
+// against a declared type. Site names the population: a direct-call actual
+// measured against its formal, or an initializer measured against the declared
+// type of the cell it is bound into. Owner is the statement that owns the site
+// and value is the measured value's semantic occurrence; both populations
+// carry the same shape, so the row is one relation rather than two.
 type diagnosticTypeConformanceRow struct {
 	site     uint8
-	call     identity.ContentID
-	argument identity.ContentID
+	owner    identity.ContentID
+	value    identity.ContentID
 	declared identity.ContentID
 	span     identity.ContentID
 	position uint32

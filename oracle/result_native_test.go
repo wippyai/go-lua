@@ -16,7 +16,7 @@ func TestCorpusNativePublicationUsesTypedBranchValueIssuerLaw(t *testing.T) {
 	for index := 0; index < result.NativePublicationCount(); index++ {
 		row, rowOK := result.NativePublicationAt(index)
 		id, idOK := row.ID()
-		value, valueOK := row.Value()
+		columns, columnsOK := corpusNativeColumns(row)
 		provenance, provenanceOK := row.Provenance()
 		validity, validityOK := row.Validity()
 		byID, byIDOK := result.NativePublicationByID(id)
@@ -24,7 +24,7 @@ func TestCorpusNativePublicationUsesTypedBranchValueIssuerLaw(t *testing.T) {
 		byIDID, _ := byID.ID()
 		byTokenID, _ := byToken.ID()
 		if !rowOK || !idOK || !id.Available() || !row.Lane().Valid() || !row.Kind().Valid() || !row.Trust().Valid() ||
-			!row.SemanticID().Available() || row.Family() == "" || row.Key() == "" || row.Module() == "" || !valueOK || value == "" ||
+			!row.SemanticID().Available() || row.Family() == "" || row.Key() == "" || row.Module() == "" || !columnsOK || len(columns) == 0 || row.EvidencePointCount() == 0 ||
 			!provenanceOK || !provenance.MountID().Available() || !provenance.ArtifactID().Available() || !provenance.LocalID().Available() || !provenance.BodyID().Available() || !provenance.PointID().Available() || !provenance.SourceSpanID().Available() ||
 			!validityOK || !validity.Valid() || !byIDOK || !byTokenOK || byIDID != id || byTokenID != id {
 			t.Fatalf("native row[%d] is not a complete Result-owned publication", index)
@@ -55,57 +55,57 @@ func TestCorpusNativePublicationRenderingIsPinnedLaw(t *testing.T) {
 			values: []string{
 				"branch_partition | partition=always_taken dead_arm=else dead_arm_reachable=false",
 				"branch_partition | partition=dynamic",
-				"constant_value | representation=boolean value=true",
+				"constant_value | literal=true representation=boolean",
 				"representation | exact=true representation=boolean",
-				"truthiness_class | class=always_truthy",
-				"truthiness_class | class=dynamic_nil_or_false",
+				"truthiness_class | truthiness=always_truthy",
+				"truthiness_class | truthiness=dynamic_nil_or_false",
 			},
 		},
 		{
 			name: "native/const-folded-through-local",
 			values: []string{
-				"constant_value | representation=integer value=10",
-				"constant_value | representation=integer value=15",
-				"constant_value | representation=integer value=5",
+				"constant_value | literal=10 representation=integer",
+				"constant_value | literal=15 representation=integer",
+				"constant_value | literal=5 representation=integer",
 				"representation | exact=true representation=integer",
 				"representation | exact=true representation=integer",
 				"representation | exact=true representation=integer",
-				"representation | exact=true representation=integer left=integer operator=add overflow=promote_integer_to_number result_representation=integer right=integer",
-				"scalar_operator | class=number dispatch=primitive left=integer operator=add overflow=promote_integer_to_number result=integer right=integer",
+				"representation | exact=true representation=integer left=integer right=integer operator=add overflow=promote_integer_to_number",
+				"scalar_operator | representation=integer left=integer right=integer operator=add overflow=promote_integer_to_number",
 			},
 		},
 		{
 			name: "native/const-float-literal-representation",
 			values: []string{
-				"constant_value | representation=float value=42.0",
+				"constant_value | literal=42.0 representation=float",
 				"representation | exact=true representation=float",
-				"representation | representation=number left=number operator=add overflow=ieee754 result_representation=number right=float",
-				"scalar_operator | class=number dispatch=primitive left=number operator=add overflow=ieee754 result=number right=float",
+				"representation | representation=number left=number right=float operator=add overflow=ieee754",
+				"scalar_operator | representation=number left=number right=float operator=add overflow=ieee754",
 			},
 		},
 		{
 			name: "native/arith-divisor-nonzero-proved",
 			values: []string{
-				"divisor_property | divisor=nonzero_not_minus_one operator=idiv",
-				"representation | exact=true operator=unm overflow=closed_integer representation=integer result_representation=integer operand_representation=integer",
-				"representation | exact=true representation=integer left=integer operator=idiv overflow=closed_integer result_representation=integer right=integer",
-				"scalar_operator | class=number dispatch=primitive left=integer operator=idiv overflow=closed_integer result=integer right=integer divisor=nonzero_not_minus_one",
+				"divisor_property | operator=idiv divisor=nonzero_not_minus_one",
+				"representation | exact=true representation=integer left=integer right=integer operator=idiv overflow=closed_integer",
+				"representation | exact=true representation=integer operand=integer operator=unm overflow=closed_integer",
+				"scalar_operator | representation=integer left=integer right=integer operator=idiv overflow=closed_integer divisor=nonzero_not_minus_one",
 			},
 		},
 		{
 			name: "native/repr-pow-int-operands-float-result",
 			values: []string{
-				"representation | exact=true representation=float left=integer operator=pow overflow=ieee754 result_representation=float right=integer",
-				"scalar_operator | class=number dispatch=primitive left=integer operator=pow overflow=ieee754 result=float right=integer",
+				"representation | exact=true representation=float left=integer right=integer operator=pow overflow=ieee754",
+				"scalar_operator | representation=float left=integer right=integer operator=pow overflow=ieee754",
 			},
 		},
 		{
 			name: "native/truthy-empty-string-is-truthy",
 			values: []string{
 				"branch_partition | partition=always_taken dead_arm=else dead_arm_reachable=false",
-				"constant_value | representation=string value=\"\"",
+				"constant_value | literal=\"\" representation=string",
 				"representation | exact=true representation=string",
-				"truthiness_class | class=always_truthy",
+				"truthiness_class | truthiness=always_truthy",
 			},
 		},
 	} {
@@ -117,11 +117,11 @@ func TestCorpusNativePublicationRenderingIsPinnedLaw(t *testing.T) {
 			published := make([]string, 0, result.NativePublicationCount())
 			for index := 0; index < result.NativePublicationCount(); index++ {
 				row, rowOK := result.NativePublicationAt(index)
-				value, valueOK := row.Value()
-				if !rowOK || !valueOK {
+				columns, columnsOK := corpusNativeColumns(row)
+				if !rowOK || !columnsOK {
 					t.Fatalf("native row[%d] is unreadable", index)
 				}
-				published = append(published, row.Family()+" | "+value)
+				published = append(published, row.Family()+" | "+corpusNativeRendering(columns))
 			}
 			sort.Strings(published)
 			if len(published) != len(fixture.values) {

@@ -53,9 +53,10 @@ func compareBranchProducer(left, right BranchProducer) int {
 
 // ObservationSite is one place a mounted result is observed: the mount, the
 // artifact-local observation identity, the kind of observation, and the source
-// span it reports at. A branch site additionally carries its producer geometry;
-// the other kinds carry none, because their evidence is static and needs no
-// execution key.
+// span it reports at. A produced-value site - a branch condition or a type
+// conformance subject - additionally carries the geometry of the occurrences
+// that produce its value; a static site carries none, because its evidence is
+// static and needs no execution key.
 type ObservationSite struct {
 	Mount     identity.ContentID
 	Local     identity.ContentID
@@ -73,7 +74,7 @@ func (site ObservationSite) Available() bool {
 	case structure.DiagnosticObservationBranchCondition:
 		return site.ValueID.Available() && site.branchGeometryAvailable()
 	case structure.DiagnosticObservationTypeConformance:
-		return site.ValueID.Available() && len(site.producers) == 0
+		return site.ValueID.Available() && site.producerGeometryAvailable()
 	case structure.DiagnosticObservationTypeReferenceUnresolved, structure.DiagnosticObservationValueReferenceUnresolved:
 		return !site.ValueID.Available() && len(site.producers) == 0
 	default:
@@ -92,16 +93,15 @@ func (site ObservationSite) ProducerAt(index int) (BranchProducer, bool) {
 	return site.producers[index], true
 }
 
-// branchGeometryAvailable states the bijection a branch site is admitted
-// under: at least one producer, and no execution key or anchor used twice. A
-// second producer sharing one base witness would make the anchor ambiguous, so
-// the site fails closed rather than selecting one.
-func (site ObservationSite) branchGeometryAvailable() bool {
+// producerGeometryAvailable is the geometry every produced-value site is
+// admitted under: at least one producer, in canonical order, and no execution
+// key claimed twice. One measured value may be established on several paths,
+// so this law does not fix how many producers a base witness carries.
+func (site ObservationSite) producerGeometryAvailable() bool {
 	if len(site.producers) == 0 {
 		return false
 	}
 	executions := make(map[identity.ContentID]struct{}, len(site.producers))
-	anchors := make(map[identity.ContentID]struct{}, len(site.producers))
 	for index, producer := range site.producers {
 		if !producer.Available() || index != 0 && compareBranchProducer(site.producers[index-1], producer) >= 0 {
 			return false
@@ -110,6 +110,19 @@ func (site ObservationSite) branchGeometryAvailable() bool {
 			return false
 		}
 		executions[producer.Point] = struct{}{}
+	}
+	return true
+}
+
+// branchGeometryAvailable adds the branch law: one producer per base witness.
+// A second producer sharing one base witness would make a branch's anchor
+// ambiguous, so the site fails closed rather than selecting one.
+func (site ObservationSite) branchGeometryAvailable() bool {
+	if !site.producerGeometryAvailable() {
+		return false
+	}
+	anchors := make(map[identity.ContentID]struct{}, len(site.producers))
+	for _, producer := range site.producers {
 		if _, duplicate := anchors[producer.Anchor]; duplicate {
 			return false
 		}
@@ -247,14 +260,40 @@ func mountObservationSites(values linkboundary.Values, contract *target.Contract
 			}
 		case structure.DiagnosticObservationTypeConformance:
 			conformance, conformanceOK := observation.TypeConformance()
-			if !conformanceOK || !conformance.CallID().Available() || !conformance.ArgumentID().Available() ||
+			if !conformanceOK || !conformance.OwnerID().Available() || !conformance.MeasuredValueID().Available() ||
 				!conformance.DeclaredStaticTypeID().Available() || !conformance.SpanID().Available() {
 				return nil, false
 			}
-			valueID, valueOK := conformanceValueID(values, mount, conformance.ArgumentID(), conformance.SpanID())
-			if !valueOK {
+			valueID, valueOK := conformanceValueID(values, mount, conformance.MeasuredValueID(), conformance.SpanID())
+			evidence, evidenceOK := conformance.EvidencePoints()
+			if !valueOK || !evidenceOK || len(evidence) == 0 {
 				return nil, false
 			}
+			if producersByValue == nil {
+				var producersOK bool
+				producersByValue, producersOK = mountedValueProducers(values, mount)
+				if !producersOK {
+					return nil, false
+				}
+			}
+			producers := append([]BranchProducer(nil), producersByValue[valueID]...)
+			// A conformance subject whose value has no producing rule role at
+			// this target is unobservable rather than malformed, exactly as a
+			// branch condition is: it contributes no site.
+			if len(producers) == 0 {
+				continue
+			}
+			if anchors == nil {
+				var anchorsOK bool
+				anchors, anchorsOK = localStageAnchors(mount.Snapshot)
+				if !anchorsOK {
+					return nil, false
+				}
+			}
+			if !anchorBranchProducers(producers, evidence, anchors) {
+				return nil, false
+			}
+			site.producers = producers
 			site.ValueID = valueID
 		default:
 			return nil, false
@@ -297,15 +336,15 @@ func branchProducers(
 	return producers, evidence, coordinate, true
 }
 
-func conformanceValueID(values linkboundary.Values, mount Mount, argumentID, spanID identity.ContentID) (identity.ContentID, bool) {
-	if mount.Snapshot == nil || !argumentID.Available() || !spanID.Available() {
+// conformanceValueID rebinds the measured value through this mount. The row
+// carries the value's semantic occurrence, so the substitution is the same one
+// a branch condition takes; the span relation answers the values a target
+// binds by operator span rather than by occurrence.
+func conformanceValueID(values linkboundary.Values, mount Mount, measuredID, spanID identity.ContentID) (identity.ContentID, bool) {
+	if mount.Snapshot == nil || !measuredID.Available() || !spanID.Available() {
 		return identity.ContentID{}, false
 	}
-	memberID, argumentSpan, argumentOK := callArgumentIdentities(mount.Snapshot, argumentID)
-	if !argumentOK || argumentSpan != spanID {
-		return identity.ContentID{}, false
-	}
-	value, valueOK := values.ForMountedSemantic(mount.ModuleKey, memberID)
+	value, valueOK := values.ForMountedSemantic(mount.ModuleKey, measuredID)
 	if !valueOK {
 		value, valueOK = values.ForMountedSpan(mount.ModuleKey, spanID)
 	}
@@ -315,22 +354,10 @@ func conformanceValueID(values linkboundary.Values, mount Mount, argumentID, spa
 	return values.ID(value)
 }
 
-func callArgumentIdentities(snapshot *ingress.Snapshot, argumentID identity.ContentID) (identity.ContentID, identity.ContentID, bool) {
-	if snapshot == nil || !argumentID.Available() {
-		return identity.ContentID{}, identity.ContentID{}, false
-	}
-	row, rowOK := snapshot.CallArgumentForID(argumentID)
-	if !rowOK || !row.Available() {
-		return identity.ContentID{}, identity.ContentID{}, false
-	}
-	return row.MemberID(), row.SpanID(), true
-}
-
 // anchorBranchProducers binds each producer to the base evidence point it
-// reports against and freezes the result in canonical order. The evidence
-// points and the anchors form a bijection: every base witness of the branch is
-// claimed exactly once, so a producer that shares another's witness is broken
-// geometry rather than a row to choose between.
+// reports against and freezes the result in canonical order. Every base
+// witness must be reached: a row whose producers leave one evidence point
+// unanchored is broken geometry rather than a row to read partially.
 func anchorBranchProducers(producers []BranchProducer, evidence []identity.ContentID, stages map[identity.ContentID]identity.ContentID) bool {
 	anchors := make(map[identity.ContentID]struct{}, len(producers))
 	for index := range producers {

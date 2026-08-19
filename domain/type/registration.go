@@ -202,6 +202,12 @@ const (
 	// member of the canonical observation vocabulary, whose ordinals artifacts
 	// carry, so it is declared there rather than here.
 	ObservationKey schema.Key = "observation/type-conformance"
+	// ConformanceCollectionKey is the observation family that supplies the
+	// measured value: the value summary read at the rule occurrence that
+	// produces the conformance subject's value. A point-keyed query column is
+	// published only at selected points and never at that occurrence, so the
+	// row names the observation family the branch pair also reads.
+	ConformanceCollectionKey schema.Key = "value-summary/type-conformance"
 	// FactKey is the coordinate space whose facts decide the row. The families a
 	// value may carry are the value axis's own judgment, and the row reads them
 	// rather than producing them.
@@ -261,7 +267,7 @@ func DiagnosticSpec() diagnostic.Spec {
 		DefaultSeverity: diagnostic.SeverityError,
 		Lane:            diagnostic.LaneBranch,
 		Observation:     diagnostic.Reference{Surface: schema.SurfaceKindStructure, Key: ObservationKey},
-		Collection:      diagnostic.Reference{Surface: schema.SurfaceKindQuery, Key: "value-summary"},
+		Collection:      diagnostic.Reference{Surface: schema.SurfaceKindObservation, Key: ConformanceCollectionKey},
 		Site:            diagnostic.SiteAssignment,
 		Fact:            diagnostic.Reference{Surface: schema.SurfaceKindAxis, Key: FactKey},
 		Requirements:    diagnostic.RequiresSubject | diagnostic.RequiresTarget,
@@ -289,7 +295,7 @@ func DiagnosticCallArgumentSpec() diagnostic.Spec {
 		DefaultSeverity: diagnostic.SeverityError,
 		Lane:            diagnostic.LaneBranch,
 		Observation:     diagnostic.Reference{Surface: schema.SurfaceKindStructure, Key: ObservationKey},
-		Collection:      diagnostic.Reference{Surface: schema.SurfaceKindQuery, Key: "value-summary"},
+		Collection:      diagnostic.Reference{Surface: schema.SurfaceKindObservation, Key: ConformanceCollectionKey},
 		Site:            diagnostic.SiteCallArgument,
 		Fact:            diagnostic.Reference{Surface: schema.SurfaceKindAxis, Key: FactKey},
 		Requirements:    diagnostic.RequiresSubject | diagnostic.RequiresTarget,

@@ -152,18 +152,21 @@ func (payload diagnosticTypeConformanceRow) Site() schemadiag.Site {
 	}
 }
 
-func (payload diagnosticTypeConformanceRow) CallID() identity.ContentID {
+// OwnerID is the statement that owns the site: the call for an argument, the
+// bind for an initializer.
+func (payload diagnosticTypeConformanceRow) OwnerID() identity.ContentID {
 	if !payload.available() {
 		return identity.ContentID{}
 	}
-	return payload.call
+	return payload.owner
 }
 
-func (payload diagnosticTypeConformanceRow) ArgumentID() identity.ContentID {
+// MeasuredValueID is the semantic occurrence of the value being measured.
+func (payload diagnosticTypeConformanceRow) MeasuredValueID() identity.ContentID {
 	if !payload.available() {
 		return identity.ContentID{}
 	}
-	return payload.argument
+	return payload.value
 }
 
 func (payload diagnosticTypeConformanceRow) DeclaredStaticTypeID() identity.ContentID {

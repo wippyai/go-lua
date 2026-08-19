@@ -2,13 +2,16 @@ package oracle
 
 import (
 	"fmt"
-	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
+	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/result"
 	"github.com/wippyai/go-lua/domain/composite"
 )
@@ -115,10 +118,111 @@ func corpusSemanticFixtureInputUnsupported(expectation *corpusDiagnosticProjectE
 type corpusSemanticNativeRow struct {
 	row                                      result.NativePublication
 	lane, module, family, key, subject, term string
-	occurrence, value, trust                 string
-	valueOK                                  bool
-	validity                                 result.NativePublicationValidity
-	validityOK                               bool
+	occurrence, trust                        string
+	// columns is the row's published typed content, keyed by the column name a
+	// manifest names it under. A column absent from the map is a column the row
+	// does not publish, which is a distinct answer from a column whose member
+	// happens to be spelled like another.
+	columns    map[string]string
+	rendered   string
+	validity   result.NativePublicationValidity
+	validityOK bool
+}
+
+// corpusNativeColumnOrder is the canonical order a native row's typed columns
+// are read and rendered in.
+var corpusNativeColumnOrder = []string{
+	"exact", "literal", "representation", "left", "right", "operand",
+	"operator", "overflow", "divisor", "truthiness", "partition", "dead_arm", "dead_arm_reachable",
+}
+
+// corpusNativeColumns reads one published row's typed columns and resolves each
+// vocabulary-valued one to its declared spelling. Nothing here holds a spelling
+// of its own: the sealed structural vocabulary is the single declaration, and a
+// column the row does not publish is simply absent.
+func corpusNativeColumns(row result.NativePublication) (map[string]string, bool) {
+	vocabulary, vocabularyOK := composite.StructureVocabulary()
+	if !vocabularyOK {
+		return nil, false
+	}
+	complete := true
+	columns := make(map[string]string, len(corpusNativeColumnOrder))
+	declared := func(name string, column result.NativePublicationColumn) {
+		ordinal, published := row.Column(column)
+		if !published {
+			return
+		}
+		member, memberOK := vocabulary.At(column.Category(), ordinal)
+		if !memberOK {
+			complete = false
+			return
+		}
+		columns[name] = member.Spelling()
+	}
+	if row.Exact() {
+		columns["exact"] = "true"
+	}
+	if literal, literalOK := row.Literal(); literalOK {
+		text, textOK := corpusNativeLiteral(literal)
+		complete = complete && textOK
+		columns["literal"] = text
+	}
+	if _, scalarOK := row.ScalarRepresentation(); scalarOK {
+		declared("representation", result.NativePublicationColumnScalarRepresentation)
+	} else {
+		declared("representation", result.NativePublicationColumnRepresentation)
+	}
+	declared("left", result.NativePublicationColumnLeft)
+	declared("right", result.NativePublicationColumnRight)
+	declared("operand", result.NativePublicationColumnOperand)
+	if _, unaryOK := row.UnaryOperator(); unaryOK {
+		declared("operator", result.NativePublicationColumnUnaryOperator)
+	} else {
+		declared("operator", result.NativePublicationColumnBinaryOperator)
+	}
+	declared("overflow", result.NativePublicationColumnOverflow)
+	declared("divisor", result.NativePublicationColumnDivisor)
+	declared("truthiness", result.NativePublicationColumnTruthiness)
+	declared("partition", result.NativePublicationColumnPartition)
+	declared("dead_arm", result.NativePublicationColumnDeadArm)
+	if reachable, reachableOK := row.DeadArmReachable(); reachableOK {
+		columns["dead_arm_reachable"] = strconv.FormatBool(reachable)
+	}
+	return columns, complete
+}
+
+// corpusNativeLiteral is the canonical text of one published constant. Every
+// bit pattern a Lua number holds has a text here, infinities and NaN included.
+func corpusNativeLiteral(literal keyspace.LiteralValue) (string, bool) {
+	switch literal.Kind {
+	case keyspace.LiteralBool:
+		return strconv.FormatBool(literal.Bool), true
+	case keyspace.LiteralInteger:
+		return strconv.FormatInt(literal.Integer, 10), true
+	case keyspace.LiteralFloat:
+		rendered := strconv.FormatFloat(math.Float64frombits(literal.FloatBits), 'g', -1, 64)
+		if !strings.ContainsAny(rendered, ".eEnfIN") {
+			rendered += ".0"
+		}
+		return rendered, true
+	case keyspace.LiteralString:
+		return strconv.Quote(literal.String), true
+	default:
+		return "", false
+	}
+}
+
+// corpusNativeRendering renders one row's typed columns in canonical order. It
+// is a consumer's reading of declared spellings, not a form the publication
+// carries: the row publishes columns, and this is what they read as.
+func corpusNativeRendering(columns map[string]string) string {
+	parts := make([]string, 0, len(columns))
+	for _, name := range corpusNativeColumnOrder {
+		if value, published := columns[name]; published {
+			parts = append(parts, name+"="+value)
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 func corpusSemanticNativeMismatches(expectation *corpusDiagnosticProjectExpectations, result *result.Result) []string {
@@ -140,15 +244,23 @@ func corpusSemanticNativeMismatches(expectation *corpusDiagnosticProjectExpectat
 	for index := 0; index < result.NativePublicationCount(); index++ {
 		row, rowOK := result.NativePublicationAt(index)
 		id, idOK := row.ID()
-		value, valueOK := row.Value()
 		validity, validityOK := row.Validity()
 		if !rowOK || !idOK || !id.Available() || !row.Lane().Valid() || !row.Kind().Valid() || !row.Trust().Valid() || !row.SemanticID().Available() || row.Family() == "" {
 			mismatches = append(mismatches, fmt.Sprintf("native row %d has no complete public identity", index))
 			continue
 		}
+		if row.EvidencePointCount() == 0 {
+			mismatches = append(mismatches, fmt.Sprintf("native row %d publishes no evidence set", index))
+			continue
+		}
+		columns, columnsOK := corpusNativeColumns(row)
+		if !columnsOK {
+			mismatches = append(mismatches, fmt.Sprintf("native row %d publishes a column its declared vocabulary does not hold", index))
+			continue
+		}
 		rows = append(rows, corpusSemanticNativeRow{
 			row: row, lane: row.Lane().String(), module: row.Module(), family: row.Family(), key: row.Key(), subject: row.Subject(), term: row.Term(), occurrence: row.Occurrence(),
-			value: value, valueOK: valueOK, trust: row.Trust().String(), validity: validity, validityOK: validityOK,
+			columns: columns, rendered: corpusNativeRendering(columns), trust: row.Trust().String(), validity: validity, validityOK: validityOK,
 		})
 	}
 	if contract.MinFacts != nil && len(rows) < *contract.MinFacts {
@@ -215,11 +327,34 @@ func corpusSemanticNativeSelectorMatches(selector corpusNativeSelector, row corp
 			return false
 		}
 	}
-	if selector.Value != nil && (!row.valueOK || row.value != *selector.Value) || selector.ValuePrefix != "" && (!row.valueOK || !strings.HasPrefix(row.value, selector.ValuePrefix)) {
+	// The typed columns. An authored column is compared against the member's
+	// declared spelling, so a manifest names a member of a sealed vocabulary
+	// rather than a fragment of a sentence.
+	for name, authored := range selector.Columns {
+		published, publishes := row.columns[name]
+		switch authored {
+		case corpusNativeColumnPresent:
+			if !publishes {
+				return false
+			}
+		case corpusNativeColumnAbsent:
+			if publishes {
+				return false
+			}
+		default:
+			if !publishes || published != authored {
+				return false
+			}
+		}
+	}
+	// The rendered form remains addressable only for publication families the
+	// analyzer does not declare yet; the inventory law rejects it for every
+	// family that publishes typed columns today.
+	if selector.Value != nil && row.rendered != *selector.Value || selector.ValuePrefix != "" && !strings.HasPrefix(row.rendered, selector.ValuePrefix) {
 		return false
 	}
 	for _, part := range selector.ValueContains {
-		if !row.valueOK || !strings.Contains(row.value, part) {
+		if !strings.Contains(row.rendered, part) {
 			return false
 		}
 	}

@@ -12,72 +12,66 @@ import (
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
-// CallArgumentSubject is one TypeConformance call-argument site.
-type CallArgumentSubject struct {
+// ConformanceSubject is one TypeConformance site: the value the program
+// assigns or passes, the declaration it is measured against, and the base
+// evidence points its measured value is observed at.
+type ConformanceSubject struct {
 	ID, FindingID, Mount identity.ContentID
 	Location             DiagnosticLocation
 	Site                 schemadiag.Site
 	Actual               uint32
 	DeclaredMay          runtimekind.Set
 	Target               string
-	Evidence             []identity.ContentID
+	// Points are the execution points of the occurrences that produce the
+	// measured value. A statement carries one base evidence point and as many
+	// producing occurrences as it has measured values, so a subject addresses
+	// its own column by its producers rather than by the point they anchor to.
+	Points []identity.ContentID
 }
 
-// QuerySummaryKey is one QueryFamily value-summary row address.
-type QuerySummaryKey struct {
-	Mount, Point, Key identity.ContentID
-}
-
-// CollectCallArguments reads each issued TypeConformance call-argument site
-// against the QueryFamily value summary at its evidence points. The judgment
-// is MayKindConformance: only a family outside the formal's declared may-set
-// becomes a finding. Empty, All, and unprojected declarations abstain.
-func CollectCallArguments(
+// CollectConformance reads each issued TypeConformance site against the Value
+// summary observed at the rule occurrence that produced the measured value.
+// The judgment is MayKindConformance: only a family outside the declaration's
+// may-set becomes a finding. Empty, All, and unprojected declarations abstain.
+//
+// The measured value is read from the observation column, not from a
+// point-keyed query column. A query site is published only at selected points,
+// and the occurrence that produces an argument or initializer value is not one
+// of them, so a query read abstains on every site by construction.
+func CollectConformance(
 	report *DiagnosticReport,
-	subjects []CallArgumentSubject,
-	summaries []QuerySummaryKey,
+	subjects []ConformanceSubject,
 	valueWidth int,
 	schema *valuedomain.Schema,
 	published *snapshot.Snapshot,
-	queryPlan snapshot.QueryPlan[identity.ContentID, engine.Answer],
-	severity FindingSeverity,
+	observationPlan snapshot.QueryPlan[identity.ContentID, engine.Answer],
+	severities map[schemadiag.Site]FindingSeverity,
 ) bool {
-	if report == nil || schema == nil || published == nil || !published.Published() || !queryPlan.Available() || !severity.Available() || valueWidth < 0 {
+	if report == nil || schema == nil || published == nil || !published.Published() || !observationPlan.Available() || valueWidth < 0 || len(severities) == 0 {
 		return false
-	}
-	keys := make(map[pointKey]identity.ContentID, len(summaries))
-	for _, query := range summaries {
-		if !query.Mount.Available() || !query.Point.Available() || !query.Key.Available() {
-			continue
-		}
-		key := pointKey{mount: query.Mount, point: query.Point}
-		if _, duplicate := keys[key]; duplicate {
-			return false
-		}
-		keys[key] = query.Key
 	}
 	for _, subject := range subjects {
 		if !subject.ID.Available() || !subject.FindingID.Available() || !subject.Mount.Available() || !subject.Location.Available() ||
-			!subject.Site.Available() || !subject.DeclaredMay.Valid() || len(subject.Evidence) == 0 {
+			!subject.Site.Available() || !subject.DeclaredMay.Valid() || len(subject.Points) == 0 {
 			return false
+		}
+		severity, enabled := severities[subject.Site]
+		if !enabled || !severity.Available() {
+			continue
 		}
 		if subject.DeclaredMay == runtimekind.All {
 			continue
 		}
 		var observed runtimekind.Set
 		anyEvidence := false
-		for _, point := range subject.Evidence {
-			if !point.Available() {
+		for _, point := range subject.Points {
+			publicationKey, addressed := ValueObservationAddress(structure.DiagnosticObservationTypeConformance, subject.Mount, point)
+			if !point.Available() || !addressed {
 				return false
 			}
-			publicationKey, known := keys[pointKey{mount: subject.Mount, point: point}]
-			if !known {
+			summary, readable := PublishedObservation[valuedomain.ValueSummaryObservation](published, observationPlan, publicationKey)
+			if !readable {
 				report.SetCollectionFailure(DiagnosticCollectionSubjectQueryAbsent)
-				return true
-			}
-			summary, readable := PublishedObservation[valuedomain.ValueSummaryObservation](published, queryPlan, publicationKey)
-			if !publicationKey.Available() || !readable {
-				report.SetCollectionFailure(DiagnosticCollectionQueryUnreadable)
 				return true
 			}
 			if !summary.Valid {
@@ -111,7 +105,7 @@ func CollectCallArguments(
 		}
 		switch conformance.MayKindConformance(subject.DeclaredMay, observed) {
 		case conformance.VerdictViolates:
-			if !appendCallArgumentFinding(report, subject, severity) {
+			if !appendConformanceFinding(report, subject, severity) {
 				return false
 			}
 		case conformance.VerdictConforms, conformance.VerdictAbstain:
@@ -122,11 +116,11 @@ func CollectCallArguments(
 	return true
 }
 
-func appendCallArgumentFinding(report *DiagnosticReport, subject CallArgumentSubject, severity FindingSeverity) bool {
+func appendConformanceFinding(report *DiagnosticReport, subject ConformanceSubject, severity FindingSeverity) bool {
 	if report == nil || !subject.ID.Available() || !subject.FindingID.Available() || !severity.Available() {
 		return false
 	}
-	name, nameOK := NewSemanticName("argument")
+	name, nameOK := NewSemanticName(conformanceSubjectName(subject.Site))
 	target, targetOK := NewTargetType(subject.Target)
 	if !nameOK || !targetOK || !subject.Location.Available() {
 		return false
@@ -142,4 +136,11 @@ func appendCallArgumentFinding(report *DiagnosticReport, subject CallArgumentSub
 	}
 	report.AppendFinding(NewFindingRow(subject.FindingID, subject.ID, declared.Code(), severity, subject.Location, data))
 	return true
+}
+
+func conformanceSubjectName(site schemadiag.Site) string {
+	if site == schemadiag.SiteAssignment {
+		return "value"
+	}
+	return "argument"
 }

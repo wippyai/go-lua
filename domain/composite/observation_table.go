@@ -15,6 +15,7 @@ import (
 // boundary.
 const (
 	ObservationBranchValueSummary         schema.Key = "value-summary/branch-condition"
+	ObservationConformanceValueSummary    schema.Key = "value-summary/type-conformance"
 	ObservationDirectAllocationMembership schema.Key = "value-summary/direct-allocation-membership"
 	ObservationPublicationTransition      schema.Key = "effect-exact/publication-transition"
 )
@@ -24,6 +25,7 @@ const (
 // know what a branch, direct-allocation, or publication geometry means.
 const (
 	observationGeometryBranchRole      = "observation/geometry/branch-evidence"
+	observationGeometryConformanceRole = "observation/geometry/type-conformance-evidence"
 	observationGeometryDirectRole      = "observation/geometry/direct-allocation-membership"
 	observationGeometryPublicationRole = "observation/geometry/publication-transition"
 	observationAnchorEvidenceRole      = "observation/anchor/evidence-point"
@@ -33,6 +35,7 @@ const (
 
 const (
 	observationRelationBranchCondition       schema.Key = "ProgramFlowControl@-"
+	observationRelationTypeConformance       schema.Key = "ProgramFlowCall@-"
 	observationRelationDirectAllocation      schema.Key = "TargetOperation@TargetOperationEffect"
 	observationRelationPublicationTransition schema.Key = "TargetOperation@TargetPublicationEffect"
 )
@@ -40,6 +43,7 @@ const (
 func observationRoleVocabulary() []structure.Spec {
 	return vocabulary.RoleSpecs(
 		observationGeometryBranchRole,
+		observationGeometryConformanceRole,
 		observationGeometryDirectRole,
 		observationGeometryPublicationRole,
 		observationAnchorEvidenceRole,
@@ -68,6 +72,7 @@ func observationSpecs(queries []*query.Registration) ([]observation.Spec, bool) 
 	}
 	for _, relation := range [...]schema.Key{
 		observationRelationBranchCondition,
+		observationRelationTypeConformance,
 		observationRelationDirectAllocation,
 		observationRelationPublicationTransition,
 	} {
@@ -84,6 +89,22 @@ func observationSpecs(queries []*query.Registration) ([]observation.Spec, bool) 
 				Kind:     observationReference(schema.SurfaceKindStructure, structure.DiagnosticObservationBranchCondition.Key()),
 			},
 			Geometry: observationReference(schema.SurfaceKindStructure, vocabulary.RoleKey(observationGeometryBranchRole)),
+			Anchor:   observationReference(schema.SurfaceKindStructure, vocabulary.RoleKey(observationAnchorEvidenceRole)),
+			Codec:    observationReference(schema.SurfaceKindStructure, vocabulary.RoleKey("query-result/value-summary")),
+		},
+		{
+			// The type-conformance population is measured on the same value
+			// summary as a branch condition and at the same kind of address: the
+			// rule occurrence that produces the measured value. It quantifies
+			// over the call relation rather than the control relation, so it is
+			// its own row rather than a second population on the branch row.
+			Key:      ObservationConformanceValueSummary,
+			Producer: observationReference(schema.SurfaceKindQuery, QueryFamilyValueSummary),
+			Population: observation.Population{
+				Relation: observationReference(schema.SurfaceKindDenominator, observationRelationTypeConformance),
+				Kind:     observationReference(schema.SurfaceKindStructure, structure.DiagnosticObservationTypeConformance.Key()),
+			},
+			Geometry: observationReference(schema.SurfaceKindStructure, vocabulary.RoleKey(observationGeometryConformanceRole)),
 			Anchor:   observationReference(schema.SurfaceKindStructure, vocabulary.RoleKey(observationAnchorEvidenceRole)),
 			Codec:    observationReference(schema.SurfaceKindStructure, vocabulary.RoleKey("query-result/value-summary")),
 		},

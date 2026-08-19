@@ -154,6 +154,39 @@ const (
 	// no per-surface law could state, because the surfaces are sealed apart.
 	// It is resolved by key alone: no foreign spelling numbers it.
 	CategorySemanticRole
+	// CategoryNativeNumericRepresentation is the vocabulary of proved numeric
+	// carriers a native publication column names. Its ordinals are
+	// programschema.NumericRepresentation's own numbering.
+	CategoryNativeNumericRepresentation
+	// CategoryNativeScalarRepresentation is the vocabulary of proved exact
+	// scalar carriers a native publication column names. Its ordinals are
+	// keyspace.LiteralKind's own numbering with Lua nil appended.
+	CategoryNativeScalarRepresentation
+	// CategoryNativeArithmeticOperator is the vocabulary of primitive binary
+	// arithmetic operators a native publication column names. Its ordinals are
+	// flowkind.BinaryOp's own numbering, whose arithmetic members occupy the
+	// first contiguous segment of that vocabulary.
+	CategoryNativeArithmeticOperator
+	// CategoryNativeUnaryOperator is the vocabulary of Lua unary operators a
+	// native publication column names. Its ordinals are flowkind.UnaryOp's own
+	// numbering.
+	CategoryNativeUnaryOperator
+	// CategoryNativeDivisorProperty is the vocabulary of divisor proofs a
+	// native publication column names.
+	CategoryNativeDivisorProperty
+	// CategoryNativeTruthinessClass is the vocabulary of branch-condition truth
+	// verdicts a native publication column names.
+	CategoryNativeTruthinessClass
+	// CategoryNativeBranchPartition is the vocabulary of branch geometries a
+	// native publication column names.
+	CategoryNativeBranchPartition
+	// CategoryNativeBranchArm is the vocabulary of conditional arms a proved
+	// partition names dead.
+	CategoryNativeBranchArm
+	// CategoryNativeNumericOverflow is the vocabulary of arithmetic overflow
+	// disciplines a native publication column names. Its ordinals are
+	// value.NumericOverflow's own numbering.
+	CategoryNativeNumericOverflow
 	categoryLimit
 )
 

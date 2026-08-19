@@ -18,28 +18,22 @@
           "name": "at least 1 proven representation.exact row(s)",
           "lane": "values",
           "family": "representation",
-          "value_contains": [
-            "exact"
-          ],
+          "exact": "present",
           "trust": "proven",
           "min": 1
         },
         {
           "name": "at most 0 representation.integer row(s)",
           "family": "representation",
-          "value_contains": [
-            "integer"
-          ],
+          "representation": "integer",
           "max": 0
         },
         {
           "name": "representation row",
           "lane": "values",
           "family": "representation",
-          "value_contains": [
-            "exact=true",
-            "representation=float"
-          ],
+          "exact": "true",
+          "representation": "float",
           "trust": "proven",
           "min": 1
         }

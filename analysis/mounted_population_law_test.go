@@ -1,7 +1,6 @@
 package analysis
 
 import (
-	"github.com/wippyai/go-lua/analysis/result"
 	"testing"
 
 	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
@@ -9,8 +8,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/program/link/mounted"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
-	"github.com/wippyai/go-lua/domain/composite"
-	publication "github.com/wippyai/go-lua/domain/composite/publication"
 	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
@@ -126,21 +123,28 @@ func TestMountedObservationCensusCapturesTheCompiledObservationSites(t *testing.
 				if site.Kind != observation.Kind || site.Location != observation.Location {
 					t.Fatalf("census site %s = kind %v span %+v, observed kind %v span %+v", observation.Local, site.Kind, site.Location, observation.Kind, observation.Location)
 				}
-				if observation.Kind != structure.DiagnosticObservationBranchCondition {
+				points, producers, produced := mountedPopulationGeometry(observation)
+				if !produced {
 					if site.ProducerCount() != 0 {
 						t.Fatalf("static census site %s carries %d producers", observation.Local, site.ProducerCount())
 					}
 					continue
 				}
-				branches++
-				if site.ValueID != coordinates[observation.ValueIndex].id {
-					t.Fatalf("census site %s value %s, observed coordinate %s", observation.Local, site.ValueID, coordinates[observation.ValueIndex].id)
+				if observation.Kind == structure.DiagnosticObservationBranchCondition {
+					branches++
 				}
-				if site.ProducerCount() != len(observation.Producers) {
-					t.Fatalf("census site %s carries %d producers, observed %d", observation.Local, site.ProducerCount(), len(observation.Producers))
+				coordinate, measured := observation.Coordinate()
+				if !measured {
+					t.Fatalf("census site %s measures no coordinate", observation.Local)
 				}
-				geometry := make(map[anadiag.Producer]struct{}, len(observation.Producers))
-				for _, producer := range observation.Producers {
+				if site.ValueID != coordinates[coordinate].id {
+					t.Fatalf("census site %s value %s, observed coordinate %s", observation.Local, site.ValueID, coordinates[coordinate].id)
+				}
+				if site.ProducerCount() != len(producers) {
+					t.Fatalf("census site %s carries %d producers, observed %d", observation.Local, site.ProducerCount(), len(producers))
+				}
+				geometry := make(map[anadiag.Producer]struct{}, len(producers))
+				for _, producer := range producers {
 					geometry[producer] = struct{}{}
 				}
 				anchors := make(map[identity.ContentID]struct{}, site.ProducerCount())
@@ -155,10 +159,10 @@ func TestMountedObservationCensusCapturesTheCompiledObservationSites(t *testing.
 					}
 					anchors[producer.Anchor] = struct{}{}
 				}
-				if len(anchors) != len(observation.Points) {
-					t.Fatalf("census site %s anchors %d evidence points, the branch carries %d", observation.Local, len(anchors), len(observation.Points))
+				if len(anchors) != len(points) {
+					t.Fatalf("census site %s anchors %d evidence points, the population carries %d", observation.Local, len(anchors), len(points))
 				}
-				for _, point := range observation.Points {
+				for _, point := range points {
 					if _, anchored := anchors[point]; !anchored {
 						t.Fatalf("census site %s leaves evidence point %s unanchored", observation.Local, point)
 					}
@@ -192,34 +196,60 @@ func TestObservationPublicationsDeriveFromSealedGeometry(t *testing.T) {
 			if !geometryOK {
 				t.Fatal("result geometry")
 			}
-			got, ok := anadiag.Publications(geometry.BranchObservations)
-			if !ok {
-				t.Fatal("observation publications")
-			}
-			seen := make(map[result.Point]identity.ContentID, len(got))
-			for _, row := range got {
-				if !row.Mount.Available() || !row.Point.Available() || !row.Key.Available() {
-					t.Fatal("publication row missing identities")
+			// Both produced-value populations publish through the same
+			// boundary, each under the observation family its own population
+			// issues, so the law is stated over both rather than over the one
+			// that happened to be wired first. The address is the producing
+			// occurrence's: one statement carries one base evidence point and
+			// as many producers as it has measured values, so an anchor may
+			// repeat while an address may not.
+			for _, population := range [][]anadiag.Observation{geometry.BranchObservations, geometry.ConformanceObservations} {
+				got, ok := anadiag.Publications(population)
+				if !ok {
+					t.Fatal("observation publications")
 				}
-				point := result.Point{Mount: row.Mount, Point: row.Point}
-				if _, duplicate := seen[point]; duplicate {
-					t.Fatalf("publication repeats evidence point %s", row.Point)
-				}
-				seen[point] = row.Key
-			}
-			for _, observation := range geometry.BranchObservations {
-				for _, producer := range observation.Producers {
-					key, keyed := seen[result.Point{Mount: observation.Mount, Point: producer.Anchor}]
-					if !keyed {
-						t.Fatalf("evidence point %s has no publication", producer.Anchor)
+				seen := make(map[identity.ContentID]identity.ContentID, len(got))
+				for _, row := range got {
+					if !row.Mount.Available() || !row.Point.Available() || !row.Key.Available() {
+						t.Fatal("publication row missing identities")
 					}
-					family, familyOK := composite.ObservationProducerForPopulationKind(structure.DiagnosticObservationBranchCondition.Key())
-					want, wantOK := publication.BranchValueObservationID(observation.Mount, producer.Point, family)
-					if !familyOK || !wantOK || key != want {
-						t.Fatalf("publication %s != branch value observation %s", key, want)
+					if _, duplicate := seen[row.Key]; duplicate {
+						t.Fatalf("publication repeats observation address %s", row.Key)
+					}
+					seen[row.Key] = row.Point
+				}
+				for _, observation := range population {
+					points, producers, _ := mountedPopulationGeometry(observation)
+					anchors := make(map[identity.ContentID]struct{}, len(points))
+					for _, point := range points {
+						anchors[point] = struct{}{}
+					}
+					for _, producer := range producers {
+						want, wantOK := anadiag.ValueObservationAddress(observation.Kind, observation.Mount, producer.Point)
+						anchor, published := seen[want]
+						if !wantOK || !published {
+							t.Fatalf("producing occurrence %s has no publication", producer.Point)
+						}
+						if _, based := anchors[anchor]; !based {
+							t.Fatalf("publication of %s is indexed by %s, which is no evidence point of its row", producer.Point, anchor)
+						}
 					}
 				}
 			}
 		})
+	}
+}
+
+// mountedPopulationGeometry is the produced-value read of one observed row:
+// the base evidence points and the producers that must anchor to them. A
+// static population answers false and carries neither.
+func mountedPopulationGeometry(observation anadiag.Observation) ([]identity.ContentID, []anadiag.Producer, bool) {
+	switch observation.Kind {
+	case structure.DiagnosticObservationBranchCondition:
+		return observation.Branch.Points, observation.Branch.Producers, true
+	case structure.DiagnosticObservationTypeConformance:
+		return observation.Conformance.Evidence, observation.Conformance.Producers, true
+	default:
+		return nil, nil, false
 	}
 }

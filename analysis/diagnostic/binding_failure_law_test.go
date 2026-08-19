@@ -3,7 +3,12 @@ package diagnostic
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema"
+	schemadiag "github.com/wippyai/go-lua/analysis/schema/diagnostic"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/composite"
+	"github.com/wippyai/go-lua/domain/runtimekind"
 )
 
 // The mount phase rejects one axis's own authority. Which axis that is belongs
@@ -86,5 +91,76 @@ func TestPostMountDerivationKeepsItsOwnVerdict(t *testing.T) {
 	}
 	if ProgramBindingFailureHeapIndex.String() != "heap-index" || ProgramBindingFailureTargetCatalog.String() != "target-catalog" {
 		t.Fatalf("a derivation verdict lost its own name: %q %q", ProgramBindingFailureHeapIndex, ProgramBindingFailureTargetCatalog)
+	}
+}
+
+// TestConformanceObservationRequiresProducerGeometry states that a
+// type-conformance row is admitted only with the execution geometry its
+// measured value is read at. The value a conformance subject judges is
+// published on the observation column of the rule occurrence that produces it,
+// so a row that reached the collector without producers would name no readable
+// address and could only abstain.
+func TestConformanceObservationRequiresProducerGeometry(t *testing.T) {
+	point := identity.ContentID{1}
+	payload := Conformance{
+		Site:        schemadiag.SiteCallArgument,
+		Owner:       identity.ContentID{2},
+		Measured:    identity.ContentID{3},
+		Declared:    identity.ContentID{4},
+		Span:        identity.ContentID{5},
+		DeclaredMay: runtimekind.Bit(runtimekind.String),
+		Target:      "string",
+		Evidence:    []identity.ContentID{point},
+	}
+	if payload.Available() {
+		t.Fatal("a conformance row without producer geometry was admitted")
+	}
+	payload.Producers = []Producer{{
+		Key:        schema.Key("value-transfer"),
+		Occurrence: identity.ContentID{6},
+		Point:      identity.ContentID{7},
+		Anchor:     point,
+	}}
+	if !payload.Available() {
+		t.Fatal("a conformance row with one anchored producer was refused")
+	}
+	payload.Producers[0].Anchor = identity.ContentID{8}
+	if payload.Available() {
+		t.Fatal("a producer anchored outside the row's evidence points was admitted")
+	}
+	// One measured value established on two paths keeps both producers: the
+	// collector joins the value over all of them, and dropping either would
+	// abstain on a violation the program can carry.
+	payload.Producers = []Producer{
+		{Key: schema.Key("value-transfer"), Occurrence: identity.ContentID{6}, Point: identity.ContentID{7}, Anchor: point},
+		{Key: schema.Key("value-transfer"), Occurrence: identity.ContentID{9}, Point: identity.ContentID{10}, Anchor: point},
+	}
+	if !payload.Available() {
+		t.Fatal("a value produced on two paths at one evidence point was refused")
+	}
+	payload.Producers[1].Point = payload.Producers[0].Point
+	if payload.Available() {
+		t.Fatal("two producers claiming one execution point were admitted")
+	}
+}
+
+// TestConformanceSubjectsAddressTheirOwnProducer states the addressing law a
+// statement with several measured values depends on. Two conformance subjects
+// of one statement share a base evidence point and differ only in the
+// occurrence that produces their value, so an address derived from the shared
+// point would give both the same column. The address is the producer's.
+func TestConformanceSubjectsAddressTheirOwnProducer(t *testing.T) {
+	mount := identity.ContentID{20}
+	first, firstOK := ValueObservationAddress(structure.DiagnosticObservationTypeConformance, mount, identity.ContentID{21})
+	second, secondOK := ValueObservationAddress(structure.DiagnosticObservationTypeConformance, mount, identity.ContentID{22})
+	if !firstOK || !secondOK || !first.Available() || !second.Available() {
+		t.Fatal("the type-conformance population issues no observation address")
+	}
+	if first == second {
+		t.Fatal("two producing occurrences of one mount share an observation address")
+	}
+	branch, branchOK := ValueObservationAddress(structure.DiagnosticObservationBranchCondition, mount, identity.ContentID{21})
+	if !branchOK || branch != first {
+		t.Fatal("one produced value at one occurrence is published on two columns")
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	schemadiag "github.com/wippyai/go-lua/analysis/schema/diagnostic"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
@@ -181,12 +182,50 @@ return identity(1)
 		location, locationOK := row.Location()
 		position, positionOK := payload.Position()
 		if !payloadOK || !locationOK || !positionOK || position != 0 ||
-			!payload.CallID().Available() || !payload.ArgumentID().Available() ||
+			!payload.OwnerID().Available() || !payload.MeasuredValueID().Available() ||
 			!payload.DeclaredStaticTypeID().Available() || location.File != "conformance-call.lua" {
 			t.Fatalf("selected call-argument observation is incomplete: payload=%v location=%+v", payloadOK, location)
 		}
 	}
 	if rows != 1 {
 		t.Fatalf("type-conformance rows = %d, want 1 (the selected identity(1) argument)", rows)
+	}
+}
+
+// TestDeclaredBindAndWriteIssueAssignmentConformance states the assignment half
+// of the conformance relation. A cell authored with a declared type is measured
+// wherever a value is written into it - the initializer that binds it and every
+// later write - and an undeclared cell is measured nowhere, so the population is
+// the declaration's, not the statement's.
+func TestDeclaredBindAndWriteIssueAssignmentConformance(t *testing.T) {
+	artifact := compileStaticReferenceLeafArtifact(t, "conformance-assign.lua", `
+local declared: number = 1
+declared = 2
+local inferred = 3
+inferred = 4
+return declared + inferred
+`)
+	sites := make(map[uint32]int)
+	for index := 0; index < artifact.DiagnosticObservationCount(); index++ {
+		row, rowOK := artifact.DiagnosticObservationAt(index)
+		if !rowOK {
+			t.Fatalf("DiagnosticObservationAt(%d)", index)
+		}
+		if row.Kind() != structure.DiagnosticObservationTypeConformance {
+			continue
+		}
+		payload, payloadOK := row.TypeConformance()
+		location, locationOK := row.Location()
+		if !payloadOK || !locationOK || location.File != "conformance-assign.lua" ||
+			!payload.OwnerID().Available() || !payload.MeasuredValueID().Available() || !payload.DeclaredStaticTypeID().Available() {
+			t.Fatalf("assignment observation is incomplete: payload=%v location=%+v", payloadOK, location)
+		}
+		if payload.Site() != schemadiag.SiteAssignment {
+			t.Fatalf("observation at %d:%d carries site %v", location.StartLine, location.StartCol, payload.Site())
+		}
+		sites[location.StartLine]++
+	}
+	if len(sites) != 2 || sites[2] != 1 || sites[3] != 1 {
+		t.Fatalf("assignment conformance rows by line = %v, want one at the declared bind and one at its write", sites)
 	}
 }

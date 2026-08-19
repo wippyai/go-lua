@@ -25,9 +25,7 @@
           "name": "divisor_property row",
           "lane": "values",
           "family": "divisor_property",
-          "value_contains": [
-            "divisor=nonzero_not_minus_one"
-          ],
+          "divisor": "nonzero_not_minus_one",
           "trust": "proven",
           "min": 1
         },
@@ -35,14 +33,11 @@
           "name": "scalar_operator row",
           "lane": "values",
           "family": "scalar_operator",
-          "value_contains": [
-            "dispatch=primitive",
-            "divisor=nonzero_not_minus_one",
-            "left=integer",
-            "overflow=closed_integer",
-            "result=integer",
-            "right=integer"
-          ],
+          "representation": "integer",
+          "left": "integer",
+          "right": "integer",
+          "overflow": "closed_integer",
+          "divisor": "nonzero_not_minus_one",
           "trust": "proven",
           "min": 1
         }

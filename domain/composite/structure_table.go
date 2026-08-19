@@ -235,6 +235,7 @@ func structureContributions() [][]structure.Spec {
 		runtimekind.StructureSpecs(),
 		constraint.StructureSpecs(),
 		diagnosticVocabulary(),
+		structure.NativePublicationSpecs(),
 		semanticRoleVocabulary(),
 		observationRoleVocabulary(),
 		queryRoleVocabulary(),

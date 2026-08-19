@@ -6,6 +6,10 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
 // NativePublicationLane is the closed public partition of native analysis
@@ -238,14 +242,174 @@ func (row NativePublication) Occurrence() string {
 	return value.occurrence
 }
 
-// Value preserves exact-empty publication: ok distinguishes an absent value
-// from a deliberately published empty value.
-func (row NativePublication) Value() (string, bool) {
+// The typed column surface. A native row publishes facts, not a sentence:
+// every accessor below reports one column and whether the row publishes it, so
+// no consumer recovers a fact by taking a rendered string apart.
+
+// Exact reports that the published carrier is the value's exact carrier rather
+// than a widened one.
+func (row NativePublication) Exact() bool {
 	value, ok := row.resolve()
-	if !ok || !value.valueOK {
-		return "", false
+	return ok && value.content.exact
+}
+
+// Literal is the proved constant: its kind and its exact bits. Infinities,
+// NaN, and signed zero are ordinary members of this column.
+func (row NativePublication) Literal() (keyspace.LiteralValue, bool) {
+	value, ok := row.resolve()
+	if !ok || !value.content.literalAvailable() {
+		return keyspace.LiteralValue{}, false
 	}
-	return value.value, true
+	return value.content.literal, true
+}
+
+// ScalarRepresentation is the carrier a proved exact scalar is published
+// under, including Lua nil.
+func (row NativePublication) ScalarRepresentation() (NativeScalarRepresentation, bool) {
+	value, ok := row.resolve()
+	if !ok || !value.content.scalar.Available() {
+		return NativeScalarRepresentationInvalid, false
+	}
+	return value.content.scalar, true
+}
+
+// Representation is the proved numeric carrier of the row's result.
+func (row NativePublication) Representation() (programschema.NumericRepresentation, bool) {
+	value, ok := row.resolve()
+	if !ok || !value.content.representation.Valid() {
+		return programschema.NumericRepresentationInvalid, false
+	}
+	return value.content.representation, true
+}
+
+// LeftRepresentation and RightRepresentation are the proved numeric carriers of
+// a binary operator's operands; Operand is the carrier of a unary operator's
+// only operand.
+func (row NativePublication) LeftRepresentation() (programschema.NumericRepresentation, bool) {
+	value, ok := row.resolve()
+	if !ok || !value.content.left.Valid() {
+		return programschema.NumericRepresentationInvalid, false
+	}
+	return value.content.left, true
+}
+
+func (row NativePublication) RightRepresentation() (programschema.NumericRepresentation, bool) {
+	value, ok := row.resolve()
+	if !ok || !value.content.right.Valid() {
+		return programschema.NumericRepresentationInvalid, false
+	}
+	return value.content.right, true
+}
+
+func (row NativePublication) OperandRepresentation() (programschema.NumericRepresentation, bool) {
+	value, ok := row.resolve()
+	if !ok || !value.content.operand.Valid() {
+		return programschema.NumericRepresentationInvalid, false
+	}
+	return value.content.operand, true
+}
+
+// BinaryOperator and UnaryOperator are the proved operator. A row publishes at
+// most one of them.
+func (row NativePublication) BinaryOperator() (flowkind.BinaryOp, bool) {
+	value, ok := row.resolve()
+	if !ok || !flowkind.IsBinaryArithmetic(value.content.binary) {
+		return 0, false
+	}
+	return value.content.binary, true
+}
+
+func (row NativePublication) UnaryOperator() (flowkind.UnaryOp, bool) {
+	value, ok := row.resolve()
+	if !ok || value.content.unary == 0 {
+		return 0, false
+	}
+	return value.content.unary, true
+}
+
+// Overflow is the arithmetic discipline the proved operator evaluates under.
+func (row NativePublication) Overflow() (valuedomain.NumericOverflow, bool) {
+	value, ok := row.resolve()
+	if !ok || !value.content.overflow.Valid() {
+		return valuedomain.NumericOverflowInvalid, false
+	}
+	return value.content.overflow, true
+}
+
+// Divisor is the divisor proof an integer division carries.
+func (row NativePublication) Divisor() (NativeDivisorProperty, bool) {
+	value, ok := row.resolve()
+	if !ok || !value.content.divisor.Available() {
+		return NativeDivisorPropertyInvalid, false
+	}
+	return value.content.divisor, true
+}
+
+// Truthiness is the branch condition's verdict over its whole evidence set. Its
+// unobserved member is an incomplete fold, which is not the same answer as a
+// condition proved to take both truths.
+func (row NativePublication) Truthiness() (NativeTruthinessClass, bool) {
+	value, ok := row.resolve()
+	if !ok || !value.content.truthiness.Available() {
+		return NativeTruthinessClassInvalid, false
+	}
+	return value.content.truthiness, true
+}
+
+// Partition is the branch geometry the truth fold licenses.
+func (row NativePublication) Partition() (NativeBranchPartition, bool) {
+	value, ok := row.resolve()
+	if !ok || !value.content.partition.Available() {
+		return NativeBranchPartitionInvalid, false
+	}
+	return value.content.partition, true
+}
+
+// DeadArm is the arm a proved partition proves dead, and DeadArmReachable is
+// that arm's reachability. A row that proves no partition publishes neither.
+func (row NativePublication) DeadArm() (NativeBranchArm, bool) {
+	value, ok := row.resolve()
+	if !ok || !value.content.deadArm.Available() {
+		return NativeBranchArmInvalid, false
+	}
+	return value.content.deadArm, true
+}
+
+func (row NativePublication) DeadArmReachable() (bool, bool) {
+	value, ok := row.resolve()
+	if !ok || !value.content.deadArm.Available() {
+		return false, false
+	}
+	return value.content.deadArmReachable, true
+}
+
+// Column resolves one vocabulary-valued column to its member ordinal in the
+// column's declared category. A renderer reads the declared spelling at that
+// ordinal; nothing here renders a name of its own.
+func (row NativePublication) Column(column NativePublicationColumn) (uint16, bool) {
+	value, ok := row.resolve()
+	if !ok || !column.Available() {
+		return 0, false
+	}
+	return value.content.column(column)
+}
+
+// EvidencePointCount and EvidencePointAt are the row's evidence set: the whole
+// set of points the row was folded over, in ascending identity order.
+func (row NativePublication) EvidencePointCount() int {
+	value, ok := row.resolve()
+	if !ok {
+		return 0
+	}
+	return len(value.content.points)
+}
+
+func (row NativePublication) EvidencePointAt(index int) (identity.ContentID, bool) {
+	value, ok := row.resolve()
+	if !ok || index < 0 || index >= len(value.content.points) {
+		return identity.ContentID{}, false
+	}
+	return value.content.points[index], true
 }
 func (row NativePublication) Provenance() (NativePublicationProvenance, bool) {
 	value, ok := row.resolve()
@@ -375,8 +539,7 @@ type nativePublicationRow struct {
 	term         string
 	subject      string
 	occurrence   string
-	value        string
-	valueOK      bool
+	content      nativePublicationContent
 	provenance   NativePublicationProvenance
 	validity     NativePublicationValidity
 	provenanceOK bool
@@ -387,7 +550,7 @@ func (row nativePublicationRow) valid() bool {
 	semantic, semanticOK := row.family.semanticID()
 	if !row.id.Available() || !semanticOK || row.semantic != semantic || row.lane != NativePublicationLaneValues ||
 		row.kind != NativePublicationKindValue || !row.trust.Valid() || row.key == "" || row.module == "" ||
-		!row.valueOK || !row.provenanceOK || !row.validityOK || !row.provenance.valid() || !row.validity.valid() {
+		!row.content.valid(row.family) || !row.provenanceOK || !row.validityOK || !row.provenance.valid() || !row.validity.valid() {
 		return false
 	}
 	id, ok := nativePublicationRowID(row)
@@ -451,22 +614,23 @@ func nativePublicationRowID(row nativePublicationRow) (identity.ContentID, bool)
 	var enums [8]byte
 	binary.BigEndian.PutUint64(enums[:], uint64(row.lane)|uint64(row.kind)<<8|uint64(row.family)<<16|uint64(row.trust)<<24)
 	var flags [1]byte
-	if row.valueOK {
+	if row.provenanceOK {
 		flags[0] |= 1
 	}
-	if row.provenanceOK {
-		flags[0] |= 2
-	}
 	if row.validityOK {
-		flags[0] |= 4
+		flags[0] |= 2
 	}
 	var ordinals [24]byte
 	binary.BigEndian.PutUint64(ordinals[0:8], row.validity.establishedOrdinal)
 	binary.BigEndian.PutUint64(ordinals[8:16], row.validity.revokedOrdinal)
-	return identity.DeriveContentID(
-		"analysis/native-publication/row/v1",
-		row.semantic[:], enums[:], flags[:], []byte(row.key), []byte(row.module), []byte(row.term), []byte(row.subject), []byte(row.occurrence), []byte(row.value),
+	// The identity is derived from the row's typed content. A column is one
+	// framed part of the preimage, so two rows are the same row exactly when
+	// their columns agree; no rendering of any column enters the digest, and a
+	// respelling therefore cannot mint or merge an identity.
+	parts := [][]byte{
+		row.semantic[:], enums[:], flags[:], []byte(row.key), []byte(row.module), []byte(row.term), []byte(row.subject), []byte(row.occurrence),
 		row.provenance.mount[:], row.provenance.artifact[:], row.provenance.local[:], row.provenance.body[:], row.provenance.point[:], row.provenance.span[:],
 		row.validity.event[:], row.validity.established[:], row.validity.revoked[:], ordinals[:],
-	)
+	}
+	return identity.DeriveContentID("analysis/native-publication/row/v2", append(parts, row.content.contentParts()...)...)
 }

@@ -24,42 +24,32 @@
         {
           "name": "at most 0 branch_partition.always_not_taken row(s)",
           "family": "branch_partition",
-          "value_contains": [
-            "always_not_taken"
-          ],
+          "partition": "always_not_taken",
           "max": 0
         },
         {
           "name": "at most 0 branch_partition.always_taken row(s)",
           "family": "branch_partition",
-          "value_contains": [
-            "always_taken"
-          ],
+          "partition": "always_taken",
           "max": 0
         },
         {
           "name": "at most 0 truthiness_class.always_falsy row(s)",
           "family": "truthiness_class",
-          "value_contains": [
-            "always_falsy"
-          ],
+          "truthiness": "always_falsy",
           "max": 0
         },
         {
           "name": "at most 0 truthiness_class.always_truthy row(s)",
           "family": "truthiness_class",
-          "value_contains": [
-            "always_truthy"
-          ],
+          "truthiness": "always_truthy",
           "max": 0
         },
         {
           "name": "truthiness_class row",
           "lane": "values",
           "family": "truthiness_class",
-          "value_contains": [
-            "class=dynamic_nil_or_false"
-          ],
+          "truthiness": "dynamic_nil_or_false",
           "trust": "proven",
           "min": 1
         },
@@ -67,18 +57,14 @@
           "name": "truthiness_class must not carry truthy",
           "lane": "values",
           "family": "truthiness_class",
-          "value_contains": [
-            "truthy"
-          ],
+          "truthiness": "always_truthy",
           "max": 0
         },
         {
           "name": "branch_partition row",
           "lane": "values",
           "family": "branch_partition",
-          "value_contains": [
-            "partition=dynamic"
-          ],
+          "partition": "dynamic",
           "trust": "proven",
           "min": 1
         },
@@ -86,18 +72,14 @@
           "name": "branch_partition must not carry dead_arm",
           "lane": "values",
           "family": "branch_partition",
-          "value_contains": [
-            "dead_arm"
-          ],
+          "dead_arm": "present",
           "max": 0
         },
         {
           "name": "branch_partition must not carry dead_arm_reachable",
           "lane": "values",
           "family": "branch_partition",
-          "value_contains": [
-            "dead_arm_reachable"
-          ],
+          "dead_arm_reachable": "present",
           "max": 0
         }
       ]

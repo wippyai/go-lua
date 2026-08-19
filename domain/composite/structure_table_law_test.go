@@ -51,7 +51,21 @@ func TestStructureTableSeals(t *testing.T) {
 		structure.CategoryIssuanceInput:         4,
 		structure.CategoryIssuanceRequirement:   2,
 		structure.CategoryIssuanceStage:         5,
-		structure.CategorySemanticRole:          93,
+		structure.CategorySemanticRole:          94,
+		// The native publication column vocabularies: three numeric carriers,
+		// five exact scalar carriers, seven primitive arithmetic operators,
+		// four unary operators, three divisor proofs, four truthiness classes,
+		// four branch partitions, two conditional arms, and three overflow
+		// disciplines.
+		structure.CategoryNativeNumericRepresentation: 3,
+		structure.CategoryNativeScalarRepresentation:  5,
+		structure.CategoryNativeArithmeticOperator:    7,
+		structure.CategoryNativeUnaryOperator:         4,
+		structure.CategoryNativeDivisorProperty:       3,
+		structure.CategoryNativeTruthinessClass:       4,
+		structure.CategoryNativeBranchPartition:       4,
+		structure.CategoryNativeBranchArm:             2,
+		structure.CategoryNativeNumericOverflow:       3,
 	}
 	declared := 0
 	for category, size := range sizes {

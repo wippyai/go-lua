@@ -18,13 +18,11 @@
           "name": "representation row",
           "lane": "values",
           "family": "representation",
-          "value_contains": [
-            "left=integer",
-            "operator=pow",
-            "overflow=ieee754",
-            "result_representation=float",
-            "right=integer"
-          ],
+          "representation": "float",
+          "left": "integer",
+          "right": "integer",
+          "operator": "pow",
+          "overflow": "ieee754",
           "trust": "proven",
           "min": 1
         }

@@ -210,3 +210,38 @@ func TestDiagnosticCollectionDirectoryIsTotalOverBranchRows(t *testing.T) {
 		}
 	}
 }
+
+// TestBranchDiagnosticsCollectFromTheirOwnPopulationObservation states where a
+// solver-observed diagnostic may read its measured value from. The value a
+// branch-lane row judges is produced by a rule occurrence, and the only column
+// published at that occurrence is the observation family issued for the row's
+// own population. A point-keyed query column is published at selected points
+// only, so a row that named one would read an absent coordinate at every site
+// and abstain silently instead of judging.
+func TestBranchDiagnosticsCollectFromTheirOwnPopulationObservation(t *testing.T) {
+	directory, directoryOK := DiagnosticCollectionDirectory()
+	if !directoryOK || len(directory) == 0 {
+		t.Fatal("diagnostic collection directory unavailable")
+	}
+	issued := make(map[schema.Key]IssuedObservation, len(ObservationIssuance()))
+	for _, observation := range ObservationIssuance() {
+		issued[observation.Key] = observation
+	}
+	for _, row := range directory {
+		if row.Collection.Surface != schema.SurfaceKindObservation {
+			t.Fatalf("branch diagnostic %q collects from surface %d; a produced value is only published on its observation family",
+				row.Code, row.Collection.Surface)
+		}
+		observation, found := issued[row.Collection.Key]
+		if !found {
+			t.Fatalf("branch diagnostic %q names unissued observation %q", row.Code, row.Collection.Key)
+		}
+		if !row.Population.Available() {
+			t.Fatalf("branch diagnostic %q names no population", row.Code)
+		}
+		if observation.Population.Kind.Key != row.Population {
+			t.Fatalf("branch diagnostic %q measures population %q but collects observation %q of population %q",
+				row.Code, row.Population, observation.Key, observation.Population.Kind.Key)
+		}
+	}
+}

@@ -18,13 +18,11 @@
           "name": "representation row",
           "lane": "values",
           "family": "representation",
-          "value_contains": [
-            "left=integer",
-            "operator=div",
-            "overflow=ieee754",
-            "result_representation=float",
-            "right=integer"
-          ],
+          "representation": "float",
+          "left": "integer",
+          "right": "integer",
+          "operator": "div",
+          "overflow": "ieee754",
           "trust": "proven",
           "min": 1
         },
@@ -32,9 +30,7 @@
           "name": "divisor_property row",
           "lane": "values",
           "family": "divisor_property",
-          "value_contains": [
-            "divisor=not_applicable"
-          ],
+          "divisor": "not_applicable",
           "trust": "proven",
           "min": 1
         }

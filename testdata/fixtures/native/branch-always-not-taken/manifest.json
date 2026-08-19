@@ -48,27 +48,21 @@
         {
           "name": "at most 0 branch_partition.always_taken row(s)",
           "family": "branch_partition",
-          "value_contains": [
-            "always_taken"
-          ],
+          "partition": "always_taken",
           "max": 0
         },
         {
           "name": "at most 0 branch_partition.dynamic row(s)",
           "family": "branch_partition",
-          "value_contains": [
-            "dynamic"
-          ],
+          "partition": "dynamic",
           "max": 0
         },
         {
           "name": "constant_value row",
           "lane": "values",
           "family": "constant_value",
-          "value_contains": [
-            "representation=integer",
-            "value=3"
-          ],
+          "literal": "3",
+          "representation": "integer",
           "trust": "proven",
           "min": 1
         },
@@ -76,11 +70,9 @@
           "name": "branch_partition row",
           "lane": "values",
           "family": "branch_partition",
-          "value_contains": [
-            "dead_arm=then",
-            "dead_arm_reachable=false",
-            "partition=always_not_taken"
-          ],
+          "partition": "always_not_taken",
+          "dead_arm": "then",
+          "dead_arm_reachable": "false",
           "trust": "proven",
           "min": 1
         }

@@ -173,6 +173,7 @@ func canonicalContributions() [][]Spec {
 		authored(CategoryIssuanceRequirement, issuanceRequirements),
 		authored(CategoryIssuanceStage, issuanceStages),
 		authored(CategorySemanticRole, semanticRoles),
+		NativePublicationSpecs(),
 	}
 }
 

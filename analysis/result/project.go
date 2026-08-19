@@ -67,9 +67,9 @@ func Detach(
 	projection := &Projection{Result: result}
 	if policy != nil && len(policy.Enabled) != 0 {
 		report := anadiag.NewReport(result.SourceID(), result.ContentID())
-		summaries, summariesOK := anadiag.QuerySummaries(queries)
-		if !summariesOK || !anadiag.CollectReport(report, *policy, geometry.BranchObservations, geometry.StaticObservations, diagnosticObservations, summaries, len(geometry.values), valueSchema, published, queryPlan, observationPlan, selects) {
-			return nil, false
+		if !anadiag.CollectReport(report, *policy, geometry.BranchObservations, geometry.ConformanceObservations, geometry.StaticObservations,
+			diagnosticObservations, len(geometry.values), valueSchema, published, observationPlan, selects) {
+				return nil, false
 		}
 		if !report.Available() {
 			return nil, false
@@ -233,8 +233,9 @@ type Geometry struct {
 	source             identity.ContentID
 	bodies             []GeometryBody
 	values             []identity.ContentID
-	BranchObservations []anadiag.Observation
-	StaticObservations []anadiag.Observation
+	BranchObservations     []anadiag.Observation
+	ConformanceObservations []anadiag.Observation
+	StaticObservations     []anadiag.Observation
 	PointBodies        map[Point][]int
 }
 
@@ -257,8 +258,9 @@ func Project(
 		source:             sourceID,
 		bodies:             make([]GeometryBody, 0),
 		values:             make([]identity.ContentID, len(coordinates)),
-		BranchObservations: make([]anadiag.Observation, 0, len(observations)),
-		StaticObservations: make([]anadiag.Observation, 0, len(observations)),
+		BranchObservations:      make([]anadiag.Observation, 0, len(observations)),
+		ConformanceObservations: make([]anadiag.Observation, 0, len(observations)),
+		StaticObservations:      make([]anadiag.Observation, 0, len(observations)),
 		PointBodies:        make(map[Point][]int),
 	}
 	for _, observation := range observations {
@@ -266,13 +268,17 @@ func Project(
 			return Geometry{}, false
 		}
 		copy := observation
-		copy.Points = append([]identity.ContentID(nil), observation.Points...)
-		copy.Producers = append([]anadiag.Producer(nil), observation.Producers...)
+		copy.Branch.Points = append([]identity.ContentID(nil), observation.Branch.Points...)
+		copy.Branch.Producers = append([]anadiag.Producer(nil), observation.Branch.Producers...)
+		copy.Conformance.Evidence = append([]identity.ContentID(nil), observation.Conformance.Evidence...)
+		copy.Conformance.Producers = append([]anadiag.Producer(nil), observation.Conformance.Producers...)
 		copy.Path = append([]string(nil), observation.Path...)
 		switch observation.Kind {
 		case structure.DiagnosticObservationBranchCondition:
 			geometry.BranchObservations = append(geometry.BranchObservations, copy)
-		case structure.DiagnosticObservationTypeReferenceUnresolved, structure.DiagnosticObservationValueReferenceUnresolved, structure.DiagnosticObservationTypeConformance:
+		case structure.DiagnosticObservationTypeConformance:
+			geometry.ConformanceObservations = append(geometry.ConformanceObservations, copy)
+		case structure.DiagnosticObservationTypeReferenceUnresolved, structure.DiagnosticObservationValueReferenceUnresolved:
 			geometry.StaticObservations = append(geometry.StaticObservations, copy)
 		default:
 			return Geometry{}, false
@@ -379,50 +385,25 @@ func Project(
 		}
 		geometry.values[index] = id
 	}
-	for _, observation := range geometry.BranchObservations {
-		if !observation.ID.Available() || !observation.Mount.Available() || !observation.Artifact.Available() ||
-			!observation.Local.Available() || len(observation.Producers) == 0 || uint64(observation.ValueIndex) >= uint64(len(coordinates)) ||
-			observation.Kind != structure.DiagnosticObservationBranchCondition {
-			return Geometry{}, false
-		}
-		artifactID, artifactOK := artifactIDs[observation.Mount]
-		if !artifactOK || artifactID != observation.Artifact {
-			return Geometry{}, false
-		}
-		coordinate := coordinates[observation.ValueIndex]
-		if coordinate.mount != observation.Mount {
-			return Geometry{}, false
-		}
-		seenPoints := make(map[identity.ContentID]struct{}, len(observation.Points))
-		for _, point := range observation.Points {
-			if !point.Available() {
+	// Branch conditions and conformance subjects are the produced-value
+	// populations: both name a Value coordinate and the occurrences that
+	// produce it. Their geometry law is stated once, on the observation row
+	// itself, and checked above; what remains here is the join this projection
+	// owns - the mount's artifact and the coordinate's mount.
+	for _, produced := range [][]anadiag.Observation{geometry.BranchObservations, geometry.ConformanceObservations} {
+		for _, observation := range produced {
+			coordinate, measured := observation.Coordinate()
+			if !observation.ID.Available() || !observation.Mount.Available() || !observation.Artifact.Available() ||
+				!observation.Local.Available() || !measured || uint64(coordinate) >= uint64(len(coordinates)) {
 				return Geometry{}, false
 			}
-			if _, duplicate := seenPoints[point]; duplicate {
+			artifactID, artifactOK := artifactIDs[observation.Mount]
+			if !artifactOK || artifactID != observation.Artifact {
 				return Geometry{}, false
 			}
-			seenPoints[point] = struct{}{}
-		}
-		seenAnchors := make(map[identity.ContentID]struct{}, len(observation.Producers))
-		seenExecution := make(map[identity.ContentID]struct{}, len(observation.Producers))
-		for _, producer := range observation.Producers {
-			if !producer.Key.Available() || !producer.Occurrence.Available() || !producer.Point.Available() || !producer.Anchor.Available() {
+			if coordinates[coordinate].mount != observation.Mount {
 				return Geometry{}, false
 			}
-			if _, known := seenPoints[producer.Anchor]; !known {
-				return Geometry{}, false
-			}
-			if _, duplicate := seenAnchors[producer.Anchor]; duplicate {
-				return Geometry{}, false
-			}
-			if _, duplicate := seenExecution[producer.Point]; duplicate {
-				return Geometry{}, false
-			}
-			seenAnchors[producer.Anchor] = struct{}{}
-			seenExecution[producer.Point] = struct{}{}
-		}
-		if len(seenAnchors) != len(seenPoints) {
-			return Geometry{}, false
 		}
 	}
 	for _, observation := range geometry.StaticObservations {

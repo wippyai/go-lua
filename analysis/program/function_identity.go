@@ -132,6 +132,14 @@ func callableCellID(bodyPath identity.ContentID, role, index uint64) identity.Co
 	})
 }
 
+// DeclaredStaticTypeID is the static type identity a canonical lexical Cell
+// was authored with. It is the same equation a callable formal's declared type
+// is resolved by, so a declared local and a declared parameter name one type
+// identity rather than two.
+func (input *Program) DeclaredStaticTypeID(cell keyspace.Term) (identity.ContentID, bool) {
+	return input.declaredStaticTypeID(cell)
+}
+
 func (input *Program) declaredStaticTypeID(cell keyspace.Term) (identity.ContentID, bool) {
 	if !input.Available() || cell == 0 {
 		return identity.ContentID{}, false

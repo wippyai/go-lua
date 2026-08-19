@@ -214,11 +214,9 @@ func CollectBranch(
 	guards []GuardSubject,
 	guardRows []ObservationKey,
 	valueWidth int,
-	calls []CallArgumentSubject,
-	summaries []QuerySummaryKey,
+	conformances []ConformanceSubject,
 	schema *valuedomain.Schema,
 	published *snapshot.Snapshot,
-	queryPlan snapshot.QueryPlan[identity.ContentID, engine.Answer],
 	observationPlan snapshot.QueryPlan[identity.ContentID, engine.Answer],
 	selects ChannelSelectInput,
 ) bool {
@@ -229,28 +227,29 @@ func CollectBranch(
 	if !directoryOK {
 		return false
 	}
-	var trueSeverity, falseSeverity, callArgumentSeverity, selectSeverity FindingSeverity
-	collectGuards, collectCallArguments, collectSelect := false, false, false
+	var trueSeverity, falseSeverity, selectSeverity FindingSeverity
+	collectGuards, collectSelect := false, false
+	conformanceSeverities := make(map[schemadiag.Site]FindingSeverity, 2)
 	for _, row := range directory {
 		severity, enabled := policy.EnabledFor(row.Code)
 		if !enabled {
 			continue
 		}
+		if row.Collection.Surface != declschema.SurfaceKindObservation {
+			return false
+		}
 		switch {
-		case row.Collection.Surface == declschema.SurfaceKindObservation:
-			switch row.Code {
-			case DiagnosticCodeAlwaysTrueGuard:
-				trueSeverity, collectGuards = severity, true
-			case DiagnosticCodeAlwaysFalseGuard:
-				falseSeverity, collectGuards = severity, true
-			case DiagnosticCodeChannelSelectExhaustiveness:
-				selectSeverity, collectSelect = severity, true
-			default:
+		case row.Population == structure.DiagnosticObservationTypeConformance.Key():
+			if !row.Site.Available() {
 				return false
 			}
-		case row.Collection.Surface == declschema.SurfaceKindQuery && row.Site == schemadiag.SiteCallArgument:
-			callArgumentSeverity, collectCallArguments = severity, true
-		case row.Collection.Surface == declschema.SurfaceKindQuery && row.Site == schemadiag.SiteAssignment:
+			conformanceSeverities[row.Site] = severity
+		case row.Code == DiagnosticCodeAlwaysTrueGuard:
+			trueSeverity, collectGuards = severity, true
+		case row.Code == DiagnosticCodeAlwaysFalseGuard:
+			falseSeverity, collectGuards = severity, true
+		case row.Code == DiagnosticCodeChannelSelectExhaustiveness:
+			selectSeverity, collectSelect = severity, true
 		default:
 			return false
 		}
@@ -258,7 +257,7 @@ func CollectBranch(
 	if collectGuards && (schema == nil || published == nil || !CollectGuardPolarity(report, guards, guardRows, valueWidth, schema, published, observationPlan, trueSeverity, falseSeverity)) {
 		return false
 	}
-	if collectCallArguments && (schema == nil || published == nil || !CollectCallArguments(report, calls, summaries, valueWidth, schema, published, queryPlan, callArgumentSeverity)) {
+	if len(conformanceSeverities) != 0 && (schema == nil || published == nil || !CollectConformance(report, conformances, valueWidth, schema, published, observationPlan, conformanceSeverities)) {
 		return false
 	}
 	if collectSelect && !CollectChannelSelect(report, selects, selectSeverity) {
@@ -272,13 +271,11 @@ func CollectBranch(
 func CollectReport(
 	report *DiagnosticReport,
 	policy DiagnosticPolicy,
-	branches, statics []Observation,
-	selected []ObservationKey,
-	summaries []QuerySummaryKey,
+	branches, conformances, statics []Observation,
+	branchRows []ObservationKey,
 	valueWidth int,
 	schema *valuedomain.Schema,
 	published *snapshot.Snapshot,
-	queryPlan snapshot.QueryPlan[identity.ContentID, engine.Answer],
 	observationPlan snapshot.QueryPlan[identity.ContentID, engine.Answer],
 	selects ChannelSelectInput,
 ) bool {
@@ -289,15 +286,15 @@ func CollectReport(
 	if !guardsOK {
 		return false
 	}
-	calls, callsOK := callArgumentSubjects(statics)
-	if !callsOK {
+	subjects, subjectsOK := conformanceSubjects(conformances)
+	if !subjectsOK {
 		return false
 	}
 	staticSubjects, staticsOK := staticSubjects(statics)
 	if !staticsOK {
 		return false
 	}
-	if !CollectBranch(report, policy, guards, selected, valueWidth, calls, summaries, schema, published, queryPlan, observationPlan, selects) {
+	if !CollectBranch(report, policy, guards, branchRows, valueWidth, subjects, schema, published, observationPlan, selects) {
 		return false
 	}
 	if !CollectStatic(report, staticSubjects, policy) {
@@ -332,31 +329,47 @@ func GuardSubjects(rows []Observation) ([]GuardSubject, bool) {
 	return subjects, true
 }
 
-func callArgumentSubjects(rows []Observation) ([]CallArgumentSubject, bool) {
-	subjects := make([]CallArgumentSubject, 0)
+func conformanceSubjects(rows []Observation) ([]ConformanceSubject, bool) {
+	subjects := make([]ConformanceSubject, 0, len(rows))
 	for _, row := range rows {
 		if row.Kind != structure.DiagnosticObservationTypeConformance {
-			continue
+			return nil, false
 		}
 		if !row.Available() || !row.Conformance.Available() {
 			return nil, false
 		}
-		if row.Site != schemadiag.SiteCallArgument {
-			continue
-		}
 		location, locationOK := NewLocation(row.Location.File, row.Location.StartLine, row.Location.StartCol, row.Location.EndLine, row.Location.EndCol)
-		id, idOK := RowID("diagnostic-finding/type-call-argument", row.Mount, row.Artifact, row.Local)
+		id, idOK := RowID(conformanceFindingRole(row.Site), row.Mount, row.Artifact, row.Local)
 		if !locationOK || !idOK {
 			return nil, false
 		}
-		subjects = append(subjects, CallArgumentSubject{
+		subjects = append(subjects, ConformanceSubject{
 			ID: row.ID, FindingID: id, Mount: row.Mount,
 			Location: location, Site: row.Site, Actual: row.Actual,
 			DeclaredMay: row.DeclaredMay, Target: row.Target,
-			Evidence: append([]identity.ContentID(nil), row.Evidence...),
+			Points: conformanceProducerPoints(row.Conformance.Producers),
 		})
 	}
 	return subjects, true
+}
+
+// conformanceProducerPoints names the occurrences whose value the subject is
+// measured at.
+func conformanceProducerPoints(producers []Producer) []identity.ContentID {
+	points := make([]identity.ContentID, 0, len(producers))
+	for _, producer := range producers {
+		points = append(points, producer.Point)
+	}
+	return points
+}
+
+// conformanceFindingRole keeps one finding identity per site, so an assignment
+// and a call argument reported at one observation never collide.
+func conformanceFindingRole(site schemadiag.Site) string {
+	if site == schemadiag.SiteAssignment {
+		return "diagnostic-finding/type-assignment"
+	}
+	return "diagnostic-finding/type-call-argument"
 }
 
 func staticSubjects(rows []Observation) ([]StaticSubject, bool) {
@@ -366,7 +379,7 @@ func staticSubjects(rows []Observation) ([]StaticSubject, bool) {
 			return nil, false
 		}
 		if row.Kind == structure.DiagnosticObservationTypeConformance {
-			continue
+			return nil, false
 		}
 		location, locationOK := NewLocation(row.Location.File, row.Location.StartLine, row.Location.StartCol, row.Location.EndLine, row.Location.EndCol)
 		id, idOK := RowID("diagnostic-finding", row.Mount, row.Artifact, row.Local)

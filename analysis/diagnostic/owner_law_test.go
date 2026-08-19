@@ -36,8 +36,8 @@ func TestReportImplementationLivesInThisPackage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(query), "func CollectCallArguments(") {
-		t.Fatal("call-argument collection implementation is not in analysis/diagnostic")
+	if !strings.Contains(string(query), "func CollectConformance(") {
+		t.Fatal("type-conformance collection implementation is not in analysis/diagnostic")
 	}
 	static, err := os.ReadFile(filepath.Join("collect_static.go"))
 	if err != nil {
@@ -57,7 +57,7 @@ func TestReportImplementationLivesInThisPackage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(attach), "func BranchValueObservations(") || !strings.Contains(string(attach), "func Publications(") {
+	if !strings.Contains(string(attach), "func ValueObservations(") || !strings.Contains(string(attach), "func Publications(") {
 		t.Fatal("observation attach and publication addressing are not in analysis/diagnostic")
 	}
 	for _, name := range []string{"diagnostic_report.go", "diagnostics.go"} {

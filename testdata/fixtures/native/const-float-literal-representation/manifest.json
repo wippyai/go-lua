@@ -24,19 +24,15 @@
         {
           "name": "at most 0 representation.integer row(s)",
           "family": "representation",
-          "value_contains": [
-            "integer"
-          ],
+          "representation": "integer",
           "max": 0
         },
         {
           "name": "constant_value row",
           "lane": "values",
           "family": "constant_value",
-          "value_contains": [
-            "representation=float",
-            "value=42.0"
-          ],
+          "literal": "42.0",
+          "representation": "float",
           "trust": "proven",
           "min": 1
         },
@@ -44,10 +40,8 @@
           "name": "representation row",
           "lane": "values",
           "family": "representation",
-          "value_contains": [
-            "exact=true",
-            "representation=float"
-          ],
+          "exact": "true",
+          "representation": "float",
           "trust": "proven",
           "min": 1
         }

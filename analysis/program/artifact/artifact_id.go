@@ -379,7 +379,7 @@ func artifactID(artifact *Artifact) identity.ContentID {
 			sink.add(bytesField(row.value.read), bytesField(row.value.cell), field{bytes: []byte(row.value.name), kind: fieldBytes})
 		case structure.DiagnosticObservationTypeConformance:
 			sink.add(
-				uintField(uint64(row.conformance.site)), bytesField(row.conformance.call), bytesField(row.conformance.argument),
+				uintField(uint64(row.conformance.site)), bytesField(row.conformance.owner), bytesField(row.conformance.value),
 				bytesField(row.conformance.declared), bytesField(row.conformance.span), uintField(uint64(row.conformance.position)),
 				uintField(uint64(len(row.conformance.points))),
 			)

@@ -1075,15 +1075,18 @@ func (payload diagnosticUnresolvedValue) Name() (string, bool) {
 }
 
 type diagnosticConformance struct {
-	call, argument, declared, span identity.ContentID
-	site                           schemadiag.Site
-	position                       uint32
-	points                         []identity.ContentID
+	owner, value, declared, span identity.ContentID
+	site                         schemadiag.Site
+	position                     uint32
+	points                       []identity.ContentID
 }
 
-func (payload diagnosticConformance) CallID() identity.ContentID { return payload.call }
-func (payload diagnosticConformance) ArgumentID() identity.ContentID {
-	return payload.argument
+// OwnerID is the statement that owns the measured site and MeasuredValueID the
+// semantic occurrence of the value it measures. Both populations of this row -
+// a direct-call actual and an initializer - carry the same pair.
+func (payload diagnosticConformance) OwnerID() identity.ContentID { return payload.owner }
+func (payload diagnosticConformance) MeasuredValueID() identity.ContentID {
+	return payload.value
 }
 func (payload diagnosticConformance) DeclaredStaticTypeID() identity.ContentID {
 	return payload.declared
@@ -1091,7 +1094,7 @@ func (payload diagnosticConformance) DeclaredStaticTypeID() identity.ContentID {
 func (payload diagnosticConformance) SpanID() identity.ContentID { return payload.span }
 func (payload diagnosticConformance) Site() schemadiag.Site      { return payload.site }
 func (payload diagnosticConformance) Position() (uint32, bool) {
-	return payload.position, payload.call.Available()
+	return payload.position, payload.owner.Available()
 }
 func (payload diagnosticConformance) EvidencePoints() ([]identity.ContentID, bool) {
 	if len(payload.points) == 0 {
@@ -1135,7 +1138,7 @@ func (row DiagnosticObservation) Available() bool {
 	case structure.DiagnosticObservationValueReferenceUnresolved:
 		return row.value.read.Available() && row.value.cell.Available() && row.value.name != ""
 	case structure.DiagnosticObservationTypeConformance:
-		return row.conform.call.Available() && row.conform.argument.Available() &&
+		return row.conform.owner.Available() && row.conform.value.Available() &&
 			row.conform.declared.Available() && row.conform.span.Available() && len(row.conform.points) != 0
 	default:
 		return false
@@ -1456,7 +1459,7 @@ func lowerDiagnosticObservation(row programartifact.DiagnosticObservationRow) (D
 			return DiagnosticObservation{}, false
 		}
 		observation.conform = diagnosticConformance{
-			call: conformance.CallID(), argument: conformance.ArgumentID(),
+			owner: conformance.OwnerID(), value: conformance.MeasuredValueID(),
 			declared: conformance.DeclaredStaticTypeID(), span: conformance.SpanID(),
 			site: conformance.Site(), position: position, points: append([]identity.ContentID(nil), points...),
 		}

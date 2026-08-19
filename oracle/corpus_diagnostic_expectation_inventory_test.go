@@ -82,6 +82,19 @@ type corpusNativeFactContract struct {
 	Term                string                   `json:"term,omitempty"`
 	Occurrence          string                   `json:"occurrence,omitempty"`
 	Trust               string                   `json:"trust,omitempty"`
+	Exact               string                   `json:"exact,omitempty"`
+	Literal             string                   `json:"literal,omitempty"`
+	Representation      string                   `json:"representation,omitempty"`
+	Left                string                   `json:"left,omitempty"`
+	Right               string                   `json:"right,omitempty"`
+	Operand             string                   `json:"operand,omitempty"`
+	Operator            string                   `json:"operator,omitempty"`
+	Overflow            string                   `json:"overflow,omitempty"`
+	Divisor             string                   `json:"divisor,omitempty"`
+	Truthiness          string                   `json:"truthiness,omitempty"`
+	Partition           string                   `json:"partition,omitempty"`
+	DeadArm             string                   `json:"dead_arm,omitempty"`
+	DeadArmReachable    string                   `json:"dead_arm_reachable,omitempty"`
 	Value               *string                  `json:"value,omitempty"`
 	ValuePrefix         string                   `json:"value_prefix,omitempty"`
 	ValueContains       []string                 `json:"value_contains,omitempty"`
@@ -98,17 +111,31 @@ type corpusNativeRevocation struct {
 }
 
 type corpusNativeInvalidationContract struct {
-	Name          string   `json:"name,omitempty"`
-	Lane          string   `json:"lane,omitempty"`
-	Module        string   `json:"module,omitempty"`
-	Family        string   `json:"family,omitempty"`
-	Key           string   `json:"key,omitempty"`
-	KeyPrefix     string   `json:"key_prefix,omitempty"`
-	KeySuffix     string   `json:"key_suffix,omitempty"`
-	KeyContains   []string `json:"key_contains,omitempty"`
-	Subject       string   `json:"subject,omitempty"`
-	Term          string   `json:"term,omitempty"`
-	Occurrence    string   `json:"occurrence,omitempty"`
+	Name             string   `json:"name,omitempty"`
+	Lane             string   `json:"lane,omitempty"`
+	Module           string   `json:"module,omitempty"`
+	Family           string   `json:"family,omitempty"`
+	Key              string   `json:"key,omitempty"`
+	KeyPrefix        string   `json:"key_prefix,omitempty"`
+	KeySuffix        string   `json:"key_suffix,omitempty"`
+	KeyContains      []string `json:"key_contains,omitempty"`
+	Subject          string   `json:"subject,omitempty"`
+	Term             string   `json:"term,omitempty"`
+	Occurrence       string   `json:"occurrence,omitempty"`
+	Exact            string   `json:"exact,omitempty"`
+	Literal          string   `json:"literal,omitempty"`
+	Representation   string   `json:"representation,omitempty"`
+	Left             string   `json:"left,omitempty"`
+	Right            string   `json:"right,omitempty"`
+	Operand          string   `json:"operand,omitempty"`
+	Operator         string   `json:"operator,omitempty"`
+	Overflow         string   `json:"overflow,omitempty"`
+	Divisor          string   `json:"divisor,omitempty"`
+	Truthiness       string   `json:"truthiness,omitempty"`
+	Partition        string   `json:"partition,omitempty"`
+	DeadArm          string   `json:"dead_arm,omitempty"`
+	DeadArmReachable string   `json:"dead_arm_reachable,omitempty"`
+
 	Value         *string  `json:"value,omitempty"`
 	ValuePrefix   string   `json:"value_prefix,omitempty"`
 	ValueContains []string `json:"value_contains,omitempty"`
@@ -1094,10 +1121,46 @@ type corpusNativeSelector struct {
 	Lane, Module, Family, Key, KeyPrefix, KeySuffix string
 	KeyContains                                     []string
 	Subject, Term, Occurrence                       string
-	Value                                           *string
-	ValuePrefix                                     string
-	ValueContains                                   []string
-	Trust                                           string
+	// Columns is the authored typed content of the selector, keyed by the
+	// published column name. A value is the declared spelling of the member the
+	// column must publish, or one of the two presence tokens below.
+	Columns       map[string]string
+	Value         *string
+	ValuePrefix   string
+	ValueContains []string
+	Trust         string
+}
+
+// The two presence tokens a column selector may author instead of a member
+// spelling. No declared vocabulary spells a member either way, so a token can
+// never collide with a member.
+const (
+	corpusNativeColumnPresent = "present"
+	corpusNativeColumnAbsent  = "absent"
+)
+
+// corpusNativePublishedFamilies are the publication families the analyzer
+// declares typed columns for today. A contract selecting one of them states
+// its content as typed columns; the rendered form is not addressable there.
+var corpusNativePublishedFamilies = map[string]bool{
+	"constant_value": true, "representation": true, "truthiness_class": true,
+	"branch_partition": true, "scalar_operator": true, "divisor_property": true,
+}
+
+// corpusNativeColumnSelectors collects the authored typed columns of one
+// contract. The map keys are the published column names, which are also the
+// manifest field names, so a reader sees one vocabulary rather than two.
+func corpusNativeColumnSelectors(columns map[string]string) map[string]string {
+	authored := make(map[string]string, len(columns))
+	for name, value := range columns {
+		if value != "" {
+			authored[name] = value
+		}
+	}
+	if len(authored) == 0 {
+		return nil
+	}
+	return authored
 }
 
 func (contract corpusNativeFactContract) selector() corpusNativeSelector {
@@ -1105,6 +1168,13 @@ func (contract corpusNativeFactContract) selector() corpusNativeSelector {
 		Lane: contract.Lane, Module: contract.Module, Family: contract.Family,
 		Key: contract.Key, KeyPrefix: contract.KeyPrefix, KeySuffix: contract.KeySuffix, KeyContains: contract.KeyContains,
 		Subject: contract.Subject, Term: contract.Term, Occurrence: contract.Occurrence,
+		Columns: corpusNativeColumnSelectors(map[string]string{
+			"exact": contract.Exact, "literal": contract.Literal, "representation": contract.Representation,
+			"left": contract.Left, "right": contract.Right, "operand": contract.Operand,
+			"operator": contract.Operator, "overflow": contract.Overflow, "divisor": contract.Divisor,
+			"truthiness": contract.Truthiness, "partition": contract.Partition,
+			"dead_arm": contract.DeadArm, "dead_arm_reachable": contract.DeadArmReachable,
+		}),
 		Value: contract.Value, ValuePrefix: contract.ValuePrefix, ValueContains: contract.ValueContains, Trust: contract.Trust,
 	}
 }
@@ -1114,18 +1184,25 @@ func (contract corpusNativeInvalidationContract) selector() corpusNativeSelector
 		Lane: contract.Lane, Module: contract.Module, Family: contract.Family,
 		Key: contract.Key, KeyPrefix: contract.KeyPrefix, KeySuffix: contract.KeySuffix, KeyContains: contract.KeyContains,
 		Subject: contract.Subject, Term: contract.Term, Occurrence: contract.Occurrence,
+		Columns: corpusNativeColumnSelectors(map[string]string{
+			"exact": contract.Exact, "literal": contract.Literal, "representation": contract.Representation,
+			"left": contract.Left, "right": contract.Right, "operand": contract.Operand,
+			"operator": contract.Operator, "overflow": contract.Overflow, "divisor": contract.Divisor,
+			"truthiness": contract.Truthiness, "partition": contract.Partition,
+			"dead_arm": contract.DeadArm, "dead_arm_reachable": contract.DeadArmReachable,
+		}),
 		Value: contract.Value, ValuePrefix: contract.ValuePrefix, ValueContains: contract.ValueContains, Trust: contract.Trust,
 	}
 }
 
 func (selector corpusNativeSelector) selects() bool {
 	return selector.Lane != "" || selector.Module != "" || selector.Family != "" || selector.Key != "" || selector.KeyPrefix != "" || selector.KeySuffix != "" ||
-		len(selector.KeyContains) != 0 || selector.Subject != "" || selector.Term != "" || selector.Occurrence != "" || selector.Value != nil || selector.ValuePrefix != "" ||
-		len(selector.ValueContains) != 0 || selector.Trust != ""
+		len(selector.KeyContains) != 0 || selector.Subject != "" || selector.Term != "" || selector.Occurrence != "" || len(selector.Columns) != 0 ||
+		selector.Value != nil || selector.ValuePrefix != "" || len(selector.ValueContains) != 0 || selector.Trust != ""
 }
 
 func (selector corpusNativeSelector) assertsContent() bool {
-	return selector.Key != "" || selector.Value != nil || selector.ValuePrefix != "" || len(selector.ValueContains) != 0 || selector.Trust != ""
+	return selector.Key != "" || len(selector.Columns) != 0 || selector.Value != nil || selector.ValuePrefix != "" || len(selector.ValueContains) != 0 || selector.Trust != ""
 }
 
 func validateCorpusNativeSelector(selector corpusNativeSelector) error {
@@ -1141,7 +1218,43 @@ func validateCorpusNativeSelector(selector corpusNativeSelector) error {
 	if err := validateCorpusContains("key_contains", selector.KeyContains); err != nil {
 		return err
 	}
+	if err := validateCorpusNativeColumns(selector); err != nil {
+		return err
+	}
 	return validateCorpusContains("value_contains", selector.ValueContains)
+}
+
+// validateCorpusNativeColumns states the manifest law for native content: a
+// column is authored under its published name, and a family that publishes
+// typed columns is asserted through them. The rendered form remains authorable
+// only for a family the analyzer does not declare yet, so an expectation
+// written against a published family can never depend on a spelling
+// arrangement.
+func validateCorpusNativeColumns(selector corpusNativeSelector) error {
+	for name, value := range selector.Columns {
+		if !corpusNativeColumnName(name) {
+			return fmt.Errorf("unknown native column %q", name)
+		}
+		if strings.TrimSpace(value) != value {
+			return fmt.Errorf("native column %q is padded", name)
+		}
+	}
+	if !corpusNativePublishedFamilies[selector.Family] {
+		return nil
+	}
+	if selector.Value != nil || selector.ValuePrefix != "" || len(selector.ValueContains) != 0 {
+		return fmt.Errorf("family %q publishes typed columns; assert them rather than the rendered form", selector.Family)
+	}
+	return nil
+}
+
+func corpusNativeColumnName(name string) bool {
+	for _, declared := range corpusNativeColumnOrder {
+		if declared == name {
+			return true
+		}
+	}
+	return false
 }
 
 func validateCorpusContains(field string, values []string) error {

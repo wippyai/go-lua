@@ -53,16 +53,17 @@ func (payload diagnosticUnresolvedValueReferenceRow) empty() bool {
 }
 
 func (payload diagnosticTypeConformanceRow) available() bool {
-	if payload.site != diagnosticTypeConformanceSiteCallArgument || !payload.call.Available() ||
-		!payload.argument.Available() || !payload.declared.Available() || !payload.span.Available() ||
-		!validDiagnosticEvidencePoints(payload.points) {
+	switch payload.site {
+	case diagnosticTypeConformanceSiteCallArgument, diagnosticTypeConformanceSiteAssignment:
+	default:
 		return false
 	}
-	return true
+	return payload.owner.Available() && payload.value.Available() && payload.declared.Available() &&
+		payload.span.Available() && validDiagnosticEvidencePoints(payload.points)
 }
 
 func (payload diagnosticTypeConformanceRow) empty() bool {
-	return payload.site == 0 && !payload.call.Available() && !payload.argument.Available() &&
+	return payload.site == 0 && !payload.owner.Available() && !payload.value.Available() &&
 		!payload.declared.Available() && !payload.span.Available() && payload.position == 0 && len(payload.points) == 0
 }
 
@@ -130,8 +131,8 @@ func equalDiagnosticObservationRows(left, right DiagnosticObservationRow) bool {
 	case structure.DiagnosticObservationValueReferenceUnresolved:
 		return left.value == right.value
 	case structure.DiagnosticObservationTypeConformance:
-		if left.conformance.site != right.conformance.site || left.conformance.call != right.conformance.call ||
-			left.conformance.argument != right.conformance.argument || left.conformance.declared != right.conformance.declared ||
+		if left.conformance.site != right.conformance.site || left.conformance.owner != right.conformance.owner ||
+			left.conformance.value != right.conformance.value || left.conformance.declared != right.conformance.declared ||
 			left.conformance.span != right.conformance.span || left.conformance.position != right.conformance.position ||
 			len(left.conformance.points) != len(right.conformance.points) {
 			return false
@@ -181,7 +182,7 @@ func diagnosticObservationID(owner identity.ContentID, kind structure.Diagnostic
 		}
 	case structure.DiagnosticObservationTypeConformance:
 		if !conformance.available() || writer.Uint(uint64(conformance.site)) != nil ||
-			writer.Bytes(conformance.call[:]) != nil || writer.Bytes(conformance.argument[:]) != nil ||
+			writer.Bytes(conformance.owner[:]) != nil || writer.Bytes(conformance.value[:]) != nil ||
 			writer.Bytes(conformance.declared[:]) != nil || writer.Bytes(conformance.span[:]) != nil ||
 			writer.Uint(uint64(conformance.position)) != nil || writer.Count(uint64(len(conformance.points))) != nil ||
 			!writeDiagnosticEvidencePoints(&writer, conformance.points) {

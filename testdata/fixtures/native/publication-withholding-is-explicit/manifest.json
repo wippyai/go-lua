@@ -14,28 +14,20 @@
         {
           "name": "at most 0 divisor_property.nonzero row(s)",
           "family": "divisor_property",
-          "value_contains": [
-            "nonzero"
-          ],
+          "divisor": "nonzero",
           "max": 0
         },
         {
           "name": "at most 0 divisor_property.nonzero_not_minus_one row(s)",
           "family": "divisor_property",
-          "value_contains": [
-            "nonzero_not_minus_one"
-          ],
+          "divisor": "nonzero_not_minus_one",
           "max": 0
         },
         {
           "name": "scalar_operator row",
           "lane": "values",
           "family": "scalar_operator",
-          "value_contains": [
-            "class=number",
-            "dispatch=primitive",
-            "overflow=ieee754"
-          ],
+          "overflow": "ieee754",
           "trust": "proven",
           "min": 1
         }

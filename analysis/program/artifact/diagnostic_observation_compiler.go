@@ -44,6 +44,12 @@ func (compiler *compiler) copyDiagnosticObservationsFailure() CompileFailure {
 	if failure := compiler.copyTypeConformanceObservationsFailure(); failure.Available() {
 		return failure
 	}
+	if failure := compiler.copyAssignmentConformanceObservationsFailure(); failure.Available() {
+		return failure
+	}
+	if failure := compiler.copyWriteConformanceObservationsFailure(); failure.Available() {
+		return failure
+	}
 	return CompileFailure{}
 }
 
@@ -273,6 +279,10 @@ func (compiler *compiler) copyUnresolvedValueObservationsFailure() CompileFailur
 	return CompileFailure{}
 }
 
+// The evidence points of a conformance row are the argument's own evaluation
+// finish, not the call's: the measured value is the argument's, and its base
+// witness is where that value is established.
+//
 // copyTypeConformanceObservationsFailure issues one TypeConformance row per
 // selected direct-call argument whose formal declares a static type. Selection
 // is the sealed DirectFunctions join already stored on the cold Call row: uncalled
@@ -311,10 +321,6 @@ func (compiler *compiler) copyTypeConformanceObservationsFailure() CompileFailur
 		if !termOK || !actualsOK {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceCall)
 		}
-		points := compiler.pointIDs(call.finish)
-		if len(points) == 0 {
-			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceCall)
-		}
 		for argumentIndex, argument := range call.arguments {
 			formal, formalOK := compiler.functionFormalAt(boundary, argumentIndex)
 			declared, declaredOK := formal.DeclaredStaticTypeID()
@@ -326,10 +332,19 @@ func (compiler *compiler) copyTypeConformanceObservationsFailure() CompileFailur
 			if !memberOK || !locationOK || !validDiagnosticSpan(location) || !argument.span.Available() {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, argumentIndex, CompileReasonOccurrenceCall)
 			}
+			memberSpan, memberSpanOK := compiler.input.Span(memberTerm)
+			memberFinish, memberFinishOK := memberSpan.Finish()
+			if !memberSpanOK || !compiler.input.OwnsSpan(memberSpan) || !memberFinishOK || !compiler.input.OwnsSite(memberFinish) {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, argumentIndex, CompileReasonOccurrenceCall)
+			}
+			points := compiler.pointIDs(memberFinish)
+			if len(points) == 0 {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, argumentIndex, CompileReasonOccurrenceCall)
+			}
 			payload := diagnosticTypeConformanceRow{
 				site:     diagnosticTypeConformanceSiteCallArgument,
-				call:     call.id,
-				argument: argument.id,
+				owner:    call.id,
+				value:    argument.member,
 				declared: declared,
 				span:     argument.span,
 				position: uint32(argumentIndex),
@@ -402,4 +417,155 @@ func (compiler *compiler) admitDiagnosticObservationRow(row DiagnosticObservatio
 	compiler.diagnosticObservationByID[row.id] = len(compiler.diagnosticObservations)
 	compiler.diagnosticObservations = append(compiler.diagnosticObservations, row)
 	return true
+}
+
+// copyWriteConformanceObservationsFailure is the reassignment half of the same
+// relation: a write whose target cell was authored with a declared type is
+// measured against that declaration, with the written value's own evaluation
+// finish as its evidence. An index or lens write has no declared cell and
+// contributes no row.
+func (compiler *compiler) copyWriteConformanceObservationsFailure() CompileFailure {
+	if compiler == nil || !compiler.input.Available() {
+		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
+	}
+	selected, selectedOK := compiler.selectedDirectCalleeBodies()
+	if !selectedOK {
+		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
+	}
+	view := compiler.input.Flow()
+	assigns := view.Authored().Storage().Assigns()
+	writes := view.Authored().Storage().Writes()
+	authoredValues := view.Authored().Values()
+	for index := 0; index < assigns.Count(); index++ {
+		term, termOK := assigns.At(index)
+		owner, valuesTerm, relationOK := assigns.Get(term)
+		width, widthOK := assigns.WriteCount(term)
+		if !termOK || !relationOK || !widthOK {
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+		}
+		if !view.Executable().Contains(term) {
+			continue
+		}
+		bodyPath, bodyOK := view.BodyPath(owner)
+		if !bodyOK || !bodyPath.Available() {
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+		}
+		if _, ownerSelected := selected[bodyPath]; !ownerSelected {
+			continue
+		}
+		assignmentID, assignmentIDOK := view.StorageAssignmentID(term)
+		valueRow, valueRowOK := compiler.valueRowForTerm(valuesTerm)
+		if !assignmentIDOK || !assignmentID.Available() || !valueRowOK {
+			continue
+		}
+		for position := 0; position < width; position++ {
+			writeTerm, writeOK := assigns.WriteAt(term, position)
+			writeAssign, target, writeRelationOK := writes.Get(writeTerm)
+			if !writeOK || !writeRelationOK || writeAssign != term {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, position, CompileReasonOccurrenceUnavailable)
+			}
+			declared, declaredOK := compiler.input.DeclaredStaticTypeID(target)
+			memberTerm, memberOK := authoredValues.Member(valuesTerm, position)
+			member, memberRowOK := valueRow.MemberAt(position)
+			if !declaredOK || !memberOK || !memberRowOK || !member.Available() {
+				continue
+			}
+			if !compiler.admitConformanceObservation(diagnosticTypeConformanceSiteAssignment, assignmentID, member.ID(), declared, memberTerm, uint32(position)) {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, position, CompileReasonOccurrenceUnavailable)
+			}
+		}
+	}
+	return CompileFailure{}
+}
+
+// admitConformanceObservation mints and admits one conformance row from the
+// coordinates every site shares: the owning statement, the measured value, the
+// declaration, and the measured value's own evaluation span.
+func (compiler *compiler) admitConformanceObservation(site uint8, owner, value, declared identity.ContentID, measured keyspace.Term, position uint32) bool {
+	location, locationOK := compiler.input.Source().Identity().Span(measured)
+	span, spanOK := compiler.input.Span(measured)
+	finish, finishOK := span.Finish()
+	if !locationOK || !validDiagnosticSpan(location) || !spanOK || !compiler.input.OwnsSpan(span) ||
+		!finishOK || !compiler.input.OwnsSite(finish) {
+		return false
+	}
+	points := compiler.pointIDs(finish)
+	if len(points) == 0 {
+		return false
+	}
+	payload := diagnosticTypeConformanceRow{
+		site: site, owner: owner, value: value, declared: declared,
+		span: span.ContextID(), position: position,
+		points: append([]identity.ContentID(nil), points...),
+	}
+	row := DiagnosticObservationRow{
+		id:   diagnosticObservationID(compiler.input.ContentID(), structure.DiagnosticObservationTypeConformance, location, diagnosticBranchConditionRow{}, diagnosticUnresolvedTypeReferenceRow{}, diagnosticUnresolvedValueReferenceRow{}, payload),
+		kind: structure.DiagnosticObservationTypeConformance, location: location, conformance: payload,
+	}
+	return row.Available() && compiler.admitDiagnosticObservationRow(row)
+}
+
+// copyAssignmentConformanceObservationsFailure issues one TypeConformance row
+// per bound cell that was authored with a declared type and receives a fixed
+// initializer. The measured value is the initializer's, the declaration is the
+// cell's, and the evidence is the initializer's own evaluation finish, so the
+// row is the assignment half of the same relation a call actual carries.
+//
+// Selection matches the call-argument half: only bodies the sealed
+// DirectFunctions closure reaches emit, so an uncalled interior stays silent.
+// A bind position with no declared type, no fixed member, or an open tail
+// contributes no row rather than a row measured against nothing.
+func (compiler *compiler) copyAssignmentConformanceObservationsFailure() CompileFailure {
+	if compiler == nil || !compiler.input.Available() {
+		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
+	}
+	selected, selectedOK := compiler.selectedDirectCalleeBodies()
+	if !selectedOK {
+		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
+	}
+	view := compiler.input.Flow()
+	binds := view.Authored().Storage().Binds()
+	authoredValues := view.Authored().Values()
+	for index := 0; index < binds.Count(); index++ {
+		term, termOK := binds.At(index)
+		owner, valuesTerm, relationOK := binds.Get(term)
+		width, widthOK := compiler.input.Source().Binds().Len(term)
+		if !termOK || !relationOK || !widthOK {
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+		}
+		if !view.Executable().Contains(term) {
+			continue
+		}
+		bodyPath, bodyOK := view.BodyPath(owner)
+		if !bodyOK || !bodyPath.Available() {
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+		}
+		if _, ownerSelected := selected[bodyPath]; !ownerSelected {
+			continue
+		}
+		bindID, bindIDOK := compiler.input.StorageBindIDAt(index)
+		if !bindIDOK || !bindID.Available() {
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+		}
+		valueRow, valueRowOK := compiler.valueRowForTerm(valuesTerm)
+		if !valueRowOK {
+			continue
+		}
+		for position := 0; position < width; position++ {
+			cellTerm, cellOK := compiler.input.Source().Binds().At(term, position)
+			if !cellOK {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, position, CompileReasonOccurrenceUnavailable)
+			}
+			declared, declaredOK := compiler.input.DeclaredStaticTypeID(cellTerm)
+			memberTerm, memberOK := authoredValues.Member(valuesTerm, position)
+			member, memberRowOK := valueRow.MemberAt(position)
+			if !declaredOK || !memberOK || !memberRowOK || !member.Available() {
+				continue
+			}
+			if !compiler.admitConformanceObservation(diagnosticTypeConformanceSiteAssignment, bindID, member.ID(), declared, memberTerm, uint32(position)) {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, position, CompileReasonOccurrenceUnavailable)
+			}
+		}
+	}
+	return CompileFailure{}
 }

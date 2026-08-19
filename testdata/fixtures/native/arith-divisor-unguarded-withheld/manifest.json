@@ -23,12 +23,9 @@
           "name": "scalar_operator row",
           "lane": "values",
           "family": "scalar_operator",
-          "value_contains": [
-            "dispatch=primitive",
-            "left=integer",
-            "result=integer",
-            "right=integer"
-          ],
+          "representation": "integer",
+          "left": "integer",
+          "right": "integer",
           "trust": "proven",
           "min": 1
         },
@@ -36,9 +33,7 @@
           "name": "scalar_operator must not carry divisor",
           "lane": "values",
           "family": "scalar_operator",
-          "value_contains": [
-            "divisor"
-          ],
+          "divisor": "present",
           "max": 0
         }
       ]

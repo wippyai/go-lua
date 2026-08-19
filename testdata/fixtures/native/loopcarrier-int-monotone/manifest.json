@@ -48,13 +48,10 @@
           "name": "scalar_operator row",
           "lane": "values",
           "family": "scalar_operator",
-          "value_contains": [
-            "dispatch=primitive",
-            "left=integer",
-            "overflow=promote_integer_to_number",
-            "result=integer",
-            "right=integer"
-          ],
+          "representation": "integer",
+          "left": "integer",
+          "right": "integer",
+          "overflow": "promote_integer_to_number",
           "trust": "proven",
           "min": 1
         }

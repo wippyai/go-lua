@@ -17,30 +17,24 @@
         {
           "name": "at most 0 divisor_property.nonzero row(s)",
           "family": "divisor_property",
-          "value_contains": [
-            "nonzero"
-          ],
+          "divisor": "nonzero",
           "max": 0
         },
         {
           "name": "at most 0 divisor_property.nonzero_not_minus_one row(s)",
           "family": "divisor_property",
-          "value_contains": [
-            "nonzero_not_minus_one"
-          ],
+          "divisor": "nonzero_not_minus_one",
           "max": 0
         },
         {
           "name": "representation row",
           "lane": "values",
           "family": "representation",
-          "value_contains": [
-            "left=integer",
-            "operator=idiv",
-            "overflow=closed_integer",
-            "result_representation=integer",
-            "right=integer"
-          ],
+          "representation": "integer",
+          "left": "integer",
+          "right": "integer",
+          "operator": "idiv",
+          "overflow": "closed_integer",
           "trust": "proven",
           "min": 1
         }

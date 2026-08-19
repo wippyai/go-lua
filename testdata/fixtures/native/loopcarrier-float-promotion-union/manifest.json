@@ -48,15 +48,11 @@
           "name": "scalar_operator row",
           "lane": "values",
           "family": "scalar_operator",
-          "value_contains": [
-            "dispatch=primitive",
-            "divisor=nonzero",
-            "left=integer",
-            "overflow=ieee754",
-            "representation=float",
-            "result=number",
-            "right=integer"
-          ],
+          "representation": "number",
+          "left": "integer",
+          "right": "integer",
+          "overflow": "ieee754",
+          "divisor": "nonzero",
           "trust": "proven",
           "min": 1
         }

@@ -17,34 +17,26 @@
         {
           "name": "at most 0 representation.exact row(s)",
           "family": "representation",
-          "value_contains": [
-            "exact"
-          ],
+          "exact": "present",
           "max": 0
         },
         {
           "name": "at most 0 representation.float row(s)",
           "family": "representation",
-          "value_contains": [
-            "float"
-          ],
+          "representation": "float",
           "max": 0
         },
         {
           "name": "at most 0 representation.integer row(s)",
           "family": "representation",
-          "value_contains": [
-            "integer"
-          ],
+          "representation": "integer",
           "max": 0
         },
         {
           "name": "representation row",
           "lane": "values",
           "family": "representation",
-          "value_contains": [
-            "representation=number"
-          ],
+          "representation": "number",
           "trust": "proven",
           "min": 1
         },
@@ -52,9 +44,7 @@
           "name": "representation must not carry exact",
           "lane": "values",
           "family": "representation",
-          "value_contains": [
-            "exact"
-          ],
+          "exact": "present",
           "max": 0
         }
       ]

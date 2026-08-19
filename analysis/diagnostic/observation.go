@@ -64,11 +64,21 @@ type Branch struct {
 }
 
 func (payload Branch) Available() bool {
-	if len(payload.Points) == 0 || len(payload.Producers) == 0 || len(payload.Points) != len(payload.Producers) {
+	return validProducerGeometry(payload.Points, payload.Producers)
+}
+
+// validProducerGeometry is the bijection every produced-value observation is
+// admitted under, whatever population declares it: at least one base evidence
+// point, one producer per point, no point, anchor, or execution key used twice,
+// and every anchor naming a listed evidence point. A second producer sharing
+// one base witness would make the anchor ambiguous, so the row fails closed
+// rather than selecting one.
+func validProducerGeometry(points []identity.ContentID, producers []Producer) bool {
+	if len(points) == 0 || len(producers) == 0 || len(points) != len(producers) {
 		return false
 	}
-	seenPoints := make(map[identity.ContentID]struct{}, len(payload.Points))
-	for _, point := range payload.Points {
+	seenPoints := make(map[identity.ContentID]struct{}, len(points))
+	for _, point := range points {
 		if !point.Available() {
 			return false
 		}
@@ -77,8 +87,9 @@ func (payload Branch) Available() bool {
 		}
 		seenPoints[point] = struct{}{}
 	}
-	seenAnchors := make(map[identity.ContentID]struct{}, len(payload.Producers))
-	for _, producer := range payload.Producers {
+	seenAnchors := make(map[identity.ContentID]struct{}, len(producers))
+	seenExecution := make(map[identity.ContentID]struct{}, len(producers))
+	for _, producer := range producers {
 		if !producer.Available() {
 			return false
 		}
@@ -88,19 +99,52 @@ func (payload Branch) Available() bool {
 		if _, duplicate := seenAnchors[producer.Anchor]; duplicate {
 			return false
 		}
-		seenAnchors[producer.Anchor] = struct{}{}
-	}
-	if len(seenAnchors) != len(seenPoints) {
-		return false
-	}
-	seenExecution := make(map[identity.ContentID]struct{}, len(payload.Producers))
-	for _, producer := range payload.Producers {
 		if _, duplicate := seenExecution[producer.Point]; duplicate {
 			return false
 		}
+		seenAnchors[producer.Anchor] = struct{}{}
 		seenExecution[producer.Point] = struct{}{}
 	}
-	return true
+	return len(seenAnchors) == len(seenPoints)
+}
+
+// validProducerCoverage is the weaker law a conformance row is admitted under.
+// One measured value may be established on several paths, so its producers are
+// not in bijection with the base evidence points: what is required is that no
+// execution point is claimed twice, that every producer anchors to a listed
+// evidence point, and that every evidence point is reached by a producer. The
+// collector joins the value over all of them, so a missed producer would read
+// a value the program can also carry and abstain on a real violation.
+func validProducerCoverage(points []identity.ContentID, producers []Producer) bool {
+	if len(points) == 0 || len(producers) == 0 {
+		return false
+	}
+	seenPoints := make(map[identity.ContentID]struct{}, len(points))
+	for _, point := range points {
+		if !point.Available() {
+			return false
+		}
+		if _, duplicate := seenPoints[point]; duplicate {
+			return false
+		}
+		seenPoints[point] = struct{}{}
+	}
+	anchored := make(map[identity.ContentID]struct{}, len(points))
+	seenExecution := make(map[identity.ContentID]struct{}, len(producers))
+	for _, producer := range producers {
+		if !producer.Available() {
+			return false
+		}
+		if _, known := seenPoints[producer.Anchor]; !known {
+			return false
+		}
+		if _, duplicate := seenExecution[producer.Point]; duplicate {
+			return false
+		}
+		anchored[producer.Anchor] = struct{}{}
+		seenExecution[producer.Point] = struct{}{}
+	}
+	return len(anchored) == len(seenPoints)
 }
 
 func (payload Branch) empty() bool {
@@ -149,8 +193,8 @@ func (payload UnresolvedValue) empty() bool {
 // Conformance is the sealed TypeConformance payload.
 type Conformance struct {
 	Site        schemadiag.Site
-	Call        identity.ContentID
-	Argument    identity.ContentID
+	Owner       identity.ContentID
+	Measured    identity.ContentID
 	Declared    identity.ContentID
 	Span        identity.ContentID
 	Position    uint32
@@ -158,30 +202,27 @@ type Conformance struct {
 	DeclaredMay runtimekind.Set
 	Target      string
 	Evidence    []identity.ContentID
+	// Producers is the execution geometry of the measured value: the rule
+	// occurrences that produce it and the base evidence point each one anchors
+	// to. It is the same geometry a branch condition carries, because the
+	// measured fact is the same one - the value summary at the occurrence that
+	// produced the value - and a point-keyed query column is not published at
+	// that occurrence.
+	Producers []Producer
 }
 
 func (payload Conformance) Available() bool {
-	if !payload.Site.Available() || !payload.Call.Available() || !payload.Argument.Available() || !payload.Declared.Available() ||
+	if !payload.Site.Available() || !payload.Owner.Available() || !payload.Measured.Available() || !payload.Declared.Available() ||
 		!payload.Span.Available() || !payload.DeclaredMay.Valid() || len(payload.Evidence) == 0 {
 		return false
 	}
-	seen := make(map[identity.ContentID]struct{}, len(payload.Evidence))
-	for _, point := range payload.Evidence {
-		if !point.Available() {
-			return false
-		}
-		if _, duplicate := seen[point]; duplicate {
-			return false
-		}
-		seen[point] = struct{}{}
-	}
-	return true
+	return validProducerCoverage(payload.Evidence, payload.Producers)
 }
 
 func (payload Conformance) empty() bool {
-	return !payload.Site.Declared() && !payload.Call.Available() && !payload.Argument.Available() && !payload.Declared.Available() &&
+	return !payload.Site.Declared() && !payload.Owner.Available() && !payload.Measured.Available() && !payload.Declared.Available() &&
 		!payload.Span.Available() && payload.Position == 0 && payload.Actual == 0 &&
-		payload.DeclaredMay == 0 && payload.Target == "" && len(payload.Evidence) == 0
+		payload.DeclaredMay == 0 && payload.Target == "" && len(payload.Evidence) == 0 && len(payload.Producers) == 0
 }
 
 // Observation is one mounted diagnostic observation row projected from a
@@ -194,6 +235,21 @@ type Observation struct {
 	UnresolvedType
 	UnresolvedValue
 	Conformance
+}
+
+// Coordinate is the Value cell a produced-value population measures. A branch
+// condition names it as the condition's own coordinate and a conformance
+// subject as the measured actual, so a reader asks the row rather than reading
+// one population's field off the other.
+func (observation Observation) Coordinate() (uint32, bool) {
+	switch observation.Kind {
+	case structure.DiagnosticObservationBranchCondition:
+		return observation.Branch.ValueIndex, true
+	case structure.DiagnosticObservationTypeConformance:
+		return observation.Conformance.Actual, true
+	default:
+		return 0, false
+	}
 }
 
 func validMountedSpan(span programsource.Span) bool {
@@ -283,18 +339,9 @@ func ProjectSites(sites mounted.ObservationSites, mounts []MountedCensus, coordi
 			valueIndex, valueOK := coordinateByID[valueKey{mount: site.Mount, id: site.ValueID}]
 			branch, branchOK := observation.BranchCondition()
 			points, pointsOK := branch.EvidencePoints()
-			if !valueOK || !branchOK || !pointsOK || uint64(valueIndex) >= uint64(len(coordinates)) || site.ProducerCount() == 0 {
+			producers, producersOK := siteProducers(site)
+			if !valueOK || !branchOK || !pointsOK || !producersOK || uint64(valueIndex) >= uint64(len(coordinates)) {
 				return nil, false
-			}
-			producers := make([]Producer, 0, site.ProducerCount())
-			for producerIndex := 0; producerIndex < site.ProducerCount(); producerIndex++ {
-				producer, producerOK := site.ProducerAt(producerIndex)
-				if !producerOK || !producer.Available() {
-					return nil, false
-				}
-				producers = append(producers, Producer{
-					Key: producer.Key, Occurrence: producer.Occurrence, Point: producer.Point, Anchor: producer.Anchor,
-				})
 			}
 			row.Branch = Branch{Points: append([]identity.ContentID(nil), points...), Producers: producers, ValueIndex: valueIndex}
 		case structure.DiagnosticObservationTypeReferenceUnresolved:
@@ -314,23 +361,25 @@ func ProjectSites(sites mounted.ObservationSites, mounts []MountedCensus, coordi
 			row.UnresolvedValue = UnresolvedValue{Read: unresolved.ReadID(), Cell: unresolved.CellID(), Name: name}
 		case structure.DiagnosticObservationTypeConformance:
 			conformance, conformanceOK := observation.TypeConformance()
-			if !conformanceOK || !conformance.CallID().Available() || !conformance.ArgumentID().Available() ||
+			if !conformanceOK || !conformance.OwnerID().Available() || !conformance.MeasuredValueID().Available() ||
 				!conformance.DeclaredStaticTypeID().Available() || !conformance.SpanID().Available() {
 				return nil, false
 			}
 			position, positionOK := conformance.Position()
 			points, pointsOK := conformance.EvidencePoints()
+			producers, producersOK := siteProducers(site)
 			valueIndex, valueOK := coordinateByID[valueKey{mount: site.Mount, id: site.ValueID}]
 			declaredMay, target, declaredOK := declaredMay(mount.Snapshot, conformance.DeclaredStaticTypeID())
-			if !positionOK || !pointsOK || !valueOK || !declaredOK || uint64(valueIndex) >= uint64(len(coordinates)) {
+			if !positionOK || !pointsOK || !producersOK || !valueOK || !declaredOK || uint64(valueIndex) >= uint64(len(coordinates)) {
 				return nil, false
 			}
 			row.Conformance = Conformance{
 				Site: conformance.Site(),
-				Call: conformance.CallID(), Argument: conformance.ArgumentID(),
+				Owner: conformance.OwnerID(), Measured: conformance.MeasuredValueID(),
 				Declared: conformance.DeclaredStaticTypeID(), Span: conformance.SpanID(), Position: position,
 				Actual: valueIndex, DeclaredMay: declaredMay, Target: target,
 				Evidence: append([]identity.ContentID(nil), points...),
+				Producers: producers,
 			}
 		default:
 			return nil, false
@@ -341,6 +390,26 @@ func ProjectSites(sites mounted.ObservationSites, mounts []MountedCensus, coordi
 		rows = append(rows, row)
 	}
 	return rows, true
+}
+
+// siteProducers copies one sealed site's execution geometry. Every population
+// that measures a produced value carries it; the copy is per row so no
+// projected observation aliases the sealed census.
+func siteProducers(site mounted.ObservationSite) ([]Producer, bool) {
+	if site.ProducerCount() == 0 {
+		return nil, false
+	}
+	producers := make([]Producer, 0, site.ProducerCount())
+	for index := 0; index < site.ProducerCount(); index++ {
+		producer, producerOK := site.ProducerAt(index)
+		if !producerOK || !producer.Available() {
+			return nil, false
+		}
+		producers = append(producers, Producer{
+			Key: producer.Key, Occurrence: producer.Occurrence, Point: producer.Point, Anchor: producer.Anchor,
+		})
+	}
+	return producers, true
 }
 
 func declaredMay(snapshot *ingress.Snapshot, declared identity.ContentID) (runtimekind.Set, string, bool) {

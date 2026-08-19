@@ -109,6 +109,7 @@ func pinnedSemanticRoles() []struct {
 		{"axis/execution-reachability", "d31d901aa14d3abfc6eb87d1ffd0cc75cf908cff5d353cf7290912ce55658132"},
 		{"axis/denominator-count", "61d6e0d98ed9eaf888181252ec8d1fb420b8220ffa43560d04c82e63c714136f"},
 		{"observation/geometry/branch-evidence", "6aa49595430d89c52a75b3ba8f52f7baa4f1c4941f6e36bb1c98c37b0fdea9aa"},
+		{"observation/geometry/type-conformance-evidence", "7f20157541b75ba0242f2002ff317cb39b27f3326e833586c7b9233a979763b8"},
 		{"observation/geometry/direct-allocation-membership", "873b96992208ec62b1da3f0d0afb3cb6bbb0f503832073c1f8ba24bbc2ada5c9"},
 		{"observation/geometry/publication-transition", "13580e632fb511b461177b7f960655162fe05facabfe38d2339535859aa6fe31"},
 		{"observation/anchor/evidence-point", "c03d14b69355beb65d341216ebb3f7de97d8b566834662b9c784adb6a204d021"},

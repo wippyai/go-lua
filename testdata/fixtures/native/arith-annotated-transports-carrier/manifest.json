@@ -18,12 +18,9 @@
           "name": "scalar_operator row",
           "lane": "values",
           "family": "scalar_operator",
-          "value_contains": [
-            "dispatch=primitive",
-            "left=number",
-            "result=number",
-            "right=number"
-          ],
+          "representation": "number",
+          "left": "number",
+          "right": "number",
           "trust": "proven",
           "min": 1
         }

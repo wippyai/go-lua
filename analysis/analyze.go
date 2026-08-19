@@ -348,7 +348,7 @@ func (state *compiledState) buildRuntimeSolver(policy *anadiag.DiagnosticPolicy)
 	if !published || len(publications) != len(state.querySites) {
 		return nil, nil, engine.ProgramSealFailure(runtimeSealPhasePublications), false
 	}
-	observations, observationFailure, observed := anadiag.BranchValueObservations(state.committed.program, binding, geometry.BranchObservations)
+	observations, observationFailure, observed := anadiag.ValueObservations(state.committed.program, binding, geometry.BranchObservations, geometry.ConformanceObservations)
 	if !observed {
 		return nil, nil, observationFailure, false
 	}

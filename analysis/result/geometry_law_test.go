@@ -14,11 +14,12 @@ import (
 	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
-// TestProjectKeepsTypeConformanceOffTheBranchPlane proves the result owner
-// classifies a call-argument observation as static geometry. It must not be
-// mistaken for a branch-value subject, whose producers carry execution-point
-// evidence for guard polarity.
-func TestProjectKeepsTypeConformanceOffTheBranchPlane(t *testing.T) {
+// TestProjectKeepsTypeConformanceOnItsOwnPlane proves the result owner gives a
+// conformance observation its own geometry. It is not a branch-value subject,
+// whose polarity is judged from the same column but concluded differently, and
+// it is not static: it measures a value the solve produced, so it carries the
+// producer geometry a static row never has.
+func TestProjectKeepsTypeConformanceOnItsOwnPlane(t *testing.T) {
 	mount, module := resultGeometryMount(t)
 	coordinateID := resultGeometryID(1)
 	coordinate, coordinateOK := NewValueCoordinate(coordinateID, module)
@@ -31,10 +32,13 @@ func TestProjectKeepsTypeConformanceOffTheBranchPlane(t *testing.T) {
 		Kind:     structure.DiagnosticObservationTypeConformance,
 		Location: source.Span{File: "geometry.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 8},
 		Conformance: anadiag.Conformance{
-			Site: diagnostic.SiteCallArgument, Call: observationID(4), Argument: observationID(5),
+			Site: diagnostic.SiteCallArgument, Owner: observationID(4), Measured: observationID(5),
 			Declared: observationID(6), Span: observationID(7), Position: 0,
 			DeclaredMay: runtimekind.Bit(runtimekind.String), Target: "string",
 			Evidence: []identity.ContentID{observationID(8)},
+			Producers: []anadiag.Producer{{
+				Key: "value-transfer", Occurrence: observationID(9), Point: observationID(10), Anchor: observationID(8),
+			}},
 		},
 	}
 	geometry, projected := Project(resultGeometryID(9), []Mount{mount}, []ValueCoordinate{coordinate}, []anadiag.Observation{observation})
@@ -44,9 +48,12 @@ func TestProjectKeepsTypeConformanceOffTheBranchPlane(t *testing.T) {
 	if len(geometry.BranchObservations) != 0 {
 		t.Fatalf("type-conformance occupied branch geometry: %d rows", len(geometry.BranchObservations))
 	}
-	if len(geometry.StaticObservations) != 1 || geometry.StaticObservations[0].Kind != structure.DiagnosticObservationTypeConformance ||
-		!geometry.StaticObservations[0].Conformance.Available() {
-		t.Fatalf("static conformance geometry = %#v", geometry.StaticObservations)
+	if len(geometry.StaticObservations) != 0 {
+		t.Fatalf("type-conformance occupied static geometry: %d rows", len(geometry.StaticObservations))
+	}
+	if len(geometry.ConformanceObservations) != 1 || geometry.ConformanceObservations[0].Kind != structure.DiagnosticObservationTypeConformance ||
+		!geometry.ConformanceObservations[0].Conformance.Available() {
+		t.Fatalf("conformance geometry = %#v", geometry.ConformanceObservations)
 	}
 }
 
