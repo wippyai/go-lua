@@ -205,7 +205,6 @@ func (compiler *compiler) arithmeticDivisorProperties() (map[identity.ContentID]
 		}
 	}
 	bodyFacts := make(map[identity.ContentID]map[identity.ContentID]arithmeticGuardMask)
-	bodyIncoming := make(map[identity.ContentID]bool)
 	for edgeIndex, edge := range compiler.environment {
 		if !edge.Available() {
 			return nil, compileFailure(CompileStageOccurrences, CompileRowOccurrence, edgeIndex, -1, CompileReasonOccurrenceUnavailable)
@@ -229,9 +228,8 @@ func (compiler *compiler) arithmeticDivisorProperties() (map[identity.ContentID]
 			}
 			facts = conditionFacts(condition, truth, make(map[guardVisit]bool))
 		}
-		if !bodyIncoming[body] {
+		if _, incoming := bodyFacts[body]; !incoming {
 			bodyFacts[body] = facts
-			bodyIncoming[body] = true
 		} else {
 			bodyFacts[body] = intersectArithmeticGuardFacts(bodyFacts[body], facts)
 		}
