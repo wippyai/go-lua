@@ -34,15 +34,10 @@ func openBindingOwnerFixture(t *testing.T, name string, input authored.Input) bi
 	if err != nil {
 		t.Fatalf("authored.Finalizer: %v", err)
 	}
-	staticDraft, err := static.Build(static.Input{})
+	_, staticView, err := static.Build(static.Input{})
 	if err != nil {
 		_ = flowFinish.Abort()
 		t.Fatalf("static.Build: %v", err)
-	}
-	staticFinish, err := staticDraft.Finalizer()
-	if err != nil {
-		_ = flowFinish.Abort()
-		t.Fatalf("static.Finalizer: %v", err)
 	}
 
 	sourceInput := source.Input{
@@ -62,20 +57,17 @@ func openBindingOwnerFixture(t *testing.T, name string, input authored.Input) bi
 	sourceDraft, err := source.Build(sourceInput)
 	if err != nil {
 		_ = flowFinish.Abort()
-		_ = staticFinish.Abort()
 		t.Fatalf("source.Build: %v", err)
 	}
 	sourceFinish, err := sourceDraft.Finalizer()
 	if err != nil {
 		_ = flowFinish.Abort()
-		_ = staticFinish.Abort()
 		t.Fatalf("source.Finalizer: %v", err)
 	}
 	preimage := sourceFinish.Preimage()
-	bodyResult, err := body.Seal(preimage, flowFinish.View(), staticFinish.View(), bodyTerm)
+	bodyResult, err := body.Seal(preimage, flowFinish.View(), staticView, bodyTerm)
 	if err != nil {
 		_ = flowFinish.Abort()
-		_ = staticFinish.Abort()
 		_ = sourceFinish.Abort()
 		t.Fatalf("body.Seal: %v", err)
 	}
@@ -88,7 +80,6 @@ func openBindingOwnerFixture(t *testing.T, name string, input authored.Input) bi
 		flowID:   flow.Cold().ContentID(),
 		close: func() {
 			_ = flowFinish.Abort()
-			_ = staticFinish.Abort()
 			_ = sourceFinish.Abort()
 		},
 	}

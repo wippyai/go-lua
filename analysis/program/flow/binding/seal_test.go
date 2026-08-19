@@ -152,15 +152,10 @@ func trySealLawFixtureAtEntry(t *testing.T, input authored.Input, rows [][]keysp
 		t.Fatalf("authored.Finalizer: %v", err)
 	}
 	flowView := flowFinish.View()
-	staticDraft, err := static.Build(static.Input{})
+	_, staticView, err := static.Build(static.Input{})
 	if err != nil {
 		t.Fatalf("static.Build: %v", err)
 	}
-	staticFinish, err := staticDraft.Finalizer()
-	if err != nil {
-		t.Fatalf("static.Finalizer: %v", err)
-	}
-	staticView := staticFinish.View()
 
 	name := "binding-law.lua"
 	sourceInput := source.Input{Name: name, Binds: bindOrder, Functions: formalOrder, ExactAtoms: exactAtoms}
@@ -208,7 +203,6 @@ func trySealLawFixtureAtEntry(t *testing.T, input authored.Input, rows [][]keysp
 	result, sealErr := Seal(preimage, flowView, bodyResult, entry)
 	finish := func() {
 		_ = flowFinish.Abort()
-		_ = staticFinish.Abort()
 		_ = sourceFinish.Abort()
 	}
 	return result, finish, sealErr
@@ -683,25 +677,19 @@ func liveLifecycleBodyResult(t *testing.T) (*body.Result, func()) {
 	t.Helper()
 	view, flowFinalizer := liveLifecycleAuthored(t, authored.Input{Counts: [keyspace.FamilyCount]uint32{keyspace.FamilyBody: 1}})
 	preimage, sourceFinalizer := liveLifecycleSource(t, 1)
-	staticDraft, err := static.Build(static.Input{})
+	_, staticView, err := static.Build(static.Input{})
 	if err != nil {
 		t.Fatalf("static.Build: %v", err)
 	}
-	staticFinalizer, err := staticDraft.Finalizer()
-	if err != nil {
-		t.Fatalf("static.Finalizer: %v", err)
-	}
-	result, err := body.Seal(preimage, view, staticFinalizer.View(), keyspace.MakeTerm(keyspace.FamilyBody, 1))
+	result, err := body.Seal(preimage, view, staticView, keyspace.MakeTerm(keyspace.FamilyBody, 1))
 	if err != nil {
 		_ = flowFinalizer.Abort()
 		_ = sourceFinalizer.Abort()
-		_ = staticFinalizer.Abort()
 		t.Fatalf("body.Seal: %v", err)
 	}
 	return result, func() {
 		_ = flowFinalizer.Abort()
 		_ = sourceFinalizer.Abort()
-		_ = staticFinalizer.Abort()
 	}
 }
 

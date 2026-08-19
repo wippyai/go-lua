@@ -44,16 +44,11 @@ func buildStaticCallChain(t *testing.T, width uint32) (staticquery.LocalContainm
 			TypeArguments: []keyspace.Term{keyspace.MakeTerm(keyspace.FamilyTypeOptional, width)},
 		}}},
 	}
-	draft, err := static.Build(input)
+	_, staticView, err := static.Build(input)
 	if err != nil {
 		t.Fatalf("static.Build(%d): %v", width, err)
 	}
-	finalizer, err := draft.Finalizer()
-	if err != nil {
-		t.Fatalf("static.Finalizer(%d): %v", width, err)
-	}
-	t.Cleanup(func() { _ = finalizer.Abort() })
-	local := finalizer.View().LocalContainment()
+	local := staticView.LocalContainment()
 	if got, want := local.Count(), int(width)+1; got != want {
 		t.Fatalf("LocalContainment.Count(%d) = %d, want %d", width, got, want)
 	}

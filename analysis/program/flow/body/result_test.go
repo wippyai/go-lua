@@ -13,9 +13,8 @@ func TestBodyContainsSiblingIntervals(t *testing.T) {
 	left := keyspace.MakeTerm(keyspace.FamilyBody, 2)
 	right := keyspace.MakeTerm(keyspace.FamilyBody, 3)
 	input := authoredInputForIntervals(3)
-	view, staticView, finish, staticFinish, preimage, sourceFinish := prepare(t, [][]keyspace.Term{{left, right}, nil, nil}, input)
+	view, staticView, finish, preimage, sourceFinish := prepare(t, [][]keyspace.Term{{left, right}, nil, nil}, input)
 	defer func() { _ = finish.Abort() }()
-	defer func() { _ = staticFinish.Abort() }()
 	defer func() { _ = sourceFinish.Abort() }()
 
 	result, err := Seal(preimage, view, staticView, root)
@@ -56,9 +55,8 @@ func TestBodyAncestryQueriesFailClosed(t *testing.T) {
 func TestBodyAncestryQueriesDoNotAllocate(t *testing.T) {
 	body := keyspace.MakeTerm(keyspace.FamilyBody, 1)
 	input := authoredInputForIntervals(1)
-	view, staticView, finish, staticFinish, preimage, sourceFinish := prepare(t, [][]keyspace.Term{nil}, input)
+	view, staticView, finish, preimage, sourceFinish := prepare(t, [][]keyspace.Term{nil}, input)
 	defer func() { _ = finish.Abort() }()
-	defer func() { _ = staticFinish.Abort() }()
 	defer func() { _ = sourceFinish.Abort() }()
 	result, err := Seal(preimage, view, staticView, body)
 	if err != nil {
@@ -91,9 +89,8 @@ func TestBodyProvenanceRejectsEqualDenominatorForeignOwners(t *testing.T) {
 		Control: keyspace.MakeTerm(keyspace.FamilyNil, 1),
 	}}}}
 
-	flowView, staticView, flowFinish, staticFinish, preimage, sourceFinish := prepareNamed(t, rows, base, "body-provenance-a.lua")
+	flowView, staticView, flowFinish, preimage, sourceFinish := prepareNamed(t, rows, base, "body-provenance-a.lua")
 	defer func() { _ = flowFinish.Abort() }()
-	defer func() { _ = staticFinish.Abort() }()
 	defer func() { _ = sourceFinish.Abort() }()
 	first, err := Seal(preimage, flowView, staticView, parent)
 	if err != nil {
@@ -105,9 +102,8 @@ func TestBodyProvenanceRejectsEqualDenominatorForeignOwners(t *testing.T) {
 		t.Fatal("Body result did not retain its exact Source/Flow identities")
 	}
 
-	foreignSourceView, foreignSourceStatic, foreignSourceFinish, foreignSourceStaticFinish, foreignSourcePreimage, foreignSourceFinalizer := prepareNamed(t, rows, base, "body-provenance-b.lua")
+	foreignSourceView, foreignSourceStatic, foreignSourceFinish, foreignSourcePreimage, foreignSourceFinalizer := prepareNamed(t, rows, base, "body-provenance-b.lua")
 	defer func() { _ = foreignSourceFinish.Abort() }()
-	defer func() { _ = foreignSourceStaticFinish.Abort() }()
 	defer func() { _ = foreignSourceFinalizer.Abort() }()
 	foreignSource, err := Seal(foreignSourcePreimage, foreignSourceView, foreignSourceStatic, parent)
 	if err != nil {
@@ -126,9 +122,8 @@ func TestBodyProvenanceRejectsEqualDenominatorForeignOwners(t *testing.T) {
 		Owner: parent, Body: child, Kind: kind.LoopRepeat,
 		Control: keyspace.MakeTerm(keyspace.FamilyNil, 1),
 	}}
-	foreignFlowView, foreignFlowStatic, foreignFlowFinish, foreignFlowStaticFinish, foreignFlowPreimage, foreignFlowFinalizer := prepareNamed(t, rows, foreignFlowInput, "body-provenance-a.lua")
+	foreignFlowView, foreignFlowStatic, foreignFlowFinish, foreignFlowPreimage, foreignFlowFinalizer := prepareNamed(t, rows, foreignFlowInput, "body-provenance-a.lua")
 	defer func() { _ = foreignFlowFinish.Abort() }()
-	defer func() { _ = foreignFlowStaticFinish.Abort() }()
 	defer func() { _ = foreignFlowFinalizer.Abort() }()
 	foreignFlow, err := Seal(foreignFlowPreimage, foreignFlowView, foreignFlowStatic, parent)
 	if err != nil {

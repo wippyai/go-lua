@@ -21,9 +21,9 @@ import (
 )
 
 // proofFixture is deliberately assembled through the live owner capabilities.
-// It does not construct Result values or bypass any owner finalizer. Keeping
-// the capabilities open is also important: LocalContainment and Preimage are
-// lifecycle-bound inputs to Prove.
+// It does not construct Result values or bypass any owner boundary. Keeping
+// the Source and Authored capabilities open is important: LocalContainment and
+// Preimage remain construction-time inputs to Prove.
 type proofFixture struct {
 	entry keyspace.Term
 
@@ -33,8 +33,7 @@ type proofFixture struct {
 	flowView     authored.View
 	flowFinalize authored.Finalizer
 
-	staticView     staticquery.View
-	staticFinalize static.Finalizer
+	staticView staticquery.View
 
 	moduleView     imports.View
 	moduleFinalize imports.Finalizer
@@ -92,27 +91,19 @@ func newProofFixture(t *testing.T, spec proofSpec) *proofFixture {
 	}
 	preimage := sourceFinalize.Preimage()
 
-	staticDraft, err := static.Build(staticInput)
+	_, staticView, err := static.Build(staticInput)
 	if err != nil {
 		_ = sourceFinalize.Abort()
 		t.Fatalf("static.Build: %v", err)
 	}
-	staticFinalize, err := staticDraft.Finalizer()
-	if err != nil {
-		_ = sourceFinalize.Abort()
-		t.Fatalf("static.Finalizer: %v", err)
-	}
-	staticView := staticFinalize.View()
 
 	flowDraft, err := authored.Build(flowInput)
 	if err != nil {
-		_ = staticFinalize.Abort()
 		_ = sourceFinalize.Abort()
 		t.Fatalf("authored.Build: %v", err)
 	}
 	flowFinalize, err := flowDraft.Finalizer()
 	if err != nil {
-		_ = staticFinalize.Abort()
 		_ = sourceFinalize.Abort()
 		t.Fatalf("authored.Finalizer: %v", err)
 	}
@@ -121,14 +112,12 @@ func newProofFixture(t *testing.T, spec proofSpec) *proofFixture {
 	bodies, err := body.Seal(preimage, flowView, staticView, entry)
 	if err != nil {
 		_ = flowFinalize.Abort()
-		_ = staticFinalize.Abort()
 		_ = sourceFinalize.Abort()
 		t.Fatalf("body.Seal: %v", err)
 	}
 	bindings, err := binding.Seal(preimage, flowView, bodies, entry)
 	if err != nil {
 		_ = flowFinalize.Abort()
-		_ = staticFinalize.Abort()
 		_ = sourceFinalize.Abort()
 		t.Fatalf("binding.Seal: %v", err)
 	}
@@ -136,14 +125,12 @@ func newProofFixture(t *testing.T, spec proofSpec) *proofFixture {
 	moduleDraft, err := imports.Build(spec.module)
 	if err != nil {
 		_ = flowFinalize.Abort()
-		_ = staticFinalize.Abort()
 		_ = sourceFinalize.Abort()
 		t.Fatalf("imports.Build: %v", err)
 	}
 	moduleFinalize, err := moduleDraft.Finalizer()
 	if err != nil {
 		_ = flowFinalize.Abort()
-		_ = staticFinalize.Abort()
 		_ = sourceFinalize.Abort()
 		t.Fatalf("imports.Finalizer: %v", err)
 	}
@@ -156,7 +143,6 @@ func newProofFixture(t *testing.T, spec proofSpec) *proofFixture {
 		flowView:       flowView,
 		flowFinalize:   flowFinalize,
 		staticView:     staticView,
-		staticFinalize: staticFinalize,
 		moduleView:     moduleView,
 		moduleFinalize: moduleFinalize,
 		bodies:         bodies,
@@ -165,7 +151,6 @@ func newProofFixture(t *testing.T, spec proofSpec) *proofFixture {
 	fixture.finalize = func() {
 		_ = fixture.moduleFinalize.Abort()
 		_ = fixture.flowFinalize.Abort()
-		_ = fixture.staticFinalize.Abort()
 		_ = fixture.sourceFinalize.Abort()
 	}
 	t.Cleanup(fixture.finalize)
@@ -494,16 +479,15 @@ func TestProveRejectsStandaloneUnconsumedTerm(t *testing.T) {
 	}
 }
 
-func TestProveRejectsExpiredOwners(t *testing.T) {
+func TestProveRejectsUnavailableOwners(t *testing.T) {
 	tests := []struct {
 		name   string
 		expire func(*proofFixture)
 	}{
 		{name: "Source", expire: func(fixture *proofFixture) { _ = fixture.sourceFinalize.Abort() }},
 		{name: "Authored", expire: func(fixture *proofFixture) { _, _ = fixture.flowFinalize.Commit() }},
-		{name: "Static", expire: func(fixture *proofFixture) { _, _ = fixture.staticFinalize.Commit(static.CommitInput{}) }},
 		{name: "Module", expire: func(fixture *proofFixture) { _ = fixture.moduleFinalize.Abort() }},
-		{name: "zero Static", expire: func(fixture *proofFixture) {
+		{name: "zero Static view", expire: func(fixture *proofFixture) {
 			fixture.staticView = staticquery.View{}
 		}},
 	}
