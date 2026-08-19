@@ -56,10 +56,12 @@ func TestClosedMountedReceiptAdmission(t *testing.T) {
 	}
 
 	module, _, allocationID, _, _, allocationOK := heapSchema.AllocationOriginForKey(root)
-	issuer, issuerOK := rule.ForMount(module)
-	admitted, admittedOK := issuer.ReceiptForOccurrence(allocationID)
-	if !allocationOK || !issuerOK || !admittedOK || !admitted.RevalidateFor(heapSchema, valueSchema) || admitted.Key() != operand.Key() {
+	admitted, admittedOK := rule.ReceiptForOccurrence(module, allocationID)
+	if !allocationOK || !admittedOK || !admitted.RevalidateFor(heapSchema, valueSchema) || admitted.Key() != operand.Key() {
 		t.Fatal("closed allocation occurrence was not reissued by its mounted receipt")
+	}
+	if _, ok := rule.ReceiptForOccurrence(allocationID, allocationID); ok {
+		t.Fatal("closed occurrence redeemed under a module that mounts no allocation")
 	}
 }
 

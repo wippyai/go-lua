@@ -53,6 +53,18 @@ func (algebra *Algebra) MountedCallForOccurrence(moduleID, callID identity.Conte
 	return mounted, ok && row.moduleID == moduleID && row.callID == callID
 }
 
+// MountedCallOrdinalForOccurrence is the dense address of one module-scoped
+// artifact call in this Algebra's canonical mounted-call order.  It is the
+// direct form of MountedCallForOccurrence for owners that key their own
+// sealed row tables by ordinal rather than by receipt.
+func (algebra *Algebra) MountedCallOrdinalForOccurrence(moduleID, callID identity.ContentID) (int, bool) {
+	mounted, ok := algebra.MountedCallForOccurrence(moduleID, callID)
+	if !ok {
+		return 0, false
+	}
+	return int(mounted.slot) - 1, true
+}
+
 // MountedCallIdentity projects the canonical detached row behind an exact
 // mounted receipt. calleeValueID is the Link-owned Boundary Value identity;
 // callID is the reusable artifact call identity qualified by moduleID.

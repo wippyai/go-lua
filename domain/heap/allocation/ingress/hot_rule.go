@@ -60,11 +60,7 @@ func BindHot(fragment *SchemaFragment, owner *heapowner.HotOwner) (*HotRule, boo
 }
 
 func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (source.Root, bool) {
-	issuer, ok := rule.ForMount(coords.Mount)
-	if !ok {
-		return source.Root{}, false
-	}
-	return issuer.ReceiptForOccurrence(coords.Occurrence)
+	return rule.ReceiptForOccurrence(coords.Mount, coords.Occurrence)
 }
 
 // AttachCatalog attaches the exact Link-local allocation occurrence issuer to
@@ -78,28 +74,17 @@ func (rule *HotRule) AttachCatalog(catalog *allocationcatalog.Catalog) bool {
 	return true
 }
 
-type MountedIssuer struct {
-	rule  *HotRule
-	mount allocationcatalog.Mount
-}
-
-// ForMount returns HeapIngress's exact mounted allocation issuer.
-func (rule *HotRule) ForMount(module identity.ContentID) (MountedIssuer, bool) {
-	if rule == nil || rule.catalog == nil {
-		return MountedIssuer{}, false
-	}
-	mount, ok := rule.catalog.ForMount(module)
-	return MountedIssuer{rule: rule, mount: mount}, ok && mount.OwnedBy(rule.catalog)
-}
-
-// ReceiptForOccurrence reuses the allocation catalog's exact Root receipt;
-// no new root or allocation shape is created here.
-func (issuer MountedIssuer) ReceiptForOccurrence(id identity.ContentID) (source.Root, bool) {
-	if issuer.rule == nil || issuer.rule.owner == nil || issuer.rule.catalog == nil || !issuer.mount.OwnedBy(issuer.rule.catalog) {
+// ReceiptForOccurrence reuses the allocation catalog's exact Root receipt for
+// one mounted occurrence; no new root or allocation shape is created here.
+// The catalog's mount row is the sealed address, so a foreign or unmounted
+// module names no row at all.
+func (rule *HotRule) ReceiptForOccurrence(module, id identity.ContentID) (source.Root, bool) {
+	if rule == nil || rule.owner == nil || rule.catalog == nil {
 		return source.Root{}, false
 	}
-	root, ok := issuer.mount.RootForOccurrence(id)
-	return root, ok && root.FencedTo(issuer.rule.owner.Schema())
+	mount, mountOK := rule.catalog.ForMount(module)
+	root, ok := mount.RootForOccurrence(id)
+	return root, mountOK && ok && root.FencedTo(rule.owner.Schema())
 }
 
 func (rule *HotRule) Implementation() (*heapowner.RuleImplementation[source.Root], bool) {

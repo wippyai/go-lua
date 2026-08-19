@@ -81,11 +81,10 @@ func (rule *HotRule) MountedPublicationCandidates(committed *engine.CommittedPro
 	if rule == nil || rule.opaque || committed == nil || effectQuery == nil || !mount.Available() || !occurrence.Available() {
 		return PublicationTransitionCandidates{}, false
 	}
-	issuer, issuerOK := rule.ForMount(mount)
-	operand, operandOK := issuer.ReceiptForOccurrence(occurrence)
+	operand, operandOK := rule.receiptForOccurrence(mount, occurrence)
 	stage, stageOK := rule.MountedSelectedCallEffectStage(committed, mount, occurrence)
 	capability, capabilityOK := rule.implementation.MountedCapability()
-	if !issuerOK || !operandOK || !stageOK || !stage.Available() || stage.Kind() != rows.ArtifactRuleStageIssued5 || stage.MountID() != mount || stage.OccurrenceID() != occurrence || !capabilityOK || !stage.HasMember() {
+	if !operandOK || !stageOK || !stage.Available() || stage.Kind() != rows.ArtifactRuleStageIssued5 || stage.MountID() != mount || stage.OccurrenceID() != occurrence || !capabilityOK || !stage.HasMember() {
 		return PublicationTransitionCandidates{}, false
 	}
 	rows, rowsOK := rule.publicationTransitionRows(operand, mount, occurrence)

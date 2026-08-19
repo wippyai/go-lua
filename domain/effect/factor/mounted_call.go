@@ -37,6 +37,23 @@ func (a *Algebra) mountedCallRow(mounted MountedCall) (mountedCallRow, bool) {
 	return row, row.applicationID.Available() && row.moduleID.Available() && row.contextID.Available()
 }
 
+// MountedCallOrdinalForOccurrence is the sole exported dense inverse from a
+// mounted Program occurrence to this algebra's canonical mounted-call order.
+// Owners key their sealed row tables by that ordinal instead of rebuilding a
+// module-scoped occurrence directory of their own.
+func (a *Algebra) MountedCallOrdinalForOccurrence(moduleID, occurrenceID identity.ContentID) (int, bool) {
+	if !a.Valid() || !moduleID.Available() || !occurrenceID.Available() {
+		return 0, false
+	}
+	slot := a.mountedCallIndex[mountedCallRef{moduleID: moduleID, contextID: occurrenceID}]
+	mounted := MountedCall{owner: a, slot: slot}
+	row, ok := a.mountedCallRow(mounted)
+	if !ok || row.moduleID != moduleID || row.contextID != occurrenceID {
+		return 0, false
+	}
+	return int(slot) - 1, true
+}
+
 func (a *Algebra) mountedCallForApplication(applicationID identity.ContentID) (MountedCall, bool) {
 	if !a.Valid() || !applicationID.Available() {
 		return MountedCall{}, false

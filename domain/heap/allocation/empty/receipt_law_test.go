@@ -58,10 +58,12 @@ func TestHotEmptyBindingIssuesOnlyItsExactMountedReceipt(t *testing.T) {
 		t.Fatal("sealed Empty binding did not issue receipt")
 	}
 	module, _, allocationID, _, _, allocationOK := heapSchema.AllocationOriginForKey(root)
-	issuer, issuerOK := rule.ForMount(module)
-	admitted, admittedOK := issuer.ReceiptForOccurrence(allocationID)
-	if !allocationOK || !issuerOK || !admittedOK || !admitted.FencedTo(heapSchema) {
+	admitted, admittedOK := rule.ReceiptForOccurrence(module, allocationID)
+	if !allocationOK || !admittedOK || !admitted.FencedTo(heapSchema) {
 		t.Fatal("Empty mounted occurrence receipt")
+	}
+	if _, ok := rule.ReceiptForOccurrence(allocationID, allocationID); ok {
+		t.Fatal("Empty occurrence redeemed under a module that mounts no allocation")
 	}
 
 	secondSchema, secondOwnerFragment, _ := emptyHotSchema(t)

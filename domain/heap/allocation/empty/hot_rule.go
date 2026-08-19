@@ -81,32 +81,19 @@ func BindHot(fragment *SchemaFragment, owner *heapowner.HotOwner, catalog *alloc
 }
 
 func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (source.Root, bool) {
-	issuer, ok := rule.ForMount(coords.Mount)
-	if !ok {
-		return source.Root{}, false
-	}
-	return issuer.ReceiptForOccurrence(coords.Occurrence)
+	return rule.ReceiptForOccurrence(coords.Mount, coords.Occurrence)
 }
 
-type MountedIssuer struct {
-	rule  *HotRule
-	mount allocationcatalog.Mount
-}
-
-func (rule *HotRule) ForMount(module identity.ContentID) (MountedIssuer, bool) {
+// ReceiptForOccurrence returns the catalog's exact presealed Empty root for
+// one mounted allocation occurrence. The catalog's mount row is the sealed
+// address; a foreign or unmounted module names no row at all.
+func (rule *HotRule) ReceiptForOccurrence(module, id identity.ContentID) (source.Root, bool) {
 	if rule == nil || rule.catalog == nil {
-		return MountedIssuer{}, false
-	}
-	mount, ok := rule.catalog.ForMount(module)
-	return MountedIssuer{rule: rule, mount: mount}, ok && mount.OwnedBy(rule.catalog)
-}
-
-func (issuer MountedIssuer) ReceiptForOccurrence(id identity.ContentID) (source.Root, bool) {
-	if issuer.rule == nil || !issuer.mount.OwnedBy(issuer.rule.catalog) {
 		return source.Root{}, false
 	}
-	root, ok := issuer.mount.RootForOccurrence(id)
-	return root, ok && root.Form() == source.FormEmpty && root.FencedTo(issuer.rule.catalogHeap())
+	mount, mountOK := rule.catalog.ForMount(module)
+	root, ok := mount.RootForOccurrence(id)
+	return root, mountOK && ok && root.Form() == source.FormEmpty && root.FencedTo(rule.catalogHeap())
 }
 
 func (rule *HotRule) catalogHeap() heapdomain.Schema {

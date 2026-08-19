@@ -68,37 +68,22 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner, heap heapdoma
 }
 
 func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (operand, bool) {
-	issuer, ok := rule.ForMount(coords.Mount)
-	if !ok {
-		return operand{}, false
-	}
-	return issuer.ReceiptForOccurrence(coords.Occurrence)
-}
-
-// MountedIssuer is Value allocation's exact mount-scoped operand issuer.
-type MountedIssuer struct {
-	rule  *HotRule
-	mount allocationcatalog.Mount
-}
-
-func (rule *HotRule) ForMount(module identity.ContentID) (MountedIssuer, bool) {
-	if rule == nil || rule.catalog == nil {
-		return MountedIssuer{}, false
-	}
-	mount, ok := rule.catalog.ForMount(module)
-	return MountedIssuer{rule: rule, mount: mount}, ok && mount.OwnedBy(rule.catalog)
+	return rule.ReceiptForOccurrence(coords.Mount, coords.Occurrence)
 }
 
 // ReceiptForOccurrence returns the exact presealed Value allocation operand.
-func (issuer MountedIssuer) ReceiptForOccurrence(id identity.ContentID) (operand, bool) {
-	if issuer.rule == nil || issuer.rule.owner == nil || issuer.rule.owner.Schema() == nil || !issuer.mount.OwnedBy(issuer.rule.catalog) {
+// The catalog's mount row is the sealed address, so a foreign or unmounted
+// module names no row at all.
+func (rule *HotRule) ReceiptForOccurrence(module, id identity.ContentID) (operand, bool) {
+	if rule == nil || rule.catalog == nil || rule.owner == nil || rule.owner.Schema() == nil {
 		return operand{}, false
 	}
-	key, ok := issuer.mount.KeyForOccurrence(id)
-	if !ok {
+	mount, mountOK := rule.catalog.ForMount(module)
+	key, ok := mount.KeyForOccurrence(id)
+	if !mountOK || !ok {
 		return operand{}, false
 	}
-	return allocationOperandForSchema(issuer.rule.owner.Schema(), key)
+	return allocationOperandForSchema(rule.owner.Schema(), key)
 }
 
 // Implementation returns the typed pending issuer until the shared binding

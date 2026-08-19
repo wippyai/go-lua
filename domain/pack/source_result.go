@@ -25,6 +25,11 @@ type sourceOccurrenceRow struct {
 	result     uint32
 }
 
+type sourceOccurrenceRef struct {
+	module     identity.ContentID
+	occurrence identity.ContentID
+}
+
 func (result SourceResult) valid() bool {
 	if result.schema == nil || uint64(result.index) >= uint64(len(result.schema.results)) {
 		return false
@@ -76,6 +81,7 @@ func (schema *Schema) sealSourceResults() bool {
 	}
 	results := make([]sourceResultRow, len(schema.state.roots))
 	occurrences := make([]sourceOccurrenceRow, 0)
+	occurrenceIndex := make(map[sourceOccurrenceRef]uint32)
 	for index := range schema.state.roots {
 		root := Root{schema: schema.state, index: uint32(index)}
 		source, sourceOK := schema.Source(root)
@@ -120,10 +126,16 @@ func (schema *Schema) sealSourceResults() bool {
 		if !module.Available() || !occurrence.Available() {
 			return false
 		}
+		ref := sourceOccurrenceRef{module: module, occurrence: occurrence}
+		if _, duplicate := occurrenceIndex[ref]; duplicate {
+			return false
+		}
+		occurrenceIndex[ref] = uint32(len(occurrences) + 1)
 		occurrences = append(occurrences, sourceOccurrenceRow{module: module, occurrence: occurrence, result: uint32(index)})
 	}
 	schema.state.results = results
 	schema.state.sourceOccurrences = occurrences
+	schema.state.sourceOccurrenceIndex = occurrenceIndex
 	for index, row := range results {
 		if !row.ready {
 			continue
@@ -154,6 +166,22 @@ func (schema *Schema) SourceOccurrenceAt(index int) (identity.ContentID, identit
 	row := schema.state.sourceOccurrences[index]
 	result := SourceResult{schema: schema.state, index: row.result}
 	return row.module, row.occurrence, result, row.module.Available() && row.occurrence.Available() && result.valid()
+}
+
+// SourceResultForMountedOccurrence is the sole direct inverse from a mounted
+// Program occurrence to Pack's already sealed source receipt. Mounted owners
+// redeem through it instead of retaining a module-scoped directory.
+func (schema *Schema) SourceResultForMountedOccurrence(module, occurrence identity.ContentID) (SourceResult, bool) {
+	if schema == nil || schema.state == nil || !module.Available() || !occurrence.Available() {
+		return SourceResult{}, false
+	}
+	slot := schema.state.sourceOccurrenceIndex[sourceOccurrenceRef{module: module, occurrence: occurrence}]
+	if slot == 0 || uint64(slot) > uint64(len(schema.state.sourceOccurrences)) {
+		return SourceResult{}, false
+	}
+	row := schema.state.sourceOccurrences[slot-1]
+	result := SourceResult{schema: schema.state, index: row.result}
+	return result, row.module == module && row.occurrence == occurrence && result.valid()
 }
 
 func sealedSourceTerm(builder Builder, item SourceItem) (Term, bool) {

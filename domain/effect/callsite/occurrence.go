@@ -1,8 +1,9 @@
 package callsite
 
-// Mounted occurrence issuers are the Link-local inverse for reusable Call
-// rows. They are sealed once and then provide O(1) typed receipts without
-// reopening Project, Boundary, Program, or Flow.
+// This file owns the sealed occurrence receipt planes for reusable Call rows.
+// Each plane is filled once in Effect's canonical mounted-call order and then
+// read by that order's own occurrence inverse, so a redemption reopens neither
+// Project, Boundary, Program, nor Flow.
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
@@ -10,70 +11,52 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 )
 
-type mountedReceiptRows struct {
-	rule   *HotRule
-	module identity.ContentID
-	rows   map[identity.ContentID]hotOperand
-}
-
+// Effect's mounted-call order is the ordinal space of every sealed receipt
+// plane here. sealOccurrenceReceipts fills that plane once; redemption is the
+// algebra's own occurrence inverse into it.
 func (rule *HotRule) sealOccurrenceReceipts() bool {
 	if rule == nil || rule.binding == nil || !rule.binding.Sealed() || rule.calls == nil || rule.calls.Algebra() == nil || rule.effects == nil || rule.effects.Algebra() == nil {
 		return false
 	}
 	if rule.receiptsSealed {
-		return rule.occurrences != nil
+		return rule.receipts != nil
 	}
 	rule.receiptsSealed = true
 	effects := rule.effects.Algebra()
-	occurrences := make(map[identity.ContentID]*mountedReceiptRows)
-	for index := 0; index < effects.MountedCallCount(); index++ {
+	receipts := make([]hotOperand, effects.MountedCallCount())
+	for index := range receipts {
 		mounted, mountedOK := effects.MountedCallAt(index)
 		_, module, id, identityOK := effects.MountedCallIdentity(mounted)
-		if !mountedOK || !identityOK || !module.Available() || !id.Available() {
+		ordinal, ordinalOK := effects.MountedCallOrdinalForOccurrence(module, id)
+		if !mountedOK || !identityOK || !module.Available() || !id.Available() || !ordinalOK || ordinal != index {
 			return false
-		}
-		rows := occurrences[module]
-		if rows == nil {
-			rows = &mountedReceiptRows{rule: rule, module: module, rows: make(map[identity.ContentID]hotOperand)}
-			occurrences[module] = rows
 		}
 		operand, operandOK := rule.Receipt(mounted)
 		if !operandOK || operand.receipt == nil || !operand.receipt.valid() {
 			return false
 		}
-		if _, duplicate := rows.rows[id]; duplicate {
-			return false
-		}
-		rows.rows[id] = operand
+		receipts[index] = operand
 	}
-	rule.occurrences = occurrences
-	return len(occurrences) != 0 || effects.MountedCallCount() == 0
+	rule.receipts = receipts
+	return true
+}
+
+// receiptForOccurrence is the one redemption of a sealed Callsite operand.
+func (rule *HotRule) receiptForOccurrence(mount, occurrence identity.ContentID) (hotOperand, bool) {
+	if rule == nil || !rule.receiptsSealed || rule.effects == nil || rule.effects.Algebra() == nil {
+		return hotOperand{}, false
+	}
+	ordinal, ok := rule.effects.Algebra().MountedCallOrdinalForOccurrence(mount, occurrence)
+	if !ok || ordinal < 0 || ordinal >= len(rule.receipts) {
+		return hotOperand{}, false
+	}
+	return rule.receipts[ordinal], true
 }
 
 // SealOccurrenceReceipts issues every Selected/Opaque mounted Call receipt
 // and closes its module-scoped occurrence inverse.
 func (rule *HotRule) SealOccurrenceReceipts() bool {
 	return rule != nil && rule.sealOccurrenceReceipts()
-}
-
-// ForMount returns this rule's exact receipt issuer for one mounted module.
-func (rule *HotRule) ForMount(module identity.ContentID) (ReceiptIssuer, bool) {
-	if rule == nil || !rule.receiptsSealed || !module.Available() {
-		return ReceiptIssuer{}, false
-	}
-	rows := rule.occurrences[module]
-	issuer := ReceiptIssuer{rows: rows}
-	return issuer, rows != nil && rows.rule == rule && rows.module == module && rows.rows != nil
-}
-
-type ReceiptIssuer struct{ rows *mountedReceiptRows }
-
-func (issuer ReceiptIssuer) ReceiptForOccurrence(id identity.ContentID) (hotOperand, bool) {
-	if issuer.rows == nil || !id.Available() || issuer.rows.rule == nil || issuer.rows.rule.occurrences[issuer.rows.module] != issuer.rows {
-		return hotOperand{}, false
-	}
-	operand, ok := issuer.rows.rows[id]
-	return operand, ok && issuer.rows.rule.accepts(operand)
 }
 
 // MountedSelectedCallEffectStage returns the cold ProgramArtifact stage proof
@@ -85,10 +68,9 @@ func (rule *HotRule) MountedSelectedCallEffectStage(committed *engine.CommittedP
 	if rule == nil || rule.opaque || committed == nil || !mountID.Available() || !occurrenceID.Available() || rule.implementation == nil {
 		return engine.ProgramCallStage{}, false
 	}
-	issuer, issuerOK := rule.ForMount(mountID)
-	_, occurrenceOK := issuer.ReceiptForOccurrence(occurrenceID)
+	_, occurrenceOK := rule.receiptForOccurrence(mountID, occurrenceID)
 	capability, capabilityOK := rule.implementation.MountedCapability()
-	if !issuerOK || !occurrenceOK || !capabilityOK {
+	if !occurrenceOK || !capabilityOK {
 		return engine.ProgramCallStage{}, false
 	}
 	stage, ok := committed.MountedNativeCallStage(capability, mountID, occurrenceID)
@@ -100,39 +82,38 @@ func (rule *BodyHotRule) sealOccurrenceReceipts() bool {
 		return false
 	}
 	if rule.receiptsSealed {
-		return rule.occurrences != nil
+		return rule.receipts != nil
 	}
 	rule.receiptsSealed = true
 	effects := rule.effects.Algebra()
-	occurrences := make(map[identity.ContentID]*mountedBodyReceiptRows)
-	for index := 0; index < effects.MountedCallCount(); index++ {
+	receipts := make([]hotBodyOperand, effects.MountedCallCount())
+	for index := range receipts {
 		mounted, mountedOK := effects.MountedCallAt(index)
 		_, module, id, identityOK := effects.MountedCallIdentity(mounted)
-		if !mountedOK || !identityOK || !module.Available() || !id.Available() {
+		ordinal, ordinalOK := effects.MountedCallOrdinalForOccurrence(module, id)
+		if !mountedOK || !identityOK || !module.Available() || !id.Available() || !ordinalOK || ordinal != index {
 			return false
-		}
-		rows := occurrences[module]
-		if rows == nil {
-			rows = &mountedBodyReceiptRows{rule: rule, module: module, rows: make(map[identity.ContentID]hotBodyOperand)}
-			occurrences[module] = rows
 		}
 		operand, operandOK := rule.Receipt(mounted)
 		if !operandOK || operand.receipt == nil || !operand.receipt.valid() {
 			return false
 		}
-		if _, duplicate := rows.rows[id]; duplicate {
-			return false
-		}
-		rows.rows[id] = operand
+		receipts[index] = operand
 	}
-	rule.occurrences = occurrences
-	return len(occurrences) != 0 || effects.MountedCallCount() == 0
+	rule.receipts = receipts
+	return true
 }
 
-type mountedBodyReceiptRows struct {
-	rule   *BodyHotRule
-	module identity.ContentID
-	rows   map[identity.ContentID]hotBodyOperand
+// receiptForOccurrence is the one redemption of a sealed Body operand.
+func (rule *BodyHotRule) receiptForOccurrence(mount, occurrence identity.ContentID) (hotBodyOperand, bool) {
+	if rule == nil || !rule.receiptsSealed || rule.effects == nil || rule.effects.Algebra() == nil {
+		return hotBodyOperand{}, false
+	}
+	ordinal, ok := rule.effects.Algebra().MountedCallOrdinalForOccurrence(mount, occurrence)
+	if !ok || ordinal < 0 || ordinal >= len(rule.receipts) {
+		return hotBodyOperand{}, false
+	}
+	return rule.receipts[ordinal], true
 }
 
 // SealOccurrenceReceipts issues every Body mounted Call receipt and closes
@@ -140,18 +121,6 @@ type mountedBodyReceiptRows struct {
 func (rule *BodyHotRule) SealOccurrenceReceipts() bool {
 	return rule != nil && rule.sealOccurrenceReceipts()
 }
-
-// ForMount returns Body's exact mounted receipt issuer.
-func (rule *BodyHotRule) ForMount(module identity.ContentID) (BodyReceiptIssuer, bool) {
-	if rule == nil || !rule.receiptsSealed || !module.Available() {
-		return BodyReceiptIssuer{}, false
-	}
-	rows := rule.occurrences[module]
-	issuer := BodyReceiptIssuer{rows: rows}
-	return issuer, rows != nil && rows.rule == rule && rows.module == module && rows.rows != nil
-}
-
-type BodyReceiptIssuer struct{ rows *mountedBodyReceiptRows }
 
 // BodyReceiptFinalizationFailure records the first closed source-seal step
 // rejected for a mounted Body row. It is retained on the Body owner only as
@@ -241,12 +210,4 @@ func (rule *BodyHotRule) recordFinalizationFailure(failure BodyReceiptFinalizati
 	if rule != nil && rule.finalizationFailure == BodyReceiptFinalizationFailureNone {
 		rule.finalizationFailure = failure
 	}
-}
-
-func (issuer BodyReceiptIssuer) ReceiptForOccurrence(id identity.ContentID) (hotBodyOperand, bool) {
-	if issuer.rows == nil || !id.Available() || issuer.rows.rule == nil || issuer.rows.rule.occurrences[issuer.rows.module] != issuer.rows {
-		return hotBodyOperand{}, false
-	}
-	operand, ok := issuer.rows.rows[id]
-	return operand, ok && issuer.rows.rule.accepts(operand)
 }

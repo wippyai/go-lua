@@ -130,7 +130,7 @@ type HotRule struct {
 	packs          *packdomain.Schema
 	read           engine.Read[engine.OrderedCells[valuedomain.Value]]
 	implementation *callowner.HeterogeneousRuleImplementation[valuedomain.Value, dispatchReceipt]
-	receipts       map[calldomain.MountedCall]dispatchReceipt
+	receipts       []dispatchReceipt
 	receiptsSealed bool
 }
 
@@ -147,7 +147,7 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, values *va
 		Admission:      engine.AdmitRuleByDerivation(fragment.evidence, hotDispatchChecker(hot)),
 		Transfer: func(access engine.Access[calldomain.Value, dispatchReceipt]) bool {
 			receipt, receiptOK := engine.Operand(access)
-			if !receiptOK || !hot.acceptsReceipt(receipt) {
+			if !receiptOK {
 				return false
 			}
 			return engine.Product(access, func(row engine.Row) bool {
@@ -196,18 +196,25 @@ func SealProgramRule(rule *HotRule) (engine.ProgramRule, bool) {
 	return engine.SealProgramRule(implementation)
 }
 
+// resolveOperand addresses the sealed receipt plane directly. Call's mounted
+// order is the ordinal space the catalog was filled in, so one module-scoped
+// occurrence inverse names the row; no mount-scoped issuer stands between.
 func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (dispatchReceipt, bool) {
-	issuer, ok := rule.ForMount(coords.Mount)
-	if !ok {
+	if rule == nil || !rule.receiptsSealed || rule.calls == nil || rule.calls.Algebra() == nil {
 		return dispatchReceipt{}, false
 	}
-	return issuer.ReceiptForOccurrence(coords.Occurrence)
+	ordinal, ok := rule.calls.Algebra().MountedCallOrdinalForOccurrence(coords.Mount, coords.Occurrence)
+	if !ok || ordinal < 0 || ordinal >= len(rule.receipts) {
+		return dispatchReceipt{}, false
+	}
+	return rule.receipts[ordinal], true
 }
 
 // sealReceiptCatalog issues every ordinary-call application witness once for
-// this sealed Link/Binding pair. The receipt map is keyed by Call's opaque
-// mounted row; occurrence/application inverses remain solely in Call. This is
-// the one cold seal pass; hot lookup never reopens Program or Flow.
+// this sealed Link/Binding pair. The receipt plane is dense in Call's
+// canonical mounted order; occurrence/application inverses remain solely in
+// Call. This is the one cold seal pass; hot lookup never reopens Program or
+// Flow.
 func (rule *HotRule) sealReceiptCatalog() bool {
 	if rule == nil || rule.binding == nil || !rule.binding.Sealed() || rule.calls == nil || rule.calls.Algebra() == nil {
 		return false
@@ -215,29 +222,23 @@ func (rule *HotRule) sealReceiptCatalog() bool {
 	if rule.receiptsSealed {
 		return rule.receipts != nil
 	}
-	receipts := make(map[calldomain.MountedCall]dispatchReceipt, rule.calls.Algebra().MountedCallCount())
 	if rule.values.Schema() == nil {
 		return false
 	}
 	algebra := rule.calls.Algebra()
-	for index := 0; index < algebra.MountedCallCount(); index++ {
+	receipts := make([]dispatchReceipt, algebra.MountedCallCount())
+	for index := range receipts {
 		mounted, mountedOK := algebra.MountedCallAtHandle(index)
 		applicationID, occurrenceID, module, _, _, identityOK := algebra.MountedCallIdentity(mounted)
-		inverse, inverseOK := algebra.MountedCallForOccurrence(module, occurrenceID)
-		if !mountedOK || !identityOK || !applicationID.Available() || !module.Available() || !occurrenceID.Available() || !inverseOK || inverse != mounted || !algebra.OwnsMountedModule(module) {
+		ordinal, ordinalOK := algebra.MountedCallOrdinalForOccurrence(module, occurrenceID)
+		if !mountedOK || !identityOK || !applicationID.Available() || !module.Available() || !occurrenceID.Available() || !ordinalOK || ordinal != index || !algebra.OwnsMountedModule(module) {
 			return false
 		}
 		receipt, ok := rule.receipt(applicationID)
 		if !ok || !receipt.valid() {
 			return false
 		}
-		if _, duplicate := receipts[mounted]; duplicate {
-			return false
-		}
-		receipts[mounted] = receipt
-	}
-	if len(receipts) != algebra.MountedCallCount() {
-		return false
+		receipts[index] = receipt
 	}
 	rule.receipts = receipts
 	rule.receiptsSealed = true
@@ -251,103 +252,13 @@ func (rule *HotRule) SealOccurrenceReceipts() bool {
 	return rule != nil && rule.sealReceiptCatalog()
 }
 
-// Receipt issues the complete cold application witness from the sealed
-// Link-local inverse. The first call seals the immutable catalog; subsequent
-// calls are O(1) by ApplicationID and never reopen Program/Flow.
-func (rule *HotRule) Receipt(applicationID identity.ContentID) (dispatchReceipt, bool) {
-	if rule == nil || rule.binding == nil || !rule.binding.Sealed() {
-		return dispatchReceipt{}, false
-	}
-	if !rule.sealReceiptCatalog() {
-		return dispatchReceipt{}, false
-	}
-	if !applicationID.Available() || rule.receipts == nil || rule.calls == nil || rule.calls.Algebra() == nil {
-		return dispatchReceipt{}, false
-	}
-	mounted, mountedOK := rule.calls.Algebra().MountedCallForApplication(applicationID)
-	if !mountedOK {
-		return dispatchReceipt{}, false
-	}
-	receipt, ok := rule.receipts[mounted]
-	return receipt, ok && receipt.valid()
-}
-
-// MountedIssuer is Call dispatch's exact mount-scoped artifact substitution
-// authority.  It cannot be replayed against an equal ModuleKey from another
-// Link or binding because the retained row is pointer-fenced to its HotRule.
-type MountedIssuer struct {
-	rule   *HotRule
-	module identity.ContentID
-}
-
-// ForMount returns the exact issuer for one mounted Program ModuleKey.
-func (rule *HotRule) ForMount(module identity.ContentID) (MountedIssuer, bool) {
-	if rule == nil || !module.Available() || !rule.receiptsSealed || rule.receipts == nil || rule.calls == nil || rule.calls.Algebra() == nil || !rule.calls.Algebra().OwnsMountedModule(module) {
-		return MountedIssuer{}, false
-	}
-	issuer := MountedIssuer{rule: rule, module: module}
-	return issuer, issuer.valid()
-}
-
-func (issuer MountedIssuer) valid() bool {
-	return issuer.rule != nil && issuer.rule.binding != nil && issuer.rule.binding.Sealed() &&
-		issuer.rule.receiptsSealed && issuer.rule.receipts != nil && issuer.rule.calls != nil && issuer.rule.calls.Algebra() != nil &&
-		issuer.module.Available() && issuer.rule.calls.Algebra().OwnsMountedModule(issuer.module)
-}
-
-// ReceiptForOccurrence returns the exact preissued dispatch receipt for one
-// artifact Call.ContextID.  It is an O(1) mounted map lookup and never
-// consults Program, Flow, Boundary, or the engine.
-func (issuer MountedIssuer) ReceiptForOccurrence(id identity.ContentID) (dispatchReceipt, bool) {
-	if !issuer.valid() || !id.Available() {
-		return dispatchReceipt{}, false
-	}
-	mounted, mountedOK := issuer.rule.calls.Algebra().MountedCallForOccurrence(issuer.module, id)
-	if !mountedOK {
-		return dispatchReceipt{}, false
-	}
-	receipt, ok := issuer.rule.receipts[mounted]
-	return receipt, ok && issuer.rule.acceptsReceipt(receipt)
-}
-
-// ApplicationIDForOccurrence exposes the detached application identity paired
-// with an artifact call occurrence.
-func (issuer MountedIssuer) ApplicationIDForOccurrence(id identity.ContentID) (identity.ContentID, bool) {
-	receipt, ok := issuer.ReceiptForOccurrence(id)
-	if !ok {
-		return identity.ContentID{}, false
-	}
-	return receipt.key.ApplicationID()
-}
-
-func (rule *HotRule) acceptsReceipt(receipt dispatchReceipt) bool {
-	if rule == nil || rule.binding == nil || rule.values == nil || rule.calls == nil || !receipt.valid() || receipt.binding != rule.binding {
-		return false
-	}
-	if !rule.receiptsSealed || rule.receipts == nil {
-		return false
-	}
-	algebra := rule.calls.Algebra()
-	if algebra == nil || !algebra.Valid() {
-		return false
-	}
-	applicationID, applicationOK := receipt.key.ApplicationID()
-	mounted, mountedOK := algebra.MountedCallForApplication(applicationID)
-	issued, issuedOK := rule.receipts[mounted]
-	if !applicationOK || !mountedOK || !issuedOK || issued.id != receipt.id || issued.key != receipt.key {
-		return false
-	}
-	values := rule.values.Schema()
-	return values != nil && algebra != nil && receipt.values == values && receipt.algebra == algebra && algebra.OwnsKey(receipt.key) && values.AdmitsCoordinate(receipt.coordinate, values.Bottom())
-}
-
 func hotDispatchChecker(rule *HotRule) engine.RuleDerivationChecker[calldomain.Value, dispatchReceipt] {
 	return func(derivation engine.RuleDerivation[calldomain.Value, dispatchReceipt]) (engine.RuleEvidence, bool) {
 		if rule == nil || rule.fragment == nil || derivation.Rule() != rule.fragment.semantic || derivation.InputCount() != 1 || derivation.ReadCount() != 1 || derivation.DispositionCount() == 0 {
 			return engine.RuleEvidence{}, false
 		}
 		receipt, receiptOK := derivation.Operand()
-		if !receiptOK || !rule.acceptsReceipt(receipt) || !derivation.OperandContentMatches(receipt.id) {
+		if !receiptOK || !derivation.OperandContentMatches(receipt.id) {
 			return engine.RuleEvidence{}, false
 		}
 		input, inputOK := derivation.InputAt(0)

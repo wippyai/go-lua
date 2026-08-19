@@ -102,16 +102,14 @@ func TestHotAllocationReceiptRejectsForeignMountAndOccurrence(t *testing.T) {
 	if !localKeyOK || !foreignKeyOK || localKey == foreignKey {
 		t.Fatal("allocation mounted keys")
 	}
-	localIssuer, localIssuerOK := localRule.ForMount(local.module)
-	if !localIssuerOK {
-		t.Fatal("local allocation mount issuer")
-	}
-	if _, ok := localIssuer.ReceiptForOccurrence(local.occurrence); !ok {
+	if _, ok := localRule.ReceiptForOccurrence(local.module, local.occurrence); !ok {
 		t.Fatal("local allocation occurrence receipt rejected")
 	}
-	_, foreignIssuerOK := localRule.ForMount(foreign.module)
-	if foreignIssuerOK {
+	if _, ok := localRule.ReceiptForOccurrence(foreign.module, foreign.occurrence); ok {
 		t.Fatal("foreign allocation occurrence crossed local mount")
+	}
+	if _, ok := localRule.ReceiptForOccurrence(foreign.module, local.occurrence); ok {
+		t.Fatal("local allocation occurrence redeemed under a foreign mount")
 	}
 }
 

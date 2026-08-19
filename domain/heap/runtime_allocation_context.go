@@ -490,6 +490,9 @@ func mountedAllocationID(requirement, context identity.ContentID) identity.Conte
 	return identity.ContentID(sha256.Sum256(payload[:]))
 }
 
+// valid re-proves liveness and issuance. Mount fixes the pair once, but the
+// issuing authority is revocable through Close and the receipt is a copyable
+// value, so every read retests the context capability and the mount identity.
 func (receipt MountedAllocationReceipt) valid() bool {
 	return receipt.requirement.valid() && receipt.context.valid() && receipt.requirement.heapID == receipt.context.authority.owner.id &&
 		receipt.id == mountedAllocationID(receipt.requirement.id, receipt.context.id)
@@ -584,5 +587,5 @@ func (unavailable PlacementUnavailable) MountedID() identity.ContentID {
 	if !unavailable.Valid() {
 		return identity.ContentID{}
 	}
-	return unavailable.mounted.ID()
+	return unavailable.mounted.id
 }

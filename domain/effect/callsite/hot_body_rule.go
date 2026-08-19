@@ -81,7 +81,7 @@ type BodyHotRule struct {
 	routes              map[calldomain.TargetRoleID]uint32
 	all                 []bodyRoute
 	receiptsSealed      bool
-	occurrences         map[identity.ContentID]*mountedBodyReceiptRows
+	receipts            []hotBodyOperand
 	finalizationFailure BodyReceiptFinalizationFailure
 }
 
@@ -162,11 +162,7 @@ func BindBodyHot(binding *engine.SchemaBinding, fragment *BodySchemaFragment, ca
 }
 
 func (rule *BodyHotRule) resolveOperand(coords engine.OperandCoords) (hotBodyOperand, bool) {
-	issuer, ok := rule.ForMount(coords.Mount)
-	if !ok {
-		return hotBodyOperand{}, false
-	}
-	return issuer.ReceiptForOccurrence(coords.Occurrence)
+	return rule.receiptForOccurrence(coords.Mount, coords.Occurrence)
 }
 
 // Receipt consumes one exact mounted caller proof after the shared binding

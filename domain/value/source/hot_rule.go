@@ -58,47 +58,17 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 	return rule, true
 }
 
+// resolveOperand redeems the preissued SourceSeed through Value's own mounted
+// occurrence inverse. No Program term, Flow traversal, or Link inverse is
+// reconstructed on the hot path, and no mount-scoped issuer stands between.
 func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (value.SourceSeed, bool) {
-	issuer, ok := rule.ForMount(coords.Mount)
-	if !ok {
+	if rule == nil || rule.owner == nil || rule.owner.Schema() == nil {
 		return value.SourceSeed{}, false
 	}
-	return issuer.ReceiptForOccurrence(coords.Occurrence)
-}
-
-type MountedIssuer struct {
-	rule  *HotRule
-	mount value.SourceSeedMount
-}
-
-// ForMount returns the mounted occurrence issuer for one exact ModuleKey.
-func (rule *HotRule) ForMount(module identity.ContentID) (MountedIssuer, bool) {
-	if rule == nil || rule.owner == nil || rule.owner.Schema() == nil || !module.Available() {
-		return MountedIssuer{}, false
-	}
-	mount, ok := rule.owner.Schema().SourceSeedMountForModule(module)
-	return MountedIssuer{rule: rule, mount: mount}, ok
-}
-
-// ReceiptForOccurrence returns the preissued SourceSeed for one artifact
-// ValueSource row. It is a direct mounted map lookup; no Program term, Flow
-// traversal, or Link inverse is reconstructed on the hot path.
-func (issuer MountedIssuer) ReceiptForOccurrence(id identity.ContentID) (value.SourceSeed, bool) {
-	if issuer.rule == nil || issuer.rule.owner == nil || issuer.rule.owner.Schema() == nil || !id.Available() {
-		return value.SourceSeed{}, false
-	}
-	occurrence, ok := issuer.mount.OccurrenceForID(id)
-	seed, seedOK := occurrence.Seed()
-	_, _, valid := sourceResultForSchema(issuer.rule.owner.Schema(), seed)
-	return seed, ok && seedOK && valid
-}
-
-// ModuleID returns the exact mounted substitution identity.
-func (issuer MountedIssuer) ModuleID() identity.ContentID {
-	if issuer.rule == nil {
-		return identity.ContentID{}
-	}
-	return issuer.mount.ModuleID()
+	schema := rule.owner.Schema()
+	seed, ok := schema.SourceSeedForMountedOccurrence(coords.Mount, coords.Occurrence)
+	_, _, valid := sourceResultForSchema(schema, seed)
+	return seed, ok && valid
 }
 
 // Implementation returns Value owner's opaque issuer only after the shared

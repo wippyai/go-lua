@@ -165,7 +165,10 @@ type schema struct {
 	results   []sourceResultRow
 	// sourceOccurrences is the compact mounted Program occurrence inverse
 	// sealed beside results; no raw Program proof survives publication.
-	sourceOccurrences []sourceOccurrenceRow
+	// sourceOccurrenceIndex is its direct address, so mounted owners redeem a
+	// source result without rebuilding a directory of their own.
+	sourceOccurrences     []sourceOccurrenceRow
+	sourceOccurrenceIndex map[sourceOccurrenceRef]uint32
 
 	relationIndex map[*relation]uint32
 	// endpointSources is Pack-owned replay data.  The old Boundary values

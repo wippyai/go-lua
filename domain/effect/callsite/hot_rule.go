@@ -94,7 +94,7 @@ type HotRule struct {
 	read           engine.Read[engine.OrderedCells[calldomain.Value]]
 	opaque         bool
 	receiptsSealed bool
-	occurrences    map[identity.ContentID]*mountedReceiptRows
+	receipts       []hotOperand
 }
 
 func BindSelectedHot(binding *engine.SchemaBinding, fragment *SelectedSchemaFragment, calls *callowner.HotOwner, effects *effectowner.HotOwner) (*HotRule, bool) {
@@ -167,11 +167,7 @@ func bindHot(binding *engine.SchemaBinding, fragment *schemaFragment[hotOperand]
 }
 
 func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (hotOperand, bool) {
-	issuer, ok := rule.ForMount(coords.Mount)
-	if !ok {
-		return hotOperand{}, false
-	}
-	return issuer.ReceiptForOccurrence(coords.Occurrence)
+	return rule.receiptForOccurrence(coords.Mount, coords.Occurrence)
 }
 
 // Receipt consumes Project's exact mounted-call proof and issues all Target

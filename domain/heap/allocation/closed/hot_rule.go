@@ -122,32 +122,19 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, heapOwner 
 }
 
 func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (source.Closed, bool) {
-	issuer, ok := rule.ForMount(coords.Mount)
-	if !ok {
-		return source.Closed{}, false
-	}
-	return issuer.ReceiptForOccurrence(coords.Occurrence)
+	return rule.ReceiptForOccurrence(coords.Mount, coords.Occurrence)
 }
 
-type MountedIssuer struct {
-	rule  *HotRule
-	mount allocationcatalog.Mount
-}
-
-func (rule *HotRule) ForMount(module identity.ContentID) (MountedIssuer, bool) {
+// ReceiptForOccurrence returns the catalog's exact presealed Closed source for
+// one mounted allocation occurrence. The catalog's mount row is the sealed
+// address; a foreign or unmounted module names no row at all.
+func (rule *HotRule) ReceiptForOccurrence(module, id identity.ContentID) (source.Closed, bool) {
 	if rule == nil || rule.catalog == nil {
-		return MountedIssuer{}, false
-	}
-	mount, ok := rule.catalog.ForMount(module)
-	return MountedIssuer{rule: rule, mount: mount}, ok && mount.OwnedBy(rule.catalog)
-}
-
-func (issuer MountedIssuer) ReceiptForOccurrence(id identity.ContentID) (source.Closed, bool) {
-	if issuer.rule == nil || !issuer.mount.OwnedBy(issuer.rule.catalog) {
 		return source.Closed{}, false
 	}
-	closed, ok := issuer.mount.ClosedForOccurrence(id)
-	return closed, ok && closed.FencedTo(issuer.rule.heap, issuer.rule.values) && closed.SummaryReceipt().IssuedBy(issuer.rule.summaryOwner())
+	mount, mountOK := rule.catalog.ForMount(module)
+	closed, ok := mount.ClosedForOccurrence(id)
+	return closed, mountOK && ok && closed.FencedTo(rule.heap, rule.values) && closed.SummaryReceipt().IssuedBy(rule.summaryOwner())
 }
 
 func (rule *HotRule) summaryOwner() *valueowner.HotOwner {

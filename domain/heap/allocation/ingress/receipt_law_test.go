@@ -50,10 +50,12 @@ func TestHotIngressBindingIssuesOnlyItsExactMountedReceipt(t *testing.T) {
 		t.Fatal("sealed ingress binding did not issue receipt")
 	}
 	module, _, allocationID, _, _, allocationOK := heapSchema.AllocationOriginForKey(root)
-	issuer, issuerOK := rule.ForMount(module)
-	admitted, admittedOK := issuer.ReceiptForOccurrence(allocationID)
-	if !allocationOK || !issuerOK || !admittedOK || !admitted.FencedTo(heapSchema) || admitted.Key() != operand.Key() {
+	admitted, admittedOK := rule.ReceiptForOccurrence(module, allocationID)
+	if !allocationOK || !admittedOK || !admitted.FencedTo(heapSchema) || admitted.Key() != operand.Key() {
 		t.Fatal("ingress mounted occurrence receipt")
+	}
+	if _, ok := rule.ReceiptForOccurrence(allocationID, allocationID); ok {
+		t.Fatal("ingress occurrence redeemed under a module that mounts no allocation")
 	}
 
 	secondSchema, secondOwnerFragment, _ := ingressHotSchema(t)

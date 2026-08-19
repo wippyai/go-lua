@@ -15,7 +15,6 @@ type HotRule struct {
 	owner          *packowner.HotOwner
 	schema         *packdomain.Schema
 	receiptsSealed bool
-	occurrences    map[identity.ContentID]*mountedSourceRows
 }
 
 // BindHot binds one exact callback-free source fragment to one exact Pack
@@ -60,12 +59,11 @@ func BindHot(fragment *SchemaFragment, owner *packowner.HotOwner, schema *packdo
 }
 
 func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (packdomain.Source, bool) {
-	issuer, ok := rule.ForMount(coords.Mount)
+	result, ok := rule.receiptForOccurrence(coords.Mount, coords.Occurrence)
 	if !ok {
 		return packdomain.Source{}, false
 	}
-	source, _, ok := issuer.SourceForOccurrence(coords.Occurrence)
-	return source, ok
+	return result.Source()
 }
 
 // Implementation returns the typed pending issuer. It resolves to an exact
