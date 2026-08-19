@@ -521,13 +521,12 @@ func (slot *RuleSlot[V, O]) ruleDraft() (*schemaRuleDraft, bool) {
 }
 
 type schemaRuleDraft struct {
-	builder    *SchemaBuilder
-	index      int
-	inputs     []*rowDraft[inputRole]
-	output     *keyDraft[factorRole]
-	structural bool
-	route      bool
-	token      *schemaTokenCell
+	builder *SchemaBuilder
+	index   int
+	inputs  []*rowDraft[inputRole]
+	output  *keyDraft[factorRole]
+	route   bool
+	token   *schemaTokenCell
 }
 
 func (draft *schemaRuleDraft) setToken(cell *schemaTokenCell) { draft.token = cell }
@@ -536,7 +535,7 @@ func (draft *schemaRuleDraft) setToken(cell *schemaTokenCell) { draft.token = ce
 // have no output capability and may never acquire writes, carries, routes, or
 // selectors through the generic factor path.
 func (rule *schemaRuleDraft) factorOutput() bool {
-	return rule != nil && !rule.structural && rule.output != nil
+	return rule != nil && rule.output != nil
 }
 
 // DeclareRuleSlot adds a callback-free Factor-output Rule.
@@ -1016,7 +1015,7 @@ func (builder *SchemaBuilder) addStructuralRule(spec SchemaStructuralRuleSpec, a
 		builder.poison()
 		return slotHandle[schemaRuleDraft]{}, false
 	}
-	draft := &schemaRuleDraft{builder: builder, index: index, structural: true}
+	draft := &schemaRuleDraft{builder: builder, index: index}
 	// Structural Rules have the engine-owned unit operand family.  It is not a
 	// caller-supplied semantic identity: support and activation execution both
 	// consume the engine's private ruleUnit proof.
@@ -1185,7 +1184,7 @@ func (builder *SchemaBuilder) bindSealed(schema *Schema, sealed *coldcomposition
 	}
 	ruleOrdinals := make(map[*schemaRuleDraft]uint64, len(builder.rules))
 	for _, rule := range builder.rules {
-		if rule == nil || rule.structural == (rule.output != nil) {
+		if rule == nil {
 			return false
 		}
 		index, ok := sealed.RuleIndex(builder.candidateRuleKey(rule))
