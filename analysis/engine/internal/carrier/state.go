@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier/shape"
+	"github.com/wippyai/go-lua/analysis/engine/internal/facts/change"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 	"github.com/wippyai/go-lua/analysis/engine/internal/guard"
 )
@@ -239,7 +240,7 @@ type Composition struct {
 	layout     *layout
 	operations []SlotOperation
 	initial    []RootHandle
-	all        []bool
+	all        change.Slots
 	zeroScopes []uint64
 	guards     *guard.Manager
 	scope      Scope
@@ -291,11 +292,86 @@ type Work struct {
 	// closure capturing Work.
 	checkpointProbe Checkpoint
 	checkpoint      Checkpoint
-	publishing      bool
-	previewing      bool
-	replacing       bool
-	reindexing      bool
-	pointFold       *pointFoldTransaction
+	// slotSets is the Work-owned reusable slot-set stack. Coverage joins borrow
+	// one set per frame and release it in reverse order, so a nested operation
+	// never aliases its caller's set and no join allocates per call.
+	slotSets  []*slotSetSlab
+	slotDepth int
+	// commitSlab is the publication lane's own slot set. Commit holds the
+	// layout publish latch and therefore never nests, so its issued view gets
+	// a lane of its own: a coverage join must not recycle the buffer a
+	// publication just handed to its consumer.
+	commitSlab slotSetSlab
+	// patchScratch is the one reusable accepted-Patch buffer. Every multi-slot
+	// operation claims it for the length of its transaction; patchesHeld makes
+	// the single-owner rule structural rather than conventional.
+	patchScratch []Patch
+	patchesHeld  bool
+	publishing   bool
+	previewing   bool
+	replacing    bool
+	reindexing   bool
+	pointFold    *pointFoldTransaction
+}
+
+// slotSetSlab is one reusable slot set with its own recycle stamp. A borrowed
+// view holds the stamp it was issued under, so the next borrow of the same
+// slab makes every earlier view refuse instead of reading recycled words.
+type slotSetSlab struct {
+	set        change.Slots
+	generation uint64
+}
+
+// borrowSlotSet lends one cleared slot set from the Work-owned stack. The
+// caller must release it before returning.
+func (work *Work) borrowSlotSet() *slotSetSlab {
+	if work == nil {
+		return nil
+	}
+	if work.slotDepth == len(work.slotSets) {
+		work.slotSets = append(work.slotSets, &slotSetSlab{})
+	}
+	slab := work.slotSets[work.slotDepth]
+	work.slotDepth++
+	slab.set.Clear()
+	slab.generation++
+	return slab
+}
+
+func (work *Work) releaseSlotSet() {
+	if work != nil && work.slotDepth > 0 {
+		work.slotDepth--
+	}
+}
+
+// beginPatches claims the reusable accepted-Patch buffer for one multi-slot
+// transaction. Carrier operations never nest, so a second live claim is a
+// structural defect and fails closed rather than silently aliasing.
+func (work *Work) beginPatches(capacity int) ([]Patch, bool) {
+	if work == nil || work.patchesHeld {
+		return nil, false
+	}
+	work.patchesHeld = true
+	if cap(work.patchScratch) < capacity {
+		work.patchScratch = make([]Patch, 0, capacity)
+	}
+	return work.patchScratch[:0], true
+}
+
+// releasePatches returns the buffer, adopting a grown backing and dropping
+// every retained Patch reference. Ownership of the Patches themselves has
+// already passed to commit or dropPatches.
+func (work *Work) releasePatches(patches *[]Patch) {
+	if work == nil {
+		return
+	}
+	if patches != nil && cap(*patches) > cap(work.patchScratch) {
+		work.patchScratch = (*patches)[:0]
+	}
+	buffer := work.patchScratch[:cap(work.patchScratch)]
+	clear(buffer)
+	work.patchScratch = buffer[:0]
+	work.patchesHeld = false
 }
 
 // RetainedWork is the sole internal ownership unit for a validated completed
@@ -373,7 +449,7 @@ func (prepared *PreparedComposition) Attach() (*Composition, bool) {
 	if value.composition.Load() != nil || value.layout.published.Load() {
 		return nil, false
 	}
-	composition := &Composition{shape: value.shape, layout: value.layout, operations: value.operations, initial: make([]RootHandle, len(value.operations)), all: make([]bool, len(value.operations)), zeroScopes: make([]uint64, len(value.operations)), guards: value.guards}
+	composition := &Composition{shape: value.shape, layout: value.layout, operations: value.operations, initial: make([]RootHandle, len(value.operations)), zeroScopes: make([]uint64, len(value.operations)), guards: value.guards}
 	composition.scope = Scope{composition: composition, guard: value.guards.AllScope()}
 	composition.authority = &stateAuthority{composition: composition}
 	for index, operation := range composition.operations {
@@ -386,7 +462,7 @@ func (prepared *PreparedComposition) Attach() (*Composition, bool) {
 			panic("prepared initial root missing structural identity")
 		}
 		composition.initial[index] = initial
-		composition.all[index] = true
+		composition.all.Set(index)
 	}
 	// Store only after every total issuer/root attachment completes, then open
 	// the shared layout latch once.  External issuer/capability paths acquire
@@ -675,6 +751,54 @@ func (work *Work) unionSupport(left, right support.Mask) (support.Mask, bool) {
 	return support.UnionWithWork(work.supportWork, work.checkpointFunc(), left, right)
 }
 
+// differenceSupport issues one exact left-minus-right region through the
+// carrier's reusable shell. It is the half of a three-way split an operation
+// needs when it already proved the other half empty.
+func (work *Work) differenceSupport(left, right support.Mask) (support.Mask, bool) {
+	if !work.live() || work.supportWork == nil {
+		return support.Mask{}, false
+	}
+	if !work.supportWork.BeginTransaction(work.checkpointFunc()) {
+		return support.Mask{}, false
+	}
+	complement, ok := work.supportWork.Not(right)
+	if !ok {
+		work.supportWork.Discard()
+		return support.Mask{}, false
+	}
+	result, ok := work.supportWork.And(left, complement)
+	if !ok || !work.supportWork.Seal() {
+		work.supportWork.Discard()
+		return support.Mask{}, false
+	}
+	return result, true
+}
+
+// publicationDelta issues the support halves of one publication ChangeSet
+// from an operation that already knows how its region moved. An unmoved
+// region is the exact identity; a region the operation grew by union has a
+// provably empty removed half and pays one difference instead of a whole
+// three-way decomposition. Only a region that genuinely left the reference
+// pays the full split.
+func (work *Work) publicationDelta(reference, published support.Mask) (added, removed support.Mask, ok bool) {
+	empty := emptyMask(work.composition.guards)
+	if !empty.Valid() {
+		return support.Mask{}, support.Mask{}, false
+	}
+	if reference.SameHandle(published) {
+		return empty, empty, true
+	}
+	if work.entailsSupport(reference, published) {
+		added, ok = work.differenceSupport(published, reference)
+		return added, empty, ok
+	}
+	split, splitOK := work.threeSupport(reference, published)
+	if !splitOK {
+		return support.Mask{}, support.Mask{}, false
+	}
+	return split.RightOnly(), split.LeftOnly(), true
+}
+
 func (work *Work) reindexSupport(mask support.Mask, plan guard.Reindex) (support.Mask, bool) {
 	if !work.live() || work.supportWork == nil {
 		return support.Mask{}, false
@@ -750,7 +874,9 @@ func (composition *Composition) TargetNotifications(slot shape.Slot, target Targ
 // arbitrary slot slices.
 type MergeScope struct {
 	composition *Composition
-	members     []bool
+	// members is the sealed selected-slot issuance. Recurrence enumerates it
+	// instead of scanning a whole Factor plane of booleans.
+	members change.Slots
 	// scopes is zero for Join. A selected Widen or Narrow scope is
 	// operation-private metadata prepared once at seal time; recurrence rejects
 	// a selected zero scope.
@@ -813,7 +939,7 @@ func (composition *Composition) sealRecurrence(kind MergeKind, targets []Target,
 		}
 	}
 	ordered = unique
-	members := make([]bool, composition.Count())
+	var members change.Slots
 	scopes := make([]uint64, composition.Count())
 	for begin := 0; begin < len(ordered); {
 		slot, ok := ordered[begin].Slot()
@@ -834,7 +960,7 @@ func (composition *Composition) sealRecurrence(kind MergeKind, targets []Target,
 			}
 			end++
 		}
-		if members[int(slot)] || !composition.operations[int(slot)].Supports(kind) {
+		if members.Test(int(slot)) || !composition.operations[int(slot)].Supports(kind) {
 			return MergeScope{}, false
 		}
 		var scope uint64
@@ -857,14 +983,15 @@ func (composition *Composition) sealRecurrence(kind MergeKind, targets []Target,
 		if !valid || scope == 0 {
 			return MergeScope{}, false
 		}
-		members[int(slot)], scopes[int(slot)] = true, scope
+		members.Set(int(slot))
+		scopes[int(slot)] = scope
 		begin = end
 	}
 	return MergeScope{composition: composition, members: members, scopes: scopes, kind: kind}, true
 }
 
 func (selection MergeScope) validFor(composition *Composition, kind MergeKind) bool {
-	if selection.composition != composition || len(selection.members) != composition.Count() || len(selection.scopes) != composition.Count() || selection.kind != kind {
+	if selection.composition != composition || len(selection.scopes) != composition.Count() || selection.kind != kind {
 		return false
 	}
 	return kind != Join || selection.all
@@ -1120,13 +1247,16 @@ func (work *Work) MergeContribution(left, right Contribution) (Contribution, Cha
 	// stable under Join.  The coverage union is still retained above for
 	// coverage-only wake semantics, and the support union remains visible in the
 	// carrier ChangeSet below.
-	fastSlots := 0
-	for position := range work.slots {
-		if work.contributionSlotIdentity(position, left, right) {
-			fastSlots++
+	merged := 0
+	for position, more := right.coverage.occupied.Next(0); more; position, more = right.coverage.occupied.Next(position + 1) {
+		if position >= len(work.slots) {
+			return Contribution{}, ChangeSet{}, false
+		}
+		if !work.contributionSlotIdentity(position, left, right) {
+			merged++
 		}
 	}
-	if fastSlots == len(work.slots) {
+	if merged == 0 {
 		empty := emptyMask(work.composition.guards)
 		if !empty.Valid() {
 			return Contribution{}, ChangeSet{}, false
@@ -1142,8 +1272,14 @@ func (work *Work) MergeContribution(left, right Contribution) (Contribution, Cha
 	if delta == nil {
 		return Contribution{}, ChangeSet{}, false
 	}
-	patches := make([]Patch, 0, len(work.slots)-fastSlots)
-	for position, slot := range work.slots {
+	patches, held := work.beginPatches(merged)
+	if !held {
+		delta.Discard()
+		return Contribution{}, ChangeSet{}, false
+	}
+	defer work.releasePatches(&patches)
+	for position, more := right.coverage.occupied.Next(0); more; position, more = right.coverage.occupied.Next(position + 1) {
+		slot := work.slots[position]
 		if !work.live() || slot == nil {
 			delta.Discard()
 			dropPatches(patches)
@@ -1187,8 +1323,8 @@ func (work *Work) contributionSlotIdentity(position int, left, right Contributio
 	return len(rightSlot.targets) == 0 || sameRoot(leftRoot, rightRoot)
 }
 
-func (work *Work) merge3Under(kind MergeKind, left, right State, members []bool, scopes []uint64) (State, ChangeSet, bool) {
-	if !work.live() || !work.liveFor(left, right) || left.previewMarked() || right.previewMarked() || left.contributionMarked() || right.contributionMarked() || len(members) != work.composition.Count() || len(scopes) != work.composition.Count() {
+func (work *Work) merge3Under(kind MergeKind, left, right State, members change.Slots, scopes []uint64) (State, ChangeSet, bool) {
+	if !work.live() || !work.liveFor(left, right) || left.previewMarked() || right.previewMarked() || left.contributionMarked() || right.contributionMarked() || len(scopes) != work.composition.Count() {
 		return State{}, ChangeSet{}, false
 	}
 	if kind != Join && kind != Widen && kind != Narrow {
@@ -1226,17 +1362,22 @@ func (work *Work) merge3Under(kind MergeKind, left, right State, members []bool,
 	if delta == nil {
 		return State{}, ChangeSet{}, false
 	}
-	patches := make([]Patch, 0, len(left.authority.composition.operations))
+	patches, held := work.beginPatches(len(left.authority.composition.operations))
+	if !held {
+		delta.Discard()
+		return State{}, ChangeSet{}, false
+	}
+	defer work.releasePatches(&patches)
 	for position, operation := range left.authority.composition.operations {
 		if !work.live() || work.slots[position] == nil {
 			delta.Discard()
 			dropPatches(patches)
 			return State{}, ChangeSet{}, false
 		}
-		if kind == Join && !members[position] {
+		if kind == Join && !members.Test(position) {
 			continue
 		}
-		recurrence := kind == Join || members[position]
+		recurrence := kind == Join || members.Test(position)
 		scope := scopes[position]
 		if (kind == Widen || kind == Narrow) && recurrence && scope == 0 {
 			return State{}, ChangeSet{}, false
@@ -1305,7 +1446,12 @@ func (work *Work) ReindexWithBoundary(state State, plan ReindexPlan) (State, Sta
 	if delta == nil {
 		return State{}, StateReindexBoundarySupport, false
 	}
-	patches := make([]Patch, 0, len(work.slots))
+	patches, held := work.beginPatches(len(work.slots))
+	if !held {
+		delta.Discard()
+		return State{}, StateReindexBoundarySupport, false
+	}
+	defer work.releasePatches(&patches)
 	for index, slot := range work.slots {
 		if !work.live() || slot == nil {
 			delta.Discard()
@@ -1346,7 +1492,7 @@ func emptyChangeSet(composition *Composition) (ChangeSet, bool) {
 	if !empty.Valid() {
 		return ChangeSet{}, false
 	}
-	return ChangeSet{composition: composition, added: empty, removed: empty}, true
+	return ChangeSet{composition: composition, added: empty, removed: empty, set: change.Set{Direction: change.Known}}, true
 }
 
 // Patch is one validated, single-output operation root replacement from a common
@@ -1528,12 +1674,34 @@ func (row FactorRegion) Region() support.Mask { return row.region }
 // ChangeSet is the exact semantic result consumed by reverse invalidation.
 // Direct writes preserve outer support, so Added and Removed are the sealed
 // empty region; merge-produced support changes join this same type later.
+// ChangeSet is one publication's semantic delta. Beside the regions and rows
+// it carries the change vocabulary the publishing operation classified, and
+// the borrowed slot set that operation touched.
+//
+// slots borrows the issuing Work's reusable buffer, so it is stamped with the
+// generation it was issued under: a read taken after the buffer was recycled
+// is refused rather than answered with recycled words.
 type ChangeSet struct {
 	composition *Composition
 	added       support.Mask
 	removed     support.Mask
 	factors     []FactorRegion
 	rows        []UnitRegion
+	set         change.Set
+	slab        *slotSetSlab
+	generation  uint64
+}
+
+// Evidence returns the classified change facts this publication carries.
+func (set ChangeSet) Evidence() change.Set { return set.set }
+
+// Slots returns the borrowed slot set this publication touched. It refuses a
+// stale read: the set lives only until the issuing Work recycles its buffers.
+func (set ChangeSet) Slots() (change.Slots, bool) {
+	if set.slab == nil || set.slab.generation != set.generation {
+		return change.Slots{}, false
+	}
+	return set.slab.set, true
 }
 
 func (set ChangeSet) Added() support.Mask   { return set.added }
@@ -1648,7 +1816,12 @@ func (work *Work) Replace(old, recomputed State) (State, ChangeSet, bool) {
 	if delta == nil {
 		return State{}, ChangeSet{}, false
 	}
-	patches := make([]Patch, 0, len(work.slots))
+	patches, held := work.beginPatches(len(work.slots))
+	if !held {
+		delta.Discard()
+		return State{}, ChangeSet{}, false
+	}
+	defer work.releasePatches(&patches)
 	for index, slot := range work.slots {
 		if !work.live() || slot == nil {
 			delta.Discard()
@@ -1770,7 +1943,12 @@ func (work *Work) prepareCommit(state State, patches []Patch, nextSupport, added
 	if work == nil || work.composition == nil || state.authority == nil || !state.live() || state.authority.composition != work.composition || !nextSupport.Valid() || !added.Valid() || !removed.Valid() || nextSupport.Manager() != state.authority.composition.guards || added.Manager() != state.authority.composition.guards || removed.Manager() != state.authority.composition.guards {
 		return preparedCommit{}, false
 	}
-	changed, rowCount, factorCount := false, 0, 0
+	// The publication lane's slot set is opened before the admission pass so
+	// the pass that proves each patch also records the slot it touched.
+	slab := &work.commitSlab
+	slab.set.Clear()
+	slab.generation++
+	changed, rootsChanged, rowCount, factorCount := false, false, 0, 0
 	for index, patch := range patches {
 		if !work.live() {
 			return preparedCommit{}, false
@@ -1791,12 +1969,34 @@ func (work *Work) prepareCommit(state State, patches []Patch, nextSupport, added
 			}
 		}
 		changed = changed || record.publisher != nil
+		rootsChanged = rootsChanged || record.publisher != nil || !sameRoot(record.before, record.after)
+		slab.set.Set(int(patch.slot))
 		rowCount += len(record.units)
 		if presentFactor {
 			factorCount++
 		}
 	}
-	set := ChangeSet{composition: state.authority.composition, added: added, removed: removed}
+	// The publishing operation owns the direction of its own delta. Support
+	// growth ascends and support loss descends. A root replaced under an
+	// unchanged support region is not provably ascending at this cut -- it is
+	// exactly the Narrow/ChangedUnit case -- so it is classified as a descent
+	// rather than left for a consumer to guess.
+	evidence := change.Set{Direction: change.Known}
+	if !support.Empty(added) {
+		evidence.Reasons |= change.SupportAdded
+		evidence.Direction |= change.Ascends
+	}
+	if !support.Empty(removed) {
+		evidence.Reasons |= change.SupportRemoved
+		evidence.Direction |= change.Descends
+	}
+	if rowCount != 0 {
+		evidence.Reasons |= change.ChangedUnit
+	}
+	if factorCount != 0 {
+		evidence.Reasons |= change.ChangedFactor
+	}
+	set := ChangeSet{composition: state.authority.composition, added: added, removed: removed, set: evidence, slab: slab, generation: slab.generation}
 	if factorCount != 0 {
 		set.factors = make([]FactorRegion, 0, factorCount)
 		for _, patch := range patches {
@@ -1813,10 +2013,8 @@ func (work *Work) prepareCommit(state State, patches []Patch, nextSupport, added
 			}
 		}
 	}
-	rootsChanged := false
-	for _, patch := range patches {
-		record := patch.change.record
-		rootsChanged = rootsChanged || record.publisher != nil || !sameRoot(record.before, record.after)
+	if rootsChanged && state.support.SameHandle(nextSupport) {
+		set.set.Direction |= change.Descends
 	}
 	return preparedCommit{set: set, rootsChanged: rootsChanged, changed: changed || rootsChanged || !state.support.SameHandle(nextSupport)}, true
 }

@@ -170,18 +170,12 @@ func TestMergeContributionSameRootKeepsCoverageOnlyWakeWithoutTypedTraversal(t *
 	defer work.Close()
 	changedLeft := contributionWrite(t, work, operation.carryOnlyOperation, leftState, shape.Slot(0), 2)
 	changedRight := contributionWrite(t, work, operation.carryOnlyOperation, rightState, shape.Slot(0), 2)
-	leftCoverage := contributionCoverage{
-		composition: composition,
-		slots:       []slotCoverage{{targets: []TargetRegion{{target: operation.target, region: leftSupport}}}},
-	}
+	leftCoverage := newContributionCoverage(composition, []slotCoverage{{targets: []TargetRegion{{target: operation.target, region: leftSupport}}}})
 	left, ok := work.admitContribution(changedLeft, leftCoverage)
 	if !ok {
 		t.Fatal("left contribution")
 	}
-	coverage := contributionCoverage{
-		composition: composition,
-		slots:       []slotCoverage{{targets: []TargetRegion{{target: operation.target, region: rightSupport}}}},
-	}
+	coverage := newContributionCoverage(composition, []slotCoverage{{targets: []TargetRegion{{target: operation.target, region: rightSupport}}}})
 	right, ok := work.admitContribution(changedRight, coverage)
 	if !ok {
 		t.Fatal("right authored contribution")

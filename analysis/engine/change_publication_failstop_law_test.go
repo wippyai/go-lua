@@ -78,10 +78,22 @@ func publicationPathShape(function *ast.FuncDecl) bool {
 	return count == 2
 }
 
-// pointInstallPosition returns the first assignment into epoch.points.
+// pointInstallPosition returns the first install into the published point
+// plane. The install itself lives behind epoch.installPoint, so a publication
+// path is recognized by that call; a direct assignment is still recognized so
+// the law survives a path that reintroduces one.
 func pointInstallPosition(function *ast.FuncDecl) token.Pos {
 	install := token.NoPos
+	mark := func(position token.Pos) {
+		if install == token.NoPos || position < install {
+			install = position
+		}
+	}
 	ast.Inspect(function.Body, func(node ast.Node) bool {
+		if call, isCall := node.(*ast.CallExpr); isCall && isSelector(call.Fun, "installPoint") {
+			mark(call.Pos())
+			return true
+		}
 		assignment, isAssignment := node.(*ast.AssignStmt)
 		if !isAssignment {
 			return true
@@ -91,13 +103,56 @@ func pointInstallPosition(function *ast.FuncDecl) token.Pos {
 			if !isIndex || !isSelector(index.X, "points") {
 				continue
 			}
-			if install == token.NoPos || index.Pos() < install {
-				install = index.Pos()
-			}
+			mark(index.Pos())
 		}
 		return true
 	})
 	return install
+}
+
+// installPoint is the single cut into the published point plane. Nothing else
+// in the package may assign into it, because a second install site is a
+// second place to forget the evidence a publication owes its consumers.
+func TestOnlyInstallPointWritesThePublishedPointPlane(t *testing.T) {
+	fset := token.NewFileSet()
+	packages, err := parser.ParseDir(fset, ".", func(info fs.FileInfo) bool {
+		return !strings.HasSuffix(info.Name(), "_test.go")
+	}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installs := 0
+	for _, parsed := range packages {
+		for _, file := range parsed.Files {
+			for _, declaration := range file.Decls {
+				function, isFunction := declaration.(*ast.FuncDecl)
+				if !isFunction || function.Body == nil {
+					continue
+				}
+				ast.Inspect(function.Body, func(node ast.Node) bool {
+					assignment, isAssignment := node.(*ast.AssignStmt)
+					if !isAssignment {
+						return true
+					}
+					for _, target := range assignment.Lhs {
+						index, isIndex := target.(*ast.IndexExpr)
+						if !isIndex || !isSelector(index.X, "points") {
+							continue
+						}
+						installs++
+						if function.Name.Name != "installPoint" {
+							t.Errorf("%s: %s installs into the published point plane outside installPoint",
+								fset.Position(index.Pos()), function.Name.Name)
+						}
+					}
+					return true
+				})
+			}
+		}
+	}
+	if installs != 1 {
+		t.Fatalf("published point installs = %d want exactly one", installs)
+	}
 }
 
 // auditPublicationReturns requires every post-install refusal to fail-stop.

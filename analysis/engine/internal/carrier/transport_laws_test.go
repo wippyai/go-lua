@@ -51,13 +51,10 @@ func transportCoverageBatchFixture(t testing.TB) (*Composition, *Work, contribut
 	if !ok {
 		t.Fatal("projection plan")
 	}
-	input := contributionCoverage{
-		composition: composition,
-		slots: []slotCoverage{
-			{targets: []TargetRegion{{target: first.target, region: secondCoordinate}}},
-			{targets: []TargetRegion{{target: second.target, region: notSecondCoordinate}}},
-		},
-	}
+	input := newContributionCoverage(composition, []slotCoverage{
+		{targets: []TargetRegion{{target: first.target, region: secondCoordinate}}},
+		{targets: []TargetRegion{{target: second.target, region: notSecondCoordinate}}},
+	})
 	work, ok := composition.NewWork()
 	if !ok {
 		t.Fatal("work")

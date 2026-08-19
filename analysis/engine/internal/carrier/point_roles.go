@@ -212,7 +212,12 @@ func (work *Work) rawCoverageAdditive(old, next contributionCoverage) bool {
 	if work == nil || !work.live() || old.composition != work.composition || next.composition != work.composition {
 		return false
 	}
-	for position := 0; position < work.composition.Count(); position++ {
+	// A slot the old surface never authored is contained by anything, so only
+	// its occupied issuance can witness a non-additive replacement.
+	for position, more := old.occupied.Next(0); more; position, more = old.occupied.Next(position + 1) {
+		if position >= work.composition.Count() {
+			return false
+		}
 		if !work.slotCoverageContains(next.slot(shape.Slot(position)), old.slot(shape.Slot(position))) {
 			return false
 		}
@@ -335,17 +340,24 @@ func (work *Work) closedInitialPoint(point PointState) bool {
 // directional sparse overlay when the rule cannot grow support, or closed
 // lifted confluence when it can.  No caller needs to decide whether to use a
 // raw State merge or a closed contribution merge.
-func (work *Work) AddRuleContribution(rhs PointRHS, rule RuleContribution) (PointRHS, bool) {
+// The returned ChangeSet is the overlay branch's own publication evidence.
+// The adoption and support-growing confluence branches publish no
+// predecessor-to-successor transition, so they return the zero ChangeSet,
+// whose evidence is unclassified and which every admissibility consumer
+// therefore refuses.
+func (work *Work) AddRuleContribution(rhs PointRHS, rule RuleContribution) (PointRHS, ChangeSet, bool) {
 	if !work.admittedPointRHS(rhs) || !work.admittedRuleContribution(rule) || !work.liveFor(rhs.point.state, rule.value.state) {
-		return PointRHS{}, false
+		return PointRHS{}, ChangeSet{}, false
 	}
 	if work.closedInitialPoint(rhs.point) && work.entailsSupport(rhs.point.state.support, rule.value.state.support) {
-		return work.PointRHSFromRuleContribution(rule)
+		adopted, ok := work.PointRHSFromRuleContribution(rule)
+		return adopted, ChangeSet{}, ok
 	}
 	if work.entailsSupport(rule.value.state.support, rhs.point.state.support) {
 		return work.OverlayRuleContribution(rhs, rule)
 	}
-	return work.JoinRuleContribution(rhs, rule)
+	joined, ok := work.JoinRuleContribution(rhs, rule)
+	return joined, ChangeSet{}, ok
 }
 
 // ProjectPointState keeps one selected factor root and selected coverage row,
@@ -364,6 +376,7 @@ func (work *Work) ProjectPointState(point PointState, selected shape.Slot) (Poin
 	if row := point.coverage.slot(selected); len(row.targets) != 0 {
 		coverage.slots = make([]slotCoverage, work.composition.Count())
 		coverage.slots[int(selected)] = row
+		coverage.occupied.Set(int(selected))
 	}
 	state := point.state
 	state.roots = roots
@@ -383,9 +396,9 @@ func (work *Work) ProjectPointState(point PointState, selected shape.Slot) (Poin
 // A rule whose support grows that output must take JoinRuleContribution
 // instead, so an old latent source branch can never become semantic merely
 // because support grew.
-func (work *Work) OverlayRuleContribution(rhs PointRHS, rule RuleContribution) (PointRHS, bool) {
+func (work *Work) OverlayRuleContribution(rhs PointRHS, rule RuleContribution) (PointRHS, ChangeSet, bool) {
 	if !work.admittedPointRHS(rhs) || !work.admittedRuleContribution(rule) {
-		return PointRHS{}, false
+		return PointRHS{}, ChangeSet{}, false
 	}
 	return work.overlayPointSurface(rhs, rule.value.state, rule.value.coverage)
 }
@@ -396,35 +409,41 @@ func (work *Work) OverlayRuleContribution(rhs PointRHS, rule RuleContribution) (
 // contained by left support: only then can the result retain left's physical
 // out-of-support root branches without making them semantic after support
 // growth.
-func (work *Work) overlayPointSurface(rhs PointRHS, rightState State, rightCoverage contributionCoverage) (PointRHS, bool) {
+func (work *Work) overlayPointSurface(rhs PointRHS, rightState State, rightCoverage contributionCoverage) (PointRHS, ChangeSet, bool) {
 	if !work.admittedPointRHS(rhs) || !work.validContributionSurface(rightState, rightCoverage) || !work.liveFor(rhs.point.state, rightState) || !work.entailsSupport(rightState.support, rhs.point.state.support) {
-		return PointRHS{}, false
+		return PointRHS{}, ChangeSet{}, false
 	}
 	// Coverage is the authoritative lifted presence plane. A contained right
 	// surface with no authored rows is therefore the exact overlay identity,
 	// even when its raw PointState retains latent payload outside support.
 	// Keep that representation-private payload out of typed work entirely.
 	if len(rightCoverage.slots) == 0 {
-		return rhs, true
+		empty, ok := emptyChangeSet(work.composition)
+		return rhs, empty, ok
 	}
 	nextCoverage, ok := work.unionCoverage(rhs.point.coverage, rightCoverage)
 	if !ok {
-		return PointRHS{}, false
+		return PointRHS{}, ChangeSet{}, false
 	}
 	empty := emptyMask(work.composition.guards)
 	if !empty.Valid() {
-		return PointRHS{}, false
+		return PointRHS{}, ChangeSet{}, false
 	}
 	delta := work.newSupportWork()
 	if delta == nil {
-		return PointRHS{}, false
+		return PointRHS{}, ChangeSet{}, false
 	}
-	patches := make([]Patch, 0, len(work.slots))
+	patches, held := work.beginPatches(len(work.slots))
+	if !held {
+		delta.Discard()
+		return PointRHS{}, ChangeSet{}, false
+	}
+	defer work.releasePatches(&patches)
 	for position, slot := range work.slots {
 		if !work.live() || slot == nil {
 			delta.Discard()
 			dropPatches(patches)
-			return PointRHS{}, false
+			return PointRHS{}, ChangeSet{}, false
 		}
 		physical := shape.Slot(position)
 		rightSlot := rightCoverage.slot(physical)
@@ -439,26 +458,29 @@ func (work *Work) overlayPointSurface(rhs PointRHS, rightState State, rightCover
 		if !valid {
 			delta.Discard()
 			dropPatches(patches)
-			return PointRHS{}, false
+			return PointRHS{}, ChangeSet{}, false
 		}
 		if !work.acceptInto(&patches, rhs.point.state, change, delta) {
 			delta.Discard()
-			return PointRHS{}, false
+			return PointRHS{}, ChangeSet{}, false
 		}
 	}
-	next, _, ok := work.commit(rhs.point.state, patches, rhs.point.state.support, empty, empty, delta)
+	// The overlay is a terminal operation: its result can reach the published
+	// point plane without passing another emitting operation, so it issues the
+	// ChangeSet its own commit produced instead of discarding it.
+	next, changes, ok := work.commit(rhs.point.state, patches, rhs.point.state.support, empty, empty, delta)
 	if !ok {
-		return PointRHS{}, false
+		return PointRHS{}, ChangeSet{}, false
 	}
 	// A C-empty right side produces no typed change and preserves a preexisting
 	// closure proof. Any authored overlay may retain left physical branches
 	// outside support, so it deliberately clears the fast-path bit.
 	point := PointState{state: next, coverage: nextCoverage, roleSeal: work.contributionSeal, authority: next.authority, closed: rhs.point.closed && len(rightCoverage.slots) == 0}
 	if !work.admittedPointState(point) {
-		return PointRHS{}, false
+		return PointRHS{}, ChangeSet{}, false
 	}
 	result := PointRHS{point: point, roleSeal: work.contributionSeal}
-	return result, work.admittedPointRHS(result)
+	return result, changes, work.admittedPointRHS(result)
 }
 
 // JoinPointRHS is the explicit total semantic join for two environment bases
@@ -685,7 +707,12 @@ func (work *Work) LiftRuleContribution(point PointState) (RuleContribution, bool
 	if delta == nil {
 		return RuleContribution{}, false
 	}
-	patches := make([]Patch, 0, len(work.slots))
+	patches, held := work.beginPatches(len(work.slots))
+	if !held {
+		delta.Discard()
+		return RuleContribution{}, false
+	}
+	defer work.releasePatches(&patches)
 	for position, slot := range work.slots {
 		if !work.live() || slot == nil {
 			delta.Discard()

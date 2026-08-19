@@ -59,7 +59,7 @@ func TestMergeTransportedPointContributionDropsPreparedRootOnCancellation(t *tes
 	if !ok {
 		t.Fatal("left")
 	}
-	coverage := contributionCoverage{composition: composition, slots: []slotCoverage{{targets: []TargetRegion{{target: operation.target, region: whole}}}}}
+	coverage := newContributionCoverage(composition, []slotCoverage{{targets: []TargetRegion{{target: operation.target, region: whole}}}})
 	right, ok := work.admitContribution(state, coverage)
 	if !ok {
 		t.Fatal("right")

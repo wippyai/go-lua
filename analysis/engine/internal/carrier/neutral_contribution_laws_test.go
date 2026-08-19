@@ -259,10 +259,7 @@ func TestNeutralContributionRejectsExplicitDefaultCoverage(t *testing.T) {
 		t.Fatal("work")
 	}
 	defer work.Close()
-	coverage := contributionCoverage{
-		composition: composition,
-		slots:       []slotCoverage{{targets: []TargetRegion{{target: operation.target, region: whole}}}},
-	}
+	coverage := newContributionCoverage(composition, []slotCoverage{{targets: []TargetRegion{{target: operation.target, region: whole}}}})
 	explicit, ok := work.admitContribution(state, coverage)
 	if !ok || work.neutralContribution(explicit) {
 		t.Fatal("explicit Default coverage received neutral proof")

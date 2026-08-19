@@ -1,6 +1,10 @@
 package carrier
 
-import "github.com/wippyai/go-lua/analysis/engine/internal/carrier/shape"
+import (
+	"github.com/wippyai/go-lua/analysis/engine/internal/carrier/shape"
+	"github.com/wippyai/go-lua/analysis/engine/internal/facts/change"
+	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
+)
 
 type pointFoldCoverageCursor struct {
 	rows  []TargetRegion
@@ -18,6 +22,11 @@ type pointFoldTransaction struct {
 	heap         []int
 	coverageRows []TargetRegion
 	resultSlots  []slotCoverage
+	// slotSources is the per-slot authored-source list the union pass builds
+	// while it considers operands. The dominance re-proof and the merge-join
+	// below read it instead of rescanning every operand for a slot most of
+	// them never author.
+	slotSources []int
 }
 
 // BeginPointRHSFold opens the one linear canonical point-fold transaction.
@@ -137,8 +146,12 @@ func (work *Work) FinishPointRHSFold() (PointRHS, ChangeSet, bool) {
 	if !ok {
 		return PointRHS{}, ChangeSet{}, false
 	}
-	split, ok := work.threeSupport(transaction.reference.state.support, finalSupport)
-	if !ok {
+	// The term loop above reached finalSupport by union, so it already holds
+	// the direction of the move. The publication delta is issued from that
+	// fact instead of re-deriving a whole three-way split against the
+	// reference on every fold.
+	var added, removed support.Mask
+	if added, removed, ok = work.publicationDelta(transaction.reference.state.support, finalSupport); !ok {
 		return PointRHS{}, ChangeSet{}, false
 	}
 	delta := work.newSupportWork()
@@ -185,7 +198,7 @@ func (work *Work) FinishPointRHSFold() (PointRHS, ChangeSet, bool) {
 			return PointRHS{}, ChangeSet{}, false
 		}
 	}
-	next, changes, ok := work.commit(transaction.reference.state, transaction.patches, finalSupport, split.RightOnly(), split.LeftOnly(), delta)
+	next, changes, ok := work.commit(transaction.reference.state, transaction.patches, finalSupport, added, removed, delta)
 	if !ok {
 		return PointRHS{}, ChangeSet{}, false
 	}
@@ -204,15 +217,7 @@ func (work *Work) FinishPointRHSFold() (PointRHS, ChangeSet, bool) {
 }
 
 func emptyContributionCoverage(coverage contributionCoverage) bool {
-	if len(coverage.slots) == 0 {
-		return true
-	}
-	for _, slot := range coverage.slots {
-		if len(slot.targets) != 0 {
-			return false
-		}
-	}
-	return true
+	return coverage.occupied.Empty()
 }
 
 func (transaction *pointFoldTransaction) clear() {
@@ -238,6 +243,7 @@ func (transaction *pointFoldTransaction) clear() {
 	transaction.coverageRows = transaction.coverageRows[:0]
 	clear(transaction.resultSlots)
 	transaction.resultSlots = transaction.resultSlots[:0]
+	transaction.slotSources = transaction.slotSources[:0]
 }
 
 func (work *Work) foldCoverageUnion(transaction *pointFoldTransaction, base contributionCoverage, terms []PointState) (contributionCoverage, bool) {
@@ -251,10 +257,23 @@ func (work *Work) foldCoverageUnion(transaction *pointFoldTransaction, base cont
 		transaction.resultSlots = transaction.resultSlots[:count]
 		clear(transaction.resultSlots)
 	}
-	nonempty := false
+	// Only a slot some operand actually authors can appear in the union. The
+	// occupied issuance of the base and every term is that set exactly, so a
+	// sparse fold visits its own width rather than the whole Factor plane.
+	joined := work.borrowSlotSet()
+	defer work.releaseSlotSet()
+	if joined == nil || !base.unionOccupiedInto(&joined.set) {
+		return contributionCoverage{}, false
+	}
+	for _, term := range terms {
+		if term.coverage.composition != work.composition || !term.coverage.unionOccupiedInto(&joined.set) {
+			return contributionCoverage{}, false
+		}
+	}
+	occupied := change.Slots{}
 	wholeDominant := -1
-	for position := 0; position < count; position++ {
-		if !work.live() {
+	for position, more := joined.set.Next(0); more; position, more = joined.set.Next(position + 1) {
+		if !work.live() || position >= count {
 			return contributionCoverage{}, false
 		}
 		slot := shape.Slot(position)
@@ -263,10 +282,12 @@ func (work *Work) foldCoverageUnion(transaction *pointFoldTransaction, base cont
 		total := 0
 		dominantSource := -1
 		var dominant slotCoverage
+		transaction.slotSources = transaction.slotSources[:0]
 		consider := func(source int, coverage slotCoverage) {
 			if len(coverage.targets) == 0 {
 				return
 			}
+			transaction.slotSources = append(transaction.slotSources, source)
 			sources++
 			sole = coverage
 			total += len(coverage.targets)
@@ -291,9 +312,6 @@ func (work *Work) foldCoverageUnion(transaction *pointFoldTransaction, base cont
 		}
 		consider(0, base.slot(slot))
 		for index, term := range terms {
-			if term.coverage.composition != work.composition {
-				return contributionCoverage{}, false
-			}
 			consider(index+1, term.coverage.slot(slot))
 		}
 		switch sources {
@@ -308,7 +326,7 @@ func (work *Work) foldCoverageUnion(transaction *pointFoldTransaction, base cont
 					wholeDominant = -2
 				}
 			}
-			nonempty = true
+			occupied.Set(position)
 			continue
 		}
 		{
@@ -316,7 +334,7 @@ func (work *Work) foldCoverageUnion(transaction *pointFoldTransaction, base cont
 			// incomparable with an intermediate source. Re-prove the final
 			// candidate against every source before sharing its header.
 			candidateValid := true
-			for source := 0; source < len(terms)+1; source++ {
+			for _, source := range transaction.slotSources {
 				if !work.slotCoverageContains(dominant, pointFoldSlotCoverageAt(base, terms, slot, source)) {
 					candidateValid = false
 					break
@@ -329,23 +347,16 @@ func (work *Work) foldCoverageUnion(transaction *pointFoldTransaction, base cont
 				} else if wholeDominant >= 0 && wholeDominant != dominantSource {
 					wholeDominant = -2
 				}
-				nonempty = true
+				occupied.Set(position)
 				continue
 			}
 			wholeDominant = -2
 		}
 		transaction.cursors = transaction.cursors[:0]
 		transaction.heap = transaction.heap[:0]
-		appendCursor := func(coverage slotCoverage) {
-			if len(coverage.targets) == 0 {
-				return
-			}
-			transaction.cursors = append(transaction.cursors, pointFoldCoverageCursor{rows: coverage.targets})
+		for _, source := range transaction.slotSources {
+			transaction.cursors = append(transaction.cursors, pointFoldCoverageCursor{rows: pointFoldSlotCoverageAt(base, terms, slot, source).targets})
 			transaction.coverageHeapPush(len(transaction.cursors) - 1)
-		}
-		appendCursor(base.slot(slot))
-		for _, term := range terms {
-			appendCursor(term.coverage.slot(slot))
 		}
 		if cap(transaction.coverageRows) < total {
 			transaction.coverageRows = make([]TargetRegion, 0, total)
@@ -384,13 +395,13 @@ func (work *Work) foldCoverageUnion(transaction *pointFoldTransaction, base cont
 		}
 		rows := append([]TargetRegion(nil), transaction.coverageRows...)
 		transaction.resultSlots[position] = slotCoverage{targets: rows}
-		nonempty = true
+		occupied.Set(position)
 	}
 	if wholeDominant >= 0 {
 		return contributionCoverageAt(base, terms, wholeDominant), true
 	}
-	result := contributionCoverage{composition: work.composition}
-	if nonempty {
+	result := contributionCoverage{composition: work.composition, occupied: occupied}
+	if !occupied.Empty() {
 		result.slots = make([]slotCoverage, count)
 		copy(result.slots, transaction.resultSlots)
 	}

@@ -352,23 +352,29 @@ func (epoch *executorEpoch) foldPointInputs(reference carrier.PointState, base c
 }
 
 func (epoch *executorEpoch) foldPoint(reference carrier.PointState, base carrier.PointRHS, point equation.Point) (carrier.PointRHS, bool) {
-	result, _, ok := epoch.foldPointWithBoundary(reference, base, point)
+	result, _, _, ok := epoch.foldPointWithBoundary(reference, base, point)
 	return result, ok
 }
 
-// foldPointWithBoundary exposes only whether the outer Point ownership check
-// reached the existing canonical terms fold. Refresh diagnostics use that
-// scalar to distinguish an invalid foldPoint boundary from a failure inside
-// foldPointTerms; it creates no additional fold authority or data path.
-func (epoch *executorEpoch) foldPointWithBoundary(reference carrier.PointState, base carrier.PointRHS, point equation.Point) (carrier.PointRHS, solveBoundary, bool) {
+// foldPointWithBoundary exposes whether the outer Point ownership check
+// reached the existing canonical terms fold, and issues the ChangeSet that
+// fold committed. The fold is a terminal operation -- its result reaches the
+// published point plane without passing another emitting operation -- so it
+// returns its evidence rather than discarding it. The boundary marker is
+// consumed immediately by refresh diagnostics and retains no fold rows.
+func (epoch *executorEpoch) foldPointWithBoundary(reference carrier.PointState, base carrier.PointRHS, point equation.Point) (carrier.PointRHS, carrier.ChangeSet, solveBoundary, bool) {
 	if epoch == nil || epoch.runtime == nil || !point.Available() || !epoch.work.OwnsPointState(reference) || !epoch.work.OwnsPointRHS(base) {
-		return carrier.PointRHS{}, refused(SolveFailureFamilyRefresh, "acyclic-fold-point"), false
+		return carrier.PointRHS{}, carrier.ChangeSet{}, refused(SolveFailureFamilyRefresh, "acyclic-fold-point"), false
 	}
 	pointIndex, indexed := epoch.runtime.graph.PointIndex(point)
 	if !indexed || pointIndex < 0 || pointIndex >= len(epoch.runtime.environmentIncoming) || pointIndex >= len(epoch.runtime.factorIncoming) {
-		return carrier.PointRHS{}, refused(SolveFailureFamilyRefresh, "acyclic-fold-point"), false
+		return carrier.PointRHS{}, carrier.ChangeSet{}, refused(SolveFailureFamilyRefresh, "acyclic-fold-point"), false
 	}
-	return epoch.foldPointTermsWithBoundary(reference, base, epoch.runtime.environmentIncoming[pointIndex], epoch.runtime.factorIncoming[pointIndex], nil, point)
+	sets := pointFoldTermSets{
+		first: pointFoldTermSet{environments: epoch.runtime.environmentIncoming[pointIndex], factors: epoch.runtime.factorIncoming[pointIndex]},
+		count: 1,
+	}
+	return epoch.foldPointTermSetsWithBoundary(reference, base, sets, point)
 }
 
 func (epoch *executorEpoch) foldPointTerms(reference carrier.PointState, base carrier.PointRHS, environments, factors, groups []int, producerPoint equation.Point) (result carrier.PointRHS, ok bool) {

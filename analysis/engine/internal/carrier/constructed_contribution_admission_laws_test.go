@@ -37,10 +37,7 @@ func TestUntrustedContributionAdmissionStillRejectsMalformedCoverage(t *testing.
 
 	// The outer vector has the right length, but the row has no issued Target
 	// capability. This must fail before any seal is attached.
-	malformed := contributionCoverage{
-		composition: composition,
-		slots:       []slotCoverage{{targets: []TargetRegion{{region: whole}}}},
-	}
+	malformed := newContributionCoverage(composition, []slotCoverage{{targets: []TargetRegion{{region: whole}}}})
 	if _, ok := work.admitContribution(state, malformed); ok {
 		t.Fatal("untrusted malformed coverage crossed deep admission")
 	}

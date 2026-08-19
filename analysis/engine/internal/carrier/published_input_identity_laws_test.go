@@ -118,10 +118,7 @@ func TestPointPublicationIdentityIncludesCompactCoverage(t *testing.T) {
 	if !ok {
 		t.Fatal("empty point")
 	}
-	covered := contributionCoverage{
-		composition: composition,
-		slots:       []slotCoverage{{targets: []TargetRegion{{target: operation.target, region: whole}}}},
-	}
+	covered := newContributionCoverage(composition, []slotCoverage{{targets: []TargetRegion{{target: operation.target, region: whole}}}})
 	coveredContribution, ok := work.admitContribution(state, covered)
 	if !ok {
 		t.Fatal("covered contribution")

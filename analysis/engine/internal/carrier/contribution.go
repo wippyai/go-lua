@@ -4,6 +4,7 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier/shape"
+	"github.com/wippyai/go-lua/analysis/engine/internal/facts/change"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 )
 
@@ -23,10 +24,14 @@ type ContributionSource struct {
 type ContributionPlan struct{ value *contributionPlan }
 
 type contributionPlan struct {
-	composition  *Composition
-	inputs       int
-	writes       []shape.Slot
-	carries      []ContributionSource
+	composition *Composition
+	inputs      int
+	writes      []shape.Slot
+	carries     []ContributionSource
+	// carrySlots is the seal-time issuance of the slots carries name. Finish
+	// asks membership of it instead of rescanning the carry vector once per
+	// physical slot.
+	carrySlots   change.Slots
 	supportPrune bool
 	environment  bool
 }
@@ -111,7 +116,11 @@ func (composition *Composition) SealContribution(inputCount int, writes []shape.
 			return ContributionPlan{}, false
 		}
 	}
-	return ContributionPlan{value: &contributionPlan{composition: composition, inputs: inputCount, writes: orderedWrites, carries: orderedCarries, supportPrune: supportPrune, environment: hasEnvironment}}, true
+	plan := &contributionPlan{composition: composition, inputs: inputCount, writes: orderedWrites, carries: orderedCarries, supportPrune: supportPrune, environment: hasEnvironment}
+	for _, carry := range orderedCarries {
+		plan.carrySlots.Set(int(carry.Slot))
+	}
+	return ContributionPlan{value: plan}, true
 }
 
 // BeginContribution is the compatibility entry for an already closed
@@ -438,33 +447,48 @@ func (work *Work) finishContribution(owner *contributionBase, patches []Patch, r
 	}
 	composition := work.composition
 	coverage := contributionCoverage{composition: composition, slots: make([]slotCoverage, composition.Count())}
-	rows := make([][]TargetRegion, composition.Count())
+	// The authored surface of a group is the join of three issued slot sets:
+	// the environment's occupied slots minus the carried ones, the carried
+	// slots, and the patched slots. A sparse group therefore assembles its own
+	// width instead of walking the whole Factor plane twice.
+	authored := work.borrowSlotSet()
+	defer work.releaseSlotSet()
+	if authored == nil {
+		dropPatches(patches)
+		return Contribution{}, false
+	}
 	if owner.plan.environment {
-		for position := range rows {
-			physical := shape.Slot(position)
-			if !containsContributionCarry(owner.plan.carries, physical) {
-				rows[position] = append(rows[position], owner.environment.coverage.slot(physical).targets...)
+		for position, more := owner.environment.coverage.occupied.Next(0); more; position, more = owner.environment.coverage.occupied.Next(position + 1) {
+			if !owner.plan.carrySlots.Test(position) {
+				authored.set.Set(position)
 			}
 		}
 	}
 	for _, carry := range owner.plan.carries {
-		carried := owner.inputs[carry.Input].coverage.slot(carry.Slot)
-		rows[int(carry.Slot)] = append(rows[int(carry.Slot)], carried.targets...)
+		if len(owner.inputs[carry.Input].coverage.slot(carry.Slot).targets) != 0 {
+			authored.set.Set(int(carry.Slot))
+		}
 	}
 	for _, patch := range patches {
-		rows[int(patch.slot)] = append(rows[int(patch.slot)], patch.authored...)
+		if len(patch.authored) != 0 {
+			authored.set.Set(int(patch.slot))
+		}
 	}
-	nonempty := false
-	for position := range rows {
-		canonical, canonicalOK := work.canonicalCoverage(rows[position], retained)
+	for position, more := authored.set.Next(0); more; position, more = authored.set.Next(position + 1) {
+		physical := shape.Slot(position)
+		rows := work.assembleAuthoredRows(owner, patches, physical)
+		canonical, canonicalOK := work.canonicalCoverage(rows, retained)
 		if !canonicalOK {
 			dropPatches(patches)
 			return Contribution{}, false
 		}
+		if len(canonical.targets) == 0 {
+			continue
+		}
 		coverage.slots[position] = canonical
-		nonempty = nonempty || len(canonical.targets) != 0
+		coverage.occupied.Set(position)
 	}
-	if !nonempty {
+	if coverage.occupied.Empty() {
 		coverage.slots = nil
 	}
 	split, splitOK := work.threeSupport(owner.state.support, retained)
@@ -498,7 +522,13 @@ func (work *Work) finishContribution(owner *contributionBase, patches []Patch, r
 		dropPatches(patches)
 		return Contribution{}, false
 	}
-	closed := make([]Patch, 0, composition.Count())
+	closed, held := work.beginPatches(composition.Count())
+	if !held {
+		delta.Discard()
+		dropPatches(patches)
+		return Contribution{}, false
+	}
+	defer work.releasePatches(&closed)
 	patchIndex := 0
 	for position, slot := range work.slots {
 		if !work.live() || slot == nil {
@@ -634,13 +664,49 @@ func (owner *contributionBase) invalidate() {
 	owner.rootsOwned = false
 }
 
-func containsContributionCarry(carries []ContributionSource, slot shape.Slot) bool {
-	for _, carry := range carries {
-		if carry.Slot == slot {
-			return true
+// assembleAuthoredRows gathers one slot's authored rows from the group's
+// three declared sources. A slot with a single already-canonical source hands
+// that immutable row vector straight to the canonicalizer, so the common
+// sparse case copies nothing.
+func (work *Work) assembleAuthoredRows(owner *contributionBase, patches []Patch, slot shape.Slot) []TargetRegion {
+	var sole []TargetRegion
+	sources, total := 0, 0
+	if owner.plan.environment && !owner.plan.carrySlots.Test(int(slot)) {
+		if rows := owner.environment.coverage.slot(slot).targets; len(rows) != 0 {
+			sole, sources, total = rows, sources+1, total+len(rows)
 		}
 	}
-	return false
+	for _, carry := range owner.plan.carries {
+		if carry.Slot != slot {
+			continue
+		}
+		if rows := owner.inputs[carry.Input].coverage.slot(slot).targets; len(rows) != 0 {
+			sole, sources, total = rows, sources+1, total+len(rows)
+		}
+	}
+	for _, patch := range patches {
+		if patch.slot == slot && len(patch.authored) != 0 {
+			sole, sources, total = patch.authored, sources+1, total+len(patch.authored)
+		}
+	}
+	if sources <= 1 {
+		return sole
+	}
+	rows := make([]TargetRegion, 0, total)
+	if owner.plan.environment && !owner.plan.carrySlots.Test(int(slot)) {
+		rows = append(rows, owner.environment.coverage.slot(slot).targets...)
+	}
+	for _, carry := range owner.plan.carries {
+		if carry.Slot == slot {
+			rows = append(rows, owner.inputs[carry.Input].coverage.slot(slot).targets...)
+		}
+	}
+	for _, patch := range patches {
+		if patch.slot == slot {
+			rows = append(rows, patch.authored...)
+		}
+	}
+	return rows
 }
 
 func (work *Work) canBorrowClosedContributionSlot(owner *contributionBase, slot shape.Slot, retained support.Mask, final slotCoverage) bool {
@@ -660,9 +726,11 @@ func contributionSourceAt(owner *contributionBase, slot shape.Slot) (contributio
 	if owner == nil || owner.plan == nil {
 		return contributionInput{}, false
 	}
-	for _, carry := range owner.plan.carries {
-		if carry.Slot == slot && carry.Input >= 0 && carry.Input < len(owner.inputs) {
-			return owner.inputs[carry.Input], true
+	if owner.plan.carrySlots.Test(int(slot)) {
+		for _, carry := range owner.plan.carries {
+			if carry.Slot == slot && carry.Input >= 0 && carry.Input < len(owner.inputs) {
+				return owner.inputs[carry.Input], true
+			}
 		}
 	}
 	if owner.plan.environment && owner.hasEnvironment {

@@ -141,8 +141,8 @@ type ActivationFamily struct {
 }
 
 // ActivationRange is the structural effect declared by one output-free Rule.
-// It names exactly one cold family permission.  Concrete locator membership
-// is checked only when equation Topology seals an ActivationBinding.
+// It names exactly one cold family permission. Concrete locator membership is
+// checked only when equation Topology seals an owner-issued activation row.
 type ActivationRange struct {
 	Family Key
 }

@@ -4,6 +4,7 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier/shape"
+	"github.com/wippyai/go-lua/analysis/engine/internal/facts/change"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 )
 
@@ -38,6 +39,11 @@ type contributionSeal struct {
 type contributionCoverage struct {
 	composition *Composition
 	slots       []slotCoverage
+	// occupied is the slot-plane issuance. Every producer writes it in the
+	// same statement that writes its slot row, so a consumer enumerates the
+	// slots that actually carry an authored relation instead of scanning the
+	// whole Factor plane. A sparse contribution therefore costs its own width.
+	occupied change.Slots
 }
 
 type slotCoverage struct {
@@ -239,6 +245,9 @@ func (coverage contributionCoverage) validFor(state State) bool {
 		return false
 	}
 	for position := range coverage.slots {
+		if coverage.occupied.Test(position) != (len(coverage.slots[position].targets) != 0) {
+			return false
+		}
 		for index, row := range coverage.slots[position].targets {
 			slot, ok := row.target.Slot()
 			if !ok || int(slot) != position || !coverage.composition.OwnsTarget(slot, row.target) || !row.region.Valid() || row.region.Manager() != coverage.composition.guards || support.Empty(row.region) || index > 0 && !coverage.slots[position].targets[index-1].target.Less(row.target) {
@@ -246,7 +255,31 @@ func (coverage contributionCoverage) validFor(state State) bool {
 			}
 		}
 	}
-	return true
+	return len(coverage.slots) != 0 || coverage.occupied.Empty()
+}
+
+// newContributionCoverage assembles one coverage header and issues its
+// occupied slot set from the rows it carries. Every construction of the
+// private representation from an existing slot vector goes through it, so the
+// issuance cannot be forgotten by a producer that builds its rows first.
+func newContributionCoverage(composition *Composition, slots []slotCoverage) contributionCoverage {
+	coverage := contributionCoverage{composition: composition, slots: slots}
+	for position := range slots {
+		if len(slots[position].targets) != 0 {
+			coverage.occupied.Set(position)
+		}
+	}
+	if coverage.occupied.Empty() {
+		coverage.slots = nil
+	}
+	return coverage
+}
+
+// unionOccupiedInto accumulates this coverage's occupied slots into a
+// caller-owned reusable set. It is the join every multi-operand coverage
+// consumer walks instead of the whole Factor plane.
+func (coverage contributionCoverage) unionOccupiedInto(dst *change.Slots) bool {
+	return coverage.occupied.UnionInto(dst)
 }
 
 func (coverage contributionCoverage) slot(slot shape.Slot) slotCoverage {
@@ -271,20 +304,27 @@ func sameSlotCoverage(left, right slotCoverage) bool {
 	return true
 }
 
+// sameContributionCoverage compares two authored surfaces over the join of
+// their occupied slots. Every slot outside that join is empty on both sides
+// and is therefore equal without being visited.
 func sameContributionCoverage(left, right contributionCoverage) bool {
 	if left.composition == nil || left.composition != right.composition {
 		return false
 	}
 	count := left.composition.Count()
-	for position := 0; position < count; position++ {
-		var leftSlot, rightSlot slotCoverage
-		if len(left.slots) != 0 {
-			leftSlot = left.slots[position]
+	for position, more := left.occupied.Next(0); more; position, more = left.occupied.Next(position + 1) {
+		if position >= count {
+			return false
 		}
-		if len(right.slots) != 0 {
-			rightSlot = right.slots[position]
+		if !sameSlotCoverage(left.slots[position], right.slot(shape.Slot(position))) {
+			return false
 		}
-		if !sameSlotCoverage(leftSlot, rightSlot) {
+	}
+	// A slot the right side authors and the left side does not is a
+	// difference by itself; the join is walked from both ends so neither
+	// direction needs the whole plane.
+	for position, more := right.occupied.Next(0); more; position, more = right.occupied.Next(position + 1) {
+		if position >= count || !left.occupied.Test(position) {
 			return false
 		}
 	}
@@ -300,17 +340,30 @@ func (work *Work) unionCoverage(left, right contributionCoverage) (contributionC
 	if !work.live() || left.composition != work.composition || right.composition != work.composition {
 		return contributionCoverage{}, false
 	}
+	if left.occupied.Empty() {
+		return right, true
+	}
+	if right.occupied.Empty() {
+		return left, true
+	}
 	result := contributionCoverage{composition: work.composition, slots: make([]slotCoverage, work.composition.Count())}
-	nonempty := false
-	for position := range result.slots {
+	joined := work.borrowSlotSet()
+	defer work.releaseSlotSet()
+	if joined == nil || !left.unionOccupiedInto(&joined.set) || !right.unionOccupiedInto(&joined.set) {
+		return contributionCoverage{}, false
+	}
+	for position, more := joined.set.Next(0); more; position, more = joined.set.Next(position + 1) {
 		merged, ok := work.unionSlotCoverage(left.slot(shape.Slot(position)), right.slot(shape.Slot(position)))
 		if !ok {
 			return contributionCoverage{}, false
 		}
+		if len(merged.targets) == 0 {
+			continue
+		}
 		result.slots[position] = merged
-		nonempty = nonempty || len(merged.targets) != 0
+		result.occupied.Set(position)
 	}
-	if !nonempty {
+	if result.occupied.Empty() {
 		result.slots = nil
 	}
 	return result, true
@@ -621,10 +674,7 @@ func (work *Work) mergeSelectedContributionSurface(kind MergeKind, currentState 
 	if kind != Widen && kind != Narrow || !work.liveFor(currentState, selectedState) || !work.liveFor(currentState, exactState) {
 		return State{}, ChangeSet{}, false
 	}
-	hasSelected := false
-	for _, member := range selected.members {
-		hasSelected = hasSelected || member
-	}
+	hasSelected := !selected.members.Empty()
 	if kind == Widen && !selectedState.support.Equal(exactState.support) || hasSelected && kind == Widen && !work.entailsSupport(currentState.support, selectedState.support) || hasSelected && kind == Narrow && (!work.entailsSupport(selectedState.support, currentState.support) || !selectedState.support.Equal(exactState.support)) {
 		return State{}, ChangeSet{}, false
 	}
@@ -675,7 +725,12 @@ func (work *Work) mergeSelectedContributionSurface(kind MergeKind, currentState 
 	if delta == nil {
 		return State{}, ChangeSet{}, false
 	}
-	patches := make([]Patch, 0, len(work.slots))
+	patches, held := work.beginPatches(len(work.slots))
+	if !held {
+		delta.Discard()
+		return State{}, ChangeSet{}, false
+	}
+	defer work.releasePatches(&patches)
 	for position, slot := range work.slots {
 		if !work.live() || slot == nil {
 			delta.Discard()
@@ -685,7 +740,7 @@ func (work *Work) mergeSelectedContributionSurface(kind MergeKind, currentState 
 		physical := shape.Slot(position)
 		var change ChangeHandle
 		var valid bool
-		if hasSelected && selected.members[position] {
+		if hasSelected && selected.members.Test(position) {
 			change, valid = slot.MergeSelectedContributionUnder(kind, selected.scopes[position], currentState.roots[position], selectedState.roots[position], exactState.roots[position], selectedSplit, exactSplit, coverageRows(currentCoverage.slot(physical)), coverageRows(selectedCoverage.slot(physical)), coverageRows(exactCoverage.slot(physical)), delta)
 		} else if exactClosed {
 			// The exact RHS owner has already physically closed this root to its
@@ -725,6 +780,13 @@ func (work *Work) mergeSelectedContributionSurface(kind MergeKind, currentState 
 	state, changes, ok := work.commit(currentState, patches, exactState.support, added, removed, delta)
 	if !ok {
 		return State{}, ChangeSet{}, false
+	}
+	// A Narrow is a descent by definition of the operation, not by what its
+	// support happened to do. Its support entailment is satisfied by equality
+	// and its lifted order permits a strict coverage shrink, so the direction
+	// is issued here by the operation that owns the phase.
+	if kind == Narrow {
+		changes.set.Direction |= change.Descends
 	}
 	return state, changes, true
 }
@@ -770,7 +832,12 @@ func (work *Work) TransportPointContribution(input Contribution, pre support.Mas
 	if delta == nil {
 		return Contribution{}, false
 	}
-	patches := make([]Patch, 0, len(work.slots))
+	patches, held := work.beginPatches(len(work.slots))
+	if !held {
+		delta.Discard()
+		return Contribution{}, false
+	}
+	defer work.releasePatches(&patches)
 	for position, slot := range work.slots {
 		if !work.live() || slot == nil {
 			delta.Discard()
@@ -836,7 +903,12 @@ func (work *Work) TransportRuleContribution(input Contribution, pre support.Mask
 	if delta == nil {
 		return Contribution{}, false
 	}
-	patches := make([]Patch, 0, len(work.slots))
+	patches, held := work.beginPatches(len(work.slots))
+	if !held {
+		delta.Discard()
+		return Contribution{}, false
+	}
+	defer work.releasePatches(&patches)
 	for position, slot := range work.slots {
 		if !work.live() || slot == nil {
 			delta.Discard()
@@ -866,18 +938,49 @@ func (work *Work) TransportRuleContribution(input Contribution, pre support.Mask
 
 // CoverageRegion is one slot-local authorship change. It is structural wake
 // evidence only and must never be converted into a semantic FactorRegion.
+//
+// The producer holds the direction of every row it emits, so the two halves
+// of the authorship split are carried separately: added names the region this
+// slot gained, removed the region it lost. Region remains their union for the
+// consumers that only need to know that something moved.
 type CoverageRegion struct {
-	slot   shape.Slot
-	region support.Mask
+	slot    shape.Slot
+	region  support.Mask
+	added   support.Mask
+	removed support.Mask
 }
 
-func (row CoverageRegion) Slot() shape.Slot     { return row.slot }
-func (row CoverageRegion) Region() support.Mask { return row.region }
+func (row CoverageRegion) Slot() shape.Slot      { return row.slot }
+func (row CoverageRegion) Region() support.Mask  { return row.region }
+func (row CoverageRegion) Added() support.Mask   { return row.added }
+func (row CoverageRegion) Removed() support.Mask { return row.removed }
 
+// CoverageChangeSet is one publication's authorship delta. It carries the
+// change vocabulary the producer classified, the slot set it touched, and the
+// row projections consumers read.
+//
+// slots borrows this Work's reusable set, so it is stamped with the operation
+// generation that issued it: a read taken after the buffer was recycled is
+// refused rather than answered with recycled words.
 type CoverageChangeSet struct {
 	composition *Composition
 	rows        []CoverageRegion
 	targets     []CoverageTargetRegion
+	set         change.Set
+	slab        *slotSetSlab
+	generation  uint64
+}
+
+// Evidence returns the classified change facts this delta carries.
+func (set CoverageChangeSet) Evidence() change.Set { return set.set }
+
+// Slots returns the borrowed slot set this delta touched. It refuses a stale
+// read: the set lives only until the issuing Work recycles its buffers.
+func (set CoverageChangeSet) Slots() (change.Slots, bool) {
+	if set.slab == nil || set.slab.generation != set.generation {
+		return change.Slots{}, false
+	}
+	return set.slab.set, true
 }
 
 // CoverageTargetRegion is the exact Target-local authorship delta retained
@@ -918,83 +1021,121 @@ func (composition *Composition) OwnsCoverageChangeSet(set CoverageChangeSet) boo
 // compact coverage headers. It is shared by closed RuleContributions and
 // semantic PointStates; only the latter can retain latent payload outside
 // support, which never enters this coverage calculation.
+// accumulateRegion widens one half of an authorship split. The first
+// nonempty contribution owns the region; every later one unions into it.
+func (work *Work) accumulateRegion(into support.Mask, has bool, next support.Mask) (support.Mask, bool, bool) {
+	if support.Empty(next) {
+		return into, has, true
+	}
+	if !has {
+		return next, true, true
+	}
+	joined, ok := work.unionSupport(into, next)
+	return joined, true, ok
+}
+
 func (work *Work) coverageChangesSurface(left, right contributionCoverage, retainTargets bool) (CoverageChangeSet, bool) {
 	if !work.live() || left.composition != work.composition || right.composition != work.composition {
 		return CoverageChangeSet{}, false
 	}
-	result := CoverageChangeSet{composition: work.composition}
-	for position := 0; position < work.composition.Count(); position++ {
+	joined := work.borrowSlotSet()
+	defer work.releaseSlotSet()
+	slab := work.borrowSlotSet()
+	defer work.releaseSlotSet()
+	if joined == nil || slab == nil || !left.unionOccupiedInto(&joined.set) || !right.unionOccupiedInto(&joined.set) {
+		return CoverageChangeSet{}, false
+	}
+	// The producer classifies its own delta. A row present only on the left is
+	// authorship this publication lost, a row present only on the right is
+	// authorship it gained, and a row on both sides splits into exactly those
+	// two halves. Unioning them into one direction-free mask would destroy the
+	// only ordering fact this operation holds.
+	result := CoverageChangeSet{composition: work.composition, set: change.Set{Direction: change.Known}, slab: slab, generation: slab.generation}
+	empty := emptyMask(work.composition.guards)
+	if !empty.Valid() {
+		return CoverageChangeSet{}, false
+	}
+	for position, more := joined.set.Next(0); more; position, more = joined.set.Next(position + 1) {
 		leftSlot, rightSlot := left.slot(shape.Slot(position)), right.slot(shape.Slot(position))
 		if sameSlotCoverage(leftSlot, rightSlot) {
 			continue
 		}
-		var region support.Mask
-		hasRegion := false
+		added, removed := empty, empty
+		hasAdded, hasRemoved := false, false
 		leftIndex, rightIndex := 0, 0
 		for leftIndex < len(leftSlot.targets) || rightIndex < len(rightSlot.targets) {
+			var target Target
+			var lost, gained support.Mask
 			switch {
 			case rightIndex == len(rightSlot.targets) || leftIndex < len(leftSlot.targets) && leftSlot.targets[leftIndex].target.Less(rightSlot.targets[rightIndex].target):
-				next := leftSlot.targets[leftIndex].region
-				if retainTargets {
-					result.targets = append(result.targets, CoverageTargetRegion{slot: shape.Slot(position), target: leftSlot.targets[leftIndex].target, region: next})
-				}
-				if !support.Empty(next) && !hasRegion {
-					region, hasRegion = next, true
-				} else if !support.Empty(next) {
-					var ok bool
-					region, ok = work.unionSupport(region, next)
-					if !ok {
-						return CoverageChangeSet{}, false
-					}
-				}
+				target, lost, gained = leftSlot.targets[leftIndex].target, leftSlot.targets[leftIndex].region, empty
 				leftIndex++
 			case leftIndex == len(leftSlot.targets) || rightSlot.targets[rightIndex].target.Less(leftSlot.targets[leftIndex].target):
-				next := rightSlot.targets[rightIndex].region
-				if retainTargets {
-					result.targets = append(result.targets, CoverageTargetRegion{slot: shape.Slot(position), target: rightSlot.targets[rightIndex].target, region: next})
-				}
-				if !support.Empty(next) && !hasRegion {
-					region, hasRegion = next, true
-				} else if !support.Empty(next) {
-					var ok bool
-					region, ok = work.unionSupport(region, next)
-					if !ok {
-						return CoverageChangeSet{}, false
-					}
-				}
+				target, lost, gained = rightSlot.targets[rightIndex].target, empty, rightSlot.targets[rightIndex].region
 				rightIndex++
 			default:
 				split, ok := work.threeSupport(leftSlot.targets[leftIndex].region, rightSlot.targets[rightIndex].region)
 				if !ok {
 					return CoverageChangeSet{}, false
 				}
-				changed, ok := work.unionSupport(split.LeftOnly(), split.RightOnly())
-				if !ok {
-					return CoverageChangeSet{}, false
-				}
-				if !support.Empty(changed) {
-					if retainTargets {
-						result.targets = append(result.targets, CoverageTargetRegion{slot: shape.Slot(position), target: leftSlot.targets[leftIndex].target, region: changed})
-					}
-					if !hasRegion {
-						region, hasRegion = changed, true
-					} else {
-						region, ok = work.unionSupport(region, changed)
-						if !ok {
-							return CoverageChangeSet{}, false
-						}
-					}
-				}
+				target, lost, gained = leftSlot.targets[leftIndex].target, split.LeftOnly(), split.RightOnly()
 				leftIndex++
 				rightIndex++
 			}
+			lostEmpty, gainedEmpty := support.Empty(lost), support.Empty(gained)
+			if lostEmpty && gainedEmpty {
+				continue
+			}
+			var ok bool
+			if added, hasAdded, ok = work.accumulateRegion(added, hasAdded, gained); !ok {
+				return CoverageChangeSet{}, false
+			}
+			if removed, hasRemoved, ok = work.accumulateRegion(removed, hasRemoved, lost); !ok {
+				return CoverageChangeSet{}, false
+			}
+			if !retainTargets {
+				continue
+			}
+			changed := gained
+			switch {
+			case gainedEmpty:
+				changed = lost
+			case lostEmpty:
+			default:
+				if changed, ok = work.unionSupport(lost, gained); !ok {
+					return CoverageChangeSet{}, false
+				}
+			}
+			result.targets = append(result.targets, CoverageTargetRegion{slot: shape.Slot(position), target: target, region: changed})
 		}
-		if !hasRegion {
+		if !hasAdded && !hasRemoved {
 			continue
 		}
-		if !support.Empty(region) {
-			result.rows = append(result.rows, CoverageRegion{slot: shape.Slot(position), region: region})
+		region := added
+		if !hasAdded {
+			region = removed
+		} else if hasRemoved {
+			var ok bool
+			if region, ok = work.unionSupport(added, removed); !ok {
+				return CoverageChangeSet{}, false
+			}
 		}
+		if support.Empty(region) {
+			continue
+		}
+		result.rows = append(result.rows, CoverageRegion{slot: shape.Slot(position), region: region, added: added, removed: removed})
+		slab.set.Set(position)
+		if hasAdded {
+			result.set.Reasons |= change.SupportAdded
+			result.set.Direction |= change.Ascends
+		}
+		if hasRemoved {
+			result.set.Reasons |= change.SupportRemoved
+			result.set.Direction |= change.Descends
+		}
+	}
+	if len(result.rows) != 0 {
+		result.set.Reasons |= change.AuthorshipChanged
 	}
 	return result, true
 }

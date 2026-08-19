@@ -80,7 +80,12 @@ func (work *Work) MergeTransportedPointContribution(left, right Contribution, pr
 	if delta == nil {
 		return Contribution{}, ChangeSet{}, false
 	}
-	patches := make([]Patch, 0, len(work.slots))
+	patches, held := work.beginPatches(len(work.slots))
+	if !held {
+		delta.Discard()
+		return Contribution{}, ChangeSet{}, false
+	}
+	defer work.releasePatches(&patches)
 	for position, slot := range work.slots {
 		if !work.live() || slot == nil {
 			delta.Discard()
@@ -138,8 +143,7 @@ func (work *Work) transportContributionCoverage(input contributionCoverage, pre 
 		}
 	}()
 	coverage := contributionCoverage{composition: work.composition, slots: make([]slotCoverage, work.composition.Count())}
-	nonempty := false
-	for position := 0; position < work.composition.Count(); position++ {
+	for position, more := input.occupied.Next(0); more; position, more = input.occupied.Next(position + 1) {
 		source := input.slot(shape.Slot(position))
 		if len(source.targets) == 0 {
 			continue
@@ -185,8 +189,11 @@ func (work *Work) transportContributionCoverage(input contributionCoverage, pre 
 		// admitted source row and the target boundary. The algebra therefore
 		// proves row ⊆ targetSupport; no second entailment or canonicalization
 		// transaction is needed while these masks remain candidates.
+		if len(rows) == 0 {
+			continue
+		}
 		coverage.slots[position] = slotCoverage{targets: rows}
-		nonempty = nonempty || len(rows) != 0
+		coverage.occupied.Set(position)
 	}
 	if !batch.Seal() {
 		return contributionCoverage{}, false
@@ -195,7 +202,7 @@ func (work *Work) transportContributionCoverage(input contributionCoverage, pre 
 	if !validTransportCoverageShape(coverage, work.composition) {
 		return contributionCoverage{}, false
 	}
-	if !nonempty {
+	if coverage.occupied.Empty() {
 		coverage.slots = nil
 	}
 	return coverage, true
@@ -205,7 +212,10 @@ func (work *Work) validTransportSourceCoverage(input contributionCoverage) bool 
 	if work == nil || input.composition != work.composition {
 		return false
 	}
-	for position := 0; position < work.composition.Count(); position++ {
+	for position, more := input.occupied.Next(0); more; position, more = input.occupied.Next(position + 1) {
+		if position >= work.composition.Count() {
+			return false
+		}
 		rows := input.slot(shape.Slot(position)).targets
 		for index, row := range rows {
 			slot, ok := row.target.Slot()
@@ -236,6 +246,9 @@ func validTransportCoverageShape(coverage contributionCoverage, composition *Com
 		return false
 	}
 	for position := range coverage.slots {
+		if coverage.occupied.Test(position) != (len(coverage.slots[position].targets) != 0) {
+			return false
+		}
 		rows := coverage.slots[position].targets
 		for index, row := range rows {
 			if !row.region.Valid() || row.region.Manager() != composition.guards || support.Empty(row.region) || index != 0 && !rows[index-1].target.Less(row.target) {
