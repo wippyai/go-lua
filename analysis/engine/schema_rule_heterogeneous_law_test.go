@@ -36,8 +36,14 @@ func TestProgramRuleThreadsExactAndSummaryReadThroughProductEvidencePatch(t *tes
 			return Product(access, func(row Row) bool { return StageValue(access, row, uint64(1)) })
 		},
 	}
-	exactRuntime, summaryRuntime, bindOK := BindRuleWithExactAndSummaryReadAndCarry[uint64, uint64, ruleUnit, uint64, uint64, uint64, uint64, OrderedCells[uint64]](
-		binding, rule, exactRead, factor, summaryRead, factor, summary, carry, writeSlot, factor, hot, HotCarrySpec[uint64, ruleUnit]{}, func(ruleUnit) (uint64, bool) { return 1, true }, func(ruleUnit) (uint64, bool) { return 2, true })
+	var exactRuntime Read[OrderedCells[uint64]]
+	var summaryRuntime Read[OrderedCells[uint64]]
+	bindOK := BindSelectedRule[uint64, uint64, ruleUnit](binding, rule, carry, writeSlot, factor.Ref(), hot, HotCarrySpec[uint64, ruleUnit]{}, func(ruleUnit) (uint64, bool) { return 2, true }, func(tx *SelectedRouteRuleBindingTransaction[uint64, uint64, ruleUnit]) bool {
+		var exactOK, summaryOK bool
+		exactRuntime, exactOK = AddSelectedRouteExactRead(tx, exactRead, factor.Ref(), func(ruleUnit) (uint64, bool) { return 1, true })
+		summaryRuntime, summaryOK = AddSelectedRouteSummaryRead[uint64, uint64, ruleUnit, uint64, OrderedCells[uint64]](tx, summaryRead, factor.Ref(), summary, nil)
+		return exactOK && summaryOK
+	})
 	if !bindOK || !binding.Seal() {
 		t.Fatal("heterogeneous rule binding")
 	}
