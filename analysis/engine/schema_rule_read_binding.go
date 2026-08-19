@@ -365,11 +365,11 @@ func (binding *schemaSummaryRuleReadBinding[K, V, S]) bind(bound readBinding, me
 	}
 	unit, unitOK := factor.readUnit(surface)
 	unitRow, rowPresent := factor.reads[surface]
-	proofSummary, proofOK := factor.summaryReadReceiptProof(surface, uint64(uint32(binding.form.ordinal)), binding.origin.semantic)
-	if !unitOK || !rowPresent || unitRow.kind != carrier.SummaryUnit || !proofOK {
+	summaryFactor, summaryForm, summaryKeys, summaryDigest, summaryOK := factor.summaryReadAddress(surface, uint64(uint32(binding.form.ordinal)), binding.origin.semantic)
+	if !unitOK || !rowPresent || unitRow.kind != carrier.SummaryUnit || !summaryOK {
 		return false
 	}
-	return bound.appendReadRuntime(&typedReadRuntime[K, V, S]{input: int(binding.origin.input), binding: factor.binding, unit: unit, summary: proofSummary, normalize: binding.form.normalize, equal: binding.form.equal, fingerprint: binding.form.fingerprint})
+	return bound.appendReadRuntime(&typedReadRuntime[K, V, S]{input: int(binding.origin.input), binding: factor.binding, unit: unit, summaryFactor: summaryFactor, summaryForm: summaryForm, summaryKeys: summaryKeys, summaryDigest: summaryDigest, summary: true, normalize: binding.form.normalize, equal: binding.form.equal, fingerprint: binding.form.fingerprint})
 }
 
 func (binding *schemaSummaryRuleReadBinding[K, V, S]) projectLocal(operand any) (uint64, bool) {
@@ -412,8 +412,8 @@ func (binding *schemaExactRuleReadBinding[K, V]) bind(bound readBinding, member 
 		return false
 	}
 	unit, unitOK := factor.readUnit(surface)
-	readProof, proofOK := newRuleReadReceiptProof(factor.receipt, surface)
-	if !unitOK || !proofOK {
+	readLocal, localOK := exactReadLocal(factor.receipt, surface)
+	if !unitOK || !localOK {
 		return false
 	}
 	normalize := func(value OrderedCells[V]) OrderedCells[V] { return value }
@@ -423,7 +423,7 @@ func (binding *schemaExactRuleReadBinding[K, V]) bind(bound readBinding, member 
 	fingerprint := func(value OrderedCells[V]) uint64 {
 		return fingerprintOrderedCellRecord(value.record, binding.factor.impl.algebra.Fingerprint)
 	}
-	return bound.appendReadRuntime(&typedReadRuntime[K, V, OrderedCells[V]]{input: int(binding.origin.input), binding: factor.binding, unit: unit, proof: readProof, normalize: normalize, equal: equal, fingerprint: fingerprint})
+	return bound.appendReadRuntime(&typedReadRuntime[K, V, OrderedCells[V]]{input: int(binding.origin.input), binding: factor.binding, unit: unit, exactFactor: factor.receipt, exactRaw: readLocal, exact: true, normalize: normalize, equal: equal, fingerprint: fingerprint})
 }
 
 func (binding *schemaExactRuleReadBinding[K, V]) exactAdmitFactor() schemaFactorBinding {

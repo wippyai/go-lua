@@ -13,14 +13,20 @@ import (
 )
 
 type typedReadRuntime[K ~uint32 | ~uint64, V, S any] struct {
-	input       int
-	binding     *factbinding.Binding[K, V]
-	unit        carrier.Unit
-	proof       ruleReadProof
-	summary     ruleSummaryReadProof
-	normalize   func(OrderedCells[V]) S
-	equal       func(S, S) bool
-	fingerprint func(S) uint64
+	input         int
+	binding       *factbinding.Binding[K, V]
+	unit          carrier.Unit
+	exactFactor   factorRuntimeBinding
+	exactRaw      uint64
+	exact         bool
+	summaryFactor factorRuntimeBinding
+	summaryForm   factorFormReceipt
+	summaryKeys   []uint64
+	summaryDigest [32]byte
+	summary       bool
+	normalize     func(OrderedCells[V]) S
+	equal         func(S, S) bool
+	fingerprint   func(S) uint64
 }
 
 type typedReadSession[V, S any] struct {
@@ -149,10 +155,12 @@ func (runtime *stagedReadRuntime[V, S, Tag]) dynamicReads() []demand.DynamicRead
 	return []demand.DynamicRead{{Input: uint64(runtime.input), Slot: slot}}
 }
 
-func (*stagedReadRuntime[V, S, Tag]) exactProof() ruleReadProof { return ruleReadProof{} }
+func (*stagedReadRuntime[V, S, Tag]) exactAddress() (factorRuntimeBinding, uint64, bool) {
+	return factorRuntimeBinding{}, 0, false
+}
 
-func (*stagedReadRuntime[V, S, Tag]) summaryProof() ruleSummaryReadProof {
-	return ruleSummaryReadProof{}
+func (*stagedReadRuntime[V, S, Tag]) summaryAddress() (factorRuntimeBinding, factorFormReceipt, []uint64, [32]byte, bool) {
+	return factorRuntimeBinding{}, factorFormReceipt{}, nil, [32]byte{}, false
 }
 
 func (runtime *stagedReadRuntime[V, S, Tag]) refine(session *productSession, index int) bool {
@@ -413,18 +421,18 @@ func (session *typedStagedSelectionSession[V, S, Tag]) close() {
 
 func (runtime *typedReadRuntime[K, V, S]) inputPort() int { return runtime.input }
 
-func (runtime *typedReadRuntime[K, V, S]) exactProof() ruleReadProof {
-	if runtime == nil {
-		return ruleReadProof{}
+func (runtime *typedReadRuntime[K, V, S]) exactAddress() (factorRuntimeBinding, uint64, bool) {
+	if runtime == nil || !runtime.exact {
+		return factorRuntimeBinding{}, 0, false
 	}
-	return runtime.proof
+	return runtime.exactFactor, runtime.exactRaw, true
 }
 
-func (runtime *typedReadRuntime[K, V, S]) summaryProof() ruleSummaryReadProof {
-	if runtime == nil {
-		return ruleSummaryReadProof{}
+func (runtime *typedReadRuntime[K, V, S]) summaryAddress() (factorRuntimeBinding, factorFormReceipt, []uint64, [32]byte, bool) {
+	if runtime == nil || !runtime.summary {
+		return factorRuntimeBinding{}, factorFormReceipt{}, nil, [32]byte{}, false
 	}
-	return runtime.summary
+	return runtime.summaryFactor, runtime.summaryForm, runtime.summaryKeys, runtime.summaryDigest, true
 }
 
 func (runtime *typedReadRuntime[K, V, S]) refine(session *productSession, index int) bool {

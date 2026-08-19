@@ -201,8 +201,8 @@ func (cell *schemaFactorBindingCell[K, V]) schemaFactorBindExactRead(bound readB
 		return false
 	}
 	unit, unitOK := factor.readUnit(surface)
-	readProof, proofOK := newRuleReadReceiptProof(factor.receipt, surface)
-	if !unitOK || !proofOK {
+	readLocal, localOK := exactReadLocal(factor.receipt, surface)
+	if !unitOK || !localOK {
 		return false
 	}
 	normalize := func(value OrderedCells[V]) OrderedCells[V] { return value }
@@ -212,7 +212,7 @@ func (cell *schemaFactorBindingCell[K, V]) schemaFactorBindExactRead(bound readB
 	fingerprint := func(value OrderedCells[V]) uint64 {
 		return fingerprintOrderedCellRecord(value.record, cell.impl.algebra.Fingerprint)
 	}
-	return bound.appendReadRuntime(&typedReadRuntime[K, V, OrderedCells[V]]{input: int(origin.input), binding: factor.binding, unit: unit, proof: readProof, normalize: normalize, equal: equal, fingerprint: fingerprint})
+	return bound.appendReadRuntime(&typedReadRuntime[K, V, OrderedCells[V]]{input: int(origin.input), binding: factor.binding, unit: unit, exactFactor: factor.receipt, exactRaw: readLocal, exact: true, normalize: normalize, equal: equal, fingerprint: fingerprint})
 }
 
 func (cell *schemaFactorBindingCell[K, V]) sealedImplementation(state *schemaBindingState, authority *schemaBindingAuthority) (*FactorImplementation[K, V], bool) {
@@ -455,11 +455,11 @@ func (cell *schemaSummaryReadCell[K, V, S]) schemaSummaryRuleReadBind(bound read
 	}
 	unit, unitOK := factor.readUnit(surface)
 	unitRow, rowPresent := factor.reads[surface]
-	proofSummary, proofOK := factor.summaryReadReceiptProof(surface, uint64(uint32(cell.ordinal)), origin.semantic)
-	if !unitOK || !rowPresent || unitRow.kind != carrier.SummaryUnit || !proofOK {
+	summaryFactor, summaryForm, summaryKeys, summaryDigest, summaryOK := factor.summaryReadAddress(surface, uint64(uint32(cell.ordinal)), origin.semantic)
+	if !unitOK || !rowPresent || unitRow.kind != carrier.SummaryUnit || !summaryOK {
 		return false
 	}
-	return bound.appendReadRuntime(&typedReadRuntime[K, V, S]{input: int(origin.input), binding: factor.binding, unit: unit, summary: proofSummary, normalize: cell.normalize, equal: cell.equal, fingerprint: cell.fingerprint})
+	return bound.appendReadRuntime(&typedReadRuntime[K, V, S]{input: int(origin.input), binding: factor.binding, unit: unit, summaryFactor: summaryFactor, summaryForm: summaryForm, summaryKeys: summaryKeys, summaryDigest: summaryDigest, summary: true, normalize: cell.normalize, equal: cell.equal, fingerprint: cell.fingerprint})
 }
 
 // Ref issues the callback-free Factor implementation's opaque exact-key
@@ -494,16 +494,16 @@ func (implementation *FactorImplementation[K, V]) Ref(key K) (Ref[K], bool) {
 		return Ref[K]{}, false
 	}
 	receipt := implementation.binding
-	return Ref[K]{compositionID: receipt.schema.ID(), bindingAuthority: receipt.authority, factorKey: receipt.semantic, factorIndex: receipt.ordinal, raw: key}, true
+	return Ref[K]{binding: receipt, raw: key}, true
 }
 
 func (implementation *FactorImplementation[K, V]) NewClosedRefs() *ClosedRefs[K] {
 	if implementation == nil || !implementation.binding.valid() {
 		return nil
 	}
-	return &ClosedRefs[K]{receipt: implementation.binding}
+	return &ClosedRefs[K]{binding: implementation.binding}
 }
 
 func (implementation *FactorImplementation[K, V]) OwnsClosedRefs(refs *ClosedRefs[K]) bool {
-	return implementation != nil && refs != nil && refs.validIssuer() && implementation.binding.valid() && refs.receipt.state == implementation.binding.state && refs.receipt.authority == implementation.binding.authority && refs.receipt.schema == implementation.binding.schema && refs.receipt.ordinal == implementation.binding.ordinal
+	return implementation != nil && refs != nil && refs.validIssuer() && implementation.binding.valid() && refs.binding.state == implementation.binding.state && refs.binding.authority == implementation.binding.authority && refs.binding.schema == implementation.binding.schema && refs.binding.ordinal == implementation.binding.ordinal
 }

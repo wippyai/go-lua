@@ -65,14 +65,16 @@ func (runtime *outputRuntime) routeRead() (uint64, bool) {
 type outputWriteRuntime struct {
 	// routeRead is the one-based staged read ordinal consumed by a route batch.
 	// Zero is the ordinary direct/static target form.
-	routeRead uint64
-	direct    carrier.Target
-	directID  ruleTargetProof
+	routeRead     uint64
+	direct        carrier.Target
+	directBinding factorRuntimeBinding
+	directRaw     uint64
 }
 
 type resolvedRuleTarget struct {
-	target carrier.Target
-	proof  ruleTargetProof
+	target  carrier.Target
+	binding factorRuntimeBinding
+	raw     uint64
 }
 
 func (runtime *outputRuntime) targets(execution *ruleExecution, row int) ([]resolvedRuleTarget, bool) {
@@ -84,10 +86,10 @@ func (runtime *outputRuntime) targets(execution *ruleExecution, row int) ([]reso
 		if !execution.product.requireCheckpoint() {
 			return nil, false
 		}
-		if write.routeRead != 0 || write.direct == (carrier.Target{}) || !write.directID.validOrigin() {
+		if write.routeRead != 0 || write.direct == (carrier.Target{}) || !write.directBinding.valid() || write.directRaw >= write.directBinding.keyEnd || write.direct.Mode() != carrier.StrongTarget {
 			return nil, false
 		}
-		result = append(result, resolvedRuleTarget{target: write.direct, proof: write.directID})
+		result = append(result, resolvedRuleTarget{target: write.direct, binding: write.directBinding, raw: write.directRaw})
 	}
 	return result, true
 }
@@ -97,7 +99,7 @@ type typedOutput[K ~uint32 | ~uint64, V any] struct {
 	binding      *factbinding.Binding[K, V]
 	targets      func(*ruleExecution, int) ([]resolvedRuleTarget, bool)
 	routeRead    uint64
-	routeTarget  func(exactRef) (carrier.Target, ruleTargetProof, bool)
+	routeTarget  func(exactRef) (carrier.Target, factorRuntimeBinding, uint64, bool)
 	patch        *factbinding.Patch[K, V]
 	transform    typedCarryTransform[K, V]
 	routeScratch []V
@@ -309,7 +311,7 @@ func (output *typedOutput[K, V]) stage(execution *ruleExecution, epoch identity.
 		}
 		resolved := make([]RuleTarget, len(targets))
 		for index, target := range targets {
-			resolved[index] = RuleTarget{target: target.target, proof: target.proof}
+			resolved[index] = RuleTarget{target: target.target, targetBinding: target.binding, targetRaw: target.raw}
 		}
 		output.dispositions[row] = RuleDisposition[V]{kind: RuleDispositionStaged, value: value, guard: RuleGuard{mask: when}, targets: resolved, carryTransform: output.transform.semantic, row: ruleResultRow{index: row}, ordinal: row}
 		output.proofCount++
@@ -401,12 +403,12 @@ func (output *typedOutput[K, V]) stageSelection(execution *ruleExecution, epoch 
 	begin := 0
 	for ordinal := 0; ordinal < batch.count; ordinal++ {
 		ref, value, available := batch.at(ordinal)
-		current, proof, resolved := output.routeTarget(ref)
-		if !available || !resolved || current == (carrier.Target{}) || !proof.validOrigin() {
+		current, binding, raw, resolved := output.routeTarget(ref)
+		if !available || !resolved || current == (carrier.Target{}) || !binding.valid() || raw >= binding.keyEnd || current.Mode() != carrier.StrongTarget {
 			return false
 		}
 		if pairs != nil {
-			pairs = append(pairs, RuleOutput[V]{target: RuleTarget{target: current, proof: proof}, value: value, ordinal: ordinal})
+			pairs = append(pairs, RuleOutput[V]{target: RuleTarget{target: current, targetBinding: binding, targetRaw: raw}, value: value, ordinal: ordinal})
 		}
 		if ordinal == 0 {
 			target, begin = current, ordinal

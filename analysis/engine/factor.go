@@ -4,7 +4,6 @@ import (
 	"sort"
 	"sync/atomic"
 
-	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/internal/canonical"
 )
 
@@ -19,37 +18,40 @@ type Measure[K ~uint32 | ~uint64, V any] struct {
 // Factor is a typed cold owner capability. K and V remain available to its
 // owner and the later template binder, but they never enter a mixed engine
 // carrier during receipt schema binding.
-// Ref is an opaque, sealed exact-key capability issued by a Factor. Its key
-// remains zero-based even though later private equation binding may choose a
-// different representation. It records canonical sealed identities plus one
-// private live seal-authority ticket, has no public constructor or inspection
-// surface, and the zero-sized function member deliberately makes it
-// uncomparable.
+// Ref is an opaque exact-key capability issued by a sealed Factor. Its key
+// remains zero-based even though later equation rows use one-based locals.
+// The sealed Factor row is carried directly beside that dense key; no second
+// provenance record or redeemable receipt is minted for the route.
 //
 // Ref is only a cold identity capability. It is not a Program handle, an
 // equation coordinate, or a runtime binding handle.
 type Ref[K ~uint32 | ~uint64] struct {
-	compositionID    CompositionID
-	bindingAuthority *schemaBindingAuthority
-	factorKey        composition.Key
-	factorIndex      uint64
-	raw              K
-	_                [0]func()
+	binding factorRuntimeBinding
+	raw     K
+	_       [0]func()
 }
+
+type exactRef interface {
+	factorBinding() factorRuntimeBinding
+	rawAddress() uint64
+}
+
+func (ref Ref[K]) factorBinding() factorRuntimeBinding { return ref.binding }
+func (ref Ref[K]) rawAddress() uint64                  { return uint64(ref.raw) }
 
 // ClosedRefs is one Factor-issued, seal-once vector of exact Ref
 // capabilities. It deliberately exposes append/close rather than raw
 // coordinates: callers with an owner-private K can construct it by type
 // inference, while only Assembly later reads its canonical Ref vector.
 type ClosedRefs[K ~uint32 | ~uint64] struct {
-	receipt factorRuntimeBinding
+	binding factorRuntimeBinding
 	digest  [32]byte
 	refs    []Ref[K]
 	closed  bool
 }
 
 func (refs *ClosedRefs[K]) validIssuer() bool {
-	return refs != nil && refs.receipt.valid()
+	return refs != nil && refs.binding.valid()
 }
 
 const (
@@ -94,7 +96,7 @@ func summaryKeyWidth[K ~uint32 | ~uint64]() uint64 {
 // legal only before Close; duplicates are rejected before they can alter the
 // canonical summary set.
 func (refs *ClosedRefs[K]) Append(ref Ref[K]) bool {
-	if refs == nil || refs.closed || !refs.receipt.valid() || !validateRefForReceipt(refs.receipt, ref) {
+	if refs == nil || refs.closed || !refs.binding.valid() || !factorAddressMatches(refs.binding, ref.binding) || uint64(ref.raw) >= refs.binding.keyEnd {
 		return false
 	}
 	for _, present := range refs.refs {
@@ -110,11 +112,11 @@ func (refs *ClosedRefs[K]) Append(ref Ref[K]) bool {
 // idempotence-free: a vector has one admission episode and any second close
 // is rejected rather than treated as a parallel construction path.
 func (refs *ClosedRefs[K]) Close() bool {
-	if refs == nil || refs.closed || !refs.receipt.valid() || len(refs.refs) == 0 {
+	if refs == nil || refs.closed || !refs.binding.valid() || len(refs.refs) == 0 {
 		return false
 	}
 	for _, ref := range refs.refs {
-		if !validateRefForReceipt(refs.receipt, ref) {
+		if !factorAddressMatches(refs.binding, ref.binding) || uint64(ref.raw) >= refs.binding.keyEnd {
 			return false
 		}
 	}

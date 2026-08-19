@@ -36,7 +36,6 @@
 //	schema_query_runtime.go      the common solver query implementation
 //	rule_capability.go           declaration-time Rule slot capability machinery
 //	rule_surface.go              binding-surface value constructors
-//	exact_ref.go                 the private factor-coordinate projection
 //
 // # Runtime assembly plane
 //

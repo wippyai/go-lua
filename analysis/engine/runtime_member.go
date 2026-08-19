@@ -233,14 +233,16 @@ func bindSchemaRuleMember[K ~uint32 | ~uint64, V, O any](implementation *RuleImp
 		return nil, false
 	}
 	var target carrier.Target
-	var targetProof ruleTargetProof
+	var targetBinding factorRuntimeBinding
+	var targetRaw uint64
 	if memberOK {
-		var targetOK, targetProofOK bool
+		var targetOK, targetAddressOK bool
 		target, targetOK = output.writeTarget(surface)
-		targetProof, targetProofOK = newRuleTargetReceiptProof(boundOutput.receipt, surface)
-		if !targetOK || !targetProofOK {
+		targetRaw, targetAddressOK = exactWriteLocal(boundOutput.receipt, surface)
+		if !targetOK || !targetAddressOK {
 			return nil, false
 		}
+		targetBinding = boundOutput.receipt
 	} else if !output.hasRouteUniverse() {
 		return nil, false
 	}
@@ -260,7 +262,7 @@ func bindSchemaRuleMember[K ~uint32 | ~uint64, V, O any](implementation *RuleImp
 	bound := &boundRule[V, O]{proof: proof, admission: hot.admission, anchor: anchor, operandContent: content, transfer: hot.transfer, operand: canonical}
 	projection := &outputRuntime{writes: make([]outputWriteRuntime, 1)}
 	if memberOK {
-		projection.writes[0] = outputWriteRuntime{direct: target, directID: targetProof}
+		projection.writes[0] = outputWriteRuntime{direct: target, directBinding: targetBinding, directRaw: targetRaw}
 	} else {
 		projection.writes[0] = outputWriteRuntime{routeRead: routeRead}
 	}

@@ -191,12 +191,13 @@ func (guard RuleGuard) Empty() bool { return !guard.mask.Valid() || support.Empt
 // comparison only, so a checker can validate target correspondence without
 // manufacturing or retargeting a Patch.
 type RuleTarget struct {
-	target carrier.Target
-	proof  ruleTargetProof
+	target        carrier.Target
+	targetBinding factorRuntimeBinding
+	targetRaw     uint64
 }
 
 func (target RuleTarget) Same(other RuleTarget) bool {
-	return target.target.Same(other.target) && target.proof == other.proof
+	return target.target.Same(other.target) && factorAddressMatches(target.targetBinding, other.targetBinding) && target.targetRaw == other.targetRaw
 }
 
 // RuleDispositionKind is the exact transfer outcome for one Product row.

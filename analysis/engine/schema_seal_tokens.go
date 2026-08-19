@@ -67,6 +67,13 @@ func (receipt factorRuntimeBinding) valid() bool {
 	return true
 }
 
+// factorAddressMatches compares two already-sealed direct Factor rows. The
+// state/authority/ordinal tuple is the address; no receipt reconstruction or
+// second proof is needed at a hot route/read boundary.
+func factorAddressMatches(left, right factorRuntimeBinding) bool {
+	return left.issued && right.issued && left.state != nil && left.authority != nil && right.state != nil && right.authority != nil && left.state == right.state && left.authority == right.authority && left.schema == right.schema && left.ordinal == right.ordinal && left.semantic == right.semantic && left.keyEnd == right.keyEnd && left.algebra == right.algebra
+}
+
 func (receipt factorRuntimeBinding) validForms() bool {
 	if !receipt.valid() {
 		return false

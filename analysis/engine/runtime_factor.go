@@ -124,22 +124,26 @@ func (bound *boundFactor[K, V]) readUnit(surface equation.Surface) (carrier.Unit
 	return unit.unit, ok
 }
 
-// summaryReadReceiptProof is the slot-native counterpart of summaryReadProof.
-// It authenticates the exact sealed form ordinal and semantic key without
-// reconstructing a declaration form or consulting a semantic lookup table.
-func (bound *boundFactor[K, V]) summaryReadReceiptProof(surface equation.Surface, formOrdinal uint64, semantic composition.Key) (ruleSummaryReadProof, bool) {
+// summaryReadAddress returns the sealed Factor row and its form address. The
+// caller already owns the declaration-time shape checks; runtime keeps the
+// row directly instead of minting a second summary proof object.
+func (bound *boundFactor[K, V]) summaryReadAddress(surface equation.Surface, formOrdinal uint64, semantic composition.Key) (factorRuntimeBinding, factorFormReceipt, []uint64, [32]byte, bool) {
 	if bound == nil || !bound.receipt.valid() || !semantic.Available() {
-		return ruleSummaryReadProof{}, false
+		return factorRuntimeBinding{}, factorFormReceipt{}, nil, [32]byte{}, false
 	}
 	unit, found := bound.reads[surface]
 	if !found || unit.kind != carrier.SummaryUnit || len(unit.summaryKeys) == 0 || !matchesFactorReadShape(bound.receipt.schema, bound.receipt.ordinal, surface, summaryReadForm) || surface.Semantic != semantic || surface.Normalizer != semantic {
-		return ruleSummaryReadProof{}, false
+		return factorRuntimeBinding{}, factorFormReceipt{}, nil, [32]byte{}, false
 	}
 	formReceipt, formOK := bound.receipt.formAt(formOrdinal, SchemaFormReadSummary, semantic)
 	if !formOK {
-		return ruleSummaryReadProof{}, false
+		return factorRuntimeBinding{}, factorFormReceipt{}, nil, [32]byte{}, false
 	}
-	return ruleSummaryReadProof{receipt: bound.receipt, formReceipt: formReceipt, keys: unit.summaryKeys, digest: SummaryVectorDigest(unit.summaryKeys)}, true
+	digest := SummaryVectorDigest(unit.summaryKeys)
+	if digest == ([32]byte{}) {
+		return factorRuntimeBinding{}, factorFormReceipt{}, nil, [32]byte{}, false
+	}
+	return bound.receipt, formReceipt, unit.summaryKeys, digest, true
 }
 
 // stagedUnit resolves only a Factor-issued exact Ref through the predeclared
@@ -152,12 +156,12 @@ func (bound *boundFactor[K, V]) stagedUnit(ref exactRef) (carrier.Unit, bool) {
 	}
 	var raw uint64
 	var ok bool
-	if bound.receipt.valid() {
-		if typed, valid := ref.(interface {
-			receiptRaw(factorRuntimeBinding) (uint64, bool)
-		}); valid {
-			raw, ok = typed.receiptRaw(bound.receipt)
-		}
+	if typed, valid := ref.(interface {
+		factorBinding() factorRuntimeBinding
+		rawAddress() uint64
+	}); valid {
+		address := typed.factorBinding()
+		raw, ok = typed.rawAddress(), factorAddressMatches(address, bound.receipt)
 	}
 	if !ok || raw >= uint64(len(bound.dynamicUnits)) {
 		return carrier.Unit{}, false
@@ -173,35 +177,31 @@ func (bound *boundFactor[K, V]) stagedUnit(ref exactRef) (carrier.Unit, bool) {
 // presealed route-target universe. Its positional pairing with stagedUnit is
 // established during Factor binding, so runtime never declares a target or
 // reconstructs a key after sealing.
-func (bound *boundFactor[K, V]) stagedTarget(ref exactRef) (carrier.Target, ruleTargetProof, bool) {
+func (bound *boundFactor[K, V]) stagedTarget(ref exactRef) (carrier.Target, factorRuntimeBinding, uint64, bool) {
 	if bound == nil || len(bound.routeTargets) != len(bound.dynamicUnits) || len(bound.routeTargets) == 0 || ref == nil {
-		return carrier.Target{}, ruleTargetProof{}, false
+		return carrier.Target{}, factorRuntimeBinding{}, 0, false
 	}
 	var raw uint64
 	var ok bool
-	if bound.receipt.valid() {
-		if typed, valid := ref.(interface {
-			receiptRaw(factorRuntimeBinding) (uint64, bool)
-		}); valid {
-			raw, ok = typed.receiptRaw(bound.receipt)
-		}
+	if typed, valid := ref.(interface {
+		factorBinding() factorRuntimeBinding
+		rawAddress() uint64
+	}); valid {
+		address := typed.factorBinding()
+		raw, ok = typed.rawAddress(), factorAddressMatches(address, bound.receipt)
 	}
 	if !ok || raw >= uint64(len(bound.routeTargets)) {
-		return carrier.Target{}, ruleTargetProof{}, false
+		return carrier.Target{}, factorRuntimeBinding{}, 0, false
 	}
 	target := bound.routeTargets[int(raw)]
 	if target == (carrier.Target{}) || target.Mode() != carrier.StrongTarget {
-		return carrier.Target{}, ruleTargetProof{}, false
+		return carrier.Target{}, factorRuntimeBinding{}, 0, false
 	}
-	var proof ruleTargetProof
-	var proven bool
-	if bound.receipt.valid() {
-		proof, proven = newRuleTargetReceiptProof(bound.receipt, exactWriteReceiptSurface(bound.receipt, raw+1))
+	targetRaw, proven := exactWriteLocal(bound.receipt, exactWriteReceiptSurface(bound.receipt, raw+1))
+	if !proven || targetRaw != raw {
+		return carrier.Target{}, factorRuntimeBinding{}, 0, false
 	}
-	if !proven {
-		return carrier.Target{}, ruleTargetProof{}, false
-	}
-	return target, proof, true
+	return target, bound.receipt, targetRaw, true
 }
 
 func (bound *boundFactor[K, V]) routeUniverse() []carrier.Target {

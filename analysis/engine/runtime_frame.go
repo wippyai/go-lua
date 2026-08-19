@@ -25,8 +25,8 @@ type readRuntime interface {
 	refine(*productSession, int) bool
 	observations() []demand.Observation
 	dynamicReads() []demand.DynamicRead
-	exactProof() ruleReadProof
-	summaryProof() ruleSummaryReadProof
+	exactAddress() (factorRuntimeBinding, uint64, bool)
+	summaryAddress() (factorRuntimeBinding, factorFormReceipt, []uint64, [32]byte, bool)
 }
 
 type productRow = provenanceRow

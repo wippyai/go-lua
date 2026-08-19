@@ -82,40 +82,13 @@ func DerivationDispositionSelectionMatchesRef[V any, O any, Tag selectionTag, S 
 	return routed && selectionRouteMatchesRef(route, expected)
 }
 
-// selectionRefIdentity is the sealed identity shared by a public expected
-// Ref and the private exactRef retained by one staged route. Its fields never
-// leave engine: external evidence receives only the boolean result above.
-// The actual route was already validated against its staged target Factor by
-// stagedRouteSink, so this comparison authenticates the same owner-issued
-// exact coordinate without constructing a second route authority.
-type selectionRefIdentity struct {
-	compositionID    CompositionID
-	bindingAuthority *schemaBindingAuthority
-	factorKey        composition.Key
-	factorIndex      uint64
-	raw              uint64
-}
-
-type selectionRefIdentityProvider interface {
-	selectionRefIdentity() selectionRefIdentity
-}
-
-func (ref Ref[K]) selectionRefIdentity() selectionRefIdentity {
-	return selectionRefIdentity{
-		compositionID:    ref.compositionID,
-		bindingAuthority: ref.bindingAuthority,
-		factorKey:        ref.factorKey,
-		factorIndex:      ref.factorIndex,
-		raw:              uint64(ref.raw),
-	}
-}
-
+// selectionRouteMatchesRef compares the sealed Factor row and dense key held
+// by a private staged route directly with the owner-issued Ref. The actual
+// route was already validated against its staged target Factor by
+// stagedRouteSink, so this comparison authenticates the same exact address
+// without reconstructing a provenance tuple or route authority.
 func selectionRouteMatchesRef[K ~uint32 | ~uint64](route exactRef, expected Ref[K]) bool {
-	if route == nil {
-		return false
-	}
-	actual, ok := route.(selectionRefIdentityProvider)
-	return ok && actual.selectionRefIdentity() == expected.selectionRefIdentity()
+	return route != nil && factorAddressMatches(route.factorBinding(), expected.binding) && route.rawAddress() == uint64(expected.raw)
 }
 
 // derivationSelectedRead authenticates one selected-read capability through
@@ -188,36 +161,25 @@ func DerivationDispositionRouteValue[V any, O any, Tag selectionTag, S any](deri
 	return DerivationDispositionSelectionAt(derivation, disposition, read, output.ordinal)
 }
 
-// ruleReadProof is the compact sealed identity retained only for exact reads.
-// Summary and selector runtimes carry the zero value and therefore cannot
-// satisfy an exact Ref proof.
-type ruleReadProof struct {
-	schema           *Schema
-	bindingAuthority *schemaBindingAuthority
-	factorIndex      uint64
-	raw              uint64
-	exact            bool
-}
-
-func newRuleReadReceiptProof(receipt factorRuntimeBinding, surface equation.Surface) (ruleReadProof, bool) {
+// exactReadLocal validates the exact read row once at binding and returns the
+// already-sealed dense local address. Runtime retains the Factor row and this
+// scalar directly; there is no read-proof wrapper to mint or reverify.
+func exactReadLocal(receipt factorRuntimeBinding, surface equation.Surface) (uint64, bool) {
 	if !receipt.valid() || surface.Factor != receipt.semantic || surface.Form != equation.SurfaceReadExact || surface.Mode != equation.TargetModeNone || surface.Semantic.Available() || surface.Normalizer.Available() || surface.Local == 0 || surface.Local > receipt.keyEnd {
-		return ruleReadProof{}, false
+		return 0, false
 	}
-	return ruleReadProof{schema: receipt.schema, bindingAuthority: receipt.authority, factorIndex: receipt.ordinal, raw: surface.Local - 1, exact: true}, true
+	return surface.Local - 1, true
 }
 
-// ruleSummaryReadProof is the private sealed identity of one summary Unit.
-// The canonical key vector is retained for cold shape bookkeeping; hot
-// evidence authenticates the sealed scalar digest and never replays it.
-type ruleSummaryReadProof struct {
-	receipt     factorRuntimeBinding
-	formReceipt factorFormReceipt
-	keys        []uint64
-	digest      [32]byte
+func exactWriteLocal(receipt factorRuntimeBinding, surface equation.Surface) (uint64, bool) {
+	if !receipt.valid() || surface.Factor != receipt.semantic || surface.Form != equation.SurfaceWriteExact || surface.Mode != equation.TargetModeStrong || surface.Semantic.Available() || surface.Normalizer.Available() || surface.Local == 0 || surface.Local > receipt.keyEnd {
+		return 0, false
+	}
+	return surface.Local - 1, true
 }
 
-func summaryProofMatchesRefs[K ~uint32 | ~uint64](proof ruleSummaryReadProof, refs *ClosedRefs[K]) bool {
-	return proof.receipt.valid() && refs != nil && refs.closed && refs.validIssuer() && refs.receipt.state == proof.receipt.state && refs.receipt.authority == proof.receipt.authority && refs.receipt.schema == proof.receipt.schema && refs.receipt.ordinal == proof.receipt.ordinal && refs.receipt.semantic == proof.receipt.semantic && proof.formReceipt.kind == SchemaFormReadSummary && proof.formReceipt.semantic != (composition.Key{}) && len(refs.refs) == len(proof.keys) && refs.digest == proof.digest
+func summaryAddressMatchesRefs[K ~uint32 | ~uint64](receipt factorRuntimeBinding, form factorFormReceipt, keys []uint64, digest [32]byte, refs *ClosedRefs[K]) bool {
+	return receipt.valid() && refs != nil && refs.closed && refs.validIssuer() && factorAddressMatches(refs.binding, receipt) && form.kind == SchemaFormReadSummary && form.semantic != (composition.Key{}) && len(refs.refs) == len(keys) && refs.digest == digest
 }
 
 // DerivationReadMatchesRef proves that one checker-visible typed read was
@@ -233,8 +195,8 @@ func DerivationReadMatchesRef[V, O, S any, K ~uint32 | ~uint64](derivation RuleD
 	if runtime == nil {
 		return false
 	}
-	proof := runtime.exactProof()
-	return proof.schema != nil && proof.exact && ref.bindingAuthority == proof.bindingAuthority && ref.compositionID == proof.schema.ID() && ref.factorKey == proof.schema.factorSemanticAt(proof.factorIndex) && ref.factorIndex == proof.factorIndex && proof.raw == uint64(ref.raw)
+	receipt, raw, exact := runtime.exactAddress()
+	return exact && receipt.valid() && factorAddressMatches(ref.binding, receipt) && raw == uint64(ref.raw)
 }
 
 // DerivationReadMatchesSummaryRefs proves that one checker-visible typed
@@ -248,27 +210,11 @@ func DerivationReadMatchesSummaryRefs[V, O, S any, K ~uint32 | ~uint64](derivati
 		return false
 	}
 	runtime := derivation.product.reads[read.index]
-	return runtime != nil && summaryProofMatchesRefs(runtime.summaryProof(), refs)
-}
-
-type ruleTargetProof struct {
-	schema           *Schema
-	state            *schemaBindingState
-	bindingAuthority *schemaBindingAuthority
-	factorIndex      uint64
-	raw              uint64
-	strong           bool
-}
-
-func newRuleTargetReceiptProof(receipt factorRuntimeBinding, surface equation.Surface) (ruleTargetProof, bool) {
-	if !receipt.valid() || surface.Factor != receipt.semantic || surface.Form != equation.SurfaceWriteExact || surface.Mode != equation.TargetModeStrong || surface.Semantic.Available() || surface.Normalizer.Available() || surface.Local == 0 || surface.Local > receipt.keyEnd {
-		return ruleTargetProof{}, false
+	if runtime == nil {
+		return false
 	}
-	return ruleTargetProof{schema: receipt.schema, state: receipt.state, bindingAuthority: receipt.authority, factorIndex: receipt.ordinal, raw: surface.Local - 1, strong: true}, true
-}
-
-func (proof ruleTargetProof) validOrigin() bool {
-	return proof.schema != nil && proof.schema.Available() && proof.state != nil && proof.bindingAuthority != nil && proof.state.phase == schemaBindingSealed && proof.state.schema == proof.schema && proof.state.authority == proof.bindingAuthority && proof.factorIndex < proof.schema.factorCount() && proof.strong
+	receipt, form, keys, digest, summary := runtime.summaryAddress()
+	return summary && summaryAddressMatchesRefs(receipt, form, keys, digest, refs)
 }
 
 // TargetMatchesRef proves that one checker-visible staged target is exactly
@@ -276,10 +222,10 @@ func (proof ruleTargetProof) validOrigin() bool {
 // sealed surface identity; neither the raw coordinate nor the equation
 // representation is exposed.
 func TargetMatchesRef[K ~uint32 | ~uint64](target RuleTarget, ref Ref[K]) bool {
-	if target.target == (carrier.Target{}) || !target.proof.validOrigin() {
+	if target.target == (carrier.Target{}) || !target.targetBinding.valid() || target.targetRaw >= target.targetBinding.keyEnd || target.target.Mode() != carrier.StrongTarget {
 		return false
 	}
-	return ref.bindingAuthority == target.proof.bindingAuthority && ref.compositionID == target.proof.schema.ID() && ref.factorKey == target.proof.schema.factorSemanticAt(target.proof.factorIndex) && ref.factorIndex == target.proof.factorIndex && target.proof.raw == uint64(ref.raw)
+	return factorAddressMatches(ref.binding, target.targetBinding) && target.targetRaw == uint64(ref.raw)
 }
 
 type ruleAdmissionSchema struct {
