@@ -28,7 +28,7 @@ func (program *Program) StorageReadIDAt(index int) (readID, spanID identity.Cont
 	if _, _, _, cellOK := view.Authored().Storage().Cells().Get(source); !cellOK {
 		return identity.ContentID{}, identity.ContentID{}, 0, false
 	}
-	bodyPath, bodyID, bodyOK := program.scalarBody(owner)
+	bodyPath, bodyID, bodyOK := view.BodyContextIDs(owner)
 	readPath, readPathOK := view.SemanticTermPath(term)
 	spanID, entry, finish, spanOK := program.EvaluationSpan(term)
 	if !bodyOK || !readPathOK || !readPath.Available() || !spanOK {
@@ -67,7 +67,7 @@ func (program *Program) StorageBindIDAt(index int) (identity.ContentID, bool) {
 	if _, _, valuesOK := view.Authored().Values().Get(values); !valuesOK {
 		return identity.ContentID{}, false
 	}
-	bodyPath, bodyID, bodyOK := program.scalarBody(owner)
+	bodyPath, bodyID, bodyOK := view.BodyContextIDs(owner)
 	_, entryTerm, finishTerm, spanOK := program.EvaluationSpan(term)
 	entry, entryOK := view.Causal().Sites().ForTerm(entryTerm)
 	finish, finishOK := view.Causal().Sites().ForTerm(finishTerm)

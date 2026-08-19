@@ -77,7 +77,7 @@ func (program *Program) ValueSourceIDAt(family keyspace.Family, index int) (sour
 	if !ok || term == 0 || owner == 0 {
 		return identity.ContentID{}, identity.ContentID{}, 0, false
 	}
-	bodyPath, bodyID, bodyOK := program.scalarBody(owner)
+	bodyPath, bodyID, bodyOK := program.Flow().BodyContextIDs(owner)
 	spanID, direct, spanOK := program.valueSourceSpan(term)
 	path, pathOK := program.Flow().ValueSourcePath(term)
 	code := valueSourceCode(family)
@@ -113,9 +113,9 @@ func (program *Program) valueSourceSpan(term keyspace.Term) (identity.ContentID,
 	}
 	entryTerm, entryOK := program.Flow().Ports().Entry(root)
 	entry, entrySiteOK := program.Flow().Causal().Sites().ForTerm(entryTerm)
-	finish, finishOK := program.finishSite(term)
+	finish, finishOK := program.Flow().FinishSite(term)
 	if !finishOK {
-		finish, finishOK = program.finishSite(root)
+		finish, finishOK = program.Flow().FinishSite(root)
 	}
 	if !entryOK || !entrySiteOK || !finishOK || !entry.Available() || !finish.Available() {
 		return identity.ContentID{}, false, false

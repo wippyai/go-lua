@@ -22,11 +22,11 @@ func TestCallIdentityQueriesKeepMissingRowsFailClosed(t *testing.T) {
 	if got, ok := published.CallActualsIDAt(0); ok || got.Available() {
 		t.Fatalf("CallActualsIDAt(0) = %x/%v; want unavailable", got, ok)
 	}
-	if got, ok := published.CallValuesIDAt(0); ok || got.Available() {
-		t.Fatalf("CallValuesIDAt(0) = %x/%v; want unavailable", got, ok)
+	if got, ok := published.Flow().CallValuesID(0); ok || got.Available() {
+		t.Fatalf("Flow.CallValuesID(0) = %x/%v; want unavailable", got, ok)
 	}
-	if got, ok := published.CallArgumentIDAt(0, 0); ok || got.Available() {
-		t.Fatalf("CallArgumentIDAt(0,0) = %x/%v; want unavailable", got, ok)
+	if got, ok := published.Flow().CallArgumentID(0, 0); ok || got.Available() {
+		t.Fatalf("Flow.CallArgumentID(0,0) = %x/%v; want unavailable", got, ok)
 	}
 	if got, ok := published.CallTypeArgumentsIDAt(0); ok || got.Available() {
 		t.Fatalf("CallTypeArgumentsIDAt(0) = %x/%v; want unavailable", got, ok)

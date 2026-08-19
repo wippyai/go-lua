@@ -10,7 +10,7 @@ func TestSpanQueriesRequirePublishedEvaluationGeometry(t *testing.T) {
 	if span, ok := published.Span(0); ok || span.Available() {
 		t.Fatalf("Span(0) = %#v/%v; want unavailable", span, ok)
 	}
-	if site, ok := published.FinishSite(0); ok || site.Available() {
+	if site, ok := published.Flow().FinishSite(0); ok || site.Available() {
 		t.Fatalf("FinishSite(0) = %#v/%v; want unavailable", site, ok)
 	}
 	if span, entry, finish, ok := published.EvaluationSpan(0); ok || span.Available() || entry != 0 || finish != 0 {

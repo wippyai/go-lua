@@ -24,7 +24,7 @@ func (program *Program) Span(term keyspace.Term) (Span, bool) {
 	}
 	ports, sites := program.Flow().Ports(), program.Flow().Causal().Sites()
 	entry, entryOK := ports.Entry(term)
-	finishSite, finishOK := program.finishSite(term)
+	finishSite, finishOK := program.Flow().FinishSite(term)
 	if !entryOK || !finishOK {
 		return Span{}, false
 	}
@@ -57,47 +57,13 @@ func (span Span) availableGeometry() bool {
 	}
 	ports, sites := span.program.Flow().Ports(), span.program.Flow().Causal().Sites()
 	entry, entryOK := ports.Entry(span.authored)
-	wantFinish, finishOK := span.program.finishSite(span.authored)
+	wantFinish, finishOK := span.program.Flow().FinishSite(span.authored)
 	wantEntry, wantEntryOK := sites.ForTerm(entry)
 	if !wantEntryOK {
 		wantEntry, wantEntryOK = wantFinish, finishOK
 	}
 	return entryOK && finishOK && wantEntryOK &&
 		span.entry.Equal(wantEntry) && span.finish.Equal(wantFinish)
-}
-
-// finishSite resolves the authored Finish chain to its first canonical causal
-// Site. Contextual value evaluation may pass through positionless literal
-// terms, which are valid intermediate ports but never causal vertices. The
-// Program owner performs this normalization once; consumers never reconstruct
-// geometry from the chain.
-func (program *Program) finishSite(term keyspace.Term) (flow.Site, bool) {
-	if !program.Available() || term == 0 {
-		return flow.Site{}, false
-	}
-	ports, sites := program.Flow().Ports(), program.Flow().Causal().Sites()
-	limit := uint64(program.Source().Identity().TermCount())
-	for step := uint64(0); step <= limit; step++ {
-		finish, ok := ports.Finish(term)
-		if !ok || finish == 0 {
-			return flow.Site{}, false
-		}
-		if site, siteOK := sites.ForTerm(finish); siteOK && site.Available() {
-			return site, true
-		}
-		if finish == term {
-			return flow.Site{}, false
-		}
-		term = finish
-	}
-	return flow.Site{}, false
-}
-
-// FinishSite returns the first canonical causal Site reached by an authored
-// Finish chain. Positionless value terms may occur inside that chain but never
-// escape through this query.
-func (program *Program) FinishSite(term keyspace.Term) (flow.Site, bool) {
-	return program.finishSite(term)
 }
 
 func (span Span) Entry() (flow.Site, bool) {

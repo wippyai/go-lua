@@ -51,23 +51,6 @@ func (input *Program) Body(term keyspace.Term) (Body, bool) {
 	return body, body.Available()
 }
 
-// scalarBody returns the existing Body path and Function-boundary context used
-// by Program's formal identity queries. It joins existing owner rows; it does
-// not derive a second geometry or retain a transport object.
-func (program *Program) scalarBody(owner keyspace.Term) (identity.ContentID, identity.ContentID, bool) {
-	if !program.Available() || owner == 0 {
-		return identity.ContentID{}, identity.ContentID{}, false
-	}
-	view := program.Flow()
-	body, ok := view.FunctionBoundaries().ForBody(owner)
-	if !ok || !body.Available() {
-		return identity.ContentID{}, identity.ContentID{}, false
-	}
-	path, pathOK := view.BodyPath(owner)
-	context := body.ContextID()
-	return path, context, pathOK && path.Available() && context.Available()
-}
-
 // OwnsBody authenticates a Body issued by this exact Program.
 // Equivalent replay Bodies deliberately do not pass: mount-local consumers
 // must retain their own issued view rather than substitute one.

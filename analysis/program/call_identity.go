@@ -93,39 +93,6 @@ func (program *Program) CallActualsIDAt(index int) (identity.ContentID, bool) {
 	return program.callOperandID(call, actuals, callOperandRoleActuals)
 }
 
-// CallValuesIDAt returns the owner-neutral CallValues identity joining the
-// authored call occurrence to its canonical Values row.
-func (program *Program) CallValuesIDAt(index int) (identity.ContentID, bool) {
-	call, _, _, _, actuals, ok := program.callIdentityRow(index)
-	if !ok {
-		return identity.ContentID{}, false
-	}
-	path, pathOK := program.Flow().SemanticTermPath(call)
-	valuesID, valuesOK := program.Flow().ValuesOccurrenceID(actuals)
-	semanticCallID := programSemanticID("program/transformer/call-occurrence-semantic", func(writer *framing.Writer) bool {
-		return writer.Bytes(path[:]) == nil
-	})
-	id := programSemanticID("program/transformer/call-values", func(writer *framing.Writer) bool {
-		return writer.Bytes(semanticCallID[:]) == nil && writer.Bytes(valuesID[:]) == nil
-	})
-	return id, pathOK && path.Available() && valuesOK && semanticCallID.Available() && id.Available()
-}
-
-// CallArgumentIDAt returns the canonical identity of one fixed actual
-// argument. Open tails are represented by ValuesTailID, never as an argument.
-func (program *Program) CallArgumentIDAt(index, argument int) (identity.ContentID, bool) {
-	_, _, _, _, actuals, ok := program.callIdentityRow(index)
-	if !ok || argument < 0 {
-		return identity.ContentID{}, false
-	}
-	valuesID, valuesOK := program.CallValuesIDAt(index)
-	memberID, memberOK := program.Flow().ValuesMemberID(actuals, argument)
-	id := programSemanticID("program/transformer/call-argument", func(writer *framing.Writer) bool {
-		return writer.Bytes(valuesID[:]) == nil && writer.Bytes(memberID[:]) == nil
-	})
-	return id, valuesOK && memberOK && id.Available()
-}
-
 // CallTypeArgumentsIDAt returns the canonical scalar identity of one call's
 // Static type-argument column. The authored term and Static view remain
 // behind this query; only the detached column identity crosses the owner
