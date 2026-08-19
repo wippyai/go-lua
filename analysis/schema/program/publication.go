@@ -43,6 +43,10 @@ type Publication struct {
 	Outcomes             []Outcome
 	OutcomeReturnValues  []OutcomeReturnValue
 	OutcomePoints        []OutcomePoint
+	FunctionBoundaries   []FunctionBoundary
+	FunctionFormals      []FunctionFormal
+	FunctionVarargs      []FunctionVararg
+	FunctionCaptures     []FunctionCapture
 }
 
 // Seal publishes every family of this catalog into one frozen store. The
@@ -81,7 +85,11 @@ func (publication Publication) Seal(catalog identity.ContentID, store identity.S
 		BodyRootFamily().Put(&builder, publication.BodyRoots, catalog) &&
 		OutcomeFamily().Put(&builder, publication.Outcomes, catalog) &&
 		OutcomeReturnValueFamily().Put(&builder, publication.OutcomeReturnValues, catalog) &&
-		OutcomePointFamily().Put(&builder, publication.OutcomePoints, catalog)
+		OutcomePointFamily().Put(&builder, publication.OutcomePoints, catalog) &&
+		FunctionBoundaryFamily().Put(&builder, publication.FunctionBoundaries, catalog) &&
+		FunctionFormalFamily().Put(&builder, publication.FunctionFormals, catalog) &&
+		FunctionVarargFamily().Put(&builder, publication.FunctionVarargs, catalog) &&
+		FunctionCaptureFamily().Put(&builder, publication.FunctionCaptures, catalog)
 	if !sealed {
 		return snapshot.Frozen{}, false
 	}

@@ -155,19 +155,61 @@ func artifactID(artifact *Artifact) identity.ContentID {
 		}
 		sink.add(uintField(uint64(outcomeOffset)), uintField(uint64(outcomeOffset+outcomeCount)))
 	}
-	sink.add(uintField(functionBoundaryLawVersion), uintField(uint64(len(artifact.functionBoundaries))))
-	for _, boundary := range artifact.functionBoundaries {
-		sink.add(
-			bytesField(boundary.id), bytesField(boundary.body), bytesField(boundary.bodyContext), bytesField(boundary.entry), bytesField(boundary.callFormal),
-			uintField(uint64(len(boundary.formals))),
-		)
-		for _, port := range boundary.formals {
-			sink.add(bytesField(port.id), bytesField(port.cell), bytesField(port.storage), bytesField(port.declared), uintField(uint64(port.position)))
+	boundaryCount, boundariesPublished := coldCount(artifact, programschema.FunctionBoundaryFamily())
+	formalCount, formalsPublished := coldCount(artifact, programschema.FunctionFormalFamily())
+	varargCount, varargsPublished := coldCount(artifact, programschema.FunctionVarargFamily())
+	captureCount, capturesPublished := coldCount(artifact, programschema.FunctionCaptureFamily())
+	if !boundariesPublished || !formalsPublished || !varargsPublished || !capturesPublished {
+		return identity.ContentID{}
+	}
+	sink.add(uintField(functionBoundaryLawVersion), uintField(uint64(boundaryCount)))
+	for index := 0; index < boundaryCount; index++ {
+		boundary, boundaryHeld := coldRow(artifact, programschema.FunctionBoundaryFamily(), index)
+		formalOffset, formalWidth, formalSpanOK := boundary.FormalSpan()
+		varargOffset, varargWidth, varargSpanOK := boundary.VarargSpan()
+		captureOffset, captureWidth, captureSpanOK := boundary.CaptureSpan()
+		if !boundaryHeld || !boundary.Available() || !formalSpanOK || !varargSpanOK || !captureSpanOK ||
+			uint64(formalOffset)+uint64(formalWidth) > uint64(formalCount) ||
+			uint64(varargOffset)+uint64(varargWidth) > uint64(varargCount) ||
+			uint64(captureOffset)+uint64(captureWidth) > uint64(captureCount) {
+			return identity.ContentID{}
 		}
-		sink.add(boolField(boundary.hasVararg), bytesField(boundary.vararg.id), bytesField(boundary.vararg.cell), uintField(uint64(len(boundary.captures))))
-		for _, capture := range boundary.captures {
+		sink.add(
+			bytesField(boundary.ID()), bytesField(boundary.BodyID()), bytesField(boundary.BodyContextID()), bytesField(boundary.EntryID()), bytesField(boundary.CallFormalID()),
+			uintField(uint64(formalWidth)),
+		)
+		for position := uint32(0); position < formalWidth; position++ {
+			port, portHeld := coldRow(artifact, programschema.FunctionFormalFamily(), int(formalOffset+position))
+			if !portHeld || !port.Available() {
+				return identity.ContentID{}
+			}
+			declared, _ := port.DeclaredStaticTypeID()
+			formalPosition, positionOK := port.Position()
+			if !positionOK {
+				return identity.ContentID{}
+			}
+			sink.add(bytesField(port.ID()), bytesField(port.CellID()), bytesField(port.StorageCellID()), bytesField(declared), uintField(uint64(formalPosition)))
+		}
+		varargID, varargCell := identity.ContentID{}, identity.ContentID{}
+		if varargWidth == 1 {
+			vararg, varargHeld := coldRow(artifact, programschema.FunctionVarargFamily(), int(varargOffset))
+			if !varargHeld || !vararg.Available() {
+				return identity.ContentID{}
+			}
+			varargID, varargCell = vararg.ID(), vararg.CellID()
+		}
+		sink.add(boolField(varargWidth == 1), bytesField(varargID), bytesField(varargCell), uintField(uint64(captureWidth)))
+		for position := uint32(0); position < captureWidth; position++ {
+			capture, captureHeld := coldRow(artifact, programschema.FunctionCaptureFamily(), int(captureOffset+position))
+			if !captureHeld || !capture.Available() {
+				return identity.ContentID{}
+			}
+			capturePosition, positionOK := capture.Position()
+			if !positionOK {
+				return identity.ContentID{}
+			}
 			sink.add(
-				bytesField(capture.id), bytesField(capture.inner), bytesField(capture.outer), bytesField(capture.innerBody), bytesField(capture.outerBody), uintField(uint64(capture.position)),
+				bytesField(capture.ID()), bytesField(capture.InnerCellID()), bytesField(capture.OuterCellID()), bytesField(capture.InnerBodyID()), bytesField(capture.OuterBodyID()), uintField(uint64(capturePosition)),
 			)
 		}
 	}

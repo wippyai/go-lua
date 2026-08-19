@@ -11,6 +11,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 )
 
 func TestOwnerIndexesAreInstalledOnceAtSeal(t *testing.T) {
@@ -26,7 +27,7 @@ func TestOwnerIndexesAreInstalledOnceAtSeal(t *testing.T) {
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("artifact compile failed: %s", failure.Error())
 	}
-	if artifact.occurrenceByID == nil || artifact.occurrenceByKind == nil || artifact.functionBoundaryByBody == nil {
+	if artifact.occurrenceByID == nil || artifact.occurrenceByKind == nil {
 		t.Fatal("seal omitted owner indexes")
 	}
 	if len(artifact.occurrenceByID) != len(artifact.occurrences) {
@@ -38,11 +39,12 @@ func TestOwnerIndexesAreInstalledOnceAtSeal(t *testing.T) {
 			t.Fatalf("occurrence %d is not indexed at seal", index)
 		}
 	}
-	for index, row := range artifact.functionBoundaries {
-		got, found := artifact.functionBoundaryByBody[row.BodyID()]
-		if !found || int(got) != index {
-			t.Fatalf("function boundary %d is not indexed at seal", index)
-		}
+	functionCount, functionsPublished := coldCount(artifact, programschema.FunctionBoundaryFamily())
+	formalCount, formalsPublished := coldCount(artifact, programschema.FunctionFormalFamily())
+	varargCount, varargsPublished := coldCount(artifact, programschema.FunctionVarargFamily())
+	captureCount, capturesPublished := coldCount(artifact, programschema.FunctionCaptureFamily())
+	if !functionsPublished || !formalsPublished || !varargsPublished || !capturesPublished || functionCount == 0 || formalCount == 0 || captureCount == 0 {
+		t.Fatalf("canonical function families unavailable: boundaries=%d/%v formals=%d/%v varargs=%d/%v captures=%d/%v", functionCount, functionsPublished, formalCount, formalsPublished, varargCount, varargsPublished, captureCount, capturesPublished)
 	}
 	if replay := artifactID(artifact); replay != artifact.id {
 		t.Fatal("identity replay rebuilt or drifted from the sealed ArtifactID")
@@ -82,14 +84,14 @@ func assertOwnerIndexAssignmentIsSealOnly(t *testing.T) {
 					continue
 				}
 				switch ident.Name {
-				case "occurrenceByID", "occurrenceByKind", "functionBoundaryByBody":
+				case "occurrenceByID", "occurrenceByKind":
 					assigned[ident.Name] = append(assigned[ident.Name], name)
 				}
 			}
 			return true
 		})
 	}
-	for _, name := range []string{"occurrenceByID", "occurrenceByKind", "functionBoundaryByBody"} {
+	for _, name := range []string{"occurrenceByID", "occurrenceByKind"} {
 		files := assigned[name]
 		if len(files) != 1 || files[0] != "artifact_freeze.go" {
 			t.Fatalf("owner index %s assigned in %v, want only artifact_freeze.go", name, files)

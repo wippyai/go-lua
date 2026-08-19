@@ -29,13 +29,12 @@ func TestIngressPublicTypesDoNotEmbedProgramArtifact(t *testing.T) {
 	}
 	watched := map[string]bool{
 		"Snapshot": true, "Point": true, "StructuralEdge": true, "LocalTransfer": true,
-		"Region": true, "Event": true, "RulePlacement": true, "BodyTransport": true, "FunctionBoundary": true,
+		"Region": true, "Event": true, "RulePlacement": true, "BodyTransport": true,
 		"Call": true, "CallOperand": true, "CallTarget": true, "CallArgument": true,
-		"FunctionVararg": true, "FunctionCapture": true,
 		"HeapAllocation": true, "HeapField": true, "HeapIndex": true,
 		"Values": true, "ValuesMember": true, "ValuesTail": true, "StaticTypeValue": true, "StaticTypeNode": true,
-		"StaticTypeArgument": true,
-		"Occurrence":         true, "FunctionFormal": true,
+		"StaticTypeArgument":    true,
+		"Occurrence":            true,
 		"DiagnosticObservation": true,
 	}
 	for _, declaration := range file.Decls {

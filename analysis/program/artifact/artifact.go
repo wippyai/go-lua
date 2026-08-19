@@ -2,8 +2,8 @@ package artifact
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 )
 
@@ -28,7 +28,6 @@ type Artifact struct {
 	sealed                 identity.ContentID
 	counts                 denominator.CountRows
 	localTransfers         []LocalTransfer
-	functionBoundaries     []FunctionBoundaryRow
 	occurrences            []OccurrenceRow
 	occurrenceByID         map[occurrenceLookup]uint32
 	ruleOccurrences        []RuleOccurrence
@@ -36,7 +35,6 @@ type Artifact struct {
 	staticTypeNodes        []StaticTypeNodeRow
 	staticInputs           []StaticInputRow
 	occurrenceByKind       map[OccurrenceKind][]uint32
-	functionBoundaryByBody map[identity.ContentID]uint32
 }
 
 func (artifact *Artifact) Available() bool {

@@ -81,15 +81,27 @@ func (compiler *compiler) deriveExactScalarSummariesFailure() CompileFailure {
 	// Formal/capture cells are caller-supplied interface state, never a local
 	// constant merely because another local producer happens to share a cell.
 	for _, boundary := range compiler.functionBoundaries {
-		for _, formal := range boundary.formals {
-			join(formal.cell, unknown)
+		for index := 0; index < boundary.FormalCount(); index++ {
+			formal, formalOK := compiler.functionFormalAt(boundary, index)
+			if !formalOK {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, index, CompileReasonOccurrenceUnavailable)
+			}
+			join(formal.CellID(), unknown)
 		}
-		if boundary.hasVararg {
-			join(boundary.vararg.cell, unknown)
+		if boundary.HasVararg() {
+			vararg, varargOK := compiler.functionVararg(boundary)
+			if !varargOK {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
+			}
+			join(vararg.CellID(), unknown)
 		}
-		for _, capture := range boundary.captures {
-			join(capture.inner, unknown)
-			join(capture.outer, unknown)
+		for index := 0; index < boundary.CaptureCount(); index++ {
+			capture, captureOK := compiler.functionCaptureAt(boundary, index)
+			if !captureOK {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, index, CompileReasonOccurrenceUnavailable)
+			}
+			join(capture.InnerCellID(), unknown)
+			join(capture.OuterCellID(), unknown)
 		}
 	}
 

@@ -362,37 +362,50 @@ func (compiler *compiler) deriveArithmeticSummariesFailure() CompileFailure {
 	// namespaces. Propagate an authored annotation across that exact port; an
 	// unannotated port remains unknown caller input.
 	for _, boundary := range compiler.functionBoundaries {
-		for _, formal := range boundary.formals {
-			if formal.declared.Available() {
-				mask, numericOK := typeMask(formal.declared, make(map[identity.ContentID]bool))
+		for index := 0; index < boundary.FormalCount(); index++ {
+			formal, formalOK := compiler.functionFormalAt(boundary, index)
+			if !formalOK {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, index, CompileReasonOccurrenceUnavailable)
+			}
+			declared, declaredOK := formal.DeclaredStaticTypeID()
+			if declaredOK {
+				mask, numericOK := typeMask(declared, make(map[identity.ContentID]bool))
 				if numericOK {
-					join(formal.cell, numeric(mask))
-					join(formal.storage, numeric(mask))
+					join(formal.CellID(), numeric(mask))
+					join(formal.StorageCellID(), numeric(mask))
 				} else {
-					join(formal.cell, unknown)
-					join(formal.storage, unknown)
+					join(formal.CellID(), unknown)
+					join(formal.StorageCellID(), unknown)
 				}
 			}
-			cell, storage := states[formal.cell], states[formal.storage]
+			cell, storage := states[formal.CellID()], states[formal.StorageCellID()]
 			switch {
 			case cell.known() && storage.known():
-				join(formal.cell, storage)
-				join(formal.storage, cell)
+				join(formal.CellID(), storage)
+				join(formal.StorageCellID(), cell)
 			case cell.known():
-				join(formal.storage, cell)
+				join(formal.StorageCellID(), cell)
 			case storage.known():
-				join(formal.cell, storage)
+				join(formal.CellID(), storage)
 			default:
-				join(formal.cell, unknown)
-				join(formal.storage, unknown)
+				join(formal.CellID(), unknown)
+				join(formal.StorageCellID(), unknown)
 			}
 		}
-		if boundary.hasVararg {
-			join(boundary.vararg.cell, unknown)
+		if boundary.HasVararg() {
+			vararg, varargOK := compiler.functionVararg(boundary)
+			if !varargOK {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
+			}
+			join(vararg.CellID(), unknown)
 		}
-		for _, capture := range boundary.captures {
-			join(capture.inner, unknown)
-			join(capture.outer, unknown)
+		for index := 0; index < boundary.CaptureCount(); index++ {
+			capture, captureOK := compiler.functionCaptureAt(boundary, index)
+			if !captureOK {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, index, CompileReasonOccurrenceUnavailable)
+			}
+			join(capture.InnerCellID(), unknown)
+			join(capture.OuterCellID(), unknown)
 		}
 	}
 

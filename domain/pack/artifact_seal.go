@@ -22,19 +22,24 @@ import (
 // Module is opaque and keeps repeated Program artifacts mounted at distinct
 // Link locations without introducing a Shard coordinate.
 type ArtifactMount struct {
-	snapshot *ingress.Snapshot
-	module   identity.ContentID
-	program  identity.ContentID
+	snapshot   *ingress.Snapshot
+	programRow programmount.Program
+	module     identity.ContentID
+	program    identity.ContentID
 }
 
 func NewArtifactMount(snapshot *ingress.Snapshot, module, program identity.ContentID) (ArtifactMount, bool) {
 	if snapshot == nil || !snapshot.Available() || !module.Available() || !program.Available() || snapshot.ProgramID() != program {
 		return ArtifactMount{}, false
 	}
-	return ArtifactMount{snapshot: snapshot, module: module, program: program}, true
+	mounted, mountedOK := programmount.ProgramFromSnapshot(snapshot, module)
+	if !mountedOK {
+		return ArtifactMount{}, false
+	}
+	return ArtifactMount{snapshot: snapshot, programRow: mounted, module: module, program: program}, true
 }
 func (mount ArtifactMount) Available() bool {
-	return mount.snapshot != nil && mount.snapshot.Available() && mount.module.Available() && mount.program.Available() && mount.snapshot.ProgramID() == mount.program
+	return mount.snapshot != nil && mount.snapshot.Available() && mount.programRow.Available() && mount.module.Available() && mount.program.Available() && mount.snapshot.ProgramID() == mount.program
 }
 func (mount ArtifactMount) Module() identity.ContentID {
 	if !mount.Available() {
@@ -47,6 +52,13 @@ func (mount ArtifactMount) Snapshot() *ingress.Snapshot {
 		return nil
 	}
 	return mount.snapshot
+}
+
+func (mount ArtifactMount) Program() programmount.Program {
+	if !mount.Available() {
+		return programmount.Program{}
+	}
+	return mount.programRow
 }
 
 type artifactValuesKey struct{ module, values identity.ContentID }
@@ -292,6 +304,10 @@ func SealMountedArtifacts(source *link.Link, authority *static.Authority, mounts
 		}
 		seenModules[mount.module] = struct{}{}
 		artifact := mount.snapshot
+		mountedProgram := mount.Program()
+		if !mountedProgram.Available() {
+			return nil, false
+		}
 		for i := 0; i < artifact.ValuesCount(); i++ {
 			row, ok := artifact.ValuesAt(i)
 			if !ok {
@@ -319,8 +335,12 @@ func SealMountedArtifacts(source *link.Link, authority *static.Authority, mounts
 				maximum = width
 			}
 		}
-		for i := 0; i < artifact.FunctionBoundaryCount(); i++ {
-			row, ok := artifact.FunctionBoundaryAt(i)
+		boundaryCount, boundariesOK := mountedProgram.FunctionBoundaryCount()
+		if !boundariesOK {
+			return nil, false
+		}
+		for i := 0; i < boundaryCount; i++ {
+			row, ok := mountedProgram.FunctionBoundaryAt(i)
 			if !ok {
 				return nil, false
 			}
@@ -576,9 +596,9 @@ func sealMountedArtifactBinds(schema *Schema, mount ArtifactMount) bool {
 // Bodies are mounted directly from the canonical Artifact Body and callable
 // boundary columns. Pack retains only its runtime substitution state.
 func sealMountedArtifactBodies(schema *Schema, mount ArtifactMount) bool {
-	state, artifact := schema.state, mount.snapshot
-	program, programOK := programmount.ProgramFromSnapshot(artifact, mount.module)
-	if !programOK {
+	state := schema.state
+	program := mount.Program()
+	if !program.Available() {
 		return false
 	}
 	bodyCount, bodiesOK := program.BodyCount()
@@ -594,7 +614,7 @@ func sealMountedArtifactBodies(schema *Schema, mount ArtifactMount) bool {
 		if _, duplicate := state.artifactBodies[key]; duplicate {
 			return false
 		}
-		boundary, callable := artifact.FunctionBoundaryForBody(row.ID())
+		boundary, callable := program.FunctionBoundaryForBody(row.ID())
 		if row.Callable() != callable {
 			return false
 		}
@@ -604,13 +624,19 @@ func sealMountedArtifactBodies(schema *Schema, mount ArtifactMount) bool {
 		}
 		formals := make([]Endpoint, formalCount)
 		formalIDs := make([]identity.ContentID, formalCount)
-		for j := range formals {
-			formal, formalOK := boundary.FormalAt(j)
-			endpoint, endpointOK := state.semanticEndpoints[artifactValuesKey{mount.module, formal.StorageCellID()}]
-			if !formalOK || !endpointOK {
+		if callable {
+			formalOffset, _, formalSpanOK := boundary.FormalSpan()
+			if !formalSpanOK {
 				return false
 			}
-			formals[j], formalIDs[j] = endpoint, formal.ID()
+			for j := range formals {
+				formal, formalOK := program.FunctionFormalAt(int(formalOffset) + j)
+				endpoint, endpointOK := state.semanticEndpoints[artifactValuesKey{mount.module, formal.StorageCellID()}]
+				if !formalOK || !endpointOK {
+					return false
+				}
+				formals[j], formalIDs[j] = endpoint, formal.ID()
+			}
 		}
 		port, portOK := newPort(state.owner, uint32(len(state.roots)+1), state.owner.classes.AnyValue(), true)
 		if !portOK {
@@ -811,8 +837,8 @@ func sealMountedSemanticEndpoints(state *schema, mount ArtifactMount) bool {
 		return true
 	}
 	artifact := mount.snapshot
-	program, programOK := programmount.ProgramFromSnapshot(artifact, mount.module)
-	if !programOK {
+	program := mount.Program()
+	if !program.Available() {
 		return false
 	}
 	for i := 0; i < artifact.ValuesCount(); i++ {
@@ -842,13 +868,21 @@ func sealMountedSemanticEndpoints(state *schema, mount ArtifactMount) bool {
 			}
 		}
 	}
-	for i := 0; i < artifact.FunctionBoundaryCount(); i++ {
-		row, ok := artifact.FunctionBoundaryAt(i)
+	boundaryCount, boundariesOK := program.FunctionBoundaryCount()
+	if !boundariesOK {
+		return false
+	}
+	for i := 0; i < boundaryCount; i++ {
+		row, ok := program.FunctionBoundaryAt(i)
 		if !ok {
 			return false
 		}
+		formalOffset, _, formalSpanOK := row.FormalSpan()
+		if !formalSpanOK {
+			return false
+		}
 		for j := 0; j < row.FormalCount(); j++ {
-			formal, formalOK := row.FormalAt(j)
+			formal, formalOK := program.FunctionFormalAt(int(formalOffset) + j)
 			if !formalOK || !add(formal.StorageCellID()) {
 				return false
 			}

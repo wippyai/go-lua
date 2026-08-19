@@ -3,8 +3,8 @@ package artifact
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program"
-	"github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 )
 
 // compiler is the private one-shot assembly state used by the artifact
@@ -27,7 +27,10 @@ type compiler struct {
 	bodies                     []programschema.Body
 	bodyEntries                []programschema.BodyEntry
 	bodyRoots                  []programschema.BodyRoot
-	functionBoundaries         []FunctionBoundaryRow
+	functionBoundaries         []programschema.FunctionBoundary
+	functionFormals            []programschema.FunctionFormal
+	functionVarargs            []programschema.FunctionVararg
+	functionCaptures           []programschema.FunctionCapture
 	callTargets                []programschema.CallTarget
 	outcomes                   []programschema.Outcome
 	outcomeReturnValues        []programschema.OutcomeReturnValue

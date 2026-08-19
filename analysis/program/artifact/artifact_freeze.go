@@ -58,10 +58,6 @@ func (compiler *compiler) sealArtifact() (*Artifact, CompileFailure) {
 		occurrenceByID[occurrenceLookup{kind: row.kind, id: row.id}] = uint32(index)
 		occurrenceByKind[row.kind] = append(occurrenceByKind[row.kind], uint32(index))
 	}
-	functionBoundaryByBody := make(map[identity.ContentID]uint32, len(compiler.functionBoundaries))
-	for index, row := range compiler.functionBoundaries {
-		functionBoundaryByBody[row.BodyID()] = uint32(index)
-	}
 	frozen, catalog, frozenOK := freezeColdPublication(compiler, points)
 	if !frozenOK {
 		return nil, compileFailure(CompileStageSeal, CompileRowBody, -1, -1, CompileReasonBodyUnavailable)
@@ -69,8 +65,7 @@ func (compiler *compiler) sealArtifact() (*Artifact, CompileFailure) {
 	artifact := &Artifact{
 		frozen: frozen, coldCatalog: catalog,
 		key: compiler.key, counts: compiler.counts, localTransfers: compiler.localTransfers,
-		functionBoundaries: compiler.functionBoundaries,
-		occurrences:        compiler.occurrences, occurrenceByID: occurrenceByID, occurrenceByKind: occurrenceByKind, functionBoundaryByBody: functionBoundaryByBody, ruleOccurrences: compiler.ruleOccurrences,
+		occurrences: compiler.occurrences, occurrenceByID: occurrenceByID, occurrenceByKind: occurrenceByKind, ruleOccurrences: compiler.ruleOccurrences,
 		diagnosticObservations: compiler.diagnosticObservations, staticTypeNodes: compiler.staticTypeNodes, staticInputs: compiler.staticInputs,
 	}
 	artifact.id = artifactID(artifact)
@@ -336,6 +331,10 @@ func freezeColdPublication(compiler *compiler, pointRows []Point) (snapshot.Froz
 		Outcomes:             compiler.outcomes,
 		OutcomeReturnValues:  compiler.outcomeReturnValues,
 		OutcomePoints:        compiler.outcomePoints,
+		FunctionBoundaries:   compiler.functionBoundaries,
+		FunctionFormals:      compiler.functionFormals,
+		FunctionVarargs:      compiler.functionVarargs,
+		FunctionCaptures:     compiler.functionCaptures,
 	}
 	frozen, sealed := publication.Seal(catalog, identity.StoreID(coldStores.Add(1)))
 	if !sealed {

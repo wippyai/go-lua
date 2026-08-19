@@ -285,16 +285,6 @@ func (compiler *compiler) copyTypeConformanceObservationsFailure() CompileFailur
 	if !selectedOK {
 		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceCall)
 	}
-	boundaries := make(map[identity.ContentID]FunctionBoundaryRow, len(compiler.functionBoundaries))
-	for _, row := range compiler.functionBoundaries {
-		if !row.Available() || !row.BodyID().Available() {
-			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceCall)
-		}
-		if _, duplicate := boundaries[row.BodyID()]; duplicate {
-			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceCall)
-		}
-		boundaries[row.BodyID()] = row
-	}
 	flowView := compiler.input.Flow()
 	calls := flowView.Authored().Calls()
 	values := flowView.Authored().Values()
@@ -309,11 +299,11 @@ func (compiler *compiler) copyTypeConformanceObservationsFailure() CompileFailur
 		if call.form != accessgeometry.CallFormPlain || call.tail.Available() || len(call.typeArguments) != 0 {
 			continue
 		}
-		boundary, boundaryOK := boundaries[call.targetBody]
+		boundary, boundaryOK := compiler.functionBoundaryForBody(call.targetBody)
 		if !boundaryOK || !boundary.Available() {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceCall)
 		}
-		if _, hasVararg := boundary.Vararg(); hasVararg || boundary.FormalCount() != len(call.arguments) {
+		if boundary.HasVararg() || boundary.FormalCount() != len(call.arguments) {
 			continue
 		}
 		term, termOK := calls.At(index)
@@ -326,7 +316,7 @@ func (compiler *compiler) copyTypeConformanceObservationsFailure() CompileFailur
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceCall)
 		}
 		for argumentIndex, argument := range call.arguments {
-			formal, formalOK := boundary.FormalAt(argumentIndex)
+			formal, formalOK := compiler.functionFormalAt(boundary, argumentIndex)
 			declared, declaredOK := formal.DeclaredStaticTypeID()
 			if !formalOK || !declaredOK {
 				continue

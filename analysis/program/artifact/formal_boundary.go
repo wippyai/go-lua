@@ -1,204 +1,17 @@
 package artifact
 
-import "github.com/wippyai/go-lua/analysis/identity"
+import (
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/program"
+)
 
-// FunctionFormalPort is one ordered fixed input of a reusable Program
-// transformer. ID and CellID belong to Program's formal namespace;
-// StorageCellID is the exact bridge used by Link-local value substitution.
-type FunctionFormalPort struct {
-	id, cell, storage, declared identity.ContentID
-	position                    uint32
-}
-
-func (port FunctionFormalPort) Available() bool {
-	return port.id.Available() && port.cell.Available() && port.storage.Available()
-}
-func (port FunctionFormalPort) ID() identity.ContentID {
-	if !port.Available() {
-		return identity.ContentID{}
-	}
-	return port.id
-}
-func (port FunctionFormalPort) CellID() identity.ContentID {
-	if !port.Available() {
-		return identity.ContentID{}
-	}
-	return port.cell
-}
-func (port FunctionFormalPort) StorageCellID() identity.ContentID {
-	if !port.Available() {
-		return identity.ContentID{}
-	}
-	return port.storage
-}
-func (port FunctionFormalPort) DeclaredStaticTypeID() (identity.ContentID, bool) {
-	return port.declared, port.Available() && port.declared.Available()
-}
-func (port FunctionFormalPort) Position() (int, bool) {
-	return int(port.position), port.Available()
-}
-
-// FunctionVarargPort is the optional open input of one Function boundary.
-// It remains distinct from fixed formal storage: no storage coordinate is
-// invented when Program did not issue one.
-type FunctionVarargPort struct{ id, cell identity.ContentID }
-
-func (port FunctionVarargPort) Available() bool {
-	return port.id.Available() && port.cell.Available()
-}
-func (port FunctionVarargPort) ID() identity.ContentID {
-	if !port.Available() {
-		return identity.ContentID{}
-	}
-	return port.id
-}
-func (port FunctionVarargPort) CellID() identity.ContentID {
-	if !port.Available() {
-		return identity.ContentID{}
-	}
-	return port.cell
-}
-
-// FunctionCapturePort is one ordered lexical interface edge. Inner/Outer are
-// role-specific Cell identities; the Body identities retain the direction of
-// the edge without exposing authored Terms or live Flow handles.
-type FunctionCapturePort struct {
-	id, inner, outer     identity.ContentID
-	innerBody, outerBody identity.ContentID
-	position             uint32
-}
-
-func (port FunctionCapturePort) Available() bool {
-	return port.id.Available() && port.inner.Available() && port.outer.Available() &&
-		port.innerBody.Available() && port.outerBody.Available() &&
-		port.inner != port.outer && port.innerBody != port.outerBody
-}
-func (port FunctionCapturePort) ID() identity.ContentID {
-	if !port.Available() {
-		return identity.ContentID{}
-	}
-	return port.id
-}
-func (port FunctionCapturePort) InnerCellID() identity.ContentID {
-	if !port.Available() {
-		return identity.ContentID{}
-	}
-	return port.inner
-}
-func (port FunctionCapturePort) OuterCellID() identity.ContentID {
-	if !port.Available() {
-		return identity.ContentID{}
-	}
-	return port.outer
-}
-func (port FunctionCapturePort) InnerBodyID() identity.ContentID {
-	if !port.Available() {
-		return identity.ContentID{}
-	}
-	return port.innerBody
-}
-func (port FunctionCapturePort) OuterBodyID() identity.ContentID {
-	if !port.Available() {
-		return identity.ContentID{}
-	}
-	return port.outerBody
-}
-func (port FunctionCapturePort) Position() (int, bool) {
-	return int(port.position), port.Available()
-}
-
-// FunctionBoundaryRow is ProgramArtifact's domain-neutral callable interface.
-// It references the already-sealed Body and Outcome planes and owns the sole
-// reusable formal/capture relation. Pack may refine these rows, but cannot be
-// their authority.
-type FunctionBoundaryRow struct {
-	id, body, bodyContext, entry, callFormal identity.ContentID
-	formals                                  []FunctionFormalPort
-	vararg                                   FunctionVarargPort
-	hasVararg                                bool
-	captures                                 []FunctionCapturePort
-	sealed                                   bool
-}
-
-func (row FunctionBoundaryRow) Available() bool {
-	if !row.sealed || !row.id.Available() || !row.body.Available() || !row.bodyContext.Available() ||
-		!row.entry.Available() || !row.callFormal.Available() || row.hasVararg != row.vararg.Available() {
-		return false
-	}
-	for index, port := range row.formals {
-		if !port.Available() || uint64(index) != uint64(port.position) {
-			return false
-		}
-	}
-	for index, port := range row.captures {
-		if !port.Available() || uint64(index) != uint64(port.position) || port.innerBody != row.body {
-			return false
-		}
-	}
-	return true
-}
-func (row FunctionBoundaryRow) ID() identity.ContentID {
-	if !row.Available() {
-		return identity.ContentID{}
-	}
-	return row.id
-}
-func (row FunctionBoundaryRow) BodyID() identity.ContentID {
-	if !row.Available() {
-		return identity.ContentID{}
-	}
-	return row.body
-}
-func (row FunctionBoundaryRow) BodyContextID() identity.ContentID {
-	if !row.Available() {
-		return identity.ContentID{}
-	}
-	return row.bodyContext
-}
-func (row FunctionBoundaryRow) EntryID() identity.ContentID {
-	if !row.Available() {
-		return identity.ContentID{}
-	}
-	return row.entry
-}
-func (row FunctionBoundaryRow) CallFormalID() identity.ContentID {
-	if !row.Available() {
-		return identity.ContentID{}
-	}
-	return row.callFormal
-}
-func (row FunctionBoundaryRow) FormalCount() int {
-	if !row.Available() {
-		return 0
-	}
-	return len(row.formals)
-}
-func (row FunctionBoundaryRow) FormalAt(index int) (FunctionFormalPort, bool) {
-	if !row.Available() || index < 0 || index >= len(row.formals) {
-		return FunctionFormalPort{}, false
-	}
-	return row.formals[index], true
-}
-func (row FunctionBoundaryRow) Vararg() (FunctionVarargPort, bool) {
-	return row.vararg, row.Available() && row.hasVararg
-}
-func (row FunctionBoundaryRow) CaptureCount() int {
-	if !row.Available() {
-		return 0
-	}
-	return len(row.captures)
-}
-func (row FunctionBoundaryRow) CaptureAt(index int) (FunctionCapturePort, bool) {
-	if !row.Available() || index < 0 || index >= len(row.captures) {
-		return FunctionCapturePort{}, false
-	}
-	return row.captures[index], true
-}
+// copyFunctionBoundariesFailure emits the callable-interface families
+// directly into the compiler publication.  The compiler keeps these rows only
+// until Freeze; the sealed Artifact retains no boundary slice or inverse.
 func (compiler *compiler) copyFunctionBoundariesFailure() CompileFailure {
 	if compiler == nil || len(compiler.bodies) == 0 || len(compiler.outcomes) == 0 {
 		return compileFailure(CompileStageBodyOutcomes, CompileRowBody, -1, -1, CompileReasonBodyUnavailable)
 	}
-	rows := make([]FunctionBoundaryRow, 0)
 	flowView := compiler.input.Flow()
 	for bodyIndex := 0; bodyIndex < compiler.input.BodyCount(); bodyIndex++ {
 		body, bodyOK := compiler.input.BodyAt(bodyIndex)
@@ -216,72 +29,118 @@ func (compiler *compiler) copyFunctionBoundariesFailure() CompileFailure {
 		if !functionOK || !copiedBody.Callable() || copiedBody.OutcomeCount() == 0 || !callFormalOK || !callFormalIDOK {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, -1, CompileReasonBodyUnavailable)
 		}
-		row := FunctionBoundaryRow{
-			id: functionID, body: copiedBody.ID(), bodyContext: copiedBody.ContextID(),
-			entry: copiedBody.EntryID(), callFormal: callFormalID, sealed: true,
+
+		if !fitsUint32(len(compiler.functionFormals)) || !fitsUint32(len(compiler.functionCaptures)) || !fitsUint32(len(compiler.functionVarargs)) {
+			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, -1, CompileReasonBodyUnavailable)
 		}
+		formalOffset := uint32(len(compiler.functionFormals))
 		for position := 0; position < function.FormalCount(); position++ {
 			formalID, cellID, storageID, declared, formalOK := compiler.input.FunctionFormalAt(function, position)
 			if !formalOK || uint64(position) > uint64(^uint32(0)) {
 				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, position, CompileReasonBodyUnavailable)
 			}
-			row.formals = append(row.formals, FunctionFormalPort{
-				id: formalID, cell: cellID, storage: storageID, declared: declared, position: uint32(position),
-			})
+			formal, formalSealed := programschema.NewFunctionFormal(formalID, cellID, storageID, declared, uint32(position))
+			if !formalSealed {
+				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, position, CompileReasonBodyUnavailable)
+			}
+			compiler.functionFormals = append(compiler.functionFormals, formal)
 		}
+
+		varargOffset := uint32(len(compiler.functionVarargs))
+		varargCount := uint32(0)
 		if varargID, cellID, varargOK := flowView.FunctionVarargIDs(function); varargOK {
-			if !varargID.Available() || !cellID.Available() {
+			vararg, varargSealed := programschema.NewFunctionVararg(varargID, cellID)
+			if !varargSealed {
 				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, -1, CompileReasonBodyUnavailable)
 			}
-			row.vararg = FunctionVarargPort{id: varargID, cell: cellID}
-			row.hasVararg = true
+			compiler.functionVarargs = append(compiler.functionVarargs, vararg)
+			varargCount = 1
 		}
+
+		captureOffset := uint32(len(compiler.functionCaptures))
 		for position := 0; position < function.CaptureCount(); position++ {
 			captureID, innerID, outerID, innerBodyID, outerBodyID, captureOK := compiler.input.FunctionCaptureAt(function, position)
 			if !captureOK || uint64(position) > uint64(^uint32(0)) {
 				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, position, CompileReasonBodyUnavailable)
 			}
-			row.captures = append(row.captures, FunctionCapturePort{
-				id: captureID, inner: innerID, outer: outerID,
-				innerBody: innerBodyID, outerBody: outerBodyID, position: uint32(position),
-			})
+			capture, captureSealed := programschema.NewFunctionCapture(captureID, innerID, outerID, innerBodyID, outerBodyID, uint32(position))
+			if !captureSealed {
+				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, position, CompileReasonBodyUnavailable)
+			}
+			compiler.functionCaptures = append(compiler.functionCaptures, capture)
 		}
-		if !row.Available() {
+
+		boundary, boundarySealed := programschema.NewFunctionBoundary(
+			functionID, copiedBody.ID(), copiedBody.ContextID(), copiedBody.EntryID(), callFormalID,
+			formalOffset, uint32(function.FormalCount()), varargOffset, varargCount,
+			captureOffset, uint32(function.CaptureCount()),
+		)
+		if !boundarySealed {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, -1, CompileReasonBodyUnavailable)
 		}
-		rows = append(rows, row)
+		compiler.functionBoundaries = append(compiler.functionBoundaries, boundary)
 	}
-	compiler.functionBoundaries = rows
 	return CompileFailure{}
 }
 
-// FunctionBoundaryCount and FunctionBoundaryAt expose the sole neutral
-// callable-interface denominator. The rows are content-addressed Program
-// artifact data; Link supplies only mounted actual/callback substitutions.
-func (artifact *Artifact) FunctionBoundaryCount() int {
-	if !artifact.Available() {
-		return 0
+// functionBoundaryIDs is used only by compiler-side summary and validation
+// passes while the canonical rows are still being assembled.
+func functionBoundaryIDs(row programschema.FunctionBoundary) (identity.ContentID, identity.ContentID, identity.ContentID, bool) {
+	if !row.Available() {
+		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
 	}
-	return len(artifact.functionBoundaries)
-}
-func (artifact *Artifact) FunctionBoundaryAt(index int) (FunctionBoundaryRow, bool) {
-	if !artifact.Available() || index < 0 || index >= len(artifact.functionBoundaries) {
-		return FunctionBoundaryRow{}, false
-	}
-	return artifact.functionBoundaries[index], true
+	return row.ID(), row.BodyID(), row.CallFormalID(), true
 }
 
-// FunctionBoundaryForBody resolves the sole callable boundary owned by a
-// Body. The inverse is sealed with the Artifact and keeps consumers from
-// rebuilding a body-to-function map beside the canonical column.
-func (artifact *Artifact) FunctionBoundaryForBody(bodyID identity.ContentID) (FunctionBoundaryRow, bool) {
-	if artifact == nil || !artifact.Available() || !bodyID.Available() || artifact.functionBoundaryByBody == nil {
-		return FunctionBoundaryRow{}, false
+func (compiler *compiler) functionFormalAt(boundary programschema.FunctionBoundary, index int) (programschema.FunctionFormal, bool) {
+	if compiler == nil || index < 0 || index >= boundary.FormalCount() {
+		return programschema.FunctionFormal{}, false
 	}
-	index, ok := artifact.functionBoundaryByBody[bodyID]
-	if !ok || uint64(index) >= uint64(len(artifact.functionBoundaries)) {
-		return FunctionBoundaryRow{}, false
+	offset, _, ok := boundary.FormalSpan()
+	if !ok || uint64(offset)+uint64(index) >= uint64(len(compiler.functionFormals)) {
+		return programschema.FunctionFormal{}, false
 	}
-	row := artifact.functionBoundaries[index]
-	return row, row.Available() && row.BodyID() == bodyID
+	formal := compiler.functionFormals[int(offset)+index]
+	return formal, formal.Available()
+}
+
+func (compiler *compiler) functionVararg(boundary programschema.FunctionBoundary) (programschema.FunctionVararg, bool) {
+	if compiler == nil || !boundary.HasVararg() {
+		return programschema.FunctionVararg{}, false
+	}
+	offset, count, ok := boundary.VarargSpan()
+	if !ok || count != 1 || uint64(offset) >= uint64(len(compiler.functionVarargs)) {
+		return programschema.FunctionVararg{}, false
+	}
+	vararg := compiler.functionVarargs[offset]
+	return vararg, vararg.Available()
+}
+
+func (compiler *compiler) functionCaptureAt(boundary programschema.FunctionBoundary, index int) (programschema.FunctionCapture, bool) {
+	if compiler == nil || index < 0 || index >= boundary.CaptureCount() {
+		return programschema.FunctionCapture{}, false
+	}
+	offset, _, ok := boundary.CaptureSpan()
+	if !ok || uint64(offset)+uint64(index) >= uint64(len(compiler.functionCaptures)) {
+		return programschema.FunctionCapture{}, false
+	}
+	capture := compiler.functionCaptures[int(offset)+index]
+	return capture, capture.Available() && capture.InnerBodyID() == boundary.BodyID()
+}
+
+func (compiler *compiler) functionBoundaryForBody(bodyID identity.ContentID) (programschema.FunctionBoundary, bool) {
+	if compiler == nil || !bodyID.Available() {
+		return programschema.FunctionBoundary{}, false
+	}
+	var found programschema.FunctionBoundary
+	for _, boundary := range compiler.functionBoundaries {
+		if !boundary.Available() || boundary.BodyID() != bodyID {
+			continue
+		}
+		if found.Available() {
+			return programschema.FunctionBoundary{}, false
+		}
+		found = boundary
+	}
+	return found, found.Available()
 }

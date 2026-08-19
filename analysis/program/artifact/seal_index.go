@@ -83,7 +83,8 @@ func (artifact *Artifact) validateSealIndexes(state *sealValidationState) Compil
 	if operandCursor != operandCount || argumentCursor != argumentCount || typeArgumentCursor != typeArgumentCount {
 		return compileFailure(CompileStageSeal, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceCall)
 	}
-	if len(artifact.functionBoundaries) != state.callableBodies {
+	functionCount, functionsPublished := coldCount(artifact, programschema.FunctionBoundaryFamily())
+	if !functionsPublished || functionCount != state.callableBodies {
 		return compileFailure(CompileStageSeal, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceStorage)
 	}
 	// Storage binds are one generic occurrence row whose inputs are ordered as
@@ -219,11 +220,21 @@ func (artifact *Artifact) validateSealIndexes(state *sealValidationState) Compil
 		}
 		seenStaticNodes[row.id] = struct{}{}
 	}
-	for functionIndex, function := range artifact.functionBoundaries {
-		for formalIndex, formal := range function.formals {
-			if formal.declared.Available() {
-				if _, exists := seenStaticNodes[formal.declared]; !exists {
-					return compileFailure(CompileStageSeal, CompileRowBody, functionIndex, formalIndex, CompileReasonBodyUnavailable)
+	for functionIndex := 0; functionIndex < functionCount; functionIndex++ {
+		function, functionHeld := coldRow(artifact, programschema.FunctionBoundaryFamily(), functionIndex)
+		formalOffset, formalWidth, formalSpanOK := function.FormalSpan()
+		if !functionHeld || !formalSpanOK {
+			return compileFailure(CompileStageSeal, CompileRowBody, functionIndex, -1, CompileReasonBodyUnavailable)
+		}
+		for formalIndex := uint32(0); formalIndex < formalWidth; formalIndex++ {
+			formal, formalHeld := coldRow(artifact, programschema.FunctionFormalFamily(), int(formalOffset+formalIndex))
+			declared, declaredOK := formal.DeclaredStaticTypeID()
+			if !formalHeld || !formal.Available() {
+				return compileFailure(CompileStageSeal, CompileRowBody, functionIndex, int(formalIndex), CompileReasonBodyUnavailable)
+			}
+			if declaredOK {
+				if _, exists := seenStaticNodes[declared]; !exists {
+					return compileFailure(CompileStageSeal, CompileRowBody, functionIndex, int(formalIndex), CompileReasonBodyUnavailable)
 				}
 			}
 		}

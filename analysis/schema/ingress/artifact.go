@@ -63,7 +63,6 @@ type Snapshot struct {
 	transfers       []LocalTransfer
 	placements      []RulePlacement
 	bodyExits       [][]identity.ContentID
-	boundaries      []FunctionBoundary
 	occurrences     []Occurrence
 	observations    []DiagnosticObservation
 	staticTypeNodes []StaticTypeNode
@@ -277,18 +276,6 @@ func (snapshot *Snapshot) BodyTransportAt(index int) (BodyTransport, bool) {
 		return BodyTransport{}, false
 	}
 	return BodyTransport{body: body, view: view, exits: snapshot.bodyExits[index]}, true
-}
-func (snapshot *Snapshot) FunctionBoundaryCount() int {
-	if !snapshot.Available() {
-		return 0
-	}
-	return len(snapshot.boundaries)
-}
-func (snapshot *Snapshot) FunctionBoundaryAt(index int) (FunctionBoundary, bool) {
-	if !snapshot.Available() || index < 0 || index >= len(snapshot.boundaries) {
-		return FunctionBoundary{}, false
-	}
-	return snapshot.boundaries[index], true
 }
 func (snapshot *Snapshot) CallArgumentCount() int {
 	if !snapshot.Available() {
@@ -585,17 +572,6 @@ func (snapshot *Snapshot) OccurrenceKindAt(kind uint8, index int) (Occurrence, b
 	}
 	return Occurrence{}, false
 }
-func (snapshot *Snapshot) FunctionBoundaryForBody(bodyID identity.ContentID) (FunctionBoundary, bool) {
-	if !snapshot.Available() || !bodyID.Available() {
-		return FunctionBoundary{}, false
-	}
-	for _, row := range snapshot.boundaries {
-		if row.body == bodyID {
-			return row, true
-		}
-	}
-	return FunctionBoundary{}, false
-}
 func (snapshot *Snapshot) OccurrenceForID(kind uint8, id identity.ContentID) (Occurrence, bool) {
 	if !snapshot.Available() || !id.Available() {
 		return Occurrence{}, false
@@ -783,68 +759,6 @@ func (row BodyTransport) ExitAt(index int) (identity.ContentID, bool) {
 		return identity.ContentID{}, false
 	}
 	return row.exits[index], true
-}
-
-type FunctionFormal struct {
-	id, cell, storage identity.ContentID
-}
-
-func (row FunctionFormal) Available() bool {
-	return row.id.Available() && row.cell.Available() && row.storage.Available()
-}
-func (row FunctionFormal) ID() identity.ContentID            { return row.id }
-func (row FunctionFormal) CellID() identity.ContentID        { return row.cell }
-func (row FunctionFormal) StorageCellID() identity.ContentID { return row.storage }
-
-type FunctionVararg struct {
-	id, cell identity.ContentID
-}
-
-func (row FunctionVararg) Available() bool {
-	return row.id.Available() && row.cell.Available()
-}
-func (row FunctionVararg) ID() identity.ContentID     { return row.id }
-func (row FunctionVararg) CellID() identity.ContentID { return row.cell }
-
-type FunctionCapture struct {
-	id, inner, outer, innerBody, outerBody identity.ContentID
-}
-
-func (row FunctionCapture) Available() bool {
-	return row.id.Available() && row.inner.Available() && row.outer.Available() &&
-		row.innerBody.Available() && row.outerBody.Available() &&
-		row.inner != row.outer && row.innerBody != row.outerBody
-}
-func (row FunctionCapture) ID() identity.ContentID          { return row.id }
-func (row FunctionCapture) InnerCellID() identity.ContentID { return row.inner }
-func (row FunctionCapture) OuterCellID() identity.ContentID { return row.outer }
-func (row FunctionCapture) InnerBodyID() identity.ContentID { return row.innerBody }
-func (row FunctionCapture) OuterBodyID() identity.ContentID { return row.outerBody }
-
-type FunctionBoundary struct {
-	id, body, bodyContext, entry, formal identity.ContentID
-	formals                              []FunctionFormal
-	vararg                               FunctionVararg
-	hasVararg                            bool
-	captures                             []FunctionCapture
-}
-
-func (row FunctionBoundary) Available() bool {
-	if !row.id.Available() || !row.body.Available() || !row.bodyContext.Available() ||
-		!row.entry.Available() || !row.formal.Available() || row.hasVararg != row.vararg.Available() {
-		return false
-	}
-	for _, port := range row.formals {
-		if !port.Available() {
-			return false
-		}
-	}
-	for _, capture := range row.captures {
-		if !capture.Available() || capture.innerBody != row.body {
-			return false
-		}
-	}
-	return true
 }
 
 type CallOperand struct{ row programschema.CallOperand }
@@ -1304,29 +1218,6 @@ func (row DiagnosticObservation) TypeConformance() (diagnosticConformance, bool)
 	return row.conform, true
 }
 
-func (row FunctionBoundary) ID() identity.ContentID            { return row.id }
-func (row FunctionBoundary) BodyID() identity.ContentID        { return row.body }
-func (row FunctionBoundary) BodyContextID() identity.ContentID { return row.bodyContext }
-func (row FunctionBoundary) EntryID() identity.ContentID       { return row.entry }
-func (row FunctionBoundary) CallFormalID() identity.ContentID  { return row.formal }
-func (row FunctionBoundary) FormalCount() int                  { return len(row.formals) }
-func (row FunctionBoundary) FormalAt(index int) (FunctionFormal, bool) {
-	if index < 0 || index >= len(row.formals) {
-		return FunctionFormal{}, false
-	}
-	return row.formals[index], true
-}
-func (row FunctionBoundary) Vararg() (FunctionVararg, bool) {
-	return row.vararg, row.hasVararg && row.vararg.Available()
-}
-func (row FunctionBoundary) CaptureCount() int { return len(row.captures) }
-func (row FunctionBoundary) CaptureAt(index int) (FunctionCapture, bool) {
-	if index < 0 || index >= len(row.captures) {
-		return FunctionCapture{}, false
-	}
-	return row.captures[index], true
-}
-
 func copyIDs(count int, at func(int) (identity.ContentID, bool)) ([]identity.ContentID, bool) {
 	if count < 0 {
 		return nil, false
@@ -1504,42 +1395,6 @@ func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Sna
 			return nil, false
 		}
 		snapshot.bodyExits = append(snapshot.bodyExits, exits)
-	}
-	snapshot.boundaries = make([]FunctionBoundary, 0, artifact.FunctionBoundaryCount())
-	for index := 0; index < artifact.FunctionBoundaryCount(); index++ {
-		row, ok := artifact.FunctionBoundaryAt(index)
-		if !ok || !row.Available() {
-			return nil, false
-		}
-		ports := make([]FunctionFormal, 0, row.FormalCount())
-		for formalIndex := 0; formalIndex < row.FormalCount(); formalIndex++ {
-			port, portOK := row.FormalAt(formalIndex)
-			if !portOK || !port.Available() {
-				return nil, false
-			}
-			ports = append(ports, FunctionFormal{id: port.ID(), cell: port.CellID(), storage: port.StorageCellID()})
-		}
-		captures := make([]FunctionCapture, 0, row.CaptureCount())
-		for captureIndex := 0; captureIndex < row.CaptureCount(); captureIndex++ {
-			capture, captureOK := row.CaptureAt(captureIndex)
-			if !captureOK || !capture.Available() {
-				return nil, false
-			}
-			captures = append(captures, FunctionCapture{
-				id: capture.ID(), inner: capture.InnerCellID(), outer: capture.OuterCellID(),
-				innerBody: capture.InnerBodyID(), outerBody: capture.OuterBodyID(),
-			})
-		}
-		vararg, hasVararg := row.Vararg()
-		copiedVararg := FunctionVararg{}
-		if hasVararg {
-			copiedVararg = FunctionVararg{id: vararg.ID(), cell: vararg.CellID()}
-		}
-		snapshot.boundaries = append(snapshot.boundaries, FunctionBoundary{
-			id: row.ID(), body: row.BodyID(), bodyContext: row.BodyContextID(),
-			entry: row.EntryID(), formal: row.CallFormalID(), formals: ports,
-			vararg: copiedVararg, hasVararg: hasVararg, captures: captures,
-		})
 	}
 	// Every published call must name operand and argument spans the two child
 	// planes actually hold. The admission is stated once here over the

@@ -227,13 +227,9 @@ return shared_template_probe(43)`
 	if leftArtifact == nil || leftArtifact != rightArtifact || leftMount.template == nil || leftMount.template != rightMount.template || leftMount.roles == nil || leftMount.roles != rightMount.roles {
 		t.Fatal("equal Programs in independent Links did not share one content-addressed template")
 	}
-	if leftMount.snapshot == nil || leftMount.snapshot.FunctionBoundaryCount() == 0 {
-		t.Fatalf("shared snapshot function interfaces = %d", func() int {
-			if leftMount.snapshot == nil {
-				return 0
-			}
-			return leftMount.snapshot.FunctionBoundaryCount()
-		}())
+	leftBoundaryCount, leftBoundariesPublished := leftMount.program.FunctionBoundaryCount()
+	if !leftBoundariesPublished || leftBoundaryCount == 0 {
+		t.Fatalf("shared Program function interfaces = %d/%v", leftBoundaryCount, leftBoundariesPublished)
 	}
 	if left.state.committed.program != nil || right.state.committed.program != nil || len(left.state.querySites) != 0 || len(right.state.querySites) != 0 {
 		t.Fatal("Compile instantiated runtime topology before Solve ownership")
@@ -256,8 +252,8 @@ return shared_template_probe(43)`
 	// The function declaration interface is owned by program/artifact. Both
 	// Links resolve it through the one shared content-addressed Artifact, so
 	// the interface outlives every Link-local release/replay.
-	if leftMount.snapshot == nil || rightMount.snapshot == nil ||
-		leftMount.snapshot.FunctionBoundaryCount() != rightMount.snapshot.FunctionBoundaryCount() {
+	rightBoundaryCount, rightBoundariesPublished := rightMount.program.FunctionBoundaryCount()
+	if !rightBoundariesPublished || leftBoundaryCount != rightBoundaryCount {
 		t.Fatal("independent Links did not share one function declaration authority")
 	}
 	programCaptures, programVarargs := 0, 0
@@ -265,8 +261,8 @@ return shared_template_probe(43)`
 	if !bodiesPublished {
 		t.Fatal("shared cold Body family unavailable")
 	}
-	for index := 0; index < leftMount.snapshot.FunctionBoundaryCount(); index++ {
-		reusable, reusableOK := leftMount.snapshot.FunctionBoundaryAt(index)
+	for index := 0; index < leftBoundaryCount; index++ {
+		reusable, reusableOK := leftMount.program.FunctionBoundaryAt(index)
 		bodyOutcomes := 0
 		for bodyIndex := 0; bodyIndex < bodyCount; bodyIndex++ {
 			body, bodyOK := leftMount.program.BodyAt(bodyIndex)
@@ -279,19 +275,19 @@ return shared_template_probe(43)`
 			t.Fatalf("function interface[%d] is incomplete", index)
 		}
 		for position := 0; position < reusable.FormalCount(); position++ {
-			port, portOK := reusable.FormalAt(position)
+			port, portOK := leftMount.program.FunctionFormalFor(index, position)
 			if !portOK || !port.ID().Available() || !port.CellID().Available() || !port.StorageCellID().Available() {
 				t.Fatalf("function formal[%d,%d] is incomplete", index, position)
 			}
 		}
-		if vararg, varargOK := reusable.Vararg(); varargOK {
+		if vararg, varargOK := leftMount.program.FunctionVarargFor(index, 0); varargOK {
 			if !vararg.ID().Available() || !vararg.CellID().Available() {
 				t.Fatalf("function vararg[%d] is incomplete", index)
 			}
 			programVarargs++
 		}
 		for position := 0; position < reusable.CaptureCount(); position++ {
-			capture, captureOK := reusable.CaptureAt(position)
+			capture, captureOK := leftMount.program.FunctionCaptureFor(index, position)
 			if !captureOK || !capture.ID().Available() || capture.InnerCellID() == capture.OuterCellID() ||
 				!capture.InnerBodyID().Available() || !capture.OuterBodyID().Available() || capture.InnerBodyID() == capture.OuterBodyID() {
 				t.Fatalf("function capture[%d,%d] lost reusable direction", index, position)

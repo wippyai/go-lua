@@ -352,3 +352,134 @@ func (row Program) UnarySummaryAt(index int) (UnarySummary, bool) {
 	}
 	return UnarySummaryFamily().At(&row.Frozen, catalog, index)
 }
+
+// FunctionBoundaryCount is the sealed width of the callable-interface
+// family. Child formals, varargs, and captures are read through the spans on
+// each boundary rather than through retained nested slices.
+func (row Program) FunctionBoundaryCount() (int, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return 0, false
+	}
+	return FunctionBoundaryFamily().Count(&row.Frozen, catalog)
+}
+
+func (row Program) FunctionBoundaryAt(index int) (FunctionBoundary, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return FunctionBoundary{}, false
+	}
+	return FunctionBoundaryFamily().At(&row.Frozen, catalog, index)
+}
+
+func (row Program) FunctionFormalCount() (int, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return 0, false
+	}
+	return FunctionFormalFamily().Count(&row.Frozen, catalog)
+}
+
+func (row Program) FunctionFormalAt(index int) (FunctionFormal, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return FunctionFormal{}, false
+	}
+	return FunctionFormalFamily().At(&row.Frozen, catalog, index)
+}
+
+func (row Program) FunctionVarargCount() (int, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return 0, false
+	}
+	return FunctionVarargFamily().Count(&row.Frozen, catalog)
+}
+
+func (row Program) FunctionVarargAt(index int) (FunctionVararg, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return FunctionVararg{}, false
+	}
+	return FunctionVarargFamily().At(&row.Frozen, catalog, index)
+}
+
+func (row Program) FunctionCaptureCount() (int, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return 0, false
+	}
+	return FunctionCaptureFamily().Count(&row.Frozen, catalog)
+}
+
+func (row Program) FunctionCaptureAt(index int) (FunctionCapture, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return FunctionCapture{}, false
+	}
+	return FunctionCaptureFamily().At(&row.Frozen, catalog, index)
+}
+
+func (row Program) FunctionFormalFor(boundaryIndex, childIndex int) (FunctionFormal, bool) {
+	boundary, ok := row.FunctionBoundaryAt(boundaryIndex)
+	if !ok || childIndex < 0 || childIndex >= boundary.FormalCount() {
+		return FunctionFormal{}, false
+	}
+	offset, _, spanOK := boundary.FormalSpan()
+	if !spanOK {
+		return FunctionFormal{}, false
+	}
+	formal, held := row.FunctionFormalAt(int(offset) + childIndex)
+	return formal, held && formal.Available()
+}
+
+func (row Program) FunctionVarargFor(boundaryIndex, childIndex int) (FunctionVararg, bool) {
+	boundary, ok := row.FunctionBoundaryAt(boundaryIndex)
+	if !ok || childIndex < 0 || childIndex >= 1 || !boundary.HasVararg() {
+		return FunctionVararg{}, false
+	}
+	offset, count, spanOK := boundary.VarargSpan()
+	if !spanOK || count != 1 {
+		return FunctionVararg{}, false
+	}
+	vararg, held := row.FunctionVarargAt(int(offset) + childIndex)
+	return vararg, held && vararg.Available()
+}
+
+func (row Program) FunctionCaptureFor(boundaryIndex, childIndex int) (FunctionCapture, bool) {
+	boundary, ok := row.FunctionBoundaryAt(boundaryIndex)
+	if !ok || childIndex < 0 || childIndex >= boundary.CaptureCount() {
+		return FunctionCapture{}, false
+	}
+	offset, _, spanOK := boundary.CaptureSpan()
+	if !spanOK {
+		return FunctionCapture{}, false
+	}
+	capture, held := row.FunctionCaptureAt(int(offset) + childIndex)
+	return capture, held && capture.InnerBodyID() == boundary.BodyID()
+}
+
+// FunctionBoundaryForBody resolves the callable boundary owned by one Body
+// by bounded lookup in the canonical family. It deliberately retains no
+// body-to-boundary inverse beside the sealed publication.
+func (row Program) FunctionBoundaryForBody(bodyID identity.ContentID) (FunctionBoundary, bool) {
+	if !bodyID.Available() {
+		return FunctionBoundary{}, false
+	}
+	count, published := row.FunctionBoundaryCount()
+	if !published {
+		return FunctionBoundary{}, false
+	}
+	var found FunctionBoundary
+	for index := 0; index < count; index++ {
+		candidate, ok := row.FunctionBoundaryAt(index)
+		if !ok || candidate.BodyID() != bodyID {
+			continue
+		}
+		if found.Available() {
+			return FunctionBoundary{}, false
+		}
+		found = candidate
+	}
+	return found, found.Available()
+}

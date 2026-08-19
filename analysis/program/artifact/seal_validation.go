@@ -196,54 +196,92 @@ func (artifact *Artifact) validateSealFoundation(state *sealValidationState) Com
 			state.callableBodies++
 		}
 	}
-	seenFunctions := make(map[identity.ContentID]struct{}, len(artifact.functionBoundaries))
-	seenFunctionBodies := make(map[identity.ContentID]struct{}, len(artifact.functionBoundaries))
-	for functionIndex, row := range artifact.functionBoundaries {
-		body, bodyOK := state.bodyRows[row.body]
+	functionCount, functionsPublished := coldCount(artifact, programschema.FunctionBoundaryFamily())
+	formalCount, formalsPublished := coldCount(artifact, programschema.FunctionFormalFamily())
+	varargCount, varargsPublished := coldCount(artifact, programschema.FunctionVarargFamily())
+	captureCount, capturesPublished := coldCount(artifact, programschema.FunctionCaptureFamily())
+	if !functionsPublished || !formalsPublished || !varargsPublished || !capturesPublished || functionCount != state.callableBodies {
+		return compileFailure(CompileStageSeal, CompileRowBody, -1, -1, CompileReasonBodyUnavailable)
+	}
+	seenFunctions := make(map[identity.ContentID]struct{}, functionCount)
+	seenFunctionBodies := make(map[identity.ContentID]struct{}, functionCount)
+	formalCursor, varargCursor, captureCursor := uint32(0), uint32(0), uint32(0)
+	seenVarargIDs := make(map[identity.ContentID]struct{}, varargCount)
+	for functionIndex := 0; functionIndex < functionCount; functionIndex++ {
+		row, rowHeld := coldRow(artifact, programschema.FunctionBoundaryFamily(), functionIndex)
+		formalOffset, formalWidth, formalSpanOK := row.FormalSpan()
+		varargOffset, varargWidth, varargSpanOK := row.VarargSpan()
+		captureOffset, captureWidth, captureSpanOK := row.CaptureSpan()
+		body, bodyOK := state.bodyRows[row.BodyID()]
 		function, _ := body.FunctionContextID()
-		formal, _ := body.CallFormalID()
-		if !row.Available() || !bodyOK || !body.Callable() || body.OutcomeCount() == 0 || body.ContextID() != row.bodyContext || body.EntryID() != row.entry ||
-			function != row.id || formal != row.callFormal {
+		callFormal, _ := body.CallFormalID()
+		if !rowHeld || !row.Available() || !formalSpanOK || !varargSpanOK || !captureSpanOK ||
+			formalOffset != formalCursor || varargOffset != varargCursor || captureOffset != captureCursor ||
+			uint64(formalOffset)+uint64(formalWidth) > uint64(formalCount) ||
+			uint64(varargOffset)+uint64(varargWidth) > uint64(varargCount) ||
+			uint64(captureOffset)+uint64(captureWidth) > uint64(captureCount) ||
+			!bodyOK || !body.Callable() || body.OutcomeCount() == 0 || body.ContextID() != row.BodyContextID() || body.EntryID() != row.EntryID() ||
+			function != row.ID() || callFormal != row.CallFormalID() || varargWidth > 1 {
 			return compileFailure(CompileStageSeal, CompileRowBody, functionIndex, -1, CompileReasonBodyUnavailable)
 		}
-		if _, duplicate := seenFunctions[row.id]; duplicate {
+		if _, duplicate := seenFunctions[row.ID()]; duplicate {
 			return compileFailure(CompileStageSeal, CompileRowBody, functionIndex, -1, CompileReasonBodyDuplicate)
 		}
-		if _, duplicate := seenFunctionBodies[row.body]; duplicate {
+		if _, duplicate := seenFunctionBodies[row.BodyID()]; duplicate {
 			return compileFailure(CompileStageSeal, CompileRowBody, functionIndex, -1, CompileReasonBodyDuplicate)
 		}
-		seenFunctions[row.id], seenFunctionBodies[row.body] = struct{}{}, struct{}{}
-		seenFormalIDs := make(map[identity.ContentID]struct{}, len(row.formals))
-		seenFormalCells := make(map[identity.ContentID]struct{}, len(row.formals))
-		seenFormalStorage := make(map[identity.ContentID]struct{}, len(row.formals))
-		for portIndex, port := range row.formals {
-			if !port.Available() || uint64(port.position) != uint64(portIndex) {
-				return compileFailure(CompileStageSeal, CompileRowBody, functionIndex, portIndex, CompileReasonBodyUnavailable)
+		seenFunctions[row.ID()], seenFunctionBodies[row.BodyID()] = struct{}{}, struct{}{}
+		seenFormalIDs := make(map[identity.ContentID]struct{}, formalWidth)
+		seenFormalCells := make(map[identity.ContentID]struct{}, formalWidth)
+		seenFormalStorage := make(map[identity.ContentID]struct{}, formalWidth)
+		for portIndex := uint32(0); portIndex < formalWidth; portIndex++ {
+			port, portHeld := coldRow(artifact, programschema.FunctionFormalFamily(), int(formalOffset+portIndex))
+			position, positionOK := port.Position()
+			if !portHeld || !port.Available() || !positionOK || uint64(position) != uint64(portIndex) {
+				return compileFailure(CompileStageSeal, CompileRowBody, functionIndex, int(portIndex), CompileReasonBodyUnavailable)
 			}
-			if _, duplicate := seenFormalIDs[port.id]; duplicate {
-				return compileFailure(CompileStageSeal, CompileRowBody, functionIndex, portIndex, CompileReasonBodyDuplicate)
+			if _, duplicate := seenFormalIDs[port.ID()]; duplicate {
+				return compileFailure(CompileStageSeal, CompileRowBody, functionIndex, int(portIndex), CompileReasonBodyDuplicate)
 			}
-			if _, duplicate := seenFormalCells[port.cell]; duplicate {
-				return compileFailure(CompileStageSeal, CompileRowBody, functionIndex, portIndex, CompileReasonBodyDuplicate)
+			if _, duplicate := seenFormalCells[port.CellID()]; duplicate {
+				return compileFailure(CompileStageSeal, CompileRowBody, functionIndex, int(portIndex), CompileReasonBodyDuplicate)
 			}
-			if _, duplicate := seenFormalStorage[port.storage]; duplicate {
-				return compileFailure(CompileStageSeal, CompileRowBody, functionIndex, portIndex, CompileReasonBodyDuplicate)
+			if _, duplicate := seenFormalStorage[port.StorageCellID()]; duplicate {
+				return compileFailure(CompileStageSeal, CompileRowBody, functionIndex, int(portIndex), CompileReasonBodyDuplicate)
 			}
-			seenFormalIDs[port.id], seenFormalCells[port.cell], seenFormalStorage[port.storage] = struct{}{}, struct{}{}, struct{}{}
+			seenFormalIDs[port.ID()], seenFormalCells[port.CellID()], seenFormalStorage[port.StorageCellID()] = struct{}{}, struct{}{}, struct{}{}
 		}
-		seenCaptureIDs := make(map[identity.ContentID]struct{}, len(row.captures))
-		for captureIndex, capture := range row.captures {
-			if !capture.Available() || capture.innerBody != row.body {
-				return compileFailure(CompileStageSeal, CompileRowBody, functionIndex, captureIndex, CompileReasonBodyUnavailable)
+		if varargWidth == 1 {
+			vararg, varargHeld := coldRow(artifact, programschema.FunctionVarargFamily(), int(varargOffset))
+			if !varargHeld || !vararg.Available() {
+				return compileFailure(CompileStageSeal, CompileRowBody, functionIndex, -1, CompileReasonBodyUnavailable)
 			}
-			if _, outerOK := state.bodyRows[capture.outerBody]; !outerOK {
-				return compileFailure(CompileStageSeal, CompileRowBody, functionIndex, captureIndex, CompileReasonBodyUnavailable)
+			if _, duplicate := seenVarargIDs[vararg.ID()]; duplicate {
+				return compileFailure(CompileStageSeal, CompileRowBody, functionIndex, -1, CompileReasonBodyDuplicate)
 			}
-			if _, duplicate := seenCaptureIDs[capture.id]; duplicate {
-				return compileFailure(CompileStageSeal, CompileRowBody, functionIndex, captureIndex, CompileReasonBodyDuplicate)
-			}
-			seenCaptureIDs[capture.id] = struct{}{}
+			seenVarargIDs[vararg.ID()] = struct{}{}
 		}
+		seenCaptureIDs := make(map[identity.ContentID]struct{}, captureWidth)
+		for captureIndex := uint32(0); captureIndex < captureWidth; captureIndex++ {
+			capture, captureHeld := coldRow(artifact, programschema.FunctionCaptureFamily(), int(captureOffset+captureIndex))
+			position, positionOK := capture.Position()
+			if !captureHeld || !capture.Available() || !positionOK || uint64(position) != uint64(captureIndex) || capture.InnerBodyID() != row.BodyID() {
+				return compileFailure(CompileStageSeal, CompileRowBody, functionIndex, int(captureIndex), CompileReasonBodyUnavailable)
+			}
+			if _, outerOK := state.bodyRows[capture.OuterBodyID()]; !outerOK {
+				return compileFailure(CompileStageSeal, CompileRowBody, functionIndex, int(captureIndex), CompileReasonBodyUnavailable)
+			}
+			if _, duplicate := seenCaptureIDs[capture.ID()]; duplicate {
+				return compileFailure(CompileStageSeal, CompileRowBody, functionIndex, int(captureIndex), CompileReasonBodyDuplicate)
+			}
+			seenCaptureIDs[capture.ID()] = struct{}{}
+		}
+		formalCursor += formalWidth
+		varargCursor += varargWidth
+		captureCursor += captureWidth
+	}
+	if formalCursor != uint32(formalCount) || varargCursor != uint32(varargCount) || captureCursor != uint32(captureCount) {
+		return compileFailure(CompileStageSeal, CompileRowBody, -1, -1, CompileReasonBodyRange)
 	}
 
 	return CompileFailure{}

@@ -87,7 +87,7 @@ func (compiler *compiler) copyFormalEntrySources() CompileFailure {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, boundaryIndex, -1, CompileReasonOccurrenceValueSourcePoints)
 		}
 		for formalIndex := 0; formalIndex < boundary.FormalCount(); formalIndex++ {
-			formal, ok := boundary.FormalAt(formalIndex)
+			formal, ok := compiler.functionFormalAt(boundary, formalIndex)
 			if !ok || !compiler.appendOccurrence(
 				OccurrenceFormalEntry,
 				formal.StorageCellID(),
