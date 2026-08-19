@@ -176,7 +176,7 @@ func (compiler *compiler) copyValuesFailure() CompileFailure {
 		seenMembers := make(map[identity.ContentID]struct{}, width)
 		for memberIndex := range members {
 			_, memberOK := view.Member(term, memberIndex)
-			memberID, memberIDOK := compiler.input.ValuesMemberID(term, memberIndex)
+			memberID, memberIDOK := compiler.input.Flow().ValuesMemberID(term, memberIndex)
 			if !memberOK || !memberIDOK || !memberID.Available() {
 				return compileFailure(CompileStageValues, CompileRowValues, index, memberIndex, CompileReasonValuesMember)
 			}
@@ -192,7 +192,7 @@ func (compiler *compiler) copyValuesFailure() CompileFailure {
 			tailFamily := keyspace.TermFamily(tailTerm)
 			var tailOK bool
 			tailKind, tailOK = valuesTailKind(tailFamily)
-			tailID, tailIDOK := compiler.input.ValuesTailID(term)
+			tailID, tailIDOK := compiler.input.Flow().ValuesTailID(term)
 			tailSpanID, _, _, tailSpanOK := compiler.input.EvaluationSpan(tailTerm)
 			if !tailOK || !tailIDOK || !tailSpanOK || !tailID.Available() || !tailSpanID.Available() {
 				return compileFailure(CompileStageValues, CompileRowValues, index, -1, CompileReasonValuesTail)
@@ -200,7 +200,7 @@ func (compiler *compiler) copyValuesFailure() CompileFailure {
 			tail = ValuesTail{id: tailID, span: tailSpanID, kind: tailKind, present: true}
 		}
 		var rowIDOK bool
-		rowID, rowIDOK = compiler.input.ValuesOccurrenceID(term)
+		rowID, rowIDOK = compiler.input.Flow().ValuesOccurrenceID(term)
 		if !rowIDOK || !rowID.Available() {
 			return compileFailure(CompileStageValues, CompileRowValues, index, -1, CompileReasonValuesIdentity)
 		}

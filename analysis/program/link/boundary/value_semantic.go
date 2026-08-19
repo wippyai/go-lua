@@ -61,7 +61,7 @@ func sealValueSemanticIDs(table *valueTable, p *program.Program, mount uint32) e
 	values := p.Flow().Authored().Values()
 	for index := 0; index < values.Count(); index++ {
 		term, termOK := values.At(index)
-		valueID, valueOK := p.ValuesOccurrenceID(term)
+		valueID, valueOK := p.Flow().ValuesOccurrenceID(term)
 		width, widthOK := values.Len(term)
 		_, tailTerm, rowOK := values.Get(term)
 		if !termOK || !valueOK || !widthOK || width < 0 || !rowOK {
@@ -72,7 +72,7 @@ func sealValueSemanticIDs(table *valueTable, p *program.Program, mount uint32) e
 		}
 		for memberIndex := 0; memberIndex < width; memberIndex++ {
 			memberTerm, memberTermOK := values.Member(term, memberIndex)
-			memberID, memberOK := p.ValuesMemberID(term, memberIndex)
+			memberID, memberOK := p.Flow().ValuesMemberID(term, memberIndex)
 			if !memberTermOK || !memberOK {
 				return fmt.Errorf("link/boundary: malformed semantic Values member row=%d member=%d term=%d authored=%t identity=%t", index, memberIndex, memberTerm, memberTermOK, memberOK)
 			}
@@ -81,7 +81,7 @@ func sealValueSemanticIDs(table *valueTable, p *program.Program, mount uint32) e
 			}
 		}
 		if tailTerm != 0 {
-			tailID, tailOK := p.ValuesTailID(term)
+			tailID, tailOK := p.Flow().ValuesTailID(term)
 			if !tailOK {
 				return errors.New("link/boundary: malformed semantic Values tail")
 			}
@@ -162,7 +162,7 @@ func sealValueSemanticIDs(table *valueTable, p *program.Program, mount uint32) e
 			return errors.New("link/boundary: malformed semantic Call Values row")
 		}
 		if tailTerm != 0 {
-			tailID, tailOK := p.ValuesTailID(actualsTerm)
+			tailID, tailOK := p.Flow().ValuesTailID(actualsTerm)
 			if !tailOK {
 				return errors.New("link/boundary: malformed semantic Call tail")
 			}

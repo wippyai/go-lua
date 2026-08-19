@@ -51,7 +51,7 @@ func (program *Program) CallIDAt(index int) (identity.ContentID, bool) {
 		receiverID, receiverOK = program.callOperandID(call, receiver, callOperandRoleReceiver)
 	}
 	typesID, typesOK := program.callTypeArgumentsID(call)
-	valuesID, valuesOK := program.ValuesOccurrenceID(actuals)
+	valuesID, valuesOK := flowView.ValuesOccurrenceID(actuals)
 	if !calleeOK || !actualsOK || !receiverOK || !typesOK || !valuesOK {
 		return identity.ContentID{}, false
 	}
@@ -101,7 +101,7 @@ func (program *Program) CallValuesIDAt(index int) (identity.ContentID, bool) {
 		return identity.ContentID{}, false
 	}
 	path, pathOK := program.Flow().SemanticTermPath(call)
-	valuesID, valuesOK := program.ValuesOccurrenceID(actuals)
+	valuesID, valuesOK := program.Flow().ValuesOccurrenceID(actuals)
 	semanticCallID := programSemanticID("program/transformer/call-occurrence-semantic", func(writer *framing.Writer) bool {
 		return writer.Bytes(path[:]) == nil
 	})
@@ -119,7 +119,7 @@ func (program *Program) CallArgumentIDAt(index, argument int) (identity.ContentI
 		return identity.ContentID{}, false
 	}
 	valuesID, valuesOK := program.CallValuesIDAt(index)
-	memberID, memberOK := program.ValuesMemberID(actuals, argument)
+	memberID, memberOK := program.Flow().ValuesMemberID(actuals, argument)
 	id := programSemanticID("program/transformer/call-argument", func(writer *framing.Writer) bool {
 		return writer.Bytes(valuesID[:]) == nil && writer.Bytes(memberID[:]) == nil
 	})
@@ -168,7 +168,7 @@ func (program *Program) CallFormalIDAt(index int) (identity.ContentID, bool) {
 	}
 	bodyPath, bodyPathOK := program.Flow().BodyPath(owner)
 	callPath, callPathOK := program.Flow().CallPath(call)
-	_, width, _, tailKind, valuesOK := program.valuesRow(actuals)
+	width, open, valuesOK := program.Flow().ValuesShape(actuals)
 	typeCount, typeCountOK := program.Static().Contracts().Calls().TypeArgumentCount(call)
 	if !bodyPathOK || !bodyPath.Available() || !callPathOK || !callPath.Available() || !valuesOK || !typeCountOK || width < 0 ||
 		typeCount < 0 || uint64(width) > uint64(^uint32(0)) || uint64(typeCount) > uint64(^uint32(0)) {
@@ -182,7 +182,6 @@ func (program *Program) CallFormalIDAt(index int) (identity.ContentID, bool) {
 	if form == flow.CallFormMethod {
 		roles = 3
 	}
-	open := tailKind != valuesTailInvalid
 	id := programSemanticID("program/call-formal", func(writer *framing.Writer) bool {
 		return writer.Bytes(bodyPath[:]) == nil && writer.Bytes(callPath[:]) == nil && writer.Uint(1) == nil && writer.Uint(uint64(form)) == nil &&
 			writer.Count(roles) == nil && writer.Uint(callOperandRoleCallee) == nil &&

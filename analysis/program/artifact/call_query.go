@@ -224,13 +224,13 @@ func (compiler *compiler) callValues(term keyspace.Term) (identity.ContentID, []
 	if !widthOK || !rowOK || width < 0 {
 		return identity.ContentID{}, nil, identity.ContentID{}, 0, false
 	}
-	rowID, rowOK := compiler.input.ValuesOccurrenceID(term)
+	rowID, rowOK := compiler.input.Flow().ValuesOccurrenceID(term)
 	if !rowOK || !rowID.Available() {
 		return identity.ContentID{}, nil, identity.ContentID{}, 0, false
 	}
 	members := make([]identity.ContentID, width)
 	for index := range members {
-		memberID, memberOK := compiler.input.ValuesMemberID(term, index)
+		memberID, memberOK := compiler.input.Flow().ValuesMemberID(term, index)
 		members[index] = memberID
 		if !memberOK || !memberID.Available() {
 			return identity.ContentID{}, nil, identity.ContentID{}, 0, false
@@ -239,7 +239,7 @@ func (compiler *compiler) callValues(term keyspace.Term) (identity.ContentID, []
 	tail := identity.ContentID{}
 	if tailTerm != 0 {
 		var tailOK bool
-		tail, tailOK = compiler.input.ValuesTailID(term)
+		tail, tailOK = compiler.input.Flow().ValuesTailID(term)
 		if !tailOK || !tail.Available() {
 			return identity.ContentID{}, nil, identity.ContentID{}, 0, false
 		}
