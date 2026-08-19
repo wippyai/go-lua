@@ -1,63 +1,15 @@
-// Package flow is the sole public Flow semantic owner.
-//
-// The authored relation is deliberately kept in internal/authored.  This
-// file exposes only the lowerer's construction vocabulary and a construction
-// Draft; authored Views and finalizers never cross this package boundary.
 package flow
 
 import (
 	"errors"
 
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 )
 
-// Construction vocabulary.  These aliases keep lowering independent of the
-// private storage package while exposing no authored lifecycle or query
-// authority.  Build is the only operation that turns this vocabulary into a
-// Draft, and Assemble is the only operation that consumes that Draft.
-type (
-	Input          = authored.Input
-	ValuesInput    = authored.ValuesInput
-	Value          = authored.Value
-	AccessInput    = authored.AccessInput
-	ExactLens      = authored.ExactLens
-	DynamicLens    = authored.DynamicLens
-	StorageInput   = authored.StorageInput
-	Cell           = authored.Cell
-	CellKind       = authored.CellKind
-	Read           = authored.Read
-	Vararg         = authored.Vararg
-	Bind           = authored.Bind
-	Assign         = authored.Assign
-	Write          = authored.Write
-	TablesInput    = authored.TablesInput
-	Table          = authored.Table
-	Field          = authored.Field
-	FunctionsInput = authored.FunctionsInput
-	Function       = authored.Function
-	Capture        = authored.Capture
-	Call           = authored.Call
-	Return         = authored.Return
-	Break          = authored.Break
-	Label          = authored.Label
-	Goto           = authored.Goto
-	Branch         = authored.Branch
-	Loop           = authored.Loop
-	ControlInput   = authored.ControlInput
-	OperatorsInput = authored.OperatorsInput
-	Unary          = authored.Unary
-	Binary         = authored.Binary
-	Select         = authored.Select
-	ValueClaim     = authored.ValueClaim
-	TypeValue      = authored.TypeValue
-	Range          = authored.Range
-	Position       = authored.Position
-)
-
-const (
-	CellLocal  = authored.CellLocal
-	CellGlobal = authored.CellGlobal
-)
+// Input is the complete authored Flow vocabulary accepted by Build.  It names
+// the seal entry parameter; the row types that populate it are published by
+// the authored owner itself.
+type Input = authored.Input
 
 // Draft is a construction-only Flow capability.  It has no public query,
 // commit, or finalizer operation.  Copies share the private authored

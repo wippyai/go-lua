@@ -13,7 +13,7 @@ func TestApplyArithmeticUsesProgramSemanticsAndSealedResultAtoms(t *testing.T) {
 		return keyspace.LiteralValue{Kind: keyspace.LiteralInteger, Integer: value}
 	}
 	schema := &Schema{atomByRow: make(map[atomRow]uint32), exactKeys: make(map[keyspace.LiteralValue]keyspace.LiteralValue), potential: 32}
-	for _, literal := range []keyspace.LiteralValue{integer(10), integer(5)} {
+	for _, literal := range []keyspace.LiteralValue{integer(10), integer(5), integer(0)} {
 		schema.exactKeys[literal] = literal
 		if schema.addAtom(atomRow{kind: atomLiteral, runtime: runtimekind.Number, key: literal, hasKey: true}) == 0 {
 			t.Fatal("source literal atom")
@@ -43,7 +43,10 @@ func TestApplyArithmeticUsesProgramSemanticsAndSealedResultAtoms(t *testing.T) {
 		t.Fatal("arithmetic result did not reuse an authored literal atom")
 	}
 	missing, missingOK := schema.ApplyArithmetic(right, right, flowkind.BinaryMul)
-	if !missingOK || !schema.Equal(missing, schema.Bottom()) {
+	if !missingOK || !missing.IsTop() {
+		t.Fatal("exact result without a sealed atom denied its reachable alternatives")
+	}
+	if schema.atomForExactArithmetic(integer(25)) != 0 {
 		t.Fatal("unsealed exact result was fabricated")
 	}
 	mixed, _ := schema.Alternatives(
@@ -51,8 +54,19 @@ func TestApplyArithmeticUsesProgramSemanticsAndSealedResultAtoms(t *testing.T) {
 		Atom{schema: schema, id: schema.atomForExactArithmetic(integer(5))},
 	)
 	unknown, unknownOK := schema.ApplyArithmetic(mixed, right, flowkind.BinaryAdd)
-	if !unknownOK || !schema.Equal(unknown, schema.Bottom()) {
+	if !unknownOK || !unknown.IsTop() {
 		t.Fatal("mixed input produced an exact arithmetic result")
+	}
+	if _, scalarOK := schema.ExactScalar(unknown); scalarOK {
+		t.Fatal("undecided arithmetic claimed an exact scalar")
+	}
+	strict, strictOK := schema.ApplyArithmetic(schema.Bottom(), right, flowkind.BinaryAdd)
+	if !strictOK || !schema.Equal(strict, schema.Bottom()) {
+		t.Fatal("arithmetic over an unreachable operand invented a reachable result")
+	}
+	trap, trapOK := schema.ApplyArithmetic(left, wantsValue(t, schema, atomRow{kind: atomLiteral, runtime: runtimekind.Number, key: integer(0), hasKey: true}), flowkind.BinaryIDiv)
+	if !trapOK || !schema.Equal(trap, schema.Bottom()) {
+		t.Fatal("integer division by zero kept a reachable alternative")
 	}
 	foreign := *schema
 	if _, ok := foreign.ApplyArithmetic(left, right, flowkind.BinaryAdd); ok {

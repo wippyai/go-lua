@@ -3,7 +3,7 @@ package flow
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"

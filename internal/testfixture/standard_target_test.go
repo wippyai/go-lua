@@ -18,7 +18,7 @@ func TestStandardLibraryTargetBindsChannelSelect(t *testing.T) {
 	if _, _, _, _, ok := contract.InitialBinding(channelselect.ModuleName); !ok {
 		t.Fatal("channel is not an initial global")
 	}
-	op, ok := contract.Lookup(vocabulary.BindingSpec{
+	op, ok := contract.Operations.Lookup(vocabulary.BindingSpec{
 		Namespace: vocabulary.BindingModule,
 		Owner:     []string{channelselect.ModuleName},
 		Member:    []string{"select"},

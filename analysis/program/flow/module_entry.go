@@ -11,10 +11,10 @@ import (
 	"errors"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/body"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/directfunction"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/executable"
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
+	"github.com/wippyai/go-lua/analysis/program/flow/body"
+	"github.com/wippyai/go-lua/analysis/program/flow/directfunction"
+	"github.com/wippyai/go-lua/analysis/program/flow/executable"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
@@ -231,7 +231,7 @@ func sealChunkEntry(
 		if !ok {
 			return imports.Entry{}, errors.New("program/flow: Return Body activation is unavailable")
 		}
-		if ownerActivation != 0 || !executableResult.Executable(returned) {
+		if ownerActivation != 0 || !executableResult.Contains(returned) {
 			continue
 		}
 		if valuesOwner, _, valuesOK := values.Get(valuesTerm); !valuesOK || valuesOwner != owner {
@@ -251,7 +251,7 @@ func sealChunkEntry(
 			}
 			input.Roots = append(input.Roots, entryDirectFunction(value, executableResult, directFunctions))
 			input.RootCells = append(input.RootCells, entryDirectCell(flowView, value))
-			if keyspace.TermFamily(value) == keyspace.FamilyTable && executableResult.Executable(value) {
+			if keyspace.TermFamily(value) == keyspace.FamilyTable && executableResult.Contains(value) {
 				if err := appendEntryTable(sourceView, flowView, executableResult, directFunctions, value, value, returned, uint32(position), &keyScratch, &input); err != nil {
 					return imports.Entry{}, err
 				}
@@ -270,11 +270,11 @@ func sealChunkEntry(
 // Function query is intentionally broader (it is identity-based even for a
 // dead Function), so the executable fence belongs here at the boundary.
 func entryDirectFunction(value keyspace.Term, executableResult *executable.Result, directFunctions *directfunction.Result) keyspace.Term {
-	if executableResult == nil || directFunctions == nil || !executableResult.Executable(value) {
+	if executableResult == nil || directFunctions == nil || !executableResult.Contains(value) {
 		return 0
 	}
-	function, ok := directFunctions.DirectFunction(value)
-	if !ok || !executableResult.Executable(function) {
+	function, ok := directFunctions.For(value)
+	if !ok || !executableResult.Contains(function) {
 		return 0
 	}
 	return function
@@ -387,7 +387,7 @@ func appendEntryTable(
 			input.MemberIndex[keyspace.TermOrdinal(candidate.field)] = uint32(len(input.Members))
 			continue
 		}
-		if keyspace.TermFamily(candidate.value) != keyspace.FamilyTable || !executableResult.Executable(candidate.value) {
+		if keyspace.TermFamily(candidate.value) != keyspace.FamilyTable || !executableResult.Contains(candidate.value) {
 			continue
 		}
 		nested, err := selectEntryFieldsWithScratch(sourceView, flowView, candidate.value, keyScratch)

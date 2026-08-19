@@ -19,7 +19,7 @@ func TestStandardManifestPreservesGsubTableSubedgeRelation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	op, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingModule, Owner: []string{"string"}, Member: []string{"gsub"}})
+	op, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingModule, Owner: []string{"string"}, Member: []string{"gsub"}})
 	if !ok {
 		t.Fatal("string.gsub missing")
 	}

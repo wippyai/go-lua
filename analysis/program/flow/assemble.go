@@ -3,28 +3,29 @@ package flow
 import (
 	"errors"
 	"fmt"
+	"github.com/wippyai/go-lua/analysis/program/flow/provenance"
 
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/accessgeometry"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/binaryprimitive"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/binding"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/body"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/candidates"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/causal"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/containment"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/continuation"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/control"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/directfunction"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/evaluation"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/executable"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/functionboundary"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/outcome"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/position"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/returnprojection"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/runtimeentry"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/semanticpath"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/sourcecontrol"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/staticcheck"
+	"github.com/wippyai/go-lua/analysis/program/flow/accessgeometry"
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
+	"github.com/wippyai/go-lua/analysis/program/flow/binaryprimitive"
+	"github.com/wippyai/go-lua/analysis/program/flow/binding"
+	"github.com/wippyai/go-lua/analysis/program/flow/body"
+	"github.com/wippyai/go-lua/analysis/program/flow/candidates"
+	"github.com/wippyai/go-lua/analysis/program/flow/causal"
+	"github.com/wippyai/go-lua/analysis/program/flow/containment"
+	"github.com/wippyai/go-lua/analysis/program/flow/continuation"
+	"github.com/wippyai/go-lua/analysis/program/flow/control"
+	"github.com/wippyai/go-lua/analysis/program/flow/directfunction"
+	"github.com/wippyai/go-lua/analysis/program/flow/evaluation"
+	"github.com/wippyai/go-lua/analysis/program/flow/executable"
+	"github.com/wippyai/go-lua/analysis/program/flow/functionboundary"
+	"github.com/wippyai/go-lua/analysis/program/flow/outcome"
+	"github.com/wippyai/go-lua/analysis/program/flow/position"
+	"github.com/wippyai/go-lua/analysis/program/flow/returnprojection"
+	"github.com/wippyai/go-lua/analysis/program/flow/runtimeentry"
+	"github.com/wippyai/go-lua/analysis/program/flow/semanticpath"
+	"github.com/wippyai/go-lua/analysis/program/flow/sourcecontrol"
+	"github.com/wippyai/go-lua/analysis/program/flow/staticcheck"
 	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
@@ -291,7 +292,7 @@ func Assemble(
 		return fail("Flow commit", errors.New("flow returned no authored View"))
 	}
 	component := &Component{
-		provenance:  Provenance{Source: sourceID, Flow: flowID, Static: staticID, Module: moduleID},
+		provenance:  provenance.Provenance{Source: sourceID, Flow: flowID, Static: staticID, Module: moduleID},
 		authored:    authoredView,
 		activation:  activation,
 		containment: reducedContainment,

@@ -8,13 +8,29 @@ import (
 	"github.com/wippyai/go-lua/domain/runtimekind"
 )
 
-// ApplyArithmetic evaluates only two singleton exact numeric alternatives.
+// ApplyArithmetic evaluates two singleton exact numeric alternatives.
 // Program scalar semantics is the sole concrete arithmetic authority. Value
 // translates its result into an already-sealed atom; it never mints hot
 // alternatives.
+//
+// Every operand pair this evaluator cannot decide - an operand that is not an
+// exact numeric singleton, or an exact result with no sealed atom - answers
+// Top, the over-approximation that admits every alternative. Answering Bottom
+// for an undecided pair would both deny reachable alternatives and break
+// monotonicity, since a union operand would then evaluate below its own
+// singleton members.
+//
+// Bottom is answered in exactly two cases, both of which keep the transfer
+// monotone. Arithmetic is strict, so an operand with no reachable alternative
+// yields a result with none. The other is the arithmetic trap: exact numeric
+// operands whose Lua arithmetic is undefined, so evaluation cannot reach a
+// concrete result.
 func (schema *Schema) ApplyArithmetic(left, right Value, op flowkind.BinaryOp) (Value, bool) {
 	if schema == nil || !schema.owns(left) || !schema.owns(right) || !flowkind.IsBinaryArithmetic(op) {
 		return Value{}, false
+	}
+	if schema.Equal(left, schema.Bottom()) || schema.Equal(right, schema.Bottom()) {
+		return schema.Bottom(), true
 	}
 	leftScalar, leftOK := schema.ExactScalar(left)
 	rightScalar, rightOK := schema.ExactScalar(right)
@@ -23,7 +39,7 @@ func (schema *Schema) ApplyArithmetic(left, right Value, op flowkind.BinaryOp) (
 	if !leftOK || !rightOK || !leftLiteralOK || !rightLiteralOK ||
 		(leftLiteral.Kind != keyspace.LiteralInteger && leftLiteral.Kind != keyspace.LiteralFloat) ||
 		(rightLiteral.Kind != keyspace.LiteralInteger && rightLiteral.Kind != keyspace.LiteralFloat) {
-		return schema.Bottom(), true
+		return schema.Top(), true
 	}
 	result, resultOK := scalar.ExactArithmeticLiteral(leftLiteral, rightLiteral, op)
 	if !resultOK {
@@ -31,7 +47,7 @@ func (schema *Schema) ApplyArithmetic(left, right Value, op flowkind.BinaryOp) (
 	}
 	atom := schema.atomForExactArithmetic(result)
 	if atom == 0 {
-		return schema.Bottom(), true
+		return schema.Top(), true
 	}
 	return schema.Singleton(Atom{schema: schema, id: atom})
 }

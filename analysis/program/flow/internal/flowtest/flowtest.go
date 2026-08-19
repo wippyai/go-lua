@@ -7,7 +7,7 @@ package flowtest
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"

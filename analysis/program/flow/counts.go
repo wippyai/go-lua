@@ -3,6 +3,8 @@ package flow
 import (
 	"errors"
 
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
+
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/schema"
@@ -18,8 +20,8 @@ func CountRows(view View) (denominator.CountRows, error) {
 	if !view.ContentID().Available() {
 		return denominator.CountRows{}, errFlowCounts
 	}
-	authored := view.Authored()
-	values := authored.Values()
+	authoredView := view.Authored()
+	values := authoredView.Values()
 	valueCount := values.Count()
 	occurrences := 0
 	for index := 0; index < valueCount; index++ {
@@ -39,8 +41,8 @@ func CountRows(view View) (denominator.CountRows, error) {
 			return denominator.CountRows{}, errFlowCounts
 		}
 	}
-	access := authored.Access()
-	storage := authored.Storage()
+	access := authoredView.Access()
+	storage := authoredView.Storage()
 	cells, reads, assigns, writes := storage.Cells().Count(), storage.Reads().Count(), storage.Assigns().Count(), storage.Writes().Count()
 	varargs, binds := storage.Varargs().Count(), storage.Binds().Count()
 	globals := 0
@@ -53,7 +55,7 @@ func CountRows(view View) (denominator.CountRows, error) {
 		if !ok {
 			return denominator.CountRows{}, errFlowCounts
 		}
-		if cellKind == CellGlobal {
+		if cellKind == authored.CellGlobal {
 			globals++
 		}
 	}
@@ -61,8 +63,8 @@ func CountRows(view View) (denominator.CountRows, error) {
 	if !ok || !flowCountFits(storagePrimary) {
 		return denominator.CountRows{}, errFlowCounts
 	}
-	tables, fields := authored.Tables().Count(), authored.Fields().Count()
-	operators := authored.Operators()
+	tables, fields := authoredView.Tables().Count(), authoredView.Fields().Count()
+	operators := authoredView.Operators()
 	unaries, binaries, selects := operators.Unaries().Count(), operators.Binaries().Count(), operators.Selects().Count()
 	operatorPrimary, ok := denominator.SumInts(unaries, binaries, selects)
 	if !ok || !flowCountFits(operatorPrimary) {
@@ -77,7 +79,7 @@ func CountRows(view View) (denominator.CountRows, error) {
 		return denominator.CountRows{}, errFlowCounts
 	}
 	candidates := view.Candidates()
-	functions := authored.Functions()
+	functions := authoredView.Functions()
 	captures := 0
 	for index := 0; index < functions.Count(); index++ {
 		term, ok := functions.At(index)
@@ -89,10 +91,10 @@ func CountRows(view View) (denominator.CountRows, error) {
 			return denominator.CountRows{}, errFlowCounts
 		}
 	}
-	calls := authored.Calls().Count()
+	calls := authoredView.Calls().Count()
 	directCalls := 0
 	for index := 0; index < calls; index++ {
-		term, ok := authored.Calls().At(index)
+		term, ok := authoredView.Calls().At(index)
 		if !ok {
 			return denominator.CountRows{}, errFlowCounts
 		}
@@ -100,7 +102,7 @@ func CountRows(view View) (denominator.CountRows, error) {
 			directCalls++
 		}
 	}
-	control := authored.Control()
+	control := authoredView.Control()
 	returns, breaks := control.Returns().Count(), control.Breaks().Count()
 	labels, gotos := control.Labels().Count(), control.Gotos().Count()
 	branches, loops := control.Branches().Count(), control.Loops().Count()
@@ -157,8 +159,8 @@ func CountRows(view View) (denominator.CountRows, error) {
 		{ids.ProgramFlowDirectCallBinding, directCalls},
 		{ids.ProgramFlowControl, controlPrimary},
 		{ids.ProgramFlowGenericFor, genericFor},
-		{ids.ProgramFlowClaim, authored.Claims().Count()},
-		{ids.ProgramFlowTypeValue, authored.TypeValues().Count()},
+		{ids.ProgramFlowClaim, authoredView.Claims().Count()},
+		{ids.ProgramFlowTypeValue, authoredView.TypeValues().Count()},
 		{ids.ProgramFlowOutcome, view.Outcomes().Count()},
 		{ids.ProgramFlowTransfer, transfers},
 	}

@@ -3,6 +3,7 @@ package flow
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
@@ -296,17 +297,17 @@ func openProjectionAssembly(t *testing.T, name string) *Assembly {
 	}
 	flowDraft, err := Build(Input{
 		Counts: counts,
-		Values: ValuesInput{
-			Rows:  []Value{{Owner: entry, Fixed: Range{End: 1}}, {Owner: entry, Fixed: Range{Start: 1, End: 3}}},
+		Values: authored.ValuesInput{
+			Rows:  []authored.Value{{Owner: entry, Fixed: authored.Range{End: 1}}, {Owner: entry, Fixed: authored.Range{Start: 1, End: 3}}},
 			Terms: []keyspace.Term{stringField, table, binary},
 		},
-		Tables: TablesInput{
-			Rows:   []Table{{Owner: entry, Fields: Range{End: 1}}},
-			Fields: []Field{{Table: table, Key: key, Values: valuesForField, Kind: kind.FieldName}},
+		Tables: authored.TablesInput{
+			Rows:   []authored.Table{{Owner: entry, Fields: authored.Range{End: 1}}},
+			Fields: []authored.Field{{Table: table, Key: key, Values: valuesForField, Kind: kind.FieldName}},
 			Order:  []keyspace.Term{field},
 		},
-		Operators: OperatorsInput{Binaries: []Binary{{Owner: entry, Op: kind.BinaryAdd, Left: integerOne, Right: integerTwo}}},
-		Control:   ControlInput{Returns: []Return{{Owner: entry, Values: valuesForReturn}}},
+		Operators: authored.OperatorsInput{Binaries: []authored.Binary{{Owner: entry, Op: kind.BinaryAdd, Left: integerOne, Right: integerTwo}}},
+		Control:   authored.ControlInput{Returns: []authored.Return{{Owner: entry, Values: valuesForReturn}}},
 	})
 	if err != nil {
 		_ = moduleFinalizer.Abort()

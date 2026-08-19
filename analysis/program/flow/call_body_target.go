@@ -3,6 +3,7 @@ package flow
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"github.com/wippyai/go-lua/analysis/program/flow/functionboundary"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 )
@@ -15,7 +16,7 @@ type CallBodyTarget struct{ context identity.ContentID }
 // CallBodyTarget returns the formal target for the Body owned by one existing
 // Function boundary. The boundary is the issued callable proof; callers do
 // not reconstruct a raw Body term or rejoin it at Program altitude.
-func (view View) CallBodyTarget(function FunctionBoundary) (CallBodyTarget, bool) {
+func (view View) CallBodyTarget(function functionboundary.Boundary) (CallBodyTarget, bool) {
 	if !view.available() || !function.Available() {
 		return CallBodyTarget{}, false
 	}

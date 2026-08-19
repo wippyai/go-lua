@@ -5,19 +5,20 @@ import (
 	"sync"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/accessgeometry"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/binaryprimitive"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/candidates"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/causal"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/continuation"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/directfunction"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/evaluation"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/executable"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/functionboundary"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/outcome"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/returnprojection"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/semanticpath"
+	"github.com/wippyai/go-lua/analysis/program/flow/accessgeometry"
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
+	"github.com/wippyai/go-lua/analysis/program/flow/binaryprimitive"
+	"github.com/wippyai/go-lua/analysis/program/flow/candidates"
+	"github.com/wippyai/go-lua/analysis/program/flow/causal"
+	"github.com/wippyai/go-lua/analysis/program/flow/continuation"
+	"github.com/wippyai/go-lua/analysis/program/flow/directfunction"
+	"github.com/wippyai/go-lua/analysis/program/flow/evaluation"
+	"github.com/wippyai/go-lua/analysis/program/flow/executable"
+	"github.com/wippyai/go-lua/analysis/program/flow/functionboundary"
+	"github.com/wippyai/go-lua/analysis/program/flow/outcome"
+	"github.com/wippyai/go-lua/analysis/program/flow/provenance"
+	"github.com/wippyai/go-lua/analysis/program/flow/returnprojection"
+	"github.com/wippyai/go-lua/analysis/program/flow/semanticpath"
 	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
@@ -68,7 +69,7 @@ func (assembly *Assembly) Take() (*source.Component, *Component, *static.Compone
 // geometry, recurrence, static scope, and all owner finalizers are seal-local
 // and are absent from this struct.
 type Component struct {
-	provenance       Provenance
+	provenance       provenance.Provenance
 	authored         authored.View
 	activation       activationProjection
 	containment      containmentProjection
@@ -87,15 +88,6 @@ type Component struct {
 	valueSourcePaths [keyspace.FamilyCount][]identity.ContentID
 	storagePaths     [keyspace.FamilyCount][]identity.ContentID
 	callPaths        []identity.ContentID
-}
-
-// Provenance is the explicit four-owner fence for the published Flow
-// assembly. It is not a composite build ID and carries no owner pointer.
-type Provenance struct {
-	Source identity.ContentID
-	Flow   identity.ContentID
-	Static identity.ContentID
-	Module identity.ContentID
 }
 
 type activationProjection struct {
@@ -144,9 +136,9 @@ func (view View) ContentID() identity.ContentID {
 	return view.component.authored.Cold().ContentID()
 }
 
-func (view View) Provenance() Provenance {
+func (view View) Provenance() provenance.Provenance {
 	if !view.available() {
-		return Provenance{}
+		return provenance.Provenance{}
 	}
 	return view.component.provenance
 }
@@ -164,24 +156,24 @@ func (view View) projectionAvailable() bool {
 		return false
 	}
 	component := view.component
-	provenance := component.provenance
-	if !provenance.Source.Available() || !provenance.Flow.Available() ||
-		!provenance.Static.Available() || !provenance.Module.Available() ||
-		component.authored.Cold().ContentID() != provenance.Flow {
+	fence := component.provenance
+	if !fence.Source.Available() || !fence.Flow.Available() ||
+		!fence.Static.Available() || !fence.Module.Available() ||
+		component.authored.Cold().ContentID() != fence.Flow {
 		return false
 	}
-	if !outcome.Matches(component.outcomes, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) ||
-		!evaluation.Matches(component.ports, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) ||
-		!functionboundary.Matches(component.programStructure.boundaries, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) ||
-		!returnprojection.Matches(component.programStructure.returns, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) ||
-		!evaluation.MatchesPending(component.pending, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) ||
-		!executable.Matches(component.executable, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) ||
-		!directfunction.Matches(component.directFunction, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) ||
-		!candidates.Matches(component.candidates, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) ||
-		!accessgeometry.Matches(component.accessGeometry, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) ||
-		!causal.Matches(component.programStructure.causal, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) ||
-		!binaryprimitive.Matches(component.binaryPrimitives, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) ||
-		!continuation.Matches(component.continuation, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) {
+	if !outcome.Matches(component.outcomes, fence.Source, fence.Flow, fence.Static, fence.Module) ||
+		!evaluation.Matches(component.ports, fence.Source, fence.Flow, fence.Static, fence.Module) ||
+		!functionboundary.Matches(component.programStructure.boundaries, fence.Source, fence.Flow, fence.Static, fence.Module) ||
+		!returnprojection.Matches(component.programStructure.returns, fence.Source, fence.Flow, fence.Static, fence.Module) ||
+		!evaluation.MatchesPending(component.pending, fence.Source, fence.Flow, fence.Static, fence.Module) ||
+		!executable.Matches(component.executable, fence.Source, fence.Flow, fence.Static, fence.Module) ||
+		!directfunction.Matches(component.directFunction, fence.Source, fence.Flow, fence.Static, fence.Module) ||
+		!candidates.Matches(component.candidates, fence.Source, fence.Flow, fence.Static, fence.Module) ||
+		!accessgeometry.Matches(component.accessGeometry, fence.Source, fence.Flow, fence.Static, fence.Module) ||
+		!causal.Matches(component.programStructure.causal, fence.Source, fence.Flow, fence.Static, fence.Module) ||
+		!binaryprimitive.Matches(component.binaryPrimitives, fence.Source, fence.Flow, fence.Static, fence.Module) ||
+		!continuation.Matches(component.continuation, fence.Source, fence.Flow, fence.Static, fence.Module) {
 		return false
 	}
 	bodyCount := component.executable.FamilyCount(keyspace.FamilyBody)
@@ -235,15 +227,15 @@ func (view View) Ports() Ports {
 // FunctionBoundaries is the sole published Function/Body-boundary join. It
 // carries only existing Source/Flow/Outcome terms, including the explicit
 // assembly root, and is fenced to the complete Flow quartet.
-func (view View) FunctionBoundaries() FunctionBoundaries {
+func (view View) FunctionBoundaries() *functionboundary.Result {
 	if !view.available() {
-		return FunctionBoundaries{}
+		return nil
 	}
-	provenance := view.component.provenance
-	if !view.projectionFence() || !functionboundary.Matches(view.component.programStructure.boundaries, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) {
-		return FunctionBoundaries{}
+	fence := view.component.provenance
+	if !view.projectionFence() || !functionboundary.Matches(view.component.programStructure.boundaries, fence.Source, fence.Flow, fence.Static, fence.Module) {
+		return nil
 	}
-	return FunctionBoundaries{result: view.component.programStructure.boundaries}
+	return view.component.programStructure.boundaries
 }
 
 // BodyReturns is the sole sealed projection from a Body boundary to its
@@ -252,88 +244,99 @@ func (view View) BodyReturns() BodyReturns {
 	if !view.available() {
 		return BodyReturns{}
 	}
-	provenance := view.component.provenance
+	fence := view.component.provenance
 	structure := view.component.programStructure
-	if !view.projectionFence() || !returnprojection.Matches(structure.returns, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) ||
-		!functionboundary.Matches(structure.boundaries, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) ||
-		!causal.Matches(structure.causal, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) {
+	if !view.projectionFence() || !returnprojection.Matches(structure.returns, fence.Source, fence.Flow, fence.Static, fence.Module) ||
+		!functionboundary.Matches(structure.boundaries, fence.Source, fence.Flow, fence.Static, fence.Module) ||
+		!causal.Matches(structure.causal, fence.Source, fence.Flow, fence.Static, fence.Module) {
 		return BodyReturns{}
 	}
 	return BodyReturns{result: structure.returns, causal: structure.causal, boundaries: structure.boundaries}
 }
 
-func (view View) Pending() Pending {
+func (view View) Pending() *evaluation.Pending {
 	if !view.available() {
-		return Pending{}
+		return nil
 	}
-	return Pending{result: view.component.pending}
+	return view.component.pending
 }
 
-func (view View) Executable() Executable {
+func (view View) Executable() *executable.Result {
 	if !view.available() {
-		return Executable{}
+		return nil
 	}
-	return Executable{result: view.component.executable}
+	return view.component.executable
 }
 
-func (view View) DirectFunctions() DirectFunctions {
+func (view View) DirectFunctions() *directfunction.Result {
 	if !view.available() {
-		return DirectFunctions{}
+		return nil
 	}
-	return DirectFunctions{result: view.component.directFunction}
+	return view.component.directFunction
 }
 
-func (view View) Candidates() Candidates {
+func (view View) Candidates() *candidates.Result {
 	if !view.available() {
-		return Candidates{}
+		return nil
 	}
-	return Candidates{result: view.component.candidates}
+	return view.component.candidates
 }
 
-func (view View) AccessGeometry() AccessGeometry {
+func (view View) AccessGeometry() *accessgeometry.Result {
 	if !view.available() {
-		return AccessGeometry{}
+		return nil
 	}
-	provenance := view.component.provenance
+	fence := view.component.provenance
 	if !view.projectionFence() ||
-		!accessgeometry.Matches(view.component.accessGeometry, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) {
-		return AccessGeometry{}
+		!accessgeometry.Matches(view.component.accessGeometry, fence.Source, fence.Flow, fence.Static, fence.Module) {
+		return nil
 	}
-	return AccessGeometry{result: view.component.accessGeometry, available: true}
+	return view.component.accessGeometry
 }
 
-func (view View) Causal() Causal {
+func (view View) Causal() *causal.Result {
 	if !view.available() {
-		return Causal{}
+		return nil
 	}
-	return Causal{result: view.component.programStructure.causal}
+	return view.component.programStructure.causal
 }
 
-func (view View) BinaryPrimitives() BinaryPrimitives {
-	if !view.available() {
-		return BinaryPrimitives{}
+// LocalWTO is the complete parent-issued Program-local schedule for this exact
+// committed Flow. It contains acyclic singleton leaves and balanced
+// Enter/Point/Exit events; consumers must copy this certificate rather than
+// reconstruct an order from final routes.
+func (view View) LocalWTO() causal.LocalWTO {
+	if !view.projectionAvailable() {
+		return causal.LocalWTO{}
 	}
-	provenance := view.component.provenance
+	return view.component.programStructure.causal.LocalWTO()
+}
+
+func (view View) BinaryPrimitives() *binaryprimitive.Result {
+	if !view.available() {
+		return nil
+	}
+	fence := view.component.provenance
 	if !view.projectionFence() ||
-		!binaryprimitive.Matches(view.component.binaryPrimitives, provenance.Source, provenance.Flow, provenance.Static, provenance.Module) {
-		return BinaryPrimitives{}
+		!binaryprimitive.Matches(view.component.binaryPrimitives, fence.Source, fence.Flow, fence.Static, fence.Module) {
+		return nil
 	}
-	return BinaryPrimitives{result: view.component.binaryPrimitives, available: true}
+	return view.component.binaryPrimitives
 }
 
 func (view View) projectionFence() bool {
 	if !view.available() {
 		return false
 	}
-	provenance := view.component.provenance
-	return provenance.Source.Available() && provenance.Flow.Available() &&
-		provenance.Static.Available() && provenance.Module.Available() &&
-		view.component.authored.Cold().ContentID() == provenance.Flow
+	fence := view.component.provenance
+	return fence.Source.Available() && fence.Flow.Available() &&
+		fence.Static.Available() && fence.Module.Available() &&
+		view.component.authored.Cold().ContentID() == fence.Flow
 }
 
-func (view View) Continuation() Continuation {
+func (view View) Continuation() *continuation.Result {
 	if !view.available() {
-		return Continuation{}
+		return nil
 	}
-	return Continuation{result: view.component.continuation}
+	return view.component.continuation
 }

@@ -38,7 +38,7 @@ func TestHostGlobalManifestFlowsDirectlyIntoTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	binding := vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"require"}}
-	if _, ok := contract.Lookup(binding); !ok {
+	if _, ok := contract.Operations.Lookup(binding); !ok {
 		t.Fatal("host require manifest did not become a target operation")
 	}
 	if _, _, _, _, ok := contract.InitialBinding("require"); !ok {

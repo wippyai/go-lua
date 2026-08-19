@@ -49,6 +49,10 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 				if !leftPresent || !rightPresent {
 					return engine.NoCandidate(access, row)
 				}
+				// Bottom denotes the arithmetic trap alone, so NoCandidate is
+				// staged only where no concrete result is reachable. Every
+				// undecided operand pair carries Top and stages a real
+				// candidate.
 				result, resultOK := owner.Schema().ApplyArithmetic(left, right, op)
 				if !resultOK || owner.Schema().Equal(result, owner.Schema().Bottom()) {
 					return resultOK && engine.NoCandidate(access, row)
@@ -184,6 +188,8 @@ func hotChecker(owner *valueowner.HotOwner, semantic identity.SemanticKey, leftR
 			if !expectedOK {
 				return engine.RuleEvidence{}, false
 			}
+			// The trap is the sole NoCandidate disposition; an undecided
+			// operand pair must arrive as a staged Top candidate.
 			if owner.Schema().Equal(expected, owner.Schema().Bottom()) {
 				if disposition.Kind() != engine.RuleDispositionNoCandidate || disposition.TargetCount() != 0 {
 					return engine.RuleEvidence{}, false

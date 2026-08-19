@@ -6,9 +6,9 @@ import (
 	"errors"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/executable"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/semanticpath"
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
+	"github.com/wippyai/go-lua/analysis/program/flow/executable"
+	"github.com/wippyai/go-lua/analysis/program/flow/semanticpath"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 )
@@ -252,7 +252,7 @@ func sealCertificateAllocationPaths(sourceView source.View, exec *executable.Res
 		}
 	}
 	store := func(term keyspace.Term, role uint8) error {
-		if !exec.Executable(term) {
+		if !exec.Contains(term) {
 			return nil
 		}
 		f, o := keyspace.TermFamily(term), keyspace.TermOrdinal(term)

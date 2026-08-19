@@ -5,18 +5,18 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/binding"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/body"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/containment"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/control"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/directfunction"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/executable"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/outcome"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/position"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/semanticpath"
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/sourcecontrol"
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
+	"github.com/wippyai/go-lua/analysis/program/flow/binding"
+	"github.com/wippyai/go-lua/analysis/program/flow/body"
+	"github.com/wippyai/go-lua/analysis/program/flow/containment"
+	"github.com/wippyai/go-lua/analysis/program/flow/control"
+	"github.com/wippyai/go-lua/analysis/program/flow/directfunction"
+	"github.com/wippyai/go-lua/analysis/program/flow/executable"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/flow/outcome"
+	"github.com/wippyai/go-lua/analysis/program/flow/position"
+	"github.com/wippyai/go-lua/analysis/program/flow/semanticpath"
+	"github.com/wippyai/go-lua/analysis/program/flow/sourcecontrol"
 	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
@@ -137,13 +137,13 @@ func openModuleEntryFunctionFixture(t *testing.T) *moduleEntryFunctionFixture {
 	if err != nil {
 		_ = staticFinalizer.Abort()
 		_ = sourceFinalizer.Abort()
-		t.Fatalf("authored.Build: %v", err)
+		t.Fatalf("Build: %v", err)
 	}
 	flowFinalizer, err := flowDraft.Finalizer()
 	if err != nil {
 		_ = staticFinalizer.Abort()
 		_ = sourceFinalizer.Abort()
-		t.Fatalf("authored.Finalizer: %v", err)
+		t.Fatalf("Finalizer: %v", err)
 	}
 	flowView := flowFinalizer.View()
 	entry := entryBody
@@ -533,15 +533,15 @@ func moduleEntryFlow(t *testing.T, input authored.Input) authored.View {
 	t.Helper()
 	draft, err := authored.Build(input)
 	if err != nil {
-		t.Fatalf("authored.Build: %v", err)
+		t.Fatalf("Build: %v", err)
 	}
 	finalizer, err := draft.Finalizer()
 	if err != nil {
-		t.Fatalf("authored.Finalizer: %v", err)
+		t.Fatalf("Finalizer: %v", err)
 	}
 	view, err := finalizer.Commit()
 	if err != nil {
-		t.Fatalf("authored.Commit: %v", err)
+		t.Fatalf("Commit: %v", err)
 	}
 	return view
 }
