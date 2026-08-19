@@ -1,0 +1,154 @@
+package cold
+
+import (
+	"testing"
+
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/snapshot"
+)
+
+func coldLawSchema(t *testing.T) identity.ContentID {
+	t.Helper()
+	id, derived := identity.DeriveContentID("cold-law/runtime-schema", nil)
+	if !derived {
+		t.Fatal("runtime schema identity")
+	}
+	return id
+}
+
+// The cold catalog and the runtime schema it is derived from are two
+// identities. That is what keeps a cold axis from being a structurally valid
+// address into a runtime publication's slot of the same number.
+func TestColdCatalogIsDistinctFromItsRuntimeSchema(t *testing.T) {
+	runtime := coldLawSchema(t)
+	catalog, derived := CatalogID(runtime)
+	if !derived || !catalog.Available() {
+		t.Fatal("cold catalog derived nothing")
+	}
+	if catalog == runtime {
+		t.Fatal("the cold catalog is the runtime schema, so a cold axis addresses a runtime column")
+	}
+
+	other, otherDerived := identity.DeriveContentID("cold-law/other-runtime-schema", nil)
+	if !otherDerived {
+		t.Fatal("second runtime schema")
+	}
+	second, secondDerived := CatalogID(other)
+	if !secondDerived || second == catalog {
+		t.Fatal("two declaration catalogs derived one cold catalog")
+	}
+	if _, derived := CatalogID(identity.ContentID{}); derived {
+		t.Fatal("an unavailable runtime schema derived a cold catalog")
+	}
+}
+
+func coldLawFamily() []CallTarget {
+	return []CallTarget{
+		{Allocation: identity.ContentID{1}, Body: identity.ContentID{2}, Context: identity.ContentID{3}, Function: identity.ContentID{4}, Formal: identity.ContentID{5}},
+		{Allocation: identity.ContentID{6}, Body: identity.ContentID{7}, Context: identity.ContentID{8}, Function: identity.ContentID{9}, Formal: identity.ContentID{10}},
+	}
+}
+
+func sealColdLaw(t *testing.T, rows []CallTarget) (snapshot.Frozen, identity.ContentID) {
+	t.Helper()
+	catalog, derived := CatalogID(coldLawSchema(t))
+	if !derived {
+		t.Fatal("cold catalog")
+	}
+	content, sealed := CallTargetFamily().Content(rows, catalog)
+	if !sealed {
+		t.Fatal("call target content")
+	}
+	builder := snapshot.NewFrozen(catalog, identity.StoreID(7))
+	if err := snapshot.PutFrozenColumn(&builder, CallTargetFamily().Axis(catalog), content); err != nil {
+		t.Fatalf("put cold column: %v", err)
+	}
+	frozen, err := builder.Seal()
+	if err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+	return frozen, catalog
+}
+
+// A cold family is read back in the order it was emitted, and its width is the
+// sealed universe rather than a count a reader has to be told separately.
+func TestCallTargetFamilyReadsBackInEmittedOrder(t *testing.T) {
+	rows := coldLawFamily()
+	frozen, catalog := sealColdLaw(t, rows)
+
+	count, published := CallTargetFamily().Count(&frozen, catalog)
+	if !published || count != len(rows) {
+		t.Fatalf("family width = %d (published %t), want %d", count, published, len(rows))
+	}
+	for index, want := range rows {
+		got, held := CallTargetFamily().At(&frozen, catalog, index)
+		if !held || got != want {
+			t.Fatalf("ordinal %d read %+v, emitted %+v", index, got, want)
+		}
+	}
+	if _, held := CallTargetFamily().At(&frozen, catalog, len(rows)); held {
+		t.Fatal("an ordinal past the family read a row")
+	}
+	if _, held := CallTargetFamily().At(&frozen, catalog, -1); held {
+		t.Fatal("a negative ordinal read a row")
+	}
+}
+
+// An ordinal past the sealed family is a proven absence, not ignorance: the
+// column publishes the family's own ordinal range as its key universe.
+func TestCallTargetFamilyProvesItsOwnBound(t *testing.T) {
+	rows := coldLawFamily()
+	frozen, catalog := sealColdLaw(t, rows)
+
+	if _, status := snapshot.ReadFrozen(&frozen, CallTargetFamily().Axis(catalog), Ordinal(len(rows)-1)); status != snapshot.ReadHit {
+		t.Fatalf("last ordinal reported %v", status)
+	}
+	if _, status := snapshot.ReadFrozen(&frozen, CallTargetFamily().Axis(catalog), Ordinal(len(rows))); status == snapshot.ReadHit {
+		t.Fatal("an ordinal past the family reported a hit")
+	}
+}
+
+// A family the compiler could not prove seals nothing: a program either
+// proved every target it emitted or it did not compile.
+func TestCallTargetContentRejectsAnUnprovenRow(t *testing.T) {
+	catalog, derived := CatalogID(coldLawSchema(t))
+	if !derived {
+		t.Fatal("cold catalog")
+	}
+	rows := append(coldLawFamily(), CallTarget{Allocation: identity.ContentID{11}})
+	if _, sealed := CallTargetFamily().Content(rows, catalog); sealed {
+		t.Fatal("an incomplete target sealed into the family")
+	}
+	if _, sealed := CallTargetFamily().Content(coldLawFamily(), identity.ContentID{}); sealed {
+		t.Fatal("a family sealed under no catalog")
+	}
+}
+
+// An empty family is a published fact: the program emitted no call target,
+// which is different from the family not being published at all.
+func TestEmptyCallTargetFamilyIsPublished(t *testing.T) {
+	frozen, catalog := sealColdLaw(t, nil)
+	count, published := CallTargetFamily().Count(&frozen, catalog)
+	if !published || count != 0 {
+		t.Fatalf("empty family width = %d (published %t)", count, published)
+	}
+	if _, held := CallTargetFamily().At(&frozen, catalog, 0); held {
+		t.Fatal("an empty family served a row")
+	}
+}
+
+// A cold axis of one catalog reads nothing out of another catalog's
+// publication, which is the property the derived catalog identity exists for.
+func TestColdAxisOfAnotherCatalogReadsNothing(t *testing.T) {
+	frozen, _ := sealColdLaw(t, coldLawFamily())
+	foreign, derived := identity.DeriveContentID("cold-law/foreign-catalog", nil)
+	if !derived {
+		t.Fatal("foreign catalog")
+	}
+	if _, status := snapshot.ReadFrozen(&frozen, CallTargetFamily().Axis(foreign), Ordinal(0)); status != snapshot.ReadInvalid {
+		t.Fatalf("a foreign catalog's axis reported %v", status)
+	}
+	if _, published := CallTargetFamily().Count(&frozen, foreign); published {
+		t.Fatal("a foreign catalog reported a family width")
+	}
+}

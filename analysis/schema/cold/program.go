@@ -52,7 +52,7 @@ func (row Program) CallTargetCount() (int, bool) {
 	if !derived {
 		return 0, false
 	}
-	return CallTargetCount(&row.Frozen, catalog)
+	return CallTargetFamily().Count(&row.Frozen, catalog)
 }
 
 // CallTargetAt returns one closure-allocation-to-callable-body proof by its
@@ -62,5 +62,62 @@ func (row Program) CallTargetAt(index int) (CallTarget, bool) {
 	if !derived {
 		return CallTarget{}, false
 	}
-	return CallTargetAt(&row.Frozen, catalog, index)
+	return CallTargetFamily().At(&row.Frozen, catalog, index)
+}
+
+// ExactScalarSummaryCount is the sealed width of this program's exact scalar
+// summary family.
+func (row Program) ExactScalarSummaryCount() (int, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return 0, false
+	}
+	return ExactScalarSummaryCount(&row.Frozen, catalog)
+}
+
+// ExactScalarSummaryAt returns one exact scalar proof by its emitted ordinal.
+func (row Program) ExactScalarSummaryAt(index int) (ExactScalarSummary, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return ExactScalarSummary{}, false
+	}
+	return ExactScalarSummaryAt(&row.Frozen, catalog, index)
+}
+
+// ArithmeticSummaryCount is the sealed width of this program's arithmetic
+// summary family.
+func (row Program) ArithmeticSummaryCount() (int, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return 0, false
+	}
+	return ArithmeticSummaryCount(&row.Frozen, catalog)
+}
+
+// ArithmeticSummaryAt returns one arithmetic proof by its emitted ordinal.
+func (row Program) ArithmeticSummaryAt(index int) (ArithmeticSummary, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return ArithmeticSummary{}, false
+	}
+	return ArithmeticSummaryAt(&row.Frozen, catalog, index)
+}
+
+// UnarySummaryCount is the sealed width of this program's unary summary
+// family.
+func (row Program) UnarySummaryCount() (int, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return 0, false
+	}
+	return UnarySummaryCount(&row.Frozen, catalog)
+}
+
+// UnarySummaryAt returns one unary proof by its emitted ordinal.
+func (row Program) UnarySummaryAt(index int) (UnarySummary, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return UnarySummary{}, false
+	}
+	return UnarySummaryAt(&row.Frozen, catalog, index)
 }
