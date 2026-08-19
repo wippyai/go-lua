@@ -190,14 +190,13 @@ const (
 	ProgramBindingFailureTarget
 	ProgramBindingFailureTargetCatalog
 	ProgramBindingFailureTable
-	ProgramBindingFailureReceipt
+	ProgramBindingFailureCompilation
 	ProgramBindingFailureBinding
 	ProgramBindingFailurePrincipal
 	ProgramBindingFailureAllocationCatalog
 	ProgramBindingFailureQueryCatalog
 	ProgramBindingFailureSeal
 	ProgramBindingFailureAllocations
-	ProgramBindingFailureQueryReceipt
 	// programBindingFailureRuleBase is the first ordinal of the derived
 	// per-rule tail. Nothing is declared past it.
 	programBindingFailureRuleBase
@@ -206,9 +205,8 @@ const (
 var programBindingFailureNames = [...]string{
 	"none", "input", "types", "static",
 	"axis-authority", "runtime-contexts", "heap-index",
-	"target", "target-catalog", "table", "receipt", "binding", "principal",
+	"target", "target-catalog", "table", "compilation", "binding", "principal",
 	"allocation-catalog", "query-catalog", "seal", "allocations",
-	"query-receipt",
 }
 
 func (failure ProgramBindingFailure) String() string {
@@ -234,7 +232,7 @@ func ProgramBindingFailureFromBind(failure composite.BindFailure) ProgramBinding
 	case composite.BindStageTable:
 		return ProgramBindingFailureTable
 	case composite.BindStageCompilation:
-		return ProgramBindingFailureReceipt
+		return ProgramBindingFailureCompilation
 	case composite.BindStageBinding:
 		return ProgramBindingFailureBinding
 	case composite.BindStagePrincipal:
@@ -249,8 +247,6 @@ func ProgramBindingFailureFromBind(failure composite.BindFailure) ProgramBinding
 		return ProgramBindingFailureSeal
 	case composite.BindStageAllocations:
 		return ProgramBindingFailureAllocations
-	case composite.BindStageQueryReceipt:
-		return ProgramBindingFailureQueryReceipt
 	case composite.BindStageRuntimeContexts:
 		return ProgramBindingFailureRuntimeContexts
 	default:
@@ -353,7 +349,7 @@ func (diagnostics *AnalyzeDiagnostics) EnterConstruction(failure engine.SolveFai
 	if diagnostics == nil {
 		return
 	}
-	if _, named := engine.ProgramConstructionStageOf(failure); named {
+	if _, named := engine.ProgramSealStageOf(failure); named {
 		diagnostics.Construction = failure
 	}
 }
