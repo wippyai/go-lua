@@ -14,19 +14,6 @@ func (compiler *compiler) returnValueAt(outcome OutcomeRow, index int) (ReturnVa
 	return compiler.returnValues[position], true
 }
 
-func (compiler *compiler) copyPointAttachments() CompileFailure {
-	for index, row := range compiler.pointAttachments {
-		if !row.Available() {
-			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceAttachment)
-		}
-		id := digest("analysis/program-artifact/point-attachment", artifactFormat, bytesField(row.site), bytesField(row.point))
-		if !compiler.appendOccurrence(OccurrencePointAttachment, id, identity.ContentID{}, []identity.ContentID{row.point}, []identity.ContentID{row.site}, 0) {
-			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceAttachment)
-		}
-	}
-	return CompileFailure{}
-}
-
 func (compiler *compiler) copyValueSources() CompileFailure {
 	input, view := compiler.input, compiler.input.Flow()
 	rows := []struct {

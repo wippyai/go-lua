@@ -164,6 +164,10 @@ func (row OccurrenceRow) Available() bool {
 	if row.kind == OccurrenceStorageRead && len(row.inputs) != 2 {
 		return false
 	}
+	if row.kind == OccurrencePointAttachment &&
+		(row.body.Available() || len(row.points) != 1 || len(row.inputs) != 1 || row.code != 0) {
+		return false
+	}
 	return true
 }
 func (row OccurrenceRow) Kind() OccurrenceKind {

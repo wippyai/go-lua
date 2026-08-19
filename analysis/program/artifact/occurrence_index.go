@@ -16,10 +16,10 @@ func (compiler *compiler) pointIDs(site flow.Site) []identity.ContentID {
 	return points
 }
 
-// indexPointAttachmentsFailure copies the immutable Site-to-LocalWTO point
-// column once from canonical Flow schedule data. All occurrence families
-// subsequently reuse this artifact-owned point order; no root row or
-// transformer attachment query remains live after this stage.
+// indexPointAttachmentsFailure indexes the immutable Site-to-LocalWTO
+// relation once from canonical Flow schedule data. The lookup map is
+// compile-only geometry; each relation is emitted directly into the generic
+// occurrence catalog so Artifact retains no second attachment plane.
 func (compiler *compiler) indexPointAttachmentsFailure() CompileFailure {
 	if compiler == nil || !compiler.input.Available() {
 		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceAttachment)
@@ -30,8 +30,6 @@ func (compiler *compiler) indexPointAttachmentsFailure() CompileFailure {
 	for site := range compiler.pointIDsBySite {
 		delete(compiler.pointIDsBySite, site)
 	}
-	compiler.pointAttachments = compiler.pointAttachments[:0]
-
 	wto := compiler.input.Flow().Local().WTO()
 	seenPoints := make(map[identity.ContentID]struct{})
 	seenAttachments := make(map[struct {
@@ -66,15 +64,14 @@ func (compiler *compiler) indexPointAttachmentsFailure() CompileFailure {
 			if _, duplicate := seenAttachments[key]; duplicate {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, eventIndex, siteIndex, CompileReasonOccurrenceAttachment)
 			}
-			if uint64(len(compiler.pointAttachments)) > uint64(^uint32(0)) {
+			if uint64(len(compiler.occurrences)) > uint64(^uint32(0)) {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, eventIndex, siteIndex, CompileReasonOccurrenceAttachment)
 			}
 			seenAttachments[key] = struct{}{}
-			row := PointAttachmentRow{site: key.site, point: key.point}
-			if !row.Available() {
+			id := digest("analysis/program-artifact/point-attachment", artifactFormat, bytesField(key.site), bytesField(key.point))
+			if !id.Available() || !compiler.appendOccurrence(OccurrencePointAttachment, id, identity.ContentID{}, []identity.ContentID{key.point}, []identity.ContentID{key.site}, 0) {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, eventIndex, siteIndex, CompileReasonOccurrenceAttachment)
 			}
-			compiler.pointAttachments = append(compiler.pointAttachments, row)
 			compiler.pointIDsBySite[key.site] = append(compiler.pointIDsBySite[key.site], key.point)
 		}
 	}

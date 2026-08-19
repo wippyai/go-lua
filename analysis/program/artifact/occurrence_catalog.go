@@ -183,9 +183,6 @@ func (compiler *compiler) copyOccurrenceCatalogFailure() CompileFailure {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, valuesIndex, -1, CompileReasonOccurrenceValues)
 		}
 	}
-	if failure := compiler.copyPointAttachments(); failure.Available() {
-		return failure
-	}
 	if failure := compiler.copyValueSources(); failure.Available() {
 		return failure
 	}

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/domain/composite"
 )
 
@@ -23,7 +24,7 @@ return run
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("point indexing failed: %s", failure.Error())
 	}
-	if artifact.PointAttachmentCount() == 0 {
-		t.Fatal("point index published no Site-to-WTO attachment")
+	if artifact.OccurrenceKindCount(programartifact.OccurrencePointAttachment) == 0 {
+		t.Fatal("point index published no Site-to-WTO occurrence")
 	}
 }

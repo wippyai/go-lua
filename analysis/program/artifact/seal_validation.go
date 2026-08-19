@@ -55,26 +55,6 @@ func (artifact *Artifact) validateSealFoundation(state *sealValidationState) Com
 		}
 		state.pointRows[row.id] = struct{}{}
 	}
-	seenAttachments := make(map[struct {
-		site  identity.ContentID
-		point identity.ContentID
-	}]struct{}, len(artifact.pointAttachments))
-	for index, row := range artifact.pointAttachments {
-		if !row.Available() {
-			return compileFailure(CompileStageSeal, CompileRowPoint, index, -1, CompileReasonPointUnavailable)
-		}
-		if _, known := state.pointRows[row.point]; !known {
-			return compileFailure(CompileStageSeal, CompileRowPoint, index, -1, CompileReasonPointUnavailable)
-		}
-		key := struct {
-			site  identity.ContentID
-			point identity.ContentID
-		}{site: row.site, point: row.point}
-		if _, duplicate := seenAttachments[key]; duplicate {
-			return compileFailure(CompileStageSeal, CompileRowPoint, index, -1, CompileReasonPointUnavailable)
-		}
-		seenAttachments[key] = struct{}{}
-	}
 	seenDiagnosticObservations := make(map[identity.ContentID]struct{}, len(artifact.diagnosticObservations))
 	for index, row := range artifact.diagnosticObservations {
 		if !row.Available() {

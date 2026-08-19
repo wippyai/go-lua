@@ -27,7 +27,6 @@ type Artifact struct {
 	coldCatalog            identity.ContentID
 	sealed                 identity.ContentID
 	counts                 denominator.CountRows
-	pointAttachments       []PointAttachmentRow
 	points                 []Point
 	environment            []EnvironmentEdge
 	localTransfers         []LocalTransfer

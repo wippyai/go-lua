@@ -27,10 +27,6 @@ func artifactID(artifact *Artifact) identity.ContentID {
 			sink.add(bytesField(decision))
 		}
 	}
-	sink.add(uintField(uint64(len(artifact.pointAttachments))))
-	for _, row := range artifact.pointAttachments {
-		sink.add(bytesField(row.site), bytesField(row.point))
-	}
 	// Values and its member plane are read out of the sealed cold publication.
 	// The member span preserves the emitted order, so the preimage is the same
 	// sequence the identity has always committed to.
