@@ -20,7 +20,7 @@ import (
 // it would rebuild an identical value; an entry the operand plane cannot
 // certify as unmoved, and every entry of a cache that has installed no
 // candidate, is transported again.
-func (epoch *executorEpoch) inputs(producer runtimeProducer, cache *producerEpoch) ([]carrier.PointState, bool) {
+func (epoch *executorEpoch) inputs(producer *runtimeProducer, cache *producerEpoch) ([]carrier.PointState, bool) {
 	if epoch == nil || epoch.work == nil || cache == nil || len(producer.inputs) != producer.group.InputCount() || len(cache.inputs) != producer.group.InputCount() {
 		return nil, false
 	}
@@ -48,7 +48,7 @@ func (epoch *executorEpoch) inputs(producer runtimeProducer, cache *producerEpoc
 	return values, true
 }
 
-func (epoch *executorEpoch) environment(producer runtimeProducer) (carrier.PointState, bool) {
+func (epoch *executorEpoch) environment(producer *runtimeProducer) (carrier.PointState, bool) {
 	if epoch == nil || epoch.work == nil || producer.environment == nil || !producer.environment.valid() {
 		return carrier.PointState{}, producer.environment == nil
 	}
@@ -68,7 +68,7 @@ func (epoch *executorEpoch) environment(producer runtimeProducer) (carrier.Point
 	return transported, true
 }
 
-func (epoch *executorEpoch) evaluate(producer runtimeProducer, cache *producerEpoch) (result carrier.RuleContribution, reads []demand.Observation, ok bool) {
+func (epoch *executorEpoch) evaluate(producer *runtimeProducer, cache *producerEpoch) (result carrier.RuleContribution, reads []demand.Observation, ok bool) {
 	if epoch != nil && epoch.diagnostics != nil && epoch.diagnostics.scheduleEnabled() {
 		defer func() { epoch.diagnostics.recordEvaluate(&ok) }()
 	}

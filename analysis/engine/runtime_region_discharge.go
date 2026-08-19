@@ -280,7 +280,7 @@ func sealRegionDischarge(graph *equation.Graph, region equation.RegionView, head
 // right-hand side. It runs only in the ascent phase and only on the operands
 // that publication widens, exactly as region.widen does: the descent that
 // follows reads the exact relations again and recovers what it can.
-func (epoch *executorEpoch) dischargeAscentRHS(region runtimeRegion, rhs carrier.PointRHS) (carrier.PointRHS, bool) {
+func (epoch *executorEpoch) dischargeAscentRHS(region *runtimeRegion, rhs carrier.PointRHS) (carrier.PointRHS, bool) {
 	if epoch == nil || epoch.work == nil || epoch.runtime == nil || epoch.runtime.carrier == nil {
 		return carrier.PointRHS{}, false
 	}

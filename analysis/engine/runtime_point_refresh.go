@@ -215,7 +215,7 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 		if !groupOK || !indexed || groupIndex < 0 || groupIndex >= len(epoch.producers) {
 			return false, false
 		}
-		producer := epoch.runtime.producers[groupIndex]
+		producer := &epoch.runtime.producers[groupIndex]
 		state := &epoch.producers[groupIndex]
 		if producer.group.Output() != point || state.applied == state.generation {
 			continue
@@ -498,7 +498,7 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 		}
 		episode.invalid = false
 	}
-	region := epoch.runtime.regions[regionIndex]
+	region := &epoch.runtime.regions[regionIndex]
 	// An unchanged ascent RHS is already represented by episode.exact and the
 	// current widened Point. Re-running Widen would only rebuild the same roots
 	// and coverage before proving the same postfix relation again.

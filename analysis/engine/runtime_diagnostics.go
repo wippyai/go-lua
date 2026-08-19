@@ -719,7 +719,7 @@ func (diagnostics *solveDiagnosticState) interfaceRefreshRow(epoch *executorEpoc
 	if diagnostics == nil || !diagnostics.restartEnabled() || epoch == nil || epoch.runtime == nil || region < 0 || region >= len(epoch.runtime.regions) || region >= len(epoch.regions) {
 		return nil
 	}
-	state := epoch.regions[region]
+	state := &epoch.regions[region]
 	key := solveDiagnosticRowKey{revision: epoch.diagnosticRevision, kind: SolveDiagnosticKindInterfaceRefresh, callSite: solveDiagnosticRestartHeadInterface, reason: solveDiagnosticRestartInterfaceChanged, region: region, head: epoch.runtime.regions[region].head}
 	if state.phase == phaseAscent {
 		key.phase = solveDiagnosticRegionAscent
@@ -850,7 +850,7 @@ func (diagnostics *solveDiagnosticState) rememberRegionInterfaces(epoch *executo
 	if diagnostics == nil || !diagnostics.restartEnabled() || epoch == nil || epoch.runtime == nil || !epoch.activeRegion(region) {
 		return
 	}
-	bound := epoch.runtime.regions[region]
+	bound := &epoch.runtime.regions[region]
 	diagnostics.rememberProducerInterfaces(epoch, region, bound.external, solveDiagnosticInputExternalProducer)
 	diagnostics.rememberProducerInterfaces(epoch, region, bound.back, solveDiagnosticInputBackProducer)
 	diagnostics.rememberEnvironmentInterfaces(epoch, region, bound.environmentBack, solveDiagnosticInputBackEnvironment)
@@ -910,7 +910,7 @@ func (diagnostics *solveDiagnosticState) beginRestart(epoch *executorEpoch, regi
 	if epoch == nil || epoch.runtime == nil || region < 0 || region >= len(epoch.runtime.regions) || region >= len(epoch.regions) {
 		return sample
 	}
-	bound, state := epoch.runtime.regions[region], epoch.regions[region]
+	bound, state := &epoch.runtime.regions[region], &epoch.regions[region]
 	sample.key.head = bound.head
 	if state.phase == phaseAscent {
 		sample.key.phase = solveDiagnosticRegionAscent
@@ -934,7 +934,7 @@ func (diagnostics *solveDiagnosticState) beginRestart(epoch *executorEpoch, regi
 // with, so the diagnostic reads the plane instead of rescanning every
 // external producer, environment edge and factor edge to diff a private
 // version vector against them.
-func (diagnostics *solveDiagnosticState) captureRestartMismatches(epoch *executorEpoch, region int, bound runtimeRegion, state regionEpoch, pendingGroup int, pending carrier.RuleContribution, sample *solveDiagnosticRestartSample) {
+func (diagnostics *solveDiagnosticState) captureRestartMismatches(epoch *executorEpoch, region int, bound *runtimeRegion, state *regionEpoch, pendingGroup int, pending carrier.RuleContribution, sample *solveDiagnosticRestartSample) {
 	rows := [6]struct {
 		kind     operandKind
 		members  []int

@@ -449,7 +449,7 @@ func newRuntimeEpoch(runtime *solverRuntime, relation equation.Relation, ctx con
 				return nil, false
 			}
 			if epoch.producers[groupIndex].generation == 0 {
-				metadata := runtime.producers[groupIndex]
+				metadata := &runtime.producers[groupIndex]
 				inputCount := metadata.group.InputCount()
 				epoch.producers[groupIndex] = producerEpoch{generation: 1, inputs: make([]carrier.PointState, inputCount), inputStates: make([]carrier.State, inputCount), patches: make([]carrier.Patch, 0, metadata.span.count()), patchRows: make([]contributionPatch, 0, metadata.span.count()), reads: make([]demand.Observation, 0, len(metadata.reads))}
 			}

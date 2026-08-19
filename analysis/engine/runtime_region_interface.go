@@ -17,7 +17,7 @@ import (
 // retained accumulator legalizes reuse, and the complete E+B row otherwise.
 // Both admit their operands in the one sealed canonical order, so the fold
 // itself never learns which of the two it is running.
-func (epoch *executorEpoch) regionRHS(point equation.Point, pointIndex, regionIndex int, region runtimeRegion, current carrier.PointState) (carrier.PointRHS, carrier.ChangeSet, bool) {
+func (epoch *executorEpoch) regionRHS(point equation.Point, pointIndex, regionIndex int, region *runtimeRegion, current carrier.PointState) (carrier.PointRHS, carrier.ChangeSet, bool) {
 	if epoch != nil && epoch.diagnostics != nil {
 		epoch.diagnostics.recordRegionRHS()
 	}
@@ -63,7 +63,7 @@ func regionAccumulatorEvidenceAdmits(episode *regionEpoch) bool {
 // from Init. Under an admitted ascent the retained accumulator already
 // contains every unmoved operand, so folding the moved ones onto it is the
 // same value as folding all of them onto Init.
-func (epoch *executorEpoch) regionOperandTerms(point equation.Point, pointIndex, regionIndex int, region runtimeRegion, episode *regionEpoch) (carrier.PointRHS, pointFoldTermSets, bool) {
+func (epoch *executorEpoch) regionOperandTerms(point equation.Point, pointIndex, regionIndex int, region *runtimeRegion, episode *regionEpoch) (carrier.PointRHS, pointFoldTermSets, bool) {
 	dbgRegionReuseRefusal(epoch, episode)
 	if regionAccumulatorEvidenceAdmits(episode) && epoch.work.OwnsPointRHS(episode.accumulator) {
 		rows := [6]struct {
@@ -132,7 +132,7 @@ func (epoch *executorEpoch) regionOperandTerms(point equation.Point, pointIndex,
 // retains X+B, not E+B: external ingress is already checked against the
 // current head before this fold. A pending interface refresh uses its newly
 // rebuilt exact R directly as selected, avoiding a redundant fold.
-func (epoch *executorEpoch) regionSelected(current carrier.PointState, region runtimeRegion) (carrier.PointRHS, bool) {
+func (epoch *executorEpoch) regionSelected(current carrier.PointState, region *runtimeRegion) (carrier.PointRHS, bool) {
 	if epoch == nil || epoch.work == nil || !epoch.work.OwnsPointState(current) {
 		return carrier.PointRHS{}, false
 	}
@@ -151,7 +151,7 @@ func (epoch *executorEpoch) regionExternalIngressChanged(region int) bool {
 	if epoch == nil || !epoch.activeRegion(region) || region >= len(epoch.regions) {
 		return true
 	}
-	state := epoch.regions[region]
+	state := &epoch.regions[region]
 	if !state.hasExact || state.externalAt <= state.rememberAt {
 		return false
 	}
@@ -170,7 +170,7 @@ func (epoch *executorEpoch) beginRegionInterfaceRefresh(region int) bool {
 		return false
 	}
 	state := &epoch.regions[region]
-	bound := epoch.runtime.regions[region]
+	bound := &epoch.runtime.regions[region]
 	if !state.hasExact || state.interfaceRefreshPending {
 		return state.interfaceRefreshPending
 	}
@@ -197,7 +197,7 @@ func (epoch *executorEpoch) regionExactInputsChanged(region int) bool {
 	if epoch == nil || !epoch.activeRegion(region) || region >= len(epoch.regions) {
 		return true
 	}
-	state := epoch.regions[region]
+	state := &epoch.regions[region]
 	if !state.hasExact || epoch.regionExternalIngressChanged(region) {
 		return true
 	}
@@ -299,7 +299,7 @@ func (epoch *executorEpoch) restartRegion(region int, callSite solveDiagnosticRe
 	// this root row covers the full restarted subtree.  Reset through the sole
 	// publication cut: observers must see the actual old-to-base delta rather
 	// than a later base-to-recomputed delta (or no delta when it stays at base).
-	bound := epoch.runtime.regions[region]
+	bound := &epoch.runtime.regions[region]
 	for _, pointIndex := range bound.points {
 		if pointIndex < 0 || pointIndex >= len(epoch.points) || !epoch.work.OwnsPointState(epoch.points[pointIndex]) {
 			return false
@@ -413,7 +413,7 @@ func (epoch *executorEpoch) regionSnapshotChanged(region int) bool {
 	if epoch == nil || !epoch.activeRegion(region) || region >= len(epoch.regions) {
 		return true
 	}
-	state := epoch.regions[region]
+	state := &epoch.regions[region]
 	return state.pointsAt > state.enterAt
 }
 
@@ -426,7 +426,7 @@ func (epoch *executorEpoch) regionPostfixed(regionIndex int) (bool, bool) {
 	if epoch == nil || epoch.canceled() || !epoch.activeRegion(regionIndex) {
 		return false, false
 	}
-	region, episode := epoch.runtime.regions[regionIndex], &epoch.regions[regionIndex]
+	region, episode := &epoch.runtime.regions[regionIndex], &epoch.regions[regionIndex]
 	phase := episode.phase
 	if phase != phaseAscent && phase != phaseNarrow {
 		return false, false

@@ -367,7 +367,7 @@ func (epoch *executorEpoch) prepareSelectedFactorEpoch(overlay *preparedSelected
 			if _, duplicate := newProducers[groupIndex]; duplicate {
 				return preparedSelectedFactorEpoch{}, false
 			}
-			metadata := epoch.runtime.producers[groupIndex]
+			metadata := &epoch.runtime.producers[groupIndex]
 			inputCount := metadata.group.InputCount()
 			cache := producerEpoch{generation: 1, inputs: make([]carrier.PointState, inputCount), inputStates: make([]carrier.State, inputCount), patches: make([]carrier.Patch, 0, metadata.span.count()), patchRows: make([]contributionPatch, 0, metadata.span.count()), reads: make([]demandpkg.Observation, 0, len(metadata.reads))}
 			producerActivations = append(producerActivations, preparedProducerActivation{index: groupIndex, state: cache})

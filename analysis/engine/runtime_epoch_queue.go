@@ -185,7 +185,7 @@ func (epoch *executorEpoch) markDirty(group int) bool {
 	if epoch == nil || epoch.runtime == nil || epoch.canceled() || group < 0 || group >= len(epoch.producers) {
 		return false
 	}
-	producer := epoch.runtime.producers[group]
+	producer := &epoch.runtime.producers[group]
 	point, pointOK := epoch.runtime.graph.PointIndex(producer.group.Output())
 	if !pointOK || point < 0 || point >= len(epoch.runtime.activePoints) || !epoch.runtime.activePoints[point] {
 		return false

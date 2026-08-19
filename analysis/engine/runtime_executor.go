@@ -50,7 +50,7 @@ func (epoch *executorEpoch) advanceNarrow() (advanced, ok bool) {
 		if !epoch.activeRegion(index) {
 			return false, false
 		}
-		region, episode := epoch.runtime.regions[index], &epoch.regions[index]
+		region, episode := &epoch.runtime.regions[index], &epoch.regions[index]
 		switch episode.phase {
 		case phaseAscent:
 			if !episode.hasExact {
@@ -184,7 +184,7 @@ func (epoch *executorEpoch) visitPoints() (visited bool, ok bool) {
 				if !epoch.activeRegion(event.Region) {
 					return false, false
 				}
-				candidate := epoch.runtime.regions[event.Region]
+				candidate := &epoch.runtime.regions[event.Region]
 				if candidate.head == pointIndex {
 					headRegion = event.Region
 				}
