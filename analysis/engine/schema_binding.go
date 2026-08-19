@@ -1,4 +1,4 @@
-// schema_binding.go owns the schema binding transaction lifecycle: state, phase, seal and poison.
+// schema_binding.go owns the schema binding lifecycle: state, phase, seal and poison.
 
 package engine
 
@@ -43,11 +43,6 @@ type schemaBindingState struct {
 	// before this Binding seals.
 	linkBootstrapTransports    [2]RuleSlotCapability
 	linkBootstrapTransportPair bool
-	// pendingRules reserves a canonical Rule ordinal while a hot transaction
-	// assembles its heterogeneous read receipts.  The reservation is shared
-	// by copied transaction handles and prevents two closures racing to publish
-	// different implementations for one cold Rule cell.
-	pendingRules map[uint64]*schemaRuleBindingToken
 	// columns is the published columns this binding's publication is admitted
 	// to write, by the column's authored key, and columnSlots is the same set
 	// by the dense slot each occupies. Both are stated once, while the binding
@@ -68,12 +63,11 @@ func NewSchemaBinding(schema *Schema) *SchemaBinding {
 	}
 	return &SchemaBinding{state: &schemaBindingState{
 		schema: schema, phase: schemaBindingOpen, authority: &schemaBindingAuthority{},
-		factors:      make([]schemaFactorBinding, factors),
-		rules:        make([]schemaBindingCell, rules),
-		queries:      make([]schemaBindingCell, queries),
-		activation:   make([]schemaBindingCell, activations),
-		roleSlots:    make(map[RuleSlotCapability]composition.Key),
-		pendingRules: make(map[uint64]*schemaRuleBindingToken),
+		factors:    make([]schemaFactorBinding, factors),
+		rules:      make([]schemaBindingCell, rules),
+		queries:    make([]schemaBindingCell, queries),
+		activation: make([]schemaBindingCell, activations),
+		roleSlots:  make(map[RuleSlotCapability]composition.Key),
 	}}
 }
 

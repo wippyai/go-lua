@@ -236,12 +236,9 @@ func TestSchemaRuleBindingReadCarryAndSelectedProductProof(t *testing.T) {
 		Admission:      AdmitRuleByTrustedTheorem[uint64, struct{}](coldKey(997_304)),
 		Transfer:       func(Access[uint64, struct{}]) bool { return true },
 	}
-	exactBound, selectedBound := false, false
-	bound := BindSelectedRouteRule[uint64, uint64, struct{}](binding, rule, carry, write, factor.Ref(), hot, HotCarrySpec[uint64, struct{}]{}, func(struct{}) (uint64, bool) { return 1, true }, func(tx *SelectedRouteRuleBindingTransaction[uint64, uint64, struct{}]) bool {
-		_, exactBound = AddSelectedRouteExactRead(tx, base, factor.Ref(), func(struct{}) (uint64, bool) { return 1, true })
-		_, selectedBound = AddSelectedRouteRead[uint64, uint64, struct{}, uint64, uint64](tx, selected, factor.Ref(), func(SelectorContext) bool { return true })
-		return exactBound && selectedBound
-	})
+	bound := BindSelectedRouteRuleDirect[uint64](binding, rule, carry, write, factor.Ref(), hot, HotCarrySpec[uint64, struct{}]{}, func(struct{}) (uint64, bool) { return 1, true })
+	_, exactBound := BindSelectedRuleDirectExactRead[uint64, uint64, struct{}, uint64](binding, rule, base, factor.Ref(), func(struct{}) (uint64, bool) { return 1, true })
+	_, selectedBound := BindSelectedRuleDirectSelectedRead[uint64, uint64, struct{}, uint64, uint64](binding, rule, selected, factor.Ref(), func(SelectorContext) bool { return true })
 	if !bound || !binding.Seal() {
 		t.Fatalf("selected Rule binding bound=%t exact=%t selected=%t poisoned=%t", bound, exactBound, selectedBound, binding.Poisoned())
 	}
@@ -572,17 +569,13 @@ func runProgramRuleSummaryThreadLaw(t testing.TB, base uint64, keyEnd uint64) {
 		func(value OrderedCells[uint64]) uint64 { return uint64(value.Count()) }) {
 		t.Fatal("summary Factor form binding")
 	}
-	var readRuntime Read[OrderedCells[uint64]]
-	bound := BindSelectedExactRule[uint64, uint64, struct{}](binding, rule, writeSlot, factor.Ref(), HotRuleSpec[uint64, struct{}]{
+	bound := BindSelectedExactRuleDirect[uint64](binding, rule, writeSlot, factor.Ref(), HotRuleSpec[uint64, struct{}]{
 		OperandContent: func(struct{}) (struct{}, [32]byte, bool) { return struct{}{}, [32]byte{0x5a}, true },
 		Admission:      AdmitRuleByTrustedTheorem[uint64, struct{}](coldKey(base + 4)),
 		Transfer:       func(Access[uint64, struct{}]) bool { return true },
-	}, func(struct{}) (uint64, bool) { return 1, true }, func(tx *SelectedRouteRuleBindingTransaction[uint64, uint64, struct{}]) bool {
-		var ok bool
-		readRuntime, ok = AddSelectedRouteSummaryRead[uint64, uint64, struct{}, uint64, OrderedCells[uint64]](tx, read, factor.Ref(), form, nil)
-		return ok
-	})
-	if !bound || !binding.Seal() || readRuntime.origin == nil || readRuntime.origin.kind != composition.ReadSummary {
+	}, func(struct{}) (uint64, bool) { return 1, true })
+	readRuntime, readBound := BindSelectedRuleDirectSummaryRead[uint64, uint64, struct{}, uint64, OrderedCells[uint64]](binding, rule, read, factor.Ref(), form, nil)
+	if !bound || !readBound || !binding.Seal() || readRuntime.origin == nil || readRuntime.origin.kind != composition.ReadSummary {
 		t.Fatal("summary ProgramRule binding")
 	}
 	implementation, implementationOK := RuleImplementationAt[uint64, uint64, struct{}](binding, rule)
