@@ -48,18 +48,14 @@ func (core Core) BindingNamespaceAt(op vocabulary.Operation, index int) (vocabul
 }
 
 func (core Core) BindingOwnerCountAt(op vocabulary.Operation, index int) int {
-	binding, ok := core.binding(op, index)
-	if !ok {
+	if _, ok := core.binding(op, index); !ok {
 		return 0
 	}
-	if core.keys.Count() != 0 {
-		projected, projectedOK := core.bindingKey(op, index)
-		if !projectedOK {
-			return 0
-		}
-		return projected.owner.Len()
+	projected, projectedOK := core.bindingKey(op, index)
+	if !projectedOK {
+		return 0
 	}
-	return core.geometry.segments.Count(binding.owner)
+	return projected.owner.Len()
 }
 
 func (core Core) BindingOwnerAt(op vocabulary.Operation, binding, index int) (string, bool) {
@@ -67,56 +63,43 @@ func (core Core) BindingOwnerAt(op vocabulary.Operation, binding, index int) (st
 }
 
 func (core Core) BindingMemberCountAt(op vocabulary.Operation, index int) int {
-	binding, ok := core.binding(op, index)
-	if !ok {
+	if _, ok := core.binding(op, index); !ok {
 		return 0
 	}
-	if core.keys.Count() != 0 {
-		projected, projectedOK := core.bindingKey(op, index)
-		if !projectedOK {
-			return 0
-		}
-		return projected.member.Len()
+	projected, projectedOK := core.bindingKey(op, index)
+	if !projectedOK {
+		return 0
 	}
-	return core.geometry.segments.Count(binding.member)
+	return projected.member.Len()
 }
 
 func (core Core) BindingMemberAt(op vocabulary.Operation, binding, index int) (string, bool) {
 	return core.bindingSegmentAt(op, binding, index, false)
 }
 
-// bindingSegmentAt reads from the canonical exact-key projection once Core is
-// published. The zero-key fallback is used only by the temporary Core that
-// compiles the Geometry lookup before exact-key projection is available.
+// bindingSegmentAt reads from the canonical exact-key projection retained by
+// the published operation owner.
 func (core Core) bindingSegmentAt(op vocabulary.Operation, binding, index int, owner bool) (string, bool) {
-	row, ok := core.binding(op, binding)
-	if !ok {
+	if _, ok := core.binding(op, binding); !ok {
 		return "", false
 	}
-	if core.keys.Count() != 0 {
-		projected, projectedOK := core.bindingKey(op, binding)
-		if !projectedOK {
-			return "", false
-		}
-		span := projected.member
-		if owner {
-			span = projected.owner
-		}
-		key, keyOK := core.bindingKeys.At(span, index)
-		if !keyOK {
-			return "", false
-		}
-		value, valueOK := core.keys.Value(key)
-		if !valueOK || value.Kind != keyspace.LiteralString {
-			return "", false
-		}
-		return value.String, true
+	projected, projectedOK := core.bindingKey(op, binding)
+	if !projectedOK {
+		return "", false
 	}
-	span := row.member
+	span := projected.member
 	if owner {
-		span = row.owner
+		span = projected.owner
 	}
-	return core.geometry.segments.At(span, index)
+	key, keyOK := core.bindingKeys.At(span, index)
+	if !keyOK {
+		return "", false
+	}
+	value, valueOK := core.keys.Value(key)
+	if !valueOK || value.Kind != keyspace.LiteralString {
+		return "", false
+	}
+	return value.String, true
 }
 
 // BindingOwnerKeyAt returns the exact-key handle projected for one owner
@@ -160,7 +143,8 @@ func (core Core) compareBindingSpec(op vocabulary.Operation, index int, right vo
 }
 
 // compareBindingRows compares two owner-issued rows directly from Core's
-// sealed segment pools. The fallback bool reports malformed coordinates.
+// sealed exact-key projection. The fallback bool reports malformed
+// coordinates.
 func (core Core) compareBindingRows(leftOp vocabulary.Operation, leftIndex int, rightOp vocabulary.Operation, rightIndex int) (int, bool) {
 	leftNamespace, leftOK := core.BindingNamespaceAt(leftOp, leftIndex)
 	rightNamespace, rightOK := core.BindingNamespaceAt(rightOp, rightIndex)
@@ -199,16 +183,15 @@ func (core Core) compareBindingIndex(left, right bindingIndexRow) (int, bool) {
 	return 0, true
 }
 
-func compileBindingLookup(geometry Geometry) (rows.Rows[bindingIndexRow], error) {
-	core := Core{geometry: geometry}
-	lookup := make([]bindingIndexRow, 0, geometry.bindings.Len())
-	for operationIndex := 0; operationIndex+1 < geometry.operations.Count(); operationIndex++ {
+func compileBindingLookup(core Core) (rows.Rows[bindingIndexRow], error) {
+	lookup := make([]bindingIndexRow, 0, core.geometry.bindings.Len())
+	for operationIndex := 0; operationIndex+1 < core.geometry.operations.Count(); operationIndex++ {
 		operation := vocabulary.Operation(operationIndex + 1)
-		row, ok := geometry.operations.At(operationIndex)
+		row, ok := core.geometry.operations.At(operationIndex)
 		if !ok {
 			return rows.Rows[bindingIndexRow]{}, errors.New("target/operation: malformed binding geometry")
 		}
-		count := geometry.bindings.Count(row.bindings)
+		count := core.geometry.bindings.Count(row.bindings)
 		if count != row.bindings.Len() {
 			return rows.Rows[bindingIndexRow]{}, errors.New("target/operation: malformed binding geometry")
 		}
@@ -238,10 +221,10 @@ func (core Core) Lookup(binding vocabulary.BindingSpec) (vocabulary.Operation, b
 	if !vocabulary.ValidBinding(binding) {
 		return 0, false
 	}
-	left, right := 0, core.geometry.lookup.Count()
+	left, right := 0, core.lookup.Count()
 	for left < right {
 		middle := left + (right-left)/2
-		row, ok := core.geometry.lookup.At(middle)
+		row, ok := core.lookup.At(middle)
 		if !ok {
 			return 0, false
 		}
@@ -255,10 +238,10 @@ func (core Core) Lookup(binding vocabulary.BindingSpec) (vocabulary.Operation, b
 			right = middle
 		}
 	}
-	if left >= core.geometry.lookup.Count() {
+	if left >= core.lookup.Count() {
 		return 0, false
 	}
-	row, ok := core.geometry.lookup.At(left)
+	row, ok := core.lookup.At(left)
 	if !ok {
 		return 0, false
 	}

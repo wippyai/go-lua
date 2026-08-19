@@ -126,7 +126,6 @@ type Geometry struct {
 	callbacks  rows.Rows[callbackRow]
 	produced   rows.Pool[producedRow]
 	sources    rows.Rows[sourceRow]
-	lookup     rows.Rows[bindingIndexRow]
 	sourceN    int
 	boundN     int
 }
@@ -145,4 +144,5 @@ type Core struct {
 	bindingKeys    rows.Pool[vocabulary.ExactKey]
 	bindingKeyRows rows.Pool[bindingKeyRow]
 	bindingRanges  rows.Rows[bindingKeyRange]
+	lookup         rows.Rows[bindingIndexRow]
 }

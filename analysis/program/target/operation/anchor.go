@@ -198,6 +198,15 @@ func CompileAnchors(geometry Geometry, keys exactkey.Table) (Core, error) {
 	if projectionErr != nil {
 		return Core{}, projectionErr
 	}
+	core := Core{
+		geometry: geometry, anchors: rows.NewRows(anchors), keys: keys, bindingKeys: bindingKeys,
+		bindingKeyRows: bindingKeyRows, bindingRanges: bindingRanges,
+	}
+	lookup, lookupErr := compileBindingLookup(core)
+	if lookupErr != nil {
+		return Core{}, lookupErr
+	}
+	core.lookup = lookup
 	// Produced rows and outcome selector bytes are construction-only inputs to
 	// anchor derivation. Target retains the richer produced relation in its own
 	// sealed table, and no published Core query reads selector bytes, so do not
@@ -205,10 +214,8 @@ func CompileAnchors(geometry Geometry, keys exactkey.Table) (Core, error) {
 	geometry.produced = rows.Pool[producedRow]{}
 	geometry.anchors = rows.Pool[byte]{}
 	geometry.segments = rows.Pool[string]{}
-	return Core{
-		geometry: geometry, anchors: rows.NewRows(anchors), keys: keys, bindingKeys: bindingKeys,
-		bindingKeyRows: bindingKeyRows, bindingRanges: bindingRanges,
-	}, nil
+	core.geometry = geometry
+	return core, nil
 }
 
 func compileBindingKeyProjection(geometry Geometry, keys exactkey.Table) (rows.Pool[vocabulary.ExactKey], rows.Pool[bindingKeyRow], rows.Rows[bindingKeyRange], error) {

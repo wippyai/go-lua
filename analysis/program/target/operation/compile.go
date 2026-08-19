@@ -193,11 +193,6 @@ func CompileGeometry(input Input) (Geometry, error) {
 		outcomes: outcomeRows.Seal(), anchors: anchorPool.Seal(), callbacks: rows.NewRows(callbackRows),
 		produced: producedRows.Seal(), sources: rows.NewRows(sources), sourceN: len(input.Operations), boundN: boundCount(input.Operations),
 	}
-	lookup, lookupErr := compileBindingLookup(geometry)
-	if lookupErr != nil {
-		return Geometry{}, lookupErr
-	}
-	geometry.lookup = lookup
 	return geometry, nil
 }
 
