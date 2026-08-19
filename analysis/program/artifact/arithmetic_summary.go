@@ -6,7 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 )
 
 const (
@@ -20,19 +20,19 @@ type numericSummaryState struct {
 }
 
 func (state numericSummaryState) known() bool { return state.unknown || state.mask != 0 }
-func (state numericSummaryState) representation() (cold.NumericRepresentation, bool) {
+func (state numericSummaryState) representation() (programschema.NumericRepresentation, bool) {
 	if state.unknown {
-		return cold.NumericRepresentationInvalid, false
+		return programschema.NumericRepresentationInvalid, false
 	}
 	switch state.mask {
 	case numericIntegerMask:
-		return cold.NumericRepresentationInteger, true
+		return programschema.NumericRepresentationInteger, true
 	case numericFloatMask:
-		return cold.NumericRepresentationFloat, true
+		return programschema.NumericRepresentationFloat, true
 	case numericIntegerMask | numericFloatMask:
-		return cold.NumericRepresentationNumber, true
+		return programschema.NumericRepresentationNumber, true
 	default:
-		return cold.NumericRepresentationInvalid, false
+		return programschema.NumericRepresentationInvalid, false
 	}
 }
 
@@ -84,7 +84,7 @@ func intersectArithmeticGuardFacts(left, right map[identity.ContentID]arithmetic
 // yield no fact. Multiple incoming body entries are intersected, so one
 // unguarded path withholds the summary rather than turning a may-guard into a
 // proof.
-func (compiler *compiler) arithmeticDivisorProperties() (map[identity.ContentID]cold.ArithmeticDivisorProperty, CompileFailure) {
+func (compiler *compiler) arithmeticDivisorProperties() (map[identity.ContentID]programschema.ArithmeticDivisorProperty, CompileFailure) {
 	if compiler == nil || compiler.exactScalarStates == nil {
 		return nil, compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
 	}
@@ -240,7 +240,7 @@ func (compiler *compiler) arithmeticDivisorProperties() (map[identity.ContentID]
 		}
 	}
 
-	properties := make(map[identity.ContentID]cold.ArithmeticDivisorProperty)
+	properties := make(map[identity.ContentID]programschema.ArithmeticDivisorProperty)
 	for index, row := range compiler.occurrences {
 		if row.Kind() != OccurrenceBinaryArithmetic {
 			continue
@@ -256,9 +256,9 @@ func (compiler *compiler) arithmeticDivisorProperties() (map[identity.ContentID]
 		mask := bodyFacts[row.body][cell]
 		switch {
 		case mask&(arithmeticGuardExcludesZero|arithmeticGuardExcludesMinusOne) == (arithmeticGuardExcludesZero | arithmeticGuardExcludesMinusOne):
-			properties[row.ID()] = cold.ArithmeticDivisorNonzeroNotMinusOne
+			properties[row.ID()] = programschema.ArithmeticDivisorNonzeroNotMinusOne
 		case mask&arithmeticGuardExcludesZero != 0:
-			properties[row.ID()] = cold.ArithmeticDivisorNonzero
+			properties[row.ID()] = programschema.ArithmeticDivisorNonzero
 		}
 	}
 	return properties, CompileFailure{}
@@ -528,7 +528,7 @@ func (compiler *compiler) deriveArithmeticSummariesFailure() CompileFailure {
 	if divisorFailure.Available() {
 		return divisorFailure
 	}
-	summaries := make([]cold.ArithmeticSummary, 0, len(arithmetic))
+	summaries := make([]programschema.ArithmeticSummary, 0, len(arithmetic))
 	for index, row := range arithmetic {
 		leftID, rightID, op, _ := row.BinaryArithmetic()
 		left, leftOK := states[leftID].representation()
@@ -537,14 +537,14 @@ func (compiler *compiler) deriveArithmeticSummariesFailure() CompileFailure {
 		if !leftOK || !rightOK || !resultOK {
 			continue
 		}
-		summary, summaryOK := cold.NewArithmeticSummary(row.ID(), row.body, cold.SummaryOperator(op), left, right, result, divisors[row.ID()])
+		summary, summaryOK := programschema.NewArithmeticSummary(row.ID(), row.body, programschema.SummaryOperator(op), left, right, result, divisors[row.ID()])
 		if !summaryOK {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 		summaries = append(summaries, summary)
 	}
-	identity.SortByContentID(summaries, func(row cold.ArithmeticSummary) identity.ContentID { return row.ID() })
-	unarySummaries := make([]cold.UnarySummary, 0, len(unaries))
+	identity.SortByContentID(summaries, func(row programschema.ArithmeticSummary) identity.ContentID { return row.ID() })
+	unarySummaries := make([]programschema.UnarySummary, 0, len(unaries))
 	for index, row := range unaries {
 		operandID, operandOK := row.InputAt(0)
 		operand, operandRepresentationOK := states[operandID].representation()
@@ -557,14 +557,14 @@ func (compiler *compiler) deriveArithmeticSummariesFailure() CompileFailure {
 			continue
 		}
 		for _, output := range geometry.finish {
-			summary, summaryOK := cold.NewUnarySummary(row.ID(), row.body, output, cold.SummaryOperator(row.Code()), operand, result)
+			summary, summaryOK := programschema.NewUnarySummary(row.ID(), row.body, output, programschema.SummaryOperator(row.Code()), operand, result)
 			if !summaryOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 			}
 			unarySummaries = append(unarySummaries, summary)
 		}
 	}
-	identity.SortByContentID(unarySummaries, func(row cold.UnarySummary) identity.ContentID { return row.ID() })
+	identity.SortByContentID(unarySummaries, func(row programschema.UnarySummary) identity.ContentID { return row.ID() })
 	compiler.arithmeticSummaries = summaries
 	compiler.unarySummaries = unarySummaries
 	return CompileFailure{}

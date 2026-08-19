@@ -6,7 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow/causal"
 	"github.com/wippyai/go-lua/analysis/schema"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 )
 
 // Point is an exact parent-issued LocalWTO phase vertex path. Its ordered
@@ -263,7 +263,7 @@ func (artifact *Artifact) PointCount() int {
 	if !artifact.Available() {
 		return 0
 	}
-	count, published := coldCount(artifact, cold.PointFamily())
+	count, published := coldCount(artifact, programschema.PointFamily())
 	if !published {
 		return 0
 	}
@@ -274,7 +274,7 @@ func (artifact *Artifact) EnvironmentEdgeCount() int {
 	if !artifact.Available() {
 		return 0
 	}
-	count, published := coldCount(artifact, cold.EnvironmentEdgeFamily())
+	count, published := coldCount(artifact, programschema.EnvironmentEdgeFamily())
 	if !published {
 		return 0
 	}
@@ -292,7 +292,7 @@ func (artifact *Artifact) RegionCount() int {
 	if !artifact.Available() {
 		return 0
 	}
-	count, published := coldCount(artifact, cold.RegionFamily())
+	count, published := coldCount(artifact, programschema.RegionFamily())
 	if !published {
 		return 0
 	}
@@ -303,7 +303,7 @@ func (artifact *Artifact) WTOEventCount() int {
 	if !artifact.Available() {
 		return 0
 	}
-	count, published := coldCount(artifact, cold.WTOEventFamily())
+	count, published := coldCount(artifact, programschema.WTOEventFamily())
 	if !published {
 		return 0
 	}
@@ -322,7 +322,7 @@ func (artifact *Artifact) PointAt(index int) (Point, bool) {
 // ordered geometry a caller receives is assembled at the read site rather
 // than retained a second time beside the publication.
 func (artifact *Artifact) pointRowAt(index int) (Point, bool) {
-	sealed, held := coldRow(artifact, cold.PointFamily(), index)
+	sealed, held := coldRow(artifact, programschema.PointFamily(), index)
 	offset, count, spanOK := sealed.DecisionSpan()
 	if !held || !spanOK {
 		return Point{}, false
@@ -332,7 +332,7 @@ func (artifact *Artifact) pointRowAt(index int) (Point, bool) {
 		row.decisions = make([]identity.ContentID, 0, count)
 	}
 	for position := uint32(0); position < count; position++ {
-		decision, decisionHeld := coldRow(artifact, cold.PointDecisionFamily(), int(offset+position))
+		decision, decisionHeld := coldRow(artifact, programschema.PointDecisionFamily(), int(offset+position))
 		if !decisionHeld {
 			return Point{}, false
 		}
@@ -353,7 +353,7 @@ func (artifact *Artifact) EnvironmentEdgeAt(index int) (EnvironmentEdge, bool) {
 // so the ordered geometry a caller receives is assembled at the read site
 // rather than retained a second time beside the publication.
 func (artifact *Artifact) environmentEdgeRowAt(index int) (EnvironmentEdge, bool) {
-	sealed, held := coldRow(artifact, cold.EnvironmentEdgeFamily(), index)
+	sealed, held := coldRow(artifact, programschema.EnvironmentEdgeFamily(), index)
 	offset, count, spanOK := sealed.ResetSpan()
 	if !held || !spanOK {
 		return EnvironmentEdge{}, false
@@ -374,7 +374,7 @@ func (artifact *Artifact) environmentEdgeRowAt(index int) (EnvironmentEdge, bool
 		row.resets = make([]identity.ContentID, 0, count)
 	}
 	for position := uint32(0); position < count; position++ {
-		witness, witnessHeld := coldRow(artifact, cold.EnvironmentResetFamily(), int(offset+position))
+		witness, witnessHeld := coldRow(artifact, programschema.EnvironmentResetFamily(), int(offset+position))
 		if !witnessHeld {
 			return EnvironmentEdge{}, false
 		}
@@ -402,14 +402,14 @@ func (artifact *Artifact) RegionAt(index int) (Region, bool) {
 // ordered geometry a caller receives is assembled at the read site rather
 // than retained a second time beside the publication.
 func (artifact *Artifact) regionRowAt(index int) (Region, bool) {
-	sealed, held := coldRow(artifact, cold.RegionFamily(), index)
+	sealed, held := coldRow(artifact, programschema.RegionFamily(), index)
 	offset, count, spanOK := sealed.MemberSpan()
 	if !held || !spanOK {
 		return Region{}, false
 	}
 	row := Region{id: sealed.ID(), parent: sealed.ParentID(), cyclic: sealed.Cyclic(), members: make([]identity.ContentID, 0, count)}
 	for position := uint32(0); position < count; position++ {
-		member, memberHeld := coldRow(artifact, cold.RegionMemberFamily(), int(offset+position))
+		member, memberHeld := coldRow(artifact, programschema.RegionMemberFamily(), int(offset+position))
 		if !memberHeld {
 			return Region{}, false
 		}
@@ -429,7 +429,7 @@ func (artifact *Artifact) WTOEventAt(index int) (WTOEvent, bool) {
 // row is flat there, so the read is a change of vocabulary and no plane is
 // retained beside the publication.
 func (artifact *Artifact) wtoEventRowAt(index int) (WTOEvent, bool) {
-	sealed, held := coldRow(artifact, cold.WTOEventFamily(), index)
+	sealed, held := coldRow(artifact, programschema.WTOEventFamily(), index)
 	if !held {
 		return WTOEvent{}, false
 	}

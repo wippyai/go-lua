@@ -5,7 +5,7 @@ import (
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/scalar"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 )
 
 type exactScalarState struct {
@@ -220,7 +220,7 @@ func (compiler *compiler) deriveExactScalarSummariesFailure() CompileFailure {
 		}
 	}
 
-	summaries := make([]cold.ExactScalarSummary, 0, len(arithmetic)*3)
+	summaries := make([]programschema.ExactScalarSummary, 0, len(arithmetic)*3)
 	seen := make(map[identity.ContentID]struct{}, len(arithmetic)*3)
 	for index, row := range arithmetic {
 		left, right, _, endpointsOK := row.BinaryArithmetic()
@@ -228,19 +228,19 @@ func (compiler *compiler) deriveExactScalarSummariesFailure() CompileFailure {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 		uses := [...]struct {
-			role    cold.ExactScalarSummaryRole
+			role    programschema.ExactScalarSummaryRole
 			subject identity.ContentID
 		}{
-			{role: cold.ExactScalarSummaryLeft, subject: left},
-			{role: cold.ExactScalarSummaryRight, subject: right},
-			{role: cold.ExactScalarSummaryResult, subject: row.ID()},
+			{role: programschema.ExactScalarSummaryLeft, subject: left},
+			{role: programschema.ExactScalarSummaryRight, subject: right},
+			{role: programschema.ExactScalarSummaryResult, subject: row.ID()},
 		}
 		for _, use := range uses {
 			literal, exactOK := states[use.subject].exact()
 			if !exactOK {
 				continue
 			}
-			summary, summaryOK := cold.NewExactScalarSummary(row.ID(), use.subject, row.body, use.role, cold.SummaryLiteral{
+			summary, summaryOK := programschema.NewExactScalarSummary(row.ID(), use.subject, row.body, use.role, programschema.SummaryLiteral{
 				Kind: uint8(literal.Kind), Integer: literal.Integer, FloatBits: literal.FloatBits,
 			})
 			if !summaryOK {
@@ -253,7 +253,7 @@ func (compiler *compiler) deriveExactScalarSummariesFailure() CompileFailure {
 			summaries = append(summaries, summary)
 		}
 	}
-	identity.SortByContentID(summaries, func(row cold.ExactScalarSummary) identity.ContentID { return row.ID() })
+	identity.SortByContentID(summaries, func(row programschema.ExactScalarSummary) identity.ContentID { return row.ID() })
 	compiler.exactScalarSummaries = summaries
 	compiler.exactScalarStates = states
 	return CompileFailure{}

@@ -8,7 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/causal"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
@@ -43,7 +43,7 @@ type callConstruction struct {
 type callOperandConstruction struct {
 	id   identity.ContentID
 	span identity.ContentID
-	kind cold.CallOperandKind
+	kind programschema.CallOperandKind
 	term keyspace.Term
 }
 
@@ -110,13 +110,13 @@ func (compiler *compiler) callConstruction(index int) (callConstruction, bool) {
 	if receiverTerm != 0 {
 		form = accessgeometry.CallFormMethod
 	}
-	callee, calleeOK := compiler.callOperand(index, term, calleeTerm, cold.CallOperandCallee)
+	callee, calleeOK := compiler.callOperand(index, term, calleeTerm, programschema.CallOperandCallee)
 	receiver := callOperandConstruction{}
 	receiverOK := true
 	if receiverTerm != 0 {
-		receiver, receiverOK = compiler.callOperand(index, term, receiverTerm, cold.CallOperandReceiver)
+		receiver, receiverOK = compiler.callOperand(index, term, receiverTerm, programschema.CallOperandReceiver)
 	}
-	actuals, actualsOK := compiler.callOperand(index, term, actualsTerm, cold.CallOperandActuals)
+	actuals, actualsOK := compiler.callOperand(index, term, actualsTerm, programschema.CallOperandActuals)
 	if !calleeOK || !receiverOK || !actualsOK {
 		return callConstruction{}, false
 	}
@@ -191,16 +191,16 @@ func (compiler *compiler) callConstruction(index int) (callConstruction, bool) {
 	return result, true
 }
 
-func (compiler *compiler) callOperand(index int, call, term keyspace.Term, kind cold.CallOperandKind) (callOperandConstruction, bool) {
+func (compiler *compiler) callOperand(index int, call, term keyspace.Term, kind programschema.CallOperandKind) (callOperandConstruction, bool) {
 	span, _, _, spanOK := compiler.input.EvaluationSpan(term)
 	id := identity.ContentID{}
 	var idOK bool
 	switch kind {
-	case cold.CallOperandCallee:
+	case programschema.CallOperandCallee:
 		id, idOK = compiler.input.CallCalleeIDAt(index)
-	case cold.CallOperandReceiver:
+	case programschema.CallOperandReceiver:
 		id, idOK = compiler.input.CallReceiverIDAt(index)
-	case cold.CallOperandActuals:
+	case programschema.CallOperandActuals:
 		id, idOK = compiler.input.CallActualsIDAt(index)
 	}
 	operand := callOperandConstruction{id: id, span: span, kind: kind, term: term}

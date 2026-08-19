@@ -1,5 +1,5 @@
-// Package cold declares the catalog of Program facts a compiled artifact
-// publishes once and every Link that mounts it shares.
+// Package programschema declares the catalog of Program facts a compiled
+// artifact publishes once and every Link that mounts it shares.
 //
 // # Two catalogs, one declaration source
 //
@@ -15,7 +15,7 @@
 // identity rather than being authored beside it. One declaration source
 // produces both, a cold column is bound to the exact declaration catalog it
 // was compiled under, and no axis of either catalog can address the other.
-package cold
+package programschema
 
 import "github.com/wippyai/go-lua/analysis/identity"
 

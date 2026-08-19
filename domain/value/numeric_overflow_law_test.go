@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 )
 
 // The overflow discipline is Value's law, not a consumer's table. These laws
@@ -13,10 +13,10 @@ import (
 // answers for none, and each discipline carries exactly one spelling.
 
 func TestBinaryNumericOverflowCoversTheSealedArithmeticOperatorsLaw(t *testing.T) {
-	representations := []cold.NumericRepresentation{
-		cold.NumericRepresentationInteger,
-		cold.NumericRepresentationFloat,
-		cold.NumericRepresentationNumber,
+	representations := []programschema.NumericRepresentation{
+		programschema.NumericRepresentationInteger,
+		programschema.NumericRepresentationFloat,
+		programschema.NumericRepresentationNumber,
 	}
 	for op := flowkind.BinaryAdd; op <= flowkind.BinaryPow; op++ {
 		for _, left := range representations {
@@ -44,16 +44,16 @@ func TestBinaryNumericOverflowIsTheDeclaredLawLaw(t *testing.T) {
 		{op: flowkind.BinaryMod, integer: NumericOverflowClosedInteger, widened: NumericOverflowIEEE754},
 		{op: flowkind.BinaryPow, integer: NumericOverflowIEEE754, widened: NumericOverflowIEEE754},
 	} {
-		integer, integerOK := BinaryNumericOverflow(law.op, cold.NumericRepresentationInteger, cold.NumericRepresentationInteger)
+		integer, integerOK := BinaryNumericOverflow(law.op, programschema.NumericRepresentationInteger, programschema.NumericRepresentationInteger)
 		if !integerOK || integer != law.integer {
 			t.Fatalf("operator %d over two integers is %q, want %q", law.op, integer, law.integer)
 		}
-		for _, mixed := range [][2]cold.NumericRepresentation{
-			{cold.NumericRepresentationInteger, cold.NumericRepresentationFloat},
-			{cold.NumericRepresentationFloat, cold.NumericRepresentationInteger},
-			{cold.NumericRepresentationNumber, cold.NumericRepresentationInteger},
-			{cold.NumericRepresentationFloat, cold.NumericRepresentationFloat},
-			{cold.NumericRepresentationNumber, cold.NumericRepresentationNumber},
+		for _, mixed := range [][2]programschema.NumericRepresentation{
+			{programschema.NumericRepresentationInteger, programschema.NumericRepresentationFloat},
+			{programschema.NumericRepresentationFloat, programschema.NumericRepresentationInteger},
+			{programschema.NumericRepresentationNumber, programschema.NumericRepresentationInteger},
+			{programschema.NumericRepresentationFloat, programschema.NumericRepresentationFloat},
+			{programschema.NumericRepresentationNumber, programschema.NumericRepresentationNumber},
 		} {
 			widened, widenedOK := BinaryNumericOverflow(law.op, mixed[0], mixed[1])
 			if !widenedOK || widened != law.widened {
@@ -65,32 +65,32 @@ func TestBinaryNumericOverflowIsTheDeclaredLawLaw(t *testing.T) {
 
 func TestNumericOverflowRejectsOperatorsWithoutArithmeticLaw(t *testing.T) {
 	for op := flowkind.BinaryConcat; op <= flowkind.BinaryGreaterEqual; op++ {
-		if overflow, ok := BinaryNumericOverflow(op, cold.NumericRepresentationInteger, cold.NumericRepresentationInteger); ok || overflow != NumericOverflowInvalid {
+		if overflow, ok := BinaryNumericOverflow(op, programschema.NumericRepresentationInteger, programschema.NumericRepresentationInteger); ok || overflow != NumericOverflowInvalid {
 			t.Fatalf("non-arithmetic operator %d stated the overflow discipline %q", op, overflow)
 		}
 	}
-	if _, ok := BinaryNumericOverflow(flowkind.BinaryAdd, cold.NumericRepresentationInvalid, cold.NumericRepresentationInteger); ok {
+	if _, ok := BinaryNumericOverflow(flowkind.BinaryAdd, programschema.NumericRepresentationInvalid, programschema.NumericRepresentationInteger); ok {
 		t.Fatal("unknown left representation stated an overflow discipline")
 	}
-	if _, ok := BinaryNumericOverflow(flowkind.BinaryAdd, cold.NumericRepresentationInteger, cold.NumericRepresentationInvalid); ok {
+	if _, ok := BinaryNumericOverflow(flowkind.BinaryAdd, programschema.NumericRepresentationInteger, programschema.NumericRepresentationInvalid); ok {
 		t.Fatal("unknown right representation stated an overflow discipline")
 	}
 	for _, op := range []flowkind.UnaryOp{flowkind.UnaryNot, flowkind.UnaryLen, flowkind.UnaryBitNot} {
-		if _, ok := UnaryNumericOverflow(op, cold.NumericRepresentationInteger); ok {
+		if _, ok := UnaryNumericOverflow(op, programschema.NumericRepresentationInteger); ok {
 			t.Fatalf("non-numeric unary operator %d stated an overflow discipline", op)
 		}
 	}
-	if _, ok := UnaryNumericOverflow(flowkind.UnaryNeg, cold.NumericRepresentationInvalid); ok {
+	if _, ok := UnaryNumericOverflow(flowkind.UnaryNeg, programschema.NumericRepresentationInvalid); ok {
 		t.Fatal("unknown unary operand representation stated an overflow discipline")
 	}
 }
 
 func TestUnaryNumericOverflowIsTheDeclaredLawLaw(t *testing.T) {
-	integer, integerOK := UnaryNumericOverflow(flowkind.UnaryNeg, cold.NumericRepresentationInteger)
+	integer, integerOK := UnaryNumericOverflow(flowkind.UnaryNeg, programschema.NumericRepresentationInteger)
 	if !integerOK || integer != NumericOverflowClosedInteger {
 		t.Fatalf("negated integer is %q, want %q", integer, NumericOverflowClosedInteger)
 	}
-	for _, operand := range []cold.NumericRepresentation{cold.NumericRepresentationFloat, cold.NumericRepresentationNumber} {
+	for _, operand := range []programschema.NumericRepresentation{programschema.NumericRepresentationFloat, programschema.NumericRepresentationNumber} {
 		widened, widenedOK := UnaryNumericOverflow(flowkind.UnaryNeg, operand)
 		if !widenedOK || widened != NumericOverflowIEEE754 {
 			t.Fatalf("negated representation %d is %q, want %q", operand, widened, NumericOverflowIEEE754)

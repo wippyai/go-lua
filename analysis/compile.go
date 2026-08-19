@@ -24,8 +24,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/program/link/mounted"
 	"github.com/wippyai/go-lua/analysis/schema"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 )
@@ -223,7 +223,7 @@ func (state *compiledState) publishComposition(source *link.Link) bool {
 		apps = append(apps, progApps...)
 		handlers = append(handlers, selectapply.Handlers(prog, progApps)...)
 	}
-	mountWrite, mountMinted := engine.MintColumnWrite[identity.ContentID, cold.Program](state.binding.SchemaBinding(), programmount.OutputKey, programmount.AxisKey)
+	mountWrite, mountMinted := engine.MintColumnWrite[identity.ContentID, programmount.Program](state.binding.SchemaBinding(), programmount.OutputKey, programmount.AxisKey)
 	if !mountMinted || !mountWrite.Available() {
 		return false
 	}
@@ -234,7 +234,7 @@ func (state *compiledState) publishComposition(source *link.Link) bool {
 	if !denominatorOK {
 		return false
 	}
-	directoryRows := make([]cold.Program, len(state.artifacts.mounts))
+	directoryRows := make([]programmount.Program, len(state.artifacts.mounts))
 	for index, mount := range state.artifacts.mounts {
 		directoryRows[index] = mount.program
 	}
@@ -302,7 +302,7 @@ type mountedProgramArtifact struct {
 	// artifact's frozen cold publication under the module key it is mounted
 	// at. Families that have moved onto the cold publication are read through
 	// it; the ingress view below still carries the families that have not.
-	program   cold.Program
+	program   programmount.Program
 	snapshot  *ingress.Snapshot
 	template  *rows.ArtifactScalarTemplate
 	roles     *scalarlower.RoleDirectory
@@ -544,9 +544,12 @@ func compileProgramArtifacts(source *link.Link, compilation composite.Compilatio
 		if !coldOK || !catalog.Available() {
 			return nil, false
 		}
-		program := cold.Program{
-			Frozen: frozen, ModuleKey: moduleKey, ArtifactID: artifact.ID(),
-			ProgramID: programID, SchemaID: schemaID,
+		program := programmount.Program{
+			ModuleKey: moduleKey,
+			Program: programschema.Program{
+				Frozen: frozen, ArtifactID: artifact.ID(),
+				ProgramID: programID, SchemaID: schemaID,
+			},
 		}
 		if !program.Available() {
 			return nil, false

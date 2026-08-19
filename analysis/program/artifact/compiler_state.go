@@ -3,7 +3,7 @@ package artifact
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 )
 
@@ -19,27 +19,27 @@ type compiler struct {
 	regions                    []Region
 	events                     []WTOEvent
 	values                     []ValuesRow
-	calls                      []cold.Call
-	callOperands               []cold.CallOperand
-	callArguments              []cold.CallArgument
-	callTypeArguments          []cold.CallTypeArgument
-	callsByID                  map[identity.ContentID]cold.Call
-	bodies                     []cold.Body
-	bodyEntries                []cold.BodyEntry
-	bodyRoots                  []cold.BodyRoot
+	calls                      []programschema.Call
+	callOperands               []programschema.CallOperand
+	callArguments              []programschema.CallArgument
+	callTypeArguments          []programschema.CallTypeArgument
+	callsByID                  map[identity.ContentID]programschema.Call
+	bodies                     []programschema.Body
+	bodyEntries                []programschema.BodyEntry
+	bodyRoots                  []programschema.BodyRoot
 	functionBoundaries         []FunctionBoundaryRow
-	callTargets                []cold.CallTarget
-	outcomes                   []cold.Outcome
-	outcomeReturnValues        []cold.OutcomeReturnValue
-	outcomePoints              []cold.OutcomePoint
+	callTargets                []programschema.CallTarget
+	outcomes                   []programschema.Outcome
+	outcomeReturnValues        []programschema.OutcomeReturnValue
+	outcomePoints              []programschema.OutcomePoint
 	heapAllocations            []HeapAllocationRow
 	heapIndexes                []HeapIndexRow
 	allocationRows             []allocationCompileRow
 	occurrences                []OccurrenceRow
-	exactScalarSummaries       []cold.ExactScalarSummary
+	exactScalarSummaries       []programschema.ExactScalarSummary
 	exactScalarStates          map[identity.ContentID]exactScalarState
-	arithmeticSummaries        []cold.ArithmeticSummary
-	unarySummaries             []cold.UnarySummary
+	arithmeticSummaries        []programschema.ArithmeticSummary
+	unarySummaries             []programschema.UnarySummary
 	ruleOccurrences            []RuleOccurrence
 	issuance                   IssuanceDirectory
 	diagnosticObservations     []DiagnosticObservationRow

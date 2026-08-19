@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 )
 
@@ -34,33 +34,36 @@ func mountLawIdentity(t *testing.T, tag string) identity.ContentID {
 	return id
 }
 
-func mountLawProgram(t *testing.T, module string) cold.Program {
+func mountLawProgram(t *testing.T, module string) Program {
 	t.Helper()
 	schema := mountLawIdentity(t, "runtime-schema")
-	catalog, derived := cold.CatalogID(schema)
+	catalog, derived := programschema.CatalogID(schema)
 	if !derived {
 		t.Fatal("cold catalog")
 	}
-	content, sealed := cold.CallTargetFamily().Content(nil, catalog)
+	content, sealed := programschema.CallTargetFamily().Content(nil, catalog)
 	if !sealed {
 		t.Fatal("cold family")
 	}
 	builder := snapshot.NewFrozen(catalog, identity.StoreID(3))
-	if err := snapshot.PutFrozenColumn(&builder, cold.CallTargetFamily().Axis(catalog), content); err != nil {
+	if err := snapshot.PutFrozenColumn(&builder, programschema.CallTargetFamily().Axis(catalog), content); err != nil {
 		t.Fatalf("put cold column: %v", err)
 	}
 	frozen, err := builder.Seal()
 	if err != nil {
 		t.Fatalf("seal cold publication: %v", err)
 	}
-	return cold.Program{
-		Frozen: frozen, ModuleKey: mountLawIdentity(t, module),
-		ArtifactID: mountLawIdentity(t, "artifact"), ProgramID: mountLawIdentity(t, "program"),
-		SchemaID: schema,
+	return Program{
+		ModuleKey: mountLawIdentity(t, module),
+		Program: programschema.Program{
+			Frozen: frozen,
+			ArtifactID: mountLawIdentity(t, "artifact"), ProgramID: mountLawIdentity(t, "program"),
+			SchemaID: schema,
+		},
 	}
 }
 
-func sealMountLaw(t *testing.T, rows []cold.Program) (snapshot.Snapshot, snapshot.Axis[identity.ContentID, cold.Program]) {
+func sealMountLaw(t *testing.T, rows []Program) (snapshot.Snapshot, snapshot.Axis[identity.ContentID, Program]) {
 	t.Helper()
 	schema := mountLawIdentity(t, "link-schema")
 	denominator, derived := DenominatorID(mountLawIdentity(t, "link"))
@@ -88,9 +91,9 @@ func sealMountLaw(t *testing.T, rows []cold.Program) (snapshot.Snapshot, snapsho
 // the published universe rather than merely missing from it.
 func TestDirectoryAnswersForItsOwnModulesOnly(t *testing.T) {
 	first, second := mountLawProgram(t, "module-a"), mountLawProgram(t, "module-b")
-	published, address := sealMountLaw(t, []cold.Program{first, second})
+	published, address := sealMountLaw(t, []Program{first, second})
 
-	for _, want := range []cold.Program{first, second} {
+	for _, want := range []Program{first, second} {
 		row, resolved := Mounted(&published, address, want.ModuleKey)
 		if !resolved {
 			t.Fatalf("module %x resolves to no row", want.ModuleKey[:4])
@@ -111,7 +114,7 @@ func TestOneProgramMountedTwiceSharesOneColdPublication(t *testing.T) {
 	first := mountLawProgram(t, "module-a")
 	second := first
 	second.ModuleKey = mountLawIdentity(t, "module-b")
-	published, address := sealMountLaw(t, []cold.Program{first, second})
+	published, address := sealMountLaw(t, []Program{first, second})
 
 	left, leftOK := Mounted(&published, address, first.ModuleKey)
 	right, rightOK := Mounted(&published, address, second.ModuleKey)
@@ -135,23 +138,23 @@ func TestDirectoryRefusesADuplicateOrIncompleteMount(t *testing.T) {
 	}
 	row := mountLawProgram(t, "module-a")
 
-	if _, sealed := Content([]cold.Program{row, row}, denominator); sealed {
+	if _, sealed := Content([]Program{row, row}, denominator); sealed {
 		t.Fatal("one module key sealed two rows")
 	}
 	incomplete := row
 	incomplete.ArtifactID = identity.ContentID{}
-	if _, sealed := Content([]cold.Program{incomplete}, denominator); sealed {
+	if _, sealed := Content([]Program{incomplete}, denominator); sealed {
 		t.Fatal("a row with no artifact identity sealed into the directory")
 	}
 	unpublished := row
 	unpublished.Frozen = snapshot.Frozen{}
-	if _, sealed := Content([]cold.Program{unpublished}, denominator); sealed {
+	if _, sealed := Content([]Program{unpublished}, denominator); sealed {
 		t.Fatal("a row with no cold publication sealed into the directory")
 	}
 	if _, sealed := Content(nil, denominator); sealed {
 		t.Fatal("a Link with no mount sealed a directory")
 	}
-	if _, sealed := Content([]cold.Program{row}, identity.ContentID{}); sealed {
+	if _, sealed := Content([]Program{row}, identity.ContentID{}); sealed {
 		t.Fatal("a directory sealed under no denominator")
 	}
 	if _, derived := DenominatorID(identity.ContentID{}); derived {

@@ -12,7 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	packdomain "github.com/wippyai/go-lua/domain/pack"
@@ -77,8 +77,8 @@ func runtimeContextBindingSchema(t testing.TB, contract *target.Contract, operat
 		t.Fatal("binding schemas")
 	}
 	frozen, catalog, coldPublished := artifact.ColdPublication()
-	coldProgram := cold.Program{
-		Frozen: frozen, ModuleKey: module, ArtifactID: artifact.ID(),
+	coldProgram := programschema.Program{
+		Frozen: frozen, ArtifactID: artifact.ID(),
 		ProgramID: artifact.CompileKey().ProgramID(), SchemaID: artifact.CompileKey().SchemaDigest(),
 	}
 	if !coldPublished || !catalog.Available() || !coldProgram.Available() {
@@ -90,7 +90,7 @@ func runtimeContextBindingSchema(t testing.TB, contract *target.Contract, operat
 	}
 	for index := 0; index < callCount; index++ {
 		call, callOK := coldProgram.CallAt(index)
-		if callOK && call.Form() == cold.CallFormMethod {
+		if callOK && call.Form() == programschema.CallFormMethod {
 			return runtimeContextBindingFixture{pack: packSchema, heap: heapSchema, module: module, callID: call.ID(), operation: operation}
 		}
 	}

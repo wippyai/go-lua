@@ -11,8 +11,8 @@ import (
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
 	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 	"github.com/wippyai/go-lua/analysis/schema"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
 	schemadiag "github.com/wippyai/go-lua/analysis/schema/diagnostic"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	snapshotstore "github.com/wippyai/go-lua/analysis/snapshot"
 )
@@ -95,14 +95,14 @@ func (snapshot *Snapshot) coldView() coldView {
 	return coldView{frozen: &snapshot.frozen, catalog: snapshot.coldCatalog}
 }
 
-func coldCount[V cold.Row](view coldView, family cold.Family[V]) (int, bool) {
+func coldCount[V programschema.Row](view coldView, family programschema.Family[V]) (int, bool) {
 	if view.frozen == nil {
 		return 0, false
 	}
 	return family.Count(view.frozen, view.catalog)
 }
 
-func coldRow[V cold.Row](view coldView, family cold.Family[V], index int) (V, bool) {
+func coldRow[V programschema.Row](view coldView, family programschema.Family[V], index int) (V, bool) {
 	var absent V
 	if view.frozen == nil {
 		return absent, false
@@ -133,24 +133,20 @@ func (snapshot *Snapshot) SchemaID() identity.ContentID {
 	return snapshot.schemaID
 }
 
-// ColdProgram authenticates this ingress snapshot as the same published cold
-// Program mounted under module. Summary consumers use this row rather than
-// reopening ingress or retaining a second summary projection.
-func (snapshot *Snapshot) ColdProgram(module identity.ContentID) (cold.Program, bool) {
-	if !snapshot.Available() || !module.Available() {
-		return cold.Program{}, false
+// Frozen returns this snapshot's neutral compiled publication. The publication
+// carries no mount identity; a mount row adds its module key at the boundary
+// that owns placement.
+func (snapshot *Snapshot) Frozen() snapshotstore.Frozen {
+	if !snapshot.Available() {
+		return snapshotstore.Frozen{}
 	}
-	program := cold.Program{
-		Frozen: snapshot.frozen, ModuleKey: module,
-		ArtifactID: snapshot.artifactID, ProgramID: snapshot.programID, SchemaID: snapshot.schemaID,
-	}
-	return program, program.Available()
+	return snapshot.frozen
 }
 func (snapshot *Snapshot) PointCount() int {
 	if !snapshot.Available() {
 		return 0
 	}
-	count, published := coldCount(snapshot.coldView(), cold.PointFamily())
+	count, published := coldCount(snapshot.coldView(), programschema.PointFamily())
 	if !published {
 		return 0
 	}
@@ -161,7 +157,7 @@ func (snapshot *Snapshot) PointAt(index int) (Point, bool) {
 		return Point{}, false
 	}
 	view := snapshot.coldView()
-	row, held := coldRow(view, cold.PointFamily(), index)
+	row, held := coldRow(view, programschema.PointFamily(), index)
 	if !held {
 		return Point{}, false
 	}
@@ -171,7 +167,7 @@ func (snapshot *Snapshot) StructuralEdgeCount() int {
 	if !snapshot.Available() {
 		return 0
 	}
-	count, published := coldCount(snapshot.coldView(), cold.EnvironmentEdgeFamily())
+	count, published := coldCount(snapshot.coldView(), programschema.EnvironmentEdgeFamily())
 	if !published {
 		return 0
 	}
@@ -182,7 +178,7 @@ func (snapshot *Snapshot) StructuralEdgeAt(index int) (StructuralEdge, bool) {
 		return StructuralEdge{}, false
 	}
 	view := snapshot.coldView()
-	row, held := coldRow(view, cold.EnvironmentEdgeFamily(), index)
+	row, held := coldRow(view, programschema.EnvironmentEdgeFamily(), index)
 	if !held {
 		return StructuralEdge{}, false
 	}
@@ -208,7 +204,7 @@ func (snapshot *Snapshot) RegionCount() int {
 	if !snapshot.Available() {
 		return 0
 	}
-	count, published := coldCount(snapshot.coldView(), cold.RegionFamily())
+	count, published := coldCount(snapshot.coldView(), programschema.RegionFamily())
 	if !published {
 		return 0
 	}
@@ -219,7 +215,7 @@ func (snapshot *Snapshot) RegionAt(index int) (Region, bool) {
 		return Region{}, false
 	}
 	view := snapshot.coldView()
-	row, held := coldRow(view, cold.RegionFamily(), index)
+	row, held := coldRow(view, programschema.RegionFamily(), index)
 	if !held {
 		return Region{}, false
 	}
@@ -229,7 +225,7 @@ func (snapshot *Snapshot) EventCount() int {
 	if !snapshot.Available() {
 		return 0
 	}
-	count, published := coldCount(snapshot.coldView(), cold.WTOEventFamily())
+	count, published := coldCount(snapshot.coldView(), programschema.WTOEventFamily())
 	if !published {
 		return 0
 	}
@@ -239,7 +235,7 @@ func (snapshot *Snapshot) EventAt(index int) (Event, bool) {
 	if !snapshot.Available() {
 		return Event{}, false
 	}
-	row, held := coldRow(snapshot.coldView(), cold.WTOEventFamily(), index)
+	row, held := coldRow(snapshot.coldView(), programschema.WTOEventFamily(), index)
 	if !held {
 		return Event{}, false
 	}
@@ -265,7 +261,7 @@ func (snapshot *Snapshot) BodyTransportCount() int {
 	if !snapshot.Available() {
 		return 0
 	}
-	count, published := coldCount(snapshot.coldView(), cold.BodyFamily())
+	count, published := coldCount(snapshot.coldView(), programschema.BodyFamily())
 	if !published || count != len(snapshot.bodyExits) {
 		return 0
 	}
@@ -276,7 +272,7 @@ func (snapshot *Snapshot) BodyTransportAt(index int) (BodyTransport, bool) {
 		return BodyTransport{}, false
 	}
 	view := snapshot.coldView()
-	body, held := coldRow(view, cold.BodyFamily(), index)
+	body, held := coldRow(view, programschema.BodyFamily(), index)
 	if !held {
 		return BodyTransport{}, false
 	}
@@ -298,7 +294,7 @@ func (snapshot *Snapshot) CallArgumentCount() int {
 	if !snapshot.Available() {
 		return 0
 	}
-	count, published := coldCount(snapshot.coldView(), cold.CallArgumentFamily())
+	count, published := coldCount(snapshot.coldView(), programschema.CallArgumentFamily())
 	if !published {
 		return 0
 	}
@@ -308,7 +304,7 @@ func (snapshot *Snapshot) CallArgumentAt(index int) (CallArgument, bool) {
 	if !snapshot.Available() {
 		return CallArgument{}, false
 	}
-	row, held := coldRow(snapshot.coldView(), cold.CallArgumentFamily(), index)
+	row, held := coldRow(snapshot.coldView(), programschema.CallArgumentFamily(), index)
 	if !held {
 		return CallArgument{}, false
 	}
@@ -330,7 +326,7 @@ func (snapshot *Snapshot) CallCount() int {
 	if !snapshot.Available() {
 		return 0
 	}
-	count, published := coldCount(snapshot.coldView(), cold.CallFamily())
+	count, published := coldCount(snapshot.coldView(), programschema.CallFamily())
 	if !published {
 		return 0
 	}
@@ -341,7 +337,7 @@ func (snapshot *Snapshot) CallAt(index int) (Call, bool) {
 		return Call{}, false
 	}
 	view := snapshot.coldView()
-	row, held := coldRow(view, cold.CallFamily(), index)
+	row, held := coldRow(view, programschema.CallFamily(), index)
 	if !held {
 		return Call{}, false
 	}
@@ -373,7 +369,7 @@ func (snapshot *Snapshot) HeapAllocationCount() int {
 	if !snapshot.Available() {
 		return 0
 	}
-	count, published := coldCount(snapshot.coldView(), cold.HeapAllocationFamily())
+	count, published := coldCount(snapshot.coldView(), programschema.HeapAllocationFamily())
 	if !published {
 		return 0
 	}
@@ -384,7 +380,7 @@ func (snapshot *Snapshot) HeapAllocationAt(index int) (HeapAllocation, bool) {
 		return HeapAllocation{}, false
 	}
 	view := snapshot.coldView()
-	row, held := coldRow(view, cold.HeapAllocationFamily(), index)
+	row, held := coldRow(view, programschema.HeapAllocationFamily(), index)
 	if !held {
 		return HeapAllocation{}, false
 	}
@@ -394,7 +390,7 @@ func (snapshot *Snapshot) ValuesCount() int {
 	if !snapshot.Available() {
 		return 0
 	}
-	count, published := coldCount(snapshot.coldView(), cold.ValuesFamily())
+	count, published := coldCount(snapshot.coldView(), programschema.ValuesFamily())
 	if !published {
 		return 0
 	}
@@ -404,7 +400,7 @@ func (snapshot *Snapshot) StaticTypeValueCount() int {
 	if !snapshot.Available() {
 		return 0
 	}
-	count, published := coldCount(snapshot.coldView(), cold.StaticTypeValueFamily())
+	count, published := coldCount(snapshot.coldView(), programschema.StaticTypeValueFamily())
 	if !published {
 		return 0
 	}
@@ -414,7 +410,7 @@ func (snapshot *Snapshot) StaticTypeValueAt(index int) (StaticTypeValue, bool) {
 	if !snapshot.Available() {
 		return StaticTypeValue{}, false
 	}
-	row, held := coldRow(snapshot.coldView(), cold.StaticTypeValueFamily(), index)
+	row, held := coldRow(snapshot.coldView(), programschema.StaticTypeValueFamily(), index)
 	if !held {
 		return StaticTypeValue{}, false
 	}
@@ -447,7 +443,7 @@ func (snapshot *Snapshot) StaticTypeArgumentCount() int {
 	if !snapshot.Available() {
 		return 0
 	}
-	count, published := coldCount(snapshot.coldView(), cold.CallTypeArgumentFamily())
+	count, published := coldCount(snapshot.coldView(), programschema.CallTypeArgumentFamily())
 	if !published {
 		return 0
 	}
@@ -457,7 +453,7 @@ func (snapshot *Snapshot) StaticTypeArgumentAt(index int) (StaticTypeArgument, b
 	if !snapshot.Available() {
 		return StaticTypeArgument{}, false
 	}
-	row, held := coldRow(snapshot.coldView(), cold.CallTypeArgumentFamily(), index)
+	row, held := coldRow(snapshot.coldView(), programschema.CallTypeArgumentFamily(), index)
 	if !held {
 		return StaticTypeArgument{}, false
 	}
@@ -467,7 +463,7 @@ func (snapshot *Snapshot) StaticExpressionCount() int {
 	if !snapshot.Available() {
 		return 0
 	}
-	count, published := coldCount(snapshot.coldView(), cold.StaticExpressionFamily())
+	count, published := coldCount(snapshot.coldView(), programschema.StaticExpressionFamily())
 	if !published {
 		return 0
 	}
@@ -477,7 +473,7 @@ func (snapshot *Snapshot) StaticExpressionAt(index int) (StaticExpression, bool)
 	if !snapshot.Available() {
 		return StaticExpression{}, false
 	}
-	row, held := coldRow(snapshot.coldView(), cold.StaticExpressionFamily(), index)
+	row, held := coldRow(snapshot.coldView(), programschema.StaticExpressionFamily(), index)
 	if !held {
 		return StaticExpression{}, false
 	}
@@ -500,7 +496,7 @@ func (snapshot *Snapshot) ValuesAt(index int) (Values, bool) {
 		return Values{}, false
 	}
 	view := snapshot.coldView()
-	row, held := coldRow(view, cold.ValuesFamily(), index)
+	row, held := coldRow(view, programschema.ValuesFamily(), index)
 	if !held {
 		return Values{}, false
 	}
@@ -533,7 +529,7 @@ func (snapshot *Snapshot) HeapIndexCount() int {
 	if !snapshot.Available() {
 		return 0
 	}
-	count, published := coldCount(snapshot.coldView(), cold.HeapIndexFamily())
+	count, published := coldCount(snapshot.coldView(), programschema.HeapIndexFamily())
 	if !published {
 		return 0
 	}
@@ -543,7 +539,7 @@ func (snapshot *Snapshot) HeapIndexAt(index int) (HeapIndex, bool) {
 	if !snapshot.Available() {
 		return HeapIndex{}, false
 	}
-	row, held := coldRow(snapshot.coldView(), cold.HeapIndexFamily(), index)
+	row, held := coldRow(snapshot.coldView(), programschema.HeapIndexFamily(), index)
 	if !held {
 		return HeapIndex{}, false
 	}
@@ -613,7 +609,7 @@ func (snapshot *Snapshot) OccurrenceForID(kind uint8, id identity.ContentID) (Oc
 }
 
 type Point struct {
-	row  cold.Point
+	row  programschema.Point
 	view coldView
 }
 
@@ -625,7 +621,7 @@ func (row Point) DecisionAt(index int) (identity.ContentID, bool) {
 	if !spanOK || index < 0 || uint64(index) >= uint64(count) {
 		return identity.ContentID{}, false
 	}
-	decision, held := coldRow(row.view, cold.PointDecisionFamily(), int(offset)+index)
+	decision, held := coldRow(row.view, programschema.PointDecisionFamily(), int(offset)+index)
 	if !held {
 		return identity.ContentID{}, false
 	}
@@ -633,7 +629,7 @@ func (row Point) DecisionAt(index int) (identity.ContentID, bool) {
 }
 
 type StructuralEdge struct {
-	row  cold.EnvironmentEdge
+	row  programschema.EnvironmentEdge
 	view coldView
 	arm  StructuralArm
 }
@@ -667,7 +663,7 @@ func (row StructuralEdge) ResetAt(index int) (identity.ContentID, bool) {
 	if !spanOK || index < 0 || uint64(index) >= uint64(count) {
 		return identity.ContentID{}, false
 	}
-	witness, held := coldRow(row.view, cold.EnvironmentResetFamily(), int(offset)+index)
+	witness, held := coldRow(row.view, programschema.EnvironmentResetFamily(), int(offset)+index)
 	if !held {
 		return identity.ContentID{}, false
 	}
@@ -696,7 +692,7 @@ func (row LocalTransfer) WritesAt(index int) (schema.Key, bool) {
 }
 
 type Region struct {
-	row  cold.Region
+	row  programschema.Region
 	view coldView
 }
 
@@ -716,7 +712,7 @@ func (row Region) MemberAt(index int) (identity.ContentID, bool) {
 	if !spanOK || index < 0 || uint64(index) >= uint64(count) {
 		return identity.ContentID{}, false
 	}
-	member, held := coldRow(row.view, cold.RegionMemberFamily(), int(offset)+index)
+	member, held := coldRow(row.view, programschema.RegionMemberFamily(), int(offset)+index)
 	if !held {
 		return identity.ContentID{}, false
 	}
@@ -726,7 +722,7 @@ func (row Region) MemberAt(index int) (identity.ContentID, bool) {
 // Event is one order bracket read out of the published plane. Its kind is the
 // sealed structural vocabulary's member, projected at the read site.
 type Event struct {
-	row  cold.WTOEvent
+	row  programschema.WTOEvent
 	kind EventKind
 }
 
@@ -766,7 +762,7 @@ func (row RulePlacement) InputKind() uint8 { return row.inputKind }
 // exit memberships computed during Lower. The Body row and entries are read
 // from the cold publication; only the derived exit set is retained here.
 type BodyTransport struct {
-	body  cold.Body
+	body  programschema.Body
 	view  coldView
 	exits []identity.ContentID
 }
@@ -778,7 +774,7 @@ func (row BodyTransport) EntryAt(index int) (identity.ContentID, bool) {
 	if !ok || index < 0 || uint64(index) >= uint64(count) {
 		return identity.ContentID{}, false
 	}
-	entry, held := coldRow(row.view, cold.BodyEntryFamily(), int(offset)+index)
+	entry, held := coldRow(row.view, programschema.BodyEntryFamily(), int(offset)+index)
 	return entry.PointID(), held && entry.BodyID() == row.body.ID()
 }
 func (row BodyTransport) ExitCount() int { return len(row.exits) }
@@ -851,15 +847,15 @@ func (row FunctionBoundary) Available() bool {
 	return true
 }
 
-type CallOperand struct{ row cold.CallOperand }
+type CallOperand struct{ row programschema.CallOperand }
 
 func (row CallOperand) ID() identity.ContentID      { return row.row.ID() }
 func (row CallOperand) CallID() identity.ContentID  { return row.row.CallID() }
 func (row CallOperand) ValueID() identity.ContentID { return row.row.ValueID() }
 func (row CallOperand) SpanID() identity.ContentID  { return row.row.SpanID() }
-func (row CallOperand) Callee() bool                { return row.row.Kind() == cold.CallOperandCallee }
+func (row CallOperand) Callee() bool                { return row.row.Kind() == programschema.CallOperandCallee }
 
-type CallArgument struct{ row cold.CallArgument }
+type CallArgument struct{ row programschema.CallArgument }
 
 func (row CallArgument) Available() bool              { return row.row.Available() }
 func (row CallArgument) ID() identity.ContentID       { return row.row.ID() }
@@ -871,7 +867,7 @@ func (row CallArgument) SpanID() identity.ContentID   { return row.row.SpanID() 
 func (row CallArgument) Index() uint32                { return row.row.Index() }
 
 type Call struct {
-	row  cold.Call
+	row  programschema.Call
 	view coldView
 }
 
@@ -895,7 +891,7 @@ func (row Call) OperandAt(index int) (CallOperand, bool) {
 	if !spanOK || index < 0 || uint64(index) >= uint64(count) {
 		return CallOperand{}, false
 	}
-	operand, held := coldRow(row.view, cold.CallOperandFamily(), int(offset)+index)
+	operand, held := coldRow(row.view, programschema.CallOperandFamily(), int(offset)+index)
 	if !held {
 		return CallOperand{}, false
 	}
@@ -906,7 +902,7 @@ func (row Call) ArgumentAt(index int) (CallArgument, bool) {
 	if !spanOK || index < 0 || uint64(index) >= uint64(count) {
 		return CallArgument{}, false
 	}
-	argument, held := coldRow(row.view, cold.CallArgumentFamily(), int(offset)+index)
+	argument, held := coldRow(row.view, programschema.CallArgumentFamily(), int(offset)+index)
 	if !held {
 		return CallArgument{}, false
 	}
@@ -925,7 +921,7 @@ func (snapshot *Snapshot) CallArgumentFor(callIndex, childIndex int) (CallArgume
 // here is the sealed cold row plus the address it was read at, so a field or
 // member span is rejoined at the read site and the plane is declared once.
 
-type HeapField struct{ row cold.HeapField }
+type HeapField struct{ row programschema.HeapField }
 
 func (row HeapField) Available() bool                  { return row.row.Available() }
 func (row HeapField) ID() identity.ContentID           { return row.row.ID() }
@@ -939,7 +935,7 @@ func (row HeapField) Values() (identity.ContentID, int, bool, bool) {
 func (row HeapField) NormalizedKey() (uint64, bool) { return row.row.NormalizedKey() }
 
 type HeapAllocation struct {
-	row  cold.HeapAllocation
+	row  programschema.HeapAllocation
 	view coldView
 }
 
@@ -954,17 +950,17 @@ func (row HeapAllocation) FieldAt(index int) (HeapField, bool) {
 	if !spanOK || index < 0 || uint64(index) >= uint64(count) {
 		return HeapField{}, false
 	}
-	field, held := coldRow(row.view, cold.HeapFieldFamily(), int(offset)+index)
+	field, held := coldRow(row.view, programschema.HeapFieldFamily(), int(offset)+index)
 	if !held {
 		return HeapField{}, false
 	}
 	return HeapField{row: field}, true
 }
 
-type ValuesMember struct{ row cold.ValuesMember }
+type ValuesMember struct{ row programschema.ValuesMember }
 
 func newValuesMember(id identity.ContentID) (ValuesMember, bool) {
-	row, ok := cold.NewValuesMember(id)
+	row, ok := programschema.NewValuesMember(id)
 	if !ok {
 		return ValuesMember{}, false
 	}
@@ -973,14 +969,14 @@ func newValuesMember(id identity.ContentID) (ValuesMember, bool) {
 
 func (row ValuesMember) ID() identity.ContentID { return row.row.ID() }
 
-type ValuesTail struct{ row cold.ValuesTail }
+type ValuesTail struct{ row programschema.ValuesTail }
 
 func (row ValuesTail) Present() bool          { return row.row.Present() }
 func (row ValuesTail) ID() identity.ContentID { return row.row.ID() }
 func (row ValuesTail) Kind() uint8            { return uint8(row.row.Kind()) }
 
 type Values struct {
-	row  cold.Values
+	row  programschema.Values
 	view coldView
 }
 
@@ -991,7 +987,7 @@ func (row Values) MemberAt(index int) (ValuesMember, bool) {
 	if !spanOK || index < 0 || uint64(index) >= uint64(count) {
 		return ValuesMember{}, false
 	}
-	member, held := coldRow(row.view, cold.ValuesMemberFamily(), int(offset)+index)
+	member, held := coldRow(row.view, programschema.ValuesMemberFamily(), int(offset)+index)
 	if !held {
 		return ValuesMember{}, false
 	}
@@ -1002,7 +998,7 @@ func (row Values) Tail() (ValuesTail, bool) {
 	return ValuesTail{row: tail}, present
 }
 
-type StaticTypeValue struct{ row cold.StaticTypeValue }
+type StaticTypeValue struct{ row programschema.StaticTypeValue }
 
 func (row StaticTypeValue) ID() identity.ContentID          { return row.row.ID() }
 func (row StaticTypeValue) BodyPathID() identity.ContentID  { return row.row.BodyPathID() }
@@ -1026,7 +1022,9 @@ func (row StaticTypeNode) Available() bool {
 	return row.id.Available() && row.owner.Available()
 }
 
-type StaticTypeArgument struct{ row cold.CallTypeArgument }
+type StaticTypeArgument struct {
+	row programschema.CallTypeArgument
+}
 
 func (row StaticTypeArgument) ID() identity.ContentID          { return row.row.ID() }
 func (row StaticTypeArgument) CallID() identity.ContentID      { return row.row.CallID() }
@@ -1035,7 +1033,9 @@ func (row StaticTypeArgument) ReferenceID() identity.ContentID { return row.row.
 func (row StaticTypeArgument) Index() uint32                   { return row.row.Index() }
 func (row StaticTypeArgument) Available() bool                 { return row.row.Available() }
 
-type StaticExpression struct{ row cold.StaticExpression }
+type StaticExpression struct {
+	row programschema.StaticExpression
+}
 
 func (row StaticExpression) ID() identity.ContentID          { return row.row.ID() }
 func (row StaticExpression) ReferenceID() identity.ContentID { return row.row.ReferenceID() }
@@ -1153,7 +1153,7 @@ func (row Occurrence) OperationPredicateRefinement() (identity.ContentID, identi
 	return row.inputs[0], row.inputs[1], row.inputs[2], row.inputs[3], uint8(row.code & 0xff), row.code&(1<<8) != 0, true
 }
 
-type HeapIndex struct{ row cold.HeapIndex }
+type HeapIndex struct{ row programschema.HeapIndex }
 
 func (row HeapIndex) Available() bool                    { return row.row.Available() }
 func (row HeapIndex) ID() identity.ContentID             { return row.row.ID() }
@@ -1363,12 +1363,12 @@ func projectEvent(vocabulary structure.Table, ordinal uint16) (EventKind, bool) 
 	return kind, kind != EventInvalid
 }
 
-func acceptedOutcome(vocabulary structure.Table, kind cold.OutcomeKind) bool {
+func acceptedOutcome(vocabulary structure.Table, kind programschema.OutcomeKind) bool {
 	member, ok := vocabulary.At(structure.CategoryOutcome, uint16(kind))
 	return ok && member.Accepted()
 }
 
-func lowerBodyExits(view coldView, vocabulary structure.Table, body cold.Body) ([]identity.ContentID, bool) {
+func lowerBodyExits(view coldView, vocabulary structure.Table, body programschema.Body) ([]identity.ContentID, bool) {
 	seen := make(map[identity.ContentID]struct{})
 	var exits []identity.ContentID
 	outcomeOffset, outcomeCount, spanOK := body.OutcomeSpan()
@@ -1376,7 +1376,7 @@ func lowerBodyExits(view coldView, vocabulary structure.Table, body cold.Body) (
 		return nil, false
 	}
 	for outcomeIndex := uint32(0); outcomeIndex < outcomeCount; outcomeIndex++ {
-		outcome, ok := coldRow(view, cold.OutcomeFamily(), int(outcomeOffset+outcomeIndex))
+		outcome, ok := coldRow(view, programschema.OutcomeFamily(), int(outcomeOffset+outcomeIndex))
 		if !ok || outcome.BodyID() != body.ID() {
 			return nil, false
 		}
@@ -1388,7 +1388,7 @@ func lowerBodyExits(view coldView, vocabulary structure.Table, body cold.Body) (
 			return nil, false
 		}
 		for pointIndex := uint32(0); pointIndex < pointCount; pointIndex++ {
-			child, childOK := coldRow(view, cold.OutcomePointFamily(), int(pointOffset+pointIndex))
+			child, childOK := coldRow(view, programschema.OutcomePointFamily(), int(pointOffset+pointIndex))
 			point := child.PointID()
 			if !childOK || child.OutcomeID() != outcome.ID() || !point.Available() {
 				return nil, false
@@ -1424,12 +1424,12 @@ func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Sna
 	// Every published route arm must name a member of the sealed structural
 	// vocabulary. The admission is stated once here over the published plane;
 	// the arm each reader receives is projected at the read site.
-	edgeCount, edgesPublished := coldCount(snapshot.coldView(), cold.EnvironmentEdgeFamily())
+	edgeCount, edgesPublished := coldCount(snapshot.coldView(), programschema.EnvironmentEdgeFamily())
 	if !edgesPublished {
 		return nil, false
 	}
 	for index := 0; index < edgeCount; index++ {
-		row, held := coldRow(snapshot.coldView(), cold.EnvironmentEdgeFamily(), index)
+		row, held := coldRow(snapshot.coldView(), programschema.EnvironmentEdgeFamily(), index)
 		if !held {
 			return nil, false
 		}
@@ -1459,12 +1459,12 @@ func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Sna
 	// structural vocabulary. The admission is stated once here over the
 	// published plane; the kind each reader receives is projected at the read
 	// site.
-	eventCount, eventsPublished := coldCount(snapshot.coldView(), cold.WTOEventFamily())
+	eventCount, eventsPublished := coldCount(snapshot.coldView(), programschema.WTOEventFamily())
 	if !eventsPublished {
 		return nil, false
 	}
 	for index := 0; index < eventCount; index++ {
-		row, held := coldRow(snapshot.coldView(), cold.WTOEventFamily(), index)
+		row, held := coldRow(snapshot.coldView(), programschema.WTOEventFamily(), index)
 		if !held {
 			return nil, false
 		}
@@ -1489,13 +1489,13 @@ func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Sna
 			inputKind:  uint8(row.InputKind()),
 		})
 	}
-	bodyCount, bodiesPublished := coldCount(snapshot.coldView(), cold.BodyFamily())
+	bodyCount, bodiesPublished := coldCount(snapshot.coldView(), programschema.BodyFamily())
 	if !bodiesPublished {
 		return nil, false
 	}
 	snapshot.bodyExits = make([][]identity.ContentID, 0, bodyCount)
 	for index := 0; index < bodyCount; index++ {
-		row, ok := coldRow(snapshot.coldView(), cold.BodyFamily(), index)
+		row, ok := coldRow(snapshot.coldView(), programschema.BodyFamily(), index)
 		if !ok {
 			return nil, false
 		}
@@ -1545,17 +1545,17 @@ func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Sna
 	// planes actually hold. The admission is stated once here over the
 	// published planes; each child row is rejoined at the read site.
 	callView := snapshot.coldView()
-	callCount, callsPublished := coldCount(callView, cold.CallFamily())
-	operandCount, operandsPublished := coldCount(callView, cold.CallOperandFamily())
-	argumentCount, argumentsPublished := coldCount(callView, cold.CallArgumentFamily())
+	callCount, callsPublished := coldCount(callView, programschema.CallFamily())
+	operandCount, operandsPublished := coldCount(callView, programschema.CallOperandFamily())
+	argumentCount, argumentsPublished := coldCount(callView, programschema.CallArgumentFamily())
 	if !callsPublished || !operandsPublished || !argumentsPublished {
 		return nil, false
 	}
-	if _, typeArgumentsPublished := coldCount(callView, cold.CallTypeArgumentFamily()); !typeArgumentsPublished {
+	if _, typeArgumentsPublished := coldCount(callView, programschema.CallTypeArgumentFamily()); !typeArgumentsPublished {
 		return nil, false
 	}
 	for index := 0; index < callCount; index++ {
-		row, held := coldRow(callView, cold.CallFamily(), index)
+		row, held := coldRow(callView, programschema.CallFamily(), index)
 		if !held {
 			return nil, false
 		}

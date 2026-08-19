@@ -4,7 +4,7 @@ import (
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/scalar"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/domain/runtimekind"
 )
 
@@ -83,7 +83,7 @@ func (schema *valueBuilder) sealComputedArithmeticAtoms() bool {
 				(literal.Kind != keyspace.LiteralInteger && literal.Kind != keyspace.LiteralFloat) {
 				return false
 			}
-			if row.Role() != cold.ExactScalarSummaryResult {
+			if row.Role() != programschema.ExactScalarSummaryResult {
 				continue
 			}
 			if schema.atomForExactArithmetic(literal) != 0 {

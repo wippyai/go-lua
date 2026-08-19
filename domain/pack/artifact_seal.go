@@ -7,13 +7,14 @@ package pack
 import (
 	"crypto/sha256"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/program/target"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/domain/static"
 )
 
@@ -576,7 +577,7 @@ func sealMountedArtifactBinds(schema *Schema, mount ArtifactMount) bool {
 // boundary columns. Pack retains only its runtime substitution state.
 func sealMountedArtifactBodies(schema *Schema, mount ArtifactMount) bool {
 	state, artifact := schema.state, mount.snapshot
-	program, programOK := artifact.ColdProgram(mount.module)
+	program, programOK := programmount.ProgramFromSnapshot(artifact, mount.module)
 	if !programOK {
 		return false
 	}
@@ -640,7 +641,7 @@ func sealMountedArtifactBodies(schema *Schema, mount ArtifactMount) bool {
 		}
 		// Pack owns only normal and return boundary roots. The artifact owns
 		// other terminal geometry; validate Body ownership but mint no Pack root.
-		if row.Kind() != cold.OutcomeNormal && row.Kind() != cold.OutcomeReturn {
+		if row.Kind() != programschema.OutcomeNormal && row.Kind() != programschema.OutcomeReturn {
 			continue
 		}
 		key := artifactOutcomeKey{mount.module, row.ID()}
@@ -657,9 +658,9 @@ func sealMountedArtifactBodies(schema *Schema, mount ArtifactMount) bool {
 		}
 		out := outcomeRow{root: root, bodyIndex: bodyIndex, moduleKey: mount.module, bodyID: row.BodyID(), outcomeID: row.ID(), port: port, sealed: true}
 		switch row.Kind() {
-		case cold.OutcomeNormal:
+		case programschema.OutcomeNormal:
 			out.kind = 1
-		case cold.OutcomeReturn:
+		case programschema.OutcomeReturn:
 			out.kind = 2
 		}
 		if out.kind == 2 {
@@ -681,7 +682,7 @@ func sealMountedArtifactBodies(schema *Schema, mount ArtifactMount) bool {
 
 func sealMountedArtifactCalls(schema *Schema, authority *static.Authority, mount ArtifactMount) bool {
 	state, artifact := schema.state, mount.snapshot
-	program, programOK := artifact.ColdProgram(mount.module)
+	program, programOK := programmount.ProgramFromSnapshot(artifact, mount.module)
 	if !programOK {
 		return false
 	}
@@ -709,7 +710,7 @@ func sealMountedArtifactCalls(schema *Schema, authority *static.Authority, mount
 			return false
 		}
 		out := callRow{root: root, mountedID: row.ID(), occurrenceID: row.ID(), valuesID: row.ValuesID(), typesID: row.TypeArgumentsID(), form: row.Form(), moduleKey: mount.module, formalID: row.FormalID(), typeFormal: typeFormal, port: port}
-		if row.Form() == cold.CallFormMethod {
+		if row.Form() == programschema.CallFormMethod {
 			receiverID, receiverOK := row.ReceiverID()
 			endpoint, endpointOK := state.semanticEndpoints[artifactValuesKey{mount.module, receiverID}]
 			if !receiverOK || !endpointOK {
@@ -810,7 +811,7 @@ func sealMountedSemanticEndpoints(state *schema, mount ArtifactMount) bool {
 		return true
 	}
 	artifact := mount.snapshot
-	program, programOK := artifact.ColdProgram(mount.module)
+	program, programOK := programmount.ProgramFromSnapshot(artifact, mount.module)
 	if !programOK {
 		return false
 	}

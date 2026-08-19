@@ -6,15 +6,15 @@ import (
 
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
 func TestNativeRenderCatalogsAreTotalOverTheirSealedVocabulariesLaw(t *testing.T) {
-	representations := map[cold.NumericRepresentation]string{
-		cold.NumericRepresentationInteger: "integer",
-		cold.NumericRepresentationFloat:   "float",
-		cold.NumericRepresentationNumber:  "number",
+	representations := map[programschema.NumericRepresentation]string{
+		programschema.NumericRepresentationInteger: "integer",
+		programschema.NumericRepresentationFloat:   "float",
+		programschema.NumericRepresentationNumber:  "number",
 	}
 	for representation, spelling := range representations {
 		rendered, ok := nativeNumericRepresentation(representation)
@@ -22,10 +22,10 @@ func TestNativeRenderCatalogsAreTotalOverTheirSealedVocabulariesLaw(t *testing.T
 			t.Fatalf("representation %d renders as %q, want %q", representation, rendered, spelling)
 		}
 	}
-	if _, ok := nativeNumericRepresentation(cold.NumericRepresentationInvalid); ok {
+	if _, ok := nativeNumericRepresentation(programschema.NumericRepresentationInvalid); ok {
 		t.Fatal("the invalid representation rendered")
 	}
-	if _, ok := nativeNumericRepresentation(cold.NumericRepresentationNumber + 1); ok {
+	if _, ok := nativeNumericRepresentation(programschema.NumericRepresentationNumber + 1); ok {
 		t.Fatal("a representation above the sealed vocabulary rendered")
 	}
 
@@ -50,10 +50,10 @@ func TestNativeRenderCatalogsAreTotalOverTheirSealedVocabulariesLaw(t *testing.T
 		}
 	}
 
-	divisors := map[cold.ArithmeticDivisorProperty]string{
-		cold.ArithmeticDivisorNone:               "",
-		cold.ArithmeticDivisorNonzero:            "nonzero",
-		cold.ArithmeticDivisorNonzeroNotMinusOne: "nonzero_not_minus_one",
+	divisors := map[programschema.ArithmeticDivisorProperty]string{
+		programschema.ArithmeticDivisorNone:               "",
+		programschema.ArithmeticDivisorNonzero:            "nonzero",
+		programschema.ArithmeticDivisorNonzeroNotMinusOne: "nonzero_not_minus_one",
 	}
 	for property, spelling := range divisors {
 		rendered, ok := nativeArithmeticDivisor(property)
@@ -61,7 +61,7 @@ func TestNativeRenderCatalogsAreTotalOverTheirSealedVocabulariesLaw(t *testing.T
 			t.Fatalf("divisor property %d renders as %q, want %q", property, rendered, spelling)
 		}
 	}
-	if _, ok := nativeArithmeticDivisor(cold.ArithmeticDivisorNonzeroNotMinusOne + 1); ok {
+	if _, ok := nativeArithmeticDivisor(programschema.ArithmeticDivisorNonzeroNotMinusOne + 1); ok {
 		t.Fatal("a divisor property above the sealed vocabulary rendered")
 	}
 }

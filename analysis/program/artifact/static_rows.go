@@ -2,7 +2,7 @@ package artifact
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 )
 
 // StaticTypeValueRow is the closed Program row for one executable
@@ -80,7 +80,7 @@ func (artifact *Artifact) StaticTypeValueCount() int {
 	if !artifact.Available() {
 		return 0
 	}
-	count, published := coldCount(artifact, cold.StaticTypeValueFamily())
+	count, published := coldCount(artifact, programschema.StaticTypeValueFamily())
 	if !published {
 		return 0
 	}
@@ -97,7 +97,7 @@ func (artifact *Artifact) StaticTypeValueAt(index int) (StaticTypeValueRow, bool
 // sealed publication. The row is flat there, so the read is a change of
 // vocabulary and no plane is retained beside the publication.
 func (artifact *Artifact) staticTypeValueRowAt(index int) (StaticTypeValueRow, bool) {
-	sealed, held := coldRow(artifact, cold.StaticTypeValueFamily(), index)
+	sealed, held := coldRow(artifact, programschema.StaticTypeValueFamily(), index)
 	if !held {
 		return StaticTypeValueRow{}, false
 	}
@@ -121,7 +121,7 @@ func (artifact *Artifact) StaticExpressionCount() int {
 	if !artifact.Available() {
 		return 0
 	}
-	count, published := coldCount(artifact, cold.StaticExpressionFamily())
+	count, published := coldCount(artifact, programschema.StaticExpressionFamily())
 	if !published {
 		return 0
 	}
@@ -138,7 +138,7 @@ func (artifact *Artifact) StaticExpressionAt(index int) (StaticExpressionRow, bo
 // publication. The row is flat there, so the read is a change of vocabulary
 // and no plane is retained beside the publication.
 func (artifact *Artifact) staticExpressionRowAt(index int) (StaticExpressionRow, bool) {
-	sealed, held := coldRow(artifact, cold.StaticExpressionFamily(), index)
+	sealed, held := coldRow(artifact, programschema.StaticExpressionFamily(), index)
 	if !held {
 		return StaticExpressionRow{}, false
 	}
@@ -150,7 +150,7 @@ func (artifact *Artifact) StaticExpressionByID(id identity.ContentID) (StaticExp
 	if artifact == nil || !id.Available() {
 		return StaticExpressionRow{}, false
 	}
-	count, published := coldCount(artifact, cold.StaticExpressionFamily())
+	count, published := coldCount(artifact, programschema.StaticExpressionFamily())
 	if !published {
 		return StaticExpressionRow{}, false
 	}

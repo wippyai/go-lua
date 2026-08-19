@@ -2,8 +2,8 @@ package result
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 )
 
 // Mount is one compile-time ingress snapshot and its canonical self-describing
@@ -11,7 +11,7 @@ import (
 // Program-owned summaries from Program; the module key is carried by Program.
 type Mount struct {
 	Snapshot *ingress.Snapshot
-	Program  cold.Program
+	Program  programmount.Program
 }
 
 // NewMount admits one sealed ingress snapshot at a module key.
@@ -19,7 +19,7 @@ func NewMount(snapshot *ingress.Snapshot, moduleKey identity.ContentID) (Mount, 
 	if snapshot == nil || !snapshot.Available() || !moduleKey.Available() {
 		return Mount{}, false
 	}
-	program, programOK := snapshot.ColdProgram(moduleKey)
+	program, programOK := programmount.ProgramFromSnapshot(snapshot, moduleKey)
 	if !programOK {
 		return Mount{}, false
 	}

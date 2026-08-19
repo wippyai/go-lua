@@ -12,8 +12,8 @@ import (
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
 	"github.com/wippyai/go-lua/analysis/schema"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	staticdomain "github.com/wippyai/go-lua/domain/static"
 	typeauthority "github.com/wippyai/go-lua/domain/type/authority"
@@ -87,9 +87,12 @@ func mountedRecord(t testing.TB, name, source string) LinkInputs {
 		if !coldOK || !catalog.Available() {
 			t.Fatalf("artifact %d publishes no cold value", index)
 		}
-		program := cold.Program{
-			Frozen: frozen, ModuleKey: module, ArtifactID: artifact.ID(),
-			ProgramID: programID, SchemaID: artifact.CompileKey().SchemaDigest(),
+		program := programmount.Program{
+			ModuleKey: module,
+			Program: programschema.Program{
+				Frozen: frozen, ArtifactID: artifact.ID(),
+				ProgramID: programID, SchemaID: artifact.CompileKey().SchemaDigest(),
+			},
 		}
 		if !program.Available() {
 			t.Fatalf("mount row %d unavailable", index)

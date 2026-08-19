@@ -1,4 +1,4 @@
-package cold
+package programschema
 
 import (
 	"testing"
@@ -7,7 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/snapshot"
 )
 
-func coldLawSchema(t *testing.T) identity.ContentID {
+func catalogLawSchema(t *testing.T) identity.ContentID {
 	t.Helper()
 	id, derived := identity.DeriveContentID("cold-law/runtime-schema", nil)
 	if !derived {
@@ -19,8 +19,8 @@ func coldLawSchema(t *testing.T) identity.ContentID {
 // The cold catalog and the runtime schema it is derived from are two
 // identities. That is what keeps a cold axis from being a structurally valid
 // address into a runtime publication's slot of the same number.
-func TestColdCatalogIsDistinctFromItsRuntimeSchema(t *testing.T) {
-	runtime := coldLawSchema(t)
+func TestCatalogIsDistinctFromItsRuntimeSchema(t *testing.T) {
+	runtime := catalogLawSchema(t)
 	catalog, derived := CatalogID(runtime)
 	if !derived || !catalog.Available() {
 		t.Fatal("cold catalog derived nothing")
@@ -42,16 +42,16 @@ func TestColdCatalogIsDistinctFromItsRuntimeSchema(t *testing.T) {
 	}
 }
 
-func coldLawFamily() []CallTarget {
+func catalogLawFamily() []CallTarget {
 	return []CallTarget{
 		{Allocation: identity.ContentID{1}, Body: identity.ContentID{2}, Context: identity.ContentID{3}, Function: identity.ContentID{4}, Formal: identity.ContentID{5}},
 		{Allocation: identity.ContentID{6}, Body: identity.ContentID{7}, Context: identity.ContentID{8}, Function: identity.ContentID{9}, Formal: identity.ContentID{10}},
 	}
 }
 
-func sealColdLaw(t *testing.T, rows []CallTarget) (snapshot.Frozen, identity.ContentID) {
+func sealCatalogLaw(t *testing.T, rows []CallTarget) (snapshot.Frozen, identity.ContentID) {
 	t.Helper()
-	catalog, derived := CatalogID(coldLawSchema(t))
+	catalog, derived := CatalogID(catalogLawSchema(t))
 	if !derived {
 		t.Fatal("cold catalog")
 	}
@@ -73,8 +73,8 @@ func sealColdLaw(t *testing.T, rows []CallTarget) (snapshot.Frozen, identity.Con
 // A cold family is read back in the order it was emitted, and its width is the
 // sealed universe rather than a count a reader has to be told separately.
 func TestCallTargetFamilyReadsBackInEmittedOrder(t *testing.T) {
-	rows := coldLawFamily()
-	frozen, catalog := sealColdLaw(t, rows)
+	rows := catalogLawFamily()
+	frozen, catalog := sealCatalogLaw(t, rows)
 
 	count, published := CallTargetFamily().Count(&frozen, catalog)
 	if !published || count != len(rows) {
@@ -97,8 +97,8 @@ func TestCallTargetFamilyReadsBackInEmittedOrder(t *testing.T) {
 // An ordinal past the sealed family is a proven absence, not ignorance: the
 // column publishes the family's own ordinal range as its key universe.
 func TestCallTargetFamilyProvesItsOwnBound(t *testing.T) {
-	rows := coldLawFamily()
-	frozen, catalog := sealColdLaw(t, rows)
+	rows := catalogLawFamily()
+	frozen, catalog := sealCatalogLaw(t, rows)
 
 	if _, status := snapshot.ReadFrozen(&frozen, CallTargetFamily().Axis(catalog), Ordinal(len(rows)-1)); status != snapshot.ReadHit {
 		t.Fatalf("last ordinal reported %v", status)
@@ -111,15 +111,15 @@ func TestCallTargetFamilyProvesItsOwnBound(t *testing.T) {
 // A family the compiler could not prove seals nothing: a program either
 // proved every target it emitted or it did not compile.
 func TestCallTargetContentRejectsAnUnprovenRow(t *testing.T) {
-	catalog, derived := CatalogID(coldLawSchema(t))
+	catalog, derived := CatalogID(catalogLawSchema(t))
 	if !derived {
 		t.Fatal("cold catalog")
 	}
-	rows := append(coldLawFamily(), CallTarget{Allocation: identity.ContentID{11}})
+	rows := append(catalogLawFamily(), CallTarget{Allocation: identity.ContentID{11}})
 	if _, sealed := CallTargetFamily().Content(rows, catalog); sealed {
 		t.Fatal("an incomplete target sealed into the family")
 	}
-	if _, sealed := CallTargetFamily().Content(coldLawFamily(), identity.ContentID{}); sealed {
+	if _, sealed := CallTargetFamily().Content(catalogLawFamily(), identity.ContentID{}); sealed {
 		t.Fatal("a family sealed under no catalog")
 	}
 }
@@ -127,7 +127,7 @@ func TestCallTargetContentRejectsAnUnprovenRow(t *testing.T) {
 // An empty family is a published fact: the program emitted no call target,
 // which is different from the family not being published at all.
 func TestEmptyCallTargetFamilyIsPublished(t *testing.T) {
-	frozen, catalog := sealColdLaw(t, nil)
+	frozen, catalog := sealCatalogLaw(t, nil)
 	count, published := CallTargetFamily().Count(&frozen, catalog)
 	if !published || count != 0 {
 		t.Fatalf("empty family width = %d (published %t)", count, published)
@@ -139,8 +139,8 @@ func TestEmptyCallTargetFamilyIsPublished(t *testing.T) {
 
 // A cold axis of one catalog reads nothing out of another catalog's
 // publication, which is the property the derived catalog identity exists for.
-func TestColdAxisOfAnotherCatalogReadsNothing(t *testing.T) {
-	frozen, _ := sealColdLaw(t, coldLawFamily())
+func TestCatalogAxisOfAnotherCatalogReadsNothing(t *testing.T) {
+	frozen, _ := sealCatalogLaw(t, catalogLawFamily())
 	foreign, derived := identity.DeriveContentID("cold-law/foreign-catalog", nil)
 	if !derived {
 		t.Fatal("foreign catalog")
@@ -158,7 +158,7 @@ func TestColdAxisOfAnotherCatalogReadsNothing(t *testing.T) {
 // slot would make the second column unpublishable and the first
 // unaddressable. The catalog states the law over the whole declaration set
 // rather than trusting each family's own arithmetic.
-func TestColdFamilySlotsAndNamesAreDistinct(t *testing.T) {
+func TestProgramFamilySlotsAndNamesAreDistinct(t *testing.T) {
 	declared := []struct {
 		slot uint32
 		name string
@@ -213,8 +213,8 @@ func TestColdFamilySlotsAndNamesAreDistinct(t *testing.T) {
 // including the empty ones, publishes one column per declaration. A family
 // whose slot collided with another's would fail here rather than at the first
 // program that emitted rows into both.
-func TestColdPublicationSealsEveryDeclaredFamily(t *testing.T) {
-	catalog, derived := CatalogID(coldLawSchema(t))
+func TestProgramPublicationSealsEveryDeclaredFamily(t *testing.T) {
+	catalog, derived := CatalogID(catalogLawSchema(t))
 	if !derived {
 		t.Fatal("catalog identity")
 	}

@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lattice"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/domain/runtimekind"
 	"github.com/wippyai/go-lua/domain/type/authority"
 	"github.com/wippyai/go-lua/domain/type/subtype"
@@ -243,8 +244,20 @@ func SealMountedArtifacts(context MountContext, types *typeauthority.Authority, 
 		if !mount.NamespaceID.Available() {
 			return nil, nil, errors.New("static: unavailable mounted namespace")
 		}
-		for rowIndex := 0; rowIndex < mount.Artifact.CallTypeArgumentCount(); rowIndex++ {
-			row, rowOK := mount.Artifact.CallTypeArgumentAt(rowIndex)
+		frozen, catalog, published := mount.Artifact.ColdPublication()
+		program := programschema.Program{
+			Frozen: frozen, ArtifactID: mount.Artifact.ID(),
+			ProgramID: mount.Artifact.CompileKey().ProgramID(), SchemaID: mount.Artifact.CompileKey().SchemaDigest(),
+		}
+		if !published || !catalog.Available() || !program.Available() {
+			return nil, nil, errors.New("static: unavailable mounted cold program")
+		}
+		typeArgumentCount, typeArgumentsOK := program.CallTypeArgumentCount()
+		if !typeArgumentsOK {
+			return nil, nil, errors.New("static: unavailable mounted type-argument family")
+		}
+		for rowIndex := 0; rowIndex < typeArgumentCount; rowIndex++ {
+			row, rowOK := program.CallTypeArgumentAt(rowIndex)
 			if !rowOK || !row.Available() {
 				return nil, nil, errors.New("static: malformed mounted type-argument row")
 			}

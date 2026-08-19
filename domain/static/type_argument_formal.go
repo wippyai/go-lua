@@ -5,7 +5,7 @@ import (
 	"crypto/sha256"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/domain/type/authority"
 	"github.com/wippyai/go-lua/domain/type/typ"
 )
@@ -141,9 +141,21 @@ func (a *Authority) sealMountedTypeArgumentFormals() bool {
 		if mount.Artifact == nil || !mount.Artifact.Available() || !mount.ModuleID.Available() {
 			return false
 		}
-		grouped := make(map[identity.ContentID][]programartifact.CallTypeArgumentRow)
-		for callIndex := 0; callIndex < mount.Artifact.CallCount(); callIndex++ {
-			call, callOK := mount.Artifact.CallAt(callIndex)
+		frozen, catalog, published := mount.Artifact.ColdPublication()
+		program := programschema.Program{
+			Frozen: frozen, ArtifactID: mount.Artifact.ID(),
+			ProgramID: mount.Artifact.CompileKey().ProgramID(), SchemaID: mount.Artifact.CompileKey().SchemaDigest(),
+		}
+		if !published || !catalog.Available() || !program.Available() {
+			return false
+		}
+		grouped := make(map[identity.ContentID][]programschema.CallTypeArgument)
+		callCount, callsOK := program.CallCount()
+		if !callsOK {
+			return false
+		}
+		for callIndex := 0; callIndex < callCount; callIndex++ {
+			call, callOK := program.CallAt(callIndex)
 			typesID := call.TypeArgumentsID()
 			if !callOK || !typesID.Available() {
 				return false
@@ -152,8 +164,12 @@ func (a *Authority) sealMountedTypeArgumentFormals() bool {
 				grouped[typesID] = nil
 			}
 		}
-		for index := 0; index < mount.Artifact.CallTypeArgumentCount(); index++ {
-			row, rowOK := mount.Artifact.CallTypeArgumentAt(index)
+		typeArgumentCount, typeArgumentsOK := program.CallTypeArgumentCount()
+		if !typeArgumentsOK {
+			return false
+		}
+		for index := 0; index < typeArgumentCount; index++ {
+			row, rowOK := program.CallTypeArgumentAt(index)
 			if !rowOK || !row.Available() {
 				return false
 			}

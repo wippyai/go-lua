@@ -7,7 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 )
 
 type computationKey struct {
@@ -393,10 +393,10 @@ func (schema *valueBuilder) sealComputationRows() bool {
 				// Calls outside the strict unary plain shape are valid calls,
 				// but are not RuntimeKindCall operands. Their own Call domain
 				// rules continue to interpret them.
-				if call.Form() == uint8(cold.CallFormMethod) || call.ArgumentCount() != 1 {
+				if call.Form() == uint8(programschema.CallFormMethod) || call.ArgumentCount() != 1 {
 					continue
 				}
-				if call.Form() != uint8(cold.CallFormPlain) {
+				if call.Form() != uint8(programschema.CallFormPlain) {
 					return false
 				}
 				if _, hasReceiver := call.ReceiverID(); hasReceiver {
@@ -430,7 +430,7 @@ func (schema *valueBuilder) sealComputationRows() bool {
 				op := flowkind.BinaryOp(opCode)
 				call, callOK := artifact.CallForID(sourceCallID)
 				if !rowOK || !routeID.Available() || !callOK || call.ID() != sourceCallID ||
-					call.Form() != uint8(cold.CallFormPlain) || call.ArgumentCount() != 1 {
+					call.Form() != uint8(programschema.CallFormPlain) || call.ArgumentCount() != 1 {
 					return false
 				}
 				if _, hasReceiver := call.ReceiverID(); hasReceiver {

@@ -5,8 +5,8 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/query"
 )
 
@@ -203,7 +203,7 @@ func TestSelectedQuerySitesUseTheirOwnerAddressFormula(t *testing.T) {
 	}
 }
 
-func selectedCallableOccurrencePoints(t *testing.T, program cold.Program, snapshot *ingress.Snapshot) map[identity.ContentID]map[identity.ContentID]struct{} {
+func selectedCallableOccurrencePoints(t *testing.T, program programmount.Program, snapshot *ingress.Snapshot) map[identity.ContentID]map[identity.ContentID]struct{} {
 	t.Helper()
 	points := make(map[identity.ContentID]map[identity.ContentID]struct{})
 	bodyCount, bodiesPublished := program.BodyCount()
@@ -238,7 +238,7 @@ func selectedCallableOccurrencePoints(t *testing.T, program cold.Program, snapsh
 	return points
 }
 
-func selectedDirectCalleeAndSibling(t *testing.T, program cold.Program, snapshot *ingress.Snapshot) (identity.ContentID, identity.ContentID) {
+func selectedDirectCalleeAndSibling(t *testing.T, program programmount.Program, snapshot *ingress.Snapshot) (identity.ContentID, identity.ContentID) {
 	t.Helper()
 	rootBodies := make(map[identity.ContentID]struct{})
 	callable := make(map[identity.ContentID]struct{})

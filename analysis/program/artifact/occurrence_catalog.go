@@ -3,7 +3,7 @@ package artifact
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 )
 
 // occurrenceCausalIndex is the one Program-owned neutral join used by the
@@ -47,7 +47,7 @@ func (compiler *compiler) occurrenceCausalIndexFailure() (occurrenceCausalIndex,
 		if !call.Available() {
 			return occurrenceCausalIndex{}, compileFailure(CompileStageOccurrences, CompileRowOccurrence, callIndex, -1, CompileReasonOccurrenceCall)
 		}
-		if call.Form() != cold.CallFormPlain || call.ArgumentCount() != 1 {
+		if call.Form() != programschema.CallFormPlain || call.ArgumentCount() != 1 {
 			continue
 		}
 		if _, hasReceiver := call.ReceiverID(); hasReceiver {

@@ -2,7 +2,7 @@ package artifact
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 )
 
 // copyCallTargetsFailure captures the exact closure-allocation mapping once
@@ -12,14 +12,14 @@ func (compiler *compiler) copyCallTargetsFailure() CompileFailure {
 	if compiler == nil || len(compiler.bodies) == 0 {
 		return compileFailure(CompileStageBodyOutcomes, CompileRowBody, -1, -1, CompileReasonBodyUnavailable)
 	}
-	bodyByContext := make(map[identity.ContentID]cold.Body, len(compiler.bodies))
+	bodyByContext := make(map[identity.ContentID]programschema.Body, len(compiler.bodies))
 	for index, body := range compiler.bodies {
 		if !body.Available() || !body.ContextID().Available() {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
 		}
 		bodyByContext[body.ContextID()] = body
 	}
-	rows := make([]cold.CallTarget, 0)
+	rows := make([]programschema.CallTarget, 0)
 	seenAllocations := make(map[identity.ContentID]struct{})
 	seenBodies := make(map[identity.ContentID]struct{})
 	flowView := compiler.input.Flow()
@@ -55,7 +55,7 @@ func (compiler *compiler) copyCallTargetsFailure() CompileFailure {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyDuplicate)
 		}
 		seenAllocations[allocationID], seenBodies[context] = struct{}{}, struct{}{}
-		rows = append(rows, cold.CallTarget{Allocation: allocationID, Body: bodyID, Context: context, Function: functionID, Formal: formalID})
+		rows = append(rows, programschema.CallTarget{Allocation: allocationID, Body: bodyID, Context: context, Function: functionID, Formal: formalID})
 	}
 	compiler.callTargets = rows
 	return CompileFailure{}

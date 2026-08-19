@@ -12,7 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"github.com/wippyai/go-lua/domain/composite"
 	packdomain "github.com/wippyai/go-lua/domain/pack"
@@ -106,8 +106,8 @@ func selectorLawSchema(t testing.TB, contract *target.Contract, label string) se
 		t.Fatal("seal selector Pack")
 	}
 	frozen, catalog, coldPublished := artifact.ColdPublication()
-	coldProgram := cold.Program{
-		Frozen: frozen, ModuleKey: module, ArtifactID: artifact.ID(),
+	coldProgram := programschema.Program{
+		Frozen: frozen, ArtifactID: artifact.ID(),
 		ProgramID: artifact.CompileKey().ProgramID(), SchemaID: artifact.CompileKey().SchemaDigest(),
 	}
 	if !coldPublished || !catalog.Available() || !coldProgram.Available() {
@@ -119,7 +119,7 @@ func selectorLawSchema(t testing.TB, contract *target.Contract, label string) se
 	}
 	for index := 0; index < callCount; index++ {
 		call, callOK := coldProgram.CallAt(index)
-		if !callOK || call.Form() != cold.CallFormMethod {
+		if !callOK || call.Form() != programschema.CallFormMethod {
 			continue
 		}
 		receiver, receiverOK := call.ReceiverID()

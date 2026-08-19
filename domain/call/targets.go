@@ -7,8 +7,9 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 )
 
 type targetKind uint8
@@ -42,7 +43,7 @@ type allocationTargetKey struct {
 // Call internally derives all closure target rows from it; no raw
 // allocation/body scalar bundle enters the domain boundary.
 type MountedArtifact struct {
-	cold.Program
+	programmount.Program
 	Snapshot *ingress.Snapshot
 }
 
@@ -112,7 +113,7 @@ func (algebra *Algebra) buildTargets(mounts []MountedArtifact, boundary *linkbou
 		if !bodiesPublished {
 			return false
 		}
-		bodies := make(map[identity.ContentID]cold.Body, bodyCount)
+		bodies := make(map[identity.ContentID]programschema.Body, bodyCount)
 		for index := 0; index < bodyCount; index++ {
 			body, ok := mount.Program.BodyAt(index)
 			if !ok || !body.ID().Available() || !body.ContextID().Available() {

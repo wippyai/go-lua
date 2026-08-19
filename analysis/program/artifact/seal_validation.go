@@ -2,7 +2,7 @@ package artifact
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
@@ -12,7 +12,7 @@ import (
 type sealValidationState struct {
 	pointRows                  map[identity.ContentID]struct{}
 	valueRows                  map[identity.ContentID]struct{}
-	bodyRows                   map[identity.ContentID]cold.Body
+	bodyRows                   map[identity.ContentID]programschema.Body
 	outcomeRows                map[identity.ContentID]int
 	outcomeCursor              uint32
 	callableBodies             int
@@ -40,7 +40,7 @@ func (artifact *Artifact) validateSealFoundation(state *sealValidationState) Com
 	if artifact == nil || state == nil || !artifact.key.Available() || !artifact.id.Available() || !artifact.counts.Available() || artifact.sealed.Available() {
 		return compileFailure(CompileStageSeal, CompileRowAuthority, -1, -1, CompileReasonArtifactIdentity)
 	}
-	pointCount, pointsPublished := coldCount(artifact, cold.PointFamily())
+	pointCount, pointsPublished := coldCount(artifact, programschema.PointFamily())
 	if !pointsPublished {
 		return compileFailure(CompileStageSeal, CompileRowPoint, -1, -1, CompileReasonPointUnavailable)
 	}
@@ -87,13 +87,13 @@ func (artifact *Artifact) validateSealFoundation(state *sealValidationState) Com
 		}
 		seenDiagnosticObservations[row.id] = struct{}{}
 	}
-	valuesCount, valuesPublished := coldCount(artifact, cold.ValuesFamily())
+	valuesCount, valuesPublished := coldCount(artifact, programschema.ValuesFamily())
 	if !valuesPublished {
 		return compileFailure(CompileStageSeal, CompileRowValues, -1, -1, CompileReasonValuesUnavailable)
 	}
 	state.valueRows = make(map[identity.ContentID]struct{}, valuesCount)
 	for index := 0; index < valuesCount; index++ {
-		row, held := coldRow(artifact, cold.ValuesFamily(), index)
+		row, held := coldRow(artifact, programschema.ValuesFamily(), index)
 		offset, members, spanOK := row.MemberSpan()
 		if !held || !spanOK || !row.Available() {
 			return compileFailure(CompileStageSeal, CompileRowValues, index, -1, CompileReasonValuesUnavailable)
@@ -104,7 +104,7 @@ func (artifact *Artifact) validateSealFoundation(state *sealValidationState) Com
 		state.valueRows[row.ID()] = struct{}{}
 		memberRows := make(map[identity.ContentID]struct{}, members)
 		for position := uint32(0); position < members; position++ {
-			member, memberHeld := coldRow(artifact, cold.ValuesMemberFamily(), int(offset+position))
+			member, memberHeld := coldRow(artifact, programschema.ValuesMemberFamily(), int(offset+position))
 			if !memberHeld || !member.Available() {
 				return compileFailure(CompileStageSeal, CompileRowValues, index, int(position), CompileReasonValuesMember)
 			}
@@ -114,22 +114,22 @@ func (artifact *Artifact) validateSealFoundation(state *sealValidationState) Com
 			memberRows[member.ID()] = struct{}{}
 		}
 	}
-	bodyCount, bodiesPublished := coldCount(artifact, cold.BodyFamily())
-	bodyEntryCount, bodyEntriesPublished := coldCount(artifact, cold.BodyEntryFamily())
-	bodyRootCount, bodyRootsPublished := coldCount(artifact, cold.BodyRootFamily())
-	outcomeCount, outcomesPublished := coldCount(artifact, cold.OutcomeFamily())
-	_, returnsPublished := coldCount(artifact, cold.OutcomeReturnValueFamily())
-	_, outcomePointsPublished := coldCount(artifact, cold.OutcomePointFamily())
+	bodyCount, bodiesPublished := coldCount(artifact, programschema.BodyFamily())
+	bodyEntryCount, bodyEntriesPublished := coldCount(artifact, programschema.BodyEntryFamily())
+	bodyRootCount, bodyRootsPublished := coldCount(artifact, programschema.BodyRootFamily())
+	outcomeCount, outcomesPublished := coldCount(artifact, programschema.OutcomeFamily())
+	_, returnsPublished := coldCount(artifact, programschema.OutcomeReturnValueFamily())
+	_, outcomePointsPublished := coldCount(artifact, programschema.OutcomePointFamily())
 	if !bodiesPublished || !bodyEntriesPublished || !bodyRootsPublished || !outcomesPublished || !returnsPublished || !outcomePointsPublished || bodyCount == 0 {
 		return compileFailure(CompileStageSeal, CompileRowBody, -1, -1, CompileReasonBodyRange)
 	}
-	state.bodyRows = make(map[identity.ContentID]cold.Body, bodyCount)
+	state.bodyRows = make(map[identity.ContentID]programschema.Body, bodyCount)
 	rootRows := make(map[identity.ContentID]struct{})
 	state.outcomeRows = make(map[identity.ContentID]int, outcomeCount)
 	entryCursor, rootCursor := uint32(0), uint32(0)
 	state.outcomeCursor = uint32(0)
 	for bodyIndex := 0; bodyIndex < bodyCount; bodyIndex++ {
-		row, held := coldRow(artifact, cold.BodyFamily(), bodyIndex)
+		row, held := coldRow(artifact, programschema.BodyFamily(), bodyIndex)
 		entryOffset, entryWidth, entriesOK := row.EntrySpan()
 		rootOffset, rootWidth, rootsOK := row.RootSpan()
 		outcomeOffset, outcomeWidth, bodyOutcomesOK := row.OutcomeSpan()
@@ -142,7 +142,7 @@ func (artifact *Artifact) validateSealFoundation(state *sealValidationState) Com
 		}
 		state.bodyRows[row.ID()] = row
 		for rootIndex := uint32(0); rootIndex < rootWidth; rootIndex++ {
-			root, childHeld := coldRow(artifact, cold.BodyRootFamily(), int(rootOffset+rootIndex))
+			root, childHeld := coldRow(artifact, programschema.BodyRootFamily(), int(rootOffset+rootIndex))
 			if !childHeld || root.BodyID() != row.ID() {
 				return compileFailure(CompileStageSeal, CompileRowBody, bodyIndex, int(rootIndex), CompileReasonBodyUnavailable)
 			}
@@ -153,7 +153,7 @@ func (artifact *Artifact) validateSealFoundation(state *sealValidationState) Com
 		}
 		entryRows := make(map[identity.ContentID]struct{}, entryWidth)
 		for pointIndex := uint32(0); pointIndex < entryWidth; pointIndex++ {
-			entry, childHeld := coldRow(artifact, cold.BodyEntryFamily(), int(entryOffset+pointIndex))
+			entry, childHeld := coldRow(artifact, programschema.BodyEntryFamily(), int(entryOffset+pointIndex))
 			point := entry.PointID()
 			if !childHeld || entry.BodyID() != row.ID() {
 				return compileFailure(CompileStageSeal, CompileRowBody, bodyIndex, int(pointIndex), CompileReasonBodyUnavailable)
@@ -166,18 +166,18 @@ func (artifact *Artifact) validateSealFoundation(state *sealValidationState) Com
 			}
 			entryRows[point] = struct{}{}
 		}
-		var mandatory [cold.OutcomeCancel + 1]bool
+		var mandatory [programschema.OutcomeCancel + 1]bool
 		for childIndex := uint32(0); childIndex < outcomeWidth; childIndex++ {
-			outcome, outcomeHeld := coldRow(artifact, cold.OutcomeFamily(), int(outcomeOffset+childIndex))
+			outcome, outcomeHeld := coldRow(artifact, programschema.OutcomeFamily(), int(outcomeOffset+childIndex))
 			if !outcomeHeld || outcome.BodyID() != row.ID() {
 				return compileFailure(CompileStageSeal, CompileRowOutcome, bodyIndex, int(childIndex), CompileReasonOutcomeBody)
 			}
 			switch outcome.Kind() {
-			case cold.OutcomeNormal, cold.OutcomeThrow, cold.OutcomeYield, cold.OutcomeCancel:
+			case programschema.OutcomeNormal, programschema.OutcomeThrow, programschema.OutcomeYield, programschema.OutcomeCancel:
 				mandatory[outcome.Kind()] = true
 			}
 		}
-		for _, kind := range [...]cold.OutcomeKind{cold.OutcomeNormal, cold.OutcomeThrow, cold.OutcomeYield, cold.OutcomeCancel} {
+		for _, kind := range [...]programschema.OutcomeKind{programschema.OutcomeNormal, programschema.OutcomeThrow, programschema.OutcomeYield, programschema.OutcomeCancel} {
 			if !mandatory[kind] {
 				return compileFailure(CompileStageSeal, CompileRowOutcome, bodyIndex, -1, CompileReasonOutcomeKind)
 			}
@@ -191,7 +191,7 @@ func (artifact *Artifact) validateSealFoundation(state *sealValidationState) Com
 	}
 	state.callableBodies = 0
 	for bodyIndex := 0; bodyIndex < bodyCount; bodyIndex++ {
-		body, _ := coldRow(artifact, cold.BodyFamily(), bodyIndex)
+		body, _ := coldRow(artifact, programschema.BodyFamily(), bodyIndex)
 		if body.Callable() {
 			state.callableBodies++
 		}

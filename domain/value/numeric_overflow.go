@@ -2,7 +2,7 @@ package value
 
 import (
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 )
 
 // NumericOverflow is Lua's closed overflow discipline for numeric arithmetic:
@@ -82,19 +82,19 @@ var unaryNumericOverflows = [flowkind.UnaryNeg + 1]numericOverflowRow{
 // BinaryNumericOverflow states one binary arithmetic operator's overflow
 // discipline over two known operand representations. Operators outside the
 // arithmetic range and unknown representations have no discipline.
-func BinaryNumericOverflow(op flowkind.BinaryOp, left, right cold.NumericRepresentation) (NumericOverflow, bool) {
+func BinaryNumericOverflow(op flowkind.BinaryOp, left, right programschema.NumericRepresentation) (NumericOverflow, bool) {
 	if !flowkind.IsBinaryArithmetic(op) || !left.Valid() || !right.Valid() {
 		return NumericOverflowInvalid, false
 	}
-	integer := left == cold.NumericRepresentationInteger && right == cold.NumericRepresentationInteger
+	integer := left == programschema.NumericRepresentationInteger && right == programschema.NumericRepresentationInteger
 	return binaryNumericOverflows[op].resolve(integer)
 }
 
 // UnaryNumericOverflow states the same for authored unary negation, the only
 // unary operator that carries a numeric result representation.
-func UnaryNumericOverflow(op flowkind.UnaryOp, operand cold.NumericRepresentation) (NumericOverflow, bool) {
+func UnaryNumericOverflow(op flowkind.UnaryOp, operand programschema.NumericRepresentation) (NumericOverflow, bool) {
 	if op != flowkind.UnaryNeg || !operand.Valid() {
 		return NumericOverflowInvalid, false
 	}
-	return unaryNumericOverflows[op].resolve(operand == cold.NumericRepresentationInteger)
+	return unaryNumericOverflows[op].resolve(operand == programschema.NumericRepresentationInteger)
 }

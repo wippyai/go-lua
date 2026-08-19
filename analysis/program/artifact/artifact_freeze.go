@@ -4,7 +4,7 @@ import (
 	"sync/atomic"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 )
 
@@ -92,16 +92,16 @@ var coldStores atomic.Uint64
 // half-open span it occupies in the field plane, so the canonical field order
 // the compiler emitted is the ordinal order of the plane and no allocation
 // retains a slice header.
-func coldHeapPlanes(rows []HeapAllocationRow) ([]cold.HeapAllocation, []cold.HeapField, bool) {
-	allocations := make([]cold.HeapAllocation, 0, len(rows))
-	fields := make([]cold.HeapField, 0, len(rows))
+func coldHeapPlanes(rows []HeapAllocationRow) ([]programschema.HeapAllocation, []programschema.HeapField, bool) {
+	allocations := make([]programschema.HeapAllocation, 0, len(rows))
+	fields := make([]programschema.HeapField, 0, len(rows))
 	for _, row := range rows {
 		if !fitsUint32(len(fields)) || !fitsUint32(len(row.fields)) {
 			return nil, nil, false
 		}
 		offset := uint32(len(fields))
 		for _, field := range row.fields {
-			converted, ok := cold.NewHeapField(
+			converted, ok := programschema.NewHeapField(
 				field.id, uint8(field.kind), field.fieldSpan, field.selectorSpan, field.valuesSpan, field.valuesID,
 				field.width, field.finalOpen, field.sharesFirstValueCell, uint64(field.normalized), field.normalizedOK,
 			)
@@ -110,7 +110,7 @@ func coldHeapPlanes(rows []HeapAllocationRow) ([]cold.HeapAllocation, []cold.Hea
 			}
 			fields = append(fields, converted)
 		}
-		allocation, ok := cold.NewHeapAllocation(row.id, uint8(row.role), uint8(row.form), row.rootSpan, offset, uint32(len(row.fields)))
+		allocation, ok := programschema.NewHeapAllocation(row.id, uint8(row.role), uint8(row.form), row.rootSpan, offset, uint32(len(row.fields)))
 		if !ok {
 			return nil, nil, false
 		}
@@ -121,26 +121,26 @@ func coldHeapPlanes(rows []HeapAllocationRow) ([]cold.HeapAllocation, []cold.Hea
 
 // coldValuesPlanes flattens the compiler's nested Values rows the same way:
 // members become one dense plane and each row names the span it owns.
-func coldValuesPlanes(rows []ValuesRow) ([]cold.Values, []cold.ValuesMember, bool) {
-	values := make([]cold.Values, 0, len(rows))
-	members := make([]cold.ValuesMember, 0, len(rows))
+func coldValuesPlanes(rows []ValuesRow) ([]programschema.Values, []programschema.ValuesMember, bool) {
+	values := make([]programschema.Values, 0, len(rows))
+	members := make([]programschema.ValuesMember, 0, len(rows))
 	for _, row := range rows {
 		if !row.Available() || !fitsUint32(len(members)) || !fitsUint32(len(row.members)) {
 			return nil, nil, false
 		}
 		offset := uint32(len(members))
 		for _, member := range row.members {
-			converted, ok := cold.NewValuesMember(member.id)
+			converted, ok := programschema.NewValuesMember(member.id)
 			if !ok {
 				return nil, nil, false
 			}
 			members = append(members, converted)
 		}
-		tail, tailOK := cold.NewValuesTail(row.tail.id, row.tail.span, cold.ValuesTailKind(row.tail.kind), row.tail.present)
+		tail, tailOK := programschema.NewValuesTail(row.tail.id, row.tail.span, programschema.ValuesTailKind(row.tail.kind), row.tail.present)
 		if !tailOK {
 			return nil, nil, false
 		}
-		converted, ok := cold.NewValues(row.id, row.body, row.span, offset, uint32(len(row.members)), tail)
+		converted, ok := programschema.NewValues(row.id, row.body, row.span, offset, uint32(len(row.members)), tail)
 		if !ok {
 			return nil, nil, false
 		}
@@ -153,22 +153,22 @@ func coldValuesPlanes(rows []ValuesRow) ([]cold.Values, []cold.ValuesMember, boo
 // planes the publication holds. Each point names its decisions by the
 // half-open span it occupies in the decision plane, so the canonical decision
 // order is the ordinal order of the plane and no point retains a slice header.
-func coldPointPlanes(rows []Point) ([]cold.Point, []cold.PointDecision, bool) {
-	points := make([]cold.Point, 0, len(rows))
-	decisions := make([]cold.PointDecision, 0, len(rows))
+func coldPointPlanes(rows []Point) ([]programschema.Point, []programschema.PointDecision, bool) {
+	points := make([]programschema.Point, 0, len(rows))
+	decisions := make([]programschema.PointDecision, 0, len(rows))
 	for _, row := range rows {
 		if !fitsUint32(len(decisions)) || !fitsUint32(len(row.decisions)) {
 			return nil, nil, false
 		}
 		offset := uint32(len(decisions))
 		for _, decision := range row.decisions {
-			converted, ok := cold.NewPointDecision(decision)
+			converted, ok := programschema.NewPointDecision(decision)
 			if !ok {
 				return nil, nil, false
 			}
 			decisions = append(decisions, converted)
 		}
-		point, ok := cold.NewPoint(row.id, row.initial, offset, uint32(len(row.decisions)))
+		point, ok := programschema.NewPoint(row.id, row.initial, offset, uint32(len(row.decisions)))
 		if !ok {
 			return nil, nil, false
 		}
@@ -182,22 +182,22 @@ func coldPointPlanes(rows []Point) ([]cold.Point, []cold.PointDecision, bool) {
 // witnesses by the half-open span it occupies in the reset plane, so the
 // canonical witness order is the ordinal order of the plane and no edge
 // retains a slice header.
-func coldEnvironmentPlanes(rows []EnvironmentEdge) ([]cold.EnvironmentEdge, []cold.EnvironmentReset, bool) {
-	edges := make([]cold.EnvironmentEdge, 0, len(rows))
-	resets := make([]cold.EnvironmentReset, 0, len(rows))
+func coldEnvironmentPlanes(rows []EnvironmentEdge) ([]programschema.EnvironmentEdge, []programschema.EnvironmentReset, bool) {
+	edges := make([]programschema.EnvironmentEdge, 0, len(rows))
+	resets := make([]programschema.EnvironmentReset, 0, len(rows))
 	for _, row := range rows {
 		if !fitsUint32(len(resets)) || !fitsUint32(len(row.resets)) {
 			return nil, nil, false
 		}
 		offset := uint32(len(resets))
 		for _, reset := range row.resets {
-			converted, ok := cold.NewEnvironmentReset(reset)
+			converted, ok := programschema.NewEnvironmentReset(reset)
 			if !ok {
 				return nil, nil, false
 			}
 			resets = append(resets, converted)
 		}
-		edge, ok := cold.NewEnvironmentEdge(
+		edge, ok := programschema.NewEnvironmentEdge(
 			row.id, row.from, row.to, row.route, row.guard, row.decision, row.condition,
 			row.reset, row.component, row.mu, offset, uint32(len(row.resets)), uint8(row.arm),
 			row.guarded, row.truth, row.hasReset, row.hasMu,
@@ -213,18 +213,18 @@ func coldEnvironmentPlanes(rows []EnvironmentEdge) ([]cold.EnvironmentEdge, []co
 // coldStaticPlanes copies the compiler's flat authored-static rows one for
 // one; both rows are already flat, so the conversion is a change of
 // vocabulary only.
-func coldStaticPlanes(values []StaticTypeValueRow, expressions []StaticExpressionRow) ([]cold.StaticTypeValue, []cold.StaticExpression, bool) {
-	typeValues := make([]cold.StaticTypeValue, 0, len(values))
+func coldStaticPlanes(values []StaticTypeValueRow, expressions []StaticExpressionRow) ([]programschema.StaticTypeValue, []programschema.StaticExpression, bool) {
+	typeValues := make([]programschema.StaticTypeValue, 0, len(values))
 	for _, row := range values {
-		converted, ok := cold.NewStaticTypeValue(row.id, row.body, row.reference, row.root, row.name)
+		converted, ok := programschema.NewStaticTypeValue(row.id, row.body, row.reference, row.root, row.name)
 		if !ok {
 			return nil, nil, false
 		}
 		typeValues = append(typeValues, converted)
 	}
-	staticExpressions := make([]cold.StaticExpression, 0, len(expressions))
+	staticExpressions := make([]programschema.StaticExpression, 0, len(expressions))
 	for _, row := range expressions {
-		converted, ok := cold.NewStaticExpression(row.id, row.reference, row.owner)
+		converted, ok := programschema.NewStaticExpression(row.id, row.reference, row.owner)
 		if !ok {
 			return nil, nil, false
 		}
@@ -238,30 +238,30 @@ func coldStaticPlanes(values []StaticTypeValueRow, expressions []StaticExpressio
 // one for one. Each region names its members by the half-open span it
 // occupies in the member plane, so the canonical member order is the ordinal
 // order of the plane and no region retains a slice header.
-func coldRegionPlanes(rows []Region, events []WTOEvent) ([]cold.Region, []cold.RegionMember, []cold.WTOEvent, bool) {
-	regions := make([]cold.Region, 0, len(rows))
-	members := make([]cold.RegionMember, 0, len(rows))
+func coldRegionPlanes(rows []Region, events []WTOEvent) ([]programschema.Region, []programschema.RegionMember, []programschema.WTOEvent, bool) {
+	regions := make([]programschema.Region, 0, len(rows))
+	members := make([]programschema.RegionMember, 0, len(rows))
 	for _, row := range rows {
 		if !fitsUint32(len(members)) || !fitsUint32(len(row.members)) {
 			return nil, nil, nil, false
 		}
 		offset := uint32(len(members))
 		for _, member := range row.members {
-			converted, ok := cold.NewRegionMember(member)
+			converted, ok := programschema.NewRegionMember(member)
 			if !ok {
 				return nil, nil, nil, false
 			}
 			members = append(members, converted)
 		}
-		region, ok := cold.NewRegion(row.id, row.parent, offset, uint32(len(row.members)), row.cyclic)
+		region, ok := programschema.NewRegion(row.id, row.parent, offset, uint32(len(row.members)), row.cyclic)
 		if !ok {
 			return nil, nil, nil, false
 		}
 		regions = append(regions, region)
 	}
-	brackets := make([]cold.WTOEvent, 0, len(events))
+	brackets := make([]programschema.WTOEvent, 0, len(events))
 	for _, event := range events {
-		converted, ok := cold.NewWTOEvent(uint8(event.kind), event.region, event.point)
+		converted, ok := programschema.NewWTOEvent(uint8(event.kind), event.region, event.point)
 		if !ok {
 			return nil, nil, nil, false
 		}
@@ -272,10 +272,10 @@ func coldRegionPlanes(rows []Region, events []WTOEvent) ([]cold.Region, []cold.R
 
 // coldHeapIndexes copies the compiler's index-access rows one for one; the
 // row is already flat, so the conversion is a change of vocabulary only.
-func coldHeapIndexes(rows []HeapIndexRow) ([]cold.HeapIndex, bool) {
-	indexes := make([]cold.HeapIndex, 0, len(rows))
+func coldHeapIndexes(rows []HeapIndexRow) ([]programschema.HeapIndex, bool) {
+	indexes := make([]programschema.HeapIndex, 0, len(rows))
 	for _, row := range rows {
-		converted, ok := cold.NewHeapIndex(
+		converted, ok := programschema.NewHeapIndex(
 			row.id, row.read, row.baseSpan, row.resultSpan, row.keySpan,
 			row.lensKind, uint64(row.exactKey), row.valuesSpan, row.valuesID, row.position,
 		)
@@ -295,7 +295,7 @@ func freezeColdPublication(compiler *compiler, pointRows []Point) (snapshot.Froz
 	if compiler == nil {
 		return snapshot.Frozen{}, identity.ContentID{}, false
 	}
-	catalog, derived := cold.CatalogID(compiler.key.SchemaDigest())
+	catalog, derived := programschema.CatalogID(compiler.key.SchemaDigest())
 	if !derived {
 		return snapshot.Frozen{}, identity.ContentID{}, false
 	}
@@ -309,7 +309,7 @@ func freezeColdPublication(compiler *compiler, pointRows []Point) (snapshot.Froz
 	if !heapOK || !valuesOK || !indexesOK || !pointsOK || !edgesOK || !staticOK || !regionsOK {
 		return snapshot.Frozen{}, identity.ContentID{}, false
 	}
-	publication := cold.Publication{
+	publication := programschema.Publication{
 		CallTargets:     compiler.callTargets,
 		HeapAllocations: allocations, HeapFields: allocationFields,
 		Values: values, ValuesMembers: valuesMembers,

@@ -6,7 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/domain/composite"
 )
 
@@ -53,7 +53,7 @@ func TestProgramArtifactOwnsCanonicalFunctionBoundaryPorts(t *testing.T) {
 	if !bodiesPublished || !replayedBodiesPublished || bodyCount != replayedBodyCount {
 		t.Fatal("cold Body families unavailable")
 	}
-	bodyRows := make(map[identity.ContentID]cold.Body, bodyCount)
+	bodyRows := make(map[identity.ContentID]programschema.Body, bodyCount)
 	for index := 0; index < bodyCount; index++ {
 		row, ok := leftProgram.BodyAt(index)
 		if !ok {
@@ -189,8 +189,8 @@ return add
 	}
 	summary, summaryOK := program.ArithmeticSummaryAt(0)
 	leftRepresentation, rightRepresentation, resultRepresentation, representationsOK := summary.Representations()
-	if !summaryOK || !representationsOK || leftRepresentation != cold.NumericRepresentationInteger ||
-		rightRepresentation != cold.NumericRepresentationNumber || resultRepresentation != cold.NumericRepresentationNumber {
+	if !summaryOK || !representationsOK || leftRepresentation != programschema.NumericRepresentationInteger ||
+		rightRepresentation != programschema.NumericRepresentationNumber || resultRepresentation != programschema.NumericRepresentationNumber {
 		t.Fatalf("declared formal arithmetic=%+v/%v representations=%d/%d/%d/%v", summary, summaryOK,
 			leftRepresentation, rightRepresentation, resultRepresentation, representationsOK)
 	}

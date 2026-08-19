@@ -2,7 +2,7 @@ package artifact
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
@@ -23,20 +23,20 @@ func artifactID(artifact *Artifact) identity.ContentID {
 	// Points and their decision plane are read out of the sealed cold
 	// publication. The decision span preserves the emitted order, so the
 	// preimage is the same sequence the identity has always committed to.
-	pointCount, pointsPublished := coldCount(artifact, cold.PointFamily())
+	pointCount, pointsPublished := coldCount(artifact, programschema.PointFamily())
 	if !pointsPublished {
 		return identity.ContentID{}
 	}
 	sink.add(uintField(uint64(pointCount)))
 	for index := 0; index < pointCount; index++ {
-		point, held := coldRow(artifact, cold.PointFamily(), index)
+		point, held := coldRow(artifact, programschema.PointFamily(), index)
 		offset, decisions, spanOK := point.DecisionSpan()
 		if !held || !spanOK {
 			return identity.ContentID{}
 		}
 		sink.add(bytesField(point.ID()), boolField(point.Initial()), uintField(uint64(decisions)))
 		for position := uint32(0); position < decisions; position++ {
-			decision, decisionHeld := coldRow(artifact, cold.PointDecisionFamily(), int(offset+position))
+			decision, decisionHeld := coldRow(artifact, programschema.PointDecisionFamily(), int(offset+position))
 			if !decisionHeld {
 				return identity.ContentID{}
 			}
@@ -46,20 +46,20 @@ func artifactID(artifact *Artifact) identity.ContentID {
 	// Values and its member plane are read out of the sealed cold publication.
 	// The member span preserves the emitted order, so the preimage is the same
 	// sequence the identity has always committed to.
-	valuesCount, valuesPublished := coldCount(artifact, cold.ValuesFamily())
+	valuesCount, valuesPublished := coldCount(artifact, programschema.ValuesFamily())
 	if !valuesPublished {
 		return identity.ContentID{}
 	}
 	sink.add(uintField(uint64(valuesCount)))
 	for index := 0; index < valuesCount; index++ {
-		row, held := coldRow(artifact, cold.ValuesFamily(), index)
+		row, held := coldRow(artifact, programschema.ValuesFamily(), index)
 		offset, members, spanOK := row.MemberSpan()
 		if !held || !spanOK {
 			return identity.ContentID{}
 		}
 		sink.add(bytesField(row.ID()), bytesField(row.BodyPathID()), uintField(uint64(members)))
 		for position := uint32(0); position < members; position++ {
-			member, memberHeld := coldRow(artifact, cold.ValuesMemberFamily(), int(offset+position))
+			member, memberHeld := coldRow(artifact, programschema.ValuesMemberFamily(), int(offset+position))
 			if !memberHeld {
 				return identity.ContentID{}
 			}
@@ -71,16 +71,16 @@ func artifactID(artifact *Artifact) identity.ContentID {
 	// Calls are read from their sealed cold families. Keep every scalar and
 	// ordered child identity in the artifact seal so replay, mutation, and
 	// mounted joins authenticate the direct plane exactly.
-	callCount, callsPublished := coldCount(artifact, cold.CallFamily())
-	operandCount, operandsPublished := coldCount(artifact, cold.CallOperandFamily())
-	argumentCount, argumentsPublished := coldCount(artifact, cold.CallArgumentFamily())
-	typeArgumentCount, typeArgumentsPublished := coldCount(artifact, cold.CallTypeArgumentFamily())
+	callCount, callsPublished := coldCount(artifact, programschema.CallFamily())
+	operandCount, operandsPublished := coldCount(artifact, programschema.CallOperandFamily())
+	argumentCount, argumentsPublished := coldCount(artifact, programschema.CallArgumentFamily())
+	typeArgumentCount, typeArgumentsPublished := coldCount(artifact, programschema.CallTypeArgumentFamily())
 	if !callsPublished || !operandsPublished || !argumentsPublished || !typeArgumentsPublished {
 		return identity.ContentID{}
 	}
 	sink.add(uintField(callRowsLawVersion), uintField(uint64(callCount)))
 	for index := 0; index < callCount; index++ {
-		row, held := coldRow(artifact, cold.CallFamily(), index)
+		row, held := coldRow(artifact, programschema.CallFamily(), index)
 		operandStart, operandWidth, operandSpanOK := row.OperandSpan()
 		argumentStart, argumentWidth, argumentSpanOK := row.ArgumentSpan()
 		typeArgumentStart, typeArgumentWidth, typeArgumentSpanOK := row.TypeArgumentSpan()
@@ -101,34 +101,34 @@ func artifactID(artifact *Artifact) identity.ContentID {
 			uintField(uint64(operandWidth)), uintField(uint64(argumentWidth)), uintField(uint64(typeArgumentWidth)),
 		)
 		for childIndex := uint32(0); childIndex < operandWidth; childIndex++ {
-			operand, childHeld := coldRow(artifact, cold.CallOperandFamily(), int(operandStart+childIndex))
+			operand, childHeld := coldRow(artifact, programschema.CallOperandFamily(), int(operandStart+childIndex))
 			if !childHeld || !operand.Available() {
 				return identity.ContentID{}
 			}
 			sink.add(bytesField(operand.ID()), bytesField(operand.CallID()), bytesField(operand.ValueID()), bytesField(operand.SpanID()), uintField(uint64(operand.Kind())))
 		}
 		for childIndex := uint32(0); childIndex < argumentWidth; childIndex++ {
-			argument, childHeld := coldRow(artifact, cold.CallArgumentFamily(), int(argumentStart+childIndex))
+			argument, childHeld := coldRow(artifact, programschema.CallArgumentFamily(), int(argumentStart+childIndex))
 			if !childHeld || !argument.Available() {
 				return identity.ContentID{}
 			}
 			sink.add(bytesField(argument.ID()), bytesField(argument.CallID()), bytesField(argument.ValuesID()), bytesField(argument.MemberID()), bytesField(argument.SpanID()), uintField(uint64(argument.Index())))
 		}
 		for childIndex := uint32(0); childIndex < typeArgumentWidth; childIndex++ {
-			argument, childHeld := coldRow(artifact, cold.CallTypeArgumentFamily(), int(typeArgumentStart+childIndex))
+			argument, childHeld := coldRow(artifact, programschema.CallTypeArgumentFamily(), int(typeArgumentStart+childIndex))
 			if !childHeld || !argument.Available() {
 				return identity.ContentID{}
 			}
 			sink.add(bytesField(argument.ID()), bytesField(argument.CallID()), bytesField(argument.TypesID()), bytesField(argument.ReferenceID()), uintField(uint64(argument.Index())))
 		}
 	}
-	bodyCount, bodiesPublished := coldCount(artifact, cold.BodyFamily())
+	bodyCount, bodiesPublished := coldCount(artifact, programschema.BodyFamily())
 	if !bodiesPublished {
 		return identity.ContentID{}
 	}
 	sink.add(uintField(uint64(bodyCount)))
 	for index := 0; index < bodyCount; index++ {
-		body, held := coldRow(artifact, cold.BodyFamily(), index)
+		body, held := coldRow(artifact, programschema.BodyFamily(), index)
 		entryOffset, entryCount, entriesOK := body.EntrySpan()
 		rootOffset, rootCount, rootsOK := body.RootSpan()
 		outcomeOffset, outcomeCount, outcomesOK := body.OutcomeSpan()
@@ -139,7 +139,7 @@ func artifactID(artifact *Artifact) identity.ContentID {
 		}
 		sink.add(bytesField(body.ID()), bytesField(body.ContextID()), bytesField(body.EntryID()), boolField(body.Callable()), bytesField(function), bytesField(formal), uintField(uint64(entryCount)))
 		for position := uint32(0); position < entryCount; position++ {
-			point, childHeld := coldRow(artifact, cold.BodyEntryFamily(), int(entryOffset+position))
+			point, childHeld := coldRow(artifact, programschema.BodyEntryFamily(), int(entryOffset+position))
 			if !childHeld || point.BodyID() != body.ID() {
 				return identity.ContentID{}
 			}
@@ -147,7 +147,7 @@ func artifactID(artifact *Artifact) identity.ContentID {
 		}
 		sink.add(uintField(uint64(rootCount)))
 		for position := uint32(0); position < rootCount; position++ {
-			root, childHeld := coldRow(artifact, cold.BodyRootFamily(), int(rootOffset+position))
+			root, childHeld := coldRow(artifact, programschema.BodyRootFamily(), int(rootOffset+position))
 			if !childHeld || root.BodyID() != body.ID() {
 				return identity.ContentID{}
 			}
@@ -173,25 +173,25 @@ func artifactID(artifact *Artifact) identity.ContentID {
 	}
 	// The call-target family is read out of the sealed cold publication in its
 	// emitted order, which is the order the identity has always committed to.
-	targets, published := cold.CallTargetFamily().Count(&artifact.frozen, artifact.coldCatalog)
+	targets, published := programschema.CallTargetFamily().Count(&artifact.frozen, artifact.coldCatalog)
 	if !published {
 		return identity.ContentID{}
 	}
 	sink.add(uintField(uint64(targets)))
 	for index := 0; index < targets; index++ {
-		target, held := cold.CallTargetFamily().At(&artifact.frozen, artifact.coldCatalog, index)
+		target, held := programschema.CallTargetFamily().At(&artifact.frozen, artifact.coldCatalog, index)
 		if !held {
 			return identity.ContentID{}
 		}
 		sink.add(bytesField(target.Allocation), bytesField(target.Body), bytesField(target.Context), bytesField(target.Function), bytesField(target.Formal))
 	}
-	outcomeCount, outcomesPublished := coldCount(artifact, cold.OutcomeFamily())
+	outcomeCount, outcomesPublished := coldCount(artifact, programschema.OutcomeFamily())
 	if !outcomesPublished {
 		return identity.ContentID{}
 	}
 	sink.add(uintField(uint64(outcomeCount)))
 	for index := 0; index < outcomeCount; index++ {
-		outcome, held := coldRow(artifact, cold.OutcomeFamily(), index)
+		outcome, held := coldRow(artifact, programschema.OutcomeFamily(), index)
 		returnOffset, returnCount, returnsOK := outcome.ReturnValueSpan()
 		pointOffset, pointCount, pointsOK := outcome.PointSpan()
 		target, hasTarget := outcome.TargetID()
@@ -206,20 +206,20 @@ func artifactID(artifact *Artifact) identity.ContentID {
 			uintField(uint64(returnOffset)), uintField(uint64(returnOffset+returnCount)), uintField(uint64(pointCount)),
 		)
 		for position := uint32(0); position < pointCount; position++ {
-			point, childHeld := coldRow(artifact, cold.OutcomePointFamily(), int(pointOffset+position))
+			point, childHeld := coldRow(artifact, programschema.OutcomePointFamily(), int(pointOffset+position))
 			if !childHeld || point.OutcomeID() != outcome.ID() {
 				return identity.ContentID{}
 			}
 			sink.add(bytesField(point.PointID()))
 		}
 	}
-	returnValueCount, returnsPublished := coldCount(artifact, cold.OutcomeReturnValueFamily())
+	returnValueCount, returnsPublished := coldCount(artifact, programschema.OutcomeReturnValueFamily())
 	if !returnsPublished {
 		return identity.ContentID{}
 	}
 	sink.add(uintField(uint64(returnValueCount)))
 	for index := 0; index < returnValueCount; index++ {
-		value, held := coldRow(artifact, cold.OutcomeReturnValueFamily(), index)
+		value, held := coldRow(artifact, programschema.OutcomeReturnValueFamily(), index)
 		if !held {
 			return identity.ContentID{}
 		}
@@ -237,13 +237,13 @@ func artifactID(artifact *Artifact) identity.ContentID {
 		}
 		sink.add(uintField(uint64(row.literalFamily)), boolField(row.literalOK), uintField(uint64(row.literal.Kind)), boolField(row.literal.Bool), uintField(uint64(row.literal.Integer)), uintField(row.literal.FloatBits), field{bytes: []byte(row.literal.String), kind: fieldBytes})
 	}
-	exactCount, exactPublished := cold.ExactScalarSummaryFamily().Count(&artifact.frozen, artifact.coldCatalog)
+	exactCount, exactPublished := programschema.ExactScalarSummaryFamily().Count(&artifact.frozen, artifact.coldCatalog)
 	if !exactPublished {
 		return identity.ContentID{}
 	}
 	sink.add(uintField(uint64(exactCount)))
 	for index := 0; index < exactCount; index++ {
-		row, rowOK := cold.ExactScalarSummaryFamily().At(&artifact.frozen, artifact.coldCatalog, index)
+		row, rowOK := programschema.ExactScalarSummaryFamily().At(&artifact.frozen, artifact.coldCatalog, index)
 		literal, literalOK := row.Literal()
 		if !rowOK || !literalOK {
 			return identity.ContentID{}
@@ -251,13 +251,13 @@ func artifactID(artifact *Artifact) identity.ContentID {
 		sink.add(bytesField(row.ID()), bytesField(row.OccurrenceID()), bytesField(row.SubjectID()), bytesField(row.BodyPathID()),
 			uintField(uint64(row.Role())), uintField(uint64(literal.Kind)), uintField(uint64(literal.Integer)), uintField(literal.FloatBits))
 	}
-	arithmeticCount, arithmeticPublished := cold.ArithmeticSummaryFamily().Count(&artifact.frozen, artifact.coldCatalog)
+	arithmeticCount, arithmeticPublished := programschema.ArithmeticSummaryFamily().Count(&artifact.frozen, artifact.coldCatalog)
 	if !arithmeticPublished {
 		return identity.ContentID{}
 	}
 	sink.add(uintField(uint64(arithmeticCount)))
 	for index := 0; index < arithmeticCount; index++ {
-		row, rowOK := cold.ArithmeticSummaryFamily().At(&artifact.frozen, artifact.coldCatalog, index)
+		row, rowOK := programschema.ArithmeticSummaryFamily().At(&artifact.frozen, artifact.coldCatalog, index)
 		left, right, result, representationsOK := row.Representations()
 		if !rowOK || !representationsOK {
 			return identity.ContentID{}
@@ -265,13 +265,13 @@ func artifactID(artifact *Artifact) identity.ContentID {
 		sink.add(bytesField(row.ID()), bytesField(row.OccurrenceID()), bytesField(row.BodyPathID()), uintField(uint64(row.Operator())),
 			uintField(uint64(left)), uintField(uint64(right)), uintField(uint64(result)), uintField(uint64(row.DivisorProperty())))
 	}
-	unaryCount, unaryPublished := cold.UnarySummaryFamily().Count(&artifact.frozen, artifact.coldCatalog)
+	unaryCount, unaryPublished := programschema.UnarySummaryFamily().Count(&artifact.frozen, artifact.coldCatalog)
 	if !unaryPublished {
 		return identity.ContentID{}
 	}
 	sink.add(uintField(uint64(unaryCount)))
 	for index := 0; index < unaryCount; index++ {
-		row, rowOK := cold.UnarySummaryFamily().At(&artifact.frozen, artifact.coldCatalog, index)
+		row, rowOK := programschema.UnarySummaryFamily().At(&artifact.frozen, artifact.coldCatalog, index)
 		operand, result, representationsOK := row.Representations()
 		if !rowOK || !representationsOK {
 			return identity.ContentID{}
@@ -279,20 +279,20 @@ func artifactID(artifact *Artifact) identity.ContentID {
 		sink.add(bytesField(row.ID()), bytesField(row.OccurrenceID()), bytesField(row.BodyPathID()), bytesField(row.OutputPointID()), uintField(uint64(row.Operator())),
 			uintField(uint64(operand)), uintField(uint64(result)))
 	}
-	allocationCount, allocationsPublished := coldCount(artifact, cold.HeapAllocationFamily())
+	allocationCount, allocationsPublished := coldCount(artifact, programschema.HeapAllocationFamily())
 	if !allocationsPublished {
 		return identity.ContentID{}
 	}
 	sink.add(uintField(uint64(allocationCount)))
 	for index := 0; index < allocationCount; index++ {
-		allocation, held := coldRow(artifact, cold.HeapAllocationFamily(), index)
+		allocation, held := coldRow(artifact, programschema.HeapAllocationFamily(), index)
 		offset, fields, spanOK := allocation.FieldSpan()
 		if !held || !spanOK {
 			return identity.ContentID{}
 		}
 		sink.add(bytesField(allocation.ID()), uintField(uint64(allocation.Role())), uintField(uint64(allocation.Form())), bytesField(allocation.RootSpan()), uintField(uint64(fields)))
 		for position := uint32(0); position < fields; position++ {
-			field, fieldHeld := coldRow(artifact, cold.HeapFieldFamily(), int(offset+position))
+			field, fieldHeld := coldRow(artifact, programschema.HeapFieldFamily(), int(offset+position))
 			valuesSpan, width, finalOpen, valuesOK := field.Values()
 			normalized, normalizedOK := field.NormalizedKey()
 			if !fieldHeld || !valuesOK {
@@ -301,13 +301,13 @@ func artifactID(artifact *Artifact) identity.ContentID {
 			sink.add(bytesField(field.ID()), uintField(uint64(field.Kind())), bytesField(field.FieldSpan()), bytesField(field.SelectorSpan()), bytesField(valuesSpan), bytesField(field.ValuesID()), uintField(uint64(width)), boolField(finalOpen), boolField(field.SharesFirstValueCell()), uintField(normalized), boolField(normalizedOK))
 		}
 	}
-	indexCount, indexesPublished := coldCount(artifact, cold.HeapIndexFamily())
+	indexCount, indexesPublished := coldCount(artifact, programschema.HeapIndexFamily())
 	if !indexesPublished {
 		return identity.ContentID{}
 	}
 	sink.add(uintField(uint64(indexCount)))
 	for index := 0; index < indexCount; index++ {
-		access, held := coldRow(artifact, cold.HeapIndexFamily(), index)
+		access, held := coldRow(artifact, programschema.HeapIndexFamily(), index)
 		if !held {
 			return identity.ContentID{}
 		}
@@ -354,13 +354,13 @@ func artifactID(artifact *Artifact) identity.ContentID {
 	// The authored type-value plane is read out of the sealed cold publication
 	// in its emitted order, which is the order the identity has always
 	// committed to.
-	typeValueCount, typeValuesPublished := coldCount(artifact, cold.StaticTypeValueFamily())
+	typeValueCount, typeValuesPublished := coldCount(artifact, programschema.StaticTypeValueFamily())
 	if !typeValuesPublished {
 		return identity.ContentID{}
 	}
 	sink.add(uintField(uint64(typeValueCount)))
 	for index := 0; index < typeValueCount; index++ {
-		row, held := coldRow(artifact, cold.StaticTypeValueFamily(), index)
+		row, held := coldRow(artifact, programschema.StaticTypeValueFamily(), index)
 		if !held {
 			return identity.ContentID{}
 		}
@@ -435,13 +435,13 @@ func artifactID(artifact *Artifact) identity.ContentID {
 			sink.add(bytesField(child))
 		}
 	}
-	expressionCount, expressionsPublished := coldCount(artifact, cold.StaticExpressionFamily())
+	expressionCount, expressionsPublished := coldCount(artifact, programschema.StaticExpressionFamily())
 	if !expressionsPublished {
 		return identity.ContentID{}
 	}
 	sink.add(uintField(uint64(expressionCount)))
 	for index := 0; index < expressionCount; index++ {
-		row, held := coldRow(artifact, cold.StaticExpressionFamily(), index)
+		row, held := coldRow(artifact, programschema.StaticExpressionFamily(), index)
 		if !held {
 			return identity.ContentID{}
 		}
@@ -455,13 +455,13 @@ func artifactID(artifact *Artifact) identity.ContentID {
 	// The environment plane and its reset witnesses are read out of the sealed
 	// cold publication. The witness span preserves the emitted order, so the
 	// preimage is the same sequence the identity has always committed to.
-	edgeCount, edgesPublished := coldCount(artifact, cold.EnvironmentEdgeFamily())
+	edgeCount, edgesPublished := coldCount(artifact, programschema.EnvironmentEdgeFamily())
 	if !edgesPublished {
 		return identity.ContentID{}
 	}
 	sink.add(uintField(uint64(edgeCount)))
 	for index := 0; index < edgeCount; index++ {
-		edge, held := coldRow(artifact, cold.EnvironmentEdgeFamily(), index)
+		edge, held := coldRow(artifact, programschema.EnvironmentEdgeFamily(), index)
 		offset, resets, spanOK := edge.ResetSpan()
 		if !held || !spanOK {
 			return identity.ContentID{}
@@ -479,7 +479,7 @@ func artifactID(artifact *Artifact) identity.ContentID {
 			bytesField(reset), boolField(hasReset), uintField(uint64(resets)),
 		)
 		for position := uint32(0); position < resets; position++ {
-			witness, witnessHeld := coldRow(artifact, cold.EnvironmentResetFamily(), int(offset+position))
+			witness, witnessHeld := coldRow(artifact, programschema.EnvironmentResetFamily(), int(offset+position))
 			if !witnessHeld {
 				return identity.ContentID{}
 			}
@@ -504,13 +504,13 @@ func artifactID(artifact *Artifact) identity.ContentID {
 	// read out of the sealed cold publication. The member span preserves the
 	// emitted order, so the preimage is the same sequence the identity has
 	// always committed to.
-	regionCount, regionsPublished := coldCount(artifact, cold.RegionFamily())
+	regionCount, regionsPublished := coldCount(artifact, programschema.RegionFamily())
 	if !regionsPublished {
 		return identity.ContentID{}
 	}
 	sink.add(uintField(uint64(regionCount)))
 	for index := 0; index < regionCount; index++ {
-		region, held := coldRow(artifact, cold.RegionFamily(), index)
+		region, held := coldRow(artifact, programschema.RegionFamily(), index)
 		offset, members, spanOK := region.MemberSpan()
 		if !held || !spanOK {
 			return identity.ContentID{}
@@ -520,20 +520,20 @@ func artifactID(artifact *Artifact) identity.ContentID {
 			uintField(uint64(members)),
 		)
 		for position := uint32(0); position < members; position++ {
-			member, memberHeld := coldRow(artifact, cold.RegionMemberFamily(), int(offset+position))
+			member, memberHeld := coldRow(artifact, programschema.RegionMemberFamily(), int(offset+position))
 			if !memberHeld {
 				return identity.ContentID{}
 			}
 			sink.add(bytesField(member.ID()))
 		}
 	}
-	eventCount, eventsPublished := coldCount(artifact, cold.WTOEventFamily())
+	eventCount, eventsPublished := coldCount(artifact, programschema.WTOEventFamily())
 	if !eventsPublished {
 		return identity.ContentID{}
 	}
 	sink.add(uintField(uint64(eventCount)))
 	for index := 0; index < eventCount; index++ {
-		event, held := coldRow(artifact, cold.WTOEventFamily(), index)
+		event, held := coldRow(artifact, programschema.WTOEventFamily(), index)
 		if !held {
 			return identity.ContentID{}
 		}

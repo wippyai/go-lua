@@ -26,8 +26,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 	"github.com/wippyai/go-lua/analysis/snapshot"
@@ -58,8 +58,35 @@ type (
 	HotAxis        struct{}
 )
 
+// Program is one Link mount row. ModuleKey belongs to this row because the
+// same compiled content can be mounted at more than one module key.
+type Program struct {
+	ModuleKey identity.ContentID
+	programschema.Program
+}
+
+func (row Program) Available() bool {
+	return row.ModuleKey.Available() && row.Program.Available()
+}
+
+// ProgramFromSnapshot constructs the mount row from the neutral ingress
+// publication and the module key that places it in a Link directory.
+func ProgramFromSnapshot(source *ingress.Snapshot, module identity.ContentID) (Program, bool) {
+	if source == nil || !source.Available() || !module.Available() {
+		return Program{}, false
+	}
+	row := Program{
+		ModuleKey: module,
+		Program: programschema.Program{
+			Frozen: source.Frozen(), ArtifactID: source.ArtifactID(),
+			ProgramID: source.ProgramID(), SchemaID: source.SchemaID(),
+		},
+	}
+	return row, row.Available()
+}
+
 // MountedArtifact is one Link mount: the mount directory row that names the
-// program's cold publication, and the ingress view that still carries the
+// program's compiled publication, and the ingress view that still carries
 // families which have not moved onto it yet. Contributors receive no
 // ProgramArtifact through either.
 //
@@ -67,7 +94,7 @@ type (
 // module and program identities, so there is one authority for where this
 // mount is and what it mounts.
 type MountedArtifact struct {
-	cold.Program
+	Program
 	Snapshot *ingress.Snapshot
 }
 
@@ -112,30 +139,30 @@ func StructureSpecs() []structure.Spec { return vocabulary.RoleSpecs(AxisRole) }
 // A duplicate module key, an unavailable key, and a row that does not
 // authenticate against the key it is stored under are all rejected. A Link
 // with no mount seals no directory at all.
-func Content(rows []cold.Program, denominator identity.ContentID) (snapshot.Content[identity.ContentID, cold.Program], bool) {
+func Content(rows []Program, denominator identity.ContentID) (snapshot.Content[identity.ContentID, Program], bool) {
 	if len(rows) == 0 || !denominator.Available() {
-		return snapshot.Content[identity.ContentID, cold.Program]{}, false
+		return snapshot.Content[identity.ContentID, Program]{}, false
 	}
-	mounted := make(map[identity.ContentID]cold.Program, len(rows))
+	mounted := make(map[identity.ContentID]Program, len(rows))
 	members := make([]identity.ContentID, 0, len(rows))
 	for _, row := range rows {
 		if !row.Available() {
-			return snapshot.Content[identity.ContentID, cold.Program]{}, false
+			return snapshot.Content[identity.ContentID, Program]{}, false
 		}
 		if _, duplicate := mounted[row.ModuleKey]; duplicate {
-			return snapshot.Content[identity.ContentID, cold.Program]{}, false
+			return snapshot.Content[identity.ContentID, Program]{}, false
 		}
 		mounted[row.ModuleKey] = row
 		members = append(members, row.ModuleKey)
 	}
-	return snapshot.Content[identity.ContentID, cold.Program]{
+	return snapshot.Content[identity.ContentID, Program]{
 		Rows: mounted, Denominator: denominator, Members: members,
 	}, true
 }
 
 // Axis is the address of the mount directory column of one Link publication.
-func Axis(runtimeSchema identity.ContentID, slot uint32) snapshot.Axis[identity.ContentID, cold.Program] {
-	return snapshot.Axis[identity.ContentID, cold.Program]{SchemaID: runtimeSchema, Slot: slot}
+func Axis(runtimeSchema identity.ContentID, slot uint32) snapshot.Axis[identity.ContentID, Program] {
+	return snapshot.Axis[identity.ContentID, Program]{SchemaID: runtimeSchema, Slot: slot}
 }
 
 // DenominatorID is the identity of one Link's module directory: the key
@@ -151,7 +178,7 @@ func DenominatorID(linkID identity.ContentID) (identity.ContentID, bool) {
 // Mounted resolves one module key against a Link publication's mount
 // directory. A key the directory covers with no row is an absent mount as a
 // published fact; a key outside the directory is not a mount of this Link.
-func Mounted(published *snapshot.Snapshot, address snapshot.Axis[identity.ContentID, cold.Program], module identity.ContentID) (cold.Program, bool) {
+func Mounted(published *snapshot.Snapshot, address snapshot.Axis[identity.ContentID, Program], module identity.ContentID) (Program, bool) {
 	row, status := snapshot.Read(published, address, module)
 	return row, status == snapshot.ReadHit && row.Available()
 }

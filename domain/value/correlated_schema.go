@@ -18,7 +18,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/scalar"
 	"github.com/wippyai/go-lua/analysis/program/target"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/domain/materialization"
 	"github.com/wippyai/go-lua/domain/runtimekind"
 )
@@ -494,14 +494,14 @@ func (builder *valueBuilder) sealHost() *linkhost.Component         { return bui
 type ArtifactMount struct {
 	snapshot *ingress.Snapshot
 	module   identity.ContentID
-	program  cold.Program
+	program  programmount.Program
 }
 
 func NewArtifactMount(snapshot *ingress.Snapshot, module, programID identity.ContentID) (ArtifactMount, bool) {
 	if snapshot == nil || !snapshot.Available() || !module.Available() || !programID.Available() || snapshot.ProgramID() != programID {
 		return ArtifactMount{}, false
 	}
-	program, programOK := snapshot.ColdProgram(module)
+	program, programOK := programmount.ProgramFromSnapshot(snapshot, module)
 	if !programOK || program.ProgramID != programID {
 		return ArtifactMount{}, false
 	}
@@ -529,9 +529,9 @@ func (mount ArtifactMount) Snapshot() *ingress.Snapshot {
 	}
 	return mount.snapshot
 }
-func (mount ArtifactMount) Program() cold.Program {
+func (mount ArtifactMount) Program() programmount.Program {
 	if !mount.Available() {
-		return cold.Program{}
+		return programmount.Program{}
 	}
 	return mount.program
 }

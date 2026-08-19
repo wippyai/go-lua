@@ -5,7 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 )
@@ -17,11 +17,11 @@ import (
 // there rather than beside it.
 func coldLawPublication(t *testing.T) (snapshot.Frozen, identity.ContentID) {
 	t.Helper()
-	catalog, derived := cold.CatalogID(identity.ContentID{0xC0, 0x1D})
+	catalog, derived := programschema.CatalogID(identity.ContentID{0xC0, 0x1D})
 	if !derived {
 		t.Fatal("cold catalog")
 	}
-	frozen, sealed := cold.Publication{}.Seal(catalog, identity.StoreID(1))
+	frozen, sealed := programschema.Publication{}.Seal(catalog, identity.StoreID(1))
 	if !sealed {
 		t.Fatal("seal cold publication")
 	}

@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"github.com/wippyai/go-lua/domain/composite"
 	publication "github.com/wippyai/go-lua/domain/composite/publication"
@@ -52,7 +53,7 @@ func directAllocationSubjectContract(t testing.TB) (*target.Contract, vocabulary
 	if err != nil || contract == nil {
 		t.Fatalf("seal direct allocation Target: %v", err)
 	}
-	operation, operationOK := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"send"}})
+	operation, operationOK := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"send"}})
 	if !operationOK {
 		t.Fatal("direct allocation operation")
 	}
@@ -120,10 +121,22 @@ func directAllocationSubjectFixtureFor(t testing.TB, label string) directAllocat
 	if !selectorOK || !otherSelectorOK {
 		t.Fatal("direct allocation fixed selectors")
 	}
+	frozen, catalog, coldPublished := artifact.ColdPublication()
+	coldProgram := programschema.Program{
+		Frozen: frozen, ArtifactID: artifact.ID(),
+		ProgramID: artifact.CompileKey().ProgramID(), SchemaID: artifact.CompileKey().SchemaDigest(),
+	}
+	if !coldPublished || !catalog.Available() || !coldProgram.Available() {
+		t.Fatal("direct allocation cold program")
+	}
+	callCount, callsOK := coldProgram.CallCount()
+	if !callsOK {
+		t.Fatal("direct allocation call family")
+	}
 	var callID identity.ContentID
-	for index := 0; index < artifact.CallCount(); index++ {
-		call, callOK := artifact.CallAt(index)
-		if callOK && call.Form() == programartifact.CallFormMethod {
+	for index := 0; index < callCount; index++ {
+		call, callOK := coldProgram.CallAt(index)
+		if callOK && call.Form() == programschema.CallFormMethod {
 			callID = call.ID()
 			break
 		}

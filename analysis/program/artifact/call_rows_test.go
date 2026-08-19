@@ -6,7 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 )
 
 func TestCallRowsExposeOnlyAvailableChildRanges(t *testing.T) {
@@ -28,14 +28,9 @@ return identity(1)
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("call fixture did not compile: %s", failure.Error())
 	}
-	artifactID := artifact.ID()
-	module, moduleOK := identity.DeriveContentID("call-rows-module", artifactID[:])
-	if !moduleOK {
-		t.Fatal("call rows module identity")
-	}
 	frozen, catalog, coldPublished := artifact.ColdPublication()
-	program := cold.Program{
-		Frozen: frozen, ModuleKey: module, ArtifactID: artifact.ID(),
+	program := programschema.Program{
+		Frozen: frozen, ArtifactID: artifact.ID(),
 		ProgramID: artifact.CompileKey().ProgramID(), SchemaID: artifact.CompileKey().SchemaDigest(),
 	}
 	if !coldPublished || !catalog.Available() || !program.Available() {

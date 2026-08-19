@@ -3,22 +3,22 @@ package artifact
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 )
 
 func (artifact *Artifact) validateSealRows(state *sealValidationState) CompileFailure {
 	if artifact == nil || state == nil {
 		return compileFailure(CompileStageSeal, CompileRowAuthority, -1, -1, CompileReasonArtifactIdentity)
 	}
-	outcomeCount, outcomesPublished := coldCount(artifact, cold.OutcomeFamily())
-	returnValueCount, returnsPublished := coldCount(artifact, cold.OutcomeReturnValueFamily())
-	outcomePointCount, pointsPublished := coldCount(artifact, cold.OutcomePointFamily())
+	outcomeCount, outcomesPublished := coldCount(artifact, programschema.OutcomeFamily())
+	returnValueCount, returnsPublished := coldCount(artifact, programschema.OutcomeReturnValueFamily())
+	outcomePointCount, pointsPublished := coldCount(artifact, programschema.OutcomePointFamily())
 	if !outcomesPublished || !returnsPublished || !pointsPublished {
 		return compileFailure(CompileStageSeal, CompileRowOutcome, -1, -1, CompileReasonOutcomeUnavailable)
 	}
 	returnCursor, pointCursor := uint32(0), uint32(0)
 	for index := 0; index < outcomeCount; index++ {
-		row, held := coldRow(artifact, cold.OutcomeFamily(), index)
+		row, held := coldRow(artifact, programschema.OutcomeFamily(), index)
 		returnOffset, returnWidth, returnSpanOK := row.ReturnValueSpan()
 		pointOffset, pointWidth, pointSpanOK := row.PointSpan()
 		if !held || !returnSpanOK || !pointSpanOK {
@@ -35,7 +35,7 @@ func (artifact *Artifact) validateSealRows(state *sealValidationState) CompileFa
 		}
 		outcomePoints := make(map[identity.ContentID]struct{}, pointWidth)
 		for pointIndex := uint32(0); pointIndex < pointWidth; pointIndex++ {
-			child, childHeld := coldRow(artifact, cold.OutcomePointFamily(), int(pointOffset+pointIndex))
+			child, childHeld := coldRow(artifact, programschema.OutcomePointFamily(), int(pointOffset+pointIndex))
 			point := child.PointID()
 			if !childHeld || child.OutcomeID() != row.ID() {
 				return compileFailure(CompileStageSeal, CompileRowOutcome, index, int(pointIndex), CompileReasonOutcomeUnavailable)
@@ -52,7 +52,7 @@ func (artifact *Artifact) validateSealRows(state *sealValidationState) CompileFa
 			return compileFailure(CompileStageSeal, CompileRowOutcome, index, -1, CompileReasonOutcomeRange)
 		}
 		for valueIndex := uint32(0); valueIndex < returnWidth; valueIndex++ {
-			value, valueHeld := coldRow(artifact, cold.OutcomeReturnValueFamily(), int(returnOffset+valueIndex))
+			value, valueHeld := coldRow(artifact, programschema.OutcomeReturnValueFamily(), int(returnOffset+valueIndex))
 			if !valueHeld || value.OutcomeID() != row.ID() {
 				return compileFailure(CompileStageSeal, CompileRowReturnValue, index, int(valueIndex), CompileReasonReturnValueUnavailable)
 			}
@@ -68,7 +68,7 @@ func (artifact *Artifact) validateSealRows(state *sealValidationState) CompileFa
 		return compileFailure(CompileStageSeal, CompileRowReturnValue, -1, -1, CompileReasonOutcomeRange)
 	}
 	for index := 0; index < outcomeCount; index++ {
-		row, _ := coldRow(artifact, cold.OutcomeFamily(), index)
+		row, _ := coldRow(artifact, programschema.OutcomeFamily(), index)
 		propagation, propagated := row.PropagationID()
 		if !propagated {
 			continue
@@ -77,14 +77,14 @@ func (artifact *Artifact) validateSealRows(state *sealValidationState) CompileFa
 		if !exists || nextIndex == index {
 			return compileFailure(CompileStageSeal, CompileRowOutcome, index, -1, CompileReasonOutcomeReference)
 		}
-		next, nextHeld := coldRow(artifact, cold.OutcomeFamily(), nextIndex)
+		next, nextHeld := coldRow(artifact, programschema.OutcomeFamily(), nextIndex)
 		target, hasTarget := row.TargetID()
 		nextTarget, nextHasTarget := next.TargetID()
 		if !nextHeld || next.Kind() != row.Kind() || nextHasTarget != hasTarget || nextTarget != target {
 			return compileFailure(CompileStageSeal, CompileRowOutcome, index, -1, CompileReasonOutcomePropagation)
 		}
 	}
-	edgeCount, edgesPublished := coldCount(artifact, cold.EnvironmentEdgeFamily())
+	edgeCount, edgesPublished := coldCount(artifact, programschema.EnvironmentEdgeFamily())
 	if !edgesPublished {
 		return compileFailure(CompileStageSeal, CompileRowEnvironment, -1, -1, CompileReasonEnvironmentUnavailable)
 	}
@@ -131,7 +131,7 @@ func (artifact *Artifact) validateSealRows(state *sealValidationState) CompileFa
 		}
 		seenLocalTransfers[row.id] = struct{}{}
 	}
-	regionCount, regionsPublished := coldCount(artifact, cold.RegionFamily())
+	regionCount, regionsPublished := coldCount(artifact, programschema.RegionFamily())
 	if !regionsPublished {
 		return compileFailure(CompileStageSeal, CompileRowRegion, -1, -1, CompileReasonRegionUnavailable)
 	}
@@ -165,7 +165,7 @@ func (artifact *Artifact) validateSealRows(state *sealValidationState) CompileFa
 			}
 		}
 	}
-	eventCount, eventsPublished := coldCount(artifact, cold.WTOEventFamily())
+	eventCount, eventsPublished := coldCount(artifact, programschema.WTOEventFamily())
 	if !eventsPublished {
 		return compileFailure(CompileStageSeal, CompileRowWTOEvent, -1, -1, CompileReasonEventUnavailable)
 	}
@@ -207,13 +207,13 @@ func (artifact *Artifact) validateSealRows(state *sealValidationState) CompileFa
 		}
 		rows[row.id] = struct{}{}
 	}
-	exactCount, exactPublished := cold.ExactScalarSummaryFamily().Count(&artifact.frozen, artifact.coldCatalog)
+	exactCount, exactPublished := programschema.ExactScalarSummaryFamily().Count(&artifact.frozen, artifact.coldCatalog)
 	if !exactPublished {
 		return compileFailure(CompileStageSeal, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
 	}
 	var priorExact identity.ContentID
 	for index := 0; index < exactCount; index++ {
-		row, rowOK := cold.ExactScalarSummaryFamily().At(&artifact.frozen, artifact.coldCatalog, index)
+		row, rowOK := programschema.ExactScalarSummaryFamily().At(&artifact.frozen, artifact.coldCatalog, index)
 		if !rowOK || index > 0 && !contentIDBefore(priorExact, row.ID()) {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
@@ -229,11 +229,11 @@ func (artifact *Artifact) validateSealRows(state *sealValidationState) CompileFa
 		left, right, _, endpointsOK := artifact.occurrences[binary].BinaryArithmetic()
 		wantSubject := artifact.occurrences[binary].ID()
 		switch row.Role() {
-		case cold.ExactScalarSummaryLeft:
+		case programschema.ExactScalarSummaryLeft:
 			wantSubject = left
-		case cold.ExactScalarSummaryRight:
+		case programschema.ExactScalarSummaryRight:
 			wantSubject = right
-		case cold.ExactScalarSummaryResult:
+		case programschema.ExactScalarSummaryResult:
 		default:
 			endpointsOK = false
 		}
@@ -241,13 +241,13 @@ func (artifact *Artifact) validateSealRows(state *sealValidationState) CompileFa
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 	}
-	arithmeticCount, arithmeticPublished := cold.ArithmeticSummaryFamily().Count(&artifact.frozen, artifact.coldCatalog)
+	arithmeticCount, arithmeticPublished := programschema.ArithmeticSummaryFamily().Count(&artifact.frozen, artifact.coldCatalog)
 	if !arithmeticPublished {
 		return compileFailure(CompileStageSeal, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
 	}
 	var priorArithmetic identity.ContentID
 	for index := 0; index < arithmeticCount; index++ {
-		row, rowOK := cold.ArithmeticSummaryFamily().At(&artifact.frozen, artifact.coldCatalog, index)
+		row, rowOK := programschema.ArithmeticSummaryFamily().At(&artifact.frozen, artifact.coldCatalog, index)
 		if !rowOK || index > 0 && !contentIDBefore(priorArithmetic, row.ID()) {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
@@ -262,13 +262,13 @@ func (artifact *Artifact) validateSealRows(state *sealValidationState) CompileFa
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 	}
-	unaryCount, unaryPublished := cold.UnarySummaryFamily().Count(&artifact.frozen, artifact.coldCatalog)
+	unaryCount, unaryPublished := programschema.UnarySummaryFamily().Count(&artifact.frozen, artifact.coldCatalog)
 	if !unaryPublished {
 		return compileFailure(CompileStageSeal, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
 	}
 	var priorUnary identity.ContentID
 	for index := 0; index < unaryCount; index++ {
-		row, rowOK := cold.UnarySummaryFamily().At(&artifact.frozen, artifact.coldCatalog, index)
+		row, rowOK := programschema.UnarySummaryFamily().At(&artifact.frozen, artifact.coldCatalog, index)
 		if !rowOK || index > 0 && !contentIDBefore(priorUnary, row.ID()) {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, 0, CompileReasonOccurrenceUnavailable)
 		}

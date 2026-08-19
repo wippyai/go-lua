@@ -2,7 +2,7 @@ package artifact
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 )
@@ -70,14 +70,14 @@ func (artifact *Artifact) CountRows() denominator.CountRows {
 // publication. They are the artifact-internal spelling of the family accessors
 // and deliberately do not gate on Available: the seal validation walks read
 // the publication while the artifact's own identity is still being derived.
-func coldCount[V cold.Row](artifact *Artifact, family cold.Family[V]) (int, bool) {
+func coldCount[V programschema.Row](artifact *Artifact, family programschema.Family[V]) (int, bool) {
 	if artifact == nil {
 		return 0, false
 	}
 	return family.Count(&artifact.frozen, artifact.coldCatalog)
 }
 
-func coldRow[V cold.Row](artifact *Artifact, family cold.Family[V], index int) (V, bool) {
+func coldRow[V programschema.Row](artifact *Artifact, family programschema.Family[V], index int) (V, bool) {
 	var absent V
 	if artifact == nil {
 		return absent, false

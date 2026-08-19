@@ -12,7 +12,7 @@ import (
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
@@ -109,7 +109,7 @@ func buildNativeBranchPublication(
 func appendNativeArithmeticRows(
 	rows *[]nativePublicationRow,
 	seen map[identity.ContentID]struct{},
-	summary cold.ArithmeticSummary,
+	summary programschema.ArithmeticSummary,
 	mount, artifact, span, body, point identity.ContentID,
 ) bool {
 	left, right, resultRepresentation, representationsOK := summary.Representations()
@@ -124,7 +124,7 @@ func appendNativeArithmeticRows(
 		return false
 	}
 	representation := "representation=" + resultName + " left=" + leftName + " operator=" + operator + " overflow=" + overflow.String() + " result_representation=" + resultName + " right=" + rightName
-	if resultRepresentation != cold.NumericRepresentationNumber {
+	if resultRepresentation != programschema.NumericRepresentationNumber {
 		representation = "exact=true " + representation
 	}
 	if !appendNativeArithmeticRow(rows, seen, nativePublicationFamilyRepresentation, summary, mount, artifact, span, body, point, representation) {
@@ -150,7 +150,7 @@ func appendNativeArithmeticRow(
 	rows *[]nativePublicationRow,
 	seen map[identity.ContentID]struct{},
 	family nativePublicationFamily,
-	summary cold.ArithmeticSummary,
+	summary programschema.ArithmeticSummary,
 	mount, artifact, span, body, point identity.ContentID,
 	value string,
 ) bool {
@@ -186,7 +186,7 @@ func appendNativeArithmeticRow(
 func appendNativeUnaryRows(
 	rows *[]nativePublicationRow,
 	seen map[identity.ContentID]struct{},
-	summary cold.UnarySummary,
+	summary programschema.UnarySummary,
 	mount, artifact, body identity.ContentID,
 ) bool {
 	operandRepresentation, resultRepresentation, representationsOK := summary.Representations()
@@ -199,7 +199,7 @@ func appendNativeUnaryRows(
 		return false
 	}
 	value := "operator=unm overflow=" + overflow.String() + " representation=" + result + " result_representation=" + result + " operand_representation=" + operand
-	if resultRepresentation != cold.NumericRepresentationNumber {
+	if resultRepresentation != programschema.NumericRepresentationNumber {
 		value = "exact=true " + value
 	}
 	semantic, semanticOK := nativePublicationFamilyRepresentation.semanticID()
@@ -231,7 +231,7 @@ func appendNativeUnaryRows(
 	return true
 }
 
-func validNativeArithmeticSummary(summary cold.ArithmeticSummary, mount, artifact, body, point, span identity.ContentID) bool {
+func validNativeArithmeticSummary(summary programschema.ArithmeticSummary, mount, artifact, body, point, span identity.ContentID) bool {
 	if !summary.Available() || !mount.Available() || !artifact.Available() || !body.Available() || !point.Available() || !span.Available() {
 		return false
 	}
@@ -240,10 +240,10 @@ func validNativeArithmeticSummary(summary cold.ArithmeticSummary, mount, artifac
 	divisor := summary.DivisorProperty()
 	return summary.ID() != summary.OccurrenceID() && summary.BodyPathID() == body &&
 		flowkind.IsBinaryArithmetic(op) && representationsOK && left.Valid() && right.Valid() && result.Valid() && divisor.Valid() &&
-		(divisor == cold.ArithmeticDivisorNone || op == flowkind.BinaryIDiv)
+		(divisor == programschema.ArithmeticDivisorNone || op == flowkind.BinaryIDiv)
 }
 
-func validNativeUnarySummary(summary cold.UnarySummary, mount, artifact, body identity.ContentID) bool {
+func validNativeUnarySummary(summary programschema.UnarySummary, mount, artifact, body identity.ContentID) bool {
 	if !summary.Available() || !mount.Available() || !artifact.Available() || !body.Available() {
 		return false
 	}
@@ -255,13 +255,13 @@ func validNativeUnarySummary(summary cold.UnarySummary, mount, artifact, body id
 // nativeNumericRepresentation is this publication's single spelling of the
 // sealed representation vocabulary: the names exist nowhere else, so they are
 // rendered here rather than projected from a declared row.
-func nativeNumericRepresentation(representation cold.NumericRepresentation) (string, bool) {
+func nativeNumericRepresentation(representation programschema.NumericRepresentation) (string, bool) {
 	switch representation {
-	case cold.NumericRepresentationInteger:
+	case programschema.NumericRepresentationInteger:
 		return "integer", true
-	case cold.NumericRepresentationFloat:
+	case programschema.NumericRepresentationFloat:
 		return "float", true
-	case cold.NumericRepresentationNumber:
+	case programschema.NumericRepresentationNumber:
 		return "number", true
 	default:
 		return "", false
@@ -295,13 +295,13 @@ func nativeArithmeticOperator(op flowkind.BinaryOp) (string, bool) {
 // nativeArithmeticDivisor is this publication's single spelling of the sealed
 // divisor-property vocabulary; the guard conclusions carry no declared name of
 // their own, and the absent property renders as no clause at all.
-func nativeArithmeticDivisor(property cold.ArithmeticDivisorProperty) (string, bool) {
+func nativeArithmeticDivisor(property programschema.ArithmeticDivisorProperty) (string, bool) {
 	switch property {
-	case cold.ArithmeticDivisorNone:
+	case programschema.ArithmeticDivisorNone:
 		return "", true
-	case cold.ArithmeticDivisorNonzero:
+	case programschema.ArithmeticDivisorNonzero:
 		return "nonzero", true
-	case cold.ArithmeticDivisorNonzeroNotMinusOne:
+	case programschema.ArithmeticDivisorNonzeroNotMinusOne:
 		return "nonzero_not_minus_one", true
 	default:
 		return "", false
@@ -323,7 +323,7 @@ func nativePublicationBodyAt(geometry Geometry, point Point) (identity.ContentID
 func appendNativeStaticScalarRows(
 	rows *[]nativePublicationRow,
 	seen map[identity.ContentID]struct{},
-	summary cold.ExactScalarSummary,
+	summary programschema.ExactScalarSummary,
 	mount, artifact, body, point identity.ContentID,
 ) bool {
 	literal, ok := nativeSummaryLiteral(summary, mount, artifact, body, point)
@@ -344,7 +344,7 @@ func appendNativeStaticScalarRow(
 	rows *[]nativePublicationRow,
 	seen map[identity.ContentID]struct{},
 	family nativePublicationFamily,
-	summary cold.ExactScalarSummary,
+	summary programschema.ExactScalarSummary,
 	mount, artifact, body, point identity.ContentID,
 	value string,
 ) bool {
@@ -377,7 +377,7 @@ func appendNativeStaticScalarRow(
 	return true
 }
 
-func nativeSummaryLiteral(summary cold.ExactScalarSummary, mount, artifact, body, point identity.ContentID) (keyspace.LiteralValue, bool) {
+func nativeSummaryLiteral(summary programschema.ExactScalarSummary, mount, artifact, body, point identity.ContentID) (keyspace.LiteralValue, bool) {
 	if !summary.Available() || !mount.Available() || !artifact.Available() || !body.Available() || !point.Available() ||
 		summary.ID() == summary.OccurrenceID() || summary.BodyPathID() != body {
 		return keyspace.LiteralValue{}, false

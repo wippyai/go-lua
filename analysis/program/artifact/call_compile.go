@@ -3,7 +3,7 @@ package artifact
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow/accessgeometry"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 )
 
 func (compiler *compiler) copyCallRowsFailure() CompileFailure {
@@ -11,7 +11,7 @@ func (compiler *compiler) copyCallRowsFailure() CompileFailure {
 		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceCall)
 	}
 	calls := compiler.input.Flow().Authored().Calls().Count()
-	compiler.calls = make([]cold.Call, 0, calls)
+	compiler.calls = make([]programschema.Call, 0, calls)
 	compiler.callOperands = compiler.callOperands[:0]
 	compiler.callArguments = compiler.callArguments[:0]
 	compiler.callTypeArguments = compiler.callTypeArguments[:0]
@@ -31,7 +31,7 @@ func (compiler *compiler) copyCallRowsFailure() CompileFailure {
 		argumentStart := uint32(len(compiler.callArguments))
 		typeArgumentStart := uint32(len(compiler.callTypeArguments))
 		appendOperand := func(operand callOperandConstruction) bool {
-			value, valueOK := cold.NewCallOperand(operand.id, call.id, operand.id, operand.span, operand.kind)
+			value, valueOK := programschema.NewCallOperand(operand.id, call.id, operand.id, operand.span, operand.kind)
 			if !valueOK {
 				return false
 			}
@@ -53,7 +53,7 @@ func (compiler *compiler) copyCallRowsFailure() CompileFailure {
 			if !fitsUint32(argumentIndex) {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, argumentIndex, CompileReasonOccurrenceCall)
 			}
-			argumentRow, argumentOK := cold.NewCallArgument(argument.id, call.id, call.values, argument.member, argument.span, uint32(argumentIndex))
+			argumentRow, argumentOK := programschema.NewCallArgument(argument.id, call.id, call.values, argument.member, argument.span, uint32(argumentIndex))
 			if !argumentOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, argumentIndex, CompileReasonOccurrenceCall)
 			}
@@ -63,7 +63,7 @@ func (compiler *compiler) copyCallRowsFailure() CompileFailure {
 			if !fitsUint32(typeIndex) {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, typeIndex, CompileReasonOccurrenceCall)
 			}
-			argumentRow, argumentOK := cold.NewCallTypeArgument(argument.id, call.id, call.types, argument.reference, uint32(typeIndex))
+			argumentRow, argumentOK := programschema.NewCallTypeArgument(argument.id, call.id, call.types, argument.reference, uint32(typeIndex))
 			if !argumentOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, typeIndex, CompileReasonOccurrenceCall)
 			}
@@ -80,7 +80,7 @@ func (compiler *compiler) copyCallRowsFailure() CompileFailure {
 		if call.tail.Available() {
 			tail, hasTail = call.tail, true
 		}
-		row, rowOK := cold.NewCall(
+		row, rowOK := programschema.NewCall(
 			call.id, call.bodyPath, call.span, call.formal, call.values, call.valuesRoot, call.types,
 			call.callee.id, call.actuals.id, receiver, tail, call.targetBody, form,
 			operandStart, operandEnd, argumentStart, argumentEnd, typeArgumentStart, typeArgumentEnd,
@@ -94,13 +94,13 @@ func (compiler *compiler) copyCallRowsFailure() CompileFailure {
 	return CompileFailure{}
 }
 
-func coldCallForm(form accessgeometry.CallForm) (cold.CallForm, bool) {
+func coldCallForm(form accessgeometry.CallForm) (programschema.CallForm, bool) {
 	switch form {
 	case accessgeometry.CallFormPlain:
-		return cold.CallFormPlain, true
+		return programschema.CallFormPlain, true
 	case accessgeometry.CallFormMethod:
-		return cold.CallFormMethod, true
+		return programschema.CallFormMethod, true
 	default:
-		return cold.CallFormInvalid, false
+		return programschema.CallFormInvalid, false
 	}
 }

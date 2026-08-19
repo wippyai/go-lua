@@ -6,7 +6,7 @@ import (
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 )
 
 // Root and Values are Pack-private selectors over direct Program topology.
@@ -80,7 +80,7 @@ type callRow struct {
 	valuesID     identity.ContentID
 	receiverID   identity.ContentID
 	typesID      identity.ContentID
-	form         cold.CallForm
+	form         programschema.CallForm
 	moduleKey    identity.ContentID
 	formalID     identity.ContentID
 	typeFormal   FormalCallTypeArguments

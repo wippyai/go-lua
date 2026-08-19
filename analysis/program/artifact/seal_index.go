@@ -3,7 +3,7 @@ package artifact
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 )
 
 func (artifact *Artifact) validateSealIndexes(state *sealValidationState) CompileFailure {
@@ -12,10 +12,10 @@ func (artifact *Artifact) validateSealIndexes(state *sealValidationState) Compil
 	}
 	// Calls and their ordered child columns are one sealed cold publication.
 	// Validate contiguous ranges and owner joins at the publication boundary.
-	callCount, callsPublished := coldCount(artifact, cold.CallFamily())
-	operandCount, operandsPublished := coldCount(artifact, cold.CallOperandFamily())
-	argumentCount, argumentsPublished := coldCount(artifact, cold.CallArgumentFamily())
-	typeArgumentCount, typeArgumentsPublished := coldCount(artifact, cold.CallTypeArgumentFamily())
+	callCount, callsPublished := coldCount(artifact, programschema.CallFamily())
+	operandCount, operandsPublished := coldCount(artifact, programschema.CallOperandFamily())
+	argumentCount, argumentsPublished := coldCount(artifact, programschema.CallArgumentFamily())
+	typeArgumentCount, typeArgumentsPublished := coldCount(artifact, programschema.CallTypeArgumentFamily())
 	if !callsPublished || !operandsPublished || !argumentsPublished || !typeArgumentsPublished {
 		return compileFailure(CompileStageSeal, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceCall)
 	}
@@ -25,7 +25,7 @@ func (artifact *Artifact) validateSealIndexes(state *sealValidationState) Compil
 	seenCallTypeArguments := make(map[identity.ContentID]struct{}, typeArgumentCount)
 	operandCursor, argumentCursor, typeArgumentCursor := 0, 0, 0
 	for index := 0; index < callCount; index++ {
-		row, held := coldRow(artifact, cold.CallFamily(), index)
+		row, held := coldRow(artifact, programschema.CallFamily(), index)
 		operandStart, operandWidth, operandSpanOK := row.OperandSpan()
 		argumentStart, argumentWidth, argumentSpanOK := row.ArgumentSpan()
 		typeArgumentStart, typeArgumentWidth, typeArgumentSpanOK := row.TypeArgumentSpan()
@@ -46,7 +46,7 @@ func (artifact *Artifact) validateSealIndexes(state *sealValidationState) Compil
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceCall)
 		}
 		for childIndex := uint32(0); childIndex < operandWidth; childIndex++ {
-			child, childHeld := coldRow(artifact, cold.CallOperandFamily(), int(operandStart+childIndex))
+			child, childHeld := coldRow(artifact, programschema.CallOperandFamily(), int(operandStart+childIndex))
 			if !childHeld || !child.Available() || child.CallID() != row.ID() {
 				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, int(childIndex), CompileReasonOccurrenceCall)
 			}
@@ -56,7 +56,7 @@ func (artifact *Artifact) validateSealIndexes(state *sealValidationState) Compil
 			seenCallOperands[child.ID()] = struct{}{}
 		}
 		for childIndex := uint32(0); childIndex < argumentWidth; childIndex++ {
-			child, childHeld := coldRow(artifact, cold.CallArgumentFamily(), int(argumentStart+childIndex))
+			child, childHeld := coldRow(artifact, programschema.CallArgumentFamily(), int(argumentStart+childIndex))
 			position := childIndex
 			if !childHeld || !child.Available() || child.CallID() != row.ID() || child.ValuesID() != row.ValuesID() || child.Index() != position {
 				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, int(position), CompileReasonOccurrenceCall)
@@ -67,7 +67,7 @@ func (artifact *Artifact) validateSealIndexes(state *sealValidationState) Compil
 			seenCallArguments[child.ID()] = struct{}{}
 		}
 		for childIndex := uint32(0); childIndex < typeArgumentWidth; childIndex++ {
-			child, childHeld := coldRow(artifact, cold.CallTypeArgumentFamily(), int(typeArgumentStart+childIndex))
+			child, childHeld := coldRow(artifact, programschema.CallTypeArgumentFamily(), int(typeArgumentStart+childIndex))
 			position := childIndex
 			if !childHeld || !child.Available() || child.CallID() != row.ID() || child.TypesID() != row.TypeArgumentsID() || child.Index() != position {
 				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, int(position), CompileReasonOccurrenceCall)
@@ -130,19 +130,19 @@ func (artifact *Artifact) validateSealIndexes(state *sealValidationState) Compil
 			}
 		}
 	}
-	targetCount, targetsPublished := cold.CallTargetFamily().Count(&artifact.frozen, artifact.coldCatalog)
+	targetCount, targetsPublished := programschema.CallTargetFamily().Count(&artifact.frozen, artifact.coldCatalog)
 	if !targetsPublished {
 		return compileFailure(CompileStageSeal, CompileRowBody, -1, -1, CompileReasonBodyUnavailable)
 	}
 	seenCallAllocations := make(map[identity.ContentID]struct{}, targetCount)
 	seenCallBodies := make(map[identity.ContentID]struct{}, targetCount)
-	bodyCount, bodiesPublished := coldCount(artifact, cold.BodyFamily())
+	bodyCount, bodiesPublished := coldCount(artifact, programschema.BodyFamily())
 	if !bodiesPublished {
 		return compileFailure(CompileStageSeal, CompileRowBody, -1, -1, CompileReasonBodyUnavailable)
 	}
-	bodyByContext := make(map[identity.ContentID]cold.Body, bodyCount)
+	bodyByContext := make(map[identity.ContentID]programschema.Body, bodyCount)
 	for bodyIndex := 0; bodyIndex < bodyCount; bodyIndex++ {
-		body, held := coldRow(artifact, cold.BodyFamily(), bodyIndex)
+		body, held := coldRow(artifact, programschema.BodyFamily(), bodyIndex)
 		if !held {
 			return compileFailure(CompileStageSeal, CompileRowBody, bodyIndex, -1, CompileReasonBodyUnavailable)
 		}
@@ -152,7 +152,7 @@ func (artifact *Artifact) validateSealIndexes(state *sealValidationState) Compil
 		bodyByContext[body.ContextID()] = body
 	}
 	for index := 0; index < targetCount; index++ {
-		target, held := cold.CallTargetFamily().At(&artifact.frozen, artifact.coldCatalog, index)
+		target, held := programschema.CallTargetFamily().At(&artifact.frozen, artifact.coldCatalog, index)
 		body, bodyOK := bodyByContext[target.Context]
 		function, functionOK := body.FunctionContextID()
 		formal, formalOK := body.CallFormalID()
@@ -168,16 +168,16 @@ func (artifact *Artifact) validateSealIndexes(state *sealValidationState) Compil
 		}
 		seenCallAllocations[target.Allocation], seenCallBodies[target.Context] = struct{}{}, struct{}{}
 	}
-	outcomeCount, outcomesPublished := coldCount(artifact, cold.OutcomeFamily())
+	outcomeCount, outcomesPublished := coldCount(artifact, programschema.OutcomeFamily())
 	if !outcomesPublished || uint64(state.outcomeCursor) != uint64(outcomeCount) {
 		return compileFailure(CompileStageSeal, CompileRowBody, -1, -1, CompileReasonBodyRange)
 	}
-	valuesCount, valuesPublished := coldCount(artifact, cold.ValuesFamily())
+	valuesCount, valuesPublished := coldCount(artifact, programschema.ValuesFamily())
 	if !valuesPublished {
 		return compileFailure(CompileStageSeal, CompileRowValues, -1, -1, CompileReasonValuesUnavailable)
 	}
 	for index := 0; index < valuesCount; index++ {
-		row, held := coldRow(artifact, cold.ValuesFamily(), index)
+		row, held := coldRow(artifact, programschema.ValuesFamily(), index)
 		if !held {
 			return compileFailure(CompileStageSeal, CompileRowValues, index, -1, CompileReasonValuesUnavailable)
 		}
@@ -185,7 +185,7 @@ func (artifact *Artifact) validateSealIndexes(state *sealValidationState) Compil
 			return compileFailure(CompileStageSeal, CompileRowValues, index, -1, CompileReasonValuesBody)
 		}
 	}
-	typeValueCount, typeValuesPublished := coldCount(artifact, cold.StaticTypeValueFamily())
+	typeValueCount, typeValuesPublished := coldCount(artifact, programschema.StaticTypeValueFamily())
 	if !typeValuesPublished {
 		return compileFailure(CompileStageSeal, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
 	}
@@ -239,7 +239,7 @@ func (artifact *Artifact) validateSealIndexes(state *sealValidationState) Compil
 			}
 		}
 	}
-	expressionCount, expressionsPublished := coldCount(artifact, cold.StaticExpressionFamily())
+	expressionCount, expressionsPublished := coldCount(artifact, programschema.StaticExpressionFamily())
 	if !expressionsPublished {
 		return compileFailure(CompileStageSeal, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
 	}

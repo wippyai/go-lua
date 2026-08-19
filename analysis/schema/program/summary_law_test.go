@@ -1,4 +1,4 @@
-package cold
+package programschema
 
 import (
 	"testing"
@@ -77,8 +77,7 @@ func sealSummaryLaw(t *testing.T) (snapshot.Frozen, identity.ContentID, []ExactS
 // come from the same Frozen publication, with no second slice authority.
 func TestSummaryColumnsReadBackThroughProgram(t *testing.T) {
 	frozen, _, exact, arithmetic, unary := sealSummaryLaw(t)
-	module := summaryLawID(t, "module")
-	program := Program{Frozen: frozen, ModuleKey: module, ArtifactID: summaryLawID(t, "artifact"), ProgramID: summaryLawID(t, "program"), SchemaID: summaryLawID(t, "runtime-schema")}
+	program := Program{Frozen: frozen, ArtifactID: summaryLawID(t, "artifact"), ProgramID: summaryLawID(t, "program"), SchemaID: summaryLawID(t, "runtime-schema")}
 	if !program.Available() {
 		t.Fatal("program rejected sealed summary publication")
 	}

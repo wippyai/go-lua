@@ -1,4 +1,4 @@
-package cold
+package programschema
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -37,7 +37,8 @@ func (property ArithmeticDivisorProperty) Valid() bool {
 }
 
 // SummaryOperator is an opaque Program operator ordinal. Keeping the carrier
-// here avoids making schema/cold depend on the Program vocabulary package.
+// here avoids making the compiled-program schema depend on the Program
+// vocabulary package.
 type SummaryOperator uint8
 
 // SummaryLiteral is the neutral exact scalar carrier. Kind retains the

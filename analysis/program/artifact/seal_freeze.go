@@ -2,20 +2,20 @@ package artifact
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 )
 
 func (artifact *Artifact) validateSealFreeze(state *sealValidationState) CompileFailure {
 	if artifact == nil || state == nil {
 		return compileFailure(CompileStageSeal, CompileRowAuthority, -1, -1, CompileReasonArtifactIdentity)
 	}
-	valuesCount, valuesPublished := coldCount(artifact, cold.ValuesFamily())
+	valuesCount, valuesPublished := coldCount(artifact, programschema.ValuesFamily())
 	if !valuesPublished {
 		return compileFailure(CompileStageSeal, CompileRowValues, -1, -1, CompileReasonValuesUnavailable)
 	}
 	state.valuesRows = make(map[identity.ContentID]struct{}, valuesCount)
 	for index := 0; index < valuesCount; index++ {
-		row, held := coldRow(artifact, cold.ValuesFamily(), index)
+		row, held := coldRow(artifact, programschema.ValuesFamily(), index)
 		if !held {
 			return compileFailure(CompileStageSeal, CompileRowValues, index, -1, CompileReasonValuesUnavailable)
 		}
@@ -24,13 +24,13 @@ func (artifact *Artifact) validateSealFreeze(state *sealValidationState) Compile
 		}
 		state.valuesRows[row.ID()] = struct{}{}
 	}
-	allocationCount, allocationsPublished := coldCount(artifact, cold.HeapAllocationFamily())
+	allocationCount, allocationsPublished := coldCount(artifact, programschema.HeapAllocationFamily())
 	if !allocationsPublished {
 		return compileFailure(CompileStageSeal, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceAllocation)
 	}
 	seenHeapAllocations := make(map[identity.ContentID]struct{}, allocationCount)
 	for index := 0; index < allocationCount; index++ {
-		allocation, held := coldRow(artifact, cold.HeapAllocationFamily(), index)
+		allocation, held := coldRow(artifact, programschema.HeapAllocationFamily(), index)
 		offset, fields, spanOK := allocation.FieldSpan()
 		if !held || !spanOK {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceAllocation)
@@ -43,7 +43,7 @@ func (artifact *Artifact) validateSealFreeze(state *sealValidationState) Compile
 		}
 		seenHeapAllocations[allocation.ID()] = struct{}{}
 		for position := uint32(0); position < fields; position++ {
-			field, fieldHeld := coldRow(artifact, cold.HeapFieldFamily(), int(offset+position))
+			field, fieldHeld := coldRow(artifact, programschema.HeapFieldFamily(), int(offset+position))
 			if !fieldHeld {
 				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, int(position), CompileReasonOccurrenceAllocation)
 			}
@@ -55,13 +55,13 @@ func (artifact *Artifact) validateSealFreeze(state *sealValidationState) Compile
 			}
 		}
 	}
-	indexCount, indexesPublished := coldCount(artifact, cold.HeapIndexFamily())
+	indexCount, indexesPublished := coldCount(artifact, programschema.HeapIndexFamily())
 	if !indexesPublished {
 		return compileFailure(CompileStageSeal, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceIndexShape)
 	}
 	seenHeapIndexes := make(map[identity.ContentID]struct{}, indexCount)
 	for index := 0; index < indexCount; index++ {
-		access, held := coldRow(artifact, cold.HeapIndexFamily(), index)
+		access, held := coldRow(artifact, programschema.HeapIndexFamily(), index)
 		if !held {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceIndexShape)
 		}

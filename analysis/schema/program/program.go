@@ -1,42 +1,36 @@
-package cold
+package programschema
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 )
 
-// Program is the published fact of one mounted module key: the frozen
-// compiled program mounted there, together with the identities that
-// authenticate it.
+// Program is the immutable compiled content published for one program.
+//
+// Module placement is deliberately not part of this value. The same sealed
+// content can be mounted at multiple module keys, while each mount row owns
+// the key that places it in a Link directory.
 //
 // The frozen program is carried by value. That is what makes one compiled
 // program shareable across every mount of it without a copy: a Frozen shares
 // its published structure on assignment and admits no derivation, so the same
 // value can sit in the row of two mounts, in two Links, for as long as any of
 // them lives, and address the same content throughout.
-//
-// The row carries the module key it is stored under so that a row handed
-// onward is self-describing. A consumer that received the frozen program and
-// the module key as two arguments would have to keep them consistent itself,
-// which is the shape this column exists to remove.
 type Program struct {
 	Frozen     snapshot.Frozen
-	ModuleKey  identity.ContentID
 	ArtifactID identity.ContentID
 	ProgramID  identity.ContentID
 	SchemaID   identity.ContentID
 }
 
-// Available reports whether row names a mounted program. A row is available
-// only when the frozen program is a sealed publication and every identity
-// that authenticates it is present, so a partially assembled mount can never
-// be mistaken for a mounted one.
+// Available reports whether row names compiled program content. A row is
+// available only when the frozen publication is sealed and every identity
+// that authenticates it is present.
 func (row Program) Available() bool {
-	return row.Frozen.Published() && row.ModuleKey.Available() &&
-		row.ArtifactID.Available() && row.ProgramID.Available() && row.SchemaID.Available()
+	return row.Frozen.Published() && row.ArtifactID.Available() && row.ProgramID.Available() && row.SchemaID.Available()
 }
 
-// catalog is the identity this program's cold publication is addressed under.
+// catalog is the identity this program's compiled publication is addressed under.
 // It is derived rather than carried, so a row cannot be assembled with a
 // catalog that disagrees with the declaration catalog it names.
 func (row Program) catalog() (identity.ContentID, bool) {

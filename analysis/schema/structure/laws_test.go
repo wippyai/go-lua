@@ -8,7 +8,7 @@ import (
 
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
@@ -101,20 +101,20 @@ func TestArtifactVocabularyIsTheSealedTable(t *testing.T) {
 
 	for _, member := range []struct {
 		key      schema.Key
-		ordinal  cold.OutcomeKind
+		ordinal  programschema.OutcomeKind
 		spelling string
 	}{
-		{"outcome/normal", cold.OutcomeNormal, "cold.OutcomeNormal"},
-		{"outcome/return", cold.OutcomeReturn, "cold.OutcomeReturn"},
-		{"outcome/throw", cold.OutcomeThrow, "cold.OutcomeThrow"},
-		{"outcome/break", cold.OutcomeBreak, "cold.OutcomeBreak"},
-		{"outcome/goto", cold.OutcomeGoto, "cold.OutcomeGoto"},
-		{"outcome/yield", cold.OutcomeYield, "cold.OutcomeYield"},
-		{"outcome/cancel", cold.OutcomeCancel, "cold.OutcomeCancel"},
+		{"outcome/normal", programschema.OutcomeNormal, "programschema.OutcomeNormal"},
+		{"outcome/return", programschema.OutcomeReturn, "programschema.OutcomeReturn"},
+		{"outcome/throw", programschema.OutcomeThrow, "programschema.OutcomeThrow"},
+		{"outcome/break", programschema.OutcomeBreak, "programschema.OutcomeBreak"},
+		{"outcome/goto", programschema.OutcomeGoto, "programschema.OutcomeGoto"},
+		{"outcome/yield", programschema.OutcomeYield, "programschema.OutcomeYield"},
+		{"outcome/cancel", programschema.OutcomeCancel, "programschema.OutcomeCancel"},
 	} {
 		pinned(t, table, structure.CategoryOutcome, uint16(member.ordinal), member.key, member.spelling)
 	}
-	counted(t, table, structure.CategoryOutcome, uint16(cold.OutcomeCancel), "cold.OutcomeCancel")
+	counted(t, table, structure.CategoryOutcome, uint16(programschema.OutcomeCancel), "programschema.OutcomeCancel")
 
 	for _, member := range []struct {
 		key      schema.Key

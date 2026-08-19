@@ -18,6 +18,7 @@ import (
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/domain/call"
 	"github.com/wippyai/go-lua/domain/pack"
 	internalhash "github.com/wippyai/go-lua/internal/hash"
@@ -773,7 +774,7 @@ func (a *Algebra) sealMountedArtifacts(mounts []MountedArtifact) (map[mountedCal
 		}
 		seenMounts[mount.ModuleKey] = struct{}{}
 		programID := mount.Snapshot.ProgramID()
-		program, programOK := mount.Snapshot.ColdProgram(mount.ModuleKey)
+		program, programOK := programmount.ProgramFromSnapshot(mount.Snapshot, mount.ModuleKey)
 		bodyCount, bodiesPublished := program.BodyCount()
 		if !programOK || !bodiesPublished {
 			return nil, false

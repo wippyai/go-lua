@@ -3,9 +3,8 @@ package artifact_test
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/domain/composite"
 )
 
@@ -25,15 +24,13 @@ return identity(1)
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("call occurrence compilation failed: %s", failure.Error())
 	}
-	artifactID := artifact.ID()
-	module, moduleOK := identity.DeriveContentID("occurrence-calls-module", artifactID[:])
 	frozen, catalog, coldPublished := artifact.ColdPublication()
-	program := cold.Program{
-		Frozen: frozen, ModuleKey: module, ArtifactID: artifact.ID(),
+	program := programschema.Program{
+		Frozen: frozen, ArtifactID: artifact.ID(),
 		ProgramID: artifact.CompileKey().ProgramID(), SchemaID: artifact.CompileKey().SchemaDigest(),
 	}
 	callCount, callsOK := program.CallCount()
-	if !moduleOK || !coldPublished || !catalog.Available() || !callsOK || !program.Available() || callCount == 0 {
+	if !coldPublished || !catalog.Available() || !callsOK || !program.Available() || callCount == 0 {
 		t.Fatal("call occurrence compilation published no call family")
 	}
 }

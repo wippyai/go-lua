@@ -1,6 +1,6 @@
 package artifact
 
-import "github.com/wippyai/go-lua/analysis/schema/cold"
+import "github.com/wippyai/go-lua/analysis/schema/program"
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -8,10 +8,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
-func (compiler *compiler) returnValueAt(outcome cold.Outcome, index int) (cold.OutcomeReturnValue, bool) {
+func (compiler *compiler) returnValueAt(outcome programschema.Outcome, index int) (programschema.OutcomeReturnValue, bool) {
 	offset, count, ok := outcome.ReturnValueSpan()
 	if !ok || index < 0 || uint64(index) >= uint64(count) || uint64(offset)+uint64(index) >= uint64(len(compiler.outcomeReturnValues)) {
-		return cold.OutcomeReturnValue{}, false
+		return programschema.OutcomeReturnValue{}, false
 	}
 	value := compiler.outcomeReturnValues[int(offset)+index]
 	return value, value.Available() && value.OutcomeID() == outcome.ID()
