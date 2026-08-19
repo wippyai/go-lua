@@ -36,13 +36,27 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
 		// plain call: Value seals an operand for exactly that geometry, so the
 		// subscription requires it and a method, nullary, multi-argument, or
 		// tail-expanded call issues nothing here.
-		Issues: []rule.Issuance{{
-			Occurrence:  "occurrence/call",
-			Requirement: "requirement/call-plain-unary",
-			Form:        "issuance/call-stage",
-			Input:       "input/finish",
-			Stage:       "stage/call-summary",
-		}},
+		//
+		// The guarded arm of the same call is its own occurrence family, and
+		// Value seals a refinement operand for every row of it, so the rule
+		// subscribes to that family too. The arm is reached along its route
+		// predecessor, which is where the narrowed subject Value is carried.
+		Issues: []rule.Issuance{
+			{
+				Occurrence:  "occurrence/call",
+				Requirement: "requirement/call-plain-unary",
+				Form:        "issuance/call-stage",
+				Input:       "input/finish",
+				Stage:       "stage/call-summary",
+			},
+			{
+				Occurrence:  "occurrence/operation-predicate-refinement",
+				Requirement: "requirement/unrestricted",
+				Form:        "issuance/local-predecessor",
+				Input:       "input/predecessor",
+				Stage:       "stage/local",
+			},
+		},
 		Lane:     rule.LaneMounted,
 		Semantic: "semantic/rule/value/runtime-kind-call",
 		Roles: []schema.Key{

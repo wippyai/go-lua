@@ -353,7 +353,8 @@ func hotChecker(rule *HotRule, semantic identity.SemanticKey, callRead *engine.R
 		}
 		operand, operandOK := derivation.Operand()
 		canonical, digest, contentOK := hotContent(rule.values.Schema(), operand)
-		result, input, endpointsOK := hotEndpoints(rule.values.Schema(), canonical)
+		_, input, endpointsOK := hotEndpoints(rule.values.Schema(), canonical)
+		written, writtenOK := hotWriteTarget(rule.values.Schema(), canonical)
 		comparison := input
 		if refinementComparison, _, _, refinement := canonical.Refinement(); refinement {
 			comparison = refinementComparison
@@ -361,7 +362,7 @@ func hotChecker(rule *HotRule, semantic identity.SemanticKey, callRead *engine.R
 		module, occurrence, identityOK := callOccurrence(rule.values.Schema(), canonical)
 		callKey, callKeyOK := projectCallKey(rule.calls.Algebra(), module, occurrence, identityOK)
 		inputGuard, inputOK := derivation.InputAt(0)
-		if !operandOK || !contentOK || !endpointsOK || !identityOK || !callKeyOK || !derivation.OperandContentMatches(digest) || !inputOK || inputGuard.Guard().Empty() ||
+		if !operandOK || !contentOK || !endpointsOK || !writtenOK || !identityOK || !callKeyOK || !derivation.OperandContentMatches(digest) || !inputOK || inputGuard.Guard().Empty() ||
 			!callowner.ReadMatches(rule.calls, derivation, *callRead, callKey) || !valueowner.ReadMatches(rule.values, derivation, *valueRead, input) || !valueowner.ReadMatches(rule.values, derivation, *comparisonRead, comparison) {
 			return engine.RuleEvidence{}, false
 		}
@@ -378,7 +379,7 @@ func hotChecker(rule *HotRule, semantic identity.SemanticKey, callRead *engine.R
 			}
 			callFact, callPresent, callAvailable := callCells.At(0)
 			valueFact, valuePresent, valueAvailable := valueCells.At(0)
-			_, comparisonPresent, comparisonAvailable := comparisonCells.At(0)
+			comparisonFact, comparisonPresent, comparisonAvailable := comparisonCells.At(0)
 			if !callAvailable || !valueAvailable || !comparisonAvailable {
 				return engine.RuleEvidence{}, false
 			}
@@ -389,6 +390,9 @@ func hotChecker(rule *HotRule, semantic identity.SemanticKey, callRead *engine.R
 				continue
 			}
 			expected, expectedDecision, expectedOK := classify(rule.values.Schema(), callFact, valueFact, rule.relation)
+			if _, op, truth, refinement := canonical.Refinement(); refinement {
+				expected, expectedDecision, expectedOK = classifyRefinement(rule.values.Schema(), callFact, valueFact, comparisonFact, rule.predicateRelation, op, truth)
+			}
 			if !expectedOK {
 				return engine.RuleEvidence{}, false
 			}
@@ -403,7 +407,7 @@ func hotChecker(rule *HotRule, semantic identity.SemanticKey, callRead *engine.R
 				}
 				target, targetOK := disposition.TargetAt(0)
 				actual, actualOK := disposition.Value()
-				if !targetOK || !actualOK || !rule.values.TargetMatches(target, result) || !rule.values.Schema().Equal(actual, expected) {
+				if !targetOK || !actualOK || !rule.values.TargetMatches(target, written) || !rule.values.Schema().Equal(actual, expected) {
 					return engine.RuleEvidence{}, false
 				}
 			default:

@@ -43,10 +43,14 @@ func (schema *Schema) RuntimeKindNameMatch(comparison Value, kind runtimekind.Ki
 	if comparison.IsBottom() {
 		return false, false, true
 	}
-	kindValue, kindValueOK := schema.ForRuntimeKinds(runtimekind.Bit(kind))
-	names, namesOK := schema.RuntimeKindNames(kindValue)
+	// The sealed name of one family is read from the presealed name table
+	// directly. Routing it through the atom universe reads back the may-kinds
+	// of every atom that could be this family, which is wider than the family
+	// itself whenever an opaque atom carries two kinds, and the widened set
+	// names two spellings instead of one.
+	names, namesOK := schema.runtimeKindName(kind)
 	nameScalar, nameOK := schema.ExactScalar(names)
-	if !kindValueOK || !namesOK || !nameOK {
+	if !namesOK || !nameOK {
 		return false, false, false
 	}
 	comparisonScalar, comparisonOK := schema.ExactScalar(comparison)
@@ -55,6 +59,15 @@ func (schema *Schema) RuntimeKindNameMatch(comparison Value, kind runtimekind.Ki
 	}
 	equal := exactScalarEqual(nameScalar, comparisonScalar)
 	return equal, !equal, true
+}
+
+// runtimeKindName is the sealed singleton spelling of one runtime family.
+func (schema *Schema) runtimeKindName(kind runtimekind.Kind) (Value, bool) {
+	set := runtimekind.Bit(kind)
+	if schema == nil || schema.forRuntimeNames == nil || !set.Valid() || int(set) >= len(schema.forRuntimeNames) {
+		return Value{}, false
+	}
+	return schema.forRuntimeNames[int(set)], true
 }
 
 // FilterPresent removes only Lua nil alternatives. False is deliberately
