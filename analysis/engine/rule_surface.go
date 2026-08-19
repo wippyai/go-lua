@@ -6,8 +6,9 @@ import (
 	"github.com/wippyai/go-lua/internal/canonical"
 )
 
-// Solver-side binding-surface value constructors; the placement envelope that
-// accumulates these surfaces lives in runtime_rule_admit.go.
+// Solver-side binding-surface value constructors. Per-issuance declarations
+// return immutable row bundles of these values; construction folds those rows
+// into the sealed equation topology.
 
 type summarySurfaceBinding interface {
 	boundTopologySummarySurface() (*schemaBindingState, *schemaBindingAuthority, composition.Key, composition.Key, bool)
@@ -18,9 +19,9 @@ func validateSummarySurface(binding summarySurfaceBinding, state *schemaBindingS
 	return ok && bindingState == state && bindingAuthority == authority && surface.Available() && surface.Factor == factor && surface.Form == equation.SurfaceReadSummary && surface.Semantic == normalizer && surface.Normalizer == normalizer && surface.Mode == equation.TargetModeNone
 }
 
-// RuleReadSurface and RuleWriteSurface are owner-issued exact coordinate
-// receipts. The Ref factory preserves the originating Binding authority and
-// the source transaction rejects foreign/equal-but-distinct refs.
+// RuleReadSurface and RuleWriteSurface are owner-issued sealed coordinate
+// values. The Ref factory preserves the originating Binding authority and
+// declaration folding rejects foreign/equal-but-distinct refs.
 type RuleReadSurface struct {
 	value     equation.Surface
 	authority *schemaBindingAuthority

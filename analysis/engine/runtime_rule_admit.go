@@ -1,10 +1,10 @@
 // runtime_rule_admit.go holds the surface-placement value plane and the
 // mount-qualified source identities one program issuance is addressed by.
 //
-// A placement is a value: RuleSourceTransaction accumulates the owner-issued
-// surfaces of one issuance and is discarded when that issuance's declaration
-// leaves. It retains no construction handle, admits nothing into a Batch, and
-// cannot be carried from one issuance to another.
+// A placement is a value: the declaration returns an immutable row bundle of
+// owner-issued surfaces for one issuance and is discarded when that
+// declaration leaves. It retains no construction handle, admits nothing into
+// a Batch, and cannot be carried from one issuance to another.
 
 package engine
 
@@ -15,171 +15,84 @@ import (
 	"github.com/wippyai/go-lua/internal/canonical"
 )
 
-// AnchoredSelectedReadSurface issues the ReadSelect surface from the exact
+// anchoredSelectedReadSurface issues the ReadSelect surface from the exact
 // admitted occurrence and operand. ReadSelect has no exact target unit: its
 // local is a sealed identity of this occurrence/operand/read proof, not a
-// caller-selected Ref.
-type AnchoredSelectedReadFailure uint8
-
-const (
-	AnchoredSelectedReadFailureNone AnchoredSelectedReadFailure = iota
-	AnchoredSelectedReadFailureArguments
-	AnchoredSelectedReadFailureReceipt
-	AnchoredSelectedReadFailureOwner
-	AnchoredSelectedReadFailureSemantic
-	AnchoredSelectedReadFailureDependencies
-	AnchoredSelectedReadFailureDependencySurface
-	AnchoredSelectedReadFailureFactor
-	AnchoredSelectedReadFailureDuplicate
-)
-
-func (transaction *RuleSourceTransaction) AnchoredSelectedReadSurface(receipt schemaSelectedRead, dependencies []RuleReadSurface) (RuleReadSurface, bool) {
-	surface, failure := transaction.AnchoredSelectedReadSurfaceWithFailure(receipt, dependencies)
-	return surface, failure == AnchoredSelectedReadFailureNone
-}
-
-func (transaction *RuleSourceTransaction) AnchoredSelectedReadSurfaceWithFailure(receipt schemaSelectedRead, dependencies []RuleReadSurface) (RuleReadSurface, AnchoredSelectedReadFailure) {
-	if transaction == nil || transaction.state == nil || transaction.schema == nil {
-		return RuleReadSurface{}, AnchoredSelectedReadFailureArguments
-	}
-	if !receipt.Valid() || receipt.fence.authority == nil {
-		return RuleReadSurface{}, AnchoredSelectedReadFailureReceipt
-	}
-	if receipt.fence.authority != transaction.authority || receipt.fence.schema != transaction.schema {
-		return RuleReadSurface{}, AnchoredSelectedReadFailureOwner
+// caller-selected Ref. The declaration passes its already-emitted reads so
+// duplicate anchored coordinates can be rejected without a mutable builder.
+func anchoredSelectedReadSurface(state *schemaBindingState, authority *schemaBindingAuthority, semantic identity.SemanticKey, anchor ruleSurfaceAnchor, receipt schemaSelectedRead, dependencies []RuleReadSurface, reads []RuleReadSurface) (RuleReadSurface, bool) {
+	if state == nil || state.schema == nil || authority == nil || !semantic.Available() || !receipt.Valid() || receipt.fence.authority == nil || receipt.fence.authority != authority || receipt.fence.schema != state.schema {
+		return RuleReadSurface{}, false
 	}
 	ruleSemantic, ruleSemanticOK := semanticKeyFromComposition(receipt.fence.schema.ruleSemanticAt(receipt.fence.rule))
-	if !ruleSemanticOK || ruleSemantic != transaction.semantic {
-		return RuleReadSurface{}, AnchoredSelectedReadFailureSemantic
-	}
-	if len(dependencies) != int(receipt.dependencyCount) {
-		return RuleReadSurface{}, AnchoredSelectedReadFailureDependencies
+	if !ruleSemanticOK || ruleSemantic != semantic || len(dependencies) != int(receipt.dependencyCount) {
+		return RuleReadSurface{}, false
 	}
 	factor := receipt.fence.schema.factorSemanticAt(receipt.factor)
 	if !factor.Available() {
-		return RuleReadSurface{}, AnchoredSelectedReadFailureFactor
+		return RuleReadSurface{}, false
 	}
 	for index, dependency := range dependencies {
 		readIndex, ok := receipt.fence.schema.ruleReadDependencyAt(receipt.fence.rule, receipt.read, uint64(index))
 		shape, shapeOK := receipt.fence.schema.ruleReadShapeAt(receipt.fence.rule, readIndex)
-		if !ok || !shapeOK || dependency.authority != receipt.fence.authority || dependency.value.Mode != equation.TargetModeNone || dependency.value.Factor != shape.Factor || !dependency.value.LocalAvailable() || !validSelectedDependencySurface(shape, dependency.value) {
-			return RuleReadSurface{}, AnchoredSelectedReadFailureDependencySurface
+		if !ok || !shapeOK || dependency.authority != authority || dependency.value.Mode != equation.TargetModeNone || dependency.value.Factor != shape.Factor || !dependency.value.LocalAvailable() || !validSelectedDependencySurface(shape, dependency.value) {
+			return RuleReadSurface{}, false
 		}
 	}
-	content, contentOK := anchoredSelectedContent(transaction.anchor.occurrence, transaction.anchor.operand, receipt)
+	content, contentOK := anchoredSelectedContent(anchor.occurrence, anchor.operand, receipt)
 	if !contentOK {
-		return RuleReadSurface{}, AnchoredSelectedReadFailureReceipt
+		return RuleReadSurface{}, false
 	}
-	for _, existing := range transaction.reads {
+	for _, existing := range reads {
 		if existing.value.Factor == factor && existing.value.Form == equation.SurfaceReadSelect && existing.value.Content == content {
-			return RuleReadSurface{}, AnchoredSelectedReadFailureDuplicate
+			return RuleReadSurface{}, false
 		}
 	}
 	surface := equation.Surface{Factor: factor, Form: equation.SurfaceReadSelect, Content: content, Semantic: factor}
-	return RuleReadSurface{value: surface, authority: receipt.fence.authority, anchored: true}, AnchoredSelectedReadFailureNone
+	return RuleReadSurface{value: surface, authority: authority, anchored: true}, true
 }
 
-// AnchoredRouteWriteSurface is the route sibling of AnchoredSelectedReadSurface:
+// anchoredRouteWriteSurface is the route sibling of anchoredSelectedReadSurface:
 // the output has no single exact Ref because runtime chooses zero-or-many
 // selected targets. Its local is tied to the admitted occurrence/operand and
 // the sealed route proof.
-func (transaction *RuleSourceTransaction) AnchoredRouteWriteSurface(receipt schemaRouteWrite) (RuleWriteSurface, bool) {
-	if transaction == nil || transaction.state == nil || transaction.schema == nil || !receipt.Valid() || receipt.fence.authority == nil || receipt.fence.authority != transaction.authority || receipt.fence.schema != transaction.schema {
+func anchoredRouteWriteSurface(state *schemaBindingState, authority *schemaBindingAuthority, semantic identity.SemanticKey, anchor ruleSurfaceAnchor, receipt schemaRouteWrite) (RuleWriteSurface, bool) {
+	if state == nil || state.schema == nil || authority == nil || !semantic.Available() || !receipt.Valid() || receipt.fence.authority == nil || receipt.fence.authority != authority || receipt.fence.schema != state.schema {
 		return RuleWriteSurface{}, false
 	}
 	ruleSemantic, ruleSemanticOK := semanticKeyFromComposition(receipt.fence.schema.ruleSemanticAt(receipt.fence.rule))
-	if !ruleSemanticOK || ruleSemantic != transaction.semantic {
+	if !ruleSemanticOK || ruleSemantic != semantic {
 		return RuleWriteSurface{}, false
 	}
 	factor := receipt.fence.schema.factorSemanticAt(receipt.factor)
 	if !factor.Available() {
 		return RuleWriteSurface{}, false
 	}
-	content, contentOK := anchoredRouteContent(transaction.anchor.occurrence, transaction.anchor.operand, receipt)
+	content, contentOK := anchoredRouteContent(anchor.occurrence, anchor.operand, receipt)
 	if !contentOK {
 		return RuleWriteSurface{}, false
 	}
 	surface := equation.Surface{Factor: factor, Form: equation.SurfaceWriteRoute, Content: content}
-	return RuleWriteSurface{value: surface, authority: receipt.fence.authority, route: &receipt, anchored: true}, true
+	return RuleWriteSurface{value: surface, authority: authority, route: &receipt, anchored: true}, true
 }
 
-// RuleSourceTransaction is the closed, issuance-owned surface placement
-// envelope. It records only owner-issued geometry against the anchor the
-// engine minted; no equation coordinate, cold factor ordinal, or construction
-// handle can be supplied through this API.
-type RuleSourceTransaction struct {
-	state     *schemaBindingState
-	authority *schemaBindingAuthority
-	schema    *Schema
-	semantic  identity.SemanticKey
-	anchor    ruleSurfaceAnchor
-	reads     []RuleReadSurface
-	writes    []RuleWriteSurface
-	carries   uint64
+// summaryReadSurface is the callback-free type-erasure seam for generic
+// ClosedRefs. It returns a row value; it cannot append to or retain a caller's
+// construction state.
+type summaryReadSurface interface {
+	summaryReadSurface(schemaSummaryRead) (RuleReadSurface, bool)
 }
 
-func (transaction *RuleSourceTransaction) AddRead(surface RuleReadSurface) bool {
-	if transaction == nil || !surface.value.Available() {
-		return false
+func (refs *ClosedRefs[K]) summaryReadSurface(receipt schemaSummaryRead) (RuleReadSurface, bool) {
+	return SummaryReadSurface(receipt, refs)
+}
+
+func readSummarySurface(receipt schemaSummaryRead, refs any) (RuleReadSurface, bool) {
+	provider, ok := refs.(summaryReadSurface)
+	if !ok || provider == nil {
+		return RuleReadSurface{}, false
 	}
-	transaction.reads = append(transaction.reads, surface)
-	return true
-}
-
-// AddExactRead is the generic typed convenience wrapper. Go does not permit
-// type parameters on methods, so domain packages call this closed function.
-func AddExactRead[K ~uint32 | ~uint64](transaction *RuleSourceTransaction, ref Ref[K]) bool {
-	surface, ok := ExactReadSurface(ref)
-	return ok && transaction != nil && transaction.AddRead(surface)
-}
-
-func AddSummaryRead[K ~uint32 | ~uint64](transaction *RuleSourceTransaction, receipt schemaSummaryRead, refs *ClosedRefs[K]) bool {
-	surface, ok := SummaryReadSurface(receipt, refs)
-	return ok && transaction != nil && transaction.AddRead(surface)
-}
-
-type summaryReadRefs interface {
-	placeSummaryRead(transaction *RuleSourceTransaction, receipt schemaSummaryRead) bool
-}
-
-func (refs *ClosedRefs[K]) placeSummaryRead(transaction *RuleSourceTransaction, receipt schemaSummaryRead) bool {
-	return AddSummaryRead(transaction, receipt, refs)
-}
-
-func addSummaryReadRefs(transaction *RuleSourceTransaction, receipt schemaSummaryRead, refs any) bool {
-	placed, ok := refs.(summaryReadRefs)
-	return ok && placed.placeSummaryRead(transaction, receipt)
-}
-
-func AddSelectedRead[K ~uint32 | ~uint64](transaction *RuleSourceTransaction, receipt schemaSelectedRead, ref Ref[K], dependencies []RuleReadSurface) bool {
-	surface, ok := SelectedReadSurface(receipt, ref, dependencies)
-	return ok && transaction != nil && transaction.AddRead(surface)
-}
-
-func (transaction *RuleSourceTransaction) AddCarry() bool {
-	if transaction == nil {
-		return false
-	}
-	transaction.carries++
-	return true
-}
-
-func (transaction *RuleSourceTransaction) AddWrite(surface RuleWriteSurface) bool {
-	if transaction == nil || !surface.value.Available() {
-		return false
-	}
-	transaction.writes = append(transaction.writes, surface)
-	return true
-}
-
-func AddExactWrite[K ~uint32 | ~uint64](transaction *RuleSourceTransaction, ref Ref[K]) bool {
-	surface, ok := ExactWriteSurface(ref)
-	return ok && transaction != nil && transaction.AddWrite(surface)
-}
-
-func AddAnchoredRouteWrite(transaction *RuleSourceTransaction, receipt schemaRouteWrite) bool {
-	surface, ok := transaction.AnchoredRouteWriteSurface(receipt)
-	return ok && transaction.AddWrite(surface)
+	return provider.summaryReadSurface(receipt)
 }
 
 // resolveDeclaredRuleInstance folds one issuance's declared surfaces into the

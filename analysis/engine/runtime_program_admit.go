@@ -80,19 +80,16 @@ func (implementation *RuleImplementation[K, V, O]) declareRuleSurfaces(declared 
 	if !semanticOK {
 		return declaredRuleSurfaces{}, false
 	}
-	transaction := &RuleSourceTransaction{
-		state: implementation.binding.state, authority: implementation.binding.authority,
-		schema: implementation.binding.state.schema, semantic: semantic, anchor: anchor,
-	}
-	if !implementation.placeSurfaces(transaction, operand) {
+	reads, writes, carries, ok := implementation.placeSurfaces(semantic, anchor, operand)
+	if !ok {
 		return declaredRuleSurfaces{}, false
 	}
-	return declaredRuleSurfaces{reads: transaction.reads, writes: transaction.writes, carries: transaction.carries}, true
+	return declaredRuleSurfaces{reads: reads, writes: writes, carries: carries}, true
 }
 
-func (implementation *RuleImplementation[K, V, O]) placeSurfaces(transaction *RuleSourceTransaction, operand O) bool {
-	if implementation == nil || !implementation.binding.valid() || implementation.binding.cell == nil || implementation.binding.cell.impl == nil || transaction == nil {
-		return false
+func (implementation *RuleImplementation[K, V, O]) placeSurfaces(semantic identity.SemanticKey, anchor ruleSurfaceAnchor, operand O) ([]RuleReadSurface, []RuleWriteSurface, uint64, bool) {
+	if implementation == nil || !semantic.Available() || !implementation.binding.valid() || implementation.binding.cell == nil || implementation.binding.cell.impl == nil {
+		return nil, nil, 0, false
 	}
 	hot := implementation.binding.cell.impl
 	state := implementation.binding.state
@@ -100,75 +97,93 @@ func (implementation *RuleImplementation[K, V, O]) placeSurfaces(transaction *Ru
 	ordinal := implementation.binding.proof.ordinal
 	shape, shapeOK := state.schema.ruleShapeAt(ordinal)
 	if !shapeOK || uint64(len(hot.reads)) != shape.ReadCount || shape.WriteCount != 1 {
-		return false
+		return nil, nil, 0, false
 	}
-	placed := make([]RuleReadSurface, shape.ReadCount)
+	reads := make([]RuleReadSurface, shape.ReadCount)
+	writes := make([]RuleWriteSurface, shape.WriteCount)
 	for index := uint64(0); index < shape.ReadCount; index++ {
 		readShape, readOK := state.schema.ruleReadShapeAt(ordinal, index)
 		if !readOK {
-			return false
+			return nil, nil, 0, false
 		}
 		switch readShape.Kind {
 		case composition.ReadExact:
 			local, projected := hot.reads[index].projectLocal(operand)
 			factor := hot.reads[index].exactAdmitFactor()
-			if !projected || factor == nil || !factor.schemaFactorAdmitExactRead(state, authority, transaction, local) {
-				return false
+			if !projected || factor == nil {
+				return nil, nil, 0, false
 			}
-			placed[index] = transaction.reads[len(transaction.reads)-1]
+			surface, surfaceOK := factor.schemaFactorExactRead(state, authority, local)
+			if !surfaceOK || !surface.value.Available() {
+				return nil, nil, 0, false
+			}
+			reads[index] = surface
 		case composition.ReadSelect:
 			deps := make([]RuleReadSurface, readShape.DependencyCount)
 			for dep := uint64(0); dep < readShape.DependencyCount; dep++ {
 				depIndex, depOK := state.schema.ruleReadDependencyAt(ordinal, index, dep)
-				if !depOK || depIndex >= uint64(len(placed)) || !placed[depIndex].value.Available() {
-					return false
+				if !depOK || depIndex >= uint64(index) || !reads[depIndex].value.Available() {
+					return nil, nil, 0, false
 				}
-				deps[dep] = placed[depIndex]
+				deps[dep] = reads[depIndex]
 			}
-			receipt, receiptOK := implementation.selectedRead(index)
-			surface, surfaceOK := transaction.AnchoredSelectedReadSurface(receipt, deps)
-			if !receiptOK || !surfaceOK || !transaction.AddRead(surface) {
-				return false
+			proof, proofOK := implementation.selectedRead(index)
+			surface, surfaceOK := anchoredSelectedReadSurface(state, authority, semantic, anchor, proof, deps, reads)
+			if !proofOK || !surfaceOK || !surface.value.Available() {
+				return nil, nil, 0, false
 			}
-			placed[index] = surface
+			reads[index] = surface
 		case composition.ReadSummary:
-			receipt, receiptOK := implementation.summaryRead(index)
+			proof, proofOK := implementation.summaryRead(index)
 			provider, providerOK := hot.reads[index].(interface{ summarySurfaceAdmit() any })
-			if !receiptOK || !providerOK {
-				return false
+			if !proofOK || !providerOK {
+				return nil, nil, 0, false
 			}
 			project, projectOK := provider.summarySurfaceAdmit().(func(any) (any, bool))
 			if !projectOK || project == nil {
-				return false
+				return nil, nil, 0, false
 			}
 			refs, refsOK := project(operand)
-			if !refsOK || !addSummaryReadRefs(transaction, receipt, refs) {
-				return false
+			surface, surfaceOK := readSummarySurface(proof, refs)
+			if !refsOK || !surfaceOK || !surface.value.Available() {
+				return nil, nil, 0, false
 			}
-			placed[index] = transaction.reads[len(transaction.reads)-1]
+			reads[index] = surface
 		default:
-			return false
+			return nil, nil, 0, false
 		}
 	}
+	var carries uint64
 	if shape.CarryCount == 1 {
-		if !transaction.AddCarry() {
-			return false
-		}
+		carries = 1
 	} else if shape.CarryCount != 0 {
-		return false
+		return nil, nil, 0, false
 	}
 	writeShape, writeOK := state.schema.ruleWriteShapeAt(ordinal, 0)
 	if !writeOK {
-		return false
+		return nil, nil, 0, false
 	}
 	switch writeShape.Kind {
 	case composition.WriteExact:
 		local, projected := hot.projectWrite(operand)
-		return projected && hot.output != nil && hot.output.schemaFactorAdmitExactWrite(state, authority, transaction, local)
+		if !projected || hot.output == nil {
+			return nil, nil, 0, false
+		}
+		surface, surfaceOK := hot.output.schemaFactorExactWrite(state, authority, local)
+		if !surfaceOK || !surface.value.Available() {
+			return nil, nil, 0, false
+		}
+		writes[0] = surface
+		return reads, writes, carries, true
 	case composition.WriteRoute:
-		receipt, receiptOK := implementation.routeWrite()
-		return receiptOK && AddAnchoredRouteWrite(transaction, receipt)
+		proof, proofOK := implementation.routeWrite()
+		surface, surfaceOK := anchoredRouteWriteSurface(state, authority, semantic, anchor, proof)
+		if !proofOK || !surfaceOK || !surface.value.Available() {
+			return nil, nil, 0, false
+		}
+		writes[0] = surface
+		return reads, writes, carries, true
 	default:
-		return false
+		return nil, nil, 0, false
 	}
 }
