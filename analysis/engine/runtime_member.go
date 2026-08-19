@@ -269,12 +269,22 @@ func bindSchemaRuleMember[K ~uint32 | ~uint64, V, O any](implementation *RuleImp
 	if memberOK {
 		allTargets = append(allTargets, target)
 	}
+	carryRouteScope := false
 	if hot.carry != nil {
 		carryShape, carryOK := hot.carry.shape()
-		if !carryOK || carryShape.Factor != shape.Output || carryShape.Input >= shape.Inputs || output.carryRouteScopeFor(member) {
+		if !carryOK || carryShape.Factor != shape.Output || carryShape.Input >= shape.Inputs {
 			return nil, false
 		}
 		if carryShape.Input > uint64(^uint(0)>>1) {
+			return nil, false
+		}
+		// A carry closure that reaches a route write has no finite exact target
+		// vector: a routed write names its concrete target only at execution.
+		// The member claims the output Factor's route universe on top of the
+		// exact closure, the same authority a route-writing member claims; the
+		// Region seal expands it once per (Region, Factor).
+		carryRouteScope = output.carryRouteScopeFor(member)
+		if carryRouteScope && !output.hasRouteUniverse() {
 			return nil, false
 		}
 		carryTargets, targetsOK := output.carryTargetsFor(member)
@@ -295,6 +305,10 @@ func bindSchemaRuleMember[K ~uint32 | ~uint64, V, O any](implementation *RuleImp
 			}
 			bound.carrySemantic = carrySemantic
 			bound.carryTargets = carryTargets
+			// The transformed carry maps the route universe through the same
+			// terminal as its exact closure, so the Factor-owned route
+			// transform closure joins the member's carry transform.
+			bound.routeTransform = carryRouteScope
 			bound.carryApply = func(value V) (V, bool) {
 				return hot.carry.apply(operand, value)
 			}
@@ -310,7 +324,7 @@ func bindSchemaRuleMember[K ~uint32 | ~uint64, V, O any](implementation *RuleImp
 			return nil, false
 		}
 	}
-	if routeOK {
+	if routeOK || carryRouteScope {
 		bound.routeScope = output
 	}
 	slot, slotOK := output.runtimeSlot()
