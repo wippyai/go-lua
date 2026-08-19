@@ -1923,6 +1923,9 @@ func (work *Work) commit(state State, patches []Patch, nextSupport, added, remov
 			next[int(patch.slot)] = record.after
 		}
 	}
+	if prepared.rootsChanged && state.support.SameHandle(nextSupport) {
+		prepared.set.set.Direction |= work.rootMoveDirection(state.roots, next, patches, nextSupport)
+	}
 	dropPatches(patches)
 	committed = true
 	return State{authority: work.authority, scope: state.scope, support: nextSupport, roots: next}, prepared.set, true
@@ -1977,10 +1980,9 @@ func (work *Work) prepareCommit(state State, patches []Patch, nextSupport, added
 		}
 	}
 	// The publishing operation owns the direction of its own delta. Support
-	// growth ascends and support loss descends. A root replaced under an
-	// unchanged support region is not provably ascending at this cut -- it is
-	// exactly the Narrow/ChangedUnit case -- so it is classified as a descent
-	// rather than left for a consumer to guess.
+	// growth ascends and support loss descends. The root axis is classified
+	// by rootMoveDirection once the successor roots exist, which is after the
+	// pending publishers have run.
 	evidence := change.Set{Direction: change.Known}
 	if !support.Empty(added) {
 		evidence.Reasons |= change.SupportAdded
@@ -2013,10 +2015,47 @@ func (work *Work) prepareCommit(state State, patches []Patch, nextSupport, added
 			}
 		}
 	}
-	if rootsChanged && state.support.SameHandle(nextSupport) {
-		set.set.Direction |= change.Descends
-	}
 	return preparedCommit{set: set, rootsChanged: rootsChanged, changed: changed || rootsChanged || !state.support.SameHandle(nextSupport)}, true
+}
+
+// rootMoveDirection classifies a root replacement published under an
+// unchanged support region. The plane that owns the roots is the only order
+// authority here, and it is asked in both directions: a successor it orders
+// above its predecessor ascends, one it orders below descends, one it orders
+// both ways replaced representation without moving value, and one it cannot
+// order at all is incomparable and carries both axes. No branch answers a
+// bare ascent without the plane having proved the predecessor is the lower
+// bound, so a consumer's retained accumulator can never be reused across a
+// replacement that was not proved monotone.
+//
+// The successor root exists only after the pending publishers have run, so
+// this is the cut that owns the classification -- a change record for a newly
+// published root carries no after handle at admission time.
+func (work *Work) rootMoveDirection(before, after []RootHandle, patches []Patch, within support.Mask) change.Direction {
+	direction := change.Direction(0)
+	for _, patch := range patches {
+		index := int(patch.slot)
+		if index < 0 || index >= len(work.slots) || index >= len(before) || index >= len(after) || work.slots[index] == nil {
+			return change.Ascends | change.Descends
+		}
+		if sameRoot(before[index], after[index]) {
+			continue
+		}
+		slot := work.slots[index]
+		ascends := slot.LessOrEqUnder(before[index], after[index], within)
+		descends := slot.LessOrEqUnder(after[index], before[index], within)
+		switch {
+		case ascends && descends:
+			// Order-equal: the representation is new, the value is not.
+		case ascends:
+			direction |= change.Ascends
+		case descends:
+			direction |= change.Descends
+		default:
+			direction |= change.Ascends | change.Descends
+		}
+	}
+	return direction
 }
 
 func candidateEntails(candidate *support.Work, region, within support.Mask) bool {

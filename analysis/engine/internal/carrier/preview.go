@@ -221,6 +221,9 @@ func (preview *Preview) apply(patches []Patch, nextSupport, added, removed suppo
 		preview.dropAttempt(held, patches, candidate)
 		return State{}, ChangeSet{}, false
 	}
+	if prepared.rootsChanged && preview.state.support.SameHandle(nextSupport) {
+		prepared.set.set.Direction |= preview.work.rootMoveDirection(preview.state.roots, next, patches, nextSupport)
+	}
 	for _, patch := range patches {
 		patch.change.record.consumed = true
 	}
