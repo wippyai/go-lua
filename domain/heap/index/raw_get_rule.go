@@ -37,6 +37,7 @@ type rawGetRuntime struct {
 	visitCallDemand    func(valuedomain.Value, func(calldomain.Key, uint64) bool) bool
 	callRoute          func(engine.SelectorContext, calldomain.Key, uint64) bool
 	valueRoute         func(engine.SelectorContext, valuedomain.Coordinate, uint64) bool
+	sourceRoute        func(engine.SelectorContext, valuedomain.Coordinate, rawSourceTag) bool
 	heapRoute          func(engine.SelectorContext, heapdomain.Key, heapdomain.RawRouteTag) bool
 	packRoute          func(engine.SelectorContext, pack.Root, heapdomain.RawPayloadTag) bool
 	visitReceiver      func(valuedomain.Value, CallState, func(Route) bool) bool

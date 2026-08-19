@@ -38,6 +38,15 @@ func TestDiagnosticCanonicalDeadlockDataflowNode(t *testing.T) {
 	analyzeCanonicalRealFixture(t, "regression/deadlock-dataflow-node")
 }
 
+// TestDiagnosticCanonicalOpaqueCalleeArrayRevocation pins the RawGet staged
+// semantic-source route. The read is declared over rawSourceTag; a route
+// emitted under a different tag type is refused by the staged sink, which
+// fails the whole solve at execution/preflight rather than at a named domain
+// boundary.
+func TestDiagnosticCanonicalOpaqueCalleeArrayRevocation(t *testing.T) {
+	analyzeCanonicalRealFixture(t, "soundness/opaque-callee-array-revocation")
+}
+
 func TestDiagnosticCanonicalAdviceShapePolymorphic(t *testing.T) {
 	analyzeCanonicalRealFixture(t, "advice/shape-polymorphic")
 }

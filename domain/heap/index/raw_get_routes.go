@@ -40,7 +40,7 @@ func (rule *RawGetRule) locateSource(context engine.SelectorContext, access Acce
 			if !ok {
 				return false
 			}
-			if rule.runtime.valueRoute == nil || !rule.runtime.valueRoute(context, source.coordinate, uint64(tag)) {
+			if rule.runtime.sourceRoute == nil || !rule.runtime.sourceRoute(context, source.coordinate, tag) {
 				return false
 			}
 			mark(seen.source, uint64(tag))

@@ -84,11 +84,17 @@ func BindRawGetHot(binding *engine.SchemaBinding, fragment *RawGetSchemaFragment
 	runtime.valueRoute = func(context engine.SelectorContext, coordinate valuedomain.Coordinate, tag uint64) bool {
 		return values.SelectRoute(context, coordinate, tag)
 	}
+	// The semantic-source read is declared over rawSourceTag, so its routes
+	// carry that tag type. Emitting the same ordinal as a bare uint64 mints a
+	// route the staged sink cannot accept.
+	runtime.sourceRoute = func(context engine.SelectorContext, coordinate valuedomain.Coordinate, tag rawSourceTag) bool {
+		return valueowner.SelectRouteTyped(values, context, coordinate, tag)
+	}
 	runtime.heapRoute = func(context engine.SelectorContext, key heapdomain.Key, tag heapdomain.RawRouteTag) bool {
 		return heap.SelectRoute(context, key, tag)
 	}
 	runtime.packRoute = func(context engine.SelectorContext, root pack.Root, tag heapdomain.RawPayloadTag) bool {
-		return packs.SelectRoute(context, root, uint64(tag))
+		return packowner.SelectRouteTyped(packs, context, root, tag)
 	}
 	runtime.valueTarget = func(target engine.RuleTarget, coordinate valuedomain.Coordinate) bool {
 		return values.TargetMatches(target, coordinate)
