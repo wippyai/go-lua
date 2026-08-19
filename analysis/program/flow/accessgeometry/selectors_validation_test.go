@@ -110,23 +110,18 @@ func proveImportAlias(t *testing.T, openTail bool) {
 	}
 	defer func() { _ = moduleFinalizer.Abort() }()
 
-	staticDraft, err := static.Build(static.Input{})
+	_, staticView, err := static.Build(static.Input{})
 	if err != nil {
 		t.Fatalf("static.Build: %v", err)
 	}
-	staticFinalizer, err := staticDraft.Finalizer()
-	if err != nil {
-		t.Fatalf("static.Finalizer: %v", err)
-	}
-	defer func() { _ = staticFinalizer.Abort() }()
 
 	flowView := flowFinalizer.View()
-	bindings := selectorBindingProof(t, sourceFinalizer.Preimage(), flowView, staticFinalizer.View(), body)
-	bodyResult, err := flowbody.Seal(sourceFinalizer.Preimage(), flowView, staticFinalizer.View(), body)
+	bindings := selectorBindingProof(t, sourceFinalizer.Preimage(), flowView, staticView, body)
+	bodyResult, err := flowbody.Seal(sourceFinalizer.Preimage(), flowView, staticView, body)
 	if err != nil {
 		t.Fatalf("body.Seal: %v", err)
 	}
-	result, err := sealSelectors(sourceFinalizer.Preimage(), flowView, bodyResult, bindings, staticFinalizer.View(), moduleFinalizer.View())
+	result, err := sealSelectors(sourceFinalizer.Preimage(), flowView, bodyResult, bindings, staticView, moduleFinalizer.View())
 	if err != nil {
 		t.Fatalf("Seal: %v", err)
 	}
@@ -192,23 +187,18 @@ func TestSealRejectsUnaryDenominatorMismatch(t *testing.T) {
 	}
 	defer func() { _ = moduleFinalizer.Abort() }()
 
-	staticDraft, err := static.Build(static.Input{})
+	_, staticView, err := static.Build(static.Input{})
 	if err != nil {
 		t.Fatalf("static.Build: %v", err)
 	}
-	staticFinalizer, err := staticDraft.Finalizer()
-	if err != nil {
-		t.Fatalf("static.Finalizer: %v", err)
-	}
-	defer func() { _ = staticFinalizer.Abort() }()
 
 	flowView := flowFinalizer.View()
-	bindings := selectorBindingProof(t, sourceFinalizer.Preimage(), flowView, staticFinalizer.View(), body)
-	bodyResult, bodyErr := flowbody.Seal(sourceFinalizer.Preimage(), flowView, staticFinalizer.View(), body)
+	bindings := selectorBindingProof(t, sourceFinalizer.Preimage(), flowView, staticView, body)
+	bodyResult, bodyErr := flowbody.Seal(sourceFinalizer.Preimage(), flowView, staticView, body)
 	if bodyErr != nil {
 		t.Fatalf("body.Seal: %v", bodyErr)
 	}
-	_, err = sealSelectors(sourceFinalizer.Preimage(), flowView, bodyResult, bindings, staticFinalizer.View(), moduleFinalizer.View())
+	_, err = sealSelectors(sourceFinalizer.Preimage(), flowView, bodyResult, bindings, staticView, moduleFinalizer.View())
 	if err == nil || !strings.Contains(err.Error(), "authored family denominator mismatch") {
 		t.Fatalf("Seal error = %v, want Unary denominator mismatch rejection", err)
 	}

@@ -59,7 +59,7 @@ func TestSealRejectsSameDenominatorForeignOwners(t *testing.T) {
 	foreign.flow.Functions.Captures = []authored.Capture{{Inner: inner, Outer: cell}}
 	left := openDirectFixture(t, base)
 	right := openDirectFixture(t, foreign)
-	staticID := left.staticFinalize.View().ContentID()
+	staticID := left.staticView.ContentID()
 	moduleID := left.moduleFinalize.View().ContentID()
 
 	if _, err := Seal(left.source, right.flow, left.bodies, left.bindings, left.forest, left.control, left.executable, staticID, moduleID); err == nil {
@@ -110,13 +110,13 @@ func TestDirectFunctionProvenanceRejectsEqualDenominatorForeignOwners(t *testing
 
 	sourceID := base.source.Identity().ContentID()
 	flowID := base.flow.Cold().ContentID()
-	staticID := base.staticFinalize.View().ContentID()
+	staticID := base.staticView.ContentID()
 	moduleID := base.moduleFinalize.View().ContentID()
 	foreignSourceID := foreignSource.source.Identity().ContentID()
 	foreignFlowID := foreignFlow.flow.Cold().ContentID()
-	foreignSourceStaticID := foreignSource.staticFinalize.View().ContentID()
+	foreignSourceStaticID := foreignSource.staticView.ContentID()
 	foreignSourceModuleID := foreignSource.moduleFinalize.View().ContentID()
-	foreignFlowStaticID := foreignFlow.staticFinalize.View().ContentID()
+	foreignFlowStaticID := foreignFlow.staticView.ContentID()
 	foreignFlowModuleID := foreignFlow.moduleFinalize.View().ContentID()
 	if !Matches(base.result, sourceID, flowID, staticID, moduleID) ||
 		!Matches(foreignSource.result, foreignSourceID, flowID, foreignSourceStaticID, foreignSourceModuleID) ||

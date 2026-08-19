@@ -114,22 +114,17 @@ func TestSealDeepExactChain(t *testing.T) {
 	}
 	defer func() { _ = moduleFinalizer.Abort() }()
 
-	staticDraft, err := static.Build(static.Input{})
+	_, staticView, err := static.Build(static.Input{})
 	if err != nil {
 		t.Fatalf("static.Build: %v", err)
 	}
-	staticFinalizer, err := staticDraft.Finalizer()
-	if err != nil {
-		t.Fatalf("static.Finalizer: %v", err)
-	}
-	defer func() { _ = staticFinalizer.Abort() }()
 
-	bindings := selectorBindingProof(t, sourceFinalizer.Preimage(), flowFinalizer.View(), staticFinalizer.View(), body)
-	bodyResult, err := flowbody.Seal(sourceFinalizer.Preimage(), flowFinalizer.View(), staticFinalizer.View(), body)
+	bindings := selectorBindingProof(t, sourceFinalizer.Preimage(), flowFinalizer.View(), staticView, body)
+	bodyResult, err := flowbody.Seal(sourceFinalizer.Preimage(), flowFinalizer.View(), staticView, body)
 	if err != nil {
 		t.Fatalf("body.Seal: %v", err)
 	}
-	result, err := sealSelectors(sourceFinalizer.Preimage(), flowFinalizer.View(), bodyResult, bindings, staticFinalizer.View(), moduleFinalizer.View())
+	result, err := sealSelectors(sourceFinalizer.Preimage(), flowFinalizer.View(), bodyResult, bindings, staticView, moduleFinalizer.View())
 	if err != nil {
 		t.Fatalf("Seal: %v", err)
 	}
@@ -282,15 +277,10 @@ func sealReadCase(t *testing.T, cellBody, readOwner keyspace.Term) error {
 	}
 	defer func() { _ = flowFinalizer.Abort() }()
 
-	staticDraft, err := static.Build(static.Input{})
+	_, staticView, err := static.Build(static.Input{})
 	if err != nil {
 		t.Fatalf("static.Build: %v", err)
 	}
-	staticFinalizer, err := staticDraft.Finalizer()
-	if err != nil {
-		t.Fatalf("static.Finalizer: %v", err)
-	}
-	defer func() { _ = staticFinalizer.Abort() }()
 
 	moduleDraft, err := imports.Build(imports.Input{})
 	if err != nil {
@@ -302,7 +292,7 @@ func sealReadCase(t *testing.T, cellBody, readOwner keyspace.Term) error {
 	}
 	defer func() { _ = moduleFinalizer.Abort() }()
 
-	preimage, flowView, staticView := sourceFinalizer.Preimage(), flowFinalizer.View(), staticFinalizer.View()
+	preimage, flowView := sourceFinalizer.Preimage(), flowFinalizer.View()
 	bodies, err := flowbody.Seal(preimage, flowView, staticView, entry)
 	if err != nil {
 		t.Fatalf("body.Seal: %v", err)
@@ -374,22 +364,17 @@ func TestSealIgnoresExactLensOverScalarBase(t *testing.T) {
 		t.Fatalf("imports.Finalizer: %v", err)
 	}
 	defer func() { _ = moduleFinalizer.Abort() }()
-	staticDraft, err := static.Build(static.Input{})
+	_, staticView, err := static.Build(static.Input{})
 	if err != nil {
 		t.Fatalf("static.Build: %v", err)
 	}
-	staticFinalizer, err := staticDraft.Finalizer()
-	if err != nil {
-		t.Fatalf("static.Finalizer: %v", err)
-	}
-	defer func() { _ = staticFinalizer.Abort() }()
 	flowView := flowFinalizer.View()
-	bindings := selectorBindingProof(t, sourceFinalizer.Preimage(), flowView, staticFinalizer.View(), body)
-	bodyResult, err := flowbody.Seal(sourceFinalizer.Preimage(), flowView, staticFinalizer.View(), body)
+	bindings := selectorBindingProof(t, sourceFinalizer.Preimage(), flowView, staticView, body)
+	bodyResult, err := flowbody.Seal(sourceFinalizer.Preimage(), flowView, staticView, body)
 	if err != nil {
 		t.Fatalf("body.Seal: %v", err)
 	}
-	result, err := sealSelectors(sourceFinalizer.Preimage(), flowView, bodyResult, bindings, staticFinalizer.View(), moduleFinalizer.View())
+	result, err := sealSelectors(sourceFinalizer.Preimage(), flowView, bodyResult, bindings, staticView, moduleFinalizer.View())
 	if err != nil {
 		t.Fatalf("Seal: %v", err)
 	}
@@ -490,7 +475,7 @@ func TestSealRejectsBracketStringPublication(t *testing.T) {
 	}
 	defer func() { _ = moduleFinalizer.Abort() }()
 
-	staticDraft, err := static.Build(static.Input{
+	_, staticView, err := static.Build(static.Input{
 		Counts: counts,
 		References: staticrefs.Input{TypeRef: []staticrefs.TypeRef{{
 			Resolution: staticrefs.CanonicalPath,
@@ -504,18 +489,12 @@ func TestSealRejectsBracketStringPublication(t *testing.T) {
 	if err != nil {
 		t.Fatalf("static.Build: %v", err)
 	}
-	staticFinalizer, err := staticDraft.Finalizer()
-	if err != nil {
-		t.Fatalf("static.Finalizer: %v", err)
-	}
-	defer func() { _ = staticFinalizer.Abort() }()
-
-	bindings := selectorBindingProof(t, sourceFinalizer.Preimage(), flowFinalizer.View(), staticFinalizer.View(), body)
-	bodyResult, bodyErr := flowbody.Seal(sourceFinalizer.Preimage(), flowFinalizer.View(), staticFinalizer.View(), body)
+	bindings := selectorBindingProof(t, sourceFinalizer.Preimage(), flowFinalizer.View(), staticView, body)
+	bodyResult, bodyErr := flowbody.Seal(sourceFinalizer.Preimage(), flowFinalizer.View(), staticView, body)
 	if bodyErr != nil {
 		t.Fatalf("body.Seal: %v", bodyErr)
 	}
-	_, err = sealSelectors(sourceFinalizer.Preimage(), flowFinalizer.View(), bodyResult, bindings, staticFinalizer.View(), moduleFinalizer.View())
+	_, err = sealSelectors(sourceFinalizer.Preimage(), flowFinalizer.View(), bodyResult, bindings, staticView, moduleFinalizer.View())
 	if err == nil || !strings.Contains(err.Error(), "publication target is not a same-owner name lens") {
 		t.Fatalf("Seal error = %v, want bracket-string publication rejection", err)
 	}
@@ -624,22 +603,17 @@ func TestSealSmoke(t *testing.T) {
 		Source:     []keyspace.Key{1}, Canonical: []keyspace.Key{1},
 	}}
 	staticInput.Publications.Type = []staticpubs.Publication{{Assign: assign, Pair: 0, Target: typeRef}}
-	staticDraft, err := static.Build(staticInput)
+	_, staticView, err := static.Build(staticInput)
 	if err != nil {
 		t.Fatalf("static.Build: %v", err)
 	}
-	staticFinalizer, err := staticDraft.Finalizer()
-	if err != nil {
-		t.Fatalf("static.Finalizer: %v", err)
-	}
-	defer func() { _ = staticFinalizer.Abort() }()
 
-	bindings := selectorBindingProof(t, sourceFinalizer.Preimage(), flowFinalizer.View(), staticFinalizer.View(), body)
-	bodyResult, err := flowbody.Seal(sourceFinalizer.Preimage(), flowFinalizer.View(), staticFinalizer.View(), body)
+	bindings := selectorBindingProof(t, sourceFinalizer.Preimage(), flowFinalizer.View(), staticView, body)
+	bodyResult, err := flowbody.Seal(sourceFinalizer.Preimage(), flowFinalizer.View(), staticView, body)
 	if err != nil {
 		t.Fatalf("body.Seal: %v", err)
 	}
-	result, err := sealSelectors(sourceFinalizer.Preimage(), flowFinalizer.View(), bodyResult, bindings, staticFinalizer.View(), moduleFinalizer.View())
+	result, err := sealSelectors(sourceFinalizer.Preimage(), flowFinalizer.View(), bodyResult, bindings, staticView, moduleFinalizer.View())
 	if err != nil {
 		t.Fatalf("Seal: %v", err)
 	}
@@ -697,7 +671,7 @@ func TestSealSmoke(t *testing.T) {
 
 	sourceID := sourceFinalizer.Preimage().Identity().ContentID()
 	flowID := flowFinalizer.View().Cold().ContentID()
-	staticID := staticFinalizer.View().ContentID()
+	staticID := staticView.ContentID()
 	moduleID := moduleFinalizer.View().ContentID()
 	if !Matches(result, sourceID, flowID, staticID, moduleID) {
 		t.Fatal("Matches rejected the four owner identities used by Seal")
