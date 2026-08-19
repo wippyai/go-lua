@@ -112,10 +112,11 @@ type UnresolvedType struct {
 	Reference identity.ContentID
 	Root      identity.ContentID
 	Path      []string
+	Name      string
 }
 
 func (payload UnresolvedType) Available() bool {
-	if !payload.Reference.Available() || len(payload.Path) == 0 {
+	if !payload.Reference.Available() || len(payload.Path) == 0 || payload.Name == "" {
 		return false
 	}
 	for _, component := range payload.Path {
@@ -127,7 +128,7 @@ func (payload UnresolvedType) Available() bool {
 }
 
 func (payload UnresolvedType) empty() bool {
-	return !payload.Reference.Available() && !payload.Root.Available() && len(payload.Path) == 0
+	return !payload.Reference.Available() && !payload.Root.Available() && len(payload.Path) == 0 && payload.Name == ""
 }
 
 // UnresolvedValue is the sealed unresolved-value payload.
@@ -157,17 +158,6 @@ type Conformance struct {
 	DeclaredMay runtimekind.Set
 	Target      string
 	Evidence    []identity.ContentID
-}
-
-func conformanceSite(site uint8) schemadiag.Site {
-	switch site {
-	case 1:
-		return schemadiag.SiteCallArgument
-	case 2:
-		return schemadiag.SiteAssignment
-	default:
-		return schemadiag.SiteNone
-	}
 }
 
 func (payload Conformance) Available() bool {
@@ -310,10 +300,11 @@ func ProjectSites(sites mounted.ObservationSites, mounts []MountedCensus, coordi
 		case structure.DiagnosticObservationTypeReferenceUnresolved:
 			unresolved, unresolvedOK := observation.UnresolvedTypeReference()
 			path, pathOK := unresolved.Path()
-			if !unresolvedOK || !pathOK || !unresolved.StaticReferenceID().Available() {
+			name, nameOK := unresolved.Name()
+			if !unresolvedOK || !pathOK || !nameOK || !unresolved.StaticReferenceID().Available() {
 				return nil, false
 			}
-			row.UnresolvedType = UnresolvedType{Reference: unresolved.StaticReferenceID(), Root: unresolved.RootID(), Path: path}
+			row.UnresolvedType = UnresolvedType{Reference: unresolved.StaticReferenceID(), Root: unresolved.RootID(), Path: path, Name: name}
 		case structure.DiagnosticObservationValueReferenceUnresolved:
 			unresolved, unresolvedOK := observation.UnresolvedValueReference()
 			name, nameOK := unresolved.Name()
@@ -335,7 +326,7 @@ func ProjectSites(sites mounted.ObservationSites, mounts []MountedCensus, coordi
 				return nil, false
 			}
 			row.Conformance = Conformance{
-				Site: conformanceSite(conformance.Site()),
+				Site: conformance.Site(),
 				Call: conformance.CallID(), Argument: conformance.ArgumentID(),
 				Declared: conformance.DeclaredStaticTypeID(), Span: conformance.SpanID(), Position: position,
 				Actual: valueIndex, DeclaredMay: declaredMay, Target: target,

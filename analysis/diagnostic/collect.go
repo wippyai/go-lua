@@ -1,8 +1,6 @@
 package diagnostic
 
 import (
-	"strings"
-
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	declschema "github.com/wippyai/go-lua/analysis/schema"
@@ -375,9 +373,9 @@ func staticSubjects(rows []Observation) ([]StaticSubject, bool) {
 		if !locationOK || !idOK {
 			return nil, false
 		}
-		name := row.Name
+		name := row.UnresolvedValue.Name
 		if row.Kind == structure.DiagnosticObservationTypeReferenceUnresolved {
-			name = strings.Join(row.Path, ".")
+			name = row.UnresolvedType.Name
 		}
 		subjects = append(subjects, StaticSubject{
 			ID: row.ID, FindingID: id, Location: location,
