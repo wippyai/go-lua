@@ -420,7 +420,11 @@ func resolveDeclaredMemberRow(state *schemaBindingState, authority *schemaBindin
 		Row: row, Bind: issuance.binder, Coords: issuance.coords,
 	}
 	if issuance.activation {
-		member.Activation, member.ActivationID = true, issuance.activationID
+		application := compositionKeyOf(issuance.application)
+		if !application.Available() {
+			return declaredMemberRow{}, nil, false
+		}
+		member.Activation, member.ActivationID, member.Application = true, issuance.activationID, application
 	}
 	return member, summaries, true
 }

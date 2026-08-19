@@ -555,7 +555,7 @@ func compileActivationRuleReceipt(implementation *ActivationRuleImplementation, 
 	if !shapeOK || shape.OutputKind != composition.StructuralOutput || shape.ActivationCount != 1 || !shape.ActivationFamily.Available() {
 		return nil, false
 	}
-	if _, bound := topology.ActivationReceipt(trigger, shape.ActivationFamily); !bound {
+	if !topology.TriggerBound(trigger, shape.ActivationFamily) {
 		return nil, false
 	}
 	application, projected := topology.ActivationApplication(trigger, shape.ActivationFamily)

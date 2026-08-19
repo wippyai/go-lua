@@ -107,15 +107,6 @@ func (rule *HotRule) MountedAdmit(mountID, reusablePointID, occurrenceID identit
 	if !capabilityOK || !implementationOK {
 		return engine.MountedActivationAdmit{}, false
 	}
-	if len(rule.catalog.rows) == 0 {
-		return engine.MountedActivationAdmit{
-			Implementation: implementation,
-			Capability:     capability,
-			Mount:          mountID,
-			Point:          reusablePointID,
-			Occurrence:     occurrenceID,
-		}, true
-	}
 	if rule.transport == nil {
 		return engine.MountedActivationAdmit{}, false
 	}
@@ -141,29 +132,4 @@ func (rule *HotRule) MountedAdmit(mountID, reusablePointID, occurrenceID identit
 		Read:           read,
 		Candidates:     candidates,
 	}, true
-}
-
-// AttachMountedReceiptMember resolves and attaches one exact activation
-// member from the committed activation graph.
-func (rule *HotRule) AttachMountedReceiptMember(compilation *engine.ProgramConstruction, mountID, reusablePointID, occurrenceID identity.ContentID) bool {
-	if rule == nil || compilation == nil || rule.implementation == nil || rule.catalog == nil || !rule.catalog.valid() {
-		return false
-	}
-	issuer, issuerOK := rule.ForMount(mountID)
-	_, _, operandOK := issuer.occurrenceKey(occurrenceID)
-	if !issuerOK || !operandOK {
-		return false
-	}
-	if len(rule.catalog.rows) == 0 {
-		return true
-	}
-	capability, capabilityOK := rule.implementation.MountedCapability()
-	if !capabilityOK {
-		return false
-	}
-	implementation, ok := callowner.ResolveActivationRuleImplementationFor(rule.owner, rule.implementation)
-	if !ok {
-		return false
-	}
-	return engine.AttachMountedActivationMember(compilation, implementation, capability, mountID, reusablePointID, occurrenceID)
 }

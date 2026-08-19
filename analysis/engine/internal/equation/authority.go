@@ -29,7 +29,19 @@ type Topology struct {
 	receipts         []activationReceipt
 	receiptAt        map[composition.Key]int
 	receiptByTrigger map[composition.Key][]int
-	reverses         []derivedActivationReverse
+	// triggers is the declared activation binding of every sealed trigger,
+	// keyed by the trigger's canonical rule-instance key. It is the authority
+	// for a trigger's family and application; receipts index the candidates
+	// that binding admits, and a trigger with none is still bound.
+	triggers map[composition.Key]activationTriggerBinding
+	reverses []derivedActivationReverse
+}
+
+// activationTriggerBinding is the sealed declaration of one activation
+// trigger, independent of the candidates it reaches.
+type activationTriggerBinding struct {
+	family      composition.Key
+	application composition.Key
 }
 
 // activationReceipt is the sealed index of one pre-materialized target row.
@@ -130,6 +142,10 @@ func sealTopologyWithFailure(source *composition.Composition, spec TopologySpec,
 		deferredQueries:  deferredQueries,
 		receiptAt:        make(map[composition.Key]int),
 		receiptByTrigger: make(map[composition.Key][]int),
+		triggers:         make(map[composition.Key]activationTriggerBinding),
+	}
+	if !topology.sealTriggers(sealed.ActivationTriggers, instances) {
+		return nil, sealRefused(SealFailureFamilyTopology, "activation-triggers"), false
 	}
 	if !topology.sealReceipts(sealed.Batch, len(sealed.Points), materializations, directCandidates, instances) {
 		return nil, sealRefused(SealFailureFamilyTopology, "receipts"), false
@@ -303,6 +319,52 @@ func reissueTopologySpec(spec *TopologySpec, assembly TopologyAssembly) bool {
 	return true
 }
 
+// sealTriggers seals the declared activation binding of every trigger. Each
+// binding names a rule instance that carries exactly one activation of the
+// declared family, and no instance is bound twice.
+func (topology *Topology) sealTriggers(bindings []ActivationTriggerBinding, instances []canonicalInstance) bool {
+	if topology == nil || topology.source == nil {
+		return false
+	}
+	for _, binding := range bindings {
+		if binding.TriggerOrdinal < 0 || binding.TriggerOrdinal >= len(instances) ||
+			!binding.Family.Available() || !binding.Application.Available() {
+			return false
+		}
+		if _, known := topology.source.ActivationFamily(binding.Family); !known {
+			return false
+		}
+		instance := instances[binding.TriggerOrdinal]
+		schema, schemaOK := ruleSchema(topology.source, instance.row.Schema)
+		if !schemaOK || len(schema.Activations) != 1 || schema.Activations[0].Family != binding.Family {
+			return false
+		}
+		if _, duplicate := topology.triggers[instance.key]; duplicate || !instance.key.Available() {
+			return false
+		}
+		topology.triggers[instance.key] = activationTriggerBinding{family: binding.Family, application: binding.Application}
+	}
+	return true
+}
+
+// receiptAgreesWithTrigger holds when a candidate receipt names a trigger the
+// declaration bound, under that trigger's declared family and application. A
+// receipt cannot introduce a trigger, a family, or an application of its own.
+func (topology *Topology) receiptAgreesWithTrigger(trigger composition.Key, origin MaterializationOrigin) bool {
+	binding, bound := topology.triggers[trigger]
+	return bound && binding.family == origin.Family && binding.application == origin.Application
+}
+
+// TriggerBound reports whether one rule-instance key is a sealed activation
+// trigger of the declared family.
+func (topology *Topology) TriggerBound(trigger, family composition.Key) bool {
+	if topology == nil || !trigger.Available() || !family.Available() {
+		return false
+	}
+	binding, bound := topology.triggers[trigger]
+	return bound && binding.family == family
+}
+
 func (topology *Topology) sealReceipts(base *Batch, pointCount int, values []TemplateMaterialization, direct []DirectActivationCandidate, instances []canonicalInstance) bool {
 	if topology == nil || topology.source == nil || base == nil || pointCount == 0 {
 		return false
@@ -329,6 +391,9 @@ func (topology *Topology) sealReceipts(base *Batch, pointCount int, values []Tem
 		if !schemaOK || len(schema.Activations) != 1 || schema.Activations[0].Family != origin.Family {
 			return false
 		}
+		if !topology.receiptAgreesWithTrigger(instance.key, origin) {
+			return false
+		}
 		key, keyed := identityKey("analysis/engine/equation/activation-receipt", func(writer *canonical.DigestWriter) bool {
 			return writeKey(writer, value.Key()) && writeKey(writer, instance.key) && writeKey(writer, origin.Family) && writeKey(writer, origin.Application) && writeKey(writer, origin.Target) && writeKey(writer, origin.Endpoint)
 		})
@@ -352,6 +417,9 @@ func (topology *Topology) sealReceipts(base *Batch, pointCount int, values []Tem
 		instance := instances[origin.TriggerOrdinal]
 		schema, schemaOK := ruleSchema(topology.source, instance.row.Schema)
 		if !schemaOK || len(schema.Activations) != 1 || schema.Activations[0].Family != origin.Family {
+			return false
+		}
+		if !topology.receiptAgreesWithTrigger(instance.key, origin) {
 			return false
 		}
 		for index := 0; index < value.TransportCount(); index++ {
@@ -424,19 +492,11 @@ func (topology *Topology) ActivationApplication(trigger, family composition.Key)
 	if topology == nil || !trigger.Available() || !family.Available() {
 		return composition.Key{}, false
 	}
-	indexes := topology.receiptByTrigger[trigger]
-	if len(indexes) == 0 {
+	binding, bound := topology.triggers[trigger]
+	if !bound || binding.family != family || !binding.application.Available() {
 		return composition.Key{}, false
 	}
-	for _, index := range indexes {
-		if index >= 0 && index < len(topology.receipts) {
-			receipt := topology.receipts[index]
-			if receipt.family == family && receipt.application.Available() {
-				return receipt.application, true
-			}
-		}
-	}
-	return composition.Key{}, false
+	return binding.application, true
 }
 
 // SelectReceiptMember converts one trigger locator only when an exact
@@ -677,7 +737,7 @@ func (topology *Topology) ActivationMemberRow(ref RuleRef) (ActivationMemberRowL
 		return ActivationMemberRowLocator{}, false
 	}
 	member := topology.rows.members[index]
-	if !member.Available() || len(topology.receiptByTrigger[member]) == 0 {
+	if _, bound := topology.triggers[member]; !member.Available() || !bound {
 		return ActivationMemberRowLocator{}, false
 	}
 	return ActivationMemberRowLocator{owner: topology, member: member}, true
@@ -712,7 +772,10 @@ func (locator QueryRowLocator) Resolve(graph *Graph) (Query, bool) {
 }
 
 func (locator ActivationMemberRowLocator) Resolve(graph *Graph) (RuleMember, bool) {
-	if locator.owner == nil || !locator.member.Available() || !locator.owner.OwnsGraph(graph) || len(locator.owner.receiptByTrigger[locator.member]) == 0 {
+	if locator.owner == nil || !locator.member.Available() || !locator.owner.OwnsGraph(graph) {
+		return RuleMember{}, false
+	}
+	if _, bound := locator.owner.triggers[locator.member]; !bound {
 		return RuleMember{}, false
 	}
 	member, found := graph.memberAt[locator.member]
@@ -883,6 +946,8 @@ func copyTopologySpec(spec TopologySpec) TopologySpec {
 		FactorEdges:      make([]FactorEdge, len(spec.FactorEdges)),
 		Summaries:        make([]SummaryMapping, len(spec.Summaries)),
 		WeakTargets:      make([]WeakTargetMapping, len(spec.WeakTargets)),
+
+		ActivationTriggers: append([]ActivationTriggerBinding(nil), spec.ActivationTriggers...),
 	}
 	for index, rule := range spec.Rules {
 		result.Rules[index] = copyInstance(rule)

@@ -17,6 +17,24 @@ type selectedOverlayLawFixture struct {
 	triggerID         identity.ContentID
 	bodyID            identity.ContentID
 	ordinaryTransfers *int
+	// activationRole, activationMount, activationPoint and
+	// activationOccurrence are the mounted coordinates the trigger was placed
+	// under, so a law can address its rule row directly.
+	activationRole       RuleSlotCapability
+	activationMount      identity.ContentID
+	activationPoint      identity.ContentID
+	activationOccurrence identity.ContentID
+}
+
+// selectedOverlayLawOptions selects the trigger geometry one law needs.
+// candidateCount may be zero: a trigger that reaches no candidate is a
+// declared trigger with an empty candidate set, not an absent one.
+type selectedOverlayLawOptions struct {
+	candidateCount       int
+	duplicateApplication bool
+	// nativeStage places the trigger on a native issuance cut instead of the
+	// base cut, which is the geometry a mounted call stage is addressed under.
+	nativeStage bool
 }
 
 func selectedOverlayLawID(value uint64) identity.ContentID {
@@ -62,7 +80,13 @@ func newSelectedOverlayLawFixture(t testing.TB) selectedOverlayLawFixture {
 
 func newSelectedOverlayLawFixtureWithCandidates(t testing.TB, candidateCount int, duplicateApplication bool) selectedOverlayLawFixture {
 	t.Helper()
-	if candidateCount < 1 {
+	return newSelectedOverlayLawFixtureWithOptions(t, selectedOverlayLawOptions{candidateCount: candidateCount, duplicateApplication: duplicateApplication})
+}
+
+func newSelectedOverlayLawFixtureWithOptions(t testing.TB, options selectedOverlayLawOptions) selectedOverlayLawFixture {
+	t.Helper()
+	candidateCount, duplicateApplication := options.candidateCount, options.duplicateApplication
+	if candidateCount < 0 {
 		t.Fatal("selected overlay candidate count")
 	}
 	const (
@@ -139,6 +163,9 @@ func newSelectedOverlayLawFixtureWithCandidates(t testing.TB, candidateCount int
 	}
 	application, target, endpoint := coldKey(activationApplication), coldKey(activationTarget), coldKey(activationEndpoint)
 	activationSpec := HotActivationSpec{Admission: AdmitActivationByTrustedTheorem(coldKey(activationAdmission)), Run: func(value Activation) bool {
+		if candidateCount == 0 {
+			return true
+		}
 		return Activate(value, application, target, endpoint)
 	}}
 	if !BindActivationRule(binding, activation, activationSpec) {
@@ -164,6 +191,13 @@ func newSelectedOverlayLawFixtureWithCandidates(t testing.TB, candidateCount int
 	artifact, artifactOK := rows.NewArtifactScalarSpec(selectedOverlayLawID(artifactID), selectedOverlayLawID(programID), identity.ContentID(schema.ID().Digest()), rows.ArtifactScalarCapacity{Roles: 2, Points: 3, Events: 5, Rules: 3, Bodies: 1, Regions: 1, Transfers: 1})
 	if !artifactOK {
 		t.Fatal("selected overlay artifact header")
+	}
+	if !artifact.InstallStageLaws([]rows.ArtifactStageLaw{
+		{Stage: rows.ArtifactRuleStageIssued3, Native: true},
+		{Stage: rows.ArtifactRuleStageIssued4, Native: true, Predecessor: rows.ArtifactRuleStageIssued3},
+		{Stage: rows.ArtifactRuleStageIssued5, Native: true, Predecessor: rows.ArtifactRuleStageIssued4},
+	}) {
+		t.Fatal("selected overlay artifact stage laws")
 	}
 	ordinaryRole, ordinaryRoleOK := artifact.DeclareRole(selectedOverlayLawID(998_640))
 	activationRole, activationRoleOK := artifact.DeclareRole(selectedOverlayLawID(998_641))
@@ -191,7 +225,11 @@ func newSelectedOverlayLawFixtureWithCandidates(t testing.TB, candidateCount int
 	if !artifact.AddEvent(rows.ArtifactScalarEvent{Kind: rows.ArtifactEventExit, Region: selectedOverlayLawID(998_642)}) {
 		t.Fatal("selected overlay artifact exit")
 	}
-	if !ordinaryRoleOK || !activationRoleOK || !artifact.AddRule(rows.ArtifactScalarRule{Role: activationRole, Stage: rows.ArtifactRuleStageBase, Point: points[0], ID: selectedOverlayLawID(triggerOccurrence)}) || !artifact.AddRule(rows.ArtifactScalarRule{Role: ordinaryRole, Stage: rows.ArtifactRuleStageLocal, Point: points[1], Input: points[0], ID: selectedOverlayLawID(targetOccurrence)}) || !artifact.AddRule(rows.ArtifactScalarRule{Role: ordinaryRole, Stage: rows.ArtifactRuleStageBase, Point: points[2], ID: selectedOverlayLawID(bodyOccurrence)}) {
+	triggerRule := rows.ArtifactScalarRule{Role: activationRole, Stage: rows.ArtifactRuleStageBase, Point: points[0], ID: selectedOverlayLawID(triggerOccurrence)}
+	if options.nativeStage {
+		triggerRule = rows.ArtifactScalarRule{Role: activationRole, Stage: rows.ArtifactRuleStageIssued3, Point: points[2], Input: points[0], ID: selectedOverlayLawID(triggerOccurrence)}
+	}
+	if !ordinaryRoleOK || !activationRoleOK || !artifact.AddRule(triggerRule) || !artifact.AddRule(rows.ArtifactScalarRule{Role: ordinaryRole, Stage: rows.ArtifactRuleStageLocal, Point: points[1], Input: points[0], ID: selectedOverlayLawID(targetOccurrence)}) || !artifact.AddRule(rows.ArtifactScalarRule{Role: ordinaryRole, Stage: rows.ArtifactRuleStageBase, Point: points[2], ID: selectedOverlayLawID(bodyOccurrence)}) {
 		t.Fatal("selected overlay artifact rules")
 	}
 	body, bodyOK := artifact.AddBody(rows.ArtifactScalarBody{ID: selectedOverlayLawID(bodyID)})
@@ -210,11 +248,11 @@ func newSelectedOverlayLawFixtureWithCandidates(t testing.TB, candidateCount int
 			{Declaration: ordinaryProgram, Capability: ordinaryCapability, Mount: selectedOverlayLawID(mountID), Point: points[2], Occurrence: selectedOverlayLawID(bodyOccurrence)},
 		},
 	}
-	candidates := []MountedActivationCandidate{{Target: target, Endpoint: endpoint, Mount: selectedOverlayLawID(mountID), Body: selectedOverlayLawID(bodyID)}}
-	for index := 1; index < candidateCount; index++ {
+	candidates := make([]MountedActivationCandidate, 0, candidateCount)
+	for index := 0; index < candidateCount; index++ {
 		candidates = append(candidates, MountedActivationCandidate{Target: coldKey(activationTarget + uint64(index)), Endpoint: coldKey(activationEndpoint + uint64(index)), Mount: selectedOverlayLawID(mountID), Body: selectedOverlayLawID(bodyID)})
 	}
-	activationAdmit := MountedActivationAdmit{Implementation: activationImplementation, Transport: issuer, Capability: activationCapability, Mount: selectedOverlayLawID(mountID), Point: points[0], Occurrence: selectedOverlayLawID(triggerOccurrence), Application: application, Candidates: candidates}
+	activationAdmit := MountedActivationAdmit{Implementation: activationImplementation, Transport: issuer, Capability: activationCapability, Mount: selectedOverlayLawID(mountID), Point: triggerRule.Point, Occurrence: selectedOverlayLawID(triggerOccurrence), Application: application, Candidates: candidates}
 	admission.Activation = []MountedActivationAdmit{activationAdmit}
 	if duplicateApplication {
 		activationAdmit.Application = coldKey(activationApplication + 1)
@@ -225,7 +263,7 @@ func newSelectedOverlayLawFixtureWithCandidates(t testing.TB, candidateCount int
 		t.Fatal("selected overlay query admission")
 	}
 	admission.Queries = []ProgramQueryAdmission{queryAdmission}
-	activationIdentity := mountedRuleActivationID(activationCapability, selectedOverlayLawID(mountID), points[0], selectedOverlayLawID(triggerOccurrence))
+	activationIdentity := mountedRuleActivationID(activationCapability, selectedOverlayLawID(mountID), triggerRule.Point, selectedOverlayLawID(triggerOccurrence))
 	if !activationIdentity.Available() {
 		t.Fatal("selected overlay activation identity")
 	}
@@ -253,7 +291,12 @@ func newSelectedOverlayLawFixtureWithCandidates(t testing.TB, candidateCount int
 	if !triggerIdentity.Available() || !bodyIdentity.Available() {
 		t.Fatal("selected overlay point identities")
 	}
-	return selectedOverlayLawFixture{solver: solver, graph: program, observationID: observationIdentity, activationID: activationIdentity, triggerID: triggerIdentity, bodyID: bodyIdentity, ordinaryTransfers: transfers}
+	return selectedOverlayLawFixture{
+		solver: solver, graph: program, observationID: observationIdentity, activationID: activationIdentity,
+		triggerID: triggerIdentity, bodyID: bodyIdentity, ordinaryTransfers: transfers,
+		activationRole: activationCapability, activationMount: selectedOverlayLawID(mountID),
+		activationPoint: triggerRule.Point, activationOccurrence: selectedOverlayLawID(triggerOccurrence),
+	}
 }
 
 type selectedOverlayObservationWriteLaw struct {

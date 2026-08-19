@@ -68,9 +68,14 @@ type declaredMemberRow struct {
 	// Coords the neutral coordinates it resolves its operand from. The
 	// declaration states both; the committed program binds them at every
 	// seal and the geometry reads neither.
-	Bind             ProgramRule
-	Coords           OperandCoords
+	Bind   ProgramRule
+	Coords OperandCoords
+	// Activation marks the row as one activation trigger, and Application is
+	// the application identity that trigger instantiates its candidates
+	// under. The application is declared by the trigger itself, so a trigger
+	// that reaches no candidate still states the one it would activate for.
 	Activation       bool
+	Application      composition.Key
 	EnvironmentInput equation.Input
 }
 
@@ -209,7 +214,6 @@ type constructedSourcePlane struct {
 	authority *schemaBindingAuthority
 	schema    *Schema
 	batch     *equation.Batch
-	key       composition.Key
 	factors   []schemaFactorBinding
 }
 
@@ -287,6 +291,13 @@ type constructedMemberPlane struct {
 	idByRef      map[equation.RuleRef]identity.ContentID
 	activations  map[identity.ContentID]equation.RuleRef
 	activationAt map[equation.RuleRef]identity.ContentID
+	// applicationAt is the declared application of each activation trigger.
+	// It is the completeness authority for a candidate set: candidates agree
+	// with it, and an empty set is complete under it.
+	applicationAt map[equation.RuleRef]composition.Key
+	// triggers is the same declaration in the form the equation Topology
+	// seals it under.
+	triggers []equation.ActivationTriggerBinding
 }
 
 // constructedQueryPlane is the finished query geometry.
@@ -299,13 +310,8 @@ type constructedQueryPlane struct {
 // target tuples each registered trigger owns, and the per-trigger denominator
 // that makes a candidate set complete.
 type constructedActivationPlane struct {
-	materializations   []equation.TemplateMaterialization
-	directCandidates   []equation.DirectActivationCandidate
-	materializationAt  map[equation.TemplateMaterialization]equation.RuleRef
-	directCandidateAt  map[equation.DirectActivationCandidate]equation.RuleRef
-	directCandidateKey map[composition.Key]equation.RuleRef
-	candidates         map[equation.RuleRef]uint64
-	application        map[equation.RuleRef]composition.Key
+	materializations []equation.TemplateMaterialization
+	directCandidates []equation.DirectActivationCandidate
 }
 
 // constructTopology folds one sealed declaration into the committed geometry.
@@ -338,7 +344,7 @@ func constructTopology(declaration topologyDeclaration) (constructedTopology, to
 	if refusal.Available() {
 		return constructedTopology{}, refusal
 	}
-	semantic, refusal := constructSemanticRows(points, members, queries, activations)
+	semantic, refusal := constructSemanticRows(points, members, queries)
 	if refusal.Available() {
 		return constructedTopology{}, refusal
 	}
@@ -380,7 +386,6 @@ func constructSourcePlane(declaration topologyDeclaration) (constructedSourcePla
 		authority: state.authority,
 		schema:    state.schema,
 		batch:     batch,
-		key:       batch.Key(),
 		factors:   append([]schemaFactorBinding(nil), state.factors...),
 	}, topologyConstructionRefusal{}
 }
@@ -898,13 +903,14 @@ func constructedTransportFactor(source constructedSourcePlane, role RuleSlotCapa
 // point plane and its Inputs derived from the declaring plane's coordinates.
 func constructMemberPlane(declaration topologyDeclaration, source constructedSourcePlane, mounts constructedMountPlane, points constructedPointPlane) (constructedMemberPlane, topologyConstructionRefusal) {
 	plane := constructedMemberPlane{
-		bindings:     make([]programMemberBinding, 0, len(declaration.members)),
-		specs:        make([]equation.RuleInstance, 0, len(declaration.members)),
-		groups:       make([]equation.Group, 0, len(declaration.members)),
-		refByID:      make(map[identity.ContentID]equation.RuleRef, len(declaration.members)),
-		idByRef:      make(map[equation.RuleRef]identity.ContentID, len(declaration.members)),
-		activations:  make(map[identity.ContentID]equation.RuleRef),
-		activationAt: make(map[equation.RuleRef]identity.ContentID),
+		bindings:      make([]programMemberBinding, 0, len(declaration.members)),
+		specs:         make([]equation.RuleInstance, 0, len(declaration.members)),
+		groups:        make([]equation.Group, 0, len(declaration.members)),
+		refByID:       make(map[identity.ContentID]equation.RuleRef, len(declaration.members)),
+		idByRef:       make(map[equation.RuleRef]identity.ContentID, len(declaration.members)),
+		activations:   make(map[identity.ContentID]equation.RuleRef),
+		activationAt:  make(map[equation.RuleRef]identity.ContentID),
+		applicationAt: make(map[equation.RuleRef]composition.Key),
 	}
 	for ordinal, member := range declaration.members {
 		coordinates, refusal := resolveMemberCoordinates(declaration, mounts, member, ordinal)
@@ -939,11 +945,16 @@ func constructMemberPlane(declaration topologyDeclaration, source constructedSou
 		}
 		shape, shapeOK := memberActivationShape(source, row)
 		_, duplicate := plane.activations[coordinates.activation]
-		if !shapeOK || duplicate || !coordinates.activation.Available() || shape.ActivationCount != 1 || !shape.ActivationFamily.Available() {
+		if !shapeOK || duplicate || !coordinates.activation.Available() || shape.ActivationCount != 1 || !shape.ActivationFamily.Available() ||
+			!member.Application.Available() {
 			return constructedMemberPlane{}, refuseAdmission(topologyConstructionStepActivationRow, ordinal)
 		}
 		plane.activations[coordinates.activation] = ref
 		plane.activationAt[ref] = coordinates.activation
+		plane.applicationAt[ref] = member.Application
+		plane.triggers = append(plane.triggers, equation.ActivationTriggerBinding{
+			TriggerOrdinal: int(uint64(ref)) - 1, Family: shape.ActivationFamily, Application: member.Application,
+		})
 	}
 	return plane, topologyConstructionRefusal{}
 }
@@ -1136,14 +1147,21 @@ func constructActivationPlane(declaration topologyDeclaration, source constructe
 	if refusal.Available() {
 		return constructedActivationPlane{}, refusal
 	}
+	// These indexes are admission-local duplicate fences. Equation.Topology
+	// owns the sealed materialization and candidate receipts; retaining the
+	// lookup tables in the engine's semantic directory would create a second
+	// candidate authority after this phase has finished.
+	materializationAt := make(map[equation.TemplateMaterialization]struct{}, len(declaration.materializations))
+	directCandidateAt := make(map[equation.DirectActivationCandidate]struct{}, len(declaration.directCandidates)+len(declared))
+	directCandidateKey := make(map[composition.Key]struct{}, len(declaration.directCandidates)+len(declared))
+	candidates := make(map[equation.RuleRef]uint64, len(members.activationAt))
+	application := make(map[equation.RuleRef]composition.Key, len(members.activationAt))
+	for ref, declared := range members.applicationAt {
+		application[ref] = declared
+	}
 	plane := constructedActivationPlane{
-		materializations:   make([]equation.TemplateMaterialization, 0, len(declaration.materializations)),
-		directCandidates:   make([]equation.DirectActivationCandidate, 0, len(declaration.directCandidates)),
-		materializationAt:  make(map[equation.TemplateMaterialization]equation.RuleRef, len(declaration.materializations)),
-		directCandidateAt:  make(map[equation.DirectActivationCandidate]equation.RuleRef, len(declaration.directCandidates)),
-		directCandidateKey: make(map[composition.Key]equation.RuleRef, len(declaration.directCandidates)),
-		candidates:         make(map[equation.RuleRef]uint64, len(members.activationAt)),
-		application:        make(map[equation.RuleRef]composition.Key, len(members.activationAt)),
+		materializations: make([]equation.TemplateMaterialization, 0, len(declaration.materializations)),
+		directCandidates: make([]equation.DirectActivationCandidate, 0, len(declaration.directCandidates)),
 	}
 	trigger := func(origin equation.MaterializationOrigin, originOK bool) (equation.RuleRef, bool) {
 		if !originOK || origin.TriggerOrdinal < 0 || origin.TriggerOrdinal >= len(members.specs) {
@@ -1157,7 +1175,7 @@ func constructActivationPlane(declaration topologyDeclaration, source constructe
 		if !shapeOK || shape.ActivationCount != 1 || shape.ActivationFamily != origin.Family {
 			return 0, false
 		}
-		if application, seen := plane.application[ref]; seen && application != origin.Application {
+		if application, seen := application[ref]; seen && application != origin.Application {
 			return 0, false
 		}
 		return ref, origin.Application.Available()
@@ -1165,32 +1183,32 @@ func constructActivationPlane(declaration topologyDeclaration, source constructe
 	for ordinal, value := range declaration.materializations {
 		origin, originOK := value.Origin()
 		ref, refOK := trigger(origin, originOK)
-		_, duplicate := plane.materializationAt[value]
+		_, duplicate := materializationAt[value]
 		if !refOK || duplicate || !value.OwnedBy(source.schema.cold, source.batch) {
 			return constructedActivationPlane{}, refuseAdmission(topologyConstructionStepCandidateRow, ordinal)
 		}
 		plane.materializations = append(plane.materializations, value)
-		plane.materializationAt[value] = ref
-		plane.candidates[ref]++
-		plane.application[ref] = origin.Application
+		materializationAt[value] = struct{}{}
+		candidates[ref]++
+		application[ref] = origin.Application
 	}
 	for ordinal, value := range append(append([]equation.DirectActivationCandidate(nil), declaration.directCandidates...), declared...) {
 		origin, originOK := value.Origin()
 		ref, refOK := trigger(origin, originOK)
 		key := value.Key()
-		_, duplicate := plane.directCandidateAt[value]
-		_, duplicateKey := plane.directCandidateKey[key]
+		_, duplicate := directCandidateAt[value]
+		_, duplicateKey := directCandidateKey[key]
 		if !refOK || duplicate || duplicateKey || !key.Available() || !value.OwnedBy(source.schema.cold, source.batch) {
 			return constructedActivationPlane{}, refuseAdmission(topologyConstructionStepCandidateRow, ordinal)
 		}
 		plane.directCandidates = append(plane.directCandidates, value)
-		plane.directCandidateAt[value] = ref
-		plane.directCandidateKey[key] = ref
-		plane.candidates[ref]++
-		plane.application[ref] = origin.Application
+		directCandidateAt[value] = struct{}{}
+		directCandidateKey[key] = struct{}{}
+		candidates[ref]++
+		application[ref] = origin.Application
 	}
 	for ref := range members.activationAt {
-		if !plane.application[ref].Available() || plane.candidates[ref] == 0 {
+		if !application[ref].Available() {
 			return constructedActivationPlane{}, refuseAdmission(topologyConstructionStepCandidateRow, int(uint64(ref)))
 		}
 	}
@@ -1274,7 +1292,7 @@ func constructBodyTransportSet(source constructedSourcePlane, mounts constructed
 // constructSemanticRows folds the four published address planes into the one
 // identity set a program publishes. An identity carried by two planes is
 // refused here: a published ContentID addresses exactly one row.
-func constructSemanticRows(points constructedPointPlane, members constructedMemberPlane, queries constructedQueryPlane, activations constructedActivationPlane) (*bindingSemanticRows, topologyConstructionRefusal) {
+func constructSemanticRows(points constructedPointPlane, members constructedMemberPlane, queries constructedQueryPlane) (*bindingSemanticRows, topologyConstructionRefusal) {
 	total := len(points.refByID) + len(members.refByID) + len(queries.ordinalByID) + len(members.activations)
 	claimed := make(map[identity.ContentID]bindingSemanticRowKind, total)
 	claim := func(id identity.ContentID, kind bindingSemanticRowKind) bool {
@@ -1310,25 +1328,11 @@ func constructSemanticRows(points constructedPointPlane, members constructedMemb
 	if len(claimed) != total {
 		return nil, refuseAdmission(topologyConstructionStepDuplicateIdentity, len(claimed))
 	}
-	expected := make(map[equation.RuleRef]uint64, len(members.activationAt))
-	for ref := range members.activationAt {
-		expected[ref] = activations.candidates[ref]
-	}
 	return &bindingSemanticRows{
-		ids:                   claimed,
-		points:                points.refByID,
-		pointAt:               points.idBySite,
-		members:               members.refByID,
-		memberAt:              members.idByRef,
-		queries:               queries.ordinalByID,
-		activations:           members.activations,
-		activationAt:          members.activationAt,
-		materializationAt:     activations.materializationAt,
-		directCandidateAt:     activations.directCandidateAt,
-		directCandidateKey:    activations.directCandidateKey,
-		activationCandidates:  activations.candidates,
-		activationExpected:    expected,
-		activationApplication: activations.application,
+		points:      points.refByID,
+		members:     members.refByID,
+		queries:     queries.ordinalByID,
+		activations: members.activations,
 	}, topologyConstructionRefusal{}
 }
 
@@ -1337,17 +1341,18 @@ func constructSemanticRows(points constructedPointPlane, members constructedMemb
 // against the parent WTO certificate, and publishes the semantic directory.
 func sealConstructedTopology(declaration topologyDeclaration, source constructedSourcePlane, mounts constructedMountPlane, points constructedPointPlane, edges constructedEdgePlane, members constructedMemberPlane, queries constructedQueryPlane, activations constructedActivationPlane, semantic *bindingSemanticRows) (constructedTopology, topologyConstructionRefusal) {
 	spec := equation.TopologySpec{
-		Batch:            source.batch,
-		Materializations: activations.materializations,
-		DirectCandidates: activations.directCandidates,
-		Rules:            members.specs,
-		Points:           points.specs,
-		PointRanks:       points.ranks,
-		Groups:           members.groups,
-		Queries:          queries.specs,
-		EnvironmentEdges: edges.environment,
-		FactorEdges:      edges.factor,
-		Summaries:        declaration.summaries,
+		Batch:              source.batch,
+		Materializations:   activations.materializations,
+		DirectCandidates:   activations.directCandidates,
+		ActivationTriggers: members.triggers,
+		Rules:              members.specs,
+		Points:             points.specs,
+		PointRanks:         points.ranks,
+		Groups:             members.groups,
+		Queries:            queries.specs,
+		EnvironmentEdges:   edges.environment,
+		FactorEdges:        edges.factor,
+		Summaries:          declaration.summaries,
 	}
 	var topology *equation.Topology
 	var sealed bool
@@ -1384,7 +1389,6 @@ func sealConstructedTopology(declaration topologyDeclaration, source constructed
 		graph: graph, topology: topology, state: source.state, authority: source.authority,
 		directory: directory, nativeCallStages: stages,
 		members: members.bindings, queries: declaredQueryBindings(declaration.queries),
-		carrier:        &committedSourceCarrier{batch: source.batch, sourceKey: source.key, spec: spec},
 		artifactBacked: declaration.mounted(),
 	}
 	committed.self = committed
