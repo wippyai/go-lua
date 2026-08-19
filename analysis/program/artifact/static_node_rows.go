@@ -60,9 +60,6 @@ type StaticTypeNodeRow struct {
 	keys                   []keyspace.Key
 	texts                  []string
 	optional               []bool
-	fieldKeys              []keyspace.Key
-	fieldTexts             []string
-	fieldOptional          []bool
 	fieldReadonly          []bool
 	memberKinds            []uint8
 	segments               []uint32
@@ -179,25 +176,6 @@ func (row StaticTypeNodeRow) OptionalAt(index int) (bool, bool) {
 		return false, false
 	}
 	return row.optional[index], true
-}
-func (row StaticTypeNodeRow) FieldCount() int { return len(row.fieldKeys) }
-func (row StaticTypeNodeRow) FieldKeyAt(index int) (keyspace.Key, bool) {
-	if index < 0 || index >= len(row.fieldKeys) {
-		return 0, false
-	}
-	return row.fieldKeys[index], row.fieldKeys[index] != 0
-}
-func (row StaticTypeNodeRow) FieldTextAt(index int) (string, bool) {
-	if index < 0 || index >= len(row.fieldTexts) {
-		return "", false
-	}
-	return row.fieldTexts[index], true
-}
-func (row StaticTypeNodeRow) FieldOptionalAt(index int) (bool, bool) {
-	if index < 0 || index >= len(row.fieldOptional) {
-		return false, false
-	}
-	return row.fieldOptional[index], true
 }
 func (row StaticTypeNodeRow) FieldReadonlyAt(index int) (bool, bool) {
 	if index < 0 || index >= len(row.fieldReadonly) {

@@ -292,22 +292,9 @@ func artifactID(artifact *Artifact) identity.ContentID {
 		for _, child := range row.typeFunctionReturns {
 			sink.add(bytesField(child))
 		}
-		sink.add(uintField(uint64(len(row.fieldKeys))))
-		for index, key := range row.fieldKeys {
-			sink.add(uintField(uint64(key)))
-			text := ""
-			if index < len(row.fieldTexts) {
-				text = row.fieldTexts[index]
-			}
-			optional := false
-			if index < len(row.fieldOptional) {
-				optional = row.fieldOptional[index]
-			}
-			readonly := false
-			if index < len(row.fieldReadonly) {
-				readonly = row.fieldReadonly[index]
-			}
-			sink.add(field{bytes: []byte(text), kind: fieldBytes}, boolField(optional), boolField(readonly))
+		sink.add(uintField(uint64(len(row.fieldReadonly))))
+		for _, readonly := range row.fieldReadonly {
+			sink.add(boolField(readonly))
 		}
 		sink.add(uintField(uint64(len(row.keys))))
 		for _, key := range row.keys {

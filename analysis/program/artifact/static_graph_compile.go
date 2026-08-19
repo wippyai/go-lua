@@ -216,9 +216,6 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 					}
 					row.texts = append(row.texts, text)
 					row.optional = append(row.optional, optional)
-					row.fieldKeys = append(row.fieldKeys, fieldKey)
-					row.fieldTexts = append(row.fieldTexts, text)
-					row.fieldOptional = append(row.fieldOptional, optional)
 					row.fieldReadonly = append(row.fieldReadonly, readonly)
 				}
 				ok = fieldOK && fieldShapeOK && appendChild(fieldType)
@@ -336,9 +333,6 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 					}
 					row.texts = append(row.texts, memberText)
 					row.optional = append(row.optional, memberOptional)
-					row.fieldKeys = append(row.fieldKeys, memberKey)
-					row.fieldTexts = append(row.fieldTexts, memberText)
-					row.fieldOptional = append(row.fieldOptional, memberOptional)
 					row.fieldReadonly = append(row.fieldReadonly, false)
 					memberID, idOK := childID(memberType)
 					ok = idOK

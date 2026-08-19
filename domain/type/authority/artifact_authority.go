@@ -327,7 +327,7 @@ func (a *artifactResolver) resolve(id identity.ContentID) (typ.Type, bool) {
 			memberType, memberOK := childInterfaceMember(a, row, index)
 			ok = memberOK
 			if ok && memberKind == 1 {
-				optional, optionalOK := row.FieldOptionalAt(index)
+				optional, optionalOK := row.OptionalAt(index)
 				if !optionalOK {
 					ok = false
 					break

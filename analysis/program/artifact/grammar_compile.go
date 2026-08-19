@@ -21,9 +21,9 @@ const (
 	// catalog; v2 removes the former retained Site-to-WTO projection from the
 	// artifact identity preimage.
 	pointAttachmentLawVersion = uint64(2)
-	// Dead structural Boundary and StaticTypeArgument projections no longer
-	// survive the compiler; their canonical owner rows are retained directly.
-	compilerLawVersion     = uint64(4)
+	// Dead structural Boundary, StaticTypeArgument, and duplicated Static node
+	// field metadata projections no longer survive the compiler.
+	compilerLawVersion     = uint64(5)
 	operatorLawVersion     = uint64(1)
 	substitutionLawVersion = uint64(1)
 	summaryLawVersion      = uint64(1)
