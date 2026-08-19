@@ -91,12 +91,14 @@ type CanonicalEncoder struct {
 	representatives []int
 	out             []byte
 	ordinals        map[int]uint64
-	acyclicClasses  map[string]int
+	foldedClasses   map[string]int
 	sccIndices      []int
+	sccOf           []int
 	sccLow          []int
 	sccOnStack      []bool
 	sccStack        []int
-	sccComponents   []int
+	sccMembers      []int
+	sccStarts       []int
 	sccFrames       []canonicalSCCFrame
 	emissionStack   []canonicalEmissionFrame
 	steps           uint64
@@ -355,6 +357,11 @@ func (e *CanonicalEncoder) clearCallState() {
 	} else {
 		e.sccIndices = e.sccIndices[:0]
 	}
+	if canonicalFormalsCapacityExceeds(cap(e.sccOf), canonicalFormalsIntBytes, canonicalFormalsRetainBytes) {
+		e.sccOf = nil
+	} else {
+		e.sccOf = e.sccOf[:0]
+	}
 	if canonicalFormalsCapacityExceeds(cap(e.sccLow), canonicalFormalsIntBytes, canonicalFormalsRetainBytes) {
 		e.sccLow = nil
 	} else {
@@ -370,10 +377,15 @@ func (e *CanonicalEncoder) clearCallState() {
 	} else {
 		e.sccStack = e.sccStack[:0]
 	}
-	if canonicalFormalsCapacityExceeds(cap(e.sccComponents), canonicalFormalsIntBytes, canonicalFormalsRetainBytes) {
-		e.sccComponents = nil
+	if canonicalFormalsCapacityExceeds(cap(e.sccMembers), canonicalFormalsIntBytes, canonicalFormalsRetainBytes) {
+		e.sccMembers = nil
 	} else {
-		e.sccComponents = e.sccComponents[:0]
+		e.sccMembers = e.sccMembers[:0]
+	}
+	if canonicalFormalsCapacityExceeds(cap(e.sccStarts), canonicalFormalsIntBytes, canonicalFormalsRetainBytes) {
+		e.sccStarts = nil
+	} else {
+		e.sccStarts = e.sccStarts[:0]
 	}
 	if canonicalFormalsCapacityExceeds(cap(e.sccFrames), canonicalFormalsFrameBytes, canonicalFormalsRetainBytes) {
 		e.sccFrames = nil
@@ -394,7 +406,7 @@ func (e *CanonicalEncoder) clearCallState() {
 	e.formalScope = nil
 	e.binders = nil
 	e.ordinals = nil
-	e.acyclicClasses = nil
+	e.foldedClasses = nil
 }
 
 func (e *CanonicalEncoder) reserve(count, elementBytes int) error {
@@ -1131,36 +1143,24 @@ func (e *CanonicalEncoder) refine() error {
 	if err != nil {
 		return err
 	}
-	components, cyclic, err := finder.find()
+	findErr := finder.find()
 	e.sccIndices = finder.indices
 	e.sccLow = finder.low
 	e.sccOnStack = finder.onStack
 	e.sccStack = finder.stack
-	e.sccComponents = finder.components
+	e.sccMembers = finder.members
+	e.sccStarts = finder.componentStart
 	e.sccFrames = finder.frames
-	if err != nil {
-		return err
+	e.sccOf = finder.sccOf
+	if findErr != nil {
+		return findErr
 	}
-	if cyclic {
-		// Bisimulation may cross SCC boundaries (for example X -> X and
-		// an acyclic Y -> X denote the same regular tree). Use exact labeled
-		// partition refinement for the cyclic frontier rather than assigning
-		// SCC identities semantic meaning. Hopcroft's smaller-half schedule
-		// avoids the graph-wide propagation rounds that made long chains
-		// quadratic.
-		err = e.refineCyclicGraph()
-	} else {
-		// Tarjan emits the acyclic condensation sink-first. Every child class
-		// is therefore final when its parent is interned, so a DAG needs one
-		// linear reverse-topological pass and no fixpoint rounds.
-		err = e.classifyAcyclic(components)
-	}
-	if err != nil {
+	if err := e.classifyByRank(finder.componentStart, finder.members, finder.sccOf); err != nil {
 		return err
 	}
 	// ZZPROBE: M1 intra-graph duplication ratio (nodes discovered vs
 	// distinct bisimulation classes). e.classes holds a contiguous class id
-	// per node in both branches above; nil unless typprobe hook installed.
+	// per node; nil unless typprobe hook installed.
 	if zzProbeRefineHook != nil {
 		classes := 0
 		for _, c := range e.classes {
@@ -1174,15 +1174,16 @@ func (e *CanonicalEncoder) refine() error {
 }
 
 type canonicalSCCFinder struct {
-	encoder    *CanonicalEncoder
-	next       int
-	indices    []int
-	low        []int
-	onStack    []bool
-	stack      []int
-	components []int
-	frames     []canonicalSCCFrame
-	cyclic     bool
+	encoder        *CanonicalEncoder
+	next           int
+	indices        []int
+	low            []int
+	onStack        []bool
+	stack          []int
+	members        []int
+	componentStart []int
+	sccOf          []int
+	frames         []canonicalSCCFrame
 }
 
 type canonicalSCCFrame struct {
@@ -1192,7 +1193,7 @@ type canonicalSCCFrame struct {
 
 func newCanonicalSCCFinder(encoder *CanonicalEncoder) (canonicalSCCFinder, error) {
 	count := len(encoder.nodes)
-	if err := encoder.reserve(count, canonicalFormalsIntBytes*2+canonicalFormalsBoolBytes+canonicalFormalsFrameBytes*2); err != nil {
+	if err := encoder.reserve(count, canonicalFormalsIntBytes*4+canonicalFormalsBoolBytes+canonicalFormalsFrameBytes*2); err != nil {
 		return canonicalSCCFinder{}, err
 	}
 	indices := growInts(encoder.sccIndices, count)
@@ -1203,6 +1204,7 @@ func newCanonicalSCCFinder(encoder *CanonicalEncoder) (canonicalSCCFinder, error
 		indices[index] = -1
 	}
 	low := growInts(encoder.sccLow, count)
+	sccOf := growInts(encoder.sccOf, count)
 	onStack := growBools(encoder.sccOnStack, count)
 	clear(onStack)
 	if err := encoder.checkpoint(); err != nil {
@@ -1216,10 +1218,18 @@ func newCanonicalSCCFinder(encoder *CanonicalEncoder) (canonicalSCCFinder, error
 	if err := encoder.checkpoint(); err != nil {
 		return canonicalSCCFinder{}, err
 	}
-	if cap(encoder.sccComponents) < count {
-		encoder.sccComponents = make([]int, 0, count)
+	if cap(encoder.sccMembers) < count {
+		encoder.sccMembers = make([]int, 0, count)
 	} else {
-		encoder.sccComponents = encoder.sccComponents[:0]
+		encoder.sccMembers = encoder.sccMembers[:0]
+	}
+	if err := encoder.checkpoint(); err != nil {
+		return canonicalSCCFinder{}, err
+	}
+	if cap(encoder.sccStarts) < count+1 {
+		encoder.sccStarts = make([]int, 0, count+1)
+	} else {
+		encoder.sccStarts = encoder.sccStarts[:0]
 	}
 	if err := encoder.checkpoint(); err != nil {
 		return canonicalSCCFinder{}, err
@@ -1230,50 +1240,38 @@ func newCanonicalSCCFinder(encoder *CanonicalEncoder) (canonicalSCCFinder, error
 		encoder.sccFrames = encoder.sccFrames[:0]
 	}
 	return canonicalSCCFinder{
-		encoder:    encoder,
-		indices:    indices,
-		low:        low,
-		onStack:    onStack,
-		stack:      encoder.sccStack,
-		components: encoder.sccComponents,
-		frames:     encoder.sccFrames,
+		encoder:        encoder,
+		indices:        indices,
+		low:            low,
+		onStack:        onStack,
+		stack:          encoder.sccStack,
+		members:        encoder.sccMembers,
+		componentStart: append(encoder.sccStarts, 0),
+		sccOf:          sccOf,
+		frames:         encoder.sccFrames,
 	}, nil
 }
 
-func (f *canonicalSCCFinder) find() ([]int, bool, error) {
+// find groups every node into its strongly connected component. Components are
+// laid out in members contiguously and in reverse-topological order, so the
+// quotient reaches a component only after every component below it is sealed.
+func (f *canonicalSCCFinder) find() error {
 	for node := range f.encoder.nodes {
 		if err := f.encoder.checkpoint(); err != nil {
-			return nil, false, err
+			return err
 		}
 		if f.indices[node] >= 0 {
 			continue
 		}
 		if err := f.walk(node); err != nil {
-			return nil, false, err
+			return err
 		}
 	}
-	if !f.cyclic {
-		for _, node := range f.components {
-			for _, edge := range f.encoder.nodes[node].edges {
-				if err := f.encoder.checkpoint(); err != nil {
-					return nil, false, err
-				}
-				if edge == node {
-					f.cyclic = true
-					break
-				}
-			}
-			if f.cyclic {
-				break
-			}
-		}
-	}
-	return f.components, f.cyclic, nil
+	return nil
 }
 
 // walk is iterative Tarjan DFS. Its completion order intentionally matches
-// recursive Tarjan's sink-first condensation order, which the acyclic fast
-// path relies on for one-pass class assignment.
+// recursive Tarjan's sink-first condensation order.
 func (f *canonicalSCCFinder) walk(root int) error {
 	if err := f.enter(root); err != nil {
 		return err
@@ -1303,7 +1301,7 @@ func (f *canonicalSCCFinder) walk(root int) error {
 
 		f.frames = f.frames[:frameIndex]
 		if f.low[node] == f.indices[node] {
-			members := 0
+			component := len(f.componentStart) - 1
 			for {
 				if err := f.encoder.checkpoint(); err != nil {
 					return err
@@ -1312,15 +1310,13 @@ func (f *canonicalSCCFinder) walk(root int) error {
 				member := f.stack[last]
 				f.stack = f.stack[:last]
 				f.onStack[member] = false
-				members++
+				f.sccOf[member] = component
+				f.members = append(f.members, member)
 				if member == node {
 					break
 				}
 			}
-			if members > 1 {
-				f.cyclic = true
-			}
-			f.components = append(f.components, node)
+			f.componentStart = append(f.componentStart, len(f.members))
 		}
 		if len(f.frames) != 0 {
 			parent := f.frames[len(f.frames)-1].node
@@ -1345,65 +1341,245 @@ func (f *canonicalSCCFinder) enter(node int) error {
 	return nil
 }
 
-func (e *CanonicalEncoder) classifyAcyclic(components []int) error {
-	if err := e.reserve(len(e.nodes), canonicalFormalsIntBytes); err != nil {
+// canonicalRankUnbounded is the rank of a node no finite unfolding depth
+// bounds: every path leaving it stays inside the cyclic region, so it reaches
+// no well-founded child at all.
+const canonicalRankUnbounded = math.MinInt
+
+// classifyByRank assigns one contiguous bisimulation class id per discovered
+// node, over one class-number space.
+//
+// Components arrive sink-first. A component is well founded when it is a single
+// node without a self edge and every component it reaches is well founded; such
+// a node unfolds to a finite tree, its children are already final when it is
+// reached, and hash-consing (scalar, child class vector) therefore decides its
+// class exactly. That fold is the whole classifier for an acyclic graph.
+//
+// Every other node unfolds infinitely, so it can be bisimilar only to another
+// infinitely unfolding node, and bisimilar nodes carry equal rank. The
+// non-well-founded components are refined one rank stratum at a time, lowest
+// rank first, with every lower stratum already sealed and spelled by class id.
+// Stratifying by rank rather than by component is what lets a cyclic component
+// merge with a bisimilar cycle it reaches: equal rank puts both in one
+// refinement, where no per-component canonical key could relate them.
+func (e *CanonicalEncoder) classifyByRank(componentStart, members, sccOf []int) error {
+	count := len(e.nodes)
+	componentCount := len(componentStart) - 1
+	if err := e.reserve(count, canonicalFormalsIntBytes); err != nil {
 		return err
 	}
-	e.classes = growInts(e.classes, len(e.nodes))
+	e.classes = growInts(e.classes, count)
 	for index := range e.classes {
 		if err := e.checkpoint(); err != nil {
 			return err
 		}
 		e.classes[index] = -1
 	}
-	clear(e.acyclicClasses)
-	if e.acyclicClasses == nil {
-		if err := e.reserve(len(e.nodes), canonicalFormalsMapEntryBytes); err != nil {
+	if count == 0 {
+		return nil
+	}
+	if err := e.reserve(componentCount, canonicalFormalsIntBytes+canonicalFormalsBoolBytes); err != nil {
+		return err
+	}
+	clear(e.foldedClasses)
+	if e.foldedClasses == nil {
+		if err := e.reserve(count, canonicalFormalsMapEntryBytes); err != nil {
 			return err
 		}
-		e.acyclicClasses = make(map[string]int, len(e.nodes))
+		e.foldedClasses = make(map[string]int, count)
 	}
-	for _, nodeIndex := range components {
+
+	wellFounded := make([]bool, componentCount)
+	rank := make([]int, componentCount)
+	nextClass, deferred, maxStratum := 0, 0, 0
+	for component := range componentCount {
+		memberList := members[componentStart[component]:componentStart[component+1]]
+		cyclic := len(memberList) > 1
+		reachesOnlyWellFounded := true
+		exits := false
+		componentRank := canonicalRankUnbounded
+		// A well-founded component reads its children's final class ids, so the
+		// same edge walk that ranks it also sizes its fold key.
+		childBytes := 0
+		for _, node := range memberList {
+			for _, edge := range e.nodes[node].edges {
+				if err := e.checkpoint(); err != nil {
+					return err
+				}
+				target := sccOf[edge]
+				if target == component {
+					cyclic = true
+					continue
+				}
+				if target > component {
+					return fmt.Errorf("typ: canonical condensation is not reverse-topological")
+				}
+				exits = true
+				candidate := rank[target]
+				if wellFounded[target] {
+					candidate++
+				} else {
+					reachesOnlyWellFounded = false
+				}
+				if candidate > componentRank {
+					componentRank = candidate
+				}
+				if e.classes[edge] >= 0 {
+					childBytes += canonicalFormalsUvarintSize(uint64(e.classes[edge]))
+				}
+			}
+		}
+		founded := !cyclic && reachesOnlyWellFounded
+		if founded && !exits {
+			componentRank = 0
+		}
+		wellFounded[component] = founded
+		rank[component] = componentRank
+		if founded {
+			minted, err := e.foldWellFoundedNode(memberList[0], childBytes, nextClass)
+			if err != nil {
+				return err
+			}
+			if minted {
+				nextClass++
+			}
+			continue
+		}
+		stratum, err := canonicalRankStratum(componentRank, count)
+		if err != nil {
+			return err
+		}
+		if stratum > maxStratum {
+			maxStratum = stratum
+		}
+		deferred += len(memberList)
+	}
+	if deferred == 0 {
+		return nil
+	}
+	return e.refineRankStrata(count, componentCount, componentStart, members, wellFounded, rank, deferred, maxStratum, nextClass)
+}
+
+// foldWellFoundedNode hash-conses one finitely unfolding node against its
+// scalar and its children's final class ids, and reports whether the node
+// minted the candidate class rather than joining an existing one. childBytes is
+// the encoded width of the child class ids, measured while the node was ranked.
+func (e *CanonicalEncoder) foldWellFoundedNode(nodeIndex, childBytes, candidate int) (bool, error) {
+	node := e.nodes[nodeIndex]
+	keyBytes := canonicalFormalsUvarintSize(uint64(len(node.scalar))) + len(node.scalar) + canonicalFormalsUvarintSize(uint64(len(node.edges))) + childBytes
+	if err := e.reserve(keyBytes, 1); err != nil {
+		return false, err
+	}
+	key := make([]byte, 0, keyBytes)
+	key = appendFrameBytes(key, node.scalar)
+	key = appendCount(key, len(node.edges))
+	for _, edge := range node.edges {
+		if err := e.checkpoint(); err != nil {
+			return false, err
+		}
+		if e.classes[edge] < 0 {
+			return false, fmt.Errorf("typ: canonical condensation is not sink-first")
+		}
+		key = binary.AppendUvarint(key, uint64(e.classes[edge]))
+	}
+	class, exists := e.foldedClasses[string(key)]
+	if !exists {
+		class = candidate
+		if err := e.reserve(1, canonicalFormalsMapEntryBytes); err != nil {
+			return false, err
+		}
+		e.foldedClasses[string(key)] = class
+	}
+	e.classes[nodeIndex] = class
+	return !exists, nil
+}
+
+// refineRankStrata refines the non-well-founded nodes rank by rank, lowest
+// first. Ranks are bucketed rather than sorted: an unbounded rank is the lowest
+// stratum, and a finite rank never exceeds the node count because it grows by
+// at most one per well-founded level.
+func (e *CanonicalEncoder) refineRankStrata(count, componentCount int, componentStart, members []int, wellFounded []bool, rank []int, deferred, maxStratum, nextClass int) error {
+	if err := e.reserve(2*(maxStratum+2)+deferred+count, canonicalFormalsIntBytes); err != nil {
+		return err
+	}
+	stratumStart := make([]int, maxStratum+2)
+	for component := range componentCount {
 		if err := e.checkpoint(); err != nil {
 			return err
 		}
-		node := e.nodes[nodeIndex]
-		keyBytes := canonicalFormalsUvarintSize(uint64(len(node.scalar))) + len(node.scalar) + canonicalFormalsUvarintSize(uint64(len(node.edges)))
-		for _, edge := range node.edges {
-			if err := e.checkpoint(); err != nil {
-				return err
-			}
-			if e.classes[edge] < 0 {
-				return fmt.Errorf("typ: acyclic condensation is not sink-first")
-			}
-			keyBytes += canonicalFormalsUvarintSize(uint64(e.classes[edge]))
+		if wellFounded[component] {
+			continue
 		}
-		if err := e.reserve(keyBytes, 1); err != nil {
+		stratum, err := canonicalRankStratum(rank[component], count)
+		if err != nil {
 			return err
 		}
-		key := make([]byte, 0, keyBytes)
-		key = appendFrameBytes(key, node.scalar)
-		key = appendCount(key, len(node.edges))
-		for _, edge := range node.edges {
-			if err := e.checkpoint(); err != nil {
-				return err
-			}
-			key = binary.AppendUvarint(key, uint64(e.classes[edge]))
-		}
-		if err := e.reserve(len(key), 1); err != nil {
+		stratumStart[stratum] += componentStart[component+1] - componentStart[component]
+	}
+	cursor := make([]int, maxStratum+2)
+	total := 0
+	for stratum := range maxStratum + 1 {
+		if err := e.checkpoint(); err != nil {
 			return err
 		}
-		class, exists := e.acyclicClasses[string(key)]
-		if !exists {
-			class = len(e.acyclicClasses)
-			if err := e.reserve(1, canonicalFormalsMapEntryBytes); err != nil {
-				return err
-			}
-			e.acyclicClasses[string(key)] = class
+		size := stratumStart[stratum]
+		stratumStart[stratum] = total
+		cursor[stratum] = total
+		total += size
+	}
+	stratumStart[maxStratum+1] = total
+	stratumNodes := make([]int, total)
+	for component := range componentCount {
+		if err := e.checkpoint(); err != nil {
+			return err
 		}
-		e.classes[nodeIndex] = class
+		if wellFounded[component] {
+			continue
+		}
+		stratum, err := canonicalRankStratum(rank[component], count)
+		if err != nil {
+			return err
+		}
+		for _, node := range members[componentStart[component]:componentStart[component+1]] {
+			stratumNodes[cursor[stratum]] = node
+			cursor[stratum]++
+		}
+	}
+
+	localIndex := make([]int, count)
+	for index := range localIndex {
+		if err := e.checkpoint(); err != nil {
+			return err
+		}
+		localIndex[index] = -1
+	}
+	for stratum := range maxStratum + 1 {
+		if err := e.checkpoint(); err != nil {
+			return err
+		}
+		nodes := stratumNodes[stratumStart[stratum]:stratumStart[stratum+1]]
+		if len(nodes) == 0 {
+			continue
+		}
+		classes, err := e.refineStratum(nodes, localIndex, nextClass)
+		if err != nil {
+			return err
+		}
+		nextClass += classes
 	}
 	return nil
+}
+
+// canonicalRankStratum orders ranks into refinement passes: the unbounded rank
+// is the lowest stratum, and finite rank r follows at r+1.
+func canonicalRankStratum(rank, count int) (int, error) {
+	if rank == canonicalRankUnbounded {
+		return 0, nil
+	}
+	if rank < 0 || rank > count {
+		return 0, fmt.Errorf("typ: canonical rank %d is outside the %d node graph", rank, count)
+	}
+	return rank + 1, nil
 }
 
 type canonicalPredecessor struct {
@@ -1411,82 +1587,117 @@ type canonicalPredecessor struct {
 	position int
 }
 
-func (e *CanonicalEncoder) refineCyclicGraph() error {
-	count := len(e.nodes)
-	if err := e.reserve(count, canonicalFormalsIntBytes+canonicalFormalsBoolBytes+canonicalFormalsFrameBytes*4); err != nil {
-		return err
+// refineStratum runs labeled partition refinement over one rank stratum and
+// returns the number of classes it minted from classBase. Nodes outside the
+// stratum are already final and enter the initial key by class id; Hopcroft's
+// smaller-half schedule then splits on in-stratum edges by edge position, so a
+// class fixes both the scalar and the whole child class vector.
+func (e *CanonicalEncoder) refineStratum(stratum, localIndex []int, classBase int) (int, error) {
+	size := len(stratum)
+	if err := e.reserve(size, canonicalFormalsIntBytes*2+canonicalFormalsBoolBytes*2+canonicalFormalsFrameBytes*4); err != nil {
+		return 0, err
 	}
-	e.classes = growInts(e.classes, count)
-	blocks := make([][]int, 0, count)
-	if err := e.reserve(count, canonicalFormalsMapEntryBytes); err != nil {
-		return err
-	}
-	initial := make(map[string]int, count)
-	for nodeIndex, node := range e.nodes {
+	for index, node := range stratum {
 		if err := e.checkpoint(); err != nil {
-			return err
+			return 0, err
 		}
+		localIndex[node] = index
+	}
+	defer func() {
+		for _, node := range stratum {
+			localIndex[node] = -1
+		}
+	}()
+
+	classOf := make([]int, size)
+	blocks := make([][]int, 0, size)
+	if err := e.reserve(size, canonicalFormalsMapEntryBytes); err != nil {
+		return 0, err
+	}
+	initial := make(map[string]int, size)
+	for index, nodeIndex := range stratum {
+		if err := e.checkpoint(); err != nil {
+			return 0, err
+		}
+		node := e.nodes[nodeIndex]
 		key := appendFrameBytes(nil, node.scalar)
 		key = appendCount(key, len(node.edges))
+		for _, edge := range node.edges {
+			if err := e.checkpoint(); err != nil {
+				return 0, err
+			}
+			if localIndex[edge] >= 0 {
+				key = binary.AppendUvarint(key, 0)
+				continue
+			}
+			if e.classes[edge] < 0 {
+				return 0, fmt.Errorf("typ: canonical rank stratum reads an unsealed class")
+			}
+			key = binary.AppendUvarint(key, uint64(e.classes[edge])+1)
+		}
 		class, exists := initial[string(key)]
 		if !exists {
 			class = len(blocks)
 			if err := e.reserve(1, canonicalFormalsMapEntryBytes); err != nil {
-				return err
+				return 0, err
 			}
 			initial[string(key)] = class
 			blocks = append(blocks, nil)
 		}
-		e.classes[nodeIndex] = class
-		blocks[class] = append(blocks[class], nodeIndex)
+		classOf[index] = class
+		blocks[class] = append(blocks[class], index)
 	}
 
-	if err := e.reserve(count, canonicalFormalsFrameBytes); err != nil {
-		return err
+	if err := e.reserve(size, canonicalFormalsFrameBytes); err != nil {
+		return 0, err
 	}
-	predecessors := make([][]canonicalPredecessor, count)
-	for nodeIndex, node := range e.nodes {
+	predecessors := make([][]canonicalPredecessor, size)
+	for index, nodeIndex := range stratum {
 		if err := e.checkpoint(); err != nil {
-			return err
+			return 0, err
 		}
-		for position, edge := range node.edges {
+		for position, edge := range e.nodes[nodeIndex].edges {
 			if err := e.checkpoint(); err != nil {
-				return err
+				return 0, err
 			}
-			predecessors[edge] = append(predecessors[edge], canonicalPredecessor{node: nodeIndex, position: position})
+			target := localIndex[edge]
+			if target < 0 {
+				continue
+			}
+			predecessors[target] = append(predecessors[target], canonicalPredecessor{node: index, position: position})
 		}
 	}
 	if err := e.reserve(len(blocks), canonicalFormalsIntBytes+canonicalFormalsBoolBytes); err != nil {
-		return err
+		return 0, err
 	}
 	queue := make([]int, len(blocks))
-	queued := make([]bool, len(blocks), count)
+	queued := make([]bool, len(blocks), size)
 	for class := range blocks {
 		if err := e.checkpoint(); err != nil {
-			return err
+			return 0, err
 		}
 		queue[class] = class
 		queued[class] = true
 	}
-	marked := make([]bool, count)
+	marked := make([]bool, size)
 
 	for head := 0; head < len(queue); head++ {
 		if err := e.checkpoint(); err != nil {
-			return err
+			return 0, err
 		}
 		splitter := queue[head]
 		queued[splitter] = false
 		if err := e.reserve(len(blocks), canonicalFormalsMapEntryBytes); err != nil {
-			return err
+			return 0, err
 		}
 		byPosition := make(map[int][]int)
 		for _, target := range blocks[splitter] {
 			if err := e.checkpoint(); err != nil {
-				return err
+				return 0, err
 			}
 			for _, predecessor := range predecessors[target] {
 				if err := e.checkpoint(); err != nil {
-					return err
+					return 0, err
 				}
 				byPosition[predecessor.position] = append(byPosition[predecessor.position], predecessor.node)
 			}
@@ -1494,42 +1705,42 @@ func (e *CanonicalEncoder) refineCyclicGraph() error {
 		positions := make([]int, 0, len(byPosition))
 		for position := range byPosition {
 			if err := e.checkpoint(); err != nil {
-				return err
+				return 0, err
 			}
 			positions = append(positions, position)
 		}
 		if err := e.sortCanonicalIntKeys(positions); err != nil {
-			return err
+			return 0, err
 		}
 		for _, position := range positions {
 			if err := e.checkpoint(); err != nil {
-				return err
+				return 0, err
 			}
 			predecessorNodes := byPosition[position]
 			if err := e.reserve(len(predecessorNodes), canonicalFormalsMapEntryBytes); err != nil {
-				return err
+				return 0, err
 			}
 			byBlock := make(map[int][]int)
 			for _, predecessor := range predecessorNodes {
 				if err := e.checkpoint(); err != nil {
-					return err
+					return 0, err
 				}
-				class := e.classes[predecessor]
+				class := classOf[predecessor]
 				byBlock[class] = append(byBlock[class], predecessor)
 			}
 			touched := make([]int, 0, len(byBlock))
 			for class := range byBlock {
 				if err := e.checkpoint(); err != nil {
-					return err
+					return 0, err
 				}
 				touched = append(touched, class)
 			}
 			if err := e.sortCanonicalIntKeys(touched); err != nil {
-				return err
+				return 0, err
 			}
 			for _, class := range touched {
 				if err := e.checkpoint(); err != nil {
-					return err
+					return 0, err
 				}
 				subset := byBlock[class]
 				if len(subset) == len(blocks[class]) {
@@ -1537,7 +1748,7 @@ func (e *CanonicalEncoder) refineCyclicGraph() error {
 				}
 				for _, node := range subset {
 					if err := e.checkpoint(); err != nil {
-						return err
+						return 0, err
 					}
 					marked[node] = true
 				}
@@ -1545,7 +1756,7 @@ func (e *CanonicalEncoder) refineCyclicGraph() error {
 				outside := make([]int, 0, len(blocks[class])-len(subset))
 				for _, node := range blocks[class] {
 					if err := e.checkpoint(); err != nil {
-						return err
+						return 0, err
 					}
 					if marked[node] {
 						inside = append(inside, node)
@@ -1555,7 +1766,7 @@ func (e *CanonicalEncoder) refineCyclicGraph() error {
 				}
 				for _, node := range subset {
 					if err := e.checkpoint(); err != nil {
-						return err
+						return 0, err
 					}
 					marked[node] = false
 				}
@@ -1565,9 +1776,9 @@ func (e *CanonicalEncoder) refineCyclicGraph() error {
 				queued = append(queued, false)
 				for _, node := range inside {
 					if err := e.checkpoint(); err != nil {
-						return err
+						return 0, err
 					}
-					e.classes[node] = newClass
+					classOf[node] = newClass
 				}
 				if queued[class] {
 					queue = append(queue, newClass)
@@ -1582,7 +1793,14 @@ func (e *CanonicalEncoder) refineCyclicGraph() error {
 			}
 		}
 	}
-	return nil
+
+	for index, nodeIndex := range stratum {
+		if err := e.checkpoint(); err != nil {
+			return 0, err
+		}
+		e.classes[nodeIndex] = classBase + classOf[index]
+	}
+	return len(blocks), nil
 }
 
 // sortCanonicalIntKeys orders sparse refinement keys without creating an

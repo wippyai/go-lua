@@ -480,3 +480,109 @@ func (c *canonicalEmissionCancelContext) Err() error {
 	}
 	return nil
 }
+
+// canonicalRankMixedGraph mixes one non-trivial cyclic SCC, one self-looping
+// SCC, an acyclic prefix that is bisimilar to that self-loop, and a large
+// well-founded region, so one fixture exercises every stratum the quotient
+// distinguishes.
+func canonicalRankMixedGraph() Type {
+	cycle := canonicalMutualRecords()
+	selfCycle := NewRecursive("N", func(self Type) Type { return self })
+	prefix := NewRecursivePlaceholder("N")
+	prefix.SetBody(selfCycle)
+	chain := canonicalRecursiveChain(256)
+	shared := NewArray(NewTuple(String, Number))
+	tree := RebuildRecord(RecordParts{Fields: []Field{
+		{Name: "left", Type: NewTuple(shared, MaterializeOptional(Integer))},
+		{Name: "right", Type: NewMap(String, shared)},
+		{Name: "tail", Type: canonicalSelfRecord("Node")},
+	}})
+	return NewTuple(chain, cycle, prefix, selfCycle, tree, shared)
+}
+
+// TestCanonicalCodecRankMixedGraphBytesAreFrozen pins the exact canonical bytes
+// of a graph whose cyclic and well-founded regions are interleaved. The
+// quotient is one relation over the whole graph, so any stratification the
+// encoder uses internally must reproduce this stream byte for byte.
+func TestCanonicalCodecRankMixedGraphBytesAreFrozen(t *testing.T) {
+	const (
+		wantLength = 1935
+		wantDigest = "825afe5049b59ad2252d5a9ff383fc1edce61f587f418f469d9a8c3754a9e92b"
+	)
+	encoded := mustCanonical(t, canonicalRankMixedGraph())
+	digest := fmt.Sprintf("%x", sha256.Sum256(encoded))
+	if len(encoded) != wantLength || digest != wantDigest {
+		t.Fatalf("canonical bytes of the rank-mixed graph changed:\nwant %d bytes, digest %s\n got %d bytes, digest %s", wantLength, wantDigest, len(encoded), digest)
+	}
+}
+
+// TestCanonicalCodecBisimilarSCCsMergeInEitherConstructionOrder pins that two
+// distinct cyclic SCCs denoting one regular tree collapse to a single class
+// regardless of which is discovered first.
+func TestCanonicalCodecBisimilarSCCsMergeInEitherConstructionOrder(t *testing.T) {
+	build := func(reverse bool) Type {
+		one := NewRecursive("N", func(self Type) Type { return self })
+		twoA := NewRecursivePlaceholder("N")
+		twoB := NewRecursivePlaceholder("N")
+		twoA.SetBody(twoB)
+		twoB.SetBody(twoA)
+		if reverse {
+			return NewTuple(twoA, one)
+		}
+		return NewTuple(one, twoA)
+	}
+	forward, reverse := build(false), build(true)
+	if !TypeEquals(forward, reverse) {
+		t.Fatal("fixture pair must be coinductively equal in both orders")
+	}
+	forwardBytes, reverseBytes := mustCanonical(t, forward), mustCanonical(t, reverse)
+	if !bytes.Equal(forwardBytes, reverseBytes) {
+		t.Fatalf("bisimilar SCC merge depended on discovery order:\n%x\n%x", forwardBytes, reverseBytes)
+	}
+	// Merged classes make the two SCCs interchangeable: the mixed tuple must
+	// emit exactly the stream a tuple of one repeated class emits.
+	one := NewRecursive("N", func(self Type) Type { return self })
+	if repeated := mustCanonical(t, NewTuple(one, one)); !bytes.Equal(forwardBytes, repeated) {
+		t.Fatalf("mixed tuple did not encode as one repeated class:\n%x\n%x", forwardBytes, repeated)
+	}
+}
+
+// TestCanonicalCodecCyclicSCCMergesWithReachableSealedCycle pins the case a
+// per-SCC canonical byte key cannot decide: a cyclic SCC that both reaches, and
+// is bisimilar to, a cycle below it. Its members' unfoldings equal that cycle's,
+// so the quotient must place them in one class even though the two SCCs have
+// different internal shapes.
+func TestCanonicalCodecCyclicSCCMergesWithReachableSealedCycle(t *testing.T) {
+	below := NewRecursive("N", func(self Type) Type { return NewTuple(self, self) })
+	aboveA := NewRecursivePlaceholder("N")
+	aboveB := NewRecursivePlaceholder("N")
+	aboveA.SetBody(NewTuple(aboveB, below))
+	aboveB.SetBody(NewTuple(aboveA, below))
+	if !TypeEquals(aboveA, below) {
+		t.Fatal("fixture must be coinductively equal")
+	}
+	belowBytes, aboveBytes := mustCanonical(t, below), mustCanonical(t, aboveA)
+	if !bytes.Equal(belowBytes, aboveBytes) {
+		t.Fatalf("a cyclic SCC bisimilar to the cycle it reaches encoded as a distinct class:\n%x\n%x", belowBytes, aboveBytes)
+	}
+	pair := mustCanonical(t, NewTuple(below, aboveA))
+	repeated := mustCanonical(t, NewTuple(below, NewRecursive("N", func(self Type) Type { return NewTuple(self, self) })))
+	if !bytes.Equal(pair, repeated) {
+		t.Fatalf("mixed tuple did not encode as one repeated class:\n%x\n%x", pair, repeated)
+	}
+}
+
+// BenchmarkCanonicalEncoderRankMixedGraph covers the shape the two classifiers
+// used to split on: a large well-founded region sharing one graph with a small
+// cyclic region.
+func BenchmarkCanonicalEncoderRankMixedGraph(b *testing.B) {
+	value := canonicalRankMixedGraph()
+	var encoder CanonicalEncoder
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		if encoded, err := encoder.Encode(context.Background(), value); err != nil || len(encoded) == 0 {
+			b.Fatal(err)
+		}
+	}
+}

@@ -565,14 +565,14 @@ func TestCanonicalFormalCancellationCheckpointsInsideCanonicalQuotient(t *testin
 		if err != nil {
 			t.Fatalf("new finder: %v", err)
 		}
-		if _, _, err := finder.find(); !errors.Is(err, context.Canceled) {
+		if err := finder.find(); !errors.Is(err, context.Canceled) {
 			t.Fatalf("Tarjan cancellation = %v", err)
 		}
 	})
 	t.Run("refinement-predecessors", func(t *testing.T) {
 		ctx := &canonicalFormalCancelAfterContext{Context: context.Background(), allowedErrCalls: 1, done: make(chan struct{})}
-		encoder := &CanonicalEncoder{nodes: []canonicalTypeNode{node}, ctx: ctx}
-		if err := encoder.refineCyclicGraph(); !errors.Is(err, context.Canceled) {
+		encoder := &CanonicalEncoder{nodes: []canonicalTypeNode{node}, classes: []int{-1}, ctx: ctx}
+		if _, err := encoder.refineStratum([]int{0}, []int{-1}, 0); !errors.Is(err, context.Canceled) {
 			t.Fatalf("refinement cancellation = %v", err)
 		}
 	})
@@ -729,15 +729,18 @@ func TestCanonicalEncoderCancellationCheckpointsInsideEncodingAndInitialization(
 			t.Fatalf("SCC initialization cancellation = %v", err)
 		}
 	})
-	t.Run("acyclic-class-initialization", func(t *testing.T) {
-		nodes, components := make([]canonicalTypeNode, width), make([]int, width)
-		for index := range components {
-			components[index] = index
+	t.Run("well-founded-class-initialization", func(t *testing.T) {
+		nodes, members, starts, sccOf := make([]canonicalTypeNode, width), make([]int, width), make([]int, width+1), make([]int, width)
+		for index := range members {
+			members[index] = index
+			starts[index] = index
+			sccOf[index] = index
 			nodes[index].scalar = []byte{canonicalString}
 		}
+		starts[width] = width
 		encoder := &CanonicalEncoder{ctx: newContext()}
 		encoder.nodes = nodes
-		if err := encoder.classifyAcyclic(components); !errors.Is(err, context.Canceled) {
+		if err := encoder.classifyByRank(starts, members, sccOf); !errors.Is(err, context.Canceled) {
 			t.Fatalf("class initialization cancellation = %v", err)
 		}
 	})
