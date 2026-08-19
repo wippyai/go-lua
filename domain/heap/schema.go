@@ -817,8 +817,8 @@ func (owner *heapBuilder) addArtifactField(root uint32, mount ArtifactMount, all
 		}
 		slotID = owner.addDynamicSlot(keyValueID)
 	case uint8(flowkind.FieldList), uint8(flowkind.FieldName), uint8(flowkind.FieldExact):
-		raw, normalizedOK := field.NormalizedKey()
-		normalized, normalizedOK = keyspace.Key(raw), normalizedOK
+		raw, rawOK := field.NormalizedKey()
+		normalized, normalizedOK = keyspace.Key(raw), rawOK
 		if !normalizedOK || normalized == 0 {
 			return false
 		}

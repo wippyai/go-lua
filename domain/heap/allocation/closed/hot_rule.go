@@ -6,6 +6,7 @@ import (
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	allocationcatalog "github.com/wippyai/go-lua/domain/heap/allocation/catalog"
 	"github.com/wippyai/go-lua/domain/heap/allocation/internal/source"
+	"github.com/wippyai/go-lua/domain/heap/keymatch"
 	heapowner "github.com/wippyai/go-lua/domain/heap/owner"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
@@ -53,6 +54,13 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, heapOwner 
 		return nil, false
 	}
 	heapSchema, values := heapOwner.Schema(), valueOwner.Schema()
+	// The sealed key/class projection is this Rule's one atom quotient. It is
+	// built once per binding beside the schemas it is fenced to, never per
+	// transfer row.
+	projection, projectionOK := keymatch.NewSelectorProjection(heapSchema, values)
+	if !projectionOK {
+		return nil, false
+	}
 	var runtimeHeapRead engine.Read[engine.OrderedCells[heapdomain.Value]]
 	var runtimeValueRead engine.Read[engine.OrderedCells[valuedomain.Value]]
 	implementation, runtimeHeapRead, runtimeValueRead, ok := heapowner.BindExactAndSummaryReadAndCarry[source.Closed, heapdomain.Value, valuedomain.Value, engine.OrderedCells[valuedomain.Value]](
@@ -61,7 +69,7 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, heapOwner 
 			OperandContent: func(candidate source.Closed) (source.Closed, [32]byte, bool) {
 				return hotClosedContent(heapSchema, values, valueOwner, candidate)
 			},
-			Admission: engine.AdmitRuleByDerivation(fragment.evidence, hotClosedChecker(heapOwner, valueOwner, fragment.transform, fragment.semantic, &runtimeHeapRead, &runtimeValueRead)),
+			Admission: engine.AdmitRuleByDerivation(fragment.evidence, hotClosedChecker(heapOwner, valueOwner, projection, fragment.transform, fragment.semantic, &runtimeHeapRead, &runtimeValueRead)),
 			Transfer: func(access engine.Access[heapdomain.Value, source.Closed]) bool {
 				operand, operandOK := engine.Operand(access)
 				if !operandOK || !operand.FencedTo(heapSchema, values) {
@@ -80,7 +88,7 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, heapOwner 
 					if !present {
 						return engine.NoCandidate(access, row)
 					}
-					next, normal, resultOK := resultClosed(heapSchema, values, operand, predecessor, valueCells)
+					next, normal, resultOK := resultClosed(heapSchema, values, projection, operand, predecessor, valueCells)
 					if !resultOK || !normal {
 						return engine.NoCandidate(access, row)
 					}
@@ -167,9 +175,9 @@ func hotClosedContent(heapSchema heapdomain.Schema, values *valuedomain.Schema, 
 	return candidate, [32]byte(id), true
 }
 
-func hotClosedChecker(heapOwner *heapowner.HotOwner, valueOwner *valueowner.HotOwner, transform, semantic identity.SemanticKey, heapRead *engine.Read[engine.OrderedCells[heapdomain.Value]], valueRead *engine.Read[engine.OrderedCells[valuedomain.Value]]) engine.RuleDerivationChecker[heapdomain.Value, source.Closed] {
+func hotClosedChecker(heapOwner *heapowner.HotOwner, valueOwner *valueowner.HotOwner, projection *keymatch.SelectorProjection, transform, semantic identity.SemanticKey, heapRead *engine.Read[engine.OrderedCells[heapdomain.Value]], valueRead *engine.Read[engine.OrderedCells[valuedomain.Value]]) engine.RuleDerivationChecker[heapdomain.Value, source.Closed] {
 	return func(derivation engine.RuleDerivation[heapdomain.Value, source.Closed]) (engine.RuleEvidence, bool) {
-		if heapOwner == nil || valueOwner == nil || heapRead == nil || valueRead == nil || !heapOwner.Schema().Valid() || valueOwner.Schema() == nil || derivation.Rule() != semantic || derivation.InputCount() != 1 || derivation.ReadCount() != 2 || derivation.DispositionCount() == 0 {
+		if heapOwner == nil || valueOwner == nil || projection == nil || heapRead == nil || valueRead == nil || !heapOwner.Schema().Valid() || valueOwner.Schema() == nil || derivation.Rule() != semantic || derivation.InputCount() != 1 || derivation.ReadCount() != 2 || derivation.DispositionCount() == 0 {
 			return engine.RuleEvidence{}, false
 		}
 		operand, operandOK := derivation.Operand()
@@ -207,7 +215,7 @@ func hotClosedChecker(heapOwner *heapowner.HotOwner, valueOwner *valueowner.HotO
 				}
 				continue
 			}
-			next, normal, resultOK := resultClosed(heapSchema, values, operand, predecessor, inputs)
+			next, normal, resultOK := resultClosed(heapSchema, values, projection, operand, predecessor, inputs)
 			if !resultOK {
 				return engine.RuleEvidence{}, false
 			}

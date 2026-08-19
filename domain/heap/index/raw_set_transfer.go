@@ -396,19 +396,57 @@ func (rule *RawSetRule) applySourceValue(
 	return true
 }
 
+// applyTop stores an unconstrained right-hand side. Top denotes every sealed
+// alternative, so the write must install the child edges an enumerated source
+// would install: the read lens selects a disjoint stored class per containment
+// kind, and one opaque edge therefore answers only the untracked band while
+// dropping every tracked allocation and boot child the same write admits.
+// Every alternative lands at the same selected key, so their disjunction is one
+// cell rather than one world apiece, and the payload-class quotient keeps that
+// cell finite by collapsing alternatives that denote the same child edge.
 func (rule *RawSetRule) applyTop(
 	schema heapdomain.Schema, raw heapdomain.RawAccess, access Access, slot heapdomain.Slot,
 	payload heapdomain.Payload, keyChild heapdomain.Containment, result *heapdomain.Value, frozen, changed *bool,
 ) bool {
+	values := rule.valueSchema()
+	if values == nil || rule.topology == nil || rule.topology.selectors == nil {
+		return false
+	}
+	// Top admits nil, so raw absence remains one branch of the write.
 	if !rule.applyDelete(schema, raw, result, frozen, changed) {
 		return false
 	}
-	unknown, unknownOK := schema.ContainmentUnknown()
-	if !unknownOK {
+	var merged heapdomain.CellState
+	have := false
+	if !rule.topology.selectors.VisitPayloadClasses(values.Top(), func(atom valuedomain.Atom) bool {
+		if atom.RuntimeKinds().Contains(runtimekind.Nil) {
+			return true
+		}
+		valueChild, valueChildOK := keymatch.Containment(schema, values, atom)
+		if !valueChildOK {
+			return false
+		}
+		cell, cellOK := schema.CellPresent(slot, payload, valueChild, keyChild)
+		if !cellOK {
+			return false
+		}
+		if !have {
+			merged, have = cell, true
+			return true
+		}
+		union, unionOK := schema.CellUnion(merged, cell)
+		if !unionOK {
+			return false
+		}
+		merged = union
+		return true
+	}) {
 		return false
 	}
-	cell, cellOK := schema.CellPresent(slot, payload, unknown, keyChild)
-	return cellOK && rule.applyStore(schema, raw, cell, result, frozen, changed)
+	if !have {
+		return true
+	}
+	return rule.applyStore(schema, raw, merged, result, frozen, changed)
 }
 
 func (rule *RawSetRule) applyStore(schema heapdomain.Schema, raw heapdomain.RawAccess, cell heapdomain.CellState, result *heapdomain.Value, frozen, changed *bool) bool {

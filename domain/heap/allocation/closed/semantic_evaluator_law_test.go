@@ -5,6 +5,7 @@ import (
 
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	closed "github.com/wippyai/go-lua/domain/heap/allocation/closed"
+	"github.com/wippyai/go-lua/domain/heap/allocation/internal/source"
 	"github.com/wippyai/go-lua/domain/materialization"
 	"github.com/wippyai/go-lua/domain/runtimekind"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
@@ -57,82 +58,197 @@ func TestClosedEvaluatorReceiptSourceOrderNilDeletionAndCarry(t *testing.T) {
 	assertClosedWorldKind(t, second, heapdomain.WorldMany)
 }
 
+// TestClosedEvaluatorReceiptDiagonalAndIndependentProducts is the closed
+// evaluator's complete product law.
+//
+// L1 keeps a shared coordinate enumerated: `{[x]=x}` over two alternatives has
+// exactly two worlds and equals the ordinary join of its two singleton leaves.
+// L2 declares the payload fold: a coordinate read once, in the stored-value
+// role only, correlates no second cell, so its result is exactly the pointwise
+// object merge of its singleton leaves — expressed as the public Widen fold,
+// not as a world count. L3 is the non-collapse guard: a shared coordinate must
+// stay strictly below that same merge, so no later lane can fold everything.
+// L4 keeps binary-carry accumulation equal to the ordinary left-fold join on a
+// still-enumerated coordinate, including one whose partner payload folds.
 func TestClosedEvaluatorReceiptDiagonalAndIndependentProducts(t *testing.T) {
-	tests := []struct {
-		name        string
-		source      string
-		coordinates int
-		worlds      int
-	}{
-		{name: "diagonal", source: `local a = {}; local x = a; return { [x] = x }`, coordinates: 1, worlds: 2},
-		{name: "independent", source: `local a = {}; local b = {}; return { [a] = b }`, coordinates: 2, worlds: 4},
+	t.Run("diagonal", func(t *testing.T) {
+		heap, values, operand := closedSemanticFixture(t, `local a = {}; local x = a; return { [x] = x }`)
+		if operand.CoordinateCount() != 1 {
+			t.Fatalf("coordinates=%d, want 1", operand.CoordinateCount())
+		}
+		left, right := tableAtoms(t, heap, values, 2)
+		alternatives, alternativesOK := values.Alternatives(left, right)
+		predecessor, predecessorOK := heap.EmptyObject(operand.Key())
+		if !alternativesOK || !predecessorOK {
+			t.Fatal("diagonal product fixture")
+		}
+		result, normal, resultOK := closed.EvaluateClosedForTest(heap, values, operand, predecessor, []valuedomain.Value{alternatives})
+		if !resultOK || !normal {
+			t.Fatalf("diagonal result=%t/%t", resultOK, normal)
+		}
+		if result.WorldCount() != 2 {
+			t.Fatalf("diagonal worlds=%d, want 2", result.WorldCount())
+		}
+		leaves := closedSingletonLeaves(t, heap, values, operand, predecessor, [][]valuedomain.Atom{{left}, {right}})
+
+		// L1/L4: the shared coordinate's product is the ordinary leaf join.
+		joined, joinedOK := closedJoinLeaves(leaves)
+		if !joinedOK || !heap.Domain().Equal(result, joined) {
+			t.Fatal("binary-carry product differs from ordinary leaf join")
+		}
+
+		// L3: it must remain strictly below the pointwise merge, which admits
+		// the off-diagonal pairs the shared coordinate excludes.
+		merged, mergedOK := closedWidenLeaves(leaves)
+		if !mergedOK || !heapdomain.LessOrEq(result, merged) {
+			t.Fatal("shared coordinate escaped the pointwise merge")
+		}
+		if heap.Domain().Equal(result, merged) {
+			t.Fatal("shared coordinate collapsed into the pointwise merge")
+		}
+	})
+
+	t.Run("payload", func(t *testing.T) {
+		heap, values, operand := closedSemanticFixture(t, `local a = {}; local b = {}; local v = a; return { item = v }`)
+		if operand.CoordinateCount() != 1 {
+			t.Fatalf("coordinates=%d, want 1", operand.CoordinateCount())
+		}
+		left, right := tableAtoms(t, heap, values, 2)
+		alternatives, alternativesOK := values.Alternatives(left, right)
+		predecessor, predecessorOK := heap.EmptyObject(operand.Key())
+		if !alternativesOK || !predecessorOK {
+			t.Fatal("payload product fixture")
+		}
+		result, normal, resultOK := closed.EvaluateClosedForTest(heap, values, operand, predecessor, []valuedomain.Value{alternatives})
+		if !resultOK || !normal {
+			t.Fatalf("payload result=%t/%t", resultOK, normal)
+		}
+
+		// L2: the folded coordinate is exactly the pointwise merge of its
+		// leaves — no more, and no less.
+		leaves := closedSingletonLeaves(t, heap, values, operand, predecessor, [][]valuedomain.Atom{{left}, {right}})
+		merged, mergedOK := closedWidenLeaves(leaves)
+		if !mergedOK || !heap.Domain().Equal(result, merged) {
+			t.Fatalf("payload fold differs from the pointwise merge merged=%t worlds=%d", mergedOK, result.WorldCount())
+		}
+		if result.WorldCount() != 1 {
+			t.Fatalf("payload worlds=%d, want 1", result.WorldCount())
+		}
+	})
+
+	t.Run("keyed-payload", func(t *testing.T) {
+		heap, values, operand := closedSemanticFixture(t, `local a = {}; local b = {}; return { [a] = b }`)
+		if operand.CoordinateCount() != 2 {
+			t.Fatalf("coordinates=%d, want 2", operand.CoordinateCount())
+		}
+		field, fieldOK := operand.At(0)
+		keyOrdinal, dynamic := field.DynamicKeyOrdinal()
+		valueOrdinal := field.ValueOrdinal()
+		if !fieldOK || !dynamic || keyOrdinal == valueOrdinal {
+			t.Fatal("keyed-payload operand did not separate its key and payload coordinates")
+		}
+		left, right := tableAtoms(t, heap, values, 2)
+		alternatives, alternativesOK := values.Alternatives(left, right)
+		predecessor, predecessorOK := heap.EmptyObject(operand.Key())
+		if !alternativesOK || !predecessorOK {
+			t.Fatal("keyed-payload fixture")
+		}
+		inputs := make([]valuedomain.Value, operand.CoordinateCount())
+		for index := range inputs {
+			inputs[index] = alternatives
+		}
+		result, normal, resultOK := closed.EvaluateClosedForTest(heap, values, operand, predecessor, inputs)
+		if !resultOK || !normal {
+			t.Fatalf("keyed-payload result=%t/%t", resultOK, normal)
+		}
+
+		// The key coordinate still enumerates one world per alternative while
+		// its partner payload folds inside each of those worlds.
+		if result.WorldCount() != 2 {
+			t.Fatalf("keyed-payload worlds=%d, want 2", result.WorldCount())
+		}
+
+		// L4: the enumerated key axis composes by ordinary join.
+		var expected heapdomain.Value
+		have := false
+		for _, keyAtom := range []valuedomain.Atom{left, right} {
+			singleton, singletonOK := values.Singleton(keyAtom)
+			if !singletonOK {
+				t.Fatal("keyed-payload singleton")
+			}
+			branchInputs := make([]valuedomain.Value, len(inputs))
+			copy(branchInputs, inputs)
+			branchInputs[keyOrdinal] = singleton
+			branch, branchNormal, branchOK := closed.EvaluateClosedForTest(heap, values, operand, predecessor, branchInputs)
+			if !branchOK || !branchNormal {
+				t.Fatalf("keyed-payload branch=%t/%t", branchOK, branchNormal)
+			}
+			if !have {
+				expected, have = branch, true
+				continue
+			}
+			var joinedOK bool
+			expected, joinedOK = heapdomain.Join(expected, branch)
+			if !joinedOK {
+				t.Fatal("keyed-payload branch join")
+			}
+		}
+		if !have || !heap.Domain().Equal(result, expected) {
+			t.Fatal("enumerated key axis differs from the ordinary branch join")
+		}
+	})
+}
+
+// closedSingletonLeaves evaluates one complete leaf per coordinate selection.
+func closedSingletonLeaves(t testing.TB, heap heapdomain.Schema, values *valuedomain.Schema, operand source.Closed, predecessor heapdomain.Value, selections [][]valuedomain.Atom) []heapdomain.Value {
+	t.Helper()
+	leaves := make([]heapdomain.Value, 0, len(selections))
+	for _, selection := range selections {
+		inputs := make([]valuedomain.Value, len(selection))
+		for index, atom := range selection {
+			singleton, singletonOK := values.Singleton(atom)
+			if !singletonOK {
+				t.Fatal("leaf singleton")
+			}
+			inputs[index] = singleton
+		}
+		leaf, leafNormal, leafOK := closed.EvaluateClosedForTest(heap, values, operand, predecessor, inputs)
+		if !leafOK || !leafNormal {
+			t.Fatalf("ordinary leaf=%t/%t", leafOK, leafNormal)
+		}
+		leaves = append(leaves, leaf)
 	}
-	for _, testCase := range tests {
-		t.Run(testCase.name, func(t *testing.T) {
-			heap, values, operand := closedSemanticFixture(t, testCase.source)
-			if operand.CoordinateCount() != testCase.coordinates {
-				t.Fatalf("coordinates=%d, want %d", operand.CoordinateCount(), testCase.coordinates)
-			}
-			left, right := tableAtoms(t, heap, values, 2)
-			alternatives, alternativesOK := values.Alternatives(left, right)
-			predecessor, predecessorOK := heap.EmptyObject(operand.Key())
-			if !alternativesOK || !predecessorOK {
-				t.Fatal("closed product fixture")
-			}
-			inputs := make([]valuedomain.Value, operand.CoordinateCount())
-			for index := range inputs {
-				inputs[index] = alternatives
-			}
-			result, normal, resultOK := closed.EvaluateClosedForTest(heap, values, operand, predecessor, inputs)
-			if !resultOK || !normal {
-				t.Fatalf("product result=%t/%t", resultOK, normal)
-			}
-			if result.WorldCount() != testCase.worlds {
-				t.Fatalf("product worlds=%d, want %d", result.WorldCount(), testCase.worlds)
-			}
-			atoms := []valuedomain.Atom{left, right}
-			var expected heapdomain.Value
-			haveExpected := false
-			joinLeaf := func(inputs []valuedomain.Value) {
-				leaf, leafNormal, leafOK := closed.EvaluateClosedForTest(heap, values, operand, predecessor, inputs)
-				if !leafOK || !leafNormal {
-					t.Fatalf("ordinary product leaf=%t/%t", leafOK, leafNormal)
-				}
-				if !haveExpected {
-					expected, haveExpected = leaf, true
-					return
-				}
-				var joinedOK bool
-				expected, joinedOK = heapdomain.Join(expected, leaf)
-				if !joinedOK {
-					t.Fatal("ordinary product join")
-				}
-			}
-			if testCase.coordinates == 1 {
-				for _, atom := range atoms {
-					singleton, singletonOK := values.Singleton(atom)
-					if !singletonOK {
-						t.Fatal("diagonal singleton")
-					}
-					joinLeaf([]valuedomain.Value{singleton})
-				}
-			} else {
-				for _, keyAtom := range atoms {
-					for _, valueAtom := range atoms {
-						keyValue, keyValueOK := values.Singleton(keyAtom)
-						payloadValue, payloadValueOK := values.Singleton(valueAtom)
-						if !keyValueOK || !payloadValueOK {
-							t.Fatal("independent singleton")
-						}
-						joinLeaf([]valuedomain.Value{keyValue, payloadValue})
-					}
-				}
-			}
-			if !haveExpected || !heap.Domain().Equal(result, expected) {
-				t.Fatal("binary-carry product differs from ordinary leaf join")
-			}
-		})
+	return leaves
+}
+
+func closedJoinLeaves(leaves []heapdomain.Value) (heapdomain.Value, bool) {
+	if len(leaves) == 0 {
+		return heapdomain.Value{}, false
 	}
+	result := leaves[0]
+	for _, leaf := range leaves[1:] {
+		joined, joinedOK := heapdomain.Join(result, leaf)
+		if !joinedOK {
+			return heapdomain.Value{}, false
+		}
+		result = joined
+	}
+	return result, true
+}
+
+func closedWidenLeaves(leaves []heapdomain.Value) (heapdomain.Value, bool) {
+	if len(leaves) == 0 {
+		return heapdomain.Value{}, false
+	}
+	result := leaves[0]
+	for _, leaf := range leaves[1:] {
+		widened, widenedOK := heapdomain.Widen(result, leaf)
+		if !widenedOK {
+			return heapdomain.Value{}, false
+		}
+		result = widened
+	}
+	return result, true
 }
 
 func TestClosedEvaluatorReceiptInvalidAndOpaqueKeys(t *testing.T) {

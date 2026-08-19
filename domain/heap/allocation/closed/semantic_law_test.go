@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/heap/allocation/internal/source"
+	"github.com/wippyai/go-lua/domain/heap/keymatch"
 	"github.com/wippyai/go-lua/domain/materialization"
 	"github.com/wippyai/go-lua/domain/runtimekind"
 	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
@@ -33,8 +34,8 @@ func TestClosedSemanticDiagonalKeepsSameCoordinateAndOpaqueContainment(t *testin
 	if !alternativesOK || !predecessorOK {
 		t.Fatal("diagonal fixture")
 	}
-	leftWorld, leftOK := materializeField(heap, operand, left)
-	rightWorld, rightOK := materializeField(heap, operand, right)
+	leftWorld, leftOK := materializeField(heap, values, operand, left)
+	rightWorld, rightOK := materializeField(heap, values, operand, right)
 	joined, joinedOK := heapdomain.Join(leftWorld, rightWorld)
 	if !leftOK || !rightOK || !joinedOK || joined.WorldCount() != 2 {
 		t.Fatalf("same-read diagonal materialization left=%t right=%t join=%t worlds=%d", leftOK, rightOK, joinedOK, joined.WorldCount())
@@ -59,8 +60,8 @@ func TestClosedSemanticDistinctCoordinatesEnumerateIndependentProduct(t *testing
 	if !alternativesOK || !predecessorOK {
 		t.Fatal("independent fixture")
 	}
-	leftWorld, leftOK := materializeField(heap, operand, left)
-	rightWorld, rightOK := materializeField(heap, operand, right)
+	leftWorld, leftOK := materializeField(heap, values, operand, left)
+	rightWorld, rightOK := materializeField(heap, values, operand, right)
 	if !leftOK || !rightOK {
 		t.Fatal("independent field materialization")
 	}
@@ -124,13 +125,22 @@ func TestClosedSemanticInvalidDynamicKeyHasNoNormalSuccessor(t *testing.T) {
 	}
 }
 
-func materializeField(schema heapdomain.Schema, operand source.Closed, atom valuedomain.Atom) (heapdomain.Value, bool) {
+// materializeField builds the one world this operand's first field denotes
+// when its coordinate selects atom. Selector and both containment edges are
+// projected from that atom through keymatch, so two distinct alternatives
+// materialize two distinct worlds: an atom-blind construction would compare
+// one world with itself and pin nothing about enumeration.
+func materializeField(schema heapdomain.Schema, values *valuedomain.Schema, operand source.Closed, atom valuedomain.Atom) (heapdomain.Value, bool) {
 	field, fieldOK := operand.At(0)
+	alternative, projected := keymatch.Project(schema, values, atom)
+	valueContainment, valueContainmentOK := keymatch.Containment(schema, values, atom)
 	none, noneOK := schema.ContainmentNone()
-	cell, cellOK := schema.CellPresent(field.Slot(), field.Payload(), none, none)
+	if !fieldOK || !projected || !valueContainmentOK || !noneOK || !atom.RuntimeKinds().Contains(runtimekind.Table) {
+		return heapdomain.Value{}, false
+	}
+	cell, cellOK := schema.CellPresent(field.Slot(), field.Payload(), valueContainment, alternative.Containment())
 	initializer, initializerOK := schema.BeginObject(heapdomain.ShapeEligible, heapdomain.FrozenMutable, none)
-	selector, selectorOK := schema.KindSelector()
-	if !fieldOK || !noneOK || !cellOK || !initializerOK || !selectorOK || !atom.RuntimeKinds().Contains(runtimekind.Table) || !initializer.Apply(selector, cell) {
+	if !cellOK || !initializerOK || !initializer.Apply(alternative.Selector(), cell) {
 		return heapdomain.Value{}, false
 	}
 	object, objectOK := initializer.Finish()

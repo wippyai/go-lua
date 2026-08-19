@@ -174,6 +174,20 @@ func (schema Schema) CellAbsent() (CellState, bool) {
 	return CellState{owner: schema.owner, raw: RawAbsent}, true
 }
 
+// CellUnion is the exact pointwise least upper bound of two complete cell
+// states, issued by the same authority that issues the states themselves. It
+// is the join the canonical partition merge already performs, exposed so a
+// construction owner can represent one cell whose stored alternatives are a
+// disjunction instead of forking one whole World per alternative. It adds no
+// containment kind and no ordering: presents remain a normalized set and raw
+// remains a may-mask.
+func (schema Schema) CellUnion(left, right CellState) (CellState, bool) {
+	if !schema.valid() || !left.valid() || left.owner != schema.owner || !right.valid() || right.owner != schema.owner {
+		return CellState{}, false
+	}
+	return mergeCellStatesAdmitted(left, right)
+}
+
 // Every runtime family but nil is a legal Lua table key. That partition is the
 // vocabulary's own, so the count, the enumeration, and the admission test are
 // projections of it rather than an ordinal range restated here.

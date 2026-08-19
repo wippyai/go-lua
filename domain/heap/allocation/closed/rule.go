@@ -13,7 +13,7 @@ import (
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
-func resultClosed(schema heapdomain.Schema, values *valuedomain.Schema, operand source.Closed, predecessor heapdomain.Value, cells engine.OrderedCells[valuedomain.Value]) (next heapdomain.Value, normal, ok bool) {
+func resultClosed(schema heapdomain.Schema, values *valuedomain.Schema, projection *keymatch.SelectorProjection, operand source.Closed, predecessor heapdomain.Value, cells engine.OrderedCells[valuedomain.Value]) (next heapdomain.Value, normal, ok bool) {
 	if values == nil || !operand.FencedTo(schema, values) || cells.Count() != operand.CoordinateCount() {
 		return heapdomain.Value{}, false, false
 	}
@@ -28,33 +28,75 @@ func resultClosed(schema heapdomain.Schema, values *valuedomain.Schema, operand 
 		}
 		inputs[index] = value
 	}
-	return evaluateClosed(schema, values, operand, predecessor, inputs)
+	return evaluateClosed(schema, values, projection, operand, predecessor, inputs)
 }
 
-// evaluateClosed enumerates the sealed finite atom product without Go recursion.
-// Every coordinate is picked once and reused at all of its source uses;
-// source.Closed has already collapsed only Link-proved direct same-read pairs
-// to one ordinal.  Distinct ordinals remain independent by construction.
-func evaluateClosed(schema heapdomain.Schema, values *valuedomain.Schema, operand source.Closed, predecessor heapdomain.Value, inputs []valuedomain.Value) (next heapdomain.Value, normal, ok bool) {
-	if values == nil || len(inputs) != operand.CoordinateCount() || !schema.Admits(operand.Key(), predecessor) {
+// evaluateClosed enumerates the sealed finite atom product without Go
+// recursion.  Every coordinate is picked once and reused at all of its source
+// uses; source.Closed has already collapsed only Link-proved direct same-read
+// pairs to one ordinal.  Distinct ordinals remain independent by construction.
+//
+// Two quotients keep that product finite without a budget or a cap.  A
+// coordinate read exactly once, in the stored-value role only, selects no key
+// and correlates no second cell, so its alternatives fold through the
+// value-level projection into one CellState instead of one World per atom.
+// Every coordinate that still enumerates is first quotiented by its
+// heap-observable class: alternatives that agree on that class produce
+// identical worlds, which the world accumulator was already discarding.
+func evaluateClosed(schema heapdomain.Schema, values *valuedomain.Schema, projection *keymatch.SelectorProjection, operand source.Closed, predecessor heapdomain.Value, inputs []valuedomain.Value) (next heapdomain.Value, normal, ok bool) {
+	if values == nil || projection == nil || len(inputs) != operand.CoordinateCount() || !schema.Admits(operand.Key(), predecessor) {
 		return heapdomain.Value{}, false, false
 	}
 	fields, fieldsOK := fieldsFor(operand)
-	choices, choicesOK := atomChoices(values, inputs)
-	if !fieldsOK || !choicesOK {
+	if !fieldsOK {
 		return heapdomain.Value{}, false, false
 	}
-	order, orderOK := coordinateOrder(fields, len(choices))
+	folded, foldedOK := payloadOnlyCoordinates(fields, len(inputs))
+	if !foldedOK {
+		return heapdomain.Value{}, false, false
+	}
+	choices, payloads, choicesOK := coordinateChoices(projection, inputs, folded)
+	order, orderOK := coordinateOrder(fields, len(inputs), folded)
 	none, noneOK := schema.ContainmentNone()
 	base, baseOK := schema.BeginObject(heapdomain.ShapeEligible, heapdomain.FrozenMutable, none)
-	if !orderOK || len(order) != len(choices) || !noneOK || !baseOK {
+	if !choicesOK || !orderOK || !noneOK || !baseOK {
 		return heapdomain.Value{}, false, false
 	}
 
-	bindings := make([]valuedomain.Atom, len(choices))
-	bound := make([]bool, len(choices))
+	state := &application{
+		schema:   schema,
+		values:   values,
+		fields:   fields,
+		folded:   folded,
+		payloads: payloads,
+		bindings: make([]valuedomain.Atom, len(inputs)),
+		bound:    make([]bool, len(inputs)),
+	}
 	var worlds []heapdomain.Value
 	var occupied []bool
+	complete := func(init heapdomain.ObjectInit) bool {
+		fresh, freshOK := init.Finish()
+		created, createdOK := schema.Create(predecessor, operand.Key(), fresh)
+		return freshOK && createdOK && accumulateWorld(&worlds, &occupied, created)
+	}
+
+	// An operand whose every coordinate folds has one complete leaf: there is
+	// nothing left to branch on, and the single object already carries each
+	// coordinate's whole disjunction.
+	if len(order) == 0 {
+		child := base
+		nextField, branchNormal, applied := state.applyReady(0, &child)
+		if !applied {
+			return heapdomain.Value{}, false, false
+		}
+		if !branchNormal {
+			return finishWorlds(worlds, occupied)
+		}
+		if nextField != len(fields) || !complete(child) {
+			return heapdomain.Value{}, false, false
+		}
+		return finishWorlds(worlds, occupied)
+	}
 
 	// A child frame owns the coordinate selected by its parent.  Its ObjectInit
 	// is a private copy-fork of the immutable unpublished prefix.  Thus every
@@ -72,8 +114,8 @@ func evaluateClosed(schema heapdomain.Schema, values *valuedomain.Schema, operan
 		release := stack[last].release
 		stack = stack[:last]
 		if release >= 0 {
-			bound[release] = false
-			bindings[release] = valuedomain.Atom{}
+			state.bound[release] = false
+			state.bindings[release] = valuedomain.Atom{}
 		}
 	}
 
@@ -89,35 +131,27 @@ func evaluateClosed(schema heapdomain.Schema, values *valuedomain.Schema, operan
 		}
 		atom := choices[coordinate][current.next]
 		current.next++
-		if bound[coordinate] {
+		if state.bound[coordinate] {
 			return heapdomain.Value{}, false, false
 		}
-		bindings[coordinate], bound[coordinate] = atom, true
+		state.bindings[coordinate], state.bound[coordinate] = atom, true
 		child := current.init
-		nextField, branchNormal, applied := applyReady(schema, values, fields, bindings, bound, current.field, &child)
+		nextField, branchNormal, applied := state.applyReady(current.field, &child)
 		if !applied {
-			bound[coordinate], bindings[coordinate] = false, valuedomain.Atom{}
+			state.bound[coordinate], state.bindings[coordinate] = false, valuedomain.Atom{}
 			return heapdomain.Value{}, false, false
 		}
 		if !branchNormal {
-			bound[coordinate], bindings[coordinate] = false, valuedomain.Atom{}
+			state.bound[coordinate], state.bindings[coordinate] = false, valuedomain.Atom{}
 			continue
 		}
 		if current.depth+1 != len(order) {
 			stack = append(stack, frame{depth: current.depth + 1, field: nextField, init: child, release: coordinate})
 			continue
 		}
-		if nextField != len(fields) {
-			bound[coordinate], bindings[coordinate] = false, valuedomain.Atom{}
-			return heapdomain.Value{}, false, false
-		}
-		fresh, freshOK := child.Finish()
-		created, createdOK := schema.Create(predecessor, operand.Key(), fresh)
-		bound[coordinate], bindings[coordinate] = false, valuedomain.Atom{}
-		if !freshOK || !createdOK {
-			return heapdomain.Value{}, false, false
-		}
-		if !accumulateWorld(&worlds, &occupied, created) {
+		completed := nextField == len(fields) && complete(child)
+		state.bound[coordinate], state.bindings[coordinate] = false, valuedomain.Atom{}
+		if !completed {
 			return heapdomain.Value{}, false, false
 		}
 	}
@@ -193,41 +227,105 @@ func fieldsFor(operand source.Closed) ([]source.Field, bool) {
 	return fields, true
 }
 
-// atomChoices intentionally uses Value.VisitSupport: Top includes every
-// sealed atom, including opaque/reference alternatives that a kind-only scan
-// would silently drop.  Its canonical iteration order drives deterministic
-// enumeration; no Go map determines semantic output order.
-func atomChoices(schema *valuedomain.Schema, inputs []valuedomain.Value) ([][]valuedomain.Atom, bool) {
-	if schema == nil {
+// payloadOnlyCoordinates marks every coordinate this constructor reads exactly
+// once, in the stored-value role only.  Such a coordinate contributes the same
+// cell at the same selector in every world its alternatives would fork, so the
+// disjunction belongs inside that one cell.  A coordinate that also selects a
+// key, or that a second source use reads, carries a real correlation across
+// cells and keeps its own enumerated world.  The use counts are read off the
+// descriptor's existing ordinal binding; this introduces no second vocabulary.
+func payloadOnlyCoordinates(fields []source.Field, count int) ([]bool, bool) {
+	if count <= 0 || len(fields) == 0 {
 		return nil, false
 	}
-	choices := make([][]valuedomain.Atom, len(inputs))
-	for index, input := range inputs {
-		if input.IsBottom() || !schema.VisitSupport(input, func(atom valuedomain.Atom) {
-			choices[index] = append(choices[index], atom)
-		}) || len(choices[index]) == 0 {
+	uses := make([]int, count)
+	keys := make([]bool, count)
+	for _, field := range fields {
+		value := field.ValueOrdinal()
+		if uint64(value) >= uint64(count) {
 			return nil, false
 		}
+		uses[value]++
+		key, dynamic := field.DynamicKeyOrdinal()
+		if !dynamic {
+			continue
+		}
+		if uint64(key) >= uint64(count) {
+			return nil, false
+		}
+		uses[key]++
+		keys[key] = true
 	}
-	return choices, true
+	folded := make([]bool, count)
+	for index := range folded {
+		folded[index] = uses[index] == 1 && !keys[index]
+	}
+	return folded, true
+}
+
+// coordinateChoices quotients each coordinate's alternatives by exactly what
+// Heap construction observes.  It intentionally goes through the sealed
+// SelectorProjection, whose walk is Value.VisitSupport: Top includes every
+// sealed atom, including opaque/reference alternatives that a kind-only scan
+// would silently drop.  Its canonical iteration order drives deterministic
+// enumeration; no Go map determines semantic output order.  Enumerated
+// coordinates receive the full class quotient, folded coordinates the coarser
+// stored-value quotient that ignores key selection.
+func coordinateChoices(projection *keymatch.SelectorProjection, inputs []valuedomain.Value, folded []bool) (choices, payloads [][]valuedomain.Atom, ok bool) {
+	if projection == nil || len(folded) != len(inputs) {
+		return nil, nil, false
+	}
+	choices = make([][]valuedomain.Atom, len(inputs))
+	payloads = make([][]valuedomain.Atom, len(inputs))
+	for index, input := range inputs {
+		if input.IsBottom() {
+			return nil, nil, false
+		}
+		target := &choices[index]
+		visit := projection.VisitClasses
+		if folded[index] {
+			target = &payloads[index]
+			visit = projection.VisitPayloadClasses
+		}
+		if !visit(input, func(atom valuedomain.Atom) bool {
+			*target = append(*target, atom)
+			return true
+		}) || len(*target) == 0 {
+			return nil, nil, false
+		}
+	}
+	return choices, payloads, true
 }
 
 // coordinateOrder is first source use (dynamic key then payload) with the
 // descriptor's ordinal mapping retained for access to the canonical summary
 // input.  It is an execution order, never a second coordinate vocabulary.
-func coordinateOrder(fields []source.Field, count int) ([]int, bool) {
-	if count <= 0 {
+// Folded coordinates are deliberately absent: they are not branched on, while
+// still having to be reached by some source use for the operand to be whole.
+func coordinateOrder(fields []source.Field, count int, folded []bool) ([]int, bool) {
+	if count <= 0 || len(folded) != count {
 		return nil, false
 	}
+	want := 0
+	for _, skip := range folded {
+		if !skip {
+			want++
+		}
+	}
 	seen := make([]bool, count)
-	order := make([]int, 0, count)
+	order := make([]int, 0, want)
+	reached := 0
 	appendOrdinal := func(ordinal uint32) bool {
 		if uint64(ordinal) >= uint64(count) {
 			return false
 		}
 		index := int(ordinal)
-		if !seen[index] {
-			seen[index] = true
+		if seen[index] {
+			return true
+		}
+		seen[index] = true
+		reached++
+		if !folded[index] {
 			order = append(order, index)
 		}
 		return true
@@ -240,41 +338,57 @@ func coordinateOrder(fields []source.Field, count int) ([]int, bool) {
 			return nil, false
 		}
 	}
-	return order, len(order) == count
+	return order, len(order) == want && reached == count
 }
 
-// applyReady extends exactly the source-order prefix whose inputs are bound.
-// The first unbound field is a hard frontier: later fields cannot move ahead
-// of it, even when their coordinates happen to be selected already.
-func applyReady(schema heapdomain.Schema, values *valuedomain.Schema, fields []source.Field, bindings []valuedomain.Atom, bound []bool, start int, init *heapdomain.ObjectInit) (next int, normal, ok bool) {
-	if values == nil || init == nil || start < 0 || start > len(fields) || len(bindings) != len(bound) {
+// application is one evaluation's immutable construction context together with
+// its current coordinate selection.  It exists so the construction rules read
+// the same descriptor, quotient, and binding vector at every field.
+type application struct {
+	schema   heapdomain.Schema
+	values   *valuedomain.Schema
+	fields   []source.Field
+	folded   []bool
+	payloads [][]valuedomain.Atom
+	bindings []valuedomain.Atom
+	bound    []bool
+}
+
+// applyReady extends exactly the source-order prefix whose inputs are ready.
+// The first field that is not ready is a hard frontier: later fields cannot
+// move ahead of it, even when their coordinates happen to be selected already.
+// A folded coordinate is always ready; a field still waits for its own dynamic
+// key, which is never folded.
+func (state *application) applyReady(start int, init *heapdomain.ObjectInit) (next int, normal, ok bool) {
+	if state == nil || state.values == nil || init == nil || start < 0 || start > len(state.fields) ||
+		len(state.bindings) != len(state.bound) || len(state.folded) != len(state.bound) {
 		return 0, false, false
 	}
-	for next = start; next < len(fields); next++ {
-		field := fields[next]
+	for next = start; next < len(state.fields); next++ {
+		field := state.fields[next]
 		valueOrdinal := field.ValueOrdinal()
-		if uint64(valueOrdinal) >= uint64(len(bindings)) || !bound[valueOrdinal] {
+		if uint64(valueOrdinal) >= uint64(len(state.bound)) {
+			return 0, false, false
+		}
+		if key, dynamic := field.DynamicKeyOrdinal(); dynamic {
+			if uint64(key) >= uint64(len(state.bound)) {
+				return 0, false, false
+			}
+			if !state.bound[key] {
+				return next, true, true
+			}
+		}
+		if !state.folded[valueOrdinal] && !state.bound[valueOrdinal] {
 			return next, true, true
 		}
-		selector, keyContainment, selected, selectedOK := selectorFor(schema, values, field, bindings, bound)
+		selector, keyContainment, selected, selectedOK := state.selectorFor(field)
 		if !selectedOK {
 			return 0, false, false
 		}
 		if !selected {
 			return next, false, true
 		}
-		atom := bindings[valueOrdinal]
-		var cell heapdomain.CellState
-		var cellOK bool
-		if atom.RuntimeKinds().Contains(runtimekind.Nil) {
-			cell, cellOK = schema.CellAbsent()
-		} else {
-			valueContainment, containmentOK := keymatch.Containment(schema, values, atom)
-			if !containmentOK {
-				return 0, false, false
-			}
-			cell, cellOK = schema.CellPresent(field.Slot(), field.Payload(), valueContainment, keyContainment)
-		}
+		cell, cellOK := state.cellFor(field, keyContainment)
 		if !cellOK || !init.Apply(selector, cell) {
 			return 0, false, false
 		}
@@ -286,22 +400,75 @@ func applyReady(schema heapdomain.Schema, values *valuedomain.Schema, fields []s
 // selected for its dynamic key coordinate.  A definitely-invalid key has no
 // normal successor.  An atom that may be valid (including opaque numbers)
 // retains the valid heap branch; its error branch is not encoded as Heap.
-func selectorFor(schema heapdomain.Schema, values *valuedomain.Schema, field source.Field, bindings []valuedomain.Atom, bound []bool) (heapdomain.KeySelector, heapdomain.Containment, bool, bool) {
+func (state *application) selectorFor(field source.Field) (heapdomain.KeySelector, heapdomain.Containment, bool, bool) {
 	if selector, exact := field.ExactSelector(); exact {
-		none, ok := schema.ContainmentNone()
+		none, ok := state.schema.ContainmentNone()
 		return selector, none, true, ok
 	}
 	ordinal, dynamic := field.DynamicKeyOrdinal()
-	if !dynamic || uint64(ordinal) >= uint64(len(bindings)) || !bound[ordinal] {
+	if !dynamic || uint64(ordinal) >= uint64(len(state.bindings)) || !state.bound[ordinal] {
 		return heapdomain.KeySelector{}, heapdomain.Containment{}, false, false
 	}
-	atom := bindings[ordinal]
+	atom := state.bindings[ordinal]
 	if !atom.TableKeyValidity().MayBeValid() {
 		return heapdomain.KeySelector{}, heapdomain.Containment{}, false, true
 	}
-	alternative, ok := keymatch.Project(schema, values, atom)
+	alternative, ok := keymatch.Project(state.schema, state.values, atom)
 	if !ok {
 		return heapdomain.KeySelector{}, heapdomain.Containment{}, false, false
 	}
 	return alternative.Selector(), alternative.Containment(), true, true
+}
+
+// cellFor issues the one complete cell a field stores under its selected key.
+func (state *application) cellFor(field source.Field, keyContainment heapdomain.Containment) (heapdomain.CellState, bool) {
+	valueOrdinal := field.ValueOrdinal()
+	if uint64(valueOrdinal) >= uint64(len(state.folded)) {
+		return heapdomain.CellState{}, false
+	}
+	if !state.folded[valueOrdinal] {
+		return state.atomCell(field, state.bindings[valueOrdinal], keyContainment)
+	}
+	return state.foldedCell(field, keyContainment)
+}
+
+// atomCell is one alternative's contribution: raw absence for a nil
+// alternative, otherwise one present tuple carrying its child edge.
+func (state *application) atomCell(field source.Field, atom valuedomain.Atom, keyContainment heapdomain.Containment) (heapdomain.CellState, bool) {
+	if atom.RuntimeKinds().Contains(runtimekind.Nil) {
+		return state.schema.CellAbsent()
+	}
+	valueContainment, containmentOK := keymatch.Containment(state.schema, state.values, atom)
+	if !containmentOK {
+		return heapdomain.CellState{}, false
+	}
+	return state.schema.CellPresent(field.Slot(), field.Payload(), valueContainment, keyContainment)
+}
+
+// foldedCell is the value-level projection of one payload-only coordinate:
+// one Present per distinct child edge its alternatives denote, plus raw
+// absence when nil is among them.  Because the coordinate selects no key, the
+// worlds its alternatives would fork differ in this cell alone, and their
+// pointwise merge is exactly this union.
+func (state *application) foldedCell(field source.Field, keyContainment heapdomain.Containment) (heapdomain.CellState, bool) {
+	atoms := state.payloads[field.ValueOrdinal()]
+	if len(atoms) == 0 {
+		return heapdomain.CellState{}, false
+	}
+	merged, mergedOK := state.atomCell(field, atoms[0], keyContainment)
+	if !mergedOK {
+		return heapdomain.CellState{}, false
+	}
+	for _, atom := range atoms[1:] {
+		cell, cellOK := state.atomCell(field, atom, keyContainment)
+		if !cellOK {
+			return heapdomain.CellState{}, false
+		}
+		union, unionOK := state.schema.CellUnion(merged, cell)
+		if !unionOK {
+			return heapdomain.CellState{}, false
+		}
+		merged = union
+	}
+	return merged, true
 }
