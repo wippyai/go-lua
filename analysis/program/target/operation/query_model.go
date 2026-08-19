@@ -79,6 +79,19 @@ type CallbackQueryInput struct {
 	Outcomes  [5]vocabulary.Values
 }
 
+// CallbackReleaseInput is one already-resolved retained-callback release.
+// Core owns both the callback-forward handle and the release-operation reverse
+// range after this construction-only value is consumed.
+type CallbackReleaseInput struct {
+	Callback     vocabulary.CallbackID
+	Operation    vocabulary.Operation
+	Input        vocabulary.ValueFormal
+	Outcome      uint32
+	Mode         vocabulary.CallbackReleaseMode
+	ZeroBehavior vocabulary.CallbackReleaseZeroBehavior
+	ZeroOutcome  uint32
+}
+
 type SubedgeArgumentOriginInput struct {
 	Segment vocabulary.ArgumentSegment
 	Index   uint32

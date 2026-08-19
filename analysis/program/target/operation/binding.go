@@ -4,9 +4,9 @@ import (
 	"errors"
 	"sort"
 
-	"github.com/wippyai/go-lua/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	"github.com/wippyai/go-lua/internal/rows"
 )
 
 // BindingCount and BindingAt expose copied neutral binding values. The final

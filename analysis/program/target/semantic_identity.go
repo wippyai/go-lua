@@ -10,6 +10,7 @@ package target
 import (
 	"crypto/sha256"
 	"errors"
+	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	operationvalue "github.com/wippyai/go-lua/analysis/program/target/operation"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"sort"
@@ -87,7 +88,7 @@ func (c *Contract) callbackSelector(id vocabulary.CallbackID) (identity.ContentI
 // the explicit range fence prevents a numerically coincident callback from a
 // different operation from being accepted.
 func (c *Contract) CallbackContentID(op vocabulary.Operation, callback vocabulary.CallbackID) (identity.ContentID, bool) {
-	if c == nil || !c.sealed || op == 0 || int(op) > len(c.operations) || callback == 0 || int(callback) > len(c.callbacks) || int(callback) > len(c.callbackContentIDs) {
+	if c == nil || !c.sealed || op == 0 || int(op) > c.Operations.OperationCount() || callback == 0 || int(callback) > len(c.callbackContentIDs) {
 		return identity.ContentID{}, false
 	}
 	owner, callbackIndex, ownerOK := c.Operations.CallbackIndex(callback)
@@ -130,7 +131,7 @@ func (c *Contract) findCallbackContentID(id identity.ContentID) (vocabulary.Oper
 // operation anchor, source/carrier, argument Values, and all five sealed
 // outcome selectors.
 func (c *Contract) ResumeContentID(op vocabulary.Operation, resume vocabulary.ResumeID) (identity.ContentID, bool) {
-	if c == nil || !c.sealed || op == 0 || int(op) > len(c.operations) || resume == 0 || int(resume) > len(c.resumeContentIDs) {
+	if c == nil || !c.sealed || op == 0 || int(op) > c.Operations.OperationCount() || resume == 0 || int(resume) > len(c.resumeContentIDs) {
 		return identity.ContentID{}, false
 	}
 	owner, _, _, _, ok := c.Operations.Resume(resume)
@@ -179,7 +180,15 @@ func (c *Contract) outcomeIndex(op vocabulary.Operation, index int) (int, bool) 
 // dense immutable result columns; all sorting/graph validation belongs to the
 // normal Target Seal phase above.
 func (c *Contract) sealSemanticIdentities() error {
-	c.callbackSelectors = make([]identity.ContentID, len(c.callbacks))
+	callbackCount := 0
+	for operationIndex := 0; operationIndex < c.Operations.OperationCount(); operationIndex++ {
+		operation, ok := c.Operations.OperationAt(operationIndex)
+		if !ok {
+			return errors.New("target: malformed callback owner")
+		}
+		callbackCount += c.Operations.CallbackCount(operation)
+	}
+	c.callbackSelectors = make([]identity.ContentID, callbackCount)
 	outcomeCount := 0
 	for operationIndex := 0; operationIndex < c.Operations.OperationCount(); operationIndex++ {
 		operation, ok := c.Operations.OperationAt(operationIndex)
@@ -191,7 +200,7 @@ func (c *Contract) sealSemanticIdentities() error {
 	c.outcomeSelectors = make([]identity.ContentID, outcomeCount)
 	outcomeOwners := make([]vocabulary.Operation, outcomeCount)
 	outcomeOrdinals := make([]uint32, outcomeCount)
-	c.operationContentIDs = make([]identity.ContentID, len(c.operations))
+	c.operationContentIDs = make([]identity.ContentID, c.Operations.OperationCount())
 	c.outcomeContentIDs = make([]identity.ContentID, outcomeCount)
 	transferCount, transferOutcomeCount := 0, 0
 	for operationIndex := 0; operationIndex < c.Operations.OperationCount(); operationIndex++ {
@@ -203,8 +212,8 @@ func (c *Contract) sealSemanticIdentities() error {
 	}
 	c.transferContentIDs = make([]identity.ContentID, transferCount)
 	c.transferOutcomeIDs = make([]identity.ContentID, transferOutcomeCount)
-	c.callbackContentIDs = make([]identity.ContentID, len(c.callbacks))
-	c.callbackContentIndex = make([]callbackContentIDRow, 0, len(c.callbacks))
+	c.callbackContentIDs = make([]identity.ContentID, callbackCount)
+	c.callbackContentIndex = make([]callbackContentIDRow, 0, callbackCount)
 	resumeCount := 0
 	for operationIndex := 0; operationIndex < c.Operations.OperationCount(); operationIndex++ {
 		operation, ok := c.Operations.OperationAt(operationIndex)
@@ -278,7 +287,7 @@ func (c *Contract) sealSemanticIdentities() error {
 		c.outcomeSelectors[i] = id
 	}
 
-	for i, row := range c.callbacks {
+	for i := 0; i < callbackCount; i++ {
 		callbackID := vocabulary.CallbackID(i + 1)
 		owner, callbackIndex, callbackOK := c.Operations.CallbackIndex(callbackID)
 		anchorID, anchorOK := c.anchor(owner)
@@ -289,6 +298,12 @@ func (c *Contract) sealSemanticIdentities() error {
 		if !lifecycleOK {
 			return errors.New("target: malformed callback lifecycle")
 		}
+		source, sourceOK := c.Operations.CallbackSource(callbackID)
+		arguments, argumentsOK := c.Operations.CallbackArguments(callbackID)
+		admission, admissionOK := c.Operations.CallbackAdmission(callbackID)
+		if !sourceOK || !argumentsOK || !admissionOK {
+			return errors.New("target: malformed callback values")
+		}
 		id, err := c.semanticID(semanticCallbackSelector, func(w *framing.Writer) error {
 			if err := w.Bytes(anchorID[:]); err != nil {
 				return err
@@ -296,18 +311,25 @@ func (c *Contract) sealSemanticIdentities() error {
 			if err := w.Uint(uint64(callbackIndex)); err != nil {
 				return err
 			}
-			if err := encodeInput(w, row.function); err != nil {
+			if err := encodeInput(w, source); err != nil {
 				return err
 			}
-			if err := encodeValues(w, c, row.arguments); err != nil {
+			if err := encodeValues(w, c, arguments); err != nil {
 				return err
 			}
-			for _, values := range row.outcomes {
+			for _, kind := range [...]flowkind.OutcomeKind{
+				flowkind.OutcomeNormal, flowkind.OutcomeReturn, flowkind.OutcomeThrow,
+				flowkind.OutcomeYield, flowkind.OutcomeCancel,
+			} {
+				values, valuesOK := c.Operations.CallbackOutcome(callbackID, kind)
+				if !valuesOK {
+					return errors.New("target: malformed callback outcome")
+				}
 				if err := encodeValues(w, c, values); err != nil {
 					return err
 				}
 			}
-			if err := w.Uint(uint64(row.admission)); err != nil {
+			if err := w.Uint(uint64(admission)); err != nil {
 				return err
 			}
 			return w.Uint(uint64(lifecycle))
@@ -317,7 +339,7 @@ func (c *Contract) sealSemanticIdentities() error {
 		}
 		c.callbackSelectors[i] = id
 	}
-	for i := range c.callbacks {
+	for i := 0; i < callbackCount; i++ {
 		callbackID := vocabulary.CallbackID(i + 1)
 		owner, _, ownerOK := c.Operations.CallbackIndex(callbackID)
 		anchorID, anchorOK := c.anchor(owner)
@@ -419,7 +441,7 @@ func (c *Contract) sealSemanticIdentities() error {
 		}
 	}
 
-	for i := range c.operations {
+	for i := 0; i < c.Operations.OperationCount(); i++ {
 		op := vocabulary.Operation(i + 1)
 		anchor, anchorOK := c.anchor(op)
 		if !anchorOK {

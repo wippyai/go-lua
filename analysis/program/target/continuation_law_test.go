@@ -81,11 +81,11 @@ func TestSuspensionCanonicalizesOutcomeOrdinalsAndKeepsCallbackValues(t *testing
 	if !ok || callback == 0 {
 		t.Fatal("create result has no exact CallbackID")
 	}
-	if _, ok := contract.CallbackArguments(callback); !ok {
+	if _, ok := contract.Operations.CallbackArguments(callback); !ok {
 		t.Fatal("sealed callback Arguments correspondence missing")
 	}
 	for _, kind := range []flowkind.OutcomeKind{flowkind.OutcomeNormal, flowkind.OutcomeReturn, flowkind.OutcomeThrow, flowkind.OutcomeYield, flowkind.OutcomeCancel} {
-		if _, ok := contract.CallbackOutcome(callback, kind); !ok {
+		if _, ok := contract.Operations.CallbackOutcome(callback, kind); !ok {
 			t.Fatalf("sealed callback outcome %d correspondence missing", kind)
 		}
 	}
@@ -630,7 +630,7 @@ func TestSpawnSealsOneTypedDetachedAuthority(t *testing.T) {
 		t.Fatalf("child owner = %d/%v", childOwner, found)
 	}
 	for _, kind := range []flowkind.OutcomeKind{flowkind.OutcomeNormal, flowkind.OutcomeReturn, flowkind.OutcomeThrow, flowkind.OutcomeYield, flowkind.OutcomeCancel} {
-		if _, found := contract.CallbackOutcome(child, kind); !found {
+		if _, found := contract.Operations.CallbackOutcome(child, kind); !found {
 			t.Fatalf("child lacks total %v outcome", kind)
 		}
 	}

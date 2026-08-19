@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/wippyai/go-lua/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	"github.com/wippyai/go-lua/internal/rows"
 )
 
 // CompileGeometry validates, canonicalizes, and seals neutral operation
@@ -124,7 +124,7 @@ func CompileGeometry(input Input) (Geometry, error) {
 			}
 			callbackValues = append(callbackValues, callbackRow{
 				id: vocabulary.CallbackID(len(callbackRows) + len(callbackValues) + 1), owner: vocabulary.Operation(index + 1),
-				source: callback.Source, ordinal: uint32(callbackIndex), lifecycle: callback.Lifecycle,
+				source: callback.Source, function: callback.Function, ordinal: uint32(callbackIndex), lifecycle: callback.Lifecycle,
 			})
 		}
 		callbackStart, err := vocabulary.CheckedStoredLength("operation callback table", len(callbackRows))

@@ -11,11 +11,10 @@ import (
 )
 
 func (c *Contract) appendOperation(builder *operationvalue.QueryBuilder, op vocabulary.Operation, draft *operationDraft, keys exactkey.Table, callbackIDs []vocabulary.CallbackID) error {
-	expected, err := checkedStoredHandle("operation table", len(c.operations))
-	if err != nil {
-		return err
+	if c == nil || op == 0 {
+		return errors.New("target: unavailable operation")
 	}
-	if op != vocabulary.Operation(expected) {
+	if _, ok := c.Operations.OperationAt(int(op) - 1); !ok {
 		return errors.New("target: noncanonical operation handle")
 	}
 	typeHandle, err := builder.AppendQueryTypes(draft.types, draft.declarations)
@@ -80,7 +79,7 @@ func (c *Contract) appendOperation(builder *operationvalue.QueryBuilder, op voca
 		valuesHandle[key] = handle
 	}
 	operationInput := valuesHandle[inputKey]
-	callbackIDs, callbackValues, err := c.appendCallbacks(builder, op, draft.callbacks, valuesHandle, callbackIDs)
+	callbackIDs, callbackValues, err := appendCallbacks(builder, op, draft.callbacks, valuesHandle, callbackIDs)
 	if err != nil {
 		return err
 	}
@@ -103,7 +102,6 @@ func (c *Contract) appendOperation(builder *operationvalue.QueryBuilder, op voca
 	if subedgeErr != nil {
 		return subedgeErr
 	}
-	c.operations = append(c.operations, operationRow{})
 	query := operationvalue.QueryOperationInput{
 		Input: operationInput, RowFormals: draft.rowFormals,
 		EffectTail: draft.effectTail, EffectVar: draft.effectVar,
@@ -233,7 +231,11 @@ func lookupDraftValues(values map[string]vocabulary.Values, draft valuesDraft) (
 }
 
 func (c *Contract) appendOpaque(builder *operationvalue.QueryBuilder, opaque vocabulary.Operation) error {
-	if opaque == 0 || uint64(opaque) != uint64(len(c.operations)+1) {
+	if c == nil || opaque == 0 {
+		return errors.New("target: unavailable opaque operation")
+	}
+	knownOpaque, opaqueOK := c.Operations.Opaque()
+	if !opaqueOK || opaque != knownOpaque {
 		return errors.New("target: noncanonical opaque operation handle")
 	}
 	unknownDraft := valuesDraft{tail: vocabulary.ValuesUnknown}
@@ -261,7 +263,7 @@ func (c *Contract) appendOpaque(builder *operationvalue.QueryBuilder, opaque voc
 		},
 	}}
 	issuedOpaque := callbackIDForOpaque(c.Operations, opaque)
-	_, opaqueCallbacks, err := c.appendCallbacks(builder, opaque, []callbackDraft{{
+	_, opaqueCallbacks, err := appendCallbacks(builder, opaque, []callbackDraft{{
 		function:  vocabulary.InputSource{Kind: vocabulary.InputSourceAllInputs},
 		admission: schematype.CallableAdmissionOrdinary,
 		arguments: unknownDraft,
@@ -274,7 +276,6 @@ func (c *Contract) appendOpaque(builder *operationvalue.QueryBuilder, opaque voc
 	if err != nil {
 		return err
 	}
-	c.operations = append(c.operations, operationRow{})
 	return builder.AppendQueryOperation(opaque, operationvalue.QueryOperationInput{
 		Input:          unknown,
 		CallbackValues: opaqueCallbacks,

@@ -42,13 +42,13 @@ func TestInvocationQueriesExposeCallbackOwnedRelations(t *testing.T) {
 	if owner, ok := contract.Operations.CallbackOwner(id); !ok || owner != op {
 		t.Fatalf("CallbackOwner = %d/%v, want %d/true", owner, ok, op)
 	}
-	if function, ok := contract.callbackFunction(id); !ok || function != (vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 0}) {
+	if function, ok := contract.Operations.CallbackSource(id); !ok || function != (vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 0}) {
 		t.Fatalf("CallbackFunction = %#v/%v", function, ok)
 	}
-	if _, ok := contract.CallbackOutcome(id, flowkind.OutcomeNormal); !ok {
+	if _, ok := contract.Operations.CallbackOutcome(id, flowkind.OutcomeNormal); !ok {
 		t.Fatal("callback normal outcome unavailable")
 	}
-	if _, ok := contract.callbackAdmission(id); !ok {
+	if _, ok := contract.Operations.CallbackAdmission(id); !ok {
 		t.Fatal("callback admission unavailable")
 	}
 }

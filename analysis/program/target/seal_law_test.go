@@ -465,14 +465,14 @@ func TestCallbackExpectedRowsAndRetainedReleaseAreDirectAndCanonical(t *testing.
 	if !effectOK || effectTarget != releaseOp || !rowOK || row != 0 {
 		t.Fatalf("callback effect = target:%d/%v row:%d/%v", effectTarget, effectOK, row, rowOK)
 	}
-	operation, input, outcome, mode, releaseFound := first.callbackRelease(callback)
+	operation, input, outcome, mode, releaseFound := first.Operations.CallbackRelease(callback)
 	if !releaseFound || operation != releaseOp || input != 0 || outcome != 0 || mode != vocabulary.CallbackReleaseOne {
 		t.Fatalf("callback release = %d/%d/%d/%d/%v", operation, input, outcome, mode, releaseFound)
 	}
-	if first.callbackReleaseCount(releaseOp) != 1 {
-		t.Fatalf("release reverse range = %d", first.callbackReleaseCount(releaseOp))
+	if first.Operations.CallbackReleaseCount(releaseOp) != 1 {
+		t.Fatalf("release reverse range = %d", first.Operations.CallbackReleaseCount(releaseOp))
 	}
-	released, releaseInput, releaseOutcome, releaseMode, reverseFound := first.callbackReleaseAt(releaseOp, 0)
+	released, releaseInput, releaseOutcome, releaseMode, reverseFound := first.Operations.CallbackReleaseAt(releaseOp, 0)
 	if !reverseFound || released != callback || releaseInput != 0 || releaseOutcome != 0 || releaseMode != vocabulary.CallbackReleaseOne {
 		t.Fatalf("reverse release = %d/%d/%d/%d/%v", released, releaseInput, releaseOutcome, releaseMode, reverseFound)
 	}

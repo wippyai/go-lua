@@ -212,6 +212,120 @@ func (builder *QueryBuilder) AppendCallbackEffects(callback vocabulary.CallbackI
 	return nil
 }
 
+// AppendCallbackReleases consumes the complete release relation after all
+// authored operation query rows are present. Core canonicalizes the reverse
+// operation ranges and stores the callback-forward handle in the callback row;
+// no Target-side release table or backpatch is needed.
+func (builder *QueryBuilder) AppendCallbackReleases(input []CallbackReleaseInput) error {
+	if builder == nil || builder.core.query.operations == nil {
+		return invalidQuery("query has not started")
+	}
+	if _, err := vocabulary.CheckedStoredTotal("callback release table", len(builder.core.query.callbackReleases), len(input)); err != nil {
+		return err
+	}
+	ordered := append([]CallbackReleaseInput(nil), input...)
+	sort.Slice(ordered, func(left, right int) bool {
+		if ordered[left].Operation != ordered[right].Operation {
+			return ordered[left].Operation < ordered[right].Operation
+		}
+		return compareCallbackReleaseInput(ordered[left], ordered[right]) < 0
+	})
+
+	core := &builder.core
+	for index, item := range ordered {
+		if item.Callback == 0 || int(item.Callback) > len(core.query.callbacks) {
+			return invalidQuery("callback release callback is outside callback table")
+		}
+		if item.Operation == 0 || int(item.Operation) > len(core.query.operations) {
+			return invalidQuery("callback release operation is outside operation table")
+		}
+		callback := &core.query.callbacks[int(item.Callback)-1]
+		owner, ownerOK := core.CallbackOwner(item.Callback)
+		if !ownerOK || !callback.valuesSet || callback.release != 0 {
+			return invalidQuery("callback release callback is malformed or duplicated")
+		}
+		if item.Input >= vocabulary.ValueFormal(core.ValueFormalCount(item.Operation)) {
+			return invalidQuery("callback release input is outside operation ABI")
+		}
+		if item.Outcome >= uint32(core.OutcomeCount(item.Operation)) {
+			return invalidQuery("callback release outcome is outside operation")
+		}
+		if item.Mode != vocabulary.CallbackReleaseOne && item.Mode != vocabulary.CallbackReleaseAll {
+			return invalidQuery("callback release has invalid mode")
+		}
+		if !vocabulary.ValidCallbackReleaseZeroBehavior(item.ZeroBehavior) {
+			return invalidQuery("callback release has invalid zero-holder behavior")
+		}
+		switch item.ZeroBehavior {
+		case vocabulary.CallbackReleaseZeroSuppress:
+			if item.ZeroOutcome != 0 {
+				return invalidQuery("suppressed callback release carries an outcome")
+			}
+		case vocabulary.CallbackReleaseZeroThrow, vocabulary.CallbackReleaseZeroIdempotent:
+			if item.ZeroOutcome >= uint32(core.OutcomeCount(item.Operation)) {
+				return invalidQuery("callback release zero-holder outcome is outside operation")
+			}
+		}
+		if index > 0 && ordered[index-1].Operation == item.Operation && ordered[index-1].Callback == item.Callback {
+			return invalidQuery("callback has duplicate release")
+		}
+		if owner == 0 {
+			return invalidQuery("callback release callback has no owner")
+		}
+		core.query.callbackReleases = append(core.query.callbackReleases, queryCallbackReleaseRow{
+			callback: item.Callback, operation: item.Operation, input: item.Input, outcome: item.Outcome,
+			mode: item.Mode, zeroBehavior: item.ZeroBehavior, zeroOutcome: item.ZeroOutcome,
+		})
+		callback.release = uint32(len(core.query.callbackReleases))
+		operation := &core.query.operations[int(item.Operation)-1]
+		if operation.callbackReleases.end == 0 {
+			operation.callbackReleases.start = len(core.query.callbackReleases) - 1
+		}
+		operation.callbackReleases.end = len(core.query.callbackReleases)
+	}
+	return nil
+}
+
+func compareCallbackReleaseInput(left, right CallbackReleaseInput) int {
+	if left.Callback < right.Callback {
+		return -1
+	}
+	if left.Callback > right.Callback {
+		return 1
+	}
+	if left.Input < right.Input {
+		return -1
+	}
+	if left.Input > right.Input {
+		return 1
+	}
+	if left.Outcome < right.Outcome {
+		return -1
+	}
+	if left.Outcome > right.Outcome {
+		return 1
+	}
+	if left.Mode < right.Mode {
+		return -1
+	}
+	if left.Mode > right.Mode {
+		return 1
+	}
+	if left.ZeroBehavior < right.ZeroBehavior {
+		return -1
+	}
+	if left.ZeroBehavior > right.ZeroBehavior {
+		return 1
+	}
+	if left.ZeroOutcome < right.ZeroOutcome {
+		return -1
+	}
+	if left.ZeroOutcome > right.ZeroOutcome {
+		return 1
+	}
+	return 0
+}
+
 // AppendQueryOperation consumes one complete frozen query declaration and
 // publishes its rows directly into Core. Effects refer to the dense effect
 // query positions issued by AppendEffect.

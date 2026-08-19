@@ -7,10 +7,10 @@ import (
 	"errors"
 	"sort"
 
-	sealedrows "github.com/wippyai/go-lua/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/scalar"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	sealedrows "github.com/wippyai/go-lua/internal/rows"
 )
 
 // Compile normalizes, canonicalizes, deduplicates, and seals one Target key

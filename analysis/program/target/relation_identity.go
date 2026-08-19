@@ -17,8 +17,8 @@ func validIdentityRange(value indexRange, length int) bool {
 // finalization. Its indexes are sorted immutable value tables, while the
 // direct paths remain dense operation/outcome ranges.
 func (c *Contract) sealHostIdentityRelations(outcomeOwners []vocabulary.Operation, outcomeOrdinals []uint32) error {
-	c.inputFormalRanges = make([]indexRange, len(c.operations))
-	for operationIndex := range c.operations {
+	c.inputFormalRanges = make([]indexRange, c.Operations.OperationCount())
+	for operationIndex := 0; operationIndex < c.Operations.OperationCount(); operationIndex++ {
 		op := vocabulary.Operation(operationIndex + 1)
 		input, inputOK := c.Operations.Input(op)
 		if !inputOK {

@@ -193,9 +193,9 @@ func TestOpaqueCallbackLifecycleIsMaximalAndExplicit(t *testing.T) {
 	}
 	id, idFound := contract.Operations.CallbackAt(op, 0)
 	owner, ownerFound := contract.Operations.CallbackOwner(id)
-	source, sourceFound := contract.callbackFunction(id)
+	source, sourceFound := contract.Operations.CallbackSource(id)
 	lifecycle, lifecycleFound := contract.Operations.CallbackLifecycle(id)
-	arguments, argumentsFound := contract.CallbackArguments(id)
+	arguments, argumentsFound := contract.Operations.CallbackArguments(id)
 	if !idFound || !ownerFound || owner != op || !sourceFound || source != (vocabulary.InputSource{Kind: vocabulary.InputSourceAllInputs}) ||
 		!lifecycleFound || lifecycle != vocabulary.CallbackRetainedOptionalMany ||
 		!argumentsFound {
@@ -211,7 +211,7 @@ func TestOpaqueCallbackLifecycleIsMaximalAndExplicit(t *testing.T) {
 		flowkind.OutcomeNormal, flowkind.OutcomeReturn, flowkind.OutcomeThrow,
 		flowkind.OutcomeYield, flowkind.OutcomeCancel,
 	} {
-		values, ok := contract.CallbackOutcome(id, kind)
+		values, ok := contract.Operations.CallbackOutcome(id, kind)
 		if !ok || values != input {
 			t.Fatalf("opaque callback outcome %d = %d/%v, want opaque unknown %d/true", kind, values, ok, input)
 		}
@@ -253,23 +253,23 @@ func TestCallbackOutcomeIsTotalCanonicalAndAllocationFree(t *testing.T) {
 		flowkind.OutcomeYield, flowkind.OutcomeCancel,
 	}
 	for index, kind := range kinds {
-		values, ok := first.CallbackOutcome(id, kind)
+		values, ok := first.Operations.CallbackOutcome(id, kind)
 		tail, variable, tailOK := first.Operations.ValuesTail(values)
 		if !ok || !tailOK || tail != vocabulary.ValuesVariable || variable != vocabulary.ValuesVar(index+1) {
 			t.Fatalf("callback outcome %d = %d/%d/%d/%v/%v, want tail %d", kind, values, tail, variable, ok, tailOK, index+1)
 		}
 	}
 	for _, kind := range []flowkind.OutcomeKind{flowkind.OutcomeBreak, flowkind.OutcomeGoto} {
-		if _, ok := first.CallbackOutcome(id, kind); ok {
+		if _, ok := first.Operations.CallbackOutcome(id, kind); ok {
 			t.Fatalf("non-activation outcome %d resolved", kind)
 		}
 	}
-	if _, ok := first.CallbackOutcome(0, flowkind.OutcomeNormal); ok {
+	if _, ok := first.Operations.CallbackOutcome(0, flowkind.OutcomeNormal); ok {
 		t.Fatal("zero CallbackID resolved an outcome")
 	}
 	if allocs := testing.AllocsPerRun(1000, func() {
 		for _, kind := range kinds {
-			if _, ok := first.CallbackOutcome(id, kind); !ok {
+			if _, ok := first.Operations.CallbackOutcome(id, kind); !ok {
 				panic("callback outcome disappeared")
 			}
 		}
@@ -393,7 +393,7 @@ func TestCallbackReleaseZeroPolicyIsRequiredAndExact(t *testing.T) {
 		contract := mustSeal(t, specWithCallbackReleaseZero(vocabulary.CallbackReleaseZeroSpec{Behavior: want.behavior, Outcome: want.outcome}))
 		owner, ownerOK := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"release-zero-owner"}})
 		callback, callbackOK := contract.Operations.CallbackAt(owner, 0)
-		got, outcome, ok := contract.callbackReleaseZero(callback)
+		got, outcome, ok := contract.Operations.CallbackReleaseZero(callback)
 		if !ownerOK || !callbackOK || !ok || got != want.behavior || outcome != want.outcome {
 			t.Fatalf("zero policy = %d/%d/%v, want %d/%d", got, outcome, ok, want.behavior, want.outcome)
 		}
@@ -506,7 +506,7 @@ func TestCallbackResultsRemapWithOutcomeAndCallbackCanonicalization(t *testing.T
 		id     vocabulary.CallbackID
 		formal uint32
 	}{{id: 1, formal: 0}, {id: 2, formal: 1}} {
-		source, found := first.callbackFunction(want.id)
+		source, found := first.Operations.CallbackSource(want.id)
 		if !found || source.Kind != vocabulary.InputSourceValueFormal || source.Ordinal != want.formal {
 			t.Fatalf("callback %d source = %#v/%v", want.id, source, found)
 		}
@@ -577,7 +577,7 @@ func TestCallbacksRequireValueFormalInputSource(t *testing.T) {
 		t.Fatalf("callback input-source relations missing: %d/%v", op, ok)
 	}
 	id, found := contract.Operations.CallbackAt(op, 0)
-	got, foundSource := contract.callbackFunction(id)
+	got, foundSource := contract.Operations.CallbackSource(id)
 	if !found || !foundSource || got != (vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 0}) {
 		t.Fatalf("callback fixed-formal source = %#v/%v/%v", got, found, foundSource)
 	}

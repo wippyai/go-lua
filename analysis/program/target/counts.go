@@ -63,11 +63,10 @@ func (c *Contract) buildCountRows() (denominator.CountRows, error) {
 		}
 	}
 
-	var callbackReleases int
-	for index := range c.callbacks {
-		if _, _, _, _, ok := c.callbackRelease(vocabulary.CallbackID(index + 1)); ok {
-			callbackReleases++
-		}
+	callbackReleases := 0
+	for operationIndex := 0; operationIndex < c.Operations.OperationCount(); operationIndex++ {
+		op := vocabulary.Operation(operationIndex + 1)
+		callbackReleases += c.Operations.CallbackReleaseCount(op)
 	}
 
 	var subedgeCount, subedgeOrigins, subedgeRelations int

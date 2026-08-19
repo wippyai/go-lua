@@ -24,7 +24,7 @@ func Seal(spec *Spec) (*Contract, error) {
 		return nil, fmt.Errorf("target: %w", err)
 	}
 
-	operationCount, err := vocabulary.CheckedStoredTotal("operation table", len(spec.Operations), 1)
+	_, err := vocabulary.CheckedStoredTotal("operation table", len(spec.Operations), 1)
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +109,7 @@ func Seal(spec *Spec) (*Contract, error) {
 		return nil, err
 	}
 	contract := &Contract{Table: bootTable, Operations: operationCore,
-		exactKeys: exactKeys, operations: make([]operationRow, 0, operationCount), protocols: protocols}
+		exactKeys: exactKeys, protocols: protocols}
 	for index := range drafts {
 		op, ok := operationCore.OperationAt(index)
 		if !ok {
@@ -127,7 +127,11 @@ func Seal(spec *Spec) (*Contract, error) {
 			return nil, err
 		}
 	}
-	if err := contract.appendCallbackReleases(drafts); err != nil {
+	releases, releaseErr := callbackReleaseInputs(drafts)
+	if releaseErr != nil {
+		return nil, releaseErr
+	}
+	if err := queryBuilder.AppendCallbackReleases(releases); err != nil {
 		return nil, err
 	}
 	opaque, opaqueOK := operationCore.Opaque()
@@ -171,6 +175,7 @@ func operationGeometryInput(drafts []operationDraft) operationvalue.Input {
 		for callbackIndex := range draft.callbacks {
 			callbacks[callbackIndex] = operationvalue.CallbackInput{
 				Source:    draft.callbacks[callbackIndex].source,
+				Function:  draft.callbacks[callbackIndex].function,
 				Lifecycle: draft.callbacks[callbackIndex].lifecycle,
 			}
 		}

@@ -10,6 +10,7 @@ import (
 type queryState struct {
 	operations             []queryOperationRow
 	callbacks              []queryCallbackRow
+	callbackReleases       []queryCallbackReleaseRow
 	types                  []queryTypeRow
 	values                 []queryValuesRow
 	effects                []queryEffectRow
@@ -36,6 +37,7 @@ type queryOperationRow struct {
 	input              vocabulary.Values
 	outcomes           queryRange
 	outcomeSources     []uint32
+	callbackReleases   queryRange
 	subedges           queryRange
 	subedgeRelation    uint32
 	suspensions        queryRange
@@ -109,10 +111,21 @@ type queryCallbackRow struct {
 	arguments  vocabulary.Values
 	outcomes   [5]vocabulary.Values
 	valuesSet  bool
+	release    uint32
 	effects    queryRange
 	effectTail vocabulary.RowTail
 	effectVar  vocabulary.RowVar
 	published  bool
+}
+
+type queryCallbackReleaseRow struct {
+	callback     vocabulary.CallbackID
+	operation    vocabulary.Operation
+	input        vocabulary.ValueFormal
+	outcome      uint32
+	mode         vocabulary.CallbackReleaseMode
+	zeroBehavior vocabulary.CallbackReleaseZeroBehavior
+	zeroOutcome  uint32
 }
 
 type queryRange struct{ start, end int }

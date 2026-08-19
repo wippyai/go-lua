@@ -88,7 +88,7 @@ func (c *Contract) encodeBindings(w *framing.Writer, op vocabulary.Operation) er
 }
 
 func (c *Contract) encodePortableOperation(w *framing.Writer, op vocabulary.Operation) error {
-	_, ok := c.operation(op)
+	_, ok := c.Operations.OperationAt(int(op) - 1)
 	if !ok {
 		return errors.New("target: malformed operation")
 	}
@@ -324,8 +324,7 @@ func (c *Contract) encodePortableOperation(w *framing.Writer, op vocabulary.Oper
 }
 
 func (c *Contract) encodePortableCallback(w *framing.Writer, id vocabulary.CallbackID) error {
-	row, ok := c.callback(id)
-	if !ok {
+	if c == nil || id == 0 {
 		return errors.New("target: malformed callback")
 	}
 	selector, ok := c.callbackSelector(id)
@@ -335,16 +334,35 @@ func (c *Contract) encodePortableCallback(w *framing.Writer, id vocabulary.Callb
 	if err := w.Bytes(selector[:]); err != nil {
 		return err
 	}
-	if err := encodeInput(w, row.function); err != nil {
+	source, sourceOK := c.Operations.CallbackSource(id)
+	if !sourceOK {
+		return errors.New("target: malformed callback source")
+	}
+	if err := encodeInput(w, source); err != nil {
 		return err
 	}
-	if err := encodeValues(w, c, row.arguments); err != nil {
+	arguments, argumentsOK := c.Operations.CallbackArguments(id)
+	if !argumentsOK {
+		return errors.New("target: malformed callback arguments")
+	}
+	if err := encodeValues(w, c, arguments); err != nil {
 		return err
 	}
-	if err := w.Uint(uint64(row.admission)); err != nil {
+	admission, admissionOK := c.Operations.CallbackAdmission(id)
+	if !admissionOK {
+		return errors.New("target: malformed callback admission")
+	}
+	if err := w.Uint(uint64(admission)); err != nil {
 		return err
 	}
-	for _, v := range row.outcomes {
+	for _, kind := range [...]flowkind.OutcomeKind{
+		flowkind.OutcomeNormal, flowkind.OutcomeReturn, flowkind.OutcomeThrow,
+		flowkind.OutcomeYield, flowkind.OutcomeCancel,
+	} {
+		v, outcomeOK := c.Operations.CallbackOutcome(id, kind)
+		if !outcomeOK {
+			return errors.New("target: malformed callback outcome")
+		}
 		if err := encodeValues(w, c, v); err != nil {
 			return err
 		}
@@ -379,11 +397,15 @@ func (c *Contract) encodePortableCallback(w *framing.Writer, id vocabulary.Callb
 			return err
 		}
 	}
-	if row.release == 0 {
+	releaseOperation, releaseInput, releaseOutcome, releaseMode, hasRelease := c.Operations.CallbackRelease(id)
+	if !hasRelease {
 		return w.Bool(false)
 	}
-	r := c.callbackReleases[row.release-1]
-	target, ok := c.anchor(r.operation)
+	zeroBehavior, zeroOutcome, zeroOK := c.Operations.CallbackReleaseZero(id)
+	if !zeroOK || !vocabulary.ValidCallbackReleaseZeroBehavior(zeroBehavior) {
+		return errors.New("target: malformed callback release zero behavior")
+	}
+	target, ok := c.anchor(releaseOperation)
 	if !ok {
 		return errors.New("target: malformed release target")
 	}
@@ -393,17 +415,17 @@ func (c *Contract) encodePortableCallback(w *framing.Writer, id vocabulary.Callb
 	if err := w.Bytes(target[:]); err != nil {
 		return err
 	}
-	if err := w.Uint(uint64(r.input)); err != nil {
+	if err := w.Uint(uint64(releaseInput)); err != nil {
 		return err
 	}
-	for _, outcome := range []uint32{r.outcome, r.zeroOutcome} {
-		if r.zeroBehavior == vocabulary.CallbackReleaseZeroSuppress && outcome == r.zeroOutcome {
+	for _, outcome := range []uint32{releaseOutcome, zeroOutcome} {
+		if zeroBehavior == vocabulary.CallbackReleaseZeroSuppress && outcome == zeroOutcome {
 			if err := w.Bool(false); err != nil {
 				return err
 			}
 			continue
 		}
-		i, ok := c.outcomeIndex(r.operation, int(outcome))
+		i, ok := c.outcomeIndex(releaseOperation, int(outcome))
 		if !ok {
 			return errors.New("target: malformed release outcome")
 		}
@@ -415,7 +437,7 @@ func (c *Contract) encodePortableCallback(w *framing.Writer, id vocabulary.Callb
 			return err
 		}
 	}
-	for _, v := range []uint64{uint64(r.mode), uint64(r.zeroBehavior)} {
+	for _, v := range []uint64{uint64(releaseMode), uint64(zeroBehavior)} {
 		if err := w.Uint(v); err != nil {
 			return err
 		}

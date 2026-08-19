@@ -133,9 +133,9 @@ func querySubedgeRouteInput(draft *operationDraft, route vocabulary.SubedgeRoute
 	}, nil
 }
 
-func (c *Contract) appendCallbacks(builder *operationvalue.QueryBuilder, owner vocabulary.Operation, input []callbackDraft, values map[string]vocabulary.Values, issued []vocabulary.CallbackID) ([]vocabulary.CallbackID, []operationvalue.CallbackQueryInput, error) {
-	if _, err := checkedStoredRange("callback table", len(c.callbacks), len(input)); err != nil {
-		return nil, nil, err
+func appendCallbacks(builder *operationvalue.QueryBuilder, owner vocabulary.Operation, input []callbackDraft, values map[string]vocabulary.Values, issued []vocabulary.CallbackID) ([]vocabulary.CallbackID, []operationvalue.CallbackQueryInput, error) {
+	if builder == nil || owner == 0 {
+		return nil, nil, errors.New("target: unavailable callback owner")
 	}
 	if len(issued) != len(input) {
 		return nil, nil, errors.New("target: operation callback geometry mismatch")
@@ -169,10 +169,6 @@ func (c *Contract) appendCallbacks(builder *operationvalue.QueryBuilder, owner v
 			}
 			outcomes[terminal] = value
 		}
-		c.callbacks = append(c.callbacks, callbackRow{
-			function: callback.function, admission: callback.admission,
-			arguments: arguments, outcomes: outcomes,
-		})
 		query[index] = operationvalue.CallbackQueryInput{
 			Source: uint32(callback.source), Admission: callback.admission,
 			Arguments: arguments, Outcomes: outcomes,
@@ -196,8 +192,11 @@ func effectInput(effect effectDraft) operationvalue.EffectInput {
 	return input
 }
 
-func (c *Contract) appendCallbackReleases(drafts []operationDraft) error {
-	pending := make([][]callbackReleaseRow, len(c.operations))
+func callbackReleaseInputs(drafts []operationDraft) ([]operationvalue.CallbackReleaseInput, error) {
+	if len(drafts) == 0 {
+		return nil, nil
+	}
+	inputs := make([]operationvalue.CallbackReleaseInput, 0)
 	for draftIndex := range drafts {
 		for callbackIndex := range drafts[draftIndex].callbacks {
 			callback := drafts[draftIndex].callbacks[callbackIndex]
@@ -205,86 +204,16 @@ func (c *Contract) appendCallbackReleases(drafts []operationDraft) error {
 				continue
 			}
 			if callback.sealed == 0 || callback.release.operation == 0 ||
-				uint64(callback.release.operation) > uint64(len(pending)) {
-				return errors.New("target: unresolved callback release")
+				uint64(callback.release.operation) > uint64(len(drafts)) {
+				return nil, errors.New("target: unresolved callback release")
 			}
-			pending[uint32(callback.release.operation)-1] = append(
-				pending[uint32(callback.release.operation)-1],
-				callbackReleaseRow{
-					callback: callback.sealed, operation: callback.release.operation,
-					input: callback.release.input, outcome: callback.release.outcome,
-					mode: callback.release.mode, zeroBehavior: callback.release.zeroBehavior,
-					zeroOutcome: callback.release.zeroOutcome,
-				},
-			)
+			inputs = append(inputs, operationvalue.CallbackReleaseInput{
+				Callback: callback.sealed, Operation: callback.release.operation,
+				Input: callback.release.input, Outcome: callback.release.outcome,
+				Mode: callback.release.mode, ZeroBehavior: callback.release.zeroBehavior,
+				ZeroOutcome: callback.release.zeroOutcome,
+			})
 		}
 	}
-	for operation := range pending {
-		releases := pending[operation]
-		if len(releases) == 0 {
-			continue
-		}
-		sort.Slice(releases, func(left, right int) bool {
-			return compareCallbackRelease(releases[left], releases[right]) < 0
-		})
-		for index := 1; index < len(releases); index++ {
-			if releases[index-1].callback == releases[index].callback {
-				return errors.New("target: callback has duplicate release")
-			}
-		}
-		rangeOut, err := checkedStoredRange("callback release table", len(c.callbackReleases), len(releases))
-		if err != nil {
-			return err
-		}
-		c.operations[operation].releases = rangeOut
-		for _, release := range releases {
-			handle, handleErr := checkedStoredHandle("callback release table", len(c.callbackReleases))
-			if handleErr != nil {
-				return handleErr
-			}
-			c.callbackReleases = append(c.callbackReleases, release)
-			c.callbacks[uint32(release.callback)-1].release = handle
-		}
-	}
-	return nil
-}
-
-func compareCallbackRelease(left, right callbackReleaseRow) int {
-	if left.callback < right.callback {
-		return -1
-	}
-	if left.callback > right.callback {
-		return 1
-	}
-	if left.input < right.input {
-		return -1
-	}
-	if left.input > right.input {
-		return 1
-	}
-	if left.outcome < right.outcome {
-		return -1
-	}
-	if left.outcome > right.outcome {
-		return 1
-	}
-	if left.mode < right.mode {
-		return -1
-	}
-	if left.mode > right.mode {
-		return 1
-	}
-	if left.zeroBehavior < right.zeroBehavior {
-		return -1
-	}
-	if left.zeroBehavior > right.zeroBehavior {
-		return 1
-	}
-	if left.zeroOutcome < right.zeroOutcome {
-		return -1
-	}
-	if left.zeroOutcome > right.zeroOutcome {
-		return 1
-	}
-	return 0
+	return inputs, nil
 }

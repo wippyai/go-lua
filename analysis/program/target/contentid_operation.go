@@ -96,21 +96,21 @@ func encodeOperation(w *framing.Writer, c *Contract, op vocabulary.Operation) er
 		if err := w.Uint(uint64(id)); err != nil {
 			return err
 		}
-		source, found := c.callbackFunction(id)
+		source, found := c.Operations.CallbackSource(id)
 		if !found {
 			return errors.New("target: malformed callback source")
 		}
 		if err := encodeCoordinate(w, uint64(source.Kind), uint64(source.Ordinal)); err != nil {
 			return err
 		}
-		arguments, found := c.CallbackArguments(id)
+		arguments, found := c.Operations.CallbackArguments(id)
 		if !found {
 			return errors.New("target: malformed callback arguments")
 		}
 		if err := encodeValues(w, c, arguments); err != nil {
 			return err
 		}
-		admission, found := c.callbackAdmission(id)
+		admission, found := c.Operations.CallbackAdmission(id)
 		if !found || !admission.Available() {
 			return errors.New("target: malformed callback admission")
 		}
@@ -121,7 +121,7 @@ func encodeOperation(w *framing.Writer, c *Contract, op vocabulary.Operation) er
 			flowkind.OutcomeNormal, flowkind.OutcomeReturn, flowkind.OutcomeThrow,
 			flowkind.OutcomeYield, flowkind.OutcomeCancel,
 		} {
-			values, found := c.CallbackOutcome(id, kind)
+			values, found := c.Operations.CallbackOutcome(id, kind)
 			if !found {
 				return errors.New("target: malformed callback outcome")
 			}
@@ -158,7 +158,7 @@ func encodeOperation(w *framing.Writer, c *Contract, op vocabulary.Operation) er
 				return err
 			}
 		}
-		releaseOperation, releaseInput, releaseOutcome, releaseMode, hasRelease := c.callbackRelease(id)
+		releaseOperation, releaseInput, releaseOutcome, releaseMode, hasRelease := c.Operations.CallbackRelease(id)
 		if err := w.Bool(hasRelease); err != nil {
 			return err
 		}
@@ -178,7 +178,7 @@ func encodeOperation(w *framing.Writer, c *Contract, op vocabulary.Operation) er
 			if err := w.Uint(uint64(releaseMode)); err != nil {
 				return err
 			}
-			zeroBehavior, zeroOutcome, zeroOK := c.callbackReleaseZero(id)
+			zeroBehavior, zeroOutcome, zeroOK := c.Operations.CallbackReleaseZero(id)
 			if !zeroOK || !vocabulary.ValidCallbackReleaseZeroBehavior(zeroBehavior) {
 				return errors.New("target: malformed callback release zero behavior")
 			}

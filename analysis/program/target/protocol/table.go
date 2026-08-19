@@ -4,8 +4,8 @@ import (
 	"errors"
 	"fmt"
 
-	sealedrows "github.com/wippyai/go-lua/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	sealedrows "github.com/wippyai/go-lua/internal/rows"
 )
 
 // Table is the sealed protocol value composed into target.Contract. Its row

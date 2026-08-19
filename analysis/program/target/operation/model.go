@@ -2,9 +2,9 @@ package operation
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/target/exactkey"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	"github.com/wippyai/go-lua/internal/rows"
 )
 
 // Input is neutral operation geometry accepted after Target has validated its
@@ -46,7 +46,11 @@ type OutcomeInput struct {
 // and by Target's callback relation. Source is the zero-based callback
 // authoring coordinate; the canonical callback ID is issued by Core.
 type CallbackInput struct {
-	Source    int
+	Source int
+	// Function is the callback's callable input coordinate. Source remains the
+	// authoring coordinate used to resolve callback references; Function is the
+	// published callback declaration.
+	Function  vocabulary.InputSource
 	Lifecycle vocabulary.CallbackLifecycle
 }
 
@@ -93,6 +97,7 @@ type callbackRow struct {
 	id        vocabulary.CallbackID
 	owner     vocabulary.Operation
 	source    int
+	function  vocabulary.InputSource
 	ordinal   uint32
 	lifecycle vocabulary.CallbackLifecycle
 }

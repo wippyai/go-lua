@@ -612,16 +612,16 @@ func TestOpaqueCallbackIsExplicitlyConservative(t *testing.T) {
 	contract := mustSeal(t, Spec{})
 	op, ok := contract.Operations.Opaque()
 	callback, callbackOK := contract.Operations.CallbackAt(op, 0)
-	if !ok || !callbackOK || !contract.callbackOpaque(callback) || contract.Operations.SubedgeCount(op) != 0 {
-		t.Fatalf("opaque callback = op:%d/%v callback:%d/%v opaque:%v subedges:%d", op, ok, callback, callbackOK, contract.callbackOpaque(callback), contract.Operations.SubedgeCount(op))
+	if !ok || !callbackOK || !contract.Operations.CallbackOpaque(callback) || contract.Operations.SubedgeCount(op) != 0 {
+		t.Fatalf("opaque callback = op:%d/%v callback:%d/%v opaque:%v subedges:%d", op, ok, callback, callbackOK, contract.Operations.CallbackOpaque(callback), contract.Operations.SubedgeCount(op))
 	}
-	arguments, argumentsOK := contract.CallbackArguments(callback)
+	arguments, argumentsOK := contract.Operations.CallbackArguments(callback)
 	input, inputOK := contract.Operations.Input(op)
 	if !argumentsOK || !inputOK || arguments != input {
 		t.Fatalf("opaque callback arguments = %d/%v input=%d/%v", arguments, argumentsOK, input, inputOK)
 	}
 	for _, kind := range []flowkind.OutcomeKind{flowkind.OutcomeNormal, flowkind.OutcomeReturn, flowkind.OutcomeThrow, flowkind.OutcomeYield, flowkind.OutcomeCancel} {
-		values, found := contract.CallbackOutcome(callback, kind)
+		values, found := contract.Operations.CallbackOutcome(callback, kind)
 		if !found || values != input {
 			t.Fatalf("opaque callback terminal %d = %d/%v", kind, values, found)
 		}

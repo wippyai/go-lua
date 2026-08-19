@@ -87,7 +87,7 @@ func TestProducedCallbackCaptureRemapsToSealedID(t *testing.T) {
 	if !ok || callback == 0 {
 		t.Fatal("missing sealed callback")
 	}
-	functionSource, ok := contract.callbackFunction(callback)
+	functionSource, ok := contract.Operations.CallbackSource(callback)
 	if !ok || functionSource.Kind != vocabulary.InputSourceValueFormal || functionSource.Ordinal != 0 {
 		t.Fatalf("callback function = %#v/%v", functionSource, ok)
 	}

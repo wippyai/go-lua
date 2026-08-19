@@ -8,10 +8,10 @@ package boot
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	sealedrows "github.com/wippyai/go-lua/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/target/exactkey"
 	"github.com/wippyai/go-lua/analysis/program/target/operation"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	sealedrows "github.com/wippyai/go-lua/internal/rows"
 )
 
 // Input is the complete immutable input to Compile. ExactKeys is the target

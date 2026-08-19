@@ -75,7 +75,7 @@ func censusFromReadSurface(t *testing.T, contract *Contract) map[schema.EntryID]
 					add(ids.TargetPublicationEffect, 1)
 				}
 			}
-			if _, _, _, _, found := contract.callbackRelease(callback); found {
+			if _, _, _, _, found := contract.Operations.CallbackRelease(callback); found {
 				add(ids.TargetCallbackRelease, 1)
 			}
 		}

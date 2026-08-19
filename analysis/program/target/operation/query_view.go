@@ -478,6 +478,91 @@ func (core Core) CallbackEffectPublication(callback vocabulary.CallbackID, index
 	return effect.publication, true
 }
 
+// CallbackArguments returns the canonical Values endpoint owned by one
+// callback correspondence.
+func (core Core) CallbackArguments(callback vocabulary.CallbackID) (vocabulary.Values, bool) {
+	row, ok := core.callbackQuery(callback)
+	if !ok || !row.valuesSet {
+		return 0, false
+	}
+	return row.arguments, true
+}
+
+// CallbackOutcome returns the canonical Values endpoint for one callback
+// activation terminal.
+func (core Core) CallbackOutcome(callback vocabulary.CallbackID, kind flowkind.OutcomeKind) (vocabulary.Values, bool) {
+	index, valid := vocabulary.CrossActivationOutcomeIndex(kind)
+	if !valid {
+		return 0, false
+	}
+	row, ok := core.callbackQuery(callback)
+	if !ok || !row.valuesSet {
+		return 0, false
+	}
+	return row.outcomes[index], true
+}
+
+// CallbackAdmission returns the callback's sealed callable convention.
+func (core Core) CallbackAdmission(callback vocabulary.CallbackID) (schematype.CallableAdmission, bool) {
+	row, ok := core.callbackQuery(callback)
+	if !ok || !row.valuesSet {
+		return schematype.CallableAdmissionInvalid, false
+	}
+	return row.admission, true
+}
+
+// CallbackRelease returns the explicit retained-callback release, if one was
+// authored. The release row is owned by the operation query plane.
+func (core Core) CallbackRelease(callback vocabulary.CallbackID) (vocabulary.Operation, vocabulary.ValueFormal, uint32, vocabulary.CallbackReleaseMode, bool) {
+	row, ok := core.callbackQuery(callback)
+	if !ok || row.release == 0 || int(row.release) > len(core.query.callbackReleases) {
+		return 0, 0, 0, vocabulary.CallbackReleaseInvalid, false
+	}
+	release := core.query.callbackReleases[row.release-1]
+	if release.callback != callback {
+		return 0, 0, 0, vocabulary.CallbackReleaseInvalid, false
+	}
+	return release.operation, release.input, release.outcome, release.mode, true
+}
+
+// CallbackReleaseZero returns the zero-holder arm of an explicit retained
+// callback release.
+func (core Core) CallbackReleaseZero(callback vocabulary.CallbackID) (vocabulary.CallbackReleaseZeroBehavior, uint32, bool) {
+	row, ok := core.callbackQuery(callback)
+	if !ok || row.release == 0 || int(row.release) > len(core.query.callbackReleases) {
+		return vocabulary.CallbackReleaseZeroInvalid, 0, false
+	}
+	release := core.query.callbackReleases[row.release-1]
+	if release.callback != callback || !vocabulary.ValidCallbackReleaseZeroBehavior(release.zeroBehavior) {
+		return vocabulary.CallbackReleaseZeroInvalid, 0, false
+	}
+	return release.zeroBehavior, release.zeroOutcome, true
+}
+
+// CallbackReleaseCount reports the reverse release range owned by one
+// source-visible operation.
+func (core Core) CallbackReleaseCount(op vocabulary.Operation) int {
+	row, ok := core.queryOperation(op)
+	if !ok {
+		return 0
+	}
+	return row.callbackReleases.len()
+}
+
+// CallbackReleaseAt returns one release in an operation's canonical reverse
+// range.
+func (core Core) CallbackReleaseAt(op vocabulary.Operation, index int) (vocabulary.CallbackID, vocabulary.ValueFormal, uint32, vocabulary.CallbackReleaseMode, bool) {
+	row, ok := core.queryOperation(op)
+	if !ok || index < 0 || index >= row.callbackReleases.len() {
+		return 0, 0, 0, vocabulary.CallbackReleaseInvalid, false
+	}
+	release := core.query.callbackReleases[row.callbackReleases.start+index]
+	if release.operation != op {
+		return 0, 0, 0, vocabulary.CallbackReleaseInvalid, false
+	}
+	return release.callback, release.input, release.outcome, release.mode, true
+}
+
 func (core Core) callbackQuery(callback vocabulary.CallbackID) (queryCallbackRow, bool) {
 	if callback == 0 || int(callback) > len(core.query.callbacks) {
 		return queryCallbackRow{}, false

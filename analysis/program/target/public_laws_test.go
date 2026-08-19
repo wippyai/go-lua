@@ -309,9 +309,9 @@ func writeOperationSnapshot(t *testing.T, out *strings.Builder, contract *Contra
 	for index := 0; index < contract.Operations.CallbackCount(op); index++ {
 		callback, callbackOK := contract.Operations.CallbackAt(op, index)
 		owner, ownerOK := contract.Operations.CallbackOwner(callback)
-		function, functionOK := contract.callbackFunction(callback)
-		arguments, argumentsOK := contract.CallbackArguments(callback)
-		admission, admissionOK := contract.callbackAdmission(callback)
+		function, functionOK := contract.Operations.CallbackSource(callback)
+		arguments, argumentsOK := contract.Operations.CallbackArguments(callback)
+		admission, admissionOK := contract.Operations.CallbackAdmission(callback)
 		lifecycle, lifecycleOK := contract.Operations.CallbackLifecycle(callback)
 		subedge, subedgeOK := contract.Operations.CallbackSubedge(callback)
 		fmt.Fprintf(out, "callback[%d]=%d/%v:owner=%d/%v,function=%d/%d/%v,args=%d/%v,admission=%d/%v,lifecycle=%d/%v;",
@@ -322,7 +322,7 @@ func writeOperationSnapshot(t *testing.T, out *strings.Builder, contract *Contra
 			flowkind.OutcomeNormal, flowkind.OutcomeReturn, flowkind.OutcomeThrow,
 			flowkind.OutcomeYield, flowkind.OutcomeCancel,
 		} {
-			values, ok := contract.CallbackOutcome(callback, kind)
+			values, ok := contract.Operations.CallbackOutcome(callback, kind)
 			fmt.Fprintf(out, "callback-outcome[%d]=%d/%v;", kind, values, ok)
 		}
 		tail, rowVar, tailOK := contract.Operations.CallbackEffectTail(callback)
@@ -332,14 +332,14 @@ func writeOperationSnapshot(t *testing.T, out *strings.Builder, contract *Contra
 			fmt.Fprintf(out, "callback-effect[%d]=target:%d/%v;", effect, target, targetOK)
 			writeCallbackEffectArguments(out, contract, callback, effect)
 		}
-		releaseOperation, releaseInput, releaseOutcome, releaseMode, releaseOK := contract.callbackRelease(callback)
+		releaseOperation, releaseInput, releaseOutcome, releaseMode, releaseOK := contract.Operations.CallbackRelease(callback)
 		fmt.Fprintf(out, "callback-release=%d/%d/%d/%d/%v;", releaseOperation, releaseInput, releaseOutcome, releaseMode, releaseOK)
-		zeroBehavior, zeroOutcome, zeroOK := contract.callbackReleaseZero(callback)
+		zeroBehavior, zeroOutcome, zeroOK := contract.Operations.CallbackReleaseZero(callback)
 		fmt.Fprintf(out, "callback-release-zero=%d/%d/%v;", zeroBehavior, zeroOutcome, zeroOK)
 	}
 	writeSubedgeSnapshot(out, contract, op)
-	for release := 0; release < contract.callbackReleaseCount(op); release++ {
-		callback, input, outcome, mode, releaseOK := contract.callbackReleaseAt(op, release)
+	for release := 0; release < contract.Operations.CallbackReleaseCount(op); release++ {
+		callback, input, outcome, mode, releaseOK := contract.Operations.CallbackReleaseAt(op, release)
 		fmt.Fprintf(out, "release[%d]=%d/%d/%d/%d/%v;", release, callback, input, outcome, mode, releaseOK)
 	}
 	for index := 0; index < contract.Operations.EffectCount(op); index++ {

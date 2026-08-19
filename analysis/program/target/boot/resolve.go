@@ -4,11 +4,11 @@ import (
 	"errors"
 	"sort"
 
-	sealedrows "github.com/wippyai/go-lua/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/target/exactkey"
 	"github.com/wippyai/go-lua/analysis/program/target/operation"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	sealedrows "github.com/wippyai/go-lua/internal/rows"
 )
 
 type valueDraft struct {

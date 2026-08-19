@@ -522,7 +522,7 @@ func (s *ClassSet) addOperation(contract *target.Contract, operation vocabulary.
 		if !ok {
 			return errors.New("static: malformed callback")
 		}
-		values, ok := contract.CallbackArguments(callback)
+		values, ok := contract.Operations.CallbackArguments(callback)
 		if !ok {
 			return errors.New("static: callback arguments unavailable")
 		}
@@ -530,7 +530,7 @@ func (s *ClassSet) addOperation(contract *target.Contract, operation vocabulary.
 			return err
 		}
 		for _, kind := range kinds {
-			if values, found := contract.CallbackOutcome(callback, kind); found {
+			if values, found := contract.Operations.CallbackOutcome(callback, kind); found {
 				if err := s.addValues(contract, values); err != nil {
 					return err
 				}

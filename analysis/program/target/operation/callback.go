@@ -51,6 +51,9 @@ func (core Core) CallbackSource(id vocabulary.CallbackID) (vocabulary.InputSourc
 	if opaque, opaqueOK := core.Opaque(); opaqueOK && row.owner == opaque {
 		return vocabulary.InputSource{Kind: vocabulary.InputSourceAllInputs}, true
 	}
+	if row.function.Kind != 0 {
+		return row.function, true
+	}
 	return vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: uint32(row.source)}, true
 }
 
@@ -60,6 +63,14 @@ func (core Core) CallbackLifecycle(id vocabulary.CallbackID) (vocabulary.Callbac
 		return 0, false
 	}
 	return row.lifecycle, true
+}
+
+// CallbackOpaque reports whether the callback belongs to the synthesized
+// opaque operation. The owner and opaque handles are both issued by Core.
+func (core Core) CallbackOpaque(id vocabulary.CallbackID) bool {
+	owner, ownerOK := core.CallbackOwner(id)
+	opaque, opaqueOK := core.Opaque()
+	return ownerOK && opaqueOK && owner == opaque
 }
 
 func (core Core) callback(id vocabulary.CallbackID) (callbackRow, bool) {
