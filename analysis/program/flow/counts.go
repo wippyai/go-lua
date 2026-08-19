@@ -125,6 +125,21 @@ func CountRows(view View) (denominator.CountRows, error) {
 		return denominator.CountRows{}, errFlowCounts
 	}
 	transfers := view.Causal().Edges().Count()
+	bodies := view.Body()
+	if bodies == nil {
+		return denominator.CountRows{}, errFlowCounts
+	}
+	bodyRoots := 0
+	for ordinal := 1; ordinal <= bodies.BodyCount(); ordinal++ {
+		bodyTerm, bodyOK := bodies.BodyAt(ordinal - 1)
+		if !bodyOK || bodyTerm != keyspace.MakeTerm(keyspace.FamilyBody, uint32(ordinal)) {
+			return denominator.CountRows{}, errFlowCounts
+		}
+		rootCount, rootOK := bodies.RootCount(bodyTerm)
+		if !rootOK || !addFlowCount(&bodyRoots, rootCount) {
+			return denominator.CountRows{}, errFlowCounts
+		}
+	}
 	ids := denominator.GeneratedProgramFlowIDs()
 	valuesToPublish := []struct {
 		id    schema.EntryID
@@ -163,6 +178,7 @@ func CountRows(view View) (denominator.CountRows, error) {
 		{ids.ProgramFlowTypeValue, authoredView.TypeValues().Count()},
 		{ids.ProgramFlowOutcome, view.Outcomes().Count()},
 		{ids.ProgramFlowTransfer, transfers},
+		{ids.ProgramFlowBodyRoots, bodyRoots},
 	}
 	rows := make([]denominator.CountRow, 0, len(valuesToPublish))
 	for _, value := range valuesToPublish {

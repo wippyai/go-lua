@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow/authored"
+	"github.com/wippyai/go-lua/analysis/program/flow/body"
 	"github.com/wippyai/go-lua/analysis/program/flow/containment"
 	"github.com/wippyai/go-lua/analysis/program/flow/semanticpath"
 	"github.com/wippyai/go-lua/analysis/program/flow/sourcecontrol"
@@ -18,6 +19,7 @@ import (
 func Seal(
 	sourceView source.View,
 	flow authored.View,
+	bodies *body.Result,
 	forest *containment.Result,
 	control *sourcecontrol.Result,
 	staticID identity.ContentID,
@@ -27,11 +29,11 @@ func Seal(
 	if paths == nil {
 		return nil, errors.New("program/flow/executable: semantic-path certificate unavailable")
 	}
-	input, err := validateInputs(sourceView, flow, forest, control, staticID, moduleID)
+	input, err := validateInputs(sourceView, flow, bodies, forest, control, staticID, moduleID)
 	if err != nil {
 		return nil, err
 	}
-	seed, err := seedRoots(sourceView, forest, control, input)
+	seed, err := seedRoots(bodies, forest, control, input)
 	if err != nil {
 		return nil, err
 	}

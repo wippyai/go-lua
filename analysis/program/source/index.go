@@ -10,24 +10,11 @@ func installIndex(a *authority, input IndexInput) error {
 	if a == nil || !input.SourceID.Available() || input.SourceID != a.content {
 		return errors.New("program/source: Index Source identity disagrees with authored authority")
 	}
-	if len(input.Bodies) != a.count(keyspace.FamilyBody) ||
-		!a.validFamilyTerm(input.Entry, keyspace.FamilyBody) {
-		return errors.New("program/source: incomplete Body index")
-	}
 	var next indexStore
-	next.rootRanges = make([]termRange, a.count(keyspace.FamilyBody))
-	next.parents = make([]keyspace.Term, a.count(keyspace.FamilyBody))
-	if err := installBodyRoots(a, &next, input.Bodies); err != nil {
-		return err
-	}
-	locations, err := buildDirectLocations(a, &next)
+	locations, err := buildDirectLocations(a, input.Positions)
 	if err != nil {
 		return err
 	}
-	if err := validateBodyForest(a, &next, locations, input.Entry); err != nil {
-		return err
-	}
-	next.entry = input.Entry
 	if err := installOutcomeIdentity(a, input.OutcomeOrigins); err != nil {
 		return err
 	}
@@ -65,30 +52,5 @@ func installOutcomeIdentity(a *authority, origins []keyspace.Term) error {
 	a.identity.counts[keyspace.FamilyOutcome] = uint32(len(spans))
 	a.identity.spans[keyspace.FamilyOutcome] = spans
 	a.identity.termCount += uint32(len(spans))
-	return nil
-}
-
-func installBodyRoots(a *authority, index *indexStore, rows []BodyRoots) error {
-	for ordinal, row := range rows {
-		if !a.validFamilyTerm(row.Body, keyspace.FamilyBody) || keyspace.TermOrdinal(row.Body) != uint32(ordinal+1) {
-			return errors.New("program/source: invalid indexed Body")
-		}
-		if (row.Parent != 0 && !a.validFamilyTerm(row.Parent, keyspace.FamilyBody)) || row.Parent == row.Body {
-			return errors.New("program/source: invalid Body parent")
-		}
-		start := len(index.rootTerms)
-		for _, root := range row.Roots {
-			if !a.validTerm(root) {
-				return errors.New("program/source: invalid statement root")
-			}
-			index.rootTerms = append(index.rootTerms, root)
-		}
-		r, ok := makeRange(start, len(row.Roots))
-		if !ok {
-			return errors.New("program/source: Body root range overflow")
-		}
-		index.rootRanges[ordinal] = r
-		index.parents[ordinal] = row.Parent
-	}
 	return nil
 }

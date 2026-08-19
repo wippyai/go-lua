@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow/authored"
+	"github.com/wippyai/go-lua/analysis/program/flow/body"
 	"github.com/wippyai/go-lua/analysis/program/flow/containment"
 	"github.com/wippyai/go-lua/analysis/program/flow/sourcecontrol"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
@@ -23,13 +24,14 @@ type validated struct {
 func validateInputs(
 	sourceView source.View,
 	flow authored.View,
+	bodies *body.Result,
 	forest *containment.Result,
 	control *sourcecontrol.Result,
 	staticID identity.ContentID,
 	moduleID identity.ContentID,
 ) (validated, error) {
 	var out validated
-	if forest == nil || control == nil {
+	if bodies == nil || forest == nil || control == nil {
 		return out, errors.New("program/flow/executable: structural owner is unavailable")
 	}
 	identity := sourceView.Identity()
@@ -42,6 +44,9 @@ func validateInputs(
 	}
 	flowID := flow.Cold().ContentID()
 	out.flow = flowID
+	if !body.Matches(bodies, out.source, flowID) {
+		return out, errors.New("program/flow/executable: Body provenance disagrees with Source or Flow")
+	}
 	if !staticID.Available() || !moduleID.Available() {
 		return out, errors.New("program/flow/executable: Static or Module identity is unavailable")
 	}
@@ -83,7 +88,7 @@ func validateInputs(
 	if err := validateContainmentDenominator(forest, out.counts); err != nil {
 		return out, err
 	}
-	entry, err := validateBodyRoots(sourceView, forest, control, out.counts)
+	entry, err := validateBodyRoots(bodies, forest, control, out.counts)
 	if err != nil {
 		return out, err
 	}
@@ -215,7 +220,7 @@ func validateContainmentDenominator(forest *containment.Result, counts [keyspace
 }
 
 func validateBodyRoots(
-	sourceView source.View,
+	bodies *body.Result,
 	forest *containment.Result,
 	control *sourcecontrol.Result,
 	counts [keyspace.FamilyCount]uint32,
@@ -224,19 +229,21 @@ func validateBodyRoots(
 	if bodyCount == 0 {
 		return 0, errors.New("program/flow/executable: Body denominator is empty")
 	}
-	index := sourceView.Index()
-	var entry keyspace.Term
+	entry, entryOK := bodies.Entry()
+	if !entryOK {
+		return 0, errors.New("program/flow/executable: Entry Body is unavailable")
+	}
 	var entryCount uint32
 	for ordinal := uint32(1); ordinal <= bodyCount; ordinal++ {
 		body := keyspace.MakeTerm(keyspace.FamilyBody, ordinal)
 		forestParent, forestHasParent := forest.Parent(body)
-		sourceParent, sourceHasParent := index.BodyParent(body)
-		if sourceHasParent != forestHasParent || (sourceHasParent && sourceParent != forestParent) {
+		bodyParent, bodyHasParent := bodies.Parent(body)
+		if bodyHasParent != forestHasParent || (bodyHasParent && bodyParent != forestParent) {
 			return 0, errors.New("program/flow/executable: Body parent disagrees with containment")
 		}
-		if sourceHasParent && (keyspace.TermFamily(sourceParent) != keyspace.FamilyBody ||
-			sourceParent == body || keyspace.TermOrdinal(sourceParent) > bodyCount) {
-			return 0, errors.New("program/flow/executable: malformed Source Body parent")
+		if bodyHasParent && (keyspace.TermFamily(bodyParent) != keyspace.FamilyBody ||
+			bodyParent == body || keyspace.TermOrdinal(bodyParent) > bodyCount) {
+			return 0, errors.New("program/flow/executable: malformed Body parent")
 		}
 		if forestHasParent {
 			parent := forestParent
@@ -245,18 +252,17 @@ func validateBodyRoots(
 				return 0, errors.New("program/flow/executable: malformed Body parent")
 			}
 		} else {
-			if entry != 0 {
+			if body != entry {
 				return 0, errors.New("program/flow/executable: multiple Entry Bodies")
 			}
-			entry = body
 			entryCount++
 		}
-		length, ok := index.BodyRootLen(body)
+		length, ok := bodies.RootCount(body)
 		if !ok || length < 0 {
 			return 0, errors.New("program/flow/executable: canonical Body roots are unavailable")
 		}
 		for cursor := 0; cursor < length; cursor++ {
-			root, rootOK := index.BodyRootAt(body, cursor)
+			root, rootOK := bodies.RootAt(body, cursor)
 			if !rootOK || !validTerm(root, counts) {
 				return 0, errors.New("program/flow/executable: malformed canonical Body root")
 			}

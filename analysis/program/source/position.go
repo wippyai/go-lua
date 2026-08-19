@@ -56,7 +56,7 @@ func installPositions(a *authority, index *indexStore, locations directLocations
 		if row.Term == row.Root {
 			directCounts[family]++
 		}
-		if err := validateFrontier(index, row, location); err != nil {
+		if err := validateFrontier(row, location); err != nil {
 			return err
 		}
 		entries[position] = positionEntry{
@@ -92,11 +92,11 @@ func installPositions(a *authority, index *indexStore, locations directLocations
 	return nil
 }
 
-func validateFrontier(index *indexStore, row Position, location directLocation) error {
+func validateFrontier(row Position, location directLocation) error {
 	// Flow's position seal supplies Repeat's kind and the exact Loop-to-child
 	// selection. Source validates only the owner-local geometry represented by
-	// this row: a direct Loop root, a Body child of the containing Body, and the
-	// selected child's sealed root-tail cursor. It does not infer which of two
+	// this row: a direct Loop root and a frontier Body distinct from the direct
+	// root owner. It does not infer the parent/root facts or which of two
 	// same-owner Body children Flow selected.
 	if !row.Repeat {
 		// A non-direct row inherits all six position fields from its direct
@@ -111,87 +111,8 @@ func validateFrontier(index *indexStore, row Position, location directLocation) 
 		}
 		return nil
 	}
-	if keyspace.TermFamily(row.Root) != keyspace.FamilyLoop || row.FrontierBody == location.body ||
-		int(keyspace.TermOrdinal(row.FrontierBody)) > len(index.parents) ||
-		index.parents[keyspace.TermOrdinal(row.FrontierBody)-1] != location.body {
+	if keyspace.TermFamily(row.Root) != keyspace.FamilyLoop || row.FrontierBody == location.body {
 		return errors.New("program/source: invalid Repeat source frontier")
-	}
-	r := index.rootRanges[keyspace.TermOrdinal(row.FrontierBody)-1]
-	if row.FrontierCursor != r.end-r.start {
-		return errors.New("program/source: invalid Repeat frontier cursor")
-	}
-	return nil
-}
-
-func validateBodyForest(a *authority, index *indexStore, locations directLocations, entry keyspace.Term) error {
-	if a == nil || index == nil || !a.validFamilyTerm(entry, keyspace.FamilyBody) {
-		return errors.New("program/source: invalid entry Body")
-	}
-	entryOrdinal := keyspace.TermOrdinal(entry) - 1
-	rootCount := 0
-	for ordinal, parent := range index.parents {
-		body := keyspace.MakeTerm(keyspace.FamilyBody, uint32(ordinal+1))
-		location, direct := locations.lookup(body)
-		if parent == 0 {
-			rootCount++
-			if body != entry {
-				return errors.New("program/source: non-entry root Body")
-			}
-			if direct {
-				return errors.New("program/source: Entry Body has direct source occurrence")
-			}
-			continue
-		}
-		// A lexical Body parent is supplied by Flow's sealed Body forest. A
-		// child Body may be represented only by a typed Function/Branch/Loop
-		// witness, so it need not also occur as a direct Source term. When a
-		// direct Body occurrence does exist, the sealed forest projection must
-		// agree with that Source-owned witness.
-		if direct && location.body != parent {
-			return errors.New("program/source: direct Body parent mismatch")
-		}
-	}
-	if rootCount != 1 || index.parents[entryOrdinal] != 0 {
-		return errors.New("program/source: invalid Body root")
-	}
-	state := make([]uint8, len(index.parents))
-	for start := range index.parents {
-		if state[start] != 0 {
-			continue
-		}
-		path := make([]uint32, 0, 4)
-		for current := uint32(start); ; {
-			if int(current) >= len(index.parents) {
-				return errors.New("program/source: invalid Body parent ordinal")
-			}
-			switch state[current] {
-			case 1:
-				return errors.New("program/source: cyclic Body parent")
-			case 2:
-				for _, visited := range path {
-					state[visited] = 2
-				}
-			default:
-				state[current] = 1
-				path = append(path, current)
-				parent := index.parents[current]
-				if parent == 0 {
-					if current != entryOrdinal {
-						return errors.New("program/source: Body forest does not reach entry")
-					}
-					for _, visited := range path {
-						state[visited] = 2
-					}
-					path = nil
-				}
-				if path == nil {
-					break
-				}
-				current = keyspace.TermOrdinal(parent) - 1
-				continue
-			}
-			break
-		}
 	}
 	return nil
 }
@@ -201,41 +122,51 @@ func validateBodyForest(a *authority, index *indexStore, locations directLocatio
 // already proved that those occurrences are valid and unique, so Commit need
 // not allocate a second membership plane for every identity ordinal. The rows
 // are discarded after position installation.
-func buildDirectLocations(a *authority, index *indexStore) (directLocations, error) {
+func buildDirectLocations(a *authority, positions []Position) (directLocations, error) {
+	if a == nil {
+		return directLocations{}, errors.New("program/source: invalid Source authority")
+	}
 	var result directLocations
-	for _, sourceRange := range a.order.bodyRanges {
+	for _, row := range positions {
+		if row.Term != row.Root {
+			continue
+		}
+		if !a.validDirectBodyTerm(row.Term) || !a.validFamilyTerm(row.Body, keyspace.FamilyBody) ||
+			row.Offset > keyspace.MaxTermOrdinal || row.Cursor > keyspace.MaxTermOrdinal {
+			return directLocations{}, errors.New("program/source: invalid direct source position")
+		}
+		bodyRange := a.order.bodyRanges[keyspace.TermOrdinal(row.Body)-1]
+		if !validRange(a.order.sourceTerms, bodyRange) || uint64(row.Offset) >= uint64(bodyRange.end-bodyRange.start) ||
+			a.order.sourceTerms[bodyRange.start+row.Offset] != row.Term {
+			return directLocations{}, errors.New("program/source: direct source position disagrees with authored order")
+		}
+		family := keyspace.TermFamily(row.Term)
+		location := directLocation{term: row.Term, body: row.Body, offset: row.Offset, cursor: row.Cursor}
+		if err := result[family].add(keyspace.TermOrdinal(row.Term), location); err != nil {
+			return directLocations{}, err
+		}
+	}
+	var expected [keyspace.FamilyCount]int
+	for bodyOrdinal, sourceRange := range a.order.bodyRanges {
 		if !validRange(a.order.sourceTerms, sourceRange) {
 			return directLocations{}, errors.New("program/source: invalid Body source range")
 		}
-		for _, term := range a.order.sourceTerms[sourceRange.start:sourceRange.end] {
+		body := keyspace.MakeTerm(keyspace.FamilyBody, uint32(bodyOrdinal+1))
+		for offset, term := range a.order.sourceTerms[sourceRange.start:sourceRange.end] {
 			family := keyspace.TermFamily(term)
 			if !a.validDirectBodyTerm(term) || family == keyspace.FamilyInvalid {
 				return directLocations{}, errors.New("program/source: invalid direct source Term")
 			}
+			expected[family]++
+			location, ok := result.lookup(term)
+			if !ok || location.body != body || location.offset != uint32(offset) {
+				return directLocations{}, errors.New("program/source: direct source Term lacks position")
+			}
 		}
 	}
-	for bodyOrdinal, sourceRange := range a.order.bodyRanges {
-		rootRange := index.rootRanges[bodyOrdinal]
-		rootAt := uint32(0)
-		cursor := uint32(0)
-		for offset, term := range a.order.sourceTerms[sourceRange.start:sourceRange.end] {
-			family := keyspace.TermFamily(term)
-			location := directLocation{
-				term:   term,
-				body:   keyspace.MakeTerm(keyspace.FamilyBody, uint32(bodyOrdinal+1)),
-				offset: uint32(offset),
-				cursor: cursor,
-			}
-			if err := result[family].add(keyspace.TermOrdinal(term), location); err != nil {
-				return directLocations{}, err
-			}
-			if rootAt < rootRange.end-rootRange.start && index.rootTerms[rootRange.start+rootAt] == term {
-				rootAt++
-				cursor++
-			}
-		}
-		if rootAt != rootRange.end-rootRange.start {
-			return directLocations{}, errors.New("program/source: unordered or non-direct statement root")
+	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
+		if expected[family] != len(result[family].rows) {
+			return directLocations{}, errors.New("program/source: direct source position has no authored occurrence")
 		}
 	}
 	return result, nil

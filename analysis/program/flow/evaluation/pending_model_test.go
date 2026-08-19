@@ -157,7 +157,7 @@ func TestSealPendingCommittedSourceRootsAndProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("semanticpath.Seal: %v", err)
 	}
-	executableResult, err := executable.Seal(sourceView, flowView, forest, controlResult, staticView.ContentID(), moduleFinalize.View().ContentID(), paths)
+	executableResult, err := executable.Seal(sourceView, flowView, bodies, forest, controlResult, staticView.ContentID(), moduleFinalize.View().ContentID(), paths)
 	if err != nil {
 		t.Fatalf("executable.Seal: %v", err)
 	}

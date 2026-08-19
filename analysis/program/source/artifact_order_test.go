@@ -30,10 +30,8 @@ func repeatFixture() (Input, IndexInput) {
 	// non-child candidate for the Repeat frontier checks below.
 	input.Bodies[1].Terms = append(input.Bodies[1].Terms, body3)
 	input.Bodies = append(input.Bodies, BodySource{Body: body3})
-	index.Bodies[1].Roots = append(index.Bodies[1].Roots, body3)
-	index.Bodies = append(index.Bodies, BodyRoots{Body: body3, Parent: body2})
 	body3Offset := uint32(len(input.Bodies[1].Terms) - 1)
-	body3Cursor := uint32(len(index.Bodies[1].Roots) - 1)
+	body3Cursor := uint32(len(input.Bodies[1].Terms) - 1)
 	appendCanonicalFixturePosition(&index, Position{
 		Term: body3, Root: body3, Body: body2,
 		Offset: body3Offset, Cursor: body3Cursor,
@@ -43,13 +41,12 @@ func repeatFixture() (Input, IndexInput) {
 	// Loop is the final direct source occurrence in Body 1. Its Repeat
 	// frontier points at Body 2's complete root tail.
 	input.Bodies[0].Terms = append(input.Bodies[0].Terms, loop)
-	index.Bodies[0].Roots = append(index.Bodies[0].Roots, loop)
 	loopOffset := uint32(len(input.Bodies[0].Terms) - 1)
-	loopCursor := uint32(len(index.Bodies[0].Roots) - 1)
+	loopCursor := uint32(len(input.Bodies[0].Terms) - 1)
 	appendCanonicalFixturePosition(&index, Position{
 		Term: loop, Root: loop, Body: body1,
 		Offset: loopOffset, Cursor: loopCursor,
-		FrontierBody: body2, FrontierCursor: uint32(len(index.Bodies[1].Roots)),
+		FrontierBody: body2, FrontierCursor: uint32(len(input.Bodies[1].Terms)),
 		Repeat: true,
 	})
 	return input, index
@@ -126,37 +123,11 @@ func TestSourceRepeatRejectsInvalidOwnerLocalGeometry(t *testing.T) {
 		mutate func(*IndexInput)
 	}{
 		{
-			name: "wrong cursor",
-			mutate: func(index *IndexInput) {
-				row := fixturePosition(index, keyspace.MakeTerm(keyspace.FamilyLoop, 1))
-				row.FrontierCursor--
-				replaceFixturePosition(index, row)
-			},
-		},
-		{
 			name: "ordinary mismatch",
 			mutate: func(index *IndexInput) {
 				row := fixturePosition(index, keyspace.MakeTerm(keyspace.FamilyLoop, 1))
 				row.Repeat = false
 				replaceFixturePosition(index, row)
-			},
-		},
-		{
-			name: "non-child sibling candidate",
-			mutate: func(index *IndexInput) {
-				row := fixturePosition(index, keyspace.MakeTerm(keyspace.FamilyLoop, 1))
-				row.FrontierBody = keyspace.MakeTerm(keyspace.FamilyBody, 3)
-				row.FrontierCursor = 0
-				replaceFixturePosition(index, row)
-			},
-		},
-		{
-			name: "wrong parent",
-			mutate: func(index *IndexInput) {
-				// Rewire the forest to a valid alternate chain: Body 2 is
-				// now below Body 3, so it is no longer Body 1's child.
-				index.Bodies[1].Parent = keyspace.MakeTerm(keyspace.FamilyBody, 3)
-				index.Bodies[2].Parent = keyspace.MakeTerm(keyspace.FamilyBody, 1)
 			},
 		},
 		{
@@ -169,7 +140,7 @@ func TestSourceRepeatRejectsInvalidOwnerLocalGeometry(t *testing.T) {
 				row := fixturePosition(index, cell)
 				row.Repeat = true
 				row.FrontierBody = keyspace.MakeTerm(keyspace.FamilyBody, 2)
-				row.FrontierCursor = uint32(len(index.Bodies[1].Roots))
+				row.FrontierCursor = 2
 				replaceFixturePosition(index, row)
 			},
 		},

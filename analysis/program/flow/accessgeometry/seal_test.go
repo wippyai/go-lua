@@ -161,7 +161,7 @@ func openAccessGeometryFixtureWithStaticTypeOfs(t *testing.T, name string, typeO
 		flowtest.CloseFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("semanticpath.Seal: %v", err)
 	}
-	proof, err := executable.Seal(sourceView, flowView, forest, controlProof, staticID, moduleID, paths)
+	proof, err := executable.Seal(sourceView, flowView, bodies, forest, controlProof, staticID, moduleID, paths)
 	if err != nil {
 		flowtest.CloseFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("executable.Seal: %v", err)

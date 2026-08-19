@@ -101,7 +101,6 @@ func TestSourceRejectsInvalidDebugSpellingRows(t *testing.T) {
 		}
 	}
 	input.Bodies[0].Terms = append(input.Bodies[0].Terms, call)
-	index.Bodies[0].Roots = append(index.Bodies[0].Roots, call)
 	appendCanonicalFixturePosition(&index, Position{Term: call, Root: call, Body: keyspace.MakeTerm(keyspace.FamilyBody, 1), FrontierBody: keyspace.MakeTerm(keyspace.FamilyBody, 1)})
 	input.CallSpellings = []CallSpelling{{Call: call, Name: "first"}, {Call: call, Name: "duplicate"}}
 	if _, err := Build(input); err == nil {
@@ -307,8 +306,6 @@ func exactDirectBodyFixture() (Input, IndexInput) {
 	input.Keys = []KeyInput{NameKey(body1, "d")}
 	input.Bodies[0].Terms = []keyspace.Term{bind, body2}
 	input.Bodies[1].Terms = nil
-	index.Bodies[0].Roots = append([]keyspace.Term(nil), input.Bodies[0].Terms...)
-	index.Bodies[1].Roots = nil
 	index.Positions = nil
 	appendCanonicalFixturePosition(&index, Position{
 		Term: bind, Root: bind, Body: body1, FrontierBody: body1,
@@ -364,8 +361,6 @@ func sparsePositionFixture(unusedLoops int) (Input, IndexInput) {
 			Term: root, Root: root, Body: body,
 			FrontierBody: body,
 		}},
-		Bodies: []BodyRoots{{Body: body, Roots: []keyspace.Term{root}}},
-		Entry:  body,
 	}
 }
 
@@ -410,10 +405,7 @@ func sourceFixture(width int) (Input, IndexInput) {
 	input.Binds = []BindCells{{Bind: keyspace.MakeTerm(keyspace.FamilyBind, 1), Cells: []keyspace.Term{keyspace.MakeTerm(keyspace.FamilyCell, 1)}}}
 	input.Functions = []FunctionFormals{{Function: keyspace.MakeTerm(keyspace.FamilyFunction, 1), Formals: []keyspace.Term{keyspace.MakeTerm(keyspace.FamilyCell, 2)}}}
 
-	index := IndexInput{Entry: keyspace.MakeTerm(keyspace.FamilyBody, 1), Bodies: []BodyRoots{
-		{Body: keyspace.MakeTerm(keyspace.FamilyBody, 1), Roots: append([]keyspace.Term(nil), input.Bodies[0].Terms...)},
-		{Body: keyspace.MakeTerm(keyspace.FamilyBody, 2), Parent: keyspace.MakeTerm(keyspace.FamilyBody, 1), Roots: append([]keyspace.Term(nil), input.Bodies[1].Terms...)},
-	}}
+	index := IndexInput{}
 	for bodyOrdinal, body := range input.Bodies {
 		for offset, term := range body.Terms {
 			frontierBody, frontierCursor := keyspace.MakeTerm(keyspace.FamilyBody, uint32(bodyOrdinal+1)), uint32(offset)

@@ -17,6 +17,7 @@ type Result struct {
 	// consumer must assemble against these exact identities.
 	sourceID    identity.ContentID
 	flowID      identity.ContentID
+	entry       keyspace.Term
 	parents     []keyspace.Term
 	roots       []keyspace.Term
 	rootOffsets []uint32
@@ -54,6 +55,18 @@ func (r *Result) BodyAt(index int) (keyspace.Term, bool) {
 		return 0, false
 	}
 	return keyspace.MakeTerm(keyspace.FamilyBody, uint32(index+1)), true
+}
+
+// Entry returns the unique Body with no lexical parent. Entry is retained by
+// the sealed Body owner so downstream consumers do not need to reconstruct it
+// from parent rows or maintain a second projection.
+func (r *Result) Entry() (keyspace.Term, bool) {
+	if !r.available() || keyspace.TermFamily(r.entry) != keyspace.FamilyBody ||
+		keyspace.TermOrdinal(r.entry) == 0 || uint64(keyspace.TermOrdinal(r.entry)) >= uint64(len(r.parents)) ||
+		r.parents[keyspace.TermOrdinal(r.entry)] != 0 {
+		return 0, false
+	}
+	return r.entry, true
 }
 
 // Parent returns a Body's lexical parent. The Entry has no parent and returns

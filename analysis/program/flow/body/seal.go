@@ -240,6 +240,7 @@ func Seal(preimage source.Preimage, view authored.View, staticView staticquery.V
 	return &Result{
 		sourceID:    sourceID,
 		flowID:      flowID,
+		entry:       entry,
 		parents:     parents,
 		roots:       roots,
 		rootOffsets: rootOffsets,

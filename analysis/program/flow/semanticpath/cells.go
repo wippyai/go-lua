@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/flow/binding"
+	"github.com/wippyai/go-lua/analysis/program/flow/body"
 	"github.com/wippyai/go-lua/analysis/program/flow/containment"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
@@ -16,8 +17,8 @@ import (
 // Binding roles. It has no fallback relation: every Cell is claimed once by
 // one typed definition role, and local identities fold both lexical Body and
 // definition host paths without using a Cell Term or global ordinal.
-func deriveCellTermPaths(sourceView source.View, catalog source.CellRoles, view authored.View, bindings binding.Result, forest *containment.Result, bodyPaths []identity.ContentID, paths *[keyspace.FamilyCount][]identity.ContentID) error {
-	if paths == nil || forest == nil || !catalog.Matches(sourceView) || !binding.Matches(&bindings, sourceView.Identity().ContentID(), view.Cold().ContentID()) {
+func deriveCellTermPaths(sourceView source.View, catalog source.CellRoles, view authored.View, bindings binding.Result, bodies *body.Result, forest *containment.Result, bodyPaths []identity.ContentID, paths *[keyspace.FamilyCount][]identity.ContentID) error {
+	if paths == nil || bodies == nil || forest == nil || !catalog.Matches(sourceView) || !binding.Matches(&bindings, sourceView.Identity().ContentID(), view.Cold().ContentID()) {
 		return errors.New("semanticpath: Cell role join owners are unavailable")
 	}
 	cells := view.Storage().Cells()
@@ -135,7 +136,7 @@ func deriveCellTermPaths(sourceView source.View, catalog source.CellRoles, view 
 				return err
 			}
 		case kind.CellChunkVararg:
-			entry, entryOK := sourceView.Index().Entry()
+			entry, entryOK := bodies.Entry()
 			chunk, chunkOK := bindings.ChunkVararg()
 			if !entryOK || !chunkOK || chunk != cell || host != entry {
 				return errors.New("semanticpath: chunk Vararg Cell role is invalid")

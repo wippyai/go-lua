@@ -65,7 +65,7 @@ func deriveTermPaths(sourceView source.View, cellRoles source.CellRoles, view au
 			return paths, err
 		}
 	}
-	if err := deriveCellTermPaths(sourceView, cellRoles, view, bindings, forest, bodyPaths, &paths); err != nil {
+	if err := deriveCellTermPaths(sourceView, cellRoles, view, bindings, bodies, forest, bodyPaths, &paths); err != nil {
 		return paths, err
 	}
 	for ordinal := 1; ordinal < len(paths[keyspace.FamilyCell]); ordinal++ {

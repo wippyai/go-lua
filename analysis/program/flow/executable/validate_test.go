@@ -15,7 +15,7 @@ func TestSealRootlessRuntimeStillRequiresProvenance(t *testing.T) {
 	label := keyspace.MakeTerm(keyspace.FamilyLabel, 1)
 	flow := authored.Input{Control: authored.ControlInput{Labels: []authored.Label{{Owner: body}}}}
 	fixture := openSealFixture(t, "rootless-provenance.lua", counts, [][]keyspace.Term{{label}}, flow, nil, nil, nil)
-	result, err := Seal(fixture.sourceView, fixture.flow, fixture.forest, fixture.control,
+	result, err := Seal(fixture.sourceView, fixture.flow, fixture.bodies, fixture.forest, fixture.control,
 		fixture.staticFinalize.View().ContentID(), fixture.moduleFinalize.View().ContentID(), fixture.paths)
 	if err != nil {
 		t.Fatalf("rootless executable.Seal: %v", err)

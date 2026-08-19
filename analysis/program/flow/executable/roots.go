@@ -3,10 +3,10 @@ package executable
 import (
 	"errors"
 
+	"github.com/wippyai/go-lua/analysis/program/flow/body"
 	"github.com/wippyai/go-lua/analysis/program/flow/containment"
 	"github.com/wippyai/go-lua/analysis/program/flow/sourcecontrol"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/analysis/program/source"
 )
 
 type rootSeed struct {
@@ -17,7 +17,7 @@ type rootSeed struct {
 }
 
 func seedRoots(
-	sourceView source.View,
+	bodies *body.Result,
 	forest *containment.Result,
 	control *sourcecontrol.Result,
 	input validated,
@@ -38,7 +38,6 @@ func seedRoots(
 	}
 	add(input.entry)
 
-	index := sourceView.Index()
 	for ordinal := uint32(1); ordinal <= input.counts[keyspace.FamilyBody]; ordinal++ {
 		body := keyspace.MakeTerm(keyspace.FamilyBody, ordinal)
 		start, startOK := control.Cursor(body, 0)
@@ -48,13 +47,13 @@ func seedRoots(
 		if control.Reachable(start) {
 			add(body)
 		}
-		length, lengthOK := index.BodyRootLen(body)
+		length, lengthOK := bodies.RootCount(body)
 		if !lengthOK || length < 0 {
 			return rootSeed{}, errors.New("program/flow/executable: Body root denominator is unavailable")
 		}
 		rootRows := make([]keyspace.Term, 0, length)
 		for cursor := 0; cursor < length; cursor++ {
-			root, rootOK := index.BodyRootAt(body, cursor)
+			root, rootOK := bodies.RootAt(body, cursor)
 			if !rootOK || !validTerm(root, input.counts) {
 				return rootSeed{}, errors.New("program/flow/executable: invalid Body source root")
 			}

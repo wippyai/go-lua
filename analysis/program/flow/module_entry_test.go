@@ -205,7 +205,7 @@ func openModuleEntryFunctionFixture(t *testing.T) *moduleEntryFunctionFixture {
 	if err != nil {
 		t.Fatalf("semanticpath.Seal: %v", err)
 	}
-	executableResult, err := executable.Seal(sourceView, flowView, forest, controlGraph, staticID, moduleID, paths)
+	executableResult, err := executable.Seal(sourceView, flowView, bodies, forest, controlGraph, staticID, moduleID, paths)
 	if err != nil {
 		t.Fatalf("executable.Seal: %v", err)
 	}
@@ -506,22 +506,8 @@ func moduleEntrySource(t *testing.T, input source.Input) source.View {
 	}
 	preimage := finalizer.Preimage()
 	identity := preimage.Identity()
-	bodyCount := identity.FamilyCount(keyspace.FamilyBody)
-	bodies := make([]source.BodyRoots, bodyCount)
-	for index := range bodies {
-		body := keyspace.MakeTerm(keyspace.FamilyBody, uint32(index+1))
-		// The focused fixtures use one chunk Body. The malformed-owner fixture
-		// adds one reachable child so Source can accept both owner rows.
-		var parent keyspace.Term
-		if index > 0 && bodyCount > 1 {
-			parent = keyspace.MakeTerm(keyspace.FamilyBody, 1)
-		}
-		bodies[index] = source.BodyRoots{Body: body, Parent: parent}
-	}
 	component, err := finalizer.Commit(source.IndexInput{
 		SourceID: identity.ContentID(),
-		Bodies:   bodies,
-		Entry:    keyspace.MakeTerm(keyspace.FamilyBody, 1),
 	})
 	if err != nil {
 		t.Fatalf("source.Commit: %v", err)

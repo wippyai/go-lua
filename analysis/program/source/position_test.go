@@ -22,42 +22,6 @@ func TestSourceRejectsBadFrontierAndBodyContainment(t *testing.T) {
 		t.Fatal("accepted unbounded ordinary frontier")
 	}
 
-	input, index = repeatFixture()
-	body1 := keyspace.MakeTerm(keyspace.FamilyBody, 1)
-	body3 := keyspace.MakeTerm(keyspace.FamilyBody, 3)
-	// Body 2 is a direct source child of Body 1, but the sealed forest claims
-	// that it belongs below Body 3. The projection must preserve that witness.
-	index.Bodies[1].Parent = body3
-	index.Bodies[2].Parent = body1
-	draft, err = Build(input)
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	if _, err := commitSource(draft, index); err == nil {
-		t.Fatal("accepted direct Body with mismatched parent")
-	}
-}
-
-func TestSourceRejectsEntryDirectSourceOccurrence(t *testing.T) {
-	input, index := sourceFixture(1)
-	entry := keyspace.MakeTerm(keyspace.FamilyBody, 1)
-	// Make the Entry itself a well-shaped direct source/root occurrence and
-	// provide the corresponding position. The parentless Entry is the sole
-	// forest root and must never also have a direct Source witness.
-	input.Bodies[0].Terms = append(input.Bodies[0].Terms, entry)
-	index.Bodies[0].Roots = append(index.Bodies[0].Roots, entry)
-	appendCanonicalFixturePosition(&index, Position{
-		Term: entry, Root: entry, Body: entry, Offset: 1, Cursor: 1,
-		FrontierBody: entry, FrontierCursor: 1,
-	})
-
-	draft, err := Build(input)
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	if _, err := commitSource(draft, index); err == nil {
-		t.Fatal("Finalize accepted a direct source occurrence for the Entry Body")
-	}
 }
 
 func TestSourceAllowsMissingNonDirectPositionFamily(t *testing.T) {
@@ -186,13 +150,7 @@ func TestSourceDirectLocationScratchScalesWithDirectRows(t *testing.T) {
 			t.Fatalf("Build(%d): %v", unusedLoops, err)
 		}
 		a := draft.state.authority
-		var next indexStore
-		next.rootRanges = make([]termRange, a.count(keyspace.FamilyBody))
-		next.parents = make([]keyspace.Term, a.count(keyspace.FamilyBody))
-		if err := installBodyRoots(a, &next, index.Bodies); err != nil {
-			t.Fatalf("installBodyRoots(%d): %v", unusedLoops, err)
-		}
-		locations, err := buildDirectLocations(a, &next)
+		locations, err := buildDirectLocations(a, index.Positions)
 		if err != nil {
 			t.Fatalf("buildDirectLocations(%d): %v", unusedLoops, err)
 		}

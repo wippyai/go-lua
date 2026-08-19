@@ -261,16 +261,6 @@ func (v Index) Root(term keyspace.Term) (keyspace.Term, bool) {
 	return row.root, ok
 }
 
-// Entry returns the unique root Body of the sealed lexical forest. Entry is
-// Source-owned derived index state: callers must not infer it from Body
-// ordinals or reconstruct it by scanning parents.
-func (v Index) Entry() (keyspace.Term, bool) {
-	if v.authority == nil || !v.authority.validFamilyTerm(v.authority.index.entry, keyspace.FamilyBody) {
-		return 0, false
-	}
-	return v.authority.index.entry, true
-}
-
 // Position is the exact containing direct source coordinate. It never implies
 // Flow activation; callers compose that separate Flow relation explicitly.
 func (v Index) Position(term keyspace.Term) (keyspace.Term, int, int, bool) {
@@ -290,27 +280,6 @@ func (v Index) Frontier(term keyspace.Term) (keyspace.Term, int, bool) {
 	return row.frontierBody, int(row.frontierCursor), true
 }
 
-func (v Index) BodyParent(body keyspace.Term) (keyspace.Term, bool) {
-	if v.authority == nil || !v.authority.validFamilyTerm(body, keyspace.FamilyBody) {
-		return 0, false
-	}
-	parent := v.authority.index.parents[keyspace.TermOrdinal(body)-1]
-	return parent, parent != 0
-}
-
-func (v Index) BodyRootLen(body keyspace.Term) (int, bool) {
-	r, ok := v.rootRange(body)
-	return int(r.end - r.start), ok
-}
-
-func (v Index) BodyRootAt(body keyspace.Term, offset int) (keyspace.Term, bool) {
-	r, ok := v.rootRange(body)
-	if !ok || offset < 0 || uint64(offset) >= uint64(r.end-r.start) {
-		return 0, false
-	}
-	return v.authority.index.rootTerms[r.start+uint32(offset)], true
-}
-
 func (v Index) position(term keyspace.Term) (positionSlot, bool) {
 	if v.authority == nil {
 		return positionSlot{}, false
@@ -321,15 +290,6 @@ func (v Index) position(term keyspace.Term) (positionSlot, bool) {
 	}
 	return v.authority.index.positions[family].lookup(ordinal)
 }
-
-func (v Index) rootRange(body keyspace.Term) (termRange, bool) {
-	if v.authority == nil || !v.authority.validFamilyTerm(body, keyspace.FamilyBody) {
-		return termRange{}, false
-	}
-	r := v.authority.index.rootRanges[keyspace.TermOrdinal(body)-1]
-	return r, validRange(v.authority.index.rootTerms, r)
-}
-
 func (v Literals) Nils() Nils {
 	return Nils(v)
 }

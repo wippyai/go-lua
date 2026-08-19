@@ -16,7 +16,8 @@ func TestDerivedOutcomeQueriesResolveAuthoredReturn(t *testing.T) {
 		t.Fatal(err)
 	}
 	view := program.Flow()
-	entry, ok := program.Source().Index().Entry()
+	bodies := view.Body()
+	entry, ok := bodies.Entry()
 	if !ok {
 		t.Fatal("missing Source entry Body")
 	}
@@ -44,11 +45,12 @@ func TestExecutableRootRowsAreIssuedByFlowInSourceOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	entry, ok := program.Source().Index().Entry()
+	bodies := program.Flow().Body()
+	entry, ok := bodies.Entry()
 	if !ok {
 		t.Fatal("missing Source entry Body")
 	}
-	authored, ok := program.Source().Index().BodyRootAt(entry, 0)
+	authored, ok := bodies.RootAt(entry, 0)
 	if !ok || !program.Flow().Executable().Contains(authored) {
 		t.Fatal("fixture did not publish an executable Source root")
 	}

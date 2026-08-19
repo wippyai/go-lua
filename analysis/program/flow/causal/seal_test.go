@@ -2167,7 +2167,7 @@ func openCausalFixture(t *testing.T, spec causalSpec) *causalFixture {
 		flowtest.CloseFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatal("sourcecontrol.BuildOutcomePhases: unavailable")
 	}
-	execResult, err := executable.Seal(sourceView, flowView, forest, graph, staticID, moduleID, certificate)
+	execResult, err := executable.Seal(sourceView, flowView, bodies, forest, graph, staticID, moduleID, certificate)
 	if err != nil {
 		flowtest.CloseFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("executable.Seal: %v", err)

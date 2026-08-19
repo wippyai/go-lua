@@ -362,7 +362,7 @@ func openContinuationFixture(t *testing.T, spec continuationSpec) *continuationF
 		flowtest.CloseFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatal("sourcecontrol.BuildOutcomePhases: unavailable")
 	}
-	executableResult, err := executable.Seal(sourceView, flowView, forest, controlResult, staticID, moduleID, certificate)
+	executableResult, err := executable.Seal(sourceView, flowView, bodies, forest, controlResult, staticID, moduleID, certificate)
 	if err != nil {
 		flowtest.CloseFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, imports.Finalizer{})
 		t.Fatalf("executable.Seal: %v", err)

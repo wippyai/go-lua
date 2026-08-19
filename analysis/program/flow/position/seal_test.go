@@ -195,11 +195,14 @@ func TestSealPositionsUseExactAnchorClosureAndOmitRootless(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Seal: %v", err)
 	}
-	if len(index.Bodies) != 1 || index.Bodies[0].Body != body || index.Bodies[0].Parent != 0 {
-		t.Fatalf("Bodies = %#v", index.Bodies)
+	if entry, ok := fixture.bodies.Entry(); !ok || entry != body {
+		t.Fatalf("Body Entry = %v/%v, want %v/true", entry, ok, body)
 	}
-	if len(index.Bodies[0].Roots) != 1 || index.Bodies[0].Roots[0] != returned {
-		t.Fatalf("Body roots = %v, want Return %v", index.Bodies[0].Roots, returned)
+	if rootCount, ok := fixture.bodies.RootCount(body); !ok || rootCount != 1 {
+		t.Fatalf("Body RootCount = %d/%v, want 1/true", rootCount, ok)
+	}
+	if root, ok := fixture.bodies.RootAt(body, 0); !ok || root != returned {
+		t.Fatalf("Body RootAt = %v/%v, want %v/true", root, ok, returned)
 	}
 	if len(index.Positions) != 3 {
 		t.Fatalf("Positions = %d, want Return/Values/Integer closure", len(index.Positions))
@@ -343,9 +346,19 @@ func TestSealRepeatCopiesFrontierOnlyThroughRepeatAnchor(t *testing.T) {
 		{body2, body2, body1, []keyspace.Term{returns[1]}},
 		{body3, body3, body1, []keyspace.Term{returns[2]}},
 	} {
-		row, ok := bodyRow(index.Bodies, want.term)
-		if !ok || row.Body != want.body || row.Parent != want.parent || !reflect.DeepEqual(row.Roots, want.roots) {
-			t.Fatalf("Body row(%v) = %#v/%v, want parent %v roots %v", want.term, row, ok, want.parent, want.roots)
+		parent, hasParent := fixture.bodies.Parent(want.term)
+		if (want.parent == 0 && hasParent) || (want.parent != 0 && (!hasParent || parent != want.parent)) {
+			t.Fatalf("Body Parent(%v) = %v/%v, want %v", want.term, parent, hasParent, want.parent)
+		}
+		rootCount, ok := fixture.bodies.RootCount(want.term)
+		if !ok || rootCount != len(want.roots) {
+			t.Fatalf("Body RootCount(%v) = %d/%v, want %d", want.term, rootCount, ok, len(want.roots))
+		}
+		for rootIndex, root := range want.roots {
+			got, ok := fixture.bodies.RootAt(want.term, rootIndex)
+			if !ok || got != root {
+				t.Fatalf("Body RootAt(%v,%d) = %v/%v, want %v", want.term, rootIndex, got, ok, root)
+			}
 		}
 	}
 	loopRow, _ := positionFor(index.Positions, loops[0])
@@ -355,38 +368,9 @@ func TestSealRepeatCopiesFrontierOnlyThroughRepeatAnchor(t *testing.T) {
 	}
 	assertOutcomeOriginRows(t, fixture, index)
 	assertNoOutcomePositions(t, index)
-	component, err := fixture.sourceFinalize.Commit(index)
+	_, err = fixture.sourceFinalize.Commit(index)
 	if err != nil {
 		t.Fatalf("Source Commit nested Bodies: %v", err)
-	}
-	committed := component.View().Index()
-	for _, want := range []struct {
-		body   keyspace.Term
-		parent keyspace.Term
-		roots  []keyspace.Term
-	}{
-		{body1, 0, []keyspace.Term{returns[0], loops[0], loops[1]}},
-		{body2, body1, []keyspace.Term{returns[1]}},
-		{body3, body1, []keyspace.Term{returns[2]}},
-	} {
-		parent, hasParent := committed.BodyParent(want.body)
-		if want.parent == 0 {
-			if hasParent || parent != 0 {
-				t.Fatalf("committed BodyParent(%v) = %v/%v, want root", want.body, parent, hasParent)
-			}
-		} else if !hasParent || parent != want.parent {
-			t.Fatalf("committed BodyParent(%v) = %v/%v, want %v", want.body, parent, hasParent, want.parent)
-		}
-		length, ok := committed.BodyRootLen(want.body)
-		if !ok || length != len(want.roots) {
-			t.Fatalf("committed BodyRootLen(%v) = %d/%v, want %d", want.body, length, ok, len(want.roots))
-		}
-		for rootIndex, root := range want.roots {
-			got, ok := committed.BodyRootAt(want.body, rootIndex)
-			if !ok || got != root {
-				t.Fatalf("committed BodyRootAt(%v,%d) = %v/%v, want %v", want.body, rootIndex, got, ok, root)
-			}
-		}
 	}
 }
 
@@ -413,10 +397,10 @@ func TestSealPositionsCanonicalAndDeterministic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second Seal: %v", err)
 	}
-	if len(first.Positions) != len(second.Positions) || len(first.Bodies) != len(second.Bodies) || len(first.OutcomeOrigins) != len(second.OutcomeOrigins) {
+	if len(first.Positions) != len(second.Positions) || len(first.OutcomeOrigins) != len(second.OutcomeOrigins) {
 		t.Fatalf("repeat Seal cardinalities differ: %#v vs %#v", first, second)
 	}
-	if !reflect.DeepEqual(first.Positions, second.Positions) || !reflect.DeepEqual(first.Bodies, second.Bodies) || !reflect.DeepEqual(first.OutcomeOrigins, second.OutcomeOrigins) {
+	if !reflect.DeepEqual(first.Positions, second.Positions) || !reflect.DeepEqual(first.OutcomeOrigins, second.OutcomeOrigins) {
 		t.Fatalf("repeat Seal changed a projection: first=%#v second=%#v", first, second)
 	}
 	wantTerms := []keyspace.Term{integer, values, returned}
@@ -592,15 +576,6 @@ func positionFor(rows []source.Position, term keyspace.Term) (source.Position, b
 		}
 	}
 	return source.Position{}, false
-}
-
-func bodyRow(rows []source.BodyRoots, term keyspace.Term) (source.BodyRoots, bool) {
-	for _, row := range rows {
-		if row.Body == term {
-			return row, true
-		}
-	}
-	return source.BodyRoots{}, false
 }
 
 func assertOutcomeOriginRows(t *testing.T, fixture *positionFixture, index source.IndexInput) {

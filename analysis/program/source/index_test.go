@@ -48,12 +48,6 @@ func TestSourceBuildRetainsOwnedRowsAndSealProjection(t *testing.T) {
 		body != keyspace.MakeTerm(keyspace.FamilyBody, 1) || cursor != 0 {
 		t.Fatalf("Frontier = %v, %d, %v", body, cursor, ok)
 	}
-	if parent, ok := view.Index().BodyParent(keyspace.MakeTerm(keyspace.FamilyBody, 2)); !ok || parent != keyspace.MakeTerm(keyspace.FamilyBody, 1) {
-		t.Fatalf("BodyParent = %v, %v", parent, ok)
-	}
-	if entry, ok := view.Index().Entry(); !ok || entry != keyspace.MakeTerm(keyspace.FamilyBody, 1) {
-		t.Fatalf("Entry = %v, %v", entry, ok)
-	}
 	if term, owner, value, ok := view.Literals().Integers().At(0); !ok || term != keyspace.MakeTerm(keyspace.FamilyInteger, 1) ||
 		owner != keyspace.MakeTerm(keyspace.FamilyBody, 2) || value != 42 {
 		t.Fatalf("Integer = %v, %v, %d, %v", term, owner, value, ok)
@@ -65,7 +59,6 @@ func TestSourceBuildRetainsOwnedRowsAndSealProjection(t *testing.T) {
 
 func TestSourceAllowsTypedChildBodyWithoutDirectSourceOccurrence(t *testing.T) {
 	input, index := sourceFixture(2)
-	body1 := keyspace.MakeTerm(keyspace.FamilyBody, 1)
 	body2 := keyspace.MakeTerm(keyspace.FamilyBody, 2)
 	// The fixture already models Body 2 as a typed Function/Branch/Loop child,
 	// without a duplicate direct Body term in Body 1's authored sequence.
@@ -79,9 +72,6 @@ func TestSourceAllowsTypedChildBodyWithoutDirectSourceOccurrence(t *testing.T) {
 		t.Fatalf("Finalize typed child Body: %v", err)
 	}
 	view := component.View()
-	if parent, ok := view.Index().BodyParent(body2); !ok || parent != body1 {
-		t.Fatalf("BodyParent = %v, %v; want %v", parent, ok, body1)
-	}
 	if _, _, _, ok := view.Index().Position(body2); ok {
 		t.Fatal("typed child Body unexpectedly acquired a source Position")
 	}

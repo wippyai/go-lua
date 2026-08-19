@@ -159,7 +159,7 @@ func Assemble(
 	if !outcomePathsOK || err != nil || outcomePhases == nil {
 		return fail("Source control Outcome phases", errors.New("Outcome phase issuance failed"))
 	}
-	executableResult, err := executable.Seal(sourceView, authoredLive, forest, controlGraph, staticID, moduleID, pathCertificate)
+	executableResult, err := executable.Seal(sourceView, authoredLive, bodies, forest, controlGraph, staticID, moduleID, pathCertificate)
 	if err != nil {
 		return fail("Executable", err)
 	}
@@ -294,6 +294,7 @@ func Assemble(
 	component := &Component{
 		provenance:  provenance.Provenance{Source: sourceID, Flow: flowID, Static: staticID, Module: moduleID},
 		authored:    authoredView,
+		body:        bodies,
 		activation:  activation,
 		containment: reducedContainment,
 		outcomes:    outcomes,

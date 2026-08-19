@@ -294,7 +294,6 @@ func keyFaultFixture() (Input, IndexInput) {
 		panic("key fixture lost Label position root")
 	}
 	input.Bodies[0].Terms = append(input.Bodies[0].Terms, fault)
-	index.Bodies[0].Roots = append(index.Bodies[0].Roots, fault)
 	offset := uint32(len(input.Bodies[0].Terms) - 1)
 	appendCanonicalFixturePosition(&index, Position{
 		Term: fault, Root: fault, Body: body, Offset: offset, Cursor: offset,

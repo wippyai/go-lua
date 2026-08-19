@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/accessgeometry"
 	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/flow/binaryprimitive"
+	flowbody "github.com/wippyai/go-lua/analysis/program/flow/body"
 	"github.com/wippyai/go-lua/analysis/program/flow/candidates"
 	"github.com/wippyai/go-lua/analysis/program/flow/causal"
 	"github.com/wippyai/go-lua/analysis/program/flow/continuation"
@@ -63,14 +64,16 @@ func (assembly *Assembly) Take() (*source.Component, *Component, *static.Compone
 	return sourceComponent, flowComponent, staticComponent, moduleComponent, nil
 }
 
-// Component is the sole published Flow semantic authority.  Its field count
-// is intentionally small: authored data plus only the projections that are
-// consumed after assembly.  Body/Binding/Containment proofs, source-control
-// geometry, recurrence, static scope, and all owner finalizers are seal-local
-// and are absent from this struct.
+// Component is the sole published Flow semantic authority. Its field count is
+// intentionally small: authored data plus only the projections consumed after
+// assembly. Body/Binding/Containment proofs, source-control geometry,
+// recurrence, static scope, and all owner finalizers are seal-local; the
+// immutable Body result is retained because Flow owns its Entry/parent/root
+// queries.
 type Component struct {
 	provenance       provenance.Provenance
 	authored         authored.View
+	body             *flowbody.Result
 	activation       activationProjection
 	containment      containmentProjection
 	outcomes         *outcome.Result
@@ -176,6 +179,9 @@ func (view View) projectionAvailable() bool {
 		!continuation.Matches(component.continuation, fence.Source, fence.Flow, fence.Static, fence.Module) {
 		return false
 	}
+	if !flowbody.Matches(component.body, fence.Source, fence.Flow) {
+		return false
+	}
 	bodyCount := component.executable.FamilyCount(keyspace.FamilyBody)
 	if bodyCount <= 0 || len(component.activation.terms) != bodyCount {
 		return false
@@ -194,6 +200,19 @@ func (view View) Authored() Authored {
 		return Authored{}
 	}
 	return Authored{view: view.component.authored}
+}
+
+// Body returns Flow's immutable sealed Body result. It is the sole published
+// owner of Entry, lexical Body parents, and ordered Body roots.
+func (view View) Body() *flowbody.Result {
+	if !view.available() {
+		return nil
+	}
+	fence := view.component.provenance
+	if !view.projectionFence() || !flowbody.Matches(view.component.body, fence.Source, fence.Flow) {
+		return nil
+	}
+	return view.component.body
 }
 
 func (view View) Activation() Activation {

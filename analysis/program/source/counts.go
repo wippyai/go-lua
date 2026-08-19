@@ -30,7 +30,7 @@ func authoredTermCount(counts [keyspace.FamilyCount]uint32) (uint32, bool) {
 
 // CountRows derives Source's native denominator rows. Source owns the rows
 // that describe provenance, source order, keys, literals, faults, and the
-// body containment projection; no other Program owner re-walks these columns.
+// authored source order; Flow owns the sealed Body containment projection.
 func CountRows(view View) (denominator.CountRows, error) {
 	if !view.Identity().ContentID().Available() || view.Identity().Name() == "" {
 		return denominator.CountRows{}, errSourceCounts
@@ -39,15 +39,11 @@ func CountRows(view View) (denominator.CountRows, error) {
 	if !sourceCountFits(bodyCount) {
 		return denominator.CountRows{}, errSourceCounts
 	}
-	direct, roots := 0, 0
+	direct := 0
 	for ordinal := 1; ordinal <= bodyCount; ordinal++ {
 		body := keyspace.MakeTerm(keyspace.FamilyBody, uint32(ordinal))
 		bodyLen, ok := view.Order().BodyLen(body)
 		if !ok || !addSourceCount(&direct, bodyLen) {
-			return denominator.CountRows{}, errSourceCounts
-		}
-		rootLen, ok := view.Index().BodyRootLen(body)
-		if !ok || !addSourceCount(&roots, rootLen) {
 			return denominator.CountRows{}, errSourceCounts
 		}
 	}
@@ -76,7 +72,6 @@ func CountRows(view View) (denominator.CountRows, error) {
 		{ids.ProgramSourceControlFault, faults},
 		{ids.ProgramFlowLiterals, literalCount},
 		{ids.ProgramFlowBody, bodyCount},
-		{ids.ProgramFlowBodyRoots, roots},
 	}
 	rows := make([]denominator.CountRow, 0, len(values))
 	for _, value := range values {

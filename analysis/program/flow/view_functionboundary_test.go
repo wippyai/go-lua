@@ -32,7 +32,8 @@ return finish()
 `)
 	flow := program.Flow()
 	boundaries := flow.FunctionBoundaries()
-	entry, entryOK := program.Source().Index().Entry()
+	bodies := flow.Body()
+	entry, entryOK := bodies.Entry()
 	if !entryOK {
 		t.Fatal("missing Source entry Body")
 	}

@@ -409,8 +409,6 @@ func minimalOwners(t *testing.T) (source.Identity, authored.View, func()) {
 	sourceID := sourceFinalizer.Preimage().Identity().ContentID()
 	sourceComponent, err := sourceFinalizer.Commit(source.IndexInput{
 		SourceID: sourceID,
-		Bodies:   []source.BodyRoots{{Body: term(keyspace.FamilyBody, 1)}},
-		Entry:    term(keyspace.FamilyBody, 1),
 	})
 	if err != nil {
 		t.Fatalf("source.Commit: %v", err)
@@ -446,8 +444,6 @@ func minimalOwnersFromPreimage(t *testing.T) (source.Identity, authored.View, fu
 	identity := preimage.Identity()
 	if _, err := sourceFinalizer.Commit(source.IndexInput{
 		SourceID: identity.ContentID(),
-		Bodies:   []source.BodyRoots{{Body: term(keyspace.FamilyBody, 1)}},
-		Entry:    term(keyspace.FamilyBody, 1),
 	}); err != nil {
 		t.Fatalf("source.Commit: %v", err)
 	}

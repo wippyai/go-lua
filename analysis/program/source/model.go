@@ -136,13 +136,6 @@ type Position struct {
 	Repeat bool
 }
 
-// BodyRoots is one Body's ordered statement roots and its lexical parent.
-type BodyRoots struct {
-	Body   keyspace.Term
-	Parent keyspace.Term
-	Roots  []keyspace.Term
-}
-
 // IndexInput is the sole typed containment/position handoff from Flow seal.
 // It is validated, compacted into Source-private indexes, then discarded.
 type IndexInput struct {
@@ -159,16 +152,12 @@ type IndexInput struct {
 	// importing Flow or reconstructing that closure. The batch is retained by
 	// neither Draft nor Component.
 	Positions []Position
-	Bodies    []BodyRoots
 	// OutcomeOrigins is Flow's one canonical ordered Outcome origin batch.
 	// Outcomes are derived Terms: Source Build rejects authored Outcome rows,
 	// and Finalize derives their count/spans from these Body origins before it
 	// validates the sparse Positions batch. The batch is consumed
 	// during Finalize and is never retained or content-addressed.
 	OutcomeOrigins []keyspace.Term
-	// Entry is the one Body with no lexical parent. It lets Source validate
-	// the complete parent forest without importing Module or Flow.
-	Entry keyspace.Term
 }
 
 type termRange struct{ start, end uint32 }
@@ -258,13 +247,9 @@ func (index positionIndex) lookup(ordinal uint32) (positionSlot, bool) {
 }
 
 type indexStore struct {
-	// positions is sparse by positioned Term ordinal; root/parent ranges remain
-	// dense because Body ordinals own those authored containment rows.
-	positions  [keyspace.FamilyCount]positionIndex
-	rootTerms  []keyspace.Term
-	rootRanges []termRange
-	parents    []keyspace.Term
-	entry      keyspace.Term
+	// positions is sparse by positioned Term ordinal. Body parent/root rows are
+	// owned by Flow's sealed Body result and are not retained in Source.
+	positions [keyspace.FamilyCount]positionIndex
 }
 
 // directLocation is Seal-only validation scratch. It proves that a root is a

@@ -353,7 +353,7 @@ func openPendingFixture(
 		closePendingFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("semanticpath.Seal: %v", err)
 	}
-	executableResult, err := executable.Seal(sourceView, flowView, forest, controlResult,
+	executableResult, err := executable.Seal(sourceView, flowView, bodies, forest, controlResult,
 		staticFinalize.View().ContentID(), moduleView.ContentID(), paths)
 	if err != nil {
 		closePendingFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)

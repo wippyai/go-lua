@@ -172,7 +172,7 @@ func openCandidateFixture(t *testing.T, spec candidateSpec) *candidateFixture {
 		flowtest.CloseFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("semanticpath.Seal: %v", err)
 	}
-	proof, err := executable.Seal(sourceView, flowView, forest, controlProof,
+	proof, err := executable.Seal(sourceView, flowView, bodies, forest, controlProof,
 		staticView.ContentID(), moduleView.ContentID(), paths)
 	if err != nil {
 		flowtest.CloseFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)

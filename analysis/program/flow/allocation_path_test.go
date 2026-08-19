@@ -15,7 +15,8 @@ func TestAllocationPathsUseTheSealedFlowCertificate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	entry, ok := program.Source().Index().Entry()
+	bodies := program.Flow().Body()
+	entry, ok := bodies.Entry()
 	if !ok {
 		t.Fatal("missing Source entry Body")
 	}

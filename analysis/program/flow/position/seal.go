@@ -26,8 +26,10 @@ import (
 // with dense per-family state and an iterative path-compression walk; no
 // alternate graph or discovery-order index is retained.
 //
-// Body rows and Outcome origins are copied from their sealed owners.  The
-// returned batch is complete or absent: an invalid foreign result never
+// Outcome origins are copied from their sealed owner. Body identity, parent,
+// and root rows remain owned by the sealed Body result; this pass validates
+// their agreement with containment without emitting a duplicate projection.
+// The returned batch is complete or absent: an invalid foreign result never
 // produces a partially usable IndexInput.
 // The explicit Static and Module IDs fence the post-containment owners before
 // any rows are read.  This projection emits only Source IndexInput and retains
@@ -49,8 +51,7 @@ func Seal(
 		return empty, err
 	}
 
-	bodyRows, err := sealBodies(bodies, forest, counts, entry)
-	if err != nil {
+	if err := validateBodies(bodies, forest, counts, entry); err != nil {
 		return empty, err
 	}
 
@@ -80,9 +81,7 @@ func Seal(
 	return source.IndexInput{
 		SourceID:       preimage.Identity().ContentID(),
 		Positions:      positions,
-		Bodies:         bodyRows,
 		OutcomeOrigins: origins,
-		Entry:          entry,
 	}, nil
 }
 
@@ -203,52 +202,48 @@ func validPreOutcomeTerm(term keyspace.Term, counts [keyspace.FamilyCount]uint32
 		keyspace.TermOrdinal(term) <= counts[family]
 }
 
-func sealBodies(
+func validateBodies(
 	bodies *body.Result,
 	forest *containment.Result,
 	counts [keyspace.FamilyCount]uint32,
 	entry keyspace.Term,
-) ([]source.BodyRoots, error) {
-	rows := make([]source.BodyRoots, bodies.BodyCount())
-	for index := range rows {
+) error {
+	for index := 0; index < bodies.BodyCount(); index++ {
 		bodyTerm, ok := bodies.BodyAt(index)
 		if !ok || bodyTerm != keyspace.MakeTerm(keyspace.FamilyBody, uint32(index+1)) {
-			return nil, errors.New("program/flow/position: Body result is not dense")
+			return errors.New("program/flow/position: Body result is not dense")
 		}
 		parent, hasParent := bodies.Parent(bodyTerm)
 		if bodyTerm == entry {
 			if hasParent || parent != 0 {
-				return nil, errors.New("program/flow/position: Entry Body has a parent")
+				return errors.New("program/flow/position: Entry Body has a parent")
 			}
 		} else {
 			if !hasParent || !validTerm(parent, counts, keyspace.FamilyBody) || parent == bodyTerm {
-				return nil, errors.New("program/flow/position: malformed Body parent")
+				return errors.New("program/flow/position: malformed Body parent")
 			}
 		}
 		forestParent, forestHasParent := forest.Parent(bodyTerm)
 		if hasParent != forestHasParent || (hasParent && forestParent != parent) {
-			return nil, errors.New("program/flow/position: Body and containment parents disagree")
+			return errors.New("program/flow/position: Body and containment parents disagree")
 		}
 
 		rootCount, ok := bodies.RootCount(bodyTerm)
 		if !ok || rootCount < 0 {
-			return nil, errors.New("program/flow/position: Body roots unavailable")
+			return errors.New("program/flow/position: Body roots unavailable")
 		}
-		roots := make([]keyspace.Term, rootCount)
-		for rootIndex := range roots {
+		for rootIndex := 0; rootIndex < rootCount; rootIndex++ {
 			root, ok := bodies.RootAt(bodyTerm, rootIndex)
 			if !ok || !validPreOutcomeTerm(root, counts) {
-				return nil, errors.New("program/flow/position: malformed Body root")
+				return errors.New("program/flow/position: malformed Body root")
 			}
 			rootParent, rootHasParent := forest.Parent(root)
 			if !rootHasParent || rootParent != bodyTerm {
-				return nil, errors.New("program/flow/position: Body root lacks direct containment")
+				return errors.New("program/flow/position: Body root lacks direct containment")
 			}
-			roots[rootIndex] = root
 		}
-		rows[index] = source.BodyRoots{Body: bodyTerm, Parent: parent, Roots: roots}
 	}
-	return rows, nil
+	return nil
 }
 
 func directSources(preimage source.Preimage, bodies *body.Result, forest *containment.Result, counts [keyspace.FamilyCount]uint32) (directTable, error) {

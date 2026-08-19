@@ -23,13 +23,13 @@ func deriveRootDescriptors(sourceView source.View, view authored.View, bodies *b
 		if !ok {
 			return descriptors, errors.New("semanticpath: Body denominator unavailable")
 		}
-		n, ok := index.BodyRootLen(bodyTerm)
+		n, ok := bodies.RootCount(bodyTerm)
 		if !ok {
 			return descriptors, errors.New("semanticpath: Body root denominator unavailable")
 		}
 		ranks := make(map[identity.ContentID]uint32)
 		for j := 0; j < n; j++ {
-			root, ok := index.BodyRootAt(bodyTerm, j)
+			root, ok := bodies.RootAt(bodyTerm, j)
 			if !ok {
 				return descriptors, errors.New("semanticpath: Body root row unavailable")
 			}

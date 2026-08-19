@@ -39,7 +39,6 @@ func TestDebugSpellingsAreSourceOwnedAndContentAddressed(t *testing.T) {
 		}
 	}
 	input.Bodies[0].Terms = append(input.Bodies[0].Terms, call)
-	index.Bodies[0].Roots = append(index.Bodies[0].Roots, call)
 	appendCanonicalFixturePosition(&index, Position{Term: call, Root: call, Body: keyspace.MakeTerm(keyspace.FamilyBody, 1), Offset: 1, Cursor: 1, FrontierBody: keyspace.MakeTerm(keyspace.FamilyBody, 1), FrontierCursor: 1})
 	input.CellSpellings = []CellSpelling{{Cell: cell1, Name: "value"}, {Cell: cell2}}
 	input.CallSpellings = []CallSpelling{{Call: call, Name: "print"}}

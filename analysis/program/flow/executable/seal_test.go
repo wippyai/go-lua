@@ -30,6 +30,7 @@ import (
 type sealFixture struct {
 	sourceView source.View
 	flow       authored.View
+	bodies     *body.Result
 	forest     *containment.Result
 	control    *sourcecontrol.Result
 	paths      *semanticpath.Certificate
@@ -208,6 +209,7 @@ func openSealFixtureWithSource(
 	fixture := &sealFixture{
 		sourceView:     sourceView,
 		flow:           flowView,
+		bodies:         bodies,
 		forest:         forest,
 		control:        controlResult,
 		paths:          paths,
@@ -355,7 +357,7 @@ func TestSealFinalSourceExcludesOutcomeAndClosesRuntimeOperands(t *testing.T) {
 		[][]keyspace.Term{{bind, returned}}, matrixFlow(),
 		[]source.BindCells{{Bind: bind, Cells: []keyspace.Term{keyspace.MakeTerm(keyspace.FamilyCell, 1)}}}, nil, nil)
 
-	result, err := Seal(fixture.sourceView, fixture.flow, fixture.forest, fixture.control,
+	result, err := Seal(fixture.sourceView, fixture.flow, fixture.bodies, fixture.forest, fixture.control,
 		fixture.staticFinalize.View().ContentID(), fixture.moduleFinalize.View().ContentID(), fixture.paths)
 	if err != nil {
 		t.Fatalf("executable.Seal: %v", err)
@@ -405,11 +407,11 @@ func TestSealRejectsForeignEqualCardinalityProvenance(t *testing.T) {
 	if first.forest.Count() != foreignSource.forest.Count() || first.control.NodeCount() != foreignSource.control.NodeCount() {
 		t.Fatal("provenance fixtures are not equal-cardinality")
 	}
-	if _, err := Seal(first.sourceView, first.flow, foreignSource.forest, first.control,
+	if _, err := Seal(first.sourceView, first.flow, first.bodies, foreignSource.forest, first.control,
 		first.staticFinalize.View().ContentID(), first.moduleFinalize.View().ContentID(), first.paths); err == nil || !strings.Contains(err.Error(), "containment provenance") {
 		t.Fatalf("foreign equal-cardinality containment splice was accepted or failed outside provenance fence: %v", err)
 	}
-	if _, err := Seal(first.sourceView, first.flow, first.forest, foreignSource.control,
+	if _, err := Seal(first.sourceView, first.flow, first.bodies, first.forest, foreignSource.control,
 		first.staticFinalize.View().ContentID(), first.moduleFinalize.View().ContentID(), first.paths); err == nil || !strings.Contains(err.Error(), "source-control provenance") {
 		t.Fatalf("foreign equal-cardinality source-control splice was accepted or failed outside provenance fence: %v", err)
 	}
@@ -426,11 +428,11 @@ func TestSealRejectsForeignEqualCardinalityProvenance(t *testing.T) {
 	if first.forest.Count() != foreignFlow.forest.Count() || first.control.NodeCount() != foreignFlow.control.NodeCount() {
 		t.Fatal("same-source Flow provenance fixtures are not equal-cardinality")
 	}
-	if _, err := Seal(first.sourceView, first.flow, foreignFlow.forest, first.control,
+	if _, err := Seal(first.sourceView, first.flow, first.bodies, foreignFlow.forest, first.control,
 		first.staticFinalize.View().ContentID(), first.moduleFinalize.View().ContentID(), first.paths); err == nil || !strings.Contains(err.Error(), "containment provenance") {
 		t.Fatalf("foreign equal-cardinality Flow forest splice was accepted or failed outside provenance fence: %v", err)
 	}
-	if _, err := Seal(first.sourceView, first.flow, first.forest, foreignFlow.control,
+	if _, err := Seal(first.sourceView, first.flow, first.bodies, first.forest, foreignFlow.control,
 		first.staticFinalize.View().ContentID(), first.moduleFinalize.View().ContentID(), first.paths); err == nil || !strings.Contains(err.Error(), "source-control provenance") {
 		t.Fatalf("foreign equal-cardinality Flow source-control splice was accepted or failed outside provenance fence: %v", err)
 	}
@@ -582,7 +584,7 @@ func TestSealClosesCompleteRuntimeOperandMatrix(t *testing.T) {
 			{Bind: bindRoots[1], Cells: []keyspace.Term{term(keyspace.FamilyCell, 3)}},
 			{Bind: bindRoots[2], Cells: []keyspace.Term{term(keyspace.FamilyCell, 4)}},
 		}, nil, nil, extras)
-	result, err := Seal(fixture.sourceView, fixture.flow, fixture.forest, fixture.control,
+	result, err := Seal(fixture.sourceView, fixture.flow, fixture.bodies, fixture.forest, fixture.control,
 		fixture.staticFinalize.View().ContentID(), fixture.moduleFinalize.View().ContentID(), fixture.paths)
 	if err != nil {
 		t.Fatalf("complete operand executable.Seal: %v", err)
@@ -695,7 +697,7 @@ func TestSealClosesBranchAndRepeatLoopControls(t *testing.T) {
 	fixture := openSealFixture(t, "branch-repeat.lua", counts, rows,
 		branchFlowKind(keyspace.MakeTerm(keyspace.FamilyBody, 4), keyspace.MakeTerm(keyspace.FamilyBody, 2), keyspace.MakeTerm(keyspace.FamilyBody, 3), kind.LoopRepeat),
 		nil, nil, []keyspace.Term{body1, keyspace.MakeTerm(keyspace.FamilyBody, 4)})
-	result, err := Seal(fixture.sourceView, fixture.flow, fixture.forest, fixture.control,
+	result, err := Seal(fixture.sourceView, fixture.flow, fixture.bodies, fixture.forest, fixture.control,
 		fixture.staticFinalize.View().ContentID(), fixture.moduleFinalize.View().ContentID(), fixture.paths)
 	if err != nil {
 		t.Fatalf("branch/repeat executable.Seal: %v", err)
@@ -733,7 +735,7 @@ func TestValidateBodyRootsRejectsSourceBodyParentDisagreement(t *testing.T) {
 	if !firstOK || !foreignOK || firstParent == foreignParent {
 		t.Fatalf("Body-parent fixtures did not disagree: first=%v/%v foreign=%v/%v", firstParent, firstOK, foreignParent, foreignOK)
 	}
-	if _, err := validateBodyRoots(first.sourceView, foreign.forest, first.control, counts); err == nil || !strings.Contains(err.Error(), "Body parent disagrees") {
+	if _, err := validateBodyRoots(first.bodies, foreign.forest, first.control, counts); err == nil || !strings.Contains(err.Error(), "Body parent disagrees") {
 		t.Fatalf("foreign Body parent was accepted or failed outside exact parent check: %v", err)
 	}
 }

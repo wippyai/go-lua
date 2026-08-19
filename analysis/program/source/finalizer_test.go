@@ -14,18 +14,8 @@ func TestSourceRejectsUnorderedAuthoredAndSealRows(t *testing.T) {
 		t.Fatal("accepted reordered canonical family rows")
 	}
 
-	input, index = keyFaultFixture()
-	index.Bodies[0].Roots[0], index.Bodies[0].Roots[1] = index.Bodies[0].Roots[1], index.Bodies[0].Roots[0]
-	draft, err := Build(input)
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	if _, err := commitSource(draft, index); err == nil {
-		t.Fatal("accepted unordered statement roots")
-	}
-
 	input, index = sourceFixture(2)
-	draft, err = Build(input)
+	draft, err := Build(input)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
