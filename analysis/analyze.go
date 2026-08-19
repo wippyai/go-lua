@@ -455,7 +455,7 @@ func (state *compiledState) release() {
 func resultMounts(mounts []mountedProgramArtifact) []result.Mount {
 	out := make([]result.Mount, len(mounts))
 	for index, mount := range mounts {
-		out[index] = result.Mount{Snapshot: mount.snapshot, ModuleKey: mount.moduleKey, Program: mount.program}
+		out[index] = result.Mount{Snapshot: mount.snapshot, Program: mount.program}
 	}
 	return out
 }

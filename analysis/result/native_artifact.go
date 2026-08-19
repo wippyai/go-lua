@@ -14,7 +14,7 @@ func appendNativeArtifactSummaryRows(rows *[]nativePublicationRow, seen map[iden
 		return false
 	}
 	for _, mount := range mounts {
-		if mount.Snapshot == nil || !mount.Snapshot.Available() || !mount.Program.Available() || !mount.ModuleKey.Available() || mount.Program.ModuleKey != mount.ModuleKey || !mount.Snapshot.ArtifactID().Available() {
+		if mount.Snapshot == nil || !mount.Snapshot.Available() || !mount.Program.Available() || !mount.Snapshot.ArtifactID().Available() || mount.Program.ArtifactID != mount.Snapshot.ArtifactID() {
 			return false
 		}
 		exactCount, exactPublished := mount.Program.ExactScalarSummaryCount()
@@ -31,7 +31,7 @@ func appendNativeArtifactSummaryRows(rows *[]nativePublicationRow, seen map[iden
 				return false
 			}
 			point, pointOK := exactNativeScalarRulePoint(mount.Snapshot, summary.OccurrenceID())
-			if !pointOK || !appendNativeStaticScalarRows(rows, seen, summary, mount.ModuleKey, mount.Snapshot.ArtifactID(), bodyID, point) {
+			if !pointOK || !appendNativeStaticScalarRows(rows, seen, summary, mount.Program.ModuleKey, mount.Snapshot.ArtifactID(), bodyID, point) {
 				return false
 			}
 		}
@@ -41,7 +41,7 @@ func appendNativeArtifactSummaryRows(rows *[]nativePublicationRow, seen map[iden
 			bodyID, bodyOK := occurrence.BodyID()
 			point, pointOK := exactNativeScalarRulePoint(mount.Snapshot, summary.OccurrenceID())
 			if !summaryOK || !occurrenceOK || !bodyOK || !pointOK || summary.BodyPathID() != bodyID ||
-				!appendNativeArithmeticRows(rows, seen, summary, mount.ModuleKey, mount.Snapshot.ArtifactID(), occurrence.ID(), bodyID, point) {
+				!appendNativeArithmeticRows(rows, seen, summary, mount.Program.ModuleKey, mount.Snapshot.ArtifactID(), occurrence.ID(), bodyID, point) {
 				return false
 			}
 		}
@@ -50,7 +50,7 @@ func appendNativeArtifactSummaryRows(rows *[]nativePublicationRow, seen map[iden
 			occurrence, occurrenceOK := mount.Snapshot.OccurrenceForID(uint8(programartifact.OccurrenceUnary), summary.OccurrenceID())
 			bodyID, bodyOK := occurrence.BodyID()
 			if !summaryOK || !occurrenceOK || !bodyOK || summary.BodyPathID() != bodyID ||
-				!appendNativeUnaryRows(rows, seen, summary, mount.ModuleKey, mount.Snapshot.ArtifactID(), bodyID) {
+				!appendNativeUnaryRows(rows, seen, summary, mount.Program.ModuleKey, mount.Snapshot.ArtifactID(), bodyID) {
 				return false
 			}
 		}

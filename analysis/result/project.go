@@ -284,19 +284,19 @@ func Project(
 		if !mount.Valid() {
 			return Geometry{}, false
 		}
-		if _, duplicate := artifactIDs[mount.ModuleKey]; duplicate {
+		if _, duplicate := artifactIDs[mount.Program.ModuleKey]; duplicate {
 			return Geometry{}, false
 		}
 		artifactID := mount.Snapshot.ArtifactID()
-		artifactIDs[mount.ModuleKey] = artifactID
+		artifactIDs[mount.Program.ModuleKey] = artifactID
 		localBodies := make(map[identity.ContentID]int)
 		for bodyIndex := 0; bodyIndex < mount.Snapshot.BodyCount(); bodyIndex++ {
 			body, bodyOK := mount.Snapshot.BodyAt(bodyIndex)
 			if !bodyOK || !body.ID().Available() {
 				return Geometry{}, false
 			}
-			key := artifactResultBody{mount: mount.ModuleKey, body: body.ID()}
-			id, idOK := mountedResultID("body", mount.ModuleKey, artifactID, body.ID())
+			key := artifactResultBody{mount: mount.Program.ModuleKey, body: body.ID()}
+			id, idOK := mountedResultID("body", mount.Program.ModuleKey, artifactID, body.ID())
 			if !idOK {
 				return Geometry{}, false
 			}
@@ -315,7 +315,7 @@ func Project(
 				if !rootOK || !root.Available() || root.Family() == keyspace.FamilyInvalid {
 					return Geometry{}, false
 				}
-				rootID, rootIDOK := mountedResultID("root", mount.ModuleKey, artifactID, root.ID())
+				rootID, rootIDOK := mountedResultID("root", mount.Program.ModuleKey, artifactID, root.ID())
 				if !rootIDOK {
 					return Geometry{}, false
 				}
@@ -335,7 +335,7 @@ func Project(
 				if !entryOK || !entry.Available() {
 					continue
 				}
-				pointKey := Point{Mount: mount.ModuleKey, Point: entry}
+				pointKey := Point{Mount: mount.Program.ModuleKey, Point: entry}
 				geometry.PointBodies[pointKey] = appendUniqueInt(geometry.PointBodies[pointKey], entryBody)
 			}
 		}
@@ -357,7 +357,7 @@ func Project(
 				if !pointOK || !point.Available() {
 					return Geometry{}, false
 				}
-				pointKey := Point{Mount: mount.ModuleKey, Point: point}
+				pointKey := Point{Mount: mount.Program.ModuleKey, Point: point}
 				geometry.PointBodies[pointKey] = appendUniqueInt(geometry.PointBodies[pointKey], mapped)
 			}
 		}
