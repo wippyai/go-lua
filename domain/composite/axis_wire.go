@@ -59,7 +59,7 @@ func wireAxis[F, H, V any](
 			if !algebraOK || !published.Available() {
 				return axis.Cell{}, false
 			}
-			return axis.NewBoundCell(hot, published), true
+			return axis.NewBoundCell(hot), true
 		},
 	}
 	return template, contributor, contributor.complete()

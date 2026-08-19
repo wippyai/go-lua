@@ -412,8 +412,7 @@ type Spec[A any] struct {
 // produced and consumed only by the typed thunks one Spec instantiated, so an
 // authored hook never sees it and never asserts.
 type Cell struct {
-	value   any
-	algebra any
+	value any
 }
 
 func (cell Cell) Available() bool { return cell.value != nil }
@@ -702,12 +701,12 @@ func NewCell(value any) Cell {
 	return Cell{value: value}
 }
 
-// NewBoundCell holds one bound axis and its published algebra.
-func NewBoundCell(value, algebra any) Cell {
-	if value == nil || algebra == nil {
+// NewBoundCell holds one bound axis.
+func NewBoundCell(value any) Cell {
+	if value == nil {
 		return Cell{}
 	}
-	return Cell{value: value, algebra: algebra}
+	return Cell{value: value}
 }
 
 // MountDeclared reports whether this axis seals its own Link authority.
