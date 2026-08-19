@@ -220,16 +220,15 @@ func corpusDiagnosticProjectExpectedCount(project *corpusDiagnosticProjectExpect
 }
 
 func corpusDiagnosticSeverity(value string) anadiag.FindingSeverity {
-	switch value {
-	case "error":
-		return anadiag.FindingSeverityError
-	case "warning":
-		return anadiag.FindingSeverityWarning
-	case "hint":
-		return anadiag.FindingSeverityHint
-	default:
+	vocabulary, vocabularyOK := composite.StructureVocabulary()
+	if !vocabularyOK {
 		return anadiag.FindingSeverityInvalid
 	}
+	ordinal, ok := vocabulary.Spelling(structure.CategoryDiagnosticSeverity, value)
+	if !ok {
+		return anadiag.FindingSeverityInvalid
+	}
+	return anadiag.FindingSeverity(ordinal)
 }
 
 // corpusDiagnosticSeveritySpelling names one published severity as the sealed

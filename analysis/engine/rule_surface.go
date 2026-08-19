@@ -6,8 +6,8 @@ import (
 	"github.com/wippyai/go-lua/internal/canonical"
 )
 
-// Solver-side binding-surface value constructors; the source admission
-// transaction that consumes these surfaces lives in runtime_rule_admit.go.
+// Solver-side binding-surface value constructors; the placement envelope that
+// accumulates these surfaces lives in runtime_rule_admit.go.
 
 type bindingSummarySurfaceReceipt interface {
 	boundTopologySummarySurfaceReceipt() (*schemaBindingState, *schemaBindingAuthority, composition.Key, composition.Key, bool)
@@ -24,8 +24,12 @@ func validateSummarySurfaceReceipt(receipt bindingSummarySurfaceReceipt, state *
 type RuleReadSurface struct {
 	value     equation.Surface
 	authority *schemaBindingAuthority
-	anchor    *mountedSelectedSurfaceAnchor
-	summary   *ruleSummaryMapping
+	// anchored marks a surface whose coordinate is derived from the issuance
+	// anchor rather than from an owner Ref. Two issuances that produce the
+	// same anchored coordinate are a construction fault, so the declaration
+	// pass claims each one exactly once.
+	anchored bool
+	summary  *ruleSummaryMapping
 }
 
 type ruleSummaryMapping struct {
@@ -38,7 +42,7 @@ type RuleWriteSurface struct {
 	value     equation.Surface
 	authority *schemaBindingAuthority
 	route     *schemaRouteWrite
-	anchor    *mountedSelectedSurfaceAnchor
+	anchored  bool
 }
 
 func ExactReadSurface[K ~uint32 | ~uint64](ref Ref[K]) (RuleReadSurface, bool) {

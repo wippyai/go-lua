@@ -31,6 +31,7 @@ func pinnedSemanticRoles() []struct {
 		digest   string
 	}{
 		{"runtime-kind/result", "3c46caa8f3974fbd6816593532bcdd0759cdceea36fb503fa2efdbb1794cd56c"},
+		{"runtime-kind/predicate", "4408a9da1915fd27e8f8489538ff5c77f1c2ccbabe04570c2c72c139d2478b76"},
 		{"factor/value", "a4a0871ca0632b6ccf9c9be70fe5ab105f15ad4cfa514868201b4764563d9ade"},
 		{"factor/value/summary-identity", "d5933a460b0cbf7226f6ce977744df7e1484a9cce7780ceababc384a83a84064"},
 		{"factor/value/summary-coordinatewise", "326db6e5e34d18eb3afee9ab020b02ebe58c4a38d217e6621396bfd9e50f1ea1"},

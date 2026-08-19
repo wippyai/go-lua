@@ -71,6 +71,21 @@ type trieEntry[K comparable, V any] struct {
 	value V
 }
 
+// trieCount is the number of rows node holds. It walks the whole structure,
+// so it is a construction-time measurement of a sealed set rather than a read
+// path, and it is exact where a count of the entries offered would not be:
+// two offers of one key are one row.
+func trieCount[K comparable, V any](node *trie[K, V]) int {
+	if node == nil {
+		return 0
+	}
+	total := len(node.entries)
+	for _, child := range node.nodes {
+		total += trieCount(child)
+	}
+	return total
+}
+
 // trieLookup answers key against node. It returns the stored value by copy
 // and allocates nothing.
 func trieLookup[K comparable, V any](node *trie[K, V], hash uint64, key K) (V, bool) {

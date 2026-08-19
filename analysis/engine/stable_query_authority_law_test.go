@@ -240,7 +240,7 @@ func buildReceiptQueryMatrixFixture(t testing.TB, count int, order, declarationO
 		}
 		sites[index], occurrences[index], operands[index], operandValues[index] = site, occurrence, operand, value
 	}
-	if !assembly.SealSources() {
+	if assembly.sealSources().Available() {
 		t.Fatal("receipt query matrix source seal")
 	}
 	pointRank := make([]int, count)

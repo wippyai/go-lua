@@ -75,10 +75,15 @@ type declaredMemberRow struct {
 	EnvironmentInput equation.Input
 }
 
-// declaredQueryRow is one query row plus the identity it publishes under.
+// declaredQueryRow is one query row plus the identity it publishes under and
+// the mounted point coordinate it is anchored at. Row carries no dense Point
+// address: the constructor resolves the coordinate against its own point
+// plane, so a query never names a second point authority.
 type declaredQueryRow struct {
-	ID  identity.ContentID
-	Row equation.QueryInstance
+	ID    identity.ContentID
+	Mount identity.ContentID
+	Point identity.ContentID
+	Row   equation.QueryInstance
 }
 
 // constructedSitePlane is the admitted source plane of one construction: the
@@ -107,6 +112,7 @@ type topologyDeclaration struct {
 	environmentEdges   []equation.EnvironmentEdge
 	factorEdges        []equation.FactorEdge
 	summaries          []equation.SummaryMapping
+	candidates         []declaredActivationCandidate
 	observationQueries bool
 }
 
@@ -190,6 +196,7 @@ func constructionOrdinal(ordinal int) uint32 {
 type constructedTopology struct {
 	topology *BindingTopology
 	graph    *equation.Graph
+	points   constructedPointPlane
 }
 
 func (constructed constructedTopology) Available() bool {
@@ -219,6 +226,13 @@ type constructedRouteKey struct {
 	route identity.ContentID
 }
 
+// constructedBodyHandle addresses one sealed template body row: the mount it
+// is mounted under, and its index in that mount's template.
+type constructedBodyHandle struct {
+	mount int
+	body  int
+}
+
 // constructedMountPlane is the admitted address space over the sealed
 // templates. Every entry is a handle, or an identity derived from one; no
 // template row content is copied into it.
@@ -227,6 +241,7 @@ type constructedMountPlane struct {
 	initial   []int
 	rules     map[artifactMountedRule]constructedRuleHandle
 	routes    map[constructedRouteKey]int
+	bodies    map[artifactMountedBody]constructedBodyHandle
 	stages    map[artifactMountedRuleOccurrence]artifactNativeCallStage
 	bootstrap LinkBootstrapWitness
 	point     LinkBootstrapPoint
@@ -314,11 +329,11 @@ func constructTopology(declaration topologyDeclaration) (constructedTopology, to
 	if refusal.Available() {
 		return constructedTopology{}, refusal
 	}
-	queries, refusal := constructQueryPlane(declaration, source)
+	queries, refusal := constructQueryPlane(declaration, source, points)
 	if refusal.Available() {
 		return constructedTopology{}, refusal
 	}
-	activations, refusal := constructActivationPlane(declaration, source, members)
+	activations, refusal := constructActivationPlane(declaration, source, mounts, points, members)
 	if refusal.Available() {
 		return constructedTopology{}, refusal
 	}
@@ -326,7 +341,9 @@ func constructTopology(declaration topologyDeclaration) (constructedTopology, to
 	if refusal.Available() {
 		return constructedTopology{}, refusal
 	}
-	return sealConstructedTopology(declaration, source, mounts, points, edges, members, queries, activations, semantic)
+	constructed, refusal := sealConstructedTopology(declaration, source, mounts, points, edges, members, queries, activations, semantic)
+	constructed.points = points
+	return constructed, refusal
 }
 
 // constructSourcePlane fences the declaration against the sealed Binding it
@@ -407,6 +424,7 @@ func constructMountPlane(declaration topologyDeclaration, source constructedSour
 	plane.initial = make([]int, len(declaration.mounts))
 	plane.rules = make(map[artifactMountedRule]constructedRuleHandle)
 	plane.routes = make(map[constructedRouteKey]int)
+	plane.bodies = make(map[artifactMountedBody]constructedBodyHandle)
 	plane.stages = make(map[artifactMountedRuleOccurrence]artifactNativeCallStage)
 	seenModule := make(map[identity.ContentID]struct{}, len(declaration.mounts))
 	for index, mount := range declaration.mounts {
@@ -457,6 +475,17 @@ func constructMountPlane(declaration topologyDeclaration, source constructedSour
 					return constructedMountPlane{}, refuseAdmission(topologyConstructionStepMountRow, index)
 				}
 			}
+		}
+		for bodyIndex := 0; bodyIndex < template.BodyCount(); bodyIndex++ {
+			body, bodyOK := template.BodyAt(bodyIndex)
+			if !bodyOK {
+				return constructedMountPlane{}, refuseAdmission(topologyConstructionStepMountRow, index)
+			}
+			key := artifactMountedBody{mount: mount.module, body: body.ID}
+			if _, duplicate := plane.bodies[key]; duplicate {
+				return constructedMountPlane{}, refuseAdmission(topologyConstructionStepMountRow, index)
+			}
+			plane.bodies[key] = constructedBodyHandle{mount: index, body: bodyIndex}
 		}
 		for ruleIndex := 0; ruleIndex < template.RuleCount(); ruleIndex++ {
 			rule, ruleOK := template.RuleAt(ruleIndex)
@@ -1050,23 +1079,32 @@ func memberActivationShape(source constructedSourcePlane, row equation.RuleInsta
 // constructQueryPlane derives the query geometry in declaration order. The
 // ordinal a query publishes under is its position in this plane, so the
 // declared order is the published order.
-func constructQueryPlane(declaration topologyDeclaration, source constructedSourcePlane) (constructedQueryPlane, topologyConstructionRefusal) {
+func constructQueryPlane(declaration topologyDeclaration, source constructedSourcePlane, points constructedPointPlane) (constructedQueryPlane, topologyConstructionRefusal) {
 	plane := constructedQueryPlane{
 		specs:       make([]equation.QueryInstance, 0, len(declaration.queries)),
 		ordinalByID: make(map[identity.ContentID]uint64, len(declaration.queries)),
 	}
 	for ordinal, query := range declaration.queries {
-		family := query.Row.Family
+		row := query.Row
+		if declaration.mounted() {
+			point, pointOK := constructedMountedPoint(points, query.Mount, query.Point)
+			if !pointOK {
+				return constructedQueryPlane{}, refuseAdmission(topologyConstructionStepQueryRow, ordinal)
+			}
+			row.Point = point
+		} else if query.Mount.Available() || query.Point.Available() {
+			return constructedQueryPlane{}, refuseAdmission(topologyConstructionStepQueryRow, ordinal)
+		}
+		family := row.Family
 		familyOrdinal, familyOK := source.schema.queryOrdinalOf(family)
 		if !query.ID.Available() || !family.Available() || !familyOK || !bindingOwnsQuerySchema(source.schema, family) ||
-			familyOrdinal >= source.schema.queryCount() || !validBindingQueryInstance(source.schema, familyOrdinal, query.Row) ||
-			duplicateBindingQuery(plane.specs, query.Row) {
+			familyOrdinal >= source.schema.queryCount() || !validBindingQueryInstance(source.schema, familyOrdinal, row) ||
+			duplicateBindingQuery(plane.specs, row) {
 			return constructedQueryPlane{}, refuseAdmission(topologyConstructionStepQueryRow, ordinal)
 		}
 		if _, duplicate := plane.ordinalByID[query.ID]; duplicate {
 			return constructedQueryPlane{}, refuseAdmission(topologyConstructionStepDuplicateIdentity, ordinal)
 		}
-		row := query.Row
 		row.Surfaces = append([]equation.Surface(nil), query.Row.Surfaces...)
 		plane.ordinalByID[query.ID] = uint64(len(plane.specs))
 		plane.specs = append(plane.specs, row)
@@ -1074,12 +1112,24 @@ func constructQueryPlane(declaration topologyDeclaration, source constructedSour
 	return plane, topologyConstructionRefusal{}
 }
 
+// constructedMountedPoint resolves one mounted point coordinate to its dense
+// address in this construction's point plane.
+func constructedMountedPoint(points constructedPointPlane, mount, reusable identity.ContentID) (equation.PointRef, bool) {
+	id, located := points.idByMounted[artifactMountedPoint{mount: mount, reusable: reusable}]
+	ref, refOK := points.refByID[id]
+	return ref, located && refOK && ref != 0
+}
+
 // constructActivationPlane derives the candidate geometry. Every candidate
 // names its trigger by ordinal; the trigger must already publish a stable
 // activation identity, and every candidate of one trigger must name the same
 // application. A registered trigger with no candidate is refused: its
 // candidate set would be complete and empty at once.
-func constructActivationPlane(declaration topologyDeclaration, source constructedSourcePlane, members constructedMemberPlane) (constructedActivationPlane, topologyConstructionRefusal) {
+func constructActivationPlane(declaration topologyDeclaration, source constructedSourcePlane, mounts constructedMountPlane, points constructedPointPlane, members constructedMemberPlane) (constructedActivationPlane, topologyConstructionRefusal) {
+	declared, refusal := constructDeclaredCandidates(declaration, source, mounts, points, members)
+	if refusal.Available() {
+		return constructedActivationPlane{}, refusal
+	}
 	plane := constructedActivationPlane{
 		materializations:   make([]equation.TemplateMaterialization, 0, len(declaration.materializations)),
 		directCandidates:   make([]equation.DirectActivationCandidate, 0, len(declaration.directCandidates)),
@@ -1118,7 +1168,7 @@ func constructActivationPlane(declaration topologyDeclaration, source constructe
 		plane.candidates[ref]++
 		plane.application[ref] = origin.Application
 	}
-	for ordinal, value := range declaration.directCandidates {
+	for ordinal, value := range append(append([]equation.DirectActivationCandidate(nil), declaration.directCandidates...), declared...) {
 		origin, originOK := value.Origin()
 		ref, refOK := trigger(origin, originOK)
 		key := value.Key()
@@ -1139,6 +1189,80 @@ func constructActivationPlane(declaration topologyDeclaration, source constructe
 		}
 	}
 	return plane, topologyConstructionRefusal{}
+}
+
+// constructDeclaredCandidates folds the mounted candidate coordinates into
+// direct activation candidates. The trigger Point, the body's entry and exit
+// Points, and the transport vector are resolved against this construction's
+// own planes; the declaration carries no dense address.
+func constructDeclaredCandidates(declaration topologyDeclaration, source constructedSourcePlane, mounts constructedMountPlane, points constructedPointPlane, members constructedMemberPlane) ([]equation.DirectActivationCandidate, topologyConstructionRefusal) {
+	if len(declaration.candidates) == 0 {
+		return nil, topologyConstructionRefusal{}
+	}
+	if !declaration.mounted() {
+		return nil, refuseAdmission(topologyConstructionStepCandidateRow, 0)
+	}
+	built := make([]equation.DirectActivationCandidate, 0, len(declaration.candidates))
+	transports := make(map[artifactMountedBody]equation.DirectActivationTransportSet, len(declaration.candidates))
+	for ordinal, candidate := range declaration.candidates {
+		ref, registered := members.refByID[candidate.Member]
+		activation, isTrigger := members.activationAt[ref]
+		trigger, triggerOK := constructedMountedPoint(points, candidate.Trigger.mount, candidate.Trigger.reusable)
+		if !registered || !isTrigger || !activation.Available() || !triggerOK {
+			return nil, refuseAdmission(topologyConstructionStepCandidateRow, ordinal)
+		}
+		set, resolved := transports[artifactMountedBody{mount: candidate.Mount, body: candidate.Body}]
+		if !resolved {
+			var setOK bool
+			set, setOK = constructBodyTransportSet(source, mounts, points, candidate)
+			if !setOK {
+				return nil, refuseAdmission(topologyConstructionStepCandidateRow, ordinal)
+			}
+			transports[artifactMountedBody{mount: candidate.Mount, body: candidate.Body}] = set
+		}
+		origin := equation.MaterializationOrigin{
+			Family: candidate.Family, Application: candidate.Application,
+			Target: candidate.Target, Endpoint: candidate.Endpoint,
+			TriggerOrdinal: int(uint64(ref)) - 1,
+		}
+		value, valueOK := equation.NewDirectActivationCandidate(source.schema.cold, source.batch, origin, trigger, set)
+		if !valueOK {
+			return nil, refuseAdmission(topologyConstructionStepCandidateRow, ordinal)
+		}
+		built = append(built, value)
+	}
+	return built, topologyConstructionRefusal{}
+}
+
+// constructBodyTransportSet resolves one mounted body's entry and exit Points
+// from the sealed template and pairs them with the declared transport vector.
+func constructBodyTransportSet(source constructedSourcePlane, mounts constructedMountPlane, points constructedPointPlane, candidate declaredActivationCandidate) (equation.DirectActivationTransportSet, bool) {
+	handle, mounted := mounts.bodies[artifactMountedBody{mount: candidate.Mount, body: candidate.Body}]
+	if !mounted || handle.mount < 0 || handle.mount >= len(mounts.mounts) {
+		return equation.DirectActivationTransportSet{}, false
+	}
+	template := mounts.mounts[handle.mount].template
+	body, bodyOK := template.BodyAt(handle.body)
+	if !bodyOK || body.ID != candidate.Body || len(body.Entry) == 0 || len(body.Exits) == 0 {
+		return equation.DirectActivationTransportSet{}, false
+	}
+	entries := make([]equation.PointRef, 0, len(body.Entry))
+	for _, reusable := range body.Entry {
+		ref, ok := constructedMountedPoint(points, candidate.Mount, reusable)
+		if !ok {
+			return equation.DirectActivationTransportSet{}, false
+		}
+		entries = append(entries, ref)
+	}
+	exits := make([]equation.PointRef, 0, len(body.Exits))
+	for _, reusable := range body.Exits {
+		ref, ok := constructedMountedPoint(points, candidate.Mount, reusable)
+		if !ok {
+			return equation.DirectActivationTransportSet{}, false
+		}
+		exits = append(exits, ref)
+	}
+	return equation.NewDirectActivationTransportSet(source.schema.cold, source.batch, entries, exits, candidate.Imports, candidate.Export)
 }
 
 // constructSemanticRows folds the four published address planes into the one

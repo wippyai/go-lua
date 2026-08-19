@@ -31,8 +31,8 @@ func TestStructureTableSeals(t *testing.T) {
 	// three severities, the thirty-three compiled occurrence families, the five
 	// placement forms, the four operand polarities, the two declared operand
 	// shapes, the five execution cuts, and
-	// the ninety-one global semantic roles (including the runtime-kind result
-	// behavior relation, observation geometry,
+	// the ninety-two global semantic roles (including the runtime-kind result
+	// and predicate behavior relations, observation geometry,
 	// evidence-anchor, query population, and query projection roles).
 	// They are stated independently of the authored inventory,
 	// so a member added or dropped on either side is a verdict rather than a
@@ -51,7 +51,7 @@ func TestStructureTableSeals(t *testing.T) {
 		structure.CategoryIssuanceInput:         4,
 		structure.CategoryIssuanceRequirement:   2,
 		structure.CategoryIssuanceStage:         5,
-		structure.CategorySemanticRole:          91,
+		structure.CategorySemanticRole:          92,
 	}
 	declared := 0
 	for category, size := range sizes {

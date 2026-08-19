@@ -274,12 +274,16 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 		}
 		callBase := predecessor
 		if stages := compiler.callStages[base]; stages.available(base) {
+			plan, planOK := compiler.issuance.callStageTransport()
+			if !planOK {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+			}
 			sequence = append(sequence, stages.dispatch, stages.summary, stages.effect)
-			if !appendTransfer("analysis/program-artifact/call-base-dispatch-transfer", callBase, stages.dispatch, false, "value-source", "pack-source", "heap-ingress", "call-dispatch") ||
-				!appendTransfer("analysis/program-artifact/call-base-summary-transfer", callBase, stages.summary, false, "effect-selected") ||
-				!appendTransfer("analysis/program-artifact/call-dispatch-summary-transfer", stages.dispatch, stages.summary, false, "call-dispatch") ||
+			if !appendTransfer("analysis/program-artifact/call-base-dispatch-transfer", callBase, stages.dispatch, false, plan.dispatchEntry...) ||
+				!appendTransfer("analysis/program-artifact/call-base-summary-transfer", callBase, stages.summary, false, plan.effectBypass...) ||
+				!appendTransfer("analysis/program-artifact/call-dispatch-summary-transfer", stages.dispatch, stages.summary, false, plan.dispatchForward...) ||
 				!appendTransfer("analysis/program-artifact/call-base-effect-transfer", callBase, stages.effect, true) ||
-				!appendTransfer("analysis/program-artifact/call-dispatch-effect-transfer", stages.dispatch, stages.effect, false, "call-dispatch") {
+				!appendTransfer("analysis/program-artifact/call-dispatch-effect-transfer", stages.dispatch, stages.effect, false, plan.dispatchForward...) {
 				return compileFailure(CompileStageOccurrences, CompileRowEnvironment, index, -1, CompileReasonEnvironmentUnavailable)
 			}
 			callInput[stages.dispatch] = callBase

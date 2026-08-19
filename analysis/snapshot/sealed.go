@@ -17,10 +17,11 @@ type Denominators struct {
 }
 
 // denominatorEntry is one published denominator: the sealed membership set,
-// erased because its key type belongs to the columns it proves, and the
-// column slots that read against it.
+// erased because its key type belongs to the columns it proves, the size of
+// that set, and the column slots that read against it.
 type denominatorEntry struct {
 	set   any
+	size  int
 	slots []uint32
 }
 
@@ -43,6 +44,20 @@ func (d Denominators) Proves(id identity.ContentID, slot uint32) bool {
 		}
 	}
 	return false
+}
+
+// Size reports how many keys the denominator id covers. It is the sealed
+// cardinality of a key universe, which is what a reader iterating a column
+// that is total over that universe needs and what a column keyed by a dense
+// ordinal has no other way to state. A denominator the publication does not
+// hold reports nothing rather than zero, so ignorance stays distinguishable
+// from an empty universe.
+func (d Denominators) Size(id identity.ContentID) (int, bool) {
+	entry, published := trieLookup(d.index, hashKey(identityPlan, id), id)
+	if !published {
+		return 0, false
+	}
+	return entry.size, true
 }
 
 // Len reports how many denominators the snapshot publishes.

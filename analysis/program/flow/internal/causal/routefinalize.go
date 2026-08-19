@@ -250,7 +250,8 @@ func (s *sealState) validateArcPlanBijection(plan *routeplan.Plan) error {
 		if !ok {
 			return errors.New("program/flow/causal: planned route is malformed")
 		}
-		if _, arc := origin.ArcRef(); arc && !seen[ordinal] {
+		carrier, _ := origin.RecurrenceCarrier()
+		if _, arc := carrier.ArcRef(); arc && !seen[ordinal] {
 			return fmt.Errorf("program/flow/causal: OriginArc plan row %d has no exact Arc disposition", ordinal)
 		}
 	}
@@ -265,7 +266,8 @@ func (s *sealState) validatePlannedArc(plan *routeplan.Plan, seen []bool, arcInd
 	if !ok {
 		return errors.New("planned Arc route is unavailable")
 	}
-	actual, ok := origin.ArcRef()
+	carrier, _ := origin.RecurrenceCarrier()
+	actual, ok := carrier.ArcRef()
 	if !ok {
 		return errors.New("planned Arc disposition lost its ArcRef")
 	}

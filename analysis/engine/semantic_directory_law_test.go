@@ -69,7 +69,7 @@ func newSemanticDirectoryScaleFixture(t testing.TB, count int) semanticDirectory
 		}
 		sites[index], occurrences[index], operands[index] = site, occurrence, operand
 	}
-	if !assembly.SealSources() {
+	if assembly.sealSources().Available() {
 		t.Fatal("directory scale source seal")
 	}
 	proof := ruleImplementation.binding.proof

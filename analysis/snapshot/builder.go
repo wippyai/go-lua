@@ -68,22 +68,15 @@ type Content[K comparable, V any] struct {
 	Members     []K
 }
 
-// Builder is the only construction surface. The engine fills one inside an
-// epoch and consumes it by value at Seal. Every structure it accumulates is
-// persistent, so sealing shares what the publication holds instead of copying
-// it, and a later builder call publishes new nodes rather than writing into
-// nodes a snapshot already holds.
-//
-// A Builder is not safe for concurrent use; it is epoch-local by
-// construction.
-type Builder struct {
+// builderCore is the construction state both publication lifecycles share:
+// the dense column vector, the authorship marks that separate a second write
+// from a replacement, the directory, and the denominator publication. It is
+// unexported and neither lifecycle copies it, so the two builders below are
+// two contracts over one implementation rather than two implementations.
+type builderCore struct {
 	schema     identity.ContentID
 	store      identity.StoreID
 	generation identity.Generation
-	// derivedFrom is the generation this builder was derived from, and is
-	// unavailable for a builder that starts from nothing. A derived
-	// publication must advance it.
-	derivedFrom identity.Generation
 	// columns holds one erased *column[K, V] per dense slot, inherited by
 	// reference from the publication this builder derives from.
 	columns []any
@@ -94,16 +87,59 @@ type Builder struct {
 	directory        *trie[identity.ContentID, uint32]
 	denominators     *trie[identity.ContentID, denominatorEntry]
 	denominatorCount int
-	mounts           *trie[identity.MountID, struct{}]
-	mountCount       int
-	queries          *trie[identity.ContentID, struct{}]
-	queryCount       int
+}
+
+// Builder publishes the hot store: the Link and solve state an engine
+// advances generation by generation. The engine fills one inside an epoch and
+// consumes it by value at Seal. Every structure it accumulates is persistent,
+// so sealing shares what the publication holds instead of copying it, and a
+// later builder call publishes new nodes rather than writing into nodes a
+// snapshot already holds.
+//
+// A Builder is not safe for concurrent use; it is epoch-local by
+// construction.
+type Builder struct {
+	builderCore
+	// derivedFrom is the generation this builder was derived from, and is
+	// unavailable for a builder that starts from nothing. A derived
+	// publication must advance it.
+	derivedFrom identity.Generation
+	mounts      *trie[identity.MountID, struct{}]
+	mountCount  int
+	queries     *trie[identity.ContentID, struct{}]
+	queryCount  int
+}
+
+// FrozenBuilder publishes the cold store: content that is produced once,
+// shared by every consumer that mounts it, and never revised. It writes
+// columns and addresses them exactly as a Builder does, and that is the whole
+// of its contract.
+//
+// What it does not have is the rest. There is no derivation entry point that
+// accepts a Frozen, no mount binding, and no query registration, so a cold
+// publication cannot advance a generation, cannot record a Link-local
+// binding, and cannot answer a runtime query. The lifecycle is enforced by
+// the type rather than by a mode a caller has to check.
+type FrozenBuilder struct {
+	builderCore
 }
 
 // NewBuilder starts a publication of schema by store at generation. It starts
 // from nothing: every column it publishes is written by it.
 func NewBuilder(schema identity.ContentID, store identity.StoreID, generation identity.Generation) Builder {
-	return Builder{schema: schema, store: store, generation: generation}
+	return Builder{builderCore: builderCore{schema: schema, store: store, generation: generation}}
+}
+
+// coldGeneration is the single revision a frozen store ever publishes. A cold
+// store has no second revision to distinguish, so its fence is a constant.
+const coldGeneration = identity.Generation(1)
+
+// NewFrozen starts the one publication of the frozen store store. It seals a
+// Frozen, which is the value a consumer mounts: immutable, shared by
+// reference across every mount of it, and anchored to a generation that
+// nothing can advance.
+func NewFrozen(schema identity.ContentID, store identity.StoreID) FrozenBuilder {
+	return FrozenBuilder{builderCore: builderCore{schema: schema, store: store, generation: coldGeneration}}
 }
 
 // NewDelta starts the publication that follows base at generation. It
@@ -117,24 +153,26 @@ func NewBuilder(schema identity.ContentID, store identity.StoreID, generation id
 // nothing.
 func NewDelta(base Snapshot, generation identity.Generation) Builder {
 	if !base.Published() {
-		return Builder{generation: generation}
+		return Builder{builderCore: builderCore{generation: generation}}
 	}
 	inherited := make([]any, len(base.columns))
 	copy(inherited, base.columns)
 	return Builder{
-		schema:           base.schema,
-		store:            base.store,
-		generation:       generation,
-		derivedFrom:      base.generation,
-		columns:          inherited,
-		authored:         make([]bool, len(inherited)),
-		directory:        base.directory,
-		denominators:     base.denominators.index,
-		denominatorCount: base.denominators.count,
-		mounts:           base.mounts.bound,
-		mountCount:       base.mounts.count,
-		queries:          base.queries.plans,
-		queryCount:       base.queries.count,
+		builderCore: builderCore{
+			schema:           base.schema,
+			store:            base.store,
+			generation:       generation,
+			columns:          inherited,
+			authored:         make([]bool, len(inherited)),
+			directory:        base.directory,
+			denominators:     base.denominators.index,
+			denominatorCount: base.denominators.count,
+		},
+		derivedFrom: base.generation,
+		mounts:      base.mounts.bound,
+		mountCount:  base.mounts.count,
+		queries:     base.queries.plans,
+		queryCount:  base.queries.count,
 	}
 }
 
@@ -144,6 +182,28 @@ func NewDelta(base Snapshot, generation identity.Generation) Builder {
 // from replaces it wholesale, detaching the replaced column from the
 // denominator it read against.
 func PutColumn[K comparable, V any](b *Builder, ax Axis[K, V], content Content[K, V]) error {
+	if b == nil {
+		return fmt.Errorf("%w: builder", ErrUnavailableIdentity)
+	}
+	return putColumn(&b.builderCore, ax, content)
+}
+
+// PutFrozenColumn seals content into the cold column ax names. It is the
+// whole write surface of a frozen publication: cold content is produced once
+// and published whole, so there is no row edit to make and no second
+// authority a later edit could introduce.
+func PutFrozenColumn[K comparable, V any](b *FrozenBuilder, ax Axis[K, V], content Content[K, V]) error {
+	if b == nil {
+		return fmt.Errorf("%w: builder", ErrUnavailableIdentity)
+	}
+	return putColumn(&b.builderCore, ax, content)
+}
+
+// putColumn is the column publication both lifecycles perform. It takes the
+// shared construction state directly rather than through an interface,
+// because an interface parameter would force every builder that reaches it to
+// escape and would charge a heap allocation to each publication.
+func putColumn[K comparable, V any](b *builderCore, ax Axis[K, V], content Content[K, V]) error {
 	if b == nil {
 		return fmt.Errorf("%w: builder", ErrUnavailableIdentity)
 	}
@@ -187,7 +247,10 @@ func PutColumn[K comparable, V any](b *Builder, ax Axis[K, V], content Content[K
 // node with the column it derived from, so the cost of the edit is the change
 // set rather than the column.
 func SetRow[K comparable, V any](b *Builder, ax Axis[K, V], key K, value V) error {
-	stored, err := editable[K, V](b, ax)
+	if b == nil {
+		return fmt.Errorf("%w: builder", ErrUnavailableIdentity)
+	}
+	stored, err := editable[K, V](&b.builderCore, ax)
 	if err != nil {
 		return err
 	}
@@ -202,7 +265,10 @@ func SetRow[K comparable, V any](b *Builder, ax Axis[K, V], key K, value V) erro
 // other key reads as a miss. Removing a row the column does not hold changes
 // nothing. The edit costs the removed key's path and nothing else.
 func RemoveRow[K comparable, V any](b *Builder, ax Axis[K, V], key K) error {
-	stored, err := editable[K, V](b, ax)
+	if b == nil {
+		return fmt.Errorf("%w: builder", ErrUnavailableIdentity)
+	}
+	stored, err := editable[K, V](&b.builderCore, ax)
 	if err != nil {
 		return err
 	}
@@ -246,7 +312,7 @@ func DeclareQuery[K comparable, O any](b *Builder, family identity.ContentID, sl
 // Publishing the locator an identity already resolves to states the same
 // fact, which is what a derived publication that reseals an addressed column
 // does, and is accepted.
-func (b *Builder) Publish(id identity.ContentID, slot uint32) error {
+func (b *builderCore) Publish(id identity.ContentID, slot uint32) error {
 	if !id.Available() {
 		return fmt.Errorf("%w: directory entry", ErrUnavailableIdentity)
 	}
@@ -305,32 +371,58 @@ func (b *Builder) RegisterQuery(plan identity.ContentID) error {
 // columns. It rejects a publication with a missing identity, a hole in its
 // dense slot range, or a derived generation that does not advance the store.
 func (b Builder) Seal() (Snapshot, error) {
-	if !b.schema.Available() {
-		return Snapshot{}, fmt.Errorf("%w: schema", ErrUnavailableIdentity)
-	}
-	if !b.store.Available() {
-		return Snapshot{}, fmt.Errorf("%w: store", ErrUnavailableIdentity)
-	}
-	if !b.generation.Available() {
-		return Snapshot{}, fmt.Errorf("%w: generation", ErrUnavailableIdentity)
-	}
 	if b.derivedFrom.Available() && !b.derivedFrom.Precedes(b.generation) {
 		return Snapshot{}, fmt.Errorf("%w: generation %d after %d", ErrStaleGeneration, b.generation, b.derivedFrom)
 	}
+	published, err := b.builderCore.seal()
+	if err != nil {
+		return Snapshot{}, err
+	}
+	return Snapshot{
+		publication: published,
+		mounts:      Mounts{bound: b.mounts, count: b.mountCount},
+		queries:     Queries{plans: b.queries, count: b.queryCount},
+	}, nil
+}
+
+// Seal consumes the frozen builder by value and returns the published Frozen.
+// It applies the same identity and dense-slot rules a hot publication applies;
+// what it cannot do is derive, because no entry point accepts a Frozen and
+// returns a builder.
+func (b FrozenBuilder) Seal() (Frozen, error) {
+	published, err := b.builderCore.seal()
+	if err != nil {
+		return Frozen{}, err
+	}
+	return Frozen{publication: published}, nil
+}
+
+// seal is the publication both lifecycles perform: it validates the
+// identities and the dense slot range and hands over the shared immutable
+// structure. The one structure it copies is the dense slot vector, so a later
+// builder call cannot reach a sealed publication's columns.
+func (b builderCore) seal() (publication, error) {
+	if !b.schema.Available() {
+		return publication{}, fmt.Errorf("%w: schema", ErrUnavailableIdentity)
+	}
+	if !b.store.Available() {
+		return publication{}, fmt.Errorf("%w: store", ErrUnavailableIdentity)
+	}
+	if !b.generation.Available() {
+		return publication{}, fmt.Errorf("%w: generation", ErrUnavailableIdentity)
+	}
 	for slot, stored := range b.columns {
 		if stored == nil {
-			return Snapshot{}, fmt.Errorf("%w: slot %d", ErrSlotEmpty, slot)
+			return publication{}, fmt.Errorf("%w: slot %d", ErrSlotEmpty, slot)
 		}
 	}
-	sealed := Snapshot{
+	sealed := publication{
 		schema:       b.schema,
 		store:        b.store,
 		generation:   b.generation,
 		columns:      make([]any, len(b.columns)),
 		directory:    b.directory,
 		denominators: Denominators{index: b.denominators, count: b.denominatorCount},
-		mounts:       Mounts{bound: b.mounts, count: b.mountCount},
-		queries:      Queries{plans: b.queries, count: b.queryCount},
 	}
 	copy(sealed.columns, b.columns)
 	return sealed, nil
@@ -339,7 +431,7 @@ func (b Builder) Seal() (Snapshot, error) {
 // editable recovers the column ax names for an edit. It performs the same
 // checks a read performs -- schema, slot bound, column kind -- so an edit can
 // never reach a column of another schema or another key and value type.
-func editable[K comparable, V any](b *Builder, ax Axis[K, V]) (*column[K, V], error) {
+func editable[K comparable, V any](b *builderCore, ax Axis[K, V]) (*column[K, V], error) {
 	if b == nil {
 		return nil, fmt.Errorf("%w: builder", ErrUnavailableIdentity)
 	}
@@ -360,7 +452,7 @@ func editable[K comparable, V any](b *Builder, ax Axis[K, V]) (*column[K, V], er
 // column that names an identity seals its members; a later column names the
 // identity alone and is attached to the very set the first sealed, so the
 // membership is stored once and referenced twice.
-func sealDenominator[K comparable](b *Builder, plan *keyPlan, id identity.ContentID, members []K, slot uint32) (*denominator[K], denominatorEntry, error) {
+func sealDenominator[K comparable](b *builderCore, plan *keyPlan, id identity.ContentID, members []K, slot uint32) (*denominator[K], denominatorEntry, error) {
 	if !id.Available() {
 		return nil, denominatorEntry{}, nil
 	}
@@ -373,7 +465,7 @@ func sealDenominator[K comparable](b *Builder, plan *keyPlan, id identity.Conten
 		if !sameKey {
 			return nil, denominatorEntry{}, fmt.Errorf("%w: denominator %s", ErrColumnKind, id)
 		}
-		return shared, denominatorEntry{set: published.set, slots: withSlot(published.slots, slot)}, nil
+		return shared, denominatorEntry{set: published.set, size: published.size, slots: withSlot(published.slots, slot)}, nil
 	}
 	sealed := &denominator[K]{id: id}
 	if len(members) > 0 {
@@ -383,11 +475,11 @@ func sealDenominator[K comparable](b *Builder, plan *keyPlan, id identity.Conten
 		}
 		sealed.members = trieBuild(covered, make([]trieEntry[K, struct{}], len(covered)), 0)
 	}
-	return sealed, denominatorEntry{set: sealed, slots: []uint32{slot}}, nil
+	return sealed, denominatorEntry{set: sealed, size: trieCount(sealed.members), slots: []uint32{slot}}, nil
 }
 
 // publishDenominator records entry under id, counting a first publication.
-func (b *Builder) publishDenominator(id identity.ContentID, entry denominatorEntry) {
+func (b *builderCore) publishDenominator(id identity.ContentID, entry denominatorEntry) {
 	var added bool
 	b.denominators, added = trieInsert(b.denominators, 0, trieEntry[identity.ContentID, denominatorEntry]{
 		hash: hashKey(identityPlan, id), key: id, value: entry,
@@ -400,7 +492,7 @@ func (b *Builder) publishDenominator(id identity.ContentID, entry denominatorEnt
 // detach withdraws slot from the denominator the column it holds reads
 // against, and unpublishes a denominator that no column reads against any
 // more. It runs when a publication replaces an inherited column.
-func (b *Builder) detach(slot uint32) {
+func (b *builderCore) detach(slot uint32) {
 	if !b.filled(slot) {
 		return
 	}
@@ -424,7 +516,7 @@ func (b *Builder) detach(slot uint32) {
 		return
 	}
 	b.denominators, _ = trieInsert(b.denominators, 0, trieEntry[identity.ContentID, denominatorEntry]{
-		hash: hash, key: id, value: denominatorEntry{set: entry.set, slots: remaining},
+		hash: hash, key: id, value: denominatorEntry{set: entry.set, size: entry.size, slots: remaining},
 	})
 }
 
@@ -468,7 +560,7 @@ func withoutSlot(slots []uint32, slot uint32) []uint32 {
 
 // reserve grows the dense slot range to cover slot. Slot assignment is
 // append-only: a publication never shrinks the range it inherited.
-func (b *Builder) reserve(slot uint32) {
+func (b *builderCore) reserve(slot uint32) {
 	if uint64(slot) < uint64(len(b.columns)) {
 		return
 	}
@@ -481,12 +573,12 @@ func (b *Builder) reserve(slot uint32) {
 }
 
 // filled reports whether slot holds a column.
-func (b *Builder) filled(slot uint32) bool {
+func (b *builderCore) filled(slot uint32) bool {
 	return uint64(slot) < uint64(len(b.columns)) && b.columns[slot] != nil
 }
 
 // authoredAt reports whether this builder wrote the column at slot itself,
 // which is what a second write to one slot in one publication is.
-func (b *Builder) authoredAt(slot uint32) bool {
+func (b *builderCore) authoredAt(slot uint32) bool {
 	return uint64(slot) < uint64(len(b.authored)) && b.authored[slot]
 }

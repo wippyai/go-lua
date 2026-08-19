@@ -707,7 +707,7 @@ func newBenchFixedFactorPopulation(b *testing.B, members int) benchFixedFactorPo
 		}
 		sites[index], occurrences[index], operands[index], operandValues[index] = site, occurrence, operand, value
 	}
-	if !assembly.SealSources() {
+	if assembly.sealSources().Available() {
 		b.Fatal("fixed factor population source seal")
 	}
 	declaration := topologyDeclaration{binding: binding, batch: assembly.inner.batch}

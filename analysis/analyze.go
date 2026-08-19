@@ -389,15 +389,6 @@ func (plan *Plan) SourceID() identity.ContentID {
 	return state.sourceID
 }
 
-func (plan *Plan) valid() bool {
-	state, leased := plan.acquire()
-	if !leased {
-		return false
-	}
-	state.releaseLease()
-	return true
-}
-
 // Close releases this Plan's assembled topology and domain receipts. The
 // compile-time snapshot, template, and owner-handoff bag remain in the
 // content-addressed cache: closing a Plan must not force a later equivalent

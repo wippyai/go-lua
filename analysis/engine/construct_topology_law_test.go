@@ -160,39 +160,22 @@ func newConstructedProgramFixture(t testing.TB) constructedProgramFixture {
 	if !installConstOperandResolver(owner.implementation, struct{}{}) {
 		t.Fatal("constructed program operand resolver")
 	}
+	inventory := MountedProgramAdmission{}
 	for _, rule := range rules {
-		if !owner.implementation.AdmitMounted(admission, owner.capability, owner.mount, rule.Point, rule.ID) {
-			t.Fatalf("constructed program occurrence %v", rule.ID)
-		}
+		inventory.Mounted = append(inventory.Mounted, MountedRuleAdmission{
+			Attach: owner.implementation, Capability: owner.capability,
+			Mount: owner.mount, Point: rule.Point, Occurrence: rule.ID,
+		})
 	}
-	if !admission.SealSources() {
-		failure, available := admission.SealFailure()
-		t.Fatalf("constructed program source seal failure=%v available=%t", failure.Failure(), available)
+	declaration, seal, stage, declared := declareMountedProgram(admission, sealed, bootstrap, inventory)
+	if !declared {
+		t.Fatalf("constructed program declaration stage=%v seal=%v ordinal=%d", stage, seal.Failure(), seal.Ordinal())
 	}
-	batch := admission.inner.batch
-	issued := admission.inner.spec.Rules
-	source := admission.mountedRows
-	if batch == nil || !batch.Sealed() || source == nil || len(issued) != len(rules) {
-		t.Fatalf("constructed program sealed source rows=%d", len(issued))
+	if declaration.batch == nil || !declaration.batch.Sealed() || len(declaration.members) != len(rules) {
+		t.Fatalf("constructed program sealed source rows=%d", len(declaration.members))
 	}
-	sites := constructedSitePlane{mounted: make(map[artifactMountedPoint]equation.Site, len(source.mounted)), bootstrap: source.bootstrap.site}
-	for handle, site := range source.mounted {
-		sites.mounted[handle] = site
-	}
-	members := make([]declaredMemberRow, len(rules))
-	for index, rule := range rules {
-		members[index] = declaredMemberRow{
-			Plane: declaredMemberMount, Role: owner.capability, Mount: owner.mount,
-			Point: rule.Point, Occurrence: rule.ID, Row: issued[index],
-		}
-	}
-	fixture := constructedProgramFixture{
-		owner: owner, rules: rules,
-		declaration: topologyDeclaration{
-			binding: owner.binding, batch: batch, mounts: sealed, bootstrap: bootstrap,
-			sites: sites, members: members,
-		},
-	}
+	sites := declaration.sites
+	fixture := constructedProgramFixture{owner: owner, rules: rules, declaration: declaration}
 	baseSite, baseOK := sites.mounted[artifactMountedPoint{mount: owner.mount, reusable: owner.base}]
 	effectSite, effectOK := sites.mounted[artifactMountedPoint{mount: owner.mount, reusable: owner.effect}]
 	if !baseOK || !effectOK {
@@ -536,7 +519,7 @@ func newConstructedOwnerFixture(t testing.TB) constructedOwnerFixture {
 	operandValue := ruleUnitForSemantic(coldKey(957_011))
 	entity, entityOK := operandEntityForContent(operandValue.content)
 	operand, operandOK := admission.admitOperand(occurrence, entity)
-	if !siteOK || !occurrenceOK || !entityOK || !operandOK || !admission.SealSources() {
+	if !siteOK || !occurrenceOK || !entityOK || !operandOK || admission.sealSources().Available() {
 		t.Fatal("owner-declared source seal")
 	}
 	proof := implementation.binding.proof
@@ -720,7 +703,7 @@ func newConstructedActivationFixture(t testing.TB) constructedActivationFixture 
 		}
 		sites[index], occurrences[index], operands[index] = site, occurrence, operand
 	}
-	if !admission.SealSources() {
+	if admission.sealSources().Available() {
 		t.Fatal("activation source seal")
 	}
 	triggerProof := activationImplementation.binding.proof
@@ -914,7 +897,7 @@ func constructActivationPlaneOf(t *testing.T, declaration topologyDeclaration) (
 	if refusal.Available() {
 		return constructedActivationPlane{}, false
 	}
-	activations, refusal := constructActivationPlane(declaration, source, members)
+	activations, refusal := constructActivationPlane(declaration, source, mounts, points, members)
 	return activations, !refusal.Available()
 }
 

@@ -298,12 +298,6 @@ func (origin Origin) RecurrenceCarrier() (RecurrenceCarrier, bool) {
 	return origin.carrier, true
 }
 
-// ArcRef and NodePair expose only opaque sourcecontrol capabilities to
-// recurrence. New recurrence code must inspect the endpoint row
-// separately from the carrier.
-func (origin Origin) ArcRef() (sourcecontrol.ArcRef, bool) {
-	return origin.carrier.ArcRef()
-}
 func validRoute(route Route, origin Origin, owner sourcecontrol.Owner) bool {
 	if !origin.valid() || !route.Arm.valid() || route.From == 0 || route.To == 0 || route.Decision == 0 && route.Truth {
 		return false

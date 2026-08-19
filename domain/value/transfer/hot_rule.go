@@ -90,13 +90,6 @@ func (rule *HotRule) ReceiptForOccurrence(mount, id identity.ContentID) (value.S
 	return transfer, ok && rule.owner.Schema().OwnsStorageTransfer(transfer)
 }
 
-func mountedCapability(issuer interface {
-	MountedCapability() (engine.RuleSlotCapability, bool)
-}) engine.RuleSlotCapability {
-	capability, _ := issuer.MountedCapability()
-	return capability
-}
-
 // Implementation resolves only after the shared SchemaBinding seals.
 func (rule *HotRule) Implementation() (*valueowner.RuleImplementation[value.StorageTransfer], bool) {
 	if rule == nil || rule.implementation == nil {

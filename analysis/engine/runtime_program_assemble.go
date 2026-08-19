@@ -50,10 +50,11 @@ type MountedRuleAdmission struct {
 	Occurrence identity.ContentID
 }
 
-// programQueryAdmit is the erased mounted query row. Implementations live
-// on the sealed query cells; the batch stays inside assemble.
+// programQueryAdmit is the erased mounted query row. Implementations live on
+// the sealed query cells; the declaration pass states the row and the
+// constructor resolves the Point it is anchored at.
 type programQueryAdmit interface {
-	admitMountedQuery(*MountedQueryBatch, identity.ContentID, identity.ContentID, identity.ContentID) bool
+	declareMountedQuery(state *schemaBindingState, authority *schemaBindingAuthority, id, mount, point identity.ContentID) (declaredQueryRow, *ruleSummaryMapping, bool)
 	bindConstruction(*ProgramConstruction, identity.ContentID) bool
 }
 

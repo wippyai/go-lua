@@ -31,14 +31,6 @@ const (
 	contentDomain = "wippy.analysis/schema/denominator/publication/relation-counts/v1"
 )
 
-// SchemaFragment and HotAxis are deliberately empty: this is an
-// engine-published axis, not a factor binding. The types make that absence
-// explicit in the generic declaration rather than inventing a binding hook.
-type (
-	SchemaFragment struct{}
-	HotAxis        struct{}
-)
-
 // AxisEntry declares the neutral relation-count column. The axis is Link
 // lifetime because one mounted Snapshot owns one publication, frozen because
 // the column is written once, and shared because readers borrow immutable

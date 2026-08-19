@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
+	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/identity"
 )
 
@@ -390,23 +391,23 @@ func TestAssembleMountedProgramConstructsFromSealedTemplates(t *testing.T) {
 			forbidden: []string{"pinReceipt"},
 		},
 		{
-			path:      "runtime_program_admit.go",
-			signature: "func applyMountedProgramAdmission",
+			path:      "runtime_program_issue.go",
+			signature: "func declareMountedProgram",
 			forbidden: []string{"*ReceiptAssembly", "&ReceiptAssembly{"},
 		},
 		{
 			path:      "runtime_program_admit.go",
-			signature: "func (implementation *RuleImplementation[K, V, O]) AdmitMounted",
+			signature: "func (implementation *RuleImplementation[K, V, O]) declareRuleOperand",
 			forbidden: []string{"*ReceiptAssembly"},
 		},
 		{
 			path:      "runtime_program_admit.go",
-			signature: "func (implementation *RuleImplementation[K, V, O]) AdmitLink",
+			signature: "func (implementation *RuleImplementation[K, V, O]) declareRuleSurfaces",
 			forbidden: []string{"*ReceiptAssembly"},
 		},
 		{
-			path:      "runtime_activation_admit.go",
-			signature: "func AdmitMountedActivationOccurrence",
+			path:      "runtime_program_issue.go",
+			signature: "func admitActivationRuleIssuance",
 			forbidden: []string{"*ReceiptAssembly"},
 		},
 		{
@@ -510,5 +511,25 @@ func TestAssembleMountedProgramPublishesConstructedGeometry(t *testing.T) {
 	}
 	if _, published := program.Query(queryID); !published {
 		t.Fatal("admitted query publishes no address")
+	}
+	// The surfaces the published rows carry are the owner's declaration: the
+	// write coordinate is the one this rule's declared per-slot projector
+	// names, resolved against the cold write shape. No admission callback
+	// placed it, so a row that carries any other coordinate proves the
+	// declared surface never reached the constructed geometry.
+	local, projected := testRuleProjector(struct{}{})
+	output := owner.implementation.binding.proof.output
+	published := program.topology.carrier.spec.Rules
+	if !projected || len(published) != len(rules) {
+		t.Fatalf("published rule rows=%d declared=%d", len(published), len(rules))
+	}
+	for ordinal, row := range published {
+		if len(row.Writes) != 1 || len(row.Reads) != 0 || len(row.Carries) != 0 {
+			t.Fatalf("published row %d shape reads=%d carries=%d writes=%d", ordinal, len(row.Reads), len(row.Carries), len(row.Writes))
+		}
+		surface := row.Writes[0].Surface
+		if surface.Factor != output || surface.Form != equation.SurfaceWriteExact || surface.Local != local+1 || surface.Mode != equation.TargetModeStrong {
+			t.Fatalf("published row %d write surface factor=%v form=%v local=%d mode=%v", ordinal, surface.Factor, surface.Form, surface.Local, surface.Mode)
+		}
 	}
 }

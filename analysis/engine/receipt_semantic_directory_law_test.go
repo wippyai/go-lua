@@ -25,7 +25,7 @@ func issueReceiptAssemblyFixtureRule(t testing.TB, fixture receiptAssemblyRuleFi
 
 func TestReceiptAssemblySemanticDirectoryLookupIsExactAndRevisionOwned(t *testing.T) {
 	fixture := newReceiptAssemblyRuleFixture(t)
-	if !fixture.assembly.SealSources() {
+	if fixture.assembly.sealSources().Available() {
 		t.Fatal("semantic directory source seal")
 	}
 	row := issueReceiptAssemblyFixtureRule(t, fixture)
@@ -68,7 +68,7 @@ func TestReceiptAssemblySemanticDirectoryLookupIsExactAndRevisionOwned(t *testin
 	pointLocator, pointLocatorOK := topology.directory.point(receiptAssemblySemanticID(1))
 	memberLocator, memberLocatorOK := topology.directory.member(receiptAssemblySemanticID(2))
 	foreign := newReceiptAssemblyRuleFixture(t)
-	if !foreign.assembly.SealSources() {
+	if foreign.assembly.sealSources().Available() {
 		t.Fatal("foreign topology source seal")
 	}
 	foreignRow := issueReceiptAssemblyFixtureRule(t, foreign)
@@ -92,7 +92,7 @@ func TestReceiptAssemblySemanticDirectoryLookupIsExactAndRevisionOwned(t *testin
 
 func TestReceiptAssemblySemanticDirectoryDuplicateZeroAndForeignFailTerminally(t *testing.T) {
 	fixture := newReceiptAssemblyRuleFixture(t)
-	if !fixture.assembly.SealSources() {
+	if fixture.assembly.sealSources().Available() {
 		t.Fatal("duplicate semantic source seal")
 	}
 	point, pointOK := fixture.assembly.issuePointRow(equation.PointSpec{Site: fixture.site})
@@ -107,12 +107,12 @@ func TestReceiptAssemblySemanticDirectoryDuplicateZeroAndForeignFailTerminally(t
 	if _, ok := fixture.assembly.addSemanticRule(id, row); ok {
 		t.Fatal("duplicate cross-role semantic ID admitted")
 	}
-	if fixture.assembly.Abort() || fixture.assembly.SealSources() {
+	if fixture.assembly.abort() || !fixture.assembly.sealSources().Available() {
 		t.Fatal("duplicate semantic ID failure was not terminal")
 	}
 
 	fixture = newReceiptAssemblyRuleFixture(t)
-	if !fixture.assembly.SealSources() {
+	if fixture.assembly.sealSources().Available() {
 		t.Fatal("zero semantic source seal")
 	}
 	point, pointOK = fixture.assembly.issuePointRow(equation.PointSpec{Site: fixture.site})
@@ -122,13 +122,13 @@ func TestReceiptAssemblySemanticDirectoryDuplicateZeroAndForeignFailTerminally(t
 	if _, ok := fixture.assembly.addSemanticPoint(receiptAssemblySemanticID(0), point); ok {
 		t.Fatal("zero semantic ID admitted")
 	}
-	if fixture.assembly.Abort() {
+	if fixture.assembly.abort() {
 		t.Fatal("zero semantic ID failure was not terminal")
 	}
 
 	first := newReceiptAssemblyRuleFixture(t)
 	second := newReceiptAssemblyRuleFixture(t)
-	if !first.assembly.SealSources() || !second.assembly.SealSources() {
+	if first.assembly.sealSources().Available() || second.assembly.sealSources().Available() {
 		t.Fatal("foreign semantic source seal")
 	}
 	foreign, foreignOK := first.assembly.issuePointRow(equation.PointSpec{Site: first.site})
@@ -138,7 +138,7 @@ func TestReceiptAssemblySemanticDirectoryDuplicateZeroAndForeignFailTerminally(t
 	if _, ok := second.assembly.addSemanticPoint(receiptAssemblySemanticID(21), foreign); ok {
 		t.Fatal("foreign equal-shape Point receipt admitted")
 	}
-	if second.assembly.Abort() || !first.assembly.Abort() {
+	if second.assembly.abort() || !first.assembly.abort() {
 		t.Fatal("foreign semantic failure lifecycle")
 	}
 }
@@ -160,7 +160,7 @@ func TestReceiptAssemblySemanticQueryDirectoryUsesExactParentReceipt(t *testing.
 	operandValue := ruleUnitForSemantic(coldKey(949_101))
 	entity, entityOK := operandEntityForContent(operandValue.content)
 	operand, operandOK := assembly.admitOperand(occurrence, entity)
-	if !siteOK || !occurrenceOK || !entityOK || !operandOK || !assembly.SealSources() {
+	if !siteOK || !occurrenceOK || !entityOK || !operandOK || assembly.sealSources().Available() {
 		t.Fatal("semantic Query source")
 	}
 	proof := ruleImplementation.binding.proof
@@ -240,7 +240,7 @@ func newReceiptSemanticActivationFixture(t testing.TB) receiptSemanticActivation
 	occurrence, occurrenceOK := assembly.admitAt(triggerSite)
 	entity, entityOK := operandEntityForContent([32]byte{31})
 	operand, operandOK := assembly.admitOperand(occurrence, entity)
-	if !triggerSiteOK || !targetSiteOK || !occurrenceOK || !entityOK || !operandOK || !assembly.SealSources() {
+	if !triggerSiteOK || !targetSiteOK || !occurrenceOK || !entityOK || !operandOK || assembly.sealSources().Available() {
 		t.Fatal("semantic Activation source")
 	}
 	proof := implementation.binding.proof
@@ -331,7 +331,7 @@ func TestReceiptAssemblySemanticActivationOwnsOneMemberIDAndManyCandidates(t *te
 	if duplicate.assembly.addSemanticActivation(receiptAssemblySemanticID(43), duplicateTrigger) {
 		t.Fatal("one trigger received multiple semantic Activation IDs")
 	}
-	if duplicate.assembly.Abort() {
+	if duplicate.assembly.abort() {
 		t.Fatal("duplicate semantic Activation failure was not terminal")
 	}
 
@@ -359,7 +359,7 @@ func TestReceiptAssemblySemanticActivationOwnsOneMemberIDAndManyCandidates(t *te
 	if mixedApplication.assembly.addActivationCandidate(foreignReceipt) {
 		t.Fatal("one trigger admitted candidates from multiple applications")
 	}
-	if mixedApplication.assembly.Abort() {
+	if mixedApplication.assembly.abort() {
 		t.Fatal("mixed-application failure was not terminal")
 	}
 }

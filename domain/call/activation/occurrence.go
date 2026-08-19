@@ -120,7 +120,8 @@ func (rule *HotRule) MountedAdmit(mountID, reusablePointID, occurrenceID identit
 		return engine.MountedActivationAdmit{}, false
 	}
 	ref, refOK := rule.owner.Ref(key)
-	if !refOK {
+	read, readOK := engine.ExactReadSurface(ref)
+	if !refOK || !readOK {
 		return engine.MountedActivationAdmit{}, false
 	}
 	candidates := make([]engine.MountedActivationCandidate, len(rule.catalog.rows))
@@ -137,8 +138,8 @@ func (rule *HotRule) MountedAdmit(mountID, reusablePointID, occurrenceID identit
 		Point:          reusablePointID,
 		Occurrence:     occurrenceID,
 		Application:    application,
-		PlaceRead:  engine.ExactReadPlacer(ref),
-		Candidates: candidates,
+		Read:           read,
+		Candidates:     candidates,
 	}, true
 }
 

@@ -559,9 +559,6 @@ func (schema *Schema) LinkOwner() link.OwnerCapability {
 	return schema.owner
 }
 
-// Owner is the concise alias used by cross-domain binders.
-func (schema *Schema) Owner() link.OwnerCapability { return schema.LinkOwner() }
-
 // OwnsHeapSchema reports whether candidate is the exact immutable Heap
 // authority retained when this Value schema was sealed.  Heap Schema values
 // are owner handles, not content identities: two independent seals of the

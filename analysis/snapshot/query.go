@@ -54,7 +54,7 @@ func OpenQuery[K comparable, O any](s *Snapshot, family identity.ContentID) (Que
 	if !addressed {
 		return QueryPlan[K, O]{}, false
 	}
-	if _, recovered := columnAt[K, O](s, s.schema, slot); !recovered {
+	if _, recovered := columnAt[K, O](&s.publication, s.schema, slot); !recovered {
 		return QueryPlan[K, O]{}, false
 	}
 	return QueryPlan[K, O]{SchemaID: s.schema, Slot: slot}, true

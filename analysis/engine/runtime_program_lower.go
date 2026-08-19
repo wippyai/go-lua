@@ -22,33 +22,25 @@ const (
 	artifactOccurrenceSourceVersion uint64 = 3
 )
 
-// mountedArtifactRows is the construction-local mounted address plane one
-// source admission reads: the Site each mounted point was admitted under, its
-// dense address once the point rows open, and the template coordinates a
-// domain owner names a rule, a body or a query by. It carries no geometry -
-// the published geometry is derived from the sealed templates by
-// constructTopology - and it is released when the admission ends.
+// mountedArtifactRows is the construction-local mounted address plane the
+// declaration pass reads: the Site each mounted point was admitted under and
+// the set of template rule rows an issuance may be declared at. It carries no
+// geometry and no dense address - both are derived from the sealed templates
+// by constructTopology - and it is released when the declaration ends.
 type mountedArtifactRows struct {
-	points     []identity.ContentID
-	pointMeta  map[identity.ContentID]artifactPointMetadata
-	sites      map[identity.ContentID]equation.Site
-	mounted    map[artifactMountedPoint]equation.Site
-	mountedRef map[artifactMountedPoint]equation.PointRef
-	bodies     map[artifactMountedBody]artifactBodyTransport
-	ruleSet    map[artifactMountedRule]artifactRuleInput
-	pointRef   map[identity.ContentID]equation.PointRef
-	bootstrap  *linkBootstrapRows
+	points    []identity.ContentID
+	pointMeta map[identity.ContentID]artifactPointMetadata
+	sites     map[identity.ContentID]equation.Site
+	mounted   map[artifactMountedPoint]equation.Site
+	ruleSet   map[artifactMountedRule]struct{}
+	bootstrap *linkBootstrapRows
 }
 
 type linkBootstrapRows struct {
-	owner       identity.ContentID
-	point       LinkBootstrapPoint
-	site        equation.Site
-	occurrences map[identity.ContentID]struct{}
-	roles       map[identity.ContentID]RuleSlotCapability
-	claims      map[identity.ContentID]RuleSlotCapability
-	semantic    identity.ContentID
-	ref         equation.PointRef
+	owner identity.ContentID
+	point LinkBootstrapPoint
+	site  equation.Site
+	roles map[identity.ContentID]RuleSlotCapability
 }
 
 type artifactMountedPoint struct {
@@ -64,23 +56,11 @@ type artifactMountedBody struct {
 	body  identity.ContentID
 }
 
-type artifactBodyTransport struct {
-	entry []identity.ContentID
-	exits []identity.ContentID
-}
-
 type artifactMountedRule struct {
 	role       RuleSlotCapability
 	mount      identity.ContentID
 	point      identity.ContentID
 	occurrence identity.ContentID
-}
-
-type artifactRuleInput struct {
-	point       identity.ContentID
-	stage       rows.ArtifactRuleStage
-	predecessor artifactEnvironmentRow
-	routed      bool
 }
 
 // artifactMountedRuleOccurrence deliberately omits the reusable point. Native
@@ -106,29 +86,6 @@ type artifactPointMetadata struct {
 	reusable  identity.ContentID
 	decisions []identity.ContentID
 	initial   bool
-}
-
-type artifactEnvironmentRow struct {
-	mount    identity.ContentID
-	artifact identity.ContentID
-	reusable identity.ContentID
-	id       identity.ContentID
-	from     identity.ContentID
-	to       identity.ContentID
-	route    identity.ContentID
-	guard    identity.ContentID
-	decision identity.ContentID
-	guarded  bool
-	truth    bool
-	// component, mu, arm, and reset are parent proof metadata. Equation has
-	// no corresponding runtime fields; lowerArtifactRows validates them before
-	// admitting the boundary and retains them in the immutable receipt.
-	component identity.ContentID
-	mu        identity.ContentID
-	reset     identity.ContentID
-	hasReset  bool
-	resets    []identity.ContentID
-	arm       rows.ArtifactStructuralArm
 }
 
 // mountedCallStage is a cold, graph-owned proof that one exact
@@ -215,15 +172,16 @@ func assembleSealedProgramMounts(binding *SchemaBinding, mounts []sealedProgramM
 	if !assembled || builder == nil {
 		return nil, nil, receiptSealFailure{}, ProgramAdmissionNone, lowering, topologyConstructionRefusal{}, false
 	}
-	seal, stage, admitted := applyMountedProgramAdmission(builder, admission)
-	if !admitted {
+	// A mounted program publishes its result through queries; an inventory
+	// with none states no observable program at all.
+	if len(admission.Queries) == 0 {
 		builder.abort()
-		return nil, nil, seal, stage, receiptAssemblyFailureNone, topologyConstructionRefusal{}, false
+		return nil, nil, receiptSealFailure{}, ProgramAdmissionQuery, receiptAssemblyFailureNone, topologyConstructionRefusal{}, false
 	}
-	declaration, declared := declareSealedTopology(builder, mounts, bootstrap)
+	declaration, seal, stage, declared := declareMountedProgram(builder, mounts, bootstrap, admission)
 	if !declared {
 		builder.abort()
-		return nil, nil, seal, stage, receiptAssemblyFailureNone, refuseAdmission(topologyConstructionStepDeclarationShape, 0), false
+		return nil, nil, seal, stage, receiptAssemblyFailureNone, topologyConstructionRefusal{}, false
 	}
 	constructed, refusal := constructTopology(declaration)
 	builder.abort()
@@ -429,12 +387,8 @@ func mustArtifactSourceKey(domain artifactSourceDomain, id identity.ContentID) c
 	return key
 }
 
-// lowerArtifactRows opens the mounted point plane the domain admission passes
-// address a Point through: the query and activation-candidate ingresses resolve
-// a mounted Point to its dense address here. It runs after SealSources so the
-// analysis dispatcher issues every exact mounted operand under one canonical
-// Batch key. The published geometry is derived from the sealed templates by
-// constructTopology; nothing lowered here reaches it.
+// receiptArtifactRowFailure names the artifact-row boundary a declaration
+// could not be addressed through.
 type receiptArtifactRowFailure uint8
 
 const (
@@ -443,65 +397,6 @@ const (
 	receiptArtifactRowFailurePoint
 	receiptArtifactRowFailureBootstrap
 )
-
-func (builder *BindingTopologyBuilder) lowerArtifactRows() (receiptArtifactRowFailure, uint32, bool) {
-	if builder == nil {
-		return receiptArtifactRowFailureOwner, 0, false
-	}
-	inner, locked := builder.lockTopologyOpen()
-	if !locked {
-		return receiptArtifactRowFailureOwner, 0, false
-	}
-	artifactRows := builder.mountedRows
-	inner.mu.Unlock()
-	if artifactRows == nil {
-		return receiptArtifactRowFailureNone, 0, true
-	}
-	sites := artifactRows.sites
-	refs := make(map[identity.ContentID]equation.PointRef, len(artifactRows.points))
-	for pointIndex, id := range artifactRows.points {
-		site, siteOK := sites[id]
-		row, issued := builder.issuePointRow(equation.PointSpec{Site: site})
-		ref, added := builder.addSemanticPoint(id, row)
-		if !siteOK || !issued || !added {
-			return receiptArtifactRowFailurePoint, uint32(pointIndex), false
-		}
-		refs[id] = ref.ref
-	}
-	if artifactRows.bootstrap != nil {
-		point := artifactRows.bootstrap.point.PointID
-		row, issued := builder.issuePointRow(equation.PointSpec{Site: artifactRows.sites[point]})
-		semanticID := linkBootstrapPointSemanticID(artifactRows.bootstrap.owner, point)
-		ref, added := builder.addSemanticPoint(semanticID, row)
-		if !issued || !added || !semanticID.Available() {
-			return receiptArtifactRowFailureBootstrap, 0, false
-		}
-		artifactRows.bootstrap.semantic = semanticID
-		artifactRows.bootstrap.ref = ref.ref
-	}
-	artifactRows.pointRef = refs
-	artifactRows.mountedRef = make(map[artifactMountedPoint]equation.PointRef, len(artifactRows.pointMeta))
-	for id, metadata := range artifactRows.pointMeta {
-		ref, refOK := refs[id]
-		if !refOK {
-			return receiptArtifactRowFailurePoint, 0, false
-		}
-		artifactRows.mountedRef[artifactMountedPoint{mount: metadata.mount, reusable: metadata.reusable}] = ref
-	}
-	return receiptArtifactRowFailureNone, 0, true
-}
-
-// validArtifactRouteProof re-proves the scalar route property the artifact
-// owner sealed, over the mounted row a routed rule names as its predecessor.
-func validArtifactRouteProof(edge artifactEnvironmentRow) bool {
-	return rows.ValidArtifactScalarEdgeProof(rows.ArtifactScalarEdge{
-		ID: edge.id, From: edge.from, To: edge.to, Route: edge.route,
-		Guard: edge.guard, Decision: edge.decision,
-		Component: edge.component, Mu: edge.mu, Reset: edge.reset,
-		Resets: edge.resets, Arm: edge.arm,
-		Guarded: edge.guarded, Truth: edge.truth, HasReset: edge.hasReset,
-	})
-}
 
 func linkBootstrapTransportKey(owner identity.ContentID, target artifactPointMetadata, factor composition.Key) (composition.Key, bool) {
 	if !owner.Available() || !target.mount.Available() || !target.artifact.Available() || !target.reusable.Available() || !factor.Available() {
@@ -582,7 +477,7 @@ func buildMountedArtifactRows(mounts []sealedProgramMount, schemaID identity.Con
 		seenTransportCapabilities[capability] = struct{}{}
 		seenTransportFactors[factor] = struct{}{}
 	}
-	result := &mountedArtifactRows{pointMeta: make(map[identity.ContentID]artifactPointMetadata), sites: make(map[identity.ContentID]equation.Site), mounted: make(map[artifactMountedPoint]equation.Site), mountedRef: make(map[artifactMountedPoint]equation.PointRef), bodies: make(map[artifactMountedBody]artifactBodyTransport), ruleSet: make(map[artifactMountedRule]artifactRuleInput), pointRef: make(map[identity.ContentID]equation.PointRef), bootstrap: &linkBootstrapRows{owner: bootstrap.OwnerID(), point: bootstrapPoint, occurrences: occurrences, roles: roles, claims: make(map[identity.ContentID]RuleSlotCapability)}}
+	result := &mountedArtifactRows{pointMeta: make(map[identity.ContentID]artifactPointMetadata), sites: make(map[identity.ContentID]equation.Site), mounted: make(map[artifactMountedPoint]equation.Site), ruleSet: make(map[artifactMountedRule]struct{}), bootstrap: &linkBootstrapRows{owner: bootstrap.OwnerID(), point: bootstrapPoint, roles: roles}}
 	seenMounts := make(map[identity.ContentID]struct{}, len(mounts))
 	for _, mount := range mounts {
 		if mount.template == nil || !mount.template.Available() || !mount.module.Available() || mount.template.SchemaID() != schemaID {
@@ -663,7 +558,7 @@ func sealedRoleCapability(capabilities map[rows.ArtifactScalarRole]RuleSlotCapab
 // artifact.NewArtifactScalarTemplate; this pass only resolves Link roles, substitutes
 // mount-qualified IDs, and checks that those substitutions stay in the mount.
 func appendMountedProgramMount(rows *mountedArtifactRows, mount identity.ContentID, template *rows.ArtifactScalarTemplate, capabilities map[rows.ArtifactScalarRole]RuleSlotCapability) bool {
-	if rows == nil || rows.pointMeta == nil || rows.bodies == nil || rows.ruleSet == nil || template == nil || !template.Available() || !mount.Available() {
+	if rows == nil || rows.pointMeta == nil || rows.ruleSet == nil || template == nil || !template.Available() || !mount.Available() {
 		return false
 	}
 	artifactID := template.ArtifactID()
@@ -698,10 +593,6 @@ func appendMountedProgramMount(rows *mountedArtifactRows, mount identity.Content
 		return false
 	}
 
-	// Route rows are indexed only so a routed rule can name the predecessor
-	// its Group input starts at. The environment geometry itself is derived
-	// from the sealed template by constructTopology.
-	routes := make(map[identity.ContentID]artifactEnvironmentRow, template.EdgeCount())
 	seenEdgeIDs := make(map[identity.ContentID]struct{}, template.EdgeCount()+template.TransferCount())
 	for index := 0; index < template.EdgeCount(); index++ {
 		edge, edgeOK := template.EdgeAt(index)
@@ -709,8 +600,8 @@ func appendMountedProgramMount(rows *mountedArtifactRows, mount identity.Content
 			return false
 		}
 		mounted := mountedArtifactID("analysis/engine/artifact-environment-edge/v1", mount, artifactID, edge.ID)
-		from, fromOK := points[edge.From]
-		to, toOK := points[edge.To]
+		_, fromOK := points[edge.From]
+		_, toOK := points[edge.To]
 		if !mounted.Available() || !fromOK || !toOK {
 			return false
 		}
@@ -718,18 +609,6 @@ func appendMountedProgramMount(rows *mountedArtifactRows, mount identity.Content
 			return false
 		}
 		seenEdgeIDs[mounted] = struct{}{}
-		if !edge.Route.Available() {
-			continue
-		}
-		if _, duplicate := routes[edge.Route]; duplicate {
-			continue
-		}
-		routes[edge.Route] = artifactEnvironmentRow{
-			mount: mount, artifact: artifactID, reusable: edge.ID, id: mounted, from: from, to: to,
-			route: edge.Route, guard: edge.Guard, decision: edge.Decision, guarded: edge.Guarded,
-			truth: edge.Truth, component: edge.Component, mu: edge.Mu, reset: edge.Reset,
-			hasReset: edge.HasReset, resets: edge.Resets, arm: edge.Arm,
-		}
 	}
 	for index := 0; index < template.TransferCount(); index++ {
 		transfer, transferOK := template.TransferAt(index)
@@ -762,11 +641,8 @@ func appendMountedProgramMount(rows *mountedArtifactRows, mount identity.Content
 		if !capabilityOK || !rule.Stage.Valid() || !pointOK {
 			return false
 		}
-		input := identity.ContentID{}
 		if rule.Input.Available() {
-			var inputOK bool
-			input, inputOK = points[rule.Input]
-			if !inputOK {
+			if _, inputOK := points[rule.Input]; !inputOK {
 				return false
 			}
 		}
@@ -774,30 +650,17 @@ func appendMountedProgramMount(rows *mountedArtifactRows, mount identity.Content
 		if _, duplicate := rows.ruleSet[key]; duplicate {
 			return false
 		}
-		bound := artifactRuleInput{point: rule.Input, stage: rule.Stage}
-		if rule.Route.Available() {
-			predecessor, predecessorOK := routes[rule.Route]
-			if !predecessorOK || predecessor.to != input {
-				return false
-			}
-			bound.predecessor, bound.routed = predecessor, true
-		}
-		rows.ruleSet[key] = bound
-	}
-	for index := 0; index < template.BodyCount(); index++ {
-		body, bodyOK := template.BodyAt(index)
-		if !bodyOK {
-			return false
-		}
-		key := artifactMountedBody{mount: mount, body: body.ID}
-		if _, duplicate := rows.bodies[key]; duplicate {
-			return false
-		}
-		// The sealed template owns these slices. Body transports retain
-		// reusable point IDs; the mounted point inverse resolves them later.
-		rows.bodies[key] = artifactBodyTransport{entry: body.Entry, exits: body.Exits}
+		rows.ruleSet[key] = struct{}{}
 	}
 	return true
+}
+
+// hasMountedSite reports whether the mounted point plane addresses this
+// coordinate. It is the artifact-row half of a declared query anchor: the
+// dense Point address itself is derived by the constructor.
+func (rows *mountedArtifactRows) hasMountedSite(mount, reusable identity.ContentID) bool {
+	_, ok := rows.mountedSite(mount, reusable)
+	return ok
 }
 
 func (rows *mountedArtifactRows) mountedSite(mount, reusable identity.ContentID) (equation.Site, bool) {
@@ -812,28 +675,14 @@ func (rows *mountedArtifactRows) mountedSite(mount, reusable identity.ContentID)
 	return site, ok
 }
 
-func (rows *mountedArtifactRows) mountedPoint(mount, reusable identity.ContentID) (equation.Site, equation.PointRef, bool) {
-	if rows == nil || rows.mounted == nil || rows.mountedRef == nil || !mount.Available() || !reusable.Available() {
-		return equation.Site{}, 0, false
-	}
-	key := artifactMountedPoint{mount: mount, reusable: reusable}
-	site, siteOK := rows.mounted[key]
-	ref, refOK := rows.mountedRef[key]
-	return site, ref, siteOK && refOK && ref != 0
-}
-
-func (rows *mountedArtifactRows) mountedBody(mount, body identity.ContentID) (artifactBodyTransport, bool) {
-	if rows == nil || rows.bodies == nil || !mount.Available() || !body.Available() {
-		return artifactBodyTransport{}, false
-	}
-	value, ok := rows.bodies[artifactMountedBody{mount: mount, body: body}]
-	return value, ok && len(value.entry) != 0 && len(value.exits) != 0
-}
-
-func (rows *mountedArtifactRows) mountedRule(role RuleSlotCapability, mount, point, occurrence identity.ContentID) (artifactRuleInput, bool) {
+// mountedRule reports whether the sealed templates carry the exact
+// role+mount+point+occurrence rule row one issuance names. The row's own
+// coordinates - its stage, its input Point and its route proof - are read from
+// the template by the constructor, never copied here.
+func (rows *mountedArtifactRows) mountedRule(role RuleSlotCapability, mount, point, occurrence identity.ContentID) bool {
 	if rows == nil || rows.ruleSet == nil || !role.mounted() || !mount.Available() || !point.Available() || !occurrence.Available() {
-		return artifactRuleInput{}, false
+		return false
 	}
-	input, ok := rows.ruleSet[artifactMountedRule{role: role, mount: mount, point: point, occurrence: occurrence}]
-	return input, ok
+	_, ok := rows.ruleSet[artifactMountedRule{role: role, mount: mount, point: point, occurrence: occurrence}]
+	return ok
 }

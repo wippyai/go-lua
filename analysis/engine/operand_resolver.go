@@ -1,6 +1,9 @@
 package engine
 
-import "github.com/wippyai/go-lua/analysis/identity"
+import (
+	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
+	"github.com/wippyai/go-lua/analysis/identity"
+)
 
 // OperandCoords is the sealed neutral member coordinate the engine already
 // holds. The owner-supplied resolver on the rule cell turns these into the
@@ -40,16 +43,41 @@ func (implementation *RuleImplementation[K, V, O]) HasOperandResolver() bool {
 }
 
 // RuleProgramAttach is the erased construction join for one sealed rule cell.
-// The engine enumerates neutral member coordinates and this handle binds the
-// executable row; the typed operand never leaves the cell.
+// The engine enumerates neutral member coordinates and this handle declares
+// the row it issues at each of them; the typed operand never leaves the cell.
+//
+// The declaration half is unexported, so the engine is the only package that
+// can publish one: a Link hands the assemble inventory the handle its sealed
+// cell issued and never a join of its own.
 type RuleProgramAttach interface {
-	AdmitMounted(builder *BindingTopologyBuilder, role RuleSlotCapability, mount, point, occurrence identity.ContentID) bool
-	AdmitLink(builder *BindingTopologyBuilder, role RuleSlotCapability, occurrence identity.ContentID) bool
+	// declaredRuleSchema names the cold rule this handle issues rows for.
+	declaredRuleSchema() (semantic, family composition.Key, ok bool)
+	// declareRuleOperand resolves one issuance's canonical operand.
+	declareRuleOperand(coords OperandCoords) (declaredRuleOperand, bool)
+	// declareRuleSurfaces places the cold shape's surfaces over that operand
+	// at the sealed anchor the engine minted.
+	declareRuleSurfaces(operand declaredRuleOperand, anchor ruleSurfaceAnchor) (declaredRuleSurfaces, bool)
 	// AdmitsMounted is the sealed owner predicate over one placement. It
 	// reads only the owner's operand directory and does not mutate topology.
 	AdmitsMounted(mount, point, occurrence identity.ContentID) bool
 	AttachMountedMember(construction *ProgramConstruction, role RuleSlotCapability, mount, point, occurrence identity.ContentID) bool
 	AttachLinkMember(construction *ProgramConstruction, role RuleSlotCapability, occurrence identity.ContentID) bool
+}
+
+func (implementation *RuleImplementation[K, V, O]) declaredRuleSchema() (composition.Key, composition.Key, bool) {
+	if implementation == nil || !implementation.binding.valid() || implementation.binding.proof == nil {
+		return composition.Key{}, composition.Key{}, false
+	}
+	semantic, family := implementation.binding.proof.semantic, implementation.binding.proof.operandFamily
+	return semantic, family, semantic.Available() && family.Available()
+}
+
+func (implementation *ActivationRuleImplementation) declaredRuleSchema() (composition.Key, composition.Key, bool) {
+	if implementation == nil || !implementation.binding.valid() || implementation.binding.proof == nil {
+		return composition.Key{}, composition.Key{}, false
+	}
+	semantic, family := implementation.binding.proof.semantic, implementation.binding.proof.operandFamily
+	return semantic, family, semantic.Available() && family.Available()
 }
 
 // RuleProgramSource is the hot-cell surface that publishes the one program

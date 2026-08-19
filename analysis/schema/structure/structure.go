@@ -368,7 +368,8 @@ func (entry *Entry) declarationComplete() bool {
 // through. It is the shape every spelling this surface replaces is derived
 // from, so a projection never restates the catalog.
 type Table struct {
-	members [categoryLimit][]*Entry
+	members   [categoryLimit][]*Entry
+	spellings [categoryLimit]map[string]uint16
 }
 
 // NewTable projects one sealed structure view. The density law has already run
@@ -392,13 +393,19 @@ func NewTable(view schema.View) (Table, bool) {
 			return Table{}, false
 		}
 		ordered := make([]*Entry, len(members))
+		spellings := make(map[string]uint16, len(members))
 		for _, entry := range members {
 			if int(entry.ordinal) > len(ordered) || ordered[entry.ordinal-1] != nil {
 				return Table{}, false
 			}
 			ordered[entry.ordinal-1] = entry
+			if _, duplicate := spellings[entry.spelling]; duplicate {
+				return Table{}, false
+			}
+			spellings[entry.spelling] = entry.ordinal
 		}
 		table.members[category] = ordered
+		table.spellings[category] = spellings
 	}
 	return table, true
 }
@@ -418,6 +425,19 @@ func (table Table) At(category Category, ordinal uint16) (*Entry, bool) {
 	}
 	entry := table.members[category][ordinal-1]
 	return entry, entry != nil
+}
+
+// Spelling resolves one member by its category and its declared spelling, the
+// reverse of At. It is a lookup index built once at seal, not a declared
+// column: it carries no information EntryContent does not already write, so
+// it enters no digest and a foreign switch on a rendered spelling reads the
+// sealed vocabulary through it instead of restating the spellings itself.
+func (table Table) Spelling(category Category, spelling string) (uint16, bool) {
+	if !category.Available() {
+		return 0, false
+	}
+	ordinal, ok := table.spellings[category][spelling]
+	return ordinal, ok
 }
 
 // surface is the structural vocabulary contribution to the declaration root.

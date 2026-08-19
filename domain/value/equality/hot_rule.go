@@ -107,13 +107,6 @@ func (rule *HotRule) ProgramAttach() (engine.RuleProgramAttach, bool) {
 	return valueowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
 }
 
-func mountedCapability(issuer interface {
-	MountedCapability() (engine.RuleSlotCapability, bool)
-}) engine.RuleSlotCapability {
-	capability, _ := issuer.MountedCapability()
-	return capability
-}
-
 func hotContent(schema *value.Schema, row value.BinaryEquality) (value.BinaryEquality, [32]byte, bool) {
 	id, ok := row.ID()
 	if schema == nil || !schema.OwnsBinaryEquality(row) || !ok || [32]byte(id) == ([32]byte{}) {

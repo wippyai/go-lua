@@ -91,18 +91,7 @@ type BindingTopologyBuilder struct {
 	// construction. It is deliberately outside the generic equation state:
 	// the builder admits schema rows, while the mounted row table supplies
 	// already-issued Program coordinates.
-	mountedRows           *mountedArtifactRows
-	selectedSurfaceMu     sync.Mutex
-	selectedSurfaceAnchor map[equation.Surface]mountedSelectedSurfaceAnchor
-	queuedRuleMu          sync.Mutex
-	queuedRuleFinalizers  []queuedRuleFinalizer
-	queuedQueryMu         sync.Mutex
-	queuedQueryBatches    []func(*MountedQueryBatch) bool
-	ruleSourceFailureMu   sync.Mutex
-	ruleSourceFailure     RuleSourceSealFailure
-	finalizerFailureMu    sync.Mutex
-	finalizerFailure      RuleFinalizerFailure
-	sealFailure           receiptSealFailure
+	mountedRows *mountedArtifactRows
 }
 
 func (receipt *BindingTopology) valid() bool {

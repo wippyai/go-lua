@@ -1,44 +1,11 @@
 package engine
 
 import (
-	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"sync"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/identity"
-)
-
-type queuedRuleFinalizer struct {
-	mounted RuleSlotCapability
-	link    RuleSlotCapability
-	run     func() bool
-}
-
-// RuleFinalizerFailure is the closed post-source step that rejected a queued
-// typed rule row. It identifies only the generic receipt operation; the
-// analyzer separately maps the opaque capability back to its domain owner.
-type RuleFinalizerFailure uint8
-
-const (
-	RuleFinalizerFailureNone RuleFinalizerFailure = iota
-	RuleFinalizerFailureBeginDraft
-	RuleFinalizerFailureReadPart
-	RuleFinalizerFailureCarryPart
-	RuleFinalizerFailureWritePart
-	RuleFinalizerFailureSupportPart
-	RuleFinalizerFailurePrunePart
-	RuleFinalizerFailureDraftRead
-	RuleFinalizerFailureDraftCarry
-	RuleFinalizerFailureDraftWrite
-	RuleFinalizerFailureDraftSupport
-	RuleFinalizerFailureDraftPrune
-	RuleFinalizerFailureAddRuleDraft
-	RuleFinalizerFailureIssueRuleRow
-	RuleFinalizerFailureAddRuleArguments
-	RuleFinalizerFailureAddRuleFence
-	RuleFinalizerFailureAddSemanticRule
-	RuleFinalizerFailureAddSemanticActivation
 )
 
 type receiptSealFailurePhase uint8
@@ -47,7 +14,7 @@ const (
 	receiptSealFailureNone receiptSealFailurePhase = iota
 	receiptSealFailureSources
 	receiptSealFailureArtifactRows
-	receiptSealFailureRuleFinalizer
+	receiptSealFailureRuleRow
 	receiptSealFailureQueryBatch
 )
 
@@ -61,18 +28,16 @@ var (
 	receiptSourceSealFailureBatchIdentity = equation.SealFailureSourceBatchIdentity
 )
 
-// receiptSealFailure is detached scalar evidence for the first failed source
-// seal boundary. Exactly one of the two capability planes is present for a
-// finalizer failure; no callback, occurrence, or topology row escapes.
+// receiptSealFailure is detached scalar evidence for the first declaration
+// boundary that refused. Exactly one of the two capability planes is present
+// for a refused rule row; no occurrence or topology row escapes.
 type receiptSealFailure struct {
-	phase     receiptSealFailurePhase
-	ordinal   uint32
-	source    receiptSourceSealFailure
-	rule      RuleSourceSealFailure
-	finalizer RuleFinalizerFailure
-	mounted   RuleSlotCapability
-	link      RuleSlotCapability
-	artifact  receiptArtifactRowFailure
+	phase    receiptSealFailurePhase
+	ordinal  uint32
+	source   receiptSourceSealFailure
+	mounted  RuleSlotCapability
+	link     RuleSlotCapability
+	artifact receiptArtifactRowFailure
 }
 
 func (failure receiptSealFailure) Phase() receiptSealFailurePhase { return failure.phase }
@@ -80,17 +45,11 @@ func (failure receiptSealFailure) Ordinal() uint32                { return failu
 func (failure receiptSealFailure) Source() (receiptSourceSealFailure, bool) {
 	return failure.source, failure.phase == receiptSealFailureSources && failure.source.Available()
 }
-func (failure receiptSealFailure) RuleSource() (RuleSourceSealFailure, bool) {
-	return failure.rule, failure.phase == receiptSealFailureRuleFinalizer && failure.rule != RuleSourceSealFailureNone
-}
-func (failure receiptSealFailure) Finalizer() (RuleFinalizerFailure, bool) {
-	return failure.finalizer, failure.phase == receiptSealFailureRuleFinalizer && failure.finalizer != RuleFinalizerFailureNone
-}
 func (failure receiptSealFailure) MountedCapability() (RuleSlotCapability, bool) {
-	return failure.mounted, failure.phase == receiptSealFailureRuleFinalizer && failure.mounted.mounted() && !failure.link.available()
+	return failure.mounted, failure.phase == receiptSealFailureRuleRow && failure.mounted.mounted() && !failure.link.available()
 }
 func (failure receiptSealFailure) LinkCapability() (RuleSlotCapability, bool) {
-	return failure.link, failure.phase == receiptSealFailureRuleFinalizer && failure.link.link() && !failure.mounted.available()
+	return failure.link, failure.phase == receiptSealFailureRuleRow && failure.link.link() && !failure.mounted.available()
 }
 func (failure receiptSealFailure) ArtifactRow() (receiptArtifactRowFailure, bool) {
 	return failure.artifact, failure.phase == receiptSealFailureArtifactRows && failure.artifact != receiptArtifactRowFailureNone
@@ -106,194 +65,7 @@ func (failure receiptSealFailure) Failure() SolveFailure {
 	sourceFamily, sourceSite := failure.source.Ordinals()
 	return receiptFailure(SolveFailureFamilyCompile, "receipt-seal",
 		uint64(failure.phase), uint64(failure.ordinal), sourceFamily, sourceSite,
-		uint64(failure.rule), uint64(failure.finalizer), uint64(failure.artifact))
-}
-
-type mountedSelectedSurfaceAnchor struct {
-	builder    *BindingTopologyBuilder
-	occurrence equation.Occurrence
-	operand    equation.Operand
-	rule       uint64
-	index      uint64
-	form       equation.SurfaceForm
-}
-
-func (builder *BindingTopologyBuilder) claimMountedSurface(surface equation.Surface, anchor mountedSelectedSurfaceAnchor) bool {
-	if builder == nil || !surface.Available() {
-		return false
-	}
-	builder.selectedSurfaceMu.Lock()
-	defer builder.selectedSurfaceMu.Unlock()
-	if _, found := builder.selectedSurfaceAnchor[surface]; found {
-		return false
-	}
-	builder.selectedSurfaceAnchor[surface] = anchor
-	return true
-}
-
-func (builder *BindingTopologyBuilder) claimMountedSelectedSurface(surface equation.Surface, anchor mountedSelectedSurfaceAnchor) bool {
-	return builder.claimMountedSurface(surface, anchor)
-}
-
-func (builder *BindingTopologyBuilder) Abort() bool {
-	return builder.abort()
-}
-
-// QueueMountedRuleFinalizer retains one typed, fully-admitted mounted source row until the
-// source Batch seals. ruleSurfaceSource deliberately requires that
-// sealed Batch; finalizers therefore run only after lowerArtifactRows opens
-// topology construction. The closure remains opaque to the engine and can
-// only close over exact owner-issued transactions and implementations.
-func (builder *BindingTopologyBuilder) QueueMountedRuleFinalizer(role RuleSlotCapability, finalize func() bool) bool {
-	if !role.mounted() {
-		return false
-	}
-	return builder.queueRuleFinalizer(queuedRuleFinalizer{mounted: role, run: finalize})
-}
-
-func (builder *BindingTopologyBuilder) QueueLinkRuleFinalizer(role RuleSlotCapability, finalize func() bool) bool {
-	if !role.link() {
-		return false
-	}
-	return builder.queueRuleFinalizer(queuedRuleFinalizer{link: role, run: finalize})
-}
-
-func (builder *BindingTopologyBuilder) queueRuleFinalizer(finalizer queuedRuleFinalizer) bool {
-	if builder == nil || finalizer.run == nil || (finalizer.mounted.mounted() == finalizer.link.link()) {
-		return false
-	}
-	inner, ok := builder.lockSourcesOpen()
-	if !ok {
-		return false
-	}
-	inner.mu.Unlock()
-	builder.queuedRuleMu.Lock()
-	defer builder.queuedRuleMu.Unlock()
-	builder.queuedRuleFinalizers = append(builder.queuedRuleFinalizers, finalizer)
-	return true
-}
-
-func (builder *BindingTopologyBuilder) drainRuleFinalizers() bool {
-	builder.queuedRuleMu.Lock()
-	finalizers := builder.queuedRuleFinalizers
-	builder.queuedRuleFinalizers = nil
-	builder.queuedRuleMu.Unlock()
-	for index, finalizer := range finalizers {
-		builder.recordRuleSourceSealFailure(RuleSourceSealFailureNone)
-		builder.recordRuleFinalizerFailure(RuleFinalizerFailureNone)
-		if finalizer.run == nil || !finalizer.run() {
-			builder.sealFailure = receiptSealFailure{phase: receiptSealFailureRuleFinalizer, ordinal: uint32(index), rule: builder.currentRuleSourceSealFailure(), finalizer: builder.currentRuleFinalizerFailure(), mounted: finalizer.mounted, link: finalizer.link}
-			return false
-		}
-	}
-	return true
-}
-
-// QueueMountedQueryBatch retains one query batch until the source Batch
-// seals. SealSources hands the batch scope back at exactly the point where
-// query rows are admissible, so a caller never orders query admission against
-// source sealing by hand.
-func (builder *BindingTopologyBuilder) QueueMountedQueryBatch(emit func(*MountedQueryBatch) bool) bool {
-	if builder == nil || emit == nil {
-		return false
-	}
-	inner, ok := builder.lockSourcesOpen()
-	if !ok {
-		return false
-	}
-	inner.mu.Unlock()
-	builder.queuedQueryMu.Lock()
-	defer builder.queuedQueryMu.Unlock()
-	builder.queuedQueryBatches = append(builder.queuedQueryBatches, emit)
-	return true
-}
-
-func (builder *BindingTopologyBuilder) drainQueryBatches() (uint32, bool) {
-	builder.queuedQueryMu.Lock()
-	batches := builder.queuedQueryBatches
-	builder.queuedQueryBatches = nil
-	builder.queuedQueryMu.Unlock()
-	for index, emit := range batches {
-		batch := &MountedQueryBatch{builder: builder, draining: true}
-		admitted := emit != nil && emit(batch)
-		batch.draining = false
-		if !admitted {
-			return uint32(index), false
-		}
-	}
-	return 0, true
-}
-
-func (builder *BindingTopologyBuilder) recordRuleSourceSealFailure(failure RuleSourceSealFailure) {
-	if builder == nil {
-		return
-	}
-	builder.ruleSourceFailureMu.Lock()
-	builder.ruleSourceFailure = failure
-	builder.ruleSourceFailureMu.Unlock()
-}
-
-func (builder *BindingTopologyBuilder) currentRuleSourceSealFailure() RuleSourceSealFailure {
-	if builder == nil {
-		return RuleSourceSealFailureNone
-	}
-	builder.ruleSourceFailureMu.Lock()
-	defer builder.ruleSourceFailureMu.Unlock()
-	return builder.ruleSourceFailure
-}
-
-func (builder *BindingTopologyBuilder) recordRuleFinalizerFailure(failure RuleFinalizerFailure) {
-	if builder == nil {
-		return
-	}
-	builder.finalizerFailureMu.Lock()
-	builder.finalizerFailure = failure
-	builder.finalizerFailureMu.Unlock()
-}
-
-func (builder *BindingTopologyBuilder) currentRuleFinalizerFailure() RuleFinalizerFailure {
-	if builder == nil {
-		return RuleFinalizerFailureNone
-	}
-	builder.finalizerFailureMu.Lock()
-	defer builder.finalizerFailureMu.Unlock()
-	return builder.finalizerFailure
-}
-
-// SealSources freezes the one exact source Batch owned by this builder. It
-// ends source admission while opening topology-row construction against those
-// same immutable Site/Occurrence/Operand identities.
-func (builder *BindingTopologyBuilder) SealSources() bool {
-	if builder == nil {
-		return false
-	}
-	if sourceFailure := builder.sealSources(); sourceFailure.Available() {
-		builder.sealFailure = receiptSealFailure{phase: receiptSealFailureSources, source: sourceFailure}
-		return false
-	}
-	artifactFailure, artifactOrdinal, artifactOK := builder.lowerArtifactRows()
-	if !artifactOK {
-		builder.sealFailure = receiptSealFailure{phase: receiptSealFailureArtifactRows, artifact: artifactFailure, ordinal: artifactOrdinal}
-		builder.abort()
-		return false
-	}
-	if !builder.drainRuleFinalizers() {
-		builder.abort()
-		return false
-	}
-	if ordinal, drained := builder.drainQueryBatches(); !drained {
-		builder.sealFailure = receiptSealFailure{phase: receiptSealFailureQueryBatch, ordinal: ordinal}
-		builder.abort()
-		return false
-	}
-	return true
-}
-
-func (builder *BindingTopologyBuilder) SealFailure() (receiptSealFailure, bool) {
-	if builder == nil || builder.sealFailure.phase == receiptSealFailureNone {
-		return receiptSealFailure{}, false
-	}
-	return builder.sealFailure, true
+		uint64(failure.artifact))
 }
 
 type bindingPointRowReceipt struct {
@@ -359,18 +131,13 @@ type bindingDirectActivation struct {
 
 // bindingRuleRow is the complete, Binding-issued structural row
 // authority. The equation RuleInstance is retained only behind this opaque
-// handle; AddRule never accepts a raw row.
+// handle; a raw row is never accepted.
 type bindingRuleRow struct {
-	builder     *bindingTopologyBuilderState
-	state       *schemaBindingState
-	authority   *schemaBindingAuthority
-	ordinal     uint64
-	row         equation.RuleInstance
-	input       equation.Site
-	inputID     identity.ContentID
-	stage       rows.ArtifactRuleStage
-	predecessor *artifactEnvironmentRow
-	routed      bool
+	builder   *bindingTopologyBuilderState
+	state     *schemaBindingState
+	authority *schemaBindingAuthority
+	ordinal   uint64
+	row       equation.RuleInstance
 }
 
 type bindingRuleRowRef struct {
@@ -390,7 +157,6 @@ type bindingRuleRowDraft struct {
 	sourceIdentity equation.SurfaceSource
 	row            equation.RuleInstance
 	consumed       bool
-	builder        *BindingTopologyBuilder
 }
 
 type bindingRuleReadPart struct {
@@ -415,22 +181,6 @@ type bindingRuleWritePart struct {
 	authority      *schemaBindingAuthority
 	index          uint64
 	value          equation.ResolvedWrite
-}
-type bindingRuleSupportPart struct {
-	issuer         bindingRuleReceipt
-	sourceIdentity equation.SurfaceSource
-	state          *schemaBindingState
-	authority      *schemaBindingAuthority
-	index          uint64
-	value          equation.ResolvedSupport
-}
-type bindingRulePrunePart struct {
-	issuer         bindingRuleReceipt
-	sourceIdentity equation.SurfaceSource
-	state          *schemaBindingState
-	authority      *schemaBindingAuthority
-	index          uint64
-	value          equation.ResolvedPrune
 }
 
 func (implementation *RuleImplementation[K, V, O]) beginBindingRuleRow(source equation.SurfaceSource) (*bindingRuleRowDraft, bool) {
@@ -488,30 +238,7 @@ func (implementation *RuleImplementation[K, V, O]) WritePart(source equation.Sur
 	return bindingRuleWritePart{issuer: implementation, sourceIdentity: source, state: state, authority: authority, index: index, value: value}, true
 }
 
-func (implementation *RuleImplementation[K, V, O]) SupportPart(source equation.SurfaceSource, index uint64) (bindingRuleSupportPart, bool) {
-	state, authority, _, ok := implementation.boundTopologyRuleReceipt()
-	value, sourceOK := source.SupportAt(index)
-	if !ok || !sourceOK || source.Rule() != implementation.binding.proof.semantic {
-		return bindingRuleSupportPart{}, false
-	}
-	return bindingRuleSupportPart{issuer: implementation, sourceIdentity: source, state: state, authority: authority, index: index, value: value}, true
-}
-
-func (implementation *RuleImplementation[K, V, O]) PrunePart(source equation.SurfaceSource, index uint64) (bindingRulePrunePart, bool) {
-	state, authority, _, ok := implementation.boundTopologyRuleReceipt()
-	value, sourceOK := source.PruneAt(index)
-	if !ok || !sourceOK || source.Rule() != implementation.binding.proof.semantic {
-		return bindingRulePrunePart{}, false
-	}
-	return bindingRulePrunePart{issuer: implementation, sourceIdentity: source, state: state, authority: authority, index: index, value: value}, true
-}
-
-func (draft *bindingRuleRowDraft) AddRead(receipt bindingRuleReadPart) (ok bool) {
-	defer func() {
-		if !ok && draft != nil {
-			draft.builder.recordRuleFinalizerFailure(RuleFinalizerFailureDraftRead)
-		}
-	}()
+func (draft *bindingRuleRowDraft) AddRead(receipt bindingRuleReadPart) bool {
 	if draft == nil {
 		return false
 	}
@@ -527,12 +254,7 @@ func (draft *bindingRuleRowDraft) AddRead(receipt bindingRuleReadPart) (ok bool)
 	return true
 }
 
-func (draft *bindingRuleRowDraft) AddCarry(receipt bindingRuleCarryPart) (ok bool) {
-	defer func() {
-		if !ok && draft != nil {
-			draft.builder.recordRuleFinalizerFailure(RuleFinalizerFailureDraftCarry)
-		}
-	}()
+func (draft *bindingRuleRowDraft) AddCarry(receipt bindingRuleCarryPart) bool {
 	if draft == nil {
 		return false
 	}
@@ -548,12 +270,7 @@ func (draft *bindingRuleRowDraft) AddCarry(receipt bindingRuleCarryPart) (ok boo
 	return true
 }
 
-func (draft *bindingRuleRowDraft) AddWrite(receipt bindingRuleWritePart) (ok bool) {
-	defer func() {
-		if !ok && draft != nil {
-			draft.builder.recordRuleFinalizerFailure(RuleFinalizerFailureDraftWrite)
-		}
-	}()
+func (draft *bindingRuleRowDraft) AddWrite(receipt bindingRuleWritePart) bool {
 	if draft == nil {
 		return false
 	}
@@ -738,11 +455,7 @@ func (binding *SchemaBinding) beginBindingTopologyBuilder() (*BindingTopologyBui
 	}
 	inner.spec.Batch = inner.batch
 	state.mu.Unlock()
-	return &BindingTopologyBuilder{
-		inner:                 inner,
-		binding:               binding,
-		selectedSurfaceAnchor: make(map[equation.Surface]mountedSelectedSurfaceAnchor),
-	}, true
+	return &BindingTopologyBuilder{inner: inner, binding: binding}, true
 }
 
 func (builder *BindingTopologyBuilder) lockPhase(phase bindingTopologyBuilderPhase) (*bindingTopologyBuilderState, bool) {
@@ -935,35 +648,13 @@ func (builder *BindingTopologyBuilder) addSemanticRule(id identity.ContentID, re
 	}
 	pointID, found := inner.semantic.pointAt[receipt.row.Occurrence.Site()]
 	output, pointOK := inner.semantic.points[pointID]
-	ordinal, shapeOK := inner.state.schema.ruleOrdinalOf(receipt.row.Schema)
+	ordinal, ruleOK := inner.state.schema.ruleOrdinalOf(receipt.row.Schema)
 	shape, shapeOK := inner.state.schema.ruleShapeAt(ordinal)
-	inputs := make([]equation.Input, 0, shape.Inputs)
-	if shapeOK && shape.Inputs != 0 {
-		source := receipt.input
-		target := receipt.row.Occurrence.Site()
-		shapeOK = receipt.inputID.Available()
-		for input := uint64(0); input < shape.Inputs; input++ {
-			provenance, provenanceOK := mountedRuleInputKey(id, receipt.inputID, input)
-			var boundary equation.Input
-			boundaryOK := false
-			if receipt.routed {
-				if receipt.predecessor != nil {
-					boundary, boundaryOK = artifactPredecessorRuleInput(builder.mountedRows, *receipt.predecessor, source, target, pointID, provenance)
-				}
-			} else {
-				reindex, reindexOK := ruleInputReindex(source.Scope(), target.Scope())
-				boundary = equation.BoundaryInput(source, target, provenance, equation.TrueExpr(), reindex, equation.TrueExpr())
-				boundaryOK = reindexOK && boundary.Available()
-			}
-			if !shapeOK || !provenanceOK || !boundaryOK || !boundary.Available() {
-				shapeOK = false
-				break
-			}
-			inputs = append(inputs, boundary)
-		}
-	}
-	group := equation.Group{Members: []equation.RuleRef{ref}, Output: output, Inputs: inputs}
-	if !found || !pointOK || !shapeOK || uint64(len(inputs)) != shape.Inputs || !validBindingGroup(inner.batch, group) {
+	// A row admitted through this plane declares its own Point and carries no
+	// predecessor coordinate, so a shape with conjunctive inputs has no
+	// boundary to derive here.
+	group := equation.Group{Members: []equation.RuleRef{ref}, Output: output}
+	if !found || !pointOK || !ruleOK || !shapeOK || shape.Inputs != 0 || !validBindingGroup(inner.batch, group) {
 		inner.failLocked()
 		inner.mu.Unlock()
 		return bindingRuleRowRef{}, false
@@ -974,20 +665,6 @@ func (builder *BindingTopologyBuilder) addSemanticRule(id identity.ContentID, re
 	inner.semantic.memberAt[ref] = id
 	inner.mu.Unlock()
 	return bindingRuleRowRef{builder: inner, ref: ref}, true
-}
-
-func artifactPredecessorRuleInput(rows *mountedArtifactRows, edge artifactEnvironmentRow, source, target equation.Site, targetPoint identity.ContentID, provenance composition.Key) (equation.Input, bool) {
-	if rows == nil || !validArtifactRouteProof(edge) || !edge.route.Available() || !provenance.Available() || !source.Available() || !target.Available() || !targetPoint.Available() {
-		return equation.Input{}, false
-	}
-	wantSource, sourceOK := rows.sites[edge.to]
-	_, targetOK := rows.pointMeta[targetPoint]
-	reindex, reindexOK := ruleInputReindex(source.Scope(), target.Scope())
-	input := equation.BoundaryInput(source, target, provenance, equation.TrueExpr(), reindex, equation.TrueExpr())
-	if !sourceOK || !source.Same(wantSource) || !targetOK {
-		return equation.Input{}, false
-	}
-	return input, reindexOK && input.Available()
 }
 
 func ruleInputReindex(source, target equation.Scope) (equation.Reindex, bool) {
@@ -1285,7 +962,7 @@ func (builder *BindingTopologyBuilder) addDirectActivationCandidate(receipt bind
 	return true
 }
 
-// SealSources closes source admission on the exact Batch retained by this
+// sealSources closes source admission on the exact Batch retained by this
 // builder. The Batch remains the sole source identity authority for the
 // topology phase; no rows are copied into a second admission plane.
 func (builder *BindingTopologyBuilder) sealSources() receiptSourceSealFailure {

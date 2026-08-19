@@ -1,7 +1,6 @@
 package static
 
 import (
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
 	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
 	staticoperands "github.com/wippyai/go-lua/analysis/program/static/operands"
@@ -100,11 +99,4 @@ func (view View) Declarations() staticdecl.View {
 		return staticdecl.View{}
 	}
 	return component.declarations.View()
-}
-
-func at(family keyspace.Family, index, length int) (keyspace.Term, bool) {
-	if index < 0 || index >= length {
-		return 0, false
-	}
-	return keyspace.MakeTerm(family, uint32(index+1)), true
 }

@@ -4,7 +4,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/identity"
 )
 
@@ -284,7 +283,7 @@ func TestArtifactScalarTemplateReusesStructureButFencesLinkCapabilities(t *testi
 	if !bootstrapOK || !localAssembled || localAssembly == nil || localFailure != receiptAssemblyFailureNone {
 		t.Fatal("local template substitution did not assemble")
 	}
-	localAssembly.Abort()
+	localAssembly.abort()
 	if foreignAssembled || foreignAssembly != nil || foreignFailure != receiptAssemblyFailureSnapshotNamespace {
 		t.Fatal("foreign Link capability crossed the shared template boundary")
 	}
@@ -300,40 +299,24 @@ func TestMountedNativeCallStageReceiptSurvivesArtifactReleaseAndRejectsForeignOc
 		t.Fatal("native Call stage mounted assembly")
 	}
 
-	proof := fixture.implementation.binding.proof
-	for index, placement := range fixture.rules() {
-		occurrence, occurrenceOK := assembly.AdmitMountedRuleOccurrence(fixture.capability, fixture.mount, placement.Point, placement.ID)
-		operand, operandOK := assembly.AdmitMountedRuleOperand(occurrence, [32]byte{0x7E, byte(index)})
-		if !occurrenceOK || !operandOK {
-			t.Fatal("native Call stage mounted occurrence")
-		}
-		occurrenceCopy, operandCopy := occurrence, operand
-		if !assembly.QueueMountedRuleFinalizer(fixture.capability, func() bool {
-			source, sourceOK := assembly.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{
-				Schema: proof.semantic, OperandFamily: proof.operandFamily, Occurrence: occurrenceCopy.value, Operand: operandCopy.value,
-				Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: proof.output, Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}},
-			})
-			draft, draftOK := fixture.implementation.beginBindingRuleRow(source)
-			write, writeOK := fixture.implementation.WritePart(source, 0)
-			if !sourceOK || !draftOK || !writeOK || !draft.AddWrite(write) {
-				return false
-			}
-			row, rowOK := assembly.issueRuleRow(draft)
-			_, added := assembly.AddRule(occurrenceCopy, row)
-			return rowOK && added
-		}) {
-			t.Fatal("native Call stage finalizer")
-		}
+	if !installConstOperandResolver(fixture.implementation, struct{}{}) {
+		t.Fatal("native Call stage operand resolver")
 	}
-	if !assembly.SealSources() {
-		t.Fatalf("native Call stage source seal: %+v", assembly.sealFailure)
+	admission := MountedProgramAdmission{}
+	for _, placement := range fixture.rules() {
+		admission.Mounted = append(admission.Mounted, MountedRuleAdmission{
+			Attach: fixture.implementation, Capability: fixture.capability,
+			Mount: fixture.mount, Point: placement.Point, Occurrence: placement.ID,
+		})
 	}
-	declaration, declared := declareSealedTopology(assembly, sealedMounts, bootstrap)
+	declaration, seal, admissionStage, declared := declareMountedProgram(assembly, sealedMounts, bootstrap, admission)
+	if !declared {
+		t.Fatalf("native Call stage declaration stage=%v seal=%d ordinal=%d", admissionStage, seal.Phase(), seal.Ordinal())
+	}
 	constructed, refusal := constructTopology(declaration)
 	topology, issued := constructed.topology, constructed.graph
-	committed := declared && !refusal.Available() && constructed.Available()
-	if !committed || issued == nil {
-		t.Fatalf("native Call stage construction declared=%t stage=%v step=%v ordinal=%d", declared, refusal.Stage(), refusal.Step(), refusal.Ordinal())
+	if refusal.Available() || !constructed.Available() || issued == nil {
+		t.Fatalf("native Call stage construction stage=%v step=%v ordinal=%d", refusal.Stage(), refusal.Step(), refusal.Ordinal())
 	}
 	graph := CommittedProgramFrom(topology, issued)
 	if graph == nil {

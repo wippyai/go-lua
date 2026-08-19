@@ -295,7 +295,7 @@ func buildExactRuleObservationFixture[R any](t testing.TB, querySpec HotExactQue
 	otherOperandValue := ruleUnitForSemantic(coldKey(949_903))
 	otherEntity, otherEntityOK := operandEntityForContent(otherOperandValue.content)
 	otherOperand, otherOperandOK := assembly.admitOperand(otherOccurrence, otherEntity)
-	if !siteOK || !occurrenceOK || !entityOK || !operandOK || !otherOccurrenceOK || !otherEntityOK || !otherOperandOK || !assembly.SealSources() {
+	if !siteOK || !occurrenceOK || !entityOK || !operandOK || !otherOccurrenceOK || !otherEntityOK || !otherOperandOK || assembly.sealSources().Available() {
 		t.Fatal("exact observation source")
 	}
 	source, sourceOK := assembly.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{

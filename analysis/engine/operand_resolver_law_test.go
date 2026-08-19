@@ -54,7 +54,7 @@ func TestOperandResolverIsRequiredToAttach(t *testing.T) {
 	occurrence, occurrenceOK := assembly.admitAt(site)
 	entity, entityOK := operandEntityForContent(operand.content)
 	operandRow, operandOK := assembly.admitOperand(occurrence, entity)
-	if !siteOK || !occurrenceOK || !entityOK || !operandOK || !assembly.SealSources() {
+	if !siteOK || !occurrenceOK || !entityOK || !operandOK || assembly.sealSources().Available() {
 		t.Fatal("resolver attach sources")
 	}
 	declaration := topologyDeclaration{binding: binding, batch: assembly.inner.batch}

@@ -101,13 +101,6 @@ func (issuer MountedIssuer) ReceiptForOccurrence(id identity.ContentID) (operand
 	return allocationOperandForSchema(issuer.rule.owner.Schema(), key)
 }
 
-func mountedCapability(issuer interface {
-	MountedCapability() (engine.RuleSlotCapability, bool)
-}) engine.RuleSlotCapability {
-	capability, _ := issuer.MountedCapability()
-	return capability
-}
-
 // Implementation returns the typed pending issuer until the shared binding
 // seals, after which Value owner resolves it to the exact engine receipt.
 func (rule *HotRule) Implementation() (*valueowner.RuleImplementation[operand], bool) {

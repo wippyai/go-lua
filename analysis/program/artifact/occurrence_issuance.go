@@ -94,10 +94,12 @@ func (directory IssuanceDirectory) writesFor(key schema.Key) (schema.Key, bool) 
 	return writes, writes.Available()
 }
 
-// transportKeysExcept returns one deterministic declared rule key for every
-// mounted factor axis except those a strong-write stage produces itself. The
-// keys remain schema vocabulary; Program never resolves them to engine slots.
-func (directory IssuanceDirectory) transportKeysExcept(excluded map[schema.Key]struct{}) ([]schema.Key, bool) {
+// transportRepresentatives maps every mounted factor axis to the one declared
+// rule key that names it in a factor transport. The key is a naming device:
+// construction resolves it to the factor its rule writes, so every declared
+// writer of an axis states the same transport and the lowest key makes the
+// choice a property of the declarations rather than an authored preference.
+func (directory IssuanceDirectory) transportRepresentatives() (map[schema.Key]schema.Key, bool) {
 	representative := make(map[schema.Key]schema.Key)
 	for _, placement := range directory {
 		if !placement.Available() {
@@ -106,20 +108,111 @@ func (directory IssuanceDirectory) transportKeysExcept(excluded map[schema.Key]s
 		if !placement.Transport {
 			continue
 		}
-		if _, omitted := excluded[placement.Writes]; omitted {
-			continue
-		}
 		prior := representative[placement.Writes]
 		if !prior.Available() || placement.Key < prior {
 			representative[placement.Writes] = placement.Key
 		}
 	}
+	return representative, true
+}
+
+// TransportKey is the declared rule key naming one mounted factor axis in a
+// factor transport.
+func (directory IssuanceDirectory) TransportKey(axis schema.Key) (schema.Key, bool) {
+	representative, ok := directory.transportRepresentatives()
+	if !ok || !axis.Available() {
+		return "", false
+	}
+	key := representative[axis]
+	return key, key.Available()
+}
+
+// transportKeysExcept returns one deterministic declared rule key for every
+// mounted factor axis except those a strong-write stage produces itself. The
+// keys remain schema vocabulary; Program never resolves them to engine slots.
+func (directory IssuanceDirectory) transportKeysExcept(excluded map[schema.Key]struct{}) ([]schema.Key, bool) {
+	representative, ok := directory.transportRepresentatives()
+	if !ok {
+		return nil, false
+	}
 	keys := make([]schema.Key, 0, len(representative))
-	for _, key := range representative {
+	for axis, key := range representative {
+		if _, omitted := excluded[axis]; omitted {
+			continue
+		}
 		keys = append(keys, key)
 	}
-	ordered, ok := orderedWrites(keys)
-	return ordered, ok
+	ordered, orderedOK := orderedWrites(keys)
+	return ordered, orderedOK
+}
+
+// transportKeysFor is the positive form: the declared transport key for each
+// named mounted factor axis. An axis no mounted rule writes has no transport
+// key, and the plan that asked for it is refused rather than thinned.
+func (directory IssuanceDirectory) transportKeysFor(included map[schema.Key]struct{}) ([]schema.Key, bool) {
+	representative, ok := directory.transportRepresentatives()
+	if !ok {
+		return nil, false
+	}
+	keys := make([]schema.Key, 0, len(included))
+	for axis := range included {
+		key := representative[axis]
+		if !key.Available() {
+			return nil, false
+		}
+		keys = append(keys, key)
+	}
+	ordered, orderedOK := orderedWrites(keys)
+	return ordered, orderedOK
+}
+
+// stageAxes is the mounted factor axis set the rules issued at one execution
+// stage produce.
+func (directory IssuanceDirectory) stageAxes(stage RuleStage) (map[schema.Key]struct{}, bool) {
+	if !stage.valid() {
+		return nil, false
+	}
+	axes := make(map[schema.Key]struct{})
+	for _, placement := range directory {
+		if !placement.Available() {
+			return nil, false
+		}
+		if !placement.Transport || placement.Stage != stage {
+			continue
+		}
+		axes[placement.Writes] = struct{}{}
+	}
+	return axes, true
+}
+
+// callStageTransport is the declared factor transport plan for one call-stage
+// triple, derived from the issuance directory alone.
+//
+// A stage reads the pre-write state of the axis it writes. The effect stage is
+// the last of the three, so the axis it produces bypasses dispatch and reaches
+// the summary stage straight from the base; every other mounted axis enters the
+// triple at dispatch. The axis the dispatch stage produces is then carried
+// forward to both of its successors, so they read the dispatched state instead
+// of the base's.
+type callStageTransport struct {
+	dispatchEntry   []schema.Key
+	effectBypass    []schema.Key
+	dispatchForward []schema.Key
+}
+
+func (directory IssuanceDirectory) callStageTransport() (callStageTransport, bool) {
+	effectAxes, effectOK := directory.stageAxes(RuleStageCallEffect)
+	dispatchAxes, dispatchOK := directory.stageAxes(RuleStageCallDispatch)
+	if !effectOK || !dispatchOK || len(effectAxes) == 0 || len(dispatchAxes) == 0 {
+		return callStageTransport{}, false
+	}
+	entry, entryOK := directory.transportKeysExcept(effectAxes)
+	bypass, bypassOK := directory.transportKeysFor(effectAxes)
+	forward, forwardOK := directory.transportKeysFor(dispatchAxes)
+	if !entryOK || !bypassOK || !forwardOK || len(entry) == 0 || len(bypass) == 0 || len(forward) == 0 {
+		return callStageTransport{}, false
+	}
+	return callStageTransport{dispatchEntry: entry, effectBypass: bypass, dispatchForward: forward}, true
 }
 
 // matching selects the subscriptions one compiled occurrence row issues: the

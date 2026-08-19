@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
+	"github.com/wippyai/go-lua/domain/composite"
 	"io"
 	"os"
 	"path/filepath"
@@ -697,12 +699,20 @@ func readCorpusDiagnosticExpectationCatalog(root string) (*corpusDiagnosticExpec
 				catalog.structuredByCode[row.Code] = append(catalog.structuredByCode[row.Code], ref)
 				key := corpusStructuredDiagnosticLocationKey{project: project.name, code: row.Code, file: row.File, line: row.Line, severity: row.Severity}
 				catalog.structuredByLocation[key] = append(catalog.structuredByLocation[key], ref)
-				switch row.Severity {
-				case "error":
+				vocabulary, vocabularyOK := composite.StructureVocabulary()
+				ordinal, ordinalOK := uint16(0), false
+				if vocabularyOK {
+					ordinal, ordinalOK = vocabulary.Spelling(structure.CategoryDiagnosticSeverity, row.Severity)
+				}
+				if !ordinalOK {
+					return fmt.Errorf("%s: structured diagnostic %q has invalid severity %q", path, row.Code, row.Severity)
+				}
+				switch anadiag.FindingSeverity(ordinal) {
+				case anadiag.FindingSeverityError:
 					inventory.structuredErrors++
-				case "warning":
+				case anadiag.FindingSeverityWarning:
 					inventory.structuredWarnings++
-				case "hint":
+				case anadiag.FindingSeverityHint:
 					inventory.structuredHints++
 				default:
 					return fmt.Errorf("%s: structured diagnostic %q has invalid severity %q", path, row.Code, row.Severity)
@@ -746,10 +756,18 @@ func readCorpusDiagnosticExpectationCatalog(root string) (*corpusDiagnosticExpec
 			project.inline = append(project.inline, row)
 			key := corpusDiagnosticLocationKey{project: project.name, file: row.File, line: row.Line, severity: row.Severity}
 			catalog.inlineByLocation[key] = append(catalog.inlineByLocation[key], row)
-			switch match[1] {
-			case "error":
+			inlineVocabulary, inlineVocabularyOK := composite.StructureVocabulary()
+			inlineOrdinal, inlineOrdinalOK := uint16(0), false
+			if inlineVocabularyOK {
+				inlineOrdinal, inlineOrdinalOK = inlineVocabulary.Spelling(structure.CategoryDiagnosticSeverity, match[1])
+			}
+			if !inlineOrdinalOK {
+				return fmt.Errorf("%s: invalid inline diagnostic severity %q", path, match[1])
+			}
+			switch anadiag.FindingSeverity(inlineOrdinal) {
+			case anadiag.FindingSeverityError:
 				inventory.inlineErrors++
-			case "warning":
+			case anadiag.FindingSeverityWarning:
 				inventory.inlineWarnings++
 			default:
 				return fmt.Errorf("%s: invalid inline diagnostic severity %q", path, match[1])

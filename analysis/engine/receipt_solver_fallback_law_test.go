@@ -156,7 +156,7 @@ func newSelectedOverlayFixture(t testing.TB) selectedOverlayFixture {
 	ordinaryOperand, ordinaryOperandOK := assembly.admitOperand(ordinaryOccurrence, ordinaryEntity)
 	bodyEntity, bodyEntityOK := operandEntityForContent(ordinaryOperandValue.content)
 	bodyOperand, bodyOperandOK := assembly.admitOperand(bodyOccurrence, bodyEntity)
-	if !triggerSiteOK || !targetSiteOK || !bodySiteOK || !occurrenceOK || !entityOK || !operandOK || !ordinaryOccurrenceOK || !bodyOccurrenceOK || !ordinaryEntityOK || !ordinaryOperandOK || !bodyEntityOK || !bodyOperandOK || !assembly.SealSources() {
+	if !triggerSiteOK || !targetSiteOK || !bodySiteOK || !occurrenceOK || !entityOK || !operandOK || !ordinaryOccurrenceOK || !bodyOccurrenceOK || !ordinaryEntityOK || !ordinaryOperandOK || !bodyEntityOK || !bodyOperandOK || assembly.sealSources().Available() {
 		t.Fatal("receipt activation source")
 	}
 	// The declared point plane is trigger, target, body: the PointRef of the

@@ -17,12 +17,6 @@ const (
 	AxisRole = "axis/channel-select-case"
 )
 
-// SchemaFragment and HotAxis are empty: this is an engine-published axis.
-type (
-	SchemaFragment struct{}
-	HotAxis        struct{}
-)
-
 // AxisEntry declares the accepted channel-select case column. Keys are
 // CaseFactID values. The column is sparse: a missing identity is not an
 // accepted arm.

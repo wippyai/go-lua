@@ -97,7 +97,7 @@ func newCycleCoordinateFixture(t *testing.T) cycleCoordinateFixture {
 		}
 		occurrences[index], operandValues[index], operands[index] = occurrence, value, operand
 	}
-	if !assembly.SealSources() {
+	if assembly.sealSources().Available() {
 		t.Fatal("cycle coordinate source seal")
 	}
 	declaration := topologyDeclaration{binding: binding, batch: assembly.inner.batch}
@@ -454,7 +454,7 @@ func newGuardedCycleFixture(t *testing.T) guardedCycleFixture {
 		}
 		occurrences[index], operandValues[index], operands[index] = occurrence, value, operand
 	}
-	if !assembly.SealSources() {
+	if assembly.sealSources().Available() {
 		t.Fatal("guarded cycle source seal")
 	}
 	declaration := topologyDeclaration{binding: binding, batch: assembly.inner.batch}

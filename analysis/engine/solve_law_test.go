@@ -325,7 +325,7 @@ func newDiagnosticsReceiptSolverOf[R any](t testing.TB, failTransfer bool, query
 		}
 		sites[index], occurrences[index], operands[index], operandValues[index] = site, occurrence, operand, operandValue
 	}
-	if !assembly.SealSources() {
+	if assembly.sealSources().Available() {
 		t.Fatal("diagnostics receipt source seal")
 	}
 	declaration := topologyDeclaration{binding: binding, batch: assembly.inner.batch}
@@ -525,7 +525,7 @@ func newDiagnosticsExternalInterfaceFixture(t testing.TB) diagnosticsExternalInt
 		}
 		occurrences[index], operandValues[index], operands[index] = occurrence, value, operand
 	}
-	if !assembly.SealSources() {
+	if assembly.sealSources().Available() {
 		t.Fatal("diagnostics external-interface source seal")
 	}
 

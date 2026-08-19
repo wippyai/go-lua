@@ -87,7 +87,7 @@ func TestReceiptRuntimeInstantiatesOnlyDemandedProducerGroups(t *testing.T) {
 		sites[index] = site
 		occurrences[index], operandRows[index] = occurrence, operand
 	}
-	if !assembly.SealSources() {
+	if assembly.sealSources().Available() {
 		t.Fatal("demanded producer source seal")
 	}
 	declaration := topologyDeclaration{binding: binding, batch: assembly.inner.batch}

@@ -3,8 +3,6 @@ package static
 import (
 	"errors"
 
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/analysis/program/source"
 	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
 	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
 	staticoperands "github.com/wippyai/go-lua/analysis/program/static/operands"
@@ -232,33 +230,4 @@ func ReadArtifactSection(reader *framing.Reader) (Input, error) {
 	}
 	input.Publications = publicationsInput
 	return input, nil
-}
-
-func writeTypeTermsContent(writer *framing.Writer, terms []keyspace.Term) error {
-	if err := writer.Count(uint64(len(terms))); err != nil {
-		return err
-	}
-	for _, term := range terms {
-		if err := writer.Uint(uint64(term)); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// writeCoordinateContent encodes the four exact authored Coordinate fields.
-// It is owned by the declaration vertical because declarations introduce the
-// shared Static spelling-coordinate representation used by signatures.
-func writeCoordinateContent(writer *framing.Writer, coordinate source.Coordinate) error {
-	startLine, startColumn, endLine, endColumn := coordinate.Parts()
-	if err := writer.Uint(uint64(startLine)); err != nil {
-		return err
-	}
-	if err := writer.Uint(uint64(startColumn)); err != nil {
-		return err
-	}
-	if err := writer.Uint(uint64(endLine)); err != nil {
-		return err
-	}
-	return writer.Uint(uint64(endColumn))
 }

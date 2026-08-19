@@ -310,6 +310,20 @@ func canonicalOrder(input []OperationInput) ([]int, error) {
 	n := len(input)
 	edges := make([][]edge, n)
 	incoming := make([]int, n)
+	sourceIndex := make([]int, n)
+	sourceSeen := make([]bool, n)
+	for index, item := range input {
+		if item.Source < 0 || item.Source >= n || sourceSeen[item.Source] {
+			return nil, fmt.Errorf("target/operation: invalid source coordinate %d", item.Source)
+		}
+		sourceSeen[item.Source] = true
+		sourceIndex[item.Source] = index
+	}
+	for source, seen := range sourceSeen {
+		if !seen {
+			return nil, fmt.Errorf("target/operation: source coordinates are not a complete mapping (missing %d)", source)
+		}
+	}
 	owners := make([]struct {
 		binding vocabulary.BindingSpec
 	}, 0)
@@ -333,11 +347,12 @@ func canonicalOrder(input []OperationInput) ([]int, error) {
 			if produced.Result >= outcome.ValueSlots {
 				return nil, fmt.Errorf("target/operation: produced %d result outside scope", producedIndex)
 			}
-			if len(input[produced.TargetSource].Bindings) == 0 {
-				incoming[produced.TargetSource]++
+			targetIndex := sourceIndex[produced.TargetSource]
+			if len(input[targetIndex].Bindings) == 0 {
+				incoming[targetIndex]++
 			}
 			edges[source] = append(edges[source], edge{
-				target: produced.TargetSource, anchor: append([]byte(nil), outcome.Anchor...),
+				target: targetIndex, anchor: append([]byte(nil), outcome.Anchor...),
 				result: produced.Result, outcome: produced.Outcome,
 			})
 		}
