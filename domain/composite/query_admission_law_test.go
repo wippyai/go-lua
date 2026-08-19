@@ -156,6 +156,27 @@ return use(1)`)
 	}
 }
 
+// A control-fault chunk is still a sealed Program root. Query admission keeps
+// it in the selected population so diagnostic collection can name the fault
+// instead of failing construction at the query boundary.
+func TestSelectedQuerySitesAdmitControlFaultRoots(t *testing.T) {
+	for _, fixture := range []struct {
+		name   string
+		source string
+	}{
+		{name: "break-outside-loop", source: "break -- expect-error"},
+		{name: "goto-backward", source: "::start::\ngoto start"},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			record := mountedRecord(t, "query-control-fault-"+fixture.name, fixture.source)
+			sites, ok := SelectedQuerySites(record.Artifacts)
+			if !ok || len(sites) == 0 {
+				t.Fatalf("control-fault root has no selected query sites: ok=%t rows=%d", ok, len(sites))
+			}
+		})
+	}
+}
+
 func TestSelectedQuerySitesUseTheirOwnerAddressFormula(t *testing.T) {
 	record := mountedRecord(t, "query-address", "return 42")
 	sites, ok := SelectedQuerySites(record.Artifacts)

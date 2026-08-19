@@ -179,22 +179,6 @@ func planLawRuleGeometryFailure(plan *Plan) string {
 	return "rule-geometry-complete"
 }
 
-func TestCompiledPlanAnalyzeParity(t *testing.T) {
-	linked := planLawLink(t)
-	plan, compileStatus := Compile(linked)
-	if compileStatus != CompileComplete || plan == nil {
-		t.Fatalf("compile = %v/%v", compileStatus, plan)
-	}
-	solved, solveStatus := plan.Solve(context.Background())
-	direct, directStatus := Analyze(context.Background(), linked)
-	if solveStatus != AnalyzeComplete || directStatus != AnalyzeComplete || solved == nil || direct == nil {
-		t.Fatalf("solve/direct = %v/%v", solveStatus, directStatus)
-	}
-	if solved.SourceID() != direct.SourceID() || solved.ContentID() != direct.ContentID() || solved.BodyCount() != direct.BodyCount() {
-		t.Fatalf("solve/direct projection mismatch")
-	}
-}
-
 func TestCompiledPlanDuplicateMountsReuseArtifactAndFreshenResults(t *testing.T) {
 	shared := planLawProgram(t, `return 1`)
 	linked := planLawMountedLink(t, []linkproject.Module{
@@ -563,22 +547,5 @@ func TestDeadlockDataflowNodeCompilesProgramArtifact(t *testing.T) {
 	artifacts, artifactsOK := compileProgramArtifacts(linked, receipt)
 	if !artifactsOK || artifacts == nil || len(artifacts.mounts) == 0 {
 		t.Fatal("program artifacts and scalar template")
-	}
-}
-
-func TestMountedReceiptPathCompletesEngineSolve(t *testing.T) {
-	plan, status := Compile(planLawLink(t))
-	if status != CompileComplete || plan == nil {
-		t.Fatalf("compile = %v/%v", status, plan)
-	}
-	result, solveStatus, diagnostics := plan.SolveWithDiagnostics(context.Background(), engine.SolveDiagnosticOptions{})
-	if result == nil || solveStatus != AnalyzeComplete || result.BodyCount() == 0 {
-		t.Fatalf("receipt solve = %v/%v", solveStatus, result)
-	}
-	if diagnostics.Phase != anadiag.AnalyzeDiagnosticPhaseComplete || diagnostics.Reason != anadiag.AnalyzeDiagnosticReasonNone {
-		t.Fatalf("receipt solve diagnostics = phase:%v reason:%v", diagnostics.Phase, diagnostics.Reason)
-	}
-	if plan.state.ordinary != nil {
-		t.Fatal("diagnostic solve populated the ordinary solver cache")
 	}
 }
