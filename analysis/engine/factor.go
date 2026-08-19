@@ -229,8 +229,11 @@ func fingerprintOrderedCellRecord[V any](record *orderedCellsRecord[V], fingerpr
 	return result
 }
 
+// newOrderedCellsRecord adopts cells: every caller builds the slice locally
+// and hands it over, so the record owns it without a copy and revoke may zero
+// it in place.
 func newOrderedCellsRecord[V any](cells []summaryCell[V]) *orderedCellsRecord[V] {
-	record := &orderedCellsRecord[V]{cells: append([]summaryCell[V](nil), cells...)}
+	record := &orderedCellsRecord[V]{cells: cells}
 	record.live.Store(true)
 	return record
 }
