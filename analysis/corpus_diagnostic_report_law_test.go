@@ -270,7 +270,11 @@ func TestConfiguredGlobalSuppressesProgramUnresolvedValueCandidateAtLinkLaw(t *t
 	if programCandidates != 1 {
 		t.Fatalf("configured-global Program candidates = %d, want 1", programCandidates)
 	}
-	for _, observation := range mustResultGeometry(t, plan.state).StaticObservations {
+	geometry, geometryOK := plan.state.resultGeometry()
+	if !geometryOK {
+		t.Fatal("configured-global result geometry")
+	}
+	for _, observation := range geometry.StaticObservations {
 		if observation.Kind == structure.DiagnosticObservationValueReferenceUnresolved {
 			t.Fatal("configured global escaped Link absence filtering")
 		}

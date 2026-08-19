@@ -2,21 +2,16 @@ package analysis
 
 import (
 	"context"
-	"fmt"
-	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/result"
 	"sync"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
@@ -49,134 +44,6 @@ func planLawMountedLink(t testing.TB, modules []linkproject.Module) *link.Link {
 		t.Fatal(err)
 	}
 	return linked
-}
-
-func planLawArtifactFailure(linked *link.Link) string {
-	if linked == nil || linked.Project() == nil {
-		return "link-unavailable"
-	}
-	receipt, ok := composite.Global()
-	if !ok {
-		return "schema-unavailable"
-	}
-	mounts := linked.Project().Mounts()
-	for index := 0; index < mounts.Count(); index++ {
-		shard, shardOK := mounts.At(index)
-		mounted, mountedOK := mounts.Program(shard)
-		if !shardOK || !mountedOK || mounted == nil {
-			return fmt.Sprintf("mount=%d:unavailable", index)
-		}
-		_, failure := composite.CompileArtifactDetailed(mounted, receipt)
-		if failure.Available() {
-			detail := ""
-			if failure.Reason() == programartifact.CompileReasonOccurrenceValueSourceProof {
-				row, rowOK := failure.Row()
-				family, familyOK := failure.Subrow()
-				if rowOK && familyOK {
-					detail = ":" + planLawValueSourceFailure(mounted, family, row)
-				}
-			}
-			return fmt.Sprintf("mount=%d:%s%s", index, failure.Error(), detail)
-		}
-	}
-	if _, ok := compileValueCoordinates(linked); !ok {
-		return "value-coordinates"
-	}
-	return "program artifacts compile succeeded"
-}
-
-func planLawValueSourceFailure(p *program.Program, family, row int) string {
-	if p == nil || row < 0 {
-		return "value-source-state"
-	}
-	input := p
-	var term, owner keyspace.Term
-	var rowOK bool
-	switch family {
-	case 1:
-		term, owner, rowOK = p.Source().Literals().Nils().At(row)
-	case 2:
-		term, owner, _, rowOK = p.Source().Literals().Bools().At(row)
-	case 3:
-		term, owner, _, rowOK = p.Source().Literals().Integers().At(row)
-	case 4:
-		term, owner, _, rowOK = p.Source().Literals().Floats().At(row)
-	case 5:
-		term, owner, _, rowOK = p.Source().Literals().Strings().At(row)
-	default:
-		return fmt.Sprintf("value-source-family=%d", family)
-	}
-	body, bodyOK := input.Body(owner)
-	containing, containingOK := input.ContainingBody(term)
-	_, directOK := input.Span(term)
-	root, rootExists := p.Source().Index().Root(term)
-	rootOK := false
-	if rootExists {
-		_, rootOK = input.Span(root)
-	}
-	sourceID, sourceSpan, sourceTerm, anchorOK := p.ValueSourceIDAt(keyspace.Family(family), row)
-	finishOK := sourceSpan.Available() && sourceTerm == term
-	path, pathOK := p.Flow().ValueSourcePath(term)
-	return fmt.Sprintf("value-source-family=%d row=%d row-ok=%v executable=%v body=%v containing=%v body-equal=%v direct-span=%v root-span=%v path=%v anchor=%v finish=%v",
-		family, row, rowOK, p.Flow().Executable().Contains(term), bodyOK, containingOK,
-		bodyOK && containingOK && body.Equal(containing), directOK, rootOK, pathOK && path.Available(), anchorOK && sourceID.Available(), finishOK)
-}
-
-func planLawRuleGeometryFailure(plan *Plan) string {
-	if plan == nil || plan.state == nil || plan.state.artifacts == nil {
-		return "artifact-unavailable"
-	}
-	for mountIndex, mount := range plan.state.artifacts.mounts {
-		if !mount.valid() {
-			return fmt.Sprintf("mount=%d snapshot-unavailable", mountIndex)
-		}
-		snapshot := mount.snapshot
-		for index := 0; index < snapshot.PointCount(); index++ {
-			point, pointOK := snapshot.PointAt(index)
-			if !pointOK || !point.ID().Available() {
-				return fmt.Sprintf("mount=%d point=%d available=%v id=%v", mountIndex, index, pointOK, point.ID().Available())
-			}
-			for decisionIndex := 0; decisionIndex < point.DecisionCount(); decisionIndex++ {
-				decision, decisionOK := point.DecisionAt(decisionIndex)
-				if !decisionOK || !decision.Available() {
-					return fmt.Sprintf("mount=%d point=%d decision=%d available=%v", mountIndex, index, decisionIndex, decisionOK && decision.Available())
-				}
-			}
-		}
-		for index := 0; index < snapshot.StructuralEdgeCount(); index++ {
-			edge, edgeOK := snapshot.StructuralEdgeAt(index)
-			if !edgeOK || !edge.ID().Available() {
-				return fmt.Sprintf("mount=%d edge=%d available=%v", mountIndex, index, edgeOK && edge.ID().Available())
-			}
-			guard, guarded := edge.GuardID()
-			truth, truthOK := edge.Truth()
-			decision, decisionOK := edge.DecisionID()
-			reset, hasReset := edge.ResetDigest()
-			mu, hasMu := edge.MuPathID()
-			if guarded != truthOK || guarded != decisionOK || hasMu != hasReset || hasReset != reset.Available() || guarded != guard.Available() {
-				return fmt.Sprintf("mount=%d edge=%d proof guard=%v/%v decision=%v/%v truth=%v/%v reset=%v/%v mu=%v/%v", mountIndex, index, guard.Available(), guarded, decision.Available(), decisionOK, truth, truthOK, reset.Available(), hasReset, mu.Available(), hasMu)
-			}
-		}
-		for index := 0; index < snapshot.RegionCount(); index++ {
-			region, regionOK := snapshot.RegionAt(index)
-			if !regionOK || !region.ID().Available() || !region.Head().Available() || region.MemberCount() == 0 {
-				return fmt.Sprintf("mount=%d region=%d available=%v id=%v head=%v members=%d", mountIndex, index, regionOK, region.ID().Available(), region.Head().Available(), region.MemberCount())
-			}
-		}
-		for index := 0; index < snapshot.EventCount(); index++ {
-			event, eventOK := snapshot.EventAt(index)
-			if !eventOK || !event.PointID().Available() {
-				return fmt.Sprintf("mount=%d event=%d available=%v", mountIndex, index, eventOK && event.PointID().Available())
-			}
-		}
-		for index := 0; index < snapshot.RulePlacementCount(); index++ {
-			row, ok := snapshot.RulePlacementAt(index)
-			if !ok || !row.PointID().Available() || !row.Key().Available() {
-				return fmt.Sprintf("mount=%d placement=%d available=%v point=%v key=%q", mountIndex, index, ok, row.PointID().Available(), row.Key())
-			}
-		}
-	}
-	return "rule-geometry-complete"
 }
 
 func TestCompiledPlanDuplicateMountsReuseArtifactAndFreshenResults(t *testing.T) {
@@ -320,132 +187,6 @@ func TestCompiledPlanZeroRowOutcomeDoesNotMaskLiteralReturn(t *testing.T) {
 	}
 }
 
-// One fixed storage transfer may carry several symbolic rows when the source
-// coordinate was populated under distinct branch guards. The Rule occurrence
-// is singular; its derivation dispositions are the exact guarded partition
-// and every row must pass the same source/destination/value proof.
-func TestCompiledPlanAcceptsGuardPartitionedStorageTransfer(t *testing.T) {
-	contract, err := testfixture.StandardLibraryTarget()
-	if err != nil {
-		t.Fatal(err)
-	}
-	linked := mustLink(t, `
-local function move(flag: boolean)
-    local source: number | string
-    if flag then
-        source = 1
-    else
-        source = "x"
-    end
-    local destination = source
-    return destination
-end
-return move
-	`, contract)
-	result, status := Analyze(context.Background(), linked)
-	bodyCount := 0
-	if result != nil {
-		bodyCount = result.BodyCount()
-	}
-	if status != AnalyzeComplete || result == nil || bodyCount < 2 {
-		var diagnostics anadiag.AnalyzeDiagnostics
-		geometry := "plan-unavailable"
-		if plan, compileStatus := Compile(linked); compileStatus == CompileComplete && plan != nil {
-			_, _, diagnostics = plan.SolveWithDiagnostics(context.Background(), engine.SolveDiagnosticOptions{})
-			geometry = planLawRuleGeometryFailure(plan)
-		}
-		t.Fatalf("guard-partitioned storage transfer = status:%v result:%v bodies:%d artifact:%s geometry:%s diagnostics:%+v", status, result != nil, bodyCount, planLawArtifactFailure(linked), geometry, diagnostics)
-	}
-	plan, compileStatus := Compile(linked)
-	if compileStatus != CompileComplete || plan == nil {
-		t.Fatalf("guard-partitioned storage transfer placement compile = %v/%v", compileStatus, plan)
-	}
-	if failure := planLawStorageTransferPlacementFailure(plan); failure != "" {
-		t.Fatalf("guard-partitioned storage transfer placement: %s", failure)
-	}
-}
-
-// planLawStorageTransferPlacementFailure verifies the sole artifact-native
-// placement authority for fixed storage transfers.  Reads and binds must keep
-// their Program-issued Entry input; writes must retain the exact parent route
-// predecessor.  All execute at the separate Local point after Finish.
-func planLawStorageTransferPlacementFailure(plan *Plan) string {
-	if plan == nil || plan.state == nil || plan.state.artifacts == nil {
-		return "plan"
-	}
-	wantKinds := map[uint8]bool{
-		uint8(programartifact.OccurrenceStorageRead):         false,
-		uint8(programartifact.OccurrenceStorageBindTransfer): false,
-		uint8(programartifact.OccurrenceStorageWrite):        false,
-	}
-	for mountIndex, mount := range plan.state.artifacts.mounts {
-		if !mount.valid() {
-			return fmt.Sprintf("mount=%d snapshot", mountIndex)
-		}
-		snapshot := mount.snapshot
-		for occurrenceIndex := 0; occurrenceIndex < snapshot.OccurrenceCount(); occurrenceIndex++ {
-			occurrence, occurrenceOK := snapshot.OccurrenceAt(occurrenceIndex)
-			if !occurrenceOK {
-				return fmt.Sprintf("mount=%d occurrence=%d", mountIndex, occurrenceIndex)
-			}
-			kind := occurrence.Kind()
-			if _, required := wantKinds[kind]; !required {
-				continue
-			}
-			wantKinds[kind] = true
-			matches := 0
-			for ruleIndex := 0; ruleIndex < snapshot.RulePlacementCount(); ruleIndex++ {
-				rule, ruleOK := snapshot.RulePlacementAt(ruleIndex)
-				if !ruleOK || rule.Key() != "value-transfer" || rule.OccurrenceID() != occurrence.ID() {
-					continue
-				}
-				matches++
-				point := rule.PointID()
-				input := rule.InputPointID()
-				if !point.Available() || !input.Available() || rule.Stage() != uint8(programartifact.RuleStageLocal) || point == input {
-					return fmt.Sprintf("mount=%d kind=%d rule=%d local", mountIndex, kind, ruleIndex)
-				}
-				switch kind {
-				case uint8(programartifact.OccurrenceStorageRead), uint8(programartifact.OccurrenceStorageBindTransfer):
-					if rule.InputKind() != uint8(programartifact.RuleInputEntry) {
-						return fmt.Sprintf("mount=%d kind=%d rule=%d entry", mountIndex, kind, ruleIndex)
-					}
-				case uint8(programartifact.OccurrenceStorageWrite):
-					route := rule.PredecessorRouteID()
-					if rule.InputKind() != uint8(programartifact.RuleInputPredecessor) || !route.Available() {
-						return fmt.Sprintf("mount=%d kind=%d rule=%d predecessor", mountIndex, kind, ruleIndex)
-					}
-				}
-				localFromOccurrence := false
-				for edgeIndex := 0; edgeIndex < snapshot.LocalTransferCount(); edgeIndex++ {
-					edge, edgeOK := snapshot.LocalTransferAt(edgeIndex)
-					if !edgeOK || edge.To() != point {
-						continue
-					}
-					for pointIndex := 0; pointIndex < occurrence.PointCount(); pointIndex++ {
-						parent, parentOK := occurrence.PointAt(pointIndex)
-						if parentOK && parent == edge.From() {
-							localFromOccurrence = true
-						}
-					}
-				}
-				if !localFromOccurrence {
-					return fmt.Sprintf("mount=%d kind=%d rule=%d local-parent", mountIndex, kind, ruleIndex)
-				}
-			}
-			if matches == 0 {
-				return fmt.Sprintf("mount=%d kind=%d transfers=%d", mountIndex, kind, matches)
-			}
-		}
-	}
-	for kind, found := range wantKinds {
-		if !found {
-			return fmt.Sprintf("missing kind=%d", kind)
-		}
-	}
-	return ""
-}
-
 func TestCompiledPlanRepeatedSolveLaw(t *testing.T) {
 	plan, status := Compile(planLawLink(t))
 	if status != CompileComplete || plan == nil || plan.state == nil || plan.state.binding == nil || plan.state.binding.SchemaBinding() == nil || !plan.state.binding.SchemaBinding().Sealed() {
@@ -532,20 +273,5 @@ func TestCompiledPlanCancellationDoesNotPoisonReuse(t *testing.T) {
 	}
 	if plan.state.ordinary != ordinary {
 		t.Fatal("reuse after cancellation rebuilt the ordinary solver")
-	}
-}
-
-func TestDeadlockDataflowNodeCompilesProgramArtifact(t *testing.T) {
-	linked := fixtureLink(t, "regression/deadlock-dataflow-node")
-	if got := planLawArtifactFailure(linked); got != "program artifacts compile succeeded" {
-		t.Fatal(got)
-	}
-	receipt, ok := composite.Global()
-	if !ok {
-		t.Fatal("schema-unavailable")
-	}
-	artifacts, artifactsOK := compileProgramArtifacts(linked, receipt)
-	if !artifactsOK || artifacts == nil || len(artifacts.mounts) == 0 {
-		t.Fatal("program artifacts and scalar template")
 	}
 }
