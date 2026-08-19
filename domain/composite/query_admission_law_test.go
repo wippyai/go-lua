@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/analysis/schema/query"
 )
 
@@ -108,4 +110,141 @@ return 42`)
 			t.Fatalf("root point %v query lanes = %d", point, count)
 		}
 	}
+}
+
+// TestSelectedQuerySitesAdmitOnlyDirectCalleeInteriors proves the selection
+// rule at its owner: a direct call from a selected root admits the callee's
+// sealed occurrence points, while an uncalled callable sibling remains out of
+// the selected-point population.
+func TestSelectedQuerySitesAdmitOnlyDirectCalleeInteriors(t *testing.T) {
+	record := mountedRecord(t, "selected-callee", `local function dormant(value)
+  local retained = value
+  return retained
+end
+local function use(x)
+  return x
+end
+return use(1)`)
+	sites, ok := SelectedQuerySites(record.Artifacts)
+	if !ok || len(sites) == 0 {
+		t.Fatal("selected query sites")
+	}
+	points := selectedCallableOccurrencePoints(t, record.Artifacts[0].Snapshot)
+	callee, sibling := selectedDirectCalleeAndSibling(t, record.Artifacts[0].Snapshot)
+	if !callee.Available() || !sibling.Available() {
+		t.Fatal("fixture lost the direct callee or its unused sibling")
+	}
+	if len(points[callee]) == 0 || len(points[sibling]) == 0 {
+		t.Fatal("callable bodies published no occurrence points")
+	}
+	selected := make(map[identity.ContentID]int)
+	for _, site := range sites {
+		if _, forbidden := points[sibling][site.Point]; forbidden {
+			t.Fatal("uncalled sibling became a query site")
+		}
+		if _, inside := points[callee][site.Point]; inside {
+			selected[site.Point]++
+		}
+	}
+	if len(selected) == 0 {
+		t.Fatal("direct callee interior is not a query subject")
+	}
+	for point, count := range selected {
+		if count != 2 {
+			t.Fatalf("selected callee point %v query lanes = %d", point, count)
+		}
+	}
+}
+
+func TestSelectedQuerySitesUseTheirOwnerAddressFormula(t *testing.T) {
+	record := mountedRecord(t, "query-address", "return 42")
+	sites, ok := SelectedQuerySites(record.Artifacts)
+	if !ok || len(sites) == 0 {
+		t.Fatal("selected query sites")
+	}
+	issued := make(map[schema.Key]struct{})
+	for _, family := range QueryIssuance() {
+		issued[family.Family] = struct{}{}
+	}
+	for index, site := range sites {
+		if _, known := issued[site.Family]; !known {
+			t.Fatalf("site %d carries unissued family %q", index, site.Family)
+		}
+		want, derived := identity.DeriveContentID(querySiteFormula, site.Mount[:], site.Point[:], []byte(site.Family))
+		if !derived || site.ID != want {
+			t.Fatalf("site %d address %v is not the owner formula over (%v, %v, %q)", index, site.ID, site.Mount, site.Point, site.Family)
+		}
+	}
+}
+
+func selectedCallableOccurrencePoints(t *testing.T, snapshot *ingress.Snapshot) map[identity.ContentID]map[identity.ContentID]struct{} {
+	t.Helper()
+	points := make(map[identity.ContentID]map[identity.ContentID]struct{})
+	for index := 0; index < snapshot.BodyTransportCount(); index++ {
+		body, ok := snapshot.BodyTransportAt(index)
+		if !ok || !body.Callable() {
+			continue
+		}
+		points[body.BodyID()] = make(map[identity.ContentID]struct{})
+	}
+	for index := 0; index < snapshot.OccurrenceCount(); index++ {
+		occurrence, occurrenceOK := snapshot.OccurrenceAt(index)
+		body, bodyOK := occurrence.BodyID()
+		if !occurrenceOK || !bodyOK {
+			continue
+		}
+		held, callable := points[body]
+		if !callable {
+			continue
+		}
+		for pointIndex := 0; pointIndex < occurrence.PointCount(); pointIndex++ {
+			point, pointOK := occurrence.PointAt(pointIndex)
+			if !pointOK {
+				t.Fatal("occurrence point")
+			}
+			held[point] = struct{}{}
+		}
+	}
+	return points
+}
+
+func selectedDirectCalleeAndSibling(t *testing.T, snapshot *ingress.Snapshot) (identity.ContentID, identity.ContentID) {
+	t.Helper()
+	rootBodies := make(map[identity.ContentID]struct{})
+	callable := make(map[identity.ContentID]struct{})
+	for index := 0; index < snapshot.BodyTransportCount(); index++ {
+		body, ok := snapshot.BodyTransportAt(index)
+		if !ok {
+			t.Fatal("body row")
+		}
+		if body.Callable() {
+			callable[body.BodyID()] = struct{}{}
+		} else {
+			rootBodies[body.BodyID()] = struct{}{}
+		}
+	}
+	var callee identity.ContentID
+	for index := 0; index < snapshot.CallCount(); index++ {
+		call, callOK := snapshot.CallAt(index)
+		target, targetOK := call.DirectTargetBody()
+		if !callOK || !targetOK {
+			continue
+		}
+		if _, root := rootBodies[call.BodyID()]; !root {
+			continue
+		}
+		if _, known := callable[target]; !known {
+			t.Fatal("direct target is not a callable body")
+		}
+		callee = target
+		break
+	}
+	var sibling identity.ContentID
+	for body := range callable {
+		if body != callee {
+			sibling = body
+			break
+		}
+	}
+	return callee, sibling
 }
