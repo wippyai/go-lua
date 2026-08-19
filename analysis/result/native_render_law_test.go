@@ -103,7 +103,4 @@ func TestNativeLiteralRenderingIsOneTableLaw(t *testing.T) {
 	if _, _, ok := renderNativeExactScalar(valuedomain.ExactScalar{}); ok {
 		t.Fatal("an unclassified exact scalar rendered")
 	}
-	if _, _, ok := renderNativeScalarSummary(compiledNativeScalarSource{}); ok {
-		t.Fatal("an invalid scalar summary rendered")
-	}
 }

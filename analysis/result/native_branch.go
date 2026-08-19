@@ -106,50 +106,65 @@ func buildNativeBranchPublication(
 	return newNativePublicationReceipt(rows)
 }
 
-func appendNativeArithmeticRows(rows *[]nativePublicationRow, seen map[identity.ContentID]struct{}, summary compiledNativeArithmeticSummary) bool {
-	left, leftOK := nativeNumericRepresentation(summary.left)
-	right, rightOK := nativeNumericRepresentation(summary.right)
-	result, resultOK := nativeNumericRepresentation(summary.result)
-	operator, operatorOK := nativeArithmeticOperator(summary.op)
-	overflow, overflowOK := valuedomain.BinaryNumericOverflow(summary.op, summary.left, summary.right)
-	divisor, divisorOK := nativeArithmeticDivisor(summary.divisor)
-	if !summary.valid() || !leftOK || !rightOK || !resultOK || !operatorOK || !overflowOK || !divisorOK {
+func appendNativeArithmeticRows(
+	rows *[]nativePublicationRow,
+	seen map[identity.ContentID]struct{},
+	summary cold.ArithmeticSummary,
+	mount, artifact, span, body, point identity.ContentID,
+) bool {
+	left, right, resultRepresentation, representationsOK := summary.Representations()
+	op := flowkind.BinaryOp(summary.Operator())
+	operator, operatorOK := nativeArithmeticOperator(op)
+	overflow, overflowOK := valuedomain.BinaryNumericOverflow(op, left, right)
+	divisor, divisorOK := nativeArithmeticDivisor(summary.DivisorProperty())
+	leftName, leftOK := nativeNumericRepresentation(left)
+	rightName, rightOK := nativeNumericRepresentation(right)
+	resultName, resultOK := nativeNumericRepresentation(resultRepresentation)
+	if !validNativeArithmeticSummary(summary, mount, artifact, body, point, span) || !representationsOK || !leftOK || !rightOK || !resultOK || !operatorOK || !overflowOK || !divisorOK {
 		return false
 	}
-	representation := "representation=" + result + " left=" + left + " operator=" + operator + " overflow=" + overflow.String() + " result_representation=" + result + " right=" + right
-	if summary.result != cold.NumericRepresentationNumber {
+	representation := "representation=" + resultName + " left=" + leftName + " operator=" + operator + " overflow=" + overflow.String() + " result_representation=" + resultName + " right=" + rightName
+	if resultRepresentation != cold.NumericRepresentationNumber {
 		representation = "exact=true " + representation
 	}
-	if !appendNativeArithmeticRow(rows, seen, nativePublicationFamilyRepresentation, summary, representation) {
+	if !appendNativeArithmeticRow(rows, seen, nativePublicationFamilyRepresentation, summary, mount, artifact, span, body, point, representation) {
 		return false
 	}
-	operatorValue := "class=number dispatch=primitive left=" + left + " operator=" + operator + " overflow=" + overflow.String() + " result=" + result + " right=" + right
+	operatorValue := "class=number dispatch=primitive left=" + leftName + " operator=" + operator + " overflow=" + overflow.String() + " result=" + resultName + " right=" + rightName
 	if divisor != "" {
 		operatorValue += " divisor=" + divisor
 	}
-	if !appendNativeArithmeticRow(rows, seen, nativePublicationFamilyScalarOperator, summary, operatorValue) {
+	if !appendNativeArithmeticRow(rows, seen, nativePublicationFamilyScalarOperator, summary, mount, artifact, span, body, point, operatorValue) {
 		return false
 	}
-	if summary.op == flowkind.BinaryDiv {
-		return appendNativeArithmeticRow(rows, seen, nativePublicationFamilyDivisorProperty, summary, "divisor=not_applicable operator=div")
+	if op == flowkind.BinaryDiv {
+		return appendNativeArithmeticRow(rows, seen, nativePublicationFamilyDivisorProperty, summary, mount, artifact, span, body, point, "divisor=not_applicable operator=div")
 	}
 	if divisor != "" {
-		return appendNativeArithmeticRow(rows, seen, nativePublicationFamilyDivisorProperty, summary, "divisor="+divisor+" operator="+operator)
+		return appendNativeArithmeticRow(rows, seen, nativePublicationFamilyDivisorProperty, summary, mount, artifact, span, body, point, "divisor="+divisor+" operator="+operator)
 	}
 	return true
 }
 
-func appendNativeArithmeticRow(rows *[]nativePublicationRow, seen map[identity.ContentID]struct{}, family nativePublicationFamily, summary compiledNativeArithmeticSummary, value string) bool {
+func appendNativeArithmeticRow(
+	rows *[]nativePublicationRow,
+	seen map[identity.ContentID]struct{},
+	family nativePublicationFamily,
+	summary cold.ArithmeticSummary,
+	mount, artifact, span, body, point identity.ContentID,
+	value string,
+) bool {
 	semantic, semanticOK := family.semanticID()
-	if !summary.valid() || !semanticOK || value == "" {
+	if !validNativeArithmeticSummary(summary, mount, artifact, body, point, span) || !semanticOK || value == "" {
 		return false
 	}
+	proof, occurrence := summary.ID(), summary.OccurrenceID()
 	row := nativePublicationRow{
 		semantic: semantic,
 		lane:     NativePublicationLaneValues, kind: NativePublicationKindValue, family: family, trust: NativePublicationTrustProven,
-		key: family.String() + "/" + summary.proof.String() + "/" + summary.point.String(), module: summary.mount.String(),
-		term: summary.proof.String(), subject: summary.span.String(), occurrence: summary.occurrence.String(), value: value, valueOK: true,
-		provenance:   NativePublicationProvenance{mount: summary.mount, artifact: summary.artifact, local: summary.occurrence, body: summary.body, point: summary.point, span: summary.span},
+		key: family.String() + "/" + proof.String() + "/" + point.String(), module: mount.String(),
+		term: proof.String(), subject: span.String(), occurrence: occurrence.String(), value: value, valueOK: true,
+		provenance:   NativePublicationProvenance{mount: mount, artifact: artifact, local: occurrence, body: body, point: point, span: span},
 		provenanceOK: true, validityOK: true,
 	}
 	id, idOK := nativePublicationRowID(row)
@@ -168,27 +183,36 @@ func appendNativeArithmeticRow(rows *[]nativePublicationRow, seen map[identity.C
 	return true
 }
 
-func appendNativeUnaryRows(rows *[]nativePublicationRow, seen map[identity.ContentID]struct{}, summary compiledNativeUnarySummary) bool {
-	operand, operandOK := nativeNumericRepresentation(summary.operand)
-	result, resultOK := nativeNumericRepresentation(summary.result)
-	overflow, overflowOK := valuedomain.UnaryNumericOverflow(summary.op, summary.operand)
-	if !summary.valid() || !operandOK || !resultOK || !overflowOK {
+func appendNativeUnaryRows(
+	rows *[]nativePublicationRow,
+	seen map[identity.ContentID]struct{},
+	summary cold.UnarySummary,
+	mount, artifact, body identity.ContentID,
+) bool {
+	operandRepresentation, resultRepresentation, representationsOK := summary.Representations()
+	op := flowkind.UnaryOp(summary.Operator())
+	operand, operandOK := nativeNumericRepresentation(operandRepresentation)
+	result, resultOK := nativeNumericRepresentation(resultRepresentation)
+	overflow, overflowOK := valuedomain.UnaryNumericOverflow(op, operandRepresentation)
+	point, span := summary.OutputPointID(), summary.OccurrenceID()
+	if !validNativeUnarySummary(summary, mount, artifact, body) || !representationsOK || !operandOK || !resultOK || !overflowOK {
 		return false
 	}
 	value := "operator=unm overflow=" + overflow.String() + " representation=" + result + " result_representation=" + result + " operand_representation=" + operand
-	if summary.result != cold.NumericRepresentationNumber {
+	if resultRepresentation != cold.NumericRepresentationNumber {
 		value = "exact=true " + value
 	}
 	semantic, semanticOK := nativePublicationFamilyRepresentation.semanticID()
 	if !semanticOK {
 		return false
 	}
+	proof, occurrence := summary.ID(), summary.OccurrenceID()
 	row := nativePublicationRow{
 		semantic: semantic,
 		lane:     NativePublicationLaneValues, kind: NativePublicationKindValue, family: nativePublicationFamilyRepresentation, trust: NativePublicationTrustProven,
-		key: nativePublicationFamilyRepresentation.String() + "/" + summary.proof.String() + "/" + summary.point.String(), module: summary.mount.String(),
-		term: summary.proof.String(), subject: summary.span.String(), occurrence: summary.occurrence.String(), value: value, valueOK: true,
-		provenance:   NativePublicationProvenance{mount: summary.mount, artifact: summary.artifact, local: summary.occurrence, body: summary.body, point: summary.point, span: summary.span},
+		key: nativePublicationFamilyRepresentation.String() + "/" + proof.String() + "/" + point.String(), module: mount.String(),
+		term: proof.String(), subject: span.String(), occurrence: occurrence.String(), value: value, valueOK: true,
+		provenance:   NativePublicationProvenance{mount: mount, artifact: artifact, local: occurrence, body: body, point: point, span: span},
 		provenanceOK: true, validityOK: true,
 	}
 	id, idOK := nativePublicationRowID(row)
@@ -205,6 +229,27 @@ func appendNativeUnaryRows(rows *[]nativePublicationRow, seen map[identity.Conte
 	seen[id] = struct{}{}
 	*rows = append(*rows, row)
 	return true
+}
+
+func validNativeArithmeticSummary(summary cold.ArithmeticSummary, mount, artifact, body, point, span identity.ContentID) bool {
+	if !summary.Available() || !mount.Available() || !artifact.Available() || !body.Available() || !point.Available() || !span.Available() {
+		return false
+	}
+	op := flowkind.BinaryOp(summary.Operator())
+	left, right, result, representationsOK := summary.Representations()
+	divisor := summary.DivisorProperty()
+	return summary.ID() != summary.OccurrenceID() && summary.BodyPathID() == body &&
+		flowkind.IsBinaryArithmetic(op) && representationsOK && left.Valid() && right.Valid() && result.Valid() && divisor.Valid() &&
+		(divisor == cold.ArithmeticDivisorNone || op == flowkind.BinaryIDiv)
+}
+
+func validNativeUnarySummary(summary cold.UnarySummary, mount, artifact, body identity.ContentID) bool {
+	if !summary.Available() || !mount.Available() || !artifact.Available() || !body.Available() {
+		return false
+	}
+	operand, result, representationsOK := summary.Representations()
+	return summary.ID() != summary.OccurrenceID() && summary.BodyPathID() == body && summary.OutputPointID().Available() &&
+		flowkind.UnaryOp(summary.Operator()) == flowkind.UnaryNeg && representationsOK && operand.Valid() && result.Valid() && operand == result
 }
 
 // nativeNumericRepresentation is this publication's single spelling of the
@@ -275,28 +320,45 @@ func nativePublicationBodyAt(geometry Geometry, point Point) (identity.ContentID
 	return body, body.Available()
 }
 
-func appendNativeStaticScalarRows(rows *[]nativePublicationRow, seen map[identity.ContentID]struct{}, source compiledNativeScalarSource) bool {
-	representation, rendered, ok := renderNativeScalarSummary(source)
+func appendNativeStaticScalarRows(
+	rows *[]nativePublicationRow,
+	seen map[identity.ContentID]struct{},
+	summary cold.ExactScalarSummary,
+	mount, artifact, body, point identity.ContentID,
+) bool {
+	literal, ok := nativeSummaryLiteral(summary, mount, artifact, body, point)
 	if !ok {
 		return false
 	}
-	if !appendNativeStaticScalarRow(rows, seen, nativePublicationFamilyConstantValue, source, "representation="+representation+" value="+rendered) {
+	representation, rendered, ok := renderNativeLiteral(literal)
+	if !ok {
 		return false
 	}
-	return appendNativeStaticScalarRow(rows, seen, nativePublicationFamilyRepresentation, source, "exact=true representation="+representation)
+	if !appendNativeStaticScalarRow(rows, seen, nativePublicationFamilyConstantValue, summary, mount, artifact, body, point, "representation="+representation+" value="+rendered) {
+		return false
+	}
+	return appendNativeStaticScalarRow(rows, seen, nativePublicationFamilyRepresentation, summary, mount, artifact, body, point, "exact=true representation="+representation)
 }
 
-func appendNativeStaticScalarRow(rows *[]nativePublicationRow, seen map[identity.ContentID]struct{}, family nativePublicationFamily, source compiledNativeScalarSource, value string) bool {
+func appendNativeStaticScalarRow(
+	rows *[]nativePublicationRow,
+	seen map[identity.ContentID]struct{},
+	family nativePublicationFamily,
+	summary cold.ExactScalarSummary,
+	mount, artifact, body, point identity.ContentID,
+	value string,
+) bool {
 	semantic, semanticOK := family.semanticID()
-	if !source.valid() || !semanticOK || value == "" {
+	if _, ok := nativeSummaryLiteral(summary, mount, artifact, body, point); !ok || !semanticOK || value == "" {
 		return false
 	}
+	proof, occurrence, span := summary.ID(), summary.OccurrenceID(), summary.SubjectID()
 	row := nativePublicationRow{
 		semantic: semantic,
 		lane:     NativePublicationLaneValues, kind: NativePublicationKindValue, family: family, trust: NativePublicationTrustProven,
-		key: family.String() + "/" + source.proof.String() + "/" + source.point.String(), module: source.mount.String(),
-		term: source.proof.String(), subject: source.span.String(), occurrence: source.occurrence.String(), value: value, valueOK: true,
-		provenance:   NativePublicationProvenance{mount: source.mount, artifact: source.artifact, local: source.occurrence, body: source.body, point: source.point, span: source.span},
+		key: family.String() + "/" + proof.String() + "/" + point.String(), module: mount.String(),
+		term: proof.String(), subject: span.String(), occurrence: occurrence.String(), value: value, valueOK: true,
+		provenance:   NativePublicationProvenance{mount: mount, artifact: artifact, local: occurrence, body: body, point: point, span: span},
 		provenanceOK: true, validityOK: true,
 	}
 	id, idOK := nativePublicationRowID(row)
@@ -313,6 +375,18 @@ func appendNativeStaticScalarRow(rows *[]nativePublicationRow, seen map[identity
 	seen[id] = struct{}{}
 	*rows = append(*rows, row)
 	return true
+}
+
+func nativeSummaryLiteral(summary cold.ExactScalarSummary, mount, artifact, body, point identity.ContentID) (keyspace.LiteralValue, bool) {
+	if !summary.Available() || !mount.Available() || !artifact.Available() || !body.Available() || !point.Available() ||
+		summary.ID() == summary.OccurrenceID() || summary.BodyPathID() != body {
+		return keyspace.LiteralValue{}, false
+	}
+	coldLiteral, literalOK := summary.Literal()
+	if !literalOK || (coldLiteral.Kind != uint8(keyspace.LiteralInteger) && coldLiteral.Kind != uint8(keyspace.LiteralFloat)) {
+		return keyspace.LiteralValue{}, false
+	}
+	return keyspace.LiteralValue{Kind: keyspace.LiteralKind(coldLiteral.Kind), Integer: coldLiteral.Integer, FloatBits: coldLiteral.FloatBits}, true
 }
 
 func validNativeValueSummary(observation valuedomain.ValueSummaryObservation, width int) bool {
@@ -454,17 +528,4 @@ func renderNativeExactScalar(scalar valuedomain.ExactScalar) (representation, va
 	default:
 		return "", "", false
 	}
-}
-
-// renderNativeScalarSummary reads the summary's literal rather than its Term
-// family: a valid source already holds the two in agreement, so the family
-// needs no second rendering of its own.
-func renderNativeScalarSummary(source compiledNativeScalarSource) (representation, value string, ok bool) {
-	if !source.valid() {
-		return "", "", false
-	}
-	if source.family == keyspace.FamilyNil {
-		return renderNativeNil()
-	}
-	return renderNativeLiteral(source.literal)
 }

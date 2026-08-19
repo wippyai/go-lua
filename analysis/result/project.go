@@ -425,11 +425,11 @@ func Project(
 		}
 		switch observation.Kind {
 		case structure.DiagnosticObservationTypeReferenceUnresolved:
-			if !observation.Reference.Available() || len(observation.Path) == 0 {
+			if !observation.Reference.Available() || len(observation.Path) == 0 || observation.UnresolvedType.Name == "" {
 				return Geometry{}, false
 			}
 		case structure.DiagnosticObservationValueReferenceUnresolved:
-			if !observation.Read.Available() || !observation.Cell.Available() || observation.Name == "" {
+			if !observation.Read.Available() || !observation.Cell.Available() || observation.UnresolvedValue.Name == "" {
 				return Geometry{}, false
 			}
 		case structure.DiagnosticObservationTypeConformance:
