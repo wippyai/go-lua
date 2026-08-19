@@ -64,16 +64,17 @@ const (
 	MountModule
 )
 
-// Library is one immutable catalogue entry.
+// Library is one immutable catalogue entry. declaration is built exactly
+// once, at catalogue construction, and reused by every lookup.
 type Library struct {
 	id          ID
 	name        string
 	mount       Mount
-	declaration func() declaration
+	declaration declaration
 }
 
-func library(id ID, name string, mount Mount, declaration func() declaration) Library {
-	return Library{id: id, name: name, mount: mount, declaration: declaration}
+func library(id ID, name string, mount Mount, build func() declaration) Library {
+	return Library{id: id, name: name, mount: mount, declaration: build()}
 }
 
 // ID returns the stable provider identity.

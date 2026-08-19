@@ -69,7 +69,7 @@ func Providers() []declarations.Provider {
 	out := make([]declarations.Provider, 0, len(catalogue))
 	for _, library := range catalogue {
 		library := library
-		declared := library.declaration()
+		declared := library.declaration
 		mount := declarations.MountModule
 		if library.Mount() == MountGlobals {
 			mount = declarations.MountGlobals
@@ -172,7 +172,7 @@ func buildManifest(library Library, decl declaration) *moduleio.Manifest {
 // alias surface without authoring a second declaredFunction.
 func canonicalStdlibFunction(path string) (declaredFunction, bool) {
 	for _, library := range catalogue {
-		declaration := library.declaration()
+		declaration := library.declaration
 		for local, function := range declaration.signatures {
 			canonical := local
 			if library.Mount() == MountModule {

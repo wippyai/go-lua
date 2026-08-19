@@ -1,6 +1,7 @@
 package stdlib
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/wippyai/go-lua/domain/effect/control"
@@ -40,13 +41,37 @@ func TestProvidersHaveExactCatalogueCoverageAndFreshResults(t *testing.T) {
 	}
 }
 
+// TestLibraryDeclarationBuiltOnce asserts each library's declaration is
+// built exactly once and reused, not rebuilt per lookup. The signatures map
+// pointer is the honest witness: a rebuild allocates a fresh map.
+func TestLibraryDeclarationBuiltOnce(t *testing.T) {
+	for _, entry := range catalogue {
+		first, ok := Lookup(entry.id)
+		if !ok {
+			t.Fatalf("missing library %q", entry.id)
+		}
+		second, ok := Lookup(entry.id)
+		if !ok {
+			t.Fatalf("missing library %q", entry.id)
+		}
+		firstSignatures := reflect.ValueOf(first.declaration.signatures)
+		secondSignatures := reflect.ValueOf(second.declaration.signatures)
+		if firstSignatures.IsNil() || secondSignatures.IsNil() {
+			t.Fatalf("%q declaration has no signatures to witness identity", entry.id)
+		}
+		if firstSignatures.Pointer() != secondSignatures.Pointer() {
+			t.Fatalf("%q declaration rebuilt across lookups: signatures map identity changed", entry.id)
+		}
+	}
+}
+
 func manifestForTest(t *testing.T, id ID) *modulemanifest.Manifest {
 	t.Helper()
 	library, ok := Lookup(id)
 	if !ok {
 		t.Fatalf("missing library %q", id)
 	}
-	return buildManifest(library, library.declaration())
+	return buildManifest(library, library.declaration)
 }
 
 func TestHighRiskSignaturesTrackNativeABIAndEffects(t *testing.T) {
@@ -223,7 +248,7 @@ func TestEveryDirectCallableIsExportedWithAnAuditedEffectRow(t *testing.T) {
 		if !ok {
 			t.Fatalf("%q export is %T, want record", library.ID(), m.Export)
 		}
-		decl := library.declaration()
+		decl := library.declaration
 		for name, sig := range decl.signatures {
 			if sig.Type == nil {
 				t.Fatalf("%q.%s has nil function type", library.ID(), name)
@@ -267,7 +292,7 @@ func TestInitialGlobalsAreProjectedFromMountShape(t *testing.T) {
 	names := sealed.InitialGlobals()
 	want := make(map[string]bool)
 	for _, library := range catalogue {
-		decl := library.declaration()
+		decl := library.declaration
 		if library.Mount() == MountGlobals {
 			for name := range decl.signatures {
 				want[name] = true
