@@ -25,8 +25,8 @@ return loop(2)
 		t.Fatalf("lower equivalent Programs: %v / %v", leftErr, rightErr)
 	}
 	transaction := compiler{input: left, points: make(map[identity.ContentID]struct{})}
-	if !transaction.copyLocalWTO() {
-		t.Fatal("left LocalWTO schedule unavailable")
+	if failure := transaction.copyLocalWTOFailure(); failure.Available() {
+		t.Fatalf("left LocalWTO schedule unavailable: %v", failure)
 	}
 	foreignRoutes := right.Flow().Causal().Successors()
 	var foreign flow.FinalRoute
@@ -42,7 +42,7 @@ return loop(2)
 	if !foreign.Available() || left.Flow().Causal().OwnsFinalRoute(foreign) {
 		t.Fatal("foreign final route owner fence unavailable")
 	}
-	if transaction.admitEnvironment(foreign) {
+	if failure := transaction.admitEnvironmentFailure(foreign, -1); !failure.Available() {
 		t.Fatal("foreign/spliced endpoint or recurrence proof was admitted")
 	}
 }

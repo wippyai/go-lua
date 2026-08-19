@@ -5,10 +5,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow"
 )
 
-func (compiler *compiler) copyLocalWTO() bool {
-	return !compiler.copyLocalWTOFailure().Available()
-}
-
 func (compiler *compiler) copyLocalWTOFailure() CompileFailure {
 	wto := compiler.input.Flow().Local().WTO()
 	regions := make(map[identity.ContentID]int, wto.Count())

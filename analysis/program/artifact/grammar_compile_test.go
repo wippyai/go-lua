@@ -11,7 +11,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	programstatic "github.com/wippyai/go-lua/analysis/program/static"
-	"github.com/wippyai/go-lua/analysis/schema/denominator"
 )
 
 func compileKeyProgram(t *testing.T, name string) *program.Program {
@@ -111,28 +110,6 @@ func TestCompileKeyIsProgramAndGrammarOnly(t *testing.T) {
 		default:
 			t.Fatalf("compile key carries non-program identity field %s", name)
 		}
-	}
-}
-
-func TestCompileSizeHintIsTheAdmittedRowTotality(t *testing.T) {
-	published := compileKeyProgram(t, "compile-size-hint.lua")
-	counts := published.CountRows()
-	if !counts.Available() || counts.Count() == 0 {
-		t.Fatal("program counts unavailable")
-	}
-	var total uint64
-	for index := 0; index < counts.Count(); index++ {
-		row, ok := counts.At(index)
-		if !ok {
-			t.Fatal("count row unavailable")
-		}
-		total += row.Count()
-	}
-	if hint := compileSizeHint(counts); hint == 0 || uint64(hint) != total {
-		t.Fatalf("compile size hint = %d, admitted totality = %d", compileSizeHint(counts), total)
-	}
-	if compileSizeHint(denominator.CountRows{}) != 0 {
-		t.Fatal("unavailable counts produced a size hint")
 	}
 }
 

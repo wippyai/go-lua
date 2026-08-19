@@ -76,10 +76,6 @@ func (compiler *compiler) emitRoutesFailure() CompileFailure {
 	return CompileFailure{}
 }
 
-func (compiler *compiler) admitEnvironment(route flow.FinalRoute) bool {
-	return !compiler.admitEnvironmentFailure(route, -1).Available()
-}
-
 func (compiler *compiler) admitEnvironmentFailure(route flow.FinalRoute, rowIndex int) CompileFailure {
 	if compiler == nil || !compiler.input.Available() || !route.Available() || !compiler.input.Flow().Causal().OwnsFinalRoute(route) {
 		return compileFailure(CompileStageRoutes, CompileRowRoute, rowIndex, -1, CompileReasonRouteForeign)

@@ -6,7 +6,6 @@ package artifact
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program"
-	"github.com/wippyai/go-lua/analysis/schema/denominator"
 )
 
 const (
@@ -268,29 +267,6 @@ func CompileDetailed(input *program.Program, grammar GrammarIdentity, issuance I
 
 // Compile compiles one sealed Program under the supplied cold grammar and
 // reports whether the immutable artifact was published.
-const compileSizeHintCap = 1 << 20
-
-func compileSizeHint(counts denominator.CountRows) int {
-	if !counts.Available() {
-		return 0
-	}
-	var total uint64
-	for index := 0; index < counts.Count(); index++ {
-		row, ok := counts.At(index)
-		if !ok {
-			return 0
-		}
-		if row.Count() > uint64(^uint(0))-total {
-			return compileSizeHintCap
-		}
-		total += row.Count()
-	}
-	if total > compileSizeHintCap {
-		return compileSizeHintCap
-	}
-	return int(total)
-}
-
 func Compile(input *program.Program, grammar GrammarIdentity, issuance IssuanceDirectory) (*Artifact, bool) {
 	artifact, failure := CompileDetailed(input, grammar, issuance)
 	return artifact, artifact != nil && !failure.Available()
