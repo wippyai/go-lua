@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/target/exactkey"
+	"github.com/wippyai/go-lua/analysis/program/target/operation"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/internal/framing"
 )
@@ -41,12 +42,12 @@ func (t *Table) semanticID(kind uint64, encode func(*framing.Writer) error) (ide
 	return id, nil
 }
 
-func (t *Table) sealValueIdentities(keys exactkey.Table) ([]identity.ContentID, error) {
+func (t *Table) sealValueIdentities(keys exactkey.Table, operations operation.Core) ([]identity.ContentID, error) {
 	ids := make([]identity.ContentID, t.values.Count())
 	for index := 0; index < t.values.Count(); index++ {
 		value := vocabulary.InitialValue(index + 1)
 		id, err := t.semanticID(semanticInitialValue, func(writer *framing.Writer) error {
-			return t.encodeInitialValueContent(writer, value, keys)
+			return t.encodeInitialValueContent(writer, value, keys, operations)
 		})
 		if err != nil {
 			return nil, err
@@ -56,7 +57,7 @@ func (t *Table) sealValueIdentities(keys exactkey.Table) ([]identity.ContentID, 
 	return ids, nil
 }
 
-func (t *Table) encodeInitialValueContent(writer *framing.Writer, value vocabulary.InitialValue, keys exactkey.Table) error {
+func (t *Table) encodeInitialValueContent(writer *framing.Writer, value vocabulary.InitialValue, keys exactkey.Table, operations operation.Core) error {
 	row, ok := t.initialValue(value)
 	if !ok {
 		return errors.New("target/boot: malformed initial value")
@@ -82,10 +83,14 @@ func (t *Table) encodeInitialValueContent(writer *framing.Writer, value vocabula
 		}
 		return writer.String(identity)
 	case vocabulary.InitialValueOperation:
-		if row.operation == 0 || !row.anchor.Available() {
+		if row.operation == 0 {
 			return errors.New("target/boot: missing initial operation anchor")
 		}
-		return writer.Bytes(row.anchor[:])
+		anchor, ok := operations.Anchor(row.operation)
+		if !ok || !anchor.Available() {
+			return errors.New("target/boot: missing initial operation anchor")
+		}
+		return writer.Bytes(anchor[:])
 	case vocabulary.InitialValueDeniedOperation:
 		binding, ok := t.initialValueBinding(value)
 		if !ok {

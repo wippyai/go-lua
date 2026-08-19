@@ -20,7 +20,7 @@ func Compile(input Input) (Table, error) {
 		globalRoot: ledger.globalRoot,
 		absent:     ledger.absent,
 	}
-	table.valueIDs, err = table.sealValueIdentities(cloned.Keys)
+	table.valueIDs, err = table.sealValueIdentities(cloned.Keys, cloned.Operations)
 	if err != nil {
 		return Table{}, err
 	}

@@ -230,11 +230,9 @@ func freezeLedger(input Input, keys exactkey.Table, operations operation.Core) (
 			if value.operation == 0 {
 				return frozenLedger{}, errors.New("target/boot: unresolved initial operation anchor")
 			}
-			anchor, ok := operations.Anchor(value.operation)
-			if !ok {
+			if _, ok := operations.Anchor(value.operation); !ok {
 				return frozenLedger{}, errors.New("target/boot: unresolved initial operation anchor")
 			}
-			row.anchor = anchor
 		}
 		if value.kind == vocabulary.InitialValueDeniedOperation {
 			_, err := appendBindingRange(&bindRanges, &bindingKeyBuilder, value.binding, keys)

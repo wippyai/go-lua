@@ -46,7 +46,6 @@ type valueRow struct {
 	string    string
 	root      vocabulary.InitialRoot
 	operation vocabulary.Operation
-	anchor    identity.ContentID
 	binding   uint32
 }
 
