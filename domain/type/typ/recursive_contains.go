@@ -1,8 +1,6 @@
 package typ
 
 type recursiveContainsMemo struct {
-	rev                  uint64
-	deps                 []recursiveHashDep
 	containsAny          bool
 	containsNever        bool
 	containsTypeParam    bool
@@ -11,41 +9,38 @@ type recursiveContainsMemo struct {
 }
 
 type recursiveClosedMemo struct {
-	rev    uint64
 	closed bool
-	deps   []recursiveHashDep
 }
 
 func (r *Recursive) containsFlags() recursiveContainsMemo {
 	if r == nil {
 		return recursiveContainsMemo{}
 	}
-	rev := r.rev
-	if cached := r.containsMemo.Load(); cached != nil && cached.rev == rev && recursiveHashDepsValid(cached.deps) {
+	if cached := r.containsMemo.Load(); cached != nil {
 		return *cached
 	}
-	memo, complete := recursiveContainsScan(r, rev)
-	// SetBody is a construction operation and must not race with queries. The
-	// revision check still prevents a sequential rewrite from publishing an
-	// obsolete computation.
-	if complete && r.rev == rev {
+	memo, complete := recursiveContainsScan(r)
+	// A scan over an incomplete graph (an unresolved nested placeholder) is
+	// never published: SetBody may still change the answer. Once every
+	// reachable placeholder has a body the fact is permanent, because Body is
+	// write-once.
+	if complete {
 		r.containsMemo.Store(&memo)
 	}
 	return memo
 }
 
-// recursiveContainsScan derives all recursive content flags and the revision
-// fence for one graph walk.
-func recursiveContainsScan(r *Recursive, rev uint64) (recursiveContainsMemo, bool) {
-	memo := recursiveContainsMemo{rev: rev}
+// recursiveContainsScan derives all recursive content flags for one graph
+// walk, and reports whether every reachable recursive placeholder already
+// has a body.
+func recursiveContainsScan(r *Recursive) (recursiveContainsMemo, bool) {
+	var memo recursiveContainsMemo
 	if r == nil || r.Body == nil {
 		return memo, false
 	}
 
 	seen := map[Type]bool{r: true}
 	seenTypeParam := map[Type]bool{r: true}
-	seenRecursive := map[*Recursive]bool{r: true}
-	deps := []recursiveHashDep{{rec: r, rev: r.rev}}
 	work := []recursiveContainsWork{{typ: r.Body, typeParam: true}}
 	complete := true
 	var flags [containmentGeneric]bool
@@ -68,10 +63,6 @@ func recursiveContainsScan(r *Recursive, rev uint64) (recursiveContainsMemo, boo
 		visited[current] = true
 
 		if recursive, ok := current.(*Recursive); ok {
-			if !seenRecursive[recursive] {
-				seenRecursive[recursive] = true
-				deps = append(deps, recursiveHashDep{rec: recursive, rev: recursive.rev})
-			}
 			if recursive.Body == nil {
 				complete = false
 				continue
@@ -110,9 +101,6 @@ func recursiveContainsScan(r *Recursive, rev uint64) (recursiveContainsMemo, boo
 	memo.containsTypeParam = flags[containmentTypeParam-1]
 	memo.containsInstantiated = flags[containmentInstantiated-1]
 	memo.containsGeneric = flags[containmentGeneric-1]
-	if complete {
-		memo.deps = deps
-	}
 	return memo, complete
 }
 
@@ -125,19 +113,18 @@ func (r *Recursive) containsClosedFlag() bool {
 	if r == nil {
 		return false
 	}
-	rev := r.rev
-	if cached := r.closedMemo.Load(); cached != nil && cached.rev == rev && recursiveHashDepsValid(cached.deps) {
+	if cached := r.closedMemo.Load(); cached != nil {
 		return cached.closed
 	}
 	if r.Body == nil {
-		memo := &recursiveClosedMemo{rev: rev}
-		r.closedMemo.Store(memo)
 		return false
 	}
-	closed, deps := recursiveGraphClosureForRecursive(r)
-	memo := &recursiveClosedMemo{rev: rev, closed: closed, deps: deps}
-	if r.rev == rev {
-		r.closedMemo.Store(memo)
+	// An unclosed graph is not cached: a still-open nested placeholder can
+	// still receive a body. A closed graph is permanent under write-once and
+	// is cached unconditionally.
+	closed := recursiveGraphClosureForRecursive(r)
+	if closed {
+		r.closedMemo.Store(&recursiveClosedMemo{closed: true})
 	}
 	return closed
 }

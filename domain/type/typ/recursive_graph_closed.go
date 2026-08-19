@@ -8,38 +8,24 @@ import "github.com/wippyai/go-lua/domain/type/kind"
 // owner-side admission predicate for callers that must not retain an open
 // mutable graph as a closed value.
 func IsGraphClosed(t Type) bool {
-	closed, _ := recursiveGraphClosureForType(t)
-	return closed
+	return recursiveGraphClosureForType(t)
 }
 
 func recursiveContainsGraphClosed(t Type, seen map[*Recursive]bool) bool {
 	return recursiveGraphClosedWalk(t, seen, make(map[recursiveTraversalMemoKey]bool))
 }
 
-func recursiveGraphClosureForRecursive(r *Recursive) (bool, []recursiveHashDep) {
+func recursiveGraphClosureForRecursive(r *Recursive) bool {
 	if r == nil {
-		return true, nil
+		return true
 	}
-	seen := make(map[*Recursive]bool)
-	closed := recursiveGraphClosedWalk(r, seen, make(map[recursiveTraversalMemoKey]bool))
-	return closed, recursiveGraphClosureDeps(seen)
+	return recursiveGraphClosedWalk(r, make(map[*Recursive]bool), make(map[recursiveTraversalMemoKey]bool))
 }
 
-// recursiveGraphClosureForType proves closure for a composite node and records
-// every recursive node that proof depends on. Callers can reuse the proof until
-// one of those placeholders receives a new body.
-func recursiveGraphClosureForType(t Type) (bool, []recursiveHashDep) {
-	seen := make(map[*Recursive]bool)
-	closed := recursiveGraphClosedWalk(t, seen, make(map[recursiveTraversalMemoKey]bool))
-	return closed, recursiveGraphClosureDeps(seen)
-}
-
-func recursiveGraphClosureDeps(seen map[*Recursive]bool) []recursiveHashDep {
-	deps := make([]recursiveHashDep, 0, len(seen))
-	for rec := range seen {
-		deps = append(deps, recursiveHashDep{rec: rec, rev: rec.rev})
-	}
-	return deps
+// recursiveGraphClosureForType proves closure for a composite node: every
+// reachable Recursive placeholder already has a body.
+func recursiveGraphClosureForType(t Type) bool {
+	return recursiveGraphClosedWalk(t, make(map[*Recursive]bool), make(map[recursiveTraversalMemoKey]bool))
 }
 
 // recursiveGraphClosedWalk is an exact finite graph walk. A visited recursive
@@ -100,20 +86,6 @@ func recursiveGraphClosedWalk(root Type, seen map[*Recursive]bool, memo map[recu
 		memo[key] = true
 	}
 	return true
-}
-
-// These names keep the focused closure/dependency callers readable while all
-// graph descent remains owned by recursiveGraphClosedWalk.
-func collectRecursiveGraphClosureDeps(r *Recursive, seen map[*Recursive]bool, memo map[recursiveTraversalMemoKey]bool) bool {
-	return recursiveGraphClosedWalk(r, seen, memo)
-}
-
-func collectRecursiveGraphClosureDepsInType(t Type, seen map[*Recursive]bool, memo map[recursiveTraversalMemoKey]bool) bool {
-	return recursiveGraphClosedWalk(t, seen, memo)
-}
-
-func recursiveContainsGraphClosedMemo(t Type, seen map[*Recursive]bool, memo map[recursiveTraversalMemoKey]bool) bool {
-	return recursiveGraphClosedWalk(t, seen, memo)
 }
 
 type recursiveTraversalMemoKey struct {

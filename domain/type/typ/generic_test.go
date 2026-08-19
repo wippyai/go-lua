@@ -191,6 +191,29 @@ func TestGeneric(t *testing.T) {
 	}
 }
 
+func TestGenericSetBodyPanicsOnSecondCall(t *testing.T) {
+	tp := NewTypeParam("T", nil)
+	g := NewGeneric("Box", []*TypeParam{tp}, nil)
+	g.SetBody(NewArray(tp))
+	firstHash := g.Hash()
+
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("second SetBody on a sealed generic did not panic")
+			}
+		}()
+		g.SetBody(NewMap(tp, tp))
+	}()
+
+	if got := g.Hash(); got != firstHash {
+		t.Fatalf("rejected SetBody mutated the sealed hash: got %d, want %d", got, firstHash)
+	}
+	if got, want := g.Body, Type(NewArray(tp)); !typeEquals(got, want) {
+		t.Fatalf("rejected SetBody mutated the sealed body: got %v, want %v", got, want)
+	}
+}
+
 func TestGenericMultipleParams(t *testing.T) {
 	k := NewTypeParam("K", nil)
 	v := NewTypeParam("V", nil)

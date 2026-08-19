@@ -24,7 +24,6 @@ type Generic struct {
 	TypeParams []*TypeParam // Type parameters to be substituted
 	Body       Type         // Template type with TypeParam references
 	hash       uint64
-	rev        uint64
 	typeProperties
 	strCache stringCache
 }
@@ -67,13 +66,16 @@ func NewGeneric(name string, params []*TypeParam, body Type) *Generic {
 // node carries the declaration identity throughout body resolution, so a
 // self-referential body and the top-level generic are the same node and the
 // hash is finalized against the completed body. Intended for construction
-// before the generic escapes into any interner; a no-op once a body is set.
+// before the generic escapes into any interner. The body is a sealed fact and
+// is written once; a second call with a non-nil body panics.
 func (g *Generic) SetBody(body Type) {
-	if g == nil || g.Body != nil || body == nil {
+	if g == nil || body == nil {
 		return
 	}
+	if g.Body != nil {
+		panic("typ: Generic.SetBody: body already sealed")
+	}
 	g.Body = body
-	g.rev++
 
 	h := hash.MixHash(uint64(kind.Generic), hash.FnvString(g.Name))
 	for _, p := range g.TypeParams {
@@ -84,7 +86,6 @@ func (g *Generic) SetBody(body Type) {
 
 	g.typeProperties.invalidateOpenRecursiveCache()
 	g.typeProperties.include(body)
-	g.strCache = stringCache{}
 }
 
 func (g *Generic) Kind() kind.Kind { return kind.Generic }

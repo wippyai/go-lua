@@ -15,13 +15,17 @@ func knownContainsOpenRecursive(t Type) bool {
 	if p == nil {
 		return false
 	}
-	if memo := p.loadOpenRecursiveMemo(); memo != nil && recursiveHashDepsValid(memo.deps) {
+	if memo := p.loadOpenRecursiveMemo(); memo != nil {
 		return memo.contains
 	}
-	closed, deps := recursiveGraphClosureForType(t)
-	contains := !closed
-	p.storeOpenRecursiveMemo(&openRecursiveMemo{contains: contains, deps: deps})
-	return contains
+	// A closed graph is permanent under write-once and is cached
+	// unconditionally. An open graph is not cached: the reachable placeholder
+	// still lacks a body and SetBody may yet close the graph.
+	closed := recursiveGraphClosureForType(t)
+	if closed {
+		p.storeOpenRecursiveMemo(&openRecursiveMemo{contains: false})
+	}
+	return !closed
 }
 
 // openRecursiveProperties returns the atomic immutable-memo slot stored by

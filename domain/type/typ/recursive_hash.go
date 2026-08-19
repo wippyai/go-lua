@@ -68,27 +68,23 @@ func (r *Recursive) Hash() uint64 {
 	if r == nil {
 		return 0
 	}
-	rev := r.rev
-	if memo := r.hashMemo.Load(); memo != nil && memo.rev == rev && recursiveHashDepsValid(memo.deps) {
+	if memo := r.hashMemo.Load(); memo != nil {
 		return memo.hash
 	}
 	// Compute hash on demand with cycle detection. Recursive types are mutable
 	// only until SetBody completes, then share the same cached-hash contract as
-	// other type nodes.
+	// other type nodes. Only a hash computed over a fully closed graph is
+	// cached: Body is write-once, so once every reachable placeholder has a
+	// body the hash is permanent.
 	scratch := getRecursiveHashScratch()
 	h := hashWithVisitedMemo(r, scratch)
 	putRecursiveHashScratch(scratch)
-	if deps, ok := recursiveHashDeps(r); ok {
-		memo := &recursiveHashMemo{rev: rev, hash: h, deps: deps}
-		if r.rev == rev {
-			r.hashMemo.Store(memo)
-		}
+	if recursiveGraphClosureForRecursive(r) {
+		r.hashMemo.Store(&recursiveHashMemo{hash: h})
 	}
 	return h
 }
 
 type recursiveHashMemo struct {
-	rev  uint64
 	hash uint64
-	deps []recursiveHashDep
 }

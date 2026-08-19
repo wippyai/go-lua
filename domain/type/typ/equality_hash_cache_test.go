@@ -2,32 +2,29 @@ package typ
 
 import "testing"
 
-func TestEqualityHashCachesFunctionTraversalUntilRecursiveSetBody(t *testing.T) {
+func TestEqualityHashCachesFunctionTraversalOnceRecursiveBodyIsSealed(t *testing.T) {
 	calls := 0
-	first := &countingHashType{name: "first", hash: 11, calls: &calls}
+	body := &countingHashType{name: "body", hash: 11, calls: &calls}
 	rec := NewRecursivePlaceholder("Node")
-	rec.SetBody(first)
 	fn := Func().Param("node", rec).Returns(rec).Build()
-	calls = 0 // Function construction initializes its ordinary Hash() separately.
+
+	_ = EqualityHash(fn)
+	if fn.equalityHashCache.valid {
+		t.Fatal("function containing an unresolved recursive placeholder must not cache EqualityHash")
+	}
+
+	rec.SetBody(body)
+	calls = 0
 
 	firstHash := EqualityHash(fn)
 	if calls != 1 {
-		t.Fatalf("first EqualityHash() called recursive body Hash() %d times, want 1", calls)
+		t.Fatalf("first sealed EqualityHash() called recursive body Hash() %d times, want 1", calls)
 	}
 	if got := EqualityHash(fn); got != firstHash {
 		t.Fatalf("cached EqualityHash() = %d, want %d", got, firstHash)
 	}
 	if calls != 1 {
 		t.Fatalf("second EqualityHash() called recursive body Hash() %d times, want cache hit", calls)
-	}
-
-	second := &countingHashType{name: "second", hash: 13, calls: &calls}
-	rec.SetBody(second)
-	if got := EqualityHash(fn); got == firstHash {
-		t.Fatalf("EqualityHash() after Recursive.SetBody() = %d, want refreshed value", got)
-	}
-	if calls != 2 {
-		t.Fatalf("EqualityHash() after Recursive.SetBody() called body Hash() %d times, want 2", calls)
 	}
 }
 

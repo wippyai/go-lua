@@ -23,13 +23,13 @@ type Recursive struct {
 	ID   uint64
 	Name string
 	Body Type
-	rev  uint64
 
 	// Recursive nodes are shared across concurrent solves after construction.
 	// Derived values are therefore published as immutable memo records rather
 	// than by mutating individual flag/hash fields. Duplicate first-use
 	// computation is harmless; readers always observe either no memo or one
-	// complete memo.
+	// complete memo. Body is write-once, so a published memo is valid for the
+	// lifetime of the node and never needs invalidation.
 	containsMemo atomic.Pointer[recursiveContainsMemo]
 	closedMemo   atomic.Pointer[recursiveClosedMemo]
 	hashMemo     atomic.Pointer[recursiveHashMemo]
@@ -72,13 +72,13 @@ func NewRecursivePlaceholder(name string) *Recursive {
 	return rec
 }
 
-// SetBody assigns the body to a placeholder recursive type.
+// SetBody assigns the body to a placeholder recursive type. The body is a
+// sealed fact and is written once; a second call panics.
 func (r *Recursive) SetBody(body Type) {
+	if r.Body != nil {
+		panic("typ: Recursive.SetBody: body already sealed")
+	}
 	r.Body = body
-	r.rev++
-	r.containsMemo.Store(nil)
-	r.closedMemo.Store(nil)
-	r.hashMemo.Store(nil)
 }
 
 func (r *Recursive) Kind() kind.Kind { return kind.Recursive }

@@ -26,7 +26,6 @@ type typeProperties struct {
 
 type openRecursiveMemo struct {
 	contains bool
-	deps     []recursiveHashDep
 }
 
 func (p *typeProperties) loadOpenRecursiveMemo() *openRecursiveMemo {

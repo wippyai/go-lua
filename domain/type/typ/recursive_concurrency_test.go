@@ -39,7 +39,7 @@ func TestRecursiveDerivedMemosAreConcurrentReadSafe(t *testing.T) {
 	wg.Wait()
 }
 
-func TestRecursiveDerivedMemosInvalidateAfterSequentialRewrite(t *testing.T) {
+func TestRecursiveSetBodyPanicsOnSecondCallAfterMemosPublish(t *testing.T) {
 	node := NewRecursivePlaceholder("Node")
 	node.SetBody(newRecord().Field("value", Any).OptField("next", node).Build())
 	firstHash := node.Hash()
@@ -50,18 +50,17 @@ func TestRecursiveDerivedMemosInvalidateAfterSequentialRewrite(t *testing.T) {
 		t.Fatal("initial queries did not publish all derived memos")
 	}
 
-	node.SetBody(newRecord().Field("value", String).Build())
-	if node.containsMemo.Load() != nil || node.closedMemo.Load() != nil || node.hashMemo.Load() != nil {
-		t.Fatal("SetBody retained a memo derived from the previous revision")
-	}
-	if ContainsAny(node) {
-		t.Fatal("rewritten recursive body retained stale contains-any result")
-	}
-	if knownContainsOpenRecursive(node) {
-		t.Fatal("rewritten closed recursive body reported open")
-	}
-	if got := node.Hash(); got == 0 || got == firstHash {
-		t.Fatalf("rewritten recursive hash = %d, initial = %d", got, firstHash)
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("second SetBody on a sealed recursive node did not panic")
+			}
+		}()
+		node.SetBody(newRecord().Field("value", String).Build())
+	}()
+
+	if got := node.Hash(); got != firstHash {
+		t.Fatalf("rejected SetBody mutated the sealed hash: got %d, want %d", got, firstHash)
 	}
 }
 

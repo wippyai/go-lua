@@ -161,16 +161,49 @@ func TestRecursiveHashNoPanic(t *testing.T) {
 	}
 }
 
-func TestRecursiveSetBodyInvalidatesCachedHash(t *testing.T) {
+func TestRecursiveSetBodyPanicsOnSecondCall(t *testing.T) {
 	rec := NewRecursivePlaceholder("Node")
 	rec.SetBody(newRecord().Field("value", String).Build())
 	first := rec.Hash()
 
-	rec.SetBody(newRecord().Field("value", Number).Build())
-	second := rec.Hash()
-	assertRecursiveRecord(t, rec, "Node", []Field{{Name: "value", Type: Number}})
-	if first == second {
-		t.Fatalf("SetBody should invalidate cached recursive hash")
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("second SetBody on a sealed recursive node did not panic")
+			}
+		}()
+		rec.SetBody(newRecord().Field("value", Number).Build())
+	}()
+
+	assertRecursiveRecord(t, rec, "Node", []Field{{Name: "value", Type: String}})
+	if got := rec.Hash(); got != first {
+		t.Fatalf("rejected SetBody mutated the sealed hash: got %d, want %d", got, first)
+	}
+}
+
+// TestRecursiveIndependentlyBuiltEquivalentGraphsAgreeOnDerivedAnswers pins
+// that deleting the revision machinery did not change any observable answer:
+// two structurally identical recursive graphs, built independently, must
+// still report identical Hash, EqualityHash, and ContainsAny.
+func TestRecursiveIndependentlyBuiltEquivalentGraphsAgreeOnDerivedAnswers(t *testing.T) {
+	build := func() *Recursive {
+		return NewRecursive("Node", func(self Type) Type {
+			return newRecord().Field("value", Any).OptField("next", self).Build()
+		})
+	}
+	a, b := build(), build()
+
+	if a == b {
+		t.Fatal("test requires two independently constructed nodes")
+	}
+	if a.Hash() != b.Hash() {
+		t.Fatalf("independently built equivalent recursive graphs disagree on Hash: %d vs %d", a.Hash(), b.Hash())
+	}
+	if EqualityHash(a) != EqualityHash(b) {
+		t.Fatalf("independently built equivalent recursive graphs disagree on EqualityHash: %d vs %d", EqualityHash(a), EqualityHash(b))
+	}
+	if !ContainsAny(a) || !ContainsAny(b) {
+		t.Fatal("test fixture should contain Any")
 	}
 }
 
@@ -777,23 +810,6 @@ func TestUnionKeepsMutualRecursiveFamiliesByIdentity(t *testing.T) {
 	}
 }
 
-func TestRecursiveIdentityGraphReflectsSetBodyRewrite(t *testing.T) {
-	child := NewRecursivePlaceholder("Child")
-	child.SetBody(newRecord().Field("value", String).Build())
-	root := NewRecursivePlaceholder("Root")
-	root.SetBody(newRecord().Field("child", child).Build())
-	wrapper := NewArray(root)
-
-	if !sameRecursiveIdentityGraph(wrapper, root) {
-		t.Fatal("wrapper and root should initially share recursive identity graph")
-	}
-
-	root.SetBody(newRecord().Field("value", Number).Build())
-	if sameRecursiveIdentityGraph(wrapper, child) {
-		t.Fatal("recursive identity graph should reflect SetBody rewrite instead of a stale cached child")
-	}
-}
-
 func TestRecursiveIdentityGraphUsesInlineStorageForSmallGraphs(t *testing.T) {
 	recA := NewRecursivePlaceholder("A")
 	recB := NewRecursivePlaceholder("B")
@@ -851,7 +867,7 @@ func TestRecursiveContentFlagsDoNotForceGraphClosure(t *testing.T) {
 
 func TestNilRecursiveFlagRefreshIsNoop(t *testing.T) {
 	var rec *Recursive
-	if got := rec.containsFlags(); got.rev != 0 || len(got.deps) != 0 || got.containsAny || got.containsNever || got.containsTypeParam || got.containsInstantiated || got.containsGeneric {
+	if got := rec.containsFlags(); got.containsAny || got.containsNever || got.containsTypeParam || got.containsInstantiated || got.containsGeneric {
 		t.Fatalf("nil recursive content flags = %#v", got)
 	}
 	if rec.containsClosedFlag() {
@@ -871,28 +887,6 @@ func TestOpenRecursiveWrapperHashRefreshesForEquality(t *testing.T) {
 	}
 	if EqualityHash(staleWrapper) != EqualityHash(freshWrapper) {
 		t.Fatalf("equality hash should refresh open recursive wrapper: %d vs %d", EqualityHash(staleWrapper), EqualityHash(freshWrapper))
-	}
-}
-
-func TestClosedRecursiveWrapperHashRefreshesAfterBodyRewrite(t *testing.T) {
-	rec := NewRecursivePlaceholder("Node")
-	rec.SetBody(newRecord().Field("value", String).Build())
-	staleWrapper := newRecord().Field("next", rec).Build()
-
-	rec.SetBody(newRecord().Field("value", Number).Build())
-	freshWrapper := newRecord().Field("next", rec).Build()
-
-	if !typeEquals(staleWrapper, freshWrapper) {
-		t.Fatal("wrappers around the same rewritten recursive node should remain equal")
-	}
-	if EqualityHash(staleWrapper) != EqualityHash(freshWrapper) {
-		t.Fatalf("closed recursive wrapper equality hash should refresh after SetBody: %d vs %d", EqualityHash(staleWrapper), EqualityHash(freshWrapper))
-	}
-	if got := MaterializeUnion([]Type{staleWrapper, freshWrapper}); got != staleWrapper {
-		t.Fatalf("stale/fresh recursive wrappers should deduplicate in unions, got %T %[1]v", got)
-	}
-	if got := MaterializeIntersection([]Type{staleWrapper, freshWrapper}); got != staleWrapper {
-		t.Fatalf("stale/fresh recursive wrappers should deduplicate in intersections, got %T %[1]v", got)
 	}
 }
 
@@ -949,30 +943,6 @@ func TestRecursiveMutualHashConsistency(t *testing.T) {
 		if hashesB[i] != hashesB[0] {
 			t.Errorf("hash B inconsistent at iteration %d: %d vs %d", i, hashesB[i], hashesB[0])
 		}
-	}
-}
-
-func TestRecursiveHashDependencyInvalidatesOnMutualBodyChange(t *testing.T) {
-	recA := NewRecursivePlaceholder("A")
-	recB := NewRecursivePlaceholder("B")
-	recB.SetBody(newRecord().Field("a", recA).Build())
-	recA.SetBody(newRecord().Field("b", recB).Build())
-
-	initial := recA.Hash()
-	if got := recA.Hash(); got != initial {
-		t.Fatalf("cached mutual hash changed without mutation: %d vs %d", got, initial)
-	}
-
-	recB.SetBody(newRecord().
-		Field("a", recA).
-		Field("tag", String).
-		Build())
-	updated := recA.Hash()
-	if updated == initial {
-		t.Fatalf("dependent recursive hash was not invalidated after body mutation")
-	}
-	if got := recA.Hash(); got != updated {
-		t.Fatalf("updated mutual hash did not stabilize: %d vs %d", got, updated)
 	}
 }
 
@@ -1104,71 +1074,38 @@ func TestRecursiveContainsGraphClosedAcceptsNilSeenForRecursiveNodes(t *testing.
 
 func TestKnownContainsOpenRecursiveReflectsCurrentChildGraphState(t *testing.T) {
 	child := NewRecursivePlaceholder("Child")
-	child.SetBody(newRecord().Field("value", String).Build())
 	wrapper := NewArray(child)
-	if knownContainsOpenRecursive(wrapper) {
-		t.Fatal("closed child should not make wrapper open-recursive")
-	}
-
-	child.SetBody(nil)
 	if !knownContainsOpenRecursive(wrapper) {
-		t.Fatal("wrapper should reflect child becoming open after construction")
+		t.Fatal("unresolved child should make wrapper open-recursive")
 	}
 
-	child.SetBody(newRecord().Field("value", Number).Build())
+	child.SetBody(newRecord().Field("value", String).Build())
 	if knownContainsOpenRecursive(wrapper) {
-		t.Fatal("wrapper should reflect child becoming closed again after construction")
+		t.Fatal("wrapper should reflect child becoming closed after construction")
 	}
 }
 
-func TestKnownContainsOpenRecursiveCachesCompositeClosureByRevision(t *testing.T) {
+func TestKnownContainsOpenRecursiveCachesCompositeClosureOnceSealed(t *testing.T) {
 	child := NewRecursivePlaceholder("Child")
-	child.SetBody(newRecord().Field("value", String).Build())
 	wrapper := NewArray(child)
 
 	if wrapper.loadOpenRecursiveMemo() != nil {
 		t.Fatal("construction must not prove recursive graph closure")
 	}
+	if !knownContainsOpenRecursive(wrapper) {
+		t.Fatal("unresolved child should make wrapper open-recursive")
+	}
+	if wrapper.loadOpenRecursiveMemo() != nil {
+		t.Fatal("an open result must not be cached: the child may still be sealed")
+	}
+
+	child.SetBody(newRecord().Field("value", String).Build())
 	if knownContainsOpenRecursive(wrapper) {
 		t.Fatal("closed child should not make wrapper open-recursive")
 	}
 	memo := wrapper.loadOpenRecursiveMemo()
-	if memo == nil || len(memo.deps) != 1 {
-		t.Fatal("open-recursive query must memoize the closure proof on the wrapper")
-	}
-	if got := memo.deps[0]; got.rec != child || got.rev != child.rev {
-		t.Fatalf("closure proof dependency = %#v, want child at revision %d", got, child.rev)
-	}
-
-	child.SetBody(nil)
-	if !knownContainsOpenRecursive(wrapper) {
-		t.Fatal("child revision change must invalidate the cached closure proof")
-	}
-
-	child.SetBody(newRecord().Field("value", Number).Build())
-	if knownContainsOpenRecursive(wrapper) {
-		t.Fatal("closed replacement body must refresh the cached closure proof")
-	}
-}
-
-func TestRecursiveGraphClosureDependencyInvalidatesThroughChildSetBody(t *testing.T) {
-	child := NewRecursivePlaceholder("Child")
-	child.SetBody(newRecord().Field("value", String).Build())
-	root := NewRecursivePlaceholder("Root")
-	root.SetBody(newRecord().Field("child", child).Build())
-
-	if knownContainsOpenRecursive(root) {
-		t.Fatal("closed child should not make root open-recursive")
-	}
-
-	child.SetBody(nil)
-	if !knownContainsOpenRecursive(root) {
-		t.Fatal("root should reflect child becoming open after root closure was cached")
-	}
-
-	child.SetBody(newRecord().Field("value", Number).Build())
-	if knownContainsOpenRecursive(root) {
-		t.Fatal("root should reflect child becoming closed again")
+	if memo == nil || memo.contains {
+		t.Fatal("open-recursive query must memoize the closure proof once the child is sealed")
 	}
 }
 
@@ -1213,12 +1150,8 @@ func TestRecursiveHashDepsHandlesDeepAcyclicProducts(t *testing.T) {
 		return body
 	})
 
-	deps, ok := recursiveHashDeps(rec)
-	if !ok {
-		t.Fatal("deep recursive hash dependencies should be collected without a depth cap")
-	}
-	if len(deps) != 1 || deps[0].rec != rec {
-		t.Fatalf("deps = %#v, want only the recursive type itself", deps)
+	if !recursiveGraphClosureForRecursive(rec) {
+		t.Fatal("deep recursive graph closure should be proven without a depth cap")
 	}
 	first := rec.Hash()
 	second := rec.Hash()
@@ -1240,9 +1173,8 @@ func TestRecursiveHashClosureAndContainmentTraverseTwelveThousandNodeGraph(t *te
 	if knownContainsOpenRecursive(node) {
 		t.Fatal("closed deep recursive graph reported open")
 	}
-	deps, ok := recursiveHashDeps(node)
-	if !ok || len(deps) != 1 || deps[0].rec != node {
-		t.Fatalf("deep recursive graph dependencies = %#v, ok=%v", deps, ok)
+	if !recursiveGraphClosureForRecursive(node) {
+		t.Fatal("deep recursive graph closure should be proven without a depth cap")
 	}
 	if !ContainsAny(node) {
 		t.Fatal("deep recursive graph lost reachable any containment")
@@ -1354,26 +1286,6 @@ func TestRecursiveHashStaticMemberTraversesType(t *testing.T) {
 	}
 }
 
-func TestRecursiveHashDependencyInvalidatesThroughStaticMember(t *testing.T) {
-	root := NewRecursivePlaceholder("Root")
-	child := NewRecursivePlaceholder("Child")
-	child.SetBody(newRecord().Field("value", String).Build())
-	root.SetBody(newRecord().
-		StaticStringIndex("child", child).
-		Build())
-
-	initial := root.Hash()
-	child.SetBody(newRecord().Field("value", Number).Build())
-	updated := root.Hash()
-
-	if updated == initial {
-		t.Fatal("recursive hash dependency missed static member recursive child")
-	}
-	if got := root.Hash(); got != updated {
-		t.Fatalf("updated recursive hash did not stabilize: %d vs %d", got, updated)
-	}
-}
-
 func TestRecursiveGraphClosureFunctionTypeParamConstraintSeesUnsealedPlaceholder(t *testing.T) {
 	root := NewRecursivePlaceholder("Root")
 	dangling := NewRecursivePlaceholder("Dangling")
@@ -1384,26 +1296,5 @@ func TestRecursiveGraphClosureFunctionTypeParamConstraintSeesUnsealedPlaceholder
 
 	if !knownContainsOpenRecursive(root) {
 		t.Fatal("graph-closure traversal missed unsealed recursive placeholder through function type-param constraint")
-	}
-}
-
-func TestRecursiveHashDependencyInvalidatesThroughFunctionTypeParamConstraint(t *testing.T) {
-	root := NewRecursivePlaceholder("Root")
-	child := NewRecursivePlaceholder("Child")
-	child.SetBody(newRecord().Field("value", String).Build())
-	root.SetBody(Func().
-		TypeParam("T", child).
-		Returns(Number).
-		Build())
-
-	initial := root.Hash()
-	child.SetBody(newRecord().Field("value", Number).Build())
-	updated := root.Hash()
-
-	if updated == initial {
-		t.Fatal("recursive hash dependency missed function type-param constraint recursive child")
-	}
-	if got := root.Hash(); got != updated {
-		t.Fatalf("updated recursive hash did not stabilize: %d vs %d", got, updated)
 	}
 }

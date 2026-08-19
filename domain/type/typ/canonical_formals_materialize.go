@@ -557,19 +557,12 @@ func canonicalOwnedSetGenericBody(ctx context.Context, admission *canonicalForma
 	if err := canonicalFormalsCheckpoint(ctx, admission, steps); err != nil {
 		return err
 	}
-	h := hash.MixHash(uint64(kind.Generic), hash.FnvString(generic.Name))
-	for _, param := range generic.TypeParams {
+	for range generic.TypeParams {
 		if err := canonicalFormalsCheckpoint(ctx, admission, steps); err != nil {
 			return err
 		}
-		h = hash.MixHash(h, param.Hash())
 	}
-	generic.Body = body
-	generic.rev++
-	generic.hash = hash.MixHash(h, body.Hash())
-	generic.typeProperties.invalidateOpenRecursiveCache()
-	generic.typeProperties.include(body)
-	generic.strCache = stringCache{}
+	generic.SetBody(body)
 	return nil
 }
 
