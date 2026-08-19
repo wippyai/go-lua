@@ -203,15 +203,21 @@ func (bound *ProgramBinding) QueryAdmissions(sites []QuerySite) ([]engine.Progra
 	return rows, true
 }
 
-// AttachQueries binds every selected-point site through the open construction.
-func (bound *ProgramBinding) AttachQueries(compilation *engine.ProgramConstruction, sites []QuerySite) ([]QueryPublication, bool) {
-	if bound == nil || compilation == nil || len(sites) == 0 {
+// QueryPublications reads the snapshot address every selected-point site
+// publishes under from the committed program. The rows are the program's own:
+// this pass names sites and never mints a publication of its own.
+func (bound *ProgramBinding) QueryPublications(committed *engine.CommittedProgram, sites []QuerySite) ([]QueryPublication, bool) {
+	if bound == nil || committed == nil || len(sites) == 0 {
 		return nil, false
 	}
 	publications := make([]QueryPublication, 0, len(sites))
 	for _, site := range sites {
-		key, ok := bound.AttachQuery(compilation, site.ID, site.Projection)
-		if !ok {
+		query, resolved := committed.Query(site.ID)
+		if !resolved {
+			return nil, false
+		}
+		key, keyed := query.PublicationKey()
+		if !keyed {
 			return nil, false
 		}
 		publications = append(publications, QueryPublication{Site: site, Key: key})

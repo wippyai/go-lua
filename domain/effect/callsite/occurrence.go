@@ -81,8 +81,8 @@ func (issuer ReceiptIssuer) ReceiptForOccurrence(id identity.ContentID) (hotOper
 // rule's owner capability plus mount/occurrence; callers cannot supply or
 // splice a stage point. Opaque Call handling is intentionally a distinct role
 // and cannot issue this selected receipt.
-func (rule *HotRule) MountedSelectedCallEffectStage(compilation *engine.ProgramConstruction, mountID, occurrenceID identity.ContentID) (engine.ProgramCallStage, bool) {
-	if rule == nil || rule.opaque || compilation == nil || !mountID.Available() || !occurrenceID.Available() || rule.implementation == nil {
+func (rule *HotRule) MountedSelectedCallEffectStage(committed *engine.CommittedProgram, mountID, occurrenceID identity.ContentID) (engine.ProgramCallStage, bool) {
+	if rule == nil || rule.opaque || committed == nil || !mountID.Available() || !occurrenceID.Available() || rule.implementation == nil {
 		return engine.ProgramCallStage{}, false
 	}
 	issuer, issuerOK := rule.ForMount(mountID)
@@ -91,7 +91,7 @@ func (rule *HotRule) MountedSelectedCallEffectStage(compilation *engine.ProgramC
 	if !issuerOK || !occurrenceOK || !capabilityOK {
 		return engine.ProgramCallStage{}, false
 	}
-	stage, ok := compilation.MountedCallStage(capability, mountID, occurrenceID)
+	stage, ok := committed.MountedNativeCallStage(capability, mountID, occurrenceID)
 	return stage, ok && stage.Kind() == rows.ArtifactRuleStageIssued5
 }
 

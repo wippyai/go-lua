@@ -10,12 +10,12 @@ import (
 )
 
 // DirectAllocationMembershipAttachment is the bridge from one exact
-// EffectSelected member to Value's summary surface. The Engine observation
-// handle is intentionally private: callers cannot provide a shaped
-// ValueSummaryObservation to this path, and cannot substitute a handle that
-// this attachment's identity did not authorize.
+// EffectSelected member to Value's summary surface. The declared observation
+// row is intentionally private: callers cannot provide a shaped
+// ValueSummaryObservation to this path, and cannot substitute a row that this
+// attachment's identity did not authorize.
 type DirectAllocationMembershipAttachment struct {
-	observation engine.ProgramObservation[valuedomain.ValueSummaryObservation]
+	observation engine.ProgramObservationAdmission
 	id          identity.ContentID
 	mount       identity.ContentID
 	point       identity.ContentID
@@ -33,7 +33,7 @@ func directAllocationMembershipAttachmentID(mount, point, call identity.ContentI
 
 func (attachment DirectAllocationMembershipAttachment) valid() bool {
 	want, ok := directAllocationMembershipAttachmentID(attachment.mount, attachment.point, attachment.call, attachment.width)
-	return ok && attachment.id == want && attachment.observation.SealedAs(attachment.id)
+	return ok && attachment.id == want && attachment.observation.Available() && attachment.observation.ID == attachment.id
 }
 
 func (attachment DirectAllocationMembershipAttachment) Valid() bool { return attachment.valid() }
@@ -42,36 +42,45 @@ func (attachment DirectAllocationMembershipAttachment) ContentID() (identity.Con
 	return attachment.id, attachment.valid()
 }
 
-// AttachSelectedDirectAllocationMembership attaches one Value summary root to
-// the exact selected CallEffect member already admitted by this construction.
-// It intentionally precedes solving and has no transition, placement, or
-// allocation input: one call occurrence shares this private observation across
-// any later completed publication candidates.
+// DeclareSelectedDirectAllocationMembership states one Value summary root over
+// the exact selected CallEffect member the committed program published. It
+// precedes solving and has no transition, placement, or allocation input: one
+// call occurrence shares this private observation across any later completed
+// publication candidates.
 //
 // The caller names the member by the role capability and its authored
-// coordinates; the graph, not this relation, decides whether that member
-// exists. A coordinate triple that is not an admitted member of the named role
-// therefore has no attachment.
-func AttachSelectedDirectAllocationMembership(
-	compilation *engine.ProgramConstruction,
+// coordinates; the committed program, not this relation, decides whether that
+// member exists. A coordinate triple that is not a published member of the
+// named role therefore has no attachment.
+func DeclareSelectedDirectAllocationMembership(
+	committed *engine.CommittedProgram,
 	query *engine.SummaryQueryImplementation[valuedomain.Value, valuedomain.ValueSummaryObservation],
 	role engine.RuleSlotCapability,
 	mount, point, call identity.ContentID,
 	width uint32,
 ) (DirectAllocationMembershipAttachment, bool) {
-	if compilation == nil || query == nil {
+	if committed == nil || query == nil {
 		return DirectAllocationMembershipAttachment{}, false
 	}
 	id, idOK := directAllocationMembershipAttachmentID(mount, point, call, width)
 	if !idOK {
 		return DirectAllocationMembershipAttachment{}, false
 	}
-	observation, failure := engine.AttachMountedSummary[valuedomain.Value, valuedomain.ValueSummaryObservation](compilation, query, id, role, mount, point, call)
-	if failure.Available() || !observation.Available() {
+	if _, published := committed.MountedRuleMember(role, mount, point, call); !published {
+		return DirectAllocationMembershipAttachment{}, false
+	}
+	observation, declared := engine.NewSummaryObservationAdmission[valuedomain.Value, valuedomain.ValueSummaryObservation](query, id, role, mount, point, call)
+	if !declared {
 		return DirectAllocationMembershipAttachment{}, false
 	}
 	attachment := DirectAllocationMembershipAttachment{observation: observation, id: id, mount: mount, point: point, call: call, width: width}
 	return attachment, attachment.valid()
+}
+
+// Observation is the declared observation row this attachment answers on. The
+// seal that mints the Solver binds it; nothing else can.
+func (attachment DirectAllocationMembershipAttachment) Observation() (engine.ProgramObservationAdmission, bool) {
+	return attachment.observation, attachment.valid()
 }
 
 // DirectAllocationMembershipProof is detached evidence of one exact solved

@@ -25,7 +25,7 @@ type publicationTransitionSet struct {
 	mount       identity.ContentID
 	occurrence  identity.ContentID
 	stage       engine.ProgramCallStage
-	observation engine.ProgramObservation[effectfactor.EffectObservation]
+	observation engine.ProgramObservationAdmission
 	rows        []publicationTransitionRow
 	sealed      bool
 }
@@ -69,18 +69,21 @@ type PublicationTransitionProof struct {
 	state     *engine.State
 }
 
-// AttachMountedPublicationCandidates joins a selected HotRule's sealed
-// occurrence receipt, its graph-owned CallEffect stage, and each explicitly
-// authored PublicationAtomBinding. One exact Effect observation is attached
-// for the whole occurrence, so multiple candidates never multiply solver
-// demand. Opaque and generic effect routes issue no candidate.
-func (rule *HotRule) AttachMountedPublicationCandidates(compilation *engine.ProgramConstruction, effectQuery *engine.ExactQueryImplementation[effectfactor.Value, effectfactor.EffectObservation], mount, occurrence identity.ContentID) (PublicationTransitionCandidates, bool) {
-	if rule == nil || rule.opaque || compilation == nil || effectQuery == nil || !mount.Available() || !occurrence.Available() {
+// MountedPublicationCandidates joins a selected HotRule's sealed occurrence
+// receipt, its graph-owned CallEffect stage, and each explicitly authored
+// PublicationAtomBinding. One exact Effect observation is declared for the
+// whole occurrence, so multiple candidates never multiply solver demand.
+// Opaque and generic effect routes issue no candidate.
+//
+// The observation is stated, not bound: the caller hands the declared row to
+// the seal that mints the Solver the proofs are read through.
+func (rule *HotRule) MountedPublicationCandidates(committed *engine.CommittedProgram, effectQuery *engine.ExactQueryImplementation[effectfactor.Value, effectfactor.EffectObservation], mount, occurrence identity.ContentID) (PublicationTransitionCandidates, bool) {
+	if rule == nil || rule.opaque || committed == nil || effectQuery == nil || !mount.Available() || !occurrence.Available() {
 		return PublicationTransitionCandidates{}, false
 	}
 	issuer, issuerOK := rule.ForMount(mount)
 	operand, operandOK := issuer.ReceiptForOccurrence(occurrence)
-	stage, stageOK := rule.MountedSelectedCallEffectStage(compilation, mount, occurrence)
+	stage, stageOK := rule.MountedSelectedCallEffectStage(committed, mount, occurrence)
 	capability, capabilityOK := rule.implementation.MountedCapability()
 	if !issuerOK || !operandOK || !stageOK || !stage.Available() || stage.Kind() != rows.ArtifactRuleStageIssued5 || stage.MountID() != mount || stage.OccurrenceID() != occurrence || !capabilityOK || !stage.HasMember() {
 		return PublicationTransitionCandidates{}, false
@@ -93,8 +96,8 @@ func (rule *HotRule) AttachMountedPublicationCandidates(compilation *engine.Prog
 		return PublicationTransitionCandidates{set: &publicationTransitionSet{rule: rule, mount: mount, occurrence: occurrence, stage: stage, sealed: true}}, true
 	}
 	observationID, idOK := publicationTransitionID(publicationObservationDomain, mount, occurrence)
-	observation, failure := engine.AttachMountedExact(compilation, effectQuery, observationID, capability, mount, stage.PointID(), occurrence)
-	if !idOK || failure.Available() || !observation.Available() {
+	observation, declared := engine.NewExactObservationAdmission[effectfactor.Value, effectfactor.EffectObservation](effectQuery, observationID, capability, mount, stage.PointID(), occurrence)
+	if !idOK || !declared {
 		return PublicationTransitionCandidates{}, false
 	}
 	set := &publicationTransitionSet{rule: rule, mount: mount, occurrence: occurrence, stage: stage, observation: observation, rows: rows, sealed: true}
@@ -167,7 +170,7 @@ func (set *publicationTransitionSet) valid() bool {
 		return !set.observation.Available()
 	}
 	observationKey, observationKeyOK := set.observationKey()
-	if !set.observation.Available() || !observationKeyOK || !set.observation.SealedAs(observationKey) || set.rule.effects == nil || set.rule.effects.Algebra() == nil {
+	if !set.observation.Available() || !observationKeyOK || set.observation.ID != observationKey || set.rule.effects == nil || set.rule.effects.Algebra() == nil {
 		return false
 	}
 	if !set.stage.HasMember() {
