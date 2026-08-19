@@ -55,10 +55,6 @@ func validTransferInputSource(source vocabulary.InputSource, d operationDraft) b
 	}
 }
 
-func validCallbackLifecycle(lifecycle vocabulary.CallbackLifecycle) bool {
-	return lifecycle >= vocabulary.CallbackSyncOptionalOnce && lifecycle <= vocabulary.CallbackRetainedRequiredMany
-}
-
 func retainedCallbackLifecycle(lifecycle vocabulary.CallbackLifecycle) bool {
 	return lifecycle >= vocabulary.CallbackRetainedOptionalOnce && lifecycle <= vocabulary.CallbackRetainedRequiredMany
 }

@@ -45,9 +45,6 @@ func (d operationDraft) freezeCallbacks(input []vocabulary.CallbackSpec) ([]call
 		if argumentsErr != nil {
 			return nil, fmt.Errorf("target: callback %d arguments: %w", index, argumentsErr)
 		}
-		if !validCallbackLifecycle(callback.Lifecycle) {
-			return nil, fmt.Errorf("target: callback %d has invalid lifecycle", index)
-		}
 		effects, effectErr := d.freezeRow(callback.Effects, "callback expected")
 		if effectErr != nil {
 			return nil, fmt.Errorf("target: callback %d effects: %w", index, effectErr)
