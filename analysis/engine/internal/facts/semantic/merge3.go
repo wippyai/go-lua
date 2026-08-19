@@ -84,6 +84,7 @@ func (domain *Domain[F, K, V]) JoinContributionsMany(previous Plane[F, K, V], in
 		roots[index] = input.root
 	}
 	combine := domain.terminalsMany(values)
+	dbgSemantic.MergeMany++
 	root, ok := builder.MergeSoleFactorMany(previous.root, roots, scratch, regions, combine, covers)
 	if !ok {
 		builder.Discard()
@@ -105,6 +106,11 @@ func (domain *Domain[F, K, V]) terminalsMany(values *terminal.Work[V]) diagram.S
 		if values == nil || len(ids) == 0 || len(ids) != len(present) {
 			return zero, false
 		}
+		dbgSemantic.Cells++
+		dbgSemantic.CellWidth += uint64(len(ids))
+		if uint64(len(ids)) > dbgSemantic.MaxOperand {
+			dbgSemantic.MaxOperand = uint64(len(ids))
+		}
 		var accumulator V
 		have := false
 		for index := range ids {
@@ -124,6 +130,7 @@ func (domain *Domain[F, K, V]) terminalsMany(values *terminal.Work[V]) diagram.S
 				continue
 			}
 			var joined bool
+			dbgSemantic.CellPairs++
 			accumulator, joined = domain.joinPair(accumulator, value)
 			if !joined {
 				return zero, false

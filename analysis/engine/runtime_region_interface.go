@@ -64,6 +64,7 @@ func regionAccumulatorEvidenceAdmits(episode *regionEpoch) bool {
 // contains every unmoved operand, so folding the moved ones onto it is the
 // same value as folding all of them onto Init.
 func (epoch *executorEpoch) regionOperandTerms(point equation.Point, pointIndex, regionIndex int, region runtimeRegion, episode *regionEpoch) (carrier.PointRHS, pointFoldTermSets, bool) {
+	dbgRegionReuseRefusal(epoch, episode)
 	if regionAccumulatorEvidenceAdmits(episode) && epoch.work.OwnsPointRHS(episode.accumulator) {
 		rows := [6]struct {
 			kind    operandKind
@@ -82,12 +83,15 @@ func (epoch *executorEpoch) regionOperandTerms(point equation.Point, pointIndex,
 			bounds[index] = len(scratch)
 			scratch, admitted = epoch.changedRegionOperands(regionIndex, row.kind, row.members, episode.rememberAt, scratch)
 			if !admitted {
+				dbgEngine.RefuseChangedRow++
 				break
 			}
 		}
 		bounds[6] = len(scratch)
 		epoch.operandScratch = scratch
 		if admitted {
+			dbgEngine.ReuseAdmit++
+			dbgEngine.ReuseTerms += uint64(bounds[6])
 			return episode.accumulator, pointFoldTermSets{
 				first: pointFoldTermSet{
 					environments: scratch[bounds[0]:bounds[1]],
@@ -103,6 +107,8 @@ func (epoch *executorEpoch) regionOperandTerms(point equation.Point, pointIndex,
 			}, true
 		}
 	}
+	dbgEngine.ReuseRefuse++
+	dbgEngine.RebuildTerms += uint64(len(region.environmentExternal) + len(region.factorExternal) + len(region.external) + len(region.environmentBack) + len(region.factorBack) + len(region.back))
 	base, ok := epoch.pointBase(point, pointIndex)
 	if !ok {
 		return carrier.PointRHS{}, pointFoldTermSets{}, false

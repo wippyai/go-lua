@@ -1,6 +1,11 @@
 package oracle
 
-import "testing"
+import (
+	"testing"
+
+	engineprobe "github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/domain/value"
+)
 
 // The real-fixture lane names individual corpus fixtures whose analysis cost
 // or termination is worth reporting on its own, outside a shard walk. It runs
@@ -10,7 +15,24 @@ import "testing"
 // remains the only resource authority.
 func analyzeCanonicalRealFixture(t *testing.T, name string) {
 	t.Helper()
+	value.DbgValueReset()
+	engineprobe.DbgEngineReset()
+	engineprobe.DbgMergeReset()
 	run := corpusHarnessFixtureRun(t, name, corpusHarnessDiagnosticMode())
+	t.Logf("canonical real fixture %s value: owns=%d valid=%d validRows=%d maxRows=%d leq=%d join=%d joinBuild=%d equal=%d",
+		name, value.DbgValue().Owns, value.DbgValue().Valid, value.DbgValue().ValidRows, value.DbgValue().MaxRows,
+		value.DbgValue().LessOrEq, value.DbgValue().Join, value.DbgValue().JoinBuild, value.DbgValue().Equal)
+	t.Logf("canonical real fixture %s fold: folds=%d terms=%d maxTerms=%d reuseAdmit=%d reuseRefuse=%d reuseTerms=%d rebuildTerms=%d",
+		name, engineprobe.DbgEngine().Folds, engineprobe.DbgEngine().FoldTerms, engineprobe.DbgEngine().FoldMaxTerms,
+		engineprobe.DbgEngine().ReuseAdmit, engineprobe.DbgEngine().ReuseRefuse, engineprobe.DbgEngine().ReuseTerms, engineprobe.DbgEngine().RebuildTerms)
+	t.Logf("canonical real fixture %s reuse refusal: notAscent=%d noAccumulator=%d pendingUnknown=%d pendingDescend=%d notOwned=%d changedRow=%d reasons=%v direction=%v",
+		name, engineprobe.DbgEngine().RefuseNotAscent, engineprobe.DbgEngine().RefuseNoAccumulator,
+		engineprobe.DbgEngine().RefusePendingUnknown, engineprobe.DbgEngine().RefusePendingDescend,
+		engineprobe.DbgEngine().RefuseNotOwned, engineprobe.DbgEngine().RefuseChangedRow,
+		engineprobe.DbgEngine().RefuseReasons, engineprobe.DbgEngine().RefuseDirection)
+	mergeMany, cells, cellPairs, cellWidth, maxOperand := engineprobe.DbgMerge()
+	t.Logf("canonical real fixture %s merge: mergeMany=%d cells=%d cellPairs=%d cellWidth=%d maxOperand=%d",
+		name, mergeMany, cells, cellPairs, cellWidth, maxOperand)
 	engine := run.solveDiagnostics.Engine
 	t.Logf("canonical real fixture %s: seal=%s compile=%s solve=%s total=%s", name, run.cost.seal, run.cost.compile, run.cost.solve, run.cost.total())
 	t.Logf("canonical real fixture %s engine: epochs=%d revisions=%d passes=%d refreshes=%d evaluates=%d evalFails=%d folds=%d rhs=%d restarts=%d activations=%d maxQueue=%d maxEpisode=%d pubs=%d semanticPubs=%d rawPubs=%d rawOnly=%d bumps=%d wakes=%d wakesByReason=%v ifaceRefresh=%d ifaceDone=%d ifaceFallback=%d leq=%d geq=%d eq=%d incomp=%d unknown=%d",

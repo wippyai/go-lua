@@ -405,6 +405,11 @@ func (epoch *executorEpoch) foldPointTermSetsWithBoundary(reference carrier.Poin
 	if termCount == 0 && producerCount == 0 {
 		return base, carrier.ChangeSet{}, boundaryNone, true
 	}
+	dbgEngine.Folds++
+	dbgEngine.FoldTerms += uint64(termCount + producerCount)
+	if total := uint64(termCount + producerCount); total > dbgEngine.FoldMaxTerms {
+		dbgEngine.FoldMaxTerms = total
+	}
 	if !epoch.work.BeginPointRHSFold(reference, base) {
 		return carrier.PointRHS{}, carrier.ChangeSet{}, refused(SolveFailureFamilyRefresh, "acyclic-fold-begin"), false
 	}
