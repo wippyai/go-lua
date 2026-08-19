@@ -124,13 +124,6 @@ func (bound *boundFactor[K, V]) readUnit(surface equation.Surface) (carrier.Unit
 	return unit.unit, ok
 }
 
-// receiptMatches is the factor-owned authority bridge for receipt queries.
-// It deliberately exposes no coordinate type: the sealed Factor cell checks
-// the exact SchemaBinding, factor ordinal, and semantic key internally.
-func (bound *boundFactor[K, V]) receiptMatches(state *schemaBindingState, authority *schemaBindingAuthority, ordinal uint64, semantic composition.Key) bool {
-	return bound != nil && bound.receipt.valid() && bound.receipt.state == state && bound.receipt.authority == authority && bound.receipt.ordinal == ordinal && bound.receipt.semantic == semantic
-}
-
 // summaryReadReceiptProof is the slot-native counterpart of summaryReadProof.
 // It authenticates the exact sealed form ordinal and semantic key without
 // reconstructing a declaration form or consulting a semantic lookup table.
